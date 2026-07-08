@@ -404,3 +404,52 @@ fn attach_composer_delegate(tv: ak::TextView, on_change: fn(*u8, *u8), on_submit
     synth::retain_associated(tv.raw(), composer_pin_key(), d);
     return;
 }
+
+// ==========================================================================
+// Split view — minimum pane sizes via NSSplitViewDelegate. The delegate is a
+// weak property, so (like the composer) it is pinned to the split view and the
+// min-size context is heap-boxed and leaked. Applies to a two-pane split with a
+// single divider at index 0.
+// ==========================================================================
+
+struct SplitCtx {
+    min_first: f64,
+    min_second: f64,
+}
+
+fn split_pin_key() -> *u8 { return { 28691 as *u8 }; }
+
+// The lowest coordinate divider 0 may take = the first pane's minimum extent.
+fn split_constrain_min_imp(user: *u8, sv: *u8, proposed: f64, divider: i64) -> f64 {
+    let c: *SplitCtx = { user as *SplitCtx };
+    if divider == (0 as i64) { return { (*c).min_first }; }
+    return proposed;
+}
+
+// The highest coordinate divider 0 may take = split extent minus the second
+// pane's minimum extent (measured along the split axis).
+fn split_constrain_max_imp(user: *u8, sv: *u8, proposed: f64, divider: i64) -> f64 {
+    let c: *SplitCtx = { user as *SplitCtx };
+    if divider == (0 as i64) {
+        let f: rt::Rect = ak::SplitView::from_raw(sv).as_view().frame();
+        let extent: f64 = if ak::SplitView::from_raw(sv).is_vertical() { f.w } else { f.h };
+        let cap: f64 = extent - { (*c).min_second };
+        if proposed > cap { return cap; }
+    }
+    return proposed;
+}
+
+// Enforce `min_first` / `min_second` on a two-pane split view (divider 0).
+fn attach_split_min_widths(sv: ak::SplitView, min_first: f64, min_second: f64) {
+    let cbox: *SplitCtx = { malloc(#size_of::[SplitCtx]()) as *SplitCtx };
+    { *cbox = SplitCtx { min_first: min_first, min_second: min_second }; }
+    var del: ak::SplitViewDelegate = ak::SplitViewDelegate_new(cbox as *u8);
+    del.set_split_view_constrain_min_coordinate_of_subview_at(split_constrain_min_imp);
+    del.set_split_view_constrain_max_coordinate_of_subview_at(split_constrain_max_imp);
+    let dbox: *ak::SplitViewDelegate = { malloc(#size_of::[ak::SplitViewDelegate]()) as *ak::SplitViewDelegate };
+    { *dbox = del; }
+    let d: *u8 = ak::create_SplitViewDelegate(dbox);
+    sv.set_delegate(d);
+    synth::retain_associated(sv.raw(), split_pin_key(), d);
+    return;
+}

@@ -477,6 +477,29 @@ fn composer_content_height(view_ptr: *u8) -> f64 {
 }
 
 // ==========================================================================
+// Native split view — draggable two-pane divider (file tree | editor).
+// ==========================================================================
+
+// A two-pane NSSplitView with a draggable divider: `split(sidebar, editor)`.
+// Each pane must be a single view (a `scroll_view`, a native leaf, or a
+// `view(...)`); NSSplitView resizes the panes on drag and their content
+// autoresizes to fill, so wrap any multi-element pane in one container view
+// first. `vertical: true` (default) places the panes side by side (a vertical
+// divider); `false` stacks them. `position` is the initial divider offset;
+// `min_first` / `min_second` are the pane minimums the delegate enforces.
+fn split(take first: flex::Node, take second: flex::Node, vertical: bool = true, position: f64 = 220.0f64, min_first: f64 = 150.0f64, min_second: f64 = 240.0f64, agent_id: str = "") -> flex::Node {
+    let sv = ak::SplitView::new();
+    sv.set_vertical(vertical);
+    sv.set_divider_style(ak::SplitViewDividerStyle::Thin);
+    if first.payload() != (0 as *u8) { sv.add_arranged_subview(ak::View::from_raw(first.payload())); }
+    if second.payload() != (0 as *u8) { sv.add_arranged_subview(ak::View::from_raw(second.payload())); }
+    akx::attach_split_min_widths(sv, min_first, min_second);
+    sv.set_position(position, 0 as i64);
+    tag_agent(sv.as_view().raw(), agent_id);
+    return fixed_view(sv.as_view());
+}
+
+// ==========================================================================
 // Builder protocol + containers (the `@ui` context)
 // ==========================================================================
 
@@ -1004,6 +1027,16 @@ fn test_composer_builds_reads_text_and_reports_height() {
     assert area_text(n.payload()).equals("hello");
     let h: f64 = composer_content_height(n.payload());   // callable pre-layout
     assert h >= 0.0f64;
+}
+
+#[test]
+fn test_split_hosts_two_arranged_panes() {
+    let n: flex::Node = split(label("tree"), label("editor"), position: 200.0f64);
+    assert n.has_payload();
+    let sv: ak::SplitView = ak::SplitView::from_raw(n.payload());
+    assert sv.is_vertical();                              // side-by-side by default
+    assert sv.arranged_subviews().count() == (2 as usize);
+    // Min-width dragging is a live behaviour; only construction is checked here.
 }
 
 #[test]
