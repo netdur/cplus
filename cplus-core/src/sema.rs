@@ -1591,7 +1591,16 @@ impl SemaCx<'_> {
     /// `__errno_location` and never monomorphize).
     fn reject_reserved_double_underscore(&mut self, kind: &str, name: &Ident) -> bool {
         let user_part = name.name.rsplit('.').next().unwrap_or(&name.name);
-        if user_part.trim_start_matches('_').contains("__") {
+        // A mangled name is `<template>__<args>` with BOTH sides non-empty. So a
+        // `__` run only at a BOUNDARY — leading (`__doctest_helper`, already
+        // exempt) or trailing (`chla_transtype__`, a Fortran/LAPACK C symbol
+        // bound 1:1) — can never be a monomorphization mangling and is safe;
+        // only an INTERIOR `__` collides. Trim both ends before the check.
+        if user_part
+            .trim_start_matches('_')
+            .trim_end_matches('_')
+            .contains("__")
+        {
             self.err(
                 "E0917",
                 format!(
@@ -24677,6 +24686,18 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
                 "expected E0917 for reserved `__` name, got {codes:?} in: {src}"
             );
         }
+    }
+
+    #[test]
+    fn boundary_double_underscore_names_allowed_not_e0917() {
+        // A `__` run only at a boundary can't be a `<template>__<args>` mangling
+        // (one side is empty), so it must NOT fire E0917. Trailing `__` is the
+        // Fortran/LAPACK C-symbol convention (`chla_transtype__`, in
+        // vendor/accelerate/clapack) bound 1:1 via a wrapper fn.
+        assert_clean(
+            "fn chla_transtype__() -> i32 { return 0; } \
+             fn main() -> i32 { return chla_transtype__(); }",
+        );
     }
 
     #[test]
