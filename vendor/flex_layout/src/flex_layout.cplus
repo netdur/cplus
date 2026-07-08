@@ -2080,6 +2080,15 @@ fn box() -> Node { return Node::new(); }
 // Ergonomic modifiers — fluent (`take this -> Node`), so they chain on one line:
 //   box().width(200.0).grow(1.0).padding(8.0)
 // The full `set_*` setters remain for non-DSL use.
+//
+// GROW PROPAGATES ONE LEVEL. `grow(v)` distributes only its DIRECT parent's free
+// space along the main axis. For a grow item to actually fill, every ancestor
+// between it and the nearest definite-main-size container must ALSO grow (or
+// carry a definite main size) — an ancestor with an `auto` main size is
+// content-sized, has no free space, and collapses the grow chain to zero. This
+// matches CSS/Yoga; it is not a bug. So `column { column { box().grow(1) } }`
+// under a fixed-height root fills only if the inner column also grows:
+// `column { column{...}.grow(1) }`. See test_grow_needs_growing_ancestors.
 impl Node {
     fn grow(take this, v: f64) -> Node { var n: Node = this; n.style.flex_grow = v; return n; }
     fn shrink(take this, v: f64) -> Node { var n: Node = this; n.style.flex_shrink = v; return n; }
@@ -3700,4 +3709,71 @@ fn test_payload_travels_with_child_into_parent() {
     }
     assert PAYLOAD_RELEASES == 1;        // released when the tree drops
     assert PAYLOAD_LAST == (11 as i64);
+}
+
+// ===== grow propagation through nested containers =====
+// grow(v) distributes only its DIRECT parent's free space. A grow item fills
+// only when every ancestor up to a definite-main-size container also grows (or
+// is definite). An `auto` intermediate is content-sized and collapses the chain
+// to zero — CSS/Yoga-correct, not a bug. These pin that contract (drove iris
+// gap #12: `fixed_view(scroll).grow(1)` went to zero under auto wrappers).
+
+#[test]
+fn test_grow_fills_directly_under_a_definite_parent() {
+    // root column, definite height 600, one grow(1) leaf -> fills.
+    var root: Node = Node::new();
+    var a: Node = Node::new(); a.set_flex_grow(1.0f64);
+    root.add_child(a);
+    root.calculate_layout(400.0f64, 600.0f64, Direction::LTR);
+    assert approx(must(root.child_layout(0 as usize)).height, 600.0f64);
+}
+
+#[test]
+fn test_grow_collapses_under_an_auto_intermediate() {
+    // root col h=600 > mid col (auto, NO grow) > grow(1) leaf.
+    // The auto mid is content-sized -> no free space -> the chain collapses to 0.
+    var root: Node = Node::new();
+    var mid: Node = Node::new();
+    var a: Node = Node::new(); a.set_flex_grow(1.0f64);
+    mid.add_child(a);
+    root.add_child(mid);
+    root.calculate_layout(400.0f64, 600.0f64, Direction::LTR);
+    assert approx(must(root.child_layout(0 as usize)).height, 0.0f64);
+}
+
+#[test]
+fn test_grow_needs_growing_ancestors() {
+    // root col h=600 > mid col grow(1) > grow(1) leaf -> both fill.
+    var root: Node = Node::new();
+    var mid: Node = Node::new(); mid.set_flex_grow(1.0f64);
+    var a: Node = Node::new(); a.set_flex_grow(1.0f64);
+    mid.add_child(a);
+    root.add_child(mid);
+    root.calculate_layout(400.0f64, 600.0f64, Direction::LTR);
+    assert approx(must(root.child_layout(0 as usize)).height, 600.0f64);
+    // grandchild fills the (now definite) mid.
+    match root.children.at_ptr(0 as usize) {
+        option::Option[*Node]::Some(pm) => {
+            assert approx(must({ (*pm).child_layout(0 as usize) }).height, 600.0f64);
+        }
+        option::Option[*Node]::None => { assert false; }
+    }
+    assert true;
+}
+
+#[test]
+fn test_grow_fills_through_deeply_nested_growing_wrappers() {
+    // The iris shape: root col h=600 with a definite sibling(24) + a wrapper
+    // subtree that grows at every level -> the wrapper absorbs the remaining 576.
+    var root: Node = Node::new();
+    var head: Node = leaf(400.0f64, 24.0f64);
+    var wrapper: Node = Node::new(); wrapper.set_flex_grow(1.0f64);
+    var screen: Node = Node::new(); screen.set_flex_grow(1.0f64);
+    var body: Node = Node::new(); body.set_flex_grow(1.0f64);
+    screen.add_child(body);
+    wrapper.add_child(screen);
+    root.add_child(head);
+    root.add_child(wrapper);
+    root.calculate_layout(400.0f64, 600.0f64, Direction::LTR);
+    assert approx(must(root.child_layout(1 as usize)).height, 576.0f64);
 }
