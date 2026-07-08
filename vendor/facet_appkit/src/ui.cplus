@@ -666,6 +666,7 @@ struct Slot {
     _render: fn(*u8) -> flex::Node,
     opaque _host: *u8,                  // borrowed: the app owns the host view
     _flipped: bool,
+    _scroll: bool,                      // host is an NSScrollView: content-size + reflow the doc
     _live: bool,
 }
 
@@ -676,6 +677,7 @@ static SLOTS: vec::Vec[Slot] = #zero::[vec::Vec[Slot]]();
 // the end of the call — the applied NSViews live on under the host, each
 // retained by its superview.
 fn render_slot(sp: *Slot) -> f64 {
+    if { (*sp)._scroll } { return render_slot_scroll(sp); }
     let host: ak::View = ak::View::from_raw({ (*sp)._host });
     var subs: vec::Vec[ak::View] = host.subviews();
     let cnt: usize = subs.count();
@@ -695,6 +697,43 @@ fn render_slot(sp: *Slot) -> f64 {
     return f.height;
 }
 
+// Scroll-mode render: lay the component out at the scroll's viewport width with
+// an unbounded height (content-sized), then reflow the FLIPPED document view.
+// The document view is REUSED when it already exists — its old rows are removed,
+// it is resized to the new content height, and the fresh tree is applied into it
+// — so the scroll offset survives a re-render. Only the first render creates the
+// document view. Returns the content height.
+fn render_slot_scroll(sp: *Slot) -> f64 {
+    let s: ak::ScrollView = ak::ScrollView::from_raw({ (*sp)._host });
+    let width: f64 = s.as_view().frame().w;
+    let r: fn(*u8) -> flex::Node = { (*sp)._render };
+    var tree: flex::Node = r({ (*sp)._cp });
+    tree.calculate_layout(width, flex::undefined(), flex::Direction::LTR);
+    tree.round_to_pixel(2.0f64);
+    let rf: flex::Layout = tree.layout_frame();
+    let doc_rect: rt::Rect = rt::Rect { x: 0.0, y: 0.0, w: width, h: rf.height };
+    match s.document_view() {
+        option::Option[ak::View]::Some(dv) => {
+            var subs: vec::Vec[ak::View] = dv.subviews();
+            let cnt: usize = subs.count();
+            for i in 0..(cnt as i32) {
+                match subs.at_ptr(i as usize) {
+                    option::Option[*ak::View]::Some(vp) => { { (*vp).remove_from_superview(); } }
+                    option::Option[*ak::View]::None => { }
+                }
+            }
+            dv.set_frame(doc_rect);
+            apply(#addr_of(tree), dv.raw(), true);
+        }
+        option::Option[ak::View]::None => {
+            let doc = akx::new_flipped_view(doc_rect);
+            apply(#addr_of(tree), doc.raw(), true);
+            s.set_document_view(ak::View::from_raw(doc.raw()));
+        }
+    }
+    return rf.height;
+}
+
 // Mount a component into a host view: `ui::mount(COUNTER.render, host: v)`.
 // The bound reference fills `ctx` with the component's address; `render`
 // runs once now and again on every invalidate. Returns the content height
@@ -702,7 +741,28 @@ fn render_slot(sp: *Slot) -> f64 {
 fn mount(render: fn(*u8) -> flex::Node, ctx: *u8 = 0 as *u8, host: *u8 = 0 as *u8, flipped: bool = false) -> f64 {
     if host == { 0 as *u8 } { return -1.0f64; }
     let slots: *vec::Vec[Slot] = #addr_of(SLOTS);
-    (*slots).append(Slot { _cp: ctx, _render: render, _host: host, _flipped: flipped, _live: true });
+    (*slots).append(Slot { _cp: ctx, _render: render, _host: host, _flipped: flipped, _scroll: false, _live: true });
+    let n: usize = SLOTS.count();
+    match SLOTS.at_ptr(n -% (1 as usize)) {
+        option::Option[*Slot]::Some(sp) => { return render_slot(sp); }
+        option::Option[*Slot]::None => { }
+    }
+    return -1.0f64;
+}
+
+// Mount a component whose host is an NSScrollView: `ui::mount_scroll(RECENTS.render,
+// scroll: sv.raw())`. Unlike `mount` (fixed-frame host), the content is laid out
+// at the viewport width with an UNBOUNDED height, so a growing list is not
+// clipped; the flipped document view is sized to fit and REUSED across
+// re-renders, so the scroll position survives an add/remove. `invalidate(cp)`
+// reflows it like any other component. Call after the outer layout has sized the
+// scroll (same two-phase rule as `fill_scroll`). Returns content height
+// (-1.0 when `scroll` is missing).
+fn mount_scroll(render: fn(*u8) -> flex::Node, ctx: *u8 = 0 as *u8, scroll: *u8 = 0 as *u8, agent_id: str = "") -> f64 {
+    if scroll == { 0 as *u8 } { return -1.0f64; }
+    if agent_id != "" { tag_agent(scroll, agent_id); }
+    let slots: *vec::Vec[Slot] = #addr_of(SLOTS);
+    (*slots).append(Slot { _cp: ctx, _render: render, _host: scroll, _flipped: true, _scroll: true, _live: true });
     let n: usize = SLOTS.count();
     match SLOTS.at_ptr(n -% (1 as usize)) {
         option::Option[*Slot]::Some(sp) => { return render_slot(sp); }
@@ -1008,6 +1068,54 @@ fn test_fill_scroll_installs_flipped_document() {
         }
         option::Option[ak::View]::None => { assert false; }
     };
+}
+
+// A test component: renders `SCROLL_TEST_ROWS` fixed-height rows into a column.
+// Each row is a real backing view (payload) so `apply` installs it as a subview.
+static SCROLL_TEST_ROWS: i64 = 3;
+fn scroll_test_render(cp: *u8) -> flex::Node {
+    var b: Builder = Builder::new();
+    var i: i64 = 0 as i64;
+    while i < SCROLL_TEST_ROWS {
+        let v = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 });
+        b.add(fixed_view(v).width(100.0f64).height(30.0f64));
+        i = i + (1 as i64);
+    }
+    return column(b);
+}
+
+#[test]
+fn test_mount_scroll_reuses_doc_and_reflows_on_invalidate() {
+    unmount_all();
+    let s = ak::ScrollView::new(rt::Rect { x: 0.0, y: 0.0, w: 100.0, h: 80.0 });
+    SCROLL_TEST_ROWS = 3 as i64;
+    // ctx is a sentinel identity (a real app passes a bound component reference).
+    let h0: f64 = mount_scroll(scroll_test_render, ctx: 1 as *u8, scroll: s.raw());
+    assert approx(h0, 90.0f64);   // 3 * 30, content-sized (not clipped to the 80 viewport)
+    var doc0: *u8 = 0 as *u8;
+    match s.document_view() {
+        option::Option[ak::View]::Some(doc) => {
+            doc0 = doc.raw();
+            assert rt::msg_i8(doc.raw(), rt::sel(#str_ptr("isFlipped\0"))) == (1 as i8);
+            assert approx(doc.frame().h, 90.0f64);
+            assert doc.subviews().count() == (3 as usize);
+        }
+        option::Option[ak::View]::None => { assert false; }
+    };
+
+    // Grow the list and invalidate: same document view (REUSED), reflowed taller.
+    SCROLL_TEST_ROWS = 5 as i64;
+    let hit: bool = invalidate(1 as *u8);
+    assert hit;
+    match s.document_view() {
+        option::Option[ak::View]::Some(doc) => {
+            assert doc.raw() == doc0;                    // reused, not recreated
+            assert approx(doc.frame().h, 150.0f64);      // 5 * 30
+            assert doc.subviews().count() == (5 as usize);
+        }
+        option::Option[ak::View]::None => { assert false; }
+    };
+    unmount_all();
 }
 
 fn t_clickable_handler(sender: *u8, ctx: *u8) { return; }
