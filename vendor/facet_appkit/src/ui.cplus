@@ -429,6 +429,53 @@ fn choose_directory() -> option::Option[text::Text] {
     return option::Option[text::Text]::None;
 }
 
+// A chat-style composer: a bordered, scrollable, editable multi-line text view
+// that submits on Enter and inserts a newline on Shift+Enter. `on_submit(ctx,
+// tv)` fires on Enter; `on_change(ctx, tv)` (optional — defaults to a no-op)
+// fires on every edit. Read the current text with `area_text(node.payload())`.
+// Auto-grow recipe: in `on_change`, read `composer_content_height(node.payload())`,
+// clamp it to your min/max, store it, and re-render with that height — the MVU
+// loop grows the field. Give it a definite `.height(...)` for the initial size.
+fn composer(on_submit: fn(*u8, *u8), on_change: fn(*u8, *u8) = 0 as fn(*u8, *u8), ctx: *u8 = 0 as *u8, value: str = "", agent_id: str = "") -> flex::Node {
+    let zero: rt::Rect = rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 };
+    let scroll = ak::ScrollView::new(zero);
+    scroll.set_border_type(ak::BorderType::NSBezelBorder);
+    scroll.set_has_vertical_scroller(true);
+    let tv = ak::TextView::new_with_frame(zero);
+    tv.set_editable(true);
+    tv.set_rich_text(false);
+    tv.as_text().set_font(ak::Font::system_font_of_size(13.0f64));
+    if value != "" { tv.as_text().set_string(value); }
+    tv.as_view().set_autoresizing_mask(ak::autoresizing_mask_options_n_s_view_width_sizable);
+    akx::attach_composer_delegate(tv, on_change, on_submit, ctx);
+    scroll.set_document_view(tv.as_view());
+    tag_agent(scroll.as_view().raw(), agent_id);
+    return fixed_view(scroll.as_view());
+}
+
+// The laid-out height of a `composer`'s text (used-rect + vertical insets), by
+// its (scroll-view) payload pointer. Clamp it to a min/max to drive auto-grow.
+// Returns 0 before the text view has laid out.
+fn composer_content_height(view_ptr: *u8) -> f64 {
+    let dv: *u8 = { rt::msg_id(view_ptr, rt::sel(#str_ptr("documentView\0"))) };
+    if dv == { 0 as *u8 } { return 0.0f64; }
+    let tv: ak::TextView = ak::TextView::from_raw(dv);
+    let inset: rt::Size = tv.text_container_inset();
+    match tv.layout_manager() {
+        option::Option[ak::LayoutManager]::Some(lm) => {
+            match tv.text_container() {
+                option::Option[ak::TextContainer]::Some(tc) => {
+                    let used: rt::Rect = lm.used_rect_for_text_container(tc);
+                    return used.h + (2.0f64 * inset.h);
+                }
+                option::Option[ak::TextContainer]::None => { }
+            }
+        }
+        option::Option[ak::LayoutManager]::None => { }
+    }
+    return 0.0f64;
+}
+
 // ==========================================================================
 // Builder protocol + containers (the `@ui` context)
 // ==========================================================================
@@ -946,6 +993,17 @@ fn test_popup_holds_items_and_selection() {
     assert n.has_payload();
     assert ak::PopUpButton::from_raw(n.payload()).number_of_items() == (3 as i64);
     assert popup_index(n.payload()) == (2 as i64);
+}
+
+#[test]
+fn test_composer_builds_reads_text_and_reports_height() {
+    // Construction wires the delegate (weak, so pinned); the Enter-to-send /
+    // Shift+Enter behaviour itself needs a live event loop to exercise.
+    let n: flex::Node = composer(on_submit: test_noop_action, value: "hello");
+    assert n.has_payload();
+    assert area_text(n.payload()).equals("hello");
+    let h: f64 = composer_content_height(n.payload());   // callable pre-layout
+    assert h >= 0.0f64;
 }
 
 #[test]

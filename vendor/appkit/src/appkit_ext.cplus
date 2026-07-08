@@ -339,3 +339,68 @@ fn new_actionable_view(frame: rt::Rect, on_in: fn(*u8, *u8), on_out: fn(*u8, *u8
     }
     return ak::View::from_raw(rt::autorelease(inited));
 }
+
+// ==========================================================================
+// Composer — an NSTextView delegate for Enter-to-send / Shift+Enter-newline
+// plus a per-edit change hook. NSTextView's `delegate` is a WEAK reference, so
+// the delegate object is pinned to the text view; the routing context and the
+// (generated) TextViewDelegate struct are heap-boxed and leaked — they live for
+// the text view's lifetime, which for a composer is the app's lifetime.
+// ==========================================================================
+
+extern fn malloc(n: usize) -> *u8;
+
+// The context the trampolines dispatch through. `caller_ctx` is the component /
+// user pointer the app passed; either fn-pointer may be null (a null `on_change`
+// means "no change hook").
+struct ComposerCtx {
+    on_change: fn(*u8, *u8),
+    on_submit: fn(*u8, *u8),
+    opaque caller_ctx: *u8,
+}
+
+fn composer_pin_key() -> *u8 { return { 28690 as *u8 }; }
+
+// `+[NSEvent modifierFlags]` — the modifier keys held down right now.
+fn composer_shift_is_down() -> bool {
+    let flags: u64 = { rt::msg_u64(rt::get_class(#str_ptr("NSEvent\0")), rt::sel(#str_ptr("modifierFlags\0"))) };
+    return (flags & ak::event_modifier_flags_n_s_event_modifier_flag_shift) != (0 as u64);
+}
+
+fn composer_did_change_imp(user: *u8, tv: *u8) {
+    let c: *ComposerCtx = { user as *ComposerCtx };
+    let f: fn(*u8, *u8) = { (*c).on_change };
+    if { f as *u8 } != { 0 as *u8 } { f({ (*c).caller_ctx }, tv); }
+    return;
+}
+
+fn composer_do_command_imp(user: *u8, tv: *u8, sel: *u8) -> i8 {
+    // Enter with no Shift submits and swallows the newline; Shift+Enter (and any
+    // other command) falls through to the text view's default handling.
+    if sel == rt::sel(#str_ptr("insertNewline:\0")) {
+        if !composer_shift_is_down() {
+            let c: *ComposerCtx = { user as *ComposerCtx };
+            let f: fn(*u8, *u8) = { (*c).on_submit };
+            if { f as *u8 } != { 0 as *u8 } { f({ (*c).caller_ctx }, tv); }
+            return 1 as i8;   // handled -> no newline inserted
+        }
+    }
+    return 0 as i8;   // not handled -> default behavior
+}
+
+// Attach a composer delegate to `tv`: `on_change(caller_ctx, tv)` fires on every
+// edit, `on_submit(caller_ctx, tv)` on Enter (Shift+Enter inserts a newline
+// instead). Either fn-pointer may be null. The delegate is pinned to `tv`.
+fn attach_composer_delegate(tv: ak::TextView, on_change: fn(*u8, *u8), on_submit: fn(*u8, *u8), caller_ctx: *u8) {
+    let cbox: *ComposerCtx = { malloc(#size_of::[ComposerCtx]()) as *ComposerCtx };
+    { *cbox = ComposerCtx { on_change: on_change, on_submit: on_submit, caller_ctx: caller_ctx }; }
+    var del: ak::TextViewDelegate = ak::TextViewDelegate_new(cbox as *u8);
+    del.set_text_view_did_change_selection(composer_did_change_imp);
+    del.set_text_view_do_command_by_selector(composer_do_command_imp);
+    let dbox: *ak::TextViewDelegate = { malloc(#size_of::[ak::TextViewDelegate]()) as *ak::TextViewDelegate };
+    { *dbox = del; }
+    let d: *u8 = ak::create_TextViewDelegate(dbox);
+    tv.set_delegate(d);
+    synth::retain_associated(tv.raw(), composer_pin_key(), d);
+    return;
+}
