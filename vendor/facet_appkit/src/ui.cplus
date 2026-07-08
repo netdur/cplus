@@ -102,12 +102,47 @@ fn fixed_view(take v: ak::View) -> flex::Node {
 // Widgets — leaf constructors (config through named params + defaults)
 // ==========================================================================
 
-// A single-line text label.
-fn label(text: str, size: f64 = 13.0f64, bold: bool = false, secondary: bool = false, agent_id: str = "") -> flex::Node {
+// A single-line text label. `truncate: true` clips to one line with a tail
+// ellipsis when the flexed width is narrower than the text — give it a bounded
+// width (a `.shrink(1)` in a row, or a fixed `.width(...)`) so there is
+// something to truncate against.
+fn label(text: str, size: f64 = 13.0f64, bold: bool = false, secondary: bool = false, truncate: bool = false, agent_id: str = "") -> flex::Node {
     let l = ak::TextField::label_with_string(text);
     if bold { l.as_control().set_font(ak::Font::bold_system_font_of_size(size)); }
     else    { l.as_control().set_font(ak::Font::system_font_of_size(size)); }
     if secondary { l.set_text_color(ak::Color::secondary_label_color()); }
+    if truncate {
+        l.set_maximum_number_of_lines(1 as i64);
+        match l.as_control().cell() {
+            option::Option[ak::Cell]::Some(c) => {
+                c.set_uses_single_line_mode(true);
+                c.set_line_break_mode(ak::LineBreakMode::NSLineBreakByTruncatingTail);
+            }
+            option::Option[ak::Cell]::None => { }
+        };
+    }
+    tag_agent(l.as_view().raw(), agent_id);
+    return view(l.as_view());
+}
+
+// A label in an arbitrary color — for severity (system_red_color for a
+// hard-stop, system_orange_color for a warning) or any accent. The color is
+// required; use `label(..., secondary: true)` for the gray secondary tier.
+fn colored_label(text: str, color: ak::Color, size: f64 = 13.0f64, bold: bool = false, truncate: bool = false, agent_id: str = "") -> flex::Node {
+    let l = ak::TextField::label_with_string(text);
+    if bold { l.as_control().set_font(ak::Font::bold_system_font_of_size(size)); }
+    else    { l.as_control().set_font(ak::Font::system_font_of_size(size)); }
+    l.set_text_color(color);
+    if truncate {
+        l.set_maximum_number_of_lines(1 as i64);
+        match l.as_control().cell() {
+            option::Option[ak::Cell]::Some(c) => {
+                c.set_uses_single_line_mode(true);
+                c.set_line_break_mode(ak::LineBreakMode::NSLineBreakByTruncatingTail);
+            }
+            option::Option[ak::Cell]::None => { }
+        };
+    }
     tag_agent(l.as_view().raw(), agent_id);
     return view(l.as_view());
 }
@@ -139,8 +174,19 @@ fn button_view(title: str, primary: bool = false, agent_id: str = "") -> flex::N
 // token. After the handler returns, the wire runs `component_after(ctx)` —
 // if ctx is a mounted component, exactly that component re-renders; any
 // other ctx (an index, 0) misses the registry and no-ops.
-fn button(title: str, on: fn(*u8, *u8), ctx: *u8 = 0 as *u8, primary: bool = false, agent_id: str = "") -> flex::Node {
+fn button(title: str, on: fn(*u8, *u8), ctx: *u8 = 0 as *u8, primary: bool = false, symbol: str = "", agent_id: str = "") -> flex::Node {
     let n: flex::Node = button_view(title, primary: primary, agent_id: agent_id);
+    // A non-empty `symbol` places a leading SF Symbol before the title.
+    if symbol != "" {
+        match ak::Image::image_with_system_symbol_name(symbol, "") {
+            option::Option[ak::Image]::Some(img) => {
+                let bb = ak::Button::from_raw(n.payload());
+                bb.set_image(img);
+                bb.set_image_position(ak::CellImagePosition::NSImageLeading);
+            }
+            option::Option[ak::Image]::None => { }
+        };
+    }
     akx::set_control_action_ctx_then_ctx(ak::Button::from_raw(n.payload()).as_control(), on, ctx, component_after);
     return n;
 }
@@ -186,6 +232,33 @@ fn icon_button_ctx(symbol_name: str, on: fn(*u8, *u8), ctx: *u8, agent_id: str =
     return view(b.as_view());
 }
 
+// A hyperlink-style button: borderless, accent-tinted title, action-wired.
+// For the Help / Settings row and other inline text actions.
+fn link_button(title: str, on: fn(*u8, *u8), ctx: *u8 = 0 as *u8, agent_id: str = "") -> flex::Node {
+    let b = ak::Button::new();
+    b.set_title(title);
+    b.set_bordered(false);
+    b.set_content_tint_color(ak::Color::link_color());
+    akx::set_control_action_ctx_then_ctx(b.as_control(), on, ctx, component_after);
+    tag_agent(b.as_view().raw(), agent_id);
+    return view(b.as_view());
+}
+
+// A borderless text button styled like a plain (or bold) label but firing an
+// action — for a clickable title that should not read as a hyperlink. Title is
+// left-aligned. Distinct from `link_button` (accent hyperlink) and from
+// `clickable` (wraps an arbitrary laid-out node).
+fn plain_button(title: str, on: fn(*u8, *u8), ctx: *u8 = 0 as *u8, bold: bool = false, agent_id: str = "") -> flex::Node {
+    let b = ak::Button::new();
+    b.set_title(title);
+    b.set_bordered(false);
+    if bold { b.as_control().set_font(ak::Font::bold_system_font_of_size(13.0f64)); }
+    b.as_control().set_alignment(ak::TextAlignment::Left);
+    akx::set_control_action_ctx_then_ctx(b.as_control(), on, ctx, component_after);
+    tag_agent(b.as_view().raw(), agent_id);
+    return view(b.as_view());
+}
+
 // An SF Symbol at a fixed side length.
 fn symbol(name: str, side: f64, secondary: bool = false) -> flex::Node {
     var img: ak::Image = ak::Image::new(rt::Size { w: side, h: side });
@@ -196,6 +269,23 @@ fn symbol(name: str, side: f64, secondary: bool = false) -> flex::Node {
     let iv = ak::ImageView::image_view_with_image(img);
     if secondary { iv.set_content_tint_color(ak::Color::secondary_label_color()); }
     else         { iv.set_content_tint_color(ak::Color::label_color()); }
+    var n: flex::Node = fixed_view(iv.as_view());
+    n.set_width(flex::StyleLength::points(side));
+    n.set_height(flex::StyleLength::points(side));
+    return n;
+}
+
+// An SF Symbol tinted an arbitrary color — the green ✓ (system_green_color) on a
+// pass chip, a red ✕, an accent glyph. The tint is required; `symbol(...)` with
+// `secondary` covers the label/secondary monochrome case.
+fn symbol_tinted(name: str, side: f64, tint: ak::Color) -> flex::Node {
+    var img: ak::Image = ak::Image::new(rt::Size { w: side, h: side });
+    match ak::Image::image_with_system_symbol_name(name, "") {
+        option::Option[ak::Image]::Some(found) => { img = found; }
+        option::Option[ak::Image]::None => { }
+    };
+    let iv = ak::ImageView::image_view_with_image(img);
+    iv.set_content_tint_color(tint);
     var n: flex::Node = fixed_view(iv.as_view());
     n.set_width(flex::StyleLength::points(side));
     n.set_height(flex::StyleLength::points(side));
@@ -609,6 +699,63 @@ fn test_button_ctx_delivers_userdata() {
     rt::msg_void_id(t, a, bp);
     assert CTX_FIRES == 1;
     assert CTX_SEEN == (5 as i64);
+}
+
+#[test]
+fn test_colored_label_builds_and_holds_text() {
+    let n: flex::Node = colored_label("danger", color: ak::Color::system_red_color());
+    assert n.has_payload();
+    let tf: ak::TextField = ak::TextField::from_raw(n.payload());
+    assert tf.as_control().string_value().count() == (6 as usize);
+}
+
+#[test]
+fn test_truncating_label_sets_single_line_cell() {
+    let n: flex::Node = label("a very long path that overflows", truncate: true);
+    let tf: ak::TextField = ak::TextField::from_raw(n.payload());
+    match tf.as_control().cell() {
+        option::Option[ak::Cell]::Some(c) => { assert c.uses_single_line_mode(); }
+        option::Option[ak::Cell]::None => { assert false; }
+    };
+    assert true;
+}
+
+#[test]
+fn test_symbol_tinted_keeps_its_fixed_side() {
+    var n: flex::Node = symbol_tinted("checkmark.circle.fill", 16.0f64, ak::Color::system_green_color());
+    assert n.has_payload();
+    n.calculate_layout(200.0f64, 200.0f64, flex::Direction::LTR);
+    let f: flex::Layout = n.layout_frame();
+    assert approx(f.width, 16.0f64);
+    assert approx(f.height, 16.0f64);
+}
+
+#[test]
+fn test_button_with_symbol_has_leading_image() {
+    let n: flex::Node = button("New", on: test_noop_action, symbol: "plus");
+    let b: ak::Button = ak::Button::from_raw(n.payload());
+    match b.image() {
+        option::Option[ak::Image]::Some(_img) => { }
+        option::Option[ak::Image]::None => { assert false; }
+    };
+    match b.image_position() {
+        ak::CellImagePosition::NSImageLeading => { }
+        _ => { assert false; }
+    };
+    assert true;
+}
+
+#[test]
+fn test_link_and_plain_buttons_wire_actions() {
+    let lk: flex::Node = link_button("Help", on: test_noop_action);
+    let pb: flex::Node = plain_button("project name", on: test_noop_action);
+    assert lk.has_payload();
+    assert pb.has_payload();
+    // both fire through a real target/action, as a click would resolve.
+    let lt: *u8 = rt::msg_id(lk.payload(), rt::sel(#str_ptr("target\0")));
+    let pt: *u8 = rt::msg_id(pb.payload(), rt::sel(#str_ptr("target\0")));
+    assert lt != (0 as *u8);
+    assert pt != (0 as *u8);
 }
 
 #[test]
