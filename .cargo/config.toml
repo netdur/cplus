@@ -1,0 +1,13 @@
+# The parser (`MAX_PARSE_DEPTH`) and monomorphizer (`INSTANTIATION_LIMIT`)
+# recursion guards turn pathological nesting / runaway generic instantiation
+# into a clean E0103 / E0910 instead of a native stack overflow.
+#
+# `cargo test` runs each test on a 2 MB thread by default. In a *debug* build,
+# unoptimized parser frames are large enough that recursing to MAX_PARSE_DEPTH
+# (256) needs ~16 MB of stack — so the guard tests overflow the 2 MB test
+# thread and abort the whole test binary before the guard can fire. (Release
+# frames are far smaller, and `cpc` itself compiles on the ~8 MB main thread, so
+# this only bites the debug test harness.) Give test/`run` threads enough stack
+# to reach the guard limit; 32 MB is ~2x the measured debug need.
+[env]
+RUST_MIN_STACK = "33554432"
