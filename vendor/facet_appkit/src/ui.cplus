@@ -1209,6 +1209,21 @@ fn test_composer_builds_reads_text_and_reports_height() {
     assert h >= 0.0f64;
 }
 
+static KEYED_REMOVED: i64 = -1;
+fn keyed_on_remove(sender: *u8, ctx: *u8) { KEYED_REMOVED = ctx as i64; return; }
+
+#[test]
+fn test_keyed_rows_carry_distinct_stable_keys() {
+    // React-list-with-keys: each row carries its OWN stable key (as ctx) and a
+    // unique agent_id — not the loop index. Distinct backing views, distinct
+    // pinned keys; a row's handler delivers ITS key, so remove-by-key works.
+    let r1: flex::Node = clickable(label("alpha"), ctx: 101 as *u8, on_click: keyed_on_remove, agent_id: "row-alpha");
+    let r2: flex::Node = clickable(label("beta"), ctx: 202 as *u8, on_click: keyed_on_remove, agent_id: "row-beta");
+    assert r1.payload() != r2.payload();
+    assert ak::Accessibility::from_raw(r1.payload()).accessibility_identifier().equals("row-alpha");
+    assert ak::Accessibility::from_raw(r2.payload()).accessibility_identifier().equals("row-beta");
+}
+
 #[test]
 fn test_split_hosts_two_arranged_panes() {
     let n: flex::Node = split(label("tree"), label("editor"), position: 200.0f64);
