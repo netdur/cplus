@@ -258,3 +258,84 @@ fn add_rotate_gesture(view: ak::View, handler: fn(*u8, *u8), ctx: *u8) {
     view.add_gesture_recognizer(g.as_gesture_recognizer());
     return;
 }
+
+// ==========================================================================
+// Hover + scroll -> C+ handler (a custom view, not a gesture)
+// ==========================================================================
+//
+// Mouse enter/exit and scroll aren't gestures: they need a view that owns an
+// NSTrackingArea (hover) and overrides scrollWheel: (scroll). One synthesized
+// NSView subclass carries all three handlers + ctx on the instance. A tracking
+// area is added only when a hover handler is set (InVisibleRect auto-follows the
+// view; facet re-mounts fresh views each render, so one at construction is
+// enough). scrollWheel: chains to super, so a scroll still bubbles up to an
+// enclosing scroll view — the handler only observes it.
+
+fn av_hover_in_key() -> *u8 { return { 28686 as *u8 }; }
+fn av_hover_out_key() -> *u8 { return { 28687 as *u8 }; }
+fn av_scroll_key() -> *u8 { return { 28688 as *u8 }; }
+fn av_ctx_key() -> *u8 { return { 28689 as *u8 }; }
+
+fn av_call(self_obj: *u8, key: *u8, sender: *u8) {
+    let f: fn(*u8, *u8) = { synth::get_associated(self_obj, key) as fn(*u8, *u8) };
+    if { f } == (0 as fn(*u8, *u8)) { return; }
+    f(sender, synth::get_associated(self_obj, av_ctx_key()));
+    return;
+}
+// Hover handlers receive the view; scroll receives the NSEvent (read deltas).
+fn av_entered_imp(self_obj: *u8, cmd: *u8, event: *u8) { av_call(self_obj, av_hover_in_key(), self_obj); return; }
+fn av_exited_imp(self_obj: *u8, cmd: *u8, event: *u8) { av_call(self_obj, av_hover_out_key(), self_obj); return; }
+fn av_scroll_imp(self_obj: *u8, cmd: *u8, event: *u8) {
+    av_call(self_obj, av_scroll_key(), event);
+    call_super_void_id(self_obj, rt::get_class(#str_ptr("NSView\0")), rt::sel(#str_ptr("scrollWheel:\0")), event);
+    return;
+}
+
+// objc_msgSendSuper for a `void (self, _cmd, id)` method — chain to NSView's
+// default (keep scroll propagating up the responder chain).
+struct ObjcSuper { opaque receiver: *u8, opaque super_class: *u8 }
+#[link_name = "objc_msgSendSuper"]
+extern fn msg_super_void_id(sup: *ObjcSuper, sel: *u8, arg: *u8);
+fn call_super_void_id(self_obj: *u8, super_cls: *u8, sel: *u8, arg: *u8) {
+    var sup: ObjcSuper = ObjcSuper { receiver: self_obj, super_class: super_cls };
+    msg_super_void_id(#addr_of(sup), sel, arg);
+    return;
+}
+
+fn actionable_view_class() -> *u8 {
+    let existing: *u8 = rt::get_class(#str_ptr("CplusExtActionableView\0"));
+    if existing != (0 as *u8) { return existing; }
+    let cls: *u8 = synth::allocate_class_pair(rt::get_class(#str_ptr("NSView\0")), #str_ptr("CplusExtActionableView\0"), 0 as usize);
+    let a: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("mouseEntered:\0")), av_entered_imp, #str_ptr("v@:@\0"));
+    let b: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("mouseExited:\0")), av_exited_imp, #str_ptr("v@:@\0"));
+    let c: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("scrollWheel:\0")), av_scroll_imp, #str_ptr("v@:@\0"));
+    synth::register_class_pair(cls);
+    return cls;
+}
+
+// `[[NSTrackingArea alloc] initWithRect:options:owner:userInfo:]` — the binding
+// skips it (the NSDictionary userInfo), so call objc_msgSend directly (nil
+// userInfo). NSRect passes by value in the C ABI.
+#[link_name = "objc_msgSend"]
+extern fn msg_init_tracking(obj: *u8, sel: *u8, rect: rt::Rect, options: u64, owner: *u8, user_info: *u8) -> *u8;
+
+// A view reporting hover (mouse enter/exit) and/or scroll. Any handler may be
+// the null sentinel (ignored). A tracking area is added only when a hover
+// handler is set; scrollWheel always chains to super so scrolling still bubbles.
+fn new_actionable_view(frame: rt::Rect, on_in: fn(*u8, *u8), on_out: fn(*u8, *u8), on_scroll: fn(*u8, *u8), ctx: *u8) -> ak::View {
+    let none: fn(*u8, *u8) = 0 as fn(*u8, *u8);
+    let alloced: *u8 = rt::msg_id(actionable_view_class(), rt::sel(#str_ptr("alloc\0")));
+    let inited: *u8 = rt::msg_id_rect(alloced, rt::sel(#str_ptr("initWithFrame:\0")), frame);
+    synth::set_associated(inited, av_hover_in_key(), { on_in as *u8 });
+    synth::set_associated(inited, av_hover_out_key(), { on_out as *u8 });
+    synth::set_associated(inited, av_scroll_key(), { on_scroll as *u8 });
+    synth::set_associated(inited, av_ctx_key(), ctx);
+    if { on_in } != none || { on_out } != none {
+        // MouseEnteredAndExited (0x01) | ActiveInKeyWindow (0x20) | InVisibleRect (0x200).
+        let ta_alloc: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSTrackingArea\0")), rt::sel(#str_ptr("alloc\0")));
+        let ta: *u8 = msg_init_tracking(ta_alloc, rt::sel(#str_ptr("initWithRect:options:owner:userInfo:\0")), frame, 545 as u64, inited, 0 as *u8);
+        rt::msg_void_id(inited, rt::sel(#str_ptr("addTrackingArea:\0")), ta);
+        rt::release(ta);
+    }
+    return ak::View::from_raw(rt::autorelease(inited));
+}

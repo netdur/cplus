@@ -300,12 +300,17 @@ fn card(take b: Builder) -> flex::Node {
 // fires the button, AppKit-style). `ctx` is delivered to every handler — use it
 // to identify the row/item. Only the handlers you pass are wired.
 //
-// Events (all via NSGestureRecognizers): click, double-click, right-click,
+// Gesture events (via NSGestureRecognizers): click, double-click, right-click,
 // long-press (`long_press_seconds` = hold time, 0 = system default), drag
 // (pan), pinch (magnify), and rotate. Each handler is `fn(recognizer, ctx)` —
 // read the `recognizer` (via `ak::*GestureRecognizer::from_raw`) for state /
-// translation / magnification when you need it. Hover and scroll arrive in a
-// later phase (they need a custom view rather than a recognizer).
+// translation / magnification when you need it.
+//
+// Hover (`on_hover_in` / `on_hover_out`, `fn(view, ctx)`) and scroll
+// (`on_scroll`, `fn(event, ctx)` — read `ak::Event::from_raw(event)` for the
+// deltas) are not gestures: they swap the backing view for a custom view with a
+// tracking area and a `scrollWheel:` override. Scroll still bubbles to an
+// enclosing scroll view, so `on_scroll` only observes it.
 
 // Unset handlers default to a null fn-pointer sentinel — wired only when set.
 // (A literal `0 as fn(..)` is used because a default value can't reference a
@@ -321,10 +326,21 @@ fn clickable(
     on_drag: fn(*u8, *u8) = 0 as fn(*u8, *u8),
     on_pinch: fn(*u8, *u8) = 0 as fn(*u8, *u8),
     on_rotate: fn(*u8, *u8) = 0 as fn(*u8, *u8),
+    on_hover_in: fn(*u8, *u8) = 0 as fn(*u8, *u8),
+    on_hover_out: fn(*u8, *u8) = 0 as fn(*u8, *u8),
+    on_scroll: fn(*u8, *u8) = 0 as fn(*u8, *u8),
     agent_id: str = "",
 ) -> flex::Node {
     let none: fn(*u8, *u8) = 0 as fn(*u8, *u8);
-    let bv: ak::View = ak::View::new(rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 });
+    let zero: rt::Rect = rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 };
+    // Hover / scroll need a custom view (tracking area + scrollWheel:); every
+    // gesture event rides a plain NSView.
+    let needs_custom: bool = { on_hover_in } != none || { on_hover_out } != none || { on_scroll } != none;
+    let bv: ak::View = if needs_custom {
+        akx::new_actionable_view(zero, on_hover_in, on_hover_out, on_scroll, ctx)
+    } else {
+        ak::View::new(zero)
+    };
     if { on_click } != none {
         akx::add_click_gesture(bv, on_click, ctx, 1 as i64, akx::primary_button_mask());
     }
@@ -765,6 +781,55 @@ fn clickable_wires_every_gesture_kind() {
         on_rotate: t_clickable_handler);
     let bv: ak::View = ak::View::from_raw(c.payload());
     assert bv.gesture_recognizers().count() == (7 as usize);
+}
+
+#[test]
+fn clickable_hover_uses_a_tracking_area_view() {
+    // A hover handler swaps in the tracking-area view (one tracking area) and
+    // still carries the click recognizer.
+    var b: Builder = Builder::new();
+    b.add(label("x"));
+    var c: flex::Node = clickable(hstack(b), ctx: 2 as *u8,
+        on_click: t_clickable_handler,
+        on_hover_in: t_clickable_handler,
+        on_hover_out: t_clickable_handler);
+    let bv: ak::View = ak::View::from_raw(c.payload());
+    assert bv.tracking_areas().count() == (1 as usize);
+    assert bv.gesture_recognizers().count() == (1 as usize);
+}
+
+#[test]
+fn clickable_without_hover_has_no_tracking_area() {
+    var b: Builder = Builder::new();
+    b.add(label("x"));
+    var c: flex::Node = clickable(hstack(b), on_click: t_clickable_handler);
+    let bv: ak::View = ak::View::from_raw(c.payload());
+    assert bv.tracking_areas().count() == (0 as usize);
+}
+
+#[test]
+fn clickable_scroll_hover_and_click_share_one_view() {
+    // Scroll + hover both use the custom view; a click recognizer rides it too.
+    var b: Builder = Builder::new();
+    b.add(label("x"));
+    var c: flex::Node = clickable(hstack(b), ctx: 3 as *u8,
+        on_click: t_clickable_handler,
+        on_hover_in: t_clickable_handler,
+        on_scroll: t_clickable_handler);
+    let bv: ak::View = ak::View::from_raw(c.payload());
+    assert bv.tracking_areas().count() == (1 as usize);
+    assert bv.gesture_recognizers().count() == (1 as usize);
+}
+
+#[test]
+fn clickable_scroll_only_builds_a_backing_view() {
+    var b: Builder = Builder::new();
+    b.add(label("x"));
+    var c: flex::Node = clickable(hstack(b), on_scroll: t_clickable_handler);
+    assert c.payload() != (0 as *u8);
+    let bv: ak::View = ak::View::from_raw(c.payload());
+    assert bv.gesture_recognizers().count() == (0 as usize);
+    assert bv.tracking_areas().count() == (0 as usize);
 }
 
 #[test]
