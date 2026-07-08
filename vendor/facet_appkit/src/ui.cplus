@@ -289,6 +289,80 @@ fn card(take b: Builder) -> flex::Node {
 }
 
 // ==========================================================================
+// Actionable container — make any laid-out node respond to events
+// ==========================================================================
+//
+// The missing clickable-CONTAINER primitive: only buttons fire actions, so an
+// arbitrary row (icon + title + subtitle) had no way to respond to a click.
+// `clickable` wraps `content` in a backing NSView and attaches one gesture
+// recognizer per handler you pass; the whole node's bounds is the hit target,
+// and children keep their own clicks (a button inside a clickable row still
+// fires the button, AppKit-style). `ctx` is delivered to every handler — use it
+// to identify the row/item. Only the handlers you pass are wired.
+//
+// Events (all via NSGestureRecognizers): click, double-click, right-click,
+// long-press (`long_press_seconds` = hold time, 0 = system default), drag
+// (pan), pinch (magnify), and rotate. Each handler is `fn(recognizer, ctx)` —
+// read the `recognizer` (via `ak::*GestureRecognizer::from_raw`) for state /
+// translation / magnification when you need it. Hover and scroll arrive in a
+// later phase (they need a custom view rather than a recognizer).
+
+// Unset handlers default to a null fn-pointer sentinel — wired only when set.
+// (A literal `0 as fn(..)` is used because a default value can't reference a
+// module fn by name.) A null handler is never called: it is only compared.
+fn clickable(
+    take content: flex::Node,
+    ctx: *u8 = 0 as *u8,
+    on_click: fn(*u8, *u8) = 0 as fn(*u8, *u8),
+    on_double_click: fn(*u8, *u8) = 0 as fn(*u8, *u8),
+    on_right_click: fn(*u8, *u8) = 0 as fn(*u8, *u8),
+    on_long_press: fn(*u8, *u8) = 0 as fn(*u8, *u8),
+    long_press_seconds: f64 = 0.0f64,
+    on_drag: fn(*u8, *u8) = 0 as fn(*u8, *u8),
+    on_pinch: fn(*u8, *u8) = 0 as fn(*u8, *u8),
+    on_rotate: fn(*u8, *u8) = 0 as fn(*u8, *u8),
+    agent_id: str = "",
+) -> flex::Node {
+    let none: fn(*u8, *u8) = 0 as fn(*u8, *u8);
+    let bv: ak::View = ak::View::new(rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 });
+    if { on_click } != none {
+        akx::add_click_gesture(bv, on_click, ctx, 1 as i64, akx::primary_button_mask());
+    }
+    if { on_double_click } != none {
+        akx::add_click_gesture(bv, on_double_click, ctx, 2 as i64, akx::primary_button_mask());
+    }
+    if { on_right_click } != none {
+        akx::add_click_gesture(bv, on_right_click, ctx, 1 as i64, akx::secondary_button_mask());
+    }
+    if { on_long_press } != none {
+        akx::add_press_gesture(bv, on_long_press, ctx, long_press_seconds);
+    }
+    if { on_drag } != none {
+        akx::add_pan_gesture(bv, on_drag, ctx);
+    }
+    if { on_pinch } != none {
+        akx::add_magnify_gesture(bv, on_pinch, ctx);
+    }
+    if { on_rotate } != none {
+        akx::add_rotate_gesture(bv, on_rotate, ctx);
+    }
+    tag_agent(bv.raw(), agent_id);
+
+    // A bare container (no backing view of its own) hosts the recognizers
+    // directly — `apply` lays its children into `bv`. A leaf/view is nested so
+    // its own payload isn't clobbered.
+    if content.payload() == (0 as *u8) {
+        var n: flex::Node = content;
+        n.set_payload(rt::retain(bv.raw()), release_view);
+        return n;
+    }
+    var wrapper: flex::Node = flex::Node::new();
+    wrapper.set_payload(rt::retain(bv.raw()), release_view);
+    wrapper.add_child(content);
+    return wrapper;
+}
+
+// ==========================================================================
 // Apply — computed frames -> a real nested NSView tree
 // ==========================================================================
 //
@@ -641,4 +715,64 @@ fn test_fill_scroll_installs_flipped_document() {
         }
         option::Option[ak::View]::None => { assert false; }
     };
+}
+
+fn t_clickable_handler(sender: *u8, ctx: *u8) { return; }
+
+#[test]
+fn clickable_container_hosts_recognizers_and_keeps_children() {
+    // A bare container gets a backing view carrying one recognizer per handler,
+    // and its children are preserved (laid into that view at apply time).
+    var b: Builder = Builder::new();
+    b.add(label("a"));
+    b.add(label("b"));
+    var content: flex::Node = hstack(b);
+    let kids: usize = content.child_count();
+    assert content.payload() == (0 as *u8);
+
+    var c: flex::Node = clickable(content, ctx: 7 as *u8,
+        on_click: t_clickable_handler,
+        on_double_click: t_clickable_handler,
+        on_right_click: t_clickable_handler);
+    assert c.payload() != (0 as *u8);
+    assert c.child_count() == kids;
+    let bv: ak::View = ak::View::from_raw(c.payload());
+    assert bv.gesture_recognizers().count() == (3 as usize);
+}
+
+#[test]
+fn clickable_wires_only_the_handlers_passed() {
+    // Unset handlers (still the noop sentinel) wire nothing.
+    var b: Builder = Builder::new();
+    b.add(label("x"));
+    var c: flex::Node = clickable(hstack(b), on_click: t_clickable_handler);
+    let bv: ak::View = ak::View::from_raw(c.payload());
+    assert bv.gesture_recognizers().count() == (1 as usize);
+}
+
+#[test]
+fn clickable_wires_every_gesture_kind() {
+    // click, double-click, right-click, long-press, drag, pinch, rotate = 7.
+    var b: Builder = Builder::new();
+    b.add(label("x"));
+    var c: flex::Node = clickable(hstack(b), ctx: 1 as *u8,
+        on_click: t_clickable_handler,
+        on_double_click: t_clickable_handler,
+        on_right_click: t_clickable_handler,
+        on_long_press: t_clickable_handler,
+        on_drag: t_clickable_handler,
+        on_pinch: t_clickable_handler,
+        on_rotate: t_clickable_handler);
+    let bv: ak::View = ak::View::from_raw(c.payload());
+    assert bv.gesture_recognizers().count() == (7 as usize);
+}
+
+#[test]
+fn clickable_wraps_a_leaf_without_clobbering_its_view() {
+    // A leaf owns its own view; wrapping nests it under a fresh backing view.
+    var leaf: flex::Node = label("x");
+    assert leaf.payload() != (0 as *u8);
+    var c: flex::Node = clickable(leaf, on_click: t_clickable_handler);
+    assert c.payload() != (0 as *u8);
+    assert c.child_count() == (1 as usize);
 }

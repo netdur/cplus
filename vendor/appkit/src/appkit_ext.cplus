@@ -188,3 +188,73 @@ fn set_control_action_ctx_then_ctx(control: ak::Control, handler: fn(*u8, *u8), 
     rt::msg_void_id(control.raw(), rt::sel(#str_ptr("setAction:\0")), action_ctx_then_ctx_sel());
     return;
 }
+
+// ==========================================================================
+// Gesture recognizers -> C+ handler
+// ==========================================================================
+//
+// An actionable *container* (a laid-out row/card, not a control) responds to
+// clicks and trackpad gestures via NSGestureRecognizers attached to its NSView.
+// A recognizer's `action:(sender)` has the same shape as a control's, so we
+// reuse the ActionCtx target: `handler(recognizer, ctx)`. Each recognizer pins
+// its own target (so it lives as long as the recognizer, which the view owns).
+
+fn gesture_pin_key() -> *u8 { return { 28685 as *u8 }; }
+
+// NSEvent button masks: primary (left) = 1<<0, secondary (right) = 1<<1.
+fn primary_button_mask() -> u64 { return 1 as u64; }
+fn secondary_button_mask() -> u64 { return 2 as u64; }
+
+// Pin an ActionCtx target to a recognizer and set its target/action.
+fn wire_gesture(recognizer: *u8, handler: fn(*u8, *u8), ctx: *u8) {
+    let t: *u8 = action_ctx_target(handler, ctx);
+    synth::retain_associated(recognizer, gesture_pin_key(), t);
+    rt::msg_void_id(recognizer, rt::sel(#str_ptr("setTarget:\0")), t);
+    rt::msg_void_id(recognizer, rt::sel(#str_ptr("setAction:\0")), action_ctx_sel());
+    return;
+}
+
+// Click / double-click / right-click. `clicks` = 1 or 2; `buttons` selects
+// primary (left) vs secondary (right) via the button-mask helpers above.
+fn add_click_gesture(view: ak::View, handler: fn(*u8, *u8), ctx: *u8, clicks: i64, buttons: u64) {
+    let g: ak::ClickGestureRecognizer = ak::ClickGestureRecognizer::new();
+    g.set_number_of_clicks_required(clicks);
+    g.set_button_mask(buttons);
+    wire_gesture(g.raw(), handler, ctx);
+    view.add_gesture_recognizer(g.as_gesture_recognizer());
+    return;
+}
+
+// Press-and-hold. `min_duration` seconds before the handler fires (0 = the
+// system default).
+fn add_press_gesture(view: ak::View, handler: fn(*u8, *u8), ctx: *u8, min_duration: f64) {
+    let g: ak::PressGestureRecognizer = ak::PressGestureRecognizer::new();
+    if min_duration > 0.0f64 { g.set_minimum_press_duration(min_duration); }
+    wire_gesture(g.raw(), handler, ctx);
+    view.add_gesture_recognizer(g.as_gesture_recognizer());
+    return;
+}
+
+// Drag (pan). The handler reads the recognizer for translation/state.
+fn add_pan_gesture(view: ak::View, handler: fn(*u8, *u8), ctx: *u8) {
+    let g: ak::PanGestureRecognizer = ak::PanGestureRecognizer::new();
+    wire_gesture(g.raw(), handler, ctx);
+    view.add_gesture_recognizer(g.as_gesture_recognizer());
+    return;
+}
+
+// Pinch-to-zoom (trackpad). The handler reads the recognizer for magnification.
+fn add_magnify_gesture(view: ak::View, handler: fn(*u8, *u8), ctx: *u8) {
+    let g: ak::MagnificationGestureRecognizer = ak::MagnificationGestureRecognizer::new();
+    wire_gesture(g.raw(), handler, ctx);
+    view.add_gesture_recognizer(g.as_gesture_recognizer());
+    return;
+}
+
+// Two-finger rotate (trackpad). The handler reads the recognizer for rotation.
+fn add_rotate_gesture(view: ak::View, handler: fn(*u8, *u8), ctx: *u8) {
+    let g: ak::RotationGestureRecognizer = ak::RotationGestureRecognizer::new();
+    wire_gesture(g.raw(), handler, ctx);
+    view.add_gesture_recognizer(g.as_gesture_recognizer());
+    return;
+}
