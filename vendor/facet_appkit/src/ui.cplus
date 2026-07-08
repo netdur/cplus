@@ -26,9 +26,11 @@
 
 import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
+import "objc/synthesis" as synth;
 import "stdlib/option" as option;
 import "stdlib/vec" as vec;
 import "stdlib/text" as text;
+import "stdlib/fs" as fs;
 import "flex_layout/flex_layout" as flex;
 import "appkit/appkit" as ak;
 import "appkit/appkit_ext" as akx;
@@ -530,6 +532,152 @@ fn set_area_text(view_ptr: *u8, value: str) {
     if dv == { 0 as *u8 } { return; }
     ak::TextView::from_raw(dv).as_text().set_string(value);
     return;
+}
+
+// ==========================================================================
+// File tree — NSOutlineView over an in-memory directory model. The model nodes
+// are heap-boxed at STABLE addresses (NSOutlineView caches and re-passes item
+// pointers by identity) and leaked (they live with the tree). The data source
+// and selection delegate are weak properties, so they are pinned to the outline
+// view; both use the already-generated OutlineViewDataSource / OutlineViewDelegate.
+// The model is built eagerly from the directory on construction.
+// ==========================================================================
+
+extern fn malloc(n: usize) -> *u8;
+
+struct TreeNode {
+    label: text::Text,               // display name (basename)
+    path: text::Text,                // full path (for on_select)
+    is_dir: bool,
+    children: vec::Vec[usize],       // stable boxed child pointers (as usize; Vec of
+                                     // raw pointers isn't supported, so store addresses)
+}
+
+struct TreeSelCtx {
+    on_select: fn(*u8, *u8),         // (caller_ctx, *TreeNode-as-*u8)
+    opaque caller_ctx: *u8,
+}
+
+fn tree_ds_pin_key() -> *u8 { return { 28692 as *u8 }; }
+fn tree_del_pin_key() -> *u8 { return { 28693 as *u8 }; }
+
+// Box a node on the heap (leaked; app-lifetime). Reading `read_dir` decides
+// dir-vs-file: a path that opens as a directory recurses, anything else is a leaf.
+fn build_tree(path: str, label: str) -> *TreeNode {
+    var kids: vec::Vec[usize] = vec::new::[usize]();
+    var isdir: bool = false;
+    match fs::read_dir(path) {
+        option::Option[vec::Vec[text::Text]]::Some(names) => {
+            isdir = true;
+            var i: usize = 0 as usize;
+            while i < names.count() {
+                match names.at_ptr(i) {
+                    option::Option[*text::Text]::Some(nm) => {
+                        var cp: text::Text = text::from_str(path);
+                        let _s1 = cp.append("/");
+                        let _s2 = cp.append((*nm).view());
+                        kids.append(build_tree(cp.view(), (*nm).view()) as usize);
+                    }
+                    option::Option[*text::Text]::None => { }
+                }
+                i = i +% (1 as usize);
+            }
+        }
+        option::Option[vec::Vec[text::Text]]::None => { isdir = false; }
+    }
+    let node: *TreeNode = { malloc(#size_of::[TreeNode]()) as *TreeNode };
+    { *node = TreeNode { label: text::from_str(label), path: text::from_str(path), is_dir: isdir, children: kids }; }
+    return node;
+}
+
+// The full path of a tree item (the `on_select` payload). Returns "" for null.
+fn tree_node_path(node_ptr: *u8) -> text::Text {
+    if node_ptr == { 0 as *u8 } { return text::from_str(""); }
+    let n: *TreeNode = { node_ptr as *TreeNode };
+    return text::from_str({ (*n).path }.view());
+}
+
+// --- data source trampolines (item == nil means the implicit root) ---
+fn tree_num_children_imp(user: *u8, ov: *u8, item: *u8) -> i64 {
+    let node: *TreeNode = if item == { 0 as *u8 } { user as *TreeNode } else { item as *TreeNode };
+    return { (*node).children }.count() as i64;
+}
+fn tree_child_imp(user: *u8, ov: *u8, index: i64, item: *u8) -> *u8 {
+    let node: *TreeNode = if item == { 0 as *u8 } { user as *TreeNode } else { item as *TreeNode };
+    match { (*node).children }.at_ptr(index as usize) {
+        option::Option[*usize]::Some(cpp) => { let addr: usize = { *cpp }; return addr as *u8; }
+        option::Option[*usize]::None => { }
+    }
+    return 0 as *u8;
+}
+fn tree_expandable_imp(user: *u8, ov: *u8, item: *u8) -> i8 {
+    if item == { 0 as *u8 } { return 1 as i8; }
+    if { (*(item as *TreeNode)).is_dir } { return 1 as i8; }
+    return 0 as i8;
+}
+fn tree_object_value_imp(user: *u8, ov: *u8, col: *u8, item: *u8) -> *u8 {
+    if item == { 0 as *u8 } { return 0 as *u8; }
+    let n: *TreeNode = { item as *TreeNode };
+    return bridge::nsstring({ (*n).label }.view());
+}
+
+// --- selection delegate ---
+fn tree_selection_imp(user: *u8, notif: *u8) {
+    let c: *TreeSelCtx = { user as *TreeSelCtx };
+    let f: fn(*u8, *u8) = { (*c).on_select };
+    if { f as *u8 } == { 0 as *u8 } { return; }
+    let ov: *u8 = { rt::msg_id(notif, rt::sel(#str_ptr("object\0"))) };
+    let row: i64 = { rt::msg_i64(ov, rt::sel(#str_ptr("selectedRow\0"))) };
+    if row < (0 as i64) { return; }
+    let item: *u8 = { rt::msg_id_i64(ov, rt::sel(#str_ptr("itemAtRow:\0")), row) };
+    if item == { 0 as *u8 } { return; }
+    f({ (*c).caller_ctx }, item);
+    return;
+}
+
+// A file-system tree: `file_tree("/path/to/project", on_select: open_file)`.
+// Shows the directory rooted at `path` in an NSOutlineView; clicking a row calls
+// `on_select(ctx, item)` where `item` is opaque — pass it to `tree_node_path` to
+// get the selected path. The model is built eagerly on construction (a big or
+// deep tree is read in full). Size it with `.grow(1.0)`.
+fn file_tree(path: str, on_select: fn(*u8, *u8) = 0 as fn(*u8, *u8), ctx: *u8 = 0 as *u8, agent_id: str = "") -> flex::Node {
+    let root: *TreeNode = build_tree(path, path);
+
+    let ov = ak::OutlineView::new();
+    let col = ak::TableColumn::new("name");
+    col.set_title("Name");
+    let col_raw: *u8 = col.raw();
+    ov.as_table_view().add_table_column(col);
+    ov.set_outline_table_column(ak::TableColumn::from_raw(col_raw));
+
+    var ds: ak::OutlineViewDataSource = ak::OutlineViewDataSource_new(root as *u8);
+    ds.set_outline_view_number_of_children_of_item(tree_num_children_imp);
+    ds.set_outline_view_child_of_item(tree_child_imp);
+    ds.set_outline_view_is_item_expandable(tree_expandable_imp);
+    ds.set_outline_view_object_value_for_table_column_by_item(tree_object_value_imp);
+    let dsbox: *ak::OutlineViewDataSource = { malloc(#size_of::[ak::OutlineViewDataSource]()) as *ak::OutlineViewDataSource };
+    { *dsbox = ds; }
+    let dsobj: *u8 = ak::create_OutlineViewDataSource(dsbox);
+    ov.set_data_source(dsobj);
+    synth::retain_associated(ov.raw(), tree_ds_pin_key(), dsobj);
+
+    let selbox: *TreeSelCtx = { malloc(#size_of::[TreeSelCtx]()) as *TreeSelCtx };
+    { *selbox = TreeSelCtx { on_select: on_select, caller_ctx: ctx }; }
+    var del: ak::OutlineViewDelegate = ak::OutlineViewDelegate_new(selbox as *u8);
+    del.set_outline_view_selection_did_change(tree_selection_imp);
+    let delbox: *ak::OutlineViewDelegate = { malloc(#size_of::[ak::OutlineViewDelegate]()) as *ak::OutlineViewDelegate };
+    { *delbox = del; }
+    let delobj: *u8 = ak::create_OutlineViewDelegate(delbox);
+    ov.set_delegate(delobj);
+    synth::retain_associated(ov.raw(), tree_del_pin_key(), delobj);
+
+    ov.as_table_view().reload_data();
+
+    let scroll = ak::ScrollView::new(rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 });
+    scroll.set_has_vertical_scroller(true);
+    scroll.set_document_view(ov.as_view());
+    tag_agent(scroll.as_view().raw(), agent_id);
+    return fixed_view(scroll.as_view());
 }
 
 // ==========================================================================
@@ -1079,6 +1227,25 @@ fn test_code_editor_holds_and_replaces_text() {
     assert area_text(n.payload()).equals("fn main() {}");
     set_area_text(n.payload(), "let x = 1;");            // opening a different file
     assert area_text(n.payload()).equals("let x = 1;");
+}
+
+#[test]
+fn test_file_tree_model_and_data_source() {
+    // Two child directories under a fresh base; the eager model + data-source
+    // trampolines should report exactly those two. (The live NSOutlineView
+    // display/selection needs a running app.)
+    let base: str = "/tmp/cplus_ui_tree_test";
+    let _a = fs::create_dir_all("/tmp/cplus_ui_tree_test/alpha");
+    let _b = fs::create_dir_all("/tmp/cplus_ui_tree_test/beta");
+    let root: *TreeNode = build_tree(base, base);
+    assert tree_num_children_imp(root as *u8, 0 as *u8, 0 as *u8) == (2 as i64);
+    assert tree_expandable_imp(root as *u8, 0 as *u8, 0 as *u8) == (1 as i8);   // root is a dir
+    let c0: *u8 = tree_child_imp(root as *u8, 0 as *u8, 0 as i64, 0 as *u8);
+    assert c0 != (0 as *u8);
+    assert tree_node_path(c0).count() > (0 as usize);                          // has a real path
+    // the widget builds over the same directory
+    let n: flex::Node = file_tree(base);
+    assert n.has_payload();
 }
 
 #[test]
