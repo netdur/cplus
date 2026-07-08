@@ -511,8 +511,11 @@ fn cplus_toml(
     if merge {
         repro.push_str(" --merge");
     }
-    for (prefix, p) in foreign {
-        repro.push_str(&format!(" --use {p}={prefix}"));
+    // `--use` takes `<namespace>=<package>` (the parse order in main.rs), e.g.
+    // `--use CA=quartzcore` — appkit's `CA*` types resolve to the quartzcore
+    // package. `foreign` holds `(namespace, package)` pairs.
+    for (ns, pkg) in foreign {
+        repro.push_str(&format!(" --use {ns}={pkg}"));
     }
     if overrides_used {
         repro.push_str(" --overrides overrides.json");
@@ -569,5 +572,26 @@ mod tests {
         assert_eq!(module_name("MTL4Archive.h", "MTL"), "mtl4archive");
         // A C header (no prefix) snakes as-is.
         assert_eq!(module_name("MTLTypes.h", ""), "mtl_types");
+    }
+
+    #[test]
+    fn reproduce_use_flag_is_namespace_equals_package() {
+        // `--use` parses as `<namespace>=<package>` (see main.rs), e.g.
+        // `--use CA=quartzcore` — appkit's `CA*` types resolve to the
+        // quartzcore package. The manifest's reproduce line must match that
+        // order so it is copy-pasteable; a swapped `quartzcore=CA` regenerates
+        // the CA types inlined locally instead of cross-package.
+        let toml = cplus_toml(
+            "AppKit", "appkit", "NS", true, "26.5", 279, true, true, None,
+            &[("CA".to_string(), "quartzcore".to_string())],
+        );
+        assert!(
+            toml.contains("--use CA=quartzcore"),
+            "reproduce line should read `--use <namespace>=<package>`:\n{toml}"
+        );
+        assert!(
+            !toml.contains("--use quartzcore=CA"),
+            "reproduce line must not swap the `--use` operands:\n{toml}"
+        );
     }
 }
