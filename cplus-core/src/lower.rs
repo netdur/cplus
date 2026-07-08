@@ -1959,7 +1959,11 @@ fn desugar_builder_entry(entry: BuilderEntry, b_name: &str, out: &mut Vec<Stmt>)
         BuilderEntry::Let(s) => out.push(*s),
         BuilderEntry::Item { expr, modifiers } => {
             let item_span = expr.span;
-            let i_name = format!("__i{}", item_span.start);
+            // A descriptive temp name (not `__i…`, which read like a user's
+            // loop variable `i` and sent people chasing phantom "loop var
+            // moved" errors). sema keys the builder-chain E0335 note on this
+            // prefix — keep the two in sync.
+            let i_name = format!("__builder_item{}", item_span.start);
             // var __i = <item>;  (a container item's expr is itself a
             // builder block, desugared later by the caller's walk.)
             out.push(Stmt {
@@ -2681,7 +2685,7 @@ mod tests {
             panic!("expected item let, got {:?}", b.stmts[1].kind);
         };
         assert!(
-            item_name.name.starts_with("__i"),
+            item_name.name.starts_with("__builder_item"),
             "item temp: {}",
             item_name.name
         );

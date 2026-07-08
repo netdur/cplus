@@ -18178,6 +18178,80 @@ fn extern_wrapper_tail_call_with_coerced_return_compiles_and_runs() {
 
 // ---- v0.0.21 multi-backend slice 3: the uikit package ----
 
+/// A `@ctx { }` modifier chain that mixes a value-returning builder
+/// (`.width()`, take-self) with an in-place mutator (`.set_pad()`) moves the
+/// item temp then reuses it. The E0335 must (a) name a `__builder_item…` temp
+/// (not `__iNNNN`, which read like a loop var and sent people chasing a phantom
+/// loop-var bug) and (b) explain the builder-vs-mutator cause + the `.set_*`
+/// fix.
+#[test]
+fn builder_chain_take_self_move_gives_a_clear_note() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"bt\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n\
+         [[bin]]\nname = \"bt\"\npath = \"src/main.cplus\"\n",
+    )
+    .unwrap();
+    // A non-Copy `Node` (has drop glue) with a take-self builder + a ref-self
+    // mutator, plus the `Builder` the `@demo { }` context desugars to.
+    std::fs::write(
+        dir.join("src/demo.cplus"),
+        "struct Node { x: i32 }
+impl Node {
+    fn drop(ref this) { return; }
+    fn width(take this, v: i32) -> Node { var n: Node = this; n.x = v; return n; }
+    fn set_pad(ref this, v: i32) { this.x = v; return; }
+}
+fn node() -> Node { return Node { x: 0 }; }
+struct Builder { last: i32 }
+impl Builder {
+    fn new() -> Builder { return Builder { last: 0 }; }
+    fn add(ref this, n: Node) { this.last = n.x; return; }
+    fn finish(take this) -> Node { return Node { x: this.last }; }
+}
+",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"./demo\" as demo;
+fn build() -> demo::Node {
+    return @demo {
+        demo::node()
+        .width(3)
+        .set_pad(5)
+    };
+}
+fn main() -> i32 { return 0; }
+",
+    )
+    .unwrap();
+
+    let out = Command::new(cpc)
+        .arg("check")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc check");
+    assert!(!out.status.success(), "expected the chain to be rejected");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0335"), "expected E0335, got: {stderr}");
+    assert!(
+        stderr.contains("__builder_item"),
+        "the moved temp should read as a builder item, not a loop var: {stderr}"
+    );
+    assert!(
+        stderr.contains("builder-block modifier chain"),
+        "should explain the builder-vs-mutator cause: {stderr}"
+    );
+    assert!(
+        stderr.contains(".set_width"),
+        "should point at the `.set_*` mutator fix: {stderr}"
+    );
+}
+
 fn tempdir() -> std::path::PathBuf {
     let dir = tempfile::Builder::new()
         .prefix("cpc-test-")

@@ -1478,6 +1478,29 @@ impl SemaCx<'_> {
         });
     }
 
+    /// Like `err`, but attaches both anchored `labels` and explanatory `notes`
+    /// — for an error that has a partner location AND a fix worth spelling out
+    /// (e.g. E0335 in a builder-block chain: the move site plus how to avoid it).
+    fn err_with_labels_and_notes(
+        &mut self,
+        code: &'static str,
+        msg: String,
+        span: ByteSpan,
+        labels: Vec<crate::diagnostics::Label>,
+        notes: Vec<String>,
+    ) {
+        let primary = self.primary_for(span);
+        self.sink.emit(Diagnostic {
+            severity: Severity::Error,
+            code: DiagCode(code),
+            message: msg,
+            primary,
+            labels,
+            notes,
+            suggestions: Vec::new(),
+        });
+    }
+
     /// Like `err`, but attaches explanatory `notes` (rendered as
     /// `= help:` / `= note:` lines under the diagnostic). Used where a
     /// bare error code is correct but a one-line pointer makes the fix
@@ -15113,11 +15136,34 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                         }]
                     })
                     .unwrap_or_default();
-                self.err_with_labels(
+                // Builder-block temps (`@ui`/`@facet { ... }`, named
+                // `__builder_item…` by `lower::desugar_builder_entry`) hit this
+                // when a chain mixes a value-returning builder modifier
+                // (`.width()`) with in-place mutators (`.set_*`): the builder
+                // consumes the item and the next modifier reuses it. The bare
+                // move error is very confusing there (the temp reads like a
+                // loop var), so spell out the cause and fix.
+                let notes = if name.starts_with("__builder_item") {
+                    vec![
+                        "in a builder-block modifier chain (`@ui` / `@facet { ... }`), a \
+                         modifier that takes the item by value and returns a new one — a \
+                         builder like `.width()`, `.height()`, or `.grow()` — consumes it \
+                         here, so the modifier after it uses a moved value"
+                            .to_string(),
+                        "use the in-place mutator form for chained modifiers (e.g. \
+                         `.set_width(...)` instead of `.width(...)`), or place the \
+                         value-returning builders before the `.set_*` modifiers"
+                            .to_string(),
+                    ]
+                } else {
+                    Vec::new()
+                };
+                self.err_with_labels_and_notes(
                     "E0335",
                     format!("use of moved value `{name}`"),
                     span,
                     labels,
+                    notes,
                 );
             } else if !assigned {
                 self.err(
