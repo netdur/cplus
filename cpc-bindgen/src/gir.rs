@@ -1566,7 +1566,34 @@ fn snake(s: &str) -> String {
     out
 }
 
-/// Make a C+-safe identifier: escape the reserved word set and leading digits.
+/// Collapse every run of 2+ underscores to a single `_`. An interior `__` is
+/// reserved by the compiler for monomorphization mangling (`Box[i32]` →
+/// `Box__i32`), so NO generated C+ identifier may contain it or it fails E0917 —
+/// e.g. GLib's `cclosure_marshal_BOOLEAN__BOXED_BOXED` marshaller wrappers,
+/// which used to break the whole gobject/gtk stack at compile time. The extern
+/// keeps the real C symbol via `#[link_name]` (and `__c_`-prefixed extern names
+/// are E0917-exempt), so only the ergonomic wrapper identifier is normalized.
+/// A rare collapse-collision (`a__b` vs `a_b`) is caught by the caller's
+/// name-reservation dedup and SKIPped, not silently merged.
+fn no_double_underscore(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut prev_us = false;
+    for ch in s.chars() {
+        if ch == '_' {
+            if !prev_us {
+                out.push('_');
+            }
+            prev_us = true;
+        } else {
+            out.push(ch);
+            prev_us = false;
+        }
+    }
+    out
+}
+
+/// Make a C+-safe identifier: escape the reserved word set and leading digits,
+/// and collapse reserved `__` runs (see `no_double_underscore`).
 fn ident(s: &str) -> String {
     let s = s.replace('-', "_");
     let safe = if s.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
@@ -1574,11 +1601,12 @@ fn ident(s: &str) -> String {
     } else {
         s
     };
-    if is_keyword(&safe) {
+    let safe = if is_keyword(&safe) {
         format!("{safe}_")
     } else {
         safe
-    }
+    };
+    no_double_underscore(&safe)
 }
 
 /// A wrapper struct type name from a GIR class/interface name. GObject class
@@ -1593,11 +1621,12 @@ fn ident_type(s: &str) -> String {
     } else {
         s
     };
-    if is_keyword(&s) {
+    let s = if is_keyword(&s) {
         format!("{s}_")
     } else {
         s
-    }
+    };
+    no_double_underscore(&s)
 }
 
 /// Strip up to four leading spaces from every line — turns an `impl`-indented
@@ -1706,6 +1735,24 @@ mod tests {
     fn entities_are_decoded_in_attr_values() {
         let n = parse(r#"<a v="x &lt; y &amp; z &#65;"/>"#);
         assert_eq!(n.child_named("a").unwrap().attr("v"), Some("x < y & z A"));
+    }
+
+    #[test]
+    fn wrapper_idents_never_contain_reserved_double_underscore() {
+        // E0917: a generated C+ identifier must not contain interior `__`
+        // (reserved for monomorphization mangling). GLib marshaller names like
+        // `cclosure_marshal_BOOLEAN__BOXED_BOXED` used to leak `__` into the
+        // wrapper fn name and break the whole gobject/gtk stack at compile time.
+        assert_eq!(
+            ident("cclosure_marshal_BOOLEAN__BOXED_BOXED"),
+            "cclosure_marshal_BOOLEAN_BOXED_BOXED"
+        );
+        assert_eq!(no_double_underscore("a___b"), "a_b");
+        assert_eq!(no_double_underscore("a__b__c"), "a_b_c");
+        assert_eq!(no_double_underscore("plain_name"), "plain_name");
+        assert_eq!(ident_type("Foo__Bar"), "Foo_Bar");
+        // keyword escape + collapse compose without producing `__`.
+        assert!(!ident("type").contains("__"));
     }
 
     #[test]
