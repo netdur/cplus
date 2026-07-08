@@ -9104,12 +9104,21 @@ impl<'a> FnState<'a> {
                         match self.return_ty {
                             Ty::Unit => self.emit_terminator("ret void"),
                             _ => {
-                                let (v, _) = val.expect("non-Unit fn requires tail value");
-                                self.emit_terminator(&format!(
-                                    "ret {} {}",
-                                    self.lty(&self.return_ty),
-                                    v
-                                ));
+                                match val {
+                                    Some((v, _)) => self.emit_terminator(&format!(
+                                        "ret {} {}",
+                                        self.lty(&self.return_ty),
+                                        v
+                                    )),
+                                    // A valueless non-Unit tail is a diverging
+                                    // tail (a `match`/`if` whose arms all
+                                    // `return`; sema allows it via the
+                                    // expr_diverges exemption). Every arm emitted
+                                    // its own `ret`, so this merge point is
+                                    // unreachable — cap it rather than inventing
+                                    // a return value.
+                                    None => self.emit_terminator("unreachable"),
+                                }
                             }
                         }
                     }

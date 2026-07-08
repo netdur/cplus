@@ -5744,32 +5744,46 @@ impl SemaCx<'_> {
         // tail expression. Block expressions remain valid in let initializers,
         // assignments, and return expressions — just not at function-body level.
         if let Some(tail) = &body.tail {
-            // Type-check the tail first so the E0333 message can suggest the
-            // right fix. v0.0.12 G-022: when the function returns `()` and
-            // the tail expression is itself unit-typed (the very common
-            // `fn f() { { ... } }` / `fn f() { if c { ... } }`
-            // shape), the right fix is `;` after the closing brace, not
-            // `return ...;`. The previous one-size message led writers to
-            // append `return;` which compiles but reads worse than `};`.
-            // A `#[naked]` body is inline asm that returns on its own; an asm
-            // tail is its normal shape, so don't type it against the declared
-            // return (it is `()`), and skip the implicit-tail rules.
-            let tail_ty = if is_naked {
-                self.check_expr(tail, None)
+            // A tail whose every path diverges (a `match`/`if` where all arms
+            // `return`/`break`/`continue`) carries NO value — it is terminal
+            // control flow, not an implicit tail VALUE. So don't type it against
+            // the declared return (it produces nothing → spurious E0302
+            // `expected T, found ()`) and don't demand `;`/`return` (E0333, whose
+            // whole point is "no implicit tail VALUES"). This is what lets
+            // `fn f() -> T { match x { A => return a, B => return b } }` compile.
+            let tail_diverges = crate::lower::expr_diverges(tail);
+            if tail_diverges {
+                // Terminal control flow, not an implicit tail value: type it
+                // with no expected type (it yields nothing) and skip E0333.
+                let _ = self.check_expr(tail, None);
             } else {
-                self.check_expr(tail, Some(expected.clone()))
-            };
-            if !is_naked {
-                let msg = if expected == Ty::Unit && tail_ty == Ty::Unit {
-                    "function body cannot end with an implicit tail expression; \
-                     add `;` after the closing `}` (or `return;` if you prefer the explicit form)"
-                        .to_string()
+                // Type-check the tail first so the E0333 message can suggest the
+                // right fix. v0.0.12 G-022: when the function returns `()` and
+                // the tail expression is itself unit-typed (the very common
+                // `fn f() { { ... } }` / `fn f() { if c { ... } }`
+                // shape), the right fix is `;` after the closing brace, not
+                // `return ...;`. The previous one-size message led writers to
+                // append `return;` which compiles but reads worse than `};`.
+                // A `#[naked]` body is inline asm that returns on its own; an asm
+                // tail is its normal shape, so don't type it against the declared
+                // return (it is `()`), and skip the implicit-tail rules.
+                let tail_ty = if is_naked {
+                    self.check_expr(tail, None)
                 } else {
-                    "function body cannot end with an implicit tail expression; \
-                     use `return ...;` instead"
-                        .to_string()
+                    self.check_expr(tail, Some(expected.clone()))
                 };
-                self.err("E0333", msg, tail.span);
+                if !is_naked {
+                    let msg = if expected == Ty::Unit && tail_ty == Ty::Unit {
+                        "function body cannot end with an implicit tail expression; \
+                         add `;` after the closing `}` (or `return;` if you prefer the explicit form)"
+                            .to_string()
+                    } else {
+                        "function body cannot end with an implicit tail expression; \
+                         use `return ...;` instead"
+                            .to_string()
+                    };
+                    self.err("E0333", msg, tail.span);
+                }
             }
         } else if !is_naked
             && expected != Ty::Unit
@@ -8071,16 +8085,19 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 &mut has_catchall,
                 scrutinee_owned,
             );
-            // Check the arm body with the expected result type.
-            let arm_ty = self.check_expr(&arm.body, expected.clone());
-            // First arm sets the result type; later arms must agree —
-            // EXCEPT arms whose body syntactically diverges (every path
-            // ends in `return` and friends) carry no value to the match
-            // expression, so they don't constrain the result type. This
-            // is what makes `guard let` work: the else arm always
-            // diverges, and the success arm's payload-typed body sets the
-            // result.
+            // An arm whose body syntactically diverges (every path ends in
+            // `return` and friends) carries no value to the match: it neither
+            // constrains the result type NOR should be checked against the
+            // expected type — doing so spuriously fired E0302 `expected T,
+            // found ()` on the common `match o { Some(v) => v, None => { return
+            // ..; } }` shape (and made `guard let` work only by luck). Pass no
+            // expected type to a diverging arm.
             let arm_diverges = crate::lower::expr_diverges(&arm.body);
+            let arm_ty = self.check_expr(
+                &arm.body,
+                if arm_diverges { None } else { expected.clone() },
+            );
+            // First arm sets the result type; later (non-diverging) arms agree.
             if !arm_diverges {
                 match &result_ty {
                     None => result_ty = Some(arm_ty),
@@ -8929,6 +8946,16 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         }
         if then_ty == Ty::Error || else_ty == Ty::Error {
             return Ty::Error;
+        }
+        // A diverging branch (`return`/`break`/`continue`) produces no value, so
+        // it imposes no type constraint: the `if`'s type is the surviving
+        // branch's. This makes `let x = if c { return } else { v };` type as the
+        // else branch instead of firing a spurious `() vs T` E0302.
+        match (then_diverges, else_diverges) {
+            (true, true) => return Ty::Unit,
+            (true, false) => return else_ty,
+            (false, true) => return then_ty,
+            (false, false) => {}
         }
         if then_ty != else_ty {
             self.err(
@@ -22419,6 +22446,54 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
              fn main() -> i32 { return 0; }",
         );
         assert!(codes.contains(&"E0341"), "expected E0341, got: {codes:?}");
+    }
+
+    #[test]
+    fn diverging_if_branch_does_not_constrain_type() {
+        // (A) 2026-07-08: a diverging branch (`return`/`break`/`continue`)
+        // yields no value, so `if` takes the surviving branch's type instead of
+        // firing a spurious `() vs T` E0302.
+        assert_clean(
+            "fn f(c: bool) -> i32 { \
+                 let x: i32 = if c { return 1; } else { 5 }; \
+                 return x; \
+             } \
+             fn main() -> i32 { return f(true); }",
+        );
+    }
+
+    #[test]
+    fn diverging_match_arm_does_not_constrain_type() {
+        // A diverging arm body must not be checked against the expected result
+        // type (it carries no value) — the common `None => { return .. }` shape.
+        assert_clean(
+            "enum Opt[T] { Some(T), None } \
+             fn f(o: Opt[i32]) -> i32 { \
+                 let x: i32 = match o { \
+                     Opt[i32]::Some(v) => v, \
+                     Opt[i32]::None => { return 0; } \
+                 }; \
+                 return x; \
+             } \
+             fn main() -> i32 { return f(Opt[i32]::None); }",
+        );
+    }
+
+    #[test]
+    fn diverging_tail_match_is_not_an_implicit_tail() {
+        // A fn-body tail whose arms all diverge is terminal control flow, not an
+        // implicit tail VALUE: no E0333, no `() vs T`. (Codegen caps the
+        // unreachable merge with `unreachable`; the run path is covered e2e.)
+        assert_clean(
+            "enum Opt[T] { Some(T), None } \
+             fn f(o: Opt[i32]) -> i32 { \
+                 match o { \
+                     Opt[i32]::Some(v) => { return v; } \
+                     Opt[i32]::None => { return 0; } \
+                 } \
+             } \
+             fn main() -> i32 { return f(Opt[i32]::None); }",
+        );
     }
 
     #[test]
