@@ -546,11 +546,10 @@ fn set_area_text(view_ptr: *u8, value: str) {
 extern fn malloc(n: usize) -> *u8;
 
 struct TreeNode {
-    label: text::Text,               // display name (basename)
-    path: text::Text,                // full path (for on_select)
+    label: text::Text,                    // display name (basename)
+    path: text::Text,                     // full path (for on_select)
     is_dir: bool,
-    children: vec::Vec[usize],       // stable boxed child pointers (as usize; Vec of
-                                     // raw pointers isn't supported, so store addresses)
+    children: vec::Vec[*TreeNode],        // stable boxed child pointers
 }
 
 struct TreeSelCtx {
@@ -564,7 +563,7 @@ fn tree_del_pin_key() -> *u8 { return { 28693 as *u8 }; }
 // Box a node on the heap (leaked; app-lifetime). Reading `read_dir` decides
 // dir-vs-file: a path that opens as a directory recurses, anything else is a leaf.
 fn build_tree(path: str, label: str) -> *TreeNode {
-    var kids: vec::Vec[usize] = vec::new::[usize]();
+    var kids: vec::Vec[*TreeNode] = vec::new::[*TreeNode]();
     var isdir: bool = false;
     match fs::read_dir(path) {
         option::Option[vec::Vec[text::Text]]::Some(names) => {
@@ -576,7 +575,7 @@ fn build_tree(path: str, label: str) -> *TreeNode {
                         var cp: text::Text = text::from_str(path);
                         let _s1 = cp.append("/");
                         let _s2 = cp.append((*nm).view());
-                        kids.append(build_tree(cp.view(), (*nm).view()) as usize);
+                        kids.append(build_tree(cp.view(), (*nm).view()));
                     }
                     option::Option[*text::Text]::None => { }
                 }
@@ -605,8 +604,8 @@ fn tree_num_children_imp(user: *u8, ov: *u8, item: *u8) -> i64 {
 fn tree_child_imp(user: *u8, ov: *u8, index: i64, item: *u8) -> *u8 {
     let node: *TreeNode = if item == { 0 as *u8 } { user as *TreeNode } else { item as *TreeNode };
     match { (*node).children }.at_ptr(index as usize) {
-        option::Option[*usize]::Some(cpp) => { let addr: usize = { *cpp }; return addr as *u8; }
-        option::Option[*usize]::None => { }
+        option::Option[**TreeNode]::Some(cpp) => { let child: *TreeNode = { *cpp }; return child as *u8; }
+        option::Option[**TreeNode]::None => { }
     }
     return 0 as *u8;
 }
