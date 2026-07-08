@@ -2032,6 +2032,16 @@ fn rewrite_fn(f: &Function, ctx: &RewriteCtx) -> Result<Function, ResolveError> 
     qualify_bounds(&mut f.generic_params, ctx)?;
     for p in &mut f.params {
         rewrite_type(&mut p.ty, ctx)?;
+        // A default value is an expression too — resolve its import aliases,
+        // module-qualified enum paths, and free-fn names, exactly as the body
+        // is. Without this, `o: T = mod::Enum[..]::None` / a module fn default
+        // reached sema unresolved (E0303 "unknown generic enum" / E0300).
+        // Defaults are spliced at call sites before params bind, so they see
+        // module scope only — a fresh, empty local scope.
+        if let Some(def) = &mut p.default {
+            let mut default_scope = HashSet::new();
+            rewrite_expr(&mut **def, ctx, &mut default_scope)?;
+        }
     }
     if let Some(rt) = &mut f.return_type {
         rewrite_type(rt, ctx)?;
@@ -2052,6 +2062,11 @@ fn rewrite_method(m: &Method, ctx: &RewriteCtx) -> Result<Method, ResolveError> 
     qualify_bounds(&mut m.generic_params, ctx)?;
     for p in &mut m.params {
         rewrite_type(&mut p.ty, ctx)?;
+        // Resolve default-value expressions (see rewrite_fn for the rationale).
+        if let Some(def) = &mut p.default {
+            let mut default_scope = HashSet::new();
+            rewrite_expr(&mut **def, ctx, &mut default_scope)?;
+        }
     }
     if let Some(rt) = &mut m.return_type {
         rewrite_type(rt, ctx)?;
@@ -3049,6 +3064,50 @@ mod tests {
             square.is_some(),
             "expected qualified `src.math.square` in merged program"
         );
+    }
+
+    #[test]
+    fn param_default_expr_is_resolved() {
+        // Regression (2026-07-08): rewrite_fn/rewrite_method rewrote param TYPES
+        // but not param DEFAULTS, so an imported name used as a default value
+        // (`= math::square`) reached sema unresolved and fired E0300/E0303.
+        // The default expression must be rewritten like any other expression.
+        let dir = tmpdir();
+        fs::write(dir.join("Cplus.toml"), "[package]\nname=\"x\"").unwrap();
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(
+            dir.join("src/math.cplus"),
+            "fn square(n: i32) -> i32 { return n * n; }",
+        )
+        .unwrap();
+        let main_src = r#"
+            import "math.cplus" as math;
+            fn apply(f: fn(i32) -> i32 = math::square) -> i32 { return f(3); }
+            fn main() -> i32 { return apply(); }
+        "#;
+        let main = dir.join("src/main.cplus");
+        fs::write(&main, main_src).unwrap();
+        let p = load_project(&main, &dir).unwrap();
+        // Non-`main` entry-file fns are qualified (`src.main.apply`).
+        let apply_fn = p
+            .program
+            .items
+            .iter()
+            .find_map(|it| match &it.kind {
+                ItemKind::Function(f) if f.name.name == "src.main.apply" => Some(f),
+                _ => None,
+            })
+            .unwrap();
+        let default = apply_fn.params[0]
+            .default
+            .as_ref()
+            .expect("default present");
+        // Unresolved it would still read `math::square`; resolved it is the
+        // qualified free-fn Ident, exactly like a call callee.
+        match &default.kind {
+            ExprKind::Ident(name) => assert_eq!(name, "src.math.square"),
+            other => panic!("expected qualified Ident default, got {other:?}"),
+        }
     }
 
     #[test]
