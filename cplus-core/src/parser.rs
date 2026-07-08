@@ -3935,13 +3935,39 @@ impl Parser {
         // `expr ,` (short form).
         let (body, arm_end) = if matches!(self.peek_kind(), TokenKind::LBrace) {
             let block = self.parse_block()?;
-            let span = block.span;
-            let expr = Expr {
+            let block_span = block.span;
+            let mut expr = Expr {
                 kind: ExprKind::Block(block),
-                span,
+                span: block_span,
             };
-            // Optional trailing comma after block.
-            let _ = self.eat(&TokenKind::Comma);
+            // A block value may still be cast — `{ *p } as T` (the block-deref
+            // idiom). Only `as` is consumed: `.`/`(`/`[` could begin the next
+            // arm's pattern, so they stay terminal here. Patterns never contain
+            // `as`, so this is purely additive.
+            let mut cast = false;
+            while matches!(self.peek_kind(), TokenKind::As) {
+                self.bump();
+                let ty = self.parse_type()?;
+                let span = expr.span.merge(ty.span);
+                expr = Expr {
+                    kind: ExprKind::Cast {
+                        expr: Box::new(expr),
+                        ty,
+                    },
+                    span,
+                };
+                cast = true;
+            }
+            let span = expr.span;
+            if cast {
+                // Now an expression arm: comma required unless it's the last.
+                if !self.at(&TokenKind::RBrace) {
+                    self.expect(&TokenKind::Comma, "`,`")?;
+                }
+            } else {
+                // Bare block: the trailing comma is optional.
+                let _ = self.eat(&TokenKind::Comma);
+            }
             (expr, span)
         } else {
             let expr = self.parse_expr()?;
@@ -6414,6 +6440,48 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err.kind, ParseErrorKind::Unexpected { .. }));
+    }
+
+    #[test]
+    fn match_arm_block_body_accepts_trailing_cast() {
+        // Regression (2026-07-08): a `{ block } as T` arm body — the block-deref
+        // idiom `{ *p } as i64` — failed with E0100 "expected pattern, found
+        // `as`" because a `{`-led arm body was parsed as a terminal block. `as`
+        // after a block value must be consumed (into a Cast wrapping the block).
+        let src = "fn f(p: *i32) -> i64 {\n\
+                   return match opt {\n\
+                       Opt::Some(q) => { *q } as i64,\n\
+                       Opt::None => 0 as i64,\n\
+                   };\n\
+                   }";
+        let prog = parse_src(src).expect("should parse `{ block } as T` arm");
+        let f = prog
+            .items
+            .iter()
+            .find_map(|it| match &it.kind {
+                ItemKind::Function(f) => Some(f),
+                _ => None,
+            })
+            .unwrap();
+        let ret = match &f.body.stmts[0].kind {
+            StmtKind::Return(Some(e)) => e,
+            other => panic!("expected return, got {other:?}"),
+        };
+        let arms = match &ret.kind {
+            ExprKind::Match { arms, .. } => arms,
+            other => panic!("expected match, got {other:?}"),
+        };
+        match &arms[0].body.kind {
+            ExprKind::Cast { expr, .. } => {
+                assert!(
+                    matches!(expr.kind, ExprKind::Block(_)),
+                    "the cast should wrap the block value"
+                );
+            }
+            other => panic!("expected Cast(Block), got {other:?}"),
+        }
+        // The bare-block second-arm shape (no cast) is unaffected; the whole
+        // thing parsing is the guarantee.
     }
 
     #[test]
