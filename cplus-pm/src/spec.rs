@@ -46,6 +46,23 @@ pub enum SpecError {
     MissingVersion { value: String },
     MissingTreeMarker { value: String },
     MissingRepo { value: String },
+    /// The `/tree/<ref>/` subpath escapes the checkout (absolute, or a `..`
+    /// parent component), so `source_root.join(subpath)` would point outside
+    /// the cloned repo. Rejected before any fetch/copy.
+    UnsafeSubpath { value: String },
+}
+
+/// A pinned subpath is joined onto the cloned repo root, so it must stay
+/// inside it: reject absolute paths and any `..` parent component. (`.` and
+/// normal segments are fine.)
+fn subpath_is_contained(subpath: &str) -> bool {
+    use std::path::{Component, Path};
+    !Path::new(subpath).components().any(|c| {
+        matches!(
+            c,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        )
+    })
 }
 
 impl DepSpec {
@@ -114,6 +131,14 @@ impl Pinned {
             None => (rest, ""),
         };
 
+        // The subpath is joined onto the checkout root; a `..` or absolute
+        // component would let it point outside the cloned repo.
+        if !subpath_is_contained(subpath) {
+            return Err(SpecError::UnsafeSubpath {
+                value: value.to_string(),
+            });
+        }
+
         Ok(Pinned {
             repo: repo.to_string(),
             git_ref: git_ref.to_string(),
@@ -158,6 +183,10 @@ impl fmt::Display for SpecError {
             SpecError::MissingRepo { value } => write!(
                 f,
                 "dependency `{value}` does not name a host/owner/repo"
+            ),
+            SpecError::UnsafeSubpath { value } => write!(
+                f,
+                "dependency `{value}` has a subpath that escapes the repo (absolute or `..`)"
             ),
         }
     }
@@ -239,5 +268,22 @@ mod tests {
     #[test]
     fn empty_is_rejected() {
         assert_eq!(DepSpec::parse("   ").unwrap_err(), SpecError::Empty);
+    }
+
+    #[test]
+    fn subpath_escaping_the_repo_is_rejected() {
+        // A `..` component in the tree-URL subpath would let install copy from
+        // (or point package_src) outside the cloned checkout.
+        for bad in [
+            "https://github.com/o/r/tree/main/../../../etc@1.0.0",
+            "https://github.com/o/r/tree/main/vendor/../../secret@1.0.0",
+        ] {
+            assert!(
+                matches!(DepSpec::parse(bad), Err(SpecError::UnsafeSubpath { .. })),
+                "`{bad}` should be rejected"
+            );
+        }
+        // A normal nested subpath is still fine.
+        assert!(DepSpec::parse("https://github.com/o/r/tree/main/vendor/stdlib@1.0.0").is_ok());
     }
 }

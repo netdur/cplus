@@ -12,7 +12,7 @@
 //! and everything in a monorepo is pinned to the same tag anyway.
 
 use crate::fetch::{Checkout, FetchError};
-use crate::manifest::{Manifest, ManifestError, MANIFEST_NAME};
+use crate::manifest::{is_valid_dep_name, Manifest, ManifestError, MANIFEST_NAME};
 use crate::spec::{DepSpec, SpecError};
 use std::collections::{HashSet, VecDeque};
 use std::fmt;
@@ -34,6 +34,7 @@ pub enum VendorError {
     MissingPackageDir { name: String, path: PathBuf },
     Io { path: PathBuf, source: std::io::Error },
     NotInstalled { name: String },
+    InvalidName { name: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -177,6 +178,14 @@ pub fn install(
 
 /// Remove a package's directory from `<project>/vendor/`.
 pub fn remove(project_dir: &Path, name: &str) -> Result<(), VendorError> {
+    // `name` comes straight from the CLI and is joined onto `vendor/`, so it
+    // must be a single, contained path component — never `../..` or an
+    // absolute path that would delete outside `vendor/`.
+    if !is_valid_dep_name(name) {
+        return Err(VendorError::InvalidName {
+            name: name.to_string(),
+        });
+    }
     let dest = vendor_dir(project_dir).join(name);
     if !dest.exists() {
         return Err(VendorError::NotInstalled {
@@ -294,6 +303,12 @@ fn copy_tree(src: &Path, dest: &Path) -> Result<(), VendorError> {
             path: from.clone(),
             source,
         })?;
+        // Skip symlinks: a fetched package must not be able to pull an external
+        // file into `vendor/` (following a link to `/etc/...`) or redirect the
+        // copy walk out of its own tree via a symlinked directory.
+        if file_type.is_symlink() {
+            continue;
+        }
         if file_type.is_dir() {
             copy_tree(&from, &to)?;
         } else {
@@ -327,6 +342,10 @@ impl fmt::Display for VendorError {
             VendorError::NotInstalled { name } => {
                 write!(f, "`{name}` is not installed in vendor/")
             }
+            VendorError::InvalidName { name } => write!(
+                f,
+                "invalid package name `{name}`: a package name must be a lowercase identifier ([a-z][a-z0-9_]*)"
+            ),
         }
     }
 }
@@ -410,6 +429,20 @@ mod tests {
             .path()
             .join("vendor/stdlib/src/lib/io.cplus")
             .is_file());
+    }
+
+    #[test]
+    fn remove_rejects_a_traversal_or_absolute_name() {
+        // `remove NAME` joins NAME onto vendor/, so a traversal/absolute name
+        // must be rejected before any deletion (it never reaches remove_dir_all).
+        let project = TempDir::new().unwrap();
+        for bad in ["../../etc", "/tmp", "a/b", ".."] {
+            let err = remove(project.path(), bad).unwrap_err();
+            assert!(
+                matches!(err, VendorError::InvalidName { .. }),
+                "`{bad}` should be rejected"
+            );
+        }
     }
 
     #[test]

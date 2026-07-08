@@ -39,6 +39,26 @@ pub enum ManifestError {
         path: PathBuf,
         source: toml::de::Error,
     },
+    /// A `[dependencies]` key that is not a valid package name. Rejected at
+    /// load so a name like `../evil` or `/etc` never reaches the filesystem.
+    InvalidDependencyName {
+        path: PathBuf,
+        name: String,
+    },
+}
+
+/// The package-name rule, kept in lockstep with the compiler's
+/// `cplus-core::manifest::is_valid_dep_name`: a lowercase identifier
+/// (`[a-z][a-z0-9_]*`). It is also the package manager's security boundary —
+/// a valid name is a single path component, so `vendor/<name>` can never
+/// contain `/`, `..`, or an absolute prefix that would escape `vendor/`.
+pub(crate) fn is_valid_dep_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_lowercase() => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
 }
 
 impl Manifest {
@@ -74,6 +94,20 @@ impl Manifest {
             path: root.join(MANIFEST_NAME),
             source,
         })?;
+        // Reject bad dependency names before they reach `vendor/<name>` in a
+        // fetch/copy/remove. This mirrors the compiler's own manifest loader
+        // (which the package manager had drifted from) and, because a valid
+        // name is a single path component, is what keeps install/remove inside
+        // `vendor/`. Covers transitive deps too: each vendored package's own
+        // manifest is loaded through here before its deps are walked.
+        for name in raw.dependencies.keys() {
+            if !is_valid_dep_name(name) {
+                return Err(ManifestError::InvalidDependencyName {
+                    path: root.join(MANIFEST_NAME),
+                    name: name.clone(),
+                });
+            }
+        }
         Ok(Self {
             name: raw.package.name,
             version: raw.package.version,
@@ -115,6 +149,11 @@ impl fmt::Display for ManifestError {
             ManifestError::Parse { path, source } => {
                 write!(f, "failed to parse {}: {source}", path.display())
             }
+            ManifestError::InvalidDependencyName { path, name } => write!(
+                f,
+                "invalid dependency name `{name}` in {}: a package name must be a lowercase identifier ([a-z][a-z0-9_]*)",
+                path.display()
+            ),
         }
     }
 }
@@ -195,5 +234,36 @@ version = "0.0.1"
     fn missing_package_table_is_a_parse_error() {
         let error = Manifest::parse("[dependencies]\nstdlib = \"*\"\n").unwrap_err();
         assert!(matches!(error, ManifestError::Parse { .. }));
+    }
+
+    #[test]
+    fn traversal_and_absolute_dependency_names_are_rejected() {
+        // Quoted TOML keys can hold arbitrary strings; a path-traversal or
+        // absolute name would escape `vendor/` on install, so it is rejected
+        // at load before any fetch/copy touches the filesystem.
+        for bad in ["../outside", "/etc", "a/b", "..", "UPPER", "has space", ""] {
+            let src = format!(
+                "[package]\nname = \"p\"\nversion = \"0.0.1\"\n\n[dependencies]\n\"{bad}\" = \"*\"\n"
+            );
+            assert!(
+                matches!(
+                    Manifest::parse(&src),
+                    Err(ManifestError::InvalidDependencyName { .. })
+                ),
+                "`{bad}` should be rejected as an invalid dependency name"
+            );
+        }
+    }
+
+    #[test]
+    fn valid_dependency_names_are_accepted() {
+        assert!(is_valid_dep_name("stdlib"));
+        assert!(is_valid_dep_name("agent_appkit"));
+        assert!(is_valid_dep_name("gtk4"));
+        assert!(!is_valid_dep_name("../x"));
+        assert!(!is_valid_dep_name("/x"));
+        assert!(!is_valid_dep_name("4gtk")); // must start with a letter
+        assert!(!is_valid_dep_name("Stdlib"));
+        assert!(!is_valid_dep_name(""));
     }
 }

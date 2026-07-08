@@ -42,7 +42,12 @@ pub fn run(args: Vec<String>) -> Result<(), String> {
 }
 
 fn install_cmd(args: &[String]) -> Result<(), String> {
-    let (positional, options) = parse_install_args(args)?;
+    // `None` means `-h`/`--help` was handled (usage printed): do NOT fall
+    // through and install the current directory.
+    let (positional, options) = match parse_install_args(args)? {
+        Some(parsed) => parsed,
+        None => return Ok(()),
+    };
     if positional.len() > 1 {
         return Err(format!("install takes at most one project DIR\n\n{USAGE}"));
     }
@@ -102,7 +107,12 @@ fn manifest_cmd(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-fn parse_install_args(args: &[String]) -> Result<(Vec<String>, InstallOptions), String> {
+/// Parse `install`/`update` arguments. Returns `Ok(None)` when `-h`/`--help`
+/// was handled (usage already printed) so the caller stops instead of
+/// installing; `Ok(Some(..))` carries the parsed positional args + options.
+fn parse_install_args(
+    args: &[String],
+) -> Result<Option<(Vec<String>, InstallOptions)>, String> {
     let mut positional = Vec::new();
     let mut options = InstallOptions::new(".pkgcache");
     let mut iter = args.iter();
@@ -123,11 +133,37 @@ fn parse_install_args(args: &[String]) -> Result<(Vec<String>, InstallOptions), 
             }
             "-h" | "--help" => {
                 print!("{USAGE}");
-                return Ok((Vec::new(), options));
+                return Ok(None);
             }
             _ => positional.push(arg.clone()),
         }
     }
 
-    Ok((positional, options))
+    Ok(Some((positional, options)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn install_help_flag_stops_before_installing() {
+        // `--help` / `-h` prints usage and yields None, so install_cmd returns
+        // without falling through to `install .`.
+        assert!(parse_install_args(&["--help".to_string()]).unwrap().is_none());
+        assert!(parse_install_args(&["-h".to_string()]).unwrap().is_none());
+    }
+
+    #[test]
+    fn install_parses_positional_dir_and_flags() {
+        let (positional, options) = parse_install_args(&[
+            "mydir".to_string(),
+            "--repo-url".to_string(),
+            "file:///x".to_string(),
+        ])
+        .unwrap()
+        .expect("normal args parse to Some");
+        assert_eq!(positional, vec!["mydir".to_string()]);
+        assert_eq!(options.repo_url_override.as_deref(), Some("file:///x"));
+    }
 }
