@@ -206,24 +206,54 @@ fn refresh() {
     return;
 }
 
-// Open a window and run `view` as an app: initial render, then re-render
-// after every event handler. Blocks in the event loop.
-fn run_app(view: fn() -> facet::Node, title: str = "facet", width: f64 = 480.0f64, height: f64 = 360.0f64) {
-    let app: ak::Application = ak::Application::shared_application();
-    let _ok: bool = app.set_activation_policy(ak::ApplicationActivationPolicy::Regular);
-
-    let style: u64 = ak::window_style_mask_titled
+// The window's style mask. `clean_titlebar` adds full-size-content so the view
+// tree extends under the titlebar (the borderless look). Pure — split out so it
+// can be tested without opening a window.
+fn shell_style_mask(clean_titlebar: bool) -> u64 {
+    var style: u64 = ak::window_style_mask_titled
         | ak::window_style_mask_closable
         | ak::window_style_mask_miniaturizable
         | ak::window_style_mask_resizable;
+    if clean_titlebar { style = style | ak::window_style_mask_full_size_content_view; }
+    return style;
+}
+
+// Create (and retain +1) the app's NSWindow. `clean_titlebar` gives the
+// borderless shell iris uses for its welcome / wizard windows: content bleeds
+// under a transparent, title-less titlebar and the miniaturize + zoom traffic
+// lights are hidden (close stays). The caller sets the content view and orders
+// it front.
+fn make_shell_window(title: str, width: f64, height: f64, clean_titlebar: bool) -> ak::Window {
     let win = ak::Window::new(
         rt::Rect { x: 0.0, y: 0.0, w: width, h: height },
-        style,
+        shell_style_mask(clean_titlebar),
         ak::BackingStoreType::NSBackingStoreBuffered,
         false,
     );
     rt::retain(win.raw());
     win.set_title(title);
+    if clean_titlebar {
+        win.set_titlebar_appears_transparent(true);
+        win.set_title_visibility(ak::WindowTitleVisibility::NSWindowTitleHidden);
+        match win.standard_window_button(ak::WindowButton::NSWindowMiniaturizeButton) {
+            option::Option[ak::Button]::Some(btn) => { btn.as_view().set_hidden(true); }
+            option::Option[ak::Button]::None => { }
+        }
+        match win.standard_window_button(ak::WindowButton::NSWindowZoomButton) {
+            option::Option[ak::Button]::Some(btn) => { btn.as_view().set_hidden(true); }
+            option::Option[ak::Button]::None => { }
+        }
+    }
+    return win;
+}
+
+// Open a window and run `view` as an app: initial render, then re-render
+// after every event handler. Blocks in the event loop.
+fn run_app(view: fn() -> facet::Node, title: str = "facet", width: f64 = 480.0f64, height: f64 = 360.0f64, clean_titlebar: bool = false) {
+    let app: ak::Application = ak::Application::shared_application();
+    let _ok: bool = app.set_activation_policy(ak::ApplicationActivationPolicy::Regular);
+
+    let win = make_shell_window(title, width, height, clean_titlebar);
 
     let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: width, h: height });
     win.set_content_view(ak::View::from_raw(content.raw()));
@@ -239,22 +269,11 @@ fn run_app(view: fn() -> facet::Node, title: str = "facet", width: f64 = 480.0f6
 }
 
 // Open a window, mount the tree, run the event loop (blocks).
-fn run(take root: facet::Node, title: str = "facet", width: f64 = 480.0f64, height: f64 = 360.0f64) {
+fn run(take root: facet::Node, title: str = "facet", width: f64 = 480.0f64, height: f64 = 360.0f64, clean_titlebar: bool = false) {
     let app: ak::Application = ak::Application::shared_application();
     let _ok: bool = app.set_activation_policy(ak::ApplicationActivationPolicy::Regular);
 
-    let style: u64 = ak::window_style_mask_titled
-        | ak::window_style_mask_closable
-        | ak::window_style_mask_miniaturizable
-        | ak::window_style_mask_resizable;
-    let win = ak::Window::new(
-        rt::Rect { x: 0.0, y: 0.0, w: width, h: height },
-        style,
-        ak::BackingStoreType::NSBackingStoreBuffered,
-        false,
-    );
-    rt::retain(win.raw());
-    win.set_title(title);
+    let win = make_shell_window(title, width, height, clean_titlebar);
 
     let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: width, h: height });
     win.set_content_view(ak::View::from_raw(content.raw()));
@@ -569,4 +588,17 @@ fn action_then_runs_handler_before_after_hook() {
     akx::set_control_action_ctx_then(b.as_control(), order_handler, 0 as *u8, order_after);
     click(b.raw());
     assert ORDER == 2;   // handler first, then the hook — in order
+}
+
+#[test]
+fn shell_style_mask_adds_full_size_content_only_when_clean() {
+    let plain: u64 = shell_style_mask(false);
+    let clean: u64 = shell_style_mask(true);
+    // Both are a standard titled/closable/resizable/miniaturizable window.
+    assert (plain & ak::window_style_mask_titled) != (0 as u64);
+    assert (plain & ak::window_style_mask_resizable) != (0 as u64);
+    assert (plain & ak::window_style_mask_miniaturizable) != (0 as u64);
+    // Full-size-content (content under the titlebar) is only in the clean shell.
+    assert (plain & ak::window_style_mask_full_size_content_view) == (0 as u64);
+    assert (clean & ak::window_style_mask_full_size_content_view) != (0 as u64);
 }
