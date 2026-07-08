@@ -16,6 +16,10 @@ class Cplus < Formula
 
   def caveats
     <<~EOS
+      C+ is written for LLMs/agents. The full language reference is embedded in
+      the binary — run `cpc skill` for a dense, self-contained guide to writing
+      C+ (version-matched to this install, no network).
+
       cpc compiles to LLVM IR and shells out to `clang` to produce a native
       binary, so building/running a program needs Xcode Command Line Tools:
         xcode-select --install

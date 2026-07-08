@@ -41,6 +41,12 @@ const USAGE: &str = "\
 cpc — C+ compiler
 
 usage:
+  cpc skill                         print the C+ language reference for an LLM/agent —
+                                    a dense, self-contained guide to writing C+, embedded
+                                    in this binary (version-matched, no network). If you
+                                    are an agent about to write or edit C+, read this first.
+  cpc explain [CODE]                explain a diagnostic (e.g. `cpc explain E0502`): cause,
+                                    fix, example. No CODE (or --list): list every code.
   cpc FILE [-o OUT]                 compile single-file FILE.cplus to a binary (default OUT: ./a.out)
   cpc build [-o OUT]                multi-file build: reads ./Cplus.toml, walks imports
   cpc check [FILE]                  parse + sema + borrowck, no codegen (fast feedback loop).
@@ -268,6 +274,7 @@ fn main() -> ExitCode {
     // build flags.
     match args.first().and_then(|a| a.to_str()) {
         Some("skill") => return run_skill(&args[1..]),
+        Some("explain") => return run_explain(&args[1..]),
         Some("init") => return run_init(&args[1..]),
         Some("pm") => return run_pm(&args[1..]),
         _ => {}
@@ -4496,6 +4503,151 @@ fn run_skill(args: &[OsString]) -> ExitCode {
         }
         Err(e) => {
             eprintln!("cpc skill: could not write {}: {e}", path.display());
+            ExitCode::FAILURE
+        }
+    }
+}
+
+// ---- `cpc explain` : self-serve diagnostic reference for an LLM/agent --------
+
+/// The C+ diagnostic catalog, embedded at build time so `cpc explain <CODE>`
+/// works from any install with no network. Same source of truth that generates
+/// `docs/ERRORS.md` and the cplus-lang.dev /docs/error-codes page, so the CLI,
+/// the docs, and the compiler never drift. An agent that hits a diagnostic runs
+/// `cpc explain E0502` for its cause, fix, and an example instead of guessing.
+const ERRORS_TOML: &str = include_str!("../../docs/errors.toml");
+
+const EXPLAIN_USAGE: &str = "\
+cpc explain [CODE] - explain a C+ diagnostic (e.g. `cpc explain E0502`)
+
+  cpc explain E0502     cause, fix, and an example for E0502
+  cpc explain --list    every diagnostic code with its title
+  cpc explain           (no code) same as --list
+
+The full docs at https://cplus-lang.dev/docs are LLM-readable as raw markdown:
+append `.md` to any page (e.g. .../docs/control-flow -> .../docs/control-flow.md).
+";
+
+/// Normalize a user-typed code to the canonical `E####` form: `e502`, `502`,
+/// and `E0502` all resolve to `E0502`. Non-numeric input is just upper-cased.
+fn normalize_code(s: &str) -> String {
+    let t = s.trim();
+    let digits = t.strip_prefix(['E', 'e']).unwrap_or(t);
+    match digits.parse::<u32>() {
+        Ok(n) => format!("E{n:04}"),
+        Err(_) => t.to_uppercase(),
+    }
+}
+
+fn format_code(e: &toml::Value) -> String {
+    let s = |k: &str| e.get(k).and_then(|v| v.as_str()).unwrap_or("").trim();
+    let mut out = String::new();
+    out.push_str(&format!("{} — {}\n", s("id"), s("title")));
+    out.push_str(&format!("  {} · {}\n\n", s("category"), s("severity")));
+    if !s("cause").is_empty() {
+        out.push_str(&format!("Cause\n  {}\n\n", s("cause")));
+    }
+    if !s("fix").is_empty() {
+        out.push_str(&format!("Fix\n  {}\n\n", s("fix")));
+    }
+    if !s("example").is_empty() {
+        out.push_str("Example\n");
+        for line in s("example").lines() {
+            out.push_str("  ");
+            out.push_str(line);
+            out.push('\n');
+        }
+        out.push('\n');
+    }
+    if !s("emit_site").is_empty() {
+        out.push_str(&format!("Verified against the compiler at {}\n", s("emit_site")));
+    }
+    out.push_str(
+        "More: https://cplus-lang.dev/docs/error-codes.md \
+         (append .md to any cplus-lang.dev/docs page for the markdown an agent can read)\n",
+    );
+    out
+}
+
+fn explain_list(codes: &[toml::Value]) -> ExitCode {
+    let mut rows: Vec<(&str, &str, &str)> = codes
+        .iter()
+        .map(|e| {
+            let g = |k: &str| e.get(k).and_then(|v| v.as_str()).unwrap_or("");
+            (g("id"), g("title"), g("category"))
+        })
+        .collect();
+    rows.sort_by(|a, b| a.0.cmp(b.0));
+    println!(
+        "{} C+ diagnostics — `cpc explain <CODE>` for cause + fix + example:\n",
+        rows.len()
+    );
+    for (id, title, cat) in rows {
+        println!("  {id}  {title}  [{cat}]");
+    }
+    println!("\nThe docs at https://cplus-lang.dev/docs are LLM-readable as markdown — append .md to any page.");
+    ExitCode::SUCCESS
+}
+
+/// `cpc explain <CODE>` — print a diagnostic's cause, fix, and example from the
+/// embedded catalog, so an agent that hits an error can read what it means
+/// (and how to fix it) without leaving the shell or guessing.
+fn run_explain(args: &[OsString]) -> ExitCode {
+    let mut query: Option<String> = None;
+    let mut list = false;
+    for a in args {
+        match a.to_str() {
+            Some("-h") | Some("--help") => {
+                print!("{EXPLAIN_USAGE}");
+                return ExitCode::SUCCESS;
+            }
+            Some("--list") | Some("-l") => list = true,
+            Some(c) if !c.starts_with('-') && query.is_none() => query = Some(c.to_string()),
+            other => {
+                eprintln!(
+                    "cpc explain: unexpected argument `{}`",
+                    other.unwrap_or("<non-utf8>")
+                );
+                eprint!("{EXPLAIN_USAGE}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+
+    let catalog: toml::Value = match toml::from_str(ERRORS_TOML) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("cpc explain: internal error parsing the embedded diagnostic catalog: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let codes = catalog
+        .get("code")
+        .and_then(|c| c.as_array())
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+
+    if list || query.is_none() {
+        return explain_list(codes);
+    }
+
+    let want = normalize_code(&query.unwrap());
+    match codes.iter().find(|e| {
+        e.get("id")
+            .and_then(|v| v.as_str())
+            .is_some_and(|id| id.eq_ignore_ascii_case(&want))
+    }) {
+        Some(entry) => {
+            print!("{}", format_code(entry));
+            ExitCode::SUCCESS
+        }
+        None => {
+            eprintln!("cpc explain: no diagnostic code `{want}`.");
+            eprintln!(
+                "Run `cpc explain --list` to see all {} codes, or read",
+                codes.len()
+            );
+            eprintln!("https://cplus-lang.dev/docs/error-codes.md");
             ExitCode::FAILURE
         }
     }

@@ -46,6 +46,7 @@ dependencies = [
  "cplus-pm",
  "serde_json",
  "tempfile",
+ "toml",
  "wasmi",
  "wat",
 ]

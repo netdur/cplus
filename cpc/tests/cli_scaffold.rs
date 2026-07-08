@@ -44,6 +44,54 @@ fn skill_write_creates_file_and_refuses_overwrite() {
     assert!(forced.status.success());
 }
 
+// ---- cpc explain ----
+
+#[test]
+fn explain_prints_cause_fix_and_example_for_a_known_code() {
+    let out = Command::new(cpc())
+        .arg("explain").arg("E0502")
+        .output().expect("run cpc explain");
+    assert!(out.status.success());
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(s.contains("E0502"), "should name the code:\n{s}");
+    assert!(s.contains("Cause") && s.contains("Fix"), "should show cause + fix:\n{s}");
+    // The .md web-docs convention is surfaced so an agent can go deeper.
+    assert!(s.contains(".md"), "should point at the markdown docs:\n{s}");
+}
+
+#[test]
+fn explain_normalizes_and_is_case_insensitive() {
+    // `e502` must resolve to the canonical `E0502`.
+    let out = Command::new(cpc())
+        .arg("explain").arg("e502")
+        .output().expect("run");
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stdout).contains("E0502"));
+}
+
+#[test]
+fn explain_unknown_code_fails_cleanly() {
+    let out = Command::new(cpc())
+        .arg("explain").arg("E9999")
+        .output().expect("run");
+    assert!(!out.status.success(), "unknown code must exit non-zero");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("E9999") && err.contains("--list"),
+        "should name the code and point to --list:\n{err}");
+}
+
+#[test]
+fn explain_list_enumerates_every_code() {
+    let out = Command::new(cpc())
+        .arg("explain").arg("--list")
+        .output().expect("run");
+    assert!(out.status.success());
+    let s = String::from_utf8_lossy(&out.stdout);
+    // First code present, and a plausible catalog size (>100 codes).
+    assert!(s.contains("E0001"), "list should include E0001:\n{}", &s[..s.len().min(400)]);
+    assert!(s.matches("  E").count() > 100, "catalog should list >100 codes");
+}
+
 // ---- cpc init ----
 
 fn read(p: &Path) -> String {

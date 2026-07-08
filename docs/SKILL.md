@@ -4,6 +4,8 @@ Dense reference for an LLM about to write or edit C+ code. Not a tutorial; for t
 
 **Project:** <https://cplus-lang.dev> · **Source:** <https://github.com/netdur/cplus>
 
+**Getting unstuck (agent surfaces, all offline in this `cpc`):** hit a diagnostic? run `cpc explain <CODE>` (e.g. `cpc explain E0502`) for its cause, fix, and an example. Re-print this reference any time with `cpc skill`. For the full docs, every page at <https://cplus-lang.dev/docs> is LLM-readable as raw markdown — **append `.md` to any page URL** (e.g. `…/docs/control-flow` → `…/docs/control-flow.md`), so you can fetch the exact topic instead of scraping HTML.
+
 This file is a standalone reference dropped into your project; the C+ repo (examples, design notes, stdlib source) is **not** local — find it online at <https://cplus-lang.dev> and <https://github.com/netdur/cplus> (runnable examples: `…/cplus/tree/main/docs/examples/`). The compiler is the source of truth; this doc is verified against it but if they ever disagree, the compiler wins — run `cpc check` / `cpc build` and trust the diagnostic.
 
 **Use the code graph, not grep.** C+ ships a resolved, typed code-knowledge graph (`cpc query` / `cpc mcp`, and it backs `cpc lsp`). For *any* "where is X / who calls X / what's the type here / what does this function touch" question, query the graph instead of `grep`-ing and reasoning about the text. It returns the answer already resolved — which both removes grep passes **and** removes the reasoning you'd otherwise spend disambiguating names, following `prefix::Item` to its module, and stitching call sites together. See §15.

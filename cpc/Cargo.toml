@@ -12,6 +12,7 @@ path = "src/main.rs"
 cplus-core = { path = "../cplus-core" }
 cplus-pm = { path = "../cplus-pm" }
 serde_json = "1"
+toml = "0.8"
 tempfile = { workspace = true }
 
 [dev-dependencies]
