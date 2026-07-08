@@ -14009,6 +14009,15 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 for scope in self.scopes.iter_mut().rev() {
                     if let Some(info) = scope.get_mut(name) {
                         info.borrow_roots = borrow_roots.clone();
+                        // Re-initialize AFTER the value is checked: the target
+                        // now holds a fresh value, so clear `moved` even when the
+                        // RHS itself consumed the binding — `n = n.width(300)`
+                        // (a self-consuming builder call) leaves `n` live, not
+                        // moved. The pre-check clear above keeps the target-type
+                        // read from tripping E0335 on an already-moved binding;
+                        // this one undoes the RHS's move of the same binding.
+                        info.moved = false;
+                        info.moved_at = None;
                         break;
                     }
                 }
@@ -15172,28 +15181,14 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                         }]
                     })
                     .unwrap_or_default();
-                // Builder-block temps (`@ui`/`@facet { ... }`, named
-                // `__builder_item…` by `lower::desugar_builder_entry`) hit this
-                // when a chain mixes a value-returning builder modifier
-                // (`.width()`) with in-place mutators (`.set_*`): the builder
-                // consumes the item and the next modifier reuses it. The bare
-                // move error is very confusing there (the temp reads like a
-                // loop var), so spell out the cause and fix.
-                let notes = if name.starts_with("__builder_item") {
-                    vec![
-                        "in a builder-block modifier chain (`@ui` / `@facet { ... }`), a \
-                         modifier that takes the item by value and returns a new one — a \
-                         builder like `.width()`, `.height()`, or `.grow()` — consumes it \
-                         here, so the modifier after it uses a moved value"
-                            .to_string(),
-                        "use the in-place mutator form for chained modifiers (e.g. \
-                         `.set_width(...)` instead of `.width(...)`), or place the \
-                         value-returning builders before the `.set_*` modifiers"
-                            .to_string(),
-                    ]
-                } else {
-                    Vec::new()
-                };
+                // (The old builder-block note here — "a `.width()` builder
+                // consumes the item, use `.set_width(...)` instead" — is gone:
+                // `lower::desugar_builder_entry` now THREADS a value-returning
+                // modifier's result back into the item temp (`__i = __i.width(…)`),
+                // so builders and `.set_*` mutators compose in one chain and this
+                // no longer fires for that case. The `moved_at` label above still
+                // points at the consuming site for any genuine move.)
+                let notes: Vec<String> = Vec::new();
                 self.err_with_labels_and_notes(
                     "E0335",
                     format!("use of moved value `{name}`"),
@@ -24697,6 +24692,30 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
         assert_clean(
             "fn chla_transtype__() -> i32 { return 0; } \
              fn main() -> i32 { return chla_transtype__(); }",
+        );
+    }
+
+    #[test]
+    fn reassign_through_self_consuming_method_reinitializes() {
+        // Root of the iris @ui builder-vs-mutator bug: `n = n.consume()` — a
+        // take-self method returning the same type — must RE-INITIALIZE `n`, not
+        // leave it moved. The move happens in the RHS, so the target's moved flag
+        // has to clear AFTER the value is checked. Pre-fix the trailing `.bump()`
+        // was E0335 "use of moved value `n`".
+        assert_clean(
+            "struct N { x: i32 } \
+             impl N { \
+                 fn drop(ref this) { return; } \
+                 fn wider(take this, v: i32) -> N { var m: N = this; m.x = v; return m; } \
+                 fn bump(ref this) { this.x = this.x + 1; } \
+             } \
+             fn main() -> i32 { \
+                 var n: N = N { x: 0 }; \
+                 n.bump(); \
+                 n = n.wider(3); \
+                 n.bump(); \
+                 return n.x; \
+             }",
         );
     }
 

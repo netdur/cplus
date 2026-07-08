@@ -18179,13 +18179,14 @@ fn extern_wrapper_tail_call_with_coerced_return_compiles_and_runs() {
 // ---- v0.0.21 multi-backend slice 3: the uikit package ----
 
 /// A `@ctx { }` modifier chain that mixes a value-returning builder
-/// (`.width()`, take-self) with an in-place mutator (`.set_pad()`) moves the
-/// item temp then reuses it. The E0335 must (a) name a `__builder_item…` temp
-/// (not `__iNNNN`, which read like a loop var and sent people chasing a phantom
-/// loop-var bug) and (b) explain the builder-vs-mutator cause + the `.set_*`
-/// fix.
+/// (`.width()`, take-self) with an in-place mutator (`.set_pad()`) must COMPOSE:
+/// the builder's result is threaded back into the item temp
+/// (`__i = __i.width(3)`) so the following `.set_pad(5)` mutates the built node
+/// instead of a moved value. (Previously this was rejected with a confusing
+/// E0335 — iris bug ui-chain-take-self-vs-mutator; now fixed in
+/// `lower::desugar_builder_entry` + the assignment re-init in `check_assign`.)
 #[test]
-fn builder_chain_take_self_move_gives_a_clear_note() {
+fn builder_chain_take_self_and_mutator_compose() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -18215,6 +18216,9 @@ impl Builder {
 ",
     )
     .unwrap();
+    // The chain mixes `.width(3)` (take-self builder) with `.set_pad(5)`
+    // (ref-self mutator). It must compile AND compose: node() x=0 -> .width(3)
+    // x=3 -> .set_pad(5) x=5, so `build().x == 5`.
     std::fs::write(
         dir.join("src/main.cplus"),
         "import \"./demo\" as demo;
@@ -18225,30 +18229,30 @@ fn build() -> demo::Node {
         .set_pad(5)
     };
 }
+#[test]
+fn chain_composes() {
+    let n: demo::Node = build();
+    assert n.x == 5;
+}
 fn main() -> i32 { return 0; }
 ",
     )
     .unwrap();
 
     let out = Command::new(cpc)
-        .arg("check")
+        .arg("test")
         .current_dir(&dir)
         .output()
-        .expect("invoke cpc check");
-    assert!(!out.status.success(), "expected the chain to be rejected");
+        .expect("invoke cpc test");
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0335"), "expected E0335, got: {stderr}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stderr.contains("__builder_item"),
-        "the moved temp should read as a builder item, not a loop var: {stderr}"
+        out.status.success(),
+        "the builder+mutator chain must now compile and compose (no E0335):\n{stderr}\n{stdout}"
     );
     assert!(
-        stderr.contains("builder-block modifier chain"),
-        "should explain the builder-vs-mutator cause: {stderr}"
-    );
-    assert!(
-        stderr.contains(".set_width"),
-        "should point at the `.set_*` mutator fix: {stderr}"
+        !stderr.contains("E0335") && !stdout.contains("E0335"),
+        "no use-of-moved on the composed chain: {stderr}{stdout}"
     );
 }
 

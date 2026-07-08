@@ -1989,29 +1989,63 @@ fn desugar_builder_entry(entry: BuilderEntry, b_name: &str, out: &mut Vec<Stmt>)
                     },
                     span: m.name.span,
                 };
-                let stmt_expr = match m.kind {
-                    BuilderModifierKind::Assign(value) => Expr {
-                        kind: ExprKind::Assign {
-                            op: AssignOp::Assign,
-                            target: Box::new(place),
-                            value: Box::new(value),
-                        },
-                        span: m.span,
-                    },
-                    BuilderModifierKind::Call(args) => Expr {
-                        kind: ExprKind::Call {
-                            callee: Box::new(place),
-                            args,
-                            type_args: Vec::new(),
-                            arg_labels: Vec::new(),
-                        },
-                        span: m.span,
-                    },
+                match m.kind {
+                    BuilderModifierKind::Assign(value) => {
+                        // `.field = value` — a field write, never a move.
+                        let stmt_expr = Expr {
+                            kind: ExprKind::Assign {
+                                op: AssignOp::Assign,
+                                target: Box::new(place),
+                                value: Box::new(value),
+                            },
+                            span: m.span,
+                        };
+                        out.push(Stmt {
+                            kind: StmtKind::Expr(stmt_expr),
+                            span: m.span,
+                        });
+                    }
+                    BuilderModifierKind::Call(args) => {
+                        let call = Expr {
+                            kind: ExprKind::Call {
+                                callee: Box::new(place),
+                                args,
+                                type_args: Vec::new(),
+                                arg_labels: Vec::new(),
+                            },
+                            span: m.span,
+                        };
+                        // A modifier is either a `take self -> Node` BUILDER
+                        // (`.width`/`.grow`/`.padding`/…) or a `ref self` MUTATOR
+                        // (`.set_*`). A builder consumes the item and returns a
+                        // NEW node, so applied as a bare statement it would MOVE
+                        // the temp and the next modifier would hit E0335. Thread
+                        // its result back into the temp — `__i = __i.width(..)` —
+                        // so builders and mutators compose in one chain. Mutators
+                        // (the `set_*` convention) return unit and stay plain
+                        // statements. (Non-`set_` `ref self` methods like
+                        // `add_child` aren't trailing `@ui` modifiers.)
+                        let stmt = if m.name.name.starts_with("set_") {
+                            StmtKind::Expr(call)
+                        } else {
+                            StmtKind::Expr(Expr {
+                                kind: ExprKind::Assign {
+                                    op: AssignOp::Assign,
+                                    target: Box::new(Expr {
+                                        kind: ExprKind::Ident(i_name.clone()),
+                                        span: m.name.span,
+                                    }),
+                                    value: Box::new(call),
+                                },
+                                span: m.span,
+                            })
+                        };
+                        out.push(Stmt {
+                            kind: stmt,
+                            span: m.span,
+                        });
+                    }
                 };
-                out.push(Stmt {
-                    kind: StmtKind::Expr(stmt_expr),
-                    span: m.span,
-                });
             }
             // __b.add(__i);
             out.push(Stmt {
@@ -2705,8 +2739,32 @@ mod tests {
             panic!("expected field target");
         };
         assert_eq!(fld.name, "font");
-        // __i.pad(3); then __b.add(__i);
-        assert_eq!(as_method_call(&b.stmts[3]).1, "pad");
+        // __i = __i.pad(3);  — a non-`set_` modifier is a `take self -> Node`
+        // builder, so its result threads back into the item temp (this is what
+        // lets builders and `.set_*` mutators compose in one chain).
+        let StmtKind::Expr(reassign) = &b.stmts[3].kind else {
+            panic!("expected builder reassign stmt, got {:?}", b.stmts[3].kind);
+        };
+        let ExprKind::Assign {
+            op: AssignOp::Assign,
+            target: reassign_target,
+            value: reassign_value,
+        } = &reassign.kind
+        else {
+            panic!("expected reassign of the item temp, got {:?}", reassign.kind);
+        };
+        assert!(
+            matches!(&reassign_target.kind, ExprKind::Ident(n) if n.starts_with("__builder_item")),
+            "reassign target is the item temp"
+        );
+        let ExprKind::Call { callee: pad_callee, .. } = &reassign_value.kind else {
+            panic!("expected `.pad(3)` call on the RHS, got {:?}", reassign_value.kind);
+        };
+        let ExprKind::Field { name: pad_m, .. } = &pad_callee.kind else {
+            panic!("expected method callee for `.pad`");
+        };
+        assert_eq!(pad_m.name, "pad");
+        // then __b.add(__i);
         let (recv, m) = as_method_call(&b.stmts[4]);
         assert_eq!((recv.starts_with("__b"), m.as_str()), (true, "add"));
         // second item: let + add
