@@ -6,6 +6,8 @@
 
 import "./result" as result;
 import "./vec" as vec;
+import "./option" as option;
+import "./status" as status;
 // v0.0.5 Phase 4 Slice 4C: File::read_async needs the reactor's
 // fd-readiness path. Phase 3 Slice 3D's File::lines is sync but
 // the gen-method machinery needs Iterator[T] in scope.
@@ -23,6 +25,18 @@ extern fn write(fd: i32, buf: *u8, count: usize) -> isize;
 extern fn close(fd: i32) -> i32;
 extern fn malloc(n: usize) -> *u8;
 extern fn free(p: *u8);
+
+// Directory + path ops. `mode_t` is `__uint16_t` on Darwin; `__error()` returns
+// the address of `errno` (the thread-local). `readdir` yields the 64-bit-inode
+// `struct dirent` (the default layout on modern macOS / Apple Silicon).
+extern fn access(path: *u8, amode: i32) -> i32;
+extern fn mkdir(path: *u8, mode: u16) -> i32;
+extern fn unlink(path: *u8) -> i32;
+extern fn opendir(path: *u8) -> *u8;
+extern fn readdir(dirp: *u8) -> *u8;
+extern fn closedir(dirp: *u8) -> i32;
+extern fn __error() -> *i32;
+extern fn strlen(s: *u8) -> usize;
 
 // Owned file handle. `fd == -1` is the invalid / closed state (disarms Drop).
 struct File {
@@ -199,6 +213,121 @@ impl File {
     }
 }
 
+// ─────────────────────── directory / path ops ───────────────────────
+
+// errno as an `IoError`. Only the file-system-relevant codes are named; the
+// rest collapse to `Other`.
+fn errno() -> i32 {
+    let p: *i32 = { __error() };
+    return { *p };
+}
+fn errno_as_ioerror() -> result::IoError {
+    let e: i32 = errno();
+    if e == (2 as i32)  { return result::IoError::NotFound; }         // ENOENT
+    if e == (13 as i32) { return result::IoError::PermissionDenied; } // EACCES
+    if e == (17 as i32) { return result::IoError::AlreadyExists; }    // EEXIST
+    return result::IoError::Other;
+}
+
+// True if `path` exists (file, directory, or any other node).
+fn exists(path: str) -> bool {
+    return { access(#str_ptr(path), 0 as i32) } == (0 as i32);   // F_OK == 0
+}
+
+// Create the single directory `path` with mode 0o755. `Err(AlreadyExists)` if it
+// is already present — use `create_dir_all` to create parents idempotently.
+fn create_dir(path: str) -> result::Result[bool, result::IoError] {
+    let r: i32 = { mkdir(#str_ptr(path), 493 as u16) };   // 0o755
+    if r == (0 as i32) { return result::io_ok::[bool](true); }
+    return result::io_err::[bool](errno_as_ioerror());
+}
+
+// Create `path` and every missing parent, like `mkdir -p`. Idempotent: an
+// already-existing directory on the path is treated as success (EEXIST is
+// swallowed); any other failure stops and returns the reason.
+fn create_dir_all(path: str) -> result::Result[bool, result::IoError] {
+    let full: text::Text = text::from_str(path);
+    if full.count() == (0 as usize) {
+        return result::io_err::[bool](result::IoError::InvalidInput);
+    }
+    let leading_slash: bool = match full.byte_at(0 as usize) {
+        option::Option[u8]::Some(b) => b == (47 as u8),   // '/'
+        option::Option[u8]::None => false,
+    };
+    let parts: vec::Vec[text::Text] = full.split("/");
+    // `prefix` always carries a trailing '/' between segments, so each mkdir
+    // target is the accumulated path with no duplicate separators.
+    var prefix: text::Text = text::with_capacity(full.count() +% (1 as usize));
+    if leading_slash { let _s: status::Status = prefix.append("/"); }
+    var i: usize = 0 as usize;
+    while i < parts.count() {
+        match parts.at_ptr(i) {
+            option::Option[*text::Text]::Some(seg) => {
+                if (*seg).count() > (0 as usize) {
+                    let _a: status::Status = prefix.append((*seg).view());
+                    match prefix.c_str() {
+                        option::Option[text::CString]::Some(cs) => {
+                            let r: i32 = { mkdir(cs.as_ptr(), 493 as u16) };
+                            if r != (0 as i32) && errno() != (17 as i32) {   // not EEXIST
+                                return result::io_err::[bool](errno_as_ioerror());
+                            }
+                        }
+                        option::Option[text::CString]::None => {
+                            return result::io_err::[bool](result::IoError::InvalidInput);
+                        }
+                    }
+                    let _b: status::Status = prefix.append("/");
+                }
+            }
+            option::Option[*text::Text]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return result::io_ok::[bool](true);
+}
+
+// Delete the file at `path`. `Err(NotFound)` if it does not exist.
+fn remove_file(path: str) -> result::Result[bool, result::IoError] {
+    let r: i32 = { unlink(#str_ptr(path)) };
+    if r == (0 as i32) { return result::io_ok::[bool](true); }
+    return result::io_err::[bool](errno_as_ioerror());
+}
+
+// `true` for the dirent name "." or "..".
+fn _is_dot_entry(p: *u8, len: usize) -> bool {
+    if len == (1 as usize) { return { *p } == (46 as u8); }             // "."
+    if len == (2 as usize) {
+        let p1: *u8 = { p + (1 as usize) };
+        return { *p } == (46 as u8) && { *p1 } == (46 as u8);          // ".."
+    }
+    return false;
+}
+
+// The entry names in directory `path` (excluding "." and ".."), or `None` if the
+// directory can't be opened. Names only — not full paths.
+fn read_dir(path: str) -> option::Option[vec::Vec[text::Text]] {
+    let dir: *u8 = { opendir(#str_ptr(path)) };
+    if dir == { 0 as *u8 } {
+        return option::Option[vec::Vec[text::Text]]::None;
+    }
+    var out: vec::Vec[text::Text] = vec::new::[text::Text]();
+    var ent: *u8 = { readdir(dir) };
+    while ent != { 0 as *u8 } {
+        // Darwin 64-bit-inode `struct dirent`: u64 d_ino, u64 d_seekoff,
+        // u16 d_reclen, u16 d_namlen, u8 d_type, then char d_name[] — the name
+        // is a NUL-terminated C string starting at byte offset 21.
+        let name_ptr: *u8 = { ent + (21 as usize) };
+        let len: usize = { strlen(name_ptr) };
+        if !_is_dot_entry(name_ptr, len) {
+            let name: str = { #str_from_raw_parts(name_ptr, len) };
+            out.append(name.to_text());
+        }
+        ent = { readdir(dir) };
+    }
+    let _c: i32 = { closedir(dir) };
+    return option::Option[vec::Vec[text::Text]]::Some(out);
+}
+
 // ───────────────────────────── tests ─────────────────────────────
 
 #[test]
@@ -227,6 +356,68 @@ fn fs_write_then_read_roundtrip() {
             }
         }
         result::Result[File, result::IoError]::Err(e) => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn dir_create_exists_read_remove() {
+    let base: str = "/tmp/cplus_fs_dir_test";
+    let nested: str = "/tmp/cplus_fs_dir_test/x/y";
+    let fpath: str = "/tmp/cplus_fs_dir_test/x/y/f.txt";
+    let _cleanup: result::Result[bool, result::IoError] = remove_file(fpath);   // best effort
+
+    // create_dir_all makes every parent; idempotent on re-run.
+    match create_dir_all(nested) {
+        result::Result[bool, result::IoError]::Ok(v) => { assert v; }
+        result::Result[bool, result::IoError]::Err(e) => { assert false; }
+    }
+    assert exists(base);
+    assert exists(nested);
+    assert !exists("/tmp/cplus_fs_dir_test/nope");
+
+    // create_dir on an existing directory reports AlreadyExists.
+    match create_dir(base) {
+        result::Result[bool, result::IoError]::Ok(v) => { assert false; }
+        result::Result[bool, result::IoError]::Err(e) => {
+            match e { result::IoError::AlreadyExists => { } _ => { assert false; } }
+        }
+    }
+
+    // a file in the nested dir shows up in read_dir, then removes cleanly.
+    match create(fpath) {
+        result::Result[File, result::IoError]::Ok(f) => { var w: File = f; w.close(); }
+        result::Result[File, result::IoError]::Err(e) => { assert false; }
+    }
+    assert exists(fpath);
+    match read_dir(nested) {
+        option::Option[vec::Vec[text::Text]]::Some(names) => {
+            var found: bool = false;
+            var i: usize = 0 as usize;
+            while i < names.count() {
+                match names.at_ptr(i) {
+                    option::Option[*text::Text]::Some(nm) => { if (*nm).equals("f.txt") { found = true; } }
+                    option::Option[*text::Text]::None => { }
+                }
+                i = i +% (1 as usize);
+            }
+            assert found;
+        }
+        option::Option[vec::Vec[text::Text]]::None => { assert false; }
+    }
+
+    match remove_file(fpath) {
+        result::Result[bool, result::IoError]::Ok(v) => { assert v; }
+        result::Result[bool, result::IoError]::Err(e) => { assert false; }
+    }
+    assert !exists(fpath);
+
+    // removing a missing file reports NotFound.
+    match remove_file(fpath) {
+        result::Result[bool, result::IoError]::Ok(v) => { assert false; }
+        result::Result[bool, result::IoError]::Err(e) => {
+            match e { result::IoError::NotFound => { } _ => { assert false; } }
+        }
     }
     return;
 }
