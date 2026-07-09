@@ -6946,19 +6946,51 @@ impl SemaCx<'_> {
             .parent()
             .map(|p| p.to_path_buf())
             .unwrap_or_default();
+        // Sandbox the shader source path (E0918) before spawning the Metal
+        // toolchain — same package boundary as `#include_*`. Rejecting here
+        // also keeps an escaping/absolute path from driving `xcrun` at all.
+        if include_path_escapes_package(&base, path) {
+            self.err(
+                "E0918",
+                format!(
+                    "`#compile_shader` path `{}` resolves outside the package directory",
+                    path
+                ),
+                span,
+            );
+            return Ty::Error;
+        }
         let shader_path = base.join(path);
         // Invoke xcrun + metallib via `Command::new`. Two-step:
         //   xcrun -sdk macosx metal -c <src> -o <tmp.air>
         //   xcrun -sdk macosx metallib <tmp.air> -o <tmp.metallib>
         // Errors from either step surface as E0904 with stderr text.
-        let tmp_dir = std::env::temp_dir();
-        let stem: String = shader_path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("shader")
-            .to_string();
-        let air_path = tmp_dir.join(format!("{}.{:x}.air", stem, span.start));
-        let metallib_path = tmp_dir.join(format!("{}.{:x}.metallib", stem, span.start));
+        //
+        // CWE-377 hardening: the intermediates go in a private, securely-named
+        // temp DIRECTORY (mkdtemp — mode 0700, random name) rather than
+        // predictable `env::temp_dir()/{stem}.{span}.air` paths in the shared,
+        // world-writable temp dir. The old scheme let a local attacker
+        // pre-create that path as a symlink and redirect the toolchain's write
+        // to a victim-owned file (same fix the driver's `make_temp_file`
+        // applied to `cpc-{pid}.ll`). `tmp_dir` removes itself and its contents
+        // when it drops at end of scope — also fixing the leftover-artifact
+        // leak. Fixed names inside the 0700 dir are safe (the dir is private).
+        let tmp_dir = match tempfile::Builder::new().prefix("cpc-shader-").tempdir() {
+            Ok(d) => d,
+            Err(e) => {
+                self.err(
+                    "E0904",
+                    format!(
+                        "could not create a temp directory for shader compilation of `{}`: {}",
+                        path, e
+                    ),
+                    span,
+                );
+                return Ty::Error;
+            }
+        };
+        let air_path = tmp_dir.path().join("shader.air");
+        let metallib_path = tmp_dir.path().join("shader.metallib");
         let step1 = std::process::Command::new("xcrun")
             .args(["-sdk", "macosx", "metal", "-c"])
             .arg(&shader_path)
@@ -7717,6 +7749,22 @@ impl SemaCx<'_> {
                 .map(|p| p.to_path_buf())
                 .unwrap_or_default(),
         };
+        // Sandbox: in project mode the resolved path must stay inside the
+        // including file's package (E0918), the same boundary imports (E0914)
+        // and `[[bin]]`/`[lib]` paths (E0868) enforce. Without it, untrusted
+        // source could `#include_bytes("/etc/passwd")` or `../../../.ssh/id_rsa`
+        // and bake any readable host file into the artifact.
+        if include_path_escapes_package(&base_dir, path) {
+            self.err(
+                "E0918",
+                format!(
+                    "`#{macro_name}` path `{}` resolves outside the package directory",
+                    path
+                ),
+                span,
+            );
+            return None;
+        }
         let raw = std::path::PathBuf::from(path);
         let resolved = if raw.is_absolute() {
             raw
@@ -15365,6 +15413,62 @@ fn op_str(op: BinOp) -> &'static str {
         BinOp::MulWrap => "*%",
         _ => "?",
     }
+}
+
+/// Lexically resolve `.` / `..` in `path` without touching the filesystem
+/// (a compile-time include/shader target may not exist yet, and a lexical
+/// walk can't be defeated by a canonicalize failure — the fail-open trap the
+/// import gate had). Absolute prefix and normal components are kept; `..`
+/// pops. Used for compile-time file-path containment.
+fn lexical_normalize(path: &std::path::Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for c in path.components() {
+        match c {
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            std::path::Component::CurDir => {}
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+/// True iff a compile-time include/shader `requested` path (resolved against
+/// `base_dir`, the including file's directory) escapes that file's PACKAGE
+/// tree — the nearest ancestor of `base_dir` holding a `Cplus.toml`.
+///
+/// Symmetric with the import sandbox (E0914) and the manifest bin/lib sandbox
+/// (E0868): a `../sibling/asset` that stays inside the package is allowed
+/// (vendor/android_view legitimately does `#include_bytes("../adapter/
+/// adapter.dex")` from `src/`), while an absolute path or a `../..` chain that
+/// leaves the package is rejected. Returns false — no boundary, allow — in
+/// single-file mode (no `Cplus.toml` ancestor), matching the import posture
+/// where file-relative `../` is expected. Containment is lexical, so it stops
+/// path *strings* like `/etc/passwd` and `../../../.ssh/id_rsa` in untrusted
+/// source; an in-tree symlink pointing out is the untrusted-filesystem threat
+/// (attacker already has write in the package), shared with imports and out of
+/// scope here.
+fn include_path_escapes_package(base_dir: &std::path::Path, requested: &str) -> bool {
+    let mut root: Option<PathBuf> = None;
+    let mut cur: Option<&std::path::Path> = Some(base_dir);
+    while let Some(d) = cur {
+        if d.join("Cplus.toml").is_file() {
+            root = Some(d.to_path_buf());
+            break;
+        }
+        cur = d.parent();
+    }
+    let Some(root) = root else {
+        return false; // single-file mode: no package boundary to enforce
+    };
+    let requested_path = std::path::Path::new(requested);
+    let joined = if requested_path.is_absolute() {
+        requested_path.to_path_buf()
+    } else {
+        base_dir.join(requested_path)
+    };
+    !lexical_normalize(&joined).starts_with(lexical_normalize(&root))
 }
 
 /// Slice 7GEN.5a: unify a possibly-Param-bearing signature type
@@ -24824,6 +24928,93 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
             b"hello",
         );
         assert!(diags.is_empty(), "expected clean, got: {:#?}", diags);
+    }
+
+    /// Project-mode sema over `<dir>/src/main.cplus` with a `Cplus.toml` at
+    /// `<dir>` — so the include/shader package boundary (E0918) is active.
+    /// Returns the error codes.
+    fn check_project_src(src: &str, extra_files: &[(&str, &[u8])]) -> Vec<&'static str> {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("Cplus.toml"), "[package]\nname=\"p\"").expect("toml");
+        std::fs::create_dir_all(dir.path().join("src")).expect("mkdir src");
+        for (rel, bytes) in extra_files {
+            let p = dir.path().join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).expect("mkdir asset parent");
+            std::fs::write(&p, bytes).expect("write asset");
+        }
+        let src_path = dir.path().join("src/main.cplus");
+        std::fs::write(&src_path, src).expect("write src");
+        let toks = tokenize(src).expect("lex");
+        let prog = parse(toks).expect("parse");
+        let diags = check(&prog, src_path, src);
+        let codes: Vec<&'static str> = diags
+            .iter()
+            .filter(|d| matches!(d.severity, Severity::Error))
+            .map(|d| Box::leak(d.code.0.to_string().into_boxed_str()) as &str)
+            .collect();
+        drop(dir);
+        codes
+    }
+
+    #[test]
+    fn include_bytes_escaping_package_is_rejected_e0918() {
+        // Absolute path and a `..`-chain that leaves the package must both be
+        // rejected in project mode — untrusted source can't embed an arbitrary
+        // readable host file.
+        for bad in ["/etc/hosts", "../../../../etc/hosts"] {
+            let src = format!(
+                "fn main() -> i32 {{ let p = #include_bytes(\"{bad}\"); return 0; }}"
+            );
+            let codes = check_project_src(&src, &[]);
+            assert!(
+                codes.contains(&"E0918"),
+                "expected E0918 for `{bad}`, got {codes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn include_str_escaping_package_is_rejected_e0918() {
+        let codes = check_project_src(
+            "fn main() -> i32 { let s = #include_str(\"../../../../etc/hosts\"); return 0; }",
+            &[],
+        );
+        assert!(codes.contains(&"E0918"), "got {codes:?}");
+    }
+
+    #[test]
+    fn include_bytes_in_package_sibling_dir_is_allowed() {
+        // The android_view shape: `../adapter/asset.bin` from `src/` stays
+        // inside the package, so it must resolve and read cleanly (no E0918,
+        // no E0870).
+        let codes = check_project_src(
+            "fn main() -> i32 { let p = #include_bytes(\"../adapter/asset.bin\"); return 0; }",
+            &[("adapter/asset.bin", b"payload")],
+        );
+        assert!(
+            !codes.contains(&"E0918") && !codes.contains(&"E0870"),
+            "in-package `../` include must be allowed, got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn include_path_escapes_package_unit() {
+        // Direct unit coverage of the boundary helper independent of sema.
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("Cplus.toml"), "x").expect("toml");
+        std::fs::create_dir_all(dir.path().join("src")).expect("src");
+        let base = dir.path().join("src");
+        // In-package: bare, nested, and in-package `..` all stay contained.
+        assert!(!include_path_escapes_package(&base, "asset.bin"));
+        assert!(!include_path_escapes_package(&base, "sub/asset.bin"));
+        assert!(!include_path_escapes_package(&base, "../adapter/asset.bin"));
+        // Escapes: absolute and a `..` chain leaving the package.
+        assert!(include_path_escapes_package(&base, "/etc/passwd"));
+        assert!(include_path_escapes_package(&base, "../../../../etc/passwd"));
+        // No Cplus.toml ancestor → single-file mode → no boundary (allow),
+        // matching the import posture.
+        let loose = tempfile::tempdir().expect("tempdir2");
+        assert!(!include_path_escapes_package(loose.path(), "/etc/passwd"));
     }
 
     #[test]

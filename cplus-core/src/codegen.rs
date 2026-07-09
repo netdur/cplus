@@ -17122,8 +17122,26 @@ fn cmp_op_for_type(op: BinOp, ty: &Ty) -> &'static str {
 }
 
 fn sanitize(s: &str) -> String {
-    // LLVM names accept a wide set; identifiers from C+ (ASCII alnum + _) are fine.
-    s.to_string()
+    // Defense in depth for local IR names (`%<hint>.addrN`, `%<name>.drop_flagN`).
+    // Today the lexer only admits ASCII-identifier characters, and the internal
+    // hints codegen passes are `[A-Za-z0-9_.]` (idents plus dotted literals like
+    // `msg.arg.coerce`), so this is a no-op on every current input — the assert
+    // below is a regression guard. It exists so that if the grammar ever widens
+    // (Unicode idents, `-`/quoted names), a stray metacharacter can't inject a
+    // second SSA token or a newline into the emitted IR: keep `[A-Za-z0-9_.]`
+    // (all valid in unquoted LLVM local names), map everything else to `_`.
+    if s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'.') {
+        return s.to_string();
+    }
+    s.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '.' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -17133,6 +17151,22 @@ mod tests {
     use crate::parser::parse;
     use crate::sema;
     use std::path::PathBuf;
+
+    #[test]
+    fn sanitize_is_noop_for_current_ir_name_shapes_and_filters_metachars() {
+        // Every hint codegen passes today (idents + dotted literals) is a
+        // no-op — output must not shift.
+        for s in ["msg.arg.coerce", "ret.coerce", "my_binding", "x", "T0", "a.b.c"] {
+            assert_eq!(sanitize(s), s.to_string(), "must not rewrite `{s}`");
+        }
+        // Hypothetical widened-grammar inputs: no char that could open a new
+        // SSA token or a newline survives.
+        assert_eq!(sanitize("a b"), "a_b");
+        assert_eq!(sanitize("a\"b"), "a_b");
+        assert_eq!(sanitize("a\nb"), "a_b");
+        assert_eq!(sanitize("a-b"), "a_b");
+        assert_eq!(sanitize("naïve"), "na_ve");
+    }
 
     fn gen_src(src: &str) -> String {
         gen_src_with(src, BuildMode::Debug)

@@ -2662,6 +2662,26 @@ fn main() -> i32 { return 0; }
 '''
 
 [[code]]
+id = "E0918"
+title = "Compile-time include/shader path escapes the package"
+category = "const / static / char"
+severity = "error"
+repro = "checked"
+lang = "cplus"
+verified = true
+emit_site = "cplus-core/src/sema.rs:include_path_escapes_package"
+test = "cplus-core/src/sema.rs:include_bytes_escaping_package_is_rejected_e0918"
+cause = "A `#include_bytes` / `#include_str` / `#compile_shader` path resolves outside the including file's package directory — an absolute path or a `..` chain that leaves the package. In project mode (a `Cplus.toml` is present) these compile-time file reads are contained to the package tree, the same boundary imports (E0914) and `[[bin]]`/`[lib]` paths (E0868) enforce, so untrusted source can't bake an arbitrary readable host file into the artifact."
+fix = "Move the asset inside the package and reference it with a package-relative path. A `..` that stays within the package (e.g. `../adapter/asset.bin` from `src/`) is allowed; only paths that leave the package are rejected."
+example = '''
+fn main() -> i32 {
+    let _ = #include_bytes("/etc/passwd");
+    return 0;
+}
+// -> [E0918] `#include_bytes` path `/etc/passwd` resolves outside the package directory
+'''
+
+[[code]]
 id = "E1000"
 title = "Missing stdlib type for `gen fn` / `Iterator::next`"
 category = "Compile-time builtins"

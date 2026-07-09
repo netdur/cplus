@@ -1226,13 +1226,20 @@ fn classify_import_path(
 /// `import "./option"` must still resolve — while a `../../etc/...` chain that
 /// leaves the package is rejected, symmetric with the vendor path's E0859.
 ///
-/// Canonicalizes the anchors (they exist on disk); if that fails, returns false
-/// (can't establish a boundary — don't block the build), matching the
-/// conservative posture of the single-file compat path.
+/// Canonicalizes the anchors (they exist on disk). This helper is only reached
+/// in project mode, so if the boundary can't be established it FAILS CLOSED —
+/// returns `true` (treat as an escape, reject the import) rather than letting an
+/// unverifiable path through. `import_dir` is `canonical.parent()` of a file we
+/// just read, so canonicalize here re-canonicalizes an already-canonical path
+/// and effectively never fails on a real build; the fail-closed branches guard
+/// only the pathological cases (broken symlink component, racy/partial checkout,
+/// a project with no discoverable root) where "no boundary" must NOT mean "no
+/// enforcement." Single-file mode never calls this (the caller gates on
+/// `project_mode`).
 fn relative_import_escapes_root(import_dir: &Path, rel: &str, manifest_root: &Path) -> bool {
     let base = match import_dir.canonicalize() {
         Ok(b) => b,
-        Err(_) => return false,
+        Err(_) => return true,
     };
     let root = {
         let mut cur: Option<&Path> = Some(base.as_path());
@@ -1246,7 +1253,7 @@ fn relative_import_escapes_root(import_dir: &Path, rel: &str, manifest_root: &Pa
         }
         match found.or_else(|| manifest_root.canonicalize().ok()) {
             Some(r) => r,
-            None => return false,
+            None => return true,
         }
     };
     let mut parts: Vec<std::ffi::OsString> = base
@@ -2979,6 +2986,20 @@ mod tests {
         assert!(
             load_project_full(&main, &dir, false, Some(&[]), BTreeMap::new()).is_ok(),
             "in-tree relative imports should resolve"
+        );
+    }
+
+    #[test]
+    fn relative_escape_check_fails_closed_when_boundary_unverifiable() {
+        // Security posture: if the package boundary can't be established
+        // (import_dir doesn't canonicalize, no Cplus.toml ancestor, no
+        // canonicalizable manifest root), the helper must treat the import as
+        // an escape — "no boundary" must not mean "no enforcement" in project
+        // mode. Force the condition with a non-existent import_dir.
+        let missing = PathBuf::from("/no/such/dir/that/exists/anywhere");
+        assert!(
+            relative_import_escapes_root(&missing, "../x", &missing),
+            "unverifiable boundary must fail CLOSED (escape = true)"
         );
     }
 
