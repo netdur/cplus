@@ -34,6 +34,7 @@ import "stdlib/fs" as fs;
 import "flex_layout/flex_layout" as flex;
 import "appkit/appkit" as ak;
 import "appkit/appkit_ext" as akx;
+import "quartzcore/quartzcore" as quartz;
 
 // ==========================================================================
 // Payload + measure plumbing
@@ -322,6 +323,32 @@ fn box() -> flex::Node {
     return flex::Node::new();
 }
 
+// A container that draws a 1px rounded border (a themed separator color) around
+// its `content`. The flex engine lays `content` out inside the border, so give
+// the returned node a size or `.grow(1.0)` in the outer layout. This is the
+// general bordered-box primitive — box a subtree, frame a sidebar, or group an
+// input with its toolbar. To put a composer + toolbar in ONE bordered box, wrap
+// a column of a border-less composer and the toolbar:
+//
+//   bordered(column {
+//       composer(on_submit: send, show_border: false)   // input, no own border
+//       row { icon_button("plus", on: attach); spacer(); icon_button("arrow.up", on: send) }
+//   })
+fn bordered(take content: flex::Node, radius: f64 = 6.0f64, agent_id: str = "") -> flex::Node {
+    let zero: rt::Rect = rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 };
+    let bv: ak::View = ak::View::new(zero);
+    bv.set_wants_layer(true);
+    let lyr: quartz::Layer = bv.layer();
+    lyr.set_border_width(1.0f64);
+    lyr.set_corner_radius(radius);
+    lyr.set_border_color(ak::Color::separator_color().c_g_color());
+    tag_agent(bv.raw(), agent_id);
+    var wrapper: flex::Node = flex::Node::new();
+    wrapper.set_payload(rt::retain(bv.raw()), release_view);
+    wrapper.add_child(content);
+    return wrapper;
+}
+
 // The viewport leaf for an NSScrollView: place it in the outer tree (give
 // it `.grow(1.0)` or a size), run the outer layout + apply, then hand the
 // row content to `fill_scroll`.
@@ -438,10 +465,17 @@ fn choose_directory() -> option::Option[text::Text] {
 // Auto-grow recipe: in `on_change`, read `composer_content_height(node.payload())`,
 // clamp it to your min/max, store it, and re-render with that height — the MVU
 // loop grows the field. Give it a definite `.height(...)` for the initial size.
-fn composer(on_submit: fn(*u8, *u8), on_change: fn(*u8, *u8) = 0 as fn(*u8, *u8), ctx: *u8 = 0 as *u8, value: str = "", agent_id: str = "") -> flex::Node {
+// `show_border: false` drops the composer's own bezel so it can sit inside an
+// outer `bordered(...)` box alongside a toolbar row — one bordered box holding
+// the input and its accessory controls — without a doubled border.
+fn composer(on_submit: fn(*u8, *u8), on_change: fn(*u8, *u8) = 0 as fn(*u8, *u8), ctx: *u8 = 0 as *u8, value: str = "", show_border: bool = true, agent_id: str = "") -> flex::Node {
     let zero: rt::Rect = rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 };
     let scroll = ak::ScrollView::new(zero);
-    scroll.set_border_type(ak::BorderType::NSBezelBorder);
+    if show_border {
+        scroll.set_border_type(ak::BorderType::NSBezelBorder);
+    } else {
+        scroll.set_border_type(ak::BorderType::NSNoBorder);
+    }
     scroll.set_has_vertical_scroller(true);
     let tv = ak::TextView::new_with_frame(zero);
     tv.set_editable(true);
@@ -506,7 +540,12 @@ fn split(take first: flex::Node, take second: flex::Node, vertical: bool = true,
 // text replacement) turned off. `editable: false` makes a read-only viewer.
 // Read with `area_text(node.payload())`; replace the whole buffer (opening a
 // file) with `set_area_text(node.payload(), src)`. Size it with `.grow(1.0)`.
-fn code_editor(value: str = "", editable: bool = true, size: f64 = 12.0f64, agent_id: str = "") -> flex::Node {
+//
+// `inset_w` / `inset_h` set the text container inset — the left/right and
+// top/bottom padding between the border and the text (NSTextView's default of
+// 0 flushes the first column to the edge). A file editor usually wants a little
+// breathing room, e.g. `inset_w: 10.0, inset_h: 8.0`.
+fn code_editor(value: str = "", editable: bool = true, size: f64 = 12.0f64, inset_w: f64 = 0.0f64, inset_h: f64 = 0.0f64, agent_id: str = "") -> flex::Node {
     let zero: rt::Rect = rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 };
     let scroll = ak::ScrollView::new(zero);
     scroll.set_border_type(ak::BorderType::NSNoBorder);
@@ -518,11 +557,23 @@ fn code_editor(value: str = "", editable: bool = true, size: f64 = 12.0f64, agen
     tv.set_automatic_dash_substitution_enabled(false);
     tv.set_automatic_text_replacement_enabled(false);
     tv.as_text().set_font(ak::Font::monospaced_system_font_of_size(size, 0.0f64));
+    if inset_w != 0.0f64 || inset_h != 0.0f64 {
+        tv.set_text_container_inset(rt::Size { w: inset_w, h: inset_h });
+    }
     if value != "" { tv.as_text().set_string(value); }
     tv.as_view().set_autoresizing_mask(ak::autoresizing_mask_options_n_s_view_width_sizable);
     scroll.set_document_view(tv.as_view());
     tag_agent(scroll.as_view().raw(), agent_id);
     return fixed_view(scroll.as_view());
+}
+
+// Read the text container inset back from a code_editor / text_area / composer,
+// by its scroll-view payload pointer. Mirrors `composer_content_height`'s access
+// path; useful in tests and for callers that adjust padding at runtime.
+fn area_inset(view_ptr: *u8) -> rt::Size {
+    let dv: *u8 = { rt::msg_id(view_ptr, rt::sel(#str_ptr("documentView\0"))) };
+    if dv == { 0 as *u8 } { return rt::Size { w: 0.0f64, h: 0.0f64 }; }
+    return ak::TextView::from_raw(dv).text_container_inset();
 }
 
 // Replace the whole text of any scroll-hosted text view (`text_area`,
@@ -596,6 +647,33 @@ fn tree_node_path(node_ptr: *u8) -> text::Text {
     return text::from_str({ (*n).path }.view());
 }
 
+// ---- public node builders: construct a tree yourself, then mount it with
+// `tree(root, ...)`. This is the agnostic path — YOU decide what nodes exist
+// (apply ignore lists, prune `.git`/`target`, stop at a depth, or build children
+// lazily). `file_tree(path)` below is just the eager convenience that walks the
+// whole directory for you; when you need control, build the model here instead.
+//
+// Nodes are heap-boxed and leaked on purpose: NSOutlineView caches and re-passes
+// item pointers by identity, so they must outlive the widget (app-lifetime).
+
+// A new node. `is_dir` gives it a disclosure triangle (an expandable branch)
+// even before it has children — set it true for a directory you fill lazily.
+// `label` is the displayed name; `path` is the opaque `on_select` payload
+// (recover it with `tree_node_path`). Add children with `tree_add_child`.
+fn tree_node(label: str, path: str, is_dir: bool) -> *TreeNode {
+    let node: *TreeNode = { malloc(#size_of::[TreeNode]()) as *TreeNode };
+    { *node = TreeNode { label: text::from_str(label), path: text::from_str(path), is_dir: is_dir, children: vec::new::[*TreeNode]() }; }
+    return node;
+}
+
+// Append `child` to `parent`'s children, in order. `parent` should be a branch
+// (`is_dir: true`); a leaf with children still renders them, but the triangle
+// only shows for `is_dir` nodes.
+fn tree_add_child(parent: *TreeNode, child: *TreeNode) {
+    { (*parent).children.append(child); }
+    return;
+}
+
 // --- data source trampolines (item == nil means the implicit root) ---
 fn tree_num_children_imp(user: *u8, ov: *u8, item: *u8) -> i64 {
     let node: *TreeNode = if item == { 0 as *u8 } { user as *TreeNode } else { item as *TreeNode };
@@ -634,14 +712,19 @@ fn tree_selection_imp(user: *u8, notif: *u8) {
     return;
 }
 
-// A file-system tree: `file_tree("/path/to/project", on_select: open_file)`.
-// Shows the directory rooted at `path` in an NSOutlineView; clicking a row calls
-// `on_select(ctx, item)` where `item` is opaque — pass it to `tree_node_path` to
-// get the selected path. The model is built eagerly on construction (a big or
-// deep tree is read in full). Size it with `.grow(1.0)`.
-fn file_tree(path: str, on_select: fn(*u8, *u8) = 0 as fn(*u8, *u8), ctx: *u8 = 0 as *u8, agent_id: str = "") -> flex::Node {
-    let root: *TreeNode = build_tree(path, path);
-
+// Mount a caller-built node tree in an NSOutlineView. This is the AGNOSTIC
+// primitive: `root` is whatever you built with `tree_node`/`tree_add_child`, so
+// the widget knows nothing about the filesystem — ignore lists, pruning, depth
+// limits and lazy loading are all your model's concern, not the widget's.
+// Clicking a row calls `on_select(ctx, item)` where `item` is opaque — pass it
+// to `tree_node_path` for the selected node's path. Size it with `.grow(1.0)`.
+//
+//   var kids: vec::Vec[*ui::TreeNode] = vec::new::[*ui::TreeNode]();
+//   kids.append(ui::tree_node("main.cplus", "/proj/main.cplus", false));
+//   let root = ui::tree_node("proj", "/proj", true);
+//   ui::tree_add_child(root, kids.at(0)...);   // or add nodes one by one
+//   ui::tree(root, on_select: open_file);
+fn tree(root: *TreeNode, on_select: fn(*u8, *u8) = 0 as fn(*u8, *u8), ctx: *u8 = 0 as *u8, agent_id: str = "") -> flex::Node {
     let ov = ak::OutlineView::new();
     let col = ak::TableColumn::new("name");
     col.set_title("Name");
@@ -677,6 +760,19 @@ fn file_tree(path: str, on_select: fn(*u8, *u8) = 0 as fn(*u8, *u8), ctx: *u8 = 
     scroll.set_document_view(ov.as_view());
     tag_agent(scroll.as_view().raw(), agent_id);
     return fixed_view(scroll.as_view());
+}
+
+// The eager convenience: `file_tree("/path/to/project", on_select: open_file)`
+// walks the WHOLE directory rooted at `path` and mounts it with `tree(...)`.
+// It applies no excludes and reads the tree in full on construction, so it is
+// meant for small, bounded directories. For a large workspace — where you must
+// skip `.git`/`target`/`vendor`, cap the depth, or load children lazily — that
+// policy is not the widget's job: build the model yourself with
+// `tree_node`/`tree_add_child` (drive it with `fs::read_dir` + your own ignore
+// list) and mount it with `tree(root, ...)`.
+fn file_tree(path: str, on_select: fn(*u8, *u8) = 0 as fn(*u8, *u8), ctx: *u8 = 0 as *u8, agent_id: str = "") -> flex::Node {
+    let root: *TreeNode = build_tree(path, path);
+    return tree(root, on_select: on_select, ctx: ctx, agent_id: agent_id);
 }
 
 // ==========================================================================
@@ -1539,4 +1635,60 @@ fn clickable_wraps_a_leaf_without_clobbering_its_view() {
     var c: flex::Node = clickable(leaf, on_click: t_clickable_handler);
     assert c.payload() != (0 as *u8);
     assert c.child_count() == (1 as usize);
+}
+
+// The agnostic tree API: build a model with tree_node/tree_add_child (no
+// filesystem involved), then mount it with `tree(root)`. Also pins down that
+// `tree_add_child` really mutates the heap-boxed parent through its pointer.
+#[test]
+fn tree_builder_adds_children_and_mounts() {
+    let root: *TreeNode = tree_node("proj", "/proj", true);
+    tree_add_child(root, tree_node("a.cplus", "/proj/a.cplus", false));
+    tree_add_child(root, tree_node("sub", "/proj/sub", true));
+    // append-through-pointer must actually mutate the node (item == nil ⇒ root).
+    assert tree_num_children_imp(root as *u8, 0 as *u8, 0 as *u8) == (2 as i64);
+    // child 0 is the leaf; its opaque item pointer round-trips to the path.
+    let c0: *u8 = tree_child_imp(root as *u8, 0 as *u8, 0 as i64, 0 as *u8);
+    assert tree_node_path(c0).equals("/proj/a.cplus");
+    // a branch is expandable, a leaf is not.
+    assert tree_expandable_imp(0 as *u8, 0 as *u8, root as *u8) == (1 as i8);
+    assert tree_expandable_imp(0 as *u8, 0 as *u8, c0) == (0 as i8);
+    // mounting a caller-built tree yields a real backing view.
+    let n: flex::Node = tree(root, agent_id: "proj-tree");
+    assert n.payload() != (0 as *u8);
+    return;
+}
+
+#[test]
+fn test_code_editor_applies_inset() {
+    let n: flex::Node = code_editor(value: "x", inset_w: 10.0f64, inset_h: 8.0f64);
+    assert n.has_payload();
+    let ins: rt::Size = area_inset(n.payload());
+    assert ins.w == (10.0f64);
+    assert ins.h == (8.0f64);
+}
+
+#[test]
+fn test_code_editor_default_inset_is_zero() {
+    let n: flex::Node = code_editor(value: "x");
+    let ins: rt::Size = area_inset(n.payload());
+    assert ins.w == (0.0f64);
+    assert ins.h == (0.0f64);
+}
+
+#[test]
+fn test_bordered_wraps_content_with_backing_view() {
+    // Own bordered backing view + content nested inside it.
+    let n: flex::Node = bordered(label("boxed"), agent_id: "the-box");
+    assert n.has_payload();
+    assert n.child_count() == (1 as usize);
+    assert ak::Accessibility::from_raw(n.payload()).accessibility_identifier().equals("the-box");
+}
+
+#[test]
+fn test_composer_borderless_still_reads_text() {
+    // The boxed-layout variant: no own bezel, but still a working input.
+    let n: flex::Node = composer(on_submit: test_noop_action, value: "hi", show_border: false);
+    assert n.has_payload();
+    assert area_text(n.payload()).equals("hi");
 }
