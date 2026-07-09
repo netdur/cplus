@@ -8,11 +8,13 @@
 // own leading-dot line = in-place `set_*`.
 //
 // The result is a `Node` tree — pure data, no native types. `mount` turns it
-// into a `flex_layout` node tree through a small per-platform `Renderer`
-// vtable. Containers, spacing, and every layout prop are applied HERE,
-// write-once; only leaf widgets (label / wrap_label / button) go through the
-// vtable. A platform package (facet_appkit, ...) supplies those fns over its
-// typed binding, then lays the flex tree out and applies the frames.
+// into a `flex_layout` node tree through a per-platform `Renderer` vtable
+// (one op per kind). Containers, spacing, and every layout prop are applied
+// HERE, write-once; widget kinds dispatch through the vtable. After every
+// widget-producing op, `mount` calls `set_identity` so agent id + role are
+// pinned once, not re-remembered inside each op. A platform package
+// (facet_appkit, ...) supplies those fns over its typed binding, then lays
+// the flex tree out and applies the frames.
 //
 // The leaf/container value IS a `Node` (no wrapper): the DSL's `add` moves a
 // whole owned value into the accumulator, and `finish`/containers hand the
@@ -52,15 +54,53 @@ fn kind_button() -> u32 { return 2 as u32; }
 fn kind_spacer() -> u32 { return 3 as u32; }
 fn kind_column() -> u32 { return 4 as u32; }
 fn kind_row() -> u32 { return 5 as u32; }
+fn kind_text_area() -> u32 { return 6 as u32; }
+fn kind_composer() -> u32 { return 7 as u32; }
+fn kind_code_editor() -> u32 { return 8 as u32; }
+fn kind_bordered() -> u32 { return 9 as u32; }
+fn kind_clickable() -> u32 { return 10 as u32; }
+fn kind_split() -> u32 { return 11 as u32; }
 
-// Default click handler — a no-op, so `click` is never a null fn-pointer.
+// Agent-affordance roles — numeric indices aligned with agent_core::Role so
+// Phase 2 can pass them through without a translation table.
+fn role_button() -> u32 { return 0 as u32; }
+fn role_text() -> u32 { return 1 as u32; }
+fn role_input() -> u32 { return 2 as u32; }
+fn role_list() -> u32 { return 3 as u32; }
+fn role_group() -> u32 { return 4 as u32; }
+fn role_window() -> u32 { return 5 as u32; }
+
+// Core-owned kind → role table. Used by `mount` when calling `set_identity`.
+fn role_for_kind(k: u32) -> u32 {
+    if k == kind_button() { return role_button(); }
+    if k == kind_clickable() { return role_button(); }
+    if k == kind_label() { return role_text(); }
+    if k == kind_wrap_label() { return role_text(); }
+    if k == kind_text_area() { return role_input(); }
+    if k == kind_composer() { return role_input(); }
+    if k == kind_code_editor() { return role_input(); }
+    if k == kind_bordered() { return role_group(); }
+    if k == kind_split() { return role_group(); }
+    return role_group();
+}
+
+// Default click handler — a no-op, so `Node.click` is never a null fn-pointer.
+// (Button always wires a target; optional gesture/composer handlers use the
+// null-fn sentinel `0 as fn(*u8,*u8)` instead, so backends know whether to
+// install a recognizer at all.)
 fn noop(sender: *u8, ctx: *u8) { return; }
+
+// Null-fn sentinel for optional handlers (composer/clickable gestures).
+// Installing 11 gesture recognizers unconditionally is waste; backends wire
+// only when the field is non-null.
+fn null_fn() -> fn(*u8, *u8) { return 0 as fn(*u8, *u8); }
 
 // ---- the description tree ----------------------------------------------
 
-// One node. Widget config (text, font, prominence, click) is read by the
-// platform's leaf ops; the `_`-prefixed layout props are applied by `mount`
-// and never cross the package boundary.
+// One node. Widget config is read by the platform's per-kind ops; the
+// `_`-prefixed layout props are applied by `mount` and never cross the
+// package boundary. Config is a flat union-of-fields (closed kind set —
+// no generic prop channel). Per-node memory is irrelevant at UI scale.
 struct Node {
     kind: u32,
     text: text::Text,
@@ -68,12 +108,40 @@ struct Node {
     opaque click_ctx: *u8,  // borrowed identity value; the app owns it
     agent_id: text::Text,   // "" = untagged. A developer-curated stable id the
                             // backend pins on the created widget at every mount
-                            // (AppKit: accessibilityIdentifier), so it survives
-                            // re-renders; the agent surface exposes tagged nodes.
+                            // (via set_identity), so it survives re-renders.
     font_size: f64,         // 0 = platform default
     bold: bool,
     secondary: bool,
     primary: bool,
+    // --- kind-specific config (union-of-fields; unused kinds leave defaults) ---
+    value: text::Text,          // composer / code_editor / text_area initial text
+    placeholder: text::Text,    // text_area
+    editable: bool,             // code_editor (default true)
+    show_border: bool,          // composer (default true)
+    draws_background: bool,     // composer (default true)
+    radius: f64,                // bordered corner radius
+    vertical: bool,             // split: true = side-by-side
+    position: f64,              // split: initial divider offset
+    min_first: f64,             // split: first-pane minimum
+    min_second: f64,            // split: second-pane minimum
+    inset_w: f64,               // code_editor text-container inset
+    inset_h: f64,
+    long_press_seconds: f64,    // clickable long-press threshold (0 = platform default)
+    // Optional handlers — null-fn sentinel when unset (see null_fn).
+    // Clickable's primary click reuses `click` (avoids shadowing the fluent
+    // `.on_click` method); remaining gestures are null-fn when unset.
+    on_submit: fn(*u8, *u8),    // composer
+    on_change: fn(*u8, *u8),    // composer / text_area
+    on_double_click: fn(*u8, *u8),
+    on_right_click: fn(*u8, *u8),
+    on_long_press: fn(*u8, *u8),
+    on_drag: fn(*u8, *u8),
+    on_pinch: fn(*u8, *u8),
+    on_rotate: fn(*u8, *u8),
+    on_hover_in: fn(*u8, *u8),
+    on_hover_out: fn(*u8, *u8),
+    on_scroll: fn(*u8, *u8),
+    // layout
     _grow: f64,
     _gap: f64,
     _padding: f64,
@@ -83,6 +151,7 @@ struct Node {
 }
 
 fn blank(kind: u32) -> Node {
+    let none: fn(*u8, *u8) = null_fn();
     return Node {
         kind: kind,
         text: text::from_str(""),
@@ -93,6 +162,30 @@ fn blank(kind: u32) -> Node {
         bold: false,
         secondary: false,
         primary: false,
+        value: text::from_str(""),
+        placeholder: text::from_str(""),
+        editable: true,
+        show_border: true,
+        draws_background: true,
+        radius: 6.0f64,
+        vertical: true,
+        position: 220.0f64,
+        min_first: 150.0f64,
+        min_second: 240.0f64,
+        inset_w: 0.0f64,
+        inset_h: 0.0f64,
+        long_press_seconds: 0.0f64,
+        on_submit: none,
+        on_change: none,
+        on_double_click: none,
+        on_right_click: none,
+        on_long_press: none,
+        on_drag: none,
+        on_pinch: none,
+        on_rotate: none,
+        on_hover_in: none,
+        on_hover_out: none,
+        on_scroll: none,
         _grow: 0.0f64,
         _gap: 0.0f64,
         _padding: 0.0f64,
@@ -133,6 +226,59 @@ fn button(s: str, primary: bool = false) -> Node {
 fn spacer() -> Node {
     var n: Node = blank(kind_spacer());
     n._grow = 1.0f64;
+    return n;
+}
+
+// Multi-line editable text area. Optional `on_change` uses the null-fn sentinel
+// when unset (same convention as composer).
+fn text_area(
+    placeholder: str = "",
+    value: str = "",
+    on_change: fn(*u8, *u8) = 0 as fn(*u8, *u8),
+    ctx: *u8 = 0 as *u8,
+) -> Node {
+    var n: Node = blank(kind_text_area());
+    n.placeholder = text::from_str(placeholder);
+    n.value = text::from_str(value);
+    n.on_change = on_change;
+    n.click_ctx = ctx;
+    return n;
+}
+
+// Chat-style composer: submit on Enter, newline on Shift+Enter.
+// Optional handlers use the null-fn sentinel when unset.
+fn composer(
+    on_submit: fn(*u8, *u8) = 0 as fn(*u8, *u8),
+    on_change: fn(*u8, *u8) = 0 as fn(*u8, *u8),
+    ctx: *u8 = 0 as *u8,
+    value: str = "",
+    show_border: bool = true,
+    draws_background: bool = true,
+) -> Node {
+    var n: Node = blank(kind_composer());
+    n.on_submit = on_submit;
+    n.on_change = on_change;
+    n.click_ctx = ctx;
+    n.value = text::from_str(value);
+    n.show_border = show_border;
+    n.draws_background = draws_background;
+    return n;
+}
+
+// Monospaced code editor / viewer. `editable: false` is a read-only viewer.
+fn code_editor(
+    value: str = "",
+    editable: bool = true,
+    size: f64 = 12.0f64,
+    inset_w: f64 = 0.0f64,
+    inset_h: f64 = 0.0f64,
+) -> Node {
+    var n: Node = blank(kind_code_editor());
+    n.value = text::from_str(value);
+    n.editable = editable;
+    n.font_size = size;
+    n.inset_w = inset_w;
+    n.inset_h = inset_h;
     return n;
 }
 
@@ -243,31 +389,181 @@ fn card(take b: Builder) -> Node {
     return n;
 }
 
+// Wrapper kinds — content lives in `children`; mount recurses then hands the
+// mounted flex nodes to the backend op.
+
+// Bordered box around one (or more) children. Prefer a single child; multiple
+// children are mounted as a column by the backend adapter if needed — the
+// description stores them as-is and mount passes children[0] for the one-content
+// vtable op (compose with column{} when wrapping several).
+fn bordered(take b: Builder, radius: f64 = 6.0f64) -> Node {
+    let Builder { children } = b;
+    var n: Node = blank(kind_bordered());
+    n.children = children;
+    n.radius = radius;
+    return n;
+}
+
+// Clickable wrapper: gesture handlers on the node, content in children[0].
+// Primary click lands in `click` (same field as button); optional gestures
+// use the null-fn sentinel when unset.
+fn clickable(
+    take b: Builder,
+    on_click: fn(*u8, *u8) = 0 as fn(*u8, *u8),
+    on_double_click: fn(*u8, *u8) = 0 as fn(*u8, *u8),
+    on_right_click: fn(*u8, *u8) = 0 as fn(*u8, *u8),
+    on_long_press: fn(*u8, *u8) = 0 as fn(*u8, *u8),
+    long_press_seconds: f64 = 0.0f64,
+    on_drag: fn(*u8, *u8) = 0 as fn(*u8, *u8),
+    on_pinch: fn(*u8, *u8) = 0 as fn(*u8, *u8),
+    on_rotate: fn(*u8, *u8) = 0 as fn(*u8, *u8),
+    on_hover_in: fn(*u8, *u8) = 0 as fn(*u8, *u8),
+    on_hover_out: fn(*u8, *u8) = 0 as fn(*u8, *u8),
+    on_scroll: fn(*u8, *u8) = 0 as fn(*u8, *u8),
+    ctx: *u8 = 0 as *u8,
+) -> Node {
+    let Builder { children } = b;
+    var n: Node = blank(kind_clickable());
+    n.children = children;
+    // Only overwrite `click` when a handler was supplied (null-fn → leave noop).
+    if on_click != null_fn() {
+        n.click = on_click;
+    }
+    n.on_double_click = on_double_click;
+    n.on_right_click = on_right_click;
+    n.on_long_press = on_long_press;
+    n.long_press_seconds = long_press_seconds;
+    n.on_drag = on_drag;
+    n.on_pinch = on_pinch;
+    n.on_rotate = on_rotate;
+    n.on_hover_in = on_hover_in;
+    n.on_hover_out = on_hover_out;
+    n.on_scroll = on_scroll;
+    n.click_ctx = ctx;
+    return n;
+}
+
+// Two-pane split. Expects exactly two children (first / second pane).
+fn split(
+    take b: Builder,
+    vertical: bool = true,
+    position: f64 = 220.0f64,
+    min_first: f64 = 150.0f64,
+    min_second: f64 = 240.0f64,
+) -> Node {
+    let Builder { children } = b;
+    var n: Node = blank(kind_split());
+    n.children = children;
+    n.vertical = vertical;
+    n.position = position;
+    n.min_first = min_first;
+    n.min_second = min_second;
+    return n;
+}
+
 // ---- the Renderer vtable + mount ---------------------------------------------
 // Write-once walk: containers and layout props are pure flex_layout, built
-// here; only the three leaf widget kinds dispatch through the vtable. Each op
-// receives the backend context and the node (for its text/config/click) and
-// returns a flex node whose payload is the native widget.
+// here; widget kinds dispatch through the vtable. Each leaf op receives the
+// backend context and the node (for its text/config/handlers) and returns a
+// flex node whose payload is the native widget. Wrapper ops additionally take
+// already-mounted content (`take` ownership marker is part of the fn-ptr type).
+// After every widget-producing op, mount calls set_identity — the single choke
+// point for agent id + role (backends pin native metadata there).
 
 struct Renderer {
     opaque ctx: *u8,
-    label: fn(*u8, *Node) -> flex::Node,
-    wrap_label: fn(*u8, *Node) -> flex::Node,
-    button: fn(*u8, *Node) -> flex::Node,
+    // leaves
+    label:       fn(*u8, *Node) -> flex::Node,
+    wrap_label:  fn(*u8, *Node) -> flex::Node,
+    button:      fn(*u8, *Node) -> flex::Node,
+    text_area:   fn(*u8, *Node) -> flex::Node,
+    composer:    fn(*u8, *Node) -> flex::Node,
+    code_editor: fn(*u8, *Node) -> flex::Node,
+    // wrappers — mount recurses children first, then hands them over
+    bordered:    fn(*u8, *Node, take flex::Node) -> flex::Node,
+    clickable:   fn(*u8, *Node, take flex::Node) -> flex::Node,
+    split:       fn(*u8, *Node, take flex::Node, take flex::Node) -> flex::Node,
+    // called by mount after every widget-producing op
+    set_identity: fn(*u8, *u8, str, u32),  // (ctx, handle, id, role)
+}
+
+// Pin agent id + role after a widget op. Handle is the op's nominated identity
+// surface — by default the returned flex node's payload. Backends where the
+// drive target differs from the layout payload (composer/code_editor inner
+// text view vs outer scroll) resolve that inside set_identity itself.
+fn call_set_identity(np: *Node, r: Renderer, handle: *u8, kind: u32) {
+    let f: fn(*u8, *u8, str, u32) = r.set_identity;
+    let id: str = { (*np).agent_id.view() };
+    f(r.ctx, handle, id, role_for_kind(kind));
+    return;
+}
+
+fn mount_child_at(np: *Node, r: Renderer, idx: usize) -> flex::Node {
+    match { (*np).children.at_ptr(idx) } {
+        option::Option[*Node]::Some(cp) => { return mount(cp, r); }
+        option::Option[*Node]::None => { return flex::Node::new(); }
+    }
+}
+
+// Wrapper content: 0 kids → empty; 1 kid → that child; 2+ kids → portable
+// column of all children (so bordered/clickable never silently drop extras).
+fn mount_wrapper_content(np: *Node, r: Renderer) -> flex::Node {
+    let cnt: usize = { (*np).children.count() };
+    if cnt == (0 as usize) { return flex::Node::new(); }
+    if cnt == (1 as usize) { return mount_child_at(np, r, 0 as usize); }
+    var col: flex::Node = flex::Node::new();
+    var i: usize = 0 as usize;
+    while i < cnt {
+        col.add_child(mount_child_at(np, r, i));
+        i = i +% (1 as usize);
+    }
+    return col;
 }
 
 fn mount(np: *Node, r: Renderer) -> flex::Node {
     let k: u32 = { (*np).kind };
     var n: flex::Node = flex::Node::new();
+    var is_widget: bool = false;
     if k == kind_label() {
         let f: fn(*u8, *Node) -> flex::Node = r.label;
         n = f(r.ctx, np);
+        is_widget = true;
     } else if k == kind_wrap_label() {
         let f: fn(*u8, *Node) -> flex::Node = r.wrap_label;
         n = f(r.ctx, np);
+        is_widget = true;
     } else if k == kind_button() {
         let f: fn(*u8, *Node) -> flex::Node = r.button;
         n = f(r.ctx, np);
+        is_widget = true;
+    } else if k == kind_text_area() {
+        let f: fn(*u8, *Node) -> flex::Node = r.text_area;
+        n = f(r.ctx, np);
+        is_widget = true;
+    } else if k == kind_composer() {
+        let f: fn(*u8, *Node) -> flex::Node = r.composer;
+        n = f(r.ctx, np);
+        is_widget = true;
+    } else if k == kind_code_editor() {
+        let f: fn(*u8, *Node) -> flex::Node = r.code_editor;
+        n = f(r.ctx, np);
+        is_widget = true;
+    } else if k == kind_bordered() {
+        let content: flex::Node = mount_wrapper_content(np, r);
+        let f: fn(*u8, *Node, take flex::Node) -> flex::Node = r.bordered;
+        n = f(r.ctx, np, content);
+        is_widget = true;
+    } else if k == kind_clickable() {
+        let content: flex::Node = mount_wrapper_content(np, r);
+        let f: fn(*u8, *Node, take flex::Node) -> flex::Node = r.clickable;
+        n = f(r.ctx, np, content);
+        is_widget = true;
+    } else if k == kind_split() {
+        let first: flex::Node = mount_child_at(np, r, 0 as usize);
+        let second: flex::Node = mount_child_at(np, r, 1 as usize);
+        let f: fn(*u8, *Node, take flex::Node, take flex::Node) -> flex::Node = r.split;
+        n = f(r.ctx, np, first, second);
+        is_widget = true;
     } else if k == kind_spacer() {
         // pure layout; `_grow = 1` from the constructor applies below.
     } else {
@@ -279,6 +575,9 @@ fn mount(np: *Node, r: Renderer) -> flex::Node {
                 option::Option[*Node]::None => { }
             }
         }
+    }
+    if is_widget {
+        call_set_identity(np, r, n.payload(), k);
     }
     // Layout props — applied uniformly, whatever built the node.
     if { (*np)._grow } > 0.0f64 { n.set_flex_grow({ (*np)._grow }); }
@@ -317,6 +616,16 @@ fn facet_leaf_ctors_set_kind_and_config() {
     let s: Node = spacer();
     assert s.kind == kind_spacer();
     assert approx(s._grow, 1.0f64);
+
+    let ta: Node = text_area(placeholder: "hint", value: "hi");
+    assert ta.kind == kind_text_area();
+    assert ta.placeholder.view() == "hint";
+    assert ta.value.view() == "hi";
+
+    let ce: Node = code_editor(value: "fn main() {}", editable: false, size: 14.0f64);
+    assert ce.kind == kind_code_editor();
+    assert ce.editable == false;
+    assert approx(ce.font_size, 14.0f64);
 }
 
 #[test]
@@ -377,11 +686,66 @@ fn facet_on_click_carries_identity() {
     assert (m.click_ctx as i64) == (0 as i64);
 }
 
+#[test]
+fn facet_new_kind_ctors_and_wrappers() {
+    let c: Node = composer(on_submit: click_a, value: "draft", show_border: false);
+    assert c.kind == kind_composer();
+    assert c.on_submit != null_fn();
+    assert c.value.view() == "draft";
+    assert c.show_border == false;
+    assert c.draws_background;  // default
+
+    var bb: Builder = Builder::new();
+    bb.add(label("in-box"));
+    let br: Node = bordered(bb, radius: 8.0f64);
+    assert br.kind == kind_bordered();
+    assert approx(br.radius, 8.0f64);
+    assert br.children.count() == (1 as usize);
+
+    var cb: Builder = Builder::new();
+    cb.add(label("row"));
+    let cl: Node = clickable(cb, on_click: click_a, ctx: 3 as *u8);
+    assert cl.kind == kind_clickable();
+    assert cl.click != noop;
+    assert (cl.click_ctx as i64) == (3 as i64);
+
+    var sb: Builder = Builder::new();
+    sb.add(label("left"));
+    sb.add(label("right"));
+    let sp: Node = split(sb, position: 180.0f64);
+    assert sp.kind == kind_split();
+    assert approx(sp.position, 180.0f64);
+    assert sp.children.count() == (2 as usize);
+}
+
+#[test]
+fn facet_role_for_kind_table() {
+    assert role_for_kind(kind_button()) == role_button();
+    assert role_for_kind(kind_clickable()) == role_button();
+    assert role_for_kind(kind_label()) == role_text();
+    assert role_for_kind(kind_wrap_label()) == role_text();
+    assert role_for_kind(kind_composer()) == role_input();
+    assert role_for_kind(kind_text_area()) == role_input();
+    assert role_for_kind(kind_code_editor()) == role_input();
+    assert role_for_kind(kind_bordered()) == role_group();
+    assert role_for_kind(kind_split()) == role_group();
+}
+
 // -- mount, against a fake renderer --
 
 static FAKE_LABELS: i32 = 0;
 static FAKE_BUTTONS: i32 = 0;
+static FAKE_TEXT_AREAS: i32 = 0;
+static FAKE_COMPOSERS: i32 = 0;
+static FAKE_CODE_EDITORS: i32 = 0;
+static FAKE_BORDEREDS: i32 = 0;
+static FAKE_CLICKABLES: i32 = 0;
+static FAKE_SPLITS: i32 = 0;
+static FAKE_IDENTITIES: i32 = 0;
+static FAKE_TAGGED_IDENTITIES: i32 = 0;
 static FAKE_LAST_CTX: i64 = 0;
+static FAKE_LAST_ROLE: u32 = 0;
+static FAKE_LAST_ID_LEN: i32 = 0;
 
 fn fake_label(ctx: *u8, np: *Node) -> flex::Node {
     FAKE_LABELS = FAKE_LABELS + 1;
@@ -395,14 +759,92 @@ fn fake_button(ctx: *u8, np: *Node) -> flex::Node {
     return flex::Node::new().width(60.0f64).height(20.0f64);
 }
 
+fn fake_text_area(ctx: *u8, np: *Node) -> flex::Node {
+    FAKE_TEXT_AREAS = FAKE_TEXT_AREAS + 1;
+    return flex::Node::new().width(100.0f64).height(40.0f64);
+}
+
+fn fake_composer(ctx: *u8, np: *Node) -> flex::Node {
+    FAKE_COMPOSERS = FAKE_COMPOSERS + 1;
+    return flex::Node::new().width(100.0f64).height(40.0f64);
+}
+
+fn fake_code_editor(ctx: *u8, np: *Node) -> flex::Node {
+    FAKE_CODE_EDITORS = FAKE_CODE_EDITORS + 1;
+    return flex::Node::new().width(100.0f64).height(40.0f64);
+}
+
+fn fake_bordered(ctx: *u8, np: *Node, take content: flex::Node) -> flex::Node {
+    FAKE_BORDEREDS = FAKE_BORDEREDS + 1;
+    var n: flex::Node = flex::Node::new();
+    n.add_child(content);
+    return n;
+}
+
+fn fake_clickable(ctx: *u8, np: *Node, take content: flex::Node) -> flex::Node {
+    FAKE_CLICKABLES = FAKE_CLICKABLES + 1;
+    FAKE_LAST_CTX = { (*np).click_ctx } as i64;
+    var n: flex::Node = flex::Node::new();
+    n.add_child(content);
+    return n;
+}
+
+fn fake_split(ctx: *u8, np: *Node, take first: flex::Node, take second: flex::Node) -> flex::Node {
+    FAKE_SPLITS = FAKE_SPLITS + 1;
+    var n: flex::Node = flex::Node::new();
+    n.set_flex_direction(flex::FlexDirection::Row);
+    n.add_child(first);
+    n.add_child(second);
+    return n;
+}
+
+fn fake_set_identity(ctx: *u8, handle: *u8, id: str, role: u32) {
+    FAKE_IDENTITIES = FAKE_IDENTITIES + 1;
+    FAKE_LAST_ROLE = role;
+    // str has no .count in all contexts — compare empty by equality.
+    if id != "" {
+        FAKE_TAGGED_IDENTITIES = FAKE_TAGGED_IDENTITIES + 1;
+        FAKE_LAST_ID_LEN = 1;  // non-empty marker
+    }
+    return;
+}
+
 fn fake_renderer() -> Renderer {
-    return Renderer { ctx: 0 as *u8, label: fake_label, wrap_label: fake_label, button: fake_button };
+    return Renderer {
+        ctx: 0 as *u8,
+        label: fake_label,
+        wrap_label: fake_label,
+        button: fake_button,
+        text_area: fake_text_area,
+        composer: fake_composer,
+        code_editor: fake_code_editor,
+        bordered: fake_bordered,
+        clickable: fake_clickable,
+        split: fake_split,
+        set_identity: fake_set_identity,
+    };
+}
+
+fn reset_fake_counts() {
+    FAKE_LABELS = 0;
+    FAKE_BUTTONS = 0;
+    FAKE_TEXT_AREAS = 0;
+    FAKE_COMPOSERS = 0;
+    FAKE_CODE_EDITORS = 0;
+    FAKE_BORDEREDS = 0;
+    FAKE_CLICKABLES = 0;
+    FAKE_SPLITS = 0;
+    FAKE_IDENTITIES = 0;
+    FAKE_TAGGED_IDENTITIES = 0;
+    FAKE_LAST_CTX = 0;
+    FAKE_LAST_ROLE = 0;
+    FAKE_LAST_ID_LEN = 0;
+    return;
 }
 
 #[test]
 fn mount_dispatches_leaves_and_builds_containers() {
-    FAKE_LABELS = 0;
-    FAKE_BUTTONS = 0;
+    reset_fake_counts();
     var b: Builder = Builder::new();
     b.add(label("t"));
     var inner: Builder = Builder::new();
@@ -417,6 +859,78 @@ fn mount_dispatches_leaves_and_builds_containers() {
     assert FAKE_BUTTONS == 1;
     assert FAKE_LAST_CTX == (9 as i64);   // the button op sees the identity
     assert tree.child_count() == (2 as usize);
+    // 3 widget-producing nodes (2 labels + 1 button) each get set_identity.
+    assert FAKE_IDENTITIES == 3;
+}
+
+#[test]
+fn mount_dispatches_new_kinds_and_wrappers() {
+    reset_fake_counts();
+    var b: Builder = Builder::new();
+    b.add(composer(on_submit: click_a, value: "x"));
+    b.add(text_area(value: "y"));
+    b.add(code_editor(value: "z"));
+    var bb: Builder = Builder::new();
+    bb.add(label("boxed"));
+    b.add(bordered(bb));
+    var cb: Builder = Builder::new();
+    cb.add(button("go"));
+    b.add(clickable(cb, on_click: click_a, ctx: 4 as *u8));
+    var sb: Builder = Builder::new();
+    sb.add(label("L"));
+    sb.add(label("R"));
+    b.add(split(sb));
+    let root: Node = b.finish();
+
+    var tree: flex::Node = mount(#addr_of(root), fake_renderer());
+    assert FAKE_COMPOSERS == 1;
+    assert FAKE_TEXT_AREAS == 1;
+    assert FAKE_CODE_EDITORS == 1;
+    assert FAKE_BORDEREDS == 1;
+    assert FAKE_CLICKABLES == 1;
+    assert FAKE_SPLITS == 1;
+    assert FAKE_LAST_CTX == (4 as i64);
+    // labels inside wrappers: boxed + L + R = 3; button inside clickable = 1
+    assert FAKE_LABELS == 3;
+    assert FAKE_BUTTONS == 1;
+    // widget ops: composer, text_area, code_editor, bordered, clickable, split,
+    // + 3 labels + 1 button = 10 set_identity calls
+    assert FAKE_IDENTITIES == 10;
+    assert tree.child_count() == (6 as usize);
+}
+
+#[test]
+fn mount_wrapper_multi_child_becomes_column() {
+    reset_fake_counts();
+    var bb: Builder = Builder::new();
+    bb.add(label("a"));
+    bb.add(label("b"));
+    var b: Builder = Builder::new();
+    b.add(bordered(bb));
+    let root: Node = b.finish();
+    var tree: flex::Node = mount(#addr_of(root), fake_renderer());
+    assert FAKE_BORDEREDS == 1;
+    assert FAKE_LABELS == 2;
+    // bordered is the only top-level widget child of the finish column
+    assert tree.child_count() == (1 as usize);
+}
+
+#[test]
+fn mount_set_identity_fires_once_per_tagged_widget() {
+    reset_fake_counts();
+    var b: Builder = Builder::new();
+    b.add(label("untagged"));
+    b.add(button("save").agent_id("save-btn"));
+    b.add(composer(on_submit: click_a).agent_id("chat-input"));
+    let root: Node = b.finish();
+
+    let _tree: flex::Node = mount(#addr_of(root), fake_renderer());
+    // All three widgets get set_identity; two carry a non-empty agent_id.
+    assert FAKE_IDENTITIES == 3;
+    assert FAKE_TAGGED_IDENTITIES == 2;
+    // Last tagged widget is the composer → role_input.
+    assert FAKE_LAST_ROLE == role_input();
+    assert FAKE_LAST_ID_LEN == 1;
 }
 
 #[test]

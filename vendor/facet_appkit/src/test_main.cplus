@@ -198,13 +198,29 @@ fn component_cycles() -> i32 {
     return 0;
 }
 
+// Component-path re-render for these tests: clear the host, then mount the
+// fresh tree (what a component's invalidate does — no global runtime).
+fn tm_render(view: fn() -> facet::Node, content_ptr: *u8, w: f64, h: f64) {
+    let content: ak::View = ak::View::from_raw(content_ptr);
+    var subs: vec::Vec[ak::View] = content.subviews();
+    let cnt: usize = subs.count();
+    for i in 0..(cnt as i32) {
+        match subs.at_ptr(i as usize) {
+            option::Option[*ak::View]::Some(sp) => { { (*sp).remove_from_superview(); } }
+            option::Option[*ak::View]::None => { }
+        }
+    }
+    var root: facet::Node = view();
+    let _h: f64 = fak::mount_into(#addr_of(root), content_ptr, w, h);
+    return;
+}
+
 // Debug probe: 0 = healthy; otherwise the counter label's char count (or 100
-// when the widget lookup failed) for diagnosing the app runtime.
+// when the widget lookup failed) for diagnosing the render path.
 fn probe() -> i32 {
     fak::COUNT = 9;
     let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
-    fak::app_bind(fak::counter_view, content.raw(), 300.0f64, 200.0f64);
-    fak::refresh();
+    tm_render(fak::counter_view, content.raw(), 300.0f64, 200.0f64);
     let lp: *u8 = fak::nth_widget(content.raw(), 0 as usize);
     if lp == (0 as *u8) { return 100; }
     let l0 = ak::TextField::from_raw(lp);
@@ -213,20 +229,19 @@ fn probe() -> i32 {
     return n;
 }
 
-// Leak-harness segment for the app runtime: one bind, then 50 full
+// Leak-harness segment for the render path: initial mount, then 50 full
 // click -> handler -> re-render cycles through the real target/action.
 fn app_click_cycles() -> i32 {
     fak::COUNT = 0;
     let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
-    fak::app_bind(fak::counter_view, content.raw(), 300.0f64, 200.0f64);
-    fak::refresh();
+    tm_render(fak::counter_view, content.raw(), 300.0f64, 200.0f64);
     for k in 0..50 {
         let bp: *u8 = fak::nth_widget(content.raw(), 1 as usize);
         if bp == (0 as *u8) { return 90; }
         fak::click(bp);
+        tm_render(fak::counter_view, content.raw(), 300.0f64, 200.0f64);
     }
     if fak::COUNT != 50 { return 91; }
-    fak::APP_CONTENT = 0 as *u8;
     return 0;
 }
 
@@ -345,8 +360,7 @@ fn component_state_slices_are_independent() {
     COUNTER_A.count = 0;
     COUNTER_B.count = 0;
     let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 400.0, h: 200.0 });
-    fak::app_bind(two_counters_view, content.raw(), 400.0f64, 200.0f64);
-    fak::refresh();
+    tm_render(two_counters_view, content.raw(), 400.0f64, 200.0f64);
 
     // Click a's +1 twice, b's once — through the real target/action.
     fak::click(row_widget(content.raw(), 0 as usize, 2 as usize));
@@ -356,10 +370,11 @@ fn component_state_slices_are_independent() {
     assert COUNTER_A.count == 2;
     assert COUNTER_B.count == 1;
 
-    // And the UI followed: a's count label reads "2" (1 char).
+    // Re-render (explicit — the component model) and the UI follows: a's count
+    // label reads "2" (1 char).
+    tm_render(two_counters_view, content.raw(), 400.0f64, 200.0f64);
     let la: ak::TextField = ak::TextField::from_raw(row_widget(content.raw(), 0 as usize, 1 as usize));
     assert la.as_control().string_value().count() == (1 as usize);
-    fak::APP_CONTENT = 0 as *u8;
 }
 
 // ============================================================================

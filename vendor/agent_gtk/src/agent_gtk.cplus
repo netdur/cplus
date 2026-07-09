@@ -94,6 +94,10 @@ extern fn gtk_widget_grab_focus(widget: *u8) -> i32;
 extern fn g_object_set_data(obj: *u8, key: *u8, data: *u8);
 #[link_name = "g_object_get_data"]
 extern fn g_object_get_data(obj: *u8, key: *u8) -> *u8;
+// Declarative tag channel (facet set_identity): gtk_widget_set_name copies
+// the id onto the widget; we read it back as a transfer-none C string.
+#[link_name = "gtk_widget_get_name"]
+extern fn gtk_widget_get_name(widget: *u8) -> *u8;
 
 fn null() -> *u8 { return { 0 as *u8 }; }
 fn is_null(p: *u8) -> bool { return p == null(); }
@@ -115,8 +119,56 @@ fn set_agent_id(widget: *u8, id: *u8) {
     return;
 }
 
+// Pinned set_data id wins; otherwise a non-empty gtk_widget_get_name counts
+// as the tag (what facet_gtk set_identity writes — parallel to AppKit
+// accessibilityIdentifier).
 fn get_agent_id(widget: *u8) -> *u8 {
-    return { g_object_get_data(widget, agent_key()) };
+    let pinned: *u8 = { g_object_get_data(widget, agent_key()) };
+    if !is_null(pinned) { return pinned; }
+    let name: *u8 = { gtk_widget_get_name(widget) };
+    if is_null(name) { return null(); }
+    // Empty string is not a tag.
+    if { *name } == (0 as u8) { return null(); }
+    return name;
+}
+
+// ---- declared affordance (role + drive-method) ------------------------------
+//
+// Same contract as agent_appkit: a packed (role, drive) under a stable GObject
+// data key. Facet GTK backends (when present) and hand-built widgets write it;
+// the walk reads it before falling back to native classify.
+
+fn set_affordance(widget: *u8, role: identity::Role) {
+    if is_null(widget) { return; }
+    let drive: u32 = identity::drive_for_role(role);
+    let packed: *u8 = identity::pack_affordance(identity::role_index(role) as u32, drive);
+    { g_object_set_data(widget, identity::affordance_gobject_key(), packed); }
+    return;
+}
+
+fn set_affordance_drive(widget: *u8, role: identity::Role, drive: u32) {
+    if is_null(widget) { return; }
+    let packed: *u8 = identity::pack_affordance(identity::role_index(role) as u32, drive);
+    { g_object_set_data(widget, identity::affordance_gobject_key(), packed); }
+    return;
+}
+
+fn get_declared_role(widget: *u8) -> option::Option[identity::Role] {
+    if is_null(widget) { return option::Option[identity::Role]::None; }
+    let p: *u8 = { g_object_get_data(widget, identity::affordance_gobject_key()) };
+    if !identity::is_packed_affordance(p) {
+        return option::Option[identity::Role]::None;
+    }
+    return option::Option[identity::Role]::Some(identity::role_from_index(identity::unpack_role(p)));
+}
+
+fn get_declared_drive(widget: *u8) -> option::Option[u32] {
+    if is_null(widget) { return option::Option[u32]::None; }
+    let p: *u8 = { g_object_get_data(widget, identity::affordance_gobject_key()) };
+    if !identity::is_packed_affordance(p) {
+        return option::Option[u32]::None;
+    }
+    return option::Option[u32]::Some(identity::unpack_drive(p));
 }
 
 // ---- describe_ui node --------------------------------------------------------
@@ -157,6 +209,7 @@ struct GtkNode {
 
 // ---- role classification + live state ---------------------------------------
 
+// Native-type fallback. Prefer declared affordance via resolve_role.
 fn classify(widget: *u8) -> identity::Role {
     if is_a(widget, #str_ptr("GtkWindow\0")) {
         return identity::Role::Window;
@@ -178,6 +231,13 @@ fn classify(widget: *u8) -> identity::Role {
         return identity::Role::List;
     }
     return identity::Role::Group;
+}
+
+fn resolve_role(widget: *u8) -> identity::Role {
+    return match get_declared_role(widget) {
+        option::Option[identity::Role]::Some(r) => r,
+        option::Option[identity::Role]::None => classify(widget),
+    };
 }
 
 // The GType name as owned Text (e.g. "GtkButton").
@@ -266,7 +326,7 @@ struct Surface {
 // its children in order (DFS pre-order). `refs` stays index-aligned with the
 // registry: each `add_child` is paired with exactly one `refs.append`.
 fn walk(ref reg: identity::Registry, ref refs: vec::Vec[WidgetRef], widget: *u8, parent_reg: usize) {
-    let role: identity::Role = classify(widget);
+    let role: identity::Role = resolve_role(widget);
     let pinned: *u8 = get_agent_id(widget);
     let reg_node: usize = if is_null(pinned) {
         reg.add_child(parent_reg, option::Option[str]::None, role)

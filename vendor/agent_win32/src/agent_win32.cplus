@@ -127,6 +127,35 @@ fn get_agent_id(hwnd: *u8) -> *u8 {
     return { GetPropA(hwnd, agent_prop()) };
 }
 
+// ---- declared affordance (role + drive-method) ------------------------------
+// Packed (role, drive) under a window property. Same contract as AppKit/GTK.
+
+fn affordance_prop() -> *u8 { return { #str_ptr("CplusAgentAffordance\0") }; }
+
+fn set_affordance(hwnd: *u8, role: identity::Role) {
+    if is_null(hwnd) { return; }
+    let drive: u32 = identity::drive_for_role(role);
+    let packed: *u8 = identity::pack_affordance(identity::role_index(role) as u32, drive);
+    { SetPropA(hwnd, affordance_prop(), packed); }
+    return;
+}
+
+fn set_affordance_drive(hwnd: *u8, role: identity::Role, drive: u32) {
+    if is_null(hwnd) { return; }
+    let packed: *u8 = identity::pack_affordance(identity::role_index(role) as u32, drive);
+    { SetPropA(hwnd, affordance_prop(), packed); }
+    return;
+}
+
+fn get_declared_role(hwnd: *u8) -> option::Option[identity::Role] {
+    if is_null(hwnd) { return option::Option[identity::Role]::None; }
+    let p: *u8 = { GetPropA(hwnd, affordance_prop()) };
+    if !identity::is_packed_affordance(p) {
+        return option::Option[identity::Role]::None;
+    }
+    return option::Option[identity::Role]::Some(identity::role_from_index(identity::unpack_role(p)));
+}
+
 // ---- describe_ui node --------------------------------------------------------
 
 // A window rectangle in screen coordinates (x, y = top-left; w, h = size).
@@ -186,6 +215,13 @@ fn classify(hwnd: *u8) -> identity::Role {
     let role: identity::Role = classify_by_class(cls, hwnd);
     { free(buf); }
     return role;
+}
+
+fn resolve_role(hwnd: *u8) -> identity::Role {
+    return match get_declared_role(hwnd) {
+        option::Option[identity::Role]::Some(r) => r,
+        option::Option[identity::Role]::None => classify(hwnd),
+    };
 }
 
 fn class_name_text(hwnd: *u8) -> text::Text {
@@ -251,7 +287,7 @@ struct Surface {
 // its child windows in Z-order. `refs` stays index-aligned with the registry:
 // each `add_child` is paired with exactly one `refs.push`.
 fn walk(ref reg: identity::Registry, ref refs: vec::Vec[HwndRef], hwnd: *u8, parent_reg: usize) {
-    let role: identity::Role = classify(hwnd);
+    let role: identity::Role = resolve_role(hwnd);
     let pinned: *u8 = get_agent_id(hwnd);
     let reg_node: usize = if is_null(pinned) {
         reg.add_child(parent_reg, option::Option[str]::None, role)

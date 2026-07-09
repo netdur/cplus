@@ -88,6 +88,87 @@ fn role_eq(a: Role, b: Role) -> bool {
     return role_index(a) == role_index(b);
 }
 
+// Inverse of `role_index` — used when a backend records a role as a u32 on a
+// native handle (facet's set_identity) and a walk later recovers it. Unknown
+// indices fall back to Group (structural).
+fn role_from_index(i: u32) -> Role {
+    if i == (0 as u32) { return Role::Button; }
+    if i == (1 as u32) { return Role::Text; }
+    if i == (2 as u32) { return Role::Input; }
+    if i == (3 as u32) { return Role::List; }
+    if i == (4 as u32) { return Role::Group; }
+    if i == (5 as u32) { return Role::Window; }
+    return Role::Group;
+}
+
+// ---- declared affordance (role + drive-method) ------------------------------
+//
+// Facet's `set_identity` (and any hand-built widget that wants the same
+// contract) pins a packed (role, drive) on the native handle so agent backends
+// do not re-derive the role by guessing native types. The agent walk reads the
+// declaration when present and falls back to native classify only for
+// un-annotated widgets (e.g. an NSOutlineView file tree built outside facet).
+//
+// Drive method: how the agent should act once authorization passes.
+//   none  — observe / structural (labels, groups, windows)
+//   click — activate (performClick: / gtk_widget_activate / BM_CLICK)
+//   text  — set/read string content
+//
+// Storage encoding is platform-neutral: a non-null "pointer" integer that
+// AppKit stashes via associated-object ASSIGN and GTK/Win32 via g_object_set_data
+// / a side map. Layout (low bit always set so the value is never null):
+//   bit 0       = marker (1)
+//   bits 1..8   = role index (0..255)
+//   bits 9..16  = drive method (0..255)
+
+fn drive_none() -> u32 { return 0 as u32; }
+fn drive_click() -> u32 { return 1 as u32; }
+fn drive_text() -> u32 { return 2 as u32; }
+
+// Default drive method for a role — the mapping facet uses when recording.
+fn drive_for_role(r: Role) -> u32 {
+    return match r {
+        Role::Button => drive_click(),
+        Role::Input => drive_text(),
+        Role::Text => drive_none(),
+        Role::List => drive_none(),
+        Role::Group => drive_none(),
+        Role::Window => drive_none(),
+    };
+}
+
+// Stable key used as the associated-object / set_data key across backends.
+// Integer cast (not a static address) so every package agrees without sharing
+// a single-object symbol. Distinct from facet_appkit's tree pin keys (28692+).
+fn affordance_key() -> *u8 { return { 28701 as *u8 }; }
+
+// NUL-terminated string key for GObject `g_object_set_data` (GTK). Same
+// semantic slot as `affordance_key`; GObject keys are C strings, not addresses.
+fn affordance_gobject_key() -> *u8 { return { #str_ptr("cplus-agent-affordance\0") }; }
+
+fn pack_affordance(role: u32, drive: u32) -> *u8 {
+    let r: usize = (role as usize) & (0xFF as usize);
+    let d: usize = (drive as usize) & (0xFF as usize);
+    let v: usize = (1 as usize) | (r << 1) | (d << 9);
+    return v as *u8;
+}
+
+fn unpack_role(packed: *u8) -> u32 {
+    let v: usize = packed as usize;
+    return ((v >> 1) & (0xFF as usize)) as u32;
+}
+
+fn unpack_drive(packed: *u8) -> u32 {
+    let v: usize = packed as usize;
+    return ((v >> 9) & (0xFF as usize)) as u32;
+}
+
+// True when `p` looks like a pack_affordance result (marker bit set, non-null).
+fn is_packed_affordance(p: *u8) -> bool {
+    if p == (0 as *u8) { return false; }
+    return ((p as usize) & (1 as usize)) == (1 as usize);
+}
+
 // One node as surfaced by `describe` (plan.agent-core.md §4): the curated view
 // the agent consumes. `parent` is the NodeId of the parent (None for the root),
 // so the flat list reconstructs the tree. `actionable` is the resolved affordance
@@ -763,4 +844,41 @@ fn test_set_exposed_can_hide_tagged_node() {
     let v: vec::Vec[NodeView] = r.describe();
     // Only the root remains visible.
     assert v.count() == (1 as usize);
+}
+
+// --- declared affordance packing (Phase 2) ---------------------------------
+
+#[test]
+fn test_role_from_index_roundtrips() {
+    assert role_eq(role_from_index(0 as u32), Role::Button);
+    assert role_eq(role_from_index(1 as u32), Role::Text);
+    assert role_eq(role_from_index(2 as u32), Role::Input);
+    assert role_eq(role_from_index(3 as u32), Role::List);
+    assert role_eq(role_from_index(4 as u32), Role::Group);
+    assert role_eq(role_from_index(5 as u32), Role::Window);
+    assert role_eq(role_from_index(99 as u32), Role::Group);
+}
+
+#[test]
+fn test_drive_for_role_defaults() {
+    assert drive_for_role(Role::Button) == drive_click();
+    assert drive_for_role(Role::Input) == drive_text();
+    assert drive_for_role(Role::Text) == drive_none();
+    assert drive_for_role(Role::Group) == drive_none();
+}
+
+#[test]
+fn test_pack_affordance_roundtrips_and_is_non_null() {
+    let p: *u8 = pack_affordance(role_index(Role::Button) as u32, drive_click());
+    assert is_packed_affordance(p);
+    assert unpack_role(p) == (role_index(Role::Button) as u32);
+    assert unpack_drive(p) == drive_click();
+
+    let q: *u8 = pack_affordance(role_index(Role::Input) as u32, drive_text());
+    assert unpack_role(q) == (role_index(Role::Input) as u32);
+    assert unpack_drive(q) == drive_text();
+
+    // Marker bit keeps every pack non-null (safe as associated-object ASSIGN).
+    assert pack_affordance(0 as u32, 0 as u32) != (0 as *u8);
+    assert is_packed_affordance(0 as *u8) == false;
 }

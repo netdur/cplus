@@ -4,18 +4,20 @@
 // tagged imperatively with `set_agent_id` on the NSView; here the tag is part
 // of the DESCRIPTION — `.agent_id("inc-btn")` on a facet node — and the AppKit
 // backend re-applies it (as the view's accessibilityIdentifier) at every
-// mount. That difference is the whole point: facet's MVU runtime rebuilds all
-// views after every event, and description-borne tags survive that where
-// view-pinned tags would die with the replaced views.
+// mount. That difference is the whole point: a re-render rebuilds all views,
+// and description-borne tags survive that where view-pinned tags would die
+// with the replaced views.
 //
-// The flow, printed step by step without the blocking event loop:
+// Re-render follows the component model: a handler mutates state, then the app
+// re-renders explicitly (clear the host + `mount_into`) — there is no global
+// runtime. The flow, printed step by step without the blocking event loop:
 //
-//   1. An MVU counter app (state = a static, view fn, run via app_bind +
-//      refresh — `run_app` minus `app.run()`).
+//   1. A counter: state = a static, a view fn, rendered via `render` (clear +
+//      mount_into — the component pattern's invalidate).
 //   2. `agent::open(window)` -> describe: the tagged button and label are
 //      exposed + actionable, structural views are visible but not.
-//   3. The agent clicks "+1" through the authorized path. The handler runs,
-//      state advances, and the runtime re-renders (all views replaced).
+//   3. The agent clicks "+1" through the authorized path. The handler runs and
+//      state advances; the app then re-renders (all views replaced).
 //   4. The OLD surface now reports `Stale` for the button — never a
 //      use-after-free (the surface retains its views).
 //   5. Re-open: the fresh button carries the same agent-id, and the click
@@ -33,7 +35,7 @@ import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/io" as io;
 
-// ---- the app: MVU counter with agent-tagged widgets -------------------------
+// ---- the app: a counter with agent-tagged widgets ---------------------------
 
 static COUNT: i32 = 0;
 
@@ -50,6 +52,24 @@ fn view() -> facet::Node {
             button("+1").on_click(on_inc).agent_id("inc-btn")
         }
     };
+}
+
+// Component-path re-render: clear the host's subviews, then mount the fresh
+// tree. This is the component pattern's invalidate — the app drives it
+// explicitly (there is no global runtime).
+fn render(content_ptr: *u8) {
+    let content: ak::View = ak::View::from_raw(content_ptr);
+    var subs: vec::Vec[ak::View] = content.subviews();
+    let cnt: usize = subs.count();
+    for i in 0..(cnt as i32) {
+        match subs.at_ptr(i as usize) {
+            option::Option[*ak::View]::Some(sp) => { { (*sp).remove_from_superview(); } }
+            option::Option[*ak::View]::None => { }
+        }
+    }
+    var root: facet::Node = view();
+    let _h: f64 = fak::mount_into(#addr_of(root), content_ptr, 300.0f64, 200.0f64);
+    return;
 }
 
 fn outcome_name(o: surface::Outcome) -> str {
@@ -72,9 +92,8 @@ fn main() -> i32 {
     let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
     win.set_content_view(ak::View::from_raw(content.raw()));
 
-    // Bind + first render (what `run_app` does before entering the loop).
-    fak::app_bind(view, content.raw(), 300.0f64, 200.0f64);
-    fak::refresh();
+    // First render (the component pattern's initial mount).
+    render(content.raw());
 
     // 2) Open the surface and describe. The two tagged nodes are actionable.
     var s1: agent::Surface = agent::open(win.raw());
@@ -94,8 +113,10 @@ fn main() -> i32 {
         i = i +% (1 as usize);
     }
 
-    // 3) The agent clicks. Handler runs, state advances, runtime re-renders.
+    // 3) The agent clicks. The handler runs and state advances; then the app
+    //    re-renders (the component pattern — the click does not auto-refresh).
     let oc1: surface::Outcome = s1.click("inc-btn");
+    render(content.raw());
     io::println("--- click inc-btn -> ${outcome_name(oc1)}, COUNT=${COUNT} ---");
 
     // 4) That re-render replaced every view. The OLD surface refuses with
@@ -108,6 +129,5 @@ fn main() -> i32 {
     let oc3: surface::Outcome = s2.click("inc-btn");
     io::println("--- re-open, click -> ${outcome_name(oc3)}, COUNT=${COUNT} ---");
 
-    fak::APP_CONTENT = 0 as *u8;
     return 0;
 }

@@ -167,6 +167,53 @@ fn get_agent_id(view: *u8) -> option::Option[text::Text] {
     return option::Option[text::Text]::None;
 }
 
+// ---- declared affordance (role + drive-method) ------------------------------
+//
+// Facet's set_identity (and hand-built widgets via set_affordance) pin a packed
+// (role, drive) on the view so the walk does not re-guess the role from the
+// native class. Storage: associated-object ASSIGN of a packed non-null integer
+// under agent_core::affordance_key() — same key facet_appkit writes.
+
+// Record the declared affordance. `drive` defaults from the role when you only
+// care about classification (the common case).
+fn set_affordance(view: *u8, role: identity::Role) {
+    if is_null(view) { return; }
+    let drive: u32 = identity::drive_for_role(role);
+    let packed: *u8 = identity::pack_affordance(identity::role_index(role) as u32, drive);
+    // OBJC_ASSOCIATION_ASSIGN (0): value is an integer disguised as a pointer.
+    rt::set_associated_object(view, identity::affordance_key(), packed, 0 as usize);
+    return;
+}
+
+// Record role + an explicit drive method (for widgets whose drive does not
+// follow the role default).
+fn set_affordance_drive(view: *u8, role: identity::Role, drive: u32) {
+    if is_null(view) { return; }
+    let packed: *u8 = identity::pack_affordance(identity::role_index(role) as u32, drive);
+    rt::set_associated_object(view, identity::affordance_key(), packed, 0 as usize);
+    return;
+}
+
+// Declared role if the view was annotated; None means "fall back to classify".
+fn get_declared_role(view: *u8) -> option::Option[identity::Role] {
+    if is_null(view) { return option::Option[identity::Role]::None; }
+    let p: *u8 = rt::get_associated_object(view, identity::affordance_key());
+    if !identity::is_packed_affordance(p) {
+        return option::Option[identity::Role]::None;
+    }
+    return option::Option[identity::Role]::Some(identity::role_from_index(identity::unpack_role(p)));
+}
+
+// Declared drive method if annotated; None when missing.
+fn get_declared_drive(view: *u8) -> option::Option[u32] {
+    if is_null(view) { return option::Option[u32]::None; }
+    let p: *u8 = rt::get_associated_object(view, identity::affordance_key());
+    if !identity::is_packed_affordance(p) {
+        return option::Option[u32]::None;
+    }
+    return option::Option[u32]::Some(identity::unpack_drive(p));
+}
+
 // ---- the describe_ui snapshot node ------------------------------------------
 
 // One node of the describe_ui snapshot. `id` is the resolved agent-id; `role` is
@@ -214,10 +261,10 @@ fn responds_to(obj: *u8, selector_name: *u8) -> bool {
     return rt::msg_i8_id(obj, rt::sel(#str_ptr("respondsToSelector:\0")), s) != (0 as i8);
 }
 
-// Map an AppKit view to the curated agent-core role vocabulary. NSTextField
-// splits on editability (an editable field is an Input; a static label is Text);
-// table/outline views are Lists; everything else (plain views, stacks, scroll
-// views, boxes) is a structural Group.
+// Map an AppKit view to the curated agent-core role vocabulary by native type.
+// Fallback only — preferred path is a declared affordance (set_affordance /
+// facet set_identity). NSTextField splits on editability; table/outline views
+// are Lists; everything else (plain views, stacks, scroll views) is Group.
 fn classify(view: *u8) -> identity::Role {
     if is_kind(view, #str_ptr("NSButton\0")) {
         return identity::Role::Button;
@@ -237,33 +284,56 @@ fn classify(view: *u8) -> identity::Role {
     return identity::Role::Group;
 }
 
+// Role used by the walk: declared affordance wins; native classify is the
+// fallback for hand-built widgets that never called set_affordance.
+fn resolve_role(view: *u8) -> identity::Role {
+    return match get_declared_role(view) {
+        option::Option[identity::Role]::Some(r) => r,
+        option::Option[identity::Role]::None => classify(view),
+    };
+}
+
 // The live text a node carries: a window's title, a button's title, a text
 // field's string value, a text view's string. Roles without inherent text
-// return "".
+// return "". Every selector is respondsToSelector-guarded: a declared role
+// (e.g. Button on a plain clickable NSView) must not raise when the native
+// class does not answer the role's usual getter.
 fn node_text(view: *u8, role: identity::Role) -> text::Text {
     if identity::role_eq(role, identity::Role::Window) {
-        let wt: *u8 = rt::msg_id(view, rt::sel(#str_ptr("title\0")));
-        if !is_null(wt) {
-            return bridge::to_text(wt);
+        if responds_to(view, #str_ptr("title\0")) {
+            let wt: *u8 = rt::msg_id(view, rt::sel(#str_ptr("title\0")));
+            if !is_null(wt) {
+                return bridge::to_text(wt);
+            }
         }
         return text::from_str("");
     }
     if identity::role_eq(role, identity::Role::Button) {
-        let t: *u8 = rt::msg_id(view, rt::sel(#str_ptr("title\0")));
-        if !is_null(t) {
-            return bridge::to_text(t);
+        if responds_to(view, #str_ptr("title\0")) {
+            let t: *u8 = rt::msg_id(view, rt::sel(#str_ptr("title\0")));
+            if !is_null(t) {
+                return bridge::to_text(t);
+            }
         }
+        return text::from_str("");
     }
     if identity::role_eq(role, identity::Role::Text) || identity::role_eq(role, identity::Role::Input) {
         // NSTextView's content is `string`; NSTextField's is `stringValue`.
-        let sel_name: *u8 = if is_kind(view, #str_ptr("NSTextView\0")) {
-            #str_ptr("string\0")
-        } else {
-            #str_ptr("stringValue\0")
-        };
-        let s: *u8 = rt::msg_id(view, rt::sel(sel_name));
-        if !is_null(s) {
-            return bridge::to_text(s);
+        // Prefer the selector the view actually answers (declared Input on a
+        // non-text view yields "").
+        if is_kind(view, #str_ptr("NSTextView\0")) || responds_to(view, #str_ptr("string\0")) {
+            if responds_to(view, #str_ptr("string\0")) {
+                let s: *u8 = rt::msg_id(view, rt::sel(#str_ptr("string\0")));
+                if !is_null(s) {
+                    return bridge::to_text(s);
+                }
+            }
+        }
+        if responds_to(view, #str_ptr("stringValue\0")) {
+            let s: *u8 = rt::msg_id(view, rt::sel(#str_ptr("stringValue\0")));
+            if !is_null(s) {
+                return bridge::to_text(s);
+            }
         }
     }
     return text::from_str("");
@@ -407,7 +477,7 @@ fn is_detached(view: *u8) -> bool {
 // registry: every `add_child` is paired with exactly one `views.push`. Recursion
 // depth is the view-tree depth (shallow in practice).
 fn walk(ref reg: identity::Registry, ref views: vec::Vec[ViewRef], view: *u8, parent_reg: usize) {
-    let role: identity::Role = classify(view);
+    let role: identity::Role = resolve_role(view);
     let pinned: option::Option[text::Text] = get_agent_id(view);
     let reg_node: usize = match pinned {
         option::Option[text::Text]::Some(t) => {
@@ -418,6 +488,17 @@ fn walk(ref reg: identity::Registry, ref views: vec::Vec[ViewRef], view: *u8, pa
         }
     };
     reg.set_enabled(reg_node, live_enabled(view));
+    // Declared drive_none (labels, groups, windows) → observe-only so the
+    // agent may read but never act. Only when an affordance was recorded —
+    // hand-built widgets without set_affordance keep the previous default.
+    match get_declared_drive(view) {
+        option::Option[u32]::Some(d) => {
+            if d == identity::drive_none() {
+                reg.set_observe_only(reg_node);
+            }
+        }
+        option::Option[u32]::None => { }
+    }
     let _r: *u8 = rt::retain(view);
     views.append(ViewRef { p: view });
 
@@ -608,10 +689,30 @@ impl Surface {
                 if !surface::outcome_eq(oc, surface::Outcome::Allowed) {
                     return oc;
                 }
-                if is_detached(this.view_of(node)) {
+                let v: *u8 = this.view_of(node);
+                if is_detached(v) {
                     return surface::Outcome::Stale;
                 }
-                perform_on_main(this.view_of(node), rt::sel(#str_ptr("performClick:\0")), null());
+                // Declared drive must be click when present (inputs are
+                // drive_text — refuse click rather than no-op on the field).
+                match get_declared_drive(v) {
+                    option::Option[u32]::Some(d) => {
+                        if d != identity::drive_click() {
+                            return surface::Outcome::NotActionable;
+                        }
+                    }
+                    option::Option[u32]::None => { }
+                }
+                // `performClick:` only lands on a view that answers it — NSControls,
+                // and facet clickable/actionable views (which implement it to fire
+                // their primary click handler, so a tagged whole-row clickable is
+                // agent-openable). A plain gesture-only view does NOT respond; the
+                // previous unguarded send raised an unrecognized-selector exception.
+                // Guard it and report `NotActionable` rather than crashing.
+                if !responds_to(v, #str_ptr("performClick:\0")) {
+                    return surface::Outcome::NotActionable;
+                }
+                perform_on_main(v, rt::sel(#str_ptr("performClick:\0")), null());
                 return surface::Outcome::Allowed;
             }
             option::Option[usize]::None => {}
@@ -631,19 +732,30 @@ impl Surface {
                 if !surface::outcome_eq(oc, surface::Outcome::Allowed) {
                     return oc;
                 }
-                if is_detached(this.view_of(node)) {
+                let v: *u8 = this.view_of(node);
+                if is_detached(v) {
                     return surface::Outcome::Stale;
+                }
+                // Declared drive must be text when present (buttons are
+                // drive_click — refuse set_text rather than silently no-op).
+                match get_declared_drive(v) {
+                    option::Option[u32]::Some(d) => {
+                        if d != identity::drive_text() {
+                            return surface::Outcome::NotActionable;
+                        }
+                    }
+                    option::Option[u32]::None => { }
                 }
                 let ns: *u8 = bridge::nsstring(value);
                 // NSTextView sets its content via `setString:`; NSControl via
                 // `setStringValue:` (which NSTextView silently ignores) — the
                 // write must branch exactly like the read in `node_text`.
-                let sel_name: *u8 = if is_kind(this.view_of(node), #str_ptr("NSTextView\0")) {
+                let sel_name: *u8 = if is_kind(v, #str_ptr("NSTextView\0")) {
                     #str_ptr("setString:\0")
                 } else {
                     #str_ptr("setStringValue:\0")
                 };
-                perform_on_main(this.view_of(node), rt::sel(sel_name), ns);
+                perform_on_main(v, rt::sel(sel_name), ns);
                 this.versions.bump(node);
                 return surface::Outcome::Allowed;
             }

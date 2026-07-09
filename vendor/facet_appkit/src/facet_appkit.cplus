@@ -2,15 +2,20 @@
 //
 // Two modules: `./ui` (the `@ui` contextual-builder layer: widgets +
 // containers over flex_layout and the typed appkit binding) and this one
-// (the facet `Renderer` ops, the mount/apply hosts, and the MVU app
-// runtime). Import "facet_appkit/ui" for direct `@ui` apps; import
-// "facet_appkit/facet_appkit" for `@facet` + run_app.
+// (the facet `Renderer` ops and the mount/apply hosts). Import
+// "facet_appkit/ui" for direct `@ui` apps; import
+// "facet_appkit/facet_appkit" for the `@facet` description model.
 //
 // facet owns the tree walk (`facet::mount`) and all layout; this package
-// supplies the three leaf ops of the `Renderer` vtable by delegating to
-// the ui module's widget constructors (typed binding underneath, view owned
-// by the node's payload slot, clicks wired with identity), plus `run` — a
-// window host that mounts a description tree and enters the event loop.
+// supplies the per-kind ops of the `Renderer` vtable by delegating to the
+// ui module's widget constructors (typed binding underneath, view owned by
+// the node's payload slot, clicks wired with identity), plus `set_identity`
+// (called by mount after every widget op) and `run` — a window host that
+// mounts a description tree and enters the event loop.
+//
+// Re-rendering follows the component model: a handler mutates state and the
+// owning component re-renders itself (ui.cplus `component_after`), or the app
+// re-renders explicitly (clear + `mount_into`). There is no global runtime.
 //
 // Replaces the FACET.1 spike wholesale: views no longer leak (payload
 // ownership), clicks are wired (action-with-userdata companion), and layout
@@ -25,28 +30,16 @@ import "appkit/appkit" as ak;
 import "appkit/appkit_ext" as akx;
 import "./ui" as ui;
 import "facet/facet" as facet;
+import "agent_core/identity" as identity;
+import "agent_core/surface" as surface;
+import "agent_appkit/agent_appkit" as agent;
 
-// ---- the three vtable ops ---------------------------------------------------
+// ---- per-kind vtable ops ----------------------------------------------------
 // Each reads the node's config and returns a ui-module node (NSView in the
 // payload, measure wired). The node's Text is borrowed via c_str inside the
 // match arm; the widget copies it into an NSString before the borrow ends.
-
-// Pin the node's agent-id (if any) on the created widget as its AppKit
-// accessibilityIdentifier. Ops run at every mount, so a re-render re-tags
-// the fresh views by construction; the agent surface (agent_appkit) reads
-// the identifier back when no explicitly pinned id exists.
-fn apply_agent_id(view: *u8, np: *facet::Node) {
-    let ip: *text::Text = { #addr_of((*np).agent_id) };
-    if (*ip).count() == (0 as usize) { return; }
-    match (*ip).c_str() {
-        option::Option[text::CString]::Some(cs) => {
-            let sv: str = { #str_from_raw_parts(cs.as_ptr(), cs.count()) };
-            ak::Accessibility::from_raw(view).set_accessibility_identifier(sv);
-        }
-        option::Option[text::CString]::None => { }
-    };
-    return;
-}
+// Agent id pinning is NOT done here — `mount` calls `set_identity` after
+// every widget-producing op (the single choke point).
 
 fn ak_label(ctx: *u8, np: *facet::Node) -> flex::Node {
     var size: f64 = { (*np).font_size };
@@ -62,7 +55,6 @@ fn ak_label(ctx: *u8, np: *facet::Node) -> flex::Node {
             n = ui::label("", size: size);
         }
     };
-    apply_agent_id(n.payload(), np);
     return n;
 }
 
@@ -80,7 +72,6 @@ fn ak_wrap_label(ctx: *u8, np: *facet::Node) -> flex::Node {
             n = ui::wrap_label("", size: size);
         }
     };
-    apply_agent_id(n.payload(), np);
     return n;
 }
 
@@ -97,26 +88,191 @@ fn ak_button(ctx: *u8, np: *facet::Node) -> flex::Node {
         }
     };
     // Wire the action exactly once (a replaced target strands its creation
-    // reference — never rewire). App mode (renderer ctx = 1) adds the
-    // re-render hook after the handler: the MVU rule.
+    // reference — never rewire). Re-render is the component's job: the handler
+    // mutates state, then the owning component (or the app) re-renders. The op
+    // does not wrap the handler.
     let b: ak::Button = ak::Button::from_raw(n.payload());
-    if ctx != (0 as *u8) {
-        akx::set_control_action_ctx_then(b.as_control(), { (*np).click }, { (*np).click_ctx }, refresh);
-    } else {
-        akx::set_control_action_ctx(b.as_control(), { (*np).click }, { (*np).click_ctx });
-    }
-    apply_agent_id(n.payload(), np);
+    akx::set_control_action_ctx(b.as_control(), { (*np).click }, { (*np).click_ctx });
     return n;
 }
 
-// The vtable value. Stateless for now (`ctx` unused); a future backend
-// context (theme, window) rides in `ctx`.
+fn ak_text_area(ctx: *u8, np: *facet::Node) -> flex::Node {
+    let ch: fn(*u8, *u8) = { (*np).on_change };
+    let cctx: *u8 = { (*np).click_ctx };
+    let vp: *text::Text = { #addr_of((*np).value) };
+    let pp: *text::Text = { #addr_of((*np).placeholder) };
+    match (*vp).c_str() {
+        option::Option[text::CString]::Some(vcs) => {
+            let vs: str = { #str_from_raw_parts(vcs.as_ptr(), vcs.count()) };
+            match (*pp).c_str() {
+                option::Option[text::CString]::Some(pcs) => {
+                    let ps: str = { #str_from_raw_parts(pcs.as_ptr(), pcs.count()) };
+                    return ui::text_area(placeholder: ps, value: vs, on_change: ch, ctx: cctx);
+                }
+                option::Option[text::CString]::None => {
+                    return ui::text_area(placeholder: "", value: vs, on_change: ch, ctx: cctx);
+                }
+            }
+        }
+        option::Option[text::CString]::None => {
+            match (*pp).c_str() {
+                option::Option[text::CString]::Some(pcs) => {
+                    let ps: str = { #str_from_raw_parts(pcs.as_ptr(), pcs.count()) };
+                    return ui::text_area(placeholder: ps, value: "", on_change: ch, ctx: cctx);
+                }
+                option::Option[text::CString]::None => {
+                    return ui::text_area(placeholder: "", value: "", on_change: ch, ctx: cctx);
+                }
+            }
+        }
+    }
+}
+
+fn ak_composer(ctx: *u8, np: *facet::Node) -> flex::Node {
+    let sh: fn(*u8, *u8) = { (*np).on_submit };
+    let sctx: *u8 = { (*np).click_ctx };
+    let ch: fn(*u8, *u8) = { (*np).on_change };
+    let vp: *text::Text = { #addr_of((*np).value) };
+    match (*vp).c_str() {
+        option::Option[text::CString]::Some(cs) => {
+            let sv: str = { #str_from_raw_parts(cs.as_ptr(), cs.count()) };
+            return ui::composer(
+                sh,
+                on_change: ch,
+                ctx: sctx,
+                value: sv,
+                show_border: { (*np).show_border },
+                draws_background: { (*np).draws_background },
+            );
+        }
+        option::Option[text::CString]::None => {
+            return ui::composer(
+                sh,
+                on_change: ch,
+                ctx: sctx,
+                value: "",
+                show_border: { (*np).show_border },
+                draws_background: { (*np).draws_background },
+            );
+        }
+    }
+}
+
+fn ak_code_editor(ctx: *u8, np: *facet::Node) -> flex::Node {
+    var size: f64 = { (*np).font_size };
+    if size <= 0.0f64 { size = 12.0f64; }
+    let vp: *text::Text = { #addr_of((*np).value) };
+    match (*vp).c_str() {
+        option::Option[text::CString]::Some(cs) => {
+            let sv: str = { #str_from_raw_parts(cs.as_ptr(), cs.count()) };
+            return ui::code_editor(
+                value: sv,
+                editable: { (*np).editable },
+                size: size,
+                inset_w: { (*np).inset_w },
+                inset_h: { (*np).inset_h },
+            );
+        }
+        option::Option[text::CString]::None => {
+            return ui::code_editor(
+                value: "",
+                editable: { (*np).editable },
+                size: size,
+                inset_w: { (*np).inset_w },
+                inset_h: { (*np).inset_h },
+            );
+        }
+    }
+}
+
+fn ak_bordered(ctx: *u8, np: *facet::Node, take content: flex::Node) -> flex::Node {
+    return ui::bordered(content, radius: { (*np).radius });
+}
+
+fn ak_clickable(ctx: *u8, np: *facet::Node, take content: flex::Node) -> flex::Node {
+    // Primary click reuses Node.click; only wire when a real handler is set
+    // (noop is the blank default — ui:: treats null-fn as "don't install").
+    let none: fn(*u8, *u8) = 0 as fn(*u8, *u8);
+    var primary: fn(*u8, *u8) = none;
+    if { (*np).click } != facet::noop {
+        primary = { (*np).click };
+    }
+    let ph: fn(*u8, *u8) = primary;
+    let pctx: *u8 = { (*np).click_ctx };
+    return ui::clickable(
+        content,
+        ctx: pctx,
+        on_click: ph,
+        on_double_click: { (*np).on_double_click },
+        on_right_click: { (*np).on_right_click },
+        on_long_press: { (*np).on_long_press },
+        long_press_seconds: { (*np).long_press_seconds },
+        on_drag: { (*np).on_drag },
+        on_pinch: { (*np).on_pinch },
+        on_rotate: { (*np).on_rotate },
+        on_hover_in: { (*np).on_hover_in },
+        on_hover_out: { (*np).on_hover_out },
+        on_scroll: { (*np).on_scroll },
+    );
+}
+
+fn ak_split(ctx: *u8, np: *facet::Node, take first: flex::Node, take second: flex::Node) -> flex::Node {
+    return ui::split(
+        first,
+        second,
+        vertical: { (*np).vertical },
+        position: { (*np).position },
+        min_first: { (*np).min_first },
+        min_second: { (*np).min_second },
+    );
+}
+
+// Mount calls this after every widget-producing op. Records the declared
+// affordance (role + drive-method) as associated-object metadata so the agent
+// surface stops re-guessing native types, and pins a non-empty agent id as
+// accessibilityIdentifier. For scroll-hosted editors (composer / text_area /
+// code_editor) the drive target is the inner documentView, not the outer
+// NSScrollView — prefer that when present.
+fn ak_set_identity(ctx: *u8, handle: *u8, id: str, role: u32) {
+    if handle == (0 as *u8) { return; }
+    var target: *u8 = handle;
+    // Prefer documentView only when the handle actually responds (NSScrollView
+    // for composer/text_area/code_editor). Labels/buttons are NSTextField /
+    // NSButton — messaging documentView there throws NSInvalidArgumentException.
+    let dv_sel: *u8 = rt::sel(#str_ptr("documentView\0"));
+    let responds: i8 = rt::msg_i8_id(handle, rt::sel(#str_ptr("respondsToSelector:\0")), dv_sel);
+    if responds != (0 as i8) {
+        let dv: *u8 = { rt::msg_id(handle, dv_sel) };
+        if dv != (0 as *u8) { target = dv; }
+    }
+    // Always record affordance — even untagged widgets get a declared role so
+    // describe_ui is accurate; exposure still requires a non-empty agent id.
+    let r: identity::Role = identity::role_from_index(role);
+    let drive: u32 = identity::drive_for_role(r);
+    let packed: *u8 = identity::pack_affordance(role, drive);
+    // OBJC_ASSOCIATION_ASSIGN (0): packed integer disguised as a pointer.
+    rt::set_associated_object(target, identity::affordance_key(), packed, 0 as usize);
+    if id != "" {
+        ak::Accessibility::from_raw(target).set_accessibility_identifier(id);
+    }
+    return;
+}
+
+// The vtable value. `ctx` is an unused backend-context slot (a future backend
+// context — theme, window — can ride here); the ops don't read it.
 fn renderer() -> facet::Renderer {
     return facet::Renderer {
         ctx: 0 as *u8,
         label: ak_label,
         wrap_label: ak_wrap_label,
         button: ak_button,
+        text_area: ak_text_area,
+        composer: ak_composer,
+        code_editor: ak_code_editor,
+        bordered: ak_bordered,
+        clickable: ak_clickable,
+        split: ak_split,
+        set_identity: ak_set_identity,
     };
 }
 
@@ -134,76 +290,6 @@ fn mount_into(np: *facet::Node, view_ptr: *u8, width: f64, height: f64) -> f64 {
     ui::apply(#addr_of(tree), view_ptr, false);
     let f: flex::Layout = tree.layout_frame();
     return f.height;
-}
-
-// ---- the app runtime: state -> view, events re-render -----------------------
-//
-// MVU with the update step in the handlers, per the app's own state:
-//
-//     static COUNT: i32 = 0;
-//     fn on_inc(sender: *u8, ctx: *u8) { COUNT = COUNT + 1; return; }
-//     fn view() -> facet::Node {
-//         let t: text::Text = "count ${COUNT}";
-//         return @facet {
-//             vstack {
-//                 label(t.view(), size: 20.0f64)
-//                 button("+1").on_click(on_inc)
-//             }
-//         };
-//     }
-//     fn main() -> i32 { fak::run_app(view); return 0; }
-//
-// One rule, no hidden machinery: after an event handler returns, the runtime
-// calls `view()` again and re-renders. State lives wherever the app puts it
-// (statics, or anything reachable from a click ctx).
-
-static APP_VIEW: *u8 = #zero::[*u8]();     // fn() -> facet::Node, stored erased
-static APP_CONTENT: *u8 = #zero::[*u8]();  // the window's content view
-static APP_W: f64 = #zero::[f64]();
-static APP_H: f64 = #zero::[f64]();
-
-// The app-mode Renderer: same leaf ops, ctx = 1 flags buttons to wire the
-// re-render hook.
-fn app_renderer() -> facet::Renderer {
-    return facet::Renderer {
-        ctx: 1 as *u8,
-        label: ak_label,
-        wrap_label: ak_wrap_label,
-        button: ak_button,
-    };
-}
-
-// Bind the view fn + host view without opening a window (run_app does this;
-// tests drive refresh directly against any NSView).
-fn app_bind(view: fn() -> facet::Node, content_ptr: *u8, width: f64, height: f64) {
-    APP_VIEW = view as *u8;
-    APP_CONTENT = content_ptr;
-    APP_W = width;
-    APP_H = height;
-    return;
-}
-
-// Re-render: drop the previous widget views, rebuild the description from
-// the view fn, mount, lay out, apply. Runs once at startup and after every
-// event handler.
-fn refresh() {
-    if APP_CONTENT == (0 as *u8) { return; }
-    let content: ak::View = ak::View::from_raw(APP_CONTENT);
-    var subs: vec::Vec[ak::View] = content.subviews();
-    let cnt: usize = subs.count();
-    for i in 0..(cnt as i32) {
-        match subs.at_ptr(i as usize) {
-            option::Option[*ak::View]::Some(sp) => { { (*sp).remove_from_superview(); } }
-            option::Option[*ak::View]::None => { }
-        }
-    }
-    let vf: fn() -> facet::Node = APP_VIEW as fn() -> facet::Node;
-    var root: facet::Node = vf();
-    var tree: flex::Node = facet::mount(#addr_of(root), app_renderer());
-    tree.calculate_layout(APP_W, APP_H, flex::Direction::LTR);
-    tree.round_to_pixel(2.0f64);
-    ui::apply(#addr_of(tree), APP_CONTENT, false);
-    return;
 }
 
 // The window's style mask. `clean_titlebar` adds full-size-content so the view
@@ -247,27 +333,6 @@ fn make_shell_window(title: str, width: f64, height: f64, clean_titlebar: bool) 
     return win;
 }
 
-// Open a window and run `view` as an app: initial render, then re-render
-// after every event handler. Blocks in the event loop.
-fn run_app(view: fn() -> facet::Node, title: str = "facet", width: f64 = 480.0f64, height: f64 = 360.0f64, clean_titlebar: bool = false) {
-    let app: ak::Application = ak::Application::shared_application();
-    let _ok: bool = app.set_activation_policy(ak::ApplicationActivationPolicy::Regular);
-
-    let win = make_shell_window(title, width, height, clean_titlebar);
-
-    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: width, h: height });
-    win.set_content_view(ak::View::from_raw(content.raw()));
-
-    app_bind(view, content.raw(), width, height);
-    refresh();
-
-    win.center();
-    win.make_key_and_order_front(0 as *u8);
-    app.activate_ignoring_other_apps(true);
-    app.run();
-    return;
-}
-
 // Open a window, mount the tree, run the event loop (blocks).
 fn run(take root: facet::Node, title: str = "facet", width: f64 = 480.0f64, height: f64 = 360.0f64, clean_titlebar: bool = false) {
     let app: ak::Application = ak::Application::shared_application();
@@ -299,6 +364,25 @@ fn approx(a: f64, b: f64) -> bool {
 }
 
 fn t_noop(sender: *u8, ctx: *u8) { return; }
+
+// Component-path re-render: clear the host's subviews, then mount a fresh
+// tree. This is what a component's invalidate does (iris drives it via
+// ui::fill_scroll / mount_into) — the app re-renders explicitly, there is no
+// global runtime. The tests drive it directly to exercise re-render behavior.
+fn remount(view: fn() -> facet::Node, content_ptr: *u8, w: f64, h: f64) {
+    let content: ak::View = ak::View::from_raw(content_ptr);
+    var subs: vec::Vec[ak::View] = content.subviews();
+    let cnt: usize = subs.count();
+    for i in 0..(cnt as i32) {
+        match subs.at_ptr(i as usize) {
+            option::Option[*ak::View]::Some(sp) => { { (*sp).remove_from_superview(); } }
+            option::Option[*ak::View]::None => { }
+        }
+    }
+    var root: facet::Node = view();
+    let _h: f64 = mount_into(#addr_of(root), content_ptr, w, h);
+    return;
+}
 
 #[test]
 fn label_op_builds_textfield_with_config() {
@@ -395,10 +479,11 @@ fn must_layout(o: option::Option[flex::Layout]) -> flex::Layout {
     };
 }
 
-// -- the app runtime: the counter story --------------------------------------
-// State in a static, a handler that mutates it, a view that reads it — the
-// runtime keeps the UI in step. Digit-width assertions ("count 9" = 7 chars,
-// "count 10" = 8) avoid depending on str equality.
+// -- the counter story: explicit re-render -----------------------------------
+// State in a static, a handler that mutates it, a view that reads it. The app
+// re-renders explicitly after the mutation (component model — no global
+// runtime). Digit-width assertions ("count 9" = 7 chars, "count 10" = 8)
+// avoid depending on str equality.
 
 static COUNT: i32 = 0;
 
@@ -444,24 +529,24 @@ fn click(button_ptr: *u8) {
 }
 
 #[test]
-fn app_counter_label_follows_state() {
+fn counter_label_follows_state_on_remount() {
     COUNT = 9;
     let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
-    app_bind(counter_view, content.raw(), 300.0f64, 200.0f64);
-    refresh();
+    remount(counter_view, content.raw(), 300.0f64, 200.0f64);
 
     // Initial render: "count 9" — 7 characters.
     let l0: ak::TextField = ak::TextField::from_raw(nth_widget(content.raw(), 0 as usize));
     assert l0.as_control().string_value().count() == (7 as usize);
 
-    // Click the button: handler mutates state, runtime re-renders.
+    // Click the button: the handler mutates state. Re-render is explicit — the
+    // component model, the handler does not auto-refresh.
     click(nth_widget(content.raw(), 1 as usize));
     assert COUNT == 10;
+    remount(counter_view, content.raw(), 300.0f64, 200.0f64);
 
     // The (rebuilt) label now reads "count 10" — 8 characters.
     let l1: ak::TextField = ak::TextField::from_raw(nth_widget(content.raw(), 0 as usize));
     assert l1.as_control().string_value().count() == (8 as usize);
-    APP_CONTENT = 0 as *u8;   // unbind for the other tests
 }
 
 // counter_view with agent-id tags on both leaves.
@@ -475,12 +560,65 @@ fn tagged_counter_view() -> facet::Node {
     };
 }
 
+// Phase 1 shared demo — a portable @facet tree meant as the shared
+// multi-backend demo. Proves the portable description mounts on AppKit
+// without a second backend present.
+fn demo_submit_noop(ctx: *u8, tv: *u8) { return; }
+
+fn phase1_demo_view() -> facet::Node {
+    let t: text::Text = "count ${COUNT}";
+    return @facet {
+        vstack {
+            label("facet multi-backend", size: 24.0f64, bold: true)
+            label("one DSL · native backends", secondary: true)
+            label(t.view(), size: 18.0f64).agent_id("count-label")
+            button("+1", primary: true).on_click(count_inc).agent_id("inc-btn")
+            composer(on_submit: demo_submit_noop, value: "")
+                .agent_id("chat-input")
+                .height(80.0f64)
+                .grow(1.0f64)
+        }
+    };
+}
+
+#[test]
+fn phase1_shared_demo_mounts_on_appkit() {
+    COUNT = 0;
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 400.0, h: 300.0 });
+    remount(phase1_demo_view, content.raw(), 400.0f64, 300.0f64);
+    // Tags from set_identity: count label, +1 button, composer inner text view.
+    // Walk by accessibility ids instead of index.
+    assert surface_has_id(content.raw(), "count-label");
+    assert surface_has_id(content.raw(), "inc-btn");
+    assert surface_has_id(content.raw(), "chat-input");
+}
+
+// True if any descendant view carries the given accessibilityIdentifier.
+fn surface_has_id(root: *u8, id: str) -> bool {
+    if root == (0 as *u8) { return false; }
+    let got: text::Text = ak::Accessibility::from_raw(root).accessibility_identifier();
+    if got.view() == id { return true; }
+    let v: ak::View = ak::View::from_raw(root);
+    var subs: vec::Vec[ak::View] = v.subviews();
+    let n: usize = subs.count();
+    var i: usize = 0 as usize;
+    while i < n {
+        match subs.at_ptr(i) {
+            option::Option[*ak::View]::Some(sp) => {
+                if surface_has_id({ (*sp).raw() }, id) { return true; }
+            }
+            option::Option[*ak::View]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
+
 #[test]
 fn agent_id_pins_identifier_and_survives_rerender() {
     COUNT = 0;
     let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
-    app_bind(tagged_counter_view, content.raw(), 300.0f64, 200.0f64);
-    refresh();
+    remount(tagged_counter_view, content.raw(), 300.0f64, 200.0f64);
 
     // Fresh mount: both leaves carry their accessibilityIdentifier.
     let l0: *u8 = nth_widget(content.raw(), 0 as usize);
@@ -489,30 +627,57 @@ fn agent_id_pins_identifier_and_survives_rerender() {
     assert ak::Accessibility::from_raw(b0).accessibility_identifier().view() == "inc-btn";
 
     // A click -> handler -> re-render cycle rebuilds every view. The ops
-    // re-apply the tag at mount, so the FRESH button carries it again —
-    // the property that keeps an agent surface addressable across MVU
-    // updates (tags used to die with the replaced views).
+    // re-apply the tag at mount, so the FRESH button carries it again — the
+    // property that keeps an agent surface addressable across re-renders (tags
+    // used to die with the replaced views).
     click(b0);
     assert COUNT == 1;
+    remount(tagged_counter_view, content.raw(), 300.0f64, 200.0f64);
     let b1: *u8 = nth_widget(content.raw(), 1 as usize);
     assert ak::Accessibility::from_raw(b1).accessibility_identifier().view() == "inc-btn";
-    APP_CONTENT = 0 as *u8;
 }
 
 #[test]
 fn untagged_nodes_get_no_identifier() {
     COUNT = 0;
     let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
-    app_bind(counter_view, content.raw(), 300.0f64, 200.0f64);
-    refresh();
+    remount(counter_view, content.raw(), 300.0f64, 200.0f64);
     // counter_view never tags; the identifier read must come back empty
     // (nil or "" both count — messages to nil return zero).
     let l0: *u8 = nth_widget(content.raw(), 0 as usize);
     assert ak::Accessibility::from_raw(l0).accessibility_identifier().count() == (0 as usize);
-    APP_CONTENT = 0 as *u8;
 }
 
-// -- the app runtime: a removable list ----------------------------------------
+#[test]
+fn set_identity_records_affordance_metadata() {
+    // Phase 2: mount always pins (role, drive) on the identity handle so the
+    // agent surface can stop re-classifying by native type. Labels are Text /
+    // drive none; buttons are Button / drive click. Untagged nodes still get
+    // the declaration (exposure still requires an agent id).
+    COUNT = 0;
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
+    remount(tagged_counter_view, content.raw(), 300.0f64, 200.0f64);
+
+    let l0: *u8 = nth_widget(content.raw(), 0 as usize);
+    let b0: *u8 = nth_widget(content.raw(), 1 as usize);
+    let lp: *u8 = rt::get_associated_object(l0, identity::affordance_key());
+    let bp: *u8 = rt::get_associated_object(b0, identity::affordance_key());
+    assert identity::is_packed_affordance(lp);
+    assert identity::is_packed_affordance(bp);
+    assert identity::unpack_role(lp) == (identity::role_index(identity::Role::Text) as u32);
+    assert identity::unpack_drive(lp) == identity::drive_none();
+    assert identity::unpack_role(bp) == (identity::role_index(identity::Role::Button) as u32);
+    assert identity::unpack_drive(bp) == identity::drive_click();
+
+    // Survives re-render (set_identity re-runs on every mount).
+    click(b0);
+    remount(tagged_counter_view, content.raw(), 300.0f64, 200.0f64);
+    let b1: *u8 = nth_widget(content.raw(), 1 as usize);
+    let bp1: *u8 = rt::get_associated_object(b1, identity::affordance_key());
+    assert identity::unpack_role(bp1) == (identity::role_index(identity::Role::Button) as u32);
+}
+
+// -- a removable list: re-render reflows --------------------------------------
 
 static REMOVED: i64 = 0;
 
@@ -541,8 +706,7 @@ fn list_view() -> facet::Node {
 fn app_list_reflows_on_remove() {
     REMOVED = 0;
     let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
-    app_bind(list_view, content.raw(), 300.0f64, 200.0f64);
-    refresh();
+    remount(list_view, content.raw(), 300.0f64, 200.0f64);
 
     let content_v: ak::View = ak::View::from_raw(content.raw());
     var subs0: vec::Vec[ak::View] = content_v.subviews();
@@ -553,9 +717,10 @@ fn app_list_reflows_on_remove() {
         option::Option[*ak::View]::None => { assert false; }
     };
 
-    // Remove row 2: its handler flips the bit, the runtime reflows.
+    // Remove row 2: its handler flips the bit; an explicit re-render reflows.
     click(nth_widget(content.raw(), 2 as usize));
     assert list_kept(2) == false;
+    remount(list_view, content.raw(), 300.0f64, 200.0f64);
 
     var subs1: vec::Vec[ak::View] = content_v.subviews();
     match subs1.at_ptr(0 as usize) {
@@ -564,30 +729,188 @@ fn app_list_reflows_on_remove() {
         }
         option::Option[*ak::View]::None => { assert false; }
     };
-    APP_CONTENT = 0 as *u8;
 }
 
-// -- the after-hook fires in order ---------------------------------------------
+// ---- Phase 3: facet description → agent surface (AppKit only) ---------------
+// Mount a @facet tree into a real window, open an agent Surface, and drive
+// the declared identities. This is the closed loop: set_identity records
+// role+drive; agent_appkit reads them instead of guessing native types.
 
-static ORDER: i32 = 0;
+static E2E_CLICKS: i32 = 0;
 
-fn order_handler(sender: *u8, ctx: *u8) {
-    if ORDER == 0 { ORDER = 1; }
+fn e2e_on_click(sender: *u8, ctx: *u8) {
+    E2E_CLICKS = E2E_CLICKS + 1;
     return;
 }
 
-fn order_after() {
-    if ORDER == 1 { ORDER = 2; }
-    return;
+fn e2e_on_submit(ctx: *u8, tv: *u8) { return; }
+
+fn e2e_window(w: f64, h: f64) -> ak::Window {
+    let _app: ak::Application = ak::Application::shared_application();
+    let win = ak::Window::new(
+        rt::Rect { x: 0.0, y: 0.0, w: w, h: h },
+        ak::window_style_mask_titled,
+        ak::BackingStoreType::NSBackingStoreBuffered,
+        false,
+    );
+    rt::retain(win.raw());
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: w, h: h });
+    win.set_content_view(ak::View::from_raw(content.raw()));
+    return win;
+}
+
+fn e2e_content(win: ak::Window) -> ak::View {
+    return ak::View::from_raw(rt::msg_id(win.raw(), rt::sel(#str_ptr("contentView\0"))));
 }
 
 #[test]
-fn action_then_runs_handler_before_after_hook() {
-    ORDER = 0;
-    let b = ak::Button::new();
-    akx::set_control_action_ctx_then(b.as_control(), order_handler, 0 as *u8, order_after);
-    click(b.raw());
-    assert ORDER == 2;   // handler first, then the hook — in order
+fn e2e_facet_button_is_agent_clickable() {
+    E2E_CLICKS = 0;
+    let win = e2e_window(360.0f64, 240.0f64);
+    let content = e2e_content(win);
+    var root: facet::Node = @facet {
+        vstack {
+            label("hello", secondary: true).agent_id("title")
+            button("Go", primary: true).on_click(e2e_on_click).agent_id("go-btn")
+        }
+    };
+    let _h: f64 = mount_into(#addr_of(root), content.raw(), 360.0f64, 240.0f64);
+
+    var s: agent::Surface = agent::open(win.raw());
+    // Button: declared role Button + drive_click → click Allowed.
+    assert surface::outcome_eq(s.click("go-btn"), surface::Outcome::Allowed);
+    assert E2E_CLICKS == 1;
+    // Label: declared Text + drive_none → observe-only, click refused.
+    assert surface::outcome_eq(s.click("title"), surface::Outcome::NotActionable);
+    // set_text on the button refused (drive is click, not text).
+    assert surface::outcome_eq(
+        s.set_text("go-btn", "x", s.text_version("go-btn")),
+        surface::Outcome::NotActionable);
+}
+
+#[test]
+fn e2e_facet_clickable_row_is_agent_button() {
+    E2E_CLICKS = 0;
+    let win = e2e_window(360.0f64, 240.0f64);
+    let content = e2e_content(win);
+    // Fluent `.on_click` after the block (named params + block is not a DSL form;
+    // primary click reuses Node.click, which `.on_click` sets).
+    var root: facet::Node = @facet {
+        vstack {
+            clickable {
+                label("open row")
+            }.on_click(e2e_on_click).agent_id("row")
+        }
+    };
+    let _h: f64 = mount_into(#addr_of(root), content.raw(), 360.0f64, 240.0f64);
+
+    var s: agent::Surface = agent::open(win.raw());
+    // Without declared affordance a plain NSView is Group; with set_identity
+    // it is Button and performClick: fires the primary handler.
+    let nodes: vec::Vec[agent::AppKitNode] = s.describe();
+    var found: bool = false;
+    var i: usize = 0 as usize;
+    while i < nodes.count() {
+        match nodes.at_ptr(i) {
+            option::Option[*agent::AppKitNode]::Some(n) => {
+                if { (*n).id.view() } == "row" {
+                    assert identity::role_eq({ (*n).role }, identity::Role::Button);
+                    assert { (*n).actionable };
+                    found = true;
+                }
+            }
+            option::Option[*agent::AppKitNode]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    assert found;
+    assert surface::outcome_eq(s.click("row"), surface::Outcome::Allowed);
+    assert E2E_CLICKS == 1;
+}
+
+#[test]
+fn facet_path_mounts_all_remaining_kinds() {
+    // wrap_label, text_area, code_editor, bordered, split — facet → adapter.
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 500.0, h: 400.0 });
+    var left_b: facet::Builder = facet::Builder::new();
+    left_b.add(facet::label("L"));
+    var right_b: facet::Builder = facet::Builder::new();
+    right_b.add(facet::label("R"));
+    var split_b: facet::Builder = facet::Builder::new();
+    split_b.add(facet::code_editor(value: "fn main() {}", editable: true));
+    split_b.add(facet::text_area(value: "notes"));
+    var box_b: facet::Builder = facet::Builder::new();
+    box_b.add(facet::wrap_label("long wrapping text for the card", secondary: true));
+    box_b.add(facet::split(split_b, position: 200.0f64));
+    var root_b: facet::Builder = facet::Builder::new();
+    root_b.add(facet::bordered(box_b, radius: 8.0f64));
+    var root: facet::Node = facet::vstack(root_b);
+    let h: f64 = mount_into(#addr_of(root), content.raw(), 500.0f64, 400.0f64);
+    assert h > 0.0f64;
+    // Content view received at least one subview from apply.
+    assert content.subviews().count() > (0 as usize);
+}
+
+#[test]
+fn e2e_facet_text_area_and_code_editor_agent_input() {
+    let win = e2e_window(400.0f64, 320.0f64);
+    let content = e2e_content(win);
+    var root: facet::Node = @facet {
+        vstack {
+            text_area(value: "ta").agent_id("notes").height(60.0f64)
+            code_editor(value: "ce", editable: true).agent_id("src").height(60.0f64)
+        }
+    };
+    let _h: f64 = mount_into(#addr_of(root), content.raw(), 400.0f64, 320.0f64);
+    var s: agent::Surface = agent::open(win.raw());
+    assert surface::outcome_eq(
+        s.set_text("notes", "hello notes", s.text_version("notes")),
+        surface::Outcome::Allowed);
+    assert surface::outcome_eq(
+        s.set_text("src", "fn x() {}", s.text_version("src")),
+        surface::Outcome::Allowed);
+    assert surface::outcome_eq(s.click("notes"), surface::Outcome::NotActionable);
+}
+
+#[test]
+fn e2e_facet_composer_is_agent_input() {
+    let win = e2e_window(360.0f64, 280.0f64);
+    let content = e2e_content(win);
+    var root: facet::Node = @facet {
+        vstack {
+            composer(on_submit: e2e_on_submit, value: "draft")
+                .agent_id("chat")
+                .height(80.0f64)
+        }
+    };
+    let _h: f64 = mount_into(#addr_of(root), content.raw(), 360.0f64, 280.0f64);
+
+    var s: agent::Surface = agent::open(win.raw());
+    // Identity is the inner NSTextView (set_identity prefers documentView).
+    assert surface::outcome_eq(
+        s.set_text("chat", "hello agent", s.text_version("chat")),
+        surface::Outcome::Allowed);
+    // Drive is text — click refused.
+    assert surface::outcome_eq(s.click("chat"), surface::Outcome::NotActionable);
+
+    // Read back through the agent-visible node text.
+    let nodes: vec::Vec[agent::AppKitNode] = s.describe();
+    var ok: bool = false;
+    var i: usize = 0 as usize;
+    while i < nodes.count() {
+        match nodes.at_ptr(i) {
+            option::Option[*agent::AppKitNode]::Some(n) => {
+                if { (*n).id.view() } == "chat" {
+                    assert identity::role_eq({ (*n).role }, identity::Role::Input);
+                    assert { (*n).text.view() } == "hello agent";
+                    ok = true;
+                }
+            }
+            option::Option[*agent::AppKitNode]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    assert ok;
 }
 
 #[test]

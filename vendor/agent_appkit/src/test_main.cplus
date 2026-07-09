@@ -158,6 +158,130 @@ fn removed_view_reports_stale_not_uaf() {
 }
 
 #[test]
+fn click_on_view_without_performclick_reports_notactionable_not_raise() {
+    // A tagged plain NSView is exposed and actionable (non-controls default to
+    // enabled), yet does NOT answer `performClick:`. The previous unguarded
+    // send raised "unrecognized selector" — an agent click on a facet
+    // `clickable` (a gesture-only NSView) could crash the process. `click` now
+    // guards with respondsToSelector: (like `live_enabled` already does) and
+    // reports NotActionable instead. facet clickables answer performClick: now,
+    // so this exercises the defensive path for any non-clicking tagged view.
+    let win = fixture_window(300.0f64, 200.0f64);
+    let content = content_of(win);
+    let plain = ak::View::new(rt::Rect { x: 5.0, y: 5.0, w: 40.0, h: 20.0 });
+    content.add_subview(ak::View::from_raw(plain.raw()));
+    agent::set_agent_id(plain.raw(), "plain-view");
+
+    var s: agent::Surface = agent::open(win.raw());
+    assert surface::outcome_eq(s.click("plain-view"), surface::Outcome::NotActionable);
+}
+
+#[test]
+fn declared_affordance_overrides_native_classify() {
+    // Phase 2: a plain NSView classifies as Group by type, but a declared
+    // affordance (what facet set_identity records) wins — so a clickable
+    // wrapper is Button, not Group, and describe stops guessing.
+    let win = fixture_window(300.0f64, 200.0f64);
+    let content = content_of(win);
+    let plain = ak::View::new(rt::Rect { x: 5.0, y: 5.0, w: 40.0, h: 20.0 });
+    content.add_subview(ak::View::from_raw(plain.raw()));
+    agent::set_agent_id(plain.raw(), "row-click");
+    agent::set_affordance(plain.raw(), identity::Role::Button);
+
+    var s: agent::Surface = agent::open(win.raw());
+    let nodes: vec::Vec[agent::AppKitNode] = s.describe();
+    // window + content + plain = 3.
+    assert nodes.count() == (3 as usize);
+    match nodes.at_ptr(2 as usize) {
+        option::Option[*agent::AppKitNode]::Some(n) => {
+            assert { (*n).id.view() } == "row-click";
+            assert identity::role_eq({ (*n).role }, identity::Role::Button);
+            assert { (*n).actionable };
+        }
+        option::Option[*agent::AppKitNode]::None => { assert false; }
+    };
+
+    // Without a declaration the same native type stays Group (fallback).
+    let plain2 = ak::View::new(rt::Rect { x: 50.0, y: 5.0, w: 40.0, h: 20.0 });
+    content.add_subview(ak::View::from_raw(plain2.raw()));
+    agent::set_agent_id(plain2.raw(), "bare");
+    var s2: agent::Surface = agent::open(win.raw());
+    let nodes2: vec::Vec[agent::AppKitNode] = s2.describe();
+    match nodes2.at_ptr(3 as usize) {
+        option::Option[*agent::AppKitNode]::Some(n) => {
+            assert { (*n).id.view() } == "bare";
+            assert identity::role_eq({ (*n).role }, identity::Role::Group);
+        }
+        option::Option[*agent::AppKitNode]::None => { assert false; }
+    };
+}
+
+#[test]
+fn declared_input_affordance_on_scroll_document_style_view() {
+    // Composer/code_editor identity lands on the inner NSTextView; if that
+    // view carries a declared Input affordance it must win even if a future
+    // classify regression would mis-tag it.
+    let win = fixture_window(300.0f64, 200.0f64);
+    let content = content_of(win);
+    let tv = ak::TextView::new_with_frame(rt::Rect { x: 10.0, y: 10.0, w: 200.0, h: 60.0 });
+    content.add_subview(tv.as_view());
+    agent::set_agent_id(tv.as_view().raw(), "chat-input");
+    agent::set_affordance(tv.as_view().raw(), identity::Role::Input);
+
+    var s: agent::Surface = agent::open(win.raw());
+    assert surface::outcome_eq(
+        s.set_text("chat-input", "hello", s.text_version("chat-input")),
+        surface::Outcome::Allowed);
+    let ttxt: text::Text = bridge::to_text(rt::msg_id(tv.as_view().raw(), rt::sel(#str_ptr("string\0"))));
+    assert ttxt.view() == "hello";
+    // Drive is text — click is refused even though the node is exposed.
+    assert surface::outcome_eq(s.click("chat-input"), surface::Outcome::NotActionable);
+}
+
+#[test]
+fn declared_drive_none_is_observe_only() {
+    // A tagged label with declared Text (drive_none) is exposed for reads but
+    // never actionable — the agent cannot click or set_text it.
+    let win = fixture_window(300.0f64, 200.0f64);
+    let content = content_of(win);
+    let l = ak::TextField::label_with_string("hello");
+    content.add_subview(l.as_view());
+    agent::set_agent_id(l.as_view().raw(), "title");
+    agent::set_affordance(l.as_view().raw(), identity::Role::Text);
+
+    var s: agent::Surface = agent::open(win.raw());
+    let nodes: vec::Vec[agent::AppKitNode] = s.describe();
+    match nodes.at_ptr(2 as usize) {
+        option::Option[*agent::AppKitNode]::Some(n) => {
+            assert { (*n).id.view() } == "title";
+            assert identity::role_eq({ (*n).role }, identity::Role::Text);
+            assert !{ (*n).actionable };
+        }
+        option::Option[*agent::AppKitNode]::None => { assert false; }
+    }
+    assert surface::outcome_eq(s.click("title"), surface::Outcome::NotActionable);
+    assert surface::outcome_eq(
+        s.set_text("title", "x", s.text_version("title")),
+        surface::Outcome::NotActionable);
+}
+
+#[test]
+fn declared_button_refuses_set_text() {
+    let win = fixture_window(300.0f64, 200.0f64);
+    let content = content_of(win);
+    let b = add_button(content, "go");
+    agent::set_agent_id(b.as_view().raw(), "go-btn");
+    agent::set_affordance(b.as_view().raw(), identity::Role::Button);
+
+    var s: agent::Surface = agent::open(win.raw());
+    assert surface::outcome_eq(
+        s.set_text("go-btn", "nope", s.text_version("go-btn")),
+        surface::Outcome::NotActionable);
+    // Click still works.
+    assert surface::outcome_eq(s.click("go-btn"), surface::Outcome::Allowed);
+}
+
+#[test]
 fn set_text_persists_on_field_and_text_view() {
     // Regression: set_text always sent `setStringValue:`, which NSTextView
     // silently ignores — the outcome was Allowed but the text never landed

@@ -102,49 +102,6 @@ fn set_control_action_ctx(control: ak::Control, handler: fn(*u8, *u8), ctx: *u8)
 extern fn cplus_ext_add_action_method(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8), types: *u8) -> i8;
 
 
-// ---- target/action with an after-hook --------------------------------------
-// The same wiring as `set_control_action_ctx`, plus a zero-arg `after` fn
-// that runs once the handler returns. This is the MVU runtime's re-render
-// hook: the handler mutates state, `after` re-renders — one documented rule,
-// no hidden subscriptions.
-
-fn action_after_key() -> *u8 { return { 28683 as *u8 }; }
-
-fn action_ctx_then_imp(self_obj: *u8, cmd: *u8, sender: *u8) {
-    let f: fn(*u8, *u8) = { synth::get_associated(self_obj, action_ctx_handler_key()) as fn(*u8, *u8) };
-    let ctx: *u8 = synth::get_associated(self_obj, action_ctx_userdata_key());
-    let after: fn() = { synth::get_associated(self_obj, action_after_key()) as fn() };
-    f(sender, ctx);
-    after();
-    return;
-}
-
-fn action_ctx_then_sel() -> *u8 { return rt::sel(#str_ptr("cplusActionCtxThen:\0")); }
-
-fn action_ctx_then_target(handler: fn(*u8, *u8), ctx: *u8, after: fn()) -> *u8 {
-    let name: *u8 = #str_ptr("CplusExt_ActionCtxThenTarget\0");
-    var cls: *u8 = rt::get_class(name);
-    if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
-        let added: i8 = cplus_ext_add_action_method(cls, action_ctx_then_sel(), action_ctx_then_imp, #str_ptr("v@:@\0"));
-        synth::register_class_pair(cls);
-    }
-    let t: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(t, action_ctx_handler_key(), { handler as *u8 });
-    synth::set_associated(t, action_ctx_userdata_key(), ctx);
-    synth::set_associated(t, action_after_key(), { after as *u8 });
-    return t;
-}
-
-// Wire a control to `handler(sender, ctx)` followed by `after()`.
-fn set_control_action_ctx_then(control: ak::Control, handler: fn(*u8, *u8), ctx: *u8, after: fn()) {
-    let t: *u8 = action_ctx_then_target(handler, ctx, after);
-    synth::retain_associated(control.raw(), action_ctx_pin_key(), t);
-    rt::msg_void_id(control.raw(), rt::sel(#str_ptr("setTarget:\0")), t);
-    rt::msg_void_id(control.raw(), rt::sel(#str_ptr("setAction:\0")), action_ctx_then_sel());
-    return;
-}
-
 // ---- target/action with a ctx-aware after-hook ------------------------------
 // Like `set_control_action_ctx_then`, but `after` RECEIVES the same ctx the
 // handler got. This is the component runtime's re-render hook: the ctx is
@@ -309,6 +266,10 @@ fn actionable_view_class() -> *u8 {
     let a: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("mouseEntered:\0")), av_entered_imp, #str_ptr("v@:@\0"));
     let b: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("mouseExited:\0")), av_exited_imp, #str_ptr("v@:@\0"));
     let c: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("scrollWheel:\0")), av_scroll_imp, #str_ptr("v@:@\0"));
+    // A hover/scroll clickable can also carry a click handler; answer
+    // performClick: too so it's agent-openable (agent_click_imp reads the
+    // handler `set_agent_click` attaches, distinct from the av_* hover keys).
+    let d: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("performClick:\0")), agent_click_imp, #str_ptr("v@:@\0"));
     synth::register_class_pair(cls);
     return cls;
 }
@@ -337,6 +298,61 @@ fn new_actionable_view(frame: rt::Rect, on_in: fn(*u8, *u8), on_out: fn(*u8, *u8
         rt::msg_void_id(inited, rt::sel(#str_ptr("addTrackingArea:\0")), ta);
         rt::release(ta);
     }
+    return ak::View::from_raw(rt::autorelease(inited));
+}
+
+// ==========================================================================
+// Agent-clickable views — answer `performClick:` (the agent-drive path)
+// ==========================================================================
+//
+// A facet `clickable` fires its handler through an NSClickGestureRecognizer,
+// which only the user's mouse triggers. The agent surface drives a control by
+// sending `performClick:` (agent_appkit `click`) — a selector a plain NSView
+// doesn't answer, so a whole-row `clickable` tagged with an agent_id couldn't
+// be opened over the app MCP (and the send would raise unrecognized-selector).
+// These NSView subclasses implement `performClick:` to fire the SAME primary
+// single-click handler the gesture calls, so a tagged clickable is openable by
+// both the mouse (via the gesture) and the agent (via performClick:) — the two
+// are independent triggers of one handler, no double-fire. `set_agent_click`
+// attaches that handler; a null handler (a clickable with only e.g. a
+// double-click) makes `performClick:` a no-op.
+
+fn agent_click_handler_key() -> *u8 { return { 28692 as *u8 }; }
+fn agent_click_ctx_key() -> *u8 { return { 28693 as *u8 }; }
+
+fn agent_click_imp(self_obj: *u8, cmd: *u8, sender: *u8) {
+    let f: fn(*u8, *u8) = { synth::get_associated(self_obj, agent_click_handler_key()) as fn(*u8, *u8) };
+    if { f } == (0 as fn(*u8, *u8)) { return; }
+    // Fire with the view as sender, matching the gesture path (whose recognizer
+    // handler also receives the clicked surface). ctx is the component pointer.
+    f(self_obj, synth::get_associated(self_obj, agent_click_ctx_key()));
+    return;
+}
+
+// Attach the primary-click handler + ctx so the view answers `performClick:`.
+// The view's class must implement performClick: (`new_clickable_view` and
+// `new_actionable_view` do); called after wiring the click gesture.
+fn set_agent_click(view: ak::View, handler: fn(*u8, *u8), ctx: *u8) {
+    synth::set_associated(view.raw(), agent_click_handler_key(), { handler as *u8 });
+    synth::set_associated(view.raw(), agent_click_ctx_key(), ctx);
+    return;
+}
+
+// A plain container NSView that also answers `performClick:` (agent-drive).
+// A `clickable`'s backing view when it has no hover/scroll handler (those need
+// the actionable subclass, which answers performClick: too).
+fn clickable_view_class() -> *u8 {
+    let existing: *u8 = rt::get_class(#str_ptr("CplusExtClickableView\0"));
+    if existing != (0 as *u8) { return existing; }
+    let cls: *u8 = synth::allocate_class_pair(rt::get_class(#str_ptr("NSView\0")), #str_ptr("CplusExtClickableView\0"), 0 as usize);
+    let a: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("performClick:\0")), agent_click_imp, #str_ptr("v@:@\0"));
+    synth::register_class_pair(cls);
+    return cls;
+}
+
+fn new_clickable_view(frame: rt::Rect) -> ak::View {
+    let alloced: *u8 = rt::msg_id(clickable_view_class(), rt::sel(#str_ptr("alloc\0")));
+    let inited: *u8 = rt::msg_id_rect(alloced, rt::sel(#str_ptr("initWithFrame:\0")), frame);
     return ak::View::from_raw(rt::autorelease(inited));
 }
 
