@@ -308,6 +308,18 @@ impl Vec[T] {
         return { #slice_from_raw_parts(this._ptr, this._len) };
     }
 
+    // A read-only `str` view of the raw backing store: `count() * size_of[T]`
+    // bytes at the base pointer. For `Vec[u8]` this is exactly the elements —
+    // the bridge `text::from_utf8` uses to validate and copy the whole buffer in
+    // one shot instead of appending element by element. Empty (`""`) for an
+    // empty Vec, so the view never dangles through a null base pointer.
+    fn as_byte_view(this) -> str {
+        if this._len == (0 as usize) {
+            return "";
+        }
+        return { #str_from_raw_parts(this._ptr as *u8, this._len *% #size_of::[T]()) };
+    }
+
     // Raw pointer to element `index`, bounds-checked (None past the end).
     //
     // The read path for NON-Copy elements, where `at`'s `T: Copy` bound does not
@@ -847,5 +859,24 @@ fn vec_fold_ref_borrows_noncopy_elements() {
         option::Option[*Vec[i32]]::Some(p) => { assert { *p }.count() == (2 as usize); }
         option::Option[*Vec[i32]]::None => { assert false; }
     }
+    return;
+}
+
+#[test]
+fn as_byte_view_reflects_elements() {
+    var b: Vec[u8] = new::[u8]();
+    b.append(65 as u8);   // 'A'
+    b.append(66 as u8);   // 'B'
+    let v: str = b.as_byte_view();
+    assert #str_len(v) == (2 as usize);
+    assert { *(#str_ptr(v)) } == (65 as u8);
+    return;
+}
+
+#[test]
+fn as_byte_view_empty_is_empty() {
+    let b: Vec[u8] = new::[u8]();
+    let v: str = b.as_byte_view();
+    assert #str_len(v) == (0 as usize);
     return;
 }

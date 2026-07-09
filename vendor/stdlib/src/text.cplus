@@ -148,6 +148,71 @@ fn repeating(s: str, count: usize) -> Text {
     return t;
 }
 
+// Well-formed UTF-8 check over `len` bytes at `p` (Unicode 15 Table 3-7):
+// rejects overlong encodings, UTF-16 surrogates (U+D800..U+DFFF), code points
+// above U+10FFFF, and stray/truncated continuation bytes. Empty input is valid.
+// The lead byte fixes the sequence length and the tightened range of the first
+// continuation byte; the rest are the plain 0x80..0xBF range.
+fn is_utf8(p: *u8, len: usize) -> bool {
+    var i: usize = 0 as usize;
+    while i < len {
+        let b0: u8 = { *(p + i) };
+        if b0 < (0x80 as u8) {
+            // ASCII.
+            i = i +% (1 as usize);
+        } else if b0 >= (0xC2 as u8) && b0 <= (0xDF as u8) {
+            // 2-byte: C2..DF 80..BF.
+            if (i +% (1 as usize)) >= len { return false; }
+            let b1: u8 = { *(p + (i +% (1 as usize))) };
+            if b1 < (0x80 as u8) || b1 > (0xBF as u8) { return false; }
+            i = i +% (2 as usize);
+        } else if b0 >= (0xE0 as u8) && b0 <= (0xEF as u8) {
+            // 3-byte: E0 A0..BF | E1..EC 80..BF | ED 80..9F | EE..EF 80..BF.
+            if (i +% (2 as usize)) >= len { return false; }
+            let b1: u8 = { *(p + (i +% (1 as usize))) };
+            let b2: u8 = { *(p + (i +% (2 as usize))) };
+            var lo1: u8 = 0x80 as u8;
+            var hi1: u8 = 0xBF as u8;
+            if b0 == (0xE0 as u8) { lo1 = 0xA0 as u8; }
+            if b0 == (0xED as u8) { hi1 = 0x9F as u8; }
+            if b1 < lo1 || b1 > hi1 { return false; }
+            if b2 < (0x80 as u8) || b2 > (0xBF as u8) { return false; }
+            i = i +% (3 as usize);
+        } else if b0 >= (0xF0 as u8) && b0 <= (0xF4 as u8) {
+            // 4-byte: F0 90..BF | F1..F3 80..BF | F4 80..8F, then 80..BF 80..BF.
+            if (i +% (3 as usize)) >= len { return false; }
+            let b1: u8 = { *(p + (i +% (1 as usize))) };
+            let b2: u8 = { *(p + (i +% (2 as usize))) };
+            let b3: u8 = { *(p + (i +% (3 as usize))) };
+            var lo1: u8 = 0x80 as u8;
+            var hi1: u8 = 0xBF as u8;
+            if b0 == (0xF0 as u8) { lo1 = 0x90 as u8; }
+            if b0 == (0xF4 as u8) { hi1 = 0x8F as u8; }
+            if b1 < lo1 || b1 > hi1 { return false; }
+            if b2 < (0x80 as u8) || b2 > (0xBF as u8) { return false; }
+            if b3 < (0x80 as u8) || b3 > (0xBF as u8) { return false; }
+            i = i +% (4 as usize);
+        } else {
+            // 0x80..0xC1 (bare continuation or overlong 2-byte lead) or 0xF5..0xFF.
+            return false;
+        }
+    }
+    return true;
+}
+
+// Build an owned Text from UTF-8 `bytes`, validating first: `None` if the bytes
+// are not well-formed UTF-8. Consumes `bytes` (they drop on return); the result
+// is a fresh copy, so the caller's buffer is freed either way. This is the tidy
+// `Vec[u8] -> Text` bridge — read a file with `fs::File::read_to_end` (or use
+// `fs::read_to_string` directly) and feed the bytes to a parser as a Text.
+fn from_utf8(take bytes: vec::Vec[u8]) -> option::Option[Text] {
+    let view: str = bytes.as_byte_view();
+    if !is_utf8({ #str_ptr(view) }, #str_len(view)) {
+        return option::Option[Text]::None;
+    }
+    return option::Option[Text]::Some(from_str(view));
+}
+
 impl Text {
     // Grow the buffer to at least `new_cap` bytes. Returns `OutOfMemory` (Text
     // unchanged and valid) if `realloc` fails, `Ok` otherwise.
@@ -1034,4 +1099,106 @@ fn text_hash_str_agrees_with_text_hash() {
     assert t.hash() == hash_str("language");
     let e: Text = new();
     assert e.hash() == hash_str("");
+}
+
+#[test]
+fn from_utf8_valid_ascii_roundtrips() {
+    var b: vec::Vec[u8] = vec::new::[u8]();
+    b.append(104 as u8);   // 'h'
+    b.append(105 as u8);   // 'i'
+    match from_utf8(b) {
+        option::Option[Text]::Some(t) => { assert t.equals("hi"); }
+        option::Option[Text]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn from_utf8_valid_multibyte_is_kept_verbatim() {
+    // "é" = U+00E9 = C3 A9 (two bytes).
+    var b: vec::Vec[u8] = vec::new::[u8]();
+    b.append(0xC3 as u8);
+    b.append(0xA9 as u8);
+    match from_utf8(b) {
+        option::Option[Text]::Some(t) => { assert t.count() == (2 as usize); }
+        option::Option[Text]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn from_utf8_empty_is_valid_and_empty() {
+    let b: vec::Vec[u8] = vec::new::[u8]();
+    match from_utf8(b) {
+        option::Option[Text]::Some(t) => { assert t.is_empty(); }
+        option::Option[Text]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn from_utf8_rejects_lone_continuation_byte() {
+    var b: vec::Vec[u8] = vec::new::[u8]();
+    b.append(0x80 as u8);
+    match from_utf8(b) {
+        option::Option[Text]::Some(_t) => { assert false; }
+        option::Option[Text]::None => { }
+    }
+    return;
+}
+
+#[test]
+fn from_utf8_rejects_truncated_multibyte() {
+    var b: vec::Vec[u8] = vec::new::[u8]();
+    b.append(0xC3 as u8);   // 2-byte lead with no continuation
+    match from_utf8(b) {
+        option::Option[Text]::Some(_t) => { assert false; }
+        option::Option[Text]::None => { }
+    }
+    return;
+}
+
+#[test]
+fn from_utf8_rejects_surrogate() {
+    // ED A0 80 encodes U+D800, a UTF-16 surrogate — not valid UTF-8.
+    var b: vec::Vec[u8] = vec::new::[u8]();
+    b.append(0xED as u8);
+    b.append(0xA0 as u8);
+    b.append(0x80 as u8);
+    match from_utf8(b) {
+        option::Option[Text]::Some(_t) => { assert false; }
+        option::Option[Text]::None => { }
+    }
+    return;
+}
+
+#[test]
+fn from_utf8_rejects_overlong_encoding() {
+    // C0 80 is an overlong encoding of NUL; C0 is below the C2 minimum lead.
+    var b: vec::Vec[u8] = vec::new::[u8]();
+    b.append(0xC0 as u8);
+    b.append(0x80 as u8);
+    match from_utf8(b) {
+        option::Option[Text]::Some(_t) => { assert false; }
+        option::Option[Text]::None => { }
+    }
+    return;
+}
+
+#[test]
+fn from_utf8_accepts_max_scalar_and_rejects_above() {
+    // F4 8F BF BF = U+10FFFF (max); F4 90 80 80 would be U+110000 (too high).
+    var ok: vec::Vec[u8] = vec::new::[u8]();
+    ok.append(0xF4 as u8); ok.append(0x8F as u8); ok.append(0xBF as u8); ok.append(0xBF as u8);
+    match from_utf8(ok) {
+        option::Option[Text]::Some(t) => { assert t.count() == (4 as usize); }
+        option::Option[Text]::None => { assert false; }
+    }
+    var bad: vec::Vec[u8] = vec::new::[u8]();
+    bad.append(0xF4 as u8); bad.append(0x90 as u8); bad.append(0x80 as u8); bad.append(0x80 as u8);
+    match from_utf8(bad) {
+        option::Option[Text]::Some(_t) => { assert false; }
+        option::Option[Text]::None => { }
+    }
+    return;
 }
