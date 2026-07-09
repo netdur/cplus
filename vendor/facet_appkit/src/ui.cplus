@@ -328,12 +328,15 @@ fn box() -> flex::Node {
 // the returned node a size or `.grow(1.0)` in the outer layout. This is the
 // general bordered-box primitive — box a subtree, frame a sidebar, or group an
 // input with its toolbar. To put a composer + toolbar in ONE bordered box, wrap
-// a column of a border-less composer and the toolbar:
+// a column of a border-less, background-less composer and the toolbar:
 //
 //   bordered(column {
-//       composer(on_submit: send, show_border: false)   // input, no own border
+//       composer(on_submit: send, show_border: false, draws_background: false)
 //       row { icon_button("plus", on: attach); spacer(); icon_button("arrow.up", on: send) }
 //   })
+//
+// (`draws_background: false` keeps the input transparent so the box shows one
+// uniform fill instead of a filled text rectangle inside the outline.)
 fn bordered(take content: flex::Node, radius: f64 = 6.0f64, agent_id: str = "") -> flex::Node {
     let zero: rt::Rect = rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 };
     let bv: ak::View = ak::View::new(zero);
@@ -468,7 +471,11 @@ fn choose_directory() -> option::Option[text::Text] {
 // `show_border: false` drops the composer's own bezel so it can sit inside an
 // outer `bordered(...)` box alongside a toolbar row — one bordered box holding
 // the input and its accessory controls — without a doubled border.
-fn composer(on_submit: fn(*u8, *u8), on_change: fn(*u8, *u8) = 0 as fn(*u8, *u8), ctx: *u8 = 0 as *u8, value: str = "", show_border: bool = true, agent_id: str = "") -> flex::Node {
+// `draws_background: false` additionally makes the text area transparent (no
+// filled background rectangle on the scroll view or its text view), so a
+// border-less composer inside a `bordered(...)` box shows only the box's own
+// outline and fill.
+fn composer(on_submit: fn(*u8, *u8), on_change: fn(*u8, *u8) = 0 as fn(*u8, *u8), ctx: *u8 = 0 as *u8, value: str = "", show_border: bool = true, draws_background: bool = true, agent_id: str = "") -> flex::Node {
     let zero: rt::Rect = rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 };
     let scroll = ak::ScrollView::new(zero);
     if show_border {
@@ -483,6 +490,10 @@ fn composer(on_submit: fn(*u8, *u8), on_change: fn(*u8, *u8) = 0 as fn(*u8, *u8)
     tv.as_text().set_font(ak::Font::system_font_of_size(13.0f64));
     if value != "" { tv.as_text().set_string(value); }
     tv.as_view().set_autoresizing_mask(ak::autoresizing_mask_options_n_s_view_width_sizable);
+    if !draws_background {
+        scroll.set_draws_background(false);
+        tv.set_draws_background(false);
+    }
     akx::attach_composer_delegate(tv, on_change, on_submit, ctx);
     scroll.set_document_view(tv.as_view());
     tag_agent(scroll.as_view().raw(), agent_id);
@@ -1691,4 +1702,38 @@ fn test_composer_borderless_still_reads_text() {
     let n: flex::Node = composer(on_submit: test_noop_action, value: "hi", show_border: false);
     assert n.has_payload();
     assert area_text(n.payload()).equals("hi");
+}
+
+#[test]
+fn test_composer_transparent_clears_both_backgrounds() {
+    // `draws_background: false` must clear the fill on BOTH layers — the
+    // scroll view and its document text view — or a filled rectangle still
+    // shows inside an outer bordered() box. Text keeps working.
+    let n: flex::Node = composer(on_submit: test_noop_action, value: "hi", show_border: false, draws_background: false);
+    assert n.has_payload();
+    let sv: ak::ScrollView = ak::ScrollView::from_raw(n.payload());
+    assert !sv.draws_background();
+    match sv.document_view() {
+        option::Option[ak::View]::Some(dv) => {
+            assert !ak::TextView::from_raw(dv.raw()).draws_background();
+        }
+        option::Option[ak::View]::None => { assert false; }
+    }
+    assert area_text(n.payload()).equals("hi");
+}
+
+#[test]
+fn test_composer_default_keeps_backgrounds() {
+    // The knob must not regress the normal composer: by default both the
+    // scroll view and the text view keep their filled background.
+    let n: flex::Node = composer(on_submit: test_noop_action, value: "hi");
+    let sv: ak::ScrollView = ak::ScrollView::from_raw(n.payload());
+    assert sv.draws_background();
+    match sv.document_view() {
+        option::Option[ak::View]::Some(dv) => {
+            assert ak::TextView::from_raw(dv.raw()).draws_background();
+        }
+        option::Option[ak::View]::None => { assert false; }
+    }
+    return;
 }
