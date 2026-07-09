@@ -519,7 +519,7 @@ fn raw_add(a: i64, b: i64) -> i64 { #asm("add x0, x0, x1\nret"); }
 | `thread` | `spawn::[T](fn)` / `spawn_with::[I, O](data, fn)` / `JoinHandle[T]` |
 | `atomic` | `atomic_fetch_add_*` + `Ordering::{Relaxed,Acquire,Release,AcqRel,SeqCst}` |
 | `mutex` | pthread-backed, internally refcounted (no separate reference-count wrapper) |
-| `box` / `arc` / `rc` | Owned-on-heap; atomic refcount; non-atomic refcount |
+| `box` / `arc` / `rc` | Owned-on-heap: `Box` one owner, `Arc` atomic-refcount shared, `Rc` non-atomic shared. `Arc`/`Rc` add `downgrade() -> Weak[T]` for cycle-breaking back-pointers |
 | `channel` | typed MPMC message passing |
 | `future` / `executor` / `reactor` / `time` | `async fn`, `await`, kqueue reactor |
 | `iterator` | `gen fn` + adapters (`map`, `filter`, `take`) |
@@ -528,6 +528,19 @@ fn raw_add(a: i64, b: i64) -> i64 { #asm("add x0, x0, x1\nret"); }
 | `marker` | Copy / Send / Sync framework |
 
 `marker`, `range`, and `time` are mostly import/marker shims with little public surface.
+
+### Smart pointers (and their C++ equivalents)
+
+| Need | Use | Notes |
+|---|---|---|
+| unique heap ownership | `box::Box[T]` | one owner; `unwrap() -> T` moves the value back out |
+| shared ownership, one thread | `rc::Rc[T]` | non-atomic refcount; `!Send` / `!Sync` |
+| shared ownership, across threads | `arc::Arc[T]` | atomic refcount; `Send + Sync` iff `T` is |
+| non-owning reference | `rc::Weak[T]` / `arc::Weak[T]` | `downgrade()` from a strong handle; `upgrade() -> Option[..]` while the value lives; the tool for cycle-breaking back-pointers (a `Weak` does not keep the value alive) |
+| exclusive access to a shared value | `Rc/Arc::with_mut(f: fn(ref T)) -> Status` | `Ok` only when this is the sole strong handle and no `Weak` exists, else `Shared` |
+| recover the owned value | `Rc/Arc::try_unwrap() -> Option[T]` | `Some` when this is the sole strong handle |
+
+Coming from C++: `unique_ptr` → `Box`, `shared_ptr` → `Arc` (or `Rc` when single-threaded), `weak_ptr` → `Weak`. There is no interior-mutability escape hatch: shared mutation goes through the `with_mut` gate or a `mutex::Mutex[T]`.
 
 ---
 
@@ -711,9 +724,24 @@ cpc --emit-ll-opt FILE         # post-opt LLVM IR
 cpc --emit-asm FILE            # native asm
 cpc --diagnostics=json         # machine-readable (NDJSON)
 cpc --release                  # -O2 (default: debug -O0 with overflow traps)
+cpc build --asan               # AddressSanitizer (also -g, --ubsan / --tsan / --msan)
 ```
 
 > Builds are fast (a small project compiles in well under a second). For the agentic edit→compile loop, prefer `cpc build` as the feedback command for any project with imports; reserve `cpc check FILE` for self-contained snippets.
+
+### Debugging and sanitizers
+
+`-g` emits DWARF debug info. The LLVM sanitizers instrument cpc-emitted code the same way they instrument clang's:
+
+```bash
+cpc build --asan  file.cplus     # AddressSanitizer: use-after-free, overflows, leaks
+cpc build --ubsan file.cplus     # UndefinedBehaviorSanitizer
+cpc build --tsan  file.cplus     # ThreadSanitizer: data races
+cpc build --msan  file.cplus     # MemorySanitizer: reads of uninitialized memory
+cpc test  --asan                 # run the test suite under a sanitizer
+```
+
+`--asan` / `--tsan` / `--msan` are mutually exclusive (they contend for shadow memory); `--ubsan` composes with any of them. The safe subset prevents most memory errors at compile time; the sanitizers cover the raw-pointer and FFI surface, where a use-after-free or leak is a runtime concern rather than a compile-time guarantee. On macOS, Apple's `leaks` complements `--asan` for allocation-balance checks.
 
 ### Navigating C+ code: query the graph, don't grep
 
