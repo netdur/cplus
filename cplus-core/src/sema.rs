@@ -13974,20 +13974,44 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // an owned Text (same as `let`/`return`), so accept it instead of
         // running the str-vs-struct check. Plain `=` only; a compound op on a
         // `Text` is still rejected by the op-type check below.
+        // A desugared builder-block modifier reassign targets a `__builder_item`
+        // temp: its RHS `__builder_item.m(args)` may resolve to a take-self BUILDER
+        // (returns the item type) or a ref-self MUTATOR (returns unit). Check it
+        // UNCONSTRAINED (expected `None`) so a unit-returning mutator doesn't trip
+        // E0302 inside `check_expr` against the item type — the mutator case is
+        // then accepted just below; a builder's item-typed result is verified by
+        // the equality check further down, exactly as before.
+        let is_builder_item_target =
+            matches!(&target.kind, ExprKind::Ident(n) if n.starts_with("__builder_item"));
         let value_ty = if matches!(op, AssignOp::Assign)
             && self.is_str_lit_to_lang_string(value, &target_ty)
         {
             target_ty.clone()
         } else {
-            self.check_expr(
-                value,
-                if target_ty == Ty::Error {
-                    None
-                } else {
-                    Some(target_ty.clone())
-                },
-            )
+            let expected = if target_ty == Ty::Error || is_builder_item_target {
+                None
+            } else {
+                Some(target_ty.clone())
+            };
+            self.check_expr(value, expected)
         };
+        // A desugared `@ui`/`@ctx` builder-block modifier lowers to
+        // `__builder_item = __builder_item.m(args)` (lower can't yet know whether
+        // `m` is a take-self BUILDER or a ref-self MUTATOR). When `m` resolves to a
+        // MUTATOR it returns unit: the item was mutated in place, not rebound.
+        // Accept it as that — the item keeps its type (no E0302), the ref-self call
+        // didn't move it (no re-init needed). Scoped to the `__builder_item` temp
+        // (the desugar's own name) so a genuine `x = <unit>` mismatch in user code
+        // still reports E0302. A modifier that returns the item type threads
+        // normally through the code below.
+        if is_builder_item_target
+            && matches!(op, AssignOp::Assign)
+            && value_ty == Ty::Unit
+            && target_ty != Ty::Unit
+            && target_ty != Ty::Error
+        {
+            return Ty::Unit;
+        }
         // v0.0.14 soundness: a plain `=` moves the RHS into the target. Moving a
         // non-Copy field/index out of a Drop aggregate is E0509 here too (same
         // as `let` / `return`) — otherwise the source's destructor double-frees

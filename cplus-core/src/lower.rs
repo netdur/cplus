@@ -2016,19 +2016,19 @@ fn desugar_builder_entry(entry: BuilderEntry, b_name: &str, out: &mut Vec<Stmt>)
                             span: m.span,
                         };
                         // A modifier is either a `take self -> Node` BUILDER
-                        // (`.width`/`.grow`/`.padding`/…) or a `ref self` MUTATOR
-                        // (`.set_*`). A builder consumes the item and returns a
-                        // NEW node, so applied as a bare statement it would MOVE
-                        // the temp and the next modifier would hit E0335. Thread
-                        // its result back into the temp — `__i = __i.width(..)` —
-                        // so builders and mutators compose in one chain. Mutators
-                        // (the `set_*` convention) return unit and stay plain
-                        // statements. (Non-`set_` `ref self` methods like
-                        // `add_child` aren't trailing `@ui` modifiers.)
-                        let stmt = if m.name.name.starts_with("set_") {
-                            StmtKind::Expr(call)
-                        } else {
-                            StmtKind::Expr(Expr {
+                        // (`.width`/`.grow`/…, returns a new item) or a `ref self`
+                        // MUTATOR (`.set_pad`/`.boost`/…, mutates in place, returns
+                        // unit). We can't tell them apart HERE — the receiver type
+                        // and the method's return type aren't resolved until sema.
+                        // So always thread the result — `__i = __i.m(..)`. For a
+                        // builder that re-inits the temp after the take-self move
+                        // (they compose in one chain); for a mutator the RHS is
+                        // unit, and sema recognizes a `__builder_item` reassign from
+                        // a unit-returning call as the in-place mutation it is (no
+                        // rebind, no E0302). This is type-directed, so a mutator
+                        // needs no naming convention (`set_*` or otherwise).
+                        out.push(Stmt {
+                            kind: StmtKind::Expr(Expr {
                                 kind: ExprKind::Assign {
                                     op: AssignOp::Assign,
                                     target: Box::new(Expr {
@@ -2038,10 +2038,7 @@ fn desugar_builder_entry(entry: BuilderEntry, b_name: &str, out: &mut Vec<Stmt>)
                                     value: Box::new(call),
                                 },
                                 span: m.span,
-                            })
-                        };
-                        out.push(Stmt {
-                            kind: stmt,
+                            }),
                             span: m.span,
                         });
                     }

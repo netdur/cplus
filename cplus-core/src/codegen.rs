@@ -15132,7 +15132,20 @@ impl<'a> FnState<'a> {
             {
                 self.gen_strlit_as_lang_string(s, &target_ty)
             }
-            _ => self.gen_expr(value).expect("assigned value").0,
+            _ => match self.gen_expr(value) {
+                Some((v, _)) => v,
+                None => {
+                    // A void RHS. A desugared builder-block MUTATOR modifier
+                    // (`__builder_item = __builder_item.m(args)` where `m` is
+                    // `ref self -> ()`) that sema accepted as an in-place mutation:
+                    // `gen_expr` above already emitted the call, which mutated the
+                    // item through its `ref self` receiver — there is no value to
+                    // store. Sema only permits a unit RHS here for the
+                    // `__builder_item` temp, so this can't silently drop a real
+                    // store in user code.
+                    return;
+                }
+            },
         };
         let _ = self.lty(&target_ty);
         // v0.0.3 Slice 3A: compound assigns. For `a OP= b`, lower as

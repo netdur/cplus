@@ -18737,12 +18737,17 @@ fn builder_block_container_fluent_chain_runs() {
     assert_eq!(out.status.code(), Some(22));
 }
 
-/// A consuming fluent modifier on its OWN leading-dot line stays a
-/// use-after-move (modifier lines are discard statements over the item
-/// temp) — and the E0335 now anchors a "value moved here" note at the
-/// moving modifier line.
+/// A consuming fluent modifier on its OWN leading-dot line composes exactly
+/// like the same-line `}.m()` form (see builder_block_container_fluent_chain_runs):
+/// every modifier threads onto the item temp (`__i = __i.boosted(3)`), so a
+/// `take self -> Self` builder re-inits the item rather than moving it away.
+/// Before the compose fix an own-line modifier was a discard statement and this
+/// was a use-after-move E0335; the two forms now agree (no whitespace-sensitive
+/// semantic split). The thread-vs-in-place-mutate choice is type-directed in
+/// sema (a unit-returning modifier is an in-place mutation), so no naming
+/// convention is required of modifiers.
 #[test]
-fn builder_block_fluent_modifier_line_e0335_with_moved_note() {
+fn builder_block_own_line_fluent_modifier_composes() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     std::fs::write(
@@ -18767,21 +18772,21 @@ fn builder_block_fluent_modifier_line_e0335_with_moved_note() {
          }\n",
     )
     .unwrap();
-    let out = Command::new(cpc)
-        .arg("check")
+    let status = Command::new(cpc)
+        .arg("build")
         .current_dir(&dir)
+        .status()
+        .expect("invoke cpc build");
+    assert!(
+        status.success(),
+        "own-line fluent modifier must compose (not E0335): {status}"
+    );
+    let out = Command::new(dir.join("target/debug/bm"))
         .output()
-        .expect("invoke cpc");
-    assert!(!out.status.success(), "own-line fluent modifier must fail");
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains("E0335"),
-        "expected use-after-move: {stderr}"
-    );
-    assert!(
-        stderr.contains("value moved here") && stderr.contains("main.cplus:8:"),
-        "E0335 must anchor the moved-here note at the modifier line: {stderr}"
-    );
+        .expect("run binary");
+    // nest folds leaf(5) -> Item{5,1}; .boosted(3) lifts its weight to 4;
+    // add contributes 5*4 = 20; tree.value = 20.
+    assert_eq!(out.status.code(), Some(20));
 }
 
 /// v0.0.22 DSL.4: a nested `@`-DSL block is rejected with a message that
