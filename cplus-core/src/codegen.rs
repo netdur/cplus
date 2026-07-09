@@ -6009,12 +6009,23 @@ fn gen_function(
         CAbiClass::Direct
     };
     // C-ABI unification: a by-value COPY struct uses the C-ABI classification
-    // (Coerce/Indirect) in EVERY function — not just `export extern fn` — so a cpc
-    // fn taking a `#[repr(C)]`-style value struct is C-callable and a fn-pointer
-    // to it is a real C function pointer. Non-Copy structs keep cpc's ownership
-    // ABI (plain → `ptr`, `take` → raw value): they carry `Drop`, which sema
-    // bars from the C boundary, so they never cross to C. Scalars are `Direct`.
+    // (Coerce/Indirect) in a C-facing function — so a cpc fn taking a
+    // `#[repr(C)]`-style value struct is C-callable and a fn-pointer to it is a
+    // real C function pointer. Non-Copy structs keep cpc's ownership ABI (plain →
+    // `ptr`, `take` → raw value): they carry `Drop`, which sema bars from the C
+    // boundary, so they never cross to C. Scalars are `Direct`.
+    //
+    // Gated on `!fastcc`, EXACTLY like `want_c_abi_ret` above. A `fastcc` fn is
+    // internal-only (never `export`, address never taken), so it is reachable
+    // only by direct cpc→cpc calls — both ends under our control. It keeps its
+    // Copy-struct params as raw aggregates (`Direct`), which `fastcc` lowers into
+    // registers instead of the AAPCS64 >16B hidden-pointer path. That recovers
+    // the register-passing the C-ABI unification otherwise costs a hot recursive
+    // fn (e.g. a raytracer's `ray_color` taking a 24-byte `Ray` by value), with
+    // no FFI impact — C callees and fn-pointers are never `fastcc`. The call side
+    // (`gen_named_call`) mirrors this on the same `is_fastcc` key.
     let _ = is_c_export;
+    let fn_is_fastcc = md.is_fastcc(&f.name.name);
     let param_abis: Vec<CAbiClass> = sig
         .params
         .iter()
@@ -6022,6 +6033,7 @@ fn gen_function(
             if matches!(pty, Ty::Struct(_))
                 && is_copy_ty(pty, types)
                 && !param_passes_by_ptr(pty, *move_, *mut_, types)
+                && !fn_is_fastcc
             {
                 classify_c_abi(pty, types)
             } else {
@@ -13032,6 +13044,14 @@ impl<'a> FnState<'a> {
         // cleared.
         let want_musttail = self.pending_musttail;
         self.pending_musttail = false;
+        // Does the callee use `fastcc`? Keyed on the same symbol the return gate
+        // (`want_c_abi_ret`) uses below (`link_name` for extern, else `name`); for
+        // a native fastcc-eligible callee `link_name` is None so this is `name`,
+        // and externs are never fastcc. A fastcc callee takes its Copy-struct args
+        // as raw aggregates (registers), matching the def-side `fn_is_fastcc` gate
+        // in `gen_function` — so both ends agree and the AAPCS64 >16B indirect
+        // path is skipped for internal cpc→cpc calls only.
+        let callee_is_fastcc = self.md.is_fastcc(sig.link_name.as_deref().unwrap_or(name));
         // Per-arg lowering. `arg_vals[i]` is (ssa-value, llvm-type-string).
         // For pointer-passed `ref x: T` params we take the address of the
         // source place; for value-passed params we evaluate the value and
@@ -13072,12 +13092,14 @@ impl<'a> FnState<'a> {
                 // callee's coerced/indirect signature → SIGSEGV on the
                 // first real call.
                 // C-ABI unification: a by-value COPY struct arg uses the C ABI
-                // for EVERY call (native + extern), matching the unified callee
-                // signature — a raw aggregate would mismatch the coerced/indirect
-                // param and segfault. Non-Copy structs keep cpc's ABI (they don't
-                // cross to C). Extern callees only ever take Copy structs (sema
-                // bars Drop), so this subsumes the old `sig.is_extern` gate.
-                if matches!(pty, Ty::Struct(_)) && is_copy_ty(pty, self.types) {
+                // for a C-facing call, matching the unified callee signature — a
+                // raw aggregate would mismatch the coerced/indirect param and
+                // segfault. Non-Copy structs keep cpc's ABI (they don't cross to
+                // C). Extern callees only ever take Copy structs (sema bars Drop),
+                // so this subsumes the old `sig.is_extern` gate. Skipped for a
+                // `fastcc` callee: it takes Copy structs as raw aggregates
+                // (registers), matching its def-side signature in `gen_function`.
+                if matches!(pty, Ty::Struct(_)) && is_copy_ty(pty, self.types) && !callee_is_fastcc {
                     match classify_c_abi(pty, self.types) {
                         CAbiClass::Coerce {
                             llvm_ty,
@@ -18323,6 +18345,72 @@ mod tests {
     }
 
     #[test]
+    fn fastcc_fn_takes_large_copy_struct_by_value_not_indirect() {
+        // A `fastcc` (internal, address-not-taken) fn keeps a >16-byte Copy struct
+        // param as a raw aggregate — `fastcc` lowers it into registers instead of
+        // the AAPCS64 hidden-pointer (Indirect) path the C-ABI unification imposes
+        // on C-facing fns. This recovers the register passing that regressed the
+        // raytracer (`ray_color` taking a 24-byte `Ray` by value) at v0.0.23.
+        // Def and call must AGREE (both Direct); they share the `is_fastcc` gate.
+        let ir = gen_src(
+            "struct Ray { ox: f32, oy: f32, oz: f32, dx: f32, dy: f32, dz: f32 }\n\
+             fn shade(r: Ray) -> f32 { return r.ox; }\n\
+             fn main() -> i32 {\n\
+                 let ray: Ray = Ray { ox: 1.0f32, oy: 2.0f32, oz: 3.0f32, dx: 4.0f32, dy: 5.0f32, dz: 6.0f32 };\n\
+                 let _v: f32 = shade(ray);\n\
+                 return 0;\n\
+             }",
+        );
+        // Definition is fastcc, and the Ray param is a by-value aggregate — NOT a
+        // hidden `ptr` (Indirect) or `ptr byval`.
+        assert!(
+            ir.contains("fastcc float @shade("),
+            "shade must be fastcc, got:\n{ir}"
+        );
+        let def_line = ir
+            .lines()
+            .find(|l| l.contains("define") && l.contains("@shade("))
+            .unwrap_or("");
+        assert!(
+            !def_line.contains("ptr"),
+            "fastcc shade must take Ray by value (no indirect ptr/byval), got def:\n{def_line}\nfull:\n{ir}"
+        );
+        // The direct call is fastcc and passes the aggregate value (not a ptr).
+        let call_line = ir
+            .lines()
+            .find(|l| l.contains("call") && l.contains("@shade("))
+            .unwrap_or("");
+        assert!(
+            call_line.contains("fastcc") && !call_line.contains("ptr") && !call_line.contains("byval"),
+            "fastcc call must pass Ray by value, agreeing with the def, got call:\n{call_line}"
+        );
+    }
+
+    #[test]
+    fn exported_fn_keeps_large_copy_struct_indirect_ffi_preserved() {
+        // The fastcc carve-out must NOT touch the FFI boundary: an `export` fn has
+        // external linkage (never fastcc), so a >16-byte Copy struct still passes
+        // by the AAPCS64 C ABI (Indirect → a hidden `ptr`) — a C caller agrees.
+        let ir = gen_src(
+            "#[repr(C)] struct Ray { ox: f32, oy: f32, oz: f32, dx: f32, dy: f32, dz: f32 }\n\
+             export fn shade(r: Ray) -> f32 { return r.ox; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        let def_line = ir
+            .lines()
+            .find(|l| l.contains("define") && l.contains("@shade("))
+            .unwrap_or("");
+        assert!(
+            !def_line.contains("fastcc"),
+            "exported shade must NOT be fastcc, got:\n{def_line}"
+        );
+        assert!(
+            def_line.contains("ptr"),
+            "exported shade must take Ray by hidden pointer (C ABI intact), got:\n{def_line}\nfull:\n{ir}"
+        );
+    }
+
+    #[test]
     fn auto_field_drop_recurses_struct_fields() {
         // v0.0.14: a struct with a Drop field but no own `drop` auto-drops the
         // field at scope exit (here: a moved-in owning param).
@@ -19052,9 +19140,12 @@ mod tests {
     #[test]
     fn struct_passed_by_value_in_signature() {
         let ir = gen_src(include_str!("../../docs/examples/point.cplus"));
-        // C-ABI unification: `Point {x:i32,y:i32}` (8 bytes) is passed coerced to
-        // `i64` per the platform C ABI (matches clang), not as a raw aggregate.
-        assert!(ir.contains("i32 @distance_squared(i64"));
+        // `distance_squared` is internal and its address is never taken, so it is
+        // `fastcc` and passes `Point {x:i32,y:i32}` as a raw `%Point` aggregate
+        // (registers) — NOT the C-ABI-coerced `i64`. The C-ABI coercion applies
+        // only to C-facing fns (see copy_struct_value_param_coerced_per_c_abi,
+        // which takes the fn's address to pin the C convention).
+        assert!(ir.contains("fastcc i32 @distance_squared(%Point"));
     }
 
     #[test]
@@ -19834,13 +19925,20 @@ mod tests {
 
     #[test]
     fn copy_struct_value_param_coerced_per_c_abi() {
-        // C-ABI unification: a by-value Copy struct is coerced to the platform
-        // C-ABI integer class (a ≤8-byte struct → `i64`), matching clang — not a
-        // raw aggregate. It's a plain scalar param (no `noundef`/aggregate attrs).
+        // C-ABI unification: a by-value Copy struct in a C-FACING fn is coerced to
+        // the platform C-ABI integer class (a ≤8-byte struct → `i64`), matching
+        // clang — not a raw aggregate. It's a plain scalar param (no `noundef`/
+        // aggregate attrs). `use_p`'s address is taken (a fn-pointer), which pins
+        // the C convention: an internal, address-not-taken fn would be `fastcc`
+        // and keep the raw `%P` aggregate instead.
         let ir = gen_src(
             "struct P { v: i32 }\n\
              fn use_p(p: P) -> i32 { return p.v; }\n\
-             fn main() -> i32 { let q: P = P { v: 5 }; return use_p(q); }",
+             fn main() -> i32 {\n\
+                 let _f: fn(P) -> i32 = use_p;\n\
+                 let q: P = P { v: 5 };\n\
+                 return use_p(q);\n\
+             }",
         );
         let line = ir
             .lines()
@@ -21972,20 +22070,25 @@ mod tests {
 
     #[test]
     fn non_extern_copy_struct_param_uses_c_abi() {
-        // C-ABI unification: a regular (non-extern) C+ fn taking a by-value COPY
-        // struct now lowers it per the platform C ABI — an 8-byte {i32,i32}
-        // coerces to `i64`, the SAME as `export extern fn` and as clang — so the fn
-        // is C-callable and a fn-pointer to it is a real C function pointer.
-        // (Previously native fns kept the raw `%Point` aggregate, diverging from
-        // C and segfaulting fn-pointer-to-C calls.)
+        // C-ABI unification: a non-extern C+ fn whose ADDRESS IS TAKEN (a real
+        // fn-pointer to it exists) lowers a by-value COPY struct per the platform
+        // C ABI — an 8-byte {i32,i32} coerces to `i64`, the SAME as `export extern
+        // fn` and as clang — so the fn-pointer is a real C function pointer.
+        // Taking the address is what pins the C convention: without it the fn is
+        // `fastcc` and keeps the raw `%Point` aggregate (registers) — that carve-
+        // out is what recovers internal-call perf while preserving fn-ptr FFI.
         let ir = gen_src(
             "#[repr(C)] struct Point { x: i32, y: i32 }\n\
              fn use_p(p: Point) -> i32 { return p.x; }\n\
-             fn main() -> i32 { let q: Point = Point { x: 1, y: 2 }; return use_p(q); }",
+             fn main() -> i32 {\n\
+                 let _f: fn(Point) -> i32 = use_p;\n\
+                 let q: Point = Point { x: 1, y: 2 };\n\
+                 return use_p(q);\n\
+             }",
         );
         assert!(
             ir.contains("@use_p(i64"),
-            "native fn must use the C ABI (coerced i64) for a by-value Copy struct, got:\n{ir}"
+            "an address-taken native fn must use the C ABI (coerced i64) for a by-value Copy struct, got:\n{ir}"
         );
     }
 
