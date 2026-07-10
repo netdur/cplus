@@ -325,6 +325,7 @@ struct Node {
     // isn't shadowed by a same-named field.
     drop_handler: fn(*u8, *u8), // null-fn when the box is not a drop target
     opaque drop_ctx: *u8,       // borrowed identity value passed to the handler
+    drag_text: text::Text,      // drag-and-drop SOURCE payload; "" = not draggable
     // layout
     _grow: f64,
     _gap: f64,
@@ -450,6 +451,7 @@ fn blank(kind: u32) -> Node {
         on_scroll: none,
         drop_handler: none,
         drop_ctx: 0 as *u8,
+        drag_text: text::from_str(""),
         _grow: 0.0f64,
         _gap: 0.0f64,
         _padding: 0.0f64,
@@ -936,6 +938,14 @@ impl Node {
         var n: Node = this;
         n.drop_handler = handler;
         n.drop_ctx = ctx;
+        return n;
+    }
+    // `.draggable(text)` — make a `box` a drag SOURCE that carries `text` on the
+    // pasteboard (SwiftUI `.draggable`). A box is either draggable OR a drop
+    // target, not both (they need distinct backing views).
+    fn draggable(take this, text: str) -> Node {
+        var n: Node = this;
+        n.drag_text = text::from_str(text);
         return n;
     }
     // `.toolbar(items)` — attach a window toolbar to the root node (SwiftUI

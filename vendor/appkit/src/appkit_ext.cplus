@@ -12,6 +12,7 @@ import "objc/synthesis" as synth;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/vec" as vec;
+import "stdlib/option" as option;
 import "appkit/appkit" as ak;
 
 // `class_addMethod` for a `BOOL (self, _cmd)` method (isFlipped). This shape isn't
@@ -534,6 +535,73 @@ fn new_drop_view(handler: fn(*u8, *u8), ctx: *u8) -> ak::View {
 fn drop_text_of(drop_view: *u8) -> text::Text {
     let ns: *u8 = synth::get_associated(drop_view, drop_text_key());
     return bridge::to_text(ns);
+}
+
+// ==========================================================================
+// Drag-and-drop SOURCE -> pasteboard text
+// ==========================================================================
+//
+// A `FacetDragView` starts a copy drag carrying its associated text when the
+// user presses inside it. It conforms to NSDraggingSource (advertising Copy for
+// any context) and builds the drag preview from a snapshot of the view, so the
+// dragged content follows the cursor. SwiftUI `.draggable`. Pairs with the
+// FacetDropView destination above.
+
+fn drag_text_key() -> *u8 { return { 28698 as *u8 }; }
+
+// NSDragOperationCopy = 1, for a local or cross-app drag.
+fn drag_source_mask_imp(self_obj: *u8, cmd: *u8, session: *u8, context: i64) -> u64 { return 1 as u64; }
+
+fn drag_mousedown_imp(self_obj: *u8, cmd: *u8, event: *u8) {
+    let ns: *u8 = synth::get_associated(self_obj, drag_text_key());
+    if { ns as *u8 } == { 0 as *u8 } { return; }
+    // one NSPasteboardItem carrying the payload as UTF-8 text
+    let pbitem: *u8 = rt::msg_id(rt::msg_id(rt::get_class(#str_ptr("NSPasteboardItem\0")), rt::sel(#str_ptr("alloc\0"))), rt::sel(#str_ptr("init\0")));
+    rt::msg_void_id_id(pbitem, rt::sel(#str_ptr("setString:forType:\0")), ns, bridge::nsstring("public.utf8-plain-text"));
+    let ditem: ak::DraggingItem = ak::DraggingItem::new(ak::PasteboardWriting::from_raw(pbitem));
+    let ditem_raw: *u8 = ditem.raw();
+    rt::release(pbitem);   // the dragging item retained it
+    let view: ak::View = ak::View::from_raw(self_obj);
+    let rect: rt::Rect = view.bounds();
+    // preview = a snapshot of the view, so something follows the cursor
+    var contents: *u8 = 0 as *u8;
+    match view.bitmap_image_rep_for_caching_display_in_rect(rect) {
+        option::Option[ak::BitmapImageRep]::Some(rep) => {
+            view.cache_display_in_rect(rect, rep);
+            let img: *u8 = rt::msg_id(rt::msg_id(rt::get_class(#str_ptr("NSImage\0")), rt::sel(#str_ptr("alloc\0"))), rt::sel(#str_ptr("init\0")));
+            rt::msg_void_id(img, rt::sel(#str_ptr("addRepresentation:\0")), rep.as_image_rep().raw());
+            contents = img;
+        }
+        option::Option[ak::BitmapImageRep]::None => {}
+    }
+    ditem.set_dragging_frame_contents(rect, contents);
+    if { contents as *u8 } != { 0 as *u8 } { rt::release(contents); }   // the item copied it
+    var items: vec::Vec[ak::DraggingItem] = vec::new::[ak::DraggingItem]();
+    items.append(ditem);
+    let _s: ak::DraggingSession = view.begin_dragging_session_with_items(items, ak::Event::from_raw(event), ak::DraggingSource::from_raw(self_obj));
+    rt::release(ditem_raw);   // the session retained it
+    return;
+}
+
+fn drag_view_class() -> *u8 {
+    let name: *u8 = #str_ptr("FacetDragView\0");
+    var cls: *u8 = rt::get_class(name);
+    if cls == { 0 as *u8 } {
+        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSView\0")), name, 0 as usize);
+        let a1: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("mouseDown:\0")), drag_mousedown_imp, #str_ptr("v@:@\0"));
+        let a2: i8 = synth::add_method_u64_1id_i64(cls, rt::sel(#str_ptr("draggingSession:sourceOperationMaskForDraggingContext:\0")), drag_source_mask_imp, #str_ptr("Q@:@q\0"));
+        synth::register_class_pair(cls);
+    }
+    return cls;
+}
+
+// A fresh +1 FacetDragView carrying `text` as its drag payload. Frame is set
+// later by the layout pass.
+fn new_drag_view(text: str) -> ak::View {
+    let cls: *u8 = drag_view_class();
+    let v: *u8 = synth::alloc_init_class(cls);
+    synth::retain_associated(v, drag_text_key(), bridge::nsstring(text));   // pin the payload NSString
+    return ak::View::from_raw(v);
 }
 
 // ==========================================================================

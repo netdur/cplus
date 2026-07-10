@@ -630,9 +630,13 @@ fn ak_date_picker(ctx: *u8, np: *facet::Node) -> flex::Node {
 // `.dropDestination`); the handler reads the payload via `dropped_text(sender)`.
 fn ak_box(ctx: *u8, np: *facet::Node) -> flex::Node {
     let drop: fn(*u8, *u8) = { (*np).drop_handler };
+    let dtp: *text::Text = { #addr_of((*np).drag_text) };
+    let drag: str = { (*dtp).view() };
     var v: ak::View = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 });
-    if drop != facet::null_fn() {
-        v = akx::new_drop_view(drop, { (*np).drop_ctx });
+    if drag != "" {
+        v = akx::new_drag_view(drag);              // drag SOURCE
+    } else if drop != facet::null_fn() {
+        v = akx::new_drop_view(drop, { (*np).drop_ctx });   // drop DESTINATION
     }
     var n: flex::Node = ui::fixed_view(v);
     apply_style(n.payload(), facet::kind_box(), np);
@@ -2134,6 +2138,28 @@ fn toolbar_attaches_with_items() {
         option::Option[ak::Toolbar]::None => {}
     }
     assert found;
+}
+
+#[test]
+fn draggable_box_is_drag_source() {
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 160.0, h: 120.0 });
+    var root: facet::Node = @facet {
+        vstack {
+            box().frame(100.0f64, 40.0f64).draggable("hello").agent_id("drag")
+        }
+    };
+    let h: f64 = mount_into(#addr_of(root), content.raw(), 160.0f64, 120.0f64);
+    assert h > 0.0f64;
+    assert surface_has_id(content.raw(), "drag");
+    let vp: *u8 = find_view_by_id(content.raw(), "drag");
+    assert vp != (0 as *u8);
+    // the box is a FacetDragView: it conforms to NSDraggingSource and handles the
+    // press that starts a drag (interactive drag itself is AppKit's, out of scope)
+    let responds_sel: *u8 = rt::sel(#str_ptr("respondsToSelector:\0"));
+    let src_sel: *u8 = rt::sel(#str_ptr("draggingSession:sourceOperationMaskForDraggingContext:\0"));
+    let down_sel: *u8 = rt::sel(#str_ptr("mouseDown:\0"));
+    assert rt::msg_i8_id(vp, responds_sel, src_sel) != (0 as i8);
+    assert rt::msg_i8_id(vp, responds_sel, down_sel) != (0 as i8);
 }
 
 fn td_drop_handler(sender: *u8, ctx: *u8) { return; }

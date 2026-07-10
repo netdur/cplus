@@ -168,6 +168,7 @@ fn shapes_cycles() -> i32 {
                 gauge(value: 0.6f64, min: 0.0f64, max: 1.0f64)
                 label("Appears").fade_in(0.3f64)
                 box().frame(160.0f64, 40.0f64).on_drop(dh, 0 as *u8)
+                box().frame(160.0f64, 40.0f64).draggable("drag me")
             }
         };
         let _h: f64 = fak::mount_into(#addr_of(root), content.raw(), 200.0f64, 160.0f64);
