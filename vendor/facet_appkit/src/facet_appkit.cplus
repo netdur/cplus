@@ -106,6 +106,15 @@ fn apply_style(view_ptr: *u8, kind: u32, np: *facet::Node) {
     if { (*alp).view() } != "" {
         ak::Accessibility::from_raw(view_ptr).set_accessibility_label({ (*alp).view() });
     }
+    let ahp: *text::Text = { #addr_of((*np).a11y_hint) };
+    if { (*ahp).view() } != "" {
+        ak::Accessibility::from_raw(view_ptr).set_accessibility_help({ (*ahp).view() });
+    }
+    // Keyboard shortcut — the button's key equivalent.
+    let kep: *text::Text = { #addr_of((*np).key_equiv) };
+    if { (*kep).view() } != "" && kind == facet::kind_button() {
+        ak::Button::from_raw(view_ptr).set_key_equivalent({ (*kep).view() });
+    }
     // Context menu — a right-click NSMenu; each item dispatches the shared
     // handler with its index as ctx. NSMenuItem.target is weak, so we retain
     // each target via an associated object on its item; the view retains the menu.
@@ -605,6 +614,16 @@ fn ak_box(ctx: *u8, np: *facet::Node) -> flex::Node {
     return n;
 }
 
+fn ak_gauge(ctx: *u8, np: *facet::Node) -> flex::Node {
+    let li: ak::LevelIndicator = ak::LevelIndicator::new();
+    li.set_min_value({ (*np).min_val });
+    li.set_max_value({ (*np).max_val });
+    li.as_control().set_double_value({ (*np).value_f });
+    var n: flex::Node = ui::fixed_view(li.as_view());
+    apply_style(n.payload(), facet::kind_gauge(), np);
+    return n;
+}
+
 fn ak_slider(ctx: *u8, np: *facet::Node) -> flex::Node {
     let sl: ak::Slider = ak::Slider::new();
     sl.set_min_value({ (*np).min_val });
@@ -877,6 +896,7 @@ fn renderer() -> facet::Renderer {
         color_picker: ak_color_picker,
         date_picker: ak_date_picker,
         box: ak_box,
+        gauge: ak_gauge,
         native: ak_native,
         bordered: ak_bordered,
         clickable: ak_clickable,
@@ -1946,6 +1966,27 @@ fn focus_makes_widget_first_responder() {
     // find_view_by_id locates the field, and makeFirstResponder succeeds.
     assert find_view_by_id(content.raw(), "email") != (0 as *u8);
     assert focus(win.raw(), "email");
+}
+
+#[test]
+fn gauge_keyboard_a11yhint_mount() {
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 100.0 });
+    var root: facet::Node = @facet {
+        vstack {
+            gauge(value: 0.6f64, min: 0.0f64, max: 1.0f64).agent_id("g")
+            button("Save")
+                .keyboard_shortcut("s")
+                .accessibility_hint("Saves the current file")
+                .agent_id("save")
+        }
+    };
+    let h: f64 = mount_into(#addr_of(root), content.raw(), 200.0f64, 100.0f64);
+    assert h > 0.0f64;
+    assert surface_has_id(content.raw(), "g");      // NSLevelIndicator
+    assert surface_has_id(content.raw(), "save");
+    // the key equivalent landed on the button
+    let bp: *u8 = nth_widget(content.raw(), 1 as usize);
+    assert ak::Button::from_raw(bp).key_equivalent().view() == "s";
 }
 
 #[test]

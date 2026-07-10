@@ -311,6 +311,17 @@ fn gtk_box(ctx: *u8, np: *facet::Node) -> flex::Node {
     return widget_leaf(da.upcast());
 }
 
+// A value gauge (GtkLevelBar; value normalized to its 0..1 range).
+fn gtk_gauge(ctx: *u8, np: *facet::Node) -> flex::Node {
+    let lb: gtk::LevelBar = gtk::LevelBar::new();
+    let mn: f64 = { (*np).min_val };
+    let mx: f64 = { (*np).max_val };
+    var frac: f64 = 0.0f64;
+    if mx > mn { frac = ({ (*np).value_f } - mn) / (mx - mn); }
+    lb.set_value(frac);
+    return widget_leaf(lb.upcast());
+}
+
 fn gtk_slider(ctx: *u8, np: *facet::Node) -> flex::Node {
     // GtkScale → GtkRange → GtkWidget; value rides the Range.
     let sc: gtk::Scale = gtk::Scale::new_with_range(0 as i32, { (*np).min_val }, { (*np).max_val }, 1.0f64);
@@ -403,6 +414,7 @@ fn renderer() -> facet::Renderer {
         color_picker: gtk_color_picker,
         date_picker: gtk_date_picker,
         box: gtk_box,
+        gauge: gtk_gauge,
         native: gtk_native,
         bordered: gtk_bordered,
         clickable: gtk_clickable,

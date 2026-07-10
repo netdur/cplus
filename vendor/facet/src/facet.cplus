@@ -95,6 +95,8 @@ fn kind_grid() -> u32 { return 28 as u32; }
 fn kind_box() -> u32 { return 29 as u32; }
 // A translucent vibrancy wrapper (macOS material / sidebar). Wrapper op.
 fn kind_material() -> u32 { return 30 as u32; }
+// A read-only value gauge (SwiftUI Gauge → NSLevelIndicator). Leaf op.
+fn kind_gauge() -> u32 { return 31 as u32; }
 
 // Agent-affordance roles — numeric indices aligned with agent_core::Role so
 // Phase 2 can pass them through without a translation table.
@@ -258,6 +260,8 @@ struct Node {
                             // (via set_identity), so it survives re-renders.
     tooltip: text::Text,    // "" = none. Hover help text (backend applies in apply_style).
     a11y_label: text::Text, // "" = none. VoiceOver / accessibility label.
+    a11y_hint: text::Text,  // "" = none. VoiceOver hint (SwiftUI .accessibilityHint).
+    key_equiv: text::Text,  // "" = none. Keyboard shortcut key for a button.
     ctx_menu_items: vec::Vec[text::Text],   // right-click menu items (empty = none)
     ctx_menu_action: fn(*u8, *u8),          // fires (item, index) on a menu pick
     font_size: f64,         // 0 = platform default
@@ -365,6 +369,8 @@ fn blank(kind: u32) -> Node {
         agent_id: text::from_str(""),
         tooltip: text::from_str(""),
         a11y_label: text::from_str(""),
+        a11y_hint: text::from_str(""),
+        key_equiv: text::from_str(""),
         ctx_menu_items: vec::new::[text::Text](),
         ctx_menu_action: null_fn(),
         font_size: 0.0f64,
@@ -716,6 +722,15 @@ fn progress(value: f64 = 0.0f64, indeterminate: bool = false) -> Node {
     return n;
 }
 
+// A read-only value gauge over [min, max] (SwiftUI `Gauge(value:in:)`).
+fn gauge(value: f64 = 0.0f64, min: f64 = 0.0f64, max: f64 = 1.0f64) -> Node {
+    var n: Node = blank(kind_gauge());
+    n.value_f = value;
+    n.min_val = min;
+    n.max_val = max;
+    return n;
+}
+
 // A +/- numeric stepper over [min, max] by `step`.
 fn stepper(
     value: f64 = 0.0f64,
@@ -794,6 +809,9 @@ impl Node {
     }
     fn tooltip(take this, s: str) -> Node { var n: Node = this; n.tooltip = text::from_str(s); return n; }
     fn accessibility_label(take this, s: str) -> Node { var n: Node = this; n.a11y_label = text::from_str(s); return n; }
+    fn accessibility_hint(take this, s: str) -> Node { var n: Node = this; n.a11y_hint = text::from_str(s); return n; }
+    // Keyboard shortcut (SwiftUI .keyboardShortcut) — the button's key equivalent.
+    fn keyboard_shortcut(take this, key: str) -> Node { var n: Node = this; n.key_equiv = text::from_str(key); return n; }
     // Right-click context menu: `on_select` fires with the picked item's index.
     fn context_menu(take this, take items: vec::Vec[text::Text], on_select: fn(*u8, *u8)) -> Node {
         var n: Node = this;
@@ -849,6 +867,8 @@ impl Node {
     }
     fn set_tooltip(ref this, s: str) { this.tooltip = text::from_str(s); return; }
     fn set_accessibility_label(ref this, s: str) { this.a11y_label = text::from_str(s); return; }
+    fn set_accessibility_hint(ref this, s: str) { this.a11y_hint = text::from_str(s); return; }
+    fn set_keyboard_shortcut(ref this, key: str) { this.key_equiv = text::from_str(key); return; }
 
     fn set_font(ref this, size: f64) { this.style.font_size = size; return; }
     fn set_weight(ref this, w: u32) { this.style.weight = w; return; }
@@ -1254,6 +1274,7 @@ struct Renderer {
     color_picker: fn(*u8, *Node) -> flex::Node,
     date_picker: fn(*u8, *Node) -> flex::Node,
     box:         fn(*u8, *Node) -> flex::Node,
+    gauge:       fn(*u8, *Node) -> flex::Node,
     // The escape hatch (Phase 3)
     native:      fn(*u8, *Node) -> flex::Node,
     // wrappers — mount recurses children first, then hands them over
@@ -1381,6 +1402,10 @@ fn mount(np: *Node, r: Renderer) -> flex::Node {
         is_widget = true;
     } else if k == kind_box() {
         let f: fn(*u8, *Node) -> flex::Node = r.box;
+        n = f(r.ctx, np);
+        is_widget = true;
+    } else if k == kind_gauge() {
+        let f: fn(*u8, *Node) -> flex::Node = r.gauge;
         n = f(r.ctx, np);
         is_widget = true;
     } else if k == kind_native() {
@@ -1849,6 +1874,7 @@ static FAKE_SEGMENTEDS: i32 = 0;
 static FAKE_COLOR_PICKERS: i32 = 0;
 static FAKE_DATE_PICKERS: i32 = 0;
 static FAKE_BOXES: i32 = 0;
+static FAKE_GAUGES: i32 = 0;
 static FAKE_NATIVES: i32 = 0;
 static FAKE_LAST_NATIVE_HANDLE: i64 = 0;
 static FAKE_BORDEREDS: i32 = 0;
@@ -1959,6 +1985,11 @@ fn fake_box(ctx: *u8, np: *Node) -> flex::Node {
     return flex::Node::new();
 }
 
+fn fake_gauge(ctx: *u8, np: *Node) -> flex::Node {
+    FAKE_GAUGES = FAKE_GAUGES + 1;
+    return flex::Node::new().width(100.0f64).height(20.0f64);
+}
+
 fn fake_native(ctx: *u8, np: *Node) -> flex::Node {
     FAKE_NATIVES = FAKE_NATIVES + 1;
     FAKE_LAST_NATIVE_HANDLE = { (*np).native_handle } as i64;
@@ -2037,6 +2068,7 @@ fn fake_renderer() -> Renderer {
         color_picker: fake_color_picker,
         date_picker: fake_date_picker,
         box: fake_box,
+        gauge: fake_gauge,
         native: fake_native,
         bordered: fake_bordered,
         clickable: fake_clickable,
@@ -2067,6 +2099,7 @@ fn reset_fake_counts() {
     FAKE_COLOR_PICKERS = 0;
     FAKE_DATE_PICKERS = 0;
     FAKE_BOXES = 0;
+    FAKE_GAUGES = 0;
     FAKE_NATIVES = 0;
     FAKE_LAST_NATIVE_HANDLE = 0;
     FAKE_BORDEREDS = 0;
