@@ -151,6 +151,16 @@ fn apply_style(view_ptr: *u8, kind: u32, style: facet::Style) {
     if ll > (0 as i32) && is_text {
         ak::TextField::from_raw(view_ptr).set_maximum_number_of_lines(ll as i64);
     }
+    // Text alignment — NSControl.setAlignment: (raw; the binding routes it via a
+    // cell). NSTextAlignment: Left 0, Right 1, Center 2, Natural 4. leading→
+    // natural, center→center, trailing→right.
+    let ta: i32 = { style.text_align };
+    if ta > (0 as i32) && is_text {
+        var nsa: i64 = 4 as i64;                       // leading → natural
+        if ta == (2 as i32) { nsa = 2 as i64; }        // center
+        else if ta == (3 as i32) { nsa = 1 as i64; }   // trailing → right
+        rt::msg_void_id(view_ptr, rt::sel(#str_ptr("setAlignment:\0")), nsa as *u8);
+    }
     return;
 }
 
