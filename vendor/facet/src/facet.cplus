@@ -333,6 +333,11 @@ struct Node {
     _grid_row_span: i32,           // 0 = unset
     _grid_col_start: i32,          // 0 = unset (1-based line)
     _grid_row_start: i32,          // 0 = unset
+    _grid_cols_subgrid: bool,      // grid: inherit parent's column tracks
+    _grid_rows_subgrid: bool,      // grid: inherit parent's row tracks
+    _bdr_l: f64, _bdr_t: f64, _bdr_r: f64, _bdr_b: f64,   // 0 = unset (border-as-inset)
+    _pad_start: f64, _pad_end: f64,   // 0 = unset (logical, direction-relative padding)
+    _mrg_start: f64, _mrg_end: f64,   // 0 = unset (logical margin)
     children: vec::Vec[Node],
 }
 
@@ -423,6 +428,11 @@ fn blank(kind: u32) -> Node {
         _grid_row_span: 0 as i32,
         _grid_col_start: 0 as i32,
         _grid_row_start: 0 as i32,
+        _grid_cols_subgrid: false,
+        _grid_rows_subgrid: false,
+        _bdr_l: 0.0f64, _bdr_t: 0.0f64, _bdr_r: 0.0f64, _bdr_b: 0.0f64,
+        _pad_start: 0.0f64, _pad_end: 0.0f64,
+        _mrg_start: 0.0f64, _mrg_end: 0.0f64,
         children: vec::new::[Node](),
     };
 }
@@ -891,6 +901,38 @@ impl Node {
     fn flex_direction(take this, d: flex::FlexDirection) -> Node { var n: Node = this; n._flex_dir = d; n._has_flex_dir = true; return n; }
     fn grid_span(take this, cols: i32, rows: i32) -> Node { var n: Node = this; n._grid_col_span = cols; n._grid_row_span = rows; return n; }
     fn grid_pos(take this, col: i32, row: i32) -> Node { var n: Node = this; n._grid_col_start = col; n._grid_row_start = row; return n; }
+    fn grid_subgrid(take this, cols: bool, rows: bool) -> Node { var n: Node = this; n._grid_cols_subgrid = cols; n._grid_rows_subgrid = rows; return n; }
+    // Border as a layout inset (reserves space, like padding — distinct from the
+    // Style border paint).
+    fn border_inset(take this, e: flex::Edge, v: f64) -> Node { var n: Node = this; n.bdr_edge_into(e, v); return n; }
+    // Logical (direction-relative) padding/margin: start = leading edge (left in
+    // LTR, right in RTL). Physical edges win if also set (flex rule).
+    fn padding_start(take this, v: f64) -> Node { var n: Node = this; n._pad_start = v; return n; }
+    fn padding_end(take this, v: f64) -> Node { var n: Node = this; n._pad_end = v; return n; }
+    fn margin_start(take this, v: f64) -> Node { var n: Node = this; n._mrg_start = v; return n; }
+    fn margin_end(take this, v: f64) -> Node { var n: Node = this; n._mrg_end = v; return n; }
+
+    fn set_grid_subgrid(ref this, cols: bool, rows: bool) { this._grid_cols_subgrid = cols; this._grid_rows_subgrid = rows; return; }
+    fn set_border_inset(ref this, e: flex::Edge, v: f64) { this.bdr_edge_into(e, v); return; }
+    fn set_padding_start(ref this, v: f64) { this._pad_start = v; return; }
+    fn set_padding_end(ref this, v: f64) { this._pad_end = v; return; }
+    fn set_margin_start(ref this, v: f64) { this._mrg_start = v; return; }
+    fn set_margin_end(ref this, v: f64) { this._mrg_end = v; return; }
+
+    fn bdr_edge_into(ref this, e: flex::Edge, v: f64) {
+        match e {
+            flex::Edge::Left => { this._bdr_l = v; }
+            flex::Edge::Right => { this._bdr_r = v; }
+            flex::Edge::Top => { this._bdr_t = v; }
+            flex::Edge::Bottom => { this._bdr_b = v; }
+            flex::Edge::Start => { this._bdr_l = v; }
+            flex::Edge::End => { this._bdr_r = v; }
+            flex::Edge::Horizontal => { this._bdr_l = v; this._bdr_r = v; }
+            flex::Edge::Vertical => { this._bdr_t = v; this._bdr_b = v; }
+            flex::Edge::All => { this._bdr_l = v; this._bdr_t = v; this._bdr_r = v; this._bdr_b = v; }
+        }
+        return;
+    }
 
     fn set_width_pct(ref this, v: f64) { this._width_pct = v; return; }
     fn set_height_pct(ref this, v: f64) { this._height_pct = v; return; }
@@ -1446,6 +1488,18 @@ fn mount(np: *Node, r: Renderer) -> flex::Node {
     if { (*np)._grid_row_span } > (0 as i32) { n.set_grid_row_span({ (*np)._grid_row_span }); }
     if { (*np)._grid_col_start } > (0 as i32) { n.set_grid_column_start({ (*np)._grid_col_start }); }
     if { (*np)._grid_row_start } > (0 as i32) { n.set_grid_row_start({ (*np)._grid_row_start }); }
+    if { (*np)._grid_cols_subgrid } { n.set_grid_columns_subgrid(true); }
+    if { (*np)._grid_rows_subgrid } { n.set_grid_rows_subgrid(true); }
+    // Border-as-inset (reserves layout space, per edge).
+    if { (*np)._bdr_l } > 0.0f64 { n.set_border(flex::Edge::Left, flex::StyleLength::points({ (*np)._bdr_l })); }
+    if { (*np)._bdr_t } > 0.0f64 { n.set_border(flex::Edge::Top, flex::StyleLength::points({ (*np)._bdr_t })); }
+    if { (*np)._bdr_r } > 0.0f64 { n.set_border(flex::Edge::Right, flex::StyleLength::points({ (*np)._bdr_r })); }
+    if { (*np)._bdr_b } > 0.0f64 { n.set_border(flex::Edge::Bottom, flex::StyleLength::points({ (*np)._bdr_b })); }
+    // Logical (direction-relative) padding/margin — flex resolves Start/End.
+    if { (*np)._pad_start } > 0.0f64 { n.set_padding(flex::Edge::Start, flex::StyleLength::points({ (*np)._pad_start })); }
+    if { (*np)._pad_end } > 0.0f64 { n.set_padding(flex::Edge::End, flex::StyleLength::points({ (*np)._pad_end })); }
+    if { (*np)._mrg_start } > 0.0f64 { n.set_margin(flex::Edge::Start, flex::StyleLength::points({ (*np)._mrg_start })); }
+    if { (*np)._mrg_end } > 0.0f64 { n.set_margin(flex::Edge::End, flex::StyleLength::points({ (*np)._mrg_end })); }
     return n;
 }
 
@@ -2461,6 +2515,37 @@ fn facet_p3_layout_modifiers_set_fields() {
     assert n._grid_col_span == (2 as i32);
     assert n._grid_col_start == (1 as i32);
     assert n._grid_row_start == (2 as i32);
+
+    let m: Node = label("y")
+        .border_inset(flex::Edge::All, 2.0f64)
+        .padding_start(8.0f64).padding_end(4.0f64)
+        .margin_start(6.0f64).margin_end(3.0f64)
+        .grid_subgrid(true, false);
+    assert approx(m._bdr_l, 2.0f64);
+    assert approx(m._bdr_b, 2.0f64);
+    assert approx(m._pad_start, 8.0f64);
+    assert approx(m._mrg_end, 3.0f64);
+    assert m._grid_cols_subgrid;
+    assert m._grid_rows_subgrid == false;
+}
+
+#[test]
+fn mount_logical_padding_resolves_by_direction() {
+    // padding_start(20) on a 200-wide row: LTR → the child insets from the left.
+    var inner: Builder = Builder::new();
+    inner.add(label("x").width(40.0f64).height(20.0f64));
+    var b: Builder = Builder::new();
+    b.add(row(inner).frame(200.0f64, 40.0f64).padding_start(20.0f64));
+    let root: Node = b.finish();
+    var tree: flex::Node = mount(#addr_of(root), fake_renderer());
+    tree.calculate_layout(200.0f64, 40.0f64, flex::Direction::LTR);
+    match tree.children.at_ptr(0 as usize) {
+        option::Option[*flex::Node]::Some(rp) => {
+            let c0: flex::Layout = must_layout({ (*rp).child_layout(0 as usize) });
+            assert approx(c0.left, 20.0f64);   // LTR: start edge = left
+        }
+        option::Option[*flex::Node]::None => { assert false; }
+    };
 }
 
 #[test]
