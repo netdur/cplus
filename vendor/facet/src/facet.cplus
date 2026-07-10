@@ -309,6 +309,14 @@ struct Node {
     _mrg_l: f64, _mrg_t: f64, _mrg_r: f64, _mrg_b: f64,   // 0 = unset (per-edge margin)
     _ins_l: f64, _ins_t: f64, _ins_r: f64, _ins_b: f64,   // absolute inset values
     _inset_mask: u32,       // bit per set inset edge: 1=L 2=T 4=R 8=B (0 is a valid inset)
+    _width_pct: f64,        // -1 = unset (percent width, overrides points)
+    _height_pct: f64,       // -1 = unset (percent height)
+    _gap_row: f64,          // 0 = unset (vertical gutter)
+    _gap_col: f64,          // 0 = unset (horizontal gutter)
+    _display: flex::Display,       _has_display: bool,
+    _overflow: flex::Overflow,     _has_overflow: bool,
+    _align_content: flex::Align,   _has_align_content: bool,
+    _direction: flex::Direction,   _has_direction: bool,
     children: vec::Vec[Node],
 }
 
@@ -383,6 +391,14 @@ fn blank(kind: u32) -> Node {
         _mrg_l: 0.0f64, _mrg_t: 0.0f64, _mrg_r: 0.0f64, _mrg_b: 0.0f64,
         _ins_l: 0.0f64, _ins_t: 0.0f64, _ins_r: 0.0f64, _ins_b: 0.0f64,
         _inset_mask: 0 as u32,
+        _width_pct: -1.0f64,
+        _height_pct: -1.0f64,
+        _gap_row: 0.0f64,
+        _gap_col: 0.0f64,
+        _display: flex::Display::Flex,          _has_display: false,
+        _overflow: flex::Overflow::Visible,     _has_overflow: false,
+        _align_content: flex::Align::Auto,      _has_align_content: false,
+        _direction: flex::Direction::Inherit,   _has_direction: false,
         children: vec::new::[Node](),
     };
 }
@@ -827,6 +843,25 @@ impl Node {
     fn margin(take this, v: f64) -> Node { var n: Node = this; n._mrg_l = v; n._mrg_t = v; n._mrg_r = v; n._mrg_b = v; return n; }
     fn margin_edge(take this, e: flex::Edge, v: f64) -> Node { var n: Node = this; n.mrg_edge_into(e, v); return n; }
     fn inset(take this, e: flex::Edge, v: f64) -> Node { var n: Node = this; n.inset_into(e, v); return n; }
+
+    // Percent sizing, per-gutter gap, and container display/overflow/content/dir.
+    fn width_pct(take this, v: f64) -> Node { var n: Node = this; n._width_pct = v; return n; }
+    fn height_pct(take this, v: f64) -> Node { var n: Node = this; n._height_pct = v; return n; }
+    fn gap_row(take this, v: f64) -> Node { var n: Node = this; n._gap_row = v; return n; }
+    fn gap_col(take this, v: f64) -> Node { var n: Node = this; n._gap_col = v; return n; }
+    fn display(take this, d: flex::Display) -> Node { var n: Node = this; n._display = d; n._has_display = true; return n; }
+    fn overflow(take this, o: flex::Overflow) -> Node { var n: Node = this; n._overflow = o; n._has_overflow = true; return n; }
+    fn align_content(take this, a: flex::Align) -> Node { var n: Node = this; n._align_content = a; n._has_align_content = true; return n; }
+    fn direction(take this, d: flex::Direction) -> Node { var n: Node = this; n._direction = d; n._has_direction = true; return n; }
+
+    fn set_width_pct(ref this, v: f64) { this._width_pct = v; return; }
+    fn set_height_pct(ref this, v: f64) { this._height_pct = v; return; }
+    fn set_gap_row(ref this, v: f64) { this._gap_row = v; return; }
+    fn set_gap_col(ref this, v: f64) { this._gap_col = v; return; }
+    fn set_display(ref this, d: flex::Display) { this._display = d; this._has_display = true; return; }
+    fn set_overflow(ref this, o: flex::Overflow) { this._overflow = o; this._has_overflow = true; return; }
+    fn set_align_content(ref this, a: flex::Align) { this._align_content = a; this._has_align_content = true; return; }
+    fn set_direction(ref this, d: flex::Direction) { this._direction = d; this._has_direction = true; return; }
 
     fn set_flex_basis(ref this, v: f64) { this._basis = v; return; }
     fn set_aspect_ratio(ref this, v: f64) { this._aspect = v; return; }
@@ -1335,6 +1370,17 @@ fn mount(np: *Node, r: Renderer) -> flex::Node {
     if (im & (2 as u32)) != (0 as u32) { n.set_position(flex::Edge::Top, flex::StyleLength::points({ (*np)._ins_t })); }
     if (im & (4 as u32)) != (0 as u32) { n.set_position(flex::Edge::Right, flex::StyleLength::points({ (*np)._ins_r })); }
     if (im & (8 as u32)) != (0 as u32) { n.set_position(flex::Edge::Bottom, flex::StyleLength::points({ (*np)._ins_b })); }
+    // Percent size overrides the point size when set.
+    if { (*np)._width_pct } >= 0.0f64 { n.set_width(flex::StyleLength::percent({ (*np)._width_pct })); }
+    if { (*np)._height_pct } >= 0.0f64 { n.set_height(flex::StyleLength::percent({ (*np)._height_pct })); }
+    // Per-gutter gap (distinct row/column) — overrides uniform gap for that axis.
+    if { (*np)._gap_row } > 0.0f64 { n.set_gap(flex::Gutter::Row, { (*np)._gap_row }); }
+    if { (*np)._gap_col } > 0.0f64 { n.set_gap(flex::Gutter::Column, { (*np)._gap_col }); }
+    // Container props.
+    if { (*np)._has_display } { n.set_display({ (*np)._display }); }
+    if { (*np)._has_overflow } { n.set_overflow({ (*np)._overflow }); }
+    if { (*np)._has_align_content } { n.set_align_content({ (*np)._align_content }); }
+    if { (*np)._has_direction } { n.set_direction({ (*np)._direction }); }
     return n;
 }
 
@@ -2193,6 +2239,44 @@ fn mount_dispatches_batch3_controls() {
     assert FAKE_COLOR_PICKERS == 1;
     assert FAKE_DATE_PICKERS == 1;
     assert FAKE_IDENTITIES == 4;
+}
+
+#[test]
+fn facet_p2_layout_modifiers_set_fields() {
+    let n: Node = label("x")
+        .width_pct(50.0f64).height_pct(25.0f64)
+        .gap_row(4.0f64).gap_col(8.0f64)
+        .display(flex::Display::None)
+        .overflow(flex::Overflow::Hidden)
+        .align_content(flex::Align::Center)
+        .direction(flex::Direction::RTL);
+    assert approx(n._width_pct, 50.0f64);
+    assert approx(n._height_pct, 25.0f64);
+    assert approx(n._gap_row, 4.0f64);
+    assert approx(n._gap_col, 8.0f64);
+    assert n._has_display;
+    assert n._has_overflow;
+    assert n._has_align_content;
+    assert n._has_direction;
+}
+
+#[test]
+fn mount_applies_percent_width() {
+    // A child with width_pct(50) inside a 200-wide row resolves to 100pt.
+    var inner: Builder = Builder::new();
+    inner.add(label("half").width_pct(50.0f64).height(20.0f64));
+    var b: Builder = Builder::new();
+    b.add(row(inner).frame(200.0f64, 40.0f64));
+    let root: Node = b.finish();
+    var tree: flex::Node = mount(#addr_of(root), fake_renderer());
+    tree.calculate_layout(200.0f64, 40.0f64, flex::Direction::LTR);
+    match tree.children.at_ptr(0 as usize) {
+        option::Option[*flex::Node]::Some(rp) => {
+            let c0: flex::Layout = must_layout({ (*rp).child_layout(0 as usize) });
+            assert approx(c0.width, 100.0f64);   // 50% of 200
+        }
+        option::Option[*flex::Node]::None => { assert false; }
+    };
 }
 
 #[test]
