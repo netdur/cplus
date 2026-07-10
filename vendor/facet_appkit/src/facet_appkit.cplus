@@ -866,6 +866,26 @@ fn alert(title: str, message: str, primary: str, secondary: str = "") -> i32 {
     return (resp -% (1000 as i64)) as i32;
 }
 
+// A modal dialog with custom facet content (matrix §4 Sheet/Modal). Mounts the
+// tree in an app-modal window and runs the modal loop; returns the dismiss code.
+// A handler inside `root` dismisses it with `end_modal(code)`. Imperative +
+// blocking (like `run`/`alert`) — not a render kind, not headless-testable.
+fn present_modal(take root: facet::Node, title: str, width: f64, height: f64) -> i64 {
+    let win = make_shell_window(title, width, height, false);
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: width, h: height });
+    win.set_content_view(ak::View::from_raw(content.raw()));
+    let _h: f64 = mount_into(#addr_of(root), content.raw(), width, height);
+    win.center();
+    win.make_key_and_order_front(0 as *u8);
+    return ak::Application::shared_application().run_modal_for_window(win);
+}
+
+// Dismiss the current modal (call from a button handler inside the modal tree).
+fn end_modal(code: i64) {
+    ak::Application::shared_application().stop_modal_with_code(code);
+    return;
+}
+
 // ---- tests -------------------------------------------------------------------
 // The literal `@facet` surface works in this module (facet is an import), so
 // the whole description -> widget pipeline is tested here; `run` itself only
