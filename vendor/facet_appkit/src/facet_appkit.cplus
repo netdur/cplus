@@ -999,6 +999,29 @@ fn end_modal(code: i64) {
     return;
 }
 
+// The live popover — an NSPopover deallocs (and dismisses) if nothing retains it,
+// so it is held here while shown (the previous one is released on the next show).
+static CURRENT_POPOVER: *u8 = #zero::[*u8]();
+
+// Show a transient popover with custom facet content, anchored below `anchor_ptr`
+// (a view, e.g. found via find_view_by_id). Imperative + app-level (like alert).
+fn present_popover(anchor_ptr: *u8, take root: facet::Node, width: f64, height: f64) {
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: width, h: height });
+    let _h: f64 = mount_into(#addr_of(root), content.raw(), width, height);
+    let vc_ptr: *u8 = rt::alloc_init(#str_ptr("NSViewController\0"));
+    rt::msg_void_id(vc_ptr, rt::sel(#str_ptr("setView:\0")), content.raw());
+    let pop: ak::Popover = ak::Popover::new();
+    pop.set_content_view_controller(ak::ViewController::from_raw(vc_ptr));
+    rt::release(vc_ptr);   // the popover retains the VC
+    pop.set_content_size(rt::Size { w: width, h: height });
+    pop.set_behavior(ak::PopoverBehavior::Transient);   // dismiss on outside click
+    if CURRENT_POPOVER != (0 as *u8) { rt::release(CURRENT_POPOVER); }
+    CURRENT_POPOVER = rt::retain(pop.raw());             // keep it alive while shown
+    let anchor: ak::View = ak::View::from_raw(anchor_ptr);
+    pop.show_relative_to_rect(anchor.bounds(), anchor, ak::RectEdge::MaxY);
+    return;
+}
+
 // ---- tests -------------------------------------------------------------------
 // The literal `@facet` surface works in this module (facet is an import), so
 // the whole description -> widget pipeline is tested here; `run` itself only
