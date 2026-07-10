@@ -252,7 +252,14 @@ struct Node {
     _min_h: f64,            // -1 = unset
     _max_w: f64,            // -1 = unset
     _max_h: f64,            // -1 = unset
+    _basis: f64,            // -1 = unset (flex-basis, points)
+    _aspect: f64,           // -1 = unset (width/height)
+    _wrap: flex::Wrap,           _has_wrap: bool,
+    _position_type: flex::PositionType, _has_position_type: bool,   // absolute → ZStack/overlay
     _pad_l: f64, _pad_t: f64, _pad_r: f64, _pad_b: f64,   // 0 = unset (per-edge padding)
+    _mrg_l: f64, _mrg_t: f64, _mrg_r: f64, _mrg_b: f64,   // 0 = unset (per-edge margin)
+    _ins_l: f64, _ins_t: f64, _ins_r: f64, _ins_b: f64,   // absolute inset values
+    _inset_mask: u32,       // bit per set inset edge: 1=L 2=T 4=R 8=B (0 is a valid inset)
     children: vec::Vec[Node],
 }
 
@@ -310,7 +317,14 @@ fn blank(kind: u32) -> Node {
         _min_h: -1.0f64,
         _max_w: -1.0f64,
         _max_h: -1.0f64,
+        _basis: -1.0f64,
+        _aspect: -1.0f64,
+        _wrap: flex::Wrap::NoWrap,               _has_wrap: false,
+        _position_type: flex::PositionType::Static, _has_position_type: false,
         _pad_l: 0.0f64, _pad_t: 0.0f64, _pad_r: 0.0f64, _pad_b: 0.0f64,
+        _mrg_l: 0.0f64, _mrg_t: 0.0f64, _mrg_r: 0.0f64, _mrg_b: 0.0f64,
+        _ins_l: 0.0f64, _ins_t: 0.0f64, _ins_r: 0.0f64, _ins_b: 0.0f64,
+        _inset_mask: 0 as u32,
         children: vec::new::[Node](),
     };
 }
@@ -560,6 +574,55 @@ impl Node {
             flex::Edge::Horizontal => { this._pad_l = v; this._pad_r = v; }
             flex::Edge::Vertical => { this._pad_t = v; this._pad_b = v; }
             flex::Edge::All => { this._pad_l = v; this._pad_t = v; this._pad_r = v; this._pad_b = v; }
+        }
+        return;
+    }
+
+    // ---- more flexbox layout (P1 pass-throughs) ------------------------------
+    fn flex_basis(take this, v: f64) -> Node { var n: Node = this; n._basis = v; return n; }
+    fn aspect_ratio(take this, v: f64) -> Node { var n: Node = this; n._aspect = v; return n; }
+    fn flex_wrap(take this, w: flex::Wrap) -> Node { var n: Node = this; n._wrap = w; n._has_wrap = true; return n; }
+    fn position_absolute(take this) -> Node { var n: Node = this; n._position_type = flex::PositionType::Absolute; n._has_position_type = true; return n; }
+    fn position_relative(take this) -> Node { var n: Node = this; n._position_type = flex::PositionType::Relative; n._has_position_type = true; return n; }
+    fn margin(take this, v: f64) -> Node { var n: Node = this; n._mrg_l = v; n._mrg_t = v; n._mrg_r = v; n._mrg_b = v; return n; }
+    fn margin_edge(take this, e: flex::Edge, v: f64) -> Node { var n: Node = this; n.mrg_edge_into(e, v); return n; }
+    fn inset(take this, e: flex::Edge, v: f64) -> Node { var n: Node = this; n.inset_into(e, v); return n; }
+
+    fn set_flex_basis(ref this, v: f64) { this._basis = v; return; }
+    fn set_aspect_ratio(ref this, v: f64) { this._aspect = v; return; }
+    fn set_flex_wrap(ref this, w: flex::Wrap) { this._wrap = w; this._has_wrap = true; return; }
+    fn set_position_absolute(ref this) { this._position_type = flex::PositionType::Absolute; this._has_position_type = true; return; }
+    fn set_margin(ref this, v: f64) { this._mrg_l = v; this._mrg_t = v; this._mrg_r = v; this._mrg_b = v; return; }
+    fn set_margin_edge(ref this, e: flex::Edge, v: f64) { this.mrg_edge_into(e, v); return; }
+    fn set_inset(ref this, e: flex::Edge, v: f64) { this.inset_into(e, v); return; }
+
+    fn mrg_edge_into(ref this, e: flex::Edge, v: f64) {
+        match e {
+            flex::Edge::Left => { this._mrg_l = v; }
+            flex::Edge::Right => { this._mrg_r = v; }
+            flex::Edge::Top => { this._mrg_t = v; }
+            flex::Edge::Bottom => { this._mrg_b = v; }
+            flex::Edge::Start => { this._mrg_l = v; }
+            flex::Edge::End => { this._mrg_r = v; }
+            flex::Edge::Horizontal => { this._mrg_l = v; this._mrg_r = v; }
+            flex::Edge::Vertical => { this._mrg_t = v; this._mrg_b = v; }
+            flex::Edge::All => { this._mrg_l = v; this._mrg_t = v; this._mrg_r = v; this._mrg_b = v; }
+        }
+        return;
+    }
+
+    // Set an absolute inset edge + mark its mask bit (0 is a valid inset).
+    fn inset_into(ref this, e: flex::Edge, v: f64) {
+        match e {
+            flex::Edge::Left => { this._ins_l = v; this._inset_mask = this._inset_mask | (1 as u32); }
+            flex::Edge::Right => { this._ins_r = v; this._inset_mask = this._inset_mask | (4 as u32); }
+            flex::Edge::Top => { this._ins_t = v; this._inset_mask = this._inset_mask | (2 as u32); }
+            flex::Edge::Bottom => { this._ins_b = v; this._inset_mask = this._inset_mask | (8 as u32); }
+            flex::Edge::Start => { this._ins_l = v; this._inset_mask = this._inset_mask | (1 as u32); }
+            flex::Edge::End => { this._ins_r = v; this._inset_mask = this._inset_mask | (4 as u32); }
+            flex::Edge::Horizontal => { this._ins_l = v; this._ins_r = v; this._inset_mask = this._inset_mask | (5 as u32); }
+            flex::Edge::Vertical => { this._ins_t = v; this._ins_b = v; this._inset_mask = this._inset_mask | (10 as u32); }
+            flex::Edge::All => { this._ins_l = v; this._ins_t = v; this._ins_r = v; this._ins_b = v; this._inset_mask = 15 as u32; }
         }
         return;
     }
@@ -904,6 +967,20 @@ fn mount(np: *Node, r: Renderer) -> flex::Node {
     if { (*np)._pad_t } > 0.0f64 { n.set_padding(flex::Edge::Top, flex::StyleLength::points({ (*np)._pad_t })); }
     if { (*np)._pad_r } > 0.0f64 { n.set_padding(flex::Edge::Right, flex::StyleLength::points({ (*np)._pad_r })); }
     if { (*np)._pad_b } > 0.0f64 { n.set_padding(flex::Edge::Bottom, flex::StyleLength::points({ (*np)._pad_b })); }
+    if { (*np)._basis } >= 0.0f64 { n.set_flex_basis(flex::StyleLength::points({ (*np)._basis })); }
+    if { (*np)._aspect } >= 0.0f64 { n.set_aspect_ratio({ (*np)._aspect }); }
+    if { (*np)._has_wrap } { n.set_flex_wrap({ (*np)._wrap }); }
+    if { (*np)._has_position_type } { n.set_position_type({ (*np)._position_type }); }
+    if { (*np)._mrg_l } > 0.0f64 { n.set_margin(flex::Edge::Left, flex::StyleLength::points({ (*np)._mrg_l })); }
+    if { (*np)._mrg_t } > 0.0f64 { n.set_margin(flex::Edge::Top, flex::StyleLength::points({ (*np)._mrg_t })); }
+    if { (*np)._mrg_r } > 0.0f64 { n.set_margin(flex::Edge::Right, flex::StyleLength::points({ (*np)._mrg_r })); }
+    if { (*np)._mrg_b } > 0.0f64 { n.set_margin(flex::Edge::Bottom, flex::StyleLength::points({ (*np)._mrg_b })); }
+    // Absolute insets — apply each masked edge (0 is a valid inset value).
+    let im: u32 = { (*np)._inset_mask };
+    if (im & (1 as u32)) != (0 as u32) { n.set_position(flex::Edge::Left, flex::StyleLength::points({ (*np)._ins_l })); }
+    if (im & (2 as u32)) != (0 as u32) { n.set_position(flex::Edge::Top, flex::StyleLength::points({ (*np)._ins_t })); }
+    if (im & (4 as u32)) != (0 as u32) { n.set_position(flex::Edge::Right, flex::StyleLength::points({ (*np)._ins_r })); }
+    if (im & (8 as u32)) != (0 as u32) { n.set_position(flex::Edge::Bottom, flex::StyleLength::points({ (*np)._ins_b })); }
     return n;
 }
 
@@ -1517,6 +1594,52 @@ fn mount_applies_flexbox_align_and_edge_padding() {
             let bf: flex::Layout = must_layout({ (*rp).child_layout(0 as usize) });
             assert approx(bf.top, 40.0f64);    // (100 - 20) / 2, centered
             assert approx(bf.left, 20.0f64);   // padding-left inset
+        }
+        option::Option[*flex::Node]::None => { assert false; }
+    };
+}
+
+#[test]
+fn facet_p1_layout_modifiers_set_fields() {
+    let n: Node = label("x")
+        .flex_basis(50.0f64)
+        .aspect_ratio(1.5f64)
+        .flex_wrap(flex::Wrap::Wrap)
+        .margin(8.0f64)
+        .position_absolute()
+        .inset(flex::Edge::Top, 0.0f64);
+    assert approx(n._basis, 50.0f64);
+    assert approx(n._aspect, 1.5f64);
+    assert n._has_wrap;
+    assert approx(n._mrg_l, 8.0f64);
+    assert approx(n._mrg_b, 8.0f64);
+    assert n._has_position_type;
+    // inset(Top, 0) must register even though the value is 0 (mask bit set).
+    assert (n._inset_mask & (2 as u32)) != (0 as u32);
+    assert approx(n._ins_t, 0.0f64);
+}
+
+#[test]
+fn mount_applies_absolute_position_and_inset() {
+    // A 200x200 column with one position:absolute child, inset top/left 10:
+    // the child leaves flow and pins to (10,10) regardless of its own size.
+    var inner: Builder = Builder::new();
+    inner.add(button("x")
+        .position_absolute()
+        .inset(flex::Edge::Top, 10.0f64)
+        .inset(flex::Edge::Left, 10.0f64)
+        .frame(30.0f64, 30.0f64));
+    var b: Builder = Builder::new();
+    b.add(column(inner).frame(200.0f64, 200.0f64));
+    let root: Node = b.finish();
+
+    var tree: flex::Node = mount(#addr_of(root), fake_renderer());
+    tree.calculate_layout(200.0f64, 200.0f64, flex::Direction::LTR);
+    match tree.children.at_ptr(0 as usize) {
+        option::Option[*flex::Node]::Some(cp) => {
+            let bf: flex::Layout = must_layout({ (*cp).child_layout(0 as usize) });
+            assert approx(bf.left, 10.0f64);
+            assert approx(bf.top, 10.0f64);
         }
         option::Option[*flex::Node]::None => { assert false; }
     };
