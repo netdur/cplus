@@ -318,6 +318,13 @@ struct Node {
     on_hover_in: fn(*u8, *u8),
     on_hover_out: fn(*u8, *u8),
     on_scroll: fn(*u8, *u8),
+    // Drag-and-drop DESTINATION (distinct from the on_drag pan gesture above):
+    // when set on a `box`, the box accepts a text drop and this fires with the
+    // drop-zone view as sender — read the payload via `dropped_text(sender)`.
+    // Field is `drop_handler` (not `on_drop`) so the fluent `.on_drop()` method
+    // isn't shadowed by a same-named field.
+    drop_handler: fn(*u8, *u8), // null-fn when the box is not a drop target
+    opaque drop_ctx: *u8,       // borrowed identity value passed to the handler
     // layout
     _grow: f64,
     _gap: f64,
@@ -440,6 +447,8 @@ fn blank(kind: u32) -> Node {
         on_hover_in: none,
         on_hover_out: none,
         on_scroll: none,
+        drop_handler: none,
+        drop_ctx: 0 as *u8,
         _grow: 0.0f64,
         _gap: 0.0f64,
         _padding: 0.0f64,
@@ -916,6 +925,15 @@ impl Node {
     fn close_path(take this) -> Node {
         var n: Node = this;
         n.path_cmds.append(PathCmd { op: path_op_close(), ax: 0.0f64, ay: 0.0f64, bx: 0.0f64, by: 0.0f64, cx: 0.0f64, cy: 0.0f64 });
+        return n;
+    }
+    // `.on_drop(handler, ctx)` — make a `box` a text drop target (SwiftUI
+    // `.dropDestination`). The handler fires with the drop-zone view as sender;
+    // read the dropped string with the backend's `dropped_text(sender)`.
+    fn on_drop(take this, handler: fn(*u8, *u8), ctx: *u8 = 0 as *u8) -> Node {
+        var n: Node = this;
+        n.drop_handler = handler;
+        n.drop_ctx = ctx;
         return n;
     }
     // `.frame(width:height:)` — set both fixed dimensions at once.

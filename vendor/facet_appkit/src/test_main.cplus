@@ -153,6 +153,7 @@ fn explicit_cross_component_invalidate() {
 // filled+stroked path, a gauge, and a fade-in label — exercises ak_path's raw
 // CAShapeLayer + bezier path, NSLevelIndicator, and the CABasicAnimation.
 fn shapes_cycles() -> i32 {
+    let dh: fn(*u8, *u8) = harness_click;
     for k in 0..50 {
         let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 160.0 });
         var root: facet::Node = @facet {
@@ -166,6 +167,7 @@ fn shapes_cycles() -> i32 {
                     .border(2.0f64, facet::Color::primary())
                 gauge(value: 0.6f64, min: 0.0f64, max: 1.0f64)
                 label("Appears").fade_in(0.3f64)
+                box().frame(160.0f64, 40.0f64).on_drop(dh, 0 as *u8)
             }
         };
         let _h: f64 = fak::mount_into(#addr_of(root), content.raw(), 200.0f64, 160.0f64);

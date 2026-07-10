@@ -624,12 +624,24 @@ fn ak_date_picker(ctx: *u8, np: *facet::Node) -> flex::Node {
 }
 
 // A styled rectangle (Shapes): a plain NSView; apply_style paints bg / corner /
-// border (wantsLayer). A full-radius square reads as a circle.
+// border (wantsLayer). A full-radius square reads as a circle. With `.on_drop`
+// set it is instead a FacetDropView registered for text drops (SwiftUI
+// `.dropDestination`); the handler reads the payload via `dropped_text(sender)`.
 fn ak_box(ctx: *u8, np: *facet::Node) -> flex::Node {
-    let v: ak::View = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 });
+    let drop: fn(*u8, *u8) = { (*np).drop_handler };
+    var v: ak::View = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 });
+    if drop != facet::null_fn() {
+        v = akx::new_drop_view(drop, { (*np).drop_ctx });
+    }
     var n: flex::Node = ui::fixed_view(v);
     apply_style(n.payload(), facet::kind_box(), np);
     return n;
+}
+
+// The text most recently dropped on a drop-zone `box` — call from an on_drop
+// handler with its `sender` (SwiftUI's dropped-item payload). Empty if none.
+fn dropped_text(sender: *u8) -> text::Text {
+    return akx::drop_text_of(sender);
 }
 
 fn ak_gauge(ctx: *u8, np: *facet::Node) -> flex::Node {
@@ -2049,6 +2061,32 @@ fn focus_makes_widget_first_responder() {
     // find_view_by_id locates the field, and makeFirstResponder succeeds.
     assert find_view_by_id(content.raw(), "email") != (0 as *u8);
     assert focus(win.raw(), "email");
+}
+
+fn td_drop_handler(sender: *u8, ctx: *u8) { return; }
+
+#[test]
+fn drop_zone_box_registers_for_text() {
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 160.0, h: 120.0 });
+    let dh: fn(*u8, *u8) = td_drop_handler;
+    var root: facet::Node = @facet {
+        vstack {
+            box()
+                .frame(140.0f64, 90.0f64)
+                .on_drop(dh, 0 as *u8)
+                .agent_id("zone")
+        }
+    };
+    let h: f64 = mount_into(#addr_of(root), content.raw(), 160.0f64, 120.0f64);
+    assert h > 0.0f64;
+    assert surface_has_id(content.raw(), "zone");
+    // the box became a FacetDropView registered for the text drag type
+    let vp: *u8 = find_view_by_id(content.raw(), "zone");
+    assert vp != (0 as *u8);
+    let types: *u8 = rt::msg_id(vp, rt::sel(#str_ptr("registeredDraggedTypes\0")));
+    let cnt: u64 = rt::msg_u64(types, rt::sel(#str_ptr("count\0")));
+    assert cnt >= (1 as u64);
+    assert dropped_text(vp).view() == "";   // nothing dropped yet
 }
 
 #[test]

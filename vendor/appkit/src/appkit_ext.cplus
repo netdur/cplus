@@ -9,6 +9,9 @@
 
 import "objc/runtime" as rt;
 import "objc/synthesis" as synth;
+import "objc/bridge" as bridge;
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
 import "appkit/appkit" as ak;
 
 // `class_addMethod` for a `BOOL (self, _cmd)` method (isFlipped). This shape isn't
@@ -468,4 +471,67 @@ fn attach_split_min_widths(sv: ak::SplitView, min_first: f64, min_second: f64) {
     sv.set_delegate(d);
     synth::retain_associated(sv.raw(), split_pin_key(), d);
     return;
+}
+
+// ==========================================================================
+// Drag-and-drop DESTINATION -> C+ handler
+// ==========================================================================
+//
+// A `FacetDropView` is a one-off NSView subclass conforming to the informal
+// NSDraggingDestination protocol. draggingEntered: advertises Copy so the
+// cursor shows a drop badge; performDragOperation: reads the pasteboard string,
+// pins it on the view (so `drop_text_of` can hand it back), then fires the C+
+// handler. Payload type is plain UTF-8 text (`public.utf8-plain-text`), which
+// also matches text dragged from other apps and Finder text clippings.
+
+fn drop_handler_key() -> *u8 { return { 28690 as *u8 }; }
+fn drop_ctx_key() -> *u8 { return { 28691 as *u8 }; }
+fn drop_text_key() -> *u8 { return { 28692 as *u8 }; }
+
+// NSDragOperationCopy = 1.
+fn drop_entered_imp(self_obj: *u8, cmd: *u8, sender: *u8) -> u64 { return 1 as u64; }
+fn drop_prepare_imp(self_obj: *u8, cmd: *u8, sender: *u8) -> i8 { return 1 as i8; }
+
+fn drop_perform_imp(self_obj: *u8, cmd: *u8, sender: *u8) -> i8 {
+    let pb: *u8 = rt::msg_id(sender, rt::sel(#str_ptr("draggingPasteboard\0")));
+    let ns: *u8 = rt::msg_id_id(pb, rt::sel(#str_ptr("stringForType:\0")), bridge::nsstring("public.utf8-plain-text"));
+    synth::retain_associated(self_obj, drop_text_key(), ns);   // keep for drop_text_of (nil is fine)
+    let f: fn(*u8, *u8) = { synth::get_associated(self_obj, drop_handler_key()) as fn(*u8, *u8) };
+    let ctx: *u8 = synth::get_associated(self_obj, drop_ctx_key());
+    if { f as *u8 } != { 0 as *u8 } { f(self_obj, ctx); }
+    return 1 as i8;   // YES — accepted
+}
+
+fn drop_view_class() -> *u8 {
+    let name: *u8 = #str_ptr("FacetDropView\0");
+    var cls: *u8 = rt::get_class(name);
+    if cls == { 0 as *u8 } {
+        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSView\0")), name, 0 as usize);
+        let a1: i8 = synth::add_method_u64_1id(cls, rt::sel(#str_ptr("draggingEntered:\0")), drop_entered_imp, #str_ptr("Q@:@\0"));
+        let a2: i8 = synth::add_method_i8_1id(cls, rt::sel(#str_ptr("prepareForDragOperation:\0")), drop_prepare_imp, #str_ptr("c@:@\0"));
+        let a3: i8 = synth::add_method_i8_1id(cls, rt::sel(#str_ptr("performDragOperation:\0")), drop_perform_imp, #str_ptr("c@:@\0"));
+        synth::register_class_pair(cls);
+    }
+    return cls;
+}
+
+// A fresh +1 FacetDropView registered for text drops, with `handler`/`ctx`
+// attached. Frame is set later by the layout pass.
+fn new_drop_view(handler: fn(*u8, *u8), ctx: *u8) -> ak::View {
+    let cls: *u8 = drop_view_class();
+    let v: *u8 = synth::alloc_init_class(cls);
+    synth::set_associated(v, drop_handler_key(), { handler as *u8 });
+    synth::set_associated(v, drop_ctx_key(), ctx);
+    let view: ak::View = ak::View::from_raw(v);
+    var types: vec::Vec[text::Text] = vec::new::[text::Text]();
+    types.append(text::from_str("public.utf8-plain-text"));
+    view.register_for_dragged_types(types);
+    return view;
+}
+
+// The last string dropped on `drop_view` (empty if none / non-text). Call from
+// an on_drop handler with its `sender`.
+fn drop_text_of(drop_view: *u8) -> text::Text {
+    let ns: *u8 = synth::get_associated(drop_view, drop_text_key());
+    return bridge::to_text(ns);
 }
