@@ -386,6 +386,35 @@ fn ak_divider(ctx: *u8, np: *facet::Node) -> flex::Node {
 fn field_text(view_ptr: *u8) -> text::Text { return ui::field_text(view_ptr); }
 fn popup_index(view_ptr: *u8) -> i64 { return ui::popup_index(view_ptr); }
 
+// The escape-hatch op: adopt the retained handle the facet Node carries into a
+// flex payload. `native()`/`native_widget()` below did the +1 retain; adopt_view
+// takes ownership of that one reference (release_view drops it on tree drop).
+fn ak_native(ctx: *u8, np: *facet::Node) -> flex::Node {
+    var n: flex::Node = ui::adopt_view({ (*np).native_handle });
+    apply_style(n.payload(), facet::kind_native(), { (*np).style });
+    return n;
+}
+
+// Wrap a native view into a `@facet` tree. Retains +1 so the view survives from
+// wrap-time through mount (safe against a temporary); the mounted payload adopts
+// that reference. The app owns the base view (a component field) and calls this
+// FRESH each render — each render retains, each prior tree drop releases.
+fn native(v: ak::View) -> facet::Node {
+    let held: *u8 = rt::retain(v.raw());
+    return facet::native(held);
+}
+
+// One-shot: wrap an existing ui:: leaf widget (a `flex::Node` whose payload is a
+// single view — tree/file_tree/scroll_view) through the hatch. Retains the
+// widget's payload, then drops the widget wrapper; the facet Node owns the +1.
+// For a widget that must survive re-renders, hold it and use `native(view)`.
+fn native_widget(take w: flex::Node) -> facet::Node {
+    let p: *u8 = w.payload();
+    var held: *u8 = 0 as *u8;
+    if p != (0 as *u8) { held = rt::retain(p); }
+    return facet::native(held);
+}
+
 fn ak_bordered(ctx: *u8, np: *facet::Node, take content: flex::Node) -> flex::Node {
     var n: flex::Node = ui::bordered(content, radius: { (*np).radius });
     // A bordered box already paints a backing view; Style props (bg/corner/
@@ -483,6 +512,7 @@ fn renderer() -> facet::Renderer {
         text_field: ak_text_field,
         popup: ak_popup,
         divider: ak_divider,
+        native: ak_native,
         bordered: ak_bordered,
         clickable: ak_clickable,
         split: ak_split,
@@ -1259,6 +1289,77 @@ fn phase2_popup_index_reads_selection() {
     var pu: facet::Node = facet::popup(items, selected: 2 as i64);
     let n: flex::Node = ak_popup(0 as *u8, #addr_of(pu));
     assert popup_index(n.payload()) == (2 as i64);
+}
+
+// Phase 3 gate — the native escape hatch. A raw view and a real structured
+// widget (an NSOutlineView tree, built by ui::) both flow through `native(...)`
+// into a portable `@facet` tree, and survive a component re-render.
+
+#[test]
+fn phase3_native_hatch_mounts_raw_view() {
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 240.0, h: 160.0 });
+    // A view facet doesn't abstract — the app builds it, the hatch carries it.
+    let custom = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 100.0, h: 60.0 });
+    var root: facet::Node = @facet {
+        vstack {
+            label("native below")
+            native(custom).frame(100.0f64, 60.0f64).agent_id("custom")
+        }
+    };
+    let h: f64 = mount_into(#addr_of(root), content.raw(), 240.0f64, 160.0f64);
+    assert h > 0.0f64;
+    // The opaque view reached the surface with its agent id (set_identity fires
+    // on the hatch payload like any other widget).
+    assert surface_has_id(content.raw(), "custom");
+}
+
+#[test]
+fn phase3_tree_through_native_hatch() {
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 400.0 });
+    // Build a structured widget with the existing ui:: tree, then deliver it
+    // through the hatch — the plan's "list/tree via native(...)" path.
+    let root_node: *ui::TreeNode = ui::tree_node("Project", "/proj", true);
+    ui::tree_add_child(root_node, ui::tree_node("main.cplus", "/proj/main.cplus", false));
+    ui::tree_add_child(root_node, ui::tree_node("README.md", "/proj/README.md", false));
+    var t: flex::Node = ui::tree(root_node);
+    var facet_root: facet::Node = @facet {
+        vstack {
+            label("Files")
+            native_widget(t).grow(1.0f64).agent_id("filetree")
+        }
+    };
+    let h: f64 = mount_into(#addr_of(facet_root), content.raw(), 300.0f64, 400.0f64);
+    assert h > 0.0f64;
+    assert surface_has_id(content.raw(), "filetree");
+}
+
+static P3_BUILDS: i32 = 0;
+
+fn phase3_native_screen() -> facet::Node {
+    P3_BUILDS = P3_BUILDS + 1;
+    let box = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 80.0, h: 40.0 });
+    return @facet {
+        vstack {
+            label("native re-render")
+            native_widget(ui::fixed_view(box)).frame(80.0f64, 40.0f64).agent_id("box")
+        }
+    };
+}
+
+#[test]
+fn phase3_native_survives_rerender() {
+    // The component contract: render produces a fresh tree each time, and the
+    // native child returns on every re-render (here via the explicit remount
+    // primitive that component_after → ui::invalidate ultimately calls).
+    P3_BUILDS = 0;
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 160.0 });
+    remount(phase3_native_screen, content.raw(), 200.0f64, 160.0f64);
+    assert P3_BUILDS == 1;
+    assert surface_has_id(content.raw(), "box");
+
+    remount(phase3_native_screen, content.raw(), 200.0f64, 160.0f64);
+    assert P3_BUILDS == 2;
+    assert surface_has_id(content.raw(), "box");
 }
 
 #[test]

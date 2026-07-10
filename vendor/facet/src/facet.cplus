@@ -67,6 +67,12 @@ fn kind_symbol() -> u32 { return 13 as u32; }       // SF Symbol / themed icon �
 fn kind_text_field() -> u32 { return 14 as u32; }
 fn kind_popup() -> u32 { return 15 as u32; }
 fn kind_divider() -> u32 { return 16 as u32; }
+// The escape hatch (Phase 3): an opaque native view facet does not abstract.
+// The backend adopts the handle into a flex payload; the app owns the base view
+// (e.g. a component field) and re-wraps it each render. This is the valve that
+// carries structured widgets (list/tree/file_tree) until a portable kind earns
+// its place (contract doc §8).
+fn kind_native() -> u32 { return 17 as u32; }
 
 // Agent-affordance roles — numeric indices aligned with agent_core::Role so
 // Phase 2 can pass them through without a translation table.
@@ -201,6 +207,7 @@ struct Node {
     placeholder: text::Text,    // text_area / text_field
     popup_items: vec::Vec[text::Text],  // popup: the selectable rows
     popup_selected: i64,        // popup: initially-selected index
+    opaque native_handle: *u8,  // native escape hatch: a borrowed native view; the app owns it
     editable: bool,             // code_editor (default true)
     show_border: bool,          // composer (default true)
     draws_background: bool,     // composer (default true)
@@ -253,6 +260,7 @@ fn blank(kind: u32) -> Node {
         placeholder: text::from_str(""),
         popup_items: vec::new::[text::Text](),
         popup_selected: 0 as i64,
+        native_handle: 0 as *u8,
         editable: true,
         show_border: true,
         draws_background: true,
@@ -413,6 +421,19 @@ fn popup(take items: vec::Vec[text::Text], selected: i64 = 0 as i64) -> Node {
 // A thin separator line.
 fn divider() -> Node {
     return blank(kind_divider());
+}
+
+// The native escape hatch: place a platform view facet does not abstract into a
+// `@facet` tree. `handle` is a borrowed native view pointer; the app owns the
+// underlying view (typically a component field) and produces this node fresh on
+// each render (the backend adopts a retained reference into the flex payload).
+// Size it with `.frame(w,h)` / `.grow(...)` — facet does not measure an opaque
+// view. Platform code that BUILDS handles lives in per-OS files (§5b) — this
+// core constructor only carries the pointer.
+fn native(handle: *u8) -> Node {
+    var n: Node = blank(kind_native());
+    n.native_handle = handle;
+    return n;
 }
 
 // ---- modifiers -------------------------------------------------------------
@@ -646,6 +667,8 @@ struct Renderer {
     text_field:  fn(*u8, *Node) -> flex::Node,
     popup:       fn(*u8, *Node) -> flex::Node,
     divider:     fn(*u8, *Node) -> flex::Node,
+    // The escape hatch (Phase 3)
+    native:      fn(*u8, *Node) -> flex::Node,
     // wrappers — mount recurses children first, then hands them over
     bordered:    fn(*u8, *Node, take flex::Node) -> flex::Node,
     clickable:   fn(*u8, *Node, take flex::Node) -> flex::Node,
@@ -733,6 +756,10 @@ fn mount(np: *Node, r: Renderer) -> flex::Node {
         is_widget = true;
     } else if k == kind_divider() {
         let f: fn(*u8, *Node) -> flex::Node = r.divider;
+        n = f(r.ctx, np);
+        is_widget = true;
+    } else if k == kind_native() {
+        let f: fn(*u8, *Node) -> flex::Node = r.native;
         n = f(r.ctx, np);
         is_widget = true;
     } else if k == kind_bordered() {
@@ -1006,6 +1033,17 @@ fn facet_tier2_roles() {
     assert role_for_kind(kind_divider()) == role_group();
 }
 
+#[test]
+fn facet_native_hatch_carries_handle() {
+    let n: Node = native(0xBEEF as *u8).frame(200.0f64, 120.0f64);
+    assert n.kind == kind_native();
+    assert (n.native_handle as i64) == (0xBEEF as i64);
+    assert approx(n._width, 200.0f64);
+    assert approx(n._height, 120.0f64);
+    // A native leaf is observe-only for the agent surface.
+    assert role_for_kind(kind_native()) == role_group();
+}
+
 // -- mount, against a fake renderer --
 
 static FAKE_LABELS: i32 = 0;
@@ -1018,6 +1056,8 @@ static FAKE_SYMBOLS: i32 = 0;
 static FAKE_TEXT_FIELDS: i32 = 0;
 static FAKE_POPUPS: i32 = 0;
 static FAKE_DIVIDERS: i32 = 0;
+static FAKE_NATIVES: i32 = 0;
+static FAKE_LAST_NATIVE_HANDLE: i64 = 0;
 static FAKE_BORDEREDS: i32 = 0;
 static FAKE_CLICKABLES: i32 = 0;
 static FAKE_SPLITS: i32 = 0;
@@ -1079,6 +1119,12 @@ fn fake_divider(ctx: *u8, np: *Node) -> flex::Node {
     return flex::Node::new().width(100.0f64).height(1.0f64);
 }
 
+fn fake_native(ctx: *u8, np: *Node) -> flex::Node {
+    FAKE_NATIVES = FAKE_NATIVES + 1;
+    FAKE_LAST_NATIVE_HANDLE = { (*np).native_handle } as i64;
+    return flex::Node::new().width(50.0f64).height(50.0f64);
+}
+
 fn fake_bordered(ctx: *u8, np: *Node, take content: flex::Node) -> flex::Node {
     FAKE_BORDEREDS = FAKE_BORDEREDS + 1;
     var n: flex::Node = flex::Node::new();
@@ -1128,6 +1174,7 @@ fn fake_renderer() -> Renderer {
         text_field: fake_text_field,
         popup: fake_popup,
         divider: fake_divider,
+        native: fake_native,
         bordered: fake_bordered,
         clickable: fake_clickable,
         split: fake_split,
@@ -1146,6 +1193,8 @@ fn reset_fake_counts() {
     FAKE_TEXT_FIELDS = 0;
     FAKE_POPUPS = 0;
     FAKE_DIVIDERS = 0;
+    FAKE_NATIVES = 0;
+    FAKE_LAST_NATIVE_HANDLE = 0;
     FAKE_BORDEREDS = 0;
     FAKE_CLICKABLES = 0;
     FAKE_SPLITS = 0;
@@ -1236,6 +1285,21 @@ fn mount_dispatches_tier2_leaves() {
     assert FAKE_DIVIDERS == 1;
     // Each Tier-2 leaf is a widget → set_identity fires once per leaf.
     assert FAKE_IDENTITIES == 5;
+}
+
+#[test]
+fn mount_dispatches_native_hatch() {
+    reset_fake_counts();
+    var b: Builder = Builder::new();
+    b.add(label("header"));
+    b.add(native(0xCAFE as *u8).grow(1.0f64));
+    let root: Node = b.finish();
+
+    let _tree: flex::Node = mount(#addr_of(root), fake_renderer());
+    assert FAKE_NATIVES == 1;
+    assert FAKE_LAST_NATIVE_HANDLE == (0xCAFE as i64);   // op saw the handle
+    // label + native = 2 widget ops → 2 set_identity calls.
+    assert FAKE_IDENTITIES == 2;
 }
 
 #[test]

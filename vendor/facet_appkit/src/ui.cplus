@@ -108,6 +108,16 @@ fn fixed_view(take v: ak::View) -> flex::Node {
     return n;
 }
 
+// Like `fixed_view` but ADOPTS an already-retained handle (no extra +1): the
+// caller transferred one reference, this payload owns it and release_view drops
+// it. The native escape hatch (facet) uses this — the facet Node retained the
+// view when it was wrapped; the op adopts that reference here.
+fn adopt_view(handle: *u8) -> flex::Node {
+    var n: flex::Node = flex::Node::new();
+    if handle != { 0 as *u8 } { n.set_payload(handle, release_view); }
+    return n;
+}
+
 // ==========================================================================
 // Widgets — leaf constructors (config through named params + defaults)
 // ==========================================================================

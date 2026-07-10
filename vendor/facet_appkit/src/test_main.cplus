@@ -158,6 +158,8 @@ fn main() -> i32 {
     if rc3 != 0 { return rc3; }
     let rc4: i32 = component_cycles();
     if rc4 != 0 { return rc4; }
+    let rc5: i32 = native_hatch_cycles();
+    if rc5 != 0 { return rc5; }
     for k in 0..50 {
         let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
         var root: facet::Node = @facet {
@@ -168,6 +170,30 @@ fn main() -> i32 {
                     button("New", primary: true).on_click(harness_click, ctx: 1 as *u8)
                     button("Open").on_click(harness_click, ctx: 2 as *u8)
                 }
+            }
+        };
+        let _h: f64 = fak::mount_into(#addr_of(root), content.raw(), 300.0f64, 200.0f64);
+    }
+    return 0;
+}
+
+// Leak-harness segment for the native escape hatch: the REAL usage pattern —
+// the app owns the native view for its lifetime (created once here) and
+// re-wraps it through `native(...)` on every render. Each wrap retains +1 and
+// each per-cycle tree drop releases it: the retain/adopt balance means no
+// per-cycle growth. (A throwaway view created per cycle would leak like any
+// unrooted NSView — an autorelease artifact, not a hatch flaw — so the harness
+// models the owning-view pattern the hatch is designed for.)
+fn native_hatch_cycles() -> i32 {
+    // The app owns the native view for its lifetime (created once) and re-wraps
+    // it through native(...) each render — the documented hatch pattern.
+    let custom = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 80.0, h: 40.0 });
+    for k in 0..50 {
+        let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
+        var root: facet::Node = @facet {
+            vstack {
+                label("native hatch")
+                fak::native(custom).frame(80.0f64, 40.0f64)
             }
         };
         let _h: f64 = fak::mount_into(#addr_of(root), content.raw(), 300.0f64, 200.0f64);
