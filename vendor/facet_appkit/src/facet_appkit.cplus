@@ -131,14 +131,16 @@ fn apply_style(view_ptr: *u8, kind: u32, np: *facet::Node) {
             ak::Button::from_raw(view_ptr).as_control().set_font(font);
         }
     }
-    // Layer-backed: background / corner / border.
+    // Layer-backed: background / corner / border / clip.
     let bg: facet::Color = { style.bg };
     let corner: f64 = { style.corner_radius };
     let border_w: f64 = { style.border_width };
-    if bg.is_set() || corner > 0.0f64 || border_w > 0.0f64 {
+    let clip: bool = { style.clip };
+    if bg.is_set() || corner > 0.0f64 || border_w > 0.0f64 || clip {
         let v: ak::View = ak::View::from_raw(view_ptr);
         v.set_wants_layer(true);
         let lyr: quartz::Layer = v.layer();
+        if clip { lyr.set_masks_to_bounds(true); }   // clip content to the (rounded) bounds
         if bg.is_set() { lyr.set_background_color(ns_color(bg).c_g_color()); }
         if corner > 0.0f64 { lyr.set_corner_radius(corner); }
         if border_w > 0.0f64 {

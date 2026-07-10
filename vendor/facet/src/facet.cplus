@@ -202,6 +202,7 @@ struct Style {
     text_align: i32,       // 0 = unset; 1 = leading, 2 = center, 3 = trailing
     hidden: bool,          // invisible but keeps its layout space (vs display:none)
     italic: bool,          // italicize the font
+    clip: bool,            // clip content to the (rounded) bounds
 }
 
 // Text-alignment tokens (0 = unset — keep the widget's natural alignment).
@@ -225,6 +226,7 @@ fn style_none() -> Style {
         text_align: 0 as i32,
         hidden: false,
         italic: false,
+        clip: false,
     };
 }
 
@@ -784,6 +786,7 @@ impl Node {
     fn text_align(take this, a: i32) -> Node { var n: Node = this; n.style.text_align = a; return n; }
     fn hidden(take this) -> Node { var n: Node = this; n.style.hidden = true; return n; }
     fn italic(take this) -> Node { var n: Node = this; n.style.italic = true; return n; }
+    fn clip(take this) -> Node { var n: Node = this; n.style.clip = true; return n; }
     // `.frame(width:height:)` — set both fixed dimensions at once.
     fn frame(take this, w: f64, h: f64) -> Node { var n: Node = this; n._width = w; n._height = h; return n; }
     // `.plain()` — borderless button (the link/plain-button fold). Pair with
@@ -821,6 +824,7 @@ impl Node {
     fn set_text_align(ref this, a: i32) { this.style.text_align = a; return; }
     fn set_hidden(ref this, v: bool) { this.style.hidden = v; return; }
     fn set_italic(ref this, v: bool) { this.style.italic = v; return; }
+    fn set_clip(ref this, v: bool) { this.style.clip = v; return; }
     fn set_frame(ref this, w: f64, h: f64) { this._width = w; this._height = h; return; }
     fn set_plain(ref this) { this.plain = true; return; }
 
@@ -2241,6 +2245,8 @@ fn facet_paint_modifiers_set_fields() {
     assert label("z").style.hidden == false;   // default visible
     assert label("z").italic().style.italic;
     assert label("z").style.italic == false;    // default upright
+    assert label("z").clip().style.clip;
+    assert label("z").style.clip == false;      // default unclipped
     // defaults untouched on a plain node.
     let p: Node = label("y");
     assert approx(p.style.opacity, -1.0f64);   // unset
