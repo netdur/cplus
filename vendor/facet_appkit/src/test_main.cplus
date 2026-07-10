@@ -149,6 +149,30 @@ fn explicit_cross_component_invalidate() {
     ui::unmount_all();
 }
 
+// Leak-harness segment for the new vector/animation kinds: 50 mount cycles of a
+// filled+stroked path, a gauge, and a fade-in label — exercises ak_path's raw
+// CAShapeLayer + bezier path, NSLevelIndicator, and the CABasicAnimation.
+fn shapes_cycles() -> i32 {
+    for k in 0..50 {
+        let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 160.0 });
+        var root: facet::Node = @facet {
+            vstack {
+                path(120.0f64, 80.0f64)
+                    .move_to(0.0f64, 0.0f64)
+                    .line_to(120.0f64, 0.0f64)
+                    .line_to(60.0f64, 80.0f64)
+                    .close_path()
+                    .background(facet::Color::accent())
+                    .border(2.0f64, facet::Color::primary())
+                gauge(value: 0.6f64, min: 0.0f64, max: 1.0f64)
+                label("Appears").fade_in(0.3f64)
+            }
+        };
+        let _h: f64 = fak::mount_into(#addr_of(root), content.raw(), 200.0f64, 160.0f64);
+    }
+    return 0;
+}
+
 fn main() -> i32 {
     let rc: i32 = probe();
     if rc != 0 { return rc; }
@@ -162,6 +186,8 @@ fn main() -> i32 {
     if rc5 != 0 { return rc5; }
     let rc6: i32 = scroll_cycles();
     if rc6 != 0 { return rc6; }
+    let rc7: i32 = shapes_cycles();
+    if rc7 != 0 { return rc7; }
     for k in 0..50 {
         let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
         var root: facet::Node = @facet {

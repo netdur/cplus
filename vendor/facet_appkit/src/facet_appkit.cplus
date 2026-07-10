@@ -176,7 +176,9 @@ fn apply_style(view_ptr: *u8, kind: u32, np: *facet::Node) {
     let corner: f64 = { style.corner_radius };
     let border_w: f64 = { style.border_width };
     let clip: bool = { style.clip };
-    if bg.is_set() || corner > 0.0f64 || border_w > 0.0f64 || clip {
+    // A path reuses bg/border as its fill/stroke (painted on its CAShapeLayer in
+    // ak_path), so skip the container background/border block for it.
+    if (bg.is_set() || corner > 0.0f64 || border_w > 0.0f64 || clip) && kind != facet::kind_path() {
         let v: ak::View = ak::View::from_raw(view_ptr);
         v.set_wants_layer(true);
         let lyr: quartz::Layer = v.layer();
@@ -640,6 +642,70 @@ fn ak_gauge(ctx: *u8, np: *facet::Node) -> flex::Node {
     return n;
 }
 
+// A custom vector shape. The outline is built as an NSBezierPath with y flipped
+// into the layer's bottom-left space (so a top-left path renders upright), then
+// handed as a CGPath to a CAShapeLayer sublayer. Fill = style.bg, stroke =
+// style.border (apply_style skips those for kind_path — see the guard there).
+fn ak_path(ctx: *u8, np: *facet::Node) -> flex::Node {
+    let w: f64 = facet::fixed_width(np);
+    let h: f64 = facet::fixed_height(np);
+    let container: ak::View = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: w, h: h });
+    container.set_wants_layer(true);
+
+    let bez: ak::BezierPath = ak::BezierPath::bezier_path();
+    let cmds: *vec::Vec[facet::PathCmd] = { #addr_of((*np).path_cmds) };
+    let count: usize = { (*cmds).count() };
+    var i: usize = 0 as usize;
+    while i < count {
+        match { (*cmds).at(i) } {
+            option::Option[facet::PathCmd]::Some(c) => {
+                let op: u32 = c.op;
+                if op == facet::path_op_move() {
+                    bez.move_to_point(rt::Point { x: c.ax, y: h - c.ay });
+                } else if op == facet::path_op_line() {
+                    bez.line_to_point(rt::Point { x: c.ax, y: h - c.ay });
+                } else if op == facet::path_op_quad() {
+                    bez.curve_to_point(rt::Point { x: c.ax, y: h - c.ay }, rt::Point { x: c.bx, y: h - c.by });
+                } else if op == facet::path_op_cubic() {
+                    bez.curve_to_point_control_point1(rt::Point { x: c.ax, y: h - c.ay }, rt::Point { x: c.bx, y: h - c.by }, rt::Point { x: c.cx, y: h - c.cy });
+                } else if op == facet::path_op_close() {
+                    bez.close_path();
+                }
+            }
+            option::Option[facet::PathCmd]::None => {}
+        }
+        i = i + (1 as usize);
+    }
+
+    // CAShapeLayer's binding is unusable (mis-bound to TextLayer), so drive it raw.
+    let cg: *u8 = rt::msg_id(bez.raw(), rt::sel(#str_ptr("CGPath\0")));
+    let shape: *u8 = rt::msg_id(rt::get_class(#str_ptr("CAShapeLayer\0")), rt::sel(#str_ptr("layer\0")));
+    rt::msg_void_id(shape, rt::sel(#str_ptr("setPath:\0")), cg);
+
+    let style: facet::Style = { (*np).style };
+    let fill: facet::Color = style.bg;
+    if fill.is_set() {
+        rt::msg_void_id(shape, rt::sel(#str_ptr("setFillColor:\0")), ns_color(fill).c_g_color());
+    } else {
+        rt::msg_void_id(shape, rt::sel(#str_ptr("setFillColor:\0")), 0 as *u8);   // clear default black fill
+    }
+    let sw: f64 = style.border_width;
+    let sc: facet::Color = style.border_color;
+    if sw > 0.0f64 && sc.is_set() {
+        rt::msg_void_id(shape, rt::sel(#str_ptr("setStrokeColor:\0")), ns_color(sc).c_g_color());
+        rt::msg_void_f64(shape, rt::sel(#str_ptr("setLineWidth:\0")), sw);
+    }
+
+    let slyr: quartz::Layer = quartz::Layer::from_raw(shape);
+    slyr.set_frame(container.bounds());
+    slyr.set_autoresizing_mask(18 as u64);                  // width|height sizable
+    rt::msg_void_id_u64(container.layer().raw(), rt::sel(#str_ptr("insertSublayer:atIndex:\0")), shape, 0 as u64);
+
+    var n: flex::Node = ui::fixed_view(container);
+    apply_style(n.payload(), facet::kind_path(), np);
+    return n;
+}
+
 fn ak_slider(ctx: *u8, np: *facet::Node) -> flex::Node {
     let sl: ak::Slider = ak::Slider::new();
     sl.set_min_value({ (*np).min_val });
@@ -913,6 +979,7 @@ fn renderer() -> facet::Renderer {
         date_picker: ak_date_picker,
         box: ak_box,
         gauge: ak_gauge,
+        path: ak_path,
         native: ak_native,
         bordered: ak_bordered,
         clickable: ak_clickable,
@@ -1982,6 +2049,35 @@ fn focus_makes_widget_first_responder() {
     // find_view_by_id locates the field, and makeFirstResponder succeeds.
     assert find_view_by_id(content.raw(), "email") != (0 as *u8);
     assert focus(win.raw(), "email");
+}
+
+#[test]
+fn path_shape_mounts_on_appkit() {
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 160.0, h: 120.0 });
+    var root: facet::Node = @facet {
+        vstack {
+            path(120.0f64, 90.0f64)
+                .move_to(0.0f64, 0.0f64)
+                .line_to(120.0f64, 0.0f64)
+                .line_to(60.0f64, 90.0f64)
+                .close_path()
+                .background(facet::Color::accent())
+                .border(3.0f64, facet::Color::primary())
+                .agent_id("tri")
+        }
+    };
+    let h: f64 = mount_into(#addr_of(root), content.raw(), 160.0f64, 120.0f64);
+    assert h > 0.0f64;
+    assert surface_has_id(content.raw(), "tri");
+    // the shape carries a CAShapeLayer sublayer with a non-nil path
+    let vp: *u8 = nth_widget(content.raw(), 0 as usize);
+    let v: ak::View = ak::View::from_raw(vp);
+    let sub: *u8 = rt::msg_id(v.layer().raw(), rt::sel(#str_ptr("sublayers\0")));
+    let n_sub: u64 = rt::msg_u64(sub, rt::sel(#str_ptr("count\0")));
+    assert n_sub >= (1 as u64);
+    let shape: *u8 = rt::msg_id_u64(sub, rt::sel(#str_ptr("objectAtIndex:\0")), 0 as u64);
+    let cg: *u8 = rt::msg_id(shape, rt::sel(#str_ptr("path\0")));
+    assert cg != (0 as *u8);
 }
 
 #[test]

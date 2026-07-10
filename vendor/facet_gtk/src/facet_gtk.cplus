@@ -322,6 +322,13 @@ fn gtk_gauge(ctx: *u8, np: *facet::Node) -> flex::Node {
     return widget_leaf(lb.upcast());
 }
 
+// A custom vector shape. TODO(gtk,linux): draw the path_cmds with cairo via a
+// GtkDrawingArea draw callback; for now a plain surface fills the vtable slot.
+fn gtk_path(ctx: *u8, np: *facet::Node) -> flex::Node {
+    let da: gtk::DrawingArea = gtk::DrawingArea::new();
+    return widget_leaf(da.upcast());
+}
+
 fn gtk_slider(ctx: *u8, np: *facet::Node) -> flex::Node {
     // GtkScale → GtkRange → GtkWidget; value rides the Range.
     let sc: gtk::Scale = gtk::Scale::new_with_range(0 as i32, { (*np).min_val }, { (*np).max_val }, 1.0f64);
@@ -415,6 +422,7 @@ fn renderer() -> facet::Renderer {
         date_picker: gtk_date_picker,
         box: gtk_box,
         gauge: gtk_gauge,
+        path: gtk_path,
         native: gtk_native,
         bordered: gtk_bordered,
         clickable: gtk_clickable,

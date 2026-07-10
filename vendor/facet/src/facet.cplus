@@ -97,6 +97,8 @@ fn kind_box() -> u32 { return 29 as u32; }
 fn kind_material() -> u32 { return 30 as u32; }
 // A read-only value gauge (SwiftUI Gauge → NSLevelIndicator). Leaf op.
 fn kind_gauge() -> u32 { return 31 as u32; }
+// A custom vector shape (SwiftUI Path → CAShapeLayer). Leaf op.
+fn kind_path() -> u32 { return 32 as u32; }
 
 // Agent-affordance roles — numeric indices aligned with agent_core::Role so
 // Phase 2 can pass them through without a translation table.
@@ -362,8 +364,25 @@ struct Node {
     _bdr_l: f64, _bdr_t: f64, _bdr_r: f64, _bdr_b: f64,   // 0 = unset (border-as-inset)
     _pad_start: f64, _pad_end: f64,   // 0 = unset (logical, direction-relative padding)
     _mrg_start: f64, _mrg_end: f64,   // 0 = unset (logical margin)
+    path_cmds: vec::Vec[PathCmd],     // path kind: the vector segments (empty = none)
     children: vec::Vec[Node],
 }
+
+// One segment of a vector `path`. `op` selects which points are read:
+// 1 move / 2 line use (ax,ay); 3 quad adds control (bx,by); 4 cubic adds a
+// second control (cx,cy); 5 close ignores all points. Local top-left coords.
+struct PathCmd {
+    op: u32,
+    ax: f64, ay: f64,   // end point
+    bx: f64, by: f64,   // control 1 (quad control; cubic control 1)
+    cx: f64, cy: f64,   // control 2 (cubic only)
+}
+
+fn path_op_move() -> u32 { return 1 as u32; }
+fn path_op_line() -> u32 { return 2 as u32; }
+fn path_op_quad() -> u32 { return 3 as u32; }
+fn path_op_cubic() -> u32 { return 4 as u32; }
+fn path_op_close() -> u32 { return 5 as u32; }
 
 fn blank(kind: u32) -> Node {
     let none: fn(*u8, *u8) = null_fn();
@@ -461,6 +480,7 @@ fn blank(kind: u32) -> Node {
         _bdr_l: 0.0f64, _bdr_t: 0.0f64, _bdr_r: 0.0f64, _bdr_b: 0.0f64,
         _pad_start: 0.0f64, _pad_end: 0.0f64,
         _mrg_start: 0.0f64, _mrg_end: 0.0f64,
+        path_cmds: vec::new::[PathCmd](),
         children: vec::new::[Node](),
     };
 }
@@ -737,6 +757,23 @@ fn gauge(value: f64 = 0.0f64, min: f64 = 0.0f64, max: f64 = 1.0f64) -> Node {
     return n;
 }
 
+// A custom vector shape drawn into a width×height box (SwiftUI `Path`). Build
+// the outline with `.move_to`/`.line_to`/`.quad_to`/`.curve_to`/`.close_path`,
+// then fill with `.background(color)` and/or stroke with `.border(w, color)`.
+// Coordinates are local, top-left origin.
+fn path(width: f64, height: f64) -> Node {
+    var n: Node = blank(kind_path());
+    n._width = width;
+    n._height = height;
+    return n;
+}
+
+// Read the fixed layout box (backends need it to size a path's drawing surface;
+// `_width`/`_height` are module-private, so expose them through the package). -1
+// means auto/unset.
+fn fixed_width(np: *Node) -> f64 { return { (*np)._width }; }
+fn fixed_height(np: *Node) -> f64 { return { (*np)._height }; }
+
 // A +/- numeric stepper over [min, max] by `step`.
 fn stepper(
     value: f64 = 0.0f64,
@@ -854,6 +891,33 @@ impl Node {
     // `.fade_in(duration)` — entrance fade (opacity 0→1) played on mount.
     // SwiftUI `.transition(.opacity)`; a one-shot appear animation.
     fn fade_in(take this, duration: f64) -> Node { var n: Node = this; n.style.fade_in = duration; return n; }
+    // Path builders — append one segment each (SwiftUI Path's move/addLine/
+    // addQuadCurve/addCurve/closeSubpath). Local top-left coordinates.
+    fn move_to(take this, x: f64, y: f64) -> Node {
+        var n: Node = this;
+        n.path_cmds.append(PathCmd { op: path_op_move(), ax: x, ay: y, bx: 0.0f64, by: 0.0f64, cx: 0.0f64, cy: 0.0f64 });
+        return n;
+    }
+    fn line_to(take this, x: f64, y: f64) -> Node {
+        var n: Node = this;
+        n.path_cmds.append(PathCmd { op: path_op_line(), ax: x, ay: y, bx: 0.0f64, by: 0.0f64, cx: 0.0f64, cy: 0.0f64 });
+        return n;
+    }
+    fn quad_to(take this, cx: f64, cy: f64, x: f64, y: f64) -> Node {
+        var n: Node = this;
+        n.path_cmds.append(PathCmd { op: path_op_quad(), ax: x, ay: y, bx: cx, by: cy, cx: 0.0f64, cy: 0.0f64 });
+        return n;
+    }
+    fn curve_to(take this, c1x: f64, c1y: f64, c2x: f64, c2y: f64, x: f64, y: f64) -> Node {
+        var n: Node = this;
+        n.path_cmds.append(PathCmd { op: path_op_cubic(), ax: x, ay: y, bx: c1x, by: c1y, cx: c2x, cy: c2y });
+        return n;
+    }
+    fn close_path(take this) -> Node {
+        var n: Node = this;
+        n.path_cmds.append(PathCmd { op: path_op_close(), ax: 0.0f64, ay: 0.0f64, bx: 0.0f64, by: 0.0f64, cx: 0.0f64, cy: 0.0f64 });
+        return n;
+    }
     // `.frame(width:height:)` — set both fixed dimensions at once.
     fn frame(take this, w: f64, h: f64) -> Node { var n: Node = this; n._width = w; n._height = h; return n; }
     // `.plain()` — borderless button (the link/plain-button fold). Pair with
@@ -1284,6 +1348,7 @@ struct Renderer {
     date_picker: fn(*u8, *Node) -> flex::Node,
     box:         fn(*u8, *Node) -> flex::Node,
     gauge:       fn(*u8, *Node) -> flex::Node,
+    path:        fn(*u8, *Node) -> flex::Node,
     // The escape hatch (Phase 3)
     native:      fn(*u8, *Node) -> flex::Node,
     // wrappers — mount recurses children first, then hands them over
@@ -1415,6 +1480,10 @@ fn mount(np: *Node, r: Renderer) -> flex::Node {
         is_widget = true;
     } else if k == kind_gauge() {
         let f: fn(*u8, *Node) -> flex::Node = r.gauge;
+        n = f(r.ctx, np);
+        is_widget = true;
+    } else if k == kind_path() {
+        let f: fn(*u8, *Node) -> flex::Node = r.path;
         n = f(r.ctx, np);
         is_widget = true;
     } else if k == kind_native() {
@@ -1884,6 +1953,7 @@ static FAKE_COLOR_PICKERS: i32 = 0;
 static FAKE_DATE_PICKERS: i32 = 0;
 static FAKE_BOXES: i32 = 0;
 static FAKE_GAUGES: i32 = 0;
+static FAKE_PATHS: i32 = 0;
 static FAKE_NATIVES: i32 = 0;
 static FAKE_LAST_NATIVE_HANDLE: i64 = 0;
 static FAKE_BORDEREDS: i32 = 0;
@@ -1999,6 +2069,13 @@ fn fake_gauge(ctx: *u8, np: *Node) -> flex::Node {
     return flex::Node::new().width(100.0f64).height(20.0f64);
 }
 
+fn fake_path(ctx: *u8, np: *Node) -> flex::Node {
+    FAKE_PATHS = FAKE_PATHS + 1;
+    let w: f64 = { (*np)._width };
+    let h: f64 = { (*np)._height };
+    return flex::Node::new().width(w).height(h);
+}
+
 fn fake_native(ctx: *u8, np: *Node) -> flex::Node {
     FAKE_NATIVES = FAKE_NATIVES + 1;
     FAKE_LAST_NATIVE_HANDLE = { (*np).native_handle } as i64;
@@ -2078,6 +2155,7 @@ fn fake_renderer() -> Renderer {
         date_picker: fake_date_picker,
         box: fake_box,
         gauge: fake_gauge,
+        path: fake_path,
         native: fake_native,
         bordered: fake_bordered,
         clickable: fake_clickable,
@@ -2109,6 +2187,7 @@ fn reset_fake_counts() {
     FAKE_DATE_PICKERS = 0;
     FAKE_BOXES = 0;
     FAKE_GAUGES = 0;
+    FAKE_PATHS = 0;
     FAKE_NATIVES = 0;
     FAKE_LAST_NATIVE_HANDLE = 0;
     FAKE_BORDEREDS = 0;
@@ -2374,6 +2453,21 @@ fn facet_paint_modifiers_set_fields() {
     assert n.style.text_align == text_center();
     assert approx(label("z").fade_in(0.3f64).style.fade_in, 0.3f64);
     assert approx(label("z").style.fade_in, 0.0f64);   // default: no entrance
+    // Path builder records one segment per call, in order, and carries fill/stroke.
+    let pth: Node = path(100.0f64, 80.0f64)
+        .move_to(0.0f64, 0.0f64)
+        .line_to(100.0f64, 0.0f64)
+        .quad_to(100.0f64, 80.0f64, 0.0f64, 80.0f64)
+        .curve_to(10.0f64, 10.0f64, 20.0f64, 20.0f64, 0.0f64, 40.0f64)
+        .close_path()
+        .background(Color::accent())
+        .border(2.0f64, Color::primary());
+    assert pth.kind == kind_path();
+    assert pth.path_cmds.count() == (5 as usize);
+    assert approx(fixed_width(#addr_of(pth)), 100.0f64);
+    assert approx(fixed_height(#addr_of(pth)), 80.0f64);
+    assert pth.style.bg.token == Color::accent().token;
+    assert approx(pth.style.border_width, 2.0f64);
     assert label("z").hidden().style.hidden;
     assert label("z").style.hidden == false;   // default visible
     assert label("z").italic().style.italic;
