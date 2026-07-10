@@ -1241,6 +1241,36 @@ fn phase1_shared_demo_mounts_on_appkit() {
 }
 
 // True if any descendant view carries the given accessibilityIdentifier.
+// Find a descendant view by agent id (accessibilityIdentifier), or 0 (null).
+fn find_view_by_id(root: *u8, id: str) -> *u8 {
+    if root == (0 as *u8) { return 0 as *u8; }
+    if ak::Accessibility::from_raw(root).accessibility_identifier().view() == id { return root; }
+    let v: ak::View = ak::View::from_raw(root);
+    var subs: vec::Vec[ak::View] = v.subviews();
+    let n: usize = subs.count();
+    var i: usize = 0 as usize;
+    while i < n {
+        match subs.at_ptr(i) {
+            option::Option[*ak::View]::Some(sp) => {
+                let found: *u8 = find_view_by_id({ (*sp).raw() }, id);
+                if found != (0 as *u8) { return found; }
+            }
+            option::Option[*ak::View]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return 0 as *u8;
+}
+
+// Focus the widget with the given agent id — make it the window's first
+// responder. Call AFTER mount (the view must be in the window). Returns success.
+fn focus(win_ptr: *u8, agent_id: str) -> bool {
+    let content: *u8 = rt::msg_id(win_ptr, rt::sel(#str_ptr("contentView\0")));
+    let v: *u8 = find_view_by_id(content, agent_id);
+    if v == (0 as *u8) { return false; }
+    return rt::msg_i8_id(win_ptr, rt::sel(#str_ptr("makeFirstResponder:\0")), v) != (0 as i8);
+}
+
 fn surface_has_id(root: *u8, id: str) -> bool {
     if root == (0 as *u8) { return false; }
     let got: text::Text = ak::Accessibility::from_raw(root).accessibility_identifier();
@@ -1877,6 +1907,22 @@ fn context_menu_dispatches_by_index() {
     assert tgt != (0 as *u8);
     rt::msg_void_id(tgt, akx::action_ctx_sel(), item);
     assert CTX_MENU_PICK == (2 as i64);
+}
+
+#[test]
+fn focus_makes_widget_first_responder() {
+    let win = e2e_window(300.0f64, 160.0f64);
+    let content = e2e_content(win);
+    var root: facet::Node = @facet {
+        vstack {
+            text_field(placeholder: "name").agent_id("name")
+            text_field(placeholder: "email").agent_id("email")
+        }
+    };
+    let _h: f64 = mount_into(#addr_of(root), content.raw(), 300.0f64, 160.0f64);
+    // find_view_by_id locates the field, and makeFirstResponder succeeds.
+    assert find_view_by_id(content.raw(), "email") != (0 as *u8);
+    assert focus(win.raw(), "email");
 }
 
 #[test]
