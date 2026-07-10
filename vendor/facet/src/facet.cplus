@@ -95,6 +95,75 @@ fn noop(sender: *u8, ctx: *u8) { return; }
 // only when the field is non-null.
 fn null_fn() -> fn(*u8, *u8) { return 0 as fn(*u8, *u8); }
 
+// ---- Style: portable visual style ------------------------------------------
+// Every field has an explicit UNSET state so a backend's `apply_style` touches
+// ONLY what the author set — it must never stomp a control's size-specific font
+// or a dark-mode-adaptive semantic color. Unset = `0.0` (numerics),
+// `weight_unset()`/`family_unset()`, a `Color` with token 0 (`Color::none`).
+
+// Font weight tokens (0 = unset — keep the widget's native weight).
+fn weight_unset() -> u32 { return 0 as u32; }
+fn weight_regular() -> u32 { return 1 as u32; }
+fn weight_medium() -> u32 { return 2 as u32; }
+fn weight_semibold() -> u32 { return 3 as u32; }
+fn weight_bold() -> u32 { return 4 as u32; }
+
+// Font family tokens (0 = unset).
+fn family_unset() -> u32 { return 0 as u32; }
+fn family_system() -> u32 { return 1 as u32; }
+fn family_monospace() -> u32 { return 2 as u32; }
+
+// A color: a semantic token (mapped to the platform's native color) or explicit
+// RGBA. token 0 = none/unset; token 255 = Rgba (use r/g/b/a, 0..1). Flat + Copy.
+struct Color {
+    token: u32,
+    r: f64,
+    g: f64,
+    b: f64,
+    a: f64,
+}
+
+impl Color {
+    fn none() -> Color { return Color { token: 0 as u32, r: 0.0f64, g: 0.0f64, b: 0.0f64, a: 0.0f64 }; }
+    fn primary() -> Color { return Color { token: 1 as u32, r: 0.0f64, g: 0.0f64, b: 0.0f64, a: 0.0f64 }; }
+    fn secondary() -> Color { return Color { token: 2 as u32, r: 0.0f64, g: 0.0f64, b: 0.0f64, a: 0.0f64 }; }
+    fn accent() -> Color { return Color { token: 3 as u32, r: 0.0f64, g: 0.0f64, b: 0.0f64, a: 0.0f64 }; }
+    fn system_red() -> Color { return Color { token: 4 as u32, r: 0.0f64, g: 0.0f64, b: 0.0f64, a: 0.0f64 }; }
+    fn system_green() -> Color { return Color { token: 5 as u32, r: 0.0f64, g: 0.0f64, b: 0.0f64, a: 0.0f64 }; }
+    fn system_blue() -> Color { return Color { token: 6 as u32, r: 0.0f64, g: 0.0f64, b: 0.0f64, a: 0.0f64 }; }
+    fn system_orange() -> Color { return Color { token: 7 as u32, r: 0.0f64, g: 0.0f64, b: 0.0f64, a: 0.0f64 }; }
+    fn system_gray() -> Color { return Color { token: 8 as u32, r: 0.0f64, g: 0.0f64, b: 0.0f64, a: 0.0f64 }; }
+    fn rgba(r: f64, g: f64, b: f64, a: f64) -> Color { return Color { token: 255 as u32, r: r, g: g, b: b, a: a }; }
+    fn is_set(this) -> bool { return this.token != (0 as u32); }
+}
+
+// A widget's visual style. Rides on every `Node`; each backend's `apply_style`
+// reads it and applies only the set fields. Paint props (fg/bg/corner/border)
+// are the Phase-0 surface; font/weight/family are present but folded in later.
+struct Style {
+    font_size: f64,        // 0 = unset
+    weight: u32,           // 0 = unset
+    family: u32,           // 0 = unset
+    fg: Color,             // token 0 = unset
+    bg: Color,             // token 0 = unset
+    corner_radius: f64,    // 0 = unset (also = square, same visual)
+    border_width: f64,     // 0 = unset
+    border_color: Color,   // token 0 = unset
+}
+
+fn style_none() -> Style {
+    return Style {
+        font_size: 0.0f64,
+        weight: 0 as u32,
+        family: 0 as u32,
+        fg: Color::none(),
+        bg: Color::none(),
+        corner_radius: 0.0f64,
+        border_width: 0.0f64,
+        border_color: Color::none(),
+    };
+}
+
 // ---- the description tree ----------------------------------------------
 
 // One node. Widget config is read by the platform's per-kind ops; the
@@ -113,6 +182,7 @@ struct Node {
     bold: bool,
     secondary: bool,
     primary: bool,
+    style: Style,           // portable visual style; backend applies set fields
     // --- kind-specific config (union-of-fields; unused kinds leave defaults) ---
     value: text::Text,          // composer / code_editor / text_area initial text
     placeholder: text::Text,    // text_area
@@ -162,6 +232,7 @@ fn blank(kind: u32) -> Node {
         bold: false,
         secondary: false,
         primary: false,
+        style: style_none(),
         value: text::from_str(""),
         placeholder: text::from_str(""),
         editable: true,
@@ -304,6 +375,15 @@ impl Node {
         return n;
     }
 
+    // Style modifiers (SwiftUI-shaped, C+-named). Each sets one `Style` field;
+    // the backend's `apply_style` applies only the fields the author set.
+    fn font(take this, size: f64) -> Node { var n: Node = this; n.style.font_size = size; return n; }
+    fn weight(take this, w: u32) -> Node { var n: Node = this; n.style.weight = w; return n; }
+    fn foreground_color(take this, c: Color) -> Node { var n: Node = this; n.style.fg = c; return n; }
+    fn background(take this, c: Color) -> Node { var n: Node = this; n.style.bg = c; return n; }
+    fn corner_radius(take this, r: f64) -> Node { var n: Node = this; n.style.corner_radius = r; return n; }
+    fn border(take this, w: f64, c: Color) -> Node { var n: Node = this; n.style.border_width = w; n.style.border_color = c; return n; }
+
     fn set_grow(ref this, v: f64) { this._grow = v; return; }
     fn set_gap(ref this, v: f64) { this._gap = v; return; }
     fn set_padding(ref this, v: f64) { this._padding = v; return; }
@@ -318,6 +398,11 @@ impl Node {
         this.agent_id = text::from_str(id);
         return;
     }
+
+    fn set_foreground_color(ref this, c: Color) { this.style.fg = c; return; }
+    fn set_background(ref this, c: Color) { this.style.bg = c; return; }
+    fn set_corner_radius(ref this, r: f64) { this.style.corner_radius = r; return; }
+    fn set_border(ref this, w: f64, c: Color) { this.style.border_width = w; this.style.border_color = c; return; }
 }
 
 // ---- the DSL builder contract ----------------------------------------------
@@ -729,6 +814,29 @@ fn facet_role_for_kind_table() {
     assert role_for_kind(kind_code_editor()) == role_input();
     assert role_for_kind(kind_bordered()) == role_group();
     assert role_for_kind(kind_split()) == role_group();
+}
+
+#[test]
+fn facet_style_modifiers_set_only_their_field() {
+    // blank starts fully unset — apply_style must skip everything.
+    let plain: Node = label("x");
+    assert plain.style.fg.is_set() == false;
+    assert plain.style.bg.is_set() == false;
+    assert approx(plain.style.corner_radius, 0.0f64);
+    assert plain.style.weight == (0 as u32);
+
+    // each modifier sets exactly its field, leaves the rest unset.
+    let styled: Node = label("x")
+        .foreground_color(Color::secondary())
+        .background(Color::rgba(0.1f64, 0.2f64, 0.3f64, 1.0f64))
+        .corner_radius(8.0f64);
+    assert styled.style.fg.is_set();
+    assert styled.style.fg.token == (2 as u32);      // secondary token
+    assert styled.style.bg.token == (255 as u32);    // rgba token
+    assert approx(styled.style.bg.b, 0.3f64);
+    assert approx(styled.style.corner_radius, 8.0f64);
+    assert styled.style.border_width < 0.001f64;     // untouched
+    assert styled.style.weight == (0 as u32);        // untouched
 }
 
 // -- mount, against a fake renderer --

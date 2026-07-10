@@ -28,6 +28,7 @@ import "stdlib/vec" as vec;
 import "flex_layout/flex_layout" as flex;
 import "appkit/appkit" as ak;
 import "appkit/appkit_ext" as akx;
+import "quartzcore/quartzcore" as quartz;
 import "./ui" as ui;
 import "facet/facet" as facet;
 import "agent_core/identity" as identity;
@@ -40,6 +41,58 @@ import "agent_appkit/agent_appkit" as agent;
 // match arm; the widget copies it into an NSString before the borrow ends.
 // Agent id pinning is NOT done here — `mount` calls `set_identity` after
 // every widget-producing op (the single choke point).
+
+// ---- style application ------------------------------------------------------
+// Map a portable facet::Color (set — token != 0) to a native NSColor. Semantic
+// tokens map to the platform's adaptive colors (dark-mode correct); token 255
+// is explicit sRGB.
+fn ns_color(c: facet::Color) -> ak::Color {
+    let t: u32 = { c.token };
+    if t == (1 as u32) { return ak::Color::label_color(); }
+    if t == (2 as u32) { return ak::Color::secondary_label_color(); }
+    if t == (3 as u32) { return ak::Color::control_accent_color(); }
+    if t == (4 as u32) { return ak::Color::system_red_color(); }
+    if t == (5 as u32) { return ak::Color::system_green_color(); }
+    if t == (6 as u32) { return ak::Color::system_blue_color(); }
+    if t == (7 as u32) { return ak::Color::system_orange_color(); }
+    if t == (8 as u32) { return ak::Color::system_gray_color(); }
+    return ak::Color::color_with_red({ c.r }, { c.g }, { c.b }, { c.a });
+}
+
+// Apply the portable Style to a freshly-built native view. Per-kind, NOT one
+// uniform table: text widgets take fg via text color, controls via content
+// tint; background / corner / border go through the view's CALayer (wantsLayer
+// first). ONLY set fields are touched — an unset field never stomps a control's
+// native font or a dark-mode-adaptive semantic color.
+fn apply_style(view_ptr: *u8, kind: u32, style: facet::Style) {
+    if view_ptr == (0 as *u8) { return; }
+    // Foreground.
+    let fg: facet::Color = { style.fg };
+    if fg.is_set() {
+        if kind == facet::kind_label() || kind == facet::kind_wrap_label() {
+            ak::TextField::from_raw(view_ptr).set_text_color(ns_color(fg));
+        } else if kind == facet::kind_button() {
+            ak::Button::from_raw(view_ptr).set_content_tint_color(ns_color(fg));
+        }
+    }
+    // Layer-backed: background / corner / border.
+    let bg: facet::Color = { style.bg };
+    let corner: f64 = { style.corner_radius };
+    let border_w: f64 = { style.border_width };
+    if bg.is_set() || corner > 0.0f64 || border_w > 0.0f64 {
+        let v: ak::View = ak::View::from_raw(view_ptr);
+        v.set_wants_layer(true);
+        let lyr: quartz::Layer = v.layer();
+        if bg.is_set() { lyr.set_background_color(ns_color(bg).c_g_color()); }
+        if corner > 0.0f64 { lyr.set_corner_radius(corner); }
+        if border_w > 0.0f64 {
+            lyr.set_border_width(border_w);
+            let bc: facet::Color = { style.border_color };
+            if bc.is_set() { lyr.set_border_color(ns_color(bc).c_g_color()); }
+        }
+    }
+    return;
+}
 
 fn ak_label(ctx: *u8, np: *facet::Node) -> flex::Node {
     var size: f64 = { (*np).font_size };
@@ -55,6 +108,7 @@ fn ak_label(ctx: *u8, np: *facet::Node) -> flex::Node {
             n = ui::label("", size: size);
         }
     };
+    apply_style(n.payload(), facet::kind_label(), { (*np).style });
     return n;
 }
 
@@ -88,11 +142,13 @@ fn ak_button(ctx: *u8, np: *facet::Node) -> flex::Node {
         }
     };
     // Wire the action exactly once (a replaced target strands its creation
-    // reference — never rewire). Re-render is the component's job: the handler
-    // mutates state, then the owning component (or the app) re-renders. The op
-    // does not wrap the handler.
+    // reference — never rewire). `component_after` re-renders the owning
+    // component after the handler runs, keyed on click_ctx = the component's
+    // address (a non-component ctx — 0, an index — misses the registry and
+    // no-ops). This is the component-model auto-refresh, through @facet.
     let b: ak::Button = ak::Button::from_raw(n.payload());
-    akx::set_control_action_ctx(b.as_control(), { (*np).click }, { (*np).click_ctx });
+    akx::set_control_action_ctx_then_ctx(b.as_control(), { (*np).click }, { (*np).click_ctx }, ui::component_after);
+    apply_style(n.payload(), facet::kind_button(), { (*np).style });
     return n;
 }
 
@@ -911,6 +967,25 @@ fn e2e_facet_composer_is_agent_input() {
         i = i +% (1 as usize);
     }
     assert ok;
+}
+
+#[test]
+fn styled_facet_widgets_mount_through_apply_style() {
+    // A styled @facet tree drives the full pipeline: description → mount →
+    // apply_style → NSViews. (Visual correctness is the iris gate; here we
+    // prove the styled path builds views without tripping.)
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
+    var root: facet::Node = @facet {
+        vstack {
+            label("hello").foreground_color(facet::Color::secondary())
+            button("Go", primary: true)
+                .background(facet::Color::rgba(0.2f64, 0.4f64, 0.9f64, 1.0f64))
+                .corner_radius(8.0f64)
+        }
+    };
+    let h: f64 = mount_into(#addr_of(root), content.raw(), 300.0f64, 200.0f64);
+    assert h > 0.0f64;
+    assert content.subviews().count() > (0 as usize);
 }
 
 #[test]
