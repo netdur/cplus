@@ -1,0 +1,40 @@
+// facet_gtk tests.
+//
+// STRUCTURAL only — these build facet descriptions and assert their shape,
+// which is host-independent (no GTK calls). Behavioral tests — mount -> GtkFixed
+// frames, measurement, the window host, real widget I/O — require a Linux/GTK
+// host with a display and are NOT included here; add them there.
+//
+// `cpc test` links libgtk-4, so it runs only on a GTK host. On other platforms
+// verify with `cpc check`, which type-checks the whole package against the gtk4
+// binding without linking.
+
+import "facet/facet" as facet;
+import "./facet_gtk" as fgtk;
+import "stdlib/option" as option;
+
+// The shared demo composes one @facet vstack of five widgets, ending in the
+// tagged +1 button and the composer — proof the DSL + demo build on this
+// backend exactly as they do on facet_appkit.
+#[test]
+fn demo_view_composes_expected_kinds() {
+    var root: facet::Node = fgtk::demo_view();
+    match root.children.at_ptr(0 as usize) {
+        option::Option[*facet::Node]::Some(vs) => {
+            assert { (*vs).children.count() } == (5 as usize);
+            match { (*vs).children.at_ptr(3 as usize) } {
+                option::Option[*facet::Node]::Some(b) => {
+                    assert { (*b).kind } == facet::kind_button();
+                }
+                option::Option[*facet::Node]::None => { assert false; }
+            };
+            match { (*vs).children.at_ptr(4 as usize) } {
+                option::Option[*facet::Node]::Some(c) => {
+                    assert { (*c).kind } == facet::kind_composer();
+                }
+                option::Option[*facet::Node]::None => { assert false; }
+            };
+        }
+        option::Option[*facet::Node]::None => { assert false; }
+    };
+}

@@ -1,0 +1,43 @@
+[package]
+name    = "facet_gtk"
+version = "0.0.1"
+edition = "2026"
+
+# facet_gtk — facet's GTK 4 backend. Same contract as facet_appkit:
+#   facet_gtk   the facet Renderer ops (one per kind) + set_identity
+#               + mount/mount_into (flex tree -> GtkFixed frames)
+#               + a window host (GtkApplication) and a component re-render helper.
+# facet owns the tree walk and all layout (shared flex engine); this package
+# maps each Node kind onto the typed gtk4 binding.
+#
+# STATUS: type-checked (`cpc check`) against the gtk4 binding on any host, but
+# NOT built or run here — it links libgtk-4, which needs a Linux/GTK host.
+# facet_appkit is the reference implementation. See README.md.
+
+# Test root (structural, host-independent tests; runtime tests need a GTK host).
+[[bin]]
+name = "facet_gtk_tests"
+path = "src/test_main.cplus"
+
+[dependencies]
+stdlib      = "*"
+flex_layout = "*"
+facet       = "*"
+agent_core  = "*"
+# GTK 4 typed binding + its transitive stack (flat-vendor: the closure the
+# build touches must be declared here, resolved from sibling vendor/ dirs).
+gtk4        = "*"
+gobject     = "*"
+gobject_gir = "*"
+gio         = "*"
+glib        = "*"
+cairo       = "*"
+gdk         = "*"
+gdkpixbuf   = "*"
+graphene    = "*"
+gsk         = "*"
+harfbuzz    = "*"
+pango       = "*"
+
+[link]
+libs = ["gtk-4"]

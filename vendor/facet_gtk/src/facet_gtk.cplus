@@ -1,0 +1,454 @@
+// facet_gtk — facet's GTK 4 backend (the Linux/BSD counterpart of
+// facet_appkit). facet owns the description tree + all layout (the shared
+// flex_layout engine); this package supplies one `Renderer` op per Node kind
+// over the TYPED gtk4 binding, `set_identity` (the agent-affordance choke
+// point), `mount`/`mount_into` (flex tree -> GtkFixed frames), a component
+// re-render helper, and a GtkApplication window host.
+//
+// ============================================================================
+// STATUS — TYPE-CHECKED, NOT RUN. `cpc check` reports ZERO errors in this
+// package's files: every method, signature, and borrow is validated against the
+// real typed gtk4 binding. It is NOT built or run here — it links libgtk-4,
+// which needs a Linux/GTK host. Everything runtime-sensitive — GtkFixed layout
+// math, widget measurement, ref/sink ownership (see `widget_leaf`), the
+// GtkApplication host, and the composer/text_view widgets — must be validated
+// on a Linux/GTK host (build + run + valgrind). facet_appkit is the reference.
+//
+// KNOWN BLOCKER (not this package): a fully-green whole-project `cpc check` is
+// blocked by 22 pre-existing E0917 errors in the STALE vendored `gobject_gir`
+// binding (middle-`__` marshal names like `cclosure_marshal_VOID__FLAGS`,
+// predating the bindgen `__`-collapse fix). Those 22 also block `gtk4` itself,
+// so they are orthogonal to facet_gtk — regenerate gobject_gir with the current
+// cpc-bindgen (or hand-collapse the names) to unblock building anything on the
+// typed GTK stack.
+// ============================================================================
+//
+// Re-render follows the component model (NOT a global runtime): a handler
+// mutates state, then the owning component re-renders — here via `render_into`
+// (clear the host + mount_into), the GTK analogue of facet_appkit's explicit
+// re-render. No `run_app`/`refresh` loop.
+//
+// Kind coverage: fills the WHOLE frozen Renderer vtable (the freeze exit
+// criterion — `cpc check` is green for this package modulo the pre-existing
+// gobject_gir blocker above). label / wrap_label / button + set_identity are
+// real. text_area / composer / code_editor render a GtkTextView in a
+// GtkScrolledWindow (display only — event wiring and text read-back need
+// hand-bound TextBuffer iterators, which the generated binding omits; see the
+// TODOs). The Tier-2 leaves — image (GtkImage), symbol (GtkImage from an icon
+// name; PROVISIONAL), text_field (GtkEntry), popup (GtkComboBoxText), divider
+// (GtkSeparator) — and the `native` hatch (adopt an app GtkWidget) are mapped.
+// bordered / clickable are pass-through; split is a flex row. These are honest,
+// localized gaps — a second pass grows each into a fully-wired op.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "flex_layout/flex_layout" as flex;
+import "gtk4/gtk4" as gtk;
+import "gio/gio" as gio;
+import "gobject/runtime" as g;
+import "facet/facet" as facet;
+import "agent_core/identity" as identity;
+
+// ---- hand-bound GTK symbols the typed binding doesn't expose ----------------
+// gtk_widget_measure fills out-params (min/natural size); binding it with
+// pointer out-params avoids the typed ref-param call form. Orientation is the
+// gtk enum as i32: 0 = horizontal, 1 = vertical.
+#[link_name = "gtk_widget_measure"]
+extern fn gtk_widget_measure(widget: *u8, orientation: i32, for_size: i32,
+    minimum: *i32, natural: *i32, minimum_baseline: *i32, natural_baseline: *i32);
+
+// Child-chain walk (GTK 4 replaced container-get-children with a sibling
+// chain) — used by `clear_fixed` to drop a host's children before a re-render.
+#[link_name = "gtk_widget_get_first_child"]
+extern fn gtk_widget_get_first_child(widget: *u8) -> *u8;
+
+// Drive the app main loop. `g_application_run` is variadic-adjacent (argv) and
+// SKIPPED by the generated gio binding, so bind it directly.
+#[link_name = "g_application_run"]
+extern fn g_application_run(app: *u8, argc: i32, argv: *u8) -> i32;
+
+fn null() -> *u8 { return { 0 as *u8 }; }
+
+// ==========================================================================
+// Payload + measure plumbing (mirrors facet_appkit/ui `view`/`measure_view`)
+// ==========================================================================
+
+// The payload release: drop the backend's ref on the backing widget.
+fn release_widget(p: *u8) { g::object_unref(p); return; }
+
+// Measure a leaf through GtkWidget's natural size. `ctx` is the raw widget
+// pointer (borrowed; the same node's payload owns it). Width first (unbounded),
+// then height for that natural width.
+fn measure_widget(ctx: *u8, avail_w: f64, wmode: flex::MeasureMode, avail_h: f64, hmode: flex::MeasureMode) -> flex::Size {
+    var min_w: i32 = 0 as i32;
+    var nat_w: i32 = 0 as i32;
+    var min_b: i32 = 0 as i32;
+    var nat_b: i32 = 0 as i32;
+    gtk_widget_measure(ctx, 0 as i32, -1 as i32,
+        { #addr_of(min_w) as *i32 }, { #addr_of(nat_w) as *i32 },
+        { #addr_of(min_b) as *i32 }, { #addr_of(nat_b) as *i32 });
+    var min_h: i32 = 0 as i32;
+    var nat_h: i32 = 0 as i32;
+    gtk_widget_measure(ctx, 1 as i32, nat_w,
+        { #addr_of(min_h) as *i32 }, { #addr_of(nat_h) as *i32 },
+        { #addr_of(min_b) as *i32 }, { #addr_of(nat_b) as *i32 });
+    return flex::Size { width: nat_w as f64, height: nat_h as f64 };
+}
+
+// Wrap a live GtkWidget as a measured flex leaf. The node OWNS a ref on the
+// widget (released on drop/replace).
+//
+// OWNERSHIP — VALIDATE ON LINUX. A fresh GTK widget carries a floating ref;
+// `object_ref_sink` converts it to a strong ref we own (+1). When `apply` puts
+// it into a GtkFixed the container adds its own ref; dropping the node releases
+// ours, leaving the container as owner. This mirrors facet_appkit's
+// retain/release, but GTK's floating-ref rules are subtle — confirm no leak /
+// no double-free under valgrind before relying on it.
+fn widget_leaf(w: gtk::Widget) -> flex::Node {
+    let p: *u8 = g::object_ref_sink(w.raw());
+    var n: flex::Node = flex::Node::new();
+    n.set_payload(p, release_widget);
+    n.set_context(p);
+    n.set_measure(measure_widget);
+    return n;
+}
+
+// ==========================================================================
+// Per-kind Renderer ops
+// ==========================================================================
+
+// A single-line label. TODO(gtk,linux): size/bold/secondary styling via Pango
+// markup or a CSS class — for now the text renders at the theme default.
+fn gtk_label(ctx: *u8, np: *facet::Node) -> flex::Node {
+    let tp: *text::Text = { #addr_of((*np).text) };
+    let l: gtk::Label = gtk::Label::new({ (*tp).view() });
+    l.set_wrap(false);
+    l.set_xalign(0.0 as f32);
+    return widget_leaf(l.upcast());
+}
+
+// A wrapping label: height follows the flexed width.
+fn gtk_wrap_label(ctx: *u8, np: *facet::Node) -> flex::Node {
+    let tp: *text::Text = { #addr_of((*np).text) };
+    let l: gtk::Label = gtk::Label::new({ (*tp).view() });
+    l.set_wrap(true);
+    l.set_xalign(0.0 as f32);
+    return widget_leaf(l.upcast());
+}
+
+// A push button firing `Node.click(sender, ctx)` on "clicked".
+fn gtk_button(ctx: *u8, np: *facet::Node) -> flex::Node {
+    let tp: *text::Text = { #addr_of((*np).text) };
+    let b: gtk::Button = gtk::Button::new_with_label({ (*tp).view() });
+    let _id: u64 = b.connect_clicked({ (*np).click }, { (*np).click_ctx });
+    return widget_leaf(b.upcast());
+}
+
+// A GtkTextView in a GtkScrolledWindow, showing `value`. TODO(gtk,linux): wire
+// submit / on_change (a key controller) and text read-back — the generated
+// TextBuffer binding omits the iterator getters, so reading typed content back
+// needs hand-bound `gtk_text_buffer_get_{start,end}_iter` + `get_text`.
+fn text_view_leaf(value: str, editable: bool, monospace: bool) -> flex::Node {
+    let tv: gtk::TextView = gtk::TextView::new();
+    tv.set_editable(editable);
+    if monospace { tv.set_monospace(true); }
+    let buf: gtk::TextBuffer = tv.get_buffer();
+    buf.set_text(value, -1 as i32);
+    let sw: gtk::ScrolledWindow = gtk::ScrolledWindow::new();
+    sw.set_child(tv.upcast());
+    return widget_leaf(sw.upcast());
+}
+
+fn gtk_text_area(ctx: *u8, np: *facet::Node) -> flex::Node {
+    let vp: *text::Text = { #addr_of((*np).value) };
+    return text_view_leaf({ (*vp).view() }, true, false);
+}
+
+fn gtk_composer(ctx: *u8, np: *facet::Node) -> flex::Node {
+    let vp: *text::Text = { #addr_of((*np).value) };
+    return text_view_leaf({ (*vp).view() }, true, false);
+}
+
+fn gtk_code_editor(ctx: *u8, np: *facet::Node) -> flex::Node {
+    let vp: *text::Text = { #addr_of((*np).value) };
+    return text_view_leaf({ (*vp).view() }, { (*np).editable }, true);
+}
+
+// Wrapper kinds. TODO(gtk,linux): bordered = GtkFrame / CSS; clickable =
+// GestureClick on the content widget for np.click; split = GtkPaned. For now
+// bordered/clickable pass their content through unchanged and split lays the
+// two panes out as a flex row — nothing is dropped.
+fn gtk_bordered(ctx: *u8, np: *facet::Node, take content: flex::Node) -> flex::Node {
+    return content;
+}
+
+fn gtk_clickable(ctx: *u8, np: *facet::Node, take content: flex::Node) -> flex::Node {
+    return content;
+}
+
+fn gtk_split(ctx: *u8, np: *facet::Node, take first: flex::Node, take second: flex::Node) -> flex::Node {
+    var row: flex::Node = flex::Node::new();
+    row.add_child(first);
+    row.add_child(second);
+    return row;
+}
+
+// ---- Tier-2 leaves (Phase 2) + the native hatch (Phase 3) -------------------
+// The frozen contract grew six ops after this sketch was first written; filling
+// them here is the compiler-checked proof the vtable is not AppKit-shaped — a
+// second backend maps every kind onto its own toolkit or fails to compile.
+
+// A bitmap image from a file path.
+fn gtk_image(ctx: *u8, np: *facet::Node) -> flex::Node {
+    let vp: *text::Text = { #addr_of((*np).value) };
+    let im: gtk::Image = gtk::Image::new_from_file({ (*vp).view() });
+    return widget_leaf(im.upcast());
+}
+
+// A themed icon by name. `symbol` is PROVISIONAL — the SF Symbol name is an
+// Apple-ism; on GTK this is an icon-theme name (a real app maps its own set).
+fn gtk_symbol(ctx: *u8, np: *facet::Node) -> flex::Node {
+    let vp: *text::Text = { #addr_of((*np).value) };
+    let im: gtk::Image = gtk::Image::new_from_icon_name({ (*vp).view() });
+    var side: i32 = { (*np).font_size } as i32;
+    if side <= (0 as i32) { side = 16 as i32; }
+    im.set_pixel_size(side);
+    return widget_leaf(im.upcast());
+}
+
+// A single-line editable field. TODO(gtk,linux): text read-back via
+// gtk_editable_get_text once inputs are wired.
+fn gtk_text_field(ctx: *u8, np: *facet::Node) -> flex::Node {
+    let e: gtk::Entry = gtk::Entry::new();
+    let pp: *text::Text = { #addr_of((*np).placeholder) };
+    e.set_placeholder_text({ (*pp).view() });
+    let vp: *text::Text = { #addr_of((*np).value) };
+    e.get_buffer().set_text({ (*vp).view() }, -1 as i32);
+    return widget_leaf(e.upcast());
+}
+
+// A dropdown selector. TODO(gtk,linux): selection read-back + initial index
+// (ComboBoxText.set_active over the ComboBox superclass) once wired.
+fn gtk_popup(ctx: *u8, np: *facet::Node) -> flex::Node {
+    let combo: gtk::ComboBoxText = gtk::ComboBoxText::new();
+    let items: *vec::Vec[text::Text] = { #addr_of((*np).popup_items) };
+    let cnt: usize = { (*items).count() };
+    var i: usize = 0 as usize;
+    while i < cnt {
+        match { (*items).at_ptr(i) } {
+            option::Option[*text::Text]::Some(tp) => { combo.append_text({ (*tp).view() }); }
+            option::Option[*text::Text]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    // ComboBoxText → ComboBox → Widget (upcast climbs one level).
+    return widget_leaf(combo.upcast().upcast());
+}
+
+// A thin separator line (0 = horizontal orientation).
+fn gtk_divider(ctx: *u8, np: *facet::Node) -> flex::Node {
+    let s: gtk::Separator = gtk::Separator::new(0 as i32);
+    return widget_leaf(s.upcast());
+}
+
+// The native escape hatch: adopt an app-owned GtkWidget handle into the tree.
+// TODO(gtk,linux): the app owns the widget; validate the floating/strong ref
+// dance under valgrind — widget_leaf ref-sinks, which suits a fresh floating
+// widget; an app that keeps its own strong ref may need a plain ref instead.
+fn gtk_native(ctx: *u8, np: *facet::Node) -> flex::Node {
+    let h: *u8 = { (*np).native_handle };
+    if h == null() { return flex::Node::new(); }
+    return widget_leaf(gtk::Widget::from_raw(h));
+}
+
+// The agent-affordance choke point — `mount` calls this after every
+// widget-producing op. Records the packed (role, drive) under the shared
+// GObject data key (agent_gtk reads it back), and pins a non-empty agent id as
+// the widget name (gtk_widget_set_name — the GTK analogue of AppKit's
+// accessibilityIdentifier). TODO(gtk,linux): for scroll-hosted editors the
+// drive target is the inner GtkTextView, not the outer GtkScrolledWindow —
+// prefer the child widget once composer/text_area wire real inputs.
+fn gtk_set_identity(ctx: *u8, handle: *u8, id: str, role: u32) {
+    if handle == null() { return; }
+    let r: identity::Role = identity::role_from_index(role);
+    let drive: u32 = identity::drive_for_role(r);
+    let packed: *u8 = identity::pack_affordance(role, drive);
+    g::set_data(handle, identity::affordance_gobject_key(), packed);
+    if id != "" {
+        gtk::Widget::from_raw(handle).set_name(id);
+    }
+    return;
+}
+
+// The vtable value. `ctx` is an unused backend-context slot (a future backend
+// context — theme, window — can ride here); the ops don't read it.
+fn renderer() -> facet::Renderer {
+    return facet::Renderer {
+        ctx: null(),
+        label: gtk_label,
+        wrap_label: gtk_wrap_label,
+        button: gtk_button,
+        text_area: gtk_text_area,
+        composer: gtk_composer,
+        code_editor: gtk_code_editor,
+        image: gtk_image,
+        symbol: gtk_symbol,
+        text_field: gtk_text_field,
+        popup: gtk_popup,
+        divider: gtk_divider,
+        native: gtk_native,
+        bordered: gtk_bordered,
+        clickable: gtk_clickable,
+        split: gtk_split,
+        set_identity: gtk_set_identity,
+    };
+}
+
+// ==========================================================================
+// mount + apply (flex tree -> GtkFixed frames)
+// ==========================================================================
+
+// Description tree -> flex tree with GtkWidgets in the payloads.
+fn mount(np: *facet::Node) -> flex::Node {
+    return facet::mount(np, renderer());
+}
+
+// Lay each computed frame into a GtkFixed. GTK uses top-left origin (y-down),
+// same as flex's absolute coordinates — no vertical flip (unlike AppKit).
+// A payload node is a leaf widget: size + `put` it. A payload-less node with
+// children is a container: make a nested GtkFixed, `put` it, and recurse.
+fn apply(root: *flex::Node, fixed_ptr: *u8) {
+    apply_nested(root, fixed_ptr, { (*root).layout_frame() });
+    return;
+}
+
+fn apply_nested(node: *flex::Node, parent_fixed: *u8, parent_abs: flex::Layout) {
+    let kc: usize = { (*node).child_count() };
+    var i: usize = 0 as usize;
+    while i < kc {
+        match { (*node).children.at_ptr(i) } {
+            option::Option[*flex::Node]::Some(cn) => {
+                let cf: flex::Layout = { (*cn).layout_frame() };   // absolute
+                let x: f64 = cf.left - parent_abs.left;            // parent-relative
+                let y: f64 = cf.top - parent_abs.top;
+                let cp: *u8 = { (*cn).payload() };
+                if cp != null() {
+                    let w: gtk::Widget = gtk::Widget::from_raw(cp);
+                    w.set_size_request(cf.width as i32, cf.height as i32);
+                    gtk::Fixed::from_raw(parent_fixed).put(w, x, y);
+                } else if { (*cn).child_count() } > (0 as usize) {
+                    let inner: gtk::Fixed = gtk::Fixed::new();
+                    let iw: gtk::Widget = inner.upcast();
+                    iw.set_size_request(cf.width as i32, cf.height as i32);
+                    gtk::Fixed::from_raw(parent_fixed).put(iw, x, y);
+                    apply_nested(cn, inner.raw(), cf);
+                }
+            }
+            option::Option[*flex::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// Mount + lay out + apply into an existing GtkFixed, in one step. Returns the
+// content height (useful when sizing the window to fit).
+fn mount_into(np: *facet::Node, fixed_ptr: *u8, width: f64, height: f64) -> f64 {
+    var tree: flex::Node = mount(np);
+    tree.calculate_layout(width, height, flex::Direction::LTR);
+    tree.round_to_pixel(1.0f64);
+    apply({ #addr_of(tree) }, fixed_ptr);
+    let f: flex::Layout = tree.layout_frame();
+    return f.height;
+}
+
+// ==========================================================================
+// Component-path re-render + window host
+// ==========================================================================
+
+// Drop every child of a GtkFixed (the pre-step of a re-render).
+fn clear_fixed(fixed_ptr: *u8) {
+    let fx: gtk::Fixed = gtk::Fixed::from_raw(fixed_ptr);
+    var c: *u8 = { gtk_widget_get_first_child(fixed_ptr) };
+    while c != null() {
+        fx.remove(gtk::Widget::from_raw(c));
+        c = { gtk_widget_get_first_child(fixed_ptr) };
+    }
+    return;
+}
+
+// The component-model re-render: clear the host GtkFixed, then re-mount the
+// fresh description. A handler mutates state and calls this — there is no
+// global runtime. (The GTK analogue of facet_appkit's explicit remount.)
+fn render_into(np: *facet::Node, fixed_ptr: *u8, width: f64, height: f64) {
+    clear_fixed(fixed_ptr);
+    let _h: f64 = mount_into(np, fixed_ptr, width, height);
+    return;
+}
+
+// ---- window host (Linux-only; VALIDATE before relying on it) ----------------
+// GTK creates windows only after the app is registered, so the root is built
+// in the `activate` handler. The pending config rides in module statics
+// (the handler is a bare C callback with no closure). `g_application_run`
+// blocks in the main loop.
+
+static G_ROOT: facet::Node = #zero::[facet::Node]();
+static G_HAS_ROOT: bool = #zero::[bool]();
+static G_TITLE: text::Text = #zero::[text::Text]();
+static G_W: f64 = #zero::[f64]();
+static G_H: f64 = #zero::[f64]();
+
+fn gtk_activate(app_ptr: *u8, user: *u8) {
+    let win: gtk::ApplicationWindow = gtk::ApplicationWindow::new(gtk::Application::from_raw(app_ptr));
+    let w: gtk::Window = win.upcast();
+    w.set_title({ G_TITLE.view() });
+    w.set_default_size(G_W as i32, G_H as i32);
+    let fixed: gtk::Fixed = gtk::Fixed::new();
+    if G_HAS_ROOT {
+        let _h: f64 = mount_into({ #addr_of(G_ROOT) }, fixed.raw(), G_W, G_H);
+    }
+    w.set_child(fixed.upcast());
+    w.present();
+    return;
+}
+
+// Open a window, mount `root`, and run the GTK main loop (blocks). Linux-only.
+fn run(take root: facet::Node, title: str = "facet", width: f64 = 480.0f64, height: f64 = 360.0f64) {
+    G_ROOT = root;
+    G_HAS_ROOT = true;
+    G_TITLE = text::from_str(title);
+    G_W = width;
+    G_H = height;
+    let app: gtk::Application = gtk::Application::new("org.cplus.facet", 0 as u32);
+    let _id: u64 = app.upcast().connect_activate(gtk_activate, null());
+    let _status: i32 = g_application_run(app.raw(), 0 as i32, null());
+    return;
+}
+
+// ==========================================================================
+// Shared demo — the same @facet tree facet_appkit renders (one DSL, two
+// backends). Drive re-render explicitly via `render_into` after `count_inc`.
+// ==========================================================================
+
+static COUNT: i32 = 0;
+
+fn count_inc(sender: *u8, ctx: *u8) { COUNT = COUNT + 1; return; }
+
+fn demo_submit_noop(sender: *u8, ctx: *u8) { return; }
+
+fn demo_view() -> facet::Node {
+    let t: text::Text = "count ${COUNT}";
+    return @facet {
+        vstack {
+            label("facet multi-backend", size: 24.0f64, bold: true)
+            label("one DSL · native backends", secondary: true)
+            label(t.view(), size: 18.0f64).agent_id("count-label")
+            button("+1", primary: true).on_click(count_inc).agent_id("inc-btn")
+            composer(on_submit: demo_submit_noop, value: "")
+                .agent_id("chat-input")
+                .height(80.0f64)
+                .grow(1.0f64)
+        }
+    };
+}

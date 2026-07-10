@@ -651,6 +651,32 @@ fn split(
 // already-mounted content (`take` ownership marker is part of the fn-ptr type).
 // After every widget-producing op, mount calls set_identity — the single choke
 // point for agent id + role (backends pin native metadata there).
+//
+// ============================================================================
+// THE CONTRACT (frozen). This struct + `Style`/`Color` (weight/family tokens)
+// ARE the cross-backend contract. A backend is portable-by-construction: it
+// fills this typed struct or it does not compile — the compiler is the parity
+// check, not a doc. To add a backend (facet_gtk4 / facet_win32 / facet_uikit):
+//
+//   1. one op per field below — leaf ops build a native widget into a flex
+//      payload; wrapper ops (bordered/clickable/split) take mounted content.
+//   2. `apply_style(view, kind, Style)` — map the portable Style onto the
+//      native widget (per-kind; only set fields; tokens → native colors/fonts).
+//   3. `set_identity(ctx, handle, id, role)` — pin the agent id + record the
+//      (role, drive) affordance for the matching agent_* reader.
+//   4. the `native` op — adopt an app-owned handle (the escape hatch).
+//   5. a small host — a window + an invalidate/re-mount primitive.
+//
+// `fake_renderer` (in the tests) is the PORTABLE CONFORMANCE TEST: it fills the
+// same struct with pure-C+ stubs, so the whole description→flex pipeline is
+// exercised with no platform. facet_appkit is the reference implementation;
+// facet_gtk is a second, type-checked-only backend proving the shape is not
+// AppKit-specific. `symbol` is PROVISIONAL — an SF-Symbol Apple-ism with no
+// portable meaning yet; don't freeze it as portable (a backend maps a themed
+// icon set). Growing the API = +1 kind constant, +1 field here, +1 constructor;
+// every backend then fails to compile until it supplies the op — the honest,
+// localized gap.
+// ============================================================================
 
 struct Renderer {
     opaque ctx: *u8,
