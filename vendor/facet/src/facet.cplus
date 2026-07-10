@@ -204,6 +204,7 @@ struct Style {
     italic: bool,          // italicize the font
     clip: bool,            // clip content to the (rounded) bounds
     underline: bool,       // underline the text
+    strikethrough: bool,   // strike through the text
 }
 
 // Text-alignment tokens (0 = unset — keep the widget's natural alignment).
@@ -229,6 +230,7 @@ fn style_none() -> Style {
         italic: false,
         clip: false,
         underline: false,
+        strikethrough: false,
     };
 }
 
@@ -800,6 +802,7 @@ impl Node {
     fn italic(take this) -> Node { var n: Node = this; n.style.italic = true; return n; }
     fn clip(take this) -> Node { var n: Node = this; n.style.clip = true; return n; }
     fn underline(take this) -> Node { var n: Node = this; n.style.underline = true; return n; }
+    fn strikethrough(take this) -> Node { var n: Node = this; n.style.strikethrough = true; return n; }
     // `.frame(width:height:)` — set both fixed dimensions at once.
     fn frame(take this, w: f64, h: f64) -> Node { var n: Node = this; n._width = w; n._height = h; return n; }
     // `.plain()` — borderless button (the link/plain-button fold). Pair with
@@ -839,6 +842,7 @@ impl Node {
     fn set_italic(ref this, v: bool) { this.style.italic = v; return; }
     fn set_clip(ref this, v: bool) { this.style.clip = v; return; }
     fn set_underline(ref this, v: bool) { this.style.underline = v; return; }
+    fn set_strikethrough(ref this, v: bool) { this.style.strikethrough = v; return; }
     fn set_frame(ref this, w: f64, h: f64) { this._width = w; this._height = h; return; }
     fn set_plain(ref this) { this.plain = true; return; }
 

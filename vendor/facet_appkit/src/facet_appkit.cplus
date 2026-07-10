@@ -170,10 +170,10 @@ fn apply_style(view_ptr: *u8, kind: u32, np: *facet::Node) {
     if ll > (0 as i32) && is_text {
         ak::TextField::from_raw(view_ptr).set_maximum_number_of_lines(ll as i64);
     }
-    // Underline — build a mutable attributed copy of the current value, add the
-    // NSUnderlineStyle attribute over the whole range, set it back. (NSNumber(1)
-    // = single underline; NSUnderlineStyleAttributeName == "NSUnderline".)
-    if { style.underline } && is_text {
+    // Underline / strikethrough — build a mutable attributed copy of the current
+    // value, add the requested attribute(s) over the whole range, set it back.
+    // (NSNumber(1) = single line; keys "NSUnderline" / "NSStrikethrough".)
+    if ({ style.underline } || { style.strikethrough }) && is_text {
         let ctrl: ak::Control = ak::TextField::from_raw(view_ptr).as_control();
         let len: u64 = ctrl.string_value().count() as u64;
         if len > (0 as u64) {
@@ -182,7 +182,9 @@ fn apply_style(view_ptr: *u8, kind: u32, np: *facet::Node) {
             let mas_ptr: *u8 = rt::msg_id_id(alloc, rt::sel(#str_ptr("initWithAttributedString:\0")), cur.raw());
             let one: *u8 = rt::msg_id_i64(rt::get_class(#str_ptr("NSNumber\0")), rt::sel(#str_ptr("numberWithInt:\0")), 1 as i64);
             let mas: ak::MutableAttributedString = ak::MutableAttributedString::from_raw(mas_ptr);
-            mas.add_attribute("NSUnderline", one, rt::Range { location: 0 as u64, length: len });
+            let full: rt::Range = rt::Range { location: 0 as u64, length: len };
+            if { style.underline } { mas.add_attribute("NSUnderline", one, full); }
+            if { style.strikethrough } { mas.add_attribute("NSStrikethrough", one, full); }
             ctrl.set_attributed_string_value(mas.as_attributed_string());
             rt::release(mas_ptr);   // the control copied it; drop our +1
         }
