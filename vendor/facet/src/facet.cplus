@@ -239,6 +239,20 @@ struct Node {
     _padding: f64,
     _width: f64,            // -1 = auto
     _height: f64,           // -1 = auto
+    // extended flexbox layout — thin pass-through to flex_layout (the shared
+    // engine); mount replays each set field onto the flex node. Uses flex's own
+    // CSS vocabulary + enums (not SwiftUI). Unset = a `_has_*` flag (enums) or a
+    // -1 sentinel (sizes, where 0 is a valid value). Per-edge padding composes
+    // OVER the uniform `_padding` (edges win).
+    _align_items: flex::Align,   _has_align_items: bool,
+    _align_self: flex::Align,    _has_align_self: bool,
+    _justify: flex::Justify,     _has_justify: bool,
+    _shrink: f64,           // -1 = unset (0 is valid)
+    _min_w: f64,            // -1 = unset
+    _min_h: f64,            // -1 = unset
+    _max_w: f64,            // -1 = unset
+    _max_h: f64,            // -1 = unset
+    _pad_l: f64, _pad_t: f64, _pad_r: f64, _pad_b: f64,   // 0 = unset (per-edge padding)
     children: vec::Vec[Node],
 }
 
@@ -288,6 +302,15 @@ fn blank(kind: u32) -> Node {
         _padding: 0.0f64,
         _width: -1.0f64,
         _height: -1.0f64,
+        _align_items: flex::Align::Auto,    _has_align_items: false,
+        _align_self: flex::Align::Auto,     _has_align_self: false,
+        _justify: flex::Justify::FlexStart, _has_justify: false,
+        _shrink: -1.0f64,
+        _min_w: -1.0f64,
+        _min_h: -1.0f64,
+        _max_w: -1.0f64,
+        _max_h: -1.0f64,
+        _pad_l: 0.0f64, _pad_t: 0.0f64, _pad_r: 0.0f64, _pad_b: 0.0f64,
         children: vec::new::[Node](),
     };
 }
@@ -500,6 +523,46 @@ impl Node {
     fn set_border(ref this, w: f64, c: Color) { this.style.border_width = w; this.style.border_color = c; return; }
     fn set_frame(ref this, w: f64, h: f64) { this._width = w; this._height = h; return; }
     fn set_plain(ref this) { this.plain = true; return; }
+
+    // ---- extended flexbox layout (flex vocabulary; thin pass-through) --------
+    // Fluent (same-line chain) + set_ (leading-dot line), the same two-form rule
+    // as the rest. Enums are flex_layout's own — the layout substrate is shared,
+    // so facet does not reskin it.
+    fn align_items(take this, a: flex::Align) -> Node { var n: Node = this; n._align_items = a; n._has_align_items = true; return n; }
+    fn align_self(take this, a: flex::Align) -> Node { var n: Node = this; n._align_self = a; n._has_align_self = true; return n; }
+    fn justify_content(take this, j: flex::Justify) -> Node { var n: Node = this; n._justify = j; n._has_justify = true; return n; }
+    fn shrink(take this, v: f64) -> Node { var n: Node = this; n._shrink = v; return n; }
+    fn min_width(take this, v: f64) -> Node { var n: Node = this; n._min_w = v; return n; }
+    fn min_height(take this, v: f64) -> Node { var n: Node = this; n._min_h = v; return n; }
+    fn max_width(take this, v: f64) -> Node { var n: Node = this; n._max_w = v; return n; }
+    fn max_height(take this, v: f64) -> Node { var n: Node = this; n._max_h = v; return n; }
+    fn padding_edge(take this, e: flex::Edge, v: f64) -> Node { var n: Node = this; n.pad_edge_into(e, v); return n; }
+
+    fn set_align_items(ref this, a: flex::Align) { this._align_items = a; this._has_align_items = true; return; }
+    fn set_align_self(ref this, a: flex::Align) { this._align_self = a; this._has_align_self = true; return; }
+    fn set_justify_content(ref this, j: flex::Justify) { this._justify = j; this._has_justify = true; return; }
+    fn set_shrink(ref this, v: f64) { this._shrink = v; return; }
+    fn set_min_width(ref this, v: f64) { this._min_w = v; return; }
+    fn set_min_height(ref this, v: f64) { this._min_h = v; return; }
+    fn set_max_width(ref this, v: f64) { this._max_w = v; return; }
+    fn set_max_height(ref this, v: f64) { this._max_h = v; return; }
+    fn set_padding_edge(ref this, e: flex::Edge, v: f64) { this.pad_edge_into(e, v); return; }
+
+    // Route one flex::Edge onto the per-edge padding fields (Start/End = LTR).
+    fn pad_edge_into(ref this, e: flex::Edge, v: f64) {
+        match e {
+            flex::Edge::Left => { this._pad_l = v; }
+            flex::Edge::Right => { this._pad_r = v; }
+            flex::Edge::Top => { this._pad_t = v; }
+            flex::Edge::Bottom => { this._pad_b = v; }
+            flex::Edge::Start => { this._pad_l = v; }
+            flex::Edge::End => { this._pad_r = v; }
+            flex::Edge::Horizontal => { this._pad_l = v; this._pad_r = v; }
+            flex::Edge::Vertical => { this._pad_t = v; this._pad_b = v; }
+            flex::Edge::All => { this._pad_l = v; this._pad_t = v; this._pad_r = v; this._pad_b = v; }
+        }
+        return;
+    }
 }
 
 // ---- the DSL builder contract ----------------------------------------------
@@ -827,6 +890,20 @@ fn mount(np: *Node, r: Renderer) -> flex::Node {
     }
     if { (*np)._width } >= 0.0f64 { n.set_width(flex::StyleLength::points({ (*np)._width })); }
     if { (*np)._height } >= 0.0f64 { n.set_height(flex::StyleLength::points({ (*np)._height })); }
+    // Extended flexbox props (pass-through). Per-edge padding runs AFTER the
+    // uniform `_padding` above, so a specific edge overrides it.
+    if { (*np)._has_align_items } { n.set_align_items({ (*np)._align_items }); }
+    if { (*np)._has_align_self } { n.set_align_self({ (*np)._align_self }); }
+    if { (*np)._has_justify } { n.set_justify_content({ (*np)._justify }); }
+    if { (*np)._shrink } >= 0.0f64 { n.set_flex_shrink({ (*np)._shrink }); }
+    if { (*np)._min_w } >= 0.0f64 { n.set_min_width(flex::StyleLength::points({ (*np)._min_w })); }
+    if { (*np)._min_h } >= 0.0f64 { n.set_min_height(flex::StyleLength::points({ (*np)._min_h })); }
+    if { (*np)._max_w } >= 0.0f64 { n.set_max_width(flex::StyleLength::points({ (*np)._max_w })); }
+    if { (*np)._max_h } >= 0.0f64 { n.set_max_height(flex::StyleLength::points({ (*np)._max_h })); }
+    if { (*np)._pad_l } > 0.0f64 { n.set_padding(flex::Edge::Left, flex::StyleLength::points({ (*np)._pad_l })); }
+    if { (*np)._pad_t } > 0.0f64 { n.set_padding(flex::Edge::Top, flex::StyleLength::points({ (*np)._pad_t })); }
+    if { (*np)._pad_r } > 0.0f64 { n.set_padding(flex::Edge::Right, flex::StyleLength::points({ (*np)._pad_r })); }
+    if { (*np)._pad_b } > 0.0f64 { n.set_padding(flex::Edge::Bottom, flex::StyleLength::points({ (*np)._pad_b })); }
     return n;
 }
 
@@ -1068,6 +1145,36 @@ fn facet_native_hatch_carries_handle() {
     assert approx(n._height, 120.0f64);
     // A native leaf is observe-only for the agent surface.
     assert role_for_kind(kind_native()) == role_group();
+}
+
+#[test]
+fn facet_flexbox_modifiers_set_fields() {
+    let n: Node = label("x")
+        .align_items(flex::Align::Center)
+        .justify_content(flex::Justify::Center)
+        .align_self(flex::Align::Stretch)
+        .shrink(1.0f64)
+        .min_width(0.0f64)
+        .max_width(300.0f64)
+        .padding_edge(flex::Edge::Right, 16.0f64);
+    assert n._has_align_items;
+    assert n._has_justify;
+    assert n._has_align_self;
+    assert approx(n._shrink, 1.0f64);
+    assert approx(n._min_w, 0.0f64);     // 0 is a real value, not "unset"
+    assert approx(n._max_w, 300.0f64);
+    assert approx(n._pad_r, 16.0f64);
+    // untouched fields stay at their sentinels / defaults.
+    assert approx(n._min_h, -1.0f64);
+    let plain: Node = label("y");
+    assert plain._has_align_items == false;
+    assert approx(plain._shrink, -1.0f64);
+
+    // Edge::Horizontal sets both left and right; Vertical both top and bottom.
+    let h: Node = label("z").padding_edge(flex::Edge::Horizontal, 8.0f64);
+    assert approx(h._pad_l, 8.0f64);
+    assert approx(h._pad_r, 8.0f64);
+    assert approx(h._pad_t, 0.0f64);
 }
 
 // -- mount, against a fake renderer --
@@ -1383,6 +1490,33 @@ fn mount_applies_layout_props_and_lays_out() {
             assert approx(bf.width, 60.0f64);
             let sf: flex::Layout = must_layout({ (*rp).child_layout(1 as usize) });
             assert approx(sf.width, 100.0f64);  // spacer absorbed the slack
+        }
+        option::Option[*flex::Node]::None => { assert false; }
+    };
+}
+
+#[test]
+fn mount_applies_flexbox_align_and_edge_padding() {
+    // A 100-tall row with align_items Center + padding-left 20, holding one
+    // 60x20 button: the button centers on the cross (vertical) axis → top 40,
+    // and the edge padding pushes its left to 20. Proves the new pass-throughs
+    // reach flex_layout and compute.
+    var inner: Builder = Builder::new();
+    inner.add(button("ok"));   // fake_button = 60x20
+    var b: Builder = Builder::new();
+    b.add(row(inner)
+        .height(100.0f64)
+        .align_items(flex::Align::Center)
+        .padding_edge(flex::Edge::Left, 20.0f64));
+    let root: Node = b.finish();
+
+    var tree: flex::Node = mount(#addr_of(root), fake_renderer());
+    tree.calculate_layout(200.0f64, flex::undefined(), flex::Direction::LTR);
+    match tree.children.at_ptr(0 as usize) {
+        option::Option[*flex::Node]::Some(rp) => {
+            let bf: flex::Layout = must_layout({ (*rp).child_layout(0 as usize) });
+            assert approx(bf.top, 40.0f64);    // (100 - 20) / 2, centered
+            assert approx(bf.left, 20.0f64);   // padding-left inset
         }
         option::Option[*flex::Node]::None => { assert false; }
     };
