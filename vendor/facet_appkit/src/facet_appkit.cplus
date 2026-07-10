@@ -563,6 +563,49 @@ fn ak_bordered(ctx: *u8, np: *facet::Node, take content: flex::Node) -> flex::No
     return n;
 }
 
+// ---- portable scroll (matrix §4) — the two-phase bridge ---------------------
+// A scroll's content can't be laid out until the OUTER pass has sized its
+// viewport (content height follows the viewport width). So ak_scroll builds the
+// NSScrollView, defers the content, and records a job; `mount_into` fills every
+// job AFTER apply has set the scroll frames — reusing ui::fill_scroll (the same
+// two-phase the AppKit-only path used, now behind the portable `scroll` kind).
+struct ScrollJob {
+    opaque scroll: *u8,     // the NSScrollView (borrowed; the flex payload owns it)
+    content: flex::Node,    // the mounted rows, awaiting layout at the viewport width
+}
+
+static SCROLL_JOBS: vec::Vec[ScrollJob] = #zero::[vec::Vec[ScrollJob]]();
+
+fn ak_scroll(ctx: *u8, np: *facet::Node, take content: flex::Node) -> flex::Node {
+    let sv: ak::ScrollView = ak::ScrollView::new(rt::Rect { x: 0.0, y: 0.0, w: 10.0, h: 10.0 });
+    sv.set_has_vertical_scroller(true);
+    sv.set_draws_background(false);
+    sv.set_autohides_scrollers(true);
+    let jobs: *vec::Vec[ScrollJob] = { #addr_of(SCROLL_JOBS) };
+    (*jobs).append(ScrollJob { scroll: sv.raw(), content: content });
+    var n: flex::Node = ui::fixed_view(sv.as_view());
+    apply_style(n.payload(), facet::kind_scroll(), { (*np).style });
+    return n;
+}
+
+// Fill every deferred scroll, parent-before-child (LIFO: a nested scroll was
+// appended before its parent, so pop-from-end fills the outer first, sizing the
+// inner's frame before it fills). Called by mount_into after apply.
+fn drain_scroll_jobs() {
+    let jobs: *vec::Vec[ScrollJob] = { #addr_of(SCROLL_JOBS) };
+    while { (*jobs).count() } > (0 as usize) {
+        let last: usize = { (*jobs).count() } -% (1 as usize);
+        match (*jobs).swap_remove(last) {
+            option::Option[ScrollJob]::Some(job) => {
+                let ScrollJob { scroll, content } = job;
+                let _h: f64 = ui::fill_scroll(ak::ScrollView::from_raw(scroll), content);
+            }
+            option::Option[ScrollJob]::None => { }
+        }
+    }
+    return;
+}
+
 fn ak_clickable(ctx: *u8, np: *facet::Node, take content: flex::Node) -> flex::Node {
     // Primary click reuses Node.click; only wire when a real handler is set
     // (noop is the blank default — ui:: treats null-fn as "don't install").
@@ -661,6 +704,7 @@ fn renderer() -> facet::Renderer {
         native: ak_native,
         bordered: ak_bordered,
         clickable: ak_clickable,
+        scroll: ak_scroll,
         split: ak_split,
         set_identity: ak_set_identity,
     };
@@ -678,6 +722,9 @@ fn mount_into(np: *facet::Node, view_ptr: *u8, width: f64, height: f64) -> f64 {
     tree.calculate_layout(width, height, flex::Direction::LTR);
     tree.round_to_pixel(2.0f64);
     ui::apply(#addr_of(tree), view_ptr, false);
+    // Now that apply has sized every scroll's viewport, fill their content
+    // (phase two). Any `scroll` kind in the tree registered a job in ak_scroll.
+    drain_scroll_jobs();
     let f: flex::Layout = tree.layout_frame();
     return f.height;
 }
@@ -1543,6 +1590,37 @@ fn controls_mount_and_toggle_drives() {
     // toggle is role_button + drive_click → the agent can flip it, firing the wire.
     assert surface::outcome_eq(s.click("wifi"), surface::Outcome::Allowed);
     assert TOGGLE_FIRES == 1;
+}
+
+#[test]
+fn scroll_hosts_content_two_phase() {
+    // A 100-tall scroll holding ~240pt of rows: mount → apply sizes the scroll
+    // viewport → drain_scroll_jobs fills the flipped document view (phase two).
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 220.0, h: 120.0 });
+    var root: facet::Node = @facet {
+        scroll {
+            for i in 0..10 {
+                label("row").height(24.0f64)
+            }
+        }
+        .frame(200.0f64, 100.0f64)
+    };
+    let h: f64 = mount_into(#addr_of(root), content.raw(), 220.0f64, 120.0f64);
+    assert h > 0.0f64;
+    let cv: ak::View = ak::View::from_raw(content.raw());
+    var subs: vec::Vec[ak::View] = cv.subviews();
+    match subs.at_ptr(0 as usize) {
+        option::Option[*ak::View]::Some(sp) => {
+            let sv: ak::ScrollView = ak::ScrollView::from_raw({ (*sp).raw() });
+            match sv.document_view() {
+                option::Option[ak::View]::Some(dv) => {
+                    assert dv.subviews().count() > (0 as usize);   // rows installed
+                }
+                option::Option[ak::View]::None => { assert false; }
+            };
+        }
+        option::Option[*ak::View]::None => { assert false; }
+    };
 }
 
 #[test]

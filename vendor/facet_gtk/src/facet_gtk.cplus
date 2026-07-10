@@ -183,6 +183,13 @@ fn gtk_bordered(ctx: *u8, np: *facet::Node, take content: flex::Node) -> flex::N
     return content;
 }
 
+// TODO(gtk,linux): host content in a GtkScrolledWindow + GtkViewport with the
+// same two-phase sizing facet_appkit does. For now content passes through (like
+// bordered/clickable) — nothing is dropped; it just doesn't scroll yet.
+fn gtk_scroll(ctx: *u8, np: *facet::Node, take content: flex::Node) -> flex::Node {
+    return content;
+}
+
 fn gtk_clickable(ctx: *u8, np: *facet::Node, take content: flex::Node) -> flex::Node {
     return content;
 }
@@ -362,6 +369,7 @@ fn renderer() -> facet::Renderer {
         native: gtk_native,
         bordered: gtk_bordered,
         clickable: gtk_clickable,
+        scroll: gtk_scroll,
         split: gtk_split,
         set_identity: gtk_set_identity,
     };

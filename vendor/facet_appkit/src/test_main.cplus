@@ -160,6 +160,8 @@ fn main() -> i32 {
     if rc4 != 0 { return rc4; }
     let rc5: i32 = native_hatch_cycles();
     if rc5 != 0 { return rc5; }
+    let rc6: i32 = scroll_cycles();
+    if rc6 != 0 { return rc6; }
     for k in 0..50 {
         let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
         var root: facet::Node = @facet {
@@ -197,6 +199,27 @@ fn native_hatch_cycles() -> i32 {
             }
         };
         let _h: f64 = fak::mount_into(#addr_of(root), content.raw(), 300.0f64, 200.0f64);
+    }
+    return 0;
+}
+
+// Leak-harness segment for the portable scroll: 50 mount cycles of a scroll
+// whose content overflows the viewport, exercising ak_scroll + the two-phase
+// drain_scroll_jobs (NSScrollView + flipped doc fill). No per-cycle growth: the
+// scroll view rides the flex payload (released on tree drop) and the content is
+// consumed by fill_scroll.
+fn scroll_cycles() -> i32 {
+    for k in 0..50 {
+        let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 220.0, h: 120.0 });
+        var root: facet::Node = @facet {
+            scroll {
+                for i in 0..12 {
+                    label("row").height(20.0f64)
+                }
+            }
+            .frame(200.0f64, 100.0f64)
+        };
+        let _h: f64 = fak::mount_into(#addr_of(root), content.raw(), 220.0f64, 120.0f64);
     }
     return 0;
 }
