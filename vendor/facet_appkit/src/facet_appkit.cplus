@@ -22,6 +22,7 @@
 // is the shared flex engine instead of NSStackView.
 
 import "objc/runtime" as rt;
+import "objc/bridge" as bridge;
 import "stdlib/option" as option;
 import "stdlib/text" as text;
 import "stdlib/vec" as vec;
@@ -1063,6 +1064,45 @@ fn make_shell_window(title: str, width: f64, height: f64, clean_titlebar: bool) 
 }
 
 // Open a window, mount the tree, run the event loop (blocks).
+// Build and attach an NSToolbar to `win` from the root's `.toolbar { }` items
+// (each a button). The item identifier is the button title (assumed distinct).
+// SwiftUI `.toolbar`. No-op when there are no items — window chrome, so it lives
+// on the tree handed to `run`.
+fn install_toolbar(win: ak::Window, rp: *facet::Node) {
+    let items: *vec::Vec[facet::Node] = { #addr_of((*rp).toolbar_items) };
+    let n: usize = { (*items).count() };
+    if n == (0 as usize) { return; }
+    let ids: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+    let map: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")), rt::sel(#str_ptr("dictionary\0")));
+    var i: usize = 0 as usize;
+    while i < n {
+        match { (*items).at_ptr(i) } {
+            option::Option[*facet::Node]::Some(ip) => {
+                let tp: *text::Text = { #addr_of((*ip).text) };
+                match (*tp).c_str() {
+                    option::Option[text::CString]::Some(cs) => {
+                        let title: str = { #str_from_raw_parts(cs.as_ptr(), cs.count()) };
+                        let ti: ak::ToolbarItem = ak::ToolbarItem::new(title);
+                        ti.set_label(title);
+                        let b: ak::Button = ak::Button::button_with_title(title, 0 as *u8, 0 as *u8);
+                        akx::set_control_action_ctx(b.as_control(), { (*ip).click }, { (*ip).click_ctx });
+                        ti.set_view(b.as_view());
+                        let idns: *u8 = bridge::nsstring(title);
+                        rt::msg_void_id(ids, rt::sel(#str_ptr("addObject:\0")), idns);
+                        rt::msg_void_id_id(map, rt::sel(#str_ptr("setObject:forKey:\0")), ti.raw(), idns);
+                    }
+                    option::Option[text::CString]::None => {}
+                }
+            }
+            option::Option[*facet::Node]::None => {}
+        }
+        i = i + (1 as usize);
+    }
+    let tb: ak::Toolbar = akx::make_toolbar(ids, map);
+    win.set_toolbar(tb);
+    return;
+}
+
 fn run(take root: facet::Node, title: str = "facet", width: f64 = 480.0f64, height: f64 = 360.0f64, clean_titlebar: bool = false) {
     let app: ak::Application = ak::Application::shared_application();
     let _ok: bool = app.set_activation_policy(ak::ApplicationActivationPolicy::Regular);
@@ -1073,6 +1113,7 @@ fn run(take root: facet::Node, title: str = "facet", width: f64 = 480.0f64, heig
     win.set_content_view(ak::View::from_raw(content.raw()));
 
     let _h: f64 = mount_into(#addr_of(root), content.raw(), width, height);
+    install_toolbar(win, #addr_of(root));
 
     win.center();
     win.make_key_and_order_front(0 as *u8);
@@ -2061,6 +2102,38 @@ fn focus_makes_widget_first_responder() {
     // find_view_by_id locates the field, and makeFirstResponder succeeds.
     assert find_view_by_id(content.raw(), "email") != (0 as *u8);
     assert focus(win.raw(), "email");
+}
+
+fn td_toolbar_click(sender: *u8, ctx: *u8) { return; }
+
+#[test]
+fn toolbar_attaches_with_items() {
+    let win: ak::Window = make_shell_window("t", 400.0f64, 300.0f64, false);
+    let cb: fn(*u8, *u8) = td_toolbar_click;
+    var tb_items: vec::Vec[facet::Node] = vec::new::[facet::Node]();
+    tb_items.append(facet::button("Save").on_click(cb, 0 as *u8));
+    tb_items.append(facet::button("Share").on_click(cb, 0 as *u8));
+    var root: facet::Node = @facet {
+        vstack {
+            label("Body")
+        }
+    };
+    root = root.toolbar(tb_items);
+    install_toolbar(win, #addr_of(root));
+    var found: bool = false;
+    match win.toolbar() {
+        option::Option[ak::Toolbar]::Some(tb) => {
+            // the delegate vends our two identifiers (queried without showing)
+            let del: *u8 = rt::msg_id(tb.raw(), rt::sel(#str_ptr("delegate\0")));
+            assert del != (0 as *u8);
+            let dids: *u8 = rt::msg_id_id(del, rt::sel(#str_ptr("toolbarDefaultItemIdentifiers:\0")), tb.raw());
+            let cnt: u64 = rt::msg_u64(dids, rt::sel(#str_ptr("count\0")));
+            assert cnt == (2 as u64);
+            found = true;
+        }
+        option::Option[ak::Toolbar]::None => {}
+    }
+    assert found;
 }
 
 fn td_drop_handler(sender: *u8, ctx: *u8) { return; }

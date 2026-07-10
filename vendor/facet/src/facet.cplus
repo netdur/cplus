@@ -372,6 +372,7 @@ struct Node {
     _pad_start: f64, _pad_end: f64,   // 0 = unset (logical, direction-relative padding)
     _mrg_start: f64, _mrg_end: f64,   // 0 = unset (logical margin)
     path_cmds: vec::Vec[PathCmd],     // path kind: the vector segments (empty = none)
+    toolbar_items: vec::Vec[Node],    // window toolbar items (buttons); empty = no toolbar
     children: vec::Vec[Node],
 }
 
@@ -490,6 +491,7 @@ fn blank(kind: u32) -> Node {
         _pad_start: 0.0f64, _pad_end: 0.0f64,
         _mrg_start: 0.0f64, _mrg_end: 0.0f64,
         path_cmds: vec::new::[PathCmd](),
+        toolbar_items: vec::new::[Node](),
         children: vec::new::[Node](),
     };
 }
@@ -934,6 +936,16 @@ impl Node {
         var n: Node = this;
         n.drop_handler = handler;
         n.drop_ctx = ctx;
+        return n;
+    }
+    // `.toolbar(items)` — attach a window toolbar to the root node (SwiftUI
+    // `.toolbar`). `items` is a Vec of button Nodes; the host (`run`) reads them
+    // and builds the platform toolbar. Window chrome, so honored only on the tree
+    // handed to `run`. (A `{ }` block isn't used — the DSL takes `(args)` on
+    // modifiers, not a trailing builder block.)
+    fn toolbar(take this, take items: vec::Vec[Node]) -> Node {
+        var n: Node = this;
+        n.toolbar_items = items;
         return n;
     }
     // `.frame(width:height:)` — set both fixed dimensions at once.

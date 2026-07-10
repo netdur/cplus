@@ -535,3 +535,46 @@ fn drop_text_of(drop_view: *u8) -> text::Text {
     let ns: *u8 = synth::get_associated(drop_view, drop_text_key());
     return bridge::to_text(ns);
 }
+
+// ==========================================================================
+// Window toolbar (NSToolbar) from a prebuilt item map
+// ==========================================================================
+//
+// NSToolbar vends its items through a delegate. The generated ToolbarDelegate
+// already bridges the three required callbacks to C+ fn-pointers, so this just
+// supplies the data: an ordered `ids` NSArray (default + allowed identifiers)
+// and an `id -> NSToolbarItem` NSDictionary (item lookup). The map rides as a
+// retained associated object on the ids array, so a single `user` pointer (the
+// ids array) reaches both. facet_appkit builds the items; this wires the plumbing.
+
+fn toolbar_map_key() -> *u8 { return { 28695 as *u8 }; }
+fn toolbar_del_pin_key() -> *u8 { return { 28696 as *u8 }; }
+fn toolbar_ids_pin_key() -> *u8 { return { 28697 as *u8 }; }
+
+fn tb_ids_imp(user: *u8, toolbar: *u8) -> *u8 { return user; }
+
+fn tb_item_imp(user: *u8, toolbar: *u8, identifier: *u8, flag: i8) -> *u8 {
+    let map: *u8 = synth::get_associated(user, toolbar_map_key());
+    return rt::msg_id_id(map, rt::sel(#str_ptr("objectForKey:\0")), identifier);
+}
+
+// Build an NSToolbar over `ids` (NSArray of NSString) + `map` (NSDictionary
+// id->NSToolbarItem). Ownership of the +1 toolbar MOVES to the caller (return by
+// value — do not round-trip through a raw ptr, or this fn's local drop would
+// release it early). The delegate is pinned to the toolbar (NSToolbar.delegate
+// is weak); ids + map are pinned too, so all three live as long as the toolbar.
+fn make_toolbar(ids: *u8, map: *u8) -> ak::Toolbar {
+    synth::retain_associated(ids, toolbar_map_key(), map);   // ids carries the map
+    var del: ak::ToolbarDelegate = ak::ToolbarDelegate_new(ids);
+    del.set_toolbar_default_item_identifiers(tb_ids_imp);
+    del.set_toolbar_allowed_item_identifiers(tb_ids_imp);
+    del.set_toolbar_item_for_item_identifier_will_be_inserted_into_toolbar(tb_item_imp);
+    let dbox: *ak::ToolbarDelegate = { malloc(#size_of::[ak::ToolbarDelegate]()) as *ak::ToolbarDelegate };
+    { *dbox = del; }
+    let d: *u8 = ak::create_ToolbarDelegate(dbox);
+    let tb: ak::Toolbar = ak::Toolbar::new_with_identifier("facet.toolbar");
+    tb.set_delegate(d);
+    synth::retain_associated(tb.raw(), toolbar_del_pin_key(), d);
+    synth::retain_associated(tb.raw(), toolbar_ids_pin_key(), ids);
+    return tb;
+}
