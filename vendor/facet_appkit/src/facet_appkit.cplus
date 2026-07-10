@@ -35,6 +35,10 @@ import "agent_core/identity" as identity;
 import "agent_core/surface" as surface;
 import "agent_appkit/agent_appkit" as agent;
 
+// libm trig for the rotation transform matrix (link_name keeps the bare symbol).
+#[link_name = "cos"] extern fn c_cos(x: f64) -> f64;
+#[link_name = "sin"] extern fn c_sin(x: f64) -> f64;
+
 // ---- per-kind vtable ops ----------------------------------------------------
 // Each reads the node's config and returns a ui-module node (NSView in the
 // payload, measure wired). The node's Text is borrowed via c_str inside the
@@ -199,6 +203,24 @@ fn apply_style(view_ptr: *u8, kind: u32, np: *facet::Node) {
         gll.set_frame(gv.bounds());
         gll.set_autoresizing_mask(18 as u64);               // width|height sizable
         rt::msg_void_id_u64(gv.layer().raw(), rt::sel(#str_ptr("insertSublayer:atIndex:\0")), gl.raw(), 0 as u64);
+    }
+    // Transform — rotation (deg) + uniform scale as a CATransform3D on the
+    // backing layer. Pivot is the layer's anchor (center for a backing layer).
+    let rot: f64 = { style.rotation };
+    let scl: f64 = { style.scale };
+    if rot != 0.0f64 || scl != 1.0f64 {
+        let tv: ak::View = ak::View::from_raw(view_ptr);
+        tv.set_wants_layer(true);
+        let a: f64 = rot * 0.017453292519943295f64;   // deg → rad
+        let c: f64 = c_cos(a);
+        let s: f64 = c_sin(a);
+        let t: quartz::Transform3D = quartz::Transform3D {
+            m11: c * scl, m12: s * scl, m13: 0.0f64, m14: 0.0f64,
+            m21: (0.0f64 - s) * scl, m22: c * scl, m23: 0.0f64, m24: 0.0f64,
+            m31: 0.0f64, m32: 0.0f64, m33: 1.0f64, m34: 0.0f64,
+            m41: 0.0f64, m42: 0.0f64, m43: 0.0f64, m44: 1.0f64,
+        };
+        tv.layer().set_transform(t);
     }
     // Drop shadow — layer-backed; a soft black shadow at the given blur radius.
     let sr: f64 = { style.shadow_radius };
@@ -1866,6 +1888,8 @@ fn gradient_box_mounts_on_appkit() {
             box()
                 .gradient(facet::Color::system_blue(), facet::Color::system_green())
                 .corner_radius(8.0f64)
+                .rotation(15.0f64)
+                .scale(1.2f64)
                 .frame(120.0f64, 60.0f64)
                 .agent_id("grad")
         }
