@@ -211,6 +211,11 @@ struct Style {
     grad_to: Color,        // gradient bottom color
     rotation: f64,         // rotation in degrees (0 = none)
     scale: f64,            // uniform scale (1.0 = none)
+    fade_in: f64,          // entrance fade duration in seconds (0 = none). The
+                           // node fades opacity 0→1 when it mounts. SwiftUI's
+                           // `.transition(.opacity)` — a one-shot appear animation
+                           // that fits the component re-render model (each mount
+                           // is a fresh view, so it plays its own entrance).
 }
 
 // Text-alignment tokens (0 = unset — keep the widget's natural alignment).
@@ -241,6 +246,7 @@ fn style_none() -> Style {
         grad_to: Color::none(),
         rotation: 0.0f64,
         scale: 1.0f64,
+        fade_in: 0.0f64,
     };
 }
 
@@ -845,6 +851,9 @@ impl Node {
     // Rotate (degrees) / scale about the element's center.
     fn rotation(take this, degrees: f64) -> Node { var n: Node = this; n.style.rotation = degrees; return n; }
     fn scale(take this, factor: f64) -> Node { var n: Node = this; n.style.scale = factor; return n; }
+    // `.fade_in(duration)` — entrance fade (opacity 0→1) played on mount.
+    // SwiftUI `.transition(.opacity)`; a one-shot appear animation.
+    fn fade_in(take this, duration: f64) -> Node { var n: Node = this; n.style.fade_in = duration; return n; }
     // `.frame(width:height:)` — set both fixed dimensions at once.
     fn frame(take this, w: f64, h: f64) -> Node { var n: Node = this; n._width = w; n._height = h; return n; }
     // `.plain()` — borderless button (the link/plain-button fold). Pair with
@@ -2363,6 +2372,8 @@ fn facet_paint_modifiers_set_fields() {
     assert approx(n.style.shadow_radius, 6.0f64);
     assert n.style.line_limit == (2 as i32);
     assert n.style.text_align == text_center();
+    assert approx(label("z").fade_in(0.3f64).style.fade_in, 0.3f64);
+    assert approx(label("z").style.fade_in, 0.0f64);   // default: no entrance
     assert label("z").hidden().style.hidden;
     assert label("z").style.hidden == false;   // default visible
     assert label("z").italic().style.italic;

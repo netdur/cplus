@@ -242,6 +242,22 @@ fn apply_style(view_ptr: *u8, kind: u32, np: *facet::Node) {
         slyr.set_shadow_offset(rt::Size { w: 0.0, h: -2.0 });
         slyr.set_shadow_color(ak::Color::color_with_red(0.0f64, 0.0f64, 0.0f64, 1.0f64).c_g_color());
     }
+    // Entrance fade — a CABasicAnimation on the backing layer's opacity (0→1)
+    // that plays once when the view mounts. SwiftUI `.transition(.opacity)`.
+    let fi: f64 = { style.fade_in };
+    if fi > 0.0f64 {
+        let fv: ak::View = ak::View::from_raw(view_ptr);
+        fv.set_wants_layer(true);
+        let anim_raw: *u8 = rt::msg_id(rt::msg_id(rt::get_class(#str_ptr("CABasicAnimation\0")), rt::sel(#str_ptr("alloc\0"))), rt::sel(#str_ptr("init\0")));
+        let anim: quartz::BasicAnimation = quartz::BasicAnimation::from_raw(anim_raw);
+        anim.as_property_animation().set_key_path("opacity");   // str → NSString
+        let nn: *u8 = rt::get_class(#str_ptr("NSNumber\0"));
+        anim.set_from_value(rt::msg_id_f64(nn, rt::sel(#str_ptr("numberWithDouble:\0")), 0.0f64));
+        anim.set_to_value(rt::msg_id_f64(nn, rt::sel(#str_ptr("numberWithDouble:\0")), 1.0f64));
+        rt::msg_void_f64(anim_raw, rt::sel(#str_ptr("setDuration:\0")), fi);
+        fv.layer().add_animation(anim.as_animation(), "opacity");  // the layer copies it
+        rt::release(anim_raw);   // drop our alloc/init +1
+    }
     // Line limit — max text lines on labels (0 = unlimited).
     let ll: i32 = { style.line_limit };
     if ll > (0 as i32) && is_text {
@@ -1966,6 +1982,28 @@ fn focus_makes_widget_first_responder() {
     // find_view_by_id locates the field, and makeFirstResponder succeeds.
     assert find_view_by_id(content.raw(), "email") != (0 as *u8);
     assert focus(win.raw(), "email");
+}
+
+#[test]
+fn fade_in_entrance_mounts() {
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 120.0, h: 60.0 });
+    var root: facet::Node = @facet {
+        vstack {
+            label("Appears").fade_in(0.35f64).agent_id("fade")
+        }
+    };
+    let h: f64 = mount_into(#addr_of(root), content.raw(), 120.0f64, 60.0f64);
+    assert h > 0.0f64;
+    assert surface_has_id(content.raw(), "fade");
+    // the entrance animation is attached to the view's backing layer
+    let vp: *u8 = nth_widget(content.raw(), 0 as usize);
+    let v: ak::View = ak::View::from_raw(vp);
+    var found: bool = false;
+    match v.layer().animation_for_key("opacity") {
+        option::Option[quartz::Animation]::Some(_) => { found = true; }
+        option::Option[quartz::Animation]::None => {}
+    }
+    assert found;
 }
 
 #[test]
