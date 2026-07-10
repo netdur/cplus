@@ -60,6 +60,13 @@ fn kind_code_editor() -> u32 { return 8 as u32; }
 fn kind_bordered() -> u32 { return 9 as u32; }
 fn kind_clickable() -> u32 { return 10 as u32; }
 fn kind_split() -> u32 { return 11 as u32; }
+// Tier-2 leaves (Phase 2) — promoted from the AppKit-only `@ui` layer so the
+// portable model covers everything a real app needs.
+fn kind_image() -> u32 { return 12 as u32; }
+fn kind_symbol() -> u32 { return 13 as u32; }       // SF Symbol / themed icon — PROVISIONAL (no portable meaning yet)
+fn kind_text_field() -> u32 { return 14 as u32; }
+fn kind_popup() -> u32 { return 15 as u32; }
+fn kind_divider() -> u32 { return 16 as u32; }
 
 // Agent-affordance roles — numeric indices aligned with agent_core::Role so
 // Phase 2 can pass them through without a translation table.
@@ -81,6 +88,11 @@ fn role_for_kind(k: u32) -> u32 {
     if k == kind_code_editor() { return role_input(); }
     if k == kind_bordered() { return role_group(); }
     if k == kind_split() { return role_group(); }
+    if k == kind_text_field() { return role_input(); }
+    // popup holds a readable selection; precise index-drive is a future agent
+    // verb (the model has click/text/none) — role_input keeps it observable.
+    if k == kind_popup() { return role_input(); }
+    // image / symbol / divider are non-interactive display — observe-only.
     return role_group();
 }
 
@@ -182,10 +194,13 @@ struct Node {
     bold: bool,
     secondary: bool,
     primary: bool,
+    plain: bool,            // button: borderless/plain variant (link/plain button fold)
     style: Style,           // portable visual style; backend applies set fields
     // --- kind-specific config (union-of-fields; unused kinds leave defaults) ---
-    value: text::Text,          // composer / code_editor / text_area initial text
-    placeholder: text::Text,    // text_area
+    value: text::Text,          // composer / code_editor / text_area initial text; image path; symbol name
+    placeholder: text::Text,    // text_area / text_field
+    popup_items: vec::Vec[text::Text],  // popup: the selectable rows
+    popup_selected: i64,        // popup: initially-selected index
     editable: bool,             // code_editor (default true)
     show_border: bool,          // composer (default true)
     draws_background: bool,     // composer (default true)
@@ -232,9 +247,12 @@ fn blank(kind: u32) -> Node {
         bold: false,
         secondary: false,
         primary: false,
+        plain: false,
         style: style_none(),
         value: text::from_str(""),
         placeholder: text::from_str(""),
+        popup_items: vec::new::[text::Text](),
+        popup_selected: 0 as i64,
         editable: true,
         show_border: true,
         draws_background: true,
@@ -353,6 +371,50 @@ fn code_editor(
     return n;
 }
 
+// ---- Tier-2 leaves (Phase 2) -----------------------------------------------
+// Promoted from the AppKit-only `@ui` layer. Each is a portable kind + op; the
+// backend adapts its existing widget. `colored_label` folds into `label` +
+// `.foreground_color`, and `icon_button`/`link_button`/`plain_button` fold into
+// `button` + `.plain()`/`.foreground_color` or `clickable { symbol(...) }`.
+
+// A bitmap image loaded from a file path.
+fn image(path: str) -> Node {
+    var n: Node = blank(kind_image());
+    n.value = text::from_str(path);
+    return n;
+}
+
+// An SF Symbol / themed icon by name. PROVISIONAL — SF Symbols are an Apple-ism
+// with no portable meaning yet; a non-Apple backend maps a themed icon set.
+fn symbol(name: str, size: f64 = 16.0f64, secondary: bool = false) -> Node {
+    var n: Node = blank(kind_symbol());
+    n.value = text::from_str(name);
+    n.font_size = size;
+    n.secondary = secondary;
+    return n;
+}
+
+// A single-line editable text field (agent-drivable via set_text).
+fn text_field(placeholder: str = "", value: str = "") -> Node {
+    var n: Node = blank(kind_text_field());
+    n.placeholder = text::from_str(placeholder);
+    n.value = text::from_str(value);
+    return n;
+}
+
+// A dropdown selector. `items` are the rows; `selected` the initial index.
+fn popup(take items: vec::Vec[text::Text], selected: i64 = 0 as i64) -> Node {
+    var n: Node = blank(kind_popup());
+    n.popup_items = items;
+    n.popup_selected = selected;
+    return n;
+}
+
+// A thin separator line.
+fn divider() -> Node {
+    return blank(kind_divider());
+}
+
 // ---- modifiers -------------------------------------------------------------
 // Fluent (chain on the item line) + `set_*` (own leading-dot line), the same
 // two-form convention as flex_layout.
@@ -388,6 +450,9 @@ impl Node {
     fn border(take this, w: f64, c: Color) -> Node { var n: Node = this; n.style.border_width = w; n.style.border_color = c; return n; }
     // `.frame(width:height:)` — set both fixed dimensions at once.
     fn frame(take this, w: f64, h: f64) -> Node { var n: Node = this; n._width = w; n._height = h; return n; }
+    // `.plain()` — borderless button (the link/plain-button fold). Pair with
+    // `.foreground_color(.accent)` for a link.
+    fn plain(take this) -> Node { var n: Node = this; n.plain = true; return n; }
 
     fn set_grow(ref this, v: f64) { this._grow = v; return; }
     fn set_gap(ref this, v: f64) { this._gap = v; return; }
@@ -413,6 +478,7 @@ impl Node {
     fn set_corner_radius(ref this, r: f64) { this.style.corner_radius = r; return; }
     fn set_border(ref this, w: f64, c: Color) { this.style.border_width = w; this.style.border_color = c; return; }
     fn set_frame(ref this, w: f64, h: f64) { this._width = w; this._height = h; return; }
+    fn set_plain(ref this) { this.plain = true; return; }
 }
 
 // ---- the DSL builder contract ----------------------------------------------
@@ -574,6 +640,12 @@ struct Renderer {
     text_area:   fn(*u8, *Node) -> flex::Node,
     composer:    fn(*u8, *Node) -> flex::Node,
     code_editor: fn(*u8, *Node) -> flex::Node,
+    // Tier-2 leaves (Phase 2)
+    image:       fn(*u8, *Node) -> flex::Node,
+    symbol:      fn(*u8, *Node) -> flex::Node,
+    text_field:  fn(*u8, *Node) -> flex::Node,
+    popup:       fn(*u8, *Node) -> flex::Node,
+    divider:     fn(*u8, *Node) -> flex::Node,
     // wrappers — mount recurses children first, then hands them over
     bordered:    fn(*u8, *Node, take flex::Node) -> flex::Node,
     clickable:   fn(*u8, *Node, take flex::Node) -> flex::Node,
@@ -641,6 +713,26 @@ fn mount(np: *Node, r: Renderer) -> flex::Node {
         is_widget = true;
     } else if k == kind_code_editor() {
         let f: fn(*u8, *Node) -> flex::Node = r.code_editor;
+        n = f(r.ctx, np);
+        is_widget = true;
+    } else if k == kind_image() {
+        let f: fn(*u8, *Node) -> flex::Node = r.image;
+        n = f(r.ctx, np);
+        is_widget = true;
+    } else if k == kind_symbol() {
+        let f: fn(*u8, *Node) -> flex::Node = r.symbol;
+        n = f(r.ctx, np);
+        is_widget = true;
+    } else if k == kind_text_field() {
+        let f: fn(*u8, *Node) -> flex::Node = r.text_field;
+        n = f(r.ctx, np);
+        is_widget = true;
+    } else if k == kind_popup() {
+        let f: fn(*u8, *Node) -> flex::Node = r.popup;
+        n = f(r.ctx, np);
+        is_widget = true;
+    } else if k == kind_divider() {
+        let f: fn(*u8, *Node) -> flex::Node = r.divider;
         n = f(r.ctx, np);
         is_widget = true;
     } else if k == kind_bordered() {
@@ -872,6 +964,48 @@ fn facet_font_and_frame_modifiers() {
     assert approx(m._height, f._height);
 }
 
+#[test]
+fn facet_tier2_ctors_set_kind_and_config() {
+    let im: Node = image("/tmp/logo.png");
+    assert im.kind == kind_image();
+    assert im.value.view() == "/tmp/logo.png";
+
+    let sy: Node = symbol("folder", size: 20.0f64);
+    assert sy.kind == kind_symbol();
+    assert sy.value.view() == "folder";
+    assert approx(sy.font_size, 20.0f64);
+
+    let tf: Node = text_field(placeholder: "name", value: "iris");
+    assert tf.kind == kind_text_field();
+    assert tf.placeholder.view() == "name";
+    assert tf.value.view() == "iris";
+
+    var items: vec::Vec[text::Text] = vec::new::[text::Text]();
+    items.append(text::from_str("One"));
+    items.append(text::from_str("Two"));
+    let pu: Node = popup(items, selected: 1 as i64);
+    assert pu.kind == kind_popup();
+    assert pu.popup_items.count() == (2 as usize);
+    assert pu.popup_selected == (1 as i64);
+
+    let dv: Node = divider();
+    assert dv.kind == kind_divider();
+
+    // Button folds: .plain() marks the borderless variant.
+    let lb: Node = button("Docs").plain().foreground_color(Color::accent());
+    assert lb.plain;
+    assert lb.style.fg.token == (3 as u32);   // accent
+}
+
+#[test]
+fn facet_tier2_roles() {
+    assert role_for_kind(kind_text_field()) == role_input();
+    assert role_for_kind(kind_popup()) == role_input();
+    assert role_for_kind(kind_image()) == role_group();
+    assert role_for_kind(kind_symbol()) == role_group();
+    assert role_for_kind(kind_divider()) == role_group();
+}
+
 // -- mount, against a fake renderer --
 
 static FAKE_LABELS: i32 = 0;
@@ -879,6 +1013,11 @@ static FAKE_BUTTONS: i32 = 0;
 static FAKE_TEXT_AREAS: i32 = 0;
 static FAKE_COMPOSERS: i32 = 0;
 static FAKE_CODE_EDITORS: i32 = 0;
+static FAKE_IMAGES: i32 = 0;
+static FAKE_SYMBOLS: i32 = 0;
+static FAKE_TEXT_FIELDS: i32 = 0;
+static FAKE_POPUPS: i32 = 0;
+static FAKE_DIVIDERS: i32 = 0;
 static FAKE_BORDEREDS: i32 = 0;
 static FAKE_CLICKABLES: i32 = 0;
 static FAKE_SPLITS: i32 = 0;
@@ -913,6 +1052,31 @@ fn fake_composer(ctx: *u8, np: *Node) -> flex::Node {
 fn fake_code_editor(ctx: *u8, np: *Node) -> flex::Node {
     FAKE_CODE_EDITORS = FAKE_CODE_EDITORS + 1;
     return flex::Node::new().width(100.0f64).height(40.0f64);
+}
+
+fn fake_image(ctx: *u8, np: *Node) -> flex::Node {
+    FAKE_IMAGES = FAKE_IMAGES + 1;
+    return flex::Node::new().width(24.0f64).height(24.0f64);
+}
+
+fn fake_symbol(ctx: *u8, np: *Node) -> flex::Node {
+    FAKE_SYMBOLS = FAKE_SYMBOLS + 1;
+    return flex::Node::new().width(16.0f64).height(16.0f64);
+}
+
+fn fake_text_field(ctx: *u8, np: *Node) -> flex::Node {
+    FAKE_TEXT_FIELDS = FAKE_TEXT_FIELDS + 1;
+    return flex::Node::new().width(120.0f64).height(22.0f64);
+}
+
+fn fake_popup(ctx: *u8, np: *Node) -> flex::Node {
+    FAKE_POPUPS = FAKE_POPUPS + 1;
+    return flex::Node::new().width(100.0f64).height(24.0f64);
+}
+
+fn fake_divider(ctx: *u8, np: *Node) -> flex::Node {
+    FAKE_DIVIDERS = FAKE_DIVIDERS + 1;
+    return flex::Node::new().width(100.0f64).height(1.0f64);
 }
 
 fn fake_bordered(ctx: *u8, np: *Node, take content: flex::Node) -> flex::Node {
@@ -959,6 +1123,11 @@ fn fake_renderer() -> Renderer {
         text_area: fake_text_area,
         composer: fake_composer,
         code_editor: fake_code_editor,
+        image: fake_image,
+        symbol: fake_symbol,
+        text_field: fake_text_field,
+        popup: fake_popup,
+        divider: fake_divider,
         bordered: fake_bordered,
         clickable: fake_clickable,
         split: fake_split,
@@ -972,6 +1141,11 @@ fn reset_fake_counts() {
     FAKE_TEXT_AREAS = 0;
     FAKE_COMPOSERS = 0;
     FAKE_CODE_EDITORS = 0;
+    FAKE_IMAGES = 0;
+    FAKE_SYMBOLS = 0;
+    FAKE_TEXT_FIELDS = 0;
+    FAKE_POPUPS = 0;
+    FAKE_DIVIDERS = 0;
     FAKE_BORDEREDS = 0;
     FAKE_CLICKABLES = 0;
     FAKE_SPLITS = 0;
@@ -1038,6 +1212,30 @@ fn mount_dispatches_new_kinds_and_wrappers() {
     // + 3 labels + 1 button = 10 set_identity calls
     assert FAKE_IDENTITIES == 10;
     assert tree.child_count() == (6 as usize);
+}
+
+#[test]
+fn mount_dispatches_tier2_leaves() {
+    reset_fake_counts();
+    var items: vec::Vec[text::Text] = vec::new::[text::Text]();
+    items.append(text::from_str("A"));
+    items.append(text::from_str("B"));
+    var b: Builder = Builder::new();
+    b.add(image("/x.png"));
+    b.add(symbol("gear"));
+    b.add(text_field(placeholder: "search"));
+    b.add(popup(items));
+    b.add(divider());
+    let root: Node = b.finish();
+
+    let _tree: flex::Node = mount(#addr_of(root), fake_renderer());
+    assert FAKE_IMAGES == 1;
+    assert FAKE_SYMBOLS == 1;
+    assert FAKE_TEXT_FIELDS == 1;
+    assert FAKE_POPUPS == 1;
+    assert FAKE_DIVIDERS == 1;
+    // Each Tier-2 leaf is a widget → set_identity fires once per leaf.
+    assert FAKE_IDENTITIES == 5;
 }
 
 #[test]

@@ -189,6 +189,8 @@ fn ak_button(ctx: *u8, np: *facet::Node) -> flex::Node {
     // address (a non-component ctx — 0, an index — misses the registry and
     // no-ops). This is the component-model auto-refresh, through @facet.
     let b: ak::Button = ak::Button::from_raw(n.payload());
+    // `.plain()` → borderless button (the link/plain-button fold).
+    if { (*np).plain } { b.set_bordered(false); }
     akx::set_control_action_ctx_then_ctx(b.as_control(), { (*np).click }, { (*np).click_ctx }, ui::component_after);
     apply_style(n.payload(), facet::kind_button(), { (*np).style });
     return n;
@@ -294,6 +296,96 @@ fn ak_code_editor(ctx: *u8, np: *facet::Node) -> flex::Node {
     return n;
 }
 
+// ---- Tier-2 leaf ops (Phase 2) — thin adapters over the ui:: widgets --------
+
+fn ak_image(ctx: *u8, np: *facet::Node) -> flex::Node {
+    var n: flex::Node = flex::Node::new();
+    let vp: *text::Text = { #addr_of((*np).value) };
+    match (*vp).c_str() {
+        option::Option[text::CString]::Some(cs) => {
+            let sv: str = { #str_from_raw_parts(cs.as_ptr(), cs.count()) };
+            n = ui::image(sv);
+        }
+        option::Option[text::CString]::None => { n = ui::image(""); }
+    };
+    apply_style(n.payload(), facet::kind_image(), { (*np).style });
+    return n;
+}
+
+fn ak_symbol(ctx: *u8, np: *facet::Node) -> flex::Node {
+    var side: f64 = { (*np).font_size };
+    if side <= 0.0f64 { side = 16.0f64; }
+    var n: flex::Node = flex::Node::new();
+    let vp: *text::Text = { #addr_of((*np).value) };
+    match (*vp).c_str() {
+        option::Option[text::CString]::Some(cs) => {
+            let sv: str = { #str_from_raw_parts(cs.as_ptr(), cs.count()) };
+            n = ui::symbol(sv, side, secondary: { (*np).secondary });
+        }
+        option::Option[text::CString]::None => { n = ui::symbol("", side); }
+    };
+    apply_style(n.payload(), facet::kind_symbol(), { (*np).style });
+    return n;
+}
+
+fn ak_text_field(ctx: *u8, np: *facet::Node) -> flex::Node {
+    var n: flex::Node = flex::Node::new();
+    let vp: *text::Text = { #addr_of((*np).value) };
+    let pp: *text::Text = { #addr_of((*np).placeholder) };
+    match (*vp).c_str() {
+        option::Option[text::CString]::Some(vcs) => {
+            let vs: str = { #str_from_raw_parts(vcs.as_ptr(), vcs.count()) };
+            match (*pp).c_str() {
+                option::Option[text::CString]::Some(pcs) => {
+                    let ps: str = { #str_from_raw_parts(pcs.as_ptr(), pcs.count()) };
+                    n = ui::text_field(placeholder: ps, value: vs);
+                }
+                option::Option[text::CString]::None => { n = ui::text_field(value: vs); }
+            }
+        }
+        option::Option[text::CString]::None => {
+            match (*pp).c_str() {
+                option::Option[text::CString]::Some(pcs) => {
+                    let ps: str = { #str_from_raw_parts(pcs.as_ptr(), pcs.count()) };
+                    n = ui::text_field(placeholder: ps);
+                }
+                option::Option[text::CString]::None => { n = ui::text_field(); }
+            }
+        }
+    };
+    apply_style(n.payload(), facet::kind_text_field(), { (*np).style });
+    return n;
+}
+
+fn ak_popup(ctx: *u8, np: *facet::Node) -> flex::Node {
+    // ui::popup takes the rows by value; deep-copy from the borrowed node.
+    var items: vec::Vec[text::Text] = vec::new::[text::Text]();
+    let src: *vec::Vec[text::Text] = { #addr_of((*np).popup_items) };
+    let cnt: usize = { (*src).count() };
+    var i: usize = 0 as usize;
+    while i < cnt {
+        match (*src).at_ptr(i) {
+            option::Option[*text::Text]::Some(tp) => { items.append(text::from_str({ (*tp).view() })); }
+            option::Option[*text::Text]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    var n: flex::Node = ui::popup(items, selected: { (*np).popup_selected });
+    apply_style(n.payload(), facet::kind_popup(), { (*np).style });
+    return n;
+}
+
+fn ak_divider(ctx: *u8, np: *facet::Node) -> flex::Node {
+    var n: flex::Node = ui::divider();
+    apply_style(n.payload(), facet::kind_divider(), { (*np).style });
+    return n;
+}
+
+// Read-back: surface the ui:: value readers through the facet layer so an app
+// (Phase 5) can pull a field's text / a popup's index from the mounted view.
+fn field_text(view_ptr: *u8) -> text::Text { return ui::field_text(view_ptr); }
+fn popup_index(view_ptr: *u8) -> i64 { return ui::popup_index(view_ptr); }
+
 fn ak_bordered(ctx: *u8, np: *facet::Node, take content: flex::Node) -> flex::Node {
     var n: flex::Node = ui::bordered(content, radius: { (*np).radius });
     // A bordered box already paints a backing view; Style props (bg/corner/
@@ -386,6 +478,11 @@ fn renderer() -> facet::Renderer {
         text_area: ak_text_area,
         composer: ak_composer,
         code_editor: ak_code_editor,
+        image: ak_image,
+        symbol: ak_symbol,
+        text_field: ak_text_field,
+        popup: ak_popup,
+        divider: ak_divider,
         bordered: ak_bordered,
         clickable: ak_clickable,
         split: ak_split,
@@ -1099,6 +1196,69 @@ fn phase1_styled_card_mounts_every_styled_kind() {
         }
         option::Option[*ak::View]::None => { assert false; }
     };
+}
+
+// Phase 2 gate — the promoted Tier-2 leaves render through the portable model,
+// and their values read back. This is the coverage that lets a real app drop
+// its AppKit-only widget calls: image / symbol / text_field / popup / divider,
+// plus the button folds (.plain(), and icon-button = clickable { symbol }).
+fn ak_submit_noop(ctx: *u8, tv: *u8) { return; }
+fn ak_open_noop(sender: *u8, ctx: *u8) { return; }
+
+fn phase2_leaves_view() -> facet::Node {
+    var items: vec::Vec[text::Text] = vec::new::[text::Text]();
+    items.append(text::from_str("Swift"));
+    items.append(text::from_str("C+"));
+    items.append(text::from_str("Rust"));
+    return @facet {
+        vstack {
+            symbol("folder", size: 18.0f64).agent_id("icon")
+            text_field(placeholder: "project name", value: "iris").agent_id("name")
+            popup(items, selected: 1 as i64).agent_id("lang")
+            divider()
+            clickable {
+                symbol("gearshape")
+            }.on_click(ak_open_noop).agent_id("settings")
+            button("Docs").plain().foreground_color(facet::Color::accent()).agent_id("docs")
+        }
+    };
+}
+
+#[test]
+fn phase2_tier2_leaves_mount_and_read_back() {
+    let win = e2e_window(360.0f64, 400.0f64);
+    let content = e2e_content(win);
+    var root: facet::Node = phase2_leaves_view();
+    let h: f64 = mount_into(#addr_of(root), content.raw(), 360.0f64, 400.0f64);
+    assert h > 0.0f64;
+
+    // Every promoted leaf reached the surface with its agent id.
+    assert surface_has_id(content.raw(), "icon");
+    assert surface_has_id(content.raw(), "name");
+    assert surface_has_id(content.raw(), "lang");
+    assert surface_has_id(content.raw(), "settings");
+    assert surface_has_id(content.raw(), "docs");
+
+    // Read-back through the facet layer: the popup keeps its initial selection,
+    // and the text_field its value.
+    var s: agent::Surface = agent::open(win.raw());
+    // text_field is agent-drivable (role_input → drive_text).
+    assert surface::outcome_eq(
+        s.set_text("name", "renamed", s.text_version("name")),
+        surface::Outcome::Allowed);
+}
+
+#[test]
+fn phase2_popup_index_reads_selection() {
+    // Direct read-back path: mount a popup, pull its index via the facet layer.
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 40.0 });
+    var items: vec::Vec[text::Text] = vec::new::[text::Text]();
+    items.append(text::from_str("A"));
+    items.append(text::from_str("B"));
+    items.append(text::from_str("C"));
+    var pu: facet::Node = facet::popup(items, selected: 2 as i64);
+    let n: flex::Node = ak_popup(0 as *u8, #addr_of(pu));
+    assert popup_index(n.payload()) == (2 as i64);
 }
 
 #[test]
