@@ -109,11 +109,15 @@ fn apply_style(view_ptr: *u8, kind: u32, style: facet::Style) {
     let fsz: f64 = { style.font_size };
     let wt: u32 = { style.weight };
     let fam: u32 = { style.family };
-    if fsz > 0.0f64 || wt != facet::weight_unset() || fam != facet::family_unset() {
+    let ital: bool = { style.italic };
+    if fsz > 0.0f64 || wt != facet::weight_unset() || fam != facet::family_unset() || ital {
+        var font: ak::Font = ns_font(fsz, wt, fam);
+        // Italic — NSFontManager trait conversion (NSItalicFontMask = 1).
+        if ital { font = ak::FontManager::shared_font_manager().convert_font_to_have_trait(font, 1 as u64); }
         if is_text {
-            ak::TextField::from_raw(view_ptr).as_control().set_font(ns_font(fsz, wt, fam));
+            ak::TextField::from_raw(view_ptr).as_control().set_font(font);
         } else if kind == facet::kind_button() {
-            ak::Button::from_raw(view_ptr).as_control().set_font(ns_font(fsz, wt, fam));
+            ak::Button::from_raw(view_ptr).as_control().set_font(font);
         }
     }
     // Layer-backed: background / corner / border.
@@ -1831,6 +1835,8 @@ fn paint_modifiers_mount_through_apply_style() {
         vstack {
             wrap_label("a long wrapping caption that the line limit clamps to two lines of height")
                 .line_limit(2 as i32)
+                .text_align(facet::text_center())
+                .italic()
                 .agent_id("cap")
             bordered {
                 label("card")
