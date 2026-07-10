@@ -323,6 +323,12 @@ struct Node {
     _overflow: flex::Overflow,     _has_overflow: bool,
     _align_content: flex::Align,   _has_align_content: bool,
     _direction: flex::Direction,   _has_direction: bool,
+    _box_sizing: flex::BoxSizing,  _has_box_sizing: bool,
+    _flex_dir: flex::FlexDirection, _has_flex_dir: bool,   // override kind dir (reverse)
+    _grid_col_span: i32,           // 0 = unset (grid child)
+    _grid_row_span: i32,           // 0 = unset
+    _grid_col_start: i32,          // 0 = unset (1-based line)
+    _grid_row_start: i32,          // 0 = unset
     children: vec::Vec[Node],
 }
 
@@ -405,6 +411,12 @@ fn blank(kind: u32) -> Node {
         _overflow: flex::Overflow::Visible,     _has_overflow: false,
         _align_content: flex::Align::Auto,      _has_align_content: false,
         _direction: flex::Direction::Inherit,   _has_direction: false,
+        _box_sizing: flex::BoxSizing::BorderBox, _has_box_sizing: false,
+        _flex_dir: flex::FlexDirection::Column,  _has_flex_dir: false,
+        _grid_col_span: 0 as i32,
+        _grid_row_span: 0 as i32,
+        _grid_col_start: 0 as i32,
+        _grid_row_start: 0 as i32,
         children: vec::new::[Node](),
     };
 }
@@ -863,6 +875,10 @@ impl Node {
     fn overflow(take this, o: flex::Overflow) -> Node { var n: Node = this; n._overflow = o; n._has_overflow = true; return n; }
     fn align_content(take this, a: flex::Align) -> Node { var n: Node = this; n._align_content = a; n._has_align_content = true; return n; }
     fn direction(take this, d: flex::Direction) -> Node { var n: Node = this; n._direction = d; n._has_direction = true; return n; }
+    fn box_sizing(take this, b: flex::BoxSizing) -> Node { var n: Node = this; n._box_sizing = b; n._has_box_sizing = true; return n; }
+    fn flex_direction(take this, d: flex::FlexDirection) -> Node { var n: Node = this; n._flex_dir = d; n._has_flex_dir = true; return n; }
+    fn grid_span(take this, cols: i32, rows: i32) -> Node { var n: Node = this; n._grid_col_span = cols; n._grid_row_span = rows; return n; }
+    fn grid_pos(take this, col: i32, row: i32) -> Node { var n: Node = this; n._grid_col_start = col; n._grid_row_start = row; return n; }
 
     fn set_width_pct(ref this, v: f64) { this._width_pct = v; return; }
     fn set_height_pct(ref this, v: f64) { this._height_pct = v; return; }
@@ -872,6 +888,10 @@ impl Node {
     fn set_overflow(ref this, o: flex::Overflow) { this._overflow = o; this._has_overflow = true; return; }
     fn set_align_content(ref this, a: flex::Align) { this._align_content = a; this._has_align_content = true; return; }
     fn set_direction(ref this, d: flex::Direction) { this._direction = d; this._has_direction = true; return; }
+    fn set_box_sizing(ref this, b: flex::BoxSizing) { this._box_sizing = b; this._has_box_sizing = true; return; }
+    fn set_flex_direction(ref this, d: flex::FlexDirection) { this._flex_dir = d; this._has_flex_dir = true; return; }
+    fn set_grid_span(ref this, cols: i32, rows: i32) { this._grid_col_span = cols; this._grid_row_span = rows; return; }
+    fn set_grid_pos(ref this, col: i32, row: i32) { this._grid_col_start = col; this._grid_row_start = row; return; }
 
     fn set_flex_basis(ref this, v: f64) { this._basis = v; return; }
     fn set_aspect_ratio(ref this, v: f64) { this._aspect = v; return; }
@@ -1406,6 +1426,14 @@ fn mount(np: *Node, r: Renderer) -> flex::Node {
     if { (*np)._has_overflow } { n.set_overflow({ (*np)._overflow }); }
     if { (*np)._has_align_content } { n.set_align_content({ (*np)._align_content }); }
     if { (*np)._has_direction } { n.set_direction({ (*np)._direction }); }
+    if { (*np)._has_box_sizing } { n.set_box_sizing({ (*np)._box_sizing }); }
+    // Explicit flex-direction (e.g. RowReverse/ColumnReverse) overrides the kind.
+    if { (*np)._has_flex_dir } { n.set_flex_direction({ (*np)._flex_dir }); }
+    // Grid child placement (set on the item; the grid container flows the rest).
+    if { (*np)._grid_col_span } > (0 as i32) { n.set_grid_column_span({ (*np)._grid_col_span }); }
+    if { (*np)._grid_row_span } > (0 as i32) { n.set_grid_row_span({ (*np)._grid_row_span }); }
+    if { (*np)._grid_col_start } > (0 as i32) { n.set_grid_column_start({ (*np)._grid_col_start }); }
+    if { (*np)._grid_row_start } > (0 as i32) { n.set_grid_row_start({ (*np)._grid_row_start }); }
     return n;
 }
 
@@ -2395,6 +2423,45 @@ fn mount_grid_flows_children_into_columns() {
         option::Option[*flex::Node]::None => { assert false; }
     };
     assert FAKE_LABELS == 4;
+}
+
+#[test]
+fn facet_p3_layout_modifiers_set_fields() {
+    let n: Node = label("x")
+        .box_sizing(flex::BoxSizing::ContentBox)
+        .flex_direction(flex::FlexDirection::RowReverse)
+        .grid_span(2 as i32, 1 as i32)
+        .grid_pos(1 as i32, 2 as i32);
+    assert n._has_box_sizing;
+    assert n._has_flex_dir;
+    assert n._grid_col_span == (2 as i32);
+    assert n._grid_col_start == (1 as i32);
+    assert n._grid_row_start == (2 as i32);
+}
+
+#[test]
+fn mount_grid_child_spans_columns() {
+    // 3-col grid at 300 wide → each col 100; first child spans 2 → 200 wide.
+    reset_fake_counts();
+    var inner: Builder = Builder::new();
+    inner.add(label("wide").grid_span(2 as i32, 1 as i32));
+    inner.add(label("b"));
+    inner.add(label("c"));
+    var b: Builder = Builder::new();
+    b.add(grid(inner, columns: 3 as i32).frame(300.0f64, 100.0f64));
+    let root: Node = b.finish();
+    var tree: flex::Node = mount(#addr_of(root), fake_renderer());
+    tree.calculate_layout(300.0f64, 100.0f64, flex::Direction::LTR);
+    match tree.children.at_ptr(0 as usize) {
+        option::Option[*flex::Node]::Some(gp) => {
+            // Child 0 spans cols 0-1, so child 1 flows to col 2 (x=200) — not col 1
+            // (x=100) as it would without the span. (Child 0 itself has a fixed
+            // fake width, so we assert via the sibling's placement.)
+            let c1: flex::Layout = must_layout({ (*gp).child_layout(1 as usize) });
+            assert approx(c1.left, 200.0f64);
+        }
+        option::Option[*flex::Node]::None => { assert false; }
+    };
 }
 
 #[test]
