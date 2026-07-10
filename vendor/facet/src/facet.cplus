@@ -235,6 +235,7 @@ struct Node {
     max_val: f64,               // slider / stepper: maximum (default 1)
     step_val: f64,              // stepper: increment (default 1)
     indeterminate: bool,        // progress: spinner mode (ignore value)
+    pull_down: bool,            // popup: pull-down menu mode (Menu) vs selector
     editable: bool,             // code_editor (default true)
     show_border: bool,          // composer (default true)
     draws_background: bool,     // composer (default true)
@@ -315,6 +316,7 @@ fn blank(kind: u32) -> Node {
         max_val: 1.0f64,
         step_val: 1.0f64,
         indeterminate: false,
+        pull_down: false,
         editable: true,
         show_border: true,
         draws_background: true,
@@ -481,10 +483,36 @@ fn text_field(placeholder: str = "", value: str = "") -> Node {
 }
 
 // A dropdown selector. `items` are the rows; `selected` the initial index.
-fn popup(take items: vec::Vec[text::Text], selected: i64 = 0 as i64) -> Node {
+// `on_change` fires on a new selection (read the index with the backend reader).
+fn popup(
+    take items: vec::Vec[text::Text],
+    selected: i64 = 0 as i64,
+    on_change: fn(*u8, *u8) = 0 as fn(*u8, *u8),
+    ctx: *u8 = 0 as *u8,
+) -> Node {
     var n: Node = blank(kind_popup());
     n.popup_items = items;
     n.popup_selected = selected;
+    n.on_change = on_change;
+    n.click_ctx = ctx;
+    return n;
+}
+
+// A pull-down actions menu (SwiftUI `Menu`): a fixed `title` button that drops a
+// list of action `items`; `on_change` fires with the chosen item. Same kind as
+// `popup` (a pull-down NSPopUpButton) — a variant, not a new contract slot.
+fn menu(
+    title: str,
+    take items: vec::Vec[text::Text],
+    on_change: fn(*u8, *u8) = 0 as fn(*u8, *u8),
+    ctx: *u8 = 0 as *u8,
+) -> Node {
+    var n: Node = blank(kind_popup());
+    n.text = text::from_str(title);
+    n.popup_items = items;
+    n.on_change = on_change;
+    n.click_ctx = ctx;
+    n.pull_down = true;
     return n;
 }
 
@@ -1386,6 +1414,16 @@ fn facet_tier2_ctors_set_kind_and_config() {
 
     let dv: Node = divider();
     assert dv.kind == kind_divider();
+
+    // menu is a pull-down popup (same kind, a variant — no new contract slot).
+    var mitems: vec::Vec[text::Text] = vec::new::[text::Text]();
+    mitems.append(text::from_str("Cut"));
+    mitems.append(text::from_str("Copy"));
+    let mn: Node = menu("Edit", mitems, on_change: click_a);
+    assert mn.kind == kind_popup();
+    assert mn.pull_down;
+    assert mn.text.view() == "Edit";
+    assert mn.on_change != null_fn();
 
     // Button folds: .plain() marks the borderless variant.
     let lb: Node = button("Docs").plain().foreground_color(Color::accent());

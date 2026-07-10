@@ -377,19 +377,40 @@ fn ak_text_field(ctx: *u8, np: *facet::Node) -> flex::Node {
 }
 
 fn ak_popup(ctx: *u8, np: *facet::Node) -> flex::Node {
-    // ui::popup takes the rows by value; deep-copy from the borrowed node.
-    var items: vec::Vec[text::Text] = vec::new::[text::Text]();
+    // NSPopUpButton: selector (pulls_down false) OR pull-down menu (true). Built
+    // directly so `menu(...)` (pull-down + title + on_change) shares this op.
+    let pull: bool = { (*np).pull_down };
+    let zero: rt::Rect = rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 };
+    let p: ak::PopUpButton = ak::PopUpButton::new(zero, pull);
+    // Pull-down: item 0 is the fixed title the button shows.
+    if pull {
+        let tp: *text::Text = { #addr_of((*np).text) };
+        match (*tp).c_str() {
+            option::Option[text::CString]::Some(cs) => {
+                p.add_item_with_title({ #str_from_raw_parts(cs.as_ptr(), cs.count()) });
+            }
+            option::Option[text::CString]::None => { p.add_item_with_title(""); }
+        };
+    }
     let src: *vec::Vec[text::Text] = { #addr_of((*np).popup_items) };
     let cnt: usize = { (*src).count() };
     var i: usize = 0 as usize;
     while i < cnt {
         match (*src).at_ptr(i) {
-            option::Option[*text::Text]::Some(tp) => { items.append(text::from_str({ (*tp).view() })); }
+            option::Option[*text::Text]::Some(tp) => { p.add_item_with_title({ (*tp).view() }); }
             option::Option[*text::Text]::None => { }
         }
         i = i +% (1 as usize);
     }
-    var n: flex::Node = ui::popup(items, selected: { (*np).popup_selected });
+    if pull == false {
+        let sel: i64 = { (*np).popup_selected };
+        if sel >= (0 as i64) && sel < (cnt as i64) { p.select_item_at_index(sel); }
+    }
+    let ch: fn(*u8, *u8) = { (*np).on_change };
+    if ch != (0 as fn(*u8, *u8)) {
+        akx::set_control_action_ctx_then_ctx(p.as_control(), ch, { (*np).click_ctx }, ui::component_after);
+    }
+    var n: flex::Node = ui::view(p.as_view());
     apply_style(n.payload(), facet::kind_popup(), { (*np).style });
     return n;
 }
@@ -719,6 +740,19 @@ fn run(take root: facet::Node, title: str = "facet", width: f64 = 480.0f64, heig
     app.activate_ignoring_other_apps(true);
     app.run();
     return;
+}
+
+// A modal alert (matrix §4). Imperative + app-level — a blocking modal, not a
+// render-tree kind (like `run`, it can't be unit-tested headlessly). Returns
+// the 0-based index of the clicked button (0 = `primary`, 1 = `secondary`).
+fn alert(title: str, message: str, primary: str, secondary: str = "") -> i32 {
+    let a: ak::Alert = ak::Alert::from_raw(rt::alloc_init(#str_ptr("NSAlert\0")));
+    a.set_message_text(title);
+    a.set_informative_text(message);
+    let _b0: ak::Button = a.add_button_with_title(primary);   // → response 1000
+    if secondary != "" { let _b1: ak::Button = a.add_button_with_title(secondary); }
+    let resp: i64 = a.run_modal();
+    return (resp -% (1000 as i64)) as i32;
 }
 
 // ---- tests -------------------------------------------------------------------
@@ -1509,6 +1543,27 @@ fn controls_mount_and_toggle_drives() {
     // toggle is role_button + drive_click → the agent can flip it, firing the wire.
     assert surface::outcome_eq(s.click("wifi"), surface::Outcome::Allowed);
     assert TOGGLE_FIRES == 1;
+}
+
+#[test]
+fn menu_and_popup_mount_on_appkit() {
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 160.0 });
+    var mitems: vec::Vec[text::Text] = vec::new::[text::Text]();
+    mitems.append(text::from_str("Cut"));
+    mitems.append(text::from_str("Copy"));
+    var pitems: vec::Vec[text::Text] = vec::new::[text::Text]();
+    pitems.append(text::from_str("Red"));
+    pitems.append(text::from_str("Green"));
+    var root: facet::Node = @facet {
+        vstack {
+            menu("Edit", mitems).agent_id("edit-menu")
+            popup(pitems, selected: 1 as i64).agent_id("color")
+        }
+    };
+    let h: f64 = mount_into(#addr_of(root), content.raw(), 300.0f64, 160.0f64);
+    assert h > 0.0f64;
+    assert surface_has_id(content.raw(), "edit-menu");   // pull-down menu
+    assert surface_has_id(content.raw(), "color");        // selector popup
 }
 
 #[test]
