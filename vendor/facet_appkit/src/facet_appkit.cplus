@@ -135,6 +135,8 @@ fn apply_style(view_ptr: *u8, kind: u32, style: facet::Style) {
     // Opacity — NSView.alphaValue (no layer needed).
     let op: f64 = { style.opacity };
     if op >= 0.0f64 { ak::View::from_raw(view_ptr).set_alpha_value(op); }
+    // Hidden — invisible but keeps its layout space.
+    if { style.hidden } { ak::View::from_raw(view_ptr).set_hidden(true); }
     // Drop shadow — layer-backed; a soft black shadow at the given blur radius.
     let sr: f64 = { style.shadow_radius };
     if sr > 0.0f64 {

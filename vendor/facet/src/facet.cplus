@@ -198,6 +198,7 @@ struct Style {
     shadow_radius: f64,    // 0 = unset (drop-shadow blur radius)
     line_limit: i32,       // 0 = unset / unlimited (max text lines)
     text_align: i32,       // 0 = unset; 1 = leading, 2 = center, 3 = trailing
+    hidden: bool,          // invisible but keeps its layout space (vs display:none)
 }
 
 // Text-alignment tokens (0 = unset — keep the widget's natural alignment).
@@ -219,6 +220,7 @@ fn style_none() -> Style {
         shadow_radius: 0.0f64,
         line_limit: 0 as i32,
         text_align: 0 as i32,
+        hidden: false,
     };
 }
 
@@ -758,6 +760,7 @@ impl Node {
     fn shadow(take this, radius: f64) -> Node { var n: Node = this; n.style.shadow_radius = radius; return n; }
     fn line_limit(take this, n_lines: i32) -> Node { var n: Node = this; n.style.line_limit = n_lines; return n; }
     fn text_align(take this, a: i32) -> Node { var n: Node = this; n.style.text_align = a; return n; }
+    fn hidden(take this) -> Node { var n: Node = this; n.style.hidden = true; return n; }
     // `.frame(width:height:)` — set both fixed dimensions at once.
     fn frame(take this, w: f64, h: f64) -> Node { var n: Node = this; n._width = w; n._height = h; return n; }
     // `.plain()` — borderless button (the link/plain-button fold). Pair with
@@ -791,6 +794,7 @@ impl Node {
     fn set_shadow(ref this, radius: f64) { this.style.shadow_radius = radius; return; }
     fn set_line_limit(ref this, n_lines: i32) { this.style.line_limit = n_lines; return; }
     fn set_text_align(ref this, a: i32) { this.style.text_align = a; return; }
+    fn set_hidden(ref this, v: bool) { this.style.hidden = v; return; }
     fn set_frame(ref this, w: f64, h: f64) { this._width = w; this._height = h; return; }
     fn set_plain(ref this) { this.plain = true; return; }
 
@@ -2156,6 +2160,8 @@ fn facet_paint_modifiers_set_fields() {
     assert approx(n.style.shadow_radius, 6.0f64);
     assert n.style.line_limit == (2 as i32);
     assert n.style.text_align == text_center();
+    assert label("z").hidden().style.hidden;
+    assert label("z").style.hidden == false;   // default visible
     // defaults untouched on a plain node.
     let p: Node = label("y");
     assert approx(p.style.opacity, -1.0f64);   // unset
