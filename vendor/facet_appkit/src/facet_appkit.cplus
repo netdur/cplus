@@ -1363,6 +1363,24 @@ fn phase3_native_survives_rerender() {
 }
 
 #[test]
+fn zstack_block_overlays_on_appkit() {
+    // The @facet block form of the overlay container mounts to real views.
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 200.0 });
+    var root: facet::Node = @facet {
+        zstack {
+            bordered {
+                label("base")
+            }
+            label("badge").agent_id("badge")
+        }
+        .frame(160.0f64, 120.0f64)
+    };
+    let h: f64 = mount_into(#addr_of(root), content.raw(), 200.0f64, 200.0f64);
+    assert h > 0.0f64;
+    assert surface_has_id(content.raw(), "badge");
+}
+
+#[test]
 fn shell_style_mask_adds_full_size_content_only_when_clean() {
     let plain: u64 = shell_style_mask(false);
     let clean: u64 = shell_style_mask(true);

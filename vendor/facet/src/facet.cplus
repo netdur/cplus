@@ -73,6 +73,9 @@ fn kind_divider() -> u32 { return 16 as u32; }
 // carries structured widgets (list/tree/file_tree) until a portable kind earns
 // its place (contract doc §8).
 fn kind_native() -> u32 { return 17 as u32; }
+// Overlay container (Phase / matrix §2): children stack. Pure layout — no vtable
+// op, handled entirely in `mount` via absolute positioning (like column/row).
+fn kind_zstack() -> u32 { return 18 as u32; }
 
 // Agent-affordance roles — numeric indices aligned with agent_core::Role so
 // Phase 2 can pass them through without a translation table.
@@ -683,6 +686,18 @@ fn hstack(take b: Builder) -> Node {
     return n;
 }
 
+// Overlay stack. The first child stays in flow and sizes the stack; the rest
+// are taken out of flow and pinned to the leading corner (top-left), so they
+// overlay without shifting layout. An overlay child can position itself
+// (`.inset(...)` / `.position_absolute()`) — e.g. a badge at the top-right —
+// and mount honors that instead of the default corner.
+fn zstack(take b: Builder) -> Node {
+    let Builder { children } = b;
+    var n: Node = blank(kind_zstack());
+    n.children = children;
+    return n;
+}
+
 fn screen(take b: Builder) -> Node {
     var n: Node = column(b);
     n._gap = flex::HIG_SPACE_S;
@@ -932,6 +947,29 @@ fn mount(np: *Node, r: Renderer) -> flex::Node {
         is_widget = true;
     } else if k == kind_spacer() {
         // pure layout; `_grow = 1` from the constructor applies below.
+    } else if k == kind_zstack() {
+        // Overlay: child 0 stays in flow (sizes the stack); children 1+ are
+        // taken out of flow and pinned to the leading corner unless they
+        // positioned themselves.
+        let cnt: usize = { (*np).children.count() };
+        for i in 0..(cnt as i32) {
+            match { (*np).children.at_ptr(i as usize) } {
+                option::Option[*Node]::Some(cp) => {
+                    var cf: flex::Node = mount(cp, r);
+                    if i >= (1 as i32) {
+                        if { (*cp)._has_position_type } == false {
+                            cf.set_position_type(flex::PositionType::Absolute);
+                            if { (*cp)._inset_mask } == (0 as u32) {
+                                cf.set_position(flex::Edge::Left, flex::StyleLength::points(0.0f64));
+                                cf.set_position(flex::Edge::Top, flex::StyleLength::points(0.0f64));
+                            }
+                        }
+                    }
+                    n.add_child(cf);
+                }
+                option::Option[*Node]::None => { }
+            }
+        }
     } else {
         if k == kind_row() { n.set_flex_direction(flex::FlexDirection::Row); }
         let cnt: usize = { (*np).children.count() };
@@ -1640,6 +1678,32 @@ fn mount_applies_absolute_position_and_inset() {
             let bf: flex::Layout = must_layout({ (*cp).child_layout(0 as usize) });
             assert approx(bf.left, 10.0f64);
             assert approx(bf.top, 10.0f64);
+        }
+        option::Option[*flex::Node]::None => { assert false; }
+    };
+}
+
+#[test]
+fn mount_zstack_overlays_children() {
+    // child0 (100x50) sizes the stack; child1 (20x20) overlays at (0,0) instead
+    // of stacking below it (which flow would put at top=50).
+    var inner: Builder = Builder::new();
+    inner.add(button("base").frame(100.0f64, 50.0f64));
+    inner.add(label("badge").frame(20.0f64, 20.0f64));
+    var b: Builder = Builder::new();
+    b.add(zstack(inner));
+    let root: Node = b.finish();
+
+    var tree: flex::Node = mount(#addr_of(root), fake_renderer());
+    tree.calculate_layout(200.0f64, 200.0f64, flex::Direction::LTR);
+    match tree.children.at_ptr(0 as usize) {
+        option::Option[*flex::Node]::Some(zp) => {
+            let c0: flex::Layout = must_layout({ (*zp).child_layout(0 as usize) });
+            let c1: flex::Layout = must_layout({ (*zp).child_layout(1 as usize) });
+            assert approx(c0.width, 100.0f64);   // in-flow child sizes the stack
+            assert approx(c0.height, 50.0f64);
+            assert approx(c1.left, 0.0f64);      // overlay pinned to the corner
+            assert approx(c1.top, 0.0f64);       // NOT 50 (would be below in flow)
         }
         option::Option[*flex::Node]::None => { assert false; }
     };
