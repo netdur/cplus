@@ -154,6 +154,25 @@ fn apply_style(view_ptr: *u8, kind: u32, np: *facet::Node) {
     if op >= 0.0f64 { ak::View::from_raw(view_ptr).set_alpha_value(op); }
     // Hidden — invisible but keeps its layout space.
     if { style.hidden } { ak::View::from_raw(view_ptr).set_hidden(true); }
+    // Gradient fill — a CAGradientLayer inserted behind content, sized to the
+    // view and autoresizing with it (so it tracks the frame apply sets later).
+    let gf: facet::Color = { style.grad_from };
+    let gt: facet::Color = { style.grad_to };
+    if gf.is_set() && gt.is_set() {
+        let gv: ak::View = ak::View::from_raw(view_ptr);
+        gv.set_wants_layer(true);
+        let arr: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        rt::msg_void_id(arr, rt::sel(#str_ptr("addObject:\0")), ns_color(gf).c_g_color());
+        rt::msg_void_id(arr, rt::sel(#str_ptr("addObject:\0")), ns_color(gt).c_g_color());
+        let gl: quartz::GradientLayer = quartz::GradientLayer::new();
+        gl.set_colors(quartz::NSArray::from_raw(arr));
+        gl.set_start_point(rt::Point { x: 0.5, y: 0.0 });   // top
+        gl.set_end_point(rt::Point { x: 0.5, y: 1.0 });     // bottom
+        let gll: quartz::Layer = quartz::Layer::from_raw(gl.raw());
+        gll.set_frame(gv.bounds());
+        gll.set_autoresizing_mask(18 as u64);               // width|height sizable
+        rt::msg_void_id_u64(gv.layer().raw(), rt::sel(#str_ptr("insertSublayer:atIndex:\0")), gl.raw(), 0 as u64);
+    }
     // Drop shadow — layer-backed; a soft black shadow at the given blur radius.
     let sr: f64 = { style.shadow_radius };
     if sr > 0.0f64 {
@@ -1781,6 +1800,24 @@ fn material_wraps_content_on_appkit() {
     let h: f64 = mount_into(#addr_of(root), content.raw(), 200.0f64, 200.0f64);
     assert h > 0.0f64;
     assert surface_has_id(content.raw(), "item1");
+}
+
+#[test]
+fn gradient_box_mounts_on_appkit() {
+    // A box with a vertical gradient fill: apply_style inserts a CAGradientLayer.
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 160.0, h: 120.0 });
+    var root: facet::Node = @facet {
+        vstack {
+            box()
+                .gradient(facet::Color::system_blue(), facet::Color::system_green())
+                .corner_radius(8.0f64)
+                .frame(120.0f64, 60.0f64)
+                .agent_id("grad")
+        }
+    };
+    let h: f64 = mount_into(#addr_of(root), content.raw(), 160.0f64, 120.0f64);
+    assert h > 0.0f64;
+    assert surface_has_id(content.raw(), "grad");
 }
 
 #[test]

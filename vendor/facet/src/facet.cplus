@@ -205,6 +205,8 @@ struct Style {
     clip: bool,            // clip content to the (rounded) bounds
     underline: bool,       // underline the text
     strikethrough: bool,   // strike through the text
+    grad_from: Color,      // gradient top color (token 0 = no gradient)
+    grad_to: Color,        // gradient bottom color
 }
 
 // Text-alignment tokens (0 = unset — keep the widget's natural alignment).
@@ -231,6 +233,8 @@ fn style_none() -> Style {
         clip: false,
         underline: false,
         strikethrough: false,
+        grad_from: Color::none(),
+        grad_to: Color::none(),
     };
 }
 
@@ -803,6 +807,8 @@ impl Node {
     fn clip(take this) -> Node { var n: Node = this; n.style.clip = true; return n; }
     fn underline(take this) -> Node { var n: Node = this; n.style.underline = true; return n; }
     fn strikethrough(take this) -> Node { var n: Node = this; n.style.strikethrough = true; return n; }
+    // A vertical (top→bottom) two-color gradient fill.
+    fn gradient(take this, from: Color, to: Color) -> Node { var n: Node = this; n.style.grad_from = from; n.style.grad_to = to; return n; }
     // `.frame(width:height:)` — set both fixed dimensions at once.
     fn frame(take this, w: f64, h: f64) -> Node { var n: Node = this; n._width = w; n._height = h; return n; }
     // `.plain()` — borderless button (the link/plain-button fold). Pair with
@@ -843,6 +849,7 @@ impl Node {
     fn set_clip(ref this, v: bool) { this.style.clip = v; return; }
     fn set_underline(ref this, v: bool) { this.style.underline = v; return; }
     fn set_strikethrough(ref this, v: bool) { this.style.strikethrough = v; return; }
+    fn set_gradient(ref this, from: Color, to: Color) { this.style.grad_from = from; this.style.grad_to = to; return; }
     fn set_frame(ref this, w: f64, h: f64) { this._width = w; this._height = h; return; }
     fn set_plain(ref this) { this.plain = true; return; }
 
@@ -2311,6 +2318,10 @@ fn facet_paint_modifiers_set_fields() {
     assert label("z").style.clip == false;      // default unclipped
     assert label("z").underline().style.underline;
     assert label("z").style.underline == false;  // default no underline
+    let g: Node = box().gradient(Color::system_blue(), Color::system_green());
+    assert g.style.grad_from.is_set();
+    assert g.style.grad_to.token == (5 as u32);   // system_green
+    assert box().style.grad_from.is_set() == false;   // default no gradient
     // defaults untouched on a plain node.
     let p: Node = label("y");
     assert approx(p.style.opacity, -1.0f64);   // unset
