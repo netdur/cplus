@@ -400,6 +400,53 @@ fn ak_divider(ctx: *u8, np: *facet::Node) -> flex::Node {
     return n;
 }
 
+// ---- form controls (matrix §2) ----------------------------------------------
+fn ak_toggle(ctx: *u8, np: *facet::Node) -> flex::Node {
+    let sw: ak::Switch = ak::Switch::new();
+    // NSSwitch.setState: (NSControlStateValue: 1 = on, 0 = off). The generated
+    // binding exposes the getter but not the setter, so send it raw.
+    var st: i64 = 0 as i64;
+    if { (*np).bool_value } { st = 1 as i64; }
+    rt::msg_void_id(sw.raw(), rt::sel(#str_ptr("setState:\0")), st as *u8);
+    let ch: fn(*u8, *u8) = { (*np).on_change };
+    if ch != (0 as fn(*u8, *u8)) {
+        akx::set_control_action_ctx_then_ctx(sw.as_control(), ch, { (*np).click_ctx }, ui::component_after);
+    }
+    var n: flex::Node = ui::fixed_view(sw.as_view());
+    apply_style(n.payload(), facet::kind_toggle(), { (*np).style });
+    return n;
+}
+
+fn ak_slider(ctx: *u8, np: *facet::Node) -> flex::Node {
+    let sl: ak::Slider = ak::Slider::new();
+    sl.set_min_value({ (*np).min_val });
+    sl.set_max_value({ (*np).max_val });
+    sl.as_control().set_double_value({ (*np).value_f });
+    let ch: fn(*u8, *u8) = { (*np).on_change };
+    if ch != (0 as fn(*u8, *u8)) {
+        akx::set_control_action_ctx_then_ctx(sl.as_control(), ch, { (*np).click_ctx }, ui::component_after);
+    }
+    var n: flex::Node = ui::fixed_view(sl.as_view());
+    apply_style(n.payload(), facet::kind_slider(), { (*np).style });
+    return n;
+}
+
+fn ak_progress(ctx: *u8, np: *facet::Node) -> flex::Node {
+    let pi: ak::ProgressIndicator = ak::ProgressIndicator::new();
+    if { (*np).indeterminate } {
+        pi.set_indeterminate(true);
+        pi.start_animation(0 as *u8);
+    } else {
+        pi.set_indeterminate(false);
+        pi.set_min_value(0.0f64);
+        pi.set_max_value(1.0f64);
+        pi.set_double_value({ (*np).value_f });
+    }
+    var n: flex::Node = ui::fixed_view(pi.as_view());
+    apply_style(n.payload(), facet::kind_progress(), { (*np).style });
+    return n;
+}
+
 // Read-back: surface the ui:: value readers through the facet layer so an app
 // (Phase 5) can pull a field's text / a popup's index from the mounted view.
 fn field_text(view_ptr: *u8) -> text::Text { return ui::field_text(view_ptr); }
@@ -531,6 +578,9 @@ fn renderer() -> facet::Renderer {
         text_field: ak_text_field,
         popup: ak_popup,
         divider: ak_divider,
+        toggle: ak_toggle,
+        slider: ak_slider,
+        progress: ak_progress,
         native: ak_native,
         bordered: ak_bordered,
         clickable: ak_clickable,
@@ -1379,6 +1429,30 @@ fn phase3_native_survives_rerender() {
     remount(phase3_native_screen, content.raw(), 200.0f64, 160.0f64);
     assert P3_BUILDS == 2;
     assert surface_has_id(content.raw(), "box");
+}
+
+static TOGGLE_FIRES: i32 = 0;
+fn on_toggle_change(sender: *u8, ctx: *u8) { TOGGLE_FIRES = TOGGLE_FIRES + 1; return; }
+
+#[test]
+fn controls_mount_and_toggle_drives() {
+    TOGGLE_FIRES = 0;
+    let win = e2e_window(300.0f64, 220.0f64);
+    let content = e2e_content(win);
+    var root: facet::Node = @facet {
+        vstack {
+            toggle(on: false, label: "Wifi", on_change: on_toggle_change).agent_id("wifi")
+            slider(value: 0.5f64, min: 0.0f64, max: 1.0f64).agent_id("vol")
+            progress(value: 0.3f64)
+        }
+    };
+    let _h: f64 = mount_into(#addr_of(root), content.raw(), 300.0f64, 220.0f64);
+    var s: agent::Surface = agent::open(win.raw());
+    assert surface_has_id(content.raw(), "wifi");
+    assert surface_has_id(content.raw(), "vol");
+    // toggle is role_button + drive_click → the agent can flip it, firing the wire.
+    assert surface::outcome_eq(s.click("wifi"), surface::Outcome::Allowed);
+    assert TOGGLE_FIRES == 1;
 }
 
 #[test]

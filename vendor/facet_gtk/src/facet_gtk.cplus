@@ -262,6 +262,29 @@ fn gtk_native(ctx: *u8, np: *facet::Node) -> flex::Node {
     return widget_leaf(gtk::Widget::from_raw(h));
 }
 
+// Form controls (matrix §2). TODO(gtk,linux): wire on_change (a GObject signal
+// connect on "notify::active" / "value-changed") + value read-back.
+fn gtk_toggle(ctx: *u8, np: *facet::Node) -> flex::Node {
+    let sw: gtk::Switch = gtk::Switch::new();
+    sw.set_active({ (*np).bool_value });
+    return widget_leaf(sw.upcast());
+}
+
+fn gtk_slider(ctx: *u8, np: *facet::Node) -> flex::Node {
+    // GtkScale → GtkRange → GtkWidget; value rides the Range.
+    let sc: gtk::Scale = gtk::Scale::new_with_range(0 as i32, { (*np).min_val }, { (*np).max_val }, 1.0f64);
+    let rng: gtk::Range = sc.upcast();
+    rng.set_value({ (*np).value_f });
+    return widget_leaf(rng.upcast());
+}
+
+fn gtk_progress(ctx: *u8, np: *facet::Node) -> flex::Node {
+    let pb: gtk::ProgressBar = gtk::ProgressBar::new();
+    if { (*np).indeterminate } { pb.pulse(); }
+    else { pb.set_fraction({ (*np).value_f }); }
+    return widget_leaf(pb.upcast());
+}
+
 // The agent-affordance choke point — `mount` calls this after every
 // widget-producing op. Records the packed (role, drive) under the shared
 // GObject data key (agent_gtk reads it back), and pins a non-empty agent id as
@@ -297,6 +320,9 @@ fn renderer() -> facet::Renderer {
         text_field: gtk_text_field,
         popup: gtk_popup,
         divider: gtk_divider,
+        toggle: gtk_toggle,
+        slider: gtk_slider,
+        progress: gtk_progress,
         native: gtk_native,
         bordered: gtk_bordered,
         clickable: gtk_clickable,
