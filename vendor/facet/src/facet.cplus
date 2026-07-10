@@ -86,6 +86,8 @@ fn kind_segmented() -> u32 { return 24 as u32; }
 // Scroll container (matrix §4): a wrapper op — the backend hosts the mounted
 // content in a scroll view. Two-phase content sizing is the backend's concern.
 fn kind_scroll() -> u32 { return 25 as u32; }
+fn kind_color_picker() -> u32 { return 26 as u32; }
+fn kind_date_picker() -> u32 { return 27 as u32; }
 
 // Agent-affordance roles — numeric indices aligned with agent_core::Role so
 // Phase 2 can pass them through without a translation table.
@@ -116,6 +118,8 @@ fn role_for_kind(k: u32) -> u32 {
     if k == kind_stepper() { return role_input(); }
     if k == kind_secure_field() { return role_input(); }
     if k == kind_segmented() { return role_input(); }
+    if k == kind_color_picker() { return role_input(); }
+    if k == kind_date_picker() { return role_input(); }
     // image / symbol / divider / progress are non-interactive display.
     return role_group();
 }
@@ -246,6 +250,7 @@ struct Node {
     step_val: f64,              // stepper: increment (default 1)
     indeterminate: bool,        // progress: spinner mode (ignore value)
     pull_down: bool,            // popup: pull-down menu mode (Menu) vs selector
+    toggle_style: i32,          // toggle: 0 = switch, 1 = checkbox, 2 = radio
     editable: bool,             // code_editor (default true)
     show_border: bool,          // composer (default true)
     draws_background: bool,     // composer (default true)
@@ -327,6 +332,7 @@ fn blank(kind: u32) -> Node {
         step_val: 1.0f64,
         indeterminate: false,
         pull_down: false,
+        toggle_style: 0 as i32,
         editable: true,
         show_border: true,
         draws_background: true,
@@ -542,6 +548,54 @@ fn toggle(
     var n: Node = blank(kind_toggle());
     n.bool_value = on;
     n.text = text::from_str(label);
+    n.on_change = on_change;
+    n.click_ctx = ctx;
+    return n;
+}
+
+// A checkbox (a labeled on/off tick) — a toggle rendered as a checkbox.
+fn checkbox(
+    label: str = "",
+    on: bool = false,
+    on_change: fn(*u8, *u8) = 0 as fn(*u8, *u8),
+    ctx: *u8 = 0 as *u8,
+) -> Node {
+    var n: Node = blank(kind_toggle());
+    n.toggle_style = 1 as i32;
+    n.bool_value = on;
+    n.text = text::from_str(label);
+    n.on_change = on_change;
+    n.click_ctx = ctx;
+    return n;
+}
+
+// A radio button (one of a mutually-exclusive set — grouping is the app's job).
+fn radio(
+    label: str = "",
+    on: bool = false,
+    on_change: fn(*u8, *u8) = 0 as fn(*u8, *u8),
+    ctx: *u8 = 0 as *u8,
+) -> Node {
+    var n: Node = blank(kind_toggle());
+    n.toggle_style = 2 as i32;
+    n.bool_value = on;
+    n.text = text::from_str(label);
+    n.on_change = on_change;
+    n.click_ctx = ctx;
+    return n;
+}
+
+// A color well (opens the system color picker).
+fn color_picker(on_change: fn(*u8, *u8) = 0 as fn(*u8, *u8), ctx: *u8 = 0 as *u8) -> Node {
+    var n: Node = blank(kind_color_picker());
+    n.on_change = on_change;
+    n.click_ctx = ctx;
+    return n;
+}
+
+// A date picker (defaults to the current date).
+fn date_picker(on_change: fn(*u8, *u8) = 0 as fn(*u8, *u8), ctx: *u8 = 0 as *u8) -> Node {
+    var n: Node = blank(kind_date_picker());
     n.on_change = on_change;
     n.click_ctx = ctx;
     return n;
@@ -1011,6 +1065,8 @@ struct Renderer {
     stepper:     fn(*u8, *Node) -> flex::Node,
     secure_field: fn(*u8, *Node) -> flex::Node,
     segmented:   fn(*u8, *Node) -> flex::Node,
+    color_picker: fn(*u8, *Node) -> flex::Node,
+    date_picker: fn(*u8, *Node) -> flex::Node,
     // The escape hatch (Phase 3)
     native:      fn(*u8, *Node) -> flex::Node,
     // wrappers — mount recurses children first, then hands them over
@@ -1125,6 +1181,14 @@ fn mount(np: *Node, r: Renderer) -> flex::Node {
         is_widget = true;
     } else if k == kind_segmented() {
         let f: fn(*u8, *Node) -> flex::Node = r.segmented;
+        n = f(r.ctx, np);
+        is_widget = true;
+    } else if k == kind_color_picker() {
+        let f: fn(*u8, *Node) -> flex::Node = r.color_picker;
+        n = f(r.ctx, np);
+        is_widget = true;
+    } else if k == kind_date_picker() {
+        let f: fn(*u8, *Node) -> flex::Node = r.date_picker;
         n = f(r.ctx, np);
         is_widget = true;
     } else if k == kind_native() {
@@ -1527,6 +1591,8 @@ static FAKE_PROGRESSES: i32 = 0;
 static FAKE_STEPPERS: i32 = 0;
 static FAKE_SECURE_FIELDS: i32 = 0;
 static FAKE_SEGMENTEDS: i32 = 0;
+static FAKE_COLOR_PICKERS: i32 = 0;
+static FAKE_DATE_PICKERS: i32 = 0;
 static FAKE_NATIVES: i32 = 0;
 static FAKE_LAST_NATIVE_HANDLE: i64 = 0;
 static FAKE_BORDEREDS: i32 = 0;
@@ -1621,6 +1687,16 @@ fn fake_segmented(ctx: *u8, np: *Node) -> flex::Node {
     return flex::Node::new().width(160.0f64).height(24.0f64);
 }
 
+fn fake_color_picker(ctx: *u8, np: *Node) -> flex::Node {
+    FAKE_COLOR_PICKERS = FAKE_COLOR_PICKERS + 1;
+    return flex::Node::new().width(44.0f64).height(24.0f64);
+}
+
+fn fake_date_picker(ctx: *u8, np: *Node) -> flex::Node {
+    FAKE_DATE_PICKERS = FAKE_DATE_PICKERS + 1;
+    return flex::Node::new().width(120.0f64).height(24.0f64);
+}
+
 fn fake_native(ctx: *u8, np: *Node) -> flex::Node {
     FAKE_NATIVES = FAKE_NATIVES + 1;
     FAKE_LAST_NATIVE_HANDLE = { (*np).native_handle } as i64;
@@ -1689,6 +1765,8 @@ fn fake_renderer() -> Renderer {
         stepper: fake_stepper,
         secure_field: fake_secure_field,
         segmented: fake_segmented,
+        color_picker: fake_color_picker,
+        date_picker: fake_date_picker,
         native: fake_native,
         bordered: fake_bordered,
         clickable: fake_clickable,
@@ -1715,6 +1793,8 @@ fn reset_fake_counts() {
     FAKE_STEPPERS = 0;
     FAKE_SECURE_FIELDS = 0;
     FAKE_SEGMENTEDS = 0;
+    FAKE_COLOR_PICKERS = 0;
+    FAKE_DATE_PICKERS = 0;
     FAKE_NATIVES = 0;
     FAKE_LAST_NATIVE_HANDLE = 0;
     FAKE_BORDEREDS = 0;
@@ -2023,6 +2103,43 @@ fn facet_control_ctors_and_roles() {
     assert sg.popup_items.count() == (2 as usize);
     assert sg.popup_selected == (1 as i64);
     assert role_for_kind(kind_segmented()) == role_input();
+}
+
+#[test]
+fn facet_batch3_control_ctors() {
+    // checkbox / radio are toggle variants (a toggle_style, no new kind/slot).
+    let cb: Node = checkbox("Agree", on: true);
+    assert cb.kind == kind_toggle();
+    assert cb.toggle_style == (1 as i32);
+    assert cb.bool_value;
+
+    let rb: Node = radio("Opt A");
+    assert rb.kind == kind_toggle();
+    assert rb.toggle_style == (2 as i32);
+
+    let cp: Node = color_picker();
+    assert cp.kind == kind_color_picker();
+    assert role_for_kind(kind_color_picker()) == role_input();
+
+    let dp: Node = date_picker();
+    assert dp.kind == kind_date_picker();
+    assert role_for_kind(kind_date_picker()) == role_input();
+}
+
+#[test]
+fn mount_dispatches_batch3_controls() {
+    reset_fake_counts();
+    var b: Builder = Builder::new();
+    b.add(checkbox("a", on: true));   // kind_toggle
+    b.add(radio("b"));                // kind_toggle
+    b.add(color_picker());
+    b.add(date_picker());
+    let root: Node = b.finish();
+    let _t: flex::Node = mount(#addr_of(root), fake_renderer());
+    assert FAKE_TOGGLES == 2;         // checkbox + radio dispatch as toggle
+    assert FAKE_COLOR_PICKERS == 1;
+    assert FAKE_DATE_PICKERS == 1;
+    assert FAKE_IDENTITIES == 4;
 }
 
 #[test]

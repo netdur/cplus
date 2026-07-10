@@ -272,9 +272,30 @@ fn gtk_native(ctx: *u8, np: *facet::Node) -> flex::Node {
 // Form controls (matrix §2). TODO(gtk,linux): wire on_change (a GObject signal
 // connect on "notify::active" / "value-changed") + value read-back.
 fn gtk_toggle(ctx: *u8, np: *facet::Node) -> flex::Node {
-    let sw: gtk::Switch = gtk::Switch::new();
-    sw.set_active({ (*np).bool_value });
-    return widget_leaf(sw.upcast());
+    // Switch → GtkSwitch; checkbox/radio → GtkCheckButton (radio grouping is the
+    // app's job — TODO(gtk,linux): set_group for a real radio set).
+    if { (*np).toggle_style } == (0 as i32) {
+        let sw: gtk::Switch = gtk::Switch::new();
+        sw.set_active({ (*np).bool_value });
+        return widget_leaf(sw.upcast());
+    }
+    let cb: gtk::CheckButton = gtk::CheckButton::new();
+    cb.set_active({ (*np).bool_value });
+    let tp: *text::Text = { #addr_of((*np).text) };
+    cb.set_label({ (*tp).view() });
+    return widget_leaf(cb.upcast());
+}
+
+fn gtk_color_picker(ctx: *u8, np: *facet::Node) -> flex::Node {
+    let cw: gtk::ColorButton = gtk::ColorButton::new();
+    return widget_leaf(cw.upcast());
+}
+
+// TODO(gtk,linux): GTK has no single date-picker widget; a GtkCalendar is the
+// closest stand-in until a popover date entry is composed.
+fn gtk_date_picker(ctx: *u8, np: *facet::Node) -> flex::Node {
+    let cal: gtk::Calendar = gtk::Calendar::new();
+    return widget_leaf(cal.upcast());
 }
 
 fn gtk_slider(ctx: *u8, np: *facet::Node) -> flex::Node {
@@ -366,6 +387,8 @@ fn renderer() -> facet::Renderer {
         stepper: gtk_stepper,
         secure_field: gtk_secure_field,
         segmented: gtk_segmented,
+        color_picker: gtk_color_picker,
+        date_picker: gtk_date_picker,
         native: gtk_native,
         bordered: gtk_bordered,
         clickable: gtk_clickable,

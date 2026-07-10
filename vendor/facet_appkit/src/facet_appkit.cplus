@@ -433,18 +433,60 @@ fn ak_divider(ctx: *u8, np: *facet::Node) -> flex::Node {
 
 // ---- form controls (matrix §2) ----------------------------------------------
 fn ak_toggle(ctx: *u8, np: *facet::Node) -> flex::Node {
-    let sw: ak::Switch = ak::Switch::new();
-    // NSSwitch.setState: (NSControlStateValue: 1 = on, 0 = off). The generated
-    // binding exposes the getter but not the setter, so send it raw.
     var st: i64 = 0 as i64;
     if { (*np).bool_value } { st = 1 as i64; }
-    rt::msg_void_id(sw.raw(), rt::sel(#str_ptr("setState:\0")), st as *u8);
+    let ch: fn(*u8, *u8) = { (*np).on_change };
+    let style: i32 = { (*np).toggle_style };
+    if style == (0 as i32) {
+        // Switch (NSSwitch). setState via raw (binding has only the getter).
+        let sw: ak::Switch = ak::Switch::new();
+        rt::msg_void_id(sw.raw(), rt::sel(#str_ptr("setState:\0")), st as *u8);
+        if ch != (0 as fn(*u8, *u8)) {
+            akx::set_control_action_ctx_then_ctx(sw.as_control(), ch, { (*np).click_ctx }, ui::component_after);
+        }
+        var n: flex::Node = ui::fixed_view(sw.as_view());
+        apply_style(n.payload(), facet::kind_toggle(), { (*np).style });
+        return n;
+    }
+    // Checkbox / radio → NSButton with the matching button type + a title.
+    let b: ak::Button = ak::Button::new();
+    if style == (2 as i32) { b.set_button_type(ak::ButtonType::Radio); }
+    else { b.set_button_type(ak::ButtonType::Switch); }   // Switch type = checkbox
+    let tp: *text::Text = { #addr_of((*np).text) };
+    match (*tp).c_str() {
+        option::Option[text::CString]::Some(cs) => {
+            b.set_title({ #str_from_raw_parts(cs.as_ptr(), cs.count()) });
+        }
+        option::Option[text::CString]::None => { }
+    };
+    rt::msg_void_id(b.raw(), rt::sel(#str_ptr("setState:\0")), st as *u8);
+    if ch != (0 as fn(*u8, *u8)) {
+        akx::set_control_action_ctx_then_ctx(b.as_control(), ch, { (*np).click_ctx }, ui::component_after);
+    }
+    var bn: flex::Node = ui::fixed_view(b.as_view());
+    apply_style(bn.payload(), facet::kind_toggle(), { (*np).style });
+    return bn;
+}
+
+fn ak_color_picker(ctx: *u8, np: *facet::Node) -> flex::Node {
+    let cw: ak::ColorWell = ak::ColorWell::new();
     let ch: fn(*u8, *u8) = { (*np).on_change };
     if ch != (0 as fn(*u8, *u8)) {
-        akx::set_control_action_ctx_then_ctx(sw.as_control(), ch, { (*np).click_ctx }, ui::component_after);
+        akx::set_control_action_ctx_then_ctx(cw.as_control(), ch, { (*np).click_ctx }, ui::component_after);
     }
-    var n: flex::Node = ui::fixed_view(sw.as_view());
-    apply_style(n.payload(), facet::kind_toggle(), { (*np).style });
+    var n: flex::Node = ui::fixed_view(cw.as_view());
+    apply_style(n.payload(), facet::kind_color_picker(), { (*np).style });
+    return n;
+}
+
+fn ak_date_picker(ctx: *u8, np: *facet::Node) -> flex::Node {
+    let dp: ak::DatePicker = ak::DatePicker::new();   // defaults to the current date
+    let ch: fn(*u8, *u8) = { (*np).on_change };
+    if ch != (0 as fn(*u8, *u8)) {
+        akx::set_control_action_ctx_then_ctx(dp.as_control(), ch, { (*np).click_ctx }, ui::component_after);
+    }
+    var n: flex::Node = ui::fixed_view(dp.as_view());
+    apply_style(n.payload(), facet::kind_date_picker(), { (*np).style });
     return n;
 }
 
@@ -711,6 +753,8 @@ fn renderer() -> facet::Renderer {
         stepper: ak_stepper,
         secure_field: ak_secure_field,
         segmented: ak_segmented,
+        color_picker: ak_color_picker,
+        date_picker: ak_date_picker,
         native: ak_native,
         bordered: ak_bordered,
         clickable: ak_clickable,
@@ -1600,6 +1644,28 @@ fn controls_mount_and_toggle_drives() {
     // toggle is role_button + drive_click → the agent can flip it, firing the wire.
     assert surface::outcome_eq(s.click("wifi"), surface::Outcome::Allowed);
     assert TOGGLE_FIRES == 1;
+}
+
+#[test]
+fn batch3_pickers_mount_and_checkbox_drives() {
+    let win = e2e_window(320.0f64, 280.0f64);
+    let content = e2e_content(win);
+    var root: facet::Node = @facet {
+        vstack {
+            checkbox("Agree", on: true).agent_id("agree")
+            radio("Option A").agent_id("optA")
+            color_picker().agent_id("color")
+            date_picker().agent_id("date")
+        }
+    };
+    let _h: f64 = mount_into(#addr_of(root), content.raw(), 320.0f64, 280.0f64);
+    var s: agent::Surface = agent::open(win.raw());
+    assert surface_has_id(content.raw(), "agree");
+    assert surface_has_id(content.raw(), "optA");
+    assert surface_has_id(content.raw(), "color");
+    assert surface_has_id(content.raw(), "date");
+    // checkbox is a toggle → role_button → the agent can click it.
+    assert surface::outcome_eq(s.click("agree"), surface::Outcome::Allowed);
 }
 
 #[test]
