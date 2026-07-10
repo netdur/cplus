@@ -254,6 +254,8 @@ struct Node {
                             // (via set_identity), so it survives re-renders.
     tooltip: text::Text,    // "" = none. Hover help text (backend applies in apply_style).
     a11y_label: text::Text, // "" = none. VoiceOver / accessibility label.
+    ctx_menu_items: vec::Vec[text::Text],   // right-click menu items (empty = none)
+    ctx_menu_action: fn(*u8, *u8),          // fires (item, index) on a menu pick
     font_size: f64,         // 0 = platform default
     bold: bool,
     secondary: bool,
@@ -359,6 +361,8 @@ fn blank(kind: u32) -> Node {
         agent_id: text::from_str(""),
         tooltip: text::from_str(""),
         a11y_label: text::from_str(""),
+        ctx_menu_items: vec::new::[text::Text](),
+        ctx_menu_action: null_fn(),
         font_size: 0.0f64,
         bold: false,
         secondary: false,
@@ -786,6 +790,13 @@ impl Node {
     }
     fn tooltip(take this, s: str) -> Node { var n: Node = this; n.tooltip = text::from_str(s); return n; }
     fn accessibility_label(take this, s: str) -> Node { var n: Node = this; n.a11y_label = text::from_str(s); return n; }
+    // Right-click context menu: `on_select` fires with the picked item's index.
+    fn context_menu(take this, take items: vec::Vec[text::Text], on_select: fn(*u8, *u8)) -> Node {
+        var n: Node = this;
+        n.ctx_menu_items = items;
+        n.ctx_menu_action = on_select;
+        return n;
+    }
 
     // Style modifiers (SwiftUI-shaped, C+-named). Each sets one `Style` field;
     // the backend's `apply_style` applies only the fields the author set.

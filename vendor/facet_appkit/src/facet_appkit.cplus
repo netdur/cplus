@@ -102,6 +102,33 @@ fn apply_style(view_ptr: *u8, kind: u32, np: *facet::Node) {
     if { (*alp).view() } != "" {
         ak::Accessibility::from_raw(view_ptr).set_accessibility_label({ (*alp).view() });
     }
+    // Context menu — a right-click NSMenu; each item dispatches the shared
+    // handler with its index as ctx. NSMenuItem.target is weak, so we retain
+    // each target via an associated object on its item; the view retains the menu.
+    let cmi: *vec::Vec[text::Text] = { #addr_of((*np).ctx_menu_items) };
+    let cm_cnt: usize = { (*cmi).count() };
+    let cm_action: fn(*u8, *u8) = { (*np).ctx_menu_action };
+    if cm_cnt > (0 as usize) && cm_action != (0 as fn(*u8, *u8)) {
+        let menu_ptr: *u8 = rt::alloc_init(#str_ptr("NSMenu\0"));
+        let menu: ak::Menu = ak::Menu::from_raw(menu_ptr);
+        let asel: *u8 = akx::action_ctx_sel();
+        var i: usize = 0 as usize;
+        while i < cm_cnt {
+            match (*cmi).at_ptr(i) {
+                option::Option[*text::Text]::Some(tp) => {
+                    let mi: ak::MenuItem = menu.add_item_with_title({ (*tp).view() }, asel, "");
+                    let tgt: *u8 = akx::action_ctx_target(cm_action, i as *u8);
+                    mi.set_target(tgt);
+                    rt::set_associated_object(mi.raw(), 29001 as *u8, tgt, 1 as usize);   // RETAIN
+                    rt::release(tgt);   // the association holds our +1
+                }
+                option::Option[*text::Text]::None => { }
+            }
+            i = i +% (1 as usize);
+        }
+        rt::msg_void_id(view_ptr, rt::sel(#str_ptr("setMenu:\0")), menu.raw());
+        rt::release(menu_ptr);   // the view retains its menu
+    }
     let is_text: bool = kind == facet::kind_label() || kind == facet::kind_wrap_label();
     // Foreground.
     let fg: facet::Color = { style.fg };
@@ -1800,6 +1827,34 @@ fn material_wraps_content_on_appkit() {
     let h: f64 = mount_into(#addr_of(root), content.raw(), 200.0f64, 200.0f64);
     assert h > 0.0f64;
     assert surface_has_id(content.raw(), "item1");
+}
+
+static CTX_MENU_PICK: i64 = -1;
+fn on_ctx_pick(sender: *u8, ctx: *u8) { CTX_MENU_PICK = ctx as i64; return; }
+
+#[test]
+fn context_menu_dispatches_by_index() {
+    CTX_MENU_PICK = -1;
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 80.0 });
+    var items: vec::Vec[text::Text] = vec::new::[text::Text]();
+    items.append(text::from_str("Cut"));
+    items.append(text::from_str("Copy"));
+    items.append(text::from_str("Paste"));
+    var root: facet::Node = @facet {
+        vstack {
+            label("right-click me").context_menu(items, on_ctx_pick).agent_id("target")
+        }
+    };
+    let _h: f64 = mount_into(#addr_of(root), content.raw(), 200.0f64, 80.0f64);
+    let lv: *u8 = nth_widget(content.raw(), 0 as usize);
+    let menu: *u8 = rt::msg_id(lv, rt::sel(#str_ptr("menu\0")));
+    assert menu != (0 as *u8);
+    // Fire the 3rd item (index 2 = "Paste") through its retained target.
+    let item: *u8 = rt::msg_id_i64(menu, rt::sel(#str_ptr("itemAtIndex:\0")), 2 as i64);
+    let tgt: *u8 = rt::msg_id(item, rt::sel(#str_ptr("target\0")));
+    assert tgt != (0 as *u8);
+    rt::msg_void_id(tgt, akx::action_ctx_sel(), item);
+    assert CTX_MENU_PICK == (2 as i64);
 }
 
 #[test]
