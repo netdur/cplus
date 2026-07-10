@@ -190,6 +190,12 @@ fn gtk_scroll(ctx: *u8, np: *facet::Node, take content: flex::Node) -> flex::Nod
     return content;
 }
 
+// TODO(gtk,linux): GTK has no NSVisualEffectView vibrancy; a plain container (or
+// a CSS-blurred box) is the fallback. Content passes through for now.
+fn gtk_material(ctx: *u8, np: *facet::Node, take content: flex::Node) -> flex::Node {
+    return content;
+}
+
 fn gtk_clickable(ctx: *u8, np: *facet::Node, take content: flex::Node) -> flex::Node {
     return content;
 }
@@ -401,6 +407,7 @@ fn renderer() -> facet::Renderer {
         bordered: gtk_bordered,
         clickable: gtk_clickable,
         scroll: gtk_scroll,
+        material: gtk_material,
         split: gtk_split,
         set_identity: gtk_set_identity,
     };

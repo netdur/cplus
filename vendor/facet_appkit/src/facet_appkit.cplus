@@ -618,6 +618,12 @@ fn native_widget(take w: flex::Node) -> facet::Node {
     return facet::native(held);
 }
 
+fn ak_material(ctx: *u8, np: *facet::Node, take content: flex::Node) -> flex::Node {
+    var n: flex::Node = ui::material(content);
+    apply_style(n.payload(), facet::kind_material(), { (*np).style });
+    return n;
+}
+
 fn ak_bordered(ctx: *u8, np: *facet::Node, take content: flex::Node) -> flex::Node {
     var n: flex::Node = ui::bordered(content, radius: { (*np).radius });
     // A bordered box already paints a backing view; Style props (bg/corner/
@@ -771,6 +777,7 @@ fn renderer() -> facet::Renderer {
         bordered: ak_bordered,
         clickable: ak_clickable,
         scroll: ak_scroll,
+        material: ak_material,
         split: ak_split,
         set_identity: ak_set_identity,
     };
@@ -1698,6 +1705,26 @@ fn batch3_pickers_mount_and_checkbox_drives() {
     assert surface_has_id(content.raw(), "date");
     // checkbox is a toggle → role_button → the agent can click it.
     assert surface::outcome_eq(s.click("agree"), surface::Outcome::Allowed);
+}
+
+#[test]
+fn material_wraps_content_on_appkit() {
+    // A vibrancy panel (NSVisualEffectView) hosting a labeled sidebar.
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 200.0 });
+    var root: facet::Node = @facet {
+        material {
+            vstack {
+                label("Sidebar").strong()
+                label("Item 1").agent_id("item1")
+                label("Item 2")
+            }
+            .padding(12.0f64)
+        }
+        .frame(180.0f64, 160.0f64)
+    };
+    let h: f64 = mount_into(#addr_of(root), content.raw(), 200.0f64, 200.0f64);
+    assert h > 0.0f64;
+    assert surface_has_id(content.raw(), "item1");
 }
 
 #[test]

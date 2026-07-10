@@ -93,6 +93,8 @@ fn kind_grid() -> u32 { return 28 as u32; }
 // A plain styled rectangle leaf (Shapes: Rectangle/RoundedRectangle/Circle via
 // background + corner_radius). One backend op.
 fn kind_box() -> u32 { return 29 as u32; }
+// A translucent vibrancy wrapper (macOS material / sidebar). Wrapper op.
+fn kind_material() -> u32 { return 30 as u32; }
 
 // Agent-affordance roles — numeric indices aligned with agent_core::Role so
 // Phase 2 can pass them through without a translation table.
@@ -1003,6 +1005,15 @@ fn bordered(take b: Builder, radius: f64 = 6.0f64) -> Node {
     return n;
 }
 
+// A translucent vibrancy panel (macOS material). Wraps its content in a
+// VisualEffectView backing; other backends fall back to a plain container.
+fn material(take b: Builder) -> Node {
+    let Builder { children } = b;
+    var n: Node = blank(kind_material());
+    n.children = children;
+    return n;
+}
+
 // Clickable wrapper: gesture handlers on the node, content in children[0].
 // Primary click lands in `click` (same field as button); optional gestures
 // use the null-fn sentinel when unset.
@@ -1136,6 +1147,7 @@ struct Renderer {
     bordered:    fn(*u8, *Node, take flex::Node) -> flex::Node,
     clickable:   fn(*u8, *Node, take flex::Node) -> flex::Node,
     scroll:      fn(*u8, *Node, take flex::Node) -> flex::Node,
+    material:    fn(*u8, *Node, take flex::Node) -> flex::Node,
     split:       fn(*u8, *Node, take flex::Node, take flex::Node) -> flex::Node,
     // called by mount after every widget-producing op
     set_identity: fn(*u8, *u8, str, u32),  // (ctx, handle, id, role)
@@ -1275,6 +1287,11 @@ fn mount(np: *Node, r: Renderer) -> flex::Node {
     } else if k == kind_scroll() {
         let content: flex::Node = mount_wrapper_content(np, r);
         let f: fn(*u8, *Node, take flex::Node) -> flex::Node = r.scroll;
+        n = f(r.ctx, np, content);
+        is_widget = true;
+    } else if k == kind_material() {
+        let content: flex::Node = mount_wrapper_content(np, r);
+        let f: fn(*u8, *Node, take flex::Node) -> flex::Node = r.material;
         n = f(r.ctx, np, content);
         is_widget = true;
     } else if k == kind_split() {
@@ -1694,6 +1711,7 @@ static FAKE_LAST_NATIVE_HANDLE: i64 = 0;
 static FAKE_BORDEREDS: i32 = 0;
 static FAKE_CLICKABLES: i32 = 0;
 static FAKE_SCROLLS: i32 = 0;
+static FAKE_MATERIALS: i32 = 0;
 static FAKE_SPLITS: i32 = 0;
 static FAKE_IDENTITIES: i32 = 0;
 static FAKE_TAGGED_IDENTITIES: i32 = 0;
@@ -1826,6 +1844,13 @@ fn fake_scroll(ctx: *u8, np: *Node, take content: flex::Node) -> flex::Node {
     return n;
 }
 
+fn fake_material(ctx: *u8, np: *Node, take content: flex::Node) -> flex::Node {
+    FAKE_MATERIALS = FAKE_MATERIALS + 1;
+    var n: flex::Node = flex::Node::new();
+    n.add_child(content);
+    return n;
+}
+
 fn fake_split(ctx: *u8, np: *Node, take first: flex::Node, take second: flex::Node) -> flex::Node {
     FAKE_SPLITS = FAKE_SPLITS + 1;
     var n: flex::Node = flex::Node::new();
@@ -1873,6 +1898,7 @@ fn fake_renderer() -> Renderer {
         bordered: fake_bordered,
         clickable: fake_clickable,
         scroll: fake_scroll,
+        material: fake_material,
         split: fake_split,
         set_identity: fake_set_identity,
     };
@@ -1903,6 +1929,7 @@ fn reset_fake_counts() {
     FAKE_BORDEREDS = 0;
     FAKE_CLICKABLES = 0;
     FAKE_SCROLLS = 0;
+    FAKE_MATERIALS = 0;
     FAKE_SPLITS = 0;
     FAKE_IDENTITIES = 0;
     FAKE_TAGGED_IDENTITIES = 0;

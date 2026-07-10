@@ -352,6 +352,20 @@ fn box() -> flex::Node {
 //
 // (`draws_background: false` keeps the input transparent so the box shows one
 // uniform fill instead of a filled text rectangle inside the outline.)
+// Wrap content in a translucent NSVisualEffectView (macOS vibrancy — sidebars,
+// panels). Same backing-view pattern as `bordered`, with a vibrancy backing.
+fn material(take content: flex::Node, agent_id: str = "") -> flex::Node {
+    let zero: rt::Rect = rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 };
+    let ve: ak::VisualEffectView = ak::VisualEffectView::new_with_frame(zero);
+    ve.set_material(ak::VisualEffectMaterial::Sidebar);
+    ve.set_blending_mode(ak::VisualEffectBlendingMode::BehindWindow);
+    tag_agent(ve.as_view().raw(), agent_id, identity::Role::Group);
+    var wrapper: flex::Node = flex::Node::new();
+    wrapper.set_payload(rt::retain(ve.as_view().raw()), release_view);
+    wrapper.add_child(content);
+    return wrapper;
+}
+
 fn bordered(take content: flex::Node, radius: f64 = 6.0f64, agent_id: str = "") -> flex::Node {
     let zero: rt::Rect = rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 };
     let bv: ak::View = ak::View::new(zero);
