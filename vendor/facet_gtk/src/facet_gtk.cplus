@@ -285,6 +285,39 @@ fn gtk_progress(ctx: *u8, np: *facet::Node) -> flex::Node {
     return widget_leaf(pb.upcast());
 }
 
+fn gtk_stepper(ctx: *u8, np: *facet::Node) -> flex::Node {
+    let sp: gtk::SpinButton = gtk::SpinButton::new_with_range({ (*np).min_val }, { (*np).max_val }, { (*np).step_val });
+    sp.set_value({ (*np).value_f });
+    return widget_leaf(sp.upcast());
+}
+
+fn gtk_secure_field(ctx: *u8, np: *facet::Node) -> flex::Node {
+    let e: gtk::Entry = gtk::Entry::new();
+    e.set_visibility(false);   // masked (password)
+    let pp: *text::Text = { #addr_of((*np).placeholder) };
+    e.set_placeholder_text({ (*pp).view() });
+    let vp: *text::Text = { #addr_of((*np).value) };
+    e.get_buffer().set_text({ (*vp).view() }, -1 as i32);
+    return widget_leaf(e.upcast());
+}
+
+// TODO(gtk,linux): a real segmented control is a linked box of toggle buttons;
+// a GtkComboBoxText is a functional stand-in until that lands.
+fn gtk_segmented(ctx: *u8, np: *facet::Node) -> flex::Node {
+    let combo: gtk::ComboBoxText = gtk::ComboBoxText::new();
+    let items: *vec::Vec[text::Text] = { #addr_of((*np).popup_items) };
+    let cnt: usize = { (*items).count() };
+    var i: usize = 0 as usize;
+    while i < cnt {
+        match { (*items).at_ptr(i) } {
+            option::Option[*text::Text]::Some(tp) => { combo.append_text({ (*tp).view() }); }
+            option::Option[*text::Text]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return widget_leaf(combo.upcast().upcast());
+}
+
 // The agent-affordance choke point — `mount` calls this after every
 // widget-producing op. Records the packed (role, drive) under the shared
 // GObject data key (agent_gtk reads it back), and pins a non-empty agent id as
@@ -323,6 +356,9 @@ fn renderer() -> facet::Renderer {
         toggle: gtk_toggle,
         slider: gtk_slider,
         progress: gtk_progress,
+        stepper: gtk_stepper,
+        secure_field: gtk_secure_field,
+        segmented: gtk_segmented,
         native: gtk_native,
         bordered: gtk_bordered,
         clickable: gtk_clickable,

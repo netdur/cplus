@@ -80,6 +80,9 @@ fn kind_zstack() -> u32 { return 18 as u32; }
 fn kind_toggle() -> u32 { return 19 as u32; }
 fn kind_slider() -> u32 { return 20 as u32; }
 fn kind_progress() -> u32 { return 21 as u32; }
+fn kind_stepper() -> u32 { return 22 as u32; }
+fn kind_secure_field() -> u32 { return 23 as u32; }
+fn kind_segmented() -> u32 { return 24 as u32; }
 
 // Agent-affordance roles — numeric indices aligned with agent_core::Role so
 // Phase 2 can pass them through without a translation table.
@@ -107,6 +110,9 @@ fn role_for_kind(k: u32) -> u32 {
     if k == kind_popup() { return role_input(); }
     if k == kind_toggle() { return role_button(); }   // click flips it
     if k == kind_slider() { return role_input(); }    // has a readable value
+    if k == kind_stepper() { return role_input(); }
+    if k == kind_secure_field() { return role_input(); }
+    if k == kind_segmented() { return role_input(); }
     // image / symbol / divider / progress are non-interactive display.
     return role_group();
 }
@@ -529,6 +535,48 @@ fn progress(value: f64 = 0.0f64, indeterminate: bool = false) -> Node {
     return n;
 }
 
+// A +/- numeric stepper over [min, max] by `step`.
+fn stepper(
+    value: f64 = 0.0f64,
+    min: f64 = 0.0f64,
+    max: f64 = 100.0f64,
+    step: f64 = 1.0f64,
+    on_change: fn(*u8, *u8) = 0 as fn(*u8, *u8),
+    ctx: *u8 = 0 as *u8,
+) -> Node {
+    var n: Node = blank(kind_stepper());
+    n.value_f = value;
+    n.min_val = min;
+    n.max_val = max;
+    n.step_val = step;
+    n.on_change = on_change;
+    n.click_ctx = ctx;
+    return n;
+}
+
+// A masked single-line field for passwords/secrets.
+fn secure_field(placeholder: str = "", value: str = "") -> Node {
+    var n: Node = blank(kind_secure_field());
+    n.placeholder = text::from_str(placeholder);
+    n.value = text::from_str(value);
+    return n;
+}
+
+// A horizontal segmented selector (mutually-exclusive segments).
+fn segmented(
+    take items: vec::Vec[text::Text],
+    selected: i64 = 0 as i64,
+    on_change: fn(*u8, *u8) = 0 as fn(*u8, *u8),
+    ctx: *u8 = 0 as *u8,
+) -> Node {
+    var n: Node = blank(kind_segmented());
+    n.popup_items = items;
+    n.popup_selected = selected;
+    n.on_change = on_change;
+    n.click_ctx = ctx;
+    return n;
+}
+
 // The native escape hatch: place a platform view facet does not abstract into a
 // `@facet` tree. `handle` is a borrowed native view pointer; the app owns the
 // underlying view (typically a component field) and produces this node fresh on
@@ -910,6 +958,9 @@ struct Renderer {
     toggle:      fn(*u8, *Node) -> flex::Node,
     slider:      fn(*u8, *Node) -> flex::Node,
     progress:    fn(*u8, *Node) -> flex::Node,
+    stepper:     fn(*u8, *Node) -> flex::Node,
+    secure_field: fn(*u8, *Node) -> flex::Node,
+    segmented:   fn(*u8, *Node) -> flex::Node,
     // The escape hatch (Phase 3)
     native:      fn(*u8, *Node) -> flex::Node,
     // wrappers — mount recurses children first, then hands them over
@@ -1011,6 +1062,18 @@ fn mount(np: *Node, r: Renderer) -> flex::Node {
         is_widget = true;
     } else if k == kind_progress() {
         let f: fn(*u8, *Node) -> flex::Node = r.progress;
+        n = f(r.ctx, np);
+        is_widget = true;
+    } else if k == kind_stepper() {
+        let f: fn(*u8, *Node) -> flex::Node = r.stepper;
+        n = f(r.ctx, np);
+        is_widget = true;
+    } else if k == kind_secure_field() {
+        let f: fn(*u8, *Node) -> flex::Node = r.secure_field;
+        n = f(r.ctx, np);
+        is_widget = true;
+    } else if k == kind_segmented() {
+        let f: fn(*u8, *Node) -> flex::Node = r.segmented;
         n = f(r.ctx, np);
         is_widget = true;
     } else if k == kind_native() {
@@ -1395,6 +1458,9 @@ static FAKE_DIVIDERS: i32 = 0;
 static FAKE_TOGGLES: i32 = 0;
 static FAKE_SLIDERS: i32 = 0;
 static FAKE_PROGRESSES: i32 = 0;
+static FAKE_STEPPERS: i32 = 0;
+static FAKE_SECURE_FIELDS: i32 = 0;
+static FAKE_SEGMENTEDS: i32 = 0;
 static FAKE_NATIVES: i32 = 0;
 static FAKE_LAST_NATIVE_HANDLE: i64 = 0;
 static FAKE_BORDEREDS: i32 = 0;
@@ -1473,6 +1539,21 @@ fn fake_progress(ctx: *u8, np: *Node) -> flex::Node {
     return flex::Node::new().width(120.0f64).height(6.0f64);
 }
 
+fn fake_stepper(ctx: *u8, np: *Node) -> flex::Node {
+    FAKE_STEPPERS = FAKE_STEPPERS + 1;
+    return flex::Node::new().width(20.0f64).height(24.0f64);
+}
+
+fn fake_secure_field(ctx: *u8, np: *Node) -> flex::Node {
+    FAKE_SECURE_FIELDS = FAKE_SECURE_FIELDS + 1;
+    return flex::Node::new().width(120.0f64).height(22.0f64);
+}
+
+fn fake_segmented(ctx: *u8, np: *Node) -> flex::Node {
+    FAKE_SEGMENTEDS = FAKE_SEGMENTEDS + 1;
+    return flex::Node::new().width(160.0f64).height(24.0f64);
+}
+
 fn fake_native(ctx: *u8, np: *Node) -> flex::Node {
     FAKE_NATIVES = FAKE_NATIVES + 1;
     FAKE_LAST_NATIVE_HANDLE = { (*np).native_handle } as i64;
@@ -1531,6 +1612,9 @@ fn fake_renderer() -> Renderer {
         toggle: fake_toggle,
         slider: fake_slider,
         progress: fake_progress,
+        stepper: fake_stepper,
+        secure_field: fake_secure_field,
+        segmented: fake_segmented,
         native: fake_native,
         bordered: fake_bordered,
         clickable: fake_clickable,
@@ -1553,6 +1637,9 @@ fn reset_fake_counts() {
     FAKE_TOGGLES = 0;
     FAKE_SLIDERS = 0;
     FAKE_PROGRESSES = 0;
+    FAKE_STEPPERS = 0;
+    FAKE_SECURE_FIELDS = 0;
+    FAKE_SEGMENTEDS = 0;
     FAKE_NATIVES = 0;
     FAKE_LAST_NATIVE_HANDLE = 0;
     FAKE_BORDEREDS = 0;
@@ -1650,16 +1737,24 @@ fn mount_dispatches_tier2_leaves() {
 #[test]
 fn mount_dispatches_controls() {
     reset_fake_counts();
+    var segs: vec::Vec[text::Text] = vec::new::[text::Text]();
+    segs.append(text::from_str("A"));
     var b: Builder = Builder::new();
     b.add(toggle(on: true));
     b.add(slider(value: 0.5f64));
     b.add(progress(value: 0.5f64));
+    b.add(stepper(value: 1.0f64));
+    b.add(secure_field(placeholder: "pw"));
+    b.add(segmented(segs));
     let root: Node = b.finish();
     let _t: flex::Node = mount(#addr_of(root), fake_renderer());
     assert FAKE_TOGGLES == 1;
     assert FAKE_SLIDERS == 1;
     assert FAKE_PROGRESSES == 1;
-    assert FAKE_IDENTITIES == 3;
+    assert FAKE_STEPPERS == 1;
+    assert FAKE_SECURE_FIELDS == 1;
+    assert FAKE_SEGMENTEDS == 1;
+    assert FAKE_IDENTITIES == 6;
 }
 
 #[test]
@@ -1816,6 +1911,26 @@ fn facet_control_ctors_and_roles() {
     assert approx(pr.value_f, 0.5f64);
     assert pr.indeterminate == false;
     assert role_for_kind(kind_progress()) == role_group();
+
+    let st: Node = stepper(value: 3.0f64, min: 0.0f64, max: 10.0f64, step: 2.0f64);
+    assert st.kind == kind_stepper();
+    assert approx(st.value_f, 3.0f64);
+    assert approx(st.step_val, 2.0f64);
+    assert role_for_kind(kind_stepper()) == role_input();
+
+    let sf: Node = secure_field(placeholder: "Password", value: "hunter2");
+    assert sf.kind == kind_secure_field();
+    assert sf.value.view() == "hunter2";
+    assert role_for_kind(kind_secure_field()) == role_input();
+
+    var segs: vec::Vec[text::Text] = vec::new::[text::Text]();
+    segs.append(text::from_str("Day"));
+    segs.append(text::from_str("Night"));
+    let sg: Node = segmented(segs, selected: 1 as i64);
+    assert sg.kind == kind_segmented();
+    assert sg.popup_items.count() == (2 as usize);
+    assert sg.popup_selected == (1 as i64);
+    assert role_for_kind(kind_segmented()) == role_input();
 }
 
 #[test]

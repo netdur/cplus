@@ -447,6 +447,59 @@ fn ak_progress(ctx: *u8, np: *facet::Node) -> flex::Node {
     return n;
 }
 
+fn ak_stepper(ctx: *u8, np: *facet::Node) -> flex::Node {
+    let st: ak::Stepper = ak::Stepper::new();
+    st.set_min_value({ (*np).min_val });
+    st.set_max_value({ (*np).max_val });
+    st.set_increment({ (*np).step_val });
+    st.as_control().set_double_value({ (*np).value_f });
+    let ch: fn(*u8, *u8) = { (*np).on_change };
+    if ch != (0 as fn(*u8, *u8)) {
+        akx::set_control_action_ctx_then_ctx(st.as_control(), ch, { (*np).click_ctx }, ui::component_after);
+    }
+    var n: flex::Node = ui::fixed_view(st.as_view());
+    apply_style(n.payload(), facet::kind_stepper(), { (*np).style });
+    return n;
+}
+
+fn ak_secure_field(ctx: *u8, np: *facet::Node) -> flex::Node {
+    let sf: ak::SecureTextField = ak::SecureTextField::new();
+    let vp: *text::Text = { #addr_of((*np).value) };
+    match (*vp).c_str() {
+        option::Option[text::CString]::Some(cs) => {
+            let vs: str = { #str_from_raw_parts(cs.as_ptr(), cs.count()) };
+            sf.as_control().set_string_value(vs);
+        }
+        option::Option[text::CString]::None => { }
+    };
+    var n: flex::Node = ui::fixed_view(sf.as_view());
+    apply_style(n.payload(), facet::kind_secure_field(), { (*np).style });
+    return n;
+}
+
+fn ak_segmented(ctx: *u8, np: *facet::Node) -> flex::Node {
+    let sc: ak::SegmentedControl = ak::SegmentedControl::new();
+    let src: *vec::Vec[text::Text] = { #addr_of((*np).popup_items) };
+    let cnt: usize = { (*src).count() };
+    sc.set_segment_count(cnt as i64);
+    var i: usize = 0 as usize;
+    while i < cnt {
+        match { (*src).at_ptr(i) } {
+            option::Option[*text::Text]::Some(tp) => { sc.set_label({ (*tp).view() }, i as i64); }
+            option::Option[*text::Text]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    sc.set_selected_segment({ (*np).popup_selected });
+    let ch: fn(*u8, *u8) = { (*np).on_change };
+    if ch != (0 as fn(*u8, *u8)) {
+        akx::set_control_action_ctx_then_ctx(sc.as_control(), ch, { (*np).click_ctx }, ui::component_after);
+    }
+    var n: flex::Node = ui::fixed_view(sc.as_view());
+    apply_style(n.payload(), facet::kind_segmented(), { (*np).style });
+    return n;
+}
+
 // Read-back: surface the ui:: value readers through the facet layer so an app
 // (Phase 5) can pull a field's text / a popup's index from the mounted view.
 fn field_text(view_ptr: *u8) -> text::Text { return ui::field_text(view_ptr); }
@@ -581,6 +634,9 @@ fn renderer() -> facet::Renderer {
         toggle: ak_toggle,
         slider: ak_slider,
         progress: ak_progress,
+        stepper: ak_stepper,
+        secure_field: ak_secure_field,
+        segmented: ak_segmented,
         native: ak_native,
         bordered: ak_bordered,
         clickable: ak_clickable,
@@ -1453,6 +1509,31 @@ fn controls_mount_and_toggle_drives() {
     // toggle is role_button + drive_click → the agent can flip it, firing the wire.
     assert surface::outcome_eq(s.click("wifi"), surface::Outcome::Allowed);
     assert TOGGLE_FIRES == 1;
+}
+
+#[test]
+fn batch2_controls_mount_and_secure_field_drives() {
+    let win = e2e_window(320.0f64, 240.0f64);
+    let content = e2e_content(win);
+    var items: vec::Vec[text::Text] = vec::new::[text::Text]();
+    items.append(text::from_str("Day"));
+    items.append(text::from_str("Night"));
+    var root: facet::Node = @facet {
+        vstack {
+            stepper(value: 2.0f64, min: 0.0f64, max: 10.0f64).agent_id("qty")
+            secure_field(placeholder: "Password").agent_id("pw")
+            segmented(items, selected: 0 as i64).agent_id("mode")
+        }
+    };
+    let _h: f64 = mount_into(#addr_of(root), content.raw(), 320.0f64, 240.0f64);
+    var s: agent::Surface = agent::open(win.raw());
+    assert surface_has_id(content.raw(), "qty");
+    assert surface_has_id(content.raw(), "pw");
+    assert surface_has_id(content.raw(), "mode");
+    // secure_field is role_input → drive_text.
+    assert surface::outcome_eq(
+        s.set_text("pw", "s3cret", s.text_version("pw")),
+        surface::Outcome::Allowed);
 }
 
 #[test]
