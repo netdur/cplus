@@ -170,6 +170,9 @@ struct Style {
     corner_radius: f64,    // 0 = unset (also = square, same visual)
     border_width: f64,     // 0 = unset
     border_color: Color,   // token 0 = unset
+    opacity: f64,          // -1 = unset (0..1)
+    shadow_radius: f64,    // 0 = unset (drop-shadow blur radius)
+    line_limit: i32,       // 0 = unset / unlimited (max text lines)
 }
 
 fn style_none() -> Style {
@@ -182,6 +185,9 @@ fn style_none() -> Style {
         corner_radius: 0.0f64,
         border_width: 0.0f64,
         border_color: Color::none(),
+        opacity: -1.0f64,
+        shadow_radius: 0.0f64,
+        line_limit: 0 as i32,
     };
 }
 
@@ -509,6 +515,9 @@ impl Node {
     fn background(take this, c: Color) -> Node { var n: Node = this; n.style.bg = c; return n; }
     fn corner_radius(take this, r: f64) -> Node { var n: Node = this; n.style.corner_radius = r; return n; }
     fn border(take this, w: f64, c: Color) -> Node { var n: Node = this; n.style.border_width = w; n.style.border_color = c; return n; }
+    fn opacity(take this, v: f64) -> Node { var n: Node = this; n.style.opacity = v; return n; }
+    fn shadow(take this, radius: f64) -> Node { var n: Node = this; n.style.shadow_radius = radius; return n; }
+    fn line_limit(take this, n_lines: i32) -> Node { var n: Node = this; n.style.line_limit = n_lines; return n; }
     // `.frame(width:height:)` — set both fixed dimensions at once.
     fn frame(take this, w: f64, h: f64) -> Node { var n: Node = this; n._width = w; n._height = h; return n; }
     // `.plain()` — borderless button (the link/plain-button fold). Pair with
@@ -538,6 +547,9 @@ impl Node {
     fn set_background(ref this, c: Color) { this.style.bg = c; return; }
     fn set_corner_radius(ref this, r: f64) { this.style.corner_radius = r; return; }
     fn set_border(ref this, w: f64, c: Color) { this.style.border_width = w; this.style.border_color = c; return; }
+    fn set_opacity(ref this, v: f64) { this.style.opacity = v; return; }
+    fn set_shadow(ref this, radius: f64) { this.style.shadow_radius = radius; return; }
+    fn set_line_limit(ref this, n_lines: i32) { this.style.line_limit = n_lines; return; }
     fn set_frame(ref this, w: f64, h: f64) { this._width = w; this._height = h; return; }
     fn set_plain(ref this) { this.plain = true; return; }
 
@@ -1655,6 +1667,19 @@ fn facet_p1_layout_modifiers_set_fields() {
     // inset(Top, 0) must register even though the value is 0 (mask bit set).
     assert (n._inset_mask & (2 as u32)) != (0 as u32);
     assert approx(n._ins_t, 0.0f64);
+}
+
+#[test]
+fn facet_paint_modifiers_set_fields() {
+    let n: Node = label("x").opacity(0.5f64).shadow(6.0f64).line_limit(2 as i32);
+    assert approx(n.style.opacity, 0.5f64);
+    assert approx(n.style.shadow_radius, 6.0f64);
+    assert n.style.line_limit == (2 as i32);
+    // defaults untouched on a plain node.
+    let p: Node = label("y");
+    assert approx(p.style.opacity, -1.0f64);   // unset
+    assert approx(p.style.shadow_radius, 0.0f64);
+    assert p.style.line_limit == (0 as i32);
 }
 
 #[test]

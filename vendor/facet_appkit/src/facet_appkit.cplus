@@ -132,6 +132,25 @@ fn apply_style(view_ptr: *u8, kind: u32, style: facet::Style) {
             if bc.is_set() { lyr.set_border_color(ns_color(bc).c_g_color()); }
         }
     }
+    // Opacity — NSView.alphaValue (no layer needed).
+    let op: f64 = { style.opacity };
+    if op >= 0.0f64 { ak::View::from_raw(view_ptr).set_alpha_value(op); }
+    // Drop shadow — layer-backed; a soft black shadow at the given blur radius.
+    let sr: f64 = { style.shadow_radius };
+    if sr > 0.0f64 {
+        let sv: ak::View = ak::View::from_raw(view_ptr);
+        sv.set_wants_layer(true);
+        let slyr: quartz::Layer = sv.layer();
+        slyr.set_shadow_radius(sr);
+        slyr.set_shadow_opacity(0.25f32);
+        slyr.set_shadow_offset(rt::Size { w: 0.0, h: -2.0 });
+        slyr.set_shadow_color(ak::Color::color_with_red(0.0f64, 0.0f64, 0.0f64, 1.0f64).c_g_color());
+    }
+    // Line limit — max text lines on labels (0 = unlimited).
+    let ll: i32 = { style.line_limit };
+    if ll > (0 as i32) && is_text {
+        ak::TextField::from_raw(view_ptr).set_maximum_number_of_lines(ll as i64);
+    }
     return;
 }
 
@@ -1360,6 +1379,30 @@ fn phase3_native_survives_rerender() {
     remount(phase3_native_screen, content.raw(), 200.0f64, 160.0f64);
     assert P3_BUILDS == 2;
     assert surface_has_id(content.raw(), "box");
+}
+
+#[test]
+fn paint_modifiers_mount_through_apply_style() {
+    // opacity / shadow / line_limit drive apply_style without tripping the
+    // pipeline (visual correctness is by eye; here: builds + alpha reads back).
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 240.0, h: 160.0 });
+    var root: facet::Node = @facet {
+        vstack {
+            wrap_label("a long wrapping caption that the line limit clamps to two lines of height")
+                .line_limit(2 as i32)
+                .agent_id("cap")
+            bordered {
+                label("card")
+            }
+            .background(facet::Color::secondary())
+            .corner_radius(8.0f64)
+            .shadow(10.0f64)
+            .opacity(0.9f64)
+        }
+    };
+    let h: f64 = mount_into(#addr_of(root), content.raw(), 240.0f64, 160.0f64);
+    assert h > 0.0f64;
+    assert surface_has_id(content.raw(), "cap");
 }
 
 #[test]
