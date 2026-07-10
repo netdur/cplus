@@ -89,8 +89,19 @@ fn ns_font(size: f64, weight: u32, family: u32) -> ak::Font {
 // the view's CALayer (wantsLayer first). ONLY set fields are touched — an unset
 // field never stomps a control's native font or a dark-mode-adaptive semantic
 // color. Called from every op; when Style is blank every guard fails (no-op).
-fn apply_style(view_ptr: *u8, kind: u32, style: facet::Style) {
+fn apply_style(view_ptr: *u8, kind: u32, np: *facet::Node) {
     if view_ptr == (0 as *u8) { return; }
+    // Re-alias the Style locally so the paint logic below is unchanged; taking
+    // the whole node lets us also apply per-node attrs (tooltip, a11y label).
+    let style: facet::Style = { (*np).style };
+    // Tooltip + accessibility label — plain per-node strings, not Style (which
+    // must stay Copy).
+    let ttp: *text::Text = { #addr_of((*np).tooltip) };
+    if { (*ttp).view() } != "" { ak::View::from_raw(view_ptr).set_tool_tip({ (*ttp).view() }); }
+    let alp: *text::Text = { #addr_of((*np).a11y_label) };
+    if { (*alp).view() } != "" {
+        ak::Accessibility::from_raw(view_ptr).set_accessibility_label({ (*alp).view() });
+    }
     let is_text: bool = kind == facet::kind_label() || kind == facet::kind_wrap_label();
     // Foreground.
     let fg: facet::Color = { style.fg };
@@ -184,7 +195,7 @@ fn ak_label(ctx: *u8, np: *facet::Node) -> flex::Node {
             n = ui::label("", size: size);
         }
     };
-    apply_style(n.payload(), facet::kind_label(), { (*np).style });
+    apply_style(n.payload(), facet::kind_label(), np);
     return n;
 }
 
@@ -202,7 +213,7 @@ fn ak_wrap_label(ctx: *u8, np: *facet::Node) -> flex::Node {
             n = ui::wrap_label("", size: size);
         }
     };
-    apply_style(n.payload(), facet::kind_wrap_label(), { (*np).style });
+    apply_style(n.payload(), facet::kind_wrap_label(), np);
     return n;
 }
 
@@ -227,7 +238,7 @@ fn ak_button(ctx: *u8, np: *facet::Node) -> flex::Node {
     // `.plain()` → borderless button (the link/plain-button fold).
     if { (*np).plain } { b.set_bordered(false); }
     akx::set_control_action_ctx_then_ctx(b.as_control(), { (*np).click }, { (*np).click_ctx }, ui::component_after);
-    apply_style(n.payload(), facet::kind_button(), { (*np).style });
+    apply_style(n.payload(), facet::kind_button(), np);
     return n;
 }
 
@@ -264,7 +275,7 @@ fn ak_text_area(ctx: *u8, np: *facet::Node) -> flex::Node {
     };
     // Editors honor the layer-paint props (bg/corner/border) on their scroll
     // host; text color/font stay the editor's own (Phase 3).
-    apply_style(n.payload(), facet::kind_text_area(), { (*np).style });
+    apply_style(n.payload(), facet::kind_text_area(), np);
     return n;
 }
 
@@ -297,7 +308,7 @@ fn ak_composer(ctx: *u8, np: *facet::Node) -> flex::Node {
             );
         }
     };
-    apply_style(n.payload(), facet::kind_composer(), { (*np).style });
+    apply_style(n.payload(), facet::kind_composer(), np);
     return n;
 }
 
@@ -327,7 +338,7 @@ fn ak_code_editor(ctx: *u8, np: *facet::Node) -> flex::Node {
             );
         }
     };
-    apply_style(n.payload(), facet::kind_code_editor(), { (*np).style });
+    apply_style(n.payload(), facet::kind_code_editor(), np);
     return n;
 }
 
@@ -343,7 +354,7 @@ fn ak_image(ctx: *u8, np: *facet::Node) -> flex::Node {
         }
         option::Option[text::CString]::None => { n = ui::image(""); }
     };
-    apply_style(n.payload(), facet::kind_image(), { (*np).style });
+    apply_style(n.payload(), facet::kind_image(), np);
     return n;
 }
 
@@ -359,7 +370,7 @@ fn ak_symbol(ctx: *u8, np: *facet::Node) -> flex::Node {
         }
         option::Option[text::CString]::None => { n = ui::symbol("", side); }
     };
-    apply_style(n.payload(), facet::kind_symbol(), { (*np).style });
+    apply_style(n.payload(), facet::kind_symbol(), np);
     return n;
 }
 
@@ -388,7 +399,7 @@ fn ak_text_field(ctx: *u8, np: *facet::Node) -> flex::Node {
             }
         }
     };
-    apply_style(n.payload(), facet::kind_text_field(), { (*np).style });
+    apply_style(n.payload(), facet::kind_text_field(), np);
     return n;
 }
 
@@ -427,13 +438,13 @@ fn ak_popup(ctx: *u8, np: *facet::Node) -> flex::Node {
         akx::set_control_action_ctx_then_ctx(p.as_control(), ch, { (*np).click_ctx }, ui::component_after);
     }
     var n: flex::Node = ui::view(p.as_view());
-    apply_style(n.payload(), facet::kind_popup(), { (*np).style });
+    apply_style(n.payload(), facet::kind_popup(), np);
     return n;
 }
 
 fn ak_divider(ctx: *u8, np: *facet::Node) -> flex::Node {
     var n: flex::Node = ui::divider();
-    apply_style(n.payload(), facet::kind_divider(), { (*np).style });
+    apply_style(n.payload(), facet::kind_divider(), np);
     return n;
 }
 
@@ -451,7 +462,7 @@ fn ak_toggle(ctx: *u8, np: *facet::Node) -> flex::Node {
             akx::set_control_action_ctx_then_ctx(sw.as_control(), ch, { (*np).click_ctx }, ui::component_after);
         }
         var n: flex::Node = ui::fixed_view(sw.as_view());
-        apply_style(n.payload(), facet::kind_toggle(), { (*np).style });
+        apply_style(n.payload(), facet::kind_toggle(), np);
         return n;
     }
     // Checkbox / radio → NSButton with the matching button type + a title.
@@ -470,7 +481,7 @@ fn ak_toggle(ctx: *u8, np: *facet::Node) -> flex::Node {
         akx::set_control_action_ctx_then_ctx(b.as_control(), ch, { (*np).click_ctx }, ui::component_after);
     }
     var bn: flex::Node = ui::fixed_view(b.as_view());
-    apply_style(bn.payload(), facet::kind_toggle(), { (*np).style });
+    apply_style(bn.payload(), facet::kind_toggle(), np);
     return bn;
 }
 
@@ -481,7 +492,7 @@ fn ak_color_picker(ctx: *u8, np: *facet::Node) -> flex::Node {
         akx::set_control_action_ctx_then_ctx(cw.as_control(), ch, { (*np).click_ctx }, ui::component_after);
     }
     var n: flex::Node = ui::fixed_view(cw.as_view());
-    apply_style(n.payload(), facet::kind_color_picker(), { (*np).style });
+    apply_style(n.payload(), facet::kind_color_picker(), np);
     return n;
 }
 
@@ -492,7 +503,7 @@ fn ak_date_picker(ctx: *u8, np: *facet::Node) -> flex::Node {
         akx::set_control_action_ctx_then_ctx(dp.as_control(), ch, { (*np).click_ctx }, ui::component_after);
     }
     var n: flex::Node = ui::fixed_view(dp.as_view());
-    apply_style(n.payload(), facet::kind_date_picker(), { (*np).style });
+    apply_style(n.payload(), facet::kind_date_picker(), np);
     return n;
 }
 
@@ -501,7 +512,7 @@ fn ak_date_picker(ctx: *u8, np: *facet::Node) -> flex::Node {
 fn ak_box(ctx: *u8, np: *facet::Node) -> flex::Node {
     let v: ak::View = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 });
     var n: flex::Node = ui::fixed_view(v);
-    apply_style(n.payload(), facet::kind_box(), { (*np).style });
+    apply_style(n.payload(), facet::kind_box(), np);
     return n;
 }
 
@@ -515,7 +526,7 @@ fn ak_slider(ctx: *u8, np: *facet::Node) -> flex::Node {
         akx::set_control_action_ctx_then_ctx(sl.as_control(), ch, { (*np).click_ctx }, ui::component_after);
     }
     var n: flex::Node = ui::fixed_view(sl.as_view());
-    apply_style(n.payload(), facet::kind_slider(), { (*np).style });
+    apply_style(n.payload(), facet::kind_slider(), np);
     return n;
 }
 
@@ -531,7 +542,7 @@ fn ak_progress(ctx: *u8, np: *facet::Node) -> flex::Node {
         pi.set_double_value({ (*np).value_f });
     }
     var n: flex::Node = ui::fixed_view(pi.as_view());
-    apply_style(n.payload(), facet::kind_progress(), { (*np).style });
+    apply_style(n.payload(), facet::kind_progress(), np);
     return n;
 }
 
@@ -546,7 +557,7 @@ fn ak_stepper(ctx: *u8, np: *facet::Node) -> flex::Node {
         akx::set_control_action_ctx_then_ctx(st.as_control(), ch, { (*np).click_ctx }, ui::component_after);
     }
     var n: flex::Node = ui::fixed_view(st.as_view());
-    apply_style(n.payload(), facet::kind_stepper(), { (*np).style });
+    apply_style(n.payload(), facet::kind_stepper(), np);
     return n;
 }
 
@@ -561,7 +572,7 @@ fn ak_secure_field(ctx: *u8, np: *facet::Node) -> flex::Node {
         option::Option[text::CString]::None => { }
     };
     var n: flex::Node = ui::fixed_view(sf.as_view());
-    apply_style(n.payload(), facet::kind_secure_field(), { (*np).style });
+    apply_style(n.payload(), facet::kind_secure_field(), np);
     return n;
 }
 
@@ -584,7 +595,7 @@ fn ak_segmented(ctx: *u8, np: *facet::Node) -> flex::Node {
         akx::set_control_action_ctx_then_ctx(sc.as_control(), ch, { (*np).click_ctx }, ui::component_after);
     }
     var n: flex::Node = ui::fixed_view(sc.as_view());
-    apply_style(n.payload(), facet::kind_segmented(), { (*np).style });
+    apply_style(n.payload(), facet::kind_segmented(), np);
     return n;
 }
 
@@ -598,7 +609,7 @@ fn popup_index(view_ptr: *u8) -> i64 { return ui::popup_index(view_ptr); }
 // takes ownership of that one reference (release_view drops it on tree drop).
 fn ak_native(ctx: *u8, np: *facet::Node) -> flex::Node {
     var n: flex::Node = ui::adopt_view({ (*np).native_handle });
-    apply_style(n.payload(), facet::kind_native(), { (*np).style });
+    apply_style(n.payload(), facet::kind_native(), np);
     return n;
 }
 
@@ -624,7 +635,7 @@ fn native_widget(take w: flex::Node) -> facet::Node {
 
 fn ak_material(ctx: *u8, np: *facet::Node, take content: flex::Node) -> flex::Node {
     var n: flex::Node = ui::material(content);
-    apply_style(n.payload(), facet::kind_material(), { (*np).style });
+    apply_style(n.payload(), facet::kind_material(), np);
     return n;
 }
 
@@ -632,7 +643,7 @@ fn ak_bordered(ctx: *u8, np: *facet::Node, take content: flex::Node) -> flex::No
     var n: flex::Node = ui::bordered(content, radius: { (*np).radius });
     // A bordered box already paints a backing view; Style props (bg/corner/
     // border) layer over it when the author opts in.
-    apply_style(n.payload(), facet::kind_bordered(), { (*np).style });
+    apply_style(n.payload(), facet::kind_bordered(), np);
     return n;
 }
 
@@ -657,7 +668,7 @@ fn ak_scroll(ctx: *u8, np: *facet::Node, take content: flex::Node) -> flex::Node
     let jobs: *vec::Vec[ScrollJob] = { #addr_of(SCROLL_JOBS) };
     (*jobs).append(ScrollJob { scroll: sv.raw(), content: content });
     var n: flex::Node = ui::fixed_view(sv.as_view());
-    apply_style(n.payload(), facet::kind_scroll(), { (*np).style });
+    apply_style(n.payload(), facet::kind_scroll(), np);
     return n;
 }
 
@@ -704,7 +715,7 @@ fn ak_clickable(ctx: *u8, np: *facet::Node, take content: flex::Node) -> flex::N
         on_hover_out: { (*np).on_hover_out },
         on_scroll: { (*np).on_scroll },
     );
-    apply_style(n.payload(), facet::kind_clickable(), { (*np).style });
+    apply_style(n.payload(), facet::kind_clickable(), np);
     return n;
 }
 
@@ -717,7 +728,7 @@ fn ak_split(ctx: *u8, np: *facet::Node, take first: flex::Node, take second: fle
         min_first: { (*np).min_first },
         min_second: { (*np).min_second },
     );
-    apply_style(n.payload(), facet::kind_split(), { (*np).style });
+    apply_style(n.payload(), facet::kind_split(), np);
     return n;
 }
 
@@ -1709,6 +1720,26 @@ fn batch3_pickers_mount_and_checkbox_drives() {
     assert surface_has_id(content.raw(), "date");
     // checkbox is a toggle → role_button → the agent can click it.
     assert surface::outcome_eq(s.click("agree"), surface::Outcome::Allowed);
+}
+
+#[test]
+fn tooltip_and_a11y_label_apply() {
+    // A widget with a tooltip + accessibility label mounts through apply_style;
+    // the a11y label reads back off the view.
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 80.0 });
+    var root: facet::Node = @facet {
+        vstack {
+            button("Save")
+                .tooltip("Save the current file")
+                .accessibility_label("Save")
+                .agent_id("save")
+        }
+    };
+    let _h: f64 = mount_into(#addr_of(root), content.raw(), 200.0f64, 80.0f64);
+    assert surface_has_id(content.raw(), "save");
+    // the accessibility label landed on the button view
+    let bp: *u8 = nth_widget(content.raw(), 0 as usize);
+    assert ak::Accessibility::from_raw(bp).accessibility_label().view() == "Save";
 }
 
 #[test]

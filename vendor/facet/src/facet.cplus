@@ -242,6 +242,8 @@ struct Node {
     agent_id: text::Text,   // "" = untagged. A developer-curated stable id the
                             // backend pins on the created widget at every mount
                             // (via set_identity), so it survives re-renders.
+    tooltip: text::Text,    // "" = none. Hover help text (backend applies in apply_style).
+    a11y_label: text::Text, // "" = none. VoiceOver / accessibility label.
     font_size: f64,         // 0 = platform default
     bold: bool,
     secondary: bool,
@@ -340,6 +342,8 @@ fn blank(kind: u32) -> Node {
         click: noop,
         click_ctx: 0 as *u8,
         agent_id: text::from_str(""),
+        tooltip: text::from_str(""),
+        a11y_label: text::from_str(""),
         font_size: 0.0f64,
         bold: false,
         secondary: false,
@@ -760,6 +764,8 @@ impl Node {
         n.agent_id = text::from_str(id);
         return n;
     }
+    fn tooltip(take this, s: str) -> Node { var n: Node = this; n.tooltip = text::from_str(s); return n; }
+    fn accessibility_label(take this, s: str) -> Node { var n: Node = this; n.a11y_label = text::from_str(s); return n; }
 
     // Style modifiers (SwiftUI-shaped, C+-named). Each sets one `Style` field;
     // the backend's `apply_style` applies only the fields the author set.
@@ -798,6 +804,8 @@ impl Node {
         this.agent_id = text::from_str(id);
         return;
     }
+    fn set_tooltip(ref this, s: str) { this.tooltip = text::from_str(s); return; }
+    fn set_accessibility_label(ref this, s: str) { this.a11y_label = text::from_str(s); return; }
 
     fn set_font(ref this, size: f64) { this.style.font_size = size; return; }
     fn set_weight(ref this, w: u32) { this.style.weight = w; return; }
@@ -1531,6 +1539,16 @@ fn facet_on_click_carries_identity() {
     // ctx defaults to null when omitted.
     let m: Node = button("ok").on_click(click_a);
     assert (m.click_ctx as i64) == (0 as i64);
+}
+
+#[test]
+fn facet_tooltip_and_a11y_label() {
+    let n: Node = label("Save").tooltip("Save the file").accessibility_label("Save button");
+    assert n.tooltip.view() == "Save the file";
+    assert n.a11y_label.view() == "Save button";
+    let plain: Node = label("x");
+    assert plain.tooltip.view() == "";        // default none
+    assert plain.a11y_label.view() == "";
 }
 
 #[test]
