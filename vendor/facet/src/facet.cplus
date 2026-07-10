@@ -379,10 +379,15 @@ impl Node {
     // the backend's `apply_style` applies only the fields the author set.
     fn font(take this, size: f64) -> Node { var n: Node = this; n.style.font_size = size; return n; }
     fn weight(take this, w: u32) -> Node { var n: Node = this; n.style.weight = w; return n; }
+    // `.bold()` is sugar for the bold weight token (SwiftUI's `.bold()`).
+    fn strong(take this) -> Node { var n: Node = this; n.style.weight = weight_bold(); return n; }
+    fn monospaced(take this) -> Node { var n: Node = this; n.style.family = family_monospace(); return n; }
     fn foreground_color(take this, c: Color) -> Node { var n: Node = this; n.style.fg = c; return n; }
     fn background(take this, c: Color) -> Node { var n: Node = this; n.style.bg = c; return n; }
     fn corner_radius(take this, r: f64) -> Node { var n: Node = this; n.style.corner_radius = r; return n; }
     fn border(take this, w: f64, c: Color) -> Node { var n: Node = this; n.style.border_width = w; n.style.border_color = c; return n; }
+    // `.frame(width:height:)` — set both fixed dimensions at once.
+    fn frame(take this, w: f64, h: f64) -> Node { var n: Node = this; n._width = w; n._height = h; return n; }
 
     fn set_grow(ref this, v: f64) { this._grow = v; return; }
     fn set_gap(ref this, v: f64) { this._gap = v; return; }
@@ -399,10 +404,15 @@ impl Node {
         return;
     }
 
+    fn set_font(ref this, size: f64) { this.style.font_size = size; return; }
+    fn set_weight(ref this, w: u32) { this.style.weight = w; return; }
+    fn set_strong(ref this) { this.style.weight = weight_bold(); return; }
+    fn set_monospaced(ref this) { this.style.family = family_monospace(); return; }
     fn set_foreground_color(ref this, c: Color) { this.style.fg = c; return; }
     fn set_background(ref this, c: Color) { this.style.bg = c; return; }
     fn set_corner_radius(ref this, r: f64) { this.style.corner_radius = r; return; }
     fn set_border(ref this, w: f64, c: Color) { this.style.border_width = w; this.style.border_color = c; return; }
+    fn set_frame(ref this, w: f64, h: f64) { this._width = w; this._height = h; return; }
 }
 
 // ---- the DSL builder contract ----------------------------------------------
@@ -837,6 +847,29 @@ fn facet_style_modifiers_set_only_their_field() {
     assert approx(styled.style.corner_radius, 8.0f64);
     assert styled.style.border_width < 0.001f64;     // untouched
     assert styled.style.weight == (0 as u32);        // untouched
+}
+
+#[test]
+fn facet_font_and_frame_modifiers() {
+    // .font/.weight/.strong/.monospaced ride the Style font channel.
+    let a: Node = label("x").font(20.0f64).weight(weight_semibold());
+    assert approx(a.style.font_size, 20.0f64);
+    assert a.style.weight == weight_semibold();
+
+    let b: Node = label("x").strong();
+    assert b.style.weight == weight_bold();
+
+    let c: Node = code_editor(value: "y").monospaced();
+    assert c.style.family == family_monospace();
+
+    // .frame sets both fixed dimensions; fluent and set_* agree.
+    let f: Node = label("x").frame(120.0f64, 44.0f64);
+    assert approx(f._width, 120.0f64);
+    assert approx(f._height, 44.0f64);
+    var m: Node = label("x");
+    m.set_frame(120.0f64, 44.0f64);
+    assert approx(m._width, f._width);
+    assert approx(m._height, f._height);
 }
 
 // -- mount, against a fake renderer --

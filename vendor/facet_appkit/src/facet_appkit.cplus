@@ -59,20 +59,61 @@ fn ns_color(c: facet::Color) -> ak::Color {
     return ak::Color::color_with_red({ c.r }, { c.g }, { c.b }, { c.a });
 }
 
+// Map a portable weight token to an NSFontWeight (a bare f64: regular 0.0,
+// medium 0.23, semibold 0.3, bold 0.4 — Apple's documented constants).
+fn ns_weight(w: u32) -> f64 {
+    if w == facet::weight_medium() { return 0.23f64; }
+    if w == facet::weight_semibold() { return 0.3f64; }
+    if w == facet::weight_bold() { return 0.4f64; }
+    return 0.0f64;   // regular / unset
+}
+
+// Build the NSFont the Style asks for. `size <= 0` means "keep the widget's
+// size" — callers only reach here when at least one font field is set, so we
+// fall back to 13pt (the system default) rather than 0.
+fn ns_font(size: f64, weight: u32, family: u32) -> ak::Font {
+    var sz: f64 = size;
+    if sz <= 0.0f64 { sz = 13.0f64; }
+    if family == facet::family_monospace() {
+        return ak::Font::monospaced_system_font_of_size(sz, ns_weight(weight));
+    }
+    if weight != facet::weight_unset() {
+        return ak::Font::system_font_of_size_weight(sz, ns_weight(weight));
+    }
+    return ak::Font::system_font_of_size(sz);
+}
+
 // Apply the portable Style to a freshly-built native view. Per-kind, NOT one
 // uniform table: text widgets take fg via text color, controls via content
-// tint; background / corner / border go through the view's CALayer (wantsLayer
-// first). ONLY set fields are touched — an unset field never stomps a control's
-// native font or a dark-mode-adaptive semantic color.
+// tint; font rides NSControl.setFont; background / corner / border go through
+// the view's CALayer (wantsLayer first). ONLY set fields are touched — an unset
+// field never stomps a control's native font or a dark-mode-adaptive semantic
+// color. Called from every op; when Style is blank every guard fails (no-op).
 fn apply_style(view_ptr: *u8, kind: u32, style: facet::Style) {
     if view_ptr == (0 as *u8) { return; }
+    let is_text: bool = kind == facet::kind_label() || kind == facet::kind_wrap_label();
     // Foreground.
     let fg: facet::Color = { style.fg };
     if fg.is_set() {
-        if kind == facet::kind_label() || kind == facet::kind_wrap_label() {
+        if is_text {
             ak::TextField::from_raw(view_ptr).set_text_color(ns_color(fg));
         } else if kind == facet::kind_button() {
             ak::Button::from_raw(view_ptr).set_content_tint_color(ns_color(fg));
+        }
+    }
+    // Font (size / weight / family) — text widgets + buttons carry a font via
+    // NSControl.setFont. Setting any font field replaces the whole NSFont
+    // (SwiftUI `.font` semantics): pair `.font(size)` with `.strong()` for bold;
+    // the legacy `bold:` constructor arg is a separate pre-Style path. Editors
+    // keep their own font (Phase 3 reaches the inner text view via documentView).
+    let fsz: f64 = { style.font_size };
+    let wt: u32 = { style.weight };
+    let fam: u32 = { style.family };
+    if fsz > 0.0f64 || wt != facet::weight_unset() || fam != facet::family_unset() {
+        if is_text {
+            ak::TextField::from_raw(view_ptr).as_control().set_font(ns_font(fsz, wt, fam));
+        } else if kind == facet::kind_button() {
+            ak::Button::from_raw(view_ptr).as_control().set_font(ns_font(fsz, wt, fam));
         }
     }
     // Layer-backed: background / corner / border.
@@ -126,6 +167,7 @@ fn ak_wrap_label(ctx: *u8, np: *facet::Node) -> flex::Node {
             n = ui::wrap_label("", size: size);
         }
     };
+    apply_style(n.payload(), facet::kind_wrap_label(), { (*np).style });
     return n;
 }
 
@@ -157,16 +199,17 @@ fn ak_text_area(ctx: *u8, np: *facet::Node) -> flex::Node {
     let cctx: *u8 = { (*np).click_ctx };
     let vp: *text::Text = { #addr_of((*np).value) };
     let pp: *text::Text = { #addr_of((*np).placeholder) };
+    var n: flex::Node = flex::Node::new();
     match (*vp).c_str() {
         option::Option[text::CString]::Some(vcs) => {
             let vs: str = { #str_from_raw_parts(vcs.as_ptr(), vcs.count()) };
             match (*pp).c_str() {
                 option::Option[text::CString]::Some(pcs) => {
                     let ps: str = { #str_from_raw_parts(pcs.as_ptr(), pcs.count()) };
-                    return ui::text_area(placeholder: ps, value: vs, on_change: ch, ctx: cctx);
+                    n = ui::text_area(placeholder: ps, value: vs, on_change: ch, ctx: cctx);
                 }
                 option::Option[text::CString]::None => {
-                    return ui::text_area(placeholder: "", value: vs, on_change: ch, ctx: cctx);
+                    n = ui::text_area(placeholder: "", value: vs, on_change: ch, ctx: cctx);
                 }
             }
         }
@@ -174,14 +217,18 @@ fn ak_text_area(ctx: *u8, np: *facet::Node) -> flex::Node {
             match (*pp).c_str() {
                 option::Option[text::CString]::Some(pcs) => {
                     let ps: str = { #str_from_raw_parts(pcs.as_ptr(), pcs.count()) };
-                    return ui::text_area(placeholder: ps, value: "", on_change: ch, ctx: cctx);
+                    n = ui::text_area(placeholder: ps, value: "", on_change: ch, ctx: cctx);
                 }
                 option::Option[text::CString]::None => {
-                    return ui::text_area(placeholder: "", value: "", on_change: ch, ctx: cctx);
+                    n = ui::text_area(placeholder: "", value: "", on_change: ch, ctx: cctx);
                 }
             }
         }
-    }
+    };
+    // Editors honor the layer-paint props (bg/corner/border) on their scroll
+    // host; text color/font stay the editor's own (Phase 3).
+    apply_style(n.payload(), facet::kind_text_area(), { (*np).style });
+    return n;
 }
 
 fn ak_composer(ctx: *u8, np: *facet::Node) -> flex::Node {
@@ -189,10 +236,11 @@ fn ak_composer(ctx: *u8, np: *facet::Node) -> flex::Node {
     let sctx: *u8 = { (*np).click_ctx };
     let ch: fn(*u8, *u8) = { (*np).on_change };
     let vp: *text::Text = { #addr_of((*np).value) };
+    var n: flex::Node = flex::Node::new();
     match (*vp).c_str() {
         option::Option[text::CString]::Some(cs) => {
             let sv: str = { #str_from_raw_parts(cs.as_ptr(), cs.count()) };
-            return ui::composer(
+            n = ui::composer(
                 sh,
                 on_change: ch,
                 ctx: sctx,
@@ -202,7 +250,7 @@ fn ak_composer(ctx: *u8, np: *facet::Node) -> flex::Node {
             );
         }
         option::Option[text::CString]::None => {
-            return ui::composer(
+            n = ui::composer(
                 sh,
                 on_change: ch,
                 ctx: sctx,
@@ -211,17 +259,20 @@ fn ak_composer(ctx: *u8, np: *facet::Node) -> flex::Node {
                 draws_background: { (*np).draws_background },
             );
         }
-    }
+    };
+    apply_style(n.payload(), facet::kind_composer(), { (*np).style });
+    return n;
 }
 
 fn ak_code_editor(ctx: *u8, np: *facet::Node) -> flex::Node {
     var size: f64 = { (*np).font_size };
     if size <= 0.0f64 { size = 12.0f64; }
     let vp: *text::Text = { #addr_of((*np).value) };
+    var n: flex::Node = flex::Node::new();
     match (*vp).c_str() {
         option::Option[text::CString]::Some(cs) => {
             let sv: str = { #str_from_raw_parts(cs.as_ptr(), cs.count()) };
-            return ui::code_editor(
+            n = ui::code_editor(
                 value: sv,
                 editable: { (*np).editable },
                 size: size,
@@ -230,7 +281,7 @@ fn ak_code_editor(ctx: *u8, np: *facet::Node) -> flex::Node {
             );
         }
         option::Option[text::CString]::None => {
-            return ui::code_editor(
+            n = ui::code_editor(
                 value: "",
                 editable: { (*np).editable },
                 size: size,
@@ -238,11 +289,17 @@ fn ak_code_editor(ctx: *u8, np: *facet::Node) -> flex::Node {
                 inset_h: { (*np).inset_h },
             );
         }
-    }
+    };
+    apply_style(n.payload(), facet::kind_code_editor(), { (*np).style });
+    return n;
 }
 
 fn ak_bordered(ctx: *u8, np: *facet::Node, take content: flex::Node) -> flex::Node {
-    return ui::bordered(content, radius: { (*np).radius });
+    var n: flex::Node = ui::bordered(content, radius: { (*np).radius });
+    // A bordered box already paints a backing view; Style props (bg/corner/
+    // border) layer over it when the author opts in.
+    apply_style(n.payload(), facet::kind_bordered(), { (*np).style });
+    return n;
 }
 
 fn ak_clickable(ctx: *u8, np: *facet::Node, take content: flex::Node) -> flex::Node {
@@ -255,7 +312,7 @@ fn ak_clickable(ctx: *u8, np: *facet::Node, take content: flex::Node) -> flex::N
     }
     let ph: fn(*u8, *u8) = primary;
     let pctx: *u8 = { (*np).click_ctx };
-    return ui::clickable(
+    var n: flex::Node = ui::clickable(
         content,
         ctx: pctx,
         on_click: ph,
@@ -270,10 +327,12 @@ fn ak_clickable(ctx: *u8, np: *facet::Node, take content: flex::Node) -> flex::N
         on_hover_out: { (*np).on_hover_out },
         on_scroll: { (*np).on_scroll },
     );
+    apply_style(n.payload(), facet::kind_clickable(), { (*np).style });
+    return n;
 }
 
 fn ak_split(ctx: *u8, np: *facet::Node, take first: flex::Node, take second: flex::Node) -> flex::Node {
-    return ui::split(
+    var n: flex::Node = ui::split(
         first,
         second,
         vertical: { (*np).vertical },
@@ -281,6 +340,8 @@ fn ak_split(ctx: *u8, np: *facet::Node, take first: flex::Node, take second: fle
         min_first: { (*np).min_first },
         min_second: { (*np).min_second },
     );
+    apply_style(n.payload(), facet::kind_split(), { (*np).style });
+    return n;
 }
 
 // Mount calls this after every widget-producing op. Records the declared
@@ -972,8 +1033,8 @@ fn e2e_facet_composer_is_agent_input() {
 #[test]
 fn styled_facet_widgets_mount_through_apply_style() {
     // A styled @facet tree drives the full pipeline: description → mount →
-    // apply_style → NSViews. (Visual correctness is the iris gate; here we
-    // prove the styled path builds views without tripping.)
+    // apply_style → NSViews. (Visual correctness is a facet-local example, run
+    // by eye; here we prove the styled path builds views without tripping.)
     let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
     var root: facet::Node = @facet {
         vstack {
@@ -986,6 +1047,58 @@ fn styled_facet_widgets_mount_through_apply_style() {
     let h: f64 = mount_into(#addr_of(root), content.raw(), 300.0f64, 200.0f64);
     assert h > 0.0f64;
     assert content.subviews().count() > (0 as usize);
+}
+
+// Phase 1 gate — the facet-local styled card. Every one of the modifiers the
+// SwiftUI-shaped surface exposes (.font/.strong/.foreground_color/.background/
+// .corner_radius/.border/.frame + .monospaced on the editor) drives apply_style
+// across label, wrap_label, button, code_editor, bordered, and split — the
+// spread that proves "every op honors Style", not just label/button. This is
+// the example a human renders by eye; the assertions prove it mounts clean.
+fn phase1_styled_card() -> facet::Node {
+    return @facet {
+        card {
+            label("Facet").font(28.0f64).strong().foreground_color(facet::Color::primary())
+            wrap_label("styled through the portable Style model", secondary: true)
+                .foreground_color(facet::Color::secondary())
+            bordered {
+                vstack {
+                    label("boxed").foreground_color(facet::Color::accent())
+                    code_editor(value: "fn main() {}", editable: false).monospaced()
+                }
+            }
+            .background(facet::Color::rgba(0.12f64, 0.12f64, 0.14f64, 1.0f64))
+            .corner_radius(10.0f64)
+            hstack {
+                button("Primary", primary: true)
+                    .background(facet::Color::accent())
+                    .corner_radius(8.0f64)
+                    .frame(120.0f64, 32.0f64)
+                button("Danger")
+                    .foreground_color(facet::Color::system_red())
+                    .border(1.0f64, facet::Color::system_red())
+            }
+        }
+        .padding(24.0f64)
+    };
+}
+
+#[test]
+fn phase1_styled_card_mounts_every_styled_kind() {
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 420.0, h: 340.0 });
+    var root: facet::Node = phase1_styled_card();
+    let h: f64 = mount_into(#addr_of(root), content.raw(), 420.0f64, 340.0f64);
+    assert h > 0.0f64;
+    // card → 4 children (label, wrap_label, bordered, hstack) mounted under one
+    // synthesized card view.
+    let subs = content.subviews();
+    assert subs.count() == (1 as usize);
+    match subs.at_ptr(0 as usize) {
+        option::Option[*ak::View]::Some(cardv) => {
+            assert { (*cardv).subviews().count() } == (4 as usize);
+        }
+        option::Option[*ak::View]::None => { assert false; }
+    };
 }
 
 #[test]
