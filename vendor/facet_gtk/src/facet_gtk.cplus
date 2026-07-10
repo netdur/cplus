@@ -298,6 +298,13 @@ fn gtk_date_picker(ctx: *u8, np: *facet::Node) -> flex::Node {
     return widget_leaf(cal.upcast());
 }
 
+// A styled rectangle (Shapes). TODO(gtk,linux): paint bg/border via a CSS class
+// on the drawing area; for now it's a plain surface.
+fn gtk_box(ctx: *u8, np: *facet::Node) -> flex::Node {
+    let da: gtk::DrawingArea = gtk::DrawingArea::new();
+    return widget_leaf(da.upcast());
+}
+
 fn gtk_slider(ctx: *u8, np: *facet::Node) -> flex::Node {
     // GtkScale → GtkRange → GtkWidget; value rides the Range.
     let sc: gtk::Scale = gtk::Scale::new_with_range(0 as i32, { (*np).min_val }, { (*np).max_val }, 1.0f64);
@@ -389,6 +396,7 @@ fn renderer() -> facet::Renderer {
         segmented: gtk_segmented,
         color_picker: gtk_color_picker,
         date_picker: gtk_date_picker,
+        box: gtk_box,
         native: gtk_native,
         bordered: gtk_bordered,
         clickable: gtk_clickable,

@@ -490,6 +490,15 @@ fn ak_date_picker(ctx: *u8, np: *facet::Node) -> flex::Node {
     return n;
 }
 
+// A styled rectangle (Shapes): a plain NSView; apply_style paints bg / corner /
+// border (wantsLayer). A full-radius square reads as a circle.
+fn ak_box(ctx: *u8, np: *facet::Node) -> flex::Node {
+    let v: ak::View = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 });
+    var n: flex::Node = ui::fixed_view(v);
+    apply_style(n.payload(), facet::kind_box(), { (*np).style });
+    return n;
+}
+
 fn ak_slider(ctx: *u8, np: *facet::Node) -> flex::Node {
     let sl: ak::Slider = ak::Slider::new();
     sl.set_min_value({ (*np).min_val });
@@ -755,6 +764,7 @@ fn renderer() -> facet::Renderer {
         segmented: ak_segmented,
         color_picker: ak_color_picker,
         date_picker: ak_date_picker,
+        box: ak_box,
         native: ak_native,
         bordered: ak_bordered,
         clickable: ak_clickable,
@@ -1666,6 +1676,24 @@ fn batch3_pickers_mount_and_checkbox_drives() {
     assert surface_has_id(content.raw(), "date");
     // checkbox is a toggle → role_button → the agent can click it.
     assert surface::outcome_eq(s.click("agree"), surface::Outcome::Allowed);
+}
+
+#[test]
+fn grid_of_boxes_mounts_on_appkit() {
+    // A grid of styled boxes (Shapes): rectangles + a circle (full corner radius).
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 220.0, h: 220.0 });
+    var root: facet::Node = @facet {
+        grid {
+            box().background(facet::Color::system_red()).frame(40.0f64, 40.0f64).agent_id("b0")
+            box().background(facet::Color::system_green()).corner_radius(20.0f64).frame(40.0f64, 40.0f64)
+            box().background(facet::Color::system_blue()).frame(40.0f64, 40.0f64)
+            box().background(facet::Color::system_orange()).frame(40.0f64, 40.0f64)
+        }
+        .frame(200.0f64, 200.0f64)
+    };
+    let h: f64 = mount_into(#addr_of(root), content.raw(), 220.0f64, 220.0f64);
+    assert h > 0.0f64;
+    assert surface_has_id(content.raw(), "b0");
 }
 
 #[test]

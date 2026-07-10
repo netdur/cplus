@@ -88,6 +88,11 @@ fn kind_segmented() -> u32 { return 24 as u32; }
 fn kind_scroll() -> u32 { return 25 as u32; }
 fn kind_color_picker() -> u32 { return 26 as u32; }
 fn kind_date_picker() -> u32 { return 27 as u32; }
+// Grid container (matrix §1): pure CSS-grid layout — no vtable op (like zstack).
+fn kind_grid() -> u32 { return 28 as u32; }
+// A plain styled rectangle leaf (Shapes: Rectangle/RoundedRectangle/Circle via
+// background + corner_radius). One backend op.
+fn kind_box() -> u32 { return 29 as u32; }
 
 // Agent-affordance roles — numeric indices aligned with agent_core::Role so
 // Phase 2 can pass them through without a translation table.
@@ -251,6 +256,7 @@ struct Node {
     indeterminate: bool,        // progress: spinner mode (ignore value)
     pull_down: bool,            // popup: pull-down menu mode (Menu) vs selector
     toggle_style: i32,          // toggle: 0 = switch, 1 = checkbox, 2 = radio
+    grid_cols: i32,             // grid: number of equal columns
     editable: bool,             // code_editor (default true)
     show_border: bool,          // composer (default true)
     draws_background: bool,     // composer (default true)
@@ -333,6 +339,7 @@ fn blank(kind: u32) -> Node {
         indeterminate: false,
         pull_down: false,
         toggle_style: 0 as i32,
+        grid_cols: 0 as i32,
         editable: true,
         show_border: true,
         draws_background: true,
@@ -535,6 +542,22 @@ fn menu(
 // A thin separator line.
 fn divider() -> Node {
     return blank(kind_divider());
+}
+
+// A styled rectangle (Shapes). Paint it with `.background(...)`; round it with
+// `.corner_radius(...)` (a full-radius square is a circle). Size with `.frame`.
+fn box() -> Node {
+    return blank(kind_box());
+}
+
+// A CSS-grid container: `columns` equal tracks; children auto-flow into cells,
+// wrapping to new rows. Pure layout (like vstack/zstack) — no backend op.
+fn grid(take b: Builder, columns: i32 = 2) -> Node {
+    let Builder { children } = b;
+    var n: Node = blank(kind_grid());
+    n.children = children;
+    n.grid_cols = columns;
+    return n;
 }
 
 // A boolean on/off switch. `on` is the initial state; `on_change` fires when the
@@ -1067,6 +1090,7 @@ struct Renderer {
     segmented:   fn(*u8, *Node) -> flex::Node,
     color_picker: fn(*u8, *Node) -> flex::Node,
     date_picker: fn(*u8, *Node) -> flex::Node,
+    box:         fn(*u8, *Node) -> flex::Node,
     // The escape hatch (Phase 3)
     native:      fn(*u8, *Node) -> flex::Node,
     // wrappers — mount recurses children first, then hands them over
@@ -1191,6 +1215,10 @@ fn mount(np: *Node, r: Renderer) -> flex::Node {
         let f: fn(*u8, *Node) -> flex::Node = r.date_picker;
         n = f(r.ctx, np);
         is_widget = true;
+    } else if k == kind_box() {
+        let f: fn(*u8, *Node) -> flex::Node = r.box;
+        n = f(r.ctx, np);
+        is_widget = true;
     } else if k == kind_native() {
         let f: fn(*u8, *Node) -> flex::Node = r.native;
         n = f(r.ctx, np);
@@ -1238,6 +1266,23 @@ fn mount(np: *Node, r: Renderer) -> flex::Node {
                     }
                     n.add_child(cf);
                 }
+                option::Option[*Node]::None => { }
+            }
+        }
+    } else if k == kind_grid() {
+        // CSS grid: N equal (1fr) columns; children auto-flow into cells.
+        n.set_display(flex::Display::Grid);
+        var gc: i32 = { (*np).grid_cols };
+        if gc < (1 as i32) { gc = 1 as i32; }
+        var c: i32 = 0 as i32;
+        while c < gc {
+            n.add_grid_column(flex::GridTrack::fr(1.0f64));
+            c = c + 1;
+        }
+        let cnt: usize = { (*np).children.count() };
+        for i in 0..(cnt as i32) {
+            match { (*np).children.at_ptr(i as usize) } {
+                option::Option[*Node]::Some(cp) => { n.add_child(mount(cp, r)); }
                 option::Option[*Node]::None => { }
             }
         }
@@ -1593,6 +1638,7 @@ static FAKE_SECURE_FIELDS: i32 = 0;
 static FAKE_SEGMENTEDS: i32 = 0;
 static FAKE_COLOR_PICKERS: i32 = 0;
 static FAKE_DATE_PICKERS: i32 = 0;
+static FAKE_BOXES: i32 = 0;
 static FAKE_NATIVES: i32 = 0;
 static FAKE_LAST_NATIVE_HANDLE: i64 = 0;
 static FAKE_BORDEREDS: i32 = 0;
@@ -1697,6 +1743,11 @@ fn fake_date_picker(ctx: *u8, np: *Node) -> flex::Node {
     return flex::Node::new().width(120.0f64).height(24.0f64);
 }
 
+fn fake_box(ctx: *u8, np: *Node) -> flex::Node {
+    FAKE_BOXES = FAKE_BOXES + 1;
+    return flex::Node::new();
+}
+
 fn fake_native(ctx: *u8, np: *Node) -> flex::Node {
     FAKE_NATIVES = FAKE_NATIVES + 1;
     FAKE_LAST_NATIVE_HANDLE = { (*np).native_handle } as i64;
@@ -1767,6 +1818,7 @@ fn fake_renderer() -> Renderer {
         segmented: fake_segmented,
         color_picker: fake_color_picker,
         date_picker: fake_date_picker,
+        box: fake_box,
         native: fake_native,
         bordered: fake_bordered,
         clickable: fake_clickable,
@@ -1795,6 +1847,7 @@ fn reset_fake_counts() {
     FAKE_SEGMENTEDS = 0;
     FAKE_COLOR_PICKERS = 0;
     FAKE_DATE_PICKERS = 0;
+    FAKE_BOXES = 0;
     FAKE_NATIVES = 0;
     FAKE_LAST_NATIVE_HANDLE = 0;
     FAKE_BORDEREDS = 0;
@@ -2192,6 +2245,47 @@ fn mount_zstack_overlays_children() {
         }
         option::Option[*flex::Node]::None => { assert false; }
     };
+}
+
+#[test]
+fn mount_grid_flows_children_into_columns() {
+    reset_fake_counts();
+    var inner: Builder = Builder::new();
+    inner.add(label("a"));
+    inner.add(label("b"));
+    inner.add(label("c"));
+    inner.add(label("d"));
+    var b: Builder = Builder::new();
+    b.add(grid(inner, columns: 2 as i32).frame(200.0f64, 200.0f64));
+    let root: Node = b.finish();
+    var tree: flex::Node = mount(#addr_of(root), fake_renderer());
+    tree.calculate_layout(200.0f64, 200.0f64, flex::Direction::LTR);
+    match tree.children.at_ptr(0 as usize) {
+        option::Option[*flex::Node]::Some(gp) => {
+            let c0: flex::Layout = must_layout({ (*gp).child_layout(0 as usize) });
+            let c1: flex::Layout = must_layout({ (*gp).child_layout(1 as usize) });
+            let c2: flex::Layout = must_layout({ (*gp).child_layout(2 as usize) });
+            assert approx(c0.left, 0.0f64);      // col 0
+            assert approx(c1.left, 100.0f64);    // col 1 (2 × 100 in 200)
+            assert approx(c2.left, 0.0f64);      // wraps to row 2, col 0
+        }
+        option::Option[*flex::Node]::None => { assert false; }
+    };
+    assert FAKE_LABELS == 4;
+}
+
+#[test]
+fn mount_dispatches_box() {
+    reset_fake_counts();
+    var b: Builder = Builder::new();
+    b.add(box()
+        .background(Color::system_blue())
+        .corner_radius(6.0f64)
+        .frame(40.0f64, 40.0f64));
+    let root: Node = b.finish();
+    let _t: flex::Node = mount(#addr_of(root), fake_renderer());
+    assert FAKE_BOXES == 1;
+    assert FAKE_IDENTITIES == 1;
 }
 
 #[test]
