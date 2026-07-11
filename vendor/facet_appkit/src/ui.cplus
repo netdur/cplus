@@ -188,6 +188,22 @@ fn button_view(title: str, primary: bool = false, agent_id: str = "") -> flex::N
     return view(b.as_view());
 }
 
+// An icon-only push button with NO action wired — the image-only twin of
+// `button_view`, for the facet `icon_button` kind (facet_appkit wires the
+// target/action itself, exactly once). Borderless, shows the named SF Symbol.
+fn icon_button_view(symbol_name: str, agent_id: str = "") -> flex::Node {
+    let b = ak::Button::new();
+    b.set_title("");
+    b.set_bordered(false);
+    match ak::Image::image_with_system_symbol_name(symbol_name, "") {
+        option::Option[ak::Image]::Some(img) => { b.set_image(img); }
+        option::Option[ak::Image]::None => { }
+    };
+    b.set_image_position(ak::CellImagePosition::NSImageOnly);
+    tag_agent(b.as_view().raw(), agent_id, identity::Role::Button);
+    return view(b.as_view());
+}
+
 // A push button firing `on(sender, ctx)`. The defaulted `ctx` right after
 // the handler is the bound-method-reference slot: `button("+1",
 // on: counter.on_inc)` wires the handler AND the component's address in one
@@ -426,15 +442,37 @@ fn text_area(
     on_change: fn(*u8, *u8) = 0 as fn(*u8, *u8),
     ctx: *u8 = 0 as *u8,
     agent_id: str = "",
+    editable: bool = true,
+    show_border: bool = true,
+    draws_background: bool = true,
+    inset_w: f64 = 0.0f64,
+    inset_h: f64 = 0.0f64,
 ) -> flex::Node {
     let zero: rt::Rect = rt::Rect { x: 0 as f64, y: 0 as f64, w: 0 as f64, h: 0 as f64 };
     let scroll = ak::ScrollView::new(zero);
-    scroll.set_border_type(ak::BorderType::NSBezelBorder);
+    // `show_border: false` drops the bezel (e.g. sitting inside a bordered box);
+    // the composer precedent.
+    if show_border {
+        scroll.set_border_type(ak::BorderType::NSBezelBorder);
+    } else {
+        scroll.set_border_type(ak::BorderType::NSNoBorder);
+    }
     scroll.set_has_vertical_scroller(true);
     let tv = ak::TextView::new_with_frame(zero);
-    tv.set_editable(true);
+    tv.set_editable(editable);   // `false` = a read-only (still selectable) viewer
     tv.set_rich_text(false);
     tv.as_text().set_font(ak::Font::system_font_of_size(13.0f64));
+    // `draws_background: false` clears BOTH layers (scroll + text view) so the
+    // area is transparent over an outer box — same two-layer clear as composer.
+    if !draws_background {
+        scroll.set_draws_background(false);
+        tv.set_draws_background(false);
+    }
+    // Text-container inset (left/right, top/bottom padding) — the code_editor
+    // precedent; a transcript usually wants a little breathing room.
+    if inset_w != 0.0f64 || inset_h != 0.0f64 {
+        tv.set_text_container_inset(rt::Size { w: inset_w, h: inset_h });
+    }
     if value != "" { tv.as_text().set_string(value); }
     // Track the scroll's content width as it resizes.
     tv.as_view().set_autoresizing_mask(ak::autoresizing_mask_options_n_s_view_width_sizable);
@@ -493,6 +531,28 @@ fn choose_directory() -> option::Option[text::Text] {
     panel.set_can_choose_files(false);
     panel.set_allows_multiple_selection(false);
     panel.as_save_panel().set_can_create_directories(true);
+    let resp: i64 = panel.as_save_panel().run_modal();
+    if resp != (1 as i64) { return option::Option[text::Text]::None; }   // NSModalResponseOK == 1
+    match panel.as_save_panel().u_r_l() {
+        option::Option[ak::URL]::Some(u) => {
+            let ns: *u8 = rt::msg_id(u.raw(), rt::sel(#str_ptr("path\0")));
+            if ns == { 0 as *u8 } { return option::Option[text::Text]::None; }
+            return option::some(bridge::to_text(ns));
+        }
+        option::Option[ak::URL]::None => { return option::Option[text::Text]::None; }
+    }
+    return option::Option[text::Text]::None;
+}
+
+// A modal open-panel that picks a single FILE, returning its path (None on
+// cancel). The `choose_directory` twin (files instead of directories) — for an
+// attach / insert-file action. Wraps the same NSOpenPanel + URL.path raw reach
+// so callers never hand-roll it.
+fn choose_file() -> option::Option[text::Text] {
+    let panel = ak::OpenPanel::open_panel();
+    panel.set_can_choose_files(true);
+    panel.set_can_choose_directories(false);
+    panel.set_allows_multiple_selection(false);
     let resp: i64 = panel.as_save_panel().run_modal();
     if resp != (1 as i64) { return option::Option[text::Text]::None; }   // NSModalResponseOK == 1
     match panel.as_save_panel().u_r_l() {
@@ -1087,6 +1147,20 @@ struct Slot {
 
 static SLOTS: vec::Vec[Slot] = #zero::[vec::Vec[Slot]]();
 
+// A post-render hook the upper (facet) layer installs. It runs after every
+// component render's `apply`, so a component whose subtree contains a portable
+// `scroll` / `split` reflows it: those kinds defer work (the two-phase fill /
+// the divider re-assert) into a job queue that lives in facet_appkit, and this
+// lower layer can't name that queue directly — so the backend registers a
+// drain fn here. Null (no facet backend in use) = a no-op.
+static POST_RENDER_HOOK: fn() = #zero::[fn()]();
+fn set_post_render_hook(h: fn()) { POST_RENDER_HOOK = h; return; }
+fn run_post_render_hook() {
+    let h: fn() = POST_RENDER_HOOK;
+    if h != (0 as fn()) { h(); }
+    return;
+}
+
 // Render one slot into its host at the host's current size. The previous
 // subtree is removed first; the flex tree (and the views it owns) drops at
 // the end of the call — the applied NSViews live on under the host, each
@@ -1108,6 +1182,7 @@ fn render_slot(sp: *Slot) -> f64 {
     tree.calculate_layout(hf.w, hf.h, flex::Direction::LTR);
     tree.round_to_pixel(2.0f64);
     apply(#addr_of(tree), { (*sp)._host }, { (*sp)._flipped });
+    run_post_render_hook();   // fill any deferred scroll/split in the subtree
     let f: flex::Layout = tree.layout_frame();
     return f.height;
 }
@@ -1146,6 +1221,7 @@ fn render_slot_scroll(sp: *Slot) -> f64 {
             s.set_document_view(ak::View::from_raw(doc.raw()));
         }
     }
+    run_post_render_hook();   // fill any deferred scroll/split nested in the rows
     return rf.height;
 }
 
@@ -1155,6 +1231,10 @@ fn render_slot_scroll(sp: *Slot) -> f64 {
 // (-1.0 when host is missing).
 fn mount(render: fn(*u8) -> flex::Node, ctx: *u8 = 0 as *u8, host: *u8 = 0 as *u8, flipped: bool = false) -> f64 {
     if host == { 0 as *u8 } { return -1.0f64; }
+    // Re-mounting the same component address replaces its prior slot, so a
+    // later invalidate never targets a stale (released) host. remove_slot
+    // no-ops on ctx 0 / no prior registration.
+    let _r: bool = remove_slot(ctx);
     let slots: *vec::Vec[Slot] = #addr_of(SLOTS);
     (*slots).append(Slot { _cp: ctx, _render: render, _host: host, _flipped: flipped, _scroll: false, _live: true });
     let n: usize = SLOTS.count();
@@ -1176,6 +1256,7 @@ fn mount(render: fn(*u8) -> flex::Node, ctx: *u8 = 0 as *u8, host: *u8 = 0 as *u
 fn mount_scroll(render: fn(*u8) -> flex::Node, ctx: *u8 = 0 as *u8, scroll: *u8 = 0 as *u8, agent_id: str = "") -> f64 {
     if scroll == { 0 as *u8 } { return -1.0f64; }
     if agent_id != "" { tag_agent(scroll, agent_id, identity::Role::Group); }
+    let _r: bool = remove_slot(ctx);   // replace any prior registration (see mount)
     let slots: *vec::Vec[Slot] = #addr_of(SLOTS);
     (*slots).append(Slot { _cp: ctx, _render: render, _host: scroll, _flipped: true, _scroll: true, _live: true });
     let n: usize = SLOTS.count();
@@ -1222,6 +1303,38 @@ fn unmount_all() {
     let slots: *vec::Vec[Slot] = #addr_of(SLOTS);
     (*slots).remove_all();
     return;
+}
+
+// Drop the (first) registration for one component address, if present.
+// swap_remove keeps the vec compact; invalidate scans all slots, so reordering
+// is harmless. Host + component are borrowed, so nothing is released. No-ops on
+// ctx 0 (the "no component" sentinel). Returns whether a slot was removed.
+fn remove_slot(cp: *u8) -> bool {
+    if cp == { 0 as *u8 } { return false; }
+    let slots: *vec::Vec[Slot] = #addr_of(SLOTS);
+    let n: usize = { (*slots).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*slots).at_ptr(i) {
+            option::Option[*Slot]::Some(sp) => {
+                if { (*sp)._cp } == cp {
+                    let _g: option::Option[Slot] = (*slots).swap_remove(i);
+                    return true;
+                }
+            }
+            option::Option[*Slot]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
+
+// Unmount ONE component — a window closing its own components without disturbing
+// another window's (vs `unmount_all`). Its slot is dropped, so a later
+// invalidate(cp) no-ops instead of reaching a released host. Returns whether a
+// registration was found.
+fn unmount(cp: *u8) -> bool {
+    return remove_slot(cp);
 }
 
 // ==========================================================================
@@ -1322,6 +1435,84 @@ fn test_button_with_symbol_has_leading_image() {
         _ => { assert false; }
     };
     assert true;
+}
+
+#[test]
+fn test_icon_button_view_is_image_only() {
+    // The facet `icon_button` backing: image set, NSImageOnly, no title, no
+    // action (facet_appkit wires that separately).
+    let n: flex::Node = icon_button_view("xmark.circle");
+    let b: ak::Button = ak::Button::from_raw(n.payload());
+    match b.image() {
+        option::Option[ak::Image]::Some(_img) => { }
+        option::Option[ak::Image]::None => { assert false; }
+    };
+    match b.image_position() {
+        ak::CellImagePosition::NSImageOnly => { }
+        _ => { assert false; }
+    };
+    assert b.title().view() == "";
+}
+
+#[test]
+fn test_text_area_editable_flag_controls_readonly() {
+    // `editable: false` makes the inner NSTextView a read-only viewer.
+    let ro: flex::Node = text_area(value: "log", editable: false);
+    match ak::ScrollView::from_raw(ro.payload()).document_view() {
+        option::Option[ak::View]::Some(dv) => { assert ak::TextView::from_raw(dv.raw()).is_editable() == false; }
+        option::Option[ak::View]::None => { assert false; }
+    };
+    let rw: flex::Node = text_area(value: "log");   // default editable
+    match ak::ScrollView::from_raw(rw.payload()).document_view() {
+        option::Option[ak::View]::Some(dv) => { assert ak::TextView::from_raw(dv.raw()).is_editable(); }
+        option::Option[ak::View]::None => { assert false; }
+    };
+}
+
+#[test]
+fn test_text_area_chrome_threads_inset() {
+    // The borderless / transparent / inset transcript config; the inset reaches
+    // the inner NSTextView (border+background follow the composer-proven path).
+    let t: flex::Node = text_area(value: "log", editable: false, show_border: false, draws_background: false, inset_w: 8.0f64, inset_h: 8.0f64);
+    let ins: rt::Size = area_inset(t.payload());
+    assert approx(ins.w, 8.0f64);
+    assert approx(ins.h, 8.0f64);
+    let d: flex::Node = text_area(value: "x");   // default: no inset
+    assert approx(area_inset(d.payload()).w, 0.0f64);
+}
+
+fn life_test_render(cp: *u8) -> flex::Node { return label("x"); }
+
+#[test]
+fn test_remount_replaces_slot_and_unmount_drops_one() {
+    unmount_all();
+    let a = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 100.0, h: 40.0 });
+    let b = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 100.0, h: 40.0 });
+    let cp: *u8 = 7 as *u8;   // a sentinel component identity
+    let _h1: f64 = mount(life_test_render, ctx: cp, host: a.raw());
+    let _h2: f64 = mount(life_test_render, ctx: cp, host: b.raw());   // re-mount same cp
+    // Exactly one live slot for cp, targeting the SECOND host (not the stale first).
+    var cnt: usize = 0 as usize;
+    var host_for_cp: *u8 = 0 as *u8;
+    let n: usize = SLOTS.count();
+    var i: usize = 0 as usize;
+    while i < n {
+        match SLOTS.at_ptr(i) {
+            option::Option[*Slot]::Some(sp) => {
+                if { (*sp)._cp } == cp { cnt = cnt +% (1 as usize); host_for_cp = { (*sp)._host }; }
+            }
+            option::Option[*Slot]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    assert cnt == (1 as usize);
+    assert host_for_cp == b.raw();
+    // invalidate finds the fresh slot; unmount drops exactly one; the rest no-op.
+    assert invalidate(cp);
+    assert unmount(cp);
+    assert unmount(cp) == false;
+    assert invalidate(cp) == false;
+    unmount_all();
 }
 
 #[test]

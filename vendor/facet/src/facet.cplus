@@ -203,6 +203,9 @@ struct Style {
     opacity: f64,          // -1 = unset (0..1)
     shadow_radius: f64,    // 0 = unset (drop-shadow blur radius)
     line_limit: i32,       // 0 = unset / unlimited (max text lines)
+    truncate: bool,        // single-line tail-ellipsis (…) when text overflows
+                           // its cell (vs the default mid-glyph clip). A label
+                           // property — SwiftUI's implicit `.truncationMode(.tail)`.
     text_align: i32,       // 0 = unset; 1 = leading, 2 = center, 3 = trailing
     hidden: bool,          // invisible but keeps its layout space (vs display:none)
     italic: bool,          // italicize the font
@@ -238,6 +241,7 @@ fn style_none() -> Style {
         opacity: -1.0f64,
         shadow_radius: 0.0f64,
         line_limit: 0 as i32,
+        truncate: false,
         text_align: 0 as i32,
         hidden: false,
         italic: false,
@@ -525,6 +529,16 @@ fn button(s: str, primary: bool = false) -> Node {
     return n;
 }
 
+// An icon-only push button: a borderless button showing the named SF Symbol
+// (SwiftUI `Button { } label: { Image(systemName:) }`). The symbol name rides
+// in `value` (the field already doubles as an image/symbol name); ak_button
+// branches to an image-only button when it is set. Wire it with `.on_click`.
+fn icon_button(symbol_name: str) -> Node {
+    var n: Node = blank(kind_button());
+    n.value = text::from_str(symbol_name);
+    return n;
+}
+
 // Flexible empty space.
 fn spacer() -> Node {
     var n: Node = blank(kind_spacer());
@@ -539,12 +553,24 @@ fn text_area(
     value: str = "",
     on_change: fn(*u8, *u8) = 0 as fn(*u8, *u8),
     ctx: *u8 = 0 as *u8,
+    editable: bool = true,
+    show_border: bool = true,
+    draws_background: bool = true,
+    inset_w: f64 = 0.0f64,
+    inset_h: f64 = 0.0f64,
 ) -> Node {
     var n: Node = blank(kind_text_area());
     n.placeholder = text::from_str(placeholder);
     n.value = text::from_str(value);
     n.on_change = on_change;
     n.click_ctx = ctx;
+    n.editable = editable;   // `false` = a read-only scrolling text view
+    // Chrome (composer/code_editor precedent): drop the bezel, clear the fill,
+    // pad the text container — a borderless transparent transcript with inset.
+    n.show_border = show_border;
+    n.draws_background = draws_background;
+    n.inset_w = inset_w;
+    n.inset_h = inset_h;
     return n;
 }
 
@@ -890,6 +916,9 @@ impl Node {
     fn opacity(take this, v: f64) -> Node { var n: Node = this; n.style.opacity = v; return n; }
     fn shadow(take this, radius: f64) -> Node { var n: Node = this; n.style.shadow_radius = radius; return n; }
     fn line_limit(take this, n_lines: i32) -> Node { var n: Node = this; n.style.line_limit = n_lines; return n; }
+    // `.truncate()` — a single-line label that ends in an ellipsis when it
+    // overflows, instead of clipping the last glyph (SwiftUI `.truncationMode(.tail)`).
+    fn truncate(take this) -> Node { var n: Node = this; n.style.truncate = true; return n; }
     fn text_align(take this, a: i32) -> Node { var n: Node = this; n.style.text_align = a; return n; }
     fn hidden(take this) -> Node { var n: Node = this; n.style.hidden = true; return n; }
     fn italic(take this) -> Node { var n: Node = this; n.style.italic = true; return n; }
@@ -994,6 +1023,7 @@ impl Node {
     fn set_opacity(ref this, v: f64) { this.style.opacity = v; return; }
     fn set_shadow(ref this, radius: f64) { this.style.shadow_radius = radius; return; }
     fn set_line_limit(ref this, n_lines: i32) { this.style.line_limit = n_lines; return; }
+    fn set_truncate(ref this, v: bool) { this.style.truncate = v; return; }
     fn set_text_align(ref this, a: i32) { this.style.text_align = a; return; }
     fn set_hidden(ref this, v: bool) { this.style.hidden = v; return; }
     fn set_italic(ref this, v: bool) { this.style.italic = v; return; }
@@ -2516,6 +2546,9 @@ fn facet_paint_modifiers_set_fields() {
     assert label("z").style.clip == false;      // default unclipped
     assert label("z").underline().style.underline;
     assert label("z").style.underline == false;  // default no underline
+    assert label("z").truncate().style.truncate;
+    assert label("z").style.truncate == false;   // default: clip, don't ellipsize
+    { var m: Node = label("z"); m.set_truncate(true); assert m.style.truncate; }
     let g: Node = box().gradient(Color::system_blue(), Color::system_green());
     assert g.style.grad_from.is_set();
     assert g.style.grad_to.token == (5 as u32);   // system_green
@@ -2529,6 +2562,20 @@ fn facet_paint_modifiers_set_fields() {
     assert approx(p.style.opacity, -1.0f64);   // unset
     assert approx(p.style.shadow_radius, 0.0f64);
     assert p.style.line_limit == (0 as i32);
+}
+
+#[test]
+fn facet_icon_button_and_readonly_text_area() {
+    // icon_button: a button kind whose SF Symbol name rides in `value` (empty
+    // title); a titled button leaves `value` empty (so ak_button can branch).
+    let ib: Node = icon_button("xmark.circle");
+    assert ib.kind == kind_button();
+    assert ib.value.view() == "xmark.circle";
+    assert ib.text.view() == "";
+    assert button("Save").value.view() == "";
+    // text_area editable flag: default true; `false` = a read-only viewer.
+    assert text_area(value: "log").editable;
+    assert text_area(value: "log", editable: false).editable == false;
 }
 
 #[test]

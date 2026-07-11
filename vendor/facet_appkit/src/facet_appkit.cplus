@@ -151,6 +151,10 @@ fn apply_style(view_ptr: *u8, kind: u32, np: *facet::Node) {
             ak::TextField::from_raw(view_ptr).set_text_color(ns_color(fg));
         } else if kind == facet::kind_button() {
             ak::Button::from_raw(view_ptr).set_content_tint_color(ns_color(fg));
+        } else if kind == facet::kind_symbol() {
+            // An SF Symbol is an NSImageView; its color is the content tint
+            // (the same knob ui::symbol_tinted uses for a green ✓ / red ✕).
+            ak::ImageView::from_raw(view_ptr).set_content_tint_color(ns_color(fg));
         }
     }
     // Font (size / weight / family) — text widgets + buttons carry a font via
@@ -303,13 +307,14 @@ fn ak_label(ctx: *u8, np: *facet::Node) -> flex::Node {
     if size <= 0.0f64 { size = 13.0f64; }
     var n: flex::Node = flex::Node::new();
     let tp: *text::Text = { #addr_of((*np).text) };
+    let trunc: bool = { (*np).style.truncate };
     match (*tp).c_str() {
         option::Option[text::CString]::Some(cs) => {
             let sv: str = { #str_from_raw_parts(cs.as_ptr(), cs.count()) };
-            n = ui::label(sv, size: size, bold: { (*np).bold }, secondary: { (*np).secondary });
+            n = ui::label(sv, size: size, bold: { (*np).bold }, secondary: { (*np).secondary }, truncate: trunc);
         }
         option::Option[text::CString]::None => {
-            n = ui::label("", size: size);
+            n = ui::label("", size: size, truncate: trunc);
         }
     };
     apply_style(n.payload(), facet::kind_label(), np);
@@ -336,16 +341,24 @@ fn ak_wrap_label(ctx: *u8, np: *facet::Node) -> flex::Node {
 
 fn ak_button(ctx: *u8, np: *facet::Node) -> flex::Node {
     var n: flex::Node = flex::Node::new();
-    let tp: *text::Text = { #addr_of((*np).text) };
-    match (*tp).c_str() {
-        option::Option[text::CString]::Some(cs) => {
-            let sv: str = { #str_from_raw_parts(cs.as_ptr(), cs.count()) };
-            n = ui::button_view(sv, primary: { (*np).primary });
-        }
-        option::Option[text::CString]::None => {
-            n = ui::button_view("", primary: { (*np).primary });
-        }
-    };
+    // `icon_button(name)` carries the SF Symbol name in `value`; build the
+    // image-only variant instead of a titled push button.
+    let vp: *text::Text = { #addr_of((*np).value) };
+    let sym: str = { (*vp).view() };
+    if sym != "" {
+        n = ui::icon_button_view(sym);
+    } else {
+        let tp: *text::Text = { #addr_of((*np).text) };
+        match (*tp).c_str() {
+            option::Option[text::CString]::Some(cs) => {
+                let sv: str = { #str_from_raw_parts(cs.as_ptr(), cs.count()) };
+                n = ui::button_view(sv, primary: { (*np).primary });
+            }
+            option::Option[text::CString]::None => {
+                n = ui::button_view("", primary: { (*np).primary });
+            }
+        };
+    }
     // Wire the action exactly once (a replaced target strands its creation
     // reference — never rewire). `component_after` re-renders the owning
     // component after the handler runs, keyed on click_ctx = the component's
@@ -362,6 +375,11 @@ fn ak_button(ctx: *u8, np: *facet::Node) -> flex::Node {
 fn ak_text_area(ctx: *u8, np: *facet::Node) -> flex::Node {
     let ch: fn(*u8, *u8) = { (*np).on_change };
     let cctx: *u8 = { (*np).click_ctx };
+    let ed: bool = { (*np).editable };   // `false` = read-only transcript view
+    let sb: bool = { (*np).show_border };
+    let db: bool = { (*np).draws_background };
+    let iw: f64 = { (*np).inset_w };
+    let ih: f64 = { (*np).inset_h };
     let vp: *text::Text = { #addr_of((*np).value) };
     let pp: *text::Text = { #addr_of((*np).placeholder) };
     var n: flex::Node = flex::Node::new();
@@ -371,10 +389,10 @@ fn ak_text_area(ctx: *u8, np: *facet::Node) -> flex::Node {
             match (*pp).c_str() {
                 option::Option[text::CString]::Some(pcs) => {
                     let ps: str = { #str_from_raw_parts(pcs.as_ptr(), pcs.count()) };
-                    n = ui::text_area(placeholder: ps, value: vs, on_change: ch, ctx: cctx);
+                    n = ui::text_area(placeholder: ps, value: vs, on_change: ch, ctx: cctx, editable: ed, show_border: sb, draws_background: db, inset_w: iw, inset_h: ih);
                 }
                 option::Option[text::CString]::None => {
-                    n = ui::text_area(placeholder: "", value: vs, on_change: ch, ctx: cctx);
+                    n = ui::text_area(placeholder: "", value: vs, on_change: ch, ctx: cctx, editable: ed, show_border: sb, draws_background: db, inset_w: iw, inset_h: ih);
                 }
             }
         }
@@ -382,10 +400,10 @@ fn ak_text_area(ctx: *u8, np: *facet::Node) -> flex::Node {
             match (*pp).c_str() {
                 option::Option[text::CString]::Some(pcs) => {
                     let ps: str = { #str_from_raw_parts(pcs.as_ptr(), pcs.count()) };
-                    n = ui::text_area(placeholder: ps, value: "", on_change: ch, ctx: cctx);
+                    n = ui::text_area(placeholder: ps, value: "", on_change: ch, ctx: cctx, editable: ed, show_border: sb, draws_background: db, inset_w: iw, inset_h: ih);
                 }
                 option::Option[text::CString]::None => {
-                    n = ui::text_area(placeholder: "", value: "", on_change: ch, ctx: cctx);
+                    n = ui::text_area(placeholder: "", value: "", on_change: ch, ctx: cctx, editable: ed, show_border: sb, draws_background: db, inset_w: iw, inset_h: ih);
                 }
             }
         }
@@ -897,6 +915,41 @@ fn drain_scroll_jobs() {
     return;
 }
 
+// A split records its divider position and re-asserts it AFTER apply. Setting
+// the position at build time lands on a 0×0 frame, so NSSplitView re-derives it
+// on the first real layout and collapses the leading pane — the same two-phase
+// problem as scroll, so the same deferral fixes it.
+struct SplitJob {
+    opaque split: *u8,      // the NSSplitView (borrowed; the flex payload owns it)
+    position: f64,          // divider offset to re-assert once the frame is real
+}
+
+static SPLIT_JOBS: vec::Vec[SplitJob] = #zero::[vec::Vec[SplitJob]]();
+
+fn drain_split_jobs() {
+    let jobs: *vec::Vec[SplitJob] = { #addr_of(SPLIT_JOBS) };
+    while { (*jobs).count() } > (0 as usize) {
+        let last: usize = { (*jobs).count() } -% (1 as usize);
+        match (*jobs).swap_remove(last) {
+            option::Option[SplitJob]::Some(job) => {
+                let SplitJob { split, position } = job;
+                ak::SplitView::from_raw(split).set_position(position, 0 as i64);
+            }
+            option::Option[SplitJob]::None => { }
+        }
+    }
+    return;
+}
+
+// The post-apply drain: size split panes FIRST (so a scroll inside a pane sees
+// the correct viewport), THEN fill scrolls. Called after apply by mount_into and
+// — via the component runtime's post-render hook — after every component render.
+fn drain_post_apply() {
+    drain_split_jobs();
+    drain_scroll_jobs();
+    return;
+}
+
 fn ak_clickable(ctx: *u8, np: *facet::Node, take content: flex::Node) -> flex::Node {
     // Primary click reuses Node.click; only wire when a real handler is set
     // (noop is the blank default — ui:: treats null-fn as "don't install").
@@ -935,6 +988,10 @@ fn ak_split(ctx: *u8, np: *facet::Node, take first: flex::Node, take second: fle
         min_first: { (*np).min_first },
         min_second: { (*np).min_second },
     );
+    // Defer a divider re-assert to after apply — ui::split set it on a 0×0
+    // frame, which NSSplitView discards on the first layout (see SplitJob).
+    let jobs: *vec::Vec[SplitJob] = { #addr_of(SPLIT_JOBS) };
+    (*jobs).append(SplitJob { split: n.payload(), position: { (*np).position } });
     apply_style(n.payload(), facet::kind_split(), np);
     return n;
 }
@@ -973,6 +1030,9 @@ fn ak_set_identity(ctx: *u8, handle: *u8, id: str, role: u32) {
 // The vtable value. `ctx` is an unused backend-context slot (a future backend
 // context — theme, window — can ride here); the ops don't read it.
 fn renderer() -> facet::Renderer {
+    // Ensure a component re-render (ui::render_slot, which can't name our job
+    // queues) drains deferred scroll/split work through this up-call hook.
+    ui::set_post_render_hook(drain_post_apply);
     return facet::Renderer {
         ctx: 0 as *u8,
         label: ak_label,
@@ -1019,9 +1079,10 @@ fn mount_into(np: *facet::Node, view_ptr: *u8, width: f64, height: f64) -> f64 {
     tree.calculate_layout(width, height, flex::Direction::LTR);
     tree.round_to_pixel(2.0f64);
     ui::apply(#addr_of(tree), view_ptr, false);
-    // Now that apply has sized every scroll's viewport, fill their content
-    // (phase two). Any `scroll` kind in the tree registered a job in ak_scroll.
-    drain_scroll_jobs();
+    // Now that apply has sized every scroll's viewport and split's frame, run
+    // the deferred phase-two work (fill scroll content, re-assert split
+    // dividers). Any `scroll`/`split` in the tree registered a job.
+    drain_post_apply();
     let f: flex::Layout = tree.layout_frame();
     return f.height;
 }
