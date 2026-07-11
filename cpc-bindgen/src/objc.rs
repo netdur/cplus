@@ -65,6 +65,19 @@ pub struct ObjcEmitter {
     // no overloading) while keeping the idiomatic `base(label:, ...)` form wherever
     // the base is unambiguous. Recomputed per class alongside `seen_methods`.
     method_plan: HashMap<String, (String, usize)>,
+    // Setter selectors (`setFoo:`) for this class's own `assign` /
+    // `unsafe_unretained` writable OBJECT properties — non-retaining references.
+    // Such a setter CAN dangle: a caller's freshly-created owning wrapper (often
+    // the object's only +1) drops after the call and the property is left
+    // pointing at freed memory → use-after-free (NSOutlineView.outlineTableColumn
+    // is the canonical case). `weak` is excluded (ARC zeroes it — no UAF) as are
+    // `strong`/`copy`/`retain` (they retain on their own). This is the ELIGIBLE
+    // set; whether a setter actually PINS its arg (a retained association) is
+    // opt-in via the `retain_setters` allow-list — because many AppKit assign
+    // object properties are hierarchy/graph BACK-references (nextResponder,
+    // parentWindow, the text-system network …) where retaining would form a
+    // retain cycle, so pinning is fail-safe opt-in, not automatic. Per class.
+    assign_prop_setters: HashSet<String>,
     // Emitted struct / type names. A class and a protocol can share a name
     // (NSObject, NSTextAttachmentCell); the later one is renamed, not duplicated.
     seen_types: HashSet<String>,
@@ -390,6 +403,7 @@ impl ObjcEmitter {
             used_enums: Vec::new(),
             seen_methods: HashSet::new(),
             method_plan: HashMap::new(),
+            assign_prop_setters: HashSet::new(),
             seen_types: HashSet::new(),
             known_types: HashSet::new(),
             type_params: HashSet::new(),
@@ -435,6 +449,24 @@ impl ObjcEmitter {
     fn is_skipped(&self, class: &str, sel: &str) -> bool {
         self.overrides
             .get("skip")
+            .and_then(|s| s.get(class))
+            .and_then(|a| a.as_array())
+            .map(|a| a.iter().any(|x| x.as_str() == Some(sel)))
+            .unwrap_or(false)
+    }
+
+    /// Is this setter on the `retain_setters` ALLOW-list — an audited-safe
+    /// `assign`/`unsafe_unretained` OBJECT-property setter that should pin its
+    /// argument with a retained association (the use-after-free fix)? Opt-in, not
+    /// automatic: most AppKit assign object properties are hierarchy/graph
+    /// BACK-references (nextResponder, parentWindow, layoutManager↔textStorage, …)
+    /// where retaining the pointee — which already owns the receiver — would form
+    /// a retain CYCLE (a leak). An allow-list is fail-safe: an unlisted property
+    /// keeps today's (unpinned) behavior — never a new leak — and a property is
+    /// added only once confirmed to be receiver-owned content with no back-edge.
+    fn retain_setter(&self, class: &str, sel: &str) -> bool {
+        self.overrides
+            .get("retain_setters")
             .and_then(|s| s.get(class))
             .and_then(|a| a.as_array())
             .map(|a| a.iter().any(|x| x.as_str() == Some(sel)))
@@ -1226,6 +1258,37 @@ impl ObjcEmitter {
                 }
             }
         }
+        // The ELIGIBLE set for assign-property pinning: this class's own WRITABLE
+        // `assign`/`unsafe_unretained` OBJECT properties (readonly has no setter;
+        // `weak` is ARC-zeroed — no dangle; `strong`/`copy`/`retain` retain on
+        // their own). `emit_method` pins one only if it is ALSO on the
+        // `retain_setters` allow-list (most are cyclic back-refs — see there).
+        // Object-ness is re-confirmed at emit (arg must lower to `.raw()`), so a
+        // rare scalar-pointer assign property recorded here is a harmless no-op.
+        self.assign_prop_setters.clear();
+        for src in std::iter::once(itf).chain(categories.iter()) {
+            for p in src.get("inner").and_then(|v| v.as_array()).into_iter().flatten() {
+                if p.get("kind").and_then(|k| k.as_str()) != Some("ObjCPropertyDecl") {
+                    continue;
+                }
+                if p.get("readonly").and_then(|v| v.as_bool()).unwrap_or(false) {
+                    continue;
+                }
+                let non_retaining = p.get("assign").and_then(|v| v.as_bool()).unwrap_or(false)
+                    || p.get("unsafe_unretained").and_then(|v| v.as_bool()).unwrap_or(false);
+                if !non_retaining {
+                    continue;
+                }
+                if let Some(setter) = p
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .and_then(setter_selector)
+                {
+                    self.assign_prop_setters.insert(setter);
+                }
+            }
+        }
+
         // Shared with Pass 2a's `non_owning_types` registration so the two never
         // drift: a type emitted `opaque` (no drop) here must be the one Pass 2a
         // judged safe to put in a `Vec`.
@@ -2485,10 +2548,44 @@ impl ObjcEmitter {
             .return_spelling(&ret, &send, owned_plus_one)
             .expect("collection/unsupported returns are handled earlier in emit_method");
 
+        // An allow-listed `assign`/`unsafe_unretained` OBJECT-property setter pins
+        // its argument with a RETAINED association (keyed by the setter selector —
+        // a stable, process-unique pointer) BEFORE the store, so the non-retaining
+        // property cannot dangle when the caller's owning wrapper drops. Re-setting
+        // the property re-keys the same slot (releases the old pin, retains the
+        // new); the association releases when the receiver deallocs. Gated on both
+        // eligibility (an assign object property) AND the `retain_setters`
+        // allow-list (pinning a cyclic back-ref would leak), and only when the arg
+        // is a typed object handle (`.raw()`).
+        let pin_prefix = if is_instance
+            && matches!(ret, Ret::Void)
+            && args.len() == 1
+            && self.assign_prop_setters.contains(&sel)
+            && self.retain_setter(objc_class, &sel)
+        {
+            match args.first() {
+                // A TYPED object wrapper lowers to `<name>.raw()` — a real,
+                // retainable ObjC object. A bare `Arg::Id(name)` is an untyped
+                // handle: `id`, but also `SEL` / `Class` (NSControl.action /
+                // .selector, restorationClass) which are NOT retainable objects —
+                // pinning one would `objc_retain` a non-object. So pin only the
+                // `.raw()` (typed-object) form.
+                Some(Arg::Id(raw)) if raw.ends_with(".raw()") => {
+                    self.needs_synth = true;
+                    format!(
+                        "        synth::retain_associated(this._obj, rt::sel(#str_ptr(\"{sel}\\0\")), {raw});\n"
+                    )
+                }
+                _ => String::new(),
+            }
+        } else {
+            String::new()
+        };
+
         // Prologue: build an NSMutableArray from each Vec[P] param (the send call
         // already references the `arr_<pname>` local via arg_expr). Same value the
         // collection-return bodies above inject.
-        self.body.push_str(&format!("    fn {name}({receiver}{sep}{sig_param}){ret_spelling} {{\n{coll_prologue}{body_line}    }}\n\n"));
+        self.body.push_str(&format!("    fn {name}({receiver}{sep}{sig_param}){ret_spelling} {{\n{coll_prologue}{pin_prefix}{body_line}    }}\n\n"));
     }
 
     /// A method with a trailing `usingBlock:` param: emit a per-method
@@ -4313,6 +4410,17 @@ enum TdCanon {
 /// one segment (`tokensForRange:` -> `tokens_for_range`); multi-part selectors
 /// camel-join every segment so they stay collision-free (`a:b:` -> `a_b`, never
 /// clashing with `a:`). The override file supplies nicer labels on top.
+/// The default Cocoa setter selector for a property name (`outlineTableColumn`
+/// -> `setOutlineTableColumn:`). Capitalizes the FIRST character only (Cocoa's
+/// rule: `URL` -> `setURL:`). `None` for an empty name. Custom `setter=` names
+/// are not modelled — they are essentially absent on AppKit's assign object
+/// properties, and a miss only reverts to today's (unpinned) behavior.
+fn setter_selector(prop: &str) -> Option<String> {
+    let mut chars = prop.chars();
+    let first = chars.next()?;
+    Some(format!("set{}{}:", first.to_uppercase(), chars.as_str()))
+}
+
 fn mechanical_name(sel: &str) -> String {
     let parts: Vec<&str> = sel.split(':').filter(|s| !s.is_empty()).collect();
     let joined: String = parts
@@ -4843,6 +4951,75 @@ mod tests {
         assert!(out.contains("type_: fn"), "field escaped:\n{out}");
         assert!(out.contains("fn set_type_(ref this"), "setter escaped:\n{out}");
         assert!(!out.contains("\n    type: fn"), "no bare keyword field:\n{out}");
+    }
+
+    #[test]
+    fn assign_object_setters_recorded_minus_weak_strong_readonly() {
+        // The ELIGIBLE set is every WRITABLE `assign`/`unsafe_unretained`
+        // property's setter; weak/strong/copy/readonly are not eligible. (Whether
+        // a setter actually pins is a separate allow-list gate at emit time.)
+        let mut e = ObjcEmitter::new("test.h", "NS", serde_json::json!({}));
+        let prop = |name: &str, attr: &str, extra: &str| {
+            let mut o = serde_json::json!({
+                "kind": "ObjCPropertyDecl", "name": name, "type": { "qualType": "NSString *" }, "readwrite": true
+            });
+            o[attr] = serde_json::json!(true);
+            if !extra.is_empty() { o[extra] = serde_json::json!(true); }
+            o
+        };
+        let itf = serde_json::json!({
+            "kind": "ObjCInterfaceDecl", "name": "NSThing", "loc": { "file": "test.h" },
+            "inner": [
+                prop("assignObj", "assign", "unsafe_unretained"),
+                prop("weakObj", "weak", ""),
+                prop("strongObj", "strong", ""),
+                serde_json::json!({ "kind": "ObjCPropertyDecl", "name": "roObj", "type": { "qualType": "NSString *" }, "assign": true, "readonly": true }),
+            ]
+        });
+        e.emit_interface(&itf, &[]);
+        assert!(e.assign_prop_setters.contains("setAssignObj:"), "assign eligible: {:?}", e.assign_prop_setters);
+        assert!(!e.assign_prop_setters.contains("setWeakObj:"), "weak not eligible");
+        assert!(!e.assign_prop_setters.contains("setStrongObj:"), "strong not eligible");
+        assert!(!e.assign_prop_setters.contains("setRoObj:"), "readonly not eligible");
+    }
+
+    #[test]
+    fn allow_listed_assign_object_setter_pins_others_do_not() {
+        // End-to-end: an assign object-property setter pins its arg ONLY when it is
+        // on the `retain_setters` allow-list (the outlineTableColumn UAF fix). A
+        // strong property, and an eligible-but-unlisted assign property, do not.
+        let col_init = serde_json::json!({
+            "kind": "ObjCMethodDecl", "name": "init", "instance": true, "loc": { "file": "test.h" },
+            "returnType": { "qualType": "instancetype" }, "inner": []
+        });
+        let setter = |sel: &str, pname: &str| serde_json::json!({
+            "kind": "ObjCMethodDecl", "name": sel, "instance": true, "loc": { "file": "test.h" },
+            "returnType": { "qualType": "void" },
+            "inner": [ { "kind": "ParmVarDecl", "name": pname, "type": { "qualType": "NSCol *" } } ]
+        });
+        let assign_prop = |name: &str| serde_json::json!({
+            "kind": "ObjCPropertyDecl", "name": name, "type": { "qualType": "NSCol *" }, "assign": true, "unsafe_unretained": true, "readwrite": true
+        });
+        let tu = serde_json::json!({ "inner": [
+            { "kind": "ObjCInterfaceDecl", "name": "NSCol", "loc": { "file": "test.h" }, "inner": [ col_init ] },
+            { "kind": "ObjCInterfaceDecl", "name": "NSThing", "loc": { "file": "test.h" }, "inner": [
+                assign_prop("outlineCol"),   setter("setOutlineCol:", "outlineCol"),
+                assign_prop("backRefCol"),   setter("setBackRefCol:", "backRefCol"),   // eligible but NOT allow-listed
+                { "kind": "ObjCPropertyDecl", "name": "strongCol", "type": { "qualType": "NSCol *" }, "strong": true, "readwrite": true },
+                setter("setStrongCol:", "strongCol"),
+            ] },
+        ]});
+        // Only setOutlineCol: is allow-listed for NSThing.
+        let overrides = serde_json::json!({ "retain_setters": { "NSThing": ["setOutlineCol:"] } });
+        let out = ObjcEmitter::new("test.h", "NS", overrides).run(&tu);
+        assert!(out.contains("fn set_outline_col("), "allow-listed setter emitted:\n{out}");
+        assert!(
+            out.contains("synth::retain_associated(this._obj, rt::sel(#str_ptr(\"setOutlineCol:\\0\")), outline_col.raw());"),
+            "allow-listed assign setter pins its arg:\n{out}"
+        );
+        assert!(!out.contains("retain_associated(this._obj, rt::sel(#str_ptr(\"setBackRefCol:"), "eligible-but-unlisted setter must NOT pin:\n{out}");
+        assert!(!out.contains("retain_associated(this._obj, rt::sel(#str_ptr(\"setStrongCol:"), "strong setter must NOT pin:\n{out}");
+        assert!(out.contains("import \"objc/synthesis\" as synth;"), "synth import pulled in:\n{out}");
     }
 
     #[test]

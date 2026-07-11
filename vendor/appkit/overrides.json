@@ -1,7 +1,11 @@
 {
-  "_comment": "cpc-bindgen naming overrides for AppKit. `types`/`methods` refine snake_case names; `skip` drops selectors that can't be bound safely. NSUserActivity -init is API_DEPRECATED/obsoleted (macOS 10.12) and throws NSInvalidArgumentException at runtime with no static signal, so it is skipped — initWithActivityType: becomes the primary new(activity_type).",
+  "_comment": "cpc-bindgen naming overrides for AppKit. `types`/`methods` refine snake_case names; `skip` drops selectors that can't be bound safely. NSUserActivity -init is API_DEPRECATED/obsoleted (macOS 10.12) and throws NSInvalidArgumentException at runtime with no static signal, so it is skipped — initWithActivityType: becomes the primary new(activity_type). `retain_setters` is the ALLOW-list of assign/unsafe_unretained OBJECT-property setters that should pin their argument with a retained association (the fix for the outlineTableColumn use-after-free: an owning wrapper passed in drops its only +1 and the non-retaining property dangles). It is opt-in because MOST AppKit assign object properties are hierarchy/graph BACK-references (nextResponder, parentWindow, menu-item→menu, the layoutManager↔textStorage↔textContainer text network, textFinder→client) where retaining the pointee — which already owns the receiver — would form a retain CYCLE / leak. Listed here only after auditing that the property is receiver-owned CONTENT with no back-edge: outlineTableColumn (the view owns its column) and NSTableCellView.imageView/textField (subviews — a subview does not retain its superview).",
   "methods": {},
   "skip": {
     "NSUserActivity": ["init"]
+  },
+  "retain_setters": {
+    "NSOutlineView": ["setOutlineTableColumn:"],
+    "NSTableCellView": ["setImageView:", "setTextField:"]
   }
 }

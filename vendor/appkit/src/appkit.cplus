@@ -51101,6 +51101,7 @@ impl TableCellView {
     }
 
     fn set_text_field(this, text_field: TextField) {
+        synth::retain_associated(this._obj, rt::sel(#str_ptr("setTextField:\0")), text_field.raw());
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setTextField:\0")), text_field.raw());
     }
 
@@ -51113,6 +51114,7 @@ impl TableCellView {
     }
 
     fn set_image_view(this, image_view: ImageView) {
+        synth::retain_associated(this._obj, rt::sel(#str_ptr("setImageView:\0")), image_view.raw());
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setImageView:\0")), image_view.raw());
     }
 
@@ -51481,6 +51483,7 @@ impl OutlineView {
     }
 
     fn set_outline_table_column(this, outline_table_column: TableColumn) {
+        synth::retain_associated(this._obj, rt::sel(#str_ptr("setOutlineTableColumn:\0")), outline_table_column.raw());
         rt::msg_void_id(this._obj, rt::sel(#str_ptr("setOutlineTableColumn:\0")), outline_table_column.raw());
     }
 
