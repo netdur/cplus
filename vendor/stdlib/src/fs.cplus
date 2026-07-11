@@ -43,13 +43,33 @@ struct File {
     _fd: i32,
 }
 
+// Copy a `str` path into an owned NUL-terminated C string for libc. A `str` is
+// a `(ptr, len)` VIEW with no guaranteed NUL at `ptr[len]`; handing
+// `#str_ptr(path)` straight to open/access/mkdir/unlink/opendir makes libc read
+// PAST the view until it finds a stray 0 byte — opening the wrong path, or
+// ENOENT on a path that exists (any substring view, e.g. a line trimmed of its
+// trailing '\n'). `text::CString` owns a malloc'd copy with the terminator
+// (exactly `len` bytes copied — never reads past the view), valid for the whole
+// call. `None` only when the path holds an interior NUL byte (not a valid path);
+// an empty path yields a valid empty C string.
+fn c_path(path: str) -> option::Option[text::CString] {
+    return text::from_str(path).c_str();
+}
+
 // Open `path` for reading. macOS + Linux: O_RDONLY = 0.
 fn open_read(path: str) -> result::Result[File, result::IoError] {
-    let fd: i32 = { open(#str_ptr(path), 0 as i32, 0 as i32) };
-    if fd < (0 as i32) {
-        return result::io_err::[File](result::IoError::NotFound);
+    match c_path(path) {
+        option::Option[text::CString]::Some(cp) => {
+            let fd: i32 = { open(cp.as_ptr(), 0 as i32, 0 as i32) };
+            if fd < (0 as i32) {
+                return result::io_err::[File](result::IoError::NotFound);
+            }
+            return result::io_ok::[File](File { _fd: fd });
+        }
+        option::Option[text::CString]::None => {
+            return result::io_err::[File](result::IoError::InvalidInput);
+        }
     }
-    return result::io_ok::[File](File { _fd: fd });
 }
 
 // Open `path` for writing, creating + truncating if missing. Mode 0o644.
@@ -60,11 +80,18 @@ fn open_read(path: str) -> result::Result[File, result::IoError] {
 fn create(path: str) -> result::Result[File, result::IoError] {
     let flags: i32 = 1537 as i32;
     let mode: i32 = 420 as i32;
-    let fd: i32 = { open(#str_ptr(path), flags, mode) };
-    if fd < (0 as i32) {
-        return result::io_err::[File](result::IoError::PermissionDenied);
+    match c_path(path) {
+        option::Option[text::CString]::Some(cp) => {
+            let fd: i32 = { open(cp.as_ptr(), flags, mode) };
+            if fd < (0 as i32) {
+                return result::io_err::[File](result::IoError::PermissionDenied);
+            }
+            return result::io_ok::[File](File { _fd: fd });
+        }
+        option::Option[text::CString]::None => {
+            return result::io_err::[File](result::IoError::InvalidInput);
+        }
     }
-    return result::io_ok::[File](File { _fd: fd });
 }
 
 impl File {
@@ -231,15 +258,25 @@ fn errno_as_ioerror() -> result::IoError {
 
 // True if `path` exists (file, directory, or any other node).
 fn exists(path: str) -> bool {
-    return { access(#str_ptr(path), 0 as i32) } == (0 as i32);   // F_OK == 0
+    match c_path(path) {
+        option::Option[text::CString]::Some(cp) => { return { access(cp.as_ptr(), 0 as i32) } == (0 as i32); }   // F_OK == 0
+        option::Option[text::CString]::None => { return false; }
+    }
 }
 
 // Create the single directory `path` with mode 0o755. `Err(AlreadyExists)` if it
 // is already present — use `create_dir_all` to create parents idempotently.
 fn create_dir(path: str) -> result::Result[bool, result::IoError] {
-    let r: i32 = { mkdir(#str_ptr(path), 493 as u16) };   // 0o755
-    if r == (0 as i32) { return result::io_ok::[bool](true); }
-    return result::io_err::[bool](errno_as_ioerror());
+    match c_path(path) {
+        option::Option[text::CString]::Some(cp) => {
+            let r: i32 = { mkdir(cp.as_ptr(), 493 as u16) };   // 0o755
+            if r == (0 as i32) { return result::io_ok::[bool](true); }
+            return result::io_err::[bool](errno_as_ioerror());
+        }
+        option::Option[text::CString]::None => {
+            return result::io_err::[bool](result::IoError::InvalidInput);
+        }
+    }
 }
 
 // Create `path` and every missing parent, like `mkdir -p`. Idempotent: an
@@ -288,9 +325,16 @@ fn create_dir_all(path: str) -> result::Result[bool, result::IoError] {
 
 // Delete the file at `path`. `Err(NotFound)` if it does not exist.
 fn remove_file(path: str) -> result::Result[bool, result::IoError] {
-    let r: i32 = { unlink(#str_ptr(path)) };
-    if r == (0 as i32) { return result::io_ok::[bool](true); }
-    return result::io_err::[bool](errno_as_ioerror());
+    match c_path(path) {
+        option::Option[text::CString]::Some(cp) => {
+            let r: i32 = { unlink(cp.as_ptr()) };
+            if r == (0 as i32) { return result::io_ok::[bool](true); }
+            return result::io_err::[bool](errno_as_ioerror());
+        }
+        option::Option[text::CString]::None => {
+            return result::io_err::[bool](result::IoError::InvalidInput);
+        }
+    }
 }
 
 // `true` for the dirent name "." or "..".
@@ -306,7 +350,12 @@ fn _is_dot_entry(p: *u8, len: usize) -> bool {
 // The entry names in directory `path` (excluding "." and ".."), or `None` if the
 // directory can't be opened. Names only — not full paths.
 fn read_dir(path: str) -> option::Option[vec::Vec[text::Text]] {
-    let dir: *u8 = { opendir(#str_ptr(path)) };
+    // opendir copies the path internally, so the CString need only outlive the
+    // call (it does — bound in the match arm).
+    let dir: *u8 = match c_path(path) {
+        option::Option[text::CString]::Some(cp) => { opendir(cp.as_ptr()) }
+        option::Option[text::CString]::None => { 0 as *u8 }
+    };
     if dir == { 0 as *u8 } {
         return option::Option[vec::Vec[text::Text]]::None;
     }
@@ -388,6 +437,28 @@ fn fs_write_then_read_roundtrip() {
         }
         result::Result[File, result::IoError]::Err(e) => { assert false; }
     }
+    return;
+}
+
+#[test]
+fn fs_path_reads_only_the_view_not_the_buffer_tail() {
+    // Regression (2026-07-11): a `str` is a (ptr,len) view with no NUL at
+    // ptr[len]. Reach a real file through a view whose backing buffer has
+    // trailing junk after `len`; libc must see only the 27-byte view, not read
+    // into the junk (before the fix, open/access saw "...binJUNKJUNK" → ENOENT).
+    let real: str = "/tmp/cplus_fs_view_test.bin";
+    match create(real) {
+        result::Result[File, result::IoError]::Ok(f) => { var w: File = f; w.close(); }
+        result::Result[File, result::IoError]::Err(e) => { assert false; }
+    }
+    let padded: str = "/tmp/cplus_fs_view_test.binJUNKJUNK";
+    let view: str = { #str_from_raw_parts(#str_ptr(padded), 27 as usize) };   // just the path
+    assert exists(view);
+    match open_read(view) {
+        result::Result[File, result::IoError]::Ok(f) => { var r: File = f; r.close(); }
+        result::Result[File, result::IoError]::Err(e) => { assert false; }
+    }
+    let _c: result::Result[bool, result::IoError] = remove_file(real);
     return;
 }
 
