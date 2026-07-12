@@ -46,17 +46,73 @@ fn release_view(p: *u8) { rt::release(p); return; }
 
 // Measure a leaf through its backing view's fittingSize. `ctx` is the raw
 // view pointer (borrowed; the same node's payload owns it).
+//
+// The answer is CACHED on the view: fittingSize of a static widget (label,
+// button, chip — everything measured here is created by this package and
+// never mutated after construction) does not depend on the available space,
+// yet a retained-relayout resize pass re-asks for thousands of them, each a
+// full text-layout. The size is packed as a 1/256-pt fixed-point (w,h) pair
+// in an ASSIGN associated integer (the identity-affordance disguised-pointer
+// trick); packed 0 = no cache (a genuine 0×0 view just re-measures). The
+// stored (quantized) value is returned on the FIRST call too, so every pass
+// sees bit-identical sizes. Wrapping text (measure_wrap) depends on the
+// flexed width and stays uncached.
+fn measure_cache_key() -> *u8 { return { 28710 as *u8 }; }
+
 fn measure_view(ctx: *u8, avail_w: f64, wmode: flex::MeasureMode, avail_h: f64, hmode: flex::MeasureMode) -> flex::Size {
+    let cached: *u8 = rt::get_associated_object(ctx, measure_cache_key());
+    if cached != (0 as *u8) {
+        let bits: u64 = cached as u64;
+        let wq: u64 = bits >> (32 as u64);
+        let hq: u64 = bits & (4294967295 as u64);
+        return flex::Size { width: (wq as f64) / 256.0f64, height: (hq as f64) / 256.0f64 };
+    }
     let s: rt::Size = ak::View::from_raw(ctx).fitting_size();
-    return flex::Size { width: s.w, height: s.h };
+    let wq2: u64 = ((s.w * 256.0f64) + 0.5f64) as u64;
+    let hq2: u64 = ((s.h * 256.0f64) + 0.5f64) as u64;
+    let packed: u64 = (wq2 << (32 as u64)) | (hq2 & (4294967295 as u64));
+    if packed != (0 as u64) {
+        rt::set_associated_object(ctx, measure_cache_key(), packed as *u8, 0 as usize);
+    }
+    return flex::Size { width: (wq2 as f64) / 256.0f64, height: (hq2 as f64) / 256.0f64 };
 }
 
 // Measure wrapping text: constrain preferredMaxLayoutWidth to the flexed
 // width first, so fittingSize reports the wrapped height.
+//
+// One-entry cache per view, KEYED BY THE AVAILABLE WIDTH: unlike static
+// leaves (measure_view) the answer depends on avail_w, but a content-sized
+// tree re-measures every wrap label each pass even when the width did not
+// change (the root's intrinsic pass runs before the layout cache can skip).
+// Same width ⇒ cached wrap; new width ⇒ honest TextKit re-wrap. Two ASSIGN
+// associated integers: the quantized key width and the packed (w,h). The
+// unconstrained path (avail_w ≤ 0 or undefined) is never cached.
+fn wrap_cache_avail_key() -> *u8 { return { 28711 as *u8 }; }
+fn wrap_cache_size_key() -> *u8 { return { 28712 as *u8 }; }
+
 fn measure_wrap(ctx: *u8, avail_w: f64, wmode: flex::MeasureMode, avail_h: f64, hmode: flex::MeasureMode) -> flex::Size {
+    var awq: u64 = 0 as u64;
+    if avail_w > 0.0f64 { awq = ((avail_w * 256.0f64) + 0.5f64) as u64; }   // NaN > 0 is false
+    if awq != (0 as u64) {
+        let k: *u8 = rt::get_associated_object(ctx, wrap_cache_avail_key());
+        if (k as u64) == awq {
+            let bits: u64 = rt::get_associated_object(ctx, wrap_cache_size_key()) as u64;
+            let wq: u64 = bits >> (32 as u64);
+            let hq: u64 = bits & (4294967295 as u64);
+            return flex::Size { width: (wq as f64) / 256.0f64, height: (hq as f64) / 256.0f64 };
+        }
+    }
     let tf: ak::TextField = ak::TextField::from_raw(ctx);
     if avail_w > 0.0f64 { tf.set_preferred_max_layout_width(avail_w); }
     let s: rt::Size = tf.as_view().fitting_size();
+    if awq != (0 as u64) {
+        let wq2: u64 = ((s.w * 256.0f64) + 0.5f64) as u64;
+        let hq2: u64 = ((s.h * 256.0f64) + 0.5f64) as u64;
+        let packed: u64 = (wq2 << (32 as u64)) | (hq2 & (4294967295 as u64));
+        rt::set_associated_object(ctx, wrap_cache_avail_key(), awq as *u8, 0 as usize);
+        rt::set_associated_object(ctx, wrap_cache_size_key(), packed as *u8, 0 as usize);
+        return flex::Size { width: (wq2 as f64) / 256.0f64, height: (hq2 as f64) / 256.0f64 };
+    }
     return flex::Size { width: s.w, height: s.h };
 }
 
@@ -1123,6 +1179,10 @@ fn apply_nested(node: *flex::Node, parent_ptr: *u8, parent_abs: flex::Layout, pa
 // flip math exactly.
 
 fn reposition(root: *flex::Node, root_flipped: bool) {
+    // The engine reports whether the last pass re-laid this subtree at all;
+    // a full cache hit (e.g. a vertical-only resize of a width-driven tree)
+    // means every frame below is bit-identical — nothing to move.
+    if (*root).layout_changed() == false { return; }
     let rf: flex::Layout = (*root).layout_frame();
     let rp: *u8 = (*root).payload();
     if rp != (0 as *u8) {
@@ -1144,8 +1204,18 @@ fn reposition_nested(node: *flex::Node, parent_abs: flex::Layout, parent_flipped
                 let y: f64 = if parent_flipped { cf.top - parent_abs.top } else { parent_abs.height - (cf.top - parent_abs.top) - cf.height };
                 let cp: *u8 = (*cn).payload();
                 if cp != (0 as *u8) {
+                    // The child's OWN AppKit frame is parent-relative (the
+                    // bottom-up flip reads the parent's height), so it must be
+                    // re-set even when the child's absolute frame is unchanged.
                     ak::View::from_raw(cp).set_frame(rt::Rect { x: x, y: y, w: cf.width, h: cf.height });
-                    reposition_nested(cn, cf, false);   // payload views are non-flipped
+                    // Its DESCENDANTS' frames are relative to the child only:
+                    // a cache-skipped child means every absolute frame under
+                    // it is unchanged — the views already sit exactly there.
+                    // Descending anyway would be thousands of no-op set_frame
+                    // msgsends per frame on a large tree.
+                    if { (*cn).layout_changed() } {
+                        reposition_nested(cn, cf, false);   // payload views are non-flipped
+                    }
                 }
                 // A payload-less node with children cannot occur on an applied
                 // tree (apply gave every such container a backing view); a
@@ -1322,6 +1392,9 @@ fn reflow_scroll_content(scroll: *u8) -> bool {
             let sf: rt::Rect = s.as_view().frame();
             { (*tp).calculate_layout(sf.w, flex::undefined(), flex::Direction::LTR); }
             { (*tp).round_to_pixel(2.0f64); }
+            // Unchanged viewport width ⇒ full cache hit ⇒ every row frame
+            // (and every nested scroll's content) is exactly as last pass.
+            if { (*tp).layout_changed() } == false { return true; }
             let rf: flex::Layout = (*tp).layout_frame();
             match s.document_view() {
                 option::Option[ak::View]::Some(dv) => {
@@ -1691,6 +1764,9 @@ fn relayout_scroll_host(host_ptr: *u8, tp: *flex::Node) {
     let width: f64 = s.as_view().frame().w;
     { (*tp).calculate_layout(width, flex::undefined(), flex::Direction::LTR); }
     { (*tp).round_to_pixel(2.0f64); }
+    // Same viewport width ⇒ full cache hit ⇒ content-sized doc + every row
+    // frame unchanged; nothing to move.
+    if { (*tp).layout_changed() } == false { return; }
     let rf: flex::Layout = (*tp).layout_frame();
     match s.document_view() {
         option::Option[ak::View]::Some(dv) => {

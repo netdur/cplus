@@ -360,6 +360,14 @@ struct Node {
     cached_child_count: usize,
     cached_grid_sig: f64,
     subtree_changed: bool,   // scratch, recomputed each pass
+
+    // Whether the last calculate_layout actually re-laid this node out.
+    // false = the incremental cache kept the whole subtree's frames — every
+    // descendant's absolute frame is bit-identical to the previous pass. An
+    // adapter can then skip re-applying that subtree to its view tree. Only
+    // meaningful along paths whose ancestors are all fresh: a skipped node's
+    // DESCENDANTS keep their stale flags (they were never visited).
+    layout_fresh: bool,
 }
 
 impl Node {
@@ -404,6 +412,7 @@ impl Node {
             cached_child_count: 0 as usize,
             cached_grid_sig: 0.0f64,
             subtree_changed: true,
+            layout_fresh: true,
         };
     }
 
@@ -726,9 +735,11 @@ impl Node {
         if this.cached_valid && !this.subtree_changed
             && layout_eq(this.cached_box, frame) && dir_eq(this.cached_dir, dir) {
             this.layout = frame;   // identical to cached; descendant frames unchanged
+            this.layout_fresh = false;
             return;
         }
         this.layout = frame;
+        this.layout_fresh = true;
         this.rdir = dir;
         this.layout_children();
         this.cached_valid = true;
@@ -739,6 +750,14 @@ impl Node {
         this.cached_grid_sig = this.grid_sig();
         return;
     }
+
+    // Did the last `calculate_layout` actually re-lay this node out? false =
+    // the incremental cache kept the subtree: every descendant's absolute
+    // frame is unchanged from the previous pass, so an adapter may skip
+    // re-applying the whole subtree. Only meaningful along all-fresh paths
+    // (a skipped node's descendants keep stale flags — never read them
+    // without checking the ancestor first).
+    fn layout_changed(this) -> bool { return this.layout_fresh; }
 
     // Snap every frame to a device pixel grid of `scale` pixels per point (1.0 =
     // integer points, 2.0 = retina half-points). Rounds each node's leading edge
@@ -3478,6 +3497,38 @@ fn test_cache_invalidates_on_add_child() {
     root.calculate_layout(undefined(), undefined(), Direction::LTR);
     assert approx(root.layout_height(), 50.0f64);  // 20 + 30
     assert approx(must(root.child_layout(1 as usize)).top, 20.0f64);
+}
+
+#[test]
+fn test_layout_changed_reports_cache_skips() {
+    // Pass 1 (cold): everything fresh. Pass 2 (same inputs): the cache keeps
+    // the whole tree — layout_changed reports false at the root, so an
+    // adapter can skip re-applying frames entirely. Pass 3 (new size):
+    // fresh again.
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    var a: Node = Node::new(); a.set_width(pts(40.0f64)); a.set_height(pts(20.0f64));
+    var b: Node = Node::new(); b.set_flex_grow(1.0f64);
+    root.add_child(a);
+    root.add_child(b);
+    root.calculate_layout(200.0f64, 50.0f64, Direction::LTR);
+    assert root.layout_changed();
+    root.calculate_layout(200.0f64, 50.0f64, Direction::LTR);
+    assert root.layout_changed() == false;
+    root.calculate_layout(300.0f64, 50.0f64, Direction::LTR);
+    assert root.layout_changed();
+    // The fixed leading child kept its box (same position, same size) — the
+    // cache skipped it even though the row itself was re-laid out; the
+    // growing sibling changed and reports fresh.
+    match root.children.at_ptr(0 as usize) {
+        option::Option[*Node]::Some(p) => { assert { (*p).layout_changed() } == false; }
+        option::Option[*Node]::None => { assert false; }
+    }
+    match root.children.at_ptr(1 as usize) {
+        option::Option[*Node]::Some(p) => { assert { (*p).layout_changed() }; }
+        option::Option[*Node]::None => { assert false; }
+    }
+    return;
 }
 
 // ---- Phase 5e: subgrid ----
