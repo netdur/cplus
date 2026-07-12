@@ -1698,10 +1698,32 @@ fn invalidate(cp: *u8) -> bool {
     return false;
 }
 
+// An upper-layer override for the after-hook: the facet backend installs its
+// reconciling invalidate here so a handler's own re-render goes through the
+// diff path instead of this tier's full rebuild. Returns whether it handled
+// the ctx; unhandled falls through to the plain invalidate below.
+static COMPONENT_AFTER_HOOK: fn(*u8) -> bool = #zero::[fn(*u8) -> bool]();
+fn set_component_after_hook(h: fn(*u8) -> bool) { COMPONENT_AFTER_HOOK = h; return; }
+
 // The after-hook every action wire carries: re-render the handler's
 // component, if the ctx is one.
 fn component_after(ctx: *u8) {
+    let h: fn(*u8) -> bool = COMPONENT_AFTER_HOOK;
+    if h != (0 as fn(*u8) -> bool) {
+        if h(ctx) { return; }
+    }
     let _hit: bool = invalidate(ctx);
+    return;
+}
+
+// Forget a view's cached measure answers (fittingSize + wrap) — the
+// reconciler calls this when it edits a measured widget's text in place, so
+// the next layout pass re-asks TextKit instead of serving the stale size.
+fn clear_measure_caches(view_ptr: *u8) {
+    if view_ptr == { 0 as *u8 } { return; }
+    rt::set_associated_object(view_ptr, measure_cache_key(), 0 as *u8, 0 as usize);
+    rt::set_associated_object(view_ptr, wrap_cache_avail_key(), 0 as *u8, 0 as usize);
+    rt::set_associated_object(view_ptr, wrap_cache_size_key(), 0 as *u8, 0 as usize);
     return;
 }
 

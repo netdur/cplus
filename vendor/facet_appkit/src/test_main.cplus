@@ -32,9 +32,11 @@ impl ClickCounter {
         this.count = this.count +% 1;
         return;
     }
-}
 
-impl ClickCounter: facet::Component {
+    // A @ui-TIER component: renders raw flex directly and mounts through
+    // ui::mount, which needs only the bound method reference — no interface.
+    // (facet::Component is the PORTABLE contract: render -> facet::Node,
+    // reconciled by the fak runtime.)
     fn render(this) -> flex::Node {
         let t: text::Text = "count ${this.count}";
         return @ui {

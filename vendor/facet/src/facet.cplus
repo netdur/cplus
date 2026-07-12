@@ -33,17 +33,19 @@ import "flex_layout/flex_layout" as flex;
 // `render`. Interface-impl blocks are closed (E0503/E0504 typo interlock),
 // so `render` here is verified against this declaration both ways.
 //
-// `render` returns the platform tier's node — a `flex_layout` tree whose
-// leaves carry native views in their payload slots (the `@ui` tier on
-// AppKit; a future gtk/win32 tier produces the same shape). The runtime
-// that mounts and re-renders components is erased and lives with the
-// platform package (facet_appkit/ui: `mount`, `invalidate`); wiring is a
-// bound method reference (`button("+1", on: counter.on_inc)`), which
-// carries the component's address as the handler ctx — the ONE update
+// `render` returns the PORTABLE DESCRIPTION — a facet `Node` tree, pure
+// data, no platform types. The backend runtime owns everything after that:
+// it mounts the description on first attach, RETAINS it, and on
+// `invalidate` reconciles the fresh description against the retained one —
+// updating existing native views in place where the shape matches and
+// rebuilding only the subtrees that structurally changed. The app never
+// chooses an update strategy; render + invalidate is the whole contract.
+// Wiring is a bound method reference (`button("+1", on: counter.on_inc)`),
+// which carries the component's address as the handler ctx — the ONE update
 // rule "after a component's handler runs, that component re-renders" is
 // keyed on that address.
 interface Component {
-    fn render(this) -> flex::Node;
+    fn render(this) -> Node;
 }
 
 // ---- node kinds --------------------------------------------------------
@@ -1653,74 +1655,85 @@ fn mount(np: *Node, r: Renderer) -> flex::Node {
     if is_widget {
         call_set_identity(np, r, n.payload(), k);
     }
-    // Layout props — applied uniformly, whatever built the node.
-    if { (*np)._grow } > 0.0f64 { n.set_flex_grow({ (*np)._grow }); }
-    if { (*np)._gap } > 0.0f64 { n.set_gap(flex::Gutter::All, { (*np)._gap }); }
+    apply_layout_props(np, #addr_of(n));
+    return n;
+}
+
+// Layout props — applied uniformly to the flex node, whatever built it.
+// Factored out of `mount` so a reconciling runtime can RE-apply a changed
+// description's props onto the RETAINED flex node (the engine's snapshot
+// cache detects which writes actually changed anything). Note: a prop that
+// was set and becomes UNSET is not cleared here — the description model
+// treats unset as "no opinion", and a set→unset transition falls back to a
+// structural rebuild at the runtime layer.
+fn apply_layout_props(np: *Node, fp: *flex::Node) {
+    if { (*np)._grow } > 0.0f64 { (*fp).set_flex_grow({ (*np)._grow }); }
+    if { (*np)._gap } > 0.0f64 { (*fp).set_gap(flex::Gutter::All, { (*np)._gap }); }
     if { (*np)._padding } > 0.0f64 {
-        n.set_padding(flex::Edge::All, flex::StyleLength::points({ (*np)._padding }));
+        (*fp).set_padding(flex::Edge::All, flex::StyleLength::points({ (*np)._padding }));
     }
-    if { (*np)._width } >= 0.0f64 { n.set_width(flex::StyleLength::points({ (*np)._width })); }
-    if { (*np)._height } >= 0.0f64 { n.set_height(flex::StyleLength::points({ (*np)._height })); }
+    if { (*np)._width } >= 0.0f64 { (*fp).set_width(flex::StyleLength::points({ (*np)._width })); }
+    if { (*np)._height } >= 0.0f64 { (*fp).set_height(flex::StyleLength::points({ (*np)._height })); }
     // Extended flexbox props (pass-through). Per-edge padding runs AFTER the
     // uniform `_padding` above, so a specific edge overrides it.
-    if { (*np)._has_align_items } { n.set_align_items({ (*np)._align_items }); }
-    if { (*np)._has_align_self } { n.set_align_self({ (*np)._align_self }); }
-    if { (*np)._has_justify } { n.set_justify_content({ (*np)._justify }); }
-    if { (*np)._shrink } >= 0.0f64 { n.set_flex_shrink({ (*np)._shrink }); }
-    if { (*np)._min_w } >= 0.0f64 { n.set_min_width(flex::StyleLength::points({ (*np)._min_w })); }
-    if { (*np)._min_h } >= 0.0f64 { n.set_min_height(flex::StyleLength::points({ (*np)._min_h })); }
-    if { (*np)._max_w } >= 0.0f64 { n.set_max_width(flex::StyleLength::points({ (*np)._max_w })); }
-    if { (*np)._max_h } >= 0.0f64 { n.set_max_height(flex::StyleLength::points({ (*np)._max_h })); }
-    if { (*np)._pad_l } > 0.0f64 { n.set_padding(flex::Edge::Left, flex::StyleLength::points({ (*np)._pad_l })); }
-    if { (*np)._pad_t } > 0.0f64 { n.set_padding(flex::Edge::Top, flex::StyleLength::points({ (*np)._pad_t })); }
-    if { (*np)._pad_r } > 0.0f64 { n.set_padding(flex::Edge::Right, flex::StyleLength::points({ (*np)._pad_r })); }
-    if { (*np)._pad_b } > 0.0f64 { n.set_padding(flex::Edge::Bottom, flex::StyleLength::points({ (*np)._pad_b })); }
-    if { (*np)._basis } >= 0.0f64 { n.set_flex_basis(flex::StyleLength::points({ (*np)._basis })); }
-    if { (*np)._aspect } >= 0.0f64 { n.set_aspect_ratio({ (*np)._aspect }); }
-    if { (*np)._has_wrap } { n.set_flex_wrap({ (*np)._wrap }); }
-    if { (*np)._has_position_type } { n.set_position_type({ (*np)._position_type }); }
-    if { (*np)._mrg_l } > 0.0f64 { n.set_margin(flex::Edge::Left, flex::StyleLength::points({ (*np)._mrg_l })); }
-    if { (*np)._mrg_t } > 0.0f64 { n.set_margin(flex::Edge::Top, flex::StyleLength::points({ (*np)._mrg_t })); }
-    if { (*np)._mrg_r } > 0.0f64 { n.set_margin(flex::Edge::Right, flex::StyleLength::points({ (*np)._mrg_r })); }
-    if { (*np)._mrg_b } > 0.0f64 { n.set_margin(flex::Edge::Bottom, flex::StyleLength::points({ (*np)._mrg_b })); }
+    if { (*np)._has_align_items } { (*fp).set_align_items({ (*np)._align_items }); }
+    if { (*np)._has_align_self } { (*fp).set_align_self({ (*np)._align_self }); }
+    if { (*np)._has_justify } { (*fp).set_justify_content({ (*np)._justify }); }
+    if { (*np)._shrink } >= 0.0f64 { (*fp).set_flex_shrink({ (*np)._shrink }); }
+    if { (*np)._min_w } >= 0.0f64 { (*fp).set_min_width(flex::StyleLength::points({ (*np)._min_w })); }
+    if { (*np)._min_h } >= 0.0f64 { (*fp).set_min_height(flex::StyleLength::points({ (*np)._min_h })); }
+    if { (*np)._max_w } >= 0.0f64 { (*fp).set_max_width(flex::StyleLength::points({ (*np)._max_w })); }
+    if { (*np)._max_h } >= 0.0f64 { (*fp).set_max_height(flex::StyleLength::points({ (*np)._max_h })); }
+    if { (*np)._pad_l } > 0.0f64 { (*fp).set_padding(flex::Edge::Left, flex::StyleLength::points({ (*np)._pad_l })); }
+    if { (*np)._pad_t } > 0.0f64 { (*fp).set_padding(flex::Edge::Top, flex::StyleLength::points({ (*np)._pad_t })); }
+    if { (*np)._pad_r } > 0.0f64 { (*fp).set_padding(flex::Edge::Right, flex::StyleLength::points({ (*np)._pad_r })); }
+    if { (*np)._pad_b } > 0.0f64 { (*fp).set_padding(flex::Edge::Bottom, flex::StyleLength::points({ (*np)._pad_b })); }
+    if { (*np)._basis } >= 0.0f64 { (*fp).set_flex_basis(flex::StyleLength::points({ (*np)._basis })); }
+    if { (*np)._aspect } >= 0.0f64 { (*fp).set_aspect_ratio({ (*np)._aspect }); }
+    if { (*np)._has_wrap } { (*fp).set_flex_wrap({ (*np)._wrap }); }
+    if { (*np)._has_position_type } { (*fp).set_position_type({ (*np)._position_type }); }
+    if { (*np)._mrg_l } > 0.0f64 { (*fp).set_margin(flex::Edge::Left, flex::StyleLength::points({ (*np)._mrg_l })); }
+    if { (*np)._mrg_t } > 0.0f64 { (*fp).set_margin(flex::Edge::Top, flex::StyleLength::points({ (*np)._mrg_t })); }
+    if { (*np)._mrg_r } > 0.0f64 { (*fp).set_margin(flex::Edge::Right, flex::StyleLength::points({ (*np)._mrg_r })); }
+    if { (*np)._mrg_b } > 0.0f64 { (*fp).set_margin(flex::Edge::Bottom, flex::StyleLength::points({ (*np)._mrg_b })); }
     // Absolute insets — apply each masked edge (0 is a valid inset value).
     let im: u32 = { (*np)._inset_mask };
-    if (im & (1 as u32)) != (0 as u32) { n.set_position(flex::Edge::Left, flex::StyleLength::points({ (*np)._ins_l })); }
-    if (im & (2 as u32)) != (0 as u32) { n.set_position(flex::Edge::Top, flex::StyleLength::points({ (*np)._ins_t })); }
-    if (im & (4 as u32)) != (0 as u32) { n.set_position(flex::Edge::Right, flex::StyleLength::points({ (*np)._ins_r })); }
-    if (im & (8 as u32)) != (0 as u32) { n.set_position(flex::Edge::Bottom, flex::StyleLength::points({ (*np)._ins_b })); }
+    if (im & (1 as u32)) != (0 as u32) { (*fp).set_position(flex::Edge::Left, flex::StyleLength::points({ (*np)._ins_l })); }
+    if (im & (2 as u32)) != (0 as u32) { (*fp).set_position(flex::Edge::Top, flex::StyleLength::points({ (*np)._ins_t })); }
+    if (im & (4 as u32)) != (0 as u32) { (*fp).set_position(flex::Edge::Right, flex::StyleLength::points({ (*np)._ins_r })); }
+    if (im & (8 as u32)) != (0 as u32) { (*fp).set_position(flex::Edge::Bottom, flex::StyleLength::points({ (*np)._ins_b })); }
     // Percent size overrides the point size when set.
-    if { (*np)._width_pct } >= 0.0f64 { n.set_width(flex::StyleLength::percent({ (*np)._width_pct })); }
-    if { (*np)._height_pct } >= 0.0f64 { n.set_height(flex::StyleLength::percent({ (*np)._height_pct })); }
+    if { (*np)._width_pct } >= 0.0f64 { (*fp).set_width(flex::StyleLength::percent({ (*np)._width_pct })); }
+    if { (*np)._height_pct } >= 0.0f64 { (*fp).set_height(flex::StyleLength::percent({ (*np)._height_pct })); }
     // Per-gutter gap (distinct row/column) — overrides uniform gap for that axis.
-    if { (*np)._gap_row } > 0.0f64 { n.set_gap(flex::Gutter::Row, { (*np)._gap_row }); }
-    if { (*np)._gap_col } > 0.0f64 { n.set_gap(flex::Gutter::Column, { (*np)._gap_col }); }
+    if { (*np)._gap_row } > 0.0f64 { (*fp).set_gap(flex::Gutter::Row, { (*np)._gap_row }); }
+    if { (*np)._gap_col } > 0.0f64 { (*fp).set_gap(flex::Gutter::Column, { (*np)._gap_col }); }
     // Container props.
-    if { (*np)._has_display } { n.set_display({ (*np)._display }); }
-    if { (*np)._has_overflow } { n.set_overflow({ (*np)._overflow }); }
-    if { (*np)._has_align_content } { n.set_align_content({ (*np)._align_content }); }
-    if { (*np)._has_direction } { n.set_direction({ (*np)._direction }); }
-    if { (*np)._has_box_sizing } { n.set_box_sizing({ (*np)._box_sizing }); }
+    if { (*np)._has_display } { (*fp).set_display({ (*np)._display }); }
+    if { (*np)._has_overflow } { (*fp).set_overflow({ (*np)._overflow }); }
+    if { (*np)._has_align_content } { (*fp).set_align_content({ (*np)._align_content }); }
+    if { (*np)._has_direction } { (*fp).set_direction({ (*np)._direction }); }
+    if { (*np)._has_box_sizing } { (*fp).set_box_sizing({ (*np)._box_sizing }); }
     // Explicit flex-direction (e.g. RowReverse/ColumnReverse) overrides the kind.
-    if { (*np)._has_flex_dir } { n.set_flex_direction({ (*np)._flex_dir }); }
+    if { (*np)._has_flex_dir } { (*fp).set_flex_direction({ (*np)._flex_dir }); }
     // Grid child placement (set on the item; the grid container flows the rest).
-    if { (*np)._grid_col_span } > (0 as i32) { n.set_grid_column_span({ (*np)._grid_col_span }); }
-    if { (*np)._grid_row_span } > (0 as i32) { n.set_grid_row_span({ (*np)._grid_row_span }); }
-    if { (*np)._grid_col_start } > (0 as i32) { n.set_grid_column_start({ (*np)._grid_col_start }); }
-    if { (*np)._grid_row_start } > (0 as i32) { n.set_grid_row_start({ (*np)._grid_row_start }); }
-    if { (*np)._grid_cols_subgrid } { n.set_grid_columns_subgrid(true); }
-    if { (*np)._grid_rows_subgrid } { n.set_grid_rows_subgrid(true); }
+    if { (*np)._grid_col_span } > (0 as i32) { (*fp).set_grid_column_span({ (*np)._grid_col_span }); }
+    if { (*np)._grid_row_span } > (0 as i32) { (*fp).set_grid_row_span({ (*np)._grid_row_span }); }
+    if { (*np)._grid_col_start } > (0 as i32) { (*fp).set_grid_column_start({ (*np)._grid_col_start }); }
+    if { (*np)._grid_row_start } > (0 as i32) { (*fp).set_grid_row_start({ (*np)._grid_row_start }); }
+    if { (*np)._grid_cols_subgrid } { (*fp).set_grid_columns_subgrid(true); }
+    if { (*np)._grid_rows_subgrid } { (*fp).set_grid_rows_subgrid(true); }
     // Border-as-inset (reserves layout space, per edge).
-    if { (*np)._bdr_l } > 0.0f64 { n.set_border(flex::Edge::Left, flex::StyleLength::points({ (*np)._bdr_l })); }
-    if { (*np)._bdr_t } > 0.0f64 { n.set_border(flex::Edge::Top, flex::StyleLength::points({ (*np)._bdr_t })); }
-    if { (*np)._bdr_r } > 0.0f64 { n.set_border(flex::Edge::Right, flex::StyleLength::points({ (*np)._bdr_r })); }
-    if { (*np)._bdr_b } > 0.0f64 { n.set_border(flex::Edge::Bottom, flex::StyleLength::points({ (*np)._bdr_b })); }
+    if { (*np)._bdr_l } > 0.0f64 { (*fp).set_border(flex::Edge::Left, flex::StyleLength::points({ (*np)._bdr_l })); }
+    if { (*np)._bdr_t } > 0.0f64 { (*fp).set_border(flex::Edge::Top, flex::StyleLength::points({ (*np)._bdr_t })); }
+    if { (*np)._bdr_r } > 0.0f64 { (*fp).set_border(flex::Edge::Right, flex::StyleLength::points({ (*np)._bdr_r })); }
+    if { (*np)._bdr_b } > 0.0f64 { (*fp).set_border(flex::Edge::Bottom, flex::StyleLength::points({ (*np)._bdr_b })); }
     // Logical (direction-relative) padding/margin — flex resolves Start/End.
-    if { (*np)._pad_start } > 0.0f64 { n.set_padding(flex::Edge::Start, flex::StyleLength::points({ (*np)._pad_start })); }
-    if { (*np)._pad_end } > 0.0f64 { n.set_padding(flex::Edge::End, flex::StyleLength::points({ (*np)._pad_end })); }
-    if { (*np)._mrg_start } > 0.0f64 { n.set_margin(flex::Edge::Start, flex::StyleLength::points({ (*np)._mrg_start })); }
-    if { (*np)._mrg_end } > 0.0f64 { n.set_margin(flex::Edge::End, flex::StyleLength::points({ (*np)._mrg_end })); }
-    return n;
+    if { (*np)._pad_start } > 0.0f64 { (*fp).set_padding(flex::Edge::Start, flex::StyleLength::points({ (*np)._pad_start })); }
+    if { (*np)._pad_end } > 0.0f64 { (*fp).set_padding(flex::Edge::End, flex::StyleLength::points({ (*np)._pad_end })); }
+    if { (*np)._mrg_start } > 0.0f64 { (*fp).set_margin(flex::Edge::Start, flex::StyleLength::points({ (*np)._mrg_start })); }
+    if { (*np)._mrg_end } > 0.0f64 { (*fp).set_margin(flex::Edge::End, flex::StyleLength::points({ (*np)._mrg_end })); }
+    return;
 }
 
 // ---- tests -------------------------------------------------------------------
