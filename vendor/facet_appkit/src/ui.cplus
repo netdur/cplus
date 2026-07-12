@@ -59,18 +59,24 @@ fn release_view(p: *u8) { rt::release(p); return; }
 // flexed width and stays uncached.
 fn measure_cache_key() -> *u8 { return { 28710 as *u8 }; }
 
+// The low-32 mask, derived arithmetically. NEVER write it as a literal:
+// `4294967295 as u64` wraps through i32 to -1 and sign-extends to all-ones
+// (masks nothing) — that bug shipped garbage 5e11-point label heights on
+// every measure-cache hit. See bugs/2026-07-12-u32max-literal-cast.md.
+fn low32() -> u64 { return ((1 as u64) << (32 as u64)) -% (1 as u64); }
+
 fn measure_view(ctx: *u8, avail_w: f64, wmode: flex::MeasureMode, avail_h: f64, hmode: flex::MeasureMode) -> flex::Size {
     let cached: *u8 = rt::get_associated_object(ctx, measure_cache_key());
     if cached != (0 as *u8) {
         let bits: u64 = cached as u64;
         let wq: u64 = bits >> (32 as u64);
-        let hq: u64 = bits & (4294967295 as u64);
+        let hq: u64 = bits & low32();
         return flex::Size { width: (wq as f64) / 256.0f64, height: (hq as f64) / 256.0f64 };
     }
     let s: rt::Size = ak::View::from_raw(ctx).fitting_size();
     let wq2: u64 = ((s.w * 256.0f64) + 0.5f64) as u64;
     let hq2: u64 = ((s.h * 256.0f64) + 0.5f64) as u64;
-    let packed: u64 = (wq2 << (32 as u64)) | (hq2 & (4294967295 as u64));
+    let packed: u64 = (wq2 << (32 as u64)) | (hq2 & low32());
     if packed != (0 as u64) {
         rt::set_associated_object(ctx, measure_cache_key(), packed as *u8, 0 as usize);
     }
@@ -98,7 +104,7 @@ fn measure_wrap(ctx: *u8, avail_w: f64, wmode: flex::MeasureMode, avail_h: f64, 
         if (k as u64) == awq {
             let bits: u64 = rt::get_associated_object(ctx, wrap_cache_size_key()) as u64;
             let wq: u64 = bits >> (32 as u64);
-            let hq: u64 = bits & (4294967295 as u64);
+            let hq: u64 = bits & low32();
             return flex::Size { width: (wq as f64) / 256.0f64, height: (hq as f64) / 256.0f64 };
         }
     }
@@ -108,7 +114,7 @@ fn measure_wrap(ctx: *u8, avail_w: f64, wmode: flex::MeasureMode, avail_h: f64, 
     if awq != (0 as u64) {
         let wq2: u64 = ((s.w * 256.0f64) + 0.5f64) as u64;
         let hq2: u64 = ((s.h * 256.0f64) + 0.5f64) as u64;
-        let packed: u64 = (wq2 << (32 as u64)) | (hq2 & (4294967295 as u64));
+        let packed: u64 = (wq2 << (32 as u64)) | (hq2 & low32());
         rt::set_associated_object(ctx, wrap_cache_avail_key(), awq as *u8, 0 as usize);
         rt::set_associated_object(ctx, wrap_cache_size_key(), packed as *u8, 0 as usize);
         return flex::Size { width: (wq2 as f64) / 256.0f64, height: (hq2 as f64) / 256.0f64 };
@@ -1868,6 +1874,40 @@ fn test_label_owns_view_and_measures() {
     let tf: ak::TextField = ak::TextField::from_raw(n.payload());
     let t = tf.as_control().string_value();
     assert t.count() == (5 as usize);
+}
+
+#[test]
+fn test_measure_cache_hit_returns_the_same_size() {
+    // The CACHE-HIT unpack path must round-trip the packed size exactly.
+    // Regression: the low-32 mask was written as `4294967295 as u64`, which
+    // wraps through i32 to -1 and sign-extends to ALL-ONES — every cache hit
+    // then returned packed_bits/256 as the height (~5e11 points), blowing up
+    // any layout that measured a label twice. The mask is now derived
+    // arithmetically (low32()).
+    assert low32() == (((1 as u64) << (32 as u64)) -% (1 as u64));
+    var n: flex::Node = label("agent_surface.cplus", size: 11.5f64);
+    n.calculate_layout(300.0f64, flex::undefined(), flex::Direction::LTR);
+    let f1: flex::Layout = n.layout_frame();
+    assert f1.height > 1.0f64;
+    assert f1.height < 100.0f64;           // sane label height
+    // Force a re-measure: the second pass serves from the assoc cache.
+    n.mark_content_changed();
+    n.calculate_layout(300.0f64, flex::undefined(), flex::Direction::LTR);
+    let f2: flex::Layout = n.layout_frame();
+    assert approx(f2.height, f1.height);   // was ~5e11 with the bad mask
+    assert approx(f2.width, f1.width);
+
+    // Same round-trip discipline for the wrap cache (width-keyed).
+    var w: flex::Node = wrap_label("a wrapping label long enough to take at least two lines at this width", size: 12.0f64);
+    w.calculate_layout(180.0f64, flex::undefined(), flex::Direction::LTR);
+    let g1: flex::Layout = w.layout_frame();
+    assert g1.height > 1.0f64;
+    assert g1.height < 200.0f64;
+    w.mark_content_changed();
+    w.calculate_layout(180.0f64, flex::undefined(), flex::Direction::LTR);
+    let g2: flex::Layout = w.layout_frame();
+    assert approx(g2.height, g1.height);
+    assert approx(g2.width, g1.width);
 }
 
 #[test]
