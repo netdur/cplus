@@ -386,10 +386,14 @@ fn gtk_segmented(ctx: *u8, np: *facet::Node) -> flex::Node {
 // prefer the child widget once composer/text_area wire real inputs.
 fn gtk_set_identity(ctx: *u8, handle: *u8, id: str, role: u32) {
     if handle == null() { return; }
-    let r: identity::Role = identity::role_from_index(role);
-    let drive: u32 = identity::drive_for_role(r);
-    let packed: *u8 = identity::pack_affordance(role, drive);
-    g::set_data(handle, identity::affordance_gobject_key(), packed);
+    // role_none (native hatch): leave the wrapped widget's affordance intact,
+    // only (re)pin an explicit id — see facet::role_none.
+    if role != facet::role_none() {
+        let r: identity::Role = identity::role_from_index(role);
+        let drive: u32 = identity::drive_for_role(r);
+        let packed: *u8 = identity::pack_affordance(role, drive);
+        g::set_data(handle, identity::affordance_gobject_key(), packed);
+    }
     if id != "" {
         gtk::Widget::from_raw(handle).set_name(id);
     }

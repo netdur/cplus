@@ -108,6 +108,12 @@ fn role_input() -> u32 { return 2 as u32; }
 fn role_list() -> u32 { return 3 as u32; }
 fn role_group() -> u32 { return 4 as u32; }
 fn role_window() -> u32 { return 5 as u32; }
+// Sentinel: "do NOT record an affordance; pin an explicit id only." Used for the
+// native hatch, which re-embeds an ALREADY-mounted widget — its real op already
+// declared the right affordance (Input, …); recording a group/none over it every
+// re-render would downgrade it to observe-only. Backends set_identity skip the
+// affordance write for this role and only apply a non-empty agent_id.
+fn role_none() -> u32 { return 255 as u32; }
 
 // Core-owned kind → role table. Used by `mount` when calling `set_identity`.
 fn role_for_kind(k: u32) -> u32 {
@@ -1438,7 +1444,13 @@ struct Renderer {
 fn call_set_identity(np: *Node, r: Renderer, handle: *u8, kind: u32) {
     let f: fn(*u8, *u8, str, u32) = r.set_identity;
     let id: str = { (*np).agent_id.view() };
-    f(r.ctx, handle, id, role_for_kind(kind));
+    // The native hatch wraps a widget its own op already identified; pass
+    // role_none so the backend re-pins an explicit agent_id (if any) but leaves
+    // the recorded affordance intact (see role_none). Every other kind records
+    // its declared role.
+    var role: u32 = role_for_kind(kind);
+    if kind == kind_native() { role = role_none(); }
+    f(r.ctx, handle, id, role);
     return;
 }
 
@@ -2390,6 +2402,26 @@ fn mount_dispatches_native_hatch() {
     assert FAKE_LAST_NATIVE_HANDLE == (0xCAFE as i64);   // op saw the handle
     // label + native = 2 widget ops → 2 set_identity calls.
     assert FAKE_IDENTITIES == 2;
+}
+
+#[test]
+fn mount_native_pins_id_but_not_affordance() {
+    // The native hatch re-embeds an already-identified widget: set_identity is
+    // still called (so an explicit agent_id is pinned) but with role_none, so the
+    // backend leaves the widget's own affordance intact instead of stamping
+    // group/none over it every re-render.
+    reset_fake_counts();
+    let n: Node = native(0xBEEF as *u8).agent_id("raw");
+    let _tree: flex::Node = mount(#addr_of(n), fake_renderer());
+    assert FAKE_IDENTITIES == 1;
+    assert FAKE_TAGGED_IDENTITIES == 1;          // the id was pinned
+    assert FAKE_LAST_ROLE == role_none();        // but no affordance recorded
+
+    // Contrast: a real widget still records its declared role.
+    reset_fake_counts();
+    let lbl: Node = label("x");
+    let _t2: flex::Node = mount(#addr_of(lbl), fake_renderer());
+    assert FAKE_LAST_ROLE == role_text();
 }
 
 #[test]

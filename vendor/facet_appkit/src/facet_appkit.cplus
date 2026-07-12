@@ -1014,13 +1014,18 @@ fn ak_set_identity(ctx: *u8, handle: *u8, id: str, role: u32) {
         let dv: *u8 = { rt::msg_id(handle, dv_sel) };
         if dv != (0 as *u8) { target = dv; }
     }
-    // Always record affordance — even untagged widgets get a declared role so
+    // Record affordance — even untagged widgets get a declared role so
     // describe_ui is accurate; exposure still requires a non-empty agent id.
-    let r: identity::Role = identity::role_from_index(role);
-    let drive: u32 = identity::drive_for_role(r);
-    let packed: *u8 = identity::pack_affordance(role, drive);
-    // OBJC_ASSOCIATION_ASSIGN (0): packed integer disguised as a pointer.
-    rt::set_associated_object(target, identity::affordance_key(), packed, 0 as usize);
+    // EXCEPT role_none (the native hatch): leave the wrapped widget's own
+    // affordance intact — recording group/none here would make an app-owned
+    // Input observe-only on every re-render — and only (re)pin the id below.
+    if role != facet::role_none() {
+        let r: identity::Role = identity::role_from_index(role);
+        let drive: u32 = identity::drive_for_role(r);
+        let packed: *u8 = identity::pack_affordance(role, drive);
+        // OBJC_ASSOCIATION_ASSIGN (0): packed integer disguised as a pointer.
+        rt::set_associated_object(target, identity::affordance_key(), packed, 0 as usize);
+    }
     if id != "" {
         ak::Accessibility::from_raw(target).set_accessibility_identifier(id);
     }
@@ -1165,6 +1170,44 @@ fn install_toolbar(win: ak::Window, rp: *facet::Node) {
     }
     let tb: ak::Toolbar = akx::make_toolbar(ids, map);
     win.set_toolbar(tb);
+    return;
+}
+
+// Mount one facet subtree into a fresh view and add it to `win`'s title bar as a
+// leading/trailing accessory (an NSTitlebarAccessoryViewController). The subtree
+// is laid out at its natural size; the accessory view is that size. The window
+// retains the controller, so the +1 from alloc/init is dropped after adding.
+fn add_titlebar_accessory(win: ak::Window, np: *facet::Node, attr: ak::LayoutAttribute) {
+    var tree: flex::Node = mount(np);
+    tree.calculate_layout(flex::undefined(), flex::undefined(), flex::Direction::LTR);
+    tree.round_to_pixel(2.0f64);
+    let f: flex::Layout = tree.layout_frame();
+    let host: ak::View = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: f.width, h: f.height });
+    ui::apply(#addr_of(tree), host.raw(), false);
+    drain_post_apply();   // fill any deferred scroll/split (rare in a title bar)
+    let vc_ptr: *u8 = rt::alloc_init(#str_ptr("NSTitlebarAccessoryViewController\0"));
+    let vc: ak::TitlebarAccessoryViewController = ak::TitlebarAccessoryViewController::from_raw(vc_ptr);
+    vc.as_view_controller().set_view(host);   // the controller retains the view
+    vc.set_layout_attribute(attr);
+    win.add_titlebar_accessory_view_controller(vc);
+    rt::release(vc_ptr);   // the window retains the controller
+    return;
+}
+
+// Put facet-described controls in the window's NATIVE title bar (matrix §4 window
+// chrome). `leading` sits right after the traffic lights, `trailing` at the far
+// right; each is a facet subtree hosted in a title-bar accessory. AppKit keeps
+// OWNING the title bar, so double-click-to-zoom, background drag, and
+// traffic-light centering all keep working with zero app event code — unlike a
+// fullSizeContentView overlay, which covers the title bar and destroys them. The
+// native title text is hidden (the controls are the title-bar content). A host
+// that owns its own NSWindow (not facet's `run`) calls this to get a native,
+// unified-looking toolbar; the controls carry their agent ids/affordances like
+// any mounted widget. Pass an empty region (e.g. `hstack { }`) to omit a side.
+fn install_titlebar(win: ak::Window, take leading: facet::Node, take trailing: facet::Node) {
+    win.set_title_visibility(ak::WindowTitleVisibility::NSWindowTitleHidden);
+    add_titlebar_accessory(win, #addr_of(leading), ak::LayoutAttribute::Leading);
+    add_titlebar_accessory(win, #addr_of(trailing), ak::LayoutAttribute::Trailing);
     return;
 }
 
@@ -2199,6 +2242,26 @@ fn toolbar_attaches_with_items() {
         option::Option[ak::Toolbar]::None => {}
     }
     assert found;
+}
+
+#[test]
+fn titlebar_installs_leading_and_trailing_accessories() {
+    let win: ak::Window = make_shell_window("t", 500.0f64, 320.0f64, false);
+    let cb: fn(*u8, *u8) = td_toolbar_click;
+    // Single-control regions also exercise the lone-leaf apply fix (#11): each
+    // accessory's content root is a bare widget with a payload and no children.
+    let leading: facet::Node = facet::icon_button("sidebar.left").on_click(cb, 0 as *u8);
+    let trailing: facet::Node = facet::button("Run").on_click(cb, 0 as *u8);
+    install_titlebar(win, leading, trailing);
+    // Leading + trailing accessories added; the native title text is hidden so
+    // the controls are the title-bar content (title bar itself is kept).
+    let vcs: vec::Vec[ak::TitlebarAccessoryViewController] = win.titlebar_accessory_view_controllers();
+    assert vcs.count() == (2 as usize);
+    match win.title_visibility() {
+        ak::WindowTitleVisibility::NSWindowTitleHidden => { }
+        _ => { assert false; }
+    }
+    return;
 }
 
 #[test]

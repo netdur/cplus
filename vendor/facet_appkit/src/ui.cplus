@@ -1059,7 +1059,23 @@ fn clickable(
 // standard bottom-left one.
 
 fn apply(root: *flex::Node, root_view: *u8, root_flipped: bool) {
-    apply_nested(root, root_view, (*root).layout_frame(), root_flipped);
+    let rf: flex::Layout = (*root).layout_frame();
+    let rp: *u8 = (*root).payload();
+    if rp != (0 as *u8) {
+        // The content ROOT is itself a leaf widget — e.g. `scroll { one label }`,
+        // where mount_wrapper_content returns the lone child directly, so the
+        // tree's root carries the payload and has no children. apply_nested only
+        // attaches CHILDREN's payloads, so attach the root's own here (filling
+        // root_view), then recurse for any children under it. Mirrors
+        // apply_nested's payload branch; payload views are non-flipped.
+        let v: ak::View = ak::View::from_raw(rp);
+        v.set_frame(rt::Rect { x: 0.0, y: 0.0, w: rf.width, h: rf.height });
+        ak::View::from_raw(root_view).add_subview(v);
+        apply_nested(root, rp, rf, false);
+    } else {
+        apply_nested(root, root_view, rf, root_flipped);
+    }
+    return;
 }
 
 fn apply_nested(node: *flex::Node, parent_ptr: *u8, parent_abs: flex::Layout, parent_flipped: bool) {
@@ -1635,6 +1651,26 @@ fn test_containers_follow_hig_presets() {
     c.calculate_layout(100.0f64, flex::undefined(), flex::Direction::LTR);
     let cfr: flex::Layout = c.layout_frame();
     assert approx(cfr.height, 42.0f64);  // 16 pad + 10 + 16 pad
+}
+
+#[test]
+fn test_apply_attaches_a_lone_leaf_root() {
+    // A content root that is ITSELF a leaf (e.g. scroll { one label }, where
+    // mount_wrapper_content returns the lone child directly): apply must attach
+    // the root's own payload, not only children's. Was: root rendered empty.
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 100.0, h: 40.0 });
+    let leaf_view = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 });
+    let lp: *u8 = leaf_view.raw();
+    var leaf: flex::Node = fixed_view(leaf_view);
+    leaf.set_width(flex::StyleLength::points(100.0f64));
+    leaf.set_height(flex::StyleLength::points(40.0f64));
+    leaf.calculate_layout(100.0f64, 40.0f64, flex::Direction::LTR);
+    apply(#addr_of(leaf), host.raw(), false);
+    let subs: vec::Vec[ak::View] = host.subviews();
+    assert subs.count() == (1 as usize);           // the leaf was attached
+    let f: rt::Rect = ak::View::from_raw(lp).frame();
+    assert approx(f.w, 100.0f64);
+    assert approx(f.h, 40.0f64);
 }
 
 #[test]
