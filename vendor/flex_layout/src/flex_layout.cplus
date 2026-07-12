@@ -759,6 +759,14 @@ impl Node {
     // without checking the ancestor first).
     fn layout_changed(this) -> bool { return this.layout_fresh; }
 
+    // The node's CONTENT changed in place (an adapter edited the measured
+    // text of an existing leaf, say) without any style change the cache
+    // could see. Invalidates this node's cache entry so the next
+    // `calculate_layout` re-measures and re-lays it (and, via the bottom-up
+    // change aggregation, every ancestor that depends on its size). The
+    // measure-fn analog of a style write.
+    fn mark_content_changed(ref this) { this.cached_valid = false; return; }
+
     // Snap every frame to a device pixel grid of `scale` pixels per point (1.0 =
     // integer points, 2.0 = retina half-points). Rounds each node's leading edge
     // and its trailing edge, deriving size from the difference — so adjacent frames
@@ -3528,6 +3536,42 @@ fn test_layout_changed_reports_cache_skips() {
         option::Option[*Node]::Some(p) => { assert { (*p).layout_changed() }; }
         option::Option[*Node]::None => { assert false; }
     }
+    return;
+}
+
+static CONTENT_H: f64 = 20.0;
+fn measure_from_static(ctx: *u8, avail_w: f64, wmode: MeasureMode, avail_h: f64, hmode: MeasureMode) -> Size {
+    return Size { width: 40.0f64, height: CONTENT_H };
+}
+
+#[test]
+fn test_mark_content_changed_forces_remeasure() {
+    // A measure leaf's content changes IN PLACE (no style write the snapshot
+    // diff could see). Under a DEFINITE-sized ancestor the cache soundly
+    // keeps the stale frames (a content-sized root re-runs its intrinsic
+    // pass anyway); mark_content_changed is what forces the re-visit. This
+    // is the adapter's text-edit hook.
+    CONTENT_H = 20.0f64;
+    var root: Node = Node::new();          // fixed box: nothing changes pass to pass
+    root.set_width(pts(100.0f64));
+    root.set_height(pts(50.0f64));
+    var leaf: Node = Node::new();
+    leaf.set_measure(measure_from_static);
+    root.add_child(leaf);
+    root.calculate_layout(100.0f64, 50.0f64, Direction::LTR);
+    assert approx(must(root.child_layout(0 as usize)).height, 20.0f64);
+
+    CONTENT_H = 35.0f64;                   // content grew; styles unchanged
+    root.calculate_layout(100.0f64, 50.0f64, Direction::LTR);
+    assert approx(must(root.child_layout(0 as usize)).height, 20.0f64);   // cache soundly stale — needs the mark
+
+    match root.children.at_ptr(0 as usize) {
+        option::Option[*Node]::Some(p) => { { (*p).mark_content_changed(); } }
+        option::Option[*Node]::None => { assert false; }
+    }
+    root.calculate_layout(100.0f64, 50.0f64, Direction::LTR);
+    assert approx(must(root.child_layout(0 as usize)).height, 35.0f64);   // re-measured
+    assert root.layout_changed();
     return;
 }
 
