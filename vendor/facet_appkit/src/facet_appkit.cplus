@@ -1695,6 +1695,109 @@ fn app_list_reflows_on_remove() {
     };
 }
 
+// ---- retained relayout, end to end (the iris-chat shape) --------------------
+// A component whose @facet tree hosts a portable scroll of wrapping labels —
+// header + transcript. ui::relayout at a new host size must keep every view
+// (scroll, document, rows) and re-wrap the text to the new width; only
+// ui::invalidate rebuilds.
+
+struct ScrollPane {
+    rows: i64,
+}
+
+impl ScrollPane: facet::Component {
+    fn render(this) -> flex::Node {
+        var list: facet::Builder = facet::Builder::new();
+        var i: i64 = 0 as i64;
+        while i < this.rows {
+            list.add(facet::wrap_label("The quick brown fox jumps over the lazy dog while the lazy dog wonders why the fox keeps wrapping to the pane width."));
+            i = i + (1 as i64);
+        }
+        var root: facet::Builder = facet::Builder::new();
+        root.add(facet::label("transcript"));
+        root.add(facet::scroll(list).grow(1.0f64));
+        var tree: facet::Node = facet::column(root);
+        return mount(#addr_of(tree));
+    }
+}
+
+static SCROLL_PANE: ScrollPane = #zero::[ScrollPane]();
+
+#[test]
+fn e2e_component_scroll_relayout_keeps_views_and_rewraps() {
+    ui::unmount_all();
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
+    SCROLL_PANE.rows = 3 as i64;
+    let _h: f64 = ui::mount(SCROLL_PANE.render, host: host.raw());
+
+    // The applied tree: [ label, scroll ] under the host; the drain filled the
+    // scroll's flipped document with the three wrapped rows.
+    var subs: vec::Vec[ak::View] = host.subviews();
+    assert subs.count() == (2 as usize);
+    var scroll_ptr: *u8 = 0 as *u8;
+    match subs.at_ptr(1 as usize) {
+        option::Option[*ak::View]::Some(vp) => { scroll_ptr = { (*vp).raw() }; }
+        option::Option[*ak::View]::None => { assert false; }
+    };
+    let sv: ak::ScrollView = ak::ScrollView::from_raw(scroll_ptr);
+    var doc0: *u8 = 0 as *u8;
+    var row0: *u8 = 0 as *u8;
+    var h0: f64 = 0.0f64;
+    match sv.document_view() {
+        option::Option[ak::View]::Some(doc) => {
+            doc0 = doc.raw();
+            h0 = doc.frame().h;
+            var rows: vec::Vec[ak::View] = doc.subviews();
+            assert rows.count() == (3 as usize);
+            match rows.at_ptr(0 as usize) { option::Option[*ak::View]::Some(rp) => { row0 = { (*rp).raw() }; } option::Option[*ak::View]::None => { assert false; } };
+        }
+        option::Option[ak::View]::None => { assert false; }
+    };
+    assert h0 > 0.0f64;
+
+    // Narrow the host and relayout: the SAME scroll, document, and row views
+    // survive; the text re-wraps, so the content grows TALLER.
+    host.set_frame(rt::Rect { x: 0.0, y: 0.0, w: 180.0, h: 200.0 });
+    assert ui::relayout(#addr_of(SCROLL_PANE) as *u8);
+    var subs2: vec::Vec[ak::View] = host.subviews();
+    assert subs2.count() == (2 as usize);
+    match subs2.at_ptr(1 as usize) {
+        option::Option[*ak::View]::Some(vp) => { assert { (*vp).raw() } == scroll_ptr; }
+        option::Option[*ak::View]::None => { assert false; }
+    };
+    assert approx(sv.as_view().frame().w, 180.0f64);
+    match sv.document_view() {
+        option::Option[ak::View]::Some(doc) => {
+            assert doc.raw() == doc0;                    // reused, not recreated
+            assert approx(doc.frame().w, 180.0f64);
+            assert doc.frame().h > h0;                   // narrower ⇒ more lines ⇒ taller
+            var rows: vec::Vec[ak::View] = doc.subviews();
+            assert rows.count() == (3 as usize);
+            match rows.at_ptr(0 as usize) { option::Option[*ak::View]::Some(rp) => { assert { (*rp).raw() } == row0; } option::Option[*ak::View]::None => { assert false; } };
+        }
+        option::Option[ak::View]::None => { assert false; }
+    };
+
+    // A state change still rebuilds: invalidate re-renders with 4 rows. The
+    // rebuild mints a FRESH scroll view (the old one is gone — re-fetch it).
+    SCROLL_PANE.rows = 4 as i64;
+    assert ui::invalidate(#addr_of(SCROLL_PANE) as *u8);
+    var subs3: vec::Vec[ak::View] = host.subviews();
+    assert subs3.count() == (2 as usize);
+    match subs3.at_ptr(1 as usize) {
+        option::Option[*ak::View]::Some(vp) => {
+            match ak::ScrollView::from_raw({ (*vp).raw() }).document_view() {
+                option::Option[ak::View]::Some(doc) => {
+                    assert doc.subviews().count() == (4 as usize);
+                }
+                option::Option[ak::View]::None => { assert false; }
+            }
+        }
+        option::Option[*ak::View]::None => { assert false; }
+    };
+    ui::unmount_all();
+}
+
 // ---- Phase 3: facet description → agent surface (AppKit only) ---------------
 // Mount a @facet tree into a real window, open an agent Surface, and drive
 // the declared identities. This is the closed loop: set_identity records

@@ -1094,8 +1094,14 @@ fn apply_nested(node: *flex::Node, parent_ptr: *u8, parent_abs: flex::Layout, pa
                     ak::View::from_raw(parent_ptr).add_subview(v);
                     apply_nested(cn, cp, cf, false);   // payload views are non-flipped
                 } else if (*cn).child_count() > (0 as usize) {
+                    // Synthesize the container's backing view ONCE and hand it
+                    // to the node (payload-owned +1, like every widget leaf):
+                    // a retained relayout can then reposition the same view
+                    // instead of orphaning it and minting another. A later
+                    // pass over this tree takes the payload branch above.
                     let bv: ak::View = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 });
-                    let bp: *u8 = bv.raw();
+                    let bp: *u8 = rt::retain(bv.raw());
+                    { (*cn).set_payload(bp, release_view); }
                     bv.set_frame(rect);
                     ak::View::from_raw(parent_ptr).add_subview(ak::View::from_raw(bp));
                     apply_nested(cn, bp, cf, false);   // fresh container, non-flipped
@@ -1107,6 +1113,51 @@ fn apply_nested(node: *flex::Node, parent_ptr: *u8, parent_abs: flex::Layout, pa
 }
 
 // ==========================================================================
+// Reposition — retained relayout's frame pass
+// ==========================================================================
+//
+// Walk an already-applied tree and set each node's EXISTING view frame from
+// the freshly computed layout. Nothing is created, added, or removed —
+// `apply` must have run on this tree once (every container then owns its
+// synthesized backing view). Mirrors apply's root-payload branch and its
+// flip math exactly.
+
+fn reposition(root: *flex::Node, root_flipped: bool) {
+    let rf: flex::Layout = (*root).layout_frame();
+    let rp: *u8 = (*root).payload();
+    if rp != (0 as *u8) {
+        ak::View::from_raw(rp).set_frame(rt::Rect { x: 0.0, y: 0.0, w: rf.width, h: rf.height });
+        reposition_nested(root, rf, false);
+    } else {
+        reposition_nested(root, rf, root_flipped);
+    }
+    return;
+}
+
+fn reposition_nested(node: *flex::Node, parent_abs: flex::Layout, parent_flipped: bool) {
+    let kc: usize = (*node).child_count();
+    for i in 0..(kc as i32) {
+        match (*node).children.at_ptr(i as usize) {
+            option::Option[*flex::Node]::Some(cn) => {
+                let cf: flex::Layout = (*cn).layout_frame();   // absolute
+                let x: f64 = cf.left - parent_abs.left;        // relative to parent
+                let y: f64 = if parent_flipped { cf.top - parent_abs.top } else { parent_abs.height - (cf.top - parent_abs.top) - cf.height };
+                let cp: *u8 = (*cn).payload();
+                if cp != (0 as *u8) {
+                    ak::View::from_raw(cp).set_frame(rt::Rect { x: x, y: y, w: cf.width, h: cf.height });
+                    reposition_nested(cn, cf, false);   // payload views are non-flipped
+                }
+                // A payload-less node with children cannot occur on an applied
+                // tree (apply gave every such container a backing view); a
+                // payload-less leaf (spacer, bare box) has no view to move.
+            }
+            option::Option[*flex::Node]::None => { }
+        }
+    }
+    return;
+}
+
+// ==========================================================================
 // Scroll — the two-phase pattern, packaged
 // ==========================================================================
 //
@@ -1114,8 +1165,10 @@ fn apply_nested(node: *flex::Node, parent_ptr: *u8, parent_abs: flex::Layout, pa
 // viewport. After the outer layout + apply, hand the row content here: it
 // is laid out at the viewport width, applied into a fresh FLIPPED document
 // view (rows read top-down, list opens at the top), and installed as the
-// scroll's document. Returns the document height. The row tree is consumed;
-// its views live on under the document view.
+// scroll's document. Returns the document height. The row tree is RETAINED
+// in the scroll-content registry (keyed by the scroll view), so a retained
+// relayout can re-wrap the rows at a new viewport width; its views live on
+// under the document view either way.
 
 fn fill_scroll(s: ak::ScrollView, take rows: flex::Node) -> f64 {
     let sf: rt::Rect = s.as_view().frame();
@@ -1126,7 +1179,179 @@ fn fill_scroll(s: ak::ScrollView, take rows: flex::Node) -> f64 {
     let doc = akx::new_flipped_view(rt::Rect { x: 0.0, y: 0.0, w: sf.w, h: rf.height });
     apply(#addr_of(r), doc.raw(), true);
     s.set_document_view(ak::View::from_raw(doc.raw()));
+    scroll_content_store(s.raw(), r);
     return rf.height;
+}
+
+// ==========================================================================
+// Scroll-content registry — retained row trees for scroll viewports
+// ==========================================================================
+//
+// `fill_scroll` lays a DETACHED row tree into the scroll's document view;
+// without keeping that tree, a retained relayout could resize the viewport
+// but never re-wrap the rows. So the tree is stored here, keyed by the
+// scroll view. The entry RETAINS its scroll (+1): a component rebuild may
+// drop the scroll while the entry still holds the key, and `tree_remove`
+// then forgets the entry exactly (no liveness heuristics).
+
+struct ScrollContent {
+    opaque _scroll: *u8,   // +1 on the NSScrollView; released in drop
+    _tree: flex::Node,     // the laid-out row tree (owns the row views' +1s)
+}
+
+impl ScrollContent {
+    fn drop(ref this) {
+        if this._scroll != (0 as *u8) {
+            rt::release(this._scroll);
+            this._scroll = 0 as *u8;
+        }
+        return;
+    }
+}
+
+static SCROLL_CONTENT: vec::Vec[ScrollContent] = #zero::[vec::Vec[ScrollContent]]();
+
+// Replace (or create) the retained row tree for `scroll`. The previous tree
+// drops here; the applied row views live on under the document view. Each
+// store also prunes entries whose scroll left the view hierarchy — the
+// one-shot mount paths (mount_into / run) fill scrolls nobody unregisters,
+// so without this a mount-per-frame caller would grow the registry forever.
+fn scroll_content_store(scroll: *u8, take rows: flex::Node) {
+    if scroll == { 0 as *u8 } { return; }
+    let _had: bool = scroll_content_remove(scroll);
+    prune_detached_scroll_content();
+    let reg: *vec::Vec[ScrollContent] = #addr_of(SCROLL_CONTENT);
+    (*reg).append(ScrollContent { _scroll: rt::retain(scroll), _tree: rows });
+    return;
+}
+
+// Drop every entry whose scroll view has no superview (its owner discarded
+// it). Safe to message: the entry holds its own +1 on the scroll.
+fn prune_detached_scroll_content() {
+    let reg: *vec::Vec[ScrollContent] = #addr_of(SCROLL_CONTENT);
+    var i: usize = 0 as usize;
+    while i < { (*reg).count() } {
+        var detached: bool = false;
+        match (*reg).at_ptr(i) {
+            option::Option[*ScrollContent]::Some(ep) => {
+                let sup: *u8 = { rt::msg_id({ (*ep)._scroll }, rt::sel(#str_ptr("superview\0"))) };
+                if sup == { 0 as *u8 } { detached = true; }
+            }
+            option::Option[*ScrollContent]::None => { }
+        }
+        if detached {
+            let _g: option::Option[ScrollContent] = (*reg).swap_remove(i);
+            // swap_remove moved the tail into slot i — re-examine i.
+        } else {
+            i = i +% (1 as usize);
+        }
+    }
+    return;
+}
+
+fn scroll_content_remove(scroll: *u8) -> bool {
+    let reg: *vec::Vec[ScrollContent] = #addr_of(SCROLL_CONTENT);
+    let n: usize = { (*reg).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*reg).at_ptr(i) {
+            option::Option[*ScrollContent]::Some(ep) => {
+                if { (*ep)._scroll } == scroll {
+                    let _g: option::Option[ScrollContent] = (*reg).swap_remove(i);
+                    return true;
+                }
+            }
+            option::Option[*ScrollContent]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
+
+// The number of retained scroll-content trees (tests).
+fn scroll_content_count() -> usize {
+    return SCROLL_CONTENT.count();
+}
+
+// Borrow the stored row tree for `scroll` (None when absent). The pointer
+// aims into the registry's storage: valid only while the registry does not
+// mutate — use it within one relayout pass.
+fn scroll_content_tree(scroll: *u8) -> option::Option[*flex::Node] {
+    let reg: *vec::Vec[ScrollContent] = #addr_of(SCROLL_CONTENT);
+    let n: usize = { (*reg).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*reg).at_ptr(i) {
+            option::Option[*ScrollContent]::Some(ep) => {
+                if { (*ep)._scroll } == scroll {
+                    return option::Option[*flex::Node]::Some(#addr_of((*ep)._tree));
+                }
+            }
+            option::Option[*ScrollContent]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return option::Option[*flex::Node]::None;
+}
+
+// Forget every registry entry keyed by a scroll view living in `node`'s
+// payload slots — called on a tree that is about to be replaced/dropped, so
+// entries die exactly when their owner does.
+fn scroll_content_forget_tree(node: *flex::Node) {
+    let p: *u8 = (*node).payload();
+    if p != (0 as *u8) { let _r: bool = scroll_content_remove(p); }
+    let kc: usize = (*node).child_count();
+    for i in 0..(kc as i32) {
+        match (*node).children.at_ptr(i as usize) {
+            option::Option[*flex::Node]::Some(cn) => { scroll_content_forget_tree(cn); }
+            option::Option[*flex::Node]::None => { }
+        }
+    }
+    return;
+}
+
+// Re-lay a registered scroll's row tree at the viewport's CURRENT width,
+// resize the (reused) document view, and reposition the existing row views —
+// then recurse into scrolls nested inside those rows. The engine's cross-call
+// cache makes an unchanged-width pass near-free. Returns whether `scroll`
+// had registered content.
+fn reflow_scroll_content(scroll: *u8) -> bool {
+    match scroll_content_tree(scroll) {
+        option::Option[*flex::Node]::Some(tp) => {
+            let s: ak::ScrollView = ak::ScrollView::from_raw(scroll);
+            let sf: rt::Rect = s.as_view().frame();
+            { (*tp).calculate_layout(sf.w, flex::undefined(), flex::Direction::LTR); }
+            { (*tp).round_to_pixel(2.0f64); }
+            let rf: flex::Layout = (*tp).layout_frame();
+            match s.document_view() {
+                option::Option[ak::View]::Some(dv) => {
+                    dv.set_frame(rt::Rect { x: 0.0, y: 0.0, w: sf.w, h: rf.height });
+                }
+                option::Option[ak::View]::None => { return false; }
+            }
+            reposition(tp, true);      // flipped document, same as fill_scroll's apply
+            reflow_nested_scrolls(tp);
+            return true;
+        }
+        option::Option[*flex::Node]::None => { return false; }
+    }
+    return false;
+}
+
+// Walk a repositioned tree and reflow every registered scroll under it (the
+// viewports' frames are final by now; their row content still needs the
+// width-aware pass).
+fn reflow_nested_scrolls(node: *flex::Node) {
+    let p: *u8 = (*node).payload();
+    if p != (0 as *u8) { let _r: bool = reflow_scroll_content(p); }
+    let kc: usize = (*node).child_count();
+    for i in 0..(kc as i32) {
+        match (*node).children.at_ptr(i as usize) {
+            option::Option[*flex::Node]::Some(cn) => { reflow_nested_scrolls(cn); }
+            option::Option[*flex::Node]::None => { }
+        }
+    }
+    return;
 }
 
 // ==========================================================================
@@ -1149,6 +1374,16 @@ fn fill_scroll(s: ak::ScrollView, take rows: flex::Node) -> f64 {
 // into its host at the host's CURRENT size, any other ctx no-ops. Explicit
 // cross-component refresh is `invalidate(#addr_of(OTHER) as *u8)`.
 //
+// TWO verbs, two update classes:
+//   invalidate(cp) — STATE changed: re-render, re-mount, re-apply (the
+//                    tree's shape may change; views are rebuilt).
+//   relayout(cp)   — only GEOMETRY changed (window resize): re-lay the
+//                    RETAINED tree out at the host's current size and
+//                    reposition the existing views. No render, no view
+//                    churn; the flex engine's incremental cache does the
+//                    heavy lifting. Never call it for a state change — it
+//                    assumes the shape is stable.
+//
 // Hosts are BORROWED plain NSViews the app owns (usually placed in its
 // outer tree via `fixed_view`); a scroll document host uses flipped: true.
 
@@ -1162,6 +1397,78 @@ struct Slot {
 }
 
 static SLOTS: vec::Vec[Slot] = #zero::[vec::Vec[Slot]]();
+
+// The retained flex tree of a mounted component, keyed by the component
+// address — what `relayout` re-lays-out and repositions without a render.
+// Kept OUTSIDE Slot on purpose: a tree reached through a raw *Slot could
+// never be replaced safely (E0509 — no move out of a Drop field through a
+// deref), while a registry entry swaps in and out whole by value.
+struct SlotTree {
+    opaque _cp: *u8,
+    _tree: flex::Node,
+}
+
+static TREES: vec::Vec[SlotTree] = #zero::[vec::Vec[SlotTree]]();
+
+// Replace (or create) the retained tree for `cp`. The previous tree drops
+// here — its view +1s release; the freshly applied views live on under the
+// host. cp 0 (the "no component" sentinel) stores nothing: it can never be
+// relaid-out, so the tree just drops.
+fn tree_store(cp: *u8, take tree: flex::Node) {
+    if cp == { 0 as *u8 } { return; }
+    let _had: bool = tree_remove(cp);
+    let trees: *vec::Vec[SlotTree] = #addr_of(TREES);
+    (*trees).append(SlotTree { _cp: cp, _tree: tree });
+    return;
+}
+
+// Drop the retained tree for `cp`, forgetting any scroll-content rows keyed
+// by scroll views inside it (exact cleanup — entries die with their owner).
+fn tree_remove(cp: *u8) -> bool {
+    let trees: *vec::Vec[SlotTree] = #addr_of(TREES);
+    let n: usize = { (*trees).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*trees).at_ptr(i) {
+            option::Option[*SlotTree]::Some(tp) => {
+                if { (*tp)._cp } == cp {
+                    match (*trees).swap_remove(i) {
+                        option::Option[SlotTree]::Some(entry) => {
+                            scroll_content_forget_tree(#addr_of(entry._tree));
+                            return true;   // entry (and its tree) drops here
+                        }
+                        option::Option[SlotTree]::None => { }
+                    }
+                    return true;
+                }
+            }
+            option::Option[*SlotTree]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
+
+// Borrow the retained tree for `cp` (None when the component never rendered).
+// The pointer aims into the registry's storage: valid only while the registry
+// does not mutate — use it within one relayout pass.
+fn tree_ptr(cp: *u8) -> option::Option[*flex::Node] {
+    let trees: *vec::Vec[SlotTree] = #addr_of(TREES);
+    let n: usize = { (*trees).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*trees).at_ptr(i) {
+            option::Option[*SlotTree]::Some(tp) => {
+                if { (*tp)._cp } == cp {
+                    return option::Option[*flex::Node]::Some(#addr_of((*tp)._tree));
+                }
+            }
+            option::Option[*SlotTree]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return option::Option[*flex::Node]::None;
+}
 
 // A post-render hook the upper (facet) layer installs. It runs after every
 // component render's `apply`, so a component whose subtree contains a portable
@@ -1178,12 +1485,20 @@ fn run_post_render_hook() {
 }
 
 // Render one slot into its host at the host's current size. The previous
-// subtree is removed first; the flex tree (and the views it owns) drops at
-// the end of the call — the applied NSViews live on under the host, each
-// retained by its superview.
+// subtree is removed first; the fresh flex tree is RETAINED in the tree
+// registry (replacing — and dropping — the previous one), so `relayout` can
+// later reposition the applied views without re-rendering. The applied
+// NSViews live on under the host, each retained by its superview.
 fn render_slot(sp: *Slot) -> f64 {
     if { (*sp)._scroll } { return render_slot_scroll(sp); }
-    let host: ak::View = ak::View::from_raw({ (*sp)._host });
+    // Copy the registration out first: the render below may mount ANOTHER
+    // component, growing SLOTS and moving its storage — `sp` must not be
+    // read after `r` runs.
+    let cp: *u8 = { (*sp)._cp };
+    let r: fn(*u8) -> flex::Node = { (*sp)._render };
+    let host_ptr: *u8 = { (*sp)._host };
+    let flipped: bool = { (*sp)._flipped };
+    let host: ak::View = ak::View::from_raw(host_ptr);
     var subs: vec::Vec[ak::View] = host.subviews();
     let cnt: usize = subs.count();
     for i in 0..(cnt as i32) {
@@ -1193,13 +1508,13 @@ fn render_slot(sp: *Slot) -> f64 {
         }
     }
     let hf: rt::Rect = host.frame();
-    let r: fn(*u8) -> flex::Node = { (*sp)._render };
-    var tree: flex::Node = r({ (*sp)._cp });
+    var tree: flex::Node = r(cp);
     tree.calculate_layout(hf.w, hf.h, flex::Direction::LTR);
     tree.round_to_pixel(2.0f64);
-    apply(#addr_of(tree), { (*sp)._host }, { (*sp)._flipped });
-    run_post_render_hook();   // fill any deferred scroll/split in the subtree
+    apply(#addr_of(tree), host_ptr, flipped);
     let f: flex::Layout = tree.layout_frame();
+    tree_store(cp, tree);     // keep for relayout; replaces (drops) the old tree
+    run_post_render_hook();   // fill any deferred scroll/split in the subtree
     return f.height;
 }
 
@@ -1210,10 +1525,13 @@ fn render_slot(sp: *Slot) -> f64 {
 // — so the scroll offset survives a re-render. Only the first render creates the
 // document view. Returns the content height.
 fn render_slot_scroll(sp: *Slot) -> f64 {
-    let s: ak::ScrollView = ak::ScrollView::from_raw({ (*sp)._host });
-    let width: f64 = s.as_view().frame().w;
+    // Same copy-out rule as render_slot: `sp` is dead once the render runs.
+    let cp: *u8 = { (*sp)._cp };
     let r: fn(*u8) -> flex::Node = { (*sp)._render };
-    var tree: flex::Node = r({ (*sp)._cp });
+    let host_ptr: *u8 = { (*sp)._host };
+    let s: ak::ScrollView = ak::ScrollView::from_raw(host_ptr);
+    let width: f64 = s.as_view().frame().w;
+    var tree: flex::Node = r(cp);
     tree.calculate_layout(width, flex::undefined(), flex::Direction::LTR);
     tree.round_to_pixel(2.0f64);
     let rf: flex::Layout = tree.layout_frame();
@@ -1237,6 +1555,7 @@ fn render_slot_scroll(sp: *Slot) -> f64 {
             s.set_document_view(ak::View::from_raw(doc.raw()));
         }
     }
+    tree_store(cp, tree);     // keep for relayout; replaces (drops) the old tree
     run_post_render_hook();   // fill any deferred scroll/split nested in the rows
     return rf.height;
 }
@@ -1313,18 +1632,95 @@ fn component_after(ctx: *u8) {
     return;
 }
 
+// ==========================================================================
+// Retained relayout — the geometry-only update verb
+// ==========================================================================
+//
+// Re-lay the ONE component registered at this address out at its host's
+// CURRENT size by REUSING the tree kept from its last render: recompute the
+// flex layout (the engine's cross-call incremental cache skips unchanged
+// subtrees) and reposition the EXISTING views. No render, no mount, no view
+// churn — this is the window-resize path. State changes keep using
+// `invalidate`: a render may change the tree's SHAPE, and relayout assumes
+// shape stability (which a pure size change gives). A component that has no
+// retained tree yet falls back to a full render. Returns whether a mounted
+// component was found.
+fn relayout(cp: *u8) -> bool {
+    if cp == { 0 as *u8 } { return false; }
+    let n: usize = SLOTS.count();
+    var i: usize = 0 as usize;
+    while i < n {
+        match SLOTS.at_ptr(i) {
+            option::Option[*Slot]::Some(sp) => {
+                if { (*sp)._live } {
+                    if { (*sp)._cp } == cp {
+                        let host_ptr: *u8 = { (*sp)._host };
+                        let flipped: bool = { (*sp)._flipped };
+                        let scroll: bool = { (*sp)._scroll };
+                        match tree_ptr(cp) {
+                            option::Option[*flex::Node]::Some(tp) => {
+                                if scroll {
+                                    relayout_scroll_host(host_ptr, tp);
+                                } else {
+                                    let hf: rt::Rect = ak::View::from_raw(host_ptr).frame();
+                                    { (*tp).calculate_layout(hf.w, hf.h, flex::Direction::LTR); }
+                                    { (*tp).round_to_pixel(2.0f64); }
+                                    reposition(tp, flipped);
+                                    reflow_nested_scrolls(tp);
+                                }
+                            }
+                            option::Option[*flex::Node]::None => {
+                                let _h: f64 = render_slot(sp);   // first render still pending
+                            }
+                        }
+                        return true;
+                    }
+                }
+            }
+            option::Option[*Slot]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
+
+// The scroll-hosted variant (mount_scroll): content-size the retained tree at
+// the viewport's current width, resize the reused document view, reposition.
+fn relayout_scroll_host(host_ptr: *u8, tp: *flex::Node) {
+    let s: ak::ScrollView = ak::ScrollView::from_raw(host_ptr);
+    let width: f64 = s.as_view().frame().w;
+    { (*tp).calculate_layout(width, flex::undefined(), flex::Direction::LTR); }
+    { (*tp).round_to_pixel(2.0f64); }
+    let rf: flex::Layout = (*tp).layout_frame();
+    match s.document_view() {
+        option::Option[ak::View]::Some(dv) => {
+            dv.set_frame(rt::Rect { x: 0.0, y: 0.0, w: width, h: rf.height });
+        }
+        option::Option[ak::View]::None => { return; }   // never applied: nothing to move
+    }
+    reposition(tp, true);   // flipped document, same as render_slot_scroll's apply
+    reflow_nested_scrolls(tp);
+    return;
+}
+
 // Drop every registration (window teardown, tests). Host views and
-// components are borrowed, so this releases nothing.
+// components are borrowed; the retained trees (and their view +1s) drop —
+// the applied views themselves live on under their superviews.
 fn unmount_all() {
     let slots: *vec::Vec[Slot] = #addr_of(SLOTS);
     (*slots).remove_all();
+    let trees: *vec::Vec[SlotTree] = #addr_of(TREES);
+    (*trees).remove_all();
+    let reg: *vec::Vec[ScrollContent] = #addr_of(SCROLL_CONTENT);
+    (*reg).remove_all();
     return;
 }
 
 // Drop the (first) registration for one component address, if present.
 // swap_remove keeps the vec compact; invalidate scans all slots, so reordering
-// is harmless. Host + component are borrowed, so nothing is released. No-ops on
-// ctx 0 (the "no component" sentinel). Returns whether a slot was removed.
+// is harmless. Host + component are borrowed, so nothing they own is released;
+// the component's RETAINED TREE drops with the registration. No-ops on ctx 0
+// (the "no component" sentinel). Returns whether a slot was removed.
 fn remove_slot(cp: *u8) -> bool {
     if cp == { 0 as *u8 } { return false; }
     let slots: *vec::Vec[Slot] = #addr_of(SLOTS);
@@ -1335,6 +1731,7 @@ fn remove_slot(cp: *u8) -> bool {
             option::Option[*Slot]::Some(sp) => {
                 if { (*sp)._cp } == cp {
                     let _g: option::Option[Slot] = (*slots).swap_remove(i);
+                    let _t: bool = tree_remove(cp);
                     return true;
                 }
             }
@@ -1821,6 +2218,203 @@ fn test_mount_scroll_reuses_doc_and_reflows_on_invalidate() {
         }
         option::Option[ak::View]::None => { assert false; }
     };
+    unmount_all();
+}
+
+// ---- retained relayout ------------------------------------------------------
+
+// column [ leaf 50x10, row { leaf 40x20 } ] — the row is a payload-less
+// container at build time, so apply must synthesize (and now PERSIST) its
+// backing view; the column root borrows the host.
+fn relayout_test_render(cp: *u8) -> flex::Node {
+    let zero: rt::Rect = rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 };
+    var inner: Builder = Builder::new();
+    inner.add(fixed_view(ak::View::new(zero)).width(40.0f64).height(20.0f64));
+    var b: Builder = Builder::new();
+    b.add(fixed_view(ak::View::new(zero)).width(50.0f64).height(10.0f64));
+    b.add(row(inner).grow(1.0f64));
+    return column(b);
+}
+
+#[test]
+fn test_relayout_repositions_existing_views_without_churn() {
+    unmount_all();
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 100.0 });
+    let cp: *u8 = 41 as *u8;
+    let _h: f64 = mount(relayout_test_render, ctx: cp, host: host.raw());
+
+    // Capture the applied view identities: leaf, synthesized row container,
+    // and the leaf nested inside the container.
+    var leaf0: *u8 = 0 as *u8;
+    var rowv: *u8 = 0 as *u8;
+    var subs: vec::Vec[ak::View] = host.subviews();
+    assert subs.count() == (2 as usize);
+    match subs.at_ptr(0 as usize) { option::Option[*ak::View]::Some(vp) => { leaf0 = { (*vp).raw() }; } option::Option[*ak::View]::None => { assert false; } };
+    match subs.at_ptr(1 as usize) { option::Option[*ak::View]::Some(vp) => { rowv = { (*vp).raw() }; } option::Option[*ak::View]::None => { assert false; } };
+    var inner0: *u8 = 0 as *u8;
+    var rsubs: vec::Vec[ak::View] = ak::View::from_raw(rowv).subviews();
+    assert rsubs.count() == (1 as usize);
+    match rsubs.at_ptr(0 as usize) { option::Option[*ak::View]::Some(vp) => { inner0 = { (*vp).raw() }; } option::Option[*ak::View]::None => { assert false; } };
+
+    // The synthesized container is persisted as the row node's payload.
+    match tree_ptr(cp) {
+        option::Option[*flex::Node]::Some(tp) => {
+            match (*tp).children.at_ptr(1 as usize) {
+                option::Option[*flex::Node]::Some(rn) => { assert { (*rn).payload() } == rowv; }
+                option::Option[*flex::Node]::None => { assert false; }
+            }
+        }
+        option::Option[*flex::Node]::None => { assert false; }
+    };
+
+    // Resize the host and relayout: SAME views, new frames.
+    host.set_frame(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 150.0 });
+    assert relayout(cp);
+    var subs2: vec::Vec[ak::View] = host.subviews();
+    assert subs2.count() == (2 as usize);
+    match subs2.at_ptr(0 as usize) { option::Option[*ak::View]::Some(vp) => { assert { (*vp).raw() } == leaf0; } option::Option[*ak::View]::None => { assert false; } };
+    match subs2.at_ptr(1 as usize) { option::Option[*ak::View]::Some(vp) => { assert { (*vp).raw() } == rowv; } option::Option[*ak::View]::None => { assert false; } };
+    var rsubs2: vec::Vec[ak::View] = ak::View::from_raw(rowv).subviews();
+    assert rsubs2.count() == (1 as usize);
+    match rsubs2.at_ptr(0 as usize) { option::Option[*ak::View]::Some(vp) => { assert { (*vp).raw() } == inner0; } option::Option[*ak::View]::None => { assert false; } };
+
+    // Frames follow the 300x150 layout (bottom-up flip: leaf at y = 150-10).
+    let lf: rt::Rect = ak::View::from_raw(leaf0).frame();
+    assert approx(lf.y, 140.0f64);
+    assert approx(lf.h, 10.0f64);
+    let rf: rt::Rect = ak::View::from_raw(rowv).frame();
+    assert approx(rf.y, 0.0f64);
+    assert approx(rf.w, 300.0f64);
+    assert approx(rf.h, 140.0f64);
+
+    // Unknown component → false; unmount drops the retained tree.
+    assert relayout(999 as *u8) == false;
+    assert unmount(cp);
+    match tree_ptr(cp) {
+        option::Option[*flex::Node]::Some(_tp) => { assert false; }
+        option::Option[*flex::Node]::None => { }
+    };
+    unmount_all();
+}
+
+// Percent-width rows: the row width follows the viewport, so a relayout at a
+// new scroll width must re-lay AND reposition them.
+fn relayout_scroll_render(cp: *u8) -> flex::Node {
+    let zero: rt::Rect = rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 };
+    var b: Builder = Builder::new();
+    var i: i64 = 0 as i64;
+    while i < (3 as i64) {
+        var n: flex::Node = fixed_view(ak::View::new(zero));
+        n.set_width(flex::StyleLength::percent(100.0f64));
+        n.set_height(flex::StyleLength::points(30.0f64));
+        b.add(n);
+        i = i + (1 as i64);
+    }
+    return column(b);
+}
+
+#[test]
+fn test_relayout_scroll_slot_reuses_doc_and_rewraps_rows() {
+    unmount_all();
+    let s = ak::ScrollView::new(rt::Rect { x: 0.0, y: 0.0, w: 100.0, h: 80.0 });
+    let cp: *u8 = 42 as *u8;
+    let h0: f64 = mount_scroll(relayout_scroll_render, ctx: cp, scroll: s.raw());
+    assert approx(h0, 90.0f64);
+    var doc0: *u8 = 0 as *u8;
+    var row0: *u8 = 0 as *u8;
+    match s.document_view() {
+        option::Option[ak::View]::Some(doc) => {
+            doc0 = doc.raw();
+            var rs: vec::Vec[ak::View] = doc.subviews();
+            assert rs.count() == (3 as usize);
+            match rs.at_ptr(0 as usize) { option::Option[*ak::View]::Some(vp) => { row0 = { (*vp).raw() }; } option::Option[*ak::View]::None => { assert false; } };
+            assert approx(ak::View::from_raw(row0).frame().w, 100.0f64);
+        }
+        option::Option[ak::View]::None => { assert false; }
+    };
+
+    // Widen the viewport and relayout: same doc, same rows, new width.
+    s.as_view().set_frame(rt::Rect { x: 0.0, y: 0.0, w: 160.0, h: 80.0 });
+    assert relayout(cp);
+    match s.document_view() {
+        option::Option[ak::View]::Some(doc) => {
+            assert doc.raw() == doc0;                       // reused, not recreated
+            assert approx(doc.frame().w, 160.0f64);
+            assert approx(doc.frame().h, 90.0f64);
+            var rs: vec::Vec[ak::View] = doc.subviews();
+            assert rs.count() == (3 as usize);
+            match rs.at_ptr(0 as usize) { option::Option[*ak::View]::Some(vp) => { assert { (*vp).raw() } == row0; } option::Option[*ak::View]::None => { assert false; } };
+            assert approx(ak::View::from_raw(row0).frame().w, 160.0f64);
+        }
+        option::Option[ak::View]::None => { assert false; }
+    };
+    unmount_all();
+}
+
+// A component whose tree HOLDS a scroll viewport leaf, its rows filled via
+// fill_scroll (the portable-scroll shape: ak_scroll + drain does exactly
+// this). relayout must reposition the viewport AND re-wrap the registered
+// row content at the new width.
+static RELAYOUT_SCROLL_HOST: *u8 = #zero::[*u8]();
+fn relayout_viewport_render(cp: *u8) -> flex::Node {
+    var b: Builder = Builder::new();
+    var n: flex::Node = fixed_view(ak::View::from_raw(RELAYOUT_SCROLL_HOST));
+    n.set_flex_grow(1.0f64);
+    b.add(n);
+    return column(b);
+}
+
+#[test]
+fn test_relayout_reflows_registered_scroll_content() {
+    unmount_all();
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 100.0 });
+    let sv = ak::ScrollView::new(rt::Rect { x: 0.0, y: 0.0, w: 10.0, h: 10.0 });
+    RELAYOUT_SCROLL_HOST = sv.as_view().raw();
+    let cp: *u8 = 43 as *u8;
+    let _h: f64 = mount(relayout_viewport_render, ctx: cp, host: host.raw());
+    // The outer apply sized the viewport to fill the host.
+    assert approx(sv.as_view().frame().w, 200.0f64);
+
+    // Fill the scroll (what drain_scroll_jobs does) — registers the row tree.
+    let zero: rt::Rect = rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 };
+    var rows: Builder = Builder::new();
+    var r0: flex::Node = fixed_view(ak::View::new(zero));
+    r0.set_width(flex::StyleLength::percent(100.0f64));
+    r0.set_height(flex::StyleLength::points(30.0f64));
+    rows.add(r0);
+    let ch: f64 = fill_scroll(sv, column(rows));
+    assert approx(ch, 30.0f64);
+    assert scroll_content_count() == (1 as usize);
+    var rowv: *u8 = 0 as *u8;
+    match sv.document_view() {
+        option::Option[ak::View]::Some(doc) => {
+            var rs: vec::Vec[ak::View] = doc.subviews();
+            match rs.at_ptr(0 as usize) { option::Option[*ak::View]::Some(vp) => { rowv = { (*vp).raw() }; } option::Option[*ak::View]::None => { assert false; } };
+            assert approx(ak::View::from_raw(rowv).frame().w, 200.0f64);
+        }
+        option::Option[ak::View]::None => { assert false; }
+    };
+
+    // Widen the host: relayout repositions the viewport, then re-wraps the
+    // registered rows at the viewport's new width — same row view.
+    host.set_frame(rt::Rect { x: 0.0, y: 0.0, w: 320.0, h: 100.0 });
+    assert relayout(cp);
+    assert approx(sv.as_view().frame().w, 320.0f64);
+    match sv.document_view() {
+        option::Option[ak::View]::Some(doc) => {
+            assert approx(doc.frame().w, 320.0f64);
+            var rs: vec::Vec[ak::View] = doc.subviews();
+            assert rs.count() == (1 as usize);
+            match rs.at_ptr(0 as usize) { option::Option[*ak::View]::Some(vp) => { assert { (*vp).raw() } == rowv; } option::Option[*ak::View]::None => { assert false; } };
+            assert approx(ak::View::from_raw(rowv).frame().w, 320.0f64);
+        }
+        option::Option[ak::View]::None => { assert false; }
+    };
+
+    // A re-render replaces the retained tree; the forgotten tree takes its
+    // scroll-content entry with it (exact cleanup, no liveness heuristics).
+    assert invalidate(cp);
+    assert scroll_content_count() == (0 as usize);
     unmount_all();
 }
 
