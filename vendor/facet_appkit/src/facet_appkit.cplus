@@ -911,6 +911,9 @@ fn install() {
     facet::set_set_hidden_fn(set_hidden_impl);
     facet::set_add_child_fn(add_child_impl);
     facet::set_remove_child_fn(remove_child_impl);
+    facet::set_insert_child_fn(insert_child_impl);
+    facet::set_replace_child_fn(replace_child_impl);
+    facet::set_set_child_fn(set_child_impl);
     facet::set_stage_fn(stage_impl);
     facet::set_attach_fn(attach_impl);
     facet::set_detach_fn(detach_impl);
@@ -2298,6 +2301,83 @@ fn remove_child_impl(h: facet::Handle, key: str) -> bool {
     return false;
 }
 
+// facet::Handle.insert_child hook: mount a child and splice it into the
+// container's children at index `at` (past the end appends), then reflow. Like
+// add_child_impl but ordered.
+fn insert_child_impl(h: facet::Handle, take child: facet::Node, at: usize) -> bool {
+    let cview: *u8 = h.view();
+    let cflex: *u8 = h.flex();
+    if cview == (0 as *u8) || cflex == (0 as *u8) { return false; }
+    let cfp: *flex::Node = cflex as *flex::Node;
+    var idx: usize = at;
+    let n: usize = { (*cfp).child_count() };
+    if idx > n { idx = n; }
+    var child_flex: flex::Node = mount(#addr_of(child));
+    ui::apply(#addr_of(child_flex), cview, false);            // add_subview; frames set by relayout
+    let _st = { (*cfp).children.insert(child_flex, idx) };    // MOVE the flex node in at `idx`
+    { (*cfp).mark_content_changed(); }
+    let _r: bool = ui::relayout(h.cp());
+    return true;
+}
+
+// facet::Handle.replace_child hook: find the direct child carrying `key`, drop
+// its view + flex node, and mount a fresh child at the SAME index, then reflow.
+fn replace_child_impl(h: facet::Handle, key: str, take child: facet::Node) -> bool {
+    let cview: *u8 = h.view();
+    let cflex: *u8 = h.flex();
+    if cview == (0 as *u8) || cflex == (0 as *u8) { return false; }
+    let target: *u8 = find_view_by_id(cview, key);
+    if target == (0 as *u8) { return false; }
+    let cfp: *flex::Node = cflex as *flex::Node;
+    let cc: usize = { (*cfp).child_count() };
+    var i: usize = 0 as usize;
+    while i < cc {
+        match (*cfp).children.at_ptr(i) {
+            option::Option[*flex::Node]::Some(childp) => {
+                if { (*childp).payload() } == target {
+                    ak::View::from_raw(target).remove_from_superview();
+                    let _g: option::Option[flex::Node] = { (*cfp).children.remove(i) };
+                    var child_flex: flex::Node = mount(#addr_of(child));
+                    ui::apply(#addr_of(child_flex), cview, false);
+                    let _st = { (*cfp).children.insert(child_flex, i) };
+                    { (*cfp).mark_content_changed(); }
+                    let _r: bool = ui::relayout(h.cp());
+                    return true;
+                }
+            }
+            option::Option[*flex::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
+
+// facet::Handle.set_child hook: clear this container's children (their view
+// subtrees tear down, their flex nodes drop), then mount a single fresh child.
+// The one-slot swap.
+fn set_child_impl(h: facet::Handle, take child: facet::Node) -> bool {
+    let cview: *u8 = h.view();
+    let cflex: *u8 = h.flex();
+    if cview == (0 as *u8) || cflex == (0 as *u8) { return false; }
+    let cfp: *flex::Node = cflex as *flex::Node;
+    while { (*cfp).child_count() } > (0 as usize) {
+        match (*cfp).children.at_ptr(0 as usize) {
+            option::Option[*flex::Node]::Some(childp) => {
+                let pv: *u8 = { (*childp).payload() };
+                if pv != (0 as *u8) { ak::View::from_raw(pv).remove_from_superview(); }
+            }
+            option::Option[*flex::Node]::None => { }
+        }
+        let _g: option::Option[flex::Node] = { (*cfp).children.remove(0 as usize) };
+    }
+    var child_flex: flex::Node = mount(#addr_of(child));
+    ui::apply(#addr_of(child_flex), cview, false);
+    { (*cfp).add_child(child_flex); }
+    { (*cfp).mark_content_changed(); }
+    let _r: bool = ui::relayout(h.cp());
+    return true;
+}
+
 // ==========================================================================
 // Component lifecycle: stage / attach / detach (facet::Staged)
 // ==========================================================================
@@ -2779,6 +2859,111 @@ fn find_add_and_remove_child() {
     unmount_all();
 }
 
+// ---- keyed-direct structural verbs: insert / replace / set_child + show/hide --
+struct VerbPane { n: i64 }
+
+impl VerbPane: facet::Component {
+    fn build(this) -> facet::Node {
+        return @facet {
+            vstack {
+                vstack {
+                    label("a", size: 12.0f64).key("a")
+                    label("b", size: 12.0f64).key("b")
+                }.key("list")
+                button("go", primary: true).key("btn")
+            }
+        };
+    }
+}
+
+static VERB_PANE: VerbPane = #zero::[VerbPane]();
+
+fn verb_install() {
+    facet::set_find_fn(find_impl);
+    facet::set_set_hidden_fn(set_hidden_impl);
+    facet::set_add_child_fn(add_child_impl);
+    facet::set_remove_child_fn(remove_child_impl);
+    facet::set_insert_child_fn(insert_child_impl);
+    facet::set_replace_child_fn(replace_child_impl);
+    facet::set_set_child_fn(set_child_impl);
+    return;
+}
+
+// The first flex child of a keyed container carries `key`? (order, not just set
+// membership — insert_child splices at an index; subview order differs.)
+fn first_child_is(container_flex: *u8, key: str) -> bool {
+    if container_flex == (0 as *u8) { return false; }
+    let cfp: *flex::Node = container_flex as *flex::Node;
+    match (*cfp).children.at_ptr(0 as usize) {
+        option::Option[*flex::Node]::Some(c) => { return view_id_is({ (*c).payload() }, key); }
+        option::Option[*flex::Node]::None => { return false; }
+    }
+    return false;
+}
+
+#[test]
+fn keyed_direct_structural_verbs() {
+    unmount_all();
+    verb_install();
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
+    let _h: f64 = mount_component(VERB_PANE.build, host: host.raw());
+    let cp: *u8 = #addr_of(VERB_PANE) as *u8;
+    let list_v: *u8 = find_view_by_id(host.raw(), "list");
+    assert list_v != (0 as *u8);
+    assert ak::View::from_raw(list_v).subviews().count() == (2 as usize);   // a, b
+
+    // insert_child at 0: "z" becomes the FIRST child (top) -> 3 rows.
+    let _i: facet::Handle = facet::find(cp, "list").insert_child(facet::label("z", size: 12.0f64).key("z"), 0 as usize);
+    assert ak::View::from_raw(list_v).subviews().count() == (3 as usize);
+    assert facet::find(cp, "z").found();
+    assert first_child_is(facet::find(cp, "list").flex(), "z");   // ordered, not appended
+
+    // insert_child past the end appends (clamps).
+    let _i2: facet::Handle = facet::find(cp, "list").insert_child(facet::label("tail", size: 12.0f64).key("tail"), 99 as usize);
+    assert ak::View::from_raw(list_v).subviews().count() == (4 as usize);
+    assert facet::find(cp, "tail").found();
+    assert first_child_is(facet::find(cp, "list").flex(), "z");   // still z first
+
+    // replace_child: swap "a" for "a2" at the same position -> count unchanged.
+    assert facet::find(cp, "list").replace_child("a", facet::label("a2", size: 12.0f64).key("a2"));
+    assert ak::View::from_raw(list_v).subviews().count() == (4 as usize);
+    assert !facet::find(cp, "a").found();
+    assert facet::find(cp, "a2").found();
+    assert facet::find(cp, "b").found();
+    // replacing a non-child returns false.
+    assert facet::find(cp, "list").replace_child("nope", facet::label("x").key("x")) == false;
+
+    // set_child: collapse the list to ONE fresh child.
+    let _s: facet::Handle = facet::find(cp, "list").set_child(facet::label("only", size: 12.0f64).key("only"));
+    assert ak::View::from_raw(list_v).subviews().count() == (1 as usize);
+    assert facet::find(cp, "only").found();
+    assert !facet::find(cp, "z").found();
+    assert !facet::find(cp, "a2").found();
+    assert !facet::find(cp, "b").found();
+    assert !facet::find(cp, "tail").found();
+
+    // show / hide over set_hidden.
+    let btn: *u8 = find_view_by_id(host.raw(), "btn");
+    assert btn != (0 as *u8);
+    let _hh: facet::Handle = facet::find(cp, "btn").hide();
+    assert rt::msg_i8(btn, rt::sel(#str_ptr("isHidden\0"))) == (1 as i8);
+    let _sh: facet::Handle = facet::find(cp, "btn").show();
+    assert rt::msg_i8(btn, rt::sel(#str_ptr("isHidden\0"))) == (0 as i8);
+
+    // find_as native hatch: view() IS the native NSButton — full native API.
+    let btn_h: facet::Handle = facet::find(cp, "btn");
+    assert btn_h.view() == btn;
+    let native: ak::Button = ak::Button::from_raw(btn_h.view());
+    native.set_title("native!");
+    let t: text::Text = native.title();
+    assert t.view() == "native!";
+
+    // structural verbs on a missing container no-op safely.
+    assert facet::find(cp, "ghost").remove_child("a") == false;
+    let _ng: facet::Handle = facet::find(cp, "ghost").insert_child(facet::label("q").key("q"), 0 as usize);
+    unmount_all();
+}
+
 // ---- component lifecycle: stage / attach / detach (the router / nav pattern) --
 // A NavHost with a keyed "outlet"; screens are staged off-canvas and attached one
 // at a time. Attaching fires on_attach; detaching PARKS the screen (views kept)
@@ -2973,6 +3158,25 @@ fn stage_leak_cycles() -> i32 {
         let _dt: bool = a.detach();
         let _re: bool = facet::find(nav_cp, "outlet").attach(a);
         let _us: bool = a.unstage();
+    }
+    unmount_all();
+    return 0;
+}
+
+// Leak-harness segment for the structural verbs: 50 cycles of insert -> replace
+// -> set_child on a keyed container. Each verb mounts a child (allocs views);
+// replace drops the old, set_child clears all — the alloc/free must balance or
+// the harness `leaks` grows per cycle. The list oscillates 1<->2 children.
+fn verb_leak_cycles() -> i32 {
+    unmount_all();
+    verb_install();
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
+    let _h: f64 = mount_component(VERB_PANE.build, host: host.raw());
+    let cp: *u8 = #addr_of(VERB_PANE) as *u8;
+    for k in 0..50 {
+        let _i: facet::Handle = facet::find(cp, "list").insert_child(facet::label("x", size: 12.0f64).key("x"), 0 as usize);
+        let _r: bool = facet::find(cp, "list").replace_child("x", facet::label("y", size: 12.0f64).key("y"));
+        let _s: facet::Handle = facet::find(cp, "list").set_child(facet::label("only", size: 12.0f64).key("only"));
     }
     unmount_all();
     return 0;

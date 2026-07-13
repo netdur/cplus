@@ -1025,6 +1025,9 @@ static SET_ON_FN: fn(Handle, bool) -> bool = #zero::[fn(Handle, bool) -> bool]()
 static SET_HIDDEN_FN: fn(Handle, bool) -> bool = #zero::[fn(Handle, bool) -> bool]();
 static ADD_CHILD_FN: fn(Handle, take Node) -> bool = #zero::[fn(Handle, take Node) -> bool]();
 static REMOVE_CHILD_FN: fn(Handle, str) -> bool = #zero::[fn(Handle, str) -> bool]();
+static INSERT_CHILD_FN: fn(Handle, take Node, usize) -> bool = #zero::[fn(Handle, take Node, usize) -> bool]();
+static REPLACE_CHILD_FN: fn(Handle, str, take Node) -> bool = #zero::[fn(Handle, str, take Node) -> bool]();
+static SET_CHILD_FN: fn(Handle, take Node) -> bool = #zero::[fn(Handle, take Node) -> bool]();
 
 fn set_find_fn(f: fn(*u8, str) -> Handle) { FIND_FN = f; return; }
 fn set_set_text_fn(f: fn(Handle, str) -> bool) { SET_TEXT_FN = f; return; }
@@ -1033,6 +1036,9 @@ fn set_set_on_fn(f: fn(Handle, bool) -> bool) { SET_ON_FN = f; return; }
 fn set_set_hidden_fn(f: fn(Handle, bool) -> bool) { SET_HIDDEN_FN = f; return; }
 fn set_add_child_fn(f: fn(Handle, take Node) -> bool) { ADD_CHILD_FN = f; return; }
 fn set_remove_child_fn(f: fn(Handle, str) -> bool) { REMOVE_CHILD_FN = f; return; }
+fn set_insert_child_fn(f: fn(Handle, take Node, usize) -> bool) { INSERT_CHILD_FN = f; return; }
+fn set_replace_child_fn(f: fn(Handle, str, take Node) -> bool) { REPLACE_CHILD_FN = f; return; }
+fn set_set_child_fn(f: fn(Handle, take Node) -> bool) { SET_CHILD_FN = f; return; }
 
 impl Handle {
     // The backend fills a resolved handle through this constructor; apps never do.
@@ -1046,6 +1052,13 @@ impl Handle {
     fn found(this) -> bool { return this._view != (0 as *u8); }
 
     // Backend accessors (the mutator hook reads the handle through these).
+    // `view()` is ALSO the native escape hatch: when the four portable mutators
+    // (set_text/value/on/hidden) aren't enough, wrap the raw view in its backend
+    // type for the full native API —
+    //   AppKit:  let b: ak::Button = ak::Button::from_raw(find(cp, key).view());
+    // (A generic `find_as[T]` returning the typed widget isn't expressible: the
+    // core can't name a backend type, and there is no generic method dispatch to
+    // call `T::from_raw`. Guard with `found()` first; on a miss `view()` is 0.)
     fn view(this) -> *u8 { return this._view; }
     fn flex(this) -> *u8 { return this._flex; }
     fn cp(this) -> *u8 { return this._cp; }
@@ -1080,6 +1093,10 @@ impl Handle {
         return this;
     }
 
+    // Reveal / conceal the element — the readable pair over `set_hidden`. Chainable.
+    fn show(this) -> Handle { return this.set_hidden(false); }
+    fn hide(this) -> Handle { return this.set_hidden(true); }
+
     // Append a freshly-built child to this (multi-child) container, in place:
     // the child mounts, attaches under the container's view, and the layout
     // reflows. `this` must resolve a KEYED container. Chainable.
@@ -1098,6 +1115,40 @@ impl Handle {
         let f: fn(Handle, str) -> bool = REMOVE_CHILD_FN;
         if f != (0 as fn(Handle, str) -> bool) { return f(this, key); }
         return false;
+    }
+
+    // Insert a freshly-built child at position `at` among this container's direct
+    // children (`at` past the end appends). Like `add_child`, but ordered. The
+    // layout reflows. `this` must resolve a KEYED container. Chainable.
+    fn insert_child(this, take child: Node, at: usize) -> Handle {
+        let f: fn(Handle, take Node, usize) -> bool = INSERT_CHILD_FN;
+        if f != (0 as fn(Handle, take Node, usize) -> bool) {
+            let _ok: bool = f(this, child, at);
+        }
+        // No backend installed: `child` was not moved out, so it drops here (RAII).
+        return this;
+    }
+
+    // Replace the direct child addressed by `key` with a freshly-built one, in
+    // place at the same position (old views tear down, new mount, layout reflows).
+    // Returns whether a child was replaced.
+    fn replace_child(this, key: str, take child: Node) -> bool {
+        let f: fn(Handle, str, take Node) -> bool = REPLACE_CHILD_FN;
+        if f != (0 as fn(Handle, str, take Node) -> bool) { return f(this, key, child); }
+        // No backend / no match: `child` drops here (RAII).
+        return false;
+    }
+
+    // Make this container hold exactly one child: clear its current children, then
+    // mount `child`. The single-slot swap (a content area / router outlet showing
+    // one thing at a time). `this` must resolve a KEYED container. Chainable.
+    fn set_child(this, take child: Node) -> Handle {
+        let f: fn(Handle, take Node) -> bool = SET_CHILD_FN;
+        if f != (0 as fn(Handle, take Node) -> bool) {
+            let _ok: bool = f(this, child);
+        }
+        // No backend installed: `child` was not moved out, so it drops here (RAII).
+        return this;
     }
 
     // Attach a STAGED component into this (keyed) container, in place: its parked

@@ -189,6 +189,8 @@ fn main() -> i32 {
     if rc7 != 0 { return rc7; }
     let rc8: i32 = fak::stage_leak_cycles();
     if rc8 != 0 { return rc8; }
+    let rc9: i32 = fak::verb_leak_cycles();
+    if rc9 != 0 { return rc9; }
     for k in 0..50 {
         let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
         var root: facet::Node = @facet {
