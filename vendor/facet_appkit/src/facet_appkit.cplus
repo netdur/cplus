@@ -13,9 +13,11 @@
 // (called by mount after every widget op) and `run` — a window host that
 // mounts a description tree and enters the event loop.
 //
-// Re-rendering follows the component model: a handler mutates state and the
-// owning component re-renders itself (ui.cplus `component_after`), or the app
-// re-renders explicitly (clear + `mount_into`). There is no global runtime.
+// Updates follow the keyed-direct model: a component's `build` renders once at
+// mount; a handler then reaches the screen by addressing a keyed element
+// (facet::find(key) + set_text / add_child / ...) and mutating its live view in
+// place. facet is NOT reactive — there is no diff, no re-render loop, no global
+// runtime. Window resize goes through ui::relayout (geometry only).
 //
 // Replaces the FACET.1 spike wholesale: views no longer leak (payload
 // ownership), clicks are wired (action-with-userdata companion), and layout
@@ -361,10 +363,9 @@ fn ak_button(ctx: *u8, np: *facet::Node) -> flex::Node {
         };
     }
     // Wire the action exactly once (a replaced target strands its creation
-    // reference — never rewire). `component_after` re-renders the owning
-    // component after the handler runs, keyed on click_ctx = the component's
-    // address (a non-component ctx — 0, an index — misses the registry and
-    // no-ops). This is the component-model auto-refresh, through @facet.
+    // reference — never rewire). click_ctx carries the component's address so
+    // the handler can address its own keyed elements via facet::find(ctx, key);
+    // the wire runs the handler and nothing more — facet is not reactive.
     let b: ak::Button = ak::Button::from_raw(n.payload());
     // `.plain()` → borderless button (the link/plain-button fold).
     if { (*np).plain } { b.set_bordered(false); }
@@ -1096,13 +1097,9 @@ fn ak_set_identity(ctx: *u8, handle: *u8, id: str, role: u32) {
 // The vtable value. `ctx` is an unused backend-context slot (a future backend
 // context — theme, window — can ride here); the ops don't read it.
 fn renderer() -> facet::Renderer {
-    // Ensure a component re-render (ui::render_slot, which can't name our job
-    // queues) drains deferred scroll/split work through this up-call hook.
+    // A mount that fills deferred scroll/split content drains that work through
+    // this up-call hook (ui::apply can't name our job queues).
     ui::set_post_render_hook(drain_post_apply);
-    // Route every action wire's after-render through the RECONCILING
-    // invalidate, so a handler's own re-render updates views in place when
-    // the shape allows instead of rebuilding.
-    ui::set_component_after_hook(component_after_hook);
     return facet::Renderer {
         ctx: 0 as *u8,
         label: ak_label,
@@ -1159,31 +1156,24 @@ fn mount_into(np: *facet::Node, view_ptr: *u8, width: f64, height: f64) -> f64 {
 }
 
 // ==========================================================================
-// The reconciling component runtime — invalidate does the right thing
+// The component mount registry — build once, update by key
 // ==========================================================================
 //
-// Components render PORTABLE DESCRIPTIONS (facet::Component::render ->
-// facet::Node). This runtime retains the last description per component
-// and, on invalidate, reconciles the fresh description against it:
+// facet is NOT reactive: a component's `build` renders a PORTABLE DESCRIPTION
+// (facet::Component::build -> facet::Node) ONCE at mount. There is no diff, no
+// re-render loop. State changes reach the screen through the keyed-direct path
+// (facet::find(key) + set_text / set_value / add_child / ...), which mutates
+// the live views in place, and through ui::relayout for pure geometry (window
+// resize).
 //
-//   same shape  -> update the EXISTING views in place (text setters,
-//                  apply_style, layout props), mark content-edited nodes
-//                  for re-measure, then a retained relayout. No view churn.
-//   shape change, or a difference v1 cannot express as an in-place edit
-//               -> full rebuild through the ui tier, exactly as before.
-//
-// The app-facing contract is render + invalidate, nothing else — the
-// runtime chooses the strategy, never the app. v1 in-place coverage:
-// label / wrap_label / button text+font, style tier and layout props on
-// every kind, recursion through containers, wrappers, and scroll content.
-// Everything else (control values, popup items, handler rewires, split
-// panes) conservatively falls back to the rebuild path, which is always
-// correct.
+// This registry just retains each mounted component's description so the
+// ui-slot bridge (comp_bridge) can mount it, and drops it on unmount. It keys
+// on the component address (a handler's `ctx`); find() walks that component's
+// live view subtree.
 
 struct CompReg {
     opaque _cp: *u8,                       // the component address (identity)
-    _render: fn(*u8) -> facet::Node,
-    _desc: facet::Node,                    // the last rendered description
+    _desc: facet::Node,                    // the rendered description
 }
 
 static COMPONENTS: vec::Vec[CompReg] = #zero::[vec::Vec[CompReg]]();
@@ -1207,31 +1197,15 @@ fn comp_remove(cp: *u8) -> bool {
     return false;
 }
 
-fn comp_store(cp: *u8, render: fn(*u8) -> facet::Node, take desc: facet::Node) {
+fn comp_store(cp: *u8, take desc: facet::Node) {
     let _had: bool = comp_remove(cp);
     let reg: *vec::Vec[CompReg] = #addr_of(COMPONENTS);
-    (*reg).append(CompReg { _cp: cp, _render: render, _desc: desc });
+    (*reg).append(CompReg { _cp: cp, _desc: desc });
     return;
 }
 
-fn comp_render_of(cp: *u8) -> option::Option[fn(*u8) -> facet::Node] {
-    let reg: *vec::Vec[CompReg] = #addr_of(COMPONENTS);
-    let n: usize = { (*reg).count() };
-    var i: usize = 0 as usize;
-    while i < n {
-        match (*reg).at_ptr(i) {
-            option::Option[*CompReg]::Some(ep) => {
-                if { (*ep)._cp } == cp { return option::some({ (*ep)._render }); }
-            }
-            option::Option[*CompReg]::None => { }
-        }
-        i = i +% (1 as usize);
-    }
-    return option::Option[fn(*u8) -> facet::Node]::None;
-}
-
-// Borrow the retained description (pointer into registry storage: use within
-// one reconcile pass, before the registry next mutates).
+// Borrow the retained description (pointer into registry storage: use before
+// the registry next mutates).
 fn comp_desc_ptr(cp: *u8) -> option::Option[*facet::Node] {
     let reg: *vec::Vec[CompReg] = #addr_of(COMPONENTS);
     let n: usize = { (*reg).count() };
@@ -1250,8 +1224,8 @@ fn comp_desc_ptr(cp: *u8) -> option::Option[*facet::Node] {
     return option::Option[*facet::Node]::None;
 }
 
-// The ui-slot bridge: mounts the registry's CURRENT description. First mount
-// and the full-rebuild path both land here through ui::render_slot.
+// The ui-slot bridge: mounts the registry's description. The one-time mount
+// lands here through ui::render_slot.
 fn comp_bridge(cp: *u8) -> flex::Node {
     match comp_desc_ptr(cp) {
         option::Option[*facet::Node]::Some(dp) => { return mount(dp); }
@@ -1260,407 +1234,12 @@ fn comp_bridge(cp: *u8) -> flex::Node {
     return flex::Node::new();
 }
 
-// ---- equality helpers (diff gates) ----------------------------------------
-
-fn text_eq(a: *text::Text, b: *text::Text) -> bool {
-    return (*a).equals((*b).view());
-}
-
-fn texts_eq(a: *vec::Vec[text::Text], b: *vec::Vec[text::Text]) -> bool {
-    let n: usize = { (*a).count() };
-    if n != { (*b).count() } { return false; }
-    var i: usize = 0 as usize;
-    while i < n {
-        match (*a).at_ptr(i) {
-            option::Option[*text::Text]::Some(pa) => {
-                match (*b).at_ptr(i) {
-                    option::Option[*text::Text]::Some(pb) => {
-                        if !(*pa).equals((*pb).view()) { return false; }
-                    }
-                    option::Option[*text::Text]::None => { return false; }
-                }
-            }
-            option::Option[*text::Text]::None => { return false; }
-        }
-        i = i +% (1 as usize);
-    }
-    return true;
-}
-
-fn color_eq(a: facet::Color, b: facet::Color) -> bool {
-    if a.token != b.token { return false; }
-    if a.r != b.r { return false; }
-    if a.g != b.g { return false; }
-    if a.b != b.b { return false; }
-    if a.a != b.a { return false; }
-    return true;
-}
-
-fn style_struct_eq(a: facet::Style, b: facet::Style) -> bool {
-    if a.font_size != b.font_size { return false; }
-    if a.weight != b.weight { return false; }
-    if a.family != b.family { return false; }
-    if !color_eq(a.fg, b.fg) { return false; }
-    if !color_eq(a.bg, b.bg) { return false; }
-    if a.corner_radius != b.corner_radius { return false; }
-    if a.border_width != b.border_width { return false; }
-    if !color_eq(a.border_color, b.border_color) { return false; }
-    if a.opacity != b.opacity { return false; }
-    if a.shadow_radius != b.shadow_radius { return false; }
-    if a.line_limit != b.line_limit { return false; }
-    if a.truncate != b.truncate { return false; }
-    if a.text_align != b.text_align { return false; }
-    if a.hidden != b.hidden { return false; }
-    if a.italic != b.italic { return false; }
-    if a.clip != b.clip { return false; }
-    if a.underline != b.underline { return false; }
-    if a.strikethrough != b.strikethrough { return false; }
-    if !color_eq(a.grad_from, b.grad_from) { return false; }
-    if !color_eq(a.grad_to, b.grad_to) { return false; }
-    if a.rotation != b.rotation { return false; }
-    if a.scale != b.scale { return false; }
-    if a.fade_in != b.fade_in { return false; }
-    return true;
-}
-
-// The style TIER: everything apply_style consumes (Style + tooltip + a11y).
-fn style_tier_eq(op: *facet::Node, np: *facet::Node) -> bool {
-    if !style_struct_eq({ (*op).style }, { (*np).style }) { return false; }
-    if !text_eq(#addr_of((*op).tooltip), #addr_of((*np).tooltip)) { return false; }
-    if !text_eq(#addr_of((*op).a11y_label), #addr_of((*np).a11y_label)) { return false; }
-    if !text_eq(#addr_of((*op).a11y_hint), #addr_of((*np).a11y_hint)) { return false; }
-    return true;
-}
-
-// Handlers are wired exactly once at creation (a replaced target strands its
-// creation reference) — any wiring difference forces a rebuild.
-fn handlers_eq(op: *facet::Node, np: *facet::Node) -> bool {
-    if { (*op).click } != { (*np).click } { return false; }
-    if { (*op).click_ctx } != { (*np).click_ctx } { return false; }
-    if { (*op).on_submit } != { (*np).on_submit } { return false; }
-    if { (*op).on_change } != { (*np).on_change } { return false; }
-    if { (*op).on_double_click } != { (*np).on_double_click } { return false; }
-    if { (*op).on_right_click } != { (*np).on_right_click } { return false; }
-    if { (*op).on_long_press } != { (*np).on_long_press } { return false; }
-    if { (*op).long_press_seconds } != { (*np).long_press_seconds } { return false; }
-    if { (*op).on_drag } != { (*np).on_drag } { return false; }
-    if { (*op).on_pinch } != { (*np).on_pinch } { return false; }
-    if { (*op).on_rotate } != { (*np).on_rotate } { return false; }
-    if { (*op).on_hover_in } != { (*np).on_hover_in } { return false; }
-    if { (*op).on_hover_out } != { (*np).on_hover_out } { return false; }
-    if { (*op).on_scroll } != { (*np).on_scroll } { return false; }
-    if { (*op).drop_handler } != { (*np).drop_handler } { return false; }
-    if { (*op).drop_ctx } != { (*np).drop_ctx } { return false; }
-    if { (*op).ctx_menu_action } != { (*np).ctx_menu_action } { return false; }
-    if !texts_eq(#addr_of((*op).ctx_menu_items), #addr_of((*np).ctx_menu_items)) { return false; }
-    if !text_eq(#addr_of((*op).drag_text), #addr_of((*np).drag_text)) { return false; }
-    return true;
-}
-
-fn path_cmds_eq(a: *vec::Vec[facet::PathCmd], b: *vec::Vec[facet::PathCmd]) -> bool {
-    let n: usize = { (*a).count() };
-    if n != { (*b).count() } { return false; }
-    var i: usize = 0 as usize;
-    while i < n {
-        match (*a).at_ptr(i) {
-            option::Option[*facet::PathCmd]::Some(pa) => {
-                match (*b).at_ptr(i) {
-                    option::Option[*facet::PathCmd]::Some(pb) => {
-                        if { (*pa).op } != { (*pb).op } { return false; }
-                        if { (*pa).ax } != { (*pb).ax } { return false; }
-                        if { (*pa).ay } != { (*pb).ay } { return false; }
-                        if { (*pa).bx } != { (*pb).bx } { return false; }
-                        if { (*pa).by } != { (*pb).by } { return false; }
-                        if { (*pa).cx } != { (*pb).cx } { return false; }
-                        if { (*pa).cy } != { (*pb).cy } { return false; }
-                    }
-                    option::Option[*facet::PathCmd]::None => { return false; }
-                }
-            }
-            option::Option[*facet::PathCmd]::None => { return false; }
-        }
-        i = i +% (1 as usize);
-    }
-    return true;
-}
-
-// Config beyond the text/style tiers, uniform across kinds. `skip_text`
-// (label/wrap_label/button: text updates in place) and `skip_label_font`
-// (label/wrap_label: font config updates in place) carve out the fields the
-// caller handles itself.
-fn config_eq(op: *facet::Node, np: *facet::Node, skip_text: bool, skip_label_font: bool) -> bool {
-    if !skip_text {
-        if !text_eq(#addr_of((*op).text), #addr_of((*np).text)) { return false; }
-    }
-    if !skip_label_font {
-        if { (*op).font_size } != { (*np).font_size } { return false; }
-        if { (*op).bold } != { (*np).bold } { return false; }
-        if { (*op).secondary } != { (*np).secondary } { return false; }
-    }
-    if !text_eq(#addr_of((*op).value), #addr_of((*np).value)) { return false; }
-    if !text_eq(#addr_of((*op).placeholder), #addr_of((*np).placeholder)) { return false; }
-    if !text_eq(#addr_of((*op).key_equiv), #addr_of((*np).key_equiv)) { return false; }
-    if !text_eq(#addr_of((*op).agent_id), #addr_of((*np).agent_id)) { return false; }
-    if { (*op).primary } != { (*np).primary } { return false; }
-    if { (*op).plain } != { (*np).plain } { return false; }
-    if !texts_eq(#addr_of((*op).popup_items), #addr_of((*np).popup_items)) { return false; }
-    if { (*op).popup_selected } != { (*np).popup_selected } { return false; }
-    if { (*op).native_handle } != { (*np).native_handle } { return false; }
-    if { (*op).bool_value } != { (*np).bool_value } { return false; }
-    if { (*op).value_f } != { (*np).value_f } { return false; }
-    if { (*op).min_val } != { (*np).min_val } { return false; }
-    if { (*op).max_val } != { (*np).max_val } { return false; }
-    if { (*op).step_val } != { (*np).step_val } { return false; }
-    if { (*op).indeterminate } != { (*np).indeterminate } { return false; }
-    if { (*op).pull_down } != { (*np).pull_down } { return false; }
-    if { (*op).toggle_style } != { (*np).toggle_style } { return false; }
-    if { (*op).grid_cols } != { (*np).grid_cols } { return false; }
-    if { (*op).editable } != { (*np).editable } { return false; }
-    if { (*op).show_border } != { (*np).show_border } { return false; }
-    if { (*op).draws_background } != { (*np).draws_background } { return false; }
-    if { (*op).radius } != { (*np).radius } { return false; }
-    if { (*op).vertical } != { (*np).vertical } { return false; }
-    if { (*op).position } != { (*np).position } { return false; }
-    if { (*op).min_first } != { (*np).min_first } { return false; }
-    if { (*op).min_second } != { (*np).min_second } { return false; }
-    if { (*op).inset_w } != { (*np).inset_w } { return false; }
-    if { (*op).inset_h } != { (*np).inset_h } { return false; }
-    if !path_cmds_eq(#addr_of((*op).path_cmds), #addr_of((*np).path_cmds)) { return false; }
-    return true;
-}
-
-fn label_cfg_eq(op: *facet::Node, np: *facet::Node) -> bool {
-    if !text_eq(#addr_of((*op).text), #addr_of((*np).text)) { return false; }
-    if { (*op).font_size } != { (*np).font_size } { return false; }
-    if { (*op).bold } != { (*np).bold } { return false; }
-    if { (*op).secondary } != { (*np).secondary } { return false; }
-    return true;
-}
-
-// ---- in-place view updates -------------------------------------------------
-
-// Re-apply a label's text + font config to its EXISTING NSTextField (the
-// creation-time config of ak_label / ak_wrap_label, minus creation).
-fn update_label_view(view: *u8, np: *facet::Node, wrap: bool) {
-    if view == (0 as *u8) { return; }
-    var size: f64 = { (*np).font_size };
-    if size <= 0.0f64 { size = 13.0f64; }
-    let tf: ak::TextField = ak::TextField::from_raw(view);
-    let tp: *text::Text = { #addr_of((*np).text) };
-    match (*tp).c_str() {
-        option::Option[text::CString]::Some(cs) => {
-            let sv: str = { #str_from_raw_parts(cs.as_ptr(), cs.count()) };
-            tf.as_control().set_string_value(sv);
-        }
-        option::Option[text::CString]::None => { tf.as_control().set_string_value(""); }
-    }
-    if !wrap && { (*np).bold } { tf.as_control().set_font(ak::Font::bold_system_font_of_size(size)); }
-    else { tf.as_control().set_font(ak::Font::system_font_of_size(size)); }
-    if { (*np).secondary } { tf.set_text_color(ak::Color::secondary_label_color()); }
-    else { tf.set_text_color(ak::Color::label_color()); }
-    return;
-}
-
-// ---- shape + reconcile -------------------------------------------------------
-
-// Same tree SHAPE: kinds and child counts match recursively. Config may
-// still differ — reconcile decides whether the differences are expressible
-// in place.
-fn shape_match(op: *facet::Node, np: *facet::Node) -> bool {
-    if { (*op).kind } != { (*np).kind } { return false; }
-    let n: usize = { (*op).children.count() };
-    if n != { (*np).children.count() } { return false; }
-    var i: usize = 0 as usize;
-    while i < n {
-        match (*op).children.at_ptr(i) {
-            option::Option[*facet::Node]::Some(oc) => {
-                match (*np).children.at_ptr(i) {
-                    option::Option[*facet::Node]::Some(nc) => {
-                        if !shape_match(oc, nc) { return false; }
-                    }
-                    option::Option[*facet::Node]::None => { return false; }
-                }
-            }
-            option::Option[*facet::Node]::None => { return false; }
-        }
-        i = i +% (1 as usize);
-    }
-    return true;
-}
-
-fn is_plain_container(k: u32) -> bool {
-    if k == facet::kind_column() { return true; }
-    if k == facet::kind_row() { return true; }
-    if k == facet::kind_zstack() { return true; }
-    if k == facet::kind_grid() { return true; }
-    return false;
-}
-
-fn is_wrapper_kind(k: u32) -> bool {
-    if k == facet::kind_bordered() { return true; }
-    if k == facet::kind_clickable() { return true; }
-    if k == facet::kind_material() { return true; }
-    return false;
-}
-
-// Pair a wrapper's description children against its mounted content node,
-// honoring mount_wrapper_content's convention (0 kids → empty node; 1 kid →
-// the child directly; 2+ kids → a synthetic column of them).
-fn reconcile_wrapped(op: *facet::Node, np: *facet::Node, content_fp: *flex::Node) -> bool {
-    let c: usize = { (*np).children.count() };
-    if c == (0 as usize) { return true; }
-    if c == (1 as usize) {
-        match (*op).children.at_ptr(0 as usize) {
-            option::Option[*facet::Node]::Some(oc) => {
-                match (*np).children.at_ptr(0 as usize) {
-                    option::Option[*facet::Node]::Some(nc) => { return reconcile_nodes(oc, nc, content_fp); }
-                    option::Option[*facet::Node]::None => { return false; }
-                }
-            }
-            option::Option[*facet::Node]::None => { return false; }
-        }
-        return false;
-    }
-    if { (*content_fp).child_count() } != c { return false; }
-    var i: usize = 0 as usize;
-    while i < c {
-        match (*op).children.at_ptr(i) {
-            option::Option[*facet::Node]::Some(oc) => {
-                match (*np).children.at_ptr(i) {
-                    option::Option[*facet::Node]::Some(nc) => {
-                        match (*content_fp).children.at_ptr(i) {
-                            option::Option[*flex::Node]::Some(cf) => {
-                                if !reconcile_nodes(oc, nc, cf) { return false; }
-                            }
-                            option::Option[*flex::Node]::None => { return false; }
-                        }
-                    }
-                    option::Option[*facet::Node]::None => { return false; }
-                }
-            }
-            option::Option[*facet::Node]::None => { return false; }
-        }
-        i = i +% (1 as usize);
-    }
-    return true;
-}
-
-// Reconcile one (old-description, new-description, mounted-flex) triple.
-// Returns false on any difference v1 cannot express in place — the caller
-// then falls back to a full rebuild (half-applied edits are discarded with
-// it, so bailing midway is safe).
-fn reconcile_nodes(op: *facet::Node, np: *facet::Node, fp: *flex::Node) -> bool {
-    let k: u32 = { (*np).kind };
-    if !handlers_eq(op, np) { return false; }
-    let is_label: bool = k == facet::kind_label() || k == facet::kind_wrap_label();
-    let is_button: bool = k == facet::kind_button();
-    if !config_eq(op, np, is_label || is_button, is_label) { return false; }
-    let pay: *u8 = (*fp).payload();
-
-    // In-place text/font updates for the text-bearing leaves.
-    if is_label {
-        if !label_cfg_eq(op, np) {
-            update_label_view(pay, np, k == facet::kind_wrap_label());
-            ui::clear_measure_caches(pay);
-            { (*fp).mark_content_changed(); }
-        }
-    }
-    if is_button {
-        if !text_eq(#addr_of((*op).text), #addr_of((*np).text)) {
-            if pay != (0 as *u8) {
-                let tp: *text::Text = { #addr_of((*np).text) };
-                match (*tp).c_str() {
-                    option::Option[text::CString]::Some(cs) => {
-                        let sv: str = { #str_from_raw_parts(cs.as_ptr(), cs.count()) };
-                        ak::Button::from_raw(pay).set_title(sv);
-                    }
-                    option::Option[text::CString]::None => { ak::Button::from_raw(pay).set_title(""); }
-                }
-                ui::clear_measure_caches(pay);
-                { (*fp).mark_content_changed(); }
-            }
-        }
-    }
-
-    // Style tier: reapply on any difference (only widget views carry style —
-    // mount applies none to plain containers, so neither do we). A style
-    // change can move a measured leaf's size (font, line limit) — re-measure.
-    if !style_tier_eq(op, np) {
-        if pay != (0 as *u8) {
-            apply_style(pay, k, np);
-            if is_label || is_button {
-                ui::clear_measure_caches(pay);
-                { (*fp).mark_content_changed(); }
-            }
-        }
-    }
-
-    // Layout props: always re-set on the retained flex node — pure C+ writes;
-    // the engine's snapshot cache detects which of them actually changed.
-    facet::apply_layout_props(np, fp);
-
-    // Recurse by structure.
-    if is_plain_container(k) {
-        let c: usize = { (*np).children.count() };
-        if { (*fp).child_count() } != c { return false; }
-        var i: usize = 0 as usize;
-        while i < c {
-            match (*op).children.at_ptr(i) {
-                option::Option[*facet::Node]::Some(oc) => {
-                    match (*np).children.at_ptr(i) {
-                        option::Option[*facet::Node]::Some(nc) => {
-                            match (*fp).children.at_ptr(i) {
-                                option::Option[*flex::Node]::Some(cf) => {
-                                    if !reconcile_nodes(oc, nc, cf) { return false; }
-                                }
-                                option::Option[*flex::Node]::None => { return false; }
-                            }
-                        }
-                        option::Option[*facet::Node]::None => { return false; }
-                    }
-                }
-                option::Option[*facet::Node]::None => { return false; }
-            }
-            i = i +% (1 as usize);
-        }
-        return true;
-    }
-    if is_wrapper_kind(k) {
-        // The wrapper's mounted content is its single flex child.
-        match (*fp).children.at_ptr(0 as usize) {
-            option::Option[*flex::Node]::Some(cf) => { return reconcile_wrapped(op, np, cf); }
-            option::Option[*flex::Node]::None => {
-                return { (*np).children.count() } == (0 as usize);
-            }
-        }
-        return false;
-    }
-    if k == facet::kind_scroll() {
-        // Content rows live in the scroll-content registry, keyed by the
-        // viewport view; reflow happens in the relayout that follows.
-        if { (*np).children.count() } == (0 as usize) { return true; }
-        match ui::scroll_content_tree(pay) {
-            option::Option[*flex::Node]::Some(ct) => { return reconcile_wrapped(op, np, ct); }
-            option::Option[*flex::Node]::None => { return false; }
-        }
-        return false;
-    }
-    if k == facet::kind_split() {
-        // Pane flex trees are consumed at mount (arranged subviews) — there
-        // is nothing to pair against. Any pane difference already rebuilt via
-        // shape/config; identical panes need nothing.
-        return { (*np).children.count() } == (0 as usize);
-    }
-    // Leaf kinds: config equality was already enforced above.
-    return true;
-}
-
 // ---- the public verbs --------------------------------------------------------
 
 // Mount a component into a host view: `fak::mount_component(APP.build,
-// host: v)`. The bound reference fills ctx with the component's address;
-// render runs once now and again on every invalidate. ctx 0 (no identity)
-// mounts one-shot with no re-render path. Returns the content height.
+// host: v)`. The bound reference fills ctx with the component's address, which
+// keys the component in the registry so find() can address it. ctx 0 (no
+// identity) mounts one-shot, unregistered. Returns the content height.
 fn mount_component(render: fn(*u8) -> facet::Node, ctx: *u8 = 0 as *u8, host: *u8 = 0 as *u8, flipped: bool = false) -> f64 {
     if host == (0 as *u8) { return -1.0f64; }
     if ctx == (0 as *u8) {
@@ -1669,50 +1248,16 @@ fn mount_component(render: fn(*u8) -> facet::Node, ctx: *u8 = 0 as *u8, host: *u
         return mount_into(#addr_of(d), host, hf.w, hf.h);
     }
     var d: facet::Node = render(ctx);
-    comp_store(ctx, render, d);
+    comp_store(ctx, d);
     return ui::mount(comp_bridge, ctx: ctx, host: host, flipped: flipped);
 }
 
-// The scroll-hosted variant (content-sized document, reused across renders).
+// The scroll-hosted variant (content-sized document view).
 fn mount_component_scroll(render: fn(*u8) -> facet::Node, ctx: *u8 = 0 as *u8, scroll: *u8 = 0 as *u8, agent_id: str = "") -> f64 {
     if scroll == (0 as *u8) || ctx == (0 as *u8) { return -1.0f64; }
     var d: facet::Node = render(ctx);
-    comp_store(ctx, render, d);
+    comp_store(ctx, d);
     return ui::mount_scroll(comp_bridge, ctx: ctx, scroll: scroll, agent_id: agent_id);
-}
-
-// Re-render the ONE component registered at this address — reconciling in
-// place when the shape allows, rebuilding when it does not. Falls through to
-// the ui tier for components mounted there (the @ui path). Returns whether
-// a mounted component was found.
-fn invalidate(cp: *u8) -> bool {
-    if cp == (0 as *u8) { return false; }
-    match comp_render_of(cp) {
-        option::Option[fn(*u8) -> facet::Node]::Some(r) => {
-            var fresh: facet::Node = r(cp);
-            var reconciled: bool = false;
-            match comp_desc_ptr(cp) {
-                option::Option[*facet::Node]::Some(odp) => {
-                    match ui::tree_ptr(cp) {
-                        option::Option[*flex::Node]::Some(tp) => {
-                            if shape_match(odp, #addr_of(fresh)) {
-                                if reconcile_nodes(odp, #addr_of(fresh), tp) { reconciled = true; }
-                            }
-                        }
-                        option::Option[*flex::Node]::None => { }
-                    }
-                }
-                option::Option[*facet::Node]::None => { }
-            }
-            comp_store(cp, r, fresh);
-            if reconciled { return ui::relayout(cp); }
-            return ui::invalidate(cp);
-        }
-        option::Option[fn(*u8) -> facet::Node]::None => {
-            return ui::invalidate(cp);
-        }
-    }
-    return false;
 }
 
 // Geometry-only update (window resize): retained relayout, no render at all.
@@ -1733,12 +1278,6 @@ fn unmount_all() {
     (*reg).remove_all();
     ui::unmount_all();
     return;
-}
-
-// The component_after hook: routes a handler's own re-render through the
-// reconciling invalidate (installed on the ui tier by renderer()).
-fn component_after_hook(cp: *u8) -> bool {
-    return invalidate(cp);
 }
 
 // The window's style mask. `clean_titlebar` adds full-size-content so the view
@@ -2297,10 +1836,10 @@ fn approx(a: f64, b: f64) -> bool {
 
 fn t_noop(sender: *u8, ctx: *u8) { return; }
 
-// Component-path re-render: clear the host's subviews, then mount a fresh
-// tree. This is what a component's invalidate does (iris drives it via
-// ui::fill_scroll / mount_into) — the app re-renders explicitly, there is no
-// global runtime. The tests drive it directly to exercise re-render behavior.
+// Explicit remount: clear the host's subviews, then mount a fresh tree. This is
+// the app's own "re-open this screen" path (iris drives it via ui::fill_scroll /
+// mount_into) — an explicit rebuild, not a reactive one; there is no global
+// runtime. The tests drive it directly to exercise remount behavior.
 fn remount(view: fn() -> facet::Node, content_ptr: *u8, w: f64, h: f64) {
     let content: ak::View = ak::View::from_raw(content_ptr);
     var subs: vec::Vec[ak::View] = content.subviews();
@@ -2870,8 +2409,8 @@ fn app_list_reflows_on_remove() {
 // ---- retained relayout, end to end (the iris-chat shape) --------------------
 // A component whose @facet tree hosts a portable scroll of wrapping labels —
 // header + transcript. ui::relayout at a new host size must keep every view
-// (scroll, document, rows) and re-wrap the text to the new width; only
-// ui::invalidate rebuilds.
+// (scroll, document, rows) and re-wrap the text to the new width — no re-render,
+// no view churn.
 
 struct ScrollPane {
     rows: i64,
@@ -2894,89 +2433,8 @@ impl ScrollPane: facet::Component {
 
 static SCROLL_PANE: ScrollPane = #zero::[ScrollPane]();
 
-// The reconcile-in-place shape: a transcript whose TAIL text streams (grows)
-// while the shape stays put, plus a header whose font config flips.
-struct ReconPane {
-    tail: text::Text,
-    header_bold: bool,
-}
-
-impl ReconPane: facet::Component {
-    fn build(this) -> facet::Node {
-        var list: facet::Builder = facet::Builder::new();
-        list.add(facet::wrap_label("a stable first bubble that keeps its wrap width across renders"));
-        list.add(facet::wrap_label(this.tail.view()));
-        var root: facet::Builder = facet::Builder::new();
-        root.add(facet::label("transcript", bold: this.header_bold));
-        root.add(facet::scroll(list).grow(1.0f64));
-        return facet::column(root);
-    }
-}
-
-static RECON_PANE: ReconPane = #zero::[ReconPane]();
-
-#[test]
-fn reconcile_updates_streaming_tail_in_place() {
-    unmount_all();
-    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
-    RECON_PANE.tail = text::from_str("short");
-    RECON_PANE.header_bold = false;
-    let _h: f64 = mount_component(RECON_PANE.build, host: host.raw());
-
-    // Capture identities: header label, scroll, document, the tail row.
-    var header0: *u8 = 0 as *u8;
-    var scroll0: *u8 = 0 as *u8;
-    var subs: vec::Vec[ak::View] = host.subviews();
-    assert subs.count() == (2 as usize);
-    match subs.at_ptr(0 as usize) { option::Option[*ak::View]::Some(vp) => { header0 = { (*vp).raw() }; } option::Option[*ak::View]::None => { assert false; } };
-    match subs.at_ptr(1 as usize) { option::Option[*ak::View]::Some(vp) => { scroll0 = { (*vp).raw() }; } option::Option[*ak::View]::None => { assert false; } };
-    let sv: ak::ScrollView = ak::ScrollView::from_raw(scroll0);
-    var doc0: *u8 = 0 as *u8;
-    var tail0: *u8 = 0 as *u8;
-    var h0: f64 = 0.0f64;
-    match sv.document_view() {
-        option::Option[ak::View]::Some(doc) => {
-            doc0 = doc.raw();
-            h0 = doc.frame().h;
-            var rows: vec::Vec[ak::View] = doc.subviews();
-            assert rows.count() == (2 as usize);
-            match rows.at_ptr(1 as usize) { option::Option[*ak::View]::Some(rp) => { tail0 = { (*rp).raw() }; } option::Option[*ak::View]::None => { assert false; } };
-        }
-        option::Option[ak::View]::None => { assert false; }
-    };
-    assert ak::TextField::from_raw(tail0).as_control().string_value().equals("short");
-
-    // STREAM: grow the tail's text — same shape, so invalidate must reconcile:
-    // every view kept, the tail's NSTextField edited in place, its wrap
-    // re-measured (content grows TALLER), and the document resized.
-    RECON_PANE.tail = text::from_str("a much much longer streamed answer that has to wrap across several lines at this narrow width so the content height visibly grows");
-    assert invalidate(#addr_of(RECON_PANE) as *u8);
-    var subs2: vec::Vec[ak::View] = host.subviews();
-    assert subs2.count() == (2 as usize);
-    match subs2.at_ptr(0 as usize) { option::Option[*ak::View]::Some(vp) => { assert { (*vp).raw() } == header0; } option::Option[*ak::View]::None => { assert false; } };
-    match subs2.at_ptr(1 as usize) { option::Option[*ak::View]::Some(vp) => { assert { (*vp).raw() } == scroll0; } option::Option[*ak::View]::None => { assert false; } };
-    match sv.document_view() {
-        option::Option[ak::View]::Some(doc) => {
-            assert doc.raw() == doc0;                     // reused, not recreated
-            assert doc.frame().h > h0;                    // tail re-wrapped taller
-            var rows: vec::Vec[ak::View] = doc.subviews();
-            assert rows.count() == (2 as usize);
-            match rows.at_ptr(1 as usize) { option::Option[*ak::View]::Some(rp) => { assert { (*rp).raw() } == tail0; } option::Option[*ak::View]::None => { assert false; } };
-        }
-        option::Option[ak::View]::None => { assert false; }
-    };
-    assert ak::TextField::from_raw(tail0).as_control().string_value().count() > (20 as usize);
-
-    // A font-config flip on the header reconciles in place too.
-    RECON_PANE.header_bold = true;
-    assert invalidate(#addr_of(RECON_PANE) as *u8);
-    var subs3: vec::Vec[ak::View] = host.subviews();
-    match subs3.at_ptr(0 as usize) { option::Option[*ak::View]::Some(vp) => { assert { (*vp).raw() } == header0; } option::Option[*ak::View]::None => { assert false; } };
-    unmount_all();
-}
-
 // ---- keyed-direct: find(key) + set_text, the non-reactive update path --------
-// The counterpart to the reconcile test above. Instead of mutating a field and
+// The update path facet actually uses. Instead of mutating a field and
 // re-rendering the component, a handler ADDRESSES the keyed element and edits it
 // in place. The proof: the same view survives the update — no re-render mints a
 // replacement, and no diff runs to rediscover the change.
@@ -3131,9 +2589,9 @@ fn find_add_and_remove_child() {
     unmount_all();
 }
 
-// The ONE update rule through the reconciler: a wired handler's own
-// re-render routes through the component_after hook into the reconciling
-// invalidate — the label and button views survive their own update.
+// The ONE update rule: a wired handler addresses its own keyed element and
+// edits it in place (facet::find(ctx, key).set_text) — the label and button
+// views survive; no re-render, no diff.
 struct ReconCounter {
     count: i32,
 }
@@ -3243,23 +2701,6 @@ fn e2e_component_scroll_relayout_keeps_views_and_rewraps() {
         option::Option[ak::View]::None => { assert false; }
     };
 
-    // A state change still rebuilds: invalidate re-renders with 4 rows. The
-    // rebuild mints a FRESH scroll view (the old one is gone — re-fetch it).
-    SCROLL_PANE.rows = 4 as i64;
-    assert invalidate(#addr_of(SCROLL_PANE) as *u8);
-    var subs3: vec::Vec[ak::View] = host.subviews();
-    assert subs3.count() == (2 as usize);
-    match subs3.at_ptr(1 as usize) {
-        option::Option[*ak::View]::Some(vp) => {
-            match ak::ScrollView::from_raw({ (*vp).raw() }).document_view() {
-                option::Option[ak::View]::Some(doc) => {
-                    assert doc.subviews().count() == (4 as usize);
-                }
-                option::Option[ak::View]::None => { assert false; }
-            }
-        }
-        option::Option[*ak::View]::None => { assert false; }
-    };
     ui::unmount_all();
 }
 
@@ -3636,9 +3077,9 @@ fn phase3_native_screen() -> facet::Node {
 
 #[test]
 fn phase3_native_survives_rerender() {
-    // The component contract: render produces a fresh tree each time, and the
-    // native child returns on every re-render (here via the explicit remount
-    // primitive that component_after → ui::invalidate ultimately calls).
+    // The component contract: build produces a fresh tree each time, and the
+    // native child returns on every remount (here via the explicit remount
+    // helper — the app's own "re-open this screen" path).
     P3_BUILDS = 0;
     let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 160.0 });
     remount(phase3_native_screen, content.raw(), 200.0f64, 160.0f64);

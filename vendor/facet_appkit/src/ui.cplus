@@ -269,9 +269,8 @@ fn icon_button_view(symbol_name: str, agent_id: str = "") -> flex::Node {
 // A push button firing `on(sender, ctx)`. The defaulted `ctx` right after
 // the handler is the bound-method-reference slot: `button("+1",
 // on: counter.on_inc)` wires the handler AND the component's address in one
-// token. After the handler returns, the wire runs `component_after(ctx)` —
-// if ctx is a mounted component, exactly that component re-renders; any
-// other ctx (an index, 0) misses the registry and no-ops.
+// token. The wire runs the handler and nothing more — facet is not reactive;
+// the handler updates the screen itself via facet::find(ctx, key) + a mutator.
 fn button(title: str, on: fn(*u8, *u8), ctx: *u8 = 0 as *u8, primary: bool = false, symbol: str = "", agent_id: str = "") -> flex::Node {
     let n: flex::Node = button_view(title, primary: primary, agent_id: agent_id);
     // A non-empty `symbol` places a leading SF Symbol before the title.
@@ -633,8 +632,9 @@ fn choose_file() -> option::Option[text::Text] {
 // tv)` fires on Enter; `on_change(ctx, tv)` (optional — defaults to a no-op)
 // fires on every edit. Read the current text with `area_text(node.payload())`.
 // Auto-grow recipe: in `on_change`, read `composer_content_height(node.payload())`,
-// clamp it to your min/max, store it, and re-render with that height — the MVU
-// loop grows the field. Give it a definite `.height(...)` for the initial size.
+// clamp it to your min/max, set that height on the composer's retained flex node,
+// then `ui::relayout(host)` to reflow — the field grows in place, no re-render.
+// Give it a definite `.height(...)` for the initial size.
 // `show_border: false` drops the composer's own bezel so it can sit inside an
 // outer `bordered(...)` box alongside a toolbar row — one bordered box holding
 // the input and its accessory controls — without a doubled border.
@@ -1738,21 +1738,19 @@ fn reflow_nested_scrolls(node: *flex::Node) {
 //     ...
 //     icon_button("xmark", on: recents.remove_at)
 //
-// The ONE update rule: after a component's handler runs, that component
-// re-renders. Every action wire in this module runs `component_after(ctx)`
-// once the handler returns; if ctx is a mounted component it re-renders
-// into its host at the host's CURRENT size, any other ctx no-ops. Explicit
-// cross-component refresh is `invalidate(#addr_of(OTHER) as *u8)`.
+// The ONE update rule: facet is NOT reactive. `build` runs once at mount; an
+// action wire runs its handler and nothing more. STATE reaches the screen
+// through the keyed-direct path (the handler calls facet::find(ctx, key) and a
+// mutator — set_text / set_value / add_child / ... — editing the live view in
+// place). There is no re-render, no diff.
 //
-// TWO verbs, two update classes:
-//   invalidate(cp) — STATE changed: re-render, re-mount, re-apply (the
-//                    tree's shape may change; views are rebuilt).
-//   relayout(cp)   — only GEOMETRY changed (window resize): re-lay the
-//                    RETAINED tree out at the host's current size and
-//                    reposition the existing views. No render, no view
+// GEOMETRY (window resize) is the one thing this tier updates:
+//   relayout(cp)   — re-lay the RETAINED tree out at the host's current size
+//                    and reposition the existing views. No render, no view
 //                    churn; the flex engine's incremental cache does the
-//                    heavy lifting. Never call it for a state change — it
-//                    assumes the shape is stable.
+//                    heavy lifting. Assumes the tree's shape is stable (a pure
+//                    size change gives that; keyed-direct edits mutate the
+//                    retained tree, then relayout reflows it).
 //
 // Hosts are BORROWED plain NSViews the app owns (usually placed in its
 // outer tree via `fixed_view`); a scroll document host uses flipped: true.
@@ -1911,7 +1909,7 @@ fn render_slot(sp: *Slot) -> f64 {
 // an unbounded height (content-sized), then reflow the FLIPPED document view.
 // The document view is REUSED when it already exists — its old rows are removed,
 // it is resized to the new content height, and the fresh tree is applied into it
-// — so the scroll offset survives a re-render. Only the first render creates the
+// — so the scroll offset survives a reflow. Only the first mount creates the
 // document view. Returns the content height.
 fn render_slot_scroll(sp: *Slot) -> f64 {
     // Same copy-out rule as render_slot: `sp` is dead once the render runs.
@@ -1950,13 +1948,13 @@ fn render_slot_scroll(sp: *Slot) -> f64 {
 }
 
 // Mount a component into a host view: `ui::mount(COUNTER.build, host: v)`.
-// The bound reference fills `ctx` with the component's address; `render`
-// runs once now and again on every invalidate. Returns the content height
-// (-1.0 when host is missing).
+// The bound reference fills `ctx` with the component's address; `render` runs
+// once at mount. The retained tree it produces is kept for relayout. Returns
+// the content height (-1.0 when host is missing).
 fn mount(render: fn(*u8) -> flex::Node, ctx: *u8 = 0 as *u8, host: *u8 = 0 as *u8, flipped: bool = false) -> f64 {
     if host == { 0 as *u8 } { return -1.0f64; }
     // Re-mounting the same component address replaces its prior slot, so a
-    // later invalidate never targets a stale (released) host. remove_slot
+    // later relayout never targets a stale (released) host. remove_slot
     // no-ops on ctx 0 / no prior registration.
     let _r: bool = remove_slot(ctx);
     let slots: *vec::Vec[Slot] = #addr_of(SLOTS);
@@ -1972,11 +1970,11 @@ fn mount(render: fn(*u8) -> flex::Node, ctx: *u8 = 0 as *u8, host: *u8 = 0 as *u
 // Mount a component whose host is an NSScrollView: `ui::mount_scroll(RECENTS.build,
 // scroll: sv.raw())`. Unlike `mount` (fixed-frame host), the content is laid out
 // at the viewport width with an UNBOUNDED height, so a growing list is not
-// clipped; the flipped document view is sized to fit and REUSED across
-// re-renders, so the scroll position survives an add/remove. `invalidate(cp)`
-// reflows it like any other component. Call after the outer layout has sized the
-// scroll (same two-phase rule as `fill_scroll`). Returns content height
-// (-1.0 when `scroll` is missing).
+// clipped; the flipped document view is sized to fit and REUSED, so the scroll
+// position survives a keyed-direct add/remove. `relayout(cp)` reflows it at a
+// new width. Call after the outer layout has sized the scroll (same two-phase
+// rule as `fill_scroll`). Returns content height (-1.0 when `scroll` is
+// missing).
 fn mount_scroll(render: fn(*u8) -> flex::Node, ctx: *u8 = 0 as *u8, scroll: *u8 = 0 as *u8, agent_id: str = "") -> f64 {
     if scroll == { 0 as *u8 } { return -1.0f64; }
     if agent_id != "" { tag_agent(scroll, agent_id, identity::Role::Group); }
@@ -1991,50 +1989,10 @@ fn mount_scroll(render: fn(*u8) -> flex::Node, ctx: *u8 = 0 as *u8, scroll: *u8 
     return -1.0f64;
 }
 
-// Re-render the ONE component registered at this address. Returns whether
-// a component was found — a non-component ctx (an index, 0) no-ops false.
-fn invalidate(cp: *u8) -> bool {
-    if cp == { 0 as *u8 } { return false; }
-    let n: usize = SLOTS.count();
-    var i: usize = 0 as usize;
-    while i < n {
-        match SLOTS.at_ptr(i) {
-            option::Option[*Slot]::Some(sp) => {
-                if { (*sp)._live } {
-                    if { (*sp)._cp } == cp {
-                        let _h: f64 = render_slot(sp);
-                        return true;
-                    }
-                }
-            }
-            option::Option[*Slot]::None => { }
-        }
-        i = i +% (1 as usize);
-    }
-    return false;
-}
-
-// An upper-layer override for the after-hook: the facet backend installs its
-// reconciling invalidate here so a handler's own re-render goes through the
-// diff path instead of this tier's full rebuild. Returns whether it handled
-// the ctx; unhandled falls through to the plain invalidate below.
-static COMPONENT_AFTER_HOOK: fn(*u8) -> bool = #zero::[fn(*u8) -> bool]();
-fn set_component_after_hook(h: fn(*u8) -> bool) { COMPONENT_AFTER_HOOK = h; return; }
-
-// The after-hook every action wire carries: re-render the handler's
-// component, if the ctx is one.
-fn component_after(ctx: *u8) {
-    let h: fn(*u8) -> bool = COMPONENT_AFTER_HOOK;
-    if h != (0 as fn(*u8) -> bool) {
-        if h(ctx) { return; }
-    }
-    let _hit: bool = invalidate(ctx);
-    return;
-}
-
 // Forget a view's cached measure answers (fittingSize + wrap) — the
-// reconciler calls this when it edits a measured widget's text in place, so
-// the next layout pass re-asks TextKit instead of serving the stale size.
+// keyed-direct set_text mutator calls this after it edits a measured widget's
+// text in place, so the next layout pass re-asks TextKit instead of serving
+// the stale size.
 fn clear_measure_caches(view_ptr: *u8) {
     if view_ptr == { 0 as *u8 } { return; }
     rt::set_associated_object(view_ptr, measure_cache_key(), 0 as *u8, 0 as usize);
@@ -2048,14 +2006,14 @@ fn clear_measure_caches(view_ptr: *u8) {
 // ==========================================================================
 //
 // Re-lay the ONE component registered at this address out at its host's
-// CURRENT size by REUSING the tree kept from its last render: recompute the
-// flex layout (the engine's cross-call incremental cache skips unchanged
-// subtrees) and reposition the EXISTING views. No render, no mount, no view
-// churn — this is the window-resize path. State changes keep using
-// `invalidate`: a render may change the tree's SHAPE, and relayout assumes
-// shape stability (which a pure size change gives). A component that has no
-// retained tree yet falls back to a full render. Returns whether a mounted
-// component was found.
+// CURRENT size by REUSING the tree kept from mount: recompute the flex layout
+// (the engine's cross-call incremental cache skips unchanged subtrees) and
+// reposition the EXISTING views. No render, no mount, no view churn — this is
+// the window-resize path, and the reflow after a keyed-direct edit mutates the
+// retained tree. relayout assumes the tree's shape is stable (a pure size
+// change gives that; keyed-direct edits update the tree before reflowing). A
+// component that has no retained tree yet falls back to a full render. Returns
+// whether a mounted component was found.
 fn relayout(cp: *u8) -> bool {
     if cp == { 0 as *u8 } { return false; }
     let n: usize = SLOTS.count();
@@ -2131,7 +2089,7 @@ fn unmount_all() {
 }
 
 // Drop the (first) registration for one component address, if present.
-// swap_remove keeps the vec compact; invalidate scans all slots, so reordering
+// swap_remove keeps the vec compact; relayout scans all slots, so reordering
 // is harmless. Host + component are borrowed, so nothing they own is released;
 // the component's RETAINED TREE drops with the registration. No-ops on ctx 0
 // (the "no component" sentinel). Returns whether a slot was removed.
@@ -2158,7 +2116,7 @@ fn remove_slot(cp: *u8) -> bool {
 
 // Unmount ONE component — a window closing its own components without disturbing
 // another window's (vs `unmount_all`). Its slot is dropped, so a later
-// invalidate(cp) no-ops instead of reaching a released host. Returns whether a
+// relayout(cp) no-ops instead of reaching a released host. Returns whether a
 // registration was found.
 fn unmount(cp: *u8) -> bool {
     return remove_slot(cp);
@@ -2368,11 +2326,11 @@ fn test_remount_replaces_slot_and_unmount_drops_one() {
     }
     assert cnt == (1 as usize);
     assert host_for_cp == b.raw();
-    // invalidate finds the fresh slot; unmount drops exactly one; the rest no-op.
-    assert invalidate(cp);
+    // relayout finds the fresh slot; unmount drops exactly one; the rest no-op.
+    assert relayout(cp);
     assert unmount(cp);
     assert unmount(cp) == false;
-    assert invalidate(cp) == false;
+    assert relayout(cp) == false;
     unmount_all();
 }
 
@@ -2693,54 +2651,6 @@ fn test_fill_scroll_installs_flipped_document() {
     };
 }
 
-// A test component: renders `SCROLL_TEST_ROWS` fixed-height rows into a column.
-// Each row is a real backing view (payload) so `apply` installs it as a subview.
-static SCROLL_TEST_ROWS: i64 = 3;
-fn scroll_test_render(cp: *u8) -> flex::Node {
-    var b: Builder = Builder::new();
-    var i: i64 = 0 as i64;
-    while i < SCROLL_TEST_ROWS {
-        let v = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 });
-        b.add(fixed_view(v).width(100.0f64).height(30.0f64));
-        i = i + (1 as i64);
-    }
-    return column(b);
-}
-
-#[test]
-fn test_mount_scroll_reuses_doc_and_reflows_on_invalidate() {
-    unmount_all();
-    let s = ak::ScrollView::new(rt::Rect { x: 0.0, y: 0.0, w: 100.0, h: 80.0 });
-    SCROLL_TEST_ROWS = 3 as i64;
-    // ctx is a sentinel identity (a real app passes a bound component reference).
-    let h0: f64 = mount_scroll(scroll_test_render, ctx: 1 as *u8, scroll: s.raw());
-    assert approx(h0, 90.0f64);   // 3 * 30, content-sized (not clipped to the 80 viewport)
-    var doc0: *u8 = 0 as *u8;
-    match s.document_view() {
-        option::Option[ak::View]::Some(doc) => {
-            doc0 = doc.raw();
-            assert rt::msg_i8(doc.raw(), rt::sel(#str_ptr("isFlipped\0"))) == (1 as i8);
-            assert approx(doc.frame().h, 90.0f64);
-            assert doc.subviews().count() == (3 as usize);
-        }
-        option::Option[ak::View]::None => { assert false; }
-    };
-
-    // Grow the list and invalidate: same document view (REUSED), reflowed taller.
-    SCROLL_TEST_ROWS = 5 as i64;
-    let hit: bool = invalidate(1 as *u8);
-    assert hit;
-    match s.document_view() {
-        option::Option[ak::View]::Some(doc) => {
-            assert doc.raw() == doc0;                    // reused, not recreated
-            assert approx(doc.frame().h, 150.0f64);      // 5 * 30
-            assert doc.subviews().count() == (5 as usize);
-        }
-        option::Option[ak::View]::None => { assert false; }
-    };
-    unmount_all();
-}
-
 // ---- retained relayout ------------------------------------------------------
 
 // column [ leaf 50x10, row { leaf 40x20 } ] — the row is a payload-less
@@ -2931,9 +2841,9 @@ fn test_relayout_reflows_registered_scroll_content() {
         option::Option[ak::View]::None => { assert false; }
     };
 
-    // A re-render replaces the retained tree; the forgotten tree takes its
+    // Unmount drops the retained tree; the forgotten tree takes its
     // scroll-content entry with it (exact cleanup, no liveness heuristics).
-    assert invalidate(cp);
+    assert unmount(cp);
     assert scroll_content_count() == (0 as usize);
     unmount_all();
 }

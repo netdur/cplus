@@ -118,32 +118,30 @@ fn idx_handler(sender: *u8, ctx: *u8) {
 }
 
 #[test]
-fn non_component_ctx_still_delivers_and_noops_the_after_hook() {
+fn non_component_ctx_delivers_data() {
     ui::unmount_all();
     IDX_SEEN = -1;
-    // The row-index pattern: ctx is data, not a component. The after-hook
-    // must miss the registry and do nothing.
+    // The row-index pattern: ctx is data (an index), not a component. The wire
+    // delivers it to the handler verbatim; facet is not reactive, so nothing
+    // else happens.
     var del: flex::Node = ui::button_ctx("x", on: idx_handler, ctx: 5 as *u8);
     press(#addr_of(del));
     assert IDX_SEEN == (5 as i64);
-    assert ui::invalidate(5 as *u8) == false;
 }
 
 #[test]
-fn explicit_cross_component_invalidate() {
+fn state_mutation_alone_does_not_touch_the_screen() {
     ui::unmount_all();
     CC_A.count = 0;
     let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 40.0 });
     let _h: f64 = ui::mount(CC_A.build, host: host.raw());
     let v0: *u8 = first_subview(host.raw());
-    // Mutating state does nothing to the screen until invalidate says so.
+    // facet is not reactive: mutating a field changes nothing on screen. The
+    // view is updated only when a handler addresses it (find + a mutator).
     CC_A.count = 41;
-    assert first_subview(host.raw()) == v0;
-    let hit: bool = ui::invalidate(#addr_of(CC_A) as *u8);
-    assert hit;
-    assert first_subview(host.raw()) != v0;
+    assert first_subview(host.raw()) == v0;   // SAME view, unchanged
     let lbl: ak::TextField = ak::TextField::from_raw(first_subview(host.raw()));
-    assert lbl.as_control().string_value().count() == (8 as usize);   // "count 41"
+    assert lbl.as_control().string_value().count() == (7 as usize);   // still "count 0"
     ui::unmount_all();
 }
 
@@ -251,10 +249,9 @@ fn scroll_cycles() -> i32 {
     return 0;
 }
 
-// Leak-harness segment for the COMPONENT runtime: one mount, then 50 full
-// click -> ref-this handler -> auto-invalidate re-render cycles through the
-// real target/action pair, plus 50 explicit invalidates. Every re-render
-// replaces the host's subtree; the removed views must fully release.
+// Leak-harness segment for the COMPONENT mount path: one mount, then 50 full
+// click -> bound-method handler cycles through the real target/action pair.
+// Mount retains a tree (+1 on its views); unmount must fully release them.
 fn component_cycles() -> i32 {
     ui::unmount_all();
     CC_A.count = 0;
@@ -266,16 +263,12 @@ fn component_cycles() -> i32 {
         press(#addr_of(plus));
     }
     if CC_A.count != 50 { return 42; }
-    for k in 0..50 {
-        let hit: bool = ui::invalidate(#addr_of(CC_A) as *u8);
-        if !hit { return 43; }
-    }
     ui::unmount_all();
     return 0;
 }
 
-// Component-path re-render for these tests: clear the host, then mount the
-// fresh tree (what a component's invalidate does — no global runtime).
+// Explicit remount for these tests: clear the host, then mount the fresh tree
+// (the app's own "re-open this screen" path — no reactive runtime).
 fn tm_render(view: fn() -> facet::Node, content_ptr: *u8, w: f64, h: f64) {
     let content: ak::View = ak::View::from_raw(content_ptr);
     var subs: vec::Vec[ak::View] = content.subviews();
@@ -730,10 +723,10 @@ fn uitag_render(ctx: *u8) -> flex::Node {
 }
 
 #[test]
-fn ui_agent_id_survives_component_rerender() {
-    // The Gap B half: a component re-render replaces its views wholesale;
-    // because the constructor tags at every mount, the FRESH button carries
-    // the same id — an agent that re-opens its surface finds "go-btn" again.
+fn ui_agent_id_survives_remount() {
+    // A re-mount (an agent re-opening its surface) replaces the views wholesale;
+    // because the constructor tags at every mount, the FRESH button carries the
+    // same id — the surface is addressable as "go-btn" again.
     ui::unmount_all();
     let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 40.0 });
     let _h0: f64 = ui::mount(uitag_render, ctx: { #addr_of(UITAG_CTX) as *u8 }, host: host.raw());
@@ -746,7 +739,8 @@ fn ui_agent_id_survives_component_rerender() {
         }
         option::Option[*ak::View]::None => { assert false; }
     };
-    assert ui::invalidate({ #addr_of(UITAG_CTX) as *u8 });
+    // Re-mount the same component into the same host (re-open the surface).
+    let _h1: f64 = ui::mount(uitag_render, ctx: { #addr_of(UITAG_CTX) as *u8 }, host: host.raw());
     var subs2: vec::Vec[ak::View] = host.subviews();
     match subs2.at_ptr(0 as usize) {
         option::Option[*ak::View]::Some(v) => {

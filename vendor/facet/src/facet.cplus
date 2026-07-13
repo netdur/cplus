@@ -1631,7 +1631,7 @@ fn split(
 //   3. `set_identity(ctx, handle, id, role)` — pin the agent id + record the
 //      (role, drive) affordance for the matching agent_* reader.
 //   4. the `native` op — adopt an app-owned handle (the escape hatch).
-//   5. a small host — a window + an invalidate/re-mount primitive.
+//   5. a small host — a window + a relayout/re-mount primitive.
 //
 // `fake_renderer` (in the tests) is the PORTABLE CONFORMANCE TEST: it fills the
 // same struct with pure-C+ stubs, so the whole description→flex pipeline is
@@ -1923,13 +1923,12 @@ fn mount(np: *Node, r: Renderer) -> flex::Node {
     return n;
 }
 
-// Layout props — applied uniformly to the flex node, whatever built it.
-// Factored out of `mount` so a reconciling runtime can RE-apply a changed
-// description's props onto the RETAINED flex node (the engine's snapshot
-// cache detects which writes actually changed anything). Note: a prop that
-// was set and becomes UNSET is not cleared here — the description model
-// treats unset as "no opinion", and a set→unset transition falls back to a
-// structural rebuild at the runtime layer.
+// Layout props — applied uniformly to the flex node at mount, whatever built
+// it. Standalone so a retained-tree edit (a keyed-direct mutator) can re-apply
+// a node's props onto the RETAINED flex node (the engine's snapshot cache
+// detects which writes actually changed anything). Note: a prop that was set
+// and becomes UNSET is not cleared here — the description model treats unset
+// as "no opinion".
 fn apply_layout_props(np: *Node, fp: *flex::Node) {
     if { (*np)._grow } > 0.0f64 { (*fp).set_flex_grow({ (*np)._grow }); }
     if { (*np)._gap } > 0.0f64 { (*fp).set_gap(flex::Gutter::All, { (*np)._gap }); }
