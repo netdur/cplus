@@ -911,6 +911,11 @@ fn install() {
     facet::set_set_hidden_fn(set_hidden_impl);
     facet::set_add_child_fn(add_child_impl);
     facet::set_remove_child_fn(remove_child_impl);
+    facet::set_stage_fn(stage_impl);
+    facet::set_attach_fn(attach_impl);
+    facet::set_detach_fn(detach_impl);
+    facet::set_is_attached_fn(is_attached_impl);
+    facet::set_unstage_fn(unstage_impl);
     return;
 }
 
@@ -1274,9 +1279,24 @@ fn unmount(cp: *u8) -> bool {
 }
 
 fn unmount_all() {
+    // Unplug every staged root from any superview before its component's tree is
+    // dropped, then release the facet-owned roots.
+    let staged: *vec::Vec[StageReg] = #addr_of(STAGED);
+    let sn: usize = { (*staged).count() };
+    var si: usize = 0 as usize;
+    while si < sn {
+        match (*staged).at_ptr(si) {
+            option::Option[*StageReg]::Some(ep) => {
+                ak::View::from_raw({ (*ep)._root.raw() }).remove_from_superview();
+            }
+            option::Option[*StageReg]::None => { }
+        }
+        si = si +% (1 as usize);
+    }
     let reg: *vec::Vec[CompReg] = #addr_of(COMPONENTS);
     (*reg).remove_all();
     ui::unmount_all();
+    (*staged).remove_all();   // drops the retained root views (-1 each)
     return;
 }
 
@@ -1525,6 +1545,9 @@ fn run_root_render(cp: *u8) -> flex::Node {
 fn appkit_did_resize(user: *u8, notif: *u8) {
     let lifecycle: *WindowLifecycle = user as *WindowLifecycle;
     let _r: bool = ui::relayout({ (*lifecycle).relayout_cp });
+    // Any staged screen attached inside this window fills its container via
+    // autoresizing, but its flex content still needs re-laying at the new size.
+    relayout_attached_staged();
     return;
 }
 
@@ -2068,7 +2091,10 @@ fn phase1_shared_demo_mounts_on_appkit() {
 // Find a descendant view by agent id (accessibilityIdentifier), or 0 (null).
 fn find_view_by_id(root: *u8, id: str) -> *u8 {
     if root == (0 as *u8) { return 0 as *u8; }
-    if ak::Accessibility::from_raw(root).accessibility_identifier().view() == id { return root; }
+    // Bind the bridged Text to a local so it drops (an inline
+    // `accessibility_identifier().view()` leaks the temporary — a temp-drop gap).
+    let got: text::Text = ak::Accessibility::from_raw(root).accessibility_identifier();
+    if got.view() == id { return root; }
     let v: ak::View = ak::View::from_raw(root);
     var subs: vec::Vec[ak::View] = v.subviews();
     let n: usize = subs.count();
@@ -2258,6 +2284,159 @@ fn remove_child_impl(h: facet::Handle, key: str) -> bool {
         i = i +% (1 as usize);
     }
     return false;
+}
+
+// ==========================================================================
+// Component lifecycle: stage / attach / detach (facet::Staged)
+// ==========================================================================
+//
+// A staged component is mounted (exactly like mount_component) into a FACET-OWNED
+// root view that starts with no superview — off-canvas. `attach` moves that root
+// under a keyed container and fires on_attach; `detach` removes it from its
+// superview (KEEPING the root and the component's retained tree — parked) and
+// fires on_detach. The component stays registered the whole time, so find(cp,key)
+// and relayout(cp) work identically whether it is parked or live. attach/detach
+// touch nothing but the view's superview + one flag — no rebuild, no diff.
+
+struct StageReg {
+    opaque _cp: *u8,
+    _root: ak::View,          // facet owns the parked root view (+1 held here)
+    _on_attach: fn(*u8),
+    opaque _on_attach_ctx: *u8,   // the callback's bound receiver (usually == _cp)
+    _on_detach: fn(*u8),
+    opaque _on_detach_ctx: *u8,
+    _attached: bool,
+}
+
+static STAGED: vec::Vec[StageReg] = #zero::[vec::Vec[StageReg]]();
+
+fn stage_index(cp: *u8) -> i64 {
+    let reg: *vec::Vec[StageReg] = #addr_of(STAGED);
+    let n: usize = { (*reg).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*reg).at_ptr(i) {
+            option::Option[*StageReg]::Some(ep) => { if { (*ep)._cp } == cp { return i as i64; } }
+            option::Option[*StageReg]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return -1 as i64;
+}
+
+fn stage_ptr(cp: *u8) -> *StageReg {
+    let idx: i64 = stage_index(cp);
+    if idx < (0 as i64) { return 0 as *StageReg; }
+    match STAGED.at_ptr(idx as usize) {
+        option::Option[*StageReg]::Some(ep) => { return ep; }
+        option::Option[*StageReg]::None => { return 0 as *StageReg; }
+    }
+    return 0 as *StageReg;
+}
+
+// Full teardown of the staging at index `idx`: unplug the root, drop the mounted
+// component (its retained tree + view +1s), then drop the registry entry (which
+// releases the facet-owned root).
+fn stage_teardown_at(idx: usize) {
+    match STAGED.at_ptr(idx) {
+        option::Option[*StageReg]::Some(ep) => {
+            ak::View::from_raw({ (*ep)._root.raw() }).remove_from_superview();
+            let _u: bool = unmount({ (*ep)._cp });
+        }
+        option::Option[*StageReg]::None => { return; }
+    }
+    let reg: *vec::Vec[StageReg] = #addr_of(STAGED);
+    let _g: option::Option[StageReg] = { (*reg).remove(idx) };   // drops _root (-1)
+    return;
+}
+
+// facet::stage hook: build the component into a facet-owned parked root (no
+// superview) and register it. mount_component registers it in the slot/tree
+// registry, so find + relayout work while it is parked or live.
+fn stage_impl(build: fn(*u8) -> facet::Node, ctx: *u8, on_attach: fn(*u8), on_attach_ctx: *u8, on_detach: fn(*u8), on_detach_ctx: *u8) -> facet::Staged {
+    if ctx == (0 as *u8) { return facet::Staged::none(); }
+    let prior: i64 = stage_index(ctx);
+    if prior >= (0 as i64) { stage_teardown_at(prior as usize); }   // re-stage replaces
+    let root: ak::View = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 320.0, h: 480.0 });
+    let root_raw: *u8 = root.raw();
+    let _h: f64 = mount_component(build, ctx: ctx, host: root_raw);
+    let reg: *vec::Vec[StageReg] = #addr_of(STAGED);
+    (*reg).append(StageReg { _cp: ctx, _root: root, _on_attach: on_attach, _on_attach_ctx: on_attach_ctx, _on_detach: on_detach, _on_detach_ctx: on_detach_ctx, _attached: false });
+    return facet::Staged::of(ctx, root_raw);
+}
+
+// facet::Handle.attach hook: move a staged component's parked root under this
+// keyed container, size it to fill, reflow its content, and fire on_attach.
+fn attach_impl(h: facet::Handle, s: facet::Staged) -> bool {
+    let container: *u8 = h.view();
+    if container == (0 as *u8) { return false; }
+    if !s.valid() { return false; }
+    let sp: *StageReg = stage_ptr(s.cp());
+    if sp == (0 as *StageReg) { return false; }
+    let root: *u8 = s.root();
+    // One parent at a time: if already attached anywhere, unplug first (a move).
+    ak::View::from_raw(root).remove_from_superview();
+    let cf: rt::Rect = ak::View::from_raw(container).frame();
+    ak::View::from_raw(root).set_frame(rt::Rect { x: 0.0, y: 0.0, w: cf.w, h: cf.h });
+    // width + height sizable: the root tracks the container's size natively.
+    let mask: u64 = ak::autoresizing_mask_options_n_s_view_width_sizable
+        | ak::autoresizing_mask_options_n_s_view_height_sizable;
+    rt::msg_void_u64(root, rt::sel(#str_ptr("setAutoresizingMask:\0")), mask);
+    ak::View::from_raw(container).add_subview(ak::View::from_raw(root));
+    let _r: bool = ui::relayout(s.cp());   // lay the content out at the container's size
+    { (*sp)._attached = true; }
+    let cb: fn(*u8) = { (*sp)._on_attach };
+    cb({ (*sp)._on_attach_ctx });
+    return true;
+}
+
+// facet::Staged.detach hook: unplug the root from its superview, KEEPING it and
+// the component's retained tree (parked), and fire on_detach.
+fn detach_impl(s: facet::Staged) -> bool {
+    if !s.valid() { return false; }
+    let sp: *StageReg = stage_ptr(s.cp());
+    if sp == (0 as *StageReg) { return false; }
+    if { (*sp)._attached } == false { return false; }
+    ak::View::from_raw(s.root()).remove_from_superview();
+    { (*sp)._attached = false; }
+    let cb: fn(*u8) = { (*sp)._on_detach };
+    cb({ (*sp)._on_detach_ctx });
+    return true;
+}
+
+// facet::is_attached hook: is this staged component currently in the live tree?
+fn is_attached_impl(cp: *u8) -> bool {
+    let sp: *StageReg = stage_ptr(cp);
+    if sp == (0 as *StageReg) { return false; }
+    return { (*sp)._attached };
+}
+
+// facet::Staged.unstage hook: tear the staged component down for good.
+fn unstage_impl(s: facet::Staged) -> bool {
+    if !s.valid() { return false; }
+    let idx: i64 = stage_index(s.cp());
+    if idx < (0 as i64) { return false; }
+    stage_teardown_at(idx as usize);
+    return true;
+}
+
+// Relayout every ATTACHED staged component (the window-resize cascade: their
+// roots autoresize to fill, but their flex content must be re-laid at the new
+// size). Called from the window's resize handler after the root relayout.
+fn relayout_attached_staged() {
+    let reg: *vec::Vec[StageReg] = #addr_of(STAGED);
+    let n: usize = { (*reg).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*reg).at_ptr(i) {
+            option::Option[*StageReg]::Some(ep) => {
+                if { (*ep)._attached } { let _r: bool = ui::relayout({ (*ep)._cp }); }
+            }
+            option::Option[*StageReg]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
 }
 
 // Focus the widget with the given agent id — make it the window's first
@@ -2587,6 +2766,205 @@ fn find_add_and_remove_child() {
     // Removing a key that is not a direct child returns false.
     assert facet::find(cp, "list").remove_child("zzz") == false;
     unmount_all();
+}
+
+// ---- component lifecycle: stage / attach / detach (the router / nav pattern) --
+// A NavHost with a keyed "outlet"; screens are staged off-canvas and attached one
+// at a time. Attaching fires on_attach; detaching PARKS the screen (views kept)
+// and fires on_detach; is_attached is the guard a handler checks before touching
+// the UI from an async completion.
+
+struct NavHost { n: i64 }
+
+impl NavHost: facet::Component {
+    fn build(this) -> facet::Node {
+        var outlet: facet::Builder = facet::Builder::new();   // empty: attach fills it
+        var root: facet::Builder = facet::Builder::new();
+        root.add(facet::column(outlet).key("outlet").grow(1.0f64));
+        return facet::column(root);
+    }
+}
+
+static NAV_HOST: NavHost = #zero::[NavHost]();
+
+struct RouteScreen {
+    tag: text::Text,
+    attaches: i32,
+    detaches: i32,
+}
+
+impl RouteScreen: facet::Component {
+    fn build(this) -> facet::Node {
+        var b: facet::Builder = facet::Builder::new();
+        b.add(facet::label(this.tag.view(), size: 14.0f64).key("title"));
+        return facet::column(b);
+    }
+}
+
+impl RouteScreen: facet::Lifecycle {
+    fn on_attach(ref this) { this.attaches = this.attaches +% 1; }
+    fn on_detach(ref this) { this.detaches = this.detaches +% 1; }
+}
+
+static SCREEN_A: RouteScreen = #zero::[RouteScreen]();
+static SCREEN_B: RouteScreen = #zero::[RouteScreen]();
+
+// A free build fn (not a bound reference) so the negative test can call stage_impl
+// directly with a 0 ctx — a bound reference always supplies a real address.
+fn dummy_screen(cp: *u8) -> facet::Node { return facet::box(); }
+
+fn lifecycle_install() {
+    facet::set_find_fn(find_impl);
+    facet::set_stage_fn(stage_impl);
+    facet::set_attach_fn(attach_impl);
+    facet::set_detach_fn(detach_impl);
+    facet::set_is_attached_fn(is_attached_impl);
+    facet::set_unstage_fn(unstage_impl);
+    return;
+}
+
+#[test]
+fn stage_attach_detach_and_reattach_keeps_views() {
+    unmount_all();
+    lifecycle_install();
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 400.0 });
+    let _h: f64 = mount_component(NAV_HOST.build, host: host.raw());
+    let nav_cp: *u8 = #addr_of(NAV_HOST) as *u8;
+
+    // Stage two screens OFF-CANVAS: built, but not attached, no callback yet.
+    SCREEN_A.tag = text::from_str("A"); SCREEN_A.attaches = 0; SCREEN_A.detaches = 0;
+    SCREEN_B.tag = text::from_str("B"); SCREEN_B.attaches = 0; SCREEN_B.detaches = 0;
+    let a: facet::Staged = facet::stage(SCREEN_A.build, on_attach: SCREEN_A.on_attach, on_detach: SCREEN_A.on_detach);
+    let b: facet::Staged = facet::stage(SCREEN_B.build, on_attach: SCREEN_B.on_attach, on_detach: SCREEN_B.on_detach);
+    assert a.valid();
+    assert b.valid();
+    assert !facet::is_attached(a.cp());
+    assert SCREEN_A.attaches == 0;
+
+    // The outlet exists and is empty until a screen is routed in.
+    let outlet_v: *u8 = find_view_by_id(host.raw(), "outlet");
+    assert outlet_v != (0 as *u8);
+    assert ak::View::from_raw(outlet_v).subviews().count() == (0 as usize);
+
+    // A screen's own views exist off-canvas (built at stage), addressable off root.
+    let a_title0: *u8 = find_view_by_id(a.root(), "title");
+    assert a_title0 != (0 as *u8);
+
+    // Route to A: attach fires on_attach; A is live in the outlet.
+    assert facet::find(nav_cp, "outlet").attach(a);
+    assert facet::is_attached(a.cp());
+    assert SCREEN_A.attaches == 1;
+    assert SCREEN_A.detaches == 0;
+    assert ak::View::from_raw(outlet_v).subviews().count() == (1 as usize);
+
+    // Route to B: detach A (PARKED, kept), attach B.
+    assert a.detach();
+    assert !facet::is_attached(a.cp());
+    assert SCREEN_A.detaches == 1;
+    assert find_view_by_id(a.root(), "title") == a_title0;   // A's views SURVIVED parking
+    assert facet::find(nav_cp, "outlet").attach(b);
+    assert facet::is_attached(b.cp());
+    assert SCREEN_B.attaches == 1;
+    assert ak::View::from_raw(outlet_v).subviews().count() == (1 as usize);   // only B now
+
+    // Route BACK to A: detach B, re-attach A — the SAME views, restored.
+    assert b.detach();
+    assert facet::find(nav_cp, "outlet").attach(a);
+    assert facet::is_attached(a.cp());
+    assert SCREEN_A.attaches == 2;                            // attached twice total
+    assert find_view_by_id(a.root(), "title") == a_title0;   // ORIGINAL view, not rebuilt
+
+    // Tear A down for good: registration gone, no longer attached.
+    assert a.unstage();
+    assert !facet::is_attached(a.cp());
+    assert stage_index(a.cp()) < (0 as i64);
+    unmount_all();
+}
+
+// The async guard: a completion that arrives after the user navigated away must
+// NOT touch the UI. is_attached is that check — no framework rule, just a bool.
+static GUARD_UPDATED: i32 = 0;
+
+fn guarded_complete(cp: *u8) {
+    if !facet::is_attached(cp) { return; }    // parked -> skip the UI update
+    GUARD_UPDATED = GUARD_UPDATED + 1;
+    let _u: facet::Handle = facet::find(cp, "title").set_text("loaded");
+    return;
+}
+
+#[test]
+fn is_attached_guards_async_completion() {
+    unmount_all();
+    lifecycle_install();
+    facet::set_set_text_fn(set_text_impl);
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 400.0 });
+    let _h: f64 = mount_component(NAV_HOST.build, host: host.raw());
+    let nav_cp: *u8 = #addr_of(NAV_HOST) as *u8;
+
+    SCREEN_A.tag = text::from_str("A"); SCREEN_A.attaches = 0; SCREEN_A.detaches = 0;
+    GUARD_UPDATED = 0;
+    let a: facet::Staged = facet::stage(SCREEN_A.build, on_attach: SCREEN_A.on_attach, on_detach: SCREEN_A.on_detach);
+
+    // Attached: a completion updates the UI in place.
+    assert facet::find(nav_cp, "outlet").attach(a);
+    guarded_complete(a.cp());
+    assert GUARD_UPDATED == 1;
+    assert ak::TextField::from_raw(find_view_by_id(a.root(), "title")).as_control().string_value().equals("loaded");
+
+    // Navigate away, THEN a slow second completion arrives: it must skip.
+    assert a.detach();
+    guarded_complete(a.cp());
+    assert GUARD_UPDATED == 1;   // unchanged — the guard held
+    let _z: bool = a.unstage();
+    unmount_all();
+}
+
+#[test]
+fn stage_lifecycle_negatives() {
+    unmount_all();
+    lifecycle_install();
+    // stage with a 0 ctx is invalid (guard tested via the impl directly, since a
+    // bound reference always supplies a real ctx); a none Staged no-ops its verbs.
+    assert !stage_impl(dummy_screen, 0 as *u8, facet::lifecycle_noop, 0 as *u8, facet::lifecycle_noop, 0 as *u8).valid();
+    assert facet::Staged::none().detach() == false;
+    assert facet::Staged::none().is_attached() == false;
+    assert facet::Staged::none().unstage() == false;
+
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 400.0 });
+    let _h: f64 = mount_component(NAV_HOST.build, host: host.raw());
+    let nav_cp: *u8 = #addr_of(NAV_HOST) as *u8;
+    SCREEN_A.tag = text::from_str("A");
+    let a: facet::Staged = facet::stage(SCREEN_A.build);
+
+    // Attaching to a MISSING key returns false (nothing attached).
+    assert facet::find(nav_cp, "no-such-outlet").attach(a) == false;
+    assert !facet::is_attached(a.cp());
+    // Detaching something never attached returns false.
+    assert a.detach() == false;
+    let _z: bool = a.unstage();
+    unmount_all();
+}
+
+// Leak-harness segment for staging: 50 cycles of stage -> attach -> detach ->
+// re-attach -> unstage. Exercises the facet-owned root views' retain/release
+// balance — StageReg holds +1 on each parked root; unstage (and unmount_all)
+// must release it, or the harness `leaks --atExit` grows per cycle.
+fn stage_leak_cycles() -> i32 {
+    unmount_all();
+    lifecycle_install();
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 400.0 });
+    let _h: f64 = mount_component(NAV_HOST.build, host: host.raw());
+    let nav_cp: *u8 = #addr_of(NAV_HOST) as *u8;
+    for k in 0..50 {
+        SCREEN_A.tag = text::from_str("A");
+        let a: facet::Staged = facet::stage(SCREEN_A.build, on_attach: SCREEN_A.on_attach, on_detach: SCREEN_A.on_detach);
+        let _at: bool = facet::find(nav_cp, "outlet").attach(a);
+        let _dt: bool = a.detach();
+        let _re: bool = facet::find(nav_cp, "outlet").attach(a);
+        let _us: bool = a.unstage();
+    }
+    unmount_all();
+    return 0;
 }
 
 // The ONE update rule: a wired handler addresses its own keyed element and
