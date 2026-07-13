@@ -1,0 +1,145 @@
+# The `@facet` DSL, widgets, and layout
+
+A screen is a `Node` tree. You build it with the `@facet { }` contextual-builder
+DSL, or with the `Builder` API directly.
+
+## The DSL
+
+```cplus
+@facet {
+    vstack {
+        label("Title", size: 20.0f64, bold: true)
+        wrap_label("A longer line that wraps to the width.", secondary: true)
+        hstack {
+            button("New", primary: true).on_click(on_new, ctx: 0 as *u8)
+            button("Open")
+        }
+    }
+    .padding(12.0f64)
+    .gap(8.0f64)
+}
+```
+
+Rules:
+
+- A bare **leaf** name resolves against this package: `label(...)` is
+  `facet::label(...)`.
+- A bare **container** (`vstack { ... }`) calls the container function with the
+  block's accumulated children.
+- **Modifiers** follow the `flex_layout` line rule: on the **same line** as the
+  item they are a fluent chain (`take this -> Node`); on their **own
+  leading-dot line** they are in-place `set_*`. Both return a `Node`.
+
+`@facet { ... }` desugars to `Builder::new()` + `.add(item)` + `.finish()`, so
+an `@facet` root wraps its children in a column.
+
+## The Builder API
+
+The imperative equivalent, useful when you need an exact shape or a computed
+list:
+
+```cplus
+var b: facet::Builder = facet::Builder::new();
+b.add(facet::label("row-a"));
+b.add(facet::label("row-b"));
+return facet::vstack(b);        // or column/hstack/row/zstack/grid/card/scroll/...
+```
+
+## Leaves
+
+| constructor | widget |
+|---|---|
+| `label(s, size?, bold?, secondary?)` | single-line text |
+| `wrap_label(s, size?, secondary?)` | wrapping text |
+| `button(s, primary?)` | push button |
+| `text_field(placeholder?, value?)` | single-line input |
+| `secure_field(placeholder?, value?)` | password input |
+| `toggle(...)` | checkbox / switch |
+| `slider(...)` | continuous value |
+| `stepper(...)` | discrete +/- |
+| `progress(value?, indeterminate?)` | progress bar |
+| `gauge(value?, min?, max?)` | level indicator |
+| `segmented(...)` | segmented control |
+| `popup(...)` | pop-up menu |
+| `color_picker(on_change?, ctx?)` | color well |
+| `date_picker(on_change?, ctx?)` | date picker |
+| `image(path)` | image |
+| `symbol(name, size?, secondary?)` | SF Symbol (provisional; Apple-specific) |
+| `divider()` | separator line |
+| `spacer()` | flexible gap |
+| `box()` | an empty backing view (drop target / drag source) |
+| `path(width, height)` | vector path (`.move_to`/`.line_to`/`.close_path`) |
+| `native(handle)` | adopt an app-owned native view (the escape hatch) |
+| `list(count, row, ctx?)` | recycling list — `row(i, ctx) -> Node` built lazily |
+
+## Containers
+
+| constructor | layout |
+|---|---|
+| `vstack {}` / `column(b)` | vertical stack |
+| `hstack {}` / `row(b)` | horizontal stack |
+| `zstack {}` | overlay (children stacked front-to-back) |
+| `grid {}` / `grid(b, columns)` | grid flow |
+| `card {}` | padded, bordered container |
+| `scroll {}` | scrollable content |
+| `split {}` / `split(b, vertical?, position?)` | draggable split panes |
+| `bordered {}` / `bordered(b, radius?)` | a backing view with a border |
+| `clickable {}` | a container that takes gestures (click/hover/drag/...) |
+| `material {}` | a translucent material background |
+
+## Modifiers
+
+Layout (consumed by `flex_layout`, applied write-once at mount). facet uses
+`flex_layout`'s CSS-flexbox vocabulary directly:
+
+| modifier | effect |
+|---|---|
+| `.grow(v)` / `.shrink(v)` / `.flex_basis(v)` | flex grow / shrink / basis |
+| `.width(v)` / `.height(v)` / `.frame(w, h)` | fixed size |
+| `.width_pct(v)` / `.height_pct(v)` | percentage size |
+| `.min_width(v)` / `.max_width(v)` / `.min_height(v)` / `.max_height(v)` | bounds |
+| `.gap(v)` / `.gap_row(v)` / `.gap_col(v)` | spacing between children |
+| `.padding(v)` / `.margin(v)` / `.inset(edge, v)` | inner / outer / per-edge space |
+| `.align_items(a)` / `.align_self(a)` / `.justify_content(j)` | flexbox alignment (`flex::Align` / `flex::Justify`) |
+| `.flex_direction(d)` / `.flex_wrap(w)` / `.direction(d)` | axis / wrapping / writing direction |
+| `.position_absolute(...)` / `.position_relative()` | positioning |
+| `.grid_pos(...)` / `.grid_span(...)` | grid placement |
+| `.aspect_ratio(r)` / `.z_index(z)` | ratio / paint order within a `zstack` |
+
+Content, style, and identity:
+
+| modifier | effect |
+|---|---|
+| `.key(id)` | the keyed-direct address (also the agent id / accessibility identifier) |
+| `.agent_id(id)` | set the agent id without making it a keyed-direct target |
+| `.on_click(cb, ctx?)` / `.on_drop(cb, ctx?)` / `.draggable(text)` | wire an interaction |
+| `.context_menu(...)` | attach a context menu |
+| `.font(size)` / `.weight(w)` / `.strong()` / `.italic()` / `.monospaced()` | text style |
+| `.line_limit(n)` / `.truncate()` / `.text_align(a)` / `.underline()` / `.strikethrough()` | text layout |
+| `.background(color)` / `.foreground_color(color)` / `.border(w, color)` / `.corner_radius(r)` | paint |
+| `.gradient(...)` / `.shadow(...)` / `.opacity(v)` / `.clip()` | paint |
+| `.rotation(deg)` / `.scale(v)` / `.fade_in(duration)` | transform / entrance animation |
+| `.hidden()` | mount hidden |
+| `.tooltip(s)` / `.accessibility_label(s)` / `.accessibility_hint(s)` | help / VoiceOver |
+| `.keyboard_shortcut(key)` | a control's key equivalent |
+| `.toolbar(items)` | attach a window toolbar to the root node |
+
+Handlers wired through container/leaf **constructors** (not modifiers) — for
+example `on_submit` / `on_change` on a composer, or `on: handler` on a `toggle`
+— are passed as constructor arguments; see each constructor's signature.
+
+## Handlers
+
+A handler is `fn(sender: *u8, ctx: *u8)`. Wire it with `.on_click(handler, ctx:
+...)`. When `ctx` is a component's address, the handler can call
+`facet::find(ctx, key)` to address its own elements. When `ctx` is data (a row
+index, say), the handler reads it and does whatever it likes — facet does not
+interpret it. See [updates.md](updates.md).
+
+## Colors and style
+
+`facet::Color` carries a semantic token (which a backend maps to a native
+system color) or an explicit RGBA. Common tokens: `Color::accent()`,
+`Color::primary()`, `Color::label()`, `Color::secondary_label()`. Style props
+(`background`, `border`, `corner`, `font`, `weight`) layer over the widget the
+constructor produced.
