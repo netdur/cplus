@@ -2089,12 +2089,24 @@ fn phase1_shared_demo_mounts_on_appkit() {
 
 // True if any descendant view carries the given accessibilityIdentifier.
 // Find a descendant view by agent id (accessibilityIdentifier), or 0 (null).
+// Does `view`'s accessibilityIdentifier equal `id`? Compares the NSString's UTF8
+// as a borrowed `str` VIEW — it never materializes an owned `Text`. This is the
+// hot path (every `find` walks the tree calling this per view), so avoiding a
+// per-comparison `to_text` allocation matters; and owning no Text, it has nothing
+// to drop.
+fn view_id_is(view: *u8, id: str) -> bool {
+    let ns: *u8 = rt::msg_id(view, rt::sel(#str_ptr("accessibilityIdentifier\0")));
+    if ns == (0 as *u8) { return id == ""; }
+    let utf8: *u8 = rt::msg_id(ns, rt::sel(#str_ptr("UTF8String\0")));
+    if utf8 == (0 as *u8) { return id == ""; }
+    let len: u64 = rt::msg_u64_u64(ns, rt::sel(#str_ptr("lengthOfBytesUsingEncoding:\0")), bridge::ns_utf8());
+    let sv: str = { #str_from_raw_parts(utf8, len as usize) };
+    return sv == id;
+}
+
 fn find_view_by_id(root: *u8, id: str) -> *u8 {
     if root == (0 as *u8) { return 0 as *u8; }
-    // Bind the bridged Text to a local so it drops (an inline
-    // `accessibility_identifier().view()` leaks the temporary — a temp-drop gap).
-    let got: text::Text = ak::Accessibility::from_raw(root).accessibility_identifier();
-    if got.view() == id { return root; }
+    if view_id_is(root, id) { return root; }
     let v: ak::View = ak::View::from_raw(root);
     var subs: vec::Vec[ak::View] = v.subviews();
     let n: usize = subs.count();
@@ -2450,8 +2462,7 @@ fn focus(win_ptr: *u8, agent_id: str) -> bool {
 
 fn surface_has_id(root: *u8, id: str) -> bool {
     if root == (0 as *u8) { return false; }
-    let got: text::Text = ak::Accessibility::from_raw(root).accessibility_identifier();
-    if got.view() == id { return true; }
+    if view_id_is(root, id) { return true; }   // zero-alloc str-view compare (see view_id_is)
     let v: ak::View = ak::View::from_raw(root);
     var subs: vec::Vec[ak::View] = v.subviews();
     let n: usize = subs.count();
