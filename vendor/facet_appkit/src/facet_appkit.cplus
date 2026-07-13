@@ -39,6 +39,7 @@ import "agent_appkit/agent_appkit" as agent;
 // libm trig for the rotation transform matrix (link_name keeps the bare symbol).
 #[link_name = "cos"] extern fn c_cos(x: f64) -> f64;
 #[link_name = "sin"] extern fn c_sin(x: f64) -> f64;
+extern fn snprintf(str: *u8, size: usize, format: *u8, ...) -> i32;
 
 // ---- per-kind vtable ops ----------------------------------------------------
 // Each reads the node's config and returns a ui-module node (NSView in the
@@ -367,7 +368,7 @@ fn ak_button(ctx: *u8, np: *facet::Node) -> flex::Node {
     let b: ak::Button = ak::Button::from_raw(n.payload());
     // `.plain()` → borderless button (the link/plain-button fold).
     if { (*np).plain } { b.set_bordered(false); }
-    akx::set_control_action_ctx_then_ctx(b.as_control(), { (*np).click }, { (*np).click_ctx }, ui::component_after);
+    akx::set_control_action_ctx(b.as_control(), { (*np).click }, { (*np).click_ctx });
     apply_style(n.payload(), facet::kind_button(), np);
     return n;
 }
@@ -570,7 +571,7 @@ fn ak_popup(ctx: *u8, np: *facet::Node) -> flex::Node {
     }
     let ch: fn(*u8, *u8) = { (*np).on_change };
     if ch != (0 as fn(*u8, *u8)) {
-        akx::set_control_action_ctx_then_ctx(p.as_control(), ch, { (*np).click_ctx }, ui::component_after);
+        akx::set_control_action_ctx(p.as_control(), ch, { (*np).click_ctx });
     }
     var n: flex::Node = ui::view(p.as_view());
     apply_style(n.payload(), facet::kind_popup(), np);
@@ -590,13 +591,12 @@ fn ak_toggle(ctx: *u8, np: *facet::Node) -> flex::Node {
     let ch: fn(*u8, *u8) = { (*np).on_change };
     let style: i32 = { (*np).toggle_style };
     if style == (0 as i32) {
-        // Switch (NSSwitch). setState via raw (binding has only the getter).
         let sw: ak::Switch = ak::Switch::new();
-        rt::msg_void_id(sw.raw(), rt::sel(#str_ptr("setState:\0")), st as *u8);
+        sw.set_state(st);
         if ch != (0 as fn(*u8, *u8)) {
-            akx::set_control_action_ctx_then_ctx(sw.as_control(), ch, { (*np).click_ctx }, ui::component_after);
+            akx::set_control_action_ctx(sw.as_control(), ch, { (*np).click_ctx });
         }
-        var n: flex::Node = ui::fixed_view(sw.as_view());
+        var n: flex::Node = ui::view(sw.as_view());
         apply_style(n.payload(), facet::kind_toggle(), np);
         return n;
     }
@@ -611,11 +611,11 @@ fn ak_toggle(ctx: *u8, np: *facet::Node) -> flex::Node {
         }
         option::Option[text::CString]::None => { }
     };
-    rt::msg_void_id(b.raw(), rt::sel(#str_ptr("setState:\0")), st as *u8);
+    b.set_state(st);
     if ch != (0 as fn(*u8, *u8)) {
-        akx::set_control_action_ctx_then_ctx(b.as_control(), ch, { (*np).click_ctx }, ui::component_after);
+        akx::set_control_action_ctx(b.as_control(), ch, { (*np).click_ctx });
     }
-    var bn: flex::Node = ui::fixed_view(b.as_view());
+    var bn: flex::Node = ui::view(b.as_view());
     apply_style(bn.payload(), facet::kind_toggle(), np);
     return bn;
 }
@@ -624,7 +624,7 @@ fn ak_color_picker(ctx: *u8, np: *facet::Node) -> flex::Node {
     let cw: ak::ColorWell = ak::ColorWell::new();
     let ch: fn(*u8, *u8) = { (*np).on_change };
     if ch != (0 as fn(*u8, *u8)) {
-        akx::set_control_action_ctx_then_ctx(cw.as_control(), ch, { (*np).click_ctx }, ui::component_after);
+        akx::set_control_action_ctx(cw.as_control(), ch, { (*np).click_ctx });
     }
     var n: flex::Node = ui::fixed_view(cw.as_view());
     apply_style(n.payload(), facet::kind_color_picker(), np);
@@ -635,7 +635,7 @@ fn ak_date_picker(ctx: *u8, np: *facet::Node) -> flex::Node {
     let dp: ak::DatePicker = ak::DatePicker::new();   // defaults to the current date
     let ch: fn(*u8, *u8) = { (*np).on_change };
     if ch != (0 as fn(*u8, *u8)) {
-        akx::set_control_action_ctx_then_ctx(dp.as_control(), ch, { (*np).click_ctx }, ui::component_after);
+        akx::set_control_action_ctx(dp.as_control(), ch, { (*np).click_ctx });
     }
     var n: flex::Node = ui::fixed_view(dp.as_view());
     apply_style(n.payload(), facet::kind_date_picker(), np);
@@ -646,6 +646,19 @@ fn ak_date_picker(ctx: *u8, np: *facet::Node) -> flex::Node {
 // border (wantsLayer). A full-radius square reads as a circle. With `.on_drop`
 // set it is instead a FacetDropView registered for text drops (SwiftUI
 // `.dropDestination`); the handler reads the payload via `dropped_text(sender)`.
+// Keyed-container backing view (approach A). facet mount calls this only for a
+// keyed column/row/zstack/grid: create a real NSView and set it as the (already
+// built, child-bearing) flex node's payload, so find(key) can address the
+// container. `apply` then takes its payload branch and hosts the children under
+// this view — identical to the view it would otherwise synthesize lazily, but
+// created early enough for mount to pin the container's agent id on it.
+fn fak_container(ctx: *u8, np: *facet::Node, node: *flex::Node) {
+    let bv: ak::View = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 });
+    let bp: *u8 = rt::retain(bv.raw());
+    { (*node).set_payload(bp, ui::release_view); }
+    return;
+}
+
 fn ak_box(ctx: *u8, np: *facet::Node) -> flex::Node {
     let drop: fn(*u8, *u8) = { (*np).drop_handler };
     let dtp: *text::Text = { #addr_of((*np).drag_text) };
@@ -748,7 +761,7 @@ fn ak_slider(ctx: *u8, np: *facet::Node) -> flex::Node {
     sl.as_control().set_double_value({ (*np).value_f });
     let ch: fn(*u8, *u8) = { (*np).on_change };
     if ch != (0 as fn(*u8, *u8)) {
-        akx::set_control_action_ctx_then_ctx(sl.as_control(), ch, { (*np).click_ctx }, ui::component_after);
+        akx::set_control_action_ctx(sl.as_control(), ch, { (*np).click_ctx });
     }
     var n: flex::Node = ui::fixed_view(sl.as_view());
     apply_style(n.payload(), facet::kind_slider(), np);
@@ -779,7 +792,7 @@ fn ak_stepper(ctx: *u8, np: *facet::Node) -> flex::Node {
     st.as_control().set_double_value({ (*np).value_f });
     let ch: fn(*u8, *u8) = { (*np).on_change };
     if ch != (0 as fn(*u8, *u8)) {
-        akx::set_control_action_ctx_then_ctx(st.as_control(), ch, { (*np).click_ctx }, ui::component_after);
+        akx::set_control_action_ctx(st.as_control(), ch, { (*np).click_ctx });
     }
     var n: flex::Node = ui::fixed_view(st.as_view());
     apply_style(n.payload(), facet::kind_stepper(), np);
@@ -817,7 +830,7 @@ fn ak_segmented(ctx: *u8, np: *facet::Node) -> flex::Node {
     sc.set_selected_segment({ (*np).popup_selected });
     let ch: fn(*u8, *u8) = { (*np).on_change };
     if ch != (0 as fn(*u8, *u8)) {
-        akx::set_control_action_ctx_then_ctx(sc.as_control(), ch, { (*np).click_ctx }, ui::component_after);
+        akx::set_control_action_ctx(sc.as_control(), ch, { (*np).click_ctx });
     }
     var n: flex::Node = ui::fixed_view(sc.as_view());
     apply_style(n.payload(), facet::kind_segmented(), np);
@@ -856,6 +869,48 @@ fn native_widget(take w: flex::Node) -> facet::Node {
     var held: *u8 = 0 as *u8;
     if p != (0 as *u8) { held = rt::retain(p); }
     return facet::native(held);
+}
+
+// ---- list: bridge facet's neutral list() to the @ui recycling NSTableView ----
+// facet::list hands us (count, a facet-row fn, ctx); ui::list wants a fn that
+// produces an already-mounted @ui subtree per row. Box the facet row fn + user
+// ctx together, and give ui::list a static bridge that MOUNTS the facet row on
+// demand (renderer() is fresh per call, so this is safe any time). Installed
+// into facet core by `install_list`.
+extern fn malloc(n: usize) -> *u8;
+
+struct FacetRowCtx {
+    row: fn(i64, *u8) -> facet::Node,
+    opaque user: *u8,
+}
+
+fn facet_list_row_bridge(ctx: *u8, i: i64) -> flex::Node {
+    let c: *FacetRowCtx = { ctx as *FacetRowCtx };
+    let f: fn(i64, *u8) -> facet::Node = { (*c).row };
+    var node: facet::Node = f(i, { (*c).user });
+    return mount(#addr_of(node));
+}
+
+fn fak_list(count: i64, row: fn(i64, *u8) -> facet::Node, ctx: *u8) -> facet::Node {
+    let bx: *FacetRowCtx = { malloc(#size_of::[FacetRowCtx]()) as *FacetRowCtx };
+    { *bx = FacetRowCtx { row: row, user: ctx }; }
+    return native_widget(ui::list(count, facet_list_row_bridge, bx as *u8));
+}
+
+// Register this backend's implementations of facet's neutral verbs (the native
+// recycling list, the by-key `raise`). Call once at startup, before the first
+// render (facet/runtime `run` does this).
+fn install() {
+    facet::set_list_builder(fak_list);
+    facet::set_raise_fn(raise);
+    facet::set_find_fn(find_impl);
+    facet::set_set_text_fn(set_text_impl);
+    facet::set_set_value_fn(set_value_impl);
+    facet::set_set_on_fn(set_on_impl);
+    facet::set_set_hidden_fn(set_hidden_impl);
+    facet::set_add_child_fn(add_child_impl);
+    facet::set_remove_child_fn(remove_child_impl);
+    return;
 }
 
 fn ak_material(ctx: *u8, np: *facet::Node, take content: flex::Node) -> flex::Node {
@@ -1008,11 +1063,17 @@ fn ak_set_identity(ctx: *u8, handle: *u8, id: str, role: u32) {
     // Prefer documentView only when the handle actually responds (NSScrollView
     // for composer/text_area/code_editor). Labels/buttons are NSTextField /
     // NSButton — messaging documentView there throws NSInvalidArgumentException.
-    let dv_sel: *u8 = rt::sel(#str_ptr("documentView\0"));
-    let responds: i8 = rt::msg_i8_id(handle, rt::sel(#str_ptr("respondsToSelector:\0")), dv_sel);
-    if responds != (0 as i8) {
-        let dv: *u8 = { rt::msg_id(handle, dv_sel) };
-        if dv != (0 as *u8) { target = dv; }
+    // EXCLUDE the native hatch (role_none): it may wrap a scroll-based widget (a
+    // `list`/`tree`), and its id must stay on the wrapper view the app named —
+    // the one find_view_by_id / raise re-order for a panel switch — instead of
+    // sinking onto the inner table/outline document view.
+    if role != facet::role_none() {
+        let dv_sel: *u8 = rt::sel(#str_ptr("documentView\0"));
+        let responds: i8 = rt::msg_i8_id(handle, rt::sel(#str_ptr("respondsToSelector:\0")), dv_sel);
+        if responds != (0 as i8) {
+            let dv: *u8 = { rt::msg_id(handle, dv_sel) };
+            if dv != (0 as *u8) { target = dv; }
+        }
     }
     // Record affordance — even untagged widgets get a declared role so
     // describe_ui is accurate; exposure still requires a non-empty agent id.
@@ -1072,6 +1133,7 @@ fn renderer() -> facet::Renderer {
         scroll: ak_scroll,
         material: ak_material,
         split: ak_split,
+        container: fak_container,
         set_identity: ak_set_identity,
     };
 }
@@ -1595,7 +1657,7 @@ fn reconcile_nodes(op: *facet::Node, np: *facet::Node, fp: *flex::Node) -> bool 
 
 // ---- the public verbs --------------------------------------------------------
 
-// Mount a component into a host view: `fak::mount_component(APP.render,
+// Mount a component into a host view: `fak::mount_component(APP.build,
 // host: v)`. The bound reference fills ctx with the component's address;
 // render runs once now and again on every invalidate. ctx 0 (no identity)
 // mounts one-shot with no re-render path. Returns the content height.
@@ -1696,7 +1758,7 @@ fn shell_style_mask(clean_titlebar: bool) -> u64 {
 // under a transparent, title-less titlebar and the miniaturize + zoom traffic
 // lights are hidden (close stays). The caller sets the content view and orders
 // it front.
-fn make_shell_window(title: str, width: f64, height: f64, clean_titlebar: bool) -> ak::Window {
+fn make_shell_window(title: str, width: f64, height: f64, clean_titlebar: bool, close_button_only: bool = false) -> ak::Window {
     let win = ak::Window::new(
         rt::Rect { x: 0.0, y: 0.0, w: width, h: height },
         shell_style_mask(clean_titlebar),
@@ -1716,15 +1778,70 @@ fn make_shell_window(title: str, width: f64, height: f64, clean_titlebar: bool) 
             option::Option[ak::Button]::Some(btn) => { btn.as_view().set_hidden(true); }
             option::Option[ak::Button]::None => { }
         }
+    } else if close_button_only {
+        match win.standard_window_button(ak::WindowButton::NSWindowMiniaturizeButton) {
+            option::Option[ak::Button]::Some(btn) => { btn.as_view().set_hidden(true); }
+            option::Option[ak::Button]::None => { }
+        }
+        match win.standard_window_button(ak::WindowButton::NSWindowZoomButton) {
+            option::Option[ak::Button]::Some(btn) => { btn.as_view().set_hidden(true); }
+            option::Option[ak::Button]::None => { }
+        }
     }
     return win;
 }
 
 // Open a window, mount the tree, run the event loop (blocks).
-// Build and attach an NSToolbar to `win` from the root's `.toolbar { }` items
-// (each a button). The item identifier is the button title (assumed distinct).
-// SwiftUI `.toolbar`. No-op when there are no items — window chrome, so it lives
-// on the tree handed to `run`.
+fn toolbar_item_label(np: *facet::Node, fallback: str) -> str {
+    let tp: *text::Text = { #addr_of((*np).text) };
+    if (*tp).count() != (0 as usize) { return (*tp).view(); }
+    let vp: *text::Text = { #addr_of((*np).value) };
+    if (*vp).count() != (0 as usize) { return (*vp).view(); }
+    let ap: *text::Text = { #addr_of((*np).agent_id) };
+    if (*ap).count() != (0 as usize) { return (*ap).view(); }
+    return fallback;
+}
+
+fn toolbar_item_view(np: *facet::Node) -> ak::View {
+    var tree: flex::Node = mount(np);
+    tree.calculate_layout(flex::undefined(), flex::undefined(), flex::Direction::LTR);
+    tree.round_to_pixel(2.0f64);
+    let f: flex::Layout = tree.layout_frame();
+    var w: f64 = f.width;
+    var h: f64 = f.height;
+    if w < 1.0f64 { w = 1.0f64; }
+    if h < 1.0f64 { h = 1.0f64; }
+    let host: ak::View = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: w, h: h });
+    ui::apply(#addr_of(tree), host.raw(), false);
+    drain_post_apply();
+    return host;
+}
+
+fn add_toolbar_identifier(ids: *u8, ident: str) {
+    rt::msg_void_id(ids, rt::sel(#str_ptr("addObject:\0")), bridge::nsstring(ident));
+    return;
+}
+
+fn add_toolbar_item(ids: *u8, map: *u8, ident: str, item: ak::ToolbarItem) {
+    let idns: *u8 = bridge::nsstring(ident);
+    rt::msg_void_id(ids, rt::sel(#str_ptr("addObject:\0")), idns);
+    rt::msg_void_id_id(map, rt::sel(#str_ptr("setObject:forKey:\0")), item.raw(), idns);
+    return;
+}
+
+fn fixed_toolbar_space(ident: str, width: f64) -> ak::ToolbarItem {
+    let ti: ak::ToolbarItem = ak::ToolbarItem::new(ident);
+    let host: ak::View = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: width, h: 1.0f64 });
+    let size: rt::Size = rt::Size { w: width, h: 1.0f64 };
+    ti.set_min_size(size);
+    ti.set_max_size(size);
+    ti.set_view(host);
+    return ti;
+}
+
+// Build and attach an NSToolbar to `win` from the root's `.toolbar(...)` items.
+// Each item is a full facet subtree, so labels, buttons, symbols, toggles, and
+// small grouped layouts share the same renderer as normal content.
 fn install_toolbar(win: ak::Window, rp: *facet::Node) {
     let items: *vec::Vec[facet::Node] = { #addr_of((*rp).toolbar_items) };
     let n: usize = { (*items).count() };
@@ -1735,20 +1852,47 @@ fn install_toolbar(win: ak::Window, rp: *facet::Node) {
     while i < n {
         match { (*items).at_ptr(i) } {
             option::Option[*facet::Node]::Some(ip) => {
-                let tp: *text::Text = { #addr_of((*ip).text) };
-                match (*tp).c_str() {
-                    option::Option[text::CString]::Some(cs) => {
-                        let title: str = { #str_from_raw_parts(cs.as_ptr(), cs.count()) };
-                        let ti: ak::ToolbarItem = ak::ToolbarItem::new(title);
-                        ti.set_label(title);
-                        let b: ak::Button = ak::Button::button_with_title(title, 0 as *u8, 0 as *u8);
-                        akx::set_control_action_ctx(b.as_control(), { (*ip).click }, { (*ip).click_ctx });
-                        ti.set_view(b.as_view());
-                        let idns: *u8 = bridge::nsstring(title);
-                        rt::msg_void_id(ids, rt::sel(#str_ptr("addObject:\0")), idns);
-                        rt::msg_void_id_id(map, rt::sel(#str_ptr("setObject:forKey:\0")), ti.raw(), idns);
+                var buf: [u8; 64] = [
+                    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+                    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+                    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+                    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+                    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+                    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+                    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+                    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+                ];
+                let wrote: i32 = { snprintf(#addr_of(buf) as *u8, 64 as usize, #str_ptr("facet-toolbar-%d\0"), i as i32) };
+                var ident: str = "facet-toolbar-item";
+                if wrote > 0 {
+                    ident = { #str_from_raw_parts(#addr_of(buf) as *u8, wrote as usize) };
+                }
+                if { (*ip).kind } == facet::kind_divider() {
+                    add_toolbar_identifier(ids, "NSToolbarSeparatorItem");
+                } else if { (*ip).kind } == facet::kind_spacer() {
+                    var space_width: f64 = (*ip).layout_width();
+                    if (*ip).layout_width_pct() >= 0.0f64 {
+                        let wf: rt::Rect = win.frame();
+                        space_width = wf.w * (*ip).layout_width_pct();
                     }
-                    option::Option[text::CString]::None => {}
+                    if space_width > 0.0f64 {
+                        let ti: ak::ToolbarItem = fixed_toolbar_space(ident, space_width);
+                        add_toolbar_item(ids, map, ident, ti);
+                    } else {
+                        add_toolbar_identifier(ids, "NSToolbarFlexibleSpaceItem");
+                    }
+                } else {
+                    let ti: ak::ToolbarItem = ak::ToolbarItem::new(ident);
+                    let label: str = toolbar_item_label(ip, ident);
+                    ti.set_label(label);
+                    ti.set_palette_label(label);
+                    let host: ak::View = toolbar_item_view(ip);
+                    let frame: rt::Rect = host.frame();
+                    let size: rt::Size = rt::Size { w: frame.w, h: frame.h };
+                    ti.set_min_size(size);
+                    ti.set_max_size(size);
+                    ti.set_view(host);
+                    add_toolbar_item(ids, map, ident, ti);
                 }
             }
             option::Option[*facet::Node]::None => {}
@@ -1798,21 +1942,272 @@ fn install_titlebar(win: ak::Window, take leading: facet::Node, take trailing: f
     return;
 }
 
+struct WindowLifecycle {
+    opaque ctx: *u8,
+    should_close: fn(*u8) -> bool,
+    will_close: fn(*u8),
+    opaque relayout_cp: *u8,          // slot key of the mounted root, for resize relayout
+}
+
+static OPEN_WINDOWS: i32 = 0;
+
+fn window_lifecycle_key() -> *u8 { return 29002 as *u8; }
+
+fn appkit_should_close(user: *u8, win_ptr: *u8) -> i8 {
+    let lifecycle: *WindowLifecycle = user as *WindowLifecycle;
+    let should_close: fn(*u8) -> bool = { (*lifecycle).should_close };
+    if should_close({ (*lifecycle).ctx }) { return 1 as i8; }
+    return 0 as i8;
+}
+
+fn appkit_will_close(user: *u8, win_ptr: *u8) {
+    let lifecycle: *WindowLifecycle = user as *WindowLifecycle;
+    let will_close: fn(*u8) = { (*lifecycle).will_close };
+    will_close({ (*lifecycle).ctx });
+    OPEN_WINDOWS = OPEN_WINDOWS -% 1;
+    if OPEN_WINDOWS <= 0 {
+        ak::Application::shared_application().stop(0 as *u8);
+    }
+    return;
+}
+
+// ui::mount render for run_window's root: the ctx pointer IS the root
+// description (see run_window). Mount it to a fresh flex tree. Called once at
+// the initial mount; a resize reuses the retained tree via relayout and never
+// re-renders, so this runs exactly once per window.
+fn run_root_render(cp: *u8) -> flex::Node {
+    return mount(cp as *facet::Node);
+}
+
+// windowDidResize: re-lay the retained root tree out at the content view's new
+// size and reposition the existing views — geometry only, no re-render. This is
+// what lets a `run` window's flex content track the window instead of staying
+// frozen at its mount-time size.
+fn appkit_did_resize(user: *u8, notif: *u8) {
+    let lifecycle: *WindowLifecycle = user as *WindowLifecycle;
+    let _r: bool = ui::relayout({ (*lifecycle).relayout_cp });
+    return;
+}
+
+fn install_window_lifecycle(
+    win: ak::Window,
+    lifecycle: *WindowLifecycle,
+    delegate: *ak::WindowDelegate,
+) {
+    (*delegate).set_window_should_close(appkit_should_close);
+    (*delegate).set_window_will_close(appkit_will_close);
+    (*delegate).set_window_did_resize(appkit_did_resize);
+    let delegate_obj: *u8 = ak::create_WindowDelegate(delegate);
+    win.set_delegate(delegate_obj);
+    rt::set_associated_object(win.raw(), window_lifecycle_key(), delegate_obj, 1 as usize);
+    return;
+}
+
+fn install_default_app_menu(app: ak::Application, title: str) {
+    match app.main_menu() {
+        option::Option[ak::Menu]::Some(existing) => { return; }
+        option::Option[ak::Menu]::None => { }
+    }
+
+    let command: u64 = ak::event_modifier_flags_n_s_event_modifier_flag_command;
+
+    let main_menu: ak::Menu = ak::Menu::new("");
+
+    let app_item: ak::MenuItem = ak::MenuItem::new("", 0 as *u8, "");
+    main_menu.add_item(app_item);
+    let app_menu: ak::Menu = ak::Menu::new(title);
+    let quit_item: ak::MenuItem = app_menu.add_item_with_title("Quit", rt::sel(#str_ptr("terminate:\0")), "q");
+    quit_item.set_target(0 as *u8);
+    quit_item.set_key_equivalent_modifier_mask(command);
+    main_menu.set_submenu(app_menu, for_item: app_item);
+
+    let window_item: ak::MenuItem = ak::MenuItem::new("Window", 0 as *u8, "");
+    main_menu.add_item(window_item);
+    let window_menu: ak::Menu = ak::Menu::new("Window");
+    let close_item: ak::MenuItem = window_menu.add_item_with_title("Close Window", rt::sel(#str_ptr("performClose:\0")), "w");
+    close_item.set_target(0 as *u8);
+    close_item.set_key_equivalent_modifier_mask(command);
+    main_menu.set_submenu(window_menu, for_item: window_item);
+    app.set_windows_menu(window_menu);
+
+    app.set_main_menu(main_menu);
+    return;
+}
+
+fn menu_selector_for_action(action: u32) -> *u8 {
+    if action == facet::menu_action_quit() {
+        return rt::sel(#str_ptr("terminate:\0"));
+    }
+    if action == facet::menu_action_close_window() {
+        return rt::sel(#str_ptr("performClose:\0"));
+    }
+    return 0 as *u8;
+}
+
+fn add_app_menu_item(menu: ak::Menu, item: *facet::MenuItem, command: u64) {
+    let selector: *u8 = menu_selector_for_action({ (*item).action });
+    let mi: ak::MenuItem = menu.add_item_with_title({ (*item).title.view() }, selector, { (*item).key.view() });
+    mi.set_target(0 as *u8);
+    if (*item).key.count() != (0 as usize) {
+        mi.set_key_equivalent_modifier_mask(command);
+    }
+    return;
+}
+
+fn add_menu_group(
+    main_menu: ak::Menu,
+    group_title: str,
+    items: *vec::Vec[facet::MenuItem],
+    command: u64,
+) -> option::Option[ak::Menu] {
+    let group_menu: ak::Menu = ak::Menu::new(group_title);
+    var has_items: bool = false;
+    let n: usize = { (*items).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match { (*items).at_ptr(i) } {
+            option::Option[*facet::MenuItem]::Some(item) => {
+                if { (*item).menu.equals(group_title) } {
+                    add_app_menu_item(group_menu, item, command);
+                    has_items = true;
+                }
+            }
+            option::Option[*facet::MenuItem]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    if has_items == false {
+        return option::Option[ak::Menu]::None;
+    }
+
+    let group_item: ak::MenuItem = ak::MenuItem::new(group_title, 0 as *u8, "");
+    main_menu.add_item(group_item);
+    main_menu.set_submenu(group_menu, for_item: group_item);
+    return option::Option[ak::Menu]::Some(group_menu);
+}
+
+fn install_app_menu(app: ak::Application, menu: *facet::AppMenu, fallback_title: str) {
+    let command: u64 = ak::event_modifier_flags_n_s_event_modifier_flag_command;
+    var menu_title: str = fallback_title;
+    if (*menu).title.count() != (0 as usize) {
+        menu_title = (*menu).title.view();
+    }
+
+    let main_menu: ak::Menu = ak::Menu::new("");
+    let items: *vec::Vec[facet::MenuItem] = { #addr_of((*menu).items) };
+
+    let app_item: ak::MenuItem = ak::MenuItem::new("", 0 as *u8, "");
+    main_menu.add_item(app_item);
+    let app_menu: ak::Menu = ak::Menu::new(menu_title);
+    let n: usize = { (*items).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match { (*items).at_ptr(i) } {
+            option::Option[*facet::MenuItem]::Some(item) => {
+                if { (*item).menu.equals("App") } {
+                    add_app_menu_item(app_menu, item, command);
+                }
+            }
+            option::Option[*facet::MenuItem]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    main_menu.set_submenu(app_menu, for_item: app_item);
+
+    let _edit_menu: option::Option[ak::Menu] = add_menu_group(main_menu, "Edit", items, command);
+    let _build_menu: option::Option[ak::Menu] = add_menu_group(main_menu, "Build", items, command);
+    match add_menu_group(main_menu, "Window", items, command) {
+        option::Option[ak::Menu]::Some(window_menu) => {
+            app.set_windows_menu(window_menu);
+        }
+        option::Option[ak::Menu]::None => { }
+    }
+    let _help_menu: option::Option[ak::Menu] = add_menu_group(main_menu, "Help", items, command);
+
+    app.set_main_menu(main_menu);
+    return;
+}
+
 fn run(take root: facet::Node, title: str = "facet", width: f64 = 480.0f64, height: f64 = 360.0f64, clean_titlebar: bool = false) {
+    run_window(
+        root,
+        title: title,
+        width: width,
+        height: height,
+        clean_titlebar: clean_titlebar,
+        close_button_only: false,
+        unified_toolbar: false,
+        hide_title: false,
+        app_menu_enabled: false,
+        app_menu: facet::empty_app_menu(),
+        ctx: 0 as *u8,
+        should_close: default_should_close,
+        will_close: default_will_close,
+    );
+    return;
+}
+
+fn default_should_close(ctx: *u8) -> bool { return true; }
+
+fn default_will_close(ctx: *u8) { return; }
+
+fn run_window(
+    take root: facet::Node,
+    title: str = "facet",
+    width: f64 = 480.0f64,
+    height: f64 = 360.0f64,
+    clean_titlebar: bool = false,
+    close_button_only: bool = false,
+    unified_toolbar: bool = false,
+    hide_title: bool = false,
+    app_menu_enabled: bool = false,
+    take app_menu: facet::AppMenu = facet::empty_app_menu(),
+    ctx: *u8 = 0 as *u8,
+    should_close: fn(*u8) -> bool = default_should_close,
+    will_close: fn(*u8) = default_will_close,
+) {
     let app: ak::Application = ak::Application::shared_application();
     let _ok: bool = app.set_activation_policy(ak::ApplicationActivationPolicy::Regular);
+    if app_menu_enabled {
+        install_app_menu(app, #addr_of(app_menu), title);
+    } else {
+        install_default_app_menu(app, title);
+    }
 
-    let win = make_shell_window(title, width, height, clean_titlebar);
+    var lifecycle: WindowLifecycle = WindowLifecycle {
+        ctx: ctx,
+        should_close: should_close,
+        will_close: will_close,
+        relayout_cp: #addr_of(root) as *u8,   // the root's address keys its mount slot
+    };
+    var delegate: ak::WindowDelegate = ak::WindowDelegate_new(#addr_of(lifecycle) as *u8);
+
+    let win = make_shell_window(title, width, height, clean_titlebar, close_button_only: close_button_only);
+    OPEN_WINDOWS = OPEN_WINDOWS +% 1;
+    install_window_lifecycle(win, #addr_of(lifecycle), #addr_of(delegate));
 
     let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: width, h: height });
     win.set_content_view(ak::View::from_raw(content.raw()));
 
-    let _h: f64 = mount_into(#addr_of(root), content.raw(), width, height);
+    // Mount the root as a RETAINED slot (keyed by the root's address) rather than
+    // a one-shot mount_into. render_slot lays it out at the host's CURRENT frame
+    // and keeps the tree, so windowDidResize can relayout it at the window's real
+    // size instead of leaving the content frozen at the mount-time size.
+    let _h: f64 = ui::mount(run_root_render, ctx: #addr_of(root) as *u8, host: content.raw());
     install_toolbar(win, #addr_of(root));
+    if unified_toolbar {
+        win.set_toolbar_style(ak::WindowToolbarStyle::UnifiedCompact);
+    }
+    if hide_title {
+        win.set_title_visibility(ak::WindowTitleVisibility::NSWindowTitleHidden);
+    }
 
     win.center();
     win.make_key_and_order_front(0 as *u8);
     app.activate_ignoring_other_apps(true);
+    // windowDidResize does not fire on the initial display, so lay out once more
+    // at the content view's real (post-show) size to fill from the first frame.
+    let _r0: bool = ui::relayout(#addr_of(root) as *u8);
     app.run();
     return;
 }
@@ -1842,6 +2237,22 @@ fn present_modal(take root: facet::Node, title: str, width: f64, height: f64) ->
     win.center();
     win.make_key_and_order_front(0 as *u8);
     return ak::Application::shared_application().run_modal_for_window(win);
+}
+
+// A non-modal secondary window with custom facet content — opens ALONGSIDE the
+// main window and returns immediately; the app's existing run loop drives it
+// (unlike present_modal, which blocks in its own modal loop). For settings /
+// inspector / tool windows. make_shell_window retains the window, and its
+// content views outlive the dropped description tree. Imperative + app-level
+// (needs a running app), so not headless-testable.
+fn present_window(take root: facet::Node, title: str, width: f64, height: f64) {
+    let win = make_shell_window(title, width, height, false);
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: width, h: height });
+    win.set_content_view(ak::View::from_raw(content.raw()));
+    let _h: f64 = mount_into(#addr_of(root), content.raw(), width, height);
+    win.center();
+    win.make_key_and_order_front(0 as *u8);
+    return;
 }
 
 // Dismiss the current modal (call from a button handler inside the modal tree).
@@ -2136,6 +2547,180 @@ fn find_view_by_id(root: *u8, id: str) -> *u8 {
     return 0 as *u8;
 }
 
+// Raise the keyed view to the front of its siblings so it paints on top — the
+// no-rebuild panel switch: the runtime effect of a higher z_index, done by
+// re-ordering the live views (no re-render). Reached from a handler's `sender`
+// (the clicked control): sender -> window -> content, find by key, re-add last.
+fn raise(sender: *u8, key: str) {
+    let btn: ak::View = ak::View::from_raw(sender);
+    match btn.window() {
+        option::Option[ak::Window]::Some(win) => {
+            match win.content_view() {
+                option::Option[ak::View]::Some(content) => {
+                    let v: *u8 = find_view_by_id(content.raw(), key);
+                    if v != (0 as *u8) {
+                        let pv: ak::View = ak::View::from_raw(v);
+                        match pv.superview() {
+                            option::Option[ak::View]::Some(sup) => {
+                                pv.remove_from_superview();
+                                sup.add_subview(pv);
+                            }
+                            option::Option[ak::View]::None => { }
+                        }
+                    }
+                }
+                option::Option[ak::View]::None => { }
+            }
+        }
+        option::Option[ak::Window]::None => { }
+    }
+    return;
+}
+
+// ---- find: resolve a key to a live element, then mutate it in place ----------
+// The backend half of `facet::find` (registered in `install`). facet core stays
+// platform-neutral; this walks the component's RETAINED flex tree for the keyed
+// node and hands back a Handle. No re-render, no diff — the keyed-direct path.
+
+// Walk `fp`'s subtree for the flex node whose payload IS `view` (a pointer
+// compare — no msgSend, so container payloads that are not real NSViews are
+// stepped over safely). Returns the flex node (0 when absent): it is what we
+// re-measure after editing the view's content.
+fn flex_node_for_view(fp: *flex::Node, view: *u8) -> *flex::Node {
+    if fp == (0 as *flex::Node) { return 0 as *flex::Node; }
+    if { (*fp).payload() } == view { return fp; }
+    let c: usize = { (*fp).child_count() };
+    var i: usize = 0 as usize;
+    while i < c {
+        match (*fp).children.at_ptr(i) {
+            option::Option[*flex::Node]::Some(cp) => {
+                let r: *flex::Node = flex_node_for_view(cp, view);
+                if r != (0 as *flex::Node) { return r; }
+            }
+            option::Option[*flex::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return 0 as *flex::Node;
+}
+
+// facet::find hook: resolve `key` inside component `cp`'s live subtree. The view
+// is found by walking the real NSView hierarchy under the component's host (safe
+// accessibilityIdentifier reads); the flex node is then matched by pointer.
+fn find_impl(cp: *u8, key: str) -> facet::Handle {
+    let host: *u8 = ui::host_of(cp);
+    if host == (0 as *u8) { return facet::Handle::missing(); }
+    let view: *u8 = find_view_by_id(host, key);
+    if view == (0 as *u8) { return facet::Handle::missing(); }
+    var flexp: *u8 = 0 as *u8;
+    match ui::tree_ptr(cp) {
+        option::Option[*flex::Node]::Some(tp) => {
+            let fp: *flex::Node = flex_node_for_view(tp, view);
+            if fp != (0 as *flex::Node) { flexp = fp as *u8; }
+        }
+        option::Option[*flex::Node]::None => { }
+    }
+    return facet::Handle::of(view, flexp, cp, 0 as u32);
+}
+
+// facet::Handle.set_text hook: edit the located view's text in place, then
+// re-measure that one leaf and relayout the component (text can change size, so
+// siblings reflow). This is the whole update — no re-render, no reconcile.
+fn set_text_impl(h: facet::Handle, s: str) -> bool {
+    let view: *u8 = h.view();
+    if view == (0 as *u8) { return false; }
+    // NSButton carries its text as `title`; labels / text fields as `stringValue`.
+    let responds: i8 = rt::msg_i8_id(view, rt::sel(#str_ptr("respondsToSelector:\0")), rt::sel(#str_ptr("setTitle:\0")));
+    if responds != (0 as i8) {
+        ak::Button::from_raw(view).set_title(s);
+    } else {
+        ak::TextField::from_raw(view).as_control().set_string_value(s);
+    }
+    ui::clear_measure_caches(view);
+    if h.flex() != (0 as *u8) {
+        let fp: *flex::Node = h.flex() as *flex::Node;
+        { (*fp).mark_content_changed(); }
+    }
+    let _r: bool = ui::relayout(h.cp());
+    return true;
+}
+
+// facet::Handle.set_value hook: set a value control's number (slider / stepper /
+// progress). These are fixed-size, so no re-measure or relayout is needed.
+fn set_value_impl(h: facet::Handle, v: f64) -> bool {
+    let view: *u8 = h.view();
+    if view == (0 as *u8) { return false; }
+    ak::Control::from_raw(view).set_double_value(v);
+    return true;
+}
+
+// facet::Handle.set_on hook: flip a toggle / checkbox / switch. Fixed-size.
+fn set_on_impl(h: facet::Handle, on: bool) -> bool {
+    let view: *u8 = h.view();
+    if view == (0 as *u8) { return false; }
+    var st: i64 = 0 as i64;
+    if on { st = 1 as i64; }
+    ak::Button::from_raw(view).set_state(st);
+    return true;
+}
+
+// facet::Handle.set_hidden hook: show or hide the element's view. (v1 toggles
+// visibility only; collapsing the freed layout space is a later refinement.)
+fn set_hidden_impl(h: facet::Handle, hidden: bool) -> bool {
+    let view: *u8 = h.view();
+    if view == (0 as *u8) { return false; }
+    ak::View::from_raw(view).set_hidden(hidden);
+    return true;
+}
+
+// facet::Handle.add_child hook: mount the child into a flex subtree, attach its
+// views under the container's backing view, splice it into the container's
+// children, and reflow. The container must be keyed (approach A) so its Handle
+// carries a real view. The child's description drops after mount (keyed-direct
+// retains the flex tree + views, not per-child descriptions).
+fn add_child_impl(h: facet::Handle, take child: facet::Node) -> bool {
+    let cview: *u8 = h.view();
+    let cflex: *u8 = h.flex();
+    if cview == (0 as *u8) || cflex == (0 as *u8) { return false; }
+    var child_flex: flex::Node = mount(#addr_of(child));
+    ui::apply(#addr_of(child_flex), cview, false);   // add_subview; frames set by relayout
+    let cfp: *flex::Node = cflex as *flex::Node;
+    { (*cfp).add_child(child_flex); }                // MOVE the flex node into the container
+    { (*cfp).mark_content_changed(); }               // force a re-layout that includes it
+    let _r: bool = ui::relayout(h.cp());
+    return true;
+}
+
+// facet::Handle.remove_child hook: find the direct child whose backing view
+// carries `key`, detach its view subtree, drop its flex node (ordered, so
+// siblings keep their order), and reflow. Returns whether one was removed.
+fn remove_child_impl(h: facet::Handle, key: str) -> bool {
+    let cview: *u8 = h.view();
+    let cflex: *u8 = h.flex();
+    if cview == (0 as *u8) || cflex == (0 as *u8) { return false; }
+    let target: *u8 = find_view_by_id(cview, key);
+    if target == (0 as *u8) { return false; }
+    let cfp: *flex::Node = cflex as *flex::Node;
+    let cc: usize = { (*cfp).child_count() };
+    var i: usize = 0 as usize;
+    while i < cc {
+        match (*cfp).children.at_ptr(i) {
+            option::Option[*flex::Node]::Some(childp) => {
+                if { (*childp).payload() } == target {
+                    ak::View::from_raw(target).remove_from_superview();
+                    let _g: option::Option[flex::Node] = { (*cfp).children.remove(i) };
+                    { (*cfp).mark_content_changed(); }
+                    let _r: bool = ui::relayout(h.cp());
+                    return true;
+                }
+            }
+            option::Option[*flex::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
+
 // Focus the widget with the given agent id — make it the window's first
 // responder. Call AFTER mount (the view must be in the window). Returns success.
 fn focus(win_ptr: *u8, agent_id: str) -> bool {
@@ -2293,7 +2878,7 @@ struct ScrollPane {
 }
 
 impl ScrollPane: facet::Component {
-    fn render(this) -> facet::Node {
+    fn build(this) -> facet::Node {
         var list: facet::Builder = facet::Builder::new();
         var i: i64 = 0 as i64;
         while i < this.rows {
@@ -2317,7 +2902,7 @@ struct ReconPane {
 }
 
 impl ReconPane: facet::Component {
-    fn render(this) -> facet::Node {
+    fn build(this) -> facet::Node {
         var list: facet::Builder = facet::Builder::new();
         list.add(facet::wrap_label("a stable first bubble that keeps its wrap width across renders"));
         list.add(facet::wrap_label(this.tail.view()));
@@ -2336,7 +2921,7 @@ fn reconcile_updates_streaming_tail_in_place() {
     let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
     RECON_PANE.tail = text::from_str("short");
     RECON_PANE.header_bold = false;
-    let _h: f64 = mount_component(RECON_PANE.render, host: host.raw());
+    let _h: f64 = mount_component(RECON_PANE.build, host: host.raw());
 
     // Capture identities: header label, scroll, document, the tail row.
     var header0: *u8 = 0 as *u8;
@@ -2390,6 +2975,162 @@ fn reconcile_updates_streaming_tail_in_place() {
     unmount_all();
 }
 
+// ---- keyed-direct: find(key) + set_text, the non-reactive update path --------
+// The counterpart to the reconcile test above. Instead of mutating a field and
+// re-rendering the component, a handler ADDRESSES the keyed element and edits it
+// in place. The proof: the same view survives the update — no re-render mints a
+// replacement, and no diff runs to rediscover the change.
+struct FindPane { n: i64 }
+
+impl FindPane: facet::Component {
+    fn build(this) -> facet::Node {
+        return @facet {
+            vstack {
+                label("v0", size: 18.0f64).key("value")
+                button("+1").on_click(count_inc).key("inc")
+                toggle(on: false, label: "flag").key("flag")
+                slider(value: 0.0f64, min: 0.0f64, max: 1.0f64).key("vol")
+            }
+        };
+    }
+}
+
+static FIND_PANE: FindPane = #zero::[FindPane]();
+
+#[test]
+fn find_set_text_mutates_label_in_place() {
+    unmount_all();
+    // Register the keyed-direct hooks (install() does this at app startup).
+    facet::set_find_fn(find_impl);
+    facet::set_set_text_fn(set_text_impl);
+    facet::set_set_value_fn(set_value_impl);
+    facet::set_set_on_fn(set_on_impl);
+    facet::set_set_hidden_fn(set_hidden_impl);
+    FIND_PANE.n = 0 as i64;
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
+    let _h: f64 = mount_component(FIND_PANE.build, host: host.raw());
+    let cp: *u8 = #addr_of(FIND_PANE) as *u8;
+
+    // The keyed label mounted with its initial text and a stable view identity.
+    let before: *u8 = find_view_by_id(host.raw(), "value");
+    assert before != (0 as *u8);
+    assert ak::TextField::from_raw(before).as_control().string_value().equals("v0");
+
+    // Keyed-direct update: resolve "value" in this component and set it in place.
+    let hv: facet::Handle = facet::find(cp, "value");
+    assert hv.found();
+    let _chain: facet::Handle = hv.set_text("v42");
+
+    // SAME view, edited — not a rebuilt one. This is the no-re-render guarantee.
+    let after: *u8 = find_view_by_id(host.raw(), "value");
+    assert after == before;
+    assert ak::TextField::from_raw(after).as_control().string_value().equals("v42");
+
+    // A key that resolves to nothing yields a no-op handle (getElementById-null).
+    assert !facet::find(cp, "nope").found();
+
+    // set_value on a slider — read it back through the control's own getter.
+    let _sv: facet::Handle = facet::find(cp, "vol").set_value(0.5f64);
+    let volv: *u8 = find_view_by_id(host.raw(), "vol");
+    assert volv != (0 as *u8);
+    assert ak::Control::from_raw(volv).double_value() == 0.5f64;
+
+    // set_on flips a toggle in place; the target resolves and the mutator applies
+    // (same plumbing as set_value, which the assertion above proves end to end).
+    assert facet::find(cp, "flag").found();
+    let _fo: facet::Handle = facet::find(cp, "flag").set_on(true);
+
+    // set_hidden hides a resolved element without touching anything else.
+    let _fh: facet::Handle = facet::find(cp, "inc").set_hidden(true);
+    unmount_all();
+}
+
+// Approach A: a KEYED container gets a backing view at mount, so find() can
+// address it exactly like a leaf (unkeyed containers stay lazily synthesized).
+struct BoxPane { n: i64 }
+
+impl BoxPane: facet::Component {
+    fn build(this) -> facet::Node {
+        return @facet {
+            vstack {
+                vstack {
+                    label("inner", size: 14.0f64).key("inner")
+                }.key("panel")
+            }
+        };
+    }
+}
+
+static BOX_PANE: BoxPane = #zero::[BoxPane]();
+
+#[test]
+fn find_resolves_keyed_container() {
+    unmount_all();
+    facet::set_find_fn(find_impl);
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
+    let _h: f64 = mount_component(BOX_PANE.build, host: host.raw());
+    let cp: *u8 = #addr_of(BOX_PANE) as *u8;
+
+    // The keyed inner container resolves — proof it carries its id on a real view.
+    assert facet::find(cp, "panel").found();
+    // A leaf inside it still resolves too (no regression).
+    assert facet::find(cp, "inner").found();
+    // Its view really carries the accessibilityIdentifier in the hierarchy.
+    assert find_view_by_id(host.raw(), "panel") != (0 as *u8);
+    unmount_all();
+}
+
+// Structural keyed-direct: add_child / remove_child on a keyed multi-child
+// container, addressed by key — no re-render, no reconcile.
+struct ListPane { n: i64 }
+
+impl ListPane: facet::Component {
+    fn build(this) -> facet::Node {
+        return @facet {
+            vstack {
+                vstack {
+                    label("row-a", size: 12.0f64).key("a")
+                    label("row-b", size: 12.0f64).key("b")
+                }.key("list")
+            }
+        };
+    }
+}
+
+static LIST_PANE: ListPane = #zero::[ListPane]();
+
+#[test]
+fn find_add_and_remove_child() {
+    unmount_all();
+    facet::set_find_fn(find_impl);
+    facet::set_add_child_fn(add_child_impl);
+    facet::set_remove_child_fn(remove_child_impl);
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
+    let _h: f64 = mount_component(LIST_PANE.build, host: host.raw());
+    let cp: *u8 = #addr_of(LIST_PANE) as *u8;
+
+    // The keyed "list" container is addressable and hosts its 2 rows directly.
+    let list_v: *u8 = find_view_by_id(host.raw(), "list");
+    assert list_v != (0 as *u8);
+    assert ak::View::from_raw(list_v).subviews().count() == (2 as usize);
+
+    // add_child: append a keyed row in place -> 3 rows, the new one findable.
+    let _a: facet::Handle = facet::find(cp, "list").add_child(facet::label("row-c", size: 12.0f64).key("c"));
+    assert ak::View::from_raw(list_v).subviews().count() == (3 as usize);
+    assert facet::find(cp, "c").found();
+
+    // remove_child: drop "a" in place -> 2 rows; b and c survive (order kept).
+    assert facet::find(cp, "list").remove_child("a");
+    assert ak::View::from_raw(list_v).subviews().count() == (2 as usize);
+    assert !facet::find(cp, "a").found();
+    assert facet::find(cp, "b").found();
+    assert facet::find(cp, "c").found();
+
+    // Removing a key that is not a direct child returns false.
+    assert facet::find(cp, "list").remove_child("zzz") == false;
+    unmount_all();
+}
+
 // The ONE update rule through the reconciler: a wired handler's own
 // re-render routes through the component_after hook into the reconciling
 // invalidate — the label and button views survive their own update.
@@ -2398,10 +3139,10 @@ struct ReconCounter {
 }
 
 impl ReconCounter: facet::Component {
-    fn render(this) -> facet::Node {
+    fn build(this) -> facet::Node {
         let t: text::Text = "count ${this.count}";
         var b: facet::Builder = facet::Builder::new();
-        b.add(facet::label(t.view()));
+        b.add(facet::label(t.view()).key("count"));   // keyed so the handler can address it
         b.add(facet::button("+1").on_click(recon_counter_inc, ctx: #addr_of(RECON_COUNTER) as *u8));
         return facet::column(b);
     }
@@ -2409,17 +3150,24 @@ impl ReconCounter: facet::Component {
 
 static RECON_COUNTER: ReconCounter = #zero::[ReconCounter]();
 
+// The keyed-direct counter (PIW's reference handler): mutate the field, then push
+// the new value to the keyed label. No re-render, no reconcile — the label view
+// is edited in place. `ctx` is the component's own address (the wire supplies it).
 fn recon_counter_inc(sender: *u8, ctx: *u8) {
     RECON_COUNTER.count = RECON_COUNTER.count + 1;
+    let msg: text::Text = "count ${RECON_COUNTER.count}";
+    let _u: facet::Handle = facet::find(ctx, "count").set_text(msg.view());
     return;
 }
 
 #[test]
-fn handler_rerender_reconciles_through_the_hook() {
+fn handler_updates_by_key_no_rerender() {
     unmount_all();
+    facet::set_find_fn(find_impl);
+    facet::set_set_text_fn(set_text_impl);
     let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 80.0 });
     RECON_COUNTER.count = 0;
-    let _h: f64 = mount_component(RECON_COUNTER.render, host: host.raw());
+    let _h: f64 = mount_component(RECON_COUNTER.build, host: host.raw());
     var label0: *u8 = 0 as *u8;
     var button0: *u8 = 0 as *u8;
     var subs: vec::Vec[ak::View] = host.subviews();
@@ -2428,8 +3176,8 @@ fn handler_rerender_reconciles_through_the_hook() {
     match subs.at_ptr(1 as usize) { option::Option[*ak::View]::Some(vp) => { button0 = { (*vp).raw() }; } option::Option[*ak::View]::None => { assert false; } };
     assert ak::TextField::from_raw(label0).as_control().string_value().equals("count 0");
 
-    // Fire the wired action — handler runs, component_after routes through
-    // the reconciling invalidate: SAME views, updated label.
+    // Click: the handler mutates state and pushes it to the keyed label IN PLACE.
+    // The same views survive — no rebuild, no reconcile, no diff.
     click(button0);
     assert RECON_COUNTER.count == 1;
     var subs2: vec::Vec[ak::View] = host.subviews();
@@ -2445,7 +3193,7 @@ fn e2e_component_scroll_relayout_keeps_views_and_rewraps() {
     unmount_all();
     let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
     SCROLL_PANE.rows = 3 as i64;
-    let _h: f64 = mount_component(SCROLL_PANE.render, host: host.raw());
+    let _h: f64 = mount_component(SCROLL_PANE.build, host: host.raw());
 
     // The applied tree: [ label, scroll ] under the host; the drain filled the
     // scroll's flipped document with the three wrapped rows.

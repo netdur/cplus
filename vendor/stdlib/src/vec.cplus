@@ -250,6 +250,26 @@ impl Vec[T] {
         return option::Option[T]::Some(value);
     }
 
+    // Remove and return the element at `at`, shifting later elements left so
+    // ORDER is preserved (unlike swap_remove). None if out of range.
+    fn remove(ref this, at: usize) -> option::Option[T] {
+        if at >= this._len {
+            return option::Option[T]::None;
+        }
+        let slot: *T = { this._ptr + at };
+        let value: T = { *slot };
+        let last: usize = this._len -% (1 as usize);
+        var i: usize = at;
+        while i < last {
+            let dst: *T = { this._ptr + i };
+            let src: *T = { this._ptr + (i +% (1 as usize)) };
+            { *dst = *src; }
+            i = i +% (1 as usize);
+        }
+        this._len = last;
+        return option::Option[T]::Some(value);
+    }
+
     fn remove_all(ref this) {
         var i: usize = 0 as usize;
         while i < this._len {
@@ -707,6 +727,27 @@ fn vec_swap_remove() {
         option::Option[i32]::Some(x) => { assert x == 30; }
         option::Option[i32]::None => { assert false; }
     }
+    return;
+}
+
+#[test]
+fn vec_remove_preserves_order() {
+    var v: Vec[i32] = new::[i32]();
+    v.append(10);
+    v.append(20);
+    v.append(30);
+    v.append(40);
+    // Remove the middle: order of the rest is preserved (unlike swap_remove).
+    match v.remove(1 as usize) {
+        option::Option[i32]::Some(x) => { assert x == 20; }
+        option::Option[i32]::None => { assert false; }
+    }
+    assert v.count() == (3 as usize);
+    match v.at(0 as usize) { option::Option[i32]::Some(x) => { assert x == 10; } option::Option[i32]::None => { assert false; } }
+    match v.at(1 as usize) { option::Option[i32]::Some(x) => { assert x == 30; } option::Option[i32]::None => { assert false; } }
+    match v.at(2 as usize) { option::Option[i32]::Some(x) => { assert x == 40; } option::Option[i32]::None => { assert false; } }
+    // Out of range → None.
+    match v.remove(9 as usize) { option::Option[i32]::Some(_z) => { assert false; } option::Option[i32]::None => { } }
     return;
 }
 

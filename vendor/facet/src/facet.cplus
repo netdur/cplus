@@ -27,25 +27,41 @@ import "stdlib/option" as option;
 import "flex_layout/flex_layout" as flex;
 
 // ---- the component contract ---------------------------------------------
-// A component is a plain struct: fields are the state, handlers are
-// `ref this` methods in the INHERENT impl, and this interface is the
-// checked conformance block (`impl Foo: facet::Component`) holding
-// `render`. Interface-impl blocks are closed (E0503/E0504 typo interlock),
-// so `render` here is verified against this declaration both ways.
+// A component is a plain struct: its FIELDS are the state, its handlers are
+// methods in the INHERENT impl, and this interface is the checked conformance
+// block (`impl Foo: facet::Component`) holding `build`. Interface-impl blocks
+// are closed (E0503/E0504 typo interlock), so `build` is verified against this
+// declaration both ways.
 //
-// `render` returns the PORTABLE DESCRIPTION — a facet `Node` tree, pure
-// data, no platform types. The backend runtime owns everything after that:
-// it mounts the description on first attach, RETAINS it, and on
-// `invalidate` reconciles the fresh description against the retained one —
-// updating existing native views in place where the shape matches and
-// rebuilding only the subtrees that structurally changed. The app never
-// chooses an update strategy; render + invalidate is the whole contract.
-// Wiring is a bound method reference (`button("+1", on: counter.on_inc)`),
-// which carries the component's address as the handler ctx — the ONE update
-// rule "after a component's handler runs, that component re-renders" is
-// keyed on that address.
+// `build` returns the PORTABLE DESCRIPTION — a facet `Node` tree, pure data,
+// no platform types — and is called ONCE. The backend mounts that description
+// into native views and RETAINS the tree; from then on the tree is live and
+// you edit it IN PLACE.
+//
+// facet is NOT reactive. There is no re-render and no diff: `build` is never
+// called again, so there is no fresh tree to reconcile against the old one. You
+// already hold the element's key, so there is no delta to rediscover. (Contrast
+// React/Flutter: mutate state, rebuild, diff the tree, patch. facet skips all of
+// that — it addresses the exact element and sets it.)
+//
+// Two ways to update, never a third:
+//   1. by key    — `facet::find(cp, key).set_text(...)` resolves the one keyed
+//                  element in this component's live subtree and mutates it (see
+//                  `find`). `cp` is the component's own address; a handler
+//                  receives it as its `ctx`.
+//   2. by method — call a method on the component; internally it updates its own
+//                  UI by key. Same mechanism, wrapped behind a named action.
+//
+// State lives in the struct's fields — the component is retained, so they persist
+// for the life of the tree. A handler writes a field, then pushes that value to
+// the element that shows it. Nothing is recomputed.
+//
+// The React trap to avoid: re-calling `build` when state changes, holding the
+// tree to "render it top-down each frame," or minting a fresh child inside a
+// parent's `build` on every call. `build` runs ONCE and returns already-owned
+// children; after that, you `find` and mutate.
 interface Component {
-    fn render(this) -> Node;
+    fn build(this) -> Node;
 }
 
 // ---- node kinds --------------------------------------------------------
@@ -266,6 +282,48 @@ fn style_none() -> Style {
 
 // ---- the description tree ----------------------------------------------
 
+fn menu_action_quit() -> u32 { return 1 as u32; }
+fn menu_action_close_window() -> u32 { return 2 as u32; }
+fn menu_action_none() -> u32 { return 0 as u32; }
+
+struct MenuItem {
+    menu: text::Text,
+    title: text::Text,
+    key: text::Text,
+    action: u32,
+}
+
+struct AppMenu {
+    title: text::Text,
+    items: vec::Vec[MenuItem],
+}
+
+fn empty_app_menu() -> AppMenu {
+    return AppMenu {
+        title: text::new(),
+        items: vec::new::[MenuItem](),
+    };
+}
+
+fn app_menu(title: str) -> AppMenu {
+    return AppMenu {
+        title: text::from_str(title),
+        items: vec::new::[MenuItem](),
+    };
+}
+
+impl AppMenu {
+    fn add_item(ref this, menu: str, title: str, key: str, action: u32) {
+        this.items.append(MenuItem {
+            menu: text::from_str(menu),
+            title: text::from_str(title),
+            key: text::from_str(key),
+            action: action,
+        });
+        return;
+    }
+}
+
 // One node. Widget config is read by the platform's per-kind ops; the
 // `_`-prefixed layout props are applied by `mount` and never cross the
 // package boundary. Config is a flat union-of-fields (closed kind set —
@@ -370,6 +428,7 @@ struct Node {
     _gap_row: f64,          // 0 = unset (vertical gutter)
     _gap_col: f64,          // 0 = unset (horizontal gutter)
     _display: flex::Display,       _has_display: bool,
+    _z_index: i32,                 _has_z_index: bool,
     _overflow: flex::Overflow,     _has_overflow: bool,
     _align_content: flex::Align,   _has_align_content: bool,
     _direction: flex::Direction,   _has_direction: bool,
@@ -490,6 +549,7 @@ fn blank(kind: u32) -> Node {
         _gap_row: 0.0f64,
         _gap_col: 0.0f64,
         _display: flex::Display::Flex,          _has_display: false,
+        _z_index: 0 as i32,                     _has_z_index: false,
         _overflow: flex::Overflow::Visible,     _has_overflow: false,
         _align_content: flex::Align::Auto,      _has_align_content: false,
         _direction: flex::Direction::Inherit,   _has_direction: false,
@@ -876,6 +936,178 @@ fn native(handle: *u8) -> Node {
     return n;
 }
 
+// ---- list: a recycling list, backed by the platform's native list widget ----
+// A long, scrollable list (chat transcripts, logs, feeds) where only the
+// on-screen rows are built. `count` rows total; `row(i, ctx)` builds row i's
+// description on demand. Because it is called LAZILY — as rows scroll into view,
+// after `render` returns — the row builder's data must OUTLIVE the render. The
+// idiomatic form is a bound method reference on a long-lived model:
+//
+//     facet::list(count: MODEL.len(), row: MODEL.render_row)
+//
+// `MODEL.render_row` (a `fn render_row(this, i: i64) -> Node` method) auto-fills
+// `ctx` with `#addr_of(MODEL)`, so the row builder is a plain method reading its
+// own state — no free function, no manual ctx threading. (`ctx` is the trailing
+// param because that is where a bound method reference lands the receiver.) A
+// plain `fn(i64, *u8)` + explicit `ctx` also works for non-method builders.
+//
+// The heavy lifting (view reuse, height measurement) is the backend's native
+// list; facet stays neutral by dispatching through a builder the backend
+// installs at startup (`set_list_builder`). Until one is installed, `list` is an
+// empty node — the same portable-by-default posture as any unimplemented op.
+static LIST_BUILDER: fn(i64, fn(i64, *u8) -> Node, *u8) -> Node = #zero::[fn(i64, fn(i64, *u8) -> Node, *u8) -> Node]();
+
+// Install the backend's native recycling-list builder (called once at startup,
+// before the first render). See facet_appkit `install_list`.
+fn set_list_builder(f: fn(i64, fn(i64, *u8) -> Node, *u8) -> Node) {
+    LIST_BUILDER = f;
+    return;
+}
+
+fn list(count: i64, row: fn(i64, *u8) -> Node, ctx: *u8 = 0 as *u8) -> Node {
+    let f: fn(i64, fn(i64, *u8) -> Node, *u8) -> Node = LIST_BUILDER;
+    if f == (0 as fn(i64, fn(i64, *u8) -> Node, *u8) -> Node) { return box(); }
+    return f(count, row, ctx);
+}
+
+// ---- raise: the by-key update verb (bring a keyed element to the front) ------
+// facet is not reactive: to switch which of several overlapping elements shows,
+// you don't rebuild — you address the one tagged `key` and bring it to the front
+// of its siblings, in place. `raise(sender, key)` is that verb; `sender` is the
+// event context (the control a handler was invoked from) the backend navigates
+// from to reach the live tree. Backend-installed, like `list`.
+static RAISE_FN: fn(*u8, str) = #zero::[fn(*u8, str)]();
+
+fn set_raise_fn(f: fn(*u8, str)) { RAISE_FN = f; return; }
+
+fn raise(sender: *u8, key: str) {
+    let f: fn(*u8, str) = RAISE_FN;
+    if f == (0 as fn(*u8, str)) { return; }
+    f(sender, key);
+    return;
+}
+
+// ---- find: the keyed-direct update path (address one element, mutate it) -----
+// This is how facet updates. facet is NOT reactive: a handler mutates a struct
+// field, then pushes that value to the ONE element that shows it — addressed by
+// its `key`, edited in place. There is no re-render and no diff; the app already
+// holds the key, so there is no delta to discover. (Contrast: React mutates data,
+// re-renders, then diffs a virtual tree to rediscover the change.)
+//
+//     fn increment(sender: *u8, ctx: *u8) {
+//         COUNTER.n = COUNTER.n + 1;
+//         facet::find(ctx, "value").set_text("${COUNTER.n}");   // in place, done
+//     }
+//
+// `cp` is the component's own address — a handler receives it as its `ctx`, so
+// `find(ctx, key)` resolves `key` inside THAT component's live subtree (keys are
+// component-scoped, not a global namespace). A miss yields an EMPTY handle whose
+// mutators no-op — the `getElementById` null-object pattern (facet has no null),
+// so a `find` on a torn-down element is safe. Backend-installed, like `list`.
+//
+// A `Handle` is a NON-OWNING view onto a mounted element: it sets content, it
+// never moves or drops the node (that is `take`). Its fields are opaque plumbing
+// the backend fills; apps only call the mutators. It is chainable and Copy.
+struct Handle {
+    opaque _view: *u8,     // located native view (0 = not found), owned by its superview
+    opaque _flex: *u8,     // retained layout node (re-measure / relayout), owned by the tree
+    opaque _cp: *u8,       // owning component (relayout scope)
+    _kind: u32,            // reserved: node kind for setter dispatch
+}
+
+// Backend hooks, installed once at startup (see facet_appkit `install`). Until a
+// backend registers them, `find` returns a missing handle and mutators no-op —
+// the same portable-by-default posture as `list` / `raise`.
+static FIND_FN: fn(*u8, str) -> Handle = #zero::[fn(*u8, str) -> Handle]();
+static SET_TEXT_FN: fn(Handle, str) -> bool = #zero::[fn(Handle, str) -> bool]();
+static SET_VALUE_FN: fn(Handle, f64) -> bool = #zero::[fn(Handle, f64) -> bool]();
+static SET_ON_FN: fn(Handle, bool) -> bool = #zero::[fn(Handle, bool) -> bool]();
+static SET_HIDDEN_FN: fn(Handle, bool) -> bool = #zero::[fn(Handle, bool) -> bool]();
+static ADD_CHILD_FN: fn(Handle, take Node) -> bool = #zero::[fn(Handle, take Node) -> bool]();
+static REMOVE_CHILD_FN: fn(Handle, str) -> bool = #zero::[fn(Handle, str) -> bool]();
+
+fn set_find_fn(f: fn(*u8, str) -> Handle) { FIND_FN = f; return; }
+fn set_set_text_fn(f: fn(Handle, str) -> bool) { SET_TEXT_FN = f; return; }
+fn set_set_value_fn(f: fn(Handle, f64) -> bool) { SET_VALUE_FN = f; return; }
+fn set_set_on_fn(f: fn(Handle, bool) -> bool) { SET_ON_FN = f; return; }
+fn set_set_hidden_fn(f: fn(Handle, bool) -> bool) { SET_HIDDEN_FN = f; return; }
+fn set_add_child_fn(f: fn(Handle, take Node) -> bool) { ADD_CHILD_FN = f; return; }
+fn set_remove_child_fn(f: fn(Handle, str) -> bool) { REMOVE_CHILD_FN = f; return; }
+
+impl Handle {
+    // The backend fills a resolved handle through this constructor; apps never do.
+    fn of(view: *u8, flex: *u8, cp: *u8, kind: u32) -> Handle {
+        return Handle { _view: view, _flex: flex, _cp: cp, _kind: kind };
+    }
+    // The not-found handle: every mutator on it is a no-op.
+    fn missing() -> Handle { return Handle::of(0 as *u8, 0 as *u8, 0 as *u8, 0 as u32); }
+
+    // Did the key resolve to a live element?
+    fn found(this) -> bool { return this._view != (0 as *u8); }
+
+    // Backend accessors (the mutator hook reads the handle through these).
+    fn view(this) -> *u8 { return this._view; }
+    fn flex(this) -> *u8 { return this._flex; }
+    fn cp(this) -> *u8 { return this._cp; }
+    fn kind(this) -> u32 { return this._kind; }
+
+    // Set the element's text — label / button title / field value — IN PLACE.
+    // Chainable; a no-op on a missing handle. No re-render.
+    fn set_text(this, s: str) -> Handle {
+        let f: fn(Handle, str) -> bool = SET_TEXT_FN;
+        if f != (0 as fn(Handle, str) -> bool) { let _ok: bool = f(this, s); }
+        return this;
+    }
+
+    // Set a value control's number — slider / stepper / progress. In place.
+    fn set_value(this, v: f64) -> Handle {
+        let f: fn(Handle, f64) -> bool = SET_VALUE_FN;
+        if f != (0 as fn(Handle, f64) -> bool) { let _ok: bool = f(this, v); }
+        return this;
+    }
+
+    // Set a toggle / checkbox / switch on or off. In place.
+    fn set_on(this, on: bool) -> Handle {
+        let f: fn(Handle, bool) -> bool = SET_ON_FN;
+        if f != (0 as fn(Handle, bool) -> bool) { let _ok: bool = f(this, on); }
+        return this;
+    }
+
+    // Show or hide the element. In place.
+    fn set_hidden(this, hidden: bool) -> Handle {
+        let f: fn(Handle, bool) -> bool = SET_HIDDEN_FN;
+        if f != (0 as fn(Handle, bool) -> bool) { let _ok: bool = f(this, hidden); }
+        return this;
+    }
+
+    // Append a freshly-built child to this (multi-child) container, in place:
+    // the child mounts, attaches under the container's view, and the layout
+    // reflows. `this` must resolve a KEYED container. Chainable.
+    fn add_child(this, take child: Node) -> Handle {
+        let f: fn(Handle, take Node) -> bool = ADD_CHILD_FN;
+        if f != (0 as fn(Handle, take Node) -> bool) {
+            let _ok: bool = f(this, child);
+        }
+        // No backend installed: `child` was not moved out, so it drops here (RAII).
+        return this;
+    }
+
+    // Remove the direct child addressed by `key` from this container, in place
+    // (its views tear down, the layout reflows). Returns whether one was removed.
+    fn remove_child(this, key: str) -> bool {
+        let f: fn(Handle, str) -> bool = REMOVE_CHILD_FN;
+        if f != (0 as fn(Handle, str) -> bool) { return f(this, key); }
+        return false;
+    }
+}
+
+// Resolve `key` inside component `cp`'s live subtree. See the block comment above.
+fn find(cp: *u8, key: str) -> Handle {
+    let f: fn(*u8, str) -> Handle = FIND_FN;
+    if f == (0 as fn(*u8, str) -> Handle) { return Handle::missing(); }
+    return f(cp, key);
+}
+
 // ---- modifiers -------------------------------------------------------------
 // Fluent (chain on the item line) + `set_*` (own leading-dot line), the same
 // two-form convention as flex_layout.
@@ -890,6 +1122,13 @@ impl Node {
         var n: Node = this;
         n.click = cb;
         n.click_ctx = ctx;
+        return n;
+    }
+    // `key` is the app-facing name for a node's stable addressing id — the same
+    // channel `find(key)` and the agent surface use (alias of agent_id).
+    fn key(take this, id: str) -> Node {
+        var n: Node = this;
+        n.agent_id = text::from_str(id);
         return n;
     }
     fn agent_id(take this, id: str) -> Node {
@@ -1006,6 +1245,8 @@ impl Node {
     fn set_padding(ref this, v: f64) { this._padding = v; return; }
     fn set_width(ref this, v: f64) { this._width = v; return; }
     fn set_height(ref this, v: f64) { this._height = v; return; }
+    fn layout_width(this) -> f64 { return this._width; }
+    fn layout_width_pct(this) -> f64 { return this._width_pct; }
     fn set_on_click(ref this, cb: fn(*u8, *u8), ctx: *u8 = 0 as *u8) {
         this.click = cb;
         this.click_ctx = ctx;
@@ -1100,6 +1341,9 @@ impl Node {
     fn gap_row(take this, v: f64) -> Node { var n: Node = this; n._gap_row = v; return n; }
     fn gap_col(take this, v: f64) -> Node { var n: Node = this; n._gap_col = v; return n; }
     fn display(take this, d: flex::Display) -> Node { var n: Node = this; n._display = d; n._has_display = true; return n; }
+    // Paint/stacking order among overlapping siblings — higher `z` draws on top,
+    // WHERE they overlap; layout position/size is unaffected (CSS z-index).
+    fn z_index(take this, z: i32) -> Node { var n: Node = this; n._z_index = z; n._has_z_index = true; return n; }
     fn overflow(take this, o: flex::Overflow) -> Node { var n: Node = this; n._overflow = o; n._has_overflow = true; return n; }
     fn align_content(take this, a: flex::Align) -> Node { var n: Node = this; n._align_content = a; n._has_align_content = true; return n; }
     fn direction(take this, d: flex::Direction) -> Node { var n: Node = this; n._direction = d; n._has_direction = true; return n; }
@@ -1435,8 +1679,19 @@ struct Renderer {
     scroll:      fn(*u8, *Node, take flex::Node) -> flex::Node,
     material:    fn(*u8, *Node, take flex::Node) -> flex::Node,
     split:       fn(*u8, *Node, take flex::Node, take flex::Node) -> flex::Node,
+    // Keyed containers: give a column/row/zstack/grid a backing view AT MOUNT and
+    // set it as the (already-built) flex node's payload, so `find(key)` can address
+    // the container. `apply` synthesizes an identical backing view for unkeyed
+    // containers anyway — this just creates the keyed one early enough to tag it.
+    container:   fn(*u8, *Node, *flex::Node),
     // called by mount after every widget-producing op
     set_identity: fn(*u8, *u8, str, u32),  // (ctx, handle, id, role)
+}
+
+// The container kinds that lay out children directly (no vtable widget op). A
+// keyed one gets a backing view via `Renderer.container` so it is addressable.
+fn is_container_kind(k: u32) -> bool {
+    return k == kind_column() || k == kind_row() || k == kind_zstack() || k == kind_grid();
 }
 
 // Pin agent id + role after a widget op. Handle is the op's nominated identity
@@ -1654,6 +1909,15 @@ fn mount(np: *Node, r: Renderer) -> flex::Node {
     }
     if is_widget {
         call_set_identity(np, r, n.payload(), k);
+    } else if is_container_kind(k) {
+        // A KEYED container needs a backing view so find(key) can address it.
+        if { (*np).agent_id.view() } != "" {
+            let cf: fn(*u8, *Node, *flex::Node) = r.container;
+            cf(r.ctx, np, #addr_of(n));
+            if n.payload() != (0 as *u8) {
+                call_set_identity(np, r, n.payload(), k);
+            }
+        }
     }
     apply_layout_props(np, #addr_of(n));
     return n;
@@ -1710,6 +1974,7 @@ fn apply_layout_props(np: *Node, fp: *flex::Node) {
     if { (*np)._gap_col } > 0.0f64 { (*fp).set_gap(flex::Gutter::Column, { (*np)._gap_col }); }
     // Container props.
     if { (*np)._has_display } { (*fp).set_display({ (*np)._display }); }
+    if { (*np)._has_z_index } { (*fp).set_z_index({ (*np)._z_index }); }
     if { (*np)._has_overflow } { (*fp).set_overflow({ (*np)._overflow }); }
     if { (*np)._has_align_content } { (*fp).set_align_content({ (*np)._align_content }); }
     if { (*np)._has_direction } { (*fp).set_direction({ (*np)._direction }); }
@@ -2226,6 +2491,13 @@ fn fake_set_identity(ctx: *u8, handle: *u8, id: str, role: u32) {
     return;
 }
 
+// The fake backend has no real views, so a keyed container gets no backing
+// payload here — mount then skips its set_identity. (The AppKit backend supplies
+// a real view; this stub keeps the conformance renderer complete.)
+fn fake_container(ctx: *u8, np: *Node, node: *flex::Node) {
+    return;
+}
+
 fn fake_renderer() -> Renderer {
     return Renderer {
         ctx: 0 as *u8,
@@ -2257,6 +2529,7 @@ fn fake_renderer() -> Renderer {
         scroll: fake_scroll,
         material: fake_material,
         split: fake_split,
+        container: fake_container,
         set_identity: fake_set_identity,
     };
 }

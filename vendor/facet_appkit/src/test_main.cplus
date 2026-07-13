@@ -37,7 +37,7 @@ impl ClickCounter {
     // ui::mount, which needs only the bound method reference — no interface.
     // (facet::Component is the PORTABLE contract: render -> facet::Node,
     // reconciled by the fak runtime.)
-    fn render(this) -> flex::Node {
+    fn build(this) -> flex::Node {
         let t: text::Text = "count ${this.count}";
         return @ui {
             label(t.view(), size: 13.0f64)
@@ -67,15 +67,15 @@ fn press(button_node: *flex::Node) {
 }
 
 #[test]
-fn component_click_rerenders_owner_only() {
+fn component_click_does_not_auto_rerender() {
     ui::unmount_all();
     CC_A.count = 0;
     CC_B.count = 0;
     let host_a = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 40.0 });
     let host_b = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 40.0 });
-    // Mount via bound references: render + component address, one token.
-    let ha: f64 = ui::mount(CC_A.render, host: host_a.raw());
-    let hb: f64 = ui::mount(CC_B.render, host: host_b.raw());
+    // Mount via bound references: build + component address, one token.
+    let ha: f64 = ui::mount(CC_A.build, host: host_a.raw());
+    let hb: f64 = ui::mount(CC_B.build, host: host_b.raw());
     assert ha > 0.0f64;
     assert hb > 0.0f64;
     let a0: *u8 = first_subview(host_a.raw());
@@ -86,15 +86,11 @@ fn component_click_rerenders_owner_only() {
     var plus: flex::Node = ui::button("+1", on: CC_A.on_inc);
     press(#addr_of(plus));
 
-    // Handler ran, and the after-hook re-rendered A's host only.
+    // The handler ran, but facet is NOT reactive: nothing re-rendered. Both
+    // components' views are untouched — updates happen only via find()/methods.
     assert CC_A.count == 1;
-    let a1: *u8 = first_subview(host_a.raw());
-    let b1: *u8 = first_subview(host_b.raw());
-    assert a1 != a0;                      // A rebuilt (fresh label view)
-    assert b1 == b0;                      // B's widget identity SURVIVED
-    // The rebuilt label shows the fresh state: "count 1" = 7 chars.
-    let lbl: ak::TextField = ak::TextField::from_raw(a1);
-    assert lbl.as_control().string_value().count() == (7 as usize);
+    assert first_subview(host_a.raw()) == a0;   // A's view SURVIVED (no auto-rerender)
+    assert first_subview(host_b.raw()) == b0;   // B untouched
     ui::unmount_all();
 }
 
@@ -103,7 +99,7 @@ fn component_state_accumulates_across_rerenders() {
     ui::unmount_all();
     CC_A.count = 0;
     let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 40.0 });
-    let _h: f64 = ui::mount(CC_A.render, host: host.raw());
+    let _h: f64 = ui::mount(CC_A.build, host: host.raw());
     var plus: flex::Node = ui::button("+1", on: CC_A.on_inc);
     press(#addr_of(plus));
     press(#addr_of(plus));
@@ -138,7 +134,7 @@ fn explicit_cross_component_invalidate() {
     ui::unmount_all();
     CC_A.count = 0;
     let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 40.0 });
-    let _h: f64 = ui::mount(CC_A.render, host: host.raw());
+    let _h: f64 = ui::mount(CC_A.build, host: host.raw());
     let v0: *u8 = first_subview(host.raw());
     // Mutating state does nothing to the screen until invalidate says so.
     CC_A.count = 41;
@@ -263,7 +259,7 @@ fn component_cycles() -> i32 {
     ui::unmount_all();
     CC_A.count = 0;
     let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 40.0 });
-    let h0: f64 = ui::mount(CC_A.render, host: host.raw());
+    let h0: f64 = ui::mount(CC_A.build, host: host.raw());
     if h0 <= 0.0f64 { return 41; }
     var plus: flex::Node = ui::button("+1", on: CC_A.on_inc);
     for k in 0..50 {

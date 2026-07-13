@@ -285,7 +285,7 @@ fn button(title: str, on: fn(*u8, *u8), ctx: *u8 = 0 as *u8, primary: bool = fal
             option::Option[ak::Image]::None => { }
         };
     }
-    akx::set_control_action_ctx_then_ctx(ak::Button::from_raw(n.payload()).as_control(), on, ctx, component_after);
+    akx::set_control_action_ctx(ak::Button::from_raw(n.payload()).as_control(), on, ctx);
     return n;
 }
 
@@ -294,7 +294,7 @@ fn button(title: str, on: fn(*u8, *u8), ctx: *u8 = 0 as *u8, primary: bool = fal
 // Same wire as `button`, ctx required. Kept as the desugared form.
 fn button_ctx(title: str, on: fn(*u8, *u8), ctx: *u8, primary: bool = false, agent_id: str = "") -> flex::Node {
     let n: flex::Node = button_view(title, primary: primary, agent_id: agent_id);
-    akx::set_control_action_ctx_then_ctx(ak::Button::from_raw(n.payload()).as_control(), on, ctx, component_after);
+    akx::set_control_action_ctx(ak::Button::from_raw(n.payload()).as_control(), on, ctx);
     return n;
 }
 
@@ -310,7 +310,7 @@ fn icon_button(symbol_name: str, on: fn(*u8, *u8), ctx: *u8 = 0 as *u8, agent_id
         option::Option[ak::Image]::None => { }
     };
     b.set_image_position(ak::CellImagePosition::NSImageOnly);
-    akx::set_control_action_ctx_then_ctx(b.as_control(), on, ctx, component_after);
+    akx::set_control_action_ctx(b.as_control(), on, ctx);
     tag_agent(b.as_view().raw(), agent_id, identity::Role::Button);
     return view(b.as_view());
 }
@@ -325,7 +325,7 @@ fn icon_button_ctx(symbol_name: str, on: fn(*u8, *u8), ctx: *u8, agent_id: str =
         option::Option[ak::Image]::None => { }
     };
     b.set_image_position(ak::CellImagePosition::NSImageOnly);
-    akx::set_control_action_ctx_then_ctx(b.as_control(), on, ctx, component_after);
+    akx::set_control_action_ctx(b.as_control(), on, ctx);
     tag_agent(b.as_view().raw(), agent_id, identity::Role::Button);
     return view(b.as_view());
 }
@@ -337,7 +337,7 @@ fn link_button(title: str, on: fn(*u8, *u8), ctx: *u8 = 0 as *u8, agent_id: str 
     b.set_title(title);
     b.set_bordered(false);
     b.set_content_tint_color(ak::Color::link_color());
-    akx::set_control_action_ctx_then_ctx(b.as_control(), on, ctx, component_after);
+    akx::set_control_action_ctx(b.as_control(), on, ctx);
     tag_agent(b.as_view().raw(), agent_id, identity::Role::Button);
     return view(b.as_view());
 }
@@ -352,7 +352,7 @@ fn plain_button(title: str, on: fn(*u8, *u8), ctx: *u8 = 0 as *u8, bold: bool = 
     b.set_bordered(false);
     if bold { b.as_control().set_font(ak::Font::bold_system_font_of_size(13.0f64)); }
     b.as_control().set_alignment(ak::TextAlignment::Left);
-    akx::set_control_action_ctx_then_ctx(b.as_control(), on, ctx, component_after);
+    akx::set_control_action_ctx(b.as_control(), on, ctx);
     tag_agent(b.as_view().raw(), agent_id, identity::Role::Button);
     return view(b.as_view());
 }
@@ -698,20 +698,97 @@ fn composer_content_height(view_ptr: *u8) -> f64 {
 // Native split view — draggable two-pane divider (file tree | editor).
 // ==========================================================================
 
+// A hosted split pane: a multi-element pane (a `column`/`row`, which has no
+// single backing view) gets its own host NSView as the arranged subview, and
+// its subtree is (re)laid out into that host whenever the split resizes the
+// pane. A leaf pane (one view) never lands here — it goes straight in as the
+// arranged subview, as NSSplitView expects. `tree` is owned here for the
+// process's life (a split rarely unmounts); `applied` gates first-apply vs
+// retained reposition.
+struct SplitPane {
+    opaque split: *u8,       // the NSSplitView this pane belongs to (registry key)
+    opaque host: *u8,        // the arranged-subview host (non-owning; the split retains it)
+    tree: flex::Node,        // the pane's mounted subtree, relaid on every resize
+    applied: bool,           // false until the first apply installs the views
+}
+
+static SPLIT_PANES: vec::Vec[SplitPane] = #zero::[vec::Vec[SplitPane]]();
+
+// Lay one hosted pane out at its host's CURRENT size: first pass installs the
+// views (apply), later passes only reposition the existing ones (the retained
+// window-resize path). A 0-sized host (not laid out yet) is skipped.
+fn reflow_pane(ep: *SplitPane) {
+    let host_ptr: *u8 = { (*ep).host };
+    let hf: rt::Rect = ak::View::from_raw(host_ptr).frame();
+    if hf.w <= 0.0f64 { return; }
+    if hf.h <= 0.0f64 { return; }
+    let tp: *flex::Node = { #addr_of((*ep).tree) };
+    (*tp).calculate_layout(hf.w, hf.h, flex::Direction::LTR);
+    (*tp).round_to_pixel(2.0f64);
+    if { (*ep).applied } == false {
+        apply(tp, host_ptr, false);
+        { (*ep).applied = true; }
+    } else {
+        reposition(tp, false);
+    }
+    return;
+}
+
+// splitViewDidResizeSubviews: hook (via attach_split_min_widths). Reflow every
+// hosted pane of the split that just resized. Leaf-only splits register no
+// panes here, so this no-ops for them.
+fn relayout_split_panes(sv_ptr: *u8) {
+    let reg: *vec::Vec[SplitPane] = { #addr_of(SPLIT_PANES) };
+    let n: usize = { (*reg).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*reg).at_ptr(i) {
+            option::Option[*SplitPane]::Some(ep) => {
+                if { (*ep).split } == sv_ptr { reflow_pane(ep); }
+            }
+            option::Option[*SplitPane]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// Add one pane to the split. A leaf pane (its own view) becomes the arranged
+// subview directly. A multi-element pane (a container, no single view) is
+// hosted: a fresh host view is the arranged subview, the pane's subtree is
+// registered against it, and reflow_pane installs/relays it once the split
+// sizes the host (deferred to the resize hook, since the host is 0×0 now).
+fn host_or_add_pane(sv: ak::SplitView, take pane: flex::Node) {
+    if pane.payload() != (0 as *u8) {
+        sv.add_arranged_subview(ak::View::from_raw(pane.payload()));
+        return;
+    }
+    if pane.child_count() > (0 as usize) {
+        let host: ak::View = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 });
+        let hraw: *u8 = host.raw();
+        sv.add_arranged_subview(host);
+        let reg: *vec::Vec[SplitPane] = { #addr_of(SPLIT_PANES) };
+        (*reg).append(SplitPane { split: sv.raw(), host: hraw, tree: pane, applied: false });
+        return;
+    }
+    return;
+}
+
 // A two-pane NSSplitView with a draggable divider: `split(sidebar, editor)`.
-// Each pane must be a single view (a `scroll_view`, a native leaf, or a
-// `view(...)`); NSSplitView resizes the panes on drag and their content
-// autoresizes to fill, so wrap any multi-element pane in one container view
-// first. `vertical: true` (default) places the panes side by side (a vertical
-// divider); `false` stacks them. `position` is the initial divider offset;
-// `min_first` / `min_second` are the pane minimums the delegate enforces.
+// Each pane can be a single view (a `scroll_view`, a native leaf, a nested
+// `split`, or a `view(...)`) OR a multi-element container (`column`/`row`) —
+// the latter is hosted in its own view and reflowed on divider drag/resize, so
+// the caller never has to wrap it. `vertical: true` (default) places the panes
+// side by side (a vertical divider); `false` stacks them. `position` is the
+// initial divider offset; `min_first` / `min_second` are the pane minimums the
+// delegate enforces.
 fn split(take first: flex::Node, take second: flex::Node, vertical: bool = true, position: f64 = 220.0f64, min_first: f64 = 150.0f64, min_second: f64 = 240.0f64, agent_id: str = "") -> flex::Node {
     let sv = ak::SplitView::new();
     sv.set_vertical(vertical);
     sv.set_divider_style(ak::SplitViewDividerStyle::Thin);
-    if first.payload() != (0 as *u8) { sv.add_arranged_subview(ak::View::from_raw(first.payload())); }
-    if second.payload() != (0 as *u8) { sv.add_arranged_subview(ak::View::from_raw(second.payload())); }
-    akx::attach_split_min_widths(sv, min_first, min_second);
+    host_or_add_pane(sv, first);
+    host_or_add_pane(sv, second);
+    akx::attach_split_min_widths(sv, min_first, min_second, on_resize: relayout_split_panes, resize_user: sv.raw());
     sv.set_position(position, 0 as i64);
     tag_agent(sv.as_view().raw(), agent_id, identity::Role::Group);
     return fixed_view(sv.as_view());
@@ -962,6 +1039,174 @@ fn file_tree(path: str, on_select: fn(*u8, *u8) = 0 as fn(*u8, *u8), ctx: *u8 = 
 }
 
 // ==========================================================================
+// list — a recycling flat list (NSTableView, view-based reuse)
+// ==========================================================================
+// The scaling answer for long content — chat logs, search results, feeds. Only
+// the rows in (and near) the viewport are instantiated; as you scroll, cell
+// views that leave the viewport are RECYCLED to render incoming rows, so a
+// 10,000-row list costs about a screenful of views, not 10,000. `row(ctx, i)`
+// builds row i's content as a @ui node (rebuilt only when a row scrolls into
+// view); `count` is the total. Each row's height is its natural (flexed) height
+// at the list's width — measured on demand and cached by NSTableView. Wrap the
+// result into a @facet tree with `native_widget(list(...))`.
+
+struct ListCtx {
+    row: fn(*u8, i64) -> flex::Node,
+    opaque caller_ctx: *u8,
+    count: i64,
+    opaque table: *u8,       // the NSTableView, for reload-on-resize
+    last_width: f64,         // last content width; reload only when it changes
+}
+
+fn list_ds_pin_key() -> *u8 { return { 28694 as *u8 }; }
+fn list_del_pin_key() -> *u8 { return { 28695 as *u8 }; }
+
+// The list's content width (the column fills the last-column-autoresizing table).
+fn list_col_width(tv: *u8) -> f64 {
+    let w: f64 = ak::TableView::from_raw(tv).as_view().frame().w;
+    if w < 1.0f64 { return 1.0f64; }
+    return w;
+}
+
+fn list_num_rows_imp(user: *u8, tv: *u8) -> i64 {
+    let c: *ListCtx = { user as *ListCtx };
+    return { (*c).count };
+}
+
+fn list_height_imp(user: *u8, tv: *u8, row: i64) -> f64 {
+    let c: *ListCtx = { user as *ListCtx };
+    let f: fn(*u8, i64) -> flex::Node = { (*c).row };
+    var node: flex::Node = f({ (*c).caller_ctx }, row);
+    node.calculate_layout(list_col_width(tv), flex::undefined(), flex::Direction::LTR);
+    node.round_to_pixel(2.0f64);
+    let h: f64 = node.layout_frame().height;
+    if h < 1.0f64 { return 1.0f64; }
+    return h;
+}
+
+// Make a cell's content stretch horizontally, so its wrapping text RE-WRAPS
+// live as the column width changes during a drag (the row heights then catch up
+// on the debounced reload). Width-only: content stays top-aligned at its
+// natural height with fixed left/right padding (NSViewWidthSizable keeps the
+// margins fixed and lets the width absorb the change).
+fn list_autoresize_subtree(v: ak::View) {
+    v.set_autoresizing_mask(ak::autoresizing_mask_options_n_s_view_width_sizable);
+    var subs: vec::Vec[ak::View] = v.subviews();
+    let n: usize = subs.count();
+    var i: usize = 0 as usize;
+    while i < n {
+        match subs.at_ptr(i) {
+            option::Option[*ak::View]::Some(sp) => { list_autoresize_subtree(ak::View::from_raw({ (*sp).raw() })); }
+            option::Option[*ak::View]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+fn list_view_for_row_imp(user: *u8, tv: *u8, col: *u8, row: i64) -> *u8 {
+    let c: *ListCtx = { user as *ListCtx };
+    let tvw: ak::TableView = ak::TableView::from_raw(tv);
+    let w: f64 = list_col_width(tv);
+    let f: fn(*u8, i64) -> flex::Node = { (*c).row };
+    var node: flex::Node = f({ (*c).caller_ctx }, row);
+    node.calculate_layout(w, flex::undefined(), flex::Direction::LTR);
+    node.round_to_pixel(2.0f64);
+    var h: f64 = node.layout_frame().height;
+    if h < 1.0f64 { h = 1.0f64; }
+
+    // Recycle a cell view (identity "cell"); make one on the first miss.
+    var cell: ak::View = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: w, h: h });
+    match tvw.make_view_with_identifier("cell", 0 as *u8) {
+        option::Option[ak::View]::Some(v) => {
+            cell = v;
+            var subs: vec::Vec[ak::View] = cell.subviews();
+            let sn: usize = subs.count();
+            for i in 0..(sn as i32) {
+                match subs.at_ptr(i as usize) {
+                    option::Option[*ak::View]::Some(vp) => { { (*vp).remove_from_superview(); } }
+                    option::Option[*ak::View]::None => { }
+                }
+            }
+        }
+        option::Option[ak::View]::None => {
+            ak::UserInterfaceItemIdentification::from_raw(cell.raw()).set_identifier("cell");
+        }
+    }
+    cell.set_frame(rt::Rect { x: 0.0, y: 0.0, w: w, h: h });
+    apply(#addr_of(node), cell.raw(), false);
+    list_autoresize_subtree(cell);   // content re-wraps live as the column widens
+    return cell.raw();
+}
+
+// NSTableView caches row heights (and cells) by width, so a width change —
+// dragging a split, resizing the window — leaves wrapped-text rows measured for
+// the OLD width until something forces a re-query. Reload only on an actual
+// width change (height-only changes keep the heights valid), and DEBOUNCE it:
+// re-measuring every row on every resize frame is O(rows) per frame and janks
+// the drag. `performSelector:withObject:afterDelay:` schedules the reload in the
+// DEFAULT run-loop mode, which does not run during a live drag (event-tracking
+// mode) — so cancelling+rescheduling each frame collapses to ONE reloadData
+// after the drag settles. reloadData re-queries heightOfRow and rebuilds the
+// visible cells at the final width; it doesn't change the table width, so no
+// re-trigger loop.
+fn list_reload_on_resize(ctx: *u8) {
+    let c: *ListCtx = { ctx as *ListCtx };
+    let tbl: *u8 = { (*c).table };
+    let w: f64 = ak::TableView::from_raw(tbl).as_view().frame().w;
+    if w == { (*c).last_width } { return; }
+    { (*c).last_width = w; }
+    let reload_sel: *u8 = rt::sel(#str_ptr("reloadData\0"));
+    rt::msg_void_id_id_id(rt::get_class(#str_ptr("NSObject\0")), rt::sel(#str_ptr("cancelPreviousPerformRequestsWithTarget:selector:object:\0")), tbl, reload_sel, 0 as *u8);
+    rt::msg_void_id_id_f64(tbl, rt::sel(#str_ptr("performSelector:withObject:afterDelay:\0")), reload_sel, 0 as *u8, 0.05f64);
+    return;
+}
+
+// A recycling flat list — see the header comment above. `row(ctx, i)` builds
+// row i; `count` rows total. Returns a scroll-wrapped NSTableView as a leaf.
+fn list(count: i64, row: fn(*u8, i64) -> flex::Node, ctx: *u8 = 0 as *u8, agent_id: str = "") -> flex::Node {
+    let tv = ak::TableView::new(rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 });
+    let col = ak::TableColumn::new("col");
+    tv.add_table_column(col);
+    tv.set_column_autoresizing_style(ak::TableViewColumnAutoresizingStyle::NSTableViewLastColumnOnlyAutoresizingStyle);
+    tv.set_header_view(ak::TableHeaderView::from_raw(0 as *u8));            // no header
+    tv.set_selection_highlight_style(ak::TableViewSelectionHighlightStyle::None);
+    tv.set_intercell_spacing(rt::Size { w: 0.0f64, h: 0.0f64 });
+
+    let lbox: *ListCtx = { malloc(#size_of::[ListCtx]()) as *ListCtx };
+    { *lbox = ListCtx { row: row, caller_ctx: ctx, count: count, table: tv.raw(), last_width: 0.0f64 }; }
+
+    var ds: ak::TableViewDataSource = ak::TableViewDataSource_new(lbox as *u8);
+    ds.set_number_of_rows_in_table_view(list_num_rows_imp);
+    let dsbox: *ak::TableViewDataSource = { malloc(#size_of::[ak::TableViewDataSource]()) as *ak::TableViewDataSource };
+    { *dsbox = ds; }
+    let dsobj: *u8 = ak::create_TableViewDataSource(dsbox);
+    tv.set_data_source(dsobj);
+    synth::retain_associated(tv.raw(), list_ds_pin_key(), dsobj);
+
+    var del: ak::TableViewDelegate = ak::TableViewDelegate_new(lbox as *u8);
+    del.set_table_view_view_for_table_column_row(list_view_for_row_imp);
+    del.set_table_view_height_of_row(list_height_imp);
+    let delbox: *ak::TableViewDelegate = { malloc(#size_of::[ak::TableViewDelegate]()) as *ak::TableViewDelegate };
+    { *delbox = del; }
+    let delobj: *u8 = ak::create_TableViewDelegate(delbox);
+    tv.set_delegate(delobj);
+    synth::retain_associated(tv.raw(), list_del_pin_key(), delobj);
+
+    tv.reload_data();
+
+    // Re-measure/reflow rows when the table's width changes (split drag, window
+    // resize) — otherwise wrapped rows keep their old-width heights until scrolled.
+    akx::observe_frame_change(tv.as_view(), list_reload_on_resize, lbox as *u8);
+
+    let scroll = ak::ScrollView::new(rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 });
+    scroll.set_has_vertical_scroller(true);
+    scroll.set_document_view(tv.as_view());
+    tag_agent(scroll.as_view().raw(), agent_id, identity::Role::List);
+    return fixed_view(scroll.as_view());
+}
+
+// ==========================================================================
 // Builder protocol + containers (the `@ui` context)
 // ==========================================================================
 
@@ -1140,10 +1385,56 @@ fn apply(root: *flex::Node, root_view: *u8, root_flipped: bool) {
     return;
 }
 
+fn child_z(node: *flex::Node, idx: usize) -> i32 {
+    match (*node).children.at_ptr(idx) {
+        option::Option[*flex::Node]::Some(cn) => { return { (*cn).z_index() }; }
+        option::Option[*flex::Node]::None => { return 0 as i32; }
+    }
+}
+
+fn order_at(order: *vec::Vec[usize], i: usize) -> usize {
+    match (*order).at(i) {
+        option::Option[usize]::Some(v) => { return v; }
+        option::Option[usize]::None => { return 0 as usize; }
+    }
+}
+
+// Child indices in PAINT order: stable-sorted by z_index (ties keep tree order).
+// All-zero z (the common case) leaves 0..kc untouched — O(n), no reordering.
+fn z_paint_order(node: *flex::Node, kc: usize) -> vec::Vec[usize] {
+    var order: vec::Vec[usize] = vec::new::[usize]();
+    var i: usize = 0 as usize;
+    while i < kc {
+        let _a = order.append(i);
+        i = i +% (1 as usize);
+    }
+    var a: usize = 1 as usize;
+    while a < kc {
+        let key: usize = order_at(#addr_of(order), a);
+        let kz: i32 = child_z(node, key);
+        var b: i32 = (a as i32) - (1 as i32);
+        while b >= (0 as i32) {
+            let bv: usize = order_at(#addr_of(order), b as usize);
+            if child_z(node, bv) <= kz { break; }   // stop shifting on ties (stable)
+            let _s = order.set(bv, (b + 1) as usize);
+            b = b - (1 as i32);
+        }
+        let _s2 = order.set(key, (b + 1) as usize);
+        a = a +% (1 as usize);
+    }
+    return order;
+}
+
 fn apply_nested(node: *flex::Node, parent_ptr: *u8, parent_abs: flex::Layout, parent_flipped: bool) {
     let kc: usize = (*node).child_count();
-    for i in 0..(kc as i32) {
-        match (*node).children.at_ptr(i as usize) {
+    // Add children in z_index paint order so higher-z siblings land last and
+    // draw on top (AppKit paints later subviews over earlier ones).
+    var order: vec::Vec[usize] = z_paint_order(node, kc);
+    var oi: usize = 0 as usize;
+    while oi < kc {
+        let i: usize = order_at(#addr_of(order), oi);
+        oi = oi +% (1 as usize);
+        match (*node).children.at_ptr(i) {
             option::Option[*flex::Node]::Some(cn) => {
                 let cf: flex::Layout = (*cn).layout_frame();   // absolute
                 let x: f64 = cf.left - parent_abs.left;        // relative to parent
@@ -1443,7 +1734,7 @@ fn reflow_nested_scrolls(node: *flex::Node) {
 // (component address, erased render fn) — which is exactly what a bound
 // method reference produces:
 //
-//     ui::mount(RECENTS.render, host: panel.raw());
+//     ui::mount(RECENTS.build, host: panel.raw());
 //     ...
 //     icon_button("xmark", on: recents.remove_at)
 //
@@ -1549,6 +1840,25 @@ fn tree_ptr(cp: *u8) -> option::Option[*flex::Node] {
     return option::Option[*flex::Node]::None;
 }
 
+// The host view a component was mounted into (0 if not slot-mounted). Lets the
+// keyed-direct `find(key)` resolve keys against the LIVE view hierarchy (walking
+// real NSViews), instead of msgSend-ing flex payloads that may not be views.
+fn host_of(cp: *u8) -> *u8 {
+    let slots: *vec::Vec[Slot] = #addr_of(SLOTS);
+    let n: usize = { (*slots).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*slots).at_ptr(i) {
+            option::Option[*Slot]::Some(sp) => {
+                if { (*sp)._cp } == cp { return { (*sp)._host }; }
+            }
+            option::Option[*Slot]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return 0 as *u8;
+}
+
 // A post-render hook the upper (facet) layer installs. It runs after every
 // component render's `apply`, so a component whose subtree contains a portable
 // `scroll` / `split` reflows it: those kinds defer work (the two-phase fill /
@@ -1639,7 +1949,7 @@ fn render_slot_scroll(sp: *Slot) -> f64 {
     return rf.height;
 }
 
-// Mount a component into a host view: `ui::mount(COUNTER.render, host: v)`.
+// Mount a component into a host view: `ui::mount(COUNTER.build, host: v)`.
 // The bound reference fills `ctx` with the component's address; `render`
 // runs once now and again on every invalidate. Returns the content height
 // (-1.0 when host is missing).
@@ -1659,7 +1969,7 @@ fn mount(render: fn(*u8) -> flex::Node, ctx: *u8 = 0 as *u8, host: *u8 = 0 as *u
     return -1.0f64;
 }
 
-// Mount a component whose host is an NSScrollView: `ui::mount_scroll(RECENTS.render,
+// Mount a component whose host is an NSScrollView: `ui::mount_scroll(RECENTS.build,
 // scroll: sv.raw())`. Unlike `mount` (fixed-frame host), the content is laid out
 // at the viewport width with an UNBOUNDED height, so a growing list is not
 // clipped; the flipped document view is sized to fit and REUSED across
@@ -2139,6 +2449,78 @@ fn test_split_hosts_two_arranged_panes() {
     assert sv.is_vertical();                              // side-by-side by default
     assert sv.arranged_subviews().count() == (2 as usize);
     // Min-width dragging is a live behaviour; only construction is checked here.
+}
+
+#[test]
+fn test_split_hosts_a_container_pane() {
+    // A multi-element pane (a column) has no single backing view, so the split
+    // gives it its OWN host as the second arranged subview — a fresh, empty view
+    // (not the pane's payload, which is null). The leaf pane goes in directly.
+    var cb: Builder = Builder::new();
+    cb.add(box().width(10.0f64).height(10.0f64));
+    cb.add(box().width(10.0f64).height(10.0f64));
+    let pane: flex::Node = vstack(cb);
+    assert pane.payload() == (0 as *u8);                  // a container: no single view
+
+    let n: flex::Node = split(label("side"), pane);
+    let sv: ak::SplitView = ak::SplitView::from_raw(n.payload());
+    assert sv.arranged_subviews().count() == (2 as usize);   // leaf pane + hosted pane
+
+    var subs: vec::Vec[ak::View] = sv.arranged_subviews();
+    match subs.at_ptr(1 as usize) {
+        option::Option[*ak::View]::Some(hp) => {
+            assert { (*hp).subviews().count() } == (0 as usize);    // empty host until sized
+        }
+        option::Option[*ak::View]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn test_reflow_pane_lays_subtree_into_its_host() {
+    // reflow_pane lays a hosted pane's subtree into its host at the host's
+    // current size. A live NSSplitView owns its arranged subviews' frames (and
+    // won't lay out headless), so this drives reflow_pane directly against a
+    // host whose frame we control — proving the layout+install half of the path.
+    let host: ak::View = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0f64, h: 400.0f64 });
+    var cb: Builder = Builder::new();
+    cb.add(label("top"));                                 // real leaves (payload views)
+    cb.add(label("bottom"));
+    let pane: flex::Node = vstack(cb);
+    var sp: SplitPane = SplitPane { split: host.raw(), host: host.raw(), tree: pane, applied: false };
+
+    assert host.subviews().count() == (0 as usize);       // nothing installed yet
+    reflow_pane(#addr_of(sp));
+    assert host.subviews().count() > (0 as usize);        // the column's boxes installed
+    assert { sp.applied };                                // first pass ran apply (not reposition)
+    return;
+}
+
+fn list_test_row(ctx: *u8, i: i64) -> flex::Node {
+    return wrap_label("a message row long enough to wrap across more than one line at a narrow width");
+}
+
+#[test]
+fn test_list_reports_row_count() {
+    let n: flex::Node = list(count: 500 as i64, row: list_test_row);
+    assert n.has_payload();                               // scroll-wrapped table leaf
+    var ctx: ListCtx = ListCtx { row: list_test_row, caller_ctx: 0 as *u8, count: 500 as i64, table: 0 as *u8, last_width: 0.0f64 };
+    assert list_num_rows_imp(#addr_of(ctx) as *u8, 0 as *u8) == (500 as i64);
+    return;
+}
+
+#[test]
+fn test_list_row_measures_and_builds_cell() {
+    // Row height is the flexed content's natural height at the list width; the
+    // returned cell hosts that content (this is what a recycled cell re-fills).
+    let tv: ak::TableView = ak::TableView::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0f64, h: 400.0f64 });
+    var ctx: ListCtx = ListCtx { row: list_test_row, caller_ctx: 0 as *u8, count: 3 as i64, table: 0 as *u8, last_width: 0.0f64 };
+    let h: f64 = list_height_imp(#addr_of(ctx) as *u8, tv.raw(), 0 as i64);
+    assert h > 0.0f64;                                    // measured a real, wrapped height
+    let cell_ptr: *u8 = list_view_for_row_imp(#addr_of(ctx) as *u8, tv.raw(), 0 as *u8, 0 as i64);
+    assert cell_ptr != (0 as *u8);
+    assert ak::View::from_raw(cell_ptr).subviews().count() > (0 as usize);   // content installed
+    return;
 }
 
 #[test]

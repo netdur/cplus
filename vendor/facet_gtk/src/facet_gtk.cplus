@@ -402,6 +402,12 @@ fn gtk_set_identity(ctx: *u8, handle: *u8, id: str, role: u32) {
 
 // The vtable value. `ctx` is an unused backend-context slot (a future backend
 // context — theme, window — can ride here); the ops don't read it.
+// Keyed-container backing view (approach A). The GTK backend is type-checked
+// only; a real port would create a GtkBox here and set it as the flex payload.
+fn gtk_container(ctx: *u8, np: *facet::Node, node: *flex::Node) {
+    return;
+}
+
 fn renderer() -> facet::Renderer {
     return facet::Renderer {
         ctx: null(),
@@ -433,6 +439,7 @@ fn renderer() -> facet::Renderer {
         scroll: gtk_scroll,
         material: gtk_material,
         split: gtk_split,
+        container: gtk_container,
         set_identity: gtk_set_identity,
     };
 }
