@@ -540,6 +540,25 @@ fn open(window: *u8) -> Surface {
         walk(reg, views, content, win_reg);
     }
 
+    // Title-bar accessory views (fak::install_titlebar) are siblings of the
+    // contentView under NSThemeFrame, so the walk above never reaches them.
+    // Walk each accessory controller's view under the window node too, so
+    // title-bar controls — which pin their agent ids at mount — stay
+    // agent-addressable (describe_ui / drive), not silently dropped.
+    let accs: *u8 = rt::msg_id(window, rt::sel(#str_ptr("titlebarAccessoryViewControllers\0")));
+    if !is_null(accs) {
+        let na: i64 = rt::msg_i64(accs, rt::sel(#str_ptr("count\0")));
+        var ai: i64 = 0 as i64;
+        while ai < na {
+            let vc: *u8 = rt::msg_id_u64(accs, rt::sel(#str_ptr("objectAtIndex:\0")), ai as u64);
+            let av: *u8 = rt::msg_id(vc, rt::sel(#str_ptr("view\0")));
+            if !is_null(av) {
+                walk(reg, views, av, win_reg);
+            }
+            ai = ai +% (1 as i64);
+        }
+    }
+
     return Surface { reg: reg, versions: surface::new_text_versions(), views: views };
 }
 

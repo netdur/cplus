@@ -1317,6 +1317,26 @@ fn manifest_diag(
 ///
 /// On any failure: a structured diagnostic is emitted via `emit_diag` and
 /// `Err(ExitCode::FAILURE)` is returned before codegen / linking can run.
+/// Platform-scoped dependencies: the dep names to thread into the resolver
+/// for the ACTIVE platform (`[dependencies]` entries plus the matching
+/// `[<platform>.dependencies]` section). As a side effect, installs the
+/// filtered-out deps into `target::set_platform_gated_deps` so an import of
+/// an off-platform package gets the targeted E0866 instead of E0852.
+fn active_dep_names(m: &manifest::Manifest) -> Vec<String> {
+    let platform = target::active_platform();
+    let mut names: Vec<String> = Vec::with_capacity(m.dependencies.len());
+    let mut gated: std::collections::BTreeMap<String, String> = Default::default();
+    for dep in &m.dependencies {
+        if dep.active_on(platform) {
+            names.push(dep.name.clone());
+        } else {
+            gated.insert(dep.name.clone(), dep.platforms.join(", "));
+        }
+    }
+    target::set_platform_gated_deps(gated);
+    names
+}
+
 fn collect_dep_link_args(
     m: &manifest::Manifest,
     diag_mode: DiagMode,
@@ -1334,7 +1354,15 @@ fn collect_dep_link_args(
         None => (detect_host_triple()?, "host"),
     };
     let mut link_args: Vec<String> = Vec::new();
+    let platform = target::active_platform();
     for dep in &m.dependencies {
+        // A dep scoped to another platform contributes nothing to this
+        // build: no presence check (its vendor/ dir may legitimately be
+        // absent here) and no `[link]` splice (its frameworks/libs would
+        // be wrong for this toolchain — `-framework AppKit` on Linux).
+        if !dep.active_on(platform) {
+            continue;
+        }
         let mut vendor_dir = m.root.join("vendor").join(&dep.name);
         let mut vendor_manifest = vendor_dir.join("Cplus.toml");
         // Vendor-package self-test fallback: when run from inside a
@@ -1645,7 +1673,7 @@ fn build_project(
     // Phase 2 Slice 2B: thread the manifest's [dependencies] names into
     // the resolver so vendor imports (`utils/math`) resolve under
     // vendor/<dep>/src/. The consumer's bin path is the entry.
-    let dep_names: Vec<String> = m.dependencies.iter().map(|d| d.name.clone()).collect();
+    let dep_names: Vec<String> = active_dep_names(&m);
     let (program, _entry_file_id, mono) = match load_and_check_project_full(
         &bin.path,
         &m.root,
@@ -1850,7 +1878,7 @@ fn build_lib_project(
             return ExitCode::FAILURE;
         }
     };
-    let dep_names: Vec<String> = m.dependencies.iter().map(|d| d.name.clone()).collect();
+    let dep_names: Vec<String> = active_dep_names(&m);
     let (program, _entry_file_id, mono) = match load_and_check_project_full(
         &lib.path,
         &m.root,
@@ -2091,7 +2119,7 @@ fn emit_ll_project(diag_mode: DiagMode, build_mode: BuildMode, fp_contract: bool
     if let Err(code) = collect_dep_link_args(&m, diag_mode) {
         return code;
     }
-    let dep_names: Vec<String> = m.dependencies.iter().map(|d| d.name.clone()).collect();
+    let dep_names: Vec<String> = active_dep_names(&m);
     let (program, _, mono) = match load_and_check_project_full(
         &bin.path,
         &m.root,
@@ -2632,7 +2660,7 @@ fn run_test(
             if let Err(code) = collect_dep_link_args(&m, diag_mode) {
                 return code;
             }
-            let dep_names: Vec<String> = m.dependencies.iter().map(|d| d.name.clone()).collect();
+            let dep_names: Vec<String> = active_dep_names(&m);
             let (program, _, mono) = match load_and_check_project_full(
                 &entry_path,
                 &m.root,
@@ -2862,7 +2890,7 @@ fn run_check_project(diag_mode: DiagMode) -> ExitCode {
     if let Err(code) = collect_dep_link_args(&m, diag_mode) {
         return code;
     }
-    let dep_names: Vec<String> = m.dependencies.iter().map(|d| d.name.clone()).collect();
+    let dep_names: Vec<String> = active_dep_names(&m);
     match load_and_check_project_full(
         &entry_path,
         &m.root,
@@ -2930,7 +2958,7 @@ fn run_realtime_report(json: bool) -> ExitCode {
         Ok(v) => v,
         Err(code) => return code,
     };
-    let dep_names: Vec<String> = m.dependencies.iter().map(|d| d.name.clone()).collect();
+    let dep_names: Vec<String> = active_dep_names(&m);
     let mut loaded = match resolver::load_project_full(
         &entry_path,
         &m.root,
@@ -3167,7 +3195,7 @@ fn load_project_for_graph(diag_mode: DiagMode) -> Result<resolver::LoadedProject
         );
         return Err(ExitCode::FAILURE);
     };
-    let dep_names: Vec<String> = m.dependencies.iter().map(|d| d.name.clone()).collect();
+    let dep_names: Vec<String> = active_dep_names(&m);
     match resolver::load_project_full(
         &entry_path,
         &m.root,
@@ -3666,7 +3694,7 @@ fn build_ir(
         let (manifest_root, dep_names): (PathBuf, Vec<String>) = match manifest_hit {
             Some(manifest_path) => match manifest::load(&manifest_path) {
                 Ok(m) => {
-                    let deps: Vec<String> = m.dependencies.iter().map(|d| d.name.clone()).collect();
+                    let deps: Vec<String> = active_dep_names(&m);
                     (m.root, deps)
                 }
                 Err(e) => {

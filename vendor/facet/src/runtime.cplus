@@ -1,0 +1,79 @@
+// facet runtime facade for the host platform.
+//
+// Keep this separate from facet.cplus so the core description model stays
+// backend-neutral. On macOS the base module selects AppKit; Linux shadows this
+// file with runtime_linux.cplus via the resolver's platform override.
+
+import "./facet" as core;
+import "facet_appkit/facet_appkit" as backend;
+
+type Node = core::Node;
+type Builder = core::Builder;
+type AppMenu = core::AppMenu;
+type MenuItem = core::MenuItem;
+
+interface Window {
+    fn root(ref this) -> Node;
+    fn title(this) -> str;
+    fn width(this) -> f64;
+    fn height(this) -> f64;
+    fn wants_clean_titlebar(this) -> bool;
+    fn wants_close_button_only(this) -> bool;
+    fn wants_unified_toolbar(this) -> bool;
+    fn wants_hidden_title(this) -> bool;
+    fn has_app_menu(this) -> bool;
+    fn app_menu(ref this) -> AppMenu;
+    fn should_close(this) -> bool;
+    fn will_close(this);
+    fn should_close_callback(this) -> fn(*u8) -> bool;
+    fn will_close_callback(this) -> fn(*u8);
+    fn lifecycle_context(this) -> *u8;
+}
+
+fn label(s: str, size: f64 = 0.0f64, bold: bool = false, secondary: bool = false) -> Node {
+    return core::label(s, size: size, bold: bold, secondary: secondary);
+}
+
+fn app_menu(title: str) -> AppMenu { return core::app_menu(title); }
+fn menu_action_none() -> u32 { return core::menu_action_none(); }
+fn menu_action_quit() -> u32 { return core::menu_action_quit(); }
+fn menu_action_close_window() -> u32 { return core::menu_action_close_window(); }
+
+fn run[W: Window](take window: W) {
+    backend::install();   // register this backend's facet verbs (list, raise) before any render uses them
+    var owned_window: W = window;
+    let root: Node = owned_window.root();
+    var app_menu: AppMenu = core::empty_app_menu();
+    if owned_window.has_app_menu() {
+        app_menu = owned_window.app_menu();
+    }
+    backend::run_window(
+        root,
+        title: owned_window.title(),
+        width: owned_window.width(),
+        height: owned_window.height(),
+        clean_titlebar: owned_window.wants_clean_titlebar(),
+        close_button_only: owned_window.wants_close_button_only(),
+        unified_toolbar: owned_window.wants_unified_toolbar(),
+        hide_title: owned_window.wants_hidden_title(),
+        app_menu_enabled: owned_window.has_app_menu(),
+        app_menu: app_menu,
+        ctx: owned_window.lifecycle_context(),
+        should_close: owned_window.should_close_callback(),
+        will_close: owned_window.will_close_callback(),
+    );
+    return;
+}
+
+// A blocking modal alert. Returns the 0-based index of the clicked button
+// (0 = `primary`, 1 = `secondary`).
+fn alert(title: str, message: str, primary: str, secondary: str = "") -> i32 {
+    return backend::alert(title, message, primary, secondary);
+}
+
+// Open a non-modal secondary window (settings / inspector / tool) with facet
+// content, alongside the running app. Returns immediately.
+fn present_window(take root: Node, title: str, width: f64, height: f64) {
+    backend::present_window(root, title, width, height);
+    return;
+}

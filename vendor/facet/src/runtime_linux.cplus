@@ -1,0 +1,43 @@
+// facet runtime facade for Linux.
+
+import "./facet" as core;
+import "facet_gtk/facet_gtk" as backend;
+
+type Node = core::Node;
+type Builder = core::Builder;
+type AppMenu = core::AppMenu;
+type MenuItem = core::MenuItem;
+
+interface Window {
+    fn root(ref this) -> Node;
+    fn title(this) -> str;
+    fn width(this) -> f64;
+    fn height(this) -> f64;
+    fn wants_clean_titlebar(this) -> bool;
+    fn wants_close_button_only(this) -> bool;
+    fn wants_unified_toolbar(this) -> bool;
+    fn wants_hidden_title(this) -> bool;
+    fn has_app_menu(this) -> bool;
+    fn app_menu(ref this) -> AppMenu;
+    fn should_close(this) -> bool;
+    fn will_close(this);
+    fn should_close_callback(this) -> fn(*u8) -> bool;
+    fn will_close_callback(this) -> fn(*u8);
+    fn lifecycle_context(this) -> *u8;
+}
+
+fn label(s: str, size: f64 = 0.0f64, bold: bool = false, secondary: bool = false) -> Node {
+    return core::label(s, size: size, bold: bold, secondary: secondary);
+}
+
+fn app_menu(title: str) -> AppMenu { return core::app_menu(title); }
+fn menu_action_none() -> u32 { return core::menu_action_none(); }
+fn menu_action_quit() -> u32 { return core::menu_action_quit(); }
+fn menu_action_close_window() -> u32 { return core::menu_action_close_window(); }
+
+fn run[W: Window](take window: W) {
+    var owned_window: W = window;
+    let root: Node = owned_window.root();
+    backend::run(root, title: owned_window.title(), width: owned_window.width(), height: owned_window.height());
+    return;
+}

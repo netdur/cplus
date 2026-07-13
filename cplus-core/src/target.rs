@@ -15,6 +15,7 @@
 //! with an explicit spec instead of mutating the global (tests run in
 //! parallel in one process).
 
+use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 /// CPU architecture, as codegen's ABI classifier and intrinsic gating see it.
@@ -365,6 +366,37 @@ impl TargetSpec {
     }
 }
 
+/// Platform names a manifest's `[<platform>.dependencies]` section may use,
+/// in the order the docs list them. These are OS families, not `--target`
+/// names: one platform covers every target that shares its dependency story
+/// (`ios-arm64` and `ios-arm64-simulator` are both `ios`).
+pub const PLATFORMS: &[&str] = &[
+    "macos", "linux", "windows", "ios", "android", "esp32", "wasm",
+];
+
+/// The manifest platform name for an OS. Total, so a new `TargetOs` variant
+/// forces a decision here at compile time.
+pub fn platform_name(os: TargetOs) -> &'static str {
+    match os {
+        TargetOs::Macos => "macos",
+        TargetOs::Linux => "linux",
+        TargetOs::Windows => "windows",
+        TargetOs::Ios => "ios",
+        TargetOs::Android => "android",
+        TargetOs::EspIdf => "esp32",
+        // Freestanding wasm32 is the only OS-less target today.
+        TargetOs::Unknown => "wasm",
+    }
+}
+
+/// The active target's manifest platform name — what `[<platform>.dependencies]`
+/// sections are matched against. For `host` this is the compiler's own OS;
+/// for `--target` builds it comes from the spec (so an iOS build from a Mac
+/// selects `ios`, not `macos`).
+pub fn active_platform() -> &'static str {
+    platform_name(active_target().os)
+}
+
 /// Comma-joined list of the names `--target` accepts, for diagnostics.
 pub fn supported_names() -> String {
     SUPPORTED
@@ -414,6 +446,26 @@ pub fn active_target() -> TargetSpec {
     *ACTIVE.lock().unwrap()
 }
 
+/// Dependencies the consumer's manifest declares for OTHER platforms only —
+/// name → comma-joined platform list. The driver installs this alongside the
+/// dep names it threads into the resolver, so an import of a platform-scoped
+/// package on the wrong platform gets a targeted E0866 ("declared for
+/// `macos`") instead of a misleading E0852 ("not a declared dependency").
+/// Same write-once-by-the-driver pattern as `ACTIVE`.
+static PLATFORM_GATED_DEPS: Mutex<BTreeMap<String, String>> = Mutex::new(BTreeMap::new());
+
+/// Install the platform-gated dependency map. Call whenever the consumer's
+/// manifest is (re)loaded; replaces the previous map.
+pub fn set_platform_gated_deps(deps: BTreeMap<String, String>) {
+    *PLATFORM_GATED_DEPS.lock().unwrap() = deps;
+}
+
+/// The platform list a gated dependency was declared for, if `name` is a
+/// declared-but-inactive dep on the active platform.
+pub fn platform_gated_dep(name: &str) -> Option<String> {
+    PLATFORM_GATED_DEPS.lock().unwrap().get(name).cloned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -432,6 +484,68 @@ mod tests {
         assert_eq!(TargetSpec::from_name("arm64-apple-ios"), None);
         assert_eq!(TargetSpec::from_name(""), None);
         assert_eq!(TargetSpec::from_name("HOST"), None);
+    }
+
+    #[test]
+    fn platform_name_is_total_and_matches_the_manifest_vocabulary() {
+        // Every OS maps to a name in PLATFORMS — the manifest section names
+        // and the target model can't drift apart.
+        for os in [
+            TargetOs::Macos,
+            TargetOs::Linux,
+            TargetOs::Windows,
+            TargetOs::Ios,
+            TargetOs::Android,
+            TargetOs::EspIdf,
+            TargetOs::Unknown,
+        ] {
+            let name = platform_name(os);
+            assert!(
+                PLATFORMS.contains(&name),
+                "platform_name({os:?}) = `{name}` missing from PLATFORMS"
+            );
+        }
+        assert_eq!(platform_name(TargetOs::Ios), "ios");
+        assert_eq!(platform_name(TargetOs::EspIdf), "esp32");
+        assert_eq!(platform_name(TargetOs::Unknown), "wasm");
+    }
+
+    #[test]
+    fn every_supported_target_has_a_platform() {
+        // ios-arm64 and ios-arm64-simulator collapse onto one platform.
+        assert_eq!(platform_name(IOS_ARM64.os), platform_name(IOS_ARM64_SIMULATOR.os));
+        for spec in SUPPORTED {
+            assert!(PLATFORMS.contains(&platform_name(spec.os)));
+        }
+    }
+
+    #[test]
+    fn default_active_platform_is_the_host_os() {
+        // Tests never mutate the active target, so this reads the default.
+        let expected = if cfg!(target_os = "macos") {
+            "macos"
+        } else if cfg!(windows) {
+            "windows"
+        } else {
+            "linux"
+        };
+        assert_eq!(active_platform(), expected);
+    }
+
+    #[test]
+    fn platform_gated_deps_roundtrip() {
+        // The one test that touches the gated-deps global (tests share a
+        // process; nothing else reads it, so this is race-free).
+        assert_eq!(platform_gated_dep("facet_gtk_probe"), None);
+        let mut m = BTreeMap::new();
+        m.insert("facet_gtk_probe".to_string(), "linux".to_string());
+        set_platform_gated_deps(m);
+        assert_eq!(
+            platform_gated_dep("facet_gtk_probe").as_deref(),
+            Some("linux")
+        );
+        set_platform_gated_deps(BTreeMap::new());
+        assert_eq!(platform_gated_dep("facet_gtk_probe"), None);
     }
 
     #[test]

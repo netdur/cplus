@@ -21,9 +21,14 @@ pub const MANIFEST_NAME: &str = "Cplus.toml";
 pub struct Manifest {
     pub name: String,
     pub version: String,
-    /// `[dependencies]`: package name → raw spec string. The string is a git
-    /// tree-URL (`…/tree/<ref>/<subpath>@<version>`) for a pinned dependency,
-    /// or a bare version / `*` for a monorepo sibling. See [`crate::spec`].
+    /// `[dependencies]` plus every `[<platform>.dependencies]` section,
+    /// merged: package name → raw spec string. The string is a git tree-URL
+    /// (`…/tree/<ref>/<subpath>@<version>`) for a pinned dependency, or a
+    /// bare version / `*` for a monorepo sibling. See [`crate::spec`].
+    ///
+    /// Platform sections are merged in deliberately — `vendor/` is committed
+    /// and must build on every OS the manifest supports, so install fetches
+    /// the union; the compiler's build driver is what filters by platform.
     pub deps: BTreeMap<String, String>,
     /// Directory the manifest lives in (used to place `vendor/`).
     pub root: PathBuf,
@@ -44,6 +49,16 @@ pub enum ManifestError {
     InvalidDependencyName {
         path: PathBuf,
         name: String,
+    },
+    /// One dependency name declared twice with incompatible meaning: in
+    /// `[dependencies]` AND a `[<platform>.dependencies]` section, or in two
+    /// platform sections with different spec strings. Kept in lockstep with
+    /// the compiler's E0869 — the pm has no conflict resolver by design, so
+    /// one package must resolve to one spec.
+    ConflictingDependency {
+        path: PathBuf,
+        name: String,
+        message: String,
     },
 }
 
@@ -108,10 +123,65 @@ impl Manifest {
                 });
             }
         }
+        let mut deps = raw.dependencies;
+        // Merge every `[<platform>.dependencies]` section in: install fetches
+        // the union of all platforms (vendor/ must build anywhere), so the pm
+        // only cares WHICH packages exist, not where they're active. The
+        // duplicate rules mirror the compiler's E0869: base + section is a
+        // conflict; two sections may share a dep only with an identical spec.
+        let sections: [(&str, Option<RawPlatformSection>); 7] = [
+            ("macos", raw.macos),
+            ("linux", raw.linux),
+            ("windows", raw.windows),
+            ("ios", raw.ios),
+            ("android", raw.android),
+            ("esp32", raw.esp32),
+            ("wasm", raw.wasm),
+        ];
+        // name → the platform section that first declared it (base deps are
+        // absent here), so base-vs-section and spec drift are told apart.
+        let mut scoped_origin: BTreeMap<String, &str> = BTreeMap::new();
+        for (platform, section) in sections {
+            let Some(section) = section else { continue };
+            for (name, spec) in section.dependencies {
+                if !is_valid_dep_name(&name) {
+                    return Err(ManifestError::InvalidDependencyName {
+                        path: root.join(MANIFEST_NAME),
+                        name,
+                    });
+                }
+                match deps.get(&name) {
+                    None => {
+                        deps.insert(name.clone(), spec);
+                        scoped_origin.insert(name, platform);
+                    }
+                    Some(_) if !scoped_origin.contains_key(&name) => {
+                        return Err(ManifestError::ConflictingDependency {
+                            path: root.join(MANIFEST_NAME),
+                            name,
+                            message: format!(
+                                "declared in `[dependencies]` (all platforms) and again in `[{platform}.dependencies]` — remove one"
+                            ),
+                        });
+                    }
+                    Some(existing) if *existing != spec => {
+                        return Err(ManifestError::ConflictingDependency {
+                            path: root.join(MANIFEST_NAME),
+                            name: name.clone(),
+                            message: format!(
+                                "declared with spec `{existing}` in `[{}.dependencies]` and spec `{spec}` in `[{platform}.dependencies]` — one package, one spec",
+                                scoped_origin[&name],
+                            ),
+                        });
+                    }
+                    Some(_) => {} // same spec in another platform section: merged
+                }
+            }
+        }
         Ok(Self {
             name: raw.package.name,
             version: raw.package.version,
-            deps: raw.dependencies,
+            deps,
             root,
         })
     }
@@ -130,6 +200,34 @@ fn manifest_root(path: &Path) -> Result<PathBuf, ManifestError> {
 #[derive(Debug, Deserialize)]
 struct RawManifest {
     package: RawPackage,
+    #[serde(default)]
+    dependencies: BTreeMap<String, String>,
+    // `[<platform>.dependencies]` sections — one field per platform the
+    // compiler's `target::PLATFORMS` knows, kept in lockstep. The pm stays
+    // lenient about everything else in the file ([[bin]], [link], …), but
+    // platform deps must be READ, not skipped: skipping them would leave
+    // vendor/ missing the packages another OS's build needs.
+    #[serde(default)]
+    macos: Option<RawPlatformSection>,
+    #[serde(default)]
+    linux: Option<RawPlatformSection>,
+    #[serde(default)]
+    windows: Option<RawPlatformSection>,
+    #[serde(default)]
+    ios: Option<RawPlatformSection>,
+    #[serde(default)]
+    android: Option<RawPlatformSection>,
+    #[serde(default)]
+    esp32: Option<RawPlatformSection>,
+    #[serde(default)]
+    wasm: Option<RawPlatformSection>,
+}
+
+/// One `[<platform>.*]` table, narrowed to the key the pm cares about.
+/// Other keys under the platform table are ignored here (the compiler's
+/// loader is the strict one).
+#[derive(Debug, Deserialize)]
+struct RawPlatformSection {
     #[serde(default)]
     dependencies: BTreeMap<String, String>,
 }
@@ -152,6 +250,15 @@ impl fmt::Display for ManifestError {
             ManifestError::InvalidDependencyName { path, name } => write!(
                 f,
                 "invalid dependency name `{name}` in {}: a package name must be a lowercase identifier ([a-z][a-z0-9_]*)",
+                path.display()
+            ),
+            ManifestError::ConflictingDependency {
+                path,
+                name,
+                message,
+            } => write!(
+                f,
+                "dependency `{name}` in {}: {message}",
                 path.display()
             ),
         }
@@ -215,6 +322,108 @@ frameworks = ["AppKit"]
         assert_eq!(manifest.name, "appkit");
         assert_eq!(manifest.deps.len(), 3);
         assert_eq!(manifest.deps["objc"], "*");
+    }
+
+    #[test]
+    fn platform_sections_merge_into_the_dep_map() {
+        // The pm fetches the union of all platforms: vendor/ is committed
+        // and must build on every OS the manifest supports.
+        let manifest = Manifest::parse(
+            r#"
+[package]
+name    = "app"
+version = "0.0.1"
+
+[dependencies]
+stdlib = "*"
+facet  = "*"
+
+[macos.dependencies]
+facet_appkit = "*"
+
+[linux.dependencies]
+facet_gtk = "*"
+"#,
+        )
+        .unwrap();
+        assert_eq!(manifest.deps.len(), 4);
+        assert_eq!(manifest.deps["facet_appkit"], "*");
+        assert_eq!(manifest.deps["facet_gtk"], "*");
+    }
+
+    #[test]
+    fn same_dep_in_two_platform_sections_with_same_spec_is_fine() {
+        let manifest = Manifest::parse(
+            r#"
+[package]
+name = "app"
+version = "0.0.1"
+
+[macos.dependencies]
+objc = "https://github.com/netdur/cplus/tree/main/vendor/objc@0.0.26"
+
+[ios.dependencies]
+objc = "https://github.com/netdur/cplus/tree/main/vendor/objc@0.0.26"
+"#,
+        )
+        .unwrap();
+        assert_eq!(manifest.deps.len(), 1);
+    }
+
+    #[test]
+    fn dep_in_base_and_platform_section_is_a_conflict() {
+        let error = Manifest::parse(
+            r#"
+[package]
+name = "app"
+version = "0.0.1"
+
+[dependencies]
+objc = "*"
+
+[macos.dependencies]
+objc = "*"
+"#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(error, ManifestError::ConflictingDependency { ref name, .. } if name == "objc"),
+            "got: {error:?}"
+        );
+    }
+
+    #[test]
+    fn spec_drift_across_platform_sections_is_a_conflict() {
+        let error = Manifest::parse(
+            r#"
+[package]
+name = "app"
+version = "0.0.1"
+
+[macos.dependencies]
+objc = "https://github.com/netdur/cplus/tree/main/vendor/objc@0.0.26"
+
+[ios.dependencies]
+objc = "https://github.com/netdur/cplus/tree/main/vendor/objc@0.0.25"
+"#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(error, ManifestError::ConflictingDependency { .. }),
+            "got: {error:?}"
+        );
+    }
+
+    #[test]
+    fn platform_section_dep_names_are_validated_too() {
+        let error = Manifest::parse(
+            "[package]\nname = \"app\"\nversion = \"0.0.1\"\n\n[linux.dependencies]\n\"../evil\" = \"*\"\n",
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            ManifestError::InvalidDependencyName { .. }
+        ));
     }
 
     #[test]

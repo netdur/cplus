@@ -119,14 +119,27 @@ pub struct LinkSpec {
     pub search_paths: Vec<String>,
 }
 
-/// Phase 2 (v0.0.2) — one entry in `[dependencies]`. Today carries
-/// just (name, version-string). Resolution is presence-check only:
-/// `cpc build` verifies `vendor/<name>/Cplus.toml` exists and is
-/// valid. SemVer resolution is forward-compat work for `cpc fetch`.
+/// Phase 2 (v0.0.2) — one entry in `[dependencies]` or a
+/// `[<platform>.dependencies]` section. Carries (name, version-string,
+/// platforms). Resolution is presence-check only: `cpc build` verifies
+/// `vendor/<name>/Cplus.toml` exists and is valid. SemVer resolution is
+/// forward-compat work for `cpc fetch`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Dependency {
     pub name: String,
     pub version: String,
+    /// Platforms this dep applies to (`crate::target::PLATFORMS` names,
+    /// from the `[<platform>.dependencies]` section(s) that declared it).
+    /// Empty = all platforms (declared in plain `[dependencies]`).
+    pub platforms: Vec<String>,
+}
+
+impl Dependency {
+    /// Whether this dep participates in a build for `platform`
+    /// (a `crate::target::active_platform()` name).
+    pub fn active_on(&self, platform: &str) -> bool {
+        self.platforms.is_empty() || self.platforms.iter().any(|p| p == platform)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -225,6 +238,18 @@ pub enum ManifestError {
         entry: String,
         message: String,
     },
+    /// (E0869): one dependency name declared in more than one place with
+    /// incompatible meaning — in `[dependencies]` (all platforms) AND a
+    /// `[<platform>.dependencies]` section, or in two platform sections
+    /// with different version specs. The package manager has no conflict
+    /// resolver by design, so one package must resolve to one spec.
+    /// (The one legal duplicate: the same spec in several platform
+    /// sections, which merges into one dep active on all of them.)
+    ConflictingDependency {
+        path: PathBuf,
+        name: String,
+        message: String,
+    },
     /// (E0868): a `[lib].path` / `[[bin]].path` resolves outside the package
     /// directory (absolute, or a `..` chain). A package's source targets must
     /// live inside its own tree — the same containment the import paths
@@ -285,6 +310,13 @@ impl fmt::Display for ManifestError {
                     path.display()
                 )
             }
+            ManifestError::ConflictingDependency { path, name, message } => {
+                write!(
+                    f,
+                    "manifest {}: dependency `{name}` {message}",
+                    path.display()
+                )
+            }
             ManifestError::TargetPathEscapes {
                 path,
                 target,
@@ -318,6 +350,7 @@ impl ManifestError {
             | ManifestError::InvalidDependencyName { path, .. }
             | ManifestError::BundledRequiresTriples { path }
             | ManifestError::EnvExpansion { path, .. }
+            | ManifestError::ConflictingDependency { path, .. }
             | ManifestError::TargetPathEscapes { path, .. } => path.clone(),
         };
         let primary = SourceSpan {
@@ -380,6 +413,10 @@ impl ManifestError {
             ManifestError::EnvExpansion { entry, message, .. } => (
                 "E0865",
                 format!("cannot expand `{entry}` in `[link]`: {message}"),
+            ),
+            ManifestError::ConflictingDependency { name, message, .. } => (
+                "E0869",
+                format!("dependency `{name}` {message}"),
             ),
             ManifestError::TargetPathEscapes {
                 target, requested, ..
@@ -446,6 +483,35 @@ struct RawManifest {
     /// is recognized today; unknown profile names are ignored.
     #[serde(default)]
     profile: Option<RawProfiles>,
+    /// Platform-scoped sections: `[<platform>.dependencies]` declares deps
+    /// that exist only on that platform (a facet backend, an OS binding).
+    /// One field per `crate::target::PLATFORMS` name; `deny_unknown_fields`
+    /// makes a misspelled platform a hard parse error. Kept in lockstep
+    /// with `cplus-pm`'s manifest reader.
+    #[serde(default)]
+    macos: Option<RawPlatformSection>,
+    #[serde(default)]
+    linux: Option<RawPlatformSection>,
+    #[serde(default)]
+    windows: Option<RawPlatformSection>,
+    #[serde(default)]
+    ios: Option<RawPlatformSection>,
+    #[serde(default)]
+    android: Option<RawPlatformSection>,
+    #[serde(default)]
+    esp32: Option<RawPlatformSection>,
+    #[serde(default)]
+    wasm: Option<RawPlatformSection>,
+}
+
+/// One `[<platform>.*]` table. Only `dependencies` exists today;
+/// `deny_unknown_fields` reserves the rest of the namespace (a future
+/// `[<platform>.link]` arrives as a feature, not a silently-ignored key).
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawPlatformSection {
+    #[serde(default)]
+    dependencies: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -699,7 +765,8 @@ pub fn parse(text: &str, manifest_path: &Path) -> Result<Manifest, ManifestError
     // Phase 2: validate every dep name against the lowercase-ident rule
     // so the first segment of an import path is unambiguous. Iterate in
     // BTreeMap order so any failure is deterministic.
-    let mut dependencies: Vec<Dependency> = Vec::with_capacity(raw.dependencies.len());
+    let mut dep_map: std::collections::BTreeMap<String, Dependency> =
+        std::collections::BTreeMap::new();
     for (dep_name, dep_version) in raw.dependencies {
         if !is_valid_dep_name(&dep_name) {
             return Err(ManifestError::InvalidDependencyName {
@@ -707,11 +774,74 @@ pub fn parse(text: &str, manifest_path: &Path) -> Result<Manifest, ManifestError
                 found: dep_name,
             });
         }
-        dependencies.push(Dependency {
-            name: dep_name,
-            version: dep_version,
-        });
+        dep_map.insert(
+            dep_name.clone(),
+            Dependency {
+                name: dep_name,
+                version: dep_version,
+                platforms: Vec::new(),
+            },
+        );
     }
+    // Platform-scoped sections, in PLATFORMS order (deterministic). The
+    // same dep may appear in several platform sections with the SAME spec
+    // (merged: active on all of them); anything else is E0869 — one
+    // package, one spec, because the package manager has no conflict
+    // resolver by design.
+    let sections: [(&str, Option<RawPlatformSection>); 7] = [
+        ("macos", raw.macos),
+        ("linux", raw.linux),
+        ("windows", raw.windows),
+        ("ios", raw.ios),
+        ("android", raw.android),
+        ("esp32", raw.esp32),
+        ("wasm", raw.wasm),
+    ];
+    for (platform, section) in sections {
+        let Some(section) = section else { continue };
+        for (dep_name, dep_version) in section.dependencies {
+            if !is_valid_dep_name(&dep_name) {
+                return Err(ManifestError::InvalidDependencyName {
+                    path: manifest_path.to_path_buf(),
+                    found: dep_name,
+                });
+            }
+            match dep_map.get_mut(&dep_name) {
+                None => {
+                    dep_map.insert(
+                        dep_name.clone(),
+                        Dependency {
+                            name: dep_name,
+                            version: dep_version,
+                            platforms: vec![platform.to_string()],
+                        },
+                    );
+                }
+                Some(existing) if existing.platforms.is_empty() => {
+                    return Err(ManifestError::ConflictingDependency {
+                        path: manifest_path.to_path_buf(),
+                        name: dep_name,
+                        message: format!(
+                            "is declared in `[dependencies]` (all platforms) and again in `[{platform}.dependencies]` — remove one"
+                        ),
+                    });
+                }
+                Some(existing) if existing.version != dep_version => {
+                    return Err(ManifestError::ConflictingDependency {
+                        path: manifest_path.to_path_buf(),
+                        name: dep_name,
+                        message: format!(
+                            "is declared with spec `{}` (for {}) and spec `{dep_version}` in `[{platform}.dependencies]` — platform sections may share a dep only with an identical spec",
+                            existing.version,
+                            existing.platforms.join(", "),
+                        ),
+                    });
+                }
+                Some(existing) => existing.platforms.push(platform.to_string()),
+            }
+        }
+    }
+    let dependencies: Vec<Dependency> = dep_map.into_values().collect();
 
     let realtime_profile = raw
         .profile
@@ -1229,6 +1359,159 @@ mod tests {
         "#;
         let m = parse_in(&std::env::temp_dir(), text).unwrap();
         assert_eq!(m.dependencies.len(), 2);
+    }
+
+    // ---- platform-scoped dependency sections ----
+
+    #[test]
+    fn platform_sections_parse_and_scope_deps() {
+        let text = r#"
+            [package]
+            name = "app"
+
+            [dependencies]
+            stdlib = "*"
+            facet  = "*"
+
+            [macos.dependencies]
+            facet_appkit = "*"
+            appkit       = "*"
+
+            [linux.dependencies]
+            facet_gtk = "*"
+        "#;
+        let m = parse_in(&std::env::temp_dir(), text).unwrap();
+        assert_eq!(m.dependencies.len(), 5);
+        let by_name = |n: &str| m.dependencies.iter().find(|d| d.name == n).unwrap();
+        assert!(by_name("stdlib").platforms.is_empty(), "base deps are platform-free");
+        assert_eq!(by_name("facet_appkit").platforms, vec!["macos".to_string()]);
+        assert_eq!(by_name("appkit").platforms, vec!["macos".to_string()]);
+        assert_eq!(by_name("facet_gtk").platforms, vec!["linux".to_string()]);
+        // active_on: base deps everywhere, scoped deps only on their platform.
+        assert!(by_name("stdlib").active_on("linux"));
+        assert!(by_name("facet_appkit").active_on("macos"));
+        assert!(!by_name("facet_appkit").active_on("linux"));
+        assert!(!by_name("facet_gtk").active_on("macos"));
+    }
+
+    #[test]
+    fn same_dep_in_two_platform_sections_merges_when_specs_match() {
+        // objc exists on both Apple platforms; one dep, two platforms.
+        let text = r#"
+            [package]
+            name = "app"
+
+            [macos.dependencies]
+            objc = "*"
+
+            [ios.dependencies]
+            objc = "*"
+        "#;
+        let m = parse_in(&std::env::temp_dir(), text).unwrap();
+        assert_eq!(m.dependencies.len(), 1);
+        let d = &m.dependencies[0];
+        assert_eq!(d.name, "objc");
+        assert_eq!(d.platforms, vec!["macos".to_string(), "ios".to_string()]);
+        assert!(d.active_on("macos") && d.active_on("ios") && !d.active_on("linux"));
+    }
+
+    #[test]
+    fn dep_in_base_and_platform_section_rejected_e0869() {
+        let text = r#"
+            [package]
+            name = "app"
+
+            [dependencies]
+            objc = "*"
+
+            [macos.dependencies]
+            objc = "*"
+        "#;
+        let err = parse_in(&std::env::temp_dir(), text).unwrap_err();
+        assert!(
+            matches!(err, ManifestError::ConflictingDependency { ref name, .. } if name == "objc"),
+            "expected ConflictingDependency, got: {err:?}"
+        );
+        assert_eq!(err.to_diagnostic().code, DiagCode("E0869"));
+    }
+
+    #[test]
+    fn same_dep_with_different_specs_across_sections_rejected_e0869() {
+        let text = r#"
+            [package]
+            name = "app"
+
+            [macos.dependencies]
+            objc = "https://github.com/netdur/cplus/tree/main/vendor/objc@0.0.26"
+
+            [ios.dependencies]
+            objc = "https://github.com/netdur/cplus/tree/main/vendor/objc@0.0.25"
+        "#;
+        let err = parse_in(&std::env::temp_dir(), text).unwrap_err();
+        assert!(
+            matches!(err, ManifestError::ConflictingDependency { .. }),
+            "two specs for one package must be rejected (no conflict resolver by design): {err:?}"
+        );
+        assert_eq!(err.to_diagnostic().code, DiagCode("E0869"));
+    }
+
+    #[test]
+    fn invalid_dep_name_in_platform_section_rejected_e0857() {
+        let text = r#"
+            [package]
+            name = "app"
+
+            [linux.dependencies]
+            "Gtk4" = "*"
+        "#;
+        let err = parse_in(&std::env::temp_dir(), text).unwrap_err();
+        assert!(
+            matches!(err, ManifestError::InvalidDependencyName { ref found, .. } if found == "Gtk4"),
+            "platform sections must apply the same name rule: {err:?}"
+        );
+    }
+
+    #[test]
+    fn unknown_platform_section_is_a_parse_error() {
+        // `[macbook.dependencies]` — not a platform. deny_unknown_fields
+        // turns it into a hard parse error, not a silently dead section.
+        let text = r#"
+            [package]
+            name = "app"
+
+            [macbook.dependencies]
+            facet_appkit = "*"
+        "#;
+        let err = parse_in(&std::env::temp_dir(), text).unwrap_err();
+        assert!(matches!(err, ManifestError::Parse { .. }), "got: {err:?}");
+    }
+
+    #[test]
+    fn platform_section_keys_other_than_dependencies_are_reserved() {
+        // `[macos.link]` is future work; today it must fail loudly rather
+        // than be ignored (a silently-dropped link table means missing
+        // frameworks at runtime, not build time).
+        let text = r#"
+            [package]
+            name = "app"
+
+            [macos.link]
+            frameworks = ["AppKit"]
+        "#;
+        let err = parse_in(&std::env::temp_dir(), text).unwrap_err();
+        assert!(matches!(err, ManifestError::Parse { .. }), "got: {err:?}");
+    }
+
+    #[test]
+    fn empty_platform_section_is_harmless() {
+        let text = r#"
+            [package]
+            name = "app"
+
+            [wasm]
+        "#;
+        let m = parse_in(&std::env::temp_dir(), text).unwrap();
+        assert!(m.dependencies.is_empty());
     }
 
     #[test]

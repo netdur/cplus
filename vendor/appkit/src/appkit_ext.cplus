@@ -435,9 +435,26 @@ fn attach_composer_delegate(tv: ak::TextView, on_change: fn(*u8, *u8), on_submit
 struct SplitCtx {
     min_first: f64,
     min_second: f64,
+    on_resize: fn(*u8),          // called after the panes re-lay (divider drag / resize)
+    opaque resize_user: *u8,     // passed back to on_resize (the split view ptr)
 }
 
 fn split_pin_key() -> *u8 { return { 28691 as *u8 }; }
+
+// Default resize hook: a split with no hosted panes (all leaf panes) does no
+// extra work when the divider moves — NSSplitView autoresizes leaf panes itself.
+fn split_noop_resize(user: *u8) { return; }
+
+// NSSplitViewDelegate splitViewDidResizeSubviews: — fires when the panes are
+// re-laid (initial sizing, window resize, divider drag). Forwards to the
+// registered hook so a multi-element pane can reflow its subtree to the pane's
+// new size. `notif` is the NSNotification (unused; the user ctx carries state).
+fn split_did_resize_imp(user: *u8, notif: *u8) {
+    let c: *SplitCtx = { user as *SplitCtx };
+    let f: fn(*u8) = { (*c).on_resize };
+    f({ (*c).resize_user });
+    return;
+}
 
 // The lowest coordinate divider 0 may take = the first pane's minimum extent.
 fn split_constrain_min_imp(user: *u8, sv: *u8, proposed: f64, divider: i64) -> f64 {
@@ -460,17 +477,61 @@ fn split_constrain_max_imp(user: *u8, sv: *u8, proposed: f64, divider: i64) -> f
 }
 
 // Enforce `min_first` / `min_second` on a two-pane split view (divider 0).
-fn attach_split_min_widths(sv: ak::SplitView, min_first: f64, min_second: f64) {
+// `on_resize` (with `resize_user`) is invoked on splitViewDidResizeSubviews:
+// so a caller hosting multi-element panes can reflow them to their new size;
+// leaf-only splits leave it at the default no-op.
+fn attach_split_min_widths(sv: ak::SplitView, min_first: f64, min_second: f64, on_resize: fn(*u8) = split_noop_resize, resize_user: *u8 = 0 as *u8) {
     let cbox: *SplitCtx = { malloc(#size_of::[SplitCtx]()) as *SplitCtx };
-    { *cbox = SplitCtx { min_first: min_first, min_second: min_second }; }
+    { *cbox = SplitCtx { min_first: min_first, min_second: min_second, on_resize: on_resize, resize_user: resize_user }; }
     var del: ak::SplitViewDelegate = ak::SplitViewDelegate_new(cbox as *u8);
     del.set_split_view_constrain_min_coordinate_of_subview_at(split_constrain_min_imp);
     del.set_split_view_constrain_max_coordinate_of_subview_at(split_constrain_max_imp);
+    del.set_split_view_did_resize_subviews(split_did_resize_imp);
     let dbox: *ak::SplitViewDelegate = { malloc(#size_of::[ak::SplitViewDelegate]()) as *ak::SplitViewDelegate };
     { *dbox = del; }
     let d: *u8 = ak::create_SplitViewDelegate(dbox);
     sv.set_delegate(d);
     synth::retain_associated(sv.raw(), split_pin_key(), d);
+    return;
+}
+
+// ==========================================================================
+// Frame-change observer — run a C+ hook after a view resizes
+// ==========================================================================
+// For content a view caches by its size and must recompute on resize — e.g. an
+// NSTableView's wrapped-text row heights, which go stale when the column width
+// changes. Registers on NSViewFrameDidChangeNotification; the observer object is
+// pinned to the view and lives exactly as long as it. `on_resize(ctx)` fires
+// after every frame change (guard on width yourself to skip height-only ones).
+
+fn frame_obs_handler_key() -> *u8 { return { 28697 as *u8 }; }
+fn frame_obs_ctx_key() -> *u8 { return { 28698 as *u8 }; }
+fn frame_obs_pin_key() -> *u8 { return { 28699 as *u8 }; }
+
+fn frame_obs_sel() -> *u8 { return rt::sel(#str_ptr("cplusFrameDidChange:\0")); }
+
+fn frame_obs_imp(self_obj: *u8, cmd: *u8, notif: *u8) {
+    let f: fn(*u8) = { synth::get_associated(self_obj, frame_obs_handler_key()) as fn(*u8) };
+    let ctx: *u8 = synth::get_associated(self_obj, frame_obs_ctx_key());
+    f(ctx);
+    return;
+}
+
+fn observe_frame_change(view: ak::View, on_resize: fn(*u8), ctx: *u8) {
+    let name: *u8 = #str_ptr("CplusExt_FrameObserver\0");
+    var cls: *u8 = rt::get_class(name);
+    if cls == { 0 as *u8 } {
+        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
+        let added: i8 = cplus_ext_add_action_method(cls, frame_obs_sel(), frame_obs_imp, #str_ptr("v@:@\0"));
+        synth::register_class_pair(cls);
+    }
+    let t: *u8 = synth::alloc_init_class(cls);
+    synth::set_associated(t, frame_obs_handler_key(), { on_resize as *u8 });
+    synth::set_associated(t, frame_obs_ctx_key(), ctx);
+    view.set_posts_frame_changed_notifications(true);
+    let nc: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSNotificationCenter\0")), rt::sel(#str_ptr("defaultCenter\0")));
+    rt::msg_void_id_id_id_id(nc, rt::sel(#str_ptr("addObserver:selector:name:object:\0")), t, frame_obs_sel(), bridge::nsstring("NSViewFrameDidChangeNotification"), view.raw());
+    synth::retain_associated(view.raw(), frame_obs_pin_key(), t);
     return;
 }
 

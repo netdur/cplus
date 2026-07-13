@@ -21,3 +21,5 @@ a.out
 # Local clippy scratch output
 /cplus-core/clippy.json
 /cplus-core/clippy_output.txt
+
+examples

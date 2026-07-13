@@ -139,6 +139,21 @@ pub enum ResolveError {
         requested: String,
         target_name: &'static str,
     },
+    /// (E0866, platform-deps flavor): the import names a package the
+    /// manifest declares only for OTHER platforms via
+    /// `[<platform>.dependencies]`. Same family as `TargetGatedModule` —
+    /// "this import doesn't exist where you're building" — but the gate is
+    /// the consumer's own manifest, so the fix-notes differ.
+    PlatformGatedPackage {
+        importing_file: PathBuf,
+        import_span: Span,
+        requested: String,
+        package: String,
+        /// Comma-joined platform list the dep was declared for.
+        platforms: String,
+        /// The active platform the build is for.
+        active: &'static str,
+    },
     /// Phase 2: a vendor import contains a `..` segment that would
     /// escape `vendor/<pkg>/src/`. Security: a package can't reach
     /// outside its own directory via static imports.
@@ -288,6 +303,20 @@ impl std::fmt::Display for ResolveError {
                 write!(
                     f,
                     "[E0866] {}: import `{requested}` is not available on target `{target_name}` (excluded from this target's package profile)",
+                    importing_file.display(),
+                )
+            }
+            ResolveError::PlatformGatedPackage {
+                importing_file,
+                requested,
+                package,
+                platforms,
+                active,
+                ..
+            } => {
+                write!(
+                    f,
+                    "[E0866] {}: import `{requested}` is not available on platform `{active}` — `Cplus.toml` declares `{package}` for `{platforms}` only",
                     importing_file.display(),
                 )
             }
@@ -480,6 +509,7 @@ impl LoadFailure {
             ResolveError::UnknownPackage { importing_file, .. } => Some(importing_file),
             ResolveError::BareImport { importing_file, .. } => Some(importing_file),
             ResolveError::TargetGatedModule { importing_file, .. } => Some(importing_file),
+            ResolveError::PlatformGatedPackage { importing_file, .. } => Some(importing_file),
             ResolveError::StaleExtension { importing_file, .. } => Some(importing_file),
             ResolveError::VendorEscape { importing_file, .. } => Some(importing_file),
             ResolveError::RelativeEscape { importing_file, .. } => Some(importing_file),
@@ -721,6 +751,26 @@ impl LoadFailure {
                 (
                     "E0866",
                     format!("import `{requested}` is not available on target `{target_name}`"),
+                    span_in(importing_file, *import_span),
+                )
+            }
+            ResolveError::PlatformGatedPackage {
+                importing_file,
+                import_span,
+                requested,
+                package,
+                platforms,
+                active,
+            } => {
+                notes.push(format!(
+                    "`Cplus.toml` declares `{package}` for `{platforms}` only — the current build is for `{active}`"
+                ));
+                notes.push(format!(
+                    "confine the import to a platform-specific module (a `<name>_<platform>.cplus` sibling shadows `<name>.cplus` on that platform), or declare `{package}` for `{active}` too"
+                ));
+                (
+                    "E0866",
+                    format!("import `{requested}` is not available on platform `{active}`"),
                     span_in(importing_file, *import_span),
                 )
             }
@@ -1140,6 +1190,19 @@ fn classify_import_path(
     }
 
     if !deps.contains(first) {
+        // Declared, but only for other platforms (`[<platform>.dependencies]`)?
+        // Report the platform gate, not "not a declared dependency" — the
+        // dep IS declared; it just doesn't exist where this build is going.
+        if let Some(platforms) = crate::target::platform_gated_dep(first) {
+            return Err(ResolveError::PlatformGatedPackage {
+                importing_file: importing_canonical.to_path_buf(),
+                import_span: span,
+                requested: path_str.to_string(),
+                package: first.to_string(),
+                platforms,
+                active: crate::target::active_platform(),
+            });
+        }
         return Err(if rest.is_empty() {
             ResolveError::BareImport {
                 importing_file: importing_canonical.to_path_buf(),
@@ -1273,27 +1336,26 @@ fn relative_import_escapes_root(import_dir: &Path, rel: &str, manifest_root: &Pa
     !resolved.starts_with(&root)
 }
 
-/// Platform-specific source override. Some stdlib modules have an
-/// OS-specific implementation that can't share one source file (e.g. the
-/// async reactor: kqueue on macOS, epoll on Linux, and C+ has no in-source
-/// `cfg`). Convention: a sibling `<name>_<os>.cplus` next to `<name>.cplus`
-/// shadows the base file on that OS. When present for the current target,
-/// it is loaded in place of the base — transparently, since these modules
-/// export the same public symbols. Today only Linux uses this (`_linux`),
-/// but the mechanism generalizes to any `cfg!(target_os)`.
+/// Platform-specific source override. Some modules have an OS-specific
+/// implementation that can't share one source file (e.g. the async reactor:
+/// kqueue on macOS, epoll on Linux, and C+ has no in-source `cfg`).
+/// Convention: a sibling `<name>_<platform>.cplus` next to `<name>.cplus`
+/// shadows the base file on that platform. When present for the current
+/// target, it is loaded in place of the base — transparently, since these
+/// modules export the same public symbols.
+///
+/// The suffix comes from `target::active_platform()` — the SELECTED target's
+/// platform, not the compiler host's OS — so a `--target ios-arm64` build
+/// from a Mac looks for `_ios` files, never `_macos` ones. (Pre-platform-deps
+/// this keyed off `cfg!(target_os)`, which conflated host and target.) The
+/// platform names are the same vocabulary `[<platform>.dependencies]` uses.
 fn platform_override(p: PathBuf) -> PathBuf {
-    let os_suffix = if cfg!(target_os = "linux") {
-        "_linux"
-    } else if cfg!(target_os = "windows") {
-        "_windows"
-    } else {
-        return p;
-    };
+    let os_suffix = format!("_{}", crate::target::active_platform());
     // Only base `.cplus` files participate; never double-suffix.
     let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else {
         return p;
     };
-    if stem.ends_with(os_suffix) {
+    if stem.ends_with(os_suffix.as_str()) {
         return p;
     }
     let candidate = p.with_file_name(format!("{stem}{os_suffix}.cplus"));

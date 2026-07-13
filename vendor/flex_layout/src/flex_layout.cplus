@@ -158,6 +158,7 @@ struct Style {
     flex_wrap: Wrap,
     overflow: Overflow,
     display: Display,
+    z_index: i32,               // paint/stacking order (higher = on top); layout-neutral
     box_sizing: BoxSizing,
 
     flex_grow: f64,
@@ -226,6 +227,7 @@ impl Style {
             flex_wrap: Wrap::NoWrap,
             overflow: Overflow::Visible,
             display: Display::Flex,
+            z_index: 0 as i32,
             box_sizing: BoxSizing::BorderBox,
             flex_grow: 0.0f64,
             flex_shrink: 0.0f64,
@@ -477,6 +479,7 @@ impl Node {
     }
     fn set_position_type(ref this, v: PositionType) { this.style.position_type = v; return; }
     fn set_display(ref this, v: Display) { this.style.display = v; return; }
+    fn set_z_index(ref this, v: i32) { this.style.z_index = v; return; }
     fn set_box_sizing(ref this, v: BoxSizing) { this.style.box_sizing = v; return; }
 
     fn set_flex_grow(ref this, v: f64) { this.style.flex_grow = v; return; }
@@ -574,6 +577,7 @@ impl Node {
     // ---- style read-back (for adapters: e.g. overflow -> NSView.clipsToBounds) ----
     fn overflow(this) -> Overflow { return this.style.overflow; }
     fn display(this) -> Display { return this.style.display; }
+    fn z_index(this) -> i32 { return this.style.z_index; }
     fn position_type(this) -> PositionType { return this.style.position_type; }
 
     // Copy of a direct child's computed frame (None if out of range). Frames are

@@ -693,6 +693,8 @@ extern fn objc_msg_void_id_i64_i64(recv: *u8, sel: *u8, a: *u8, b: i64, c: i64);
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_void_id_f64(recv: *u8, sel: *u8, a: *u8, b: f64);
 #[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_id_f64(recv: *u8, sel: *u8, a: *u8, b: *u8, c: f64);
+#[link_name = "objc_msgSend"]
 extern fn objc_msg_void_f32_f32(recv: *u8, sel: *u8, a: f32, b: f32);
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_id_id_rect_id_id(recv: *u8, sel: *u8, a: *u8, b: Rect, c: *u8, d: *u8) -> *u8;
@@ -824,6 +826,9 @@ fn msg_void_id_i64_i64(recv: *u8, selector: *u8, a: *u8, b: i64, c: i64) {
 }
 fn msg_void_id_f64(recv: *u8, selector: *u8, a: *u8, b: f64) {
     { objc_msg_void_id_f64(recv, selector, a, b); };
+}
+fn msg_void_id_id_f64(recv: *u8, selector: *u8, a: *u8, b: *u8, c: f64) {
+    { objc_msg_void_id_id_f64(recv, selector, a, b, c); };
 }
 fn msg_void_f32_f32(recv: *u8, selector: *u8, a: f32, b: f32) {
     { objc_msg_void_f32_f32(recv, selector, a, b); };

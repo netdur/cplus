@@ -64,7 +64,7 @@ fn render(content_ptr: *u8) {
     for i in 0..(cnt as i32) {
         match subs.at_ptr(i as usize) {
             option::Option[*ak::View]::Some(sp) => { { (*sp).remove_from_superview(); } }
-            option::Option[*ak::View]::None => { }
+            option::Option[*ak::View]::None => {}
         }
     }
     var root: facet::Node = view();

@@ -84,6 +84,41 @@ fn walk_classifies_and_exposes_only_tagged() {
 }
 
 #[test]
+fn open_walks_titlebar_accessory_controls() {
+    // #13: title-bar accessory views (fak::install_titlebar) are siblings of the
+    // contentView under NSThemeFrame; open() must reach them so a tagged control
+    // there stays agent-addressable (regressed when #12 moved iris's toolbar
+    // into the title bar). Attach the accessory raw — the library owns no appkit.
+    let win = fixture_window(400.0f64, 300.0f64);
+    let acc_view = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 30.0 });
+    let tb = add_button(acc_view, "run");
+    agent::set_agent_id(tb.as_view().raw(), "run-toggle");
+    let vc_ptr: *u8 = rt::alloc_init(#str_ptr("NSTitlebarAccessoryViewController\0"));
+    rt::msg_void_id(vc_ptr, rt::sel(#str_ptr("setView:\0")), acc_view.raw());
+    rt::msg_void_id(win.raw(), rt::sel(#str_ptr("addTitlebarAccessoryViewController:\0")), vc_ptr);
+
+    var s: agent::Surface = agent::open(win.raw());
+    let nodes: vec::Vec[agent::AppKitNode] = s.describe();
+    var found: bool = false;
+    var i: usize = 0 as usize;
+    while i < nodes.count() {
+        match nodes.at_ptr(i) {
+            option::Option[*agent::AppKitNode]::Some(n) => {
+                if { (*n).id.view() } == "run-toggle" {
+                    found = true;
+                    assert identity::role_eq({ (*n).role }, identity::Role::Button);
+                    assert { (*n).actionable };
+                }
+            }
+            option::Option[*agent::AppKitNode]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    assert found;   // the accessory's control was NOT reached before the fix
+    return;
+}
+
+#[test]
 fn click_gates_by_exposure_and_id() {
     CLICKS = 0;
     let win = fixture_window(300.0f64, 200.0f64);
