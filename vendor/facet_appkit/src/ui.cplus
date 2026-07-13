@@ -850,11 +850,22 @@ fn set_area_text(view_ptr: *u8, value: str) {
 
 // ==========================================================================
 // File tree — NSOutlineView over an in-memory directory model. The model nodes
-// are heap-boxed at STABLE addresses (NSOutlineView caches and re-passes item
-// pointers by identity) and leaked (they live with the tree). The data source
-// and selection delegate are weak properties, so they are pinned to the outline
-// view; both use the already-generated OutlineViewDataSource / OutlineViewDelegate.
-// The model is built eagerly from the directory on construction.
+// are heap-boxed at STABLE addresses and leaked (they live with the tree). The
+// data source and selection delegate are weak properties, so they are pinned to
+// the outline view; both use the already-generated OutlineViewDataSource /
+// OutlineViewDelegate. The model is built eagerly from the directory on
+// construction.
+//
+// IMPORTANT: NSOutlineView treats its items as Objective-C OBJECTS, not just
+// stable pointers — on a key-state change it walks the visible rows and inserts
+// each item into an internal NSMapTable with object semantics, MESSAGING the
+// item (probeGC/retain/hash/isEqual:). A raw `*TreeNode` satisfies "stable
+// identity" yet crashes the instant the outline messages it (its first word is
+// the label's `char*`, read as an `isa` → objc_msgSend on garbage). So every
+// node carries a cached objc wrapper (an NSValue over the node pointer, created
+// ONCE and retained for app-lifetime), and THAT is the item handed to / accepted
+// from NSOutlineView; the `*TreeNode` stays the payload behind it. One wrapper
+// per node, reused, so identity is preserved and every item is a valid object.
 // ==========================================================================
 
 extern fn malloc(n: usize) -> *u8;
@@ -864,6 +875,7 @@ struct TreeNode {
     path: text::Text,                     // full path (for on_select)
     is_dir: bool,
     children: vec::Vec[*TreeNode],        // stable boxed child pointers
+    opaque item: *u8,                    // cached objc wrapper (NSValue over this node; app-lifetime, leaked)
 }
 
 struct TreeSelCtx {
@@ -873,6 +885,26 @@ struct TreeSelCtx {
 
 fn tree_ds_pin_key() -> *u8 { return { 28692 as *u8 }; }
 fn tree_del_pin_key() -> *u8 { return { 28693 as *u8 }; }
+
+// The objc wrapper for a node: `+[NSValue valueWithPointer:]` boxes the raw
+// `*TreeNode` in a real Foundation object whose `-isEqual:`/`-hash` are BY the
+// wrapped pointer — exactly the identity NSOutlineView caches by, and safe to
+// message (probeGC/retain/hash) the way the outline does. It comes back
+// autoreleased, so we retain it for app-lifetime (the node is leaked too). Call
+// once per node at construction and stash on `TreeNode.item`.
+fn tree_wrap_node(node: *TreeNode) -> *u8 {
+    let cls: *u8 = rt::get_class(#str_ptr("NSValue\0"));
+    let v: *u8 = rt::msg_id_id(cls, rt::sel(#str_ptr("valueWithPointer:\0")), node as *u8);
+    return rt::retain(v);
+}
+
+// Recover the `*TreeNode` behind a wrapper item (nil-safe: nil → null node).
+// `item` is always a wrapper handed back by NSOutlineView (or by `tree_child_imp`
+// / `on_select`), never a raw node pointer.
+fn tree_unwrap(item: *u8) -> *TreeNode {
+    if item == { 0 as *u8 } { return { 0 as *TreeNode }; }
+    return { rt::msg_id(item, rt::sel(#str_ptr("pointerValue\0"))) as *TreeNode };
+}
 
 // Box a node on the heap (leaked; app-lifetime). Reading `read_dir` decides
 // dir-vs-file: a path that opens as a directory recurses, anything else is a leaf.
@@ -899,14 +931,18 @@ fn build_tree(path: str, label: str) -> *TreeNode {
         option::Option[vec::Vec[text::Text]]::None => { isdir = false; }
     }
     let node: *TreeNode = { malloc(#size_of::[TreeNode]()) as *TreeNode };
-    { *node = TreeNode { label: text::from_str(label), path: text::from_str(path), is_dir: isdir, children: kids }; }
+    { *node = TreeNode { label: text::from_str(label), path: text::from_str(path), is_dir: isdir, children: kids, item: 0 as *u8 }; }
+    { (*node).item = tree_wrap_node(node); }
     return node;
 }
 
-// The full path of a tree item (the `on_select` payload). Returns "" for null.
-fn tree_node_path(node_ptr: *u8) -> text::Text {
-    if node_ptr == { 0 as *u8 } { return text::from_str(""); }
-    let n: *TreeNode = { node_ptr as *TreeNode };
+// The full path of a tree item (the `on_select` payload). `item` is the opaque
+// wrapper NSOutlineView / `on_select` hands back; unwrap it to the node. Returns
+// "" for a null or unwrappable item.
+fn tree_node_path(item: *u8) -> text::Text {
+    if item == { 0 as *u8 } { return text::from_str(""); }
+    let n: *TreeNode = tree_unwrap(item);
+    if { n as *u8 } == { 0 as *u8 } { return text::from_str(""); }
     return text::from_str({ (*n).path }.view());
 }
 
@@ -916,8 +952,10 @@ fn tree_node_path(node_ptr: *u8) -> text::Text {
 // lazily). `file_tree(path)` below is just the eager convenience that walks the
 // whole directory for you; when you need control, build the model here instead.
 //
-// Nodes are heap-boxed and leaked on purpose: NSOutlineView caches and re-passes
-// item pointers by identity, so they must outlive the widget (app-lifetime).
+// Nodes are heap-boxed and leaked on purpose: NSOutlineView caches its items and
+// MESSAGES them (they must be objc objects, not just stable pointers), so each
+// node is given a retained objc wrapper at construction and outlives the widget
+// (app-lifetime). See the module header above for why a raw pointer crashes.
 
 // A new node. `is_dir` gives it a disclosure triangle (an expandable branch)
 // even before it has children — set it true for a directory you fill lazily.
@@ -925,7 +963,8 @@ fn tree_node_path(node_ptr: *u8) -> text::Text {
 // (recover it with `tree_node_path`). Add children with `tree_add_child`.
 fn tree_node(label: str, path: str, is_dir: bool) -> *TreeNode {
     let node: *TreeNode = { malloc(#size_of::[TreeNode]()) as *TreeNode };
-    { *node = TreeNode { label: text::from_str(label), path: text::from_str(path), is_dir: is_dir, children: vec::new::[*TreeNode]() }; }
+    { *node = TreeNode { label: text::from_str(label), path: text::from_str(path), is_dir: is_dir, children: vec::new::[*TreeNode](), item: 0 as *u8 }; }
+    { (*node).item = tree_wrap_node(node); }
     return node;
 }
 
@@ -937,27 +976,30 @@ fn tree_add_child(parent: *TreeNode, child: *TreeNode) {
     return;
 }
 
-// --- data source trampolines (item == nil means the implicit root) ---
+// --- data source trampolines. `item == nil` means the implicit root (whose node
+// is the data source's user data). Every non-nil `item` is a wrapper object, so
+// recover the node with `tree_unwrap`; `tree_child_imp` returns the child's
+// wrapper, never a raw pointer. ---
 fn tree_num_children_imp(user: *u8, ov: *u8, item: *u8) -> i64 {
-    let node: *TreeNode = if item == { 0 as *u8 } { user as *TreeNode } else { item as *TreeNode };
+    let node: *TreeNode = if item == { 0 as *u8 } { user as *TreeNode } else { tree_unwrap(item) };
     return { (*node).children }.count() as i64;
 }
 fn tree_child_imp(user: *u8, ov: *u8, index: i64, item: *u8) -> *u8 {
-    let node: *TreeNode = if item == { 0 as *u8 } { user as *TreeNode } else { item as *TreeNode };
+    let node: *TreeNode = if item == { 0 as *u8 } { user as *TreeNode } else { tree_unwrap(item) };
     match { (*node).children }.at_ptr(index as usize) {
-        option::Option[**TreeNode]::Some(cpp) => { let child: *TreeNode = { *cpp }; return child as *u8; }
+        option::Option[**TreeNode]::Some(cpp) => { let child: *TreeNode = { *cpp }; return { (*child).item }; }
         option::Option[**TreeNode]::None => { }
     }
     return 0 as *u8;
 }
 fn tree_expandable_imp(user: *u8, ov: *u8, item: *u8) -> i8 {
     if item == { 0 as *u8 } { return 1 as i8; }
-    if { (*(item as *TreeNode)).is_dir } { return 1 as i8; }
+    if { (*tree_unwrap(item)).is_dir } { return 1 as i8; }
     return 0 as i8;
 }
 fn tree_object_value_imp(user: *u8, ov: *u8, col: *u8, item: *u8) -> *u8 {
     if item == { 0 as *u8 } { return 0 as *u8; }
-    let n: *TreeNode = { item as *TreeNode };
+    let n: *TreeNode = tree_unwrap(item);
     return bridge::nsstring({ (*n).label }.view());
 }
 
@@ -3025,15 +3067,91 @@ fn tree_builder_adds_children_and_mounts() {
     tree_add_child(root, tree_node("sub", "/proj/sub", true));
     // append-through-pointer must actually mutate the node (item == nil ⇒ root).
     assert tree_num_children_imp(root as *u8, 0 as *u8, 0 as *u8) == (2 as i64);
-    // child 0 is the leaf; its opaque item pointer round-trips to the path.
+    // child 0 is the leaf; its opaque item (a wrapper object) round-trips to the path.
     let c0: *u8 = tree_child_imp(root as *u8, 0 as *u8, 0 as i64, 0 as *u8);
     assert tree_node_path(c0).equals("/proj/a.cplus");
-    // a branch is expandable, a leaf is not.
-    assert tree_expandable_imp(0 as *u8, 0 as *u8, root as *u8) == (1 as i8);
+    // a branch is expandable, a leaf is not — items are wrappers, so unwrap-safe.
+    assert tree_expandable_imp(0 as *u8, 0 as *u8, { (*root).item }) == (1 as i8);
     assert tree_expandable_imp(0 as *u8, 0 as *u8, c0) == (0 as i8);
     // mounting a caller-built tree yields a real backing view.
     let n: flex::Node = tree(root, agent_id: "proj-tree");
     assert n.payload() != (0 as *u8);
+    return;
+}
+
+// Regression (bug 2026-07-13): NSOutlineView MESSAGES its items on a key-state
+// change, so an item MUST be an objc object — a raw `*TreeNode` faults the moment
+// the outline reads its "isa". This pins down that the item crossing the outline
+// boundary is a real, STABLE wrapper object that unwraps back to the node.
+#[test]
+fn tree_items_are_stable_objc_wrappers() {
+    let root: *TreeNode = tree_node("proj", "/proj", true);
+    let leaf: *TreeNode = tree_node("a.cplus", "/proj/a.cplus", false);
+    tree_add_child(root, leaf);
+
+    // The item handed to / returned from the outline is the wrapper, NOT the raw
+    // node pointer (whose first word is a `char*`, fatal to message).
+    let it0: *u8 = tree_child_imp(root as *u8, 0 as *u8, 0 as i64, 0 as *u8);
+    assert it0 != (0 as *u8);
+    assert it0 != { leaf as *u8 };
+    assert it0 == { (*leaf).item };
+
+    // One wrapper per node, reused: identical pointer every call (the identity
+    // NSOutlineView caches its items by).
+    let it1: *u8 = tree_child_imp(root as *u8, 0 as *u8, 0 as i64, 0 as *u8);
+    assert it0 == it1;
+
+    // It is a genuine objc object — safe to message (this IS the crashing path):
+    // it answers -isKindOfClass:NSValue and unwraps back to the node's path.
+    let nsvalue_cls: *u8 = rt::get_class(#str_ptr("NSValue\0"));
+    assert rt::msg_i8_id(it0, rt::sel(#str_ptr("isKindOfClass:\0")), nsvalue_cls) != (0 as i8);
+    assert { tree_unwrap(it0) as *u8 } == { leaf as *u8 };
+    assert tree_node_path(it0).equals("/proj/a.cplus");
+    return;
+}
+
+// The live reproduction of the crash, headless. Mount a real NSOutlineView via
+// `tree(...)`, then drive the EXACT path the crash stack shows: `reloadData` →
+// `numberOfRows` → `itemAtRow:`. `itemAtRow:` runs `loadItemEntryLazyInfoIfNecessary`,
+// which inserts each visible item into an internal map with object semantics —
+// MESSAGING it (probeGC/retain/hash). With raw `*TreeNode` items this faults on
+// the first row (its label `char*` read as an isa); with wrappers it is safe. We
+// then message every item ourselves (as `_dirtyVisibleCellsForKeyStateChange`
+// does on activation) to be doubly sure. No window/run-loop needed — expanding
+// and counting rows forces the lazy item map that carried the fault.
+#[test]
+fn tree_live_outline_itematrow_messages_items_safely() {
+    let root: *TreeNode = tree_node("proj", "/proj", true);
+    tree_add_child(root, tree_node("a.cplus", "/proj/a.cplus", false));
+    tree_add_child(root, tree_node("b.cplus", "/proj/b.cplus", false));
+    let sub: *TreeNode = tree_node("sub", "/proj/sub", true);
+    tree_add_child(sub, tree_node("c.cplus", "/proj/sub/c.cplus", false));
+    tree_add_child(root, sub);
+
+    let n: flex::Node = tree(root, agent_id: "live-tree");
+    // node payload is the scroll view; its documentView is the NSOutlineView.
+    let ov: *u8 = { rt::msg_id(n.payload(), rt::sel(#str_ptr("documentView\0"))) };
+    assert ov != (0 as *u8);
+
+    // Load rows, then expand the whole tree (nil + expandChildren:YES), forcing
+    // the lazy row/item map that carried the fault.
+    { rt::msg_void(ov, rt::sel(#str_ptr("reloadData\0"))); }
+    rt::msg_void_id_i8(ov, rt::sel(#str_ptr("expandItem:expandChildren:\0")), 0 as *u8, 1 as i8);
+    let rows: i64 = { rt::msg_i64(ov, rt::sel(#str_ptr("numberOfRows\0"))) };
+    assert rows > (0 as i64);   // top-level rows are populated headlessly
+
+    // Message every visible item, exactly as the key-state walk does. If any item
+    // were a raw pointer, `itemAtRow:` above would already have faulted.
+    let nsvalue_cls: *u8 = rt::get_class(#str_ptr("NSValue\0"));
+    var r: i64 = 0 as i64;
+    while r < rows {
+        let it: *u8 = { rt::msg_id_i64(ov, rt::sel(#str_ptr("itemAtRow:\0")), r) };
+        assert it != (0 as *u8);
+        assert rt::msg_i8_id(it, rt::sel(#str_ptr("isKindOfClass:\0")), nsvalue_cls) != (0 as i8);
+        assert { tree_unwrap(it) as *u8 } != (0 as *u8);              // recovers a node
+        assert tree_node_path(it).count() > (0 as usize);            // node has a path
+        r = r +% (1 as i64);
+    }
     return;
 }
 
