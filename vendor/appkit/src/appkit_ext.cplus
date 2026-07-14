@@ -739,12 +739,53 @@ fn wd_mousedown_imp(self_obj: *u8, cmd: *u8, event: *u8) {
     return;
 }
 
+// hitTest: routes bare regions to the drag view (so a press there starts the
+// window drag) while letting INTERACTIVE content keep its clicks. AppKit's
+// synthesized container backing views are hit-testable everywhere, so without
+// this a filled toolbar's container would swallow every bare-region press and
+// the drag surface below it would never see a mouseDown. We reclaim those: run
+// the normal hit-test, then walk from the hit view up to self — if anything on
+// that path is interactive (an NSControl, or a view carrying gesture recognizers
+// like a facet `clickable`), return it untouched; otherwise the press landed on
+// passive chrome, so return self and drag. This is why the window need NOT be
+// movableByWindowBackground (which would instead swallow clicks on real controls).
+fn wd_is_interactive(v: *u8) -> bool {
+    if rt::msg_i8_id(v, rt::sel(#str_ptr("isKindOfClass:\0")), rt::get_class(#str_ptr("NSControl\0"))) != (0 as i8) {
+        return true;
+    }
+    let grs: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("gestureRecognizers\0"))) };
+    if grs != { 0 as *u8 } {
+        if rt::msg_u64(grs, rt::sel(#str_ptr("count\0"))) > (0 as u64) { return true; }
+    }
+    return false;
+}
+
+#[link_name = "objc_msgSendSuper"]
+extern fn msg_super_id_point(sup: *ObjcSuper, sel: *u8, p: rt::Point) -> *u8;
+
+fn wd_hittest_imp(self_obj: *u8, cmd: *u8, p: rt::Point) -> *u8 {
+    var sup: ObjcSuper = ObjcSuper { receiver: self_obj, super_class: rt::get_class(#str_ptr("NSView\0")) };
+    let hit: *u8 = { msg_super_id_point(#addr_of(sup), rt::sel(#str_ptr("hitTest:\0")), p) };
+    if hit == { 0 as *u8 } { return 0 as *u8; }
+    if hit == self_obj { return self_obj; }
+    var v: *u8 = hit;
+    while v != { 0 as *u8 } && v != self_obj {
+        if wd_is_interactive(v) { return hit; }
+        v = { rt::msg_id(v, rt::sel(#str_ptr("superview\0"))) };
+    }
+    return self_obj;   // passive region → the drag view handles the press
+}
+
+#[link_name = "class_addMethod"]
+extern fn wd_add_hittest(cls: *u8, sel: *u8, imp: fn(*u8, *u8, rt::Point) -> *u8, types: *u8) -> i8;
+
 fn window_drag_view_class() -> *u8 {
     let name: *u8 = #str_ptr("CplusExtWindowDragView\0");
     var cls: *u8 = rt::get_class(name);
     if cls == { 0 as *u8 } {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSView\0")), name, 0 as usize);
         let a: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("mouseDown:\0")), wd_mousedown_imp, #str_ptr("v@:@\0"));
+        let b: i8 = wd_add_hittest(cls, rt::sel(#str_ptr("hitTest:\0")), wd_hittest_imp, #str_ptr("@@:{CGPoint=dd}\0"));
         synth::register_class_pair(cls);
     }
     return cls;

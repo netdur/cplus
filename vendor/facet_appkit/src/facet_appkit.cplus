@@ -1363,23 +1363,23 @@ fn make_shell_window(title: str, width: f64, height: f64, clean_titlebar: bool, 
     if native_buttons {
         // Keep ALL THREE standard buttons VISIBLE under a full-size, hidden-title
         // chrome; a window_buttons() node re-parents them into the content toolbar
-        // (native zoom toggle + green hover/tiling menu preserved). Background
-        // drag stays on for the toolbar's bare regions.
+        // (native zoom toggle + green hover/tiling menu preserved). Dragging comes
+        // from an explicit window_drag() surface (its hitTest claims bare regions
+        // while real controls keep their clicks) — NOT movableByWindowBackground,
+        // which swallows a static click on the re-parented buttons as a
+        // no-movement window drag.
         win.set_titlebar_appears_transparent(true);
         win.set_title_visibility(ak::WindowTitleVisibility::NSWindowTitleHidden);
-        win.set_movable_by_window_background(true);
     } else if custom_chrome {
         win.set_titlebar_appears_transparent(true);
         win.set_title_visibility(ak::WindowTitleVisibility::NSWindowTitleHidden);
         hide_window_button(win, ak::WindowButton::NSWindowCloseButton);
         hide_window_button(win, ak::WindowButton::NSWindowMiniaturizeButton);
         hide_window_button(win, ak::WindowButton::NSWindowZoomButton);
-        // The app draws its own titlebar row: make the window background drag it
-        // (dead areas of the custom bar move the window; controls don't) and honor
-        // the native double-click title-bar action — the behavior a real titlebar
-        // has. A `window_drag` surface can still be layered on for an explicit,
-        // always-zoom strip where the app wants one.
-        win.set_movable_by_window_background(true);
+        // Dragging comes from the app's window_drag() surface (its hitTest drags
+        // bare regions and lets the app's own controls keep their clicks), NOT
+        // movableByWindowBackground — that swallows clicks on those custom
+        // controls exactly as it did the native buttons.
     } else if clean_titlebar {
         win.set_titlebar_appears_transparent(true);
         win.set_title_visibility(ak::WindowTitleVisibility::NSWindowTitleHidden);
@@ -3934,9 +3934,10 @@ fn custom_chrome_hides_all_standard_window_buttons() {
     assert button_is_hidden(win, ak::WindowButton::NSWindowZoomButton);
     // full-size content (borderless look) is on, exactly like clean_titlebar
     assert (win.style_mask() & ak::window_style_mask_full_size_content_view) != (0 as u64);
-    // the background drags the window (the custom bar's dead areas move it)
-    assert win.is_movable_by_window_background();
-    // a plain window keeps its native close button visible and is not bg-draggable
+    // NOT movableByWindowBackground: that would swallow clicks on the app's own
+    // controls; dragging is the job of an explicit window_drag() surface.
+    assert win.is_movable_by_window_background() == false;
+    // a plain window keeps its native close button visible
     let plain: ak::Window = make_shell_window("t", 400.0f64, 300.0f64, false);
     assert button_is_hidden(plain, ak::WindowButton::NSWindowCloseButton) == false;
     assert plain.is_movable_by_window_background() == false;
@@ -3969,7 +3970,9 @@ fn native_buttons_mode_keeps_standard_buttons_visible() {
     assert button_is_hidden(win, ak::WindowButton::NSWindowMiniaturizeButton) == false;
     assert button_is_hidden(win, ak::WindowButton::NSWindowZoomButton) == false;
     assert (win.style_mask() & ak::window_style_mask_full_size_content_view) != (0 as u64);
-    assert win.is_movable_by_window_background();
+    // NOT movableByWindowBackground: it would swallow static clicks on the
+    // re-parented traffic lights; dragging is window_drag()'s job.
+    assert win.is_movable_by_window_background() == false;
     match win.title_visibility() {
         ak::WindowTitleVisibility::NSWindowTitleHidden => { }
         _ => { assert false; }
@@ -4016,6 +4019,35 @@ fn window_buttons_view_reparents_the_native_buttons() {
         }
         option::Option[ak::Button]::None => { assert false; }
     }
+    return;
+}
+
+#[test]
+fn window_drag_hittest_drags_bare_regions_but_not_controls() {
+    // The drag surface hosts two children: a passive filler view (left) and an
+    // NSControl (right). A press over the filler returns the drag view (so the
+    // window drag starts); a press over the control returns the control (so it
+    // clicks). This is what lets window_drag coexist with real toolbar controls
+    // without movableByWindowBackground.
+    let dv: ak::View = akx::new_window_drag_view(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 40.0 });
+    let filler: ak::View = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 90.0, h: 40.0 });
+    dv.add_subview(filler);
+    let btn: ak::Button = ak::Button::new_with_frame(rt::Rect { x: 120.0, y: 8.0, w: 40.0, h: 24.0 });
+    dv.add_subview(btn.as_view());
+    // A facet `clickable` is NOT an NSControl — it's a plain view carrying a click
+    // gesture recognizer. It must pass through too (else clicking it would drag).
+    let clk: ak::View = akx::new_clickable_view(rt::Rect { x: 60.0, y: 0.0, w: 30.0, h: 40.0 });
+    akx::add_click_gesture(clk, td_toolbar_click, 0 as *u8, 1 as i64, akx::primary_button_mask());
+    dv.add_subview(clk);
+
+    // hitTest point is in the drag view's superview space; dv sits at origin 0,0
+    // (no superview), so points map straight through.
+    let hit_bare: *u8 = { rt::msg_id_point(dv.raw(), rt::sel(#str_ptr("hitTest:\0")), rt::Point { x: 20.0, y: 20.0 }) };
+    assert hit_bare == dv.raw();                                   // passive → drag
+    let hit_ctrl: *u8 = { rt::msg_id_point(dv.raw(), rt::sel(#str_ptr("hitTest:\0")), rt::Point { x: 135.0, y: 20.0 }) };
+    assert hit_ctrl == btn.as_view().raw();                        // NSControl → clicks
+    let hit_clk: *u8 = { rt::msg_id_point(dv.raw(), rt::sel(#str_ptr("hitTest:\0")), rt::Point { x: 72.0, y: 20.0 }) };
+    assert hit_clk == clk.raw();                                   // gesture view → clicks
     return;
 }
 
