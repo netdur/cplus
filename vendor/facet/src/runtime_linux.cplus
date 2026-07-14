@@ -25,6 +25,9 @@ interface Window {
     // node can re-parent the real controls into a content toolbar. Distinct from
     // custom_chrome (which hides all). Honored per-backend.
     fn wants_native_buttons(this) -> bool;
+    // Minimum content-size floor (points). 0 = no floor; applies only when both > 0.
+    fn min_width(this) -> f64;
+    fn min_height(this) -> f64;
     fn has_app_menu(this) -> bool;
     fn app_menu(ref this) -> AppMenu;
     fn should_close(this) -> bool;

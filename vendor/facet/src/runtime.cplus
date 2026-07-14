@@ -30,6 +30,11 @@ interface Window {
     // re-parent the REAL traffic lights into a content toolbar (native zoom
     // toggle + green hover/tiling menu preserved). Distinct from custom_chrome.
     fn wants_native_buttons(this) -> bool;
+    // Minimum window size floor (content size, points). 0 = no floor; a floor
+    // applies only when BOTH are > 0. Stops the window shrinking below its usable
+    // layout. Threaded to the backend's set_content_min_size.
+    fn min_width(this) -> f64;
+    fn min_height(this) -> f64;
     fn has_app_menu(this) -> bool;
     fn app_menu(ref this) -> AppMenu;
     fn should_close(this) -> bool;
@@ -67,6 +72,8 @@ fn run[W: Window](take window: W) {
         hide_title: owned_window.wants_hidden_title(),
         custom_chrome: owned_window.wants_custom_chrome(),
         native_buttons: owned_window.wants_native_buttons(),
+        min_width: owned_window.min_width(),
+        min_height: owned_window.min_height(),
         app_menu_enabled: owned_window.has_app_menu(),
         app_menu: app_menu,
         ctx: owned_window.lifecycle_context(),

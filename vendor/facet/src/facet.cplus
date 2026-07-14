@@ -243,8 +243,9 @@ struct Style {
     clip: bool,            // clip content to the (rounded) bounds
     underline: bool,       // underline the text
     strikethrough: bool,   // strike through the text
-    grad_from: Color,      // gradient top color (token 0 = no gradient)
-    grad_to: Color,        // gradient bottom color
+    grad_from: Color,      // gradient start color (token 0 = no gradient)
+    grad_to: Color,        // gradient end color
+    grad_dir: GradientDir, // gradient direction (default Vertical, top→bottom)
     rotation: f64,         // rotation in degrees (0 = none)
     scale: f64,            // uniform scale (1.0 = none)
     fade_in: f64,          // entrance fade duration in seconds (0 = none). The
@@ -258,6 +259,16 @@ struct Style {
 fn text_leading() -> i32 { return 1 as i32; }
 fn text_center() -> i32 { return 2 as i32; }
 fn text_trailing() -> i32 { return 3 as i32; }
+
+// Gradient direction — a portable start→end for a two-color linear gradient,
+// mapped by the backend to its gradient layer's start/end points (SwiftUI
+// LinearGradient's start/endPoint). `Vertical` is the default (top→bottom).
+enum GradientDir {
+    Vertical,       // top → bottom
+    Horizontal,     // leading → trailing
+    DiagonalTLBR,   // top-left → bottom-right
+    DiagonalTRBL,   // top-right → bottom-left
+}
 
 fn style_none() -> Style {
     return Style {
@@ -281,6 +292,7 @@ fn style_none() -> Style {
         strikethrough: false,
         grad_from: Color::none(),
         grad_to: Color::none(),
+        grad_dir: GradientDir::Vertical,
         rotation: 0.0f64,
         scale: 1.0f64,
         fade_in: 0.0f64,
@@ -1352,8 +1364,10 @@ impl Node {
     fn clip(take this) -> Node { var n: Node = this; n.style.clip = true; return n; }
     fn underline(take this) -> Node { var n: Node = this; n.style.underline = true; return n; }
     fn strikethrough(take this) -> Node { var n: Node = this; n.style.strikethrough = true; return n; }
-    // A vertical (top→bottom) two-color gradient fill.
-    fn gradient(take this, from: Color, to: Color) -> Node { var n: Node = this; n.style.grad_from = from; n.style.grad_to = to; return n; }
+    // A two-color linear gradient fill. `dir` sets the start→end direction
+    // (default Vertical, top→bottom); Horizontal / the two diagonals map to the
+    // backend's gradient start/end points.
+    fn gradient(take this, from: Color, to: Color, dir: GradientDir = GradientDir::Vertical) -> Node { var n: Node = this; n.style.grad_from = from; n.style.grad_to = to; n.style.grad_dir = dir; return n; }
     // Rotate (degrees) / scale about the element's center.
     fn rotation(take this, degrees: f64) -> Node { var n: Node = this; n.style.rotation = degrees; return n; }
     fn scale(take this, factor: f64) -> Node { var n: Node = this; n.style.scale = factor; return n; }
@@ -1459,7 +1473,7 @@ impl Node {
     fn set_clip(ref this, v: bool) { this.style.clip = v; return; }
     fn set_underline(ref this, v: bool) { this.style.underline = v; return; }
     fn set_strikethrough(ref this, v: bool) { this.style.strikethrough = v; return; }
-    fn set_gradient(ref this, from: Color, to: Color) { this.style.grad_from = from; this.style.grad_to = to; return; }
+    fn set_gradient(ref this, from: Color, to: Color, dir: GradientDir = GradientDir::Vertical) { this.style.grad_from = from; this.style.grad_to = to; this.style.grad_dir = dir; return; }
     fn set_rotation(ref this, degrees: f64) { this.style.rotation = degrees; return; }
     fn set_scale(ref this, factor: f64) { this.style.scale = factor; return; }
     fn set_frame(ref this, w: f64, h: f64) { this._width = w; this._height = h; return; }
@@ -3143,6 +3157,10 @@ fn facet_paint_modifiers_set_fields() {
     assert g.style.grad_from.is_set();
     assert g.style.grad_to.token == (5 as u32);   // system_green
     assert box().style.grad_from.is_set() == false;   // default no gradient
+    // gradient direction: default Vertical; an explicit diagonal is recorded.
+    match g.style.grad_dir { GradientDir::Vertical => { } _ => { assert false; } }
+    let gd: Node = box().gradient(Color::system_blue(), Color::system_green(), GradientDir::DiagonalTLBR);
+    match gd.style.grad_dir { GradientDir::DiagonalTLBR => { } _ => { assert false; } }
     let tr: Node = box().rotation(45.0f64).scale(1.5f64);
     assert approx(tr.style.rotation, 45.0f64);
     assert approx(tr.style.scale, 1.5f64);

@@ -216,8 +216,17 @@ fn apply_style(view_ptr: *u8, kind: u32, np: *facet::Node) {
         rt::msg_void_id(arr, rt::sel(#str_ptr("addObject:\0")), ns_color(gt).c_g_color());
         let gl: quartz::GradientLayer = quartz::GradientLayer::new();
         gl.set_colors(quartz::NSArray::from_raw(arr));
-        gl.set_start_point(rt::Point { x: 0.5, y: 0.0 });   // top
-        gl.set_end_point(rt::Point { x: 0.5, y: 1.0 });     // bottom
+        // start→end in unit space (y=0 is the top here). Vertical = top→bottom.
+        var sp: rt::Point = rt::Point { x: 0.5, y: 0.0 };
+        var ep: rt::Point = rt::Point { x: 0.5, y: 1.0 };
+        match { style.grad_dir } {
+            facet::GradientDir::Vertical => { }
+            facet::GradientDir::Horizontal => { sp = rt::Point { x: 0.0, y: 0.5 }; ep = rt::Point { x: 1.0, y: 0.5 }; }
+            facet::GradientDir::DiagonalTLBR => { sp = rt::Point { x: 0.0, y: 0.0 }; ep = rt::Point { x: 1.0, y: 1.0 }; }
+            facet::GradientDir::DiagonalTRBL => { sp = rt::Point { x: 1.0, y: 0.0 }; ep = rt::Point { x: 0.0, y: 1.0 }; }
+        }
+        gl.set_start_point(sp);
+        gl.set_end_point(ep);
         let gll: quartz::Layer = quartz::Layer::from_raw(gl.raw());
         gll.set_frame(gv.bounds());
         gll.set_autoresizing_mask(18 as u64);               // width|height sizable
@@ -1354,7 +1363,7 @@ fn hide_window_button(win: ak::Window, b: ak::WindowButton) {
 // title-less titlebar AND all three standard buttons hidden (close included), so
 // the app supplies custom traffic lights (wired via window_close/minimize/zoom)
 // and a window_drag surface. The caller sets the content view and orders it front.
-fn make_shell_window(title: str, width: f64, height: f64, clean_titlebar: bool, close_button_only: bool = false, custom_chrome: bool = false, native_buttons: bool = false) -> ak::Window {
+fn make_shell_window(title: str, width: f64, height: f64, clean_titlebar: bool, close_button_only: bool = false, custom_chrome: bool = false, native_buttons: bool = false, min_width: f64 = 0.0f64, min_height: f64 = 0.0f64) -> ak::Window {
     let full_size: bool = clean_titlebar || custom_chrome || native_buttons;
     let win = ak::Window::new(
         rt::Rect { x: 0.0, y: 0.0, w: width, h: height },
@@ -1392,6 +1401,11 @@ fn make_shell_window(title: str, width: f64, height: f64, clean_titlebar: bool, 
     } else if close_button_only {
         hide_window_button(win, ak::WindowButton::NSWindowMiniaturizeButton);
         hide_window_button(win, ak::WindowButton::NSWindowZoomButton);
+    }
+    // Minimum content-size floor: keep the window from shrinking below its usable
+    // layout. Applied only when both dimensions are set (> 0).
+    if min_width > 0.0f64 && min_height > 0.0f64 {
+        win.set_content_min_size(rt::Size { w: min_width, h: min_height });
     }
     return win;
 }
@@ -1770,6 +1784,8 @@ fn run_window(
     hide_title: bool = false,
     custom_chrome: bool = false,
     native_buttons: bool = false,
+    min_width: f64 = 0.0f64,
+    min_height: f64 = 0.0f64,
     app_menu_enabled: bool = false,
     take app_menu: facet::AppMenu = facet::empty_app_menu(),
     ctx: *u8 = 0 as *u8,
@@ -1792,7 +1808,7 @@ fn run_window(
     };
     var delegate: ak::WindowDelegate = ak::WindowDelegate_new(#addr_of(lifecycle) as *u8);
 
-    let win = make_shell_window(title, width, height, clean_titlebar, close_button_only: close_button_only, custom_chrome: custom_chrome, native_buttons: native_buttons);
+    let win = make_shell_window(title, width, height, clean_titlebar, close_button_only: close_button_only, custom_chrome: custom_chrome, native_buttons: native_buttons, min_width: min_width, min_height: min_height);
     OPEN_WINDOWS = OPEN_WINDOWS +% 1;
     install_window_lifecycle(win, #addr_of(lifecycle), #addr_of(delegate));
 
@@ -4027,6 +4043,21 @@ fn window_buttons_view_reparents_the_native_buttons() {
 }
 
 #[test]
+fn min_size_floors_the_content_size() {
+    // A min_width/min_height floor is applied as the window's contentMinSize, so
+    // the window can't be dragged below its usable layout. 0 = no floor.
+    let win: ak::Window = make_shell_window("t", 900.0f64, 700.0f64, false, min_width: 800.0f64, min_height: 630.0f64);
+    let ms: rt::Size = win.content_min_size();
+    assert ms.w == (800.0f64);
+    assert ms.h == (630.0f64);
+    // both must be > 0 to floor: a plain window keeps AppKit's default (no floor).
+    let plain: ak::Window = make_shell_window("t", 900.0f64, 700.0f64, false);
+    let pm: rt::Size = plain.content_min_size();
+    assert pm.w == (0.0f64);
+    assert pm.h == (0.0f64);
+}
+
+#[test]
 fn window_buttons_reparented_buttons_are_hit_testable() {
     // The re-parented traffic lights must be the hitTest target at their painted
     // location — else the press falls through them (to the drag view / passive
@@ -4270,6 +4301,27 @@ fn gradient_box_mounts_on_appkit() {
     let h: f64 = mount_into(#addr_of(root), content.raw(), 160.0f64, 120.0f64);
     assert h > 0.0f64;
     assert surface_has_id(content.raw(), "grad");
+}
+
+#[test]
+fn gradient_direction_maps_to_layer_start_end_points() {
+    // The portable GradientDir reaches the CAGradientLayer's start/end points.
+    // Horizontal → start (0, 0.5) end (1, 0.5); the default Vertical → (0.5, 0)→(0.5, 1).
+    var b: facet::Node = facet::box()
+        .frame(40.0f64, 40.0f64)
+        .gradient(facet::Color::system_blue(), facet::Color::system_green(), facet::GradientDir::Horizontal);
+    var n: flex::Node = mount(#addr_of(b));
+    let layer: *u8 = { rt::msg_id(n.payload(), rt::sel(#str_ptr("layer\0"))) };
+    let subs: *u8 = { rt::msg_id(layer, rt::sel(#str_ptr("sublayers\0"))) };
+    assert subs != (0 as *u8);
+    let gl: *u8 = { rt::msg_id_u64(subs, rt::sel(#str_ptr("objectAtIndex:\0")), 0 as u64) };
+    let sp: rt::Point = { rt::msg_point(gl, rt::sel(#str_ptr("startPoint\0"))) };
+    let ep: rt::Point = { rt::msg_point(gl, rt::sel(#str_ptr("endPoint\0"))) };
+    assert sp.x == (0.0f64);
+    assert sp.y == (0.5f64);
+    assert ep.x == (1.0f64);
+    assert ep.y == (0.5f64);
+    return;
 }
 
 #[test]
