@@ -13,11 +13,15 @@
 // dangles. Returning the view of a *local* Text is rejected (E0513); returning
 // a view of a parameter is the caller's promise that the Text outlives it.
 //
-// API (Swift-flavored): count, capacity, is_empty; append, reserve, remove_all,
-// truncate(count:); clone, byte_at(index:), slice(from:to:); has_prefix,
-// has_suffix, contains, find, rfind; trim/trim_start/trim_end, lowercased,
-// uppercased, split(separator:); c_str. Free fns: new, with_capacity(minimum:),
-// from_str, repeating(_, count:).
+// API (Swift-flavored): count, char_count, capacity, is_empty; append,
+// insert(at:), reserve, remove_all, remove_range(from:to:), truncate(to:);
+// clone, byte_at(index:), slice(from:to:); has_prefix, has_suffix, contains,
+// find, rfind, compare, equals, equals_ignoring_case; trim/trim_start/trim_end,
+// lowercased, uppercased, lowercased_first, uppercased_first,
+// removing_prefix/removing_suffix, pad_start(to:with:)/pad_end(to:with:),
+// split(separator:); c_str. Free fns: new, with_capacity(minimum:),
+// from_str, from_utf8, repeating(_, count:), join(_, separator:) (the inverse
+// of split).
 //
 // Bytes are stored as-is (UTF-8 when the inputs are UTF-8). Indices returned by
 // `find` are byte offsets. This is the owned half of the `Text` plan; the
@@ -31,6 +35,7 @@ extern fn malloc(n: usize) -> *u8;
 extern fn realloc(p: *u8, n: usize) -> *u8;
 extern fn free(p: *u8);
 extern fn memcpy(dest: *u8, src: *u8, n: usize) -> *u8;
+extern fn memmove(dest: *u8, src: *u8, n: usize) -> *u8;
 extern fn memcmp(a: *u8, b: *u8, n: usize) -> i32;
 
 // `#[lang("string")]` designates this struct as the compiler's owned-string
@@ -213,6 +218,30 @@ fn from_utf8(take bytes: vec::Vec[u8]) -> option::Option[Text] {
     return option::Option[Text]::Some(from_str(view));
 }
 
+// Glue the pieces of `parts` back into one Text with `separator` between each
+// pair — the inverse of `Text::split`, so `join(s.split(separator: sep),
+// separator: sep)` reproduces `s`. The separator goes *between* pieces only,
+// never before the first or after the last, so a leading/trailing empty piece
+// still contributes its separator (`join(["", "", ""], separator: ",")` →
+// `",,"`). The default separator is empty, making `join(parts)` a plain
+// concatenation (Swift `Array.joined()` / `joined(separator:)`). Each piece is
+// read in place and its bytes copied; `parts` is left untouched.
+fn join(parts: vec::Vec[Text], separator: str = "") -> Text {
+    var out: Text = new();
+    var i: usize = 0 as usize;
+    while i < parts.count() {
+        if i != (0 as usize) {
+            out.append(separator);
+        }
+        match parts.at_ptr(i) {
+            option::Option[*Text]::Some(p) => { out.append({ *p }.view()); }
+            option::Option[*Text]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return out;
+}
+
 impl Text {
     // Grow the buffer to at least `new_cap` bytes. Returns `OutOfMemory` (Text
     // unchanged and valid) if `realloc` fails, `Ok` otherwise.
@@ -292,6 +321,59 @@ impl Text {
             this._len = to;
         }
         return;
+    }
+
+    // Insert `s` at byte offset `at`, shifting the bytes at/after `at` to the
+    // right. `at == count` appends. Returns `OutOfBounds` (no change) if `at`
+    // is past the end, `OutOfMemory` (no change) if the buffer cannot grow, and
+    // `Ok` otherwise. `at` is a byte offset — inserting in the middle of a
+    // multibyte scalar produces invalid UTF-8, so split on scalar boundaries.
+    fn insert(ref this, s: str, at: usize) -> status::Status {
+        if at > this._len {
+            return status::Status::OutOfBounds;
+        }
+        let n: usize = #str_len(s);
+        if n == (0 as usize) {
+            return status::Status::Ok;
+        }
+        let st: status::Status = this.reserve(n);
+        if st != status::Status::Ok {
+            return st;
+        }
+        // Open a gap: slide the `tail` bytes at `at` up by `n` (regions overlap,
+        // so memmove), then copy `s` into the gap.
+        let tail: usize = this._len -% at;
+        let gap_at: *u8 = { this._ptr + at };
+        if tail != (0 as usize) {
+            let dest: *u8 = { gap_at + n };
+            { memmove(dest, gap_at, tail); }
+        }
+        { memcpy(gap_at, #str_ptr(s), n); }
+        this._len = this._len +% n;
+        return status::Status::Ok;
+    }
+
+    // Remove the byte range `[from, to)`, sliding the tail left to close the
+    // gap. Returns `OutOfBounds` (no change) if the range is inverted
+    // (`from > to`) or past the end (`to > count`), `Ok` otherwise. An empty
+    // range (`from == to`) is a no-op `Ok`. Byte offsets: cutting through a
+    // multibyte scalar produces invalid UTF-8.
+    fn remove_range(ref this, from: usize, to: usize) -> status::Status {
+        if from > to || to > this._len {
+            return status::Status::OutOfBounds;
+        }
+        let cut: usize = to -% from;
+        if cut == (0 as usize) {
+            return status::Status::Ok;
+        }
+        let tail: usize = this._len -% to;
+        if tail != (0 as usize) {
+            let dest: *u8 = { this._ptr + from };
+            let src: *u8 = { this._ptr + to };
+            { memmove(dest, src, tail); }
+        }
+        this._len = this._len -% cut;
+        return status::Status::Ok;
     }
 
     // Owned deep copy. If the allocation fails the copy is empty (best effort);
@@ -496,6 +578,36 @@ impl Text {
         return t;
     }
 
+    // Owned copy with only the FIRST byte ASCII-uppercased (`a`–`z` → `A`–`Z`);
+    // every other byte is left as-is. The "capitalize first letter" helper:
+    // `"hello world"` → `"Hello world"`. An empty Text yields an empty copy.
+    fn uppercased_first(this) -> Text {
+        var t: Text = this.clone();
+        if t._len != (0 as usize) {
+            let p: *u8 = { t._ptr + (0 as usize) };
+            let b: u8 = { *p };
+            if b >= (97 as u8) && b <= (122 as u8) {
+                { *p = b -% (32 as u8); }
+            }
+        }
+        return t;
+    }
+
+    // Owned copy with only the FIRST byte ASCII-lowercased (`A`–`Z` → `a`–`z`);
+    // every other byte is left as-is. The mirror of `uppercased_first`:
+    // `"Hello World"` → `"hello World"`. An empty Text yields an empty copy.
+    fn lowercased_first(this) -> Text {
+        var t: Text = this.clone();
+        if t._len != (0 as usize) {
+            let p: *u8 = { t._ptr + (0 as usize) };
+            let b: u8 = { *p };
+            if b >= (65 as u8) && b <= (90 as u8) {
+                { *p = b +% (32 as u8); }
+            }
+        }
+        return t;
+    }
+
     // Split on every (non-overlapping) occurrence of `separator`, returning the
     // pieces as owned `Text` values. An empty separator yields the whole string
     // as one piece. `"a,b,c".split(separator: ",")` → `["a", "b", "c"]`.
@@ -638,6 +750,133 @@ impl Text {
             }
         }
         out.append(this._copy_range(start, this._len));
+        return out;
+    }
+
+    // Count of Unicode scalars (not bytes). `count` returns the byte length;
+    // this returns the number of encoded scalars by counting every byte that is
+    // not a UTF-8 continuation byte (0x80–0xBF). For all-ASCII text the two
+    // agree. Assumes well-formed UTF-8 (see `from_utf8`).
+    fn char_count(this) -> usize {
+        var total: usize = 0 as usize;
+        var i: usize = 0 as usize;
+        while i < this._len {
+            let b: u8 = this._byte_at_raw(i);
+            if b < (0x80 as u8) || b >= (0xC0 as u8) {
+                total = total +% (1 as usize);
+            }
+            i = i +% (1 as usize);
+        }
+        return total;
+    }
+
+    // Lexicographic byte comparison (unsigned): `-1` if `this` sorts before
+    // `other`, `1` if after, `0` if equal. Shorter is less when one is a prefix
+    // of the other. The ordering primitive for sorting Texts (`strcmp` /
+    // `compareTo`); `equals` is the equality-only fast path.
+    fn compare(this, other: str) -> i32 {
+        let on: usize = #str_len(other);
+        var m: usize = this._len;
+        if on < m {
+            m = on;
+        }
+        if m != (0 as usize) {
+            let c: i32 = { memcmp(this._ptr, #str_ptr(other), m) };
+            if c < (0 as i32) {
+                return -1 as i32;
+            }
+            if c > (0 as i32) {
+                return 1 as i32;
+            }
+        }
+        if this._len < on {
+            return -1 as i32;
+        }
+        if this._len > on {
+            return 1 as i32;
+        }
+        return 0 as i32;
+    }
+
+    // ASCII case-insensitive equality: like `equals` but treating `A`–`Z` and
+    // `a`–`z` as the same letter. Non-letter bytes must still match exactly.
+    // (ASCII only — no Unicode case folding.)
+    fn equals_ignoring_case(this, other: str) -> bool {
+        let n: usize = #str_len(other);
+        if n != this._len {
+            return false;
+        }
+        let op: *u8 = #str_ptr(other);
+        var i: usize = 0 as usize;
+        while i < this._len {
+            var a: u8 = this._byte_at_raw(i);
+            var b: u8 = { *(op + i) };
+            if a >= (65 as u8) && a <= (90 as u8) {
+                a = a +% (32 as u8);
+            }
+            if b >= (65 as u8) && b <= (90 as u8) {
+                b = b +% (32 as u8);
+            }
+            if a != b {
+                return false;
+            }
+            i = i +% (1 as usize);
+        }
+        return true;
+    }
+
+    // Owned copy with `prefix` removed from the front if present; an unchanged
+    // copy otherwise (Rust `strip_prefix`, non-trapping). An empty prefix is a
+    // plain copy.
+    fn removing_prefix(this, prefix: str) -> Text {
+        if this.has_prefix(prefix) {
+            return this._copy_range(#str_len(prefix), this._len);
+        }
+        return this.clone();
+    }
+
+    // Owned copy with `suffix` removed from the end if present; an unchanged
+    // copy otherwise (Rust `strip_suffix`). An empty suffix is a plain copy.
+    fn removing_suffix(this, suffix: str) -> Text {
+        if this.has_suffix(suffix) {
+            return this._copy_range(0 as usize, this._len -% #str_len(suffix));
+        }
+        return this.clone();
+    }
+
+    // Owned copy left-padded with `with` (a space by default) until it is at
+    // least `to` bytes long (JS `padStart`, Python `rjust`). If already `>= to`
+    // bytes, or `with` is empty, returns a plain copy. A multi-byte `with` is
+    // repeated and the padding is cut to hit `to` exactly, so it can end
+    // mid-pattern.
+    fn pad_start(this, to: usize, with: str = " ") -> Text {
+        if this._len >= to || #str_len(with) == (0 as usize) {
+            return this.clone();
+        }
+        let deficit: usize = to -% this._len;
+        var out: Text = with_capacity(to);
+        while out._len < deficit {
+            out.append(with);
+        }
+        out.truncate(deficit);
+        out.append(this.view());
+        return out;
+    }
+
+    // Owned copy right-padded with `with` (a space by default) until it is at
+    // least `to` bytes long (JS `padEnd`, Python `ljust`). If already `>= to`
+    // bytes, or `with` is empty, returns a plain copy. `with` is repeated and
+    // cut to hit `to`.
+    fn pad_end(this, to: usize, with: str = " ") -> Text {
+        if this._len >= to || #str_len(with) == (0 as usize) {
+            return this.clone();
+        }
+        var out: Text = with_capacity(to);
+        out.append(this.view());
+        while out._len < to {
+            out.append(with);
+        }
+        out.truncate(to);
         return out;
     }
 
@@ -931,6 +1170,211 @@ fn text_lowercased_uppercased() {
 }
 
 #[test]
+fn text_uppercased_first_capitalizes_leading_letter_only() {
+    assert from_str("hello world").uppercased_first().equals("Hello world");
+    // Already-uppercase leading byte is unchanged; the rest is never touched.
+    assert from_str("HELLO").uppercased_first().equals("HELLO");
+    // A non-letter leading byte is left as-is (no shift into the alphabet).
+    assert from_str("1st").uppercased_first().equals("1st");
+}
+
+#[test]
+fn text_lowercased_first_lowers_leading_letter_only() {
+    assert from_str("Hello World").lowercased_first().equals("hello World");
+    assert from_str("hello").lowercased_first().equals("hello");
+    assert from_str("_X").lowercased_first().equals("_X");
+}
+
+#[test]
+fn text_cased_first_on_empty_is_empty() {
+    assert from_str("").uppercased_first().is_empty();
+    assert from_str("").lowercased_first().is_empty();
+}
+
+#[test]
+fn text_cased_first_is_nonmutating() {
+    let t: Text = from_str("hello");
+    assert t.uppercased_first().equals("Hello");
+    // The receiver is untouched — the helper returns an owned copy.
+    assert t.equals("hello");
+}
+
+// ── insert / remove_range (mutating buffer edits) ──
+
+#[test]
+fn text_insert_in_the_middle_shifts_the_tail() {
+    var t: Text = from_str("hello");
+    let st: status::Status = t.insert("XY", at: 2 as usize);
+    assert st == status::Status::Ok;
+    assert t.equals("heXYllo");
+}
+
+#[test]
+fn text_insert_at_zero_prepends() {
+    var t: Text = from_str("bc");
+    let st: status::Status = t.insert("a", at: 0 as usize);
+    assert st == status::Status::Ok;
+    assert t.equals("abc");
+}
+
+#[test]
+fn text_insert_at_count_appends() {
+    var t: Text = from_str("ab");
+    let st: status::Status = t.insert("c", at: 2 as usize);
+    assert st == status::Status::Ok;
+    assert t.equals("abc");
+}
+
+#[test]
+fn text_insert_past_end_is_out_of_bounds_no_change() {
+    var t: Text = from_str("ab");
+    let st: status::Status = t.insert("x", at: 9 as usize);
+    assert st == status::Status::OutOfBounds;
+    assert t.equals("ab");
+}
+
+#[test]
+fn text_insert_empty_is_noop_ok() {
+    var t: Text = from_str("ab");
+    let st: status::Status = t.insert("", at: 1 as usize);
+    assert st == status::Status::Ok;
+    assert t.equals("ab");
+}
+
+#[test]
+fn text_remove_range_cuts_the_span() {
+    var t: Text = from_str("hello world");
+    let st: status::Status = t.remove_range(from: 5 as usize, to: 11 as usize);
+    assert st == status::Status::Ok;
+    assert t.equals("hello");
+}
+
+#[test]
+fn text_remove_range_full_empties() {
+    var t: Text = from_str("abc");
+    let st: status::Status = t.remove_range(from: 0 as usize, to: 3 as usize);
+    assert st == status::Status::Ok;
+    assert t.is_empty();
+}
+
+#[test]
+fn text_remove_range_empty_span_is_noop_ok() {
+    var t: Text = from_str("abc");
+    let st: status::Status = t.remove_range(from: 2 as usize, to: 2 as usize);
+    assert st == status::Status::Ok;
+    assert t.equals("abc");
+}
+
+#[test]
+fn text_remove_range_inverted_is_out_of_bounds_no_change() {
+    var t: Text = from_str("abcde");
+    let st: status::Status = t.remove_range(from: 4 as usize, to: 1 as usize);
+    assert st == status::Status::OutOfBounds;
+    assert t.equals("abcde");
+}
+
+#[test]
+fn text_remove_range_past_end_is_out_of_bounds_no_change() {
+    var t: Text = from_str("abc");
+    let st: status::Status = t.remove_range(from: 0 as usize, to: 99 as usize);
+    assert st == status::Status::OutOfBounds;
+    assert t.equals("abc");
+}
+
+// ── compare / equals_ignoring_case ──
+
+#[test]
+fn text_compare_orders_lexicographically() {
+    assert from_str("abc").compare("abd") == (-1 as i32);
+    assert from_str("abd").compare("abc") == (1 as i32);
+    assert from_str("abc").compare("abc") == (0 as i32);
+}
+
+#[test]
+fn text_compare_shorter_prefix_is_less() {
+    assert from_str("ab").compare("abc") == (-1 as i32);
+    assert from_str("abc").compare("ab") == (1 as i32);
+    assert from_str("").compare("a") == (-1 as i32);
+    assert from_str("").compare("") == (0 as i32);
+}
+
+#[test]
+fn text_equals_ignoring_case() {
+    assert from_str("Hello").equals_ignoring_case("hELLO");
+    assert from_str("a-b").equals_ignoring_case("A-B");
+    assert from_str("Hello").equals_ignoring_case("world") == false;
+    // Length mismatch is never equal.
+    assert from_str("Hi").equals_ignoring_case("Hix") == false;
+    // Non-letters must still match exactly ('.' vs ',').
+    assert from_str("a.b").equals_ignoring_case("a,b") == false;
+}
+
+// ── removing_prefix / removing_suffix ──
+
+#[test]
+fn text_removing_prefix() {
+    assert from_str("foobar").removing_prefix("foo").equals("bar");
+    // Absent prefix → unchanged copy.
+    assert from_str("foobar").removing_prefix("xyz").equals("foobar");
+    // Empty prefix → plain copy.
+    assert from_str("foo").removing_prefix("").equals("foo");
+}
+
+#[test]
+fn text_removing_suffix() {
+    assert from_str("foobar").removing_suffix("bar").equals("foo");
+    assert from_str("foobar").removing_suffix("xyz").equals("foobar");
+    assert from_str("foo").removing_suffix("").equals("foo");
+}
+
+// ── pad_start / pad_end ──
+
+#[test]
+fn text_pad_start_left_pads_to_width() {
+    assert from_str("42").pad_start(to: 5 as usize, with: "0").equals("00042");
+    // Default fill is a space.
+    assert from_str("42").pad_start(to: 5 as usize).equals("   42");
+    // A multi-byte fill is repeated then cut to hit the width exactly.
+    assert from_str("x").pad_start(to: 4 as usize, with: "ab").equals("abax");
+}
+
+#[test]
+fn text_pad_end_right_pads_to_width() {
+    assert from_str("42").pad_end(to: 5 as usize, with: "0").equals("42000");
+    assert from_str("42").pad_end(to: 5 as usize).equals("42   ");
+}
+
+#[test]
+fn text_pad_already_at_width_is_plain_copy() {
+    assert from_str("hello").pad_start(to: 3 as usize, with: "0").equals("hello");
+    assert from_str("hello").pad_end(to: 3 as usize, with: "0").equals("hello");
+    // Empty fill can't pad, so it's a plain copy even when short.
+    assert from_str("ab").pad_start(to: 9 as usize, with: "").equals("ab");
+}
+
+// ── char_count (Unicode scalars vs bytes) ──
+
+#[test]
+fn text_char_count_matches_bytes_for_ascii() {
+    let t: Text = from_str("hello");
+    assert t.char_count() == (5 as usize);
+    assert t.count() == (5 as usize);
+}
+
+#[test]
+fn text_char_count_counts_scalars_not_bytes() {
+    // "café" is 5 bytes (é = C3 A9) but 4 Unicode scalars.
+    let t: Text = from_str("café");
+    assert t.count() == (5 as usize);
+    assert t.char_count() == (4 as usize);
+}
+
+#[test]
+fn text_char_count_empty_is_zero() {
+    assert from_str("").char_count() == (0 as usize);
+}
+
+#[test]
 fn text_split_on_sep() {
     var parts: vec::Vec[Text] = from_str("a,bb,ccc").split(separator: ",");
     assert parts.count() == (3 as usize);
@@ -945,6 +1389,45 @@ fn text_split_on_sep() {
 fn text_split_empty_sep_is_whole_string() {
     var parts: vec::Vec[Text] = from_str("abc").split(separator: "");
     assert parts.count() == (1 as usize);
+}
+
+#[test]
+fn text_join_roundtrips_split() {
+    var parts: vec::Vec[Text] = from_str("a,bb,ccc").split(separator: ",");
+    let whole: Text = join(parts, separator: ",");
+    assert whole.equals("a,bb,ccc");
+}
+
+#[test]
+fn text_join_default_separator_concatenates() {
+    var parts: vec::Vec[Text] = vec::new::[Text]();
+    parts.append(from_str("foo"));
+    parts.append(from_str("bar"));
+    parts.append(from_str("baz"));
+    assert join(parts).equals("foobarbaz");
+}
+
+#[test]
+fn text_join_places_separator_between_pieces_only() {
+    // Leading/trailing empty pieces still contribute their separators.
+    var parts: vec::Vec[Text] = vec::new::[Text]();
+    parts.append(from_str(""));
+    parts.append(from_str(""));
+    parts.append(from_str(""));
+    assert join(parts, separator: ",").equals(",,");
+}
+
+#[test]
+fn text_join_empty_vec_is_empty() {
+    let parts: vec::Vec[Text] = vec::new::[Text]();
+    assert join(parts, separator: ",").is_empty();
+}
+
+#[test]
+fn text_join_single_piece_has_no_separator() {
+    var parts: vec::Vec[Text] = vec::new::[Text]();
+    parts.append(from_str("solo"));
+    assert join(parts, separator: ", ").equals("solo");
 }
 
 #[test]
