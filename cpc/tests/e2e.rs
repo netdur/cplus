@@ -37,6 +37,43 @@ fn emit_ir_prints_module() {
     assert!(s.contains("hello, world"), "missing greeting: {s}");
 }
 
+/// bug 2026-07-12: an unsuffixed integer literal above i32 range, cast to a wider
+/// unsigned type, wrapped through i32 first and then SIGN-extended —
+/// `4294967295 as u64` yielded 0xFFFFFFFFFFFFFFFF instead of 0x00000000FFFFFFFF
+/// (no diagnostic). `gen_cast` now materializes an unsuffixed int-literal operand
+/// at the target width directly. The other columns pin the neighbours that must
+/// NOT regress: a hex literal takes the same path, small values are unchanged, and
+/// `300 as i8` still truncates to 44.
+#[test]
+fn unsuffixed_int_literal_cast_takes_target_width() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("litcast.cplus");
+    std::fs::write(
+        &src,
+        "extern fn printf(fmt: *u8, ...) -> i32;\n\
+         fn main() -> i32 {\n\
+         printf(#str_ptr(\"%llx %llx %llx %d\\n\\0\"), 4294967295 as u64, 0xFFFFFFFF as u64, 5 as u64, 300 as i8);\n\
+         return 0;\n\
+         }\n",
+    )
+    .expect("write litcast.cplus");
+    let bin = dir.join("litcast");
+    let compile = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(compile.success(), "cpc exited non-zero: {compile}");
+    let run = Command::new(&bin).output().expect("run litcast");
+    assert!(run.status.success(), "binary exited non-zero: {}", run.status);
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "ffffffff ffffffff 5 44\n"
+    );
+}
+
 /// v0.0.16: owned locals declared in a loop body are dropped at the end of each
 /// iteration (and on break/continue) — previously they leaked, because the
 /// back-edge branch was emitted before the scope-exit drop hooks. A Drop counts

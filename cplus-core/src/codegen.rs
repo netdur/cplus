@@ -12552,6 +12552,22 @@ impl<'a> FnState<'a> {
     }
 
     fn gen_cast(&mut self, expr: &Expr, target: &Type) -> (String, Ty) {
+        // An UNSUFFIXED integer literal cast to an integer type takes the target's
+        // type directly: materialize the stored value at the target width (masked),
+        // with no intermediate i32. Without this the literal defaults to i32, so a
+        // value above i32 range wraps to a negative bit pattern that the widening
+        // `sext` then sign-extends — e.g. `4294967295 as u64` produced
+        // 0xFFFFFFFFFFFFFFFF instead of 0x00000000FFFFFFFF (bug 2026-07-12). A
+        // suffixed literal keeps its own width (its bits are what the author chose),
+        // and `-1 as u64` is Unary(Neg, …), not this shape, so all-ones stays right.
+        if let ExprKind::IntLit(v, crate::lexer::NumSuffix::None) = &expr.kind {
+            let to = ty_from(target, self.types);
+            if to.is_int() {
+                let bits = ty_bit_width(&to);
+                let masked = if bits >= 64 { *v } else { *v & ((1u64 << bits) - 1) };
+                return (masked.to_string(), to);
+            }
+        }
         let (v, from_actual) = self.gen_expr(expr).expect("cast operand has value");
         let to_actual = ty_from(target, self.types);
         // Enums lower to i32 at LLVM level. For cast instruction selection,
