@@ -936,6 +936,12 @@ fn ak_bordered(ctx: *u8, np: *facet::Node, take content: flex::Node) -> flex::No
     return n;
 }
 
+fn ak_window_drag(ctx: *u8, np: *facet::Node, take content: flex::Node) -> flex::Node {
+    var n: flex::Node = ui::window_drag(content);
+    apply_style(n.payload(), facet::kind_window_drag(), np);
+    return n;
+}
+
 // ---- portable scroll (matrix §4) — the two-phase bridge ---------------------
 // A scroll's content can't be laid out until the OUTER pass has sized its
 // viewport (content height follows the viewport width). So ak_scroll builds the
@@ -1137,6 +1143,7 @@ fn renderer() -> facet::Renderer {
         clickable: ak_clickable,
         scroll: ak_scroll,
         material: ak_material,
+        window_drag: ak_window_drag,
         split: ak_split,
         container: fak_container,
         set_identity: ak_set_identity,
@@ -1315,40 +1322,54 @@ fn shell_style_mask(clean_titlebar: bool) -> u64 {
     return style;
 }
 
+// Hide one standard window button (traffic light) if present. `win.standard_window_button`
+// returns None when the style mask lacks that button; nothing to hide then.
+fn hide_window_button(win: ak::Window, b: ak::WindowButton) {
+    match win.standard_window_button(b) {
+        option::Option[ak::Button]::Some(btn) => { btn.as_view().set_hidden(true); }
+        option::Option[ak::Button]::None => { }
+    }
+    return;
+}
+
 // Create (and retain +1) the app's NSWindow. `clean_titlebar` gives the
 // borderless shell iris uses for its welcome / wizard windows: content bleeds
 // under a transparent, title-less titlebar and the miniaturize + zoom traffic
-// lights are hidden (close stays). The caller sets the content view and orders
-// it front.
-fn make_shell_window(title: str, width: f64, height: f64, clean_titlebar: bool, close_button_only: bool = false) -> ak::Window {
+// lights are hidden (close stays). `custom_chrome` goes one step further for an
+// app that draws its OWN titlebar controls: full-size content + transparent,
+// title-less titlebar AND all three standard buttons hidden (close included), so
+// the app supplies custom traffic lights (wired via window_close/minimize/zoom)
+// and a window_drag surface. The caller sets the content view and orders it front.
+fn make_shell_window(title: str, width: f64, height: f64, clean_titlebar: bool, close_button_only: bool = false, custom_chrome: bool = false) -> ak::Window {
+    let full_size: bool = clean_titlebar || custom_chrome;
     let win = ak::Window::new(
         rt::Rect { x: 0.0, y: 0.0, w: width, h: height },
-        shell_style_mask(clean_titlebar),
+        shell_style_mask(full_size),
         ak::BackingStoreType::NSBackingStoreBuffered,
         false,
     );
     rt::retain(win.raw());
     win.set_title(title);
-    if clean_titlebar {
+    if custom_chrome {
         win.set_titlebar_appears_transparent(true);
         win.set_title_visibility(ak::WindowTitleVisibility::NSWindowTitleHidden);
-        match win.standard_window_button(ak::WindowButton::NSWindowMiniaturizeButton) {
-            option::Option[ak::Button]::Some(btn) => { btn.as_view().set_hidden(true); }
-            option::Option[ak::Button]::None => { }
-        }
-        match win.standard_window_button(ak::WindowButton::NSWindowZoomButton) {
-            option::Option[ak::Button]::Some(btn) => { btn.as_view().set_hidden(true); }
-            option::Option[ak::Button]::None => { }
-        }
+        hide_window_button(win, ak::WindowButton::NSWindowCloseButton);
+        hide_window_button(win, ak::WindowButton::NSWindowMiniaturizeButton);
+        hide_window_button(win, ak::WindowButton::NSWindowZoomButton);
+        // The app draws its own titlebar row: make the window background drag it
+        // (dead areas of the custom bar move the window; controls don't) and honor
+        // the native double-click title-bar action — the behavior a real titlebar
+        // has. A `window_drag` surface can still be layered on for an explicit,
+        // always-zoom strip where the app wants one.
+        win.set_movable_by_window_background(true);
+    } else if clean_titlebar {
+        win.set_titlebar_appears_transparent(true);
+        win.set_title_visibility(ak::WindowTitleVisibility::NSWindowTitleHidden);
+        hide_window_button(win, ak::WindowButton::NSWindowMiniaturizeButton);
+        hide_window_button(win, ak::WindowButton::NSWindowZoomButton);
     } else if close_button_only {
-        match win.standard_window_button(ak::WindowButton::NSWindowMiniaturizeButton) {
-            option::Option[ak::Button]::Some(btn) => { btn.as_view().set_hidden(true); }
-            option::Option[ak::Button]::None => { }
-        }
-        match win.standard_window_button(ak::WindowButton::NSWindowZoomButton) {
-            option::Option[ak::Button]::Some(btn) => { btn.as_view().set_hidden(true); }
-            option::Option[ak::Button]::None => { }
-        }
+        hide_window_button(win, ak::WindowButton::NSWindowMiniaturizeButton);
+        hide_window_button(win, ak::WindowButton::NSWindowZoomButton);
     }
     return win;
 }
@@ -1725,6 +1746,7 @@ fn run_window(
     close_button_only: bool = false,
     unified_toolbar: bool = false,
     hide_title: bool = false,
+    custom_chrome: bool = false,
     app_menu_enabled: bool = false,
     take app_menu: facet::AppMenu = facet::empty_app_menu(),
     ctx: *u8 = 0 as *u8,
@@ -1747,7 +1769,7 @@ fn run_window(
     };
     var delegate: ak::WindowDelegate = ak::WindowDelegate_new(#addr_of(lifecycle) as *u8);
 
-    let win = make_shell_window(title, width, height, clean_titlebar, close_button_only: close_button_only);
+    let win = make_shell_window(title, width, height, clean_titlebar, close_button_only: close_button_only, custom_chrome: custom_chrome);
     OPEN_WINDOWS = OPEN_WINDOWS +% 1;
     install_window_lifecycle(win, #addr_of(lifecycle), #addr_of(delegate));
 
@@ -1825,6 +1847,14 @@ fn end_modal(code: i64) {
     ak::Application::shared_application().stop_modal_with_code(code);
     return;
 }
+
+// Window-button actions for a custom titlebar: a button handler calls these with
+// its `sender` (the clicked control), and they drive the enclosing window the way
+// the standard traffic lights do (close respects windowShouldClose:). These pair
+// with a hidden-button window (run_window custom_chrome) + custom controls.
+fn window_close(sender: *u8) { akx::window_perform_close(sender); return; }
+fn window_minimize(sender: *u8) { akx::window_perform_minimize(sender); return; }
+fn window_zoom(sender: *u8) { akx::window_perform_zoom(sender); return; }
 
 // The live popover — an NSPopover deallocs (and dismisses) if nothing retains it,
 // so it is held here while shown (the previous one is released on the next show).
@@ -3864,6 +3894,66 @@ fn titlebar_installs_leading_and_trailing_accessories() {
         _ => { assert false; }
     }
     return;
+}
+
+// True when the window's standard button `b` exists and is hidden.
+fn button_is_hidden(win: ak::Window, b: ak::WindowButton) -> bool {
+    match win.standard_window_button(b) {
+        option::Option[ak::Button]::Some(btn) => { return btn.as_view().is_hidden(); }
+        option::Option[ak::Button]::None => { return false; }
+    }
+    return false;
+}
+
+#[test]
+fn custom_chrome_hides_all_standard_window_buttons() {
+    // custom_chrome hides ALL THREE traffic lights (the app draws its own), unlike
+    // clean_titlebar which keeps the native close button.
+    let win: ak::Window = make_shell_window("t", 400.0f64, 300.0f64, false, custom_chrome: true);
+    assert button_is_hidden(win, ak::WindowButton::NSWindowCloseButton);
+    assert button_is_hidden(win, ak::WindowButton::NSWindowMiniaturizeButton);
+    assert button_is_hidden(win, ak::WindowButton::NSWindowZoomButton);
+    // full-size content (borderless look) is on, exactly like clean_titlebar
+    assert (win.style_mask() & ak::window_style_mask_full_size_content_view) != (0 as u64);
+    // the background drags the window (the custom bar's dead areas move it)
+    assert win.is_movable_by_window_background();
+    // a plain window keeps its native close button visible and is not bg-draggable
+    let plain: ak::Window = make_shell_window("t", 400.0f64, 300.0f64, false);
+    assert button_is_hidden(plain, ak::WindowButton::NSWindowCloseButton) == false;
+    assert plain.is_movable_by_window_background() == false;
+}
+
+#[test]
+fn window_drag_wraps_content_in_a_drag_surface() {
+    // window_drag mounts to a CplusExtWindowDragView payload that drags the window
+    // (and double-click-zooms); its content mounts through as a child. Build the
+    // node directly (an @facet block would wrap this lone element in a column).
+    var inner: facet::Builder = facet::Builder::new();
+    inner.add(facet::label("titlebar"));
+    var wd: facet::Node = facet::window_drag(inner);
+    var tree: flex::Node = mount(#addr_of(wd));
+    assert tree.payload() != (0 as *u8);
+    let cls: *u8 = akx::window_drag_view_class();
+    assert rt::msg_i8_id(tree.payload(), rt::sel(#str_ptr("isKindOfClass:\0")), cls) != (0 as i8);
+    // the drag surface handles mouseDown: (starts the window drag / zoom)
+    assert rt::msg_i8_id(tree.payload(), rt::sel(#str_ptr("respondsToSelector:\0")), rt::sel(#str_ptr("mouseDown:\0"))) != (0 as i8);
+    assert tree.child_count() == (1 as usize);
+}
+
+#[test]
+fn window_actions_resolve_and_are_safe_without_a_window() {
+    // A control already in a window resolves that window.
+    let win: ak::Window = make_shell_window("t", 200.0f64, 200.0f64, false);
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 40.0, h: 40.0 });
+    win.set_content_view(ak::View::from_raw(content.raw()));
+    assert akx::window_of(content.raw()) == win.raw();
+    // A control with no enclosing window: every verb is a safe no-op (no crash).
+    let orphan = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 10.0, h: 10.0 });
+    assert akx::window_of(orphan.raw()) == (0 as *u8);
+    window_close(orphan.raw());
+    window_minimize(orphan.raw());
+    window_zoom(orphan.raw());
+    assert true;   // reached here without faulting
 }
 
 #[test]

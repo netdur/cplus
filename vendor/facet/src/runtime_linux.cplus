@@ -17,6 +17,10 @@ interface Window {
     fn wants_close_button_only(this) -> bool;
     fn wants_unified_toolbar(this) -> bool;
     fn wants_hidden_title(this) -> bool;
+    // Custom chrome: hide all standard window buttons so the app draws its own
+    // titlebar controls (window_close / window_minimize / window_zoom) + a
+    // window_drag surface. Honored per-backend (gtk maps to its own decorations).
+    fn wants_custom_chrome(this) -> bool;
     fn has_app_menu(this) -> bool;
     fn app_menu(ref this) -> AppMenu;
     fn should_close(this) -> bool;
@@ -41,3 +45,9 @@ fn run[W: Window](take window: W) {
     backend::run(root, title: owned_window.title(), width: owned_window.width(), height: owned_window.height());
     return;
 }
+
+// Window-button actions for a custom titlebar (parity with the macOS facade) —
+// a control's handler calls these with its `sender` to drive the host window.
+fn window_close(sender: *u8) { backend::window_close(sender); return; }
+fn window_minimize(sender: *u8) { backend::window_minimize(sender); return; }
+fn window_zoom(sender: *u8) { backend::window_zoom(sender); return; }

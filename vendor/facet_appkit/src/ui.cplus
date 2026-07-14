@@ -458,6 +458,21 @@ fn bordered(take content: flex::Node, radius: f64 = 6.0f64, agent_id: str = "") 
     return wrapper;
 }
 
+// A window-drag surface: same single-backing-view wrapper as `bordered`, but the
+// backing view is a `CplusExtWindowDragView` — dragging it moves the window and a
+// double-click zooms it. For a custom titlebar (a content toolbar row over a
+// hidden-button window): wrap the bar so the empty regions behave like a real
+// title bar. Child controls keep their own clicks (only the bare surface drags).
+fn window_drag(take content: flex::Node, agent_id: str = "") -> flex::Node {
+    let zero: rt::Rect = rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 };
+    let dv: ak::View = akx::new_window_drag_view(zero);
+    tag_agent(dv.raw(), agent_id, identity::Role::Group);
+    var wrapper: flex::Node = flex::Node::new();
+    wrapper.set_payload(rt::retain(dv.raw()), release_view);
+    wrapper.add_child(content);
+    return wrapper;
+}
+
 // The viewport leaf for an NSScrollView: place it in the outer tree (give
 // it `.grow(1.0)` or a size), run the outer layout + apply, then hand the
 // row content to `fill_scroll`.

@@ -707,3 +707,91 @@ fn make_toolbar(ids: *u8, map: *u8) -> ak::Toolbar {
     synth::retain_associated(tb.raw(), toolbar_ids_pin_key(), ids);
     return tb;
 }
+
+// ==========================================================================
+// Window-drag surface + window-button actions (custom titlebar chrome)
+// ==========================================================================
+//
+// An app that hides the standard window buttons and draws its OWN titlebar (a
+// content row) needs two things AppKit gives a real titlebar for free: the
+// region must DRAG the window, and a double-click on it must ZOOM. A
+// `CplusExtWindowDragView` provides both — its `mouseDown:` runs
+// `-[NSWindow performWindowDragWithEvent:]` (the public 10.11+ window-drag loop)
+// for a single press, and `-[NSWindow performZoom:]` on a double-click. Because
+// the subclass overrides `mouseDown:`, AppKit's own background-drag
+// (`mouseDownCanMoveWindow`) stays off, so the two never fight; child controls
+// (buttons) sit in subviews and get their clicks first via hit-testing, so only
+// presses on the bare bar reach this view. The window-action helpers below are
+// the button-driven equivalents of the traffic lights: a handler calls them with
+// its `sender` (the clicked control), and they message the sender's window.
+
+// `-[NSEvent clickCount]`.
+fn wd_click_count(event: *u8) -> i64 { return rt::msg_i64(event, rt::sel(#str_ptr("clickCount\0"))); }
+
+fn wd_mousedown_imp(self_obj: *u8, cmd: *u8, event: *u8) {
+    let win: *u8 = rt::msg_id(self_obj, rt::sel(#str_ptr("window\0")));
+    if win == { 0 as *u8 } { return; }
+    if wd_click_count(event) >= (2 as i64) {
+        rt::msg_void_id(win, rt::sel(#str_ptr("performZoom:\0")), self_obj);
+        return;
+    }
+    rt::msg_void_id(win, rt::sel(#str_ptr("performWindowDragWithEvent:\0")), event);
+    return;
+}
+
+fn window_drag_view_class() -> *u8 {
+    let name: *u8 = #str_ptr("CplusExtWindowDragView\0");
+    var cls: *u8 = rt::get_class(name);
+    if cls == { 0 as *u8 } {
+        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSView\0")), name, 0 as usize);
+        let a: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("mouseDown:\0")), wd_mousedown_imp, #str_ptr("v@:@\0"));
+        synth::register_class_pair(cls);
+    }
+    return cls;
+}
+
+// A fresh +1 window-drag view. Dragging it moves the window; double-clicking it
+// zooms. Frame is set by the layout pass. Put content in subviews (they keep
+// their own clicks); only the bare surface drags.
+fn new_window_drag_view(frame: rt::Rect) -> ak::View {
+    let alloced: *u8 = rt::msg_id(window_drag_view_class(), rt::sel(#str_ptr("alloc\0")));
+    let inited: *u8 = rt::msg_id_rect(alloced, rt::sel(#str_ptr("initWithFrame:\0")), frame);
+    return ak::View::from_raw(rt::autorelease(inited));
+}
+
+// The window behind a handler's `sender`, or nil if unhosted. A control/view
+// sender answers `-window` directly; a gesture-recognizer sender (a facet
+// `clickable`'s handler fires with the recognizer) answers `-view`, so unwrap to
+// its view first. Either way we reach the enclosing NSWindow (or nil).
+fn window_of(sender: *u8) -> *u8 {
+    if sender == { 0 as *u8 } { return 0 as *u8; }
+    let responds: *u8 = rt::sel(#str_ptr("respondsToSelector:\0"));
+    if rt::msg_i8_id(sender, responds, rt::sel(#str_ptr("window\0"))) != (0 as i8) {
+        return rt::msg_id(sender, rt::sel(#str_ptr("window\0")));
+    }
+    if rt::msg_i8_id(sender, responds, rt::sel(#str_ptr("view\0"))) != (0 as i8) {
+        let v: *u8 = rt::msg_id(sender, rt::sel(#str_ptr("view\0")));
+        if v != { 0 as *u8 } { return rt::msg_id(v, rt::sel(#str_ptr("window\0"))); }
+    }
+    return 0 as *u8;
+}
+
+// Button-driven window actions: the equivalents of clicking the standard traffic
+// lights, run against `sender`'s window. `performClose:`/`performMiniaturize:`/
+// `performZoom:` validate + animate exactly as the native buttons do (and respect
+// a delegate's windowShouldClose:). No-op when the sender has no window yet.
+fn window_perform_close(sender: *u8) {
+    let win: *u8 = window_of(sender);
+    if win != { 0 as *u8 } { rt::msg_void_id(win, rt::sel(#str_ptr("performClose:\0")), sender); }
+    return;
+}
+fn window_perform_minimize(sender: *u8) {
+    let win: *u8 = window_of(sender);
+    if win != { 0 as *u8 } { rt::msg_void_id(win, rt::sel(#str_ptr("performMiniaturize:\0")), sender); }
+    return;
+}
+fn window_perform_zoom(sender: *u8) {
+    let win: *u8 = window_of(sender);
+    if win != { 0 as *u8 } { rt::msg_void_id(win, rt::sel(#str_ptr("performZoom:\0")), sender); }
+    return;
+}

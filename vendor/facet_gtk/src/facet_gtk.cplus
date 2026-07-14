@@ -200,6 +200,14 @@ fn gtk_clickable(ctx: *u8, np: *facet::Node, take content: flex::Node) -> flex::
     return content;
 }
 
+// TODO(gtk,linux): a GtkWindowHandle makes a region drag the window (and titlebar
+// double-click-maximize), the direct parity for the macOS window-drag surface.
+// For now the content passes through — nothing is dropped; it just doesn't drag
+// the window yet.
+fn gtk_window_drag(ctx: *u8, np: *facet::Node, take content: flex::Node) -> flex::Node {
+    return content;
+}
+
 fn gtk_split(ctx: *u8, np: *facet::Node, take first: flex::Node, take second: flex::Node) -> flex::Node {
     var row: flex::Node = flex::Node::new();
     row.add_child(first);
@@ -438,6 +446,7 @@ fn renderer() -> facet::Renderer {
         clickable: gtk_clickable,
         scroll: gtk_scroll,
         material: gtk_material,
+        window_drag: gtk_window_drag,
         split: gtk_split,
         container: gtk_container,
         set_identity: gtk_set_identity,
@@ -553,6 +562,14 @@ fn gtk_activate(app_ptr: *u8, user: *u8) {
 }
 
 // Open a window, mount `root`, and run the GTK main loop (blocks). Linux-only.
+// Window-button actions for a custom titlebar (parity with the macOS backend).
+// TODO(gtk,linux): resolve `sender`'s GtkWindow via gtk_widget_get_root and call
+// gtk_window_close / gtk_window_minimize / gtk_window_maximize. Type-checked-only
+// backend: no-op for now (nothing to drive without a live GTK window).
+fn window_close(sender: *u8) { return; }
+fn window_minimize(sender: *u8) { return; }
+fn window_zoom(sender: *u8) { return; }
+
 fn run(take root: facet::Node, title: str = "facet", width: f64 = 480.0f64, height: f64 = 360.0f64) {
     G_ROOT = root;
     G_HAS_ROOT = true;
