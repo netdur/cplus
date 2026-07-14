@@ -945,8 +945,12 @@ fn ak_window_drag(ctx: *u8, np: *facet::Node, take content: flex::Node) -> flex:
 fn ak_window_buttons(ctx: *u8, np: *facet::Node) -> flex::Node {
     // A native leaf: the view re-parents the real close/miniaturize/zoom buttons
     // into itself once it enters the window (and re-attaches on fullscreen/resize).
+    // MEASURED (ui::view, not fixed_view): the view's fittingSize (its natural
+    // traffic-light extent) sizes the flex node. An UNMEASURED leaf defaults to
+    // width 0, which clips the re-parented buttons out of their parent's bounds so
+    // they stop being the hitTest target — rendered + hovered but dead to clicks.
     let v: ak::View = akx::new_window_buttons_view();
-    var n: flex::Node = ui::fixed_view(v);
+    var n: flex::Node = ui::view(v);
     apply_style(n.payload(), facet::kind_window_buttons(), np);
     return n;
 }
@@ -4016,6 +4020,67 @@ fn window_buttons_view_reparents_the_native_buttons() {
         option::Option[ak::Button]::Some(btn) => {
             let sv: *u8 = rt::msg_id(btn.as_view().raw(), rt::sel(#str_ptr("superview\0")));
             assert sv == v.raw();   // the zoom button is present (native toggle preserved)
+        }
+        option::Option[ak::Button]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn window_buttons_reparented_buttons_are_hit_testable() {
+    // The re-parented traffic lights must be the hitTest target at their painted
+    // location — else the press falls through them (to the drag view / passive
+    // chrome) and close/minimize/zoom never fire, even though they render + hover.
+    let win: ak::Window = make_shell_window("t", 400.0f64, 300.0f64, false, native_buttons: true);
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 400.0, h: 56.0 });
+    win.set_content_view(ak::View::from_raw(content.raw()));
+    let v: ak::View = akx::new_window_buttons_view();
+    content.add_subview(v);   // → viewDidMoveToWindow → re-parent + lay out
+    match win.standard_window_button(ak::WindowButton::NSWindowCloseButton) {
+        option::Option[ak::Button]::Some(btn) => {
+            // v sits at content's origin, so a point in v's coords is also the
+            // point in content's coords (hitTest's argument space).
+            let bf: rt::Rect = btn.as_view().frame();
+            let p: rt::Point = rt::Point { x: bf.x + bf.w / 2.0f64, y: bf.y + bf.h / 2.0f64 };
+            let hit: *u8 = { rt::msg_id_point(v.raw(), rt::sel(#str_ptr("hitTest:\0")), p) };
+            assert hit == btn.as_view().raw();
+        }
+        option::Option[ak::Button]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn window_buttons_hit_testable_through_window_drag_live_chain() {
+    // Reproduce iris's exact nesting through the REAL mount+apply pipeline:
+    // window_drag { hstack(background) { window_buttons() label } }. Then hitTest
+    // from the window's content view at the close button's centre — the path AppKit
+    // uses for a real click. It must resolve to the button (not the drag view /
+    // the covering row), else the click falls through and close/min/zoom are dead.
+    let win: ak::Window = make_shell_window("t", 400.0f64, 300.0f64, false, native_buttons: true);
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 400.0, h: 56.0 });
+    win.set_content_view(ak::View::from_raw(content.raw()));
+    var root: facet::Node = @facet {
+        window_drag {
+            hstack {
+                window_buttons()
+                label("hello")
+            }
+            .height(56.0f64)
+            .background(facet::Color::rgba(0.13f64, 0.13f64, 0.16f64, 1.0f64))
+        }
+    };
+    let _h: f64 = mount_into(#addr_of(root), content.raw(), 400.0f64, 56.0f64);
+
+    match win.standard_window_button(ak::WindowButton::NSWindowCloseButton) {
+        option::Option[ak::Button]::Some(btn) => {
+            let bv: *u8 = btn.as_view().raw();
+            let bb: rt::Rect = { rt::msg_rect(bv, rt::sel(#str_ptr("bounds\0"))) };
+            let center: rt::Point = rt::Point { x: bb.w / 2.0f64, y: bb.h / 2.0f64 };
+            // the button's centre, expressed in the content view's coordinate space
+            let cpt: rt::Point = { rt::msg_point_point_id(bv, rt::sel(#str_ptr("convertPoint:toView:\0")), center, content.raw()) };
+            let hit: *u8 = { rt::msg_id_point(content.raw(), rt::sel(#str_ptr("hitTest:\0")), cpt) };
+            assert hit == bv;
         }
         option::Option[ak::Button]::None => { assert false; }
     }
