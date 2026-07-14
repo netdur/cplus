@@ -21,6 +21,10 @@ interface Window {
     // titlebar controls (window_close / window_minimize / window_zoom) + a
     // window_drag surface. Honored per-backend (gtk maps to its own decorations).
     fn wants_custom_chrome(this) -> bool;
+    // Native buttons: keep the standard window buttons visible so a window_buttons()
+    // node can re-parent the real controls into a content toolbar. Distinct from
+    // custom_chrome (which hides all). Honored per-backend.
+    fn wants_native_buttons(this) -> bool;
     fn has_app_menu(this) -> bool;
     fn app_menu(ref this) -> AppMenu;
     fn should_close(this) -> bool;

@@ -120,6 +120,10 @@ fn kind_path() -> u32 { return 32 as u32; }
 // window_drag: a wrapper whose backing surface drags the host window (and zooms
 // on double-click) — the drag affordance for a custom, hidden-button titlebar.
 fn kind_window_drag() -> u32 { return 33 as u32; }
+// window_buttons: a native leaf that re-parents the REAL standard window buttons
+// (close/miniaturize/zoom) into its host view — the traffic lights for a custom
+// titlebar, keeping native behavior (zoom toggle, green-button tiling menu).
+fn kind_window_buttons() -> u32 { return 34 as u32; }
 
 // Agent-affordance roles — numeric indices aligned with agent_core::Role so
 // Phase 2 can pass them through without a translation table.
@@ -1731,6 +1735,16 @@ fn window_drag(take b: Builder) -> Node {
     return n;
 }
 
+// The app's real window controls: a native leaf that re-parents the standard
+// close / miniaturize / zoom buttons into itself, so a content toolbar shows the
+// GENUINE traffic lights (native zoom-toggle + green hover/tiling menu), not
+// fakes. Pair with a `wants_native_buttons` window (keeps the buttons visible
+// under a full-size, hidden-title chrome). Measures to the buttons' natural
+// extent. On a backend with no equivalent it is an empty leaf.
+fn window_buttons() -> Node {
+    return blank(kind_window_buttons());
+}
+
 // Clickable wrapper: gesture handlers on the node, content in children[0].
 // Primary click lands in `click` (same field as button); optional gestures
 // use the null-fn sentinel when unset.
@@ -1862,6 +1876,10 @@ struct Renderer {
     path:        fn(*u8, *Node) -> flex::Node,
     // The escape hatch (Phase 3)
     native:      fn(*u8, *Node) -> flex::Node,
+    // window_buttons: re-parent the native window controls into a host view (the
+    // real traffic lights for a custom titlebar). A backend with no equivalent
+    // returns an empty leaf.
+    window_buttons: fn(*u8, *Node) -> flex::Node,
     // wrappers — mount recurses children first, then hands them over
     bordered:    fn(*u8, *Node, take flex::Node) -> flex::Node,
     clickable:   fn(*u8, *Node, take flex::Node) -> flex::Node,
@@ -2020,6 +2038,10 @@ fn mount(np: *Node, r: Renderer) -> flex::Node {
         is_widget = true;
     } else if k == kind_native() {
         let f: fn(*u8, *Node) -> flex::Node = r.native;
+        n = f(r.ctx, np);
+        is_widget = true;
+    } else if k == kind_window_buttons() {
+        let f: fn(*u8, *Node) -> flex::Node = r.window_buttons;
         n = f(r.ctx, np);
         is_widget = true;
     } else if k == kind_bordered() {
@@ -2518,6 +2540,7 @@ static FAKE_CLICKABLES: i32 = 0;
 static FAKE_SCROLLS: i32 = 0;
 static FAKE_MATERIALS: i32 = 0;
 static FAKE_WINDOW_DRAGS: i32 = 0;
+static FAKE_WINDOW_BUTTONS: i32 = 0;
 static FAKE_SPLITS: i32 = 0;
 static FAKE_IDENTITIES: i32 = 0;
 static FAKE_TAGGED_IDENTITIES: i32 = 0;
@@ -2676,6 +2699,11 @@ fn fake_window_drag(ctx: *u8, np: *Node, take content: flex::Node) -> flex::Node
     return n;
 }
 
+fn fake_window_buttons(ctx: *u8, np: *Node) -> flex::Node {
+    FAKE_WINDOW_BUTTONS = FAKE_WINDOW_BUTTONS + 1;
+    return flex::Node::new().width(74.0f64).height(16.0f64);
+}
+
 fn fake_split(ctx: *u8, np: *Node, take first: flex::Node, take second: flex::Node) -> flex::Node {
     FAKE_SPLITS = FAKE_SPLITS + 1;
     var n: flex::Node = flex::Node::new();
@@ -2729,6 +2757,7 @@ fn fake_renderer() -> Renderer {
         gauge: fake_gauge,
         path: fake_path,
         native: fake_native,
+        window_buttons: fake_window_buttons,
         bordered: fake_bordered,
         clickable: fake_clickable,
         scroll: fake_scroll,
@@ -2769,6 +2798,7 @@ fn reset_fake_counts() {
     FAKE_SCROLLS = 0;
     FAKE_MATERIALS = 0;
     FAKE_WINDOW_DRAGS = 0;
+    FAKE_WINDOW_BUTTONS = 0;
     FAKE_SPLITS = 0;
     FAKE_IDENTITIES = 0;
     FAKE_TAGGED_IDENTITIES = 0;
@@ -2833,6 +2863,21 @@ fn mount_dispatches_new_kinds_and_wrappers() {
     // + 3 labels + 1 button = 10 set_identity calls
     assert FAKE_IDENTITIES == 10;
     assert tree.child_count() == (6 as usize);
+}
+
+#[test]
+fn mount_dispatches_window_buttons_leaf() {
+    // window_buttons is a native leaf: it routes through r.window_buttons and gets
+    // a set_identity call like every widget leaf.
+    reset_fake_counts();
+    var b: Builder = Builder::new();
+    b.add(window_buttons());
+    let root: Node = b.finish();
+
+    var tree: flex::Node = mount(#addr_of(root), fake_renderer());
+    assert FAKE_WINDOW_BUTTONS == 1;    // the leaf op ran
+    assert FAKE_IDENTITIES == 1;        // the leaf was identified
+    assert tree.child_count() == (1 as usize);
 }
 
 #[test]

@@ -942,6 +942,15 @@ fn ak_window_drag(ctx: *u8, np: *facet::Node, take content: flex::Node) -> flex:
     return n;
 }
 
+fn ak_window_buttons(ctx: *u8, np: *facet::Node) -> flex::Node {
+    // A native leaf: the view re-parents the real close/miniaturize/zoom buttons
+    // into itself once it enters the window (and re-attaches on fullscreen/resize).
+    let v: ak::View = akx::new_window_buttons_view();
+    var n: flex::Node = ui::fixed_view(v);
+    apply_style(n.payload(), facet::kind_window_buttons(), np);
+    return n;
+}
+
 // ---- portable scroll (matrix §4) — the two-phase bridge ---------------------
 // A scroll's content can't be laid out until the OUTER pass has sized its
 // viewport (content height follows the viewport width). So ak_scroll builds the
@@ -1139,6 +1148,7 @@ fn renderer() -> facet::Renderer {
         gauge: ak_gauge,
         path: ak_path,
         native: ak_native,
+        window_buttons: ak_window_buttons,
         bordered: ak_bordered,
         clickable: ak_clickable,
         scroll: ak_scroll,
@@ -1340,8 +1350,8 @@ fn hide_window_button(win: ak::Window, b: ak::WindowButton) {
 // title-less titlebar AND all three standard buttons hidden (close included), so
 // the app supplies custom traffic lights (wired via window_close/minimize/zoom)
 // and a window_drag surface. The caller sets the content view and orders it front.
-fn make_shell_window(title: str, width: f64, height: f64, clean_titlebar: bool, close_button_only: bool = false, custom_chrome: bool = false) -> ak::Window {
-    let full_size: bool = clean_titlebar || custom_chrome;
+fn make_shell_window(title: str, width: f64, height: f64, clean_titlebar: bool, close_button_only: bool = false, custom_chrome: bool = false, native_buttons: bool = false) -> ak::Window {
+    let full_size: bool = clean_titlebar || custom_chrome || native_buttons;
     let win = ak::Window::new(
         rt::Rect { x: 0.0, y: 0.0, w: width, h: height },
         shell_style_mask(full_size),
@@ -1350,7 +1360,15 @@ fn make_shell_window(title: str, width: f64, height: f64, clean_titlebar: bool, 
     );
     rt::retain(win.raw());
     win.set_title(title);
-    if custom_chrome {
+    if native_buttons {
+        // Keep ALL THREE standard buttons VISIBLE under a full-size, hidden-title
+        // chrome; a window_buttons() node re-parents them into the content toolbar
+        // (native zoom toggle + green hover/tiling menu preserved). Background
+        // drag stays on for the toolbar's bare regions.
+        win.set_titlebar_appears_transparent(true);
+        win.set_title_visibility(ak::WindowTitleVisibility::NSWindowTitleHidden);
+        win.set_movable_by_window_background(true);
+    } else if custom_chrome {
         win.set_titlebar_appears_transparent(true);
         win.set_title_visibility(ak::WindowTitleVisibility::NSWindowTitleHidden);
         hide_window_button(win, ak::WindowButton::NSWindowCloseButton);
@@ -1747,6 +1765,7 @@ fn run_window(
     unified_toolbar: bool = false,
     hide_title: bool = false,
     custom_chrome: bool = false,
+    native_buttons: bool = false,
     app_menu_enabled: bool = false,
     take app_menu: facet::AppMenu = facet::empty_app_menu(),
     ctx: *u8 = 0 as *u8,
@@ -1769,7 +1788,7 @@ fn run_window(
     };
     var delegate: ak::WindowDelegate = ak::WindowDelegate_new(#addr_of(lifecycle) as *u8);
 
-    let win = make_shell_window(title, width, height, clean_titlebar, close_button_only: close_button_only, custom_chrome: custom_chrome);
+    let win = make_shell_window(title, width, height, clean_titlebar, close_button_only: close_button_only, custom_chrome: custom_chrome, native_buttons: native_buttons);
     OPEN_WINDOWS = OPEN_WINDOWS +% 1;
     install_window_lifecycle(win, #addr_of(lifecycle), #addr_of(delegate));
 
@@ -3938,6 +3957,66 @@ fn window_drag_wraps_content_in_a_drag_surface() {
     // the drag surface handles mouseDown: (starts the window drag / zoom)
     assert rt::msg_i8_id(tree.payload(), rt::sel(#str_ptr("respondsToSelector:\0")), rt::sel(#str_ptr("mouseDown:\0"))) != (0 as i8);
     assert tree.child_count() == (1 as usize);
+}
+
+#[test]
+fn native_buttons_mode_keeps_standard_buttons_visible() {
+    // native_buttons keeps ALL THREE standard buttons VISIBLE (the opposite of
+    // custom_chrome) under a full-size, hidden-title, background-drag chrome — a
+    // window_buttons() node then re-parents the real controls.
+    let win: ak::Window = make_shell_window("t", 400.0f64, 300.0f64, false, native_buttons: true);
+    assert button_is_hidden(win, ak::WindowButton::NSWindowCloseButton) == false;
+    assert button_is_hidden(win, ak::WindowButton::NSWindowMiniaturizeButton) == false;
+    assert button_is_hidden(win, ak::WindowButton::NSWindowZoomButton) == false;
+    assert (win.style_mask() & ak::window_style_mask_full_size_content_view) != (0 as u64);
+    assert win.is_movable_by_window_background();
+    match win.title_visibility() {
+        ak::WindowTitleVisibility::NSWindowTitleHidden => { }
+        _ => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn window_buttons_mounts_a_reparent_view() {
+    // window_buttons() mounts to a CplusExtWindowButtonsView leaf that will grab
+    // the native traffic lights when it enters a window; it measures to their
+    // natural extent and answers viewDidMoveToWindow (the re-parent hook).
+    var wb: facet::Node = facet::window_buttons();
+    var tree: flex::Node = mount(#addr_of(wb));
+    assert tree.payload() != (0 as *u8);
+    let cls: *u8 = akx::window_buttons_view_class();
+    assert rt::msg_i8_id(tree.payload(), rt::sel(#str_ptr("isKindOfClass:\0")), cls) != (0 as i8);
+    assert rt::msg_i8_id(tree.payload(), rt::sel(#str_ptr("respondsToSelector:\0")), rt::sel(#str_ptr("viewDidMoveToWindow\0"))) != (0 as i8);
+}
+
+#[test]
+fn window_buttons_view_reparents_the_native_buttons() {
+    // The live mechanism, headless: adding the view to a window's content view
+    // fires viewDidMoveToWindow, which moves the REAL close/miniaturize/zoom
+    // buttons out of the titlebar and into the view (kept visible).
+    let win: ak::Window = make_shell_window("t", 400.0f64, 300.0f64, false, native_buttons: true);
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 400.0, h: 56.0 });
+    win.set_content_view(ak::View::from_raw(content.raw()));
+    let v: ak::View = akx::new_window_buttons_view();
+    content.add_subview(v);   // → viewDidMoveToWindow → re-parent
+    // each standard button now lives under our view and is visible
+    match win.standard_window_button(ak::WindowButton::NSWindowCloseButton) {
+        option::Option[ak::Button]::Some(btn) => {
+            let sv: *u8 = rt::msg_id(btn.as_view().raw(), rt::sel(#str_ptr("superview\0")));
+            assert sv == v.raw();
+            assert btn.as_view().is_hidden() == false;
+        }
+        option::Option[ak::Button]::None => { assert false; }
+    }
+    match win.standard_window_button(ak::WindowButton::NSWindowZoomButton) {
+        option::Option[ak::Button]::Some(btn) => {
+            let sv: *u8 = rt::msg_id(btn.as_view().raw(), rt::sel(#str_ptr("superview\0")));
+            assert sv == v.raw();   // the zoom button is present (native toggle preserved)
+        }
+        option::Option[ak::Button]::None => { assert false; }
+    }
+    return;
 }
 
 #[test]

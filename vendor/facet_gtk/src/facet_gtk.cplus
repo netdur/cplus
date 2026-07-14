@@ -208,6 +208,13 @@ fn gtk_window_drag(ctx: *u8, np: *facet::Node, take content: flex::Node) -> flex
     return content;
 }
 
+// TODO(gtk,linux): GTK draws its own titlebar (GtkHeaderBar / GtkWindowControls),
+// the parity for re-parented native window buttons. For now an empty leaf — the
+// row still lays out; the window controls just aren't hosted in it yet.
+fn gtk_window_buttons(ctx: *u8, np: *facet::Node) -> flex::Node {
+    return flex::Node::new();
+}
+
 fn gtk_split(ctx: *u8, np: *facet::Node, take first: flex::Node, take second: flex::Node) -> flex::Node {
     var row: flex::Node = flex::Node::new();
     row.add_child(first);
@@ -442,6 +449,7 @@ fn renderer() -> facet::Renderer {
         gauge: gtk_gauge,
         path: gtk_path,
         native: gtk_native,
+        window_buttons: gtk_window_buttons,
         bordered: gtk_bordered,
         clickable: gtk_clickable,
         scroll: gtk_scroll,

@@ -795,3 +795,133 @@ fn window_perform_zoom(sender: *u8) {
     if win != { 0 as *u8 } { rt::msg_void_id(win, rt::sel(#str_ptr("performZoom:\0")), sender); }
     return;
 }
+
+// ==========================================================================
+// Native window buttons re-parented into a content view (custom titlebar)
+// ==========================================================================
+//
+// A content toolbar under a hidden title bar wants the REAL traffic lights, not
+// fakes — hiding them breaks the native zoom TOGGLE and the green-button hover /
+// window-tiling menu. So keep the three standard buttons VISIBLE and move them
+// into the app's own view: `CplusExtWindowButtonsView`, on `viewDidMoveToWindow`,
+// takes window.standardWindowButton(close/miniaturize/zoom), unhides them,
+// removeFromSuperview + addSubview into itself, and lays them out (leading 4,
+// 14pt gaps, vertically centered). AppKit re-creates/re-lays the buttons on
+// full-screen transitions and live-resize end, so it re-attaches on those
+// notifications (plus a delayed pass to catch the settle). All native behavior
+// survives — the buttons' actions still target the window. Their natural extent
+// is reported via `fittingSize` so facet measures the leaf correctly.
+
+fn wb_observed_key() -> *u8 { return { 28731 as *u8 }; }
+
+// `-[NSView setFrameOrigin:]` shape reused from rt (msg_void_point). Place the
+// three buttons in `self`: leading inset 4, 14pt between button edges, centered.
+fn wb_layout(self_obj: *u8) {
+    let win: *u8 = rt::msg_id(self_obj, rt::sel(#str_ptr("window\0")));
+    if win == { 0 as *u8 } { return; }
+    let self_h: f64 = { rt::msg_rect(self_obj, rt::sel(#str_ptr("bounds\0"))).h };
+    let std_sel: *u8 = rt::sel(#str_ptr("standardWindowButton:\0"));
+    var x: f64 = 4.0f64;
+    var i: i64 = 0 as i64;
+    while i < (3 as i64) {
+        let btn: *u8 = { rt::msg_id_i64(win, std_sel, i) };   // 0 close, 1 miniaturize, 2 zoom
+        if btn != { 0 as *u8 } {
+            rt::msg_void_i8(btn, rt::sel(#str_ptr("setHidden:\0")), 0 as i8);   // keep visible
+            let bf: rt::Rect = { rt::msg_rect(btn, rt::sel(#str_ptr("frame\0"))) };
+            let sv: *u8 = { rt::msg_id(btn, rt::sel(#str_ptr("superview\0"))) };
+            if sv != self_obj {
+                rt::msg_void(btn, rt::sel(#str_ptr("removeFromSuperview\0")));
+                rt::msg_void_id(self_obj, rt::sel(#str_ptr("addSubview:\0")), btn);
+            }
+            let y: f64 = (self_h - bf.h) / 2.0f64;
+            rt::msg_void_point(btn, rt::sel(#str_ptr("setFrameOrigin:\0")), rt::Point { x: x, y: y });
+            x = x + bf.w + 14.0f64;
+        }
+        i = i +% (1 as i64);
+    }
+    return;
+}
+
+// Re-lay after AppKit moves the buttons back (fullscreen / live-resize / settle).
+// The notification arg (if any) is ignored — we re-read the window each time.
+fn wb_reattach_imp(self_obj: *u8, cmd: *u8, notif: *u8) { wb_layout(self_obj); return; }
+
+fn wb_did_move_to_window_imp(self_obj: *u8, cmd: *u8) {
+    let win: *u8 = rt::msg_id(self_obj, rt::sel(#str_ptr("window\0")));
+    if win == { 0 as *u8 } { return; }
+    wb_layout(self_obj);
+    // Register the re-attach observers once, then a delayed pass for the settle.
+    if synth::get_associated(self_obj, wb_observed_key()) == { 0 as *u8 } {
+        synth::set_associated(self_obj, wb_observed_key(), { 1 as *u8 });
+        let nc: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSNotificationCenter\0")), rt::sel(#str_ptr("defaultCenter\0")));
+        let add_sel: *u8 = rt::sel(#str_ptr("addObserver:selector:name:object:\0"));
+        let re_sel: *u8 = rt::sel(#str_ptr("cplusWBReattach:\0"));
+        rt::msg_void_id_id_id_id(nc, add_sel, self_obj, re_sel, bridge::nsstring("NSWindowDidEnterFullScreenNotification"), win);
+        rt::msg_void_id_id_id_id(nc, add_sel, self_obj, re_sel, bridge::nsstring("NSWindowDidExitFullScreenNotification"), win);
+        rt::msg_void_id_id_id_id(nc, add_sel, self_obj, re_sel, bridge::nsstring("NSWindowDidEndLiveResizeNotification"), win);
+    }
+    wb_perform_after(self_obj, rt::sel(#str_ptr("cplusWBReattach:\0")), 0 as *u8, 0.15f64);
+    return;
+}
+
+// Re-center the buttons when the host view is resized (window relayout).
+fn wb_set_frame_size_imp(self_obj: *u8, cmd: *u8, size: rt::Size) {
+    call_super_void_size(self_obj, rt::get_class(#str_ptr("NSView\0")), rt::sel(#str_ptr("setFrameSize:\0")), size);
+    wb_layout(self_obj);
+    return;
+}
+
+// Natural extent = leading 4 + three ~14pt buttons + two 14pt gaps ≈ 74×16.
+// Reported so facet measures the leaf (the buttons aren't reparented yet at
+// measure time, so this is a fixed estimate, not read from live frames).
+fn wb_fitting_size_imp(self_obj: *u8, cmd: *u8) -> rt::Size { return rt::Size { w: 74.0f64, h: 16.0f64 }; }
+
+// objc_msgSendSuper for `void (self, _cmd, NSSize)` — chain setFrameSize: to NSView.
+#[link_name = "objc_msgSendSuper"]
+extern fn msg_super_void_size(sup: *ObjcSuper, sel: *u8, a: rt::Size);
+fn call_super_void_size(self_obj: *u8, super_cls: *u8, sel: *u8, a: rt::Size) {
+    var sup: ObjcSuper = ObjcSuper { receiver: self_obj, super_class: super_cls };
+    msg_super_void_size(#addr_of(sup), sel, a);
+    return;
+}
+
+// `-[NSObject performSelector:withObject:afterDelay:]` — run the settle pass off
+// the runloop (nil object; the reattach imp ignores its arg).
+#[link_name = "objc_msgSend"]
+extern fn msg_perform_after(recv: *u8, sel: *u8, a_sel: *u8, obj: *u8, delay: f64);
+fn wb_perform_after(self_obj: *u8, target_sel: *u8, obj: *u8, delay: f64) {
+    msg_perform_after(self_obj, rt::sel(#str_ptr("performSelector:withObject:afterDelay:\0")), target_sel, obj, delay);
+    return;
+}
+
+// class_addMethod shapes not in objc/synthesis: a no-arg void (viewDidMoveToWindow),
+// an NSSize-taking void (setFrameSize:), and an NSSize-returning getter (fittingSize).
+#[link_name = "class_addMethod"]
+extern fn wb_add_void0(cls: *u8, sel: *u8, imp: fn(*u8, *u8), types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn wb_add_void_size(cls: *u8, sel: *u8, imp: fn(*u8, *u8, rt::Size), types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn wb_add_size0(cls: *u8, sel: *u8, imp: fn(*u8, *u8) -> rt::Size, types: *u8) -> i8;
+
+fn window_buttons_view_class() -> *u8 {
+    let name: *u8 = #str_ptr("CplusExtWindowButtonsView\0");
+    var cls: *u8 = rt::get_class(name);
+    if cls == { 0 as *u8 } {
+        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSView\0")), name, 0 as usize);
+        let a: i8 = wb_add_void0(cls, rt::sel(#str_ptr("viewDidMoveToWindow\0")), wb_did_move_to_window_imp, #str_ptr("v@:\0"));
+        let b: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("cplusWBReattach:\0")), wb_reattach_imp, #str_ptr("v@:@\0"));
+        let c: i8 = wb_add_void_size(cls, rt::sel(#str_ptr("setFrameSize:\0")), wb_set_frame_size_imp, #str_ptr("v@:{CGSize=dd}\0"));
+        let d: i8 = wb_add_size0(cls, rt::sel(#str_ptr("fittingSize\0")), wb_fitting_size_imp, #str_ptr("{CGSize=dd}@:\0"));
+        synth::register_class_pair(cls);
+    }
+    return cls;
+}
+
+// A fresh +1 view that re-parents the window's native traffic lights into itself
+// once it enters a window. Frame is set by the layout pass; drop it in the custom
+// toolbar (pair with a `wants_native_buttons` window so the buttons stay visible).
+fn new_window_buttons_view() -> ak::View {
+    let alloced: *u8 = rt::msg_id(window_buttons_view_class(), rt::sel(#str_ptr("alloc\0")));
+    let inited: *u8 = rt::msg_id_rect(alloced, rt::sel(#str_ptr("initWithFrame:\0")), rt::Rect { x: 0.0, y: 0.0, w: 74.0, h: 16.0 });
+    return ak::View::from_raw(rt::autorelease(inited));
+}

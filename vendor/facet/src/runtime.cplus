@@ -25,6 +25,11 @@ interface Window {
     // app draws its own titlebar controls (traffic lights via window_close /
     // window_minimize / window_zoom) and a window_drag surface.
     fn wants_custom_chrome(this) -> bool;
+    // Native buttons: KEEP the standard window buttons visible under full-size
+    // content + hidden transparent title, so a `window_buttons()` node can
+    // re-parent the REAL traffic lights into a content toolbar (native zoom
+    // toggle + green hover/tiling menu preserved). Distinct from custom_chrome.
+    fn wants_native_buttons(this) -> bool;
     fn has_app_menu(this) -> bool;
     fn app_menu(ref this) -> AppMenu;
     fn should_close(this) -> bool;
@@ -61,6 +66,7 @@ fn run[W: Window](take window: W) {
         unified_toolbar: owned_window.wants_unified_toolbar(),
         hide_title: owned_window.wants_hidden_title(),
         custom_chrome: owned_window.wants_custom_chrome(),
+        native_buttons: owned_window.wants_native_buttons(),
         app_menu_enabled: owned_window.has_app_menu(),
         app_menu: app_menu,
         ctx: owned_window.lifecycle_context(),
