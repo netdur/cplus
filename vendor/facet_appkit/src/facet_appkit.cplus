@@ -64,6 +64,12 @@ fn ns_color(c: facet::Color) -> ak::Color {
     if t == (6 as u32) { return ak::Color::system_blue_color(); }
     if t == (7 as u32) { return ak::Color::system_orange_color(); }
     if t == (8 as u32) { return ak::Color::system_gray_color(); }
+    if t == (9 as u32) { return ak::Color::tertiary_label_color(); }
+    if t == (10 as u32) { return ak::Color::separator_color(); }
+    if t == (11 as u32) { return ak::Color::window_background_color(); }
+    if t == (12 as u32) { return ak::Color::under_page_background_color(); }
+    if t == (13 as u32) { return ak::Color::control_background_color(); }
+    if t == (14 as u32) { return ak::Color::system_fill_color(); }
     return ak::Color::color_with_red({ c.r }, { c.g }, { c.b }, { c.a });
 }
 
@@ -915,6 +921,8 @@ fn install() {
     facet::set_list_builder(fak_list);
     facet::set_raise_fn(raise);
     facet::set_key_of_fn(key_of_impl);
+    facet::set_dropped_text_fn(dropped_text);
+    facet::set_is_dark_fn(is_dark_impl);
     facet::set_find_fn(find_impl);
     facet::set_set_text_fn(set_text_impl);
     facet::set_set_value_fn(set_value_impl);
@@ -2074,6 +2082,10 @@ fn run_window(
     // size instead of leaving the content frozen at the mount-time size.
     RUN_ROOT = #addr_of(root);
     let _h: f64 = ui::mount(run_root_render, ctx: slot_cp, host: content.raw());
+    // System light/dark flips reach the app through facet::on_appearance_change:
+    // an invisible sentinel subview's viewDidChangeEffectiveAppearance forwards
+    // the signal (the override is the only hook AppKit offers).
+    akx::add_appearance_observer(ak::View::from_raw(content.raw()), fire_appearance_change, 0 as *u8);
     if zoomable {
         install_pinch_zoom(content.raw(), min_zoom: min_zoom, max_zoom: max_zoom);
     }
@@ -2485,6 +2497,31 @@ fn key_of_impl(sender: *u8) -> text::Text {
         v = rt::msg_id(v, rt::sel(#str_ptr("superview\0")));
     }
     return text::new();
+}
+
+// Is `a` the dark appearance? bestMatch resolves derived appearances (vibrant
+// dark, high-contrast variants) onto the base pair.
+fn appearance_is_dark(a: ak::Appearance) -> bool {
+    var names: vec::Vec[text::Text] = vec::new::[text::Text]();
+    names.append(text::from_str("NSAppearanceNameAqua"));
+    names.append(text::from_str("NSAppearanceNameDarkAqua"));
+    match a.best_match_from_appearances_with_names(names) {
+        option::Option[text::Text]::Some(n) => { return n.equals("NSAppearanceNameDarkAqua"); }
+        option::Option[text::Text]::None => { return false; }
+    }
+    return false;
+}
+
+// facet::is_dark hook: the app-wide effective appearance.
+fn is_dark_impl() -> bool {
+    return appearance_is_dark(ak::Application::shared_application().effective_appearance());
+}
+
+// The sentinel's callback (see run_window): forward the flip to the app's
+// registered facet::on_appearance_change handler.
+fn fire_appearance_change(ctx: *u8) {
+    facet::notify_appearance_changed();
+    return;
 }
 
 // Raise the keyed view to the front of its siblings so it paints on top — the
@@ -3520,6 +3557,99 @@ fn find_and_structural_verbs_reach_scroll_hosted_content() {
     assert facet::find(cp, "rows").remove_child("rows:a");
     assert find_view_by_id(host.raw(), "rows:a") == (0 as *u8);
     unmount_all();
+}
+
+// ---- appearance, adaptive tokens, drop payload (portable read hooks) --------
+
+#[test]
+fn adaptive_color_tokens_map_to_real_nscolors() {
+    assert ns_color(facet::Color::tertiary()).raw() != (0 as *u8);
+    assert ns_color(facet::Color::separator()).raw() != (0 as *u8);
+    assert ns_color(facet::Color::window_background()).raw() != (0 as *u8);
+    assert ns_color(facet::Color::under_page_background()).raw() != (0 as *u8);
+    assert ns_color(facet::Color::control_background()).raw() != (0 as *u8);
+    assert ns_color(facet::Color::fill()).raw() != (0 as *u8);
+}
+
+#[test]
+fn appearance_is_dark_matches_the_named_pair() {
+    match ak::Appearance::appearance_named("NSAppearanceNameDarkAqua") {
+        option::Option[ak::Appearance]::Some(dark) => { assert appearance_is_dark(dark); }
+        option::Option[ak::Appearance]::None => { assert false; }
+    };
+    match ak::Appearance::appearance_named("NSAppearanceNameAqua") {
+        option::Option[ak::Appearance]::Some(light) => { assert appearance_is_dark(light) == false; }
+        option::Option[ak::Appearance]::None => { assert false; }
+    };
+    // The installed hook reads the app-wide appearance — whichever it is, the
+    // facade and the impl agree.
+    install();
+    assert facet::is_dark() == is_dark_impl();
+}
+
+static T_APPEAR_FIRED: i64 = 0;
+
+fn t_appear_probe(ctx: *u8) {
+    T_APPEAR_FIRED = T_APPEAR_FIRED + (1 as i64);
+    return;
+}
+
+#[test]
+fn appearance_observer_forwards_real_flips_only() {
+    // The sentinel run_window plants: its viewDidChangeEffectiveAppearance
+    // override forwards to facet::notify_appearance_changed -> the app's
+    // registered handler — but ONLY on a real appearance change (AppKit also
+    // calls the override when the view joins the hierarchy; that resolution
+    // must stay quiet). Flip the sentinel's own appearance override to drive
+    // a genuine change without touching the system theme.
+    T_APPEAR_FIRED = 0;
+    facet::on_appearance_change(t_appear_probe);
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 100.0, h: 100.0 });
+    akx::add_appearance_observer(host, fire_appearance_change, 0 as *u8);
+    var subs: vec::Vec[ak::View] = host.subviews();
+    assert subs.count() == (1 as usize);
+    assert T_APPEAR_FIRED == (0 as i64);   // attach-time resolution: no forward
+    var other: str = "NSAppearanceNameDarkAqua";
+    if is_dark_impl() { other = "NSAppearanceNameAqua"; }
+    match subs.at_ptr(0 as usize) {
+        option::Option[*ak::View]::Some(sp) => {
+            let sentinel: *u8 = { (*sp).raw() };
+            match ak::Appearance::appearance_named(other) {
+                option::Option[ak::Appearance]::Some(ap) => {
+                    rt::msg_void_id(sentinel, rt::sel(#str_ptr("setAppearance:\0")), ap.raw());
+                }
+                option::Option[ak::Appearance]::None => { assert false; }
+            };
+            // AppKit delivers the override on the change; call it too — the
+            // change detector forwards exactly once per name move either way.
+            rt::msg_void(sentinel, rt::sel(#str_ptr("viewDidChangeEffectiveAppearance\0")));
+            assert T_APPEAR_FIRED == (1 as i64);   // the flip forwarded once
+            rt::msg_void(sentinel, rt::sel(#str_ptr("viewDidChangeEffectiveAppearance\0")));
+            assert T_APPEAR_FIRED == (1 as i64);   // no change: suppressed
+        }
+        option::Option[*ak::View]::None => { assert false; }
+    };
+    facet::on_appearance_change(0 as fn(*u8));   // restore
+}
+
+#[test]
+fn facet_dropped_text_reads_the_drop_zone_payload() {
+    install();
+    // Nothing dropped yet: empty through the portable facade.
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 160.0, h: 120.0 });
+    var root: facet::Node = @facet {
+        vstack {
+            box().frame(140.0f64, 90.0f64).on_drop(t3x_noop).agent_id("zone2")
+        }
+    };
+    let _h: f64 = mount_into(#addr_of(root), content.raw(), 160.0f64, 120.0f64);
+    let vp: *u8 = find_view_by_id(content.raw(), "zone2");
+    assert vp != (0 as *u8);
+    assert facet::dropped_text(vp).count() == (0 as usize);
+    // A performed drop pins the payload on the zone view (what the backend's
+    // perform imp does); the facade reads it back.
+    akx::set_drop_text(vp, "card:42");
+    assert facet::dropped_text(vp).equals("card:42");
 }
 
 // ---- sender normalization + key readback (facet::key_of) --------------------

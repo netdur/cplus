@@ -144,6 +144,39 @@ A `clickable`'s handler fires from a gesture recognizer, so its `sender` is the
 recognizer, not a view. `key_of` and `raise` both normalize such senders to the
 view they are attached to before any view walk.
 
+## What was dropped: `dropped_text`
+
+```cplus
+fn dropped_text(sender: *u8) -> text::Text
+```
+
+An `.on_drop` handler's sender is the drop-zone view; `dropped_text(sender)`
+returns the text payload the drag carried (a `.draggable(text)` source's
+string), empty when nothing has been dropped. Pair with `key_of(sender)` for
+where it landed:
+
+```cplus
+fn on_card_drop(sender: *u8, ctx: *u8) {
+    let zone: text::Text = facet::key_of(sender);        // "board:col:2:drop"
+    let card: text::Text = facet::dropped_text(sender);  // "card:42"
+    // parse both, move the card, update by key
+}
+```
+
+## Light and dark: `is_dark` and the appearance signal
+
+```cplus
+fn is_dark() -> bool
+fn on_appearance_change(handler: fn(*u8), ctx: *u8 = 0)
+```
+
+Semantic `Color` tokens adapt to the system appearance by themselves (see
+widgets.md). An app that themes with explicit RGBA reads `is_dark()` when
+choosing colors, and registers one `on_appearance_change` handler: the backend
+fires it on every system light/dark flip. Colors are flattened at build time,
+so the handler re-applies them — re-theme keyed elements in place, or swap a
+root outlet's child.
+
 ## The native escape hatch
 
 When the portable mutators are not enough, `Handle::view()` returns the raw

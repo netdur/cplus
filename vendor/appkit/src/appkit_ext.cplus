@@ -588,6 +588,71 @@ fn observe_notification(name: str, object: *u8, handler: fn(*u8), ctx: *u8, pin_
 }
 
 // ==========================================================================
+// Appearance-change observer — viewDidChangeEffectiveAppearance -> C+ handler
+// ==========================================================================
+//
+// NSView.viewDidChangeEffectiveAppearance is override-only (no delegate, no
+// notification), so reacting to a system light/dark flip takes a one-off
+// NSView subclass. `add_appearance_observer` drops a 0x0 sentinel instance
+// under `host`: it inherits the window's effective appearance, so AppKit
+// calls the override on every flip and the handler fires with its ctx.
+
+// `class_addMethod` for the bare `void (self, _cmd)` shape.
+#[link_name = "class_addMethod"]
+extern fn add_method_void_0(cls: *u8, sel: *u8, imp: fn(*u8, *u8), types: *u8) -> i8;
+
+fn appearance_obs_handler_key() -> *u8 { return { 28701 as *u8 }; }
+fn appearance_obs_ctx_key() -> *u8 { return { 28702 as *u8 }; }
+fn appearance_obs_seen_key() -> *u8 { return { 28703 as *u8 }; }
+
+// The sentinel's current effective-appearance NAME (an NSString, nil-safe).
+fn appearance_obs_name(self_obj: *u8) -> *u8 {
+    let ap: *u8 = rt::msg_id(self_obj, rt::sel(#str_ptr("effectiveAppearance\0")));
+    if ap == { 0 as *u8 } { return 0 as *u8; }
+    return rt::msg_id(ap, rt::sel(#str_ptr("name\0")));
+}
+
+// Forward ONLY on a real change: AppKit also calls the override when the view
+// joins a hierarchy (and on other no-op resolutions), so the handler compares
+// the appearance NAME against the last one seen (primed at attach) and stays
+// quiet unless it moved.
+fn appearance_obs_imp(self_obj: *u8, cmd: *u8) {
+    let prev: *u8 = synth::get_associated(self_obj, appearance_obs_seen_key());
+    let now: *u8 = appearance_obs_name(self_obj);
+    synth::retain_associated(self_obj, appearance_obs_seen_key(), now);
+    if prev == { 0 as *u8 } { return; }        // never primed: record only
+    if now == { 0 as *u8 } { return; }
+    if rt::msg_i8_id(now, rt::sel(#str_ptr("isEqualToString:\0")), prev) != (0 as i8) { return; }   // unchanged
+    let f: fn(*u8) = { synth::get_associated(self_obj, appearance_obs_handler_key()) as fn(*u8) };
+    let ctx: *u8 = synth::get_associated(self_obj, appearance_obs_ctx_key());
+    if { f as *u8 } != { 0 as *u8 } { f(ctx); }
+    return;
+}
+
+fn appearance_obs_class() -> *u8 {
+    let existing: *u8 = rt::get_class(#str_ptr("CplusExt_AppearanceObserverView\0"));
+    if existing != (0 as *u8) { return existing; }
+    let cls: *u8 = synth::allocate_class_pair(rt::get_class(#str_ptr("NSView\0")), #str_ptr("CplusExt_AppearanceObserverView\0"), 0 as usize);
+    let _a: i8 = add_method_void_0(cls, rt::sel(#str_ptr("viewDidChangeEffectiveAppearance\0")), appearance_obs_imp, #str_ptr("v@:\0"));
+    synth::register_class_pair(cls);
+    return cls;
+}
+
+// Watch `host`'s window for appearance changes: `handler(ctx)` fires on every
+// system light/dark flip. The sentinel is invisible (0x0) and lives with `host`.
+fn add_appearance_observer(host: ak::View, handler: fn(*u8), ctx: *u8) {
+    let alloced: *u8 = rt::msg_id(appearance_obs_class(), rt::sel(#str_ptr("alloc\0")));
+    let inited: *u8 = rt::msg_id_rect(alloced, rt::sel(#str_ptr("initWithFrame:\0")), rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 });
+    synth::set_associated(inited, appearance_obs_handler_key(), { handler as *u8 });
+    synth::set_associated(inited, appearance_obs_ctx_key(), ctx);
+    // Prime the change detector with the CURRENT appearance, so the attach-time
+    // override call (a resolution, not a flip) never forwards.
+    synth::retain_associated(inited, appearance_obs_seen_key(), appearance_obs_name(inited));
+    host.add_subview(ak::View::from_raw(rt::autorelease(inited)));
+    return;
+}
+
+// ==========================================================================
 // Line-number ruler — a vertical NSRulerView gutter for a code text view
 // ==========================================================================
 //
@@ -736,6 +801,13 @@ fn drop_text_key() -> *u8 { return { 28692 as *u8 }; }
 // NSDragOperationCopy = 1.
 fn drop_entered_imp(self_obj: *u8, cmd: *u8, sender: *u8) -> u64 { return 1 as u64; }
 fn drop_prepare_imp(self_obj: *u8, cmd: *u8, sender: *u8) -> i8 { return 1 as i8; }
+
+// Pin `s` as `drop_view`'s current payload — the same association a performed
+// drop writes (drop_perform_imp), exposed for programmatic drops and tests.
+fn set_drop_text(drop_view: *u8, s: str) {
+    synth::retain_associated(drop_view, drop_text_key(), bridge::nsstring(s));
+    return;
+}
 
 fn drop_perform_imp(self_obj: *u8, cmd: *u8, sender: *u8) -> i8 {
     let pb: *u8 = rt::msg_id(sender, rt::sel(#str_ptr("draggingPasteboard\0")));

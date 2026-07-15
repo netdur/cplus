@@ -217,6 +217,16 @@ impl Color {
     fn system_orange() -> Color { return Color { token: 7 as u32, r: 0.0f64, g: 0.0f64, b: 0.0f64, a: 0.0f64 }; }
     fn system_gray() -> Color { return Color { token: 8 as u32, r: 0.0f64, g: 0.0f64, b: 0.0f64, a: 0.0f64 }; }
     fn rgba(r: f64, g: f64, b: f64, a: f64) -> Color { return Color { token: 255 as u32, r: r, g: g, b: b, a: a }; }
+    // Adaptive tokens (light/dark correct on every backend): the tertiary text
+    // tier, the separator hairline, three surface tiers (window / under-page /
+    // control background), and the neutral fill. Prefer these over fixed rgba
+    // for chrome that must read in both appearances.
+    fn tertiary() -> Color { return Color { token: 9 as u32, r: 0.0f64, g: 0.0f64, b: 0.0f64, a: 0.0f64 }; }
+    fn separator() -> Color { return Color { token: 10 as u32, r: 0.0f64, g: 0.0f64, b: 0.0f64, a: 0.0f64 }; }
+    fn window_background() -> Color { return Color { token: 11 as u32, r: 0.0f64, g: 0.0f64, b: 0.0f64, a: 0.0f64 }; }
+    fn under_page_background() -> Color { return Color { token: 12 as u32, r: 0.0f64, g: 0.0f64, b: 0.0f64, a: 0.0f64 }; }
+    fn control_background() -> Color { return Color { token: 13 as u32, r: 0.0f64, g: 0.0f64, b: 0.0f64, a: 0.0f64 }; }
+    fn fill() -> Color { return Color { token: 14 as u32, r: 0.0f64, g: 0.0f64, b: 0.0f64, a: 0.0f64 }; }
     fn is_set(this) -> bool { return this.token != (0 as u32); }
 }
 
@@ -1026,6 +1036,62 @@ fn key_of(sender: *u8) -> text::Text {
     return f(sender);
 }
 
+// ---- dropped_text: read a drop's payload (what landed?) ----------------------
+// An `.on_drop` handler's sender is the drop-zone view; `dropped_text(sender)`
+// returns the text the drag carried as an owned Text (empty when nothing has
+// been dropped). Pair with `key_of(sender)` for WHERE it landed. Backend-
+// installed, like `key_of`.
+static DROPPED_TEXT_FN: fn(*u8) -> text::Text = #zero::[fn(*u8) -> text::Text]();
+
+fn set_dropped_text_fn(f: fn(*u8) -> text::Text) { DROPPED_TEXT_FN = f; return; }
+
+fn dropped_text(sender: *u8) -> text::Text {
+    let f: fn(*u8) -> text::Text = DROPPED_TEXT_FN;
+    if f == (0 as fn(*u8) -> text::Text) { return text::new(); }
+    return f(sender);
+}
+
+// ---- is_dark: which system appearance is active ------------------------------
+// True when the platform is in its dark appearance. An app choosing custom
+// colors branches on this at build/re-theme time; prefer the adaptive Color
+// tokens where one fits (they track the appearance without any branching).
+// Backend-installed; false until a backend registers (light is the neutral
+// default for headless/portable runs).
+static IS_DARK_FN: fn() -> bool = #zero::[fn() -> bool]();
+
+fn set_is_dark_fn(f: fn() -> bool) { IS_DARK_FN = f; return; }
+
+fn is_dark() -> bool {
+    let f: fn() -> bool = IS_DARK_FN;
+    if f == (0 as fn() -> bool) { return false; }
+    return f();
+}
+
+// ---- appearance change: the re-theme signal ----------------------------------
+// The backend fires `notify_appearance_changed()` on every system light/dark
+// flip (macOS: viewDidChangeEffectiveAppearance). The app registers ONE handler
+// with `on_appearance_change`; what it does — re-theme keyed elements in place,
+// swap a root outlet's child — is app policy, never facet's. Colors flattened
+// at build time (layer backgrounds) do not track the appearance by themselves,
+// so a themed app re-applies them from this handler.
+static APPEARANCE_CB: fn(*u8) = #zero::[fn(*u8)]();
+static APPEARANCE_CB_CTX: *u8 = #zero::[*u8]();
+
+fn on_appearance_change(handler: fn(*u8), ctx: *u8 = 0 as *u8) {
+    APPEARANCE_CB = handler;
+    APPEARANCE_CB_CTX = ctx;
+    return;
+}
+
+// Backend entry: deliver the flip to the app's registered handler (no-op when
+// the app never registered).
+fn notify_appearance_changed() {
+    let f: fn(*u8) = APPEARANCE_CB;
+    if f == (0 as fn(*u8)) { return; }
+    f(APPEARANCE_CB_CTX);
+    return;
+}
+
 // ---- find: the keyed-direct update path (address one element, mutate it) -----
 // This is how facet updates. facet is NOT reactive: a handler mutates a struct
 // field, then pushes that value to the ONE element that shows it — addressed by
@@ -1423,7 +1489,7 @@ impl Node {
     }
     // `.on_drop(handler, ctx)` — make a `box` a text drop target (SwiftUI
     // `.dropDestination`). The handler fires with the drop-zone view as sender;
-    // read the dropped string with the backend's `dropped_text(sender)`.
+    // read the dropped string with `facet::dropped_text(sender)`.
     fn on_drop(take this, handler: fn(*u8, *u8), ctx: *u8 = 0 as *u8) -> Node {
         var n: Node = this;
         n.drop_handler = handler;
@@ -2433,6 +2499,60 @@ fn key_of_defaults_empty_and_routes_through_backend() {
     assert miss.count() == (0 as usize);
     // Restore the uninstalled default so test order never matters.
     set_key_of_fn(0 as fn(*u8) -> text::Text);
+}
+
+fn fake_dropped_text(sender: *u8) -> text::Text {
+    if sender == (7 as *u8) { return text::from_str("card:42"); }
+    return text::new();
+}
+
+#[test]
+fn dropped_text_defaults_empty_and_routes_through_backend() {
+    let empty: text::Text = dropped_text(7 as *u8);
+    assert empty.count() == (0 as usize);
+    set_dropped_text_fn(fake_dropped_text);
+    let payload: text::Text = dropped_text(7 as *u8);
+    assert payload.equals("card:42");
+    set_dropped_text_fn(0 as fn(*u8) -> text::Text);   // restore
+}
+
+fn fake_is_dark() -> bool { return true; }
+
+#[test]
+fn is_dark_defaults_false_and_routes_through_backend() {
+    assert is_dark() == false;   // uninstalled: light is the neutral default
+    set_is_dark_fn(fake_is_dark);
+    assert is_dark();
+    set_is_dark_fn(0 as fn() -> bool);   // restore
+}
+
+fn appearance_probe(ctx: *u8) {
+    let c: *i64 = ctx as *i64;
+    { *c = *c + (1 as i64); }
+    return;
+}
+
+#[test]
+fn appearance_change_notifies_the_registered_handler() {
+    var fired: i64 = 0 as i64;
+    notify_appearance_changed();                 // nothing registered: no-op
+    assert fired == (0 as i64);
+    on_appearance_change(appearance_probe, ctx: #addr_of(fired) as *u8);
+    notify_appearance_changed();
+    notify_appearance_changed();
+    assert fired == (2 as i64);
+    on_appearance_change(0 as fn(*u8));          // restore
+}
+
+#[test]
+fn adaptive_color_tokens_are_distinct_and_set() {
+    assert Color::tertiary().token == (9 as u32);
+    assert Color::separator().token == (10 as u32);
+    assert Color::window_background().token == (11 as u32);
+    assert Color::under_page_background().token == (12 as u32);
+    assert Color::control_background().token == (13 as u32);
+    assert Color::fill().token == (14 as u32);
+    assert Color::fill().is_set();
 }
 
 #[test]

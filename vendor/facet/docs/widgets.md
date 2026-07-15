@@ -157,7 +157,21 @@ interpret it. See [updates.md](updates.md).
 ## Colors and style
 
 `facet::Color` carries a semantic token (which a backend maps to a native
-system color) or an explicit RGBA. Common tokens: `Color::accent()`,
-`Color::primary()`, `Color::label()`, `Color::secondary_label()`. Style props
-(`background`, `border`, `corner`, `font`, `weight`) layer over the widget the
-constructor produced.
+system color) or an explicit RGBA. Style props (`background`, `border`,
+`corner`, `font`, `weight`) layer over the widget the constructor produced.
+
+Semantic tokens are adaptive — they resolve correctly in both light and dark
+appearance without any app-side branching:
+
+| token | maps to (AppKit) |
+|---|---|
+| `Color::primary()` / `Color::secondary()` / `Color::tertiary()` | label tiers |
+| `Color::accent()` | the accent color |
+| `Color::separator()` | hairline separators |
+| `Color::window_background()` / `Color::under_page_background()` / `Color::control_background()` | surface tiers |
+| `Color::fill()` | the neutral control fill |
+| `Color::system_red()` / `green` / `blue` / `orange` / `gray` | system palette |
+
+`Color::rgba(...)` is a fixed color: it does not adapt. An app that themes with
+explicit RGBA branches on `facet::is_dark()` and re-themes from its
+`facet::on_appearance_change` handler (see updates.md).
