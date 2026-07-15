@@ -41,7 +41,7 @@ the owning component re-renders explicitly (`render_into`). There is no
 |---|---|
 | `label`, `wrap_label`, `button` | **real** (GtkLabel / GtkButton, click wired) |
 | `set_identity` | **real** (widget name + affordance data key) |
-| `text_area`, `composer`, `code_editor` | **partial** — GtkTextView in a GtkScrolledWindow, displays `value`; **no** event wiring or text read-back yet (needs hand-bound `GtkTextBuffer` iterators — the generated binding omits them) |
+| `text_area`, `composer` | **partial** — GtkTextView in a GtkScrolledWindow, displays `value`; **no** event wiring or text read-back yet (needs hand-bound `GtkTextBuffer` iterators — the generated binding omits them) |
 | `bordered`, `clickable` | **pass-through** (content shown; no border / no gesture yet) |
 | `split` | **flex row** of the two panes (no GtkPaned divider yet) |
 

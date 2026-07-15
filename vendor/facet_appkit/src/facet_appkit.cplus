@@ -441,36 +441,6 @@ fn ak_composer(ctx: *u8, np: *facet::Node) -> flex::Node {
     return n;
 }
 
-fn ak_code_editor(ctx: *u8, np: *facet::Node) -> flex::Node {
-    var size: f64 = { (*np).font_size };
-    if size <= 0.0f64 { size = 12.0f64; }
-    let vp: *text::Text = { #addr_of((*np).value) };
-    var n: flex::Node = flex::Node::new();
-    match (*vp).c_str() {
-        option::Option[text::CString]::Some(cs) => {
-            let sv: str = { #str_from_raw_parts(cs.as_ptr(), cs.count()) };
-            n = ui::code_editor(
-                value: sv,
-                editable: { (*np).editable },
-                size: size,
-                inset_w: { (*np).inset_w },
-                inset_h: { (*np).inset_h },
-            );
-        }
-        option::Option[text::CString]::None => {
-            n = ui::code_editor(
-                value: "",
-                editable: { (*np).editable },
-                size: size,
-                inset_w: { (*np).inset_w },
-                inset_h: { (*np).inset_h },
-            );
-        }
-    };
-    apply_style(n.payload(), facet::kind_code_editor(), np);
-    return n;
-}
-
 // ---- Tier-2 leaf ops (Phase 2) — thin adapters over the ui:: widgets --------
 
 fn ak_image(ctx: *u8, np: *facet::Node) -> flex::Node {
@@ -910,6 +880,7 @@ fn fak_list(count: i64, row: fn(i64, *u8) -> facet::Node, ctx: *u8) -> facet::No
 fn install() {
     facet::set_list_builder(fak_list);
     facet::set_raise_fn(raise);
+    facet::set_key_of_fn(key_of_impl);
     facet::set_find_fn(find_impl);
     facet::set_set_text_fn(set_text_impl);
     facet::set_set_value_fn(set_value_impl);
@@ -1088,14 +1059,14 @@ fn ak_split(ctx: *u8, np: *facet::Node, take first: flex::Node, take second: fle
 // Mount calls this after every widget-producing op. Records the declared
 // affordance (role + drive-method) as associated-object metadata so the agent
 // surface stops re-guessing native types, and pins a non-empty agent id as
-// accessibilityIdentifier. For scroll-hosted editors (composer / text_area /
-// code_editor) the drive target is the inner documentView, not the outer
-// NSScrollView — prefer that when present.
+// accessibilityIdentifier. For scroll-hosted editors (composer / text_area)
+// the drive target is the inner documentView, not the outer NSScrollView —
+// prefer that when present.
 fn ak_set_identity(ctx: *u8, handle: *u8, id: str, role: u32) {
     if handle == (0 as *u8) { return; }
     var target: *u8 = handle;
     // Prefer documentView only when the handle actually responds (NSScrollView
-    // for composer/text_area/code_editor). Labels/buttons are NSTextField /
+    // for composer/text_area). Labels/buttons are NSTextField /
     // NSButton — messaging documentView there throws NSInvalidArgumentException.
     // EXCLUDE the native hatch (role_none): it may wrap a scroll-based widget (a
     // `list`/`tree`), and its id must stay on the wrapper view the app named —
@@ -1140,7 +1111,6 @@ fn renderer() -> facet::Renderer {
         button: ak_button,
         text_area: ak_text_area,
         composer: ak_composer,
-        code_editor: ak_code_editor,
         image: ak_image,
         symbol: ak_symbol,
         text_field: ak_text_field,
@@ -1589,12 +1559,19 @@ fn appkit_will_close(user: *u8, win_ptr: *u8) {
     return;
 }
 
-// ui::mount render for run_window's root: the ctx pointer IS the root
-// description (see run_window). Mount it to a fresh flex tree. Called once at
-// the initial mount; a resize reuses the retained tree via relayout and never
-// re-renders, so this runs exactly once per window.
+// The root description run_window is about to mount. The slot ctx used to
+// double as the root's address, but an app may key the slot with its OWN
+// component address (run_window's component_ctx) so its handlers can call
+// facet::find(cp, key) — so the root reaches the render through this static
+// instead. Set immediately before ui::mount, consumed synchronously inside it;
+// run_window blocks in app.run(), so there is never a second pending root.
+static RUN_ROOT: *facet::Node = #zero::[*facet::Node]();
+
+// ui::mount render for run_window's root (see run_window). Mount it to a fresh
+// flex tree. Called once at the initial mount; a resize reuses the retained
+// tree via relayout and never re-renders, so this runs exactly once per window.
 fn run_root_render(cp: *u8) -> flex::Node {
-    return mount(cp as *facet::Node);
+    return mount(RUN_ROOT);
 }
 
 // windowDidResize: re-lay the retained root tree out at the content view's new
@@ -2025,6 +2002,7 @@ fn run_window(
     ctx: *u8 = 0 as *u8,
     should_close: fn(*u8) -> bool = default_should_close,
     will_close: fn(*u8) = default_will_close,
+    component_ctx: *u8 = 0 as *u8,
 ) {
     let app: ak::Application = ak::Application::shared_application();
     let _ok: bool = app.set_activation_policy(ak::ApplicationActivationPolicy::Regular);
@@ -2034,11 +2012,18 @@ fn run_window(
         install_default_app_menu(app, title);
     }
 
+    // The mount-slot key. By default the root description's own address; an app
+    // that supplies component_ctx keys the slot with a component address IT can
+    // name (a module static), so its handlers can facet::find(cp, key) and the
+    // structural verbs are reachable under facet::run.
+    var slot_cp: *u8 = component_ctx;
+    if slot_cp == { 0 as *u8 } { slot_cp = #addr_of(root) as *u8; }
+
     var lifecycle: WindowLifecycle = WindowLifecycle {
         ctx: ctx,
         should_close: should_close,
         will_close: will_close,
-        relayout_cp: #addr_of(root) as *u8,   // the root's address keys its mount slot
+        relayout_cp: slot_cp,   // the slot key, for resize relayout
     };
     var delegate: ak::WindowDelegate = ak::WindowDelegate_new(#addr_of(lifecycle) as *u8);
 
@@ -2049,11 +2034,12 @@ fn run_window(
     let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: width, h: height });
     win.set_content_view(ak::View::from_raw(content.raw()));
 
-    // Mount the root as a RETAINED slot (keyed by the root's address) rather than
-    // a one-shot mount_into. render_slot lays it out at the host's CURRENT frame
+    // Mount the root as a RETAINED slot (keyed by slot_cp) rather than a
+    // one-shot mount_into. render_slot lays it out at the host's CURRENT frame
     // and keeps the tree, so windowDidResize can relayout it at the window's real
     // size instead of leaving the content frozen at the mount-time size.
-    let _h: f64 = ui::mount(run_root_render, ctx: #addr_of(root) as *u8, host: content.raw());
+    RUN_ROOT = #addr_of(root);
+    let _h: f64 = ui::mount(run_root_render, ctx: slot_cp, host: content.raw());
     if zoomable {
         install_pinch_zoom(content.raw(), min_zoom: min_zoom, max_zoom: max_zoom);
     }
@@ -2070,7 +2056,7 @@ fn run_window(
     app.activate_ignoring_other_apps(true);
     // windowDidResize does not fire on the initial display, so lay out once more
     // at the content view's real (post-show) size to fill from the first frame.
-    let _r0: bool = ui::relayout(#addr_of(root) as *u8);
+    let _r0: bool = ui::relayout(slot_cp);
     app.run();
     return;
 }
@@ -2433,12 +2419,49 @@ fn find_view_by_id(root: *u8, id: str) -> *u8 {
     return 0 as *u8;
 }
 
+// Normalize a handler's `sender` to a VIEW. A control's action passes the
+// control (an NSView), but a `clickable`'s handler fires from a gesture
+// recognizer's target/action, so its sender is the RECOGNIZER — msgSend-ing
+// view selectors (`window`, `accessibilityIdentifier`) on it would throw
+// unrecognized-selector. If the sender responds to `view` (recognizers do,
+// views don't), take that; otherwise the sender already is the view.
+fn sender_view(sender: *u8) -> *u8 {
+    if sender == (0 as *u8) { return 0 as *u8; }
+    let responds: i8 = rt::msg_i8_id(sender, rt::sel(#str_ptr("respondsToSelector:\0")), rt::sel(#str_ptr("view\0")));
+    if responds != (0 as i8) {
+        let v: *u8 = rt::msg_id(sender, rt::sel(#str_ptr("view\0")));
+        if v != (0 as *u8) { return v; }
+    }
+    return sender;
+}
+
+// facet::key_of hook: the sender's key (accessibilityIdentifier) as an owned
+// Text. Normalizes recognizer senders to their view, then walks superviews to
+// the first NON-EMPTY id — a click on an untagged inner view (an icon inside a
+// tagged row) still reads the row's key. Empty when nothing up the chain is
+// tagged. Read mirrors view_id_is (borrowed UTF8 view; owns a Text only on hit).
+fn key_of_impl(sender: *u8) -> text::Text {
+    var v: *u8 = sender_view(sender);
+    while v != (0 as *u8) {
+        let ns: *u8 = rt::msg_id(v, rt::sel(#str_ptr("accessibilityIdentifier\0")));
+        if ns != (0 as *u8) {
+            let len: u64 = rt::msg_u64_u64(ns, rt::sel(#str_ptr("lengthOfBytesUsingEncoding:\0")), bridge::ns_utf8());
+            if len > (0 as u64) { return bridge::to_text(ns); }
+        }
+        v = rt::msg_id(v, rt::sel(#str_ptr("superview\0")));
+    }
+    return text::new();
+}
+
 // Raise the keyed view to the front of its siblings so it paints on top — the
 // no-rebuild panel switch: the runtime effect of a higher z_index, done by
 // re-ordering the live views (no re-render). Reached from a handler's `sender`
-// (the clicked control): sender -> window -> content, find by key, re-add last.
+// (the clicked control or a clickable's recognizer, normalized to its view):
+// sender -> window -> content, find by key, re-add last.
 fn raise(sender: *u8, key: str) {
-    let btn: ak::View = ak::View::from_raw(sender);
+    let sv: *u8 = sender_view(sender);
+    if sv == (0 as *u8) { return; }
+    let btn: ak::View = ak::View::from_raw(sv);
     match btn.window() {
         option::Option[ak::Window]::Some(win) => {
             match win.content_view() {
@@ -3114,6 +3137,119 @@ fn find_resolves_keyed_container() {
     unmount_all();
 }
 
+// The run_window slot under an APP-chosen component ctx (the facet::run path):
+// the slot is keyed by the app's address and the root reaches the render via
+// RUN_ROOT — so find(cp, key) and relayout(cp) work from app code. This is
+// exactly what run_window does when the Window supplies component_context();
+// only the blocking app.run() is elided.
+#[test]
+fn run_slot_keyed_by_app_component_ctx_resolves_find() {
+    unmount_all();
+    facet::set_find_fn(find_impl);
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 400.0, h: 300.0 });
+    var root: facet::Node = @facet {
+        vstack {
+            label("tab one").key("tabs:tab:1")
+        }
+    };
+    let app_cp: *u8 = 4242 as *u8;   // the app's stable component address
+    RUN_ROOT = #addr_of(root);
+    let _h: f64 = ui::mount(run_root_render, ctx: app_cp, host: content.raw());
+    // The keyed-direct verbs resolve against the app-chosen cp.
+    assert facet::find(app_cp, "tabs:tab:1").found();
+    assert !facet::find(app_cp, "tabs:tab:2").found();
+    // Resize relayout addresses the same cp (run_window's relayout_cp).
+    assert ui::relayout(app_cp);
+    RUN_ROOT = 0 as *facet::Node;
+    unmount_all();
+}
+
+// Default run_window path (no component_ctx): the slot keys on the root's own
+// address; RUN_ROOT carries the same pointer, so behavior is unchanged.
+#[test]
+fn run_slot_defaults_to_root_address_ctx() {
+    unmount_all();
+    facet::set_find_fn(find_impl);
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 400.0, h: 300.0 });
+    var root: facet::Node = @facet {
+        vstack {
+            label("hello").key("greet")
+        }
+    };
+    RUN_ROOT = #addr_of(root);
+    let _h: f64 = ui::mount(run_root_render, ctx: #addr_of(root) as *u8, host: content.raw());
+    assert facet::find(#addr_of(root) as *u8, "greet").found();
+    assert ui::relayout(#addr_of(root) as *u8);
+    RUN_ROOT = 0 as *facet::Node;
+    unmount_all();
+}
+
+// ---- sender normalization + key readback (facet::key_of) --------------------
+
+#[test]
+fn sender_view_normalizes_recognizer_to_its_view() {
+    // A control/view sender passes through unchanged.
+    let v = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 40.0, h: 20.0 });
+    assert sender_view(v.raw()) == v.raw();
+    // A gesture recognizer normalizes to the view it is attached to.
+    let g: ak::ClickGestureRecognizer = ak::ClickGestureRecognizer::new();
+    v.add_gesture_recognizer(g.as_gesture_recognizer());
+    assert sender_view(g.raw()) == v.raw();
+    // The null sender stays null (raise/key_of then no-op).
+    assert sender_view(0 as *u8) == (0 as *u8);
+}
+
+#[test]
+fn key_of_reads_sender_key_and_walks_superviews() {
+    let row = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 32.0 });
+    ui::tag_agent(row.raw(), "tabs:tab:42", identity::Role::Button);
+    let inner = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 16.0, h: 16.0 });
+    row.add_subview(ak::View::from_raw(inner.raw()));   // untagged child
+    // Direct hit on the tagged view.
+    assert key_of_impl(row.raw()).equals("tabs:tab:42");
+    // An untagged inner view walks up to the first tagged ancestor.
+    assert key_of_impl(inner.raw()).equals("tabs:tab:42");
+    // A recognizer sender (a clickable's handler) normalizes to its view first.
+    let g: ak::ClickGestureRecognizer = ak::ClickGestureRecognizer::new();
+    inner.add_gesture_recognizer(g.as_gesture_recognizer());
+    assert key_of_impl(g.raw()).equals("tabs:tab:42");
+    // Nothing tagged up the chain: an owned empty Text, never a trap.
+    let lone = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 10.0, h: 10.0 });
+    assert key_of_impl(lone.raw()).count() == (0 as usize);
+    // And through the facade with the backend installed.
+    facet::set_key_of_fn(key_of_impl);
+    assert facet::key_of(g.raw()).equals("tabs:tab:42");
+}
+
+#[test]
+fn e2e_raise_from_recognizer_sender_reorders_keyed_view() {
+    // A clickable container's handler raises by its recognizer sender: the
+    // normalize step resolves the recognizer to its view, then walks to the
+    // window. (Before normalization this msgSend-ed `window` on the recognizer
+    // — unrecognized selector.)
+    let win = e2e_window(300.0f64, 200.0f64);
+    let content = e2e_content(win);
+    let pane_a = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
+    ui::tag_agent(pane_a.raw(), "pane-a", identity::Role::Group);
+    let pane_b = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
+    ui::tag_agent(pane_b.raw(), "pane-b", identity::Role::Group);
+    content.add_subview(ak::View::from_raw(pane_a.raw()));
+    content.add_subview(ak::View::from_raw(pane_b.raw()));   // b in front
+    let g: ak::ClickGestureRecognizer = ak::ClickGestureRecognizer::new();
+    content.add_gesture_recognizer(g.as_gesture_recognizer());
+
+    raise(g.raw(), "pane-a");
+
+    // pane-a re-added last: frontmost among its siblings now.
+    var subs: vec::Vec[ak::View] = content.subviews();
+    assert subs.count() == (2 as usize);
+    match subs.at_ptr(1 as usize) {
+        option::Option[*ak::View]::Some(vp) => { assert { (*vp).raw() } == pane_a.raw(); }
+        option::Option[*ak::View]::None => { assert false; }
+    };
+    return;
+}
+
 // Structural keyed-direct: add_child / remove_child on a keyed multi-child
 // container, addressed by key — no re-render, no reconcile.
 struct ListPane { n: i64 }
@@ -3702,14 +3838,14 @@ fn e2e_facet_clickable_row_is_agent_button() {
 
 #[test]
 fn facet_path_mounts_all_remaining_kinds() {
-    // wrap_label, text_area, code_editor, bordered, split — facet → adapter.
+    // wrap_label, text_area, bordered, split — facet → adapter.
     let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 500.0, h: 400.0 });
     var left_b: facet::Builder = facet::Builder::new();
     left_b.add(facet::label("L"));
     var right_b: facet::Builder = facet::Builder::new();
     right_b.add(facet::label("R"));
     var split_b: facet::Builder = facet::Builder::new();
-    split_b.add(facet::code_editor(value: "fn main() {}", editable: true));
+    split_b.add(facet::text_area(value: "fn main() {}"));
     split_b.add(facet::text_area(value: "notes"));
     var box_b: facet::Builder = facet::Builder::new();
     box_b.add(facet::wrap_label("long wrapping text for the card", secondary: true));
@@ -3724,13 +3860,13 @@ fn facet_path_mounts_all_remaining_kinds() {
 }
 
 #[test]
-fn e2e_facet_text_area_and_code_editor_agent_input() {
+fn e2e_facet_text_area_agent_input() {
     let win = e2e_window(400.0f64, 320.0f64);
     let content = e2e_content(win);
     var root: facet::Node = @facet {
         vstack {
             text_area(value: "ta").agent_id("notes").height(60.0f64)
-            code_editor(value: "ce", editable: true).agent_id("src").height(60.0f64)
+            text_area(value: "ce").agent_id("src").height(60.0f64)
         }
     };
     let _h: f64 = mount_into(#addr_of(root), content.raw(), 400.0f64, 320.0f64);
@@ -3806,8 +3942,8 @@ fn styled_facet_widgets_mount_through_apply_style() {
 
 // Phase 1 gate — the facet-local styled card. Every one of the modifiers the
 // SwiftUI-shaped surface exposes (.font/.strong/.foreground_color/.background/
-// .corner_radius/.border/.frame + .monospaced on the editor) drives apply_style
-// across label, wrap_label, button, code_editor, bordered, and split — the
+// .corner_radius/.border/.frame + .monospaced on the text area) drives
+// apply_style across label, wrap_label, button, text_area, bordered, and split — the
 // spread that proves "every op honors Style", not just label/button. This is
 // the example a human renders by eye; the assertions prove it mounts clean.
 fn phase1_styled_card() -> facet::Node {
@@ -3819,7 +3955,7 @@ fn phase1_styled_card() -> facet::Node {
             bordered {
                 vstack {
                     label("boxed").foreground_color(facet::Color::accent())
-                    code_editor(value: "fn main() {}", editable: false).monospaced()
+                    text_area(value: "fn main() {}", editable: false).monospaced()
                 }
             }
             .background(facet::Color::rgba(0.12f64, 0.12f64, 0.14f64, 1.0f64))

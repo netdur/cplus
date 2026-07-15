@@ -253,7 +253,7 @@ fn declared_affordance_overrides_native_classify() {
 
 #[test]
 fn declared_input_affordance_on_scroll_document_style_view() {
-    // Composer/code_editor identity lands on the inner NSTextView; if that
+    // Composer/text_area identity lands on the inner NSTextView; if that
     // view carries a declared Input affordance it must win even if a future
     // classify regression would mis-tag it.
     let win = fixture_window(300.0f64, 200.0f64);

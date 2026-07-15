@@ -567,8 +567,8 @@ fn text_area(
         scroll.set_draws_background(false);
         tv.set_draws_background(false);
     }
-    // Text-container inset (left/right, top/bottom padding) — the code_editor
-    // precedent; a transcript usually wants a little breathing room.
+    // Text-container inset (left/right, top/bottom padding); a transcript or
+    // file viewer usually wants a little breathing room.
     if inset_w != 0.0f64 || inset_h != 0.0f64 {
         tv.set_text_container_inset(rt::Size { w: inset_w, h: inset_h });
     }
@@ -832,44 +832,8 @@ fn split(take first: flex::Node, take second: flex::Node, vertical: bool = true,
     return fixed_view(sv.as_view());
 }
 
-// A monospaced code editor / viewer: an NSTextView in an NSScrollView with a
-// fixed-pitch font and code-hostile auto-substitutions (smart quotes, dashes,
-// text replacement) turned off. `editable: false` makes a read-only viewer.
-// Read with `area_text(node.payload())`; replace the whole buffer (opening a
-// file) with `set_area_text(node.payload(), src)`. Size it with `.grow(1.0)`.
-//
-// `inset_w` / `inset_h` set the text container inset — the left/right and
-// top/bottom padding between the border and the text (NSTextView's default of
-// 0 flushes the first column to the edge). A file editor usually wants a little
-// breathing room, e.g. `inset_w: 10.0, inset_h: 8.0`.
-fn code_editor(value: str = "", editable: bool = true, size: f64 = 12.0f64, inset_w: f64 = 0.0f64, inset_h: f64 = 0.0f64, agent_id: str = "") -> flex::Node {
-    let zero: rt::Rect = rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 };
-    let scroll = ak::ScrollView::new(zero);
-    scroll.set_border_type(ak::BorderType::NSNoBorder);
-    scroll.set_has_vertical_scroller(true);
-    let tv = ak::TextView::new_with_frame(zero);
-    tv.set_editable(editable);
-    tv.set_rich_text(false);
-    tv.set_automatic_quote_substitution_enabled(false);
-    tv.set_automatic_dash_substitution_enabled(false);
-    tv.set_automatic_text_replacement_enabled(false);
-    tv.as_text().set_font(ak::Font::monospaced_system_font_of_size(size, 0.0f64));
-    if inset_w != 0.0f64 || inset_h != 0.0f64 {
-        tv.set_text_container_inset(rt::Size { w: inset_w, h: inset_h });
-    }
-    if value != "" { tv.as_text().set_string(value); }
-    tv.as_view().set_autoresizing_mask(ak::autoresizing_mask_options_n_s_view_width_sizable);
-    scroll.set_document_view(tv.as_view());
-    // Tag the inner NSTextView (the editable surface), not the scroll wrapper,
-    // so the agent surface's set_text / read address the text directly:
-    // set_text branches NSTextView->setString: else NSControl->setStringValue:,
-    // and an NSScrollView silently ignores setStringValue: (write no-op'd).
-    tag_agent(tv.as_view().raw(), agent_id, identity::Role::Input);
-    return fixed_view(scroll.as_view());
-}
-
-// Read the text container inset back from a code_editor / text_area / composer,
-// by its scroll-view payload pointer. Mirrors `composer_content_height`'s access
+// Read the text container inset back from a text_area / composer, by its
+// scroll-view payload pointer. Mirrors `composer_content_height`'s access
 // path; useful in tests and for callers that adjust padding at runtime.
 fn area_inset(view_ptr: *u8) -> rt::Size {
     let dv: *u8 = { rt::msg_id(view_ptr, rt::sel(#str_ptr("documentView\0"))) };
@@ -878,7 +842,8 @@ fn area_inset(view_ptr: *u8) -> rt::Size {
 }
 
 // Replace the whole text of any scroll-hosted text view (`text_area`,
-// `composer`, `code_editor`), by its scroll-view payload pointer.
+// `composer`, or an app-built scroll+text pair), by its scroll-view payload
+// pointer.
 fn set_area_text(view_ptr: *u8, value: str) {
     let dv: *u8 = { rt::msg_id(view_ptr, rt::sel(#str_ptr("documentView\0"))) };
     if dv == { 0 as *u8 } { return; }
@@ -2820,8 +2785,8 @@ fn test_list_row_measures_and_builds_cell() {
 }
 
 #[test]
-fn test_code_editor_holds_and_replaces_text() {
-    let n: flex::Node = code_editor(value: "fn main() {}");
+fn test_text_area_holds_and_replaces_text() {
+    let n: flex::Node = text_area(value: "fn main() {}");
     assert n.has_payload();
     assert area_text(n.payload()).equals("fn main() {}");
     set_area_text(n.payload(), "let x = 1;");            // opening a different file
@@ -3346,12 +3311,11 @@ fn assert_tags_inner_text_view(take n: flex::Node, id: str) {
 
 #[test]
 fn text_components_tag_inner_text_view_for_agent_drive() {
-    // composer / code_editor / text_area must tag the inner NSTextView, not the
-    // outer NSScrollView, so the agent surface's set_text (NSTextView setString:)
+    // composer / text_area must tag the inner NSTextView, not the outer
+    // NSScrollView, so the agent surface's set_text (NSTextView setString:)
     // and read address the editable surface. A scroll-tagged composer silently
     // dropped setStringValue:.
     assert_tags_inner_text_view(composer(on_submit: test_noop_action, agent_id: "cmp"), "cmp");
-    assert_tags_inner_text_view(code_editor(agent_id: "edt"), "edt");
     assert_tags_inner_text_view(text_area(agent_id: "txa"), "txa");
 }
 
@@ -3540,8 +3504,8 @@ fn tree_live_outline_itematrow_messages_items_safely() {
 }
 
 #[test]
-fn test_code_editor_applies_inset() {
-    let n: flex::Node = code_editor(value: "x", inset_w: 10.0f64, inset_h: 8.0f64);
+fn test_text_area_applies_inset() {
+    let n: flex::Node = text_area(value: "x", inset_w: 10.0f64, inset_h: 8.0f64);
     assert n.has_payload();
     let ins: rt::Size = area_inset(n.payload());
     assert ins.w == (10.0f64);
@@ -3549,8 +3513,8 @@ fn test_code_editor_applies_inset() {
 }
 
 #[test]
-fn test_code_editor_default_inset_is_zero() {
-    let n: flex::Node = code_editor(value: "x");
+fn test_text_area_default_inset_is_zero() {
+    let n: flex::Node = text_area(value: "x");
     let ins: rt::Size = area_inset(n.payload());
     assert ins.w == (0.0f64);
     assert ins.h == (0.0f64);

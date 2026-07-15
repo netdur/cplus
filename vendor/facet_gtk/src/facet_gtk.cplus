@@ -31,7 +31,7 @@
 // Kind coverage: fills the WHOLE frozen Renderer vtable (the freeze exit
 // criterion — `cpc check` is green for this package modulo the pre-existing
 // gobject_gir blocker above). label / wrap_label / button + set_identity are
-// real. text_area / composer / code_editor render a GtkTextView in a
+// real. text_area / composer render a GtkTextView in a
 // GtkScrolledWindow (display only — event wiring and text read-back need
 // hand-bound TextBuffer iterators, which the generated binding omits; see the
 // TODOs). The Tier-2 leaves — image (GtkImage), symbol (GtkImage from an icon
@@ -168,11 +168,6 @@ fn gtk_text_area(ctx: *u8, np: *facet::Node) -> flex::Node {
 fn gtk_composer(ctx: *u8, np: *facet::Node) -> flex::Node {
     let vp: *text::Text = { #addr_of((*np).value) };
     return text_view_leaf({ (*vp).view() }, true, false);
-}
-
-fn gtk_code_editor(ctx: *u8, np: *facet::Node) -> flex::Node {
-    let vp: *text::Text = { #addr_of((*np).value) };
-    return text_view_leaf({ (*vp).view() }, { (*np).editable }, true);
 }
 
 // Wrapper kinds. TODO(gtk,linux): bordered = GtkFrame / CSS; clickable =
@@ -431,7 +426,6 @@ fn renderer() -> facet::Renderer {
         button: gtk_button,
         text_area: gtk_text_area,
         composer: gtk_composer,
-        code_editor: gtk_code_editor,
         image: gtk_image,
         symbol: gtk_symbol,
         text_field: gtk_text_field,

@@ -48,6 +48,12 @@ interface Window {
     fn should_close_callback(this) -> fn(*u8) -> bool;
     fn will_close_callback(this) -> fn(*u8);
     fn lifecycle_context(this) -> *u8;
+    // Component address for the window's root mount slot. The keyed-direct verbs
+    // resolve keys against a mounted slot's cp, so an app that wants to call
+    // `facet::find(cp, key)` from its handlers supplies a stable address here
+    // (typically `#addr_of(WORKSPACE) as *u8` for a module-static root component).
+    // 0 keeps the runtime's internal key (find is then unreachable from app code).
+    fn component_context(this) -> *u8;
 }
 
 fn label(s: str, size: f64 = 0.0f64, bold: bool = false, secondary: bool = false) -> Node {
@@ -88,6 +94,7 @@ fn run[W: Window](take window: W) {
         ctx: owned_window.lifecycle_context(),
         should_close: owned_window.should_close_callback(),
         will_close: owned_window.will_close_callback(),
+        component_ctx: owned_window.component_context(),
     );
     return;
 }

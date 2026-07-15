@@ -74,7 +74,9 @@ fn kind_column() -> u32 { return 4 as u32; }
 fn kind_row() -> u32 { return 5 as u32; }
 fn kind_text_area() -> u32 { return 6 as u32; }
 fn kind_composer() -> u32 { return 7 as u32; }
-fn kind_code_editor() -> u32 { return 8 as u32; }
+// kind 8 retired (code_editor, removed 2026-07-15): a code editor is an APP
+// widget, not a facet primitive — apps build it natively and embed it through
+// the native hatch. The number stays unassigned.
 fn kind_bordered() -> u32 { return 9 as u32; }
 fn kind_clickable() -> u32 { return 10 as u32; }
 fn kind_split() -> u32 { return 11 as u32; }
@@ -148,7 +150,6 @@ fn role_for_kind(k: u32) -> u32 {
     if k == kind_wrap_label() { return role_text(); }
     if k == kind_text_area() { return role_input(); }
     if k == kind_composer() { return role_input(); }
-    if k == kind_code_editor() { return role_input(); }
     if k == kind_bordered() { return role_group(); }
     if k == kind_split() { return role_group(); }
     if k == kind_text_field() { return role_input(); }
@@ -368,7 +369,7 @@ struct Node {
     plain: bool,            // button: borderless/plain variant (link/plain button fold)
     style: Style,           // portable visual style; backend applies set fields
     // --- kind-specific config (union-of-fields; unused kinds leave defaults) ---
-    value: text::Text,          // composer / code_editor / text_area initial text; image path; symbol name
+    value: text::Text,          // composer / text_area initial text; image path; symbol name
     placeholder: text::Text,    // text_area / text_field
     popup_items: vec::Vec[text::Text],  // popup / segmented: the rows/segments
     popup_selected: i64,        // popup / segmented: initially-selected index
@@ -382,7 +383,7 @@ struct Node {
     pull_down: bool,            // popup: pull-down menu mode (Menu) vs selector
     toggle_style: i32,          // toggle: 0 = switch, 1 = checkbox, 2 = radio
     grid_cols: i32,             // grid: number of equal columns
-    editable: bool,             // code_editor (default true)
+    editable: bool,             // text_area (default true)
     show_border: bool,          // composer (default true)
     draws_background: bool,     // composer (default true)
     radius: f64,                // bordered corner radius
@@ -390,7 +391,7 @@ struct Node {
     position: f64,              // split: initial divider offset
     min_first: f64,             // split: first-pane minimum
     min_second: f64,            // split: second-pane minimum
-    inset_w: f64,               // code_editor text-container inset
+    inset_w: f64,               // text_area text-container inset
     inset_h: f64,
     long_press_seconds: f64,    // clickable long-press threshold (0 = platform default)
     // Optional handlers — null-fn sentinel when unset (see null_fn).
@@ -650,7 +651,7 @@ fn text_area(
     n.on_change = on_change;
     n.click_ctx = ctx;
     n.editable = editable;   // `false` = a read-only scrolling text view
-    // Chrome (composer/code_editor precedent): drop the bezel, clear the fill,
+    // Chrome (composer precedent): drop the bezel, clear the fill,
     // pad the text container — a borderless transparent transcript with inset.
     n.show_border = show_border;
     n.draws_background = draws_background;
@@ -676,23 +677,6 @@ fn composer(
     n.value = text::from_str(value);
     n.show_border = show_border;
     n.draws_background = draws_background;
-    return n;
-}
-
-// Monospaced code editor / viewer. `editable: false` is a read-only viewer.
-fn code_editor(
-    value: str = "",
-    editable: bool = true,
-    size: f64 = 12.0f64,
-    inset_w: f64 = 0.0f64,
-    inset_h: f64 = 0.0f64,
-) -> Node {
-    var n: Node = blank(kind_code_editor());
-    n.value = text::from_str(value);
-    n.editable = editable;
-    n.font_size = size;
-    n.inset_w = inset_w;
-    n.inset_h = inset_h;
     return n;
 }
 
@@ -1002,6 +986,24 @@ fn raise(sender: *u8, key: str) {
     if f == (0 as fn(*u8, str)) { return; }
     f(sender, key);
     return;
+}
+
+// ---- key_of: read a sender's key back (which item fired?) --------------------
+// The inverse of tagging: a per-item handler bound as an instance method spends
+// its ctx on `this`, so it recovers WHICH item fired from `sender`. `key_of`
+// returns the sender's key (its agent id) as an owned Text — empty if the sender
+// (and, in the AppKit backend, every ancestor view above it) is untagged. With
+// namespaced keys ("tabs:tab:<hash>"), the handler parses the id segment out and
+// looks the item up. Backend-installed, like `raise`; the backend also
+// normalizes gesture-recognizer senders to the view they are attached to.
+static KEY_OF_FN: fn(*u8) -> text::Text = #zero::[fn(*u8) -> text::Text]();
+
+fn set_key_of_fn(f: fn(*u8) -> text::Text) { KEY_OF_FN = f; return; }
+
+fn key_of(sender: *u8) -> text::Text {
+    let f: fn(*u8) -> text::Text = KEY_OF_FN;
+    if f == (0 as fn(*u8) -> text::Text) { return text::new(); }
+    return f(sender);
 }
 
 // ---- find: the keyed-direct update path (address one element, mutate it) -----
@@ -1867,7 +1869,6 @@ struct Renderer {
     button:      fn(*u8, *Node) -> flex::Node,
     text_area:   fn(*u8, *Node) -> flex::Node,
     composer:    fn(*u8, *Node) -> flex::Node,
-    code_editor: fn(*u8, *Node) -> flex::Node,
     // Tier-2 leaves (Phase 2)
     image:       fn(*u8, *Node) -> flex::Node,
     symbol:      fn(*u8, *Node) -> flex::Node,
@@ -1919,7 +1920,7 @@ fn is_container_kind(k: u32) -> bool {
 
 // Pin agent id + role after a widget op. Handle is the op's nominated identity
 // surface — by default the returned flex node's payload. Backends where the
-// drive target differs from the layout payload (composer/code_editor inner
+// drive target differs from the layout payload (composer/text_area inner
 // text view vs outer scroll) resolve that inside set_identity itself.
 fn call_set_identity(np: *Node, r: Renderer, handle: *u8, kind: u32) {
     let f: fn(*u8, *u8, str, u32) = r.set_identity;
@@ -1978,10 +1979,6 @@ fn mount(np: *Node, r: Renderer) -> flex::Node {
         is_widget = true;
     } else if k == kind_composer() {
         let f: fn(*u8, *Node) -> flex::Node = r.composer;
-        n = f(r.ctx, np);
-        is_widget = true;
-    } else if k == kind_code_editor() {
-        let f: fn(*u8, *Node) -> flex::Node = r.code_editor;
         n = f(r.ctx, np);
         is_widget = true;
     } else if k == kind_image() {
@@ -2263,10 +2260,6 @@ fn facet_leaf_ctors_set_kind_and_config() {
     assert ta.kind == kind_text_area();
     assert ta.value.view() == "hi";
 
-    let ce: Node = code_editor(value: "fn main() {}", editable: false, size: 14.0f64);
-    assert ce.kind == kind_code_editor();
-    assert ce.editable == false;
-    assert approx(ce.font_size, 14.0f64);
 }
 
 #[test]
@@ -2377,9 +2370,28 @@ fn facet_role_for_kind_table() {
     assert role_for_kind(kind_wrap_label()) == role_text();
     assert role_for_kind(kind_composer()) == role_input();
     assert role_for_kind(kind_text_area()) == role_input();
-    assert role_for_kind(kind_code_editor()) == role_input();
     assert role_for_kind(kind_bordered()) == role_group();
     assert role_for_kind(kind_split()) == role_group();
+}
+
+fn fake_key_of(sender: *u8) -> text::Text {
+    if sender == (7 as *u8) { return text::from_str("tabs:tab:42"); }
+    return text::new();
+}
+
+#[test]
+fn key_of_defaults_empty_and_routes_through_backend() {
+    // No backend installed: an owned empty Text, never a trap.
+    let empty: text::Text = key_of(7 as *u8);
+    assert empty.count() == (0 as usize);
+    // Installed: the sender routes through; the handler gets an owned key.
+    set_key_of_fn(fake_key_of);
+    let k: text::Text = key_of(7 as *u8);
+    assert k.equals("tabs:tab:42");
+    let miss: text::Text = key_of(9 as *u8);
+    assert miss.count() == (0 as usize);
+    // Restore the uninstalled default so test order never matters.
+    set_key_of_fn(0 as fn(*u8) -> text::Text);
 }
 
 #[test]
@@ -2415,7 +2427,7 @@ fn facet_font_and_frame_modifiers() {
     let b: Node = label("x").strong();
     assert b.style.weight == weight_bold();
 
-    let c: Node = code_editor(value: "y").monospaced();
+    let c: Node = text_area(value: "y").monospaced();
     assert c.style.family == family_monospace();
 
     // .frame sets both fixed dimensions; fluent and set_* agree.
@@ -2527,7 +2539,6 @@ static FAKE_LABELS: i32 = 0;
 static FAKE_BUTTONS: i32 = 0;
 static FAKE_TEXT_AREAS: i32 = 0;
 static FAKE_COMPOSERS: i32 = 0;
-static FAKE_CODE_EDITORS: i32 = 0;
 static FAKE_IMAGES: i32 = 0;
 static FAKE_SYMBOLS: i32 = 0;
 static FAKE_TEXT_FIELDS: i32 = 0;
@@ -2578,11 +2589,6 @@ fn fake_text_area(ctx: *u8, np: *Node) -> flex::Node {
 
 fn fake_composer(ctx: *u8, np: *Node) -> flex::Node {
     FAKE_COMPOSERS = FAKE_COMPOSERS + 1;
-    return flex::Node::new().width(100.0f64).height(40.0f64);
-}
-
-fn fake_code_editor(ctx: *u8, np: *Node) -> flex::Node {
-    FAKE_CODE_EDITORS = FAKE_CODE_EDITORS + 1;
     return flex::Node::new().width(100.0f64).height(40.0f64);
 }
 
@@ -2750,7 +2756,6 @@ fn fake_renderer() -> Renderer {
         button: fake_button,
         text_area: fake_text_area,
         composer: fake_composer,
-        code_editor: fake_code_editor,
         image: fake_image,
         symbol: fake_symbol,
         text_field: fake_text_field,
@@ -2785,7 +2790,6 @@ fn reset_fake_counts() {
     FAKE_BUTTONS = 0;
     FAKE_TEXT_AREAS = 0;
     FAKE_COMPOSERS = 0;
-    FAKE_CODE_EDITORS = 0;
     FAKE_IMAGES = 0;
     FAKE_SYMBOLS = 0;
     FAKE_TEXT_FIELDS = 0;
@@ -2846,7 +2850,6 @@ fn mount_dispatches_new_kinds_and_wrappers() {
     var b: Builder = Builder::new();
     b.add(composer(on_submit: click_a, value: "x"));
     b.add(text_area(value: "y"));
-    b.add(code_editor(value: "z"));
     var bb: Builder = Builder::new();
     bb.add(label("boxed"));
     b.add(bordered(bb));
@@ -2862,7 +2865,6 @@ fn mount_dispatches_new_kinds_and_wrappers() {
     var tree: flex::Node = mount(#addr_of(root), fake_renderer());
     assert FAKE_COMPOSERS == 1;
     assert FAKE_TEXT_AREAS == 1;
-    assert FAKE_CODE_EDITORS == 1;
     assert FAKE_BORDEREDS == 1;
     assert FAKE_CLICKABLES == 1;
     assert FAKE_SPLITS == 1;
@@ -2870,10 +2872,10 @@ fn mount_dispatches_new_kinds_and_wrappers() {
     // labels inside wrappers: boxed + L + R = 3; button inside clickable = 1
     assert FAKE_LABELS == 3;
     assert FAKE_BUTTONS == 1;
-    // widget ops: composer, text_area, code_editor, bordered, clickable, split,
-    // + 3 labels + 1 button = 10 set_identity calls
-    assert FAKE_IDENTITIES == 10;
-    assert tree.child_count() == (6 as usize);
+    // widget ops: composer, text_area, bordered, clickable, split,
+    // + 3 labels + 1 button = 9 set_identity calls
+    assert FAKE_IDENTITIES == 9;
+    assert tree.child_count() == (5 as usize);
 }
 
 #[test]

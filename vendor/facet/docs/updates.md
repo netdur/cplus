@@ -29,6 +29,20 @@ fn find(cp: *u8, key: str) -> Handle
 `Handle` whose mutators no-op — the `getElementById`-null pattern, so a `find`
 on a torn-down element is safe.
 
+Under `facet::run`, the window's root mount slot needs a component address the
+app can name. Supply one on the `Window` before running it:
+
+```cplus
+static WORKSPACE: Workspace = #zero::[Workspace]();
+
+win.component_ctx(#addr_of(WORKSPACE) as *u8);
+runtime::run(win);
+```
+
+Every `find(cp, key)` and structural verb then resolves against that address,
+from any handler. Unset, the runtime keys the slot internally and `find` is not
+reachable from app code.
+
 `Handle` is a non-owning, `Copy`, chainable view onto a mounted element:
 
 ```cplus
@@ -105,6 +119,30 @@ fn increment(sender: *u8, ctx: *u8) {
 
 Two steps, always: write the field, push it to the keyed element. The element's
 view survives; nothing is rebuilt.
+
+## Which item fired: `key_of`
+
+```cplus
+fn key_of(sender: *u8) -> text::Text
+```
+
+A per-item handler bound as an instance method spends its `ctx` binding the
+receiver, so it recovers which item fired from `sender`. `key_of` returns the
+sender's key (its agent id) as an owned `Text`; the AppKit backend walks up to
+the first tagged ancestor view, so a click on an untagged inner view still
+reads its row's key. Empty when nothing up the chain is tagged. With namespaced
+keys, parse the id segment back out:
+
+```cplus
+fn on_tab_click(sender: *u8, ctx: *u8) {
+    let k: text::Text = facet::key_of(sender);   // e.g. "tabs:tab:42"
+    // parse the trailing segment, look the tab up, act on it
+}
+```
+
+A `clickable`'s handler fires from a gesture recognizer, so its `sender` is the
+recognizer, not a view. `key_of` and `raise` both normalize such senders to the
+view they are attached to before any view walk.
 
 ## The native escape hatch
 

@@ -40,6 +40,9 @@ interface Window {
     fn should_close_callback(this) -> fn(*u8) -> bool;
     fn will_close_callback(this) -> fn(*u8);
     fn lifecycle_context(this) -> *u8;
+    // Component address for the window's root mount slot (parity with the macOS
+    // facade — see runtime.cplus). Not yet honored by the gtk backend.
+    fn component_context(this) -> *u8;
 }
 
 fn label(s: str, size: f64 = 0.0f64, bold: bool = false, secondary: bool = false) -> Node {

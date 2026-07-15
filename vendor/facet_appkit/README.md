@@ -16,7 +16,7 @@ facet's **AppKit** backend — two modules:
 
 ### Renderer kinds (all implemented)
 
-`label`, `wrap_label`, `button`, `text_area`, `composer`, `code_editor`, `bordered`, `clickable`, `split` + `set_identity`.
+`label`, `wrap_label`, `button`, `text_area`, `composer`, `bordered`, `clickable`, `split` + `set_identity`.
 
 `tree` / `file_tree` stay AppKit-only `ui::` escape hatches (structured payload, not in `Node`).
 
@@ -89,7 +89,7 @@ fn main() -> i32 { fak::run(view(), title: "counter"); return 0; }
 
 ## Tests
 
-`cd vendor/facet_appkit && cpc test` — `@ui` suite, facet pipeline, full-kind mount, agent e2e (button / clickable / composer / text_area / code_editor), re-render, components.
+`cd vendor/facet_appkit && cpc test` — `@ui` suite, facet pipeline, full-kind mount, agent e2e (button / clickable / composer / text_area), re-render, components.
 
 ## Porting another backend
 
