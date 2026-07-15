@@ -546,6 +546,9 @@ fn text_area(
     draws_background: bool = true,
     inset_w: f64 = 0.0f64,
     inset_h: f64 = 0.0f64,
+    wrap: bool = true,
+    smart_substitutions: bool = true,
+    line_numbers: bool = false,
 ) -> flex::Node {
     let zero: rt::Rect = rt::Rect { x: 0 as f64, y: 0 as f64, w: 0 as f64, h: 0 as f64 };
     let scroll = ak::ScrollView::new(zero);
@@ -559,7 +562,31 @@ fn text_area(
     scroll.set_has_vertical_scroller(true);
     let tv = ak::TextView::new_with_frame(zero);
     tv.set_editable(editable);   // `false` = a read-only (still selectable) viewer
+    if editable { tv.set_allows_undo(true); }   // NSTextView defaults to NO undo
     tv.set_rich_text(false);
+    // `smart_substitutions: false` turns off the code-hostile auto-substitutions
+    // (smart quotes, dashes, text replacement) — the code-editing configuration.
+    if !smart_substitutions {
+        tv.set_automatic_quote_substitution_enabled(false);
+        tv.set_automatic_dash_substitution_enabled(false);
+        tv.set_automatic_text_replacement_enabled(false);
+    }
+    // `wrap: false` = no soft wrap: the container stops tracking the view width,
+    // the view grows horizontally to its longest line, and the scroll gains a
+    // horizontal scroller.
+    if !wrap {
+        let huge: f64 = 10000000.0f64;
+        scroll.set_has_horizontal_scroller(true);
+        tv.as_text().set_horizontally_resizable(true);
+        tv.as_text().set_max_size(rt::Size { w: huge, h: huge });
+        match tv.text_container() {
+            option::Option[ak::TextContainer]::Some(tc) => {
+                tc.set_width_tracks_text_view(false);
+                tc.set_container_size(rt::Size { w: huge, h: huge });
+            }
+            option::Option[ak::TextContainer]::None => { }
+        }
+    }
     tv.as_text().set_font(ak::Font::system_font_of_size(13.0f64));
     // `draws_background: false` clears BOTH layers (scroll + text view) so the
     // area is transparent over an outer box — same two-layer clear as composer.
@@ -573,14 +600,23 @@ fn text_area(
         tv.set_text_container_inset(rt::Size { w: inset_w, h: inset_h });
     }
     if value != "" { tv.as_text().set_string(value); }
-    // Track the scroll's content width as it resizes.
-    tv.as_view().set_autoresizing_mask(ak::autoresizing_mask_options_n_s_view_width_sizable);
-    // Reuse the composer delegate with a null on_submit — change hook only.
+    // Track the scroll's content width as it resizes — only when wrapping; a
+    // no-wrap view must be free to exceed the viewport width instead.
+    if wrap {
+        tv.as_view().set_autoresizing_mask(ak::autoresizing_mask_options_n_s_view_width_sizable);
+    }
+    // Reuse the composer delegate with a null on_submit — change hook only
+    // (plain Enter falls through to the default newline; see appkit_ext).
     let none: fn(*u8, *u8) = 0 as fn(*u8, *u8);
     if on_change != none {
         akx::attach_composer_delegate(tv, on_change, none, ctx);
     }
     scroll.set_document_view(tv.as_view());
+    // The line-number gutter: a vertical NSRulerView drawn from the text's
+    // line metrics (see appkit_ext attach_line_number_ruler).
+    if line_numbers {
+        akx::attach_line_number_ruler(scroll, tv);
+    }
     // Tag the inner NSTextView (the editable surface), not the scroll wrapper,
     // so the agent surface's set_text / read address the text directly:
     // set_text branches NSTextView->setString: else NSControl->setStringValue:,
@@ -1899,6 +1935,121 @@ fn reflow_nested_scrolls(node: *flex::Node) {
 }
 
 // ==========================================================================
+// Hosted-tree resolution — keyed-direct reach into pane / scroll trees
+// ==========================================================================
+//
+// The mount slot's retained tree is not the only registry that OWNS a
+// subtree: a multi-element split pane's tree lives in SPLIT_PANES
+// (host_or_add_pane) and portable scroll rows live in SCROLL_CONTENT
+// (fill_scroll). A keyed container inside either resolves its VIEW fine —
+// the real NSViews nest straight through the split/scroll — but its flex
+// node is invisible to the slot tree, so `find`'s flex half and the
+// structural verbs' reflow both go through these fallbacks.
+
+// Walk `tp`'s subtree for the flex node whose payload IS `view` (a pointer
+// compare — container payloads that are not real NSViews are stepped over
+// safely). 0 when absent.
+fn flex_in_tree(tp: *flex::Node, view: *u8) -> *flex::Node {
+    if tp == (0 as *flex::Node) { return 0 as *flex::Node; }
+    if { (*tp).payload() } == view { return tp; }
+    let c: usize = { (*tp).child_count() };
+    var i: usize = 0 as usize;
+    while i < c {
+        match (*tp).children.at_ptr(i) {
+            option::Option[*flex::Node]::Some(cn) => {
+                let r: *flex::Node = flex_in_tree(cn, view);
+                if r != (0 as *flex::Node) { return r; }
+            }
+            option::Option[*flex::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return 0 as *flex::Node;
+}
+
+// Resolve `view`'s flex node in a HOSTED tree — a split pane's subtree or a
+// scroll's row tree. 0 when no hosted tree contains it. Pointer identity
+// makes this safe across components: whichever registry tree holds the node
+// whose payload is `view` is by construction the owning tree. The returned
+// pointer aims into registry storage: valid only until that registry mutates
+// (the same one-pass rule as tree_ptr / scroll_content_tree).
+fn hosted_flex_for_view(view: *u8) -> *flex::Node {
+    if view == (0 as *u8) { return 0 as *flex::Node; }
+    let panes: *vec::Vec[SplitPane] = #addr_of(SPLIT_PANES);
+    let pn: usize = { (*panes).count() };
+    var i: usize = 0 as usize;
+    while i < pn {
+        match (*panes).at_ptr(i) {
+            option::Option[*SplitPane]::Some(ep) => {
+                let r: *flex::Node = flex_in_tree(#addr_of((*ep).tree), view);
+                if r != (0 as *flex::Node) { return r; }
+            }
+            option::Option[*SplitPane]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    let rows: *vec::Vec[ScrollContent] = #addr_of(SCROLL_CONTENT);
+    let rn: usize = { (*rows).count() };
+    var j: usize = 0 as usize;
+    while j < rn {
+        match (*rows).at_ptr(j) {
+            option::Option[*ScrollContent]::Some(ep) => {
+                let r: *flex::Node = flex_in_tree(#addr_of((*ep)._tree), view);
+                if r != (0 as *flex::Node) { return r; }
+            }
+            option::Option[*ScrollContent]::None => { }
+        }
+        j = j +% (1 as usize);
+    }
+    return 0 as *flex::Node;
+}
+
+// Reflow whatever retained tree owns `view` after a keyed-direct edit: the
+// component's slot tree (relayout — which also cascades into panes/scrolls
+// nested under it), the owning split pane (reflow_pane at its host's current
+// size), or the owning scroll rows (reflow_scroll_content re-wraps and
+// resizes the document). Falls back to relayout(cp), so a slot-hosted edit
+// behaves exactly as before.
+fn reflow_owner(cp: *u8, view: *u8) -> bool {
+    match tree_ptr(cp) {
+        option::Option[*flex::Node]::Some(tp) => {
+            if flex_in_tree(tp, view) != (0 as *flex::Node) { return relayout(cp); }
+        }
+        option::Option[*flex::Node]::None => { }
+    }
+    let panes: *vec::Vec[SplitPane] = #addr_of(SPLIT_PANES);
+    let pn: usize = { (*panes).count() };
+    var i: usize = 0 as usize;
+    while i < pn {
+        match (*panes).at_ptr(i) {
+            option::Option[*SplitPane]::Some(ep) => {
+                if flex_in_tree(#addr_of((*ep).tree), view) != (0 as *flex::Node) {
+                    reflow_pane(ep);
+                    return true;
+                }
+            }
+            option::Option[*SplitPane]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    let rows: *vec::Vec[ScrollContent] = #addr_of(SCROLL_CONTENT);
+    let rn: usize = { (*rows).count() };
+    var j: usize = 0 as usize;
+    while j < rn {
+        match (*rows).at_ptr(j) {
+            option::Option[*ScrollContent]::Some(ep) => {
+                if flex_in_tree(#addr_of((*ep)._tree), view) != (0 as *flex::Node) {
+                    return reflow_scroll_content({ (*ep)._scroll });
+                }
+            }
+            option::Option[*ScrollContent]::None => { }
+        }
+        j = j +% (1 as usize);
+    }
+    return relayout(cp);
+}
+
+// ==========================================================================
 // The component runtime
 // ==========================================================================
 // A component is a plain struct: fields = state, handlers = `ref this`
@@ -2782,6 +2933,81 @@ fn test_list_row_measures_and_builds_cell() {
     assert cell_ptr != (0 as *u8);
     assert ak::View::from_raw(cell_ptr).subviews().count() > (0 as usize);   // content installed
     return;
+}
+
+#[test]
+fn change_hooked_text_area_lets_enter_through() {
+    // A text_area with on_change reuses the composer delegate with a NULL
+    // on_submit: plain Enter must fall through to the default newline (0 =
+    // not handled), not be swallowed as a submit. A real composer (non-null
+    // on_submit) still swallows it; any other command falls through.
+    let none: fn(*u8, *u8) = 0 as fn(*u8, *u8);
+    let ins: *u8 = rt::sel(#str_ptr("insertNewline:\0"));
+    var no_submit: akx::ComposerCtx = akx::ComposerCtx { on_change: test_noop_action, on_submit: none, caller_ctx: 0 as *u8 };
+    assert akx::composer_do_command_imp(#addr_of(no_submit) as *u8, 0 as *u8, ins) == (0 as i8);
+    var with_submit: akx::ComposerCtx = akx::ComposerCtx { on_change: none, on_submit: test_noop_action, caller_ctx: 0 as *u8 };
+    assert akx::composer_do_command_imp(#addr_of(with_submit) as *u8, 0 as *u8, ins) == (1 as i8);
+    assert akx::composer_do_command_imp(#addr_of(with_submit) as *u8, 0 as *u8, rt::sel(#str_ptr("moveDown:\0"))) == (0 as i8);
+}
+
+// The scroll-hosted inner NSTextView of a text_area node (asserting helper).
+fn area_text_view(n: *flex::Node) -> ak::TextView {
+    let dv: *u8 = { rt::msg_id({ (*n).payload() }, rt::sel(#str_ptr("documentView\0"))) };
+    assert dv != (0 as *u8);
+    return ak::TextView::from_raw(dv);
+}
+
+#[test]
+fn test_text_area_editable_gets_undo() {
+    var e: flex::Node = text_area(value: "x", editable: true);
+    assert area_text_view(#addr_of(e)).allows_undo();
+    // A read-only viewer needs no undo stack.
+    var r: flex::Node = text_area(value: "x", editable: false);
+    assert area_text_view(#addr_of(r)).allows_undo() == false;
+}
+
+#[test]
+fn test_text_area_smart_substitutions_off() {
+    // The code-editing configuration turns the auto-substitutions off.
+    var n: flex::Node = text_area(value: "x", smart_substitutions: false);
+    assert area_text_view(#addr_of(n)).is_automatic_quote_substitution_enabled() == false;
+}
+
+#[test]
+fn test_text_area_no_wrap_scrolls_horizontally() {
+    var n: flex::Node = text_area(value: "x", wrap: false);
+    let sv: ak::ScrollView = ak::ScrollView::from_raw(n.payload());
+    assert sv.has_horizontal_scroller();
+    let tv: ak::TextView = area_text_view(#addr_of(n));
+    assert tv.as_text().is_horizontally_resizable();
+    match tv.text_container() {
+        option::Option[ak::TextContainer]::Some(tc) => {
+            assert tc.width_tracks_text_view() == false;
+        }
+        option::Option[ak::TextContainer]::None => { assert false; }
+    };
+    // The default (wrapping) area keeps the vertical-only configuration.
+    var d: flex::Node = text_area(value: "x");
+    assert ak::ScrollView::from_raw(d.payload()).has_horizontal_scroller() == false;
+}
+
+#[test]
+fn test_text_area_line_numbers_installs_gutter_ruler() {
+    var n: flex::Node = text_area(value: "one\ntwo", line_numbers: true);
+    let sv: ak::ScrollView = ak::ScrollView::from_raw(n.payload());
+    assert sv.has_vertical_ruler();
+    match sv.vertical_ruler_view() {
+        option::Option[ak::RulerView]::Some(rv) => {
+            assert rv.rule_thickness() == (48.0f64);
+            // Our subclass, not a stock NSRulerView.
+            let cls: *u8 = rt::get_class(#str_ptr("CplusExt_LineNumberRuler\0"));
+            assert rt::msg_i8_id(rv.raw(), rt::sel(#str_ptr("isKindOfClass:\0")), cls) != (0 as i8);
+        }
+        option::Option[ak::RulerView]::None => { assert false; }
+    };
+    // Default: no ruler machinery at all.
+    var d: flex::Node = text_area(value: "x");
+    assert ak::ScrollView::from_raw(d.payload()).has_vertical_ruler() == false;
 }
 
 #[test]

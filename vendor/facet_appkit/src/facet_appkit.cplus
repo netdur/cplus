@@ -383,6 +383,35 @@ fn ak_button(ctx: *u8, np: *facet::Node) -> flex::Node {
     return n;
 }
 
+// Text-level Style for a scroll-hosted editor: font (size / weight / family)
+// and foreground apply to the INNER text view — the scroll host only takes the
+// layer paints. The caret (insertion point) follows the foreground so it stays
+// visible on a dark editor background. Only set fields are touched.
+fn apply_editor_text_style(scroll_ptr: *u8, np: *facet::Node) {
+    if scroll_ptr == (0 as *u8) { return; }
+    let style: facet::Style = { (*np).style };
+    let fsz: f64 = { style.font_size };
+    let wt: u32 = { style.weight };
+    let fam: u32 = { style.family };
+    let ital: bool = { style.italic };
+    let fg: facet::Color = { style.fg };
+    let has_font: bool = fsz > 0.0f64 || wt != facet::weight_unset() || fam != facet::family_unset() || ital;
+    if !has_font && !fg.is_set() { return; }
+    let dv: *u8 = rt::msg_id(scroll_ptr, rt::sel(#str_ptr("documentView\0")));
+    if dv == (0 as *u8) { return; }
+    let tv: ak::TextView = ak::TextView::from_raw(dv);
+    if has_font {
+        var font: ak::Font = ns_font(fsz, wt, fam);
+        if ital { font = ak::FontManager::shared_font_manager().convert_font_to_have_trait(font, 1 as u64); }
+        tv.as_text().set_font(font);
+    }
+    if fg.is_set() {
+        tv.as_text().set_text_color(ns_color(fg));
+        tv.set_insertion_point_color(ns_color(fg));
+    }
+    return;
+}
+
 fn ak_text_area(ctx: *u8, np: *facet::Node) -> flex::Node {
     let ch: fn(*u8, *u8) = { (*np).on_change };
     let cctx: *u8 = { (*np).click_ctx };
@@ -391,20 +420,25 @@ fn ak_text_area(ctx: *u8, np: *facet::Node) -> flex::Node {
     let db: bool = { (*np).draws_background };
     let iw: f64 = { (*np).inset_w };
     let ih: f64 = { (*np).inset_h };
+    let wr: bool = { (*np).soft_wrap };
+    let ss: bool = { (*np).smart_subs };
+    let ln: bool = { (*np).line_numbers };
     let vp: *text::Text = { #addr_of((*np).value) };
     var n: flex::Node = flex::Node::new();
     match (*vp).c_str() {
         option::Option[text::CString]::Some(vcs) => {
             let vs: str = { #str_from_raw_parts(vcs.as_ptr(), vcs.count()) };
-            n = ui::text_area(value: vs, on_change: ch, ctx: cctx, editable: ed, show_border: sb, draws_background: db, inset_w: iw, inset_h: ih);
+            n = ui::text_area(value: vs, on_change: ch, ctx: cctx, editable: ed, show_border: sb, draws_background: db, inset_w: iw, inset_h: ih, wrap: wr, smart_substitutions: ss, line_numbers: ln);
         }
         option::Option[text::CString]::None => {
-            n = ui::text_area(value: "", on_change: ch, ctx: cctx, editable: ed, show_border: sb, draws_background: db, inset_w: iw, inset_h: ih);
+            n = ui::text_area(value: "", on_change: ch, ctx: cctx, editable: ed, show_border: sb, draws_background: db, inset_w: iw, inset_h: ih, wrap: wr, smart_substitutions: ss, line_numbers: ln);
         }
     };
-    // Editors honor the layer-paint props (bg/corner/border) on their scroll
-    // host; text color/font stay the editor's own (Phase 3).
+    // Editors take the layer paints (bg/corner/border) on their scroll host and
+    // the TEXT channels (font family/size/weight, foreground + caret) on the
+    // inner text view.
     apply_style(n.payload(), facet::kind_text_area(), np);
+    apply_editor_text_style(n.payload(), np);
     return n;
 }
 
@@ -2513,22 +2547,35 @@ fn flex_node_for_view(fp: *flex::Node, view: *u8) -> *flex::Node {
     return 0 as *flex::Node;
 }
 
+// Resolve `view`'s flex node: the component's slot tree first, then the
+// hosted-tree registries (split panes / scroll rows — their subtrees are moved
+// OUT of the slot tree at mount, see ui::hosted_flex_for_view). The structural
+// verbs re-run this after mounting a child: a mount can grow a registry vec
+// and move the entry a previously resolved pointer aimed into.
+fn resolve_flex(cp: *u8, view: *u8) -> *flex::Node {
+    match ui::tree_ptr(cp) {
+        option::Option[*flex::Node]::Some(tp) => {
+            let fp: *flex::Node = flex_node_for_view(tp, view);
+            if fp != (0 as *flex::Node) { return fp; }
+        }
+        option::Option[*flex::Node]::None => { }
+    }
+    return ui::hosted_flex_for_view(view);
+}
+
 // facet::find hook: resolve `key` inside component `cp`'s live subtree. The view
 // is found by walking the real NSView hierarchy under the component's host (safe
-// accessibilityIdentifier reads); the flex node is then matched by pointer.
+// accessibilityIdentifier reads); the flex node is then matched by pointer —
+// in the slot tree or, for split-pane / scroll-hosted subtrees, in the owning
+// registry's tree.
 fn find_impl(cp: *u8, key: str) -> facet::Handle {
     let host: *u8 = ui::host_of(cp);
     if host == (0 as *u8) { return facet::Handle::missing(); }
     let view: *u8 = find_view_by_id(host, key);
     if view == (0 as *u8) { return facet::Handle::missing(); }
     var flexp: *u8 = 0 as *u8;
-    match ui::tree_ptr(cp) {
-        option::Option[*flex::Node]::Some(tp) => {
-            let fp: *flex::Node = flex_node_for_view(tp, view);
-            if fp != (0 as *flex::Node) { flexp = fp as *u8; }
-        }
-        option::Option[*flex::Node]::None => { }
-    }
+    let fp: *flex::Node = resolve_flex(cp, view);
+    if fp != (0 as *flex::Node) { flexp = fp as *u8; }
     return facet::Handle::of(view, flexp, cp, 0 as u32);
 }
 
@@ -2550,7 +2597,7 @@ fn set_text_impl(h: facet::Handle, s: str) -> bool {
         let fp: *flex::Node = h.flex() as *flex::Node;
         { (*fp).mark_content_changed(); }
     }
-    let _r: bool = ui::relayout(h.cp());
+    let _r: bool = ui::reflow_owner(h.cp(), view);
     return true;
 }
 
@@ -2589,14 +2636,17 @@ fn set_hidden_impl(h: facet::Handle, hidden: bool) -> bool {
 // retains the flex tree + views, not per-child descriptions).
 fn add_child_impl(h: facet::Handle, take child: facet::Node) -> bool {
     let cview: *u8 = h.view();
-    let cflex: *u8 = h.flex();
-    if cview == (0 as *u8) || cflex == (0 as *u8) { return false; }
+    if cview == (0 as *u8) || h.flex() == (0 as *u8) { return false; }
     var child_flex: flex::Node = mount(#addr_of(child));
-    ui::apply(#addr_of(child_flex), cview, false);   // add_subview; frames set by relayout
-    let cfp: *flex::Node = cflex as *flex::Node;
+    // Re-resolve after the mount: mounting a child that itself contains a
+    // hosted split/scroll appends to a registry vec, which can move the entry
+    // the handle's flex pointer aimed into.
+    let cfp: *flex::Node = resolve_flex(h.cp(), cview);
+    if cfp == (0 as *flex::Node) { return false; }   // child_flex drops (views with it)
+    ui::apply(#addr_of(child_flex), cview, false);   // add_subview; frames set by the reflow
     { (*cfp).add_child(child_flex); }                // MOVE the flex node into the container
     { (*cfp).mark_content_changed(); }               // force a re-layout that includes it
-    let _r: bool = ui::relayout(h.cp());
+    let _r: bool = ui::reflow_owner(h.cp(), cview);
     return true;
 }
 
@@ -2619,7 +2669,7 @@ fn remove_child_impl(h: facet::Handle, key: str) -> bool {
                     ak::View::from_raw(target).remove_from_superview();
                     let _g: option::Option[flex::Node] = { (*cfp).children.remove(i) };
                     { (*cfp).mark_content_changed(); }
-                    let _r: bool = ui::relayout(h.cp());
+                    let _r: bool = ui::reflow_owner(h.cp(), cview);
                     return true;
                 }
             }
@@ -2635,17 +2685,17 @@ fn remove_child_impl(h: facet::Handle, key: str) -> bool {
 // add_child_impl but ordered.
 fn insert_child_impl(h: facet::Handle, take child: facet::Node, at: usize) -> bool {
     let cview: *u8 = h.view();
-    let cflex: *u8 = h.flex();
-    if cview == (0 as *u8) || cflex == (0 as *u8) { return false; }
-    let cfp: *flex::Node = cflex as *flex::Node;
+    if cview == (0 as *u8) || h.flex() == (0 as *u8) { return false; }
+    var child_flex: flex::Node = mount(#addr_of(child));
+    let cfp: *flex::Node = resolve_flex(h.cp(), cview);       // re-resolve (see add_child_impl)
+    if cfp == (0 as *flex::Node) { return false; }
     var idx: usize = at;
     let n: usize = { (*cfp).child_count() };
     if idx > n { idx = n; }
-    var child_flex: flex::Node = mount(#addr_of(child));
-    ui::apply(#addr_of(child_flex), cview, false);            // add_subview; frames set by relayout
+    ui::apply(#addr_of(child_flex), cview, false);            // add_subview; frames set by the reflow
     let _st = { (*cfp).children.insert(child_flex, idx) };    // MOVE the flex node in at `idx`
     { (*cfp).mark_content_changed(); }
-    let _r: bool = ui::relayout(h.cp());
+    let _r: bool = ui::reflow_owner(h.cp(), cview);
     return true;
 }
 
@@ -2667,10 +2717,12 @@ fn replace_child_impl(h: facet::Handle, key: str, take child: facet::Node) -> bo
                     ak::View::from_raw(target).remove_from_superview();
                     let _g: option::Option[flex::Node] = { (*cfp).children.remove(i) };
                     var child_flex: flex::Node = mount(#addr_of(child));
+                    let cfp2: *flex::Node = resolve_flex(h.cp(), cview);   // re-resolve (see add_child_impl)
+                    if cfp2 == (0 as *flex::Node) { return false; }
                     ui::apply(#addr_of(child_flex), cview, false);
-                    let _st = { (*cfp).children.insert(child_flex, i) };
-                    { (*cfp).mark_content_changed(); }
-                    let _r: bool = ui::relayout(h.cp());
+                    let _st = { (*cfp2).children.insert(child_flex, i) };
+                    { (*cfp2).mark_content_changed(); }
+                    let _r: bool = ui::reflow_owner(h.cp(), cview);
                     return true;
                 }
             }
@@ -2700,10 +2752,12 @@ fn set_child_impl(h: facet::Handle, take child: facet::Node) -> bool {
         let _g: option::Option[flex::Node] = { (*cfp).children.remove(0 as usize) };
     }
     var child_flex: flex::Node = mount(#addr_of(child));
+    let cfp2: *flex::Node = resolve_flex(h.cp(), cview);   // re-resolve (see add_child_impl)
+    if cfp2 == (0 as *flex::Node) { return false; }
     ui::apply(#addr_of(child_flex), cview, false);
-    { (*cfp).add_child(child_flex); }
-    { (*cfp).mark_content_changed(); }
-    let _r: bool = ui::relayout(h.cp());
+    { (*cfp2).add_child(child_flex); }
+    { (*cfp2).mark_content_changed(); }
+    let _r: bool = ui::reflow_owner(h.cp(), cview);
     return true;
 }
 
@@ -3181,6 +3235,116 @@ fn run_slot_defaults_to_root_address_ctx() {
     assert facet::find(#addr_of(root) as *u8, "greet").found();
     assert ui::relayout(#addr_of(root) as *u8);
     RUN_ROOT = 0 as *facet::Node;
+    unmount_all();
+}
+
+// A keyed container INSIDE a split's hosted pane: its subtree is moved into
+// the SPLIT_PANES registry at mount, not kept in the slot tree — find() must
+// still resolve its flex node (the hosted fallback) and the structural verbs
+// must reflow the PANE. This is iris's editor-tabs shape: splits all the way
+// down, tabs grown/shrunk by key.
+struct PaneTabs { n: i64 }
+
+impl PaneTabs: facet::Component {
+    fn build(this) -> facet::Node {
+        return @facet {
+            vstack {
+                split {
+                    label("sidebar")
+                    vstack {
+                        vstack {
+                            label("tab-a").key("tabs:tab:a")
+                        }.key("tabs")
+                        label("under")
+                    }
+                }.key("the-split")
+            }
+        };
+    }
+}
+
+static PANE_TABS: PaneTabs = #zero::[PaneTabs]();
+
+#[test]
+fn find_and_structural_verbs_reach_split_pane_content() {
+    unmount_all();
+    install();   // find + the structural hooks (a run's startup registration)
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 500.0, h: 400.0 });
+    let _h: f64 = mount_component(PANE_TABS.build, host: host.raw());
+    let cp: *u8 = #addr_of(PANE_TABS) as *u8;
+
+    // Size the hosted pane by hand (a live NSSplitView does this in a real
+    // window; headless it stays 0x0) and reflow it — the resize-hook path.
+    let sv_ptr: *u8 = find_view_by_id(host.raw(), "the-split");
+    assert sv_ptr != (0 as *u8);
+    var arranged: vec::Vec[ak::View] = ak::SplitView::from_raw(sv_ptr).arranged_subviews();
+    assert arranged.count() == (2 as usize);
+    match arranged.at_ptr(1 as usize) {
+        option::Option[*ak::View]::Some(hp) => {
+            (*hp).set_frame(rt::Rect { x: 0.0, y: 0.0, w: 280.0, h: 400.0 });
+        }
+        option::Option[*ak::View]::None => { assert false; }
+    };
+    ui::relayout_split_panes(sv_ptr);
+
+    // find resolves BOTH halves for the pane-hosted keyed container: the view
+    // (NSViews nest through the split) AND the flex node (the SPLIT_PANES
+    // fallback — this was 0 before, so every structural verb no-op'd).
+    let tabs: facet::Handle = facet::find(cp, "tabs");
+    assert tabs.found();
+    assert tabs.flex() != (0 as *u8);
+
+    // add_child grows the pane-hosted container in place...
+    let _c: facet::Handle = tabs.add_child(facet::label("tab-b").key("tabs:tab:b"));
+    let added: *u8 = find_view_by_id(host.raw(), "tabs:tab:b");
+    assert added != (0 as *u8);
+    // ...at a real frame (reflow_owner reflowed the PANE, not the slot tree).
+    assert ak::View::from_raw(added).frame().w > 0.0f64;
+
+    // remove_child shrinks it again.
+    assert facet::find(cp, "tabs").remove_child("tabs:tab:a");
+    assert find_view_by_id(host.raw(), "tabs:tab:a") == (0 as *u8);
+    unmount_all();
+}
+
+// The same fallback, scroll-flavored: a keyed container inside a portable
+// `scroll { }` lives in the SCROLL_CONTENT registry; edits reflow the rows at
+// the viewport width and resize the document.
+struct ScrollRows { n: i64 }
+
+impl ScrollRows: facet::Component {
+    fn build(this) -> facet::Node {
+        return @facet {
+            vstack {
+                scroll {
+                    vstack {
+                        label("row-a").key("rows:a")
+                    }.key("rows")
+                }
+                .frame(300.0f64, 200.0f64)
+            }
+        };
+    }
+}
+
+static SCROLL_ROWS: ScrollRows = #zero::[ScrollRows]();
+
+#[test]
+fn find_and_structural_verbs_reach_scroll_hosted_content() {
+    unmount_all();
+    install();   // find + the structural hooks
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 400.0, h: 300.0 });
+    let _h: f64 = mount_component(SCROLL_ROWS.build, host: host.raw());
+    let cp: *u8 = #addr_of(SCROLL_ROWS) as *u8;
+
+    let rows: facet::Handle = facet::find(cp, "rows");
+    assert rows.found();
+    assert rows.flex() != (0 as *u8);          // SCROLL_CONTENT fallback
+
+    let _c: facet::Handle = rows.add_child(facet::label("row-b").key("rows:b"));
+    assert find_view_by_id(host.raw(), "rows:b") != (0 as *u8);
+    assert facet::find(cp, "rows").remove_child("rows:a");
+    assert find_view_by_id(host.raw(), "rows:a") == (0 as *u8);
     unmount_all();
 }
 
@@ -3878,6 +4042,45 @@ fn e2e_facet_text_area_agent_input() {
         s.set_text("src", "fn x() {}", s.text_version("src")),
         surface::Outcome::Allowed);
     assert surface::outcome_eq(s.click("notes"), surface::Outcome::NotActionable);
+}
+
+#[test]
+fn facet_text_area_honors_style_text_channels() {
+    // .monospaced() / .font(size) / .foreground_color reach the INNER text
+    // view (the "Phase 3" gap, closed): the font swaps to the monospaced face
+    // at the asked size; text color AND the caret follow the foreground.
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
+    var root: facet::Node = @facet {
+        vstack {
+            text_area(value: "fn main() {}", editable: true, wrap: false, smart_substitutions: false)
+                .monospaced()
+                .font(13.0f64)
+                .foreground_color(facet::Color::rgba(0.84f64, 0.86f64, 0.90f64, 1.0f64))
+                .agent_id("src")
+                .height(80.0f64)
+        }
+    };
+    let _h: f64 = mount_into(#addr_of(root), content.raw(), 300.0f64, 200.0f64);
+    let tvp: *u8 = find_view_by_id(content.raw(), "src");   // the tagged inner NSTextView
+    assert tvp != (0 as *u8);
+    let tv: ak::TextView = ak::TextView::from_raw(tvp);
+    match tv.as_text().font() {
+        option::Option[ak::Font]::Some(f) => {
+            assert f.point_size() == (13.0f64);
+            // The monospaced face, not the default system font.
+            let mono_name: text::Text = ak::Font::monospaced_system_font_of_size(13.0f64, 0.0f64).font_name();
+            assert f.font_name().equals(mono_name.view());
+        }
+        option::Option[ak::Font]::None => { assert false; }
+    };
+    // Caret follows the foreground: both read back as the same color.
+    let caret: ak::Color = tv.insertion_point_color();
+    match tv.as_text().text_color() {
+        option::Option[ak::Color]::Some(tc) => {
+            assert rt::msg_i8_id(caret.raw(), rt::sel(#str_ptr("isEqual:\0")), tc.raw()) != (0 as i8);
+        }
+        option::Option[ak::Color]::None => { assert false; }
+    };
 }
 
 #[test]

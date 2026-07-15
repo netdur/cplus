@@ -13,6 +13,7 @@ import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/vec" as vec;
 import "stdlib/option" as option;
+import "stdlib/string_map" as string_map;
 import "appkit/appkit" as ak;
 
 // `class_addMethod` for a `BOOL (self, _cmd)` method (isFlipped). This shape isn't
@@ -435,12 +436,15 @@ fn composer_did_change_imp(user: *u8, tv: *u8) {
 
 fn composer_do_command_imp(user: *u8, tv: *u8, sel: *u8) -> i8 {
     // Enter with no Shift submits and swallows the newline; Shift+Enter (and any
-    // other command) falls through to the text view's default handling.
+    // other command) falls through to the text view's default handling. With NO
+    // submit handler (a change-hooked text_area reusing this delegate), plain
+    // Enter must also fall through — swallowing it made newlines untypeable.
     if sel == rt::sel(#str_ptr("insertNewline:\0")) {
         if !composer_shift_is_down() {
             let c: *ComposerCtx = { user as *ComposerCtx };
             let f: fn(*u8, *u8) = { (*c).on_submit };
-            if { f as *u8 } != { 0 as *u8 } { f({ (*c).caller_ctx }, tv); }
+            if { f as *u8 } == { 0 as *u8 } { return 0 as i8; }   // no submit -> default newline
+            f({ (*c).caller_ctx }, tv);
             return 1 as i8;   // handled -> no newline inserted
         }
     }
@@ -557,20 +561,160 @@ fn frame_obs_imp(self_obj: *u8, cmd: *u8, notif: *u8) {
 }
 
 fn observe_frame_change(view: ak::View, on_resize: fn(*u8), ctx: *u8) {
-    let name: *u8 = #str_ptr("CplusExt_FrameObserver\0");
-    var cls: *u8 = rt::get_class(name);
+    view.set_posts_frame_changed_notifications(true);
+    observe_notification("NSViewFrameDidChangeNotification", view.raw(), on_resize, ctx, pin_on: view.raw(), pin_key: frame_obs_pin_key());
+    return;
+}
+
+// Generic notification -> C+ handler: register `handler(ctx)` for `name` from
+// `object`, pinning the observer target to `pin_on` (it lives as long as that
+// owner; selector-based observers auto-unregister on dealloc). `pin_key` keeps
+// different observer kinds on the same owner from evicting each other.
+fn observe_notification(name: str, object: *u8, handler: fn(*u8), ctx: *u8, pin_on: *u8, pin_key: *u8) {
+    let cls_name: *u8 = #str_ptr("CplusExt_FrameObserver\0");
+    var cls: *u8 = rt::get_class(cls_name);
     if cls == { 0 as *u8 } {
-        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
+        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), cls_name, 0 as usize);
         let added: i8 = cplus_ext_add_action_method(cls, frame_obs_sel(), frame_obs_imp, #str_ptr("v@:@\0"));
         synth::register_class_pair(cls);
     }
     let t: *u8 = synth::alloc_init_class(cls);
-    synth::set_associated(t, frame_obs_handler_key(), { on_resize as *u8 });
+    synth::set_associated(t, frame_obs_handler_key(), { handler as *u8 });
     synth::set_associated(t, frame_obs_ctx_key(), ctx);
-    view.set_posts_frame_changed_notifications(true);
     let nc: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSNotificationCenter\0")), rt::sel(#str_ptr("defaultCenter\0")));
-    rt::msg_void_id_id_id_id(nc, rt::sel(#str_ptr("addObserver:selector:name:object:\0")), t, frame_obs_sel(), bridge::nsstring("NSViewFrameDidChangeNotification"), view.raw());
-    synth::retain_associated(view.raw(), frame_obs_pin_key(), t);
+    rt::msg_void_id_id_id_id(nc, rt::sel(#str_ptr("addObserver:selector:name:object:\0")), t, frame_obs_sel(), bridge::nsstring(name), object);
+    synth::retain_associated(pin_on, pin_key, t);
+    return;
+}
+
+// ==========================================================================
+// Line-number ruler — a vertical NSRulerView gutter for a code text view
+// ==========================================================================
+//
+// A one-off NSRulerView subclass whose drawRect: paints the whole gutter —
+// adaptive background, a 1px trailing divider, and right-aligned line numbers
+// from the client text view's line metrics (its font's default line height,
+// exact for the no-wrap code configuration this pairs with; a soft-wrapped
+// line shows one number at its first fragment's position). Scrolling redraws
+// rulers for free (the scroll view manages them); an NSTextDidChangeNotification
+// observer redraws on edits.
+
+// `class_addMethod` for the `void (self, _cmd, NSRect)` draw shape — declared
+// locally, exactly as the flipped-view/composer shims above.
+#[link_name = "class_addMethod"]
+extern fn add_method_rect_0(cls: *u8, sel: *u8, imp: fn(*u8, *u8, rt::Rect), types: *u8) -> i8;
+
+fn line_ruler_pin_key() -> *u8 { return { 28700 as *u8 }; }
+
+fn line_ruler_pad() -> f64 { return 6.0f64; }
+
+fn line_ruler_draw_imp(self_obj: *u8, cmd: *u8, dirty: rt::Rect) {
+    let bounds: rt::Rect = rt::msg_rect(self_obj, rt::sel(#str_ptr("bounds\0")));
+    // Adaptive gutter paint: controlBackground fill, separator divider.
+    let fill_sel: *u8 = rt::sel(#str_ptr("setFill\0"));
+    let bezier: *u8 = rt::get_class(#str_ptr("NSBezierPath\0"));
+    let fill_rect: *u8 = rt::sel(#str_ptr("fillRect:\0"));
+    rt::msg_void(ak::Color::control_background_color().raw(), fill_sel);
+    rt::msg_void_rect(bezier, fill_rect, bounds);
+    rt::msg_void(ak::Color::separator_color().raw(), fill_sel);
+    rt::msg_void_rect(bezier, fill_rect, rt::Rect { x: bounds.x + bounds.w - 1.0f64, y: bounds.y, w: 1.0f64, h: bounds.h });
+
+    let tv_ptr: *u8 = rt::msg_id(self_obj, rt::sel(#str_ptr("clientView\0")));
+    if tv_ptr == { 0 as *u8 } { return; }
+    let tv: ak::TextView = ak::TextView::from_raw(tv_ptr);
+    // Line geometry: the font's default line height.
+    var line_h: f64 = 15.0f64;
+    match tv.as_text().font() {
+        option::Option[ak::Font]::Some(f) => {
+            match tv.layout_manager() {
+                option::Option[ak::LayoutManager]::Some(lm) => {
+                    line_h = lm.default_line_height_for_font(f);
+                }
+                option::Option[ak::LayoutManager]::None => { }
+            }
+        }
+        option::Option[ak::Font]::None => { }
+    }
+    if line_h <= 0.0f64 { line_h = 15.0f64; }
+    let inset: rt::Size = tv.text_container_inset();
+    let visible: rt::Rect = ak::View::from_raw(tv_ptr).visible_rect();
+    // Total hard lines (newline count + 1).
+    let src: text::Text = tv.as_text().string();
+    var total: i64 = 1 as i64;
+    var bi: usize = 0 as usize;
+    let n: usize = src.count();
+    while bi < n {
+        match src.byte_at(bi) {
+            option::Option[u8]::Some(b) => {
+                if b == (10 as u8) { total = total + (1 as i64); }
+            }
+            option::Option[u8]::None => { }
+        }
+        bi = bi +% (1 as usize);
+    }
+    // The visible line range, one line of slack each side.
+    var first: i64 = (((visible.y - inset.h) / line_h) as i64) - (1 as i64);
+    if first < (0 as i64) { first = 0 as i64; }
+    var last: i64 = (((visible.y + visible.h - inset.h) / line_h) as i64) + (1 as i64);
+    if last >= total { last = total - (1 as i64); }
+    // Number attributes (monospaced digits, secondary), shared across the loop.
+    // AnyObject wraps are non-owning: the font/color locals outlive the draws.
+    let num_font: ak::Font = ak::Font::monospaced_system_font_of_size(10.0f64, 0.0f64);
+    let num_color: ak::Color = ak::Color::secondary_label_color();
+    var attrs: string_map::StringMap[ak::AnyObject] = string_map::new::[ak::AnyObject]();
+    let _s1 = attrs.insert(text::from_str("NSFont"), ak::AnyObject::from_raw(num_font.raw()));
+    let _s2 = attrs.insert(text::from_str("NSColor"), ak::AnyObject::from_raw(num_color.raw()));
+    let cvt: *u8 = rt::sel(#str_ptr("convertPoint:fromView:\0"));
+    var i: i64 = first;
+    while i <= last {
+        let y_tv: f64 = inset.h + ((i as f64) * line_h);
+        let p: rt::Point = rt::msg_point_point_id(self_obj, cvt, rt::Point { x: 0.0f64, y: y_tv }, tv_ptr);
+        let ln: i64 = i + (1 as i64);
+        let label: text::Text = "${ln}";
+        let ns: ak::String = ak::String::from_raw(bridge::nsstring(label.view()));
+        let sz: rt::Size = ns.size_with_attributes(attrs);
+        ns.draw_at_point(
+            rt::Point { x: bounds.x + bounds.w - line_ruler_pad() - sz.w, y: p.y + ((line_h - sz.h) / 2.0f64) },
+            with_attributes: attrs,
+        );
+        i = i + (1 as i64);
+    }
+    return;
+}
+
+// The NSRulerView subclass: drawRect: paints the gutter (never calling super,
+// so the standard light ruler background never shows); flipped to match the
+// text view so converted y-coordinates read top-down.
+fn line_ruler_class() -> *u8 {
+    let existing: *u8 = rt::get_class(#str_ptr("CplusExt_LineNumberRuler\0"));
+    if existing != (0 as *u8) { return existing; }
+    let cls: *u8 = synth::allocate_class_pair(rt::get_class(#str_ptr("NSRulerView\0")), #str_ptr("CplusExt_LineNumberRuler\0"), 0 as usize);
+    let _a: i8 = add_method_rect_0(cls, rt::sel(#str_ptr("drawRect:\0")), line_ruler_draw_imp, #str_ptr("v@:{CGRect={CGPoint=dd}{CGSize=dd}}\0"));
+    let _b: i8 = add_method_bool_0(cls, rt::sel(#str_ptr("isFlipped\0")), flipped_is_flipped_imp, #str_ptr("c@:\0"));
+    synth::register_class_pair(cls);
+    return cls;
+}
+
+fn line_ruler_needs_display(ruler_ptr: *u8) {
+    rt::msg_void_i8(ruler_ptr, rt::sel(#str_ptr("setNeedsDisplay:\0")), 1 as i8);
+    return;
+}
+
+// Attach a line-number gutter to `scroll`'s text view `tv`: install the ruler
+// as the scroll's vertical ruler (the scroll owns and places it), redraw on
+// text edits. `thickness` is the gutter width in points.
+fn attach_line_number_ruler(scroll: ak::ScrollView, tv: ak::TextView, thickness: f64 = 48.0f64) {
+    let alloced: *u8 = rt::msg_id(line_ruler_class(), rt::sel(#str_ptr("alloc\0")));
+    let inited: *u8 = rt::msg_id_id_i64(alloced, rt::sel(#str_ptr("initWithScrollView:orientation:\0")), scroll.raw(), 1 as i64);   // NSVerticalRuler
+    // from_raw retains; autorelease balances alloc's +1 (the new_flipped_view rule).
+    let ruler: ak::RulerView = ak::RulerView::from_raw(rt::autorelease(inited));
+    ruler.set_client_view(tv.as_view());
+    ruler.set_rule_thickness(thickness);
+    scroll.set_has_vertical_ruler(true);
+    scroll.set_vertical_ruler_view(ruler);
+    scroll.set_rulers_visible(true);
+    // Edits move the line count: redraw the gutter on every text change.
+    observe_notification("NSTextDidChangeNotification", tv.as_view().raw(), line_ruler_needs_display, inited, pin_on: scroll.raw(), pin_key: line_ruler_pin_key());
     return;
 }
 

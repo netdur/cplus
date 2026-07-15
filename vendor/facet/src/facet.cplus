@@ -384,6 +384,9 @@ struct Node {
     toggle_style: i32,          // toggle: 0 = switch, 1 = checkbox, 2 = radio
     grid_cols: i32,             // grid: number of equal columns
     editable: bool,             // text_area (default true)
+    soft_wrap: bool,            // text_area: false = no soft wrap + horizontal scroll (code)
+    smart_subs: bool,           // text_area: false = no smart quotes/dashes/replacement (code)
+    line_numbers: bool,         // text_area: true = a line-number gutter (code)
     show_border: bool,          // composer (default true)
     draws_background: bool,     // composer (default true)
     radius: f64,                // bordered corner radius
@@ -519,6 +522,9 @@ fn blank(kind: u32) -> Node {
         toggle_style: 0 as i32,
         grid_cols: 0 as i32,
         editable: true,
+        soft_wrap: true,
+        smart_subs: true,
+        line_numbers: false,
         show_border: true,
         draws_background: true,
         radius: 6.0f64,
@@ -636,6 +642,14 @@ fn spacer() -> Node {
 
 // Multi-line editable text area. Optional `on_change` uses the null-fn sentinel
 // when unset (same convention as composer).
+//
+// The code-editing knobs (a code editor is this text_area configured, not a
+// separate kind): `wrap: false` disables soft wrap and adds a horizontal
+// scroller; `smart_substitutions: false` turns off the code-hostile automatic
+// quotes/dashes/text replacement; `line_numbers: true` adds a line-number
+// gutter. Font and color ride the Style channels — `.monospaced()`,
+// `.font(size)`, `.foreground_color(...)` reach the inner text view (the caret
+// follows the foreground). An editable area supports undo.
 fn text_area(
     value: str = "",
     on_change: fn(*u8, *u8) = 0 as fn(*u8, *u8),
@@ -645,6 +659,9 @@ fn text_area(
     draws_background: bool = true,
     inset_w: f64 = 0.0f64,
     inset_h: f64 = 0.0f64,
+    wrap: bool = true,
+    smart_substitutions: bool = true,
+    line_numbers: bool = false,
 ) -> Node {
     var n: Node = blank(kind_text_area());
     n.value = text::from_str(value);
@@ -657,6 +674,9 @@ fn text_area(
     n.draws_background = draws_background;
     n.inset_w = inset_w;
     n.inset_h = inset_h;
+    n.soft_wrap = wrap;
+    n.smart_subs = smart_substitutions;
+    n.line_numbers = line_numbers;
     return n;
 }
 
@@ -2372,6 +2392,20 @@ fn facet_role_for_kind_table() {
     assert role_for_kind(kind_text_area()) == role_input();
     assert role_for_kind(kind_bordered()) == role_group();
     assert role_for_kind(kind_split()) == role_group();
+}
+
+#[test]
+fn facet_text_area_code_editing_knobs() {
+    // Defaults: wrapping, substitutions on, no gutter.
+    let d: Node = text_area(value: "x");
+    assert d.soft_wrap;
+    assert d.smart_subs;
+    assert d.line_numbers == false;
+    // The code-editor configuration (a code editor is this text_area configured).
+    let c: Node = text_area(value: "x", wrap: false, smart_substitutions: false, line_numbers: true);
+    assert c.soft_wrap == false;
+    assert c.smart_subs == false;
+    assert c.line_numbers;
 }
 
 fn fake_key_of(sender: *u8) -> text::Text {

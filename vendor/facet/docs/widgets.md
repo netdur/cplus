@@ -71,6 +71,24 @@ return facet::vstack(b);        // or column/hstack/row/zstack/grid/card/scroll/
 | `path(width, height)` | vector path (`.move_to`/`.line_to`/`.close_path`) |
 | `native(handle)` | adopt an app-owned native view (the escape hatch) |
 | `list(count, row, ctx?)` | recycling list — `row(i, ctx) -> Node` built lazily |
+| `text_area(value?, on_change?, ctx?, editable?, ...)` | multi-line editor (see below) |
+| `composer(on_submit, on_change?, ctx?, value?, ...)` | chat input — Enter submits, Shift+Enter newline |
+
+A code editor is a `text_area` configured, not a separate kind:
+
+```cplus
+text_area(value: src, editable: true, show_border: false,
+          wrap: false, smart_substitutions: false, line_numbers: true)
+    .monospaced().font(13.0f64)
+    .foreground_color(...)          // text and caret
+    .background(...)
+```
+
+`wrap: false` disables soft wrap and adds a horizontal scroller;
+`smart_substitutions: false` turns off automatic quotes/dashes/replacement;
+`line_numbers: true` adds a line-number gutter. `.monospaced()` / `.font(size)`
+/ `.foreground_color(...)` reach the inner text view, and the caret follows the
+foreground. An editable area supports undo.
 
 ## Containers
 
