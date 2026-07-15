@@ -1763,6 +1763,12 @@ fn install_pinch_zoom(host: *u8, min_zoom: f64 = 1.0f64, max_zoom: f64 = 4.0f64)
     // clipsToBounds to false) so it can't bleed over the titlebar region.
     ak::View::from_raw(host).set_clips_to_bounds(true);
     akx::add_magnify_gesture(ak::View::from_raw(host), on_pinch_zoom, host);
+    // The first pinch host brings the process-wide scroll filter with it
+    // (pan while zoomed). Never removed: with no zoomed host it is a pure
+    // pass-through, and pinch hosts can come and go for the process life.
+    if PAN_FILTER == { 0 as *u8 } {
+        PAN_FILTER = akx::add_local_event_filter(ak::event_mask_scroll_wheel, pan_event_filter, 0 as *u8);
+    }
     return;
 }
 
@@ -1785,6 +1791,69 @@ fn set_pinch_zoom(host: *u8, zoom: f64) -> f64 {
 
 // The zoom currently applied to a host (1.0 = natural size).
 fn pinch_zoom_level(host: *u8) -> f64 { return ui::zoom_of(host); }
+
+// ---- pan while zoomed -------------------------------------------------------
+// Safari's other half: with the content magnified, a two-finger scroll PANS
+// the visible cut instead of scrolling the app. One process-wide scroll-wheel
+// FILTER (installed with the first pinch-zoom host) routes each event: if its
+// window's content view is a pinch host zoomed past 1, the deltas move that
+// host's bounds origin (clamped by ui::set_zoom) and the event is consumed;
+// otherwise it is delivered untouched, so every window and inner scroll view
+// behaves stock at natural size. While zoomed the window pans as ONE surface
+// — inner scrolls resume at 1x (the iOS rule: predictable over clever).
+
+static PAN_FILTER: *u8 = 0 as *u8;
+
+// One axis of the pan. The bounds-space step is the wheel delta over the
+// zoom (window points → scaled points); the CALLER fixes the sign per axis.
+// NaN samples and degenerate zooms leave the origin alone.
+fn pinch_pan_origin(origin: f64, delta: f64, zoom: f64) -> f64 {
+    if (delta == delta) == false { return origin; }   // false only for NaN
+    if (zoom > 0.0f64) == false { return origin; }
+    return origin + (delta / zoom);
+}
+
+// Pan a zoomed pinch host by wheel deltas: x subtracts (deltaX > 0 = scroll
+// left = view content to the left), y adds (deltaY > 0 = scroll up = view
+// the content above; AppKit's y grows upward). False when there is nothing
+// to pan — not a pinch host, or at natural size — so the caller delivers
+// the event instead.
+fn pan_zoomed_host(host: *u8, dx: f64, dy: f64) -> bool {
+    match pinch_zoom_entry(host) {
+        option::Option[*PinchZoom]::Some(zp) => { }
+        option::Option[*PinchZoom]::None => { return false; }
+    }
+    let z: f64 = ui::zoom_of(host);
+    if (z > 1.0f64) == false { return false; }
+    let b: rt::Rect = ak::View::from_raw(host).bounds();
+    let _ok: bool = ui::set_zoom(
+        host,
+        z,
+        origin_x: pinch_pan_origin(b.x, 0.0f64 - dx, z),
+        origin_y: pinch_pan_origin(b.y, dy, z),
+    );
+    return true;
+}
+
+// The scroll-wheel filter: consume the event (return 0) when it panned a
+// zoomed window, deliver it unchanged otherwise.
+fn pan_event_filter(ctx: *u8, event_ptr: *u8) -> *u8 {
+    let ev: ak::Event = ak::Event::from_raw(event_ptr);
+    match ev.window() {
+        option::Option[ak::Window]::Some(win) => {
+            match win.content_view() {
+                option::Option[ak::View]::Some(content) => {
+                    if pan_zoomed_host(content.raw(), ev.scrolling_delta_x(), ev.scrolling_delta_y()) {
+                        return 0 as *u8;
+                    }
+                }
+                option::Option[ak::View]::None => { }
+            }
+        }
+        option::Option[ak::Window]::None => { }
+    }
+    return event_ptr;
+}
 
 fn install_default_app_menu(app: ak::Application, title: str) {
     match app.main_menu() {
@@ -4757,6 +4826,69 @@ fn e2e_pinch_zoom_gesture_and_programmatic() {
     assert set_pinch_zoom(other.raw(), 2.0f64) == 1.0f64;
     assert pinch_zoom_level(other.raw()) == 1.0f64;
     assert approx(other.bounds().w, 100.0f64);
+    unmount_all();
+}
+
+#[test]
+fn test_pinch_pan_origin_math() {
+    // The bounds-space step is delta/zoom, added to the origin.
+    assert pinch_pan_origin(100.0f64, 30.0f64, 2.0f64) == 115.0f64;
+    assert pinch_pan_origin(100.0f64, -30.0f64, 2.0f64) == 85.0f64;
+    assert pinch_pan_origin(100.0f64, 0.0f64, 2.0f64) == 100.0f64;
+    // NaN samples and degenerate zooms leave the origin alone.
+    var zero: f64 = 0.0f64;
+    assert pinch_pan_origin(100.0f64, zero / zero, 2.0f64) == 100.0f64;
+    assert pinch_pan_origin(100.0f64, 30.0f64, 0.0f64) == 100.0f64;
+    assert pinch_pan_origin(100.0f64, 30.0f64, zero / zero) == 100.0f64;
+}
+
+#[test]
+fn e2e_pan_while_zoomed_moves_and_clamps() {
+    unmount_all();
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 400.0, h: 300.0 });
+    let cp: *u8 = #addr_of(ZOOM_PANE) as *u8;
+    let h: f64 = mount_component(ZOOM_PANE.build, host: host.raw());
+    assert h > 0.0f64;
+    install_pinch_zoom(host.raw(), min_zoom: 1.0f64, max_zoom: 3.0f64);
+    // The first install brought the process-wide scroll filter with it.
+    assert PAN_FILTER != (0 as *u8);
+
+    // Zoom ×2, center cut: (100, 75) + 200×150 visible.
+    assert set_pinch_zoom(host.raw(), 2.0f64) == 2.0f64;
+    // Scroll right+down (dx 40, dy -30): the cut moves left in x (deltaX
+    // subtracts) and down in y (negative deltaY subtracts) — half the wheel
+    // points, since bounds units are scaled.
+    assert pan_zoomed_host(host.raw(), 40.0f64, -30.0f64);
+    assert approx(host.bounds().x, 80.0f64);
+    assert approx(host.bounds().y, 60.0f64);
+    assert approx(host.bounds().w, 200.0f64);   // pan never rescales
+    assert pinch_zoom_level(host.raw()) == 2.0f64;
+
+    // A huge fling clamps at the content edges — both far…
+    assert pan_zoomed_host(host.raw(), -100000.0f64, 100000.0f64);
+    assert approx(host.bounds().x, 200.0f64);
+    assert approx(host.bounds().y, 150.0f64);
+    // …and near.
+    assert pan_zoomed_host(host.raw(), 100000.0f64, -100000.0f64);
+    assert approx(host.bounds().x, 0.0f64);
+    assert approx(host.bounds().y, 0.0f64);
+
+    // NaN deltas are consumed (still a zoomed window) but move nothing.
+    var zero: f64 = 0.0f64;
+    assert pan_zoomed_host(host.raw(), zero / zero, zero / zero);
+    assert approx(host.bounds().x, 0.0f64);
+    assert approx(host.bounds().y, 0.0f64);
+
+    // At natural size there is nothing to pan: the event passes through and
+    // the coordinate space stays stock — inner scroll views behave normally.
+    assert set_pinch_zoom(host.raw(), 1.0f64) == 1.0f64;
+    assert pan_zoomed_host(host.raw(), 10.0f64, 10.0f64) == false;
+    assert approx(host.bounds().x, 0.0f64);
+    assert approx(host.bounds().w, 400.0f64);
+
+    // A view that never installed pinch zoom is never panned.
+    let other = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 100.0, h: 100.0 });
+    assert pan_zoomed_host(other.raw(), 10.0f64, 10.0f64) == false;
     unmount_all();
 }
 

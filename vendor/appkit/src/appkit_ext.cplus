@@ -221,6 +221,45 @@ fn add_rotate_gesture(view: ak::View, handler: fn(*u8, *u8), ctx: *u8) {
 }
 
 // ==========================================================================
+// Local event FILTER — a monitor whose handler can swallow the event
+// ==========================================================================
+//
+// addLocalMonitorForEventsMatchingMask:'s block RETURNS the event to deliver
+// — or nil to consume it before dispatch. The generated binding's void
+// trampoline can't express that (its return register is whatever's left
+// over), so this is the hand block for the FILTERING uses: `filter(ctx,
+// event)` returns `event` to pass it through unchanged, or 0 to swallow it.
+// The block captures only PODs (fn ptr + ctx), so AppKit's Block_copy needs
+// no copy/dispose helpers — same 48-byte layout the generated monitors use.
+// Returns the RETAINED monitor object (0 on failure); to uninstall, pass it
+// to ak::Event::remove_monitor and release it.
+
+#[repr(C)]
+struct EventFilterBlock {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8) -> *u8,
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8) -> *u8,
+    opaque ctx: *u8,
+}
+
+fn event_filter_invoke(block: *u8, event: *u8) -> *u8 {
+    let bl: *EventFilterBlock = { block as *EventFilterBlock };
+    let f: fn(*u8, *u8) -> *u8 = { (*bl).user_fn };
+    return f({ (*bl).ctx }, event);
+}
+
+fn add_local_event_filter(mask: u64, filter: fn(*u8, *u8) -> *u8, ctx: *u8) -> *u8 {
+    var desc: rt::BlockDescriptor = rt::BlockDescriptor { reserved: 0 as u64, size: 48 as u64 };
+    var blk: EventFilterBlock = EventFilterBlock { isa: rt::stack_block_isa(), flags: 0 as i32, reserved: 0 as i32, invoke: event_filter_invoke, descriptor: { #addr_of(desc) as *u8 }, user_fn: filter, ctx: ctx };
+    let obj: *u8 = rt::msg_id_u64_id(rt::get_class(#str_ptr("NSEvent\0")), rt::sel(#str_ptr("addLocalMonitorForEventsMatchingMask:handler:\0")), mask, { #addr_of(blk) as *u8 });
+    if obj == { 0 as *u8 } { return 0 as *u8; }
+    return rt::retain(obj);
+}
+
+// ==========================================================================
 // Hover + scroll -> C+ handler (a custom view, not a gesture)
 // ==========================================================================
 //
