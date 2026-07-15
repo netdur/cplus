@@ -436,6 +436,11 @@ fn material(take content: flex::Node, agent_id: str = "") -> flex::Node {
     let ve: ak::VisualEffectView = ak::VisualEffectView::new_with_frame(zero);
     ve.set_material(ak::VisualEffectMaterial::Sidebar);
     ve.set_blending_mode(ak::VisualEffectBlendingMode::BehindWindow);
+    // A container never hosts a focus ring: a visual-effect view is layer-backed,
+    // so a borderless focused control inside it (an NSTextView, an NSTableView)
+    // would otherwise draw its ring on THIS ancestor — wrapping the whole panel.
+    // The focused control still shows its own ring where appropriate.
+    ve.as_view().set_focus_ring_type(ak::FocusRingType::None);
     tag_agent(ve.as_view().raw(), agent_id, identity::Role::Group);
     var wrapper: flex::Node = flex::Node::new();
     wrapper.set_payload(rt::retain(ve.as_view().raw()), release_view);
@@ -447,6 +452,13 @@ fn bordered(take content: flex::Node, radius: f64 = 6.0f64, agent_id: str = "") 
     let zero: rt::Rect = rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 };
     let bv: ak::View = ak::View::new(zero);
     bv.set_wants_layer(true);
+    // A container never hosts a focus ring. This wrapper is layer-backed (the
+    // border draws on its layer), so it is the nearest layer-backed ancestor of
+    // whatever it wraps — and a borderless focused control inside it (an
+    // NSTextView composer, an NSTableView list) would otherwise draw its focus
+    // ring here, framing the WHOLE box in blue. Suppress it on the wrapper; the
+    // focused control still shows its own ring where appropriate.
+    bv.set_focus_ring_type(ak::FocusRingType::None);
     let lyr: quartz::Layer = bv.layer();
     lyr.set_border_width(1.0f64);
     lyr.set_corner_radius(radius);
@@ -904,9 +916,17 @@ struct TreeNode {
     opaque item: *u8,                    // cached objc wrapper (NSValue over this node; app-lifetime, leaked)
 }
 
-struct TreeSelCtx {
+// The outline view's shared delegate context: selection + (optionally) the
+// caller's view-based row builder. `row` is the null-fn sentinel unless
+// `tree(..., row: ...)` supplied one; `row_height` is a fixed row height (<= 0
+// = measure the built node). All three delegate trampolines (selection,
+// viewForColumn, heightOfRow) read this one struct through the delegate's user
+// pointer.
+struct TreeDelCtx {
     on_select: fn(*u8, *u8),         // (caller_ctx, *TreeNode-as-*u8)
     opaque caller_ctx: *u8,
+    row: fn(*u8) -> flex::Node,      // null sentinel = default object-value text cell
+    row_height: f64,                 // fixed row height; <= 0 = measure the built node
 }
 
 fn tree_ds_pin_key() -> *u8 { return { 28692 as *u8 }; }
@@ -972,6 +992,25 @@ fn tree_node_path(item: *u8) -> text::Text {
     return text::from_str({ (*n).path }.view());
 }
 
+// The display name (basename) of a tree item — the companion to
+// `tree_node_path` for a row builder that styles the label itself. Returns ""
+// for a null or unwrappable item.
+fn tree_node_label(item: *u8) -> text::Text {
+    if item == { 0 as *u8 } { return text::from_str(""); }
+    let n: *TreeNode = tree_unwrap(item);
+    if { n as *u8 } == { 0 as *u8 } { return text::from_str(""); }
+    return text::from_str({ (*n).label }.view());
+}
+
+// Whether a tree item is a directory (branch) — lets a row builder pick a folder
+// icon vs a file icon without re-stat'ing the path. False for a null item.
+fn tree_node_is_dir(item: *u8) -> bool {
+    if item == { 0 as *u8 } { return false; }
+    let n: *TreeNode = tree_unwrap(item);
+    if { n as *u8 } == { 0 as *u8 } { return false; }
+    return { (*n).is_dir };
+}
+
 // ---- public node builders: construct a tree yourself, then mount it with
 // `tree(root, ...)`. This is the agnostic path — YOU decide what nodes exist
 // (apply ignore lists, prune `.git`/`target`, stop at a depth, or build children
@@ -1029,9 +1068,87 @@ fn tree_object_value_imp(user: *u8, ov: *u8, col: *u8, item: *u8) -> *u8 {
     return bridge::nsstring({ (*n).label }.view());
 }
 
+// --- view-based row delegate (only wired when tree() gets a row builder) ---
+
+// The column width available for a tree row's content, from the outline table
+// column. NSOutlineView positions the returned cell view AFTER the disclosure
+// triangle + depth indent, so this is the content width to flex against.
+fn tree_content_width(ov: *u8) -> f64 {
+    return match ak::OutlineView::from_raw(ov).outline_table_column() {
+        option::Option[ak::TableColumn]::Some(col) => {
+            let w: f64 = col.width();
+            if w < 1.0f64 { 200.0f64 } else { w }
+        }
+        option::Option[ak::TableColumn]::None => 200.0f64,
+    };
+}
+
+// outlineView:heightOfRowByItem: — the fixed `row_height` if given, else the
+// built node's natural (flexed) height at the column width.
+fn tree_height_imp(user: *u8, ov: *u8, item: *u8) -> f64 {
+    let c: *TreeDelCtx = { user as *TreeDelCtx };
+    let rh: f64 = { (*c).row_height };
+    if rh >= 1.0f64 { return rh; }
+    let f: fn(*u8) -> flex::Node = { (*c).row };
+    if { f as *u8 } == { 0 as *u8 } { return 17.0f64; }
+    if item == { 0 as *u8 } { return 17.0f64; }
+    var node: flex::Node = f(item);
+    node.calculate_layout(tree_content_width(ov), flex::undefined(), flex::Direction::LTR);
+    node.round_to_pixel(2.0f64);
+    let h: f64 = node.layout_frame().height;
+    if h < 1.0f64 { return 17.0f64; }
+    return h;
+}
+
+// outlineView:viewForTableColumn:byItem: — build `row(item)`'s @ui node and
+// mount it into a (recycled) cell NSView. The outline view keeps supplying the
+// disclosure triangle, depth indent, selection highlight and keyboard nav; only
+// the row's CONTENT is ours. Mirrors the recycling `list` cell path.
+fn tree_view_for_column_imp(user: *u8, ov: *u8, col: *u8, item: *u8) -> *u8 {
+    let c: *TreeDelCtx = { user as *TreeDelCtx };
+    let f: fn(*u8) -> flex::Node = { (*c).row };
+    if { f as *u8 } == { 0 as *u8 } { return 0 as *u8; }
+    if item == { 0 as *u8 } { return 0 as *u8; }
+    var node: flex::Node = f(item);
+    var w: f64 = ak::TableColumn::from_raw(col).width();
+    if w < 1.0f64 { w = 1.0f64; }
+    var h: f64 = { (*c).row_height };
+    if h >= 1.0f64 {
+        node.calculate_layout(w, h, flex::Direction::LTR);
+    } else {
+        node.calculate_layout(w, flex::undefined(), flex::Direction::LTR);
+    }
+    node.round_to_pixel(2.0f64);
+    if h < 1.0f64 { h = node.layout_frame().height; }
+    if h < 1.0f64 { h = 1.0f64; }
+
+    // Recycle a cell view (identity "treecell"); make one on the first miss.
+    let tvw: ak::TableView = ak::OutlineView::from_raw(ov).as_table_view();
+    var cell: ak::View = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: w, h: h });
+    match tvw.make_view_with_identifier("treecell", 0 as *u8) {
+        option::Option[ak::View]::Some(v) => {
+            cell = v;
+            var subs: vec::Vec[ak::View] = cell.subviews();
+            let sn: usize = subs.count();
+            for i in 0..(sn as i32) {
+                match subs.at_ptr(i as usize) {
+                    option::Option[*ak::View]::Some(vp) => { { (*vp).remove_from_superview(); } }
+                    option::Option[*ak::View]::None => { }
+                }
+            }
+        }
+        option::Option[ak::View]::None => {
+            ak::UserInterfaceItemIdentification::from_raw(cell.raw()).set_identifier("treecell");
+        }
+    }
+    cell.set_frame(rt::Rect { x: 0.0, y: 0.0, w: w, h: h });
+    apply(#addr_of(node), cell.raw(), false);
+    return cell.raw();
+}
+
 // --- selection delegate ---
 fn tree_selection_imp(user: *u8, notif: *u8) {
-    let c: *TreeSelCtx = { user as *TreeSelCtx };
+    let c: *TreeDelCtx = { user as *TreeDelCtx };
     let f: fn(*u8, *u8) = { (*c).on_select };
     if { f as *u8 } == { 0 as *u8 } { return; }
     let ov: *u8 = { rt::msg_id(notif, rt::sel(#str_ptr("object\0"))) };
@@ -1055,7 +1172,24 @@ fn tree_selection_imp(user: *u8, notif: *u8) {
 //   let root = ui::tree_node("proj", "/proj", true);
 //   ui::tree_add_child(root, kids.at(0)...);   // or add nodes one by one
 //   ui::tree(root, on_select: open_file);
-fn tree(root: *TreeNode, on_select: fn(*u8, *u8) = 0 as fn(*u8, *u8), ctx: *u8 = 0 as *u8, agent_id: str = "") -> flex::Node {
+//
+// STYLED ROWS: by default a row renders as the native text cell + disclosure
+// triangle (object-value based). Pass a `row` builder to take over the row's
+// CONTENT — `row(item)` returns a @ui node (icon + styled label + whatever) that
+// is mounted as a view-based cell; `row_height` fixes the row height (a builder
+// that measures the node leaves it 0). The outline view still supplies the
+// disclosure triangle, depth indent, selection highlight and keyboard nav, so
+// nothing native is lost. `item` is the same opaque wrapper `on_select` gets —
+// read it with `tree_node_path` / `tree_node_label` / `tree_node_is_dir`:
+//
+//   fn row(item: *u8) -> flex::Node {
+//       var b: ui::Builder = ui::Builder::new();
+//       b.add(ui::symbol(if ui::tree_node_is_dir(item) { "folder" } else { "doc" }, 15.0f64));
+//       b.add(ui::label(ui::tree_node_label(item).view(), size: 14.0f64));
+//       return ui::row(b).align_items(flex::Align::Center).gap(6.0f64);
+//   }
+//   ui::tree(root, on_select: open_file, row: row, row_height: 34.0f64);
+fn tree(root: *TreeNode, on_select: fn(*u8, *u8) = 0 as fn(*u8, *u8), row: fn(*u8) -> flex::Node = 0 as fn(*u8) -> flex::Node, row_height: f64 = 0.0f64, ctx: *u8 = 0 as *u8, agent_id: str = "") -> flex::Node {
     let ov = ak::OutlineView::new();
     let col = ak::TableColumn::new("name");
     col.set_title("Name");
@@ -1074,10 +1208,17 @@ fn tree(root: *TreeNode, on_select: fn(*u8, *u8) = 0 as fn(*u8, *u8), ctx: *u8 =
     ov.set_data_source(dsobj);
     synth::retain_associated(ov.raw(), tree_ds_pin_key(), dsobj);
 
-    let selbox: *TreeSelCtx = { malloc(#size_of::[TreeSelCtx]()) as *TreeSelCtx };
-    { *selbox = TreeSelCtx { on_select: on_select, caller_ctx: ctx }; }
+    let selbox: *TreeDelCtx = { malloc(#size_of::[TreeDelCtx]()) as *TreeDelCtx };
+    { *selbox = TreeDelCtx { on_select: on_select, caller_ctx: ctx, row: row, row_height: row_height }; }
     var del: ak::OutlineViewDelegate = ak::OutlineViewDelegate_new(selbox as *u8);
     del.set_outline_view_selection_did_change(tree_selection_imp);
+    // A row builder switches the outline view to view-based cells: wire the
+    // cell + height hooks. Without one, the object-value text cell (the data
+    // source's tree_object_value_imp) renders the row — the native default.
+    if { row as *u8 } != { 0 as *u8 } {
+        del.set_outline_view_view_for_table_column_item(tree_view_for_column_imp);
+        del.set_outline_view_height_of_row_by_item(tree_height_imp);
+    }
     let delbox: *ak::OutlineViewDelegate = { malloc(#size_of::[ak::OutlineViewDelegate]()) as *ak::OutlineViewDelegate };
     { *delbox = del; }
     let delobj: *u8 = ak::create_OutlineViewDelegate(delbox);
@@ -1101,9 +1242,9 @@ fn tree(root: *TreeNode, on_select: fn(*u8, *u8) = 0 as fn(*u8, *u8), ctx: *u8 =
 // policy is not the widget's job: build the model yourself with
 // `tree_node`/`tree_add_child` (drive it with `fs::read_dir` + your own ignore
 // list) and mount it with `tree(root, ...)`.
-fn file_tree(path: str, on_select: fn(*u8, *u8) = 0 as fn(*u8, *u8), ctx: *u8 = 0 as *u8, agent_id: str = "") -> flex::Node {
+fn file_tree(path: str, on_select: fn(*u8, *u8) = 0 as fn(*u8, *u8), row: fn(*u8) -> flex::Node = 0 as fn(*u8) -> flex::Node, row_height: f64 = 0.0f64, ctx: *u8 = 0 as *u8, agent_id: str = "") -> flex::Node {
     let root: *TreeNode = build_tree(path, path);
-    return tree(root, on_select: on_select, ctx: ctx, agent_id: agent_id);
+    return tree(root, on_select: on_select, row: row, row_height: row_height, ctx: ctx, agent_id: agent_id);
 }
 
 // ==========================================================================
@@ -1926,88 +2067,110 @@ fn host_of(cp: *u8) -> *u8 {
 }
 
 // ==========================================================================
-// Zoom — per-host content magnification (browser-style full-content zoom)
+// Zoom — per-host content magnification (pinch scale, NO reflow)
 // ==========================================================================
 //
-// A zoomed host lays its slot content out at frame/zoom and scales the host's
-// coordinate space with setBoundsSize: (the same mechanism NSScrollView
-// magnification uses), so every descendant view — text, controls, nested
-// scrolls — renders magnified yet vector-crisp, and the content REWRAPS to
-// the reduced layout width exactly like a browser's full-page zoom. Only
-// slot-mounted, fixed-frame roots consult this registry (run_window's content
-// view); a host with no entry never has its bounds touched, so every other
-// mount keeps today's behavior bit for bit.
+// A zoomed host SCALES its coordinate space with setBoundsSize: +
+// setBoundsOrigin: (the mechanism NSScrollView magnification uses). The
+// retained layout stays exactly as laid out at the host's natural frame —
+// nothing reflows, nothing rewraps — and the bounds shrink to a frame/zoom
+// window onto it, so the host shows a magnified, vector-crisp cut of the
+// same picture: Safari's pinch scale, NOT a browser's Cmd+/- full-page zoom
+// (which re-lays-out). The origin picks WHICH cut is visible (the gesture
+// keeps the pinch point under the fingers); it is clamped to the content on
+// every assert. Only slot-mounted, fixed-frame roots consult this registry
+// (run_window's content view); a host with no entry never has its bounds
+// touched, so every other mount keeps today's behavior bit for bit.
 
 struct HostZoom {
     opaque _host: *u8,   // borrowed: the app owns the host view
     _zoom: f64,
+    _ox: f64,            // desired bounds origin (content coords; clamped on assert)
+    _oy: f64,
 }
 
 static ZOOMS: vec::Vec[HostZoom] = #zero::[vec::Vec[HostZoom]]();
 
-// The zoom factor registered for a host, or None when the host never zoomed.
-// A registered host keeps its bounds asserted every layout pass, so a return
-// to exactly 1.0 restores the natural coordinate space.
-fn zoom_entry(host: *u8) -> option::Option[f64] {
+fn zoom_entry(host: *u8) -> option::Option[*HostZoom] {
     let zooms: *vec::Vec[HostZoom] = #addr_of(ZOOMS);
     let n: usize = { (*zooms).count() };
     var i: usize = 0 as usize;
     while i < n {
         match (*zooms).at_ptr(i) {
             option::Option[*HostZoom]::Some(zp) => {
-                if { (*zp)._host } == host { return option::Option[f64]::Some({ (*zp)._zoom }); }
+                if { (*zp)._host } == host { return option::Option[*HostZoom]::Some(zp); }
             }
             option::Option[*HostZoom]::None => { }
         }
         i = i +% (1 as usize);
     }
-    return option::Option[f64]::None;
+    return option::Option[*HostZoom]::None;
 }
 
-// Record the zoom factor for a slot host (1.0 = natural size). Rejects zero,
-// negative, and NaN factors and a null host. Recording does not reflow —
-// the caller relayouts to apply, exactly like a keyed-direct edit.
-fn set_zoom(host: *u8, zoom: f64) -> bool {
+// Clamp one axis of a desired origin into the pannable range [0, span], where
+// span = content − visible (zoomed in: the content overflows the window). A
+// zoomed-OUT axis (visible > content) has nothing to pan — center the content
+// instead. NaN and negative desires collapse to 0. At zoom 1.0 span is 0, so
+// the origin resets exactly.
+fn zoom_clamp_origin(desired: f64, content: f64, visible: f64) -> f64 {
+    let span: f64 = content - visible;
+    if span < 0.0f64 { return span / 2.0f64; }          // zoomed out: center
+    if (desired > 0.0f64) == false { return 0.0f64; }   // NaN > 0 is false
+    if desired > span { return span; }
+    return desired;
+}
+
+// Assert a registered host's scaled coordinate space from its current frame:
+// bounds size = frame/zoom, origin clamped to the content. set_zoom applies
+// it on the spot; render_slot/relayout re-assert it, so a window RESIZE
+// re-derives the viewing window onto the freshly (natural-size) laid-out tree
+// while the zoom and pan survive.
+fn assert_zoom_bounds(host_ptr: *u8, hf: rt::Rect) {
+    match zoom_entry(host_ptr) {
+        option::Option[*HostZoom]::Some(zp) => {
+            let z: f64 = { (*zp)._zoom };
+            let vw: f64 = hf.w / z;
+            let vh: f64 = hf.h / z;
+            let v: ak::View = ak::View::from_raw(host_ptr);
+            v.set_bounds_size(rt::Size { w: vw, h: vh });
+            v.set_bounds_origin(rt::Point {
+                x: zoom_clamp_origin({ (*zp)._ox }, hf.w, vw),
+                y: zoom_clamp_origin({ (*zp)._oy }, hf.h, vh),
+            });
+        }
+        option::Option[*HostZoom]::None => { }
+    }
+    return;
+}
+
+// Set a host's zoom factor (1.0 = natural size) and view origin (bottom-left
+// of the visible cut, content coords) and scale its bounds on the spot — a
+// pure coordinate-space change; the retained layout is not touched, so there
+// is no relayout to run. Rejects zero, negative, and NaN factors and a null
+// host.
+fn set_zoom(host: *u8, zoom: f64, origin_x: f64 = 0.0f64, origin_y: f64 = 0.0f64) -> bool {
     if host == { 0 as *u8 } { return false; }
     if (zoom > 0.0f64) == false { return false; }   // NaN > 0 is false
-    let zooms: *vec::Vec[HostZoom] = #addr_of(ZOOMS);
-    let n: usize = { (*zooms).count() };
-    var i: usize = 0 as usize;
-    while i < n {
-        match (*zooms).at_ptr(i) {
-            option::Option[*HostZoom]::Some(zp) => {
-                if { (*zp)._host } == host {
-                    { (*zp)._zoom = zoom; }
-                    return true;
-                }
-            }
-            option::Option[*HostZoom]::None => { }
+    match zoom_entry(host) {
+        option::Option[*HostZoom]::Some(zp) => {
+            { (*zp)._zoom = zoom; }
+            { (*zp)._ox = origin_x; }
+            { (*zp)._oy = origin_y; }
         }
-        i = i +% (1 as usize);
+        option::Option[*HostZoom]::None => {
+            let zooms: *vec::Vec[HostZoom] = #addr_of(ZOOMS);
+            (*zooms).append(HostZoom { _host: host, _zoom: zoom, _ox: origin_x, _oy: origin_y });
+        }
     }
-    (*zooms).append(HostZoom { _host: host, _zoom: zoom });
+    assert_zoom_bounds(host, ak::View::from_raw(host).frame());
     return true;
 }
 
 // The zoom factor applied to a host (1.0 when none was ever set).
 fn zoom_of(host: *u8) -> f64 {
     match zoom_entry(host) {
-        option::Option[f64]::Some(z) => { return z; }
-        option::Option[f64]::None => { return 1.0f64; }
-    }
-}
-
-// The layout area for a fixed-frame slot host: frame/zoom for a zoomed host
-// (asserting the scaled bounds on the way), the frame itself otherwise.
-fn zoomed_layout_area(host_ptr: *u8, hf: rt::Rect) -> rt::Size {
-    match zoom_entry(host_ptr) {
-        option::Option[f64]::Some(z) => {
-            let lw: f64 = hf.w / z;
-            let lh: f64 = hf.h / z;
-            ak::View::from_raw(host_ptr).set_bounds_size(rt::Size { w: lw, h: lh });
-            return rt::Size { w: lw, h: lh };
-        }
-        option::Option[f64]::None => { return rt::Size { w: hf.w, h: hf.h }; }
+        option::Option[*HostZoom]::Some(zp) => { return { (*zp)._zoom }; }
+        option::Option[*HostZoom]::None => { return 1.0f64; }
     }
 }
 
@@ -2049,9 +2212,9 @@ fn render_slot(sp: *Slot) -> f64 {
         }
     }
     let hf: rt::Rect = host.frame();
-    let area: rt::Size = zoomed_layout_area(host_ptr, hf);
+    assert_zoom_bounds(host_ptr, hf);   // zoom is a viewing window; layout stays natural
     var tree: flex::Node = r(cp);
-    tree.calculate_layout(area.w, area.h, flex::Direction::LTR);
+    tree.calculate_layout(hf.w, hf.h, flex::Direction::LTR);
     tree.round_to_pixel(2.0f64);
     apply(#addr_of(tree), host_ptr, flipped);
     let f: flex::Layout = tree.layout_frame();
@@ -2187,8 +2350,8 @@ fn relayout(cp: *u8) -> bool {
                                     relayout_scroll_host(host_ptr, tp);
                                 } else {
                                     let hf: rt::Rect = ak::View::from_raw(host_ptr).frame();
-                                    let area: rt::Size = zoomed_layout_area(host_ptr, hf);
-                                    { (*tp).calculate_layout(area.w, area.h, flex::Direction::LTR); }
+                                    assert_zoom_bounds(host_ptr, hf);   // zoom pans/scales the view, not the layout
+                                    { (*tp).calculate_layout(hf.w, hf.h, flex::Direction::LTR); }
                                     { (*tp).round_to_pixel(2.0f64); }
                                     reposition(tp, flipped);
                                     reflow_nested_scrolls(tp);
@@ -2682,6 +2845,94 @@ fn test_file_tree_model_and_data_source() {
     // the widget builds over the same directory
     let n: flex::Node = file_tree(base);
     assert n.has_payload();
+}
+
+// A view-based row builder for the tree tests: a folder/doc icon by kind + the
+// node's own label, laid out in a row — exercises the same accessors iris uses.
+fn tree_test_row(item: *u8) -> flex::Node {
+    var b: Builder = Builder::new();
+    if tree_node_is_dir(item) { b.add(symbol("folder", 14.0f64)); }
+    else                      { b.add(symbol("doc", 14.0f64)); }
+    b.add(label(tree_node_label(item).view(), size: 14.0f64));
+    var n: flex::Node = row(b);
+    n.set_align_items(flex::Align::Center);
+    return n;
+}
+
+#[test]
+fn test_tree_item_accessors_read_label_and_kind() {
+    // The row-builder accessors recover a node's basename + dir-ness from the
+    // opaque item wrapper (same wrapper on_select / viewForColumn receive).
+    let dir: *TreeNode = tree_node("src", "/proj/src", true);
+    let file: *TreeNode = tree_node("main.cplus", "/proj/src/main.cplus", false);
+    assert tree_node_label({ (*dir).item }).equals("src");
+    assert tree_node_is_dir({ (*dir).item });
+    assert tree_node_label({ (*file).item }).equals("main.cplus");
+    assert !tree_node_is_dir({ (*file).item });
+    assert tree_node_path({ (*file).item }).equals("/proj/src/main.cplus");
+    // Null-safe: a nil item yields empty / false, never a crash.
+    assert tree_node_label(0 as *u8).equals("");
+    assert !tree_node_is_dir(0 as *u8);
+    return;
+}
+
+#[test]
+fn test_tree_view_row_fixed_height_builds_cell() {
+    // With a fixed row_height, heightOfRow returns it verbatim and viewForColumn
+    // builds a cell hosting the row's content (this is what a recycled cell
+    // re-fills). Needs an outline view + outline table column for the width.
+    let ov = ak::OutlineView::new();
+    let col = ak::TableColumn::new("name");
+    col.set_width(180.0f64);
+    let col_raw: *u8 = col.raw();
+    ov.as_table_view().add_table_column(col);
+    ov.set_outline_table_column(ak::TableColumn::from_raw(col_raw));
+
+    let node: *TreeNode = tree_node("main.cplus", "/proj/main.cplus", false);
+    let item: *u8 = { (*node).item };
+    var dc: TreeDelCtx = TreeDelCtx { on_select: 0 as fn(*u8, *u8), caller_ctx: 0 as *u8, row: tree_test_row, row_height: 34.0f64 };
+
+    let h: f64 = tree_height_imp(#addr_of(dc) as *u8, ov.raw(), item);
+    assert approx(h, 34.0f64);                               // fixed height honored verbatim
+
+    let cell_ptr: *u8 = tree_view_for_column_imp(#addr_of(dc) as *u8, ov.raw(), col_raw, item);
+    assert cell_ptr != (0 as *u8);
+    assert ak::View::from_raw(cell_ptr).subviews().count() > (0 as usize);   // content installed
+    return;
+}
+
+#[test]
+fn test_tree_view_row_measures_when_height_unset() {
+    // row_height <= 0 means "measure": heightOfRow flexes the built node at the
+    // column width and returns its natural height (> 0).
+    let ov = ak::OutlineView::new();
+    let col = ak::TableColumn::new("name");
+    col.set_width(180.0f64);
+    ov.as_table_view().add_table_column(col);
+    ov.set_outline_table_column(ak::TableColumn::from_raw(col.raw()));
+
+    let node: *TreeNode = tree_node("main.cplus", "/proj/main.cplus", false);
+    var dc: TreeDelCtx = TreeDelCtx { on_select: 0 as fn(*u8, *u8), caller_ctx: 0 as *u8, row: tree_test_row, row_height: 0.0f64 };
+    let h: f64 = tree_height_imp(#addr_of(dc) as *u8, ov.raw(), { (*node).item });
+    assert h > 0.0f64;                                       // a real, measured height
+    return;
+}
+
+#[test]
+fn test_tree_default_row_has_no_view_builder() {
+    // Without a row builder the delegate ctx carries the null sentinel — the
+    // native object-value text cell renders the row, and viewForColumn returns
+    // nil so NSOutlineView falls back to it. The widget still builds.
+    let node: *TreeNode = tree_node("readme.md", "/proj/readme.md", false);
+    var dc: TreeDelCtx = TreeDelCtx { on_select: 0 as fn(*u8, *u8), caller_ctx: 0 as *u8, row: 0 as fn(*u8) -> flex::Node, row_height: 0.0f64 };
+    let ov = ak::OutlineView::new();
+    assert tree_view_for_column_imp(#addr_of(dc) as *u8, ov.raw(), 0 as *u8, { (*node).item }) == (0 as *u8);
+    // The object-value path still yields the label string (the default cell).
+    assert tree_object_value_imp(0 as *u8, ov.raw(), 0 as *u8, { (*node).item }) != (0 as *u8);
+    // End-to-end: a styled tree constructs with the builder + fixed height.
+    let styled: flex::Node = tree(node, on_select: 0 as fn(*u8, *u8), row: tree_test_row, row_height: 34.0f64);
+    assert styled.has_payload();
+    return;
 }
 
 #[test]
@@ -3315,6 +3566,26 @@ fn test_bordered_wraps_content_with_backing_view() {
 }
 
 #[test]
+fn test_bordered_suppresses_focus_ring() {
+    // A layer-backed container must never host a focus ring: a borderless
+    // focused control inside it would otherwise draw its ring on this ancestor,
+    // framing the whole box. The backing view is FocusRingType::None.
+    let n: flex::Node = bordered(label("boxed"));
+    let got: i64 = ak::focus_ring_type_raw(ak::View::from_raw(n.payload()).focus_ring_type());
+    assert got == ak::focus_ring_type_raw(ak::FocusRingType::None);
+    return;
+}
+
+#[test]
+fn test_material_suppresses_focus_ring() {
+    // Same rule for the vibrancy container (a visual-effect view is layer-backed).
+    let n: flex::Node = material(label("panel"));
+    let got: i64 = ak::focus_ring_type_raw(ak::View::from_raw(n.payload()).focus_ring_type());
+    assert got == ak::focus_ring_type_raw(ak::FocusRingType::None);
+    return;
+}
+
+#[test]
 fn test_composer_borderless_still_reads_text() {
     // The boxed-layout variant: no own bezel, but still a working input.
     let n: flex::Node = composer(on_submit: test_noop_action, value: "hi", show_border: false);
@@ -3375,6 +3646,20 @@ fn zoom_test_subview(host_ptr: *u8) -> *u8 {
 }
 
 #[test]
+fn test_zoom_clamp_origin_bounds_the_pan() {
+    // In range passes through; past the span clamps; negative/NaN collapse to 0.
+    assert zoom_clamp_origin(50.0f64, 400.0f64, 200.0f64) == 50.0f64;
+    assert zoom_clamp_origin(999.0f64, 400.0f64, 200.0f64) == 200.0f64;
+    assert zoom_clamp_origin(-5.0f64, 400.0f64, 200.0f64) == 0.0f64;
+    var zero: f64 = 0.0f64;
+    assert zoom_clamp_origin(zero / zero, 400.0f64, 200.0f64) == 0.0f64;
+    // Zoom 1 (span 0): any desire resets to exactly 0.
+    assert zoom_clamp_origin(120.0f64, 400.0f64, 400.0f64) == 0.0f64;
+    // Zoomed out (visible > content): centered, nothing to pan.
+    assert zoom_clamp_origin(50.0f64, 400.0f64, 800.0f64) == -200.0f64;
+}
+
+#[test]
 fn test_set_zoom_rejects_bad_factors() {
     unmount_all();
     let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 400.0, h: 300.0 });
@@ -3383,16 +3668,23 @@ fn test_set_zoom_rejects_bad_factors() {
     assert set_zoom(host.raw(), -2.0f64) == false;
     assert set_zoom(host.raw(), zero / zero) == false;   // NaN
     assert set_zoom(0 as *u8, 2.0f64) == false;
-    // None of the rejects registered anything: the host reads natural size.
+    // None of the rejects registered anything: natural size, bounds untouched.
     assert zoom_of(host.raw()) == 1.0f64;
+    assert approx(host.bounds().w, 400.0f64);
+    // A valid factor applies on the spot — no relayout involved.
     assert set_zoom(host.raw(), 2.0f64);
     assert zoom_of(host.raw()) == 2.0f64;
+    assert approx(host.bounds().w, 200.0f64);
+    // A wild origin clamps into the content; a NaN origin collapses to 0.
+    assert set_zoom(host.raw(), 2.0f64, origin_x: 999.0f64, origin_y: -5.0f64);
+    assert approx(host.bounds().x, 200.0f64);
+    assert approx(host.bounds().y, 0.0f64);
     unmount_all();   // teardown clears the zoom registry too
     assert zoom_of(host.raw()) == 1.0f64;
 }
 
 #[test]
-fn e2e_zoomed_relayout_scales_bounds_and_rewraps() {
+fn e2e_zoom_scales_the_view_without_reflow() {
     unmount_all();
     let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 400.0, h: 300.0 });
     let cp: *u8 = #addr_of(ZOOM_PANE_KEY) as *u8;
@@ -3404,26 +3696,37 @@ fn e2e_zoomed_relayout_scales_bounds_and_rewraps() {
     assert before != (0 as *u8);
     let f1: rt::Rect = ak::View::from_raw(before).frame();
 
-    // Zoom ×2: content lays out at 200×150 and the bounds scale to match —
-    // the browser-zoom pair (rewrap + crisp magnification).
-    assert set_zoom(host.raw(), 2.0f64);
-    assert relayout(cp);
+    // Zoom ×2 with the top-left cut visible (origin_y = the top in AppKit's
+    // bottom-up space): the bounds become a 200×150 window onto the SAME
+    // 400-wide layout — the frame and the wrap width don't move.
+    assert set_zoom(host.raw(), 2.0f64, origin_y: 150.0f64);
     assert approx(host.bounds().w, 200.0f64);
     assert approx(host.bounds().h, 150.0f64);
+    assert approx(host.bounds().x, 0.0f64);
+    assert approx(host.bounds().y, 150.0f64);
     assert approx(host.frame().w, 400.0f64);   // the window-facing frame is untouched
-    // The SAME view survived (geometry-only, no re-render) and re-wrapped to
-    // the halved layout width: more lines, taller frame.
+    // THE no-reflow proof: same view, bit-identical frame — no rewrap, no move.
     let after: *u8 = zoom_test_subview(host.raw());
     assert after == before;
     let f2: rt::Rect = ak::View::from_raw(after).frame();
-    assert f2.h > f1.h;
+    assert approx(f2.w, f1.w);
+    assert approx(f2.h, f1.h);
+    assert approx(f2.x, f1.x);
+    assert approx(f2.y, f1.y);
+
+    // The resize path (relayout) keeps the zoom: layout runs at the NATURAL
+    // frame and the scaled bounds are re-asserted — still no reflow.
+    assert relayout(cp);
+    assert approx(host.bounds().w, 200.0f64);
+    assert approx(host.bounds().y, 150.0f64);
+    let f3: rt::Rect = ak::View::from_raw(after).frame();
+    assert approx(f3.h, f1.h);
 
     // Back to natural size: the coordinate space restores exactly.
     assert set_zoom(host.raw(), 1.0f64);
-    assert relayout(cp);
     assert approx(host.bounds().w, 400.0f64);
     assert approx(host.bounds().h, 300.0f64);
-    let f3: rt::Rect = ak::View::from_raw(after).frame();
-    assert approx(f3.h, f1.h);
+    assert approx(host.bounds().x, 0.0f64);
+    assert approx(host.bounds().y, 0.0f64);
     unmount_all();
 }
