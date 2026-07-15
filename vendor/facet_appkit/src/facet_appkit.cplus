@@ -3307,6 +3307,180 @@ fn find_and_structural_verbs_reach_split_pane_content() {
     unmount_all();
 }
 
+// The iris tab anatomy, minimal: a zstack of two states — off IN-FLOW (sizes
+// the item), on ABSOLUTE overlaying it (inset 0). After an add_child + reflow
+// the two states must occupy the SAME frame (the on state exactly covers the
+// off state); a drift shows both ("double icon/text").
+fn t3_tab_state() -> facet::Node {
+    var body: facet::Builder = facet::Builder::new();
+    body.add(facet::label("main.cplus").font(13.0f64));
+    var col: facet::Builder = facet::Builder::new();
+    col.add(facet::hstack(body).padding_edge(flex::Edge::Horizontal, 13.0f64).grow(1.0f64));
+    col.add(facet::box().height(2.0f64));
+    return facet::column(col);
+}
+
+fn t3_tab_item() -> facet::Node {
+    var z: facet::Builder = facet::Builder::new();
+    z.add(t3_tab_state().key("t:off"));
+    z.add(t3_tab_state()
+        .position_absolute()
+        .inset(flex::Edge::All, 0.0f64)
+        .key("t:on"));
+    var b: facet::Builder = facet::Builder::new();
+    b.add(facet::zstack(z).align_items(flex::Align::Stretch));
+    return facet::hstack(b).align_items(flex::Align::Stretch).key("t:item");
+}
+
+fn t3_frame_of(host: *u8, key: str) -> rt::Rect {
+    let v: *u8 = find_view_by_id(host, key);
+    assert v != (0 as *u8);
+    return ak::View::from_raw(v).frame();
+}
+
+#[test]
+fn added_zstack_states_overlap_in_split_pane() {
+    unmount_all();
+    install();
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 500.0, h: 400.0 });
+    let _h: f64 = mount_component(PANE_TABS.build, host: host.raw());
+    let cp: *u8 = #addr_of(PANE_TABS) as *u8;
+    let sv_ptr: *u8 = find_view_by_id(host.raw(), "the-split");
+    var arranged: vec::Vec[ak::View] = ak::SplitView::from_raw(sv_ptr).arranged_subviews();
+    match arranged.at_ptr(1 as usize) {
+        option::Option[*ak::View]::Some(hp) => {
+            (*hp).set_frame(rt::Rect { x: 0.0, y: 0.0, w: 280.0, h: 400.0 });
+        }
+        option::Option[*ak::View]::None => { assert false; }
+    };
+    ui::relayout_split_panes(sv_ptr);
+
+    let _c: facet::Handle = facet::find(cp, "tabs").add_child(t3_tab_item());
+    let off: rt::Rect = t3_frame_of(host.raw(), "t:off");
+    let on: rt::Rect = t3_frame_of(host.raw(), "t:on");
+    assert off.w > 0.0f64;
+    assert off.x == on.x;
+    assert off.y == on.y;
+    assert off.w == on.w;
+    assert off.h == on.h;
+    unmount_all();
+}
+
+// iris's EXACT tab anatomy (clickable click-surface + icon_button close +
+// backgrounds + underline), added live then raised — the real editor-tabs
+// open() sequence. The on state must exactly cover the off state.
+fn t3x_noop(sender: *u8, ctx: *u8) { return; }
+
+fn t3x_tab_state(active: bool) -> facet::Node {
+    let fg: facet::Color = facet::Color::rgba(1.0f64, 1.0f64, 1.0f64, 0.90f64);
+    var bg: facet::Color = facet::Color::rgba(0.118f64, 0.118f64, 0.141f64, 1.0f64);
+    if active { bg = facet::Color::rgba(0.094f64, 0.094f64, 0.114f64, 1.0f64); }
+    var body: facet::Builder = facet::Builder::new();
+    body.add(facet::symbol("doc", 13.0f64).foreground_color(fg));
+    body.add(facet::label("main.cplus").font(13.0f64).foreground_color(fg));
+    var cb: facet::Builder = facet::Builder::new();
+    cb.add(facet::hstack(body).align_items(flex::Align::Center).gap(9.0f64));
+    let click_area: facet::Node = facet::clickable(cb)
+        .on_click(t3x_noop)
+        .align_items(flex::Align::Center)
+        .justify_content(flex::Justify::Center);
+    var row: facet::Builder = facet::Builder::new();
+    row.add(click_area);
+    row.add(facet::icon_button("xmark")
+        .plain()
+        .on_click(t3x_noop)
+        .font(9.0f64)
+        .frame(18.0f64, 18.0f64));
+    var col: facet::Builder = facet::Builder::new();
+    col.add(facet::hstack(row).align_items(flex::Align::Center).gap(9.0f64)
+        .padding_edge(flex::Edge::Horizontal, 13.0f64)
+        .grow(1.0f64));
+    col.add(facet::box().height(2.0f64).background(fg));
+    return facet::column(col).background(bg).align_items(flex::Align::Stretch);
+}
+
+fn t3x_tab_item() -> facet::Node {
+    var z: facet::Builder = facet::Builder::new();
+    // The stack is stretched to the 40pt strip row, so the in-flow off state
+    // needs .grow(1) to keep filling it (see facet::zstack's contract) — the
+    // missing grow showed BOTH states ("double icon/text", iris 2026-07-15).
+    z.add(t3x_tab_state(false).grow(1.0f64).key("tt:off"));
+    z.add(t3x_tab_state(true)
+        .position_absolute()
+        .inset(flex::Edge::All, 0.0f64)
+        .key("tt:on"));
+    var b: facet::Builder = facet::Builder::new();
+    b.add(facet::zstack(z).align_items(flex::Align::Stretch));
+    b.add(facet::box().width(1.0f64).background(facet::Color::rgba(1.0f64, 1.0f64, 1.0f64, 0.06f64)));
+    return facet::hstack(b).align_items(flex::Align::Stretch).key("tt:item");
+}
+
+// The strip shape from EditorTabs::build: empty keyed tabs box + spacer on a
+// 40pt row, inside a split's container pane.
+struct PaneTabs2 { n: i64 }
+
+impl PaneTabs2: facet::Component {
+    fn build(this) -> facet::Node {
+        var tb: facet::Builder = facet::Builder::new();
+        let tabs_box: facet::Node = facet::hstack(tb)
+            .align_items(flex::Align::Stretch)
+            .gap(0.0f64)
+            .key("tabs2");
+        var row: facet::Builder = facet::Builder::new();
+        row.add(tabs_box);
+        row.add(facet::spacer());
+        let strip: facet::Node = facet::hstack(row)
+            .align_items(flex::Align::Stretch)
+            .height(40.0f64);
+        var pane: facet::Builder = facet::Builder::new();
+        pane.add(strip);
+        pane.add(facet::box().grow(1.0f64));
+        var sb: facet::Builder = facet::Builder::new();
+        sb.add(facet::label("side"));
+        sb.add(facet::column(pane).grow(1.0f64));
+        var b: facet::Builder = facet::Builder::new();
+        b.add(facet::split(sb).key("the-split2"));
+        return facet::vstack(b);
+    }
+}
+
+static PANE_TABS2: PaneTabs2 = #zero::[PaneTabs2]();
+
+#[test]
+fn iris_tab_anatomy_states_overlap_after_add_and_raise() {
+    unmount_all();
+    install();
+    let win = e2e_window(500.0f64, 400.0f64);
+    let content = e2e_content(win);
+    let _h: f64 = mount_component(PANE_TABS2.build, host: content.raw());
+    let cp: *u8 = #addr_of(PANE_TABS2) as *u8;
+    let sv_ptr: *u8 = find_view_by_id(content.raw(), "the-split2");
+    assert sv_ptr != (0 as *u8);
+    var arranged: vec::Vec[ak::View] = ak::SplitView::from_raw(sv_ptr).arranged_subviews();
+    match arranged.at_ptr(1 as usize) {
+        option::Option[*ak::View]::Some(hp) => {
+            (*hp).set_frame(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 400.0 });
+        }
+        option::Option[*ak::View]::None => { assert false; }
+    };
+    ui::relayout_split_panes(sv_ptr);
+
+    // iris's open(): add the tab, then raise the on state from the strip view.
+    let strip: facet::Handle = facet::find(cp, "tabs2");
+    assert strip.found();
+    let _c: facet::Handle = strip.add_child(t3x_tab_item());
+    facet::raise(strip.view(), "tt:on");
+
+    let off: rt::Rect = t3_frame_of(content.raw(), "tt:off");
+    let on: rt::Rect = t3_frame_of(content.raw(), "tt:on");
+    assert off.w > 0.0f64;
+    assert off.x == on.x;
+    assert off.y == on.y;
+    assert off.w == on.w;
+    assert off.h == on.h;
+    unmount_all();
+}
+
 // The same fallback, scroll-flavored: a keyed container inside a portable
 // `scroll { }` lives in the SCROLL_CONTENT registry; edits reflow the rows at
 // the viewport width and resize the document.

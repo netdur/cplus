@@ -1711,6 +1711,13 @@ fn hstack(take b: Builder) -> Node {
 // overlay without shifting layout. An overlay child can position itself
 // (`.inset(...)` / `.position_absolute()`) — e.g. a badge at the top-right —
 // and mount honors that instead of the default corner.
+//
+// When the stack itself is STRETCHED past the first child — an overlay
+// filling a fixed-height row, say — that child keeps its natural size (normal
+// flex) and an `.inset(All, 0)` overlay fills the whole stack, so the two no
+// longer coincide. Give the first child `.grow(1)` to keep them covering each
+// other exactly (a content-sized stack is unaffected: grow only distributes
+// extra space).
 fn zstack(take b: Builder) -> Node {
     let Builder { children } = b;
     var n: Node = blank(kind_zstack());
