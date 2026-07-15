@@ -1327,6 +1327,8 @@ fn unmount_all() {
     (*reg).remove_all();
     ui::unmount_all();
     (*staged).remove_all();   // drops the retained root views (-1 each)
+    let zooms: *vec::Vec[PinchZoom] = #addr_of(PINCH_ZOOMS);
+    (*zooms).remove_all();    // recognizers die with their windows' views
     return;
 }
 
@@ -1622,6 +1624,133 @@ fn install_window_lifecycle(
     return;
 }
 
+// ==========================================================================
+// Pinch zoom — browser-style content magnification (dev opt-in)
+// ==========================================================================
+//
+// `run_window(root, zoomable: true)` lets the END USER pinch the trackpad to
+// magnify the whole window's content — read small text — exactly like a web
+// browser's full-page zoom: the root lays out at frame/zoom (so text rewraps
+// to the narrower area) and the host's coordinate space scales (ui::set_zoom's
+// bounds scaling), so everything re-renders vector-crisp at the new size. The
+// dev picks the allowed range; pinching past it clamps. State is keyed by the
+// HOST view (multi-window safe); the recognizer's ctx carries the host.
+
+struct PinchZoom {
+    opaque _host: *u8,   // borrowed: the window owns its content view
+    opaque _cp: *u8,     // the mounted root's slot key, for relayout
+    _base: f64,          // zoom when the gesture began; magnification is relative to it
+    _min: f64,
+    _max: f64,
+}
+
+static PINCH_ZOOMS: vec::Vec[PinchZoom] = #zero::[vec::Vec[PinchZoom]]();
+
+fn pinch_zoom_entry(host: *u8) -> option::Option[*PinchZoom] {
+    let zooms: *vec::Vec[PinchZoom] = #addr_of(PINCH_ZOOMS);
+    let n: usize = { (*zooms).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*zooms).at_ptr(i) {
+            option::Option[*PinchZoom]::Some(zp) => {
+                if { (*zp)._host } == host { return option::Option[*PinchZoom]::Some(zp); }
+            }
+            option::Option[*PinchZoom]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return option::Option[*PinchZoom]::None;
+}
+
+// The pinch target, pure math: NSMagnificationGestureRecognizer reports a
+// CUMULATIVE magnification since the gesture began (0 = unchanged), so the
+// target is base * (1 + m), clamped to [min_zoom, max_zoom]. A NaN
+// magnification leaves the base (the sample is ignored, never amplified).
+fn pinch_zoom_target(base: f64, magnification: f64, min_zoom: f64, max_zoom: f64) -> f64 {
+    var target: f64 = base;
+    if magnification == magnification {   // false only for NaN
+        target = base * (1.0f64 + magnification);
+    }
+    if (target > min_zoom) == false { target = min_zoom; }   // NaN/-inf products collapse here
+    if target > max_zoom { target = max_zoom; }
+    return target;
+}
+
+// Apply a zoom factor to a mounted root: record it, reflow the retained tree
+// (content rewraps at frame/zoom), and reflow any staged screen attached
+// inside the window — the same follow-up windowDidResize does.
+fn apply_pinch_zoom(host: *u8, cp: *u8, zoom: f64) {
+    if ui::set_zoom(host, zoom) {
+        let _r: bool = ui::relayout(cp);
+        relayout_attached_staged();
+    }
+    return;
+}
+
+// The magnify recognizer's action. On Began the current zoom is captured as
+// the base; every sample then scales THAT, so consecutive pinches compound
+// naturally instead of restarting from 1.
+fn on_pinch_zoom(sender: *u8, ctx: *u8) {
+    match pinch_zoom_entry(ctx) {
+        option::Option[*PinchZoom]::Some(zp) => {
+            let g: ak::MagnificationGestureRecognizer = ak::MagnificationGestureRecognizer::from_raw(sender);
+            match g.as_gesture_recognizer().state() {
+                ak::GestureRecognizerState::Began => { { (*zp)._base = ui::zoom_of(ctx); } }
+                _ => { }
+            }
+            let target: f64 = pinch_zoom_target({ (*zp)._base }, g.magnification(), { (*zp)._min }, { (*zp)._max });
+            apply_pinch_zoom(ctx, { (*zp)._cp }, target);
+        }
+        option::Option[*PinchZoom]::None => { }
+    }
+    return;
+}
+
+// Install pinch-to-zoom on a slot host. run_window calls this for a
+// `zoomable:` window; a host that owns its own NSWindow calls it directly
+// with its content view and the mounted root's address. A degenerate range
+// (max below min, or non-positive min) is healed: min floors at 1.0-or-given,
+// max floors at min (= zoom locked). Re-installing on the same host updates
+// the range and root without adding a second recognizer.
+fn install_pinch_zoom(host: *u8, cp: *u8, min_zoom: f64 = 1.0f64, max_zoom: f64 = 4.0f64) {
+    if host == { 0 as *u8 } { return; }
+    var lo: f64 = min_zoom;
+    if (lo > 0.0f64) == false { lo = 1.0f64; }   // 0/negative/NaN: floor at natural size
+    var hi: f64 = max_zoom;
+    if (hi >= lo) == false { hi = lo; }          // NaN/inverted range: locked at min
+    match pinch_zoom_entry(host) {
+        option::Option[*PinchZoom]::Some(zp) => {
+            { (*zp)._cp = cp; }
+            { (*zp)._min = lo; }
+            { (*zp)._max = hi; }
+            return;
+        }
+        option::Option[*PinchZoom]::None => { }
+    }
+    let zooms: *vec::Vec[PinchZoom] = #addr_of(PINCH_ZOOMS);
+    (*zooms).append(PinchZoom { _host: host, _cp: cp, _base: 1.0f64, _min: lo, _max: hi });
+    akx::add_magnify_gesture(ak::View::from_raw(host), on_pinch_zoom, host);
+    return;
+}
+
+// Programmatic zoom — a dev's menu item / shortcut / test drives the same
+// path the gesture does. Clamps to the installed range and reflows; returns
+// the factor actually applied (1.0 when no pinch zoom is installed here).
+fn set_pinch_zoom(host: *u8, zoom: f64) -> f64 {
+    match pinch_zoom_entry(host) {
+        option::Option[*PinchZoom]::Some(zp) => {
+            let target: f64 = pinch_zoom_target(zoom, 0.0f64, { (*zp)._min }, { (*zp)._max });
+            { (*zp)._base = target; }   // the next pinch compounds from here
+            apply_pinch_zoom(host, { (*zp)._cp }, target);
+            return target;
+        }
+        option::Option[*PinchZoom]::None => { return 1.0f64; }
+    }
+}
+
+// The zoom currently applied to a host (1.0 = natural size).
+fn pinch_zoom_level(host: *u8) -> f64 { return ui::zoom_of(host); }
+
 fn install_default_app_menu(app: ak::Application, title: str) {
     match app.main_menu() {
         option::Option[ak::Menu]::Some(existing) => { return; }
@@ -1747,7 +1876,7 @@ fn install_app_menu(app: ak::Application, menu: *facet::AppMenu, fallback_title:
     return;
 }
 
-fn run(take root: facet::Node, title: str = "facet", width: f64 = 480.0f64, height: f64 = 360.0f64, clean_titlebar: bool = false) {
+fn run(take root: facet::Node, title: str = "facet", width: f64 = 480.0f64, height: f64 = 360.0f64, clean_titlebar: bool = false, zoomable: bool = false) {
     run_window(
         root,
         title: title,
@@ -1757,6 +1886,7 @@ fn run(take root: facet::Node, title: str = "facet", width: f64 = 480.0f64, heig
         close_button_only: false,
         unified_toolbar: false,
         hide_title: false,
+        zoomable: zoomable,
         app_menu_enabled: false,
         app_menu: facet::empty_app_menu(),
         ctx: 0 as *u8,
@@ -1783,6 +1913,9 @@ fn run_window(
     native_buttons: bool = false,
     min_width: f64 = 0.0f64,
     min_height: f64 = 0.0f64,
+    zoomable: bool = false,
+    min_zoom: f64 = 1.0f64,
+    max_zoom: f64 = 4.0f64,
     app_menu_enabled: bool = false,
     take app_menu: facet::AppMenu = facet::empty_app_menu(),
     ctx: *u8 = 0 as *u8,
@@ -1817,6 +1950,9 @@ fn run_window(
     // and keeps the tree, so windowDidResize can relayout it at the window's real
     // size instead of leaving the content frozen at the mount-time size.
     let _h: f64 = ui::mount(run_root_render, ctx: #addr_of(root) as *u8, host: content.raw());
+    if zoomable {
+        install_pinch_zoom(content.raw(), #addr_of(root) as *u8, min_zoom: min_zoom, max_zoom: max_zoom);
+    }
     install_toolbar(win, #addr_of(root));
     if unified_toolbar {
         win.set_toolbar_style(ak::WindowToolbarStyle::UnifiedCompact);
@@ -4472,4 +4608,98 @@ fn shell_style_mask_adds_full_size_content_only_when_clean() {
     // Full-size-content (content under the titlebar) is only in the clean shell.
     assert (plain & ak::window_style_mask_full_size_content_view) == (0 as u64);
     assert (clean & ak::window_style_mask_full_size_content_view) != (0 as u64);
+}
+
+// ---- pinch zoom: browser-style content magnification ------------------------
+
+struct ZoomPane { n: i64 }
+
+impl ZoomPane: facet::Component {
+    fn build(this) -> facet::Node {
+        return @facet {
+            vstack {
+                wrap_label("The quick brown fox jumps over the lazy dog while the lazy dog wonders why the fox keeps wrapping to the pane width.")
+            }
+        };
+    }
+}
+
+static ZOOM_PANE: ZoomPane = #zero::[ZoomPane]();
+
+#[test]
+fn test_pinch_zoom_target_math() {
+    // Cumulative magnification: 0 = unchanged, 0.5 = half again.
+    assert pinch_zoom_target(1.0f64, 0.0f64, 1.0f64, 4.0f64) == 1.0f64;
+    assert pinch_zoom_target(1.0f64, 0.5f64, 1.0f64, 4.0f64) == 1.5f64;
+    // Compounds from the base zoom, not from 1.
+    assert pinch_zoom_target(2.0f64, 0.5f64, 1.0f64, 4.0f64) == 3.0f64;
+    // Clamps both ends of the dev's range.
+    assert pinch_zoom_target(2.0f64, 5.0f64, 1.0f64, 3.0f64) == 3.0f64;
+    assert pinch_zoom_target(1.0f64, -0.9f64, 1.0f64, 4.0f64) == 1.0f64;
+    // A dev-allowed zoom-out range works below 1.
+    assert pinch_zoom_target(1.0f64, -0.5f64, 0.25f64, 4.0f64) == 0.5f64;
+    // A NaN sample is ignored: the base survives (clamped), never amplified.
+    var zero: f64 = 0.0f64;
+    assert pinch_zoom_target(2.0f64, zero / zero, 1.0f64, 4.0f64) == 2.0f64;
+}
+
+#[test]
+fn e2e_pinch_zoom_gesture_and_programmatic() {
+    unmount_all();
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 400.0, h: 300.0 });
+    let cp: *u8 = #addr_of(ZOOM_PANE) as *u8;
+    let h: f64 = mount_component(ZOOM_PANE.build, host: host.raw());
+    assert h > 0.0f64;
+    install_pinch_zoom(host.raw(), cp, min_zoom: 1.0f64, max_zoom: 3.0f64);
+
+    // Programmatic zoom clamps to the installed range and reflows: the host's
+    // coordinate space halves while its window-facing frame stays put.
+    assert set_pinch_zoom(host.raw(), 2.0f64) == 2.0f64;
+    assert pinch_zoom_level(host.raw()) == 2.0f64;
+    assert approx(host.bounds().w, 200.0f64);
+    assert approx(host.bounds().h, 150.0f64);
+    assert approx(host.frame().w, 400.0f64);
+
+    // Gesture-driven: the recognizer's CUMULATIVE magnification compounds the
+    // base (2.0), clamping at the dev's max. A fresh recognizer's state is
+    // Possible, not Began, so the stored base is used as-is.
+    let g: ak::MagnificationGestureRecognizer = ak::MagnificationGestureRecognizer::new();
+    g.set_magnification(1.0f64);            // ×2 since gesture start
+    on_pinch_zoom(g.raw(), host.raw());     // 2.0 × 2 = 4 → clamped to 3
+    assert pinch_zoom_level(host.raw()) == 3.0f64;
+    assert approx(host.bounds().w, 400.0f64 / 3.0f64);
+
+    // Pinching in past the floor clamps at min and restores natural bounds.
+    g.set_magnification(-0.9f64);           // 2.0 × 0.1 → floors at 1.0
+    on_pinch_zoom(g.raw(), host.raw());
+    assert pinch_zoom_level(host.raw()) == 1.0f64;
+    assert approx(host.bounds().w, 400.0f64);
+    assert approx(host.bounds().h, 300.0f64);
+
+    // Re-install on the same host updates the range in place.
+    install_pinch_zoom(host.raw(), cp, min_zoom: 1.0f64, max_zoom: 2.0f64);
+    assert set_pinch_zoom(host.raw(), 10.0f64) == 2.0f64;
+
+    // A host with no installation: the gesture no-ops, the setter reports 1.
+    let other = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 100.0, h: 100.0 });
+    on_pinch_zoom(g.raw(), other.raw());
+    assert set_pinch_zoom(other.raw(), 2.0f64) == 1.0f64;
+    assert pinch_zoom_level(other.raw()) == 1.0f64;
+    assert approx(other.bounds().w, 100.0f64);
+    unmount_all();
+}
+
+#[test]
+fn test_install_pinch_zoom_heals_degenerate_ranges() {
+    unmount_all();
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 100.0 });
+    // Negative min floors at natural size; a max below min lifts to min —
+    // the zoom is locked rather than inverted.
+    install_pinch_zoom(host.raw(), 0 as *u8, min_zoom: -3.0f64, max_zoom: 0.5f64);
+    assert set_pinch_zoom(host.raw(), 9.0f64) == 1.0f64;
+    assert pinch_zoom_level(host.raw()) == 1.0f64;
+    // A null host is refused outright.
+    install_pinch_zoom(0 as *u8, 0 as *u8);
+    assert set_pinch_zoom(0 as *u8, 2.0f64) == 1.0f64;
+    unmount_all();
 }

@@ -35,6 +35,12 @@ interface Window {
     // layout. Threaded to the backend's set_content_min_size.
     fn min_width(this) -> f64;
     fn min_height(this) -> f64;
+    // Pinch zoom: let the end user magnify the window content with the trackpad
+    // pinch gesture, browser-style — the content rewraps and re-renders crisp at
+    // the new scale. min/max clamp the gesture's range (1.0 = natural size).
+    fn wants_pinch_zoom(this) -> bool;
+    fn min_zoom(this) -> f64;
+    fn max_zoom(this) -> f64;
     fn has_app_menu(this) -> bool;
     fn app_menu(ref this) -> AppMenu;
     fn should_close(this) -> bool;
@@ -74,6 +80,9 @@ fn run[W: Window](take window: W) {
         native_buttons: owned_window.wants_native_buttons(),
         min_width: owned_window.min_width(),
         min_height: owned_window.min_height(),
+        zoomable: owned_window.wants_pinch_zoom(),
+        min_zoom: owned_window.min_zoom(),
+        max_zoom: owned_window.max_zoom(),
         app_menu_enabled: owned_window.has_app_menu(),
         app_menu: app_menu,
         ctx: owned_window.lifecycle_context(),

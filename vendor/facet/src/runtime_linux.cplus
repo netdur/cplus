@@ -28,6 +28,11 @@ interface Window {
     // Minimum content-size floor (points). 0 = no floor; applies only when both > 0.
     fn min_width(this) -> f64;
     fn min_height(this) -> f64;
+    // Pinch zoom (parity with the macOS facade): end-user content magnification.
+    // Not yet honored by the gtk backend.
+    fn wants_pinch_zoom(this) -> bool;
+    fn min_zoom(this) -> f64;
+    fn max_zoom(this) -> f64;
     fn has_app_menu(this) -> bool;
     fn app_menu(ref this) -> AppMenu;
     fn should_close(this) -> bool;

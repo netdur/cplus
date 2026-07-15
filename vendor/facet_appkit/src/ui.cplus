@@ -1925,6 +1925,92 @@ fn host_of(cp: *u8) -> *u8 {
     return 0 as *u8;
 }
 
+// ==========================================================================
+// Zoom — per-host content magnification (browser-style full-content zoom)
+// ==========================================================================
+//
+// A zoomed host lays its slot content out at frame/zoom and scales the host's
+// coordinate space with setBoundsSize: (the same mechanism NSScrollView
+// magnification uses), so every descendant view — text, controls, nested
+// scrolls — renders magnified yet vector-crisp, and the content REWRAPS to
+// the reduced layout width exactly like a browser's full-page zoom. Only
+// slot-mounted, fixed-frame roots consult this registry (run_window's content
+// view); a host with no entry never has its bounds touched, so every other
+// mount keeps today's behavior bit for bit.
+
+struct HostZoom {
+    opaque _host: *u8,   // borrowed: the app owns the host view
+    _zoom: f64,
+}
+
+static ZOOMS: vec::Vec[HostZoom] = #zero::[vec::Vec[HostZoom]]();
+
+// The zoom factor registered for a host, or None when the host never zoomed.
+// A registered host keeps its bounds asserted every layout pass, so a return
+// to exactly 1.0 restores the natural coordinate space.
+fn zoom_entry(host: *u8) -> option::Option[f64] {
+    let zooms: *vec::Vec[HostZoom] = #addr_of(ZOOMS);
+    let n: usize = { (*zooms).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*zooms).at_ptr(i) {
+            option::Option[*HostZoom]::Some(zp) => {
+                if { (*zp)._host } == host { return option::Option[f64]::Some({ (*zp)._zoom }); }
+            }
+            option::Option[*HostZoom]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return option::Option[f64]::None;
+}
+
+// Record the zoom factor for a slot host (1.0 = natural size). Rejects zero,
+// negative, and NaN factors and a null host. Recording does not reflow —
+// the caller relayouts to apply, exactly like a keyed-direct edit.
+fn set_zoom(host: *u8, zoom: f64) -> bool {
+    if host == { 0 as *u8 } { return false; }
+    if (zoom > 0.0f64) == false { return false; }   // NaN > 0 is false
+    let zooms: *vec::Vec[HostZoom] = #addr_of(ZOOMS);
+    let n: usize = { (*zooms).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*zooms).at_ptr(i) {
+            option::Option[*HostZoom]::Some(zp) => {
+                if { (*zp)._host } == host {
+                    { (*zp)._zoom = zoom; }
+                    return true;
+                }
+            }
+            option::Option[*HostZoom]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    (*zooms).append(HostZoom { _host: host, _zoom: zoom });
+    return true;
+}
+
+// The zoom factor applied to a host (1.0 when none was ever set).
+fn zoom_of(host: *u8) -> f64 {
+    match zoom_entry(host) {
+        option::Option[f64]::Some(z) => { return z; }
+        option::Option[f64]::None => { return 1.0f64; }
+    }
+}
+
+// The layout area for a fixed-frame slot host: frame/zoom for a zoomed host
+// (asserting the scaled bounds on the way), the frame itself otherwise.
+fn zoomed_layout_area(host_ptr: *u8, hf: rt::Rect) -> rt::Size {
+    match zoom_entry(host_ptr) {
+        option::Option[f64]::Some(z) => {
+            let lw: f64 = hf.w / z;
+            let lh: f64 = hf.h / z;
+            ak::View::from_raw(host_ptr).set_bounds_size(rt::Size { w: lw, h: lh });
+            return rt::Size { w: lw, h: lh };
+        }
+        option::Option[f64]::None => { return rt::Size { w: hf.w, h: hf.h }; }
+    }
+}
+
 // A post-render hook the upper (facet) layer installs. It runs after every
 // component render's `apply`, so a component whose subtree contains a portable
 // `scroll` / `split` reflows it: those kinds defer work (the two-phase fill /
@@ -1963,8 +2049,9 @@ fn render_slot(sp: *Slot) -> f64 {
         }
     }
     let hf: rt::Rect = host.frame();
+    let area: rt::Size = zoomed_layout_area(host_ptr, hf);
     var tree: flex::Node = r(cp);
-    tree.calculate_layout(hf.w, hf.h, flex::Direction::LTR);
+    tree.calculate_layout(area.w, area.h, flex::Direction::LTR);
     tree.round_to_pixel(2.0f64);
     apply(#addr_of(tree), host_ptr, flipped);
     let f: flex::Layout = tree.layout_frame();
@@ -2100,7 +2187,8 @@ fn relayout(cp: *u8) -> bool {
                                     relayout_scroll_host(host_ptr, tp);
                                 } else {
                                     let hf: rt::Rect = ak::View::from_raw(host_ptr).frame();
-                                    { (*tp).calculate_layout(hf.w, hf.h, flex::Direction::LTR); }
+                                    let area: rt::Size = zoomed_layout_area(host_ptr, hf);
+                                    { (*tp).calculate_layout(area.w, area.h, flex::Direction::LTR); }
                                     { (*tp).round_to_pixel(2.0f64); }
                                     reposition(tp, flipped);
                                     reflow_nested_scrolls(tp);
@@ -2153,6 +2241,8 @@ fn unmount_all() {
     (*trees).remove_all();
     let reg: *vec::Vec[ScrollContent] = #addr_of(SCROLL_CONTENT);
     (*reg).remove_all();
+    let zooms: *vec::Vec[HostZoom] = #addr_of(ZOOMS);
+    (*zooms).remove_all();
     return;
 }
 
@@ -3264,4 +3354,76 @@ fn test_composer_default_keeps_backgrounds() {
         option::Option[ak::View]::None => { assert false; }
     }
     return;
+}
+
+// ---- zoom: the per-host magnification registry + zoomed slot layout ---------
+
+static ZOOM_PANE_KEY: i32 = 0;
+
+fn zoom_pane_render(cp: *u8) -> flex::Node {
+    var b: Builder = Builder::new();
+    b.add(wrap_label("The quick brown fox jumps over the lazy dog while the lazy dog wonders why the fox keeps wrapping to the pane width.", size: 12.0f64));
+    return column(b);
+}
+
+fn zoom_test_subview(host_ptr: *u8) -> *u8 {
+    var subs: vec::Vec[ak::View] = ak::View::from_raw(host_ptr).subviews();
+    match subs.at_ptr(0 as usize) {
+        option::Option[*ak::View]::Some(vp) => { return { (*vp).raw() }; }
+        option::Option[*ak::View]::None => { return 0 as *u8; }
+    }
+}
+
+#[test]
+fn test_set_zoom_rejects_bad_factors() {
+    unmount_all();
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 400.0, h: 300.0 });
+    var zero: f64 = 0.0f64;
+    assert set_zoom(host.raw(), 0.0f64) == false;
+    assert set_zoom(host.raw(), -2.0f64) == false;
+    assert set_zoom(host.raw(), zero / zero) == false;   // NaN
+    assert set_zoom(0 as *u8, 2.0f64) == false;
+    // None of the rejects registered anything: the host reads natural size.
+    assert zoom_of(host.raw()) == 1.0f64;
+    assert set_zoom(host.raw(), 2.0f64);
+    assert zoom_of(host.raw()) == 2.0f64;
+    unmount_all();   // teardown clears the zoom registry too
+    assert zoom_of(host.raw()) == 1.0f64;
+}
+
+#[test]
+fn e2e_zoomed_relayout_scales_bounds_and_rewraps() {
+    unmount_all();
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 400.0, h: 300.0 });
+    let cp: *u8 = #addr_of(ZOOM_PANE_KEY) as *u8;
+    let h1: f64 = mount(zoom_pane_render, ctx: cp, host: host.raw());
+    assert h1 > 0.0f64;
+    // An unzoomed host's coordinate space is never touched.
+    assert approx(host.bounds().w, 400.0f64);
+    let before: *u8 = zoom_test_subview(host.raw());
+    assert before != (0 as *u8);
+    let f1: rt::Rect = ak::View::from_raw(before).frame();
+
+    // Zoom ×2: content lays out at 200×150 and the bounds scale to match —
+    // the browser-zoom pair (rewrap + crisp magnification).
+    assert set_zoom(host.raw(), 2.0f64);
+    assert relayout(cp);
+    assert approx(host.bounds().w, 200.0f64);
+    assert approx(host.bounds().h, 150.0f64);
+    assert approx(host.frame().w, 400.0f64);   // the window-facing frame is untouched
+    // The SAME view survived (geometry-only, no re-render) and re-wrapped to
+    // the halved layout width: more lines, taller frame.
+    let after: *u8 = zoom_test_subview(host.raw());
+    assert after == before;
+    let f2: rt::Rect = ak::View::from_raw(after).frame();
+    assert f2.h > f1.h;
+
+    // Back to natural size: the coordinate space restores exactly.
+    assert set_zoom(host.raw(), 1.0f64);
+    assert relayout(cp);
+    assert approx(host.bounds().w, 400.0f64);
+    assert approx(host.bounds().h, 300.0f64);
+    let f3: rt::Rect = ak::View::from_raw(after).frame();
+    assert approx(f3.h, f1.h);
+    unmount_all();
 }
