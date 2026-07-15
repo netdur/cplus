@@ -392,31 +392,14 @@ fn ak_text_area(ctx: *u8, np: *facet::Node) -> flex::Node {
     let iw: f64 = { (*np).inset_w };
     let ih: f64 = { (*np).inset_h };
     let vp: *text::Text = { #addr_of((*np).value) };
-    let pp: *text::Text = { #addr_of((*np).placeholder) };
     var n: flex::Node = flex::Node::new();
     match (*vp).c_str() {
         option::Option[text::CString]::Some(vcs) => {
             let vs: str = { #str_from_raw_parts(vcs.as_ptr(), vcs.count()) };
-            match (*pp).c_str() {
-                option::Option[text::CString]::Some(pcs) => {
-                    let ps: str = { #str_from_raw_parts(pcs.as_ptr(), pcs.count()) };
-                    n = ui::text_area(placeholder: ps, value: vs, on_change: ch, ctx: cctx, editable: ed, show_border: sb, draws_background: db, inset_w: iw, inset_h: ih);
-                }
-                option::Option[text::CString]::None => {
-                    n = ui::text_area(placeholder: "", value: vs, on_change: ch, ctx: cctx, editable: ed, show_border: sb, draws_background: db, inset_w: iw, inset_h: ih);
-                }
-            }
+            n = ui::text_area(value: vs, on_change: ch, ctx: cctx, editable: ed, show_border: sb, draws_background: db, inset_w: iw, inset_h: ih);
         }
         option::Option[text::CString]::None => {
-            match (*pp).c_str() {
-                option::Option[text::CString]::Some(pcs) => {
-                    let ps: str = { #str_from_raw_parts(pcs.as_ptr(), pcs.count()) };
-                    n = ui::text_area(placeholder: ps, value: "", on_change: ch, ctx: cctx, editable: ed, show_border: sb, draws_background: db, inset_w: iw, inset_h: ih);
-                }
-                option::Option[text::CString]::None => {
-                    n = ui::text_area(placeholder: "", value: "", on_change: ch, ctx: cctx, editable: ed, show_border: sb, draws_background: db, inset_w: iw, inset_h: ih);
-                }
-            }
+            n = ui::text_area(value: "", on_change: ch, ctx: cctx, editable: ed, show_border: sb, draws_background: db, inset_w: iw, inset_h: ih);
         }
     };
     // Editors honor the layer-paint props (bg/corner/border) on their scroll
@@ -810,16 +793,30 @@ fn ak_stepper(ctx: *u8, np: *facet::Node) -> flex::Node {
 }
 
 fn ak_secure_field(ctx: *u8, np: *facet::Node) -> flex::Node {
-    let sf: ak::SecureTextField = ak::SecureTextField::new();
     let vp: *text::Text = { #addr_of((*np).value) };
+    let pp: *text::Text = { #addr_of((*np).placeholder) };
+    var n: flex::Node = flex::Node::new();
     match (*vp).c_str() {
-        option::Option[text::CString]::Some(cs) => {
-            let vs: str = { #str_from_raw_parts(cs.as_ptr(), cs.count()) };
-            sf.as_control().set_string_value(vs);
+        option::Option[text::CString]::Some(vcs) => {
+            let vs: str = { #str_from_raw_parts(vcs.as_ptr(), vcs.count()) };
+            match (*pp).c_str() {
+                option::Option[text::CString]::Some(pcs) => {
+                    let ps: str = { #str_from_raw_parts(pcs.as_ptr(), pcs.count()) };
+                    n = ui::secure_field(placeholder: ps, value: vs);
+                }
+                option::Option[text::CString]::None => { n = ui::secure_field(value: vs); }
+            }
         }
-        option::Option[text::CString]::None => { }
+        option::Option[text::CString]::None => {
+            match (*pp).c_str() {
+                option::Option[text::CString]::Some(pcs) => {
+                    let ps: str = { #str_from_raw_parts(pcs.as_ptr(), pcs.count()) };
+                    n = ui::secure_field(placeholder: ps);
+                }
+                option::Option[text::CString]::None => { n = ui::secure_field(); }
+            }
+        }
     };
-    var n: flex::Node = ui::fixed_view(sf.as_view());
     apply_style(n.payload(), facet::kind_secure_field(), np);
     return n;
 }

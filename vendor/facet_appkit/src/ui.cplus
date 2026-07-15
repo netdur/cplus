@@ -501,6 +501,18 @@ fn text_field(placeholder: str = "", value: str = "", agent_id: str = "") -> fle
     return view(tf.as_view());
 }
 
+// A masked single-line field for passwords/secrets — an NSSecureTextField.
+// Its cell is an NSTextField underneath, so (unlike the NSTextView editors) it
+// supports a native `placeholder` as well as an initial `value`. Read the value
+// back with `field_text(node.payload())`, same as `text_field`.
+fn secure_field(placeholder: str = "", value: str = "", agent_id: str = "") -> flex::Node {
+    let sf = ak::SecureTextField::new();
+    if value != "" { sf.as_control().set_string_value(value); }
+    if placeholder != "" { sf.as_text_field().set_placeholder_string(placeholder); }
+    tag_agent(sf.as_view().raw(), agent_id, identity::Role::Input);
+    return fixed_view(sf.as_view());
+}
+
 // The current text of a `text_field`, by its payload view pointer.
 fn field_text(view_ptr: *u8) -> text::Text {
     return ak::TextField::from_raw(view_ptr).as_control().string_value();
@@ -508,12 +520,11 @@ fn field_text(view_ptr: *u8) -> text::Text {
 
 // A bordered, scrollable, editable multi-line editor (an NSTextView inside an
 // NSScrollView). Size it with a definite `.height(...)` or `.grow(1.0)`. Read
-// the value with `area_text(node.payload())`. `placeholder` is accepted for
-// symmetry with `text_field` but is not drawn — NSTextView has no placeholder;
-// supply a separate prompt label if you need one. Optional `on_change(ctx, tv)`
-// fires on every edit (null-fn sentinel = no hook).
+// the value with `area_text(node.payload())`. NSTextView has no placeholder, so
+// there is no `placeholder` argument — supply a separate prompt label if you need
+// one. Optional `on_change(ctx, tv)` fires on every edit (null-fn sentinel = no
+// hook).
 fn text_area(
-    placeholder: str = "",
     value: str = "",
     on_change: fn(*u8, *u8) = 0 as fn(*u8, *u8),
     ctx: *u8 = 0 as *u8,
@@ -2409,6 +2420,23 @@ fn test_text_field_reads_back_its_value() {
     let n: flex::Node = text_field(placeholder: "Project name", value: "Iris");
     assert n.has_payload();
     assert field_text(n.payload()).equals("Iris");
+}
+
+#[test]
+fn test_secure_field_applies_placeholder_and_value() {
+    let n: flex::Node = secure_field(placeholder: "Passphrase", value: "hunter2");
+    assert n.has_payload();
+    // Value reads back through the same NSControl door as `text_field`.
+    assert field_text(n.payload()).equals("hunter2");
+    // NSSecureTextField carries a native placeholder (its cell is an NSTextField).
+    assert ak::TextField::from_raw(n.payload()).placeholder_string().equals("Passphrase");
+}
+
+#[test]
+fn test_secure_field_without_placeholder_is_empty() {
+    let n: flex::Node = secure_field(value: "x");
+    assert n.has_payload();
+    assert ak::TextField::from_raw(n.payload()).placeholder_string().equals("");
 }
 
 #[test]

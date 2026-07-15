@@ -636,7 +636,6 @@ fn spacer() -> Node {
 // Multi-line editable text area. Optional `on_change` uses the null-fn sentinel
 // when unset (same convention as composer).
 fn text_area(
-    placeholder: str = "",
     value: str = "",
     on_change: fn(*u8, *u8) = 0 as fn(*u8, *u8),
     ctx: *u8 = 0 as *u8,
@@ -647,7 +646,6 @@ fn text_area(
     inset_h: f64 = 0.0f64,
 ) -> Node {
     var n: Node = blank(kind_text_area());
-    n.placeholder = text::from_str(placeholder);
     n.value = text::from_str(value);
     n.on_change = on_change;
     n.click_ctx = ctx;
@@ -2261,9 +2259,8 @@ fn facet_leaf_ctors_set_kind_and_config() {
     assert s.kind == kind_spacer();
     assert approx(s._grow, 1.0f64);
 
-    let ta: Node = text_area(placeholder: "hint", value: "hi");
+    let ta: Node = text_area(value: "hi");
     assert ta.kind == kind_text_area();
-    assert ta.placeholder.view() == "hint";
     assert ta.value.view() == "hi";
 
     let ce: Node = code_editor(value: "fn main() {}", editable: false, size: 14.0f64);
