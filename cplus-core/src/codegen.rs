@@ -12170,7 +12170,7 @@ impl<'a> FnState<'a> {
             .types
             .enum_by_name
             .get(enum_name)
-            .expect("sema validated enum name");
+            .unwrap_or_else(|| panic!("sema validated enum name: missing `{}::{}`", enum_name, variant_name));
         let info = &self.types.enum_defs[id.0 as usize];
         let idx = info
             .variants

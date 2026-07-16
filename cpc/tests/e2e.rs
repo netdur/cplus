@@ -19385,3 +19385,129 @@ fn borrow_error_names_the_offending_module() {
         "the error must NOT be attributed to the entry file, got:\n{err}"
     );
 }
+
+// ---- 2026-07-16: generic template BODIES instantiate what they mention ----
+//
+// Generic-impl method bodies are never type-checked (name-resolution only), so
+// a generic type used ONLY inside one — `MyVec[T]::new()`, `let m: MyVec[T]`,
+// a same-module free-fn dispatch — used to leave no instantiation and no
+// span-keyed dispatch record, and the enclosing generic's instantiation
+// panicked codegen ("sema validated enum name" for the no-arg assoc call,
+// "TypeKind::Generic" for the annotation). `propagate_body_instantiations`
+// (sema) + the by-name fn-instantiation lookup (monomorphize) close this.
+
+fn compile_and_run_src(name: &str, src: &str) -> std::process::Output {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src_path = dir.join(format!("{name}.cplus"));
+    std::fs::write(&src_path, src).expect("write source");
+    let bin = dir.join(name);
+    let compile = Command::new(cpc)
+        .arg(&src_path)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        compile.status.success(),
+        "cpc failed to compile {name}: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    Command::new(&bin).output().expect("run produced binary")
+}
+
+/// The events-package ctor shape: a generic static method building a field
+/// whose type is ANOTHER generic, via that generic's own static method. The
+/// call is no-arg, so it also pins the Path-vs-Call dispatch decision for
+/// spans sema never type-checks.
+#[test]
+fn generic_static_method_calls_generic_static_ctor() {
+    let out = compile_and_run_src(
+        "genstatic",
+        "struct MyVec[T] { n: i64 }\n\
+         impl MyVec[T] {\n\
+             fn new() -> MyVec[T] { return MyVec[T] { n: 7 }; }\n\
+         }\n\
+         struct Signal[T] { subs: MyVec[T] }\n\
+         impl Signal[T] {\n\
+             fn new() -> Signal[T] { return Signal[T] { subs: MyVec[T]::new() }; }\n\
+         }\n\
+         fn main() -> i32 {\n\
+             var s: Signal[i64] = Signal[i64]::new();\n\
+             return (s.subs.n - 7) as i32;\n\
+         }\n",
+    );
+    assert!(out.status.success(), "exit: {}", out.status);
+}
+
+/// A generic type mentioned ONLY in a `let` annotation inside a generic
+/// body — no field of the enclosing generic covers the instantiation.
+#[test]
+fn generic_body_type_annotation_instantiates() {
+    let out = compile_and_run_src(
+        "genannot",
+        "struct MyVec[T] { n: i64 }\n\
+         impl MyVec[T] {\n\
+             fn make(v: i64) -> MyVec[T] { return MyVec[T] { n: v }; }\n\
+         }\n\
+         struct Signal[T] { dummy: i64 }\n\
+         impl Signal[T] {\n\
+             fn probe() -> i64 { let m: MyVec[T] = MyVec[T]::make(1); return m.n; }\n\
+         }\n\
+         fn main() -> i32 {\n\
+             return (Signal[i64]::probe() - 1) as i32;\n\
+         }\n",
+    );
+    assert!(out.status.success(), "exit: {}", out.status);
+}
+
+/// An enum associated fn whose signature names its own enum, reached both
+/// from a generic body and a concrete site. Pins two fixes at once: the
+/// enum-side no-arg dispatch record, and the `populate_generic_enum_methods`
+/// reentrancy guard (this shape used to stack-overflow the compiler).
+#[test]
+fn generic_body_enum_assoc_fn_self_referential_sig() {
+    let out = compile_and_run_src(
+        "genenum",
+        "enum Maybe[T] { Yes(T), No }\n\
+         impl Maybe[T] {\n\
+             fn empty() -> Maybe[T] { return Maybe[T]::No; }\n\
+         }\n\
+         struct Signal[T] { dummy: i64 }\n\
+         impl Signal[T] {\n\
+             fn probe() -> Maybe[T] { return Maybe[T]::empty(); }\n\
+         }\n\
+         fn main() -> i32 {\n\
+             let m: Maybe[i64] = Signal[i64]::probe();\n\
+             let d: Maybe[i64] = Maybe[i64]::empty();\n\
+             let a: i32 = match m { Maybe[i64]::Yes(v) => 1, Maybe[i64]::No => 0 };\n\
+             let b: i32 = match d { Maybe[i64]::Yes(v) => 1, Maybe[i64]::No => 0 };\n\
+             return a + b;\n\
+         }\n",
+    );
+    assert!(out.status.success(), "exit: {}", out.status);
+}
+
+/// `Type[args]::name()` resolving to a same-module FREE generic fn, called
+/// inside a generic body with a NOMINAL type-arg (`MyVec[Item[T]]::of()`).
+/// The span has no `call_monos` record and the AST→Ty fallback can't resolve
+/// nominal args, so the callee resolves through the by-name fn-instantiation
+/// lookup added to monomorphize.
+#[test]
+fn generic_body_free_fn_dispatch_nominal_args() {
+    let out = compile_and_run_src(
+        "genfreefn",
+        "struct Item[T] { v: T }\n\
+         struct MyVec[T] { n: i64 }\n\
+         fn of[T]() -> MyVec[T] { return MyVec[T] { n: 3 }; }\n\
+         struct Signal[T] { subs: MyVec[Item[T]] }\n\
+         impl Signal[T] {\n\
+             fn new() -> Signal[T] { return Signal[T] { subs: MyVec[Item[T]]::of() }; }\n\
+         }\n\
+         fn main() -> i32 {\n\
+             var s: Signal[i64] = Signal[i64]::new();\n\
+             return (s.subs.n - 3) as i32;\n\
+         }\n",
+    );
+    assert!(out.status.success(), "exit: {}", out.status);
+}

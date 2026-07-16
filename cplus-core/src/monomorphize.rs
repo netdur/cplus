@@ -57,6 +57,14 @@ pub const INSTANTIATION_LIMIT: usize = 4096;
 /// by rendered name sidesteps the id round-trip.
 struct StructLookup {
     by_names: std::collections::HashMap<(String, Vec<String>), String>,
+    /// 2026-07-16: generic-FN instantiations keyed the same way —
+    /// `(generic_fn_name, [mangled arg names])` → mangled fn name. The
+    /// free-fn dispatch rewrite (`Vec[Item[T]]::new()` → `vec.new`) inside a
+    /// generic template body has no `call_monos` record (sema never
+    /// type-checks those spans per instantiation) and the AST→`Ty` fallback
+    /// can't resolve NOMINAL type-args, so it resolves the callee by mangled
+    /// NAME instead — the same trick `by_names` plays for the type half.
+    fn_by_names: std::collections::HashMap<(String, Vec<String>), String>,
 }
 
 /// Public entry point. Consumes the input `Program` and returns a new
@@ -108,7 +116,12 @@ pub fn monomorphize(
             ((k.0.clone(), names), v.clone())
         })
         .collect();
-    let struct_lookup = StructLookup { by_names };
+    // `fn_by_names` is filled after fn-instantiation propagation below —
+    // its instance set isn't final yet.
+    let mut struct_lookup = StructLookup {
+        by_names,
+        fn_by_names: std::collections::HashMap::new(),
+    };
     // v0.0.4 Phase 1B: propagate fn-instantiation set to a fixed point.
     //
     // Sema records each generic-fn call site's type-args once, using the
@@ -141,6 +154,19 @@ pub fn monomorphize(
             mangled: mangle_name(name, args, type_name_of),
         });
     }
+    // 2026-07-16: name-keyed fn-instantiation lookup for template-body
+    // free-fn dispatches with nominal type-args (see `StructLookup`).
+    for i in &instances {
+        let names: Vec<String> = i
+            .concrete_args
+            .iter()
+            .map(|t| mangle_ty(t, type_name_of))
+            .collect();
+        struct_lookup
+            .fn_by_names
+            .insert((i.generic_name.clone(), names), i.mangled.clone());
+    }
+    let struct_lookup = struct_lookup;
     // Walk the program's items: pass through everything except generic
     // fns; for those, swap each instantiation for a concrete-typed
     // clone. Also rewrite all `Call` sites whose callee is `Ident(name)`
@@ -2847,14 +2873,29 @@ fn rewrite_expr(
                         .map(|t| type_ast_to_ty_with_subst(t, subst))
                         .collect(),
                 };
-                let final_name = if let Some(tys) = arg_tys {
+                let by_ty: Option<String> = arg_tys.and_then(|tys| {
                     inst_lookup
                         .get(&(qualified_fn_name.clone(), tys))
                         .cloned()
+                });
+                let final_name = by_ty.unwrap_or_else(|| {
+                    // 2026-07-16: no usable `Ty` route — either the span has
+                    // no `call_monos` record (it sits inside a generic
+                    // template body sema never type-checks per instantiation)
+                    // and the AST fallback couldn't produce `Ty`s (NOMINAL
+                    // type-args), or the produced `Ty`s don't match sema's
+                    // key forms. The substituted AST args still NAME the
+                    // instantiation exactly, so resolve the callee by mangled
+                    // name — the same route the `mangled_enum` lookup below
+                    // takes for the type half.
+                    let arg_names: Vec<String> =
+                        resolved_args.iter().map(mangle_type_ast_arg).collect();
+                    struct_lookup
+                        .fn_by_names
+                        .get(&(qualified_fn_name.clone(), arg_names))
+                        .cloned()
                         .unwrap_or_else(|| qualified_fn_name.clone())
-                } else {
-                    qualified_fn_name.clone()
-                };
+                });
                 let callee_expr = Expr {
                     kind: ExprKind::Ident(final_name),
                     span: variant.span,

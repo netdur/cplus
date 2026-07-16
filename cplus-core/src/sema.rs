@@ -837,6 +837,7 @@ fn check_with_files_inner(
         struct_instantiations: std::collections::BTreeMap::new(),
         enum_generic_templates: HashMap::new(),
         enum_instantiations: std::collections::BTreeMap::new(),
+        enums_populating: std::collections::HashSet::new(),
         method_instantiations: std::collections::BTreeSet::new(),
         enum_method_instantiations: std::collections::BTreeSet::new(),
         generic_impl_methods: HashMap::new(),
@@ -949,6 +950,15 @@ fn check_with_files_inner(
     // to a fixed point so an instantiation that itself drags in another
     // enum (e.g. a `Vec[Option[i32]]` field type) gets registered too.
     cx.propagate_pattern_instantiations(program);
+    // 2026-07-16: same propagation shape, one level up — see the doc
+    // comment on `propagate_body_instantiations`. Generic template bodies
+    // are never type-checked as METHODS (only name-resolved), so generic
+    // types and associated-fn calls mentioned only inside them
+    // (`Vec[Listener[T]]::new()` in `impl Signal[T]`) leave no trace in
+    // the instantiation/dispatch tables and ICE in monomorphize/codegen.
+    // Walks generic bodies once per concrete enclosing instantiation, to
+    // a fixed point.
+    cx.propagate_body_instantiations(program);
     // Slice 7GEN.5c: hand monomorphize a snapshot of the synthesized
     // struct instantiations (mangled name + concrete fields) so it can
     // emit AST struct items + rewrite Generic types in the program.
@@ -1301,6 +1311,13 @@ struct SemaCx<'a> {
     /// Slice 7GEN.5d: per-instantiation dedup for enums. Mirrors
     /// `struct_instantiations`.
     enum_instantiations: std::collections::BTreeMap<(String, Vec<Ty>), EnumId>,
+    /// 2026-07-16: enum ids whose method tables are being populated RIGHT NOW.
+    /// A method signature that names its own enum (`fn empty() -> Maybe[T]`
+    /// inside `impl Maybe[T]`) re-resolves the instantiation mid-population;
+    /// the cache hit saw an empty method table and re-entered the backfill,
+    /// recursing to a stack overflow. In-progress ids skip the nested
+    /// populate — the outer call finishes the table.
+    enums_populating: std::collections::HashSet<EnumId>,
     /// Slice 7GEN.5e: generic-method instantiations.
     /// Keyed by `(struct_id, method_name, [concrete_args])`.
     /// At export time `(struct_id, ...)` is converted to
@@ -14951,6 +14968,320 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         self.instantiate_enum_from_arg_tys(enum_name, &template, resolved_args);
     }
 
+    /// 2026-07-16: instantiation + dispatch propagation through generic
+    /// template BODIES. Generic-impl method bodies are never type-checked
+    /// (they get a name-resolution pass only — see
+    /// `check_generic_method_body_names`), so three site shapes inside them
+    /// leave no trace in the tables monomorphize needs, and the enclosing
+    /// generic's instantiation dies later with an ICE:
+    ///
+    ///   - `MyVec[T]::new()` — `GenericEnumCall`: the base type's
+    ///     instantiation is never registered, the span never lands in
+    ///     `assoc_method_dispatches` (a NO-ARG assoc call then degrades to an
+    ///     enum-variant `Path` in mono → codegen `gen_path` panic), and a
+    ///     free-fn dispatch (`vec::Vec[T]::new()` → module fn `vec.new`)
+    ///     records neither the dispatch nor the fn instantiation.
+    ///   - `MyVec[T] { .. }` / `let m: MyVec[T]` — the instantiation is never
+    ///     registered, so mono can't rewrite the `TypeKind::Generic` node and
+    ///     codegen panics ("monomorphize did not rewrite this site").
+    ///
+    /// Generic FREE-fn bodies ARE type-checked (dispatch + `call_monos` get
+    /// recorded, in `Ty::Param` form), but the fn-instantiation propagation in
+    /// monomorphize walks only `Ident`-callee calls, so an assoc-fn dispatch
+    /// inside a generic body (`Vec[T]::new()` resolving to `vec.new`) never
+    /// produces the callee's instantiation either.
+    ///
+    /// This pass mirrors `propagate_pattern_instantiations` one level up: walk
+    /// every generic template body once per CONCRETE enclosing instantiation,
+    /// substitute the enclosing type-args through each site, register the
+    /// discovered struct/enum/fn instantiations, and record the span-keyed
+    /// dispatch decisions exactly as `check_generic_enum_call` would have at a
+    /// concrete site. Runs to a fixed point: a discovered type instantiation
+    /// walks its own generic-impl method bodies in turn, and a discovered fn
+    /// instantiation walks its template body. Variant patterns are walked
+    /// along the way (same rule as the pattern pass) so instantiations
+    /// discovered HERE get their pattern-mentioned enums registered too.
+    ///
+    /// Known non-goals (pre-existing gaps, unchanged): method-level-generic
+    /// associated fns inside generic bodies (`Box[T]::make::[U]`), and bound
+    /// checking (E0502) on instantiations discovered here — both mirror the
+    /// pattern pass's behavior.
+    fn propagate_body_instantiations(&mut self, program: &Program) {
+        // Index generic templates by name once: impl blocks by target, fn
+        // items by name (arity checked at walk time).
+        let mut impls_by_target: HashMap<String, Vec<usize>> = HashMap::new();
+        let mut fn_items_by_name: HashMap<String, usize> = HashMap::new();
+        for (i, item) in program.items.iter().enumerate() {
+            match &item.kind {
+                ItemKind::Impl(b) if !b.target_generic_params.is_empty() => {
+                    impls_by_target
+                        .entry(b.target.name.clone())
+                        .or_default()
+                        .push(i);
+                }
+                ItemKind::Function(f) if !f.generic_params.is_empty() => {
+                    fn_items_by_name.insert(f.name.name.clone(), i);
+                }
+                _ => {}
+            }
+        }
+        // Worklist entries: (is_fn, template_name, concrete_args). Seed with
+        // every param-free instantiation known so far. The caps guard against
+        // a self-growing chain (`fn rec[T]() { rec::[*T](); }` or
+        // `impl A[T] { fn f() { A[Box[T]]::f(); } }`): this pass stops
+        // chasing quietly and CHEAPLY (each step of such a chain deepens the
+        // types, so the cost per step grows too) — the monomorphize-side
+        // bounds check still walks the fn chain to its own 4096 cap and
+        // reports E0910. Legitimate programs instantiate on the order of
+        // hundreds, far below both caps.
+        let mut ctl = BodyPropagationCtl {
+            queue: std::collections::VecDeque::new(),
+            done: std::collections::BTreeSet::new(),
+            per_name: HashMap::new(),
+            budget: 8192,
+        };
+        let param_free = |args: &[Ty], structs: &[StructDef], enums: &[EnumDef]| {
+            !args.iter().any(|t| ty_contains_param(t, structs, enums))
+        };
+        let struct_seed: Vec<(String, Vec<Ty>)> = self
+            .struct_instantiations
+            .keys()
+            .filter(|(_, args)| param_free(args, &self.structs, &self.enums))
+            .cloned()
+            .collect();
+        for (name, args) in struct_seed {
+            ctl.enqueue(false, name, args);
+        }
+        let enum_seed: Vec<(String, Vec<Ty>)> = self
+            .enum_instantiations
+            .keys()
+            .filter(|(_, args)| param_free(args, &self.structs, &self.enums))
+            .cloned()
+            .collect();
+        for (name, args) in enum_seed {
+            ctl.enqueue(false, name, args);
+        }
+        let fn_seed: Vec<(String, Vec<Ty>)> = self
+            .fn_instantiations
+            .iter()
+            .filter(|(_, args)| param_free(args, &self.structs, &self.enums))
+            .cloned()
+            .collect();
+        for (name, args) in fn_seed {
+            ctl.enqueue(true, name, args);
+        }
+        while let Some((is_fn, name, args)) = ctl.queue.pop_front() {
+            if !ctl.done.insert((is_fn, name.clone(), args.clone())) {
+                continue;
+            }
+            // Collect this template's bodies and the enclosing subst, then
+            // process sites with `&mut self` (the walker itself only borrows
+            // `program`).
+            let mut walks: Vec<(Vec<BodySite>, HashMap<String, Ty>)> = Vec::new();
+            if is_fn {
+                if let Some(&idx) = fn_items_by_name.get(&name) {
+                    if let ItemKind::Function(f) = &program.items[idx].kind {
+                        if f.generic_params.len() == args.len() {
+                            let subst: HashMap<String, Ty> = f
+                                .generic_params
+                                .iter()
+                                .map(|g| g.name.name.clone())
+                                .zip(args.iter().cloned())
+                                .collect();
+                            let mut sites: Vec<BodySite> = Vec::new();
+                            walk_body_sites_in_block(&f.body, &mut sites);
+                            walks.push((sites, subst));
+                        }
+                    }
+                }
+            } else if let Some(idxs) = impls_by_target.get(&name) {
+                for &idx in idxs {
+                    let ItemKind::Impl(b) = &program.items[idx].kind else {
+                        continue;
+                    };
+                    if b.target_generic_params.len() != args.len() {
+                        continue;
+                    }
+                    let subst: HashMap<String, Ty> = b
+                        .target_generic_params
+                        .iter()
+                        .map(|g| g.name.name.clone())
+                        .zip(args.iter().cloned())
+                        .collect();
+                    let mut sites: Vec<BodySite> = Vec::new();
+                    for m in &b.methods {
+                        walk_body_sites_in_block(&m.body, &mut sites);
+                    }
+                    walks.push((sites, subst));
+                }
+            }
+            for (sites, subst) in walks {
+                for site in sites {
+                    self.process_body_site(site, &subst, &mut ctl);
+                }
+            }
+        }
+    }
+
+    /// Substitute the enclosing instantiation's subst through one collected
+    /// AST type-arg list and resolve to concrete `Ty`s. `None` when any arg
+    /// still references an unbound type-param (e.g. a method-level generic the
+    /// outer subst doesn't bind — that inner substitution stays the concrete
+    /// checker's responsibility) or failed to resolve.
+    fn resolve_body_type_args(
+        &mut self,
+        type_args: &[Type],
+        subst: &HashMap<String, Ty>,
+    ) -> Option<Vec<Ty>> {
+        let resolved: Vec<Ty> = type_args
+            .iter()
+            .map(|t| {
+                let substituted =
+                    substitute_param_in_type_ast_with_tables(t, subst, &self.structs, &self.enums);
+                self.resolve_field_type_with_subst(&substituted, subst)
+            })
+            .collect();
+        if resolved
+            .iter()
+            .any(|t| ty_contains_param(t, &self.structs, &self.enums) || matches!(t, Ty::Error))
+        {
+            return None;
+        }
+        Some(resolved)
+    }
+
+    /// Process one site collected from a generic template body, under the
+    /// enclosing instantiation's `subst`. Registers instantiations, records
+    /// span-keyed dispatch decisions, and enqueues newly discovered
+    /// instantiations for their own body walk. Deliberately conservative:
+    /// anything that doesn't resolve cleanly is skipped, never diagnosed —
+    /// this is a propagation pass, not a checking pass.
+    fn process_body_site(
+        &mut self,
+        site: BodySite,
+        subst: &HashMap<String, Ty>,
+        ctl: &mut BodyPropagationCtl,
+    ) {
+        match site {
+            BodySite::TypeUse { name, args } => {
+                let Some(resolved) = self.resolve_body_type_args(&args, subst) else {
+                    return;
+                };
+                if let Some(template) = self.struct_generic_templates.get(&name).cloned() {
+                    if template.generic_params.len() != resolved.len() {
+                        return;
+                    }
+                    self.instantiate_struct_from_arg_tys(&name, &template, resolved.clone());
+                    ctl.enqueue(false, name, resolved);
+                } else if let Some(template) = self.enum_generic_templates.get(&name).cloned() {
+                    if template.generic_params.len() != resolved.len() {
+                        return;
+                    }
+                    self.instantiate_enum_from_arg_tys(&name, &template, resolved.clone());
+                    ctl.enqueue(false, name, resolved);
+                }
+            }
+            BodySite::AssocCall {
+                span,
+                base,
+                type_args,
+                variant,
+            } => {
+                let Some(resolved) = self.resolve_body_type_args(&type_args, subst) else {
+                    return;
+                };
+                if let Some(template) = self.struct_generic_templates.get(&base).cloned() {
+                    if template.generic_params.len() != resolved.len() {
+                        return;
+                    }
+                    let sty =
+                        self.instantiate_struct_from_arg_tys(&base, &template, resolved.clone());
+                    ctl.enqueue(false, base.clone(), resolved.clone());
+                    // Mirror `check_generic_enum_call`'s dispatch order: the
+                    // instantiated struct's method table first, then the
+                    // same-module free-fn fallback.
+                    let has_method = matches!(sty, Ty::Struct(sid)
+                        if self.structs[sid.0 as usize].methods.contains_key(&variant));
+                    if has_method {
+                        self.assoc_method_dispatches.insert(span);
+                        return;
+                    }
+                    let module_prefix = base.rsplit_once('.').map(|(prefix, _)| prefix.to_string());
+                    let qualified = match &module_prefix {
+                        Some(prefix) if !prefix.is_empty() => format!("{}.{}", prefix, variant),
+                        _ => variant.clone(),
+                    };
+                    if self.fns_generic.contains_key(&qualified) {
+                        self.assoc_free_fn_dispatches.insert(span, qualified.clone());
+                        self.fn_instantiations
+                            .insert((qualified.clone(), resolved.clone()));
+                        ctl.enqueue(true, qualified, resolved);
+                    }
+                    // Neither a method nor a known free fn: the concrete
+                    // checker would have E0324'd; leave it for the existing
+                    // downstream failure rather than diagnosing from a
+                    // propagation pass.
+                } else if let Some(template) = self.enum_generic_templates.get(&base).cloned() {
+                    if template.generic_params.len() != resolved.len() {
+                        return;
+                    }
+                    let ety =
+                        self.instantiate_enum_from_arg_tys(&base, &template, resolved.clone());
+                    ctl.enqueue(false, base.clone(), resolved.clone());
+                    // An assoc FN on the enum (name not among the variants)
+                    // must lower as a Call even with no args.
+                    let is_variant = matches!(ety, Ty::Enum(eid)
+                        if self.enums[eid.0 as usize].variants.iter().any(|v| v.name == variant));
+                    if !is_variant {
+                        self.assoc_method_dispatches.insert(span);
+                    }
+                }
+            }
+            BodySite::FnCall {
+                span,
+                name,
+                turbofish,
+            } => {
+                if !self.fns_generic.contains_key(&name) {
+                    return;
+                }
+                // Sema's record for this span (Param form) is authoritative;
+                // the AST turbofish is the fallback. Both resolve through the
+                // enclosing subst.
+                let resolved: Option<Vec<Ty>> = if let Some(recorded) =
+                    self.call_monos.get(&span).cloned()
+                {
+                    Some(
+                        recorded
+                            .iter()
+                            .map(|t| self.subst_ty_deep(t, subst))
+                            .collect(),
+                    )
+                } else if !turbofish.is_empty() {
+                    self.resolve_body_type_args(&turbofish, subst)
+                } else {
+                    None
+                };
+                let Some(resolved) = resolved else { return };
+                if resolved
+                    .iter()
+                    .any(|t| ty_contains_param(t, &self.structs, &self.enums) || matches!(t, Ty::Error))
+                {
+                    return;
+                }
+                if self
+                    .fn_instantiations
+                    .insert((name.clone(), resolved.clone()))
+                {
+                    ctl.enqueue(true, name, resolved);
+                }
+            }
+            BodySite::VariantPattern { enum_name, type_args } => {
+                self.try_instantiate_enum_from_pattern_args(&enum_name, &type_args, subst);
+            }
+        }
+    }
+
     /// Slice 7GEN.5d (factored 2026-05-13): post-arg-resolution body of
     /// `resolve_generic_enum_instantiation`. See `instantiate_struct_from_arg_tys`
     /// for the rationale (substitution paths re-enter without AST args).
@@ -15019,7 +15350,12 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
     /// at instantiation, and re-run as a backfill when an instance was
     /// created before its templates were registered (see the dedup path).
     fn populate_generic_enum_methods(&mut self, id: EnumId, name: &str, arg_tys: &[Ty]) {
+        // Reentrancy guard — see the `enums_populating` field comment.
+        if !self.enums_populating.insert(id) {
+            return;
+        }
         let Some(templates) = self.generic_impl_methods.get(name).cloned() else {
+            self.enums_populating.remove(&id);
             return;
         };
         let self_ty = Ty::Enum(id);
@@ -15063,6 +15399,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 },
             );
         }
+        self.enums_populating.remove(&id);
     }
 
     fn resolve_field_type_with_subst(&mut self, ty: &Type, subst: &HashMap<String, Ty>) -> Ty {
@@ -15963,6 +16300,389 @@ fn ty_contains_param(ty: &Ty, structs: &[StructDef], enums: &[EnumDef]) -> bool 
             }
         }
         _ => false,
+    }
+}
+
+/// 2026-07-16: worklist state for `propagate_body_instantiations`. The
+/// enqueue-side caps keep a pathological self-growing chain from spinning
+/// this pass (see the seeding comment there); `done` dedups walks.
+struct BodyPropagationCtl {
+    queue: std::collections::VecDeque<(bool, String, Vec<Ty>)>,
+    done: std::collections::BTreeSet<(bool, String, Vec<Ty>)>,
+    per_name: HashMap<String, u32>,
+    budget: u32,
+}
+
+impl BodyPropagationCtl {
+    /// Cap on walks of any ONE template — a self-growing chain concentrates
+    /// its instantiations on a single name, so this trips long before the
+    /// total budget while leaving wide-but-legitimate programs alone.
+    const PER_NAME_CAP: u32 = 512;
+
+    fn enqueue(&mut self, is_fn: bool, name: String, args: Vec<Ty>) {
+        if self.budget == 0 {
+            return;
+        }
+        let key = (is_fn, name, args);
+        if self.done.contains(&key) || self.queue.contains(&key) {
+            return;
+        }
+        let count = self.per_name.entry(key.1.clone()).or_insert(0);
+        if *count >= Self::PER_NAME_CAP {
+            return;
+        }
+        *count += 1;
+        self.budget -= 1;
+        self.queue.push_back(key);
+    }
+}
+
+/// 2026-07-16: one site a generic template body mentions that
+/// `propagate_body_instantiations` must act on. Collected by
+/// `walk_body_sites_in_block`; processed (with the enclosing
+/// instantiation's subst) by `process_body_site`.
+enum BodySite {
+    /// A `TypeKind::Generic { name, args }` in any type position of the
+    /// body (a `let` annotation, a cast target, a nested type-arg, ...) or
+    /// the type half of a `GenericStructLit`.
+    TypeUse { name: String, args: Vec<Type> },
+    /// A `GenericEnumCall` — `Base[Args]::variant(..)`. Carries the call's
+    /// span so the dispatch decision can be recorded exactly where
+    /// `check_generic_enum_call` would have recorded it.
+    AssocCall {
+        span: ByteSpan,
+        base: String,
+        type_args: Vec<Type>,
+        variant: String,
+    },
+    /// An `Ident`-callee call — a potential generic-fn instantiation
+    /// (resolved via the span's `call_monos` record or the turbofish).
+    FnCall {
+        span: ByteSpan,
+        name: String,
+        turbofish: Vec<Type>,
+    },
+    /// A `PatternKind::Variant` with explicit type-args — same rule as
+    /// `propagate_pattern_instantiations`, folded in here so instantiations
+    /// discovered by THIS pass get their pattern enums registered too.
+    VariantPattern {
+        enum_name: String,
+        type_args: Vec<Type>,
+    },
+}
+
+/// Collect every `TypeKind::Generic` nested anywhere in a type AST.
+fn walk_type_sites(ty: &Type, out: &mut Vec<BodySite>) {
+    match &ty.kind {
+        TypeKind::Path(_) => {}
+        TypeKind::Generic { name, args } => {
+            out.push(BodySite::TypeUse {
+                name: name.clone(),
+                args: args.clone(),
+            });
+            for a in args {
+                walk_type_sites(a, out);
+            }
+        }
+        TypeKind::Array { elem, .. } => walk_type_sites(elem, out),
+        TypeKind::Borrowed { inner, .. } => walk_type_sites(inner, out),
+        TypeKind::RawPtr(inner) => walk_type_sites(inner, out),
+        TypeKind::Slice(inner) => walk_type_sites(inner, out),
+        TypeKind::FnPtr {
+            params,
+            return_type,
+            ..
+        } => {
+            for p in params {
+                walk_type_sites(p, out);
+            }
+            if let Some(rt) = return_type {
+                walk_type_sites(rt, out);
+            }
+        }
+        TypeKind::Tuple(elems) => {
+            for e in elems {
+                walk_type_sites(e, out);
+            }
+        }
+    }
+}
+
+/// Walk a generic template body and collect every `BodySite` — see
+/// `propagate_body_instantiations`. Mirrors `walk_variant_patterns_in_block`'s
+/// coverage of statement shapes, and additionally visits type positions.
+fn walk_body_sites_in_block(block: &Block, out: &mut Vec<BodySite>) {
+    for stmt in &block.stmts {
+        match &stmt.kind {
+            StmtKind::Let { ty, init, .. } => {
+                if let Some(t) = ty {
+                    walk_type_sites(t, out);
+                }
+                if let Some(e) = init {
+                    walk_body_sites_in_expr(e, out);
+                }
+            }
+            StmtKind::LetDestructure { init, .. } => walk_body_sites_in_expr(init, out),
+            StmtKind::Return(Some(e)) => walk_body_sites_in_expr(e, out),
+            StmtKind::Return(None) | StmtKind::Break | StmtKind::Continue => {}
+            StmtKind::While { cond, body, .. } => {
+                walk_body_sites_in_expr(cond, out);
+                walk_body_sites_in_block(body, out);
+            }
+            StmtKind::For(forloop, _) => match forloop {
+                ForLoop::Range { iter, body, .. } => {
+                    walk_body_sites_in_expr(iter, out);
+                    walk_body_sites_in_block(body, out);
+                }
+                ForLoop::CStyle {
+                    init,
+                    cond,
+                    update,
+                    body,
+                } => {
+                    if let Some(s) = init.as_deref() {
+                        if let StmtKind::Let { ty, init, .. } = &s.kind {
+                            if let Some(t) = ty {
+                                walk_type_sites(t, out);
+                            }
+                            if let Some(e) = init {
+                                walk_body_sites_in_expr(e, out);
+                            }
+                        }
+                    }
+                    if let Some(c) = cond {
+                        walk_body_sites_in_expr(c, out);
+                    }
+                    for u in update {
+                        walk_body_sites_in_expr(u, out);
+                    }
+                    walk_body_sites_in_block(body, out);
+                }
+            },
+            StmtKind::Expr(e) | StmtKind::Defer(e) | StmtKind::Assert(e) => {
+                walk_body_sites_in_expr(e, out)
+            }
+            StmtKind::Loop(body, _) => walk_body_sites_in_block(body, out),
+            StmtKind::IfLet {
+                pattern,
+                scrutinee,
+                body,
+                else_body,
+            } => {
+                walk_pattern_sites(pattern, out);
+                walk_body_sites_in_expr(scrutinee, out);
+                walk_body_sites_in_block(body, out);
+                if let Some(eb) = else_body {
+                    walk_body_sites_in_block(eb, out);
+                }
+            }
+            StmtKind::WhileLet {
+                pattern,
+                scrutinee,
+                body,
+            } => {
+                walk_pattern_sites(pattern, out);
+                walk_body_sites_in_expr(scrutinee, out);
+                walk_body_sites_in_block(body, out);
+            }
+            StmtKind::GuardLet {
+                pattern,
+                scrutinee,
+                complement,
+                else_body,
+            } => {
+                walk_pattern_sites(pattern, out);
+                if let Some(c) = complement {
+                    walk_pattern_sites(c, out);
+                }
+                walk_body_sites_in_expr(scrutinee, out);
+                walk_body_sites_in_block(else_body, out);
+            }
+        }
+    }
+    if let Some(tail) = &block.tail {
+        walk_body_sites_in_expr(tail, out);
+    }
+}
+
+fn walk_pattern_sites(pat: &Pattern, out: &mut Vec<BodySite>) {
+    if let PatternKind::Variant {
+        enum_name,
+        type_args,
+        payload,
+        ..
+    } = &pat.kind
+    {
+        if !type_args.is_empty() {
+            out.push(BodySite::VariantPattern {
+                enum_name: enum_name.name.clone(),
+                type_args: type_args.clone(),
+            });
+            for t in type_args {
+                walk_type_sites(t, out);
+            }
+        }
+        for p in payload {
+            walk_pattern_sites(p, out);
+        }
+    }
+}
+
+fn walk_body_sites_in_expr(expr: &Expr, out: &mut Vec<BodySite>) {
+    match &expr.kind {
+        ExprKind::GenericEnumCall {
+            enum_name,
+            type_args,
+            variant,
+            method_type_args,
+            args,
+        } => {
+            out.push(BodySite::AssocCall {
+                span: expr.span,
+                base: enum_name.name.clone(),
+                type_args: type_args.clone(),
+                variant: variant.name.clone(),
+            });
+            for t in type_args {
+                walk_type_sites(t, out);
+            }
+            for t in method_type_args {
+                walk_type_sites(t, out);
+            }
+            for a in args {
+                walk_body_sites_in_expr(a, out);
+            }
+        }
+        ExprKind::GenericStructLit {
+            name,
+            type_args,
+            fields,
+        } => {
+            out.push(BodySite::TypeUse {
+                name: name.name.clone(),
+                args: type_args.clone(),
+            });
+            for t in type_args {
+                walk_type_sites(t, out);
+            }
+            for f in fields {
+                walk_body_sites_in_expr(&f.value, out);
+            }
+        }
+        ExprKind::Call {
+            callee,
+            args,
+            type_args,
+            ..
+        } => {
+            if let ExprKind::Ident(name) = &callee.kind {
+                out.push(BodySite::FnCall {
+                    span: expr.span,
+                    name: name.clone(),
+                    turbofish: type_args.clone(),
+                });
+            } else {
+                walk_body_sites_in_expr(callee, out);
+            }
+            for t in type_args {
+                walk_type_sites(t, out);
+            }
+            for a in args {
+                walk_body_sites_in_expr(a, out);
+            }
+        }
+        ExprKind::Cast { expr: inner, ty } => {
+            walk_body_sites_in_expr(inner, out);
+            walk_type_sites(ty, out);
+        }
+        ExprKind::Intrinsic {
+            type_args,
+            args,
+            ret_ty,
+            ..
+        } => {
+            for t in type_args {
+                walk_type_sites(t, out);
+            }
+            if let Some(rt) = ret_ty {
+                walk_type_sites(rt, out);
+            }
+            for a in args {
+                walk_body_sites_in_expr(a, out);
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            walk_body_sites_in_expr(scrutinee, out);
+            for arm in arms {
+                walk_pattern_sites(&arm.pattern, out);
+                walk_body_sites_in_expr(&arm.body, out);
+            }
+        }
+        ExprKind::If {
+            cond,
+            then,
+            else_branch,
+        } => {
+            walk_body_sites_in_expr(cond, out);
+            walk_body_sites_in_block(then, out);
+            if let Some(e) = else_branch {
+                walk_body_sites_in_expr(e, out);
+            }
+        }
+        ExprKind::Block(b) => walk_body_sites_in_block(b, out),
+        ExprKind::Binary { lhs, rhs, .. } => {
+            walk_body_sites_in_expr(lhs, out);
+            walk_body_sites_in_expr(rhs, out);
+        }
+        ExprKind::Unary { operand, .. } => walk_body_sites_in_expr(operand, out),
+        ExprKind::Assign { target, value, .. } => {
+            walk_body_sites_in_expr(target, out);
+            walk_body_sites_in_expr(value, out);
+        }
+        ExprKind::Field { receiver, .. } => walk_body_sites_in_expr(receiver, out),
+        ExprKind::Index { receiver, index } => {
+            walk_body_sites_in_expr(receiver, out);
+            walk_body_sites_in_expr(index, out);
+        }
+        ExprKind::StructLit { fields, .. } | ExprKind::InferredStructLit { fields } => {
+            for f in fields {
+                walk_body_sites_in_expr(&f.value, out);
+            }
+        }
+        ExprKind::ArrayLit { elements } | ExprKind::TupleLit { elements } => {
+            for e in elements {
+                walk_body_sites_in_expr(e, out);
+            }
+        }
+        ExprKind::ArrayFill { fill, .. } => walk_body_sites_in_expr(fill, out),
+        ExprKind::Range { start, end, .. } => {
+            if let Some(s) = start {
+                walk_body_sites_in_expr(s, out);
+            }
+            if let Some(e) = end {
+                walk_body_sites_in_expr(e, out);
+            }
+        }
+        ExprKind::InterpStr { parts } => {
+            for p in parts {
+                if let InterpStrPart::Expr(e) = p {
+                    walk_body_sites_in_expr(e, out);
+                }
+            }
+        }
+        ExprKind::Await(inner) | ExprKind::Yield(inner) => walk_body_sites_in_expr(inner, out),
+        ExprKind::IntLit(..)
+        | ExprKind::FloatLit(..)
+        | ExprKind::BoolLit(..)
+        | ExprKind::StrLit(..)
+        | ExprKind::CStrLit(..)
+        | ExprKind::Ident(..)
+        | ExprKind::Path { .. }
+        | ExprKind::IncludeBytes { .. }
+        | ExprKind::IncludeStr { .. }
+        | ExprKind::EnvVar { .. }
+        | ExprKind::Asm { .. }
+        | ExprKind::BuilderBlock { .. } => {}
     }
 }
 
