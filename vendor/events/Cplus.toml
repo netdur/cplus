@@ -1,0 +1,20 @@
+[package]
+name    = "events"
+version = "0.0.1"
+edition = "2026"
+
+# events — typed signals and a string-keyed event bus.
+#
+# `Signal[T]` is a typed multicast event: any number of listeners, payload
+# checked at compile time, token-based unsubscribe. `Bus` is the dynamic
+# counterpart for decoupled cross-module messaging: string event names, a
+# `str` payload. Both use the (fn-pointer, ctx) listener convention shared
+# with facet, so `sig.on(this.method)` bound-method references work.
+
+# Test root: imports the package module, so `cpc test` runs the suite.
+[[bin]]
+name = "events_tests"
+path = "src/test_main.cplus"
+
+[dependencies]
+stdlib = "*"

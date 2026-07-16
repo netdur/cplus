@@ -1,0 +1,329 @@
+import "stdlib/vec" as vec;
+import "stdlib/text" as text;
+import "stdlib/option" as option;
+import "stdlib/status" as status;
+
+// events — typed signals and a string-keyed event bus.
+//
+// Two layers, one listener convention:
+//
+//   Signal[T]  a typed multicast event. `on` registers a listener
+//              (`fn(T, *u8)` + ctx), `emit` calls every listener with a
+//              borrowed payload. The payload type is checked at compile
+//              time. Use one Signal per event, as a field or a static.
+//
+//   Bus        the dynamic counterpart: string event NAMES, `str` payload.
+//              For decoupled cross-module messaging where the sender and
+//              receiver share no type — a file tree emits "file:open" and
+//              the editor subscribes, with no import between them.
+//              `events::shared()` is the app-wide instance.
+//
+// The listener is a fn pointer plus an opaque `ctx` — the same convention
+// facet handlers use, so a component method binds directly:
+//
+//     sig.on(this.on_file_open);        // fn on_file_open(this, path: str)
+//     bus.on("file:open", on_open, ctx: cp);
+//
+// `on` returns a token (u64). `off(token)` removes the listener — no
+// function identity involved, so any listener can be removed. `once: true`
+// (or the `once` method) auto-removes after the first delivery.
+//
+// Delivery semantics (defined, not incidental):
+//   - listeners fire in subscription order;
+//   - a listener ADDED during an emit does not fire in that emit;
+//   - a listener REMOVED during an emit does not fire after its removal;
+//   - a `once` listener is removed before it fires, so re-subscribing from
+//     inside the handler is safe (the new registration waits for the next
+//     emit);
+//   - `emit` borrows the payload — listeners read it for the duration of
+//     the call and must not retain it.
+//
+// Emit walks the listener list once per delivery (ordered by token), which
+// is quadratic in listener count. That is the price of allocation-free,
+// mutation-safe dispatch; event listener counts are small.
+
+// ---- Signal[T] ---------------------------------------------------------------
+
+// One registered listener. `ctx` is a borrowed identity value (a component
+// address, an index) passed back to `f`; the signal never owns or frees it.
+struct Listener[T] {
+    f: fn(T, *u8),
+    opaque ctx: *u8,
+    id: u64,
+    once: bool,
+}
+
+// A typed multicast event. Fields are private; use the methods.
+struct Signal[T] {
+    _subs: vec::Vec[Listener[T]],
+    _next_id: u64,
+}
+
+impl Signal[T] {
+    fn new() -> Signal[T] {
+        return Signal[T] { _subs: vec::Vec[Listener[T]]::new(), _next_id: 1u64 };
+    }
+
+    // Register `f` (with its ctx) and return the listener's token. Token 0 is
+    // never issued — it is the "no listener" sentinel (`off(0)` is a no-op
+    // returning false, and `on` returns 0 only if storage failed to grow).
+    fn on(ref this, f: fn(T, *u8), ctx: *u8 = 0 as *u8, once: bool = false) -> u64 {
+        let id: u64 = this._next_id;
+        this._next_id = this._next_id + 1u64;
+        let added: status::Status =
+            this._subs.append(Listener[T] { f: f, ctx: ctx, id: id, once: once });
+        return match added {
+            status::Status::Ok => id,
+            _ => 0u64,
+        };
+    }
+
+    // `on` with once: true — the listener is removed before its first
+    // delivery runs.
+    fn once(ref this, f: fn(T, *u8), ctx: *u8 = 0 as *u8) -> u64 {
+        return this.on(f, ctx: ctx, once: true);
+    }
+
+    // Remove the listener with this token. False when the token is unknown
+    // (already removed, never issued, or 0).
+    fn off(ref this, id: u64) -> bool {
+        if id == 0u64 { return false; }
+        var i: usize = 0usize;
+        let n: usize = this._subs.count();
+        while i < n {
+            var hit: bool = false;
+            match this._subs.at_ptr(i) {
+                option::Option[*Listener[T]]::Some(p) => { hit = { (*p).id } == id; }
+                option::Option[*Listener[T]]::None => {}
+            }
+            if hit {
+                let _gone: option::Option[Listener[T]] = this._subs.remove(i);
+                return true;
+            }
+            i = i + 1usize;
+        }
+        return false;
+    }
+
+    // Deliver `value` to every listener registered before this call, in
+    // subscription order. See the module header for the exact semantics
+    // under mid-dispatch mutation.
+    fn emit(ref this, value: T) {
+        let ceiling: u64 = this._next_id;
+        var last: u64 = 0u64;
+        loop {
+            // The live listener with the smallest token in (last, ceiling).
+            // Re-scanned every step so any `on`/`off` a listener performed
+            // is respected.
+            var best: u64 = 0u64;
+            var best_f: fn(T, *u8) = 0 as fn(T, *u8);
+            var best_ctx: *u8 = 0 as *u8;
+            var best_once: bool = false;
+            var i: usize = 0usize;
+            let n: usize = this._subs.count();
+            while i < n {
+                match this._subs.at_ptr(i) {
+                    option::Option[*Listener[T]]::Some(p) => {
+                        let lid: u64 = { (*p).id };
+                        if lid > last && lid < ceiling && (best == 0u64 || lid < best) {
+                            best = lid;
+                            best_f = { (*p).f };
+                            best_ctx = { (*p).ctx };
+                            best_once = { (*p).once };
+                        }
+                    }
+                    option::Option[*Listener[T]]::None => {}
+                }
+                i = i + 1usize;
+            }
+            if best == 0u64 { break; }
+            last = best;
+            if best_once {
+                let _removed: bool = this.off(best);
+            }
+            best_f(value, best_ctx);
+        }
+        return;
+    }
+
+    // Number of registered listeners.
+    fn count(this) -> usize {
+        return this._subs.count();
+    }
+
+    fn is_empty(this) -> bool {
+        return this._subs.is_empty();
+    }
+
+    // Drop every listener. Issued tokens stay dead (token numbering is not
+    // reset), so a stale `off` after this stays a false no-op.
+    fn remove_all(ref this) {
+        this._subs.remove_all();
+        return;
+    }
+}
+
+// ---- Bus ---------------------------------------------------------------------
+
+// One registered bus listener: a Signal listener plus the owned event name
+// it subscribed to.
+struct BusListener {
+    name: text::Text,
+    f: fn(str, *u8),
+    opaque ctx: *u8,
+    id: u64,
+    once: bool,
+}
+
+// A string-keyed multicast event bus. `str` payload; for typed payloads use
+// a `Signal[T]`. One flat listener list — emit filters by name, so tokens
+// are unique across the whole bus.
+struct Bus {
+    _subs: vec::Vec[BusListener],
+    _next_id: u64,
+}
+
+impl Bus {
+    fn new() -> Bus {
+        return Bus { _subs: vec::Vec[BusListener]::new(), _next_id: 1u64 };
+    }
+
+    // Register `f` for events named `name`. Same token contract as
+    // `Signal.on`.
+    fn on(ref this, name: str, f: fn(str, *u8), ctx: *u8 = 0 as *u8, once: bool = false) -> u64 {
+        let id: u64 = this._next_id;
+        this._next_id = this._next_id + 1u64;
+        let added: status::Status = this._subs.append(BusListener {
+            name: text::from_str(name),
+            f: f,
+            ctx: ctx,
+            id: id,
+            once: once,
+        });
+        return match added {
+            status::Status::Ok => id,
+            _ => 0u64,
+        };
+    }
+
+    fn once(ref this, name: str, f: fn(str, *u8), ctx: *u8 = 0 as *u8) -> u64 {
+        return this.on(name, f, ctx: ctx, once: true);
+    }
+
+    // Remove the listener with this token (any event name). False when the
+    // token is unknown.
+    fn off(ref this, id: u64) -> bool {
+        if id == 0u64 { return false; }
+        var i: usize = 0usize;
+        let n: usize = this._subs.count();
+        while i < n {
+            var hit: bool = false;
+            match this._subs.at_ptr(i) {
+                option::Option[*BusListener]::Some(p) => { hit = { (*p).id } == id; }
+                option::Option[*BusListener]::None => {}
+            }
+            if hit {
+                let _gone: option::Option[BusListener] = this._subs.remove(i);
+                return true;
+            }
+            i = i + 1usize;
+        }
+        return false;
+    }
+
+    // Remove every listener registered for `name`.
+    fn off_all(ref this, name: str) {
+        var i: usize = 0usize;
+        while i < this._subs.count() {
+            var hit: bool = false;
+            match this._subs.at_ptr(i) {
+                option::Option[*BusListener]::Some(p) => { hit = { (*p).name } == name; }
+                option::Option[*BusListener]::None => {}
+            }
+            if hit {
+                let _gone: option::Option[BusListener] = this._subs.remove(i);
+            } else {
+                i = i + 1usize;
+            }
+        }
+        return;
+    }
+
+    // Deliver `payload` to every listener of `name`. Same order and
+    // mid-dispatch mutation semantics as `Signal.emit`.
+    fn emit(ref this, name: str, payload: str = "") {
+        let ceiling: u64 = this._next_id;
+        var last: u64 = 0u64;
+        loop {
+            var best: u64 = 0u64;
+            var best_f: fn(str, *u8) = 0 as fn(str, *u8);
+            var best_ctx: *u8 = 0 as *u8;
+            var best_once: bool = false;
+            var i: usize = 0usize;
+            let n: usize = this._subs.count();
+            while i < n {
+                match this._subs.at_ptr(i) {
+                    option::Option[*BusListener]::Some(p) => {
+                        let lid: u64 = { (*p).id };
+                        if lid > last && lid < ceiling && (best == 0u64 || lid < best) {
+                            if { (*p).name } == name {
+                                best = lid;
+                                best_f = { (*p).f };
+                                best_ctx = { (*p).ctx };
+                                best_once = { (*p).once };
+                            }
+                        }
+                    }
+                    option::Option[*BusListener]::None => {}
+                }
+                i = i + 1usize;
+            }
+            if best == 0u64 { break; }
+            last = best;
+            if best_once {
+                let _removed: bool = this.off(best);
+            }
+            best_f(payload, best_ctx);
+        }
+        return;
+    }
+
+    // Number of listeners registered for `name`.
+    fn count(this, name: str) -> usize {
+        var total: usize = 0usize;
+        var i: usize = 0usize;
+        let n: usize = this._subs.count();
+        while i < n {
+            match this._subs.at_ptr(i) {
+                option::Option[*BusListener]::Some(p) => {
+                    if { (*p).name } == name { total = total + 1usize; }
+                }
+                option::Option[*BusListener]::None => {}
+            }
+            i = i + 1usize;
+        }
+        return total;
+    }
+
+    // Drop every listener for every name.
+    fn remove_all(ref this) {
+        this._subs.remove_all();
+        return;
+    }
+}
+
+// ---- the app-wide bus --------------------------------------------------------
+
+// One process-wide Bus, for the common case where sender and receiver share
+// nothing but this package. Lazily initialized on first use (token numbering
+// starts at 1, so a zeroed `_next_id` marks "not yet initialized").
+static SHARED_BUS: Bus = #zero::[Bus]();
+
+fn shared() -> *Bus {
+    let b: *Bus = { #addr_of(SHARED_BUS) };
+    if { (*b)._next_id } == 0u64 {
+        { (*b)._subs = vec::Vec[BusListener]::new(); }
+        { (*b)._next_id = 1u64; }
+    }
+    return b;
+}

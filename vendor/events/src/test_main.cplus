@@ -1,0 +1,345 @@
+import "./events" as events;
+import "stdlib/io" as io;
+
+// events test root — `cpc test` discovers the `#[test]` fns below. State
+// shared with handlers lives in statics (handlers are free fns); every test
+// resets what it uses.
+
+// ---- shared handler state ----------------------------------------------------
+
+static LOG: i64 = 0;        // order-sensitive accumulator: LOG = LOG*10 + digit
+static HITS: i64 = 0;       // plain counter
+static SEEN: i64 = 0;       // last payload seen
+static NEST_DEPTH: i64 = 0; // nested-emit guard
+
+fn reset() {
+    LOG = 0;
+    HITS = 0;
+    SEEN = 0;
+    NEST_DEPTH = 0;
+    return;
+}
+
+// ---- Signal: order, ctx, payload ----------------------------------------------
+
+fn log_digit(v: i64, ctx: *u8) {
+    LOG = LOG * 10 + (ctx as i64);
+    SEEN = v;
+    return;
+}
+
+#[test]
+fn signal_emits_in_subscription_order_with_ctx() {
+    reset();
+    var s: events::Signal[i64] = events::Signal[i64]::new();
+    let _a: u64 = s.on(log_digit, ctx: 1 as *u8);
+    let _b: u64 = s.on(log_digit, ctx: 2 as *u8);
+    let _c: u64 = s.on(log_digit, ctx: 3 as *u8);
+    s.emit(42);
+    assert LOG == 123;
+    assert SEEN == 42;
+    assert s.count() == 3usize;
+    return;
+}
+
+#[test]
+fn signal_emit_with_no_listeners_is_noop() {
+    reset();
+    var s: events::Signal[i64] = events::Signal[i64]::new();
+    s.emit(7);
+    assert LOG == 0;
+    assert s.is_empty();
+    return;
+}
+
+fn read_str(v: str, ctx: *u8) {
+    HITS = HITS + (#str_len(v) as i64);
+    return;
+}
+
+#[test]
+fn signal_str_payload_borrows() {
+    reset();
+    var s: events::Signal[str] = events::Signal[str]::new();
+    let _a: u64 = s.on(read_str);
+    s.emit("hello");
+    s.emit("hi");
+    assert HITS == 7;
+    return;
+}
+
+// ---- Signal: once ---------------------------------------------------------------
+
+fn bump(v: i64, ctx: *u8) {
+    HITS = HITS + v;
+    return;
+}
+
+#[test]
+fn signal_once_fires_exactly_once() {
+    reset();
+    var s: events::Signal[i64] = events::Signal[i64]::new();
+    let _a: u64 = s.on(bump);
+    let _b: u64 = s.once(bump);
+    s.emit(1);
+    assert HITS == 2;
+    s.emit(1);
+    assert HITS == 3;
+    assert s.count() == 1usize;
+    return;
+}
+
+// A once handler that re-subscribes itself: the fresh registration must wait
+// for the NEXT emit (tokens issued mid-emit are above the ceiling).
+static RESUB_SIG: events::Signal[i64] = #zero::[events::Signal[i64]]();
+
+fn resub_sig() -> *events::Signal[i64] { return { #addr_of(RESUB_SIG) }; }
+
+fn resub(v: i64, ctx: *u8) {
+    HITS = HITS + 1;
+    let s: *events::Signal[i64] = resub_sig();
+    let _id: u64 = { (*s).once(resub) };
+    return;
+}
+
+#[test]
+fn signal_once_resubscribing_defers_to_next_emit() {
+    reset();
+    RESUB_SIG = events::Signal[i64]::new();
+    let s: *events::Signal[i64] = resub_sig();
+    let _a: u64 = { (*s).once(resub) };
+    { (*s).emit(0); }
+    assert HITS == 1;
+    { (*s).emit(0); }
+    assert HITS == 2;
+    { (*s).remove_all(); }
+    return;
+}
+
+// ---- Signal: off ----------------------------------------------------------------
+
+#[test]
+fn signal_off_removes_and_reports() {
+    reset();
+    var s: events::Signal[i64] = events::Signal[i64]::new();
+    let a: u64 = s.on(bump);
+    let b: u64 = s.on(bump);
+    assert s.off(a);
+    assert !s.off(a);          // already removed
+    assert !s.off(0u64);       // never a valid token
+    assert !s.off(9999u64);    // never issued
+    s.emit(5);
+    assert HITS == 5;          // only b left
+    assert s.off(b);
+    return;
+}
+
+#[test]
+fn signal_remove_all_drops_everything() {
+    reset();
+    var s: events::Signal[i64] = events::Signal[i64]::new();
+    let a: u64 = s.on(bump);
+    let _b: u64 = s.on(bump);
+    s.remove_all();
+    assert s.is_empty();
+    assert !s.off(a);          // stale token after remove_all
+    s.emit(3);
+    assert HITS == 0;
+    return;
+}
+
+// ---- Signal: mutation during dispatch ---------------------------------------------
+
+// Listener 1 removes listener 2 (a later token) mid-emit: 2 must not fire.
+static KILL_SIG: events::Signal[i64] = #zero::[events::Signal[i64]]();
+static KILL_TARGET: u64 = 0u64;
+
+fn kill_sig() -> *events::Signal[i64] { return { #addr_of(KILL_SIG) }; }
+
+fn killer(v: i64, ctx: *u8) {
+    HITS = HITS + 1;
+    let s: *events::Signal[i64] = kill_sig();
+    let _r: bool = { (*s).off(KILL_TARGET) };
+    return;
+}
+
+#[test]
+fn signal_off_during_emit_skips_removed_listener() {
+    reset();
+    KILL_SIG = events::Signal[i64]::new();
+    let s: *events::Signal[i64] = kill_sig();
+    let _a: u64 = { (*s).on(killer) };
+    KILL_TARGET = { (*s).on(bump) };
+    { (*s).emit(100); }
+    assert HITS == 1;          // killer ran, bump never did
+    assert KILL_SIG.count() == 1usize;
+    { (*s).remove_all(); }
+    return;
+}
+
+// A listener that adds a listener mid-emit: the addition waits for the next
+// emit.
+static GROW_SIG: events::Signal[i64] = #zero::[events::Signal[i64]]();
+
+fn grow_sig() -> *events::Signal[i64] { return { #addr_of(GROW_SIG) }; }
+
+fn grower(v: i64, ctx: *u8) {
+    HITS = HITS + 1;
+    let s: *events::Signal[i64] = grow_sig();
+    let _id: u64 = { (*s).on(bump) };
+    return;
+}
+
+#[test]
+fn signal_on_during_emit_defers_to_next_emit() {
+    reset();
+    GROW_SIG = events::Signal[i64]::new();
+    let s: *events::Signal[i64] = grow_sig();
+    let _a: u64 = { (*s).on(grower) };
+    { (*s).emit(0); }
+    assert HITS == 1;                      // grower only; the added bump deferred
+    assert GROW_SIG.count() == 2usize;
+    { (*s).remove_all(); }
+    return;
+}
+
+// A listener that re-emits the same signal (bounded): nested dispatch must
+// complete and not disturb the outer pass.
+static NEST_SIG: events::Signal[i64] = #zero::[events::Signal[i64]]();
+
+fn nest_sig() -> *events::Signal[i64] { return { #addr_of(NEST_SIG) }; }
+
+fn nester(v: i64, ctx: *u8) {
+    HITS = HITS + v;
+    if NEST_DEPTH == 0 {
+        NEST_DEPTH = 1;
+        let s: *events::Signal[i64] = nest_sig();
+        { (*s).emit(10); }
+    }
+    return;
+}
+
+#[test]
+fn signal_nested_emit_completes() {
+    reset();
+    NEST_SIG = events::Signal[i64]::new();
+    let s: *events::Signal[i64] = nest_sig();
+    let _a: u64 = { (*s).on(nester) };
+    let _b: u64 = { (*s).on(bump) };
+    { (*s).emit(1); }
+    // outer: nester(1) -> nested emit(10) fires nester(10)+bump(10) -> bump(1)
+    assert HITS == 22;
+    { (*s).remove_all(); }
+    return;
+}
+
+// ---- Signal: bound-method listeners ------------------------------------------------
+
+struct Counter {
+    total: i64,
+}
+
+impl Counter {
+    fn add(ref this, v: i64) {
+        this.total = this.total + v;
+        return;
+    }
+}
+
+#[test]
+fn signal_bound_method_listener() {
+    reset();
+    var c: Counter = Counter { total: 0 };
+    var s: events::Signal[i64] = events::Signal[i64]::new();
+    let _id: u64 = s.on(c.add);
+    s.emit(5);
+    s.emit(2);
+    assert c.total == 7;
+    return;
+}
+
+// ---- Bus ---------------------------------------------------------------------------
+
+fn on_open(payload: str, ctx: *u8) {
+    HITS = HITS + (#str_len(payload) as i64);
+    return;
+}
+
+fn on_save(payload: str, ctx: *u8) {
+    LOG = LOG + 1;
+    return;
+}
+
+#[test]
+fn bus_routes_by_name() {
+    reset();
+    var b: events::Bus = events::Bus::new();
+    let _a: u64 = b.on("file:open", on_open);
+    let _b: u64 = b.on("file:save", on_save);
+    b.emit("file:open", payload: "abc");
+    assert HITS == 3;
+    assert LOG == 0;           // save listener untouched
+    b.emit("file:save");
+    assert LOG == 1;
+    assert HITS == 3;
+    b.emit("file:rename", payload: "x");   // no listeners: no-op
+    assert HITS == 3;
+    assert LOG == 1;
+    return;
+}
+
+#[test]
+fn bus_once_off_and_count() {
+    reset();
+    var b: events::Bus = events::Bus::new();
+    let a: u64 = b.on("tick", on_save);
+    let _o: u64 = b.once("tick", on_save);
+    assert b.count("tick") == 2usize;
+    b.emit("tick");
+    assert LOG == 2;
+    assert b.count("tick") == 1usize;      // once removed
+    b.emit("tick");
+    assert LOG == 3;
+    assert b.off(a);
+    assert !b.off(a);
+    assert b.count("tick") == 0usize;
+    return;
+}
+
+#[test]
+fn bus_off_all_clears_one_name_only() {
+    reset();
+    var b: events::Bus = events::Bus::new();
+    let _a: u64 = b.on("tick", on_save);
+    let _b: u64 = b.on("tick", on_save);
+    let _c: u64 = b.on("tock", on_open);
+    b.off_all("tick");
+    assert b.count("tick") == 0usize;
+    assert b.count("tock") == 1usize;
+    b.emit("tick");
+    assert LOG == 0;
+    b.emit("tock", payload: "zz");
+    assert HITS == 2;
+    b.remove_all();
+    assert b.count("tock") == 0usize;
+    return;
+}
+
+#[test]
+fn bus_shared_is_one_instance() {
+    reset();
+    let a: *events::Bus = events::shared();
+    let b: *events::Bus = events::shared();
+    assert a == b;
+    let id: u64 = { (*a).on("ping", on_save) };
+    { (*b).emit("ping"); }
+    assert LOG == 1;
+    let removed: bool = { (*a).off(id) };
+    assert removed;
+    return;
+}
+
+fn main() -> i32 {
+    io::println("events: run `cpc test`");
+    return 0;
+}
