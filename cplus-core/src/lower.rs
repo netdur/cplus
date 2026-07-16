@@ -197,6 +197,30 @@ impl Lower {
                         }
                     }
                 }
+                // An interface's method *declarations* are call candidates too:
+                // a call through an interface-bounded generic (`w: W` where
+                // `W: Window`) resolves by name here, and if the only registered
+                // candidate is a same-named `impl` method on another type (e.g.
+                // `Node::width(v)`), a no-arg interface call like `w.width()`
+                // mis-selects it and reports a bogus "missing argument". Register
+                // interface methods so the 0-arg arrangement matches, regardless
+                // of whether a concrete implementor is present in this build.
+                ItemKind::Interface(d) => {
+                    for m in &d.methods {
+                        let params: Vec<ParamInfo> = m.params.iter().map(param_info).collect();
+                        if m.receiver.is_some() {
+                            self.method_params
+                                .entry(m.name.name.clone())
+                                .or_default()
+                                .push(params);
+                        } else {
+                            self.assoc_params
+                                .entry(format!("{}::{}", d.name.name, m.name.name))
+                                .or_default()
+                                .push(params);
+                        }
+                    }
+                }
                 _ => {}
             }
         }
@@ -2323,6 +2347,29 @@ mod tests {
             (PathBuf::from(lib_path), lib_src.to_string()),
         );
         (prog, files, PathBuf::from(entry_path))
+    }
+
+    #[test]
+    fn interface_method_call_not_shadowed_by_same_named_impl_method() {
+        // A no-arg call through an interface-bounded generic must resolve to the
+        // interface method, not a same-named `impl` method on another type that
+        // takes an argument. Before interface decls were registered as call
+        // candidates, `t.size()` saw only `Widget::size(v)` and reported a bogus
+        // E0308 "missing argument for parameter `v`" — the exact shape that broke
+        // facet's `run[W: Window]` calling `owned_window.width()` when no concrete
+        // Window implementor was present in the build.
+        let src = "\
+interface Measured { fn size(this) -> i64; }\n\
+struct Widget { w: i64 }\n\
+impl Widget { fn size(take this, v: i64) -> Widget { var n: Widget = this; n.w = v; return n; } }\n\
+fn measure[T: Measured](take t: T) -> i64 { return t.size(); }\n\
+fn main() -> i32 { return 0; }\n";
+        let (_prog, diags) = run(src);
+        assert!(
+            !first_codes(&diags).contains(&"E0308"),
+            "interface method call mis-resolved to the arg-taking impl overload: {:?}",
+            first_codes(&diags)
+        );
     }
 
     #[test]
