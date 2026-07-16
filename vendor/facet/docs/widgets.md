@@ -158,8 +158,8 @@ button("+1").on_click(this.inc)   // inc is `fn inc(ref this, sender: *u8)`
 ```
 
 The bound method's receiver fills `ctx`, so `inc` declares only `sender`. Inside,
-use `this` for state and `facet::find(#addr_of(this) as *u8, key)` to address
-elements — no static. See [component-model.md](component-model.md) and
+use `this` for state and `facet::find(key)` to address elements — by id, global,
+the same handle an agent uses. See [component-model.md](component-model.md) and
 [updates.md](updates.md).
 
 **Raw form**, for a handler with no component: a free `fn(sender, ctx)` wired

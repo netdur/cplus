@@ -2182,6 +2182,38 @@ fn host_of(cp: *u8) -> *u8 {
     return 0 as *u8;
 }
 
+// Mounted-slot enumeration — the backing for a GLOBAL (cp-less) find: search
+// every mounted component's host, so in-app code can address any element by id
+// the way an agent does. Nested component hosts are subviews of their parents,
+// so a top-level host already covers them; enumerating all is simply robust.
+fn slot_count() -> usize { let s: *vec::Vec[Slot] = #addr_of(SLOTS); return { (*s).count() }; }
+
+fn slot_host_at(i: usize) -> *u8 {
+    let s: *vec::Vec[Slot] = #addr_of(SLOTS);
+    match (*s).at_ptr(i) {
+        option::Option[*Slot]::Some(sp) => { return { (*sp)._host }; }
+        option::Option[*Slot]::None => { return 0 as *u8; }
+    }
+}
+
+// The cp that owns a host view (reverse of host_of) — a global find records it on
+// the Handle so a later in-place mutation reflows the owning component.
+fn cp_of_host(host: *u8) -> *u8 {
+    let s: *vec::Vec[Slot] = #addr_of(SLOTS);
+    let n: usize = { (*s).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*s).at_ptr(i) {
+            option::Option[*Slot]::Some(sp) => {
+                if { (*sp)._host } == host { return { (*sp)._cp }; }
+            }
+            option::Option[*Slot]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return 0 as *u8;
+}
+
 // ==========================================================================
 // Zoom — per-host content magnification (pinch scale, NO reflow)
 // ==========================================================================

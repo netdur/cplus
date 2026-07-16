@@ -1273,8 +1273,17 @@ impl Handle {
     }
 }
 
-// Resolve `key` inside component `cp`'s live subtree. See the block comment above.
-fn find(cp: *u8, key: str) -> Handle {
+// Address a mounted element by its `key` — its agent id / accessibilityIdentifier,
+// the SAME handle an external/MCP agent uses through the ACI surface. By default
+// the search is GLOBAL across the app's mounted components, so in-app code
+// addresses the UI exactly as an agent does: `find("save").set_text(...)` — no
+// component context to thread.
+//
+// `cp` (a component's own address, e.g. `#addr_of(this)` in a handler) narrows the
+// search to that component's subtree — needed only for key ISOLATION when two
+// components mount identical keys. Window-unique keys (namespaced, as apps
+// normally do) never need it.
+fn find(key: str, cp: *u8 = 0 as *u8) -> Handle {
     let f: fn(*u8, str) -> Handle = FIND_FN;
     if f == (0 as fn(*u8, str) -> Handle) { return Handle::missing(); }
     return f(cp, key);

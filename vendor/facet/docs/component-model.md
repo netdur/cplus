@@ -41,16 +41,16 @@ recomputed and the tree is not rebuilt.
 
 The instance is owned by whoever runs it — `run_component` holds it for the
 window's life (see [updates.md](updates.md)). A handler is a `ref this` method
-bound at the call site (`.on_click(this.toggle_collapse)`); `#addr_of(this)` is
-the component's own keyed subtree, so it self-locates — no module static, no
-stored `cp`:
+bound at the call site (`.on_click(this.toggle_collapse)`) and addresses elements
+by id with `find(key)` — global, the same way an agent does. No module static,
+no cp:
 
 ```cplus
 // ...in `impl Sidebar`, bound in build as `.on_click(this.toggle_collapse)`:
 fn toggle_collapse(ref this, sender: *u8) {
-    this.collapsed = !this.collapsed;                                // 1. update state
+    this.collapsed = !this.collapsed;                    // 1. update state
     let _u: facet::Handle =
-        facet::find(#addr_of(this) as *u8, "panel").set_hidden(this.collapsed);  // 2. push to the view
+        facet::find("panel").set_hidden(this.collapsed);  // 2. push to the view
     return;
 }
 ```

@@ -14,33 +14,25 @@ button("+1").key("inc")
 vstack { ... }.key("list")           // containers can be keyed too
 ```
 
-Keys are **component-scoped**, not a global namespace: `find(cp, key)` resolves
-`key` inside the subtree of the component at address `cp`. (A key is also the
-element's `agent_id` / accessibility identifier, shared with the agent surface.)
+A `key` **is** the element's `agent_id` / accessibility identifier — the same
+handle the ACI (agent) surface uses. So an in-app handler and an external/MCP
+agent address the element the same way: by id.
 
 ## `find` and the `Handle`
 
 ```cplus
-fn find(cp: *u8, key: str) -> Handle
+fn find(key: str, cp: *u8 = 0) -> Handle
 ```
 
-`cp` is the component's own address. Inside a `ref this` handler that is
-`#addr_of(this)`, so `find(#addr_of(this), key)` addresses the handler's own
-component. A miss returns an empty `Handle` whose mutators no-op — the
+`find(key)` resolves an element by its id across the app's mounted components —
+**global, exactly how an agent addresses the UI**, with no component context to
+thread. A miss returns an empty `Handle` whose mutators no-op — the
 `getElementById`-null pattern, so a `find` on a torn-down element is safe.
 
-`run_component` owns the instance for the window's life and keys the root mount
-slot by its address, so `find` and the structural verbs resolve from any handler
-with no setup:
-
-```cplus
-fn main() -> i32 {
-    runtime::run_component(Workspace { /* ... */ }, title: "Workspace");
-    return 0;
-}
-```
-
-(The examples below write `cp` for that address — `#addr_of(this)` in a handler.)
+`cp` narrows the search to one component's subtree (`#addr_of(this)` in a `ref
+this` handler) — needed only for key **isolation** when two components mount
+identical keys. Window-unique keys (namespaced, as apps normally do) never need
+it, so the examples below use the plain `find(key)`.
 
 `Handle` is a non-owning, `Copy`, chainable view onto a mounted element:
 
@@ -62,10 +54,10 @@ Each sets one element in place and returns the `Handle` (chainable):
 | `show()` / `hide()` | the readable pair over `set_hidden` |
 
 ```cplus
-facet::find(cp, "count").set_text("count 3");
-facet::find(cp, "vol").set_value(0.5f64);
-facet::find(cp, "flag").set_on(true);
-facet::find(cp, "panel").hide();
+facet::find("count").set_text("count 3");
+facet::find("vol").set_value(0.5f64);
+facet::find("flag").set_on(true);
+facet::find("panel").hide();
 ```
 
 These four setters are the **portable** update path: they work on every backend
@@ -85,19 +77,19 @@ On a **keyed container**, address children in place:
 
 ```cplus
 // append a row
-facet::find(cp, "list").add_child(facet::label("row-c").key("c"));
+facet::find("list").add_child(facet::label("row-c").key("c"));
 
 // insert at the top
-facet::find(cp, "list").insert_child(facet::label("row-0").key("z"), 0 as usize);
+facet::find("list").insert_child(facet::label("row-0").key("z"), 0 as usize);
 
 // swap one row for another
-let ok: bool = facet::find(cp, "list").replace_child("c", facet::label("row-c2").key("c2"));
+let ok: bool = facet::find("list").replace_child("c", facet::label("row-c2").key("c2"));
 
 // remove one row
-let gone: bool = facet::find(cp, "list").remove_child("a");
+let gone: bool = facet::find("list").remove_child("a");
 
 // single-slot swap: make the container hold exactly one thing
-facet::find(cp, "outlet").set_child(some_screen_node);
+facet::find("outlet").set_child(some_screen_node);
 ```
 
 `add_child` / `insert_child` / `set_child` mount a **fresh** `Node` and take
@@ -113,7 +105,7 @@ fn increment(ref this, sender: *u8) {
     this.n = this.n + 1;                                        // 1. state
     let msg: text::Text = "count ${this.n}";
     let _u: facet::Handle =
-        facet::find(#addr_of(this) as *u8, "count").set_text(msg.view());  // 2. push by key
+        facet::find("count").set_text(msg.view());  // 2. push by key
     return;
 }
 ```

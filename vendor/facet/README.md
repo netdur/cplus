@@ -13,13 +13,15 @@ mounts it into native views and **retains** the tree; from then on the tree is
 live and you edit it in place. facet is **not reactive**: there is no re-render
 and no diff. When state changes, a handler addresses the one element that shows
 it — by its `key` — and mutates that element directly
-(`facet::find(cp, key).set_text(...)`). You already hold the key, so there is no
+(`facet::find(key).set_text(...)`). You already hold the key, so there is no
 delta to rediscover.
 
 Two ways to update, never a third:
 
-1. **by key** — `facet::find(cp, key)` resolves a keyed element in a component's
-   live subtree and returns a `Handle` you mutate.
+1. **by key** — `facet::find(key)` resolves a keyed element by its id and returns
+   a `Handle` you mutate. That id is the element's `agent_id` / accessibility
+   identifier, so **in-app code and an external/MCP agent address the UI the same
+   way** — this is the ACI surface, not a separate API.
 2. **by method** — call a method on the component; internally it updates its own
    UI by key. Same mechanism, wrapped behind a named action.
 
@@ -34,13 +36,12 @@ struct Counter { n: i32 }
 
 impl Counter {
     // A handler is a METHOD: `ref this` is the receiver, `sender` is the control
-    // that fired. `#addr_of(this)` is the component's own address — its keyed
-    // subtree — so the handler self-locates. No module static, no stored `cp`.
+    // that fired. `find(key)` addresses the element by its id — global, exactly
+    // how an agent addresses it. No cp, no static.
     fn inc(ref this, sender: *u8) {
         this.n = this.n + 1;
         let msg: text::Text = "count ${this.n}";
-        let _u: facet::Handle =
-            facet::find(#addr_of(this) as *u8, "count").set_text(msg.view());
+        let _u: facet::Handle = facet::find("count").set_text(msg.view());
         return;
     }
 }
@@ -69,9 +70,9 @@ fn main() -> i32 {
 `build` runs once. Clicking `+1` runs `Counter::inc`, which finds `"count"` and
 sets its text on the same label view — the label is never rebuilt. Binding
 `this.inc` spends the handler's `ctx` on the receiver, so `inc` takes only
-`sender`. There is no module static and no `component_ctx` wiring: `run_component`
-holds the instance and keys the mount by its address, and the handler self-locates
-with `find(#addr_of(this), key)`.
+`sender`. No module static, no `component_ctx`, no cp threading: `run_component`
+holds the instance, and `find("count")` addresses the element by its id — the
+same handle an agent uses.
 
 ## Layout
 
