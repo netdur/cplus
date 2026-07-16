@@ -6,6 +6,8 @@
 
 import "./facet" as core;
 import "facet_appkit/facet_appkit" as backend;
+import "stdlib/option" as option;
+import "stdlib/text" as text;
 
 type Node = core::Node;
 type Builder = core::Builder;
@@ -119,6 +121,19 @@ fn run[W: Window](take window: W) {
 //         fn build(ref this) -> facet::Node { /* ... .on_click(this.inc) ... */ }
 //     }
 //     fn main() -> i32 { runtime::run_component(Counter { n: 0 }, title: "Counter"); return 0; }
+fn run_component_should_close(ctx: *u8) -> bool { return true; }
+fn run_component_will_close(ctx: *u8) { return; }
+
+// Window chrome / menu / zoom / lifecycle are forwarded to the backend so a
+// static-free component can drive a rich window (transparent titlebar, an app
+// menu, pinch zoom, a close guard). An `menu` with items enables the app menu;
+// `should_close` / `will_close` receive `ctx`.
+//
+// run_component RETURNS the component: `run_window` blocks until the window
+// closes, so the returned value carries its FINAL field state — a launcher can
+// hand back what the user chose without a side channel:
+//     let w: Welcome = runtime::run_component(Welcome::fresh(), title: "Iris");
+//     if w.chosen { open(w.chosen_path); }
 fn run_component[C: core::Component](
     take component: C,
     title: str = "facet",
@@ -126,23 +141,49 @@ fn run_component[C: core::Component](
     height: f64 = 360.0f64,
     min_width: f64 = 0.0f64,
     min_height: f64 = 0.0f64,
+    clean_titlebar: bool = false,
+    close_button_only: bool = false,
+    native_buttons: bool = false,
     zoomable: bool = false,
-) {
+    min_zoom: f64 = 1.0f64,
+    max_zoom: f64 = 4.0f64,
+    take menu: AppMenu = core::empty_app_menu(),
+    should_close: fn(*u8) -> bool = 0 as fn(*u8) -> bool,
+    will_close: fn(*u8) = 0 as fn(*u8),
+    ctx: *u8 = 0 as *u8,
+) -> C {
     backend::install();   // register this backend's facet verbs before any render
     var owned: C = component;                   // the runtime holds the instance
     let cp: *u8 = #addr_of(owned) as *u8;       // stable address in this blocking frame
     let root: Node = owned.build();             // build(ref this) wires handlers at cp
+    var app_menu: AppMenu = menu;
+    let has_menu: bool = app_menu.items.count() > (0 as usize);
+    // Null defaults → the neutral lifecycle (can-always-close / no-op teardown).
+    var sc: fn(*u8) -> bool = should_close;
+    if sc == (0 as fn(*u8) -> bool) { sc = run_component_should_close; }
+    var wc: fn(*u8) = will_close;
+    if wc == (0 as fn(*u8)) { wc = run_component_will_close; }
     backend::run_window(
         root,
         title: title,
         width: width,
         height: height,
+        clean_titlebar: clean_titlebar,
+        close_button_only: close_button_only,
+        native_buttons: native_buttons,
         min_width: min_width,
         min_height: min_height,
         zoomable: zoomable,
+        min_zoom: min_zoom,
+        max_zoom: max_zoom,
+        app_menu_enabled: has_menu,
+        app_menu: app_menu,
+        ctx: ctx,
+        should_close: sc,
+        will_close: wc,
         component_ctx: cp,
     );
-    return;
+    return owned;   // window closed → final state is readable by the caller
 }
 
 // A blocking modal alert. Returns the 0-based index of the clicked button
@@ -150,6 +191,12 @@ fn run_component[C: core::Component](
 fn alert(title: str, message: str, primary: str, secondary: str = "") -> i32 {
     return backend::alert(title, message, primary, secondary);
 }
+
+// Open a native folder / file picker (modal). Returns the chosen absolute path,
+// or None if the user cancelled. The portable app-tier verb — a facet-only screen
+// reaches it without importing the backend.
+fn choose_directory() -> option::Option[text::Text] { return backend::choose_directory(); }
+fn choose_file() -> option::Option[text::Text] { return backend::choose_file(); }
 
 // Open a non-modal secondary window (settings / inspector / tool) with facet
 // content, alongside the running app. Returns immediately.

@@ -1132,6 +1132,7 @@ struct Handle {
 static FIND_FN: fn(*u8, str) -> Handle = #zero::[fn(*u8, str) -> Handle]();
 static SET_TEXT_FN: fn(Handle, str) -> bool = #zero::[fn(Handle, str) -> bool]();
 static SET_VALUE_FN: fn(Handle, f64) -> bool = #zero::[fn(Handle, f64) -> bool]();
+static GET_VALUE_FN: fn(Handle) -> f64 = #zero::[fn(Handle) -> f64]();
 static SET_ON_FN: fn(Handle, bool) -> bool = #zero::[fn(Handle, bool) -> bool]();
 static SET_HIDDEN_FN: fn(Handle, bool) -> bool = #zero::[fn(Handle, bool) -> bool]();
 static ADD_CHILD_FN: fn(Handle, take Node) -> bool = #zero::[fn(Handle, take Node) -> bool]();
@@ -1143,6 +1144,7 @@ static SET_CHILD_FN: fn(Handle, take Node) -> bool = #zero::[fn(Handle, take Nod
 fn set_find_fn(f: fn(*u8, str) -> Handle) { FIND_FN = f; return; }
 fn set_set_text_fn(f: fn(Handle, str) -> bool) { SET_TEXT_FN = f; return; }
 fn set_set_value_fn(f: fn(Handle, f64) -> bool) { SET_VALUE_FN = f; return; }
+fn set_get_value_fn(f: fn(Handle) -> f64) { GET_VALUE_FN = f; return; }
 fn set_set_on_fn(f: fn(Handle, bool) -> bool) { SET_ON_FN = f; return; }
 fn set_set_hidden_fn(f: fn(Handle, bool) -> bool) { SET_HIDDEN_FN = f; return; }
 fn set_add_child_fn(f: fn(Handle, take Node) -> bool) { ADD_CHILD_FN = f; return; }
@@ -1188,6 +1190,16 @@ impl Handle {
         let f: fn(Handle, f64) -> bool = SET_VALUE_FN;
         if f != (0 as fn(Handle, f64) -> bool) { let _ok: bool = f(this, v); }
         return this;
+    }
+
+    // Read the element's natural value: a `split`'s divider position (the leading
+    // pane's trailing edge, in points), or a value control's number (slider /
+    // stepper / progress / gauge). 0 on a miss or a kind with no value. The
+    // portable read-back counterpart to `set_value` — no backend reach-through.
+    fn value(this) -> f64 {
+        let f: fn(Handle) -> f64 = GET_VALUE_FN;
+        if f == (0 as fn(Handle) -> f64) { return 0.0f64; }
+        return f(this);
     }
 
     // Set a toggle / checkbox / switch on or off. In place.

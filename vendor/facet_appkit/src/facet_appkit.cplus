@@ -926,6 +926,7 @@ fn install() {
     facet::set_find_fn(find_impl);
     facet::set_set_text_fn(set_text_impl);
     facet::set_set_value_fn(set_value_impl);
+    facet::set_get_value_fn(value_impl);
     facet::set_set_on_fn(set_on_impl);
     facet::set_set_hidden_fn(set_hidden_impl);
     facet::set_add_child_fn(add_child_impl);
@@ -2150,6 +2151,12 @@ fn present_window(take root: facet::Node, title: str, width: f64, height: f64) {
     return;
 }
 
+// Portable file/directory pickers — front the ui-module NSOpenPanel wrappers so
+// facet/runtime can expose them app-tier (the alert / present_window pattern).
+// Blocking; the chosen path, or None on cancel.
+fn choose_directory() -> option::Option[text::Text] { return ui::choose_directory(); }
+fn choose_file() -> option::Option[text::Text] { return ui::choose_file(); }
+
 // Dismiss the current modal (call from a button handler inside the modal tree).
 fn end_modal(code: i64) {
     ak::Application::shared_application().stop_modal_with_code(code);
@@ -2670,6 +2677,31 @@ fn set_value_impl(h: facet::Handle, v: f64) -> bool {
     return true;
 }
 
+// facet::Handle.value hook: read a mounted element's natural value. An
+// NSSplitView reports its divider position (leading pane's trailing edge — the
+// arranged_subviews walk the workspace did through ak:: by hand); a value control
+// (slider / stepper / progress / gauge) reports its doubleValue. 0 otherwise.
+fn value_impl(h: facet::Handle) -> f64 {
+    let view: *u8 = h.view();
+    if view == (0 as *u8) { return 0.0f64; }
+    // NSSplitView: respondsToSelector(arrangedSubviews) → divider position.
+    let is_split: i8 = rt::msg_i8_id(view, rt::sel(#str_ptr("respondsToSelector:\0")), rt::sel(#str_ptr("arrangedSubviews\0")));
+    if is_split != (0 as i8) {
+        var arranged: vec::Vec[ak::View] = ak::SplitView::from_raw(view).arranged_subviews();
+        match arranged.at_ptr(0 as usize) {
+            option::Option[*ak::View]::Some(vp) => {
+                let fr: rt::Rect = { (*vp).frame() };
+                return fr.x + fr.w;
+            }
+            option::Option[*ak::View]::None => { return 0.0f64; }
+        }
+    }
+    // A value control: doubleValue.
+    let has_dv: i8 = rt::msg_i8_id(view, rt::sel(#str_ptr("respondsToSelector:\0")), rt::sel(#str_ptr("doubleValue\0")));
+    if has_dv != (0 as i8) { return ak::Control::from_raw(view).double_value(); }
+    return 0.0f64;
+}
+
 // facet::Handle.set_on hook: flip a toggle / checkbox / switch. Fixed-size.
 fn set_on_impl(h: facet::Handle, on: bool) -> bool {
     let view: *u8 = h.view();
@@ -2707,6 +2739,7 @@ fn add_child_impl(h: facet::Handle, take child: facet::Node) -> bool {
     { (*cfp).add_child(child_flex); }                // MOVE the flex node into the container
     { (*cfp).mark_content_changed(); }               // force a re-layout that includes it
     let _r: bool = ui::reflow_owner(h.cp(), cview);
+    drain_post_apply();   // size a freshly-mounted scroll/split child (deferred at mount)
     return true;
 }
 
@@ -2756,6 +2789,7 @@ fn insert_child_impl(h: facet::Handle, take child: facet::Node, at: usize) -> bo
     let _st = { (*cfp).children.insert(child_flex, idx) };    // MOVE the flex node in at `idx`
     { (*cfp).mark_content_changed(); }
     let _r: bool = ui::reflow_owner(h.cp(), cview);
+    drain_post_apply();   // size a freshly-mounted scroll/split child (deferred at mount)
     return true;
 }
 
@@ -2783,6 +2817,7 @@ fn replace_child_impl(h: facet::Handle, key: str, take child: facet::Node) -> bo
                     let _st = { (*cfp2).children.insert(child_flex, i) };
                     { (*cfp2).mark_content_changed(); }
                     let _r: bool = ui::reflow_owner(h.cp(), cview);
+                    drain_post_apply();   // size a freshly-mounted scroll/split child (deferred at mount)
                     return true;
                 }
             }
@@ -2818,6 +2853,7 @@ fn set_child_impl(h: facet::Handle, take child: facet::Node) -> bool {
     { (*cfp2).add_child(child_flex); }
     { (*cfp2).mark_content_changed(); }
     let _r: bool = ui::reflow_owner(h.cp(), cview);
+    drain_post_apply();   // size a freshly-mounted scroll/split child (deferred at mount)
     return true;
 }
 
@@ -2919,6 +2955,7 @@ fn attach_impl(h: facet::Handle, s: facet::Staged) -> bool {
     rt::msg_void_u64(root, rt::sel(#str_ptr("setAutoresizingMask:\0")), mask);
     ak::View::from_raw(container).add_subview(ak::View::from_raw(root));
     let _r: bool = ui::relayout(s.cp());   // lay the content out at the container's size
+    drain_post_apply();   // size any scroll/split in the attached subtree (deferred at mount)
     { (*sp)._attached = true; }
     let cb: fn(*u8) = { (*sp)._on_attach };
     cb({ (*sp)._on_attach_ctx });
@@ -3175,6 +3212,7 @@ fn find_set_text_mutates_label_in_place() {
     facet::set_find_fn(find_impl);
     facet::set_set_text_fn(set_text_impl);
     facet::set_set_value_fn(set_value_impl);
+    facet::set_get_value_fn(value_impl);
     facet::set_set_on_fn(set_on_impl);
     facet::set_set_hidden_fn(set_hidden_impl);
     FIND_PANE.n = 0 as i64;
@@ -3205,6 +3243,9 @@ fn find_set_text_mutates_label_in_place() {
     let volv: *u8 = find_view_by_id(host.raw(), "vol");
     assert volv != (0 as *u8);
     assert ak::Control::from_raw(volv).double_value() == 0.5f64;
+    // the same number through the portable getter (Handle.value); a miss reads 0.
+    assert facet::find("vol", cp).value() == 0.5f64;
+    assert facet::find("nope", cp).value() == 0.0f64;
 
     // set_on flips a toggle in place; the target resolves and the mutator applies
     // (same plumbing as set_value, which the assertion above proves end to end).
@@ -3388,6 +3429,19 @@ fn find_and_structural_verbs_reach_split_pane_content() {
     assert added != (0 as *u8);
     // ...at a real frame (reflow_owner reflowed the PANE, not the slot tree).
     assert ak::View::from_raw(added).frame().w > 0.0f64;
+
+    // portable divider read: Handle.value() on the split reports the leading
+    // pane's trailing edge — the arranged_subviews walk, now backend-free.
+    let split_h: facet::Handle = facet::find("the-split", cp);
+    assert split_h.found();
+    var arr2: vec::Vec[ak::View] = ak::SplitView::from_raw(split_h.view()).arranged_subviews();
+    match arr2.at_ptr(0 as usize) {
+        option::Option[*ak::View]::Some(p0) => {
+            let f0: rt::Rect = { (*p0).frame() };
+            assert split_h.value() == f0.x + f0.w;
+        }
+        option::Option[*ak::View]::None => { assert false; }
+    };
 
     // remove_child shrinks it again.
     assert facet::find("tabs", cp).remove_child("tabs:tab:a");
@@ -3607,6 +3661,37 @@ fn find_and_structural_verbs_reach_scroll_hosted_content() {
     assert find_view_by_id(host.raw(), "rows:b") != (0 as *u8);
     assert facet::find("rows", cp).remove_child("rows:a");
     assert find_view_by_id(host.raw(), "rows:a") == (0 as *u8);
+    unmount_all();
+}
+
+// Gap 2 regression: a structural verb that mounts a subtree containing a
+// `scroll{}` must DRAIN the deferred post-apply queue at its tail. Mounting a
+// scroll enqueues a ScrollJob (its content is sized once its frame is real); if
+// the verb doesn't drain, the job lingers in SCROLL_JOBS and the scroll's content
+// stays unsized until a later resize / post-render. Falsifiable: without the
+// drain, SCROLL_JOBS.count() is non-zero right after add_child returns.
+#[test]
+fn add_child_of_a_scroll_subtree_drains_post_apply() {
+    unmount_all();
+    install();
+    drain_post_apply();                            // start from a clean queue
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 400.0, h: 300.0 });
+    let _h: f64 = mount_component(LIST_PANE.build, host: host.raw());
+    let cp: *u8 = #addr_of(LIST_PANE) as *u8;
+    drain_post_apply();                            // clear anything the mount queued
+    assert SCROLL_JOBS.count() == (0 as usize);    // nothing pending before the add
+
+    // add_child a subtree that CONTAINS a scroll{} — mounting it enqueues a ScrollJob
+    var inner: facet::Builder = facet::Builder::new();
+    inner.add(facet::label("x").key("panel:x"));
+    var sc: facet::Builder = facet::Builder::new();
+    sc.add(facet::column(inner).key("panel:rows"));
+    let child: facet::Node = facet::scroll(sc).frame(200.0f64, 150.0f64).key("panel");
+    let _c: facet::Handle = facet::find("list", cp).add_child(child);
+
+    // the verb drained the queue at its tail: the scroll was filled, none pending.
+    assert find_view_by_id(host.raw(), "panel") != (0 as *u8);
+    assert SCROLL_JOBS.count() == (0 as usize);
     unmount_all();
 }
 
