@@ -593,6 +593,10 @@ pub struct MonoInfo {
     /// 2026-07-06 bound method references, keyed by the handler-argument
     /// expression's span. See [`BoundMethodRefInfo`].
     pub bound_method_refs: HashMap<ByteSpan, BoundMethodRefInfo>,
+    /// 2026-07-16: call span -> default exprs to APPEND to that call's args.
+    /// Recorded by sema when it (not lower) spliced omitted trailing
+    /// defaults — see `try_splice_method_defaults`. Monomorphize applies it.
+    pub default_splices: HashMap<ByteSpan, Vec<Expr>>,
     /// Slice 7GEN.5c: generic-struct instantiations. Maps
     /// `(generic_name, [concrete_args])` to the synthesized
     /// `StructDef` (cloned out of sema's table so monomorphize can
@@ -801,6 +805,8 @@ fn check_with_files_inner(
         resolving_aliases: std::collections::HashSet::new(),
         fnptr_field_names: None,
         bound_method_refs: HashMap::new(),
+        method_defaults: HashMap::new(),
+        default_splices: HashMap::new(),
         bound_ref_arg_spans: std::collections::HashSet::new(),
         scopes: Vec::new(),
         current_return: Ty::Error,
@@ -910,6 +916,7 @@ fn check_with_files_inner(
     // `#[no_alloc]`-marked `drop` before body-checking, so the scope-exit
     // drop-glue check in `check_stmt` can consult it.
     cx.collect_no_alloc_drop_types(program);
+    cx.collect_method_default_exprs(program);
     cx.lint_generic_fn_bodies(program);
     cx.check_functions(program);
     cx.check_methods(program);
@@ -1055,6 +1062,7 @@ fn check_with_files_inner(
         assoc_free_fn_dispatches: std::mem::take(&mut cx.assoc_free_fn_dispatches),
         assoc_method_dispatches: std::mem::take(&mut cx.assoc_method_dispatches),
         bound_method_refs: std::mem::take(&mut cx.bound_method_refs),
+        default_splices: std::mem::take(&mut cx.default_splices),
         struct_instantiations,
         enum_instantiations,
         method_instantiations,
@@ -1115,6 +1123,18 @@ struct SemaCx<'a> {
     /// twice, double-marking moves inside it (false E0335 on
     /// `eat(s).grow(2)` chains).
     fnptr_field_names: Option<(usize, std::collections::HashSet<String>)>,
+    /// 2026-07-16: per-(impl-target, method) parameter DEFAULT exprs,
+    /// receiver excluded, positionally parallel to the method's params
+    /// (None = required). Lower splices omitted defaults only when the bare
+    /// method name is unambiguous across ALL types (its table has no type
+    /// info); when two types share a method name, the positional call
+    /// reaches sema unspliced. Sema KNOWS the receiver type, so
+    /// `check_method_receiver` finishes the job from this table and records
+    /// the splice in `default_splices` for monomorphize to apply.
+    method_defaults: HashMap<(String, String), Vec<Option<Expr>>>,
+    /// 2026-07-16: call span -> default exprs to APPEND to the call's args
+    /// (monomorphize applies the rewrite; sema already type-checked them).
+    default_splices: HashMap<ByteSpan, Vec<Expr>>,
     /// 2026-07-06 bound method references: `recv.method` passed where a
     /// fn-pointer is expected. Keyed by the argument expression's span;
     /// monomorphize rewrites the arg to the synthesized bridge fn and
@@ -10271,6 +10291,98 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         }
     }
 
+    /// 2026-07-16: collect every impl method's parameter defaults, keyed by
+    /// (impl target name, method name) — see the `method_defaults` field.
+    /// The impl target name is the AST name: a concrete struct/enum's own
+    /// name, or the generic TEMPLATE name (`Signal` for `impl Signal[T]`) —
+    /// a receiver's instantiation maps back to it via `generic_origin`.
+    fn collect_method_default_exprs(&mut self, program: &Program) {
+        for item in &program.items {
+            let ItemKind::Impl(b) = &item.kind else {
+                continue;
+            };
+            for m in &b.methods {
+                if m.receiver.is_none() {
+                    continue; // assoc fns splice through lower's type-keyed table
+                }
+                let defaults: Vec<Option<Expr>> = m
+                    .params
+                    .iter()
+                    .map(|p| p.default.as_deref().cloned())
+                    .collect();
+                if defaults.iter().any(|d| d.is_some()) {
+                    self.method_defaults
+                        .insert((b.target.name.clone(), m.name.name.clone()), defaults);
+                }
+            }
+        }
+    }
+
+    /// 2026-07-16: a positional method call arrived with fewer args than
+    /// params (lower couldn't splice — the bare method name is shared by
+    /// several types). The receiver type is known HERE: if every missing
+    /// trailing parameter has a declared default, type-check the defaults
+    /// against the (already-substituted) param types, record the splice for
+    /// monomorphize, and report success. Any other shape returns false and
+    /// the caller's E0308 stands.
+    fn try_splice_method_defaults(
+        &mut self,
+        recv_ty: &Ty,
+        name: &Ident,
+        sig: &MethodSig,
+        n_args: usize,
+        call_span: ByteSpan,
+    ) -> bool {
+        let key_ty: Option<String> = match recv_ty {
+            Ty::Struct(sid) => {
+                let d = &self.structs[sid.0 as usize];
+                Some(
+                    d.generic_origin
+                        .as_ref()
+                        .map(|(n, _)| n.clone())
+                        .unwrap_or_else(|| d.name.clone()),
+                )
+            }
+            Ty::Enum(eid) => {
+                let d = &self.enums[eid.0 as usize];
+                Some(
+                    d.generic_origin
+                        .as_ref()
+                        .map(|(n, _)| n.clone())
+                        .unwrap_or_else(|| d.name.clone()),
+                )
+            }
+            _ => None,
+        };
+        let Some(key_ty) = key_ty else {
+            return false;
+        };
+        let Some(defaults) = self
+            .method_defaults
+            .get(&(key_ty, name.name.clone()))
+            .cloned()
+        else {
+            return false;
+        };
+        if defaults.len() != sig.params.len() {
+            return false; // table/sig drift — let the arity error surface
+        }
+        let mut spliced: Vec<Expr> = Vec::with_capacity(sig.params.len() - n_args);
+        for slot in defaults.iter().skip(n_args) {
+            let Some(d) = slot else {
+                return false; // a required param is missing — real arity error
+            };
+            spliced.push(d.clone());
+        }
+        // Type-check each default against its param, exactly as a written
+        // arg would be (defaults are closed expressions — literals/casts).
+        for (off, e) in spliced.iter().enumerate() {
+            self.check_arg_with_move(e, &sig.params[n_args + off]);
+        }
+        self.default_splices.insert(call_span, spliced);
+        return true;
+    }
+
     /// Shared receiver + arity checks for a resolved method call. The concrete
     /// struct path and the generic `Ty::Param` bound-method path BOTH go
     /// through this (and `check_method_args_and_return`) so they cannot drift —
@@ -10322,17 +10434,21 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             self.consume_place(receiver, recv_ty);
         }
         if args.len() != sig.params.len() {
-            self.err(
-                "E0308",
-                format!(
-                    "method `{}::{}` takes {} argument(s), got {}",
-                    display_ty,
-                    name.name,
-                    sig.params.len(),
-                    args.len()
-                ),
-                call_span,
-            );
+            let spliced = args.len() < sig.params.len()
+                && self.try_splice_method_defaults(recv_ty, name, sig, args.len(), call_span);
+            if !spliced {
+                self.err(
+                    "E0308",
+                    format!(
+                        "method `{}::{}` takes {} argument(s), got {}",
+                        display_ty,
+                        name.name,
+                        sig.params.len(),
+                        args.len()
+                    ),
+                    call_span,
+                );
+            }
         }
         true
     }
@@ -12940,15 +13056,26 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 }
                 Some(_) => {} // the spliced default — monomorphize replaces it
                 None => {
-                    self.err(
-                        "E0824",
-                        format!(
-                            "bound reference `{}::{}` needs a defaulted `*u8` context parameter after the handler (so the call may omit it)",
-                            struct_name, name.name
-                        ),
-                        args[i].span,
-                    );
-                    continue;
+                    // 2026-07-16: the ctx slot may also be a SEMA-side splice
+                    // (recorded by `try_splice_method_defaults` when the bare
+                    // method name is shared across types and lower could not
+                    // splice). Monomorphize appends those before the bound-ref
+                    // rewrite, so the slot exists to overwrite.
+                    let splice_covers = self
+                        .default_splices
+                        .get(&call_span)
+                        .is_some_and(|sp| i + 1 >= args.len() && (i + 1 - args.len()) < sp.len());
+                    if !splice_covers {
+                        self.err(
+                            "E0824",
+                            format!(
+                                "bound reference `{}::{}` needs a defaulted `*u8` context parameter after the handler (so the call may omit it)",
+                                struct_name, name.name
+                            ),
+                            args[i].span,
+                        );
+                        continue;
+                    }
                 }
             }
             let sanitized: String = struct_name

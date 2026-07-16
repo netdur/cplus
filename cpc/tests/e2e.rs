@@ -19511,3 +19511,41 @@ fn generic_body_free_fn_dispatch_nominal_args() {
     );
     assert!(out.status.success(), "exit: {}", out.status);
 }
+
+/// 2026-07-16: omitted trailing DEFAULTS on a method whose bare name is
+/// shared by several types. Lower's splice table is keyed by method name
+/// alone (no type info), so both candidates accepted the positional call
+/// differently and it reached sema unspliced — E0308 arity error on
+/// perfectly valid code. Sema now finishes the splice from the receiver's
+/// type (`try_splice_method_defaults`) and monomorphize appends the
+/// recorded defaults. The bound-method reference rides the same splice for
+/// its ctx slot.
+#[test]
+fn method_name_collision_still_splices_defaults() {
+    let out = compile_and_run_src(
+        "defcollide",
+        "struct Sig { total: i64 }\n\
+         impl Sig {\n\
+             fn on(ref this, v: i64, ctx: *u8 = 0 as *u8, once: bool = false) -> u64 {\n\
+                 this.total = this.total + v + (ctx as i64);\n\
+                 return 1u64;\n\
+             }\n\
+         }\n\
+         struct Bus { total: i64 }\n\
+         impl Bus {\n\
+             fn on(ref this, name: str, v: i64, ctx: *u8 = 0 as *u8) -> u64 {\n\
+                 this.total = this.total + v;\n\
+                 return 2u64;\n\
+             }\n\
+         }\n\
+         fn main() -> i32 {\n\
+             var s: Sig = Sig { total: 0 };\n\
+             let _a: u64 = s.on(5);\n\
+             let _b: u64 = s.on(5, ctx: 2 as *u8);\n\
+             var b: Bus = Bus { total: 0 };\n\
+             let _c: u64 = b.on(\"tick\", 3);\n\
+             return ((s.total - 12) + (b.total - 3)) as i32;\n\
+         }\n",
+    );
+    assert!(out.status.success(), "exit: {}", out.status);
+}

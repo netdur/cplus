@@ -2531,6 +2531,24 @@ fn rewrite_expr(
                     )
                 })
                 .collect();
+            // 2026-07-16: sema-side default splices — trailing defaulted
+            // args sema resolved when lower could not (the bare method name
+            // is shared across types). Appended BEFORE the bound-ref rewrite
+            // below so a ctx slot that came from a splice exists to
+            // overwrite.
+            if let Some(splices) = mono.default_splices.get(&expr.span) {
+                for sp in splices {
+                    new_args.push(rewrite_expr(
+                        sp,
+                        subst,
+                        generic_names,
+                        inst_lookup,
+                        mono,
+                        type_name_of,
+                        struct_lookup,
+                    ));
+                }
+            }
             // 2026-07-06 bound method references: an arg sema recorded as
             // `recv.method` in handler position becomes the erased bridge
             // fn, and the FOLLOWING arg slot (the spliced ctx default —

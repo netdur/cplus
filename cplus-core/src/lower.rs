@@ -296,10 +296,29 @@ impl Lower {
         };
         let mut results: Vec<(usize, Vec<ArgSlot>)> = Vec::new();
         let mut first_err: Option<(&'static str, String, Span)> = None;
+        // Two arrangements are the same only if they'd produce the same
+        // lowered call: same slot shape AND the same exprs spliced into the
+        // `Default` slots. Comparing slots alone deduped `Sig::on(v, ctx=0,
+        // once=false)` against `Bus::on(name, v, ctx=0)` for a 2-arg call
+        // (both are `[Arg0, Arg1, Default]`) and spliced the FIRST
+        // candidate's `false` into the other type's `*u8` slot.
+        let splice_sig = |ci: usize, slots: &[ArgSlot]| -> Vec<Option<Expr>> {
+            slots
+                .iter()
+                .enumerate()
+                .map(|(pos, sl)| match sl {
+                    ArgSlot::Default => candidates[ci][pos].default.clone(),
+                    ArgSlot::Arg(_) => None,
+                })
+                .collect()
+        };
         for (ci, params) in candidates.iter().enumerate() {
             match Self::match_call(params, args, arg_labels, call_span) {
                 Ok(slots) => {
-                    if !results.iter().any(|(_, s)| *s == slots) {
+                    if !results
+                        .iter()
+                        .any(|(pci, s)| *s == slots && splice_sig(*pci, s) == splice_sig(ci, &slots))
+                    {
                         results.push((ci, slots));
                     }
                 }
