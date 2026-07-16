@@ -11,7 +11,7 @@ DSL, or with the `Builder` API directly.
         label("Title", size: 20.0f64, bold: true)
         wrap_label("A longer line that wraps to the width.", secondary: true)
         hstack {
-            button("New", primary: true).on_click(on_new, ctx: 0 as *u8)
+            button("New", primary: true).on_click(this.on_new)
             button("Open")
         }
     }
@@ -148,11 +148,23 @@ example `on_submit` / `on_change` on a composer, or `on: handler` on a `toggle`
 
 ## Handlers
 
-A handler is `fn(sender: *u8, ctx: *u8)`. Wire it with `.on_click(handler, ctx:
-...)`. When `ctx` is a component's address, the handler can call
-`facet::find(ctx, key)` to address its own elements. When `ctx` is data (a row
-index, say), the handler reads it and does whatever it likes — facet does not
-interpret it. See [updates.md](updates.md).
+The handler primitive is `fn(sender: *u8, ctx: *u8)` — `sender` is the control
+that fired, `ctx` is an opaque pointer facet passes through untouched.
+
+**Bind a component method** — the default form. In `build(ref this)`:
+
+```cplus
+button("+1").on_click(this.inc)   // inc is `fn inc(ref this, sender: *u8)`
+```
+
+The bound method's receiver fills `ctx`, so `inc` declares only `sender`. Inside,
+use `this` for state and `facet::find(#addr_of(this) as *u8, key)` to address
+elements — no static. See [component-model.md](component-model.md) and
+[updates.md](updates.md).
+
+**Raw form**, for a handler with no component: a free `fn(sender, ctx)` wired
+with an explicit `.on_click(handler, ctx: data)`. Pass data as `ctx` (a row
+index, say); the handler reads it and facet never interprets it.
 
 ## Colors and style
 

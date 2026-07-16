@@ -61,7 +61,13 @@ import "flex_layout/flex_layout" as flex;
 // parent's `build` on every call. `build` runs ONCE and returns already-owned
 // children; after that, you `find` and mutate.
 interface Component {
-    fn build(this) -> Node;
+    // `build` takes `ref this` so a component can bind its own handlers directly
+    // — `button(...).on_click(this.method)` — where the bound method's receiver
+    // is the component itself. The receiver is a writable place at the real
+    // address, so a handler can also self-locate: `find(#addr_of(this), key)`.
+    // No module static, no stored `cp`. (build still runs ONCE and should only
+    // read state to produce the tree; the writable receiver is for binding.)
+    fn build(ref this) -> Node;
 }
 
 // ---- node kinds --------------------------------------------------------

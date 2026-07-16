@@ -62,7 +62,7 @@ touches the UI: the imperative version of "don't update a detached view", as a
 plain boolean.
 
 ```cplus
-impl Feed: facet::Component { fn build(this) -> facet::Node { ... } }
+impl Feed: facet::Component { fn build(ref this) -> facet::Node { ... } }
 
 impl Feed: facet::Lifecycle {
     fn on_attach(ref this) { this.reload(); }        // came on screen

@@ -27,37 +27,51 @@ Two ways to update, never a third:
 
 ```cplus
 import "facet/facet" as facet;
+import "facet/runtime" as runtime;
 import "stdlib/text" as text;
 
 struct Counter { n: i32 }
 
-static COUNTER: Counter = #zero::[Counter]();
-
-// A handler receives the component's address as its `ctx`, so `find(ctx, key)`
-// resolves inside this component. It mutates state, then pushes the new value
-// to the keyed label — in place. No re-render.
-fn inc(sender: *u8, ctx: *u8) {
-    COUNTER.n = COUNTER.n + 1;
-    let msg: text::Text = "count ${COUNTER.n}";
-    let _u: facet::Handle = facet::find(ctx, "count").set_text(msg.view());
-    return;
+impl Counter {
+    // A handler is a METHOD: `ref this` is the receiver, `sender` is the control
+    // that fired. `#addr_of(this)` is the component's own address — its keyed
+    // subtree — so the handler self-locates. No module static, no stored `cp`.
+    fn inc(ref this, sender: *u8) {
+        this.n = this.n + 1;
+        let msg: text::Text = "count ${this.n}";
+        let _u: facet::Handle =
+            facet::find(#addr_of(this) as *u8, "count").set_text(msg.view());
+        return;
+    }
 }
 
 impl Counter: facet::Component {
-    fn build(this) -> facet::Node {
+    // `build` takes `ref this`, so it binds its own handler directly —
+    // `.on_click(this.inc)`, the receiver being this component. `build` runs ONCE.
+    fn build(ref this) -> facet::Node {
         let t: text::Text = "count ${this.n}";
         return @facet {
             vstack {
-                label(t.view()).key("count")            // keyed so a handler can find it
-                button("+1").on_click(inc, ctx: #addr_of(COUNTER) as *u8)
+                label(t.view()).key("count")     // keyed so a handler can find it
+                button("+1").on_click(this.inc)  // bind the method; receiver is the component
             }
         };
     }
 }
+
+fn main() -> i32 {
+    // run_component OWNS the instance for the window's life — no module static.
+    runtime::run_component(Counter { n: 0 }, title: "Counter", width: 300.0f64, height: 160.0f64);
+    return 0;
+}
 ```
 
-`build` runs once. Clicking `+1` runs `inc`, which finds `"count"` and sets its
-text on the same label view — the label is never rebuilt.
+`build` runs once. Clicking `+1` runs `Counter::inc`, which finds `"count"` and
+sets its text on the same label view — the label is never rebuilt. Binding
+`this.inc` spends the handler's `ctx` on the receiver, so `inc` takes only
+`sender`. There is no module static and no `component_ctx` wiring: `run_component`
+holds the instance and keys the mount by its address, and the handler self-locates
+with `find(#addr_of(this), key)`.
 
 ## Layout
 

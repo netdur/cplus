@@ -24,24 +24,23 @@ element's `agent_id` / accessibility identifier, shared with the agent surface.)
 fn find(cp: *u8, key: str) -> Handle
 ```
 
-`cp` is the component's own address. A handler receives it as its `ctx`, so
-`find(ctx, key)` addresses the handler's own component. A miss returns an empty
-`Handle` whose mutators no-op — the `getElementById`-null pattern, so a `find`
-on a torn-down element is safe.
+`cp` is the component's own address. Inside a `ref this` handler that is
+`#addr_of(this)`, so `find(#addr_of(this), key)` addresses the handler's own
+component. A miss returns an empty `Handle` whose mutators no-op — the
+`getElementById`-null pattern, so a `find` on a torn-down element is safe.
 
-Under `facet::run`, the window's root mount slot needs a component address the
-app can name. Supply one on the `Window` before running it:
+`run_component` owns the instance for the window's life and keys the root mount
+slot by its address, so `find` and the structural verbs resolve from any handler
+with no setup:
 
 ```cplus
-static WORKSPACE: Workspace = #zero::[Workspace]();
-
-win.component_ctx(#addr_of(WORKSPACE) as *u8);
-runtime::run(win);
+fn main() -> i32 {
+    runtime::run_component(Workspace { /* ... */ }, title: "Workspace");
+    return 0;
+}
 ```
 
-Every `find(cp, key)` and structural verb then resolves against that address,
-from any handler. Unset, the runtime keys the slot internally and `find` is not
-reachable from app code.
+(The examples below write `cp` for that address — `#addr_of(this)` in a handler.)
 
 `Handle` is a non-owning, `Copy`, chainable view onto a mounted element:
 
@@ -63,10 +62,10 @@ Each sets one element in place and returns the `Handle` (chainable):
 | `show()` / `hide()` | the readable pair over `set_hidden` |
 
 ```cplus
-facet::find(ctx, "count").set_text("count 3");
-facet::find(ctx, "vol").set_value(0.5f64);
-facet::find(ctx, "flag").set_on(true);
-facet::find(ctx, "panel").hide();
+facet::find(cp, "count").set_text("count 3");
+facet::find(cp, "vol").set_value(0.5f64);
+facet::find(cp, "flag").set_on(true);
+facet::find(cp, "panel").hide();
 ```
 
 These four setters are the **portable** update path: they work on every backend
@@ -86,19 +85,19 @@ On a **keyed container**, address children in place:
 
 ```cplus
 // append a row
-facet::find(ctx, "list").add_child(facet::label("row-c").key("c"));
+facet::find(cp, "list").add_child(facet::label("row-c").key("c"));
 
 // insert at the top
-facet::find(ctx, "list").insert_child(facet::label("row-0").key("z"), 0 as usize);
+facet::find(cp, "list").insert_child(facet::label("row-0").key("z"), 0 as usize);
 
 // swap one row for another
-let ok: bool = facet::find(ctx, "list").replace_child("c", facet::label("row-c2").key("c2"));
+let ok: bool = facet::find(cp, "list").replace_child("c", facet::label("row-c2").key("c2"));
 
 // remove one row
-let gone: bool = facet::find(ctx, "list").remove_child("a");
+let gone: bool = facet::find(cp, "list").remove_child("a");
 
 // single-slot swap: make the container hold exactly one thing
-facet::find(ctx, "outlet").set_child(some_screen_node);
+facet::find(cp, "outlet").set_child(some_screen_node);
 ```
 
 `add_child` / `insert_child` / `set_child` mount a **fresh** `Node` and take
@@ -109,16 +108,20 @@ views and state), use the component lifecycle instead — see
 ## The canonical handler
 
 ```cplus
-fn increment(sender: *u8, ctx: *u8) {
-    COUNTER.n = COUNTER.n + 1;                                  // 1. state
-    let msg: text::Text = "count ${COUNTER.n}";
-    let _u: facet::Handle = facet::find(ctx, "count").set_text(msg.view());  // 2. push by key
+// in `impl Counter`; wired in build as `button("+1").on_click(this.increment)`
+fn increment(ref this, sender: *u8) {
+    this.n = this.n + 1;                                        // 1. state
+    let msg: text::Text = "count ${this.n}";
+    let _u: facet::Handle =
+        facet::find(#addr_of(this) as *u8, "count").set_text(msg.view());  // 2. push by key
     return;
 }
 ```
 
 Two steps, always: write the field, push it to the keyed element. The element's
-view survives; nothing is rebuilt.
+view survives; nothing is rebuilt. The handler is a `ref this` method bound at
+the call site; binding the method spends `ctx` on the receiver, so `increment`
+takes only `sender`.
 
 ## Which item fired: `key_of`
 
@@ -134,7 +137,7 @@ reads its row's key. Empty when nothing up the chain is tagged. With namespaced
 keys, parse the id segment back out:
 
 ```cplus
-fn on_tab_click(sender: *u8, ctx: *u8) {
+fn on_tab_click(ref this, sender: *u8) {         // bound as `.on_click(this.on_tab_click)`
     let k: text::Text = facet::key_of(sender);   // e.g. "tabs:tab:42"
     // parse the trailing segment, look the tab up, act on it
 }
@@ -156,7 +159,7 @@ string), empty when nothing has been dropped. Pair with `key_of(sender)` for
 where it landed:
 
 ```cplus
-fn on_card_drop(sender: *u8, ctx: *u8) {
+fn on_card_drop(ref this, sender: *u8) {                  // bound as `.on_drop(this.on_card_drop)`
     let zone: text::Text = facet::key_of(sender);        // "board:col:2:drop"
     let card: text::Text = facet::dropped_text(sender);  // "card:42"
     // parse both, move the card, update by key

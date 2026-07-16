@@ -16,7 +16,8 @@ impl Sidebar {
 }
 
 impl Sidebar: facet::Component {
-    fn build(this) -> facet::Node { /* return a Node tree */ }
+    // build takes `ref this`, so it binds its own handlers: `.on_click(this.toggle_collapse)`
+    fn build(ref this) -> facet::Node { /* return a Node tree */ }
 }
 ```
 
@@ -38,25 +39,35 @@ the tree, so its fields persist. A handler writes a field, then pushes that
 value to the element that displays it (see [updates.md](updates.md)). Nothing is
 recomputed and the tree is not rebuilt.
 
+The instance is owned by whoever runs it — `run_component` holds it for the
+window's life (see [updates.md](updates.md)). A handler is a `ref this` method
+bound at the call site (`.on_click(this.toggle_collapse)`); `#addr_of(this)` is
+the component's own keyed subtree, so it self-locates — no module static, no
+stored `cp`:
+
 ```cplus
-fn toggle_collapse(sender: *u8, ctx: *u8) {
-    SIDEBAR.collapsed = !SIDEBAR.collapsed;                 // 1. update state
+// ...in `impl Sidebar`, bound in build as `.on_click(this.toggle_collapse)`:
+fn toggle_collapse(ref this, sender: *u8) {
+    this.collapsed = !this.collapsed;                                // 1. update state
     let _u: facet::Handle =
-        facet::find(ctx, "panel").set_hidden(SIDEBAR.collapsed);  // 2. push to the view
+        facet::find(#addr_of(this) as *u8, "panel").set_hidden(this.collapsed);  // 2. push to the view
     return;
 }
 ```
 
 ## The conformance block
 
-`interface Component { fn build(this) -> Node; }` is closed: the `impl T:
+`interface Component { fn build(ref this) -> Node; }` is closed: the `impl T:
 facet::Component` block is verified against this declaration both ways, so a
 typo in the method name or signature is a compile error rather than a silently
 unmounted component.
 
-`build` takes `this` by read-only receiver — it reads state to produce the
-description, it does not mutate. Mutation happens in the inherent handlers
-(`ref this`, or via the component's address as a free function's `ctx`).
+`build` takes `ref this` so it can bind its own handlers —
+`button(...).on_click(this.method)`, the receiver being the component. By
+convention `build` still only *reads* state to produce the tree; the writable
+receiver is for binding, not mutation. A free `fn(sender, ctx)` handler is also
+accepted — it takes a component address as `ctx` — but the bound method is the
+default: no static, and no `ctx: #addr_of(...)` at the call site.
 
 ## Composition
 
@@ -73,7 +84,7 @@ fn chip(name: str, ok: bool) -> facet::Node {
 }
 
 impl Panel: facet::Component {
-    fn build(this) -> facet::Node {
+    fn build(ref this) -> facet::Node {
         var p: OtherComponent = OtherComponent::new();
         return @facet {
             vstack {

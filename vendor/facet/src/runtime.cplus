@@ -99,6 +99,52 @@ fn run[W: Window](take window: W) {
     return;
 }
 
+// Run a component that OWNS its own lifetime — no module static required.
+//
+// The runtime holds the instance in this frame, which outlives `run_window`
+// (it blocks), so the component lives exactly as long as the window. Its address
+// is stable here, so it serves as BOTH the mount key (`component_ctx`) and the
+// handlers' self-location target: inside a `ref this` handler,
+// `facet::find(#addr_of(this), key)` addresses this component's own subtree.
+//
+// The component's `build` takes `ref this` (see `Component`), so it binds its
+// own handlers directly — `button(...).on_click(this.method)` — with the
+// receiver being the component. No static, no stored `cp`.
+//
+//     struct Counter { n: i32 }
+//     impl Counter {
+//         fn inc(ref this, sender: *u8) { this.n = this.n + 1; /* find + set */ }
+//     }
+//     impl Counter: facet::Component {
+//         fn build(ref this) -> facet::Node { /* ... .on_click(this.inc) ... */ }
+//     }
+//     fn main() -> i32 { runtime::run_component(Counter { n: 0 }, title: "Counter"); return 0; }
+fn run_component[C: core::Component](
+    take component: C,
+    title: str = "facet",
+    width: f64 = 480.0f64,
+    height: f64 = 360.0f64,
+    min_width: f64 = 0.0f64,
+    min_height: f64 = 0.0f64,
+    zoomable: bool = false,
+) {
+    backend::install();   // register this backend's facet verbs before any render
+    var owned: C = component;                   // the runtime holds the instance
+    let cp: *u8 = #addr_of(owned) as *u8;       // stable address in this blocking frame
+    let root: Node = owned.build();             // build(ref this) wires handlers at cp
+    backend::run_window(
+        root,
+        title: title,
+        width: width,
+        height: height,
+        min_width: min_width,
+        min_height: min_height,
+        zoomable: zoomable,
+        component_ctx: cp,
+    );
+    return;
+}
+
 // A blocking modal alert. Returns the 0-based index of the clicked button
 // (0 = `primary`, 1 = `secondary`).
 fn alert(title: str, message: str, primary: str, secondary: str = "") -> i32 {

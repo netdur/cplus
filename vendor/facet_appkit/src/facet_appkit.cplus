@@ -3107,7 +3107,7 @@ struct ScrollPane {
 }
 
 impl ScrollPane: facet::Component {
-    fn build(this) -> facet::Node {
+    fn build(ref this) -> facet::Node {
         var list: facet::Builder = facet::Builder::new();
         var i: i64 = 0 as i64;
         while i < this.rows {
@@ -3131,7 +3131,7 @@ static SCROLL_PANE: ScrollPane = #zero::[ScrollPane]();
 struct FindPane { n: i64 }
 
 impl FindPane: facet::Component {
-    fn build(this) -> facet::Node {
+    fn build(ref this) -> facet::Node {
         return @facet {
             vstack {
                 label("v0", size: 18.0f64).key("value")
@@ -3198,7 +3198,7 @@ fn find_set_text_mutates_label_in_place() {
 struct BoxPane { n: i64 }
 
 impl BoxPane: facet::Component {
-    fn build(this) -> facet::Node {
+    fn build(ref this) -> facet::Node {
         return @facet {
             vstack {
                 vstack {
@@ -3283,7 +3283,7 @@ fn run_slot_defaults_to_root_address_ctx() {
 struct PaneTabs { n: i64 }
 
 impl PaneTabs: facet::Component {
-    fn build(this) -> facet::Node {
+    fn build(ref this) -> facet::Node {
         return @facet {
             vstack {
                 split {
@@ -3457,7 +3457,7 @@ fn t3x_tab_item() -> facet::Node {
 struct PaneTabs2 { n: i64 }
 
 impl PaneTabs2: facet::Component {
-    fn build(this) -> facet::Node {
+    fn build(ref this) -> facet::Node {
         var tb: facet::Builder = facet::Builder::new();
         let tabs_box: facet::Node = facet::hstack(tb)
             .align_items(flex::Align::Stretch)
@@ -3524,7 +3524,7 @@ fn iris_tab_anatomy_states_overlap_after_add_and_raise() {
 struct ScrollRows { n: i64 }
 
 impl ScrollRows: facet::Component {
-    fn build(this) -> facet::Node {
+    fn build(ref this) -> facet::Node {
         return @facet {
             vstack {
                 scroll {
@@ -3723,7 +3723,7 @@ fn e2e_raise_from_recognizer_sender_reorders_keyed_view() {
 struct ListPane { n: i64 }
 
 impl ListPane: facet::Component {
-    fn build(this) -> facet::Node {
+    fn build(ref this) -> facet::Node {
         return @facet {
             vstack {
                 vstack {
@@ -3773,7 +3773,7 @@ fn find_add_and_remove_child() {
 struct VerbPane { n: i64 }
 
 impl VerbPane: facet::Component {
-    fn build(this) -> facet::Node {
+    fn build(ref this) -> facet::Node {
         return @facet {
             vstack {
                 vstack {
@@ -3883,7 +3883,7 @@ fn keyed_direct_structural_verbs() {
 struct NavHost { n: i64 }
 
 impl NavHost: facet::Component {
-    fn build(this) -> facet::Node {
+    fn build(ref this) -> facet::Node {
         var outlet: facet::Builder = facet::Builder::new();   // empty: attach fills it
         var root: facet::Builder = facet::Builder::new();
         root.add(facet::column(outlet).key("outlet").grow(1.0f64));
@@ -3900,7 +3900,7 @@ struct RouteScreen {
 }
 
 impl RouteScreen: facet::Component {
-    fn build(this) -> facet::Node {
+    fn build(ref this) -> facet::Node {
         var b: facet::Builder = facet::Builder::new();
         b.add(facet::label(this.tag.view(), size: 14.0f64).key("title"));
         return facet::column(b);
@@ -4100,7 +4100,7 @@ struct ReconCounter {
 }
 
 impl ReconCounter: facet::Component {
-    fn build(this) -> facet::Node {
+    fn build(ref this) -> facet::Node {
         let t: text::Text = "count ${this.count}";
         var b: facet::Builder = facet::Builder::new();
         b.add(facet::label(t.view()).key("count"));   // keyed so the handler can address it
@@ -5362,7 +5362,7 @@ fn shell_style_mask_adds_full_size_content_only_when_clean() {
 struct ZoomPane { n: i64 }
 
 impl ZoomPane: facet::Component {
-    fn build(this) -> facet::Node {
+    fn build(ref this) -> facet::Node {
         return @facet {
             vstack {
                 wrap_label("The quick brown fox jumps over the lazy dog while the lazy dog wonders why the fox keeps wrapping to the pane width.")
