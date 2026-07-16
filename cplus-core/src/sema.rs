@@ -13644,7 +13644,16 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
     fn is_writable_place_quiet(&self, target: &Expr) -> bool {
         match &target.kind {
             ExprKind::Ident(name) => {
+                // A mutable local (`var`), OR a module `static` — every static is
+                // a mutable, writable place (v0.0.24 #9), exactly as
+                // `target_is_writable_place` treats it for `STATIC.field = v` and
+                // as the E0823 bound-ref check treats it for `.on_click(S.method)`.
+                // Without the static case here, a direct `ref this` method call on a
+                // static (`WORKSPACE.build()`) was the one mutation E0328 uniquely
+                // rejected, forcing pointer-laundering — the static-receiver
+                // asymmetry (bugs/2026-07-16-static-receiver-asymmetry-...).
                 matches!(self.lookup_local(name), Some(info) if info.mutable)
+                    || self.statics_table.contains_key(name)
             }
             ExprKind::Field { receiver, .. } => self.is_writable_place_quiet(receiver),
             ExprKind::Index { receiver, .. } => {
@@ -18753,6 +18762,38 @@ mod tests {
                 Box::leak(d.code.0.to_string().into_boxed_str()) as &str
             })
             .collect()
+    }
+
+    // A module `static` is a mutable, writable place (like `S.field = v` and
+    // `S = v`, both allowed), so a `ref this` method call on it must be legal.
+    // Previously E0328 rejected only this form — the static-receiver asymmetry.
+    #[test]
+    fn static_receiver_allows_ref_this_method_call() {
+        let src = "\
+struct C { n: i32 }\n\
+impl C { fn bump(ref this) { this.n = this.n + 1; return; } }\n\
+static S: C = C { n: 0 };\n\
+fn go() { S.bump(); return; }\n";
+        assert!(
+            !errors(src).contains(&"E0328"),
+            "static receiver wrongly rejected for a ref-this method: {:?}",
+            errors(src)
+        );
+    }
+
+    // The fix must not over-broaden: a `let` (immutable) local is not a writable
+    // place, so a `ref this` method call on it still errors.
+    #[test]
+    fn immutable_local_receiver_still_rejects_ref_this_method_e0328() {
+        let src = "\
+struct C { n: i32 }\n\
+impl C { fn bump(ref this) { this.n = this.n + 1; return; } }\n\
+fn go() { let c: C = C { n: 0 }; c.bump(); return; }\n";
+        assert!(
+            errors(src).contains(&"E0328"),
+            "immutable-local receiver should still be E0328: {:?}",
+            errors(src)
+        );
     }
 
     fn assert_clean(src: &str) {
