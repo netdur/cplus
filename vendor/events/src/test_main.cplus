@@ -339,6 +339,96 @@ fn bus_shared_is_one_instance() {
     return;
 }
 
+// ---- off_ctx: one-call receiver teardown --------------------------------------
+
+#[test]
+fn signal_off_ctx_removes_by_identity() {
+    reset();
+    var s: events::Signal[i64] = events::Signal[i64]::new();
+    let _a: u64 = s.on(bump, ctx: 1 as *u8);
+    let _b: u64 = s.on(bump, ctx: 1 as *u8);
+    let _c: u64 = s.on(bump, ctx: 2 as *u8);
+    let removed: usize = s.off_ctx(1 as *u8);
+    assert removed == 2usize;
+    assert s.count() == 1usize;
+    let none: usize = s.off_ctx(9 as *u8);   // unknown identity: no-op
+    assert none == 0usize;
+    return;
+}
+
+#[test]
+fn bus_off_ctx_removes_across_names() {
+    reset();
+    var b: events::Bus = events::Bus::new();
+    let _a: u64 = b.on("tick", on_save, ctx: 5 as *u8);
+    let _b: u64 = b.on("tock", on_save, ctx: 5 as *u8);
+    let _c: u64 = b.on("tick", on_save, ctx: 6 as *u8);
+    let removed: usize = b.off_ctx(5 as *u8);
+    assert removed == 2usize;
+    assert b.count("tick") == 1usize;
+    assert b.count("tock") == 0usize;
+    return;
+}
+
+// ---- module verbs: the pointer-free shared-bus surface --------------------------
+
+#[test]
+fn module_verbs_route_through_shared_bus() {
+    reset();
+    let id: u64 = events::on("mv:ping", on_save);
+    let _o: u64 = events::once("mv:ping", on_save);
+    assert events::count("mv:ping") == 2usize;
+    events::emit("mv:ping");
+    assert LOG == 2;
+    assert events::count("mv:ping") == 1usize;   // once removed
+    events::emit("mv:ping", payload: "x");
+    assert LOG == 3;
+    assert events::off(id);
+    assert !events::off(id);
+    assert events::count("mv:ping") == 0usize;
+    return;
+}
+
+#[test]
+fn module_off_all_and_off_ctx() {
+    reset();
+    let _a: u64 = events::on("mv:a", on_save);
+    let _b: u64 = events::on("mv:a", on_save);
+    let _c: u64 = events::on("mv:b", on_open, ctx: 3 as *u8);
+    events::off_all("mv:a");
+    assert events::count("mv:a") == 0usize;
+    assert events::count("mv:b") == 1usize;
+    let removed: usize = events::off_ctx(3 as *u8);
+    assert removed == 1usize;
+    assert events::count("mv:b") == 0usize;
+    return;
+}
+
+// A bound method registered through the module verb: `this` rides as ctx
+// through the shared bus, payload arrives typed as `str`.
+struct Recorder {
+    total: i64,
+}
+
+impl Recorder {
+    fn on_note(ref this, payload: str) {
+        this.total = this.total + (#str_len(payload) as i64);
+        return;
+    }
+}
+
+#[test]
+fn module_verb_bound_method_listener() {
+    reset();
+    var r: Recorder = Recorder { total: 0 };
+    let id: u64 = events::on("mv:note", r.on_note);
+    events::emit("mv:note", payload: "abc");
+    events::emit("mv:note", payload: "de");
+    assert r.total == 5;
+    assert events::off(id);
+    return;
+}
+
 fn main() -> i32 {
     io::println("events: run `cpc test`");
     return 0;

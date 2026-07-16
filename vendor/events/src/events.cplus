@@ -105,6 +105,30 @@ impl Signal[T] {
         return false;
     }
 
+    // Remove every listener registered with this ctx — one-call teardown
+    // for a receiver: a component detaches all its bound methods (their ctx
+    // is the receiver's address) before it goes away, without keeping
+    // tokens. Returns how many were removed. Note ctx 0 matches exactly the
+    // listeners registered without a ctx.
+    fn off_ctx(ref this, ctx: *u8) -> usize {
+        var removed: usize = 0usize;
+        var i: usize = 0usize;
+        while i < this._subs.count() {
+            var hit: bool = false;
+            match this._subs.at_ptr(i) {
+                option::Option[*Listener[T]]::Some(p) => { hit = { (*p).ctx } == ctx; }
+                option::Option[*Listener[T]]::None => {}
+            }
+            if hit {
+                let _gone: option::Option[Listener[T]] = this._subs.remove(i);
+                removed = removed + 1usize;
+            } else {
+                i = i + 1usize;
+            }
+        }
+        return removed;
+    }
+
     // Deliver `value` to every listener registered before this call, in
     // subscription order. See the module header for the exact semantics
     // under mid-dispatch mutation.
@@ -249,6 +273,27 @@ impl Bus {
         return;
     }
 
+    // Remove every listener registered with this ctx, across all names —
+    // the same one-call receiver teardown as `Signal.off_ctx`.
+    fn off_ctx(ref this, ctx: *u8) -> usize {
+        var removed: usize = 0usize;
+        var i: usize = 0usize;
+        while i < this._subs.count() {
+            var hit: bool = false;
+            match this._subs.at_ptr(i) {
+                option::Option[*BusListener]::Some(p) => { hit = { (*p).ctx } == ctx; }
+                option::Option[*BusListener]::None => {}
+            }
+            if hit {
+                let _gone: option::Option[BusListener] = this._subs.remove(i);
+                removed = removed + 1usize;
+            } else {
+                i = i + 1usize;
+            }
+        }
+        return removed;
+    }
+
     // Deliver `payload` to every listener of `name`. Same order and
     // mid-dispatch mutation semantics as `Signal.emit`.
     fn emit(ref this, name: str, payload: str = "") {
@@ -326,4 +371,51 @@ fn shared() -> *Bus {
         { (*b)._next_id = 1u64; }
     }
     return b;
+}
+
+// ---- module verbs (the shared bus, pointer-free) -----------------------------
+//
+// The surface for the common case. Each verb forwards to `shared()`, so app
+// code never touches `*Bus`:
+//
+//     events::on("file:open", open_file);
+//     events::emit("file:open", payload: path);
+//
+// Bound methods work here too: `events::on("file:open", this.on_open)`.
+
+fn on(name: str, f: fn(str, *u8), ctx: *u8 = 0 as *u8, once: bool = false) -> u64 {
+    let b: *Bus = shared();
+    return { (*b).on(name, f, ctx: ctx, once: once) };
+}
+
+fn once(name: str, f: fn(str, *u8), ctx: *u8 = 0 as *u8) -> u64 {
+    let b: *Bus = shared();
+    return { (*b).once(name, f, ctx: ctx) };
+}
+
+fn off(id: u64) -> bool {
+    let b: *Bus = shared();
+    return { (*b).off(id) };
+}
+
+fn off_all(name: str) {
+    let b: *Bus = shared();
+    { (*b).off_all(name); }
+    return;
+}
+
+fn off_ctx(ctx: *u8) -> usize {
+    let b: *Bus = shared();
+    return { (*b).off_ctx(ctx) };
+}
+
+fn emit(name: str, payload: str = "") {
+    let b: *Bus = shared();
+    { (*b).emit(name, payload: payload); }
+    return;
+}
+
+fn count(name: str) -> usize {
+    let b: *Bus = shared();
+    return { (*b).count(name) };
 }
