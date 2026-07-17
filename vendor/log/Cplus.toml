@@ -2,3 +2,9 @@
 name    = "log"
 version = "0.0.1"
 edition = "2026"
+
+# log — leveled stderr logging with optional ANSI color.
+#
+# Level cutoff (default Info), timestamp + fixed-width tags, trace/debug/
+# info/warn/error conveniences. Process-global config; not synchronized.
+# See docs/.
