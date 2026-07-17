@@ -28,7 +28,14 @@ fn nsstring(s: str) -> *u8 {
     if #str_len(s) == (0 as usize) {
         return { objc_msg_id_ptr_len_enc(cls, selector, #str_ptr(""), 0 as usize, ns_utf8()) };
     }
-    return { objc_msg_id_ptr_len_enc(cls, selector, #str_ptr(s), #str_len(s), ns_utf8()) };
+    let ns: *u8 = { objc_msg_id_ptr_len_enc(cls, selector, #str_ptr(s), #str_len(s), ns_utf8()) };
+    if ns != { 0 as *u8 } { return ns; }
+    // INVALID UTF-8 (a byte-sliced multibyte char, foreign bytes): the UTF-8
+    // decode yields nil, and AppKit conveniences THROW on a nil string
+    // (`wrappingLabelWithString:` took the whole app down — live crash
+    // 2026-07-17). Fall back to Latin-1, which maps any byte sequence —
+    // garbled beats crashed, and the caller keeps a real NSString.
+    return { objc_msg_id_ptr_len_enc(cls, selector, #str_ptr(s), #str_len(s), 5 as u64) };
 }
 
 // NSString -> owned `Text` (copies out of the autoreleased UTF8 buffer, so it
@@ -105,6 +112,18 @@ fn nsstring_empty_literal_roundtrips() {
     let ns: *u8 = nsstring("");
     let t: text::Text = to_text(ns);
     assert t.count() == (0 as usize);
+}
+
+#[test]
+fn nsstring_invalid_utf8_never_returns_nil() {
+    // A byte-sliced multibyte char (a clipped "→": E2 86 without its 92) is
+    // not valid UTF-8; the UTF-8 decode yields nil and AppKit's label
+    // conveniences THROW on nil (live app abort 2026-07-17). The bridge must
+    // fall back to a lossy decode and hand back a real NSString.
+    let bad: [u8; 2] = [226 as u8, 134 as u8];
+    let s: str = { #str_from_raw_parts(#addr_of(bad) as *u8, 2 as usize) };
+    let ns: *u8 = nsstring(s);
+    assert ns != { 0 as *u8 };
 }
 
 #[test]
