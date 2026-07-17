@@ -3,5 +3,8 @@ name    = "rt"
 version = "0.0.1"
 edition = "2026"
 
+# rt — portable real-time data structures (no heap, no blocking APIs).
+# SpscRingU64 + FixedPoolU64. OS knobs: rt_darwin (etc.). See docs/.
+
 [dependencies]
 stdlib = "*"

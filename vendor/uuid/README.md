@@ -37,6 +37,8 @@ guard let option::Option[uuid::Uuid]::Some(id) =
 
 ## Tests
 
+Unit tests live in `src/uuid.cplus`.
+
 ```
-cpc test
+cd vendor/uuid && cpc test
 ```

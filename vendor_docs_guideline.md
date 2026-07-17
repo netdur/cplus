@@ -22,11 +22,12 @@ Reference implementation of this split: `vendor/events/docs/`.
 vendor/<package>/
   README.md              # one-screen surface: what it is, depend, 1–2 snippets
   Cplus.toml
-  src/
+  src/                   # library (+ unit #[test]s, or a dedicated test root)
   docs/
     tutorial.md          # required for packages with a public API worth learning
     guide.md             # required once there are non-obvious choices or lifetimes
     ref.md               # required once there is more than a handful of entry points
+  tests/                 # optional: integration / e2e fixtures (flat — no subdirs required)
 ```
 
 Optional extras under `docs/` are fine when a topic is large enough to stand
@@ -45,9 +46,54 @@ The front door. Keep it short:
 2. `Cplus.toml` dependency + import line.
 3. The common-case snippet (one path, not every option).
 4. Links into `docs/` for the rest.
+5. How to run tests (`cpc test`) — unit location is enough; no separate
+   `tests/README.md`.
 
 The README is **not** a fourth tutorial. If a section is growing past a
 screen, move it into `docs/` and leave a link.
+
+## Tests
+
+Docs explain the API; **tests prove it**. Keep test material out of `docs/`
+(no harnesses under `doc/` or `docs/`).
+
+### Two layers
+
+| Layer | Where | What | How it runs |
+|---|---|---|---|
+| **Unit** | `src/` (`#[test]` in modules, or a dedicated root such as `src/test_main.cplus` / `src/<pkg>.cplus`) | Fast checks of one package’s types and functions | `cd vendor/<pkg> && cpc test` |
+| **Integration / e2e** | `tests/` (flat files — no `e2e/` subfolder, no README required) | Multi-step programs, subprocess builds, archived harnesses | Document in the package **root** `README.md` when present |
+
+### `tests/` (optional)
+
+```
+tests/
+  lang_e2e.rs            # example: integration harness
+  …                      # other fixtures — live directly here
+```
+
+- Add `tests/` only when you have files that belong there. Do **not** create
+  an empty tree, `tests/e2e/`, or `tests/README.md`.
+- Do **not** put harnesses under `docs/` or a singular `doc/` folder.
+- The package **root README** states where unit tests live and how to run
+  them; mention `tests/` only if it has contents.
+
+### Unit test placement in `src/`
+
+| Pattern | Use when |
+|---|---|
+| `#[test]` next to the impl in `src/<module>.cplus` | Small / single-module packages (`uuid`, `log`, `json`) |
+| Dedicated test root (`src/test_main.cplus`, or `src/<package>.cplus` umbrella) | Multi-module packages or when discovery needs a named entry (`events`, `stdlib`) |
+
+Prefer unit tests **inside the package** so `cpc test` from the package
+root is enough.
+
+### What not to do
+
+- Do not treat `docs/` as a test dump.
+- Do not invent empty `tests/` scaffolding.
+- Prefer growing `#[test]`s with the API; document only behavior tests cover
+  when practical.
 
 ## The three files
 
@@ -208,6 +254,9 @@ someone has been bitten by a lifetime, ordering, or layering rule.
       threading, ownership).
 - [ ] Snippets use the real import path (`"events/events"`, etc.).
 - [ ] Tests or examples still match the documented behavior.
+- [ ] Root README says how to run unit tests (`cpc test` + where they live).
+- [ ] No test harnesses under `docs/` or `doc/`; integration files sit flat
+      under `tests/` if any.
 
 ## Naming this guideline
 

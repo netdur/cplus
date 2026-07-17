@@ -3,5 +3,8 @@ name    = "rt_darwin"
 version = "0.0.1"
 edition = "2026"
 
+# rt_darwin — Darwin real-time platform controls (clock, QoS, mlock).
+# Portable structures live in package `rt`. See docs/.
+
 [dependencies]
 stdlib = "*"

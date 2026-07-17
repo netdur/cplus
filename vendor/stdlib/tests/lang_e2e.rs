@@ -2,6 +2,9 @@
 // language e2e suite (cpc/tests/e2e.rs): the language test suite must not depend
 // on a shipped vendor package, so these tests live with the package they exercise.
 //
+// Location: vendor/stdlib/tests/ (not docs/) — Rust harness, not package
+// documentation. See docs/ for tutorial / guide / ref; root README for unit tests.
+//
 // These are the original Rust harness tests (each builds an embedded C+ program
 // that imports `stdlib`, then asserts on the cpc build/run output). They still
 // reference the e2e harness helpers + workspace-relative vendor paths, so they

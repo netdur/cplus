@@ -55,6 +55,8 @@ Bound methods work on both layers (`opened.on(bar.on_open)`,
 
 ## Tests
 
+Unit tests live in `src/test_main.cplus`.
+
 ```
-cpc test
+cd vendor/events && cpc test
 ```

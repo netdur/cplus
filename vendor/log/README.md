@@ -24,6 +24,8 @@ log::error("bind failed");
 
 ## Tests
 
+Unit tests live in `src/log.cplus`.
+
 ```
-cpc test
+cd vendor/log && cpc test
 ```

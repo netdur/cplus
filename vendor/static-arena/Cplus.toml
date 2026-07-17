@@ -3,6 +3,9 @@ name    = "static-arena"
 version = "0.0.1"
 edition = "2026"
 
+# static-arena — fixed-size bump allocator (16K / 64K in-struct buffer).
+# No malloc; Option on overflow. Heap sibling: arena. See docs/.
+
 [dependencies]
 stdlib = "*"
 

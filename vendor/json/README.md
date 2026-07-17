@@ -35,6 +35,8 @@ guard let option::Option[text::Text]::Some(name) = name_value.as_text() else {
 
 ## Tests
 
+Unit tests live in `src/json.cplus`.
+
 ```
-cpc test
+cd vendor/json && cpc test
 ```

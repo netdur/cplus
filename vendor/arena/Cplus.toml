@@ -3,5 +3,9 @@ name    = "arena"
 version = "0.0.1"
 edition = "2026"
 
+# arena — heap bump allocator (chunked).
+# Append-only alloc_bytes / alloc[T] / alloc_str; free all on reset/Drop.
+# Fixed no-malloc sibling: static-arena. See docs/.
+
 [dependencies]
 stdlib = "*"
