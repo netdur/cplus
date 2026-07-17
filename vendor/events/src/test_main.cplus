@@ -404,6 +404,18 @@ fn module_off_all_and_off_ctx() {
     return;
 }
 
+#[test]
+fn module_remove_all_clears_shared_bus() {
+    reset();
+    let a: u64 = events::on("mv:ra", on_save);
+    let _b: u64 = events::on("mv:rb", on_open);
+    events::remove_all();
+    assert events::count("mv:ra") == 0usize;
+    assert events::count("mv:rb") == 0usize;
+    assert !events::off(a);   // stale token after remove_all
+    return;
+}
+
 // A bound method registered through the module verb: `this` rides as ctx
 // through the shared bus, payload arrives typed as `str`.
 struct Recorder {

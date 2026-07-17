@@ -1,5 +1,4 @@
 import "stdlib/vec" as vec;
-import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/status" as status;
 
@@ -23,6 +22,12 @@ import "stdlib/status" as status;
 //
 //     sig.on(this.on_file_open);        // fn on_file_open(this, path: str)
 //     bus.on("file:open", on_open, ctx: cp);
+//
+// Borrowed inputs (nothing is copied for identity):
+//   - `ctx` is borrowed for the life of the registration;
+//   - bus event `name` is a borrowed `str` for the life of the registration
+//     (use a string literal or a buffer that outlives the subscription);
+//   - `emit` payloads are borrowed for the duration of the call only.
 //
 // `on` returns a token (u64). `off(token)` removes the listener — no
 // function identity involved, so any listener can be removed. `once: true`
@@ -189,10 +194,11 @@ impl Signal[T] {
 
 // ---- Bus ---------------------------------------------------------------------
 
-// One registered bus listener: a Signal listener plus the owned event name
-// it subscribed to.
+// One registered bus listener: a Signal listener plus the event name it
+// subscribed to. `name` is borrowed for the life of the registration — same
+// rule as `ctx` (literals and long-lived buffers only).
 struct BusListener {
-    name: text::Text,
+    name: str,
     f: fn(str, *u8),
     opaque ctx: *u8,
     id: u64,
@@ -201,7 +207,7 @@ struct BusListener {
 
 // A string-keyed multicast event bus. `str` payload; for typed payloads use
 // a `Signal[T]`. One flat listener list — emit filters by name, so tokens
-// are unique across the whole bus.
+// are unique across the whole bus. Registering never allocates for the name.
 struct Bus {
     _subs: vec::Vec[BusListener],
     _next_id: u64,
@@ -213,12 +219,12 @@ impl Bus {
     }
 
     // Register `f` for events named `name`. Same token contract as
-    // `Signal.on`.
+    // `Signal.on`. `name` is stored by view — it must outlive the registration.
     fn on(ref this, name: str, f: fn(str, *u8), ctx: *u8 = 0 as *u8, once: bool = false) -> u64 {
         let id: u64 = this._next_id;
         this._next_id = this._next_id + 1u64;
         let added: status::Status = this._subs.append(BusListener {
-            name: text::from_str(name),
+            name: name,
             f: f,
             ctx: ctx,
             id: id,
@@ -418,4 +424,10 @@ fn emit(name: str, payload: str = "") {
 fn count(name: str) -> usize {
     let b: *Bus = shared();
     return { (*b).count(name) };
+}
+
+fn remove_all() {
+    let b: *Bus = shared();
+    { (*b).remove_all(); }
+    return;
 }
