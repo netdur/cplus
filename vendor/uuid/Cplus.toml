@@ -3,5 +3,10 @@ name    = "uuid"
 version = "0.0.1"
 edition = "2026"
 
+# uuid — RFC 4122 UUID value type.
+#
+# Generate v4 (via /dev/urandom), parse/format the canonical 8-4-4-4-12
+# string, and inspect nil / raw bytes. See docs/ for tutorial, guide, ref.
+
 [dependencies]
 stdlib = "*"
