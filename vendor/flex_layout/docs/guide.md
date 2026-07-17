@@ -1,21 +1,23 @@
 # Guide
 
+How the layout engine is meant to be used: node model, flex, grid, measure,
+DSL/HIG, and adapter gotchas. Fast start: [tutorial.md](tutorial.md).
+Signatures: [ref.md](ref.md).
+
 ## The node model
 
 A layout tree is a tree of `Node`s. A node owns its children (the parent owns
 them by value), carries a `Style`, and — after layout — a computed `Layout`
 frame.
 
-```
-var n: flex::Node = flex::Node::new();   // default: a Column, align-items stretch
+```cplus
+var n: flex::Node = flex::Node::new();   // default: Column, align-items stretch
 ```
 
-A fresh node is a **column** container with
-`align-items: stretch`, `flex-shrink: 0`, and all sizes `auto`.
+A fresh node is a **column** container with `align-items: stretch`,
+`flex-shrink: 0`, and all sizes `auto`.
 
-Build the tree with `add_child` (which consumes the child):
-
-```
+```cplus
 var parent: flex::Node = flex::Node::new();
 parent.add_child(child_a);   // child_a is moved in
 parent.add_child(child_b);
@@ -23,212 +25,271 @@ parent.add_child(child_b);
 
 ## Running layout
 
-```
+```cplus
 root.calculate_layout(available_width, available_height, flex::Direction::LTR);
 ```
 
-- `available_width` / `available_height` are the space the root is given. Either
-  may be `flex::undefined()` for an **unconstrained** axis — the root then sizes
-  to its content.
-- The root is placed at `(0, 0)`; every descendant's frame is filled in and is
-  **absolute in the root's coordinate space** — a child's `left`/`top` already
-  includes all ancestor offsets. An adapter nesting into a real (per-superview)
-  view tree must therefore **subtract the parent node's `layout` origin** to get
-  a superview-relative frame: `child.left - parent.left`, `child.top - parent.top`.
+- Either available axis may be `flex::undefined()` for **unconstrained**
+  (content-sized) layout.
+- Root is at `(0, 0)`; every frame is **absolute in the root’s coordinate
+  space**. For a superview-relative frame: `child.left - parent.left`,
+  `child.top - parent.top`.
 
-Read frames back:
-
-```
+```cplus
 root.layout_left()  root.layout_top()  root.layout_width()  root.layout_height()
-root.layout_frame()                 // -> Layout { left, top, width, height }
-root.child_layout(i)                // -> Option[Layout]  (a direct child's frame)
+root.layout_frame()                 // -> Layout
+root.child_layout(i)                // -> Option[Layout]
 ```
 
-To read deeper than direct children, navigate the node tree with
-`children.at_ptr(i)` (the children `Vec`), then `child_layout` on that node.
+Deeper than direct children: walk `children` and call `child_layout` on that
+node.
 
 ## Sizing a box
 
-Each node's main/cross size comes from, in order of precedence:
+Precedence for main/cross size:
 
-1. an explicit `width` / `height` (point or percent),
-2. flex `grow` / `shrink` distributing free space,
-3. a `measure` callback (for content leaves — see below),
-4. the node's **content** (a container with an `auto` dimension hugs its
-   children).
+1. explicit `width` / `height` (point or percent),
+2. flex `grow` / `shrink`,
+3. `measure` callback (content leaves),
+4. content-fit (container with `auto` hugs children).
 
-```
-n.set_width(flex::StyleLength::points(120.0f64));      // 120pt
-n.set_height(flex::StyleLength::percent(50.0f64));     // 50% of the parent
-n.set_width(flex::StyleLength::auto());                // size to content / stretch
-```
-
-`min` / `max` clamp the result:
-
-```
+```cplus
+n.set_width(flex::StyleLength::points(120.0f64));
+n.set_height(flex::StyleLength::percent(50.0f64));
 n.set_min_width(flex::StyleLength::points(80.0f64));
 n.set_max_width(flex::StyleLength::points(320.0f64));
 ```
 
 ## Flex distribution
 
-`grow` shares extra space; `shrink` absorbs overflow; `basis` is the starting
-size. Resolution is the full CSS algorithm — items that hit a min/max are frozen
-and their space is redistributed.
-
-```
-a.set_flex_grow(1.0f64);   b.set_flex_grow(2.0f64);   // a gets 1/3, b gets 2/3
-n.set_flex(1.0f64);        // shorthand == grow 1, shrink 1, basis 0
+```cplus
+a.set_flex_grow(1.0f64);   b.set_flex_grow(2.0f64);   // 1/3 and 2/3
+n.set_flex(1.0f64);        // grow 1, shrink 1, basis 0
 ```
 
-`justify-content` positions items along the main axis; `align-items` /
-`align-self` along the cross axis:
+Min/max freeze + redistribute (full CSS algorithm).
+`justify-content` is main axis; `align-items` / `align-self` are cross.
+`auto` margins absorb free space (push / center idioms).
 
-```
+```cplus
 row.set_justify_content(flex::Justify::SpaceBetween);
 row.set_align_items(flex::Align::Center);
-child.set_align_self(flex::Align::FlexEnd);            // overrides align-items
-```
-
-`auto` margins absorb free space (the centering / push idiom):
-
-```
-child.set_margin(flex::Edge::Left, flex::StyleLength::auto());   // push to the right
-// both left+right auto -> centered on the main axis
+child.set_margin(flex::Edge::Left, flex::StyleLength::auto());
 ```
 
 ## Spacing: padding, border, margin, gap
 
-All accept a `StyleLength` and an `Edge` (`Left`/`Top`/`Right`/`Bottom`, the
-shorthands `Horizontal`/`Vertical`/`All`, or the logical `Start`/`End`):
-
-```
+```cplus
 n.set_padding(flex::Edge::All, flex::StyleLength::points(8.0f64));
-n.set_margin(flex::Edge::Top, flex::StyleLength::points(4.0f64));
-n.set_border(flex::Edge::All, flex::StyleLength::points(1.0f64));
-```
-
-`gap` sits between children (and between wrapped lines). `set_gap` takes points;
-`set_gap_length` takes any length (e.g. percent):
-
-```
 n.set_gap(flex::Gutter::All, 8.0f64);
-n.set_gap(flex::Gutter::Column, 12.0f64);   // horizontal gap only
+n.set_gap_length(flex::Gutter::Column, flex::StyleLength::percent(2.0f64));
+n.set_box_sizing(flex::BoxSizing::ContentBox);   // default is border-box
 ```
 
-`box-sizing` defaults to `border-box` (width includes padding+border). Switch to
-`content-box` so width is the content area:
-
-```
-n.set_box_sizing(flex::BoxSizing::ContentBox);
-```
+Logical `Start` / `End` edges resolve with direction; physical `Left`/`Right`
+win if also set.
 
 ## Wrapping
 
+```cplus
+row.set_flex_wrap(flex::Wrap::Wrap);
+row.set_align_content(flex::Align::Center);
 ```
-row.set_flex_wrap(flex::Wrap::Wrap);          // items wrap onto multiple lines
-row.set_align_content(flex::Align::Center);   // distributes the lines on the cross axis
-```
-
-Content sizing is wrap-aware: an auto-sized wrapping container sizes to all its
-lines.
 
 ## Positioning
 
-- `Relative` (the default) — the node flows normally, then is offset by its
-  `position` insets (without affecting siblings).
-- `Static` — flows normally and ignores insets.
-- `Absolute` — removed from the flow, positioned against the padding box by its
-  insets (and `left`+`right` / `top`+`bottom` pairs define its size).
+- **Relative** (default) — flow, then offset by position insets.
+- **Static** — flow, ignore insets.
+- **Absolute** — out of flow; insets against padding box.
+- **`display: none`** — out of flow entirely.
 
-```
+```cplus
 overlay.set_position_type(flex::PositionType::Absolute);
 overlay.set_position(flex::Edge::Left, flex::StyleLength::points(10.0f64));
-overlay.set_position(flex::Edge::Right, flex::StyleLength::points(10.0f64));   // width = parent - 20
-```
-
-`display: none` collapses a node out of the flow entirely:
-
-```
 hidden.set_display(flex::Display::None);
 ```
 
-## aspect-ratio
+## Aspect ratio
 
-Ties one dimension to the other (`width / height`). The unset dimension is
-derived; on the main axis it follows the flexed size:
-
-```
+```cplus
 thumb.set_aspect_ratio(16.0f64 / 9.0f64);
-thumb.set_width(flex::StyleLength::points(320.0f64));   // -> height 180
+thumb.set_width(flex::StyleLength::points(320.0f64));   // height 180
 ```
 
-## Content sizing — the measure callback
+## CSS Grid
 
-Content leaves (text, images) report their intrinsic size through a **measure
-function pointer**, so the engine stays UI-kit-agnostic. The callback's first
-argument is the node's **context** (`set_context`) — a platform adapter stores
-the backing view there so one `fn` can size *any* view: it casts the context
-back and asks that specific view for its fitting size at the engine's proposed
-width. This is what makes wrapping text wrap to its computed column width.
+Set `display: grid` and define tracks. Supports points / `fr` / `auto` tracks,
+row-major auto-flow, implicit rows, spanning, dense packing, explicit + named
+lines, subgrid, and gaps.
 
+### Tracks
+
+```cplus
+var g: flex::Node = flex::Node::new();
+g.set_display(flex::Display::Grid);
+g.add_grid_column(flex::GridTrack::points(200.0f64));
+g.add_grid_column(flex::GridTrack::fr(1.0f64));
+g.add_grid_column(flex::GridTrack::auto());
+g.set_gap(flex::Gutter::All, 12.0f64);
 ```
-fn measure_label(ctx: *u8, w: f64, wm: flex::MeasureMode, h: f64, hm: flex::MeasureMode) -> flex::Size {
-    let view: *MyTextView = ctx as *MyTextView;      // the adapter's backing view
-    return fitting_size(view, w, wm, h, hm);         // e.g. NSTextField.fittingSize
+
+- **`points(v)`** — fixed.
+- **`fr(v)`** — share of space after fixed + auto + gaps.
+- **`auto()`** — max content of items in the track.
+
+Rows via `add_grid_row`. Extra rows are implicit `auto`.
+
+### Flow, span, dense
+
+```cplus
+g.set_grid_dense(true);           // backfill holes
+header.set_grid_column_span(2);
+photo.set_grid_row_span(2);
+```
+
+### Named lines
+
+```cplus
+g.name_grid_column_line("sidebar");
+g.add_grid_column(flex::GridTrack::points(200.0f64));
+g.name_grid_column_line("main");
+g.add_grid_column(flex::GridTrack::fr(1.0f64));
+content.set_grid_column_start(g.column_line("main"));  // -1 if unknown
+```
+
+Explicit starts: `set_grid_column_start` / `set_grid_row_start` (0-based, -1 =
+auto).
+
+### Subgrid
+
+```cplus
+sub.set_display(flex::Display::Grid);
+sub.set_grid_columns_subgrid(true);
+sub.set_grid_column_span(3);
+```
+
+Children align to the parent’s lines over the span.
+
+## Content sizing — measure callback
+
+Content leaves report size through a measure `fn` + borrowed `ctx` (adapter
+stores the view). Engine never owns or frees `ctx`.
+
+```cplus
+fn measure_label(ctx: *u8, w: f64, wm: flex::MeasureMode,
+                 h: f64, hm: flex::MeasureMode) -> flex::Size {
+    // cast ctx → view; return fitting size under (w, wm) / (h, hm)
+    return flex::Size { width: 80.0f64, height: 24.0f64 };
 }
-
-var label: flex::Node = flex::Node::new();
-label.set_context(view_ptr as *u8);                  // store the backing view
+label.set_context(view_ptr as *u8);
 label.set_measure(measure_label);
 ```
 
-The engine never owns the context (it's `opaque` / borrowed) — the adapter keeps
-the view alive. `MeasureMode` tells the callback how the constraint is meant:
-`Exactly` (fixed), `AtMost` (shrink to fit within), `Undefined` (unconstrained).
+`MeasureMode`: `Exactly` / `AtMost` / `Undefined`. Optional baseline callback
+for `align-items: baseline`.
 
-For text baselines (align-items: baseline), supply a baseline callback — same
-context, returning the ascent from the top:
+Owned payload (retain/release a view with the node): `set_payload` /
+`clear_payload` — see [ref.md](ref.md).
 
+## `@flex` DSL and HIG
+
+Import as `flex` (alias is the DSL context name).
+
+```cplus
+var ui: flex::Node = @flex {
+    row {
+        box().width(200.0)
+        box().grow(1.0).padding(8.0)
+    }
+};
 ```
-fn baseline_first_line(ctx: *u8, width: f64, height: f64) -> f64 { return 15.0f64; }
-label.set_baseline(baseline_first_line);
+
+- `@flex { }` builds a **column** of its items.
+- Containers: bare `column { }` / `row { }` (and HIG presets below).
+- Leaf: `box()` plus fluent modifiers.
+- Nesting is same-context containers only (no nested different `@` blocks).
+
+### Modifiers
+
+Same-line fluent chain returns `Node` (consumes):
+
+```cplus
+box().width(200.0).height(44.0).grow(1.0)
+column { box() }.gap(8.0).grow(1.0)
+```
+
+Own leading-dot line: mutating `set_*` (in-place). Putting a consuming fluent
+on its own leading-dot line is a use-after-move.
+
+| Modifier | Effect |
+|---|---|
+| `.width` / `.height` | points |
+| `.width_pct` / `.height_pct` | percent of parent |
+| `.grow` / `.shrink` | flex factors |
+| `.padding` / `.margin` | uniform points |
+| `.gap` | container gap |
+| `.justify` / `.align` / `.wrap` | main/cross/wrap |
+
+Flow control: `if` and `for` may add children; no `while` / `break` / `return`
+inside the block.
+
+### HIG presets (opt-in)
+
+Engine `Style::new` defaults stay conservative. HIG is a layer on top (8pt
+grid):
+
+| Container / modifier | Rule |
+|---|---|
+| `vstack` / `hstack` | 8pt between items |
+| `screen` | 20pt edge margins + 8pt spacing |
+| `card` | 16pt padding + 8pt spacing |
+| `.tappable()` | min 44×44 tap target |
+| `.card_padding` / `.screen_margins` / `.std_gap` | 16 / 20 / 8 |
+
+Constants: `HIG_SPACE_XS/S/M/L/XL` = 4/8/16/20/32, `HIG_TAP_MIN` = 44.
+
+```cplus
+@flex {
+    screen {
+        hstack {
+            box().width(200.0)
+            card { box().grow(1.0) }
+        }
+    }
+}
 ```
 
 ## RTL / direction
 
-`set_direction` (or the `owner_dir` passed to `calculate_layout`) flips a row's
-main axis and a column's cross axis; it inherits down the tree. Logical
-`Start` / `End` edges resolve to physical sides per direction (a physical
-`Left`/`Right` wins if also set).
+```cplus
+root.set_direction(flex::Direction::RTL);
+child.set_margin(flex::Edge::Start, flex::StyleLength::points(16.0f64));
+```
 
-```
-root.set_direction(flex::Direction::RTL);          // row flows right-to-left
-child.set_margin(flex::Edge::Start, flex::StyleLength::points(16.0f64));  // leading margin
-```
+`owner_dir` on `calculate_layout` also seeds inheritance.
 
 ## Pixel-grid rounding
 
-After layout, snap frames to a device pixel grid so adjacent edges stay seamless
-(no cumulative rounding gaps):
-
-```
+```cplus
 root.round_to_pixel(1.0f64);   // integer points
 root.round_to_pixel(2.0f64);   // retina half-points
 ```
 
 ## Incremental relayout
 
-Calling `calculate_layout` again is cheap when little changed: the engine
-compares each node's style/grid/children against a snapshot from the last pass
-and **skips re-laying-out unchanged subtrees** whose box is unchanged. Mutations
-— including a deep change through a content-fit ancestor — invalidate correctly,
-automatically. There is nothing to opt into; just call `calculate_layout` again.
+Re-calling `calculate_layout` skips unchanged subtrees when style/grid/children
+match the last pass. Deep mutations invalidate correctly — nothing to opt in.
 
-## The AppKit adapter (sketch)
+## Adapter sketch
 
-The engine only produces frames. An adapter walks the node tree alongside its own
-view tree and, for each node, sets the view's frame from `layout_frame()` and
-applies `overflow()` (e.g. `NSView.clipsToBounds`). Leaf measure callbacks are
-backed by the view's `fittingSize`. See [dsl.md](dsl.md) for building the tree
-declaratively.
+Walk the node tree with your view tree; set frames from `layout_frame()`;
+apply `overflow()` (e.g. clip). Leaves measure via `fittingSize`-style
+callbacks. Engine only produces numbers.
+
+## Gotchas
+
+- **Move semantics:** `add_child` and fluent DSL consume; mutate a `var` with
+  `set_*`, not `n = n.width(...)`.
+- **Absolute frames:** always root-relative until the adapter subtracts.
+- **Measure context:** borrowed; adapter owns the view lifetime.
+- **Overflow** is stored for adapters; it does not change layout math.

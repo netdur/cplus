@@ -3,5 +3,8 @@ name    = "flex_layout"
 version = "0.0.1"
 edition = "2026"
 
+# flex_layout — CSS Flexbox + Grid layout engine (pure C+, no UI kit).
+# Node tree → calculate_layout → absolute frames. See docs/.
+
 [dependencies]
 stdlib = "*"

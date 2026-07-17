@@ -1,4 +1,7 @@
-# API reference
+# Reference
+
+Manual for the `flex_layout` package. Signatures and behavior only.
+Walkthrough: [tutorial.md](tutorial.md). Concepts: [guide.md](guide.md).
 
 All items live in the `flex_layout` package (imported here as `flex`).
 
@@ -130,19 +133,24 @@ the pointer, so it stays UI-kit agnostic.
 | `column_line` / `row_line` | `(this, str) -> i32` — line index, or -1 |
 | `set_grid_columns_subgrid` / `set_grid_rows_subgrid` | `(ref this, bool)` — item adopts parent tracks |
 
-## `@flex` DSL
+## `@flex` DSL surface
 
-See [dsl.md](dsl.md). Surface: `Builder` (`new` / `add` / `finish`), containers
-`row` / `column` / `box`, fluent modifiers (`width`, `height`, `width_pct`,
-`height_pct`, `grow`, `shrink`, `padding`, `margin`, `gap`, `justify`, `align`,
-`wrap`), and the HIG presets `vstack` / `hstack` / `screen` / `card` +
-`.tappable()` / `.card_padding()` / `.screen_margins()` / `.std_gap()`.
+| Piece | Names |
+|---|---|
+| Builder | `Builder::new` / `add(take)` / `finish` |
+| Containers | `row` / `column` / `box` |
+| Fluent | `width`, `height`, `width_pct`, `height_pct`, `grow`, `shrink`, `padding`, `margin`, `gap`, `justify`, `align`, `wrap` |
+| HIG containers | `vstack` / `hstack` / `screen` / `card` |
+| HIG modifiers | `.tappable()` / `.card_padding()` / `.screen_margins()` / `.std_gap()` |
+| HIG constants | `HIG_SPACE_XS/S/M/L/XL` (4/8/16/20/32), `HIG_TAP_MIN` (44) |
+
+Usage rules and examples: [guide.md](guide.md) (`@flex` DSL and HIG).
 
 ## Notes on move semantics
 
 - `add_child(take child)` and the DSL `Builder::add(take item)` **consume** the
   node (move it in).
-- The fluent DSL modifiers (`.width(v)` etc.) also consume and return the node, so
-  they chain: `box().width(200.0).grow(1.0)`. Assigning a fluent chain back to the
-  same `var` (`n = n.width(...)`) trips the move checker — build inline, or use
-  the engine's `set_*` setters (which mutate in place) when you hold a `var`.
+- Fluent DSL modifiers also consume and return the node, so they chain:
+  `box().width(200.0).grow(1.0)`. Assigning a fluent chain back to the same
+  `var` (`n = n.width(...)`) trips the move checker — build inline, or use
+  the engine's `set_*` setters when you hold a `var`.
