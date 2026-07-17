@@ -696,12 +696,15 @@ fn text_area(
     return n;
 }
 
-// Chat-style composer: submit on Enter, newline on Shift+Enter.
-// Optional handlers use the null-fn sentinel when unset.
+// Chat-style composer: submit on Enter, newline on Shift+Enter or Ctrl+Enter.
+// Optional handlers use the null-fn sentinel when unset. `ctx` sits RIGHT
+// AFTER `on_submit` so a component can bind an instance method — the
+// bound-reference rule (E0824) requires the defaulted `*u8` context parameter
+// adjacent to the handler it fills: `composer(on_submit: this.send, ...)`.
 fn composer(
     on_submit: fn(*u8, *u8) = 0 as fn(*u8, *u8),
-    on_change: fn(*u8, *u8) = 0 as fn(*u8, *u8),
     ctx: *u8 = 0 as *u8,
+    on_change: fn(*u8, *u8) = 0 as fn(*u8, *u8),
     value: str = "",
     show_border: bool = true,
     draws_background: bool = true,
@@ -2438,6 +2441,31 @@ fn facet_on_click_carries_identity() {
     // ctx defaults to null when omitted.
     let m: Node = button("ok").on_click(click_a);
     assert (m.click_ctx as i64) == (0 as i64);
+}
+
+// The bound-method thunk ABI: a `composer(on_submit: X.method)` callsite emits
+// a (sender, ctx) thunk with the receiver in the TRAILING ctx slot — the same
+// order every control action and the composer delegate use. This test is the
+// contract: if the thunk order ever flips, receivers arrive as garbage.
+struct SubmitProbe { hits: i64, opaque seen: *u8 }
+static SUBMIT_PROBE: SubmitProbe = #zero::[SubmitProbe]();
+impl SubmitProbe {
+    fn poke(ref this, sender: *u8) {
+        this.hits = this.hits +% (1 as i64);
+        this.seen = sender;
+        return;
+    }
+}
+
+#[test]
+fn bound_submit_thunk_takes_sender_then_receiver() {
+    SUBMIT_PROBE.hits = 0 as i64;
+    let n: Node = composer(on_submit: SUBMIT_PROBE.poke);
+    assert n.click_ctx == { #addr_of(SUBMIT_PROBE) as *u8 };   // ctx = the receiver
+    let f: fn(*u8, *u8) = n.on_submit;
+    f(5 as *u8, n.click_ctx);                                  // backend order: (sender, ctx)
+    assert SUBMIT_PROBE.hits == (1 as i64);
+    assert SUBMIT_PROBE.seen == (5 as *u8);
 }
 
 #[test]
