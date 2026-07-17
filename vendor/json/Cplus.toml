@@ -3,5 +3,11 @@ name    = "json"
 version = "0.0.1"
 edition = "2026"
 
+# json — typed JSON parse and serialize.
+#
+# `Value` is a recursive owned enum (null / bool / f64 / Text / array /
+# object). Parse with Value::parse, build with constructors + Member::new,
+# read with Option accessors, emit compact JSON with to_text. See docs/.
+
 [dependencies]
 stdlib = "*"

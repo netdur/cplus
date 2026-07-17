@@ -1,8 +1,11 @@
 # json
 
-Typed JSON parsing and serialization for C+.
+Typed JSON parse and serialize for C+.
 
-## Usage
+```toml
+[dependencies]
+json = "*"
+```
 
 ```cplus
 import "json/json" as json;
@@ -24,16 +27,14 @@ guard let option::Option[text::Text]::Some(name) = name_value.as_text() else {
 };
 ```
 
-## API
+## Docs
 
-- Parse with `Value::parse(source:)`. Parse failures return `ParseError`, whose
-  `offset` is the byte position where parsing stopped.
-- Build values with `Value::null`, `boolean(value:)`, `number(value:)`,
-  `text(value:)`, `array(values:)`, and `object(members:)`. Build object
-  members with `Member::new(key:, value:)`.
-- Inspect variants with `is_null`, `is_boolean`, `is_number`, `is_text`,
-  `is_array`, and `is_object`.
-- Read potentially absent values with `as_boolean`, `as_number`, `as_text`,
-  `item(at:)`, `value(for_key:)`, `key(at:)`, and `object_value(at:)`. These
-  return `Option` rather than a sentinel value or null pointer.
-- Serialize compact JSON with `value.to_text()`.
+- [docs/tutorial.md](docs/tutorial.md) — fast path
+- [docs/guide.md](docs/guide.md) — how / why / gotchas
+- [docs/ref.md](docs/ref.md) — API manual
+
+## Tests
+
+```
+cpc test
+```
