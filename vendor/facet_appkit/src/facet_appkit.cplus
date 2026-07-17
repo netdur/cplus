@@ -548,26 +548,34 @@ fn ak_popup(ctx: *u8, np: *facet::Node) -> flex::Node {
     let pull: bool = { (*np).pull_down };
     let zero: rt::Rect = rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 };
     let p: ak::PopUpButton = ak::PopUpButton::new(zero, pull);
-    // Pull-down: item 0 is the fixed title the button shows.
-    if pull {
-        let tp: *text::Text = { #addr_of((*np).text) };
-        match (*tp).c_str() {
-            option::Option[text::CString]::Some(cs) => {
-                p.add_item_with_title({ #str_from_raw_parts(cs.as_ptr(), cs.count()) });
-            }
-            option::Option[text::CString]::None => { p.add_item_with_title(""); }
-        };
-    }
+    // Items are added through the button's MENU, never NSPopUpButton's own
+    // addItemWithTitle:, which REMOVES any existing item with the same title.
+    // A pull-down whose fixed title equals one of its rows (a model switcher
+    // titled with the current choice) had that row silently eaten and every
+    // later index shifted — the selection landed one row off (live bug).
+    // Menu-level items keep no per-item action; the control's action still
+    // fires on selection. Pull-down: item 0 stays the fixed displayed title.
     let src: *vec::Vec[text::Text] = { #addr_of((*np).popup_items) };
     let cnt: usize = { (*src).count() };
-    var i: usize = 0 as usize;
-    while i < cnt {
-        match (*src).at_ptr(i) {
-            option::Option[*text::Text]::Some(tp) => { p.add_item_with_title({ (*tp).view() }); }
-            option::Option[*text::Text]::None => { }
+    match p.menu() {
+        option::Option[ak::Menu]::Some(menu) => {
+            if pull {
+                let tp: *text::Text = { #addr_of((*np).text) };
+                let _t: ak::MenuItem = menu.add_item_with_title({ (*tp).view() }, 0 as *u8, "");
+            }
+            var i: usize = 0 as usize;
+            while i < cnt {
+                match (*src).at_ptr(i) {
+                    option::Option[*text::Text]::Some(tp) => {
+                        let _mi: ak::MenuItem = menu.add_item_with_title({ (*tp).view() }, 0 as *u8, "");
+                    }
+                    option::Option[*text::Text]::None => { }
+                }
+                i = i +% (1 as usize);
+            }
         }
-        i = i +% (1 as usize);
-    }
+        option::Option[ak::Menu]::None => { }
+    };
     if pull == false {
         let sel: i64 = { (*np).popup_selected };
         if sel >= (0 as i64) && sel < (cnt as i64) { p.select_item_at_index(sel); }
@@ -576,6 +584,9 @@ fn ak_popup(ctx: *u8, np: *facet::Node) -> flex::Node {
     if ch != (0 as fn(*u8, *u8)) {
         akx::set_control_action_ctx(p.as_control(), ch, { (*np).click_ctx });
     }
+    // `.plain()` → borderless popup (the same fold as button): a quiet,
+    // text-like dropdown for toolbar / composer control rows.
+    if { (*np).plain } { p.as_button().set_bordered(false); }
     var n: flex::Node = ui::view(p.as_view());
     apply_style(n.payload(), facet::kind_popup(), np);
     return n;
@@ -3905,6 +3916,77 @@ fn find_add_and_remove_child() {
     unmount_all();
 }
 
+#[test]
+fn pull_down_keeps_a_row_matching_its_title() {
+    // NSPopUpButton's addItemWithTitle: REMOVES a same-titled existing item — a
+    // pull-down switcher titled with its current choice ("Default (recommended)")
+    // was eating that row and shifting every later index, so selecting row N
+    // landed on N-1 (live bug in the iris model switcher). Items now go through
+    // the menu (no dedup): title + all rows survive, and indexOfSelectedItem is
+    // the full-menu index (title = 0, rows from 1) the idx-1 mapping expects.
+    var rows: vec::Vec[text::Text] = vec::new::[text::Text]();
+    rows.append(text::from_str("Default (recommended)"));
+    rows.append(text::from_str("Sonnet"));
+    rows.append(text::from_str("Haiku"));
+    rows.append(text::from_str("claude-fable-5[1m]"));
+    var root: facet::Node = @facet {
+        vstack {
+            menu(title: "Default (recommended)", items: rows).key("m")
+        }
+    };
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 80.0 });
+    let _h: f64 = mount_into(#addr_of(root), content.raw(), 300.0f64, 80.0f64);
+    let v: *u8 = find_view_by_id(content.raw(), "m");
+    assert v != (0 as *u8);
+    let p: ak::PopUpButton = ak::PopUpButton::from_raw(v);
+    match p.menu() {
+        option::Option[ak::Menu]::Some(m) => { assert m.number_of_items() == (5 as i64); }
+        option::Option[ak::Menu]::None => { assert false; }
+    };
+    // Choosing the LAST row ("claude-fable-5[1m]", menu index 4): the index the
+    // change handler reads back must be 4 — with the dedup bug it was 3.
+    p.select_item_at_index(4 as i64);
+    assert p.index_of_selected_item() == (4 as i64);
+}
+
+// The chips-row shape from the iris prompt box: a keyed hstack that starts
+// EMPTY and only ever gains children at runtime (attach-file chips).
+struct ChipsPane { n: i64 }
+
+impl ChipsPane: facet::Component {
+    fn build(ref this) -> facet::Node {
+        var chips: facet::Builder = facet::Builder::new();
+        var col: facet::Builder = facet::Builder::new();
+        col.add(facet::hstack(chips).gap(6.0f64).key("chips"));
+        col.add(facet::label("composer-stand-in", size: 12.0f64));
+        return facet::column(col);
+    }
+}
+
+static CHIPS_PANE: ChipsPane = #zero::[ChipsPane]();
+
+#[test]
+fn empty_keyed_row_accepts_runtime_chips() {
+    unmount_all();
+    facet::set_find_fn(find_impl);
+    facet::set_add_child_fn(add_child_impl);
+    facet::set_remove_child_fn(remove_child_impl);
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 320.0, h: 160.0 });
+    let _h: f64 = mount_component(CHIPS_PANE.build, host: host.raw());
+    let cp: *u8 = #addr_of(CHIPS_PANE) as *u8;
+
+    // An EMPTY keyed container must still mount an addressable backing view.
+    assert facet::find("chips", cp).found();
+
+    // First chip lands, is findable, and removes by its key.
+    let _a: facet::Handle = facet::find("chips", cp)
+        .add_child(facet::button("notes.txt").plain().key("chip:1"));
+    assert facet::find("chip:1", cp).found();
+    assert facet::find("chips", cp).remove_child("chip:1");
+    assert !facet::find("chip:1", cp).found();
+    unmount_all();
+}
+
 // ---- keyed-direct structural verbs: insert / replace / set_child + show/hide --
 struct VerbPane { n: i64 }
 
@@ -4562,6 +4644,33 @@ fn e2e_facet_composer_is_agent_input() {
         i = i +% (1 as usize);
     }
     assert ok;
+}
+
+#[test]
+fn plain_popup_mounts_borderless() {
+    // `.plain()` folds onto popup/menu the way it does onto button: the mounted
+    // NSPopUpButton drops its bezel (a quiet, text-like dropdown). An unstyled
+    // popup keeps the default bordered look.
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 120.0 });
+    var items: vec::Vec[text::Text] = vec::new::[text::Text]();
+    items.append(text::from_str("One"));
+    items.append(text::from_str("Two"));
+    var quiet_items: vec::Vec[text::Text] = vec::new::[text::Text]();
+    quiet_items.append(text::from_str("One"));
+    quiet_items.append(text::from_str("Two"));
+    var root: facet::Node = @facet {
+        vstack {
+            menu(title: "Model", items: quiet_items).plain().key("quiet")
+            popup(items).key("stock")
+        }
+    };
+    let _h: f64 = mount_into(#addr_of(root), content.raw(), 300.0f64, 120.0f64);
+    let quiet: *u8 = find_view_by_id(content.raw(), "quiet");
+    assert quiet != (0 as *u8);
+    assert ak::Button::from_raw(quiet).is_bordered() == false;
+    let stock: *u8 = find_view_by_id(content.raw(), "stock");
+    assert stock != (0 as *u8);
+    assert ak::Button::from_raw(stock).is_bordered();
 }
 
 #[test]

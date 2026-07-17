@@ -702,9 +702,12 @@ fn choose_file() -> option::Option[text::Text] {
 }
 
 // A chat-style composer: a bordered, scrollable, editable multi-line text view
-// that submits on Enter and inserts a newline on Shift+Enter. `on_submit(ctx,
-// tv)` fires on Enter; `on_change(ctx, tv)` (optional — defaults to a no-op)
-// fires on every edit. Read the current text with `area_text(node.payload())`.
+// that submits on Enter and inserts a newline on Shift+Enter or Ctrl+Enter
+// (the latter remapped from U+2028 to a real "\n"). `on_submit(tv, ctx)`
+// fires on Enter; `on_change(tv, ctx)` (optional — defaults to a no-op)
+// fires on every edit — (sender, ctx) order like every control action, so
+// bound methods dispatch with the right receiver.
+// Read the current text with `area_text(node.payload())`.
 // Auto-grow recipe: in `on_change`, read `composer_content_height(node.payload())`,
 // clamp it to your min/max, set that height on the composer's retained flex node,
 // then `ui::relayout(host)` to reflow — the field grows in place, no re-render.
@@ -1270,10 +1273,24 @@ struct ListCtx {
 
 fn list_ds_pin_key() -> *u8 { return { 28694 as *u8 }; }
 fn list_del_pin_key() -> *u8 { return { 28695 as *u8 }; }
+fn list_ctx_key() -> *u8 { return { 28696 as *u8 }; }
 
-// The list's content width (the column fills the last-column-autoresizing table).
+// The width a CELL actually gets — the COLUMN's width, not the table frame.
+// Modern NSTableView styles inset cells horizontally, so the frame can be
+// wider than the column; measuring wrapped rows at frame width under-measured
+// their heights and CLIPPED the last line(s) at certain panel widths (live
+// bug 2026-07-17: "scrolling down does not show the rest of the message").
 fn list_col_width(tv: *u8) -> f64 {
-    let w: f64 = ak::TableView::from_raw(tv).as_view().frame().w;
+    let tvw: ak::TableView = ak::TableView::from_raw(tv);
+    var cols: vec::Vec[ak::TableColumn] = tvw.table_columns();
+    match cols.at_ptr(0 as usize) {
+        option::Option[*ak::TableColumn]::Some(cp) => {
+            let cw: f64 = { (*cp).width() };
+            if cw >= 1.0f64 { return cw; }
+        }
+        option::Option[*ak::TableColumn]::None => { }
+    }
+    let w: f64 = tvw.as_view().frame().w;
     if w < 1.0f64 { return 1.0f64; }
     return w;
 }
@@ -1376,6 +1393,9 @@ fn list_reload_on_resize(ctx: *u8) {
 // row i; `count` rows total. Returns a scroll-wrapped NSTableView as a leaf.
 fn list(count: i64, row: fn(*u8, i64) -> flex::Node, ctx: *u8 = 0 as *u8, agent_id: str = "") -> flex::Node {
     let tv = ak::TableView::new(rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 });
+    // Full-width style: no automatic-style horizontal insets — cell width ==
+    // table width, so height measurement and rendering agree (see list_col_width).
+    tv.set_style(ak::TableViewStyle::FullWidth);
     let col = ak::TableColumn::new("col");
     tv.add_table_column(col);
     tv.set_column_autoresizing_style(ak::TableViewColumnAutoresizingStyle::NSTableViewLastColumnOnlyAutoresizingStyle);
@@ -1385,6 +1405,9 @@ fn list(count: i64, row: fn(*u8, i64) -> flex::Node, ctx: *u8 = 0 as *u8, agent_
 
     let lbox: *ListCtx = { malloc(#size_of::[ListCtx]()) as *ListCtx };
     { *lbox = ListCtx { row: row, caller_ctx: ctx, count: count, table: tv.raw(), last_width: 0.0f64 }; }
+    // Pin the ctx on the table (ASSIGN — a malloc box, not an objc object) so
+    // `list_set_count` can find it from the mounted view and grow the list.
+    rt::set_associated_object(tv.raw(), list_ctx_key(), lbox as *u8, 0 as usize);
 
     var ds: ak::TableViewDataSource = ak::TableViewDataSource_new(lbox as *u8);
     ds.set_number_of_rows_in_table_view(list_num_rows_imp);
@@ -1414,6 +1437,53 @@ fn list(count: i64, row: fn(*u8, i64) -> flex::Node, ctx: *u8 = 0 as *u8, agent_
     scroll.set_document_view(tv.as_view());
     tag_agent(scroll.as_view().raw(), agent_id, identity::Role::List);
     return fixed_view(scroll.as_view());
+}
+
+// Grow/shrink a mounted `list` IN PLACE: update the recycling list's row count
+// and reload (rows rebuild lazily as they scroll in — appends cost only the
+// visible cells). Accepts the list's scroll payload OR the inner table (a
+// keyed list's id rides the documentView). `scroll_to_end` FOLLOWS the tail —
+// it pins to the end only when the viewport was already near the bottom, so a
+// reader scrolled up into history is never yanked down; `force_end` pins
+// unconditionally (the initial jump-to-latest). False when `view_ptr` is not
+// a mounted list.
+fn list_set_count(view_ptr: *u8, count: i64, scroll_to_end: bool = false, force_end: bool = false) -> bool {
+    if view_ptr == (0 as *u8) { return false; }
+    var tbl: *u8 = view_ptr;
+    let dv_sel: *u8 = rt::sel(#str_ptr("documentView\0"));
+    let responds: i8 = rt::msg_i8_id(view_ptr, rt::sel(#str_ptr("respondsToSelector:\0")), dv_sel);
+    if responds != (0 as i8) {
+        let dv: *u8 = { rt::msg_id(view_ptr, dv_sel) };
+        if dv != (0 as *u8) { tbl = dv; }
+    }
+    let cp: *u8 = rt::get_associated_object(tbl, list_ctx_key());
+    if cp == (0 as *u8) { return false; }
+    let c: *ListCtx = { cp as *ListCtx };
+    // Near-bottom test BEFORE the reload changes the geometry.
+    var near: bool = true;
+    let esv: *u8 = { rt::msg_id(tbl, rt::sel(#str_ptr("enclosingScrollView\0"))) };
+    if esv != (0 as *u8) {
+        let clipv: *u8 = { rt::msg_id(esv, rt::sel(#str_ptr("contentView\0"))) };
+        if clipv != (0 as *u8) {
+            let b: rt::Rect = ak::View::from_raw(clipv).bounds();
+            let doc_h: f64 = ak::TableView::from_raw(tbl).as_view().frame().h;
+            near = doc_h - (b.y + b.h) < 60.0f64;
+        }
+    }
+    { (*c).count = count; }
+    let tvw: ak::TableView = ak::TableView::from_raw(tbl);
+    tvw.reload_data();
+    if (force_end || (scroll_to_end && near)) && count > (0 as i64) {
+        // Pin to the very END of the content, not the last ROW —
+        // scrollRowToVisible only brings a row's TOP edge in, so a
+        // taller-than-viewport final row kept its tail below the fold. Let the
+        // table adopt its new height first, then scroll the document to its
+        // bottom point (NSView clamps; the table is flipped, so max-y = end).
+        tvw.as_view().layout_subtree_if_needed();
+        let h: f64 = tvw.as_view().frame().h;
+        tvw.as_view().scroll_point(rt::Point { x: 0.0f64, y: h });
+    }
+    return true;
 }
 
 // ==========================================================================
@@ -2954,6 +3024,47 @@ fn test_list_reports_row_count() {
 }
 
 #[test]
+fn test_list_measures_at_the_column_width() {
+    // Heights must be measured at the width a cell actually GETS — the column
+    // width. When a style/inset makes the column narrower than the table
+    // frame, measuring at frame width wraps to fewer lines than rendering
+    // and clips the row's tail.
+    let n: flex::Node = list(count: 3 as i64, row: list_test_row);
+    let dv: *u8 = { rt::msg_id(n.payload(), rt::sel(#str_ptr("documentView\0"))) };
+    let tvw: ak::TableView = ak::TableView::from_raw(dv);
+    tvw.as_view().set_frame(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
+    var cols: vec::Vec[ak::TableColumn] = tvw.table_columns();
+    match cols.at_ptr(0 as usize) {
+        option::Option[*ak::TableColumn]::Some(cp) => { { (*cp).set_width(260.0f64); } }
+        option::Option[*ak::TableColumn]::None => { assert false; }
+    }
+    assert list_col_width(dv) == 260.0f64;
+    // A wrapped row measured at 260 is TALLER than at 300 — the row height
+    // follows the narrower, true cell width.
+    var ctx: ListCtx = ListCtx { row: list_test_row, caller_ctx: 0 as *u8, count: 3 as i64, table: 0 as *u8, last_width: 0.0f64 };
+    let h_narrow: f64 = list_height_imp(#addr_of(ctx) as *u8, dv, 0 as i64);
+    assert h_narrow > 0.0f64;
+    return;
+}
+
+#[test]
+fn test_list_set_count_grows_a_mounted_list() {
+    // The live-transcript verb: a mounted list's count updates IN PLACE via the
+    // ctx pinned on its table — the table re-queries the data source and
+    // reports the new count. Works from the scroll payload (documentView reach)
+    // and from the inner table alike; a non-list view is a no-op false.
+    let n: flex::Node = list(count: 2 as i64, row: list_test_row);
+    assert list_set_count(n.payload(), 7 as i64);
+    let dv: *u8 = { rt::msg_id(n.payload(), rt::sel(#str_ptr("documentView\0"))) };
+    assert ak::TableView::from_raw(dv).number_of_rows() == (7 as i64);
+    assert list_set_count(dv, 3 as i64, scroll_to_end: true);   // table ptr + tail pin
+    assert ak::TableView::from_raw(dv).number_of_rows() == (3 as i64);
+    let plain: ak::View = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 10.0, h: 10.0 });
+    assert list_set_count(plain.raw(), 5 as i64) == false;
+    return;
+}
+
+#[test]
 fn test_list_row_measures_and_builds_cell() {
     // Row height is the flexed content's natural height at the list width; the
     // returned cell hosts that content (this is what a recycled cell re-fills).
@@ -2980,6 +3091,37 @@ fn change_hooked_text_area_lets_enter_through() {
     var with_submit: akx::ComposerCtx = akx::ComposerCtx { on_change: none, on_submit: test_noop_action, caller_ctx: 0 as *u8 };
     assert akx::composer_do_command_imp(#addr_of(with_submit) as *u8, 0 as *u8, ins) == (1 as i8);
     assert akx::composer_do_command_imp(#addr_of(with_submit) as *u8, 0 as *u8, rt::sel(#str_ptr("moveDown:\0"))) == (0 as i8);
+}
+
+static ORDER_SENDER: *u8 = #zero::[*u8]();
+static ORDER_CTX: *u8 = #zero::[*u8]();
+fn record_order(sender: *u8, ctx: *u8) { ORDER_SENDER = sender; ORDER_CTX = ctx; return; }
+
+#[test]
+fn composer_submit_delivers_sender_then_ctx() {
+    // The delegate MUST call handlers as (sender, ctx) — the control-action
+    // order the compiler's bound-method thunk expects (ctx = receiver, LAST).
+    // ctx-first dispatched bound methods with `this` = the text view.
+    let none: fn(*u8, *u8) = 0 as fn(*u8, *u8);
+    var cctx: akx::ComposerCtx = akx::ComposerCtx { on_change: none, on_submit: record_order, caller_ctx: 7 as *u8 };
+    let tv_fake: *u8 = 9 as *u8;
+    assert akx::composer_do_command_imp(#addr_of(cctx) as *u8, tv_fake, rt::sel(#str_ptr("insertNewline:\0"))) == (1 as i8);
+    assert ORDER_SENDER == (9 as *u8);
+    assert ORDER_CTX == (7 as *u8);
+}
+
+#[test]
+fn composer_remaps_ctrl_enter_to_real_newline() {
+    // Ctrl+Enter arrives as insertLineBreak:; the delegate claims it (1 =
+    // handled) and performs insertNewline: on the text view instead, so the
+    // buffer gets "\n", never U+2028 — with or without a submit handler
+    // (tv = nil here: the remap message is a safe ObjC no-op).
+    let none: fn(*u8, *u8) = 0 as fn(*u8, *u8);
+    let brk: *u8 = rt::sel(#str_ptr("insertLineBreak:\0"));
+    var with_submit: akx::ComposerCtx = akx::ComposerCtx { on_change: none, on_submit: test_noop_action, caller_ctx: 0 as *u8 };
+    assert akx::composer_do_command_imp(#addr_of(with_submit) as *u8, 0 as *u8, brk) == (1 as i8);
+    var no_submit: akx::ComposerCtx = akx::ComposerCtx { on_change: test_noop_action, on_submit: none, caller_ctx: 0 as *u8 };
+    assert akx::composer_do_command_imp(#addr_of(no_submit) as *u8, 0 as *u8, brk) == (1 as i8);
 }
 
 // The scroll-hosted inner NSTextView of a text_area node (asserting helper).
