@@ -1,5 +1,7 @@
 # Backends
 
+> Entry path: [tutorial.md](tutorial.md) · [guide.md](guide.md) · [ref.md](ref.md)
+
 `facet/facet` is platform-free: it produces a `Node` tree and knows nothing
 about native views. A **backend** package turns that description into a native
 UI. `facet_appkit` is the reference backend (macOS / AppKit); `facet_gtk` is a

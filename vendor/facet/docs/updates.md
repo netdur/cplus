@@ -1,5 +1,7 @@
 # Keyed-direct updates
 
+> Entry path: [tutorial.md](tutorial.md) · [guide.md](guide.md) · [ref.md](ref.md)
+
 facet updates the screen by addressing one element and mutating it in place. A
 handler mutates a struct field, then pushes that value to the element that shows
 it, found by its `key`. There is no re-render and no diff.

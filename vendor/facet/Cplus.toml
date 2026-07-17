@@ -3,11 +3,9 @@ name    = "facet"
 version = "0.0.2"
 edition = "2026"
 
-# facet — the platform-free UI description + the `@facet { }` builder context.
-# A `Node` tree is built declaratively via the contextual-builder DSL; `mount`
-# turns it into a flex_layout tree through a small per-platform `Renderer`
-# vtable (facet_appkit, ...) — containers and layout are write-once here, only
-# leaf widgets go through the vtable.
+# facet — platform-free UI description + @facet DSL; keyed-direct updates.
+# Backends (facet_appkit, …) mount Nodes via runtime. See docs/
+# (tutorial / guide / ref + topical deep dives).
 
 # Test root: its import closure covers the package, so `cpc test` runs the
 # literal `@facet`-syntax tests plus the module tests.

@@ -3,5 +3,8 @@ name    = "agent_core"
 version = "0.0.1"
 edition = "2026"
 
+# agent_core — framework-agnostic agent UI surface (identity, auth, surface
+# outcomes, events, backend vtable). See docs/.
+
 [dependencies]
 stdlib = "*"

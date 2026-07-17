@@ -1,5 +1,7 @@
 # The component model
 
+> Entry path: [tutorial.md](tutorial.md) · [guide.md](guide.md) · [ref.md](ref.md)
+
 A component is a plain struct. Its fields are the state, its handlers are
 methods in the inherent `impl`, and `impl T: facet::Component` is the checked
 conformance block holding `build`:
@@ -12,7 +14,7 @@ struct Sidebar {
 
 impl Sidebar {
     // handlers + helpers live in the inherent impl
-    fn new() -> Sidebar { return Sidebar { collapsed: false, width: 240.0f64 }; }
+    fn new() -> Sidebar { return { collapsed: false, width: 240.0f64 }; }
 }
 
 impl Sidebar: facet::Component {

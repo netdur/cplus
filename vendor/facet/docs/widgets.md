@@ -1,5 +1,7 @@
 # The `@facet` DSL, widgets, and layout
 
+> Entry path: [tutorial.md](tutorial.md) · [guide.md](guide.md) · [ref.md](ref.md)
+
 A screen is a `Node` tree. You build it with the `@facet { }` contextual-builder
 DSL, or with the `Builder` API directly.
 

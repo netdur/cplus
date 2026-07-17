@@ -1,5 +1,7 @@
 # Component lifecycle — stage / attach / detach
 
+> Entry path: [tutorial.md](tutorial.md) · [guide.md](guide.md) · [ref.md](ref.md)
+
 You can build a component **off-canvas**, hold it, then attach it into the live
 tree at the right moment and detach it later — without rebuilding it. Its views
 and native state survive being parked, so re-attaching restores it exactly:
