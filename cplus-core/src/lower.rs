@@ -718,6 +718,9 @@ impl Lower {
                     self.lower_expr(eb);
                 }
             }
+            ExprKind::FnRef { callee, .. } => {
+                self.lower_expr(callee);
+            }
             ExprKind::Call {
                 callee,
                 args,
@@ -1820,6 +1823,7 @@ fn subst_expr(e: &mut Expr, consts: &std::collections::HashMap<String, (Expr, Ty
                 subst_expr(eb, consts);
             }
         }
+        ExprKind::FnRef { callee, .. } => subst_expr(callee, consts),
         ExprKind::Call { callee, args, .. } => {
             subst_expr(callee, consts);
             for a in args {

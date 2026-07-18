@@ -4940,6 +4940,9 @@ fn collect_address_taken_fns(program: &Program, sigs: &HashMap<String, FnSig>) -
             // v0.0.22 DSL.2: never reached — builder blocks desugar to
             // ordinary AST long before codegen.
             ExprKind::BuilderBlock { .. } => {}
+            // Post-mono a value-turbofish is already an `Ident` of the concrete
+            // instantiation (collected by the `Ident` arm); this is unreachable.
+            ExprKind::FnRef { .. } => {}
             ExprKind::Ident(name) => {
                 if sigs.contains_key(name) {
                     taken.insert(name.clone());
@@ -10110,6 +10113,9 @@ impl<'a> FnState<'a> {
             // the resolver walk or `lower`; codegen never sees one.
             ExprKind::BuilderBlock { .. } => {
                 panic!("codegen saw an un-lowered builder block; driver must call crate::lower before codegen");
+            }
+            ExprKind::FnRef { .. } => {
+                panic!("codegen saw a value-turbofish `FnRef`; monomorphize must lower it to an `Ident` of the concrete instantiation");
             }
             ExprKind::IntLit(v, suf) => {
                 use crate::lexer::NumSuffix;

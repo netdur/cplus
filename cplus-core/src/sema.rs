@@ -2413,6 +2413,77 @@ impl SemaCx<'_> {
     /// the param's declared bounds at an instantiation site. Emits
     /// **E0502** for each violation, naming the offending bound, type,
     /// and the surrounding instantiation context.
+    /// Value-turbofish (`f::[T]` with no following call): type it as a
+    /// fn-pointer to the generic function `f` instantiated at `type_args`, and
+    /// record the instantiation so monomorphize synthesizes the concrete
+    /// symbol (`f__<args>`) and — when the *caller* is itself generic —
+    /// propagates it through the caller's subst. The trampoline body already
+    /// type-checks (a call on a generic value); this only makes *taking its
+    /// address at a fixed `T`* expressible, closing the E0821 gap.
+    fn check_fn_ref(&mut self, callee: &Expr, type_args: &[Type], span: ByteSpan) -> Ty {
+        let ExprKind::Ident(name) = &callee.kind else {
+            self.err(
+                "E0821",
+                "value-turbofish `::[T]` is only supported on a generic function name".to_string(),
+                span,
+            );
+            return Ty::Error;
+        };
+        let name = name.clone();
+        let Some(gsig) = self.fns_generic.get(&name).cloned() else {
+            self.err(
+                "E0821",
+                format!("`{name}` is not a generic function; `::[T]` cannot be taken as a value"),
+                span,
+            );
+            return Ty::Error;
+        };
+        if type_args.len() != gsig.generic_params.len() {
+            self.err(
+                "E0501",
+                format!(
+                    "function `{}` takes {} type argument(s), got {}",
+                    name,
+                    gsig.generic_params.len(),
+                    type_args.len()
+                ),
+                span,
+            );
+            return Ty::Error;
+        }
+        let mut subst: HashMap<String, Ty> = HashMap::new();
+        let mut concrete_args: Vec<Ty> = Vec::with_capacity(gsig.generic_params.len());
+        for (gp, ta) in gsig.generic_params.iter().zip(type_args.iter()) {
+            let concrete = self.resolve_type(ta);
+            subst.insert(gp.clone(), concrete.clone());
+            concrete_args.push(concrete);
+        }
+        self.check_generic_bounds(
+            &gsig.generic_params,
+            &gsig.bounds,
+            &concrete_args,
+            span,
+            &format!("function `{}`", name),
+        );
+        self.fn_instantiations
+            .insert((name.clone(), concrete_args.clone()));
+        self.call_monos.insert(span, concrete_args.clone());
+        let params: Vec<Ty> = gsig
+            .params
+            .iter()
+            .map(|p| self.subst_ty_deep(&p.ty, &subst))
+            .collect();
+        let param_takes: Vec<bool> = gsig.params.iter().map(|p| p.move_).collect();
+        let param_refs: Vec<bool> = gsig.params.iter().map(|p| p.mutable).collect();
+        let return_type = Box::new(self.subst_ty_deep(&gsig.return_type, &subst));
+        Ty::FnPtr {
+            params,
+            param_takes,
+            param_refs,
+            return_type,
+        }
+    }
+
     fn check_generic_bounds(
         &mut self,
         param_names: &[String],
@@ -6529,6 +6600,7 @@ impl SemaCx<'_> {
                 type_args,
                 arg_labels,
             } => self.check_call(callee, args, type_args, arg_labels, e.span),
+            ExprKind::FnRef { callee, type_args } => self.check_fn_ref(callee, type_args, e.span),
             ExprKind::Binary { op, lhs, rhs } => self.check_binary(*op, lhs, rhs, e.span),
             ExprKind::Unary { op, operand } => self.check_unary(*op, operand, expected, e.span),
             ExprKind::Assign { op, target, value } => self.check_assign(*op, target, value, e.span),
@@ -16727,6 +16799,22 @@ fn walk_body_sites_in_expr(expr: &Expr, out: &mut Vec<BodySite>) {
                 walk_body_sites_in_expr(a, out);
             }
         }
+        ExprKind::FnRef { callee, type_args } => {
+            // Value-turbofish is an instantiation site exactly like a call, so
+            // record the same FnCall body-site (drives mono discovery).
+            if let ExprKind::Ident(name) = &callee.kind {
+                out.push(BodySite::FnCall {
+                    span: expr.span,
+                    name: name.clone(),
+                    turbofish: type_args.clone(),
+                });
+            } else {
+                walk_body_sites_in_expr(callee, out);
+            }
+            for t in type_args {
+                walk_type_sites(t, out);
+            }
+        }
         ExprKind::Cast { expr: inner, ty } => {
             walk_body_sites_in_expr(inner, out);
             walk_type_sites(ty, out);
@@ -18370,6 +18458,8 @@ fn collect_effects_expr(e: &Expr, out: &mut BodyEffects) {
         // v0.0.22 DSL.2: never reached — builder blocks desugar to
         // ordinary AST before any effects collection runs.
         ExprKind::BuilderBlock { .. } => {}
+        // Taking a function's address is pure — no runtime effect.
+        ExprKind::FnRef { .. } => {}
         ExprKind::Call { callee, args, .. } => {
             if let Some(name) = extract_call_name(callee) {
                 out.calls.push((name, e.span));
@@ -28249,5 +28339,77 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
              fn main() -> i32 { return 0; }",
         );
         assert!(codes.contains(&"E0906"), "got {:?}", codes);
+    }
+
+    // Value-turbofish: `f::[T]` with no call takes the instantiation as a
+    // fn-pointer value (the E0821 gap). The type is the substituted signature.
+    #[test]
+    fn value_turbofish_takes_generic_fn_as_value() {
+        let codes = errors(
+            "fn id[T](take v: T) -> T { return v; }\n\
+             fn main() -> i32 {\n\
+                 let f: fn(take i32) -> i32 = id::[i32];\n\
+                 let x: i32 = f(3);\n\
+                 return x - 3;\n\
+             }",
+        );
+        assert!(codes.is_empty(), "got {:?}", codes);
+    }
+
+    // The type-erasing trampoline from generic code — the pattern that lets a
+    // runtime store an interface method of a type parameter as fn(*u8)+ctx
+    // (bug report bugs/generic-method-fn-pointer.md, case C).
+    #[test]
+    fn value_turbofish_trampoline_from_generic_context() {
+        let codes = errors(
+            "interface Hook { fn on_detach(ref this); }\n\
+             struct W { }\n\
+             impl W: Hook { fn on_detach(ref this) { return; } }\n\
+             fn sink(f: fn(*u8), fctx: *u8) { f(fctx); return; }\n\
+             fn tramp[C: Hook](p: *u8) { let q: *C = p as *C; { (*q).on_detach() }; return; }\n\
+             fn store[C: Hook](take c: C) {\n\
+                 var owned: C = c;\n\
+                 sink(tramp::[C], #addr_of(owned) as *u8);\n\
+                 return;\n\
+             }\n\
+             fn main() -> i32 { store(W { }); return 0; }",
+        );
+        assert!(codes.is_empty(), "got {:?}", codes);
+    }
+
+    // `::[T]` as a value is only meaningful on a GENERIC function name.
+    #[test]
+    fn value_turbofish_on_non_generic_fn_e0821() {
+        let codes = errors(
+            "fn g(p: *u8) { return; }\n\
+             fn main() -> i32 { let f: fn(*u8) = g::[i32]; f(0 as *u8); return 0; }",
+        );
+        assert!(codes.contains(&"E0821"), "got {:?}", codes);
+    }
+
+    // Wrong number of type arguments is the same arity error a call gets.
+    #[test]
+    fn value_turbofish_arity_mismatch_e0501() {
+        let codes = errors(
+            "fn id[T](take v: T) -> T { return v; }\n\
+             fn main() -> i32 {\n\
+                 let f: fn(take i32) -> i32 = id::[i32, i32];\n\
+                 let _x: i32 = f(3);\n\
+                 return 0;\n\
+             }",
+        );
+        assert!(codes.contains(&"E0501"), "got {:?}", codes);
+    }
+
+    // Interface bounds are enforced at the take-site exactly like a call site.
+    #[test]
+    fn value_turbofish_bound_violation_e0502() {
+        let codes = errors(
+            "interface Hook { fn on_detach(ref this); }\n\
+             struct Plain { }\n\
+             fn tramp[C: Hook](p: *u8) { let q: *C = p as *C; { (*q).on_detach() }; return; }\n\
+             fn main() -> i32 { let f: fn(*u8) = tramp::[Plain]; f(0 as *u8); return 0; }",
+        );
+        assert!(codes.contains(&"E0502"), "got {:?}", codes);
     }
 }

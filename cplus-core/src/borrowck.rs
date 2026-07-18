@@ -2649,6 +2649,9 @@ impl Analyzer<'_> {
             // v0.0.22 DSL.2: never reached — builder blocks desugar to
             // ordinary AST before the borrow checker runs.
             ExprKind::BuilderBlock { .. } => {}
+            // A value-turbofish takes a function's address; no place is read
+            // or moved.
+            ExprKind::FnRef { .. } => {}
             ExprKind::IntLit(_, _)
             | ExprKind::FloatLit(_, _)
             | ExprKind::BoolLit(_)
@@ -3724,6 +3727,7 @@ fn expr_reads_ident(e: &Expr, name: &str) -> bool {
         // v0.0.22 DSL.2: never reached — builder blocks desugar to
         // ordinary AST before the borrow checker runs.
         ExprKind::BuilderBlock { .. } => false,
+        ExprKind::FnRef { .. } => false,
         ExprKind::Ident(n) => n == name,
         ExprKind::IntLit(_, _)
         | ExprKind::FloatLit(_, _)

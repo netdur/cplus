@@ -1576,6 +1576,7 @@ impl<'a> Resolver<'a> {
                     self.walk_expr(a);
                 }
             }
+            ExprKind::FnRef { callee, .. } => self.walk_expr(callee),
             ExprKind::Binary { lhs, rhs, .. } => {
                 self.walk_expr(lhs);
                 self.walk_expr(rhs);

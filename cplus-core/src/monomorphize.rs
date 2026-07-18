@@ -143,6 +143,7 @@ pub fn monomorphize(
         &mono.instantiations,
         &mono.call_monos,
         &mono.struct_instantiations,
+        &mono.method_instantiations,
     );
     // Build the substitution context for each instantiation up front
     // so call-site rewriting and template-expansion share one source.
@@ -1237,6 +1238,13 @@ fn visit_ident_calls(expr: &Expr, f: &mut impl FnMut(&str, &[Type], crate::lexer
                 visit_ident_calls(a, f);
             }
         }
+        ExprKind::FnRef { callee, type_args } => {
+            // Value-turbofish (`f::[T]`) discovers the same instantiation a
+            // call to `f::[T](...)` would, so propagation synthesizes `f__T`.
+            if let ExprKind::Ident(name) = &callee.kind {
+                f(name, type_args, expr.span);
+            }
+        }
         ExprKind::Block(b) => visit_ident_calls_in_block(b, f),
         ExprKind::If {
             cond,
@@ -1403,6 +1411,7 @@ fn propagate_fn_instantiations(
         (String, Vec<Ty>),
         crate::sema::StructInstantiationInfo,
     >,
+    method_instantiations: &std::collections::BTreeSet<(String, String, Vec<Ty>)>,
 ) -> (std::collections::BTreeSet<(String, Vec<Ty>)>, Option<String>) {
     // Build template lookup: name -> &Function. Only generic templates.
     let templates: std::collections::HashMap<String, &Function> = program
@@ -1535,6 +1544,58 @@ fn propagate_fn_instantiations(
             }
         }
     }
+    // Discovery inside METHOD-GENERIC methods on a CONCRETE struct
+    // (`impl Handle { fn present[C](..) }`): the walks above cover free-fn
+    // templates and generic-STRUCT impl methods, but a method's OWN generic
+    // params are instantiated through `method_instantiations`, not
+    // `struct_instantiations`. Seed the same worklist through that channel —
+    // otherwise a generic-fn use inside such a method (a `tramp::[C]`
+    // value-turbofish, a `helper::[C](x)` call) never synthesizes its
+    // concrete instantiation and codegen faults on the mangled ident.
+    for (sname, mname, margs) in method_instantiations {
+        for item in &program.items {
+            let ItemKind::Impl(b) = &item.kind else {
+                continue;
+            };
+            if !b.target_generic_params.is_empty() {
+                continue; // generic-struct impls: covered by the pass above
+            }
+            if &b.target.name != sname {
+                continue;
+            }
+            for m in &b.methods {
+                if m.name.name != *mname
+                    || m.generic_params.is_empty()
+                    || m.generic_params.len() != margs.len()
+                {
+                    continue;
+                }
+                let subst = build_subst(&m.generic_params, margs);
+                visit_ident_calls_in_block(&m.body, &mut |callee_name, type_args, _span| {
+                    if !templates.contains_key(callee_name) {
+                        return;
+                    }
+                    if type_args.is_empty() {
+                        return;
+                    }
+                    let Some(resolved) = type_args
+                        .iter()
+                        .map(|t| type_ast_to_ty_with_subst(t, &subst))
+                        .collect::<Option<Vec<Ty>>>()
+                    else {
+                        return;
+                    };
+                    if !is_concrete(&resolved) {
+                        return;
+                    }
+                    let pair = (callee_name.to_string(), resolved);
+                    if out.insert(pair.clone()) {
+                        method_worklist.push_back(pair);
+                    }
+                });
+            }
+        }
+    }
     // Drain the method-discovered set transitively — a freshly-discovered
     // generic-fn instantiation might call yet another generic fn in its
     // body. Same fixed-point shape as the main worklist above.
@@ -1615,6 +1676,7 @@ pub fn check_instantiation_bounds(
         &mono.instantiations,
         &mono.call_monos,
         &mono.struct_instantiations,
+        &mono.method_instantiations,
     );
     let Some(name) = culprit else {
         return Vec::new();
@@ -2358,6 +2420,35 @@ fn rewrite_expr(
     struct_lookup: &StructLookup,
 ) -> Expr {
     let kind = match &expr.kind {
+        // Value-turbofish `f::[T]` (a fn-pointer VALUE): lower to the address
+        // of the concrete instantiation — the SAME symbol the turbofish CALL
+        // path mangles (mangle_call_from_ast), resolved through the active
+        // subst so `f::[C]` inside `caller[Widget]` becomes `@f__Widget`.
+        // Codegen's `Ident` arm emits it as a fn-pointer with zero extra work.
+        ExprKind::FnRef { callee, type_args } => {
+            if let ExprKind::Ident(cname) = &callee.kind {
+                ExprKind::Ident(mangle_call_from_ast(
+                    cname,
+                    type_args,
+                    subst,
+                    type_name_of,
+                    struct_lookup,
+                ))
+            } else {
+                ExprKind::FnRef {
+                    callee: Box::new(rewrite_expr(
+                        callee,
+                        subst,
+                        generic_names,
+                        inst_lookup,
+                        mono,
+                        type_name_of,
+                        struct_lookup,
+                    )),
+                    type_args: type_args.clone(),
+                }
+            }
+        }
         ExprKind::Call {
             callee,
             args,
@@ -3822,6 +3913,35 @@ mod tests {
         };
         let p = run(src);
         assert_eq!(p.items.len(), before_count);
+    }
+
+    // A value-turbofish inside a METHOD-GENERIC method on a CONCRETE struct
+    // must synthesize the referenced instantiation: discovery flows through
+    // `method_instantiations` (not `struct_instantiations`), the channel the
+    // propagation pass seeds last. Regression: this used to reach codegen as
+    // a mangled ident with no synthesized fn ("sema validated" panic).
+    #[test]
+    fn value_turbofish_in_concrete_struct_generic_method_synthesizes() {
+        let prog = run(
+            "interface Hook { fn m(ref this); }\n\
+             struct W { }\n\
+             impl W: Hook { fn m(ref this) { return; } }\n\
+             fn tramp[C: Hook](p: *u8) { let q: *C = p as *C; { (*q).m() }; return; }\n\
+             struct H { }\n\
+             impl H {\n\
+                 fn go[C: Hook](this, ref c: C) {\n\
+                     let cb: fn(*u8) = tramp::[C];\n\
+                     cb(#addr_of(c) as *u8);\n\
+                     return;\n\
+                 }\n\
+             }\n\
+             fn main() -> i32 { var w: W = W { }; let h: H = H { }; h.go(w); return 0; }",
+        );
+        let has = prog.items.iter().any(|i| match &i.kind {
+            ItemKind::Function(f) => f.name.name.starts_with("tramp__"),
+            _ => false,
+        });
+        assert!(has, "tramp instantiation not synthesized for C=W");
     }
 
     #[allow(dead_code)]

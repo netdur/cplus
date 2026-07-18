@@ -763,6 +763,15 @@ pub enum ExprKind {
         /// argument types.
         type_args: Vec<Type>,
     },
+    /// Value-turbofish: a reference to a generic function instantiated at
+    /// explicit type args, taken as a fn-pointer VALUE (no call) — `f::[T]`
+    /// with no following `(...)`. Monomorphize rewrites it to `Ident(mangled)`
+    /// (the concrete instantiation's symbol), so no pass after mono sees it.
+    /// `callee` is the function name (an `Ident`); `type_args` is the turbofish.
+    FnRef {
+        callee: Box<Expr>,
+        type_args: Vec<Type>,
+    },
     Binary {
         op: BinOp,
         lhs: Box<Expr>,

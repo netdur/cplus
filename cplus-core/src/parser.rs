@@ -2985,21 +2985,35 @@ impl Parser {
                         break;
                     }
                 }
-                self.expect(&TokenKind::RBracket, "`]`")?;
-                // After the turbofish, a `(args)` is required.
-                self.expect(&TokenKind::LParen, "`(` after `::[...]` turbofish")?;
-                let (args, arg_labels) = self.parse_call_args()?;
-                let end = self.expect(&TokenKind::RParen, "`)`")?.span;
-                let span = e.span.merge(end);
-                e = Expr {
-                    kind: ExprKind::Call {
-                        callee: Box::new(e),
-                        args,
-                        arg_labels,
-                        type_args,
-                    },
-                    span,
-                };
+                let rbracket = self.expect(&TokenKind::RBracket, "`]`")?;
+                // A `(args)` after the turbofish makes it a CALL. Its absence
+                // makes it a VALUE: a fn-pointer to the instantiation
+                // (value-turbofish, `f::[T]`), lowered by monomorphize to the
+                // concrete symbol's address.
+                if self.at(&TokenKind::LParen) {
+                    self.bump();
+                    let (args, arg_labels) = self.parse_call_args()?;
+                    let end = self.expect(&TokenKind::RParen, "`)`")?.span;
+                    let span = e.span.merge(end);
+                    e = Expr {
+                        kind: ExprKind::Call {
+                            callee: Box::new(e),
+                            args,
+                            arg_labels,
+                            type_args,
+                        },
+                        span,
+                    };
+                } else {
+                    let span = e.span.merge(rbracket.span);
+                    e = Expr {
+                        kind: ExprKind::FnRef {
+                            callee: Box::new(e),
+                            type_args,
+                        },
+                        span,
+                    };
+                }
                 continue;
             }
             match self.peek_kind() {

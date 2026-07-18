@@ -2665,6 +2665,12 @@ fn rewrite_expr(
                 rewrite_type(ta, ctx)?;
             }
         }
+        ExprKind::FnRef { callee, type_args } => {
+            rewrite_expr(callee, ctx, scope)?;
+            for ta in type_args.iter_mut() {
+                rewrite_type(ta, ctx)?;
+            }
+        }
         ExprKind::Binary { lhs, rhs, .. } => {
             rewrite_expr(lhs, ctx, scope)?;
             rewrite_expr(rhs, ctx, scope)?;
