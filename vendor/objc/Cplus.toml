@@ -3,6 +3,9 @@ name    = "objc"
 version = "0.0.0"
 edition = "2026"
 
+# objc — shared Objective-C runtime for C+ (msgSend, bridge, synthesis).
+# Foundation + libobjc. See docs/.
+
 [dependencies]
 stdlib = "*"
 
