@@ -44,6 +44,11 @@ impl Counter: facet::Component {
     }
 }
 
+impl Counter: facet::Lifecycle {
+    fn on_attach(ref this) { return; }   // fired by the runtime after the mount
+    fn on_detach(ref this) { return; }   // fired when the window closes, before teardown
+}
+
 fn main() -> i32 {
     runtime::run_component(
         Counter { n: 0 },
@@ -62,6 +67,9 @@ What matters:
    there is no re-render and no diff.
 3. **Handlers are methods** — `.on_click(this.inc)`; `find` is global (same id
    an agent would use).
+4. **Lifecycle is the runtime's job** — `run_component` fires `on_attach` once
+   the tree is live (initial work goes there, not in `main`) and `on_detach`
+   before teardown. The counter needs nothing, so its hooks are empty.
 
 ## Minimal DSL
 
@@ -87,3 +95,6 @@ More widgets and modifiers: [widgets.md](widgets.md).
 - Prefer **window-unique keys** so plain `find(key)` is enough.
 - Missed keys: empty `Handle` (mutators no-op) — safe on teardown.
 - Host entry: `runtime::run_component` or `runtime::run(window)`.
+- `run_component` needs `Component` **and** `Lifecycle`; empty hooks are fine.
+- Slow reads go in a service (`load_async`), never in a handler:
+  [services.md](services.md).

@@ -9,7 +9,8 @@ backends. Fast start: [tutorial.md](tutorial.md). API tables: [ref.md](ref.md).
 |---|---|
 | Components, state, composition | [component-model.md](component-model.md) |
 | `find` / Handle / structural verbs | [updates.md](updates.md) |
-| stage / attach / detach (router) | [lifecycle.md](lifecycle.md) |
+| Lifecycle, `present`, router, parking | [lifecycle.md](lifecycle.md) |
+| Services, `load_service`, `run_on_main` | [services.md](services.md) |
 | `@facet` DSL, leaves, containers | [widgets.md](widgets.md) |
 | Backend vtable, runtime host | [backends.md](backends.md) |
 
@@ -68,9 +69,21 @@ backend vtable. Full catalog: [widgets.md](widgets.md).
 
 ## Lifecycle (navigation)
 
-`stage` / `attach` / `detach` park a fully built component off-canvas without
-destroying native state (scroll, selection, half-typed input). Router pattern:
-one nav owns screens, attaches one at a time. See [lifecycle.md](lifecycle.md).
+Components implement `Lifecycle` (`on_attach` / `on_detach`); the hooks are
+fired for them. `run_component` fires the root's around the run loop;
+`present` shows a component in a keyed container and arranges the outgoing
+one's `on_detach` before its tree is removed — by any verb, including a plain
+`set_child` and teardown. Routers therefore hold state and project it;
+they never call hooks. For view parking across navigation (scroll,
+half-typed input) there is `stage` / `attach` / `detach`. See
+[lifecycle.md](lifecycle.md).
+
+## Services (slow data)
+
+A service owns data and sources it off the main thread: implement
+`Service` (`produce` on a worker / `apply` on main) and call
+`facet::load_service` — or the service's own `load_async` wrapper — from
+`on_attach`. See [services.md](services.md).
 
 ## Backends
 
@@ -92,7 +105,10 @@ stable, namespaced ids so external agents and `find` stay aligned
 - **`find` after teardown** no-ops; check `found()` if you must know.
 - **Identical keys in two components** — pass `cp: #addr_of(this)` to scope, or
   namespace keys globally.
-- **Async completions** — use `is_attached(cp)` before touching UI (lifecycle).
+- **Async completions** — with namespaced keys a stale delivery just misses;
+  guard with `found()` or `facet::attached(this)` when you must know.
+- **Do not `await` in a handler** — `block_on` blocks the main thread. Slow
+  reads go through a service ([services.md](services.md)).
 
 ## Status (high level)
 

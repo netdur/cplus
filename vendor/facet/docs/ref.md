@@ -19,15 +19,22 @@ import "facet/runtime" as runtime;
 
 ---
 
-## `Component`
+## `Component` and `Lifecycle`
 
 ```cplus
 interface Component {
     fn build(ref this) -> Node;
 }
+
+interface Lifecycle {
+    fn on_attach(ref this);
+    fn on_detach(ref this);
+}
 ```
 
-`build` once; bind handlers with `.on_click(this.method)`.
+`build` once; bind handlers with `.on_click(this.method)`. Lifecycle hooks
+are fired FOR the component (by `run_component` and the structural verbs);
+`run_component` requires both conformances. Empty hooks are fine.
 
 ---
 
@@ -58,19 +65,35 @@ Global by default; `cp` scopes to a component subtree. Miss → empty Handle
 | `replace_child(key, take Node) -> bool` | swap |
 | `remove_child(key) -> bool` | remove |
 | `set_child(take Node)` | replace sole child |
+| `present[C: Component + Lifecycle](ref c)` | show a component; hooks fired for it |
 
-Retained live subtrees: lifecycle attach (see lifecycle.md), not these alone.
-
-Full narrative: [updates.md](updates.md).
+Removing / replacing a presented component's content fires its `on_detach`
+first, whichever verb does it. Full narrative: [updates.md](updates.md).
 
 ---
 
 ## Lifecycle
 
 ```cplus
-// stage / Staged / attach / detach / is_attached / Lifecycle
-// see lifecycle.md for signatures and router pattern
+interface Lifecycle { fn on_attach(ref this); fn on_detach(ref this); }
+fn attached[C](ref c: C) -> bool     // self-liveness: facet::attached(this)
+fn is_attached(cp: *u8) -> bool
+// present (Handle verb, above); stage / Staged / attach / detach = view parking
+// see lifecycle.md for the router pattern and parking signatures
 ```
+
+---
+
+## Services
+
+```cplus
+interface Service { fn produce(ref this); fn apply(ref this); }
+fn load_service[S: Service](ref svc: S, on_ready: fn(*u8) = noop, ctx: *u8 = 0)
+fn run_on_main(work: fn(*u8), ctx: *u8)
+```
+
+`produce` on a worker, `apply` + `on_ready(ctx)` on the main thread; the
+service must outlive the flight. See [services.md](services.md).
 
 ---
 
@@ -131,12 +154,16 @@ token list.
 
 ```cplus
 fn run[W: Window](take window: W)
-fn run_component[C: Component](take component: C, title, width, height, ...)
+fn run_component[C: Component + Lifecycle](take component: C, title, width, height, ...) -> C
 fn present_window(take root: Node, title, width, height)
 fn alert(title, message, primary, secondary?) -> i32
 fn choose_file() / choose_directory() -> Option[Text]
 // Window interface: root, title, size, chrome flags, menus, close hooks
 ```
+
+`run_component` fires the component's `on_attach` after the mount and its
+`on_detach` (then a teardown drain of presented children) when the loop
+stops; it returns the component with its final field state.
 
 Backend selection and porting: [backends.md](backends.md).
 

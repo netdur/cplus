@@ -32,7 +32,8 @@ runtime::run_component(Counter { n: 0 }, title: "Counter",
 |---|---|
 | Components & state | [docs/component-model.md](docs/component-model.md) |
 | Keyed updates | [docs/updates.md](docs/updates.md) |
-| stage / attach / detach | [docs/lifecycle.md](docs/lifecycle.md) |
+| Lifecycle, `present`, parking | [docs/lifecycle.md](docs/lifecycle.md) |
+| Services & threading | [docs/services.md](docs/services.md) |
 | DSL & widgets | [docs/widgets.md](docs/widgets.md) |
 | Backends & host | [docs/backends.md](docs/backends.md) |
 

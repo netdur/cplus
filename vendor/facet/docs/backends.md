@@ -72,7 +72,10 @@ hook, that verb no-ops (the portable-by-default posture). `facet/runtime`'s
 | `set_find_fn` | `find(cp, key) -> Handle` |
 | `set_set_text_fn` / `set_set_value_fn` / `set_set_on_fn` / `set_set_hidden_fn` | the leaf mutators |
 | `set_add_child_fn` / `set_insert_child_fn` / `set_replace_child_fn` / `set_remove_child_fn` / `set_set_child_fn` | the structural verbs |
-| `set_stage_fn` / `set_attach_fn` / `set_detach_fn` / `set_unstage_fn` / `set_is_attached_fn` | the component lifecycle |
+| `set_lc_register_fn` | the container→detach registry `present` writes; the backend's structural verbs fire+clear entries before removing content |
+| `set_is_attached_fn` | liveness (mounted = attached; staged answers by attach state) |
+| `set_run_on_main_fn` | `run_on_main(work, ctx)` (main-thread dispatch; `load_service` relies on it) |
+| `set_stage_fn` / `set_attach_fn` / `set_detach_fn` / `set_unstage_fn` | view parking (stage / attach / detach) |
 | `set_list_builder` | the recycling `list` |
 | `set_raise_fn` | `raise(sender, key)` (bring a keyed element to front) |
 
@@ -85,7 +88,11 @@ To port facet to a new toolkit, a package supplies:
 2. The keyed-direct + lifecycle hook implementations, registered in `install()`.
 3. A window / run host and a **relayout** primitive (used on window resize and
    after a keyed-direct edit to re-lay the retained tree — geometry only, no
-   re-render).
+   re-render). The host splits into `open_window` (create + mount, returns)
+   and `run_loop` (blocks): the seam lets `run_component` fire `on_attach`
+   after the mount and `on_detach` after the loop stops, from typed code.
+4. A main-thread dispatch for `run_on_main` (AppKit: `dispatch_async_f` onto
+   the main queue).
 
 The `native(...)` op is the universal fallback: anything a backend does not have
 a portable op for, an app can drop in as an app-owned native view. Layout stays

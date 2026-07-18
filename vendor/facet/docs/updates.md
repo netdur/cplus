@@ -95,8 +95,11 @@ facet::find("outlet").set_child(some_screen_node);
 ```
 
 `add_child` / `insert_child` / `set_child` mount a **fresh** `Node` and take
-ownership of it. To move a **retained, live** subtree in and out (keeping its
-views and state), use the component lifecycle instead — see
+ownership of it. To show a **component** in a container — with its
+`on_attach` / `on_detach` fired for it — use `present` instead of a bare
+`set_child`; the structural verbs then notify a presented occupant before
+removing or replacing its content, whoever calls them. To move a retained,
+live subtree in and out (keeping its views and state), use staging. Both:
 [lifecycle.md](lifecycle.md).
 
 ## The canonical handler

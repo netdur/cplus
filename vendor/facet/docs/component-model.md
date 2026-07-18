@@ -71,6 +71,15 @@ receiver is for binding, not mutation. A free `fn(sender, ctx)` handler is also
 accepted — it takes a component address as `ctx` — but the bound method is the
 default: no static, and no `ctx: #addr_of(...)` at the call site.
 
+## The lifecycle conformance
+
+A component that comes on and off screen also implements `Lifecycle`
+(`on_attach` / `on_detach`). The hooks are fired for it — by `run_component`
+around the window's life, and by `present` and the structural verbs as the
+component enters and leaves a container. The component never calls a hook
+itself. `run_component` requires the conformance; empty hooks satisfy it.
+Details: [lifecycle.md](lifecycle.md).
+
 ## Composition
 
 A component composes by calling other components' `build` inside its own `@facet`
