@@ -43,7 +43,12 @@ extern fn free(p: *u8);
 
 struct JoinHandle[O] {
     _tid: u64,
-    _ctx: *u8,
+    // opaque: SHARED (refcounted) ownership, not a plainly-owned pointer — the
+    // parent's drop and the worker's trampoline each decrement the refcount,
+    // and whichever observes the prev==1 transition frees the ctx (layout in
+    // the header comment). Every owning path releases; the conditional-free
+    // lint (W0002) cannot prove a refcount protocol, so the intent is marked.
+    opaque _ctx: *u8,
 }
 
 // Spawn a fresh OS thread that will run `f`. Returns a handle whose

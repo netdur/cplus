@@ -43,6 +43,17 @@ fn new[T](take v: T) -> option::Option[Box[T]] {
     return option::Option[Box[T]]::Some(Box[T] { _p: p });
 }
 
+// Reclaim a box from a raw pointer previously surrendered by `into_raw`. The
+// heap slot (and the inner T) come back under RAII ownership: drop frees it, or
+// `unwrap` moves the inner value out. Pairs 1:1 with `into_raw` — reconstructing
+// two boxes from one raw pointer, or a pointer `into_raw` never returned, is a
+// use-after-free / bad-free. This is the receiving half of a `*u8` handoff
+// across a boundary a `Box[T]` can't cross (a `dispatch_async_f` context, a
+// thread argument): `into_raw` on one side, `from_raw` on the other.
+fn from_raw[T](raw: *u8) -> Box[T] {
+    return Box[T] { _p: raw as *T };
+}
+
 // `get` reads the boxed value by bitwise copy without consuming the box, so it
 // is sound only for `Copy` T — a non-Copy T would be duplicated, double-freeing
 // when both copies drop. The `T: Copy` bound makes that a compile error
@@ -87,6 +98,18 @@ impl Box[T] {
         { this._p = 0 as *T; }
         { free(free_p); }
         return v;
+    }
+
+    // Surrender the box as a raw pointer WITHOUT freeing: ownership of the heap
+    // slot (and the inner T) transfers to the caller, who must later reclaim it
+    // with `from_raw`. Nulls `this._p` first so the consuming `take this` drop
+    // treats the box as emptied — no inner Drop, no free — leaving the slot live
+    // for `from_raw`. The `*u8` can then cross a C boundary a `Box[T]` cannot
+    // (an FFI handle, a `dispatch_async_f` context, a thread argument).
+    fn into_raw(take this) -> *u8 {
+        let p: *u8 = { this._p as *u8 };
+        { this._p = 0 as *T; }
+        return p;
     }
 
     // Destructor: invoke inner-T Drop, then free the heap slot.
@@ -135,6 +158,23 @@ fn box_set_overwrites() {
 fn box_unwrap_recovers_value() {
     match new::[i32](7) {
         option::Option[Box[i32]]::Some(b) => { assert b.unwrap() == 7; }
+        option::Option[Box[i32]]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn box_into_raw_from_raw_roundtrips() {
+    // into_raw surrenders the slot as a bare pointer; from_raw reclaims it. The
+    // value survives the trip, and drop frees it exactly once (into_raw
+    // neutralized the first box's drop) — a double-free here would trip the
+    // leak/ASan harness.
+    match new::[i32](7) {
+        option::Option[Box[i32]]::Some(b) => {
+            let raw: *u8 = b.into_raw();
+            let b2: Box[i32] = from_raw::[i32](raw);
+            assert b2.value() == 7;
+        }
         option::Option[Box[i32]]::None => { assert false; }
     }
     return;
