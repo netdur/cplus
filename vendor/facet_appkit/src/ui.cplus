@@ -30,6 +30,7 @@ import "objc/synthesis" as synth;
 import "stdlib/option" as option;
 import "stdlib/vec" as vec;
 import "stdlib/text" as text;
+import "stdlib/io" as io;
 import "stdlib/fs" as fs;
 import "flex_layout/flex_layout" as flex;
 import "appkit/appkit" as ak;
@@ -392,7 +393,20 @@ fn symbol_tinted(name: str, side: f64, tint: ak::Color) -> flex::Node {
 // An image from a file path, scaled proportionally. Size it with
 // `.width()` / `.height()`.
 fn image(path: str) -> flex::Node {
-    let iv = ak::ImageView::image_view_with_image(ak::Image::new_with_contents_of_file(path));
+    let img = ak::Image::new_with_contents_of_file(path);
+    // A missing / unreadable / non-image file yields a nil NSImage, and
+    // +[NSImageView imageViewWithImage:] throws "image != nil" on nil — which
+    // would abort the whole app. A content bug (bad asset path) must degrade to
+    // a blank image, never be process-fatal: log the path and mount an empty
+    // NSImageView (alloc/init is +1, adopted straight into the payload).
+    if img.raw() == (0 as *u8) {
+        io::eprintln(text::from_str("facet::image: could not load image file: ").appending(path).view());
+        let cls: *u8 = rt::get_class(#str_ptr("NSImageView\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        let blank: *u8 = rt::msg_id(alloced, rt::sel(#str_ptr("init\0")));
+        return adopt_view(blank);
+    }
+    let iv = ak::ImageView::image_view_with_image(img);
     iv.set_image_scaling(ak::ImageScaling::NSImageScaleProportionallyUpOrDown);
     return fixed_view(iv.as_view());
 }
@@ -2661,6 +2675,45 @@ fn unmount(cp: *u8) -> bool {
     return remove_slot(cp);
 }
 
+// The host view of one component's mounted slot (0 if not mounted). Lets the
+// backend scope container-registry cleanup to the tree being unmounted.
+fn slot_host(cp: *u8) -> *u8 {
+    if cp == { 0 as *u8 } { return 0 as *u8; }
+    let slots: *vec::Vec[Slot] = #addr_of(SLOTS);
+    let n: usize = { (*slots).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*slots).at_ptr(i) {
+            option::Option[*Slot]::Some(sp) => {
+                if { (*sp)._cp } == cp { return { (*sp)._host }; }
+            }
+            option::Option[*Slot]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return 0 as *u8;
+}
+
+// Is this component registered as a mounted slot right now? The liveness read
+// behind facet::is_attached for MOUNTED (non-staged) components: mounted =
+// attached, unmounted (or never mounted, or ctx 0) = not.
+fn has_slot(cp: *u8) -> bool {
+    if cp == { 0 as *u8 } { return false; }
+    let slots: *vec::Vec[Slot] = #addr_of(SLOTS);
+    let n: usize = { (*slots).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*slots).at_ptr(i) {
+            option::Option[*Slot]::Some(sp) => {
+                if { (*sp)._cp } == cp { return true; }
+            }
+            option::Option[*Slot]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
+
 // ==========================================================================
 // Tests — the builder protocol, widget wiring, apply math, and scroll fill.
 // These call the protocol functions directly (exactly what a `@ui` block
@@ -3918,6 +3971,18 @@ fn test_text_area_default_inset_is_zero() {
     let ins: rt::Size = area_inset(n.payload());
     assert ins.w == (0.0f64);
     assert ins.h == (0.0f64);
+}
+
+#[test]
+fn image_missing_file_degrades_to_blank_view() {
+    // A bad asset path used to abort the app: +[NSImageView imageViewWithImage:]
+    // throws "image != nil" on the nil NSImage a missing file yields. It must now
+    // degrade to a blank image view — REACHING this assert at all proves the
+    // process did not abort, and the node still carries a real NSImageView payload.
+    let n: flex::Node = image("/no/such/dir/definitely-missing-asset.png");
+    assert n.has_payload();
+    let is_iv: i8 = rt::msg_i8_id(n.payload(), rt::sel(#str_ptr("isKindOfClass:\0")), rt::get_class(#str_ptr("NSImageView\0")));
+    assert is_iv != (0 as i8);
 }
 
 #[test]

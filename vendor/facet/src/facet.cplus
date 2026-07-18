@@ -24,6 +24,8 @@
 import "stdlib/vec" as vec;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/box" as box;
+import "stdlib/thread" as thread;
 import "flex_layout/flex_layout" as flex;
 
 // ---- the component contract ---------------------------------------------
@@ -1286,6 +1288,141 @@ impl Handle {
         if f != (0 as fn(Handle, Staged) -> bool) { return f(this, s); }
         return false;
     }
+
+    // ---- component-aware structural verb ------------------------------------
+    // The typed mirror of `set_child`. The call site knows the component (this
+    // is ordinary generic code — no erasure), so the verb can both notify it
+    // (on_attach once its tree is live) and leave behind an ERASED detach for
+    // whoever evicts it later: set_child fires the previous occupant's
+    // on_detach through the backend registry, mounts `c`, registers `c`'s own
+    // detach trampoline, then fires c.on_attach. Lifecycle is never the app's
+    // concern — showing a component through any structural verb notifies the
+    // one it replaces. Fires nothing on a missing handle.
+    //
+    // `c` must outlive its presentation (the registry holds its address).
+    fn present[C: Component + Lifecycle](this, ref c: C) -> Handle {
+        if !this.found() { return this; }
+        let n: Node = c.build();
+        let h: Handle = this.set_child(n);   // notifies + evicts the current occupant
+        lc_register(this, lc_detach_tramp::[C], #addr_of(c) as *u8);
+        c.on_attach();
+        return h;
+    }
+}
+
+// The type-erasing detach trampoline: `lc_detach_tramp::[C]` (a value-turbofish
+// fn-pointer) fires C's on_detach on the component at `p`. `present` registers
+// one per shown component; the structural verbs fire it right before they
+// remove or replace that component's tree — notify, don't wait.
+fn lc_detach_tramp[C: Lifecycle](p: *u8) {
+    let q: *C = p as *C;
+    { (*q).on_detach() };
+    return;
+}
+
+// Backend hook: remember (container → detach fn + component address) for the
+// component a container is showing. Every structural removal path fires and
+// clears the entry (see facet_appkit); the component must outlive its
+// presentation. Not app-facing — `present` is the only writer.
+static LC_REGISTER_FN: fn(Handle, fn(*u8), *u8) = #zero::[fn(Handle, fn(*u8), *u8)]();
+fn set_lc_register_fn(f: fn(Handle, fn(*u8), *u8)) { LC_REGISTER_FN = f; return; }
+fn lc_register(h: Handle, detach: fn(*u8), ctx: *u8) {
+    let f: fn(Handle, fn(*u8), *u8) = LC_REGISTER_FN;
+    if f != (0 as fn(Handle, fn(*u8), *u8)) { f(h, detach, ctx); }
+    return;
+}
+
+// Main-thread dispatcher: run `work(ctx)` on the UI thread, where touching
+// views (or state the UI reads) is safe. Non-blocking — the caller returns
+// immediately and the main run loop picks the work up on its next turn. The
+// workhorse of the service pattern: a background read finishes, boxes its
+// result as the ctx, and hops here to deliver it. The backend installs the
+// primitive; until then run_on_main silently DROPS the work (the portable
+// no-backend default, like `find`) — so a ctx that carries ownership must be
+// reclaimed by `work` itself, never by the scheduling side.
+static RUN_ON_MAIN_FN: fn(fn(*u8), *u8) = #zero::[fn(fn(*u8), *u8)]();
+fn set_run_on_main_fn(f: fn(fn(*u8), *u8)) { RUN_ON_MAIN_FN = f; return; }
+fn run_on_main(work: fn(*u8), ctx: *u8) {
+    let f: fn(fn(*u8), *u8) = RUN_ON_MAIN_FN;
+    if f != (0 as fn(fn(*u8), *u8)) { f(work, ctx); }
+    return;
+}
+
+// ---- services ---------------------------------------------------------------
+// A data owner whose slow read must never block the UI. The interface IS the
+// threading contract:
+//   produce — the slow read (db / fs / net). load_service runs it on a worker
+//             thread; it must not touch anything the UI reads.
+//   apply   — install what produce prepared. load_service runs it on the main
+//             thread, so the UI never observes a half-written service.
+// A service conforms once and gets the whole async pipeline from load_service;
+// no per-service job structs, boxing, or thread code.
+interface Service {
+    fn produce(ref this);
+    fn apply(ref this);
+}
+
+// Run `svc`'s produce OFF the main thread, then its apply and `on_ready(ctx)`
+// back ON it. Returns immediately. `svc` must outlive the flight (it is
+// reached through its address). Needs a backend for the main-thread hop
+// (run_on_main): without one the produced result is never applied.
+fn load_service[S: Service](ref svc: S, on_ready: fn(*u8) = service_ready_noop, ctx: *u8 = 0 as *u8) {
+    let job: ServiceJob = ServiceJob {
+        svc_addr: { #addr_of(svc) as *u8 } as usize,
+        produce: service_produce_tramp::[S],
+        apply: service_apply_tramp::[S],
+        on_ready: on_ready,
+        ctx_addr: ctx as usize,
+    };
+    let _bg: thread::JoinHandle[i32] = thread::spawn_with::[ServiceJob, i32](job, run_service_job);
+    return;
+}
+
+fn service_ready_noop(ctx: *u8) { return; }
+
+// Type-erasing trampolines (value-turbofish): plain fn(*u8)s that call S's
+// interface methods on the service at `p`.
+fn service_produce_tramp[S: Service](p: *u8) {
+    let q: *S = p as *S;
+    { (*q).produce() };
+    return;
+}
+
+fn service_apply_tramp[S: Service](p: *u8) {
+    let q: *S = p as *S;
+    { (*q).apply() };
+    return;
+}
+
+// Raw pointers are !Send, so the service and ctx addresses ride as integers —
+// sound under load_service's outlive-the-flight contract.
+struct ServiceJob {
+    svc_addr: usize,
+    produce: fn(*u8),
+    apply: fn(*u8),
+    on_ready: fn(*u8),
+    ctx_addr: usize,
+}
+
+fn run_service_job(take job: ServiceJob) -> i32 {
+    let produce: fn(*u8) = job.produce;
+    produce(job.svc_addr as *u8);   // the slow read, OFF the main thread
+    match box::new::[ServiceJob](job) {
+        option::Option[box::Box[ServiceJob]]::Some(b) => {
+            run_on_main(finish_service_job, b.into_raw());
+        }
+        option::Option[box::Box[ServiceJob]]::None => { }
+    }
+    return 0;
+}
+
+fn finish_service_job(raw: *u8) {
+    let job: ServiceJob = box::from_raw::[ServiceJob](raw).unwrap();
+    let apply: fn(*u8) = job.apply;
+    apply(job.svc_addr as *u8);     // install ON the main thread
+    let cb: fn(*u8) = job.on_ready;
+    cb(job.ctx_addr as *u8);
+    return;
 }
 
 // Address a mounted element by its `key` — its agent id / accessibilityIdentifier,
@@ -1414,6 +1551,15 @@ fn is_attached(cp: *u8) -> bool {
     let f: fn(*u8) -> bool = IS_ATTACHED_FN;
     if f == (0 as fn(*u8) -> bool) { return false; }
     return f(cp);
+}
+
+// Self-liveness for component code: is `c` currently mounted / attached?
+// `ref` receives the caller's own place, so inside a `ref this` method the
+// component asks `facet::attached(this)` — its address IS its identity (cp).
+// Sugar it into a method if you like:
+//     impl ScreenY { fn is_attached(ref this) -> bool { return facet::attached(this); } }
+fn attached[C](ref c: C) -> bool {
+    return is_attached(#addr_of(c) as *u8);
 }
 
 // ---- modifiers -------------------------------------------------------------

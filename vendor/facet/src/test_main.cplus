@@ -112,3 +112,64 @@ fn agent_id_rides_the_description() {
     n.set_agent_id("save-btn");
     assert n.agent_id.view() == "save-btn";
 }
+
+// ---- run_on_main hook --------------------------------------------------------
+
+static ROM_HITS: i32 = 0;
+static ROM_CTX_OK: i32 = 0;
+fn rom_probe(ctx: *u8) {
+    ROM_HITS = ROM_HITS + 1;
+    if ctx == (7 as *u8) { ROM_CTX_OK = 1; }
+    return;
+}
+fn rom_sync(work: fn(*u8), ctx: *u8) { work(ctx); return; }
+
+#[test]
+fn run_on_main_drops_without_backend_and_fires_through_hook() {
+    // Reset to the no-backend state so the test is order-independent.
+    facet::set_run_on_main_fn(0 as fn(fn(*u8), *u8));
+    ROM_HITS = 0; ROM_CTX_OK = 0;
+    facet::run_on_main(rom_probe, 7 as *u8);   // no backend: dropped, no crash
+    assert ROM_HITS == 0;
+    facet::set_run_on_main_fn(rom_sync);
+    facet::run_on_main(rom_probe, 7 as *u8);   // dispatched, ctx intact
+    assert ROM_HITS == 1;
+    assert ROM_CTX_OK == 1;
+    facet::set_run_on_main_fn(0 as fn(fn(*u8), *u8));
+}
+
+// ---- Service / load_service --------------------------------------------------
+
+static SVC_ORDER: i32 = 0;
+
+struct ProbeService { }
+
+impl ProbeService: facet::Service {
+    fn produce(ref this) { SVC_ORDER = SVC_ORDER * 10 + 1; return; }
+    fn apply(ref this) { SVC_ORDER = SVC_ORDER * 10 + 2; return; }
+}
+
+fn svc_ready(ctx: *u8) {
+    if ctx == (9 as *u8) { SVC_ORDER = SVC_ORDER * 10 + 3; }
+    return;
+}
+
+#[test]
+fn service_job_runs_produce_then_apply_then_ready() {
+    // Drive the pipeline synchronously (no worker, no sleep): a passthrough
+    // run_on_main and a hand-built job. Order must be produce, apply, ready,
+    // with the ctx intact end to end.
+    facet::set_run_on_main_fn(rom_sync);
+    SVC_ORDER = 0;
+    var svc: ProbeService = ProbeService { };
+    let job: facet::ServiceJob = facet::ServiceJob {
+        svc_addr: { #addr_of(svc) as *u8 } as usize,
+        produce: facet::service_produce_tramp::[ProbeService],
+        apply: facet::service_apply_tramp::[ProbeService],
+        on_ready: svc_ready,
+        ctx_addr: (9 as *u8) as usize,
+    };
+    let _rc: i32 = facet::run_service_job(job);
+    assert SVC_ORDER == 123;
+    facet::set_run_on_main_fn(0 as fn(fn(*u8), *u8));
+}

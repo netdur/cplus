@@ -129,12 +129,22 @@ fn run_component_will_close(ctx: *u8) { return; }
 // menu, pinch zoom, a close guard). An `menu` with items enables the app menu;
 // `should_close` / `will_close` receive `ctx`.
 //
-// run_component RETURNS the component: `run_window` blocks until the window
+// run_component RETURNS the component: the loop blocks until the window
 // closes, so the returned value carries its FINAL field state — a launcher can
 // hand back what the user chose without a side channel:
 //     let w: Welcome = runtime::run_component(Welcome::fresh(), title: "Iris");
 //     if w.chosen { open(w.chosen_path); }
-fn run_component[C: core::Component](
+//
+// Lifecycle is the RUNTIME's job, fired at the seams of the backend's
+// open / loop primitives — the component wires nothing:
+//   - on_attach fires AFTER the mount, BEFORE the loop: the tree is live and
+//     find() resolves, so initial routing/subscription belongs there.
+//   - on_detach fires when the loop stops (window closing), BEFORE teardown:
+//     the component's views are still alive. Best-effort by nature — an app
+//     terminated outright (⌘Q) never returns from the loop.
+// This is plain typed code (calls on an interface-bound generic), not stored
+// callbacks: the component's type is known right here, so nothing is erased.
+fn run_component[C: core::Component + core::Lifecycle](
     take component: C,
     title: str = "facet",
     width: f64 = 480.0f64,
@@ -163,7 +173,7 @@ fn run_component[C: core::Component](
     if sc == (0 as fn(*u8) -> bool) { sc = run_component_should_close; }
     var wc: fn(*u8) = will_close;
     if wc == (0 as fn(*u8)) { wc = run_component_will_close; }
-    backend::run_window(
+    let _w = backend::open_window(
         root,
         title: title,
         width: width,
@@ -183,7 +193,11 @@ fn run_component[C: core::Component](
         will_close: wc,
         component_ctx: cp,
     );
-    return owned;   // window closed → final state is readable by the caller
+    owned.on_attach();       // the tree is mounted and live; find() resolves
+    backend::run_loop();     // blocks until the window closes
+    owned.on_detach();       // loop stopped, views still alive: notify before teardown
+    backend::unmount_all();  // drains presented components' detaches, then drops the trees
+    return owned;            // window closed → final state is readable by the caller
 }
 
 // A blocking modal alert. Returns the 0-based index of the clicked button

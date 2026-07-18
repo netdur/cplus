@@ -928,6 +928,25 @@ fn fak_list(count: i64, row: fn(i64, *u8) -> facet::Node, ctx: *u8) -> facet::No
 // Register this backend's implementations of facet's neutral verbs (the native
 // recycling list, the by-key `raise`). Call once at startup, before the first
 // render (facet/runtime `run` does this).
+extern fn dlsym(handle: *u8, symbol: *u8) -> *u8;
+extern fn dispatch_async_f(queue: *u8, context: *u8, work: fn(*u8));
+
+// The main dispatch queue, via dlsym on the libdispatch global (RTLD_DEFAULT
+// is -2 on Darwin) — `dispatch_get_main_queue()` is a macro over this symbol,
+// so there is no function to call.
+fn main_dispatch_queue() -> *u8 {
+    let rtld_default: *u8 = { ((0 as usize) -% (2 as usize)) as *u8 };
+    return { dlsym(rtld_default, #str_ptr("_dispatch_main_q\0")) };
+}
+
+// Backend impl of facet::run_on_main: schedule `work(ctx)` on the main thread,
+// asynchronously (non-blocking — the worker returns immediately; the main run
+// loop picks the work up on its next turn).
+fn dispatch_to_main(work: fn(*u8), ctx: *u8) {
+    { dispatch_async_f(main_dispatch_queue(), ctx, work); }
+    return;
+}
+
 fn install() {
     facet::set_list_builder(fak_list);
     facet::set_raise_fn(raise);
@@ -950,6 +969,8 @@ fn install() {
     facet::set_detach_fn(detach_impl);
     facet::set_is_attached_fn(is_attached_impl);
     facet::set_unstage_fn(unstage_impl);
+    facet::set_lc_register_fn(lc_register_impl);
+    facet::set_run_on_main_fn(dispatch_to_main);
     return;
 }
 
@@ -1328,11 +1349,17 @@ fn relayout(cp: *u8) -> bool {
 // description and flex tree drop; the host's views are the app's to tear
 // down with the window.
 fn unmount(cp: *u8) -> bool {
+    // Anything PRESENTED inside this component's tree leaves with it: fire its
+    // registered detach (and clear the entries) while the views are alive.
+    lc_fire_under(ui::slot_host(cp));
     let _c: bool = comp_remove(cp);
     return ui::unmount(cp);
 }
 
 fn unmount_all() {
+    // Full teardown: every presented component gets its detach first, while
+    // every view is still alive.
+    lc_fire_all();
     // Unplug every staged root from any superview before its component's tree is
     // dropped, then release the facet-owned roots.
     let staged: *vec::Vec[StageReg] = #addr_of(STAGED);
@@ -2035,6 +2062,117 @@ fn default_should_close(ctx: *u8) -> bool { return true; }
 
 fn default_will_close(ctx: *u8) { return; }
 
+// Window-shell state whose ADDRESSES the run loop reads for the window's whole
+// life: the delegate's user pointer (should_close / will_close / did_resize),
+// the delegate method table, the mounted root description (toolbar items,
+// RUN_ROOT), and the app menu items. run_window used to keep these alive on its
+// blocking frame; open_window RETURNS, so they live here instead. One shell
+// window at a time — the same single-window model RUN_ROOT already encodes.
+static WIN_LIFECYCLE: WindowLifecycle = #zero::[WindowLifecycle]();
+static WIN_DELEGATE: ak::WindowDelegate = #zero::[ak::WindowDelegate]();
+static RUN_ROOT_NODE: facet::Node = #zero::[facet::Node]();
+static APP_MENU: facet::AppMenu = #zero::[facet::AppMenu]();
+
+// Open the shell window and MOUNT the root — then return, loop not yet running.
+// The seam that makes lifecycle composable: a typed caller (run_component) can
+// act between "the tree is live" and "the loop blocks" — fire on_attach, stage
+// initial state — without the backend ever holding an erased callback into the
+// component. Pair with run_loop(); run_window is exactly that composition.
+fn open_window(
+    take root: facet::Node,
+    title: str = "facet",
+    width: f64 = 480.0f64,
+    height: f64 = 360.0f64,
+    clean_titlebar: bool = false,
+    close_button_only: bool = false,
+    unified_toolbar: bool = false,
+    hide_title: bool = false,
+    custom_chrome: bool = false,
+    native_buttons: bool = false,
+    min_width: f64 = 0.0f64,
+    min_height: f64 = 0.0f64,
+    zoomable: bool = false,
+    min_zoom: f64 = 1.0f64,
+    max_zoom: f64 = 4.0f64,
+    app_menu_enabled: bool = false,
+    take app_menu: facet::AppMenu = facet::empty_app_menu(),
+    ctx: *u8 = 0 as *u8,
+    should_close: fn(*u8) -> bool = default_should_close,
+    will_close: fn(*u8) = default_will_close,
+    component_ctx: *u8 = 0 as *u8,
+) -> ak::Window {
+    let app: ak::Application = ak::Application::shared_application();
+    let _ok: bool = app.set_activation_policy(ak::ApplicationActivationPolicy::Regular);
+    APP_MENU = app_menu;   // keep the items alive for menu action targets
+    if app_menu_enabled {
+        install_app_menu(app, #addr_of(APP_MENU), title);
+    } else {
+        install_default_app_menu(app, title);
+    }
+
+    // The root lives in the static from here on: its address feeds RUN_ROOT and
+    // the toolbar installer, and it must outlive this returning frame.
+    RUN_ROOT_NODE = root;
+
+    // The mount-slot key. By default the root description's own address; an app
+    // that supplies component_ctx keys the slot with a component address IT can
+    // name (its component's address), so its handlers can facet::find(cp, key)
+    // and the structural verbs are reachable under facet::run.
+    var slot_cp: *u8 = component_ctx;
+    if slot_cp == { 0 as *u8 } { slot_cp = #addr_of(RUN_ROOT_NODE) as *u8; }
+
+    WIN_LIFECYCLE = WindowLifecycle {
+        ctx: ctx,
+        should_close: should_close,
+        will_close: will_close,
+        relayout_cp: slot_cp,   // the slot key, for resize relayout
+    };
+    WIN_DELEGATE = ak::WindowDelegate_new(#addr_of(WIN_LIFECYCLE) as *u8);
+
+    let win = make_shell_window(title, width, height, clean_titlebar, close_button_only: close_button_only, custom_chrome: custom_chrome, native_buttons: native_buttons, min_width: min_width, min_height: min_height);
+    OPEN_WINDOWS = OPEN_WINDOWS +% 1;
+    install_window_lifecycle(win, #addr_of(WIN_LIFECYCLE), #addr_of(WIN_DELEGATE));
+
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: width, h: height });
+    win.set_content_view(ak::View::from_raw(content.raw()));
+
+    // Mount the root as a RETAINED slot (keyed by slot_cp) rather than a
+    // one-shot mount_into. render_slot lays it out at the host's CURRENT frame
+    // and keeps the tree, so windowDidResize can relayout it at the window's real
+    // size instead of leaving the content frozen at the mount-time size.
+    RUN_ROOT = #addr_of(RUN_ROOT_NODE);
+    let _h: f64 = ui::mount(run_root_render, ctx: slot_cp, host: content.raw());
+    // System light/dark flips reach the app through facet::on_appearance_change:
+    // an invisible sentinel subview's viewDidChangeEffectiveAppearance forwards
+    // the signal (the override is the only hook AppKit offers).
+    akx::add_appearance_observer(ak::View::from_raw(content.raw()), fire_appearance_change, 0 as *u8);
+    if zoomable {
+        install_pinch_zoom(content.raw(), min_zoom: min_zoom, max_zoom: max_zoom);
+    }
+    install_toolbar(win, #addr_of(RUN_ROOT_NODE));
+    if unified_toolbar {
+        win.set_toolbar_style(ak::WindowToolbarStyle::UnifiedCompact);
+    }
+    if hide_title {
+        win.set_title_visibility(ak::WindowTitleVisibility::NSWindowTitleHidden);
+    }
+
+    win.center();
+    win.make_key_and_order_front(0 as *u8);
+    app.activate_ignoring_other_apps(true);
+    // windowDidResize does not fire on the initial display, so lay out once more
+    // at the content view's real (post-show) size to fill from the first frame.
+    let _r0: bool = ui::relayout(slot_cp);
+    return win;
+}
+
+// Block in the app run loop until the last shell window closes (will_close
+// stops the loop). The second half of the open_window / run_loop pair.
+fn run_loop() {
+    ak::Application::shared_application().run();
+    return;
+}
+
 fn run_window(
     take root: facet::Node,
     title: str = "facet",
@@ -2058,64 +2196,30 @@ fn run_window(
     will_close: fn(*u8) = default_will_close,
     component_ctx: *u8 = 0 as *u8,
 ) {
-    let app: ak::Application = ak::Application::shared_application();
-    let _ok: bool = app.set_activation_policy(ak::ApplicationActivationPolicy::Regular);
-    if app_menu_enabled {
-        install_app_menu(app, #addr_of(app_menu), title);
-    } else {
-        install_default_app_menu(app, title);
-    }
-
-    // The mount-slot key. By default the root description's own address; an app
-    // that supplies component_ctx keys the slot with a component address IT can
-    // name (a module static), so its handlers can facet::find(cp, key) and the
-    // structural verbs are reachable under facet::run.
-    var slot_cp: *u8 = component_ctx;
-    if slot_cp == { 0 as *u8 } { slot_cp = #addr_of(root) as *u8; }
-
-    var lifecycle: WindowLifecycle = WindowLifecycle {
+    let _w: ak::Window = open_window(
+        root,
+        title: title,
+        width: width,
+        height: height,
+        clean_titlebar: clean_titlebar,
+        close_button_only: close_button_only,
+        unified_toolbar: unified_toolbar,
+        hide_title: hide_title,
+        custom_chrome: custom_chrome,
+        native_buttons: native_buttons,
+        min_width: min_width,
+        min_height: min_height,
+        zoomable: zoomable,
+        min_zoom: min_zoom,
+        max_zoom: max_zoom,
+        app_menu_enabled: app_menu_enabled,
+        app_menu: app_menu,
         ctx: ctx,
         should_close: should_close,
         will_close: will_close,
-        relayout_cp: slot_cp,   // the slot key, for resize relayout
-    };
-    var delegate: ak::WindowDelegate = ak::WindowDelegate_new(#addr_of(lifecycle) as *u8);
-
-    let win = make_shell_window(title, width, height, clean_titlebar, close_button_only: close_button_only, custom_chrome: custom_chrome, native_buttons: native_buttons, min_width: min_width, min_height: min_height);
-    OPEN_WINDOWS = OPEN_WINDOWS +% 1;
-    install_window_lifecycle(win, #addr_of(lifecycle), #addr_of(delegate));
-
-    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: width, h: height });
-    win.set_content_view(ak::View::from_raw(content.raw()));
-
-    // Mount the root as a RETAINED slot (keyed by slot_cp) rather than a
-    // one-shot mount_into. render_slot lays it out at the host's CURRENT frame
-    // and keeps the tree, so windowDidResize can relayout it at the window's real
-    // size instead of leaving the content frozen at the mount-time size.
-    RUN_ROOT = #addr_of(root);
-    let _h: f64 = ui::mount(run_root_render, ctx: slot_cp, host: content.raw());
-    // System light/dark flips reach the app through facet::on_appearance_change:
-    // an invisible sentinel subview's viewDidChangeEffectiveAppearance forwards
-    // the signal (the override is the only hook AppKit offers).
-    akx::add_appearance_observer(ak::View::from_raw(content.raw()), fire_appearance_change, 0 as *u8);
-    if zoomable {
-        install_pinch_zoom(content.raw(), min_zoom: min_zoom, max_zoom: max_zoom);
-    }
-    install_toolbar(win, #addr_of(root));
-    if unified_toolbar {
-        win.set_toolbar_style(ak::WindowToolbarStyle::UnifiedCompact);
-    }
-    if hide_title {
-        win.set_title_visibility(ak::WindowTitleVisibility::NSWindowTitleHidden);
-    }
-
-    win.center();
-    win.make_key_and_order_front(0 as *u8);
-    app.activate_ignoring_other_apps(true);
-    // windowDidResize does not fire on the initial display, so lay out once more
-    // at the content view's real (post-show) size to fill from the first frame.
-    let _r0: bool = ui::relayout(slot_cp);
-    app.run();
+        component_ctx: component_ctx,
+    );
+    run_loop();
     return;
 }
 
@@ -2770,6 +2874,10 @@ fn remove_child_impl(h: facet::Handle, key: str) -> bool {
         match (*cfp).children.at_ptr(i) {
             option::Option[*flex::Node]::Some(childp) => {
                 if { (*childp).payload() } == target {
+                    // Removing the presented content: notify it (and anything
+                    // presented inside it) before its views leave the tree.
+                    lc_fire(cview);
+                    lc_fire_under(target);
                     ak::View::from_raw(target).remove_from_superview();
                     let _g: option::Option[flex::Node] = { (*cfp).children.remove(i) };
                     { (*cfp).mark_content_changed(); }
@@ -2819,6 +2927,10 @@ fn replace_child_impl(h: facet::Handle, key: str, take child: facet::Node) -> bo
         match (*cfp).children.at_ptr(i) {
             option::Option[*flex::Node]::Some(childp) => {
                 if { (*childp).payload() } == target {
+                    // Replacing the presented content: notify it (and anything
+                    // presented inside it) before its views leave the tree.
+                    lc_fire(cview);
+                    lc_fire_under(target);
                     ak::View::from_raw(target).remove_from_superview();
                     let _g: option::Option[flex::Node] = { (*cfp).children.remove(i) };
                     var child_flex: flex::Node = mount(#addr_of(child));
@@ -2846,12 +2958,19 @@ fn set_child_impl(h: facet::Handle, take child: facet::Node) -> bool {
     let cview: *u8 = h.view();
     let cflex: *u8 = h.flex();
     if cview == (0 as *u8) || cflex == (0 as *u8) { return false; }
+    // There is something here already: tell the presented occupant (and any
+    // component presented in a nested outlet) it is about to get removed —
+    // fire-and-forget — BEFORE its views leave the tree.
+    lc_fire(cview);
     let cfp: *flex::Node = cflex as *flex::Node;
     while { (*cfp).child_count() } > (0 as usize) {
         match (*cfp).children.at_ptr(0 as usize) {
             option::Option[*flex::Node]::Some(childp) => {
                 let pv: *u8 = { (*childp).payload() };
-                if pv != (0 as *u8) { ak::View::from_raw(pv).remove_from_superview(); }
+                if pv != (0 as *u8) {
+                    lc_fire_under(pv);
+                    ak::View::from_raw(pv).remove_from_superview();
+                }
             }
             option::Option[*flex::Node]::None => { }
         }
@@ -2988,10 +3107,145 @@ fn detach_impl(s: facet::Staged) -> bool {
 }
 
 // facet::is_attached hook: is this staged component currently in the live tree?
+// ---- container lifecycle registry (present's erased detach) ----------------
+// One entry per container currently SHOWING a presented component: the erased
+// on_detach (a facet::lc_detach_tramp instantiation) plus the component's
+// address. The structural verbs fire it right before they remove or replace
+// that content — notify, don't wait for anything — and clear the entry first,
+// so a hook that itself mutates the tree cannot re-enter its own entry.
+// Entries hold borrowed pointers: a presented component must outlive its
+// presentation; every removal path below clears its entry, so nothing stales.
+// The single-slot contract: a presented container shows exactly one tree.
+struct LcEntry {
+    opaque _container: *u8,
+    _detach: fn(*u8),
+    opaque _ctx: *u8,
+}
+
+static LC_ENTRIES: vec::Vec[LcEntry] = #zero::[vec::Vec[LcEntry]]();
+
+fn lc_register_impl(h: facet::Handle, detach: fn(*u8), ctx: *u8) {
+    let v: *u8 = h.view();
+    if v == (0 as *u8) { return; }
+    let reg: *vec::Vec[LcEntry] = #addr_of(LC_ENTRIES);
+    let n: usize = { (*reg).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*reg).at_ptr(i) {
+            option::Option[*LcEntry]::Some(ep) => {
+                if { (*ep)._container } == v {
+                    { (*ep)._detach = detach; }
+                    { (*ep)._ctx = ctx; }
+                    return;
+                }
+            }
+            option::Option[*LcEntry]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    (*reg).append(LcEntry { _container: v, _detach: detach, _ctx: ctx });
+    return;
+}
+
+// Fire + clear the detach registered for `container`, if any.
+fn lc_fire(container: *u8) {
+    if container == (0 as *u8) { return; }
+    let reg: *vec::Vec[LcEntry] = #addr_of(LC_ENTRIES);
+    let n: usize = { (*reg).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*reg).at_ptr(i) {
+            option::Option[*LcEntry]::Some(ep) => {
+                if { (*ep)._container } == container {
+                    let cb: fn(*u8) = { (*ep)._detach };
+                    let ctx: *u8 = { (*ep)._ctx };
+                    let _g: option::Option[LcEntry] = (*reg).swap_remove(i);
+                    cb(ctx);
+                    return;
+                }
+            }
+            option::Option[*LcEntry]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// Fire + clear every entry whose container sits under `root` (inclusive):
+// removing a subtree also evicts any component presented INSIDE it (nested
+// outlets), so they get told before their views die with the subtree.
+fn lc_fire_under(root: *u8) {
+    if root == (0 as *u8) { return; }
+    let reg: *vec::Vec[LcEntry] = #addr_of(LC_ENTRIES);
+    var i: usize = 0 as usize;
+    while i < { (*reg).count() } {
+        var hit: bool = false;
+        match (*reg).at_ptr(i) {
+            option::Option[*LcEntry]::Some(ep) => {
+                var v: *u8 = { (*ep)._container };
+                while v != (0 as *u8) {
+                    if v == root {
+                        hit = true;
+                        v = 0 as *u8;
+                    } else {
+                        match ak::View::from_raw(v).superview() {
+                            option::Option[ak::View]::Some(sv) => { v = sv.raw(); }
+                            option::Option[ak::View]::None => { v = 0 as *u8; }
+                        }
+                    }
+                }
+            }
+            option::Option[*LcEntry]::None => { }
+        }
+        if hit {
+            match (*reg).at_ptr(i) {
+                option::Option[*LcEntry]::Some(ep) => {
+                    let cb: fn(*u8) = { (*ep)._detach };
+                    let ctx: *u8 = { (*ep)._ctx };
+                    let _g: option::Option[LcEntry] = (*reg).swap_remove(i);
+                    cb(ctx);
+                    // swap_remove moved a fresh entry into `i` — re-examine it.
+                }
+                option::Option[*LcEntry]::None => { i = i +% (1 as usize); }
+            }
+        } else {
+            i = i +% (1 as usize);
+        }
+    }
+    return;
+}
+
+// Fire + clear everything — full teardown (unmount_all / window-close drain).
+fn lc_fire_all() {
+    let reg: *vec::Vec[LcEntry] = #addr_of(LC_ENTRIES);
+    while { (*reg).count() } > (0 as usize) {
+        match (*reg).at_ptr(0 as usize) {
+            option::Option[*LcEntry]::Some(ep) => {
+                let cb: fn(*u8) = { (*ep)._detach };
+                let ctx: *u8 = { (*ep)._ctx };
+                let _g: option::Option[LcEntry] = (*reg).swap_remove(0 as usize);
+                cb(ctx);
+            }
+            option::Option[*LcEntry]::None => { return; }
+        }
+    }
+    return;
+}
+
+// Diagnostic: number of live registrations (tests assert the clear paths).
+fn lc_entry_count() -> usize {
+    let reg: *vec::Vec[LcEntry] = #addr_of(LC_ENTRIES);
+    return { (*reg).count() };
+}
+
 fn is_attached_impl(cp: *u8) -> bool {
+    // A STAGED component's liveness is its attach state — parked reads false,
+    // even though its parked root keeps a mounted slot alive.
     let sp: *StageReg = stage_ptr(cp);
-    if sp == (0 as *StageReg) { return false; }
-    return { (*sp)._attached };
+    if sp != (0 as *StageReg) { return { (*sp)._attached }; }
+    // Otherwise mounted = attached: a run_component root or a mount_component
+    // registration that has not been unmounted.
+    return ui::has_slot(cp);
 }
 
 // facet::Staged.unstage hook: tear the staged component down for good.
@@ -4144,6 +4398,7 @@ fn lifecycle_install() {
     facet::set_detach_fn(detach_impl);
     facet::set_is_attached_fn(is_attached_impl);
     facet::set_unstage_fn(unstage_impl);
+    facet::set_lc_register_fn(lc_register_impl);
     return;
 }
 
@@ -4266,6 +4521,138 @@ fn stage_lifecycle_negatives() {
     // Detaching something never attached returns false.
     assert a.detach() == false;
     let _z: bool = a.unstage();
+    unmount_all();
+}
+
+// present fixtures: each hook appends a digit to LC_ORDER, so the final
+// number IS the firing order. A: attach=1, detach=2; B: attach=3, detach=4.
+static LC_ORDER: i32 = 0;
+
+struct OrderScreen { base: i32 }
+
+impl OrderScreen: facet::Component {
+    fn build(ref this) -> facet::Node { return facet::box().key("order:root"); }
+}
+
+impl OrderScreen: facet::Lifecycle {
+    fn on_attach(ref this) { LC_ORDER = LC_ORDER * 10 + this.base; }
+    fn on_detach(ref this) { LC_ORDER = LC_ORDER * 10 + this.base + 1; }
+}
+
+static ORDER_A: OrderScreen = #zero::[OrderScreen]();
+static ORDER_B: OrderScreen = #zero::[OrderScreen]();
+
+#[test]
+fn present_evicts_through_the_registry_in_order() {
+    unmount_all();
+    install();
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 400.0 });
+    let _h: f64 = mount_component(NAV_HOST.build, host: host.raw());
+    let nav_cp: *u8 = #addr_of(NAV_HOST) as *u8;
+
+    ORDER_A.base = 1; ORDER_B.base = 3; LC_ORDER = 0;
+    let outlet: facet::Handle = facet::find("outlet", nav_cp);
+    assert outlet.found();
+    let outlet_v: *u8 = find_view_by_id(host.raw(), "outlet");
+
+    // First show: attach only, one registration.
+    let _p: facet::Handle = outlet.present(ORDER_A);
+    assert LC_ORDER == 1;
+    assert lc_entry_count() == (1 as usize);
+    assert ak::View::from_raw(outlet_v).subviews().count() == (1 as usize);
+
+    // Re-present: the VERB notices A is there and fires its detach (2) before
+    // B mounts and attaches (3) — the app never touched a hook.
+    let _p2: facet::Handle = outlet.present(ORDER_B);
+    assert LC_ORDER == 123;
+    assert lc_entry_count() == (1 as usize);
+    assert ak::View::from_raw(outlet_v).subviews().count() == (1 as usize);
+
+    // A PLAIN set_child evicts the presented component the same way (4):
+    // eviction notification is the verb's job, whoever calls it.
+    let _s: facet::Handle = outlet.set_child(facet::box());
+    assert LC_ORDER == 1234;
+    assert lc_entry_count() == (0 as usize);
+    unmount_all();
+    assert lc_entry_count() == (0 as usize);
+}
+
+#[test]
+fn remove_child_and_unmount_fire_the_registered_detach() {
+    unmount_all();
+    install();
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 400.0 });
+    let _h: f64 = mount_component(NAV_HOST.build, host: host.raw());
+    let nav_cp: *u8 = #addr_of(NAV_HOST) as *u8;
+
+    ORDER_A.base = 1; LC_ORDER = 0;
+    let outlet: facet::Handle = facet::find("outlet", nav_cp);
+
+    // remove_child of the presented root notifies it (2) and clears the entry.
+    let _p: facet::Handle = outlet.present(ORDER_A);
+    assert facet::find("outlet", nav_cp).remove_child("order:root");
+    assert LC_ORDER == 12;
+    assert lc_entry_count() == (0 as usize);
+
+    // A registration still live at full teardown is drained by unmount_all
+    // (1 then 2 again), views still alive when the hook runs.
+    let _p2: facet::Handle = outlet.present(ORDER_A);
+    assert lc_entry_count() == (1 as usize);
+    unmount_all();
+    assert LC_ORDER == 1212;
+    assert lc_entry_count() == (0 as usize);
+}
+
+#[test]
+fn present_fires_nothing_on_a_missing_handle() {
+    unmount_all();
+    install();
+    ORDER_A.base = 1; LC_ORDER = 0;
+    // No mounted tree at all: the handle misses, so neither the structural
+    // change nor any lifecycle hook may fire, and nothing registers.
+    let none: facet::Handle = facet::find("no-such-outlet");
+    assert !none.found();
+    let _p: facet::Handle = none.present(ORDER_A);
+    assert LC_ORDER == 0;
+    assert lc_entry_count() == (0 as usize);
+    unmount_all();
+}
+
+#[test]
+fn is_attached_reads_true_for_mounted_components() {
+    unmount_all();
+    install();
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 400.0 });
+    let nav_cp: *u8 = #addr_of(NAV_HOST) as *u8;
+    assert !facet::is_attached(nav_cp);
+    assert !facet::attached(NAV_HOST);   // the ref-place form agrees
+    let _h: f64 = mount_component(NAV_HOST.build, host: host.raw());
+    assert facet::is_attached(nav_cp);
+    assert facet::attached(NAV_HOST);
+    let _u: bool = unmount(nav_cp);
+    assert !facet::is_attached(nav_cp);
+    assert !facet::attached(NAV_HOST);
+    unmount_all();
+}
+
+// A stable slot key for the open_window test (any nameable address works).
+static OPEN_CHECK_CP: i32 = 0;
+
+#[test]
+fn open_window_mounts_and_returns_without_blocking() {
+    unmount_all();
+    install();
+    var b: facet::Builder = facet::Builder::new();
+    b.add(facet::label("open", size: 12.0f64).key("open_check:title"));
+    let cp: *u8 = #addr_of(OPEN_CHECK_CP) as *u8;
+    let _w: ak::Window = open_window(facet::column(b), title: "open-check", width: 220.0f64, height: 160.0f64, component_ctx: cp);
+    // REACHING here at all is the point: open_window returned instead of
+    // blocking in a run loop. The tree is mounted and addressable, and the
+    // component slot reads attached — the seam run_component fires on_attach in.
+    assert facet::find("open_check:title", cp).found();
+    assert facet::is_attached(cp);
+    let _u: bool = unmount(cp);
+    assert !facet::is_attached(cp);
     unmount_all();
 }
 
