@@ -107,8 +107,9 @@ stable, namespaced ids so external agents and `find` stay aligned
   namespace keys globally.
 - **Async completions** — with namespaced keys a stale delivery just misses;
   guard with `found()` or `facet::attached(this)` when you must know.
-- **Do not `await` in a handler** — `block_on` blocks the main thread. Slow
-  reads go through a service ([services.md](services.md)).
+- **Never `block_on` in a handler** — it blocks the main thread. Async work
+  goes through `facet::spawn_ui`; CPU-blocking reads through a service
+  ([services.md](services.md)).
 
 ## Status (high level)
 

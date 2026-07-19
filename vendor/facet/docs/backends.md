@@ -92,7 +92,9 @@ To port facet to a new toolkit, a package supplies:
    and `run_loop` (blocks): the seam lets `run_component` fire `on_attach`
    after the mount and `on_detach` after the loop stops, from typed code.
 4. A main-thread dispatch for `run_on_main` (AppKit: `dispatch_async_f` onto
-   the main queue).
+   the main queue), and a reactor watch for `spawn_ui`: observe the stdlib
+   reactor's kqueue fd from the UI loop and call `facet::pump_async` when it
+   reads ready (AppKit: a dispatch READ source on the main queue).
 
 The `native(...)` op is the universal fallback: anything a backend does not have
 a portable op for, an app can drop in as an app-owned native view. Layout stays

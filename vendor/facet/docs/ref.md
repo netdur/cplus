@@ -90,6 +90,8 @@ fn is_attached(cp: *u8) -> bool
 interface Service { fn produce(ref this); fn apply(ref this); }
 fn load_service[S: Service](ref svc: S, on_ready: fn(*u8) = noop, ctx: *u8 = 0)
 fn run_on_main(work: fn(*u8), ctx: *u8)
+fn spawn_ui[T: Send](take f: future::Future[T])   // async task on the UI thread
+async fn on_worker[I: Send, O: Send](take input: I, f: fn(take I) -> O) -> O   // awaitable blocking work
 ```
 
 `produce` on a worker, `apply` + `on_ready(ctx)` on the main thread; the

@@ -126,10 +126,44 @@ thread, non-blocking. Available directly for custom threading; the same
 ownership rule applies — without a backend the work is dropped, so a ctx
 that carries ownership must be reclaimed by `work`, never by the scheduler.
 
-## Why not `await`
+## Async tasks: `spawn_ui`
 
-`block_on` drives a future by blocking its calling thread. Under a running
-window the main thread belongs to the event loop, so awaiting in a handler
-would freeze the UI for the whole read — the situation services exist to
-avoid. `produce` / `apply` expresses the one hop a load needs; use the
-executor for compute pipelines outside the UI.
+```cplus
+fn spawn_ui[T: Send](take f: future::Future[T])
+```
+
+For time- and I/O-shaped logic there is a second tool: hand an async task to
+the UI. The task's body runs eagerly to its first suspension at the call
+site; the rest resumes on the main thread as its awaits complete — timers
+(`time::sleep`) and async fd I/O wake it through the backend's reactor
+watch, awaited async fns through the executor. After any await the tree may
+have changed; the usual discipline applies (namespaced keys miss harmlessly,
+`attached(this)` / `found()` to know).
+
+```cplus
+fn on_click(ref this, sender: *u8) { facet::spawn_ui(this.refresh()); }
+
+async fn refresh(ref this) {
+    await time::sleep(milliseconds: 150 as u64);
+    if !facet::attached(this) { return; }
+    facet::find("status").set_text("refreshed");
+    return;
+}
+```
+
+Never `block_on` in a handler — it blocks the main thread for the whole
+drive, which is the freeze services and `spawn_ui` both exist to avoid.
+There is no cancellation; a task in flight at teardown finds its keys gone
+and falls through.
+
+For BLOCKING work inside an async task there is the worker bridge:
+
+```cplus
+async fn on_worker[I: Send, O: Send](take input: I, f: fn(take I) -> O) -> O
+```
+
+`await on_worker(input, f)` runs `f(input)` on a worker thread and resumes
+the awaiting task with the result (the values cross boxed, over a pipe the
+reactor waits on). A service can expose its read this way instead of — or
+alongside — `load_async`; `Service`'s produce/apply remains the plain
+callback-shaped story.
