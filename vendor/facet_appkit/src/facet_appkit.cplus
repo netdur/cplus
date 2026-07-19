@@ -947,6 +947,34 @@ fn dispatch_to_main(work: fn(*u8), ctx: *u8) {
     return;
 }
 
+// ---- async pump (facet::spawn_ui's wake source) -----------------------------
+// The stdlib reactor parks suspended coroutines and wakes them off a kqueue
+// (timers, fd readiness). A kqueue fd itself reads as ready when it holds
+// events, so a dispatch READ source on it — on the main queue — makes the
+// AppKit run loop the executor: whenever a timer or fd fires inside the
+// reactor, the source runs facet::pump_async on the main thread, which
+// resumes every task that can make progress. Installed once.
+extern fn dispatch_source_create(type_: *u8, handle: u64, mask: u64, queue: *u8) -> *u8;
+extern fn dispatch_source_set_event_handler_f(source: *u8, handler: fn(*u8));
+extern fn dispatch_resume(obj: *u8);
+extern fn stdlib_reactor_kqfd_v1() -> i32;
+
+static ASYNC_PUMP_SOURCE: *u8 = #zero::[*u8]();
+
+fn install_async_pump() {
+    if ASYNC_PUMP_SOURCE != (0 as *u8) { return; }
+    let rtld_default: *u8 = { ((0 as usize) -% (2 as usize)) as *u8 };
+    let read_type: *u8 = { dlsym(rtld_default, #str_ptr("_dispatch_source_type_read\0")) };
+    if read_type == (0 as *u8) { return; }
+    let kq: i32 = { stdlib_reactor_kqfd_v1() };
+    let src: *u8 = { dispatch_source_create(read_type, kq as u64, 0 as u64, main_dispatch_queue()) };
+    if src == (0 as *u8) { return; }
+    { dispatch_source_set_event_handler_f(src, facet::pump_async); }
+    { dispatch_resume(src); }
+    ASYNC_PUMP_SOURCE = src;
+    return;
+}
+
 fn install() {
     facet::set_list_builder(fak_list);
     facet::set_raise_fn(raise);
@@ -971,6 +999,7 @@ fn install() {
     facet::set_unstage_fn(unstage_impl);
     facet::set_lc_register_fn(lc_register_impl);
     facet::set_run_on_main_fn(dispatch_to_main);
+    install_async_pump();
     return;
 }
 

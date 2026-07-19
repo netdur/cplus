@@ -26,6 +26,9 @@ import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/box" as box;
 import "stdlib/thread" as thread;
+import "stdlib/future" as future;
+import "stdlib/executor" as executor;
+import "stdlib/net" as net;
 import "flex_layout/flex_layout" as flex;
 
 // ---- the component contract ---------------------------------------------
@@ -1346,6 +1349,124 @@ fn run_on_main(work: fn(*u8), ctx: *u8) {
     let f: fn(fn(*u8), *u8) = RUN_ON_MAIN_FN;
     if f != (0 as fn(fn(*u8), *u8)) { f(work, ctx); }
     return;
+}
+
+// ---- async tasks on the UI thread -------------------------------------------
+// `spawn_ui` hands an async task to the UI: calling the async fn already ran
+// its body to the first suspension (eagerly, on the caller's thread); the rest
+// resumes on the main thread as its awaits complete. Timers and async I/O wake
+// the task through the backend's reactor watch (see facet_appkit); awaiting
+// another async fn resumes through the executor's pending queue. After any
+// await the tree may have changed — the usual discipline applies (namespaced
+// keys miss harmlessly; `attached(this)` / `found()` to know).
+//
+//     fn on_click(ref this, sender: *u8) { spawn_ui(this.refresh()); }
+//     async fn refresh(ref this) {
+//         await time::sleep(milliseconds: 150 as u64);
+//         if !attached(this) { return; }
+//         find("list").add_child(...);
+//     }
+//
+// A spawned task runs to completion or not at all past a suspension the
+// backend cannot wake (no backend installed = the portable no-op posture).
+// There is no cancellation; a task in flight at teardown finds its keys gone.
+
+extern fn stdlib_reactor_drain_pending_v1() -> i32;
+extern fn stdlib_reactor_poll_one_event_nb_v1() -> i32;
+
+fn spawn_ui[T: Send](take f: future::Future[T]) {
+    executor::spawn_local::[T](f);
+    run_on_main(pump_async, 0 as *u8);
+}
+
+// Drive every parked async task as far as it can go WITHOUT blocking: resume
+// the pending queue, consume every already-fired reactor event, repeat until
+// neither makes progress. The backend calls this whenever the reactor's
+// kqueue reads ready (fd/timer fired) and after spawn_ui. Signature is
+// fn(*u8) so it rides run_on_main and the dispatch source directly.
+fn pump_async(ctx: *u8) {
+    loop {
+        let drained: i32 = { stdlib_reactor_drain_pending_v1() };
+        var fired: i32 = 0;
+        while { stdlib_reactor_poll_one_event_nb_v1() } == 1 {
+            fired = fired + 1;
+        }
+        if drained == 0 {
+            if fired == 0 { break; }
+        }
+    }
+    return;
+}
+
+// ---- awaitable worker (blocking work off the UI thread) ---------------------
+// The reactor wakes on fds and timers, not on computation — a CPU-blocking
+// read gains nothing from `await` alone. `on_worker` bridges: it runs
+// `f(input)` on a worker thread and suspends the CALLING task until the
+// result is back, via a pipe the reactor can wait on (the worker writes the
+// boxed result's address; the awaiting side reads it and reclaims). So an
+// async task can hold a straight line through blocking work:
+//
+//     async fn refresh(ref this) {
+//         let rows: vec::Vec[text::Text] = await on_worker(job, read_rows);
+//         if !attached(this) { return; }
+//         // fill by key
+//     }
+//
+// `input` moves to the worker (I: Send); the result moves back (O: Send).
+extern fn pipe(fds: *i32) -> i32;
+extern fn close(fd: i32) -> i32;
+extern fn write(fd: i32, buf: *u8, count: usize) -> isize;
+
+// The handoff crossing to the worker thread is a CONCRETE struct: the typed
+// input and fn ride as boxed raw pointers, reclaimed by the run_worker[I, O]
+// trampoline (value-turbofish) on the far side.
+struct WorkerHandoff {
+    input_raw: usize,
+    f_raw: usize,
+    write_fd: i32,
+}
+
+fn run_worker[I: Send, O: Send](take h: WorkerHandoff) -> i32 {
+    let input: I = box::from_raw::[I]((h.input_raw) as *u8).unwrap();
+    let f: fn(take I) -> O = box::from_raw::[fn(take I) -> O]((h.f_raw) as *u8).unwrap();
+    let out: O = f(input);
+    match box::new::[O](out) {
+        option::Option[box::Box[O]]::Some(b) => {
+            var slot: *u8 = b.into_raw();
+            let _w: isize = { write(h.write_fd, #addr_of(slot) as *u8, 8 as usize) };
+        }
+        option::Option[box::Box[O]]::None => { }
+    }
+    let _c: i32 = { close(h.write_fd) };
+    return 0;
+}
+
+// The sync half: open the pipe, move the work to a thread, return the read
+// end. Separate from the async fn so the coroutine body holds only concrete
+// types.
+fn worker_start[I: Send, O: Send](take input: I, f: fn(take I) -> O) -> i32 {
+    var fds: [i32; 2] = [0, 0];
+    let _p: i32 = { pipe(#addr_of(fds) as *i32) };
+    let input_raw: usize = match box::new::[I](input) {
+        option::Option[box::Box[I]]::Some(b) => { b.into_raw() } as usize,
+        option::Option[box::Box[I]]::None => 0 as usize,
+    };
+    let f_raw: usize = match box::new::[fn(take I) -> O](f) {
+        option::Option[box::Box[fn(take I) -> O]]::Some(b) => { b.into_raw() } as usize,
+        option::Option[box::Box[fn(take I) -> O]]::None => 0 as usize,
+    };
+    let h: WorkerHandoff = WorkerHandoff { input_raw: input_raw, f_raw: f_raw, write_fd: fds[1] };
+    let tramp: fn(take WorkerHandoff) -> i32 = run_worker::[I, O];
+    let _bg: thread::JoinHandle[i32] = thread::spawn_with::[WorkerHandoff, i32](h, tramp);
+    return fds[0];
+}
+
+async fn on_worker[I: Send, O: Send](take input: I, f: fn(take I) -> O) -> O {
+    let rfd: i32 = worker_start::[I, O](input, f);
+    var slot: *u8 = 0 as *u8;
+    let _n: isize = await net::read_fd_async(rfd, #addr_of(slot) as *u8, 8 as usize);
+    let _c: i32 = { close(rfd) };
+    return box::from_raw::[O](slot).unwrap();
 }
 
 // ---- services ---------------------------------------------------------------

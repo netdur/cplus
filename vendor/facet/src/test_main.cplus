@@ -3,6 +3,8 @@
 // The protocol- and mount-level tests live in facet.cplus.
 
 import "stdlib/option" as option;
+import "stdlib/time" as time;
+import "stdlib/text" as text;
 import "flex_layout/flex_layout" as flex;
 import "./facet" as facet;
 
@@ -171,5 +173,84 @@ fn service_job_runs_produce_then_apply_then_ready() {
     };
     let _rc: i32 = facet::run_service_job(job);
     assert SVC_ORDER == 123;
+    facet::set_run_on_main_fn(0 as fn(fn(*u8), *u8));
+}
+
+// ---- spawn_ui / pump_async ---------------------------------------------------
+
+static UI_TASK_DONE: i32 = 0;
+
+async fn ui_probe_task() {
+    await time::sleep(milliseconds: 10 as u64);
+    UI_TASK_DONE = 1;
+    return;
+}
+
+#[test]
+fn spawn_ui_task_completes_under_external_pumping() {
+    // A synchronous run_on_main stand-in makes spawn_ui's own pump run inline;
+    // the task parks on its timer, and this loop plays the dispatch source's
+    // role until the reactor fires it. No block_on anywhere.
+    facet::set_run_on_main_fn(rom_sync);
+    UI_TASK_DONE = 0;
+    facet::spawn_ui(ui_probe_task());
+    let start: i64 = time::now_millis();
+    while UI_TASK_DONE == 0 {
+        if time::now_millis() - start > (2000 as i64) { break; }
+        facet::pump_async(0 as *u8);
+    }
+    assert UI_TASK_DONE == 1;
+    facet::set_run_on_main_fn(0 as fn(fn(*u8), *u8));
+}
+
+// ---- on_worker ---------------------------------------------------------------
+
+static WORKER_RESULT: i32 = 0;
+static WORKER_TEXT_OK: i32 = 0;
+
+fn slow_double(take v: i32) -> i32 { return v * 2; }
+fn make_text(take n: i32) -> text::Text { return text::from_str("worker"); }
+
+async fn worker_task() {
+    let f: fn(take i32) -> i32 = slow_double;
+    let v: i32 = await facet::on_worker(21, f);
+    WORKER_RESULT = v;
+    return;
+}
+
+async fn worker_text_task() {
+    let f: fn(take i32) -> text::Text = make_text;
+    let t: text::Text = await facet::on_worker::[i32, text::Text](0, f);
+    if t.view() == "worker" { WORKER_TEXT_OK = 1; }
+    return;
+}
+
+#[test]
+fn on_worker_result_arrives_through_await() {
+    facet::set_run_on_main_fn(rom_sync);
+    WORKER_RESULT = 0;
+    facet::spawn_ui(worker_task());
+    let start: i64 = time::now_millis();
+    while WORKER_RESULT == 0 {
+        if time::now_millis() - start > (2000 as i64) { break; }
+        facet::pump_async(0 as *u8);
+    }
+    assert WORKER_RESULT == 42;
+    facet::set_run_on_main_fn(0 as fn(fn(*u8), *u8));
+}
+
+#[test]
+fn on_worker_moves_owned_results_across() {
+    // A Drop-carrying result (Text) crosses the pipe boxed and is reclaimed
+    // exactly once on the awaiting side.
+    facet::set_run_on_main_fn(rom_sync);
+    WORKER_TEXT_OK = 0;
+    facet::spawn_ui(worker_text_task());
+    let start: i64 = time::now_millis();
+    while WORKER_TEXT_OK == 0 {
+        if time::now_millis() - start > (2000 as i64) { break; }
+        facet::pump_async(0 as *u8);
+    }
+    assert WORKER_TEXT_OK == 1;
     facet::set_run_on_main_fn(0 as fn(fn(*u8), *u8));
 }
