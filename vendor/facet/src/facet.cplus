@@ -1327,8 +1327,13 @@ impl Handle {
     // `c` must outlive its presentation (the registry holds its address).
     fn present[C: Component + Lifecycle](this, ref c: C) -> Handle {
         if !this.found() { return this; }
+        // The presented tree FILLS the container: present is the single-slot
+        // "show this screen here" verb, so the root stretches to the slot and
+        // the component's own layout governs everything inside it. (Without
+        // this, the `@facet` block wrapper — a plain column — content-sizes
+        // and swallows the root's grow.)
         let n: Node = c.build();
-        let h: Handle = this.set_child(n);   // notifies + evicts the current occupant
+        let h: Handle = this.set_child(n.grow(1.0f64).shrink(1.0f64));
         lc_register(this, lc_detach_tramp::[C], #addr_of(c) as *u8);
         c.on_attach();
         return h;

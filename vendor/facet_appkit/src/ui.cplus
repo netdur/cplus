@@ -1807,10 +1807,22 @@ fn reposition_nested(node: *flex::Node, parent_abs: flex::Layout, parent_flipped
                     if { (*cn).layout_changed() } {
                         reposition_nested(cn, cf, false);   // payload views are non-flipped
                     }
+                } else {
+                    // A payload-less container CAN occur on an applied tree:
+                    // a HOSTED subtree's root (set_child mounts the child and
+                    // `apply` never synthesizes a backing for the root it is
+                    // handed — only for children it visits). Its children's
+                    // views hang from the nearest payload ancestor with frames
+                    // read against THIS node's absolute frame, exactly apply's
+                    // root-else convention — descend the same way, or a
+                    // presented component's views are never framed on relayout.
+                    if { (*cn).child_count() } > (0 as usize) {
+                        if { (*cn).layout_changed() } {
+                            reposition_nested(cn, cf, parent_flipped);
+                        }
+                    }
                 }
-                // A payload-less node with children cannot occur on an applied
-                // tree (apply gave every such container a backing view); a
-                // payload-less leaf (spacer, bare box) has no view to move.
+                // A payload-less leaf (spacer, bare box) has no view to move.
             }
             option::Option[*flex::Node]::None => { }
         }
