@@ -41,6 +41,11 @@ impl ScreenY: facet::Lifecycle {
 }
 ```
 
+The hooks are plain fns (an `async fn` does not conform to the interface).
+For asynchronous initial work — a load, a poll loop — `on_attach` hands a
+task off in one line: `facet::spawn_ui(this.refresh())`. See
+[services.md](services.md).
+
 ## `present` — show a component, lifecycle included
 
 On a keyed container `Handle`:

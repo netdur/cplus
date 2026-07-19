@@ -151,6 +151,13 @@ async fn refresh(ref this) {
 }
 ```
 
+Callbacks stay plain fns — an `async fn` returns a `Future`, so it does not
+conform to a handler signature or to `Lifecycle`, and the compiler rejects
+wiring one directly. The bridge is always the same one line: any callback —
+a click handler, `on_attach`, a service's `on_ready` — calls
+`spawn_ui(this.some_async_method())` and returns; the task carries on from
+there.
+
 Never `block_on` in a handler — it blocks the main thread for the whole
 drive, which is the freeze services and `spawn_ui` both exist to avoid.
 There is no cancellation; a task in flight at teardown finds its keys gone
