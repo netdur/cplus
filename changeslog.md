@@ -3,6 +3,74 @@
 User-facing changes per release, newest first. The changelog starts at v0.0.14;
 earlier history lives in each version's archived plan.
 
+## v0.0.27 — unreleased
+
+> Component lifecycle and asynchrony. facet components gain a runtime-fired
+> lifecycle; services move slow reads off the main thread; async/await becomes
+> usable inside UI apps, with tasks resuming on the main thread through the
+> platform run loop. The enabling language change: a generic function
+> instantiation is now a first-class fn-pointer value.
+
+### Language
+- **Value-turbofish**: `f::[T]` with no call following is a fn-pointer VALUE to
+  the concrete instantiation. Bounds are enforced at the take site (E0502),
+  arity at E0501; `::[T]` on a non-generic name is E0821. This makes the
+  type-erasing trampoline pattern expressible from generic code — the basis of
+  facet's lifecycle registry and service runner.
+- **Fn-pointer arguments infer generic fn-typed parameters**: a parameter
+  `f: fn(take I) -> O` now unifies structurally with a fn-pointer argument,
+  binding `I`/`O` (previously E0302 — a generic fn could not take a fn-typed
+  argument mentioning its own params).
+- **Generic calls under `await` monomorphize correctly.** Previously the
+  awaited call site kept its template name and the build failed in codegen.
+- Generic-fn uses inside a method-generic method on a concrete struct are now
+  discovered by monomorphization (previously a codegen panic).
+
+### facet — component lifecycle
+- `interface Lifecycle { fn on_attach(ref this); fn on_detach(ref this); }`.
+  Hooks are fired FOR the component, never by it: `run_component` fires
+  `on_attach` after the mount (the tree is live; initial routing belongs
+  there) and `on_detach` when the loop stops, before teardown; teardown then
+  drains the detach of every presented component. **Breaking:**
+  `run_component` now requires `Component + Lifecycle` (empty hooks satisfy
+  it).
+- **`Handle.present(component)`** — the component-aware `set_child`: mounts
+  the component's tree, fires its `on_attach`, and registers an erased detach
+  so that whichever verb later removes or replaces that content (`present`,
+  `set_child`, `remove_child`, `replace_child`, teardown) notifies the
+  outgoing component first. Nested outlets included.
+- **Liveness**: `facet::attached(this)` / `is_attached(cp)` answer for mounted
+  components (staged components keep answering by attach state).
+- `stage` / `attach` / `detach` remain unchanged as the view-parking tool.
+- Backend host contract: `run_window` splits into `open_window` (mounts,
+  returns) and `run_loop` (blocks), so hosts can act between mount and loop.
+
+### facet — services and async
+- **`interface Service { produce; apply }` + `load_service`**: the threading
+  contract as an interface — `produce` (the slow read) runs on a worker
+  thread, `apply` and the optional `on_ready(ctx)` run back on the main
+  thread. A service conforms once and gets the whole pipeline.
+- **`run_on_main(work, ctx)`** — main-thread dispatch, backend-installed.
+- **`spawn_ui(task)`** — hand an async task to the UI: it runs eagerly to its
+  first suspension at the call site and resumes on the main thread as awaits
+  complete. The AppKit run loop pumps the stdlib reactor through a dispatch
+  source on its kqueue, so timers and async fd I/O wake tasks with the tree
+  addressable. `block_on` in a handler remains wrong (it blocks the loop).
+- **`on_worker(input, f)`** — awaitable blocking work: `f(input)` runs on a
+  worker thread and the awaiting task resumes with the result.
+
+### Standard library
+- `Box::into_raw` / `Box::from_raw` — surrender and reclaim a heap slot as a
+  raw pointer across boundaries a `Box` cannot cross.
+- Reactor: the kqueue fd is exported and a non-blocking poll variant added, so
+  an external event loop can drive spawned futures.
+- `thread::JoinHandle`'s refcount-shared ctx field is marked `opaque`,
+  removing a spurious W0002 warning from every build that links `thread`.
+
+### facet_appkit
+- `image(path)` degrades a missing or unreadable file to a blank image view
+  instead of aborting the app on AppKit's nil-image throw.
+
 ## v0.0.26 — 2026-07-02
 
 > A bindings release. `cpc-bindgen` grows from a C-header FFI generator into a

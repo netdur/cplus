@@ -484,9 +484,15 @@ fn register_read(fd: i32, hdl: *u8)
 fn register_write(fd: i32, hdl: *u8)
 fn register_timer(ms: u64, hdl: *u8)
 fn poll_one_event() -> bool
+fn poll_one_event_nb() -> bool   // zero-timeout: consume one ready event or return
 fn drain_pending() -> i32
 // awaiter registration — see source
 ```
+
+For external pumps (an event loop driving spawned futures without
+`block_on`), stable C-ABI exports include `stdlib_reactor_kqfd_v1()` — the
+kqueue fd, itself pollable, so a run loop can watch it — plus the `_v1`
+forms of drain/poll above. facet's `spawn_ui` is the reference consumer.
 
 Backend: kqueue (default), epoll (`reactor_linux`), Windows
 (`reactor_windows`).

@@ -5,7 +5,7 @@ facet's **AppKit** backend — two modules:
 | Module | Import | What it is |
 |---|---|---|
 | `ui` | `import "facet_appkit/ui" as ui;` | The `@ui` contextual-builder layer: widgets + layout containers over flex_layout and the typed appkit binding. Usable standalone (no facet). |
-| `facet_appkit` | `import "facet_appkit/facet_appkit" as fak;` | Full per-kind `Renderer` ops, `set_identity`, `mount`/`mount_into`/`run` (window host). |
+| `facet_appkit` | `import "facet_appkit/facet_appkit" as fak;` | Full per-kind `Renderer` ops, `set_identity`, the keyed-direct/lifecycle/async hook impls, and the window host (`open_window` + `run_loop`, composed by `run_window`). |
 
 ## Architecture (post multi-backend plan)
 
@@ -14,9 +14,11 @@ facet's **AppKit** backend — two modules:
 3. **`mount` calls `set_identity` after every widget-producing op** — pins `accessibilityIdentifier` + packed `(role, drive)` affordance metadata. Agents read the declaration; they do not re-guess from `isKindOfClass:`.
 4. **Layout is write-once** in facet + flex_layout. Only leaf/widget ops are per-backend.
 
-### Renderer kinds (all implemented)
+### Renderer kinds
 
-`label`, `wrap_label`, `button`, `text_area`, `composer`, `bordered`, `clickable`, `split` + `set_identity`.
+The full portable kind set is implemented — leaves, value controls, pickers,
+containers, wrappers, `list`, `native` (catalog: `vendor/facet/docs/widgets.md`)
+— plus `set_identity` after every widget op.
 
 `tree` / `file_tree` stay AppKit-only `ui::` escape hatches (structured payload, not in `Node`).
 
@@ -56,32 +58,29 @@ ui::apply(#addr_of(tree), content.raw(), false);
 
 Widgets own their NSView in the flex payload; measurement is per-kind inside the op. Escape hatches: `view` / `wrap_view` / `fixed_view`.
 
+`@ui` components: a handler wired as `ui::button(on: component.method)` re-renders that component through `component_after` — an `@ui`-layer mechanism only. The `@facet` layer never re-renders; it updates by key.
+
 ## The `@facet` layer (portable description)
 
-```
-import "facet/facet" as facet;
-import "facet_appkit/facet_appkit" as fak;
+Apps write against `vendor/facet` (component struct + `build`, keyed-direct
+updates, runtime-fired lifecycle, services, `spawn_ui`) and run through
+`facet/runtime`, which selects this backend. See `vendor/facet/docs/` — this
+package is the implementation side:
 
-static COUNT: i32 = 0;
-fn on_inc(sender: *u8, ctx: *u8) { COUNT = COUNT + 1; return; }
+- **Keyed-direct verbs** (`find`, leaf mutators, structural verbs) resolve
+  against the retained mounted trees; a miss no-ops.
+- **Lifecycle**: the container→detach registry `present` writes is fired and
+  cleared by the structural verbs before they remove content; `unmount` /
+  `unmount_all` drain it while views are alive.
+- **Window host**: `open_window` (creates the shell, mounts, returns) +
+  `run_loop` (blocks); `run_window` is the composition. The seam is what lets
+  `runtime::run_component` fire `on_attach` / `on_detach` from typed code.
+- **Async**: `run_on_main` dispatches onto the main queue; a dispatch READ
+  source on the stdlib reactor's kqueue pumps `spawn_ui` tasks — awaits
+  resume on the main thread.
 
-fn view() -> facet::Node {
-    let t: text::Text = "count ${COUNT}";
-    return @facet {
-        vstack {
-            label(t.view(), size: 20.0f64).agent_id("count-label")
-            button("+1").on_click(on_inc).agent_id("inc-btn")
-            clickable {
-                label("row")
-            }.on_click(on_inc).agent_id("row")
-        }
-    };
-}
-
-fn main() -> i32 { fak::run(view(), title: "counter"); return 0; }
-```
-
-**Re-render (component model — there is no global runtime):** a handler mutates state, then the owner re-renders. Two paths: automatic for `@ui` components (a handler wired via `ui::button(on: component.method)` re-renders that component through `component_after`), or explicit (clear the host view and call `mount_into` again). The `run` above mounts once; drive updates by one of those two paths.
+There is no re-render loop: state changes are pushed to keyed elements in
+place (`vendor/facet/docs/updates.md`).
 
 **Wrapper + named params:** use fluent modifiers after the block (`.on_click`, `.agent_id`). Primary click for `clickable` is `Node.click`.
 
