@@ -1304,7 +1304,7 @@ fn visit_ident_calls(expr: &Expr, f: &mut impl FnMut(&str, &[Type], crate::lexer
                 visit_ident_calls(&arm.body, f);
             }
         }
-        ExprKind::Await(inner) => visit_ident_calls(inner, f),
+        ExprKind::Await(inner) | ExprKind::Yield(inner) => visit_ident_calls(inner, f),
         ExprKind::InterpStr { parts } => {
             for p in parts {
                 if let InterpStrPart::Expr(e) = p {
@@ -2810,6 +2810,29 @@ fn rewrite_expr(
             )),
             ty: subst_type_ast(ty, subst, type_name_of, struct_lookup),
         },
+        // A generic call under `await` (`await on_worker::[I, O](...)`) must be
+        // rewritten like any other call site — without these arms the awaited
+        // subtree kept its bare template name and codegen faulted on the
+        // unmangled symbol (discovery at `visit_ident_calls` already descended,
+        // so the instantiation existed; only the call site was left behind).
+        ExprKind::Await(inner) => ExprKind::Await(Box::new(rewrite_expr(
+            inner,
+            subst,
+            generic_names,
+            inst_lookup,
+            mono,
+            type_name_of,
+            struct_lookup,
+        ))),
+        ExprKind::Yield(inner) => ExprKind::Yield(Box::new(rewrite_expr(
+            inner,
+            subst,
+            generic_names,
+            inst_lookup,
+            mono,
+            type_name_of,
+            struct_lookup,
+        ))),
         ExprKind::StructLit { name, fields } => ExprKind::StructLit {
             name: name.clone(),
             fields: fields
@@ -3942,6 +3965,40 @@ mod tests {
             _ => false,
         });
         assert!(has, "tramp instantiation not synthesized for C=W");
+    }
+
+    // A generic call under `await` must be rewritten to its instantiation.
+    // Regression: rewrite_expr had no Await arm, so the awaited subtree kept
+    // the bare template name (codegen "missing `...`" fault) even though
+    // discovery had synthesized the instantiation.
+    #[test]
+    fn generic_call_under_await_is_rewritten() {
+        let prog = run(
+            "struct Future[T] { opaque handle: *u8 }\n\
+             async fn hold[T: Send](take v: T) -> T { return v; }\n\
+             async fn caller() -> i32 {\n\
+                 let v: i32 = await hold(7);\n\
+                 return v;\n\
+             }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        let has_inst = prog.items.iter().any(|i| {
+            matches!(&i.kind, ItemKind::Function(f) if f.name.name.starts_with("hold__"))
+        });
+        assert!(has_inst, "hold instantiation not synthesized");
+        let mut bare = false;
+        for item in &prog.items {
+            if let ItemKind::Function(f) = &item.kind {
+                if f.name.name.contains("caller") {
+                    visit_ident_calls_in_block(&f.body, &mut |n, _, _| {
+                        if n == "hold" {
+                            bare = true;
+                        }
+                    });
+                }
+            }
+        }
+        assert!(!bare, "awaited call site still names the bare template");
     }
 
     #[allow(dead_code)]

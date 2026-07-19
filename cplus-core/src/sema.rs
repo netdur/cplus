@@ -16147,6 +16147,36 @@ fn unify_param_against_concrete(
                 _ => false,
             }
         }
+        // A fn-pointer parameter unifies structurally: `f: fn(take I) -> O`
+        // infers I and O from a fn-pointer argument's signature. Ownership
+        // modes (take/ref markers) are part of the type and must match
+        // exactly — only the types inside unify. Before this arm, FnPtr fell
+        // through to `a == b`, so a generic fn could never take a fn-typed
+        // argument mentioning its own params (E0302 "argument has type
+        // fn-pointer").
+        (
+            Ty::FnPtr {
+                params: pp,
+                param_takes: ptk,
+                param_refs: prf,
+                return_type: pret,
+            },
+            Ty::FnPtr {
+                params: bp,
+                param_takes: btk,
+                param_refs: brf,
+                return_type: bret,
+            },
+        ) => {
+            pp.len() == bp.len()
+                && ptk == btk
+                && prf == brf
+                && pp
+                    .iter()
+                    .zip(bp.iter())
+                    .all(|(p, b)| unify_param_against_concrete(p, b, subst, structs, enums))
+                && unify_param_against_concrete(pret, bret, subst, structs, enums)
+        }
         (a, b) => a == b,
     }
 }
