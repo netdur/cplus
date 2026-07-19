@@ -985,6 +985,8 @@ fn install() {
     facet::set_set_text_fn(set_text_impl);
     facet::set_set_value_fn(set_value_impl);
     facet::set_get_value_fn(value_impl);
+    facet::set_get_text_fn(text_impl);
+    facet::set_get_index_fn(index_impl);
     facet::set_set_on_fn(set_on_impl);
     facet::set_set_hidden_fn(set_hidden_impl);
     facet::set_add_child_fn(add_child_impl);
@@ -2846,6 +2848,32 @@ fn value_impl(h: facet::Handle) -> f64 {
     return 0.0f64;
 }
 
+// facet::Handle.text hook: the element's text, read portably. A text_area's
+// find() resolves the INNER NSTextView (its id is sunk onto the documentView),
+// so -string is probed first; then -title (buttons), then -stringValue
+// (controls: fields, labels). Empty for kinds with none.
+fn text_impl(h: facet::Handle) -> text::Text {
+    let view: *u8 = h.view();
+    if view == (0 as *u8) { return text::from_str(""); }
+    let has_string: i8 = rt::msg_i8_id(view, rt::sel(#str_ptr("respondsToSelector:\0")), rt::sel(#str_ptr("string\0")));
+    if has_string != (0 as i8) { return ak::TextView::from_raw(view).as_text().string(); }
+    let has_title: i8 = rt::msg_i8_id(view, rt::sel(#str_ptr("respondsToSelector:\0")), rt::sel(#str_ptr("title\0")));
+    if has_title != (0 as i8) { return ak::Button::from_raw(view).title(); }
+    let has_sv: i8 = rt::msg_i8_id(view, rt::sel(#str_ptr("respondsToSelector:\0")), rt::sel(#str_ptr("stringValue\0")));
+    if has_sv != (0 as i8) { return ak::Control::from_raw(view).string_value(); }
+    return text::from_str("");
+}
+
+// facet::Handle.selected_index hook: a popup's chosen row (0-based). -1 for any
+// kind without -indexOfSelectedItem (not an NSPopUpButton) or a missing handle.
+fn index_impl(h: facet::Handle) -> i64 {
+    let view: *u8 = h.view();
+    if view == (0 as *u8) { return -1 as i64; }
+    let has_idx: i8 = rt::msg_i8_id(view, rt::sel(#str_ptr("respondsToSelector:\0")), rt::sel(#str_ptr("indexOfSelectedItem\0")));
+    if has_idx != (0 as i8) { return ak::PopUpButton::from_raw(view).index_of_selected_item(); }
+    return -1 as i64;
+}
+
 // facet::Handle.set_on hook: flip a toggle / checkbox / switch. Fixed-size.
 fn set_on_impl(h: facet::Handle, on: bool) -> bool {
     let view: *u8 = h.view();
@@ -4550,6 +4578,63 @@ fn stage_lifecycle_negatives() {
     // Detaching something never attached returns false.
     assert a.detach() == false;
     let _z: bool = a.unstage();
+    unmount_all();
+}
+
+// ---- keyed-direct: find(key) + text()/selected_index(), the portable READERS --
+// The read-back counterparts to set_text/set_value: a text_field's string, a
+// text_area's content (find resolves the INNER NSTextView), and a popup's chosen
+// row — all read WITHOUT reaching through to ak/ui.
+struct ReadPane { n: i64 }
+
+impl ReadPane: facet::Component {
+    fn build(ref this) -> facet::Node {
+        var items: vec::Vec[text::Text] = vec::new::[text::Text]();
+        items.append(text::from_str("Claude"));
+        items.append(text::from_str("GPT"));
+        var b: facet::Builder = facet::Builder::new();
+        b.add(facet::text_field(value: "Iris").key("rp:name"));
+        b.add(facet::text_area(value: "hello world").key("rp:desc"));
+        b.add(facet::popup(items, selected: 1 as i64).key("rp:agent"));
+        return facet::column(b);
+    }
+}
+
+static READ_PANE: ReadPane = #zero::[ReadPane]();
+
+#[test]
+fn find_reads_text_and_index_portably() {
+    unmount_all();
+    facet::set_find_fn(find_impl);
+    facet::set_get_text_fn(text_impl);
+    facet::set_get_index_fn(index_impl);
+    READ_PANE.n = 0 as i64;
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 320.0, h: 240.0 });
+    let _h: f64 = mount_component(READ_PANE.build, host: host.raw());
+    let cp: *u8 = #addr_of(READ_PANE) as *u8;
+
+    // text_field value read back portably — Control -stringValue under the hood.
+    let nh: facet::Handle = facet::find("rp:name", cp);
+    assert nh.found();
+    assert nh.text().equals("Iris");
+
+    // text_area content: find() resolves the INNER NSTextView (id sunk onto the
+    // documentView), so text() must answer via -string, not -stringValue.
+    let dh: facet::Handle = facet::find("rp:desc", cp);
+    assert dh.found();
+    assert dh.text().equals("hello world");
+
+    // popup selection read back — the initial `selected: 1` row.
+    let ah: facet::Handle = facet::find("rp:agent", cp);
+    assert ah.found();
+    assert ah.selected_index() == (1 as i64);
+
+    // NEGATIVE: selected_index on a non-popup kind is -1 (no -indexOfSelectedItem).
+    assert facet::find("rp:name", cp).selected_index() == (-1 as i64);
+    // NEGATIVE: a missing key reads empty / -1, never traps.
+    assert !facet::find("nope", cp).found();
+    assert facet::find("nope", cp).text().equals("");
+    assert facet::find("nope", cp).selected_index() == (-1 as i64);
     unmount_all();
 }
 

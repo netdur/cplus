@@ -1141,6 +1141,8 @@ static FIND_FN: fn(*u8, str) -> Handle = #zero::[fn(*u8, str) -> Handle]();
 static SET_TEXT_FN: fn(Handle, str) -> bool = #zero::[fn(Handle, str) -> bool]();
 static SET_VALUE_FN: fn(Handle, f64) -> bool = #zero::[fn(Handle, f64) -> bool]();
 static GET_VALUE_FN: fn(Handle) -> f64 = #zero::[fn(Handle) -> f64]();
+static GET_TEXT_FN: fn(Handle) -> text::Text = #zero::[fn(Handle) -> text::Text]();
+static GET_INDEX_FN: fn(Handle) -> i64 = #zero::[fn(Handle) -> i64]();
 static SET_ON_FN: fn(Handle, bool) -> bool = #zero::[fn(Handle, bool) -> bool]();
 static SET_HIDDEN_FN: fn(Handle, bool) -> bool = #zero::[fn(Handle, bool) -> bool]();
 static ADD_CHILD_FN: fn(Handle, take Node) -> bool = #zero::[fn(Handle, take Node) -> bool]();
@@ -1153,6 +1155,8 @@ fn set_find_fn(f: fn(*u8, str) -> Handle) { FIND_FN = f; return; }
 fn set_set_text_fn(f: fn(Handle, str) -> bool) { SET_TEXT_FN = f; return; }
 fn set_set_value_fn(f: fn(Handle, f64) -> bool) { SET_VALUE_FN = f; return; }
 fn set_get_value_fn(f: fn(Handle) -> f64) { GET_VALUE_FN = f; return; }
+fn set_get_text_fn(f: fn(Handle) -> text::Text) { GET_TEXT_FN = f; return; }
+fn set_get_index_fn(f: fn(Handle) -> i64) { GET_INDEX_FN = f; return; }
 fn set_set_on_fn(f: fn(Handle, bool) -> bool) { SET_ON_FN = f; return; }
 fn set_set_hidden_fn(f: fn(Handle, bool) -> bool) { SET_HIDDEN_FN = f; return; }
 fn set_add_child_fn(f: fn(Handle, take Node) -> bool) { ADD_CHILD_FN = f; return; }
@@ -1207,6 +1211,24 @@ impl Handle {
     fn value(this) -> f64 {
         let f: fn(Handle) -> f64 = GET_VALUE_FN;
         if f == (0 as fn(Handle) -> f64) { return 0.0f64; }
+        return f(this);
+    }
+
+    // Read the element's text: a `text_field`'s value, a `text_area`'s content,
+    // a label's string, or a button's title. Empty on a miss or a kind with no
+    // text. The portable read-back counterpart to `set_text` — no backend
+    // reach-through, so an app never touches `ak`/`ui` to read an input.
+    fn text(this) -> text::Text {
+        let f: fn(Handle) -> text::Text = GET_TEXT_FN;
+        if f == (0 as fn(Handle) -> text::Text) { return text::from_str(""); }
+        return f(this);
+    }
+
+    // Read a `popup`'s chosen row (0-based), or -1 on a miss or a kind with no
+    // selection. The portable read-back for a dropdown selection.
+    fn selected_index(this) -> i64 {
+        let f: fn(Handle) -> i64 = GET_INDEX_FN;
+        if f == (0 as fn(Handle) -> i64) { return -1 as i64; }
         return f(this);
     }
 
