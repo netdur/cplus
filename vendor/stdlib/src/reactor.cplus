@@ -253,6 +253,25 @@ export extern fn stdlib_reactor_poll_one_event_v1() -> i32 {
     return 0 as i32;
 }
 
+// Non-blocking poll: consume one ready kevent if there is one, resume its
+// waiter, and return 1; return 0 immediately when nothing is ready. The
+// building block for an external pump that must never block its thread
+// (a UI run loop driving spawned tasks).
+export extern fn stdlib_reactor_poll_one_event_nb_v1() -> i32 {
+    if poll_one_event_nb() {
+        return 1 as i32;
+    }
+    return 0 as i32;
+}
+
+// The reactor's kqueue fd. A kqueue is itself pollable — it reads as ready
+// when events are pending — so an external loop (a dispatch source, a
+// select set) can watch this fd and pump only when there is work.
+export extern fn stdlib_reactor_kqfd_v1() -> i32 {
+    let state: *u8 = ensure();
+    return { *((state + off_kqfd()) as *i32) };
+}
+
 // Register fd for read-readiness; record the coroutine handle to wake.
 fn register_read(fd: i32, hdl: *u8) {
     register_filter(fd, hdl, evfilt_read());
@@ -362,6 +381,22 @@ fn register_filter(fd: i32, hdl: *u8, filter: i16) {
 // Wait for one fd to become ready, then resume its waiter. Blocks the
 // calling thread on kevent. Returns true if a coroutine was resumed.
 fn poll_one_event() -> bool {
+    return poll_event_with(0 as *u8);   // NULL timeout: block until an event
+}
+
+// The non-blocking form: a zero timespec makes kevent return immediately
+// when nothing is ready.
+struct PollTimeout {
+    secs: i64,
+    nanos: i64,
+}
+
+fn poll_one_event_nb() -> bool {
+    var zero: PollTimeout = PollTimeout { secs: 0 as i64, nanos: 0 as i64 };
+    return poll_event_with(#addr_of(zero) as *u8);
+}
+
+fn poll_event_with(timeout: *u8) -> bool {
     let state: *u8 = ensure();
     let nw_slot: *i32 = { (state + off_n_waiters()) as *i32 };
     let nt_slot: *i32 = { (state + off_n_timers()) as *i32 };
@@ -372,7 +407,7 @@ fn poll_one_event() -> bool {
     }
     let kqfd: i32 = { *((state + off_kqfd()) as *i32) };
     let kb: *u8 = { *((state + off_kevent_buf()) as **u8) };
-    let nev: i32 = { kevent(kqfd, 0 as *u8, 0 as i32, kb, 1 as i32, 0 as *u8) };
+    let nev: i32 = { kevent(kqfd, 0 as *u8, 0 as i32, kb, 1 as i32, timeout) };
     if nev <= (0 as i32) { return false; }
     let ident: u64 = { *(kb as *u64) };
     let filter_ready: i16 = { *((kb + (8 as usize)) as *i16) };
@@ -563,4 +598,18 @@ fn notify_completed(awaitee: *u8) {
         i = i +% (1 as i32);
     }
     return;
+}
+
+// ───────────────────────────── tests ─────────────────────────────
+
+#[test]
+fn nb_poll_returns_immediately_when_nothing_is_ready() {
+    // The point is termination: a blocking kevent here would hang the suite.
+    let _r: bool = poll_one_event_nb();
+}
+
+#[test]
+fn kqfd_export_is_a_valid_descriptor() {
+    let fd: i32 = stdlib_reactor_kqfd_v1();
+    assert fd >= (0 as i32);
 }
