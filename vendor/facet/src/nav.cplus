@@ -9,11 +9,12 @@
 // current window and opens the next screen's, `push` opens a secondary window,
 // `pop` closes it. On a mobile backend the same verbs drive the nav stack.
 //
-// The verbs act when an `App` is running (it registers the hooks below for
-// exactly the life of its loop). Without one — a screen shown through
-// `run_screen`, `run_component`, or `present` — `go`/`quit` still record the
-// intent (the caller can read it after the window closes) but close nothing,
-// and `push`/`pop` report false. Main-thread only, like every facet verb.
+// `go` and `quit` also unwind a `run_screen` / `run_component` window (the
+// runtime registers the close hook while one is up) — the caller reads the
+// pending intent after the return, the way an App loop does. `push`/`pop`
+// need a running App's route registry and report false otherwise. With no
+// runtime window at all (`present`, plain mounts) the verbs record intent
+// but close nothing. Main-thread only, like every facet verb.
 
 import "stdlib/text" as text;
 
@@ -99,8 +100,17 @@ fn pop() -> bool {
 // ---- reads (screen + App side) ----------------------------------------------
 
 // The argument the intent that showed the CURRENT screen carried. Empty when
-// none was given. Stable until the next `go`.
+// none was given. Stable until the next navigation verb.
 fn arg() -> str { return ARG.view(); }
+
+// The App hook's channel for a pushed screen's argument: the hook sets it
+// right before the route factory runs, so the pushed screen's `arg()` reads
+// its own argument — and a FAILED push (unknown route) leaves the current
+// arg untouched. App-side plumbing, not an app-facing verb.
+fn set_arg(arg: str) {
+    ARG = text::from_str(arg);
+    return;
+}
 
 // The pending intent code, without consuming it.
 fn pending() -> u32 { return INTENT; }
@@ -208,4 +218,12 @@ fn nav_reset_seeds_the_initial_arg() {
     assert arg() == "first-arg";
     reset();
     assert arg() == "";
+}
+
+#[test]
+fn nav_set_arg_is_the_push_hook_channel() {
+    reset("primary-arg");
+    set_arg("pushed-arg");
+    assert arg() == "pushed-arg";
+    reset();
 }

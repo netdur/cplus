@@ -1667,7 +1667,30 @@ fn appkit_will_close(user: *u8, win_ptr: *u8) {
     will_close({ (*lifecycle).ctx });
     OPEN_WINDOWS = OPEN_WINDOWS -% 1;
     if OPEN_WINDOWS <= 0 {
-        ak::Application::shared_application().stop(0 as *u8);
+        let app: ak::Application = ak::Application::shared_application();
+        app.stop(0 as *u8);
+        // -[NSApplication stop:] takes effect only after the loop finishes an
+        // EVENT. A close driven from a callout — a run_on_main step, an
+        // agent's marshaled click — is not one, so without a nudge the loop
+        // keeps waiting and the app appears hung. Post a no-op app-defined
+        // event so the stop is honored immediately. (A user's real click
+        // already is an event; the nudge is harmless there.)
+        let origin: rt::Point = rt::Point { x: 0.0, y: 0.0 };
+        let nudge: option::Option[ak::Event] = ak::Event::other_event_with_type(
+            ak::EventType::ApplicationDefined,
+            origin,
+            0 as u64,
+            0.0f64,
+            0 as i64,
+            ak::GraphicsContext::from_raw(0 as *u8),
+            0 as i16,
+            0 as i64,
+            0 as i64,
+        );
+        match nudge {
+            option::Option[ak::Event]::Some(ev) => { app.post_event(ev, at_start: true); }
+            option::Option[ak::Event]::None => { }
+        }
     }
     return;
 }
@@ -2349,11 +2372,13 @@ fn secondary_will_close(user: *u8, notif: *u8) {
     return;
 }
 
-// Open a screen window. `ctx` keys the retained slot (pass the screen
-// instance's address, like run_component's component_ctx); `on_closed` fires
-// once, whichever way the window closes. Returns the window's raw handle —
-// feed it to `close_window` to dismiss programmatically. Returns null if a
-// bookkeeping allocation failed (the window is not shown).
+// Open a screen window. `slot_ctx` keys the retained slot (pass the screen
+// instance's address, like run_component's component_ctx); `on_closed(ctx)`
+// fires once, whichever way the window closes — `ctx` is the caller's own
+// context and may differ from the slot key (facet/runtime passes the boxed
+// ScreenBox). Returns the window's raw handle — feed it to `close_window` to
+// dismiss programmatically. Returns null if a bookkeeping allocation failed
+// (the window is not shown).
 fn present_screen_window(
     take root: facet::Node,
     title: str = "facet",
@@ -2362,6 +2387,7 @@ fn present_screen_window(
     min_width: f64 = 0.0f64,
     min_height: f64 = 0.0f64,
     clean_titlebar: bool = false,
+    slot_ctx: *u8 = 0 as *u8,
     ctx: *u8 = 0 as *u8,
     on_closed: fn(*u8) = default_will_close,
 ) -> *u8 {
@@ -2371,7 +2397,7 @@ fn present_screen_window(
 
     // Slot key: the screen instance's address; a keyless caller gets the
     // content view's (unique per window) so relayout/unmount still resolve.
-    var slot_cp: *u8 = ctx;
+    var slot_cp: *u8 = slot_ctx;
     if slot_cp == (0 as *u8) { slot_cp = content.raw(); }
 
     // Per-window heap records: the primary window's static delegate pair is
@@ -4923,6 +4949,7 @@ fn screen_window_opens_finds_and_fires_on_closed() {
         title: "screen-check",
         width: 220.0f64,
         height: 160.0f64,
+        slot_ctx: cp,
         ctx: cp,
         on_closed: screen_check_on_closed,
     );

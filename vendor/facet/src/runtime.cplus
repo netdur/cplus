@@ -5,14 +5,21 @@
 // file with runtime_linux.cplus via the resolver's platform override.
 
 import "./facet" as core;
+import "./nav" as nav;
 import "facet_appkit/facet_appkit" as backend;
 import "stdlib/option" as option;
 import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "stdlib/box" as box;
+import "stdlib/status" as status;
+import "stdlib/io" as io;
 
 type Node = core::Node;
 type Builder = core::Builder;
 type AppMenu = core::AppMenu;
 type MenuItem = core::MenuItem;
+type Chrome = core::Chrome;
+type ScreenBox = core::ScreenBox;
 
 interface Window {
     fn root(ref this) -> Node;
@@ -153,7 +160,10 @@ fn run_component[C: core::Component + core::Lifecycle](
     min_height: f64 = 0.0f64,
     clean_titlebar: bool = false,
     close_button_only: bool = false,
+    custom_chrome: bool = false,
     native_buttons: bool = false,
+    unified_toolbar: bool = false,
+    hide_title: bool = false,
     zoomable: bool = false,
     min_zoom: f64 = 1.0f64,
     max_zoom: f64 = 4.0f64,
@@ -180,6 +190,9 @@ fn run_component[C: core::Component + core::Lifecycle](
         height: height,
         clean_titlebar: clean_titlebar,
         close_button_only: close_button_only,
+        unified_toolbar: unified_toolbar,
+        hide_title: hide_title,
+        custom_chrome: custom_chrome,
         native_buttons: native_buttons,
         min_width: min_width,
         min_height: min_height,
@@ -193,10 +206,17 @@ fn run_component[C: core::Component + core::Lifecycle](
         will_close: wc,
         component_ctx: cp,
     );
+    // nav::quit / nav::go can unwind this window too (the caller reads the
+    // pending intent after the return, the way an App loop does). Registered
+    // only while this window is up; push/pop stay App-only.
+    CURRENT_WIN = _w.raw();
+    nav::set_close_fn(app_close_current);
     owned.on_attach();       // the tree is mounted and live; find() resolves
     backend::run_loop();     // blocks until the window closes
     owned.on_detach();       // loop stopped, views still alive: notify before teardown
     backend::unmount_all();  // drains presented components' detaches, then drops the trees
+    nav::set_close_fn(0 as fn());
+    CURRENT_WIN = 0 as *u8;
     return owned;            // window closed → final state is readable by the caller
 }
 
@@ -225,3 +245,401 @@ fn present_window(take root: Node, title: str, width: f64, height: f64) {
 fn window_close(sender: *u8) { backend::window_close(sender); return; }
 fn window_minimize(sender: *u8) { backend::window_minimize(sender); return; }
 fn window_zoom(sender: *u8) { backend::window_zoom(sender); return; }
+
+// ---- run_screen -------------------------------------------------------------
+// run_component with the window read from the SCREEN itself: the component
+// also conforms to `Screen`, so its `chrome()` supplies what the 15 window
+// parameters would. The blocking-returns-state property is unchanged — the
+// window closes and the final field state comes back to the caller.
+//
+//     let s: Settings = runtime::run_screen(Settings::new());
+fn run_screen[S: core::Component + core::Lifecycle + core::Screen](
+    take screen: S,
+    take menu: AppMenu = core::empty_app_menu(),
+    should_close: fn(*u8) -> bool = 0 as fn(*u8) -> bool,
+    will_close: fn(*u8) = 0 as fn(*u8),
+    ctx: *u8 = 0 as *u8,
+) -> S {
+    var owned: S = screen;
+    let c: core::Chrome = owned.chrome();
+    return run_component(
+        owned,
+        title: c.title(),
+        width: c.width,
+        height: c.height,
+        min_width: c.min_width,
+        min_height: c.min_height,
+        clean_titlebar: c.clean_titlebar,
+        close_button_only: c.close_button_only,
+        custom_chrome: c.custom_chrome,
+        native_buttons: c.native_buttons,
+        unified_toolbar: c.unified_toolbar,
+        hide_title: c.hide_title,
+        zoomable: c.zoomable,
+        min_zoom: c.min_zoom,
+        max_zoom: c.max_zoom,
+        menu: menu,
+        should_close: should_close,
+        will_close: will_close,
+        ctx: ctx,
+    );
+}
+
+// ---- App --------------------------------------------------------------------
+// The process tier: what iris's hand-rolled `while running { ... }` main loop
+// is, formalized. An App owns the once-per-process concerns — the app menu,
+// the agent surface, launch/quit hooks — and a registry of named screen
+// routes. `run(initial)` shows one screen at a time as a blocking window;
+// `nav::go` unwinds it and shows the next, `nav::push`/`nav::pop` show and
+// dismiss secondary screens alongside, `nav::quit` (or closing the window
+// with no intent pending) ends the loop.
+//
+//     fn make_welcome() -> facet::ScreenBox { return facet::screen_box(Welcome::new()); }
+//     fn make_workspace() -> facet::ScreenBox { return facet::screen_box(Workspace::new()); }
+//
+//     fn main() -> i32 {
+//         var app: runtime::App = runtime::App::new("Iris");
+//         app.screen("welcome", make_welcome);
+//         app.screen("workspace", make_workspace);
+//         let _s: status::Status = app.run("welcome");
+//         return 0;
+//     }
+//
+// Deliberately NOT here: services (component-owned, or module statics set up
+// in `on_launch`), any scene graph, any diffing. App replaces a while-loop,
+// not the component model.
+
+struct AppRoute {
+    name: text::Text,
+    factory: fn() -> core::ScreenBox,
+}
+
+fn app_hook_noop(ctx: *u8) { return; }
+
+struct App {
+    name_text: text::Text,
+    // The app menu, built fresh per shown screen (AppMenu owns its items, so
+    // a value could only be installed once). Null = the default menu: the app
+    // name with a Quit item.
+    menu_fn: fn() -> AppMenu,
+    on_launch_fn: fn(*u8),
+    on_quit_fn: fn(*u8),
+    opaque hook_ctx: *u8,
+    agent_path: text::Text,
+    routes: vec::Vec[AppRoute],
+}
+
+impl App {
+    fn new(name: str = "facet") -> App {
+        return App {
+            name_text: text::from_str(name),
+            menu_fn: 0 as fn() -> AppMenu,
+            on_launch_fn: app_hook_noop,
+            on_quit_fn: app_hook_noop,
+            hook_ctx: 0 as *u8,
+            agent_path: text::new(),
+            routes: vec::new::[AppRoute](),
+        };
+    }
+
+    fn name(this) -> str { return this.name_text.view(); }
+
+    // The app-global menu bar (per-app on macOS, unlike run_component's
+    // per-window `menu:`). A builder fn, called once per shown screen.
+    fn menu(ref this, build: fn() -> AppMenu) {
+        this.menu_fn = build;
+        return;
+    }
+
+    // Register a screen under a route name. The factory constructs a FRESH
+    // boxed screen each time the route is shown (state that must survive
+    // navigation lives in services or statics, not the screen).
+    fn screen(ref this, name: str, factory: fn() -> core::ScreenBox) {
+        this.routes.append(AppRoute { name: text::from_str(name), factory: factory });
+        return;
+    }
+
+    // Serve the agent surface over MCP at this Unix-socket path: the running
+    // app becomes drivable/readable by an external agent (describe_ui, click,
+    // set_text). The server starts on a worker thread after the first screen
+    // mounts and re-opens its surface on every navigation.
+    fn agent_mcp(ref this, path: str) {
+        this.agent_path = text::from_str(path);
+        return;
+    }
+
+    // Process-level hooks: on_launch fires once before the first screen (no
+    // window exists yet — service statics, logging, cwd), on_quit once after
+    // the loop ends.
+    fn on_launch(ref this, f: fn(*u8), ctx: *u8 = 0 as *u8) {
+        this.on_launch_fn = f;
+        this.hook_ctx = ctx;
+        return;
+    }
+
+    fn on_quit(ref this, f: fn(*u8)) {
+        this.on_quit_fn = f;
+        return;
+    }
+
+    // The factory registered under `route`, or null. Split from calling it so
+    // the nav hooks can set the route argument between lookup and construction.
+    fn route_factory(this, route: str) -> fn() -> core::ScreenBox {
+        var i: usize = 0 as usize;
+        let n: usize = this.routes.count();
+        while i < n {
+            match this.routes.at_ptr(i) {
+                option::Option[*AppRoute]::Some(rp) => {
+                    if { (*rp).name.view() } == route {
+                        return { (*rp).factory };
+                    }
+                }
+                option::Option[*AppRoute]::None => { }
+            }
+            i = i +% (1 as usize);
+        }
+        return 0 as fn() -> core::ScreenBox;
+    }
+
+    fn build_menu(this) -> AppMenu {
+        let f: fn() -> AppMenu = this.menu_fn;
+        if f != (0 as fn() -> AppMenu) { return f(); }
+        // The default: an app menu named after the App, with Quit.
+        var m: AppMenu = core::app_menu(this.name());
+        m.add_item(this.name(), "Quit", "q", core::menu_action_quit());
+        return m;
+    }
+
+    // Run the app: show `initial` (its `arg()` reads `arg`), then follow nav
+    // intents until quit. Blocks for the app's whole life. InvalidInput when
+    // a route resolves to nothing (unknown name, or a factory whose
+    // allocation failed) — the loop cannot continue without a screen.
+    fn run(ref this, initial: str, arg: str = "") -> status::Status {
+        backend::install();
+        nav::reset(arg);
+        RUNNING_APP = #addr_of(this) as *u8;
+        nav::set_close_fn(app_close_current);
+        nav::set_push_fn(app_push);
+        nav::set_pop_fn(app_pop);
+        let launch: fn(*u8) = this.on_launch_fn;
+        launch(this.hook_ctx);
+
+        var route: text::Text = text::from_str(initial);
+        var outcome: status::Status = status::Status::Ok;
+        loop {
+            let f: fn() -> core::ScreenBox = this.route_factory(route.view());
+            if f == (0 as fn() -> core::ScreenBox) {
+                outcome = status::Status::InvalidInput;
+                break;
+            }
+            var sb: core::ScreenBox = f();
+            if !sb.valid() {
+                outcome = status::Status::InvalidInput;
+                break;
+            }
+            let c: core::Chrome = sb.chrome();
+            let root: Node = sb.build();
+            var m: AppMenu = this.build_menu();
+            let has_menu: bool = m.items.count() > (0 as usize);
+            let w = backend::open_window(
+                root,
+                title: c.title(),
+                width: c.width,
+                height: c.height,
+                clean_titlebar: c.clean_titlebar,
+                close_button_only: c.close_button_only,
+                unified_toolbar: c.unified_toolbar,
+                hide_title: c.hide_title,
+                custom_chrome: c.custom_chrome,
+                native_buttons: c.native_buttons,
+                min_width: c.min_width,
+                min_height: c.min_height,
+                zoomable: c.zoomable,
+                min_zoom: c.min_zoom,
+                max_zoom: c.max_zoom,
+                app_menu_enabled: has_menu,
+                app_menu: m,
+                component_ctx: sb.instance(),
+            );
+            CURRENT_WIN = w.raw();
+            if this.agent_path.is_empty() == false {
+                agent_attach_window(w.raw());
+                agent_serve_once(this.agent_path.view());
+            }
+            sb.on_attach();          // the tree is mounted and live
+            backend::run_loop();     // blocks until this screen's window closes
+            app_close_all_pushed();  // replacing the root dismisses pushed screens
+            sb.on_detach();          // loop stopped, views still alive
+            backend::unmount_all();
+            CURRENT_WIN = 0 as *u8;
+            // sb drops here: the screen instance is freed before the next shows.
+            let taken: u32 = nav::take();
+            if taken == nav::intent_go() {
+                route = text::from_str(nav::target());
+            } else {
+                break;   // quit, or the window closed with nothing pending
+            }
+        }
+
+        nav::clear_hooks();
+        RUNNING_APP = 0 as *u8;
+        let quit: fn(*u8) = this.on_quit_fn;
+        quit(this.hook_ctx);
+        return outcome;
+    }
+}
+
+// ---- App <-> nav wiring -----------------------------------------------------
+// The hooks nav fires while an App loop runs. Statics, because the verbs are
+// plain fns a handler calls from anywhere; registered on entry to `App::run`,
+// cleared on exit.
+
+static RUNNING_APP: *u8 = #zero::[*u8]();
+static CURRENT_WIN: *u8 = #zero::[*u8]();
+
+// One pushed (secondary) screen window: the window handle to close it by, and
+// the heap ScreenBox that owns its instance.
+struct PushedScreen {
+    opaque win: *u8,
+    opaque sbp: *u8,
+}
+
+static PUSHED: vec::Vec[PushedScreen] = #zero::[vec::Vec[PushedScreen]]();
+
+// nav::go / nav::quit: unwind the current primary window. Zeroed first so a
+// second verb in the same handler (go then quit) closes nothing twice.
+fn app_close_current() {
+    let w: *u8 = CURRENT_WIN;
+    CURRENT_WIN = 0 as *u8;
+    backend::close_window(w);
+    return;
+}
+
+// nav::push: show `route` in a screen window alongside the primary. The boxed
+// ScreenBox rides as the window's on_closed ctx; the slot is keyed by the
+// screen INSTANCE address so its handlers self-locate with find().
+fn app_push(route: str, arg: str) -> bool {
+    if RUNNING_APP == (0 as *u8) { return false; }
+    let ap: *App = RUNNING_APP as *App;
+    let f: fn() -> core::ScreenBox = { (*ap).route_factory(route) };
+    if f == (0 as fn() -> core::ScreenBox) { return false; }
+    nav::set_arg(arg);   // after the lookup: a failed push leaves arg alone
+    var sb: core::ScreenBox = f();
+    if !sb.valid() { return false; }
+    let c: core::Chrome = sb.chrome();
+    let root: Node = sb.build();
+    let sbp: *u8 = match box::new::[core::ScreenBox](sb) {
+        option::Option[box::Box[core::ScreenBox]]::Some(b) => b.into_raw(),
+        option::Option[box::Box[core::ScreenBox]]::None => 0 as *u8,
+    };
+    if sbp == (0 as *u8) { return false; }
+    let inst: *u8 = { (*(sbp as *core::ScreenBox)).instance() };
+    let w: *u8 = backend::present_screen_window(
+        root,
+        title: c.title(),
+        width: c.width,
+        height: c.height,
+        min_width: c.min_width,
+        min_height: c.min_height,
+        clean_titlebar: c.clean_titlebar,
+        slot_ctx: inst,
+        ctx: sbp,
+        on_closed: app_pushed_closed,
+    );
+    if w == (0 as *u8) {
+        let _b: box::Box[core::ScreenBox] = box::from_raw::[core::ScreenBox](sbp);
+        return false;
+    }
+    let stack: *vec::Vec[PushedScreen] = #addr_of(PUSHED);
+    (*stack).append(PushedScreen { win: w, sbp: sbp });
+    { (*(sbp as *core::ScreenBox)).on_attach() };
+    return true;
+}
+
+// Fires ONCE per pushed window, whichever way it closes (nav::pop, the user's
+// close button, or the unwind sweep) — from the backend's windowWillClose,
+// BEFORE the slot unmounts, so the screen's views are alive for on_detach.
+fn app_pushed_closed(ctx: *u8) {
+    { (*(ctx as *core::ScreenBox)).on_detach() };
+    pushed_remove(ctx);
+    let _b: box::Box[core::ScreenBox] = box::from_raw::[core::ScreenBox](ctx);
+    return;
+}
+
+fn pushed_remove(sbp: *u8) {
+    let stack: *vec::Vec[PushedScreen] = #addr_of(PUSHED);
+    let n: usize = { (*stack).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        let hit: bool = match (*stack).at_ptr(i) {
+            option::Option[*PushedScreen]::Some(pp) => sbp == { (*pp).sbp },
+            option::Option[*PushedScreen]::None => false,
+        };
+        if hit {
+            let _e: option::Option[PushedScreen] = (*stack).remove(at: i);
+            return;
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// nav::pop: dismiss the most recently pushed screen. False when none is up.
+fn app_pop() -> bool {
+    let stack: *vec::Vec[PushedScreen] = #addr_of(PUSHED);
+    let n: usize = { (*stack).count() };
+    if n == (0 as usize) { return false; }
+    let w: *u8 = match (*stack).at_ptr(n -% (1 as usize)) {
+        option::Option[*PushedScreen]::Some(pp) => { (*pp).win },
+        option::Option[*PushedScreen]::None => 0 as *u8,
+    };
+    backend::close_window(w);   // fires app_pushed_closed, which removes the entry
+    return true;
+}
+
+// Primary unwind sweep: a replaced root takes its pushed screens with it
+// (each gets its on_detach + drop through the normal close path). The guard
+// bounds the loop if a close ever fails to remove its entry.
+fn app_close_all_pushed() {
+    var sweeps: i32 = 0;
+    loop {
+        let stack: *vec::Vec[PushedScreen] = #addr_of(PUSHED);
+        let remaining: usize = { (*stack).count() };
+        if remaining == (0 as usize) { return; }
+        if sweeps > 256 { return; }
+        sweeps = sweeps + 1;
+        let _p: bool = app_pop();
+    }
+    return;
+}
+
+// ---- the agent surface under App --------------------------------------------
+// `app.agent_mcp(path)` makes the running app agent-drivable over MCP. The
+// actual serving lives in `facet/agent` (an OPT-IN module, so an app that
+// never serves pays for none of the agent packages): importing it and calling
+// `agent::enable()` registers these two hooks. App::run then walks each
+// mounted screen's window into the surface and starts the socket worker once.
+// With the path set but the hooks unregistered, run says so instead of
+// silently serving nothing.
+
+static AGENT_ATTACH_FN: fn(*u8) = #zero::[fn(*u8)]();
+static AGENT_SERVE_FN: fn(str) = #zero::[fn(str)]();
+
+fn set_agent_attach_fn(f: fn(*u8)) { AGENT_ATTACH_FN = f; return; }
+fn set_agent_serve_fn(f: fn(str)) { AGENT_SERVE_FN = f; return; }
+
+fn agent_attach_window(win: *u8) {
+    let f: fn(*u8) = AGENT_ATTACH_FN;
+    if f != (0 as fn(*u8)) { f(win); }
+    return;
+}
+
+fn agent_serve_once(path: str) {
+    let f: fn(str) = AGENT_SERVE_FN;
+    if f == (0 as fn(str)) {
+        io::println("facet: agent_mcp path set but the agent module is not enabled — import \"facet/agent\" and call agent::enable() before app.run");
+        return;
+    }
+    f(path);
+    return;
+}

@@ -1,7 +1,12 @@
 // facet runtime facade for Linux.
 
 import "./facet" as core;
+import "./nav" as nav;
 import "facet_gtk/facet_gtk" as backend;
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "stdlib/status" as status;
 
 type Node = core::Node;
 type Builder = core::Builder;
@@ -66,3 +71,140 @@ fn run[W: Window](take window: W) {
 fn window_close(sender: *u8) { backend::window_close(sender); return; }
 fn window_minimize(sender: *u8) { backend::window_minimize(sender); return; }
 fn window_zoom(sender: *u8) { backend::window_zoom(sender); return; }
+
+// ---- screens + App (parity with the macOS facade — see runtime.cplus) -------
+// The gtk backend has no open/loop split yet: backend::run blocks per window.
+// run_screen and App keep the same shape and semantics an app writes against;
+// what the backend cannot do yet is called out per member.
+
+type Chrome = core::Chrome;
+type ScreenBox = core::ScreenBox;
+
+// Chrome beyond title/size is not yet honored by the gtk backend.
+fn run_screen[S: core::Component + core::Lifecycle + core::Screen](
+    take screen: S,
+    take menu: AppMenu = core::empty_app_menu(),
+) -> S {
+    var owned: S = screen;
+    let c: core::Chrome = owned.chrome();
+    let root: Node = owned.build();
+    owned.on_attach();
+    backend::run(root, title: c.title(), width: c.width, height: c.height);
+    owned.on_detach();
+    return owned;
+}
+
+struct AppRoute {
+    name: text::Text,
+    factory: fn() -> core::ScreenBox,
+}
+
+fn app_hook_noop(ctx: *u8) { return; }
+
+struct App {
+    name_text: text::Text,
+    menu_fn: fn() -> AppMenu,
+    on_launch_fn: fn(*u8),
+    on_quit_fn: fn(*u8),
+    opaque hook_ctx: *u8,
+    agent_path: text::Text,
+    routes: vec::Vec[AppRoute],
+}
+
+impl App {
+    fn new(name: str = "facet") -> App {
+        return App {
+            name_text: text::from_str(name),
+            menu_fn: 0 as fn() -> AppMenu,
+            on_launch_fn: app_hook_noop,
+            on_quit_fn: app_hook_noop,
+            hook_ctx: 0 as *u8,
+            agent_path: text::new(),
+            routes: vec::new::[AppRoute](),
+        };
+    }
+
+    fn name(this) -> str { return this.name_text.view(); }
+
+    // Not yet honored by the gtk backend (no app-global menu bar wiring).
+    fn menu(ref this, build: fn() -> AppMenu) {
+        this.menu_fn = build;
+        return;
+    }
+
+    fn screen(ref this, name: str, factory: fn() -> core::ScreenBox) {
+        this.routes.append(AppRoute { name: text::from_str(name), factory: factory });
+        return;
+    }
+
+    // Not yet honored on Linux (no agent_gtk serving hookup in facet/agent).
+    fn agent_mcp(ref this, path: str) {
+        this.agent_path = text::from_str(path);
+        return;
+    }
+
+    fn on_launch(ref this, f: fn(*u8), ctx: *u8 = 0 as *u8) {
+        this.on_launch_fn = f;
+        this.hook_ctx = ctx;
+        return;
+    }
+
+    fn on_quit(ref this, f: fn(*u8)) {
+        this.on_quit_fn = f;
+        return;
+    }
+
+    fn route_factory(this, route: str) -> fn() -> core::ScreenBox {
+        var i: usize = 0 as usize;
+        let n: usize = this.routes.count();
+        while i < n {
+            match this.routes.at_ptr(i) {
+                option::Option[*AppRoute]::Some(rp) => {
+                    if { (*rp).name.view() } == route {
+                        return { (*rp).factory };
+                    }
+                }
+                option::Option[*AppRoute]::None => { }
+            }
+            i = i +% (1 as usize);
+        }
+        return 0 as fn() -> core::ScreenBox;
+    }
+
+    // One screen at a time, each in a blocking backend::run window. nav::go is
+    // honored when the current window closes; nav::push/pop report false (no
+    // secondary-window hook on gtk yet); a close with nothing pending quits.
+    fn run(ref this, initial: str, arg: str = "") -> status::Status {
+        nav::reset(arg);
+        let launch: fn(*u8) = this.on_launch_fn;
+        launch(this.hook_ctx);
+        var route: text::Text = text::from_str(initial);
+        var outcome: status::Status = status::Status::Ok;
+        loop {
+            let f: fn() -> core::ScreenBox = this.route_factory(route.view());
+            if f == (0 as fn() -> core::ScreenBox) {
+                outcome = status::Status::InvalidInput;
+                break;
+            }
+            var sb: core::ScreenBox = f();
+            if !sb.valid() {
+                outcome = status::Status::InvalidInput;
+                break;
+            }
+            let c: core::Chrome = sb.chrome();
+            let root: Node = sb.build();
+            sb.on_attach();
+            backend::run(root, title: c.title(), width: c.width, height: c.height);
+            sb.on_detach();
+            let taken: u32 = nav::take();
+            if taken == nav::intent_go() {
+                route = text::from_str(nav::target());
+            } else {
+                break;
+            }
+        }
+        let quit: fn(*u8) = this.on_quit_fn;
+        quit(this.hook_ctx);
+        return outcome;
+    }
+}
