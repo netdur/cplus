@@ -11,6 +11,7 @@ backends. Fast start: [tutorial.md](tutorial.md). API tables: [ref.md](ref.md).
 | `find` / Handle / structural verbs | [updates.md](updates.md) |
 | Lifecycle, `present`, router, parking | [lifecycle.md](lifecycle.md) |
 | App, Screen, nav (the process tier) | [app-screens.md](app-screens.md) |
+| Theme, color tiers, light/dark | [theme.md](theme.md) |
 | Services, `load_service`, `run_on_main` | [services.md](services.md) |
 | `@facet` DSL, leaves, containers | [widgets.md](widgets.md) |
 | Backend vtable, runtime host | [backends.md](backends.md) |
@@ -91,6 +92,15 @@ between them with `nav::go` (replace), `nav::push`/`nav::pop` (overlay), and
 agent-surface socket (`app.agent_mcp`). In-window navigation (`present` into
 an outlet) is unchanged and needs no App. See
 [app-screens.md](app-screens.md).
+
+## Theme (color)
+
+Two tiers of color names: the platform's semantic colors (pass-through,
+"look native") and app-retintable theme roles (`primary`, `ink(a)`,
+`surface`/`raised`/`sunken`, status). `facet::set_theme(Theme::new(...))`
+once; unset roles fall back to platform colors. Light/dark and runtime
+re-theming repaint the mounted chrome in place — no rebuild, no
+`on_appearance_change` for chrome. See [theme.md](theme.md).
 
 ## Services (slow data)
 

@@ -179,12 +179,17 @@ appearance without any app-side branching:
 
 | token | maps to (AppKit) |
 |---|---|
-| `Color::primary()` / `Color::secondary()` / `Color::tertiary()` | label tiers |
+| `Color::text()` / `Color::text_secondary()` / `Color::text_tertiary()` | label tiers |
+| `Color::placeholder()` / `Color::link()` | placeholder / link text |
 | `Color::accent()` | the accent color |
 | `Color::separator()` | hairline separators |
 | `Color::window_background()` / `Color::under_page_background()` / `Color::control_background()` | surface tiers |
-| `Color::fill()` | the neutral control fill |
-| `Color::system_red()` / `green` / `blue` / `orange` / `gray` | system palette |
+| `Color::fill()` / `Color::fill_secondary()` | neutral control fills |
+| `Color::selected_content_background()` / `Color::selected_text_background()` | selection |
+| `Color::system_red()` / `green` / `blue` / `orange` / `yellow` / `purple` / `pink` / `teal` / `indigo` / `gray` | system palette |
+| `Color::primary()` / `on_primary()` / `secondary()` / `on_secondary()` | theme brand roles ([theme.md](theme.md)) |
+| `Color::ink(a)` / `surface()` / `raised()` / `sunken()` / `outline()` / `success()` / `warning()` / `danger()` | theme roles ([theme.md](theme.md)) |
+| `Color::adaptive(light:, dark:)` | a light/dark pair, resolved at paint |
 
 `Color::rgba(...)` is a fixed color: it does not adapt. An app that themes with
 explicit RGBA branches on `facet::is_dark()` and re-themes from its

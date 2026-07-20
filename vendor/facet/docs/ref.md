@@ -145,12 +145,22 @@ Full tables: [widgets.md](widgets.md).
 
 ---
 
-## `Color` / `Style`
+## `Color` / `Style` / `Theme`
 
-Semantic tokens (`primary`, `secondary`, `accent`, `system_*`,
-`window_background`, …) and `Color::rgba`. `Style` holds font/color fields
-used by leaves. See source `facet.cplus` and widgets.md for the complete
-token list.
+```cplus
+// Tier 1 (platform): text/text_secondary/text_tertiary, placeholder, link,
+//   accent, window_background/under_page_background/control_background,
+//   fill/fill_secondary, selected_*_background, separator, system_*
+// Tier 2 (theme roles): primary/on_primary, secondary/on_secondary,
+//   ink(a?), surface/raised/sunken, outline, success/warning/danger
+// Literals: rgba(r,g,b,a) fixed; adaptive(light:, dark:) — a pair resolved
+//   by appearance at paint time
+fn set_theme(take t: Theme)     // Theme::new(named optional roles); calling
+                                // again re-themes the live app in place
+```
+
+`Style` holds font/paint fields used by leaves and containers. Deep dive:
+[theme.md](theme.md); token tables: widgets.md.
 
 ---
 

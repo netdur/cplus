@@ -34,6 +34,7 @@ runtime::run_component(Counter { n: 0 }, title: "Counter",
 | Keyed updates | [docs/updates.md](docs/updates.md) |
 | Lifecycle, `present`, parking | [docs/lifecycle.md](docs/lifecycle.md) |
 | App, Screen, nav | [docs/app-screens.md](docs/app-screens.md) |
+| Theme & color tiers | [docs/theme.md](docs/theme.md) |
 | Services & threading | [docs/services.md](docs/services.md) |
 | DSL & widgets | [docs/widgets.md](docs/widgets.md) |
 | Backends & host | [docs/backends.md](docs/backends.md) |
