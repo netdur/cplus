@@ -160,7 +160,7 @@ fn shapes_cycles() -> i32 {
                     .line_to(60.0f64, 80.0f64)
                     .close_path()
                     .background(facet::Color::accent())
-                    .border(2.0f64, facet::Color::primary())
+                    .border(2.0f64, facet::Color::text())
                 gauge(value: 0.6f64, min: 0.0f64, max: 1.0f64)
                 label("Appears").fade_in(0.3f64)
                 box().frame(160.0f64, 40.0f64).on_drop(dh, 0 as *u8)

@@ -209,36 +209,246 @@ fn family_monospace() -> u32 { return 2 as u32; }
 
 // A color: a semantic token (mapped to the platform's native color) or explicit
 // RGBA. token 0 = none/unset; token 255 = Rgba (use r/g/b/a, 0..1). Flat + Copy.
+// A color is a NAME (token) or a literal, resolved by the backend at paint
+// time. Two tiers of names:
+//
+//   Tier 1 — the PLATFORM's semantic colors (text tiers, surfaces, fills,
+//   selection, separator, accent, the system palette). Pass-through: their
+//   job is "look native"; they are never themeable. The escape hatch when
+//   the theme roles are not what you mean.
+//
+//   Tier 2 — THEME roles (primary/secondary brand slots, ink, surface tiers,
+//   outline, status). The app retints these with `set_theme`; unset roles
+//   fall back to the nearest Tier-1 color, so a themeless app is native in
+//   both appearances and a themed app looks the same on every backend.
+//
+// `rgba` is a fixed literal (identical in light and dark); `adaptive` packs
+// a light/dark rgba pair into one Color, resolved by appearance at paint
+// time — the primitive behind every Theme slot and the one-off escape for
+// app-specific pairs.
 struct Color {
     token: u32,
     r: f64,
     g: f64,
     b: f64,
     a: f64,
+    // The dark side of an `adaptive` pair (token 254); unused otherwise.
+    r2: f64,
+    g2: f64,
+    b2: f64,
+    a2: f64,
 }
 
 impl Color {
-    fn none() -> Color { return Color { token: 0 as u32, r: 0.0f64, g: 0.0f64, b: 0.0f64, a: 0.0f64 }; }
-    fn primary() -> Color { return Color { token: 1 as u32, r: 0.0f64, g: 0.0f64, b: 0.0f64, a: 0.0f64 }; }
-    fn secondary() -> Color { return Color { token: 2 as u32, r: 0.0f64, g: 0.0f64, b: 0.0f64, a: 0.0f64 }; }
-    fn accent() -> Color { return Color { token: 3 as u32, r: 0.0f64, g: 0.0f64, b: 0.0f64, a: 0.0f64 }; }
-    fn system_red() -> Color { return Color { token: 4 as u32, r: 0.0f64, g: 0.0f64, b: 0.0f64, a: 0.0f64 }; }
-    fn system_green() -> Color { return Color { token: 5 as u32, r: 0.0f64, g: 0.0f64, b: 0.0f64, a: 0.0f64 }; }
-    fn system_blue() -> Color { return Color { token: 6 as u32, r: 0.0f64, g: 0.0f64, b: 0.0f64, a: 0.0f64 }; }
-    fn system_orange() -> Color { return Color { token: 7 as u32, r: 0.0f64, g: 0.0f64, b: 0.0f64, a: 0.0f64 }; }
-    fn system_gray() -> Color { return Color { token: 8 as u32, r: 0.0f64, g: 0.0f64, b: 0.0f64, a: 0.0f64 }; }
-    fn rgba(r: f64, g: f64, b: f64, a: f64) -> Color { return Color { token: 255 as u32, r: r, g: g, b: b, a: a }; }
-    // Adaptive tokens (light/dark correct on every backend): the tertiary text
-    // tier, the separator hairline, three surface tiers (window / under-page /
-    // control background), and the neutral fill. Prefer these over fixed rgba
-    // for chrome that must read in both appearances.
-    fn tertiary() -> Color { return Color { token: 9 as u32, r: 0.0f64, g: 0.0f64, b: 0.0f64, a: 0.0f64 }; }
-    fn separator() -> Color { return Color { token: 10 as u32, r: 0.0f64, g: 0.0f64, b: 0.0f64, a: 0.0f64 }; }
-    fn window_background() -> Color { return Color { token: 11 as u32, r: 0.0f64, g: 0.0f64, b: 0.0f64, a: 0.0f64 }; }
-    fn under_page_background() -> Color { return Color { token: 12 as u32, r: 0.0f64, g: 0.0f64, b: 0.0f64, a: 0.0f64 }; }
-    fn control_background() -> Color { return Color { token: 13 as u32, r: 0.0f64, g: 0.0f64, b: 0.0f64, a: 0.0f64 }; }
-    fn fill() -> Color { return Color { token: 14 as u32, r: 0.0f64, g: 0.0f64, b: 0.0f64, a: 0.0f64 }; }
+    // A bare token, all channels zero.
+    fn tok(t: u32) -> Color {
+        return Color {
+            token: t,
+            r: 0.0f64, g: 0.0f64, b: 0.0f64, a: 0.0f64,
+            r2: 0.0f64, g2: 0.0f64, b2: 0.0f64, a2: 0.0f64,
+        };
+    }
+
+    fn none() -> Color { return Color::tok(0 as u32); }
+
+    // ---- Tier 1: platform semantic colors -----------------------------------
+    // Text tiers.
+    fn text() -> Color { return Color::tok(1 as u32); }
+    fn text_secondary() -> Color { return Color::tok(2 as u32); }
+    fn text_tertiary() -> Color { return Color::tok(9 as u32); }
+    fn placeholder() -> Color { return Color::tok(15 as u32); }
+    fn link() -> Color { return Color::tok(16 as u32); }
+    // The user's chosen system accent.
+    fn accent() -> Color { return Color::tok(3 as u32); }
+    // Area tiers.
+    fn window_background() -> Color { return Color::tok(11 as u32); }
+    fn under_page_background() -> Color { return Color::tok(12 as u32); }
+    fn control_background() -> Color { return Color::tok(13 as u32); }
+    // Neutral fills.
+    fn fill() -> Color { return Color::tok(14 as u32); }
+    fn fill_secondary() -> Color { return Color::tok(19 as u32); }
+    // Selection.
+    fn selected_content_background() -> Color { return Color::tok(17 as u32); }
+    fn selected_text_background() -> Color { return Color::tok(18 as u32); }
+    fn separator() -> Color { return Color::tok(10 as u32); }
+    // The system palette.
+    fn system_red() -> Color { return Color::tok(4 as u32); }
+    fn system_green() -> Color { return Color::tok(5 as u32); }
+    fn system_blue() -> Color { return Color::tok(6 as u32); }
+    fn system_orange() -> Color { return Color::tok(7 as u32); }
+    fn system_gray() -> Color { return Color::tok(8 as u32); }
+    fn system_yellow() -> Color { return Color::tok(20 as u32); }
+    fn system_purple() -> Color { return Color::tok(21 as u32); }
+    fn system_pink() -> Color { return Color::tok(22 as u32); }
+    fn system_teal() -> Color { return Color::tok(23 as u32); }
+    fn system_indigo() -> Color { return Color::tok(24 as u32); }
+
+    // ---- literals + pairs ---------------------------------------------------
+    fn rgba(r: f64, g: f64, b: f64, a: f64) -> Color {
+        return Color {
+            token: 255 as u32,
+            r: r, g: g, b: b, a: a,
+            r2: 0.0f64, g2: 0.0f64, b2: 0.0f64, a2: 0.0f64,
+        };
+    }
+
+    // A light/dark rgba pair in one Color, resolved by the CURRENT appearance
+    // at paint time (and re-resolved live on an appearance flip). Pass rgba
+    // colors for both sides.
+    fn adaptive(light: Color, dark: Color) -> Color {
+        return Color {
+            token: 254 as u32,
+            r: light.r, g: light.g, b: light.b, a: light.a,
+            r2: dark.r, g2: dark.g, b2: dark.b, a2: dark.a,
+        };
+    }
+
+    // ---- Tier 2: theme roles ------------------------------------------------
+    // The brand slot: buttons, selection marks, links, badges.
+    fn primary() -> Color { return Color::tok(100 as u32); }
+    fn on_primary() -> Color { return Color::tok(101 as u32); }
+    // The second brand slot.
+    fn secondary() -> Color { return Color::tok(102 as u32); }
+    fn on_secondary() -> Color { return Color::tok(103 as u32); }
+    // The mark base (text / glyph / hairline / translucent fill) at `a` —
+    // the same alpha reads identically over both appearances' surfaces.
+    fn ink(a: f64 = 1.0f64) -> Color {
+        var c: Color = Color::tok(104 as u32);
+        c.a = a;
+        return c;
+    }
+    // Surface tiers: the floor, raised chrome (panel / toolbar / card), and
+    // recessed wells.
+    fn surface() -> Color { return Color::tok(105 as u32); }
+    fn raised() -> Color { return Color::tok(106 as u32); }
+    fn sunken() -> Color { return Color::tok(107 as u32); }
+    // Separators and borders.
+    fn outline() -> Color { return Color::tok(108 as u32); }
+    // Status.
+    fn success() -> Color { return Color::tok(109 as u32); }
+    fn warning() -> Color { return Color::tok(110 as u32); }
+    fn danger() -> Color { return Color::tok(111 as u32); }
+
     fn is_set(this) -> bool { return this.token != (0 as u32); }
+    // Resolution depends on the theme or the appearance (any named token or
+    // pair — everything except unset and a fixed rgba literal). What the
+    // backend's repaint registry keys on.
+    fn is_dynamic(this) -> bool {
+        return this.token != (0 as u32) && this.token != (255 as u32);
+    }
+    fn is_adaptive(this) -> bool { return this.token == (254 as u32); }
+    fn is_theme_role(this) -> bool {
+        return this.token >= (100 as u32) && this.token <= (111 as u32);
+    }
+}
+
+// ---- Theme ------------------------------------------------------------------
+// The app's palette: one plain record, installed once with `set_theme` (main,
+// or App::on_launch). Every field is a Color — unset (the platform default
+// chain), a fixed `rgba`, or an `adaptive` light/dark pair. Calling set_theme
+// again re-themes the LIVE app: the backend repaints token-colored chrome in
+// place, the same sweep an appearance flip runs. No context, no threading —
+// a role is spelled `Color::primary()` anywhere, and resolution happens at
+// paint time.
+struct Theme {
+    primary: Color,
+    on_primary: Color,
+    secondary: Color,
+    on_secondary: Color,
+    ink: Color,
+    surface: Color,
+    raised: Color,
+    sunken: Color,
+    outline: Color,
+    success: Color,
+    warning: Color,
+    danger: Color,
+}
+
+impl Theme {
+    fn new(
+        primary: Color = Color::none(),
+        on_primary: Color = Color::none(),
+        secondary: Color = Color::none(),
+        on_secondary: Color = Color::none(),
+        ink: Color = Color::none(),
+        surface: Color = Color::none(),
+        raised: Color = Color::none(),
+        sunken: Color = Color::none(),
+        outline: Color = Color::none(),
+        success: Color = Color::none(),
+        warning: Color = Color::none(),
+        danger: Color = Color::none(),
+    ) -> Theme {
+        return Theme {
+            primary: primary,
+            on_primary: on_primary,
+            secondary: secondary,
+            on_secondary: on_secondary,
+            ink: ink,
+            surface: surface,
+            raised: raised,
+            sunken: sunken,
+            outline: outline,
+            success: success,
+            warning: warning,
+            danger: danger,
+        };
+    }
+}
+
+static THEME: Theme = #zero::[Theme]();
+
+// Backend hook: repaint token-colored chrome after a theme change (the same
+// sweep the appearance observer runs). Installed by the backend; without one
+// set_theme still stores (new mounts resolve the new palette).
+static THEME_CHANGED_FN: fn() = #zero::[fn()]();
+fn set_theme_changed_fn(f: fn()) { THEME_CHANGED_FN = f; return; }
+
+fn set_theme(take t: Theme) {
+    THEME = t;
+    let f: fn() = THEME_CHANGED_FN;
+    if f != (0 as fn()) { f(); }
+    return;
+}
+
+fn theme() -> Theme { return THEME; }
+
+// The stored Color for a theme-role token — none when the app left the role
+// unset (resolve `theme_fallback` instead). Backend-facing.
+fn theme_slot(token: u32) -> Color {
+    if token == (100 as u32) { return THEME.primary; }
+    if token == (101 as u32) { return THEME.on_primary; }
+    if token == (102 as u32) { return THEME.secondary; }
+    if token == (103 as u32) { return THEME.on_secondary; }
+    if token == (104 as u32) { return THEME.ink; }
+    if token == (105 as u32) { return THEME.surface; }
+    if token == (106 as u32) { return THEME.raised; }
+    if token == (107 as u32) { return THEME.sunken; }
+    if token == (108 as u32) { return THEME.outline; }
+    if token == (109 as u32) { return THEME.success; }
+    if token == (110 as u32) { return THEME.warning; }
+    if token == (111 as u32) { return THEME.danger; }
+    return Color::none();
+}
+
+// The Tier-1 default an UNSET theme role resolves to. All fallbacks are
+// platform tokens or literals (never another role), so resolution is one
+// step deep. Backend-facing.
+fn theme_fallback(token: u32) -> Color {
+    if token == (100 as u32) { return Color::accent(); }
+    if token == (101 as u32) { return Color::rgba(1.0f64, 1.0f64, 1.0f64, 1.0f64); }
+    if token == (102 as u32) { return Color::accent(); }
+    if token == (103 as u32) { return Color::rgba(1.0f64, 1.0f64, 1.0f64, 1.0f64); }
+    if token == (104 as u32) { return Color::text(); }
+    if token == (105 as u32) { return Color::window_background(); }
+    if token == (106 as u32) { return Color::control_background(); }
+    if token == (107 as u32) { return Color::under_page_background(); }
+    if token == (108 as u32) { return Color::separator(); }
+    if token == (109 as u32) { return Color::system_green(); }
+    if token == (110 as u32) { return Color::system_orange(); }
+    if token == (111 as u32) { return Color::system_red(); }
+    return Color::none();
 }
 
 // A widget's visual style. Rides on every `Node`; each backend's `apply_style`
@@ -2536,6 +2746,26 @@ fn is_container_kind(k: u32) -> bool {
     return k == kind_column() || k == kind_row() || k == kind_zstack() || k == kind_grid();
 }
 
+// Whether a container's Style operates on a VIEW (paint, visibility,
+// transform) — such a container needs a backing view too, or the style is a
+// silent no-op (there is nothing to paint a background ON). Text-only fields
+// (fg, font) don't count: a container has no text of its own.
+fn style_wants_view(np: *Node) -> bool {
+    let s: Style = { (*np).style };
+    if s.bg.is_set() { return true; }
+    if s.grad_from.is_set() && s.grad_to.is_set() { return true; }
+    if s.border_width > 0.0f64 { return true; }
+    if s.corner_radius > 0.0f64 { return true; }
+    if s.clip { return true; }
+    if s.hidden { return true; }
+    if s.opacity >= 0.0f64 { return true; }
+    if s.shadow_radius > 0.0f64 { return true; }
+    if s.rotation != 0.0f64 { return true; }
+    if s.scale != 1.0f64 { return true; }
+    if s.fade_in > 0.0f64 { return true; }
+    return false;
+}
+
 // Pin agent id + role after a widget op. Handle is the op's nominated identity
 // surface — by default the returned flex node's payload. Backends where the
 // drive target differs from the layout payload (composer/text_area inner
@@ -2757,11 +2987,14 @@ fn mount(np: *Node, r: Renderer) -> flex::Node {
     if is_widget {
         call_set_identity(np, r, n.payload(), k);
     } else if is_container_kind(k) {
-        // A KEYED container needs a backing view so find(key) can address it.
-        if { (*np).agent_id.view() } != "" {
+        // A container needs a backing view when it is KEYED (find(key) must
+        // address it) or when its Style operates on a view (a background has
+        // to be painted ON something). The backend's container op applies the
+        // style to the view it creates.
+        if { (*np).agent_id.view() } != "" || style_wants_view(np) {
             let cf: fn(*u8, *Node, *flex::Node) = r.container;
             cf(r.ctx, np, #addr_of(n));
-            if n.payload() != (0 as *u8) {
+            if n.payload() != (0 as *u8) && { (*np).agent_id.view() } != "" {
                 call_set_identity(np, r, n.payload(), k);
             }
         }
@@ -3096,7 +3329,7 @@ fn appearance_change_notifies_the_registered_handler() {
 
 #[test]
 fn adaptive_color_tokens_are_distinct_and_set() {
-    assert Color::tertiary().token == (9 as u32);
+    assert Color::text_tertiary().token == (9 as u32);
     assert Color::separator().token == (10 as u32);
     assert Color::window_background().token == (11 as u32);
     assert Color::under_page_background().token == (12 as u32);
@@ -3116,7 +3349,7 @@ fn facet_style_modifiers_set_only_their_field() {
 
     // each modifier sets exactly its field, leaves the rest unset.
     let styled: Node = label("x")
-        .foreground_color(Color::secondary())
+        .foreground_color(Color::text_secondary())
         .background(Color::rgba(0.1f64, 0.2f64, 0.3f64, 1.0f64))
         .corner_radius(8.0f64);
     assert styled.style.fg.is_set();
@@ -3454,8 +3687,11 @@ fn fake_set_identity(ctx: *u8, handle: *u8, id: str, role: u32) {
 
 // The fake backend has no real views, so a keyed container gets no backing
 // payload here — mount then skips its set_identity. (The AppKit backend supplies
-// a real view; this stub keeps the conformance renderer complete.)
+// a real view; this stub keeps the conformance renderer complete.) The counter
+// records that mount ASKED for a backing view (keyed or styled container).
+static FAKE_CONTAINERS: i32 = 0;
 fn fake_container(ctx: *u8, np: *Node, node: *flex::Node) {
+    FAKE_CONTAINERS = FAKE_CONTAINERS + 1;
     return;
 }
 
@@ -3845,7 +4081,7 @@ fn facet_paint_modifiers_set_fields() {
         .curve_to(10.0f64, 10.0f64, 20.0f64, 20.0f64, 0.0f64, 40.0f64)
         .close_path()
         .background(Color::accent())
-        .border(2.0f64, Color::primary());
+        .border(2.0f64, Color::text());
     assert pth.kind == kind_path();
     assert pth.path_cmds.count() == (5 as usize);
     assert approx(fixed_width(#addr_of(pth)), 100.0f64);
@@ -4331,4 +4567,134 @@ fn screen_box_invalid_noops() {
     assert SBT_ATTACHES == 0;
     assert SBT_DETACHES == 0;
     assert SBT_DROPS == 0;
+}
+
+// ---- theme tests --------------------------------------------------------------
+
+static THT_CHANGES: i32 = 0;
+fn tht_changed() { THT_CHANGES = THT_CHANGES + 1; return; }
+
+#[test]
+fn color_tokens_two_tiers_and_predicates() {
+    // Tier 1 keeps its numeric identities (backend mapping stability).
+    assert Color::text().token == (1 as u32);
+    assert Color::text_secondary().token == (2 as u32);
+    assert Color::text_tertiary().token == (9 as u32);
+    assert Color::accent().token == (3 as u32);
+    assert Color::separator().token == (10 as u32);
+    assert Color::placeholder().token == (15 as u32);
+    assert Color::link().token == (16 as u32);
+    assert Color::selected_content_background().token == (17 as u32);
+    assert Color::fill_secondary().token == (19 as u32);
+    assert Color::system_indigo().token == (24 as u32);
+    // Tier 2 lives in the 100s.
+    assert Color::primary().token == (100 as u32);
+    assert Color::danger().token == (111 as u32);
+    // Predicates: every named token is dynamic; literals and none are not.
+    assert Color::primary().is_theme_role();
+    assert Color::accent().is_theme_role() == false;
+    assert Color::surface().is_dynamic();
+    assert Color::window_background().is_dynamic();
+    assert Color::rgba(0.1f64, 0.2f64, 0.3f64, 1.0f64).is_dynamic() == false;
+    assert Color::none().is_dynamic() == false;
+    assert Color::none().is_set() == false;
+}
+
+#[test]
+fn color_adaptive_packs_both_sides_and_ink_carries_alpha() {
+    let c: Color = Color::adaptive(
+        light: Color::rgba(0.9f64, 0.8f64, 0.7f64, 1.0f64),
+        dark: Color::rgba(0.1f64, 0.2f64, 0.3f64, 0.5f64),
+    );
+    assert c.is_adaptive();
+    assert approx(c.r, 0.9f64);
+    assert approx(c.g, 0.8f64);
+    assert approx(c.b, 0.7f64);
+    assert approx(c.a, 1.0f64);
+    assert approx(c.r2, 0.1f64);
+    assert approx(c.g2, 0.2f64);
+    assert approx(c.b2, 0.3f64);
+    assert approx(c.a2, 0.5f64);
+
+    let i: Color = Color::ink(0.55f64);
+    assert i.token == (104 as u32);
+    assert approx(i.a, 0.55f64);
+    assert approx(Color::ink().a, 1.0f64);   // full-strength default
+}
+
+#[test]
+fn theme_defaults_chain_to_platform_tokens() {
+    set_theme(Theme::new());   // all roles unset
+    // Unset role: the slot reads none, the fallback names the Tier-1 color.
+    assert theme_slot(100 as u32).is_set() == false;
+    assert theme_fallback(100 as u32).token == Color::accent().token;
+    assert theme_fallback(104 as u32).token == Color::text().token;
+    assert theme_fallback(105 as u32).token == Color::window_background().token;
+    assert theme_fallback(106 as u32).token == Color::control_background().token;
+    assert theme_fallback(107 as u32).token == Color::under_page_background().token;
+    assert theme_fallback(108 as u32).token == Color::separator().token;
+    assert theme_fallback(109 as u32).token == Color::system_green().token;
+    assert theme_fallback(111 as u32).token == Color::system_red().token;
+    // on_primary falls back to a white literal.
+    assert theme_fallback(101 as u32).token == (255 as u32);
+    // Non-role tokens answer none from both.
+    assert theme_slot(1 as u32).is_set() == false;
+    assert theme_fallback(1 as u32).is_set() == false;
+}
+
+#[test]
+fn set_theme_stores_roles_and_fires_the_hook() {
+    THT_CHANGES = 0;
+    set_theme_changed_fn(tht_changed);
+    set_theme(Theme::new(
+        primary: Color::rgba(0.35f64, 0.42f64, 0.95f64, 1.0f64),
+        surface: Color::adaptive(
+            light: Color::rgba(0.92f64, 0.92f64, 0.94f64, 1.0f64),
+            dark: Color::rgba(0.09f64, 0.09f64, 0.11f64, 1.0f64),
+        ),
+    ));
+    assert THT_CHANGES == 1;
+    let p: Color = theme_slot(100 as u32);
+    assert p.token == (255 as u32);
+    assert approx(p.r, 0.35f64);
+    let s: Color = theme_slot(105 as u32);
+    assert s.is_adaptive();
+    assert approx(s.r2, 0.09f64);
+    // Roles not named stay unset (the chain still applies to them).
+    assert theme_slot(106 as u32).is_set() == false;
+    // Reset for other tests: hook cleared, palette back to defaults.
+    set_theme_changed_fn(0 as fn());
+    set_theme(Theme::new());
+}
+
+#[test]
+fn styled_or_keyed_containers_get_backing_views() {
+    // A styled container must get a backing view (its background paints ON
+    // it); a keyed one must too (find(key) addresses it); a plain one stays
+    // pure layout. Regression for the silent `.background()`-on-column no-op.
+    FAKE_CONTAINERS = 0;
+    var plain: Builder = Builder::new();
+    plain.add(label("x"));
+    var proot: Node = column(plain);
+    let _p: flex::Node = mount(#addr_of(proot), fake_renderer());
+    assert FAKE_CONTAINERS == 0;
+
+    var styled: Builder = Builder::new();
+    styled.add(label("x"));
+    var sroot: Node = column(styled).background(Color::surface());
+    let _s: flex::Node = mount(#addr_of(sroot), fake_renderer());
+    assert FAKE_CONTAINERS == 1;
+
+    var keyed: Builder = Builder::new();
+    keyed.add(label("x"));
+    var kroot: Node = column(keyed).key("kc:root");
+    let _k: flex::Node = mount(#addr_of(kroot), fake_renderer());
+    assert FAKE_CONTAINERS == 2;
+
+    // Every view-operating style field forces the backing, not just bg.
+    var hid: Builder = Builder::new();
+    hid.add(label("x"));
+    var hroot: Node = column(hid).opacity(0.5f64);
+    let _h: flex::Node = mount(#addr_of(hroot), fake_renderer());
+    assert FAKE_CONTAINERS == 3;
 }

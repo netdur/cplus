@@ -29,6 +29,7 @@ import "stdlib/option" as option;
 import "stdlib/text" as text;
 import "stdlib/vec" as vec;
 import "stdlib/box" as box;
+import "stdlib/io" as io;
 import "flex_layout/flex_layout" as flex;
 import "appkit/appkit" as ak;
 import "appkit/appkit_ext" as akx;
@@ -52,26 +53,179 @@ extern fn snprintf(str: *u8, size: usize, format: *u8, ...) -> i32;
 // every widget-producing op (the single choke point).
 
 // ---- style application ------------------------------------------------------
-// Map a portable facet::Color (set — token != 0) to a native NSColor. Semantic
-// tokens map to the platform's adaptive colors (dark-mode correct); token 255
-// is explicit sRGB.
+// Map a portable facet::Color (set — token != 0) to a native NSColor.
+//
+// Resolution order: a THEME role (Tier 2, tokens 100..111) first substitutes
+// its stored slot from the installed theme — or its platform fallback when
+// the app left the role unset. The result (or the original color) is then a
+// Tier-1 platform token (mapped to the platform's adaptive NSColor), an
+// `adaptive` light/dark pair (the side picked by the CURRENT effective
+// appearance), or an explicit sRGB literal. `ink(a)` carries its alpha on
+// the role color; it is applied to whatever the role resolved to.
 fn ns_color(c: facet::Color) -> ak::Color {
-    let t: u32 = { c.token };
-    if t == (1 as u32) { return ak::Color::label_color(); }
-    if t == (2 as u32) { return ak::Color::secondary_label_color(); }
-    if t == (3 as u32) { return ak::Color::control_accent_color(); }
-    if t == (4 as u32) { return ak::Color::system_red_color(); }
-    if t == (5 as u32) { return ak::Color::system_green_color(); }
-    if t == (6 as u32) { return ak::Color::system_blue_color(); }
-    if t == (7 as u32) { return ak::Color::system_orange_color(); }
-    if t == (8 as u32) { return ak::Color::system_gray_color(); }
-    if t == (9 as u32) { return ak::Color::tertiary_label_color(); }
-    if t == (10 as u32) { return ak::Color::separator_color(); }
-    if t == (11 as u32) { return ak::Color::window_background_color(); }
-    if t == (12 as u32) { return ak::Color::under_page_background_color(); }
-    if t == (13 as u32) { return ak::Color::control_background_color(); }
-    if t == (14 as u32) { return ak::Color::system_fill_color(); }
-    return ak::Color::color_with_red({ c.r }, { c.g }, { c.b }, { c.a });
+    var cc: facet::Color = c;
+    // ink(a): remember the mark's alpha before the role substitutes away.
+    var mark_alpha: f64 = -1.0f64;
+    if { cc.token } == (104 as u32) && { c.a } < 1.0f64 { mark_alpha = { c.a }; }
+    if cc.is_theme_role() {
+        var slot: facet::Color = facet::theme_slot({ cc.token });
+        if slot.is_set() == false { slot = facet::theme_fallback({ cc.token }); }
+        cc = slot;
+    }
+    var out: ak::Color = ak::Color::label_color();
+    let t: u32 = { cc.token };
+    if t == (254 as u32) {
+        // Adaptive pair: the side for the current appearance. Flattened paint
+        // re-resolves through the repaint registry on a flip.
+        if is_dark_impl() {
+            out = ak::Color::color_with_red({ cc.r2 }, { cc.g2 }, { cc.b2 }, { cc.a2 });
+        } else {
+            out = ak::Color::color_with_red({ cc.r }, { cc.g }, { cc.b }, { cc.a });
+        }
+    }
+    else if t == (1 as u32) { out = ak::Color::label_color(); }
+    else if t == (2 as u32) { out = ak::Color::secondary_label_color(); }
+    else if t == (3 as u32) { out = ak::Color::control_accent_color(); }
+    else if t == (4 as u32) { out = ak::Color::system_red_color(); }
+    else if t == (5 as u32) { out = ak::Color::system_green_color(); }
+    else if t == (6 as u32) { out = ak::Color::system_blue_color(); }
+    else if t == (7 as u32) { out = ak::Color::system_orange_color(); }
+    else if t == (8 as u32) { out = ak::Color::system_gray_color(); }
+    else if t == (9 as u32) { out = ak::Color::tertiary_label_color(); }
+    else if t == (10 as u32) { out = ak::Color::separator_color(); }
+    else if t == (11 as u32) { out = ak::Color::window_background_color(); }
+    else if t == (12 as u32) { out = ak::Color::under_page_background_color(); }
+    else if t == (13 as u32) { out = ak::Color::control_background_color(); }
+    else if t == (14 as u32) { out = ak::Color::system_fill_color(); }
+    else if t == (15 as u32) { out = ak::Color::placeholder_text_color(); }
+    else if t == (16 as u32) { out = ak::Color::link_color(); }
+    else if t == (17 as u32) { out = ak::Color::selected_content_background_color(); }
+    else if t == (18 as u32) { out = ak::Color::selected_text_background_color(); }
+    else if t == (19 as u32) { out = ak::Color::secondary_system_fill_color(); }
+    else if t == (20 as u32) { out = ak::Color::system_yellow_color(); }
+    else if t == (21 as u32) { out = ak::Color::system_purple_color(); }
+    else if t == (22 as u32) { out = ak::Color::system_pink_color(); }
+    else if t == (23 as u32) { out = ak::Color::system_teal_color(); }
+    else if t == (24 as u32) { out = ak::Color::system_indigo_color(); }
+    else { out = ak::Color::color_with_red({ cc.r }, { cc.g }, { cc.b }, { cc.a }); }
+    if mark_alpha >= 0.0f64 { out = out.color_with_alpha_component(mark_alpha); }
+    return out;
+}
+
+// ---- theme repaint registry --------------------------------------------------
+// Flattened paint (layer background / border / gradient — CGColor snapshots)
+// and theme-resolved text colors do not follow an appearance flip or a later
+// set_theme by themselves. Any view painted with a DYNAMIC color (a named
+// token or an adaptive pair) is recorded here at apply; the sweep re-resolves
+// each through ns_color under the new appearance/theme and resets the native
+// colors in place — no re-render, no relayout, geometry untouched. Entries
+// retain their view (repainting is safe whatever the tree did since) and are
+// cleared wholesale by unmount_all; within one long-lived screen, a
+// structurally removed widget's entry lives until that teardown — a retained
+// view and a few words, bounded by widgets removed, not by time.
+struct PaintEntry {
+    opaque view: *u8,        // retained
+    kind: u32,
+    fg: facet::Color,        // theme-role/adaptive only — a Tier-1 fg stays a
+                             // live dynamic NSColor and needs no re-apply
+    bg: facet::Color,
+    border: facet::Color,
+    grad_from: facet::Color,
+    grad_to: facet::Color,
+    opaque grad_layer: *u8,  // the CAGradientLayer; the view's layer tree owns it
+}
+
+static PAINTS: vec::Vec[PaintEntry] = #zero::[vec::Vec[PaintEntry]]();
+
+fn paint_register(take e: PaintEntry) {
+    let list: *vec::Vec[PaintEntry] = #addr_of(PAINTS);
+    // Re-applying a widget replaces its entry (drop the old +1).
+    let n: usize = { (*list).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        let hit: bool = match (*list).at_ptr(i) {
+            option::Option[*PaintEntry]::Some(pp) => e.view == { (*pp).view },
+            option::Option[*PaintEntry]::None => false,
+        };
+        if hit {
+            match (*list).remove(at: i) {
+                option::Option[PaintEntry]::Some(old) => { rt::release(old.view); }
+                option::Option[PaintEntry]::None => { }
+            }
+            break;
+        }
+        i = i +% (1 as usize);
+    }
+    let _r: *u8 = rt::retain(e.view);
+    (*list).append(e);
+    return;
+}
+
+fn repaint_entry(pp: *PaintEntry) {
+    let view: *u8 = { (*pp).view };
+    if view == (0 as *u8) { return; }
+    let kind: u32 = { (*pp).kind };
+    let bg: facet::Color = { (*pp).bg };
+    if bg.is_set() {
+        ak::View::from_raw(view).layer().set_background_color(ns_color(bg).c_g_color());
+    }
+    let bc: facet::Color = { (*pp).border };
+    if bc.is_set() {
+        ak::View::from_raw(view).layer().set_border_color(ns_color(bc).c_g_color());
+    }
+    let gf: facet::Color = { (*pp).grad_from };
+    let glp: *u8 = { (*pp).grad_layer };
+    if gf.is_set() && glp != (0 as *u8) {
+        let gt: facet::Color = { (*pp).grad_to };
+        let arr: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+        rt::msg_void_id(arr, rt::sel(#str_ptr("addObject:\0")), ns_color(gf).c_g_color());
+        rt::msg_void_id(arr, rt::sel(#str_ptr("addObject:\0")), ns_color(gt).c_g_color());
+        quartz::GradientLayer::from_raw(glp).set_colors(quartz::NSArray::from_raw(arr));
+    }
+    let fg: facet::Color = { (*pp).fg };
+    if fg.is_set() {
+        if kind == facet::kind_label() || kind == facet::kind_wrap_label() {
+            ak::TextField::from_raw(view).set_text_color(ns_color(fg));
+        } else if kind == facet::kind_button() {
+            ak::Button::from_raw(view).set_content_tint_color(ns_color(fg));
+        } else if kind == facet::kind_symbol() {
+            ak::ImageView::from_raw(view).set_content_tint_color(ns_color(fg));
+        }
+    }
+    return;
+}
+
+// Re-resolve every registered view's dynamic paint under the current
+// appearance + theme. Runs on the appearance flip and after set_theme.
+fn repaint_all() {
+    let list: *vec::Vec[PaintEntry] = #addr_of(PAINTS);
+    let n: usize = { (*list).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*list).at_ptr(i) {
+            option::Option[*PaintEntry]::Some(pp) => { repaint_entry(pp); }
+            option::Option[*PaintEntry]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+fn paint_clear_all() {
+    let list: *vec::Vec[PaintEntry] = #addr_of(PAINTS);
+    loop {
+        match (*list).remove_last() {
+            option::Option[PaintEntry]::Some(e) => { rt::release(e.view); }
+            option::Option[PaintEntry]::None => { return; }
+        }
+    }
+    return;
+}
+
+// facet::set_theme's backend hook.
+fn theme_repaint() {
+    repaint_all();
+    return;
 }
 
 // Map a portable weight token to an NSFontWeight (a bare f64: regular 0.0,
@@ -215,6 +369,7 @@ fn apply_style(view_ptr: *u8, kind: u32, np: *facet::Node) {
     // view and autoresizing with it (so it tracks the frame apply sets later).
     let gf: facet::Color = { style.grad_from };
     let gt: facet::Color = { style.grad_to };
+    var reg_grad_layer: *u8 = 0 as *u8;   // captured for the repaint registry
     if gf.is_set() && gt.is_set() {
         let gv: ak::View = ak::View::from_raw(view_ptr);
         gv.set_wants_layer(true);
@@ -238,6 +393,7 @@ fn apply_style(view_ptr: *u8, kind: u32, np: *facet::Node) {
         gll.set_frame(gv.bounds());
         gll.set_autoresizing_mask(18 as u64);               // width|height sizable
         rt::msg_void_id_u64(gv.layer().raw(), rt::sel(#str_ptr("insertSublayer:atIndex:\0")), gl.raw(), 0 as u64);
+        reg_grad_layer = gl.raw();
     }
     // Transform — rotation (deg) + uniform scale as a CATransform3D on the
     // backing layer. Pivot is the layer's anchor (center for a backing layer).
@@ -317,6 +473,38 @@ fn apply_style(view_ptr: *u8, kind: u32, np: *facet::Node) {
         if ta == (2 as i32) { nsa = 2 as i64; }        // center
         else if ta == (3 as i32) { nsa = 1 as i64; }   // trailing → right
         rt::msg_void_id(view_ptr, rt::sel(#str_ptr("setAlignment:\0")), nsa as *u8);
+    }
+    // Dynamic paint follows the theme and the appearance through the repaint
+    // registry: record whichever of this view's colors need re-resolving.
+    // Flattened paths (bg/border/gradient) register for ANY named token or
+    // pair; fg only for theme roles and pairs (a Tier-1 fg is a live dynamic
+    // NSColor already).
+    var reg_fg: facet::Color = facet::Color::none();
+    if fg.is_theme_role() || fg.is_adaptive() { reg_fg = fg; }
+    var reg_bg: facet::Color = facet::Color::none();
+    if bg.is_dynamic() { reg_bg = bg; }
+    var reg_border: facet::Color = facet::Color::none();
+    if border_w > 0.0f64 {
+        let bcol: facet::Color = { style.border_color };
+        if bcol.is_dynamic() { reg_border = bcol; }
+    }
+    var reg_gf: facet::Color = facet::Color::none();
+    var reg_gt: facet::Color = facet::Color::none();
+    if reg_grad_layer != (0 as *u8) && (gf.is_dynamic() || gt.is_dynamic()) {
+        reg_gf = gf;
+        reg_gt = gt;
+    }
+    if reg_fg.is_set() || reg_bg.is_set() || reg_border.is_set() || reg_gf.is_set() {
+        paint_register(PaintEntry {
+            view: view_ptr,
+            kind: kind,
+            fg: reg_fg,
+            bg: reg_bg,
+            border: reg_border,
+            grad_from: reg_gf,
+            grad_to: reg_gt,
+            grad_layer: reg_grad_layer,
+        });
     }
     return;
 }
@@ -671,6 +859,10 @@ fn fak_container(ctx: *u8, np: *facet::Node, node: *flex::Node) {
     let bv: ak::View = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 });
     let bp: *u8 = rt::retain(bv.raw());
     { (*node).set_payload(bp, ui::release_view); }
+    // The container's own Style paints on this backing view (background /
+    // border / gradient / corner / opacity ...) — mount creates the view for
+    // exactly the keyed and the styled containers.
+    apply_style(bp, { (*np).kind }, np);
     return;
 }
 
@@ -982,6 +1174,7 @@ fn install() {
     facet::set_key_of_fn(key_of_impl);
     facet::set_dropped_text_fn(dropped_text);
     facet::set_is_dark_fn(is_dark_impl);
+    facet::set_theme_changed_fn(theme_repaint);
     facet::set_find_fn(find_impl);
     facet::set_set_text_fn(set_text_impl);
     facet::set_set_value_fn(set_value_impl);
@@ -1392,6 +1585,8 @@ fn unmount_all() {
     // Full teardown: every presented component gets its detach first, while
     // every view is still alive.
     lc_fire_all();
+    // The repaint registry's retains go with the trees they painted.
+    paint_clear_all();
     // Unplug every staged root from any superview before its component's tree is
     // dropped, then release the facet-owned roots.
     let staged: *vec::Vec[StageReg] = #addr_of(STAGED);
@@ -2827,6 +3022,10 @@ fn is_dark_impl() -> bool {
 // The sentinel's callback (see run_window): forward the flip to the app's
 // registered facet::on_appearance_change handler.
 fn fire_appearance_change(ctx: *u8) {
+    // Chrome first: re-resolve token/adaptive paint under the new appearance,
+    // so app handlers (content decisions — re-highlighting, image swaps) run
+    // against already-correct chrome.
+    repaint_all();
     facet::notify_appearance_changed();
     return;
 }
@@ -4175,7 +4374,7 @@ fn add_child_of_a_scroll_subtree_drains_post_apply() {
 
 #[test]
 fn adaptive_color_tokens_map_to_real_nscolors() {
-    assert ns_color(facet::Color::tertiary()).raw() != (0 as *u8);
+    assert ns_color(facet::Color::text_tertiary()).raw() != (0 as *u8);
     assert ns_color(facet::Color::separator()).raw() != (0 as *u8);
     assert ns_color(facet::Color::window_background()).raw() != (0 as *u8);
     assert ns_color(facet::Color::under_page_background()).raw() != (0 as *u8);
@@ -4973,6 +5172,128 @@ fn close_window_on_null_is_inert() {
     close_window(0 as *u8);
 }
 
+// Read an NSColor's red component in sRGB (for asserting resolution).
+fn color_red(c: ak::Color) -> f64 {
+    let srgb: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSColorSpace\0")), rt::sel(#str_ptr("sRGBColorSpace\0")));
+    let conv: *u8 = rt::msg_id_id(c.raw(), rt::sel(#str_ptr("colorUsingColorSpace:\0")), srgb);
+    if conv == (0 as *u8) { return -1.0f64; }
+    return rt::msg_f64(conv, rt::sel(#str_ptr("redComponent\0")));
+}
+
+#[test]
+fn ns_color_resolves_theme_roles_through_slot_and_fallback() {
+    // Unset theme: a role resolves through its platform fallback.
+    facet::set_theme(facet::Theme::new());
+    assert ns_color(facet::Color::primary()).raw() != (0 as *u8);
+    assert ns_color(facet::Color::surface()).raw() != (0 as *u8);
+    // Set theme: the role resolves to the stored literal.
+    facet::set_theme(facet::Theme::new(
+        primary: facet::Color::rgba(0.25f64, 0.5f64, 0.75f64, 1.0f64),
+    ));
+    let r: f64 = color_red(ns_color(facet::Color::primary()));
+    assert r > 0.24f64 && r < 0.26f64;
+    // An adaptive slot picks the side of the CURRENT appearance.
+    facet::set_theme(facet::Theme::new(
+        surface: facet::Color::adaptive(
+            light: facet::Color::rgba(0.9f64, 0.9f64, 0.9f64, 1.0f64),
+            dark: facet::Color::rgba(0.1f64, 0.1f64, 0.1f64, 1.0f64),
+        ),
+    ));
+    let sr: f64 = color_red(ns_color(facet::Color::surface()));
+    if is_dark_impl() {
+        assert sr > 0.05f64 && sr < 0.15f64;
+    } else {
+        assert sr > 0.85f64 && sr < 0.95f64;
+    }
+    facet::set_theme(facet::Theme::new());
+}
+
+#[test]
+fn ns_color_ink_carries_alpha_over_the_resolved_base() {
+    facet::set_theme(facet::Theme::new(
+        ink: facet::Color::rgba(1.0f64, 0.0f64, 0.0f64, 1.0f64),
+    ));
+    let c: ak::Color = ns_color(facet::Color::ink(0.5f64));
+    let a: f64 = rt::msg_f64(c.raw(), rt::sel(#str_ptr("alphaComponent\0")));
+    assert a > 0.45f64 && a < 0.55f64;
+    // Full-strength ink keeps the base alpha.
+    let f: ak::Color = ns_color(facet::Color::ink());
+    let fa: f64 = rt::msg_f64(f.raw(), rt::sel(#str_ptr("alphaComponent\0")));
+    assert fa > 0.95f64;
+    facet::set_theme(facet::Theme::new());
+}
+
+#[test]
+fn ns_color_new_tier1_tokens_resolve() {
+    assert ns_color(facet::Color::placeholder()).raw() != (0 as *u8);
+    assert ns_color(facet::Color::link()).raw() != (0 as *u8);
+    assert ns_color(facet::Color::selected_content_background()).raw() != (0 as *u8);
+    assert ns_color(facet::Color::selected_text_background()).raw() != (0 as *u8);
+    assert ns_color(facet::Color::fill_secondary()).raw() != (0 as *u8);
+    assert ns_color(facet::Color::system_yellow()).raw() != (0 as *u8);
+    assert ns_color(facet::Color::system_purple()).raw() != (0 as *u8);
+    assert ns_color(facet::Color::system_pink()).raw() != (0 as *u8);
+    assert ns_color(facet::Color::system_teal()).raw() != (0 as *u8);
+    assert ns_color(facet::Color::system_indigo()).raw() != (0 as *u8);
+}
+
+// Read a view's layer background red component (sRGB) for repaint asserts.
+fn layer_bg_red(view: *u8) -> f64 {
+    let lyr: *u8 = rt::msg_id(view, rt::sel(#str_ptr("layer\0")));
+    if lyr == (0 as *u8) { return -1.0f64; }
+    let cg: *u8 = rt::msg_id(lyr, rt::sel(#str_ptr("backgroundColor\0")));
+    if cg == (0 as *u8) { return -1.0f64; }
+    let nsc: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("colorWithCGColor:\0")), cg);
+    if nsc == (0 as *u8) { return -1.0f64; }
+    return color_red(ak::Color::from_raw(nsc));
+}
+
+// Depth-first: the first descendant whose layer carries a background color.
+fn find_painted(view: *u8) -> *u8 {
+    if layer_bg_red(view) >= 0.0f64 { return view; }
+    let subs: *u8 = rt::msg_id(view, rt::sel(#str_ptr("subviews\0")));
+    if subs == (0 as *u8) { return 0 as *u8; }
+    let n: i64 = rt::msg_i64(subs, rt::sel(#str_ptr("count\0")));
+    var i: i64 = 0 as i64;
+    while i < n {
+        let sub: *u8 = rt::msg_id_u64(subs, rt::sel(#str_ptr("objectAtIndex:\0")), i as u64);
+        let hit: *u8 = find_painted(sub);
+        if hit != (0 as *u8) { return hit; }
+        i = i +% (1 as i64);
+    }
+    return 0 as *u8;
+}
+
+#[test]
+fn set_theme_repaints_registered_backgrounds_in_place() {
+    unmount_all();
+    install();
+    facet::set_theme(facet::Theme::new(
+        surface: facet::Color::rgba(0.2f64, 0.2f64, 0.2f64, 1.0f64),
+    ));
+    // Mount a surface-colored box; its layer flattens the CURRENT theme.
+    var inner: facet::Builder = facet::Builder::new();
+    inner.add(facet::label("themed"));
+    var b: facet::Builder = facet::Builder::new();
+    b.add(facet::column(inner).background(facet::Color::surface()).grow(1.0f64));
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 120.0 });
+    var root: facet::Node = facet::column(b);
+    let _h: f64 = mount_into(#addr_of(root), host.raw(), 200.0f64, 120.0f64);
+    let painted: *u8 = find_painted(host.raw());
+    assert painted != (0 as *u8);
+    let before: f64 = layer_bg_red(painted);
+    assert before > 0.15f64 && before < 0.25f64;
+    // Re-theme the LIVE tree: set_theme's hook sweeps the registry, the layer
+    // recolors in place — no rebuild, no relayout.
+    facet::set_theme(facet::Theme::new(
+        surface: facet::Color::rgba(0.8f64, 0.3f64, 0.3f64, 1.0f64),
+    ));
+    let after: f64 = layer_bg_red(painted);
+    assert after > 0.75f64 && after < 0.85f64;
+    facet::set_theme(facet::Theme::new());
+    unmount_all();   // also drops the registry's retain (leak balance)
+}
+
 // Leak-harness segment for staging: 50 cycles of stage -> attach -> detach ->
 // re-attach -> unstage. Exercises the facet-owned root views' retain/release
 // balance — StageReg holds +1 on each parked root; unstage (and unmount_all)
@@ -5385,7 +5706,7 @@ fn styled_facet_widgets_mount_through_apply_style() {
     let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
     var root: facet::Node = @facet {
         vstack {
-            label("hello").foreground_color(facet::Color::secondary())
+            label("hello").foreground_color(facet::Color::text_secondary())
             button("Go", primary: true)
                 .background(facet::Color::rgba(0.2f64, 0.4f64, 0.9f64, 1.0f64))
                 .corner_radius(8.0f64)
@@ -5405,9 +5726,9 @@ fn styled_facet_widgets_mount_through_apply_style() {
 fn phase1_styled_card() -> facet::Node {
     return @facet {
         card {
-            label("Facet").font(28.0f64).strong().foreground_color(facet::Color::primary())
+            label("Facet").font(28.0f64).strong().foreground_color(facet::Color::text())
             wrap_label("styled through the portable Style model", secondary: true)
-                .foreground_color(facet::Color::secondary())
+                .foreground_color(facet::Color::text_secondary())
             bordered {
                 vstack {
                     label("boxed").foreground_color(facet::Color::accent())
@@ -6051,7 +6372,7 @@ fn path_shape_mounts_on_appkit() {
                 .line_to(60.0f64, 90.0f64)
                 .close_path()
                 .background(facet::Color::accent())
-                .border(3.0f64, facet::Color::primary())
+                .border(3.0f64, facet::Color::text())
                 .agent_id("tri")
         }
     };
@@ -6264,7 +6585,7 @@ fn paint_modifiers_mount_through_apply_style() {
             bordered {
                 label("card")
             }
-            .background(facet::Color::secondary())
+            .background(facet::Color::text_secondary())
             .corner_radius(8.0f64)
             .shadow(10.0f64)
             .opacity(0.9f64)
