@@ -33,6 +33,7 @@ runtime::run_component(Counter { n: 0 }, title: "Counter",
 | Components & state | [docs/component-model.md](docs/component-model.md) |
 | Keyed updates | [docs/updates.md](docs/updates.md) |
 | Lifecycle, `present`, parking | [docs/lifecycle.md](docs/lifecycle.md) |
+| App, Screen, nav | [docs/app-screens.md](docs/app-screens.md) |
 | Services & threading | [docs/services.md](docs/services.md) |
 | DSL & widgets | [docs/widgets.md](docs/widgets.md) |
 | Backends & host | [docs/backends.md](docs/backends.md) |
@@ -41,8 +42,10 @@ runtime::run_component(Counter { n: 0 }, title: "Counter",
 
 | import | provides |
 |---|---|
-| `facet/facet` | Node, DSL, widgets, Component, find/Handle, lifecycle, Color/Style |
-| `facet/runtime` | run / run_component, Window, alert, menus (selects platform backend) |
+| `facet/facet` | Node, DSL, widgets, Component, find/Handle, lifecycle, Chrome/Screen, Color/Style |
+| `facet/runtime` | run / run_component / run_screen, App, Window, alert, menus (selects platform backend) |
+| `facet/nav` | go / push / pop / quit / arg — screen navigation verbs |
+| `facet/agent` | opt-in MCP serving for `app.agent_mcp` |
 
 ## Tests
 

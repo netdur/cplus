@@ -10,6 +10,7 @@ backends. Fast start: [tutorial.md](tutorial.md). API tables: [ref.md](ref.md).
 | Components, state, composition | [component-model.md](component-model.md) |
 | `find` / Handle / structural verbs | [updates.md](updates.md) |
 | Lifecycle, `present`, router, parking | [lifecycle.md](lifecycle.md) |
+| App, Screen, nav (the process tier) | [app-screens.md](app-screens.md) |
 | Services, `load_service`, `run_on_main` | [services.md](services.md) |
 | `@facet` DSL, leaves, containers | [widgets.md](widgets.md) |
 | Backend vtable, runtime host | [backends.md](backends.md) |
@@ -29,8 +30,10 @@ app code  →  @facet / Node tree  →  backend mount  →  native views
 
 | import | role |
 |---|---|
-| `facet/facet` | `Node`, DSL, widgets, `Component`, `find`/`Handle`, lifecycle, Color/Style |
-| `facet/runtime` | host: `run`, `run_component`, `alert`, menus, `Window`; selects backend |
+| `facet/facet` | `Node`, DSL, widgets, `Component`, `find`/`Handle`, lifecycle, `Chrome`/`Screen`, Color/Style |
+| `facet/runtime` | host: `run`, `run_component`, `run_screen`, `App`, `alert`, menus; selects backend |
+| `facet/nav` | screen navigation verbs (`go`/`push`/`pop`/`quit`/`arg`) |
+| `facet/agent` | opt-in MCP serving for `app.agent_mcp` |
 
 Apps describe with `facet`; they run with `runtime`. Backend packages
 (`facet_appkit`, …) are pulled in by runtime, not by the description.
@@ -77,6 +80,17 @@ one's `on_detach` before its tree is removed — by any verb, including a plain
 they never call hooks. For view parking across navigation (scroll,
 half-typed input) there is `stage` / `attach` / `detach`. See
 [lifecycle.md](lifecycle.md).
+
+## App and screens (the process tier)
+
+A component that also implements `Screen` (one method, `chrome()`) can be run
+as a window with `run_screen`, or registered under a route name on an `App`.
+`App::run` shows one screen at a time as a blocking window; handlers move
+between them with `nav::go` (replace), `nav::push`/`nav::pop` (overlay), and
+`nav::quit`. The App also owns the app menu, launch/quit hooks, and the
+agent-surface socket (`app.agent_mcp`). In-window navigation (`present` into
+an outlet) is unchanged and needs no App. See
+[app-screens.md](app-screens.md).
 
 ## Services (slow data)
 

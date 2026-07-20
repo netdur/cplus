@@ -14,8 +14,10 @@ import "facet/runtime" as runtime;
 
 | Path | Contents |
 |---|---|
-| `facet/facet` | Node, DSL, widgets, Component, find/Handle, lifecycle, Color/Style |
-| `facet/runtime` | run, run_component, Window, alert, dialogs, menus (host + backend select) |
+| `facet/facet` | Node, DSL, widgets, Component, find/Handle, lifecycle, Chrome/Screen, Color/Style |
+| `facet/runtime` | run, run_component, run_screen, App, Window, alert, dialogs, menus (host + backend select) |
+| `facet/nav` | go, push, pop, quit, arg (screen navigation) |
+| `facet/agent` | opt-in MCP serving (`agent::enable`) |
 
 ---
 
@@ -157,6 +159,7 @@ token list.
 ```cplus
 fn run[W: Window](take window: W)
 fn run_component[C: Component + Lifecycle](take component: C, title, width, height, ...) -> C
+fn run_screen[S: Component + Lifecycle + Screen](take screen: S, menu?, ...) -> S
 fn present_window(take root: Node, title, width, height)
 fn alert(title, message, primary, secondary?) -> i32
 fn choose_file() / choose_directory() -> Option[Text]
@@ -165,9 +168,38 @@ fn choose_file() / choose_directory() -> Option[Text]
 
 `run_component` fires the component's `on_attach` after the mount and its
 `on_detach` (then a teardown drain of presented children) when the loop
-stops; it returns the component with its final field state.
+stops; it returns the component with its final field state. `run_screen` is
+the same run with the window read from the screen's `chrome()`.
 
 Backend selection and porting: [backends.md](backends.md).
+
+---
+
+## Screens and App
+
+```cplus
+// facet/facet
+struct Chrome { title, width, height, min_*, titlebar flags, zoom }   // Chrome::new(named params)
+interface Screen { fn chrome(this) -> Chrome; }
+fn screen_box[S: Component + Lifecycle + Screen](take s: S) -> ScreenBox
+
+// facet/runtime
+App::new(name) ; app.screen(name, fn() -> ScreenBox) ; app.menu(fn() -> AppMenu)
+app.on_launch(f, ctx?) ; app.on_quit(f) ; app.agent_mcp(path)
+app.run(initial, arg?) -> Status        // blocks; InvalidInput on unknown route
+
+// facet/nav
+fn go(route, arg?)          // replace the current screen
+fn push(route, arg?) -> bool // overlay in a secondary window (App only)
+fn pop() -> bool             // dismiss the last pushed screen
+fn quit()                    // end the app
+fn arg() -> str              // the current screen's route argument
+
+// facet/agent (opt-in MCP serving for app.agent_mcp)
+fn enable()
+```
+
+Deep dive: [app-screens.md](app-screens.md).
 
 ---
 
