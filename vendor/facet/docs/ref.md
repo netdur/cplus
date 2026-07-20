@@ -152,7 +152,8 @@ Full tables: [widgets.md](widgets.md).
 //   accent, window_background/under_page_background/control_background,
 //   fill/fill_secondary, selected_*_background, separator, system_*
 // Tier 2 (theme roles): primary/on_primary, secondary/on_secondary,
-//   ink(a?), surface/raised/sunken, outline, success/warning/danger
+//   ink(a?), surface/raised/sunken, content/toolbar/tabstrip/track/chip/
+//   recessed, outline, success/warning/danger
 // Literals: rgba(r,g,b,a) fixed; adaptive(light:, dark:) — a pair resolved
 //   by appearance at paint time
 fn set_theme(take t: Theme)     // Theme::new(named optional roles); calling

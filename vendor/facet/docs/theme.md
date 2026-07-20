@@ -32,11 +32,21 @@ the installed theme, so a themed app looks the same on every backend:
 | `surface()` | `window_background()` |
 | `raised()` | `control_background()` |
 | `sunken()` | `under_page_background()` |
+| `content()` | `control_background()` |
+| `toolbar()` | `window_background()` |
+| `tabstrip()` | `under_page_background()` |
+| `track()` | `fill()` |
+| `chip()` | `fill_secondary()` |
+| `recessed()` | `fill()` |
 | `outline()` | `separator()` |
 | `success()` / `warning()` / `danger()` | system green / orange / red |
 
 `ink(a)` is the mark family: text, glyphs, hairlines, translucent fills at
-an alpha that reads identically over both appearances' surfaces.
+an alpha that reads identically over both appearances' surfaces. The
+extended surface tiers (`content`/`toolbar`/`tabstrip`/`track`/`chip`/
+`recessed`) are what IDE-grade chrome needs beyond the three base tiers —
+each independently retintable, so a runtime theme picker reaches the whole
+chrome, not just the floor.
 
 Literals: `rgba(r,g,b,a)` is fixed (same in both appearances);
 `adaptive(light:, dark:)` packs a light/dark rgba pair into one Color,

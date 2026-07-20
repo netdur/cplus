@@ -317,11 +317,19 @@ impl Color {
         c.a = a;
         return c;
     }
-    // Surface tiers: the floor, raised chrome (panel / toolbar / card), and
-    // recessed wells.
+    // Surface tiers: the floor, raised chrome (panel / card), and recessed
+    // wells.
     fn surface() -> Color { return Color::tok(105 as u32); }
     fn raised() -> Color { return Color::tok(106 as u32); }
     fn sunken() -> Color { return Color::tok(107 as u32); }
+    // Extended surface tiers — what IDE-grade chrome needs beyond the three
+    // base tiers, each independently retintable by set_theme:
+    fn content() -> Color { return Color::tok(112 as u32); }    // editor / document body
+    fn toolbar() -> Color { return Color::tok(113 as u32); }    // the chrome row above content
+    fn tabstrip() -> Color { return Color::tok(114 as u32); }   // a tab row / strip behind tabs
+    fn track() -> Color { return Color::tok(115 as u32); }      // a segmented / switcher track
+    fn chip() -> Color { return Color::tok(116 as u32); }       // a discrete raised control chip
+    fn recessed() -> Color { return Color::tok(117 as u32); }   // a translucent recessed well
     // Separators and borders.
     fn outline() -> Color { return Color::tok(108 as u32); }
     // Status.
@@ -338,7 +346,7 @@ impl Color {
     }
     fn is_adaptive(this) -> bool { return this.token == (254 as u32); }
     fn is_theme_role(this) -> bool {
-        return this.token >= (100 as u32) && this.token <= (111 as u32);
+        return this.token >= (100 as u32) && this.token <= (117 as u32);
     }
 }
 
@@ -363,6 +371,12 @@ struct Theme {
     success: Color,
     warning: Color,
     danger: Color,
+    content: Color,
+    toolbar: Color,
+    tabstrip: Color,
+    track: Color,
+    chip: Color,
+    recessed: Color,
 }
 
 impl Theme {
@@ -379,6 +393,12 @@ impl Theme {
         success: Color = Color::none(),
         warning: Color = Color::none(),
         danger: Color = Color::none(),
+        content: Color = Color::none(),
+        toolbar: Color = Color::none(),
+        tabstrip: Color = Color::none(),
+        track: Color = Color::none(),
+        chip: Color = Color::none(),
+        recessed: Color = Color::none(),
     ) -> Theme {
         return Theme {
             primary: primary,
@@ -393,6 +413,12 @@ impl Theme {
             success: success,
             warning: warning,
             danger: danger,
+            content: content,
+            toolbar: toolbar,
+            tabstrip: tabstrip,
+            track: track,
+            chip: chip,
+            recessed: recessed,
         };
     }
 }
@@ -429,6 +455,12 @@ fn theme_slot(token: u32) -> Color {
     if token == (109 as u32) { return THEME.success; }
     if token == (110 as u32) { return THEME.warning; }
     if token == (111 as u32) { return THEME.danger; }
+    if token == (112 as u32) { return THEME.content; }
+    if token == (113 as u32) { return THEME.toolbar; }
+    if token == (114 as u32) { return THEME.tabstrip; }
+    if token == (115 as u32) { return THEME.track; }
+    if token == (116 as u32) { return THEME.chip; }
+    if token == (117 as u32) { return THEME.recessed; }
     return Color::none();
 }
 
@@ -448,6 +480,12 @@ fn theme_fallback(token: u32) -> Color {
     if token == (109 as u32) { return Color::system_green(); }
     if token == (110 as u32) { return Color::system_orange(); }
     if token == (111 as u32) { return Color::system_red(); }
+    if token == (112 as u32) { return Color::control_background(); }
+    if token == (113 as u32) { return Color::window_background(); }
+    if token == (114 as u32) { return Color::under_page_background(); }
+    if token == (115 as u32) { return Color::fill(); }
+    if token == (116 as u32) { return Color::fill_secondary(); }
+    if token == (117 as u32) { return Color::fill(); }
     return Color::none();
 }
 
@@ -4590,6 +4628,9 @@ fn color_tokens_two_tiers_and_predicates() {
     // Tier 2 lives in the 100s.
     assert Color::primary().token == (100 as u32);
     assert Color::danger().token == (111 as u32);
+    assert Color::content().token == (112 as u32);
+    assert Color::recessed().token == (117 as u32);
+    assert Color::recessed().is_theme_role();
     // Predicates: every named token is dynamic; literals and none are not.
     assert Color::primary().is_theme_role();
     assert Color::accent().is_theme_role() == false;
@@ -4637,6 +4678,14 @@ fn theme_defaults_chain_to_platform_tokens() {
     assert theme_fallback(111 as u32).token == Color::system_red().token;
     // on_primary falls back to a white literal.
     assert theme_fallback(101 as u32).token == (255 as u32);
+    // The extended surface tiers chain to platform colors too.
+    assert theme_fallback(112 as u32).token == Color::control_background().token;
+    assert theme_fallback(113 as u32).token == Color::window_background().token;
+    assert theme_fallback(114 as u32).token == Color::under_page_background().token;
+    assert theme_fallback(115 as u32).token == Color::fill().token;
+    assert theme_fallback(116 as u32).token == Color::fill_secondary().token;
+    assert theme_fallback(117 as u32).token == Color::fill().token;
+    assert theme_slot(112 as u32).is_set() == false;
     // Non-role tokens answer none from both.
     assert theme_slot(1 as u32).is_set() == false;
     assert theme_fallback(1 as u32).is_set() == false;
@@ -4662,6 +4711,9 @@ fn set_theme_stores_roles_and_fires_the_hook() {
     assert approx(s.r2, 0.09f64);
     // Roles not named stay unset (the chain still applies to them).
     assert theme_slot(106 as u32).is_set() == false;
+    // The extended tiers store like the base ones.
+    set_theme(Theme::new(chip: Color::rgba(0.5f64, 0.5f64, 0.5f64, 1.0f64)));
+    assert theme_slot(116 as u32).token == (255 as u32);
     // Reset for other tests: hook cleared, palette back to defaults.
     set_theme_changed_fn(0 as fn());
     set_theme(Theme::new());
