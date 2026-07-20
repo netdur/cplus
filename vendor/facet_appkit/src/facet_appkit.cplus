@@ -5166,6 +5166,43 @@ fn screen_window_opens_finds_and_fires_on_closed() {
     unmount_all();
 }
 
+// A minimal host component for the tree-changed hook test: one keyed outlet.
+struct TchHost {
+    n: i32,
+}
+impl TchHost {
+    fn build(ref this) -> facet::Node {
+        var b: facet::Builder = facet::Builder::new();
+        b.add(facet::column(facet::Builder::new()).key("tch:outlet"));
+        return facet::column(b);
+    }
+}
+static TCH_HOST: TchHost = TchHost { n: 0 };
+static TCH_FIRES: i32 = 0;
+fn tch_hook() { TCH_FIRES = TCH_FIRES + 1; return; }
+
+#[test]
+fn structural_verbs_fire_the_tree_changed_hook() {
+    unmount_all();
+    install();
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 240.0, h: 160.0 });
+    let _h: f64 = mount_component(TCH_HOST.build, host: host.raw());
+    let cp: *u8 = #addr_of(TCH_HOST) as *u8;
+    facet::set_tree_changed_fn(tch_hook);
+    TCH_FIRES = 0;
+    // A mutation that mounted something fires the hook once.
+    let _a: facet::Handle = facet::find("tch:outlet", cp).add_child(facet::label("row").key("tch:row"));
+    assert TCH_FIRES == 1;
+    let _r: bool = facet::find("tch:outlet", cp).remove_child("tch:row");
+    assert TCH_FIRES == 2;
+    // A miss mutates nothing and fires nothing.
+    let _m: bool = facet::find("tch:outlet", cp).remove_child("tch:nope");
+    assert TCH_FIRES == 2;
+    facet::set_tree_changed_fn(0 as fn());
+    let _u: bool = unmount(cp);
+    unmount_all();
+}
+
 #[test]
 fn close_window_on_null_is_inert() {
     // The no-window handle no-ops (present_screen_window's alloc-failure path).
