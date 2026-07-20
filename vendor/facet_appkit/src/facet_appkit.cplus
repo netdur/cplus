@@ -28,6 +28,7 @@ import "objc/bridge" as bridge;
 import "stdlib/option" as option;
 import "stdlib/text" as text;
 import "stdlib/vec" as vec;
+import "stdlib/box" as box;
 import "flex_layout/flex_layout" as flex;
 import "appkit/appkit" as ak;
 import "appkit/appkit_ext" as akx;
@@ -2294,6 +2295,133 @@ fn present_window(take root: facet::Node, title: str, width: f64, height: f64) {
     let _h: f64 = mount_into(#addr_of(root), content.raw(), width, height);
     win.center();
     win.make_key_and_order_front(0 as *u8);
+    return;
+}
+
+// ---- screen windows (nav::push) ---------------------------------------------
+// A lifecycle-aware secondary window: what `nav::push` opens. Unlike
+// present_window (fire-and-forget), the content is a RETAINED slot keyed by
+// `ctx` (the screen instance's address), so keyed-direct find()/verbs resolve
+// inside it and a resize relays it out; and closing the window — by
+// `close_window` (nav::pop) or the user's red button — fires `on_closed(ctx)`
+// so the runtime can detach and drop the boxed screen. Closing a screen window
+// never stops the app loop (it is not counted in OPEN_WINDOWS).
+
+// The description tree of the screen window being mounted right now. Same
+// contract as RUN_ROOT: set immediately before ui::mount, consumed
+// synchronously inside it (render runs once per mount; a resize relays the
+// retained flex tree and never re-renders), so one static serves every
+// screen window in turn.
+static SCREEN_ROOT_NODE: facet::Node = #zero::[facet::Node]();
+static SCREEN_ROOT: *facet::Node = #zero::[*facet::Node]();
+
+fn screen_root_render(cp: *u8) -> flex::Node {
+    return mount(SCREEN_ROOT);
+}
+
+// Associates the per-window delegate STRUCT (heap) with its window so
+// secondary_will_close can reclaim it. Distinct from window_lifecycle_key
+// (which retains the delegate's ObjC proxy).
+fn screen_delegate_key() -> *u8 { return 29003 as *u8; }
+
+// windowWillClose for a screen window: notify the runtime (detach + drop the
+// boxed screen — views still alive), tear the retained slot down, then reclaim
+// the heap records this window carried. No OPEN_WINDOWS bookkeeping — a
+// closing screen window must not stop the app loop. The delegate's second
+// argument is the NSNotification (unlike windowShouldClose's sender), so the
+// window is its `object`.
+fn secondary_will_close(user: *u8, notif: *u8) {
+    let lifecycle: *WindowLifecycle = user as *WindowLifecycle;
+    let cb: fn(*u8) = { (*lifecycle).will_close };
+    cb({ (*lifecycle).ctx });
+    let _u: bool = unmount({ (*lifecycle).relayout_cp });
+    let win_ptr: *u8 = rt::msg_id(notif, rt::sel(#str_ptr("object\0")));
+    if win_ptr != (0 as *u8) {
+        // Detach the delegate before freeing what it points at.
+        ak::Window::from_raw(win_ptr).set_delegate(0 as *u8);
+        let dsp: *u8 = rt::get_associated_object(win_ptr, screen_delegate_key());
+        if dsp != (0 as *u8) {
+            rt::set_associated_object(win_ptr, screen_delegate_key(), 0 as *u8, 0 as usize);
+            let _d: box::Box[ak::WindowDelegate] = box::from_raw::[ak::WindowDelegate](dsp);
+        }
+    }
+    let _lc: box::Box[WindowLifecycle] = box::from_raw::[WindowLifecycle](user);
+    return;
+}
+
+// Open a screen window. `ctx` keys the retained slot (pass the screen
+// instance's address, like run_component's component_ctx); `on_closed` fires
+// once, whichever way the window closes. Returns the window's raw handle —
+// feed it to `close_window` to dismiss programmatically. Returns null if a
+// bookkeeping allocation failed (the window is not shown).
+fn present_screen_window(
+    take root: facet::Node,
+    title: str = "facet",
+    width: f64 = 480.0f64,
+    height: f64 = 360.0f64,
+    min_width: f64 = 0.0f64,
+    min_height: f64 = 0.0f64,
+    clean_titlebar: bool = false,
+    ctx: *u8 = 0 as *u8,
+    on_closed: fn(*u8) = default_will_close,
+) -> *u8 {
+    let win = make_shell_window(title, width, height, clean_titlebar, min_width: min_width, min_height: min_height);
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: width, h: height });
+    win.set_content_view(ak::View::from_raw(content.raw()));
+
+    // Slot key: the screen instance's address; a keyless caller gets the
+    // content view's (unique per window) so relayout/unmount still resolve.
+    var slot_cp: *u8 = ctx;
+    if slot_cp == (0 as *u8) { slot_cp = content.raw(); }
+
+    // Per-window heap records: the primary window's static delegate pair is
+    // single-occupancy, and several screen windows can be open at once.
+    let lc: WindowLifecycle = WindowLifecycle {
+        ctx: ctx,
+        should_close: default_should_close,
+        will_close: on_closed,
+        relayout_cp: slot_cp,
+    };
+    let lcp: *u8 = match box::new::[WindowLifecycle](lc) {
+        option::Option[box::Box[WindowLifecycle]]::Some(b) => b.into_raw(),
+        option::Option[box::Box[WindowLifecycle]]::None => 0 as *u8,
+    };
+    if lcp == (0 as *u8) { return 0 as *u8; }
+    let dsp: *u8 = match box::new::[ak::WindowDelegate](ak::WindowDelegate_new(lcp)) {
+        option::Option[box::Box[ak::WindowDelegate]]::Some(b) => b.into_raw(),
+        option::Option[box::Box[ak::WindowDelegate]]::None => 0 as *u8,
+    };
+    if dsp == (0 as *u8) {
+        let _lc: box::Box[WindowLifecycle] = box::from_raw::[WindowLifecycle](lcp);
+        return 0 as *u8;
+    }
+    let del: *ak::WindowDelegate = dsp as *ak::WindowDelegate;
+    { (*del).set_window_should_close(appkit_should_close) };
+    { (*del).set_window_will_close(secondary_will_close) };
+    { (*del).set_window_did_resize(appkit_did_resize) };
+    let delegate_obj: *u8 = ak::create_WindowDelegate(del);
+    win.set_delegate(delegate_obj);
+    rt::set_associated_object(win.raw(), window_lifecycle_key(), delegate_obj, 1 as usize);
+    rt::set_associated_object(win.raw(), screen_delegate_key(), dsp, 0 as usize);
+
+    // Retained-slot mount (the run_root pattern): relayout on resize, no
+    // re-render. The description tree only needs to live through the mount.
+    SCREEN_ROOT_NODE = root;
+    SCREEN_ROOT = #addr_of(SCREEN_ROOT_NODE);
+    let _h: f64 = ui::mount(screen_root_render, ctx: slot_cp, host: content.raw());
+
+    win.center();
+    win.make_key_and_order_front(0 as *u8);
+    let _r0: bool = ui::relayout(slot_cp);
+    return win.raw();
+}
+
+// Close a window by the raw handle `present_screen_window` (or `open_window`
+// via .raw()) returned. Direct — windowShouldClose is NOT consulted (the
+// close is programmatic, e.g. nav::pop); windowWillClose fires normally.
+fn close_window(win: *u8) {
+    if win == (0 as *u8) { return; }
+    ak::Window::from_raw(win).close();
     return;
 }
 
@@ -4768,6 +4896,54 @@ fn open_window_mounts_and_returns_without_blocking() {
     let _u: bool = unmount(cp);
     assert !facet::is_attached(cp);
     unmount_all();
+}
+
+// A stable slot key + a closed-counter for the screen-window test.
+static SCREEN_CHECK_CP: i32 = 0;
+static SCREEN_CHECK_CLOSED: i32 = 0;
+
+fn screen_check_on_closed(ctx: *u8) {
+    // The runtime's hook sees the ctx it registered (the screen instance addr).
+    if ctx == (#addr_of(SCREEN_CHECK_CP) as *u8) {
+        SCREEN_CHECK_CLOSED = SCREEN_CHECK_CLOSED + 1;
+    }
+    return;
+}
+
+#[test]
+fn screen_window_opens_finds_and_fires_on_closed() {
+    unmount_all();
+    install();
+    SCREEN_CHECK_CLOSED = 0;
+    var b: facet::Builder = facet::Builder::new();
+    b.add(facet::label("pushed", size: 12.0f64).key("screen_check:title"));
+    let cp: *u8 = #addr_of(SCREEN_CHECK_CP) as *u8;
+    let w: *u8 = present_screen_window(
+        facet::column(b),
+        title: "screen-check",
+        width: 220.0f64,
+        height: 160.0f64,
+        ctx: cp,
+        on_closed: screen_check_on_closed,
+    );
+    assert w != (0 as *u8);
+    // The slot is retained and keyed by the screen instance address: the
+    // keyed-direct path resolves inside the pushed window.
+    assert facet::find("screen_check:title", cp).found();
+    assert facet::is_attached(cp);
+    assert SCREEN_CHECK_CLOSED == 0;
+    // Programmatic close (the nav::pop path): on_closed fires exactly once and
+    // the slot unmounts — the window carried its own delegate records.
+    close_window(w);
+    assert SCREEN_CHECK_CLOSED == 1;
+    assert !facet::is_attached(cp);
+    unmount_all();
+}
+
+#[test]
+fn close_window_on_null_is_inert() {
+    // The no-window handle no-ops (present_screen_window's alloc-failure path).
+    close_window(0 as *u8);
 }
 
 // Leak-harness segment for staging: 50 cycles of stage -> attach -> detach ->

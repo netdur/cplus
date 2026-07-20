@@ -1710,6 +1710,207 @@ fn attached[C](ref c: C) -> bool {
     return is_attached(#addr_of(c) as *u8);
 }
 
+// ---- screens: Chrome + Screen + ScreenBox -----------------------------------
+// A SCREEN is the unit of presentation. On desktop a screen shown at the top
+// level is a window; shown into a keyed container it is a pane. On a mobile
+// backend it is a page. A screen is an ordinary component — state in fields,
+// handlers in the inherent impl, `build` in the Component block, lifecycle in
+// the Lifecycle block — plus one more conformance, `chrome`: the presentation
+// metadata its host reads when it shows the screen.
+//
+//     impl Settings: facet::Screen {
+//         fn chrome(this) -> facet::Chrome {
+//             return facet::Chrome::new(title: "Settings", width: 420.0f64);
+//         }
+//     }
+//
+// Run one directly with `runtime::run_screen(Settings::new())`, or register it
+// under a route name on an `App` and navigate with `nav::go` / `nav::push`.
+
+// One screen's presentation metadata: how the host window should look. A plain
+// record — construct with `Chrome::new`, naming only what differs from the
+// defaults. On a backend without windows most fields are ignored and `title`
+// names the page. `hide_title` is honored together with `unified_toolbar`.
+struct Chrome {
+    title_text: text::Text,
+    width: f64,
+    height: f64,
+    min_width: f64,
+    min_height: f64,
+    clean_titlebar: bool,
+    close_button_only: bool,
+    custom_chrome: bool,
+    native_buttons: bool,
+    unified_toolbar: bool,
+    hide_title: bool,
+    zoomable: bool,
+    min_zoom: f64,
+    max_zoom: f64,
+}
+
+impl Chrome {
+    fn new(
+        title: str = "facet",
+        width: f64 = 480.0f64,
+        height: f64 = 360.0f64,
+        min_width: f64 = 0.0f64,
+        min_height: f64 = 0.0f64,
+        clean_titlebar: bool = false,
+        close_button_only: bool = false,
+        custom_chrome: bool = false,
+        native_buttons: bool = false,
+        unified_toolbar: bool = false,
+        hide_title: bool = false,
+        zoomable: bool = false,
+        min_zoom: f64 = 1.0f64,
+        max_zoom: f64 = 4.0f64,
+    ) -> Chrome {
+        return Chrome {
+            title_text: text::from_str(title),
+            width: width,
+            height: height,
+            min_width: min_width,
+            min_height: min_height,
+            clean_titlebar: clean_titlebar,
+            close_button_only: close_button_only,
+            custom_chrome: custom_chrome,
+            native_buttons: native_buttons,
+            unified_toolbar: unified_toolbar,
+            hide_title: hide_title,
+            zoomable: zoomable,
+            min_zoom: min_zoom,
+            max_zoom: max_zoom,
+        };
+    }
+
+    fn title(this) -> str { return this.title_text.view(); }
+}
+
+// The screen conformance: presentation metadata, read by the host each time it
+// shows the screen. A screen also conforms to Component and Lifecycle; the
+// hosts (`run_screen`, `App`) bound all three.
+interface Screen {
+    fn chrome(this) -> Chrome;
+}
+
+// A type-erased, heap-owned screen — what a route factory returns, so an `App`
+// holds screens of DIFFERENT types in one registry. `screen_box` moves the
+// screen to the heap and pairs its address with value-turbofish trampolines
+// for the three conformances. The box owns the instance: dropping the
+// ScreenBox drops the screen (its own `drop` included) and frees the slot.
+// The instance address is stable for the box's life, so it serves as the mount
+// slot key — inside a handler, `facet::find(key, #addr_of(this) as *u8)`
+// addresses the boxed screen's own subtree, exactly as under `run_component`.
+struct ScreenBox {
+    opaque _p: *u8,
+    _build: fn(*u8) -> Node,
+    _attach: fn(*u8),
+    _detach: fn(*u8),
+    _chrome: fn(*u8) -> Chrome,
+    _drop: fn(*u8),
+}
+
+fn screen_box[S: Component + Lifecycle + Screen](take s: S) -> ScreenBox {
+    return match box::new::[S](s) {
+        option::Option[box::Box[S]]::Some(b) => ScreenBox {
+            _p: b.into_raw(),
+            _build: sb_build_tramp::[S],
+            _attach: sb_attach_tramp::[S],
+            _detach: sb_detach_tramp::[S],
+            _chrome: sb_chrome_tramp::[S],
+            _drop: sb_drop_tramp::[S],
+        },
+        // Allocation failed: `s` dropped inside box::new. The invalid box —
+        // every verb no-ops (the Handle::missing convention, not a trap).
+        option::Option[box::Box[S]]::None => ScreenBox::invalid(),
+    };
+}
+
+// Type-erasing trampolines (value-turbofish): plain fn(*u8)s that call S's
+// conformance methods on the boxed screen at `p`.
+fn sb_build_tramp[S: Component](p: *u8) -> Node {
+    let q: *S = p as *S;
+    return { (*q).build() };
+}
+
+fn sb_attach_tramp[S: Lifecycle](p: *u8) {
+    let q: *S = p as *S;
+    { (*q).on_attach() };
+    return;
+}
+
+fn sb_detach_tramp[S: Lifecycle](p: *u8) {
+    let q: *S = p as *S;
+    { (*q).on_detach() };
+    return;
+}
+
+fn sb_chrome_tramp[S: Screen](p: *u8) -> Chrome {
+    let q: *S = p as *S;
+    return { (*q).chrome() };
+}
+
+// Reclaim the heap slot: the box drops the screen (drop_in_place) and frees.
+fn sb_drop_tramp[S](p: *u8) {
+    let _b: box::Box[S] = box::from_raw::[S](p);
+    return;
+}
+
+impl ScreenBox {
+    // The no-screen box (failed allocation, or an unknown route): every verb
+    // no-ops, `valid` reads false.
+    fn invalid() -> ScreenBox {
+        return ScreenBox {
+            _p: 0 as *u8,
+            _build: 0 as fn(*u8) -> Node,
+            _attach: 0 as fn(*u8),
+            _detach: 0 as fn(*u8),
+            _chrome: 0 as fn(*u8) -> Chrome,
+            _drop: 0 as fn(*u8),
+        };
+    }
+
+    fn valid(this) -> bool { return this._p != (0 as *u8); }
+
+    // The boxed instance's address — the mount slot key (cp) its handlers
+    // self-locate against.
+    fn instance(this) -> *u8 { return this._p; }
+
+    fn build(this) -> Node {
+        if !this.valid() { return column(Builder::new()); }
+        let f: fn(*u8) -> Node = this._build;
+        return f(this._p);
+    }
+
+    fn on_attach(this) {
+        if !this.valid() { return; }
+        let f: fn(*u8) = this._attach;
+        f(this._p);
+        return;
+    }
+
+    fn on_detach(this) {
+        if !this.valid() { return; }
+        let f: fn(*u8) = this._detach;
+        f(this._p);
+        return;
+    }
+
+    fn chrome(this) -> Chrome {
+        if !this.valid() { return Chrome::new(); }
+        let f: fn(*u8) -> Chrome = this._chrome;
+        return f(this._p);
+    }
+
+    fn drop(ref this) {
+        if this._p == (0 as *u8) { return; }
+        let f: fn(*u8) = this._drop;
+        f(this._p);
+        this._p = 0 as *u8;
+        return;
+    }
+}
+
 // ---- modifiers -------------------------------------------------------------
 // Fluent (chain on the item line) + `set_*` (own leading-dot line), the same
 // two-form convention as flex_layout.
@@ -3999,4 +4200,135 @@ fn must_layout(o: option::Option[flex::Layout]) -> flex::Layout {
         option::Option[flex::Layout]::Some(l) => l,
         option::Option[flex::Layout]::None => flex::Layout { left: -999.0f64, top: -999.0f64, width: 0.0f64, height: 0.0f64 },
     };
+}
+
+// ---- screen tests ------------------------------------------------------------
+// A minimal screen: counters in module statics record every erased call so the
+// tests can assert the trampolines reach the real methods and the box drops
+// the instance exactly once.
+
+static SBT_BUILDS: i32 = 0;
+static SBT_ATTACHES: i32 = 0;
+static SBT_DETACHES: i32 = 0;
+static SBT_DROPS: i32 = 0;
+
+fn sbt_reset() {
+    SBT_BUILDS = 0;
+    SBT_ATTACHES = 0;
+    SBT_DETACHES = 0;
+    SBT_DROPS = 0;
+    return;
+}
+
+struct SbtScreen {
+    n: i32,
+}
+
+impl SbtScreen {
+    fn drop(ref this) {
+        SBT_DROPS = SBT_DROPS + 1;
+        return;
+    }
+}
+
+impl SbtScreen: Component {
+    fn build(ref this) -> Node {
+        SBT_BUILDS = SBT_BUILDS + 1;
+        var b: Builder = Builder::new();
+        b.add(label("sbt"));
+        return column(b);
+    }
+}
+
+impl SbtScreen: Lifecycle {
+    fn on_attach(ref this) {
+        SBT_ATTACHES = SBT_ATTACHES + 1;
+        return;
+    }
+    fn on_detach(ref this) {
+        SBT_DETACHES = SBT_DETACHES + 1;
+        return;
+    }
+}
+
+impl SbtScreen: Screen {
+    fn chrome(this) -> Chrome {
+        return Chrome::new(title: "sbt", width: 300.0f64, height: 200.0f64, zoomable: true, max_zoom: 3.0f64);
+    }
+}
+
+#[test]
+fn chrome_defaults_and_overrides() {
+    let d: Chrome = Chrome::new();
+    assert d.title() == "facet";
+    assert approx(d.width, 480.0f64);
+    assert approx(d.height, 360.0f64);
+    assert approx(d.min_width, 0.0f64);
+    assert d.clean_titlebar == false;
+    assert d.close_button_only == false;
+    assert d.custom_chrome == false;
+    assert d.native_buttons == false;
+    assert d.unified_toolbar == false;
+    assert d.hide_title == false;
+    assert d.zoomable == false;
+    assert approx(d.min_zoom, 1.0f64);
+    assert approx(d.max_zoom, 4.0f64);
+
+    let c: Chrome = Chrome::new(title: "Iris", width: 800.0f64, min_width: 640.0f64, clean_titlebar: true);
+    assert c.title() == "Iris";
+    assert approx(c.width, 800.0f64);
+    assert approx(c.min_width, 640.0f64);
+    assert c.clean_titlebar;
+    assert c.zoomable == false;
+}
+
+#[test]
+fn screen_box_drives_the_erased_screen() {
+    sbt_reset();
+    {
+        var sb: ScreenBox = screen_box(SbtScreen { n: 7 });
+        assert sb.valid();
+        assert sb.instance() != (0 as *u8);
+
+        // chrome reaches the real conformance through the trampoline.
+        let c: Chrome = sb.chrome();
+        assert c.title() == "sbt";
+        assert approx(c.width, 300.0f64);
+        assert c.zoomable;
+        assert approx(c.max_zoom, 3.0f64);
+
+        // build / lifecycle reach the real methods.
+        let root: Node = sb.build();
+        assert root.kind == kind_column();
+        sb.on_attach();
+        sb.on_detach();
+        assert SBT_BUILDS == 1;
+        assert SBT_ATTACHES == 1;
+        assert SBT_DETACHES == 1;
+        // The instance lives while the box lives.
+        assert SBT_DROPS == 0;
+    }
+    // Scope exit dropped the box -> the boxed screen dropped exactly once.
+    assert SBT_DROPS == 1;
+}
+
+#[test]
+fn screen_box_invalid_noops() {
+    sbt_reset();
+    {
+        var sb: ScreenBox = ScreenBox::invalid();
+        assert sb.valid() == false;
+        assert sb.instance() == (0 as *u8);
+        // Every verb no-ops instead of trapping; chrome yields the defaults.
+        let root: Node = sb.build();
+        assert root.kind == kind_column();
+        sb.on_attach();
+        sb.on_detach();
+        let c: Chrome = sb.chrome();
+        assert c.title() == "facet";
+    }
+    assert SBT_BUILDS == 0;
+    assert SBT_ATTACHES == 0;
+    assert SBT_DETACHES == 0;
+    assert SBT_DROPS == 0;
 }
