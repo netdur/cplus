@@ -195,6 +195,12 @@ fn pop() -> bool             // dismiss the last pushed screen
 fn quit()                    // end the app
 fn arg() -> str              // the current screen's route argument
 
+// facet/runtime — app context (live while an App runs, inert otherwise)
+fn app_running() -> bool
+fn app_name() -> str                 // "" when none
+fn has_screen(route) -> bool
+fn register_screen(route, factory) -> bool   // dynamic route; false if taken
+
 // facet/agent (opt-in MCP serving for app.agent_mcp)
 fn enable()
 ```

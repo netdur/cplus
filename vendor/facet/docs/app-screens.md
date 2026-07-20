@@ -126,6 +126,30 @@ Arguments ride the verb: `nav::go("workspace", arg: path)`; the workspace
 factory or its `on_attach` reads `nav::arg()`. `app.run(initial, arg:)`
 seeds the first screen's the same way.
 
+## The app context
+
+The process-scoped read side of the running App, reachable from any handler
+without threading a handle (the role Android's `getApplicationContext` plays
+elsewhere). Same contract as the nav verbs: live while `App::run` runs,
+inert defaults otherwise; main thread only.
+
+| verb | effect |
+|---|---|
+| `runtime::app_running() -> bool` | whether an App loop is running |
+| `runtime::app_name() -> str` | the App's name; `""` when none |
+| `runtime::has_screen(route) -> bool` | whether a route is registered |
+| `runtime::register_screen(route, factory) -> bool` | add a route at runtime; `false` when no App runs or the name is taken (first registration wins) |
+
+`register_screen` is the dynamic counterpart of `app.screen`, for screens
+discovered after launch (plugins, project-typed editors). A registered route
+navigates like a static one: `runtime::register_screen("extra", make_extra)`
+then `nav::go("extra")`.
+
+The App instance itself stays unexposed. App-wide state does not belong on
+the App: put it in named module statics (the iris `project::Project`
+pattern) initialized in `on_launch`, where every screen, service, and
+handler reads it typed and unthreaded.
+
 ## The agent surface
 
 ```cplus

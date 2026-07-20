@@ -176,6 +176,7 @@ impl App {
     // secondary-window hook on gtk yet); a close with nothing pending quits.
     fn run(ref this, initial: str, arg: str = "") -> status::Status {
         nav::reset(arg);
+        RUNNING_APP = #addr_of(this) as *u8;
         let launch: fn(*u8) = this.on_launch_fn;
         launch(this.hook_ctx);
         var route: text::Text = text::from_str(initial);
@@ -203,8 +204,36 @@ impl App {
                 break;
             }
         }
+        RUNNING_APP = 0 as *u8;
         let quit: fn(*u8) = this.on_quit_fn;
         quit(this.hook_ctx);
         return outcome;
     }
+}
+
+// ---- app context (parity with the macOS facade — see runtime.cplus) ---------
+
+static RUNNING_APP: *u8 = #zero::[*u8]();
+
+fn app_running() -> bool { return RUNNING_APP != (0 as *u8); }
+
+fn app_name() -> str {
+    if RUNNING_APP == (0 as *u8) { return ""; }
+    let ap: *App = RUNNING_APP as *App;
+    return { (*ap).name() };
+}
+
+fn has_screen(route: str) -> bool {
+    if RUNNING_APP == (0 as *u8) { return false; }
+    let ap: *App = RUNNING_APP as *App;
+    let f: fn() -> core::ScreenBox = { (*ap).route_factory(route) };
+    return f != (0 as fn() -> core::ScreenBox);
+}
+
+fn register_screen(route: str, factory: fn() -> core::ScreenBox) -> bool {
+    if RUNNING_APP == (0 as *u8) { return false; }
+    if has_screen(route) { return false; }
+    let ap: *App = RUNNING_APP as *App;
+    { (*ap).screen(route, factory) };
+    return true;
 }

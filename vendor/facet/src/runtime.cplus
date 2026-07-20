@@ -613,6 +613,44 @@ fn app_close_all_pushed() {
     return;
 }
 
+// ---- app context (any component, while an App runs) -------------------------
+// The process-scoped read side of the running App, reachable from any handler
+// without threading a handle through fields. Live between App::run entry and
+// exit; inert defaults otherwise (the nav contract). Main thread only. The
+// App instance itself stays unexposed — app-wide STATE belongs in named
+// module statics initialized in on_launch, not on the App.
+
+// Whether an App loop is running in this process.
+fn app_running() -> bool { return RUNNING_APP != (0 as *u8); }
+
+// The running App's name ("" when none is running).
+fn app_name() -> str {
+    if RUNNING_APP == (0 as *u8) { return ""; }
+    let ap: *App = RUNNING_APP as *App;
+    return { (*ap).name() };
+}
+
+// Whether `route` is registered on the running App — probe before a nav::go
+// that may target an optional screen.
+fn has_screen(route: str) -> bool {
+    if RUNNING_APP == (0 as *u8) { return false; }
+    let ap: *App = RUNNING_APP as *App;
+    let f: fn() -> core::ScreenBox = { (*ap).route_factory(route) };
+    return f != (0 as fn() -> core::ScreenBox);
+}
+
+// Register a route on the RUNNING App — the dynamic counterpart of
+// `app.screen`, for screens discovered after launch (plugins, project-typed
+// editors). False when no App is running or the name is already taken:
+// the first registration wins, re-registration is refused, never shadowed.
+fn register_screen(route: str, factory: fn() -> core::ScreenBox) -> bool {
+    if RUNNING_APP == (0 as *u8) { return false; }
+    if has_screen(route) { return false; }
+    let ap: *App = RUNNING_APP as *App;
+    { (*ap).screen(route, factory) };
+    return true;
+}
+
 // ---- the agent surface under App --------------------------------------------
 // `app.agent_mcp(path)` makes the running app agent-drivable over MCP. The
 // actual serving lives in `facet/agent` (an OPT-IN module, so an app that
