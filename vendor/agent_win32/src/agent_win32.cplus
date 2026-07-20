@@ -522,9 +522,43 @@ fn mcp_navigate(p: *u8, id: str) -> surface::Outcome {
     return (*s).focus(id);
 }
 
+
+// The curated describe: identity::Registry.describe() over the wire — only
+// developer-EXPOSED nodes, lean fields (id, role, the human name as `text`,
+// actionable, parent re-parented to the nearest exposed ancestor). Structural
+// auto-keyed chrome is pruned; frames and classes are omitted so the agent's
+// context stays small. describe_ui's DEFAULT view ("full" opts into
+// mcp_describe above).
+fn mcp_describe_exposed(p: *u8) -> vec::Vec[mcpb::UiNode] {
+    let s: *Surface = { p as *Surface };
+    let views: vec::Vec[identity::NodeView] = { (*s).reg.describe() };
+    var out: vec::Vec[mcpb::UiNode] = vec::new::[mcpb::UiNode]();
+    var i: usize = 0 as usize;
+    while i < views.count() {
+        match views.at_ptr(i) {
+            option::Option[*identity::NodeView]::Some(n) => {
+                out.append(mcpb::UiNode {
+                    id: text::from_str({ (*n).id.view() }),
+                    role: { (*n).role },
+                    class_name: text::new(),
+                    frame: mcpb::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 },
+                    is_hidden: false,
+                    text: text::from_str({ (*n).name.view() }),
+                    actionable: { (*n).actionable },
+                    parent: { (*n).parent },
+                });
+            }
+            option::Option[*identity::NodeView]::None => {}
+        }
+        i = i +% (1 as usize);
+    }
+    return out;
+}
+
 fn mcp_backend() -> mcpb::Backend {
     return mcpb::Backend {
         describe: mcp_describe,
+        describe_exposed: mcp_describe_exposed,
         click: mcp_click,
         set_text: mcp_set_text,
         navigate: mcp_navigate,

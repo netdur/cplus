@@ -53,6 +53,12 @@ struct UiNode {
 // freely through the dispatch/serve call chain.
 struct Backend {
     describe: fn(*u8) -> vec::Vec[UiNode],
+    // The CURATED snapshot: only developer-exposed nodes, lean fields (id,
+    // role, name-as-text, actionable, parent re-parented to the nearest
+    // exposed ancestor) — identity::Registry.describe() over the wire. The
+    // MCP client picks per request (describe_ui mode param); "exposed" is
+    // the default view, `describe` above is the opt-in full tree.
+    describe_exposed: fn(*u8) -> vec::Vec[UiNode],
     click: fn(*u8, str) -> surface::Outcome,
     set_text: fn(*u8, str, str, u64) -> surface::Outcome,
     navigate: fn(*u8, str) -> surface::Outcome,

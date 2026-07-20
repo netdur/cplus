@@ -202,7 +202,14 @@ fn dispatch(
     }
 
     if method == "describe_ui" {
-        return ok_response(id, describe_to_json((vt.describe)(surf)));
+        // The CLIENT chooses the surface view per request: "exposed" (the
+        // default) is the curated developer-exposed set — small, high-signal;
+        // "full" is the whole walked tree incl. auto-keyed structural nodes.
+        let mode: text::Text = val_as_text(obj_get(params, "mode"));
+        if { mode.view() } == "full" {
+            return ok_response(id, describe_to_json((vt.describe)(surf)));
+        }
+        return ok_response(id, describe_to_json((vt.describe_exposed)(surf)));
     }
     if method == "click" {
         let target: text::Text = val_as_text(obj_get(params, "id"));
@@ -403,4 +410,69 @@ fn serve_uds(
     { close(fd); }
     { unlink(path_c); }
     return 0;
+}
+
+// ---- tests -------------------------------------------------------------------
+// Dispatch-level: a fake vtable proves the wire behavior without a backend.
+
+static FAKE_SURF: i32 = 0;
+
+fn fake_node(id: str) -> backend::UiNode {
+    return backend::UiNode {
+        id: text::from_str(id),
+        role: identity::Role::Button,
+        class_name: text::new(),
+        frame: backend::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 },
+        is_hidden: false,
+        text: text::new(),
+        actionable: true,
+        parent: option::Option[usize]::None,
+    };
+}
+
+fn fake_describe_full(p: *u8) -> vec::Vec[backend::UiNode] {
+    var out: vec::Vec[backend::UiNode] = vec::new::[backend::UiNode]();
+    out.append(fake_node("exposed-node"));
+    out.append(fake_node("structural-node"));
+    return out;
+}
+
+fn fake_describe_exposed(p: *u8) -> vec::Vec[backend::UiNode] {
+    var out: vec::Vec[backend::UiNode] = vec::new::[backend::UiNode]();
+    out.append(fake_node("exposed-node"));
+    return out;
+}
+
+fn fake_click(p: *u8, id: str) -> surface::Outcome { return surface::Outcome::Allowed; }
+fn fake_set_text(p: *u8, id: str, v: str, base: u64) -> surface::Outcome { return surface::Outcome::Allowed; }
+fn fake_nav(p: *u8, id: str) -> surface::Outcome { return surface::Outcome::Allowed; }
+
+fn fake_backend() -> backend::Backend {
+    return backend::Backend {
+        describe: fake_describe_full,
+        describe_exposed: fake_describe_exposed,
+        click: fake_click,
+        set_text: fake_set_text,
+        navigate: fake_nav,
+    };
+}
+
+fn allow_all(req: auth::Request) -> auth::Decision { return auth::Decision::Allow; }
+
+#[test]
+fn describe_ui_mode_selects_the_view() {
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
+    // Default (no mode): the curated exposed view.
+    let r1: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all), "{\"method\":\"describe_ui\",\"id\":1}");
+    assert r1.contains("exposed-node");
+    assert r1.contains("structural-node") == false;
+    // An explicit "exposed" reads the same.
+    let r2: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all), "{\"method\":\"describe_ui\",\"params\":{\"mode\":\"exposed\"},\"id\":2}");
+    assert r2.contains("exposed-node");
+    assert r2.contains("structural-node") == false;
+    // "full" opts into the whole walked tree.
+    let r3: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all), "{\"method\":\"describe_ui\",\"params\":{\"mode\":\"full\"},\"id\":3}");
+    assert r3.contains("exposed-node");
+    assert r3.contains("structural-node");
 }
