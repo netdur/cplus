@@ -28,6 +28,10 @@ structural verbs fire them.
   teardown — the component's views are still alive. Teardown then drains the
   detach of every component still presented inside the tree.
 
+`run_screen` and screens shown by an `App` ride the same two seams; a screen
+pushed with `nav::push` mirrors them around its own window's life. See
+[app-screens.md](app-screens.md).
+
 Delivery is best-effort by nature: an app terminated outright (⌘Q) never
 returns from the loop, so nothing after it runs.
 
@@ -85,6 +89,10 @@ Two rules make this sound:
 `present` on a missing handle does nothing and fires nothing.
 
 ## A router
+
+This is the IN-WINDOW pattern: one screen owns an outlet and presents
+sub-screens into it. Navigation between top-level screens (whole windows) is
+the App tier's job — [app-screens.md](app-screens.md).
 
 The router owns its screens, `current` is its only state, and one projection
 function maps state to the outlet. Handlers mutate and re-project; every hook

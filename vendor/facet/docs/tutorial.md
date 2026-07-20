@@ -94,7 +94,9 @@ More widgets and modifiers: [widgets.md](widgets.md).
 - State lives in **struct fields**, not in a virtual DOM.
 - Prefer **window-unique keys** so plain `find(key)` is enough.
 - Missed keys: empty `Handle` (mutators no-op) — safe on teardown.
-- Host entry: `runtime::run_component` or `runtime::run(window)`.
+- Host entry: `runtime::run_component` or `runtime::run(window)`; a
+  multi-screen app runs an `App` of named screens
+  ([app-screens.md](app-screens.md)).
 - `run_component` needs `Component` **and** `Lifecycle`; empty hooks are fine.
 - Slow reads go in a service (`load_async`), never in a handler:
   [services.md](services.md).

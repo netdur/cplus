@@ -41,8 +41,9 @@ the tree, so its fields persist. A handler writes a field, then pushes that
 value to the element that displays it (see [updates.md](updates.md)). Nothing is
 recomputed and the tree is not rebuilt.
 
-The instance is owned by whoever runs it — `run_component` holds it for the
-window's life (see [updates.md](updates.md)). A handler is a `ref this` method
+The instance is owned by whoever runs it — `run_component` / `run_screen`
+hold it for the window's life; an `App` route holds it boxed for exactly as
+long as its screen shows ([app-screens.md](app-screens.md)). A handler is a `ref this` method
 bound at the call site (`.on_click(this.toggle_collapse)`) and addresses elements
 by id with `find(key)` — global, the same way an agent does. No module static,
 no cp:

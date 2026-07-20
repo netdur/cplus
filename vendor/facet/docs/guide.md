@@ -127,6 +127,6 @@ stable, namespaced ids so external agents and `find` stay aligned
 
 ## Status (high level)
 
-Description model, AppKit backend, keyed updates, and lifecycle are real and
-tested. GTK is a stub relative to AppKit. Widget coverage continues to grow
+Description model, AppKit backend, keyed updates, lifecycle, and the
+App/Screen/nav tier are real and tested. GTK is a stub relative to AppKit. Widget coverage continues to grow
 toward portable kit parity; platform-only escapes use `native(...)`.

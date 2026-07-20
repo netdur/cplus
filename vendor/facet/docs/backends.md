@@ -91,6 +91,13 @@ To port facet to a new toolkit, a package supplies:
    re-render). The host splits into `open_window` (create + mount, returns)
    and `run_loop` (blocks): the seam lets `run_component` fire `on_attach`
    after the mount and `on_detach` after the loop stops, from typed code.
+   For the App tier the host also supplies `present_screen_window` (a
+   lifecycle-aware secondary window: retained slot, an `on_closed` that
+   fires on any close path, and closing one must not stop the app loop) and
+   `close_window(handle)` — the pair `nav::push` / `nav::pop` drive. The
+   loop stop must be honored even when the closing call came from a callout
+   rather than an input event (AppKit posts a no-op app-defined event after
+   `stop`).
 4. A main-thread dispatch for `run_on_main` (AppKit: `dispatch_async_f` onto
    the main queue), and a reactor watch for `spawn_ui`: observe the stdlib
    reactor's kqueue fd from the UI loop and call `facet::pump_async` when it

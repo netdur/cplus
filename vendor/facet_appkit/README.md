@@ -75,6 +75,13 @@ package is the implementation side:
 - **Window host**: `open_window` (creates the shell, mounts, returns) +
   `run_loop` (blocks); `run_window` is the composition. The seam is what lets
   `runtime::run_component` fire `on_attach` / `on_detach` from typed code.
+- **Screen windows**: `present_screen_window` (retained slot keyed by the
+  screen instance, per-window delegate records, `on_closed` fires on any
+  close path; not counted against the shell-window total, so closing one
+  never stops the loop) + `close_window(handle)` — the host pair under
+  `nav::push` / `nav::pop`. `Application.stop` is nudged with a no-op
+  app-defined event so a close from a callout (a `run_on_main` step, an
+  agent's click) stops the loop immediately.
 - **Async**: `run_on_main` dispatches onto the main queue; a dispatch READ
   source on the stdlib reactor's kqueue pumps `spawn_ui` tasks — awaits
   resume on the main thread.
