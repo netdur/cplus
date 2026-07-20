@@ -822,6 +822,7 @@ fn ctext(s: str) -> text::Text {
 // the neutral `Rect`, reading each owned node through a pointer and cloning its
 // `Text`s (never moving them out of the Vec, which would double-free).
 fn mcp_describe(p: *u8) -> vec::Vec[mcpb::UiNode] {
+    refresh_surface(p);
     let s: *Surface = { p as *Surface };
     let local: vec::Vec[AppKitNode] = (*s).describe();
     var out: vec::Vec[mcpb::UiNode] = vec::new::[mcpb::UiNode]();
@@ -853,23 +854,91 @@ fn mcp_describe(p: *u8) -> vec::Vec[mcpb::UiNode] {
 }
 
 fn mcp_click(p: *u8, id: str) -> surface::Outcome {
+    refresh_surface(p);
     let s: *Surface = { p as *Surface };
     return (*s).click(id);
 }
 
 fn mcp_set_text(p: *u8, id: str, value: str, base: u64) -> surface::Outcome {
+    refresh_surface(p);
     let s: *Surface = { p as *Surface };
     return (*s).set_text(id, value, base);
 }
 
 // AppKit's navigate is scroll-into-view (Win32/GTK focus instead).
 fn mcp_navigate(p: *u8, id: str) -> surface::Outcome {
+    refresh_surface(p);
     let s: *Surface = { p as *Surface };
     return (*s).scroll_to(id);
 }
 
 // The vtable agent_mcp drives an AppKit surface through. Pass the surface as
 // `{ #addr_of(surf) as *u8 }` alongside this to `agent_mcp::serve_uds` / etc.
+
+// ---- lazy surface refresh ---------------------------------------------------
+// The surface is a SNAPSHOT (registry + retained views) — and the app's tree
+// is dynamic in ways no hook can enumerate (facet verbs, @ui-native
+// mutations, async fills). So the surface re-walks itself ON REQUEST: every
+// MCP operation refreshes from the window it was opened on before acting.
+// Describe/click/set_text therefore always see the tree as it is NOW; a view
+// that has not mounted yet is simply absent, and the agent asks again later.
+// The walk must run on the main thread (AppKit); off-main callers hop with
+// the registered-method trick scroll_visible_on_main uses, waitUntilDone so
+// the request proceeds against the fresh registry. The serve loop handles
+// one connection at a time, so the static handoff has a single writer.
+
+static REFRESH_TARGET: *u8 = #zero::[*u8]();
+static REFRESH_METHOD_REGISTERED: bool = false;
+
+// Re-walk in place: drop the old registry + view retains, install a fresh
+// walk of the same window. TextVersions restart (they key on NodeIds, which
+// renumber with the walk); optimistic edits re-read after a refresh anyway.
+fn refresh_in_place(p: *u8) {
+    let s: *Surface = { p as *Surface };
+    let win: *u8 = { (*s).view_of(1 as usize) };
+    if is_null(win) { return; }
+    { *s = open(win); }
+    return;
+}
+
+fn cplus_agent_refresh(receiver: *u8, _cmd: *u8, _arg: *u8) {
+    let p: *u8 = REFRESH_TARGET;
+    if is_null(p) { return; }
+    refresh_in_place(p);
+    return;
+}
+
+fn ensure_refresh_method() {
+    if { REFRESH_METHOD_REGISTERED } {
+        return;
+    }
+    let cls: *u8 = rt::get_class(#str_ptr("NSWindow\0"));
+    if !is_null(cls) {
+        rt::add_method_action(
+            cls,
+            rt::sel(#str_ptr("cplusAgentRefresh:\0")),
+            cplus_agent_refresh,
+            #str_ptr("v@:@\0"),
+        );
+    }
+    { REFRESH_METHOD_REGISTERED = true; }
+    return;
+}
+
+fn refresh_surface(p: *u8) {
+    if on_main_thread() {
+        refresh_in_place(p);
+        return;
+    }
+    let s: *Surface = { p as *Surface };
+    let win: *u8 = { (*s).view_of(1 as usize) };
+    if is_null(win) { return; }
+    ensure_refresh_method();
+    REFRESH_TARGET = p;
+    perform_on_main(win, rt::sel(#str_ptr("cplusAgentRefresh:\0")), null());
+    REFRESH_TARGET = null();
+    return;
+}
 
 // The curated describe: identity::Registry.describe() over the wire — only
 // developer-EXPOSED nodes, lean fields (id, role, the human name as `text`,
@@ -878,6 +947,7 @@ fn mcp_navigate(p: *u8, id: str) -> surface::Outcome {
 // context stays small. describe_ui's DEFAULT view ("full" opts into
 // mcp_describe above).
 fn mcp_describe_exposed(p: *u8) -> vec::Vec[mcpb::UiNode] {
+    refresh_surface(p);
     let s: *Surface = { p as *Surface };
     let views: vec::Vec[identity::NodeView] = { (*s).reg.describe() };
     var out: vec::Vec[mcpb::UiNode] = vec::new::[mcpb::UiNode]();

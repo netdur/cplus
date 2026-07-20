@@ -421,7 +421,6 @@ impl App {
         nav::set_close_fn(app_close_current);
         nav::set_push_fn(app_push);
         nav::set_pop_fn(app_pop);
-        core::set_tree_changed_fn(app_tree_changed);
         let launch: fn(*u8) = this.on_launch_fn;
         launch(this.hook_ctx);
 
@@ -483,8 +482,6 @@ impl App {
         }
 
         nav::clear_hooks();
-        core::set_tree_changed_fn(0 as fn());
-        AGENT_WIN = 0 as *u8;
         RUNNING_APP = 0 as *u8;
         let quit: fn(*u8) = this.on_quit_fn;
         quit(this.hook_ctx);
@@ -665,30 +662,13 @@ fn register_screen(route: str, factory: fn() -> core::ScreenBox) -> bool {
 
 static AGENT_ATTACH_FN: fn(*u8) = #zero::[fn(*u8)]();
 static AGENT_SERVE_FN: fn(str) = #zero::[fn(str)]();
-// The window the agent surface currently reflects — so a structural tree
-// change (facet's tree-changed hook) can re-walk it and content mounted
-// AFTER the window opened (present()-ed screens, added rows) stays
-// agent-visible. Null when the agent is not serving.
-static AGENT_WIN: *u8 = #zero::[*u8]();
 
 fn set_agent_attach_fn(f: fn(*u8)) { AGENT_ATTACH_FN = f; return; }
 fn set_agent_serve_fn(f: fn(str)) { AGENT_SERVE_FN = f; return; }
 
 fn agent_attach_window(win: *u8) {
     let f: fn(*u8) = AGENT_ATTACH_FN;
-    if f != (0 as fn(*u8)) {
-        AGENT_WIN = win;
-        f(win);
-    }
-    return;
-}
-
-// facet's tree-changed hook: any structural mutation re-walks the served
-// window's surface (main thread — the verbs run there), so describe/click
-// always act on the live tree, never the mount-time snapshot.
-fn app_tree_changed() {
-    let win: *u8 = AGENT_WIN;
-    if win != (0 as *u8) { agent_attach_window(win); }
+    if f != (0 as fn(*u8)) { f(win); }
     return;
 }
 
