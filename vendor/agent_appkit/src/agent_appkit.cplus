@@ -749,6 +749,12 @@ impl Surface {
                 // previous unguarded send raised an unrecognized-selector exception.
                 // Guard it and report `NotActionable` rather than crashing.
                 if !responds_to(v, #str_ptr("performClick:\0")) {
+                    // A row cell inside a table/outline: the agent's click IS
+                    // the user's row selection — select it, let the widget's
+                    // selection delegate fire (ui::tree's on_select).
+                    if select_row_of(v) {
+                        return surface::Outcome::Allowed;
+                    }
                     return surface::Outcome::NotActionable;
                 }
                 perform_on_main(v, rt::sel(#str_ptr("performClick:\0")), null());
@@ -944,6 +950,64 @@ fn ensure_refresh_method() {
     }
     { REFRESH_METHOD_REGISTERED = true; }
     return;
+}
+
+// ---- row selection (agent click on a table/outline row cell) ---------------
+// A row CELL answers no performClick: — selecting it is the table's job:
+// selectRowIndexes: on the enclosing NSTableView/NSOutlineView, which posts
+// the SelectionDidChange notification, firing the widget's selection delegate
+// exactly as a user click would (ui::tree -> on_select). The 2-arg send hops
+// to the main thread through a registered method (the refresh pattern).
+
+static SELECT_METHOD_REGISTERED: bool = false;
+
+fn cplus_agent_select_row(table: *u8, _cmd: *u8, idxset: *u8) {
+    rt::msg_void_id_i8(table, rt::sel(#str_ptr("selectRowIndexes:byExtendingSelection:\0")), idxset, 0 as i8);
+    return;
+}
+
+fn ensure_select_method() {
+    if { SELECT_METHOD_REGISTERED } {
+        return;
+    }
+    let cls: *u8 = rt::get_class(#str_ptr("NSTableView\0"));
+    if !is_null(cls) {
+        rt::add_method_action(
+            cls,
+            rt::sel(#str_ptr("cplusAgentSelectRow:\0")),
+            cplus_agent_select_row,
+            #str_ptr("v@:@\0"),
+        );
+    }
+    { SELECT_METHOD_REGISTERED = true; }
+    return;
+}
+
+// The nearest enclosing NSTableView (NSOutlineView included) above `v`, or null.
+fn enclosing_table(v: *u8) -> *u8 {
+    let table_cls: *u8 = rt::get_class(#str_ptr("NSTableView\0"));
+    var cur: *u8 = v;
+    while !is_null(cur) {
+        if rt::msg_i8_id(cur, rt::sel(#str_ptr("isKindOfClass:\0")), table_cls) != (0 as i8) {
+            return cur;
+        }
+        cur = rt::msg_id(cur, rt::sel(#str_ptr("superview\0")));
+    }
+    return null();
+}
+
+// Select the row containing `v`, if a table encloses it. True when selected.
+fn select_row_of(v: *u8) -> bool {
+    let table: *u8 = enclosing_table(v);
+    if is_null(table) { return false; }
+    let row: i64 = rt::msg_i64_id(table, rt::sel(#str_ptr("rowForView:\0")), v);
+    if row < (0 as i64) { return false; }
+    let idx_cls: *u8 = rt::get_class(#str_ptr("NSIndexSet\0"));
+    let idxset: *u8 = rt::msg_id_u64(idx_cls, rt::sel(#str_ptr("indexSetWithIndex:\0")), row as u64);
+    if is_null(idxset) { return false; }
+    ensure_select_method();
+    perform_on_main(table, rt::sel(#str_ptr("cplusAgentSelectRow:\0")), idxset);
+    return true;
 }
 
 fn refresh_surface(p: *u8) {

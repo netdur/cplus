@@ -948,6 +948,12 @@ struct TreeDelCtx {
     row: fn(*u8, *u8) -> flex::Node, // (item, ctx); null sentinel = default
                                      // object-value text cell
     opaque row_ctx: *u8,
+    // Per-row AGENT identity: (item, ctx) -> the row's stable dev key
+    // ("files:row:<path>"). Tagged onto the cell at build/recycle, so the
+    // agent surface exposes each MATERIALIZED row as a child of the tree
+    // and `click` can select it. Null sentinel / "" = untagged row.
+    row_id: fn(*u8, *u8) -> text::Text,
+    opaque row_id_ctx: *u8,
     row_height: f64,                 // fixed row height; <= 0 = measure the built node
 }
 
@@ -1165,6 +1171,14 @@ fn tree_view_for_column_imp(user: *u8, ov: *u8, col: *u8, item: *u8) -> *u8 {
     }
     cell.set_frame(rt::Rect { x: 0.0, y: 0.0, w: w, h: h });
     apply(#addr_of(node), cell.raw(), false);
+    // Stamp the row's agent identity — every (re)build, so a RECYCLED cell
+    // carries the id of the item it currently shows. Role Button = the click
+    // affordance; the agent's click selects the row (see agent_appkit).
+    let fid: fn(*u8, *u8) -> text::Text = { (*c).row_id };
+    if { fid as *u8 } != { 0 as *u8 } {
+        let rid: text::Text = fid(item, { (*c).row_id_ctx });
+        tag_agent(cell.raw(), rid.view(), identity::Role::Button);
+    }
     return cell.raw();
 }
 
@@ -1215,7 +1229,7 @@ fn tree_selection_imp(user: *u8, notif: *u8) {
 //       return ui::row(b).align_items(flex::Align::Center).gap(6.0f64);
 //   }
 //   ui::tree(root, on_select: open_file, row: row, row_height: 34.0f64);
-fn tree(root: *TreeNode, on_select: fn(*u8, *u8) = 0 as fn(*u8, *u8), ctx: *u8 = 0 as *u8, row: fn(*u8, *u8) -> flex::Node = 0 as fn(*u8, *u8) -> flex::Node, row_ctx: *u8 = 0 as *u8, row_height: f64 = 0.0f64, agent_id: str = "") -> flex::Node {
+fn tree(root: *TreeNode, on_select: fn(*u8, *u8) = 0 as fn(*u8, *u8), ctx: *u8 = 0 as *u8, row: fn(*u8, *u8) -> flex::Node = 0 as fn(*u8, *u8) -> flex::Node, row_ctx: *u8 = 0 as *u8, row_id: fn(*u8, *u8) -> text::Text = 0 as fn(*u8, *u8) -> text::Text, row_id_ctx: *u8 = 0 as *u8, row_height: f64 = 0.0f64, agent_id: str = "") -> flex::Node {
     let ov = ak::OutlineView::new();
     let col = ak::TableColumn::new("name");
     col.set_title("Name");
@@ -1235,7 +1249,7 @@ fn tree(root: *TreeNode, on_select: fn(*u8, *u8) = 0 as fn(*u8, *u8), ctx: *u8 =
     synth::retain_associated(ov.raw(), tree_ds_pin_key(), dsobj);
 
     let selbox: *TreeDelCtx = { malloc(#size_of::[TreeDelCtx]()) as *TreeDelCtx };
-    { *selbox = TreeDelCtx { on_select: on_select, caller_ctx: ctx, row: row, row_ctx: row_ctx, row_height: row_height }; }
+    { *selbox = TreeDelCtx { on_select: on_select, caller_ctx: ctx, row: row, row_ctx: row_ctx, row_id: row_id, row_id_ctx: row_id_ctx, row_height: row_height }; }
     var del: ak::OutlineViewDelegate = ak::OutlineViewDelegate_new(selbox as *u8);
     del.set_outline_view_selection_did_change(tree_selection_imp);
     // A row builder switches the outline view to view-based cells: wire the
@@ -1268,9 +1282,9 @@ fn tree(root: *TreeNode, on_select: fn(*u8, *u8) = 0 as fn(*u8, *u8), ctx: *u8 =
 // policy is not the widget's job: build the model yourself with
 // `tree_node`/`tree_add_child` (drive it with `fs::read_dir` + your own ignore
 // list) and mount it with `tree(root, ...)`.
-fn file_tree(path: str, on_select: fn(*u8, *u8) = 0 as fn(*u8, *u8), ctx: *u8 = 0 as *u8, row: fn(*u8, *u8) -> flex::Node = 0 as fn(*u8, *u8) -> flex::Node, row_ctx: *u8 = 0 as *u8, row_height: f64 = 0.0f64, agent_id: str = "") -> flex::Node {
+fn file_tree(path: str, on_select: fn(*u8, *u8) = 0 as fn(*u8, *u8), ctx: *u8 = 0 as *u8, row: fn(*u8, *u8) -> flex::Node = 0 as fn(*u8, *u8) -> flex::Node, row_ctx: *u8 = 0 as *u8, row_id: fn(*u8, *u8) -> text::Text = 0 as fn(*u8, *u8) -> text::Text, row_id_ctx: *u8 = 0 as *u8, row_height: f64 = 0.0f64, agent_id: str = "") -> flex::Node {
     let root: *TreeNode = build_tree(path, path);
-    return tree(root, on_select: on_select, ctx: ctx, row: row, row_ctx: row_ctx, row_height: row_height, agent_id: agent_id);
+    return tree(root, on_select: on_select, ctx: ctx, row: row, row_ctx: row_ctx, row_id: row_id, row_id_ctx: row_id_ctx, row_height: row_height, agent_id: agent_id);
 }
 
 // ==========================================================================
@@ -3289,6 +3303,10 @@ fn test_file_tree_model_and_data_source() {
 
 // A view-based row builder for the tree tests: a folder/doc icon by kind + the
 // node's own label, laid out in a row — exercises the same accessors iris uses.
+fn tree_test_row_id(item: *u8, ctx: *u8) -> text::Text {
+    return "t:row:${tree_node_path(item).view()}";
+}
+
 fn tree_test_row(item: *u8, ctx: *u8) -> flex::Node {
     var b: Builder = Builder::new();
     if tree_node_is_dir(item) { b.add(symbol("folder", 14.0f64)); }
@@ -3330,7 +3348,7 @@ fn test_tree_view_row_fixed_height_builds_cell() {
 
     let node: *TreeNode = tree_node("main.cplus", "/proj/main.cplus", false);
     let item: *u8 = { (*node).item };
-    var dc: TreeDelCtx = TreeDelCtx { on_select: 0 as fn(*u8, *u8), caller_ctx: 0 as *u8, row: tree_test_row, row_ctx: 0 as *u8, row_height: 34.0f64 };
+    var dc: TreeDelCtx = TreeDelCtx { on_select: 0 as fn(*u8, *u8), caller_ctx: 0 as *u8, row: tree_test_row, row_ctx: 0 as *u8, row_id: tree_test_row_id, row_id_ctx: 0 as *u8, row_height: 34.0f64 };
 
     let h: f64 = tree_height_imp(#addr_of(dc) as *u8, ov.raw(), item);
     assert approx(h, 34.0f64);                               // fixed height honored verbatim
@@ -3338,6 +3356,11 @@ fn test_tree_view_row_fixed_height_builds_cell() {
     let cell_ptr: *u8 = tree_view_for_column_imp(#addr_of(dc) as *u8, ov.raw(), col_raw, item);
     assert cell_ptr != (0 as *u8);
     assert ak::View::from_raw(cell_ptr).subviews().count() > (0 as usize);   // content installed
+    // The row-id builder stamped the cell's agent identity for THIS item.
+    let rid: *u8 = rt::msg_id(cell_ptr, rt::sel(#str_ptr("accessibilityIdentifier\0")));
+    assert rid != (0 as *u8);
+    let rid_t: text::Text = bridge::to_text(rid);
+    assert rid_t.view() == "t:row:/proj/main.cplus";
     return;
 }
 
@@ -3352,7 +3375,7 @@ fn test_tree_view_row_measures_when_height_unset() {
     ov.set_outline_table_column(ak::TableColumn::from_raw(col.raw()));
 
     let node: *TreeNode = tree_node("main.cplus", "/proj/main.cplus", false);
-    var dc: TreeDelCtx = TreeDelCtx { on_select: 0 as fn(*u8, *u8), caller_ctx: 0 as *u8, row: tree_test_row, row_ctx: 0 as *u8, row_height: 0.0f64 };
+    var dc: TreeDelCtx = TreeDelCtx { on_select: 0 as fn(*u8, *u8), caller_ctx: 0 as *u8, row: tree_test_row, row_ctx: 0 as *u8, row_id: 0 as fn(*u8, *u8) -> text::Text, row_id_ctx: 0 as *u8, row_height: 0.0f64 };
     let h: f64 = tree_height_imp(#addr_of(dc) as *u8, ov.raw(), { (*node).item });
     assert h > 0.0f64;                                       // a real, measured height
     return;
@@ -3364,7 +3387,7 @@ fn test_tree_default_row_has_no_view_builder() {
     // native object-value text cell renders the row, and viewForColumn returns
     // nil so NSOutlineView falls back to it. The widget still builds.
     let node: *TreeNode = tree_node("readme.md", "/proj/readme.md", false);
-    var dc: TreeDelCtx = TreeDelCtx { on_select: 0 as fn(*u8, *u8), caller_ctx: 0 as *u8, row: 0 as fn(*u8, *u8) -> flex::Node, row_ctx: 0 as *u8, row_height: 0.0f64 };
+    var dc: TreeDelCtx = TreeDelCtx { on_select: 0 as fn(*u8, *u8), caller_ctx: 0 as *u8, row: 0 as fn(*u8, *u8) -> flex::Node, row_ctx: 0 as *u8, row_id: 0 as fn(*u8, *u8) -> text::Text, row_id_ctx: 0 as *u8, row_height: 0.0f64 };
     let ov = ak::OutlineView::new();
     assert tree_view_for_column_imp(#addr_of(dc) as *u8, ov.raw(), 0 as *u8, { (*node).item }) == (0 as *u8);
     // The object-value path still yields the label string (the default cell).
