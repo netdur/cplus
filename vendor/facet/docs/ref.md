@@ -49,6 +49,16 @@ fn find(key: str, cp: *u8 = 0) -> Handle
 Global by default; `cp` scopes to a component subtree. Miss → empty Handle
 (no-op mutators). `found()`, `view() -> *u8`.
 
+```cplus
+fn Handle.component() -> *u8                      // instance presented here, or 0
+fn component_at[C](key, cp?) -> Option[*C]        // the typed reader
+```
+
+The instance-level analog of the view Handle: recover the component
+`present` registered behind a keyed slot, so a bare-fn callback (a native
+widget's) can invoke a component method without a module static. Valid while
+the presentation lasts — resolve, call, don't store.
+
 ### Handle leaf mutators (chainable)
 
 | method | effect |

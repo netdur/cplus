@@ -194,3 +194,24 @@ A generic `find_as[T]` returning the typed widget is not expressible (the core
 cannot name a backend type, and there is no generic method dispatch to call
 `T::from_raw`), so `view()` is the hatch. Guard with `found()` first — on a miss
 `view()` is `0`.
+
+
+## Reaching the component behind a slot
+
+`find(key)` resolves the VIEW. `find(key).component()` resolves the
+COMPONENT INSTANCE `present` registered there (0 when nothing presented);
+`facet::component_at::[C](key)` is the typed form, returning `Option[*C]`.
+This is for bare-fn callbacks — a native widget's fn-pointer callback has no
+`this`, and the instance behind a presented slot is otherwise reachable only
+through a module static. The pointer is valid while the presentation lasts
+(every eviction path clears it): resolve, call the method, don't store it.
+
+```cplus
+fn on_tree_select(ctx: *u8, item: *u8) {
+    match facet::component_at::[EditorTabs]("code:body") {
+        option::Option[*EditorTabs]::Some(et) => { { (*et).open(path); } }
+        option::Option[*EditorTabs]::None => { }
+    }
+    return;
+}
+```

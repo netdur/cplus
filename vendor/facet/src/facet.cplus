@@ -1586,6 +1586,36 @@ impl Handle {
         c.on_attach();
         return h;
     }
+
+    // The COMPONENT INSTANCE this container is presenting — the address
+    // `present` registered — or 0 when nothing presented is here. The
+    // instance-level analog of the view this Handle already is: `find`
+    // reaches a sibling's VIEW by key; this reaches the component behind a
+    // presented slot, so a bare-fn callback (a native widget's, a service's)
+    // can invoke a component METHOD without a module static. Valid while the
+    // presentation lasts (every eviction path clears the registry entry):
+    // resolve, call, don't store. Prefer the typed `component_at`.
+    fn component(this) -> *u8 {
+        if !this.found() { return 0 as *u8; }
+        let f: fn(Handle) -> *u8 = COMPONENT_AT_FN;
+        if f == (0 as fn(Handle) -> *u8) { return 0 as *u8; }
+        return f(this);
+    }
+}
+
+// The typed reader over `Handle.component`: the component instance presented
+// in the container at `key`, or None. The turbofish names the type the app
+// KNOWS it presented there (present is typed; the cast recovers what it
+// erased):
+//
+//     match facet::component_at::[EditorTabs]("code:body") {
+//         option::Option[*EditorTabs]::Some(et) => { { (*et).open(path) }; }
+//         option::Option[*EditorTabs]::None => { }
+//     }
+fn component_at[C](key: str, cp: *u8 = 0 as *u8) -> option::Option[*C] {
+    let p: *u8 = find(key, cp).component();
+    if p == (0 as *u8) { return option::Option[*C]::None; }
+    return option::Option[*C]::Some(p as *C);
 }
 
 // The type-erasing detach trampoline: `lc_detach_tramp::[C]` (a value-turbofish
@@ -1604,6 +1634,12 @@ fn lc_detach_tramp[C: Lifecycle](p: *u8) {
 // presentation. Not app-facing — `present` is the only writer.
 static LC_REGISTER_FN: fn(Handle, fn(*u8), *u8) = #zero::[fn(Handle, fn(*u8), *u8)]();
 fn set_lc_register_fn(f: fn(Handle, fn(*u8), *u8)) { LC_REGISTER_FN = f; return; }
+
+// Backend hook: read the component address `present` registered for a
+// container (the reader half of the registry above). 0 when the container
+// shows nothing presented. Installed with the others.
+static COMPONENT_AT_FN: fn(Handle) -> *u8 = #zero::[fn(Handle) -> *u8]();
+fn set_component_at_fn(f: fn(Handle) -> *u8) { COMPONENT_AT_FN = f; return; }
 fn lc_register(h: Handle, detach: fn(*u8), ctx: *u8) {
     let f: fn(Handle, fn(*u8), *u8) = LC_REGISTER_FN;
     if f != (0 as fn(Handle, fn(*u8), *u8)) { f(h, detach, ctx); }

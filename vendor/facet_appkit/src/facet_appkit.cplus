@@ -1175,6 +1175,7 @@ fn install() {
     facet::set_dropped_text_fn(dropped_text);
     facet::set_is_dark_fn(is_dark_impl);
     facet::set_theme_changed_fn(theme_repaint);
+    facet::set_component_at_fn(component_at_impl);
     facet::set_find_fn(find_impl);
     facet::set_set_text_fn(set_text_impl);
     facet::set_set_value_fn(set_value_impl);
@@ -3557,6 +3558,26 @@ fn lc_register_impl(h: facet::Handle, detach: fn(*u8), ctx: *u8) {
     return;
 }
 
+// facet::component_at hook: the component address registered for `h`'s
+// container view, or 0. A read of the registry present already writes.
+fn component_at_impl(h: facet::Handle) -> *u8 {
+    let v: *u8 = h.view();
+    if v == (0 as *u8) { return 0 as *u8; }
+    let reg: *vec::Vec[LcEntry] = #addr_of(LC_ENTRIES);
+    let n: usize = { (*reg).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*reg).at_ptr(i) {
+            option::Option[*LcEntry]::Some(ep) => {
+                if v == { (*ep)._container } { return { (*ep)._ctx }; }
+            }
+            option::Option[*LcEntry]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return 0 as *u8;
+}
+
 // Fire + clear the detach registered for `container`, if any.
 fn lc_fire(container: *u8) {
     if container == (0 as *u8) { return; }
@@ -5163,6 +5184,50 @@ fn screen_window_opens_finds_and_fires_on_closed() {
     close_window(w);
     assert SCREEN_CHECK_CLOSED == 1;
     assert !facet::is_attached(cp);
+    unmount_all();
+}
+
+#[test]
+fn component_at_reads_the_presented_instance() {
+    unmount_all();
+    install();
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 400.0 });
+    let _h: f64 = mount_component(NAV_HOST.build, host: host.raw());
+    let nav_cp: *u8 = #addr_of(NAV_HOST) as *u8;
+    let outlet: facet::Handle = facet::find("outlet", nav_cp);
+    assert outlet.found();
+
+    // Nothing presented yet: the reader answers 0 / None.
+    assert outlet.component() == (0 as *u8);
+
+    // Present -> the reader recovers the INSTANCE address present registered.
+    let _p: facet::Handle = outlet.present(ORDER_A);
+    assert outlet.component() == (#addr_of(ORDER_A) as *u8);
+    let typed: option::Option[*OrderScreen] = facet::component_at::[OrderScreen]("outlet", nav_cp);
+    let hit: bool = match typed {
+        option::Option[*OrderScreen]::Some(pp) => (pp as *u8) == (#addr_of(ORDER_A) as *u8),
+        option::Option[*OrderScreen]::None => false,
+    };
+    assert hit;
+
+    // Re-present swaps the registered instance with the slot's occupant.
+    let _p2: facet::Handle = outlet.present(ORDER_B);
+    assert outlet.component() == (#addr_of(ORDER_B) as *u8);
+
+    // Eviction clears it: a stale instance is unreachable, not dangling.
+    let _s: facet::Handle = outlet.set_child(facet::box());
+    assert outlet.component() == (0 as *u8);
+    let gone: bool = match facet::component_at::[OrderScreen]("outlet", nav_cp) {
+        option::Option[*OrderScreen]::Some(pp) => false,
+        option::Option[*OrderScreen]::None => true,
+    };
+    assert gone;
+    // An unknown key answers None, never a trap.
+    let missing: bool = match facet::component_at::[OrderScreen]("no:such:slot", nav_cp) {
+        option::Option[*OrderScreen]::Some(pp) => false,
+        option::Option[*OrderScreen]::None => true,
+    };
+    assert missing;
     unmount_all();
 }
 

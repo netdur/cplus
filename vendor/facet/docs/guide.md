@@ -118,7 +118,11 @@ Description never imports AppKit/GTK. A backend implements mount + leaf ops;
 
 `.key(id)` and `.agent_id(id)` participate in the agent identity story. Prefer
 stable, namespaced ids so external agents and `find` stay aligned
-(`agent_core` / `agent_mcp`).
+(`agent_core` / `agent_mcp`). The exposed describe is the agent's TOOL LIST:
+a node's name auto-derives from its title/label, `.accessibility_label`
+overrides it (essential for icon-only controls), and `.accessibility_hint`
+supplies the intent description ("opens the New Project wizard") — the same
+channel VoiceOver reads, one annotation serving both.
 
 ## Gotchas
 
