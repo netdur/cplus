@@ -1105,7 +1105,7 @@ struct FacetRowCtx {
     opaque user: *u8,
 }
 
-fn facet_list_row_bridge(ctx: *u8, i: i64) -> flex::Node {
+fn facet_list_row_bridge(i: i64, ctx: *u8) -> flex::Node {
     let c: *FacetRowCtx = { ctx as *FacetRowCtx };
     let f: fn(i64, *u8) -> facet::Node = { (*c).row };
     var node: facet::Node = f(i, { (*c).user });
