@@ -77,10 +77,14 @@ the presentation lasts — resolve, call, don't store.
 | `replace_child(key, take Node) -> bool` | swap |
 | `remove_child(key) -> bool` | remove |
 | `set_child(take Node)` | replace sole child |
-| `present[C: Component + Lifecycle](ref c)` | show a component; hooks fired for it |
+| `present[C: Component + Lifecycle](ref c)` | show a component, REBUILT each show; hooks fired for it |
+| `switch_to[C: Component + Lifecycle](ref c)` | show a sibling, built once then parked/re-attached; hooks fired for it |
 
-Removing / replacing a presented component's content fires its `on_detach`
-first, whichever verb does it. Full narrative: [updates.md](updates.md).
+`present` for showing a new screen; `switch_to` for siblings the user
+returns to (tabs, panes — view state survives the switch). Removing /
+replacing a presented component's content fires its `on_detach` first,
+whichever verb does it. Full narrative: [updates.md](updates.md),
+[lifecycle.md](lifecycle.md).
 
 ---
 
@@ -90,8 +94,9 @@ first, whichever verb does it. Full narrative: [updates.md](updates.md).
 interface Lifecycle { fn on_attach(ref this); fn on_detach(ref this); }
 fn attached[C](ref c: C) -> bool     // self-liveness: facet::attached(this)
 fn is_attached(cp: *u8) -> bool
-// present (Handle verb, above); stage / Staged / attach / detach = view parking
-// see lifecycle.md for the router pattern and parking signatures
+// present / switch_to (Handle verbs, above); stage / Staged / attach / detach
+// = the manual parking tier under switch_to — see lifecycle.md for the router
+// pattern and parking signatures
 ```
 
 ---

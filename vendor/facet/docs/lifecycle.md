@@ -88,15 +88,35 @@ Two rules make this sound:
 
 `present` on a missing handle does nothing and fires nothing.
 
-## A router
+`present` REBUILDS: `build()` runs on every show, so it is the verb for
+showing something genuinely new, or a screen whose appearance derives
+entirely from surviving data (fields, services) — there a rebuild is
+lossless. For siblings the user switches back and forth between, use
+`switch_to` (next section): it builds once and preserves the views.
 
-This is the IN-WINDOW pattern: one screen owns an outlet and presents
-sub-screens into it. Navigation between top-level screens (whole windows) is
-the App tier's job — [app-screens.md](app-screens.md).
+## A router: `switch_to`
+
+This is the IN-WINDOW pattern: one parent owns several long-lived child
+components as fields and shows one at a time through a keyed outlet.
+Navigation between top-level screens (whole windows) is the App tier's job —
+[app-screens.md](app-screens.md).
+
+For siblings the user RETURNS to — tabs, inspector panes, pagers — the outlet
+verb is `switch_to`:
+
+```cplus
+fn switch_to[C: Component + Lifecycle](this, ref c: C) -> Handle
+```
+
+Each sibling is built ONCE, on its first visit. After that, switching parks
+the outgoing sibling's view tree (kept, off-canvas) and re-attaches the
+incoming one's — the views survive, so a sibling comes back exactly as it was
+left: scroll position, half-typed input, selection. The child model stays
+build-once-mutate-later across switches, the same as everywhere else in
+facet.
 
 The router owns its screens, `current` is its only state, and one projection
-function maps state to the outlet. Handlers mutate and re-project; every hook
-firing is facet's:
+function maps state to the outlet:
 
 ```cplus
 struct ScreenY {
@@ -109,7 +129,7 @@ impl ScreenY {
         if this.current < 0 { return; }
         match this.get_screen(this.current) {
             option::Option[*ScreenX]::Some(sp) => {
-                facet::find("screen_y:outlet").present((*sp));
+                facet::find("screen_y:outlet").switch_to((*sp));
             }
             option::Option[*ScreenX]::None => { }
         };
@@ -126,10 +146,31 @@ impl ScreenY {
 }
 ```
 
-Each `present` rebuilds the incoming screen's views from its fields. State
-worth keeping across visits belongs in the component's fields; what does not
-survive is pure view state (scroll position, an uncommitted selection). To
-keep views alive across navigation instead, see parking below.
+Lifecycle matches `present`: the incoming sibling's `on_attach` fires on
+every switch-in (guarded loads and keyed-slot populates keep data fresh), the
+outgoing sibling's `on_detach` fires as it parks. Switching to the
+already-shown sibling is a no-op. Like `present`, a switched sibling must
+outlive its outlet, and its address is its identity — components in a `Vec`
+must all be in place before the first switch.
+
+The outlet manages two things the app never has to:
+
+- **Eviction.** When the outlet itself leaves the tree (a body swap, a window
+  teardown), the attached sibling detaches (its `on_detach` fires) and every
+  parked tree of that outlet is dropped; the next `switch_to` re-stages.
+- **Theme changes.** Parked trees bake build-time colors, so `set_theme`
+  drops them (what is on screen is the app's own theme path's concern); the
+  next `switch_to` rebuilds against the new palette. A theme change loses
+  parked view state; a switch never does.
+
+One nuance for services: while a sibling is parked its views are NOT in the
+live tree, so keyed writes (`find(key).set_text(...)`) miss — harmlessly, the
+verbs no-op. Land the data in the service and repaint from `on_attach` on the
+way back in, or guard with `is_attached`.
+
+**The rule of thumb:** siblings the user switches back and forth between →
+`switch_to`. Showing a genuinely new screen → `present`. Don't mix the two
+verbs on one outlet.
 
 ## Liveness: `attached` and `is_attached`
 
@@ -154,9 +195,12 @@ missing handle no-ops. Use `found()` on the handle when you want to know.
 
 ## Parking: stage / attach / detach
 
-`present` rebuilds on every show. When a screen's **views** must survive
-navigation — scroll position, half-typed input, selection — build it
-off-canvas once and move the live views in and out instead:
+The manual tier UNDER `switch_to` — the outlet verb stages, parks, and
+re-attaches through exactly these calls, and most apps never use them
+directly. Reach for them when you want explicit control over the parking
+lifetime (a custom nav stack that pre-builds screens, an outlet with policy
+`switch_to` doesn't have). To build a screen off-canvas once and move its
+live views in and out yourself:
 
 ```cplus
 fn stage(build: fn(*u8) -> Node,
@@ -192,6 +236,7 @@ Components' `connectedCallback` / `disconnectedCallback` / `isConnected`.
 
 | you have | put it in with | remove with | on removal |
 |---|---|---|---|
-| a component (normal case) | `present` | the next `present` / `set_child`, or teardown | destroyed; its `on_detach` fired first |
+| siblings the user returns to (tabs, panes, pagers) | `switch_to` | the next `switch_to` | parked (views kept); dropped when the outlet dies or the theme changes |
+| a new screen (normal case) | `present` | the next `present` / `set_child`, or teardown | destroyed; its `on_detach` fired first |
 | a fresh `Node` description | `add_child` / `insert_child` / `set_child` | `remove_child` | destroyed |
-| a staged component (view parking) | `attach` | `detach` | parked (kept), or `unstage` to destroy |
+| a staged component (manual view parking) | `attach` | `detach` | parked (kept), or `unstage` to destroy |

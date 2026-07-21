@@ -3119,6 +3119,16 @@ fn find_impl(cp: *u8, key: str) -> facet::Handle {
     // right component.
     if cp == (0 as *u8) {
         let n: usize = ui::slot_count();
+        // A key can be found under MORE than one slot host: a staged (switch_to)
+        // component's root is a subview of its outlet, so its keyed views are
+        // ALSO reachable from the outer component's host — but that outer host's
+        // flex tree does not contain them. Prefer the slot whose tree actually
+        // OWNS the view's flex node (the staged component's), so the Handle
+        // carries the right owner (later mutation reflows it) and a non-null
+        // flex (structural verbs are otherwise silently inert). Fall back to a
+        // view-only handle if no slot owns the flex.
+        var first_v: *u8 = 0 as *u8;
+        var first_owner: *u8 = 0 as *u8;
         var i: usize = 0 as usize;
         while i < n {
             let host_i: *u8 = ui::slot_host_at(i);
@@ -3126,13 +3136,17 @@ fn find_impl(cp: *u8, key: str) -> facet::Handle {
                 let v: *u8 = find_view_by_id(host_i, key);
                 if v != (0 as *u8) {
                     let owner: *u8 = ui::cp_of_host(host_i);
-                    var fpx: *u8 = 0 as *u8;
                     let f2: *flex::Node = resolve_flex(owner, v);
-                    if f2 != (0 as *flex::Node) { fpx = f2 as *u8; }
-                    return facet::Handle::of(v, fpx, owner, 0 as u32);
+                    if f2 != (0 as *flex::Node) {
+                        return facet::Handle::of(v, f2 as *u8, owner, 0 as u32);
+                    }
+                    if first_v == (0 as *u8) { first_v = v; first_owner = owner; }
                 }
             }
             i = i +% (1 as usize);
+        }
+        if first_v != (0 as *u8) {
+            return facet::Handle::of(first_v, 0 as *u8, first_owner, 0 as u32);
         }
         return facet::Handle::missing();
     }
@@ -3490,6 +3504,16 @@ fn stage_teardown_at(idx: usize) {
 // facet::stage hook: build the component into a facet-owned parked root (no
 // superview) and register it. mount_component registers it in the slot/tree
 // registry, so find + relayout work while it is parked or live.
+// Re-lay a staged component's retained tree at its root's CURRENT frame. The
+// attached root tracks its container via an autoresizing mask, so on any
+// resize (window OR split-divider drag) its frame is already the new size —
+// but the flex layout inside still needs recomputing. This is the staged
+// mirror of the retained window-resize path: geometry only, no re-render.
+fn staged_root_reflow(cp: *u8) {
+    let _r: bool = ui::relayout(cp);
+    return;
+}
+
 fn stage_impl(build: fn(*u8) -> facet::Node, ctx: *u8, on_attach: fn(*u8), on_attach_ctx: *u8, on_detach: fn(*u8), on_detach_ctx: *u8) -> facet::Staged {
     if ctx == (0 as *u8) { return facet::Staged::none(); }
     let prior: i64 = stage_index(ctx);
@@ -3497,6 +3521,15 @@ fn stage_impl(build: fn(*u8) -> facet::Node, ctx: *u8, on_attach: fn(*u8), on_at
     let root: ak::View = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 320.0, h: 480.0 });
     let root_raw: *u8 = root.raw();
     let _h: f64 = mount_component(build, ctx: ctx, host: root_raw);
+    // Reflow the parked content whenever the root resizes. The root lives as
+    // long as the staging, so this one observer (pinned to it, auto-cleared on
+    // its dealloc) covers every attach: while parked the root is out of the
+    // tree and never resizes, so this is dormant; attached, it fires on window
+    // AND split-divider resize — the flex-tree walk that reflows split panes
+    // does NOT descend into a staged subtree (it is connected natively, not in
+    // the parent flex tree), so without this a switch_to'd pane stops
+    // reflowing on divider drags until re-attached.
+    akx::observe_frame_change(root, staged_root_reflow, ctx);
     let reg: *vec::Vec[StageReg] = #addr_of(STAGED);
     (*reg).append(StageReg { _cp: ctx, _root: root, _on_attach: on_attach, _on_attach_ctx: on_attach_ctx, _on_detach: on_detach, _on_detach_ctx: on_detach_ctx, _attached: false });
     return facet::Staged::of(ctx, root_raw);
@@ -4977,6 +5010,359 @@ fn stage_lifecycle_negatives() {
     // Detaching something never attached returns false.
     assert a.detach() == false;
     let _z: bool = a.unstage();
+    unmount_all();
+}
+
+// ---- switch_to: the outlet verb over stage/attach ---------------------------
+// One verb for "siblings the user returns to": stages a sibling on its first
+// visit, parks/attaches on switches, no-ops on the already-attached sibling,
+// evicts with its outlet, and drops parked trees on a theme change.
+
+#[test]
+fn switch_to_stages_once_parks_and_reattaches() {
+    unmount_all();
+    lifecycle_install();
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 400.0 });
+    let _h: f64 = mount_component(NAV_HOST.build, host: host.raw());
+    let nav_cp: *u8 = #addr_of(NAV_HOST) as *u8;
+
+    SCREEN_A.tag = text::from_str("A"); SCREEN_A.attaches = 0; SCREEN_A.detaches = 0;
+    SCREEN_B.tag = text::from_str("B"); SCREEN_B.attaches = 0; SCREEN_B.detaches = 0;
+    let ap: *RouteScreen = #addr_of(SCREEN_A);
+    let bp: *RouteScreen = #addr_of(SCREEN_B);
+    let outlet_v: *u8 = find_view_by_id(host.raw(), "outlet");
+    assert outlet_v != (0 as *u8);
+
+    // First visit: staged + attached, on_attach fired once.
+    let _1: facet::Handle = facet::find("outlet", nav_cp).switch_to((*ap));
+    assert facet::is_attached(ap as *u8);
+    assert SCREEN_A.attaches == 1;
+    assert ak::View::from_raw(outlet_v).subviews().count() == (1 as usize);
+    let a_title: *u8 = find_view_by_id(outlet_v, "title");
+    assert a_title != (0 as *u8);
+
+    // Switch to B: A parks (on_detach fires, views kept), B stages + attaches.
+    let _2: facet::Handle = facet::find("outlet", nav_cp).switch_to((*bp));
+    assert SCREEN_A.detaches == 1;
+    assert !facet::is_attached(ap as *u8);
+    assert SCREEN_B.attaches == 1;
+    assert ak::View::from_raw(outlet_v).subviews().count() == (1 as usize);
+
+    // Switching to the attached sibling is a no-op.
+    let _3: facet::Handle = facet::find("outlet", nav_cp).switch_to((*bp));
+    assert SCREEN_B.attaches == 1;
+    assert SCREEN_B.detaches == 0;
+
+    // Back to A: the SAME views return — parked, not rebuilt.
+    let _4: facet::Handle = facet::find("outlet", nav_cp).switch_to((*ap));
+    assert SCREEN_A.attaches == 2;
+    assert SCREEN_B.detaches == 1;
+    assert find_view_by_id(outlet_v, "title") == a_title;
+
+    facet::router_evict(outlet_v);
+    unmount_all();
+}
+
+#[test]
+fn switch_to_evicts_with_its_outlet_and_restages() {
+    unmount_all();
+    lifecycle_install();
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 400.0 });
+    let _h: f64 = mount_component(NAV_HOST.build, host: host.raw());
+    let nav_cp: *u8 = #addr_of(NAV_HOST) as *u8;
+
+    SCREEN_A.tag = text::from_str("A"); SCREEN_A.attaches = 0; SCREEN_A.detaches = 0;
+    SCREEN_B.tag = text::from_str("B"); SCREEN_B.attaches = 0; SCREEN_B.detaches = 0;
+    let ap: *RouteScreen = #addr_of(SCREEN_A);
+    let bp: *RouteScreen = #addr_of(SCREEN_B);
+    let outlet_v: *u8 = find_view_by_id(host.raw(), "outlet");
+
+    let _1: facet::Handle = facet::find("outlet", nav_cp).switch_to((*ap));
+    let _2: facet::Handle = facet::find("outlet", nav_cp).switch_to((*bp));   // A parked, B attached
+
+    // A structural swap of the outlet fires the router's eviction: the
+    // attached sibling detaches, every parked tree of this outlet is dropped.
+    let _sc: facet::Handle = facet::find("outlet", nav_cp).set_child(facet::box());
+    assert SCREEN_B.detaches == 1;
+    assert !facet::is_attached(bp as *u8);
+    assert !facet::router_staged_of(ap as *u8).valid();
+    assert !facet::router_staged_of(bp as *u8).valid();
+
+    // The next switch_to re-stages FRESH (a rebuild).
+    let _3: facet::Handle = facet::find("outlet", nav_cp).switch_to((*ap));
+    assert SCREEN_A.attaches == 2;
+    assert facet::is_attached(ap as *u8);
+    assert find_view_by_id(outlet_v, "title") != (0 as *u8);
+
+    facet::router_evict(outlet_v);
+    unmount_all();
+}
+
+#[test]
+fn switch_to_theme_change_drops_parked_keeps_attached() {
+    unmount_all();
+    lifecycle_install();
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 400.0 });
+    let _h: f64 = mount_component(NAV_HOST.build, host: host.raw());
+    let nav_cp: *u8 = #addr_of(NAV_HOST) as *u8;
+
+    SCREEN_A.tag = text::from_str("A"); SCREEN_A.attaches = 0; SCREEN_A.detaches = 0;
+    SCREEN_B.tag = text::from_str("B"); SCREEN_B.attaches = 0; SCREEN_B.detaches = 0;
+    let ap: *RouteScreen = #addr_of(SCREEN_A);
+    let bp: *RouteScreen = #addr_of(SCREEN_B);
+    let outlet_v: *u8 = find_view_by_id(host.raw(), "outlet");
+
+    let _1: facet::Handle = facet::find("outlet", nav_cp).switch_to((*ap));
+    let _2: facet::Handle = facet::find("outlet", nav_cp).switch_to((*bp));   // A parked, B attached
+    let b_title: *u8 = find_view_by_id(outlet_v, "title");
+
+    let old_theme: facet::Theme = facet::theme();
+    facet::set_theme(facet::Theme::new(primary: facet::Color::rgba(0.2f64, 0.3f64, 0.9f64, 1.0f64)));
+
+    // Parked A dropped (its baked colors went stale) ...
+    assert !facet::router_staged_of(ap as *u8).valid();
+    // ... the ATTACHED B stays, views untouched.
+    assert facet::router_staged_of(bp as *u8).valid();
+    assert facet::is_attached(bp as *u8);
+    assert find_view_by_id(outlet_v, "title") == b_title;
+
+    // Returning to A re-stages fresh against the new palette.
+    let _3: facet::Handle = facet::find("outlet", nav_cp).switch_to((*ap));
+    assert SCREEN_A.attaches == 2;
+    assert SCREEN_B.detaches == 1;
+
+    facet::router_evict(outlet_v);
+    facet::set_theme(old_theme);
+    unmount_all();
+}
+
+#[test]
+fn switch_to_negatives() {
+    unmount_all();
+    lifecycle_install();
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 400.0 });
+    let _h: f64 = mount_component(NAV_HOST.build, host: host.raw());
+    let nav_cp: *u8 = #addr_of(NAV_HOST) as *u8;
+    SCREEN_A.tag = text::from_str("A"); SCREEN_A.attaches = 0; SCREEN_A.detaches = 0;
+    let ap: *RouteScreen = #addr_of(SCREEN_A);
+
+    // A missing outlet is a full no-op: nothing staged, nothing attached.
+    let _g: facet::Handle = facet::find("no-such-outlet", nav_cp).switch_to((*ap));
+    assert SCREEN_A.attaches == 0;
+    assert !facet::is_attached(ap as *u8);
+    assert !facet::router_staged_of(ap as *u8).valid();
+    unmount_all();
+}
+
+// A width-tracking screen: a full-bleed box whose laid-out width IS its
+// container's, so a reflow at a new width is observable through its frame.
+struct ResizeScreen { n: i64 }
+
+impl ResizeScreen: facet::Component {
+    fn build(ref this) -> facet::Node {
+        var b: facet::Builder = facet::Builder::new();
+        b.add(facet::box().grow(1.0f64).key("fill"));
+        return facet::column(b).align_items(flex::Align::Stretch).grow(1.0f64);
+    }
+}
+
+impl ResizeScreen: facet::Lifecycle {
+    fn on_attach(ref this) { return; }
+    fn on_detach(ref this) { return; }
+}
+
+static RESIZE_SCREEN: ResizeScreen = #zero::[ResizeScreen]();
+
+// A staged subtree is connected to its outlet NATIVELY (addSubview), not in
+// the parent flex tree, so the split-pane / window relayout walks never
+// descend into it. stage installs a frame-change observer on the root that
+// re-lays the staged tree whenever the root resizes (an attached root tracks
+// its container via an autoresizing mask), so a switch_to'd pane keeps
+// reflowing on divider drags — the regression this guards.
+#[test]
+fn switch_to_reflows_on_root_resize() {
+    unmount_all();
+    lifecycle_install();
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 400.0 });
+    let _h: f64 = mount_component(NAV_HOST.build, host: host.raw());
+    let nav_cp: *u8 = #addr_of(NAV_HOST) as *u8;
+    let rp: *ResizeScreen = #addr_of(RESIZE_SCREEN);
+
+    let _1: facet::Handle = facet::find("outlet", nav_cp).switch_to((*rp));
+    let cp: *u8 = rp as *u8;
+    let root: *u8 = facet::router_staged_of(cp).root();
+    assert root != (0 as *u8);
+
+    // Baseline: the fill box laid out at the attached root's width.
+    let fill: *u8 = find_view_by_id(root, "fill");
+    assert fill != (0 as *u8);
+    let w0: f64 = ak::View::from_raw(fill).frame().w;
+    assert w0 > 0.0f64;
+
+    // Resize the root directly — what an autoresizing mask does on a split
+    // drag. The frame-change observer must re-lay the staged tree, so the fill
+    // box tracks the new width (without the observer it would stay at w0).
+    ak::View::from_raw(root).set_frame(rt::Rect { x: 0.0, y: 0.0, w: w0 + 160.0f64, h: 400.0f64 });
+    let w1: f64 = ak::View::from_raw(fill).frame().w;
+    assert w1 > w0 + 100.0f64;
+
+    facet::router_evict(find_view_by_id(host.raw(), "outlet"));
+    unmount_all();
+}
+
+// A staged screen with a plain keyed slot; on_attach set_child's a scroll whose
+// content far exceeds the viewport — the iris git/chat-panel shape. The
+// documentView must end up taller than the scroll frame (i.e. scrollable), which
+// under staging depends on the deferred fill reading the ATTACHED viewport size,
+// not the parked 320x480 mount size.
+struct ScrollScreen { n: i64 }
+
+impl ScrollScreen {
+    fn tall(ref this) -> facet::Node {
+        var b: facet::Builder = facet::Builder::new();
+        var i: i32 = 0;
+        while i < 40 {
+            b.add(facet::box().height(40.0f64));
+            i = i + 1;
+        }
+        return facet::scroll(b).grow(1.0f64).key("ss:scroll");
+    }
+}
+
+impl ScrollScreen: facet::Component {
+    fn build(ref this) -> facet::Node {
+        var slot: facet::Builder = facet::Builder::new();
+        slot.add(facet::column(facet::Builder::new()).grow(1.0f64));
+        var b: facet::Builder = facet::Builder::new();
+        b.add(facet::column(slot).grow(1.0f64).key("ss:slot"));
+        return facet::column(b).grow(1.0f64);
+    }
+}
+
+impl ScrollScreen {
+    // Populate AFTER attach — the async service-completion timing (on_ready),
+    // not during on_attach — set_child'ing a fresh scroll into the plain slot.
+    fn populate(ref this) {
+        let cp: *u8 = #addr_of(this) as *u8;
+        let slot: facet::Handle = facet::find("ss:slot", cp);
+        if slot.found() { let _h: facet::Handle = slot.set_child(this.tall()); }
+        return;
+    }
+}
+
+impl ScrollScreen: facet::Lifecycle {
+    fn on_attach(ref this) { return; }
+    fn on_detach(ref this) { return; }
+}
+
+static SCROLL_SCREEN: ScrollScreen = #zero::[ScrollScreen]();
+
+#[test]
+fn switch_to_scroll_sizes_document_to_attached_viewport() {
+    unmount_all();
+    lifecycle_install();
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 480.0, h: 600.0 });
+    let _h: f64 = mount_component(NAV_HOST.build, host: host.raw());
+    let nav_cp: *u8 = #addr_of(NAV_HOST) as *u8;
+    let sp: *ScrollScreen = #addr_of(SCROLL_SCREEN);
+
+    let _1: facet::Handle = facet::find("outlet", nav_cp).switch_to((*sp));
+    // The async completion lands AFTER attach fully returned — populate then.
+    SCROLL_SCREEN.populate();
+    let cp: *u8 = sp as *u8;
+
+    let scroll_v: *u8 = facet::find("ss:scroll", cp).view();
+    assert scroll_v != (0 as *u8);
+    let s: ak::ScrollView = ak::ScrollView::from_raw(scroll_v);
+    let viewport_h: f64 = s.as_view().frame().h;
+    assert viewport_h > 0.0f64;                 // scroll got a real (attached) frame
+    // 40 rows * 40pt ≈ 1600pt of content — must exceed the ~600pt viewport, and
+    // the documentView must be sized to that content height (else it can't scroll).
+    match s.document_view() {
+        option::Option[ak::View]::Some(dv) => {
+            let doc_h: f64 = dv.frame().h;
+            assert doc_h > viewport_h;           // scrollable: content taller than viewport
+            assert doc_h > 1000.0f64;            // sized to the real content, not the placeholder
+        }
+        option::Option[ak::View]::None => { assert false; }   // no documentView = broken
+    };
+
+    facet::router_evict(find_view_by_id(host.raw(), "outlet"));
+    unmount_all();
+}
+
+// The iris topology: the outlet lives inside a SPLIT's hosted pane (its own
+// deferred sizing), so a scroll switch_to'd there depends on the pane host being
+// sized before the staged root's fill runs. A `split` host is 0x0 until the
+// resize hook sizes it, so populate must happen after that pass — exactly what
+// the live app does (async completion arrives long after layout settles).
+struct SplitOutletHost { n: i64 }
+
+impl SplitOutletHost: facet::Component {
+    fn build(ref this) -> facet::Node {
+        var pane: facet::Builder = facet::Builder::new();
+        pane.add(facet::column(facet::Builder::new()).grow(1.0f64).align_items(flex::Align::Stretch).key("outlet"));
+        var second: facet::Builder = facet::Builder::new();
+        second.add(facet::column(pane).grow(1.0f64).align_items(flex::Align::Stretch));
+        var sb: facet::Builder = facet::Builder::new();
+        sb.add(facet::label("side"));
+        sb.add(facet::column(second).grow(1.0f64).align_items(flex::Align::Stretch));
+        return facet::split(sb, vertical: true, position: 140.0f64).grow(1.0f64).key("the-split");
+    }
+}
+
+static SPLIT_OUTLET_HOST: SplitOutletHost = #zero::[SplitOutletHost]();
+
+#[test]
+fn switch_to_scroll_sizes_document_inside_a_split_pane() {
+    unmount_all();
+    install();   // find + structural hooks + split resize wiring
+    lifecycle_install();
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 640.0, h: 600.0 });
+    let _h: f64 = mount_component(SPLIT_OUTLET_HOST.build, host: host.raw());
+    let hcp: *u8 = #addr_of(SPLIT_OUTLET_HOST) as *u8;
+
+    // Size the split's hosted second pane by hand (a live NSSplitView does this;
+    // headless it stays 0x0) and run the resize hook, so the outlet inside it
+    // gets a real frame — the state the app is in when the async load lands.
+    let sv_ptr: *u8 = find_view_by_id(host.raw(), "the-split");
+    assert sv_ptr != (0 as *u8);
+    var arranged: vec::Vec[ak::View] = ak::SplitView::from_raw(sv_ptr).arranged_subviews();
+    match arranged.at_ptr(1 as usize) {
+        option::Option[*ak::View]::Some(hp) => {
+            (*hp).set_frame(rt::Rect { x: 0.0, y: 0.0, w: 480.0f64, h: 600.0f64 });
+        }
+        option::Option[*ak::View]::None => { assert false; }
+    };
+    ui::relayout_split_panes(sv_ptr);
+
+    // Now switch the scroll screen into the pane-hosted outlet and populate.
+    let sp: *ScrollScreen = #addr_of(SCROLL_SCREEN);
+    let _1: facet::Handle = facet::find("outlet", hcp).switch_to((*sp));
+    SCROLL_SCREEN.populate();
+    let cp: *u8 = sp as *u8;
+
+    // GLOBAL find (cp=0, the agent-surface path) must resolve a staged
+    // component's view AND flex — parity with a presented component, so keyed
+    // structural verbs are not silently inert on a staged panel.
+    let gh: facet::Handle = facet::find("ss:scroll", 0 as *u8);
+    assert gh.found();
+    assert gh.flex() != (0 as *u8);
+
+    let scroll_v: *u8 = facet::find("ss:scroll", cp).view();
+    assert scroll_v != (0 as *u8);
+    let s: ak::ScrollView = ak::ScrollView::from_raw(scroll_v);
+    let viewport_h: f64 = s.as_view().frame().h;
+    assert viewport_h > 0.0f64;                 // outlet-in-split gave the scroll a real frame
+    match s.document_view() {
+        option::Option[ak::View]::Some(dv) => {
+            assert dv.frame().h > viewport_h;    // scrollable inside the split pane
+            assert dv.frame().h > 1000.0f64;
+        }
+        option::Option[ak::View]::None => { assert false; }
+    };
+
+    facet::router_evict(find_view_by_id(host.raw(), "outlet"));
     unmount_all();
 }
 

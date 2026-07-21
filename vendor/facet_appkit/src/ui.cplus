@@ -1321,11 +1321,15 @@ struct ListCtx {
     count: i64,
     opaque table: *u8,       // the NSTableView, for reload-on-resize
     last_width: f64,         // last content width; reload only when it changes
+    follow_tail: bool,       // was the viewport at the bottom when this resize
+                             // began? the debounced reload re-pins if so
+    opaque repin_target: *u8, // action target the debounced reload fires on
 }
 
 fn list_ds_pin_key() -> *u8 { return { 28694 as *u8 }; }
 fn list_del_pin_key() -> *u8 { return { 28695 as *u8 }; }
 fn list_ctx_key() -> *u8 { return { 28696 as *u8 }; }
+fn list_repin_pin_key() -> *u8 { return { 28700 as *u8 }; }
 
 // The width a CELL actually gets — the COLUMN's width, not the table frame.
 // Modern NSTableView styles inset cells horizontally, so the frame can be
@@ -1418,26 +1422,70 @@ fn list_view_for_row_imp(user: *u8, tv: *u8, col: *u8, row: i64) -> *u8 {
     return cell.raw();
 }
 
+// Is the viewport within 60pt of the content's bottom edge? The tail-follow
+// test — read BEFORE a reload changes the geometry. A scroll-less list (no
+// enclosing scroll view) counts as at-bottom.
+fn list_is_near_bottom(tbl: *u8) -> bool {
+    let esv: *u8 = { rt::msg_id(tbl, rt::sel(#str_ptr("enclosingScrollView\0"))) };
+    if esv == (0 as *u8) { return true; }
+    let clipv: *u8 = { rt::msg_id(esv, rt::sel(#str_ptr("contentView\0"))) };
+    if clipv == (0 as *u8) { return true; }
+    let b: rt::Rect = ak::View::from_raw(clipv).bounds();
+    let doc_h: f64 = ak::TableView::from_raw(tbl).as_view().frame().h;
+    return doc_h - (b.y + b.h) < 60.0f64;
+}
+
+// Pin the viewport to the very END of the content (not the last ROW — a
+// taller-than-viewport final row would keep its tail below the fold). Let the
+// table adopt its current height first, then scroll the document to its bottom
+// point (the table is flipped, so max-y = end; NSView clamps).
+fn list_scroll_to_end(tbl: *u8) {
+    let tvw: ak::TableView = ak::TableView::from_raw(tbl);
+    tvw.as_view().layout_subtree_if_needed();
+    let h: f64 = tvw.as_view().frame().h;
+    tvw.as_view().scroll_point(rt::Point { x: 0.0f64, y: h });
+    return;
+}
+
 // NSTableView caches row heights (and cells) by width, so a width change —
 // dragging a split, resizing the window — leaves wrapped-text rows measured for
 // the OLD width until something forces a re-query. Reload only on an actual
 // width change (height-only changes keep the heights valid), and DEBOUNCE it:
 // re-measuring every row on every resize frame is O(rows) per frame and janks
-// the drag. `performSelector:withObject:afterDelay:` schedules the reload in the
+// the drag. `performSelector:withObject:afterDelay:` schedules the work in the
 // DEFAULT run-loop mode, which does not run during a live drag (event-tracking
-// mode) — so cancelling+rescheduling each frame collapses to ONE reloadData
-// after the drag settles. reloadData re-queries heightOfRow and rebuilds the
-// visible cells at the final width; it doesn't change the table width, so no
-// re-trigger loop.
+// mode) — so cancelling+rescheduling each frame collapses to ONE pass after the
+// drag settles.
+//
+// The pass reloads AND re-pins the tail: a NARROWER width re-wraps rows TALLER,
+// growing the total height, so the scroll view's kept point offset would leave
+// the viewport ABOVE the new bottom (looks "scrolled up"); a wider width shrinks
+// it and NSScrollView clamps back down on its own. So we record whether the
+// viewport was at the bottom NOW — before the reload re-measures heights (a
+// width-only drag keeps the old heights until then, so this read is valid) — and
+// scroll to the new end after, only if it was.
 fn list_reload_on_resize(ctx: *u8) {
     let c: *ListCtx = { ctx as *ListCtx };
     let tbl: *u8 = { (*c).table };
     let w: f64 = ak::TableView::from_raw(tbl).as_view().frame().w;
     if w == { (*c).last_width } { return; }
     { (*c).last_width = w; }
-    let reload_sel: *u8 = rt::sel(#str_ptr("reloadData\0"));
-    rt::msg_void_id_id_id(rt::get_class(#str_ptr("NSObject\0")), rt::sel(#str_ptr("cancelPreviousPerformRequestsWithTarget:selector:object:\0")), tbl, reload_sel, 0 as *u8);
-    rt::msg_void_id_id_f64(tbl, rt::sel(#str_ptr("performSelector:withObject:afterDelay:\0")), reload_sel, 0 as *u8, 0.05f64);
+    { (*c).follow_tail = list_is_near_bottom(tbl); }
+    let t: *u8 = { (*c).repin_target };
+    let sel: *u8 = akx::action_ctx_sel();
+    rt::msg_void_id_id_id(rt::get_class(#str_ptr("NSObject\0")), rt::sel(#str_ptr("cancelPreviousPerformRequestsWithTarget:selector:object:\0")), t, sel, 0 as *u8);
+    rt::msg_void_id_id_f64(t, rt::sel(#str_ptr("performSelector:withObject:afterDelay:\0")), sel, 0 as *u8, 0.05f64);
+    return;
+}
+
+// The debounced resize pass (fired on the ctx's repin target): re-measure every
+// row at the settled width, then re-pin the tail if the viewport was at the
+// bottom when the drag began.
+fn list_repin_after_reload(sender: *u8, ctx: *u8) {
+    let c: *ListCtx = { ctx as *ListCtx };
+    let tbl: *u8 = { (*c).table };
+    ak::TableView::from_raw(tbl).reload_data();
+    if { (*c).follow_tail } { list_scroll_to_end(tbl); }
     return;
 }
 
@@ -1456,7 +1504,11 @@ fn list(count: i64, row: fn(i64, *u8) -> flex::Node, ctx: *u8 = 0 as *u8, agent_
     tv.set_intercell_spacing(rt::Size { w: 0.0f64, h: 0.0f64 });
 
     let lbox: *ListCtx = { malloc(#size_of::[ListCtx]()) as *ListCtx };
-    { *lbox = ListCtx { row: row, caller_ctx: ctx, count: count, table: tv.raw(), last_width: 0.0f64 }; }
+    // The resize pass fires on this target (reload + conditional tail re-pin);
+    // pinned to the table so it lives exactly as long as the list.
+    let repin: *u8 = akx::action_ctx_target(list_repin_after_reload, lbox as *u8);
+    synth::retain_associated(tv.raw(), list_repin_pin_key(), repin);
+    { *lbox = ListCtx { row: row, caller_ctx: ctx, count: count, table: tv.raw(), last_width: 0.0f64, follow_tail: false, repin_target: repin }; }
     // Pin the ctx on the table (ASSIGN — a malloc box, not an objc object) so
     // `list_set_count` can find it from the mounted view and grow the list.
     rt::set_associated_object(tv.raw(), list_ctx_key(), lbox as *u8, 0 as usize);
@@ -1512,28 +1564,11 @@ fn list_set_count(view_ptr: *u8, count: i64, scroll_to_end: bool = false, force_
     if cp == (0 as *u8) { return false; }
     let c: *ListCtx = { cp as *ListCtx };
     // Near-bottom test BEFORE the reload changes the geometry.
-    var near: bool = true;
-    let esv: *u8 = { rt::msg_id(tbl, rt::sel(#str_ptr("enclosingScrollView\0"))) };
-    if esv != (0 as *u8) {
-        let clipv: *u8 = { rt::msg_id(esv, rt::sel(#str_ptr("contentView\0"))) };
-        if clipv != (0 as *u8) {
-            let b: rt::Rect = ak::View::from_raw(clipv).bounds();
-            let doc_h: f64 = ak::TableView::from_raw(tbl).as_view().frame().h;
-            near = doc_h - (b.y + b.h) < 60.0f64;
-        }
-    }
+    let near: bool = list_is_near_bottom(tbl);
     { (*c).count = count; }
-    let tvw: ak::TableView = ak::TableView::from_raw(tbl);
-    tvw.reload_data();
+    ak::TableView::from_raw(tbl).reload_data();
     if (force_end || (scroll_to_end && near)) && count > (0 as i64) {
-        // Pin to the very END of the content, not the last ROW —
-        // scrollRowToVisible only brings a row's TOP edge in, so a
-        // taller-than-viewport final row kept its tail below the fold. Let the
-        // table adopt its new height first, then scroll the document to its
-        // bottom point (NSView clamps; the table is flipped, so max-y = end).
-        tvw.as_view().layout_subtree_if_needed();
-        let h: f64 = tvw.as_view().frame().h;
-        tvw.as_view().scroll_point(rt::Point { x: 0.0f64, y: h });
+        list_scroll_to_end(tbl);
     }
     return true;
 }
@@ -3121,7 +3156,7 @@ fn list_test_row(i: i64, ctx: *u8) -> flex::Node {
 fn test_list_reports_row_count() {
     let n: flex::Node = list(count: 500 as i64, row: list_test_row);
     assert n.has_payload();                               // scroll-wrapped table leaf
-    var ctx: ListCtx = ListCtx { row: list_test_row, caller_ctx: 0 as *u8, count: 500 as i64, table: 0 as *u8, last_width: 0.0f64 };
+    var ctx: ListCtx = ListCtx { row: list_test_row, caller_ctx: 0 as *u8, count: 500 as i64, table: 0 as *u8, last_width: 0.0f64, follow_tail: false, repin_target: 0 as *u8 };
     assert list_num_rows_imp(#addr_of(ctx) as *u8, 0 as *u8) == (500 as i64);
     return;
 }
@@ -3144,7 +3179,7 @@ fn test_list_measures_at_the_column_width() {
     assert list_col_width(dv) == 260.0f64;
     // A wrapped row measured at 260 is TALLER than at 300 — the row height
     // follows the narrower, true cell width.
-    var ctx: ListCtx = ListCtx { row: list_test_row, caller_ctx: 0 as *u8, count: 3 as i64, table: 0 as *u8, last_width: 0.0f64 };
+    var ctx: ListCtx = ListCtx { row: list_test_row, caller_ctx: 0 as *u8, count: 3 as i64, table: 0 as *u8, last_width: 0.0f64, follow_tail: false, repin_target: 0 as *u8 };
     let h_narrow: f64 = list_height_imp(#addr_of(ctx) as *u8, dv, 0 as i64);
     assert h_narrow > 0.0f64;
     return;
@@ -3168,11 +3203,44 @@ fn test_list_set_count_grows_a_mounted_list() {
 }
 
 #[test]
+fn test_list_resize_captures_tail_follow_and_wires_repin() {
+    // The resize path's SYNCHRONOUS half: a mounted list wires a repin target,
+    // and a width change records the tail-follow decision + the new width (the
+    // debounced reload+repin itself needs a run loop and real scroll geometry,
+    // so it is verified live). Guards the wiring that would silently break the
+    // "narrowing scrolls the chat up" fix.
+    let n: flex::Node = list(count: 5 as i64, row: list_test_row);
+    let dv: *u8 = { rt::msg_id(n.payload(), rt::sel(#str_ptr("documentView\0"))) };
+    let cp: *u8 = rt::get_associated_object(dv, list_ctx_key());
+    assert cp != (0 as *u8);
+    let c: *ListCtx = { cp as *ListCtx };
+    assert { (*c).repin_target } != (0 as *u8);          // resize pass has a target to fire on
+
+    // A standalone table (no enclosing scroll view) reads as at-bottom — the
+    // guard path that keeps a scroll-less list pinning.
+    let bare: ak::TableView = ak::TableView::new(rt::Rect { x: 0.0, y: 0.0, w: 100.0f64, h: 50.0f64 });
+    assert list_is_near_bottom(bare.raw());
+
+    // A width change records BOTH the new width and the tail-follow decision
+    // (whatever the geometry reads — captured before the reload changes it).
+    ak::TableView::from_raw(dv).as_view().set_frame(rt::Rect { x: 0.0, y: 0.0, w: 180.0f64, h: 300.0f64 });
+    let expect: bool = list_is_near_bottom(dv);
+    list_reload_on_resize(cp);
+    assert { (*c).last_width } == 180.0f64;
+    assert { (*c).follow_tail } == expect;               // populated from near-bottom
+    // A same-width call is a no-op — no spurious reschedule.
+    let before: f64 = { (*c).last_width };
+    list_reload_on_resize(cp);
+    assert { (*c).last_width } == before;
+    return;
+}
+
+#[test]
 fn test_list_row_measures_and_builds_cell() {
     // Row height is the flexed content's natural height at the list width; the
     // returned cell hosts that content (this is what a recycled cell re-fills).
     let tv: ak::TableView = ak::TableView::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0f64, h: 400.0f64 });
-    var ctx: ListCtx = ListCtx { row: list_test_row, caller_ctx: 0 as *u8, count: 3 as i64, table: 0 as *u8, last_width: 0.0f64 };
+    var ctx: ListCtx = ListCtx { row: list_test_row, caller_ctx: 0 as *u8, count: 3 as i64, table: 0 as *u8, last_width: 0.0f64, follow_tail: false, repin_target: 0 as *u8 };
     let h: f64 = list_height_imp(#addr_of(ctx) as *u8, tv.raw(), 0 as i64);
     assert h > 0.0f64;                                    // measured a real, wrapped height
     let cell_ptr: *u8 = list_view_for_row_imp(#addr_of(ctx) as *u8, tv.raw(), 0 as *u8, 0 as i64);

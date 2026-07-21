@@ -433,6 +433,9 @@ fn set_theme_changed_fn(f: fn()) { THEME_CHANGED_FN = f; return; }
 
 fn set_theme(take t: Theme) {
     THEME = t;
+    // Parked outlet siblings bake build-time colors — drop them so the next
+    // switch_to re-stages against the new palette (see the outlet section).
+    router_theme_invalidate();
     let f: fn() = THEME_CHANGED_FN;
     if f != (0 as fn()) { f(); }
     return;
@@ -1587,6 +1590,40 @@ impl Handle {
         return h;
     }
 
+    // Show sibling `c` in this (keyed) outlet, PARKING whatever it showed
+    // before — the switching mirror of `present` for siblings the user returns
+    // to (tabs, inspector panes). `c` is staged on its first visit and its
+    // view tree survives every switch after that; `present` would rebuild it.
+    // See the outlet section below for the full contract (lifecycle, eviction,
+    // theme changes). Showing the already-attached sibling is a no-op.
+    // Chainable; does nothing on a missing handle.
+    fn switch_to[C: Component + Lifecycle](this, ref c: C) -> Handle {
+        if !this.found() { return this; }
+        let container: *u8 = this.view();
+        if container == (0 as *u8) { return this; }
+        let cp: *u8 = #addr_of(c) as *u8;
+        let cur: *u8 = router_attached_cp(container);
+        if cur == cp { return this; }
+        // Park the current occupant (its on_detach fires as it leaves).
+        if cur != (0 as *u8) { let _d: bool = router_staged_of(cur).detach(); }
+        // Stage this sibling on its first visit.
+        var s: Staged = router_staged_of(cp);
+        if !s.valid() {
+            s = stage(router_build_tramp::[C], ctx: cp,
+                on_attach: router_attach_tramp::[C], on_attach_ctx: cp,
+                on_detach: lc_detach_tramp::[C], on_detach_ctx: cp);
+            if !s.valid() { return this; }   // no backend installed
+            let reg: *vec::Vec[RouterStaged] = #addr_of(ROUTER_STAGED);
+            (*reg).append(RouterStaged { _container: container, _cp: cp, _staged: s });
+        }
+        let _ok: bool = this.attach(s);
+        router_set_attached(container, cp);
+        // Arm the outlet's eviction hook (idempotent: the registry keeps one
+        // entry per container).
+        lc_register(this, router_evict, container);
+        return this;
+    }
+
     // The COMPONENT INSTANCE this container is presenting — the address
     // `present` registered — or 0 when nothing presented is here. The
     // instance-level analog of the view this Handle already is: `find`
@@ -1992,6 +2029,181 @@ fn is_attached(cp: *u8) -> bool {
 //     impl ScreenY { fn is_attached(ref this) -> bool { return facet::attached(this); } }
 fn attached[C](ref c: C) -> bool {
     return is_attached(#addr_of(c) as *u8);
+}
+
+// ---- the outlet: switching among long-lived siblings ------------------------
+// `present` REBUILDS: the right verb when a screen's appearance derives fully
+// from surviving data (fields, services) — forward navigation, one-shot
+// screens. For siblings the user RETURNS to (tab panels, inspector panes),
+// rebuilding discards the view state that lives only in the native tree: a
+// list's scroll offset, half-typed input, measured row heights. `switch_to`
+// is the verb for that shape: each sibling is staged ONCE (built off-canvas)
+// on its first visit, and switching moves the parked view trees in and out of
+// the outlet — the views survive, so a sibling comes back exactly as it was
+// left.
+//
+// The rule of thumb: tabs or panes you switch back and forth between ->
+// `switch_to`; showing a new screen -> `present`. Don't mix the two verbs on
+// one outlet.
+//
+//     fn show(ref this, idx: i32) {
+//         let out: facet::Handle = facet::find("panels:outlet");
+//         if idx == (0 as i32) { let _h: facet::Handle = out.switch_to(this.chat); }
+//         else                 { let _h: facet::Handle = out.switch_to(this.files); }
+//         return;
+//     }
+//
+// Lifecycle matches `present`: the incoming sibling's `on_attach` fires on
+// EVERY switch-in (guarded loads / keyed-slot populates keep data fresh), and
+// the outgoing sibling's `on_detach` fires as it parks. Like `present`, a
+// switched sibling must outlive its outlet (the registry holds its address).
+//
+// Two things the outlet manages so the app never has to:
+//   - EVICTION: when the outlet itself leaves the tree (a body swap, a window
+//     teardown), the attached sibling detaches (its on_detach fires) and every
+//     parked tree of that outlet is dropped; the next switch_to re-stages.
+//   - THEME changes: parked trees bake build-time colors, so `set_theme` drops
+//     them (the ATTACHED sibling stays — the app's own theme path repaints or
+//     rebuilds what is on screen); the next switch_to re-stages with the new
+//     palette.
+
+// One record per staged sibling: which outlet it belongs to, its identity
+// (the component address), and its parked-tree handle.
+struct RouterStaged {
+    opaque _container: *u8,
+    opaque _cp: *u8,
+    _staged: Staged,
+}
+
+// One record per outlet: which sibling is attached right now (0 = none).
+struct RouterSlot {
+    opaque _container: *u8,
+    opaque _cp: *u8,
+}
+
+static ROUTER_STAGED: vec::Vec[RouterStaged] = #zero::[vec::Vec[RouterStaged]]();
+static ROUTER_SLOTS: vec::Vec[RouterSlot] = #zero::[vec::Vec[RouterSlot]]();
+
+fn router_slot_index(container: *u8) -> i64 {
+    let reg: *vec::Vec[RouterSlot] = #addr_of(ROUTER_SLOTS);
+    let n: usize = { (*reg).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*reg).at_ptr(i) {
+            option::Option[*RouterSlot]::Some(sp) => {
+                if { (*sp)._container } == container { return i as i64; }
+            }
+            option::Option[*RouterSlot]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return -1;
+}
+
+// The attached sibling of `container` (0 when none / unknown outlet).
+fn router_attached_cp(container: *u8) -> *u8 {
+    let si: i64 = router_slot_index(container);
+    if si < (0 as i64) { return 0 as *u8; }
+    let reg: *vec::Vec[RouterSlot] = #addr_of(ROUTER_SLOTS);
+    match (*reg).at_ptr(si as usize) {
+        option::Option[*RouterSlot]::Some(sp) => { return { (*sp)._cp }; }
+        option::Option[*RouterSlot]::None => { return 0 as *u8; }
+    }
+}
+
+fn router_staged_of(cp: *u8) -> Staged {
+    let reg: *vec::Vec[RouterStaged] = #addr_of(ROUTER_STAGED);
+    let n: usize = { (*reg).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*reg).at_ptr(i) {
+            option::Option[*RouterStaged]::Some(rp) => {
+                if { (*rp)._cp } == cp { return { (*rp)._staged }; }
+            }
+            option::Option[*RouterStaged]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return Staged::none();
+}
+
+// Record `cp` as the attached sibling of `container`.
+fn router_set_attached(container: *u8, cp: *u8) {
+    let reg: *vec::Vec[RouterSlot] = #addr_of(ROUTER_SLOTS);
+    let si: i64 = router_slot_index(container);
+    if si < (0 as i64) {
+        (*reg).append(RouterSlot { _container: container, _cp: cp });
+        return;
+    }
+    match (*reg).at_ptr(si as usize) {
+        option::Option[*RouterSlot]::Some(sp) => { { (*sp)._cp = cp; } }
+        option::Option[*RouterSlot]::None => { }
+    }
+    return;
+}
+
+// The outlet's eviction hook (registered through the same container registry
+// `present` uses, so every structural removal path fires it): park the
+// attached sibling, then drop every parked tree that belongs to this outlet.
+fn router_evict(container: *u8) {
+    let cur: *u8 = router_attached_cp(container);
+    if cur != (0 as *u8) { let _d: bool = router_staged_of(cur).detach(); }
+    let slots: *vec::Vec[RouterSlot] = #addr_of(ROUTER_SLOTS);
+    let si: i64 = router_slot_index(container);
+    if si >= (0 as i64) { let _s: option::Option[RouterSlot] = { (*slots).remove(si as usize) }; }
+    let reg: *vec::Vec[RouterStaged] = #addr_of(ROUTER_STAGED);
+    var i: usize = { (*reg).count() };
+    while i > (0 as usize) {
+        i = i -% (1 as usize);
+        var stale: bool = false;
+        match (*reg).at_ptr(i) {
+            option::Option[*RouterStaged]::Some(rp) => {
+                if { (*rp)._container } == container {
+                    let _u: bool = { (*rp)._staged }.unstage();
+                    stale = true;
+                }
+            }
+            option::Option[*RouterStaged]::None => { }
+        }
+        if stale { let _r: option::Option[RouterStaged] = { (*reg).remove(i) }; }
+    }
+    return;
+}
+
+// Theme change: drop every PARKED sibling (baked colors went stale); keep the
+// attached ones — what is on screen is the app's own theme path's concern.
+fn router_theme_invalidate() {
+    let reg: *vec::Vec[RouterStaged] = #addr_of(ROUTER_STAGED);
+    var i: usize = { (*reg).count() };
+    while i > (0 as usize) {
+        i = i -% (1 as usize);
+        var stale: bool = false;
+        match (*reg).at_ptr(i) {
+            option::Option[*RouterStaged]::Some(rp) => {
+                let on_screen: bool = router_attached_cp({ (*rp)._container }) == { (*rp)._cp };
+                if !on_screen {
+                    let _u: bool = { (*rp)._staged }.unstage();
+                    stale = true;
+                }
+            }
+            option::Option[*RouterStaged]::None => { }
+        }
+        if stale { let _r: option::Option[RouterStaged] = { (*reg).remove(i) }; }
+    }
+    return;
+}
+
+// Type-erasing trampolines for the outlet's staged wiring (the `switch_to`
+// analogs of `lc_detach_tramp`).
+fn router_build_tramp[C: Component](p: *u8) -> Node {
+    let q: *C = p as *C;
+    return { (*q).build() };
+}
+
+fn router_attach_tramp[C: Lifecycle](p: *u8) {
+    let q: *C = p as *C;
+    { (*q).on_attach() };
+    return;
 }
 
 // ---- screens: Chrome + Screen + ScreenBox -----------------------------------
