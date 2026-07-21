@@ -470,6 +470,15 @@ fn is_detached(view: *u8) -> bool {
     return is_null(rt::msg_id(view, rt::sel(#str_ptr("window\0"))));
 }
 
+// Read an NSString-valued accessibility property ("accessibilityLabel\0",
+// "accessibilityHelp\0") off a view; empty Text when absent/unanswered.
+fn view_a11y_string(view: *u8, prop: str) -> text::Text {
+    if !responds_to(view, #str_ptr(prop)) { return text::new(); }
+    let v: *u8 = rt::msg_id(view, rt::sel(#str_ptr(prop)));
+    if is_null(v) { return text::new(); }
+    return bridge::to_text(v);
+}
+
 // Recursively register a view subtree: classify the view, add it to the
 // identity tree (a pinned agent-id becomes the developer id, which also exposes
 // the node), reflect its live enabled state, map NodeId->view, then recurse into
@@ -488,6 +497,17 @@ fn walk(ref reg: identity::Registry, ref views: vec::Vec[ViewRef], view: *u8, pa
         }
     };
     reg.set_enabled(reg_node, live_enabled(view));
+    // The agent-facing NAME: the accessibility label when the dev set one
+    // (facet .accessibility_label — the override channel, essential for
+    // icon-only controls), else the widget's own title/text. The exposed
+    // describe is the agent's tool list; a tool needs a human name.
+    var nm: text::Text = view_a11y_string(view, "accessibilityLabel\0");
+    if nm.is_empty() { nm = node_text(view, role); }
+    if nm.is_empty() == false { reg.set_name(reg_node, { nm.view() }); }
+    // The intent DESCRIPTION rides the accessibility help/hint channel
+    // (facet .accessibility_hint) — dev-authored, no widget fallback.
+    let ds: text::Text = view_a11y_string(view, "accessibilityHelp\0");
+    if ds.is_empty() == false { reg.set_description(reg_node, { ds.view() }); }
     // Declared drive_none (labels, groups, windows) → observe-only so the
     // agent may read but never act. Only when an affordance was recorded —
     // hand-built widgets without set_affordance keep the previous default.
@@ -842,6 +862,7 @@ fn mcp_describe(p: *u8) -> vec::Vec[mcpb::UiNode] {
                     },
                     is_hidden: { (*n).is_hidden },
                     text: ctext((*n).text.view()),
+                    description: text::new(),
                     actionable: { (*n).actionable },
                     parent: { (*n).parent },
                 });
@@ -962,6 +983,7 @@ fn mcp_describe_exposed(p: *u8) -> vec::Vec[mcpb::UiNode] {
                     frame: mcpb::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 },
                     is_hidden: false,
                     text: text::from_str({ (*n).name.view() }),
+                    description: text::from_str({ (*n).description.view() }),
                     actionable: { (*n).actionable },
                     parent: { (*n).parent },
                 });

@@ -177,6 +177,7 @@ struct NodeView {
     id: text::Text,
     role: Role,
     name: text::Text,
+    description: text::Text,
     parent: option::Option[usize],
     enabled: bool,
     actionable: bool,
@@ -220,6 +221,7 @@ struct Registry {
     roles: vec::Vec[Role],
     parents: vec::Vec[option::Option[usize]],
     names: vec::Vec[text::Text],
+    descriptions: vec::Vec[text::Text],
     enabled: vec::Vec[bool],
     actionable: vec::Vec[bool],
     exposed: vec::Vec[bool],
@@ -235,6 +237,7 @@ fn new() -> Registry {
         roles: vec::new::[Role](),
         parents: vec::new::[option::Option[usize]](),
         names: vec::new::[text::Text](),
+        descriptions: vec::new::[text::Text](),
         enabled: vec::new::[bool](),
         actionable: vec::new::[bool](),
         exposed: vec::new::[bool](),
@@ -351,6 +354,24 @@ impl Registry {
         };
     }
 
+    // Set the agent-facing intent description for this node ("opens the New
+    // Project wizard"). Dev-authored — it has no widget source; with the name
+    // it is the node's tool schema in the exposed describe.
+    fn set_description(ref this, node: usize, d: str) {
+        assert this.is_valid(node);
+        this.descriptions.set(text::from_str(d), node);
+        return;
+    }
+
+    // The intent description ("" if unset), a view into registry-owned storage.
+    fn description_of(this, node: usize) -> str {
+        assert this.is_valid(node);
+        return match this.descriptions.at_ptr(node) {
+            option::Option[*text::Text]::Some(p) => (*p).view(),
+            option::Option[*text::Text]::None => "",
+        };
+    }
+
     fn set_enabled(ref this, node: usize, on: bool) {
         assert this.is_valid(node);
         this.enabled.set(on, node);
@@ -418,6 +439,7 @@ impl Registry {
                     id: text::from_str(this.id_view(i)),
                     role: this.role_of(i),
                     name: text::from_str(this.name_of(i)),
+                    description: text::from_str(this.description_of(i)),
                     parent: this.nearest_exposed_ancestor(i),
                     enabled: this.is_enabled(i),
                     actionable: this.is_agent_actionable(i),
@@ -464,6 +486,7 @@ impl Registry {
         this.roles.append(role);
         this.parents.append(parent);
         this.names.append(text::from_str(""));
+        this.descriptions.append(text::from_str(""));
         this.enabled.append(true);
         this.actionable.append(true);
         this.exposed.append(exposed);
@@ -881,4 +904,28 @@ fn test_pack_affordance_roundtrips_and_is_non_null() {
     // Marker bit keeps every pack non-null (safe as associated-object ASSIGN).
     assert pack_affordance(0 as u32, 0 as u32) != (0 as *u8);
     assert is_packed_affordance(0 as *u8) == false;
+}
+
+#[test]
+fn describe_carries_name_and_description() {
+    var r: Registry = new();
+    let n: usize = r.add_child(r.root(), option::Option[str]::Some("launcher:new"), Role::Button);
+    r.set_name(n, "New Project");
+    r.set_description(n, "opens the New Project wizard");
+    let views: vec::Vec[NodeView] = r.describe();
+    // root + the exposed button
+    assert views.count() == (2 as usize);
+    let ok: bool = match views.at_ptr(1 as usize) {
+        option::Option[*NodeView]::Some(v) => {
+            let nm: str = { (*v).name.view() };
+            let dsc: str = { (*v).description.view() };
+            nm == "New Project" && dsc == "opens the New Project wizard"
+        }
+        option::Option[*NodeView]::None => false,
+    };
+    assert ok;
+    // Unset stays empty, never traps.
+    let m: usize = r.add_child(r.root(), option::Option[str]::Some("bare"), Role::Button);
+    assert r.name_of(m) == "";
+    assert r.description_of(m) == "";
 }

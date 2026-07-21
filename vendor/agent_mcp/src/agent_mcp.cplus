@@ -131,6 +131,11 @@ fn node_to_json(p: *backend::UiNode) -> json::Value {
     m.append(member("frame", json::Value::Object(frame)));
     m.append(member("hidden", jbool({ (*p).is_hidden })));
     m.append(member("text", jstr({ (*p).text })));
+    // Dev-authored intent — only on the wire when present (keeps full lean).
+    let dp: *text::Text = { #addr_of((*p).description) };
+    if { (*dp).view() } != "" {
+        m.append(member("description", jstr({ (*p).description })));
+    }
     m.append(member("actionable", jbool({ (*p).actionable })));
     m.append(member("parent", parent_val));
     return json::Value::Object(m);
@@ -425,6 +430,7 @@ fn fake_node(id: str) -> backend::UiNode {
         frame: backend::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 },
         is_hidden: false,
         text: text::new(),
+        description: text::from_str("does the thing"),
         actionable: true,
         parent: option::Option[usize]::None,
     };
@@ -467,6 +473,7 @@ fn describe_ui_mode_selects_the_view() {
     let r1: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all), "{\"method\":\"describe_ui\",\"id\":1}");
     assert r1.contains("exposed-node");
     assert r1.contains("structural-node") == false;
+    assert r1.contains("does the thing");   // description rides the wire
     // An explicit "exposed" reads the same.
     let r2: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all), "{\"method\":\"describe_ui\",\"params\":{\"mode\":\"exposed\"},\"id\":2}");
     assert r2.contains("exposed-node");

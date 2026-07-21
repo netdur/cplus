@@ -38,6 +38,9 @@ struct UiNode {
     frame: Rect,
     is_hidden: bool,
     text: text::Text,
+    // Agent-facing intent ("opens the New Project wizard"), dev-authored.
+    // Carried by the curated exposed view; "" elsewhere.
+    description: text::Text,
     actionable: bool,
     parent: option::Option[usize],
 }
