@@ -12,6 +12,14 @@ earlier history lives in each version's archived plan.
 > instantiation is now a first-class fn-pointer value.
 
 ### Language
+- **`guard var` / `if var` / `while var`**: the pattern-binding statements
+  take `var` in place of `let`, making the bound value(s) mutable — `guard
+  var` in the enclosing scope, `if var` / `while var` inside the body
+  (fresh per iteration for `while var`). Previously pattern bindings were
+  always frozen; mutating one meant an extra `var x = v;` copy. The `let`
+  spellings and all pattern-let diagnostics (E0347/E0348/E0349/E0350/E0351)
+  are unchanged; a `guard var` complement binding (`else |Pat|`) stays
+  immutable, since it is scoped to the diverging else block.
 - **Value-turbofish**: `f::[T]` with no call following is a fn-pointer VALUE to
   the concrete instantiation. Bounds are enforced at the take site (E0502),
   arity at E0501; `::[T]` on a non-generic name is E0821. This makes the
@@ -41,7 +49,24 @@ earlier history lives in each version's archived plan.
   outgoing component first. Nested outlets included.
 - **Liveness**: `facet::attached(this)` / `is_attached(cp)` answer for mounted
   components (staged components keep answering by attach state).
-- `stage` / `attach` / `detach` remain unchanged as the view-parking tool.
+- **`Handle.switch_to(component)`** — the outlet verb for siblings the user
+  RETURNS to (tabs, inspector panes, pagers). Each sibling is built once on
+  its first visit; switching parks the outgoing view tree and re-attaches
+  the incoming one, so view state (scroll offset, in-progress input)
+  survives the switch. `on_attach` fires on every switch-in, `on_detach` as
+  a sibling parks; switching to the shown sibling is a no-op. The outlet
+  handles its own eviction (outlet leaves the tree → attached sibling
+  detaches, parked trees drop) and theme changes (`set_theme` drops parked
+  trees; the next switch re-stages against the new palette). Rule of thumb:
+  returning siblings → `switch_to`; a new screen → `present`; don't mix the
+  verbs on one outlet.
+- `stage` / `attach` / `detach` remain the manual view-parking tier
+  `switch_to` is built on. Staging now installs a frame-change observer on the
+  parked root, so attached staged content re-lays its flex tree on ANY resize
+  — window resize AND split-divider drag. (A staged subtree connects to its
+  outlet natively, not in the parent flex tree, so the split-pane relayout
+  walk never descended into it; before the observer a `switch_to`'d pane
+  stopped reflowing on divider drags until re-attached.)
 - Backend host contract: `run_window` splits into `open_window` (mounts,
   returns) and `run_loop` (blocks), so hosts can act between mount and loop.
 
@@ -59,6 +84,59 @@ earlier history lives in each version's archived plan.
 - **`on_worker(input, f)`** — awaitable blocking work: `f(input)` runs on a
   worker thread and the awaiting task resumes with the result.
 
+### facet — App, screens, and navigation
+- **`Screen`** — a component that also names its window: one conformance,
+  `fn chrome(this) -> Chrome`, where `Chrome` is a plain record built with
+  named parameters (title, size, minimums, titlebar flags, zoom).
+  `runtime::run_screen(screen)` is `run_component` with the window read from
+  the screen; it still returns the instance with its final field state.
+- **`App`** — the process tier: named screen routes (`app.screen(name,
+  factory)`, `factory: fn() -> ScreenBox`), an app-global menu-bar builder
+  (default: the app name with Quit), `on_launch` / `on_quit` hooks, and
+  `app.run(initial, arg?)` — one screen at a time as a blocking window; the
+  sequential-window main loop as a type. `screen_box(s)` erases a screen to
+  the heap so routes of different types share one registry.
+- **`facet/nav`** — `go(route, arg?)` replaces the current screen, `push` /
+  `pop` open and dismiss a secondary screen window alongside it, `quit()`
+  ends the app, `arg()` reads the argument the showing verb carried.
+  `go` / `quit` also unwind a `run_screen` / `run_component` window.
+- **App context** — `runtime::app_running` / `app_name` / `has_screen` /
+  `register_screen`: process-scoped reads from any handler, live while an
+  App runs. `register_screen` adds a route at runtime (plugins); the first
+  registration wins.
+- **`app.agent_mcp(path)` + `facet/agent`** — opt-in serving of the agent
+  surface over a Unix socket (describe_ui / click / set_text); each shown
+  screen's window is re-walked into the surface. A separate module so the
+  agent packages stay out of apps that never serve.
+- `run_component` gains `custom_chrome` / `unified_toolbar` / `hide_title`.
+
+### facet — theme
+- **Two-tier color names.** Tier 1: the platform's semantic colors, extended
+  (placeholder, link, selection backgrounds, `fill_secondary`, the full
+  system palette). Tier 2: app-retintable THEME roles — `primary`/
+  `on_primary`, `secondary`/`on_secondary`, `ink(a)` (the mark family, alpha
+  on the color), `surface`/`raised`/`sunken`, `outline`,
+  `success`/`warning`/`danger`, plus the extended surface tiers IDE-grade
+  chrome needs (`content`/`toolbar`/`tabstrip`/`track`/`chip`/`recessed`) —
+  each independently retintable at runtime. An unset role falls back to the
+  nearest Tier-1 color, so a themeless app is native in both appearances.
+  **Breaking:** `Color::primary()/secondary()/tertiary()` (the label tiers)
+  are renamed `text()/text_secondary()/text_tertiary()`; `primary` now
+  means the brand role.
+- **`Theme` + `set_theme`.** A plain record built with named optional
+  parameters, installed once. Calling `set_theme` again re-themes the LIVE
+  app: the backend re-resolves recorded paint in place (same sweep as an
+  appearance flip) — runtime theme switching with no extra machinery.
+- **`Color::adaptive(light:, dark:)`** — a light/dark rgba pair in one
+  Color, resolved by the current appearance at paint time and re-resolved
+  live on a flip. Replaces per-color `is_dark()` branching and the
+  rebuild-on-appearance-change dance.
+- **Fix: styled containers paint.** A `column`/`row`/`zstack`/`grid` whose
+  style operates on a view (background, gradient, border, corner, clip,
+  opacity, hidden, shadow, transform, fade) now gets a backing view at
+  mount and paints it; previously `.background()` on a container was a
+  silent no-op unless something else supplied a view.
+
 ### Standard library
 - `Box::into_raw` / `Box::from_raw` — surrender and reclaim a heap slot as a
   raw pointer across boundaries a `Box` cannot cross.
@@ -67,9 +145,103 @@ earlier history lives in each version's archived plan.
 - `thread::JoinHandle`'s refcount-shared ctx field is marked `opaque`,
   removing a spurious W0002 warning from every build that links `thread`.
 
+### agent surface
+- **describe_ui modes — the client chooses the view per request.**
+  `{"params":{"mode":"full"}}` opts into the whole walked tree (auto-keyed
+  structural nodes included); the DEFAULT is now the curated `exposed` view
+  — only developer-exposed nodes, lean fields (id, role, name, actionable,
+  re-parented to the nearest exposed ancestor) via
+  `identity::Registry.describe()`. Small, high-signal context for agents;
+  the `Backend` vtable gains `describe_exposed` (all three backends).
+- **Exposed nodes carry a tool schema: name + intent description.** A
+  node's name auto-derives from its widget's accessibility label, else its
+  title/text; `.accessibility_label` overrides it (icon-only controls), and
+  `.accessibility_hint` supplies the dev-authored intent ("opens the New
+  Project wizard") — surfaced as `description` in the exposed describe JSON
+  (omitted when empty). One annotation serves VoiceOver and agents alike.
+  Registry gains set_description/description_of; NodeView and UiNode carry
+  the field across all three backends.
+- **The surface is lazy: it re-walks on request.** It was a one-time walk
+  taken when the window opened — content mounted afterwards (`present()`-ed
+  screens, added rows, @ui-native mutations: how real apps build) was
+  invisible to describe_ui and unreachable by click/set_text. Every MCP
+  operation now refreshes the surface from its window before acting
+  (marshaled to the main thread, waitUntilDone), so describe/click/set_text
+  always see the tree as it is NOW; a view not yet mounted is simply absent
+  and the agent asks again later. No mutation hooks to keep complete.
+  Verified live in iris: exposed describe grew from the 4-node frozen shell
+  to every launcher and recents control.
+
+### facet — addressing
+- **`find(key).component()` / `component_at[C](key) -> Option[*C]`** — the
+  instance-level analog of the view Handle: recover the component `present`
+  registered behind a keyed slot, so a bare-fn callback (a native widget's
+  fn-pointer) can invoke a component method without a module static. Valid
+  while the presentation lasts; eviction clears it. iris's EditorTabs — the
+  last module-static component — became an owned Workspace field.
+
 ### facet_appkit
+- **Global `find` resolves a staged component's flex node.** A `switch_to`
+  (staged) panel's root is a subview of its outlet, so its keyed views are
+  reachable by `find_view_by_id` from the OUTER component's host too — and the
+  global (cp=0) find was resolving the flex against that outer owner, whose
+  tree does not contain them, yielding a null flex. Structural verbs
+  (`set_child`, `add_child`, …) then silently no-op'd on a staged panel. Global
+  find now picks the slot whose tree actually OWNS the view's flex, so the
+  Handle carries the right owner and a live flex. This is what made a
+  `facet::scroll` inside a staged router child (iris Saves timeline) never
+  establish its documentView; the canonical pattern — a plain keyed slot,
+  `set_child` a fresh `facet::scroll(content)` into it — now scrolls under the
+  staging router exactly as it did under `present`.
+- **`ui::list` follows the tail through a resize.** A narrower list re-wraps
+  its rows TALLER, growing total height; the scroll view kept its point
+  offset, so a list pinned at the bottom drifted UP on a narrowing (a split
+  drag, a window shrink) — visible in iris chat as "narrowing the panel
+  scrolls the transcript up." The debounced resize reload now records whether
+  the viewport was at the bottom BEFORE it re-measures heights, and re-pins to
+  the new end after if it was (widening already self-corrected via
+  NSScrollView's clamp). Shared near-bottom / scroll-to-end helpers back both
+  this and `list_set_count`.
+- **Agent click on an expandable outline row toggles disclosure.** A folder
+  row's click is the disclosure gesture, not a selection: expand (or
+  collapse) it so nested rows materialize — each already carrying its
+  row_id agent key — and become clickable. A file row still selects and
+  fires on_select. Completes the agent file-open drive: files tab -> click
+  src (expands) -> click src/main.cplus (opens in the editor).
+- **Tree rows are agent-addressable and click-selectable.** `ui::tree` gains
+  `row_id: fn(item, ctx) -> Text` (bound-method ready, like `row`): each
+  MATERIALIZED cell is stamped with its dev key at build/recycle, so the
+  agent surface exposes visible rows as children of the tree. And the agent's
+  `click` on a row cell now SELECTS the row (selectRowIndexes: on the
+  enclosing table, main-thread hopped) — the selection delegate fires exactly
+  as a user click would, driving `on_select`. An agent can list the visible
+  files and open one by its predictable id
+  (`click file-tree:row:/abs/path`), verified end to end in iris: row click
+  -> on_tree_select -> component_at -> EditorTabs.open -> the tab appears.
+- **`ui::tree` / `ui::list` callbacks take component METHODS.** Their
+  callbacks were bare fn pointers in (ctx, payload) order, so row builders
+  and selection handlers had to live as top-level free fns. Both now follow
+  the bound-method thunk order (payload first, ctx TRAILING) with each fn
+  param's ctx adjacent (`on_select`+`ctx`, `row`+`row_ctx`) — so
+  `on_select: this.open_file, row: this.file_row` binds directly, the
+  receiver auto-riding the ctx. Bare fns + explicit ctx still work.
+  **Breaking** for existing bare-fn callers: flip callback params to
+  (item/index, ctx). iris's files_tree callbacks are FilesTree methods now.
 - `image(path)` degrades a missing or unreadable file to a blank image view
   instead of aborting the app on AppKit's nil-image throw.
+- **Screen windows**: `present_screen_window` (a lifecycle-aware secondary
+  window — retained slot keyed by the screen instance, per-window delegate
+  records, `on_closed` fires on any close path, never counted against the
+  shell-window total) + `close_window(handle)`. The host pair under
+  `nav::push` / `nav::pop`.
+- `Application.stop` is nudged with a no-op app-defined event when the last
+  shell window closes: a close driven from a callout (a `run_on_main` step,
+  an agent's marshaled click) is not an event, so the stopped loop would
+  otherwise idle until the next real one — an agent-driven quit hung.
+- **Repaint registry**: views painted with dynamic colors (named tokens,
+  adaptive pairs, theme roles) re-resolve their layer backgrounds, borders,
+  gradients, and theme text colors IN PLACE on an appearance flip or
+  `set_theme` — no rebuild, no relayout.
 
 ## v0.0.26 — 2026-07-02
 
