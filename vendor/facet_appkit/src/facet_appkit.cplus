@@ -3362,6 +3362,32 @@ fn replace_child_impl(h: facet::Handle, key: str, take child: facet::Node) -> bo
     return false;
 }
 
+// Detach every view a flex subtree put in the hierarchy. A payload-bearing
+// node takes its whole native subtree with it; a payload-LESS container (an
+// unkeyed, unstyled presented root — apply attaches its children's views
+// directly under the slot) contributes nothing itself, so DESCEND and detach
+// each child's top-most payload. Without the descent, set_child's clear
+// dropped such a child's flex node but left its views mounted — the
+// append-instead-of-swap half of the split-pane evict bug.
+fn detach_subtree_views(childp: *flex::Node) {
+    let pv: *u8 = { (*childp).payload() };
+    if pv != (0 as *u8) {
+        lc_fire_under(pv);
+        ak::View::from_raw(pv).remove_from_superview();
+        return;
+    }
+    let n: usize = { (*childp).child_count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*childp).children.at_ptr(i) {
+            option::Option[*flex::Node]::Some(gp) => { detach_subtree_views(gp); }
+            option::Option[*flex::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
 // facet::Handle.set_child hook: clear this container's children (their view
 // subtrees tear down, their flex nodes drop), then mount a single fresh child.
 // The one-slot swap.
@@ -3373,23 +3399,22 @@ fn set_child_impl(h: facet::Handle, take child: facet::Node) -> bool {
     // component presented in a nested outlet) it is about to get removed —
     // fire-and-forget — BEFORE its views leave the tree.
     lc_fire(cview);
-    let cfp: *flex::Node = cflex as *flex::Node;
-    while { (*cfp).child_count() } > (0 as usize) {
-        match (*cfp).children.at_ptr(0 as usize) {
-            option::Option[*flex::Node]::Some(childp) => {
-                let pv: *u8 = { (*childp).payload() };
-                if pv != (0 as *u8) {
-                    lc_fire_under(pv);
-                    ak::View::from_raw(pv).remove_from_superview();
-                }
-            }
+    // Mount FIRST, then resolve the container ONCE — a mount can grow the
+    // registry stores (a child containing a split/scroll appends to
+    // SPLIT_PANES / SCROLL_CONTENT, moving trees), so a pre-mount pointer
+    // can go stale and the clear would silently strip nothing (the filed
+    // split-pane evict bug's second leg). One post-mount resolve serves the
+    // clear AND the add.
+    var child_flex: flex::Node = mount(#addr_of(child));
+    let cfp2: *flex::Node = resolve_flex(h.cp(), cview);
+    if cfp2 == (0 as *flex::Node) { return false; }
+    while { (*cfp2).child_count() } > (0 as usize) {
+        match (*cfp2).children.at_ptr(0 as usize) {
+            option::Option[*flex::Node]::Some(childp) => { detach_subtree_views(childp); }
             option::Option[*flex::Node]::None => { }
         }
-        let _g: option::Option[flex::Node] = { (*cfp).children.remove(0 as usize) };
+        let _g: option::Option[flex::Node] = { (*cfp2).children.remove(0 as usize) };
     }
-    var child_flex: flex::Node = mount(#addr_of(child));
-    let cfp2: *flex::Node = resolve_flex(h.cp(), cview);   // re-resolve (see add_child_impl)
-    if cfp2 == (0 as *flex::Node) { return false; }
     ui::apply(#addr_of(child_flex), cview, false);
     { (*cfp2).add_child(child_flex); }
     { (*cfp2).mark_content_changed(); }
@@ -5228,6 +5253,67 @@ fn component_at_reads_the_presented_instance() {
         option::Option[*OrderScreen]::None => true,
     };
     assert missing;
+    unmount_all();
+}
+
+struct EvPanelLike { n: i32 }
+static EV_PANEL: EvPanelLike = #zero::[EvPanelLike]();
+impl EvPanelLike: facet::Lifecycle { fn on_attach(ref this){return;} fn on_detach(ref this){return;} }
+impl EvPanelLike: facet::Component {
+    fn build(ref this) -> facet::Node {
+        var b: facet::Builder = facet::Builder::new();
+        b.add(facet::box().height(40.0f64));
+        b.add(facet::column(facet::Builder::new()).grow(1.0f64).key("ev:outlet"));
+        return facet::column(b).grow(1.0f64);
+    }
+}
+struct EvPaneHost { n: i32 }
+static EV_PANE_HOST: EvPaneHost = #zero::[EvPaneHost]();
+impl EvPaneHost: facet::Component {
+    fn build(ref this) -> facet::Node {
+        var b: facet::Builder = facet::Builder::new();
+        b.add(facet::column(facet::Builder::new()).grow(1.0f64));
+        b.add(facet::column(facet::Builder::new()).grow(1.0f64).key("ev:pane"));
+        return facet::split(b, vertical: true, position: 200.0f64,
+            min_first: 100.0f64, min_second: 100.0f64).grow(1.0f64);
+    }
+}
+
+#[test]
+fn set_child_evicts_in_component_presented_under_split() {
+    // The filed split-pane evict bug, both legs: (1) a payload-bearing pane
+    // (keyed/styled container) must keep a RESOLVABLE flex tree — the old
+    // leaf path dropped it, making set_child/present into the pane silently
+    // inert; (2) set_child resolves its clear target AFTER mount, so a
+    // registry-growing mount cannot stale the pointer and turn the swap
+    // into an append.
+    unmount_all();
+    install();
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 400.0, h: 300.0 });
+    let _m: f64 = mount_component(EV_PANE_HOST.build, host: host.raw());
+    let cp: *u8 = #addr_of(EV_PANE_HOST) as *u8;
+
+    // The keyed leaf pane resolves BOTH halves now.
+    let pane: facet::Handle = facet::find("ev:pane", cp);
+    assert pane.found();
+    assert pane.flex() != (0 as *u8);
+
+    // present into the pane mounts (was inert while the pane's tree was
+    // dropped); the presented component's outlet is addressable.
+    let _p: facet::Handle = facet::find("ev:pane", cp).present(EV_PANEL);
+    assert facet::find("ev:outlet", cp).found();
+
+    // set_child twice into the outlet: the second EVICTS the first.
+    let _a: facet::Handle = facet::find("ev:outlet", cp).set_child(facet::box().frame(10.0f64,10.0f64).key("ev:first"));
+    assert facet::find("ev:first", cp).found();
+    let _b: facet::Handle = facet::find("ev:outlet", cp).set_child(facet::box().frame(10.0f64,10.0f64).key("ev:second"));
+    assert facet::find("ev:second", cp).found();
+    assert !facet::find("ev:first", cp).found();
+
+    // A re-present at the PANE level evicts the whole presented subtree too.
+    let _p2: facet::Handle = facet::find("ev:pane", cp).present(EV_PANEL);
+    assert facet::find("ev:outlet", cp).found();
+    assert !facet::find("ev:second", cp).found();
     unmount_all();
 }
 

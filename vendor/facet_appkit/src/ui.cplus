@@ -850,11 +850,25 @@ fn relayout_split_panes(sv_ptr: *u8) {
 // registered against it, and reflow_pane installs/relays it once the split
 // sizes the host (deferred to the resize hook, since the host is 0×0 now).
 fn host_or_add_pane(sv: ak::SplitView, take pane: flex::Node) {
-    if pane.payload() != (0 as *u8) {
-        sv.add_arranged_subview(ak::View::from_raw(pane.payload()));
+    // EVERY pane's flex tree is registered — dropping it orphans the pane:
+    // find()'s flex half resolves nothing, so set_child / present INTO a
+    // keyed pane is silently inert (the split-pane evict bug). Three shapes:
+    if pane.payload() != (0 as *u8) && pane.child_count() == (0 as usize) {
+        // A single view (a scroll, a native leaf, an EMPTY keyed/styled
+        // container): arranged directly, as NSSplitView expects. Its tree is
+        // just this node and its view is already live — applied from birth;
+        // a later set_child mounts into it through the registry.
+        let pview: *u8 = pane.payload();
+        sv.add_arranged_subview(ak::View::from_raw(pview));
+        let reg: *vec::Vec[SplitPane] = { #addr_of(SPLIT_PANES) };
+        (*reg).append(SplitPane { split: sv.raw(), host: pview, tree: pane, applied: true });
         return;
     }
-    if pane.child_count() > (0 as usize) {
+    if pane.payload() != (0 as *u8) || pane.child_count() > (0 as usize) {
+        // A subtree (multi-element container, backed or not): hosted in a
+        // fresh view and applied at the host's first real size — which also
+        // attaches the views of a BACKED container's children, previously
+        // orphaned by the leaf path.
         let host: ak::View = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 });
         let hraw: *u8 = host.raw();
         sv.add_arranged_subview(host);
