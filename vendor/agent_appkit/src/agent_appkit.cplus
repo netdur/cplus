@@ -996,10 +996,34 @@ fn enclosing_table(v: *u8) -> *u8 {
     return null();
 }
 
+// Toggle an EXPANDABLE outline row: the agent's click on a folder row is
+// the disclosure gesture, not a selection — expand (or collapse) it so the
+// nested rows materialize, each already carrying its own row_id agent key
+// via the cell builder. False when the row is not an expandable outline item.
+fn toggle_expand_row(table: *u8, v: *u8) -> bool {
+    let ov_cls: *u8 = rt::get_class(#str_ptr("NSOutlineView\0"));
+    if rt::msg_i8_id(table, rt::sel(#str_ptr("isKindOfClass:\0")), ov_cls) == (0 as i8) { return false; }
+    let row: i64 = rt::msg_i64_id(table, rt::sel(#str_ptr("rowForView:\0")), v);
+    if row < (0 as i64) { return false; }
+    let item: *u8 = rt::msg_id_i64(table, rt::sel(#str_ptr("itemAtRow:\0")), row);
+    if is_null(item) { return false; }
+    if rt::msg_i8_id(table, rt::sel(#str_ptr("isExpandable:\0")), item) == (0 as i8) { return false; }
+    let expanded: i8 = rt::msg_i8_id(table, rt::sel(#str_ptr("isItemExpanded:\0")), item);
+    if expanded != (0 as i8) {
+        perform_on_main(table, rt::sel(#str_ptr("collapseItem:\0")), item);
+    } else {
+        perform_on_main(table, rt::sel(#str_ptr("expandItem:\0")), item);
+    }
+    return true;
+}
+
 // Select the row containing `v`, if a table encloses it. True when selected.
+// An expandable outline row toggles instead: click-a-folder = disclosure,
+// click-a-file = selection (which fires the widget's on_select).
 fn select_row_of(v: *u8) -> bool {
     let table: *u8 = enclosing_table(v);
     if is_null(table) { return false; }
+    if toggle_expand_row(table, v) { return true; }
     let row: i64 = rt::msg_i64_id(table, rt::sel(#str_ptr("rowForView:\0")), v);
     if row < (0 as i64) { return false; }
     let idx_cls: *u8 = rt::get_class(#str_ptr("NSIndexSet\0"));
