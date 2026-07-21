@@ -2306,6 +2306,7 @@ fn rewrite_stmt(
             scrutinee,
             body,
             else_body,
+            ..
         } => {
             rewrite_expr(scrutinee, ctx, scope)?;
             let snapshot = scope.clone();
@@ -2327,6 +2328,7 @@ fn rewrite_stmt(
             pattern,
             scrutinee,
             body,
+            ..
         } => {
             rewrite_expr(scrutinee, ctx, scope)?;
             // Bindings from the loop pattern live inside the body only.
@@ -2340,6 +2342,7 @@ fn rewrite_stmt(
             scrutinee,
             complement,
             else_body,
+            ..
         } => {
             rewrite_expr(scrutinee, ctx, scope)?;
             // Else block runs in a scope that has NEITHER the pattern's

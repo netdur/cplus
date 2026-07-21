@@ -639,23 +639,27 @@ impl Lower {
                 scrutinee,
                 body,
                 else_body,
+                mutable,
             } => {
-                s.kind = self.lower_if_let(pattern, scrutinee, body, else_body, s.span);
+                s.kind = self.lower_if_let(pattern, scrutinee, body, else_body, mutable, s.span);
             }
             StmtKind::GuardLet {
                 pattern,
                 scrutinee,
                 complement,
                 else_body,
+                mutable,
             } => {
-                s.kind = self.lower_guard_let(pattern, scrutinee, complement, else_body, s.span);
+                s.kind =
+                    self.lower_guard_let(pattern, scrutinee, complement, else_body, mutable, s.span);
             }
             StmtKind::WhileLet {
                 pattern,
                 scrutinee,
                 body,
+                mutable,
             } => {
-                s.kind = self.lower_while_let(pattern, scrutinee, body, s.span);
+                s.kind = self.lower_while_let(pattern, scrutinee, body, mutable, s.span);
             }
             other => {
                 s.kind = other;
@@ -794,12 +798,16 @@ impl Lower {
 
     /// `if let PAT = E { B }` →  `match E { PAT => { B; }, _ => {} }`
     /// `if let PAT = E { B } else { B2 }` → `match E { PAT => { B; }, _ => { B2; } }`
+    /// `if var PAT = E { B }` → same match, with each binding in PAT
+    /// renamed to a fresh temp and `var NAME = TEMP;` rebinds prepended to
+    /// B — sema sees ordinary mutable locals (arm bindings stay immutable).
     fn lower_if_let(
         &mut self,
-        pattern: Pattern,
+        mut pattern: Pattern,
         scrutinee: Expr,
         mut body: Block,
         else_body: Option<Block>,
+        mutable: bool,
         stmt_span: Span,
     ) -> StmtKind {
         // E0347: pattern must be refutable. A bare binding or wildcard is
@@ -817,6 +825,10 @@ impl Lower {
         // Normalize both arm bodies to unit-valued blocks so the synthetic
         // match's two arms agree on type (statement-position).
         body = into_unit_block(body);
+        if mutable {
+            let rebinds = mutable_rebinds(&mut pattern);
+            body.stmts.splice(0..0, rebinds);
+        }
         let else_blk = match else_body {
             Some(b) => into_unit_block(b),
             None => Block {
@@ -860,12 +872,17 @@ impl Lower {
     /// `guard let PAT = E else |COMP| { ELSE };`
     ///   → `let X = match E { PAT => X, COMP => { ELSE } };`
     /// (where `X` is the single binding extracted from `PAT`.)
+    /// `guard var` emits the same rewrite with a `var` head instead of
+    /// `let` — the enclosing-scope binding is mutable. A complement
+    /// binding stays immutable: it is an ordinary match-arm binding
+    /// scoped to the diverging else block.
     fn lower_guard_let(
         &mut self,
         pattern: Pattern,
         scrutinee: Expr,
         complement: Option<Pattern>,
         else_body: Block,
+        mutable: bool,
         stmt_span: Span,
     ) -> StmtKind {
         // E0348: the else block must diverge.
@@ -945,7 +962,7 @@ impl Lower {
         };
 
         StmtKind::Let {
-            mutable: false,
+            mutable,
             name: extracted,
             ty: None,
             init: Some(match_expr),
@@ -961,9 +978,10 @@ impl Lower {
     /// rewriting.
     fn lower_while_let(
         &mut self,
-        pattern: Pattern,
+        mut pattern: Pattern,
         scrutinee: Expr,
         body: Block,
+        mutable: bool,
         stmt_span: Span,
     ) -> StmtKind {
         if !is_refutable(&pattern) {
@@ -976,7 +994,13 @@ impl Lower {
         }
         // Normalize the body to unit-typed (drop any tail expression
         // value) so the success and fallback arms both have type unit.
-        let body_block = into_unit_block(body);
+        let mut body_block = into_unit_block(body);
+        if mutable {
+            // `while var` — same rebind rewrite as `if var`; the bindings
+            // are fresh mutable locals each iteration.
+            let rebinds = mutable_rebinds(&mut pattern);
+            body_block.stmts.splice(0..0, rebinds);
+        }
         let body_span = body_block.span;
 
         // Success arm: run body.
@@ -2211,6 +2235,44 @@ fn is_refutable(p: &Pattern) -> bool {
     }
 }
 
+/// `if var` / `while var` desugar support: rewrite `pattern` in place so
+/// every binding `name` becomes a fresh `__var<start>_<name>` temp
+/// (span-start keeps siblings unique, mirroring `_discard<start>`), and
+/// return the `var NAME = TEMP;` rebind statements to prepend to the
+/// success body. Sema then sees ordinary mutable locals; the match-arm
+/// bindings themselves stay immutable and are each read exactly once.
+fn mutable_rebinds(pattern: &mut Pattern) -> Vec<Stmt> {
+    fn walk(p: &mut Pattern, out: &mut Vec<Stmt>) {
+        match &mut p.kind {
+            PatternKind::Wildcard => {}
+            PatternKind::Binding(id) => {
+                let user = id.clone();
+                id.name = format!("__var{}_{}", id.span.start, id.name);
+                out.push(Stmt {
+                    kind: StmtKind::Let {
+                        mutable: true,
+                        name: user.clone(),
+                        ty: None,
+                        init: Some(Expr {
+                            kind: ExprKind::Ident(id.name.clone()),
+                            span: user.span,
+                        }),
+                    },
+                    span: user.span,
+                });
+            }
+            PatternKind::Variant { payload, .. } => {
+                for sub in payload {
+                    walk(sub, out);
+                }
+            }
+        }
+    }
+    let mut out = vec![];
+    walk(pattern, &mut out);
+    out
+}
+
 fn collect_pattern_bindings(p: &Pattern) -> Vec<Ident> {
     fn walk(p: &Pattern, out: &mut Vec<Ident>) {
         match &p.kind {
@@ -2601,6 +2663,140 @@ fn main() -> i32 { return 0; }\n";
         "#;
         let (_, diags) = run(src);
         assert!(first_codes(&diags).contains(&"E0350"));
+    }
+
+    // ---- pattern-binding `var` forms: `guard var` / `if var` / `while var` ----
+
+    fn main_body(prog: &Program) -> &Block {
+        prog.items
+            .iter()
+            .find_map(|it| match &it.kind {
+                ItemKind::Function(f) if f.name.name == "main" => Some(&f.body),
+                _ => None,
+            })
+            .expect("main fn")
+    }
+
+    #[test]
+    fn guard_var_lowers_to_mutable_let() {
+        let src = r#"
+            enum Maybe { Some(i32), None }
+            fn main() -> i32 {
+                let m: Maybe = Maybe::Some(7);
+                guard var Maybe::Some(v) = m else { return 0; };
+                return v;
+            }
+        "#;
+        let (prog, diags) = run(src);
+        assert!(diags.is_empty(), "unexpected diags: {diags:?}");
+        // The guard-var becomes `var v = match ...;` — same rewrite as
+        // guard-let with a mutable head.
+        match &main_body(&prog).stmts[1].kind {
+            StmtKind::Let {
+                mutable,
+                name,
+                init: Some(_),
+                ..
+            } => {
+                assert!(*mutable, "guard var must synthesize a mutable let");
+                assert_eq!(name.name, "v");
+            }
+            other => panic!("expected let, got {other:?}"),
+        }
+    }
+
+    /// Dig the success-arm rebind out of a lowered `if var` / `while var`
+    /// match: the arm pattern's binding must be renamed to a `__var` temp
+    /// and the arm body must open with `var NAME = TEMP;`.
+    fn assert_success_arm_rebinds(match_expr: &Expr, user_name: &str) {
+        let ExprKind::Match { arms, .. } = &match_expr.kind else {
+            panic!("expected match, got {:?}", match_expr.kind);
+        };
+        let PatternKind::Variant { payload, .. } = &arms[0].pattern.kind else {
+            panic!("expected variant pattern");
+        };
+        let PatternKind::Binding(temp) = &payload[0].kind else {
+            panic!("expected binding in payload");
+        };
+        assert!(
+            temp.name.starts_with("__var"),
+            "arm binding should be a fresh temp, got `{}`",
+            temp.name
+        );
+        let ExprKind::Block(body) = &arms[0].body.kind else {
+            panic!("expected block arm body");
+        };
+        match &body.stmts[0].kind {
+            StmtKind::Let {
+                mutable,
+                name,
+                init: Some(init),
+                ..
+            } => {
+                assert!(*mutable);
+                assert_eq!(name.name, user_name);
+                assert!(
+                    matches!(&init.kind, ExprKind::Ident(n) if n == &temp.name),
+                    "rebind must read the renamed arm temp"
+                );
+            }
+            other => panic!("expected rebind let, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn if_var_renames_binding_and_prepends_rebind() {
+        let src = r#"
+            enum Maybe { Some(i32), None }
+            fn main() -> i32 {
+                let m: Maybe = Maybe::Some(7);
+                if var Maybe::Some(v) = m { return v; }
+                return 0;
+            }
+        "#;
+        let (prog, diags) = run(src);
+        assert!(diags.is_empty(), "unexpected diags: {diags:?}");
+        let StmtKind::Expr(match_expr) = &main_body(&prog).stmts[1].kind else {
+            panic!("expected lowered match stmt");
+        };
+        assert_success_arm_rebinds(match_expr, "v");
+    }
+
+    #[test]
+    fn while_var_renames_binding_and_prepends_rebind() {
+        let src = r#"
+            enum Maybe { Some(i32), None }
+            fn main() -> i32 {
+                while var Maybe::Some(v) = next() { break; }
+                return 0;
+            }
+            fn next() -> Maybe { return Maybe::None; }
+        "#;
+        let (prog, diags) = run(src);
+        assert!(diags.is_empty(), "unexpected diags: {diags:?}");
+        // while-var lowers to `loop { match ... }`.
+        let StmtKind::Loop(loop_body, _) = &main_body(&prog).stmts[0].kind else {
+            panic!("expected lowered loop stmt");
+        };
+        let StmtKind::Expr(match_expr) = &loop_body.stmts[0].kind else {
+            panic!("expected match inside loop");
+        };
+        assert_success_arm_rebinds(match_expr, "v");
+    }
+
+    #[test]
+    fn guard_var_keeps_guard_diagnostics() {
+        // The var spelling goes through the same E0348/E0351 checks.
+        let src = r#"
+            enum Maybe { Some(i32), None }
+            fn main() -> i32 {
+                let m: Maybe = Maybe::Some(7);
+                guard var Maybe::Some(v) = m else { let x: i32 = 1; };
+                return v;
+            }
+        "#;
+        let (_, diags) = run(src);
+        assert!(first_codes(&diags).contains(&"E0348"));
     }
 
     fn walks_any_iflet(prog: &Program) -> bool {

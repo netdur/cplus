@@ -2220,7 +2220,9 @@ fn rewrite_stmt(
             scrutinee,
             body,
             else_body,
+            mutable,
         } => StmtKind::IfLet {
+            mutable: *mutable,
             pattern: pattern.clone(),
             scrutinee: rewrite_expr(
                 scrutinee,
@@ -2258,7 +2260,9 @@ fn rewrite_stmt(
             scrutinee,
             else_body,
             complement,
+            mutable,
         } => StmtKind::GuardLet {
+            mutable: *mutable,
             pattern: pattern.clone(),
             scrutinee: rewrite_expr(
                 scrutinee,
@@ -2296,7 +2300,9 @@ fn rewrite_stmt(
             pattern,
             scrutinee,
             body,
+            mutable,
         } => StmtKind::WhileLet {
+            mutable: *mutable,
             pattern: pattern.clone(),
             scrutinee: rewrite_expr(
                 scrutinee,

@@ -769,6 +769,17 @@ mod tests {
     }
 
     #[test]
+    fn pattern_var_forms_keep_spacing() {
+        // `guard var` / `if var` / `while var` — the contextual `var` keeps
+        // ordinary identifier spacing in the pattern-binding head.
+        let src = "fn f() -> i32 {\n    guard var R::Ok(v) = run() else |R::Err(e)| {\n        return e;\n    }\n    if var R::Ok(w) = run() {\n        w = 1;\n    }\n    while var R::Ok(u) = run() {\n        u = 2;\n    }\n    return v;\n}\n";
+        let out = fmt(src);
+        assert!(out.contains("guard var R::Ok(v) = run() else |R::Err(e)| {"), "guard var head:\n{out}");
+        assert!(out.contains("if var R::Ok(w) = run() {"), "if var head:\n{out}");
+        assert!(out.contains("while var R::Ok(u) = run() {"), "while var head:\n{out}");
+    }
+
+    #[test]
     fn preserves_line_comments() {
         let src = "// header\nfn main() -> i32 {\n    return 0; // trailing\n}\n";
         let out = fmt(src);

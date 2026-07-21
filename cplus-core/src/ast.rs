@@ -610,6 +610,11 @@ pub enum StmtKind {
         scrutinee: Expr,
         body: Block,
         else_body: Option<Block>,
+        /// `if var PAT = E { ... }` — the pattern bindings are mutable
+        /// inside BODY. Lowering renames each binding to a fresh temp in
+        /// the match pattern and prepends `var NAME = TEMP;` rebinds to
+        /// the success arm's body.
+        mutable: bool,
     },
     /// `break;` — exits the innermost enclosing loop. Sema rejects
     /// `break` outside a loop context with E0353. Phase 4 carries no
@@ -640,6 +645,9 @@ pub enum StmtKind {
         pattern: Pattern,
         scrutinee: Expr,
         body: Block,
+        /// `while var PAT = E { ... }` — same rebind lowering as `if var`;
+        /// the bindings are fresh (and mutable) each iteration.
+        mutable: bool,
     },
     /// `guard let PATTERN = SCRUTINEE else { ELSE };` —
     /// the binding(s) from PATTERN live in the *enclosing* scope after the
@@ -656,6 +664,11 @@ pub enum StmtKind {
         /// When absent the lowering pass synthesizes a `_` arm.
         complement: Option<Pattern>,
         else_body: Block,
+        /// `guard var PAT = E else { ... };` — the enclosing-scope binding
+        /// is mutable (the lowering's synthesized `let` becomes a `var`).
+        /// The complement binding (if any) stays immutable: it is an
+        /// ordinary match-arm binding scoped to the diverging else block.
+        mutable: bool,
     },
 }
 

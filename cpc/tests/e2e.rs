@@ -2853,6 +2853,182 @@ fn main() -> i32 {
     );
 }
 
+// ---- pattern-binding `var` forms: `guard var` / `if var` / `while var` ----
+
+/// `guard var` binds into the enclosing scope mutably; the complement form
+/// still captures the failure payload alongside it.
+#[test]
+fn guard_var_binding_is_mutable() {
+    let out = compile_and_run_src(
+        "guard_var",
+        "enum R { Ok(i32), Err(i32) }\n\
+         fn get(ok: bool) -> R { if ok { return R::Ok(41); } return R::Err(7); }\n\
+         fn happy() -> i32 {\n\
+         \x20   guard var R::Ok(c) = get(true) else { return 0 -% 1; };\n\
+         \x20   c = c +% 1;\n\
+         \x20   return c;\n\
+         }\n\
+         fn sad() -> i32 {\n\
+         \x20   guard var R::Ok(c) = get(false) else |R::Err(e)| { return e; };\n\
+         \x20   c = c +% 1;\n\
+         \x20   return c;\n\
+         }\n\
+         fn main() -> i32 {\n\
+         \x20   #println(happy());\n\
+         \x20   #println(sad());\n\
+         \x20   return 0;\n\
+         }\n",
+    );
+    assert!(out.status.success(), "exited {:?}", out.status);
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "42\n7\n");
+}
+
+/// `if var` / `while var` make the arm bindings mutable inside the body;
+/// multi-binding payloads rebind every name.
+#[test]
+fn if_var_and_while_var_bindings_are_mutable() {
+    let out = compile_and_run_src(
+        "if_while_var",
+        "enum P { Two(i32, i32), N }\n\
+         fn tick(n: i32) -> P { if n > 0 { return P::Two(n, 10); } return P::N; }\n\
+         fn main() -> i32 {\n\
+         \x20   if var P::Two(a, b) = tick(3) {\n\
+         \x20       a = a *% 2;\n\
+         \x20       b = b +% a;\n\
+         \x20       #println(b);\n\
+         \x20   }\n\
+         \x20   var total: i32 = 0;\n\
+         \x20   var n: i32 = 3;\n\
+         \x20   while var P::Two(c, _) = tick(n) {\n\
+         \x20       c = c *% 2;\n\
+         \x20       total = total +% c;\n\
+         \x20       n = n -% 1;\n\
+         \x20   }\n\
+         \x20   #println(total);\n\
+         \x20   return 0;\n\
+         }\n",
+    );
+    assert!(out.status.success(), "exited {:?}", out.status);
+    // if var: 10 + 3*2 = 16; while var: 3*2 + 2*2 + 1*2 = 12.
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "16\n12\n");
+}
+
+/// The `let` spellings keep their frozen bindings: assignment through a
+/// `guard let` / `if let` / `while let` binding (and through a `guard var`
+/// complement binding, which is arm-scoped) still fails E0305.
+#[test]
+fn let_pattern_bindings_stay_immutable() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let cases = [
+        (
+            "guard_let",
+            "enum M { S(i32), N }\n\
+             fn main() -> i32 {\n\
+             \x20   guard let M::S(v) = M::S(1) else { return 1; };\n\
+             \x20   v = v +% 1;\n\
+             \x20   return v;\n\
+             }\n",
+        ),
+        (
+            "if_let",
+            "enum M { S(i32), N }\n\
+             fn main() -> i32 {\n\
+             \x20   if let M::S(v) = M::S(1) { v = v +% 1; }\n\
+             \x20   return 0;\n\
+             }\n",
+        ),
+        (
+            "while_let",
+            "enum M { S(i32), N }\n\
+             fn main() -> i32 {\n\
+             \x20   while let M::S(v) = M::N { v = v +% 1; }\n\
+             \x20   return 0;\n\
+             }\n",
+        ),
+        (
+            "guard_var_complement",
+            "enum M { S(i32), N(i32) }\n\
+             fn main() -> i32 {\n\
+             \x20   guard var M::S(v) = M::S(1) else |M::N(e)| { e = e +% 1; return e; };\n\
+             \x20   return v;\n\
+             }\n",
+        ),
+    ];
+    for (name, src) in cases {
+        let dir = tempdir();
+        let src_path = dir.join(format!("{name}.cplus"));
+        std::fs::write(&src_path, src).unwrap();
+        let out = Command::new(cpc)
+            .arg(&src_path)
+            .arg("-o")
+            .arg(dir.join(name))
+            .output()
+            .expect("invoke cpc");
+        assert!(
+            !out.status.success(),
+            "{name}: expected compile failure on immutable-binding assignment"
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains("E0305"),
+            "{name}: expected E0305 in stderr, got: {stderr}"
+        );
+    }
+}
+
+/// `guard var` runs through the same guard checks as `guard let`:
+/// non-diverging else is still E0348, a bindingless pattern is still E0351,
+/// and an irrefutable `if var` is still E0347.
+#[test]
+fn var_forms_keep_pattern_let_diagnostics() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let cases = [
+        (
+            "guard_var_nondiverging",
+            "enum M { S(i32), N }\n\
+             fn main() -> i32 {\n\
+             \x20   guard var M::S(v) = M::S(1) else { let x: i32 = 1; };\n\
+             \x20   return v;\n\
+             }\n",
+            "E0348",
+        ),
+        (
+            "guard_var_no_binding",
+            "enum M { S(i32), N }\n\
+             fn main() -> i32 {\n\
+             \x20   guard var _ = M::S(1) else { return 1; };\n\
+             \x20   return 0;\n\
+             }\n",
+            "E0351",
+        ),
+        (
+            "if_var_irrefutable",
+            "fn main() -> i32 {\n\
+             \x20   if var x = 7 { x = 8; return x; }\n\
+             \x20   return 0;\n\
+             }\n",
+            "E0347",
+        ),
+    ];
+    for (name, src, code) in cases {
+        let dir = tempdir();
+        let src_path = dir.join(format!("{name}.cplus"));
+        std::fs::write(&src_path, src).unwrap();
+        let out = Command::new(cpc)
+            .arg(&src_path)
+            .arg("-o")
+            .arg(dir.join(name))
+            .output()
+            .expect("invoke cpc");
+        assert!(!out.status.success(), "{name}: expected compile failure");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains(code),
+            "{name}: expected {code} in stderr, got: {stderr}"
+        );
+    }
+}
+
 // ---- Phase 4 slice 4A: multi-file projects via `cpc build` ----
 
 /// Copy the in-tree `hello_mods` sample to a tempdir and run `cpc build`

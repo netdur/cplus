@@ -207,6 +207,11 @@ stmt     = let_stmt | return_stmt | while_stmt | for_stmt | loop_stmt
          | expr ';' | block_like_expr ;
 
 let_stmt = ( 'let' | 'var' ) pattern ( ':' type )? ( '=' expr )? ';' ;
+
+if_let_stmt    = 'if'    ( 'let' | 'var' ) pattern '=' expr block ( 'else' block )? ;
+while_let_stmt = 'while' ( 'let' | 'var' ) pattern '=' expr block ;
+guard_let_stmt = 'guard' ( 'let' | 'var' ) pattern '=' expr
+                 'else' ( '|' pattern '|' )? block ';' ;
 ```
 
 A local binding is `let` (immutable: no rebind, no field write) or `var`
@@ -509,6 +514,14 @@ Three sugar forms bind patterns outside `match`; all are lowered to
   `else |COMPLEMENT|` form must cover the scrutinee exhaustively
   (**E0349**/**E0350**).
 
+Each form also takes `var` in place of `let`, mirroring plain local
+bindings: `let` bindings are frozen, `var` bindings are mutable. `guard
+var` makes the enclosing-scope binding mutable; `if var` / `while var`
+make the pattern bindings mutable inside the body (fresh per iteration
+for `while var`). A `guard var` complement binding stays immutable — it
+is an ordinary match-arm binding scoped to the diverging else block. All
+diagnostics are shared between the two spellings.
+
 ---
 
 ## 9. Functions, methods, impls, interfaces
@@ -791,7 +804,11 @@ Sugar forms are rewritten to the listed core forms before semantic
 analysis. The rewrites preserve source spans so diagnostics point at the
 written code.
 
-1. **`if let` / `while let` / `guard let`** → `match` (§8).
+1. **`if let` / `while let` / `guard let`** (and their `var` spellings)
+   → `match` (§8). The `var` forms additionally rename each pattern
+   binding to a fresh temp and open the success body with `var NAME =
+   TEMP;` rebinds (`guard var` instead flips the synthesized `let` to a
+   `var`).
 2. **Tuple literal `(a, b)`** → a synthesized struct literal with fields
    `_0`, `_1`, …; `t.0` → `t._0`.
 3. **String interpolation** → a single allocating concatenation building

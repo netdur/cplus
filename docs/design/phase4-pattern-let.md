@@ -327,3 +327,22 @@ Nothing new — the desugar produces match IR, which slice 3I already lowers.
 One new keyword (`guard`). Three statement forms. Pure desugar into existing `match`. ~15 sema tests + 4 e2e tests. No codegen changes. Doc-only edits to §2.4, §2.8c, §11.
 
 Solves the only realistic pain point of the no-`try` decision (nested fallible chains) without compromising any of the principles that drove it.
+
+---
+
+## 10. Addendum (v0.0.27): the `var` spellings
+
+All three forms now take `var` in place of `let`, completing the 2×2 with
+the local-binding model (`let` = frozen, `var` = mutable). Still pure
+desugar, still no sema/codegen changes:
+
+- `guard var PAT = E else { ... };` — the synthesized enclosing-scope
+  `let X = match ...;` becomes `var X = match ...;`.
+- `if var` / `while var` — each pattern binding is renamed to a fresh
+  `__var<start>_<name>` temp in the match pattern and the success body
+  opens with `var NAME = TEMP;` rebinds, so sema sees ordinary mutable
+  locals. Match-arm bindings themselves stay immutable.
+- A `guard var` complement binding (`else |Pat|`) stays immutable: it is
+  an ordinary arm binding scoped to the diverging else block.
+- Every slice diagnostic (E0347–E0352) fires identically on both
+  spellings.

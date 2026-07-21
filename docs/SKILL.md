@@ -215,6 +215,15 @@ fn process(m: Maybe[i32]) -> i32 {
     guard let Maybe[i32]::Some(v) = m else { return 0 -% 1; };
     return v +% 1;
 }
+
+// All three forms also take `var` instead of `let` — the bindings become
+// mutable (`guard var` = mutable in the enclosing scope; `if var` /
+// `while var` = mutable inside the body). `let` bindings are frozen.
+fn bump(m: Maybe[i32]) -> i32 {
+    guard var Maybe[i32]::Some(v) = m else { return 0 -% 1; };
+    v = v +% 1;
+    return v;
+}
 ```
 
 ### Arrays + fill-array literal
@@ -405,6 +414,18 @@ fn or_zero(s: str) -> i32 {
 // Readable — guard let is the dominant idiom across the recipes
 fn handle(s: str) -> i32 {
     guard let ParseResult::Ok(v) = parse(s) else { return 0 -% 1; };
+    return v +% 100;
+}
+
+// When the failure payload matters, capture it with the complement form
+// `else |Pat|` — the else block receives the failure value instead of
+// losing it. The two patterns together must cover the enum (E0349).
+enum ReadResult { Ok(i32), Err(i32) }
+
+fn handle_or_report(s: str) -> i32 {
+    guard let ReadResult::Ok(v) = read(s) else |ReadResult::Err(code)| {
+        return 0 -% code;
+    };
     return v +% 100;
 }
 ```

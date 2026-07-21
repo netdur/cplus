@@ -1946,7 +1946,7 @@ impl Parser {
                         if matches!(
                             self.tokens.get(self.pos + 1).map(|t| &t.kind),
                             Some(TokenKind::Let)
-                        ) =>
+                        ) || self.var_leads_pattern_at(1) =>
                     {
                         // while-let attributes — lower to `loop { match }`
                         // attaches the attrs to the synthesized loop in
@@ -2015,7 +2015,7 @@ impl Parser {
                     if matches!(
                         self.tokens.get(self.pos + 1).map(|t| &t.kind),
                         Some(TokenKind::Let)
-                    ) =>
+                    ) || self.var_leads_pattern_at(1) =>
                 {
                     stmts.push(self.parse_while_let_stmt()?);
                     continue;
@@ -2055,12 +2055,15 @@ impl Parser {
                 // `if let PAT = E { ... }` is a statement (slice 4A.5);
                 // plain `if EXPR { ... }` keeps its existing expression
                 // path. The split is decided by lookahead one token after
-                // `if`.
+                // `if`. `if var PAT = E { ... }` needs one more token: `var`
+                // is contextual, so it counts only when it leads a pattern
+                // (`if var {` / `if var == x {` stay on the plain-if
+                // expression path).
                 TokenKind::If
                     if matches!(
                         self.tokens.get(self.pos + 1).map(|t| &t.kind),
                         Some(TokenKind::Let)
-                    ) =>
+                    ) || self.var_leads_pattern_at(1) =>
                 {
                     stmts.push(self.parse_if_let_stmt()?);
                     continue;
@@ -2280,6 +2283,45 @@ impl Parser {
             )
     }
 
+    /// True when the token `n` ahead is the contextual `var` keyword leading
+    /// a pattern binding — `if var PAT = ...` / `while var PAT = ...`. Same
+    /// shape as [`Self::at_var_binding`], shifted to the lookahead position:
+    /// the identifier `var` immediately followed by a pattern start (`Ident`
+    /// or `_`). The pattern-start requirement keeps the dispatch from
+    /// committing to the if-let path on anything else (`if var { ... }` /
+    /// `if var == x { ... }` stay on the plain-if expression path, where
+    /// name resolution reports `var` precisely).
+    fn var_leads_pattern_at(&self, n: usize) -> bool {
+        matches!(self.peek_kind_n(n), TokenKind::Ident(s) if s == "var")
+            && matches!(
+                self.peek_kind_n(n + 1),
+                TokenKind::Ident(_) | TokenKind::Underscore
+            )
+    }
+
+    /// Consume the `let` or contextual `var` that heads a pattern-binding
+    /// statement (`if`/`while`/`guard` forms); returns `true` for `var`.
+    /// The pattern-let family takes both spellings, mirroring plain local
+    /// bindings: `let` bindings are frozen, `var` bindings are mutable.
+    fn eat_let_or_var(&mut self) -> Result<bool, ParseError> {
+        if self.at(&TokenKind::Let) {
+            self.bump();
+            return Ok(false);
+        }
+        if matches!(self.peek_kind(), TokenKind::Ident(s) if s == "var") {
+            self.bump();
+            return Ok(true);
+        }
+        let tok = self.peek().clone();
+        Err(ParseError {
+            kind: ParseErrorKind::Unexpected {
+                found: tok_name(&tok.kind).into(),
+                expected: "`let` or `var`",
+            },
+            span: tok.span,
+        })
+    }
+
     fn parse_return_stmt(&mut self) -> Result<Stmt, ParseError> {
         let start = self.expect(&TokenKind::Return, "`return`")?.span;
         let value = if self.at(&TokenKind::Semi) {
@@ -2318,10 +2360,11 @@ impl Parser {
     }
 
     /// `if let PATTERN = EXPR { BODY }` and the two-arm form with `else`.
-    /// Slice 4A.5; lowered to `match` before sema.
+    /// Slice 4A.5; lowered to `match` before sema. `if var` makes the
+    /// pattern bindings mutable inside BODY.
     fn parse_if_let_stmt(&mut self) -> Result<Stmt, ParseError> {
         let start = self.expect(&TokenKind::If, "`if`")?.span;
-        self.expect(&TokenKind::Let, "`let`")?;
+        let mutable = self.eat_let_or_var()?;
         let pattern = self.parse_pattern()?;
         self.expect(&TokenKind::Eq, "`=`")?;
         // Same struct-lit disambiguation as `if EXPR { ... }`.
@@ -2343,6 +2386,7 @@ impl Parser {
                 scrutinee,
                 body,
                 else_body,
+                mutable,
             },
             span: start.merge(end),
         })
@@ -2350,10 +2394,10 @@ impl Parser {
 
     /// `guard let PATTERN = EXPR else { ELSE };`
     /// `guard let PATTERN = EXPR else |COMPLEMENT_PATTERN| { ELSE };`
-    /// Slice 4A.5.
+    /// Slice 4A.5. `guard var` makes the enclosing-scope binding mutable.
     fn parse_guard_let_stmt(&mut self) -> Result<Stmt, ParseError> {
         let start = self.expect(&TokenKind::Guard, "`guard`")?.span;
-        self.expect(&TokenKind::Let, "`let`")?;
+        let mutable = self.eat_let_or_var()?;
         let pattern = self.parse_pattern()?;
         self.expect(&TokenKind::Eq, "`=`")?;
         let scrutinee = self.with_no_struct_lit(|p| p.parse_expr())?;
@@ -2374,6 +2418,7 @@ impl Parser {
                 scrutinee,
                 complement,
                 else_body,
+                mutable,
             },
             span: start.merge(end),
         })
@@ -2403,9 +2448,10 @@ impl Parser {
 
     /// `while let PATTERN = SCRUTINEE { BODY }` — slice 4-end carry-forward
     /// from 4A.5. Lowered (in `crate::lower`) to `loop { match ... }`.
+    /// `while var` makes the per-iteration bindings mutable.
     fn parse_while_let_stmt(&mut self) -> Result<Stmt, ParseError> {
         let start = self.expect(&TokenKind::While, "`while`")?.span;
-        self.expect(&TokenKind::Let, "`let`")?;
+        let mutable = self.eat_let_or_var()?;
         let pattern = self.parse_pattern()?;
         self.expect(&TokenKind::Eq, "`=`")?;
         let scrutinee = self.with_no_struct_lit(|p| p.parse_expr())?;
@@ -2416,6 +2462,7 @@ impl Parser {
                 pattern,
                 scrutinee,
                 body,
+                mutable,
             },
             span,
         })
@@ -6512,5 +6559,95 @@ mod tests {
         let m = &modifiers[0];
         let mod_src = &src[m.span.start as usize..m.span.end as usize];
         assert_eq!(mod_src, ".font = bigger");
+    }
+
+    // ---- pattern-binding `var` forms: `guard var` / `if var` / `while var` ----
+
+    fn first_fn_stmt(p: &Program) -> &StmtKind {
+        let ItemKind::Function(f) = &p.items[0].kind else {
+            panic!("expected a function item");
+        };
+        &f.body.stmts[0].kind
+    }
+
+    #[test]
+    fn guard_var_parses_mutable() {
+        let p = parse_src("fn f() -> i32 { guard var M::S(v) = m else { return 0; }; return v; }")
+            .unwrap();
+        let StmtKind::GuardLet { mutable, .. } = first_fn_stmt(&p) else {
+            panic!("expected guard-let");
+        };
+        assert!(*mutable);
+    }
+
+    #[test]
+    fn guard_let_parses_immutable() {
+        let p = parse_src("fn f() -> i32 { guard let M::S(v) = m else { return 0; }; return v; }")
+            .unwrap();
+        let StmtKind::GuardLet { mutable, .. } = first_fn_stmt(&p) else {
+            panic!("expected guard-let");
+        };
+        assert!(!*mutable);
+    }
+
+    #[test]
+    fn guard_var_complement_parses() {
+        let p = parse_src(
+            "fn f() -> i32 { guard var M::S(v) = m else |M::N(e)| { return e; }; return v; }",
+        )
+        .unwrap();
+        let StmtKind::GuardLet {
+            mutable,
+            complement,
+            ..
+        } = first_fn_stmt(&p)
+        else {
+            panic!("expected guard-let");
+        };
+        assert!(*mutable);
+        assert!(complement.is_some());
+    }
+
+    #[test]
+    fn if_var_parses_mutable() {
+        let p = parse_src("fn f() { if var M::S(v) = m { return; } }").unwrap();
+        let StmtKind::IfLet { mutable, .. } = first_fn_stmt(&p) else {
+            panic!("expected if-let");
+        };
+        assert!(*mutable);
+    }
+
+    #[test]
+    fn while_var_parses_mutable() {
+        let p = parse_src("fn f() { while var M::S(v) = m { return; } }").unwrap();
+        let StmtKind::WhileLet { mutable, .. } = first_fn_stmt(&p) else {
+            panic!("expected while-let");
+        };
+        assert!(*mutable);
+    }
+
+    #[test]
+    fn guard_without_let_or_var_rejected() {
+        let err =
+            parse_src("fn f() -> i32 { guard M::S(v) = m else { return 0; }; return v; }")
+                .unwrap_err();
+        match err.kind {
+            ParseErrorKind::Unexpected { expected, .. } => {
+                assert!(expected.contains("`let` or `var`"), "got: {expected}");
+            }
+            other => panic!("expected Unexpected, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn if_var_not_leading_pattern_stays_plain_if() {
+        // `var` here is an ordinary identifier in the condition (the next
+        // token isn't a pattern start), so the statement takes the plain-if
+        // expression path, not the if-let path.
+        let p = parse_src("fn f() { if var { return; } return; }").unwrap();
+        assert!(
+            matches!(first_fn_stmt(&p), StmtKind::Expr(_)),
+            "`if var {{ ... }}` must parse as a plain if expression, not if-let"
+        );
     }
 }

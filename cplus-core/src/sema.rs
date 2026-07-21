@@ -16356,6 +16356,7 @@ fn walk_stmt_names(
             scrutinee,
             body,
             else_body,
+            ..
         } => {
             walk_expr_names(scrutinee, globals, scopes, out);
             let mut binds = std::collections::HashSet::new();
@@ -16371,6 +16372,7 @@ fn walk_stmt_names(
             pattern,
             scrutinee,
             body,
+            ..
         } => {
             walk_expr_names(scrutinee, globals, scopes, out);
             let mut binds = std::collections::HashSet::new();
@@ -16706,6 +16708,7 @@ fn walk_body_sites_in_block(block: &Block, out: &mut Vec<BodySite>) {
                 scrutinee,
                 body,
                 else_body,
+                ..
             } => {
                 walk_pattern_sites(pattern, out);
                 walk_body_sites_in_expr(scrutinee, out);
@@ -16718,6 +16721,7 @@ fn walk_body_sites_in_block(block: &Block, out: &mut Vec<BodySite>) {
                 pattern,
                 scrutinee,
                 body,
+                ..
             } => {
                 walk_pattern_sites(pattern, out);
                 walk_body_sites_in_expr(scrutinee, out);
@@ -16728,6 +16732,7 @@ fn walk_body_sites_in_block(block: &Block, out: &mut Vec<BodySite>) {
                 scrutinee,
                 complement,
                 else_body,
+                ..
             } => {
                 walk_pattern_sites(pattern, out);
                 if let Some(c) = complement {
@@ -16994,6 +16999,7 @@ fn walk_variant_patterns_in_block(block: &Block, f: &mut impl FnMut(&str, &[Type
                 scrutinee,
                 body,
                 else_body,
+                ..
             } => {
                 walk_variant_patterns_in_pat(pattern, f);
                 walk_variant_patterns_in_expr(scrutinee, f);
@@ -17006,6 +17012,7 @@ fn walk_variant_patterns_in_block(block: &Block, f: &mut impl FnMut(&str, &[Type
                 pattern,
                 scrutinee,
                 body,
+                ..
             } => {
                 walk_variant_patterns_in_pat(pattern, f);
                 walk_variant_patterns_in_expr(scrutinee, f);
@@ -17016,6 +17023,7 @@ fn walk_variant_patterns_in_block(block: &Block, f: &mut impl FnMut(&str, &[Type
                 scrutinee,
                 complement,
                 else_body,
+                ..
             } => {
                 walk_variant_patterns_in_pat(pattern, f);
                 walk_variant_patterns_in_expr(scrutinee, f);
