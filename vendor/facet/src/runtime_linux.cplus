@@ -58,6 +58,12 @@ fn app_menu(title: str) -> AppMenu { return core::app_menu(title); }
 fn menu_action_none() -> u32 { return core::menu_action_none(); }
 fn menu_action_quit() -> u32 { return core::menu_action_quit(); }
 fn menu_action_close_window() -> u32 { return core::menu_action_close_window(); }
+fn menu_action_undo() -> u32 { return core::menu_action_undo(); }
+fn menu_action_redo() -> u32 { return core::menu_action_redo(); }
+fn menu_action_cut() -> u32 { return core::menu_action_cut(); }
+fn menu_action_copy() -> u32 { return core::menu_action_copy(); }
+fn menu_action_paste() -> u32 { return core::menu_action_paste(); }
+fn menu_action_select_all() -> u32 { return core::menu_action_select_all(); }
 
 fn run[W: Window](take window: W) {
     var owned_window: W = window;

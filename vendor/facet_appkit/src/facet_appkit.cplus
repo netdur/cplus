@@ -2223,6 +2223,28 @@ fn menu_selector_for_action(action: u32) -> *u8 {
     if action == facet::menu_action_close_window() {
         return rt::sel(#str_ptr("performClose:\0"));
     }
+    // Standard edit commands: the responder-chain selectors. `add_app_menu_item`
+    // sets target nil, so AppKit delivers these to the focused control (a text
+    // field/view) and auto-enables the item — which is how the standard macOS
+    // Edit menu makes Cmd+X/C/V/Z/A work.
+    if action == facet::menu_action_undo() {
+        return rt::sel(#str_ptr("undo:\0"));
+    }
+    if action == facet::menu_action_redo() {
+        return rt::sel(#str_ptr("redo:\0"));
+    }
+    if action == facet::menu_action_cut() {
+        return rt::sel(#str_ptr("cut:\0"));
+    }
+    if action == facet::menu_action_copy() {
+        return rt::sel(#str_ptr("copy:\0"));
+    }
+    if action == facet::menu_action_paste() {
+        return rt::sel(#str_ptr("paste:\0"));
+    }
+    if action == facet::menu_action_select_all() {
+        return rt::sel(#str_ptr("selectAll:\0"));
+    }
     return 0 as *u8;
 }
 

@@ -578,6 +578,19 @@ fn menu_action_quit() -> u32 { return 1 as u32; }
 fn menu_action_close_window() -> u32 { return 2 as u32; }
 fn menu_action_none() -> u32 { return 0 as u32; }
 
+// Standard first-responder edit commands. These are SEMANTIC (portable) tokens:
+// each backend routes them to whatever mechanism delivers the command to the
+// focused control — on AppKit the responder-chain selectors undo:/redo:/cut:/
+// copy:/paste:/selectAll: (target nil). An app puts these on its Edit menu so
+// the keyboard shortcuts work in every text field; a backend that has no
+// equivalent leaves them inert (like menu_action_none).
+fn menu_action_undo() -> u32 { return 3 as u32; }
+fn menu_action_redo() -> u32 { return 4 as u32; }
+fn menu_action_cut() -> u32 { return 5 as u32; }
+fn menu_action_copy() -> u32 { return 6 as u32; }
+fn menu_action_paste() -> u32 { return 7 as u32; }
+fn menu_action_select_all() -> u32 { return 8 as u32; }
+
 struct MenuItem {
     menu: text::Text,
     title: text::Text,
