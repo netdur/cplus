@@ -1311,6 +1311,24 @@ fn drain_post_apply() {
     return;
 }
 
+// Drop every deferred scroll/split job WITHOUT processing it — the discard
+// companion to drain_post_apply (installed as ui's post-render DISCARD hook).
+// For a mount whose views are thrown away (a `list` row built only to measure
+// its height): each ScrollJob owns its content flex tree, dropped here; its
+// borrowed scroll/split view is freed by the measured node's own teardown.
+// Filling instead would retain those views into SCROLL_CONTENT and orphan them.
+fn discard_post_apply() {
+    let sjobs: *vec::Vec[ScrollJob] = { #addr_of(SCROLL_JOBS) };
+    while { (*sjobs).count() } > (0 as usize) {
+        let _g: option::Option[ScrollJob] = { (*sjobs).remove_last() };
+    }
+    let pjobs: *vec::Vec[SplitJob] = { #addr_of(SPLIT_JOBS) };
+    while { (*pjobs).count() } > (0 as usize) {
+        let _g: option::Option[SplitJob] = { (*pjobs).remove_last() };
+    }
+    return;
+}
+
 fn ak_clickable(ctx: *u8, np: *facet::Node, take content: flex::Node) -> flex::Node {
     // Primary click reuses Node.click; only wire when a real handler is set
     // (noop is the blank default — ui:: treats null-fn as "don't install").
@@ -1403,8 +1421,11 @@ fn ak_set_identity(ctx: *u8, handle: *u8, id: str, role: u32) {
 // context — theme, window — can ride here); the ops don't read it.
 fn renderer() -> facet::Renderer {
     // A mount that fills deferred scroll/split content drains that work through
-    // this up-call hook (ui::apply can't name our job queues).
+    // this up-call hook (ui::apply can't name our job queues). The DISCARD hook
+    // is the measure-only companion: a `list` row built just for its height
+    // drops its deferred jobs instead of filling them.
     ui::set_post_render_hook(drain_post_apply);
+    ui::set_post_render_discard_hook(discard_post_apply);
     return facet::Renderer {
         ctx: 0 as *u8,
         label: ak_label,
@@ -4446,6 +4467,50 @@ fn add_child_of_a_scroll_subtree_drains_post_apply() {
     // the verb drained the queue at its tail: the scroll was filled, none pending.
     assert find_view_by_id(host.raw(), "panel") != (0 as *u8);
     assert SCROLL_JOBS.count() == (0 as usize);
+    unmount_all();
+}
+
+// A `facet::list` row whose content is a `facet::scroll` (iris chat code card):
+// mounting it enqueues a ScrollJob on its own row path — neither the height
+// measure nor the cell build goes through a verb that drains, so before the fix
+// the job lingered in SCROLL_JOBS referencing a scroll view the recycled row
+// then freed, and a later unrelated drain retained the dangling pointer (crash).
+fn scroll_code_row(i: i64, ctx: *u8) -> flex::Node {
+    var inner: facet::Builder = facet::Builder::new();
+    inner.add(facet::label("a long line of code that scrolls sideways"));
+    var b: facet::Builder = facet::Builder::new();
+    b.add(facet::scroll(inner).height(20.0f64));
+    var node: facet::Node = facet::column(b);
+    return mount(#addr_of(node));
+}
+
+#[test]
+fn list_row_scroll_leaves_no_lingering_post_apply_job() {
+    unmount_all();
+    install();
+    drain_post_apply();
+    assert SCROLL_JOBS.count() == (0 as usize);      // clean queue to start
+
+    let n: flex::Node = ui::list(count: 3 as i64, row: scroll_code_row);
+    let scroll_v: *u8 = n.payload();
+    let tbl: *u8 = { rt::msg_id(scroll_v, rt::sel(#str_ptr("documentView\0"))) };
+    assert tbl != (0 as *u8);
+    let cx: *u8 = rt::get_associated_object(tbl, ui::list_ctx_key());
+    assert cx != (0 as *u8);
+
+    // Height measure: mounts a scroll row, then DISCARDS its job (the measured
+    // node is thrown away). No job may survive.
+    let _h: f64 = ui::list_height_imp(cx, tbl, 0 as i64);
+    assert SCROLL_JOBS.count() == (0 as usize);
+
+    // Cell build: mounts + applies + DRAINS (fills) its job into the live cell.
+    let cellp: *u8 = ui::list_view_for_row_imp(cx, tbl, 0 as *u8, 0 as i64);
+    assert cellp != (0 as *u8);
+    assert SCROLL_JOBS.count() == (0 as usize);
+
+    // The crash reproduction: a later, unrelated drain. With nothing lingering,
+    // it is a safe no-op instead of retaining a freed scroll view.
+    drain_post_apply();
     unmount_all();
 }
 

@@ -1363,6 +1363,11 @@ fn list_height_imp(user: *u8, tv: *u8, row: i64) -> f64 {
     node.calculate_layout(list_col_width(tv), flex::undefined(), flex::Direction::LTR);
     node.round_to_pixel(2.0f64);
     let h: f64 = node.layout_frame().height;
+    // This row was mounted only to measure — `node` (and any scroll/split views
+    // it built) drops on return. Drop the deferred jobs those mounts registered
+    // so none outlives its view (a lingering job = dangling-pointer crash on a
+    // later drain).
+    run_post_render_discard_hook();
     if h < 1.0f64 { return 1.0f64; }
     return h;
 }
@@ -1418,6 +1423,11 @@ fn list_view_for_row_imp(user: *u8, tv: *u8, col: *u8, row: i64) -> *u8 {
     }
     cell.set_frame(rt::Rect { x: 0.0, y: 0.0, w: w, h: h });
     apply(#addr_of(node), cell.raw(), false);
+    // Fill any deferred scroll/split the row mounted, now that its views are
+    // live in the cell (their frames set by apply). A `list` row is its own
+    // mount path — nothing else drains for it — so without this a scroll inside
+    // a row is never sized AND its job lingers to crash a later drain.
+    run_post_render_hook();
     list_autoresize_subtree(cell);   // content re-wraps live as the column widens
     return cell.raw();
 }
@@ -2501,6 +2511,22 @@ static POST_RENDER_HOOK: fn() = #zero::[fn()]();
 fn set_post_render_hook(h: fn()) { POST_RENDER_HOOK = h; return; }
 fn run_post_render_hook() {
     let h: fn() = POST_RENDER_HOOK;
+    if h != (0 as fn()) { h(); }
+    return;
+}
+
+// The DISCARD companion: drop any deferred post-apply jobs WITHOUT processing
+// them, for a mount whose views are about to be thrown away — a `list` row
+// built only to MEASURE its height, never shown. Draining (filling) such a
+// mount's scrolls would retain their views into the content registry and orphan
+// them; discarding drops each job's owned content and leaves the borrowed view
+// to its owner's teardown. Without this, a scroll/split inside a measured-only
+// row leaves a job whose view is then freed — a later drain retains a dangling
+// pointer (crash).
+static POST_RENDER_DISCARD_HOOK: fn() = #zero::[fn()]();
+fn set_post_render_discard_hook(h: fn()) { POST_RENDER_DISCARD_HOOK = h; return; }
+fn run_post_render_discard_hook() {
+    let h: fn() = POST_RENDER_DISCARD_HOOK;
     if h != (0 as fn()) { h(); }
     return;
 }
