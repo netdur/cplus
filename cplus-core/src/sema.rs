@@ -814,6 +814,8 @@ fn check_with_files_inner(
         current_fn_is_gen: false,
         current_gen_yield_ty: None,
         current_fn_param_names: std::collections::HashSet::new(),
+        fn_return_borrows: crate::borrowck::free_fn_return_borrows(program),
+        current_fn_ref_targets: std::collections::HashSet::new(),
         current_fn_param_regions: HashMap::new(),
         current_fn_return_region: None,
         current_fn_no_alloc: false,
@@ -1166,6 +1168,19 @@ struct SemaCx<'a> {
     /// local-rooted one (dropped at function exit → dangling). Set fresh at the
     /// top of `check_function` / `check_method`.
     current_fn_param_names: std::collections::HashSet<String>,
+    /// Free-function return-borrow map (from borrowck's SigTable), built once
+    /// per program. Lets the E0513 return-escape check trace `return
+    /// head(local)` — where `head(x) -> str` returns a view of parameter `x` —
+    /// back to `local` and reject it, the same as the direct
+    /// `return local.view()` form. Empty until populated at check entry.
+    fn_return_borrows: HashMap<String, crate::borrowck::ReturnBorrowSource>,
+    /// Names of the current function's *borrowing write targets* — `ref`
+    /// parameters and a `ref this` receiver (`self`/`this`). These outlive the
+    /// call frame (they alias the caller's storage), so storing a view of
+    /// function-dying storage into them is a dangling-view escape (bug 02-C),
+    /// the same class as storing into a `static` (bug 09). A `take` parameter
+    /// is NOT here — it owns its value and dies with the frame.
+    current_fn_ref_targets: std::collections::HashSet<String>,
     /// v0.0.12 (#2 region enforcement): map from parameter name to the explicit
     /// `borrow REGION T` region it carried, for parameters that had one. Used
     /// to validate that a region-annotated return borrows a same-region param.
@@ -3809,7 +3824,7 @@ impl SemaCx<'_> {
                 },
             );
         }
-        self.setup_returned_borrow_ctx(&m.params, &m.return_type, m.receiver.is_some());
+        self.setup_returned_borrow_ctx(&m.params, &m.return_type, m.receiver);
         self.check_function_body(
             &m.body,
             self.current_return.clone(),
@@ -3973,7 +3988,7 @@ impl SemaCx<'_> {
                 },
             );
         }
-        self.setup_returned_borrow_ctx(&m.params, &m.return_type, m.receiver.is_some());
+        self.setup_returned_borrow_ctx(&m.params, &m.return_type, m.receiver);
         self.check_function_body(
             &m.body,
             self.current_return.clone(),
@@ -5668,7 +5683,7 @@ impl SemaCx<'_> {
                 },
             );
         }
-        self.setup_returned_borrow_ctx(&f.params, &f.return_type, false);
+        self.setup_returned_borrow_ctx(&f.params, &f.return_type, None);
         self.check_function_body(
             &f.body,
             body_return,
@@ -6106,6 +6121,11 @@ impl SemaCx<'_> {
                     );
                 }
                 let borrow_roots = if matches!(final_ty, Ty::Str | Ty::Slice(_)) {
+                    // Bug 03: `let s: str = temp.view();` binds a view of a
+                    // statement-scoped temporary that drops immediately.
+                    if let Some(e) = init.as_ref() {
+                        self.flag_view_of_temp(e);
+                    }
                     init.as_ref()
                         .map(|e| self.returned_borrow_roots(e))
                         .unwrap_or_default()
@@ -13536,19 +13556,31 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         &mut self,
         params: &[Param],
         ret_ty: &Option<Type>,
-        has_self_receiver: bool,
+        receiver: Option<Receiver>,
     ) {
         let mut names = std::collections::HashSet::new();
         let mut regions: HashMap<String, String> = HashMap::new();
-        if has_self_receiver {
+        let mut ref_targets = std::collections::HashSet::new();
+        if receiver.is_some() {
             names.insert("self".to_string());
+        }
+        // `ref this` aliases the caller's receiver — a borrowing write target.
+        if receiver == Some(Receiver::Mut) {
+            ref_targets.insert("self".to_string());
+            ref_targets.insert("this".to_string());
         }
         for p in params {
             names.insert(p.name.name.clone());
+            // A `ref x: T` parameter (mutable, not `take`) borrows the caller's
+            // storage and writes back — it outlives the frame.
+            if p.mutable && !p.move_ {
+                ref_targets.insert(p.name.name.clone());
+            }
             if let TypeKind::Borrowed { region, .. } = &p.ty.kind {
                 regions.insert(p.name.name.clone(), region.clone());
             }
         }
+        self.current_fn_ref_targets = ref_targets;
         let ret_region = match ret_ty {
             Some(t) => match &t.kind {
                 TypeKind::Borrowed { region, .. } => Some(region.clone()),
@@ -13597,6 +13629,12 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         self.flag_escaping_local_views(e);
 
         let ret_borrow_shaped = matches!(self.current_return, Ty::Str | Ty::Slice(_));
+        // Bug 03: `return temp.view();` returns a view of a statement-scoped
+        // temporary — dangles even harder than a local (the temp is already
+        // gone by the time the caller reads it).
+        if ret_borrow_shaped {
+            self.flag_view_of_temp(e);
+        }
         let ret_region = self.current_fn_return_region.clone();
         if !ret_borrow_shaped && ret_region.is_none() {
             return;
@@ -13622,26 +13660,38 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 }
             }
         }
-        // #3 — dangling view into a local owned value.
+        // #3 — dangling view into storage that dies at function return. The
+        // gate is the root's `owns_value` flag, not "is it a parameter": a
+        // plain local, a `take` parameter, and a `take this` receiver ALL own
+        // their storage and drop it at return, so a returned view of any of
+        // them dangles. A bare / `ref` parameter and a `this` / `ref this`
+        // receiver borrow caller-owned storage, so a view of them is
+        // caller-tied and sound (`owns_value == false`). This replaces the
+        // old "every parameter name is a safe root" heuristic that let
+        // `return take_param.as_str()` / `return this.as_str()` (take this)
+        // escape.
         if ret_borrow_shaped {
             for root in &roots {
-                if !self.current_fn_param_names.contains(root) {
-                    let local_ty = self.lookup_local(root).map(|i| i.ty.clone());
-                    if let Some(ty) = local_ty {
-                        if !self.is_copy(&ty) {
-                            self.err(
-                                "E0513",
-                                format!(
-                                    "cannot return a borrow of local `{root}`: it owns heap that is freed when the function returns, so the returned view would dangle. Return an owned value (`Text` / `Vec[T]`) instead, or borrow from a parameter"
-                                ),
-                                e.span,
-                            );
-                            return;
-                        }
-                    }
+                let key: &str = if root == "this" { "self" } else { root };
+                let Some(info) = self.lookup_local(key) else {
+                    continue;
+                };
+                if info.owns_value && !self.is_copy(&info.ty) {
+                    self.err("E0513", self.dangling_view_root_message(root), e.span);
+                    return;
                 }
             }
         }
+    }
+
+    /// The E0513 message for a returned view whose owner dies at return,
+    /// tailored to what the root actually is — a `take` receiver, a `take`
+    /// parameter, or a plain local — so the fix is obvious from the text.
+    fn dangling_view_root_message(&self, root: &str) -> String {
+        format!(
+            "cannot return a borrow of {}: it owns heap that is freed when the function returns, so the returned view would dangle. Return an owned value (`Text` / `Vec[T]`) instead, or borrow from a non-`take` parameter",
+            self.view_owner_desc(root)
+        )
     }
 
     /// v0.0.13 (Tier 1): walk a returned **aggregate literal** and flag any
@@ -13678,47 +13728,359 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 }
             }
             ExprKind::ArrayFill { fill, .. } => self.flag_view_leaves(fill),
-            // Leaf: a `local.as_slice()` view, OR (v0.0.24 #11) a bare local
-            // `Text` coerced to `str` at this aggregate position — both borrow
-            // a non-Copy local that drops at return, so the stored view would
-            // dangle. The coercion has no `as_str` anchor, so consult the
-            // recorded coercion sites and trace the coerced expression's root.
+            // Leaf: a view-producing call (`local.view()` / `local.as_slice()`
+            // / a free-fn view), OR (v0.0.24 #11) a bare owner coerced to `str`
+            // at a recorded coercion site — both store a borrow of storage that
+            // drops at return, so the stored view would dangle. `view_leaf_roots`
+            // yields roots only for genuine views (never for an owned value
+            // moved into an owned field), and the `owns_value` gate flags a
+            // plain local, a `take` parameter, and a `take this` receiver alike.
             _ => {
-                let mut root = view_producing_root(e);
-                if root.is_none() && self.text_to_str_coercion_table.contains(&e.span) {
-                    root = returned_borrow_root(e);
-                }
-                if let Some(root) = root {
-                    if !self.current_fn_param_names.contains(root) {
-                        if let Some(ty) = self.lookup_local(root).map(|i| i.ty.clone()) {
-                            if !self.is_copy(&ty) {
-                                self.err(
-                                    "E0513",
-                                    format!(
-                                        "view of local `{root}` escapes inside the returned value: `{root}` is freed when the function returns, so the stored view would dangle. Store an owned `Text` / `Vec[T]`, or borrow the view from a parameter"
-                                    ),
-                                    e.span,
-                                );
-                            }
-                        }
+                for root in self.view_leaf_roots(e) {
+                    let key: &str = if root == "this" { "self" } else { &root };
+                    let Some(info) = self.lookup_local(key) else {
+                        continue;
+                    };
+                    if info.owns_value && !self.is_copy(&info.ty) {
+                        self.err(
+                            "E0513",
+                            format!(
+                                "view of {} escapes inside the returned value: it is freed when the function returns, so the stored view would dangle. Store an owned `Text` / `Vec[T]`, or borrow the view from a non-`take` parameter",
+                                if root == "self" || root == "this" {
+                                    "the `take this` receiver".to_string()
+                                } else if self.current_fn_param_names.contains(&root) {
+                                    format!("`take` parameter `{root}`")
+                                } else {
+                                    format!("local `{root}`")
+                                }
+                            ),
+                            e.span,
+                        );
                     }
                 }
             }
         }
     }
 
-    fn returned_borrow_roots(&self, e: &Expr) -> BTreeSet<String> {
-        let mut roots = BTreeSet::new();
-        let Some(root) = returned_borrow_root(e) else {
-            return roots;
+    /// Resolve the declared type of a *place* expression (local / field /
+    /// index / deref chain) without re-checking it — a read-only structural
+    /// walk over recorded local types and struct field types. `this`
+    /// normalizes to the receiver local `self`. `None` for anything it can't
+    /// follow (non-place expressions, unknown fields).
+    fn place_expr_ty(&self, e: &Expr) -> Option<Ty> {
+        match &e.kind {
+            ExprKind::Ident(n) => {
+                let key: &str = if n == "this" { "self" } else { n };
+                self.lookup_local(key).map(|i| i.ty.clone())
+            }
+            ExprKind::Field { receiver, name } => {
+                let Ty::Struct(id) = self.place_expr_ty(receiver)? else {
+                    return None;
+                };
+                self.structs[id.0 as usize]
+                    .fields
+                    .iter()
+                    .find(|(fname, _, _)| *fname == name.name)
+                    .map(|(_, fty, _)| fty.clone())
+            }
+            ExprKind::Index { receiver, .. } => match self.place_expr_ty(receiver)? {
+                Ty::Slice(inner) | Ty::Array(inner, _) => Some(*inner),
+                _ => None,
+            },
+            ExprKind::Unary {
+                op: UnaryOp::Deref,
+                operand,
+            } => match self.place_expr_ty(operand)? {
+                Ty::RawPtr(inner) => Some(*inner),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// A best-effort type for an expression: a place type (via
+    /// `place_expr_ty`), or the result type of a simple owned-value producer
+    /// (free-fn call, method call, struct literal). Used to spot a view taken
+    /// off an owned *temporary* receiver. `None` when it can't resolve without
+    /// full inference — conservative (the temp check then simply doesn't fire).
+    fn expr_result_ty(&self, e: &Expr) -> Option<Ty> {
+        if let Some(ty) = self.place_expr_ty(e) {
+            return Some(ty);
+        }
+        match &e.kind {
+            ExprKind::Call { callee, .. } => match &callee.kind {
+                ExprKind::Ident(fn_name) => self.fns.get(fn_name).map(|s| s.return_type.clone()),
+                ExprKind::Field { receiver, name } => {
+                    let rty = self.expr_result_ty(receiver)?;
+                    let sig = match &rty {
+                        Ty::Struct(id) => self.structs[id.0 as usize].methods.get(&name.name),
+                        Ty::Enum(id) => self.enums[id.0 as usize].methods.get(&name.name),
+                        _ => None,
+                    };
+                    sig.map(|s| s.return_type.clone())
+                }
+                _ => None,
+            },
+            ExprKind::StructLit { name, .. } => {
+                self.struct_by_name.get(&name.name).copied().map(Ty::Struct)
+            }
+            _ => None,
+        }
+    }
+
+    /// Bug 03: a view taken off an owned *temporary* receiver — `let s =
+    /// text::from_str("x").view();` — binds a `str`/slice that aliases a
+    /// temporary the statement drops at its end, so the binding immediately
+    /// dangles. Reject binding / returning / storing such a view. Using it as a
+    /// direct call argument (where the temp still lives across that call) is
+    /// sound and is not routed here.
+    fn flag_view_of_temp(&mut self, value: &Expr) {
+        let ExprKind::Call { callee, .. } = &value.kind else {
+            return;
         };
-        if let Some(info) = self.lookup_local(root) {
-            if !info.borrow_roots.is_empty() {
-                roots.extend(info.borrow_roots.iter().cloned());
-                return roots;
+        let ExprKind::Field { receiver, name } = &callee.kind else {
+            return;
+        };
+        // A named place receiver is handled by the `owns_value` root checks;
+        // only a *non-place* receiver is a statement-scoped temporary.
+        if self.place_root_name(receiver).is_some() {
+            return;
+        }
+        let Some(rty) = self.expr_result_ty(receiver) else {
+            return;
+        };
+        // The temporary must be a non-Copy owned value that actually drops
+        // (a `str`/slice temporary is itself a Copy view, nothing to dangle).
+        if self.is_copy(&rty) {
+            return;
+        }
+        let sig = match &rty {
+            Ty::Struct(id) => self.structs[id.0 as usize].methods.get(&name.name),
+            Ty::Enum(id) => self.enums[id.0 as usize].methods.get(&name.name),
+            _ => None,
+        };
+        let Some(sig) = sig else {
+            return;
+        };
+        if matches!(sig.receiver, Some(Receiver::Read) | Some(Receiver::Mut))
+            && matches!(sig.return_type, Ty::Str | Ty::Slice(_))
+        {
+            self.err(
+                "E0513",
+                format!(
+                    "cannot bind the view returned by `.{}()` on a temporary `{}`: the temporary is dropped at the end of this statement, so the view would dangle. Bind the owner to a named local first (`let owner = ...; owner.{}()`)",
+                    name.name,
+                    ty_display(&rty),
+                    name.name
+                ),
+                value.span,
+            );
+        }
+    }
+
+    /// The base binding name of a place expression (Ident / field / index /
+    /// deref chain). `None` for non-place expressions.
+    fn place_root_name(&self, e: &Expr) -> Option<String> {
+        match &e.kind {
+            ExprKind::Ident(n) => Some(n.clone()),
+            ExprKind::Field { receiver, .. } | ExprKind::Index { receiver, .. } => {
+                self.place_root_name(receiver)
+            }
+            ExprKind::Unary {
+                op: UnaryOp::Deref,
+                operand,
+            } => self.place_root_name(operand),
+            _ => None,
+        }
+    }
+
+    /// Human description of a view-owner root for diagnostics: distinguishes a
+    /// `take this` receiver, a `take` parameter, and a plain local — the three
+    /// `owns_value` kinds whose storage dies when the function returns.
+    fn view_owner_desc(&self, root: &str) -> String {
+        if root == "self" || root == "this" {
+            "the `take this` receiver".to_string()
+        } else if self.current_fn_param_names.contains(root) {
+            format!("`take` parameter `{root}`")
+        } else {
+            format!("local `{root}`")
+        }
+    }
+
+    /// Bugs 09 / 02-C: reject storing a view of function-dying storage into a
+    /// place that OUTLIVES the frame — a module `static`, or a `ref` /
+    /// `ref this` borrowing target (which aliases the caller's storage). The
+    /// stored view's owner is an `owns_value` root (a local, a `take`
+    /// parameter, or a `take this` receiver) that is freed on return, so the
+    /// escaped view would dangle. A view of a bare / `ref` *parameter* is
+    /// caller-tied and left alone (only `owns_value` owners are flagged).
+    fn check_view_store_escape(&mut self, target: &Expr, value: &Expr, target_ty: &Ty) {
+        if !matches!(target_ty, Ty::Str | Ty::Slice(_)) {
+            return;
+        }
+        let Some(troot) = self.place_root_name(target) else {
+            return;
+        };
+        let target_is_static = self.statics_table.contains_key(&troot);
+        let target_is_ref = self.current_fn_ref_targets.contains(&troot);
+        if !(target_is_static || target_is_ref) {
+            return;
+        }
+        for vroot in self.returned_borrow_roots(value) {
+            let key: &str = if vroot == "this" { "self" } else { &vroot };
+            let Some(info) = self.lookup_local(key) else {
+                continue;
+            };
+            if info.owns_value && !self.is_copy(&info.ty) {
+                let dest = if target_is_static {
+                    format!("static `{troot}`")
+                } else {
+                    format!("`ref` target `{troot}`")
+                };
+                self.err(
+                    "E0513",
+                    format!(
+                        "cannot store a view of {} into {dest}: the view's owner is freed when the function returns, but {dest} outlives it, so the stored view would dangle",
+                        self.view_owner_desc(&vroot)
+                    ),
+                    value.span,
+                );
+                break;
             }
         }
-        roots.insert(root.to_string());
+    }
+
+    /// True iff `receiver.method(...)` produces a `str`/slice VIEW that borrows
+    /// the receiver — the shape-based generalization of the old `as_str` /
+    /// `as_slice` name allowlist. A method qualifies when the receiver's type
+    /// declares `method` with a borrowing receiver (`this` / `ref this`, not
+    /// `take this`) and a view return type (`str` / `T[]`). This is what lets
+    /// E0513 recognize `Text::view` and any user accessor — matching
+    /// borrowck's shape-based `detect_method_view`, instead of two hard-coded
+    /// names that missed the stdlib's actual accessor.
+    fn method_produces_view(&self, receiver: &Expr, method: &str) -> bool {
+        let Some(ty) = self.place_expr_ty(receiver) else {
+            return false;
+        };
+        let sig = match &ty {
+            Ty::Struct(id) => self.structs[id.0 as usize].methods.get(method),
+            Ty::Enum(id) => self.enums[id.0 as usize].methods.get(method),
+            _ => None,
+        };
+        let Some(sig) = sig else {
+            return false;
+        };
+        matches!(sig.receiver, Some(Receiver::Read) | Some(Receiver::Mut))
+            && matches!(sig.return_type, Ty::Str | Ty::Slice(_))
+    }
+
+    /// The set of *root bindings* a returned view borrows from, traced by
+    /// SHAPE (not method name). Covers place chains (Ident/Field/Index/Deref);
+    /// a view-producing method call (`recv.view()` → recv's root); a free-fn
+    /// call whose signature returns a borrow of one or more params
+    /// (`head(x)` → x's root, via borrowck's `fn_return_borrows`); and
+    /// control-flow *expressions* (`if` / block / `match`) — the union of every
+    /// value-producing arm, so a dangling arm can't hide behind a sound one.
+    /// A bare `Ident` is a root itself (a view-typed binding is either an
+    /// owner coerced to a view or an alias — alias expansion happens in
+    /// `returned_borrow_roots`).
+    fn view_source_roots(&self, e: &Expr) -> BTreeSet<String> {
+        let mut roots = BTreeSet::new();
+        match &e.kind {
+            ExprKind::Ident(n) => {
+                roots.insert(n.clone());
+            }
+            ExprKind::Field { receiver, .. } | ExprKind::Index { receiver, .. } => {
+                roots.extend(self.view_source_roots(receiver));
+            }
+            ExprKind::Unary {
+                op: UnaryOp::Deref,
+                operand,
+            } => {
+                roots.extend(self.view_source_roots(operand));
+            }
+            ExprKind::Call { callee, args, .. } => match &callee.kind {
+                ExprKind::Field { receiver, name } => {
+                    if self.method_produces_view(receiver, &name.name) {
+                        roots.extend(self.view_source_roots(receiver));
+                    }
+                }
+                ExprKind::Ident(fn_name) => match self.fn_return_borrows.get(fn_name) {
+                    Some(crate::borrowck::ReturnBorrowSource::Param(i)) => {
+                        if let Some(a) = args.get(*i as usize) {
+                            roots.extend(self.view_source_roots(a));
+                        }
+                    }
+                    Some(crate::borrowck::ReturnBorrowSource::MultiParam(is)) => {
+                        for &i in is {
+                            if let Some(a) = args.get(i as usize) {
+                                roots.extend(self.view_source_roots(a));
+                            }
+                        }
+                    }
+                    _ => {}
+                },
+                _ => {}
+            },
+            ExprKind::If {
+                then, else_branch, ..
+            } => {
+                if let Some(t) = &then.tail {
+                    roots.extend(self.view_source_roots(t));
+                }
+                if let Some(eb) = else_branch {
+                    roots.extend(self.view_source_roots(eb));
+                }
+            }
+            ExprKind::Block(b) => {
+                if let Some(t) = &b.tail {
+                    roots.extend(self.view_source_roots(t));
+                }
+            }
+            ExprKind::Match { arms, .. } => {
+                for a in arms {
+                    roots.extend(self.view_source_roots(&a.body));
+                }
+            }
+            _ => {}
+        }
+        roots
+    }
+
+    /// View-source roots of an aggregate *leaf* — but ONLY for an expression
+    /// that is genuinely a view (a view-producing call, or a bare owner at a
+    /// recorded `Text`→`str` coercion site). A leaf that moves an owned value
+    /// into an owned field (`Holder { text: local }`) is not a view and must
+    /// never be flagged (that would reject a valid ownership transfer). Keeps
+    /// `flag_view_leaves` free of false positives while recognizing `view()`
+    /// and free-fn views, not just `as_str`/`as_slice`.
+    fn view_leaf_roots(&self, e: &Expr) -> BTreeSet<String> {
+        match &e.kind {
+            ExprKind::Call { callee, .. }
+                if matches!(&callee.kind, ExprKind::Field { .. } | ExprKind::Ident(_)) =>
+            {
+                self.view_source_roots(e)
+            }
+            _ if self.text_to_str_coercion_table.contains(&e.span) => self.view_source_roots(e),
+            _ => BTreeSet::new(),
+        }
+    }
+
+    fn returned_borrow_roots(&self, e: &Expr) -> BTreeSet<String> {
+        let mut roots = BTreeSet::new();
+        for root in self.view_source_roots(e) {
+            // Expand aliases: a view binding that itself borrows other owners
+            // (`let s = t.view(); return s;`) contributes those owners, not
+            // the alias name.
+            let key: &str = if root == "this" { "self" } else { &root };
+            if let Some(info) = self.lookup_local(key) {
+                if !info.borrow_roots.is_empty() {
+                    roots.extend(info.borrow_roots.iter().cloned());
+                    continue;
+                }
+            }
+            roots.insert(root);
+        }
         roots
     }
 
@@ -14175,6 +14537,15 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     // resolution only — the operator's legality still applies,
                     // so `FLAG += true` (bool static) is rejected like a local.
                     self.check_compound_assign_op_type(op, &info.ty, &value_ty, span);
+                    // Bug 09: `static S = local.view()` stores a view of
+                    // frame-dying storage into program-lifetime storage.
+                    // Bug 03: `static S = temp.view()` — view of a temporary.
+                    if matches!(op, AssignOp::Assign) {
+                        self.check_view_store_escape(target, value, &info.ty);
+                        if matches!(info.ty, Ty::Str | Ty::Slice(_)) {
+                            self.flag_view_of_temp(value);
+                        }
+                    }
                     return Ty::Unit;
                 }
             }
@@ -14305,6 +14676,13 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             self.mark_moved_through_wrappers(value, &value_ty);
         }
         self.check_compound_assign_op_type(op, &target_ty, &value_ty, span);
+        if matches!(op, AssignOp::Assign) {
+            self.check_view_store_escape(target, value, &target_ty);
+            // Bug 03: `s = temp.view();` into any view-typed place.
+            if matches!(target_ty, Ty::Str | Ty::Slice(_)) {
+                self.flag_view_of_temp(value);
+            }
+        }
         if matches!(op, AssignOp::Assign) {
             if let ExprKind::Ident(name) = &target.kind {
                 let borrow_roots = if matches!(target_ty, Ty::Str | Ty::Slice(_)) {
@@ -17901,57 +18279,6 @@ fn cast_allowed(from: &Ty, to: &Ty) -> bool {
 /// attribute list and return the string value. Returns `None` if absent.
 /// Attribute-shape validation has already run via attrs::check, so any
 /// `link_name` here is guaranteed to have the right arg shape.
-/// v0.0.10 Phase 5: is the argument expression a named binding (a plain
-/// `Ident` referring to a local / parameter) that the move-by-default
-/// rule should consume? Rvalues (struct literals, calls returning by
-/// value, etc.) own their result outright and don't have a caller
-/// binding to mark moved — applying the implicit move to them is a
-/// no-op and would otherwise spuriously fire E0337 on temporaries.
-/// v0.0.12 (returned-borrow checking): the binding a borrow-shaped value
-/// (`str` / `T[]`) is rooted at, tracing through place projections
-/// (field / index / deref) and the canonical view accessors `as_str` /
-/// `as_slice` (which borrow their receiver). Returns `None` for values
-/// whose provenance can't be traced syntactically — literals (`'static`),
-/// arbitrary call results, etc. — which the return check then treats
-/// conservatively as "not provably dangling".
-/// v0.0.13 (Tier 1): the root local of an *unambiguous view-producing*
-/// expression — only `recv.as_str()` / `recv.as_slice()`. Unlike
-/// `returned_borrow_root`, a bare identifier/field is NOT view-producing here
-/// (it might be an owned value being moved), so this never flags a legitimate
-/// move of an owned field into a returned aggregate.
-fn view_producing_root(e: &Expr) -> Option<&str> {
-    if let ExprKind::Call { callee, .. } = &e.kind {
-        if let ExprKind::Field { receiver, name } = &callee.kind {
-            if matches!(name.name.as_str(), "as_str" | "as_slice") {
-                return returned_borrow_root(receiver);
-            }
-        }
-    }
-    None
-}
-
-fn returned_borrow_root(e: &Expr) -> Option<&str> {
-    match &e.kind {
-        ExprKind::Ident(n) => Some(n.as_str()),
-        ExprKind::Field { receiver, .. } => returned_borrow_root(receiver),
-        ExprKind::Index { receiver, .. } => returned_borrow_root(receiver),
-        ExprKind::Unary {
-            op: UnaryOp::Deref,
-            operand,
-        } => returned_borrow_root(operand),
-        // `recv.as_str()` / `recv.as_slice()` return a view borrowing `recv`.
-        ExprKind::Call { callee, .. } => {
-            if let ExprKind::Field { receiver, name } = &callee.kind {
-                if matches!(name.name.as_str(), "as_str" | "as_slice") {
-                    return returned_borrow_root(receiver);
-                }
-            }
-            None
-        }
-        _ => None,
-    }
-}
-
 fn extract_link_name(attrs: &[Attribute]) -> Option<String> {
     attrs.iter().find_map(|a| {
         if a.path.name != "link_name" {

@@ -213,8 +213,13 @@ impl File {
                         yield view.to_text();
                     } else {
                         carry.extend_from_raw(chunk_p, chunk_len);
-                        let cs: u8[] = carry.as_slice();
-                        let cp: *u8 = { #slice_ptr(cs) };
+                        // Inline the slice rather than binding it: a bound `u8[]`
+                        // view of `carry` keeps `carry` borrowed through the
+                        // `remove_all()` below (borrowck is lexical), even though
+                        // the view is dead after `#slice_ptr`. The raw pointer
+                        // stays valid until `remove_all` frees the buffer — which
+                        // runs after `view` has been copied out via `to_text`.
+                        let cp: *u8 = { #slice_ptr(carry.as_slice()) };
                         let view: str = { #str_from_raw_parts(cp, carry.count()) };
                         yield view.to_text();
                         carry.remove_all();

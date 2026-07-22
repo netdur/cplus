@@ -402,11 +402,19 @@ impl CopyOracle {
             TypeKind::Borrowed { inner, .. } => self.definitely_non_copy(inner),
             // Slice 7GEN.5c: generic instantiation in type position.
             // Borrowck runs *before* monomorphize, so `Pair[i32, bool]`
-            // still appears here. Conservative: treat as not-definitely-
-            // non-Copy (return false) — the actual Copy-ness is
-            // determined by the instantiated struct's fields, which
-            // monomorphize lowers later.
-            TypeKind::Generic { .. } => false,
+            // still appears here. A generic base that is a **Drop** type is
+            // unconditionally non-Copy regardless of its type args (the
+            // destructor makes it non-Copy no matter what `T` is), so we can
+            // answer definitively — this is what lets Rule E-VIEW / move
+            // tracking fire for `Vec[i32]` (a `Vec` slice view must pin the
+            // owner; moving/reallocating it under a live slice is a UAF).
+            // For a **non-Drop** generic (`Pair[i32, bool]`) Copy-ness still
+            // depends on the type args, which monomorphize resolves later, so
+            // stay conservative (return false) to avoid a false non-Copy
+            // verdict on what may be a Copy instantiation.
+            TypeKind::Generic { name, .. } => {
+                self.types.get(name).map(|i| i.is_drop).unwrap_or(false)
+            }
             // Slice 10.FFI.1: raw pointers are Copy.
             TypeKind::RawPtr(_) => false,
             // Slice 11.FN_PTR: function pointers are Copy (atomic).
@@ -575,7 +583,14 @@ struct SigTable {
 /// false for those. Treating them as non-moves keeps the analysis conservative;
 /// codegen still moves them correctly post-mono.
 fn param_is_effective_move(p: &crate::ast::Param, oracle: &CopyOracle) -> bool {
-    p.move_ && matches!(&p.ty.kind, TypeKind::Path(_)) && oracle.definitely_non_copy(&p.ty)
+    // `Path` and `Generic` (an instantiation like `Vec[i32]`) both reach
+    // `definitely_non_copy`, which now answers definitively for Drop generic
+    // bases — so passing a `take v: Vec[T]` consumes it, and a move-while-view
+    // is caught. Non-Drop generics still answer `false` there (conservative),
+    // so this stays a no-move for genuinely-maybe-Copy instantiations.
+    p.move_
+        && matches!(&p.ty.kind, TypeKind::Path(_) | TypeKind::Generic { .. })
+        && oracle.definitely_non_copy(&p.ty)
 }
 
 impl SigTable {
@@ -664,6 +679,22 @@ pub fn return_borrow_source(prog: &Program, fn_name: &str) -> Option<ReturnBorro
     let oracle = CopyOracle::build(prog);
     let sigs = SigTable::collect(prog, &oracle);
     sigs.fns.get(fn_name)?.return_borrow.clone()
+}
+
+/// The free-function return-borrow map for a whole program: every free fn
+/// whose body was detected (Rules E1 / E1-mut / E3) to return a `str`/slice
+/// view of one or more of its parameters, keyed by fn name. Sema reuses this
+/// as the single source of truth for its E0513 return-escape check — so a
+/// `return head(local)` where `head(x) -> str` returns a view of `x` is
+/// traced to `local` and rejected, exactly as the direct `return local.view()`
+/// form is. Built once (walks the program); the caller should cache it.
+pub fn free_fn_return_borrows(prog: &Program) -> HashMap<String, ReturnBorrowSource> {
+    let oracle = CopyOracle::build(prog);
+    let sigs = SigTable::collect(prog, &oracle);
+    sigs.fns
+        .into_iter()
+        .filter_map(|(name, e)| e.return_borrow.map(|rb| (name, rb)))
+        .collect()
 }
 
 /// Public test hook (5BC.3a): given a parsed program, the impl target
@@ -1914,6 +1945,37 @@ impl<'p> Analyzer<'p> {
                 .flat_map(|el| self.classify_borrow_source(el))
                 .collect(),
             ExprKind::ArrayFill { fill, .. } => self.classify_borrow_source(fill),
+            // Rule E-VIEW through control-flow *expressions* (2026-07-22): an
+            // `if` / block / `match` used in value position produces its value
+            // from a branch tail, and that tail may be a view. Union the
+            // borrow sources of every value-producing arm so
+            // `let s = if c { t.view() } else { "" };` records `s` as a
+            // borrower of `t` exactly like the direct `let s = t.view();`
+            // form. Conservative on multi-arm: pin *every* possible owner.
+            // Before this arm these landed in `_ => Vec::new()`, leaving the
+            // owner `Owned` and movable out from under the live view (UAF).
+            ExprKind::If {
+                then, else_branch, ..
+            } => {
+                let mut v = then
+                    .tail
+                    .as_ref()
+                    .map(|t| self.classify_borrow_source(t))
+                    .unwrap_or_default();
+                if let Some(eb) = else_branch {
+                    v.extend(self.classify_borrow_source(eb));
+                }
+                v
+            }
+            ExprKind::Block(b) => b
+                .tail
+                .as_ref()
+                .map(|t| self.classify_borrow_source(t))
+                .unwrap_or_default(),
+            ExprKind::Match { arms, .. } => arms
+                .iter()
+                .flat_map(|a| self.classify_borrow_source(&a.body))
+                .collect(),
             _ => Vec::new(),
         }
     }
@@ -2004,18 +2066,28 @@ impl<'p> Analyzer<'p> {
     /// instantiations, index projections.
     fn place_type_name(&self, e: &Expr) -> Option<String> {
         match &e.kind {
-            ExprKind::Ident(name) => match &self.binding_type(name)?.kind {
-                TypeKind::Path(p) => Some(p.clone()),
-                _ => None,
-            },
+            ExprKind::Ident(name) => Self::type_name_of(&self.binding_type(name)?.kind),
             ExprKind::Field { receiver, name } => {
                 let recv_ty = self.place_type_name(receiver)?;
                 let fty = self.sigs.struct_fields.get(&recv_ty)?.get(&name.name)?;
-                match &fty.kind {
-                    TypeKind::Path(p) => Some(p.clone()),
-                    _ => None,
-                }
+                Self::type_name_of(&fty.kind)
             }
+            _ => None,
+        }
+    }
+
+    /// The lookup key a type contributes to `SigTable::methods`
+    /// (`"{name}.{method}"`). A bare `Path` uses its own name; a **generic
+    /// instantiation** (`Vec[i32]`, `Pair[A, B]`) uses its base `name` —
+    /// the same string the generic `impl Vec[T]` block registers its methods
+    /// under (both are pre-mono AST names). Handling `Generic` here is what
+    /// lets Rule E-VIEW fire for `v.as_slice()` on a `Vec[T]` receiver; before
+    /// this it returned `None` and no borrow was recorded (a UAF: the `Vec`
+    /// could be moved/reallocated out from under a live slice view).
+    fn type_name_of(kind: &TypeKind) -> Option<String> {
+        match kind {
+            TypeKind::Path(p) => Some(p.clone()),
+            TypeKind::Generic { name, .. } => Some(name.clone()),
             _ => None,
         }
     }
@@ -2536,13 +2608,28 @@ impl Analyzer<'_> {
             StmtKind::LetDestructure { fields, init, .. } => {
                 // Destructuring consumes `init` wholly and re-owns each field as
                 // a new binding. Walk the init for its sub-expression
-                // transitions, then mark every field binding Owned. (Fields are
-                // moved-out owned values, never borrows — no borrow-acquire.)
+                // transitions, then mark every field binding Owned.
+                //
+                // Rule E-VIEW through destructure (2026-07-22): when the `init`
+                // aggregate embeds a view (`let Slot { s } = Slot { s: t.view()
+                // };`), the moved-out field is a *borrow*, not an owned
+                // resource — the same view the non-destructure form
+                // (`let w = Slot { s: t.view() }`) already pins. Classify the
+                // init's borrow sources and record each field binding as a
+                // borrower, so moving/dropping the owner while any field is
+                // live fires E0372. Conservative: union every source onto every
+                // field (destructured fields share one scope and release
+                // together, so over-pinning is harmless). Owning-field
+                // destructures classify to no sources and stay plain `Owned`.
+                let borrow_sources = self.classify_borrow_source(init);
                 self.apply_expr(init, state);
                 for f in fields {
                     self.binding_types
                         .insert(f.name.clone(), BindingType::Unknown);
                     state.insert(Place::root(&f.name), PlaceState::Owned);
+                    if !borrow_sources.is_empty() {
+                        self.acquire_borrows(borrow_sources.clone(), &f.name, f.span, state);
+                    }
                 }
             }
             StmtKind::Return(Some(e)) | StmtKind::Expr(e) | StmtKind::Defer(e) => {
@@ -2826,6 +2913,31 @@ impl Analyzer<'_> {
                     }
                     if !sources.is_empty() {
                         self.acquire_borrows(sources, name, target.span, state);
+                    }
+                } else if !borrow_sources.is_empty() {
+                    // Rule E-VIEW into a *projection* target (2026-07-22):
+                    // `w.s = t.view()` / `arr[0] = t.view()` stores a view into
+                    // a field/index of a local aggregate. The aggregate root
+                    // becomes a borrower of the owner, so moving/dropping the
+                    // owner while the aggregate is live fires E0372 — the same
+                    // pin the construction form `let w = Slot { s: t.view() }`
+                    // records. Keyed under the root binding so the block's
+                    // scope-exit release (which drops by place root) frees it
+                    // when the aggregate leaves scope. Deliberately not
+                    // `drop_borrower`'d first: a field reassignment keeps the
+                    // prior owner conservatively pinned (a safe
+                    // over-approximation) rather than under-pinning a sibling
+                    // view field — the field-granular alternative would need
+                    // per-projection borrower tracking.
+                    if let Some(root_place) = place_from_expr(target) {
+                        if !root_place.projections.is_empty() {
+                            self.acquire_borrows(
+                                borrow_sources,
+                                &root_place.root,
+                                target.span,
+                                state,
+                            );
+                        }
                     }
                 }
             }
@@ -3567,17 +3679,33 @@ impl Analyzer<'_> {
         let Some(bt) = self.binding_type(recv_name) else {
             return;
         };
-        let TypeKind::Path(type_name) = &bt.kind else {
+        // Path or generic instantiation (`Vec[i32]`) — a method call on a
+        // shared-borrowed generic receiver (`v.append(..)` while a slice view
+        // of `v` is live) is the same iterator-invalidation conflict as on a
+        // non-generic one. Before this it returned early on `Generic` and the
+        // mutation slipped past (a UAF: append can realloc the buffer the live
+        // slice points into).
+        let Some(type_name) = Self::type_name_of(&bt.kind) else {
             return;
         };
         let key = format!("{type_name}.{method_name}");
-        if !self.sigs.methods.contains_key(&key) {
+        let Some(entry) = self.sigs.methods.get(&key) else {
             return;
-        }
+        };
+        // A `this` (read-only) method does NOT conflict with a *shared* borrow —
+        // both are shared reads. Only a `ref this` / `take this` method needs
+        // exclusive/consuming access, which is what actually invalidates a live
+        // slice view (`v.append(..)` reallocates the buffer). Gating on the
+        // receiver's claim keeps the real iterator-invalidation catch while not
+        // rejecting a benign read (`v.count()`) taken alongside a view.
+        let receiver_mutates = matches!(
+            entry.receiver_claim,
+            Some(ClaimKind::Exclusive) | Some(ClaimKind::Move)
+        );
         let place = Place::root(recv_name);
         let Some(st) = state.get(&place) else { return };
         match st {
-            PlaceState::BorrowedShared(_) => {
+            PlaceState::BorrowedShared(_) if receiver_mutates => {
                 let (borrower, borrow_span) = self
                     .live_borrows
                     .get(&place)

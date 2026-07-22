@@ -34,6 +34,37 @@ earlier history lives in each version's archived plan.
 - Generic-fn uses inside a method-generic method on a concrete struct are now
   discovered by monomorphization (previously a codegen panic).
 
+### Memory model — view-lifetime hardening
+Nine ways a `str`/slice view of storage that dies at function return could
+escape unchecked (safe-code use-after-free) are now rejected. A view is tracked
+by its *shape*, not a method-name allowlist, through every form it can leak:
+- **E0513 by view shape, not name.** Returning a view of a local (`return
+  t.view()`, an alias, or a leaf inside a returned aggregate) is rejected for
+  *any* view accessor — `Text::view`, `as_str`/`as_slice`, or a user method
+  returning `str`/`T[]` from a borrowing receiver — not just two hard-coded
+  names.
+- **`take` parameters / `take this` are dying roots.** A returned view of a
+  `take` parameter or `take this` receiver now fires E0513: the callee owns
+  that storage and drops it at return (previously treated as a safe root).
+- **Free-function views are traced.** `return head(local)` where `head(x) ->
+  str` returns a view of its parameter is rejected — the view is rooted at
+  `local`.
+- **Views of temporaries.** `let s = mk().view();` (a view of a
+  statement-scoped temporary) is rejected; passing such a view as a direct call
+  argument stays legal.
+- **Escapes into long-lived places.** Storing a view of a frame-dying owner
+  into a `static` (or a static field) or a `ref` out-parameter is rejected —
+  the owner outlives neither.
+- **All the syntactic leak paths pin the owner (E0372/E0381).** A view written
+  into a field/index place, produced by an `if`/block/`match` *expression*, or
+  moved out by a struct destructure now pins its owner exactly like the direct
+  `let s = t.view()` form.
+- **Generic containers are tracked.** A slice view of a `Vec[T]` (or any
+  generic Drop type) now pins it: moving it is E0372 and a mutating method such
+  as `append` while a slice is live is E0381 (iterator invalidation). A
+  read-only method alongside a live view stays legal — a shared read no longer
+  spuriously conflicts with a shared borrow.
+
 ### facet — component lifecycle
 - `interface Lifecycle { fn on_attach(ref this); fn on_detach(ref this); }`.
   Hooks are fired FOR the component, never by it: `run_component` fires

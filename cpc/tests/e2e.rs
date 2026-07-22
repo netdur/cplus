@@ -5266,6 +5266,208 @@ const BUF_PRELUDE: &str = "extern fn malloc(n: usize) -> *u8;\n\
      }\n\
      fn mk_buf() -> Buf { return Buf { ptr: { malloc(4 as usize) } }; }\n";
 
+/// 2026-07-22 view-lifetime audit toolkit: a Drop struct whose view accessor
+/// is named `view()` (a *shape*-based view, NOT the allowlisted `as_str`),
+/// plus a read-only `len()`, a `Slot { s: str }` carrier, a constructor, and a
+/// consumer. Exercises the generalized (name-independent) view tracking.
+const VIEW_PRELUDE: &str = "extern fn malloc(n: usize) -> *u8;\n\
+     extern fn free(p: *u8);\n\
+     struct Buf { ptr: *u8 }\n\
+     impl Buf {\n\
+         fn drop(ref this) { { free(this.ptr); } return; }\n\
+         fn view(this) -> str { return { #str_from_raw_parts(this.ptr, 4 as usize) }; }\n\
+         fn len(this) -> usize { return 4 as usize; }\n\
+     }\n\
+     struct Slot { s: str }\n\
+     fn mk() -> Buf { return Buf { ptr: { malloc(4 as usize) } }; }\n\
+     fn consume(take b: Buf) { return; }\n";
+
+// ---------------------------------------------------------------------------
+// 2026-07-22 view-lifetime / ownership audit (bugs/mem 01-09). Each `str`/slice
+// view of storage that dies at function return must be rejected (E0513 escape,
+// E0372 move-while-borrowed, E0381 mutate-while-borrowed) — regardless of the
+// accessor's name, the syntactic form the view escapes through, or whether the
+// owner is a local, a `take` parameter, or a generic instantiation.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn view_method_return_of_local_rejected_e0513() {
+    // Bug 01: E0513 must trace a view by SHAPE, not the `as_str`/`as_slice`
+    // name allowlist — `view()` returning a str borrows its local receiver.
+    for tail in [
+        "fn bad() -> str { let b: Buf = mk(); return b.view(); }",
+        "fn bad() -> str { let b: Buf = mk(); let s: str = b.view(); return s; }",
+    ] {
+        let (ok, stderr) =
+            try_compile_snippet(&format!("{VIEW_PRELUDE}{tail}\nfn main() -> i32 {{ return 0; }}\n"));
+        assert!(!ok, "expected E0513 for `{tail}`, compiled instead");
+        assert!(stderr.contains("E0513"), "expected E0513 for `{tail}`, got: {stderr}");
+    }
+}
+
+#[test]
+fn view_in_returned_aggregate_of_local_rejected_e0513() {
+    // Bug 01 (aggregate): a `view()` leaf embedded in a returned struct still
+    // dangles — the local drops at return under the escaped view.
+    let (ok, stderr) = try_compile_snippet(&format!(
+        "{VIEW_PRELUDE}fn bad() -> Slot {{ let b: Buf = mk(); return Slot {{ s: b.view() }}; }}\n\
+         fn main() -> i32 {{ return 0; }}\n"
+    ));
+    assert!(!ok, "expected E0513, compiled instead");
+    assert!(stderr.contains("E0513"), "expected E0513, got: {stderr}");
+}
+
+#[test]
+fn view_stored_into_projection_then_move_rejected_e0372() {
+    // Bug 02: writing a view into a field / index place must pin the owner, so
+    // moving it while the aggregate holds the view is E0372 — same as the
+    // construction form `let w = Slot { s: b.view() }`.
+    for tail in [
+        "fn main() -> i32 { let b: Buf = mk(); var w: Slot = Slot { s: \"\" }; \
+         w.s = b.view(); consume(b); return 0; }",
+        "fn main() -> i32 { let b: Buf = mk(); var a: [str; 1] = [\"\"]; \
+         a[0] = b.view(); consume(b); return 0; }",
+    ] {
+        let (ok, stderr) = try_compile_snippet(&format!("{VIEW_PRELUDE}{tail}\n"));
+        assert!(!ok, "expected E0372 for `{tail}`, compiled instead");
+        assert!(stderr.contains("E0372"), "expected E0372 for `{tail}`, got: {stderr}");
+    }
+}
+
+#[test]
+fn view_of_temporary_receiver_rejected_e0513() {
+    // Bug 03: `mk().view()` binds a view of a statement-scoped temporary that
+    // drops immediately — the binding would dangle.
+    let (ok, stderr) = try_compile_snippet(&format!(
+        "{VIEW_PRELUDE}fn main() -> i32 {{ let s: str = mk().view(); return 0; }}\n"
+    ));
+    assert!(!ok, "expected E0513, compiled instead");
+    assert!(stderr.contains("E0513"), "expected E0513, got: {stderr}");
+}
+
+#[test]
+fn view_return_of_take_param_rejected_e0513() {
+    // Bug 04: a `take` parameter / `take this` owns its value and drops it at
+    // return, so a returned view of it dangles — even via `as_str` or coercion,
+    // forms E0513 already understood for locals.
+    for tail in [
+        "fn steal(take b: Buf) -> str { return b.view(); }",
+        "impl Buf { fn into_view(take this) -> str { return this.view(); } }",
+    ] {
+        let (ok, stderr) =
+            try_compile_snippet(&format!("{VIEW_PRELUDE}{tail}\nfn main() -> i32 {{ return 0; }}\n"));
+        assert!(!ok, "expected E0513 for `{tail}`, compiled instead");
+        assert!(stderr.contains("E0513"), "expected E0513 for `{tail}`, got: {stderr}");
+    }
+}
+
+#[test]
+fn view_return_via_free_fn_of_local_rejected_e0513() {
+    // Bug 05: `return head(local)` where `head(b) -> str` returns a view of its
+    // parameter escapes the local `b` — trace through the free-fn call.
+    let (ok, stderr) = try_compile_snippet(&format!(
+        "{VIEW_PRELUDE}fn head(b: Buf) -> str {{ return b.view(); }}\n\
+         fn bad() -> str {{ let b: Buf = mk(); return head(b); }}\n\
+         fn main() -> i32 {{ return 0; }}\n"
+    ));
+    assert!(!ok, "expected E0513, compiled instead");
+    assert!(stderr.contains("E0513"), "expected E0513, got: {stderr}");
+}
+
+#[test]
+fn view_through_control_flow_expr_then_move_rejected_e0372() {
+    // Bug 06: a view produced by an `if` / block / `match` *expression* still
+    // pins its owner — moving the owner while the binding is live is E0372.
+    for tail in [
+        "fn main() -> i32 { let b: Buf = mk(); \
+         let s: str = if true { b.view() } else { \"\" }; consume(b); return 0; }",
+        "fn main() -> i32 { let b: Buf = mk(); let s: str = { b.view() }; consume(b); return 0; }",
+    ] {
+        let (ok, stderr) = try_compile_snippet(&format!("{VIEW_PRELUDE}{tail}\n"));
+        assert!(!ok, "expected E0372 for `{tail}`, compiled instead");
+        assert!(stderr.contains("E0372"), "expected E0372 for `{tail}`, got: {stderr}");
+    }
+}
+
+#[test]
+fn view_through_destructure_then_move_rejected_e0372() {
+    // Bug 07: destructuring an aggregate that embeds a view re-binds a borrow,
+    // not an owned resource — the owner must stay pinned.
+    let (ok, stderr) = try_compile_snippet(&format!(
+        "{VIEW_PRELUDE}fn main() -> i32 {{ let b: Buf = mk(); \
+         let Slot {{ s }} = Slot {{ s: b.view() }}; consume(b); return 0; }}\n"
+    ));
+    assert!(!ok, "expected E0372, compiled instead");
+    assert!(stderr.contains("E0372"), "expected E0372, got: {stderr}");
+}
+
+#[test]
+fn view_of_local_stored_into_static_rejected_e0513() {
+    // Bug 09: storing a view of a frame-dying local into a `static` (or a
+    // static's field) lets it outlive its owner for the whole program.
+    for tail in [
+        "static S: str = \"\";\nfn main() -> i32 { { let b: Buf = mk(); S = b.view(); } return 0; }",
+        "static W: Slot = Slot { s: \"\" };\nfn main() -> i32 { let b: Buf = mk(); W.s = b.view(); return 0; }",
+    ] {
+        let (ok, stderr) = try_compile_snippet(&format!("{VIEW_PRELUDE}{tail}\n"));
+        assert!(!ok, "expected E0513 for `{tail}`, compiled instead");
+        assert!(stderr.contains("E0513"), "expected E0513 for `{tail}`, got: {stderr}");
+    }
+}
+
+#[test]
+fn view_stored_into_ref_out_param_rejected_e0513() {
+    // Bug 02-C: writing a view of a callee-local into a `ref` out-parameter
+    // escapes the borrow to the caller, who outlives the callee's local.
+    let (ok, stderr) = try_compile_snippet(&format!(
+        "{VIEW_PRELUDE}fn stash(ref w: Slot) {{ let b: Buf = mk(); w.s = b.view(); return; }}\n\
+         fn main() -> i32 {{ var w: Slot = Slot {{ s: \"\" }}; stash(w); return 0; }}\n"
+    ));
+    assert!(!ok, "expected E0513, compiled instead");
+    assert!(stderr.contains("E0513"), "expected E0513, got: {stderr}");
+}
+
+#[test]
+fn view_lifetime_sound_forms_still_compile() {
+    // Controls — none of these dangle, so all must keep compiling (guards the
+    // audit fixes against over-rejection / false positives):
+    //  * a view of a local used while the owner stays put (lexical pin),
+    //  * a view returned from a bare (borrowing) parameter (caller-tied),
+    //  * a read-only method called alongside a live view (shared + shared),
+    //  * a view of a temporary passed as a direct argument (temp still alive),
+    //  * moving an owned value into a returned aggregate (not a view).
+    for (label, tail) in [
+        (
+            "used-before-move",
+            "fn peek(x: str) -> i32 { return 0; }\n\
+             fn main() -> i32 { let b: Buf = mk(); let s: str = b.view(); return peek(s); }",
+        ),
+        (
+            "view-of-bare-param",
+            "fn head(b: Buf) -> str { return b.view(); }\nfn main() -> i32 { return 0; }",
+        ),
+        (
+            "read-method-alongside-view",
+            "fn peek(x: str) -> i32 { return 0; }\n\
+             fn main() -> i32 { let b: Buf = mk(); let s: str = b.view(); \
+             let n: usize = b.len(); return peek(s) + (n as i32); }",
+        ),
+        (
+            "view-of-temp-as-argument",
+            "fn peek(x: str) -> i32 { return 0; }\n\
+             fn main() -> i32 { return peek(mk().view()); }",
+        ),
+        (
+            "move-owned-into-aggregate",
+            "struct Own { b: Buf }\n\
+             fn wrap(take b: Buf) -> Own { return Own { b: b }; }\nfn main() -> i32 { return 0; }",
+        ),
+    ] {
+        let (ok, stderr) = try_compile_snippet(&format!("{VIEW_PRELUDE}{tail}\n"));
+        assert!(ok, "sound form `{label}` must compile; stderr: {stderr}");
+    }
+}
+
 #[test]
 fn return_borrow_of_local_owned_rejected_e0513() {
     // v0.0.12 (#3): returning a `str` view into a function-local owned value
@@ -5686,6 +5888,66 @@ fn str_view_cannot_outlive_owner() {
     std::fs::write(dir.join("src/main.cplus"), ok).unwrap();
     let st = Command::new(cpc).arg("check").current_dir(&dir).status().expect("cpc");
     assert!(st.success(), "a view with a live owner must stay legal");
+}
+
+#[test]
+fn generic_vec_slice_view_invalidation_rejected() {
+    // Bug 08 (2026-07-22): a slice view of a GENERIC container (`Vec[i32]`)
+    // must pin it exactly like a non-generic owner — borrowck runs pre-mono, so
+    // generic receivers used to be skipped and the view could dangle after a
+    // move (realloc/free) of the `Vec`. Three programs in one package:
+    //  (a) `as_slice` then move the owner   → E0372
+    //  (b) `as_slice` then `append` (realloc) → E0381 (iterator invalidation)
+    //  (c) a read (`count`) alongside a live slice → still compiles (shared+shared)
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"gv\"\n\n[[bin]]\nname = \"gv\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::os::unix::fs::symlink(
+        format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
+        dir.join("vendor"),
+    )
+    .unwrap();
+    let head = "import \"stdlib/vec\" as vec;\n\
+         import \"stdlib/status\" as status;\n\
+         fn consume(take v: vec::Vec[i32]) { return; }\n\
+         fn main() -> i32 {\n\
+             var v: vec::Vec[i32] = vec::new::[i32]();\n\
+             let a: status::Status = v.append(10);\n\
+             let s: i32[] = v.as_slice();\n";
+    let check = |body: &str| -> (bool, String) {
+        std::fs::write(dir.join("src/main.cplus"), format!("{head}{body}")).unwrap();
+        let out = Command::new(cpc).arg("check").current_dir(&dir).output().expect("cpc");
+        (
+            out.status.success(),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ),
+        )
+    };
+
+    // (a) move the owner while the slice is live → E0372
+    let (ok_a, out_a) = check("    consume(v);\n    return 0;\n}\n");
+    assert!(!ok_a, "moving a Vec under a live slice must be rejected");
+    assert!(out_a.contains("E0372"), "expected E0372, got: {out_a}");
+
+    // (b) mutate (append → realloc) while the slice is live → E0381
+    let (ok_b, out_b) = check("    let b: status::Status = v.append(2);\n    return 0;\n}\n");
+    assert!(!ok_b, "append under a live slice must be rejected");
+    assert!(out_b.contains("E0381"), "expected E0381, got: {out_b}");
+
+    // (c) a read-only method alongside a live slice is sound (shared + shared)
+    let (ok_c, out_c) = check(
+        "    let n: usize = v.count();\n\
+         let p: *i32 = { #slice_ptr(s) as *i32 };\n    return (n as i32) + { *p };\n}\n",
+    );
+    assert!(ok_c, "a read alongside a live slice must compile; got: {out_c}");
 }
 
 #[test]
@@ -19616,6 +19878,10 @@ fn borrow_error_names_the_offending_module() {
     )
     .unwrap();
     // The borrow error lives in the SECOND module, on line 8/7.
+    // `s` is a view of `cmd_str`; consuming `cmd_str` on line 8 while `s` is
+    // still used (line 9) is the move-while-borrowed E0372. `describe` returns
+    // a literal so this stays a pure move-routing test — returning `s` itself
+    // would (correctly) add an E0513 dangling-view-of-local on line 9.
     std::fs::write(
         dir.join("src/codex.cplus"),
         "import \"stdlib/text\" as text;\n\
@@ -19626,7 +19892,8 @@ fn borrow_error_names_the_offending_module() {
              let cmd_str: text::Text = text::from_str(\"codex exec\");\n\
              let s: str = cmd_str.view();\n\
              consume(cmd_str);\n\
-             return s;\n\
+             if s == \"codex exec\" { return \"yes\"; }\n\
+             return \"no\";\n\
          }\n",
     )
     .unwrap();
