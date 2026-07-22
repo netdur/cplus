@@ -1909,6 +1909,102 @@ fn generic_body_move_out_of_borrow_rejected_e0337() {
 }
 
 #[test]
+fn assign_reassign_view_borrow_rejected_e0372() {
+    // Memory-model audit (2026-07-22): a view assigned to an EXISTING local via
+    // `=` (not `let`) must acquire the same borrow the `let` form does. Before
+    // the fix, `s = b.view();` left `b` Owned with zero borrows, so `let b2 =
+    // b;` moved it out from under the still-live view `s` — a safe-code
+    // use-after-free the `let s: str = b.view();` form already rejected.
+    assert_compile_fails_with(
+        "struct Buf { opaque p: *u8 }\n\
+         impl Buf {\n\
+           fn drop(ref this) { return; }\n\
+           fn view(this) -> str { return #str_from_raw_parts(this.p, 3 as usize); }\n\
+         }\n\
+         fn main() -> i32 {\n\
+           var b: Buf = Buf { p: 0 as *u8 };\n\
+           var s: str = \"x\";\n\
+           s = b.view();\n\
+           let b2: Buf = b;\n\
+           return 0;\n\
+         }\n",
+        "E0372",
+    );
+}
+
+#[test]
+fn assign_reassign_view_then_release_lets_owner_move() {
+    // The positive companion: reassigning the view binding to a non-borrowing
+    // value RELEASES its borrow, so the owner can then move. This exercises the
+    // reassignment's `drop_borrower` path — without release, this would falsely
+    // report E0372.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("releas.cplus");
+    std::fs::write(
+        &src,
+        "struct Buf { opaque p: *u8 }\n\
+         impl Buf {\n\
+           fn drop(ref this) { return; }\n\
+           fn view(this) -> str { return #str_from_raw_parts(this.p, 3 as usize); }\n\
+         }\n\
+         fn main() -> i32 {\n\
+           var b: Buf = Buf { p: 0 as *u8 };\n\
+           var s: str = \"x\";\n\
+           s = b.view();\n\
+           s = \"y\";\n\
+           let b2: Buf = b;\n\
+           return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    let bin = dir.join("releas");
+    let st = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    assert!(st.success(), "reassigning the view away should release the borrow");
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(0));
+}
+
+#[test]
+fn generic_rawptr_deref_move_non_copy_rejected_e0337() {
+    // Memory-model audit (2026-07-22): moving out of `*ptr` in a generic body
+    // whose pointee is an unbounded `Ty::Param` was accepted (ty_carries_drop
+    // reads false for Param), a double-free once instantiated with a Drop type.
+    // The move must be rejected at the definition — the concrete `*Text` form
+    // already is — unless `T: Copy` proves there is no destructor.
+    assert_compile_fails_with(
+        "fn extract[T](ptr: *T) -> T { return *ptr; }\n\
+         fn main() -> i32 { return 0; }\n",
+        "E0337",
+    );
+}
+
+#[test]
+fn generic_rawptr_deref_move_copy_bound_compiles_and_runs() {
+    // The escape hatch: `T: Copy` makes moving out of `*ptr` provably safe (a
+    // Copy pointee has no destructor), so the generic read compiles and runs.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("rdcopy.cplus");
+    std::fs::write(
+        &src,
+        "fn extract[T: Copy](ptr: *T) -> T { return *ptr; }\n\
+         fn main() -> i32 {\n\
+           var n: i32 = 42;\n\
+           let p: *i32 = #addr_of(n);\n\
+           let m: i32 = extract::[i32](p);\n\
+           return m - 42;\n\
+         }\n",
+    )
+    .unwrap();
+    let bin = dir.join("rdcopy");
+    let st = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    assert!(st.success(), "extract[T: Copy] should compile");
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(0), "extract::[i32] should read 42 back");
+}
+
+#[test]
 fn generic_path_assoc_fn_through_bound_compiles_and_runs() {
     // `T::make()` — a receiver-less interface fn called through the bound, the
     // path form E0327 suggests. Must compile through monomorphization (the

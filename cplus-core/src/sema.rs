@@ -13422,7 +13422,16 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         } = &e.kind
         {
             if let Some(Ty::RawPtr(pointee)) = self.place_ty_quiet(operand) {
-                if self.ty_carries_drop(&pointee) {
+                // `ty_carries_drop` reads `false` for an abstract generic `T`
+                // (`Ty::Param`), but `T` may be instantiated with a Drop type:
+                // moving `*ptr` out then bit-copies a value the pointee's owner
+                // will free a second time (double-free). Mirror the
+                // Ident-binding gate below — a non-Copy `Ty::Param` pointee
+                // counts as may-drop. (A `T: Copy` pointee has no destructor,
+                // so the read stays a harmless bit-copy.)
+                let param_may_drop =
+                    matches!(&*pointee, Ty::Param(_)) && !self.is_copy(&pointee);
+                if self.ty_carries_drop(&pointee) || param_may_drop {
                     return Some((e.span, PartialMoveKind::RawDeref));
                 }
             }

@@ -2782,10 +2782,50 @@ impl Analyzer<'_> {
                 if !heal {
                     self.apply_expr(target, state);
                 }
+                // Rule E-VIEW on REASSIGNMENT (mirror of the `StmtKind::Let`
+                // arm): classify the value's borrow sources *before* the walk,
+                // so a view-returning RHS (`s = t.view()`) records the target
+                // as a borrower of the owner. Without this, `s = t.view();`
+                // left the owner `Owned` with zero borrows, so safe code could
+                // move/drop it out from under the still-live view (`let t2 =
+                // t;`) — a use-after-free the `let s: str = t.view();` form
+                // already rejects (E0372).
+                let borrow_sources = self.classify_borrow_source(value);
                 self.apply_expr(value, state);
                 if heal {
                     if let ExprKind::Ident(name) = &target.kind {
                         state.insert(Place::root(name), PlaceState::Owned);
+                    }
+                }
+                // Only simple-local targets participate in borrow tracking
+                // (borrows are keyed by binding name). Reassigning the local
+                // ends whatever it previously borrowed, then it borrows the new
+                // sources — the same acquire the `let` form runs.
+                if let ExprKind::Ident(name) = &target.kind {
+                    self.drop_borrower(name, state);
+                    let mut sources = borrow_sources;
+                    if sources.is_empty() {
+                        // Bare-coercion arm (mirror of the Let arm): `s = t;`
+                        // where `s` is view-typed (`str` / slice) and `t` is a
+                        // non-Copy owner coerces owner → view with no call, so
+                        // `s` borrows `t` just like `s = t.view();`.
+                        let target_is_view = self
+                            .binding_type(name)
+                            .map(|t| {
+                                matches!(&t.kind, TypeKind::Slice(_))
+                                    || matches!(&t.kind, TypeKind::Path(p) if p == "str")
+                            })
+                            .unwrap_or(false);
+                        if target_is_view {
+                            if let Some(place) = place_from_expr(value) {
+                                if self.binding_is_non_copy(&place.root) {
+                                    sources = vec![(place, BorrowFlavor::Shared)];
+                                }
+                            }
+                        }
+                    }
+                    if !sources.is_empty() {
+                        self.acquire_borrows(sources, name, target.span, state);
                     }
                 }
             }
