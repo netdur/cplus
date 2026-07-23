@@ -1,0 +1,282 @@
+// stdlib/process.cplus — spawn a child process from an argv (NO shell), write its
+// stdin, read/stream its stdout+stderr, and collect its real exit code.
+//
+// This is the "spawn half" that pairs with the async reactor's streamed-stdout
+// half: hand `Child.take_stdout_fd()` to `reactor::read_fd_async` under
+// `facet::spawn_ui` for a live turn, or call `output()` for a one-shot sync
+// capture. Either way there is no shell string, no quoting, and no injection
+// surface — arguments are passed as a real argv. Swift lens: Process + Pipe.
+//
+// macOS today (fork + execvp + pipe). Between fork and exec the child touches
+// only async-signal-safe calls (chdir/dup2/close/execvp/_exit).
+
+import "./text" as text;
+import "./option" as option;
+import "./vec" as vec;
+import "./status" as status;
+
+extern fn pipe(fds: *i32) -> i32;
+extern fn close(fd: i32) -> i32;
+extern fn waitpid(pid: i32, status: *i32, options: i32) -> i32;
+extern fn read(fd: i32, buf: *u8, count: usize) -> isize;
+extern fn write(fd: i32, buf: *u8, count: usize) -> isize;
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+extern fn fcntl(fd: i32, cmd: i32, arg: i32) -> i32;
+// posix_spawn: fork+exec done atomically inside libc — safe to call from a
+// multithreaded process (unlike a raw fork, whose child may only touch
+// async-signal-safe calls). On macOS the *_t handles are opaque `void*`.
+extern fn posix_spawn_file_actions_init(fa: *u8) -> i32;
+extern fn posix_spawn_file_actions_destroy(fa: *u8) -> i32;
+extern fn posix_spawn_file_actions_adddup2(fa: *u8, fd: i32, newfd: i32) -> i32;
+extern fn posix_spawn_file_actions_addchdir_np(fa: *u8, path: *u8) -> i32;
+extern fn posix_spawnp(pid: *i32, file: *u8, file_actions: *u8, attrp: *u8, argv: *u8, envp: *u8) -> i32;
+extern fn _NSGetEnviron() -> *u8;
+
+// Mark a fd close-on-exec (F_SETFD=2, FD_CLOEXEC=1). macOS lacks pipe2, so pipe
+// ends are opened plain and flagged here. dup2 clears CLOEXEC on the target, so a
+// child's redirected 0/1/2 survive exec while every OTHER inherited pipe fd —
+// including one leaked in from a concurrently-forking sibling — is closed at exec.
+// Without this, a sibling's read side never sees EOF and its drain hangs.
+fn set_cloexec(fd: i32) { let _r: i32 = { fcntl(fd, 2 as i32, 1 as i32) }; return; }
+
+// Decode a waitpid status word into an exit code: WEXITSTATUS on a normal exit,
+// or 128 + signal when the child was killed. Pure, so unit-testable without a
+// real child.
+fn decode_status(status_word: i32) -> i32 {
+    if (status_word & (0x7f as i32)) == (0 as i32) {
+        return (status_word >> (8 as i32)) & (0xff as i32);
+    }
+    return (128 as i32) + (status_word & (0x7f as i32));
+}
+
+// A spawned child. Owns the parent-side pipe ends; unclosed fds are closed on
+// drop (but the child is NOT reaped there — call `wait` or `output`).
+struct Child {
+    _pid: i32,
+    _stdin: i32,     // write end (parent -> child stdin); -1 once closed/absent
+    _stdout: i32,    // read end (child stdout -> parent)
+    _stderr: i32,    // read end (child stderr -> parent)
+}
+
+// The result of a one-shot `output()` capture.
+struct Output {
+    stdout: text::Text,
+    stderr: text::Text,
+    code: i32,
+}
+
+struct Pipe { read: i32, write: i32, ok: bool }
+
+fn make_pipe() -> Pipe {
+    let b: *u8 = { malloc(8 as usize) };
+    let rc: i32 = { pipe(b as *i32) };
+    let r: i32 = { *(b as *i32) };
+    let w: i32 = { *((b + (4 as usize)) as *i32) };
+    free(b);
+    if rc == (0 as i32) { set_cloexec(r); set_cloexec(w); }
+    return Pipe { read: r, write: w, ok: rc == (0 as i32) };
+}
+
+// Read a fd to EOF into a byte vector (blocking). Used for the sync capture.
+fn drain_fd(fd: i32) -> vec::Vec[u8] {
+    var acc: vec::Vec[u8] = vec::new::[u8]();
+    let bufsz: usize = 8192 as usize;
+    let buf: *u8 = { malloc(bufsz) };
+    loop {
+        let n: isize = { read(fd, buf, bufsz) };
+        if n <= (0 as isize) { break; }
+        let _s: status::Status = acc.extend_from_raw(buf, n as usize);
+    }
+    free(buf);
+    return acc;
+}
+
+fn bytes_to_text(take bytes: vec::Vec[u8]) -> text::Text {
+    return match text::from_utf8(bytes) {
+        option::Option[text::Text]::Some(t) => t,
+        option::Option[text::Text]::None => text::from_str(""),
+    };
+}
+
+// Spawn `argv[0]` (searched on PATH) with `argv` as its arguments, optionally in
+// working directory `cwd` (""  = inherit the parent's). Environment is inherited.
+// `None` if argv is empty, an argument/cwd holds an interior NUL, or fork fails.
+fn spawn(argv: vec::Vec[text::Text], cwd: str = "") -> option::Option[Child] {
+    let argc: usize = argv.count();
+    if argc == (0 as usize) { return option::Option[Child]::None; }
+
+    // Build the C `char* const argv[]` as a NULL-terminated Vec of the CString
+    // buffer pointers; the CStrings themselves are parked in `cstrs` so their
+    // buffers outlive the fork (the child inherits copies of both).
+    var cstrs: vec::Vec[text::CString] = vec::new::[text::CString]();
+    var cargv: vec::Vec[*u8] = vec::new::[*u8]();
+    var i: usize = 0 as usize;
+    while i < argc {
+        match argv.at_ptr(i) {
+            option::Option[*text::Text]::Some(tp) => {
+                match { (*tp).c_str() } {
+                    option::Option[text::CString]::Some(cs) => {
+                        let _p: status::Status = cargv.append(cs.as_ptr());
+                        let _a: status::Status = cstrs.append(cs);
+                    }
+                    option::Option[text::CString]::None => { return option::Option[Child]::None; }
+                }
+            }
+            option::Option[*text::Text]::None => { return option::Option[Child]::None; }
+        }
+        i = i +% (1 as usize);
+    }
+    let _nul: status::Status = cargv.append(0 as *u8);   // argv terminator
+
+    // cwd C string (kept alive until after fork).
+    var cwd_cs: option::Option[text::CString] = option::Option[text::CString]::None;
+    var cwd_ptr: *u8 = 0 as *u8;
+    if cwd != "" {
+        match text::from_str(cwd).c_str() {
+            option::Option[text::CString]::Some(cs) => { cwd_ptr = cs.as_ptr(); cwd_cs = option::Option[text::CString]::Some(cs); }
+            option::Option[text::CString]::None => { return option::Option[Child]::None; }
+        }
+    }
+
+    // The contiguous argv base + argv[0].
+    let arr: *u8 = match cargv.at_ptr(0 as usize) {
+        option::Option[**u8]::Some(base) => base as *u8,
+        option::Option[**u8]::None => 0 as *u8,
+    };
+    let arg0: *u8 = { *(arr as **u8) };
+
+    let in_p: Pipe = make_pipe();
+    let out_p: Pipe = make_pipe();
+    let err_p: Pipe = make_pipe();
+    if !in_p.ok || !out_p.ok || !err_p.ok { return option::Option[Child]::None; }
+
+    // File actions redirect the child's 0/1/2 onto our pipe ends. The pipe fds are
+    // CLOEXEC, so every OTHER inherited fd closes at exec; dup2 clears CLOEXEC on
+    // 0/1/2 so the child's stdio survives. addchdir_np handles cwd atomically.
+    let fa: *u8 = { malloc(8 as usize) };
+    let _fi: i32 = { posix_spawn_file_actions_init(fa) };
+    if cwd_ptr != (0 as *u8) { let _cd: i32 = { posix_spawn_file_actions_addchdir_np(fa, cwd_ptr) }; }
+    let _d0: i32 = { posix_spawn_file_actions_adddup2(fa, in_p.read, 0 as i32) };
+    let _d1: i32 = { posix_spawn_file_actions_adddup2(fa, out_p.write, 1 as i32) };
+    let _d2: i32 = { posix_spawn_file_actions_adddup2(fa, err_p.write, 2 as i32) };
+
+    let pid_buf: *u8 = { malloc(4 as usize) };
+    let envp: *u8 = { *(_NSGetEnviron() as **u8) };   // inherit the parent's env
+    let rc: i32 = { posix_spawnp(pid_buf as *i32, arg0, fa, 0 as *u8, arr, envp) };
+    let pid: i32 = { *(pid_buf as *i32) };
+    free(pid_buf);
+    let _fd: i32 = { posix_spawn_file_actions_destroy(fa) };
+    free(fa);
+
+    // Parent drops the child-side ends whether or not the spawn succeeded.
+    { close(in_p.read) };
+    { close(out_p.write) };
+    { close(err_p.write) };
+    if rc != (0 as i32) {
+        { close(in_p.write) }; { close(out_p.read) }; { close(err_p.read) };
+        return option::Option[Child]::None;
+    }
+    return option::Option[Child]::Some(Child {
+        _pid: pid, _stdin: in_p.write, _stdout: out_p.read, _stderr: err_p.read,
+    });
+}
+
+impl Child {
+    fn pid(this) -> i32 { return this._pid; }
+    fn stdout_fd(this) -> i32 { return this._stdout; }
+    fn stderr_fd(this) -> i32 { return this._stderr; }
+
+    // Hand stdout's read end to a caller (e.g. reactor::read_fd_async); Child no
+    // longer closes it on drop.
+    fn take_stdout_fd(ref this) -> i32 { let fd: i32 = this._stdout; this._stdout = -1 as i32; return fd; }
+
+    // Write to the child's stdin. Bytes written, or -1 if stdin is already closed.
+    fn write_stdin(this, data: str) -> isize {
+        if this._stdin < (0 as i32) { return -1 as isize; }
+        return { write(this._stdin, #str_ptr(data), #str_len(data)) };
+    }
+
+    // Close the child's stdin (signals EOF to the child).
+    fn close_stdin(ref this) {
+        if this._stdin >= (0 as i32) { let _c: i32 = { close(this._stdin) }; this._stdin = -1 as i32; }
+        return;
+    }
+
+    // Reap the child and return its exit code (128 + signal if it was killed).
+    fn wait(ref this) -> i32 {
+        let st: *u8 = { malloc(4 as usize) };
+        let _r: i32 = { waitpid(this._pid, st as *i32, 0 as i32) };
+        let status_word: i32 = { *(st as *i32) };
+        free(st);
+        return decode_status(status_word);
+    }
+
+    // One-shot sync capture: close stdin, drain stdout then stderr to EOF, reap.
+    // Adequate for bounded output (the common case). For a program that emits
+    // large volumes on BOTH streams at once, stream stdout via the reactor
+    // instead (sequential draining could otherwise stall on a full stderr pipe).
+    fn output(take this) -> Output {
+        var me: Child = this;
+        me.close_stdin();
+        let out_bytes: vec::Vec[u8] = drain_fd(me._stdout);
+        let err_bytes: vec::Vec[u8] = drain_fd(me._stderr);
+        let code: i32 = me.wait();
+        if me._stdout >= (0 as i32) { let _a: i32 = { close(me._stdout) }; me._stdout = -1 as i32; }
+        if me._stderr >= (0 as i32) { let _b: i32 = { close(me._stderr) }; me._stderr = -1 as i32; }
+        return Output {
+            stdout: bytes_to_text(out_bytes),
+            stderr: bytes_to_text(err_bytes),
+            code: code,
+        };
+    }
+
+}
+
+// Spawn + sync capture in one call — the replacement for the hand-rolled
+// popen-capture helpers. On a spawn failure, returns empty output with code 127.
+fn capture(argv: vec::Vec[text::Text], cwd: str = "") -> Output {
+    return match spawn(argv, cwd: cwd) {
+        option::Option[Child]::Some(ch) => ch.output(),
+        option::Option[Child]::None => Output { stdout: text::from_str(""), stderr: text::from_str(""), code: 127 as i32 },
+    };
+}
+
+// ───────────────────────────── tests ─────────────────────────────
+
+// NOTE on coverage: the actual spawn+capture path is exercised END-TO-END, but
+// NOT from `cpc test`. A `#[test]` that spawns hangs the whole test binary —
+// spawning a child from inside the test driver (which links every stdlib module,
+// including the reactor's background machinery) deadlocks in a way a standalone
+// program does not. Verified instead by a standalone binary:
+//     let out = process::capture(["echo", "hello"]);   // -> code 0, stdout "hello\n"
+// which prints `code=0 out=[hello\n]` and exits 0. The in-harness tests below
+// cover the pure pieces (argv gate, status decode, byte->text).
+
+#[test]
+fn empty_argv_is_none() {
+    let empty: vec::Vec[text::Text] = vec::new::[text::Text]();
+    match spawn(empty) {
+        option::Option[Child]::Some(c) => { assert false; }
+        option::Option[Child]::None => { assert true; }
+    }
+    return;
+}
+
+#[test]
+fn decode_status_reads_exit_code_and_signal() {
+    assert decode_status(0 as i32) == (0 as i32);            // exited 0
+    assert decode_status(0x100 as i32) == (1 as i32);        // exited 1  (1 << 8)
+    assert decode_status(0x7f00 as i32) == (127 as i32);     // exited 127 (127 << 8)
+    assert decode_status(9 as i32) == (137 as i32);          // killed by signal 9 -> 128+9
+}
+
+#[test]
+fn bytes_to_text_decodes_utf8_and_empty() {
+    let empty: vec::Vec[u8] = vec::new::[u8]();
+    assert bytes_to_text(empty).view() == "";
+    var hi: vec::Vec[u8] = vec::new::[u8]();
+    let _a: status::Status = hi.append('h' as u8);
+    let _b: status::Status = hi.append('i' as u8);
+    assert bytes_to_text(hi).view() == "hi";
+}
