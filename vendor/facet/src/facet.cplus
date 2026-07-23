@@ -638,6 +638,10 @@ struct Node {
     text: text::Text,
     click: fn(*u8, *u8),    // (sender, ctx) — wired by the backend's button op
     opaque click_ctx: *u8,  // borrowed identity value; the app owns it
+    opaque item: *u8,       // 0 = none. A SECOND app-owned pointer (the bound
+                            // method's `this` occupies click_ctx), recovered in a
+                            // handler via `item_of(sender)` — per-item data
+                            // without encoding it into the key. The app owns it.
     agent_id: text::Text,   // "" = untagged. A developer-curated stable id the
                             // backend pins on the created widget at every mount
                             // (via set_identity), so it survives re-renders.
@@ -779,6 +783,7 @@ fn blank(kind: u32) -> Node {
         text: text::from_str(""),
         click: noop,
         click_ctx: 0 as *u8,
+        item: 0 as *u8,
         agent_id: text::from_str(""),
         tooltip: text::from_str(""),
         a11y_label: text::from_str(""),
@@ -1311,6 +1316,19 @@ fn set_key_of_fn(f: fn(*u8) -> text::Text) { KEY_OF_FN = f; return; }
 fn key_of(sender: *u8) -> text::Text {
     let f: fn(*u8) -> text::Text = KEY_OF_FN;
     if f == (0 as fn(*u8) -> text::Text) { return text::new(); }
+    return f(sender);
+}
+
+// The per-node app pointer set by `.item(p)`, recovered in a handler from the
+// sender — the backend walks up to the nearest node that carries one (exact
+// parallel to `key_of`). 0 when unset or no backend. The app owns the pointee.
+static ITEM_OF_FN: fn(*u8) -> *u8 = #zero::[fn(*u8) -> *u8]();
+
+fn set_item_of_fn(f: fn(*u8) -> *u8) { ITEM_OF_FN = f; return; }
+
+fn item_of(sender: *u8) -> *u8 {
+    let f: fn(*u8) -> *u8 = ITEM_OF_FN;
+    if f == (0 as fn(*u8) -> *u8) { return 0 as *u8; }
     return f(sender);
 }
 
@@ -2494,6 +2512,12 @@ impl Node {
         n.click_ctx = ctx;
         return n;
     }
+    // Attach a second app-owned pointer, recovered in a handler via
+    // `facet::item_of(sender)`. The bound-method `this` fills `click_ctx`; use
+    // this for per-item data (a stable `&this.rows[i]` or an int-as-*u8 id) so
+    // per-row identity need not be baked into `.key()` and re-parsed. The app
+    // owns the pointee — same lifetime rule as `click_ctx`.
+    fn item(take this, p: *u8) -> Node { var n: Node = this; n.item = p; return n; }
     // `key` is the app-facing name for a node's stable addressing id — the same
     // channel `find(key)` and the agent surface use (alias of agent_id).
     fn key(take this, id: str) -> Node {

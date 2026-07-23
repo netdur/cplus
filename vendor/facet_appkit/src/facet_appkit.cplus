@@ -390,6 +390,11 @@ fn apply_style(view_ptr: *u8, kind: u32, np: *facet::Node) {
     if { (*ahp).view() } != "" {
         ak::Accessibility::from_raw(view_ptr).set_accessibility_help({ (*ahp).view() });
     }
+    // Per-item app pointer (.item(p)) — pinned to the view so a handler recovers
+    // it with facet::item_of(sender). OBJC_ASSOCIATION_ASSIGN (0): the app owns
+    // the pointee, exactly like click_ctx, so we never retain it.
+    let itm: *u8 = { (*np).item };
+    if itm != (0 as *u8) { rt::set_associated_object(view_ptr, item_key(), itm, 0 as usize); }
     // Keyboard shortcut — the button's key equivalent.
     let kep: *text::Text = { #addr_of((*np).key_equiv) };
     if { (*kep).view() } != "" && kind == facet::kind_button() {
@@ -1278,6 +1283,7 @@ fn install() {
     facet::set_list_builder(fak_list);
     facet::set_raise_fn(raise);
     facet::set_key_of_fn(key_of_impl);
+    facet::set_item_of_fn(item_of_impl);
     facet::set_dropped_text_fn(dropped_text);
     facet::set_is_dark_fn(is_dark_impl);
     facet::set_theme_changed_fn(theme_repaint);
@@ -3150,6 +3156,22 @@ fn key_of_impl(sender: *u8) -> text::Text {
         v = rt::msg_id(v, rt::sel(#str_ptr("superview\0")));
     }
     return text::new();
+}
+
+// The associated-object key holding a node's .item(p) pointer (ASSIGN policy).
+fn item_key() -> *u8 { return 29004 as *u8; }
+
+// facet::item_of hook: recover the app pointer set by .item(p), walking up from
+// the sender to the nearest node that carries one — the same superview walk
+// key_of_impl uses, so item and key resolve off the same view. 0 when none.
+fn item_of_impl(sender: *u8) -> *u8 {
+    var v: *u8 = sender_view(sender);
+    while v != (0 as *u8) {
+        let itm: *u8 = rt::get_associated_object(v, item_key());
+        if itm != (0 as *u8) { return itm; }
+        v = rt::msg_id(v, rt::sel(#str_ptr("superview\0")));
+    }
+    return 0 as *u8;
 }
 
 // Is `a` the dark appearance? bestMatch resolves derived appearances (vibrant
@@ -5920,6 +5942,61 @@ fn set_text_reaches_editor_field_and_button() {
     assert ak::Button::from_raw(bp).title().count() == (7 as usize);   // "clicked"
 
     unmount_all();
+}
+
+// ---- keyed-direct: .item(p) + facet::item_of(sender), per-item handler data ---
+// A second app-owned pointer, recovered in a handler WITHOUT encoding identity
+// into the key. int-as-*u8 ids here (the gap's "stable &this.vec[i] or an id").
+static ITEM_SEEN: i64 = 0;
+fn t_item_click(sender: *u8, ctx: *u8) {
+    ITEM_SEEN = facet::item_of(sender) as i64;
+    return;
+}
+
+#[test]
+fn item_of_recovers_the_per_node_pointer() {
+    facet::set_item_of_fn(item_of_impl);
+    let d: facet::Node = facet::button("row").item(42 as *u8);
+    let n: flex::Node = ak_button(0 as *u8, #addr_of(d));
+    assert facet::item_of(n.payload()) == (42 as *u8);
+}
+
+#[test]
+fn item_of_walks_up_to_the_nearest_carrier() {
+    facet::set_item_of_fn(item_of_impl);
+    let parent: ak::View = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 40.0, h: 40.0 });
+    let child: ak::View = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 10.0, h: 10.0 });
+    parent.add_subview(child);
+    rt::set_associated_object(parent.raw(), item_key(), 7 as *u8, 0 as usize);
+    // The child carries no item; item_of climbs the superview chain to the parent.
+    assert facet::item_of(child.raw()) == (7 as *u8);
+}
+
+#[test]
+fn item_of_is_zero_without_an_item() {
+    facet::set_item_of_fn(item_of_impl);
+    let d: facet::Node = facet::button("plain");   // no .item()
+    let n: flex::Node = ak_button(0 as *u8, #addr_of(d));
+    assert facet::item_of(n.payload()) == (0 as *u8);
+    // A lone view with no carrier anywhere above → 0, never traps.
+    let lone: ak::View = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 5.0, h: 5.0 });
+    assert facet::item_of(lone.raw()) == (0 as *u8);
+}
+
+#[test]
+fn handler_recovers_item_via_item_of() {
+    // The real use case: a per-row button carries its id via .item(), and the
+    // shared click handler recovers it with item_of(sender) — no key parsing.
+    facet::set_item_of_fn(item_of_impl);
+    ITEM_SEEN = 0 as i64;
+    let d: facet::Node = facet::button("open").item(99 as *u8).on_click(t_item_click);
+    let n: flex::Node = ak_button(0 as *u8, #addr_of(d));
+    let bp: *u8 = n.payload();
+    // Fire through the wired target/action pair, as a click would.
+    let tgt: *u8 = rt::msg_id(bp, rt::sel(#str_ptr("target\0")));
+    let act: *u8 = rt::msg_id(bp, rt::sel(#str_ptr("action\0")));
+    rt::msg_void_id(tgt, act, bp);
+    assert ITEM_SEEN == (99 as i64);
 }
 
 // present fixtures: each hook appends a digit to LC_ORDER, so the final
