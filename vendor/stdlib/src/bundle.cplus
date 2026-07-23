@@ -1,0 +1,170 @@
+// stdlib/bundle.cplus — locate the running executable and resources beside it,
+// WITHOUT mutating the process CWD.
+//
+// The pattern this replaces: resolve the executable, walk up looking for a
+// resource root, then `chdir` into it so later relative paths resolve — a
+// process-global side effect every subsequent path silently depends on. Here the
+// paths are RETURNED; nothing global changes.
+//
+// macOS today (via _NSGetExecutablePath + realpath). Swift lens: Bundle.main.
+
+import "./text" as text;
+import "./option" as option;
+import "./result" as result;
+import "./fs" as fs;
+
+// dyld: copy the executable path into `buf`. Returns 0 on success; -1 if `buf` is
+// too small, writing the required size (incl. NUL) back through `size`.
+extern fn _NSGetExecutablePath(buf: *u8, size: *u32) -> i32;
+// libc: canonicalize `path` (resolve symlinks, `.` and `..`) into `resolved`
+// (>= PATH_MAX). Returns `resolved` on success, 0 on error.
+extern fn realpath(path: *u8, resolved: *u8) -> *u8;
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+extern fn strlen(s: *u8) -> usize;
+
+// Full, canonical path of the running executable. "" only if dyld refuses (never
+// seen in practice).
+fn executable_path() -> text::Text {
+    // Probe for the required buffer size (dyld sets it when buf is too small).
+    var size: u32 = 0 as u32;
+    let _probe: i32 = { _NSGetExecutablePath(0 as *u8, #addr_of(size)) };
+    if size == (0 as u32) { size = 4096 as u32; }
+    let buf: *u8 = { malloc((size as usize) + (1 as usize)) };
+    if buf == (0 as *u8) { return text::from_str(""); }
+    let rc: i32 = { _NSGetExecutablePath(buf, #addr_of(size)) };
+    if rc != (0 as i32) { free(buf); return text::from_str(""); }
+    // Canonicalize; fall back to the raw (possibly symlinked) path if realpath fails.
+    let canon: *u8 = { malloc(4096 as usize) };
+    let rp: *u8 = { realpath(buf, canon) };
+    var out: text::Text = text::from_str("");
+    if rp != (0 as *u8) {
+        out = { #str_from_raw_parts(canon, strlen(canon)) }.to_text();
+    } else {
+        out = { #str_from_raw_parts(buf, strlen(buf)) }.to_text();
+    }
+    free(canon);
+    free(buf);
+    return out;
+}
+
+// The directory containing `path` — everything before the last '/'. A path with
+// no '/' returns as-is; a top-level path like "/foo" returns "/".
+fn parent_of(path: str) -> text::Text {
+    let p: *u8 = #str_ptr(path);
+    let n: usize = #str_len(path);
+    var last: i64 = -1 as i64;
+    var i: usize = 0 as usize;
+    while i < n {
+        if { *(p + i) } == ('/' as u8) { last = i as i64; }
+        i = i +% (1 as usize);
+    }
+    if last < (0 as i64) { return path.to_text(); }
+    if last == (0 as i64) { return text::from_str("/"); }
+    return { #str_from_raw_parts(p, last as usize) }.to_text();
+}
+
+// The directory the executable lives in — the base for `resource`.
+fn dir() -> text::Text {
+    let ep: text::Text = executable_path();
+    return parent_of(ep.view());
+}
+
+// Path to a resource named `name` sitting beside the executable (`dir()/name`).
+fn resource(name: str) -> text::Text {
+    let d: text::Text = dir();
+    return "${d}/${name}";
+}
+
+// Does a path exist at all (file or directory)?
+fn exists(path: str) -> bool {
+    return match fs::metadata(path) {
+        result::Result[fs::Metadata, result::IoError]::Ok(m) => true,
+        result::Result[fs::Metadata, result::IoError]::Err(e) => false,
+    };
+}
+
+// Walk up from `start`, returning the nearest ancestor directory that CONTAINS a
+// child named `marker` (a resource root marker like an `assets` dir or a
+// manifest file). `None` if none up to the filesystem root. Pure string walk on
+// the parents — `start` itself need not exist. Bounded at 64 levels.
+fn find_up_from(start: str, marker: str) -> option::Option[text::Text] {
+    var cur: text::Text = start.to_text();
+    var depth: i32 = 0 as i32;
+    while depth < (64 as i32) {
+        let cand: text::Text = "${cur}/${marker}";
+        if exists(cand.view()) { return option::Option[text::Text]::Some(cur); }
+        let parent: text::Text = parent_of(cur.view());
+        if parent.view() == cur.view() { return option::Option[text::Text]::None; }
+        cur = parent;
+        depth = depth + (1 as i32);
+    }
+    return option::Option[text::Text]::None;
+}
+
+// `find_up_from` anchored at the executable's directory — the no-chdir
+// replacement for "walk up from the exe for the resource root".
+fn find_up(marker: str) -> option::Option[text::Text] {
+    let d: text::Text = dir();
+    return find_up_from(d.view(), marker);
+}
+
+// ───────────────────────────── tests ─────────────────────────────
+
+#[test]
+fn executable_path_is_absolute_and_nonempty() {
+    let ep: text::Text = executable_path();
+    assert ep.count() > (0 as usize);
+    let s: str = ep.view();
+    assert { *(#str_ptr(s)) } == ('/' as u8);   // canonical absolute path
+}
+
+#[test]
+fn dir_is_a_prefix_and_resource_joins() {
+    let d: text::Text = dir();
+    assert d.count() > (0 as usize);
+    // resource(name) == dir()/name
+    let r: text::Text = resource("assets");
+    assert r.view() == "${d}/assets";
+    // The executable lives directly under dir(): dir + "/" + basename == ep.
+    let ep: text::Text = executable_path();
+    let base: text::Text = parent_leaf(ep.view());
+    assert ep.view() == "${d}/${base}";
+}
+
+fn parent_leaf(path: str) -> text::Text {
+    // basename — for the assertion above; kept trivial.
+    let p: *u8 = #str_ptr(path);
+    let n: usize = #str_len(path);
+    var last: i64 = -1 as i64;
+    var i: usize = 0 as usize;
+    while i < n {
+        if { *(p + i) } == ('/' as u8) { last = i as i64; }
+        i = i +% (1 as usize);
+    }
+    let start: usize = (last + (1 as i64)) as usize;
+    return { #str_from_raw_parts({ p + start }, n - start) }.to_text();
+}
+
+#[test]
+fn find_up_from_locates_an_ancestor_with_the_marker() {
+    // Plant a marker under /tmp, then find it from a deep (non-existent) subpath
+    // — the walk is pure string parenting, so the intermediate dirs need not exist.
+    let marker: str = "cplus_bundle_marker.txt";
+    let mpath: str = "/tmp/cplus_bundle_marker.txt";
+    let _w: result::Result[usize, result::IoError] = fs::write_string(mpath, "x");
+    match find_up_from("/tmp/deep/does/not/exist", marker) {
+        option::Option[text::Text]::Some(found) => { assert found.view() == "/tmp"; }
+        option::Option[text::Text]::None => { assert false; }
+    }
+    let _rm: result::Result[bool, result::IoError] = fs::remove_file(mpath);
+}
+
+#[test]
+fn find_up_from_returns_none_when_absent() {
+    match find_up_from("/tmp/deep/does/not/exist", "cplus_bundle_definitely_absent_zzz") {
+        option::Option[text::Text]::Some(found) => { assert false; }
+        option::Option[text::Text]::None => { assert true; }
+    }
+    return;
+}
