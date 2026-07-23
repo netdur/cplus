@@ -3010,10 +3010,18 @@ fn clickable(
 // A scrolling container. Children are laid out (as a column) and hosted in the
 // backend's scroll view; content taller than the viewport scrolls. The backend
 // sizes content two-phase (at the viewport width, after the outer layout).
-fn scroll(take b: Builder) -> Node {
+// A scrolling container. `horizontal: false` (default) is the usual vertical
+// scroll — content is laid at the viewport width and scrolls down. `horizontal:
+// true` scrolls SIDEWAYS instead: content keeps its natural width and the
+// viewport gains a horizontal scroller (a code block that must not wrap, say).
+// A horizontal scroll is opaque to the layout on its cross axis, so give it a
+// definite `.height(...)`. Reuses the `soft_wrap` slot (false = horizontal),
+// the same "no wrap = scroll sideways" meaning it has for text_area/code.
+fn scroll(take b: Builder, horizontal: bool = false) -> Node {
     let Builder { children } = b;
     var n: Node = blank(kind_scroll());
     n.children = children;
+    n.soft_wrap = !horizontal;
     return n;
 }
 

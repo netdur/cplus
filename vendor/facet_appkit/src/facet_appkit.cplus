@@ -1355,17 +1355,25 @@ fn ak_window_buttons(ctx: *u8, np: *facet::Node) -> flex::Node {
 struct ScrollJob {
     opaque scroll: *u8,     // the NSScrollView (borrowed; the flex payload owns it)
     content: flex::Node,    // the mounted rows, awaiting layout at the viewport width
+    horizontal: bool,       // true = scroll sideways (content keeps its natural width)
 }
 
 static SCROLL_JOBS: vec::Vec[ScrollJob] = #zero::[vec::Vec[ScrollJob]]();
 
 fn ak_scroll(ctx: *u8, np: *facet::Node, take content: flex::Node) -> flex::Node {
+    // soft_wrap is the axis flag for a scroll: false = scroll sideways.
+    let horizontal: bool = !{ (*np).soft_wrap };
     let sv: ak::ScrollView = ak::ScrollView::new(rt::Rect { x: 0.0, y: 0.0, w: 10.0, h: 10.0 });
-    sv.set_has_vertical_scroller(true);
+    if horizontal {
+        sv.set_has_horizontal_scroller(true);
+        sv.set_has_vertical_scroller(false);
+    } else {
+        sv.set_has_vertical_scroller(true);
+    }
     sv.set_draws_background(false);
     sv.set_autohides_scrollers(true);
     let jobs: *vec::Vec[ScrollJob] = { #addr_of(SCROLL_JOBS) };
-    (*jobs).append(ScrollJob { scroll: sv.raw(), content: content });
+    (*jobs).append(ScrollJob { scroll: sv.raw(), content: content, horizontal: horizontal });
     var n: flex::Node = ui::fixed_view(sv.as_view());
     apply_style(n.payload(), facet::kind_scroll(), np);
     return n;
@@ -1380,8 +1388,12 @@ fn drain_scroll_jobs() {
         let last: usize = { (*jobs).count() } -% (1 as usize);
         match (*jobs).swap_remove(last) {
             option::Option[ScrollJob]::Some(job) => {
-                let ScrollJob { scroll, content } = job;
-                let _h: f64 = ui::fill_scroll(ak::ScrollView::from_raw(scroll), content);
+                let ScrollJob { scroll, content, horizontal } = job;
+                if horizontal {
+                    let _h: f64 = ui::fill_scroll_h(ak::ScrollView::from_raw(scroll), content);
+                } else {
+                    let _h: f64 = ui::fill_scroll(ak::ScrollView::from_raw(scroll), content);
+                }
             }
             option::Option[ScrollJob]::None => { }
         }

@@ -1939,6 +1939,23 @@ fn fill_scroll(s: ak::ScrollView, take rows: flex::Node) -> f64 {
     return rf.height;
 }
 
+// Horizontal counterpart of fill_scroll: lay the content at its NATURAL width
+// (no viewport-width constraint) so long lines keep their length, size the
+// document to that natural size, and let the viewport scroll sideways. The
+// caller gives the scroll a definite height (a horizontal scroll cannot derive
+// one from its content through the layout).
+fn fill_scroll_h(s: ak::ScrollView, take rows: flex::Node) -> f64 {
+    var r: flex::Node = rows;
+    r.calculate_layout(flex::undefined(), flex::undefined(), flex::Direction::LTR);
+    r.round_to_pixel(2.0f64);
+    let rf: flex::Layout = r.layout_frame();
+    let doc = akx::new_flipped_view(rt::Rect { x: 0.0, y: 0.0, w: rf.width, h: rf.height });
+    apply(#addr_of(r), doc.raw(), true);
+    s.set_document_view(ak::View::from_raw(doc.raw()));
+    scroll_content_store(s.raw(), r);
+    return rf.height;
+}
+
 // ==========================================================================
 // Scroll-content registry — retained row trees for scroll viewports
 // ==========================================================================
