@@ -196,6 +196,51 @@ impl Value {
             _ => option::Option[Value]::None,
         };
     }
+
+    // ---- typed field getters ----
+    // `value(key)` -> `as_X()` -> unwrap-or-default, in ONE call. These retire the
+    // per-service `jstr` / `jfield` helpers copy-pasted to decode one object field
+    // (get by key, coerce to a type, fall back when missing or the wrong kind). C+
+    // has no Codable-style derive (that needs macros), so decoding stays
+    // field-by-field — but without the per-call `Option` dance.
+
+    // The `key` field as text, or `fallback` when missing / not a JSON string.
+    fn field_str(this, key: str, fallback: str) -> text::Text {
+        return match this.value(key) {
+            option::Option[Value]::Some(v) => match v.as_text() {
+                option::Option[text::Text]::Some(t) => t,
+                option::Option[text::Text]::None => fallback.to_text(),
+            },
+            option::Option[Value]::None => fallback.to_text(),
+        };
+    }
+    // The `key` field as a number, or `fallback` when missing / not a JSON number.
+    fn field_number(this, key: str, fallback: f64) -> f64 {
+        return match this.value(key) {
+            option::Option[Value]::Some(v) => match v.as_number() {
+                option::Option[f64]::Some(x) => x,
+                option::Option[f64]::None => fallback,
+            },
+            option::Option[Value]::None => fallback,
+        };
+    }
+    // The `key` field as a bool, or `fallback` when missing / not a JSON bool.
+    fn field_bool(this, key: str, fallback: bool) -> bool {
+        return match this.value(key) {
+            option::Option[Value]::Some(v) => match v.as_boolean() {
+                option::Option[bool]::Some(x) => x,
+                option::Option[bool]::None => fallback,
+            },
+            option::Option[Value]::None => fallback,
+        };
+    }
+    // Does the object carry `key` at all? (A present `null` still counts.)
+    fn has(this, key: str) -> bool {
+        return match this.value(key) {
+            option::Option[Value]::Some(v) => true,
+            option::Option[Value]::None => false,
+        };
+    }
 }
 
 impl Member {
@@ -712,9 +757,12 @@ fn buf_push_bytes(b: Buf, p: *u8, n: usize) -> Buf {
     return b;
 }
 
-fn encode_string(b: Buf, s: str) -> Buf {
+// Escape the CONTENT of a JSON string (no surrounding quotes) into `b`: the
+// shared core of `encode_string` and the public `escape`. Per RFC 8259: the two
+// mandatory escapes (" and \), the short forms for the C0 controls that have
+// them (\b \f \n \r \t), and \u00xx for every other control byte.
+fn escape_into(b: Buf, s: str) -> Buf {
     var b: Buf = b;
-    b = buf_push(b, '"' as u8);
     let p: *u8 = #str_ptr(s);
     let n: usize = #str_len(s);
     var i: usize = 0 as usize;
@@ -737,8 +785,26 @@ fn encode_string(b: Buf, s: str) -> Buf {
         else { b = buf_push(b, c); }
         i = i +% (1 as usize);
     }
+    return b;
+}
+
+fn encode_string(b: Buf, s: str) -> Buf {
+    var b: Buf = b;
+    b = buf_push(b, '"' as u8);
+    b = escape_into(b, s);
     b = buf_push(b, '"' as u8);
     return b;
+}
+
+// Escape a raw string into JSON string CONTENT — the escaped bytes WITHOUT the
+// surrounding quotes — for splicing into a hand-built JSON template, e.g.
+// `"{\"prompt\":\"${json::escape(user_text)}\"}"`. Retires the copy-pasted
+// per-service `json_escape` fragment-escapers. (For a whole quoted value, wrap
+// the result in `"..."` yourself, or encode a `Value::text`.)
+fn escape(s: str) -> text::Text {
+    var b: Buf = buf_new();
+    b = escape_into(b, s);
+    return buf_to_string(b);   // frees `b`
 }
 
 fn encode_number(b: Buf, n: f64) -> Buf {
@@ -1184,4 +1250,40 @@ fn test_named_constructors_build_values() {
 
     let number: Value = Value::number(12.0f64);
     assert _must_number(number) >= 11.5f64;
+}
+
+#[test]
+fn escape_escapes_quotes_backslash_and_controls() {
+    // Quote, backslash, and newline get their escapes; a plain char is untouched;
+    // NO surrounding quotes are added (it is a fragment).
+    assert escape("he said \"hi\"").equals("he said \\\"hi\\\"");
+    assert escape("a\\b").equals("a\\\\b");
+    assert escape("line1\nline2").equals("line1\\nline2");
+    assert escape("tab\there").equals("tab\\there");
+    assert escape("plain").equals("plain");
+}
+
+#[test]
+fn escape_output_round_trips_as_a_json_string() {
+    // Wrapping escape(s) in quotes yields a parseable JSON string equal to s.
+    let s: str = "quote \" back \\ new\n done";
+    let doc: text::Text = "\"${escape(s)}\"";
+    let v: Value = parse_ok(doc.view());
+    assert _must_text(v).equals(s);
+}
+
+#[test]
+fn field_getters_decode_or_default() {
+    let v: Value = parse_ok("{\"name\":\"iris\",\"n\":42,\"ok\":true}");
+    assert v.field_str("name", "?").equals("iris");
+    assert v.field_number("n", 0.0f64) == 42.0f64;
+    assert v.field_bool("ok", false);
+    // Missing key -> fallback.
+    assert v.field_str("missing", "def").equals("def");
+    assert v.field_number("missing", 7.0f64) == 7.0f64;
+    // Wrong kind -> fallback (n is a number, not a string).
+    assert v.field_str("n", "def").equals("def");
+    // has() distinguishes present from absent.
+    assert v.has("name");
+    assert !v.has("missing");
 }
