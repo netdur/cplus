@@ -94,6 +94,27 @@ fn create(path: str) -> result::Result[File, result::IoError] {
     }
 }
 
+// Open `path` for appending, creating it if missing. Mode 0o644.
+//
+// macOS flags: O_WRONLY = 0x001, O_CREAT = 0x200, O_APPEND = 0x008.
+// Combined: 0x209 = 521. (Linux numbers differ — same caveat as `create`.)
+fn open_append(path: str) -> result::Result[File, result::IoError] {
+    let flags: i32 = 521 as i32;
+    let mode: i32 = 420 as i32;
+    match c_path(path) {
+        option::Option[text::CString]::Some(cp) => {
+            let fd: i32 = { open(cp.as_ptr(), flags, mode) };
+            if fd < (0 as i32) {
+                return result::io_err::[File](result::IoError::PermissionDenied);
+            }
+            return result::io_ok::[File](File { _fd: fd });
+        }
+        option::Option[text::CString]::None => {
+            return result::io_err::[File](result::IoError::InvalidInput);
+        }
+    }
+}
+
 impl File {
     // Drain remaining bytes into a fresh heap-allocated buffer. Returns
     // the Vec inside Result::Ok on success, or an IoError on failure.
@@ -132,6 +153,28 @@ impl File {
         let n: usize = data.count();
         let slice: u8[] = data.as_slice();
         let p: *u8 = { #slice_ptr(slice) };
+        var written: usize = 0 as usize;
+        while written < n {
+            let remaining: usize = n -% written;
+            let q: *u8 = { p + written };
+            let w: isize = { write(this._fd, q, remaining) };
+            if w <= (0 as isize) {
+                return result::io_err::[usize](result::IoError::BrokenPipe);
+            }
+            written = written +% (w as usize);
+        }
+        return result::io_ok::[usize](written);
+    }
+
+    // Write a string view. Loops on short writes, like `write_all`, but takes
+    // the bytes straight from the `str` — no intermediate Vec. A `Text` passed
+    // here coerces to its view. On success returns bytes written.
+    fn write_str(ref this, s: str) -> result::Result[usize, result::IoError] {
+        if this._fd < (0 as i32) {
+            return result::io_err::[usize](result::IoError::InvalidInput);
+        }
+        let n: usize = { #str_len(s) };
+        let p: *u8 = { #str_ptr(s) };
         var written: usize = 0 as usize;
         while written < n {
             let remaining: usize = n -% written;
@@ -413,7 +456,149 @@ fn read_to_string(path: str) -> result::Result[text::Text, result::IoError] {
     }
 }
 
+// Write `contents` to the file at `path`, creating it and replacing what was
+// there. Combines `create` + `File::write_str` + `close`; the fd is closed on
+// return either way. The mirror of `read_to_string` — and since a `Text`
+// coerces to `str`, `fs::write_string(path, "${n}")` writes an interpolated
+// value in one call. On success returns bytes written. Use `create` +
+// `write_all` when you want raw bytes or several writes into one open file.
+fn write_string(path: str, contents: str) -> result::Result[usize, result::IoError] {
+    match create(path) {
+        result::Result[File, result::IoError]::Ok(f) => {
+            var file: File = f;
+            let written: result::Result[usize, result::IoError] = file.write_str(contents);
+            file.close();
+            return written;
+        }
+        result::Result[File, result::IoError]::Err(e) => {
+            return result::io_err::[usize](e);
+        }
+    }
+}
+
+// Append `contents` to the file at `path`, creating it if missing. Combines
+// `open_append` + `File::write_str` + `close`; the fd is closed on return
+// either way. For logs and transports where history must survive; use
+// `write_string` when the new content replaces the old. On success returns
+// bytes written.
+fn append_string(path: str, contents: str) -> result::Result[usize, result::IoError] {
+    match open_append(path) {
+        result::Result[File, result::IoError]::Ok(f) => {
+            var file: File = f;
+            let written: result::Result[usize, result::IoError] = file.write_str(contents);
+            file.close();
+            return written;
+        }
+        result::Result[File, result::IoError]::Err(e) => {
+            return result::io_err::[usize](e);
+        }
+    }
+}
+
 // ───────────────────────────── tests ─────────────────────────────
+
+#[test]
+fn append_string_creates_then_extends() {
+    let path: str = "/tmp/cplus_stdlib_fs_append.txt";
+    let _rm0: result::Result[bool, result::IoError] = remove_file(path);
+    let _a: result::Result[usize, result::IoError] = append_string(path, "one\n");
+    let _b: result::Result[usize, result::IoError] = append_string(path, "two\n");
+    match read_to_string(path) {
+        result::Result[text::Text, result::IoError]::Ok(t) => {
+            assert t.view() == "one\ntwo\n";
+        }
+        result::Result[text::Text, result::IoError]::Err(e) => { assert false; }
+    }
+    let _rm: result::Result[bool, result::IoError] = remove_file(path);
+}
+
+#[test]
+fn append_string_after_write_string_preserves_content() {
+    let path: str = "/tmp/cplus_stdlib_fs_append2.txt";
+    let _w: result::Result[usize, result::IoError] = write_string(path, "base");
+    let _a: result::Result[usize, result::IoError] = append_string(path, "+more");
+    match read_to_string(path) {
+        result::Result[text::Text, result::IoError]::Ok(t) => {
+            assert t.view() == "base+more";
+        }
+        result::Result[text::Text, result::IoError]::Err(e) => { assert false; }
+    }
+    let _rm: result::Result[bool, result::IoError] = remove_file(path);
+}
+
+#[test]
+fn write_string_then_read_to_string_roundtrip() {
+    let path: str = "/tmp/cplus_stdlib_fs_write_string.txt";
+    match write_string(path, "hello fs") {
+        result::Result[usize, result::IoError]::Ok(n) => { assert n == (8 as usize); }
+        result::Result[usize, result::IoError]::Err(e) => { assert false; }
+    }
+    match read_to_string(path) {
+        result::Result[text::Text, result::IoError]::Ok(t) => {
+            assert t.view() == "hello fs";
+        }
+        result::Result[text::Text, result::IoError]::Err(e) => { assert false; }
+    }
+    let _rm: result::Result[bool, result::IoError] = remove_file(path);
+}
+
+#[test]
+fn write_string_replaces_previous_content() {
+    let path: str = "/tmp/cplus_stdlib_fs_write_string2.txt";
+    let _a: result::Result[usize, result::IoError] = write_string(path, "a much longer first version");
+    let _b: result::Result[usize, result::IoError] = write_string(path, "short");
+    match read_to_string(path) {
+        result::Result[text::Text, result::IoError]::Ok(t) => {
+            assert t.view() == "short";
+        }
+        result::Result[text::Text, result::IoError]::Err(e) => { assert false; }
+    }
+    let _rm: result::Result[bool, result::IoError] = remove_file(path);
+}
+
+#[test]
+fn write_string_accepts_an_interpolated_text() {
+    // "${...}" builds an owned Text; the coercion passes it as the str view.
+    let path: str = "/tmp/cplus_stdlib_fs_write_string3.txt";
+    let n: i32 = 42;
+    let _w: result::Result[usize, result::IoError] = write_string(path, "${n}");
+    match read_to_string(path) {
+        result::Result[text::Text, result::IoError]::Ok(t) => {
+            assert t.view() == "42";
+        }
+        result::Result[text::Text, result::IoError]::Err(e) => { assert false; }
+    }
+    let _rm: result::Result[bool, result::IoError] = remove_file(path);
+}
+
+#[test]
+fn write_string_missing_directory_is_an_error() {
+    match write_string("/tmp/cplus_stdlib_fs_missing_dir/f.txt", "x") {
+        result::Result[usize, result::IoError]::Ok(n) => { assert false; }
+        result::Result[usize, result::IoError]::Err(e) => { }
+    };
+}
+
+#[test]
+fn write_str_appends_within_one_open_file() {
+    let path: str = "/tmp/cplus_stdlib_fs_write_str.txt";
+    match create(path) {
+        result::Result[File, result::IoError]::Ok(f) => {
+            var w: File = f;
+            let _a: result::Result[usize, result::IoError] = w.write_str("ab");
+            let _b: result::Result[usize, result::IoError] = w.write_str("cd");
+            w.close();
+        }
+        result::Result[File, result::IoError]::Err(e) => { assert false; }
+    }
+    match read_to_string(path) {
+        result::Result[text::Text, result::IoError]::Ok(t) => {
+            assert t.view() == "abcd";
+        }
+        result::Result[text::Text, result::IoError]::Err(e) => { assert false; }
+    }
+    let _rm: result::Result[bool, result::IoError] = remove_file(path);
+}
 
 #[test]
 fn fs_write_then_read_roundtrip() {
