@@ -37,6 +37,9 @@ extern fn readdir(dirp: *u8) -> *u8;
 extern fn closedir(dirp: *u8) -> i32;
 extern fn __error() -> *i32;
 extern fn strlen(s: *u8) -> usize;
+// Darwin arm64 exposes the 64-bit-inode stat as the bare `stat` symbol (on
+// x86_64 it is `stat$INODE64`; this build targets arm64 macOS).
+extern fn stat(path: *u8, buf: *u8) -> i32;
 
 // Owned file handle. `fd == -1` is the invalid / closed state (disarms Drop).
 struct File {
@@ -112,6 +115,69 @@ fn open_append(path: str) -> result::Result[File, result::IoError] {
         option::Option[text::CString]::None => {
             return result::io_err::[File](result::IoError::InvalidInput);
         }
+    }
+}
+
+// File metadata from stat(2): size in bytes, mtime as Unix seconds (whole
+// seconds since 1970-01-01 UTC), and whether the path is a directory. Enables
+// an in-process mtime sort (retiring `ls -t | head`) and a cheap size probe
+// (retiring the fopen/fseek(SEEK_END)/ftell dance).
+struct Metadata {
+    size: i64,      // st_size
+    mtime: i64,     // st_mtimespec.tv_sec
+    is_dir: bool,   // (st_mode & S_IFMT) == S_IFDIR
+}
+
+// Fields are read straight out of the Darwin (arm64, 64-bit-inode) `struct stat`,
+// which is 144 bytes: st_mode is a u16 at byte 4; st_mtimespec.tv_sec an i64 at
+// byte 48; st_size an i64 at byte 96. S_IFMT = 0xF000, S_IFDIR = 0x4000.
+fn metadata(path: str) -> result::Result[Metadata, result::IoError] {
+    match c_path(path) {
+        option::Option[text::CString]::Some(cp) => {
+            let buf: *u8 = { malloc(144 as usize) };
+            if buf == (0 as *u8) { return result::io_err::[Metadata](result::IoError::Other); }
+            let rc: i32 = { stat(cp.as_ptr(), buf) };
+            if rc != (0 as i32) {
+                let err: i32 = { *(__error()) };
+                free(buf);
+                if err == (2 as i32) { return result::io_err::[Metadata](result::IoError::NotFound); }
+                if err == (13 as i32) { return result::io_err::[Metadata](result::IoError::PermissionDenied); }
+                return result::io_err::[Metadata](result::IoError::Other);
+            }
+            let mode: u16 = { *((buf + (4 as usize)) as *u16) };
+            let mtime: i64 = { *((buf + (48 as usize)) as *i64) };
+            let size: i64 = { *((buf + (96 as usize)) as *i64) };
+            free(buf);
+            let dir: bool = (mode & (0xF000 as u16)) == (0x4000 as u16);
+            return result::io_ok::[Metadata](Metadata { size: size, mtime: mtime, is_dir: dir });
+        }
+        option::Option[text::CString]::None => {
+            return result::io_err::[Metadata](result::IoError::InvalidInput);
+        }
+    }
+}
+
+// Size in bytes — the common single-field probe over `metadata`.
+fn size(path: str) -> result::Result[i64, result::IoError] {
+    match metadata(path) {
+        result::Result[Metadata, result::IoError]::Ok(m) => { return result::io_ok::[i64](m.size); }
+        result::Result[Metadata, result::IoError]::Err(e) => { return result::io_err::[i64](e); }
+    }
+}
+
+// Modification time (Unix seconds) — for an in-process newest-first sort.
+fn mtime(path: str) -> result::Result[i64, result::IoError] {
+    match metadata(path) {
+        result::Result[Metadata, result::IoError]::Ok(m) => { return result::io_ok::[i64](m.mtime); }
+        result::Result[Metadata, result::IoError]::Err(e) => { return result::io_err::[i64](e); }
+    }
+}
+
+// Does the path exist AND name a directory? False on any error (incl. missing).
+fn is_dir(path: str) -> bool {
+    match metadata(path) {
+        result::Result[Metadata, result::IoError]::Ok(m) => { return m.is_dir; }
+        result::Result[Metadata, result::IoError]::Err(e) => { return false; }
     }
 }
 
@@ -567,6 +633,54 @@ fn write_string_accepts_an_interpolated_text() {
             assert t.view() == "42";
         }
         result::Result[text::Text, result::IoError]::Err(e) => { assert false; }
+    }
+    let _rm: result::Result[bool, result::IoError] = remove_file(path);
+}
+
+#[test]
+fn metadata_reports_size_mtime_and_not_dir() {
+    let path: str = "/tmp/cplus_stdlib_fs_meta.txt";
+    let _w: result::Result[usize, result::IoError] = write_string(path, "hello fs stat");
+    match metadata(path) {
+        result::Result[Metadata, result::IoError]::Ok(m) => {
+            assert m.size == (13 as i64);          // "hello fs stat" is 13 bytes
+            assert !m.is_dir;
+            assert m.mtime > (1600000000 as i64);  // a real Unix time (post-2020)
+        }
+        result::Result[Metadata, result::IoError]::Err(e) => { assert false; }
+    }
+    let _rm: result::Result[bool, result::IoError] = remove_file(path);
+}
+
+#[test]
+fn metadata_on_a_directory_reports_is_dir() {
+    match metadata("/tmp") {
+        result::Result[Metadata, result::IoError]::Ok(m) => { assert m.is_dir; }
+        result::Result[Metadata, result::IoError]::Err(e) => { assert false; }
+    }
+    assert is_dir("/tmp");
+}
+
+#[test]
+fn metadata_missing_path_is_not_found() {
+    match metadata("/tmp/cplus_stdlib_fs_does_not_exist_zzz") {
+        result::Result[Metadata, result::IoError]::Ok(m) => { assert false; }
+        result::Result[Metadata, result::IoError]::Err(e) => { assert e == result::IoError::NotFound; }
+    }
+    assert !is_dir("/tmp/cplus_stdlib_fs_does_not_exist_zzz");
+}
+
+#[test]
+fn size_and_mtime_convenience_match_metadata() {
+    let path: str = "/tmp/cplus_stdlib_fs_meta2.txt";
+    let _w: result::Result[usize, result::IoError] = write_string(path, "0123456789");   // 10 bytes
+    match size(path) {
+        result::Result[i64, result::IoError]::Ok(s) => { assert s == (10 as i64); }
+        result::Result[i64, result::IoError]::Err(e) => { assert false; }
+    }
+    match mtime(path) {
+        result::Result[i64, result::IoError]::Ok(t) => { assert t > (1600000000 as i64); }
+        result::Result[i64, result::IoError]::Err(e) => { assert false; }
     }
     let _rm: result::Result[bool, result::IoError] = remove_file(path);
 }
