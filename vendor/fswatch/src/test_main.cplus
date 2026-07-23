@@ -1,0 +1,348 @@
+import "./fswatch" as fswatch;
+import "events/events" as events;
+import "stdlib/fs" as fs;
+import "stdlib/io" as io;
+import "stdlib/result" as result;
+import "stdlib/vec" as vec;
+
+extern fn rmdir(path: *u8) -> i32;
+extern fn rename(from: *u8, to: *u8) -> i32;
+extern fn nanosleep(req: *u8, rem: *u8) -> i32;
+
+struct SleepSpec { secs: i64, nanos: i64 }
+
+static CREATED: i64 = 0;
+static MODIFIED: i64 = 0;
+static REMOVED: i64 = 0;
+static RENAMED: i64 = 0;
+static MATCHED: i64 = 0;
+static EXPECTED: str = "";
+
+fn reset_events(expected: str = "") {
+    CREATED = 0;
+    MODIFIED = 0;
+    REMOVED = 0;
+    RENAMED = 0;
+    MATCHED = 0;
+    EXPECTED = expected;
+    return;
+}
+
+fn record(change: fswatch::Change, ctx: *u8) {
+    if change.kind == fswatch::ChangeKind::Created { CREATED = CREATED + 1; }
+    if change.kind == fswatch::ChangeKind::Modified { MODIFIED = MODIFIED + 1; }
+    if change.kind == fswatch::ChangeKind::Removed { REMOVED = REMOVED + 1; }
+    if change.kind == fswatch::ChangeKind::Renamed { RENAMED = RENAMED + 1; }
+    if change.relative_path == EXPECTED { MATCHED = MATCHED + 1; }
+    return;
+}
+
+fn make_file(path: str, byte: u8 = 1 as u8) {
+    match fs::create(path) {
+        result::Result[fs::File, result::IoError]::Ok(f) => {
+            var file: fs::File = f;
+            var bytes: vec::Vec[u8] = vec::new::[u8]();
+            let _a = bytes.append(byte);
+            let _w = file.write_all(bytes);
+            file.close();
+        }
+        result::Result[fs::File, result::IoError]::Err(_e) => { assert false; }
+    }
+    return;
+}
+
+fn pause_briefly() {
+    var spec: SleepSpec = SleepSpec { secs: 0 as i64, nanos: 2000000 as i64 };
+    let _n: i32 = { nanosleep(#addr_of(spec) as *u8, 0 as *u8) };
+    return;
+}
+
+fn drain(ref watcher: fswatch::Watcher) -> usize {
+    var total: usize = 0 as usize;
+    var tries: i32 = 0 as i32;
+    while tries < (20 as i32) {
+        match watcher.poll() {
+            result::Result[usize, fswatch::WatchError]::Ok(n) => {
+                total = total +% n;
+                if n > (0 as usize) { return total; }
+            }
+            result::Result[usize, fswatch::WatchError]::Err(_e) => { assert false; }
+        }
+        pause_briefly();
+        tries = tries +% (1 as i32);
+    }
+    return total;
+}
+
+#[test]
+fn ignore_patterns_suppress_files_but_visible_changes_fire() {
+    let root: str = "/tmp/cplus_fswatch_ignore";
+    let ignored: str = "/tmp/cplus_fswatch_ignore/skip.tmp";
+    let visible: str = "/tmp/cplus_fswatch_ignore/visible.txt";
+    let _r0 = fs::remove_file(ignored);
+    let _r1 = fs::remove_file(visible);
+    let _d0: i32 = { rmdir(#str_ptr("/tmp/cplus_fswatch_ignore\0")) };
+    let _mk = fs::create_dir_all(root);
+
+    var options: fswatch::Options = fswatch::Options::new();
+    let _ig = options.ignore("*.tmp");
+    var watcher: fswatch::Watcher = match fswatch::Watcher::new(root, options) {
+        result::Result[fswatch::Watcher, fswatch::WatchError]::Ok(w) => w,
+        result::Result[fswatch::Watcher, fswatch::WatchError]::Err(_e) => { assert false; return; }
+    };
+    let _sub: events::SignalSubscription[fswatch::Change] = watcher.on_change(record);
+
+    reset_events("skip.tmp");
+    make_file(ignored);
+    let _ignored_count: usize = drain(watcher);
+    assert CREATED == 0;
+    assert MATCHED == 0;
+
+    reset_events("visible.txt");
+    make_file(visible);
+    let _visible_count: usize = drain(watcher);
+    assert CREATED == 1;
+    assert MATCHED == 1;
+
+    let _rr0 = fs::remove_file(ignored);
+    let _rr1 = fs::remove_file(visible);
+    let _d1: i32 = { rmdir(#str_ptr("/tmp/cplus_fswatch_ignore\0")) };
+    return;
+}
+
+#[test]
+fn shallow_skips_nested_files_while_recursive_reports_them() {
+    let root: str = "/tmp/cplus_fswatch_depth";
+    let sub: str = "/tmp/cplus_fswatch_depth/sub";
+    let first: str = "/tmp/cplus_fswatch_depth/sub/first.txt";
+    let second: str = "/tmp/cplus_fswatch_depth/sub/second.txt";
+    let _r0 = fs::remove_file(first);
+    let _r1 = fs::remove_file(second);
+    let _d0: i32 = { rmdir(#str_ptr("/tmp/cplus_fswatch_depth/sub\0")) };
+    let _d1: i32 = { rmdir(#str_ptr("/tmp/cplus_fswatch_depth\0")) };
+    let _mk = fs::create_dir_all(sub);
+
+    var shallow_options: fswatch::Options = fswatch::Options::new();
+    var shallow: fswatch::Watcher = match fswatch::Watcher::new(root, shallow_options) {
+        result::Result[fswatch::Watcher, fswatch::WatchError]::Ok(w) => w,
+        result::Result[fswatch::Watcher, fswatch::WatchError]::Err(_e) => { assert false; return; }
+    };
+    let _s: events::SignalSubscription[fswatch::Change] = shallow.on_change(record);
+    reset_events("sub/first.txt");
+    make_file(first);
+    let _shallow_count: usize = drain(shallow);
+    assert MATCHED == 0;
+    let _rm_first = fs::remove_file(first);
+    let _shallow_cleanup: usize = drain(shallow);
+
+    var recursive_options: fswatch::Options = fswatch::Options::new();
+    recursive_options.depth(fswatch::WatchDepth::Recursive);
+    var recursive: fswatch::Watcher = match fswatch::Watcher::new(root, recursive_options) {
+        result::Result[fswatch::Watcher, fswatch::WatchError]::Ok(w) => w,
+        result::Result[fswatch::Watcher, fswatch::WatchError]::Err(_e) => { assert false; return; }
+    };
+    let _r: events::SignalSubscription[fswatch::Change] = recursive.on_change(record);
+    reset_events("sub/second.txt");
+    make_file(second);
+    let _recursive_count: usize = drain(recursive);
+    assert CREATED == 1;
+    assert MATCHED == 1;
+
+    let _rm_second = fs::remove_file(second);
+    let _d2: i32 = { rmdir(#str_ptr("/tmp/cplus_fswatch_depth/sub\0")) };
+    let _d3: i32 = { rmdir(#str_ptr("/tmp/cplus_fswatch_depth\0")) };
+    return;
+}
+
+#[test]
+fn file_watch_detects_content_write_and_atomic_replacement() {
+    let root: str = "/tmp/cplus_fswatch_file.txt";
+    let temp: str = "/tmp/cplus_fswatch_file.new";
+    let _r0 = fs::remove_file(root);
+    let _r1 = fs::remove_file(temp);
+    make_file(root, byte: 1 as u8);
+
+    var options: fswatch::Options = fswatch::Options::new();
+    var watcher: fswatch::Watcher = match fswatch::Watcher::new(root, options) {
+        result::Result[fswatch::Watcher, fswatch::WatchError]::Ok(w) => w,
+        result::Result[fswatch::Watcher, fswatch::WatchError]::Err(_e) => { assert false; return; }
+    };
+    let _sub: events::SignalSubscription[fswatch::Change] = watcher.on_change(record);
+
+    reset_events("");
+    make_file(root, byte: 2 as u8);
+    let _write_count: usize = drain(watcher);
+    assert MODIFIED == 1;
+
+    reset_events("");
+    make_file(temp, byte: 3 as u8);
+    let renamed: i32 = { rename(#str_ptr("/tmp/cplus_fswatch_file.new\0"), #str_ptr("/tmp/cplus_fswatch_file.txt\0")) };
+    assert renamed == 0;
+    let _replace_count: usize = drain(watcher);
+    assert MODIFIED == 1;
+
+    let _rr0 = fs::remove_file(root);
+    let _rr1 = fs::remove_file(temp);
+    return;
+}
+
+#[test]
+fn directory_rename_is_paired_by_inode() {
+    let root: str = "/tmp/cplus_fswatch_rename";
+    let old_path: str = "/tmp/cplus_fswatch_rename/old.txt";
+    let new_path: str = "/tmp/cplus_fswatch_rename/new.txt";
+    let _r0 = fs::remove_file(old_path);
+    let _r1 = fs::remove_file(new_path);
+    let _d0: i32 = { rmdir(#str_ptr("/tmp/cplus_fswatch_rename\0")) };
+    let _mk = fs::create_dir_all(root);
+    make_file(old_path);
+
+    var options: fswatch::Options = fswatch::Options::new();
+    var watcher: fswatch::Watcher = match fswatch::Watcher::new(root, options) {
+        result::Result[fswatch::Watcher, fswatch::WatchError]::Ok(w) => w,
+        result::Result[fswatch::Watcher, fswatch::WatchError]::Err(_e) => { assert false; return; }
+    };
+    let _sub: events::SignalSubscription[fswatch::Change] = watcher.on_change(record);
+    reset_events("new.txt");
+    let moved: i32 = { rename(#str_ptr("/tmp/cplus_fswatch_rename/old.txt\0"), #str_ptr("/tmp/cplus_fswatch_rename/new.txt\0")) };
+    assert moved == 0;
+    let _count: usize = drain(watcher);
+    assert RENAMED == 1;
+    assert MATCHED == 1;
+
+    let _rr = fs::remove_file(new_path);
+    let _d1: i32 = { rmdir(#str_ptr("/tmp/cplus_fswatch_rename\0")) };
+    return;
+}
+
+
+// ---- background watch (fswatch::watch) ---------------------------------------
+
+fn wait_ms(ms: i64) {
+    var spec: SleepSpec = SleepSpec {
+        secs: ms / (1000 as i64),
+        nanos: (ms % (1000 as i64)) * (1000000 as i64),
+    };
+    let _n: i32 = { nanosleep(#addr_of(spec) as *u8, 0 as *u8) };
+    return;
+}
+
+static BG_PATH_OK: i64 = 0;
+
+fn record_bg(change: fswatch::Change, ctx: *u8) {
+    record(change, ctx);
+    if change.path == "/tmp/cplus_fswatch_bg.txt" { BG_PATH_OK = BG_PATH_OK + 1; }
+    return;
+}
+
+static DELIVERIES: i64 = 0;
+
+fn count_delivery(work: fn(*u8), ctx: *u8) {
+    DELIVERIES = DELIVERIES + 1;
+    work(ctx);
+    return;
+}
+
+#[test]
+fn background_watch_delivers_with_owned_paths() {
+    let path: str = "/tmp/cplus_fswatch_bg.txt";
+    make_file(path);
+    reset_events();
+    BG_PATH_OK = 0;
+    var options: fswatch::Options = fswatch::Options::new();
+    var task: fswatch::WatchTask = match fswatch::watch(path, options, record_bg, interval_ms: 20 as u64) {
+        result::Result[fswatch::WatchTask, fswatch::WatchError]::Ok(t) => t,
+        result::Result[fswatch::WatchTask, fswatch::WatchError]::Err(_e) => { assert false; return; }
+    };
+    assert task.active();
+    wait_ms(80);
+    make_file(path, byte: 2 as u8);
+    wait_ms(200);
+    assert MODIFIED >= 1;
+    assert BG_PATH_OK >= 1;    // the path survived the cross-thread copy intact
+    task.stop();
+    assert !task.active();
+    let _rm = fs::remove_file(path);
+    return;
+}
+
+#[test]
+fn background_watch_stop_ends_delivery() {
+    let path: str = "/tmp/cplus_fswatch_bg2.txt";
+    make_file(path);
+    reset_events();
+    var options: fswatch::Options = fswatch::Options::new();
+    var task: fswatch::WatchTask = match fswatch::watch(path, options, record, interval_ms: 20 as u64) {
+        result::Result[fswatch::WatchTask, fswatch::WatchError]::Ok(t) => t,
+        result::Result[fswatch::WatchTask, fswatch::WatchError]::Err(_e) => { assert false; return; }
+    };
+    wait_ms(80);
+    task.stop();
+    wait_ms(80);
+    make_file(path, byte: 3 as u8);
+    wait_ms(150);
+    assert MODIFIED == 0;
+    let _rm = fs::remove_file(path);
+    return;
+}
+
+#[test]
+fn background_watch_drop_stops_the_thread() {
+    let path: str = "/tmp/cplus_fswatch_bg3.txt";
+    make_file(path);
+    reset_events();
+    {
+        var options: fswatch::Options = fswatch::Options::new();
+        var task: fswatch::WatchTask = match fswatch::watch(path, options, record, interval_ms: 20 as u64) {
+            result::Result[fswatch::WatchTask, fswatch::WatchError]::Ok(t) => t,
+            result::Result[fswatch::WatchTask, fswatch::WatchError]::Err(_e) => { assert false; return; }
+        };
+        wait_ms(80);
+    }
+    wait_ms(80);
+    make_file(path, byte: 4 as u8);
+    wait_ms(150);
+    assert MODIFIED == 0;
+    let _rm = fs::remove_file(path);
+    return;
+}
+
+#[test]
+fn background_watch_uses_the_given_executor() {
+    let path: str = "/tmp/cplus_fswatch_bg4.txt";
+    make_file(path);
+    reset_events();
+    DELIVERIES = 0;
+    var options: fswatch::Options = fswatch::Options::new();
+    var task: fswatch::WatchTask = match fswatch::watch(path, options, record, deliver: count_delivery, interval_ms: 20 as u64) {
+        result::Result[fswatch::WatchTask, fswatch::WatchError]::Ok(t) => t,
+        result::Result[fswatch::WatchTask, fswatch::WatchError]::Err(_e) => { assert false; return; }
+    };
+    wait_ms(80);
+    make_file(path, byte: 5 as u8);
+    wait_ms(200);
+    assert DELIVERIES >= 1;
+    assert MODIFIED >= 1;
+    task.stop();
+    let _rm = fs::remove_file(path);
+    return;
+}
+
+#[test]
+fn background_watch_bad_root_errors_immediately() {
+    var options: fswatch::Options = fswatch::Options::new();
+    match fswatch::watch("/tmp/cplus_fswatch_missing_dir/nope.txt", options, record) {
+        result::Result[fswatch::WatchTask, fswatch::WatchError]::Ok(t) => {
+            var task: fswatch::WatchTask = t;
+            task.stop();
+            assert false;
+        }
+        result::Result[fswatch::WatchTask, fswatch::WatchError]::Err(_e) => { }
+    }
+    return;
+}
+
+fn main() -> i32 {
+    io::println("fswatch: run `cpc test`");
+    return 0;
+}

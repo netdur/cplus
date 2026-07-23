@@ -1,0 +1,934 @@
+import "./backend" as backend;
+import "events/events" as events;
+import "stdlib/atomic" as atomic;
+import "stdlib/box" as box;
+import "stdlib/fs" as fs;
+import "stdlib/option" as option;
+import "stdlib/result" as result;
+import "stdlib/status" as status;
+import "stdlib/text" as text;
+import "stdlib/thread" as thread;
+import "stdlib/time" as time;
+import "stdlib/vec" as vec;
+
+// Public event model ----------------------------------------------------------
+
+enum WatchDepth {
+    Shallow,
+    Recursive,
+}
+
+enum ChangeKind {
+    Created,
+    Modified,
+    Removed,
+    Renamed,
+    Metadata,
+    Overflow,
+}
+
+enum WatchError {
+    NotFound,
+    PermissionDenied,
+    InvalidPath,
+    OutOfMemory,
+    Backend,
+    Busy,
+}
+
+// Every string is borrowed for the callback duration. `path` and
+// `previous_path` are full paths; their relative counterparts are rooted at
+// the path passed to Watcher::new. Previous fields are empty except on rename.
+struct Change {
+    kind: ChangeKind,
+    path: str,
+    relative_path: str,
+    previous_path: str,
+    previous_relative_path: str,
+    is_directory: bool,
+}
+
+struct Options {
+    depth_value: WatchDepth,
+    ignore_patterns: vec::Vec[text::Text],
+}
+
+impl Options {
+    fn new() -> Options {
+        return Options {
+            depth_value: WatchDepth::Shallow,
+            ignore_patterns: vec::new::[text::Text](),
+        };
+    }
+
+    fn depth(ref this, value: WatchDepth) {
+        this.depth_value = value;
+        return;
+    }
+
+    // A pattern without '/' matches the basename at every visible depth.
+    // '*' and '?' stay inside one segment; '**' may cross '/'.
+    fn ignore(ref this, pattern: str) -> status::Status {
+        if #str_len(pattern) == (0 as usize) { return status::Status::InvalidInput; }
+        return this.ignore_patterns.append(text::from_str(pattern));
+    }
+}
+
+// Glob matching ---------------------------------------------------------------
+
+fn byte_at(s: str, i: usize) -> u8 {
+    let p: *u8 = { #str_ptr(s) + i };
+    return { *p };
+}
+
+fn has_slash(s: str) -> bool {
+    var i: usize = 0 as usize;
+    while i < #str_len(s) {
+        if byte_at(s, i) == (47 as u8) { return true; }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
+
+fn basename_view(s: str) -> str {
+    let n: usize = #str_len(s);
+    var start: usize = 0 as usize;
+    var i: usize = 0 as usize;
+    while i < n {
+        if byte_at(s, i) == (47 as u8) { start = i +% (1 as usize); }
+        i = i +% (1 as usize);
+    }
+    return { #str_from_raw_parts(#str_ptr(s) + start, n -% start) };
+}
+
+fn glob_from(pattern: str, value: str, pi: usize, vi: usize) -> bool {
+    let pn: usize = #str_len(pattern);
+    let vn: usize = #str_len(value);
+    if pi == pn { return vi == vn; }
+    let p: u8 = byte_at(pattern, pi);
+
+    if p == (42 as u8) { // '*'
+        let is_double: bool = (pi +% (1 as usize)) < pn && byte_at(pattern, pi +% (1 as usize)) == (42 as u8);
+        var next_pi: usize = pi +% (1 as usize);
+        if is_double {
+            while next_pi < pn && byte_at(pattern, next_pi) == (42 as u8) {
+                next_pi = next_pi +% (1 as usize);
+            }
+            // `**/name` also matches `name` at the current level.
+            if next_pi < pn && byte_at(pattern, next_pi) == (47 as u8) {
+                if glob_from(pattern, value, next_pi +% (1 as usize), vi) { return true; }
+            }
+            var j: usize = vi;
+            while j <= vn {
+                if glob_from(pattern, value, next_pi, j) { return true; }
+                j = j +% (1 as usize);
+            }
+            return false;
+        }
+        var j: usize = vi;
+        loop {
+            if glob_from(pattern, value, next_pi, j) { return true; }
+            if j == vn || byte_at(value, j) == (47 as u8) { break; }
+            j = j +% (1 as usize);
+        }
+        return false;
+    }
+
+    if p == (63 as u8) { // '?'
+        if vi == vn || byte_at(value, vi) == (47 as u8) { return false; }
+        return glob_from(pattern, value, pi +% (1 as usize), vi +% (1 as usize));
+    }
+
+    if vi == vn || p != byte_at(value, vi) { return false; }
+    return glob_from(pattern, value, pi +% (1 as usize), vi +% (1 as usize));
+}
+
+fn glob_matches(pattern: str, relative_path: str) -> bool {
+    if has_slash(pattern) {
+        return glob_from(pattern, relative_path, 0 as usize, 0 as usize);
+    }
+    return glob_from(pattern, basename_view(relative_path), 0 as usize, 0 as usize);
+}
+
+fn pattern_prunes_dir(pattern: str, relative_path: str) -> bool {
+    if glob_matches(pattern, relative_path) { return true; }
+    let n: usize = #str_len(pattern);
+    if n >= (3 as usize) && byte_at(pattern, n -% (3 as usize)) == (47 as u8) &&
+       byte_at(pattern, n -% (2 as usize)) == (42 as u8) &&
+       byte_at(pattern, n -% (1 as usize)) == (42 as u8) {
+        let prefix: str = { #str_from_raw_parts(#str_ptr(pattern), n -% (3 as usize)) };
+        return glob_from(prefix, relative_path, 0 as usize, 0 as usize);
+    }
+    return false;
+}
+
+fn ignored(options: Options, relative_path: str, is_directory: bool) -> bool {
+    var i: usize = 0 as usize;
+    while i < options.ignore_patterns.count() {
+        match options.ignore_patterns.at_ptr(i) {
+            option::Option[*text::Text]::Some(p) => {
+                if glob_matches((*p).view(), relative_path) { return true; }
+                if is_directory && pattern_prunes_dir((*p).view(), relative_path) { return true; }
+            }
+            option::Option[*text::Text]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
+
+// Snapshot model --------------------------------------------------------------
+
+struct Entry {
+    relative_path: text::Text,
+    inode: u64,
+    size: i64,
+    mtime_sec: i64,
+    mtime_nsec: i64,
+    mode: u16,
+    is_directory: bool,
+}
+
+enum ScanResult {
+    Ok,
+    Error(WatchError),
+}
+
+fn normalized_root(path: str) -> text::Text {
+    var out: text::Text = text::from_str(path);
+    while out.count() > (1 as usize) {
+        match out.byte_at(out.count() -% (1 as usize)) {
+            option::Option[u8]::Some(b) => {
+                if b == (47 as u8) { out = out.drop_last(); } else { break; }
+            }
+            option::Option[u8]::None => { break; }
+        }
+    }
+    return out;
+}
+
+fn parent_path(path: str) -> text::Text {
+    let n: usize = #str_len(path);
+    if n == (0 as usize) { return text::from_str("."); }
+    var found: bool = false;
+    var last: usize = 0 as usize;
+    var i: usize = 0 as usize;
+    while i < n {
+        if byte_at(path, i) == (47 as u8) { found = true; last = i; }
+        i = i +% (1 as usize);
+    }
+    if !found { return text::from_str("."); }
+    if last == (0 as usize) { return text::from_str("/"); }
+    let view: str = { #str_from_raw_parts(#str_ptr(path), last) };
+    return text::from_str(view);
+}
+
+fn full_path(root: str, relative_path: str) -> text::Text {
+    if #str_len(relative_path) == (0 as usize) { return text::from_str(root); }
+    if root == "/" { return "/${relative_path}"; }
+    return "${root}/${relative_path}";
+}
+
+fn entry_from(relative_path: str, meta: backend::Metadata) -> Entry {
+    return Entry {
+        relative_path: text::from_str(relative_path),
+        inode: meta.inode,
+        size: meta.size,
+        mtime_sec: meta.mtime_sec,
+        mtime_nsec: meta.mtime_nsec,
+        mode: meta.mode,
+        is_directory: meta.kind == backend::NodeKind::Directory,
+    };
+}
+
+fn scan_dir(root: str, directory_relative: str, options: Options, ref out: vec::Vec[Entry], root_level: bool) -> ScanResult {
+    let directory_full: text::Text = full_path(root, directory_relative);
+    match fs::read_dir(directory_full) {
+        option::Option[vec::Vec[text::Text]]::Some(names) => {
+            var i: usize = 0 as usize;
+            while i < names.count() {
+                match names.at_ptr(i) {
+                    option::Option[*text::Text]::Some(np) => {
+                        var rel: text::Text = (*np).clone();
+                        if #str_len(directory_relative) != (0 as usize) {
+                            rel = "${directory_relative}/${(*np).view()}";
+                        }
+                        let absolute: text::Text = full_path(root, rel);
+                        match backend::metadata(absolute) {
+                            backend::MetadataResult::Found(meta) => {
+                                let is_dir: bool = meta.kind == backend::NodeKind::Directory;
+                                if !ignored(options, rel, is_dir) {
+                                    let append_status: status::Status = out.append(entry_from(rel, meta));
+                                    if append_status != status::Status::Ok { return ScanResult::Error(WatchError::OutOfMemory); }
+                                    if is_dir && options.depth_value == WatchDepth::Recursive {
+                                        match scan_dir(root, rel, options, out, false) {
+                                            ScanResult::Ok => { }
+                                            ScanResult::Error(e) => { return ScanResult::Error(e); }
+                                        }
+                                    }
+                                }
+                            }
+                            backend::MetadataResult::PermissionDenied => {
+                                if root_level { return ScanResult::Error(WatchError::PermissionDenied); }
+                            }
+                            backend::MetadataResult::InvalidPath => { return ScanResult::Error(WatchError::InvalidPath); }
+                            _ => { }
+                        }
+                    }
+                    option::Option[*text::Text]::None => { }
+                }
+                i = i +% (1 as usize);
+            }
+            return ScanResult::Ok;
+        }
+        option::Option[vec::Vec[text::Text]]::None => {
+            if root_level { return ScanResult::Error(WatchError::PermissionDenied); }
+            return ScanResult::Ok;
+        }
+    }
+}
+
+fn make_snapshot(root: str, options: Options, allow_missing: bool) -> result::Result[vec::Vec[Entry], WatchError] {
+    var entries: vec::Vec[Entry] = vec::new::[Entry]();
+    match backend::metadata(root) {
+        backend::MetadataResult::Found(meta) => {
+            if entries.append(entry_from("", meta)) != status::Status::Ok {
+                return result::err::[vec::Vec[Entry], WatchError](WatchError::OutOfMemory);
+            }
+            if meta.kind == backend::NodeKind::Directory {
+                match scan_dir(root, "", options, entries, true) {
+                    ScanResult::Ok => { }
+                    ScanResult::Error(e) => {
+                        return result::err::[vec::Vec[Entry], WatchError](e);
+                    }
+                }
+            }
+            return result::ok::[vec::Vec[Entry], WatchError](entries);
+        }
+        backend::MetadataResult::Missing => {
+            if allow_missing { return result::ok::[vec::Vec[Entry], WatchError](entries); }
+            return result::err::[vec::Vec[Entry], WatchError](WatchError::NotFound);
+        }
+        backend::MetadataResult::PermissionDenied => {
+            return result::err::[vec::Vec[Entry], WatchError](WatchError::PermissionDenied);
+        }
+        backend::MetadataResult::InvalidPath => {
+            return result::err::[vec::Vec[Entry], WatchError](WatchError::InvalidPath);
+        }
+        backend::MetadataResult::Failed => {
+            return result::err::[vec::Vec[Entry], WatchError](WatchError::Backend);
+        }
+    }
+}
+
+fn find_path(entries: vec::Vec[Entry], relative_path: str) -> *Entry {
+    var i: usize = 0 as usize;
+    while i < entries.count() {
+        match entries.at_ptr(i) {
+            option::Option[*Entry]::Some(p) => {
+                if (*p).relative_path.equals(relative_path) { return p; }
+            }
+            option::Option[*Entry]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return 0 as *Entry;
+}
+
+fn find_missing_inode(entries: vec::Vec[Entry], other: vec::Vec[Entry], inode: u64) -> *Entry {
+    if inode == (0 as u64) { return 0 as *Entry; }
+    var i: usize = 0 as usize;
+    while i < entries.count() {
+        match entries.at_ptr(i) {
+            option::Option[*Entry]::Some(p) => {
+                if (*p).inode == inode && find_path(other, (*p).relative_path) == (0 as *Entry) { return p; }
+            }
+            option::Option[*Entry]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return 0 as *Entry;
+}
+
+// Native registrations -------------------------------------------------------
+
+struct WatchTarget {
+    path: text::Text,
+    inode: u64,
+}
+
+struct WatchHandle {
+    path: text::Text,
+    inode: u64,
+    fd: i32,
+}
+
+impl WatchHandle {
+    fn drop(ref this) {
+        backend::fd_close(this.fd);
+        this.fd = (0 as i32) -% (1 as i32);
+        return;
+    }
+}
+
+fn target_index(targets: vec::Vec[WatchTarget], path: str, inode: u64) -> isize {
+    var i: usize = 0 as usize;
+    while i < targets.count() {
+        match targets.at_ptr(i) {
+            option::Option[*WatchTarget]::Some(p) => {
+                if (*p).inode == inode && (*p).path.equals(path) { return i as isize; }
+            }
+            option::Option[*WatchTarget]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return (0 as isize) -% (1 as isize);
+}
+
+fn handle_index(handles: vec::Vec[WatchHandle], path: str, inode: u64) -> isize {
+    var i: usize = 0 as usize;
+    while i < handles.count() {
+        match handles.at_ptr(i) {
+            option::Option[*WatchHandle]::Some(p) => {
+                if (*p).inode == inode && (*p).path.equals(path) { return i as isize; }
+            }
+            option::Option[*WatchHandle]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return (0 as isize) -% (1 as isize);
+}
+
+fn desired_targets(root: str, snapshot: vec::Vec[Entry]) -> result::Result[vec::Vec[WatchTarget], WatchError] {
+    var targets: vec::Vec[WatchTarget] = vec::new::[WatchTarget]();
+    let parent: text::Text = parent_path(root);
+    match backend::metadata(parent) {
+        backend::MetadataResult::Found(meta) => {
+            let parent_added: status::Status =
+                targets.append(WatchTarget { path: parent, inode: meta.inode });
+            if parent_added != status::Status::Ok {
+                return result::err::[vec::Vec[WatchTarget], WatchError](WatchError::OutOfMemory);
+            }
+        }
+        _ => { return result::err::[vec::Vec[WatchTarget], WatchError](WatchError::PermissionDenied); }
+    }
+    var i: usize = 0 as usize;
+    while i < snapshot.count() {
+        match snapshot.at_ptr(i) {
+            option::Option[*Entry]::Some(p) => {
+                let path: text::Text = full_path(root, (*p).relative_path);
+                if target_index(targets, path, (*p).inode) < (0 as isize) {
+                    let target_added: status::Status =
+                        targets.append(WatchTarget { path: path, inode: (*p).inode });
+                    if target_added != status::Status::Ok {
+                        return result::err::[vec::Vec[WatchTarget], WatchError](WatchError::OutOfMemory);
+                    }
+                }
+            }
+            option::Option[*Entry]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return result::ok::[vec::Vec[WatchTarget], WatchError](targets);
+}
+
+// Watcher --------------------------------------------------------------------
+
+struct Watcher {
+    _root: text::Text,
+    _options: Options,
+    _snapshot: vec::Vec[Entry],
+    _handles: vec::Vec[WatchHandle],
+    _queue: i32,
+    _running: bool,
+    _polling: bool,
+    _changes: events::Signal[Change],
+    _errors: events::Signal[WatchError],
+}
+
+impl Watcher {
+    fn new(path: str, take options: Options) -> result::Result[Watcher, WatchError] {
+        if #str_len(path) == (0 as usize) {
+            return result::err::[Watcher, WatchError](WatchError::InvalidPath);
+        }
+        let root: text::Text = normalized_root(path);
+        let snapshot: vec::Vec[Entry] = match make_snapshot(root, options, false) {
+            result::Result[vec::Vec[Entry], WatchError]::Ok(v) => v,
+            result::Result[vec::Vec[Entry], WatchError]::Err(e) => {
+                return result::err::[Watcher, WatchError](e);
+            }
+        };
+        let queue: i32 = backend::queue_open();
+        if queue < (0 as i32) {
+            return result::err::[Watcher, WatchError](WatchError::Backend);
+        }
+        var watcher: Watcher = Watcher {
+            _root: root,
+            _options: options,
+            _snapshot: snapshot,
+            _handles: vec::new::[WatchHandle](),
+            _queue: queue,
+            _running: false,
+            _polling: false,
+            _changes: events::Signal[Change]::new(),
+            _errors: events::Signal[WatchError]::new(),
+        };
+        match watcher.reconcile_handles() {
+            result::Result[bool, WatchError]::Ok(_ok) => {
+                return result::ok::[Watcher, WatchError](watcher);
+            }
+            result::Result[bool, WatchError]::Err(e) => {
+                return result::err::[Watcher, WatchError](e);
+            }
+        }
+    }
+
+    fn root(this) -> str { return this._root; }
+
+    // Subscribe to change events. Returns the owning subscription handle —
+    // dropping it unsubscribes (see the events package). The watcher must
+    // not move while handles to it are live: subscribe after the watcher
+    // sits in its final home.
+    fn on_change(ref this, f: fn(Change, *u8), ctx: *u8 = 0 as *u8, once: bool = false) -> events::SignalSubscription[Change] {
+        return this._changes.on(f, ctx: ctx, once: once);
+    }
+
+    fn once(ref this, f: fn(Change, *u8), ctx: *u8 = 0 as *u8) -> events::SignalSubscription[Change] {
+        return this._changes.once(f, ctx: ctx);
+    }
+
+    fn off(ref this, id: u64) -> bool { return this._changes.off(id); }
+    fn off_ctx(ref this, ctx: *u8) -> usize { return this._changes.off_ctx(ctx); }
+
+    fn on_error(ref this, f: fn(WatchError, *u8), ctx: *u8 = 0 as *u8) -> events::SignalSubscription[WatchError] {
+        return this._errors.on(f, ctx: ctx);
+    }
+
+    fn off_error(ref this, id: u64) -> bool { return this._errors.off(id); }
+    fn off_error_ctx(ref this, ctx: *u8) -> usize { return this._errors.off_ctx(ctx); }
+
+    fn reconcile_handles(ref this) -> result::Result[bool, WatchError] {
+        let targets: vec::Vec[WatchTarget] = match desired_targets(this._root, this._snapshot) {
+            result::Result[vec::Vec[WatchTarget], WatchError]::Ok(v) => v,
+            result::Result[vec::Vec[WatchTarget], WatchError]::Err(e) => {
+                return result::err::[bool, WatchError](e);
+            }
+        };
+
+        var i: usize = 0 as usize;
+        while i < this._handles.count() {
+            var keep: bool = false;
+            match this._handles.at_ptr(i) {
+                option::Option[*WatchHandle]::Some(p) => {
+                    keep = target_index(targets, (*p).path, (*p).inode) >= (0 as isize);
+                }
+                option::Option[*WatchHandle]::None => { }
+            }
+            if keep {
+                i = i +% (1 as usize);
+            } else {
+                let _gone: option::Option[WatchHandle] = this._handles.remove(i);
+            }
+        }
+
+        i = 0 as usize;
+        while i < targets.count() {
+            match targets.at_ptr(i) {
+                option::Option[*WatchTarget]::Some(p) => {
+                    if handle_index(this._handles, (*p).path, (*p).inode) < (0 as isize) {
+                        let fd: i32 = backend::watch_path(this._queue, (*p).path);
+                        if fd < (0 as i32) {
+                            return result::err::[bool, WatchError](WatchError::PermissionDenied);
+                        }
+                        let added: status::Status = this._handles.append(WatchHandle {
+                            path: (*p).path.clone(),
+                            inode: (*p).inode,
+                            fd: fd,
+                        });
+                        if added != status::Status::Ok {
+                            backend::fd_close(fd);
+                            return result::err::[bool, WatchError](WatchError::OutOfMemory);
+                        }
+                    }
+                }
+                option::Option[*WatchTarget]::None => { }
+            }
+            i = i +% (1 as usize);
+        }
+        return result::ok::[bool, WatchError](true);
+    }
+
+    fn emit_one(ref this, kind: ChangeKind, relative_path: str, previous_relative_path: str, is_directory: bool) {
+        let path: text::Text = full_path(this._root, relative_path);
+        var previous: text::Text = text::new();
+        if #str_len(previous_relative_path) != (0 as usize) {
+            previous = full_path(this._root, previous_relative_path);
+        }
+        this._changes.emit(Change {
+            kind: kind,
+            path: path,
+            relative_path: relative_path,
+            previous_path: previous,
+            previous_relative_path: previous_relative_path,
+            is_directory: is_directory,
+        });
+        return;
+    }
+
+    fn apply_snapshot(ref this, take next: vec::Vec[Entry]) -> usize {
+        var emitted: usize = 0 as usize;
+        var i: usize = 0 as usize;
+
+        // Existing paths: content/metadata changes. Missing paths: rename or remove.
+        while i < this._snapshot.count() {
+            match this._snapshot.at_ptr(i) {
+                option::Option[*Entry]::Some(oldp) => {
+                    let same: *Entry = find_path(next, (*oldp).relative_path);
+                    if same != (0 as *Entry) {
+                        if !(*oldp).is_directory &&
+                           ((*oldp).inode != (*same).inode || (*oldp).size != (*same).size || (*oldp).mtime_sec != (*same).mtime_sec ||
+                            (*oldp).mtime_nsec != (*same).mtime_nsec) {
+                            this.emit_one(ChangeKind::Modified, (*same).relative_path, "", false);
+                            emitted = emitted +% (1 as usize);
+                        } else if (*oldp).mode != (*same).mode {
+                            this.emit_one(ChangeKind::Metadata, (*same).relative_path, "", (*same).is_directory);
+                            emitted = emitted +% (1 as usize);
+                        }
+                    } else {
+                        let moved: *Entry = find_missing_inode(next, this._snapshot, (*oldp).inode);
+                        if moved != (0 as *Entry) {
+                            this.emit_one(ChangeKind::Renamed, (*moved).relative_path, (*oldp).relative_path, (*moved).is_directory);
+                        } else {
+                            this.emit_one(ChangeKind::Removed, (*oldp).relative_path, "", (*oldp).is_directory);
+                        }
+                        emitted = emitted +% (1 as usize);
+                    }
+                }
+                option::Option[*Entry]::None => { }
+            }
+            i = i +% (1 as usize);
+        }
+
+        // New paths not already paired as renames.
+        i = 0 as usize;
+        while i < next.count() {
+            match next.at_ptr(i) {
+                option::Option[*Entry]::Some(newp) => {
+                    if find_path(this._snapshot, (*newp).relative_path) == (0 as *Entry) {
+                        let moved_from: *Entry = find_missing_inode(this._snapshot, next, (*newp).inode);
+                        if moved_from == (0 as *Entry) {
+                            this.emit_one(ChangeKind::Created, (*newp).relative_path, "", (*newp).is_directory);
+                            emitted = emitted +% (1 as usize);
+                        }
+                    }
+                }
+                option::Option[*Entry]::None => { }
+            }
+            i = i +% (1 as usize);
+        }
+
+        this._snapshot = next;
+        return emitted;
+    }
+
+    // Drain all currently queued kqueue notifications, rescan once, emit the
+    // normalized diff, and return the number of callbacks/events produced.
+    fn poll(ref this) -> result::Result[usize, WatchError] {
+        if this._polling { return result::err::[usize, WatchError](WatchError::Busy); }
+        this._polling = true;
+        var saw_event: bool = false;
+        var overflow: bool = false;
+        loop {
+            let state: i32 = backend::poll_one(this._queue);
+            if state == (1 as i32) { saw_event = true; }
+            else if state == (0 as i32) { break; }
+            else if state == ((0 as i32) -% (2 as i32)) { overflow = true; saw_event = true; }
+            else {
+                this._polling = false;
+                return result::err::[usize, WatchError](WatchError::Backend);
+            }
+        }
+        if !saw_event {
+            this._polling = false;
+            return result::ok::[usize, WatchError](0 as usize);
+        }
+
+        let next: vec::Vec[Entry] = match make_snapshot(this._root, this._options, true) {
+            result::Result[vec::Vec[Entry], WatchError]::Ok(v) => v,
+            result::Result[vec::Vec[Entry], WatchError]::Err(e) => {
+                this._polling = false;
+                return result::err::[usize, WatchError](e);
+            }
+        };
+        var count: usize = this.apply_snapshot(next);
+        match this.reconcile_handles() {
+            result::Result[bool, WatchError]::Ok(_ok) => { }
+            result::Result[bool, WatchError]::Err(e) => {
+                this._polling = false;
+                return result::err::[usize, WatchError](e);
+            }
+        }
+        if overflow {
+            this.emit_one(ChangeKind::Overflow, "", "", false);
+            count = count +% (1 as usize);
+        }
+        this._polling = false;
+        return result::ok::[usize, WatchError](count);
+    }
+
+    async fn run(ref this, interval_ms: u64 = 50 as u64) {
+        if this._running { return; }
+        this._running = true;
+        var delay: u64 = interval_ms;
+        if delay == (0 as u64) { delay = 1 as u64; }
+        while this._running {
+            await time::sleep(milliseconds: delay);
+            if !this._running { break; }
+            match this.poll() {
+                result::Result[usize, WatchError]::Ok(_count) => { }
+                result::Result[usize, WatchError]::Err(e) => {
+                    this._errors.emit(e);
+                    this._running = false;
+                }
+            }
+        }
+        return;
+    }
+
+    fn stop(ref this) { this._running = false; return; }
+    fn is_running(this) -> bool { return this._running; }
+
+    fn drop(ref this) {
+        this._running = false;
+        backend::fd_close(this._queue);
+        this._queue = (0 as i32) -% (1 as i32);
+        return;
+    }
+}
+
+// Tests ----------------------------------------------------------------------
+
+#[test]
+fn glob_basename_and_recursive_patterns() {
+    assert glob_matches("*.tmp", "a.tmp");
+    assert glob_matches("*.tmp", "deep/a.tmp");
+    assert !glob_matches("*.tmp", "deep/a.txt");
+    assert glob_matches("build/**", "build/cache/a.o");
+    assert glob_matches("**/*.tmp", "a.tmp");
+    assert glob_matches("**/*.tmp", "one/two/a.tmp");
+    assert glob_matches("src/?.cplus", "src/a.cplus");
+    assert !glob_matches("src/?.cplus", "src/ab.cplus");
+    return;
+}
+
+#[test]
+fn recursive_ignore_prunes_the_directory_itself() {
+    assert pattern_prunes_dir(".git/**", ".git");
+    assert pattern_prunes_dir("cache/**", "cache");
+    assert !pattern_prunes_dir("cache/**", "other");
+    return;
+}
+
+// ---- one-call background watching --------------------------------------------
+//
+// `watch` is the high-level entry point: it validates the root NOW (errors
+// return before any thread exists), then owns a background thread that polls
+// a `Watcher` and hands every change to `f` through `deliver` — an executor
+// of the shared `(work, ctx)` shape. Pass a main-thread dispatcher (facet's
+// `run_on_main`) and callbacks land on the main thread, with the change's
+// strings copied for the flight; leave `deliver` defaulted and callbacks run
+// inline on the watcher thread. The returned `WatchTask` owns the thread:
+// `stop()` ends it after its current sleep, and dropping the task stops it
+// the same way. `stop` does not flush deliveries already queued with the
+// executor. Poll errors inside the thread are dropped; use the low-level
+// `Watcher` when error observation matters.
+
+struct WatchSleepSpec {
+    secs: i64,
+    nanos: i64,
+}
+extern fn nanosleep(req: *u8, rem: *u8) -> i32;
+
+fn watch_sleep_ms(ms: u64) {
+    var ts: WatchSleepSpec = WatchSleepSpec {
+        secs: (ms / (1000 as u64)) as i64,
+        nanos: ((ms % (1000 as u64)) * (1000000 as u64)) as i64,
+    };
+    { nanosleep(#addr_of(ts) as *u8, 0 as *u8); }
+    return;
+}
+
+// The default executor: run the delivery on the watcher thread.
+fn deliver_inline(work: fn(*u8), ctx: *u8) {
+    work(ctx);
+    return;
+}
+
+// Shared between the task handle and the thread: the stop flag plus a
+// reference count. Each side releases once; the last release frees the block.
+struct TaskFlag {
+    stop: i32,
+    refs: i32,
+}
+
+fn flag_release(raw: *u8) {
+    let fp: *TaskFlag = raw as *TaskFlag;
+    let rp: *i32 = { #addr_of((*fp).refs) };
+    let prev: i32 = atomic::fetch_sub_i32(rp, 1 as i32, atomic::Ordering::AcqRel);
+    if prev == (1 as i32) {
+        let _last: TaskFlag = box::from_raw::[TaskFlag](raw).unwrap();
+    }
+    return;
+}
+
+// One background run — everything the thread needs, passed by value. All
+// fields are Copy (the Watcher rides in its own heap box), so the job
+// crosses the thread boundary without a Drop struct to move out of.
+struct WatchRun {
+    opaque watcher_box: *u8,
+    f: fn(Change, *u8),
+    opaque ctx: *u8,
+    deliver: fn(fn(*u8), *u8),
+    interval_ms: u64,
+    opaque flag: *u8,
+}
+
+impl WatchRun: Send {}
+
+// What crosses to the delivery executor: the change with its strings COPIED
+// (the poll-side views die with the poll callback), plus the user callback.
+struct ChangeMsg {
+    kind: ChangeKind,
+    path: text::Text,
+    relative_path: text::Text,
+    previous_path: text::Text,
+    previous_relative_path: text::Text,
+    is_directory: bool,
+    f: fn(Change, *u8),
+    opaque ctx: *u8,
+}
+
+// Runs wherever `deliver` dispatches to: rebuild a borrowed Change over the
+// owned copies, call the user callback, drop the copies.
+fn dispatch_change(raw: *u8) {
+    let m: ChangeMsg = box::from_raw::[ChangeMsg](raw).unwrap();
+    let event: Change = Change {
+        kind: m.kind,
+        path: m.path.view(),
+        relative_path: m.relative_path.view(),
+        previous_path: m.previous_path.view(),
+        previous_relative_path: m.previous_relative_path.view(),
+        is_directory: m.is_directory,
+    };
+    let f: fn(Change, *u8) = m.f;
+    f(event, m.ctx);
+    return;
+}
+
+// Runs on the watcher thread for every polled change: copy and ship.
+fn relay_change(event: Change, ctx: *u8) {
+    let rp: *WatchRun = ctx as *WatchRun;
+    let msg: ChangeMsg = ChangeMsg {
+        kind: event.kind,
+        path: event.path.to_text(),
+        relative_path: event.relative_path.to_text(),
+        previous_path: event.previous_path.to_text(),
+        previous_relative_path: event.previous_relative_path.to_text(),
+        is_directory: event.is_directory,
+        f: { (*rp).f },
+        ctx: { (*rp).ctx },
+    };
+    match box::new::[ChangeMsg](msg) {
+        option::Option[box::Box[ChangeMsg]]::Some(b) => {
+            let deliver: fn(fn(*u8), *u8) = { (*rp).deliver };
+            deliver(dispatch_change, b.into_raw());
+        }
+        option::Option[box::Box[ChangeMsg]]::None => { }
+    }
+    return;
+}
+
+fn run_watch_task(take job: WatchRun) -> i32 {
+    var watcher: Watcher = box::from_raw::[Watcher](job.watcher_box).unwrap();
+    let jp: *WatchRun = { #addr_of(job) };
+    let _sub: events::SignalSubscription[Change] =
+        watcher.on_change(relay_change, ctx: jp as *u8);
+    let fp: *TaskFlag = job.flag as *TaskFlag;
+    let stop_p: *i32 = { #addr_of((*fp).stop) };
+    loop {
+        if atomic::load_i32(stop_p, atomic::Ordering::Acquire) != (0 as i32) { break; }
+        let _n: result::Result[usize, WatchError] = watcher.poll();
+        watch_sleep_ms(job.interval_ms);
+    }
+    flag_release(job.flag);
+    return 0;
+}
+
+// The owner of one background watch. `none()` is the inert value for fields
+// that start watching later.
+struct WatchTask {
+    opaque _flag: *u8,
+}
+
+impl WatchTask {
+    fn none() -> WatchTask {
+        return WatchTask { _flag: 0 as *u8 };
+    }
+
+    fn active(this) -> bool {
+        return this._flag != (0 as *u8);
+    }
+
+    // End the background thread after its current sleep. Idempotent; makes
+    // the task inert.
+    fn stop(ref this) {
+        if this._flag == (0 as *u8) { return; }
+        let fp: *TaskFlag = this._flag as *TaskFlag;
+        let stop_p: *i32 = { #addr_of((*fp).stop) };
+        atomic::store_i32(stop_p, 1 as i32, atomic::Ordering::Release);
+        flag_release(this._flag);
+        this._flag = 0 as *u8;
+        return;
+    }
+
+    fn drop(ref this) {
+        this.stop();
+        return;
+    }
+}
+
+fn watch(path: str, take options: Options, f: fn(Change, *u8), ctx: *u8 = 0 as *u8,
+         deliver: fn(fn(*u8), *u8) = deliver_inline, interval_ms: u64 = 100 as u64)
+    -> result::Result[WatchTask, WatchError] {
+    match Watcher::new(path, options) {
+        result::Result[Watcher, WatchError]::Ok(w) => {
+            let wb: *u8 = match box::new::[Watcher](w) {
+                option::Option[box::Box[Watcher]]::Some(b) => b.into_raw(),
+                option::Option[box::Box[Watcher]]::None => {
+                    return result::err::[WatchTask, WatchError](WatchError::Backend);
+                }
+            };
+            let fresh_flag: TaskFlag = TaskFlag { stop: 0 as i32, refs: 2 as i32 };
+            let fb: *u8 = match box::new::[TaskFlag](fresh_flag) {
+                option::Option[box::Box[TaskFlag]]::Some(b) => b.into_raw(),
+                option::Option[box::Box[TaskFlag]]::None => {
+                    let _w: Watcher = box::from_raw::[Watcher](wb).unwrap();
+                    return result::err::[WatchTask, WatchError](WatchError::Backend);
+                }
+            };
+            let job: WatchRun = WatchRun {
+                watcher_box: wb,
+                f: f,
+                ctx: ctx,
+                deliver: deliver,
+                interval_ms: interval_ms,
+                flag: fb,
+            };
+            let _bg: thread::JoinHandle[i32] = thread::spawn_with::[WatchRun, i32](job, run_watch_task);
+            return result::ok::[WatchTask, WatchError](WatchTask { _flag: fb });
+        }
+        result::Result[Watcher, WatchError]::Err(e) => {
+            return result::err::[WatchTask, WatchError](e);
+        }
+    }
+}

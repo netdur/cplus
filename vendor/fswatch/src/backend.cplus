@@ -1,0 +1,152 @@
+// macOS filesystem-watch primitives.
+//
+// This file is intentionally a narrow platform seam. A future
+// backend_linux.cplus / backend_windows.cplus can replace it through C+'s
+// platform-override convention without changing fswatch.cplus.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+
+extern fn lstat(path: *u8, buf: *u8) -> i32;
+extern fn open(path: *u8, flags: i32, ...) -> i32;
+extern fn close(fd: i32) -> i32;
+extern fn kqueue() -> i32;
+extern fn kevent(kq: i32, changes: *KEvent, nchanges: i32, events: *KEvent, nevents: i32, timeout: *Timespec) -> i32;
+extern fn __error() -> *i32;
+
+#[repr(C)]
+struct Timespec {
+    sec: i64,
+    nsec: i64,
+}
+
+// Darwin's 64-bit kevent layout (32 bytes).
+#[repr(C)]
+struct KEvent {
+    ident: u64,
+    filter: i16,
+    flags: u16,
+    fflags: u32,
+    data: i64,
+    opaque udata: *u8,
+}
+
+enum NodeKind {
+    File,
+    Directory,
+    Symlink,
+    Other,
+}
+
+struct Metadata {
+    kind: NodeKind,
+    inode: u64,
+    size: i64,
+    mtime_sec: i64,
+    mtime_nsec: i64,
+    mode: u16,
+}
+
+enum MetadataResult {
+    Found(Metadata),
+    Missing,
+    PermissionDenied,
+    InvalidPath,
+    Failed,
+}
+
+fn errno_value() -> i32 {
+    let p: *i32 = { __error() };
+    return { *p };
+}
+
+// lstat rather than stat: recursive scans never follow symlinks implicitly.
+fn metadata(path: str) -> MetadataResult {
+    let owned: text::Text = text::from_str(path);
+    match owned.c_str() {
+        option::Option[text::CString]::Some(cp) => {
+            // Darwin arm64/x86_64 struct stat is 144 bytes. We read only the
+            // stable fields used by the snapshot engine.
+            var raw: [u8; 144] = [0 as u8; 144];
+            let rc: i32 = { lstat(cp.as_ptr(), #addr_of(raw) as *u8) };
+            if rc != (0 as i32) {
+                let e: i32 = errno_value();
+                if e == (2 as i32) { return MetadataResult::Missing; }       // ENOENT
+                if e == (13 as i32) { return MetadataResult::PermissionDenied; } // EACCES
+                return MetadataResult::Failed;
+            }
+            let base: *u8 = { #addr_of(raw) as *u8 };
+            let mode: u16 = { *((base + (4 as usize)) as *u16) };
+            let file_type: u16 = mode & (0xF000 as u16);
+            var kind: NodeKind = NodeKind::Other;
+            if file_type == (0x8000 as u16) { kind = NodeKind::File; }
+            if file_type == (0x4000 as u16) { kind = NodeKind::Directory; }
+            if file_type == (0xA000 as u16) { kind = NodeKind::Symlink; }
+            return MetadataResult::Found(Metadata {
+                kind: kind,
+                inode: { *((base + (8 as usize)) as *u64) },
+                mtime_sec: { *((base + (48 as usize)) as *i64) },
+                mtime_nsec: { *((base + (56 as usize)) as *i64) },
+                size: { *((base + (96 as usize)) as *i64) },
+                mode: mode,
+            });
+        }
+        option::Option[text::CString]::None => { return MetadataResult::InvalidPath; }
+    }
+}
+
+fn queue_open() -> i32 {
+    return { kqueue() };
+}
+
+fn fd_close(fd: i32) {
+    if fd >= (0 as i32) { let _rc: i32 = { close(fd) }; }
+    return;
+}
+
+// Open a vnode without read permission and register persistent, edge-cleared
+// notifications. Returns the owned fd, or -1 on failure.
+fn watch_path(kq: i32, path: str) -> i32 {
+    let owned: text::Text = text::from_str(path);
+    match owned.c_str() {
+        option::Option[text::CString]::Some(cp) => {
+            let fd: i32 = { open(cp.as_ptr(), 0x8000 as i32, 0 as i32) }; // O_EVTONLY
+            if fd < (0 as i32) { return (0 as i32) -% (1 as i32); }
+            var change: KEvent = KEvent {
+                ident: fd as u64,
+                filter: (0 as i16) -% (4 as i16),                         // EVFILT_VNODE
+                flags: (1 as u16) | (4 as u16) | (32 as u16),             // ADD|ENABLE|CLEAR
+                fflags: (1 as u32) | (2 as u32) | (4 as u32) | (8 as u32) |
+                        (16 as u32) | (32 as u32) | (64 as u32),
+                data: 0 as i64,
+                udata: 0 as *u8,
+            };
+            let rc: i32 = { kevent(kq, #addr_of(change), 1 as i32, 0 as *KEvent, 0 as i32, 0 as *Timespec) };
+            if rc < (0 as i32) {
+                let _closed: i32 = { close(fd) };
+                return (0 as i32) -% (1 as i32);
+            }
+            return fd;
+        }
+        option::Option[text::CString]::None => { return (0 as i32) -% (1 as i32); }
+    }
+}
+
+// Non-blocking single-event drain. 1 = event, 0 = empty, -1 = syscall error,
+// -2 = EV_ERROR (the caller surfaces this as Overflow/rescan-required).
+fn poll_one(kq: i32) -> i32 {
+    var event: KEvent = KEvent {
+        ident: 0 as u64,
+        filter: 0 as i16,
+        flags: 0 as u16,
+        fflags: 0 as u32,
+        data: 0 as i64,
+        udata: 0 as *u8,
+    };
+    var timeout: Timespec = Timespec { sec: 0 as i64, nsec: 0 as i64 };
+    let rc: i32 = { kevent(kq, 0 as *KEvent, 0 as i32, #addr_of(event), 1 as i32, #addr_of(timeout)) };
+    if rc < (0 as i32) { return (0 as i32) -% (1 as i32); }
+    if rc == (0 as i32) { return 0 as i32; }
+    if (event.flags & (0x4000 as u16)) != (0 as u16) { return (0 as i32) -% (2 as i32); } // EV_ERROR
+    return 1 as i32;
+}

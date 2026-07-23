@@ -1,0 +1,17 @@
+[package]
+name    = "fswatch"
+version = "0.0.1"
+edition = "2026"
+
+# fswatch — owner-thread filesystem change events.
+#
+# The first backend targets macOS with kqueue. Platform-specific backends keep
+# the public module stable when Linux and Windows support lands.
+
+[[bin]]
+name = "fswatch_tests"
+path = "src/test_main.cplus"
+
+[dependencies]
+stdlib = "*"
+events = "*"
