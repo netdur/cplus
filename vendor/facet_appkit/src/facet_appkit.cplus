@@ -2486,6 +2486,7 @@ fn install_app_menu(app: ak::Application, menu: *facet::AppMenu, fallback_title:
     }
     main_menu.set_submenu(app_menu, for_item: app_item);
 
+    let _file_menu: option::Option[ak::Menu] = add_menu_group(main_menu, "File", items, command);
     let _edit_menu: option::Option[ak::Menu] = add_menu_group(main_menu, "Edit", items, command);
     let _build_menu: option::Option[ak::Menu] = add_menu_group(main_menu, "Build", items, command);
     match add_menu_group(main_menu, "Window", items, command) {
