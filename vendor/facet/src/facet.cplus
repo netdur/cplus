@@ -1414,6 +1414,7 @@ static REMOVE_CHILD_FN: fn(Handle, str) -> bool = #zero::[fn(Handle, str) -> boo
 static INSERT_CHILD_FN: fn(Handle, take Node, usize) -> bool = #zero::[fn(Handle, take Node, usize) -> bool]();
 static REPLACE_CHILD_FN: fn(Handle, str, take Node) -> bool = #zero::[fn(Handle, str, take Node) -> bool]();
 static SET_CHILD_FN: fn(Handle, take Node) -> bool = #zero::[fn(Handle, take Node) -> bool]();
+static SET_STYLE_FN: fn(Handle, Style) -> bool = #zero::[fn(Handle, Style) -> bool]();
 
 fn set_find_fn(f: fn(*u8, str) -> Handle) { FIND_FN = f; return; }
 fn set_set_text_fn(f: fn(Handle, str) -> bool) { SET_TEXT_FN = f; return; }
@@ -1428,6 +1429,7 @@ fn set_remove_child_fn(f: fn(Handle, str) -> bool) { REMOVE_CHILD_FN = f; return
 fn set_insert_child_fn(f: fn(Handle, take Node, usize) -> bool) { INSERT_CHILD_FN = f; return; }
 fn set_replace_child_fn(f: fn(Handle, str, take Node) -> bool) { REPLACE_CHILD_FN = f; return; }
 fn set_set_child_fn(f: fn(Handle, take Node) -> bool) { SET_CHILD_FN = f; return; }
+fn set_set_style_fn(f: fn(Handle, Style) -> bool) { SET_STYLE_FN = f; return; }
 
 impl Handle {
     // The backend fills a resolved handle through this constructor; apps never do.
@@ -1513,6 +1515,44 @@ impl Handle {
     // Reveal / conceal the element — the readable pair over `set_hidden`. Chainable.
     fn show(this) -> Handle { return this.set_hidden(false); }
     fn hide(this) -> Handle { return this.set_hidden(true); }
+
+    // Restyle a MOUNTED element IN PLACE — the live-time counterpart to the
+    // build-time `.background(...)` / `.foreground_color(...)` modifiers. Push a
+    // partial `Style` (unset fields skipped, exactly like the mount-time apply)
+    // onto the located native view; no rebuild, no re-render, no reflow — the
+    // colors/corner/border are non-metric. Chainable; a no-op on a missing
+    // handle. Backends honor the color / border / corner_radius fields today;
+    // other `Style` fields take effect as a backend gains live support for them.
+    fn set_style(this, s: Style) -> Handle {
+        let f: fn(Handle, Style) -> bool = SET_STYLE_FN;
+        if f != (0 as fn(Handle, Style) -> bool) { let _ok: bool = f(this, s); }
+        return this;
+    }
+
+    // Sugar over `set_style` for the common single-field restyles — the same
+    // names as the build-time modifiers, `set_`-prefixed per the mutator
+    // convention. Each recolors the live view in place. Chainable.
+    fn set_background(this, c: Color) -> Handle {
+        var s: Style = style_none();
+        s.bg = c;
+        return this.set_style(s);
+    }
+    fn set_foreground_color(this, c: Color) -> Handle {
+        var s: Style = style_none();
+        s.fg = c;
+        return this.set_style(s);
+    }
+    fn set_corner_radius(this, r: f64) -> Handle {
+        var s: Style = style_none();
+        s.corner_radius = r;
+        return this.set_style(s);
+    }
+    fn set_border(this, c: Color, width: f64) -> Handle {
+        var s: Style = style_none();
+        s.border_color = c;
+        s.border_width = width;
+        return this.set_style(s);
+    }
 
     // Append a freshly-built child to this (multi-child) container, in place:
     // the child mounts, attaches under the container's view, and the layout

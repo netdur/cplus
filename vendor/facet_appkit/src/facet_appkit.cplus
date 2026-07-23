@@ -161,10 +161,91 @@ fn paint_register(take e: PaintEntry) {
     return;
 }
 
+// Apply a foreground color to a LIVE view, dispatching by what the view responds
+// to rather than by a facet kind (a `find` handle carries kind 0). The families:
+// NSTextField / NSTextView answer -setTextColor:, NSButton / NSImageView answer
+// -setContentTintColor:. Shared by mount (apply_style), live restyle
+// (set_style_impl), and the theme repaint (repaint_entry) — one fg path.
+fn apply_fg_color(view: *u8, c: facet::Color) {
+    if view == (0 as *u8) { return; }
+    let responds: *u8 = rt::sel(#str_ptr("respondsToSelector:\0"));
+    if rt::msg_i8_id(view, responds, rt::sel(#str_ptr("setTextColor:\0"))) != (0 as i8) {
+        ak::TextField::from_raw(view).set_text_color(ns_color(c));
+        return;
+    }
+    if rt::msg_i8_id(view, responds, rt::sel(#str_ptr("setContentTintColor:\0"))) != (0 as i8) {
+        ak::Button::from_raw(view).set_content_tint_color(ns_color(c));
+        return;
+    }
+    return;
+}
+
+// Merge the SET colors of a partial style into `view`'s paint note (creating the
+// note if absent), so the theme repaint re-applies THESE colors instead of the
+// mount-time ones — this is what makes a live restyle survive a dark-mode flip.
+// Upsert is by view (paint_register drops any prior entry for it). Corner radius
+// and border WIDTH are theme-invariant, so they are never recorded here — only
+// the colors that a repaint would otherwise clobber. Recording a literal color
+// is harmless and it stops a stale dynamic from a prior note from winning a flip.
+fn paint_note_merge(view: *u8, kind: u32, s: facet::Style) {
+    let list: *vec::Vec[PaintEntry] = #addr_of(PAINTS);
+    // Seed from the existing note (preserve its colors + gradient) or a blank one.
+    var e: PaintEntry = PaintEntry {
+        view: view,
+        kind: kind,
+        fg: facet::Color::none(),
+        bg: facet::Color::none(),
+        border: facet::Color::none(),
+        grad_from: facet::Color::none(),
+        grad_to: facet::Color::none(),
+        grad_layer: 0 as *u8,
+    };
+    var had_prior: bool = false;
+    let n: usize = { (*list).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*list).at_ptr(i) {
+            option::Option[*PaintEntry]::Some(pp) => {
+                if { (*pp).view } == view {
+                    had_prior = true;
+                    e.kind = { (*pp).kind };
+                    e.fg = { (*pp).fg };
+                    e.bg = { (*pp).bg };
+                    e.border = { (*pp).border };
+                    e.grad_from = { (*pp).grad_from };
+                    e.grad_to = { (*pp).grad_to };
+                    e.grad_layer = { (*pp).grad_layer };
+                }
+            }
+            option::Option[*PaintEntry]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    // Overlay the colors this restyle set; track whether any is theme-varying.
+    var any_dynamic: bool = false;
+    let fg: facet::Color = { s.fg };
+    if fg.is_set() { e.fg = fg; if fg.is_dynamic() { any_dynamic = true; } }
+    let bg: facet::Color = { s.bg };
+    if bg.is_set() { e.bg = bg; if bg.is_dynamic() { any_dynamic = true; } }
+    let bw: f64 = { s.border_width };
+    if bw > 0.0f64 {
+        let bc: facet::Color = { s.border_color };
+        if bc.is_set() { e.border = bc; if bc.is_dynamic() { any_dynamic = true; } }
+    }
+    // Record only when it changes a flip's outcome: a theme-varying color to
+    // re-resolve, or an existing note whose stale color a flip would re-apply
+    // over what we just set. A first-time literal restyle needs no note — nothing
+    // repaints it, so it simply stays.
+    let worth_keeping: bool = e.fg.is_set() || e.bg.is_set() || e.border.is_set() || e.grad_from.is_set();
+    if (had_prior || any_dynamic) && worth_keeping {
+        paint_register(e);
+    }
+    return;
+}
+
 fn repaint_entry(pp: *PaintEntry) {
     let view: *u8 = { (*pp).view };
     if view == (0 as *u8) { return; }
-    let kind: u32 = { (*pp).kind };
     let bg: facet::Color = { (*pp).bg };
     if bg.is_set() {
         ak::View::from_raw(view).layer().set_background_color(ns_color(bg).c_g_color());
@@ -183,15 +264,7 @@ fn repaint_entry(pp: *PaintEntry) {
         quartz::GradientLayer::from_raw(glp).set_colors(quartz::NSArray::from_raw(arr));
     }
     let fg: facet::Color = { (*pp).fg };
-    if fg.is_set() {
-        if kind == facet::kind_label() || kind == facet::kind_wrap_label() {
-            ak::TextField::from_raw(view).set_text_color(ns_color(fg));
-        } else if kind == facet::kind_button() {
-            ak::Button::from_raw(view).set_content_tint_color(ns_color(fg));
-        } else if kind == facet::kind_symbol() {
-            ak::ImageView::from_raw(view).set_content_tint_color(ns_color(fg));
-        }
-    }
+    if fg.is_set() { apply_fg_color(view, fg); }
     return;
 }
 
@@ -308,19 +381,10 @@ fn apply_style(view_ptr: *u8, kind: u32, np: *facet::Node) {
         rt::release(menu_ptr);   // the view retains its menu
     }
     let is_text: bool = kind == facet::kind_label() || kind == facet::kind_wrap_label();
-    // Foreground.
+    // Foreground — kind-free dispatch (label -> textColor, button/symbol ->
+    // contentTintColor), shared with the live restyle and theme repaint paths.
     let fg: facet::Color = { style.fg };
-    if fg.is_set() {
-        if is_text {
-            ak::TextField::from_raw(view_ptr).set_text_color(ns_color(fg));
-        } else if kind == facet::kind_button() {
-            ak::Button::from_raw(view_ptr).set_content_tint_color(ns_color(fg));
-        } else if kind == facet::kind_symbol() {
-            // An SF Symbol is an NSImageView; its color is the content tint
-            // (the same knob ui::symbol_tinted uses for a green ✓ / red ✕).
-            ak::ImageView::from_raw(view_ptr).set_content_tint_color(ns_color(fg));
-        }
-    }
+    if fg.is_set() { apply_fg_color(view_ptr, fg); }
     // Font (size / weight / family) — text widgets + buttons carry a font via
     // NSControl.setFont. Setting any font field replaces the whole NSFont
     // (SwiftUI `.font` semantics): pair `.font(size)` with `.strong()` for bold;
@@ -1189,6 +1253,7 @@ fn install() {
     facet::set_insert_child_fn(insert_child_impl);
     facet::set_replace_child_fn(replace_child_impl);
     facet::set_set_child_fn(set_child_impl);
+    facet::set_set_style_fn(set_style_impl);
     facet::set_stage_fn(stage_impl);
     facet::set_attach_fn(attach_impl);
     facet::set_detach_fn(detach_impl);
@@ -3304,6 +3369,40 @@ fn set_hidden_impl(h: facet::Handle, hidden: bool) -> bool {
     return true;
 }
 
+// facet::Handle.set_style hook: recolor a mounted view IN PLACE. Push the SET
+// color / border / corner fields of a partial style onto the live view (the same
+// native calls the mount-time apply_style makes — no rebuild, no reflow, colors
+// are non-metric), then merge the colors into the paint note so a later dark-mode
+// flip re-applies them instead of the mount-time colors. Only the fields a live
+// backend supports today (fg, bg, border, corner_radius) are honored; the rest
+// are ignored until their backend gains a live path.
+fn set_style_impl(h: facet::Handle, s: facet::Style) -> bool {
+    let view: *u8 = h.view();
+    if view == (0 as *u8) { return false; }
+    // Foreground (kind-free dispatch).
+    let fg: facet::Color = { s.fg };
+    if fg.is_set() { apply_fg_color(view, fg); }
+    // Layer-backed: background / corner / border. Any one of them forces a layer.
+    let bg: facet::Color = { s.bg };
+    let corner: f64 = { s.corner_radius };
+    let border_w: f64 = { s.border_width };
+    if bg.is_set() || corner > 0.0f64 || border_w > 0.0f64 {
+        let v: ak::View = ak::View::from_raw(view);
+        v.set_wants_layer(true);
+        let lyr: quartz::Layer = v.layer();
+        if bg.is_set() { lyr.set_background_color(ns_color(bg).c_g_color()); }
+        if corner > 0.0f64 { lyr.set_corner_radius(corner); }
+        if border_w > 0.0f64 {
+            lyr.set_border_width(border_w);
+            let bc: facet::Color = { s.border_color };
+            if bc.is_set() { lyr.set_border_color(ns_color(bc).c_g_color()); }
+        }
+    }
+    // Survive a theme flip: record the colors in this view's paint note.
+    paint_note_merge(view, h.kind(), s);
+    return true;
+}
+
 // facet::Handle.add_child hook: mount the child into a flex subtree, attach its
 // views under the container's backing view, splice it into the container's
 // children, and reflow. The container must be keyed (approach A) so its Handle
@@ -4815,6 +4914,147 @@ fn empty_keyed_row_accepts_runtime_chips() {
     assert facet::find("chips", cp).remove_child("chip:1");
     assert !facet::find("chip:1", cp).found();
     unmount_all();
+}
+
+// ---- keyed-direct LIVE RESTYLE: Handle.set_background / _foreground / _corner /
+// _border recolor a mounted view in place (no rebuild), and dynamic colors are
+// recorded so a dark-mode flip re-applies them. -----------------------------
+fn t_note_bg_token(view: *u8) -> u32 {
+    let list: *vec::Vec[PaintEntry] = #addr_of(PAINTS);
+    let n: usize = { (*list).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*list).at_ptr(i) {
+            option::Option[*PaintEntry]::Some(pp) => {
+                if { (*pp).view } == view { let c: facet::Color = { (*pp).bg }; return c.token; }
+            }
+            option::Option[*PaintEntry]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return 0 as u32;
+}
+
+fn t_note_fg_token(view: *u8) -> u32 {
+    let list: *vec::Vec[PaintEntry] = #addr_of(PAINTS);
+    let n: usize = { (*list).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*list).at_ptr(i) {
+            option::Option[*PaintEntry]::Some(pp) => {
+                if { (*pp).view } == view { let c: facet::Color = { (*pp).fg }; return c.token; }
+            }
+            option::Option[*PaintEntry]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return 0 as u32;
+}
+
+#[test]
+fn set_background_paints_a_live_layer() {
+    paint_clear_all();
+    facet::set_set_style_fn(set_style_impl);
+    let v: ak::View = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 40.0, h: 20.0 });
+    let h: facet::Handle = facet::Handle::of(v.raw(), 0 as *u8, 0 as *u8, facet::kind_label());
+    let _r: facet::Handle = h.set_background(facet::Color::rgba(1.0f64, 0.0f64, 0.0f64, 1.0f64));
+    assert v.wants_layer();
+    match v.layer().background_color() {
+        option::Option[*u8]::Some(_c) => { }
+        option::Option[*u8]::None => { assert false; }
+    };
+    // A first-time literal restyle needs no repaint note.
+    assert t_note_bg_token(v.raw()) == (0 as u32);
+    paint_clear_all();
+}
+
+#[test]
+fn set_corner_and_border_land_on_the_layer() {
+    paint_clear_all();
+    facet::set_set_style_fn(set_style_impl);
+    let v: ak::View = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 40.0, h: 20.0 });
+    let h: facet::Handle = facet::Handle::of(v.raw(), 0 as *u8, 0 as *u8, facet::kind_label());
+    let _a: facet::Handle = h.set_corner_radius(8.0f64);
+    let _b: facet::Handle = h.set_border(facet::Color::rgba(0.0f64, 0.0f64, 1.0f64, 1.0f64), 2.0f64);
+    assert approx(v.layer().corner_radius(), 8.0f64);
+    assert approx(v.layer().border_width(), 2.0f64);
+    paint_clear_all();
+}
+
+#[test]
+fn set_foreground_on_button_handle_uses_tint_not_textcolor() {
+    // A `find` handle carries kind 0; before the selector-probe fix this drove
+    // setTextColor: onto an NSButton — an unrecognized selector that throws.
+    // Now it must route to contentTintColor. Reaching the assert = no crash.
+    paint_clear_all();
+    facet::set_set_style_fn(set_style_impl);
+    let d: facet::Node = facet::button("go");
+    let n: flex::Node = ak_button(0 as *u8, #addr_of(d));
+    let bp: *u8 = n.payload();
+    let h: facet::Handle = facet::Handle::of(bp, 0 as *u8, 0 as *u8, 0 as u32);
+    let _r: facet::Handle = h.set_foreground_color(facet::Color::primary());
+    // The dynamic fg is recorded for the theme repaint.
+    let want: u32 = { facet::Color::primary().token };
+    assert t_note_fg_token(bp) == want;
+    paint_clear_all();
+}
+
+#[test]
+fn live_restyle_survives_a_theme_flip() {
+    paint_clear_all();
+    facet::set_set_style_fn(set_style_impl);
+    let v: ak::View = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 40.0, h: 20.0 });
+    // Simulate a mount that registered a dynamic (theme-role) background.
+    paint_register(PaintEntry {
+        view: v.raw(),
+        kind: facet::kind_label(),
+        fg: facet::Color::none(),
+        bg: facet::Color::primary(),
+        border: facet::Color::none(),
+        grad_from: facet::Color::none(),
+        grad_to: facet::Color::none(),
+        grad_layer: 0 as *u8,
+    });
+    // A live restyle to a DIFFERENT dynamic background.
+    let h: facet::Handle = facet::Handle::of(v.raw(), 0 as *u8, 0 as *u8, 0 as u32);
+    let _r: facet::Handle = h.set_background(facet::Color::secondary());
+    // The note now carries the live color, so a dark-mode repaint re-applies it,
+    // not the stale mount-time primary.
+    let want: u32 = { facet::Color::secondary().token };
+    assert t_note_bg_token(v.raw()) == want;
+    repaint_all();
+    assert t_note_bg_token(v.raw()) == want;
+    paint_clear_all();
+}
+
+#[test]
+fn set_style_on_missing_handle_is_a_noop() {
+    facet::set_set_style_fn(set_style_impl);
+    let m: facet::Handle = facet::Handle::missing();
+    let _a: facet::Handle = m.set_background(facet::Color::primary());
+    let _b: facet::Handle = m.set_corner_radius(4.0f64);
+    let _c: facet::Handle = m.set_foreground_color(facet::Color::primary());
+    let _d: facet::Handle = m.set_border(facet::Color::primary(), 1.0f64);
+    assert !m.found();
+}
+
+#[test]
+fn set_foreground_on_label_handle_records_and_routes() {
+    paint_clear_all();
+    facet::set_set_style_fn(set_style_impl);
+    let d: facet::Node = facet::label("hi", size: 13.0f64);
+    let n: flex::Node = ak_label(0 as *u8, #addr_of(d));
+    let lp: *u8 = n.payload();
+    let h: facet::Handle = facet::Handle::of(lp, 0 as *u8, 0 as *u8, 0 as u32);
+    let _r: facet::Handle = h.set_foreground_color(facet::Color::primary());
+    let want: u32 = { facet::Color::primary().token };
+    assert t_note_fg_token(lp) == want;
+    // The label's textColor is now set — routed via setTextColor:, no crash.
+    match ak::TextField::from_raw(lp).text_color() {
+        option::Option[ak::Color]::Some(_c) => { }
+        option::Option[ak::Color]::None => { assert false; }
+    };
+    paint_clear_all();
 }
 
 // ---- keyed-direct structural verbs: insert / replace / set_child + show/hide --
