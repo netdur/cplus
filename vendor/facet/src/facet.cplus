@@ -1517,12 +1517,14 @@ impl Handle {
     fn hide(this) -> Handle { return this.set_hidden(true); }
 
     // Restyle a MOUNTED element IN PLACE — the live-time counterpart to the
-    // build-time `.background(...)` / `.foreground_color(...)` modifiers. Push a
-    // partial `Style` (unset fields skipped, exactly like the mount-time apply)
-    // onto the located native view; no rebuild, no re-render, no reflow — the
-    // colors/corner/border are non-metric. Chainable; a no-op on a missing
-    // handle. Backends honor the color / border / corner_radius fields today;
-    // other `Style` fields take effect as a backend gains live support for them.
+    // build-time `.background(...)` / `.foreground_color(...)` / `.font(...)`
+    // modifiers. Push a partial `Style` (unset fields skipped, exactly like the
+    // mount-time apply) onto the located native view; no rebuild, no re-render.
+    // Colors / corner / border are non-metric (no relayout); a FONT change is
+    // metric, so the backend re-measures that leaf and reflows its owner — the
+    // same as `set_text`. Chainable; a no-op on a missing handle. Backends honor
+    // the color / border / corner_radius / font fields today; other `Style`
+    // fields take effect as a backend gains live support for them.
     fn set_style(this, s: Style) -> Handle {
         let f: fn(Handle, Style) -> bool = SET_STYLE_FN;
         if f != (0 as fn(Handle, Style) -> bool) { let _ok: bool = f(this, s); }
@@ -1553,6 +1555,22 @@ impl Handle {
         s.border_width = width;
         return this.set_style(s);
     }
+    // Font restyles. `set_font` changes point size while keeping the current
+    // weight / family; `set_weight` changes weight while keeping the current
+    // size — each converts only the axis it names (see the backend). Metric:
+    // the leaf re-measures and its owner reflows. Chainable.
+    fn set_font(this, size: f64) -> Handle {
+        var s: Style = style_none();
+        s.font_size = size;
+        return this.set_style(s);
+    }
+    fn set_weight(this, w: u32) -> Handle {
+        var s: Style = style_none();
+        s.weight = w;
+        return this.set_style(s);
+    }
+    // The bold-weight shortcut — the live mirror of the build-time `.strong()`.
+    fn set_strong(this) -> Handle { return this.set_weight(weight_bold()); }
 
     // Append a freshly-built child to this (multi-child) container, in place:
     // the child mounts, attaches under the container's view, and the layout

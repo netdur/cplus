@@ -180,6 +180,48 @@ fn apply_fg_color(view: *u8, c: facet::Color) {
     return;
 }
 
+// Change a LIVE view's font, converting ONLY the axis each set field names so the
+// others survive: set_font(size) keeps the current weight/family, set_weight(w)
+// keeps the current size. (Building a whole NSFont via ns_font like the mount path
+// would reset the unset axes — a set_weight would snap a 28pt label back to 13pt.)
+// NSImageView (a symbol) and other non-controls don't answer -setFont: and are
+// skipped. Family switches and non-bold explicit weights rebuild at the current
+// size (a font's family/named-weight isn't a single convertible trait).
+fn apply_font_live(view: *u8, fsz: f64, wt: u32, fam: u32, ital: bool) {
+    if view == (0 as *u8) { return; }
+    if rt::msg_i8_id(view, rt::sel(#str_ptr("respondsToSelector:\0")), rt::sel(#str_ptr("setFont:\0"))) == (0 as i8) {
+        return;
+    }
+    let fm: ak::FontManager = ak::FontManager::shared_font_manager();
+    let curp: *u8 = rt::msg_id(view, rt::sel(#str_ptr("font\0")));
+    if curp == (0 as *u8) {
+        // No current font to preserve — build from scratch, mount-style.
+        var f0: ak::Font = ns_font(fsz, wt, fam);
+        if ital { f0 = fm.convert_font_to_have_trait(f0, 1 as u64); }
+        ak::Control::from_raw(view).set_font(f0);
+        return;
+    }
+    var font: ak::Font = ak::Font::from_raw(curp);
+    // Size — convert in place, preserving weight/family/traits.
+    if fsz > 0.0f64 { font = fm.convert_font_to_size(font, fsz); }
+    if fam == facet::family_monospace() {
+        // Family switch rebuilds at the (converted) size + requested weight.
+        font = ak::Font::monospaced_system_font_of_size(font.point_size(), ns_weight(wt));
+    } else if wt == facet::weight_bold() {
+        font = fm.convert_font_to_have_trait(font, 2 as u64);   // NSBoldFontMask
+    } else if wt == facet::weight_regular() {
+        font = fm.convert_font_to_have_trait(font, 4 as u64);   // NSUnboldFontMask
+    } else if wt != facet::weight_unset() {
+        // A named weight (medium / semibold) — rebuild a system font at that
+        // weight and the current size.
+        font = ak::Font::system_font_of_size_weight(font.point_size(), ns_weight(wt));
+    }
+    // Italic trait on top (NSItalicFontMask = 1), matching the mount path.
+    if ital { font = fm.convert_font_to_have_trait(font, 1 as u64); }
+    ak::Control::from_raw(view).set_font(font);
+    return;
+}
+
 // Merge the SET colors of a partial style into `view`'s paint note (creating the
 // note if absent), so the theme repaint re-applies THESE colors instead of the
 // mount-time ones — this is what makes a live restyle survive a dark-mode flip.
@@ -3400,6 +3442,21 @@ fn set_style_impl(h: facet::Handle, s: facet::Style) -> bool {
     }
     // Survive a theme flip: record the colors in this view's paint note.
     paint_note_merge(view, h.kind(), s);
+    // Font is METRIC — changing it resizes the leaf, so re-measure it and reflow
+    // its owner (like set_text). Never theme-clobbered, so it takes no paint note.
+    let fsz: f64 = { s.font_size };
+    let wt: u32 = { s.weight };
+    let fam: u32 = { s.family };
+    let ital: bool = { s.italic };
+    if fsz > 0.0f64 || wt != facet::weight_unset() || fam != facet::family_unset() || ital {
+        apply_font_live(view, fsz, wt, fam, ital);
+        ui::clear_measure_caches(view);
+        if h.flex() != (0 as *u8) {
+            let fp: *flex::Node = h.flex() as *flex::Node;
+            { (*fp).mark_content_changed(); }
+        }
+        let _r: bool = ui::reflow_owner(h.cp(), view);
+    }
     return true;
 }
 
@@ -5035,6 +5092,8 @@ fn set_style_on_missing_handle_is_a_noop() {
     let _b: facet::Handle = m.set_corner_radius(4.0f64);
     let _c: facet::Handle = m.set_foreground_color(facet::Color::primary());
     let _d: facet::Handle = m.set_border(facet::Color::primary(), 1.0f64);
+    let _e: facet::Handle = m.set_font(20.0f64);
+    let _f: facet::Handle = m.set_weight(facet::weight_bold());
     assert !m.found();
 }
 
@@ -5055,6 +5114,80 @@ fn set_foreground_on_label_handle_records_and_routes() {
         option::Option[ak::Color]::None => { assert false; }
     };
     paint_clear_all();
+}
+
+// ---- live FONT restyle: metric, converts only the named axis, reflows ------
+fn t_point_size(view: *u8) -> f64 {
+    match ak::Control::from_raw(view).font() {
+        option::Option[ak::Font]::Some(f) => { return f.point_size(); }
+        option::Option[ak::Font]::None => { return -1.0f64; }
+    }
+}
+
+struct FontPane { }
+impl FontPane: facet::Component {
+    fn build(ref this) -> facet::Node {
+        return @facet {
+            vstack {
+                label("title", size: 15.0f64).key("t")
+            }
+        };
+    }
+}
+static FONT_PANE: FontPane = #zero::[FontPane]();
+
+#[test]
+fn set_font_changes_point_size() {
+    facet::set_set_style_fn(set_style_impl);
+    let d: facet::Node = facet::label("hi", size: 13.0f64);
+    let n: flex::Node = ak_label(0 as *u8, #addr_of(d));
+    let lp: *u8 = n.payload();
+    let h: facet::Handle = facet::Handle::of(lp, 0 as *u8, 0 as *u8, 0 as u32);
+    let _r: facet::Handle = h.set_font(20.0f64);
+    assert approx(t_point_size(lp), 20.0f64);
+}
+
+#[test]
+fn set_weight_preserves_the_current_size() {
+    // The footgun: set_weight alone must NOT reset size to the ns_font default.
+    // apply_font_live converts only the weight axis of the CURRENT font.
+    facet::set_set_style_fn(set_style_impl);
+    let d: facet::Node = facet::label("hi");
+    let n: flex::Node = ak_label(0 as *u8, #addr_of(d));
+    let lp: *u8 = n.payload();
+    let h: facet::Handle = facet::Handle::of(lp, 0 as *u8, 0 as *u8, 0 as u32);
+    let _a: facet::Handle = h.set_font(28.0f64);       // establish size 28
+    assert approx(t_point_size(lp), 28.0f64);
+    let _b: facet::Handle = h.set_strong();            // bold; size must stay 28
+    assert approx(t_point_size(lp), 28.0f64);
+}
+
+#[test]
+fn set_font_on_non_control_view_is_a_safe_noop() {
+    // A bare NSView doesn't answer -setFont:; apply_font_live must skip it (not
+    // throw an unrecognized selector). Reaching the assert = no crash.
+    facet::set_set_style_fn(set_style_impl);
+    let v: ak::View = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 20.0, h: 20.0 });
+    let h: facet::Handle = facet::Handle::of(v.raw(), 0 as *u8, 0 as *u8, 0 as u32);
+    let _r: facet::Handle = h.set_font(18.0f64);
+    assert !v.wants_layer();   // font path never touches the layer
+}
+
+#[test]
+fn e2e_set_font_reflows_a_mounted_label() {
+    // Through the real find -> Handle (carries cp + flex), so the metric reflow
+    // path actually runs.
+    unmount_all();
+    facet::set_find_fn(find_impl);
+    facet::set_set_style_fn(set_style_impl);
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 80.0 });
+    let _h: f64 = mount_component(FONT_PANE.build, host: host.raw());
+    let cp: *u8 = #addr_of(FONT_PANE) as *u8;
+    assert facet::find("t", cp).found();
+    let _r: facet::Handle = facet::find("t", cp).set_font(24.0f64);
+    let lp: *u8 = facet::find("t", cp).view();
+    assert approx(t_point_size(lp), 24.0f64);
+    unmount_all();
 }
 
 // ---- keyed-direct structural verbs: insert / replace / set_child + show/hide --
