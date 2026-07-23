@@ -3316,9 +3316,15 @@ fn find_impl(cp: *u8, key: str) -> facet::Handle {
 fn set_text_impl(h: facet::Handle, s: str) -> bool {
     let view: *u8 = h.view();
     if view == (0 as *u8) { return false; }
-    // NSButton carries its text as `title`; labels / text fields as `stringValue`.
-    let responds: i8 = rt::msg_i8_id(view, rt::sel(#str_ptr("respondsToSelector:\0")), rt::sel(#str_ptr("setTitle:\0")));
-    if responds != (0 as i8) {
+    // Mirror text_impl's probe order so the writable side reaches the SAME views
+    // the read side does. A text_area / composer resolves to the inner NSTextView
+    // (-setString:); a button carries its text as -title; labels / fields as
+    // -stringValue. Without the -setString: branch, set_text missed editors —
+    // they answer neither -setTitle: nor -setStringValue:.
+    let responds: *u8 = rt::sel(#str_ptr("respondsToSelector:\0"));
+    if rt::msg_i8_id(view, responds, rt::sel(#str_ptr("setString:\0"))) != (0 as i8) {
+        ak::TextView::from_raw(view).as_text().set_string(s);
+    } else if rt::msg_i8_id(view, responds, rt::sel(#str_ptr("setTitle:\0"))) != (0 as i8) {
         ak::Button::from_raw(view).set_title(s);
     } else {
         ak::TextField::from_raw(view).as_control().set_string_value(s);
@@ -5880,6 +5886,39 @@ fn find_reads_text_and_index_portably() {
     assert !facet::find("nope", cp).found();
     assert facet::find("nope", cp).text().equals("");
     assert facet::find("nope", cp).selected_index() == (-1 as i64);
+    unmount_all();
+}
+
+#[test]
+fn set_text_reaches_editor_field_and_button() {
+    // The write side of the same three routes. The point-3 fix: set_text must
+    // drive an NSTextView via -setString: — the editor answers neither -setTitle:
+    // nor -setStringValue:, so without the probe it silently kept its old text.
+    unmount_all();
+    facet::set_find_fn(find_impl);
+    facet::set_get_text_fn(text_impl);
+    facet::set_set_text_fn(set_text_impl);
+    READ_PANE.n = 0 as i64;
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 320.0, h: 240.0 });
+    let _h: f64 = mount_component(READ_PANE.build, host: host.raw());
+    let cp: *u8 = #addr_of(READ_PANE) as *u8;
+
+    // text_area (inner NSTextView) round-trips through -setString: -> -string.
+    let _d: facet::Handle = facet::find("rp:desc", cp).set_text("changed body");
+    assert facet::find("rp:desc", cp).text().equals("changed body");
+
+    // text_field (NSControl) still routes to -setStringValue: under the new order.
+    let _n: facet::Handle = facet::find("rp:name", cp).set_text("Renamed");
+    assert facet::find("rp:name", cp).text().equals("Renamed");
+
+    // button still routes to -setTitle: (probed after -setString:, which it lacks).
+    let bd: facet::Node = facet::button("orig");
+    let bn: flex::Node = ak_button(0 as *u8, #addr_of(bd));
+    let bp: *u8 = bn.payload();
+    let bh: facet::Handle = facet::Handle::of(bp, 0 as *u8, 0 as *u8, 0 as u32);
+    let _b: facet::Handle = bh.set_text("clicked");
+    assert ak::Button::from_raw(bp).title().count() == (7 as usize);   // "clicked"
+
     unmount_all();
 }
 
