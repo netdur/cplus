@@ -591,11 +591,25 @@ fn menu_action_copy() -> u32 { return 6 as u32; }
 fn menu_action_paste() -> u32 { return 7 as u32; }
 fn menu_action_select_all() -> u32 { return 8 as u32; }
 
+// The native find bar over the focused text view (Edit > Find …). On AppKit
+// these route performTextFinderAction: down the responder chain, with the
+// item's tag selecting the operation — the same shape as the edit tokens.
+// Backends without an equivalent leave them inert.
+fn menu_action_find() -> u32 { return 9 as u32; }
+fn menu_action_find_next() -> u32 { return 10 as u32; }
+fn menu_action_find_previous() -> u32 { return 11 as u32; }
+fn menu_action_find_replace() -> u32 { return 12 as u32; }
+
 struct MenuItem {
     menu: text::Text,
     title: text::Text,
     key: text::Text,
     action: u32,
+    // App-command items: a non-null callback WINS over `action` — the backend
+    // wires a target/action trampoline that invokes it (sender = the native
+    // menu item, ctx = the bound receiver). null_fn() = token item.
+    on_click: fn(*u8, *u8),
+    opaque click_ctx: *u8,
 }
 
 struct AppMenu {
@@ -624,6 +638,23 @@ impl AppMenu {
             title: text::from_str(title),
             key: text::from_str(key),
             action: action,
+            on_click: null_fn(),
+            click_ctx: 0 as *u8,
+        });
+        return;
+    }
+
+    // An app-command item: the menu click runs YOUR code. Bound-method ready —
+    // `m.add_command("File", "Save", key: "s", on_click: this.on_save)` — the
+    // defaulted ctx takes the receiver.
+    fn add_command(ref this, menu: str, title: str, key: str = "", on_click: fn(*u8, *u8) = null_fn(), ctx: *u8 = 0 as *u8) {
+        this.items.append(MenuItem {
+            menu: text::from_str(menu),
+            title: text::from_str(title),
+            key: text::from_str(key),
+            action: menu_action_none(),
+            on_click: on_click,
+            click_ctx: ctx,
         });
         return;
     }

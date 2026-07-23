@@ -79,6 +79,11 @@ fn menu_action_cut() -> u32 { return core::menu_action_cut(); }
 fn menu_action_copy() -> u32 { return core::menu_action_copy(); }
 fn menu_action_paste() -> u32 { return core::menu_action_paste(); }
 fn menu_action_select_all() -> u32 { return core::menu_action_select_all(); }
+fn menu_action_find() -> u32 { return core::menu_action_find(); }
+fn menu_action_find_next() -> u32 { return core::menu_action_find_next(); }
+fn menu_action_find_previous() -> u32 { return core::menu_action_find_previous(); }
+fn menu_action_find_replace() -> u32 { return core::menu_action_find_replace(); }
+fn null_fn() -> fn(*u8, *u8) { return core::null_fn(); }
 
 fn run[W: Window](take window: W) {
     backend::install();   // register this backend's facet verbs (list, raise) before any render uses them

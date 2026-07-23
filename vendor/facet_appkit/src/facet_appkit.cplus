@@ -2370,13 +2370,56 @@ fn menu_selector_for_action(action: u32) -> *u8 {
     if action == facet::menu_action_select_all() {
         return rt::sel(#str_ptr("selectAll:\0"));
     }
+    // Find-bar family: one responder-chain selector, tag-dispatched (see
+    // menu_tag_for_action). NSTextView implements it natively.
+    if action == facet::menu_action_find() {
+        return rt::sel(#str_ptr("performTextFinderAction:\0"));
+    }
+    if action == facet::menu_action_find_next() {
+        return rt::sel(#str_ptr("performTextFinderAction:\0"));
+    }
+    if action == facet::menu_action_find_previous() {
+        return rt::sel(#str_ptr("performTextFinderAction:\0"));
+    }
+    if action == facet::menu_action_find_replace() {
+        return rt::sel(#str_ptr("performTextFinderAction:\0"));
+    }
     return 0 as *u8;
 }
 
+// performTextFinderAction: dispatches on the SENDER's tag (NSTextFinderAction):
+// 1 showFindInterface, 2 nextMatch, 3 previousMatch, 12 replace.
+fn menu_tag_for_action(action: u32) -> i64 {
+    if action == facet::menu_action_find() { return 1 as i64; }
+    if action == facet::menu_action_find_next() { return 2 as i64; }
+    if action == facet::menu_action_find_previous() { return 3 as i64; }
+    if action == facet::menu_action_find_replace() { return 12 as i64; }
+    return 0 as i64;
+}
+
 fn add_app_menu_item(menu: ak::Menu, item: *facet::MenuItem, command: u64) {
+    let cb: fn(*u8, *u8) = { (*item).on_click };
+    if cb != (0 as fn(*u8, *u8)) {
+        // App-command item: a target/action trampoline invokes the callback
+        // (sender = the NSMenuItem, ctx = the bound receiver). Explicit target
+        // — the item never consults the responder chain and stays enabled.
+        // The target is pinned to the item so it lives as long as the menu.
+        let mi: ak::MenuItem = menu.add_item_with_title({ (*item).title.view() }, akx::action_ctx_sel(), { (*item).key.view() });
+        let t: *u8 = akx::action_ctx_target(cb, { (*item).click_ctx });
+        rt::set_associated_object(mi.raw(), akx::action_ctx_pin_key(), t, 1 as usize);
+        mi.set_target(t);
+        if (*item).key.count() != (0 as usize) {
+            mi.set_key_equivalent_modifier_mask(command);
+        }
+        return;
+    }
     let selector: *u8 = menu_selector_for_action({ (*item).action });
     let mi: ak::MenuItem = menu.add_item_with_title({ (*item).title.view() }, selector, { (*item).key.view() });
     mi.set_target(0 as *u8);
+    let tag: i64 = menu_tag_for_action({ (*item).action });
+    if tag != (0 as i64) {
+        mi.set_tag(tag);
+    }
     if (*item).key.count() != (0 as usize) {
         mi.set_key_equivalent_modifier_mask(command);
     }
@@ -7943,4 +7986,74 @@ fn test_install_pinch_zoom_heals_degenerate_ranges() {
     install_pinch_zoom(0 as *u8);
     assert set_pinch_zoom(0 as *u8, 2.0f64) == 1.0f64;
     unmount_all();
+}
+
+// ---- menus: app-command callbacks + find tokens -------------------------------
+
+static MENU_CLICKS: i32 = 0;
+fn menu_probe(sender: *u8, ctx: *u8) {
+    if ctx == (5 as *u8) { MENU_CLICKS = MENU_CLICKS + 1; }
+    return;
+}
+
+#[test]
+fn menu_wires_callbacks_and_find_tags() {
+    var m: facet::AppMenu = facet::app_menu("TestApp");
+    m.add_command("File", "Save", key: "s", on_click: menu_probe, ctx: 5 as *u8);
+    m.add_item("Edit", "Find…", "f", facet::menu_action_find());
+    m.add_item("Edit", "Find Next", "g", facet::menu_action_find_next());
+    m.add_item("Edit", "Copy", "c", facet::menu_action_copy());
+
+    let main: ak::Menu = ak::Menu::new("");
+    let items: *vec::Vec[facet::MenuItem] = #addr_of(m.items);
+    let cmd: u64 = ak::event_modifier_flags_n_s_event_modifier_flag_command;
+
+    // The callback item: explicit target answering the trampoline selector;
+    // invoking it (what AppKit does on click) runs the app callback with ctx.
+    MENU_CLICKS = 0;
+    match add_menu_group(main, "File", items, cmd) {
+        option::Option[ak::Menu]::Some(file_menu) => {
+            match file_menu.item_at_index(0 as i64) {
+                option::Option[ak::MenuItem]::Some(mi) => {
+                    let target: *u8 = rt::msg_id(mi.raw(), rt::sel(#str_ptr("target\0")));
+                    assert target != (0 as *u8);
+                    rt::msg_void_id(target, akx::action_ctx_sel(), mi.raw());
+                }
+                option::Option[ak::MenuItem]::None => { assert false; }
+            }
+        }
+        option::Option[ak::Menu]::None => { assert false; }
+    }
+    assert MENU_CLICKS == 1;
+
+    // Find tokens: performTextFinderAction: + NSTextFinderAction tags; an
+    // ordinary edit token stays untagged with its own selector.
+    match add_menu_group(main, "Edit", items, cmd) {
+        option::Option[ak::Menu]::Some(edit_menu) => {
+            match edit_menu.item_at_index(0 as i64) {
+                option::Option[ak::MenuItem]::Some(mi) => {
+                    assert mi.tag() == (1 as i64);
+                    let act: *u8 = rt::msg_id(mi.raw(), rt::sel(#str_ptr("action\0")));
+                    assert act == rt::sel(#str_ptr("performTextFinderAction:\0"));
+                }
+                option::Option[ak::MenuItem]::None => { assert false; }
+            }
+            match edit_menu.item_at_index(1 as i64) {
+                option::Option[ak::MenuItem]::Some(mi) => {
+                    assert mi.tag() == (2 as i64);
+                }
+                option::Option[ak::MenuItem]::None => { assert false; }
+            }
+            match edit_menu.item_at_index(2 as i64) {
+                option::Option[ak::MenuItem]::Some(mi) => {
+                    assert mi.tag() == (0 as i64);
+                    let act: *u8 = rt::msg_id(mi.raw(), rt::sel(#str_ptr("action\0")));
+                    assert act == rt::sel(#str_ptr("copy:\0"));
+                }
+                option::Option[ak::MenuItem]::None => { assert false; }
+            }
+        }
+        option::Option[ak::Menu]::None => { assert false; }
+    }
+    return;
 }
