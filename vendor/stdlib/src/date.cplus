@@ -1,0 +1,282 @@
+// stdlib/date.cplus — civil calendar over Unix time: ISO-8601 parse + format +
+// real (non-wrapping) differences. Complements `time` (a monotonic/epoch clock
+// with no calendar). All times are UTC.
+//
+// The pain this replaces: byte-parsing an ISO stamp into seconds-of-day and then
+// diffing those, which WRAPS at 86400 because there is no date underneath; and
+// shelling out to `date '+%Y-%m-%d'` / `date -v-1d` for today / yesterday.
+//
+// Civil<->days conversion uses Howard Hinnant's public-domain algorithms
+// (proleptic Gregorian, exact across the full i64 range, day 0 = 1970-01-01).
+
+import "./text" as text;
+import "./option" as option;
+import "./time" as time;
+
+// A civil date + wall-clock time, UTC. Fields are the obvious ranges: month
+// 1..12, day 1..31, hour 0..23, minute/second 0..59.
+struct DateTime {
+    year: i64,
+    month: i64,
+    day: i64,
+    hour: i64,
+    minute: i64,
+    second: i64,
+}
+
+struct Civil { year: i64, month: i64, day: i64 }
+
+// Floor division (rounds toward negative infinity) — correct for pre-1970 (negative)
+// epoch seconds, where C's truncating `/` would be off by a day/second.
+fn floor_div(a: i64, b: i64) -> i64 {
+    let q: i64 = a / b;
+    let r: i64 = a - q * b;
+    if r != (0 as i64) {
+        let neg_r: bool = r < (0 as i64);
+        let neg_b: bool = b < (0 as i64);
+        if neg_r != neg_b { return q - (1 as i64); }
+    }
+    return q;
+}
+
+// Days since 1970-01-01 for a civil date (Hinnant `days_from_civil`).
+fn days_from_civil(y0: i64, m: i64, d: i64) -> i64 {
+    let y: i64 = if m <= (2 as i64) { y0 - (1 as i64) } else { y0 };
+    let era: i64 = (if y >= (0 as i64) { y } else { y - (399 as i64) }) / (400 as i64);
+    let yoe: i64 = y - era * (400 as i64);                                       // [0, 399]
+    let mp: i64 = if m > (2 as i64) { m - (3 as i64) } else { m + (9 as i64) };  // [0, 11]
+    let doy: i64 = ((153 as i64) * mp + (2 as i64)) / (5 as i64) + d - (1 as i64);   // [0, 365]
+    let doe: i64 = yoe * (365 as i64) + yoe / (4 as i64) - yoe / (100 as i64) + doy; // [0, 146096]
+    return era * (146097 as i64) + doe - (719468 as i64);
+}
+
+// The civil date `z` days after 1970-01-01 (Hinnant `civil_from_days`).
+fn civil_from_days(z0: i64) -> Civil {
+    let z: i64 = z0 + (719468 as i64);
+    let era: i64 = (if z >= (0 as i64) { z } else { z - (146096 as i64) }) / (146097 as i64);
+    let doe: i64 = z - era * (146097 as i64);                                    // [0, 146096]
+    let yoe: i64 = (doe - doe / (1460 as i64) + doe / (36524 as i64) - doe / (146096 as i64)) / (365 as i64);  // [0, 399]
+    let y: i64 = yoe + era * (400 as i64);
+    let doy: i64 = doe - ((365 as i64) * yoe + yoe / (4 as i64) - yoe / (100 as i64));  // [0, 365]
+    let mp: i64 = ((5 as i64) * doy + (2 as i64)) / (153 as i64);                // [0, 11]
+    let d: i64 = doy - ((153 as i64) * mp + (2 as i64)) / (5 as i64) + (1 as i64);   // [1, 31]
+    let m: i64 = if mp < (10 as i64) { mp + (3 as i64) } else { mp - (9 as i64) };   // [1, 12]
+    let yy: i64 = if m <= (2 as i64) { y + (1 as i64) } else { y };
+    return Civil { year: yy, month: m, day: d };
+}
+
+// Convert between Unix seconds (UTC) and a `DateTime`.
+fn from_unix(secs: i64) -> DateTime {
+    let days: i64 = floor_div(secs, 86400 as i64);
+    let tod: i64 = secs - days * (86400 as i64);   // [0, 86399]
+    let c: Civil = civil_from_days(days);
+    return DateTime {
+        year: c.year, month: c.month, day: c.day,
+        hour: tod / (3600 as i64),
+        minute: (tod / (60 as i64)) % (60 as i64),
+        second: tod % (60 as i64),
+    };
+}
+
+fn to_unix(dt: DateTime) -> i64 {
+    let days: i64 = days_from_civil(dt.year, dt.month, dt.day);
+    return days * (86400 as i64) + dt.hour * (3600 as i64) + dt.minute * (60 as i64) + dt.second;
+}
+
+// The current UTC date+time.
+fn now() -> DateTime { return from_unix(time::now()); }
+
+// Signed difference a - b, in whole seconds. Because both sides carry a real
+// date, this never wraps at a day boundary (the seconds-of-day bug).
+fn diff_seconds(a: DateTime, b: DateTime) -> i64 { return to_unix(a) - to_unix(b); }
+
+// ---- parsing ----
+
+fn digit_val(s: str, i: usize) -> i64 {
+    if i >= #str_len(s) { return -1 as i64; }
+    let c: u8 = { *(#str_ptr(s) + i) };
+    if c < ('0' as u8) { return -1 as i64; }
+    if c > ('9' as u8) { return -1 as i64; }
+    return (c - ('0' as u8)) as i64;
+}
+
+// Parse `width` decimal digits at byte `start`; -1 if any is not a digit.
+fn num_at(s: str, start: usize, width: usize) -> i64 {
+    var v: i64 = 0 as i64;
+    var i: usize = 0 as usize;
+    while i < width {
+        let d: i64 = digit_val(s, start + i);
+        if d < (0 as i64) { return -1 as i64; }
+        v = v * (10 as i64) + d;
+        i = i +% (1 as usize);
+    }
+    return v;
+}
+
+// Parse an ISO-8601 timestamp. Accepts "YYYY-MM-DD" (time = midnight) and
+// "YYYY-MM-DD" + ('T' | ' ') + "HH:MM:SS" with any trailing fractional / zone
+// suffix ignored (times here are treated as UTC). `None` on a malformed date, an
+// out-of-range field, or a present-but-broken time.
+fn parse_iso8601(s: str) -> option::Option[DateTime] {
+    let n: usize = #str_len(s);
+    if n < (10 as usize) { return option::Option[DateTime]::None; }
+    let p: *u8 = #str_ptr(s);
+    if { *(p + (4 as usize)) } != ('-' as u8) { return option::Option[DateTime]::None; }
+    if { *(p + (7 as usize)) } != ('-' as u8) { return option::Option[DateTime]::None; }
+    let y: i64 = num_at(s, 0 as usize, 4 as usize);
+    let mo: i64 = num_at(s, 5 as usize, 2 as usize);
+    let d: i64 = num_at(s, 8 as usize, 2 as usize);
+    if y < (0 as i64) { return option::Option[DateTime]::None; }
+    if mo < (1 as i64) || mo > (12 as i64) { return option::Option[DateTime]::None; }
+    if d < (1 as i64) || d > (31 as i64) { return option::Option[DateTime]::None; }
+    var hh: i64 = 0 as i64;
+    var mm: i64 = 0 as i64;
+    var ss: i64 = 0 as i64;
+    if n >= (19 as usize) {
+        let sep: u8 = { *(p + (10 as usize)) };
+        if sep == ('T' as u8) || sep == (' ' as u8) {
+            hh = num_at(s, 11 as usize, 2 as usize);
+            mm = num_at(s, 14 as usize, 2 as usize);
+            ss = num_at(s, 17 as usize, 2 as usize);
+            if hh < (0 as i64) || hh > (23 as i64) { return option::Option[DateTime]::None; }
+            if mm < (0 as i64) || mm > (59 as i64) { return option::Option[DateTime]::None; }
+            if ss < (0 as i64) || ss > (60 as i64) { return option::Option[DateTime]::None; }
+        }
+    }
+    return option::Option[DateTime]::Some(DateTime { year: y, month: mo, day: d, hour: hh, minute: mm, second: ss });
+}
+
+// ---- formatting ----
+
+fn pad2(n: i64) -> text::Text {
+    if n >= (0 as i64) && n < (10 as i64) { return "0${n}"; }
+    return "${n}";
+}
+fn pad4(n: i64) -> text::Text {
+    if n < (0 as i64) { return "${n}"; }
+    if n < (10 as i64) { return "000${n}"; }
+    if n < (100 as i64) { return "00${n}"; }
+    if n < (1000 as i64) { return "0${n}"; }
+    return "${n}";
+}
+
+// "YYYY-MM-DD".
+fn format_date(dt: DateTime) -> text::Text {
+    let y: text::Text = pad4(dt.year);
+    let mo: text::Text = pad2(dt.month);
+    let d: text::Text = pad2(dt.day);
+    return "${y}-${mo}-${d}";
+}
+
+// "YYYY-MM-DDTHH:MM:SSZ".
+fn format_iso8601(dt: DateTime) -> text::Text {
+    let dpart: text::Text = format_date(dt);
+    let hh: text::Text = pad2(dt.hour);
+    let mm: text::Text = pad2(dt.minute);
+    let ss: text::Text = pad2(dt.second);
+    return "${dpart}T${hh}:${mm}:${ss}Z";
+}
+
+// today / yesterday as "YYYY-MM-DD" (UTC) — the `date` shell-outs, in process.
+fn today() -> text::Text { return format_date(from_unix(time::now())); }
+fn yesterday() -> text::Text { return format_date(from_unix(time::now() - (86400 as i64))); }
+
+// ───────────────────────────── tests ─────────────────────────────
+
+#[test]
+fn epoch_zero_is_1970_01_01() {
+    let dt: DateTime = from_unix(0 as i64);
+    assert dt.year == (1970 as i64);
+    assert dt.month == (1 as i64);
+    assert dt.day == (1 as i64);
+    assert dt.hour == (0 as i64);
+    assert dt.minute == (0 as i64);
+    assert dt.second == (0 as i64);
+}
+
+#[test]
+fn billennium_components_are_correct() {
+    // Unix 1_000_000_000 = 2001-09-09T01:46:40Z.
+    let dt: DateTime = from_unix(1000000000 as i64);
+    assert dt.year == (2001 as i64);
+    assert dt.month == (9 as i64);
+    assert dt.day == (9 as i64);
+    assert dt.hour == (1 as i64);
+    assert dt.minute == (46 as i64);
+    assert dt.second == (40 as i64);
+    assert to_unix(dt) == (1000000000 as i64);   // round-trips
+}
+
+#[test]
+fn unix_datetime_roundtrips() {
+    let t: i64 = 1721745000 as i64;   // some 2024 instant
+    assert to_unix(from_unix(t)) == t;
+    let now_s: i64 = time::now();
+    assert to_unix(from_unix(now_s)) == now_s;
+}
+
+#[test]
+fn parse_and_format_iso8601_roundtrip() {
+    match parse_iso8601("2026-07-23T14:30:05Z") {
+        option::Option[DateTime]::Some(dt) => {
+            assert dt.year == (2026 as i64) && dt.month == (7 as i64) && dt.day == (23 as i64);
+            assert dt.hour == (14 as i64) && dt.minute == (30 as i64) && dt.second == (5 as i64);
+            assert format_iso8601(dt).view() == "2026-07-23T14:30:05Z";
+        }
+        option::Option[DateTime]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn parse_date_only_is_midnight() {
+    match parse_iso8601("2026-07-23") {
+        option::Option[DateTime]::Some(dt) => {
+            assert dt.year == (2026 as i64) && dt.month == (7 as i64) && dt.day == (23 as i64);
+            assert dt.hour == (0 as i64) && dt.minute == (0 as i64) && dt.second == (0 as i64);
+        }
+        option::Option[DateTime]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn parse_rejects_garbage_and_out_of_range() {
+    match parse_iso8601("not-a-date!") { option::Option[DateTime]::Some(x) => { assert false; } option::Option[DateTime]::None => { } }
+    match parse_iso8601("2026-13-01") { option::Option[DateTime]::Some(x) => { assert false; } option::Option[DateTime]::None => { } }
+    match parse_iso8601("2026/07/23") { option::Option[DateTime]::Some(x) => { assert false; } option::Option[DateTime]::None => { } }
+    return;
+}
+
+#[test]
+fn format_date_zero_pads() {
+    let dt: DateTime = DateTime { year: 2026 as i64, month: 7 as i64, day: 3 as i64, hour: 0 as i64, minute: 0 as i64, second: 0 as i64 };
+    assert format_date(dt).view() == "2026-07-03";
+}
+
+#[test]
+fn diff_across_midnight_does_not_wrap() {
+    // The seconds-of-day bug: 20s apart across a midnight boundary must be 20,
+    // not 86380. Real dates make the difference exact.
+    let a: DateTime = DateTime { year: 2026 as i64, month: 7 as i64, day: 23 as i64, hour: 0 as i64, minute: 0 as i64, second: 10 as i64 };
+    let b: DateTime = DateTime { year: 2026 as i64, month: 7 as i64, day: 22 as i64, hour: 23 as i64, minute: 59 as i64, second: 50 as i64 };
+    assert diff_seconds(a, b) == (20 as i64);
+}
+
+#[test]
+fn today_and_yesterday_differ_by_one_day() {
+    let t: text::Text = today();
+    let y: text::Text = yesterday();
+    assert t.count() == (10 as usize);   // "YYYY-MM-DD"
+    assert y.count() == (10 as usize);
+    match parse_iso8601(t.view()) {
+        option::Option[DateTime]::Some(td) => {
+            match parse_iso8601(y.view()) {
+                option::Option[DateTime]::Some(yd) => { assert diff_seconds(td, yd) == (86400 as i64); }
+                option::Option[DateTime]::None => { assert false; }
+            }
+        }
+        option::Option[DateTime]::None => { assert false; }
+    }
+    return;
+}

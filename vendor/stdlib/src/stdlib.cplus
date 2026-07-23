@@ -33,6 +33,7 @@ import "./future" as future;
 import "./reactor" as reactor;
 import "./executor" as executor;
 import "./time" as time;
+import "./date" as date;
 import "./fs" as fs;
 import "./bundle" as bundle;
 import "./netsys" as netsys;
