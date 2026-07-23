@@ -66,23 +66,30 @@ What the package guarantees:
   as `ctx`). Names are never mutated through the bus.
 - **Payloads are borrowed** for the duration of `emit`. Keeping a pointer
   into the payload after return is undefined for the caller.
-- **Tokens do not own listeners.** Losing a token does not leak: the
-  listener is still reachable via `off_ctx`, `off_all`, or `remove_all`.
-- Registration storage is freed by `off` / `off_all` / `off_ctx` /
-  `remove_all` (or dropping the signal/bus). Registering on the bus does
-  **not** allocate for the name.
+- **The handle owns the listener.** `on` returns a subscription handle
+  whose drop cancels the registration. A handle stored in the receiver's
+  own fields therefore unsubscribes exactly when the receiver dies — the
+  use-after-free window never opens. `detach()` opts a registration out of
+  handle ownership; it is then reachable only via `off_ctx`, `off_all`, or
+  `remove_all`.
+- Registration storage is freed by cancel/drop, `off` / `off_all` /
+  `off_ctx` / `remove_all` (or dropping the signal/bus). Registering on
+  the bus does **not** allocate for the name.
 
 What you must guarantee:
 
 > The receiver must **outlive** its registration.  
-> A bus event **name** must **outlive** its registration.
+> A bus event **name** must **outlive** its registration.  
+> The signal/bus must **outlive its handles** and must not move (the
+> shared bus always qualifies).
 
 A bound method's ctx is the receiver's address. Free the receiver while
 still registered → the next emit is a use-after-free. Patterns that work:
 
-1. Long-lived module statics.
-2. Component-owned signals and fields (facet-style retain).
-3. Explicit detach before free:
+1. Handles stored in the receiver's fields (teardown is automatic — the
+   default).
+2. Long-lived module statics, with detached handles.
+3. Explicit bulk detach before free:
 
 ```cplus
 let _n: usize = events::off_ctx(#addr_of(bar) as *u8);
@@ -103,9 +110,16 @@ token stays dead (`off` returns `false`). That is intentional: a stale
 
 ### Gotcha: token `0`
 
-`0` is never issued as a live listener. `on` returns `0` only if storage
-failed to grow. Treat `0` as failure / "no listener"; `off(0)` is a false
-no-op.
+`0` is never issued as a live listener. `on` returns a handle carrying id
+`0` only if storage failed to grow; such a handle is inert (every method
+returns `false`). `off(0)` is a false no-op.
+
+### Gotcha: the discarded handle
+
+`on` as a bare statement subscribes and immediately unsubscribes — the
+returned handle is a temporary, and its drop cancels the registration.
+Bind the handle for as long as you want to listen, or `detach()` it for a
+fire-and-forget listener.
 
 ## Delivery under mutation
 
@@ -118,9 +132,12 @@ These are part of the contract (covered by the package tests):
    emit.
 4. **`once`** — detached **before** the body runs. Re-`once` from inside
    the handler is safe; the new registration waits for the next emit.
-5. **Nested emit** — a re-entrant `emit` is a full independent pass; it
+5. **Paused** — skipped by emit; keeps its token and its place in the
+   order; a paused `once` stays registered and fires (once) after
+   `resume`.
+6. **Nested emit** — a re-entrant `emit` is a full independent pass; it
    does not corrupt the outer walk.
-6. **Empty emit** — silent no-op.
+7. **Empty emit** — silent no-op.
 
 ### Why it feels "quadratic"
 
@@ -132,15 +149,18 @@ counts; this is not a hot-path bus.
 
 | Goal | Tool |
 |---|---|
-| Drop one listener | keep the token → `off(id)` |
+| Listener lives as long as its holder | store the handle in a field; drop cancels |
+| Drop one listener now | `handle.cancel()` |
+| Mute without losing the place | `handle.pause()` / `handle.resume()` |
+| Fire-and-forget registration | `handle.detach()` |
 | Drop one bus name | `off_all(name)` |
-| Drop everything for a component | `off_ctx(receiver_addr)` (bus: all names) |
+| Drop everything for a component (detached/legacy) | `off_ctx(receiver_addr)` (bus: all names) |
 | Reset a signal/bus | `remove_all()` |
 | Clear the shared bus | `events::remove_all()` |
 
-Prefer **tokens** when one subscription has a different lifetime from its
-siblings. Prefer **`off_ctx`** for component teardown so you do not store
-every id.
+Prefer **handles**: teardown follows ownership with no bookkeeping. The
+raw-token surface (`handle.id()` → `off(id)`) and `off_ctx` remain for
+detached registrations and bulk resets.
 
 ## Shared bus vs private bus
 
@@ -176,18 +196,21 @@ matches that shape so a component can:
 - or publish on the shared bus while the UI subscribes with
   `events::on("…", this.handler)`.
 
-On detach, pair facet lifecycle with teardown so parked components never
-receive late events:
+Store the handles in the component's fields — teardown then follows the
+component's own life: when it drops, the handles drop and every
+registration cancels. Two policies for parked (detached but alive)
+components, by what the events mean:
 
-```cplus
-fn on_detach(ref this) {
-    let _n: usize = events::off_ctx(#addr_of(this) as *u8);
-    return;
-}
-```
+- **State events** (the payload changes what the component would show):
+  keep listening while parked. Handlers update fields; the next attach
+  pushes state back into the views.
+- **View-only events** (the handler only touches views): `pause()` the
+  handles in `on_detach`, `resume()` in `on_attach` — the listeners keep
+  their place and never fire off-tree.
 
-If the component owns a `Signal`, either `remove_all` / drop it, or ensure
-subscribers used `off_ctx` against their own identities.
+If the component owns a `Signal`, subscribers' handles must not outlive
+the signal — a handle's drop reaches the signal by address. Subscribers
+`cancel()` or `detach()` their handles before the signal's owner drops.
 
 ## Payload choices
 

@@ -29,17 +29,28 @@ import "stdlib/status" as status;
 //     (use a string literal or a buffer that outlives the subscription);
 //   - `emit` payloads are borrowed for the duration of the call only.
 //
-// `on` returns a token (u64). `off(token)` removes the listener — no
-// function identity involved, so any listener can be removed. `once: true`
-// (or the `once` method) auto-removes after the first delivery.
+// `on` returns a subscription handle (`SignalSubscription[T]` from a
+// signal, `Subscription` from a bus). The handle is the control surface:
+// `cancel()` removes the listener, `pause()` / `resume()` mute it without
+// losing its registration or order, `active()` asks whether it is still
+// registered. Handles are Copy and non-owning; a zeroed handle (`none()`,
+// or a failed `on`) is inert — every method returns false. The signal or
+// bus must outlive its handles' use and must not move (handles reach it by
+// address; the shared bus always qualifies). Bulk teardown (`off_all`,
+// `off_ctx`, `remove_all`) and raw tokens (`handle.id()`, `off(id)`)
+// remain for advanced use. `once: true` (or the `once` method)
+// auto-removes after the first delivery.
 //
 // Delivery semantics (defined, not incidental):
 //   - listeners fire in subscription order;
 //   - a listener ADDED during an emit does not fire in that emit;
 //   - a listener REMOVED during an emit does not fire after its removal;
+//   - a PAUSED listener is skipped by emit; it keeps its token and its
+//     place in the order, and fires again after `resume()`;
 //   - a `once` listener is removed before it fires, so re-subscribing from
 //     inside the handler is safe (the new registration waits for the next
-//     emit);
+//     emit); a paused `once` listener stays registered and fires (once)
+//     after `resume()`;
 //   - `emit` borrows the payload — listeners read it for the duration of
 //     the call and must not retain it.
 //
@@ -56,6 +67,7 @@ struct Listener[T] {
     opaque ctx: *u8,
     id: u64,
     once: bool,
+    paused: bool,
 }
 
 // A typed multicast event. Fields are private; use the methods.
@@ -69,23 +81,25 @@ impl Signal[T] {
         return Signal[T] { _subs: vec::Vec[Listener[T]]::new(), _next_id: 1u64 };
     }
 
-    // Register `f` (with its ctx) and return the listener's token. Token 0 is
-    // never issued — it is the "no listener" sentinel (`off(0)` is a no-op
-    // returning false, and `on` returns 0 only if storage failed to grow).
-    fn on(ref this, f: fn(T, *u8), ctx: *u8 = 0 as *u8, once: bool = false) -> u64 {
+    // Register `f` (with its ctx) and return the subscription handle. Token 0
+    // is never issued — a handle carrying id 0 (storage failed to grow) is
+    // inert: every method on it returns false.
+    fn on(ref this, f: fn(T, *u8), ctx: *u8 = 0 as *u8, once: bool = false) -> SignalSubscription[T] {
         let id: u64 = this._next_id;
         this._next_id = this._next_id + 1u64;
         let added: status::Status =
-            this._subs.append(Listener[T] { f: f, ctx: ctx, id: id, once: once });
-        return match added {
+            this._subs.append(Listener[T] { f: f, ctx: ctx, id: id, once: once, paused: false });
+        let granted: u64 = match added {
             status::Status::Ok => id,
             _ => 0u64,
         };
+        let sp: *Signal[T] = { #addr_of(this) };
+        return SignalSubscription[T] { _sig: sp, _id: granted };
     }
 
     // `on` with once: true — the listener is removed before its first
     // delivery runs.
-    fn once(ref this, f: fn(T, *u8), ctx: *u8 = 0 as *u8) -> u64 {
+    fn once(ref this, f: fn(T, *u8), ctx: *u8 = 0 as *u8) -> SignalSubscription[T] {
         return this.on(f, ctx: ctx, once: true);
     }
 
@@ -154,7 +168,8 @@ impl Signal[T] {
                 match this._subs.at_ptr(i) {
                     option::Option[*Listener[T]]::Some(p) => {
                         let lid: u64 = { (*p).id };
-                        if lid > last && lid < ceiling && (best == 0u64 || lid < best) {
+                        let lpaused: bool = { (*p).paused };
+                        if !lpaused && lid > last && lid < ceiling && (best == 0u64 || lid < best) {
                             best = lid;
                             best_f = { (*p).f };
                             best_ctx = { (*p).ctx };
@@ -175,6 +190,57 @@ impl Signal[T] {
         return;
     }
 
+    // True when a listener with this token is still registered (paused or
+    // not).
+    fn has(this, id: u64) -> bool {
+        if id == 0u64 { return false; }
+        var i: usize = 0usize;
+        let n: usize = this._subs.count();
+        while i < n {
+            match this._subs.at_ptr(i) {
+                option::Option[*Listener[T]]::Some(p) => {
+                    if { (*p).id } == id { return true; }
+                }
+                option::Option[*Listener[T]]::None => {}
+            }
+            i = i + 1usize;
+        }
+        return false;
+    }
+
+    // Mute the listener with this token: it stays registered, keeps its
+    // place in the order, and is skipped by emit until `resume`. False when
+    // the token is unknown.
+    fn pause(ref this, id: u64) -> bool {
+        return this._set_paused(id, true);
+    }
+
+    // Undo `pause`. False when the token is unknown.
+    fn resume(ref this, id: u64) -> bool {
+        return this._set_paused(id, false);
+    }
+
+    fn _set_paused(ref this, id: u64, paused: bool) -> bool {
+        if id == 0u64 { return false; }
+        var i: usize = 0usize;
+        let n: usize = this._subs.count();
+        while i < n {
+            var hit: bool = false;
+            match this._subs.at_ptr(i) {
+                option::Option[*Listener[T]]::Some(p) => {
+                    if { (*p).id } == id {
+                        { (*p).paused = paused; }
+                        hit = true;
+                    }
+                }
+                option::Option[*Listener[T]]::None => {}
+            }
+            if hit { return true; }
+            i = i + 1usize;
+        }
+        return false;
+    }
+
     // Number of registered listeners.
     fn count(this) -> usize {
         return this._subs.count();
@@ -192,6 +258,71 @@ impl Signal[T] {
     }
 }
 
+// A handle to one Signal registration — what `on` returns and what the
+// subscriber keeps. The handle OWNS the registration: dropping it cancels
+// the listener, so a component that stores its handles in fields
+// unsubscribes automatically when it drops. `detach()` opts out for
+// fire-and-forget wiring. The signal must outlive the handle (its drop
+// reaches the signal by address) and must not move. A zeroed handle
+// (`none()`, or a failed `on`) is inert.
+struct SignalSubscription[T] {
+    opaque _sig: *Signal[T],
+    _id: u64,
+}
+
+impl SignalSubscription[T] {
+    // The inert handle — for fields that subscribe later.
+    fn none() -> SignalSubscription[T] {
+        return SignalSubscription[T] { _sig: 0 as *Signal[T], _id: 0u64 };
+    }
+
+    // The raw token, for the advanced `off(id)` surface.
+    fn id(this) -> u64 {
+        return this._id;
+    }
+
+    // Still registered (paused or not)?
+    fn active(this) -> bool {
+        if this._id == 0u64 { return false; }
+        return { (*this._sig).has(this._id) };
+    }
+
+    // Remove the listener and make the handle inert. False when already
+    // removed or inert.
+    fn cancel(ref this) -> bool {
+        if this._id == 0u64 { return false; }
+        let removed: bool = { (*this._sig).off(this._id) };
+        this._id = 0u64;
+        return removed;
+    }
+
+    // Keep the registration for the life of the signal, give up control:
+    // the handle becomes inert and its drop no longer cancels.
+    fn detach(ref this) {
+        this._id = 0u64;
+        return;
+    }
+
+    // Mute the listener without removing it. False when unknown or inert.
+    fn pause(this) -> bool {
+        if this._id == 0u64 { return false; }
+        return { (*this._sig).pause(this._id) };
+    }
+
+    // Undo `pause`. False when unknown or inert.
+    fn resume(this) -> bool {
+        if this._id == 0u64 { return false; }
+        return { (*this._sig).resume(this._id) };
+    }
+
+    // Dropping the handle cancels its registration (inert handles no-op).
+    fn drop(ref this) {
+        if this._id == 0u64 { return; }
+        let _removed: bool = { (*this._sig).off(this._id) };
+        return;
+    }
+}
+
 // ---- Bus ---------------------------------------------------------------------
 
 // One registered bus listener: a Signal listener plus the event name it
@@ -203,6 +334,7 @@ struct BusListener {
     opaque ctx: *u8,
     id: u64,
     once: bool,
+    paused: bool,
 }
 
 // A string-keyed multicast event bus. `str` payload; for typed payloads use
@@ -218,9 +350,9 @@ impl Bus {
         return Bus { _subs: vec::Vec[BusListener]::new(), _next_id: 1u64 };
     }
 
-    // Register `f` for events named `name`. Same token contract as
+    // Register `f` for events named `name`. Same handle contract as
     // `Signal.on`. `name` is stored by view — it must outlive the registration.
-    fn on(ref this, name: str, f: fn(str, *u8), ctx: *u8 = 0 as *u8, once: bool = false) -> u64 {
+    fn on(ref this, name: str, f: fn(str, *u8), ctx: *u8 = 0 as *u8, once: bool = false) -> Subscription {
         let id: u64 = this._next_id;
         this._next_id = this._next_id + 1u64;
         let added: status::Status = this._subs.append(BusListener {
@@ -229,14 +361,17 @@ impl Bus {
             ctx: ctx,
             id: id,
             once: once,
+            paused: false,
         });
-        return match added {
+        let granted: u64 = match added {
             status::Status::Ok => id,
             _ => 0u64,
         };
+        let bp: *Bus = { #addr_of(this) };
+        return Subscription { _bus: bp, _id: granted };
     }
 
-    fn once(ref this, name: str, f: fn(str, *u8), ctx: *u8 = 0 as *u8) -> u64 {
+    fn once(ref this, name: str, f: fn(str, *u8), ctx: *u8 = 0 as *u8) -> Subscription {
         return this.on(name, f, ctx: ctx, once: true);
     }
 
@@ -316,7 +451,8 @@ impl Bus {
                 match this._subs.at_ptr(i) {
                     option::Option[*BusListener]::Some(p) => {
                         let lid: u64 = { (*p).id };
-                        if lid > last && lid < ceiling && (best == 0u64 || lid < best) {
+                        let lpaused: bool = { (*p).paused };
+                        if !lpaused && lid > last && lid < ceiling && (best == 0u64 || lid < best) {
                             if { (*p).name } == name {
                                 best = lid;
                                 best_f = { (*p).f };
@@ -339,6 +475,57 @@ impl Bus {
         return;
     }
 
+    // True when a listener with this token is still registered (paused or
+    // not).
+    fn has(this, id: u64) -> bool {
+        if id == 0u64 { return false; }
+        var i: usize = 0usize;
+        let n: usize = this._subs.count();
+        while i < n {
+            match this._subs.at_ptr(i) {
+                option::Option[*BusListener]::Some(p) => {
+                    if { (*p).id } == id { return true; }
+                }
+                option::Option[*BusListener]::None => {}
+            }
+            i = i + 1usize;
+        }
+        return false;
+    }
+
+    // Mute the listener with this token: it stays registered, keeps its
+    // place in the order, and is skipped by emit until `resume`. False when
+    // the token is unknown.
+    fn pause(ref this, id: u64) -> bool {
+        return this._set_paused(id, true);
+    }
+
+    // Undo `pause`. False when the token is unknown.
+    fn resume(ref this, id: u64) -> bool {
+        return this._set_paused(id, false);
+    }
+
+    fn _set_paused(ref this, id: u64, paused: bool) -> bool {
+        if id == 0u64 { return false; }
+        var i: usize = 0usize;
+        let n: usize = this._subs.count();
+        while i < n {
+            var hit: bool = false;
+            match this._subs.at_ptr(i) {
+                option::Option[*BusListener]::Some(p) => {
+                    if { (*p).id } == id {
+                        { (*p).paused = paused; }
+                        hit = true;
+                    }
+                }
+                option::Option[*BusListener]::None => {}
+            }
+            if hit { return true; }
+            i = i + 1usize;
+        }
+        return false;
+    }
+
     // Number of listeners registered for `name`.
     fn count(this, name: str) -> usize {
         var total: usize = 0usize;
@@ -359,6 +546,71 @@ impl Bus {
     // Drop every listener for every name.
     fn remove_all(ref this) {
         this._subs.remove_all();
+        return;
+    }
+}
+
+// A handle to one Bus registration — what `Bus.on` and the module verbs
+// return. The handle OWNS the registration: dropping it cancels the
+// listener, so a component that stores its handles in fields unsubscribes
+// automatically when it drops. `detach()` opts out for fire-and-forget
+// wiring. The bus must outlive the handle (its drop reaches the bus by
+// address) and must not move — the shared bus always qualifies. A zeroed
+// handle (`none()`, or a failed `on`) is inert.
+struct Subscription {
+    opaque _bus: *Bus,
+    _id: u64,
+}
+
+impl Subscription {
+    // The inert handle — for fields that subscribe later.
+    fn none() -> Subscription {
+        return Subscription { _bus: 0 as *Bus, _id: 0u64 };
+    }
+
+    // The raw token, for the advanced `off(id)` surface.
+    fn id(this) -> u64 {
+        return this._id;
+    }
+
+    // Still registered (paused or not)?
+    fn active(this) -> bool {
+        if this._id == 0u64 { return false; }
+        return { (*this._bus).has(this._id) };
+    }
+
+    // Remove the listener and make the handle inert. False when already
+    // removed or inert.
+    fn cancel(ref this) -> bool {
+        if this._id == 0u64 { return false; }
+        let removed: bool = { (*this._bus).off(this._id) };
+        this._id = 0u64;
+        return removed;
+    }
+
+    // Keep the registration for the life of the bus, give up control: the
+    // handle becomes inert and its drop no longer cancels.
+    fn detach(ref this) {
+        this._id = 0u64;
+        return;
+    }
+
+    // Mute the listener without removing it. False when unknown or inert.
+    fn pause(this) -> bool {
+        if this._id == 0u64 { return false; }
+        return { (*this._bus).pause(this._id) };
+    }
+
+    // Undo `pause`. False when unknown or inert.
+    fn resume(this) -> bool {
+        if this._id == 0u64 { return false; }
+        return { (*this._bus).resume(this._id) };
+    }
+
+    // Dropping the handle cancels its registration (inert handles no-op).
+    fn drop(ref this) {
+        if this._id == 0u64 { return; }
+        let _removed: bool = { (*this._bus).off(this._id) };
         return;
     }
 }
@@ -389,12 +641,12 @@ fn shared() -> *Bus {
 //
 // Bound methods work here too: `events::on("file:open", this.on_open)`.
 
-fn on(name: str, f: fn(str, *u8), ctx: *u8 = 0 as *u8, once: bool = false) -> u64 {
+fn on(name: str, f: fn(str, *u8), ctx: *u8 = 0 as *u8, once: bool = false) -> Subscription {
     let b: *Bus = shared();
     return { (*b).on(name, f, ctx: ctx, once: once) };
 }
 
-fn once(name: str, f: fn(str, *u8), ctx: *u8 = 0 as *u8) -> u64 {
+fn once(name: str, f: fn(str, *u8), ctx: *u8 = 0 as *u8) -> Subscription {
     let b: *Bus = shared();
     return { (*b).once(name, f, ctx: ctx) };
 }

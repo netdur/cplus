@@ -1,6 +1,6 @@
 # Tutorial
 
-Quick path: depend, import, subscribe, emit, unsubscribe. Read this when you
+Quick path: depend, import, subscribe, emit, let go. Read this when you
 want to use the package in minutes. Deeper rationale and gotchas live in
 [guide.md](guide.md); signatures in [ref.md](ref.md).
 
@@ -17,37 +17,43 @@ import "events/events" as events;
 
 ## Typed signal
 
+`on` returns an owning subscription handle. The listener lives as long as
+the handle: dropping it unsubscribes, `cancel()` unsubscribes now.
+
 ```cplus
 fn on_opened(path: str, ctx: *u8) {
     return;
 }
 
 var opened: events::Signal[str] = events::Signal[str]::new();
-let id: u64 = opened.on(on_opened);
+var sub: events::SignalSubscription[str] = opened.on(on_opened);
 opened.emit("notes.md");
-let removed: bool = opened.off(id);
+let _c: bool = sub.cancel();
 ```
 
-Fire once, then auto-detach:
+Fire once, then auto-detach (the handle is detached — the registration
+must survive the current scope):
 
 ```cplus
-let _one: u64 = opened.once(on_opened);
+var one: events::SignalSubscription[str] = opened.once(on_opened);
+one.detach();
 opened.emit("a.md");   // runs
 opened.emit("b.md");   // already gone
 ```
 
 ## Shared bus (string names)
 
-No shared type between modules — only an event name and a `str` payload:
+No shared type between modules — only an event name and a `str` payload.
+Same handle contract, non-generic `Subscription`:
 
 ```cplus
 fn open_file(path: str, ctx: *u8) {
     return;
 }
 
-let id: u64 = events::on("file:open", open_file);
+var sub: events::Subscription = events::on("file:open", open_file);
 events::emit("file:open", payload: "src/main.cplus");
-events::off(id);
+let _c: bool = sub.cancel();
 events::off_all("file:open");
 let n: usize = events::count("file:open");
 ```
@@ -67,25 +73,45 @@ impl StatusBar {
 }
 
 // bar: StatusBar
-opened.on(bar.on_open);
-events::on("file:open", bar.on_open);
+var s1: events::SignalSubscription[str] = opened.on(bar.on_open);
+var s2: events::Subscription = events::on("file:open", bar.on_open);
+```
+
+## Pause and resume
+
+A paused listener stays registered, keeps its place in the delivery
+order, and is skipped by emit:
+
+```cplus
+let _p: bool = s2.pause();
+events::emit("file:open", payload: "ignored.md");   // s2 skipped
+let _r: bool = s2.resume();
 ```
 
 ## Teardown
 
+Store the handles in the receiver's fields and teardown is automatic: when
+the receiver drops, its handles drop, and each drop cancels its
+registration. No explicit unsubscribe code.
+
 ```cplus
-// drop every listener registered with this receiver
-opened.off_ctx(#addr_of(bar) as *u8);
-events::off_ctx(#addr_of(bar) as *u8);   // shared bus: all names
+struct StatusBar {
+    sub_open: events::Subscription,   // starts events::Subscription::none()
+}
 ```
 
-Keep the receiver alive until you `off` / `off_ctx` / `remove_all`.
+Escape hatches, in order of preference: `cancel()` (unsubscribe now),
+`detach()` (fire-and-forget: registration outlives the handle),
+`off_all(name)` / `off_ctx(ctx)` / `remove_all()` (bulk).
 
 ## Rules you need on day one
 
-- Listeners run in subscription order.
+- KEEP the handle `on` returns. A discarded handle drops immediately —
+  and unsubscribes with it.
+- Listeners run in subscription order; paused listeners are skipped but
+  keep their place.
 - Payload is borrowed for the duration of `emit` — do not store it.
 - Bus event names are borrowed `str`s (use literals); they must outlive the
   subscription — same rule as `ctx`.
-- `off(0)` is always a no-op (`0` is never a live token).
+- The signal/bus must outlive its handles (the shared bus always does).
 - Single-threaded: emit on the thread that owns the listeners.

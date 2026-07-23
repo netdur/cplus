@@ -4,6 +4,11 @@ import "stdlib/io" as io;
 // events test root — `cpc test` discovers the `#[test]` fns below. State
 // shared with handlers lives in statics (handlers are free fns); every test
 // resets what it uses.
+//
+// `on` returns an owning subscription handle: dropping it cancels the
+// registration. Tests therefore BIND every handle (a bare `on(...)`
+// statement would unsubscribe immediately) and call `detach()` where a
+// registration must outlive its handle.
 
 // ---- shared handler state ----------------------------------------------------
 
@@ -32,9 +37,9 @@ fn log_digit(v: i64, ctx: *u8) {
 fn signal_emits_in_subscription_order_with_ctx() {
     reset();
     var s: events::Signal[i64] = events::Signal[i64]::new();
-    let _a: u64 = s.on(log_digit, ctx: 1 as *u8);
-    let _b: u64 = s.on(log_digit, ctx: 2 as *u8);
-    let _c: u64 = s.on(log_digit, ctx: 3 as *u8);
+    let _a: events::SignalSubscription[i64] = s.on(log_digit, ctx: 1 as *u8);
+    let _b: events::SignalSubscription[i64] = s.on(log_digit, ctx: 2 as *u8);
+    let _c: events::SignalSubscription[i64] = s.on(log_digit, ctx: 3 as *u8);
     s.emit(42);
     assert LOG == 123;
     assert SEEN == 42;
@@ -61,7 +66,7 @@ fn read_str(v: str, ctx: *u8) {
 fn signal_str_payload_borrows() {
     reset();
     var s: events::Signal[str] = events::Signal[str]::new();
-    let _a: u64 = s.on(read_str);
+    let _a: events::SignalSubscription[str] = s.on(read_str);
     s.emit("hello");
     s.emit("hi");
     assert HITS == 7;
@@ -79,8 +84,8 @@ fn bump(v: i64, ctx: *u8) {
 fn signal_once_fires_exactly_once() {
     reset();
     var s: events::Signal[i64] = events::Signal[i64]::new();
-    let _a: u64 = s.on(bump);
-    let _b: u64 = s.once(bump);
+    let _a: events::SignalSubscription[i64] = s.on(bump);
+    let _b: events::SignalSubscription[i64] = s.once(bump);
     s.emit(1);
     assert HITS == 2;
     s.emit(1);
@@ -90,7 +95,8 @@ fn signal_once_fires_exactly_once() {
 }
 
 // A once handler that re-subscribes itself: the fresh registration must wait
-// for the NEXT emit (tokens issued mid-emit are above the ceiling).
+// for the NEXT emit (tokens issued mid-emit are above the ceiling). The
+// handler detaches its handle — the registration must outlive the call.
 static RESUB_SIG: events::Signal[i64] = #zero::[events::Signal[i64]]();
 
 fn resub_sig() -> *events::Signal[i64] { return { #addr_of(RESUB_SIG) }; }
@@ -98,7 +104,8 @@ fn resub_sig() -> *events::Signal[i64] { return { #addr_of(RESUB_SIG) }; }
 fn resub(v: i64, ctx: *u8) {
     HITS = HITS + 1;
     let s: *events::Signal[i64] = resub_sig();
-    let _id: u64 = { (*s).once(resub) };
+    var sub: events::SignalSubscription[i64] = { (*s).once(resub) };
+    sub.detach();
     return;
 }
 
@@ -107,7 +114,8 @@ fn signal_once_resubscribing_defers_to_next_emit() {
     reset();
     RESUB_SIG = events::Signal[i64]::new();
     let s: *events::Signal[i64] = resub_sig();
-    let _a: u64 = { (*s).once(resub) };
+    var first: events::SignalSubscription[i64] = { (*s).once(resub) };
+    first.detach();
     { (*s).emit(0); }
     assert HITS == 1;
     { (*s).emit(0); }
@@ -116,21 +124,21 @@ fn signal_once_resubscribing_defers_to_next_emit() {
     return;
 }
 
-// ---- Signal: off ----------------------------------------------------------------
+// ---- Signal: cancel / off ------------------------------------------------------
 
 #[test]
-fn signal_off_removes_and_reports() {
+fn signal_cancel_removes_and_reports() {
     reset();
     var s: events::Signal[i64] = events::Signal[i64]::new();
-    let a: u64 = s.on(bump);
-    let b: u64 = s.on(bump);
-    assert s.off(a);
-    assert !s.off(a);          // already removed
+    var a: events::SignalSubscription[i64] = s.on(bump);
+    var b: events::SignalSubscription[i64] = s.on(bump);
+    assert a.cancel();
+    assert !a.cancel();        // already removed; handle went inert
     assert !s.off(0u64);       // never a valid token
     assert !s.off(9999u64);    // never issued
     s.emit(5);
     assert HITS == 5;          // only b left
-    assert s.off(b);
+    assert b.cancel();
     return;
 }
 
@@ -138,13 +146,93 @@ fn signal_off_removes_and_reports() {
 fn signal_remove_all_drops_everything() {
     reset();
     var s: events::Signal[i64] = events::Signal[i64]::new();
-    let a: u64 = s.on(bump);
-    let _b: u64 = s.on(bump);
+    var a: events::SignalSubscription[i64] = s.on(bump);
+    let _b: events::SignalSubscription[i64] = s.on(bump);
+    let a_id: u64 = a.id();
     s.remove_all();
     assert s.is_empty();
-    assert !s.off(a);          // stale token after remove_all
+    assert !s.off(a_id);       // stale token after remove_all
     s.emit(3);
     assert HITS == 0;
+    return;
+}
+
+// ---- Signal: handle ownership --------------------------------------------------
+
+#[test]
+fn signal_handle_drop_unsubscribes() {
+    reset();
+    var s: events::Signal[i64] = events::Signal[i64]::new();
+    {
+        var a: events::SignalSubscription[i64] = s.on(bump);
+        s.emit(2);
+        assert HITS == 2;
+        assert a.active();
+    }
+    assert s.count() == 0usize;   // the handle's drop cancelled it
+    s.emit(3);
+    assert HITS == 2;
+    return;
+}
+
+#[test]
+fn signal_detach_keeps_registration() {
+    reset();
+    var s: events::Signal[i64] = events::Signal[i64]::new();
+    {
+        var a: events::SignalSubscription[i64] = s.on(bump);
+        a.detach();
+    }
+    s.emit(4);
+    assert HITS == 4;             // survived the handle's drop
+    s.remove_all();
+    return;
+}
+
+#[test]
+fn signal_pause_and_resume() {
+    reset();
+    var s: events::Signal[i64] = events::Signal[i64]::new();
+    var a: events::SignalSubscription[i64] = s.on(log_digit, ctx: 1 as *u8);
+    let _b: events::SignalSubscription[i64] = s.on(log_digit, ctx: 2 as *u8);
+    assert a.pause();
+    s.emit(1);
+    assert LOG == 2;              // a skipped, b fired
+    assert a.active();            // paused is still registered
+    assert a.resume();
+    s.emit(2);
+    assert LOG == 212;            // a fires again, in its ORIGINAL place
+    return;
+}
+
+#[test]
+fn signal_paused_once_waits_for_resume() {
+    reset();
+    var s: events::Signal[i64] = events::Signal[i64]::new();
+    var o: events::SignalSubscription[i64] = s.once(bump);
+    assert o.pause();
+    s.emit(5);
+    assert HITS == 0;
+    assert s.count() == 1usize;   // skipped, still registered
+    assert o.resume();
+    s.emit(7);
+    assert HITS == 7;
+    assert s.count() == 0usize;   // fired once, removed
+    return;
+}
+
+#[test]
+fn inert_handles_are_safe() {
+    var sn: events::SignalSubscription[i64] = events::SignalSubscription[i64]::none();
+    assert !sn.active();
+    assert !sn.cancel();
+    assert !sn.pause();
+    assert !sn.resume();
+    var bn: events::Subscription = events::Subscription::none();
+    assert !bn.active();
+    assert !bn.cancel();
+    assert !bn.pause();
+    assert !bn.resume();
     return;
 }
 
@@ -168,8 +256,11 @@ fn signal_off_during_emit_skips_removed_listener() {
     reset();
     KILL_SIG = events::Signal[i64]::new();
     let s: *events::Signal[i64] = kill_sig();
-    let _a: u64 = { (*s).on(killer) };
-    KILL_TARGET = { (*s).on(bump) };
+    var a: events::SignalSubscription[i64] = { (*s).on(killer) };
+    a.detach();
+    var kt: events::SignalSubscription[i64] = { (*s).on(bump) };
+    KILL_TARGET = kt.id();
+    kt.detach();
     { (*s).emit(100); }
     assert HITS == 1;          // killer ran, bump never did
     assert KILL_SIG.count() == 1usize;
@@ -186,7 +277,8 @@ fn grow_sig() -> *events::Signal[i64] { return { #addr_of(GROW_SIG) }; }
 fn grower(v: i64, ctx: *u8) {
     HITS = HITS + 1;
     let s: *events::Signal[i64] = grow_sig();
-    let _id: u64 = { (*s).on(bump) };
+    var sub: events::SignalSubscription[i64] = { (*s).on(bump) };
+    sub.detach();
     return;
 }
 
@@ -195,7 +287,8 @@ fn signal_on_during_emit_defers_to_next_emit() {
     reset();
     GROW_SIG = events::Signal[i64]::new();
     let s: *events::Signal[i64] = grow_sig();
-    let _a: u64 = { (*s).on(grower) };
+    var a: events::SignalSubscription[i64] = { (*s).on(grower) };
+    a.detach();
     { (*s).emit(0); }
     assert HITS == 1;                      // grower only; the added bump deferred
     assert GROW_SIG.count() == 2usize;
@@ -224,8 +317,10 @@ fn signal_nested_emit_completes() {
     reset();
     NEST_SIG = events::Signal[i64]::new();
     let s: *events::Signal[i64] = nest_sig();
-    let _a: u64 = { (*s).on(nester) };
-    let _b: u64 = { (*s).on(bump) };
+    var a: events::SignalSubscription[i64] = { (*s).on(nester) };
+    a.detach();
+    var b: events::SignalSubscription[i64] = { (*s).on(bump) };
+    b.detach();
     { (*s).emit(1); }
     // outer: nester(1) -> nested emit(10) fires nester(10)+bump(10) -> bump(1)
     assert HITS == 22;
@@ -251,7 +346,7 @@ fn signal_bound_method_listener() {
     reset();
     var c: Counter = Counter { total: 0 };
     var s: events::Signal[i64] = events::Signal[i64]::new();
-    let _id: u64 = s.on(c.add);
+    let _sub: events::SignalSubscription[i64] = s.on(c.add);
     s.emit(5);
     s.emit(2);
     assert c.total == 7;
@@ -274,8 +369,8 @@ fn on_save(payload: str, ctx: *u8) {
 fn bus_routes_by_name() {
     reset();
     var b: events::Bus = events::Bus::new();
-    let _a: u64 = b.on("file:open", on_open);
-    let _b: u64 = b.on("file:save", on_save);
+    let _a: events::Subscription = b.on("file:open", on_open);
+    let _b: events::Subscription = b.on("file:save", on_save);
     b.emit("file:open", payload: "abc");
     assert HITS == 3;
     assert LOG == 0;           // save listener untouched
@@ -289,19 +384,19 @@ fn bus_routes_by_name() {
 }
 
 #[test]
-fn bus_once_off_and_count() {
+fn bus_once_cancel_and_count() {
     reset();
     var b: events::Bus = events::Bus::new();
-    let a: u64 = b.on("tick", on_save);
-    let _o: u64 = b.once("tick", on_save);
+    var a: events::Subscription = b.on("tick", on_save);
+    let _o: events::Subscription = b.once("tick", on_save);
     assert b.count("tick") == 2usize;
     b.emit("tick");
     assert LOG == 2;
     assert b.count("tick") == 1usize;      // once removed
     b.emit("tick");
     assert LOG == 3;
-    assert b.off(a);
-    assert !b.off(a);
+    assert a.cancel();
+    assert !a.cancel();
     assert b.count("tick") == 0usize;
     return;
 }
@@ -310,9 +405,9 @@ fn bus_once_off_and_count() {
 fn bus_off_all_clears_one_name_only() {
     reset();
     var b: events::Bus = events::Bus::new();
-    let _a: u64 = b.on("tick", on_save);
-    let _b: u64 = b.on("tick", on_save);
-    let _c: u64 = b.on("tock", on_open);
+    let _a: events::Subscription = b.on("tick", on_save);
+    let _b: events::Subscription = b.on("tick", on_save);
+    let _c: events::Subscription = b.on("tock", on_open);
     b.off_all("tick");
     assert b.count("tick") == 0usize;
     assert b.count("tock") == 1usize;
@@ -326,28 +421,58 @@ fn bus_off_all_clears_one_name_only() {
 }
 
 #[test]
+fn bus_handle_drop_unsubscribes() {
+    reset();
+    var b: events::Bus = events::Bus::new();
+    {
+        var sub: events::Subscription = b.on("tick", on_save);
+        b.emit("tick");
+        assert LOG == 1;
+        assert sub.active();
+    }
+    assert b.count("tick") == 0usize;
+    b.emit("tick");
+    assert LOG == 1;
+    return;
+}
+
+#[test]
+fn bus_pause_and_resume() {
+    reset();
+    var b: events::Bus = events::Bus::new();
+    var t: events::Subscription = b.on("tick", on_save);
+    assert t.pause();
+    b.emit("tick");
+    assert LOG == 0;              // skipped
+    assert t.active();
+    assert t.resume();
+    b.emit("tick");
+    assert LOG == 1;
+    return;
+}
+
+#[test]
 fn bus_shared_is_one_instance() {
     reset();
     let a: *events::Bus = events::shared();
     let b: *events::Bus = events::shared();
     assert a == b;
-    let id: u64 = { (*a).on("ping", on_save) };
+    var sub: events::Subscription = { (*a).on("ping", on_save) };
     { (*b).emit("ping"); }
     assert LOG == 1;
-    let removed: bool = { (*a).off(id) };
-    assert removed;
+    assert sub.cancel();
     return;
 }
 
-// ---- off_ctx: one-call receiver teardown --------------------------------------
+// ---- off_ctx: bulk receiver teardown ------------------------------------------
 
 #[test]
 fn signal_off_ctx_removes_by_identity() {
     reset();
     var s: events::Signal[i64] = events::Signal[i64]::new();
-    let _a: u64 = s.on(bump, ctx: 1 as *u8);
-    let _b: u64 = s.on(bump, ctx: 1 as *u8);
-    let _c: u64 = s.on(bump, ctx: 2 as *u8);
+    let _a: events::SignalSubscription[i64] = s.on(bump, ctx: 1 as *u8);
+    let _b: events::SignalSubscription[i64] = s.on(bump, ctx: 1 as *u8);
+    let _c: events::SignalSubscription[i64] = s.on(bump, ctx: 2 as *u8);
     let removed: usize = s.off_ctx(1 as *u8);
     assert removed == 2usize;
     assert s.count() == 1usize;
@@ -360,9 +485,9 @@ fn signal_off_ctx_removes_by_identity() {
 fn bus_off_ctx_removes_across_names() {
     reset();
     var b: events::Bus = events::Bus::new();
-    let _a: u64 = b.on("tick", on_save, ctx: 5 as *u8);
-    let _b: u64 = b.on("tock", on_save, ctx: 5 as *u8);
-    let _c: u64 = b.on("tick", on_save, ctx: 6 as *u8);
+    let _a: events::Subscription = b.on("tick", on_save, ctx: 5 as *u8);
+    let _b: events::Subscription = b.on("tock", on_save, ctx: 5 as *u8);
+    let _c: events::Subscription = b.on("tick", on_save, ctx: 6 as *u8);
     let removed: usize = b.off_ctx(5 as *u8);
     assert removed == 2usize;
     assert b.count("tick") == 1usize;
@@ -375,26 +500,40 @@ fn bus_off_ctx_removes_across_names() {
 #[test]
 fn module_verbs_route_through_shared_bus() {
     reset();
-    let id: u64 = events::on("mv:ping", on_save);
-    let _o: u64 = events::once("mv:ping", on_save);
+    var a: events::Subscription = events::on("mv:ping", on_save);
+    let _o: events::Subscription = events::once("mv:ping", on_save);
     assert events::count("mv:ping") == 2usize;
     events::emit("mv:ping");
     assert LOG == 2;
     assert events::count("mv:ping") == 1usize;   // once removed
     events::emit("mv:ping", payload: "x");
     assert LOG == 3;
-    assert events::off(id);
-    assert !events::off(id);
+    assert a.cancel();
+    assert !a.cancel();
     assert events::count("mv:ping") == 0usize;
+    return;
+}
+
+#[test]
+fn module_handle_drop_unsubscribes_shared() {
+    reset();
+    {
+        var sub: events::Subscription = events::on("mv:raii", on_save);
+        events::emit("mv:raii");
+        assert LOG == 1;
+    }
+    assert events::count("mv:raii") == 0usize;   // dropped with the scope
+    events::emit("mv:raii");
+    assert LOG == 1;
     return;
 }
 
 #[test]
 fn module_off_all_and_off_ctx() {
     reset();
-    let _a: u64 = events::on("mv:a", on_save);
-    let _b: u64 = events::on("mv:a", on_save);
-    let _c: u64 = events::on("mv:b", on_open, ctx: 3 as *u8);
+    let _a: events::Subscription = events::on("mv:a", on_save);
+    let _b: events::Subscription = events::on("mv:a", on_save);
+    let _c: events::Subscription = events::on("mv:b", on_open, ctx: 3 as *u8);
     events::off_all("mv:a");
     assert events::count("mv:a") == 0usize;
     assert events::count("mv:b") == 1usize;
@@ -407,12 +546,13 @@ fn module_off_all_and_off_ctx() {
 #[test]
 fn module_remove_all_clears_shared_bus() {
     reset();
-    let a: u64 = events::on("mv:ra", on_save);
-    let _b: u64 = events::on("mv:rb", on_open);
+    var a: events::Subscription = events::on("mv:ra", on_save);
+    let _b: events::Subscription = events::on("mv:rb", on_open);
+    let a_id: u64 = a.id();
     events::remove_all();
     assert events::count("mv:ra") == 0usize;
     assert events::count("mv:rb") == 0usize;
-    assert !events::off(a);   // stale token after remove_all
+    assert !events::off(a_id);   // stale token after remove_all
     return;
 }
 
@@ -433,11 +573,11 @@ impl Recorder {
 fn module_verb_bound_method_listener() {
     reset();
     var r: Recorder = Recorder { total: 0 };
-    let id: u64 = events::on("mv:note", r.on_note);
+    var sub: events::Subscription = events::on("mv:note", r.on_note);
     events::emit("mv:note", payload: "abc");
     events::emit("mv:note", payload: "de");
     assert r.total == 5;
-    assert events::off(id);
+    assert sub.cancel();
     return;
 }
 
