@@ -618,6 +618,38 @@ fn token_field(tokens: *vec::Vec[text::Text], on_change: fn(*u8, *u8) = 0 as fn(
     return view(tf.as_view());
 }
 
+// An NSPathControl — a breadcrumb trail of a file path's components, each
+// clickable. `path` is a filesystem path; the control shows its components with
+// folder icons. `on_click(ctx, sender)` fires when a component is clicked (read
+// the chosen component through the control if needed). Read the whole path back
+// with `path_control_path(node.payload())`.
+fn path_control(path: str, on_click: fn(*u8, *u8) = 0 as fn(*u8, *u8), ctx: *u8 = 0 as *u8, agent_id: str = "") -> flex::Node {
+    let pc = ak::PathControl::new();
+    if path != "" {
+        let url_raw: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSURL\0")), rt::sel(#str_ptr("fileURLWithPath:\0")), bridge::nsstring(path));
+        pc.set_u_r_l(ak::URL::from_raw(url_raw));
+    }
+    if on_click != (0 as fn(*u8, *u8)) {
+        akx::set_control_action_ctx(pc.as_control(), on_click, ctx);
+    }
+    tag_agent(pc.as_view().raw(), agent_id, identity::Role::Text);
+    return view(pc.as_view());
+}
+
+// The path currently shown by a `path_control`, by its payload pointer ("" if
+// none).
+fn path_control_path(view_ptr: *u8) -> text::Text {
+    match ak::PathControl::from_raw(view_ptr).u_r_l() {
+        option::Option[ak::URL]::Some(u) => {
+            let ns: *u8 = rt::msg_id(u.raw(), rt::sel(#str_ptr("path\0")));
+            if ns == { 0 as *u8 } { return text::from_str(""); }
+            return bridge::to_text(ns);
+        }
+        option::Option[ak::URL]::None => { return text::from_str(""); }
+    }
+    return text::from_str("");
+}
+
 // A bordered, scrollable, editable multi-line editor (an NSTextView inside an
 // NSScrollView). Size it with a definite `.height(...)` or `.grow(1.0)`. Read
 // the value with `area_text(node.payload())`. NSTextView has no placeholder, so
@@ -3550,6 +3582,20 @@ fn test_token_field_empty_is_blank() {
     let n: flex::Node = token_field(#addr_of(toks));
     assert n.has_payload();
     assert field_text(n.payload()).equals("");
+}
+
+#[test]
+fn test_path_control_reads_back_its_path() {
+    let n: flex::Node = path_control("/Users/adel/project/main.cplus");
+    assert n.has_payload();
+    assert path_control_path(n.payload()).equals("/Users/adel/project/main.cplus");
+}
+
+#[test]
+fn test_path_control_empty_path_reads_blank() {
+    let n: flex::Node = path_control("");
+    assert n.has_payload();
+    assert path_control_path(n.payload()).equals("");
 }
 
 fn tabs_test_content(idx: i64, ctx: *u8) -> flex::Node {
