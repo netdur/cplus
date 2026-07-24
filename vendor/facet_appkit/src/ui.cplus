@@ -3733,6 +3733,28 @@ fn tabs_test_content(idx: i64, ctx: *u8) -> flex::Node {
 }
 
 #[test]
+fn test_tabs_reflows_the_correct_pane_among_several() {
+    // Multi-pane: driving one host's frame-change must reflow THAT pane (the
+    // lookup keys by host), not a neighbor. Guards a mis-keyed reflow.
+    var labels: vec::Vec[text::Text] = vec::new::[text::Text]();
+    labels.append(text::from_str("A"));
+    labels.append(text::from_str("B"));
+    labels.append(text::from_str("C"));
+    let n: flex::Node = tabs(#addr_of(labels), tabs_test_content, selected: 0 as i64);
+    let tv = ak::TabView::from_raw(n.payload());
+    // Reflow tab 2 (not the selected one) by giving its host a size.
+    let host2: ak::View = match tv.tab_view_item_at_index(2 as i64).view() {
+        option::Option[ak::View]::Some(v) => v,
+        option::Option[ak::View]::None => { assert false; return; }
+    };
+    host2.set_frame(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 140.0 });
+    tab_host_resized(host2.raw());
+    var subs2: vec::Vec[ak::View] = host2.subviews();
+    assert subs2.count() >= (1 as usize);   // tab 2's content installed
+    return;
+}
+
+#[test]
 fn test_tabs_builds_items_and_reads_selection() {
     var labels: vec::Vec[text::Text] = vec::new::[text::Text]();
     labels.append(text::from_str("General"));
