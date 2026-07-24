@@ -1124,6 +1124,66 @@ fn tabs_selected_index(view_ptr: *u8) -> i64 {
 }
 
 // ==========================================================================
+// Popover — a transient panel of facet content anchored to a view. Fixed-size
+// (no reflow): the content is laid out once into a host view of the requested
+// size. The host is wrapped so any content (leaf or container) installs.
+// ==========================================================================
+
+// A shown popover, retained for the process's life — an NSPopover with no
+// strong reference is deallocated and never appears (its content controller +
+// mounted tree ride along so they outlive `show_popover`'s stack frame).
+struct PopoverReg {
+    opaque popover: *u8,
+    vc: ak::ViewController,
+    tree: flex::Node,
+}
+
+static POPOVERS: vec::Vec[PopoverReg] = #zero::[vec::Vec[PopoverReg]]();
+
+// Mount `content` into a fresh host view of `width`x`height` and lay it out. The
+// host becomes the popover's content-controller view. Split out so the content
+// path is testable without a window (show_relative_to_rect needs the anchor in
+// a live window). The returned tree is handed to the caller to retain.
+fn popover_host(take content: flex::Node, width: f64, height: f64, out_tree: *flex::Node) -> ak::View {
+    let host: ak::View = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: width, h: height });
+    var wrap_b: Builder = Builder::new();
+    wrap_b.add(content.grow(1.0f64));
+    var tree: flex::Node = column(wrap_b).grow(1.0f64);
+    tree.calculate_layout(width, height, flex::Direction::LTR);
+    tree.round_to_pixel(2.0f64);
+    apply({ #addr_of(tree) }, host.raw(), false);
+    { *out_tree = tree; }
+    return host;
+}
+
+// Show a popover of `content` anchored to `anchor` (a view pointer — e.g. a
+// button's node.view()). `edge` picks the side it pops toward. Transient: a
+// click outside dismisses it. Returns the popover's raw pointer as a handle for
+// close_popover. Needs the anchor in a live window (call from a click handler).
+fn show_popover(anchor: *u8, take content: flex::Node, width: f64 = 280.0f64, height: f64 = 180.0f64, edge: ak::RectEdge = ak::RectEdge::MaxY) -> *u8 {
+    var tree: flex::Node = flex::Node::new();
+    let host: ak::View = popover_host(content, width, height, { #addr_of(tree) });
+    let vc: ak::ViewController = ak::ViewController::new("", ak::Bundle::from_raw(0 as *u8));
+    vc.set_view(host);
+    let pop: ak::Popover = ak::Popover::new();
+    pop.set_content_view_controller(vc);
+    pop.set_content_size(rt::Size { w: width, h: height });
+    pop.set_behavior(ak::PopoverBehavior::Transient);
+    let av: ak::View = ak::View::from_raw(anchor);
+    pop.show_relative_to_rect(av.bounds(), of_view: av, preferred_edge: edge);
+    let reg: *vec::Vec[PopoverReg] = { #addr_of(POPOVERS) };
+    (*reg).append(PopoverReg { popover: pop.raw(), vc: vc, tree: tree });
+    return pop.raw();
+}
+
+// Dismiss a popover by its handle (from show_popover). Idempotent.
+fn close_popover(handle: *u8) {
+    if handle == { 0 as *u8 } { return; }
+    ak::Popover::from_raw(handle).close();
+    return;
+}
+
+// ==========================================================================
 // File tree — NSOutlineView over an in-memory directory model. The model nodes
 // are heap-boxed at STABLE addresses and leaked (they live with the tree). The
 // data source and selection delegate are weak properties, so they are pinned to
@@ -3532,6 +3592,22 @@ fn test_tabs_reflows_pane_content_when_host_gains_a_size() {
     // positive width (never 0x0).
     host.set_frame(rt::Rect { x: 0.0, y: 0.0, w: 240.0, h: 160.0 });
     tab_host_resized(host.raw());
+    var subs: vec::Vec[ak::View] = host.subviews();
+    assert subs.count() >= (1 as usize);
+    match subs.at_ptr(0 as usize) {
+        option::Option[*ak::View]::Some(sv) => { assert { (*sv).frame().w } > 0.0f64; }
+        option::Option[*ak::View]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn test_popover_host_mounts_and_lays_out_content() {
+    // The testable core of show_popover (the show step needs a live window).
+    // A leaf as popover content installs into the fixed-size host and lays out.
+    var tree: flex::Node = flex::Node::new();
+    let host: ak::View = popover_host(label("hello"), 280.0f64, 180.0f64, { #addr_of(tree) });
+    assert host.frame().w == 280.0f64;
     var subs: vec::Vec[ak::View] = host.subviews();
     assert subs.count() >= (1 as usize);
     match subs.at_ptr(0 as usize) {
