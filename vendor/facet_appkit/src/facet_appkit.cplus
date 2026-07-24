@@ -2490,6 +2490,61 @@ fn add_app_menu_item(menu: ak::Menu, item: *facet::MenuItem, command: u64) {
     return;
 }
 
+// Assemble a flat NSMenu from an app-menu's items — every item becomes a
+// command row via the same target/action trampoline the app menu uses (so a
+// status-item pick runs app code exactly like a menu-bar pick). The group
+// field is ignored: a status-item menu is a single flat dropdown. Pulled out
+// of `install_status_item` so it can be tested without touching NSStatusBar
+// (which needs a running NSApplication).
+fn build_status_menu(items: *vec::Vec[facet::MenuItem]) -> ak::Menu {
+    let ns_menu: ak::Menu = ak::Menu::new("");
+    let command: u64 = ak::event_modifier_flags_n_s_event_modifier_flag_command;
+    let n: usize = { (*items).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match { (*items).at_ptr(i) } {
+            option::Option[*facet::MenuItem]::Some(item) => {
+                add_app_menu_item(ns_menu, item, command);
+            }
+            option::Option[*facet::MenuItem]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return ns_menu;
+}
+
+// Status items must be retained for the process's life — an unreferenced
+// NSStatusItem is deallocated and its menu-bar slot silently disappears.
+static STATUS_ITEMS: vec::Vec[ak::StatusItem] = #zero::[vec::Vec[ak::StatusItem]]();
+
+// Install a menu-bar extra (NSStatusItem): a persistent `title` at the right of
+// the system menu bar whose click drops `menu` (its items run their on_click
+// callbacks, same wiring as the app menu). The item is retained here, so it
+// stays put. Returns the item's raw pointer as a handle for later updates
+// (e.g. reaching its button through ak::StatusItem::from_raw). Needs a running
+// NSApplication — call it after the app is up (from on_attach / after run).
+fn install_status_item(title: str, take menu: facet::AppMenu) -> *u8 {
+    let bar: ak::StatusBar = ak::StatusBar::system_status_bar();
+    let item: ak::StatusItem = bar.status_item_with_length(-1.0f64);   // NSVariableStatusItemLength
+    item.button().as_button().set_title(title);
+    item.set_menu(build_status_menu({ #addr_of(menu.items) }));
+    let reg: *vec::Vec[ak::StatusItem] = { #addr_of(STATUS_ITEMS) };
+    (*reg).append(item);
+    return item.raw();
+}
+
+#[test]
+fn build_status_menu_maps_every_command() {
+    // The menu-assembly half of install_status_item (the NSStatusBar half needs
+    // a running app). Every app-menu command becomes one NSMenu row.
+    var m: facet::AppMenu = facet::empty_app_menu();
+    m.add_command("Status", "Open Dashboard", "", t_noop);
+    m.add_command("Status", "Preferences", "", t_noop);
+    m.add_command("Status", "Quit", "q", t_noop);
+    let ns: ak::Menu = build_status_menu({ #addr_of(m.items) });
+    assert ns.number_of_items() == (3 as i64);
+}
+
 fn add_menu_group(
     main_menu: ak::Menu,
     group_title: str,
