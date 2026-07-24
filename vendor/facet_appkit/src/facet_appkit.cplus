@@ -1364,6 +1364,17 @@ fn install() {
     facet::set_thumb_color_fn(set_thumb_color_impl);
     facet::set_thumb_image_fn(set_thumb_image_impl);
     // ==== END GENERATED ====
+    // GEN:REGS
+    facet::set_background_color_fn(c_set_background_color);
+    facet::set_is_enabled_fn(c_set_is_enabled);
+    facet::set_is_read_only_fn(c_set_is_read_only);
+    facet::set_is_visible_fn(c_set_is_visible);
+    facet::set_opacity_fn(c_set_opacity);
+    facet::set_placeholder_fn(c_set_placeholder);
+    facet::set_progress_fn(c_set_progress);
+    facet::set_text_color_fn(c_set_text_color);
+    facet::set_title_fn(c_set_title);
+// GEN:REGS:END
     facet::set_set_hidden_fn(set_hidden_impl);
     facet::set_add_child_fn(add_child_impl);
     facet::set_remove_child_fn(remove_child_impl);
@@ -2542,6 +2553,37 @@ fn install_status_item(title: str, take menu: facet::AppMenu) -> *u8 {
 }
 
 #[test]
+fn generated_verified_backings_drive_native_and_unbacked_slots_noop() {
+    // The bug-fix contract: only VERIFIED slots are registered (ABI-correct
+    // selector), and unbacked slots no-op through the null-fn path (no message
+    // sent at all). install() wires these app-side; register here for the test.
+    facet::set_is_enabled_fn(c_set_is_enabled);
+    facet::set_is_visible_fn(c_set_is_visible);
+
+    // Verified bool backing -> the native (NSControl.enabled).
+    let btn: ak::Button = ak::Button::new();
+    let hb: facet::Handle = facet::Handle::of(btn.as_view().raw(), 0 as *u8, 0 as *u8, 0 as u32);
+    let _a: facet::Handle = hb.set_is_enabled(false);
+    assert btn.as_control().is_enabled() == false;
+    let _b: facet::Handle = hb.set_is_enabled(true);
+    assert btn.as_control().is_enabled() == true;
+
+    // Inverted semantic adapter: is_visible(false) -> setHidden:(true).
+    let v: ak::View = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 10.0, h: 10.0 });
+    let hv: facet::Handle = facet::Handle::of(v.raw(), 0 as *u8, 0 as *u8, 0 as u32);
+    let _c: facet::Handle = hv.set_is_visible(false);
+    assert v.is_hidden() == true;
+    let _d: facet::Handle = hv.set_is_visible(true);
+    assert v.is_hidden() == false;
+
+    // An UNBACKED slot no-ops safely: no fn is registered, so the Handle method
+    // takes the null-fn path and sends NO message (fixes the wrong-ABI +
+    // guessed-selector bugs — the earlier generic dispatch would have messaged
+    // a wrong/absent selector here).
+    let _e: facet::Handle = hb.set_character_spacing(2.0f64);
+}
+
+#[test]
 fn generated_slider_contract_reaches_the_native() {
     // Proves the bootstrap loop end to end: a portable contract slot generated
     // from the MAUI spec (Handle.set_minimum/set_maximum) routes through the
@@ -3603,6 +3645,105 @@ fn set_thumb_image_impl(h: facet::Handle, v: str) -> bool {
     return false;
 }
 // ==== END GENERATED ====
+// GEN:APPKIT
+// Two shared helpers for the verified per-slot backings below. Each backing
+// sends its OWN ABI-correct message (the send-kind matches the real AppKit
+// method signature); these only cover the guard and the layout invalidation.
+fn slot_responds(view: *u8, sel: *u8) -> bool {
+    return rt::msg_i8_id(view, rt::sel(#str_ptr("respondsToSelector:\0")), sel) != (0 as i8);
+}
+// A property that changes a control's intrinsic size must invalidate facet's
+// retained layout, not just the native view (mirrors set_text_impl).
+fn slot_relayout(h: facet::Handle, view: *u8) {
+    ui::clear_measure_caches(view);
+    if h.flex() != (0 as *u8) {
+        let fp: *flex::Node = h.flex() as *flex::Node;
+        { (*fp).mark_content_changed(); }
+    }
+    let _r: bool = ui::reflow_owner(h.cp(), view);
+    return;
+}
+
+fn c_set_background_color(h: facet::Handle, v: facet::Color) -> bool {
+    let view: *u8 = h.view();
+    if view == (0 as *u8) { return false; }
+    let s: *u8 = rt::sel(#str_ptr("setBackgroundColor:\0"));
+    if !slot_responds(view, s) { return false; }
+    rt::msg_void_id(view, s, ns_color(v).raw());
+    return true;
+}
+fn c_set_is_enabled(h: facet::Handle, v: bool) -> bool {
+    let view: *u8 = h.view();
+    if view == (0 as *u8) { return false; }
+    let s: *u8 = rt::sel(#str_ptr("setEnabled:\0"));
+    if !slot_responds(view, s) { return false; }
+    var b: i8 = 0 as i8;
+    if v { b = 1 as i8; }
+    rt::msg_void_i8(view, s, b);
+    return true;
+}
+fn c_set_is_read_only(h: facet::Handle, v: bool) -> bool {
+    let view: *u8 = h.view();
+    if view == (0 as *u8) { return false; }
+    let s: *u8 = rt::sel(#str_ptr("setEditable:\0"));
+    if !slot_responds(view, s) { return false; }
+    var b: i8 = 1 as i8;
+    if v { b = 0 as i8; }
+    rt::msg_void_i8(view, s, b);
+    return true;
+}
+fn c_set_is_visible(h: facet::Handle, v: bool) -> bool {
+    let view: *u8 = h.view();
+    if view == (0 as *u8) { return false; }
+    let s: *u8 = rt::sel(#str_ptr("setHidden:\0"));
+    if !slot_responds(view, s) { return false; }
+    var b: i8 = 1 as i8;
+    if v { b = 0 as i8; }
+    rt::msg_void_i8(view, s, b);
+    return true;
+}
+fn c_set_opacity(h: facet::Handle, v: f64) -> bool {
+    let view: *u8 = h.view();
+    if view == (0 as *u8) { return false; }
+    let s: *u8 = rt::sel(#str_ptr("setAlphaValue:\0"));
+    if !slot_responds(view, s) { return false; }
+    rt::msg_void_f64(view, s, v);
+    return true;
+}
+fn c_set_placeholder(h: facet::Handle, v: str) -> bool {
+    let view: *u8 = h.view();
+    if view == (0 as *u8) { return false; }
+    let s: *u8 = rt::sel(#str_ptr("setPlaceholderString:\0"));
+    if !slot_responds(view, s) { return false; }
+    rt::msg_void_id(view, s, bridge::nsstring(v));
+    return true;
+}
+fn c_set_progress(h: facet::Handle, v: f64) -> bool {
+    let view: *u8 = h.view();
+    if view == (0 as *u8) { return false; }
+    let s: *u8 = rt::sel(#str_ptr("setDoubleValue:\0"));
+    if !slot_responds(view, s) { return false; }
+    rt::msg_void_f64(view, s, v);
+    return true;
+}
+fn c_set_text_color(h: facet::Handle, v: facet::Color) -> bool {
+    let view: *u8 = h.view();
+    if view == (0 as *u8) { return false; }
+    let s: *u8 = rt::sel(#str_ptr("setTextColor:\0"));
+    if !slot_responds(view, s) { return false; }
+    rt::msg_void_id(view, s, ns_color(v).raw());
+    return true;
+}
+fn c_set_title(h: facet::Handle, v: str) -> bool {
+    let view: *u8 = h.view();
+    if view == (0 as *u8) { return false; }
+    let s: *u8 = rt::sel(#str_ptr("setTitle:\0"));
+    if !slot_responds(view, s) { return false; }
+    rt::msg_void_id(view, s, bridge::nsstring(v));
+    slot_relayout(h, view);
+    return true;
+}
+// GEN:APPKIT:END
 
 // facet::Handle.value hook: read a mounted element's natural value. An
 // NSSplitView reports its divider position (leading pane's trailing edge — the

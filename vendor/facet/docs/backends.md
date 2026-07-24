@@ -79,13 +79,58 @@ hook, that verb no-ops (the portable-by-default posture). `facet/runtime`'s
 | `set_list_builder` | the recycling `list` |
 | `set_raise_fn` | `raise(sender, key)` (bring a keyed element to front) |
 
+## Portable contract (generated from MAUI)
+
+The mutator hooks above started as a hand-picked set (`set_text`, `set_value`,
+and a few more). The larger portable surface — the per-widget properties an app
+sets through a `Handle` (opacity, enabled state, placeholder, colors, and so on)
+— is generated rather than hand-written, so it stays complete and consistent
+across backends.
+
+The source is .NET MAUI's platform-agnostic public API (the `netstandard`
+`PublicAPI.Shipped.txt`). MAUI is a native-control-backed cross-platform
+framework, so its control properties are a proven portable capability set.
+`tools/gen_contract.py` extracts those properties, maps each to a facet slot
+(snake_case name, facet type, per the naming guideline), and emits both halves:
+
+- in `facet.cplus`: a `Handle` method plus a registry fn-pointer per slot (the
+  contract);
+- in the backend: an impl per slot that registers into that fn-pointer (the
+  backing).
+
+Only the marked `GEN:` regions of each file are generated; everything else is
+hand-written.
+
+### Coverage and safety
+
+The contract surface — a `Handle` method per portable slot — is generated in
+full. A backend registers a native backing only for slots it has verified, so
+coverage is intentionally partial and grows over time:
+
+1. An unregistered slot no-ops through the null-fn path: the `Handle` method
+   sends no message at all. This is the safe, honest "inert", the same posture
+   the hand-picked hooks always had.
+2. A registered backing sends the argument-type-correct message for that
+   control's real selector, and invalidates facet's retained layout when the
+   property affects intrinsic size (through the shared relayout helper, the
+   same sequence `set_text` uses).
+
+Registering a slot to a *guessed* selector is not safe. `respondsToSelector:`
+proves a selector exists but not that its argument type matches, so a
+wrong-signature message is undefined behavior, not a no-op (an `int` sent to a
+`CGFloat` setter reads the wrong register bank on arm64). Only verified
+`(selector, argument type)` pairs are registered; every other slot stays inert.
+Native coverage grows by verifying a mapping, adding it to the generator's
+native map, and covering it with a test.
+
 ## Adding a backend
 
 To port facet to a new toolkit, a package supplies:
 
 1. The `Renderer` vtable — one op per widget kind, plus `apply_style`,
    `set_identity`, the wrapper ops, `container`, and the `native` hatch op.
-2. The keyed-direct + lifecycle hook implementations, registered in `install()`.
+2. The keyed-direct + lifecycle hook implementations, and the generated
+   portable-contract backings, registered in `install()`.
 3. A window / run host and a **relayout** primitive (used on window resize and
    after a keyed-direct edit to re-lay the retained tree — geometry only, no
    re-render). The host splits into `open_window` (create + mount, returns)
