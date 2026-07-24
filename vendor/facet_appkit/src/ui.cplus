@@ -760,6 +760,30 @@ fn choose_file() -> option::Option[text::Text] {
     return option::Option[text::Text]::None;
 }
 
+// A modal SAVE panel: asks the user where to write a file, returning the chosen
+// destination path (None on cancel). The write-side twin of `choose_file` — an
+// NSSavePanel with a name field pre-filled with `suggested_name` (e.g.
+// "Untitled.txt"). `message` is an optional prompt shown above the field. The
+// panel offers to create intermediate directories. Same URL.path raw reach as
+// the open panels, so callers never hand-roll it.
+fn save_file(suggested_name: str = "", message: str = "") -> option::Option[text::Text] {
+    let panel = ak::SavePanel::save_panel();
+    panel.set_can_create_directories(true);
+    if suggested_name != "" { panel.set_name_field_string_value(suggested_name); }
+    if message != "" { panel.set_message(message); }
+    let resp: i64 = panel.run_modal();
+    if resp != (1 as i64) { return option::Option[text::Text]::None; }   // NSModalResponseOK == 1
+    match panel.u_r_l() {
+        option::Option[ak::URL]::Some(u) => {
+            let ns: *u8 = rt::msg_id(u.raw(), rt::sel(#str_ptr("path\0")));
+            if ns == { 0 as *u8 } { return option::Option[text::Text]::None; }
+            return option::some(bridge::to_text(ns));
+        }
+        option::Option[ak::URL]::None => { return option::Option[text::Text]::None; }
+    }
+    return option::Option[text::Text]::None;
+}
+
 // A chat-style composer: a bordered, scrollable, editable multi-line text view
 // that submits on Enter and inserts a newline on Shift+Enter or Ctrl+Enter
 // (the latter remapped from U+2028 to a real "\n"). `on_submit(tv, ctx)`
@@ -3285,6 +3309,18 @@ fn test_combo_box_holds_items_and_value() {
     assert ak::ComboBox::from_raw(n.payload()).number_of_items() == (3 as i64);
     // A combo box IS editable — the current text reads back through field_text.
     assert field_text(n.payload()).equals("Rust");
+}
+
+#[test]
+fn test_save_panel_prefills_the_name_field() {
+    // The configuration path of `save_file` (everything before the modal
+    // runModal, which needs a user + XPC and cannot run headless — the same
+    // reason choose_file/choose_directory ship untested). Allocation + the name
+    // field are safe to exercise and prove the binding is wired.
+    let panel = ak::SavePanel::save_panel();
+    panel.set_can_create_directories(true);
+    panel.set_name_field_string_value("Untitled.txt");
+    assert panel.name_field_string_value().equals("Untitled.txt");
 }
 
 #[test]
