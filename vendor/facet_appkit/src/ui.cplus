@@ -544,6 +544,51 @@ fn field_text(view_ptr: *u8) -> text::Text {
     return ak::TextField::from_raw(view_ptr).as_control().string_value();
 }
 
+// An NSSearchField — a rounded query field with a magnifier and a clear button.
+// Editable like `text_field` (it IS an NSTextField subclass), so read the query
+// with `field_text(node.payload())`. `on_search(ctx, sender)` fires when the
+// user commits the query (Return, or after the send delay) — null-fn = no hook.
+fn search_field(placeholder: str = "", value: str = "", on_search: fn(*u8, *u8) = 0 as fn(*u8, *u8), ctx: *u8 = 0 as *u8, agent_id: str = "") -> flex::Node {
+    let sf = ak::SearchField::new();
+    if value != "" { sf.as_control().set_string_value(value); }
+    if placeholder != "" { sf.as_text_field().set_placeholder_string(placeholder); }
+    if on_search != (0 as fn(*u8, *u8)) {
+        akx::set_control_action_ctx(sf.as_control(), on_search, ctx);
+    }
+    tag_agent(sf.as_view().raw(), agent_id, identity::Role::Input);
+    return view(sf.as_view());
+}
+
+// An NSComboBox — an editable text field with a drop-down list of suggestions.
+// Unlike `popup` (a fixed set of choices), the user can type a free value OR
+// pick a row. `items` seed the list; `value` is the initial text. It is a
+// text-field subclass, so read the current text with `field_text(node.payload())`.
+// `on_change(ctx, sender)` fires on selection/commit. Non-data-source mode: the
+// items live in the control (no delegate to keep alive). `items` is BORROWED
+// (read-only, copied into the control) — pass `#addr_of(myvec)`; the caller
+// keeps ownership.
+fn combo_box(items: *vec::Vec[text::Text], value: str = "", on_change: fn(*u8, *u8) = 0 as fn(*u8, *u8), ctx: *u8 = 0 as *u8, agent_id: str = "") -> flex::Node {
+    let cb = ak::ComboBox::new();
+    cb.set_uses_data_source(false);
+    let cnt: usize = { (*items).count() };
+    var i: usize = 0 as usize;
+    while i < cnt {
+        match { (*items).at_ptr(i) } {
+            option::Option[*text::Text]::Some(tp) => {
+                cb.add_item_with_object_value(bridge::nsstring({ (*tp).view() }));
+            }
+            option::Option[*text::Text]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    if value != "" { cb.as_control().set_string_value(value); }
+    if on_change != (0 as fn(*u8, *u8)) {
+        akx::set_control_action_ctx(cb.as_control(), on_change, ctx);
+    }
+    tag_agent(cb.as_view().raw(), agent_id, identity::Role::Input);
+    return view(cb.as_view());
+}
+
 // A bordered, scrollable, editable multi-line editor (an NSTextView inside an
 // NSScrollView). Size it with a definite `.height(...)` or `.grow(1.0)`. Read
 // the value with `area_text(node.payload())`. NSTextView has no placeholder, so
@@ -3211,6 +3256,47 @@ fn test_popup_holds_items_and_selection() {
     assert n.has_payload();
     assert ak::PopUpButton::from_raw(n.payload()).number_of_items() == (3 as i64);
     assert popup_index(n.payload()) == (2 as i64);
+}
+
+#[test]
+fn test_search_field_reads_back_value_and_placeholder() {
+    let n: flex::Node = search_field(placeholder: "Filter files", value: "main");
+    assert n.has_payload();
+    // NSSearchField is an NSTextField subclass — same readback door as text_field.
+    assert field_text(n.payload()).equals("main");
+    assert ak::TextField::from_raw(n.payload()).placeholder_string().equals("Filter files");
+}
+
+#[test]
+fn test_search_field_without_placeholder_is_empty() {
+    let n: flex::Node = search_field(value: "q");
+    assert n.has_payload();
+    assert ak::TextField::from_raw(n.payload()).placeholder_string().equals("");
+}
+
+#[test]
+fn test_combo_box_holds_items_and_value() {
+    var items: vec::Vec[text::Text] = vec::new::[text::Text]();
+    items.append(text::from_str("Swift"));
+    items.append(text::from_str("Rust"));
+    items.append(text::from_str("C+"));
+    let n: flex::Node = combo_box(#addr_of(items), value: "Rust");
+    assert n.has_payload();
+    assert ak::ComboBox::from_raw(n.payload()).number_of_items() == (3 as i64);
+    // A combo box IS editable — the current text reads back through field_text.
+    assert field_text(n.payload()).equals("Rust");
+}
+
+#[test]
+fn test_combo_box_accepts_a_free_value_outside_its_items() {
+    var items: vec::Vec[text::Text] = vec::new::[text::Text]();
+    items.append(text::from_str("Red"));
+    items.append(text::from_str("Green"));
+    // "Violet" is not a listed row — a combo box (unlike popup) keeps it verbatim.
+    let n: flex::Node = combo_box(#addr_of(items), value: "Violet");
+    assert n.has_payload();
+    assert ak::ComboBox::from_raw(n.payload()).number_of_items() == (2 as i64);
+    assert field_text(n.payload()).equals("Violet");
 }
 
 #[test]

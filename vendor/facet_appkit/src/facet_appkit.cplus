@@ -892,6 +892,57 @@ fn ak_popup(ctx: *u8, np: *facet::Node) -> flex::Node {
     return n;
 }
 
+fn ak_search_field(ctx: *u8, np: *facet::Node) -> flex::Node {
+    var n: flex::Node = flex::Node::new();
+    let vp: *text::Text = { #addr_of((*np).value) };
+    let pp: *text::Text = { #addr_of((*np).placeholder) };
+    let ch: fn(*u8, *u8) = { (*np).on_change };
+    let cx: *u8 = { (*np).click_ctx };
+    match (*vp).c_str() {
+        option::Option[text::CString]::Some(vcs) => {
+            let vs: str = { #str_from_raw_parts(vcs.as_ptr(), vcs.count()) };
+            match (*pp).c_str() {
+                option::Option[text::CString]::Some(pcs) => {
+                    let ps: str = { #str_from_raw_parts(pcs.as_ptr(), pcs.count()) };
+                    n = ui::search_field(placeholder: ps, value: vs, on_search: ch, ctx: cx);
+                }
+                option::Option[text::CString]::None => { n = ui::search_field(value: vs, on_search: ch, ctx: cx); }
+            }
+        }
+        option::Option[text::CString]::None => {
+            match (*pp).c_str() {
+                option::Option[text::CString]::Some(pcs) => {
+                    let ps: str = { #str_from_raw_parts(pcs.as_ptr(), pcs.count()) };
+                    n = ui::search_field(placeholder: ps, on_search: ch, ctx: cx);
+                }
+                option::Option[text::CString]::None => { n = ui::search_field(on_search: ch, ctx: cx); }
+            }
+        }
+    };
+    apply_style(n.payload(), facet::kind_search_field(), np);
+    return n;
+}
+
+fn ak_combo_box(ctx: *u8, np: *facet::Node) -> flex::Node {
+    let ch: fn(*u8, *u8) = { (*np).on_change };
+    let cx: *u8 = { (*np).click_ctx };
+    let vp: *text::Text = { #addr_of((*np).value) };
+    // popup_items is owned by the node; ui::combo_box borrows (reads) it.
+    let items: *vec::Vec[text::Text] = { #addr_of((*np).popup_items) };
+    var n: flex::Node = flex::Node::new();
+    match (*vp).c_str() {
+        option::Option[text::CString]::Some(vcs) => {
+            let vs: str = { #str_from_raw_parts(vcs.as_ptr(), vcs.count()) };
+            n = ui::combo_box(items, value: vs, on_change: ch, ctx: cx);
+        }
+        option::Option[text::CString]::None => {
+            n = ui::combo_box(items, on_change: ch, ctx: cx);
+        }
+    };
+    apply_style(n.payload(), facet::kind_combo_box(), np);
+    return n;
+}
+
 fn ak_divider(ctx: *u8, np: *facet::Node) -> flex::Node {
     var n: flex::Node = ui::divider();
     apply_style(n.payload(), facet::kind_divider(), np);
@@ -1571,6 +1622,8 @@ fn renderer() -> facet::Renderer {
         segmented: ak_segmented,
         color_picker: ak_color_picker,
         date_picker: ak_date_picker,
+        search_field: ak_search_field,
+        combo_box: ak_combo_box,
         box: ak_box,
         gauge: ak_gauge,
         path: ak_path,

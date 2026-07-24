@@ -137,6 +137,11 @@ fn kind_window_drag() -> u32 { return 33 as u32; }
 // (close/miniaturize/zoom) into its host view — the traffic lights for a custom
 // titlebar, keeping native behavior (zoom toggle, green-button tiling menu).
 fn kind_window_buttons() -> u32 { return 34 as u32; }
+// A query field with magnifier + clear button (NSSearchField). Leaf op.
+fn kind_search_field() -> u32 { return 35 as u32; }
+// An editable dropdown: type a free value or pick a suggestion (NSComboBox).
+// Leaf op. Distinct from `popup`, which is a fixed non-editable selector.
+fn kind_combo_box() -> u32 { return 36 as u32; }
 
 // Agent-affordance roles — numeric indices aligned with agent_core::Role so
 // Phase 2 can pass them through without a translation table.
@@ -174,6 +179,8 @@ fn role_for_kind(k: u32) -> u32 {
     if k == kind_segmented() { return role_input(); }
     if k == kind_color_picker() { return role_input(); }
     if k == kind_date_picker() { return role_input(); }
+    if k == kind_search_field() { return role_input(); }
+    if k == kind_combo_box() { return role_input(); }
     // image / symbol / divider / progress are non-interactive display.
     return role_group();
 }
@@ -1055,6 +1062,23 @@ fn text_field(placeholder: str = "", value: str = "") -> Node {
     return n;
 }
 
+// A search field (NSSearchField): a query box with a magnifier and a clear
+// button. Editable like `text_field` — read the query with the backend field
+// reader. `on_search` fires when the user commits (Return / send delay).
+fn search_field(
+    placeholder: str = "",
+    value: str = "",
+    on_search: fn(*u8, *u8) = 0 as fn(*u8, *u8),
+    ctx: *u8 = 0 as *u8,
+) -> Node {
+    var n: Node = blank(kind_search_field());
+    n.placeholder = text::from_str(placeholder);
+    n.value = text::from_str(value);
+    n.on_change = on_search;
+    n.click_ctx = ctx;
+    return n;
+}
+
 // A dropdown selector. `items` are the rows; `selected` the initial index.
 // `on_change` fires on a new selection (read the index with the backend reader).
 fn popup(
@@ -1086,6 +1110,24 @@ fn menu(
     n.on_change = on_change;
     n.click_ctx = ctx;
     n.pull_down = true;
+    return n;
+}
+
+// An editable dropdown (NSComboBox): the user types a free value OR picks one
+// of `items`. `value` is the initial text; `on_change` fires on selection or
+// commit. Read the current text with the backend field reader — unlike `popup`,
+// the value is not restricted to the listed rows.
+fn combo_box(
+    take items: vec::Vec[text::Text],
+    value: str = "",
+    on_change: fn(*u8, *u8) = 0 as fn(*u8, *u8),
+    ctx: *u8 = 0 as *u8,
+) -> Node {
+    var n: Node = blank(kind_combo_box());
+    n.popup_items = items;
+    n.value = text::from_str(value);
+    n.on_change = on_change;
+    n.click_ctx = ctx;
     return n;
 }
 
@@ -3132,6 +3174,8 @@ struct Renderer {
     segmented:   fn(*u8, *Node) -> flex::Node,
     color_picker: fn(*u8, *Node) -> flex::Node,
     date_picker: fn(*u8, *Node) -> flex::Node,
+    search_field: fn(*u8, *Node) -> flex::Node,
+    combo_box:   fn(*u8, *Node) -> flex::Node,
     box:         fn(*u8, *Node) -> flex::Node,
     gauge:       fn(*u8, *Node) -> flex::Node,
     path:        fn(*u8, *Node) -> flex::Node,
@@ -3299,6 +3343,14 @@ fn mount(np: *Node, r: Renderer) -> flex::Node {
         is_widget = true;
     } else if k == kind_date_picker() {
         let f: fn(*u8, *Node) -> flex::Node = r.date_picker;
+        n = f(r.ctx, np);
+        is_widget = true;
+    } else if k == kind_search_field() {
+        let f: fn(*u8, *Node) -> flex::Node = r.search_field;
+        n = f(r.ctx, np);
+        is_widget = true;
+    } else if k == kind_combo_box() {
+        let f: fn(*u8, *Node) -> flex::Node = r.combo_box;
         n = f(r.ctx, np);
         is_widget = true;
     } else if k == kind_box() {
@@ -3857,6 +3909,30 @@ fn facet_tier2_roles() {
 }
 
 #[test]
+fn facet_search_and_combo_ctors_set_kind_and_config() {
+    let sf: Node = search_field(placeholder: "Filter", value: "main", on_search: click_a);
+    assert sf.kind == kind_search_field();
+    assert sf.placeholder.view() == "Filter";
+    assert sf.value.view() == "main";
+    assert sf.on_change != null_fn();
+
+    var items: vec::Vec[text::Text] = vec::new::[text::Text]();
+    items.append(text::from_str("Red"));
+    items.append(text::from_str("Green"));
+    items.append(text::from_str("Blue"));
+    let cb: Node = combo_box(items, value: "Violet", on_change: click_a);
+    assert cb.kind == kind_combo_box();
+    assert cb.popup_items.count() == (3 as usize);
+    // A combo box keeps a free value that is not one of its listed rows.
+    assert cb.value.view() == "Violet";
+    assert cb.on_change != null_fn();
+
+    // Both are readable input affordances.
+    assert role_for_kind(kind_search_field()) == role_input();
+    assert role_for_kind(kind_combo_box()) == role_input();
+}
+
+#[test]
 fn facet_native_hatch_carries_handle() {
     let n: Node = native(0xBEEF as *u8).frame(200.0f64, 120.0f64);
     assert n.kind == kind_native();
@@ -4136,6 +4212,8 @@ fn fake_renderer() -> Renderer {
         segmented: fake_segmented,
         color_picker: fake_color_picker,
         date_picker: fake_date_picker,
+        search_field: fake_text_field,
+        combo_box: fake_popup,
         box: fake_box,
         gauge: fake_gauge,
         path: fake_path,

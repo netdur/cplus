@@ -439,6 +439,8 @@ fn renderer() -> facet::Renderer {
         segmented: gtk_segmented,
         color_picker: gtk_color_picker,
         date_picker: gtk_date_picker,
+        search_field: gtk_text_field,
+        combo_box: gtk_popup,
         box: gtk_box,
         gauge: gtk_gauge,
         path: gtk_path,
