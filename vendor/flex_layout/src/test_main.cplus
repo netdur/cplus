@@ -1,0 +1,5 @@
+// Test root: keep the platform-neutral responsive layer separate from the core
+// engine while including both modules in package-wide test discovery.
+
+import "./flex_layout" as flex;
+import "./responsive" as responsive;

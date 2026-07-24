@@ -280,6 +280,46 @@ root.round_to_pixel(2.0f64);   // retina half-points
 Re-calling `calculate_layout` skips unchanged subtrees when style/grid/children
 match the last pass. Deep mutations invalidate correctly — nothing to opt in.
 
+## Responsive configuration
+
+The flex/grid engine intentionally does not identify devices or own global
+screen state. The optional `flex_layout/responsive` module converts viewport
+numbers supplied by a host into application-defined layout classes:
+
+```cplus
+import "flex_layout/responsive" as responsive;
+
+var screens: responsive::ResponsiveConfig =
+    responsive::ResponsiveConfig::new("desktop");
+screens.add_breakpoint("mobile", 300.0f64);
+screens.add_breakpoint("tablet", 900.0f64);
+
+let env: responsive::LayoutEnvironment =
+    screens.resolve(viewport_width, viewport_height);
+
+var root: flex::Node = if env.is("mobile") {
+    compact_layout()
+} else {
+    regular_layout()
+};
+root.calculate_layout(env.width(), env.height(), flex::Direction::LTR);
+```
+
+Each breakpoint is an inclusive maximum width. The smallest matching maximum
+wins, independent of registration order; the fallback applies above all
+breakpoints. Names such as `mobile`, `compact`, or `sidebar` have no built-in
+meaning.
+
+Thresholds are expressed in the same logical unit as `viewport_width`: AppKit
+points, CSS pixels, or another unit selected by the host. The module does not
+perform DPI conversion or inspect a physical display.
+
+On resize, resolve again. When `next.same_class(previous)` is true, the existing
+tree can be passed straight to `calculate_layout`. When it is false, reapply the
+new class's styles or rebuild the tree before layout. This split keeps ordinary
+fluid resizing cheap while leaving structural adaptation under application or
+adapter control.
+
 ## Adapter sketch
 
 Walk the node tree with your view tree; set frames from `layout_frame()`;

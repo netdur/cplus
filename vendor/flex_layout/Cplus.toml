@@ -6,5 +6,9 @@ edition = "2026"
 # flex_layout — CSS Flexbox + Grid layout engine (pure C+, no UI kit).
 # Node tree → calculate_layout → absolute frames. See docs/.
 
+[[bin]]
+name = "flex_layout_tests"
+path = "src/test_main.cplus"
+
 [dependencies]
 stdlib = "*"

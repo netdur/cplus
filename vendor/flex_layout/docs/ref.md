@@ -146,6 +146,21 @@ the pointer, so it stays UI-kit agnostic.
 
 Usage rules and examples: [guide.md](guide.md) (`@flex` DSL and HIG).
 
+## Responsive module
+
+Import separately with `import "flex_layout/responsive" as responsive;`.
+It has no dependency on the flex algorithm or a platform UI toolkit.
+
+| Type | API |
+|---|---|
+| `ResponsiveConfig` | `::new(fallback)`, `add_breakpoint(name, max_width)`, `remove_breakpoint(name)`, `remove_all_breakpoints()`, `set_fallback(name)`, `breakpoint_count()`, `resolve(width, height)` |
+| `LayoutEnvironment` | `width()`, `height()`, `class_name()`, `is(name)`, `breakpoint()`, `matched_breakpoint()`, `orientation()`, `same_class(other)` |
+| `Orientation` | `Portrait`, `Landscape`, `Square` |
+
+Breakpoints are inclusive maximum widths. Resolution chooses the smallest
+matching maximum, so configuration order does not matter. Above every maximum,
+the configured fallback class is used.
+
 ## Notes on move semantics
 
 - `add_child(take child)` and the DSL `Builder::add(take item)` **consume** the
