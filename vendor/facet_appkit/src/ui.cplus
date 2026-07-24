@@ -1184,6 +1184,92 @@ fn tabs_selected_index(view_ptr: *u8) -> i64 {
 }
 
 // ==========================================================================
+// Grid — an NSCollectionView of fixed-size cells, each hosting a facet subtree.
+// A flow layout tiles cells left-to-right, wrapping to new rows; the whole grid
+// scrolls vertically. Like `list`, a data source drives it: `cell(index, ctx)`
+// builds each cell's content on demand, mounted into the cell's item view. Cell
+// size is fixed (the flow layout's itemSize), so each cell lays out once — no
+// per-cell reflow.
+// ==========================================================================
+
+fn grid_ds_pin_key() -> *u8 { return { 28713 as *u8 }; }
+fn grid_ctx_key() -> *u8 { return { 28714 as *u8 }; }
+
+// Per-grid state, malloc-boxed and pinned on the collection view (its address is
+// the data source's `user` pointer, so the callbacks recover it).
+struct GridCtx {
+    item_fn: fn(i64, *u8) -> flex::Node,   // (index, ctx) — ctx trails so a component method binds
+    opaque caller_ctx: *u8,
+    count: i64,
+    item_w: f64,
+    item_h: f64,
+}
+
+fn grid_num_items_imp(user: *u8, cv: *u8, section: i64) -> i64 {
+    let c: *GridCtx = { user as *GridCtx };
+    return { (*c).count };
+}
+
+// Build one cell: an NSCollectionViewItem whose view hosts the freshly-mounted
+// content for `indexPath.item`, laid out to the fixed cell size. The item is +1
+// from `new()`; NSCollectionView retains it (these handles are non-owning, so
+// no premature release — same donation `list` makes with its cell views).
+fn grid_item_imp(user: *u8, cv: *u8, index_path: *u8) -> *u8 {
+    let c: *GridCtx = { user as *GridCtx };
+    let idx: i64 = ak::IndexPath::from_raw(index_path).item();
+    let iw: f64 = { (*c).item_w };
+    let ih: f64 = { (*c).item_h };
+    let item: ak::CollectionViewItem = ak::CollectionViewItem::new();
+    let host: ak::View = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: iw, h: ih });
+    let f: fn(i64, *u8) -> flex::Node = { (*c).item_fn };
+    // Fill-wrap the content so a bare leaf cell installs too (see `tabs`).
+    var wrap_b: Builder = Builder::new();
+    wrap_b.add(f(idx, { (*c).caller_ctx }).grow(1.0f64));
+    var tree: flex::Node = column(wrap_b).grow(1.0f64);
+    tree.calculate_layout(iw, ih, flex::Direction::LTR);
+    tree.round_to_pixel(2.0f64);
+    apply({ #addr_of(tree) }, host.raw(), false);
+    run_post_render_hook();   // drain any deferred scroll/split the cell mounted
+    item.as_view_controller().set_view(host);
+    return item.raw();
+}
+
+// A scrollable grid of `count` fixed-size cells. `cell(index, ctx)` builds each
+// cell's content. `item_width`/`item_height` set the cell size; `spacing` is the
+// gap between cells. Read/refresh by rebuilding (like `list`).
+fn grid(count: i64, cell: fn(i64, *u8) -> flex::Node, item_width: f64 = 120.0f64, item_height: f64 = 120.0f64, spacing: f64 = 10.0f64, ctx: *u8 = 0 as *u8, agent_id: str = "") -> flex::Node {
+    let cv: ak::CollectionView = ak::CollectionView::new_with_frame(rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 });
+    // NSCollectionViewFlowLayout has no bound constructor — alloc/init it raw.
+    let layout_raw: *u8 = rt::msg_id(rt::msg_id(rt::get_class(#str_ptr("NSCollectionViewFlowLayout\0")), rt::sel(#str_ptr("alloc\0"))), rt::sel(#str_ptr("init\0")));
+    let layout: ak::CollectionViewFlowLayout = ak::CollectionViewFlowLayout::from_raw(layout_raw);
+    layout.set_item_size(rt::Size { w: item_width, h: item_height });
+    layout.set_minimum_line_spacing(spacing);
+    layout.set_minimum_interitem_spacing(spacing);
+    cv.set_collection_view_layout(layout.as_collection_view_layout());
+
+    let gbox: *GridCtx = { malloc(#size_of::[GridCtx]()) as *GridCtx };
+    { *gbox = GridCtx { item_fn: cell, caller_ctx: ctx, count: count, item_w: item_width, item_h: item_height }; }
+    rt::set_associated_object(cv.raw(), grid_ctx_key(), gbox as *u8, 0 as usize);
+
+    var ds: ak::CollectionViewDataSource = ak::CollectionViewDataSource_new(gbox as *u8);
+    ds.set_collection_view_number_of_items_in_section(grid_num_items_imp);
+    ds.set_collection_view_item_for_represented_object_at_index_path(grid_item_imp);
+    let dsbox: *ak::CollectionViewDataSource = { malloc(#size_of::[ak::CollectionViewDataSource]()) as *ak::CollectionViewDataSource };
+    { *dsbox = ds; }
+    let dsobj: *u8 = ak::create_CollectionViewDataSource(dsbox);
+    cv.set_data_source(dsobj);
+    synth::retain_associated(cv.raw(), grid_ds_pin_key(), dsobj);
+
+    cv.reload_data();
+
+    let scroll: ak::ScrollView = ak::ScrollView::new(rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 });
+    scroll.set_has_vertical_scroller(true);
+    scroll.set_document_view(cv.as_view());
+    tag_agent(scroll.as_view().raw(), agent_id, identity::Role::List);
+    return fixed_view(scroll.as_view());
+}
+
+// ==========================================================================
 // Popover — a transient panel of facet content anchored to a view. Fixed-size
 // (no reflow): the content is laid out once into a host view of the requested
 // size. The host is wrapped so any content (leaf or container) installs.
@@ -3683,6 +3769,31 @@ fn test_tabs_reflows_pane_content_when_host_gains_a_size() {
     host.set_frame(rt::Rect { x: 0.0, y: 0.0, w: 240.0, h: 160.0 });
     tab_host_resized(host.raw());
     var subs: vec::Vec[ak::View] = host.subviews();
+    assert subs.count() >= (1 as usize);
+    match subs.at_ptr(0 as usize) {
+        option::Option[*ak::View]::Some(sv) => { assert { (*sv).frame().w } > 0.0f64; }
+        option::Option[*ak::View]::None => { assert false; }
+    }
+    return;
+}
+
+fn grid_test_cell(idx: i64, ctx: *u8) -> flex::Node {
+    return label("cell");
+}
+
+#[test]
+fn test_grid_counts_and_builds_a_laid_out_cell() {
+    var gc: GridCtx = GridCtx { item_fn: grid_test_cell, caller_ctx: 0 as *u8, count: 7 as i64, item_w: 100.0f64, item_h: 80.0f64 };
+    let up: *u8 = { #addr_of(gc) as *u8 };
+    // The count callback reports the model size.
+    assert grid_num_items_imp(up, 0 as *u8, 0 as i64) == (7 as i64);
+    // Build cell 2 through a real NSIndexPath; the item hosts laid-out content
+    // (guards the empty-cell / 0x0 failure mode, like the tab reflow test).
+    let ip: *u8 = rt::msg_id_i64_i64(rt::get_class(#str_ptr("NSIndexPath\0")), rt::sel(#str_ptr("indexPathForItem:inSection:\0")), 2 as i64, 0 as i64);
+    let item_raw: *u8 = grid_item_imp(up, 0 as *u8, ip);
+    assert item_raw != { 0 as *u8 };
+    let item: ak::CollectionViewItem = ak::CollectionViewItem::from_raw(item_raw);
+    var subs: vec::Vec[ak::View] = item.as_view_controller().view().subviews();
     assert subs.count() >= (1 as usize);
     match subs.at_ptr(0 as usize) {
         option::Option[*ak::View]::Some(sv) => { assert { (*sv).frame().w } > 0.0f64; }
