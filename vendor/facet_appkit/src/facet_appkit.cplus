@@ -943,6 +943,16 @@ fn ak_combo_box(ctx: *u8, np: *facet::Node) -> flex::Node {
     return n;
 }
 
+fn ak_token_field(ctx: *u8, np: *facet::Node) -> flex::Node {
+    let ch: fn(*u8, *u8) = { (*np).on_change };
+    let cx: *u8 = { (*np).click_ctx };
+    // popup_items holds the seed tokens; ui::token_field borrows (reads) them.
+    let toks: *vec::Vec[text::Text] = { #addr_of((*np).popup_items) };
+    var n: flex::Node = ui::token_field(toks, on_change: ch, ctx: cx);
+    apply_style(n.payload(), facet::kind_token_field(), np);
+    return n;
+}
+
 fn ak_divider(ctx: *u8, np: *facet::Node) -> flex::Node {
     var n: flex::Node = ui::divider();
     apply_style(n.payload(), facet::kind_divider(), np);
@@ -1624,6 +1634,7 @@ fn renderer() -> facet::Renderer {
         date_picker: ak_date_picker,
         search_field: ak_search_field,
         combo_box: ak_combo_box,
+        token_field: ak_token_field,
         box: ak_box,
         gauge: ak_gauge,
         path: ak_path,

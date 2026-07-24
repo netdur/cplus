@@ -441,6 +441,7 @@ fn renderer() -> facet::Renderer {
         date_picker: gtk_date_picker,
         search_field: gtk_text_field,
         combo_box: gtk_popup,
+        token_field: gtk_text_field,
         box: gtk_box,
         gauge: gtk_gauge,
         path: gtk_path,

@@ -142,6 +142,9 @@ fn kind_search_field() -> u32 { return 35 as u32; }
 // An editable dropdown: type a free value or pick a suggestion (NSComboBox).
 // Leaf op. Distinct from `popup`, which is a fixed non-editable selector.
 fn kind_combo_box() -> u32 { return 36 as u32; }
+// An editable field whose text becomes discrete pill tokens (NSTokenField).
+// Leaf op.
+fn kind_token_field() -> u32 { return 37 as u32; }
 
 // Agent-affordance roles — numeric indices aligned with agent_core::Role so
 // Phase 2 can pass them through without a translation table.
@@ -181,6 +184,7 @@ fn role_for_kind(k: u32) -> u32 {
     if k == kind_date_picker() { return role_input(); }
     if k == kind_search_field() { return role_input(); }
     if k == kind_combo_box() { return role_input(); }
+    if k == kind_token_field() { return role_input(); }
     // image / symbol / divider / progress are non-interactive display.
     return role_group();
 }
@@ -1126,6 +1130,21 @@ fn combo_box(
     var n: Node = blank(kind_combo_box());
     n.popup_items = items;
     n.value = text::from_str(value);
+    n.on_change = on_change;
+    n.click_ctx = ctx;
+    return n;
+}
+
+// A token field (NSTokenField): free text that becomes discrete pill tokens
+// (tags, recipients). `tokens` seed it; `on_change` fires on edit. Read the
+// comma-joined tokens with the backend field reader (split on ',').
+fn token_field(
+    take tokens: vec::Vec[text::Text],
+    on_change: fn(*u8, *u8) = 0 as fn(*u8, *u8),
+    ctx: *u8 = 0 as *u8,
+) -> Node {
+    var n: Node = blank(kind_token_field());
+    n.popup_items = tokens;
     n.on_change = on_change;
     n.click_ctx = ctx;
     return n;
@@ -3176,6 +3195,7 @@ struct Renderer {
     date_picker: fn(*u8, *Node) -> flex::Node,
     search_field: fn(*u8, *Node) -> flex::Node,
     combo_box:   fn(*u8, *Node) -> flex::Node,
+    token_field: fn(*u8, *Node) -> flex::Node,
     box:         fn(*u8, *Node) -> flex::Node,
     gauge:       fn(*u8, *Node) -> flex::Node,
     path:        fn(*u8, *Node) -> flex::Node,
@@ -3351,6 +3371,10 @@ fn mount(np: *Node, r: Renderer) -> flex::Node {
         is_widget = true;
     } else if k == kind_combo_box() {
         let f: fn(*u8, *Node) -> flex::Node = r.combo_box;
+        n = f(r.ctx, np);
+        is_widget = true;
+    } else if k == kind_token_field() {
+        let f: fn(*u8, *Node) -> flex::Node = r.token_field;
         n = f(r.ctx, np);
         is_widget = true;
     } else if k == kind_box() {
@@ -3930,6 +3954,15 @@ fn facet_search_and_combo_ctors_set_kind_and_config() {
     // Both are readable input affordances.
     assert role_for_kind(kind_search_field()) == role_input();
     assert role_for_kind(kind_combo_box()) == role_input();
+
+    var toks: vec::Vec[text::Text] = vec::new::[text::Text]();
+    toks.append(text::from_str("tag1"));
+    toks.append(text::from_str("tag2"));
+    let tk: Node = token_field(toks, on_change: click_a);
+    assert tk.kind == kind_token_field();
+    assert tk.popup_items.count() == (2 as usize);
+    assert tk.on_change != null_fn();
+    assert role_for_kind(kind_token_field()) == role_input();
 }
 
 #[test]
@@ -4214,6 +4247,7 @@ fn fake_renderer() -> Renderer {
         date_picker: fake_date_picker,
         search_field: fake_text_field,
         combo_box: fake_popup,
+        token_field: fake_text_field,
         box: fake_box,
         gauge: fake_gauge,
         path: fake_path,
