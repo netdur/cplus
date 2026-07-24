@@ -1017,6 +1017,113 @@ fn set_area_text(view_ptr: *u8, value: str) {
 }
 
 // ==========================================================================
+// Native tab view — an NSTabView whose tabs each host a facet subtree. Each
+// tab's content is mounted into its own host view and (re)laid out to the host
+// whenever it resizes. NSTabView installs a tab's view lazily on first
+// selection and sizes it to the content rect; a frame-change observer catches
+// that (and every later resize) and reflows the pane. Non-selected tabs stay
+// unmaterialized until picked, then reflow on their first real size — same
+// deferred-apply shape as split panes.
+// ==========================================================================
+
+// A hosted tab pane: its content subtree, relaid into `host` on every resize.
+// `host` is the registry key (a stable NSView pointer) and the reflow target.
+struct TabPane {
+    opaque host: *u8,        // the tab item's host view (non-owning; the tab view retains it)
+    tree: flex::Node,        // the pane's mounted subtree, relaid on every resize
+    applied: bool,           // false until the first apply installs the views
+}
+
+static TAB_PANES: vec::Vec[TabPane] = #zero::[vec::Vec[TabPane]]();
+
+// Lay one pane out at its host's CURRENT size: first pass installs the views
+// (apply), later passes reposition the existing ones. A 0-sized host (not laid
+// out yet — an unselected tab) is skipped until it gains a real frame.
+fn reflow_tab_pane(ep: *TabPane) {
+    let host_ptr: *u8 = { (*ep).host };
+    let hf: rt::Rect = ak::View::from_raw(host_ptr).frame();
+    if hf.w <= 0.0f64 { return; }
+    if hf.h <= 0.0f64 { return; }
+    let tp: *flex::Node = { #addr_of((*ep).tree) };
+    (*tp).calculate_layout(hf.w, hf.h, flex::Direction::LTR);
+    (*tp).round_to_pixel(2.0f64);
+    if { (*ep).applied } == false {
+        apply(tp, host_ptr, false);
+        { (*ep).applied = true; }
+    } else {
+        reposition(tp, false);
+    }
+    return;
+}
+
+// Frame-change callback (ctx = the host view pointer). Vec growth moves the
+// TabPane structs, so we key by the stable host pointer, never a cached
+// *TabPane.
+fn tab_host_resized(host_ctx: *u8) {
+    let reg: *vec::Vec[TabPane] = { #addr_of(TAB_PANES) };
+    let n: usize = { (*reg).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*reg).at_ptr(i) {
+            option::Option[*TabPane]::Some(ep) => {
+                if { (*ep).host } == host_ctx { reflow_tab_pane(ep); return; }
+            }
+            option::Option[*TabPane]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// A native tab view. `labels` are the tab titles; `content(index, ctx)` builds
+// the mounted subtree for each tab (called once per tab at construction, like a
+// list row builder). `selected` is the initially-shown tab. Read the active tab
+// with `tabs_selected_index(node.payload())`. Native tab switching handles
+// showing/hiding; each pane reflows to the tab content rect on resize.
+fn tabs(labels: *vec::Vec[text::Text], content: fn(i64, *u8) -> flex::Node, ctx: *u8 = 0 as *u8, selected: i64 = 0 as i64, agent_id: str = "") -> flex::Node {
+    let tv: ak::TabView = ak::TabView::new();
+    let cnt: usize = { (*labels).count() };
+    let reg: *vec::Vec[TabPane] = { #addr_of(TAB_PANES) };
+    var i: usize = 0 as usize;
+    while i < cnt {
+        let host: ak::View = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 });
+        let hraw: *u8 = host.raw();
+        // Wrap the tab's content in a fill container so `apply` always has a
+        // child to install into the host — a bare leaf (a single control as a
+        // tab page) would otherwise install nothing and render empty. A
+        // container content nests harmlessly; grow lets either fill the host.
+        var wrap_b: Builder = Builder::new();
+        wrap_b.add(content(i as i64, ctx).grow(1.0f64));
+        let subtree: flex::Node = column(wrap_b).grow(1.0f64);
+        (*reg).append(TabPane { host: hraw, tree: subtree, applied: false });
+        akx::observe_frame_change(host, tab_host_resized, hraw);
+        let item: ak::TabViewItem = ak::TabViewItem::new(0 as *u8);
+        match (*labels).at_ptr(i) {
+            option::Option[*text::Text]::Some(lp) => { item.set_label({ (*lp).view() }); }
+            option::Option[*text::Text]::None => { }
+        }
+        item.set_view(host);
+        tv.add_tab_view_item(item);
+        i = i +% (1 as usize);
+    }
+    if selected > (0 as i64) && selected < (cnt as i64) {
+        tv.select_tab_view_item_at_index(selected);
+    }
+    tag_agent(tv.as_view().raw(), agent_id, identity::Role::Group);
+    return fixed_view(tv.as_view());
+}
+
+// The index of the active tab, by the tab view's payload pointer (-1 if none).
+fn tabs_selected_index(view_ptr: *u8) -> i64 {
+    let tv: ak::TabView = ak::TabView::from_raw(view_ptr);
+    match tv.selected_tab_view_item() {
+        option::Option[ak::TabViewItem]::Some(it) => { return tv.index_of_tab_view_item(it); }
+        option::Option[ak::TabViewItem]::None => { return -1 as i64; }
+    }
+    return -1 as i64;
+}
+
+// ==========================================================================
 // File tree — NSOutlineView over an in-memory directory model. The model nodes
 // are heap-boxed at STABLE addresses and leaked (they live with the tree). The
 // data source and selection delegate are weak properties, so they are pinned to
@@ -3383,6 +3490,55 @@ fn test_token_field_empty_is_blank() {
     let n: flex::Node = token_field(#addr_of(toks));
     assert n.has_payload();
     assert field_text(n.payload()).equals("");
+}
+
+fn tabs_test_content(idx: i64, ctx: *u8) -> flex::Node {
+    return label("pane");
+}
+
+#[test]
+fn test_tabs_builds_items_and_reads_selection() {
+    var labels: vec::Vec[text::Text] = vec::new::[text::Text]();
+    labels.append(text::from_str("General"));
+    labels.append(text::from_str("Editor"));
+    labels.append(text::from_str("Advanced"));
+    let before: usize = TAB_PANES.count();
+    let n: flex::Node = tabs(#addr_of(labels), tabs_test_content, selected: 1 as i64);
+    assert n.has_payload();
+    let tv = ak::TabView::from_raw(n.payload());
+    assert tv.number_of_tab_view_items() == (3 as i64);
+    // Each tab registered one hosted pane.
+    assert TAB_PANES.count() == before +% (3 as usize);
+    // Selection reads back through the payload.
+    assert tabs_selected_index(n.payload()) == (1 as i64);
+}
+
+#[test]
+fn test_tabs_reflows_pane_content_when_host_gains_a_size() {
+    // Guards the presented-at-0x0 failure mode: a tab's content must lay out
+    // into its host once the host has a real frame. NSTabView sizes the host and
+    // the frame-change observer reflows the pane. A bare leaf as tab content
+    // (exercised here) must install too — the fill-container wrap ensures apply
+    // always has a child to place.
+    var labels: vec::Vec[text::Text] = vec::new::[text::Text]();
+    labels.append(text::from_str("Only"));
+    let n: flex::Node = tabs(#addr_of(labels), tabs_test_content);
+    let tv = ak::TabView::from_raw(n.payload());
+    let host: ak::View = match tv.tab_view_item_at_index(0 as i64).view() {
+        option::Option[ak::View]::Some(v) => v,
+        option::Option[ak::View]::None => { assert false; return; }
+    };
+    // Drive a reflow at a known size; the content installs and lays out to a
+    // positive width (never 0x0).
+    host.set_frame(rt::Rect { x: 0.0, y: 0.0, w: 240.0, h: 160.0 });
+    tab_host_resized(host.raw());
+    var subs: vec::Vec[ak::View] = host.subviews();
+    assert subs.count() >= (1 as usize);
+    match subs.at_ptr(0 as usize) {
+        option::Option[*ak::View]::Some(sv) => { assert { (*sv).frame().w } > 0.0f64; }
+        option::Option[*ak::View]::None => { assert false; }
+    }
+    return;
 }
 
 #[test]
