@@ -484,6 +484,34 @@ fn bordered(take content: flex::Node, radius: f64 = 6.0f64, agent_id: str = "") 
     return wrapper;
 }
 
+// A gradient fill: a view whose backing layer is a CAGradientLayer running from
+// `start_color` to `end_color` (top->bottom when `vertical`, else left->right).
+// A layer-HOSTING view must not host subviews, so this is a pure fill with no
+// children — size it with .grow / .frame, and put content ON a gradient by
+// stacking: zstack([gradient_box(...).grow(1.0), your_content]). The hosting
+// layer tracks the view bounds automatically (no resize wiring).
+fn gradient_box(start_color: ak::Color, end_color: ak::Color, vertical: bool = true, agent_id: str = "") -> flex::Node {
+    let zero: rt::Rect = rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 };
+    let bv: ak::View = ak::View::new(zero);
+    let g: quartz::GradientLayer = quartz::GradientLayer::new();
+    // set_colors wants an NSArray of CGColorRef — build it with NSMutableArray.
+    let arr_raw: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+    rt::msg_void_id(arr_raw, rt::sel(#str_ptr("addObject:\0")), start_color.c_g_color());
+    rt::msg_void_id(arr_raw, rt::sel(#str_ptr("addObject:\0")), end_color.c_g_color());
+    g.set_colors(quartz::NSArray::from_raw(arr_raw));
+    if vertical {
+        g.set_start_point(rt::Point { x: 0.5f64, y: 0.0f64 });
+        g.set_end_point(rt::Point { x: 0.5f64, y: 1.0f64 });
+    } else {
+        g.set_start_point(rt::Point { x: 0.0f64, y: 0.5f64 });
+        g.set_end_point(rt::Point { x: 1.0f64, y: 0.5f64 });
+    }
+    bv.set_layer(g.as_layer());     // layer-hosting: set the layer BEFORE wants_layer
+    bv.set_wants_layer(true);
+    tag_agent(bv.raw(), agent_id, identity::Role::Group);
+    return view(bv);
+}
+
 // A window-drag surface: same single-backing-view wrapper as `bordered`, but the
 // backing view is a `CplusExtWindowDragView` — dragging it moves the window and a
 // double-click zooms it. For a custom titlebar (a content toolbar row over a
@@ -3582,6 +3610,22 @@ fn test_token_field_empty_is_blank() {
     let n: flex::Node = token_field(#addr_of(toks));
     assert n.has_payload();
     assert field_text(n.payload()).equals("");
+}
+
+#[test]
+fn test_gradient_box_backs_a_view_with_a_two_color_gradient() {
+    let n: flex::Node = gradient_box(ak::Color::red_color(), ak::Color::blue_color());
+    assert n.has_payload();
+    // The backing layer is a CAGradientLayer carrying our two colors.
+    let lyr: quartz::Layer = ak::View::from_raw(n.payload()).layer();
+    let grad: quartz::GradientLayer = quartz::GradientLayer::from_raw(lyr.raw());
+    match grad.colors() {
+        option::Option[quartz::NSArray]::Some(arr) => {
+            assert { rt::msg_i64(arr.raw(), rt::sel(#str_ptr("count\0"))) } == (2 as i64);
+        }
+        option::Option[quartz::NSArray]::None => { assert false; }
+    }
+    return;
 }
 
 #[test]
