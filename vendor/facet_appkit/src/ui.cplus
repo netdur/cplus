@@ -973,6 +973,7 @@ struct TreeDelCtx {
 
 fn tree_ds_pin_key() -> *u8 { return { 28692 as *u8 }; }
 fn tree_del_pin_key() -> *u8 { return { 28693 as *u8 }; }
+fn tree_root_key() -> *u8 { return { 28694 as *u8 }; }
 
 // The objc wrapper for a node: `+[NSValue valueWithPointer:]` boxes the raw
 // `*TreeNode` in a real Foundation object whose `-isEqual:`/`-hash` are BY the
@@ -1197,7 +1198,15 @@ fn tree_view_for_column_imp(user: *u8, ov: *u8, col: *u8, item: *u8) -> *u8 {
 }
 
 // --- selection delegate ---
+// Programmatic-selection suppression: tree_select_path selects a real row, and
+// the did-change notification arrives SYNCHRONOUSLY inside selectRowIndexes: —
+// without this gate the reveal would fire on_select and apps that reveal on an
+// "active item changed" event would loop (select -> on_select -> event ->
+// select). Main-thread only, like all UI.
+static TREE_SUPPRESS_SELECT: i32 = 0;
+
 fn tree_selection_imp(user: *u8, notif: *u8) {
+    if TREE_SUPPRESS_SELECT != 0 { return; }
     let c: *TreeDelCtx = { user as *TreeDelCtx };
     let f: fn(*u8, *u8) = { (*c).on_select };
     if { f as *u8 } == { 0 as *u8 } { return; }
@@ -1261,6 +1270,9 @@ fn tree(root: *TreeNode, on_select: fn(*u8, *u8) = 0 as fn(*u8, *u8), ctx: *u8 =
     let dsobj: *u8 = ak::create_OutlineViewDataSource(dsbox);
     ov.set_data_source(dsobj);
     synth::retain_associated(ov.raw(), tree_ds_pin_key(), dsobj);
+    // Pin the model root on the outline (non-retaining: nodes are app-lifetime)
+    // so tree_select_path can walk the model from just the view.
+    synth::set_associated(ov.raw(), tree_root_key(), root as *u8);
 
     let selbox: *TreeDelCtx = { malloc(#size_of::[TreeDelCtx]()) as *TreeDelCtx };
     { *selbox = TreeDelCtx { on_select: on_select, caller_ctx: ctx, row: row, row_ctx: row_ctx, row_id: row_id, row_id_ctx: row_id_ctx, row_height: row_height }; }
@@ -1306,6 +1318,76 @@ fn tree_deselect(view: *u8) {
     let can: i8 = rt::msg_i8_id(ov, rt::sel(#str_ptr("respondsToSelector:\0")), rt::sel(#str_ptr("deselectAll:\0")));
     if can == (0 as i8) { return; }
     rt::msg_void_id(ov, rt::sel(#str_ptr("deselectAll:\0")), 0 as *u8);
+    return;
+}
+
+// Find the node whose path equals `path`; on the unwind, append each node's
+// wrapper (target first, then its ancestors up to and including `node`), so
+// the caller expands from the vec's END (root side) downwards.
+fn tree_find_chain(node: *TreeNode, path: str, chain: *vec::Vec[*u8]) -> bool {
+    if { (*node).path.equals(path) } {
+        (*chain).append({ (*node).item });
+        return true;
+    }
+    let n: usize = { (*node).children.count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match { (*node).children.at_ptr(i) } {
+            option::Option[**TreeNode]::Some(cp) => {
+                if tree_find_chain({ *cp }, path, chain) {
+                    (*chain).append({ (*node).item });
+                    return true;
+                }
+            }
+            option::Option[**TreeNode]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
+
+// Reveal + select the row for `path`: expand its ancestors, select the row,
+// and scroll it visible — WITHOUT firing on_select (see TREE_SUPPRESS_SELECT;
+// a reveal driven by an "active item changed" event must not re-emit it).
+// `view` is the tagged scroll host a facet handle returns, or the outline.
+// No-op when `path` is "" or not in the model.
+fn tree_select_path(view: *u8, path: str) {
+    if view == { 0 as *u8 } { return; }
+    if #str_len(path) == (0 as usize) { return; }
+    var ov: *u8 = view;
+    let has_doc: i8 = rt::msg_i8_id(view, rt::sel(#str_ptr("respondsToSelector:\0")), rt::sel(#str_ptr("documentView\0")));
+    if has_doc != (0 as i8) {
+        let doc: *u8 = { rt::msg_id(view, rt::sel(#str_ptr("documentView\0"))) };
+        if doc != (0 as *u8) { ov = doc; }
+    }
+    let root: *TreeNode = { synth::get_associated(ov, tree_root_key()) as *TreeNode };
+    if { root as *u8 } == { 0 as *u8 } { return; }
+    var chain: vec::Vec[*u8] = vec::new::[*u8]();
+    if tree_find_chain(root, path, #addr_of(chain)) == false { return; }
+    // Expand ancestors root-first (the chain is target-first), so rowForItem:
+    // resolves even for a file inside collapsed folders.
+    var i: i64 = (chain.count() as i64) - (1 as i64);
+    while i >= (1 as i64) {
+        match chain.at(i as usize) {
+            option::Option[*u8]::Some(anc) => {
+                rt::msg_void_id(ov, rt::sel(#str_ptr("expandItem:\0")), anc);
+            }
+            option::Option[*u8]::None => { }
+        }
+        i = i - (1 as i64);
+    }
+    var target: *u8 = 0 as *u8;
+    match chain.at(0 as usize) {
+        option::Option[*u8]::Some(t) => { target = t; }
+        option::Option[*u8]::None => { return; }
+    }
+    let row: i64 = rt::msg_i64_id(ov, rt::sel(#str_ptr("rowForItem:\0")), target);
+    if row < (0 as i64) { return; }
+    let ixset: *u8 = rt::msg_id_i64(rt::get_class(#str_ptr("NSIndexSet\0")), rt::sel(#str_ptr("indexSetWithIndex:\0")), row);
+    TREE_SUPPRESS_SELECT = 1;
+    rt::msg_void_id_i8(ov, rt::sel(#str_ptr("selectRowIndexes:byExtendingSelection:\0")), ixset, 0 as i8);
+    TREE_SUPPRESS_SELECT = 0;
+    rt::msg_void_i64(ov, rt::sel(#str_ptr("scrollRowToVisible:\0")), row);
     return;
 }
 
@@ -4375,5 +4457,42 @@ fn tree_deselect_clears_selection_without_firing_on_select() {
     tree_deselect(scroll_raw);
     assert { rt::msg_i64(ov, rt::sel(#str_ptr("selectedRow\0"))) } == (-1 as i64);
     assert TREE_SEL_HITS == hits_after_select;
+    return;
+}
+
+#[test]
+fn tree_select_path_reveals_selects_and_stays_silent() {
+    // root/proj > src (collapsed dir) > deep.cplus — the reveal must expand
+    // src, select the nested row, and fire NO on_select.
+    let root: *TreeNode = tree_node("proj", "/proj", true);
+    let dir: *TreeNode = tree_node("src", "/proj/src", true);
+    let leaf: *TreeNode = tree_node("deep.cplus", "/proj/src/deep.cplus", false);
+    tree_add_child(dir, leaf);
+    tree_add_child(root, dir);
+    TREE_SEL_HITS = 0;
+    var n: flex::Node = tree(root, on_select: tree_sel_probe);
+    let scroll_raw: *u8 = n.payload();
+    let ov: *u8 = { rt::msg_id(scroll_raw, rt::sel(#str_ptr("documentView\0"))) };
+
+    // Nested leaf is not materialized yet (its folder is collapsed).
+    assert { rt::msg_i64_id(ov, rt::sel(#str_ptr("rowForItem:\0")), { (*leaf).item }) } == (-1 as i64);
+
+    tree_select_path(scroll_raw, "/proj/src/deep.cplus");
+    let row: i64 = rt::msg_i64_id(ov, rt::sel(#str_ptr("rowForItem:\0")), { (*leaf).item });
+    assert row >= (0 as i64);
+    assert { rt::msg_i64(ov, rt::sel(#str_ptr("selectedRow\0"))) } == row;
+    assert TREE_SEL_HITS == 0;   // the reveal never fired on_select
+
+    // Unknown path and empty path: selection untouched, still silent.
+    tree_select_path(scroll_raw, "/proj/nope.cplus");
+    assert { rt::msg_i64(ov, rt::sel(#str_ptr("selectedRow\0"))) } == row;
+    tree_select_path(scroll_raw, "");
+    assert { rt::msg_i64(ov, rt::sel(#str_ptr("selectedRow\0"))) } == row;
+    assert TREE_SEL_HITS == 0;
+
+    // And the deselect pairing still works after a programmatic reveal.
+    tree_deselect(scroll_raw);
+    assert { rt::msg_i64(ov, rt::sel(#str_ptr("selectedRow\0"))) } == (-1 as i64);
+    assert TREE_SEL_HITS == 0;
     return;
 }
