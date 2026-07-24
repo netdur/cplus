@@ -1715,6 +1715,35 @@ static SET_Z_INDEX_FN: fn(Handle, i64) -> bool = #zero::[fn(Handle, i64) -> bool
 fn set_z_index_fn(f: fn(Handle, i64) -> bool) { SET_Z_INDEX_FN = f; return; }
 // GEN:STATICS:END
 
+// ---- Span styling for a text surface ---------------------------------------
+// A styled run over an element's text: syntax highlighting, search hits, diff
+// marks. Hand-authored rather than generated — no cross-platform framework
+// exposes span styling on an EDITABLE surface, so this slot has no counterpart
+// in the imported spec.
+//
+// OFFSETS ARE UTF-8 BYTE OFFSETS into the element's current text — not
+// characters, not UTF-16 code units. A lexer naturally counts bytes; a platform
+// string usually does not, and that conversion is platform knowledge, so the
+// backend performs it. Runs must be ordered by `start` and must not overlap.
+struct TextSpan {
+    start: usize,      // byte offset of the run's first byte
+    len: usize,        // run length, in bytes
+    color: Color,      // the run's foreground
+}
+
+impl TextSpan {
+    // Built through this constructor, never a bare literal, so the run can gain
+    // fields (background, weight, decorations) without breaking every call site.
+    fn new(start: usize, len: usize, color: Color) -> TextSpan {
+        return TextSpan { start: start, len: len, color: color };
+    }
+}
+
+static SET_TEXT_SPANS_FN: fn(Handle, *vec::Vec[TextSpan]) -> bool = #zero::[fn(Handle, *vec::Vec[TextSpan]) -> bool]();
+fn set_text_spans_fn(f: fn(Handle, *vec::Vec[TextSpan]) -> bool) { SET_TEXT_SPANS_FN = f; return; }
+static CLEAR_TEXT_SPANS_FN: fn(Handle) -> bool = #zero::[fn(Handle) -> bool]();
+fn clear_text_spans_fn(f: fn(Handle) -> bool) { CLEAR_TEXT_SPANS_FN = f; return; }
+
 impl Handle {
     // The backend fills a resolved handle through this constructor; apps never do.
     fn of(view: *u8, flex: *u8, cp: *u8, kind: u32) -> Handle {
@@ -2141,6 +2170,28 @@ impl Handle {
         return this;
     }
 // GEN:METHODS:END
+
+    // Paint `spans` over this element's text (byte offsets, ordered,
+    // non-overlapping — see TextSpan). The runs survive a theme flip, a
+    // restyle, and a re-mount: the backend stores them and repaints them after
+    // any whole-element colour sweep, which would otherwise erase them.
+    //
+    // Re-apply after every edit. A span list is measured against the text it
+    // was lexed from, so a backend that finds the text changed underneath drops
+    // the stale list rather than colour the wrong glyphs.
+    fn set_text_spans(this, spans: *vec::Vec[TextSpan]) -> Handle {
+        let f: fn(Handle, *vec::Vec[TextSpan]) -> bool = SET_TEXT_SPANS_FN;
+        if f != (0 as fn(Handle, *vec::Vec[TextSpan]) -> bool) { let _ok: bool = f(this, spans); }
+        return this;
+    }
+
+    // Drop every run, returning the element to its single style colour.
+    fn clear_text_spans(this) -> Handle {
+        let f: fn(Handle) -> bool = CLEAR_TEXT_SPANS_FN;
+        if f != (0 as fn(Handle) -> bool) { let _ok: bool = f(this); }
+        return this;
+    }
+
     // The not-found handle: every mutator on it is a no-op.
     fn missing() -> Handle { return Handle::of(0 as *u8, 0 as *u8, 0 as *u8, 0 as u32); }
 
