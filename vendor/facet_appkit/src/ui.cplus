@@ -1288,6 +1288,27 @@ fn tree(root: *TreeNode, on_select: fn(*u8, *u8) = 0 as fn(*u8, *u8), ctx: *u8 =
     return fixed_view(scroll.as_view());
 }
 
+// Clear an outline's row selection. `view` is whatever the tree's handle
+// resolves to — the tagged NSScrollView host (what `find(key).view()` returns)
+// or the NSOutlineView itself; the document view is unwrapped as needed. The
+// selection delegate's `row < 0` guard means clearing fires no `on_select`.
+// The driver: NSOutlineView does NOT re-fire selection for a click on the
+// already-selected row — so after an external "this item closed" event, clear
+// the selection and the next click is a fresh selection again.
+fn tree_deselect(view: *u8) {
+    if view == { 0 as *u8 } { return; }
+    var ov: *u8 = view;
+    let has_doc: i8 = rt::msg_i8_id(view, rt::sel(#str_ptr("respondsToSelector:\0")), rt::sel(#str_ptr("documentView\0")));
+    if has_doc != (0 as i8) {
+        let doc: *u8 = { rt::msg_id(view, rt::sel(#str_ptr("documentView\0"))) };
+        if doc != (0 as *u8) { ov = doc; }
+    }
+    let can: i8 = rt::msg_i8_id(ov, rt::sel(#str_ptr("respondsToSelector:\0")), rt::sel(#str_ptr("deselectAll:\0")));
+    if can == (0 as i8) { return; }
+    rt::msg_void_id(ov, rt::sel(#str_ptr("deselectAll:\0")), 0 as *u8);
+    return;
+}
+
 // The eager convenience: `file_tree("/path/to/project", on_select: open_file)`
 // walks the WHOLE directory rooted at `path` and mounts it with `tree(...)`.
 // It applies no excludes and reads the tree in full on construction, so it is
@@ -4328,4 +4349,31 @@ fn e2e_zoom_scales_the_view_without_reflow() {
     assert approx(host.bounds().x, 0.0f64);
     assert approx(host.bounds().y, 0.0f64);
     unmount_all();
+}
+
+static TREE_SEL_HITS: i32 = 0;
+fn tree_sel_probe(item: *u8, ctx: *u8) { TREE_SEL_HITS = TREE_SEL_HITS + 1; return; }
+
+#[test]
+fn tree_deselect_clears_selection_without_firing_on_select() {
+    let root: *TreeNode = tree_node("proj", "/proj", true);
+    let child: *TreeNode = tree_node("main.cplus", "/proj/main.cplus", false);
+    tree_add_child(root, child);
+    TREE_SEL_HITS = 0;
+    var n: flex::Node = tree(root, on_select: tree_sel_probe);
+    let scroll_raw: *u8 = n.payload();
+    let ov: *u8 = { rt::msg_id(scroll_raw, rt::sel(#str_ptr("documentView\0"))) };
+
+    // Programmatic select of row 0. byExtendingSelection's BOOL rides the id
+    // slot as 0 (NO) — same register, test-only send.
+    let ixset: *u8 = rt::msg_id_i64(rt::get_class(#str_ptr("NSIndexSet\0")), rt::sel(#str_ptr("indexSetWithIndex:\0")), 0 as i64);
+    rt::msg_void_id_id(ov, rt::sel(#str_ptr("selectRowIndexes:byExtendingSelection:\0")), ixset, 0 as *u8);
+    assert { rt::msg_i64(ov, rt::sel(#str_ptr("selectedRow\0"))) } == (0 as i64);
+    let hits_after_select: i32 = TREE_SEL_HITS;
+
+    // Deselect through the SCROLL host — the view a facet handle returns.
+    tree_deselect(scroll_raw);
+    assert { rt::msg_i64(ov, rt::sel(#str_ptr("selectedRow\0"))) } == (-1 as i64);
+    assert TREE_SEL_HITS == hits_after_select;
+    return;
 }
