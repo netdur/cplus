@@ -851,8 +851,14 @@ fn relay_change(event: Change, ctx: *u8) {
 fn run_watch_task(take job: WatchRun) -> i32 {
     var watcher: Watcher = box::from_raw::[Watcher](job.watcher_box).unwrap();
     let jp: *WatchRun = { #addr_of(job) };
+    // Every argument passed positionally, including the defaulted `once`.
+    // Named-argument lowering resolves a method by NAME across the whole
+    // compilation unit (before type inference), so `watcher.on_change(f, ctx:)`
+    // is ambiguous the moment the APP also defines an `on_change` taking a
+    // `ctx` — the two lower differently and the compiler will not guess.
+    // Passing every argument pins the arity to this signature alone.
     let _sub: events::SignalSubscription[Change] =
-        watcher.on_change(relay_change, ctx: jp as *u8);
+        watcher.on_change(relay_change, jp as *u8, false);
     let fp: *TaskFlag = job.flag as *TaskFlag;
     let stop_p: *i32 = { #addr_of((*fp).stop) };
     loop {
