@@ -8106,7 +8106,7 @@ struct FnState<'a> {
     /// loop bodies each drain their own temps at the right point. Only *borrowed*
     /// temps are registered — a temp consumed by `take`/move is never entered, so
     /// there is no disarm and no double-free path.
-    temp_scopes: Vec<Vec<(String, Ty)>>,
+    temp_scopes: Vec<Vec<(String, Ty, String)>>,
     tmp_counter: u32,
     block_counter: u32,
     terminated: bool,
@@ -8489,8 +8489,26 @@ impl<'a> FnState<'a> {
     /// scope is open (the temp then leaks — safe, never a double-free); only
     /// *borrowed* temps are ever registered.
     fn register_temp(&mut self, slot: String, ty: Ty) {
+        if self.temp_scopes.is_empty() {
+            return;
+        }
+        // A temporary can be materialized on a CONDITIONAL path — the receiver
+        // of a method call inside an `if` body or a match arm — while its
+        // statement scope closes at the join both paths reach. Dropping it
+        // unconditionally there frees an uninitialized alloca (stack garbage),
+        // which libc reports as "pointer being freed was not allocated".
+        //
+        // So a temp carries the same liveness flag a named local does: hoisted
+        // to the entry block and initialised `false` (the path that never
+        // creates the temp sees that), then set `true` right here, where the
+        // value provably exists. `close_temp_scope` drops through the flag.
+        self.tmp_counter += 1;
+        let flag = format!("%tmp.drop_flag{}", self.tmp_counter);
+        self.allocas.push(format!("{flag} = alloca i1"));
+        self.allocas.push(format!("store i1 false, ptr {flag}"));
+        self.gen_store(&Ty::Bool, "true", &flag);
         if let Some(top) = self.temp_scopes.last_mut() {
-            top.push((slot, ty));
+            top.push((slot, ty, flag));
         }
     }
 
@@ -8504,8 +8522,8 @@ impl<'a> FnState<'a> {
         if self.terminated {
             return;
         }
-        for (slot, ty) in scope.iter().rev() {
-            self.gen_drop_in_place(ty, slot);
+        for (slot, ty, flag) in scope.iter().rev() {
+            self.emit_flag_gated_drop(ty, slot, flag);
         }
     }
 
@@ -23058,6 +23076,53 @@ mod tests {
         assert!(ir.contains("@plain(i32 noundef %0) {"), "IR:\n{ir}");
         assert!(!ir.contains("inlinehint"), "IR:\n{ir}");
         assert!(!ir.contains("alwaysinline"), "IR:\n{ir}");
+    }
+
+
+    #[test]
+    fn conditional_temp_receiver_drop_is_flag_guarded() {
+        // Regression: a Drop temporary created only inside an `if` body, whose
+        // statement scope closes at the join both paths reach, was dropped
+        // UNCONDITIONALLY there. On the else path that freed an uninitialized
+        // alloca — libc reported "pointer being freed was not allocated", and
+        // which allocation died depended on stack layout, so the symptom moved
+        // whenever unrelated code changed. It made stdlib's process::spawn and
+        // pty::spawn unusable.
+        let ir = gen_src(
+            "struct Buf { n: i32 }\n\
+             impl Buf {\n\
+                 fn make() -> Buf { return Buf { n: 0 }; }\n\
+                 fn len(this) -> i32 { return 1; }\n\
+                 fn drop(ref this) { return; }\n\
+             }\n\
+             fn f(c: bool) -> i32 {\n\
+                 var n: i32 = 0;\n\
+                 if c { n = Buf::make().len(); }\n\
+                 return n;\n\
+             }\n\
+             fn main() -> i32 { return f(false); }",
+        );
+        // The temp's drop must be reached through a liveness flag, never
+        // straight-line at the join.
+        assert!(ir.contains("tmp.drop_flag"), "no temp drop flag emitted:\n{ir}");
+        assert!(
+            ir.contains("store i1 false, ptr %tmp.drop_flag"),
+            "temp flag must start false in the entry block:\n{ir}"
+        );
+        // Every Buf.drop call is inside a flag-guarded block: the instruction
+        // right before each one is a label, not a fallthrough from the join.
+        for (i, chunk) in ir.split("call preserve_nonecc void @Buf.drop").enumerate() {
+            if i == 0 {
+                continue;
+            }
+            let before = ir[..ir.find("call preserve_nonecc void @Buf.drop").unwrap()].to_string();
+            assert!(
+                before.contains("br i1 ") && before.contains("tmp.drop_flag"),
+                "Buf.drop is not reached through the temp flag:\n{ir}"
+            );
+            let _ = chunk;
+            break;
+        }
     }
 
     #[test]
