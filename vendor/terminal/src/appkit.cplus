@@ -1,0 +1,335 @@
+// terminal/appkit — live macOS terminal widget.
+//
+// A Widget owns an NSScrollView/NSTextView pair and a real PTY session. A
+// libdispatch READ source drains the master fd on the main queue, feeds the
+// portable Transcript, and updates AppKit. A tiny NSTextView subclass forwards
+// keys to the PTY. The returned flex node is compatible with facet_appkit's
+// view-bearing layout layer; `native_handle` also plugs into facet::native.
+
+import "./pty" as pty;
+import "./terminal" as terminal;
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "objc/runtime" as rt;
+import "objc/bridge" as bridge;
+import "objc/synthesis" as synth;
+import "appkit/appkit" as ak;
+import "appkit/appkit_ext" as akx;
+import "flex_layout/flex_layout" as flex;
+
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+extern fn dlsym(handle: *u8, symbol: *u8) -> *u8;
+extern fn dispatch_source_create(type_: *u8, handle: u64, mask: u64, queue: *u8) -> *u8;
+// dispatch_source_set_context does NOT exist. The context setter is the generic
+// dispatch_set_context(dispatch_object_t, void*), which applies to sources too.
+extern fn dispatch_set_context(source: *u8, context: *u8);
+extern fn dispatch_source_set_event_handler_f(source: *u8, handler: fn(*u8));
+extern fn dispatch_source_set_cancel_handler_f(source: *u8, handler: fn(*u8));
+extern fn dispatch_resume(object: *u8);
+extern fn dispatch_source_cancel(source: *u8);
+extern fn dispatch_release(object: *u8);
+
+struct TerminalContext {
+    session: pty::Session,
+    transcript: terminal::Transcript,
+    opaque text_view: *u8,     // borrowed from Widget._scroll's view tree
+    opaque scroll_view: *u8,   // borrowed from Widget._scroll
+    opaque source: *u8,        // released by the dispatch cancel handler
+    cell_width: f64,
+    cell_height: f64,
+    cancel_requested: bool,
+    cancel_finished: bool,
+    dispose_requested: bool,
+}
+
+struct Widget {
+    _scroll: ak::ScrollView,
+    opaque _ctx: *TerminalContext,
+}
+
+fn supported() -> bool { return true; }
+
+fn terminal_context_key() -> *u8 { return { 30101 as *u8 }; }
+
+fn main_dispatch_queue() -> *u8 {
+    let rtld_default: *u8 = { ((0 as usize) -% (2 as usize)) as *u8 };
+    return { dlsym(rtld_default, #str_ptr("_dispatch_main_q\0")) };
+}
+
+fn render(c: *TerminalContext) {
+    if c == (0 as *TerminalContext) || { (*c).text_view } == (0 as *u8) { return; }
+    let tv: ak::TextView = ak::TextView::from_raw({ (*c).text_view });
+    tv.as_text().set_string({ (*c).transcript.view() });
+
+    // NSString length is UTF-16 units, which is exactly what NSRange expects.
+    let ns: *u8 = rt::msg_id(tv.raw(), rt::sel(#str_ptr("string\0")));
+    let end: u64 = rt::msg_u64(ns, rt::sel(#str_ptr("length\0")));
+    let r: rt::Range = rt::Range { location: end, length: 0 as u64 };
+    tv.as_text().set_selected_range(r);
+    tv.as_text().scroll_range_to_visible(r);
+    return;
+}
+
+fn destroy_context(c: *TerminalContext) {
+    if c == (0 as *TerminalContext) { return; }
+    { #drop_in_place::[TerminalContext](c); }
+    { free(c as *u8); }
+    return;
+}
+
+fn cancel_finished(ctx: *u8) {
+    let c: *TerminalContext = { ctx as *TerminalContext };
+    { (*c).session.close(); }
+    if { (*c).source } != (0 as *u8) {
+        { dispatch_release({ (*c).source }); }
+        { (*c).source = 0 as *u8; }
+    }
+    { (*c).cancel_finished = true; }
+    if { (*c).dispose_requested } { destroy_context(c); }
+    return;
+}
+
+fn request_cancel(c: *TerminalContext) {
+    if c == (0 as *TerminalContext) || { (*c).cancel_requested } { return; }
+    { (*c).cancel_requested = true; }
+    { dispatch_source_cancel({ (*c).source }); }
+    // Cancellation prevents further main-queue reads. Close/reap now as well
+    // as in the cancel handler so dropping a widget during application
+    // shutdown cannot leave its shell alive if the run loop never turns again.
+    { (*c).session.close(); }
+    return;
+}
+
+fn read_ready(ctx: *u8) {
+    let c: *TerminalContext = { ctx as *TerminalContext };
+    if c == (0 as *TerminalContext) || { (*c).cancel_requested } { return; }
+    var buf: [u8; 8192] = [0 as u8; 8192];
+    var changed: bool = false;
+    loop {
+        match { (*c).session.read_into(#addr_of(buf) as *u8, 8192 as usize) } {
+            pty::ReadResult::Data(n) => {
+                let chunk: str = { #str_from_raw_parts(#addr_of(buf) as *u8, n) };
+                { (*c).transcript.feed(chunk); }
+                changed = true;
+            }
+            pty::ReadResult::WouldBlock => { break; }
+            pty::ReadResult::Closed => {
+                { (*c).transcript.finish(); }
+                changed = true;
+                request_cancel(c);
+                break;
+            }
+            pty::ReadResult::Failed => {
+                request_cancel(c);
+                break;
+            }
+        }
+    }
+    if changed { render(c); }
+    return;
+}
+
+fn send(c: *TerminalContext, bytes: str) {
+    if c == (0 as *TerminalContext) || { (*c).cancel_requested } { return; }
+    let _written: isize = { (*c).session.write(bytes) };
+    return;
+}
+
+fn key_down_imp(self_obj: *u8, cmd: *u8, event_obj: *u8) {
+    let c: *TerminalContext = { synth::get_associated(self_obj, terminal_context_key()) as *TerminalContext };
+    if c == (0 as *TerminalContext) || { (*c).cancel_requested } { return; }
+    let event: ak::Event = ak::Event::from_raw(event_obj);
+    let key: u16 = event.key_code();
+    let mods: u64 = event.modifier_flags();
+
+    // Preserve native selection/copy and implement paste explicitly (the view
+    // is read-only so pasted text must go to the PTY, never into the transcript).
+    if (mods & ak::event_modifier_flags_n_s_event_modifier_flag_command) != (0 as u64) {
+        // C
+        if key == (8 as u16) {
+            ak::TextView::from_raw(self_obj).as_text().copy(self_obj);
+            // A
+        } else if key == (0 as u16) {
+            ak::TextView::from_raw(self_obj).as_text().select_all(self_obj);
+            // V
+        } else if key == (9 as u16) {
+            let pb: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSPasteboard\0")), rt::sel(#str_ptr("generalPasteboard\0")));
+            let ns: *u8 = rt::msg_id_id(pb, rt::sel(#str_ptr("stringForType:\0")), bridge::nsstring("public.utf8-plain-text"));
+            if ns != (0 as *u8) {
+                let pasted = bridge::to_text(ns);
+                send(c, pasted);
+            }
+        }
+        return;
+    }
+
+    if key == (36 as u16) || key == (76 as u16) { send(c, "\r"); return; }
+    if key == (48 as u16) { send(c, "\t"); return; }
+    if key == (51 as u16) { send(c, "\x7f"); return; }
+    if key == (53 as u16) { send(c, "\x1b"); return; }
+    if key == (123 as u16) { send(c, "\x1b[D"); return; }
+    if key == (124 as u16) { send(c, "\x1b[C"); return; }
+    if key == (125 as u16) { send(c, "\x1b[B"); return; }
+    if key == (126 as u16) { send(c, "\x1b[A"); return; }
+    if key == (115 as u16) { send(c, "\x1b[H"); return; }
+    if key == (119 as u16) { send(c, "\x1b[F"); return; }
+    if key == (117 as u16) { send(c, "\x1b[3~"); return; }
+    if key == (116 as u16) { send(c, "\x1b[5~"); return; }
+    if key == (121 as u16) { send(c, "\x1b[6~"); return; }
+
+    match event.characters() {
+        option::Option[text::Text]::Some(chars) => { send(c, chars); }
+        option::Option[text::Text]::None => {}
+    }
+    return;
+}
+
+fn terminal_text_view_class() -> *u8 {
+    let existing: *u8 = rt::get_class(#str_ptr("CplusTerminalTextView\0"));
+    if existing != (0 as *u8) { return existing; }
+    let cls: *u8 = synth::allocate_class_pair(rt::get_class(#str_ptr("NSTextView\0")), #str_ptr("CplusTerminalTextView\0"), 0 as usize);
+    let _m: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("keyDown:\0")), key_down_imp, #str_ptr("v@:@\0"));
+    synth::register_class_pair(cls);
+    return cls;
+}
+
+fn new_terminal_text_view(frame: rt::Rect) -> ak::TextView {
+    let alloced: *u8 = rt::msg_id(terminal_text_view_class(), rt::sel(#str_ptr("alloc\0")));
+    let inited: *u8 = rt::msg_id_rect(alloced, rt::sel(#str_ptr("initWithFrame:\0")), frame);
+    return ak::TextView::from_raw(rt::autorelease(inited));
+}
+
+fn resize_pty(ctx: *u8) {
+    let c: *TerminalContext = { ctx as *TerminalContext };
+    if c == (0 as *TerminalContext) || { (*c).cancel_requested } { return; }
+    let size: rt::Size = ak::ScrollView::from_raw({ (*c).scroll_view }).content_size();
+    var cols: u16 = (size.w / { (*c).cell_width }) as u16;
+    var rows: u16 = (size.h / { (*c).cell_height }) as u16;
+    if cols < (2 as u16) { cols = 2 as u16; }
+    if rows < (1 as u16) { rows = 1 as u16; }
+    let _ok: bool = { (*c).session.resize(rows, cols) };
+    return;
+}
+
+fn start(
+    shell: str = "/bin/zsh",
+    cwd: str = "",
+    max_scrollback: usize = 1048576 as usize,
+    font_size: f64 = 13.0f64,
+) -> option::Option[Widget] {
+    var session: pty::Session = match pty::start(shell, cwd: cwd) {
+        option::Option[pty::Session]::Some(s) => s,
+        option::Option[pty::Session]::None => { return option::Option[Widget]::None; }
+    };
+
+    let zero: rt::Rect = rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 };
+    let scroll: ak::ScrollView = ak::ScrollView::new(zero);
+    scroll.set_border_type(ak::BorderType::NSNoBorder);
+    scroll.set_has_vertical_scroller(true);
+    scroll.set_autohides_scrollers(true);
+    scroll.set_draws_background(true);
+    scroll.set_background_color(ak::Color::text_background_color());
+
+    let tv: ak::TextView = new_terminal_text_view(zero);
+    tv.set_editable(false);
+    tv.set_selectable(true);
+    tv.set_rich_text(false);
+    tv.set_draws_background(true);
+    tv.set_background_color(ak::Color::text_background_color());
+    tv.as_text().set_text_color(ak::Color::text_color());
+    let font: ak::Font = ak::Font::monospaced_system_font_of_size(font_size, 0.0f64);
+    tv.as_text().set_font(font);
+    tv.set_text_container_inset(rt::Size { w: 8.0f64, h: 6.0f64 });
+    tv.as_view().set_autoresizing_mask(ak::autoresizing_mask_options_n_s_view_width_sizable);
+    scroll.set_document_view(tv.as_view());
+
+    let c: *TerminalContext = { malloc(#size_of::[TerminalContext]()) as *TerminalContext };
+    if c == (0 as *TerminalContext) {
+        session.close();
+        return option::Option[Widget]::None;
+    }
+    { *c = TerminalContext {
+        session: session,
+        transcript: terminal::Transcript::new(max_bytes: max_scrollback),
+        text_view: tv.raw(),
+        scroll_view: scroll.raw(),
+        source: 0 as *u8,
+        cell_width: font.maximum_advancement().w,
+        cell_height: font.ascender() - font.descender() + font.leading(),
+        cancel_requested: false,
+        cancel_finished: false,
+        dispose_requested: false,
+    }; }
+    synth::set_associated(tv.raw(), terminal_context_key(), c as *u8);
+
+    let rtld_default: *u8 = { ((0 as usize) -% (2 as usize)) as *u8 };
+    let read_type: *u8 = { dlsym(rtld_default, #str_ptr("_dispatch_source_type_read\0")) };
+    if read_type == (0 as *u8) {
+        synth::set_associated(tv.raw(), terminal_context_key(), 0 as *u8);
+        { (*c).session.close(); }
+        destroy_context(c);
+        return option::Option[Widget]::None;
+    }
+    let source: *u8 = { dispatch_source_create(read_type, { (*c).session.master_fd() } as u64, 0 as u64, main_dispatch_queue()) };
+    if source == (0 as *u8) {
+        synth::set_associated(tv.raw(), terminal_context_key(), 0 as *u8);
+        { (*c).session.close(); }
+        destroy_context(c);
+        return option::Option[Widget]::None;
+    }
+    { (*c).source = source; }
+    { dispatch_set_context(source, c as *u8); }
+    { dispatch_source_set_event_handler_f(source, read_ready); }
+    { dispatch_source_set_cancel_handler_f(source, cancel_finished); }
+    { dispatch_resume(source); }
+
+    akx::observe_frame_change(scroll.as_view(), resize_pty, c as *u8);
+    resize_pty(c as *u8);
+    return option::Option[Widget]::Some(Widget { _scroll: scroll, _ctx: c });
+}
+
+fn release_view(p: *u8) { rt::release(p); return; }
+
+impl Widget {
+    // Owned AppKit view handle. The Widget must stay alive while the terminal
+    // should remain interactive.
+    fn view(this) -> ak::View { return this._scroll.as_view(); }
+
+    // Retained raw handle for facet::native(handle).
+    fn native_handle(this) -> *u8 { return rt::retain(this._scroll.raw()); }
+
+    // A fixed flex leaf. Size it with width/height/grow like any @ui widget.
+    fn node(this) -> flex::Node {
+        var n: flex::Node = flex::Node::new();
+        n.set_payload(rt::retain(this._scroll.raw()), release_view);
+        return n;
+    }
+
+    fn send(this, bytes: str) { send(this._ctx, bytes); return; }
+
+    fn text(this) -> text::Text {
+        if this._ctx == (0 as *TerminalContext) { return text::new(); }
+        return text::from_str({ (*this._ctx).transcript.view() });
+    }
+
+    fn is_running(this) -> bool {
+        return this._ctx != (0 as *TerminalContext) && !{ (*this._ctx).cancel_requested };
+    }
+
+    fn stop(this) { request_cancel(this._ctx); return; }
+
+    fn drop(ref this) {
+        let c: *TerminalContext = this._ctx;
+        if c == (0 as *TerminalContext) { return; }
+        synth::set_associated({ (*c).text_view }, terminal_context_key(), 0 as *u8);
+        { (*c).dispose_requested = true; }
+        if { (*c).cancel_finished } {
+            destroy_context(c);
+        } else {
+            request_cancel(c);
+        }
+        this._ctx = 0 as *TerminalContext;
+        return;
+    }
+}

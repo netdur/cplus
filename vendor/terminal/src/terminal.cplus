@@ -1,0 +1,192 @@
+// terminal/terminal — platform-neutral terminal transcript model.
+//
+// This first slice deliberately models a scrollback transcript, not a complete
+// VT screen. It strips ANSI/OSC control traffic, preserves UTF-8 payload bytes,
+// normalizes CRLF, makes bare CR updates readable as successive lines, handles
+// backspace, and bounds retained scrollback. The PTY and UI live in separate
+// modules so a future Linux/Windows backend can keep this API.
+
+import "stdlib/option" as option;
+import "stdlib/status" as status;
+import "stdlib/text" as text;
+
+enum ParseState {
+    Text,
+    Escape,
+    Csi,
+    Osc,
+    OscEscape,
+}
+
+struct Transcript {
+    _text: text::Text,
+    _state: ParseState,
+    _pending_cr: bool,
+    _max_bytes: usize,
+}
+
+fn is_utf8_continuation(b: u8) -> bool {
+    return (b & (0xc0 as u8)) == (0x80 as u8);
+}
+
+fn byte_at_or_zero(t: text::Text, i: usize) -> u8 {
+    return match t.byte_at(i) {
+        option::Option[u8]::Some(b) => b,
+        option::Option[u8]::None => 0 as u8,
+    };
+}
+
+impl Transcript {
+    fn new(max_bytes: usize = 1048576 as usize) -> Transcript {
+        var cap: usize = max_bytes;
+        if cap < (1024 as usize) { cap = 1024 as usize; }
+        return Transcript {
+            _text: text::new(),
+            _state: ParseState::Text,
+            _pending_cr: false,
+            _max_bytes: cap,
+        };
+    }
+
+    fn view(this) -> str {
+        return this._text.view();
+    }
+
+    fn count(this) -> usize {
+        return this._text.count();
+    }
+
+    fn clear(ref this) {
+        this._text.remove_all();
+        this._state = ParseState::Text;
+        this._pending_cr = false;
+        return;
+    }
+
+    fn append_byte(ref this, b: u8) {
+        let one: str = { #str_from_raw_parts(#addr_of(b), 1 as usize) };
+        let _st: status::Status = this._text.append(one);
+        return;
+    }
+
+    fn append_newline(ref this) {
+        let _st: status::Status = this._text.append("\n");
+        return;
+    }
+
+    fn erase_previous_scalar(ref this) {
+        var n: usize = this._text.count();
+        if n == (0 as usize) { return; }
+        n = n -% (1 as usize);
+        while n > (0 as usize) && is_utf8_continuation(byte_at_or_zero(this._text, n)) {
+            n = n -% (1 as usize);
+        }
+        this._text.truncate(n);
+        return;
+    }
+
+    fn flush_pending_cr(ref this, next: u8) {
+        if !this._pending_cr { return; }
+        this._pending_cr = false;
+        // CRLF is one newline. A bare CR commonly means a progress-line
+        // rewrite; transcript mode keeps both versions readable.
+        if next != (10 as u8) { this.append_newline(); }
+        return;
+    }
+
+    fn trim(ref this) {
+        let n: usize = this._text.count();
+        if n <= this._max_bytes { return; }
+        var cut: usize = n -% this._max_bytes;
+
+        // Prefer a line boundary, but do not scan without bound when one huge
+        // line exceeds the cap.
+        var i: usize = cut;
+        let scan_end: usize = if (cut +% (4096 as usize)) < n {
+            cut +% (4096 as usize)
+        } else {
+            n
+        };
+        while i < scan_end && byte_at_or_zero(this._text, i) != (10 as u8) {
+            i = i +% (1 as usize);
+        }
+        if i < n && byte_at_or_zero(this._text, i) == (10 as u8) {
+            cut = i +% (1 as usize);
+        } else {
+            // Never leave the new first byte inside a UTF-8 scalar.
+            while cut < n && is_utf8_continuation(byte_at_or_zero(this._text, cut)) {
+                cut = cut +% (1 as usize);
+            }
+        }
+        let _st: status::Status = this._text.remove_range(0 as usize, cut);
+        return;
+    }
+
+    // Feed arbitrary PTY bytes. ANSI CSI sequences and OSC title/control
+    // strings are removed; UTF-8 bytes pass through unchanged.
+    fn feed(ref this, bytes: str) {
+        let p: *u8 = #str_ptr(bytes);
+        let n: usize = #str_len(bytes);
+        var i: usize = 0 as usize;
+        while i < n {
+            let b: u8 = { p[i] };
+
+            if this._state == ParseState::Text {
+                this.flush_pending_cr(b);
+                if b == (27 as u8) {
+                    this._state = ParseState::Escape;
+                } else if b == (13 as u8) {
+                    this._pending_cr = true;
+                } else if b == (10 as u8) {
+                    this.append_newline();
+                } else if b == (8 as u8) || b == (127 as u8) {
+                    this.erase_previous_scalar();
+                } else if b == (9 as u8) {
+                    let _st: status::Status = this._text.append("    ");
+                } else if b >= (32 as u8) {
+                    this.append_byte(b);
+                }
+            } else if this._state == ParseState::Escape {
+                // ESC [
+                if b == (91 as u8) {
+                    this._state = ParseState::Csi;
+                    // ESC ]
+                } else if b == (93 as u8) {
+                    this._state = ParseState::Osc;
+                } else if b == (27 as u8) {
+                    this._state = ParseState::Escape;
+                } else {
+                    // Single-character ESC command.
+                    this._state = ParseState::Text;
+                }
+            } else if this._state == ParseState::Csi {
+                // ECMA-48 final bytes occupy 0x40...0x7e.
+                if b >= (0x40 as u8) && b <= (0x7e as u8) {
+                    this._state = ParseState::Text;
+                }
+            } else if this._state == ParseState::Osc {
+                if b == (7 as u8) {
+                    this._state = ParseState::Text;       // BEL terminator
+                } else if b == (27 as u8) {
+                    this._state = ParseState::OscEscape;  // possible ST
+                }
+            } else {
+                if b == (92 as u8) { this._state = ParseState::Text; }
+                else if b != (27 as u8) { this._state = ParseState::Osc; }
+            }
+            i = i +% (1 as usize);
+        }
+        this.trim();
+        return;
+    }
+
+    // Flush a trailing bare CR when a stream closes.
+    fn finish(ref this) {
+        if this._pending_cr {
+            this._pending_cr = false;
+            this.append_newline();
+            this.trim();
+        }
+        return;
+    }
+}

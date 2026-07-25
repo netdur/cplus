@@ -1,0 +1,62 @@
+// terminal/widget — portable facet-facing terminal widget.
+//
+// Applications use this module rather than naming AppKit. The owned Widget
+// keeps the platform session alive; node() returns a portable facet native
+// escape-hatch node. A future backend keeps this surface and replaces only the
+// platform implementation selected underneath it.
+
+import "./appkit" as backend;
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "facet/facet" as facet;
+
+struct Widget {
+    _backend: backend::Widget,
+}
+
+fn supported() -> bool { return backend::supported(); }
+
+fn start(
+    shell: str = "/bin/zsh",
+    cwd: str = "",
+    max_scrollback: usize = 1048576 as usize,
+    font_size: f64 = 13.0f64,
+) -> option::Option[Widget] {
+    return match backend::start(
+        shell,
+        cwd: cwd,
+        max_scrollback: max_scrollback,
+        font_size: font_size,
+    ) {
+        option::Option[backend::Widget]::Some(w) => {
+            option::Option[Widget]::Some(Widget { _backend: w })
+        }
+        option::Option[backend::Widget]::None => option::Option[Widget]::None,
+    };
+}
+
+impl Widget {
+    // The node owns its own retain on the native view. Keep Widget itself alive
+    // for as long as the terminal should remain interactive.
+    fn node(this) -> facet::Node {
+        return facet::native(this._backend.native_handle());
+    }
+
+    fn send(this, bytes: str) {
+        this._backend.send(bytes);
+        return;
+    }
+
+    fn text(this) -> text::Text {
+        return this._backend.text();
+    }
+
+    fn is_running(this) -> bool {
+        return this._backend.is_running();
+    }
+
+    fn stop(this) {
+        this._backend.stop();
+        return;
+    }
+}

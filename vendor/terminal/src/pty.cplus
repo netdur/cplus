@@ -1,0 +1,165 @@
+// terminal/pty — macOS pseudo-terminal session.
+//
+// The public Session surface is intentionally small and backend-shaped. A
+// future platform module can replace this implementation without changing the
+// widget: start, read, write, resize, and close.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+
+extern fn forkpty(master: *i32, name: *u8, termp: *u8, winp: *WinSize) -> i32;
+extern fn chdir(path: *u8) -> i32;
+extern fn execl(path: *u8, arg0: *u8, ...) -> i32;
+extern fn setenv(name: *u8, value: *u8, overwrite: i32) -> i32;
+extern fn _exit(code: i32);
+extern fn read(fd: i32, buf: *u8, count: usize) -> isize;
+extern fn write(fd: i32, buf: *u8, count: usize) -> isize;
+extern fn close(fd: i32) -> i32;
+extern fn kill(pid: i32, signal: i32) -> i32;
+extern fn waitpid(pid: i32, status: *i32, options: i32) -> i32;
+// fcntl and ioctl are VARIADIC in libc. Declared fixed-arity, the third
+// argument is passed in a register the callee never reads on AArch64-darwin, so
+// O_NONBLOCK and TIOCSWINSZ silently do nothing (or worse). Same defect that
+// was in stdlib/process.
+extern fn fcntl(fd: i32, cmd: i32, ...) -> i32;
+extern fn ioctl(fd: i32, request: u64, ...) -> i32;
+extern fn __error() -> *i32;
+
+#[repr(C)]
+struct WinSize {
+    rows: u16,
+    cols: u16,
+    xpixel: u16,
+    ypixel: u16,
+}
+
+enum ReadResult {
+    Data(usize),
+    WouldBlock,
+    Closed,
+    Failed,
+}
+
+struct Session {
+    _master: i32,
+    _pid: i32,
+    _closed: bool,
+}
+
+fn supported() -> bool { return true; }
+
+fn make_nonblocking(fd: i32) {
+    let flags: i32 = { fcntl(fd, 3 as i32, 0 as i32) }; // F_GETFL
+    if flags >= (0 as i32) {
+        let _rc: i32 = { fcntl(fd, 4 as i32, flags | (4 as i32)) }; // F_SETFL, O_NONBLOCK
+    }
+    return;
+}
+
+fn start(shell: str = "/bin/zsh", cwd: str = "", rows: u16 = 24 as u16, cols: u16 = 80 as u16) -> option::Option[Session] {
+    let shell_text: text::Text = text::from_str(shell);
+    let shell_c: text::CString = match shell_text.c_str() {
+        option::Option[text::CString]::Some(v) => v,
+        option::Option[text::CString]::None => { return option::Option[Session]::None; }
+    };
+    var cwd_text: text::Text = text::from_str(cwd);
+    var cwd_c: option::Option[text::CString] = if cwd == "" {
+        option::Option[text::CString]::None
+    } else {
+        cwd_text.c_str()
+    };
+    if cwd != "" {
+        match cwd_c {
+            option::Option[text::CString]::Some(_v) => {}
+            option::Option[text::CString]::None => { return option::Option[Session]::None; }
+        }
+    }
+
+    // TERM/COLORTERM are exported in the PARENT, before the fork, and the child
+    // inherits environ. setenv() allocates, and only async-signal-safe calls are
+    // legal between fork and exec: if another thread held the malloc lock when
+    // we forked, a setenv in the child would deadlock it forever. This library
+    // runs inside threaded apps (a reactor, worker threads), so that is a real
+    // hazard, not a theoretical one.
+    let _term: i32 = { setenv(#str_ptr("TERM\0"), #str_ptr("xterm-256color\0"), 1 as i32) };
+    let _color: i32 = { setenv(#str_ptr("COLORTERM\0"), #str_ptr("truecolor\0"), 1 as i32) };
+
+    var master: i32 = -1 as i32;
+    var ws: WinSize = WinSize { rows: rows, cols: cols, xpixel: 0 as u16, ypixel: 0 as u16 };
+    let pid: i32 = { forkpty(#addr_of(master), 0 as *u8, 0 as *u8, #addr_of(ws)) };
+    if pid < (0 as i32) { return option::Option[Session]::None; }
+    if pid == (0 as i32) {
+        // Child: chdir and execl only — both async-signal-safe.
+        if cwd != "" {
+            match cwd_c {
+                option::Option[text::CString]::Some(cp) => {
+                    let _cd: i32 = { chdir(cp.as_ptr()) };
+                }
+                option::Option[text::CString]::None => {}
+            }
+        }
+        let _exec: i32 = { execl(shell_c.as_ptr(), shell_c.as_ptr(), #str_ptr("-l\0"), 0 as *u8) };
+        { _exit(127 as i32); }
+    }
+
+    make_nonblocking(master);
+    return option::Option[Session]::Some(Session {
+        _master: master,
+        _pid: pid,
+        _closed: false,
+    });
+}
+
+impl Session {
+    fn master_fd(this) -> i32 { return this._master; }
+    fn pid(this) -> i32 { return this._pid; }
+    fn is_open(this) -> bool { return !this._closed; }
+
+    fn read_into(this, buffer: *u8, capacity: usize) -> ReadResult {
+        if this._closed || capacity == (0 as usize) { return ReadResult::Closed; }
+        let n: isize = { read(this._master, buffer, capacity) };
+        if n > (0 as isize) { return ReadResult::Data(n as usize); }
+        if n == (0 as isize) { return ReadResult::Closed; }
+        let e: i32 = { *{ __error() } };
+        if e == (35 as i32) { return ReadResult::WouldBlock; } // EAGAIN/EWOULDBLOCK
+        if e == (5 as i32) { return ReadResult::Closed; }      // EIO: Darwin PTY peer closed
+        return ReadResult::Failed;
+    }
+
+    fn write(this, bytes: str) -> isize {
+        if this._closed { return -1 as isize; }
+        return { write(this._master, #str_ptr(bytes), #str_len(bytes)) };
+    }
+
+    fn resize(this, rows: u16, cols: u16) -> bool {
+        if this._closed { return false; }
+        var ws: WinSize = WinSize { rows: rows, cols: cols, xpixel: 0 as u16, ypixel: 0 as u16 };
+        // Darwin TIOCSWINSZ from <sys/ttycom.h>.
+        return { ioctl(this._master, 0x80087467 as u64, #addr_of(ws) as *u8) } == (0 as i32);
+    }
+
+    fn close(ref this) {
+        if this._closed { return; }
+        this._closed = true;
+        if this._master >= (0 as i32) {
+            let _fd: i32 = { close(this._master) };
+            this._master = -1 as i32;
+        }
+        let _sig: i32 = { kill(this._pid, 1 as i32) }; // SIGHUP
+        var st: i32 = 0 as i32;
+        let first: i32 = { waitpid(this._pid, #addr_of(st), 1 as i32) }; // WNOHANG
+        if first == (0 as i32) {
+            // A foreground program may ignore SIGHUP. Widget destruction must
+            // remain deterministic, so finish the owned child rather than
+            // blocking the AppKit main thread indefinitely.
+            let _kill: i32 = { kill(this._pid, 9 as i32) }; // SIGKILL
+            let _reaped: i32 = { waitpid(this._pid, #addr_of(st), 0 as i32) };
+        }
+        return;
+    }
+
+    fn drop(ref this) {
+        this.close();
+        return;
+    }
+}

@@ -1,0 +1,40 @@
+import "./terminal" as terminal;
+import "./pty" as pty;
+import "./appkit" as terminal_ui;
+
+#[test]
+fn transcript_strips_ansi_and_osc() {
+    var t: terminal::Transcript = terminal::Transcript::new();
+    t.feed("plain \x1b[31mred\x1b[0m");
+    t.feed("\x1b]0;window title\x07 done");
+    assert t.view() == "plain red done";
+}
+
+#[test]
+fn transcript_normalizes_cr_and_backspace() {
+    var t: terminal::Transcript = terminal::Transcript::new();
+    t.feed("one\r\n");
+    t.feed("progress 1\rprogress 2");
+    t.feed("x\x08!");
+    t.finish();
+    assert t.view() == "one\nprogress 1\nprogress 2!";
+}
+
+#[test]
+fn transcript_keeps_utf8_and_bounds_scrollback() {
+    var t: terminal::Transcript = terminal::Transcript::new(max_bytes: 1024 as usize);
+    t.feed("héllo\n");
+    var i: i32 = 0 as i32;
+    while i < (200 as i32) {
+        t.feed("0123456789\n");
+        i = i +% (1 as i32);
+    }
+    assert t.count() <= (1024 as usize);
+    assert t.count() > (0 as usize);
+}
+
+#[test]
+fn macos_pty_backend_is_present() {
+    assert pty::supported();
+    assert terminal_ui::supported();
+}

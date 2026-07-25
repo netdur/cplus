@@ -1,0 +1,21 @@
+[package]
+name    = "terminal"
+version = "0.0.1"
+edition = "2026"
+
+# Portable terminal-facing API with a macOS implementation today:
+# - terminal/terminal: bounded, ANSI-aware transcript model
+# - terminal/pty:      pseudo-terminal session (Darwin forkpty backend)
+# - terminal/appkit:   live AppKit widget
+
+[[bin]]
+name = "terminal_tests"
+path = "src/test_main.cplus"
+
+[dependencies]
+stdlib     = "*"
+objc       = "*"
+appkit     = "*"
+quartzcore = "*"
+flex_layout = "*"
+facet       = "*"
