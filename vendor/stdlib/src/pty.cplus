@@ -1,0 +1,339 @@
+// stdlib/pty.cplus — run a child under a pseudo-terminal.
+//
+// The difference from `process`: a pipe is not a terminal. A child on pipes has
+// no controlling tty, so it takes its non-interactive path — block buffering,
+// no prompt, no job control — and cannot be sent Ctrl-C or told the window
+// resized. A pty child believes it is on a terminal, because it is.
+//
+// NOT forkpty. forkpty(3) forks, and this library is used from threaded apps
+// (facet's reactor, worker threads), where a forked child may only touch
+// async-signal-safe calls before exec — the same reason `process` uses
+// posix_spawn rather than fork+exec. Instead: openpty(3) for the pair, then
+// posix_spawn with POSIX_SPAWN_SETSID so the child becomes a session leader,
+// and a file action that OPENS the slave by path in the child. Opening a tty as
+// a session leader with no controlling terminal is what makes it the
+// controlling terminal — dup2 alone would not.
+//
+// The master end is an ordinary fd: hand `read_fd()` to the async reactor
+// (`net::read_fd_async`) exactly as with a pipe.
+//
+// ⚠ STATUS: `spawn` is BLOCKED by a compiler defect, not by anything here.
+// Calling it aborts, exactly as `process::spawn` does, and from the same cause —
+// see bugs/process_spawn_crashes_across_module_boundary.md. Traced end to end,
+// this function reaches its last statement (the pty is allocated, the child is
+// spawned) and the fault lands on the way out; inserting or removing unrelated
+// code moves which allocation dies. The pure logic below is tested and correct;
+// the live path lights up when that defect is fixed.
+
+import "./text" as text;
+import "./option" as option;
+import "./vec" as vec;
+import "./status" as status;
+
+extern fn openpty(amaster: *i32, aslave: *i32, name: *u8, termp: *u8, winp: *u8) -> i32;
+extern fn close(fd: i32) -> i32;
+extern fn read(fd: i32, buf: *u8, count: usize) -> isize;
+extern fn write(fd: i32, buf: *u8, count: usize) -> isize;
+extern fn waitpid(pid: i32, status: *i32, options: i32) -> i32;
+extern fn kill(pid: i32, sig: i32) -> i32;
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+extern fn __error() -> *i32;
+// ioctl is VARIADIC — declaring it fixed-arity passes the third argument in a
+// register the callee never reads on AArch64-darwin (see the same note on
+// fcntl in process.cplus).
+extern fn ioctl(fd: i32, request: u64, ...) -> i32;
+extern fn posix_spawn_file_actions_init(fa: *u8) -> i32;
+extern fn posix_spawn_file_actions_destroy(fa: *u8) -> i32;
+extern fn posix_spawn_file_actions_adddup2(fa: *u8, fd: i32, newfd: i32) -> i32;
+extern fn posix_spawn_file_actions_addopen(fa: *u8, fd: i32, path: *u8, oflag: i32, mode: u16) -> i32;
+extern fn posix_spawn_file_actions_addclose(fa: *u8, fd: i32) -> i32;
+extern fn posix_spawn_file_actions_addchdir_np(fa: *u8, path: *u8) -> i32;
+extern fn posix_spawnattr_init(attr: *u8) -> i32;
+extern fn posix_spawnattr_destroy(attr: *u8) -> i32;
+extern fn posix_spawnattr_setflags(attr: *u8, flags: i16) -> i32;
+extern fn posix_spawnp(pid: *i32, file: *u8, file_actions: *u8, attrp: *u8, argv: *u8, envp: *u8) -> i32;
+extern fn _NSGetEnviron() -> *u8;
+
+fn e_intr() -> i32 { return 4 as i32; }
+fn sig_int() -> i32 { return 2 as i32; }        // Ctrl-C
+fn sig_term() -> i32 { return 15 as i32; }
+fn sig_kill() -> i32 { return 9 as i32; }
+fn o_rdwr() -> i32 { return 2 as i32; }
+// POSIX_SPAWN_SETSID (sys/spawn.h): the child leads a new session, so the tty
+// it opens becomes its controlling terminal.
+fn spawn_setsid() -> i16 { return 1024 as i16; }
+// TIOCSWINSZ = _IOW('t', 103, struct winsize) = 0x80087467 — tell the child's
+// terminal its new size; the kernel then sends it SIGWINCH.
+fn tiocswinsz() -> u64 { return 2148037735 as u64; }
+
+// A child running under a pty. Owns the master fd, which is closed on drop.
+// Like process::Child, every accessor takes `ref this`: a by-value receiver
+// would move the value into the method and drop it on return, closing the
+// master out from under the caller.
+struct PtyChild {
+    _pid: i32,
+    _master: i32,     // -1 once closed/taken
+}
+
+// Decode a waitpid status word: exit code, or 128 + signal when killed.
+fn decode_status(status_word: i32) -> i32 {
+    if (status_word & (0x7f as i32)) == (0 as i32) {
+        return (status_word >> (8 as i32)) & (0xff as i32);
+    }
+    return (128 as i32) + (status_word & (0x7f as i32));
+}
+
+// `struct winsize { unsigned short ws_row, ws_col, ws_xpixel, ws_ypixel; }`
+fn winsize_new(cols: u16, rows: u16) -> *u8 {
+    let w: *u8 = { malloc(8 as usize) };
+    if w == (0 as *u8) { return 0 as *u8; }
+    { *((w + (0 as usize)) as *u16) = rows; }
+    { *((w + (2 as usize)) as *u16) = cols; }
+    { *((w + (4 as usize)) as *u16) = 0 as u16; }
+    { *((w + (6 as usize)) as *u16) = 0 as u16; }
+    return w;
+}
+
+// Start `argv[0]` (searched on PATH) under a new pty of `cols` x `rows`, in
+// working directory `cwd` ("" inherits). `None` if argv is empty, a string
+// holds an interior NUL, the pty cannot be allocated, or the spawn fails.
+//
+// Every parameter is REQUIRED. A defaulted trailing parameter on a function of
+// this shape currently miscompiles when called from another module (see
+// bugs/process_spawn_crashes_across_module_boundary.md); until that is fixed,
+// this API does not offer one.
+fn spawn(argv: vec::Vec[text::Text], cwd: str, cols: u16, rows: u16) -> option::Option[PtyChild] {
+    let argc: usize = argv.count();
+    if argc == (0 as usize) { return option::Option[PtyChild]::None; }
+
+    // argv as a NULL-terminated array of C string pointers; the CStrings are
+    // parked in `cstrs` so their buffers outlive the spawn.
+    var cstrs: vec::Vec[text::CString] = vec::new::[text::CString]();
+    var cargv: vec::Vec[*u8] = vec::new::[*u8]();
+    var i: usize = 0 as usize;
+    while i < argc {
+        match argv.at_ptr(i) {
+            option::Option[*text::Text]::Some(tp) => {
+                match { (*tp).c_str() } {
+                    option::Option[text::CString]::Some(cs) => {
+                        let _p: status::Status = cargv.append(cs.as_ptr());
+                        let _a: status::Status = cstrs.append(cs);
+                    }
+                    option::Option[text::CString]::None => { return option::Option[PtyChild]::None; }
+                }
+            }
+            option::Option[*text::Text]::None => { return option::Option[PtyChild]::None; }
+        }
+        i = i +% (1 as usize);
+    }
+    let _nul: status::Status = cargv.append(0 as *u8);
+
+    var cwd_cs: option::Option[text::CString] = option::Option[text::CString]::None;
+    var cwd_ptr: *u8 = 0 as *u8;
+    if cwd != "" {
+        match text::from_str(cwd).c_str() {
+            option::Option[text::CString]::Some(cs) => { cwd_ptr = cs.as_ptr(); cwd_cs = option::Option[text::CString]::Some(cs); }
+            option::Option[text::CString]::None => { return option::Option[PtyChild]::None; }
+        }
+    }
+
+    let arr: *u8 = match cargv.at_ptr(0 as usize) {
+        option::Option[**u8]::Some(base) => base as *u8,
+        option::Option[**u8]::None => 0 as *u8,
+    };
+    let arg0: *u8 = { *(arr as **u8) };
+
+    // Allocate the pty. `name` receives the slave's path, which the child
+    // reopens after setsid to acquire it as its controlling terminal.
+    let fds: *u8 = { malloc(8 as usize) };
+    if fds == (0 as *u8) { return option::Option[PtyChild]::None; }
+    let name: *u8 = { malloc(128 as usize) };
+    if name == (0 as *u8) { free(fds); return option::Option[PtyChild]::None; }
+    let ws: *u8 = winsize_new(cols, rows);
+    let rc_pty: i32 = { openpty(fds as *i32, (fds + (4 as usize)) as *i32, name, 0 as *u8, ws) };
+    let master: i32 = { *(fds as *i32) };
+    let slave: i32 = { *((fds + (4 as usize)) as *i32) };
+    free(fds);
+    if ws != (0 as *u8) { free(ws); }
+    if rc_pty != (0 as i32) { free(name); return option::Option[PtyChild]::None; }
+
+    // File actions: open the slave by PATH as fd 0 (post-setsid, so it becomes
+    // the controlling terminal — dup2 of an already-open fd would not), then
+    // point 1 and 2 at it. Both inherited pty fds are closed in the child.
+    let fa: *u8 = { malloc(8 as usize) };
+    let attr: *u8 = { malloc(8 as usize) };
+    if fa == (0 as *u8) || attr == (0 as *u8) {
+        { close(master) }; { close(slave) }; free(name);
+        if fa != (0 as *u8) { free(fa); }
+        if attr != (0 as *u8) { free(attr); }
+        return option::Option[PtyChild]::None;
+    }
+    let _fi: i32 = { posix_spawn_file_actions_init(fa) };
+    let _ai: i32 = { posix_spawnattr_init(attr) };
+    let _af: i32 = { posix_spawnattr_setflags(attr, spawn_setsid()) };
+    if cwd_ptr != (0 as *u8) { let _cd: i32 = { posix_spawn_file_actions_addchdir_np(fa, cwd_ptr) }; }
+    let _c0: i32 = { posix_spawn_file_actions_addclose(fa, master) };
+    let _c1: i32 = { posix_spawn_file_actions_addclose(fa, slave) };
+    let _o0: i32 = { posix_spawn_file_actions_addopen(fa, 0 as i32, name, o_rdwr(), 0 as u16) };
+    let _d1: i32 = { posix_spawn_file_actions_adddup2(fa, 0 as i32, 1 as i32) };
+    let _d2: i32 = { posix_spawn_file_actions_adddup2(fa, 0 as i32, 2 as i32) };
+
+    let pid_buf: *u8 = { malloc(4 as usize) };
+    if pid_buf == (0 as *u8) {
+        { close(master) }; { close(slave) }; free(name); free(fa); free(attr);
+        return option::Option[PtyChild]::None;
+    }
+    { *(pid_buf as *i32) = 0 as i32; }
+    let envp: *u8 = { *(_NSGetEnviron() as **u8) };
+    let rc: i32 = { posix_spawnp(pid_buf as *i32, arg0, fa, attr, arr, envp) };
+    let pid: i32 = { *(pid_buf as *i32) };
+    free(pid_buf);
+    let _fd: i32 = { posix_spawn_file_actions_destroy(fa) };
+    let _ad: i32 = { posix_spawnattr_destroy(attr) };
+    free(fa); free(attr); free(name);
+
+    // The parent holds the slave only until the spawn returns: keeping it open
+    // across the call avoids a race where the master reports EOF before the
+    // child has opened its end.
+    { close(slave) };
+    if rc != (0 as i32) { { close(master) }; return option::Option[PtyChild]::None; }
+    return option::Option[PtyChild]::Some(PtyChild { _pid: pid, _master: master });
+}
+
+
+
+impl PtyChild {
+    fn pid(ref this) -> i32 { return this._pid; }
+
+    // The master fd — readable AND writable, unlike a pipe pair. Hand it to the
+    // async reactor to stream output.
+    fn read_fd(ref this) -> i32 { return this._master; }
+
+    // Give the fd away; this PtyChild no longer closes it on drop.
+    fn take_fd(ref this) -> i32 { let fd: i32 = this._master; this._master = -1 as i32; return fd; }
+
+    // Write to the child's terminal input, looping over partial writes. This is
+    // how a keystroke reaches the program — including a raw control byte.
+    fn write(ref this, data: str) -> isize {
+        if this._master < (0 as i32) { return -1 as isize; }
+        let p: *u8 = #str_ptr(data);
+        let total: usize = #str_len(data);
+        var off: usize = 0 as usize;
+        while off < total {
+            let k: isize = { write(this._master, p + off, total -% off) };
+            if k > (0 as isize) { off = off +% (k as usize); continue; }
+            if k < (0 as isize) && { *(__error()) } == e_intr() { continue; }
+            if off > (0 as usize) { return off as isize; }
+            return -1 as isize;
+        }
+        return off as isize;
+    }
+
+    // Read whatever the terminal has produced. -1 on error; 0 at EOF (the child
+    // closed its end). Non-blocking behaviour follows the fd's own flags.
+    fn read(ref this, buf: *u8, count: usize) -> isize {
+        if this._master < (0 as i32) { return -1 as isize; }
+        loop {
+            let k: isize = { read(this._master, buf, count) };
+            if k < (0 as isize) && { *(__error()) } == e_intr() { continue; }
+            return k;
+        }
+        return -1 as isize;
+    }
+
+    // Tell the child's terminal it was resized; the kernel sends it SIGWINCH,
+    // which is how a full-screen program learns to redraw.
+    fn resize(ref this, cols: u16, rows: u16) -> bool {
+        if this._master < (0 as i32) { return false; }
+        let w: *u8 = winsize_new(cols, rows);
+        if w == (0 as *u8) { return false; }
+        let rc: i32 = { ioctl(this._master, tiocswinsz(), w) };
+        free(w);
+        return rc == (0 as i32);
+    }
+
+    // Signals. `interrupt` is Ctrl-C — the thing pipes cannot deliver.
+    fn signal(ref this, sig: i32) -> bool {
+        if this._pid <= (0 as i32) { return false; }
+        return { kill(this._pid, sig) } == (0 as i32);
+    }
+    fn interrupt(ref this) -> bool { return this.signal(sig_int()); }
+    fn terminate(ref this) -> bool { return this.signal(sig_term()); }
+    fn kill_now(ref this) -> bool { return this.signal(sig_kill()); }
+
+    // Reap the child; 128 + signal if it was killed, -1 if there is nothing to
+    // reap. Retries on EINTR — waitpid returning -1 leaves the status word
+    // unwritten, so decoding it without the retry reports a random exit.
+    fn wait(ref this) -> i32 {
+        if this._pid <= (0 as i32) { return -1 as i32; }
+        let st: *u8 = { malloc(4 as usize) };
+        if st == (0 as *u8) { return -1 as i32; }
+        { *(st as *i32) = 0 as i32; }
+        var rc: i32 = 0 as i32;
+        loop {
+            rc = { waitpid(this._pid, st as *i32, 0 as i32) };
+            if rc >= (0 as i32) { break; }
+            if { *(__error()) } != e_intr() { break; }
+        }
+        let status_word: i32 = { *(st as *i32) };
+        free(st);
+        if rc < (0 as i32) { return -1 as i32; }
+        this._pid = -1 as i32;
+        return decode_status(status_word);
+    }
+
+    // Close the master. The child is NOT reaped here: a blocking waitpid in a
+    // destructor would hang an arbitrary caller. Call wait().
+    fn drop(ref this) {
+        if this._master >= (0 as i32) { let _c: i32 = { close(this._master) }; this._master = -1 as i32; }
+        return;
+    }
+}
+
+// ───────────────────────────── tests ─────────────────────────────
+
+// NOTE on coverage: spawning is not exercised from `cpc test` — a child spawned
+// inside the test driver deadlocks the harness (the same limit process.cplus
+// documents, bugs/process_spawn_test_harness_hang.md). The pure pieces are
+// covered here; the live pty is verified by a standalone binary.
+
+#[test]
+fn winsize_is_packed_rows_then_cols() {
+    // struct winsize is { ws_row, ws_col, ws_xpixel, ws_ypixel }, all u16 —
+    // rows FIRST. Getting the order wrong silently gives the child a terminal
+    // of the wrong shape, which only shows up as mis-wrapped output.
+    let w: *u8 = winsize_new(80 as u16, 24 as u16);
+    assert w != (0 as *u8);
+    assert { *((w + (0 as usize)) as *u16) } == (24 as u16);   // rows
+    assert { *((w + (2 as usize)) as *u16) } == (80 as u16);   // cols
+    assert { *((w + (4 as usize)) as *u16) } == (0 as u16);
+    assert { *((w + (6 as usize)) as *u16) } == (0 as u16);
+    free(w);
+}
+
+#[test]
+fn tiocswinsz_matches_the_kernel_encoding() {
+    // _IOW('t', 103, struct winsize): IOC_IN | (8 << 16) | ('t' << 8) | 103.
+    let expected: u64 = (2147483648 as u64) | ((8 as u64) << (16 as u64))
+                      | ((116 as u64) << (8 as u64)) | (103 as u64);
+    assert tiocswinsz() == expected;
+}
+
+#[test]
+fn pty_decode_status_reads_exit_code_and_signal() {
+    assert decode_status(0 as i32) == (0 as i32);
+    assert decode_status(0x300 as i32) == (3 as i32);      // exited 3
+    assert decode_status(2 as i32) == (130 as i32);        // killed by SIGINT
+    assert decode_status(15 as i32) == (143 as i32);       // killed by SIGTERM
+}
+
+#[test]
+fn empty_argv_is_none() {
+    let empty: vec::Vec[text::Text] = vec::new::[text::Text]();
+    match spawn(empty, "", 80 as u16, 24 as u16) {
+        option::Option[PtyChild]::Some(c) => { assert false; }
+        option::Option[PtyChild]::None => { assert true; }
+    }
+    return;
+}

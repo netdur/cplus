@@ -35,6 +35,7 @@ import "./executor" as executor;
 import "./time" as time;
 import "./date" as date;
 import "./process" as process;
+import "./pty" as pty;
 import "./fs" as fs;
 import "./bundle" as bundle;
 import "./netsys" as netsys;
