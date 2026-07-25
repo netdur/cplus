@@ -845,6 +845,12 @@ struct Node {
     on_hover_in: fn(*u8, *u8),
     on_hover_out: fn(*u8, *u8),
     on_scroll: fn(*u8, *u8),
+    // Raw key input while this element has focus (see key_code/key_chars).
+    // Named `key_handler`, not `on_key`, so the fluent `.on_key()` method is
+    // not shadowed by a same-named field — the same reason `on_drop`'s field is
+    // called `drop_handler`.
+    key_handler: fn(*u8, *u8),
+    opaque key_ctx: *u8,
     // Drag-and-drop DESTINATION (distinct from the on_drag pan gesture above):
     // when set on a `box`, the box accepts a text drop and this fires with the
     // drop-zone view as sender — read the payload via `dropped_text(sender)`.
@@ -981,6 +987,8 @@ fn blank(kind: u32) -> Node {
         on_hover_in: none,
         on_hover_out: none,
         on_scroll: none,
+        key_handler: none,
+        key_ctx: 0 as *u8,
         drop_handler: none,
         drop_ctx: 0 as *u8,
         drag_text: text::from_str(""),
@@ -1841,6 +1849,54 @@ impl TextSpan {
         return TextSpan { start: start, len: len, color: color };
     }
 }
+
+// ---- raw key input ----------------------------------------------------------
+// A key event delivered to whichever registered element currently holds focus.
+// The handler is `fn(event, ctx)` — `event` is an opaque platform event read
+// through the accessors below, so an app never touches a native type.
+//
+// Handling: a handler that wants the key STOPPED calls `consume_key()`, and the
+// event does not fall through to the responder chain (so Ctrl-C reaches a
+// terminal instead of beeping). Anything not consumed behaves exactly as before.
+static KEY_CODE_FN: fn(*u8) -> i64 = #zero::[fn(*u8) -> i64]();
+fn set_key_code_fn(f: fn(*u8) -> i64) { KEY_CODE_FN = f; return; }
+static KEY_CHARS_FN: fn(*u8) -> text::Text = #zero::[fn(*u8) -> text::Text]();
+fn set_key_chars_fn(f: fn(*u8) -> text::Text) { KEY_CHARS_FN = f; return; }
+static KEY_MODS_FN: fn(*u8) -> u64 = #zero::[fn(*u8) -> u64]();
+fn set_key_mods_fn(f: fn(*u8) -> u64) { KEY_MODS_FN = f; return; }
+
+// Read a key event. `code` is the platform key code; `chars` the text it would
+// produce (empty for a bare modifier or a function key); `modifiers` a bit set
+// tested with the mod_* helpers.
+fn key_code(event: *u8) -> i64 {
+    let f: fn(*u8) -> i64 = KEY_CODE_FN;
+    if f == (0 as fn(*u8) -> i64) { return -1 as i64; }
+    return f(event);
+}
+fn key_chars(event: *u8) -> text::Text {
+    let f: fn(*u8) -> text::Text = KEY_CHARS_FN;
+    if f == (0 as fn(*u8) -> text::Text) { return text::from_str(""); }
+    return f(event);
+}
+fn key_modifiers(event: *u8) -> u64 {
+    let f: fn(*u8) -> u64 = KEY_MODS_FN;
+    if f == (0 as fn(*u8) -> u64) { return 0 as u64; }
+    return f(event);
+}
+
+// Portable modifier bits (the backend maps its own flags onto these, so an app
+// never sees a platform constant).
+fn mod_shift() -> u64 { return 1 as u64; }
+fn mod_control() -> u64 { return 2 as u64; }
+fn mod_option() -> u64 { return 4 as u64; }
+fn mod_command() -> u64 { return 8 as u64; }
+fn has_modifier(mods: u64, which: u64) -> bool { return (mods & which) != (0 as u64); }
+
+// Set while a key handler runs: the handler calls consume_key() to stop the
+// event, and the backend reads (and clears) the flag when the handler returns.
+static KEY_CONSUMED: bool = false;
+fn consume_key() { KEY_CONSUMED = true; return; }
+fn take_key_consumed() -> bool { let c: bool = KEY_CONSUMED; KEY_CONSUMED = false; return c; }
 
 // ---- split divider position -------------------------------------------------
 // The write counterpart to Handle.value(), which already READS a split's divider
@@ -3507,6 +3563,19 @@ impl Node {
         n.drop_ctx = ctx;
         return n;
     }
+
+    // Receive raw key events while this element (or something inside it) holds
+    // focus. `handler(event, ctx)` reads the event with key_code / key_chars /
+    // key_modifiers, and calls consume_key() to stop it reaching the responder
+    // chain. This is the primitive behind shortcut-driven and terminal-style
+    // surfaces — arrows, function keys, Escape and Ctrl chords are otherwise
+    // unreachable, because a text field only reports change and submit.
+    fn on_key(take this, handler: fn(*u8, *u8), ctx: *u8 = 0 as *u8) -> Node {
+        var n: Node = this;
+        n.key_handler = handler;
+        n.key_ctx = ctx;
+        return n;
+    }
     // `.draggable(text)` — make a `box` a drag SOURCE that carries `text` on the
     // pasteboard (SwiftUI `.draggable`). A box is either draggable OR a drop
     // target, not both (they need distinct backing views).
@@ -4733,6 +4802,31 @@ fn facet_tier2_roles() {
     assert role_for_kind(kind_image()) == role_group();
     assert role_for_kind(kind_symbol()) == role_group();
     assert role_for_kind(kind_divider()) == role_group();
+}
+
+#[test]
+fn on_key_rides_the_node_and_consume_is_one_shot() {
+    let h: fn(*u8, *u8) = click_a;
+    let n: Node = box().on_key(h, 0 as *u8);
+    assert n.key_handler != null_fn();
+
+    // consume_key() is read-and-cleared by the backend, so a handler that
+    // consumes one event does not silently swallow the next.
+    assert !take_key_consumed();
+    consume_key();
+    assert take_key_consumed();
+    assert !take_key_consumed();
+
+    // Modifier bits are distinct and testable through has_modifier.
+    let both: u64 = mod_control() | mod_shift();
+    assert has_modifier(both, mod_control());
+    assert has_modifier(both, mod_shift());
+    assert !has_modifier(both, mod_command());
+
+    // With no backend installed the readers answer safely rather than trap.
+    assert key_code(0 as *u8) == (-1 as i64);
+    assert key_modifiers(0 as *u8) == (0 as u64);
+    return;
 }
 
 #[test]

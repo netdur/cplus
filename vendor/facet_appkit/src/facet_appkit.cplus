@@ -378,6 +378,11 @@ fn ns_font(size: f64, weight: u32, family: u32) -> ak::Font {
 // color. Called from every op; when Style is blank every guard fails (no-op).
 fn apply_style(view_ptr: *u8, kind: u32, np: *facet::Node) {
     if view_ptr == (0 as *u8) { return; }
+    // Raw key input: every widget passes through here, so this is where an
+    // element declaring on_key becomes a key target. Registration is keyed by
+    // view, so a re-mount replaces rather than stacks.
+    let kh: fn(*u8, *u8) = { (*np).key_handler };
+    if kh != (0 as fn(*u8, *u8)) { register_key_target(view_ptr, kh, { (*np).key_ctx }); }
     // Re-alias the Style locally so the paint logic below is unchanged; taking
     // the whole node lets us also apply per-node attrs (tooltip, a11y label).
     let style: facet::Style = { (*np).style };
@@ -1389,6 +1394,10 @@ fn install() {
     // Split divider: the write counterpart to value()'s split reader.
     facet::set_split_position_fn(set_split_position_impl);
     facet::set_split_fraction_fn(set_split_fraction_impl);
+    // Raw key event readers.
+    facet::set_key_code_fn(key_code_impl);
+    facet::set_key_chars_fn(key_chars_impl);
+    facet::set_key_mods_fn(key_mods_impl);
     facet::set_set_hidden_fn(set_hidden_impl);
     facet::set_add_child_fn(add_child_impl);
     facet::set_remove_child_fn(remove_child_impl);
@@ -2829,6 +2838,81 @@ fn split_position_writes_and_reads_back_including_fractions() {
     assert !set_split_fraction_impl(lh, 0.5f64, 0 as i64);
 }
 
+static T_KEY_HITS: i32 = 0;
+
+fn t_key_handler(event: *u8, ctx: *u8) { T_KEY_HITS = T_KEY_HITS + (1 as i32); return; }
+fn t_key_other(event: *u8, ctx: *u8) { T_KEY_HITS = T_KEY_HITS + (100 as i32); return; }
+
+// NOTE on coverage: delivering a real keystroke needs a running app with a key
+// window, and NSEvent's keyEvent constructor takes ten arguments (no message
+// shim covers it), so the MONITOR hop is not driven from `cpc test` — the same
+// limit the modal panels have. Everything the monitor decides with, though, is
+// pure or observable, and is covered here: the flag mapping, the ancestor walk
+// that picks the target from the first responder, and the registry semantics.
+
+#[test]
+fn key_modifier_flags_map_onto_portable_bits() {
+    // An app must never see an NSEventModifierFlag.
+    assert map_modifier_flags(262144 as u64) == facet::mod_control();
+    assert map_modifier_flags(131072 as u64) == facet::mod_shift();
+    assert map_modifier_flags(524288 as u64) == facet::mod_option();
+    assert map_modifier_flags(1048576 as u64) == facet::mod_command();
+    // Combined, and unrelated bits (caps lock 65536, fn 8388608) are ignored.
+    let both: u64 = map_modifier_flags(262144 as u64 | 1048576 as u64 | 65536 as u64);
+    assert facet::has_modifier(both, facet::mod_control());
+    assert facet::has_modifier(both, facet::mod_command());
+    assert !facet::has_modifier(both, facet::mod_shift());
+    assert map_modifier_flags(0 as u64) == (0 as u64);
+}
+
+#[test]
+fn key_target_is_found_through_the_responder_ancestry() {
+    // Focus lands on a composer's INNER text view while the app registered the
+    // wrapping element, so the monitor walks up from the first responder.
+    let n: flex::Node = ui::text_area(value: "", agent_id: "");
+    let wrapper: *u8 = n.payload();
+    let inner: *u8 = { rt::msg_id(wrapper, rt::sel(#str_ptr("documentView\0"))) };
+    assert inner != (0 as *u8);
+    assert view_contains(wrapper, inner);      // ancestor of the responder
+    assert view_contains(inner, inner);        // the responder itself
+    // An unrelated element is not a target.
+    let other: flex::Node = ui::label("x");
+    assert !view_contains(other.payload(), inner);
+    assert !view_contains(0 as *u8, inner);
+}
+
+#[test]
+fn registering_a_key_target_replaces_rather_than_stacks() {
+    // A re-mount must not leave the old handler behind (it would fire twice).
+    let a: flex::Node = ui::label("a");
+    let v: *u8 = a.payload();
+    let reg: *vec::Vec[KeyTarget] = { #addr_of(KEY_TARGETS) };
+    let before: usize = { (*reg).count() };
+    register_key_target(v, t_key_handler, 0 as *u8);
+    register_key_target(v, t_key_other, 0 as *u8);
+    assert { (*reg).count() } == before +% (1 as usize);   // one entry, not two
+
+    // ...and it is the LATEST handler that is held.
+    var found: bool = false;
+    var i: usize = 0 as usize;
+    while i < { (*reg).count() } {
+        match (*reg).at_ptr(i) {
+            option::Option[*KeyTarget]::Some(t) => {
+                if { (*t).view } == v { found = { (*t).handler } == t_key_other; }
+            }
+            option::Option[*KeyTarget]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    assert found;
+
+    // A null handler is refused rather than registered.
+    let b: flex::Node = ui::label("b");
+    let n2: usize = { (*reg).count() };
+    register_key_target(b.payload(), 0 as fn(*u8, *u8), 0 as *u8);
+    assert { (*reg).count() } == n2;
+}
+
 #[test]
 fn set_is_focused_makes_the_element_first_responder() {
     // iris's terminal calls this after each command to return the caret to the
@@ -4201,6 +4285,121 @@ fn reapply_text_spans(view: *u8) {
         i = i +% (1 as usize);
     }
     return;
+}
+
+// ==== raw key input =========================================================
+// Keys arrive through ONE local event monitor rather than a synthesized
+// responder subclass: no acceptsFirstResponder override, no keyDown: shim, and
+// it works for elements (NSTextView, NSTextField) that already own the
+// responder chain — which is exactly where a terminal or editor wants keys.
+// The monitor dispatches to whichever registered element contains the window's
+// current first responder, so focus decides the target, as it should.
+
+struct KeyTarget {
+    opaque view: *u8,
+    handler: fn(*u8, *u8),
+    opaque ctx: *u8,
+}
+
+static KEY_TARGETS: vec::Vec[KeyTarget] = #zero::[vec::Vec[KeyTarget]]();
+static KEY_MONITOR: *u8 = 0 as *u8;
+
+// Is `view` the responder itself, or an ancestor of it? A composer's keys land
+// on its inner NSTextView, while the app registered the wrapping element.
+fn view_contains(view: *u8, responder: *u8) -> bool {
+    if view == (0 as *u8) { return false; }
+    var p: *u8 = responder;
+    var guard_n: i32 = 0 as i32;
+    while p != (0 as *u8) && guard_n < (64 as i32) {
+        if p == view { return true; }
+        p = { rt::msg_id(p, rt::sel(#str_ptr("superview\0"))) };
+        guard_n = guard_n + (1 as i32);
+    }
+    return false;
+}
+
+fn key_event_filter(ctx: *u8, event_ptr: *u8) -> *u8 {
+    let ev: ak::Event = ak::Event::from_raw(event_ptr);
+    let win: *u8 = { rt::msg_id(event_ptr, rt::sel(#str_ptr("window\0"))) };
+    if win == (0 as *u8) { return event_ptr; }
+    let fr: *u8 = { rt::msg_id(win, rt::sel(#str_ptr("firstResponder\0"))) };
+    if fr == (0 as *u8) { return event_ptr; }
+    let reg: *vec::Vec[KeyTarget] = { #addr_of(KEY_TARGETS) };
+    let n: usize = { (*reg).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*reg).at_ptr(i) {
+            option::Option[*KeyTarget]::Some(t) => {
+                if view_contains({ (*t).view }, fr) {
+                    let _c: bool = facet::take_key_consumed();   // clear stale state
+                    let f: fn(*u8, *u8) = { (*t).handler };
+                    f(event_ptr, { (*t).ctx });
+                    // Consumed -> swallow the event so it never reaches the
+                    // responder chain (Ctrl-C reaches a terminal, no beep).
+                    if facet::take_key_consumed() { return 0 as *u8; }
+                    return event_ptr;
+                }
+            }
+            option::Option[*KeyTarget]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return event_ptr;
+}
+
+fn register_key_target(view: *u8, handler: fn(*u8, *u8), ctx: *u8) {
+    if view == (0 as *u8) { return; }
+    if handler == (0 as fn(*u8, *u8)) { return; }
+    if KEY_MONITOR == (0 as *u8) {
+        KEY_MONITOR = akx::add_local_event_filter(ak::event_mask_key_down, key_event_filter, 0 as *u8);
+    }
+    let reg: *vec::Vec[KeyTarget] = { #addr_of(KEY_TARGETS) };
+    // Re-mounting an element replaces its entry rather than stacking duplicates.
+    let n: usize = { (*reg).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*reg).at_ptr(i) {
+            option::Option[*KeyTarget]::Some(t) => {
+                if { (*t).view } == view {
+                    { (*t).handler = handler; }
+                    { (*t).ctx = ctx; }
+                    return;
+                }
+            }
+            option::Option[*KeyTarget]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    (*reg).append(KeyTarget { view: view, handler: handler, ctx: ctx });
+    return;
+}
+
+// Event readers, registered into facet's portable slots.
+fn key_code_impl(event: *u8) -> i64 {
+    if event == (0 as *u8) { return -1 as i64; }
+    return ak::Event::from_raw(event).key_code() as i64;
+}
+fn key_chars_impl(event: *u8) -> text::Text {
+    if event == (0 as *u8) { return text::from_str(""); }
+    return match ak::Event::from_raw(event).characters() {
+        option::Option[text::Text]::Some(t) => t,
+        option::Option[text::Text]::None => text::from_str(""),
+    };
+}
+// AppKit's flags mapped onto facet's portable bits, so an app never sees an
+// NSEventModifierFlag: shift 1<<17, control 1<<18, option 1<<19, command 1<<20.
+fn map_modifier_flags(f: u64) -> u64 {
+    var out: u64 = 0 as u64;
+    if (f & (131072 as u64)) != (0 as u64) { out = out | facet::mod_shift(); }
+    if (f & (262144 as u64)) != (0 as u64) { out = out | facet::mod_control(); }
+    if (f & (524288 as u64)) != (0 as u64) { out = out | facet::mod_option(); }
+    if (f & (1048576 as u64)) != (0 as u64) { out = out | facet::mod_command(); }
+    return out;
+}
+
+fn key_mods_impl(event: *u8) -> u64 {
+    if event == (0 as *u8) { return 0 as u64; }
+    return map_modifier_flags(ak::Event::from_raw(event).modifier_flags());
 }
 
 // The write counterpart to value_impl's split reader. Detected the same way
