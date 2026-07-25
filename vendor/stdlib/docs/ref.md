@@ -330,10 +330,24 @@ fn into_owned(take c: CowStr) -> text::Text
 struct Box[T] { /* private */ }
 
 fn new[T](take v: T) -> option::Option[Box[T]]
+fn from_raw[T](raw: *u8) -> Box[T]
+
+impl Box[T] {
+    fn set(ref this, take v: T)
+    fn unwrap(take this) -> T
+    fn into_raw(take this) -> *u8
+}
+
+impl Box[T: Copy] {
+    fn value(this) -> T
+}
 ```
 
-Unique heap ownership. `None` if allocation fails. Methods: get/set/unwrap
-family (see source; `Copy` vs non-`Copy` impls).
+Unique heap ownership. `new` returns `None` if allocation fails. `value`
+copies the payload out and is available only for `Copy` payloads; `unwrap`
+consumes the handle and is the non-`Copy` route. `into_raw` releases
+ownership to the caller, `from_raw` takes it back; pairing them is the
+caller's responsibility.
 
 ---
 
@@ -344,10 +358,52 @@ struct Rc[T] { /* private */ }
 struct Weak[T] { /* private */ }
 
 fn new[T](take v: T) -> option::Option[Rc[T]]
+
+impl Rc[T] {
+    fn clone(this) -> Rc[T]
+    fn downgrade(this) -> Weak[T]
+    fn strong_count(this) -> u64
+    fn weak_count(this) -> u64
+    fn is_unique(this) -> bool
+    fn with_mut(ref this, f: fn(ref T)) -> status::Status
+    fn try_unwrap(take this) -> option::Option[T]
+}
+
+impl Rc[T: Copy] {
+    fn value(this) -> T
+}
+
+impl Weak[T] {
+    fn clone(this) -> Weak[T]
+    fn strong_count(this) -> u64
+    fn weak_count(this) -> u64
+    fn upgrade(this) -> option::Option[Rc[T]]
+}
 ```
 
-Single-threaded refcount. `clone`, strong/weak counts, `try_unwrap`,
-`with_mut`, `downgrade` / `upgrade` — see source. Not `Send`/`Sync`.
+Single-threaded reference counting. `new` returns `None` if allocation
+fails. Not `Send`/`Sync`: passing an `Rc` to a `Send`/`Sync`-bounded generic
+is rejected at sema time (E0502). Use [`arc`](#arc) across threads.
+
+A `Weak` keeps the control block addressable without keeping the value
+alive, which is what breaks the reference cycles a graph of `Rc`s would
+otherwise leak (parent/child, observer/subject). `upgrade` yields `None`
+once the last strong handle is gone. The value is dropped when the strong
+count reaches 0; the block itself is freed when the last `Weak` goes, so a
+live `Weak` safely outlives the value.
+
+`weak_count` reports user-held `Weak` handles only. The strong handles
+collectively own one implicit weak, which this excludes while any strong
+handle remains.
+
+`with_mut` gives exclusive access to the payload in place, returning `Ok`
+only when the caller holds the sole strong handle **and** no `Weak` exists —
+a live `Weak` could be upgraded to a second strong handle mid-mutation. It
+returns `Shared` otherwise. `try_unwrap` consumes the handle and recovers
+the payload on the same uniqueness condition, and is the extraction route
+for non-`Copy` payloads (`value` stays `Copy`-gated). There is no
+`make_mut`: copy-on-write needs a `T: Clone` story C+ does not have, so use
+`try_unwrap` plus `new`.
 
 ---
 
@@ -358,10 +414,38 @@ struct Arc[T] { /* private */ }
 struct Weak[T] { /* private */ }
 
 fn new[T](take v: T) -> option::Option[Arc[T]]
+
+impl Arc[T] {
+    fn clone(this) -> Arc[T]
+    fn downgrade(this) -> Weak[T]
+    fn strong_count(this) -> u64
+    fn weak_count(this) -> u64
+    fn is_unique(this) -> bool
+    fn with_mut(ref this, f: fn(ref T)) -> status::Status
+    fn try_unwrap(take this) -> option::Option[T]
+}
+
+impl Arc[T: Copy] {
+    fn value(this) -> T
+}
+
+impl Weak[T] {
+    fn clone(this) -> Weak[T]
+    fn strong_count(this) -> u64
+    fn weak_count(this) -> u64
+    fn upgrade(this) -> option::Option[Arc[T]]
+}
+
+impl Arc[T: Send + Sync]: Send {}
+impl Arc[T: Send + Sync]: Sync {}
+impl Weak[T: Send + Sync]: Send {}
+impl Weak[T: Send + Sync]: Sync {}
 ```
 
-Atomic refcount. `Arc[T: Send + Sync]: Send + Sync`. Same conceptual API as
-`Rc` with atomics.
+Atomic reference counting. Same API and same weak/uniqueness rules as
+[`rc`](#rc), with atomic counter updates. Both `Arc[T]` and its `Weak[T]`
+are `Send + Sync` when `T` is. Prefer `Rc` within a single thread; the
+atomics are the only difference and they are not free.
 
 ---
 
