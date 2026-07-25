@@ -1386,6 +1386,9 @@ fn install() {
     facet::clear_text_spans_fn(clear_text_spans_impl);
     // Focus: a responder change, not a setter — cannot be generated.
     facet::set_is_focused_fn(c_set_is_focused);
+    // Split divider: the write counterpart to value()'s split reader.
+    facet::set_split_position_fn(set_split_position_impl);
+    facet::set_split_fraction_fn(set_split_fraction_impl);
     facet::set_set_hidden_fn(set_hidden_impl);
     facet::set_add_child_fn(add_child_impl);
     facet::set_remove_child_fn(remove_child_impl);
@@ -2782,6 +2785,51 @@ fn t_menu_is_enabled(ctx: *u8) -> bool { return T_MENU_ENABLED != (0 as i32); }
 fn t_menu_title_of(ctx: *u8) -> text::Text { return text::from_str("Close \"main.cplus\""); }
 
 #[test]
+fn split_position_writes_and_reads_back_including_fractions() {
+    // facet could already READ a split's divider (value_impl) but not write it;
+    // set_value cannot serve, because a split is not an NSControl and the
+    // setDoubleValue: it sends is silently ignored.
+    //
+    // Each case gets a FRESH split: AppKit re-negotiates a split it has already
+    // positioned (these panes carry intrinsic sizes and the split is not in a
+    // window), so repeated writes to one split drift. The first write to a laid
+    // out split is exact, which is what an app actually does.
+    facet::set_split_position_fn(set_split_position_impl);
+    facet::set_split_fraction_fn(set_split_fraction_impl);
+
+    // Absolute points.
+    let a: flex::Node = ui::split(ui::label("a"), ui::label("b"), vertical: true,
+                                  position: 100.0f64, min_first: 0.0f64, min_second: 0.0f64);
+    ak::View::from_raw(a.payload()).set_frame(rt::Rect { x: 0.0, y: 0.0, w: 400.0, h: 300.0 });
+    let ha: facet::Handle = facet::Handle::of(a.payload(), 0 as *u8, 0 as *u8, 0 as u32);
+    let _pa: facet::Handle = ha.set_split_position(120.0f64);
+    assert value_impl(ha) == 120.0f64;        // the existing reader agrees
+
+    // Fraction of the split's OWN length — vertical, so 0.25 of width 400.
+    let b: flex::Node = ui::split(ui::label("a"), ui::label("b"), vertical: true,
+                                  position: 100.0f64, min_first: 0.0f64, min_second: 0.0f64);
+    ak::View::from_raw(b.payload()).set_frame(rt::Rect { x: 0.0, y: 0.0, w: 400.0, h: 300.0 });
+    let hb: facet::Handle = facet::Handle::of(b.payload(), 0 as *u8, 0 as *u8, 0 as u32);
+    let _pb: facet::Handle = hb.set_split_fraction(0.25f64);
+    assert value_impl(hb) == 100.0f64;
+
+    // A fraction is clamped to 0..1 rather than driving the divider off-view.
+    let c: flex::Node = ui::split(ui::label("a"), ui::label("b"), vertical: true,
+                                  position: 100.0f64, min_first: 0.0f64, min_second: 0.0f64);
+    ak::View::from_raw(c.payload()).set_frame(rt::Rect { x: 0.0, y: 0.0, w: 400.0, h: 300.0 });
+    let hc: facet::Handle = facet::Handle::of(c.payload(), 0 as *u8, 0 as *u8, 0 as u32);
+    assert set_split_fraction_impl(hc, 2.0f64, 0 as i64);
+    assert value_impl(hc) <= 400.0f64;
+
+    // A non-split element is REJECTED, not silently "set" — the failure mode
+    // set_value has on a split today.
+    let lbl: flex::Node = ui::label("x");
+    let lh: facet::Handle = facet::Handle::of(lbl.payload(), 0 as *u8, 0 as *u8, 0 as u32);
+    assert !set_split_position_impl(lh, 50.0f64, 0 as i64);
+    assert !set_split_fraction_impl(lh, 0.5f64, 0 as i64);
+}
+
+#[test]
 fn set_is_focused_makes_the_element_first_responder() {
     // iris's terminal calls this after each command to return the caret to the
     // input. It was one of the generated slots with NO backing, so it silently
@@ -4153,6 +4201,41 @@ fn reapply_text_spans(view: *u8) {
         i = i +% (1 as usize);
     }
     return;
+}
+
+// The write counterpart to value_impl's split reader. Detected the same way
+// (respondsToSelector: arrangedSubviews), so the two agree on what a split is.
+fn split_of(view: *u8) -> *u8 {
+    if view == (0 as *u8) { return 0 as *u8; }
+    let is_split: i8 = rt::msg_i8_id(view, rt::sel(#str_ptr("respondsToSelector:\0")),
+                                     rt::sel(#str_ptr("arrangedSubviews\0")));
+    if is_split == (0 as i8) { return 0 as *u8; }
+    return view;
+}
+
+fn set_split_position_impl(h: facet::Handle, position: f64, divider: i64) -> bool {
+    let sv: *u8 = split_of(h.view());
+    if sv == (0 as *u8) { return false; }
+    ak::SplitView::from_raw(sv).set_position(position, divider);
+    return true;
+}
+
+// Fraction of the split's OWN length: width when the panes are side by side
+// (isVertical), height when they are stacked. Nothing is applied before the
+// split has been laid out — a 0-sized split would collapse the divider to 0.
+fn set_split_fraction_impl(h: facet::Handle, fraction: f64, divider: i64) -> bool {
+    let svp: *u8 = split_of(h.view());
+    if svp == (0 as *u8) { return false; }
+    let sv: ak::SplitView = ak::SplitView::from_raw(svp);
+    let fr: rt::Rect = sv.as_view().frame();
+    var span: f64 = fr.h;
+    if sv.is_vertical() { span = fr.w; }
+    if span <= 0.0f64 { return false; }
+    var f: f64 = fraction;
+    if f < 0.0f64 { f = 0.0f64; }
+    if f > 1.0f64 { f = 1.0f64; }
+    sv.set_position(span * f, divider);
+    return true;
 }
 
 // Focus is not a property — it is a window-level responder change, so this slot

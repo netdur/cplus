@@ -1842,6 +1842,19 @@ impl TextSpan {
     }
 }
 
+// ---- split divider position -------------------------------------------------
+// The write counterpart to Handle.value(), which already READS a split's divider
+// position. `set_value` cannot serve: it drives an NSControl-style value, and a
+// split is not one, so it would no-op silently.
+//
+// `fraction` is the portable form: an absolute point position has to be chosen
+// blind at build time, before the container's size is known, whereas a fraction
+// of the split's own length is meaningful whenever it is applied.
+static SET_SPLIT_POSITION_FN: fn(Handle, f64, i64) -> bool = #zero::[fn(Handle, f64, i64) -> bool]();
+fn set_split_position_fn(f: fn(Handle, f64, i64) -> bool) { SET_SPLIT_POSITION_FN = f; return; }
+static SET_SPLIT_FRACTION_FN: fn(Handle, f64, i64) -> bool = #zero::[fn(Handle, f64, i64) -> bool]();
+fn set_split_fraction_fn(f: fn(Handle, f64, i64) -> bool) { SET_SPLIT_FRACTION_FN = f; return; }
+
 static SET_TEXT_SPANS_FN: fn(Handle, *vec::Vec[TextSpan]) -> bool = #zero::[fn(Handle, *vec::Vec[TextSpan]) -> bool]();
 fn set_text_spans_fn(f: fn(Handle, *vec::Vec[TextSpan]) -> bool) { SET_TEXT_SPANS_FN = f; return; }
 static CLEAR_TEXT_SPANS_FN: fn(Handle) -> bool = #zero::[fn(Handle) -> bool]();
@@ -2285,6 +2298,25 @@ impl Handle {
     fn set_text_spans(this, spans: *vec::Vec[TextSpan]) -> Handle {
         let f: fn(Handle, *vec::Vec[TextSpan]) -> bool = SET_TEXT_SPANS_FN;
         if f != (0 as fn(Handle, *vec::Vec[TextSpan]) -> bool) { let _ok: bool = f(this, spans); }
+        return this;
+    }
+
+    // Move a split's divider to `position` points from its leading edge.
+    // `divider` is 0 for the usual two-pane split; the parameter exists so a
+    // three-pane split needs no new method. Reads back through `value()`.
+    fn set_split_position(this, position: f64, divider: i64 = 0 as i64) -> Handle {
+        let f: fn(Handle, f64, i64) -> bool = SET_SPLIT_POSITION_FN;
+        if f != (0 as fn(Handle, f64, i64) -> bool) { let _ok: bool = f(this, position, divider); }
+        return this;
+    }
+
+    // Move a split's divider to `fraction` (0.0-1.0) of the split's own length —
+    // its width when the panes sit side by side, its height when stacked. Unlike
+    // an absolute position this needs no knowledge of the window size, so it is
+    // the form to prefer for "the drawer takes a third".
+    fn set_split_fraction(this, fraction: f64, divider: i64 = 0 as i64) -> Handle {
+        let f: fn(Handle, f64, i64) -> bool = SET_SPLIT_FRACTION_FN;
+        if f != (0 as fn(Handle, f64, i64) -> bool) { let _ok: bool = f(this, fraction, divider); }
         return this;
     }
 
