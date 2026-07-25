@@ -3774,6 +3774,171 @@ mod tests {
         monomorphize(prog, &mono, &name_of)
     }
 
+    /// Faithful stand-in for the driver's `name_of` (`run_monomorphize` in
+    /// cpc/src/main.rs): non-generic structs in declaration order, generic
+    /// instantiations slotted at their sema id, unfilled slots left as `"?"`.
+    /// The `name_of` stub above renders every struct through `Ty::name()`,
+    /// which would hide precisely the defect these tests guard.
+    fn run_with_driver_names(src: &str) -> Program {
+        let toks = tokenize(src).expect("lex");
+        let prog = parse(toks).expect("parse");
+        let (diags, mono) = check_multi_with_mono(
+            &prog,
+            PathBuf::from("test.cplus"),
+            src,
+            std::collections::BTreeMap::new(),
+        );
+        for d in &diags {
+            if matches!(d.severity, crate::diagnostics::Severity::Error) {
+                panic!("sema errors: {diags:#?}");
+            }
+        }
+        let mut struct_names: Vec<String> = Vec::new();
+        for item in &prog.items {
+            if let ItemKind::Struct(s) = &item.kind {
+                if s.generic_params.is_empty() {
+                    struct_names.push(s.name.name.clone());
+                }
+            }
+        }
+        for info in mono.struct_instantiations.values() {
+            let slot = info.id as usize;
+            if struct_names.len() <= slot {
+                struct_names.resize(slot + 1, String::from("?"));
+            }
+            struct_names[slot] = info.mangled_name.clone();
+        }
+        let name_of = move |ty: &Ty| -> String {
+            match ty {
+                Ty::Struct(id) => struct_names
+                    .get(id.0 as usize)
+                    .cloned()
+                    .unwrap_or_else(|| "?".into()),
+                other => other.name().to_string(),
+            }
+        };
+        monomorphize(prog, &mono, &name_of)
+    }
+
+    fn emitted_fn_names(p: &Program) -> Vec<String> {
+        p.items
+            .iter()
+            .filter_map(|i| match &i.kind {
+                ItemKind::Function(f) => Some(f.name.name.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    // Two levels of generic forwarding through a user-defined generic struct.
+    // Sema records `r0::[W[T]]` from inside `r1`'s template body; that arg
+    // resolves to the instantiation `W[Param T]`, which monomorphize's
+    // table-less `ty_contains_param` reads as concrete. Before the sema-side
+    // filter this emitted junk `r0__?` / `r1__?` monomorphs alongside the real
+    // ones, and `r1__?` called an `r0__W__?` that nothing defined — codegen
+    // panicked on the dangling callee (`cpc check` exited 101). One level of
+    // forwarding never reached it; two did.
+    const DEPTH2_W: &str = "struct W[T] { v: T }\n\
+         fn r0[T]() -> i32 { return 0; }\n\
+         fn r1[T]() -> i32 { return r0::[W[T]](); }\n\
+         fn r2[T]() -> i32 { return r1::[W[T]](); }\n\
+         fn main() -> i32 { return r2::[i32](); }";
+
+    // Same shape with a two-parameter wrapper, which grows the type faster.
+    const DEPTH2_PAIR: &str = "struct Pair[A, B] { a: A, b: B }\n\
+         fn r0[T]() -> i32 { return 0; }\n\
+         fn r1[T]() -> i32 { return r0::[Pair[T, T]](); }\n\
+         fn r2[T]() -> i32 { return r1::[Pair[T, T]](); }\n\
+         fn main() -> i32 { return r2::[i32](); }";
+
+    const DEPTH3_W: &str = "struct W[T] { v: T }\n\
+         fn r0[T]() -> i32 { return 0; }\n\
+         fn r1[T]() -> i32 { return r0::[W[T]](); }\n\
+         fn r2[T]() -> i32 { return r1::[W[T]](); }\n\
+         fn r3[T]() -> i32 { return r2::[W[T]](); }\n\
+         fn main() -> i32 { return r3::[i32](); }";
+
+    #[test]
+    fn nominal_forwarding_depth2_emits_no_param_bearing_monomorph() {
+        let names = emitted_fn_names(&run_with_driver_names(DEPTH2_W));
+        assert!(
+            !names.iter().any(|n| n.contains('?')),
+            "param-bearing junk monomorph emitted: {names:?}"
+        );
+        for want in ["r0__W__W__i32", "r1__W__i32", "r2__i32", "main"] {
+            assert!(names.iter().any(|n| n == want), "missing `{want}`: {names:?}");
+        }
+        assert_eq!(names.len(), 4, "unexpected extra monomorphs: {names:?}");
+    }
+
+    #[test]
+    fn nominal_forwarding_two_param_wrapper_emits_no_junk() {
+        let names = emitted_fn_names(&run_with_driver_names(DEPTH2_PAIR));
+        assert!(
+            !names.iter().any(|n| n.contains('?')),
+            "param-bearing junk monomorph emitted: {names:?}"
+        );
+    }
+
+    // The invariant codegen actually depends on: every rewritten callee names
+    // a function that was emitted. `sigs.get(name).unwrap_or_else(panic!)` in
+    // codegen is the backstop that fired here, so assert it directly rather
+    // than only checking for `?` in names.
+    #[test]
+    fn every_rewritten_callee_resolves_to_an_emitted_fn() {
+        for (label, src) in [
+            ("depth2 W", DEPTH2_W),
+            ("depth3 W", DEPTH3_W),
+            ("depth2 Pair", DEPTH2_PAIR),
+        ] {
+            let out = run_with_driver_names(src);
+            let defined: std::collections::HashSet<String> =
+                emitted_fn_names(&out).into_iter().collect();
+            for item in &out.items {
+                let ItemKind::Function(f) = &item.kind else {
+                    continue;
+                };
+                let caller = f.name.name.clone();
+                visit_ident_calls_in_block(&f.body, &mut |callee, _args, _span| {
+                    // Only monomorphized generics are emitted as items here;
+                    // builtins/externs legitimately have no Function item.
+                    if callee.contains("__") {
+                        assert!(
+                            defined.contains(callee),
+                            "[{label}] `{caller}` calls undefined `{callee}`; defined: {defined:?}"
+                        );
+                    }
+                });
+            }
+        }
+    }
+
+    // Controls: the shapes that already worked must keep working. `*T` and a
+    // single forwarding level both dodged the bug (the pointer arm of
+    // `subst_ty_plain` substitutes structurally, and one level never records a
+    // param-bearing arg), so a regression here would mean the filter is too
+    // aggressive and is dropping real instantiations.
+    #[test]
+    fn pointer_wrapper_and_single_level_forwarding_unaffected() {
+        let ptr = emitted_fn_names(&run_with_driver_names(
+            "fn r0[T]() -> i32 { return 0; }\n\
+             fn r1[T]() -> i32 { return r0::[*T](); }\n\
+             fn r2[T]() -> i32 { return r1::[*T](); }\n\
+             fn main() -> i32 { return r2::[i32](); }",
+        ));
+        assert!(ptr.iter().any(|n| n.starts_with("r0__")), "{ptr:?}");
+        assert!(!ptr.iter().any(|n| n.contains('?')), "{ptr:?}");
+
+        let one = emitted_fn_names(&run_with_driver_names(
+            "struct W[T] { v: T }\n\
+             fn r0[T]() -> i32 { return 0; }\n\
+             fn r1[T]() -> i32 { return r0::[W[T]](); }\n\
+             fn main() -> i32 { return r1::[i32](); }",
+        ));
+        assert!(one.iter().any(|n| n == "r0__W__i32"), "{one:?}");
+        assert!(one.iter().any(|n| n == "r1__i32"), "{one:?}");
+    }
+
     fn bounds_diags(src: &str) -> Vec<crate::diagnostics::Diagnostic> {
         let toks = tokenize(src).expect("lex");
         let prog = parse(toks).expect("parse");

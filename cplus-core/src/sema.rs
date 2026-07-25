@@ -824,6 +824,7 @@ fn check_with_files_inner(
         current_file: None,
         files,
         loop_depth: 0,
+        instantiation_size_reported: false,
         extern_fns: std::collections::HashSet::new(),
         type_params_stack: Vec::new(),
         param_bounds_stack: Vec::new(),
@@ -1058,8 +1059,41 @@ fn check_with_files_inner(
         .iter()
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
+    // Template-context entries must not cross into monomorphize as if they
+    // were real monomorphs. While type-checking a generic body sema records
+    // the turbofish `r0::[W[T]]`, whose arg resolves to the instantiation
+    // `W[Param T]` — concrete-*looking* (a real `Ty::Struct` id) but carrying
+    // an unsubstituted param in its `generic_origin`. Monomorphize's own
+    // `ty_contains_param` cannot see that: it has no type tables, so any
+    // `Ty::Struct(_)` reads as concrete and its `is_concrete` filter lets the
+    // entry through. It then emits a junk `r0__?` whose body calls a
+    // `r0__W__?` that nothing defines, and codegen panics on the dangling
+    // callee. Two levels of generic forwarding through a nominal wrapper was
+    // enough to reach this; one level was not.
+    //
+    // Filter here with sema's table-aware `ty_contains_param`, which does see
+    // through `generic_origin`. Keeping the decision where the tables live
+    // beats teaching monomorphize to reconstruct them.
+    let raw_fn_instantiations = std::mem::take(&mut cx.fn_instantiations);
+    let instantiations: std::collections::BTreeSet<(String, Vec<Ty>)> = raw_fn_instantiations
+        .into_iter()
+        .filter(|(_, args)| {
+            !args
+                .iter()
+                .any(|a| ty_contains_param(a, &cx.structs, &cx.enums))
+        })
+        .collect();
+    let method_instantiations: std::collections::BTreeSet<(String, String, Vec<Ty>)> =
+        method_instantiations
+            .into_iter()
+            .filter(|(_, _, args)| {
+                !args
+                    .iter()
+                    .any(|a| ty_contains_param(a, &cx.structs, &cx.enums))
+            })
+            .collect();
     let mono = MonoInfo {
-        instantiations: std::mem::take(&mut cx.fn_instantiations),
+        instantiations,
         call_monos: std::mem::take(&mut cx.call_monos),
         assoc_free_fn_dispatches: std::mem::take(&mut cx.assoc_free_fn_dispatches),
         assoc_method_dispatches: std::mem::take(&mut cx.assoc_method_dispatches),
@@ -1221,6 +1255,11 @@ struct SemaCx<'a> {
     /// Incremented entering `while` / `for` / `loop` bodies; decremented
     /// on exit. `break` / `continue` require `> 0` (E0353).
     loop_depth: u32,
+    /// Set once the mangled-name ceiling ([`MAX_MANGLED_TYPE_NAME`]) has been
+    /// reported. A self-growing generic trips the cap on every step of the
+    /// chain; without this the user would get thousands of copies of the same
+    /// diagnostic.
+    instantiation_size_reported: bool,
     /// Slice 10.FFI.3: names of extern fns declared in this program.
     extern_fns: std::collections::HashSet<String>,
     /// Slice 7GEN.4: stack of type-parameter scopes. Each frame holds the
@@ -15159,6 +15198,41 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         self.instantiate_struct_from_arg_tys(name, &template, arg_tys)
     }
 
+    /// Would instantiating `name[args]` produce a mangled type name past
+    /// [`MAX_MANGLED_TYPE_NAME`]? Reports **E0910** the first time (the same
+    /// diagnostic `check_instantiation_bounds` raises for the count-based
+    /// limit — same user error, same fix) and returns `true` so the caller
+    /// bails.
+    ///
+    /// The bail is deliberately loud. Silently declining to instantiate would
+    /// leave sema having promised a monomorph that never gets synthesized,
+    /// which is exactly the shape that made codegen panic on a dangling
+    /// callee; a compiler that stops early must say so.
+    fn reject_oversized_instantiation(
+        &mut self,
+        name: &str,
+        args: &[Ty],
+        span: ByteSpan,
+    ) -> bool {
+        let projected = projected_generic_name_len(name, args, &self.structs, &self.enums);
+        if projected <= MAX_MANGLED_TYPE_NAME {
+            return false;
+        }
+        if !self.instantiation_size_reported {
+            self.instantiation_size_reported = true;
+            self.err(
+                "E0910",
+                format!(
+                    "generic instantiation of `{name}` exceeds the type-name limit \
+                     ({MAX_MANGLED_TYPE_NAME} bytes); the type argument grows on each \
+                     recursive step, so monomorphization never terminates"
+                ),
+                span,
+            );
+        }
+        true
+    }
+
     /// Slice 7GEN.5c (factored 2026-05-13): the post-arg-resolution body
     /// of `resolve_generic_instantiation`. Takes already-resolved `arg_tys`
     /// and a cloned template; synthesizes the concrete `StructDef` (or
@@ -15176,6 +15250,13 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         let key = (name.to_string(), arg_tys.clone());
         if let Some(&existing) = self.struct_instantiations.get(&key) {
             return Ty::Struct(existing);
+        }
+        // Refuse a self-growing chain before synthesizing anything. The check
+        // is on the PROJECTED name length, not the built one: the name is what
+        // consumes the memory, so building it first would be paying the cost
+        // we are trying to refuse.
+        if self.reject_oversized_instantiation(name, &arg_tys, template.name.span) {
+            return Ty::Error;
         }
         // Synthesize a new concrete StructDef. Substitute generic-param
         // names in the template's field types using the arg map; resolve
@@ -15898,6 +15979,11 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 self.populate_generic_enum_methods(existing, name, &arg_tys);
             }
             return Ty::Enum(existing);
+        }
+        // Same ceiling as the struct side — a self-growing generic reaches it
+        // through `Option[Option[...]]` just as readily as through a struct.
+        if self.reject_oversized_instantiation(name, &arg_tys, template.name.span) {
+            return Ty::Error;
         }
         // Build subst map and synthesize variant payloads.
         let subst: HashMap<String, Ty> = template
@@ -17957,6 +18043,82 @@ fn ty_to_source_name(ty: &Ty) -> String {
 /// Slice 7GEN.5c: mangle a generic struct instantiation's name —
 /// `Pair[i32, bool]` → `Pair__i32__bool`. Matches the fn-instantiation
 /// mangling convention (`name__T1__T2`).
+/// Ceiling on the length of a synthesized generic type name.
+///
+/// A generic instantiation's mangled name is built by concatenating the
+/// already-stored names of its arguments, so a wrapper that mentions its
+/// parameter more than once *doubles* the name at every nesting level:
+/// `Pair[T, T]` produces names of ~11·2^depth bytes (measured: 175 bytes at
+/// depth 4, 45,055 at depth 12). Those names are held in `StructDef::name`,
+/// `struct_by_name` and `struct_instantiations`, so memory follows the same
+/// exponential — a three-line self-growing generic exhausted RAM before any
+/// counter-based limit noticed, because `INSTANTIATION_LIMIT` counts
+/// instantiations and this blows up *within* a handful of them.
+///
+/// The bound is on name length rather than on nesting depth deliberately: a
+/// depth cap does not bound a branching type (depth 128 still admits 2^128
+/// nodes), whereas length is exactly the quantity being consumed.
+///
+/// Real code sits far below this. The longest mangled symbol across the
+/// vendored packages is 246 bytes (`facet_appkit`, most of it module path),
+/// with `flex_layout` and `events` at 123 — so 64 KiB leaves roughly 266x
+/// headroom while capping the pathological case in the single-digit MB.
+pub const MAX_MANGLED_TYPE_NAME: usize = 65536;
+
+/// Length `mangle_ty_for_name` *would* produce, computed without building the
+/// string. The whole point of the cap is to refuse an oversized name before
+/// allocating it, so this must never concatenate: for `Ty::Struct`/`Ty::Enum`
+/// it reads the stored name's length (O(1)) instead of cloning it.
+fn mangled_ty_name_len(ty: &Ty, structs: &[StructDef], enums: &[EnumDef]) -> usize {
+    match ty {
+        Ty::Struct(id) => structs.get(id.0 as usize).map_or(1, |d| d.name.len()),
+        Ty::Enum(id) => enums.get(id.0 as usize).map_or(1, |d| d.name.len()),
+        Ty::Slice(inner) => "slice_".len() + mangled_ty_name_len(inner, structs, enums),
+        Ty::RawPtr(inner) => "ptr_".len() + mangled_ty_name_len(inner, structs, enums),
+        Ty::Array(elem, n) => {
+            format!("arr{n}_").len() + mangled_ty_name_len(elem, structs, enums)
+        }
+        Ty::FnPtr {
+            params,
+            param_takes,
+            param_refs,
+            return_type,
+        } => {
+            let mut n = "fn".len();
+            for (i, p) in params.iter().enumerate() {
+                n += 1;
+                if param_takes.get(i).copied().unwrap_or(false) {
+                    n += "take_".len();
+                } else if param_refs.get(i).copied().unwrap_or(false) {
+                    n += "ref_".len();
+                }
+                n += mangled_ty_name_len(p, structs, enums);
+            }
+            if !matches!(**return_type, Ty::Unit) {
+                n += "_ret_".len() + mangled_ty_name_len(return_type, structs, enums);
+            }
+            n
+        }
+        // Primitives and other leaf kinds: exact, and safe to render because
+        // none of these arms reach a stored struct/enum name.
+        other => mangle_ty_for_name(other, structs, enums).len(),
+    }
+}
+
+/// Length `mangle_generic_struct_name` would produce for `name[args]`.
+fn projected_generic_name_len(
+    name: &str,
+    args: &[Ty],
+    structs: &[StructDef],
+    enums: &[EnumDef],
+) -> usize {
+    name.len()
+        + args
+            .iter()
+            .map(|a| "__".len() + mangled_ty_name_len(a, structs, enums))
+            .sum::<usize>()
+}
+
 fn mangle_generic_struct_name(
     name: &str,
     args: &[Ty],
@@ -19181,6 +19343,116 @@ mod tests {
         let toks = tokenize(src).expect("lex");
         let prog = parse(toks).expect("parse");
         check(&prog, PathBuf::from("test.cplus"), src)
+    }
+
+    // ---- generic-instantiation size ceiling (MAX_MANGLED_TYPE_NAME) ----
+    //
+    // A wrapper that mentions its parameter twice doubles the mangled name at
+    // every nesting level, and those names are held in `StructDef::name`,
+    // `struct_by_name` and `struct_instantiations`. Before the ceiling, the
+    // three-line program below drove `cpc check` past 5 GB and the language
+    // server past 4 GB in ~2.5 s — with no diagnostic, because
+    // `INSTANTIATION_LIMIT` counts instantiations and this exhausts memory
+    // inside a couple of dozen of them.
+
+    #[test]
+    fn self_growing_struct_generic_reports_e0910_not_oom() {
+        let ds = check_src(
+            "struct Pair[A, B] { a: A, b: B }\n\
+             fn rec[T]() -> i32 { let _z: i32 = rec::[Pair[T, T]](); return 0; }\n\
+             fn main() -> i32 { return rec::[i32](); }",
+        );
+        assert!(
+            ds.iter().any(|d| d.code.0 == "E0910"),
+            "expected E0910; got {:?}",
+            ds.iter().map(|d| d.code.0).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn self_growing_enum_generic_reports_e0910_not_oom() {
+        let ds = check_src(
+            "enum Two[A, B] { Left(A), Right(B) }\n\
+             fn rec[T]() -> i32 { let _z: i32 = rec::[Two[T, T]](); return 0; }\n\
+             fn main() -> i32 { return rec::[i32](); }",
+        );
+        assert!(
+            ds.iter().any(|d| d.code.0 == "E0910"),
+            "expected E0910; got {:?}",
+            ds.iter().map(|d| d.code.0).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn e0910_is_reported_once_not_per_instantiation() {
+        // The chain trips the ceiling on every remaining step; without the
+        // `instantiation_size_reported` latch the user gets a wall of
+        // identical diagnostics.
+        let ds = check_src(
+            "struct Pair[A, B] { a: A, b: B }\n\
+             fn rec[T]() -> i32 { let _z: i32 = rec::[Pair[T, T]](); return 0; }\n\
+             fn main() -> i32 { return rec::[i32](); }",
+        );
+        assert_eq!(
+            ds.iter().filter(|d| d.code.0 == "E0910").count(),
+            1,
+            "E0910 should be reported once"
+        );
+    }
+
+    #[test]
+    fn nesting_below_the_ceiling_still_compiles() {
+        // Guards against a cap so tight it rejects real code. The deepest
+        // mangled symbol across the vendored packages is 246 bytes; this
+        // chain reaches ~2.8 KB, already an order of magnitude past anything
+        // real, and must still be accepted.
+        let mut src = String::from("struct Pair[A, B] { a: A, b: B }\nfn rec0[T]() -> i32 { return 0; }\n");
+        for i in 1..=8 {
+            src.push_str(&format!(
+                "fn rec{i}[T]() -> i32 {{ return rec{}::[Pair[T, T]](); }}\n",
+                i - 1
+            ));
+        }
+        src.push_str("fn main() -> i32 { return rec8::[i32](); }");
+        let errs: Vec<_> = check_src(&src)
+            .into_iter()
+            .filter(|d| matches!(d.severity, Severity::Error))
+            .collect();
+        assert!(errs.is_empty(), "unexpected errors: {errs:#?}");
+    }
+
+    #[test]
+    fn projected_name_length_matches_the_name_actually_built() {
+        // The ceiling refuses an instantiation by *predicting* its mangled
+        // length rather than building it (building it is the cost being
+        // avoided). If the prediction drifts from `mangle_generic_struct_name`
+        // the ceiling silently guards the wrong quantity, so pin them together.
+        let structs: Vec<StructDef> = Vec::new();
+        let enums: Vec<EnumDef> = Vec::new();
+        let cases: Vec<Vec<Ty>> = vec![
+            vec![Ty::I32],
+            vec![Ty::I32, Ty::Bool],
+            vec![Ty::RawPtr(Box::new(Ty::U8))],
+            vec![Ty::Slice(Box::new(Ty::F64))],
+            vec![Ty::Array(Box::new(Ty::I16), 12)],
+            vec![Ty::RawPtr(Box::new(Ty::Slice(Box::new(Ty::Str))))],
+            vec![Ty::Unit, Ty::Usize, Ty::String],
+            vec![Ty::FnPtr {
+                params: vec![Ty::I32, Ty::Bool],
+                param_takes: vec![false, false],
+                param_refs: vec![false, false],
+                return_type: Box::new(Ty::I64),
+            }],
+        ];
+        for args in cases {
+            let built = mangle_generic_struct_name("W", &args, &structs, &enums);
+            let projected = projected_generic_name_len("W", &args, &structs, &enums);
+            assert_eq!(
+                projected,
+                built.len(),
+                "prediction drifted for {args:?}: built {built:?}"
+            );
+        }
     }
 
     fn check_multifile_src(entry_file: &str, files: &[(&str, &str)]) -> Vec<Diagnostic> {
