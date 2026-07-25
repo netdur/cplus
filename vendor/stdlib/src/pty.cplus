@@ -92,10 +92,8 @@ fn winsize_new(cols: u16, rows: u16) -> *u8 {
 // working directory `cwd` ("" inherits). `None` if argv is empty, a string
 // holds an interior NUL, the pty cannot be allocated, or the spawn fails.
 //
-// Every parameter is REQUIRED. A defaulted trailing parameter on a function of
-// this shape currently miscompiles when called from another module (see
-// bugs/process_spawn_crashes_across_module_boundary.md); until that is fixed,
-// this API does not offer one.
+// Every parameter is required: a pty's size is not something to default
+// silently, and `cwd` reads better stated than assumed.
 fn spawn(argv: vec::Vec[text::Text], cwd: str, cols: u16, rows: u16) -> option::Option[PtyChild] {
     let argc: usize = argv.count();
     if argc == (0 as usize) { return option::Option[PtyChild]::None; }
