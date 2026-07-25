@@ -16,14 +16,7 @@
 //
 // The master end is an ordinary fd: hand `read_fd()` to the async reactor
 // (`net::read_fd_async`) exactly as with a pipe.
-//
-// ⚠ STATUS: `spawn` is BLOCKED by a compiler defect, not by anything here.
-// Calling it aborts, exactly as `process::spawn` does, and from the same cause —
-// see bugs/process_spawn_crashes_across_module_boundary.md. Traced end to end,
-// this function reaches its last statement (the pty is allocated, the child is
-// spawned) and the fault lands on the way out; inserting or removing unrelated
-// code moves which allocation dies. The pure logic below is tested and correct;
-// the live path lights up when that defect is fixed.
+
 
 import "./text" as text;
 import "./option" as option;
