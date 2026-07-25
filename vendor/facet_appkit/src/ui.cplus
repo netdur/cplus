@@ -1838,6 +1838,13 @@ struct ListCtx {
     follow_tail: bool,       // was the viewport at the bottom when this resize
                              // began? the debounced reload re-pins if so
     opaque repin_target: *u8, // action target the debounced reload fires on
+    // Measured row heights, indexed by row; 0 = not measured yet. NSTableView
+    // asks heightOfRow: for EVERY row (not just visible ones) whenever it
+    // recomputes geometry, and measuring means building the row's whole subtree
+    // and laying it out. Without this cache a scroll re-builds every row on
+    // every pass, which is felt as a periodic hitch.
+    heights: vec::Vec[f64],
+    heights_width: f64,       // the column width the cache was measured at
 }
 
 fn list_ds_pin_key() -> *u8 { return { 28694 as *u8 }; }
@@ -1872,6 +1879,18 @@ fn list_num_rows_imp(user: *u8, tv: *u8) -> i64 {
 
 fn list_height_imp(user: *u8, tv: *u8, row: i64) -> f64 {
     let c: *ListCtx = { user as *ListCtx };
+    let w: f64 = list_col_width(tv);
+    let hp: *vec::Vec[f64] = { #addr_of((*c).heights) };
+    // A width change invalidates every measurement (wrapped rows re-flow).
+    if w != { (*c).heights_width } {
+        (*hp).remove_all();
+        { (*c).heights_width = w; }
+    } else if row >= (0 as i64) {
+        match (*hp).at(row as usize) {
+            option::Option[f64]::Some(cached) => { if cached > 0.0f64 { return cached; } }
+            option::Option[f64]::None => { }
+        }
+    }
     let f: fn(i64, *u8) -> flex::Node = { (*c).row };
     var node: flex::Node = f(row, { (*c).caller_ctx });
     node.calculate_layout(list_col_width(tv), flex::undefined(), flex::Direction::LTR);
@@ -1882,8 +1901,16 @@ fn list_height_imp(user: *u8, tv: *u8, row: i64) -> f64 {
     // so none outlives its view (a lingering job = dangling-pointer crash on a
     // later drain).
     run_post_render_discard_hook();
-    if h < 1.0f64 { return 1.0f64; }
-    return h;
+    var out: f64 = h;
+    if out < 1.0f64 { out = 1.0f64; }
+    // Remember it: rows are grown to `row` with 0 (unmeasured) placeholders so
+    // the cache stays index-aligned however the table walks the rows.
+    if row >= (0 as i64) {
+        let idx: usize = row as usize;
+        while { (*hp).count() } <= idx { (*hp).append(0.0f64); }
+        (*hp).set(out, at: idx);
+    }
+    return out;
 }
 
 // Make a cell's content stretch horizontally, so its wrapping text RE-WRAPS
@@ -2032,7 +2059,7 @@ fn list(count: i64, row: fn(i64, *u8) -> flex::Node, ctx: *u8 = 0 as *u8, agent_
     // pinned to the table so it lives exactly as long as the list.
     let repin: *u8 = akx::action_ctx_target(list_repin_after_reload, lbox as *u8);
     synth::retain_associated(tv.raw(), list_repin_pin_key(), repin);
-    { *lbox = ListCtx { row: row, caller_ctx: ctx, count: count, table: tv.raw(), last_width: 0.0f64, follow_tail: false, repin_target: repin }; }
+    { *lbox = ListCtx { row: row, caller_ctx: ctx, count: count, table: tv.raw(), last_width: 0.0f64, follow_tail: false, repin_target: repin, heights: vec::new::[f64](), heights_width: 0.0f64 }; }
     // Pin the ctx on the table (ASSIGN — a malloc box, not an objc object) so
     // `list_set_count` can find it from the mounted view and grow the list.
     rt::set_associated_object(tv.raw(), list_ctx_key(), lbox as *u8, 0 as usize);
@@ -2089,6 +2116,15 @@ fn list_set_count(view_ptr: *u8, count: i64, scroll_to_end: bool = false, force_
     let c: *ListCtx = { cp as *ListCtx };
     // Near-bottom test BEFORE the reload changes the geometry.
     let near: bool = list_is_near_bottom(tbl);
+    // Height cache: rows that still exist keep their measurement (appending a
+    // chat message must not re-measure the whole backlog), but a SHRINK drops
+    // the tail so a later row cannot read a stale neighbour's height.
+    let hp: *vec::Vec[f64] = { #addr_of((*c).heights) };
+    if count < (0 as i64) {
+        (*hp).remove_all();
+    } else if { (*hp).count() } > (count as usize) {
+        (*hp).truncate(to: count as usize);
+    }
     { (*c).count = count; }
     ak::TableView::from_raw(tbl).reload_data();
     if (force_end || (scroll_to_end && near)) && count > (0 as i64) {
@@ -3929,8 +3965,58 @@ fn list_test_row(i: i64, ctx: *u8) -> flex::Node {
 fn test_list_reports_row_count() {
     let n: flex::Node = list(count: 500 as i64, row: list_test_row);
     assert n.has_payload();                               // scroll-wrapped table leaf
-    var ctx: ListCtx = ListCtx { row: list_test_row, caller_ctx: 0 as *u8, count: 500 as i64, table: 0 as *u8, last_width: 0.0f64, follow_tail: false, repin_target: 0 as *u8 };
+    var ctx: ListCtx = ListCtx { row: list_test_row, caller_ctx: 0 as *u8, count: 500 as i64, table: 0 as *u8, last_width: 0.0f64, follow_tail: false, repin_target: 0 as *u8, heights: vec::new::[f64](), heights_width: 0.0f64 };
     assert list_num_rows_imp(#addr_of(ctx) as *u8, 0 as *u8) == (500 as i64);
+    return;
+}
+
+
+static T_ROW_BUILDS: i32 = 0;
+fn list_counting_row(i: i64, ctx: *u8) -> flex::Node {
+    T_ROW_BUILDS = T_ROW_BUILDS + (1 as i32);
+    return label("row");
+}
+
+#[test]
+fn list_row_heights_are_measured_once_and_cached() {
+    // The scroll hitch: NSTableView asks heightOfRow: for EVERY row whenever it
+    // recomputes geometry, and measuring means running the app's row builder and
+    // laying the subtree out. Uncached, a scroll re-built every row on every
+    // pass. A measured row must be built exactly ONCE per width.
+    let n: flex::Node = list(count: 50 as i64, row: list_counting_row);
+    let dv: *u8 = { rt::msg_id(n.payload(), rt::sel(#str_ptr("documentView\0"))) };
+    ak::TableView::from_raw(dv).as_view().set_frame(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
+    var ctx: ListCtx = ListCtx { row: list_counting_row, caller_ctx: 0 as *u8, count: 50 as i64, table: 0 as *u8, last_width: 0.0f64, follow_tail: false, repin_target: 0 as *u8, heights: vec::new::[f64](), heights_width: 0.0f64 };
+    let up: *u8 = { #addr_of(ctx) as *u8 };
+
+    T_ROW_BUILDS = 0;
+    let h0: f64 = list_height_imp(up, dv, 0 as i64);
+    assert T_ROW_BUILDS == (1 as i32);          // measured
+    assert h0 > 0.0f64;
+
+    // Every later ask for the same row is served from the cache.
+    var i: i32 = 0 as i32;
+    while i < (20 as i32) {
+        assert list_height_imp(up, dv, 0 as i64) == h0;
+        i = i + (1 as i32);
+    }
+    assert T_ROW_BUILDS == (1 as i32);          // still ONE build, not 21
+
+    // A different row measures once, then caches too.
+    let h5: f64 = list_height_imp(up, dv, 5 as i64);
+    assert T_ROW_BUILDS == (2 as i32);
+    assert list_height_imp(up, dv, 5 as i64) == h5;
+    assert T_ROW_BUILDS == (2 as i32);
+
+    // A WIDTH change must invalidate — wrapped rows reflow, so a stale height
+    // would clip the row's tail.
+    var cols: vec::Vec[ak::TableColumn] = ak::TableView::from_raw(dv).table_columns();
+    match cols.at_ptr(0 as usize) {
+        option::Option[*ak::TableColumn]::Some(cp) => { { (*cp).set_width(120.0f64); } }
+        option::Option[*ak::TableColumn]::None => { assert false; }
+    }
+    let _h: f64 = list_height_imp(up, dv, 0 as i64);
+    assert T_ROW_BUILDS == (3 as i32);          // re-measured at the new width
     return;
 }
 
@@ -3952,7 +4038,7 @@ fn test_list_measures_at_the_column_width() {
     assert list_col_width(dv) == 260.0f64;
     // A wrapped row measured at 260 is TALLER than at 300 — the row height
     // follows the narrower, true cell width.
-    var ctx: ListCtx = ListCtx { row: list_test_row, caller_ctx: 0 as *u8, count: 3 as i64, table: 0 as *u8, last_width: 0.0f64, follow_tail: false, repin_target: 0 as *u8 };
+    var ctx: ListCtx = ListCtx { row: list_test_row, caller_ctx: 0 as *u8, count: 3 as i64, table: 0 as *u8, last_width: 0.0f64, follow_tail: false, repin_target: 0 as *u8, heights: vec::new::[f64](), heights_width: 0.0f64 };
     let h_narrow: f64 = list_height_imp(#addr_of(ctx) as *u8, dv, 0 as i64);
     assert h_narrow > 0.0f64;
     return;
@@ -4013,7 +4099,7 @@ fn test_list_row_measures_and_builds_cell() {
     // Row height is the flexed content's natural height at the list width; the
     // returned cell hosts that content (this is what a recycled cell re-fills).
     let tv: ak::TableView = ak::TableView::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0f64, h: 400.0f64 });
-    var ctx: ListCtx = ListCtx { row: list_test_row, caller_ctx: 0 as *u8, count: 3 as i64, table: 0 as *u8, last_width: 0.0f64, follow_tail: false, repin_target: 0 as *u8 };
+    var ctx: ListCtx = ListCtx { row: list_test_row, caller_ctx: 0 as *u8, count: 3 as i64, table: 0 as *u8, last_width: 0.0f64, follow_tail: false, repin_target: 0 as *u8, heights: vec::new::[f64](), heights_width: 0.0f64 };
     let h: f64 = list_height_imp(#addr_of(ctx) as *u8, tv.raw(), 0 as i64);
     assert h > 0.0f64;                                    // measured a real, wrapped height
     let cell_ptr: *u8 = list_view_for_row_imp(#addr_of(ctx) as *u8, tv.raw(), 0 as *u8, 0 as i64);
