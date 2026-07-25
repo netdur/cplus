@@ -1845,6 +1845,10 @@ struct ListCtx {
     // every pass, which is felt as a periodic hitch.
     heights: vec::Vec[f64],
     heights_width: f64,       // the column width the cache was measured at
+    // A fixed row height, when the caller knows rows are uniform. Skips
+    // measurement ENTIRELY — no row build, no layout, no cache — which is the
+    // cheapest a list can be. 0 = measure and cache.
+    fixed_height: f64,
 }
 
 fn list_ds_pin_key() -> *u8 { return { 28694 as *u8 }; }
@@ -1879,6 +1883,9 @@ fn list_num_rows_imp(user: *u8, tv: *u8) -> i64 {
 
 fn list_height_imp(user: *u8, tv: *u8, row: i64) -> f64 {
     let c: *ListCtx = { user as *ListCtx };
+    // Uniform rows: answer without building anything.
+    let fh: f64 = { (*c).fixed_height };
+    if fh >= 1.0f64 { return fh; }
     let w: f64 = list_col_width(tv);
     let hp: *vec::Vec[f64] = { #addr_of((*c).heights) };
     // A width change invalidates every measurement (wrapped rows re-flow).
@@ -2042,7 +2049,7 @@ fn list_repin_after_reload(sender: *u8, ctx: *u8) {
 
 // A recycling flat list — see the header comment above. `row(ctx, i)` builds
 // row i; `count` rows total. Returns a scroll-wrapped NSTableView as a leaf.
-fn list(count: i64, row: fn(i64, *u8) -> flex::Node, ctx: *u8 = 0 as *u8, agent_id: str = "") -> flex::Node {
+fn list(count: i64, row: fn(i64, *u8) -> flex::Node, ctx: *u8 = 0 as *u8, row_height: f64 = 0.0f64, agent_id: str = "") -> flex::Node {
     let tv = ak::TableView::new(rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 });
     // Full-width style: no automatic-style horizontal insets — cell width ==
     // table width, so height measurement and rendering agree (see list_col_width).
@@ -2059,7 +2066,7 @@ fn list(count: i64, row: fn(i64, *u8) -> flex::Node, ctx: *u8 = 0 as *u8, agent_
     // pinned to the table so it lives exactly as long as the list.
     let repin: *u8 = akx::action_ctx_target(list_repin_after_reload, lbox as *u8);
     synth::retain_associated(tv.raw(), list_repin_pin_key(), repin);
-    { *lbox = ListCtx { row: row, caller_ctx: ctx, count: count, table: tv.raw(), last_width: 0.0f64, follow_tail: false, repin_target: repin, heights: vec::new::[f64](), heights_width: 0.0f64 }; }
+    { *lbox = ListCtx { row: row, caller_ctx: ctx, count: count, table: tv.raw(), last_width: 0.0f64, follow_tail: false, repin_target: repin, heights: vec::new::[f64](), heights_width: 0.0f64, fixed_height: row_height }; }
     // Pin the ctx on the table (ASSIGN — a malloc box, not an objc object) so
     // `list_set_count` can find it from the mounted view and grow the list.
     rt::set_associated_object(tv.raw(), list_ctx_key(), lbox as *u8, 0 as usize);
@@ -4018,7 +4025,7 @@ fn list_test_row(i: i64, ctx: *u8) -> flex::Node {
 fn test_list_reports_row_count() {
     let n: flex::Node = list(count: 500 as i64, row: list_test_row);
     assert n.has_payload();                               // scroll-wrapped table leaf
-    var ctx: ListCtx = ListCtx { row: list_test_row, caller_ctx: 0 as *u8, count: 500 as i64, table: 0 as *u8, last_width: 0.0f64, follow_tail: false, repin_target: 0 as *u8, heights: vec::new::[f64](), heights_width: 0.0f64 };
+    var ctx: ListCtx = ListCtx { row: list_test_row, caller_ctx: 0 as *u8, count: 500 as i64, table: 0 as *u8, last_width: 0.0f64, follow_tail: false, repin_target: 0 as *u8, heights: vec::new::[f64](), heights_width: 0.0f64, fixed_height: 0.0f64 };
     assert list_num_rows_imp(#addr_of(ctx) as *u8, 0 as *u8) == (500 as i64);
     return;
 }
@@ -4039,7 +4046,7 @@ fn list_row_heights_are_measured_once_and_cached() {
     let n: flex::Node = list(count: 50 as i64, row: list_counting_row);
     let dv: *u8 = { rt::msg_id(n.payload(), rt::sel(#str_ptr("documentView\0"))) };
     ak::TableView::from_raw(dv).as_view().set_frame(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
-    var ctx: ListCtx = ListCtx { row: list_counting_row, caller_ctx: 0 as *u8, count: 50 as i64, table: 0 as *u8, last_width: 0.0f64, follow_tail: false, repin_target: 0 as *u8, heights: vec::new::[f64](), heights_width: 0.0f64 };
+    var ctx: ListCtx = ListCtx { row: list_counting_row, caller_ctx: 0 as *u8, count: 50 as i64, table: 0 as *u8, last_width: 0.0f64, follow_tail: false, repin_target: 0 as *u8, heights: vec::new::[f64](), heights_width: 0.0f64, fixed_height: 0.0f64 };
     let up: *u8 = { #addr_of(ctx) as *u8 };
 
     T_ROW_BUILDS = 0;
@@ -4073,6 +4080,25 @@ fn list_row_heights_are_measured_once_and_cached() {
     return;
 }
 
+
+
+#[test]
+fn list_with_a_fixed_row_height_never_builds_a_row_to_measure() {
+    // The cheapest a list can be: uniform rows answer heightOfRow: from a
+    // constant, so no row is built, no layout runs, and nothing is cached.
+    let n: flex::Node = list(count: 200 as i64, row: list_counting_row, row_height: 28.0f64);
+    let dv: *u8 = { rt::msg_id(n.payload(), rt::sel(#str_ptr("documentView\0"))) };
+    let cp: *u8 = rt::get_associated_object(dv, list_ctx_key());
+    assert cp != (0 as *u8);
+    T_ROW_BUILDS = 0;
+    var i: i64 = 0 as i64;
+    while i < (200 as i64) {
+        assert list_height_imp(cp, dv, i) == 28.0f64;
+        i = i + (1 as i64);
+    }
+    assert T_ROW_BUILDS == (0 as i32);   // 200 heights, zero row builds
+    return;
+}
 
 #[test]
 fn list_height_cache_is_invalidated_when_content_can_change() {
@@ -4131,7 +4157,7 @@ fn test_list_measures_at_the_column_width() {
     assert list_col_width(dv) == 260.0f64;
     // A wrapped row measured at 260 is TALLER than at 300 — the row height
     // follows the narrower, true cell width.
-    var ctx: ListCtx = ListCtx { row: list_test_row, caller_ctx: 0 as *u8, count: 3 as i64, table: 0 as *u8, last_width: 0.0f64, follow_tail: false, repin_target: 0 as *u8, heights: vec::new::[f64](), heights_width: 0.0f64 };
+    var ctx: ListCtx = ListCtx { row: list_test_row, caller_ctx: 0 as *u8, count: 3 as i64, table: 0 as *u8, last_width: 0.0f64, follow_tail: false, repin_target: 0 as *u8, heights: vec::new::[f64](), heights_width: 0.0f64, fixed_height: 0.0f64 };
     let h_narrow: f64 = list_height_imp(#addr_of(ctx) as *u8, dv, 0 as i64);
     assert h_narrow > 0.0f64;
     return;
@@ -4192,7 +4218,7 @@ fn test_list_row_measures_and_builds_cell() {
     // Row height is the flexed content's natural height at the list width; the
     // returned cell hosts that content (this is what a recycled cell re-fills).
     let tv: ak::TableView = ak::TableView::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0f64, h: 400.0f64 });
-    var ctx: ListCtx = ListCtx { row: list_test_row, caller_ctx: 0 as *u8, count: 3 as i64, table: 0 as *u8, last_width: 0.0f64, follow_tail: false, repin_target: 0 as *u8, heights: vec::new::[f64](), heights_width: 0.0f64 };
+    var ctx: ListCtx = ListCtx { row: list_test_row, caller_ctx: 0 as *u8, count: 3 as i64, table: 0 as *u8, last_width: 0.0f64, follow_tail: false, repin_target: 0 as *u8, heights: vec::new::[f64](), heights_width: 0.0f64, fixed_height: 0.0f64 };
     let h: f64 = list_height_imp(#addr_of(ctx) as *u8, tv.raw(), 0 as i64);
     assert h > 0.0f64;                                    // measured a real, wrapped height
     let cell_ptr: *u8 = list_view_for_row_imp(#addr_of(ctx) as *u8, tv.raw(), 0 as *u8, 0 as i64);
