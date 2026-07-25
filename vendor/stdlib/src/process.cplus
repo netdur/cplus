@@ -22,7 +22,20 @@ extern fn read(fd: i32, buf: *u8, count: usize) -> isize;
 extern fn write(fd: i32, buf: *u8, count: usize) -> isize;
 extern fn malloc(n: usize) -> *u8;
 extern fn free(p: *u8);
-extern fn fcntl(fd: i32, cmd: i32, arg: i32) -> i32;
+// fcntl is VARIADIC in libc — the third argument comes from the variadic area,
+// not a fixed register. Declaring it fixed-arity silently passes garbage on
+// AArch64-darwin (where varargs are read from the stack), so the CLOEXEC flag
+// below was never reliably set. Same declaration as netsys.cplus.
+extern fn fcntl(fd: i32, cmd: i32, ...) -> i32;
+extern fn __error() -> *i32;            // &errno (thread-local)
+extern fn kill(pid: i32, sig: i32) -> i32;
+// poll(2): drain both pipes together instead of one-then-the-other.
+extern fn poll(fds: *u8, nfds: u32, timeout: i32) -> i32;
+
+fn e_intr() -> i32 { return 4 as i32; }          // EINTR
+fn sig_int() -> i32 { return 2 as i32; }         // SIGINT  (Ctrl-C)
+fn sig_term() -> i32 { return 15 as i32; }       // SIGTERM
+fn sig_kill() -> i32 { return 9 as i32; }        // SIGKILL
 // posix_spawn: fork+exec done atomically inside libc — safe to call from a
 // multithreaded process (unlike a raw fork, whose child may only touch
 // async-signal-safe calls). On macOS the *_t handles are opaque `void*`.
@@ -52,6 +65,10 @@ fn decode_status(status_word: i32) -> i32 {
 
 // A spawned child. Owns the parent-side pipe ends; unclosed fds are closed on
 // drop (but the child is NOT reaped there — call `wait` or `output`).
+//
+// Because it has a destructor, every accessor takes `ref this`: a by-value
+// receiver would MOVE the Child into the method and drop it on return, closing
+// the pipes out from under the caller.
 struct Child {
     _pid: i32,
     _stdin: i32,     // write end (parent -> child stdin); -1 once closed/absent
@@ -70,6 +87,7 @@ struct Pipe { read: i32, write: i32, ok: bool }
 
 fn make_pipe() -> Pipe {
     let b: *u8 = { malloc(8 as usize) };
+    if b == (0 as *u8) { return Pipe { read: -1 as i32, write: -1 as i32, ok: false }; }
     let rc: i32 = { pipe(b as *i32) };
     let r: i32 = { *(b as *i32) };
     let w: i32 = { *((b + (4 as usize)) as *i32) };
@@ -78,18 +96,80 @@ fn make_pipe() -> Pipe {
     return Pipe { read: r, write: w, ok: rc == (0 as i32) };
 }
 
-// Read a fd to EOF into a byte vector (blocking). Used for the sync capture.
+// Read a fd to EOF into a byte vector (blocking). For a SINGLE stream only —
+// see drain_both for the two-pipe case.
 fn drain_fd(fd: i32) -> vec::Vec[u8] {
     var acc: vec::Vec[u8] = vec::new::[u8]();
     let bufsz: usize = 8192 as usize;
     let buf: *u8 = { malloc(bufsz) };
+    if buf == (0 as *u8) { return acc; }
     loop {
         let n: isize = { read(fd, buf, bufsz) };
-        if n <= (0 as isize) { break; }
+        if n <= (0 as isize) {
+            if n < (0 as isize) && { *(__error()) } == e_intr() { continue; }
+            break;
+        }
         let _s: status::Status = acc.extend_from_raw(buf, n as usize);
     }
     free(buf);
     return acc;
+}
+
+// One `struct pollfd { int fd; short events; short revents; }` = 8 bytes.
+fn pollfd_set(base: *u8, slot: usize, fd: i32) {
+    let off: usize = slot *% (8 as usize);
+    { *((base + off) as *i32) = fd; }
+    { *((base + off + (4 as usize)) as *i16) = 1 as i16; }   // POLLIN
+    { *((base + off + (6 as usize)) as *i16) = 0 as i16; }   // revents
+    return;
+}
+fn pollfd_revents(base: *u8, slot: usize) -> i16 {
+    return { *((base + (slot *% (8 as usize)) + (6 as usize)) as *i16) };
+}
+
+// Drain stdout AND stderr together, reading whichever has bytes.
+//
+// Draining one to EOF before touching the other DEADLOCKS: the pipe buffer is
+// 64 KB on macOS, so a child that writes more than that to the stream we are
+// NOT reading blocks in write(), never finishes the stream we ARE reading, and
+// the parent waits forever. A build command with many warnings is exactly this
+// shape. poll() hands back whichever side is ready, so neither can wedge.
+fn drain_both(out_fd: i32, err_fd: i32, out_acc: *vec::Vec[u8], err_acc: *vec::Vec[u8]) {
+    let bufsz: usize = 8192 as usize;
+    let buf: *u8 = { malloc(bufsz) };
+    if buf == (0 as *u8) { return; }
+    let pfds: *u8 = { malloc(16 as usize) };
+    if pfds == (0 as *u8) { free(buf); return; }
+    var o: i32 = out_fd;
+    var e: i32 = err_fd;
+    loop {
+        if o < (0 as i32) && e < (0 as i32) { break; }
+        var n: u32 = 0 as u32;
+        var o_slot: i64 = -1 as i64;
+        var e_slot: i64 = -1 as i64;
+        if o >= (0 as i32) { pollfd_set(pfds, n as usize, o); o_slot = n as i64; n = n +% (1 as u32); }
+        if e >= (0 as i32) { pollfd_set(pfds, n as usize, e); e_slot = n as i64; n = n +% (1 as u32); }
+        let rc: i32 = { poll(pfds, n, -1 as i32) };
+        if rc < (0 as i32) {
+            if { *(__error()) } == e_intr() { continue; }
+            break;
+        }
+        if o_slot >= (0 as i64) && pollfd_revents(pfds, o_slot as usize) != (0 as i16) {
+            let k: isize = { read(o, buf, bufsz) };
+            if k > (0 as isize) { let _s: status::Status = (*out_acc).extend_from_raw(buf, k as usize); }
+            else if k == (0 as isize) { o = -1 as i32; }
+            else if { *(__error()) } != e_intr() { o = -1 as i32; }
+        }
+        if e_slot >= (0 as i64) && pollfd_revents(pfds, e_slot as usize) != (0 as i16) {
+            let k: isize = { read(e, buf, bufsz) };
+            if k > (0 as isize) { let _s: status::Status = (*err_acc).extend_from_raw(buf, k as usize); }
+            else if k == (0 as isize) { e = -1 as i32; }
+            else if { *(__error()) } != e_intr() { e = -1 as i32; }
+        }
+    }
+    free(pfds);
+    free(buf);
+    return;
 }
 
 fn bytes_to_text(take bytes: vec::Vec[u8]) -> text::Text {
@@ -183,18 +263,42 @@ fn spawn(argv: vec::Vec[text::Text], cwd: str = "") -> option::Option[Child] {
 }
 
 impl Child {
-    fn pid(this) -> i32 { return this._pid; }
-    fn stdout_fd(this) -> i32 { return this._stdout; }
-    fn stderr_fd(this) -> i32 { return this._stderr; }
+    fn pid(ref this) -> i32 { return this._pid; }
+    fn stdout_fd(ref this) -> i32 { return this._stdout; }
+    fn stderr_fd(ref this) -> i32 { return this._stderr; }
 
-    // Hand stdout's read end to a caller (e.g. reactor::read_fd_async); Child no
-    // longer closes it on drop.
+    // Hand a read end to a caller (e.g. reactor::read_fd_async); Child no longer
+    // closes it on drop — the caller owns it from here.
     fn take_stdout_fd(ref this) -> i32 { let fd: i32 = this._stdout; this._stdout = -1 as i32; return fd; }
+    fn take_stderr_fd(ref this) -> i32 { let fd: i32 = this._stderr; this._stderr = -1 as i32; return fd; }
 
-    // Write to the child's stdin. Bytes written, or -1 if stdin is already closed.
-    fn write_stdin(this, data: str) -> isize {
+    // Send a signal to the child. `interrupt` is Ctrl-C; `terminate` asks it to
+    // exit; `kill` cannot be refused. False if there is no live child.
+    fn signal(ref this, sig: i32) -> bool {
+        if this._pid <= (0 as i32) { return false; }
+        return { kill(this._pid, sig) } == (0 as i32);
+    }
+    fn interrupt(ref this) -> bool { return this.signal(sig_int()); }
+    fn terminate(ref this) -> bool { return this.signal(sig_term()); }
+    fn kill_now(ref this) -> bool { return this.signal(sig_kill()); }
+
+    // Write to the child's stdin, looping over partial writes. Returns the bytes
+    // written (== data length on success), or -1 if stdin is closed or the first
+    // write fails outright. A pipe write over PIPE_BUF can be partial, so a
+    // single write() call is not enough.
+    fn write_stdin(ref this, data: str) -> isize {
         if this._stdin < (0 as i32) { return -1 as isize; }
-        return { write(this._stdin, #str_ptr(data), #str_len(data)) };
+        let p: *u8 = #str_ptr(data);
+        let total: usize = #str_len(data);
+        var off: usize = 0 as usize;
+        while off < total {
+            let k: isize = { write(this._stdin, p + off, total -% off) };
+            if k > (0 as isize) { off = off +% (k as usize); continue; }
+            if k < (0 as isize) && { *(__error()) } == e_intr() { continue; }
+            if off > (0 as usize) { return off as isize; }
+            return -1 as isize;
+        }
+        return off as isize;
     }
 
     // Close the child's stdin (signals EOF to the child).
@@ -203,24 +307,37 @@ impl Child {
         return;
     }
 
-    // Reap the child and return its exit code (128 + signal if it was killed).
+    // Reap the child and return its exit code (128 + signal if it was killed),
+    // or -1 if there is nothing to reap. Retries on EINTR: waitpid returning -1
+    // leaves the status word UNWRITTEN, so without the retry (and the zero-init)
+    // the code below would decode uninitialised heap and report a random exit.
     fn wait(ref this) -> i32 {
+        if this._pid <= (0 as i32) { return -1 as i32; }
         let st: *u8 = { malloc(4 as usize) };
-        let _r: i32 = { waitpid(this._pid, st as *i32, 0 as i32) };
+        if st == (0 as *u8) { return -1 as i32; }
+        { *(st as *i32) = 0 as i32; }
+        var rc: i32 = 0 as i32;
+        loop {
+            rc = { waitpid(this._pid, st as *i32, 0 as i32) };
+            if rc >= (0 as i32) { break; }
+            if { *(__error()) } != e_intr() { break; }
+        }
         let status_word: i32 = { *(st as *i32) };
         free(st);
+        if rc < (0 as i32) { return -1 as i32; }
+        this._pid = -1 as i32;   // reaped once; a second wait has no child
         return decode_status(status_word);
     }
 
-    // One-shot sync capture: close stdin, drain stdout then stderr to EOF, reap.
-    // Adequate for bounded output (the common case). For a program that emits
-    // large volumes on BOTH streams at once, stream stdout via the reactor
-    // instead (sequential draining could otherwise stall on a full stderr pipe).
+    // One-shot sync capture: close stdin, drain BOTH streams together, reap.
+    // Safe for unbounded output on either stream — see drain_both for why
+    // draining them one after the other deadlocks.
     fn output(take this) -> Output {
         var me: Child = this;
         me.close_stdin();
-        let out_bytes: vec::Vec[u8] = drain_fd(me._stdout);
-        let err_bytes: vec::Vec[u8] = drain_fd(me._stderr);
+        var out_bytes: vec::Vec[u8] = vec::new::[u8]();
+        var err_bytes: vec::Vec[u8] = vec::new::[u8]();
+        drain_both(me._stdout, me._stderr, #addr_of(out_bytes), #addr_of(err_bytes));
         let code: i32 = me.wait();
         if me._stdout >= (0 as i32) { let _a: i32 = { close(me._stdout) }; me._stdout = -1 as i32; }
         if me._stderr >= (0 as i32) { let _b: i32 = { close(me._stderr) }; me._stderr = -1 as i32; }
@@ -231,6 +348,17 @@ impl Child {
         };
     }
 
+    // Destructor: close every parent-side end still owned. Without this, a spawn
+    // whose Child is dropped without output() leaks three fds — File and the
+    // sockets already close theirs on drop. The child is deliberately NOT reaped
+    // here: a blocking waitpid inside a destructor would hang an arbitrary
+    // caller. Call wait() or output() to reap.
+    fn drop(ref this) {
+        if this._stdin >= (0 as i32) { let _a: i32 = { close(this._stdin) }; this._stdin = -1 as i32; }
+        if this._stdout >= (0 as i32) { let _b: i32 = { close(this._stdout) }; this._stdout = -1 as i32; }
+        if this._stderr >= (0 as i32) { let _c: i32 = { close(this._stderr) }; this._stderr = -1 as i32; }
+        return;
+    }
 }
 
 // Spawn + sync capture in one call — the replacement for the hand-rolled

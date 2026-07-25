@@ -1384,6 +1384,8 @@ fn install() {
     // Span styling (hand-authored, outside the generated region).
     facet::set_text_spans_fn(set_text_spans_impl);
     facet::clear_text_spans_fn(clear_text_spans_impl);
+    // Focus: a responder change, not a setter — cannot be generated.
+    facet::set_is_focused_fn(c_set_is_focused);
     facet::set_set_hidden_fn(set_hidden_impl);
     facet::set_add_child_fn(add_child_impl);
     facet::set_remove_child_fn(remove_child_impl);
@@ -2775,6 +2777,32 @@ fn t_menu_is_enabled(ctx: *u8) -> bool { return T_MENU_ENABLED != (0 as i32); }
 fn t_menu_title_of(ctx: *u8) -> text::Text { return text::from_str("Close \"main.cplus\""); }
 
 #[test]
+fn set_is_focused_makes_the_element_first_responder() {
+    // iris's terminal calls this after each command to return the caret to the
+    // input. It was one of the generated slots with NO backing, so it silently
+    // did nothing — focus needs makeFirstResponder: on the window.
+    facet::set_is_focused_fn(c_set_is_focused);
+    let win: ak::Window = make_shell_window("focus", 300.0f64, 200.0f64, false);
+    let n: flex::Node = ui::text_area(value: "hi", agent_id: "");
+    win.set_content_view(ak::View::from_raw(n.payload()));
+    let tv: *u8 = { rt::msg_id(n.payload(), rt::sel(#str_ptr("documentView\0"))) };
+    let h: facet::Handle = facet::Handle::of(tv, 0 as *u8, 0 as *u8, 0 as u32);
+
+    let _a: facet::Handle = h.set_is_focused(true);
+    match win.first_responder() {
+        option::Option[ak::Responder]::Some(r) => { assert r.raw() == tv; }
+        option::Option[ak::Responder]::None => { assert false; }
+    }
+    // And it resigns.
+    let _b: facet::Handle = h.set_is_focused(false);
+    match win.first_responder() {
+        option::Option[ak::Responder]::Some(r) => { assert r.raw() != tv; }
+        option::Option[ak::Responder]::None => { }
+    }
+    return;
+}
+
+#[test]
 fn menu_validation_answers_enablement_and_dynamic_title_at_open() {
     // The whole point: the answer is produced when the menu OPENS, from live
     // state, with nothing rebuilt. Drive -validateMenuItem: exactly as AppKit
@@ -4120,6 +4148,20 @@ fn reapply_text_spans(view: *u8) {
         i = i +% (1 as usize);
     }
     return;
+}
+
+// Focus is not a property — it is a window-level responder change, so this slot
+// cannot be a generated `set<Prop>:` mapping and is hand-written here. Setting
+// it true makes the element the window's first responder; false resigns focus
+// by clearing it. False return = no window (the element is not on screen yet).
+fn c_set_is_focused(h: facet::Handle, v: bool) -> bool {
+    let view: *u8 = h.view();
+    if view == (0 as *u8) { return false; }
+    let win: *u8 = { rt::msg_id(view, rt::sel(#str_ptr("window\0"))) };
+    if win == (0 as *u8) { return false; }
+    let sel_mfr: *u8 = rt::sel(#str_ptr("makeFirstResponder:\0"));
+    if v { return rt::msg_i8_id(win, sel_mfr, view) != (0 as i8); }
+    return rt::msg_i8_id(win, sel_mfr, 0 as *u8) != (0 as i8);
 }
 
 fn set_text_spans_impl(h: facet::Handle, spans: *vec::Vec[facet::TextSpan]) -> bool {
