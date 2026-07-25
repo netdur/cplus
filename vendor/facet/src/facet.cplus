@@ -616,11 +616,52 @@ struct MenuItem {
     title: text::Text,
     key: text::Text,
     action: u32,
+    // Answered when the MENU OPENS, from the same ctx the click receives, so an
+    // item reflects live state without anything being rebuilt — the platform
+    // behaviour: inapplicable items grey out instead of disappearing, and the
+    // menu keeps a stable shape. Null = always enabled / static title.
+    //
+    // `title_of` is the half a bool cannot express: `Close "editor_tabs.cplus"`
+    // rather than `Close`. Returning an empty Text keeps the built title.
+    is_enabled: fn(*u8) -> bool,
+    title_of: fn(*u8) -> text::Text,
     // App-command items: a non-null callback WINS over `action` — the backend
     // wires a target/action trampoline that invokes it (sender = the native
     // menu item, ctx = the bound receiver). null_fn() = token item.
     on_click: fn(*u8, *u8),
     opaque click_ctx: *u8,
+}
+
+// The null validation callbacks (an item with neither is always enabled and
+// keeps its built title), spelled as fns so call sites never write a cast.
+fn null_enabled_fn() -> fn(*u8) -> bool { return 0 as fn(*u8) -> bool; }
+fn null_title_fn() -> fn(*u8) -> text::Text { return 0 as fn(*u8) -> text::Text; }
+
+impl MenuItem {
+    // Build an item through this rather than a struct literal, so the item can
+    // gain fields — a checkmark, a submenu, an image — without breaking every
+    // call site (adding `is_enabled` / `title_of` broke every literal there was).
+    fn new(
+        menu: str,
+        title: str,
+        key: str = "",
+        action: u32 = 2 as u32,                     // menu_action_none()
+        on_click: fn(*u8, *u8) = 0 as fn(*u8, *u8),
+        ctx: *u8 = 0 as *u8,
+        is_enabled: fn(*u8) -> bool = 0 as fn(*u8) -> bool,
+        title_of: fn(*u8) -> text::Text = 0 as fn(*u8) -> text::Text,
+    ) -> MenuItem {
+        return MenuItem {
+            menu: text::from_str(menu),
+            title: text::from_str(title),
+            key: text::from_str(key),
+            action: action,
+            is_enabled: is_enabled,
+            title_of: title_of,
+            on_click: on_click,
+            click_ctx: ctx,
+        };
+    }
 }
 
 struct AppMenu {
@@ -644,29 +685,29 @@ fn app_menu(title: str) -> AppMenu {
 
 impl AppMenu {
     fn add_item(ref this, menu: str, title: str, key: str, action: u32) {
-        this.items.append(MenuItem {
-            menu: text::from_str(menu),
-            title: text::from_str(title),
-            key: text::from_str(key),
-            action: action,
-            on_click: null_fn(),
-            click_ctx: 0 as *u8,
-        });
+        this.items.append(MenuItem::new(menu, title, key: key, action: action));
         return;
     }
 
     // An app-command item: the menu click runs YOUR code. Bound-method ready —
     // `m.add_command("File", "Save", key: "s", on_click: this.on_save)` — the
     // defaulted ctx takes the receiver.
-    fn add_command(ref this, menu: str, title: str, key: str = "", on_click: fn(*u8, *u8) = null_fn(), ctx: *u8 = 0 as *u8) {
-        this.items.append(MenuItem {
-            menu: text::from_str(menu),
-            title: text::from_str(title),
-            key: text::from_str(key),
-            action: menu_action_none(),
-            on_click: on_click,
-            click_ctx: ctx,
-        });
+    // `is_enabled` / `title_of` are answered when the menu opens, from `ctx` —
+    // so "Save" greys itself out with no open tab, and an item can name its
+    // target (`Close "main.cplus"`), without the menu being rebuilt.
+    fn add_command(
+        ref this,
+        menu: str,
+        title: str,
+        key: str = "",
+        on_click: fn(*u8, *u8) = null_fn(),
+        ctx: *u8 = 0 as *u8,
+        is_enabled: fn(*u8) -> bool = 0 as fn(*u8) -> bool,
+        title_of: fn(*u8) -> text::Text = 0 as fn(*u8) -> text::Text,
+    ) {
+        this.items.append(MenuItem::new(menu, title, key: key, action: menu_action_none(),
+                                        on_click: on_click, ctx: ctx,
+                                        is_enabled: is_enabled, title_of: title_of));
         return;
     }
 }

@@ -84,6 +84,9 @@ fn menu_action_find_next() -> u32 { return core::menu_action_find_next(); }
 fn menu_action_find_previous() -> u32 { return core::menu_action_find_previous(); }
 fn menu_action_find_replace() -> u32 { return core::menu_action_find_replace(); }
 fn null_fn() -> fn(*u8, *u8) { return core::null_fn(); }
+// The null menu-validation callbacks (always enabled / static title).
+fn null_enabled_fn() -> fn(*u8) -> bool { return core::null_enabled_fn(); }
+fn null_title_fn() -> fn(*u8) -> text::Text { return core::null_title_fn(); }
 
 fn run[W: Window](take window: W) {
     backend::install();   // register this backend's facet verbs (list, raise) before any render uses them
