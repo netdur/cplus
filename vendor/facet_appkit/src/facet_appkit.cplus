@@ -2535,6 +2535,11 @@ fn install_menu_validation() {
 }
 
 fn add_app_menu_item(menu: ak::Menu, item: *facet::MenuItem, command: u64) {
+    // A separator is a rule, not an item: every other field is ignored.
+    if { (*item).is_separator } {
+        menu.add_item(ak::MenuItem::separator_item());
+        return;
+    }
     let cb: fn(*u8, *u8) = { (*item).on_click };
     if cb != (0 as fn(*u8, *u8)) {
         // App-command item: a target/action trampoline invokes the callback

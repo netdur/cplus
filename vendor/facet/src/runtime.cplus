@@ -454,6 +454,9 @@ impl App {
             let c: core::Chrome = sb.chrome();
             let root: Node = sb.build();
             var m: AppMenu = this.build_menu();
+            // The mounted screen adds its own items to the app's base menu, so
+            // main does not have to know what every screen contains.
+            m.extend(sb.menu_items());
             let has_menu: bool = m.items.count() > (0 as usize);
             let w = backend::open_window(
                 root,

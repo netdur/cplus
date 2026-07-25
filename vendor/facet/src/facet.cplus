@@ -625,6 +625,10 @@ struct MenuItem {
     // rather than `Close`. Returning an empty Text keeps the built title.
     is_enabled: fn(*u8) -> bool,
     title_of: fn(*u8) -> text::Text,
+    // A rule between groups of items rather than an item — every other field is
+    // ignored except `menu`, which says which group it divides. Once screens
+    // append into shared menus, "where does my group begin" needs an answer.
+    is_separator: bool,
     // App-command items: a non-null callback WINS over `action` — the backend
     // wires a target/action trampoline that invokes it (sender = the native
     // menu item, ctx = the bound receiver). null_fn() = token item.
@@ -650,6 +654,7 @@ impl MenuItem {
         ctx: *u8 = 0 as *u8,
         is_enabled: fn(*u8) -> bool = 0 as fn(*u8) -> bool,
         title_of: fn(*u8) -> text::Text = 0 as fn(*u8) -> text::Text,
+        is_separator: bool = false,
     ) -> MenuItem {
         return MenuItem {
             menu: text::from_str(menu),
@@ -658,9 +663,15 @@ impl MenuItem {
             action: action,
             is_enabled: is_enabled,
             title_of: title_of,
+            is_separator: is_separator,
             on_click: on_click,
             click_ctx: ctx,
         };
+    }
+
+    // A dividing rule inside `menu`, at the point it is added.
+    fn separator(menu: str) -> MenuItem {
+        return MenuItem::new(menu, "", is_separator: true);
     }
 }
 
@@ -708,6 +719,57 @@ impl AppMenu {
         this.items.append(MenuItem::new(menu, title, key: key, action: menu_action_none(),
                                         on_click: on_click, ctx: ctx,
                                         is_enabled: is_enabled, title_of: title_of));
+        return;
+    }
+
+    // Add a dividing rule to `menu` at this point.
+    fn add_separator(ref this, menu: str) {
+        this.items.append(MenuItem::separator(menu));
+        return;
+    }
+
+    // Drop every item holding key equivalent `k` (ignoring keyless items).
+    fn remove_key(ref this, k: str) {
+        if #str_len(k) == (0 as usize) { return; }
+        var i: usize = 0 as usize;
+        while i < this.items.count() {
+            var hit: bool = false;
+            match this.items.at_ptr(i) {
+                option::Option[*MenuItem]::Some(p) => { hit = { (*p).key.equals(k) }; }
+                option::Option[*MenuItem]::None => { }
+            }
+            if hit {
+                let _r: option::Option[MenuItem] = this.items.remove(at: i);
+            } else {
+                i = i +% (1 as usize);
+            }
+        }
+        return;
+    }
+
+    // Merge a screen's own items into this menu.
+    //
+    // ADDITIVE, not override: the base keeps its items and the screen's are
+    // appended to their groups. Override would force every screen to redeclare
+    // Edit's whole undo/cut/copy/paste/select-all/find family.
+    //
+    // On a key-equivalent collision the SCREEN wins — two items cannot share a
+    // key equivalent, and the mounted screen is the more specific context. Key
+    // uniqueness is therefore required only WITHIN one built menu: `New Project
+    // ⌘N` on the launcher and `New File ⌘N` in the workspace never coexist.
+    fn extend(ref this, take items: vec::Vec[MenuItem]) {
+        var src: vec::Vec[MenuItem] = items;
+        loop {
+            if src.count() == (0 as usize) { break; }
+            match src.remove(at: 0 as usize) {
+                option::Option[MenuItem]::Some(it) => {
+                    let k: text::Text = it.key.clone();
+                    this.remove_key(k.view());
+                    this.items.append(it);
+                }
+                option::Option[MenuItem]::None => { break; }
+            }
+        }
         return;
     }
 }
@@ -3155,6 +3217,11 @@ impl Chrome {
 // hosts (`run_screen`, `App`) bound all three.
 interface Screen {
     fn chrome(this) -> Chrome;
+    // The items this screen contributes to the app menu, merged additively by
+    // the runtime each time the screen is shown (see AppMenu::extend). A screen
+    // with nothing to add returns an empty Vec — C+ interfaces carry no default
+    // bodies, so the empty case is written out rather than inherited.
+    fn menu_items(this) -> vec::Vec[MenuItem];
 }
 
 // A type-erased, heap-owned screen — what a route factory returns, so an `App`
@@ -3171,6 +3238,7 @@ struct ScreenBox {
     _attach: fn(*u8),
     _detach: fn(*u8),
     _chrome: fn(*u8) -> Chrome,
+    _menu_items: fn(*u8) -> vec::Vec[MenuItem],
     _drop: fn(*u8),
 }
 
@@ -3182,6 +3250,7 @@ fn screen_box[S: Component + Lifecycle + Screen](take s: S) -> ScreenBox {
             _attach: sb_attach_tramp::[S],
             _detach: sb_detach_tramp::[S],
             _chrome: sb_chrome_tramp::[S],
+            _menu_items: sb_menu_items_tramp::[S],
             _drop: sb_drop_tramp::[S],
         },
         // Allocation failed: `s` dropped inside box::new. The invalid box —
@@ -3214,6 +3283,11 @@ fn sb_chrome_tramp[S: Screen](p: *u8) -> Chrome {
     return { (*q).chrome() };
 }
 
+fn sb_menu_items_tramp[S: Screen](p: *u8) -> vec::Vec[MenuItem] {
+    let q: *S = p as *S;
+    return { (*q).menu_items() };
+}
+
 // Reclaim the heap slot: the box drops the screen (drop_in_place) and frees.
 fn sb_drop_tramp[S](p: *u8) {
     let _b: box::Box[S] = box::from_raw::[S](p);
@@ -3230,6 +3304,7 @@ impl ScreenBox {
             _attach: 0 as fn(*u8),
             _detach: 0 as fn(*u8),
             _chrome: 0 as fn(*u8) -> Chrome,
+            _menu_items: 0 as fn(*u8) -> vec::Vec[MenuItem],
             _drop: 0 as fn(*u8),
         };
     }
@@ -3263,6 +3338,15 @@ impl ScreenBox {
     fn chrome(this) -> Chrome {
         if !this.valid() { return Chrome::new(); }
         let f: fn(*u8) -> Chrome = this._chrome;
+        return f(this._p);
+    }
+
+    // The boxed screen's menu contribution. Empty for an invalid box, so the
+    // host merges nothing rather than special-casing.
+    fn menu_items(this) -> vec::Vec[MenuItem] {
+        if !this.valid() { return vec::new::[MenuItem](); }
+        let f: fn(*u8) -> vec::Vec[MenuItem] = this._menu_items;
+        if f == (0 as fn(*u8) -> vec::Vec[MenuItem]) { return vec::new::[MenuItem](); }
         return f(this._p);
     }
 
@@ -4620,6 +4704,68 @@ fn facet_tier2_roles() {
 }
 
 #[test]
+fn menu_extend_is_additive_and_screen_wins_on_key() {
+    // The base app menu: what main declares for every screen.
+    var base: AppMenu = empty_app_menu();
+    base.add_item("Edit", "Undo", "z", menu_action_undo());
+    base.add_item("Edit", "Copy", "c", menu_action_copy());
+    base.add_command("File", "Close Window", "w", click_a);
+
+    // A screen's contribution: one new item, one separator, and one item whose
+    // key collides with the base's Close Window.
+    var mine: vec::Vec[MenuItem] = vec::new::[MenuItem]();
+    mine.append(MenuItem::new("File", "New File", key: "n", on_click: click_a));
+    mine.append(MenuItem::separator("File"));
+    mine.append(MenuItem::new("File", "Close Tab", key: "w", on_click: click_a));
+
+    base.extend(mine);
+
+    // ADDITIVE: the base's Edit family survives untouched.
+    var undo: bool = false;
+    var copy: bool = false;
+    var new_file: bool = false;
+    var sep: bool = false;
+    var close_window: bool = false;
+    var close_tab: bool = false;
+    var i: usize = 0 as usize;
+    while i < base.items.count() {
+        match base.items.at_ptr(i) {
+            option::Option[*MenuItem]::Some(p) => {
+                if { (*p).title.equals("Undo") } { undo = true; }
+                if { (*p).title.equals("Copy") } { copy = true; }
+                if { (*p).title.equals("New File") } { new_file = true; }
+                if { (*p).title.equals("Close Window") } { close_window = true; }
+                if { (*p).title.equals("Close Tab") } { close_tab = true; }
+                if { (*p).is_separator } { sep = true; }
+            }
+            option::Option[*MenuItem]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    assert undo;
+    assert copy;
+    assert new_file;
+    assert sep;                 // the rule came through
+    assert close_tab;           // the screen's item is present
+    assert !close_window;       // and it EVICTED the base item sharing ⌘W
+    return;
+}
+
+#[test]
+fn screen_box_without_a_contribution_merges_nothing() {
+    // An invalid box (unknown route / failed allocation) must answer empty
+    // rather than trap, so the host can merge unconditionally.
+    let sb: ScreenBox = ScreenBox::invalid();
+    assert sb.menu_items().count() == (0 as usize);
+
+    var base: AppMenu = empty_app_menu();
+    base.add_item("Edit", "Undo", "z", menu_action_undo());
+    base.extend(sb.menu_items());
+    assert base.items.count() == (1 as usize);
+    return;
+}
+
+#[test]
 fn facet_search_and_combo_ctors_set_kind_and_config() {
     let sf: Node = search_field(placeholder: "Filter", value: "main", on_search: click_a);
     assert sf.kind == kind_search_field();
@@ -5710,6 +5856,7 @@ impl SbtScreen: Screen {
     fn chrome(this) -> Chrome {
         return Chrome::new(title: "sbt", width: 300.0f64, height: 200.0f64, zoomable: true, max_zoom: 3.0f64);
     }
+    fn menu_items(this) -> vec::Vec[MenuItem] { return vec::new::[MenuItem](); }
 }
 
 #[test]
