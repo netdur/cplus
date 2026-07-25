@@ -432,11 +432,15 @@ fn subview_at(view: *u8, i: usize) -> *u8 {
 
 // ---- the Surface ------------------------------------------------------------
 
-// A RETAINED NSView wrapped as a nominal type so it can be stored in a `Vec`.
-// (cpc's monomorphizer does not accept a bare raw pointer as a generic type
-// argument — `Vec[*u8]` fails with "unknown type <raw-ptr>" — so the map is a
-// `Vec[ViewRef]`.) `opaque` marks the pointer unaccounted-by-design; the
-// retain/release pairing lives in `open`/`walk` and `Surface::drop`.
+// A RETAINED NSView wrapped as a nominal type. `opaque` marks the pointer
+// unaccounted-by-design; the retain/release pairing lives in `open`/`walk` and
+// `Surface::drop`.
+//
+// The wrapper is NOT a workaround. `Vec[*u8]` compiles today — stdlib/pty.cplus
+// and process.cplus both use it — and the "unknown type <raw-ptr>" monomorphizer
+// bug this once cited was fixed 2026-07-08. `ViewRef` stays because `opaque`
+// states something a bare `*u8` element cannot: these pointers carry a refcount
+// this module owns.
 struct ViewRef {
     opaque p: *u8,
 }

@@ -10,12 +10,17 @@
 // backend (the AppKit slice), which performs the operation only when the core
 // returns `Allowed`.
 //
-// Why not a dispatched `UiBackend` interface + a fake here? cpc does not yet
-// support interface-bound generics (`fn op[B: UiBackend](...)` / `Surface[B]`),
-// and has no closures, so the core cannot dispatch polymorphically through a
-// port. Keeping the core to pure authorization + version state sidesteps that
-// entirely and is the cleaner framework-agnostic boundary anyway: the backend is
-// dumb execution, the core is the policy.
+// Why not a dispatched `UiBackend` interface + a fake here? Not for want of the
+// language: interface-bound generics work — both `fn op[B: UiBackend](...)` and
+// `Surface[B: UiBackend]` compile and dispatch (verified 2026-07-26; the claim
+// that they did not was stale). C+ still has no capturing closures, so a port
+// would have to be an interface or an fn pointer, but that is a shape
+// constraint, not a blocker.
+//
+// The real reason is the boundary itself: keeping the core to pure
+// authorization + version state is the cleaner framework-agnostic split — the
+// backend is dumb execution, the core is the policy. That argument stood on its
+// own even when the language was the stated cause.
 //
 // Consumer flow:
 //   click(id)            -> authorize_action; if Allowed, backend.activate(node)
