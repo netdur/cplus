@@ -2102,6 +2102,50 @@ fn list(count: i64, row: fn(i64, *u8) -> flex::Node, ctx: *u8 = 0 as *u8, agent_
 // reader scrolled up into history is never yanked down; `force_end` pins
 // unconditionally (the initial jump-to-latest). False when `view_ptr` is not
 // a mounted list.
+
+// Forget every measured row height for the list that OWNS `view` (the view
+// itself, or any cell content inside it). Walks up to the NSTableView carrying
+// the list ctx, so an app can hand it any element it just mutated.
+//
+// Needed because a measured height is only valid for the DATA it was measured
+// from: changing a row's content (a longer message, a different font) changes
+// its intrinsic height while the column width is unchanged, and a cached
+// height would then clip or pad the row.
+fn list_invalidate_heights(view: *u8) -> bool {
+    if view == (0 as *u8) { return false; }
+    var p: *u8 = view;
+    var guard_n: i32 = 0 as i32;
+    while p != (0 as *u8) && guard_n < (64 as i32) {
+        let cp: *u8 = rt::get_associated_object(p, list_ctx_key());
+        if cp != (0 as *u8) {
+            let c: *ListCtx = { cp as *ListCtx };
+            let hp: *vec::Vec[f64] = { #addr_of((*c).heights) };
+            (*hp).remove_all();
+            return true;
+        }
+        // A scroll host reaches its table through documentView, not a subview.
+        // Probe first: a plain NSView does not implement it, and sending an
+        // unrecognized selector raises.
+        let dv_sel: *u8 = rt::sel(#str_ptr("documentView\0"));
+        var dv: *u8 = 0 as *u8;
+        if rt::msg_i8_id(p, rt::sel(#str_ptr("respondsToSelector:\0")), dv_sel) != (0 as i8) {
+            dv = { rt::msg_id(p, dv_sel) };
+        }
+        if dv != (0 as *u8) {
+            let dcp: *u8 = rt::get_associated_object(dv, list_ctx_key());
+            if dcp != (0 as *u8) {
+                let c2: *ListCtx = { dcp as *ListCtx };
+                let hp2: *vec::Vec[f64] = { #addr_of((*c2).heights) };
+                (*hp2).remove_all();
+                return true;
+            }
+        }
+        p = { rt::msg_id(p, rt::sel(#str_ptr("superview\0"))) };
+        guard_n = guard_n + (1 as i32);
+    }
+    return false;
+}
+
 fn list_set_count(view_ptr: *u8, count: i64, scroll_to_end: bool = false, force_end: bool = false) -> bool {
     if view_ptr == (0 as *u8) { return false; }
     var tbl: *u8 = view_ptr;
@@ -2120,9 +2164,14 @@ fn list_set_count(view_ptr: *u8, count: i64, scroll_to_end: bool = false, force_
     // chat message must not re-measure the whole backlog), but a SHRINK drops
     // the tail so a later row cannot read a stale neighbour's height.
     let hp: *vec::Vec[f64] = { #addr_of((*c).heights) };
-    if count < (0 as i64) {
+    if count < (0 as i64) || count == { (*c).count } {
+        // Same count: the only reason to reload is that row CONTENT changed,
+        // so nothing measured before can be trusted.
         (*hp).remove_all();
     } else if { (*hp).count() } > (count as usize) {
+        // Shrink: drop the tail so a later row cannot read a removed
+        // neighbour's height. A GROW keeps what it has — appending a chat
+        // message must not re-measure the whole backlog.
         (*hp).truncate(to: count as usize);
     }
     { (*c).count = count; }
@@ -2757,6 +2806,10 @@ fn hosted_flex_for_view(view: *u8) -> *flex::Node {
 // resizes the document). Falls back to relayout(cp), so a slot-hosted edit
 // behaves exactly as before.
 fn reflow_owner(cp: *u8, view: *u8) -> bool {
+    // A keyed-direct edit (set_text, a style change) can alter the intrinsic
+    // height of a list row, so any cached measurement for the owning list is
+    // now wrong. Cheap: a no-op unless `view` really is inside a list.
+    let _inv: bool = list_invalidate_heights(view);
     match tree_ptr(cp) {
         option::Option[*flex::Node]::Some(tp) => {
             if flex_in_tree(tp, view) != (0 as *flex::Node) { return relayout(cp); }
@@ -4017,6 +4070,46 @@ fn list_row_heights_are_measured_once_and_cached() {
     }
     let _h: f64 = list_height_imp(up, dv, 0 as i64);
     assert T_ROW_BUILDS == (3 as i32);          // re-measured at the new width
+    return;
+}
+
+
+#[test]
+fn list_height_cache_is_invalidated_when_content_can_change() {
+    // A cached height is only valid for the DATA it was measured from. Before
+    // caching, heightOfRow: re-ran the row builder and always saw current data;
+    // the cache must not turn that into a stale measurement. Asserted on the
+    // cache itself — reload_data legitimately re-measures, so counting builds
+    // across it would measure the harness, not the invalidation.
+    let n: flex::Node = list(count: 10 as i64, row: list_counting_row);
+    let scroll: *u8 = n.payload();
+    let dv: *u8 = { rt::msg_id(scroll, rt::sel(#str_ptr("documentView\0"))) };
+    ak::TableView::from_raw(dv).as_view().set_frame(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
+    let cp: *u8 = rt::get_associated_object(dv, list_ctx_key());
+    assert cp != (0 as *u8);
+    let c: *ListCtx = { cp as *ListCtx };
+    let hp: *vec::Vec[f64] = { #addr_of((*c).heights) };
+
+    // A measurement populates the cache.
+    let _h: f64 = list_height_imp(cp, dv, 0 as i64);
+    assert { (*hp).count() } > (0 as usize);
+
+    // 1. Explicit invalidation, given the SCROLL host — an app holds the outer
+    //    handle, not the inner table, so the walk must unwrap documentView.
+    assert list_invalidate_heights(scroll);
+    assert { (*hp).count() } == (0 as usize);
+
+    // 2. A keyed-direct edit inside the list invalidates through reflow_owner,
+    //    so set_text on a row does not leave a stale height behind.
+    let _h2: f64 = list_height_imp(cp, dv, 0 as i64);
+    assert { (*hp).count() } > (0 as usize);
+    let _r: bool = reflow_owner(0 as *u8, dv);
+    assert { (*hp).count() } == (0 as usize);
+
+    // 3. Invalidating from an element that is NOT in a list is a no-op, not a
+    //    crash — the walk probes documentView rather than assuming it.
+    let outside: flex::Node = label("x");
+    assert !list_invalidate_heights(outside.payload());
     return;
 }
 
