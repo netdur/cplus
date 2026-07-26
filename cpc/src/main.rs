@@ -1387,20 +1387,16 @@ fn collect_dep_link_args(
     if m.dependencies.is_empty() {
         return Ok(Vec::new());
     }
-    // v0.0.21 multi-backend slice 1: bundled artifacts resolve by the
-    // *selected* target's stable artifact triple; only the host target
-    // still asks `clang -print-target-triple`. `triple_word` keeps the
-    // E0862 message precise ("host triple" vs "target triple").
-    let tgt = target::active_target();
+    // v0.0.21 multi-backend slice 1: binary slices resolve by the *selected*
+    // target's stable artifact triple; only the host target still asks
+    // `clang -print-target-triple`.
+    //
     // The host triple is normalised to its stable, version-less form before it
     // names a directory: `clang -print-target-triple` reports the running
-    // system (`arm64-apple-darwin25.5.0`), so using it raw would make a shipped
-    // binary stop being found after an OS upgrade. Cross targets already carry
-    // a fixed canonical `artifact_triple`.
-    let (link_triple, triple_word) = match tgt.artifact_triple {
-        Some(t) => (t.to_string(), "target"),
-        None => (target::normalize_triple(&detect_host_triple()?), "host"),
-    };
+    // system (`arm64-apple-darwin25.5.0`), so using it raw would make a slice
+    // stop being found after an OS upgrade. Cross targets already carry a
+    // fixed canonical `artifact_triple`.
+    let link_triple = active_link_triple()?;
     let mut link_args: Vec<String> = Vec::new();
     let platform = target::active_platform();
     for dep in &m.dependencies {
@@ -1411,22 +1407,9 @@ fn collect_dep_link_args(
         if !dep.active_on(platform) {
             continue;
         }
-        let mut vendor_dir = m.root.join("vendor").join(&dep.name);
-        let mut vendor_manifest = vendor_dir.join("Cplus.toml");
-        // Vendor-package self-test fallback: when run from inside a
-        // vendor package, sibling vendor packages live at
-        // `<m.root>/../<dep>/` rather than under `<m.root>/vendor/`.
-        // See resolver.rs's matching fallback in `resolve_vendor_path`.
-        if !vendor_manifest.is_file() {
-            if let Some(parent) = m.root.parent() {
-                let alt_dir = parent.join(&dep.name);
-                let alt_manifest = alt_dir.join("Cplus.toml");
-                if alt_manifest.is_file() {
-                    vendor_dir = alt_dir;
-                    vendor_manifest = alt_manifest;
-                }
-            }
-        }
+        let vendor_dir = vendor_dir_for(m, &dep.name)
+            .unwrap_or_else(|| m.root.join("vendor").join(&dep.name));
+        let vendor_manifest = vendor_dir.join("Cplus.toml");
         if !vendor_manifest.is_file() {
             let d = manifest_diag(
                 "E0854",
@@ -1475,37 +1458,27 @@ fn collect_dep_link_args(
             .as_ref()
             .map(|l| l.bundled.as_slice())
             .unwrap_or(&[]);
-        let triples: &[String] = vm
-            .link
-            .as_ref()
-            .map(|l| l.triples.as_slice())
-            .unwrap_or(&[]);
-        if !bundled.is_empty() {
-            if !triples.iter().any(|t| t == &link_triple) {
-                let supported = if triples.is_empty() {
-                    "<none>".to_string()
-                } else {
-                    triples
-                        .iter()
-                        .map(|s| format!("`{s}`"))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                };
-                let d = manifest_diag(
-                    "E0862",
-                    &vendor_manifest,
-                    format!(
-                        "package `{}` does not ship a build for {} triple `{}` (supports: {})",
-                        dep.name, triple_word, link_triple, supported
-                    ),
-                    vec![
-                        format!("add `{link_triple}` to `[link].triples` and ship the matching binaries, or build the package from source for this triple"),
-                    ],
-                );
-                emit_diag(&d, diag_mode, "");
-                return Err(ExitCode::FAILURE);
-            }
-            let triple_lib_dir = lib_root.join(&link_triple);
+        // `[build] dev = true`: the package is being worked on. No binaries of
+        // any origin participate — not its own prebuilt slice, not an
+        // author-shipped one — and the resolver compiles it from `src/`. Said
+        // out loud on every build: a manifest knob that changes what gets
+        // compiled must not be able to sit there forgotten.
+        if vm.build.dev {
+            eprintln!(
+                "cpc: `{}` is in dev mode (`[build] dev = true`) — compiling it from source",
+                dep.name
+            );
+            splice_plain_link_args(&mut link_args, &vm, diag_mode, &vendor_manifest)?;
+            continue;
+        }
+        // The triple is derived, never declared: whatever we are building for
+        // names the directory. Its absence is not an error — it means this
+        // package ships nothing for this target, so it compiles from `src/`
+        // exactly like a source-only package. That is what makes an ignored
+        // (or not-yet-built) slice a non-event on a fresh clone.
+        let triple_lib_dir = lib_root.join(&link_triple);
+        if !bundled.is_empty() && triple_lib_dir.is_dir() {
+            // Inside a slice that IS present, the manifest is truth.
             for basename in bundled {
                 let p = triple_lib_dir.join(basename);
                 if !p.is_file() {
@@ -1550,6 +1523,13 @@ fn collect_dep_link_args(
                         if !is_binary {
                             continue;
                         }
+                        // The archive `prebuild` produces is expected, not an
+                        // orphan: the compiler put it there, and the package
+                        // deliberately doesn't declare it (declaring it would
+                        // make a not-yet-built slice an E0860 on a fresh clone).
+                        if vm.build.prebuild && fname == prebuilt_archive_name(&dep.name) {
+                            continue;
+                        }
                         if !bundled.iter().any(|b| b == &fname) {
                             let triple_name = triple_dir
                                 .file_name()
@@ -1574,39 +1554,275 @@ fn collect_dep_link_args(
             }
         }
         // Splice this dep's validated link contributions into the line.
+        splice_plain_link_args(&mut link_args, &vm, diag_mode, &vendor_manifest)?;
         // Bundled artifacts go in as full paths (not `-l<name>` — they're
-        // not on the linker's search path).
-        if let Some(ls) = &vm.link {
-            // `-L<dir>` must precede the `-l<name>` it resolves; emit search
-            // paths first. `-rpath` bakes the same dir into the binary so the
-            // loader finds the .so at runtime (no LD_LIBRARY_PATH needed).
-            for dir in &ls.search_paths {
-                link_args.push(format!("-L{dir}"));
-                link_args.push(format!("-Wl,-rpath,{dir}"));
-            }
-            for fw in &ls.frameworks {
-                link_args.push("-framework".to_string());
-                link_args.push(fw.clone());
-            }
-            for l in &ls.libs {
-                link_args.push(format!("-l{l}"));
-            }
-            for basename in &ls.bundled {
-                let p = lib_root.join(&link_triple).join(basename);
-                link_args.push(p.to_string_lossy().to_string());
-            }
-            // v0.0.9 Phase 8 (cpc-gaps G-001): vendor packages may also
-            // declare `extra-objects` (rare — usually consumer-side).
-            // Validate existence here so the diag carries the dep name.
-            for obj in &ls.extra_objects {
-                if !obj.is_file() {
-                    return Err(emit_extra_object_missing(diag_mode, obj, &vendor_manifest));
+        // not on the linker's search path). Skipped entirely when the slice
+        // directory is absent: that case already resolved to source.
+        if triple_lib_dir.is_dir() {
+            if let Some(ls) = &vm.link {
+                for basename in &ls.bundled {
+                    link_args.push(triple_lib_dir.join(basename).to_string_lossy().to_string());
                 }
-                link_args.push(obj.to_string_lossy().to_string());
+            }
+        }
+        // The prebuilt slice, if `ensure_prebuilt_deps` produced one. Checked
+        // for existence rather than assumed: `cpc check` never builds a cache,
+        // and a dep whose package failed to prebuild has already aborted.
+        if vm.build.prebuild {
+            let archive = triple_lib_dir.join(prebuilt_archive_name(&dep.name));
+            if archive.is_file() {
+                link_args.push(archive.to_string_lossy().to_string());
             }
         }
     }
     Ok(link_args)
+}
+
+/// Where a dependency's package directory lives, or `None` if it isn't there.
+///
+/// Normally `<root>/vendor/<name>/`. The fallback covers the vendor-package
+/// self-test case: run from inside a vendor package, sibling packages live at
+/// `<root>/../<name>/` rather than under a `vendor/` of their own. Mirrors
+/// `resolver.rs`'s fallback in `resolve_vendor_path` — the two must agree, or
+/// the link line and the import resolution point at different copies.
+fn vendor_dir_for(m: &manifest::Manifest, dep_name: &str) -> Option<PathBuf> {
+    let primary = m.root.join("vendor").join(dep_name);
+    if primary.join("Cplus.toml").is_file() {
+        return Some(primary);
+    }
+    let alt = m.root.parent()?.join(dep_name);
+    alt.join("Cplus.toml").is_file().then_some(alt)
+}
+
+/// Bring every `[build] prebuild = true` dependency's slice up to date, before
+/// anything resolves an import.
+///
+/// Ordering is the whole reason this is a separate pass: the resolver decides
+/// header-vs-source per module, and the link line names the archive, so both
+/// need the slice to already exist. `cpc check` deliberately does NOT call
+/// this — checking should not spend a clang invocation on a dependency, and
+/// resolution falls back to `src/` per module when a header is absent.
+///
+/// A dep that is `dev = true`, or that ships author-built binaries, is skipped:
+/// the first is being worked on, the second already has its answer.
+fn ensure_prebuilt_deps(m: &manifest::Manifest, build_mode: BuildMode, diag_mode: DiagMode) -> Result<(), ExitCode> {
+    if m.dependencies.is_empty() {
+        return Ok(());
+    }
+    let link_triple = active_link_triple()?;
+    let platform = target::active_platform();
+    for dep in &m.dependencies {
+        if !dep.active_on(platform) {
+            continue;
+        }
+        let Some(vendor_dir) = vendor_dir_for(m, &dep.name) else {
+            continue; // absence is the dep walk's error to report, not ours
+        };
+        let vendor_manifest = vendor_dir.join("Cplus.toml");
+        let Ok(vm) = manifest::load(&vendor_manifest) else {
+            continue; // ditto — `collect_dep_link_args` produces the diagnostic
+        };
+        if !vm.build.prebuild || vm.build.dev {
+            continue;
+        }
+        if let Err(e) = ensure_one_prebuilt(&vm, &vendor_dir, &link_triple, build_mode, diag_mode) {
+            eprintln!("cpc: prebuilding `{}`: {e}", dep.name);
+            return Err(ExitCode::FAILURE);
+        }
+    }
+    Ok(())
+}
+
+/// Compile one package into `lib/<triple>/<name>.a` if the recorded
+/// fingerprint doesn't match the current inputs, and generate its headers
+/// alongside. A match is the fast path: nothing runs.
+fn ensure_one_prebuilt(
+    vm: &manifest::Manifest,
+    vendor_dir: &Path,
+    link_triple: &str,
+    build_mode: BuildMode,
+    diag_mode: DiagMode,
+) -> Result<(), String> {
+    let slice_dir = vendor_dir.join("lib").join(link_triple);
+    let archive = slice_dir.join(prebuilt_archive_name(&vm.package.name));
+    let stamp = slice_dir.join(format!("{}.fingerprint", vm.package.name));
+    let want = prebuild_fingerprint(vendor_dir, link_triple, build_mode)?;
+    if archive.is_file() {
+        if let Ok(have) = fs::read_to_string(&stamp) {
+            if have.trim() == want {
+                return Ok(());
+            }
+        }
+    }
+    eprintln!(
+        "cpc: prebuilding `{}` for {} ({})",
+        vm.package.name,
+        link_triple,
+        match build_mode {
+            BuildMode::Release => "release",
+            _ => "debug",
+        }
+    );
+    // Headers first: an archive whose declarations are stale is worse than no
+    // archive at all, and this pass is the only thing that keeps them in step.
+    generate_headers_for(vendor_dir)?;
+    let mut lib = vm
+        .lib
+        .clone()
+        .ok_or_else(|| "`prebuild = true` did not yield a library target".to_string())?;
+    if lib.synthesized {
+        lib.path = write_package_entry(vendor_dir, &vm.package.name)?;
+    }
+    // Build into the package's own `target/`, then copy the archive across.
+    // Pointing the library pipeline straight at the slice directory also
+    // deposits its `.o` and its C header there — half a megabyte of build
+    // litter inside what is meant to be the shipped surface.
+    let code = build_lib_project(vm, &lib, None, diag_mode, build_mode, true, false);
+    timings::report_titled(&format!("prebuild {}", vm.package.name));
+    if code != ExitCode::SUCCESS {
+        // Leave nothing half-built: a stale archive with a fresh fingerprint
+        // would be linked forever after.
+        let _ = fs::remove_file(&stamp);
+        return Err("build failed".to_string());
+    }
+    let built = vm
+        .root
+        .join("target")
+        .join(match build_mode {
+            BuildMode::Release => "release",
+            _ => "debug",
+        })
+        .join(prebuilt_archive_name(&vm.package.name));
+    fs::create_dir_all(&slice_dir).map_err(|e| format!("creating {}: {e}", slice_dir.display()))?;
+    fs::copy(&built, &archive)
+        .map_err(|e| format!("copying {} to {}: {e}", built.display(), archive.display()))?;
+    fs::write(&stamp, &want).map_err(|e| format!("writing {}: {e}", stamp.display()))?;
+    Ok(())
+}
+
+/// Write the entry a `prebuild` package is actually compiled from: one that
+/// imports every module in `src/`.
+///
+/// A package's public surface is its `src/` directory — `cpc headers` emits a
+/// declaration file per module there — but a build starts from one entry and
+/// only ever reaches that entry's import tree. Where the two disagree the
+/// consumer loses: it compiles against a header for a module the archive
+/// doesn't contain, and the link fails on symbols nothing defines. `appkit` is
+/// the live example, with `appkit_ext.cplus` sitting alongside `appkit.cplus`
+/// and imported by neither.
+///
+/// The file lands in `target/` (already ignored, never scanned by `cpc
+/// headers`, which reads `src/` only) and imports by relative path, so it
+/// stays inside the package boundary the resolver enforces.
+fn write_package_entry(vendor_dir: &Path, pkg: &str) -> Result<PathBuf, String> {
+    let src_dir = vendor_dir.join("src");
+    let mut modules: Vec<String> = fs::read_dir(&src_dir)
+        .map_err(|e| format!("reading {}: {e}", src_dir.display()))?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("cplus"))
+        .filter_map(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
+        .collect();
+    modules.sort();
+
+    let mut text = String::from(
+        "// Generated by cpc. The entry a prebuilt package is compiled from:\n         // it imports every module in src/, so the archive covers the whole\n         // package and matches the declarations in lib/include/.\n",
+    );
+    for (i, m) in modules.iter().enumerate() {
+        text.push_str(&format!("import \"../src/{m}\" as m{i};\n"));
+    }
+    let dir = vendor_dir.join("target");
+    fs::create_dir_all(&dir).map_err(|e| format!("creating {}: {e}", dir.display()))?;
+    let path = dir.join(format!("cpc-prebuild-{pkg}.cplus"));
+    fs::write(&path, &text).map_err(|e| format!("writing {}: {e}", path.display()))?;
+    Ok(path)
+}
+
+/// What the cached archive was built from. Any change here rebuilds it:
+/// package source, the triple, debug-vs-release, and the compiler itself.
+///
+/// Build mode is inside the fingerprint rather than splitting the cache into
+/// per-mode directories, so a package has exactly one slice layout —
+/// alternating `cpc build` and `cpc build --release` rebuilds rather than
+/// silently linking the other mode's code, which is the bug this replaces.
+fn prebuild_fingerprint(vendor_dir: &Path, link_triple: &str, build_mode: BuildMode) -> Result<String, String> {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let src_dir = vendor_dir.join("src");
+    let mut files: Vec<PathBuf> = fs::read_dir(&src_dir)
+        .map_err(|e| format!("reading {}: {e}", src_dir.display()))?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("cplus"))
+        .collect();
+    files.sort();
+
+    let mut h = DefaultHasher::new();
+    env!("CARGO_PKG_VERSION").hash(&mut h);
+    link_triple.hash(&mut h);
+    matches!(build_mode, BuildMode::Release).hash(&mut h);
+    for f in &files {
+        f.file_name().map(|n| n.to_string_lossy().into_owned()).hash(&mut h);
+        fs::read(f)
+            .map_err(|e| format!("reading {}: {e}", f.display()))?
+            .hash(&mut h);
+    }
+    Ok(format!("{:016x}", h.finish()))
+}
+
+/// The triple that names a binary slice's directory for the build in progress.
+/// Derived, never declared — see `LinkSpec::bundled`.
+fn active_link_triple() -> Result<String, ExitCode> {
+    match target::active_target().artifact_triple {
+        Some(t) => Ok(t.to_string()),
+        None => Ok(target::normalize_triple(&detect_host_triple()?)),
+    }
+}
+
+/// The basename of the archive `[build] prebuild = true` produces for a
+/// package. One place, because the dep walk writes it, the orphan check
+/// exempts it, and the link line names it. The `lib` prefix is what the
+/// library pipeline emits (`ar rcs lib<name>.a`), not a second convention.
+fn prebuilt_archive_name(pkg: &str) -> String {
+    format!("lib{pkg}.a")
+}
+
+/// A dependency's `[link]` contributions that are independent of binary
+/// slices: search paths, frameworks, system libs, prebuilt objects. Shared by
+/// the normal path and the `dev = true` path, which takes everything here and
+/// nothing binary.
+fn splice_plain_link_args(
+    link_args: &mut Vec<String>,
+    vm: &manifest::Manifest,
+    diag_mode: DiagMode,
+    vendor_manifest: &Path,
+) -> Result<(), ExitCode> {
+    let Some(ls) = &vm.link else {
+        return Ok(());
+    };
+    // `-L<dir>` must precede the `-l<name>` it resolves; emit search
+    // paths first. `-rpath` bakes the same dir into the binary so the
+    // loader finds the .so at runtime (no LD_LIBRARY_PATH needed).
+    for dir in &ls.search_paths {
+        link_args.push(format!("-L{dir}"));
+        link_args.push(format!("-Wl,-rpath,{dir}"));
+    }
+    for fw in &ls.frameworks {
+        link_args.push("-framework".to_string());
+        link_args.push(fw.clone());
+    }
+    for l in &ls.libs {
+        link_args.push(format!("-l{l}"));
+    }
+    // v0.0.9 Phase 8 (cpc-gaps G-001): vendor packages may also
+    // declare `extra-objects` (rare — usually consumer-side).
+    // Validate existence here so the diag carries the dep name.
+    for obj in &ls.extra_objects {
+        if !obj.is_file() {
+            return Err(emit_extra_object_missing(diag_mode, obj, vendor_manifest));
+        }
+        link_args.push(obj.to_string_lossy().to_string());
+    }
+    Ok(())
 }
 
 /// v0.0.9 Phase 8 (cpc-gaps G-001): produce E0864 ("[link]
@@ -1662,13 +1878,39 @@ fn build_project(
             return ExitCode::FAILURE;
         }
     };
+    // Dependencies that ask to be compiled once (`[build] prebuild = true`)
+    // are brought up to date here, BEFORE the entry file is resolved: the
+    // resolver reads `lib/include/` for them and the link line names the
+    // archive, so both need the slice to already be on disk.
+    if let Err(code) = ensure_prebuilt_deps(&m, build_mode, diag_mode) {
+        return code;
+    }
     // Phase 5 Slice 5.A: a `[lib]` manifest dispatches to the library
     // build path (object → archive / shared-library) instead of the
     // executable path. Mutual exclusion with `[[bin]]` is enforced at
     // manifest-parse time (E0408), so reaching here with `lib` set
     // means no `[[bin]]` declared.
-    if let Some(lib) = m.lib.clone() {
-        return build_lib_project(&m, &lib, out, diag_mode, build_mode, fp_contract);
+    if let Some(mut lib) = m.lib.clone() {
+        // A synthesized target compiles the whole package, the same way the
+        // prebuild pass does — `cpc build` inside the package and a consumer's
+        // prebuild of it must not produce different archives. An explicit
+        // `[lib]` keeps its declared entry and its bare C-ABI names.
+        let c_abi_entry = !lib.synthesized;
+        if lib.synthesized {
+            match write_package_entry(&m.root, &m.package.name) {
+                Ok(p) => lib.path = p,
+                Err(e) => {
+                    eprintln!("cpc: {e}");
+                    return ExitCode::FAILURE;
+                }
+            }
+        }
+        // `--timings` was silently a no-op on the library path, which is where
+        // a `prebuild` compile spends its time — the one build whose cost you
+        // most want to see, since the cache exists to avoid paying it again.
+        let code = build_lib_project(&m, &lib, out, diag_mode, build_mode, fp_contract, c_abi_entry);
+        timings::report();
+        return code;
     }
     // v0.0.21 multi-backend slice 1: an external-builder target has no app
     // link inside cpc — Xcode (or the platform's build system) owns it. A
@@ -1867,6 +2109,17 @@ fn build_project(
 ///   5. For `cdylib`   / `both`: `clang -shared <opts> -o target/<mode>/lib<name>.<ext> <name>.o`.
 ///   6. Manifest `frameworks` / `libs` are forwarded only at the cdylib link
 ///      step — they don't get into the static archive (consumers re-state them).
+/// `c_abi_entry` decides how the entry file's top-level names are spelled, and
+/// the two consumers of an archive want opposite answers.
+///
+/// A declared `[lib]` exists to be called from C: the entry file's names are
+/// the public ABI, so they stay bare and match the generated `.h`. A `[build]
+/// prebuild = true` package exists to be linked by another C+ project, which
+/// addresses every module the same way — `<package>.src.<module>.<item>` — so
+/// its entry must be qualified like any other module. Bare names there produce
+/// an archive defining `_answer` against a consumer calling
+/// `_mathy.src.mathy.answer`, and the only symptom is an undefined symbol at
+/// the consumer's link.
 fn build_lib_project(
     m: &manifest::Manifest,
     lib: &manifest::LibTarget,
@@ -1874,6 +2127,7 @@ fn build_lib_project(
     diag_mode: DiagMode,
     build_mode: BuildMode,
     fp_contract: bool,
+    c_abi_entry: bool,
 ) -> ExitCode {
     if !lib.path.is_file() {
         let d = diag::Diagnostic {
@@ -1930,14 +2184,16 @@ fn build_lib_project(
         }
     };
     let dep_names: Vec<String> = active_dep_names(&m);
-    let (program, _entry_file_id, mono) = match load_and_check_project_full(
-        &lib.path,
-        &m.root,
-        diag_mode,
-        true,
-        Some(&dep_names),
-        m.realtime_profile.as_ref(),
-    ) {
+    let (program, _entry_file_id, mono) = match timings::phase("resolve+sema+borrowck", || {
+        load_and_check_project_full(
+            &lib.path,
+            &m.root,
+            diag_mode,
+            c_abi_entry,
+            Some(&dep_names),
+            m.realtime_profile.as_ref(),
+        )
+    }) {
         Ok(p) => p,
         Err(code) => return code,
     };
@@ -1982,9 +2238,10 @@ fn build_lib_project(
     }
 
     ensure_coro_end_probed();
-    let ir = prune_ir(codegen::generate_with_mono(
-        &program, build_mode, fp_contract, None, &[], true, &mono,
-    ));
+    let ir = timings::phase("codegen", || {
+        codegen::generate_with_mono(&program, build_mode, fp_contract, None, &[], true, &mono)
+    });
+    let ir = timings::phase("prune", || prune_ir(ir));
 
     let mode_subdir = match build_mode {
         BuildMode::Debug => "debug",
@@ -2033,15 +2290,17 @@ fn build_lib_project(
         BuildMode::Debug => "-O0",
         BuildMode::Release => "-O3",
     };
-    let obj_status = Command::new(&clang_prog)
-        .arg(opt)
-        .arg("-Wno-override-module")
-        .args(clang_target_args(&tgt))
-        .arg("-c")
-        .arg(&tmp_ll)
-        .arg("-o")
-        .arg(&obj_path)
-        .status();
+    let obj_status = timings::phase("clang -c", || {
+        Command::new(&clang_prog)
+            .arg(opt)
+            .arg("-Wno-override-module")
+            .args(clang_target_args(&tgt))
+            .arg("-c")
+            .arg(&tmp_ll)
+            .arg("-o")
+            .arg(&obj_path)
+            .status()
+    });
     drop(tmp_ll_handle);
     match obj_status {
         Ok(s) if s.success() => {}
@@ -2672,6 +2931,11 @@ fn run_test(
                     return ExitCode::FAILURE;
                 }
             };
+            // Same ordering rule as `build_project`: a prebuilt dependency's
+            // slice must exist before anything resolves an import against it.
+            if let Err(code) = ensure_prebuilt_deps(&m, build_mode, diag_mode) {
+                return code;
+            }
             // Resolve the entry: prefer [lib] (explicit library target),
             // then [[bin]]. If neither exists on disk, fall back to
             // `src/<package-name>.cplus` — library-only vendor packages
@@ -2945,67 +3209,73 @@ fn run_headers() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let src_dir = m.root.join("src");
-    if !src_dir.is_dir() {
-        eprintln!("cpc: no `src/` directory in {}", m.root.display());
-        return ExitCode::FAILURE;
-    }
-    let include_dir = m.root.join("lib").join("include");
-    if let Err(e) = fs::create_dir_all(&include_dir) {
-        eprintln!("cpc: creating {}: {e}", include_dir.display());
-        return ExitCode::FAILURE;
-    }
-
-    let mut entries: Vec<PathBuf> = match fs::read_dir(&src_dir) {
-        Ok(rd) => rd
-            .filter_map(|e| e.ok().map(|e| e.path()))
-            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("cplus"))
-            .collect(),
-        Err(e) => {
-            eprintln!("cpc: reading {}: {e}", src_dir.display());
-            return ExitCode::FAILURE;
+    match generate_headers_for(&m.root) {
+        Ok(r) => {
+            println!(
+                "cpc: wrote {} headers to {} ({} declarations, {} verbatim [generic])",
+                r.total,
+                m.root.join("lib").join("include").display(),
+                r.stripped,
+                r.verbatim
+            );
+            ExitCode::SUCCESS
         }
-    };
+        Err(e) => {
+            eprintln!("cpc: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Outcome of a header-generation pass over one package.
+struct HeaderRun {
+    total: usize,
+    stripped: usize,
+    verbatim: usize,
+}
+
+/// Generate `lib/include/` from `src/` for the package rooted at `root`.
+///
+/// Split out of `run_headers` because `prebuild` needs the same pass: an
+/// archive without headers is unusable, so the cache builds both together and
+/// they cannot drift apart.
+fn generate_headers_for(root: &Path) -> Result<HeaderRun, String> {
+    let src_dir = root.join("src");
+    if !src_dir.is_dir() {
+        return Err(format!("no `src/` directory in {}", root.display()));
+    }
+    let include_dir = root.join("lib").join("include");
+    fs::create_dir_all(&include_dir)
+        .map_err(|e| format!("creating {}: {e}", include_dir.display()))?;
+
+    let mut entries: Vec<PathBuf> = fs::read_dir(&src_dir)
+        .map_err(|e| format!("reading {}: {e}", src_dir.display()))?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("cplus"))
+        .collect();
     entries.sort();
 
     let (mut stripped, mut verbatim) = (0usize, 0usize);
     for path in &entries {
-        let src = match fs::read_to_string(path) {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("cpc: reading {}: {e}", path.display());
-                return ExitCode::FAILURE;
-            }
-        };
-        let (text, kind) = match cplus_core::header::generate(&src) {
-            Ok(v) => v,
-            Err(e) => {
-                eprintln!("cpc: {}: {e}", path.display());
-                return ExitCode::FAILURE;
-            }
-        };
-        let name = match path.file_name() {
-            Some(n) => n,
-            None => continue,
+        let src =
+            fs::read_to_string(path).map_err(|e| format!("reading {}: {e}", path.display()))?;
+        let (text, kind) = cplus_core::header::generate(&src)
+            .map_err(|e| format!("{}: {e}", path.display()))?;
+        let Some(name) = path.file_name() else {
+            continue;
         };
         let out = include_dir.join(name);
-        if let Err(e) = fs::write(&out, &text) {
-            eprintln!("cpc: writing {}: {e}", out.display());
-            return ExitCode::FAILURE;
-        }
+        fs::write(&out, &text).map_err(|e| format!("writing {}: {e}", out.display()))?;
         match kind {
             cplus_core::header::HeaderKind::Stripped => stripped += 1,
             cplus_core::header::HeaderKind::VerbatimGeneric => verbatim += 1,
         }
     }
-    println!(
-        "cpc: wrote {} headers to {} ({} declarations, {} verbatim [generic])",
-        entries.len(),
-        include_dir.display(),
+    Ok(HeaderRun {
+        total: entries.len(),
         stripped,
-        verbatim
-    );
-    ExitCode::SUCCESS
+        verbatim,
+    })
 }
 
 fn run_check_project(diag_mode: DiagMode) -> ExitCode {
@@ -3994,21 +4264,34 @@ mod timings {
 
     /// Print the breakdown to stderr, longest-running phase share first.
     pub fn report() {
+        report_titled("");
+    }
+
+    /// `report`, with a heading and a reset. A `prebuild` compile runs nested
+    /// inside a consumer's build, and without clearing, its phases land in the
+    /// consumer's table as a second set of identically-named rows whose
+    /// percentages are computed over both builds at once.
+    pub fn report_titled(title: &str) {
         if !on() {
             return;
         }
-        let Ok(p) = PHASES.lock() else { return };
+        let Ok(mut p) = PHASES.lock() else { return };
         if p.is_empty() {
             return;
         }
         let total: f64 = p.iter().map(|(_, d)| d.as_secs_f64()).sum();
-        eprintln!("cpc timings:");
+        if title.is_empty() {
+            eprintln!("cpc timings:");
+        } else {
+            eprintln!("cpc timings ({title}):");
+        }
         for (name, d) in p.iter() {
             let secs = d.as_secs_f64();
             let pct = if total > 0.0 { 100.0 * secs / total } else { 0.0 };
             eprintln!("  {name:<26} {secs:>7.2}s  {pct:>4.0}%");
         }
         eprintln!("  {:<26} {total:>7.2}s", "measured total");
+        p.clear();
     }
 }
 

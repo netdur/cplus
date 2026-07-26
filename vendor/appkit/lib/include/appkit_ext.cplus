@@ -1,0 +1,608 @@
+// vendor/appkit/src/appkit_ext.cplus — hand-written companion to the generated
+// AppKit binding. It does NOT edit `appkit.cplus` (which is machine-generated);
+// it only composes the existing runtime + synthesis helpers to add the things the
+// generator can't know to emit. Import it as `appkit/appkit_ext`.
+//
+// Currently: a flipped NSView (top-left origin). `NSView.isFlipped` is
+// override-only in AppKit, so the standard fix is a one-method subclass whose
+// isFlipped returns YES — which is exactly what this builds at runtime.
+
+import "objc/runtime" as rt;
+import "objc/synthesis" as synth;
+import "objc/bridge" as bridge;
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "stdlib/option" as option;
+import "stdlib/string_map" as string_map;
+import "appkit/appkit" as ak;
+
+// `class_addMethod` for a `BOOL (self, _cmd)` method (isFlipped). This shape isn't
+// in objc/synthesis yet, so declare it locally — the generated binding declares
+// its own delegate shims the same way (`#[link_name = "class_addMethod"]`).
+#[link_name = "class_addMethod"]
+extern fn add_method_bool_0(cls: *u8, sel: *u8, imp: fn(*u8, *u8) -> i8, types: *u8) -> i8;
+
+// The override: -[isFlipped] -> YES.
+fn flipped_is_flipped_imp(self_obj: *u8, cmd: *u8) -> i8 ;
+
+// The NSView subclass whose isFlipped is YES. Registered once; reused thereafter
+// (`get_class` returns null until the pair is registered).
+fn flipped_view_class() -> *u8 ;
+
+// A flipped view (top-left origin), constructible like any other view. Use it as
+// a scroll view's document view — the first row then sits at the top by
+// construction, with no manual scroll-to-top afterwards.
+fn new_flipped_view(frame: rt::Rect) -> ak::View ;
+
+// ---- target/action with userdata ------------------------------------------
+//
+// The generated binding's `set_on_action` carries a bare `fn(*u8)` (sender
+// only), which forces per-item state into side channels (`setTag:` + a
+// global). This companion adds the ctx-carrying variant: the handler
+// receives `(sender, ctx)`, where `ctx` is an opaque pointer chosen at wiring
+// time. The caller owns `ctx` (an integer index smuggled as a pointer needs
+// no ownership at all); the target object itself is pinned to the control via
+// an associated reference, so it lives exactly as long as the control.
+
+// Associated-object keys. Any unique addresses work; the generated binding
+// uses 28672/28673, so this module takes the next block.
+fn action_ctx_handler_key() -> *u8 ;
+fn action_ctx_userdata_key() -> *u8 ;
+fn action_ctx_pin_key() -> *u8 ;
+
+fn action_ctx_imp(self_obj: *u8, cmd: *u8, sender: *u8) ;
+
+// The selector our target answers. Exposed so a caller can wire the pair
+// onto anything that takes target/action (gesture recognizers, menu items).
+fn action_ctx_sel() -> *u8 ;
+
+// A fresh autoreleased target answering `action_ctx_sel()` with `handler`
+// and `ctx` attached. The caller must keep it alive (pin it to the owning
+// object) — `set_control_action_ctx` below does both steps. `ctx` is
+// DEFAULTED so a bound method binds here too (`action_ctx_target(X.method)`).
+fn action_ctx_target(handler: fn(*u8, *u8), ctx: *u8 = 0 as *u8) -> *u8 ;
+
+// Wire a control to `handler(sender, ctx)`: build the target, pin it to the
+// control, and set target/action.
+fn set_control_action_ctx(control: ak::Control, handler: fn(*u8, *u8), ctx: *u8) ;
+
+// `class_addMethod` for the `void (self, _cmd, id)` action shape — declared
+// locally, exactly as the generated binding declares its shims.
+#[link_name = "class_addMethod"]
+extern fn cplus_ext_add_action_method(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8), types: *u8) -> i8;
+
+
+// ---- target/action with a ctx-aware after-hook ------------------------------
+// Like `set_control_action_ctx_then`, but `after` RECEIVES the same ctx the
+// handler got. This is the component runtime's re-render hook: the ctx is
+// the component's address, the handler mutates it, `after(ctx)` re-renders
+// exactly that component (a non-component ctx misses the registry and
+// no-ops). One documented rule, keyed by identity, no hidden subscriptions.
+
+fn action_after_ctx_key() -> *u8 ;
+
+fn action_ctx_then_ctx_imp(self_obj: *u8, cmd: *u8, sender: *u8) ;
+
+fn action_ctx_then_ctx_sel() -> *u8 ;
+
+fn action_ctx_then_ctx_target(handler: fn(*u8, *u8), ctx: *u8, after: fn(*u8)) -> *u8 ;
+
+// Wire a control to `handler(sender, ctx)` followed by `after(ctx)`.
+fn set_control_action_ctx_then_ctx(control: ak::Control, handler: fn(*u8, *u8), ctx: *u8, after: fn(*u8)) ;
+
+// ==========================================================================
+// Gesture recognizers -> C+ handler
+// ==========================================================================
+//
+// An actionable *container* (a laid-out row/card, not a control) responds to
+// clicks and trackpad gestures via NSGestureRecognizers attached to its NSView.
+// A recognizer's `action:(sender)` has the same shape as a control's, so we
+// reuse the ActionCtx target: `handler(recognizer, ctx)`. Each recognizer pins
+// its own target (so it lives as long as the recognizer, which the view owns).
+
+fn gesture_pin_key() -> *u8 ;
+
+// NSEvent button masks: primary (left) = 1<<0, secondary (right) = 1<<1.
+fn primary_button_mask() -> u64 ;
+fn secondary_button_mask() -> u64 ;
+
+// Pin an ActionCtx target to a recognizer and set its target/action.
+fn wire_gesture(recognizer: *u8, handler: fn(*u8, *u8), ctx: *u8) ;
+
+// Click / double-click / right-click. `clicks` = 1 or 2; `buttons` selects
+// primary (left) vs secondary (right) via the button-mask helpers above.
+fn add_click_gesture(view: ak::View, handler: fn(*u8, *u8), ctx: *u8, clicks: i64, buttons: u64) ;
+
+// Press-and-hold. `min_duration` seconds before the handler fires (0 = the
+// system default).
+fn add_press_gesture(view: ak::View, handler: fn(*u8, *u8), ctx: *u8, min_duration: f64) ;
+
+// Drag (pan). The handler reads the recognizer for translation/state.
+fn add_pan_gesture(view: ak::View, handler: fn(*u8, *u8), ctx: *u8) ;
+
+// Pinch-to-zoom (trackpad). The handler reads the recognizer for magnification.
+fn add_magnify_gesture(view: ak::View, handler: fn(*u8, *u8), ctx: *u8) ;
+
+// Two-finger rotate (trackpad). The handler reads the recognizer for rotation.
+fn add_rotate_gesture(view: ak::View, handler: fn(*u8, *u8), ctx: *u8) ;
+
+// ==========================================================================
+// Local event FILTER — a monitor whose handler can swallow the event
+// ==========================================================================
+//
+// addLocalMonitorForEventsMatchingMask:'s block RETURNS the event to deliver
+// — or nil to consume it before dispatch. The generated binding's void
+// trampoline can't express that (its return register is whatever's left
+// over), so this is the hand block for the FILTERING uses: `filter(ctx,
+// event)` returns `event` to pass it through unchanged, or 0 to swallow it.
+// The block captures only PODs (fn ptr + ctx), so AppKit's Block_copy needs
+// no copy/dispose helpers — same 48-byte layout the generated monitors use.
+// Returns the RETAINED monitor object (0 on failure); to uninstall, pass it
+// to ak::Event::remove_monitor and release it.
+
+#[repr(C)]
+struct EventFilterBlock {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8) -> *u8,
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8) -> *u8,
+    opaque ctx: *u8,
+}
+
+fn event_filter_invoke(block: *u8, event: *u8) -> *u8 ;
+
+fn add_local_event_filter(mask: u64, filter: fn(*u8, *u8) -> *u8, ctx: *u8) -> *u8 ;
+
+// ==========================================================================
+// Hover + scroll -> C+ handler (a custom view, not a gesture)
+// ==========================================================================
+//
+// Mouse enter/exit and scroll aren't gestures: they need a view that owns an
+// NSTrackingArea (hover) and overrides scrollWheel: (scroll). One synthesized
+// NSView subclass carries all three handlers + ctx on the instance. A tracking
+// area is added only when a hover handler is set (InVisibleRect auto-follows the
+// view; facet re-mounts fresh views each render, so one at construction is
+// enough). scrollWheel: chains to super, so a scroll still bubbles up to an
+// enclosing scroll view — the handler only observes it.
+
+fn av_hover_in_key() -> *u8 ;
+fn av_hover_out_key() -> *u8 ;
+fn av_scroll_key() -> *u8 ;
+fn av_ctx_key() -> *u8 ;
+
+fn av_call(self_obj: *u8, key: *u8, sender: *u8) ;
+// Hover handlers receive the view; scroll receives the NSEvent (read deltas).
+fn av_entered_imp(self_obj: *u8, cmd: *u8, event: *u8) ;
+fn av_exited_imp(self_obj: *u8, cmd: *u8, event: *u8) ;
+fn av_scroll_imp(self_obj: *u8, cmd: *u8, event: *u8) ;
+
+// objc_msgSendSuper for a `void (self, _cmd, id)` method — chain to NSView's
+// default (keep scroll propagating up the responder chain).
+struct ObjcSuper { opaque receiver: *u8, opaque super_class: *u8 }
+#[link_name = "objc_msgSendSuper"]
+extern fn msg_super_void_id(sup: *ObjcSuper, sel: *u8, arg: *u8);
+fn call_super_void_id(self_obj: *u8, super_cls: *u8, sel: *u8, arg: *u8) ;
+
+fn actionable_view_class() -> *u8 ;
+
+// `[[NSTrackingArea alloc] initWithRect:options:owner:userInfo:]` — the binding
+// skips it (the NSDictionary userInfo), so call objc_msgSend directly (nil
+// userInfo). NSRect passes by value in the C ABI.
+#[link_name = "objc_msgSend"]
+extern fn msg_init_tracking(obj: *u8, sel: *u8, rect: rt::Rect, options: u64, owner: *u8, user_info: *u8) -> *u8;
+
+// A view reporting hover (mouse enter/exit) and/or scroll. Any handler may be
+// the null sentinel (ignored). A tracking area is added only when a hover
+// handler is set; scrollWheel always chains to super so scrolling still bubbles.
+fn new_actionable_view(frame: rt::Rect, on_in: fn(*u8, *u8), on_out: fn(*u8, *u8), on_scroll: fn(*u8, *u8), ctx: *u8) -> ak::View ;
+
+// ==========================================================================
+// Agent-clickable views — answer `performClick:` (the agent-drive path)
+// ==========================================================================
+//
+// A facet `clickable` fires its handler through an NSClickGestureRecognizer,
+// which only the user's mouse triggers. The agent surface drives a control by
+// sending `performClick:` (agent_appkit `click`) — a selector a plain NSView
+// doesn't answer, so a whole-row `clickable` tagged with an agent_id couldn't
+// be opened over the app MCP (and the send would raise unrecognized-selector).
+// These NSView subclasses implement `performClick:` to fire the SAME primary
+// single-click handler the gesture calls, so a tagged clickable is openable by
+// both the mouse (via the gesture) and the agent (via performClick:) — the two
+// are independent triggers of one handler, no double-fire. `set_agent_click`
+// attaches that handler; a null handler (a clickable with only e.g. a
+// double-click) makes `performClick:` a no-op.
+
+fn agent_click_handler_key() -> *u8 ;
+fn agent_click_ctx_key() -> *u8 ;
+
+fn agent_click_imp(self_obj: *u8, cmd: *u8, sender: *u8) ;
+
+// Attach the primary-click handler + ctx so the view answers `performClick:`.
+// The view's class must implement performClick: (`new_clickable_view` and
+// `new_actionable_view` do); called after wiring the click gesture.
+fn set_agent_click(view: ak::View, handler: fn(*u8, *u8), ctx: *u8) ;
+
+// A plain container NSView that also answers `performClick:` (agent-drive).
+// A `clickable`'s backing view when it has no hover/scroll handler (those need
+// the actionable subclass, which answers performClick: too).
+fn clickable_view_class() -> *u8 ;
+
+fn new_clickable_view(frame: rt::Rect) -> ak::View ;
+
+// ==========================================================================
+// Composer — an NSTextView delegate for Enter-to-send / Shift+Enter- and
+// Ctrl+Enter-newline plus a per-edit change hook. NSTextView's `delegate` is a WEAK reference, so
+// the delegate object is pinned to the text view; the routing context and the
+// (generated) TextViewDelegate struct are heap-boxed and leaked — they live for
+// the text view's lifetime, which for a composer is the app's lifetime.
+// ==========================================================================
+
+extern fn malloc(n: usize) -> *u8;
+
+// The context the trampolines dispatch through. `caller_ctx` is the component /
+// user pointer the app passed; either fn-pointer may be null (a null `on_change`
+// means "no change hook").
+struct ComposerCtx {
+    on_change: fn(*u8, *u8),
+    on_submit: fn(*u8, *u8),
+    opaque caller_ctx: *u8,
+}
+
+fn composer_pin_key() -> *u8 ;
+
+// `+[NSEvent modifierFlags]` — the modifier keys held down right now.
+fn composer_shift_is_down() -> bool ;
+
+fn composer_did_change_imp(user: *u8, tv: *u8) ;
+
+fn composer_do_command_imp(user: *u8, tv: *u8, sel: *u8) -> i8 ;
+
+// Attach a composer delegate to `tv`: `on_change(tv, caller_ctx)` fires on every
+// edit, `on_submit(tv, caller_ctx)` on Enter (Shift+Enter inserts a newline
+// instead) — (sender, ctx) order, like every control action, so bound methods
+// dispatch correctly. Either fn-pointer may be null. The delegate is pinned to `tv`.
+fn attach_composer_delegate(tv: ak::TextView, on_change: fn(*u8, *u8), on_submit: fn(*u8, *u8), caller_ctx: *u8) ;
+
+// ==========================================================================
+// Split view — minimum pane sizes via NSSplitViewDelegate. The delegate is a
+// weak property, so (like the composer) it is pinned to the split view and the
+// min-size context is heap-boxed and leaked. Applies to a two-pane split with a
+// single divider at index 0.
+// ==========================================================================
+
+struct SplitCtx {
+    min_first: f64,
+    min_second: f64,
+    on_resize: fn(*u8),          // called after the panes re-lay (divider drag / resize)
+    opaque resize_user: *u8,     // passed back to on_resize (the split view ptr)
+}
+
+fn split_pin_key() -> *u8 ;
+
+// Default resize hook: a split with no hosted panes (all leaf panes) does no
+// extra work when the divider moves — NSSplitView autoresizes leaf panes itself.
+fn split_noop_resize(user: *u8) ;
+
+// NSSplitViewDelegate splitViewDidResizeSubviews: — fires when the panes are
+// re-laid (initial sizing, window resize, divider drag). Forwards to the
+// registered hook so a multi-element pane can reflow its subtree to the pane's
+// new size. `notif` is the NSNotification (unused; the user ctx carries state).
+fn split_did_resize_imp(user: *u8, notif: *u8) ;
+
+// The lowest coordinate divider 0 may take = the first pane's minimum extent.
+fn split_constrain_min_imp(user: *u8, sv: *u8, proposed: f64, divider: i64) -> f64 ;
+
+// The highest coordinate divider 0 may take = split extent minus the second
+// pane's minimum extent (measured along the split axis).
+fn split_constrain_max_imp(user: *u8, sv: *u8, proposed: f64, divider: i64) -> f64 ;
+
+// Enforce `min_first` / `min_second` on a two-pane split view (divider 0).
+// `on_resize` (with `resize_user`) is invoked on splitViewDidResizeSubviews:
+// so a caller hosting multi-element panes can reflow them to their new size;
+// leaf-only splits leave it at the default no-op.
+fn attach_split_min_widths(sv: ak::SplitView, min_first: f64, min_second: f64, on_resize: fn(*u8) = split_noop_resize, resize_user: *u8 = 0 as *u8) ;
+
+// ==========================================================================
+// Frame-change observer — run a C+ hook after a view resizes
+// ==========================================================================
+// For content a view caches by its size and must recompute on resize — e.g. an
+// NSTableView's wrapped-text row heights, which go stale when the column width
+// changes. Registers on NSViewFrameDidChangeNotification; the observer object is
+// pinned to the view and lives exactly as long as it. `on_resize(ctx)` fires
+// after every frame change (guard on width yourself to skip height-only ones).
+
+fn frame_obs_handler_key() -> *u8 ;
+fn frame_obs_ctx_key() -> *u8 ;
+fn frame_obs_pin_key() -> *u8 ;
+
+fn frame_obs_sel() -> *u8 ;
+
+fn frame_obs_imp(self_obj: *u8, cmd: *u8, notif: *u8) ;
+
+fn observe_frame_change(view: ak::View, on_resize: fn(*u8), ctx: *u8) ;
+
+// Generic notification -> C+ handler: register `handler(ctx)` for `name` from
+// `object`, pinning the observer target to `pin_on` (it lives as long as that
+// owner; selector-based observers auto-unregister on dealloc). `pin_key` keeps
+// different observer kinds on the same owner from evicting each other.
+fn observe_notification(name: str, object: *u8, handler: fn(*u8), ctx: *u8, pin_on: *u8, pin_key: *u8) ;
+
+// ==========================================================================
+// Appearance-change observer — viewDidChangeEffectiveAppearance -> C+ handler
+// ==========================================================================
+//
+// NSView.viewDidChangeEffectiveAppearance is override-only (no delegate, no
+// notification), so reacting to a system light/dark flip takes a one-off
+// NSView subclass. `add_appearance_observer` drops a 0x0 sentinel instance
+// under `host`: it inherits the window's effective appearance, so AppKit
+// calls the override on every flip and the handler fires with its ctx.
+
+// `class_addMethod` for the bare `void (self, _cmd)` shape.
+#[link_name = "class_addMethod"]
+extern fn add_method_void_0(cls: *u8, sel: *u8, imp: fn(*u8, *u8), types: *u8) -> i8;
+
+fn appearance_obs_handler_key() -> *u8 ;
+fn appearance_obs_ctx_key() -> *u8 ;
+fn appearance_obs_seen_key() -> *u8 ;
+
+// The sentinel's current effective-appearance NAME (an NSString, nil-safe).
+fn appearance_obs_name(self_obj: *u8) -> *u8 ;
+
+// Forward ONLY on a real change: AppKit also calls the override when the view
+// joins a hierarchy (and on other no-op resolutions), so the handler compares
+// the appearance NAME against the last one seen (primed at attach) and stays
+// quiet unless it moved.
+fn appearance_obs_imp(self_obj: *u8, cmd: *u8) ;
+
+fn appearance_obs_class() -> *u8 ;
+
+// Watch `host`'s window for appearance changes: `handler(ctx)` fires on every
+// system light/dark flip. The sentinel is invisible (0x0) and lives with `host`.
+fn add_appearance_observer(host: ak::View, handler: fn(*u8), ctx: *u8) ;
+
+// ==========================================================================
+// Line-number ruler — a vertical NSRulerView gutter for a code text view
+// ==========================================================================
+//
+// A one-off NSRulerView subclass whose drawRect: paints the whole gutter —
+// adaptive background, a 1px trailing divider, and right-aligned line numbers
+// from the client text view's line metrics (its font's default line height,
+// exact for the no-wrap code configuration this pairs with; a soft-wrapped
+// line shows one number at its first fragment's position). Scrolling redraws
+// rulers for free (the scroll view manages them); an NSTextDidChangeNotification
+// observer redraws on edits.
+
+// `class_addMethod` for the `void (self, _cmd, NSRect)` draw shape — declared
+// locally, exactly as the flipped-view/composer shims above.
+#[link_name = "class_addMethod"]
+extern fn add_method_rect_0(cls: *u8, sel: *u8, imp: fn(*u8, *u8, rt::Rect), types: *u8) -> i8;
+
+fn line_ruler_pin_key() -> *u8 ;
+
+fn line_ruler_pad() -> f64 ;
+
+fn line_ruler_draw_imp(self_obj: *u8, cmd: *u8, dirty: rt::Rect) ;
+
+// The NSRulerView subclass: drawRect: paints the gutter (never calling super,
+// so the standard light ruler background never shows); flipped to match the
+// text view so converted y-coordinates read top-down.
+fn line_ruler_class() -> *u8 ;
+
+fn line_ruler_needs_display(ruler_ptr: *u8) ;
+
+// Attach a line-number gutter to `scroll`'s text view `tv`: install the ruler
+// as the scroll's vertical ruler (the scroll owns and places it), redraw on
+// text edits. `thickness` is the gutter width in points.
+fn attach_line_number_ruler(scroll: ak::ScrollView, tv: ak::TextView, thickness: f64 = 48.0f64) ;
+
+// ==========================================================================
+// Drag-and-drop DESTINATION -> C+ handler
+// ==========================================================================
+//
+// A `FacetDropView` is a one-off NSView subclass conforming to the informal
+// NSDraggingDestination protocol. draggingEntered: advertises Copy so the
+// cursor shows a drop badge; performDragOperation: reads the pasteboard string,
+// pins it on the view (so `drop_text_of` can hand it back), then fires the C+
+// handler. Payload type is plain UTF-8 text (`public.utf8-plain-text`), which
+// also matches text dragged from other apps and Finder text clippings.
+
+fn drop_handler_key() -> *u8 ;
+fn drop_ctx_key() -> *u8 ;
+fn drop_text_key() -> *u8 ;
+
+// NSDragOperationCopy = 1.
+fn drop_entered_imp(self_obj: *u8, cmd: *u8, sender: *u8) -> u64 ;
+fn drop_prepare_imp(self_obj: *u8, cmd: *u8, sender: *u8) -> i8 ;
+
+// Pin `s` as `drop_view`'s current payload — the same association a performed
+// drop writes (drop_perform_imp), exposed for programmatic drops and tests.
+fn set_drop_text(drop_view: *u8, s: str) ;
+
+fn drop_perform_imp(self_obj: *u8, cmd: *u8, sender: *u8) -> i8 ;
+
+fn drop_view_class() -> *u8 ;
+
+// A fresh +1 FacetDropView registered for text drops, with `handler`/`ctx`
+// attached. Frame is set later by the layout pass.
+fn new_drop_view(handler: fn(*u8, *u8), ctx: *u8) -> ak::View ;
+
+// The last string dropped on `drop_view` (empty if none / non-text). Call from
+// an on_drop handler with its `sender`.
+fn drop_text_of(drop_view: *u8) -> text::Text ;
+
+// ==========================================================================
+// Drag-and-drop SOURCE -> pasteboard text
+// ==========================================================================
+//
+// A `FacetDragView` starts a copy drag carrying its associated text when the
+// user presses inside it. It conforms to NSDraggingSource (advertising Copy for
+// any context) and builds the drag preview from a snapshot of the view, so the
+// dragged content follows the cursor. SwiftUI `.draggable`. Pairs with the
+// FacetDropView destination above.
+
+fn drag_text_key() -> *u8 ;
+
+// NSDragOperationCopy = 1, for a local or cross-app drag.
+fn drag_source_mask_imp(self_obj: *u8, cmd: *u8, session: *u8, context: i64) -> u64 ;
+
+fn drag_mousedown_imp(self_obj: *u8, cmd: *u8, event: *u8) ;
+
+fn drag_view_class() -> *u8 ;
+
+// A fresh +1 FacetDragView carrying `text` as its drag payload. Frame is set
+// later by the layout pass.
+fn new_drag_view(text: str) -> ak::View ;
+
+// ==========================================================================
+// Window toolbar (NSToolbar) from a prebuilt item map
+// ==========================================================================
+//
+// NSToolbar vends its items through a delegate. The generated ToolbarDelegate
+// already bridges the three required callbacks to C+ fn-pointers, so this just
+// supplies the data: an ordered `ids` NSArray (default + allowed identifiers)
+// and an `id -> NSToolbarItem` NSDictionary (item lookup). The map rides as a
+// retained associated object on the ids array, so a single `user` pointer (the
+// ids array) reaches both. facet_appkit builds the items; this wires the plumbing.
+
+fn toolbar_map_key() -> *u8 ;
+fn toolbar_del_pin_key() -> *u8 ;
+fn toolbar_ids_pin_key() -> *u8 ;
+
+fn tb_ids_imp(user: *u8, toolbar: *u8) -> *u8 ;
+
+fn tb_item_imp(user: *u8, toolbar: *u8, identifier: *u8, flag: i8) -> *u8 ;
+
+// Build an NSToolbar over `ids` (NSArray of NSString) + `map` (NSDictionary
+// id->NSToolbarItem). Ownership of the +1 toolbar MOVES to the caller (return by
+// value — do not round-trip through a raw ptr, or this fn's local drop would
+// release it early). The delegate is pinned to the toolbar (NSToolbar.delegate
+// is weak); ids + map are pinned too, so all three live as long as the toolbar.
+fn make_toolbar(ids: *u8, map: *u8) -> ak::Toolbar ;
+
+// ==========================================================================
+// Window-drag surface + window-button actions (custom titlebar chrome)
+// ==========================================================================
+//
+// An app that hides the standard window buttons and draws its OWN titlebar (a
+// content row) needs two things AppKit gives a real titlebar for free: the
+// region must DRAG the window, and a double-click on it must ZOOM. A
+// `CplusExtWindowDragView` provides both — its `mouseDown:` runs
+// `-[NSWindow performWindowDragWithEvent:]` (the public 10.11+ window-drag loop)
+// for a single press, and `-[NSWindow performZoom:]` on a double-click. Because
+// the subclass overrides `mouseDown:`, AppKit's own background-drag
+// (`mouseDownCanMoveWindow`) stays off, so the two never fight; child controls
+// (buttons) sit in subviews and get their clicks first via hit-testing, so only
+// presses on the bare bar reach this view. The window-action helpers below are
+// the button-driven equivalents of the traffic lights: a handler calls them with
+// its `sender` (the clicked control), and they message the sender's window.
+
+// `-[NSEvent clickCount]`.
+fn wd_click_count(event: *u8) -> i64 ;
+
+fn wd_mousedown_imp(self_obj: *u8, cmd: *u8, event: *u8) ;
+
+// hitTest: routes bare regions to the drag view (so a press there starts the
+// window drag) while letting INTERACTIVE content keep its clicks. AppKit's
+// synthesized container backing views are hit-testable everywhere, so without
+// this a filled toolbar's container would swallow every bare-region press and
+// the drag surface below it would never see a mouseDown. We reclaim those: run
+// the normal hit-test, then walk from the hit view up to self — if anything on
+// that path is interactive (an NSControl, or a view carrying gesture recognizers
+// like a facet `clickable`), return it untouched; otherwise the press landed on
+// passive chrome, so return self and drag. This is why the window need NOT be
+// movableByWindowBackground (which would instead swallow clicks on real controls).
+fn wd_is_interactive(v: *u8) -> bool ;
+
+#[link_name = "objc_msgSendSuper"]
+extern fn msg_super_id_point(sup: *ObjcSuper, sel: *u8, p: rt::Point) -> *u8;
+
+fn wd_hittest_imp(self_obj: *u8, cmd: *u8, p: rt::Point) -> *u8 ;
+
+#[link_name = "class_addMethod"]
+extern fn wd_add_hittest(cls: *u8, sel: *u8, imp: fn(*u8, *u8, rt::Point) -> *u8, types: *u8) -> i8;
+
+fn window_drag_view_class() -> *u8 ;
+
+// A fresh +1 window-drag view. Dragging it moves the window; double-clicking it
+// zooms. Frame is set by the layout pass. Put content in subviews (they keep
+// their own clicks); only the bare surface drags.
+fn new_window_drag_view(frame: rt::Rect) -> ak::View ;
+
+// The window behind a handler's `sender`, or nil if unhosted. A control/view
+// sender answers `-window` directly; a gesture-recognizer sender (a facet
+// `clickable`'s handler fires with the recognizer) answers `-view`, so unwrap to
+// its view first. Either way we reach the enclosing NSWindow (or nil).
+fn window_of(sender: *u8) -> *u8 ;
+
+// Button-driven window actions: the equivalents of clicking the standard traffic
+// lights, run against `sender`'s window. `performClose:`/`performMiniaturize:`/
+// `performZoom:` validate + animate exactly as the native buttons do (and respect
+// a delegate's windowShouldClose:). No-op when the sender has no window yet.
+fn window_perform_close(sender: *u8) ;
+fn window_perform_minimize(sender: *u8) ;
+fn window_perform_zoom(sender: *u8) ;
+
+// ==========================================================================
+// Native window buttons re-parented into a content view (custom titlebar)
+// ==========================================================================
+//
+// A content toolbar under a hidden title bar wants the REAL traffic lights, not
+// fakes — hiding them breaks the native zoom TOGGLE and the green-button hover /
+// window-tiling menu. So keep the three standard buttons VISIBLE and move them
+// into the app's own view: `CplusExtWindowButtonsView`, on `viewDidMoveToWindow`,
+// takes window.standardWindowButton(close/miniaturize/zoom), unhides them,
+// removeFromSuperview + addSubview into itself, and lays them out (leading 4,
+// 14pt gaps, vertically centered). AppKit re-creates/re-lays the buttons on
+// full-screen transitions and live-resize end, so it re-attaches on those
+// notifications (plus a delayed pass to catch the settle). All native behavior
+// survives — the buttons' actions still target the window. Their natural extent
+// is reported via `fittingSize` so facet measures the leaf correctly.
+
+fn wb_observed_key() -> *u8 ;
+
+// `-[NSView setFrameOrigin:]` shape reused from rt (msg_void_point). Place the
+// three buttons in `self`: leading inset 4, 14pt between button edges, centered.
+fn wb_layout(self_obj: *u8) ;
+
+// Re-lay after AppKit moves the buttons back (fullscreen / live-resize / settle).
+// The notification arg (if any) is ignored — we re-read the window each time.
+fn wb_reattach_imp(self_obj: *u8, cmd: *u8, notif: *u8) ;
+
+fn wb_did_move_to_window_imp(self_obj: *u8, cmd: *u8) ;
+
+// Re-center the buttons when the host view is resized (window relayout).
+fn wb_set_frame_size_imp(self_obj: *u8, cmd: *u8, size: rt::Size) ;
+
+// Natural extent = leading 4 + three ~14pt buttons + two 14pt gaps ≈ 74×16.
+// Reported so facet measures the leaf (the buttons aren't reparented yet at
+// measure time, so this is a fixed estimate, not read from live frames).
+fn wb_fitting_size_imp(self_obj: *u8, cmd: *u8) -> rt::Size ;
+
+// objc_msgSendSuper for `void (self, _cmd, NSSize)` — chain setFrameSize: to NSView.
+#[link_name = "objc_msgSendSuper"]
+extern fn msg_super_void_size(sup: *ObjcSuper, sel: *u8, a: rt::Size);
+fn call_super_void_size(self_obj: *u8, super_cls: *u8, sel: *u8, a: rt::Size) ;
+
+// `-[NSObject performSelector:withObject:afterDelay:]` — run the settle pass off
+// the runloop (nil object; the reattach imp ignores its arg).
+#[link_name = "objc_msgSend"]
+extern fn msg_perform_after(recv: *u8, sel: *u8, a_sel: *u8, obj: *u8, delay: f64);
+fn wb_perform_after(self_obj: *u8, target_sel: *u8, obj: *u8, delay: f64) ;
+
+// class_addMethod shapes not in objc/synthesis: a no-arg void (viewDidMoveToWindow),
+// an NSSize-taking void (setFrameSize:), and an NSSize-returning getter (fittingSize).
+#[link_name = "class_addMethod"]
+extern fn wb_add_void0(cls: *u8, sel: *u8, imp: fn(*u8, *u8), types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn wb_add_void_size(cls: *u8, sel: *u8, imp: fn(*u8, *u8, rt::Size), types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn wb_add_size0(cls: *u8, sel: *u8, imp: fn(*u8, *u8) -> rt::Size, types: *u8) -> i8;
+
+fn window_buttons_view_class() -> *u8 ;
+
+// A fresh +1 view that re-parents the window's native traffic lights into itself
+// once it enters a window. Frame is set by the layout pass; drop it in the custom
+// toolbar (pair with a `wants_native_buttons` window so the buttons stay visible).
+fn new_window_buttons_view() -> ak::View ;

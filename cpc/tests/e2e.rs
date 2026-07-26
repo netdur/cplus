@@ -10622,7 +10622,12 @@ fn host_triple_for_test() -> String {
         .output()
         .expect("invoke clang -print-target-triple");
     assert!(out.status.success(), "clang -print-target-triple failed");
-    String::from_utf8_lossy(&out.stdout).trim().to_string()
+    let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    // The driver normalises before the triple names a directory: clang reports
+    // the running system (`arm64-apple-darwin25.5.0`), and a shipped artifact
+    // must keep resolving after an OS upgrade. A fixture that creates
+    // `lib/<raw-triple>/` would never be found, so use the same rule.
+    cplus_core::target::normalize_triple(&raw)
 }
 
 #[test]
@@ -10712,7 +10717,7 @@ fn bin_package_link_libs_warns_w0003() {
 #[test]
 fn dep_walk_links_bundled_static_lib_end_to_end() {
     // Full bundled-artifact path: vendor ships a real `.a` at
-    // `src/lib/<host>/libtiny.a`; consumer's C+ source declares an extern
+    // `lib/<host>/libtiny.a`; consumer's C+ source declares an extern
     // fn matching the C symbol, calls it, and the dep walk wires the
     // archive into the link line.
     let cpc = env!("CARGO_BIN_EXE_cpc");
@@ -10720,7 +10725,7 @@ fn dep_walk_links_bundled_static_lib_end_to_end() {
     let host = host_triple_for_test();
 
     // 1. Build a tiny static archive from C, deposit at the vendor path.
-    let lib_dir = dir.join("vendor/tiny/src/lib").join(&host);
+    let lib_dir = dir.join("vendor/tiny/lib").join(&host);
     std::fs::create_dir_all(&lib_dir).unwrap();
     let c_src = dir.join("tiny_src.c");
     std::fs::write(&c_src, "int tiny_double(int n) { return n * 2; }\n").unwrap();
@@ -10748,7 +10753,7 @@ fn dep_walk_links_bundled_static_lib_end_to_end() {
     std::fs::write(
         dir.join("vendor/tiny/Cplus.toml"),
         format!(
-            "[package]\nname = \"tiny\"\n\n[link]\nbundled = [\"libtiny.a\"]\ntriples = [\"{host}\"]\n"
+            "[package]\nname = \"tiny\"\n\n[link]\nbundled = [\"libtiny.a\"]\n"
         ),
     ).unwrap();
     std::fs::create_dir_all(dir.join("vendor/tiny/src")).unwrap();
@@ -10949,12 +10954,16 @@ fn bundled_declared_but_file_missing_emits_e0860() {
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/foo/src")).unwrap();
-    // The triples list includes the host so we route past the E0862
-    // check; the file at the expected path is absent → E0860.
+    // The slice directory for this triple EXISTS, so the manifest is truth
+    // inside it — and the file it declares is absent → E0860. (Without the
+    // directory the package would simply resolve to source; that is the
+    // `slice_for_another_triple_only_falls_back_to_source` case.)
+    std::fs::create_dir_all(dir.join("vendor/foo/lib").join(&host)).unwrap();
     std::fs::write(
         dir.join("vendor/foo/Cplus.toml"),
-        format!("[package]\nname = \"foo\"\n\n[link]\nbundled = [\"libmissing.a\"]\ntriples = [\"{host}\"]\n"),
-    ).unwrap();
+        "[package]\nname = \"foo\"\n\n[link]\nbundled = [\"libmissing.a\"]\n",
+    )
+    .unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
         "fn main() -> i32 { return 0; }\n",
@@ -12945,13 +12954,13 @@ fn orphan_static_lib_emits_e0861() {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/foo/src")).unwrap();
     // Vendor declares NO `[link]` at all but has an .a file sitting under
-    // src/lib/<host>/ — orphan, manifest-is-truth violation.
+    // lib/<host>/ — orphan, manifest-is-truth violation.
     std::fs::write(
         dir.join("vendor/foo/Cplus.toml"),
         "[package]\nname = \"foo\"\n",
     )
     .unwrap();
-    let lib_dir = dir.join("vendor/foo/src/lib").join(&host);
+    let lib_dir = dir.join("vendor/foo/lib").join(&host);
     std::fs::create_dir_all(&lib_dir).unwrap();
     // The orphan-detection is filesystem-presence only, no content read.
     std::fs::write(lib_dir.join("liborphan.a"), b"not a real archive").unwrap();
@@ -12975,7 +12984,12 @@ fn orphan_static_lib_emits_e0861() {
 }
 
 #[test]
-fn host_triple_unsupported_emits_e0862() {
+fn slice_for_another_triple_only_falls_back_to_source() {
+    // A package ships binaries, but not for what we're building: there is no
+    // `lib/<our-triple>/`. That is not an error — it means this package has
+    // nothing prebuilt for us, so it compiles from `src/` like any source
+    // package. The directory's existence is the whole signal, which is what
+    // lets a slice be a build artifact nobody has to version.
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     std::fs::write(
@@ -12985,53 +12999,61 @@ fn host_triple_unsupported_emits_e0862() {
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/foo/src")).unwrap();
-    // Package only supports an alien triple. (`not-a-real-triple` is
-    // deliberately nonsensical so this test stays host-agnostic — both
-    // x86 and arm CI machines run it correctly.)
-    std::fs::write(
-        dir.join("vendor/foo/Cplus.toml"),
-        "[package]\nname = \"foo\"\n\n[link]\nbundled = [\"libfoo.a\"]\ntriples = [\"not-a-real-triple\"]\n",
-    ).unwrap();
-    std::fs::write(
-        dir.join("src/main.cplus"),
-        "fn main() -> i32 { return 0; }\n",
-    )
-    .unwrap();
-    let out = Command::new(cpc)
-        .arg("build")
-        .current_dir(&dir)
-        .output()
-        .expect("invoke cpc");
-    assert!(!out.status.success());
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0862"), "expected E0862, got: {stderr}");
-    assert!(
-        stderr.contains("not-a-real-triple"),
-        "diagnostic should list the package's supported triples: {stderr}"
-    );
-}
-
-#[test]
-fn bundled_without_triples_emits_e0863_via_build() {
-    // E0863 is enforced at manifest-parse time, but a `cpc build` that
-    // touches a malformed vendor manifest must still surface it through
-    // the dep walk — this test pins the integration path so future
-    // refactors can't silently swallow the diagnostic.
-    let cpc = env!("CARGO_BIN_EXE_cpc");
-    let dir = tempdir();
-    std::fs::write(
-        dir.join("Cplus.toml"),
-        "[package]\nname = \"app\"\n\n[dependencies]\nfoo = \"*\"\n",
-    )
-    .unwrap();
-    std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::fs::create_dir_all(dir.join("vendor/foo/src")).unwrap();
+    // The slice that IS present is for an alien triple. (`not-a-real-triple`
+    // is deliberately nonsensical so this test stays host-agnostic.)
+    let alien = dir.join("vendor/foo/lib/not-a-real-triple");
+    std::fs::create_dir_all(&alien).unwrap();
+    std::fs::write(alien.join("libfoo.a"), b"!<arch>\n").unwrap();
     std::fs::write(
         dir.join("vendor/foo/Cplus.toml"),
         "[package]\nname = \"foo\"\n\n[link]\nbundled = [\"libfoo.a\"]\n",
     )
     .unwrap();
     std::fs::write(
+        dir.join("vendor/foo/src/api.cplus"),
+        "fn answer() -> i32 { return 7 as i32; }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"foo/api\" as foo;\nfn main() -> i32 { return foo::answer(); }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "a package with no slice for this triple must compile from source: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = Command::new(dir.join("target/debug/app")).status().expect("run");
+    assert_eq!(run.code(), Some(7), "source-compiled dep must still work");
+}
+
+#[test]
+fn unknown_manifest_key_is_rejected_not_ignored() {
+    // `triples` was removed when the build started deriving the triple itself.
+    // A manifest still carrying it must fail loudly: a build-policy key that
+    // is silently ignored is worse than one that refuses to load, because the
+    // author believes it is in effect.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"app\"\n\n[dependencies]\nfoo = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/foo/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/foo/Cplus.toml"),
+        "[package]\nname = \"foo\"\n\n[link]\nbundled = [\"libfoo.a\"]\ntriples = [\"aarch64-apple-darwin\"]\n",
+    )
+    .unwrap();
+    std::fs::write(
         dir.join("src/main.cplus"),
         "fn main() -> i32 { return 0; }\n",
     )
@@ -13043,7 +13065,10 @@ fn bundled_without_triples_emits_e0863_via_build() {
         .expect("invoke cpc");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0863"), "expected E0863, got: {stderr}");
+    assert!(
+        stderr.contains("unknown field `triples`"),
+        "expected the parse error to name the key, got: {stderr}"
+    );
 }
 
 // ---- Phase 5 Slice 5.A: library targets + object emission ----
@@ -13454,11 +13479,12 @@ fn emit_obj_produces_relocatable_object() {
 
 #[test]
 fn lib_target_non_pub_fns_get_internal_linkage() {
-    // Phase 5 Slice 5.B (v0.0.24 #10): only `export` items expose external
-    // symbols. A non-exported helper called by an exported fn must NOT appear
-    // in `nm -g` output of the resulting `.a`. `-O2` may inline it away
-    // entirely, which is also fine (the assertion accepts either absent or
-    // internal).
+    // Visibility in a library build is NAME-based: a leading `_` marks an item
+    // module-private, and only those get `internal` linkage. A name-public
+    // helper is part of what the archive exists to offer — keeping it internal
+    // produced a valid archive that exported nothing (stdlib: 13 KB, 14
+    // symbols). `-O2` may inline `_helper` away entirely, which is also fine
+    // (the assertion accepts either absent or internal).
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     std::fs::write(
@@ -13469,8 +13495,8 @@ fn lib_target_non_pub_fns_get_internal_linkage() {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("src/lib.cplus"),
-        "export fn pub_api(x: i32) -> i32 { return helper(x); }\n\
-         fn helper(x: i32) -> i32 { return x +% (1 as i32); }\n",
+        "export fn pub_api(x: i32) -> i32 { return _helper(x); }\n\
+         fn _helper(x: i32) -> i32 { return x +% (1 as i32); }\n",
     )
     .unwrap();
     // Use release so -O2 + internal-linkage lets LTO fold helper away.
@@ -13492,18 +13518,21 @@ fn lib_target_non_pub_fns_get_internal_linkage() {
         out.contains(" _pub_api") || out.contains(" T pub_api"),
         "expected `pub_api` in nm -g output:\n{out}"
     );
-    // `helper` must NOT be a globally-visible symbol — either inlined
-    // away by LTO or carrying internal linkage.
+    // `_helper` is module-private by name, so it must NOT be a globally-visible
+    // symbol — either inlined away by LTO or carrying internal linkage. (`nm -g`
+    // lists external symbols only; the Mach-O form of `_helper` is `__helper`.)
     assert!(
-        !out.contains(" _helper") && !out.contains(" T helper"),
-        "private `helper` leaked into nm -g output:\n{out}"
+        !out.contains("_helper"),
+        "private `_helper` leaked into nm -g output:\n{out}"
     );
 }
 
 #[test]
 fn lib_target_non_pub_methods_get_internal_linkage() {
-    // Same property for `impl` block methods: only `pub fn` exposes
-    // external symbols. Private methods used by pub ones stay internal.
+    // Same name-based rule for `impl` block methods: `_`-prefixed methods stay
+    // internal, name-public ones are exported. A consumer compiles against the
+    // generated header and links these definitions, so a name-public method
+    // that stayed internal would be an undefined symbol at the consumer's link.
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     std::fs::write(
@@ -13517,9 +13546,10 @@ fn lib_target_non_pub_methods_get_internal_linkage() {
         "struct Counter { v: i32 }\n\
          impl Counter {\n\
            fn make() -> Counter { return Counter { v: 0 }; }\n\
-           fn value(this) -> i32 { return this.v; }\n\
-           fn priv_bump(ref this) -> Counter { return Counter { v: this.v +% (1 as i32) }; }\n\
-         }\n",
+           fn value(this) -> i32 { return this.v +% _bias(); }\n\
+           fn _priv_bump(ref this) -> Counter { return Counter { v: this.v +% (1 as i32) }; }\n\
+         }\n\
+         fn _bias() -> i32 { return 0 as i32; }\n",
     )
     .unwrap();
     let st = Command::new(cpc)
@@ -13537,7 +13567,13 @@ fn lib_target_non_pub_methods_get_internal_linkage() {
     let out = String::from_utf8_lossy(&nm.stdout);
     assert!(
         !out.contains("priv_bump"),
-        "private method `priv_bump` leaked into nm -g output:\n{out}"
+        "private method `_priv_bump` leaked into nm -g output:\n{out}"
+    );
+    // The flip side, and the reason the archive is worth linking: a
+    // name-public method IS exported.
+    assert!(
+        out.contains("Counter.value"),
+        "name-public method `value` must be exported from the archive:\n{out}"
     );
 }
 
@@ -17748,10 +17784,11 @@ fn target_dep_bundled_artifacts_resolve_by_selected_target() {
         "fn main() -> i32 { return 0; }\n",
     )
     .unwrap();
-    std::fs::create_dir_all(dir.join("vendor/gadget/src/lib/arm64-apple-ios")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/gadget/src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/gadget/lib/arm64-apple-ios")).unwrap();
     std::fs::write(
         dir.join("vendor/gadget/Cplus.toml"),
-        "[package]\nname = \"gadget\"\n\n[link]\nbundled = [\"libgadget.a\"]\ntriples = [\"arm64-apple-ios\"]\n",
+        "[package]\nname = \"gadget\"\n\n[link]\nbundled = [\"libgadget.a\"]\n",
     )
     .unwrap();
     std::fs::write(
@@ -17760,7 +17797,7 @@ fn target_dep_bundled_artifacts_resolve_by_selected_target() {
     )
     .unwrap();
     std::fs::write(
-        dir.join("vendor/gadget/src/lib/arm64-apple-ios/libgadget.a"),
+        dir.join("vendor/gadget/lib/arm64-apple-ios/libgadget.a"),
         b"!<arch>\n",
     )
     .unwrap();
@@ -17783,27 +17820,23 @@ fn target_dep_bundled_artifacts_resolve_by_selected_target() {
     let ir = String::from_utf8_lossy(&out.stdout);
     assert!(ir.contains("target triple = \"arm64-apple-ios13.0\""));
 
-    // Host target: the same package has no build for the host triple —
-    // E0862, worded for the *host* triple.
+    // Host target: the same package has no `lib/<host-triple>/`, so it simply
+    // has nothing prebuilt for us and resolves to source. Selecting a target
+    // changes which slice is looked for, not whether a missing one is fatal.
     let out = Command::new(cpc)
         .arg("--emit-ll-project")
         .current_dir(&dir)
         .output()
         .expect("invoke cpc");
     assert!(
-        !out.status.success(),
-        "host dep walk must reject the ios-only bundle"
-    );
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0862"), "expected E0862, got: {stderr}");
-    assert!(
-        stderr.contains("host triple"),
-        "host-side E0862 must say `host triple`: {stderr}"
+        out.status.success(),
+        "host build must fall back to source, not fail: {}",
+        String::from_utf8_lossy(&out.stderr)
     );
 }
 
 #[test]
-fn target_dep_unsupported_target_triple_fires_e0862() {
+fn target_dep_without_a_slice_for_the_selected_target_uses_source() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     // Vendor bundles a binary for some other triple only; selecting
@@ -17819,10 +17852,11 @@ fn target_dep_unsupported_target_triple_fires_e0862() {
         "fn main() -> i32 { return 0; }\n",
     )
     .unwrap();
-    std::fs::create_dir_all(dir.join("vendor/gadget/src/lib/riscv32-unknown-none")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/gadget/src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/gadget/lib/riscv32-unknown-none")).unwrap();
     std::fs::write(
         dir.join("vendor/gadget/Cplus.toml"),
-        "[package]\nname = \"gadget\"\n\n[link]\nbundled = [\"libgadget.a\"]\ntriples = [\"riscv32-unknown-none\"]\n",
+        "[package]\nname = \"gadget\"\n\n[link]\nbundled = [\"libgadget.a\"]\n",
     )
     .unwrap();
     std::fs::write(
@@ -17831,10 +17865,12 @@ fn target_dep_unsupported_target_triple_fires_e0862() {
     )
     .unwrap();
     std::fs::write(
-        dir.join("vendor/gadget/src/lib/riscv32-unknown-none/libgadget.a"),
+        dir.join("vendor/gadget/lib/riscv32-unknown-none/libgadget.a"),
         b"!<arch>\n",
     )
     .unwrap();
+    // The only slice is riscv32; building for ios-arm64 finds no
+    // `lib/arm64-apple-ios/`, so `gadget` compiles from source for iOS.
     let out = Command::new(cpc)
         .arg("--target")
         .arg("ios-arm64")
@@ -17842,12 +17878,15 @@ fn target_dep_unsupported_target_triple_fires_e0862() {
         .current_dir(&dir)
         .output()
         .expect("invoke cpc");
-    assert!(!out.status.success());
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0862"), "expected E0862, got: {stderr}");
     assert!(
-        stderr.contains("target triple `arm64-apple-ios`"),
-        "target-side E0862 must name the selected artifact triple: {stderr}"
+        out.status.success(),
+        "a slice for another triple must not block this target: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let ir = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        ir.contains("target triple = \"arm64-apple-ios13.0\""),
+        "IR should still be built for the selected target"
     );
 }
 
@@ -20087,4 +20126,404 @@ fn method_name_collision_still_splices_defaults() {
          }\n",
     );
     assert!(out.status.success(), "exit: {}", out.status);
+}
+
+// ---- `[build]` — prebuild cache + dev override ----
+
+/// Lay out a consumer app plus one vendor package whose `[build]` table is
+/// `build_table`. The package exports `answer()`, which returns `answer`.
+fn prebuild_fixture(dir: &std::path::Path, build_table: &str, answer: i32) {
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"app\"\n\n[dependencies]\nmathy = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"mathy/mathy\" as mathy;\nfn main() -> i32 { return mathy::answer(); }\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("vendor/mathy/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/mathy/Cplus.toml"),
+        format!("[package]\nname = \"mathy\"\n\n{build_table}"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("vendor/mathy/src/mathy.cplus"),
+        format!("fn answer() -> i32 {{ return {answer} as i32; }}\n"),
+    )
+    .unwrap();
+}
+
+fn build_app(cpc: &str, dir: &std::path::Path, extra: &[&str]) -> std::process::Output {
+    let mut c = Command::new(cpc);
+    c.arg("build");
+    for a in extra {
+        c.arg(a);
+    }
+    c.current_dir(dir).output().expect("invoke cpc")
+}
+
+#[test]
+fn prebuild_compiles_the_dep_once_and_links_the_slice() {
+    // `[build] prebuild = true` is the whole opt-in: no `[lib]`, no `[link]`,
+    // no triple. The first consumer build produces the slice and its headers;
+    // the second reuses them.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let host = host_triple_for_test();
+    prebuild_fixture(&dir, "[build]\nprebuild = true\n", 21);
+
+    let out = build_app(cpc, &dir, &[]);
+    assert!(
+        out.status.success(),
+        "prebuild build failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("prebuilding `mathy`"),
+        "first build should announce the prebuild: {stderr}"
+    );
+
+    let slice = dir.join("vendor/mathy/lib").join(&host);
+    assert!(
+        slice.join("libmathy.a").is_file(),
+        "expected an archive at {}",
+        slice.display()
+    );
+    assert!(
+        slice.join("mathy.fingerprint").is_file(),
+        "expected a fingerprint next to the archive"
+    );
+    assert!(
+        dir.join("vendor/mathy/lib/include/mathy.cplus").is_file(),
+        "headers must be generated with the archive, never separately"
+    );
+    // The slice holds the shipped surface and nothing else — no object file,
+    // no C header from the library pipeline's own output directory.
+    let stray: Vec<String> = std::fs::read_dir(&slice)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n != "libmathy.a" && n != "mathy.fingerprint")
+        .collect();
+    assert!(stray.is_empty(), "build litter in the slice dir: {stray:?}");
+
+    let run = Command::new(dir.join("target/debug/app")).status().expect("run");
+    assert_eq!(run.code(), Some(21));
+
+    // Second build: fingerprint matches, nothing recompiles.
+    let out = build_app(cpc, &dir, &[]);
+    assert!(out.status.success());
+    assert!(
+        !String::from_utf8_lossy(&out.stderr).contains("prebuilding"),
+        "an unchanged dep must not rebuild"
+    );
+}
+
+#[test]
+fn prebuild_rebuilds_when_the_package_source_changes() {
+    // The fingerprint covers package source, so an edit invalidates it. This
+    // is what makes the cache trustworthy rather than merely fast.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    prebuild_fixture(&dir, "[build]\nprebuild = true\n", 21);
+    assert!(build_app(cpc, &dir, &[]).status.success());
+
+    std::fs::write(
+        dir.join("vendor/mathy/src/mathy.cplus"),
+        "fn answer() -> i32 { return 33 as i32; }\n",
+    )
+    .unwrap();
+    let out = build_app(cpc, &dir, &[]);
+    assert!(out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("prebuilding `mathy`"),
+        "an edited dep must rebuild"
+    );
+    let run = Command::new(dir.join("target/debug/app")).status().expect("run");
+    assert_eq!(run.code(), Some(33), "the consumer must see the new code");
+}
+
+#[test]
+fn prebuild_rebuilds_when_the_build_mode_changes() {
+    // Debug and release share one slice path, so the mode is in the
+    // fingerprint. Without it a `--release` consumer would silently link
+    // overflow-checked debug code.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    prebuild_fixture(&dir, "[build]\nprebuild = true\n", 21);
+    assert!(build_app(cpc, &dir, &[]).status.success());
+
+    let out = build_app(cpc, &dir, &["--release"]);
+    assert!(out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("prebuilding `mathy`"),
+        "switching build mode must rebuild the slice"
+    );
+    let run = Command::new(dir.join("target/release/app")).status().expect("run");
+    assert_eq!(run.code(), Some(21));
+}
+
+#[test]
+fn prebuilt_slice_is_not_an_orphan() {
+    // E0861 rejects undeclared binaries under `lib/<triple>/` — the manifest
+    // is the source of truth for what a package SHIPS. The archive the
+    // compiler produced is not that, and must not trip the check.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    prebuild_fixture(&dir, "[build]\nprebuild = true\n", 21);
+    assert!(build_app(cpc, &dir, &[]).status.success());
+    let out = build_app(cpc, &dir, &[]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success() && !stderr.contains("E0861"),
+        "the compiler's own slice must not be an orphan: {stderr}"
+    );
+}
+
+#[test]
+fn dev_mode_compiles_from_source_and_ignores_the_slice() {
+    // The development loop: a slice exists and is up to date, but `dev = true`
+    // means the package is being worked on. Edits must take effect with no
+    // rebuild-the-archive step in between.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let host = host_triple_for_test();
+    prebuild_fixture(&dir, "[build]\nprebuild = true\n", 21);
+    assert!(build_app(cpc, &dir, &[]).status.success());
+    let archive = dir.join("vendor/mathy/lib").join(&host).join("libmathy.a");
+    let before = std::fs::metadata(&archive).unwrap().len();
+
+    // Flip to dev and change the answer, leaving the stale slice in place.
+    std::fs::write(
+        dir.join("vendor/mathy/Cplus.toml"),
+        "[package]\nname = \"mathy\"\n\n[build]\nprebuild = true\ndev      = true\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("vendor/mathy/src/mathy.cplus"),
+        "fn answer() -> i32 { return 44 as i32; }\n",
+    )
+    .unwrap();
+
+    let out = build_app(cpc, &dir, &[]);
+    assert!(
+        out.status.success(),
+        "dev-mode build failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("dev mode"),
+        "dev mode must announce itself on every build: {stderr}"
+    );
+    assert!(
+        !stderr.contains("prebuilding"),
+        "dev mode must not maintain the cache: {stderr}"
+    );
+    assert_eq!(
+        std::fs::metadata(&archive).unwrap().len(),
+        before,
+        "the stale slice must be left untouched, just unused"
+    );
+    let run = Command::new(dir.join("target/debug/app")).status().expect("run");
+    assert_eq!(
+        run.code(),
+        Some(44),
+        "dev mode must compile the edited source, not link the stale archive"
+    );
+}
+
+#[test]
+fn dev_mode_ignores_author_shipped_binaries_too() {
+    // `dev` overrides every source of binaries, not just `prebuild`. A
+    // deliberately corrupt archive proves the link line never sees it.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let host = host_triple_for_test();
+    prebuild_fixture(&dir, "[build]\ndev = true\n", 9);
+    std::fs::write(
+        dir.join("vendor/mathy/Cplus.toml"),
+        "[package]\nname = \"mathy\"\n\n[build]\ndev = true\n\n[link]\nbundled = [\"libmathy.a\"]\n",
+    )
+    .unwrap();
+    let slice = dir.join("vendor/mathy/lib").join(&host);
+    std::fs::create_dir_all(&slice).unwrap();
+    std::fs::write(slice.join("libmathy.a"), b"not a real archive").unwrap();
+
+    let out = build_app(cpc, &dir, &[]);
+    assert!(
+        out.status.success(),
+        "dev mode must bypass the bundled archive entirely: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = Command::new(dir.join("target/debug/app")).status().expect("run");
+    assert_eq!(run.code(), Some(9));
+}
+
+#[test]
+fn build_table_defaults_to_source_only() {
+    // A package that says nothing keeps the old behaviour: compiled from
+    // `src/` every time, no slice, no headers. `prebuild` is opt-in.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    prebuild_fixture(&dir, "", 5);
+    let out = build_app(cpc, &dir, &[]);
+    assert!(out.status.success());
+    assert!(
+        !String::from_utf8_lossy(&out.stderr).contains("prebuilding"),
+        "nothing should be cached without `prebuild = true`"
+    );
+    assert!(
+        !dir.join("vendor/mathy/lib").exists(),
+        "a source-only package must not grow a lib/ directory"
+    );
+    let run = Command::new(dir.join("target/debug/app")).status().expect("run");
+    assert_eq!(run.code(), Some(5));
+}
+
+#[test]
+fn unknown_build_key_is_rejected() {
+    // Negative case: `[build]` is closed. A typo'd policy key must fail the
+    // build rather than sit there doing nothing.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    prebuild_fixture(&dir, "[build]\nprebuilt = true\n", 21);
+    let out = build_app(cpc, &dir, &[]);
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("unknown field `prebuilt`"),
+        "expected the parse error to name the key: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn prebuilt_archive_covers_modules_the_entry_never_imports() {
+    // A package's public surface is its `src/` directory, and `cpc headers`
+    // emits a declaration file per module there. If the archive only held the
+    // entry's import tree, a consumer would compile against a header for a
+    // module nothing defines and fail at link. `appkit` is the live shape:
+    // `appkit_ext.cplus` sits alongside `appkit.cplus`, imported by neither.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"app\"\n\n[dependencies]\nmathy = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/mathy/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/mathy/Cplus.toml"),
+        "[package]\nname = \"mathy\"\n\n[build]\nprebuild = true\n",
+    )
+    .unwrap();
+    // The entry. It does NOT import `extra`.
+    std::fs::write(
+        dir.join("vendor/mathy/src/mathy.cplus"),
+        "fn base() -> i32 { return 20 as i32; }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("vendor/mathy/src/extra.cplus"),
+        "fn bonus() -> i32 { return 1 as i32; }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"mathy/mathy\" as mathy;\n\
+         import \"mathy/extra\" as extra;\n\
+         fn main() -> i32 { return mathy::base() +% extra::bonus(); }\n",
+    )
+    .unwrap();
+
+    let out = build_app(cpc, &dir, &[]);
+    assert!(
+        out.status.success(),
+        "a module outside the entry's import tree must still be in the archive: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = Command::new(dir.join("target/debug/app")).status().expect("run");
+    assert_eq!(run.code(), Some(21));
+}
+
+#[test]
+fn a_package_can_import_itself_by_name() {
+    // `appkit_ext.cplus` writes `import "appkit/appkit"`. That resolves through
+    // `vendor/appkit/` for every consumer, but inside appkit's own build there
+    // is no `vendor/appkit` and a package is not its own dependency. Both
+    // spellings must mean the same module, or such a package cannot be
+    // compiled on its own — which is exactly what `prebuild` has to do.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"app\"\n\n[dependencies]\nmathy = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/mathy/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/mathy/Cplus.toml"),
+        "[package]\nname = \"mathy\"\n\n[build]\nprebuild = true\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("vendor/mathy/src/mathy.cplus"),
+        "fn base() -> i32 { return 20 as i32; }\n",
+    )
+    .unwrap();
+    // The companion module refers to its own package BY NAME, not relatively.
+    std::fs::write(
+        dir.join("vendor/mathy/src/extra.cplus"),
+        "import \"mathy/mathy\" as own;\n\
+         fn twice_base() -> i32 { return own::base() +% own::base(); }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"mathy/extra\" as extra;\n\
+         fn main() -> i32 { return extra::twice_base(); }\n",
+    )
+    .unwrap();
+
+    let out = build_app(cpc, &dir, &[]);
+    assert!(
+        out.status.success(),
+        "a package must be able to name itself: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = Command::new(dir.join("target/debug/app")).status().expect("run");
+    assert_eq!(run.code(), Some(40));
+}
+
+#[test]
+fn self_import_of_a_missing_module_is_still_an_error() {
+    // The self-name path must not become a way to import anything: only a file
+    // that actually exists under this package's `src/` resolves.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"app\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"app/nope\" as nope;\nfn main() -> i32 { return 0; }\n",
+    )
+    .unwrap();
+    let out = build_app(cpc, &dir, &[]);
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("E0852") || stderr.contains("not a declared dependency"),
+        "expected the ordinary undeclared-package error, got: {stderr}"
+    );
 }

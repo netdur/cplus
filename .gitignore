@@ -2,6 +2,17 @@
 **/target/
 a.out
 
+# Prebuilt package slices. A package's binary mode is `lib/<triple>/lib<name>.a`
+# next to the generated `lib/include/` headers; the headers are source-shaped
+# and tracked, the archives are build output and are not. `[build] prebuild =
+# true` recreates them on demand, and a missing slice directory just means the
+# package compiles from source — so a fresh clone needs nothing here.
+**/lib/*/*.a
+**/lib/*/*.dylib
+**/lib/*/*.so
+**/lib/*/*.lib
+**/lib/*/*.fingerprint
+
 /proves
 
 # Local backup of vendored sources (not tracked)

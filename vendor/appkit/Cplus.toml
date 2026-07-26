@@ -11,6 +11,10 @@ name    = "appkit"
 version = "0.0.0"
 edition = "2026"
 
+[build]
+prebuild = true
+# dev = true
+
 [dependencies]
 stdlib = "*"
 objc   = "*"

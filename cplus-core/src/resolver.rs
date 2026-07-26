@@ -423,6 +423,7 @@ pub fn load_project_full(
     // Resolve the project's own package name once, before any file is loaded:
     // every file id derived below is qualified with it.
     loader.load_package_name();
+    let own_package = loader.package_name.clone();
     loader.overlays = overlays;
     let entry_file_id = match loader.load_recursive(entry_path, None, None) {
         Ok(id) => id,
@@ -451,6 +452,7 @@ pub fn load_project_full(
         is_lib,
         manifest_root,
         &loader_deps_snapshot,
+        own_package.as_deref(),
         project_mode,
     ) {
         Ok(p) => p,
@@ -1149,6 +1151,7 @@ impl Loader {
             span,
             &self.manifest_root,
             &self.deps,
+            self.package_name.as_deref(),
             self.project_mode,
         )
     }
@@ -1179,6 +1182,7 @@ fn classify_import_path(
     span: Span,
     manifest_root: &Path,
     deps: &BTreeSet<String>,
+    own_package: Option<&str>,
     project_mode: bool,
 ) -> Result<PathBuf, ResolveError> {
     let extensionless = if let Some(stripped) = path_str.strip_suffix(".cplus") {
@@ -1239,6 +1243,23 @@ fn classify_import_path(
         });
     }
 
+    // A package may name ITSELF. `appkit_ext.cplus` writes `import
+    // "appkit/appkit"`, which resolves through `vendor/appkit/` for every
+    // consumer — but inside appkit's own build there is no `vendor/appkit`,
+    // and a package is not its own dependency. Both spellings must mean the
+    // same module, or a package with modules that cross-reference by name can
+    // never be compiled on its own. Resolve to this project's `src/`.
+    if own_package == Some(first) && !rest.is_empty() {
+        let mut p = manifest_root.join("src");
+        for seg in &rest {
+            p.push(seg);
+        }
+        p.set_extension("cplus");
+        if p.is_file() {
+            return Ok(platform_override(p));
+        }
+    }
+
     if !deps.contains(first) {
         // Declared, but only for other platforms (`[<platform>.dependencies]`)?
         // Report the platform gate, not "not a declared dependency" — the
@@ -1297,7 +1318,7 @@ fn classify_import_path(
         }
     }
 
-    // Binary / mixed mode: when a package declares `[link].bundled`, its
+    // Binary / mixed mode: when a package has binaries for consumers, its
     // public surface is the generated header in `lib/include/`, not `src/`.
     // The consumer must not have to know which — `import "stdlib/text"` is the
     // same line either way — so the choice is made here, once.
@@ -1305,10 +1326,13 @@ fn classify_import_path(
     // Gated on the MANIFEST, never on the mere presence of the directory:
     // `cpc headers` may leave `lib/include/` behind in a package that still
     // ships as source, and compiling against declarations with no archive to
-    // link would fail at link time with undefined symbols. Same rule the
-    // build driver applies to `bundled` artifacts.
+    // link would fail at link time with undefined symbols.
+    //
+    // Per-module fallback below is what makes MIXED mode work: a generic
+    // module has no header of its own (it ships verbatim), so it misses here
+    // and resolves from `src/` like any source module.
     let pkg_root = manifest_root.join("vendor").join(first);
-    if package_ships_binary(&pkg_root) {
+    if package_resolves_through_headers(&pkg_root) {
         let mut hdr = pkg_root.join("lib").join("include");
         for seg in &rest {
             hdr.push(seg);
@@ -1455,39 +1479,56 @@ fn platform_override(p: PathBuf) -> PathBuf {
 /// `<root>/vendor/<pkg>/src/...` and the package-self-test sibling fallback
 /// (`<root>/../<pkg>/src/...`, which canonicalizes back under `vendor/` too).
 
-/// Does this package's manifest declare bundled binary artifacts?
+/// Does this package's public surface resolve through `lib/include/`?
+///
+/// True when the package has binaries for consumers to link — either its own
+/// (`[build] prebuild = true`) or the author's (`[link] bundled = [...]`) — and
+/// false whenever `[build] dev = true`, which is the point of that key: the
+/// package is being worked on, so consumers compile its `src/` no matter what
+/// binaries are lying around.
 ///
 /// Read straight from the file rather than threaded through: import resolution
 /// does not otherwise carry dependency manifests, and this runs once per
 /// imported module. A package with no manifest, or one that fails to parse, is
 /// treated as source-only — the conservative answer, since it keeps the build
 /// compiling from `src/` rather than silently switching to headers.
-fn package_ships_binary(pkg_root: &Path) -> bool {
+fn package_resolves_through_headers(pkg_root: &Path) -> bool {
     let manifest = pkg_root.join("Cplus.toml");
     let Ok(text) = std::fs::read_to_string(&manifest) else {
         return false;
     };
-    // A cheap scan: `bundled` under `[link]` with a non-empty list. Parsing the
-    // whole manifest here would pull the manifest module into the resolver's
+    // A cheap line scan over the three keys that matter. Parsing the whole
+    // manifest here would pull the manifest module into the resolver's
     // dependency surface for one boolean.
-    let mut in_link = false;
+    let (mut ships_bundled, mut prebuild, mut dev) = (false, false, false);
+    let mut section = "";
     for line in text.lines() {
         let t = line.trim();
         if t.starts_with('#') {
             continue;
         }
         if t.starts_with('[') {
-            in_link = t == "[link]";
+            section = if t == "[link]" {
+                "link"
+            } else if t == "[build]" {
+                "build"
+            } else {
+                ""
+            };
             continue;
         }
-        if in_link && t.starts_with("bundled") {
-            if let Some((_, rhs)) = t.split_once('=') {
-                let rhs = rhs.trim();
-                return rhs.starts_with('[') && rhs != "[]";
-            }
+        let Some((key, rhs)) = t.split_once('=') else {
+            continue;
+        };
+        let (key, rhs) = (key.trim(), rhs.trim());
+        match (section, key) {
+            ("link", "bundled") => ships_bundled = rhs.starts_with('[') && rhs != "[]",
+            ("build", "prebuild") => prebuild = rhs == "true",
+            ("build", "dev") => dev = rhs == "true",
+            _ => {}
         }
     }
-    false
+    !dev && (prebuild || ships_bundled)
 }
 
 /// `derive_file_id`, but qualified with the project's own package name when the
@@ -1509,11 +1550,12 @@ fn derive_file_id_qualified(
     // Only files INSIDE this project need qualifying. A dependency was already
     // re-rooted at its own package boundary by `package_relative`, so it
     // carries its package name already — prefixing again would give
-    // `iris.stdlib.src.text`.
+    // `iris.stdlib.src.text`. `vendor/` is a dependency wherever it sits: a
+    // real subdirectory is still not this project's code.
     let canonical_root =
         std::fs::canonicalize(manifest_root).unwrap_or_else(|_| manifest_root.to_path_buf());
-    let inside = canonical.strip_prefix(&canonical_root).is_ok();
-    if !inside {
+    let own = matches!(canonical.strip_prefix(&canonical_root), Ok(r) if !path_is_under_vendor(r));
+    if !own {
         return base;
     }
     let pkg = sanitize_id(pkg);
@@ -1544,12 +1586,16 @@ fn derive_file_id(canonical: &Path, manifest_root: &Path) -> String {
     let canonical_root =
         std::fs::canonicalize(manifest_root).unwrap_or_else(|_| manifest_root.to_path_buf());
     let rel: &Path = match canonical.strip_prefix(&canonical_root) {
-        // Inside the project: the path relative to the root is already
-        // machine-independent.
-        Ok(r) => r,
-        // Outside the project — a dependency. Anchor on the package boundary
-        // instead of the absolute path.
-        Err(_) => package_relative(canonical).unwrap_or(canonical),
+        // Inside the project, and not under `vendor/`: the path relative to
+        // the root is already machine-independent.
+        Ok(r) if !path_is_under_vendor(r) => r,
+        // A dependency. Anchor on the package boundary instead of the path we
+        // happen to have reached it by — including when `vendor/` is a real
+        // directory inside this project rather than a symlink out of it. Get
+        // this wrong and the same module compiles to `app.vendor.mathy.src.x`
+        // here and `mathy.src.x` in the package's own build, so a prebuilt
+        // archive never links.
+        _ => package_relative(canonical).unwrap_or(canonical),
     };
     let mut parts: Vec<String> = Vec::new();
     for c in rel.components() {
@@ -1630,6 +1676,15 @@ fn header_path_as_source(p: &Path) -> Option<PathBuf> {
 ///
 /// Returning a path (not a string) keeps the component walk, `.cplus`
 /// stripping and LLVM sanitisation in one place in the caller.
+/// Does this project-relative path run through a `vendor/` directory?
+///
+/// The marker of a dependency. Checked against the path relative to the
+/// manifest root, never the absolute one, so a project that merely happens to
+/// live under a directory called `vendor` is not mistaken for its own dep.
+fn path_is_under_vendor(rel: &Path) -> bool {
+    rel.components().any(|c| comp_name(&c) == Some("vendor"))
+}
+
 fn package_relative(canonical: &Path) -> Option<&Path> {
     let comps: Vec<std::path::Component<'_>> = canonical.components().collect();
 
@@ -1753,6 +1808,7 @@ fn merge(
     is_lib_entry: bool,
     manifest_root: &Path,
     deps: &BTreeSet<String>,
+    own_package: Option<&str>,
     project_mode: bool,
 ) -> Result<Program, ResolveError> {
     // Pre-pass: collect each file's local item names (used by the
@@ -1895,6 +1951,7 @@ fn merge(
                 imp.span,
                 manifest_root,
                 deps,
+                own_package,
                 project_mode,
             )?;
             let target_canon = std::fs::canonicalize(&target_path).unwrap_or(target_path);

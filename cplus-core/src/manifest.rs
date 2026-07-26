@@ -49,6 +49,8 @@ pub struct Manifest {
     /// Directory containing the manifest file. All bin `path` entries are
     /// resolved relative to this directory.
     pub root: PathBuf,
+    /// Optional `[build]` table — how this package is consumed. See `BuildSpec`.
+    pub build: BuildSpec,
     /// v0.0.12 realtime Phase 8: optional `[profile.realtime]` table. When
     /// present, the build/check driver synthesizes the corresponding contract
     /// attributes (`#[no_alloc]`, `#[no_block]`, `#[max_stack(N)]`) onto every
@@ -88,15 +90,16 @@ pub struct LinkSpec {
     /// System libraries — expected on the consumer's machine. Each
     /// entry becomes `-l<name>` on the link line.
     pub libs: Vec<String>,
-    /// Bundled binaries — shipped by THIS package, located at
-    /// `lib/<host-triple>/<basename>`. Each entry is a basename
-    /// (no path component); the file must exist for every triple in
-    /// `triples`. Missing file → E0860; orphan file → E0861.
+    /// Binaries shipped by THIS package, located at `lib/<triple>/<basename>`.
+    /// Each entry is a basename, no path component.
+    ///
+    /// The triple is never declared — the build derives it from the target it
+    /// is building for, and the directory's existence is the whole signal: no
+    /// `lib/<triple>/` means this package ships nothing for you, so it is
+    /// compiled from `src/` like any source package. When the directory IS
+    /// there, the manifest is truth inside it: a declared file that is missing
+    /// is E0860, an undeclared binary sitting in it is E0861.
     pub bundled: Vec<String>,
-    /// Host triples this package's bundled binaries are built for.
-    /// Required when `bundled` is non-empty (E0863); the consumer's
-    /// host must appear here (E0862) or the package can't link.
-    pub triples: Vec<String>,
     /// v0.0.9 Phase 8 (cpc-gaps G-001): prebuilt `.o` files to append
     /// to the link line for any target produced from this manifest.
     /// Paths are resolved relative to the manifest directory. Useful
@@ -147,6 +150,17 @@ pub struct LibTarget {
     pub name: String,
     pub path: PathBuf,
     pub crate_type: CrateType,
+    /// True when `[build] prebuild = true` produced this target rather than an
+    /// explicit `[lib]` table.
+    ///
+    /// The two mean different things by "the entry". An explicit `[lib]` names
+    /// one file on purpose — that import tree IS the library. A prebuilt
+    /// package means all of `src/`: `cpc headers` generates a declaration file
+    /// per module there, so any module the entry doesn't happen to import
+    /// would be declared to consumers with nothing defining it. The build
+    /// driver compiles a synthesized entry importing every module to keep the
+    /// archive and the headers describing the same package.
+    pub synthesized: bool,
     /// Same shape as `BinTarget.frameworks` / `.libs`: linker flags
     /// forwarded as `-framework <name>` / `-l<name>`. Today these flags
     /// are baked into the produced `.dylib` (the C consumer doesn't have
@@ -154,6 +168,47 @@ pub struct LibTarget {
     /// the consumer's link line (a future polish).
     pub frameworks: Vec<String>,
     pub libs: Vec<String>,
+}
+
+/// The `[build]` table — how a package is consumed by anything that depends on
+/// it. Both keys are booleans and both default to `false`, so a package that
+/// says nothing keeps today's behaviour: consumers compile it from `src/` on
+/// every build.
+///
+/// ```toml
+/// [build]
+/// prebuild = true    # compile me once, reuse the archive
+/// dev      = true    # I'm being worked on — compile me from src/, ignore binaries
+/// ```
+///
+/// `prebuild` is the cache: the first consumer build compiles the package into
+/// `lib/<triple>/<name>.a`, generates `lib/include/`, and records a fingerprint
+/// next to the archive. Later builds link the archive instead of recompiling.
+/// A package that declares it needs no `[lib]` table — one is synthesized, so
+/// `prebuild = true` is the whole opt-in.
+///
+/// `dev` is the escape hatch, and it wins over everything: no headers, no
+/// archive, no fingerprint, `src/` straight through, whether the binaries come
+/// from `prebuild` or from an author-shipped `[link].bundled`. It is declared
+/// in the manifest of the package being worked on, not in each consumer, so
+/// flipping it applies to every app that depends on it. Every build restates
+/// it on stderr — a manifest knob that changes what gets compiled must not be
+/// able to rot silently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct BuildSpec {
+    pub prebuild: bool,
+    pub dev: bool,
+}
+
+impl BuildSpec {
+    /// Does this package's public surface resolve through `lib/include/`?
+    ///
+    /// `bundled` is passed in because author-shipped binaries live in `[link]`,
+    /// not `[build]`: either source of binaries puts consumers on headers, and
+    /// `dev` overrides both.
+    pub fn resolves_through_headers(&self, ships_bundled: bool) -> bool {
+        !self.dev && (self.prebuild || ships_bundled)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -221,12 +276,6 @@ pub enum ManifestError {
     InvalidDependencyName {
         path: PathBuf,
         found: String,
-    },
-    /// Phase 2 (E0863): `[link].bundled` is non-empty but `[link].triples`
-    /// is empty. The build driver can't know what hosts the bundled
-    /// binaries are built for without a declared triples list.
-    BundledRequiresTriples {
-        path: PathBuf,
     },
     /// v0.0.20 (E0865): a `${VAR}` reference in `[link].search-paths` or
     /// `[link].extra-objects` could not be expanded — the variable is unset
@@ -296,9 +345,6 @@ impl fmt::Display for ManifestError {
             ManifestError::InvalidDependencyName { path, found } => {
                 write!(f, "manifest {}: dependency name `{found}` must be a lowercase identifier (`[a-z][a-z0-9_]*`)", path.display())
             }
-            ManifestError::BundledRequiresTriples { path } => {
-                write!(f, "manifest {}: `[link].bundled` is non-empty but `[link].triples` is empty — declare the host triples the binaries are built for", path.display())
-            }
             ManifestError::EnvExpansion {
                 path,
                 entry,
@@ -348,7 +394,6 @@ impl ManifestError {
             | ManifestError::BinAndLibConflict { path }
             | ManifestError::UnsupportedCrateType { path, .. }
             | ManifestError::InvalidDependencyName { path, .. }
-            | ManifestError::BundledRequiresTriples { path }
             | ManifestError::EnvExpansion { path, .. }
             | ManifestError::ConflictingDependency { path, .. }
             | ManifestError::TargetPathEscapes { path, .. } => path.clone(),
@@ -405,10 +450,6 @@ impl ManifestError {
             ManifestError::InvalidDependencyName { found, .. } => (
                 "E0857",
                 format!("dependency name `{found}` must match `[a-z][a-z0-9_]*` (no dots, slashes, or uppercase — the first segment of an import path must be unambiguous)"),
-            ),
-            ManifestError::BundledRequiresTriples { .. } => (
-                "E0863",
-                "`[link].bundled` is non-empty but `[link].triples` is empty — declare the host triples your bundled binaries are built for (e.g. `triples = [\"aarch64-apple-darwin\"]`)".to_string(),
             ),
             ManifestError::EnvExpansion { entry, message, .. } => (
                 "E0865",
@@ -473,6 +514,9 @@ struct RawManifest {
     /// Phase 2: top-level `[link]` table on a vendor package's manifest.
     #[serde(default)]
     link: Option<RawLinkSpec>,
+    /// `[build]` table — consumption policy. See `BuildSpec`.
+    #[serde(default)]
+    build: Option<RawBuildSpec>,
     /// Phase 2: `[dependencies]` table — `name = "version-string"` pairs.
     /// Toml's `serde` integration deserializes this as a string-keyed map.
     /// Iteration order matches insertion order via `BTreeMap` (lexicographic
@@ -549,14 +593,24 @@ struct RawLinkSpec {
     libs: Vec<String>,
     #[serde(default)]
     bundled: Vec<String>,
-    #[serde(default)]
-    triples: Vec<String>,
     /// v0.0.9 Phase 8 (cpc-gaps G-001): kebab-case key `extra-objects`
     /// matching the rest of the manifest's multi-word field naming.
     #[serde(default, rename = "extra-objects")]
     extra_objects: Vec<String>,
     #[serde(default, rename = "search-paths")]
     search_paths: Vec<String>,
+}
+
+/// On-disk `[build]`. `deny_unknown_fields` makes a misspelled key a hard
+/// parse error rather than a silently-ignored line — a build policy that
+/// quietly does nothing is worse than one that refuses to load.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawBuildSpec {
+    #[serde(default)]
+    prebuild: bool,
+    #[serde(default)]
+    dev: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -641,6 +695,14 @@ pub fn parse(text: &str, manifest_path: &Path) -> Result<Manifest, ManifestError
         });
     }
 
+    let build = raw
+        .build
+        .map(|b| BuildSpec {
+            prebuild: b.prebuild,
+            dev: b.dev,
+        })
+        .unwrap_or_default();
+
     let lib = match raw.lib {
         None => None,
         Some(rl) => {
@@ -674,10 +736,38 @@ pub fn parse(text: &str, manifest_path: &Path) -> Result<Manifest, ManifestError
                 name: lib_name,
                 path: lib_path,
                 crate_type,
+                synthesized: false,
                 frameworks: rl.frameworks,
                 libs: rl.libs,
             })
         }
+    };
+
+    // `prebuild = true` is the whole opt-in: a package that asks to be compiled
+    // once and reused is a library by definition, so it gets a staticlib target
+    // without also having to write `[lib] crate-type = ...`. An explicit `[lib]`
+    // still wins, and an explicit `[[bin]]` means the author meant a program —
+    // leave both alone. The entry is `src/<name>.cplus` when that exists (a
+    // package usually names its root module after itself, as stdlib does),
+    // otherwise the conventional `src/lib.cplus`.
+    let lib = match (lib, build.prebuild && raw.bin.is_empty()) {
+        (None, true) => {
+            let named = root.join("src").join(format!("{name}.cplus"));
+            let path = if named.is_file() {
+                named
+            } else {
+                root.join("src").join("lib.cplus")
+            };
+            Some(LibTarget {
+                name: name.clone(),
+                path,
+                crate_type: CrateType::Staticlib,
+                synthesized: true,
+                frameworks: Vec::new(),
+                libs: Vec::new(),
+            })
+        }
+        (other, _) => other,
     };
 
     // Bin targets — only auto-injected when neither `[lib]` nor `[[bin]]`
@@ -720,18 +810,12 @@ pub fn parse(text: &str, manifest_path: &Path) -> Result<Manifest, ManifestError
             .collect::<Result<Vec<_>, ManifestError>>()?
     };
 
-    // Phase 2: convert raw `[link]` to LinkSpec + enforce
-    // bundled-requires-triples. The pure-source-package case (no [link]
+    // Phase 2: convert raw `[link]` to LinkSpec. The pure-source-package case (no [link]
     // table at all) yields `link = None`; an empty [link] table still
     // round-trips as `Some(LinkSpec::default())` which is harmless.
     let link = match raw.link {
         None => None,
         Some(rl) => {
-            if !rl.bundled.is_empty() && rl.triples.is_empty() {
-                return Err(ManifestError::BundledRequiresTriples {
-                    path: manifest_path.to_path_buf(),
-                });
-            }
             // v0.0.20: expand `${VAR}` / `${VAR:-default}` in path entries
             // before resolving, so a vendor binding can point at an external
             // SDK via the environment instead of a hardcoded absolute path.
@@ -755,7 +839,6 @@ pub fn parse(text: &str, manifest_path: &Path) -> Result<Manifest, ManifestError
                 frameworks: rl.frameworks,
                 libs: rl.libs,
                 bundled: rl.bundled,
-                triples: rl.triples,
                 extra_objects,
                 search_paths,
             })
@@ -864,6 +947,7 @@ pub fn parse(text: &str, manifest_path: &Path) -> Result<Manifest, ManifestError
         link,
         dependencies,
         root,
+        build,
         realtime_profile,
     })
 }
@@ -1529,25 +1613,42 @@ mod tests {
         assert_eq!(link.frameworks, vec!["Cocoa".to_string()]);
         assert_eq!(link.libs, vec!["objc".to_string()]);
         assert!(link.bundled.is_empty());
-        assert!(link.triples.is_empty());
     }
 
     #[test]
-    fn top_level_link_with_bundled_and_triples_parses() {
+    fn top_level_link_with_bundled_parses() {
         let text = r#"
             [package]
             name = "curl_bindings"
 
             [link]
             bundled = ["curl.a"]
-            triples = ["aarch64-apple-darwin", "x86_64-unknown-linux-gnu"]
             libs    = ["z"]
         "#;
         let m = parse_in(&std::env::temp_dir(), text).unwrap();
         let link = m.link.expect("expected [link]");
         assert_eq!(link.bundled, vec!["curl.a".to_string()]);
-        assert_eq!(link.triples.len(), 2);
         assert_eq!(link.libs, vec!["z".to_string()]);
+    }
+
+    #[test]
+    fn bundled_needs_no_triples_declaration() {
+        // The triple is derived from what's being built, never declared, so
+        // `bundled` alone is a complete statement. A `triples` key is now an
+        // unknown field — the manifest refuses it rather than ignoring it.
+        let text = r#"
+            [package]
+            name = "x"
+
+            [link]
+            bundled = ["foo.a"]
+            triples = ["aarch64-apple-darwin"]
+        "#;
+        let err = parse_in(&std::env::temp_dir(), text).unwrap_err();
+        assert!(
+            matches!(err, ManifestError::Parse { .. }),
+            "expected a parse error naming `triples`, got {err:?}"
+        );
     }
 
     #[test]
@@ -1761,9 +1862,10 @@ mod tests {
     }
 
     #[test]
-    fn bundled_without_triples_rejected_e0863() {
-        // The manifest-as-truth principle: a package that ships
-        // binaries must declare which triples it supports.
+    fn bundled_alone_is_a_complete_declaration() {
+        // A package that ships binaries names the files and nothing else: the
+        // triple that locates them comes from the build, and whether they are
+        // present at all is answered by the directory, not the manifest.
         let text = r#"
             [package]
             name = "x"
@@ -1771,27 +1873,8 @@ mod tests {
             [link]
             bundled = ["foo.a"]
         "#;
-        let err = parse_in(&std::env::temp_dir(), text).unwrap_err();
-        assert!(matches!(err, ManifestError::BundledRequiresTriples { .. }));
-    }
-
-    #[test]
-    fn triples_without_bundled_accepted() {
-        // A package that DECLARES triples but ships no binaries is
-        // weird but harmless — maybe they intend to add binaries later.
-        // We don't reject this; the Slice 2C build-driver path is the
-        // arbiter of whether anything actually gets linked.
-        let text = r#"
-            [package]
-            name = "x"
-
-            [link]
-            triples = ["aarch64-apple-darwin"]
-        "#;
         let m = parse_in(&std::env::temp_dir(), text).unwrap();
-        let link = m.link.unwrap();
-        assert!(link.bundled.is_empty());
-        assert_eq!(link.triples, vec!["aarch64-apple-darwin".to_string()]);
+        assert_eq!(m.link.unwrap().bundled, vec!["foo.a".to_string()]);
     }
 
     #[test]
@@ -1807,7 +1890,6 @@ mod tests {
         assert!(link.frameworks.is_empty());
         assert!(link.libs.is_empty());
         assert!(link.bundled.is_empty());
-        assert!(link.triples.is_empty());
         assert!(link.extra_objects.is_empty());
     }
 
