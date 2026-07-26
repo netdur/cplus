@@ -865,7 +865,21 @@ impl Parser {
         } else {
             None
         };
-        let body = self.parse_block()?;
+        // Body-less method — the header form. `impl Arc[T] { fn is_unique(this)
+        // -> bool; }` declares the signature; the body ships in the archive.
+        let (body, is_declaration) = if self.at(&TokenKind::Semi) {
+            let semi = self.expect(&TokenKind::Semi, "`;`")?;
+            (
+                Block {
+                    stmts: Vec::new(),
+                    tail: None,
+                    span: semi.span,
+                },
+                true,
+            )
+        } else {
+            (self.parse_block()?, false)
+        };
         let span = start.merge(body.span);
         Ok(Method {
             name,
@@ -874,6 +888,7 @@ impl Parser {
             params,
             return_type,
             body,
+            is_declaration,
             span,
             is_pub,
             attributes,
@@ -1402,6 +1417,7 @@ impl Parser {
                 // sema can route the export-only checks, and on
                 // declarations we drop it (pre-5.C behavior).
                 is_pub: is_extern_def,
+                is_declaration: false,
                 is_extern: true,
                 is_variadic,
                 attributes,
@@ -1453,7 +1469,23 @@ impl Parser {
             None
         };
 
-        let body = self.parse_block()?;
+        // A body-less `fn name(...) -> T;` is a DECLARATION — the header form a
+        // binary package ships in `lib/include/`. The body lives in the bundled
+        // archive. Same synthesized-empty-Block trick `extern fn` uses, so no
+        // AST walker needs an `Option<Block>` migration.
+        let (body, is_declaration) = if self.at(&TokenKind::Semi) {
+            let semi = self.expect(&TokenKind::Semi, "`;`")?;
+            (
+                Block {
+                    stmts: Vec::new(),
+                    tail: None,
+                    span: semi.span,
+                },
+                true,
+            )
+        } else {
+            (self.parse_block()?, false)
+        };
         let span = start.merge(body.span);
         Ok(Item {
             kind: ItemKind::Function(Function {
@@ -1461,6 +1493,7 @@ impl Parser {
                 params,
                 return_type,
                 body,
+                is_declaration,
                 is_pub,
                 is_extern: false,
                 is_variadic: false,
@@ -4302,6 +4335,66 @@ mod tests {
     fn parse_src(src: &str) -> Result<Program, ParseError> {
         let toks = tokenize(src).expect("lex");
         parse(toks)
+    }
+
+    // ---- body-less declarations (the `lib/include/` header form) ----
+    //
+    // A binary package ships signatures without bodies; the implementation
+    // lives in the bundled archive. `extern fn` cannot serve this role: its
+    // names are deliberately module-scoped (so two packages can both declare
+    // `extern fn malloc` without colliding), which makes them unreachable
+    // across a package boundary — E0403. Hence a distinct form.
+
+    #[test]
+    fn body_less_free_fn_parses_as_a_declaration() {
+        let p = parse_src("fn answer(seed: i32) -> i32;").expect("should parse");
+        let ItemKind::Function(f) = &p.items[0].kind else {
+            panic!("expected a Function item");
+        };
+        assert!(f.is_declaration, "should be marked as a declaration");
+        assert!(!f.is_extern, "a declaration is NOT an extern fn");
+        assert!(f.body.stmts.is_empty(), "body should be the synthesized empty block");
+        assert_eq!(f.params.len(), 1);
+    }
+
+    #[test]
+    fn body_less_method_parses_as_a_declaration() {
+        // The exact shape a generated header needs for `impl Arc[T]`.
+        let p = parse_src("struct Arc { n: i32 }\nimpl Arc { fn is_unique(this) -> bool; }")
+            .expect("should parse");
+        let ItemKind::Impl(b) = &p.items[1].kind else {
+            panic!("expected an Impl item");
+        };
+        assert!(b.methods[0].is_declaration, "method should be a declaration");
+        assert!(b.methods[0].receiver.is_some(), "`this` receiver preserved");
+    }
+
+    #[test]
+    fn a_normal_fn_is_not_marked_a_declaration() {
+        let p = parse_src("fn ok(a: i32) -> i32 { return a; }").expect("should parse");
+        let ItemKind::Function(f) = &p.items[0].kind else {
+            panic!("expected a Function item");
+        };
+        assert!(!f.is_declaration);
+        assert!(!f.body.stmts.is_empty(), "real body preserved");
+    }
+
+    #[test]
+    fn declarations_mix_with_definitions_in_one_file() {
+        // A mixed-mode header: concrete items declared, generic ones inline.
+        let p = parse_src(
+            "fn declared(a: i32) -> i32;\nfn defined(a: i32) -> i32 { return a; }",
+        )
+        .expect("should parse");
+        let flags: Vec<bool> = p
+            .items
+            .iter()
+            .filter_map(|i| match &i.kind {
+                ItemKind::Function(f) => Some(f.is_declaration),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(flags, vec![true, false]);
     }
 
     #[test]

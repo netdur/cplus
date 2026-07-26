@@ -1449,9 +1449,14 @@ fn generate_inner(
         for item in &program.items {
             match &item.kind {
                 ItemKind::Function(f) => {
+                    // `is_declaration` is excluded: a declaration is emitted as
+                    // `declare`, which carries no calling convention, so a
+                    // `call fastcc` against it is an ABI mismatch. It must use
+                    // the default cc, matching the archive that defines it.
                     if f.generic_params.is_empty()
                         && !f.is_pub
                         && !f.is_extern
+                        && !f.is_declaration
                         && f.name.name != "main"
                         && !address_taken.contains(&f.name.name)
                     {
@@ -6083,7 +6088,10 @@ fn gen_function(
     // builds. `main` and `export` items stay external (linker entry +
     // public ABI); everything else is `internal` so LTO can strip
     // unused helpers. The `is_lib` parameter no longer gates this rule.
-    let linkage = if f.name.name == "main" || f.is_pub {
+    // A body-less declaration resolves from a bundled archive, so it can never
+    // be `internal` — internal linkage is exactly what makes a symbol
+    // unreachable from another object file.
+    let linkage = if f.name.name == "main" || f.is_pub || f.is_declaration {
         ""
     } else {
         "internal "
@@ -6112,10 +6120,24 @@ fn gen_function(
     } else {
         format!("{ret_ext} ")
     };
+    // `fn name(...) -> T;` with no body: emit a DECLARATION. Emitting a
+    // `define` with the synthesized empty block would produce a function that
+    // silently returns garbage instead of calling the real implementation in
+    // the bundled archive.
+    // A body-less declaration reuses the SAME signature emission as a
+    // definition — identical sret handling, ABI classes, ref-by-ptr and param
+    // attributes — so the declared signature cannot drift from the one the
+    // package's own build produced. Only the keyword differs, and `declare`
+    // takes no linkage or calling-convention prefix.
+    let (keyword, linkage, cc) = if f.is_declaration {
+        ("declare", "", "")
+    } else {
+        ("define", linkage, cc)
+    };
     write!(
         out,
-        "define {}{}{}{} @{}(",
-        linkage, cc, ret_ext, sig_return_ty, f.name.name
+        "{} {}{}{}{} @{}(",
+        keyword, linkage, cc, ret_ext, sig_return_ty, f.name.name
     )
     .unwrap();
     if uses_sret {
@@ -6208,6 +6230,14 @@ fn gen_function(
         }
     }
     out.push(')');
+    // Declaration: the signature is the whole emission. Stop before the body —
+    // the implementation is in the bundled archive, and emitting the
+    // synthesized empty block as a `define` would produce a function that
+    // silently returns garbage instead of calling it.
+    if f.is_declaration {
+        out.push('\n');
+        return;
+    }
     out.push_str(inline_fn_attr(&f.attributes));
     let is_naked = has_naked_attr(&f.attributes);
     if is_naked {
@@ -17186,6 +17216,38 @@ fn sanitize(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    // ---- body-less declarations emit `declare`, never `define` ----
+
+    #[test]
+    fn a_declaration_emits_declare_not_define() {
+        let ir = gen_src("fn answer(seed: i32) -> i32;\nfn main() -> i32 { return answer(1); }");
+        assert!(
+            ir.contains("declare i32 @answer("),
+            "expected a declare for the body-less fn:\n{ir}"
+        );
+        assert!(
+            !ir.contains("define internal fastcc i32 @answer("),
+            "must NOT emit a definition — the empty body would silently return garbage:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn a_declaration_call_site_uses_no_calling_convention() {
+        // `declare` carries no cc, so `call fastcc @answer` would be an ABI
+        // mismatch against the archive that actually defines it.
+        let ir = gen_src("fn answer(seed: i32) -> i32;\nfn main() -> i32 { return answer(1); }");
+        assert!(ir.contains("call i32 @answer("), "call should use the default cc:\n{ir}");
+        assert!(!ir.contains("call fastcc i32 @answer("), "cc mismatch with the declare:\n{ir}");
+    }
+
+    #[test]
+    fn a_declaration_is_never_internal() {
+        // internal linkage is exactly what makes a symbol unreachable from
+        // another object file, which is where the implementation lives.
+        let ir = gen_src("fn answer(seed: i32) -> i32;\nfn main() -> i32 { return answer(1); }");
+        assert!(!ir.contains("declare internal"), "declare must not be internal:\n{ir}");
+    }
     use super::*;
     use crate::lexer::tokenize;
     use crate::parser::parse;

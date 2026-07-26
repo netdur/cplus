@@ -318,6 +318,19 @@ pub struct Method {
     pub params: Vec<Param>,
     pub return_type: Option<Type>,
     pub body: Block,
+    /// A body-less declaration: `fn name(params) -> T;` with no `{ ... }`.
+    ///
+    /// This is the header form a binary package ships in `lib/include/`. The
+    /// signature is real — sema type-checks calls against it — but the body
+    /// lives in a prebuilt archive, so codegen emits `declare` instead of
+    /// `define` and the linker resolves it from the bundled `.a`.
+    ///
+    /// Distinct from `is_extern`, which additionally means "C ABI, bare
+    /// unmangled symbol name". A declaration keeps the ordinary C+ mangled
+    /// name and calling convention, so it matches what the package's own
+    /// build emitted — which is what lets a consumer call it with the same
+    /// syntax whether the package shipped source or a binary.
+    pub is_declaration: bool,
     pub span: Span,
     /// Slice 4B (v0.0.24 #10): `true` when the method is marked `export`
     /// (C-ABI / linker surface). Method visibility itself is name-based —
@@ -364,6 +377,19 @@ pub struct Function {
     /// body field is a synthesized empty block; codegen emits
     /// `declare TYPE @name(...)` with the `ccc` calling convention.
     pub is_extern: bool,
+    /// A body-less declaration: `fn name(params) -> T;` with no `{ ... }`.
+    ///
+    /// This is the header form a binary package ships in `lib/include/`. The
+    /// signature is real — sema type-checks calls against it — but the body
+    /// lives in a prebuilt archive, so codegen emits `declare` instead of
+    /// `define` and the linker resolves it from the bundled `.a`.
+    ///
+    /// Distinct from `is_extern`, which additionally means "C ABI, bare
+    /// unmangled symbol name". A declaration keeps the ordinary C+ mangled
+    /// name and calling convention, so it matches what the package's own
+    /// build emitted — which is what lets a consumer call it with the same
+    /// syntax whether the package shipped source or a binary.
+    pub is_declaration: bool,
     /// Slice 10.FFI.4: variadic-arg extern fn (e.g.
     /// `extern fn printf(fmt: *u8, ...) -> i32;`). Valid only when
     /// `is_extern` is true. Codegen emits `(<fixed params>, ...)` in

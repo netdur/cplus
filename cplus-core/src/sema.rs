@@ -3881,6 +3881,13 @@ impl SemaCx<'_> {
     }
 
     fn check_method(&mut self, struct_id: StructId, m: &Method) {
+        // `fn name(this) -> T;` — a header declaration from a binary package's
+        // `lib/include/`. Its signature is registered (callers type-check
+        // against it); there is no body to check, because the implementation
+        // ships in the bundled archive.
+        if m.is_declaration {
+            return;
+        }
         let Some(sig) = self.structs[struct_id.0 as usize]
             .methods
             .get(&m.name.name)
@@ -5557,6 +5564,12 @@ impl SemaCx<'_> {
             // Fall through to the normal body-checking path below.
         } else if f.is_extern {
             // Plain `extern fn ...;` import declaration: nothing more to check.
+            return;
+        } else if f.is_declaration {
+            // `fn name(...) -> T;` — a header declaration from a binary
+            // package's `lib/include/`. The signature is real and callers are
+            // checked against it, but there is no body here to check: the
+            // implementation ships in the bundled archive.
             return;
         }
         let sig = self.fns.get(&f.name.name).cloned().or_else(|| {
