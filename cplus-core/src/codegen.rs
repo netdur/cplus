@@ -6099,9 +6099,29 @@ fn gen_function(
     // is name-based (a leading `_` is module-private), so that rule decides it
     // here too. Executable builds are unaffected: everything outside `main` and
     // `export` stays internal so LTO can strip it.
+    //
+    // The linkage is `linkonce_odr`, not plain external, and that is what makes
+    // MIXED mode link. A package ships its generic modules as source (a generic
+    // has no object code until a consumer instantiates it), so the consumer
+    // compiles them — while the package's own archive necessarily contains them
+    // too, because its concrete modules call into them. On stdlib that is 218
+    // symbols defined twice, and plain external linkage means "exactly one
+    // definition", so the link fails with duplicate symbols.
+    //
+    // `weak_odr` is the same answer C++ gives for a template instantiated in two
+    // translation units: the definitions are equivalent by construction (same
+    // source, same flags), so the linker keeps one and discards the rest.
+    //
+    // `weak_odr` rather than `linkonce_odr` because a library archive must
+    // RETAIN its API even though nothing inside the archive references it —
+    // the consumer does, later. `linkonce_odr` is discardable-if-unused, which
+    // in a library build means the whole surface is stripped: stdlib came out
+    // at 14 KB instead of 400 KB, the same empty archive `internal` produced.
     let lib_public = is_lib && !f.name.name.starts_with('_');
-    let linkage = if f.name.name == "main" || f.is_pub || f.is_declaration || lib_public {
+    let linkage = if f.name.name == "main" || f.is_pub || f.is_declaration {
         ""
+    } else if lib_public {
+        "weak_odr "
     } else {
         "internal "
     };
