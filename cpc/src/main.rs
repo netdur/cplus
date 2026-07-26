@@ -75,6 +75,8 @@ build flags (apply to `cpc FILE` and `cpc build`):
   --fp-contract=off|on|fast         float contraction policy; `off` keeps `a*b+c` as
                                     fmul+fadd for bit-identical-to-C output (default: on).
                                     Place before --emit-ll/--emit-asm/--emit-obj FILE.
+  --timings                         print per-phase build cost to stderr
+                                    (resolve+sema+borrowck / codegen / prune / clang+link)
   -g | --debug-info                 emit DWARF debug metadata + pass -g to clang
   --asan | --ubsan | --tsan | --msan
                                     enable the matching LLVM sanitizer (asan/tsan/msan are
