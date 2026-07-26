@@ -1366,14 +1366,33 @@ fn platform_override(p: PathBuf) -> PathBuf {
     }
 }
 
+/// The file id becomes the mangled-symbol prefix for every item in the file,
+/// so it must be a function of the file's position INSIDE its package — never
+/// of where the package happens to sit on this machine.
+///
+/// A dependency reached through a `vendor/` symlink canonicalizes outside the
+/// consumer's manifest root, so `strip_prefix` fails for it. Before 2026-07-26
+/// the fallback was the whole absolute path, which put
+/// `Users.adel.Workspace.C_.vendor.appkit.src.appkit.<item>` into ~18k symbols:
+/// builds were not reproducible across machines, the developer's home path
+/// leaked into every shipped binary, and a prebuilt `.a` could never link
+/// anywhere but the exact path that produced it. `vendor` anchoring fixes all
+/// three — the id becomes `appkit.src.appkit.<item>` wherever the tree lives.
+///
+/// Both real package layouts end in `<package>/src/<module>`: the normal
+/// `<root>/vendor/<pkg>/src/...` and the package-self-test sibling fallback
+/// (`<root>/../<pkg>/src/...`, which canonicalizes back under `vendor/` too).
 fn derive_file_id(canonical: &Path, manifest_root: &Path) -> String {
-    // Try to express canonical as a path relative to manifest_root. If that
-    // fails (file lives outside the project — e.g. a vendor symlink resolving
-    // outside the consumer's tree), fall back to the basename chain — better
-    // than nothing.
     let canonical_root =
         std::fs::canonicalize(manifest_root).unwrap_or_else(|_| manifest_root.to_path_buf());
-    let rel = canonical.strip_prefix(&canonical_root).unwrap_or(canonical);
+    let rel: &Path = match canonical.strip_prefix(&canonical_root) {
+        // Inside the project: the path relative to the root is already
+        // machine-independent.
+        Ok(r) => r,
+        // Outside the project — a dependency. Anchor on the package boundary
+        // instead of the absolute path.
+        Err(_) => package_relative(canonical).unwrap_or(canonical),
+    };
     let mut parts: Vec<String> = Vec::new();
     for c in rel.components() {
         match c {
@@ -1409,6 +1428,60 @@ fn derive_file_id(canonical: &Path, manifest_root: &Path) -> String {
             }
         })
         .collect()
+}
+
+/// Re-root an out-of-project path at its package boundary, so the resulting id
+/// is identical on every machine.
+///
+/// Preference order:
+///   1. everything after the last `vendor` component — `appkit/src/appkit`
+///   2. else `<parent-of-src>/src/<rest>` — covers a package laid out without
+///      a `vendor` ancestor
+///   3. else `None`, and the caller keeps its existing behaviour
+///
+/// Returning a path (not a string) keeps the component walk, `.cplus`
+/// stripping and LLVM sanitisation in one place in the caller.
+fn package_relative(canonical: &Path) -> Option<&Path> {
+    let comps: Vec<std::path::Component<'_>> = canonical.components().collect();
+
+    // 1. after the last `vendor`
+    if let Some(i) = comps.iter().rposition(|c| comp_name(c) == Some("vendor")) {
+        if i + 1 < comps.len() {
+            return Some(sub_path(canonical, comps.len() - (i + 1)));
+        }
+    }
+    // 2. the package dir immediately above `src`
+    if let Some(i) = comps.iter().rposition(|c| comp_name(c) == Some("src")) {
+        if i >= 1 {
+            return Some(sub_path(canonical, comps.len() - (i - 1)));
+        }
+    }
+    None
+}
+
+fn comp_name<'a>(c: &std::path::Component<'a>) -> Option<&'a str> {
+    match c {
+        std::path::Component::Normal(s) => s.to_str(),
+        _ => None,
+    }
+}
+
+/// The last `n` components of `p`, as a borrowed sub-path.
+fn sub_path(p: &Path, n: usize) -> &Path {
+    let mut cur = p;
+    while cur.components().count() > n {
+        cur = strip_first_component(cur);
+    }
+    cur
+}
+
+/// Drop the leading component of `p` (e.g. `/a/b/c` -> `a/b/c` -> `b/c`).
+fn strip_first_component(p: &Path) -> &Path {
+    let mut it = p.components();
+    match it.next() {
+        Some(_) => it.as_path(),
+        None => p,
+    }
 }
 
 fn detect_cycle(
@@ -2980,6 +3053,67 @@ mod tests {
             derive_file_id(Path::new("/tmp/proj/src/util/strings.cplus"), &root),
             "src.util.strings"
         );
+    }
+
+    // A dependency reached through a `vendor/` symlink canonicalizes OUTSIDE the
+    // consumer's manifest root. The id must still be package-relative: it lands
+    // in every mangled symbol, so an absolute path here means non-reproducible
+    // builds, the developer's home directory baked into shipped binaries, and a
+    // prebuilt archive that only links on the machine that produced it.
+    #[test]
+    fn dependency_outside_the_root_is_package_relative_not_absolute() {
+        let root = PathBuf::from("/Users/someone/Workspace/iris");
+        let dep = Path::new("/Users/someone/Workspace/C+/vendor/appkit/src/appkit.cplus");
+        assert_eq!(derive_file_id(dep, &root), "appkit.src.appkit");
+    }
+
+    #[test]
+    fn package_relative_id_is_identical_from_any_checkout_location() {
+        // Same package, three different machines / checkout paths, one id.
+        let ids: Vec<String> = [
+            "/Users/adel/Workspace/C+/vendor/facet/src/runtime.cplus",
+            "/home/ci/build/deps/vendor/facet/src/runtime.cplus",
+            "/completely/elsewhere/vendor/facet/src/runtime.cplus",
+        ]
+        .iter()
+        .map(|p| derive_file_id(Path::new(p), &PathBuf::from("/some/consumer")))
+        .collect();
+        assert_eq!(ids, vec!["facet.src.runtime"; 3], "ids diverged: {ids:?}");
+    }
+
+    #[test]
+    fn nested_module_under_a_dependency_keeps_its_subpath() {
+        let root = PathBuf::from("/proj");
+        assert_eq!(
+            derive_file_id(
+                Path::new("/x/vendor/facet_appkit/src/backend/ns/view.cplus"),
+                &root
+            ),
+            "facet_appkit.src.backend.ns.view"
+        );
+    }
+
+    // No `vendor` ancestor: fall back to the package dir above `src`.
+    #[test]
+    fn out_of_root_without_vendor_anchors_above_src() {
+        let root = PathBuf::from("/proj");
+        assert_eq!(
+            derive_file_id(Path::new("/elsewhere/mypkg/src/thing.cplus"), &root),
+            "mypkg.src.thing"
+        );
+    }
+
+    // The `+` in the C+ project path used to be the reason the sanitiser exists;
+    // with vendor anchoring it should not appear in an id at all.
+    #[test]
+    fn vendor_anchoring_removes_the_host_path_entirely() {
+        let id = derive_file_id(
+            Path::new("/Users/adel/Workspace/C+/vendor/stdlib/src/vec.cplus"),
+            &PathBuf::from("/Users/adel/Workspace/iris"),
+        );
+        assert_eq!(id, "stdlib.src.vec");
+        assert!(!id.contains("Users"), "host path leaked: {id}");
+        assert!(!id.contains('_'), "sanitiser fired unexpectedly: {id}");
     }
 
     #[test]
