@@ -1247,6 +1247,28 @@ fn classify_import_path(
         }
     }
 
+    // Binary / mixed mode: when a package declares `[link].bundled`, its
+    // public surface is the generated header in `lib/include/`, not `src/`.
+    // The consumer must not have to know which — `import "stdlib/text"` is the
+    // same line either way — so the choice is made here, once.
+    //
+    // Gated on the MANIFEST, never on the mere presence of the directory:
+    // `cpc headers` may leave `lib/include/` behind in a package that still
+    // ships as source, and compiling against declarations with no archive to
+    // link would fail at link time with undefined symbols. Same rule the
+    // build driver applies to `bundled` artifacts.
+    let pkg_root = manifest_root.join("vendor").join(first);
+    if package_ships_binary(&pkg_root) {
+        let mut hdr = pkg_root.join("lib").join("include");
+        for seg in &rest {
+            hdr.push(seg);
+        }
+        hdr.set_extension("cplus");
+        if hdr.is_file() {
+            return Ok(platform_override(hdr));
+        }
+    }
+
     let mut p = manifest_root.to_path_buf();
     p.push("vendor");
     p.push(first);
@@ -1382,7 +1404,46 @@ fn platform_override(p: PathBuf) -> PathBuf {
 /// Both real package layouts end in `<package>/src/<module>`: the normal
 /// `<root>/vendor/<pkg>/src/...` and the package-self-test sibling fallback
 /// (`<root>/../<pkg>/src/...`, which canonicalizes back under `vendor/` too).
+
+/// Does this package's manifest declare bundled binary artifacts?
+///
+/// Read straight from the file rather than threaded through: import resolution
+/// does not otherwise carry dependency manifests, and this runs once per
+/// imported module. A package with no manifest, or one that fails to parse, is
+/// treated as source-only — the conservative answer, since it keeps the build
+/// compiling from `src/` rather than silently switching to headers.
+fn package_ships_binary(pkg_root: &Path) -> bool {
+    let manifest = pkg_root.join("Cplus.toml");
+    let Ok(text) = std::fs::read_to_string(&manifest) else {
+        return false;
+    };
+    // A cheap scan: `bundled` under `[link]` with a non-empty list. Parsing the
+    // whole manifest here would pull the manifest module into the resolver's
+    // dependency surface for one boolean.
+    let mut in_link = false;
+    for line in text.lines() {
+        let t = line.trim();
+        if t.starts_with('#') {
+            continue;
+        }
+        if t.starts_with('[') {
+            in_link = t == "[link]";
+            continue;
+        }
+        if in_link && t.starts_with("bundled") {
+            if let Some((_, rhs)) = t.split_once('=') {
+                let rhs = rhs.trim();
+                return rhs.starts_with('[') && rhs != "[]";
+            }
+        }
+    }
+    false
+}
+
 fn derive_file_id(canonical: &Path, manifest_root: &Path) -> String {
+    // A generated header stands in for its source module and must share its id.
+    let rewritten = header_path_as_source(canonical);
+    let canonical: &Path = rewritten.as_deref().unwrap_or(canonical);
     let canonical_root =
         std::fs::canonicalize(manifest_root).unwrap_or_else(|_| manifest_root.to_path_buf());
     let rel: &Path = match canonical.strip_prefix(&canonical_root) {
@@ -1428,6 +1489,37 @@ fn derive_file_id(canonical: &Path, manifest_root: &Path) -> String {
             }
         })
         .collect()
+}
+
+/// Rewrite a `lib/include/` path to the `src/` path it stands for.
+///
+/// A header and the source it was generated from MUST produce the same file id,
+/// because the id becomes the mangled-symbol prefix. The archive was compiled
+/// from `src/text.cplus` as `stdlib.src.text.*`; a consumer compiling against
+/// `lib/include/text.cplus` would otherwise derive `stdlib.lib.include.text.*`
+/// and fail to link against symbols that exist under a different name.
+///
+/// Doing it here means every id consumer — mangling, diagnostics, monomorphize
+/// routing — sees one identity for a module regardless of which form of it was
+/// read.
+fn header_path_as_source(p: &Path) -> Option<PathBuf> {
+    let comps: Vec<std::path::Component<'_>> = p.components().collect();
+    // ... /<pkg>/lib/include/<rest...>
+    let i = comps
+        .iter()
+        .rposition(|c| comp_name(c) == Some("include"))?;
+    if i == 0 || comp_name(&comps[i - 1]) != Some("lib") {
+        return None;
+    }
+    let mut out = PathBuf::new();
+    for c in &comps[..i - 1] {
+        out.push(c.as_os_str());
+    }
+    out.push("src");
+    for c in &comps[i + 1..] {
+        out.push(c.as_os_str());
+    }
+    Some(out)
 }
 
 /// Re-root an out-of-project path at its package boundary, so the resulting id
@@ -3060,6 +3152,36 @@ mod tests {
     // in every mangled symbol, so an absolute path here means non-reproducible
     // builds, the developer's home directory baked into shipped binaries, and a
     // prebuilt archive that only links on the machine that produced it.
+    // A generated header stands in for its source module. If their ids differ,
+    // the consumer emits calls to `stdlib.lib.include.text.find` while the
+    // archive defines `stdlib.src.text.find`, and the link fails.
+    #[test]
+    fn a_header_gets_the_same_file_id_as_the_source_it_replaces() {
+        let root = PathBuf::from("/proj");
+        let from_src = derive_file_id(Path::new("/x/vendor/stdlib/src/text.cplus"), &root);
+        let from_hdr =
+            derive_file_id(Path::new("/x/vendor/stdlib/lib/include/text.cplus"), &root);
+        assert_eq!(from_src, "stdlib.src.text");
+        assert_eq!(from_hdr, from_src, "header id must match its source module");
+    }
+
+    #[test]
+    fn a_nested_header_module_maps_back_correctly() {
+        let root = PathBuf::from("/proj");
+        assert_eq!(
+            derive_file_id(Path::new("/x/vendor/p/lib/include/sub/mod.cplus"), &root),
+            derive_file_id(Path::new("/x/vendor/p/src/sub/mod.cplus"), &root),
+        );
+    }
+
+    // `lib/` alone is the binary-slice directory; only `lib/include/` is headers.
+    #[test]
+    fn a_binary_slice_path_is_not_mistaken_for_a_header() {
+        let root = PathBuf::from("/proj");
+        let id = derive_file_id(Path::new("/x/vendor/p/lib/aarch64-apple-darwin/p.a"), &root);
+        assert!(!id.contains("src"), "binary slice must not be rewritten: {id}");
+    }
+
     #[test]
     fn dependency_outside_the_root_is_package_relative_not_absolute() {
         let root = PathBuf::from("/Users/someone/Workspace/iris");

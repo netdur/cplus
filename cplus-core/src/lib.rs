@@ -20,6 +20,7 @@ pub mod docgen;
 pub mod doctest;
 pub mod fmt;
 pub mod graph;
+pub mod header;
 pub mod lexer;
 pub mod lower;
 pub mod manifest;

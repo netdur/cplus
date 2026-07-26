@@ -54,6 +54,11 @@ usage:
                                     enforcing any [profile.realtime] gate; no codegen.
                                     With a FILE: also runs codegen and discards the
                                     IR, so a codegen-stage fault is caught here too.
+  cpc headers                       generate `lib/include/` from `src/` for the package in
+                                    the current directory: concrete modules become
+                                    declarations (`fn f(...) -> T;`), modules declaring
+                                    generics are copied verbatim (a generic has no object
+                                    code until the consumer instantiates it)
   cpc doc FILE                      extract public items + `///` docs from FILE, emit
                                     Markdown to ./target/doc/<basename>.md
   cpc test [FILE] [--json]          discover + run `#[test]` functions. Single-file mode
@@ -129,6 +134,26 @@ other:
 fn subcommand_help(sub: Option<Subcommand>) -> &'static str {
     match sub {
         None => USAGE,
+        Some(Subcommand::Headers) => {
+            "\
+cpc headers
+
+Generate `lib/include/` from `src/` for the package in the current directory.
+
+The header is what a consumer compiles against when the package ships as a
+binary. Each module in `src/` produces one file in `lib/include/`:
+
+  - a module with no generics has its function and method bodies replaced by
+    `;` — the implementation lives in the bundled archive named by
+    `[link].bundled`;
+  - a module that declares ANY generic is copied verbatim, because a generic
+    has no object code until the consumer instantiates it, so its body has to
+    travel with the package (the same reason a C++ template lives in a header).
+
+Everything else — imports, `struct` layouts, `const`s, comments — is preserved
+byte for byte, so the header cannot drift from the source it came from.
+"
+        }
         Some(Subcommand::Build) => {
             "\
 cpc build [-o OUT] [--release] [-g] [--asan|--ubsan|--tsan|--msan]
@@ -592,6 +617,10 @@ fn main() -> ExitCode {
                 subcommand = Some(Subcommand::Check);
                 i += 1;
             }
+            Some("headers") if subcommand.is_none() && input.is_none() => {
+                subcommand = Some(Subcommand::Headers);
+                i += 1;
+            }
             Some("doc") if subcommand.is_none() && input.is_none() => {
                 subcommand = Some(Subcommand::Doc);
                 i += 1;
@@ -759,6 +788,7 @@ fn main() -> ExitCode {
         (Some(Subcommand::Lsp), _) => run_lsp(lsp_args),
         (Some(Subcommand::Check), Some(path)) => run_check(path, diag_mode),
         (Some(Subcommand::Check), None) => run_check_project(diag_mode),
+        (Some(Subcommand::Headers), _) => run_headers(),
         (Some(Subcommand::Doc), Some(path)) => run_doc(path),
         (Some(Subcommand::Doc), None) => {
             eprintln!("cpc: `doc` requires a FILE argument");
@@ -783,6 +813,11 @@ fn main() -> ExitCode {
 #[derive(Debug, Clone, Copy)]
 enum Subcommand {
     Build,
+    /// `cpc headers` — generate `lib/include/` from `src/` for the package in
+    /// the current directory. Concrete modules get their bodies stripped to
+    /// declarations; modules declaring generics are copied verbatim, because a
+    /// generic has no object code until a consumer instantiates it.
+    Headers,
     EmitLlProject,
     Fmt,
     Test,
@@ -2890,6 +2925,84 @@ fn build_program(
 /// runs the full front-end (incl. any `[profile.realtime]` enforcement)
 /// through sema/borrowck, and stops before codegen. The fast CI gate for a
 /// whole package: exit 0 iff clean. Diagnostics honor `--json`.
+/// `cpc headers` — regenerate `lib/include/` from `src/`.
+///
+/// The header is what a consumer compiles against when the package ships as a
+/// binary. Generating it from source (rather than maintaining it by hand) is
+/// what keeps the two from drifting: a signature can only be wrong here if it
+/// is wrong in `src/` too.
+fn run_headers() -> ExitCode {
+    let manifest_path = PathBuf::from("Cplus.toml");
+    let m = match manifest::load(&manifest_path) {
+        Ok(m) => m,
+        Err(e) => {
+            emit_diag(&e.to_diagnostic(), DiagMode::Human, "");
+            return ExitCode::FAILURE;
+        }
+    };
+    let src_dir = m.root.join("src");
+    if !src_dir.is_dir() {
+        eprintln!("cpc: no `src/` directory in {}", m.root.display());
+        return ExitCode::FAILURE;
+    }
+    let include_dir = m.root.join("lib").join("include");
+    if let Err(e) = fs::create_dir_all(&include_dir) {
+        eprintln!("cpc: creating {}: {e}", include_dir.display());
+        return ExitCode::FAILURE;
+    }
+
+    let mut entries: Vec<PathBuf> = match fs::read_dir(&src_dir) {
+        Ok(rd) => rd
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("cplus"))
+            .collect(),
+        Err(e) => {
+            eprintln!("cpc: reading {}: {e}", src_dir.display());
+            return ExitCode::FAILURE;
+        }
+    };
+    entries.sort();
+
+    let (mut stripped, mut verbatim) = (0usize, 0usize);
+    for path in &entries {
+        let src = match fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("cpc: reading {}: {e}", path.display());
+                return ExitCode::FAILURE;
+            }
+        };
+        let (text, kind) = match cplus_core::header::generate(&src) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("cpc: {}: {e}", path.display());
+                return ExitCode::FAILURE;
+            }
+        };
+        let name = match path.file_name() {
+            Some(n) => n,
+            None => continue,
+        };
+        let out = include_dir.join(name);
+        if let Err(e) = fs::write(&out, &text) {
+            eprintln!("cpc: writing {}: {e}", out.display());
+            return ExitCode::FAILURE;
+        }
+        match kind {
+            cplus_core::header::HeaderKind::Stripped => stripped += 1,
+            cplus_core::header::HeaderKind::VerbatimGeneric => verbatim += 1,
+        }
+    }
+    println!(
+        "cpc: wrote {} headers to {} ({} declarations, {} verbatim [generic])",
+        entries.len(),
+        include_dir.display(),
+        stripped,
+        verbatim
+    );
+    ExitCode::SUCCESS
+}
+
 fn run_check_project(diag_mode: DiagMode) -> ExitCode {
     let manifest_path = PathBuf::from("Cplus.toml");
     let m = match manifest::load(&manifest_path) {

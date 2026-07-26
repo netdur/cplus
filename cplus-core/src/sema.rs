@@ -3769,6 +3769,11 @@ impl SemaCx<'_> {
     /// `This` resolves to `Ty::Enum(enum_id)` and receiver bindings
     /// take the enum's type.
     fn check_enum_method(&mut self, enum_id: EnumId, m: &Method) {
+        // Header declaration: signature only, body in the archive. Same rule as
+        // the struct side in `check_method`.
+        if m.is_declaration {
+            return;
+        }
         let Some(sig) = self.enums[enum_id.0 as usize]
             .methods
             .get(&m.name.name)
@@ -5310,11 +5315,22 @@ impl SemaCx<'_> {
 
         // Each struct's `drop` body, keyed by the impl target name.
         let mut drop_bodies: HashMap<&str, &Block> = HashMap::new();
+        // Types whose `drop` is a body-less DECLARATION — a header from a
+        // binary package's `lib/include/`. The implementation is in the
+        // archive, so there is no body here to inspect and this analysis has
+        // nothing to say. Treating the synthesized empty block as a real one
+        // would report every such type as leaking its raw-pointer fields.
+        let mut declared_drop: std::collections::HashSet<&str> =
+            std::collections::HashSet::new();
         for item in &p.items {
             if let ItemKind::Impl(b) = &item.kind {
                 for m in &b.methods {
                     if m.name.name == "drop" {
-                        drop_bodies.insert(b.target.name.as_str(), &m.body);
+                        if m.is_declaration {
+                            declared_drop.insert(b.target.name.as_str());
+                        } else {
+                            drop_bodies.insert(b.target.name.as_str(), &m.body);
+                        }
                     }
                 }
             }
@@ -5324,6 +5340,9 @@ impl SemaCx<'_> {
             let ItemKind::Struct(s) = &item.kind else {
                 continue;
             };
+            if declared_drop.contains(s.name.name.as_str()) {
+                continue;
+            }
             self.current_file = item.origin_file.clone();
             let body = drop_bodies.get(s.name.name.as_str());
             for f in &s.fields {
