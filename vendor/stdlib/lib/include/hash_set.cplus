@@ -1,0 +1,660 @@
+// stdlib/hash_set.cplus — Generic `HashSet[T]`.
+//
+// Open addressing with linear probing and tombstone deletion, doubling at a
+// 0.75 load factor. The unordered, unique-element companion to `HashMap`
+// (`Vec` is ordered and allows duplicates; a set answers membership in O(1)
+// and dedups by value).
+//
+// **Type parameter and bound.**
+//
+//   - `T: Copy` (enforced) — elements are bitwise-copied into the table on
+//     insert, exactly like `HashMap` keys. Primitive types (`i32`, `i64`,
+//     `u64`, `usize`, `str`, ...) are Copy structurally; a user struct is Copy
+//     iff every field is Copy. The bound makes sema reject a non-Copy
+//     (owning / `drop`-carrying) element at the use site (E0502) rather than
+//     leak or double-free. A Text-keyed set (`StringSet`, paralleling
+//     `StringMap`) is a separate feature.
+//
+// **Hashing and equality.** `T.hash() -> u64` and `T.eq(other) -> bool` are
+// required. The compiler ships blessed implementations for every integer
+// primitive plus `str`; user types provide their own via `impl MyType: Hash`
+// / `impl MyType: Eq`. The generic body calls `value.hash()` / `stored.eq(value)`
+// and monomorphization picks the right lowering per instantiation.
+//
+// **Layout** (parallel arrays, no per-entry padding):
+//
+//   _slots:      *T     — cap slots (the elements)
+//   _occupied:   *u8    — cap slots; 0 = empty, 1 = live, 2 = tombstone
+//   _cap, _len:  usize
+//   _tombstones: usize  — live+tombstone drives the grow/rehash threshold so a
+//                         delete-heavy workload can't fill the table with
+//                         tombstones and stall probing
+//
+// **API.**
+//
+//   hash_set::new::[T]() -> HashSet[T]
+//   hash_set::with_capacity::[T](capacity: usize) -> HashSet[T]
+//   HashSet[T]::count(this) -> usize
+//   HashSet[T]::capacity(this) -> usize
+//   HashSet[T]::is_empty(this) -> bool
+//   HashSet[T]::insert(ref this, take value: T) -> status::Status
+//   HashSet[T]::contains(this, value: T) -> bool
+//   HashSet[T]::remove(ref this, value: T) -> bool           (was present)
+//   HashSet[T]::clear(ref this)
+//   HashSet[T]::is_subset(this, of: HashSet[T]) -> bool
+//   HashSet[T]::is_superset(this, of: HashSet[T]) -> bool
+//   HashSet[T]::is_disjoint(this, from: HashSet[T]) -> bool
+//   HashSet[T]::union_with(this, other: HashSet[T]) -> HashSet[T]
+//   HashSet[T]::intersection(this, other: HashSet[T]) -> HashSet[T]
+//   HashSet[T]::difference(this, other: HashSet[T]) -> HashSet[T]
+//   HashSet[T]::slot_capacity(this) -> usize
+//   HashSet[T]::element_at_slot(this, slot: usize) -> option::Option[T]
+
+import "./option" as option;
+import "./status" as status;
+
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+extern fn memset(b: *u8, c: i32, len: usize) -> *u8;
+
+struct HashSet[T: Copy] {
+    _slots: *T,
+    _occupied: *u8,
+    _cap: usize,
+    _len: usize,
+    _tombstones: usize,
+}
+
+fn max_usize() -> usize {
+    return (0 as usize) -% (1 as usize);
+}
+
+// Empty set; first insert allocates. The `T: Copy` bound is load-bearing:
+// insert bit-copies the element in, `contains` bit-copies it out, and drop
+// frees the storage without running a destructor per element — a non-Copy
+// element would leak or double-free, so sema rejects it at the use site.
+fn new[T: Copy]() -> HashSet[T] {
+    return HashSet[T] {
+        _slots: { 0 as *T },
+        _occupied: { 0 as *u8 },
+        _cap: 0 as usize,
+        _len: 0 as usize,
+        _tombstones: 0 as usize,
+    };
+}
+
+// Pre-sized empty set: reserves enough capacity to hold `capacity` elements
+// without regrowing (accounting for the 0.75 load factor). On allocation
+// failure the set is returned empty (first insert will retry the allocation).
+fn with_capacity[T: Copy](capacity: usize) -> HashSet[T] {
+    var s: HashSet[T] = new::[T]();
+    if capacity == (0 as usize) {
+        return s;
+    }
+    // Need cap > capacity / 0.75 = capacity * 4 / 3 so the load stays under
+    // threshold after inserting `capacity` elements. Floor at 16.
+    var want: usize = (capacity *% (4 as usize)) / (3 as usize) +% (1 as usize);
+    if want < (16 as usize) {
+        want = 16 as usize;
+    }
+    let _st: status::Status = s.grow_to(want);
+    return s;
+}
+
+impl HashSet[T] {
+    fn count(this) -> usize {
+        return this._len;
+    }
+
+    fn capacity(this) -> usize {
+        return this._cap;
+    }
+
+    fn is_empty(this) -> bool {
+        return this._len == (0 as usize);
+    }
+
+    // Insert `value`. A no-op (returns Ok) if it is already present, so the set
+    // stays unique. The element is bitwise-copied in (its `Copy` bound makes
+    // this safe). Returns OutOfMemory only if a required grow could not allocate;
+    // the set is left valid at its old capacity.
+    fn insert(ref this, take value: T) -> status::Status {
+        if this._cap == (0 as usize) {
+            let st: status::Status = this.grow_to(16 as usize);
+            if st != status::Status::Ok {
+                return st;
+            }
+        }
+        // Grow (or rehash in place to shed tombstones) once live+tombstones hits
+        // 0.75. Doubling only when the LIVE count itself is over threshold; a
+        // tombstone-heavy but sparse table just rehashes at the same capacity.
+        if (this._len +% this._tombstones) *% (4 as usize) >= (this._cap *% (3 as usize)) {
+            let target: usize = if (this._len *% (4 as usize)) >= (this._cap *% (3 as usize)) {
+                this._cap *% (2 as usize)
+            } else {
+                this._cap
+            };
+            let st: status::Status = this.grow_to(target);
+            if st != status::Status::Ok {
+                return st;
+            }
+        }
+        let h: u64 = value.hash();
+        let start: usize = (h as usize) % this._cap;
+        var slot: usize = start;
+        var first_tomb: usize = max_usize();
+        loop {
+            let occ: u8 = { this._occupied[slot] };
+            if occ == (0 as u8) {
+                // `value` is definitively absent (empty slot ends the probe run).
+                // Reuse the first tombstone we passed, else this empty slot.
+                if first_tomb != max_usize() {
+                    { this._slots[first_tomb] = value; }
+                    { this._occupied[first_tomb] = 1 as u8; }
+                    this._tombstones = this._tombstones -% (1 as usize);
+                } else {
+                    { this._slots[slot] = value; }
+                    { this._occupied[slot] = 1 as u8; }
+                }
+                this._len = this._len +% (1 as usize);
+                return status::Status::Ok;
+            }
+            if occ == (1 as u8) {
+                let stored: T = { this._slots[slot] };
+                if stored.eq(value) {
+                    return status::Status::Ok; // already a member
+                }
+            } else {
+                // tombstone — remember the first, keep probing to check for a
+                // live duplicate further down the run.
+                if first_tomb == max_usize() {
+                    first_tomb = slot;
+                }
+            }
+            slot = (slot +% (1 as usize)) % this._cap;
+            if slot == start {
+                // No empty slot in the whole table. The load-factor grow keeps at
+                // least one empty slot, so this only fires if every slot is a
+                // tombstone or live; a passed tombstone still lets us insert.
+                if first_tomb != max_usize() {
+                    { this._slots[first_tomb] = value; }
+                    { this._occupied[first_tomb] = 1 as u8; }
+                    this._tombstones = this._tombstones -% (1 as usize);
+                    this._len = this._len +% (1 as usize);
+                    return status::Status::Ok;
+                }
+                return status::Status::OutOfMemory;
+            }
+        }
+    }
+
+    fn contains(this, value: T) -> bool {
+        if this._cap == (0 as usize) {
+            return false;
+        }
+        let h: u64 = value.hash();
+        let start: usize = (h as usize) % this._cap;
+        var slot: usize = start;
+        loop {
+            let occ: u8 = { this._occupied[slot] };
+            if occ == (0 as u8) {
+                return false;
+            }
+            if occ == (1 as u8) {
+                let stored: T = { this._slots[slot] };
+                if stored.eq(value) {
+                    return true;
+                }
+            }
+            slot = (slot +% (1 as usize)) % this._cap;
+            if slot == start {
+                return false;
+            }
+        }
+        return false; // unreachable
+    }
+
+    // Remove `value`. Returns whether it was present. The slot becomes a
+    // tombstone so the probe run of any colliding element stays intact; the
+    // tombstone is reclaimed on the next grow/rehash.
+    fn remove(ref this, value: T) -> bool {
+        if this._cap == (0 as usize) {
+            return false;
+        }
+        let h: u64 = value.hash();
+        let start: usize = (h as usize) % this._cap;
+        var slot: usize = start;
+        loop {
+            let occ: u8 = { this._occupied[slot] };
+            if occ == (0 as u8) {
+                return false;
+            }
+            if occ == (1 as u8) {
+                let stored: T = { this._slots[slot] };
+                if stored.eq(value) {
+                    { #drop_in_place::[T](this._slots + slot); }
+                    { this._occupied[slot] = 2 as u8; }
+                    this._len = this._len -% (1 as usize);
+                    this._tombstones = this._tombstones +% (1 as usize);
+                    return true;
+                }
+            }
+            slot = (slot +% (1 as usize)) % this._cap;
+            if slot == start {
+                return false;
+            }
+        }
+        return false; // unreachable
+    }
+
+    // Drop every element and reset to empty, keeping the allocated capacity.
+    fn clear(ref this) {
+        if this._cap == (0 as usize) {
+            return;
+        }
+        var i: usize = 0 as usize;
+        while i < this._cap {
+            let occ: u8 = { this._occupied[i] };
+            if occ == (1 as u8) {
+                { #drop_in_place::[T](this._slots + i); }
+            }
+            i = i +% (1 as usize);
+        }
+        { memset(this._occupied, 0 as i32, this._cap); }
+        this._len = 0 as usize;
+        this._tombstones = 0 as usize;
+        return;
+    }
+
+    // Every element of `this` is in `of`.
+    fn is_subset(this, of: HashSet[T]) -> bool {
+        var i: usize = 0 as usize;
+        while i < this._cap {
+            let occ: u8 = { this._occupied[i] };
+            if occ == (1 as u8) {
+                let e: T = { this._slots[i] };
+                if of.contains(e) == false {
+                    return false;
+                }
+            }
+            i = i +% (1 as usize);
+        }
+        return true;
+    }
+
+    // Every element of `of` is in `this`.
+    fn is_superset(this, of: HashSet[T]) -> bool {
+        return of.is_subset(this);
+    }
+
+    // `this` and `from` share no element.
+    fn is_disjoint(this, from: HashSet[T]) -> bool {
+        var i: usize = 0 as usize;
+        while i < this._cap {
+            let occ: u8 = { this._occupied[i] };
+            if occ == (1 as u8) {
+                let e: T = { this._slots[i] };
+                if from.contains(e) {
+                    return false;
+                }
+            }
+            i = i +% (1 as usize);
+        }
+        return true;
+    }
+
+    // A new set with every element of `this` and `other`. Best-effort on
+    // allocation: an insert that cannot grow drops that element (its ignorable
+    // `Status` is discarded), never leaking or aborting.
+    fn union_with(this, other: HashSet[T]) -> HashSet[T] {
+        var out: HashSet[T] = with_capacity::[T](this._len +% other._len);
+        var i: usize = 0 as usize;
+        while i < this._cap {
+            if { this._occupied[i] } == (1 as u8) {
+                let _st: status::Status = out.insert({ this._slots[i] });
+            }
+            i = i +% (1 as usize);
+        }
+        var j: usize = 0 as usize;
+        while j < other._cap {
+            if { other._occupied[j] } == (1 as u8) {
+                let _st: status::Status = out.insert({ other._slots[j] });
+            }
+            j = j +% (1 as usize);
+        }
+        return out;
+    }
+
+    // A new set of the elements in both `this` and `other`.
+    fn intersection(this, other: HashSet[T]) -> HashSet[T] {
+        var out: HashSet[T] = new::[T]();
+        var i: usize = 0 as usize;
+        while i < this._cap {
+            if { this._occupied[i] } == (1 as u8) {
+                let e: T = { this._slots[i] };
+                if other.contains(e) {
+                    let _st: status::Status = out.insert(e);
+                }
+            }
+            i = i +% (1 as usize);
+        }
+        return out;
+    }
+
+    // A new set of the elements in `this` but not `other`.
+    fn difference(this, other: HashSet[T]) -> HashSet[T] {
+        var out: HashSet[T] = new::[T]();
+        var i: usize = 0 as usize;
+        while i < this._cap {
+            if { this._occupied[i] } == (1 as u8) {
+                let e: T = { this._slots[i] };
+                if other.contains(e) == false {
+                    let _st: status::Status = out.insert(e);
+                }
+            }
+            i = i +% (1 as usize);
+        }
+        return out;
+    }
+
+    // Iteration surface (parity with StringMap): walk `0 .. slot_capacity()` and
+    // take the `Some` elements. Slots are visited in table order, not insertion
+    // order — a set is unordered.
+    fn slot_capacity(this) -> usize {
+        return this._cap;
+    }
+
+    fn element_at_slot(this, slot: usize) -> option::Option[T] {
+        if slot >= this._cap {
+            return option::Option[T]::None;
+        }
+        if { this._occupied[slot] } == (1 as u8) {
+            let e: T = { this._slots[slot] };
+            return option::Option[T]::Some(e);
+        }
+        return option::Option[T]::None;
+    }
+
+    // Grow (or rehash at the same size) to `new_cap`, re-inserting only the live
+    // entries — open-addressing positions depend on cap, and this is where
+    // tombstones are shed. Internal helper.
+    fn grow_to(ref this, new_cap: usize) -> status::Status {
+        let old_slots: *T = this._slots;
+        let old_occ: *u8 = this._occupied;
+        let old_cap: usize = this._cap;
+
+        let telem: usize = #size_of::[T]();
+        if telem != (0 as usize) && new_cap > (max_usize() / telem) {
+            return status::Status::OutOfMemory;
+        }
+        let slots_bytes: usize = new_cap *% telem;
+        let occ_bytes: usize = new_cap;
+
+        let ns_raw: *u8 = { malloc(slots_bytes) };
+        if ns_raw.is_null() {
+            return status::Status::OutOfMemory;
+        }
+        let no_raw: *u8 = { malloc(occ_bytes) };
+        if no_raw.is_null() {
+            { free(ns_raw); }
+            return status::Status::OutOfMemory;
+        }
+        { memset(no_raw, 0 as i32, occ_bytes); }
+        this._slots = { ns_raw as *T };
+        this._occupied = { no_raw as *u8 };
+        this._cap = new_cap;
+        this._len = 0 as usize;
+        this._tombstones = 0 as usize;
+
+        var j: usize = 0 as usize;
+        while j < old_cap {
+            let occ_j: u8 = { old_occ[j] };
+            if occ_j == (1 as u8) {
+                let e: T = { old_slots[j] };
+                let h: u64 = e.hash();
+                let start: usize = (h as usize) % this._cap;
+                var slot: usize = start;
+                loop {
+                    let cur: u8 = { this._occupied[slot] };
+                    if cur == (0 as u8) {
+                        { this._slots[slot] = e; }
+                        { this._occupied[slot] = 1 as u8; }
+                        this._len = this._len +% (1 as usize);
+                        break;
+                    }
+                    slot = (slot +% (1 as usize)) % this._cap;
+                    if slot == start { break; }
+                }
+            }
+            j = j +% (1 as usize);
+        }
+        if old_cap > (0 as usize) {
+            { free(old_slots as *u8); }
+            { free(old_occ); }
+        }
+        return status::Status::Ok;
+    }
+
+    fn drop(ref this) {
+        if this._cap == (0 as usize) { return; }
+        var i: usize = 0 as usize;
+        while i < this._cap {
+            let occ: u8 = { this._occupied[i] };
+            if occ == (1 as u8) {
+                { #drop_in_place::[T](this._slots + i); }
+            }
+            i = i +% (1 as usize);
+        }
+        { free(this._slots as *u8); }
+        { free(this._occupied); }
+        return;
+    }
+}
+
+// ───────────────────────────── tests ─────────────────────────────
+
+#[test]
+fn hashset_new_is_empty() {
+    let s: HashSet[i32] = new::[i32]();
+    assert s.count() == (0 as usize);
+    assert s.is_empty();
+}
+
+#[test]
+fn hashset_insert_and_contains() {
+    var s: HashSet[i32] = new::[i32]();
+    assert s.insert(1) == status::Status::Ok;
+    assert s.insert(2) == status::Status::Ok;
+    assert s.count() == (2 as usize);
+    assert s.contains(1);
+    assert s.contains(2);
+    assert s.contains(3) == false;
+}
+
+#[test]
+fn hashset_insert_duplicate_is_noop() {
+    var s: HashSet[i32] = new::[i32]();
+    s.insert(7);
+    s.insert(7);
+    s.insert(7);
+    assert s.count() == (1 as usize);
+    assert s.contains(7);
+}
+
+#[test]
+fn hashset_remove_present_and_missing() {
+    var s: HashSet[i32] = new::[i32]();
+    s.insert(10);
+    s.insert(20);
+    assert s.remove(10);            // present -> true
+    assert s.contains(10) == false;
+    assert s.count() == (1 as usize);
+    assert s.remove(999) == false;  // missing -> false
+    assert s.remove(10) == false;   // already removed -> false
+}
+
+#[test]
+fn hashset_remove_then_reinsert_reuses_tombstone() {
+    var s: HashSet[i32] = new::[i32]();
+    s.insert(1);
+    s.insert(2);
+    s.insert(3);
+    assert s.remove(2);
+    assert s.contains(2) == false;
+    // Re-insert must land cleanly (reusing the tombstone) and still see 1 and 3.
+    assert s.insert(2) == status::Status::Ok;
+    assert s.contains(2);
+    assert s.contains(1);
+    assert s.contains(3);
+    assert s.count() == (3 as usize);
+}
+
+#[test]
+fn hashset_grows_past_load_factor() {
+    var s: HashSet[i32] = new::[i32]();
+    var i: i32 = 0;
+    while i < 200 {
+        s.insert(i);
+        i = i +% 1;
+    }
+    assert s.count() == (200 as usize);
+    // Every inserted element still probes correctly after several grows.
+    var k: i32 = 0;
+    while k < 200 {
+        assert s.contains(k);
+        k = k +% 1;
+    }
+    assert s.contains(200) == false;
+}
+
+#[test]
+fn hashset_delete_heavy_stays_correct() {
+    // Insert 100, remove the evens, verify — exercises tombstone accumulation and
+    // the same-capacity rehash that sheds them.
+    var s: HashSet[i32] = new::[i32]();
+    var i: i32 = 0;
+    while i < 100 {
+        s.insert(i);
+        i = i +% 1;
+    }
+    var j: i32 = 0;
+    while j < 100 {
+        s.remove(j);
+        j = j +% (2 as i32);
+    }
+    assert s.count() == (50 as usize);
+    var k: i32 = 0;
+    while k < 100 {
+        let odd: bool = (k % (2 as i32)) == (1 as i32);
+        assert s.contains(k) == odd;
+        k = k +% 1;
+    }
+}
+
+#[test]
+fn hashset_str_elements() {
+    var s: HashSet[str] = new::[str]();
+    s.insert("apple");
+    s.insert("banana");
+    s.insert("apple");
+    assert s.count() == (2 as usize);
+    assert s.contains("banana");
+    assert s.contains("cherry") == false;
+}
+
+#[test]
+fn hashset_clear_keeps_capacity() {
+    var s: HashSet[i32] = new::[i32]();
+    s.insert(1);
+    s.insert(2);
+    let cap: usize = s.capacity();
+    s.clear();
+    assert s.count() == (0 as usize);
+    assert s.is_empty();
+    assert s.contains(1) == false;
+    assert s.capacity() == cap;
+    // Still usable after clear.
+    s.insert(9);
+    assert s.contains(9);
+}
+
+#[test]
+fn hashset_subset_superset_disjoint() {
+    var a: HashSet[i32] = new::[i32]();
+    a.insert(1);
+    a.insert(2);
+    var b: HashSet[i32] = new::[i32]();
+    b.insert(1);
+    b.insert(2);
+    b.insert(3);
+    assert a.is_subset(b);
+    assert a.is_subset(a);
+    assert b.is_subset(a) == false;
+    assert b.is_superset(a);
+    var c: HashSet[i32] = new::[i32]();
+    c.insert(9);
+    c.insert(10);
+    assert a.is_disjoint(c);
+    assert a.is_disjoint(b) == false;
+}
+
+#[test]
+fn hashset_union_intersection_difference() {
+    var a: HashSet[i32] = new::[i32]();
+    a.insert(1);
+    a.insert(2);
+    a.insert(3);
+    var b: HashSet[i32] = new::[i32]();
+    b.insert(2);
+    b.insert(3);
+    b.insert(4);
+
+    let u: HashSet[i32] = a.union_with(b);
+    assert u.count() == (4 as usize);
+    assert u.contains(1);
+    assert u.contains(4);
+
+    let inter: HashSet[i32] = a.intersection(b);
+    assert inter.count() == (2 as usize);
+    assert inter.contains(2);
+    assert inter.contains(3);
+    assert inter.contains(1) == false;
+
+    let diff: HashSet[i32] = a.difference(b);
+    assert diff.count() == (1 as usize);
+    assert diff.contains(1);
+    assert diff.contains(2) == false;
+}
+
+#[test]
+fn hashset_slot_iteration_visits_every_element() {
+    var s: HashSet[i32] = new::[i32]();
+    s.insert(11);
+    s.insert(22);
+    s.insert(33);
+    var seen: i32 = 0;
+    var found: usize = 0 as usize;
+    var slot: usize = 0 as usize;
+    let cap: usize = s.slot_capacity();
+    while slot < cap {
+        match s.element_at_slot(slot) {
+            option::Option[i32]::Some(e) => {
+                seen = seen +% e;
+                found = found +% (1 as usize);
+            }
+            option::Option[i32]::None => {}
+        }
+        slot = slot +% (1 as usize);
+    }
+    assert found == (3 as usize);
+    assert seen == (66 as i32);
+}
+
+#[test]
+fn hashset_with_capacity_preallocates() {
+    var s: HashSet[i32] = with_capacity::[i32](100 as usize);
+    assert s.count() == (0 as usize);
+    assert s.capacity() >= (100 as usize);
+    s.insert(5);
+    assert s.contains(5);
+}

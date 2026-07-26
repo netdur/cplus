@@ -1,0 +1,529 @@
+// stdlib/rc.cplus — single-threaded reference-counted shared ownership.
+//
+// `Rc[T]` is the single-threaded sibling of `Arc[T]`: same shape, same
+// API, **non-atomic** refcount. Use `Rc` when sharing within one OS
+// thread (saves the atomic-op overhead); use `Arc` when sharing across
+// threads.
+//
+// `Rc[T]` is `!Send` and `!Sync` (v0.0.12 realtime Phase 6): passing one to
+// a `Send`/`Sync`-bounded generic — e.g. `thread::spawn_with::[Rc[T], ...]` —
+// is rejected at sema time with E0502. Sharing a non-atomic refcount across
+// threads would race; use `Arc[T]` (which is `Send + Sync`) for that.
+//
+// Uniqueness: `is_unique()` reports whether this handle is the only
+// strong reference; `try_unwrap()` consumes the handle and recovers the
+// inner T when it is. That is the safe extraction path for non-Copy T
+// (shared `value()` stays `T: Copy`-gated). No `make_mut` — clone-on-write
+// needs a `T: Clone` story C+ does not have; use `try_unwrap` + `new`.
+
+import "./option" as option;
+import "./status" as status;
+import "./text" as text;
+
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+
+struct Rc[T] {
+    _ctrl: *u8,
+}
+
+// A weak (non-owning) handle to an `Rc`'s value: it keeps the control block
+// addressable but does NOT keep the value alive, so it breaks the reference
+// cycles a graph of `Rc`s would otherwise leak (parent<->child, observer<->
+// subject). `Rc::downgrade` makes one; `Weak::upgrade` tries to get an `Rc`
+// back, yielding `None` once the last strong handle is gone.
+struct Weak[T] {
+    _ctrl: *u8,
+}
+
+// Control block: `[strong: u64 @0][weak: u64 @8][value: T @16]` (assumes
+// align_of[T] <= 8). `strong` counts `Rc` handles; `weak` counts `Weak` handles
+// PLUS one implicit weak collectively owned by all the strong handles. The value
+// is dropped when `strong` hits 0; the block is freed exactly once — by whoever
+// drops `weak` to 0 — so a live `Weak` safely outlives the value. An `Rc` is
+// always a live heap slot, so on allocation failure `new` returns `None` (and
+// `v` drops as the function returns) rather than trapping.
+fn new[T](take v: T) -> option::Option[Rc[T]] {
+    let header: usize = 16 as usize;
+    let value_size: usize = #size_of::[T]();
+    let total: usize = header +% value_size;
+    let raw: *u8 = { malloc(total) };
+    if raw.is_null() {
+        return option::Option[Rc[T]]::None;
+    }
+    let strong: *u64 = { raw as *u64 };
+    { *strong = 1 as u64; }
+    let weak: *u64 = { (raw + (8 as usize)) as *u64 };
+    { *weak = 1 as u64; }
+    let value_ptr: *T = { (raw + header) as *T };
+    { *value_ptr = v; }
+    return option::Option[Rc[T]]::Some(Rc[T] { _ctrl: raw });
+}
+
+impl Rc[T] {
+    // Non-atomic increment; returns a new Rc sharing the storage.
+    fn clone(this) -> Rc[T] {
+        let refct: *u64 = { this._ctrl as *u64 };
+        let cur: u64 = { *refct };
+        { *refct = cur +% (1 as u64); }
+        return Rc[T] { _ctrl: this._ctrl };
+    }
+
+    // Make a non-owning `Weak` handle to this value (bumps the weak count). The
+    // `Weak` can outlive every `Rc`; `upgrade` reports whether the value is still
+    // there. Use it for back-pointers so a graph of `Rc`s doesn't leak a cycle.
+    fn downgrade(this) -> Weak[T] {
+        let weak: *u64 = { (this._ctrl + (8 as usize)) as *u64 };
+        { *weak = { *weak } +% (1 as u64); }
+        return Weak[T] { _ctrl: this._ctrl };
+    }
+
+}
+
+// `get` bitwise-copies the shared value out, sound only for `Copy` T: an Rc is
+// shared ownership, so a non-Copy T can never be safely extracted (it would
+// double-free against the storage and other handles). The `T: Copy` bound makes
+// a non-Copy `get` a compile error (E0502); it lives in its own impl block so
+// `Rc[NonCopy]` still works through `clone` / `strong_count` / Drop.
+impl Rc[T: Copy] {
+    // Read inner T (bitwise copy).
+    fn value(this) -> T {
+        let header: usize = 16 as usize;
+        let value_ptr: *T = { (this._ctrl + header) as *T };
+        return { *value_ptr };
+    }
+}
+
+impl Rc[T] {
+
+    // Current strong-reference count (single-threaded, exact).
+    fn strong_count(this) -> u64 {
+        let refct: *u64 = { this._ctrl as *u64 };
+        return { *refct };
+    }
+
+    // Number of live `Weak` handles (excludes the implicit weak that the strong
+    // handles share while any strong remains).
+    fn weak_count(this) -> u64 {
+        let wp: *u64 = { (this._ctrl + (8 as usize)) as *u64 };
+        let sp: *u64 = { this._ctrl as *u64 };
+        if { *sp } > (0 as u64) {
+            return { *wp } -% (1 as u64);
+        }
+        return { *wp };
+    }
+
+    // True when this handle is the only strong reference (count == 1).
+    // Single-threaded, exact.
+    fn is_unique(this) -> bool {
+        let refct: *u64 = { this._ctrl as *u64 };
+        let cur: u64 = { *refct };
+        return cur == (1 as u64);
+    }
+
+    // Scoped exclusive access: when this handle is the only strong
+    // reference, call `f` with the shared value through a `ref` slot (the
+    // callback mutates it in place) and return `Ok`. When other handles
+    // exist, return `Shared` without touching the value. The gate is what
+    // makes this sound: the callback is a plain fn-pointer — no captures —
+    // so the only route to a second handle is through the payload itself,
+    // and a payload containing a handle to this same block makes the count
+    // at least 2, which this gate refuses.
+    fn with_mut(ref this, f: fn(ref T)) -> status::Status {
+        let strong: *u64 = { this._ctrl as *u64 };
+        if { *strong } != (1 as u64) {
+            return status::Status::Shared;
+        }
+        // A live `Weak` could be upgraded to a second strong handle, so exclusive
+        // mutation also requires that none exist: raw weak == 1 (implicit only).
+        let weak: *u64 = { (this._ctrl + (8 as usize)) as *u64 };
+        if { *weak } != (1 as u64) {
+            return status::Status::Shared;
+        }
+        let value_ptr: *T = { (this._ctrl + (16 as usize)) as *T };
+        { f(*value_ptr); }
+        return status::Status::Ok;
+    }
+
+    // Consume the handle; recover the inner T when this is the only
+    // strong reference. On success the block is freed here and the
+    // handle is disarmed (null `_ctrl`) so the function-exit Drop skips
+    // both inner Drop and free — the caller now owns the T. When other
+    // handles exist, returns `None`; the function-exit Drop then
+    // decrements the count like any normal handle drop.
+    fn try_unwrap(take this) -> option::Option[T] {
+        let strong: *u64 = { this._ctrl as *u64 };
+        if { *strong } != (1 as u64) {
+            return option::Option[T]::None;
+        }
+        // Sole strong owner: retire this strong handle and move the value out.
+        { *strong = 0 as u64; }
+        let value_ptr: *T = { (this._ctrl + (16 as usize)) as *T };
+        let v: T = { *value_ptr };
+        // Release the implicit weak; free the block only if no `Weak` remains.
+        let weak: *u64 = { (this._ctrl + (8 as usize)) as *u64 };
+        { *weak = { *weak } -% (1 as u64); }
+        if { *weak } == (0 as u64) {
+            { free(this._ctrl); }
+        }
+        { this._ctrl = 0 as *u8; }
+        return option::Option[T]::Some(v);
+    }
+
+    // Destructor: non-atomic decrement; free the block on the last ref.
+    // Short-circuits on null `_ctrl` — the `try_unwrap` success path
+    // nulls the handle after moving the value out, so this Drop must
+    // not touch the already-freed block.
+    fn drop(ref this) {
+        let null_p: *u8 = { 0 as *u8 };
+        if this._ctrl == null_p { return; }
+        let strong: *u64 = { this._ctrl as *u64 };
+        let s_new: u64 = { *strong } -% (1 as u64);
+        { *strong = s_new; }
+        if s_new == (0 as u64) {
+            // Last strong handle: invoke inner-T Drop, then release the implicit
+            // weak. The block is freed here only if no `Weak` handles remain;
+            // otherwise the final `Weak::drop` frees it.
+            let value_ptr: *T = { (this._ctrl + (16 as usize)) as *T };
+            { #drop_in_place::[T](value_ptr); }
+            let weak: *u64 = { (this._ctrl + (8 as usize)) as *u64 };
+            let w_new: u64 = { *weak } -% (1 as u64);
+            { *weak = w_new; }
+            if w_new == (0 as u64) {
+                { free(this._ctrl); }
+            }
+        }
+        return;
+    }
+}
+
+impl Weak[T] {
+    // Another `Weak` to the same block (bumps the weak count).
+    fn clone(this) -> Weak[T] {
+        let weak: *u64 = { (this._ctrl + (8 as usize)) as *u64 };
+        { *weak = { *weak } +% (1 as u64); }
+        return Weak[T] { _ctrl: this._ctrl };
+    }
+
+    // Strong count seen through this weak handle: 0 once the value is gone.
+    fn strong_count(this) -> u64 {
+        let sp: *u64 = { this._ctrl as *u64 };
+        return { *sp };
+    }
+
+    // Live `Weak` handles (excludes the implicit weak while any strong remains).
+    fn weak_count(this) -> u64 {
+        let wp: *u64 = { (this._ctrl + (8 as usize)) as *u64 };
+        let sp: *u64 = { this._ctrl as *u64 };
+        if { *sp } > (0 as u64) {
+            return { *wp } -% (1 as u64);
+        }
+        return { *wp };
+    }
+
+    // Try to recover an `Rc`: `Some` while at least one strong handle is alive
+    // (bumps strong and hands back a full owner), `None` once the value has been
+    // dropped. Single-threaded and exact.
+    fn upgrade(this) -> option::Option[Rc[T]] {
+        let strong: *u64 = { this._ctrl as *u64 };
+        if { *strong } == (0 as u64) {
+            return option::Option[Rc[T]]::None;
+        }
+        { *strong = { *strong } +% (1 as u64); }
+        return option::Option[Rc[T]]::Some(Rc[T] { _ctrl: this._ctrl });
+    }
+
+    // Destructor: drop the weak count; free the block once it reaches 0 — which
+    // only happens after every strong handle is also gone (the last strong drop
+    // released the implicit weak this scheme keeps).
+    fn drop(ref this) {
+        let null_p: *u8 = { 0 as *u8 };
+        if this._ctrl == null_p { return; }
+        let weak: *u64 = { (this._ctrl + (8 as usize)) as *u64 };
+        let w_new: u64 = { *weak } -% (1 as u64);
+        { *weak = w_new; }
+        if w_new == (0 as u64) {
+            { free(this._ctrl); }
+        }
+        return;
+    }
+}
+
+// ───────────────────────────── tests ─────────────────────────────
+
+#[test]
+fn rc_new_and_get() {
+    match new::[i32](5) {
+        option::Option[Rc[i32]]::Some(r) => { assert r.value() == 5; }
+        option::Option[Rc[i32]]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn rc_clone_bumps_strong_count() {
+    match new::[i32](5) {
+        option::Option[Rc[i32]]::Some(r) => {
+            assert r.strong_count() == (1 as u64);
+            let r2: Rc[i32] = r.clone();
+            assert r.strong_count() == (2 as u64);
+            assert r2.value() == 5;
+        }
+        option::Option[Rc[i32]]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn rc_is_unique_tracks_clones() {
+    match new::[i32](7) {
+        option::Option[Rc[i32]]::Some(r) => {
+            assert r.is_unique();
+            let r2: Rc[i32] = r.clone();
+            assert !r.is_unique();
+            assert !r2.is_unique();
+        }
+        option::Option[Rc[i32]]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn rc_try_unwrap_sole_handle_recovers_value() {
+    match new::[i32](41) {
+        option::Option[Rc[i32]]::Some(r) => {
+            match r.try_unwrap() {
+                option::Option[i32]::Some(v) => { assert v == 41; }
+                option::Option[i32]::None => { assert false; }
+            }
+        }
+        option::Option[Rc[i32]]::None => { assert false; }
+    }
+    return;
+}
+
+// Shared handle refuses to unwrap; the refusal decrements like a normal
+// drop, storage stays intact for the survivor, which can then unwrap.
+#[test]
+fn rc_try_unwrap_shared_refuses_then_survivor_unwraps() {
+    match new::[i32](13) {
+        option::Option[Rc[i32]]::Some(r) => {
+            let r2: Rc[i32] = r.clone();
+            assert r2.strong_count() == (2 as u64);
+            match r.try_unwrap() {
+                option::Option[i32]::Some(_v) => { assert false; }
+                option::Option[i32]::None => { }
+            }
+            assert r2.strong_count() == (1 as u64);
+            assert r2.value() == 13;
+            match r2.try_unwrap() {
+                option::Option[i32]::Some(v) => { assert v == 13; }
+                option::Option[i32]::None => { assert false; }
+            }
+        }
+        option::Option[Rc[i32]]::None => { assert false; }
+    }
+    return;
+}
+
+// Callbacks for the `with_mut` tests — plain fns; a fn-pointer callback
+// has no captures, so nothing but its argument is reachable inside it.
+fn bump(ref n: i32) { n = n +% 1; return; }
+fn append_world(ref t: text::Text) {
+    let _st: status::Status = t.append(" world");
+    return;
+}
+
+#[test]
+fn rc_with_mut_unique_mutates_in_place() {
+    match new::[i32](41) {
+        option::Option[Rc[i32]]::Some(r) => {
+            var rr: Rc[i32] = r;
+            assert rr.with_mut(bump).is_ok();
+            assert rr.value() == 42;
+        }
+        option::Option[Rc[i32]]::None => { assert false; }
+    }
+    return;
+}
+
+// A shared handle refuses scoped mutation (`Shared`), leaving the value
+// untouched; once the extra handle is the only survivor it mutates fine.
+#[test]
+fn rc_with_mut_shared_refuses() {
+    match new::[i32](7) {
+        option::Option[Rc[i32]]::Some(r) => {
+            var rr: Rc[i32] = r;
+            let r2: Rc[i32] = rr.clone();
+            let st: status::Status = rr.with_mut(bump);
+            assert st.is_err();
+            assert st == status::Status::Shared;
+            assert r2.value() == 7;
+        }
+        option::Option[Rc[i32]]::None => { assert false; }
+    }
+    return;
+}
+
+// The flagship shape: in-place mutation of a non-Copy payload through a
+// shared handle — no copy out, no whole-value replace — then extraction.
+#[test]
+fn rc_with_mut_non_copy_payload_in_place() {
+    match new::[text::Text](text::from_str("hello")) {
+        option::Option[Rc[text::Text]]::Some(r) => {
+            var rr: Rc[text::Text] = r;
+            assert rr.with_mut(append_world).is_ok();
+            match rr.try_unwrap() {
+                option::Option[text::Text]::Some(t) => {
+                    assert t.equals("hello world");
+                }
+                option::Option[text::Text]::None => { assert false; }
+            }
+        }
+        option::Option[Rc[text::Text]]::None => { assert false; }
+    }
+    return;
+}
+
+// Non-Copy Drop payload: `value()` is unavailable (T: Copy gate), so
+// `try_unwrap` is the extraction path. The recovered Text is owned by
+// the caller and drops exactly once at scope exit.
+#[test]
+fn rc_try_unwrap_non_copy_payload() {
+    match new::[text::Text](text::from_str("hello rc")) {
+        option::Option[Rc[text::Text]]::Some(r) => {
+            match r.try_unwrap() {
+                option::Option[text::Text]::Some(t) => {
+                    assert t.equals("hello rc");
+                }
+                option::Option[text::Text]::None => { assert false; }
+            }
+        }
+        option::Option[Rc[text::Text]]::None => { assert false; }
+    }
+    return;
+}
+
+// ─────────────────────────── Weak tests ───────────────────────────
+
+// Consume an Rc and return a Weak to its (now value-dropped) block: the owned
+// `r` drops on return, so the returned Weak observes strong == 0.
+fn downgrade_and_drop(take r: Rc[i32]) -> Weak[i32] {
+    let w: Weak[i32] = r.downgrade();
+    return w;
+}
+
+// A Drop-observing payload: increments a global counter each time it is dropped,
+// so a test can prove the value drops exactly once (and never again when a
+// lingering Weak later frees the block).
+static RC_WEAK_DROPS: i64 = 0;
+struct RcTracked { _tag: i32 }
+impl RcTracked {
+    fn drop(ref this) { RC_WEAK_DROPS = RC_WEAK_DROPS +% (1 as i64); return; }
+}
+fn downgrade_and_drop_tracked(take r: Rc[RcTracked]) -> Weak[RcTracked] {
+    let w: Weak[RcTracked] = r.downgrade();
+    return w;
+}
+
+#[test]
+fn rc_downgrade_upgrade_roundtrip_while_alive() {
+    match new::[i32](5) {
+        option::Option[Rc[i32]]::Some(r) => {
+            let w: Weak[i32] = r.downgrade();
+            assert r.weak_count() == (1 as u64);
+            assert w.strong_count() == (1 as u64);
+            match w.upgrade() {
+                option::Option[Rc[i32]]::Some(r2) => {
+                    assert r2.value() == 5;
+                    assert r.strong_count() == (2 as u64);   // upgrade bumped strong
+                }
+                option::Option[Rc[i32]]::None => { assert false; }
+            }
+            assert r.strong_count() == (1 as u64);           // r2 dropped, back to 1
+        }
+        option::Option[Rc[i32]]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn rc_weak_count_excludes_implicit_and_tracks_clones() {
+    match new::[i32](1) {
+        option::Option[Rc[i32]]::Some(r) => {
+            assert r.weak_count() == (0 as u64);             // no user weaks yet
+            let w1: Weak[i32] = r.downgrade();
+            assert r.weak_count() == (1 as u64);
+            let w2: Weak[i32] = w1.clone();
+            assert r.weak_count() == (2 as u64);
+            assert w2.strong_count() == (1 as u64);
+        }
+        option::Option[Rc[i32]]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn rc_upgrade_none_after_last_strong_drops() {
+    match new::[i32](9) {
+        option::Option[Rc[i32]]::Some(r) => {
+            let w: Weak[i32] = downgrade_and_drop(r);        // r dropped inside helper
+            assert w.strong_count() == (0 as u64);           // value gone
+            match w.upgrade() {
+                option::Option[Rc[i32]]::Some(_r2) => { assert false; }
+                option::Option[Rc[i32]]::None => { }
+            }
+            // w drops here -> weak 0 -> block freed (no double free / crash).
+        }
+        option::Option[Rc[i32]]::None => { assert false; }
+    }
+    return;
+}
+
+// The soundness invariant: when the last strong drops but a Weak still points at
+// the block, the value is dropped EXACTLY ONCE — and the later block-free (when
+// the Weak drops) must not drop it again.
+#[test]
+fn rc_value_dropped_once_when_strong_gone_weak_lingers() {
+    RC_WEAK_DROPS = 0 as i64;
+    let payload: RcTracked = RcTracked { _tag: 7 };
+    match new::[RcTracked](payload) {
+        option::Option[Rc[RcTracked]]::Some(r) => {
+            let w: Weak[RcTracked] = downgrade_and_drop_tracked(r);
+            assert RC_WEAK_DROPS == (1 as i64);              // dropped once when strong→0
+            match w.upgrade() {
+                option::Option[Rc[RcTracked]]::Some(_r2) => { assert false; }
+                option::Option[Rc[RcTracked]]::None => { }
+            }
+            // w drops here -> block freed, value NOT dropped a second time.
+        }
+        option::Option[Rc[RcTracked]]::None => { assert false; }
+    }
+    assert RC_WEAK_DROPS == (1 as i64);
+    return;
+}
+
+// A live Weak makes exclusive mutation refuse (it could be upgraded to a second
+// strong); dropping it restores unique access.
+#[test]
+fn rc_with_mut_refuses_while_a_weak_exists() {
+    match new::[i32](10) {
+        option::Option[Rc[i32]]::Some(r) => {
+            var rr: Rc[i32] = r;
+            assert rr.strong_count() == (1 as u64);
+            let held: Weak[i32] = held_weak_then_confirm_refusal(rr);
+            // `held_weak_then_confirm_refusal` asserts the refusal internally.
+            assert held.strong_count() == (0 as u64);
+        }
+        option::Option[Rc[i32]]::None => { assert false; }
+    }
+    return;
+}
+fn held_weak_then_confirm_refusal(take rr: Rc[i32]) -> Weak[i32] {
+    var m: Rc[i32] = rr;
+    let w: Weak[i32] = m.downgrade();
+    // strong == 1 but a Weak exists -> with_mut refuses.
+    assert m.with_mut(bump).is_err();
+    assert m.value() == 10;                                  // untouched
+    return w;                                                // m drops -> strong 0
+}

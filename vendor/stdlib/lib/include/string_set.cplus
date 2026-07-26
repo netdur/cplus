@@ -1,0 +1,167 @@
+// stdlib/string_set.cplus — `StringSet`: a `Text`-keyed set.
+//
+// The owning counterpart to `HashSet[T]` for the one element type `HashSet`
+// cannot take: `Text`. `HashSet` requires `T: Copy` because it bitwise-copies
+// elements; `Text` owns a heap buffer and has `drop`, so it is not `Copy`.
+// `StringSet` fixes the element type to `Text` and *owns* every element —
+// dropping each live element when the set drops or an element is removed — so
+// it is exactly to `HashSet` what `StringMap` is to `HashMap`.
+//
+// This is the target for bridging Foundation's `NSSet<NSString*>`: a
+// string-valued set maps to a `StringSet` of the bridged `Text` elements.
+//
+// **Storage** (parallel arrays, open addressing with linear probing and
+// tombstone deletion, doubling at a 0.75 load factor):
+//
+//   _slots:      *Text  — cap slots; an owned Text per live slot
+//   _occupied:   *u8    — cap slots; 0 = empty, 1 = live, 2 = tombstone
+//   _cap, _len:  usize
+//   _tombstones: usize  — live+tombstone drives the grow/rehash threshold
+//
+// **Hashing / equality.** Elements hash via `Text::hash` (FNV-1a). A stored
+// `Text` and an equal `str` lookup agree because `text::hash_str` shares that
+// hash core; stored elements are compared in place through a `*Text`
+// (`(*sp).equals(key)` for a `str`, `(*sp).eq(other)` for a `Text`) — a borrow,
+// never a move, so a probe never disturbs the element it walks past.
+//
+// **API.**
+//
+//   string_set::new() -> StringSet
+//   string_set::with_capacity(capacity: usize) -> StringSet
+//   StringSet::count(this) -> usize
+//   StringSet::capacity(this) -> usize
+//   StringSet::is_empty(this) -> bool
+//   StringSet::insert(ref this, take value: Text) -> status::Status
+//   StringSet::contains(this, value: str) -> bool
+//   StringSet::remove(ref this, value: str) -> bool
+//   StringSet::clear(ref this)
+//   StringSet::is_subset(this, of: StringSet) -> bool
+//   StringSet::is_superset(this, of: StringSet) -> bool
+//   StringSet::is_disjoint(this, from: StringSet) -> bool
+//   StringSet::union_with(this, other: StringSet) -> StringSet
+//   StringSet::intersection(this, other: StringSet) -> StringSet
+//   StringSet::difference(this, other: StringSet) -> StringSet
+//   StringSet::slot_capacity(this) -> usize
+//   StringSet::element_ptr_at_slot(this, slot: usize) -> option::Option[*Text]
+
+import "./text" as text;
+import "./option" as option;
+import "./status" as status;
+
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+extern fn memcpy(dest: *u8, src: *u8, n: usize) -> *u8;
+extern fn memset(b: *u8, c: i32, len: usize) -> *u8;
+
+struct StringSet {
+    _slots: *text::Text,
+    _occupied: *u8,
+    _cap: usize,
+    _len: usize,
+    _tombstones: usize,
+}
+
+fn max_usize() -> usize ;
+
+// Empty set; first insert allocates.
+fn new() -> StringSet ;
+
+// Pre-sized empty set: reserves capacity for `capacity` elements without
+// regrowing (accounting for the 0.75 load factor). On allocation failure the
+// set is returned empty (first insert retries).
+fn with_capacity(capacity: usize) -> StringSet ;
+
+impl StringSet {
+    fn count(this) -> usize ;
+
+    fn capacity(this) -> usize ;
+
+    fn is_empty(this) -> bool ;
+
+    // Insert `value`; the set takes ownership. A no-op (returns Ok) if an equal
+    // element is already present — the incoming duplicate `value` is dropped as
+    // the function returns, so nothing leaks. Returns OutOfMemory (value dropped,
+    // set unchanged) if a needed grow fails.
+    fn insert(ref this, take value: text::Text) -> status::Status ;
+
+    fn contains(this, value: str) -> bool ;
+
+    // Remove `value`. Returns whether it was present, dropping the owned Text.
+    // The slot becomes a tombstone so colliding probe runs stay intact.
+    fn remove(ref this, value: str) -> bool ;
+
+    // Drop every element and reset to empty, keeping the allocated capacity.
+    fn clear(ref this) ;
+
+    // Every element of `this` is in `of`.
+    fn is_subset(this, of: StringSet) -> bool ;
+
+    // Every element of `of` is in `this`.
+    fn is_superset(this, of: StringSet) -> bool ;
+
+    // `this` and `from` share no element.
+    fn is_disjoint(this, from: StringSet) -> bool ;
+
+    // A new set with every element of `this` and `other`. Elements are cloned
+    // (the source sets keep ownership). Best-effort on allocation: an insert
+    // that cannot grow drops that clone (its ignorable Status is discarded).
+    fn union_with(this, other: StringSet) -> StringSet ;
+
+    // A new set of the elements in both `this` and `other` (cloned).
+    fn intersection(this, other: StringSet) -> StringSet ;
+
+    // A new set of the elements in `this` but not `other` (cloned).
+    fn difference(this, other: StringSet) -> StringSet ;
+
+    // Iteration surface (parity with StringMap): walk `0 .. slot_capacity()` and
+    // read the `Some` element pointers. Order is table order, not insertion order.
+    fn slot_capacity(this) -> usize ;
+
+    fn element_ptr_at_slot(this, slot: usize) -> option::Option[*text::Text] ;
+
+    // Grow (or rehash at the same size) to `new_cap`, relocating only the live
+    // elements. Positions depend on `cap`, so each element is re-probed; the
+    // bytes are moved with memcpy (the old array is freed without per-entry
+    // drops, so no double free), which also sheds tombstones. Internal helper.
+    fn grow_to(ref this, new_cap: usize) -> status::Status ;
+
+    fn drop(ref this) ;
+}
+
+// ───────────────────────────── tests ─────────────────────────────
+
+#[test]
+fn string_set_new_is_empty() ;
+
+#[test]
+fn string_set_insert_and_contains() ;
+
+#[test]
+fn string_set_insert_duplicate_is_noop() ;
+
+#[test]
+fn string_set_empty_string_element() ;
+
+#[test]
+fn string_set_remove_present_and_missing() ;
+
+#[test]
+fn string_set_remove_then_reinsert_reuses_tombstone() ;
+
+#[test]
+fn string_set_grows_past_load_factor() ;
+
+#[test]
+fn string_set_clear_keeps_capacity() ;
+
+#[test]
+fn string_set_subset_superset_disjoint() ;
+
+#[test]
+fn string_set_union_intersection_difference() ;
+
+#[test]
+fn string_set_slot_iteration_visits_every_element() ;
+
+#[test]
+fn string_set_with_capacity_preallocates() ;

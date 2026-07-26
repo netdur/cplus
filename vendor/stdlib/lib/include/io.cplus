@@ -1,0 +1,24 @@
+// stdlib/io.cplus — process-level stdin/stdout/stderr I/O.
+//
+// Built on libc `write` via `extern fn`. Users never see `extern fn` —
+// they just call `print` / `println` / etc.
+
+extern fn write(fd: i32, buf: *u8, count: usize) -> isize;
+extern fn printf(fmt: *u8, ...) -> i32;
+
+// Loop until all `n` bytes from `p` are written to `fd` (or write errors).
+fn write_all(fd: i32, p: *u8, n: usize) ;
+
+// Write `s` to stdout, no trailing newline.
+fn print(s: str) ;
+
+// Write `s` to stdout, followed by '\n'.
+fn println(s: str) ;
+
+// Write `s` to stderr, followed by '\n'.
+fn eprintln(s: str) ;
+
+// ───────────────────────────── tests ─────────────────────────────
+
+#[test]
+fn io_write_paths_do_not_trap() ;

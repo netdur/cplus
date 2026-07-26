@@ -1,0 +1,181 @@
+// stdlib/box.cplus — single heap-allocated owned value.
+//
+// `Box[T]` is a unique-ownership wrapper around a heap slot. Useful when
+// you need a stable pointer to a value (recursive types via raw pointer
+// chains, FFI handles whose lifetime matches a C+ scope, returning a
+// value through a function boundary without sret-widening every callee).
+//
+// API: free-fn constructor `box::new(v)` (matches the rest of the
+// stdlib's free-fn-constructor convention until module-qualified
+// generic associated-fn calls are routinely resolved). Methods on
+// `Box[T]`: `get`, `set`, `unwrap`, and Drop. No `as_ref` — C+ has no
+// `&T` reference type; pass `mut this` / `this` receivers instead.
+//
+// **v0.0.4 limitation** (inherited from `Vec[T]`): when `T` itself is
+// Drop, the inner value's destructor is **not** invoked automatically
+// at Box's Drop. Free-fn `unwrap(move this)` is the safe way to recover
+// the inner T before scope-exit Drop runs.
+
+import "./option" as option;
+
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+
+struct Box[T] {
+    _p: *T,
+}
+
+// Heap-allocate a new T-sized slot, initialize it with `v`, return Box.
+// `move v` is the explicit ownership-transfer marker — required for
+// non-Copy T (string, Vec[U], owned structs) so the caller's binding
+// is properly marked moved. Copy T's behave as if move were absent.
+// Heap-allocate a slot for `v`. A `Box` is always a live heap slot, so it has
+// no valid-empty form: on allocation failure `new` returns `None` (and `v` drops
+// as the function returns — no leak) rather than trapping.
+fn new[T](take v: T) -> option::Option[Box[T]] {
+    let bytes: usize = #size_of::[T]();
+    let raw: *u8 = { malloc(bytes) };
+    if raw.is_null() {
+        return option::Option[Box[T]]::None;
+    }
+    let p: *T = { raw as *T };
+    { *p = v; }
+    return option::Option[Box[T]]::Some(Box[T] { _p: p });
+}
+
+// Reclaim a box from a raw pointer previously surrendered by `into_raw`. The
+// heap slot (and the inner T) come back under RAII ownership: drop frees it, or
+// `unwrap` moves the inner value out. Pairs 1:1 with `into_raw` — reconstructing
+// two boxes from one raw pointer, or a pointer `into_raw` never returned, is a
+// use-after-free / bad-free. This is the receiving half of a `*u8` handoff
+// across a boundary a `Box[T]` can't cross (a `dispatch_async_f` context, a
+// thread argument): `into_raw` on one side, `from_raw` on the other.
+fn from_raw[T](raw: *u8) -> Box[T] {
+    return Box[T] { _p: raw as *T };
+}
+
+// `get` reads the boxed value by bitwise copy without consuming the box, so it
+// is sound only for `Copy` T — a non-Copy T would be duplicated, double-freeing
+// when both copies drop. The `T: Copy` bound makes that a compile error
+// (E0502); non-Copy callers move the value out with `unwrap()` instead. (Bound
+// lives on its own impl block so `Box[NonCopy]` stays usable via `new` / `set`
+// / `unwrap` / Drop below.)
+impl Box[T: Copy] {
+    // Read the boxed value (does not consume the box; the pointer stays valid).
+    fn value(this) -> T {
+        return { *this._p };
+    }
+}
+
+impl Box[T] {
+    // Overwrite the boxed value, dropping the value previously there first
+    // (mirrors `Vec::set`). The box always holds an initialized T by the time
+    // `set` is callable (`new` initialized it), so the drop-then-store is sound
+    // for any T — for Copy T the `#drop_in_place` is a no-op the optimizer
+    // elides; for a Drop T it frees the old value's resources before the new
+    // value moves in, so there is no leak and no double-free.
+    fn set(ref this, take v: T) {
+        { #drop_in_place::[T](this._p); }
+        { *this._p = v; }
+        return;
+    }
+
+    // Consume the box, return the inner T. The function-exit drop
+    // (fires because `move this` transfers ownership *into* the
+    // callee) frees the heap slot — no manual free here, or we'd
+    // double-free.
+    fn unwrap(take this) -> T {
+        // Read the inner value out, then null `this._p` so the
+        // function-exit Drop (v0.0.5 Phase 1C invokes inner-T Drop
+        // via `__cplus_drop_in_place`) treats the box as "already
+        // emptied" and skips both inner Drop and the outer free.
+        // The caller now owns the T; their scope-exit Drop handles
+        // cleanup. Without this nulling, the v0.0.5 inner-T Drop
+        // would double-free the inner value while it's also live in
+        // the caller's binding.
+        let v: T = { *this._p };
+        let free_p: *u8 = { this._p as *u8 };
+        { this._p = 0 as *T; }
+        { free(free_p); }
+        return v;
+    }
+
+    // Surrender the box as a raw pointer WITHOUT freeing: ownership of the heap
+    // slot (and the inner T) transfers to the caller, who must later reclaim it
+    // with `from_raw`. Nulls `this._p` first so the consuming `take this` drop
+    // treats the box as emptied — no inner Drop, no free — leaving the slot live
+    // for `from_raw`. The `*u8` can then cross a C boundary a `Box[T]` cannot
+    // (an FFI handle, a `dispatch_async_f` context, a thread argument).
+    fn into_raw(take this) -> *u8 {
+        let p: *u8 = { this._p as *u8 };
+        { this._p = 0 as *T; }
+        return p;
+    }
+
+    // Destructor: invoke inner-T Drop, then free the heap slot.
+    // Short-circuits on null `this._p` so the `unwrap` consumer path
+    // (which nulls `p` after taking ownership of the inner T) doesn't
+    // double-free.
+    fn drop(ref this) {
+        let null_p: *T = { 0 as *T };
+        if this._p == null_p { return; }
+        // v0.0.5 Phase 1C: invoke inner-T Drop before freeing the box's
+        // heap slot. For Copy T this is a no-op the optimizer elides;
+        // for `T = string` / `T = Vec[U]` / user struct with Drop, this
+        // tears down the contained value's resources first so the
+        // following `free` only releases the box's outer slot.
+        { #drop_in_place::[T](this._p); }
+        { free(this._p as *u8); }
+        return;
+    }
+}
+
+// ───────────────────────────── tests ─────────────────────────────
+
+#[test]
+fn box_new_and_get() {
+    match new::[i32](42) {
+        option::Option[Box[i32]]::Some(b) => { assert b.value() == 42; }
+        option::Option[Box[i32]]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn box_set_overwrites() {
+    match new::[i32](1) {
+        option::Option[Box[i32]]::Some(b) => {
+            var bb: Box[i32] = b;
+            bb.set(99);
+            assert bb.value() == 99;
+        }
+        option::Option[Box[i32]]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn box_unwrap_recovers_value() {
+    match new::[i32](7) {
+        option::Option[Box[i32]]::Some(b) => { assert b.unwrap() == 7; }
+        option::Option[Box[i32]]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn box_into_raw_from_raw_roundtrips() {
+    // into_raw surrenders the slot as a bare pointer; from_raw reclaims it. The
+    // value survives the trip, and drop frees it exactly once (into_raw
+    // neutralized the first box's drop) — a double-free here would trip the
+    // leak/ASan harness.
+    match new::[i32](7) {
+        option::Option[Box[i32]]::Some(b) => {
+            let raw: *u8 = b.into_raw();
+            let b2: Box[i32] = from_raw::[i32](raw);
+            assert b2.value() == 7;
+        }
+        option::Option[Box[i32]]::None => { assert false; }
+    }
+    return;
+}

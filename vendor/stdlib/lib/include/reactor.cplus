@@ -1,0 +1,303 @@
+// stdlib/reactor.cplus — async I/O event loop (v0.0.4 Phase 3 Slice 3A.1).
+//
+// Backed by kqueue on macOS; epoll-on-Linux lands separately. The reactor
+// is a process-global resource lazily initialized on first use. Single-
+// threaded for v0.0.4 — matches tokio's `current_thread` runtime, and
+// sidesteps the Send/Sync design that the multi-threaded executor would
+// need.
+//
+// **Architecture.**
+//
+//   - The reactor holds a kqueue fd + parallel arrays for `(waiter_fd,
+//     waiter_filter, waiter_handle)` triples (one per pending fd
+//     registration; storing the filter makes wait_read + wait_write on
+//     the same fd resume the right coroutine) and a queue of pending
+//     coroutine handles (spawned via `spawn_local`).
+//
+//   - Async I/O wrappers call `wait_fd_readable(fd)` (a compiler
+//     intrinsic — see codegen.rs) to suspend the current coroutine
+//     until the fd becomes read-ready. The intrinsic registers
+//     `(fd, current_coro_handle)` with the reactor, then issues
+//     `llvm.coro.suspend`.
+//
+//   - `executor::block_on(future)` drives the outer coroutine. When
+//     `coro.resume(outer)` returns and `coro.done(outer)` is false,
+//     block_on first drains any tasks `spawn_local` queued, then
+//     calls `reactor::poll_one_event` which blocks on `kevent` until
+//     one fd is ready, looks up the waiter, and `coro.resume`s it.
+//     Loop until outer is done.
+//
+//   - `spawn_local(future)` pushes the future's handle onto the
+//     reactor's task queue; block_on's loop resumes each queued task
+//     to its next suspend point.
+//
+//   - `yield_now()` is `spawn_local(this)` essentially — re-enqueue
+//     this and suspend, giving the scheduler a chance to run other
+//     queued tasks.
+//
+// **Layout of the reactor state heap block:**
+//   0..4    kqfd             i32
+//   4..8    n_waiters        i32   (current waiter count)
+//   8..12   cap_waiters      i32
+//   12..16  n_pending        i32   (queued spawn_local handles)
+//   16..20  cap_pending      i32
+//   20..24  (pad)
+//   24..32  waiter_fds       *i32  (separately malloc'd)
+//   32..40  waiter_hdls      **u8
+//   40..48  pending_hdls     **u8
+//   48..56  kevent_buf       *u8  (32-byte kevent struct slot, reused)
+//   56..64  waiter_filters   *i16  (parallel to waiter_fds: EVFILT_READ=-1, EVFILT_WRITE=-2)
+//   64..68  n_timers         i32   (pending one-shot timer count; v0.0.5 Slice 4A)
+//   68..72  (pad)
+//   72..76  n_awaiters       i32   (live awaitee→awaiter mappings; v0.0.5 Slice 4F)
+//   76..80  cap_awaiters     i32
+//   80..88  awaitee_hdls     **u8  (parallel to awaiter_hdls; v0.0.5 Slice 4F)
+//   88..96  awaiter_hdls     **u8
+//   total: 96 bytes header + 6 growable buffers.
+//
+// **Timers (v0.0.5 Slice 4A).** A `sleep(ms)` await registers a kqueue
+// EVFILT_TIMER (filter = -7) using the coroutine handle as the kevent
+// `ident` (uintptr_t). On fire, `poll_one_event` reads ident back and
+// resumes that handle directly — no separate waiter table needed, since
+// the resume target is encoded in the ident. `n_timers` participates in
+// `waiter_count()` so `block_on` knows to keep polling.
+//
+// **Awaiter notification (v0.0.5 Slice 4F).** Each `await EXPR` site
+// registers `(awaitee_hdl, %.coro.hdl)` in the awaiter table before
+// suspending the awaiter coroutine. When the awaitee reaches its
+// `final_suspend` epilogue, codegen emits a `notify_completed(self_hdl)`
+// call — the reactor looks up the matching entry, swap-removes it, and
+// enqueues the awaiter on the pending queue. Next `drain_pending` round
+// resumes the awaiter, which re-checks `coro.done(awaitee)` (now true)
+// and extracts the value. Without this notification, awaiters of inner
+// coroutines that suspend on fd/timer events stall forever — `block_on`
+// only re-resumes the *outermost* future on each loop pass.
+
+extern fn malloc(n: usize) -> *u8;
+extern fn realloc(p: *u8, n: usize) -> *u8;
+extern fn free(p: *u8);
+
+// kqueue / kevent (macOS).
+extern fn kqueue() -> i32;
+extern fn kevent(
+    kq: i32,
+    changelist: *u8,
+    nchanges: i32,
+    eventlist: *u8,
+    nevents: i32,
+    timeout: *u8,
+) -> i32;
+
+// LLVM coroutine intrinsics — surfaced via stable wrapper symbols
+// emitted by codegen, so stdlib can call them as plain extern fns.
+// `#coro_resume(hdl)` lowers to `call void @llvm.coro.resume(ptr %hdl)`.
+extern fn __cplus_coro_resume(hdl: *u8);
+extern fn __cplus_coro_done(hdl: *u8) -> i32;
+
+// Reactor-state-slot accessors emitted in the codegen preamble.
+extern fn __cplus_reactor_get_state() -> *u8;
+extern fn __cplus_reactor_set_state(p: *u8);
+
+// kevent struct field constants (macOS):
+//   ident   uintptr_t  @ 0    (fd for EVFILT_READ)
+//   filter  int16_t    @ 8    (EVFILT_READ = -1)
+//   flags   uint16_t   @ 10   (EV_ADD | EV_ONESHOT = 0x11)
+//   fflags  uint32_t   @ 12
+//   data    intptr_t   @ 16
+//   udata   void*      @ 24
+// total size: 32 bytes.
+
+fn header_bytes() -> usize ;
+fn kevent_bytes() -> usize ;
+
+fn off_kqfd() -> usize ;
+fn off_n_waiters() -> usize ;
+fn off_cap_waiters() -> usize ;
+fn off_n_pending() -> usize ;
+fn off_cap_pending() -> usize ;
+fn off_waiter_fds() -> usize ;
+fn off_waiter_hdls() -> usize ;
+fn off_pending_hdls() -> usize ;
+fn off_kevent_buf() -> usize ;
+fn off_waiter_filters() -> usize ;
+fn off_n_timers() -> usize ;
+fn off_n_awaiters() -> usize ;
+fn off_cap_awaiters() -> usize ;
+fn off_awaitee_hdls() -> usize ;
+fn off_awaiter_hdls() -> usize ;
+
+// EVFILT_READ = -1, EVFILT_WRITE = -2, EVFILT_TIMER = -7 (macOS sys/event.h).
+fn evfilt_read() -> i16 ;
+fn evfilt_write() -> i16 ;
+fn evfilt_timer() -> i16 ;
+
+// Lazily allocate + init the reactor on first use. Idempotent: returns
+// the same state pointer on every call within a process.
+fn ensure() -> *u8 ;
+
+// Internal helper: null check on a raw pointer via direct comparison
+// against the canonical null spelling.
+fn ptr_is_null(p: *u8) -> bool ;
+
+// Stable-symbol wrappers exposed under canonical C-ABI names so the
+// codegen intrinsics for `__cplus_reactor_wait_read` and
+// `block_on`'s reactor-integrated drive loop can call them directly.
+// Named at the source level rather than via `#[link_name]` because the
+// link_name attribute is currently honored only on `extern fn`
+// declarations, not on `export extern fn` export definitions (v0.0.5
+// polish — at which point these can rename via link_name).
+export extern fn stdlib_reactor_register_read_v1(fd: i32, hdl: *u8) {
+    register_read(fd, hdl);
+    return;
+}
+
+export extern fn stdlib_reactor_register_write_v1(fd: i32, hdl: *u8) {
+    register_write(fd, hdl);
+    return;
+}
+
+// v0.0.5 Slice 4A: register a one-shot timer that fires after `ms`
+// milliseconds and resumes `hdl`. Uses kqueue EVFILT_TIMER with
+// ident = handle pointer (uintptr_t). On fire, `poll_one_event` reads
+// ident back from the kevent and resumes directly — no waiter table
+// lookup, no separate timer-id allocation.
+export extern fn stdlib_reactor_register_timer_v1(ms: u64, hdl: *u8) {
+    register_timer(ms, hdl);
+    return;
+}
+
+// v0.0.5 Slice 4F: awaiter-of-completed-coroutine notification.
+// Codegen emits `register_awaiter_v1(awaitee, this)` at await sites
+// before suspending; `notify_completed_v1(this)` runs in every async
+// fn's final_suspend epilogue. See the architecture comment at the
+// top of this file for the full flow.
+export extern fn stdlib_reactor_register_awaiter_v1(awaitee: *u8, awaiter: *u8) {
+    register_awaiter(awaitee, awaiter);
+    return;
+}
+
+export extern fn stdlib_reactor_notify_completed_v1(awaitee: *u8) {
+    notify_completed(awaitee);
+    return;
+}
+
+export extern fn stdlib_reactor_enqueue_pending_v1(hdl: *u8) {
+    enqueue_pending(hdl);
+    return;
+}
+
+export extern fn stdlib_reactor_drain_pending_v1() -> i32 {
+    return drain_pending();
+}
+
+export extern fn stdlib_reactor_waiter_count_v1() -> i32 {
+    return waiter_count();
+}
+
+export extern fn stdlib_reactor_poll_one_event_v1() -> i32 {
+    if poll_one_event() {
+        return 1 as i32;
+    }
+    return 0 as i32;
+}
+
+// Non-blocking poll: consume one ready kevent if there is one, resume its
+// waiter, and return 1; return 0 immediately when nothing is ready. The
+// building block for an external pump that must never block its thread
+// (a UI run loop driving spawned tasks).
+export extern fn stdlib_reactor_poll_one_event_nb_v1() -> i32 {
+    if poll_one_event_nb() {
+        return 1 as i32;
+    }
+    return 0 as i32;
+}
+
+// The reactor's kqueue fd. A kqueue is itself pollable — it reads as ready
+// when events are pending — so an external loop (a dispatch source, a
+// select set) can watch this fd and pump only when there is work.
+export extern fn stdlib_reactor_kqfd_v1() -> i32 {
+    let state: *u8 = ensure();
+    return { *((state + off_kqfd()) as *i32) };
+}
+
+// Register fd for read-readiness; record the coroutine handle to wake.
+fn register_read(fd: i32, hdl: *u8) ;
+
+// Register fd for write-readiness (kqueue EVFILT_WRITE).
+fn register_write(fd: i32, hdl: *u8) ;
+
+// v0.0.5 Slice 4A: register a one-shot timer. Submits EVFILT_TIMER with
+// ident = (u64)hdl, data = ms (default unit on macOS is milliseconds).
+// `poll_one_event` recognizes the timer filter and resumes via ident
+// directly, so we just bump the `n_timers` counter so `block_on`'s
+// "anything pending?" check sees us.
+fn register_timer(ms: u64, hdl: *u8) ;
+
+// Append a (fd, filter, hdl) triple to the waiter arrays and submit a
+// one-shot kqueue filter. `poll_one_event` matches by (fd, filter) so
+// read- and write-waiters on the same fd don't collide.
+fn register_filter(fd: i32, hdl: *u8, filter: i16) ;
+
+// Wait for one fd to become ready, then resume its waiter. Blocks the
+// calling thread on kevent. Returns true if a coroutine was resumed.
+fn poll_one_event() -> bool ;
+
+// The non-blocking form: a zero timespec makes kevent return immediately
+// when nothing is ready.
+struct PollTimeout {
+    secs: i64,
+    nanos: i64,
+}
+
+fn poll_one_event_nb() -> bool ;
+
+fn poll_event_with(timeout: *u8) -> bool ;
+
+// Drain the spawn_local task queue: resume each handle once. Returns
+// the number of tasks resumed.
+fn drain_pending() -> i32 ;
+
+// Push a coroutine handle to the spawn_local queue.
+fn enqueue_pending(hdl: *u8) ;
+
+// Snapshot of "pending kevent-side work" — fd waiters plus active
+// timers. `block_on` uses it to decide whether to kevent_wait or
+// terminate the loop.
+//
+// v0.0.5 Slice 4F: the awaiter table doesn't drive kevent (its
+// resumes are triggered by `notify_completed`, which routes through
+// `enqueue_pending`), so it doesn't participate here. The drain step
+// in `block_on` picks up notified awaiters via the pending queue.
+fn waiter_count() -> i32 ;
+
+fn pending_count() -> i32 ;
+
+// v0.0.5 Slice 4F: register `awaiter` as waiting on `awaitee`. Codegen
+// emits a call here from inside each `await` site's resume_bb, just
+// before the awaiter suspends itself. The table grows by doubling.
+// Append-only; entries are removed by `notify_completed` (swap-remove).
+fn register_awaiter(awaitee: *u8, awaiter: *u8) ;
+
+// v0.0.5 Slice 4F: linear scan for an awaiter registered on `awaitee`.
+// If found, swap-remove and enqueue the awaiter for resumption. No-op
+// when nobody is awaiting (block_on'd outer futures don't register,
+// orphan spawned tasks don't register).
+//
+// An awaitee can in principle be awaited by multiple awaiters. The
+// codegen path only generates a single `await X` per source-level
+// `await`, so the scenario is: same future-value passed to two
+// different awaiters via Copy semantics. Treating the table as a
+// multimap is overkill for v0.0.5; instead this fn pops *one* matching
+// entry per call. If two awaiters were registered, the second is left
+// behind in the table — leak, not crash. (Realistic? Same Future
+// shouldn't be awaited twice anyway; the gen_await_expr destroy path
+// already breaks that pattern.)
+fn notify_completed(awaitee: *u8) ;
+
+// ───────────────────────────── tests ─────────────────────────────
+
+#[test]
+fn nb_poll_returns_immediately_when_nothing_is_ready() ;
+
+#[test]
+fn kqfd_export_is_a_valid_descriptor() ;

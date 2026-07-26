@@ -466,6 +466,51 @@ pub fn platform_gated_dep(name: &str) -> Option<String> {
     PLATFORM_GATED_DEPS.lock().unwrap().get(name).cloned()
 }
 
+
+/// Canonicalise a host triple into the stable, version-less form used for
+/// binary-slice directory names.
+///
+/// `clang -print-target-triple` reports the *running* system, so on macOS it
+/// carries the OS version — `arm64-apple-darwin25.5.0`. Using that raw as a
+/// directory name makes a shipped binary stop being found the moment the user
+/// upgrades the OS, which is fatal for a distribution format: the slice is
+/// still perfectly valid, but the lookup no longer matches it and the build
+/// fails with E0862 "host not supported".
+///
+/// It also spells the architecture Apple's way (`arm64`) rather than the LLVM /
+/// Rust canonical `aarch64`, so two names exist for one machine.
+///
+/// Both are normalised here:
+///
+///   arm64-apple-darwin25.5.0   -> aarch64-apple-darwin
+///   x86_64-apple-darwin24.0.0  -> x86_64-apple-darwin
+///   x86_64-unknown-linux-gnu   -> x86_64-unknown-linux-gnu   (already stable)
+///
+/// The cross-compile targets never needed this — their `artifact_triple` is a
+/// fixed constant already in canonical form.
+pub fn normalize_triple(raw: &str) -> String {
+    let mut parts: Vec<String> = raw.split('-').map(|s| s.to_string()).collect();
+    if parts.is_empty() {
+        return raw.to_string();
+    }
+    // Architecture: Apple spells it `arm64`, LLVM/Rust canonical is `aarch64`.
+    if parts[0] == "arm64" {
+        parts[0] = "aarch64".to_string();
+    }
+    // OS component: drop a trailing version (`darwin25.5.0` -> `darwin`,
+    // `ios17.0` -> `ios`). Only the OS field carries one.
+    if parts.len() >= 3 {
+        let os = &parts[2];
+        let cut = os
+            .find(|c: char| c.is_ascii_digit())
+            .unwrap_or(os.len());
+        if cut > 0 {
+            parts[2] = os[..cut].to_string();
+        }
+    }
+    parts.join("-")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -708,5 +753,47 @@ mod tests {
         // Other tests must not mutate the global (they use the `*_for`
         // helpers with explicit specs), so the default is observable here.
         assert!(active_target().is_host());
+    }
+}
+
+#[cfg(test)]
+mod triple_tests {
+    use super::normalize_triple;
+
+    // The OS version must not reach a directory name: a slice built today has
+    // to keep matching after the user upgrades macOS.
+    #[test]
+    fn strips_the_macos_version_and_canonicalises_the_arch() {
+        assert_eq!(normalize_triple("arm64-apple-darwin25.5.0"), "aarch64-apple-darwin");
+        assert_eq!(normalize_triple("x86_64-apple-darwin24.0.0"), "x86_64-apple-darwin");
+    }
+
+    #[test]
+    fn an_already_stable_triple_is_unchanged() {
+        for t in ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"] {
+            assert_eq!(normalize_triple(t), t);
+        }
+    }
+
+    #[test]
+    fn two_os_versions_of_one_machine_agree() {
+        assert_eq!(
+            normalize_triple("arm64-apple-darwin25.5.0"),
+            normalize_triple("arm64-apple-darwin26.0.0"),
+            "an OS upgrade must not change the slice directory"
+        );
+    }
+
+    #[test]
+    fn arm64_and_aarch64_spellings_agree() {
+        assert_eq!(
+            normalize_triple("arm64-apple-darwin25.5.0"),
+            normalize_triple("aarch64-apple-darwin"),
+        );
+    }
+
+    #[test]
+    fn ios_style_versioned_targets_normalise_too() {
+        assert_eq!(normalize_triple("arm64-apple-ios17.0"), "aarch64-apple-ios");
     }
 }

@@ -1,0 +1,323 @@
+// stdlib/mutex.cplus — mutual-exclusion primitive over a heap-stored T.
+//
+// `Mutex[T]` wraps `T` with a pthread mutex; `lock()` returns a
+// `MutexGuard[T]` whose Drop releases the lock. Acquire-only access:
+// no method on a `Mutex` reads / writes `T` without going through a
+// `MutexGuard`.
+//
+// **Memory safety vs. liveness (the C+ split).** A guard takes its own
+// reference on `lock` (#5), so it can never dangle even if it outlives every
+// `Mutex` handle — that is the language's guarantee. What stays the caller's
+// responsibility is *liveness*: re-locking the same mutex on one thread, or
+// holding a guard for a long time, can DEADLOCK or starve other threads. That
+// can hang the program but never corrupts memory; there is no compile-time
+// check for it (no language has a general one). Drop guards promptly; do not
+// lock a mutex a thread already holds.
+//
+// **Why Mutex is internally refcounted in v0.0.4.** Rust's idiomatic
+// shape is `Arc<Mutex<T>>`, with `&Mutex<T>` as the shared handle.
+// C+ has no `&T` references, so a literal `Arc[Mutex[T]]` would break:
+// `Arc::get(this)` returns a bitwise copy of `Mutex`, and `Mutex`'s
+// own Drop (which destroys the pthread mutex + frees the heap block)
+// would fire on every copy. To avoid that hazard while keeping the
+// API ergonomic, `Mutex[T]` collapses Arc into itself: the heap block
+// holds `{ u64 refcount, pthread_mutex_t, T value }`; `clone()` does
+// an atomic increment; `drop()` does an atomic decrement and destroys
+// the mutex + frees only on the last reference. Users `clone()` into
+// a worker thread; the worker drops normally on exit; the last live
+// reference does the teardown.
+//
+// **Pthread mutex size.** macOS pthread_mutex_t is 64 bytes; Linux
+// (glibc) is 40. We allocate 64 in the v0.0.4 layout so the same
+// code works on both platforms.
+
+import "./atomic" as atomic;
+import "./option" as option;
+import "./status" as status;
+import "./text" as text;
+
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+
+extern fn pthread_mutex_init(mutex: *u8, attr: *u8) -> i32;
+extern fn pthread_mutex_destroy(mutex: *u8) -> i32;
+extern fn pthread_mutex_lock(mutex: *u8) -> i32;
+extern fn pthread_mutex_unlock(mutex: *u8) -> i32;
+
+struct Mutex[T] {
+    // Pointer to heap block: { u64 refcount, [64 bytes pthread mutex], T value }.
+    _ctrl: *u8,
+}
+
+// The mutex serializes all access to `T`, so a `Mutex[T]` is `Send` and `Sync`
+// whenever the payload can be moved between threads (`T: Send`). `T: Sync` is
+// not required — only one thread holds the lock (and thus touches `T`) at a
+// time. The raw `_ctrl` pointer makes the structural rule reject it by default;
+// this vouches for the locking discipline. (`MutexGuard[T]` stays `!Send` — it
+// is bound to the acquiring thread — via the builtin name rule.)
+impl Mutex[T: Send]: Send {}
+impl Mutex[T: Send]: Sync {}
+
+struct MutexGuard[T] {
+    // Same heap block the originating Mutex carries. #5: the guard co-owns a
+    // reference — `lock` bumped the refcount — so it can safely outlive the
+    // `Mutex` handle that produced it (return it, store it) without dangling.
+    // Its Drop unlocks, then drops that reference, tearing the block down on
+    // the last reference exactly like `Mutex::drop`. Not `opaque`: this field
+    // IS released here (a guard holding the final reference frees it).
+    _ctrl: *u8,
+}
+
+// Heap layout offsets — keep in sync between `new` / `clone` / `lock` /
+// `drop` / `get` / `set`.
+//   refcount: _ctrl + 0    (u64, 8 bytes)
+//   mutex:    _ctrl + 8    (64 bytes — pthread_mutex_t)
+//   value:    _ctrl + 72   (T)
+
+// A `Mutex` is always a live heap block, so on allocation failure `new` returns
+// `None` (and `v` drops as the function returns) rather than trapping.
+fn new[T](take v: T) -> option::Option[Mutex[T]] {
+    let refct_bytes: usize = 8 as usize;
+    let mutex_bytes: usize = 64 as usize;
+    let value_size: usize = #size_of::[T]();
+    let total: usize = refct_bytes +% mutex_bytes +% value_size;
+    let raw: *u8 = { malloc(total) };
+    if raw.is_null() {
+        return option::Option[Mutex[T]]::None;
+    }
+    let refct: *u64 = { raw as *u64 };
+    { *refct = 1 as u64; }
+    let mutex_ptr: *u8 = { raw + refct_bytes };
+    let _err: i32 = { pthread_mutex_init(mutex_ptr, 0 as *u8) };
+    let value_off: usize = refct_bytes +% mutex_bytes;
+    let value_ptr: *T = { (raw + value_off) as *T };
+    { *value_ptr = v; }
+    return option::Option[Mutex[T]]::Some(Mutex[T] { _ctrl: raw });
+}
+
+impl Mutex[T] {
+    // Atomic increment refcount; share the inner heap block. Same
+    // ordering rationale as `Arc::clone` — relaxed is sufficient
+    // because the new Mutex carries a _ctrl already visible to this
+    // thread.
+    fn clone(this) -> Mutex[T] {
+        let refct: *u64 = { this._ctrl as *u64 };
+        let _prev: u64 = {
+            atomic::fetch_add_u64(refct, 1 as u64, atomic::Ordering::Relaxed)
+        };
+        return Mutex[T] { _ctrl: this._ctrl };
+    }
+
+    // Acquire the lock, return a `MutexGuard` whose Drop releases it.
+    // Borrows the mutex via `this` (read-only-receiver — the lock op
+    // doesn't change the Mutex's own state, only the underlying
+    // mutex's state).
+    //
+    // #5: the returned guard owns its own reference to the heap block, so it
+    // stays valid even if every `Mutex` handle drops while the guard is live
+    // (the guard-escape use-after-free is thus impossible). Bump the refcount
+    // before handing the _ctrl pointer over — Relaxed mirrors `clone` (the
+    // block is already visible to this thread).
+    fn lock(this) -> MutexGuard[T] {
+        let refct_bytes: usize = 8 as usize;
+        let refct: *u64 = { this._ctrl as *u64 };
+        let _prev: u64 = {
+            atomic::fetch_add_u64(refct, 1 as u64, atomic::Ordering::Relaxed)
+        };
+        let mutex_ptr: *u8 = { this._ctrl + refct_bytes };
+        let _err: i32 = { pthread_mutex_lock(mutex_ptr) };
+        return MutexGuard[T] { _ctrl: this._ctrl };
+    }
+
+    // Strong-count snapshot (racy except in single-threaded contexts).
+    fn strong_count(this) -> u64 {
+        let refct: *u64 = { this._ctrl as *u64 };
+        return { atomic::load_u64(refct, atomic::Ordering::SeqCst) };
+    }
+
+    // Destructor: atomic decrement; on the last reference, destroy
+    // the pthread mutex and free the heap block. AcqRel ordering
+    // mirrors `Arc::drop`.
+    fn drop(ref this) {
+        let refct: *u64 = { this._ctrl as *u64 };
+        let prev: u64 = {
+            atomic::fetch_sub_u64(refct, 1 as u64, atomic::Ordering::AcqRel)
+        };
+        if prev == (1 as u64) {
+            let refct_bytes: usize = 8 as usize;
+            let mutex_ptr: *u8 = { this._ctrl + refct_bytes };
+            let _err: i32 = { pthread_mutex_destroy(mutex_ptr) };
+            // v0.0.5 Phase 1C: invoke inner-T Drop on the last
+            // reference before freeing the heap block. Value lives
+            // at refcount(8B) + pthread_mutex_t(64B) = offset 72.
+            let value_off: usize = (8 as usize) +% (64 as usize);
+            let value_ptr: *T = { (this._ctrl + value_off) as *T };
+            { #drop_in_place::[T](value_ptr); }
+            { free(this._ctrl); }
+        }
+        return;
+    }
+}
+
+// `get` bitwise-copies the guarded value out, sound only for `Copy` T — a
+// non-Copy T would be duplicated (the Mutex still owns the original) and
+// double-free. The `T: Copy` bound makes a non-Copy `get` a compile error
+// (E0502); it lives in its own impl block so `Mutex[NonCopy]` stays usable for
+// `set` and lock/Drop. (A non-Copy payload that needs reading wants a
+// borrow-style accessor, which C+ lacks today.)
+impl MutexGuard[T: Copy] {
+    // Read inner T (bitwise copy). The lock guarantees no other
+    // thread is reading or writing concurrently.
+    fn value(this) -> T {
+        let value_off: usize = (8 as usize) +% (64 as usize);
+        let value_ptr: *T = { (this._ctrl + value_off) as *T };
+        return { *value_ptr };
+    }
+}
+
+impl MutexGuard[T] {
+    // Scoped read access: call `f` with the guarded value. Works for any T
+    // (unlike `value()`, which is Copy-gated): the callback borrows its
+    // argument read-only and cannot keep it. The callback is a plain
+    // fn-pointer — no captures — so nothing else the guard protects is
+    // reachable inside it.
+    fn with(this, f: fn(T)) {
+        let value_off: usize = (8 as usize) +% (64 as usize);
+        let value_ptr: *T = { (this._ctrl + value_off) as *T };
+        { f(*value_ptr); }
+        return;
+    }
+
+    // Scoped exclusive access: call `f` with the guarded value through a
+    // `ref` slot, so the callback mutates the value in place — fields of a
+    // non-Copy T included, which whole-value `set()` cannot express. The
+    // lock makes this the sole writer. No uniqueness gate is needed:
+    // reaching this same mutex through the payload and re-locking is a
+    // deadlock, which is the caller's liveness responsibility (see the
+    // header note), not a memory-safety hole.
+    fn with_mut(ref this, f: fn(ref T)) {
+        let value_off: usize = (8 as usize) +% (64 as usize);
+        let value_ptr: *T = { (this._ctrl + value_off) as *T };
+        { f(*value_ptr); }
+        return;
+    }
+
+    // Write inner T, dropping the value previously stored first (mirrors
+    // `Vec::set`). The guard holds the lock, so this is the sole writer; the
+    // inner T is always initialized (`new` moved it in), so the drop-then-store
+    // is sound for any T — a no-op `#drop_in_place` for Copy T, and a proper
+    // teardown of the old value for a Drop T (no leak, no double-free).
+    fn set(ref this, take v: T) {
+        let value_off: usize = (8 as usize) +% (64 as usize);
+        let value_ptr: *T = { (this._ctrl + value_off) as *T };
+        { #drop_in_place::[T](value_ptr); }
+        { *value_ptr = v; }
+        return;
+    }
+
+    // Destructor: release the lock, then drop the guard's own reference.
+    // #5: the guard holds a refcount (taken in `lock`), so teardown mirrors
+    // `Mutex::drop` — on the last reference, destroy the pthread mutex, run
+    // inner-T Drop, and free the heap block. Unlock happens FIRST: destroying
+    // a still-locked mutex is undefined. When other references remain (another
+    // `Mutex` handle or guard), this only unlocks + decrements. `prev == 1`
+    // implies no other reference exists, so no other thread can be mid-use.
+    // The free is inlined here (not delegated) so the raw-pointer
+    // accountability check is satisfied — same shape as `Mutex::drop`.
+    fn drop(ref this) {
+        let refct_bytes: usize = 8 as usize;
+        let mutex_ptr: *u8 = { this._ctrl + refct_bytes };
+        let _err: i32 = { pthread_mutex_unlock(mutex_ptr) };
+        let refct: *u64 = { this._ctrl as *u64 };
+        let prev: u64 = {
+            atomic::fetch_sub_u64(refct, 1 as u64, atomic::Ordering::AcqRel)
+        };
+        if prev == (1 as u64) {
+            let _derr: i32 = { pthread_mutex_destroy(mutex_ptr) };
+            let value_off: usize = (8 as usize) +% (64 as usize);
+            let value_ptr: *T = { (this._ctrl + value_off) as *T };
+            { #drop_in_place::[T](value_ptr); }
+            { free(this._ctrl); }
+        }
+        return;
+    }
+}
+
+// ───────────────────────────── tests ─────────────────────────────
+
+#[test]
+fn mutex_lock_and_get() {
+    match new::[i32](100) {
+        option::Option[Mutex[i32]]::Some(m) => {
+            let g: MutexGuard[i32] = m.lock();
+            assert g.value() == 100;
+        }
+        option::Option[Mutex[i32]]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn mutex_lock_set_then_get() {
+    match new::[i32](1) {
+        option::Option[Mutex[i32]]::Some(m) => {
+            var g: MutexGuard[i32] = m.lock();
+            g.set(999);
+            assert g.value() == 999;
+        }
+        option::Option[Mutex[i32]]::None => { assert false; }
+    }
+    return;
+}
+
+// Callbacks for the `with`/`with_mut` tests — plain fns; a fn-pointer
+// callback has no captures, so these are the only shapes possible.
+fn expect_100(v: i32) { assert v == 100; return; }
+fn bump(ref v: i32) { v = v +% 1; return; }
+fn append_world(ref t: text::Text) {
+    let _st: status::Status = t.append(" world");
+    return;
+}
+fn expect_hello_world(t: text::Text) { assert t.equals("hello world"); return; }
+
+#[test]
+fn mutex_guard_with_reads_in_place() {
+    match new::[i32](100) {
+        option::Option[Mutex[i32]]::Some(m) => {
+            let g: MutexGuard[i32] = m.lock();
+            g.with(expect_100);
+            assert g.value() == 100;
+        }
+        option::Option[Mutex[i32]]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn mutex_guard_with_mut_mutates_in_place() {
+    match new::[i32](99) {
+        option::Option[Mutex[i32]]::Some(m) => {
+            var g: MutexGuard[i32] = m.lock();
+            g.with_mut(bump);
+            assert g.value() == 100;
+        }
+        option::Option[Mutex[i32]]::None => { assert false; }
+    }
+    return;
+}
+
+// Non-Copy payload: `value()` is unavailable (T: Copy gate) and `set()`
+// can only replace wholesale — `with_mut` mutates the guarded Text in
+// place, and `with` reads it back, all under one lock.
+#[test]
+fn mutex_guard_with_mut_non_copy_in_place() {
+    match new::[text::Text](text::from_str("hello")) {
+        option::Option[Mutex[text::Text]]::Some(m) => {
+            var g: MutexGuard[text::Text] = m.lock();
+            g.with_mut(append_world);
+            g.with(expect_hello_world);
+        }
+        option::Option[Mutex[text::Text]]::None => { assert false; }
+    }
+    return;
+}

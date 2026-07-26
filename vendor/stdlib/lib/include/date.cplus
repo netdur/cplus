@@ -1,0 +1,106 @@
+// stdlib/date.cplus — civil calendar over Unix time: ISO-8601 parse + format +
+// real (non-wrapping) differences. Complements `time` (a monotonic/epoch clock
+// with no calendar). All times are UTC.
+//
+// The pain this replaces: byte-parsing an ISO stamp into seconds-of-day and then
+// diffing those, which WRAPS at 86400 because there is no date underneath; and
+// shelling out to `date '+%Y-%m-%d'` / `date -v-1d` for today / yesterday.
+//
+// Civil<->days conversion uses Howard Hinnant's public-domain algorithms
+// (proleptic Gregorian, exact across the full i64 range, day 0 = 1970-01-01).
+
+import "./text" as text;
+import "./option" as option;
+import "./time" as time;
+
+// A civil date + wall-clock time, UTC. Fields are the obvious ranges: month
+// 1..12, day 1..31, hour 0..23, minute/second 0..59.
+struct DateTime {
+    year: i64,
+    month: i64,
+    day: i64,
+    hour: i64,
+    minute: i64,
+    second: i64,
+}
+
+struct Civil { year: i64, month: i64, day: i64 }
+
+// Floor division (rounds toward negative infinity) — correct for pre-1970 (negative)
+// epoch seconds, where C's truncating `/` would be off by a day/second.
+fn floor_div(a: i64, b: i64) -> i64 ;
+
+// Days since 1970-01-01 for a civil date (Hinnant `days_from_civil`).
+fn days_from_civil(y0: i64, m: i64, d: i64) -> i64 ;
+
+// The civil date `z` days after 1970-01-01 (Hinnant `civil_from_days`).
+fn civil_from_days(z0: i64) -> Civil ;
+
+// Convert between Unix seconds (UTC) and a `DateTime`.
+fn from_unix(secs: i64) -> DateTime ;
+
+fn to_unix(dt: DateTime) -> i64 ;
+
+// The current UTC date+time.
+fn now() -> DateTime ;
+
+// Signed difference a - b, in whole seconds. Because both sides carry a real
+// date, this never wraps at a day boundary (the seconds-of-day bug).
+fn diff_seconds(a: DateTime, b: DateTime) -> i64 ;
+
+// ---- parsing ----
+
+fn digit_val(s: str, i: usize) -> i64 ;
+
+// Parse `width` decimal digits at byte `start`; -1 if any is not a digit.
+fn num_at(s: str, start: usize, width: usize) -> i64 ;
+
+// Parse an ISO-8601 timestamp. Accepts "YYYY-MM-DD" (time = midnight) and
+// "YYYY-MM-DD" + ('T' | ' ') + "HH:MM:SS" with any trailing fractional / zone
+// suffix ignored (times here are treated as UTC). `None` on a malformed date, an
+// out-of-range field, or a present-but-broken time.
+fn parse_iso8601(s: str) -> option::Option[DateTime] ;
+
+// ---- formatting ----
+
+fn pad2(n: i64) -> text::Text ;
+fn pad4(n: i64) -> text::Text ;
+
+// "YYYY-MM-DD".
+fn format_date(dt: DateTime) -> text::Text ;
+
+// "YYYY-MM-DDTHH:MM:SSZ".
+fn format_iso8601(dt: DateTime) -> text::Text ;
+
+// today / yesterday as "YYYY-MM-DD" (UTC) — the `date` shell-outs, in process.
+fn today() -> text::Text ;
+fn yesterday() -> text::Text ;
+
+// ───────────────────────────── tests ─────────────────────────────
+
+#[test]
+fn epoch_zero_is_1970_01_01() ;
+
+#[test]
+fn billennium_components_are_correct() ;
+
+#[test]
+fn unix_datetime_roundtrips() ;
+
+#[test]
+fn parse_and_format_iso8601_roundtrip() ;
+
+#[test]
+fn parse_date_only_is_midnight() ;
+
+#[test]
+fn parse_rejects_garbage_and_out_of_range() ;
+
+#[test]
+fn format_date_zero_pads() ;
+
+#[test]
+fn diff_across_midnight_does_not_wrap() ;
+
+#[test]
+fn today_and_yesterday_differ_by_one_day() ;

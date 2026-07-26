@@ -1392,9 +1392,14 @@ fn collect_dep_link_args(
     // still asks `clang -print-target-triple`. `triple_word` keeps the
     // E0862 message precise ("host triple" vs "target triple").
     let tgt = target::active_target();
+    // The host triple is normalised to its stable, version-less form before it
+    // names a directory: `clang -print-target-triple` reports the running
+    // system (`arm64-apple-darwin25.5.0`), so using it raw would make a shipped
+    // binary stop being found after an OS upgrade. Cross targets already carry
+    // a fixed canonical `artifact_triple`.
     let (link_triple, triple_word) = match tgt.artifact_triple {
         Some(t) => (t.to_string(), "target"),
-        None => (detect_host_triple()?, "host"),
+        None => (target::normalize_triple(&detect_host_triple()?), "host"),
     };
     let mut link_args: Vec<String> = Vec::new();
     let platform = target::active_platform();

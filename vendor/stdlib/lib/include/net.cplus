@@ -1,0 +1,171 @@
+// stdlib/net.cplus — TCP networking.
+//
+// Built on libc socket/connect/bind/listen/accept/read/write/close via
+// `extern fn`. `TcpStream` and `TcpListener` are owned fd handles; Drop
+// closes them on scope exit.
+//
+// v0.0.3 scope: IPv4 + numeric IP addresses only. DNS resolution (via
+// `gethostbyname` or `getaddrinfo`) is a follow-up — for now, callers
+// pass an IP string like "127.0.0.1". The `gethostbyname` recipe lives
+// at [docs/examples/recipes/http_get/](../../../docs/examples/recipes/http_get/)
+// for programs that need DNS today.
+
+import "./result" as result;
+import "./vec" as vec;
+import "./reactor" as reactor;
+import "./future" as future;
+// Platform syscall constants + errno accessor. macOS values live in
+// netsys.cplus; Linux ones in netsys_linux.cplus (selected by the
+// resolver's `_linux` override). Keeps this file platform-neutral.
+import "./netsys" as netsys;
+
+extern fn socket(domain: i32, ty: i32, protocol: i32) -> i32;
+extern fn connect(fd: i32, addr: *u8, len: u32) -> i32;
+extern fn bind(fd: i32, addr: *u8, len: u32) -> i32;
+extern fn listen(fd: i32, backlog: i32) -> i32;
+extern fn accept(fd: i32, addr: *u8, len: *u32) -> i32;
+extern fn setsockopt(fd: i32, level: i32, optname: i32, optval: *u8, optlen: u32) -> i32;
+extern fn shutdown(fd: i32, how: i32) -> i32;
+// read / write / close on a socket fd differ by platform (POSIX read/write/
+// close vs Winsock recv/send/closesocket), so they route through netsys.
+extern fn inet_addr(s: *u8) -> u32;
+extern fn malloc(n: usize) -> *u8;
+extern fn memset(p: *u8, c: i32, n: usize) -> *u8;
+extern fn free(p: *u8);
+
+struct TcpStream {
+    _fd: i32,
+}
+
+struct TcpListener {
+    _fd: i32,
+}
+
+// Build a `sockaddr_in` for IPv4 in a fresh malloc'd buffer (16 bytes).
+// The first two bytes are platform-specific (macOS has a `sin_len` byte
+// ahead of the family; Linux starts with a 2-byte family) — netsys
+// supplies them. Caller owns the buffer.
+fn build_sockaddr(ip_dotted: str, port: u16) -> *u8 ;
+
+// Connect to `ip:port` over TCP. `ip` is a dotted-quad string ("127.0.0.1");
+// DNS resolution is out of scope for v0.0.3.
+fn connect_tcp(ip: str, port: u16) -> result::Result[TcpStream, result::IoError] ;
+
+// Bind a listener to 127.0.0.1:port and start listening. Sets SO_REUSEADDR
+// so quick test restarts don't hit EADDRINUSE.
+fn listen_tcp(port: u16) -> result::Result[TcpListener, result::IoError] ;
+
+impl TcpStream {
+    // Drain all remaining bytes from the peer (until EOF or error).
+    fn read_to_end(ref this) -> result::Result[vec::Vec[u8], result::IoError] ;
+
+    // Write `data` to the peer. Loops on short writes.
+    fn write_all(ref this, data: vec::Vec[u8]) -> result::Result[usize, result::IoError] ;
+
+    // Half-close the write side so the peer sees EOF. Pairs with a remote
+    // `read_to_end` that would otherwise block forever waiting for more.
+    fn shutdown_write(this) ;
+
+    fn close(ref this) ;
+
+    fn drop(ref this) ;
+
+    // v0.0.5 Phase 4 Slice 4B: async I/O method form. `mut this` is
+    // pointer-passed (not consumed), so callers can chain — a
+    // `stream.read_async(...)` then `stream.write_async(...)` keeps
+    // the same handle live and Drop still runs on scope exit.
+    //
+    // Slice 4F shipped the executor's awaiter-notification machinery
+    // (register_awaiter at await sites + notify_completed in async
+    // fn epilogues), so these can now be real `async fn` methods —
+    // multi-level await chains drive correctly.
+    //
+    // Prerequisite: the stream's fd must be non-blocking. Easiest path
+    // is to call `this.make_nonblocking()` once after construction.
+
+    // Mark the stream's fd O_NONBLOCK. Idempotent; safe to call
+    // repeatedly. Returns 0 on success, -1 on fcntl error.
+    fn make_nonblocking(ref this) -> i32 ;
+
+    // Async read: same semantics as `read_fd_async(this._fd, buf, count)`.
+    async fn read_async(ref this, buf: *u8, count: usize) -> isize ;
+
+    // Async best-effort write (may return < count).
+    async fn write_async(ref this, buf: *u8, count: usize) -> isize ;
+
+    // Async full-buffer write — loops on short writes / EAGAIN.
+    async fn write_all_async(ref this, buf: *u8, count: usize) -> isize ;
+}
+
+impl TcpListener {
+    // Block until a client connects, return the accepted stream.
+    fn accept(ref this) -> result::Result[TcpStream, result::IoError] ;
+
+    fn close(ref this) ;
+
+    fn drop(ref this) ;
+
+    // v0.0.5 Phase 4 Slice 4B: async accept method form. Slice 4F's
+    // awaiter-notification fix made real `async fn` shapes safe here.
+    fn make_nonblocking(ref this) -> i32 ;
+
+    // Async accept: returns the accepted client fd on success (>= 0),
+    // -1 on error.
+    async fn accept_async(ref this) -> i32 ;
+}
+
+// -----------------------------------------------------------------------------
+// v0.0.4 Phase 3 Slice 3A.3 — async I/O wrappers.
+//
+// Pattern: every wrapper requires the fd to be set non-blocking (call
+// `set_nonblocking(fd)` once before first use), then loops:
+//   1. Try the sync syscall (read / write / accept).
+//   2. If it returns 0 or > 0 (or a valid fd for accept), return.
+//   3. If it returns -1 and errno == EAGAIN, await the reactor's
+//      wait_read / wait_write — this suspends the coroutine until the
+//      kqueue/epoll reports the fd ready. Then retry.
+//   4. Any other -1 returns an error sentinel.
+//
+// The wrappers are free fns taking a raw `fd: i32` rather than methods on
+// TcpStream / TcpListener: those types are non-Copy (have Drop), and v0.0.4
+// async-method `this` passing would consume the stream on first call. Free
+// fns sidestep that — pass `stream._fd` and keep your handle. A friendlier
+// method API can re-export these once impl-on-non-Copy-this async lands.
+//
+// EAGAIN / O_NONBLOCK / errno and the read/write/close + non-blocking
+// mechanics all differ across macOS, Linux and Windows — netsys supplies
+// the right ones for the target.
+
+// Set fd to non-blocking mode. Idempotent — safe to call repeatedly on the
+// same fd. Returns 0 on success, -1 on error. Delegates to the platform
+// netsys shim (fcntl(O_NONBLOCK) on POSIX, ioctlsocket(FIONBIO) on Windows).
+fn set_nonblocking(fd: i32) -> i32 ;
+
+// Async read from `fd` into `buf` for up to `count` bytes. Returns:
+//   > 0  — number of bytes read.
+//   = 0  — EOF (peer closed).
+//   < 0  — error (-1 generic).
+//
+// Suspends the calling coroutine via the reactor until data is available;
+// under `block_on`, other queued tasks make progress meanwhile.
+async fn read_fd_async(fd: i32, buf: *u8, count: usize) -> isize ;
+
+// Async write to `fd` from `buf` for up to `count` bytes. Returns:
+//   > 0  — bytes written this call (may be < count; caller loops or uses
+//          `write_all_fd_async` for a full-write wrapper).
+//   < 0  — error (-1 generic).
+async fn write_fd_async(fd: i32, buf: *u8, count: usize) -> isize ;
+
+// Write every byte in [buf, buf+count). Loops on short writes, awaiting
+// the reactor on EAGAIN. Returns 0 on full success, -1 on any error.
+async fn write_all_fd_async(fd: i32, buf: *u8, count: usize) -> isize ;
+
+// Async accept on a listening socket. Returns:
+//   >= 0  — accepted client fd.
+//   <  0  — error.
+async fn accept_fd_async(listener_fd: i32) -> i32 ;
+
+// ───────────────────────────── tests ─────────────────────────────
+
+#[test]
+fn net_listen_tcp_binds_on_ephemeral_port() ;
