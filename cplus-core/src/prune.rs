@@ -7,19 +7,27 @@
 //! removal is iterated to a fixed point. appkit alone contributes 10,309 dead
 //! definitions out of 12,730. Every one of them is `internal`.
 //!
-//! Where the saving comes from depends on the optimisation level, and the two
-//! cases are very different — both measured on iris:
+//! **The saving is modest, and smaller than the size reduction suggests.**
+//! Measured end to end on iris, pruned vs `CPC_NO_PRUNE=1`:
 //!
-//!   - `-O0`: clang already dead-strips unreferenced `internal` functions, so
-//!     the object file is 15.2 MB either way. Pruning only saves clang the
-//!     *parse* of 33 MB of surplus text — worth ~0.6s of an 8s build.
-//!   - `-O2`: the optimiser runs the whole pipeline over every function
-//!     *before* `globaldce` discards it, so the dead 85% is fully optimised and
-//!     then thrown away. That is where the real cost sits.
+//!   - debug (`-O0`):   8.0s -> 7.3s   (~9%)
+//!   - release (`-O3`): 264.9s -> 256.0s (~3%)
 //!
-//! The pass therefore earns its keep on release builds far more than debug
-//! ones, which is the opposite of the intuition that a 4x smaller module is 4x
-//! less work.
+//! The reason is that LLVM already discards this code cheaply: clang
+//! dead-strips unreferenced `internal` functions itself, and does so early
+//! enough in the pipeline that the dead 85% is never fully optimised. The
+//! object file is 15.2 MB with or without pruning. What pruning actually buys
+//! is the *parse* of ~33 MB of surplus text, which is real but small.
+//!
+//! Recorded because an earlier estimate of "~2x on release" was wrong: it
+//! compared a standalone `clang -O2` run against a real `-O3` release build,
+//! so it measured the optimisation level, not the pruning. A 4x smaller module
+//! is not 4x less work — the work is in the code that survives.
+//!
+//! The pass is kept because it costs 0.07s, shrinks the module 4x for anything
+//! that reads it (`--emit-ll-project`, debugging, any future per-module
+//! caching where 85% less text is 85% less to hash and store), and makes the
+//! emitted IR honestly reflect what the program contains.
 //!
 //! This pass is deliberately a **text post-pass over the emitted module**, not a
 //! reachability walk over the AST. The AST route has to enumerate every way one
