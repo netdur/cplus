@@ -5819,7 +5819,7 @@ fn gen_function(
     emitted_extern_symbols: &mut std::collections::HashSet<String>,
     md: &ModuleMetadata,
     tramps: &ThreadTrampolines,
-    _is_lib: bool,
+    is_lib: bool,
 ) {
     // Builtin name: codegen never emits a definition for it; clang links printf.
     if f.name.name == "println" {
@@ -6091,7 +6091,16 @@ fn gen_function(
     // A body-less declaration resolves from a bundled archive, so it can never
     // be `internal` — internal linkage is exactly what makes a symbol
     // unreachable from another object file.
-    let linkage = if f.name.name == "main" || f.is_pub || f.is_declaration {
+    //
+    // In a LIBRARY build, a name-public item is the point of the library: a
+    // consumer links the archive to call it. Keeping it `internal` produces a
+    // technically-valid archive that exports nothing — stdlib built as a
+    // staticlib came to 13 KB and 14 symbols, none of them its API. Visibility
+    // is name-based (a leading `_` is module-private), so that rule decides it
+    // here too. Executable builds are unaffected: everything outside `main` and
+    // `export` stays internal so LTO can strip it.
+    let lib_public = is_lib && !f.name.name.starts_with('_');
+    let linkage = if f.name.name == "main" || f.is_pub || f.is_declaration || lib_public {
         ""
     } else {
         "internal "
