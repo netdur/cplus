@@ -49,9 +49,11 @@ usage:
                                     fix, example. No CODE (or --list): list every code.
   cpc FILE [-o OUT]                 compile single-file FILE.cplus to a binary (default OUT: ./a.out)
   cpc build [-o OUT]                multi-file build: reads ./Cplus.toml, walks imports
-  cpc check [FILE]                  parse + sema + borrowck, no codegen (fast feedback loop).
+  cpc check [FILE]                  fast feedback loop: parse + sema + borrowck.
                                     With no FILE: whole-project check via Cplus.toml,
-                                    enforcing any [profile.realtime] gate.
+                                    enforcing any [profile.realtime] gate; no codegen.
+                                    With a FILE: also runs codegen and discards the
+                                    IR, so a codegen-stage fault is caught here too.
   cpc doc FILE                      extract public items + `///` docs from FILE, emit
                                     Markdown to ./target/doc/<basename>.md
   cpc test [FILE] [--json]          discover + run `#[test]` functions. Single-file mode
