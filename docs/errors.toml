@@ -1969,30 +1969,30 @@ lang = "toml"
 verified = true
 emit_site = "cpc/src/main.rs:link_bundled_missing"
 test = "cpc/tests/e2e.rs:bundled_lib_missing_for_host_triple_is_e0860"
-cause = "A vendored package's manifest declares a file in `[link].bundled`, but `src/lib/<host-triple>/<basename>` does not exist. The manifest says the package ships that binary for this triple; the file is missing."
-fix = "Add the missing file under `src/lib/<host-triple>/`, or remove its entry from `[link].bundled`."
+cause = "A vendored package's manifest declares a file in `[link].bundled`, but `lib/<host-triple>/<basename>` does not exist. The manifest says the package ships that binary for this triple; the file is missing."
+fix = "Add the missing file under `lib/<host-triple>/`, or remove its entry from `[link].bundled`."
 example = '''
 [link]
 triples = ["arm64-apple-darwin"]
 bundled = ["libfoo.a"]
-# src/lib/arm64-apple-darwin/libfoo.a absent
+# lib/arm64-apple-darwin/libfoo.a absent
 # -> [E0860] package declares bundled `libfoo.a` but the file is not present
 '''
 
 [[code]]
 id = "E0861"
-title = "Orphan binary under `src/lib/` not declared in `[link].bundled`"
+title = "Orphan binary under `lib/` not declared in `[link].bundled`"
 category = "Targets and packages"
 severity = "error"
 repro = "scenario"
 lang = "toml"
 verified = true
 emit_site = "cpc/src/main.rs:link_orphan_binary"
-test = "cpc/tests/e2e.rs (orphan .a under src/lib/<host> without [link])"
-cause = "A binary artifact (`.a`, `.o`, `.lib`) sits under a package's `src/lib/<triple>/`, but the package manifest does not declare it in `[link].bundled`. The manifest is the single source of truth for shipped binaries."
+test = "cpc/tests/e2e.rs (orphan .a under lib/<host> without [link])"
+cause = "A binary artifact (`.a`, `.o`, `.lib`) sits under a package's `lib/<triple>/`, but the package manifest does not declare it in `[link].bundled`. The manifest is the single source of truth for shipped binaries."
 fix = "Add the file to `[link].bundled`, or delete it from the package."
 example = '''
-# vendor/foo/src/lib/arm64-apple-darwin/liborphan.a exists
+# vendor/foo/lib/arm64-apple-darwin/liborphan.a exists
 # vendor/foo/Cplus.toml has no [link] section
 # -> [E0861] package ships `liborphan.a` but the manifest doesn't declare it
 '''

@@ -1196,7 +1196,7 @@ fn ensure_coro_end_probed() {
 
 /// Phase 2 Slice 2C: detect the host triple via `clang -print-target-triple`.
 /// Used by the dep walker to look up bundled binary paths in each vendor
-/// package's `src/lib/<triple>/`. Each build calls this once.
+/// package's `lib/<triple>/`. Each build calls this once.
 fn detect_host_triple() -> Result<String, ExitCode> {
     let output = match Command::new(clang_program())
         .arg("-print-target-triple")
@@ -1316,9 +1316,9 @@ fn manifest_diag(
 ///   - Vendor manifest's `[package].name == <name>` (E0855).
 ///   - For each name in `[link].bundled`:
 ///     host triple is in `[link].triples` (E0862),
-///     `vendor/<name>/src/lib/<host-triple>/<basename>` exists (E0860).
+///     `vendor/<name>/lib/<host-triple>/<basename>` exists (E0860).
 ///   - No `.a`/`.dylib`/`.so` files under any
-///     `vendor/<name>/src/lib/<triple>/` that aren't in `[link].bundled`
+///     `vendor/<name>/lib/<triple>/` that aren't in `[link].bundled`
 ///     (E0861). Applies even when a package declares no `[link]` table —
 ///     orphan binaries are a manifest bug, never a graceful-degradation
 ///     case.
@@ -1426,7 +1426,10 @@ fn collect_dep_link_args(
             emit_diag(&d, diag_mode, "");
             return Err(ExitCode::FAILURE);
         }
-        let lib_root = vendor_dir.join("src").join("lib");
+        // AAR-shaped layout: binaries live at the package root under `lib/`,
+        // not inside `src/`. `src/` is importable C+ source; a prebuilt archive
+        // is not source and does not belong there.
+        let lib_root = vendor_dir.join("lib");
         let bundled: &[String] = vm
             .link
             .as_ref()
@@ -1470,7 +1473,7 @@ fn collect_dep_link_args(
                         "E0860",
                         &vendor_manifest,
                         format!(
-                            "package `{}` declares bundled `{}` but `src/lib/{}/{}` is not present (the package manifest says you ship it for this triple, but the file is missing)",
+                            "package `{}` declares bundled `{}` but `lib/{}/{}` is not present (the package manifest says you ship it for this triple, but the file is missing)",
                             dep.name, basename, link_triple, basename
                         ),
                         vec![
@@ -1483,7 +1486,7 @@ fn collect_dep_link_args(
                 }
             }
         }
-        // Orphan-file check: every binary under `src/lib/<triple>/` (any
+        // Orphan-file check: every binary under `lib/<triple>/` (any
         // triple, not just the host's) must be declared in `[link].bundled`.
         // Applies even when bundled is empty — a source-only package with a
         // stray `.a` is a manifest bug.
@@ -1516,7 +1519,7 @@ fn collect_dep_link_args(
                                 "E0861",
                                 &vendor_manifest,
                                 format!(
-                                    "package `{}` ships `src/lib/{}/{}` but the manifest doesn't declare it; the manifest is the single source of truth",
+                                    "package `{}` ships `lib/{}/{}` but the manifest doesn't declare it; the manifest is the single source of truth",
                                     dep.name, triple_name, fname
                                 ),
                                 vec![format!(

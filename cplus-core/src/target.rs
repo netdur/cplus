@@ -125,7 +125,7 @@ pub struct TargetSpec {
     /// line in the IR (today's output, byte-for-byte).
     pub triple: Option<&'static str>,
     /// Stable directory name for vendor bundled-artifact lookup
-    /// (`vendor/<dep>/src/lib/<artifact-triple>/` and `[link].triples`).
+    /// (`vendor/<dep>/lib/<artifact-triple>/` and `[link].triples`).
     /// Unversioned, unlike `triple` (no `13.0`) — packages ship one binary
     /// per target, not per minimum OS version. `None` = host: the dep
     /// walker uses `clang -print-target-triple` as before.

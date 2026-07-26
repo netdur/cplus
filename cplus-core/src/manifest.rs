@@ -89,7 +89,7 @@ pub struct LinkSpec {
     /// entry becomes `-l<name>` on the link line.
     pub libs: Vec<String>,
     /// Bundled binaries — shipped by THIS package, located at
-    /// `src/lib/<host-triple>/<basename>`. Each entry is a basename
+    /// `lib/<host-triple>/<basename>`. Each entry is a basename
     /// (no path component); the file must exist for every triple in
     /// `triples`. Missing file → E0860; orphan file → E0861.
     pub bundled: Vec<String>,
