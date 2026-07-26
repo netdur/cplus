@@ -420,6 +420,9 @@ pub fn load_project_full(
     let loader_deps_snapshot = dep_set.clone();
     let mut loader = Loader::with_deps(manifest_root.to_path_buf(), dep_set);
     loader.project_mode = project_mode;
+    // Resolve the project's own package name once, before any file is loaded:
+    // every file id derived below is qualified with it.
+    loader.load_package_name();
     loader.overlays = overlays;
     let entry_file_id = match loader.load_recursive(entry_path, None, None) {
         Ok(id) => id,
@@ -959,6 +962,18 @@ struct Loader {
     /// contents are used instead of the on-disk bytes, so graph/type-at/
     /// value-refs reflect edits before save. Empty for the compile path.
     overlays: BTreeMap<PathBuf, String>,
+    /// This project's own package name, from `[package].name`.
+    ///
+    /// A module's identity must not depend on WHO is compiling it. When stdlib
+    /// builds itself, `src/text.cplus` is inside its own root and would derive
+    /// `src.text`; when a consumer builds it, the same file is outside their
+    /// root and derives `stdlib.src.text`. The two disagree by exactly the
+    /// package prefix, so an archive built by the package exports
+    /// `_src.text.from_str` while every consumer emits calls to
+    /// `_stdlib.src.text.from_str` — and the link fails. Qualifying a
+    /// package's own files with its name makes the identity the same either
+    /// way.
+    package_name: Option<String>,
 }
 
 struct LoaderState {
@@ -977,6 +992,37 @@ impl Loader {
             deps,
             project_mode: false,
             overlays: BTreeMap::new(),
+            package_name: None,
+        }
+    }
+
+    /// Read `[package].name` from the project's manifest, once.
+    fn load_package_name(&mut self) {
+        let manifest = self.manifest_root.join("Cplus.toml");
+        let Ok(text) = std::fs::read_to_string(&manifest) else {
+            return;
+        };
+        let mut in_package = false;
+        for line in text.lines() {
+            let t = line.trim();
+            if t.starts_with('#') {
+                continue;
+            }
+            if t.starts_with('[') {
+                in_package = t == "[package]";
+                continue;
+            }
+            if in_package {
+                if let Some((k, v)) = t.split_once('=') {
+                    if k.trim() == "name" {
+                        let v = v.trim().trim_matches('"').trim();
+                        if !v.is_empty() {
+                            self.package_name = Some(v.to_string());
+                        }
+                        return;
+                    }
+                }
+            }
         }
     }
 
@@ -1044,7 +1090,11 @@ impl Loader {
         // and monomorphization route by `span.file` from here on; the
         // per-item `origin_file` strings remain as the fallback for
         // synthesized (file-less) spans.
-        let file_id = derive_file_id(&canonical, &self.manifest_root);
+        let file_id = derive_file_id_qualified(
+            &canonical,
+            &self.manifest_root,
+            self.package_name.as_deref(),
+        );
         let file_idx = crate::lexer::intern_file(&file_id);
         let tokens =
             crate::lexer::tokenize_with_file(&source, file_idx).map_err(|e| ResolveError::Lex {
@@ -1438,6 +1488,53 @@ fn package_ships_binary(pkg_root: &Path) -> bool {
         }
     }
     false
+}
+
+/// `derive_file_id`, but qualified with the project's own package name when the
+/// file lives inside it.
+///
+/// This is what makes a module's identity independent of who compiles it — see
+/// `Loader::package_name`. Without it, a package's own build and a consumer's
+/// build of the same file produce symbol names that differ by the package
+/// prefix, and a prebuilt archive can never link.
+fn derive_file_id_qualified(
+    canonical: &Path,
+    manifest_root: &Path,
+    package_name: Option<&str>,
+) -> String {
+    let base = derive_file_id(canonical, manifest_root);
+    let Some(pkg) = package_name else {
+        return base;
+    };
+    // Only files INSIDE this project need qualifying. A dependency was already
+    // re-rooted at its own package boundary by `package_relative`, so it
+    // carries its package name already — prefixing again would give
+    // `iris.stdlib.src.text`.
+    let canonical_root =
+        std::fs::canonicalize(manifest_root).unwrap_or_else(|_| manifest_root.to_path_buf());
+    let inside = canonical.strip_prefix(&canonical_root).is_ok();
+    if !inside {
+        return base;
+    }
+    let pkg = sanitize_id(pkg);
+    if base.is_empty() || base == "root" {
+        pkg
+    } else {
+        format!("{pkg}.{base}")
+    }
+}
+
+/// Map arbitrary text to the `[A-Za-z0-9_.]` shape LLVM accepts in a symbol.
+fn sanitize_id(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '.' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }
 
 fn derive_file_id(canonical: &Path, manifest_root: &Path) -> String {
@@ -3400,12 +3497,12 @@ mod tests {
             other => panic!("expected Call, got {other:?}"),
         };
         match &callee.kind {
-            ExprKind::Ident(name) => assert_eq!(name, "src.math.square"),
+            ExprKind::Ident(name) => assert_eq!(name, "x.src.math.square"),
             other => panic!("expected Ident, got {other:?}"),
         }
         // `square` itself should have been qualified.
         let square = p.program.items.iter().find_map(|it| match &it.kind {
-            ItemKind::Function(f) if f.name.name == "src.math.square" => Some(f),
+            ItemKind::Function(f) if f.name.name == "x.src.math.square" => Some(f),
             _ => None,
         });
         assert!(
@@ -3442,7 +3539,7 @@ mod tests {
             .items
             .iter()
             .find_map(|it| match &it.kind {
-                ItemKind::Function(f) if f.name.name == "src.main.apply" => Some(f),
+                ItemKind::Function(f) if f.name.name == "x.src.main.apply" => Some(f),
                 _ => None,
             })
             .unwrap();
@@ -3453,7 +3550,7 @@ mod tests {
         // Unresolved it would still read `math::square`; resolved it is the
         // qualified free-fn Ident, exactly like a call callee.
         match &default.kind {
-            ExprKind::Ident(name) => assert_eq!(name, "src.math.square"),
+            ExprKind::Ident(name) => assert_eq!(name, "x.src.math.square"),
             other => panic!("expected qualified Ident default, got {other:?}"),
         }
     }
@@ -3668,7 +3765,7 @@ mod tests {
             .items
             .iter()
             .find_map(|it| match &it.kind {
-                ItemKind::Function(f) if f.name.name == "src.main.name" => Some(f),
+                ItemKind::Function(f) if f.name.name == "x.src.main.name" => Some(f),
                 _ => None,
             })
             .expect("found name fn");
@@ -3683,7 +3780,7 @@ mod tests {
         for arm in arms {
             if let PatternKind::Variant { enum_name, .. } = &arm.pattern.kind {
                 assert_eq!(
-                    enum_name.name, "src.colors.Color",
+                    enum_name.name, "x.src.colors.Color",
                     "expected qualified enum name; got `{}`",
                     enum_name.name
                 );
@@ -3771,13 +3868,13 @@ mod tests {
         let p = load_project(&main, &dir).unwrap();
         // The struct should be `src.geom.Point`.
         let has_struct = p.program.items.iter().any(|it| match &it.kind {
-            ItemKind::Struct(s) => s.name.name == "src.geom.Point",
+            ItemKind::Struct(s) => s.name.name == "x.src.geom.Point",
             _ => false,
         });
         assert!(has_struct);
         // The impl block target should also be `src.geom.Point`.
         let has_impl = p.program.items.iter().any(|it| match &it.kind {
-            ItemKind::Impl(b) => b.target.name == "src.geom.Point",
+            ItemKind::Impl(b) => b.target.name == "x.src.geom.Point",
             _ => false,
         });
         assert!(has_impl);
