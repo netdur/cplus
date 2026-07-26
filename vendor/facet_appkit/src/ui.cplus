@@ -31,7 +31,6 @@ import "stdlib/option" as option;
 import "stdlib/vec" as vec;
 import "stdlib/text" as text;
 import "stdlib/io" as io;
-import "stdlib/fs" as fs;
 import "flex_layout/flex_layout" as flex;
 import "appkit/appkit" as ak;
 import "appkit/appkit_ext" as akx;
@@ -1406,36 +1405,6 @@ fn tree_unwrap(item: *u8) -> *TreeNode {
     return { rt::msg_id(item, rt::sel(#str_ptr("pointerValue\0"))) as *TreeNode };
 }
 
-// Box a node on the heap (leaked; app-lifetime). Reading `read_dir` decides
-// dir-vs-file: a path that opens as a directory recurses, anything else is a leaf.
-fn build_tree(path: str, label: str) -> *TreeNode {
-    var kids: vec::Vec[*TreeNode] = vec::new::[*TreeNode]();
-    var isdir: bool = false;
-    match fs::read_dir(path) {
-        option::Option[vec::Vec[text::Text]]::Some(names) => {
-            isdir = true;
-            var i: usize = 0 as usize;
-            while i < names.count() {
-                match names.at_ptr(i) {
-                    option::Option[*text::Text]::Some(nm) => {
-                        var cp: text::Text = text::from_str(path);
-                        let _s1 = cp.append("/");
-                        let _s2 = cp.append((*nm).view());
-                        kids.append(build_tree(cp.view(), (*nm).view()));
-                    }
-                    option::Option[*text::Text]::None => { }
-                }
-                i = i +% (1 as usize);
-            }
-        }
-        option::Option[vec::Vec[text::Text]]::None => { isdir = false; }
-    }
-    let node: *TreeNode = { malloc(#size_of::[TreeNode]()) as *TreeNode };
-    { *node = TreeNode { label: text::from_str(label), path: text::from_str(path), is_dir: isdir, children: kids, item: 0 as *u8 }; }
-    { (*node).item = tree_wrap_node(node); }
-    return node;
-}
-
 // The full path of a tree item (the `on_select` payload). `item` is the opaque
 // wrapper NSOutlineView / `on_select` hands back; unwrap it to the node. Returns
 // "" for a null or unwrappable item.
@@ -1466,10 +1435,19 @@ fn tree_node_is_dir(item: *u8) -> bool {
 }
 
 // ---- public node builders: construct a tree yourself, then mount it with
-// `tree(root, ...)`. This is the agnostic path — YOU decide what nodes exist
-// (apply ignore lists, prune `.git`/`target`, stop at a depth, or build children
-// lazily). `file_tree(path)` below is just the eager convenience that walks the
-// whole directory for you; when you need control, build the model here instead.
+// `tree(root, ...)`. The widget takes a MODEL and knows nothing about where the
+// nodes came from — YOU decide what exists (apply ignore lists, prune
+// `.git`/`target`, stop at a depth, build children lazily, or feed it something
+// that is not a filesystem at all: a symbol outline, a JSON document, a scene
+// graph).
+//
+// There was once a `file_tree(path)` convenience here that walked a directory
+// eagerly with `fs::read_dir`. It was removed 2026-07-26: filesystem traversal
+// policy is not the widget layer's business, and every toolkit that ships this
+// at all ships it as a lazy MODEL with filters (Qt `QFileSystemModel`, GTK4
+// `GtkDirectoryList`) rather than an eager view — while AppKit, SwiftUI and
+// WinUI ship no filesystem tree at all. It also had no callers: iris, the one
+// consumer with a file tree, builds its model here instead.
 //
 // Nodes are heap-boxed and leaked on purpose: NSOutlineView caches its items and
 // MESSAGES them (they must be objc objects, not just stable pointers), so each
@@ -1800,19 +1778,6 @@ fn tree_select_path(view: *u8, path: str) {
     TREE_SUPPRESS_SELECT = 0;
     rt::msg_void_i64(ov, rt::sel(#str_ptr("scrollRowToVisible:\0")), row);
     return;
-}
-
-// The eager convenience: `file_tree("/path/to/project", on_select: open_file)`
-// walks the WHOLE directory rooted at `path` and mounts it with `tree(...)`.
-// It applies no excludes and reads the tree in full on construction, so it is
-// meant for small, bounded directories. For a large workspace — where you must
-// skip `.git`/`target`/`vendor`, cap the depth, or load children lazily — that
-// policy is not the widget's job: build the model yourself with
-// `tree_node`/`tree_add_child` (drive it with `fs::read_dir` + your own ignore
-// list) and mount it with `tree(root, ...)`.
-fn file_tree(path: str, on_select: fn(*u8, *u8) = 0 as fn(*u8, *u8), ctx: *u8 = 0 as *u8, row: fn(*u8, *u8) -> flex::Node = 0 as fn(*u8, *u8) -> flex::Node, row_ctx: *u8 = 0 as *u8, row_id: fn(*u8, *u8) -> text::Text = 0 as fn(*u8, *u8) -> text::Text, row_id_ctx: *u8 = 0 as *u8, row_height: f64 = 0.0f64, agent_id: str = "") -> flex::Node {
-    let root: *TreeNode = build_tree(path, path);
-    return tree(root, on_select: on_select, ctx: ctx, row: row, row_ctx: row_ctx, row_id: row_id, row_id_ctx: row_id_ctx, row_height: row_height, agent_id: agent_id);
 }
 
 // ==========================================================================
@@ -4340,25 +4305,6 @@ fn test_text_area_holds_and_replaces_text() {
     assert area_text(n.payload()).equals("fn main() {}");
     set_area_text(n.payload(), "let x = 1;");            // opening a different file
     assert area_text(n.payload()).equals("let x = 1;");
-}
-
-#[test]
-fn test_file_tree_model_and_data_source() {
-    // Two child directories under a fresh base; the eager model + data-source
-    // trampolines should report exactly those two. (The live NSOutlineView
-    // display/selection needs a running app.)
-    let base: str = "/tmp/cplus_ui_tree_test";
-    let _a = fs::create_dir_all("/tmp/cplus_ui_tree_test/alpha");
-    let _b = fs::create_dir_all("/tmp/cplus_ui_tree_test/beta");
-    let root: *TreeNode = build_tree(base, base);
-    assert tree_num_children_imp(root as *u8, 0 as *u8, 0 as *u8) == (2 as i64);
-    assert tree_expandable_imp(root as *u8, 0 as *u8, 0 as *u8) == (1 as i8);   // root is a dir
-    let c0: *u8 = tree_child_imp(root as *u8, 0 as *u8, 0 as i64, 0 as *u8);
-    assert c0 != (0 as *u8);
-    assert tree_node_path(c0).count() > (0 as usize);                          // has a real path
-    // the widget builds over the same directory
-    let n: flex::Node = file_tree(base);
-    assert n.has_payload();
 }
 
 // A view-based row builder for the tree tests: a folder/doc icon by kind + the

@@ -20,7 +20,7 @@ The full portable kind set is implemented — leaves, value controls, pickers,
 containers, wrappers, `list`, `native` (catalog: `vendor/facet/docs/widgets.md`)
 — plus `set_identity` after every widget op.
 
-`tree` / `file_tree` stay AppKit-only `ui::` escape hatches (structured payload, not in `Node`).
+`tree` / `list` stay AppKit-only `ui::` escape hatches (structured payload, not in `Node`).
 
 ### Handler conventions
 

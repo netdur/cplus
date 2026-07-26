@@ -1265,7 +1265,7 @@ fn native(v: ak::View) -> facet::Node {
 }
 
 // One-shot: wrap an existing ui:: leaf widget (a `flex::Node` whose payload is a
-// single view — tree/file_tree/scroll_view) through the hatch. Retains the
+// single view — tree/list/scroll_view) through the hatch. Retains the
 // widget's payload, then drops the widget wrapper; the facet Node owns the +1.
 // For a widget that must survive re-renders, hold it and use `native(view)`.
 fn native_widget(take w: flex::Node) -> facet::Node {
