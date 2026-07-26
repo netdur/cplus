@@ -68,7 +68,7 @@ usage:
   cpc [-o OUT]                      with no FILE: emit the Phase-0 hello-world demo
 
 build flags (apply to `cpc FILE` and `cpc build`):
-  --release                         -O2, no overflow checks on `+ - *` (default: debug, checked)
+  --release                         -O3, no overflow checks on `+ - *` (default: debug, checked)
   --debug                           -O0 with overflow traps (the default)
   --fp-contract=off|on|fast         float contraction policy; `off` keeps `a*b+c` as
                                     fmul+fadd for bit-identical-to-C output (default: on).
@@ -3922,7 +3922,8 @@ fn run_clang(
     // Pass the LLVM optimization level alongside our own build-mode choice:
     //   Debug   -> `-O0`. Keeps the overflow-check intrinsics, leaves divs
     //              and branches in source order, debuggable IR.
-    //   Release -> `-O2`. Engages LLVM's standard inlining, mem2reg,
+    //   Release -> `-O3` (see the v0.0.5 note below). Engages LLVM's
+    //              standard inlining, mem2reg,
     //              GVN, LICM, loop reduction, etc. Without this flag clang
     //              defaults to `-O0` and our "release" binaries are 100×
     //              slower than they need to be.
