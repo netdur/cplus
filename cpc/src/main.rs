@@ -449,6 +449,10 @@ fn main() -> ExitCode {
                 subcommand = Some(Subcommand::EmitLlProject);
                 i += 1;
             }
+            Some("--timings") => {
+                timings::enable();
+                i += 1;
+            }
             Some("--release") => {
                 build_mode = BuildMode::Release;
                 i += 1;
@@ -1674,14 +1678,16 @@ fn build_project(
     // the resolver so vendor imports (`utils/math`) resolve under
     // vendor/<dep>/src/. The consumer's bin path is the entry.
     let dep_names: Vec<String> = active_dep_names(&m);
-    let (program, _entry_file_id, mono) = match load_and_check_project_full(
-        &bin.path,
-        &m.root,
-        diag_mode,
-        false,
-        Some(&dep_names),
-        m.realtime_profile.as_ref(),
-    ) {
+    let (program, _entry_file_id, mono) = match timings::phase("resolve+sema+borrowck", || {
+        load_and_check_project_full(
+            &bin.path,
+            &m.root,
+            diag_mode,
+            false,
+            Some(&dep_names),
+            m.realtime_profile.as_ref(),
+        )
+    }) {
         Ok(p) => p,
         Err(code) => return code,
     };
@@ -1692,15 +1698,10 @@ fn build_project(
     // test was vacuously clean. The single-file path (`compile_file`)
     // already plumbed sanitizers; this matches.
     ensure_coro_end_probed();
-    let ir = prune_ir(codegen::generate_with_mono(
-        &program,
-        build_mode,
-        fp_contract,
-        None,
-        sanitizers,
-        false,
-        &mono,
-    ));
+    let ir = timings::phase("codegen", || {
+        codegen::generate_with_mono(&program, build_mode, fp_contract, None, sanitizers, false, &mono)
+    });
+    let ir = timings::phase("prune", || prune_ir(ir));
 
     let out_path = out.unwrap_or_else(|| {
         let sub = match build_mode {
@@ -1799,7 +1800,10 @@ fn build_project(
             link_args.push(obj.to_string_lossy().to_string());
         }
     }
-    let status = run_clang(&tmp, &out_path, build_mode, false, sanitizers, &link_args);
+    let status = timings::phase("clang + link", || {
+        run_clang(&tmp, &out_path, build_mode, false, sanitizers, &link_args)
+    });
+    timings::report();
     drop(tmp_handle); // explicit cleanup on the secure temp path
     status
 }
@@ -3826,6 +3830,61 @@ fn build_ir(
         false,
         &mono,
     )))
+}
+
+/// Phase timing for `--timings`. Off unless the flag is passed, so the
+/// instrumentation costs nothing in a normal build.
+///
+/// Exists because the phase split had to be reverse-engineered by hand — three
+/// separate runs plus arithmetic — to learn that clang is 73% of a debug build
+/// and 99% of a release one. That should be one flag, not a research project.
+mod timings {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+
+    static ENABLED: AtomicBool = AtomicBool::new(false);
+    static PHASES: Mutex<Vec<(&'static str, Duration)>> = Mutex::new(Vec::new());
+
+    pub fn enable() {
+        ENABLED.store(true, Ordering::Relaxed);
+    }
+
+    fn on() -> bool {
+        ENABLED.load(Ordering::Relaxed)
+    }
+
+    /// Run `f`, recording how long it took under `name`.
+    pub fn phase<T>(name: &'static str, f: impl FnOnce() -> T) -> T {
+        if !on() {
+            return f();
+        }
+        let start = Instant::now();
+        let out = f();
+        if let Ok(mut p) = PHASES.lock() {
+            p.push((name, start.elapsed()));
+        }
+        out
+    }
+
+    /// Print the breakdown to stderr, longest-running phase share first.
+    pub fn report() {
+        if !on() {
+            return;
+        }
+        let Ok(p) = PHASES.lock() else { return };
+        if p.is_empty() {
+            return;
+        }
+        let total: f64 = p.iter().map(|(_, d)| d.as_secs_f64()).sum();
+        eprintln!("cpc timings:");
+        for (name, d) in p.iter() {
+            let secs = d.as_secs_f64();
+            let pct = if total > 0.0 { 100.0 * secs / total } else { 0.0 };
+            eprintln!("  {name:<26} {secs:>7.2}s  {pct:>4.0}%");
+        }
+        eprintln!("  {:<26} {total:>7.2}s", "measured total");
+    }
 }
 
 /// Drop unreachable `internal` definitions before handing the module to clang.
