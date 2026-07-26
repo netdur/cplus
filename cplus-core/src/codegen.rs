@@ -1458,6 +1458,7 @@ fn generate_inner(
                         && !f.is_extern
                         && !f.is_declaration
                         && f.name.name != "main"
+                        && !lib_public_name(is_lib, &f.name.name)
                         && !address_taken.contains(&f.name.name)
                     {
                         fastcc.insert(f.name.name.clone());
@@ -1466,7 +1467,18 @@ fn generate_inner(
                 ItemKind::Impl(b) => {
                     let target_name = &b.target.name;
                     for m in &b.methods {
-                        if m.generic_params.is_empty() && !m.is_pub && m.name.name != "drop" {
+                        // A declaration is emitted as `declare`, which carries no
+                        // calling convention — a `call fastcc` against it is an ABI
+                        // mismatch with the archive that defines it. A library's
+                        // name-public method is external for the same reason.
+                        // This set is consulted by BOTH the definition site and every
+                        // call site, so excluding them here keeps the two symmetric.
+                        if m.generic_params.is_empty()
+                            && !m.is_pub
+                            && !m.is_declaration
+                            && m.name.name != "drop"
+                            && !lib_public_name(is_lib, &m.name.name)
+                        {
                             fastcc.insert(mangle(target_name, &m.name.name));
                         }
                     }
@@ -1530,7 +1542,7 @@ fn generate_inner(
             }
         })
         .collect();
-    emit_statics(&mut out, statics_map, &static_ast_tys, &types, &md);
+    emit_statics(&mut out, statics_map, &static_ast_tys, &types, &md, is_lib);
     // v0.0.10 Phase 4A: emit per-selector cached-pointer globals.
     emit_selector_globals(&mut out, selectors_set, &md);
     // v0.0.10 Phase 4C: emit per-call shader-blob globals.
@@ -2177,6 +2189,26 @@ struct EnumInfo {
     methods: HashMap<String, MethodInfo>,
 }
 
+/// OBS.1: the `field` argument the hook receives when an entire watched
+/// struct was replaced in one store (`c = C { .. }`), rather than a single
+/// field written. Cannot collide with a real field name — identifiers admit
+/// no `*` — so a hook can test for it unambiguously.
+const WHOLE_STRUCT_FIELD: &str = "*";
+
+/// OBS.1: what a field store on a `#[watch]` struct must emit after the
+/// store. Decided before any lowering happens, because the three store paths
+/// in `gen_assign_inner` each return on their own.
+struct WatchBarrier {
+    /// The struct place being written through — re-lowered for the hook call.
+    /// Restricted to side-effect-free place shapes by `place_is_safe_owned`.
+    receiver: Expr,
+    /// Name of the field just written; becomes the hook's `str` argument.
+    field: String,
+    struct_ty: Ty,
+    /// True when the hook declared the 4-parameter snapshot form.
+    wants_snapshot: bool,
+}
+
 #[derive(Debug, Clone)]
 struct StructInfo {
     name: String,
@@ -2198,6 +2230,12 @@ struct StructInfo {
     /// type (`Text`). A string literal in this type's context is lowered to an
     /// owned `{ ptr, len, cap }` buffer instead of a `str` view.
     is_lang_string: bool,
+    /// OBS.1: this struct carries `#[watch]`. Every field store through a
+    /// safe owned place is followed by a call to its `on_value(ref this,
+    /// field: str)` hook. Re-derived from the post-mono AST rather than
+    /// imported from sema, per the id-universe rule — sema `StructId`s and
+    /// codegen `StructId`s are different numbering spaces.
+    is_watched: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -2406,6 +2444,8 @@ fn collect_types(p: &Program) -> TypeTable {
                     a.path.name == "lang"
                         && matches!(a.args.first(), Some(AttrArg::Str(v, _)) if v == "string")
                 });
+                // OBS.1: presence-only, same shape as the `repr` read in sema.
+                let is_watched = s.attributes.iter().any(|a| a.path.name == "watch");
                 t.struct_defs.push(StructInfo {
                     name: s.name.name.clone(),
                     fields: Vec::new(),
@@ -2413,6 +2453,7 @@ fn collect_types(p: &Program) -> TypeTable {
                     is_drop: false,
                     is_copy: false, // computed in `compute_copy_flags`
                     is_lang_string,
+                    is_watched,
                 });
                 t.struct_by_name.insert(s.name.name.clone(), id);
             }
@@ -4922,6 +4963,20 @@ fn collect_and_emit_str_lits(out: &mut String, program: &Program) -> StrLitTable
                     }
                 }
             }
+            // OBS.1: the field names an `#[watch]` struct's write barrier
+            // passes to `on_value` are compiler-synthesized `str` values with
+            // no literal anywhere in source, so nothing above would have
+            // interned them. Seed one global per field here; `gen_assign`
+            // looks them up through the same `@.str.N` table as a hand-written
+            // literal, and a field name that happens to match a real literal
+            // dedupes onto it.
+            ItemKind::Struct(s) if s.attributes.iter().any(|a| a.path.name == "watch") => {
+                for f in &s.fields {
+                    emit_str_global(&f.name.name, &mut table, &mut next_id, out);
+                }
+                // The whole-struct-replacement sentinel needs a global too.
+                emit_str_global(WHOLE_STRUCT_FIELD, &mut table, &mut next_id, out);
+            }
             _ => {}
         }
     }
@@ -5315,17 +5370,53 @@ fn emit_shader_blob_globals(
 /// Populates `md.statics` with the qualified-name → `Ty` map so
 /// `gen_expr` / `gen_assign` can detect references to statics and
 /// route them through load/store ops against the emitted symbol.
+/// Is this item part of a library build's public surface?
+///
+/// Visibility in C+ is name-based: a leading `_` marks an item module-private.
+/// In a library build a name-public item is the point of the archive — a
+/// consumer links it to call it — so it keeps external (`weak_odr`) linkage
+/// and the default C calling convention. Executable builds always answer
+/// `false`: there is no archive, so everything outside `main`/`export` stays
+/// `internal` and `fastcc`-eligible.
+///
+/// One rule, consulted by every site that must agree on it: function linkage,
+/// method linkage, static linkage, and the `fastcc` eligibility pre-pass.
+fn lib_public_name(is_lib: bool, name: &str) -> bool {
+    is_lib && !name.rsplit('.').next().unwrap_or(name).starts_with('_')
+}
+
 fn emit_statics(
     out: &mut String,
     statics_map: &std::collections::BTreeMap<String, crate::sema::StaticInfo>,
     ast_tys: &HashMap<String, Ty>,
     types: &TypeTable,
     md: &ModuleMetadata,
+    is_lib: bool,
 ) {
     let us = usize_llvm_ty();
     if statics_map.is_empty() {
         return;
     }
+    // A library build applies the same name-based visibility rule to statics
+    // that `gen_fn` applies to functions, and for the same reason: a package
+    // ships its generic modules as source, so a consumer compiles them while
+    // the package's own archive already contains them. With plain external
+    // linkage every such static is defined twice and the consumer's link
+    // fails with `duplicate symbol`. Module-private statics (leading `_` on
+    // the base name) become `internal`, so the archive's copy is invisible;
+    // name-public statics become `weak_odr`, so equivalent definitions merge.
+    // `weak_odr`, not `linkonce_odr` — the archive must retain its public
+    // surface even though nothing inside the archive references it.
+    // Executable builds are unaffected: statics keep external linkage.
+    let static_linkage = |qname: &str| -> &'static str {
+        if !is_lib {
+            ""
+        } else if lib_public_name(is_lib, qname) {
+            "weak_odr "
+        } else {
+            "internal "
+        }
+    };
     for (qname, info) in statics_map {
         // Statics-id-drift fix: prefer the AST-derived type (codegen's id
         // universe) over sema's `info.ty` (sema's id universe) — the two
@@ -5346,8 +5437,9 @@ fn emit_statics(
                 let bytes_len = emit_cstr(out, &bytes_sym, s);
                 let str_len = bytes_len.saturating_sub(1); // emit_cstr adds NUL terminator
                 let storage = if info.is_mut { "global" } else { "constant" };
+                let linkage = static_linkage(qname);
                 out.push_str(&format!(
-                    "@{qname} = {storage} {{ ptr, {us} }} {{ ptr @{bytes_sym}, i64 {str_len} }}\n"
+                    "@{qname} = {linkage}{storage} {{ ptr, {us} }} {{ ptr @{bytes_sym}, i64 {str_len} }}\n"
                 ));
                 md.statics.borrow_mut().insert(qname.clone(), sty.clone());
                 continue;
@@ -5366,7 +5458,8 @@ fn emit_statics(
             }
         };
         let storage = if info.is_mut { "global" } else { "constant" };
-        out.push_str(&format!("@{qname} = {storage} {lltype} {llvalue}\n"));
+        let linkage = static_linkage(qname);
+        out.push_str(&format!("@{qname} = {linkage}{storage} {lltype} {llvalue}\n"));
         md.statics.borrow_mut().insert(qname.clone(), sty.clone());
     }
     out.push('\n');
@@ -6117,7 +6210,7 @@ fn gen_function(
     // the consumer does, later. `linkonce_odr` is discardable-if-unused, which
     // in a library build means the whole surface is stripped: stdlib came out
     // at 14 KB instead of 400 KB, the same empty archive `internal` produced.
-    let lib_public = is_lib && !f.name.name.starts_with('_');
+    let lib_public = lib_public_name(is_lib, &f.name.name);
     let linkage = if f.name.name == "main" || f.is_pub || f.is_declaration {
         ""
     } else if lib_public {
@@ -7684,7 +7777,7 @@ fn gen_method(
     test_mode: bool,
     md: &ModuleMetadata,
     tramps: &ThreadTrampolines,
-    _is_lib: bool,
+    is_lib: bool,
 ) {
     // v0.0.5 Phase 2B: gen-method dispatch. Same lowering as
     // `gen_gen_function` for free fns but adapted to method receiver
@@ -7726,6 +7819,13 @@ fn gen_method(
     // cold helper. `preserve_nonecc` requires clang/LLVM 17+; macOS
     // shipped that in Xcode 15.3 (Feb 2024).
     let is_drop_method = m.name.name == "drop";
+    // A library's name-public method is the archive's reason to exist: a
+    // consumer compiles against the generated header and links the definition
+    // from here. `drop` counts — a consumer that owns one of this package's
+    // types runs its destructor, and the header declares it like any other
+    // method. The `fastcc` pre-pass excludes these for the same reason, so the
+    // definition below and every call site agree on the convention.
+    let lib_public = lib_public_name(is_lib, &m.name.name);
     // v0.0.8 bench-gap fix C: non-drop, non-export methods can use
     // `fastcc` (LLVM-internal register-passing cc). Drop methods stay
     // `preserve_nonecc` — fastcc can't compose with it. `export` methods
@@ -7753,8 +7853,15 @@ fn gen_method(
     // v0.0.3 Slice 3D: methods also pick up internal linkage in bin
     // builds. `export` methods stay external; `drop` (synthesized) stays
     // internal regardless of `export`-ness.
+    //
+    // In a library build the name-based rule wins over both: `weak_odr`, so
+    // the method is reachable from a consumer's object AND so the copy the
+    // consumer compiled from a verbatim generic module merges with this one
+    // instead of colliding. Mirrors `gen_fn` exactly.
     let linkage = if m.is_pub && !is_drop_method {
         ""
+    } else if lib_public {
+        "weak_odr "
     } else {
         "internal "
     };
@@ -7768,10 +7875,24 @@ fn gen_method(
     } else {
         llvm_ty(&return_ty, types)
     };
+    // A body-less method (`fn count(this) -> usize ;`) comes from a generated
+    // header: the implementation lives in the package's bundled archive. It
+    // reuses the SAME signature emission as a definition — identical sret
+    // handling, receiver shape, and param attributes — so the declared
+    // signature cannot drift from the one the package's own build produced.
+    // Only the keyword differs; `declare` takes no linkage or cc prefix.
+    // Emitting the synthesized empty body as a `define` instead produces a
+    // function that traps (non-void) or silently does nothing (void) —
+    // which is exactly what a missing `drop` looks like: a leak.
+    let (keyword, linkage, cc_prefix) = if m.is_declaration {
+        ("declare", "", "")
+    } else {
+        ("define", linkage, cc_prefix)
+    };
     write!(
         out,
-        "define {}{}{} @{}(",
-        linkage, cc_prefix, return_ty_str, mangled
+        "{} {}{}{} @{}(",
+        keyword, linkage, cc_prefix, return_ty_str, mangled
     )
     .unwrap();
     let mut llvm_idx: u32 = 0;
@@ -7856,6 +7977,11 @@ fn gen_method(
         first = false;
     }
     out.push(')');
+    // Declaration: the signature is the whole emission.
+    if m.is_declaration {
+        out.push('\n');
+        return;
+    }
     out.push_str(fn_attrs);
     out.push_str(" {\n");
     out.push_str("entry:\n");
@@ -7874,6 +8000,10 @@ fn gen_method(
     // Destructors don't auto-drop their receiver — we *are* the destructor.
     if m.name.name == "drop" {
         state.in_destructor = true;
+    }
+    // OBS.1: the observer hook must not observe itself — see the flag's doc.
+    if m.name.name == "on_value" {
+        state.suppress_watch_barrier = true;
     }
     // v0.0.3 Slice 1P: when the method uses sret, %0 is the sret slot and
     // the receiver shifts to %1.
@@ -8174,6 +8304,16 @@ struct FnState<'a> {
     /// as a Drop binding — running drop at end of drop would recurse. Other
     /// local Drop bindings inside the destructor body still register normally.
     in_destructor: bool,
+    /// OBS.1: true iff we are currently emitting the body of an `on_value`
+    /// hook. Field stores inside the hook do NOT re-fire the write barrier —
+    /// otherwise `this.version = this.version + 1` in a handler would call the
+    /// handler again, unboundedly. This is the same shape as `in_destructor`:
+    /// a compiler-inserted call must not re-trigger the thing that inserted it.
+    ///
+    /// It is a *static* suppression covering the hook's own body only. A hook
+    /// that calls a helper which writes a watched field will still re-enter;
+    /// no runtime guard bit is emitted.
+    suppress_watch_barrier: bool,
     /// Slice 5ATTR.4: `assert` lowering depends on whether we're emitting a
     /// `cpc test` binary. In test mode the trap is replaced by a write to
     /// `@cpc_test_failed` so the driver's `main` can read which test failed
@@ -8298,6 +8438,7 @@ impl<'a> FnState<'a> {
             block_counter: 0,
             terminated: false,
             in_destructor: false,
+            suppress_watch_barrier: false,
             test_mode,
             loop_labels: Vec::new(),
             loop_scope_depth: Vec::new(),
@@ -15162,6 +15303,157 @@ impl<'a> FnState<'a> {
         // mutates the target. Drop the field-read memo so any reads
         // after the assignment see the new value, not the cached one.
         self.invalidate_field_load_cache();
+
+        // OBS.1: decide the write barrier BEFORE lowering anything. All three
+        // store paths below return early on their own, so the notification is
+        // emitted by `gen_assign_inner`'s callers rather than bolted onto each
+        // exit — see `watch_barrier_for`.
+        let barrier = self.watch_barrier_for(target);
+        // The `old` snapshot must be taken BEFORE the store — that is the only
+        // moment the previous value still exists anywhere. Nothing is retained
+        // between calls: both snapshots are stack copies produced from memory
+        // that already exists.
+        let old = barrier.as_ref().filter(|b| b.wants_snapshot).map(|b| {
+            self.snapshot_watched(&b.receiver, &b.struct_ty, "old")
+        });
+        self.gen_assign_inner(op, target, value);
+        if let Some(b) = barrier {
+            let new = old
+                .as_ref()
+                .map(|_| self.snapshot_watched(&b.receiver, &b.struct_ty, "new"));
+            self.gen_watch_notify(&b.receiver, &b.field, old.zip(new));
+        }
+    }
+
+    /// OBS.1: if `target` is a field store on an `#[watch]` struct that
+    /// should fire the hook, return the receiver expression and the field name.
+    ///
+    /// Guards, and why each one:
+    /// - The target must be `receiver.field` — a whole-struct assignment
+    ///   (`c = Counter { .. }`) replaces the observer along with the state, so
+    ///   there is no meaningful "which field changed" answer.
+    /// - `place_is_safe_owned(receiver)` restricts the receiver to an
+    ///   Ident/Field/Index chain. That is what makes it sound to re-lower the
+    ///   receiver for the hook call: those shapes are side-effect-free to
+    ///   evaluate twice. It also excludes raw-pointer paths (`(*p).f = v`),
+    ///   which the barrier deliberately does not cover — a raw pointer may not
+    ///   even point at a live object.
+    /// - `suppress_watch_barrier` is set while lowering an `on_value` body,
+    ///   so a hook that writes its own fields does not re-enter itself. This is
+    ///   a static, zero-cost rule; it does NOT catch mutual recursion through a
+    ///   helper the hook calls, which stays the author's responsibility.
+    fn watch_barrier_for(&self, target: &Expr) -> Option<WatchBarrier> {
+        if self.suppress_watch_barrier {
+            return None;
+        }
+        // Two ways a store reaches a watched struct, checked innermost-first.
+        //
+        // 1. WHOLE-STRUCT — the target's own type is watched (`c = C { .. }`,
+        //    `o.leaf = Leaf { .. }`). One store replaced every field at once,
+        //    so the hook fires ONCE with the `WHOLE_STRUCT_FIELD` sentinel
+        //    rather than once per field. Silence here would be the worst
+        //    option: a whole-struct assign is plainly a state change, and
+        //    letting it bypass the barrier is the same silent no-op E0361
+        //    exists to prevent.
+        //
+        // 2. SINGLE FIELD — the target is `receiver.field` and the *receiver*
+        //    is watched (`c.count = 10`).
+        //
+        // Order matters. `o.leaf = Leaf { .. }` matches shape (2) syntactically
+        // (it IS a Field target), but semantically it replaces `leaf` wholesale,
+        // so case 1 must claim it first. Only the innermost watched struct is
+        // notified — matching `o.leaf.v = 5`, which tells `leaf` and not `o`.
+        let (receiver, field) = match self.place_ty(target) {
+            Some(Ty::Struct(id))
+                if self
+                    .types
+                    .struct_defs
+                    .get(id.0 as usize)
+                    .is_some_and(|d| d.is_watched) =>
+            {
+                (target, WHOLE_STRUCT_FIELD.to_string())
+            }
+            _ => {
+                let ExprKind::Field { receiver, name } = &target.kind else {
+                    return None;
+                };
+                (&**receiver, name.name.clone())
+            }
+        };
+        if !self.place_is_safe_owned(receiver) {
+            return None;
+        }
+        let Some(Ty::Struct(id)) = self.place_ty(receiver) else {
+            return None;
+        };
+        let info = &self.types.struct_defs[id.0 as usize];
+        if !info.is_watched {
+            return None;
+        }
+        let hook = info.methods.get("on_value")?;
+        // Sema has already accepted exactly one of the two shapes, so the
+        // parameter count alone distinguishes them: 1 = `(field)`,
+        // 3 = `(field, old, new)`.
+        let wants_snapshot = hook.params.len() == 3;
+        Some(WatchBarrier {
+            receiver: receiver.clone(),
+            field,
+            struct_ty: Ty::Struct(id),
+            wants_snapshot,
+        })
+    }
+
+    /// OBS.1: copy the watched struct out of its place into a fresh slot and
+    /// bind it under a generated name, so the notify call can name it as an
+    /// ordinary argument expression. The struct is `Copy` and pointer-free
+    /// (sema's E0363), so a flat value copy is the whole snapshot — nothing
+    /// is aliased and nothing needs dropping.
+    fn snapshot_watched(&mut self, receiver: &Expr, ty: &Ty, tag: &str) -> Expr {
+        let span = receiver.span;
+        let (slot, _) = self.gen_place(receiver);
+        let val = self.next_tmp();
+        self.gen_load(&val, ty, &slot);
+        let copy = self.alloca_anon(ty.clone());
+        self.gen_store(ty, &val, &copy);
+        let name = format!("__watch_{tag}_{}", self.tmp_counter);
+        self.bind(&name, copy, ty.clone());
+        Expr {
+            kind: ExprKind::Ident(name),
+            span,
+        }
+    }
+
+    /// OBS.1: emit `receiver.on_value("<field>")`. Routed through the normal
+    /// method-call path rather than a hand-written `call` so the receiver's
+    /// pointer-passing, the `str` fat-pointer argument, and the calling
+    /// convention (`fastcc` for a non-`export` method) all stay in lockstep
+    /// with how every other method call in the module is emitted.
+    fn gen_watch_notify(
+        &mut self,
+        receiver: &Expr,
+        field: &str,
+        snapshots: Option<(Expr, Expr)>,
+    ) {
+        let span = receiver.span;
+        let name = Ident {
+            name: "on_value".to_string(),
+            span,
+        };
+        let mut args = vec![Expr {
+            kind: ExprKind::StrLit(field.to_string()),
+            span,
+        }];
+        if let Some((old, new)) = snapshots {
+            args.push(old);
+            args.push(new);
+        }
+        self.gen_method_call(receiver, &name, &args);
+        // The hook takes `ref this` and may have written any field, so the
+        // memoized field reads from before the call are stale.
+        self.invalidate_field_load_cache();
+    }
+
+    fn gen_assign_inner(&mut self, op: AssignOp, target: &Expr, value: &Expr) {
 
         // v0.0.8 bench-gap finding 2: `place = StructLit{...}` fast
         // path. Bypass the intermediate-alloca-and-aggregate-copy

@@ -318,7 +318,12 @@ pub fn monomorphize(
             },
             fields,
             is_pub: true,
-            attributes: Vec::new(),
+            // OBS.1: carry the template's attributes onto the instantiation.
+            // Codegen re-derives type-level flags (`#[lang]`, `#[watch]`)
+            // from this AST; dropping them here made every generic
+            // instantiation look unmarked to the backend while sema had it
+            // marked.
+            attributes: info.attributes.clone(),
             generic_params: Vec::new(),
         };
         out_items.push(Item {

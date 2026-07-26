@@ -86,6 +86,11 @@ pub enum AttrArg {
 pub enum AttrValue {
     Ident(Ident),
     Str(String, Span),
+    /// An integer-literal value in the `name = VALUE` form —
+    /// `#[watch(history = 10)]`. Without this the key-value shape could only
+    /// carry a quoted count (`history = "10"`), which reads as a string and
+    /// pushes the parse of a number into attribute validation.
+    Int(i64, Span),
 }
 
 #[derive(Debug, Clone, PartialEq)]

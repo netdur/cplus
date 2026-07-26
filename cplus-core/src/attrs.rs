@@ -206,6 +206,21 @@ const KNOWN_ATTRS: &[AttrSpec] = &[
         targets: TARGET_STRUCT,
         allow_duplicate: false,
     },
+    // OBS.1: `#[watch]` — field-write barrier. Every store to a field of
+    // an `#[watch]` struct is followed by a call to the struct's
+    // `fn on_value(ref this, field: str)` hook, with the written field's name
+    // as the argument. Declarative per plan.md §2.8d: the attribute generates
+    // no code and transforms no AST — it marks the type, and codegen reads
+    // the mark the same way it reads `drop` to decide where teardown runs.
+    // Sema enforces that an `#[watch]` struct supplies the hook (E0361)
+    // with the exact signature (E0362). See
+    // [docs/design/watch-structs.md](../../docs/design/watch-structs.md).
+    AttrSpec {
+        name: "watch",
+        args: ArgsSpec::None,
+        targets: TARGET_STRUCT,
+        allow_duplicate: false,
+    },
 ];
 
 /// Single-file entry point. Mirrors `sema::check`.
@@ -1277,5 +1292,49 @@ mod tests {
     fn inline_duplicate_e0357() {
         let diags = check_src("#[inline] #[inline(always)] fn f() -> i32 { return 0; }");
         assert_eq!(codes(&diags), vec!["E0357"]);
+    }
+
+    // ---- OBS.1: `#[watch]` surface-shape validation ----
+    //
+    // The hook-existence (E0361) and hook-signature (E0362) rules need the
+    // method table, so they live in sema; this pass only pins the four
+    // shape rules the attribute spec buys.
+
+    #[test]
+    fn watch_on_struct_clean() {
+        let diags = check_src("#[watch] struct S { x: i32 }");
+        assert!(diags.is_empty(), "expected clean, got: {:?}", codes(&diags));
+    }
+
+    #[test]
+    fn watch_with_args_rejected_e0355() {
+        let diags = check_src("#[watch(deep)] struct S { x: i32 }");
+        assert_eq!(codes(&diags), vec!["E0355"]);
+    }
+
+    #[test]
+    fn watch_on_function_rejected_e0356() {
+        let diags = check_src("#[watch] fn f() { return; }");
+        assert_eq!(codes(&diags), vec!["E0356"]);
+    }
+
+    #[test]
+    fn watch_on_enum_rejected_e0356() {
+        let diags = check_src("#[watch] enum E { A, B }");
+        assert_eq!(codes(&diags), vec!["E0356"]);
+    }
+
+    #[test]
+    fn watch_duplicate_e0357() {
+        let diags = check_src("#[watch] #[watch] struct S { x: i32 }");
+        assert_eq!(codes(&diags), vec!["E0357"]);
+    }
+
+    #[test]
+    fn watch_composes_with_repr_c() {
+        // Two distinct struct attributes on one declaration is not a
+        // duplicate — the uniqueness rule is per-name.
+        let diags = check_src("#[repr(C)] #[watch] struct S { x: i32 }");
+        assert!(diags.is_empty(), "expected clean, got: {:?}", codes(&diags));
     }
 }

@@ -18866,6 +18866,334 @@ fn main() -> i32 { return 0; }
     );
 }
 
+/// OBS.1: `#[watch]` emits a write barrier after every field store made
+/// through a safe owned place, calling `on_value(ref this, field: str)` with
+/// the written field's name.
+///
+/// The columns pinned here are the ones that would silently no-op if the
+/// barrier were wired at the wrong layer:
+///   - a direct field write from outside the type,
+///   - a compound assign (`+=`), which takes the read-modify-write path
+///     rather than the plain-store path,
+///   - a write made from *inside* a method (`this.count = ...`),
+///   - a nested watched struct reached through an outer field,
+///   - reentrancy: the hook writes one of its own fields, which must NOT
+///     re-enter the hook (else this test hangs instead of failing),
+///   - a non-watched sibling field, which must stay silent.
+#[test]
+fn watch_struct_fires_write_barrier() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("watch.cplus");
+    let bin = dir.join("watch");
+    std::fs::write(
+        &src,
+        "extern fn printf(fmt: *u8, ...) -> i32;\n\
+         #[watch]\n\
+         struct Leaf { v: i32, hits: i32 }\n\
+         impl Leaf {\n\
+           fn on_value(ref this, field: str) {\n\
+             this.hits = this.hits + 1;\n\
+             printf(#str_ptr(\"%.*s \\0\"), #str_len(field) as i32, #str_ptr(field));\n\
+           }\n\
+           fn bump(ref this) { this.v = this.v + 1; }\n\
+         }\n\
+         struct Outer { leaf: Leaf, tag: i32 }\n\
+         fn main() -> i32 {\n\
+           var o = Outer { leaf: Leaf { v: 0, hits: 0 }, tag: 0 };\n\
+           o.leaf.v = 10;\n\
+           o.leaf.v += 5;\n\
+           o.leaf.bump();\n\
+           o.tag = 1;\n\
+           printf(#str_ptr(\"| v=%d hits=%d tag=%d\\n\\0\"), o.leaf.v, o.leaf.hits, o.tag);\n\
+           return 0;\n\
+         }\n",
+    )
+    .expect("write watch.cplus");
+
+    let compile = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        compile.status.success(),
+        "compile failed: {}{}",
+        String::from_utf8_lossy(&compile.stderr),
+        String::from_utf8_lossy(&compile.stdout)
+    );
+
+    let run = Command::new(&bin).output().expect("run watch binary");
+    assert!(run.status.success(), "binary exited non-zero: {}", run.status);
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    // Three notifications, all naming `v`; `o.tag = 1` is on a non-watched
+    // struct and contributes nothing. `hits` reaching exactly 3 is the
+    // reentrancy proof — the hook's own `this.hits = ...` store did not
+    // re-fire the barrier.
+    assert_eq!(
+        stdout, "v v v | v=16 hits=3 tag=1\n",
+        "unexpected observer trace: {stdout}"
+    );
+}
+
+/// OBS.1 negative: the attribute is not a silent no-op. A `#[watch]`
+/// struct with no hook, or a hook with the wrong signature, is a hard error
+/// rather than a type that quietly never notifies.
+#[test]
+fn watch_struct_without_valid_hook_is_rejected() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+
+    for (name, body, expected) in [
+        ("missing", "#[watch]\nstruct S { x: i32 }\n", "E0361"),
+        (
+            "badsig",
+            "#[watch]\nstruct S { x: i32 }\n\
+             impl S { fn on_value(this, field: str) { return; } }\n",
+            "E0362",
+        ),
+    ] {
+        let src = dir.join(format!("watch_{name}.cplus"));
+        std::fs::write(&src, format!("{body}fn main() -> i32 {{ return 0; }}\n"))
+            .expect("write source");
+        let out = Command::new(cpc)
+            .arg("check")
+            .arg(&src)
+            .output()
+            .expect("invoke cpc check");
+        let combined = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stderr),
+            String::from_utf8_lossy(&out.stdout)
+        );
+        assert!(
+            combined.contains(expected),
+            "case `{name}`: expected {expected}, got: {combined}"
+        );
+    }
+}
+
+/// OBS.1: a `#[watch]` generic struct stays observed through
+/// monomorphization. This is the regression guard for the attribute-dropping
+/// bug in `run_monomorphize` — instantiated `StructDecl`s used to be rebuilt
+/// with an empty attribute list, so codegen (which re-derives type-level
+/// flags off the post-mono AST) saw every instantiation as unmarked while
+/// sema had it marked, and the barrier silently vanished.
+#[test]
+fn watch_generic_struct_keeps_barrier_after_mono() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("obs_generic.cplus");
+    let bin = dir.join("obs_generic");
+    std::fs::write(
+        &src,
+        "extern fn printf(fmt: *u8, ...) -> i32;\n\
+         #[watch]\n\
+         struct Cell[T] { value: T, hits: i32 }\n\
+         impl Cell[T] {\n\
+           fn on_value(ref this, field: str) { this.hits = this.hits + 1; }\n\
+         }\n\
+         fn main() -> i32 {\n\
+           var a = Cell[i32] { value: 0, hits: 0 };\n\
+           var b = Cell[f64] { value: 0.0, hits: 0 };\n\
+           a.value = 1;\n\
+           a.value = 2;\n\
+           b.value = 1.5;\n\
+           printf(#str_ptr(\"%d %d\\n\\0\"), a.hits, b.hits);\n\
+           return 0;\n\
+         }\n",
+    )
+    .expect("write obs_generic.cplus");
+
+    let compile = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        compile.status.success(),
+        "compile failed: {}{}",
+        String::from_utf8_lossy(&compile.stderr),
+        String::from_utf8_lossy(&compile.stdout)
+    );
+    let run = Command::new(&bin).output().expect("run obs_generic binary");
+    assert!(run.status.success(), "binary exited non-zero: {}", run.status);
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "2 1\n",
+        "each instantiation must observe its own writes"
+    );
+}
+
+/// OBS.1: the 4-parameter snapshot hook. `old` is captured before the store
+/// and `new` after, so the hook sees both sides of every write.
+///
+/// The load-bearing column is the last one: a snapshot is a *frozen value*,
+/// not a view of the live struct. The hook stashes `new` into a static; 99
+/// further writes then move the live struct on. If the snapshot aliased
+/// `this`, the stashed reading would track those writes. It must not — that
+/// distinction is the entire reason the hook takes values instead of letting
+/// the handler read `this.field` back.
+#[test]
+fn watch_snapshot_hook_passes_frozen_old_and_new() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("watch_snap.cplus");
+    let bin = dir.join("watch_snap");
+    std::fs::write(
+        &src,
+        "extern fn printf(fmt: *u8, ...) -> i32;\n\
+         #[watch]\n\
+         struct Sensor { reading: i32, seq: i32 }\n\
+         static PENDING: Sensor = Sensor { reading: 0, seq: 0 };\n\
+         impl Sensor {\n\
+           fn on_value(ref this, field: str, old: Sensor, new: Sensor) {\n\
+             if new.reading - old.reading < 10 { return; }\n\
+             PENDING = new;\n\
+           }\n\
+         }\n\
+         fn main() -> i32 {\n\
+           var s = Sensor { reading: 0, seq: 0 };\n\
+           s.reading = 100;\n\
+           var i = 0;\n\
+           while i < 99 { s.reading = s.reading + 1; i = i + 1; }\n\
+           printf(#str_ptr(\"%d %d\\n\\0\"), s.reading, PENDING.reading);\n\
+           return 0;\n\
+         }\n",
+    )
+    .expect("write watch_snap.cplus");
+
+    let compile = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        compile.status.success(),
+        "compile failed: {}{}",
+        String::from_utf8_lossy(&compile.stderr),
+        String::from_utf8_lossy(&compile.stdout)
+    );
+    let run = Command::new(&bin).output().expect("run watch_snap binary");
+    assert!(run.status.success(), "binary exited non-zero: {}", run.status);
+    // live = 199; the stashed snapshot stays at the value it was notified
+    // about (100), and the 99 sub-threshold writes never reached the static.
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "199 100\n",
+        "a snapshot must be a frozen value, not a view of the live struct"
+    );
+}
+
+/// OBS.1: the snapshot form is gated on the struct being safe to copy and
+/// hold. A raw-pointer field is `Copy`, so the Copy rule alone would admit it
+/// — but its pointee can be freed while a snapshot still names it.
+#[test]
+fn watch_snapshot_hook_rejects_unsafe_struct() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("watch_unsafe.cplus");
+    std::fs::write(
+        &src,
+        "#[watch]\n\
+         struct S { x: i32, opaque p: *i32 }\n\
+         impl S { fn on_value(ref this, field: str, old: S, new: S) { return; } }\n\
+         fn main() -> i32 { return 0; }\n",
+    )
+    .expect("write watch_unsafe.cplus");
+    let out = Command::new(cpc)
+        .arg("check")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc check");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stderr),
+        String::from_utf8_lossy(&out.stdout)
+    );
+    assert!(
+        combined.contains("E0363"),
+        "expected E0363, got: {combined}"
+    );
+}
+
+/// OBS.1: a store that replaces an entire watched struct fires the hook
+/// exactly ONCE, with the `"*"` sentinel, rather than once per field or (as
+/// it did originally) not at all.
+///
+/// Columns, and why each is load-bearing:
+///   - two field writes fire twice — they are two independent updates;
+///   - one whole-struct assign fires once — the batching answer, and silence
+///     here would be a state change that bypasses the barrier entirely;
+///   - `o.leaf = Leaf { .. }` is syntactically a Field target but semantically
+///     a whole-struct replacement, so it must report `"*"` on `leaf`, not
+///     `"leaf"` on `o` — only the innermost watched struct is told, matching
+///     how `o.leaf.v = 5` behaves;
+///   - a `let` initializer does NOT fire: there is no previous state;
+///   - the hook still works after a whole-struct assign (the hook is a method
+///     on the type, so nothing about the instance's observability is lost).
+#[test]
+fn watch_whole_struct_assign_fires_once_with_sentinel() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("watch_whole.cplus");
+    let bin = dir.join("watch_whole");
+    std::fs::write(
+        &src,
+        "extern fn printf(fmt: *u8, ...) -> i32;\n\
+         #[watch]\n\
+         struct Leaf { v: i32, w: i32 }\n\
+         impl Leaf {\n\
+           fn on_value(ref this, field: str) {\n\
+             printf(#str_ptr(\"%.*s \\0\"), #str_len(field) as i32, #str_ptr(field));\n\
+           }\n\
+         }\n\
+         struct Outer { leaf: Leaf, tag: i32 }\n\
+         fn main() -> i32 {\n\
+           var l = Leaf { v: 1, w: 2 };\n\
+           l.v = 10;\n\
+           l.w = 20;\n\
+           l = Leaf { v: 100, w: 200 };\n\
+           l.v = 5;\n\
+           var o = Outer { leaf: Leaf { v: 0, w: 0 }, tag: 0 };\n\
+           o.leaf = Leaf { v: 7, w: 8 };\n\
+           o.tag = 9;\n\
+           printf(#str_ptr(\"|\\n\\0\"));\n\
+           return 0;\n\
+         }\n",
+    )
+    .expect("write watch_whole.cplus");
+
+    let compile = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        compile.status.success(),
+        "compile failed: {}{}",
+        String::from_utf8_lossy(&compile.stderr),
+        String::from_utf8_lossy(&compile.stdout)
+    );
+    let run = Command::new(&bin).output().expect("run watch_whole binary");
+    assert!(run.status.success(), "binary exited non-zero: {}", run.status);
+    // v w  → two field writes
+    // *    → whole-struct assign, once
+    // v    → the hook still fires afterwards
+    // *    → nested whole-struct replacement, reported on `leaf`
+    //        (`o.tag = 9` is not watched and adds nothing; the `var` inits add
+    //        nothing either)
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "v w * v * |\n",
+        "unexpected watch trace"
+    );
+}
+
 fn tempdir() -> std::path::PathBuf {
     let dir = tempfile::Builder::new()
         .prefix("cpc-test-")

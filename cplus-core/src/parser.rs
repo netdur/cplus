@@ -533,10 +533,22 @@ impl Parser {
                             self.bump();
                             AttrValue::Str(s, tok.span)
                         }
+                        // `#[watch(history = 10)]` — an integer count in the
+                        // key-value form. Same u64→i64 cast rationale as the
+                        // positional `AttrArg::Int` arm above.
+                        TokenKind::Int(..) => {
+                            let tok = self.peek().clone();
+                            let TokenKind::Int(v, _) = tok.kind else {
+                                unreachable!()
+                            };
+                            self.bump();
+                            AttrValue::Int(v as i64, tok.span)
+                        }
                         TokenKind::Ident(_) => AttrValue::Ident(self.expect_ident()?),
                         _ => {
-                            return Err(self
-                                .err_at_peek("string literal or identifier (attribute key=value)"))
+                            return Err(self.err_at_peek(
+                                "string literal, integer literal, or identifier (attribute key=value)",
+                            ))
                         }
                     };
                     Ok(AttrArg::KeyValue(name, value))

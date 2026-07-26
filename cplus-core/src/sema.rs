@@ -328,6 +328,12 @@ pub struct StructDef {
     /// signature `fn drop(ref this)`). Drop types are always non-`Copy` —
     /// see `docs/design/phase3-drop.md`. Set by `collect_methods`.
     pub is_drop: bool,
+    /// OBS.1: true when the struct carries `#[watch]`. Every field store
+    /// reached through a safe owned place is followed by a call to this
+    /// struct's `on_value(ref this, field: str)` hook. Sema validates the hook
+    /// exists (E0361) and has the exact signature (E0362); codegen re-derives
+    /// the same flag off the post-mono AST and emits the barrier.
+    pub is_watched: bool,
     /// Slice 10.FFI.5: true when the struct carries `#[repr(C)]`.
     /// Promises a C-compatible layout for FFI passing — fields stored
     /// in declaration order with the platform's C ABI padding rules.
@@ -693,12 +699,28 @@ pub struct EnvVarEntry {
     pub value: String,
 }
 
+/// OBS.1: which of the two accepted `on_value` shapes a `#[watch]` struct
+/// declared. `Snapshot` makes the write barrier copy the struct either side
+/// of the store and pass both; `Plain` costs nothing beyond the call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HookShape {
+    Plain,
+    Snapshot,
+}
+
 /// Slice 7GEN.5c: per-instantiation info handed to monomorphize.
 #[derive(Debug, Clone)]
 pub struct StructInstantiationInfo {
     pub mangled_name: String,
     pub fields: Vec<(String, Ty, bool)>,
     pub template_origin_file: Option<String>,
+    /// OBS.1: the template declaration's attribute list, carried onto every
+    /// synthesized instantiation. Before this, `run_monomorphize` rebuilt
+    /// instantiated `StructDecl`s with an empty attribute list, so any
+    /// codegen stage that re-derives a flag from the AST (`#[lang]`,
+    /// `#[watch]`) silently saw generic instantiations as unmarked while
+    /// sema saw them as marked — a flag drift with no diagnostic.
+    pub attributes: Vec<crate::ast::Attribute>,
     /// Sema-assigned `StructId.0`. Exposed so consumers can map
     /// `Ty::Struct(id)` back to a mangled name (the `name_of` closure
     /// in `run_monomorphize`). Without this, generic instantiations
@@ -899,6 +921,10 @@ fn check_with_files_inner(
     // at creation (fixes the spurious-E0335 late-Copy FP). Before this point
     // the fixpoint owns classification.
     cx.copy_flags_settled = true;
+    // OBS.1: runs here, not before the fixpoint — the snapshot hook form is
+    // gated on the watched struct being `Copy`, which is not known until the
+    // Copy/Drop fixpoint above has settled.
+    cx.check_watch_hooks(program);
     // Reject infinite-size (value-recursive) type definitions before any later
     // pass tries to compute their layout. `struct S { s: S }` and mutually
     // recursive `A`/`B` have no finite size; left unchecked they leak a clang
@@ -989,6 +1015,13 @@ fn check_with_files_inner(
             let info = StructInstantiationInfo {
                 mangled_name: def.name.clone(),
                 fields: def.fields.clone(),
+                // OBS.1: inherit the template's attributes so post-mono
+                // AST re-derivation agrees with sema. See the field's doc.
+                attributes: cx
+                    .struct_generic_templates
+                    .get(&key.0)
+                    .map(|t| t.attributes.clone())
+                    .unwrap_or_default(),
                 template_origin_file: cx
                     .struct_generic_templates
                     .get(&key.0)
@@ -1824,6 +1857,9 @@ impl SemaCx<'_> {
                     // declaration. The attrs pass has already validated
                     // the args are `(C)`; here we just check presence.
                     let is_repr_c = s.attributes.iter().any(|a| a.path.name == "repr");
+                    // OBS.1: presence-only — the attrs pass has already
+                    // validated that `#[watch]` carries no arguments.
+                    let is_watched = s.attributes.iter().any(|a| a.path.name == "watch");
                     // TEXT.R1: record the `#[lang("string")]` struct as the
                     // designated owned-string type. The attrs pass has already
                     // validated the one-string-arg shape.
@@ -1851,6 +1887,7 @@ impl SemaCx<'_> {
                         methods: HashMap::new(),
                         is_copy: false,
                         is_drop: false,
+                        is_watched,
                         is_repr_c,
                         is_pub: s.is_pub,
                         // Slice 4C: an item's origin_file is set by the
@@ -2077,6 +2114,197 @@ impl SemaCx<'_> {
                 s.is_drop = true;
             }
         }
+    }
+
+    /// OBS.1: every `#[watch]` struct must supply the write-barrier hook,
+    /// and its signature is fixed. Runs after `collect_methods` so the method
+    /// tables are populated.
+    ///
+    /// - No `on_value` method → **E0361**. The attribute would otherwise be a
+    ///   silent no-op, which is the worst outcome for a marker whose entire
+    ///   job is to make writes observable.
+    /// - Wrong signature → **E0362**. It must be exactly
+    ///   `fn on_value(ref this, field: str)`: `ref this` because a handler that
+    ///   cannot write is useless for the accumulate/forward cases, `field: str`
+    ///   because the field name is the only type-uniform thing the barrier can
+    ///   hand over (field types differ, so the value itself cannot be a
+    ///   parameter — the handler reads it back off `this`), and no return type
+    ///   because the barrier sits mid-statement and has nowhere to put a value.
+    ///
+    /// Spans come from the AST rather than the method table so the diagnostic
+    /// points at the user's `impl`, not at a synthesized entry.
+    fn check_watch_hooks(&mut self, program: &Program) {
+        for item in &program.items {
+            let ItemKind::Struct(s) = &item.kind else {
+                continue;
+            };
+            if !s.attributes.iter().any(|a| a.path.name == "watch") {
+                continue;
+            }
+            // A generic template has no concrete StructDef of its own; its
+            // instantiations inherit both the flag and the method table, so
+            // validating the template once covers every instantiation.
+            let sig = self
+                .struct_by_name
+                .get(&s.name.name)
+                .and_then(|id| self.structs[id.0 as usize].methods.get("on_value").cloned())
+                .or_else(|| {
+                    self.struct_generic_templates
+                        .get(&s.name.name)
+                        .and_then(|_| self.watch_hook_sig_from_ast(program, &s.name.name))
+                });
+            let Some(sig) = sig else {
+                self.err(
+                    "E0361",
+                    format!(
+                        "`#[watch] struct {}` has no `on_value` hook — add `impl {} {{ fn on_value(ref this, field: str) {{ ... }} }}`",
+                        s.name.name, s.name.name
+                    ),
+                    s.name.span,
+                );
+                continue;
+            };
+            let self_id = self.struct_by_name.get(&s.name.name).copied();
+            let recv_ok = matches!(sig.receiver, Some(Receiver::Mut));
+            let ret_ok = matches!(sig.return_type, Ty::Unit);
+            // Two accepted shapes. The short one costs nothing; the snapshot
+            // one asks the barrier to copy the struct either side of the store.
+            let is_self = |t: &Ty| match (t, self_id) {
+                (Ty::Struct(a), Some(b)) => *a == b,
+                // A generic template's hook is read off the AST, where the
+                // param type resolves to `Ty::Error` (there is no StructDef to
+                // name). Shape is all we can judge there; the concrete
+                // instantiations are checked normally.
+                _ => self_id.is_none(),
+            };
+            let shape = match sig.params.as_slice() {
+                [f] if f.ty == Ty::Str => Some(HookShape::Plain),
+                [f, old, new] if f.ty == Ty::Str && is_self(&old.ty) && is_self(&new.ty) => {
+                    Some(HookShape::Snapshot)
+                }
+                _ => None,
+            };
+            let Some(shape) = shape.filter(|_| recv_ok && ret_ok) else {
+                self.err(
+                    "E0362",
+                    format!(
+                        "watch hook `{0}::on_value` must be `fn on_value(ref this, field: str)` or `fn on_value(ref this, field: str, old: {0}, new: {0})`",
+                        s.name.name
+                    ),
+                    s.name.span,
+                );
+                continue;
+            };
+            // The snapshot form hands the hook two copies of the struct that
+            // outlive the write. That is only safe when a copy is a flat,
+            // self-contained value: `Copy` rules out owned heap (Copy and Drop
+            // are mutually exclusive), and pointer-freedom rules out the
+            // remaining way a flat copy can dangle — a raw-pointer field is
+            // `Copy` but its pointee can be freed while a snapshot still names
+            // it. E0363 rather than a silent hazard.
+            if shape == HookShape::Snapshot {
+                if let Some(id) = self_id {
+                    if let Some(reason) = self.snapshot_unsafe_reason(id) {
+                        self.err(
+                            "E0363",
+                            format!(
+                                "`#[watch] struct {}` cannot use the snapshot hook form: {reason}. Use `fn on_value(ref this, field: str)` instead",
+                                s.name.name
+                            ),
+                            s.name.span,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Why a struct's value copy is not safe to hold past the write that
+    /// produced it, or `None` when it is. See `check_watch_hooks`.
+    fn snapshot_unsafe_reason(&self, id: StructId) -> Option<String> {
+        let def = &self.structs[id.0 as usize];
+        if !def.is_copy {
+            return Some(format!(
+                "`{}` is not `Copy`, so a snapshot would alias owned storage",
+                def.name
+            ));
+        }
+        let mut seen = std::collections::HashSet::new();
+        self.first_raw_ptr_field(id, &mut seen)
+            .map(|f| format!("field `{f}` is a raw pointer, whose pointee can be freed while a snapshot still names it"))
+    }
+
+    /// Depth-first hunt for a raw-pointer field, transitively through struct
+    /// and array fields. `seen` breaks cycles (a struct reachable from itself
+    /// through an indirection).
+    fn first_raw_ptr_field(
+        &self,
+        id: StructId,
+        seen: &mut std::collections::HashSet<u32>,
+    ) -> Option<String> {
+        if !seen.insert(id.0) {
+            return None;
+        }
+        for (name, ty, _) in &self.structs[id.0 as usize].fields {
+            let mut probe = ty;
+            while let Ty::Array(inner, _) = probe {
+                probe = inner;
+            }
+            match probe {
+                Ty::RawPtr(_) => return Some(name.clone()),
+                Ty::Struct(inner) => {
+                    if let Some(found) = self.first_raw_ptr_field(*inner, seen) {
+                        return Some(format!("{name}.{found}"));
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    /// Look up a generic template's `on_value` signature. Template methods
+    /// aren't in `self.structs` (a template has no StructDef), so read the
+    /// `impl` block straight off the AST.
+    fn watch_hook_sig_from_ast(&self, program: &Program, target: &str) -> Option<MethodSig> {
+        for item in &program.items {
+            let ItemKind::Impl(b) = &item.kind else {
+                continue;
+            };
+            if b.target.name != target {
+                continue;
+            }
+            for m in &b.methods {
+                if m.name.name != "on_value" {
+                    continue;
+                }
+                // Only the shape matters here — `str` is not generic, so no
+                // parameter substitution is needed to judge the signature.
+                return Some(MethodSig {
+                    receiver: m.receiver,
+                    params: m
+                        .params
+                        .iter()
+                        .map(|p| ParamSig {
+                            ty: match &p.ty.kind {
+                                crate::ast::TypeKind::Path(n) if n == "str" => Ty::Str,
+                                _ => Ty::Error,
+                            },
+                            mutable: p.mutable,
+                            move_: p.move_,
+                            borrow_: p.borrow_,
+                        })
+                        .collect(),
+                    return_type: match &m.return_type {
+                        None => Ty::Unit,
+                        Some(_) => Ty::Error,
+                    },
+                    generic_params: Vec::new(),
+                    generic_bounds: Vec::new(),
+                });
+            }
+        }
+        None
     }
 
     /// Total number of struct + enum types currently flagged Copy. Both copy
@@ -8209,6 +8437,9 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             methods: HashMap::new(),
             is_copy: false,
             is_drop: false,
+            // A synthesized tuple carries no user attributes and has no
+            // `impl` block to hang an `on_value` hook on.
+            is_watched: false,
             is_repr_c: false,
             is_pub: false,
             origin_file: None,
@@ -15320,6 +15551,13 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             methods: HashMap::new(),
             is_copy: false, // recomputed by compute_struct_copy_flags? not for late-synthesized
             is_drop: false,
+            // OBS.1: unlike `repr(C)`, `#[watch]` DOES inherit — the write
+            // barrier is a property of the type's contract, and a
+            // `#[watch] struct Cell[T]` means every instantiation is
+            // watched. `run_monomorphize` carries the template's attribute
+            // list onto each synthesized decl so codegen re-derives the same
+            // answer off the post-mono AST.
+            is_watched: template.attributes.iter().any(|a| a.path.name == "watch"),
             is_repr_c: false, // generic instantiations don't inherit repr(C); revisit when use case appears
             is_pub: template.is_pub,
             // Inherit the template's declaring file so cross-file `_`-field
@@ -19386,6 +19624,223 @@ mod tests {
     // server past 4 GB in ~2.5 s — with no diagnostic, because
     // `INSTANTIATION_LIMIT` counts instantiations and this exhausts memory
     // inside a couple of dozen of them.
+
+    // ---- OBS.1: `#[watch]` hook existence + signature ----
+
+    fn codes_of(ds: &[Diagnostic]) -> Vec<&str> {
+        ds.iter().map(|d| d.code.0).collect()
+    }
+
+    const WATCH_OK: &str = "#[watch] struct S { x: i32 }\n\
+         impl S { fn on_value(ref this, field: str) { return; } }\n\
+         fn main() -> i32 { return 0; }";
+
+    #[test]
+    fn watch_with_correct_hook_clean() {
+        let ds = check_src(WATCH_OK);
+        assert!(
+            !ds.iter().any(|d| d.code.0 == "E0361" || d.code.0 == "E0362"),
+            "expected no observer diagnostics; got {:?}",
+            codes_of(&ds)
+        );
+    }
+
+    #[test]
+    fn watch_without_hook_reports_e0361() {
+        let ds = check_src(
+            "#[watch] struct S { x: i32 }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(
+            ds.iter().any(|d| d.code.0 == "E0361"),
+            "expected E0361; got {:?}",
+            codes_of(&ds)
+        );
+    }
+
+    #[test]
+    fn watch_hook_needs_ref_receiver_e0362() {
+        let ds = check_src(
+            "#[watch] struct S { x: i32 }\n\
+             impl S { fn on_value(this, field: str) { return; } }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(
+            ds.iter().any(|d| d.code.0 == "E0362"),
+            "expected E0362; got {:?}",
+            codes_of(&ds)
+        );
+    }
+
+    #[test]
+    fn watch_hook_needs_str_param_e0362() {
+        let ds = check_src(
+            "#[watch] struct S { x: i32 }\n\
+             impl S { fn on_value(ref this, field: i32) { return; } }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(
+            ds.iter().any(|d| d.code.0 == "E0362"),
+            "expected E0362; got {:?}",
+            codes_of(&ds)
+        );
+    }
+
+    #[test]
+    fn watch_hook_rejects_extra_params_e0362() {
+        let ds = check_src(
+            "#[watch] struct S { x: i32 }\n\
+             impl S { fn on_value(ref this, field: str, extra: i32) { return; } }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(
+            ds.iter().any(|d| d.code.0 == "E0362"),
+            "expected E0362; got {:?}",
+            codes_of(&ds)
+        );
+    }
+
+    #[test]
+    fn watch_hook_rejects_return_type_e0362() {
+        let ds = check_src(
+            "#[watch] struct S { x: i32 }\n\
+             impl S { fn on_value(ref this, field: str) -> i32 { return 0; } }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(
+            ds.iter().any(|d| d.code.0 == "E0362"),
+            "expected E0362; got {:?}",
+            codes_of(&ds)
+        );
+    }
+
+    #[test]
+    fn unwatched_struct_may_define_on_value_freely() {
+        // Without `#[watch]`, `on_value` is an ordinary method — no
+        // signature rule applies and no barrier is emitted.
+        let ds = check_src(
+            "struct S { x: i32 }\n\
+             impl S { fn on_value(this) -> i32 { return this.x; } }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(
+            !ds.iter().any(|d| d.code.0 == "E0361" || d.code.0 == "E0362"),
+            "expected no observer diagnostics; got {:?}",
+            codes_of(&ds)
+        );
+    }
+
+    #[test]
+    fn watch_generic_struct_validates_hook_on_template() {
+        // A generic template has no concrete StructDef; the hook is read
+        // off the `impl` AST so the missing-hook rule still fires once.
+        let ds = check_src(
+            "#[watch] struct Cell[T] { v: T }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(
+            ds.iter().any(|d| d.code.0 == "E0361"),
+            "expected E0361 on the template; got {:?}",
+            codes_of(&ds)
+        );
+    }
+
+    #[test]
+    fn watch_generic_struct_with_hook_clean() {
+        let ds = check_src(
+            "#[watch] struct Cell[T] { v: T }\n\
+             impl Cell[T] { fn on_value(ref this, field: str) { return; } }\n\
+             fn main() -> i32 { let c = Cell[i32] { v: 1 }; return 0; }",
+        );
+        assert!(
+            !ds.iter().any(|d| d.code.0 == "E0361" || d.code.0 == "E0362"),
+            "expected no observer diagnostics; got {:?}",
+            codes_of(&ds)
+        );
+    }
+
+    // ---- OBS.1: the 4-parameter snapshot hook form ----
+
+    #[test]
+    fn watch_snapshot_hook_on_copy_struct_clean() {
+        let ds = check_src(
+            "#[watch] struct S { x: i32, y: i32 }\n\
+             impl S { fn on_value(ref this, field: str, old: S, new: S) { return; } }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(
+            !ds.iter()
+                .any(|d| matches!(d.code.0, "E0361" | "E0362" | "E0363")),
+            "expected clean; got {:?}",
+            codes_of(&ds)
+        );
+    }
+
+    #[test]
+    fn watch_snapshot_hook_rejects_raw_pointer_field_e0363() {
+        // A raw-pointer field is `Copy`, so the Copy rule alone would let this
+        // through — but the pointee can be freed while a snapshot still names
+        // it, which is exactly what holding a snapshot past the write invites.
+        let ds = check_src(
+            "#[watch] struct S { x: i32, opaque p: *i32 }\n\
+             impl S { fn on_value(ref this, field: str, old: S, new: S) { return; } }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(
+            ds.iter().any(|d| d.code.0 == "E0363"),
+            "expected E0363; got {:?}",
+            codes_of(&ds)
+        );
+    }
+
+    #[test]
+    fn watch_plain_hook_allowed_on_raw_pointer_struct() {
+        // The same struct is fine with the short form — no snapshot is taken,
+        // so there is nothing to outlive the pointee.
+        let ds = check_src(
+            "#[watch] struct S { x: i32, opaque p: *i32 }\n\
+             impl S { fn on_value(ref this, field: str) { return; } }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(
+            !ds.iter()
+                .any(|d| matches!(d.code.0, "E0361" | "E0362" | "E0363")),
+            "expected clean; got {:?}",
+            codes_of(&ds)
+        );
+    }
+
+    #[test]
+    fn watch_snapshot_hook_rejects_nested_raw_pointer_e0363() {
+        // The pointer hazard is transitive — a struct field carrying one is
+        // just as unsafe to snapshot as a direct field.
+        let ds = check_src(
+            "struct Inner { opaque p: *i32 }\n\
+             #[watch] struct S { x: i32, inner: Inner }\n\
+             impl S { fn on_value(ref this, field: str, old: S, new: S) { return; } }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(
+            ds.iter().any(|d| d.code.0 == "E0363"),
+            "expected E0363 through the nested field; got {:?}",
+            codes_of(&ds)
+        );
+    }
+
+    #[test]
+    fn watch_snapshot_hook_rejects_foreign_struct_type_e0362() {
+        let ds = check_src(
+            "#[watch] struct S { x: i32 }\n\
+             struct Other { y: i32 }\n\
+             impl S { fn on_value(ref this, field: str, old: Other, new: Other) { return; } }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(
+            ds.iter().any(|d| d.code.0 == "E0362"),
+            "expected E0362; got {:?}",
+            codes_of(&ds)
+        );
+    }
 
     #[test]
     fn self_growing_struct_generic_reports_e0910_not_oom() {
