@@ -25,6 +25,7 @@ pub mod lower;
 pub mod manifest;
 pub mod monomorphize;
 pub mod parser;
+pub mod prune;
 pub mod resolver;
 pub mod sema;
 pub mod target;

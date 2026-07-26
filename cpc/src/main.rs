@@ -1692,7 +1692,7 @@ fn build_project(
     // test was vacuously clean. The single-file path (`compile_file`)
     // already plumbed sanitizers; this matches.
     ensure_coro_end_probed();
-    let ir = codegen::generate_with_mono(
+    let ir = prune_ir(codegen::generate_with_mono(
         &program,
         build_mode,
         fp_contract,
@@ -1700,7 +1700,7 @@ fn build_project(
         sanitizers,
         false,
         &mono,
-    );
+    ));
 
     let out_path = out.unwrap_or_else(|| {
         let sub = match build_mode {
@@ -1931,7 +1931,9 @@ fn build_lib_project(
     }
 
     ensure_coro_end_probed();
-    let ir = codegen::generate_with_mono(&program, build_mode, fp_contract, None, &[], true, &mono);
+    let ir = prune_ir(codegen::generate_with_mono(
+        &program, build_mode, fp_contract, None, &[], true, &mono,
+    ));
 
     let mode_subdir = match build_mode {
         BuildMode::Debug => "debug",
@@ -2132,8 +2134,9 @@ fn emit_ll_project(diag_mode: DiagMode, build_mode: BuildMode, fp_contract: bool
         Err(code) => return code,
     };
     ensure_coro_end_probed();
-    let ir =
-        codegen::generate_with_mono(&program, build_mode, fp_contract, None, &[], false, &mono);
+    let ir = prune_ir(codegen::generate_with_mono(
+        &program, build_mode, fp_contract, None, &[], false, &mono,
+    ));
     print!("{ir}");
     ExitCode::SUCCESS
 }
@@ -2726,7 +2729,9 @@ fn run_test(
         return ExitCode::SUCCESS;
     }
     ensure_coro_end_probed();
-    let ir = codegen::generate_test_binary(&program, build_mode, &tests, opts.json, &mono);
+    let ir = prune_ir(codegen::generate_test_binary(
+        &program, build_mode, &tests, opts.json, &mono,
+    ));
     let tmp_handle = match make_temp_file("cpc-test-", ".ll", ir.as_bytes()) {
         Ok(h) => h,
         Err(e) => {
@@ -3812,7 +3817,7 @@ fn build_ir(
     let post_mono = run_monomorphize(prog, &mono, &files_map);
     let dbg_path = if debug_info { Some(file) } else { None };
     ensure_coro_end_probed();
-    Ok(codegen::generate_with_mono(
+    Ok(prune_ir(codegen::generate_with_mono(
         &post_mono,
         build_mode,
         fp_contract,
@@ -3820,7 +3825,31 @@ fn build_ir(
         sanitizers,
         false,
         &mono,
-    ))
+    )))
+}
+
+/// Drop unreachable `internal` definitions before handing the module to clang.
+///
+/// Whole-program codegen emits every function of every dependency; on iris 69%
+/// of them are referenced nowhere, and at `-O0` clang codegens all of them into
+/// the object file rather than discarding them. Pruning first is strictly less
+/// work for clang and cannot change behaviour — see `cplus_core::prune`, which
+/// only removes definitions whose symbol appears nowhere else in the module.
+///
+/// `CPC_NO_PRUNE=1` disables it, for bisecting a suspected miscompile.
+fn prune_ir(ir: String) -> String {
+    if std::env::var_os("CPC_NO_PRUNE").is_some() {
+        return ir;
+    }
+    let (pruned, dropped) = cplus_core::prune::prune_unreachable(&ir);
+    if dropped > 0 && std::env::var_os("CPC_VERBOSE").is_some() {
+        eprintln!(
+            "cpc: pruned {dropped} unreachable definitions ({:.1} MB -> {:.1} MB)",
+            ir.len() as f64 / 1e6,
+            pruned.len() as f64 / 1e6
+        );
+    }
+    pruned
 }
 
 fn run_clang(
