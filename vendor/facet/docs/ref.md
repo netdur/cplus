@@ -67,6 +67,13 @@ the presentation lasts — resolve, call, don't store.
 | `set_value(v: f64)` | slider / stepper / progress |
 | `set_on(on: bool)` | toggle |
 | `set_hidden` / `show` / `hide` | visibility |
+| `set_split_position(position: f64, divider: i64 = 0)` | move a split's divider |
+
+`set_split_position` is the write counterpart to `value()`, which reads a
+split's first-pane edge. `set_value` does **not** work on a split — it sends
+`setDoubleValue:` to an `NSControl`, and a split view is not one, so the call
+is a silent no-op rather than an error. `divider` defaults to 0 because most
+splits have one; the parameter exists so a three-pane split needs no new method.
 
 ### Handle structural verbs (keyed containers)
 
@@ -146,8 +153,8 @@ Details and options: [widgets.md](widgets.md).
 
 ## Common modifiers
 
-**Identity / interaction:** `.key`, `.agent_id`, `.on_click`, `.on_drop`,
-`.draggable`, `.context_menu`, …
+**Identity / interaction:** `.key`, `.agent_id`, `.on_click`, `.on_key`,
+`.on_drop`, `.draggable`, `.context_menu`, …
 
 **Layout (flex_layout):** `.grow`, `.shrink`, `.width`/`.height`,
 `.width_pct`/`.height_pct`, min/max, `.gap`, `.padding`/`.margin`,
@@ -206,7 +213,10 @@ Backend selection and porting: [backends.md](backends.md).
 ```cplus
 // facet/facet
 struct Chrome { title, width, height, min_*, titlebar flags, zoom }   // Chrome::new(named params)
-interface Screen { fn chrome(this) -> Chrome; }
+interface Screen {
+    fn chrome(this) -> Chrome;
+    fn menu_items(this) -> vec::Vec[MenuItem];   // the screen's menu contributions
+}
 fn screen_box[S: Component + Lifecycle + Screen](take s: S) -> ScreenBox
 
 // facet/runtime
@@ -231,7 +241,85 @@ fn register_screen(route, factory) -> bool   // dynamic route; false if taken
 fn enable()
 ```
 
-Deep dive: [app-screens.md](app-screens.md).
+`menu_items` has no default — C+ interfaces carry no default bodies, so a
+screen with nothing to add returns `vec::new::[MenuItem]()` explicitly. The
+runtime merges it each time the screen is shown, **additively**: a screen adds
+to the base menus rather than replacing them, so it never has to redeclare
+Edit's undo/cut/copy/paste family. On a key-equivalent collision the screen
+wins. Keys need only be unique *within one built menu* — two screens that are
+never mounted together may both use `⌘N`.
+
+---
+
+## Menus
+
+```cplus
+struct MenuItem { /* built through MenuItem::new, not a literal */ }
+
+impl MenuItem {
+    fn new(
+        menu: str, title: str,
+        key: str = "",                                  // key equivalent, "" = none
+        action: u32 = menu_action_none(),
+        on_click: fn(*u8, *u8) = null,                   // (sender, ctx); WINS over action
+        ctx: *u8 = 0 as *u8,
+        is_enabled: fn(*u8) -> bool = null,              // asked when the MENU OPENS
+        title_of: fn(*u8) -> text::Text = null,          // dynamic title; "" keeps the built one
+        is_separator: bool = false,
+    ) -> MenuItem
+    fn separator(menu: str) -> MenuItem                   // a rule inside `menu`
+}
+
+fn null_enabled_fn() -> fn(*u8) -> bool      // spelled as fns so call sites need no cast
+fn null_title_fn()   -> fn(*u8) -> text::Text
+
+impl AppMenu {
+    fn add_item(ref this, menu, title, key, action)
+    fn add_command(ref this, ...)                        // callback item
+    fn add_separator(ref this, menu: str)
+    fn remove_key(ref this, k: str)
+    fn extend(ref this, take items: vec::Vec[MenuItem])  // merge a screen's contributions
+}
+```
+
+Build items through `MenuItem::new`, never a struct literal: the item gains
+fields over time (adding `is_enabled` / `title_of` broke every literal that
+existed), and the defaults keep call sites intact.
+
+`is_enabled` and `title_of` are answered when the menu opens, from the same
+`ctx` the click receives, so an item tracks live state with nothing rebuilt.
+That is the platform behaviour — an inapplicable item greys out rather than
+disappearing, and the menu keeps a stable shape. `title_of` expresses what a
+bool cannot: `Close "editor_tabs.cplus"` rather than `Close`.
+
+A separator ignores every field except `menu`, which says which group it
+divides.
+
+---
+
+## Raw key input
+
+```cplus
+impl Node {
+    fn on_key(take this, handler: fn(*u8, *u8), ctx: *u8 = 0 as *u8) -> Node
+}
+
+// read the event inside the handler
+fn key_code(event: *u8) -> i64
+fn key_chars(event: *u8) -> text::Text
+fn key_modifiers(event: *u8) -> u64
+fn mod_shift() / mod_control() / mod_option() / mod_command() -> u64
+
+fn consume_key()      // stop the event reaching the responder chain
+```
+
+Fires while the element has focus. `handler(event, ctx)`. Without it, arrows,
+function keys, Escape and Ctrl chords are unreachable — a text field reports
+only change and submit. This is the primitive behind shortcut-driven and
+terminal-style surfaces.
+
+Call `consume_key()` from the handler to mark the event handled; it is one-shot
+per event, so not calling it lets the key fall through as normal.
 
 ---
 
