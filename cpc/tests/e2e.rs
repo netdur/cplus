@@ -4827,12 +4827,14 @@ fn main() -> i32 {
         !ir.contains("%x.drop_flag"),
         "drop flag should be elided when binding is never moved; got: {ir}"
     );
-    // Direct unconditional drop call must still appear. Slice 1F changed
-    // the call to use `preserve_nonecc` to match the cold-path CC on the
-    // drop method's `define` line.
+    // Direct unconditional drop call must still appear. It uses the C
+    // convention: `preserve_nonecc` was removed from drop glue 2026-07-27
+    // (it miscompiled under ASan at -O1+ on arm64 — see
+    // bugs/flex-calculate-layout-segv-under-release-plus-asan.md), and the call
+    // site has to match the definition or the mismatch is UB.
     assert!(
-        ir.contains("call preserve_nonecc void @B.drop(ptr %x"),
-        "expected unconditional drop call (preserve_nonecc); got: {ir}"
+        ir.contains("call void @B.drop(ptr %x"),
+        "expected unconditional drop call; got: {ir}"
     );
 }
 

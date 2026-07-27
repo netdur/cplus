@@ -4414,6 +4414,17 @@ fn run_clang(
         // Better stack traces in sanitizer reports.
         cmd.arg("-fno-omit-frame-pointer");
     }
+    // Debug escape hatch: `CPC_CLANG_EXTRA="-mllvm -foo"` appends
+    // whitespace-separated flags to the clang invocation. There is otherwise no
+    // way to bisect a backend pass from outside the compiler, because the IR cpc
+    // feeds clang is written to a temp file and deleted, and `--emit-ll-project`
+    // generates with an EMPTY sanitizer list — so hand-compiling its output
+    // silently produces an UNINSTRUMENTED binary and looks like a clean run.
+    if let Ok(extra) = env::var("CPC_CLANG_EXTRA") {
+        for a in extra.split_whitespace() {
+            cmd.arg(a);
+        }
+    }
     // The program object goes FIRST, before any libraries. GNU `ld`
     // resolves left-to-right in a single pass and pulls a static-archive
     // member only to satisfy a reference it has ALREADY seen. So a bundled

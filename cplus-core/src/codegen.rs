@@ -7867,12 +7867,42 @@ fn gen_method(
     // (the struct's address). The receiver kind only affects sema-level
     // mutability checks, not the LLVM signature.
     //
-    // Slice 1F (v0.0.2): destructors are compiler-synthesized cold paths.
-    // Apply `preserve_nonecc` (no callee-save register saves at the call
-    // boundary) plus `cold` (the optimizer biases hot paths away from
-    // them). Drop runs once per object at scope exit — it's the canonical
-    // cold helper. `preserve_nonecc` requires clang/LLVM 17+; macOS
-    // shipped that in Xcode 15.3 (Feb 2024).
+    // Slice 1F (v0.0.2): destructors are compiler-synthesized cold paths, so
+    // they were given `preserve_nonecc` (no callee-save register saves at the
+    // call boundary) plus `cold`.
+    //
+    // `preserve_nonecc` WAS REMOVED 2026-07-27. `cold` stays.
+    //
+    // A drop sequence at scope exit is a run of calls off one base pointer:
+    //
+    //     %t12 = getelementptr %Node, ptr %x, i32 0, i32 16
+    //     call void @Vec__Text.drop(ptr %t12)
+    //     %t13 = getelementptr %Node, ptr %x, i32 0, i32 15
+    //     call void @Vec__Text.drop(ptr %t13)
+    //
+    // `preserve_none` declares NO callee-saved registers, so the caller must
+    // keep `%x` live across each call itself. Built with `-fsanitize=address`
+    // at `-O1` or above on arm64, it did not: the base register read as 0 on a
+    // later call in the run, and the GEP offsets went straight to the zero page
+    // (a fault at 0x300 = offset 768 = field 16 of `flex::Node`, with 0x2f8 =
+    // field 15 in the neighbouring register). Correct at `-O0`, and correct at
+    // every level without the sanitizer.
+    //
+    // Our own use was internally consistent — definition and every call site
+    // both carried the convention — so this is an LLVM arm64 backend
+    // interaction rather than a mismatch of ours. A calling convention with no
+    // callee-saved registers is exotic, its arm64 support is young, and what it
+    // bought was a register-save elision on a path already marked `cold` and
+    // documented as running once per object. That is a bad trade against
+    // "ASan cannot be used on optimized builds at all", which is what the bug
+    // actually cost: it hid behind `facet::mount` for two months and the whole
+    // `-O3` + ASan configuration was unusable.
+    //
+    // Reproduced in five lines (`examples/flex_asan`):
+    //     var x: flex::Node = flex::Node::new();
+    //     x.calculate_layout(100.0f64, 100.0f64, flex::Direction::LTR);
+    // Removing the convention here is what makes it pass.
+    // See bugs/flex-calculate-layout-segv-under-release-plus-asan.md.
     let is_drop_method = m.name.name == "drop";
     // A library's name-public method is the archive's reason to exist: a
     // consumer compiles against the generated header and links the definition
@@ -7882,11 +7912,14 @@ fn gen_method(
     // definition below and every call site agree on the convention.
     let lib_public = lib_public_name(is_lib, &m.name.name);
     // v0.0.8 bench-gap fix C: non-drop, non-export methods can use
-    // `fastcc` (LLVM-internal register-passing cc). Drop methods stay
-    // `preserve_nonecc` — fastcc can't compose with it. `export` methods
-    // have external linkage and must keep C cc for the public ABI.
+    // `fastcc` (LLVM-internal register-passing cc). `export` methods have
+    // external linkage and must keep C cc for the public ABI. Drop methods now
+    // take the C convention: they are excluded from the `fastcc` pre-pass (it
+    // skips `drop`), and `preserve_nonecc` is gone for the reason above, so
+    // there is nothing left to give them. Definition and call sites agree
+    // because both consult this same emptiness.
     let cc_prefix = if is_drop_method {
-        "preserve_nonecc "
+        ""
     } else if !m.is_pub && md.is_fastcc(&mangled) {
         "fastcc "
     } else {
@@ -9067,7 +9100,11 @@ impl<'a> FnState<'a> {
                 if struct_def.methods.contains_key("drop") {
                     let struct_name = struct_def.name.clone();
                     self.emit(&format!(
-                        "call preserve_nonecc void @{struct_name}.drop(ptr {p_val})"
+                        // Must match the definition's convention exactly — a
+                        // def/call cc mismatch is immediate UB. `drop` is
+                        // excluded from the fastcc pre-pass and no longer takes
+                        // `preserve_nonecc` (see `emit_method`), so: C cc.
+                        "call void @{struct_name}.drop(ptr {p_val})"
                     ));
                 }
                 // 2. Auto-drop owning fields, reverse declaration order.
@@ -18971,7 +19008,7 @@ mod tests {
              fn main() -> i32 { return 0; }",
         );
         assert!(
-            ir.contains("call preserve_nonecc void @Inner.drop"),
+            ir.contains("call void @Inner.drop"),
             "auto field-drop must invoke the field's destructor, got:\n{ir}"
         );
     }
@@ -19008,7 +19045,7 @@ mod tests {
              fn scope_array() { let _cells: [Cell; 2] = [mk(1), mk(2)]; return; }\n\
              fn main() -> i32 { scope_array(); return 0; }",
         );
-        let drops = ir.matches("call preserve_nonecc void @Cell.drop").count();
+        let drops = ir.matches("call void @Cell.drop").count();
         assert!(
             drops >= 2,
             "a [Cell; 2] local must drop both elements at scope exit (>=2 calls), got {drops}:\n{ir}"
@@ -19028,7 +19065,7 @@ mod tests {
              fn reassign() { var x: Owner = Owner { id: 1 }; x = Owner { id: 2 }; return; }\n\
              fn main() -> i32 { reassign(); return 0; }",
         );
-        let drops = ir.matches("call preserve_nonecc void @Owner.drop").count();
+        let drops = ir.matches("call void @Owner.drop").count();
         assert!(
             drops >= 2,
             "reassigning a Drop binding must pre-drop the old value (>=2 calls), got {drops}:\n{ir}"
@@ -19069,7 +19106,7 @@ mod tests {
         );
         // In f(): the pre-drop at `h.r = mk()` plus the scope-exit drop of the
         // Holder (auto-drops its `r` field) = 2 calls. Pre-fix there was 1.
-        let drops = ir.matches("call preserve_nonecc void @R.drop").count();
+        let drops = ir.matches("call void @R.drop").count();
         assert!(
             drops >= 2,
             "field overwrite must pre-drop the old value (>=2 R.drop), got {drops}:\n{ir}"
@@ -19091,7 +19128,7 @@ mod tests {
              fn main() -> i32 { f(); return 0; }",
         );
         // pre-drop at `a[0] = mk()` (1) + scope-exit drop of [R; 2] (2) = 3.
-        let drops = ir.matches("call preserve_nonecc void @R.drop").count();
+        let drops = ir.matches("call void @R.drop").count();
         assert!(
             drops >= 3,
             "array element overwrite must pre-drop the old element (>=3 R.drop), got {drops}:\n{ir}"
@@ -19119,7 +19156,7 @@ mod tests {
         );
         // Exactly one drop — the explicit #drop_in_place. A spurious pre-drop on
         // the `*pr = mk()` store (reading uninitialized heap) would make it 2.
-        let drops = ir.matches("call preserve_nonecc void @R.drop").count();
+        let drops = ir.matches("call void @R.drop").count();
         assert_eq!(
             drops, 1,
             "raw-pointer store must not pre-drop uninitialized memory; expected 1 R.drop, got {drops}:\n{ir}"
@@ -20946,8 +20983,8 @@ mod tests {
         // `define [internal ]preserve_nonecc void @R.drop(...) cold {`
         // After Slice 3D, drop methods get `internal` linkage in exe mode.
         assert!(
-            ir.contains("preserve_nonecc void @R.drop("),
-            "expected preserve_nonecc on drop definition, got:\n{ir}"
+            ir.contains("void @R.drop("),
+            "expected the drop definition, got:\n{ir}"
         );
         // The `cold` attribute lands after the param list, before `{`.
         let drop_line = ir
@@ -20970,7 +21007,7 @@ mod tests {
              fn main() -> i32 { let r: R = R { v: 7 }; return r.v; }",
         );
         assert!(
-            ir.contains("call preserve_nonecc void @R.drop("),
+            ir.contains("call void @R.drop("),
             "drop call site must match preserve_nonecc CC, got:\n{ir}"
         );
     }
@@ -21033,7 +21070,7 @@ mod tests {
         );
         // Drop call still emits preserve_nonecc.
         assert!(
-            ir.contains("call preserve_nonecc void @R.drop("),
+            ir.contains("call void @R.drop("),
             "expected preserve_nonecc call to R.drop, got:\n{ir}"
         );
     }
@@ -23582,11 +23619,11 @@ mod tests {
         );
         // Every Buf.drop call is inside a flag-guarded block: the instruction
         // right before each one is a label, not a fallthrough from the join.
-        for (i, chunk) in ir.split("call preserve_nonecc void @Buf.drop").enumerate() {
+        for (i, chunk) in ir.split("call void @Buf.drop").enumerate() {
             if i == 0 {
                 continue;
             }
-            let before = ir[..ir.find("call preserve_nonecc void @Buf.drop").unwrap()].to_string();
+            let before = ir[..ir.find("call void @Buf.drop").unwrap()].to_string();
             assert!(
                 before.contains("br i1 ") && before.contains("tmp.drop_flag"),
                 "Buf.drop is not reached through the temp flag:\n{ir}"
