@@ -1,10 +1,22 @@
 // terminal/terminal — platform-neutral terminal transcript model.
 //
-// This first slice deliberately models a scrollback transcript, not a complete
-// VT screen. It strips ANSI/OSC control traffic, preserves UTF-8 payload bytes,
-// normalizes CRLF, makes bare CR updates readable as successive lines, handles
-// backspace, and bounds retained scrollback. The PTY and UI live in separate
-// modules so a future Linux/Windows backend can keep this API.
+// This models a scrollback transcript with a CURSOR on the current line, not a
+// complete VT screen. That distinction is the whole design: a shell does not
+// edit text, it MOVES a cursor and overwrites. Treating CR / BS / cursor-CSI as
+// content edits (append a newline, delete a scalar) is correct for captured
+// pipe output and wrong for a live PTY, where CR + repaint is how zsh redraws
+// its prompt — it produced one transcript line per keystroke, and made
+// `\b space \b` erase the wrong cell. See
+// bugs/terminal-transcript-has-no-cursor.md.
+//
+// The model: `_text` holds committed scrollback AND the line being edited.
+// `_line_start` is the byte offset where that live line begins; `_col` is the
+// cursor's byte offset within it. Keeping both in one buffer means `view()`
+// stays a borrow of `_text` with no assembly step.
+//
+// It strips ANSI/OSC control traffic, preserves UTF-8 payload bytes, normalizes
+// CRLF, and bounds retained scrollback. The PTY and UI live in separate modules
+// so a future Linux/Windows backend can keep this API.
 
 import "stdlib/option" as option;
 import "stdlib/status" as status;
@@ -21,7 +33,17 @@ enum ParseState {
 struct Transcript {
     _text: text::Text,
     _state: ParseState,
-    _pending_cr: bool,
+    // Byte offset in `_text` where the line currently being edited begins.
+    // Everything before it is committed scrollback and is never rewritten.
+    _line_start: usize,
+    // Cursor position as a byte offset from `_line_start`. Not a display
+    // column: for ASCII (every shell prompt and line-editor redraw) the two
+    // coincide, and motion steps whole UTF-8 scalars so it never lands mid-
+    // scalar.
+    _col: usize,
+    // Numeric parameter accumulated while parsing a CSI sequence, for the
+    // cursor-motion finals (`ESC[<n>C` / `ESC[<n>D`).
+    _csi_num: usize,
     _max_bytes: usize,
 }
 
@@ -43,13 +65,28 @@ impl Transcript {
         return Transcript {
             _text: text::new(),
             _state: ParseState::Text,
-            _pending_cr: false,
+            _line_start: 0 as usize,
+            _col: 0 as usize,
+            _csi_num: 0 as usize,
             _max_bytes: cap,
         };
     }
 
+    // The transcript as text. Trailing spaces on the UNCOMMITTED line are
+    // excluded: `\b space \b` (how every shell erases) leaves a blank cell
+    // under the cursor that a real terminal renders as nothing, so reporting it
+    // would show erased characters as lingering whitespace. Committed lines are
+    // returned verbatim. Read-only — this narrows the borrow, it does not edit.
     fn view(this) -> str {
-        return this._text.view();
+        let full: str = this._text.view();
+        let p: *u8 = #str_ptr(full);
+        var n: usize = #str_len(full);
+        while n > this._line_start {
+            let prev: u8 = { p[n -% (1 as usize)] };
+            if prev != (32 as u8) { break; }
+            n = n -% (1 as usize);
+        }
+        return { #str_from_raw_parts(p, n) };
     }
 
     fn count(this) -> usize {
@@ -59,38 +96,77 @@ impl Transcript {
     fn clear(ref this) {
         this._text.remove_all();
         this._state = ParseState::Text;
-        this._pending_cr = false;
+        this._line_start = 0 as usize;
+        this._col = 0 as usize;
+        this._csi_num = 0 as usize;
         return;
     }
 
-    fn append_byte(ref this, b: u8) {
-        let one: str = { #str_from_raw_parts(#addr_of(b), 1 as usize) };
-        let _st: status::Status = this._text.append(one);
-        return;
-    }
-
-    fn append_newline(ref this) {
-        let _st: status::Status = this._text.append("\n");
-        return;
-    }
-
-    fn erase_previous_scalar(ref this) {
-        var n: usize = this._text.count();
-        if n == (0 as usize) { return; }
-        n = n -% (1 as usize);
-        while n > (0 as usize) && is_utf8_continuation(byte_at_or_zero(this._text, n)) {
-            n = n -% (1 as usize);
+    // Write one byte AT THE CURSOR, overwriting what is there and extending the
+    // line only past its end. This is the difference between a cursor and an
+    // append-only log: a shell that backs up and rewrites (completion, history
+    // recall, prompt repaint) depends on the overwrite.
+    fn put_byte(ref this, b: u8) {
+        let pos: usize = this._line_start +% this._col;
+        let n: usize = this._text.count();
+        if pos < n {
+            // Overwrite: drop the scalar under the cursor, then insert. Sized
+            // per-scalar so replacing a multi-byte character with a 1-byte one
+            // does not leave a stray continuation byte behind.
+            var end: usize = pos +% (1 as usize);
+            while end < n && is_utf8_continuation(byte_at_or_zero(this._text, end)) {
+                end = end +% (1 as usize);
+            }
+            let _rm: status::Status = this._text.remove_range(pos, end);
         }
-        this._text.truncate(n);
+        let one: str = { #str_from_raw_parts(#addr_of(b), 1 as usize) };
+        let _st: status::Status = this._text.insert(one, at: pos);
+        this._col = this._col +% (1 as usize);
         return;
     }
 
-    fn flush_pending_cr(ref this, next: u8) {
-        if !this._pending_cr { return; }
-        this._pending_cr = false;
-        // CRLF is one newline. A bare CR commonly means a progress-line
-        // rewrite; transcript mode keeps both versions readable.
-        if next != (10 as u8) { this.append_newline(); }
+    // Commit the current line and start a new one. Only `\n` does this — CR
+    // moves the cursor, it does not end a line.
+    fn commit_line(ref this) {
+        let _st: status::Status = this._text.append("\n");
+        this._line_start = this._text.count();
+        this._col = 0 as usize;
+        return;
+    }
+
+    // Cursor left by whole scalars, clamped at the start of the line. Note it
+    // ERASES NOTHING: `\b space \b` erases because of the space in the middle.
+    fn cursor_left(ref this, cells: usize) {
+        var k: usize = cells;
+        while k > (0 as usize) && this._col > (0 as usize) {
+            this._col = this._col -% (1 as usize);
+            while this._col > (0 as usize)
+                && is_utf8_continuation(byte_at_or_zero(this._text, this._line_start +% this._col)) {
+                this._col = this._col -% (1 as usize);
+            }
+            k = k -% (1 as usize);
+        }
+        return;
+    }
+
+    // Cursor right by whole scalars, clamped at the end of the line.
+    fn cursor_right(ref this, cells: usize) {
+        let n: usize = this._text.count();
+        var k: usize = cells;
+        while k > (0 as usize) && (this._line_start +% this._col) < n {
+            this._col = this._col +% (1 as usize);
+            while (this._line_start +% this._col) < n
+                && is_utf8_continuation(byte_at_or_zero(this._text, this._line_start +% this._col)) {
+                this._col = this._col +% (1 as usize);
+            }
+            k = k -% (1 as usize);
+        }
+        return;
+    }
+
+    // `ESC[K` — erase from the cursor to the end of the line.
+    fn erase_to_line_end(ref this) {
+        this._text.truncate(this._line_start +% this._col);
         return;
     }
 
@@ -119,6 +195,14 @@ impl Transcript {
             }
         }
         let _st: status::Status = this._text.remove_range(0 as usize, cut);
+        // Everything after the cut shifted down by `cut`; the live line has to
+        // move with it or the cursor would address committed scrollback.
+        if this._line_start > cut { this._line_start = this._line_start -% cut; }
+        else { this._line_start = 0 as usize; }
+        let n2: usize = this._text.count();
+        if (this._line_start +% this._col) > n2 {
+            this._col = n2 -% this._line_start;
+        }
         return;
     }
 
@@ -132,24 +216,34 @@ impl Transcript {
             let b: u8 = { p[i] };
 
             if this._state == ParseState::Text {
-                this.flush_pending_cr(b);
                 if b == (27 as u8) {
                     this._state = ParseState::Escape;
                 } else if b == (13 as u8) {
-                    this._pending_cr = true;
+                    // CR is CURSOR TO COLUMN 0 — not a line break. This single
+                    // change removes the prompt storm: zsh repaints with
+                    // `\r<prompt>`, which now overwrites in place instead of
+                    // appending a fresh line per repaint.
+                    this._col = 0 as usize;
                 } else if b == (10 as u8) {
-                    this.append_newline();
+                    this.commit_line();
                 } else if b == (8 as u8) || b == (127 as u8) {
-                    this.erase_previous_scalar();
+                    // BS/DEL MOVE the cursor. The shell's erase sequence is
+                    // `\b space \b`; the space does the blanking.
+                    this.cursor_left(1 as usize);
                 } else if b == (9 as u8) {
-                    let _st: status::Status = this._text.append("    ");
+                    var t: usize = 0 as usize;
+                    while t < (4 as usize) {
+                        this.put_byte(32 as u8);
+                        t = t +% (1 as usize);
+                    }
                 } else if b >= (32 as u8) {
-                    this.append_byte(b);
+                    this.put_byte(b);
                 }
             } else if this._state == ParseState::Escape {
                 // ESC [
                 if b == (91 as u8) {
                     this._state = ParseState::Csi;
+                    this._csi_num = 0 as usize;
                     // ESC ]
                 } else if b == (93 as u8) {
                     this._state = ParseState::Osc;
@@ -160,8 +254,19 @@ impl Transcript {
                     this._state = ParseState::Text;
                 }
             } else if this._state == ParseState::Csi {
-                // ECMA-48 final bytes occupy 0x40...0x7e.
-                if b >= (0x40 as u8) && b <= (0x7e as u8) {
+                // ECMA-48 final bytes occupy 0x40...0x7e; digits before them
+                // are the parameter. Only the finals that move or clear the
+                // cursor are acted on — the rest (colour, mode) stay stripped.
+                if b >= (0x30 as u8) && b <= (0x39 as u8) {
+                    this._csi_num = (this._csi_num *% (10 as usize))
+                        +% ((b -% (0x30 as u8)) as usize);
+                } else if b >= (0x40 as u8) && b <= (0x7e as u8) {
+                    var cells: usize = this._csi_num;
+                    if cells == (0 as usize) { cells = 1 as usize; }
+                    if b == (0x43 as u8) { this.cursor_right(cells); }        // C
+                    else if b == (0x44 as u8) { this.cursor_left(cells); }    // D
+                    else if b == (0x4b as u8) { this.erase_to_line_end(); }   // K
+                    this._csi_num = 0 as usize;
                     this._state = ParseState::Text;
                 }
             } else if this._state == ParseState::Osc {
@@ -180,13 +285,10 @@ impl Transcript {
         return;
     }
 
-    // Flush a trailing bare CR when a stream closes.
+    // Stream closed. With CR as cursor motion there is no deferred state left
+    // to flush, so this exists only so callers (the AppKit backend) keep a
+    // stable API. Retained deliberately rather than removed.
     fn finish(ref this) {
-        if this._pending_cr {
-            this._pending_cr = false;
-            this.append_newline();
-            this.trim();
-        }
         return;
     }
 }

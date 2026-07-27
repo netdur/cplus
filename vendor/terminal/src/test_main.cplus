@@ -11,13 +11,86 @@ fn transcript_strips_ansi_and_osc() {
 }
 
 #[test]
-fn transcript_normalizes_cr_and_backspace() {
+fn transcript_treats_cr_as_cursor_not_newline() {
+    // bugs/terminal-transcript-has-no-cursor.md, symptom 1 — the prompt storm.
+    // zsh repaints with `\r<prompt>` on every keystroke; when CR appended a
+    // newline, each repaint became another transcript line.
     var t: terminal::Transcript = terminal::Transcript::new();
-    t.feed("one\r\n");
-    t.feed("progress 1\rprogress 2");
-    t.feed("x\x08!");
-    t.finish();
-    assert t.view() == "one\nprogress 1\nprogress 2!";
+    t.feed("abc\r(base) % ");
+    assert t.view() == "(base) %";      // ONE line, overwritten in place
+
+    // CRLF must still be exactly one newline.
+    var u: terminal::Transcript = terminal::Transcript::new();
+    u.feed("one\r\n");
+    assert u.view() == "one\n";
+
+    // A repaint SHORTER than what it overwrites leaves the tail behind, exactly
+    // as a real terminal does — nothing is implicitly cleared.
+    var v: terminal::Transcript = terminal::Transcript::new();
+    v.feed("longer text\rshort");
+    assert v.view() == "shortr text";
+    // ...which is why a shell that means to clear sends ESC[K, and it must work.
+    v.feed("\x1b[K");
+    assert v.view() == "short";
+}
+
+#[test]
+fn transcript_backspace_moves_and_overwrites() {
+    // Symptom 2. `\b space \b` is how every shell erases; the space does the
+    // blanking and the trailing blank cell must not render.
+    var t: terminal::Transcript = terminal::Transcript::new();
+    t.feed("abc\x08 \x08");
+    assert t.view() == "ab";
+
+    // The case that separates a cursor from a delete: backspace then write.
+    // A deleting backspace yields "abX" only by luck here; it diverges the
+    // moment the shell overwrites more than one cell.
+    var u: terminal::Transcript = terminal::Transcript::new();
+    u.feed("abc\x08X");
+    assert u.view() == "abX";
+
+    // Overwriting several cells after backing up — a completion rewrite.
+    var v: terminal::Transcript = terminal::Transcript::new();
+    v.feed("abcdef\x08\x08\x08XYZ");
+    assert v.view() == "abcXYZ";
+}
+
+#[test]
+fn transcript_honours_cursor_csi() {
+    // ESC[C / ESC[D were parsed and discarded; they move the cursor.
+    var t: terminal::Transcript = terminal::Transcript::new();
+    t.feed("abcdef");
+    t.feed("\x1b[3D");        // back three cells
+    t.feed("XY");
+    assert t.view() == "abcXYf";
+
+    t.feed("\x1b[1C");        // forward one, past the 'f'
+    t.feed("!");
+    assert t.view() == "abcXYf!";
+
+    // ESC[K truncates from the cursor. ("keep " loses its trailing blank to
+    // the same live-line trim that makes `\b space \b` render as an erase.)
+    var u: terminal::Transcript = terminal::Transcript::new();
+    u.feed("keep this\x1b[4D\x1b[K");
+    assert u.view() == "keep";
+}
+
+#[test]
+fn transcript_erase_survives_utf8() {
+    // Motion steps whole scalars, so it never lands mid-character. Backing up
+    // twice over "llo" puts the cursor on the first `l`, and `!` OVERWRITES it
+    // — the trailing `o` survives, which is exactly the delete-vs-move
+    // distinction this bug was about.
+    var t: terminal::Transcript = terminal::Transcript::new();
+    t.feed("héllo\x08\x08!");
+    assert t.view() == "hél!o";
+
+    // Erasing a multi-byte scalar in place must not leave a continuation byte.
+    var u: terminal::Transcript = terminal::Transcript::new();
+    u.feed("héllo");
+    u.feed("\x1b[4D");
+    u.feed("e");
+    assert u.view() == "hello";
 }
 
 #[test]
