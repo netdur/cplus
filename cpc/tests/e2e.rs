@@ -4913,7 +4913,16 @@ fn never_moved_drop_runtime_behavior_unchanged() {
 // ---- Phase 6 slice 6BC.codegen — noalias / readonly param attributes ----
 
 #[test]
-fn mut_param_tagged_noalias_in_ir() {
+fn mut_param_is_not_tagged_noalias_in_ir() {
+    // The inverse of what this asserted until 2026-07-27, and a soundness fix.
+    // `noalias` on a borrow param is a promise the borrow checker cannot keep:
+    // a `static` is unchecked by design and `(*p).method()` makes a `ref`
+    // receiver out of an untracked raw pointer, so the ordinary callback
+    // pattern (method takes `ref this`, calls a stored fn pointer, callback
+    // reaches the same object via `#addr_of(SOME_STATIC)`) aliases it legally.
+    // LLVM acted on the promise at -O2+ and miscompiled `events::Signal::emit`.
+    // `readonly` on shared borrows stays — that constrains the callee, which
+    // the callee's own body proves.
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("t.cplus");
@@ -4941,10 +4950,24 @@ fn main() -> i32 {
         String::from_utf8_lossy(&out.stderr)
     );
     let ir = String::from_utf8_lossy(&out.stdout);
+    // The param is still pointer-passed and still carries the definite-value
+    // attributes; it just makes no aliasing claim.
+    let def = ir
+        .lines()
+        .find(|l| l.contains("i32 @bump("))
+        .unwrap_or_else(|| panic!("expected a @bump definition; got: {ir}"));
     assert!(
-        ir.contains("i32 @bump(ptr noalias "),
-        "expected `ref b: B` to lower to `ptr noalias`; got: {ir}"
+        !def.contains("noalias"),
+        "`ref b: B` must NOT promise noalias: {def}"
     );
+    assert!(
+        def.contains("nonnull noundef"),
+        "`ref b: B` should keep nonnull/noundef: {def}"
+    );
+    // Call sites must agree — the inliner will use either one.
+    for l in ir.lines().filter(|l| l.contains("call") && l.contains("@bump(")) {
+        assert!(!l.contains("noalias"), "call site must not promise noalias: {l}");
+    }
 }
 
 #[test]

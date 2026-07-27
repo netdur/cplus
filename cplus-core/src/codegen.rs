@@ -2856,19 +2856,52 @@ fn param_attrs(
 ) -> String {
     if pointer_passed {
         let mut s = String::new();
-        // Memory-model hardening (2026-07-06): `noalias` is a PROMISE the
-        // borrow checker must be enforcing. It enforces exclusivity only
-        // for non-Copy places — §2.9 defines `ref`-on-Copy as local
-        // mutability, NOT a borrow, so `f(ref x, ref x)` on a Copy `x` is
-        // legal and the two pointers genuinely alias. Emitting `noalias`
-        // there handed LLVM a false promise (UB on a legal program).
-        // Three-way split: exclusive non-Copy → noalias; exclusive Copy →
-        // no aliasing attr (written through, may alias); shared → readonly.
-        if move_ || mutable {
-            if !is_copy_ty(ty, types) {
-                s.push_str("noalias ");
-            }
-        } else {
+        // NO `noalias` ON BORROW PARAMS — 2026-07-27. It is a promise the
+        // borrow checker cannot keep.
+        //
+        // The 2026-07-06 hardening pass narrowed this to exclusive non-Copy
+        // places, on the grounds that the borrow checker enforces exclusivity
+        // there. It does not, and cannot, in two shapes the language makes
+        // first-class:
+        //
+        //   - a `static`. Reads and writes of a static are unchecked by
+        //     design, so a callee holding `ref this` on a static has no
+        //     guarantee about who else touches it.
+        //   - a raw-pointer path. `(*p).method()` produces a `ref` receiver out
+        //     of a pointer the checker never tracked.
+        //
+        // Both together are the ordinary callback pattern: a method takes
+        // `ref this`, calls a stored `fn` pointer, and the callback reaches the
+        // same object through `#addr_of(SOME_STATIC)`. `events::Signal::emit`
+        // does exactly that, and documents the re-scan as observing the
+        // mutation. `noalias` told LLVM the mutation was impossible; after
+        // inlining the callback, the inliner turns call-site `noalias` args into
+        // scoped alias metadata and the re-scan's loads become provably
+        // independent of the callback's writes. Two `events` tests failed at
+        // -O2 and above with a garbage listener value, and passed at -O0.
+        // Removing the attribute from BOTH definitions and call sites (the
+        // inliner will use either) restores them.
+        //
+        // Verified by ablation on the failing IR: stripping definition-site
+        // `noalias` alone does not help, nor call-site alone; stripping both
+        // takes events from 70/2 to 72/0.
+        //
+        // This is the third unsound-promise bug of the same family, after the
+        // aggregate TBAA leaves and the test driver's calling convention. The
+        // pattern to distrust is any attribute asserting something the front
+        // end merely hopes is true.
+        //
+        // The sound way back is a per-CALL-SITE attribute rather than a blanket
+        // one: at a call site the compiler can sometimes prove the argument is a
+        // fresh local whose address does not escape, and only then promise
+        // exclusivity. `restrict` on a raw pointer stays — that is the author's
+        // explicit promise, gated by sema (E0411), not the compiler's guess.
+        //
+        // Shared borrows keep `readonly`: that constrains what the CALLEE does
+        // through the pointer, which the callee's own body proves. It says
+        // nothing about other pointers, so a callback writing the same object
+        // does not violate it.
+        if !(move_ || mutable) {
             s.push_str("readonly ");
         }
         s.push_str("nonnull noundef");
@@ -18542,7 +18575,8 @@ mod tests {
         // full attribute set, not just bare `ptr <addr>`. clang emits
         // these attrs at the call site too — it helps inter-procedural
         // analysis before inlining and matches the IR shape clang
-        // produces.
+        // produces. `noalias` is deliberately absent from the set: see
+        // `param_attrs` for why a borrow param cannot promise exclusivity.
         let ir = gen_src(
             "struct Tag { v: i32 }\n\
              impl Tag { fn drop(ref this) { return; } }\n\
@@ -18551,14 +18585,14 @@ mod tests {
         );
         // Definition still has the attrs (pre-existing behavior).
         assert!(
-            ir.contains("void @bump(ptr noalias nonnull noundef dereferenceable(4) align 4 %0)"),
+            ir.contains("void @bump(ptr nonnull noundef dereferenceable(4) align 4 %0)"),
             "bump definition missing param attrs, got:\n{ir}"
         );
         // Call site now mirrors the same attrs. v0.0.8 fix C: `bump`
         // is non-export so the call site also picks up `fastcc`.
         assert!(
             ir.contains(
-                "call fastcc void @bump(ptr noalias nonnull noundef dereferenceable(4) align 4 "
+                "call fastcc void @bump(ptr nonnull noundef dereferenceable(4) align 4 "
             ),
             "bump call site missing param attrs (or fastcc), got:\n{ir}"
         );
@@ -19942,10 +19976,12 @@ mod tests {
     // unaffected — they stay value-passed.
 
     #[test]
-    fn mut_param_noncopy_struct_lowers_to_ptr_noalias() {
-        // Slice 6BC.codegen: Drop forces non-Copy. `bump` takes
-        // `ref t: Tag` as `ptr noalias` — the borrow checker proves
-        // uniqueness, so LLVM gets the strong promise.
+    fn mut_param_noncopy_struct_lowers_to_plain_ptr() {
+        // Slice 6BC.codegen: Drop forces non-Copy, so `bump` takes
+        // `ref t: Tag` by pointer. It gets NO aliasing promise: the borrow
+        // checker does not prove uniqueness against statics or raw-pointer
+        // paths, which is how a callback legally aliases the same object.
+        // See `param_attrs`.
         let ir = gen_src(
             "struct Tag { v: i32 }\n\
              impl Tag { fn drop(ref this) { return; } }\n\
@@ -19953,8 +19989,12 @@ mod tests {
              fn main() -> i32 { var x: Tag = Tag { v: 1 }; bump(x); return x.v; }",
         );
         assert!(
-            ir.contains("void @bump(ptr noalias "),
-            "expected `ref t: Tag` to lower to `ptr noalias` param, got: {ir}"
+            ir.contains("void @bump(ptr nonnull noundef "),
+            "expected `ref t: Tag` to lower to a pointer param, got: {ir}"
+        );
+        assert!(
+            !ir.contains("@bump(ptr noalias"),
+            "`ref t: Tag` must make no aliasing promise, got: {ir}"
         );
         // Call site still passes a pointer, not a struct value.
         // v0.0.8 fix C: non-export `bump` → fastcc at the call.
@@ -20326,8 +20366,8 @@ mod tests {
 
     #[test]
     fn mut_param_noncopy_struct_emits_full_attr_set() {
-        // `ref t: Tag` (non-Copy) gets the full pointer-attribute set:
-        // noalias nonnull noundef dereferenceable(N) align A.
+        // `ref t: Tag` (non-Copy) gets the definite-value pointer attributes —
+        // nonnull noundef dereferenceable(N) align A — and no aliasing claim.
         // Tag = { i32 v } → size 4, align 4.
         let ir = gen_src(
             "struct Tag { v: i32 }\n\
@@ -20336,8 +20376,8 @@ mod tests {
              fn main() -> i32 { var x: Tag = Tag { v: 1 }; bump(x); return x.v; }",
         );
         assert!(
-            ir.contains("void @bump(ptr noalias nonnull noundef dereferenceable(4) align 4 %0)"),
-            "expected full attr set on mut ptr param, got:\n{ir}"
+            ir.contains("void @bump(ptr nonnull noundef dereferenceable(4) align 4 %0)"),
+            "expected the definite-value attr set on mut ptr param, got:\n{ir}"
         );
     }
 
@@ -20360,7 +20400,9 @@ mod tests {
 
     #[test]
     fn method_receiver_emits_receiver_attrs() {
-        // this / ref this / take this map to readonly / noalias / noalias.
+        // this / ref this / take this map to readonly / (no aliasing attr) /
+        // (no aliasing attr). Only the shared form makes a claim, and it is a
+        // claim about the CALLEE's own behaviour. See `param_attrs`.
         let ir = gen_src(
             "struct T { v: i32 }\n\
              impl T {\n\
@@ -20381,14 +20423,15 @@ mod tests {
             ir.contains("i32 @T.read(ptr readonly nonnull noundef dereferenceable(4) align 4 %0)"),
             "T.read receiver attrs missing, got:\n{ir}"
         );
-        // `ref this` (Mut) → noalias
+        // `ref this` (Mut) → NO aliasing attr: a callback reachable from the
+        // body may legally touch the same object through a static.
         assert!(
-            ir.contains("void @T.bump(ptr noalias nonnull noundef dereferenceable(4) align 4 %0)"),
+            ir.contains("void @T.bump(ptr nonnull noundef dereferenceable(4) align 4 %0)"),
             "T.bump receiver attrs missing, got:\n{ir}"
         );
-        // `take this` (Move) → noalias (callee owns; exclusive)
+        // `take this` (Move) → likewise none.
         assert!(
-            ir.contains("i32 @T.into(ptr noalias nonnull noundef dereferenceable(4) align 4 %0)"),
+            ir.contains("i32 @T.into(ptr nonnull noundef dereferenceable(4) align 4 %0)"),
             "T.into receiver attrs missing, got:\n{ir}"
         );
     }
@@ -22642,16 +22685,16 @@ mod tests {
 
     #[test]
     fn existing_substring_checks_still_match() {
-        // Backward-compat: pre-1A tests assert on substrings like
-        // `define void @bump(ptr noalias ` — confirm those still hold after
-        // the attr set widened (the noalias prefix is still left-anchored).
+        // Backward-compat on the attribute PREFIX shape. `noalias` was dropped
+        // from borrow params (see `param_attrs`), so the left-anchored substring
+        // is now the definite-value set.
         let ir = gen_src(
             "struct Tag { v: i32 }\n\
              impl Tag { fn drop(ref this) { return; } }\n\
              fn bump(ref t: Tag) { t.v = t.v + 1; return; }\n\
              fn main() -> i32 { var x: Tag = Tag { v: 1 }; bump(x); return x.v; }",
         );
-        assert!(ir.contains("void @bump(ptr noalias "));
+        assert!(ir.contains("void @bump(ptr nonnull noundef "));
     }
 
     // ---- Phase v0.0.2 Slice 1C: scoped !alias.scope / !noalias ----
