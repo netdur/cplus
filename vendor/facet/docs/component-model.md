@@ -41,6 +41,11 @@ the tree, so its fields persist. A handler writes a field, then pushes that
 value to the element that displays it (see [updates.md](updates.md)). Nothing is
 recomputed and the tree is not rebuilt.
 
+A component may instead declare which field feeds which element **once** and let
+the compiler's `#[watch]` barrier do the pushing, so its handlers only write
+state — see [bound-components.md](bound-components.md). That is additive: the
+`Component` block below is unchanged either way.
+
 The instance is owned by whoever runs it — `run_component` / `run_screen`
 hold it for the window's life; an `App` route holds it boxed for exactly as
 long as its screen shows ([app-screens.md](app-screens.md)). A handler is a `ref this` method

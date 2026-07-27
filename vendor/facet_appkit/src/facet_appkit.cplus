@@ -37,6 +37,7 @@ import "appkit/appkit_ext" as akx;
 import "quartzcore/quartzcore" as quartz;
 import "./ui" as ui;
 import "facet/facet" as facet;
+import "facet/bound" as bound;
 import "agent_core/identity" as identity;
 import "agent_core/surface" as surface;
 import "agent_appkit/agent_appkit" as agent;
@@ -9110,4 +9111,151 @@ fn menu_wires_callbacks_and_find_tags() {
         option::Option[ak::Menu]::None => { assert false; }
     }
     return;
+}
+
+// ---- bound components, end to end through the real backend ------------------
+// The `bound` unit tests drive a recording stub. These mount REAL NSViews, so
+// what they assert is that a plain field write reaches an actual AppKit control:
+// the label's string is read back through `Handle::text()`, which goes to
+// `stringValue` on the located view, not to any facet-side cache.
+
+#[watch]
+struct BoundCounter {
+    n: i32,
+    note: text::Text,
+    busy: bool,
+}
+
+impl BoundCounter {
+    // A handler that writes state and nothing else — the whole claim of the tier.
+    fn inc(ref this, sender: *u8) { this.n = this.n + 1; return; }
+}
+
+impl BoundCounter: facet::Component {
+    fn build(ref this) -> facet::Node {
+        var b: facet::Builder = facet::Builder::new();
+        b.add(facet::label("placeholder").key("bc:n"));
+        b.add(facet::label("placeholder").key("bc:note"));
+        b.add(facet::label("spinner").key("bc:spinner"));
+        b.add(facet::button("+1").on_click(this.inc).key("bc:inc"));
+        return facet::vstack(b);
+    }
+}
+
+impl BoundCounter: bound::Bound {
+    fn bindings(ref this, b: bound::Bindings) -> bound::Bindings {
+        return b
+            .int("bc:n", this.n, prefix: "count: ")
+            .text("bc:note", this.note)
+            .shown("bc:spinner", this.busy);
+    }
+    fn on_value(ref this, field: str) { bound::changed(this); return; }
+}
+
+impl BoundCounter: facet::Lifecycle {
+    fn on_attach(ref this) { let _m: i64 = bound::bind(this); return; }
+    fn on_detach(ref this) { bound::unbind(this); return; }
+}
+
+static BOUND_COUNTER: BoundCounter = #zero::[BoundCounter]();
+
+#[test]
+fn bound_component_updates_real_appkit_views_on_a_field_write() {
+    unmount_all();
+    install();
+    BOUND_COUNTER.n = 0;
+    BOUND_COUNTER.note = text::from_str("start");
+    BOUND_COUNTER.busy = false;
+
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
+    let _h: f64 = mount_component(BOUND_COUNTER.build, host: host.raw());
+
+    // `build` mounted the literal string "placeholder"; nothing has bound yet.
+    assert facet::find("bc:n").text().equals("placeholder");
+
+    // The lifecycle seam is where binding happens. `run_component` fires this
+    // hook itself; the test stands in for the runner.
+    BOUND_COUNTER.on_attach();
+    assert bound::unresolved(BOUND_COUNTER) == (0 as i64);
+    assert facet::find("bc:n").text().equals("count: 0");
+    assert facet::find("bc:note").text().equals("start");
+
+    // The whole point: a field write, no view code, and the real NSTextField
+    // reads back the new string.
+    BOUND_COUNTER.n = 7;
+    assert facet::find("bc:n").text().equals("count: 7");
+    BOUND_COUNTER.note = text::from_str("saved");
+    assert facet::find("bc:note").text().equals("saved");
+
+    // A bool binding reaches the real view's `hidden` flag.
+    assert ak::View::from_raw(facet::find("bc:spinner").view()).is_hidden();
+    BOUND_COUNTER.busy = true;
+    assert !ak::View::from_raw(facet::find("bc:spinner").view()).is_hidden();
+
+    BOUND_COUNTER.on_detach();
+    BOUND_COUNTER.n = 99;                       // unbound: the view must not move
+    assert facet::find("bc:n").text().equals("count: 7");
+    unmount_all();
+}
+
+#[test]
+fn bound_component_rebinds_after_a_detach_and_reattach() {
+    // A parked component comes back with its addresses intact but its caches
+    // re-primed, so the re-mounted tree is repainted from current state rather
+    // than inheriting a cache that matches views which no longer exist.
+    unmount_all();
+    install();
+    BOUND_COUNTER.n = 0;
+    BOUND_COUNTER.note = text::from_str("first");
+    BOUND_COUNTER.busy = false;
+
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
+    let _h: f64 = mount_component(BOUND_COUNTER.build, host: host.raw());
+    BOUND_COUNTER.on_attach();
+    BOUND_COUNTER.n = 3;
+    assert facet::find("bc:n").text().equals("count: 3");
+
+    BOUND_COUNTER.on_detach();
+    unmount_all();
+
+    // Fresh tree, same component instance and same field addresses.
+    let host2 = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
+    let _h2: f64 = mount_component(BOUND_COUNTER.build, host: host2.raw());
+    assert facet::find("bc:n").text().equals("placeholder");
+    BOUND_COUNTER.on_attach();
+    assert facet::find("bc:n").text().equals("count: 3");
+    BOUND_COUNTER.n = 4;
+    assert facet::find("bc:n").text().equals("count: 4");
+    BOUND_COUNTER.on_detach();
+    unmount_all();
+}
+
+#[test]
+fn bound_component_updates_on_a_real_click_through_target_action() {
+    // The full chain in one test, with nothing simulated but the click itself:
+    // AppKit target/action -> bound-method handler -> field store -> compiler
+    // write barrier -> on_value -> changed -> find(key).set_text -> NSTextField.
+    unmount_all();
+    install();
+    BOUND_COUNTER.n = 0;
+    BOUND_COUNTER.note = text::from_str("start");
+    BOUND_COUNTER.busy = false;
+
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
+    let _h: f64 = mount_component(BOUND_COUNTER.build, host: host.raw());
+    BOUND_COUNTER.on_attach();
+    assert facet::find("bc:n").text().equals("count: 0");
+
+    let btn: *u8 = facet::find("bc:inc").view();
+    assert btn != (0 as *u8);
+    let tgt: *u8 = rt::msg_id(btn, rt::sel(#str_ptr("target\0")));
+    let act: *u8 = rt::msg_id(btn, rt::sel(#str_ptr("action\0")));
+    rt::msg_void_id(tgt, act, btn);
+    assert facet::find("bc:n").text().equals("count: 1");
+    rt::msg_void_id(tgt, act, btn);
+    rt::msg_void_id(tgt, act, btn);
+    assert facet::find("bc:n").text().equals("count: 3");
+
+    BOUND_COUNTER.on_detach();
+    unmount_all();
 }

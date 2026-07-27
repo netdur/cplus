@@ -6,6 +6,12 @@ facet updates the screen by addressing one element and mutating it in place. A
 handler mutates a struct field, then pushes that value to the element that shows
 it, found by its `key`. There is no re-render and no diff.
 
+Everything on this page is the manual form, and it is the whole mechanism. A
+component that would rather declare its field → element links once and have the
+push happen on every field write adds the bound tier
+([bound-components.md](bound-components.md)); it resolves to the identical
+`find(key).set_*()` call described here.
+
 ## Keys
 
 Give an element a stable `key` in `build`:

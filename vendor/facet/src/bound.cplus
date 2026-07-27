@@ -1,0 +1,939 @@
+// facet — BOUND components (spike).
+//
+// A bound component is an ordinary facet component whose state fields are
+// DECLARED ONCE against the elements that display them. After that, writing a
+// field updates the screen: the compiler's `#[watch]` write barrier calls
+// `on_value`, `on_value` calls `changed`, and `changed` re-reads the bound
+// fields and pushes the ones whose value actually moved.
+//
+//     #[watch]
+//     struct Counter { n: i32, note: text::Text, busy: bool }
+//
+//     impl Counter: facet::Component {          // UNCHANGED — the normal tier
+//         fn build(ref this) -> facet::Node { /* ... .key("n") ... */ }
+//     }
+//
+//     impl Counter: bound::Bound {
+//         // ONE place says which field shows where. Declared, not executed
+//         // per update.
+//         fn bindings(ref this, b: bound::Bindings) -> bound::Bindings {
+//             return b
+//                 .int("n",     this.n, prefix: "count: ")
+//                 .text("note", this.note)
+//                 .shown("spinner", this.busy);
+//         }
+//         // The required wiring, always this line.
+//         fn on_value(ref this, field: str) { changed(this); return; }
+//     }
+//
+//     impl Counter: facet::Lifecycle {
+//         fn on_attach(ref this) { let _m: i64 = bound::bind(this); return; }
+//         fn on_detach(ref this) { bound::unbind(this); return; }
+//     }
+//
+// A handler now writes state and nothing else:
+//
+//     fn inc(ref this, sender: *u8) { this.n = this.n + 1; return; }   // label updates
+//
+// ---- what this is NOT ------------------------------------------------------
+// This is not reactive. There is no dependency graph, no recompute, no vdom and
+// no diff: `build` still runs exactly once, the tree is still retained, and the
+// update is still `find(key).set_*()` — the same keyed-direct write a handler
+// would have made by hand. All that moved is WHO makes it: a declaration
+// instead of a line in every handler. The cost of a write is one pass over that
+// component's binding list (a handful of word compares), not a tree walk.
+//
+// It is also ONE-WAY, state -> view. A control's own edits (a text field being
+// typed into) arrive as handlers; a bound field does not read them back.
+//
+// ---- why the three-line wiring is not folded into the runtime -------------
+// `bind` is called from `on_attach` rather than by a `run_bound_component`,
+// because `on_attach` is fired by EVERY path that puts a component on screen —
+// `run_component`, `run_screen`, `present`, `switch_to`, `stage`/`attach`, and
+// an `App` route. Wiring at the lifecycle seam therefore needs no change to any
+// runner, no parallel set of 20-parameter window functions, and no new
+// interface bound threaded through `App`. The price is three one-line hooks in
+// the component, all of them checked (the interface is closed, and `#[watch]`
+// itself rejects a struct with no `on_value` — E0361).
+
+import "./facet" as core;
+import "stdlib/vec" as vec;
+import "stdlib/text" as text;
+import "stdlib/option" as option;
+import "stdlib/status" as status;
+
+// ---- the conformance -------------------------------------------------------
+
+// The bound tier. Additive to `facet::Component`: a bound component still
+// implements `Component` for `build`, so nothing about the normal tier changes
+// and a component can be converted to (or from) bound without touching its
+// tree.
+//
+// `on_value` is here rather than in the inherent impl on purpose. `#[watch]`
+// looks the hook up by name on the type and does not care which impl block
+// supplies it, so putting it in the conformance block makes the interlock
+// two-sided: forget it and the interface reports a missing method as well as
+// `#[watch]` reporting a hookless struct.
+//
+// Only the PLAIN hook shape is part of this contract. The snapshot shape
+// (`old`/`new`) exists for coalescing a high-rate writer down to a repaint
+// tick, which is a different job from binding and carries the `Copy` +
+// pointer-free restriction (E0363) that a component holding a `Text` cannot
+// meet anyway.
+interface Bound {
+    // Declare this component's field -> element links. Called ONCE per
+    // attachment, by `bind`. Chain off `b` and return it.
+    fn bindings(ref this, b: Bindings) -> Bindings;
+    // The write barrier's landing point. Always `changed(this);`.
+    fn on_value(ref this, field: str);
+}
+
+// ---- binding kinds ---------------------------------------------------------
+// What a binding does with the field it reads. Private: the surface is the
+// named `Bindings` method, so a kind number never appears in app code.
+
+fn _k_text() -> u32 { return 0 as u32; }      // *text::Text -> set_text
+fn _k_int() -> u32 { return 1 as u32; }       // *i32        -> set_text
+fn _k_long() -> u32 { return 2 as u32; }      // *i64        -> set_text
+fn _k_value() -> u32 { return 3 as u32; }     // *f64        -> set_value
+fn _k_on() -> u32 { return 4 as u32; }        // *bool       -> set_on
+fn _k_hidden() -> u32 { return 5 as u32; }    // *bool       -> set_hidden(v)
+fn _k_shown() -> u32 { return 6 as u32; }     // *bool       -> set_hidden(!v)
+
+// One declared link. `_cp` is the owning component's address (its identity, the
+// same `cp` facet uses everywhere) and `_src` is the address of the field —
+// both borrowed, both outlived by their owner, hence `opaque`.
+//
+// The caches are what make a write cheap and idempotent: a push happens only
+// when the source value differs from what was last pushed, so `n = n` costs
+// nothing, a whole-struct assign (`field == "*"`) pushes only the members that
+// really moved, and a handler that writes three fields in a row does not
+// repaint the two that were already correct.
+struct _Bind {
+    opaque _cp: *u8,
+    opaque _src: *u8,
+    _key: text::Text,
+    _pre: text::Text,
+    _post: text::Text,
+    _txt: text::Text,       // last pushed body — `_k_text` only
+    _num: i64,              // last pushed integral / bool (0 or 1)
+    _f: f64,                // last pushed f64
+    _kind: u32,
+    _primed: bool,          // false until the first push, which is unconditional
+    _found: bool,           // did the key resolve on the last push attempt?
+}
+
+static _BINDS: vec::Vec[_Bind] = #zero::[vec::Vec[_Bind]]();
+
+// ---- declaring bindings ----------------------------------------------------
+
+// The cursor handed to `bindings`. Carries only the component identity: the
+// declarations themselves land in the module registry, which is what lets
+// `sync` work from a bare `*u8` (all `on_value` has) with no per-component
+// storage and nothing for the component to hold.
+struct Bindings {
+    opaque _cp: *u8,
+}
+
+impl Bindings {
+    fn of(cp: *u8) -> Bindings { return Bindings { _cp: cp }; }
+
+    // The component's address, for a `bindings` body that needs it.
+    fn cp(this) -> *u8 { return this._cp; }
+
+    // Every declaration takes the FIELD ITSELF, as a `ref` parameter — the
+    // language's way of saying "pass me the place, not a copy". A binding has to
+    // RE-READ its field at every later push, so what it must keep is the field's
+    // location; a by-value parameter would freeze a snapshot at declaration time
+    // and the element would never move again. `ref` is what makes the location
+    // available without app code naming an address: it is compiler-checked
+    // (`this.nope` is E0320, a wrong type is E0302), and the one `#addr_of` this
+    // needs happens in here, once per kind, rather than at every call site.
+
+    // An owned string field -> the element's text. The one binding that needs
+    // no conversion, and the escape hatch for any formatting this module does
+    // not do: format into a `Text` field and bind that — the write to the field
+    // fires the barrier, so the label still updates itself.
+    fn text(this, key: str, ref src: text::Text, prefix: str = "", suffix: str = "") -> Bindings {
+        return this._add(key, #addr_of(src) as *u8, _k_text(), prefix, suffix);
+    }
+
+    // An integer field -> the element's text, decimal. `prefix` / `suffix`
+    // cover the ordinary "count: 12 items" case without a format language.
+    fn int(this, key: str, ref src: i32, prefix: str = "", suffix: str = "") -> Bindings {
+        return this._add(key, #addr_of(src) as *u8, _k_int(), prefix, suffix);
+    }
+    fn long(this, key: str, ref src: i64, prefix: str = "", suffix: str = "") -> Bindings {
+        return this._add(key, #addr_of(src) as *u8, _k_long(), prefix, suffix);
+    }
+
+    // An `f64` field -> a value control's number (slider / stepper / progress /
+    // gauge). Not text: a float has no one right rendering, so a float shown as
+    // text goes through a `Text` field the component formats itself.
+    fn value(this, key: str, ref src: f64) -> Bindings {
+        return this._add(key, #addr_of(src) as *u8, _k_value(), "", "");
+    }
+
+    // A `bool` field -> a toggle / checkbox / switch.
+    fn on(this, key: str, ref src: bool) -> Bindings {
+        return this._add(key, #addr_of(src) as *u8, _k_on(), "", "");
+    }
+
+    // A `bool` field -> visibility. Both directions, because a component's flag
+    // is named for whichever reads better (`busy`, `collapsed`) and inverting it
+    // at the binding beats keeping a second field in sync.
+    fn hidden(this, key: str, ref src: bool) -> Bindings {
+        return this._add(key, #addr_of(src) as *u8, _k_hidden(), "", "");
+    }
+    fn shown(this, key: str, ref src: bool) -> Bindings {
+        return this._add(key, #addr_of(src) as *u8, _k_shown(), "", "");
+    }
+
+    fn _add(this, key: str, src: *u8, kind: u32, pre: str, post: str) -> Bindings {
+        let reg: *vec::Vec[_Bind] = #addr_of(_BINDS);
+        let _s: status::Status = (*reg).append(_Bind {
+            _cp: this._cp,
+            _src: src,
+            _key: text::from_str(key),
+            _pre: text::from_str(pre),
+            _post: text::from_str(post),
+            _txt: text::from_str(""),
+            _num: 0 as i64,
+            _f: 0.0f64,
+            _kind: kind,
+            _primed: false,
+            _found: false,
+        });
+        return this;
+    }
+}
+
+// ---- wiring ----------------------------------------------------------------
+
+// Collect `c`'s bindings and paint the initial state. Call from `on_attach`,
+// where the tree is mounted and `find` resolves.
+//
+// Returns the number of bindings whose key did NOT resolve — 0 means every
+// declared link found its element. It is a count rather than a `Status` because
+// the useful answer is "how many", and it is returned rather than swallowed
+// because a facet mutator on a missing handle is a silent no-op: a mistyped key
+// would otherwise produce a component that simply never updates, with nothing
+// to read. Assert on it in development.
+//
+// Idempotent: re-attaching a parked component re-declares its bindings from
+// scratch (the addresses are still valid — the component did not move — but the
+// caches are re-primed, so the first sync after a re-attach repaints
+// everything, which is what a freshly re-mounted tree needs).
+fn bind[C: Bound](ref c: C) -> i64 {
+    let cp: *u8 = #addr_of(c) as *u8;
+    unbind_at(cp);
+    let _b: Bindings = c.bindings(Bindings::of(cp));
+    sync(cp);
+    return unresolved_at(cp);
+}
+
+// Drop every binding this component declared. Call from `on_detach`. Required,
+// not hygiene: the registry holds the component's field ADDRESSES, so a binding
+// left behind after the component dies is a dangling read on the next sync of
+// whatever lands at that address.
+fn unbind[C](ref c: C) { unbind_at(#addr_of(c) as *u8); return; }
+
+// `unbind` for a caller that holds the component's address rather than the
+// component — an erased teardown callback registered by `present`, for
+// instance, which receives a bare `cp`.
+fn unbind_at(cp: *u8) {
+    let reg: *vec::Vec[_Bind] = #addr_of(_BINDS);
+    var i: usize = 0 as usize;
+    while i < { (*reg).count() } {
+        var hit: bool = false;
+        match (*reg).at_ptr(i) {
+            option::Option[*_Bind]::Some(bp) => { if { (*bp)._cp } == cp { hit = true; } }
+            option::Option[*_Bind]::None => { }
+        }
+        if hit {
+            // The removed `_Bind` drops here, releasing its owned strings.
+            let _gone: option::Option[_Bind] = (*reg).remove(i);
+        } else {
+            i = i +% (1 as usize);
+        }
+    }
+    return;
+}
+
+// Re-read `cp`'s bound fields and push the ones that changed — the address form,
+// for a caller holding a bare `cp` (an erased callback's ctx). A component holds
+// itself, so it calls `changed(this)`.
+//
+// This is what the write barrier ends up calling, and it is also the manual
+// entry point for the writes the barrier does not cover: a store INSIDE a field
+// (`this.rows[i] = x`) or through a raw pointer does not fire `on_value`, so a
+// component doing either calls `changed(this)` itself.
+fn sync(cp: *u8) {
+    let reg: *vec::Vec[_Bind] = #addr_of(_BINDS);
+    let n: usize = { (*reg).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*reg).at_ptr(i) {
+            option::Option[*_Bind]::Some(bp) => {
+                if { (*bp)._cp } == cp { _push(bp); }
+            }
+            option::Option[*_Bind]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// `sync` for a caller that holds the component itself: the body of every bound
+// component's `on_value`, and the manual escape after a write the barrier does
+// not see. `ref c` is a place at the component's real address, so the identity
+// is recovered here — the component stores nothing and names no address.
+fn changed[C: Bound](ref c: C) {
+    sync(#addr_of(c) as *u8);
+    return;
+}
+
+// How many of this component's bindings failed to resolve their key on the last
+// push. Re-readable after the fact, so a component can check again once a
+// conditionally-built part of its tree is mounted.
+fn unresolved[C](ref c: C) -> i64 { return unresolved_at(#addr_of(c) as *u8); }
+
+fn unresolved_at(cp: *u8) -> i64 {
+    let reg: *vec::Vec[_Bind] = #addr_of(_BINDS);
+    let n: usize = { (*reg).count() };
+    var miss: i64 = 0 as i64;
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*reg).at_ptr(i) {
+            option::Option[*_Bind]::Some(bp) => {
+                if { (*bp)._cp } == cp {
+                    if !{ (*bp)._found } { miss = miss + (1 as i64); }
+                }
+            }
+            option::Option[*_Bind]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return miss;
+}
+
+// How many bindings are registered for this component. Diagnostic.
+fn count[C](ref c: C) -> i64 { return count_at(#addr_of(c) as *u8); }
+
+fn count_at(cp: *u8) -> i64 {
+    let reg: *vec::Vec[_Bind] = #addr_of(_BINDS);
+    let n: usize = { (*reg).count() };
+    var c: i64 = 0 as i64;
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*reg).at_ptr(i) {
+            option::Option[*_Bind]::Some(bp) => {
+                if { (*bp)._cp } == cp { c = c + (1 as i64); }
+            }
+            option::Option[*_Bind]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return c;
+}
+
+// ---- pushing ---------------------------------------------------------------
+
+// Wrap a body in the binding's affixes. The no-affix case is the common one and
+// allocates nothing — the caller pushes the body view directly.
+fn _wrapped(bp: *_Bind, body: str) -> text::Text {
+    var t: text::Text = text::from_str({ (*bp)._pre.view() });
+    let _a: status::Status = t.append(body);
+    let _b: status::Status = t.append({ (*bp)._post.view() });
+    return t;
+}
+
+fn _has_affix(bp: *_Bind) -> bool {
+    if !{ (*bp)._pre.is_empty() } { return true; }
+    return !{ (*bp)._post.is_empty() };
+}
+
+// Push `body` as the element's text, honouring the affixes.
+fn _push_text(bp: *_Bind, body: str) {
+    let key: str = { (*bp)._key.view() };
+    if _has_affix(bp) {
+        let full: text::Text = _wrapped(bp, body);
+        let h: core::Handle = core::find(key).set_text(full.view());
+        { (*bp)._found = h.found(); }
+        return;
+    }
+    let h: core::Handle = core::find(key).set_text(body);
+    { (*bp)._found = h.found(); }
+    return;
+}
+
+// Decimal text for an i64, without a format language: interpolation is the only
+// number-to-string in the language today, and it is exactly what is wanted.
+fn _decimal(v: i64) -> text::Text { return "${v}"; }
+
+// One binding: read the source, compare against what was last pushed, push and
+// re-cache only on a real change. `_primed` makes the first push unconditional,
+// which is why `build` may mount placeholder content and let `bind` fill in the
+// initial state rather than spelling every value twice.
+fn _push(bp: *_Bind) {
+    let k: u32 = { (*bp)._kind };
+    let src: *u8 = { (*bp)._src };
+    let primed: bool = { (*bp)._primed };
+
+    if k == _k_text() {
+        let cur: str = { (*(src as *text::Text)).view() };
+        if primed {
+            if { (*bp)._txt.equals(cur) } { return; }
+        }
+        _push_text(bp, cur);
+        // Re-fill the cache in place. Assigning a fresh `Text` over an owned
+        // field through a raw pointer would raise the question of whether the
+        // old one is dropped; truncate-and-append settles it, and reuses the
+        // buffer so a steady stream of same-length updates stops allocating.
+        { (*bp)._txt.remove_all(); }
+        let _a: status::Status = { (*bp)._txt.append(cur) };
+        { (*bp)._primed = true; }
+        return;
+    }
+
+    if k == _k_int() || k == _k_long() {
+        var cur: i64 = 0 as i64;
+        if k == _k_int() { cur = { *(src as *i32) } as i64; }
+        else { cur = { *(src as *i64) }; }
+        if primed {
+            if { (*bp)._num } == cur { return; }
+        }
+        let body: text::Text = _decimal(cur);
+        _push_text(bp, body.view());
+        { (*bp)._num = cur; }
+        { (*bp)._primed = true; }
+        return;
+    }
+
+    if k == _k_value() {
+        let cur: f64 = { *(src as *f64) };
+        if primed {
+            // Bit-equality is not available, so a NaN source re-pushes on every
+            // write. A NaN in a value control is already meaningless, and the
+            // push is idempotent, so the cost is a redundant native call rather
+            // than a wrong screen.
+            if { (*bp)._f } == cur { return; }
+        }
+        let h: core::Handle = core::find({ (*bp)._key.view() }).set_value(cur);
+        { (*bp)._found = h.found(); }
+        { (*bp)._f = cur; }
+        { (*bp)._primed = true; }
+        return;
+    }
+
+    // The three bool kinds. Cached as 0 / 1 in `_num`.
+    let cur: bool = { *(src as *bool) };
+    var asnum: i64 = 0 as i64;
+    if cur { asnum = 1 as i64; }
+    if primed {
+        if { (*bp)._num } == asnum { return; }
+    }
+    let key: str = { (*bp)._key.view() };
+    if k == _k_on() {
+        let h: core::Handle = core::find(key).set_on(cur);
+        { (*bp)._found = h.found(); }
+    }
+    if k == _k_hidden() {
+        let h: core::Handle = core::find(key).set_hidden(cur);
+        { (*bp)._found = h.found(); }
+    }
+    if k == _k_shown() {
+        let h: core::Handle = core::find(key).set_hidden(!cur);
+        { (*bp)._found = h.found(); }
+    }
+    { (*bp)._num = asnum; }
+    { (*bp)._primed = true; }
+    return;
+}
+
+// ---- tests -----------------------------------------------------------------
+// A recording stub backend stands in for a mounted tree: `_probe_mount` names
+// the keys that "exist", every mutator records what it received, and a push
+// counter proves the change-detection actually suppresses redundant writes.
+// Installed and removed per test, so no other facet test sees the hooks.
+
+static _PK: vec::Vec[text::Text] = #zero::[vec::Vec[text::Text]]();
+static _PTEXT: vec::Vec[text::Text] = #zero::[vec::Vec[text::Text]]();
+static _PNUM: vec::Vec[f64] = #zero::[vec::Vec[f64]]();
+static _PON: vec::Vec[bool] = #zero::[vec::Vec[bool]]();
+static _PHID: vec::Vec[bool] = #zero::[vec::Vec[bool]]();
+static _PUSHES: i64 = 0 as i64;
+
+fn _probe_index(key: str) -> i64 {
+    let reg: *vec::Vec[text::Text] = #addr_of(_PK);
+    let n: usize = { (*reg).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*reg).at_ptr(i) {
+            option::Option[*text::Text]::Some(tp) => {
+                if { (*tp).equals(key) } { return i as i64; }
+            }
+            option::Option[*text::Text]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return -1 as i64;
+}
+
+// Declare a key as mounted. The fake view pointer is `index + 1` so it is
+// never 0 (which `Handle::found()` reads as a miss).
+fn _probe_mount(key: str) {
+    let kr: *vec::Vec[text::Text] = #addr_of(_PK);
+    let _a: status::Status = (*kr).append(text::from_str(key));
+    let tr: *vec::Vec[text::Text] = #addr_of(_PTEXT);
+    let _b: status::Status = (*tr).append(text::from_str(""));
+    let nr: *vec::Vec[f64] = #addr_of(_PNUM);
+    let _c: status::Status = (*nr).append(0.0f64);
+    let orr: *vec::Vec[bool] = #addr_of(_PON);
+    let _d: status::Status = (*orr).append(false);
+    let hr: *vec::Vec[bool] = #addr_of(_PHID);
+    let _e: status::Status = (*hr).append(false);
+    return;
+}
+
+fn _probe_find(cp: *u8, key: str) -> core::Handle {
+    let i: i64 = _probe_index(key);
+    if i < (0 as i64) { return core::Handle::missing(); }
+    return core::Handle::of((i + (1 as i64)) as *u8, 0 as *u8, cp, 0 as u32);
+}
+
+fn _probe_slot(h: core::Handle) -> i64 { return (h.view() as i64) - (1 as i64); }
+
+fn _probe_set_text(h: core::Handle, s: str) -> bool {
+    let i: i64 = _probe_slot(h);
+    if i < (0 as i64) { return false; }
+    let tr: *vec::Vec[text::Text] = #addr_of(_PTEXT);
+    match (*tr).at_ptr(i as usize) {
+        option::Option[*text::Text]::Some(tp) => {
+            { (*tp).remove_all(); }
+            let _a: status::Status = { (*tp).append(s) };
+        }
+        option::Option[*text::Text]::None => { return false; }
+    }
+    _PUSHES = _PUSHES + (1 as i64);
+    return true;
+}
+
+fn _probe_set_value(h: core::Handle, v: f64) -> bool {
+    let i: i64 = _probe_slot(h);
+    if i < (0 as i64) { return false; }
+    let nr: *vec::Vec[f64] = #addr_of(_PNUM);
+    let _s: status::Status = (*nr).set(v, i as usize);
+    _PUSHES = _PUSHES + (1 as i64);
+    return true;
+}
+
+fn _probe_set_on(h: core::Handle, v: bool) -> bool {
+    let i: i64 = _probe_slot(h);
+    if i < (0 as i64) { return false; }
+    let orr: *vec::Vec[bool] = #addr_of(_PON);
+    let _s: status::Status = (*orr).set(v, i as usize);
+    _PUSHES = _PUSHES + (1 as i64);
+    return true;
+}
+
+fn _probe_set_hidden(h: core::Handle, v: bool) -> bool {
+    let i: i64 = _probe_slot(h);
+    if i < (0 as i64) { return false; }
+    let hr: *vec::Vec[bool] = #addr_of(_PHID);
+    let _s: status::Status = (*hr).set(v, i as usize);
+    _PUSHES = _PUSHES + (1 as i64);
+    return true;
+}
+
+fn _probe_text(key: str) -> text::Text {
+    let i: i64 = _probe_index(key);
+    if i < (0 as i64) { return text::from_str("<unmounted>"); }
+    let tr: *vec::Vec[text::Text] = #addr_of(_PTEXT);
+    match (*tr).at_ptr(i as usize) {
+        option::Option[*text::Text]::Some(tp) => { return { (*tp).clone() }; }
+        option::Option[*text::Text]::None => { return text::from_str("<gone>"); }
+    }
+}
+
+fn _probe_num(key: str) -> f64 {
+    let i: i64 = _probe_index(key);
+    if i < (0 as i64) { return -1.0f64; }
+    let nr: *vec::Vec[f64] = #addr_of(_PNUM);
+    match (*nr).at_ptr(i as usize) {
+        option::Option[*f64]::Some(p) => { return { *p }; }
+        option::Option[*f64]::None => { return -1.0f64; }
+    }
+}
+
+fn _probe_on(key: str) -> bool {
+    let i: i64 = _probe_index(key);
+    if i < (0 as i64) { return false; }
+    let orr: *vec::Vec[bool] = #addr_of(_PON);
+    match (*orr).at_ptr(i as usize) {
+        option::Option[*bool]::Some(p) => { return { *p }; }
+        option::Option[*bool]::None => { return false; }
+    }
+}
+
+fn _probe_hidden(key: str) -> bool {
+    let i: i64 = _probe_index(key);
+    if i < (0 as i64) { return false; }
+    let hr: *vec::Vec[bool] = #addr_of(_PHID);
+    match (*hr).at_ptr(i as usize) {
+        option::Option[*bool]::Some(p) => { return { *p }; }
+        option::Option[*bool]::None => { return false; }
+    }
+}
+
+fn _probe_install() {
+    let kr: *vec::Vec[text::Text] = #addr_of(_PK);
+    (*kr).remove_all();
+    let tr: *vec::Vec[text::Text] = #addr_of(_PTEXT);
+    (*tr).remove_all();
+    let nr: *vec::Vec[f64] = #addr_of(_PNUM);
+    (*nr).remove_all();
+    let orr: *vec::Vec[bool] = #addr_of(_PON);
+    (*orr).remove_all();
+    let hr: *vec::Vec[bool] = #addr_of(_PHID);
+    (*hr).remove_all();
+    _PUSHES = 0 as i64;
+    core::set_find_fn(_probe_find);
+    core::set_set_text_fn(_probe_set_text);
+    core::set_set_value_fn(_probe_set_value);
+    core::set_set_on_fn(_probe_set_on);
+    core::set_set_hidden_fn(_probe_set_hidden);
+    return;
+}
+
+fn _probe_remove() {
+    core::set_find_fn(0 as fn(*u8, str) -> core::Handle);
+    core::set_set_text_fn(0 as fn(core::Handle, str) -> bool);
+    core::set_set_value_fn(0 as fn(core::Handle, f64) -> bool);
+    core::set_set_on_fn(0 as fn(core::Handle, bool) -> bool);
+    core::set_set_hidden_fn(0 as fn(core::Handle, bool) -> bool);
+    return;
+}
+
+// A bound component that ALSO implements `facet::Component`, to hold the claim
+// that the two conformances coexist on one struct: `build` lives in the
+// `Component` block, `bindings` + `on_value` in the `Bound` block, and neither
+// block knows about the other.
+#[watch]
+struct _Probe {
+    n: i32,
+    total: i64,
+    note: text::Text,
+    ratio: f64,
+    busy: bool,
+    ready: bool,
+    checked: bool,
+}
+
+impl _Probe {
+    fn fresh() -> _Probe {
+        return _Probe {
+            n: 0, total: 0 as i64, note: text::from_str("start"),
+            ratio: 0.0f64, busy: false, ready: true, checked: false,
+        };
+    }
+    // An ordinary handler: it writes state and NOTHING else. The label moves
+    // because of the binding, not because of a line in here.
+    fn inc(ref this, sender: *u8) { this.n = this.n + 1; return; }
+}
+
+impl _Probe: core::Component {
+    fn build(ref this) -> core::Node {
+        var b: core::Builder = core::Builder::new();
+        b.add(core::label("placeholder").key("n"));
+        b.add(core::label("placeholder").key("total"));
+        b.add(core::label("placeholder").key("note"));
+        b.add(core::progress().key("ratio"));
+        b.add(core::label("spinner").key("spinner"));
+        return core::vstack(b);
+    }
+}
+
+impl _Probe: Bound {
+    fn bindings(ref this, b: Bindings) -> Bindings {
+        return b
+            .int("n", this.n, prefix: "count: ")
+            .long("total", this.total, suffix: " items")
+            .text("note", this.note)
+            .value("ratio", this.ratio)
+            .shown("spinner", this.busy)
+            .hidden("note", this.ready)
+            .on("toggle", this.checked);
+    }
+    fn on_value(ref this, field: str) { changed(this); return; }
+}
+
+// Mount the keys `_Probe` binds against, minus `toggle` where a test wants a
+// miss.
+fn _probe_mount_all() {
+    _probe_mount("n");
+    _probe_mount("total");
+    _probe_mount("note");
+    _probe_mount("ratio");
+    _probe_mount("spinner");
+    _probe_mount("toggle");
+    return;
+}
+
+#[test]
+fn bound_initial_bind_paints_every_binding() {
+    _probe_install();
+    _probe_mount_all();
+    var p: _Probe = _Probe::fresh();
+    let miss: i64 = bind(p);
+    assert miss == (0 as i64);
+    assert count(p) == (7 as i64);
+    // `build` mounted placeholders; the initial sync is what put real state on
+    // screen, so a bound component never spells its values twice.
+    assert _probe_text("n").equals("count: 0");
+    assert _probe_text("total").equals("0 items");
+    assert _probe_text("note").equals("start");
+    assert _probe_num("ratio") == 0.0f64;
+    unbind(p);
+    _probe_remove();
+}
+
+#[test]
+fn bound_field_write_updates_the_element() {
+    _probe_install();
+    _probe_mount_all();
+    var p: _Probe = _Probe::fresh();
+    let _m: i64 = bind(p);
+    p.n = 41;
+    assert _probe_text("n").equals("count: 41");
+    p.n = p.n + 1;
+    assert _probe_text("n").equals("count: 42");
+    unbind(p);
+    _probe_remove();
+}
+
+#[test]
+fn bound_handler_writing_state_only_still_updates() {
+    // The point of the tier: `inc` touches no view code at all.
+    _probe_install();
+    _probe_mount_all();
+    var p: _Probe = _Probe::fresh();
+    let _m: i64 = bind(p);
+    p.inc(0 as *u8);
+    p.inc(0 as *u8);
+    assert _probe_text("n").equals("count: 2");
+    unbind(p);
+    _probe_remove();
+}
+
+#[test]
+fn bound_write_pushes_only_the_field_that_moved() {
+    _probe_install();
+    _probe_mount_all();
+    var p: _Probe = _Probe::fresh();
+    let _m: i64 = bind(p);
+    _PUSHES = 0 as i64;          // ignore the 7 priming pushes
+    p.n = 5;
+    // One write, one push — the other six bindings compared equal.
+    assert _PUSHES == (1 as i64);
+    unbind(p);
+    _probe_remove();
+}
+
+#[test]
+fn bound_rewriting_the_same_value_pushes_nothing() {
+    _probe_install();
+    _probe_mount_all();
+    var p: _Probe = _Probe::fresh();
+    let _m: i64 = bind(p);
+    p.n = 5;
+    _PUSHES = 0 as i64;
+    p.n = 5;
+    p.n = 5;
+    assert _PUSHES == (0 as i64);
+    assert _probe_text("n").equals("count: 5");
+    unbind(p);
+    _probe_remove();
+}
+
+#[test]
+fn bound_whole_struct_assign_pushes_only_the_movers() {
+    // A whole-struct assign fires the barrier ONCE with field == "*". Because
+    // the bindings compare values rather than dispatching on the field name,
+    // that single notification still lands on exactly the members that changed.
+    _probe_install();
+    _probe_mount_all();
+    var p: _Probe = _Probe::fresh();
+    let _m: i64 = bind(p);
+    _PUSHES = 0 as i64;
+    p = _Probe {
+        n: 9, total: 0 as i64, note: text::from_str("start"),
+        ratio: 0.0f64, busy: false, ready: true, checked: false,
+    };
+    assert _PUSHES == (1 as i64);
+    assert _probe_text("n").equals("count: 9");
+    unbind(p);
+    _probe_remove();
+}
+
+#[test]
+fn bound_text_binding_follows_an_owned_string_field() {
+    _probe_install();
+    _probe_mount_all();
+    var p: _Probe = _Probe::fresh();
+    let _m: i64 = bind(p);
+    p.note = text::from_str("saved");
+    assert _probe_text("note").equals("saved");
+    _PUSHES = 0 as i64;
+    p.note = text::from_str("saved");
+    assert _PUSHES == (0 as i64);      // same bytes -> no push
+    p.note = text::from_str("");
+    assert _probe_text("note").equals("");
+    unbind(p);
+    _probe_remove();
+}
+
+#[test]
+fn bound_long_and_value_bindings() {
+    _probe_install();
+    _probe_mount_all();
+    var p: _Probe = _Probe::fresh();
+    let _m: i64 = bind(p);
+    p.total = -17 as i64;
+    assert _probe_text("total").equals("-17 items");
+    p.ratio = 0.75f64;
+    assert _probe_num("ratio") == 0.75f64;
+    unbind(p);
+    _probe_remove();
+}
+
+#[test]
+fn bound_bool_kinds_keep_their_polarity() {
+    _probe_install();
+    _probe_mount_all();
+    var p: _Probe = _Probe::fresh();
+    let _m: i64 = bind(p);
+    // `shown` inverts: busy == false -> hidden == true.
+    assert _probe_hidden("spinner");
+    p.busy = true;
+    assert !_probe_hidden("spinner");
+    // `hidden` does not invert: ready == true -> hidden == true.
+    assert _probe_hidden("note");
+    p.ready = false;
+    assert !_probe_hidden("note");
+    assert !_probe_on("toggle");
+    p.checked = true;
+    assert _probe_on("toggle");
+    unbind(p);
+    _probe_remove();
+}
+
+#[test]
+fn bound_unresolved_reports_a_key_that_did_not_mount() {
+    // The negative case that matters: a mistyped or not-yet-mounted key makes
+    // every mutator a silent no-op, so `bind` reports the count instead of
+    // leaving a component that just never updates.
+    _probe_install();
+    _probe_mount("n");
+    _probe_mount("total");
+    _probe_mount("note");
+    _probe_mount("ratio");
+    _probe_mount("spinner");
+    // "toggle" deliberately NOT mounted.
+    var p: _Probe = _Probe::fresh();
+    let miss: i64 = bind(p);
+    assert miss == (1 as i64);
+    assert unresolved(p) == (1 as i64);
+    unbind(p);
+    _probe_remove();
+}
+
+#[test]
+fn bound_unbind_stops_every_push() {
+    _probe_install();
+    _probe_mount_all();
+    var p: _Probe = _Probe::fresh();
+    let _m: i64 = bind(p);
+    unbind(p);
+    assert count(p) == (0 as i64);
+    _PUSHES = 0 as i64;
+    p.n = 100;                          // barrier still fires; nothing is bound
+    assert _PUSHES == (0 as i64);
+    assert _probe_text("n").equals("count: 0");
+    _probe_remove();
+}
+
+#[test]
+fn bound_rebinding_does_not_double_register() {
+    _probe_install();
+    _probe_mount_all();
+    var p: _Probe = _Probe::fresh();
+    let _a: i64 = bind(p);
+    let _b: i64 = bind(p);
+    assert count(p) == (7 as i64);
+    _PUSHES = 0 as i64;
+    p.n = 3;
+    assert _PUSHES == (1 as i64);       // one push, not two
+    unbind(p);
+    _probe_remove();
+}
+
+#[test]
+fn bound_two_instances_are_independent() {
+    // Two components of the same type share a binding registry, so the `cp`
+    // filter is what keeps them apart. Both bind the same keys here — the
+    // registry is keyed by identity, not by key name.
+    _probe_install();
+    _probe_mount_all();
+    var a: _Probe = _Probe::fresh();
+    var b: _Probe = _Probe::fresh();
+    let _x: i64 = bind(a);
+    let _y: i64 = bind(b);
+    assert count(a) == (7 as i64);
+    assert count(b) == (7 as i64);
+    _PUSHES = 0 as i64;
+    a.n = 11;
+    assert _PUSHES == (1 as i64);       // only a's binding pushed
+    assert _probe_text("n").equals("count: 11");
+    b.n = 22;
+    assert _PUSHES == (2 as i64);
+    assert _probe_text("n").equals("count: 22");
+    unbind(a);
+    // Removing a's bindings leaves b's intact.
+    assert count(b) == (7 as i64);
+    b.n = 33;
+    assert _probe_text("n").equals("count: 33");
+    unbind(b);
+    _probe_remove();
+}
+
+#[test]
+fn bound_manual_sync_covers_writes_the_barrier_misses() {
+    // The barrier stops at whole-field stores, so a write INSIDE a field never
+    // reaches `on_value`. `sync` by address is the documented escape.
+    _probe_install();
+    _probe_mount_all();
+    var p: _Probe = _Probe::fresh();
+    let _m: i64 = bind(p);
+    // Mutate the Text in place — a method call on the field, not a store to it.
+    let np: *text::Text = #addr_of(p.note);
+    { (*np).remove_all(); }
+    let _a: status::Status = { (*np).append("in place") };
+    assert _probe_text("note").equals("start");        // no barrier, no push
+    changed(p);
+    assert _probe_text("note").equals("in place");
+    unbind(p);
+    _probe_remove();
+}
+
+#[test]
+fn bound_missing_backend_is_a_silent_noop_not_a_crash() {
+    // No hooks installed at all: `find` returns the missing handle, every push
+    // no-ops, and `bind` reports all seven as unresolved.
+    _probe_remove();
+    var p: _Probe = _Probe::fresh();
+    let miss: i64 = bind(p);
+    assert miss == (7 as i64);
+    p.n = 1;
+    unbind(p);
+}

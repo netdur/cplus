@@ -32,6 +32,7 @@ runtime::run_component(Counter { n: 0 }, title: "Counter",
 |---|---|
 | Components & state | [docs/component-model.md](docs/component-model.md) |
 | Keyed updates | [docs/updates.md](docs/updates.md) |
+| Bound components (spike) | [docs/bound-components.md](docs/bound-components.md) |
 | Lifecycle, `present`, parking | [docs/lifecycle.md](docs/lifecycle.md) |
 | App, Screen, nav | [docs/app-screens.md](docs/app-screens.md) |
 | Theme & color tiers | [docs/theme.md](docs/theme.md) |
