@@ -112,13 +112,16 @@ fn verb_to_str(v: events::Verb) -> str {
 // are Copy) — never moving the non-Copy `UiNode` out of the Vec, which would
 // double-free its owned `Text`s. `parent` is the index into the node array, or
 // JSON null for the window root.
-fn node_to_json(p: *backend::UiNode) -> json::Value {
-    var frame: vec::Vec[json::Member] = vec::new::[json::Member]();
-    frame.append(member("x", jnum({ (*p).frame.x })));
-    frame.append(member("y", jnum({ (*p).frame.y })));
-    frame.append(member("w", jnum({ (*p).frame.w })));
-    frame.append(member("h", jnum({ (*p).frame.h })));
-
+// `with_geometry` says whether this view MEASURED anything. The curated
+// "exposed" view does not — it reports identity, not layout — so emitting
+// `frame: {0,0,0,0}` there would be a lie in the shape of a measurement, and
+// one that reads as a broken backend rather than an absent field. It cost a
+// real investigation exactly once (bugs/facet-trailing-padding-lost-in-native-
+// placement.md, which could not compare rendered frames against flex output
+// because every frame came back zero), so the lean view now OMITS `frame` and
+// `class` instead of filling them with placeholders. Same rule as
+// `description` below: absent when there is nothing to say.
+fn node_to_json(p: *backend::UiNode, with_geometry: bool) -> json::Value {
     let parent_val: json::Value = match { (*p).parent } {
         option::Option[usize]::Some(pi) => jnum(pi as f64),
         option::Option[usize]::None => json::Value::Null,
@@ -127,8 +130,15 @@ fn node_to_json(p: *backend::UiNode) -> json::Value {
     var m: vec::Vec[json::Member] = vec::new::[json::Member]();
     m.append(member("id", jstr({ (*p).id })));
     m.append(member("role", jstr(role_to_str({ (*p).role }))));
-    m.append(member("class", jstr({ (*p).class_name })));
-    m.append(member("frame", json::Value::Object(frame)));
+    if with_geometry {
+        m.append(member("class", jstr({ (*p).class_name })));
+        var frame: vec::Vec[json::Member] = vec::new::[json::Member]();
+        frame.append(member("x", jnum({ (*p).frame.x })));
+        frame.append(member("y", jnum({ (*p).frame.y })));
+        frame.append(member("w", jnum({ (*p).frame.w })));
+        frame.append(member("h", jnum({ (*p).frame.h })));
+        m.append(member("frame", json::Value::Object(frame)));
+    }
     m.append(member("hidden", jbool({ (*p).is_hidden })));
     m.append(member("text", jstr({ (*p).text })));
     // Dev-authored intent — only on the wire when present (keeps full lean).
@@ -142,13 +152,13 @@ fn node_to_json(p: *backend::UiNode) -> json::Value {
 }
 
 // The whole describe_ui snapshot as a JSON array of node objects.
-fn describe_to_json(nodes: vec::Vec[backend::UiNode]) -> json::Value {
+fn describe_to_json(nodes: vec::Vec[backend::UiNode], with_geometry: bool) -> json::Value {
     var arr: vec::Vec[json::Value] = vec::new::[json::Value]();
     var i: usize = 0 as usize;
     while i < nodes.count() {
         match nodes.at_ptr(i) {
             option::Option[*backend::UiNode]::Some(p) => {
-                arr.append(node_to_json(p));
+                arr.append(node_to_json(p, with_geometry));
             }
             option::Option[*backend::UiNode]::None => {}
         }
@@ -212,9 +222,9 @@ fn dispatch(
         // "full" is the whole walked tree incl. auto-keyed structural nodes.
         let mode: text::Text = val_as_text(obj_get(params, "mode"));
         if { mode.view() } == "full" {
-            return ok_response(id, describe_to_json((vt.describe)(surf)));
+            return ok_response(id, describe_to_json((vt.describe)(surf), true));
         }
-        return ok_response(id, describe_to_json((vt.describe_exposed)(surf)));
+        return ok_response(id, describe_to_json((vt.describe_exposed)(surf), false));
     }
     if method == "click" {
         let target: text::Text = val_as_text(obj_get(params, "id"));
@@ -427,7 +437,7 @@ fn fake_node(id: str) -> backend::UiNode {
         id: text::from_str(id),
         role: identity::Role::Button,
         class_name: text::new(),
-        frame: backend::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 },
+        frame: backend::Rect { x: 11.0f64, y: 22.0f64, w: 33.0f64, h: 44.0f64 },
         is_hidden: false,
         text: text::new(),
         description: text::from_str("does the thing"),
@@ -482,4 +492,29 @@ fn describe_ui_mode_selects_the_view() {
     let r3: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all), "{\"method\":\"describe_ui\",\"params\":{\"mode\":\"full\"},\"id\":3}");
     assert r3.contains("exposed-node");
     assert r3.contains("structural-node");
+}
+
+#[test]
+fn only_the_measured_view_carries_geometry() {
+    // bugs/facet-trailing-padding-lost-in-native-placement.md: the curated view
+    // reports identity, not layout. It must OMIT `frame` rather than serialize
+    // `{0,0,0,0}` — placeholder zeros read as a measurement the backend got
+    // wrong, and sent one investigation looking for a placement bug that was
+    // not there. The fixture carries a distinctive frame so "dropped" and
+    // "carried" are told apart by the numbers, not by their absence upstream.
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
+
+    let lean: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all), "{\"method\":\"describe_ui\",\"params\":{\"mode\":\"exposed\"},\"id\":1}");
+    assert lean.contains("exposed-node");
+    assert lean.contains("\"frame\"") == false;
+    assert lean.contains("\"class\"") == false;
+    // ...and specifically not as zeros, which is what used to go out.
+    assert lean.contains("\"w\":0") == false;
+
+    let full: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all), "{\"method\":\"describe_ui\",\"params\":{\"mode\":\"full\"},\"id\":2}");
+    assert full.contains("\"frame\"");
+    assert full.contains("\"class\"");
+    assert full.contains("33");        // the fixture's width survives the wire
+    assert full.contains("44");        // ...and its height
 }

@@ -9259,3 +9259,109 @@ fn bound_component_updates_on_a_real_click_through_target_action() {
     BOUND_COUNTER.on_detach();
     unmount_all();
 }
+
+// ---- bugs/facet-trailing-padding-lost-in-native-placement.md ----------------
+// The repro the report asks for: assert the LAST child's NATIVE frame, since the
+// equivalent flex-only assertion already passes.
+
+#[test]
+fn padded_row_keeps_its_trailing_inset_in_native_frames() {
+    unmount_all();
+    install();
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 1000.0f64, h: 100.0f64 });
+    var b: facet::Builder = facet::Builder::new();
+    b.add(facet::label("first").width(100.0f64).key("pad:first"));
+    b.add(facet::spacer());
+    b.add(facet::label("last").width(42.0f64).key("pad:last"));
+    var d: facet::Node = facet::hstack(b).padding_edge(flex::Edge::Horizontal, 22.0f64);
+    let _h: f64 = mount_into(#addr_of(d), host.raw(), 1000.0f64, 100.0f64);
+
+    let fv: *u8 = find_view_by_id(host.raw(), "pad:first");
+    let lv: *u8 = find_view_by_id(host.raw(), "pad:last");
+    assert fv != (0 as *u8);
+    assert lv != (0 as *u8);
+    let ff: rt::Rect = ak::View::from_raw(fv).frame();
+    let lf: rt::Rect = ak::View::from_raw(lv).frame();
+    io::println("first x=${ff.x} w=${ff.w} right=${ff.x + ff.w}");
+    io::println("last  x=${lf.x} w=${lf.w} right=${lf.x + lf.w}");
+
+    // Leading inset: already known good.
+    assert ff.x == 22.0f64;
+    // Trailing inset: the bug.
+    assert (lf.x + lf.w) == (1000.0f64 - 22.0f64);
+    unmount_all();
+}
+
+#[test]
+fn overfull_padded_row_overflows_past_the_trailing_inset() {
+    // The other branch the report names: frames agree with flex, but the row's
+    // content is wider than its content box. `flex_layout` defaults
+    // flex-shrink to 0 (engine semantics, not CSS's 1), so an over-full row
+    // does not compress — it OVERFLOWS, and the last child is pushed past the
+    // trailing inset and clipped at the window edge. On screen that is
+    // indistinguishable from "the trailing padding was dropped".
+    unmount_all();
+    install();
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 1000.0f64, h: 100.0f64 });
+    var b: facet::Builder = facet::Builder::new();
+    b.add(facet::label("first").width(600.0f64).key("of:first"));
+    b.add(facet::spacer());
+    b.add(facet::label("mid").width(200.0f64).key("of:mid"));
+    b.add(facet::label("last").width(300.0f64).key("of:last"));
+    var d: facet::Node = facet::hstack(b).padding_edge(flex::Edge::Horizontal, 22.0f64);
+    let _h: f64 = mount_into(#addr_of(d), host.raw(), 1000.0f64, 100.0f64);
+
+    let lv: *u8 = find_view_by_id(host.raw(), "of:last");
+    assert lv != (0 as *u8);
+    let lf: rt::Rect = ak::View::from_raw(lv).frame();
+    io::println("overfull last x=${lf.x} w=${lf.w} right=${lf.x + lf.w} (inset edge would be 978)");
+    // Reproduces the report's symptom: the last child's right edge is past the
+    // trailing inset, so the gap the author asked for is not on screen.
+    assert (lf.x + lf.w) > (1000.0f64 - 22.0f64);
+    unmount_all();
+}
+
+#[test]
+fn window_drag_wrapped_padded_row_keeps_its_trailing_inset() {
+    // iris's toolbar shape: the padded row is not the root — it is the single
+    // child of a `window_drag` wrapper, which is a bare flex::Node (Column,
+    // align_items: Stretch). This is the one structural difference from the
+    // plain repro above.
+    unmount_all();
+    install();
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 1000.0f64, h: 200.0f64 });
+    var b: facet::Builder = facet::Builder::new();
+    b.add(facet::box().width(74.0f64).shrink(0.0f64).key("wd:buttons"));
+    b.add(facet::box().width(34.0f64));
+    b.add(facet::label("badge").min_width(0.0f64).shrink(1.0f64).key("wd:badge"));
+    b.add(facet::box().width(48.0f64));
+    b.add(facet::label("switcher").grow(1.0f64).shrink(0.0f64).key("wd:switcher"));
+    b.add(facet::spacer());
+    b.add(facet::label("status").shrink(0.0f64).key("wd:status"));
+    b.add(facet::box().width(20.0f64));
+    b.add(facet::box().frame(42.0f64, 42.0f64).shrink(0.0f64).key("wd:run"));
+    let row: facet::Node = facet::hstack(b)
+        .align_items(flex::Align::Center)
+        .height(74.0f64)
+        .padding_edge(flex::Edge::Horizontal, 22.0f64);
+    var wb: facet::Builder = facet::Builder::new();
+    wb.add(row);
+    var d: facet::Node = facet::window_drag(wb);
+    let _h: f64 = mount_into(#addr_of(d), host.raw(), 1000.0f64, 200.0f64);
+
+    let rv: *u8 = find_view_by_id(host.raw(), "wd:run");
+    assert rv != (0 as *u8);
+    let rfr: rt::Rect = ak::View::from_raw(rv).frame();
+    // The run chip's frame is relative to the ROW's backing view; walk up to
+    // learn how wide the row actually got.
+    var rowf: rt::Rect = rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 };
+    match ak::View::from_raw(rv).superview() {
+        option::Option[ak::View]::Some(sv) => { rowf = sv.frame(); }
+        option::Option[ak::View]::None => { assert false; }
+    }
+    io::println("row   x=${rowf.x} w=${rowf.w}");
+    io::println("run   x=${rfr.x} w=${rfr.w} right=${rfr.x + rfr.w}  row_w-22=${rowf.w - 22.0f64}");
+    assert rowf.w == 1000.0f64;
+    assert (rfr.x + rfr.w) == (rowf.w - 22.0f64);
+    unmount_all();
+}
