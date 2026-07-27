@@ -1735,7 +1735,7 @@ fn generate_inner(
         }
     }
     if let Some(cfg) = test_cfg {
-        emit_test_driver_main(&mut out, cfg.tests, cfg.json);
+        emit_test_driver_main(&mut out, &md, cfg.tests, cfg.json);
     }
     // v0.0.3 Phase 5 Slice 5B: emit one `define internal ptr` trampoline
     // per unique O type registered during function-body codegen. Done
@@ -5782,7 +5782,22 @@ fn emit_cstr(out: &mut String, name: &str, s: &str) -> usize {
 ///
 /// Final block prints the summary and returns the fail count as the process
 /// exit status (so `cpc test` can short-circuit on any failure).
-fn emit_test_driver_main(out: &mut String, tests: &[crate::attrs::TestFn], json: bool) {
+/// The driver's calls MUST go through `md.fastcc_prefix`, exactly like every
+/// other direct-call site. A `#[test]` fn is non-`export` and non-extern, so it
+/// is fastcc-eligible and its definition is emitted `internal fastcc`; a plain
+/// `call void @name()` against that is a calling-convention mismatch, which is
+/// immediate UB. At -O0 it happens to work, so the whole test suite passed. At
+/// -O3 LLVM folded the driver's `main` down to a bare `unreachable` marked
+/// `noreturn` — the binary died on SIGTRAP having printed nothing, and
+/// `cpc test` reported a bare exit 1 that read as "the flag is unsupported".
+/// That is why `cpc test --release` appeared not to exist.
+/// See bugs/facet-node-builder-mutations-lost-in-release.md §Still open.
+fn emit_test_driver_main(
+    out: &mut String,
+    md: &ModuleMetadata,
+    tests: &[crate::attrs::TestFn],
+    json: bool,
+) {
     out.push('\n');
     // Format strings. Use distinct names per mode to keep the IR readable.
     let (pass_fmt, fail_fmt, summary_fmt) = if json {
@@ -5822,13 +5837,17 @@ fn emit_test_driver_main(out: &mut String, tests: &[crate::attrs::TestFn], json:
         let next_lbl = format!("n{i}");
         out.push_str(&format!("\n  ; test {} {}\n", i, t.display_name));
         out.push_str("  store i32 0, ptr @cpc_test_failed\n");
+        let cc = md.fastcc_prefix(&t.qualified_name);
         if t.returns_i32 {
-            out.push_str(&format!("  %ret{i} = call i32 @{}()\n", t.qualified_name));
+            out.push_str(&format!(
+                "  %ret{i} = call {cc}i32 @{}()\n",
+                t.qualified_name
+            ));
             out.push_str(&format!("  %flag{i} = load i32, ptr @cpc_test_failed\n"));
             out.push_str(&format!("  %combined{i} = or i32 %ret{i}, %flag{i}\n"));
             out.push_str(&format!("  %ok{i} = icmp eq i32 %combined{i}, 0\n"));
         } else {
-            out.push_str(&format!("  call void @{}()\n", t.qualified_name));
+            out.push_str(&format!("  call {cc}void @{}()\n", t.qualified_name));
             out.push_str(&format!("  %flag{i} = load i32, ptr @cpc_test_failed\n"));
             out.push_str(&format!("  %ok{i} = icmp eq i32 %flag{i}, 0\n"));
         }

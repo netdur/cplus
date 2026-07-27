@@ -63,7 +63,10 @@ usage:
                                     Markdown to ./target/doc/<basename>.md
   cpc test [FILE] [--json]          discover + run `#[test]` functions. Single-file mode
                                     if FILE is given; project mode (reads ./Cplus.toml)
-                                    otherwise. `--json` emits one JSON object per test
+                                    otherwise. Honors the build flags below, so
+                                    `--release` runs the suite at -O3 and `--asan`/`--ubsan`
+                                    instrument the test binary.
+                                    `--json` emits one JSON object per test
                                     plus a final summary line.
   cpc fmt FILE|DIR [...]            format C+ source. By default: rewrites in place.
                                     flags: --check (no write, exit non-zero on diff)
@@ -784,7 +787,9 @@ fn main() -> ExitCode {
         }
         (Some(Subcommand::EmitLlProject), _) => emit_ll_project(diag_mode, build_mode, fp_contract),
         (Some(Subcommand::Fmt), _) => run_fmt(fmt_inputs, fmt_opts, diag_mode),
-        (Some(Subcommand::Test), _) => run_test(test_input, test_opts, diag_mode, build_mode),
+        (Some(Subcommand::Test), _) => {
+            run_test(test_input, test_opts, diag_mode, build_mode, &sanitizers)
+        }
         (Some(Subcommand::Lsp), _) => run_lsp(lsp_args),
         (Some(Subcommand::Check), Some(path)) => run_check(path, diag_mode),
         (Some(Subcommand::Check), None) => run_check_project(diag_mode),
@@ -2906,6 +2911,7 @@ fn run_test(
     opts: TestOpts,
     diag_mode: DiagMode,
     build_mode: BuildMode,
+    sanitizers: &[&str],
 ) -> ExitCode {
     let (program, _src_for_diags, mono, link_args) = match file {
         Some(path) => {
@@ -3047,6 +3053,15 @@ fn run_test(
     let ir = prune_ir(codegen::generate_test_binary(
         &program, build_mode, &tests, opts.json, &mono,
     ));
+    // Debug hook: `CPC_TEST_IR=path` writes the generated test-driver IR out.
+    // The driver module is otherwise unreachable — it exists only inside this
+    // function and its temp file is deleted — so a crash in it (a release-mode
+    // trap, say) has nothing to inspect without this.
+    if let Ok(dump) = std::env::var("CPC_TEST_IR") {
+        if let Err(e) = fs::write(&dump, &ir) {
+            eprintln!("cpc test: CPC_TEST_IR write {dump}: {e}");
+        }
+    }
     let tmp_handle = match make_temp_file("cpc-test-", ".ll", ir.as_bytes()) {
         Ok(h) => h,
         Err(e) => {
@@ -3073,7 +3088,11 @@ fn run_test(
         }
     };
     let bin_out = bin_path.to_path_buf();
-    let clang_status = run_clang(&tmp, &bin_out, build_mode, false, &[], &link_args);
+    // Sanitizers reach the test binary too. They used to be dropped on the
+    // floor here (a hardcoded empty slice), so `cpc test --asan` silently ran an
+    // uninstrumented binary — the one place where catching UB matters most,
+    // since tests are where UB is reachable on demand.
+    let clang_status = run_clang(&tmp, &bin_out, build_mode, false, sanitizers, &link_args);
     drop(tmp_handle);
     if !matches!(clang_status, ExitCode::SUCCESS) {
         return clang_status;
@@ -3088,11 +3107,34 @@ fn run_test(
             // The driver `main` returns the failure count. Map any non-zero
             // back to a clamped u8 ExitCode so callers can distinguish
             // "all passed" (0) from "something failed" (1..=255).
-            let code = s.code().unwrap_or(1);
-            if code == 0 {
-                ExitCode::SUCCESS
+            if let Some(code) = s.code() {
+                if code == 0 {
+                    ExitCode::SUCCESS
+                } else {
+                    ExitCode::from(code.clamp(1, 255) as u8)
+                }
             } else {
-                ExitCode::from(code.clamp(1, 255) as u8)
+                // No exit code means the process was killed by a signal, which
+                // is NOT a failing test — it is a crash, usually before the
+                // driver printed anything. `unwrap_or(1)` used to collapse that
+                // into a bare "1", indistinguishable from "one test failed" and
+                // carrying no output at all, which is exactly how a crashing
+                // release test binary looked like an unsupported flag.
+                #[cfg(unix)]
+                {
+                    use std::os::unix::process::ExitStatusExt;
+                    if let Some(sig) = s.signal() {
+                        eprintln!(
+                            "cpc test: the test binary was killed by signal {sig} before it finished"
+                        );
+                        eprintln!(
+                            "    no test output means it died during discovery or in the first test"
+                        );
+                    }
+                }
+                #[cfg(not(unix))]
+                eprintln!("cpc test: the test binary terminated abnormally");
+                ExitCode::FAILURE
             }
         }
         Err(e) => {
