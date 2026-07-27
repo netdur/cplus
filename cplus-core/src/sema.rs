@@ -827,6 +827,8 @@ fn check_with_files_inner(
         resolving_aliases: std::collections::HashSet::new(),
         fnptr_field_names: None,
         bound_method_refs: HashMap::new(),
+        receiver_capturing: std::collections::HashSet::new(),
+        capture_taint: HashMap::new(),
         method_defaults: HashMap::new(),
         default_splices: HashMap::new(),
         bound_ref_arg_spans: std::collections::HashSet::new(),
@@ -901,6 +903,7 @@ fn check_with_files_inner(
     cx.collect_enum_payloads(program);
     cx.collect_methods(program);
     cx.collect_method_contracts(program);
+    cx.collect_receiver_capturing_methods(program);
     cx.reconcile_drop_from_methods();
     // Struct and enum Copy-ness are mutually recursive (a struct may hold an
     // enum field; an enum payload may be a struct), and each pass is a monotone
@@ -1210,6 +1213,24 @@ struct SemaCx<'a> {
     /// monomorphize rewrites the arg to the synthesized bridge fn and
     /// fills the following ctx slot with the receiver's address.
     bound_method_refs: HashMap<ByteSpan, BoundMethodRefInfo>,
+    /// 2026-07-26 (bugs/facet-component-local-child-dangling-receiver.md):
+    /// `(struct_name, method_name)` pairs whose body takes a bound-method
+    /// reference to `this` — i.e. calling the method hands out the receiver's
+    /// raw address, so whatever it returns captures that address. Computed
+    /// syntactically after `collect_methods`, before any body is checked, so
+    /// the answer does not depend on the order impls appear in.
+    receiver_capturing: std::collections::HashSet<(String, String)>,
+    /// 2026-07-27 (reopened): locals that have ABSORBED a capture of another
+    /// local's address, mapped to the local whose address was captured.
+    ///
+    /// The first cut of E0365 only inspected the returned expression, which
+    /// caught `return c.build()` but missed the shape facet actually uses:
+    ///     var b = Builder::new();
+    ///     b.add(c.build());        // b now holds &c
+    ///     return column(b);        // ...and b escapes
+    /// Five live instances of that shape in iris compiled clean. Cleared at
+    /// each function/method body.
+    capture_taint: HashMap<String, Vec<String>>,
     /// Arg spans validated as bound references — `check_arg_with_move`
     /// skips them (as Field exprs they would fail "unknown field").
     bound_ref_arg_spans: std::collections::HashSet<ByteSpan>,
@@ -2109,6 +2130,346 @@ impl SemaCx<'_> {
     /// `Node { Branch(Vec[Node]) }` / json `Value::Array(Vec[Value])` gap).
     /// Running after `collect_methods` (method tables fully populated) and before
     /// the fixpoints fixes the classification for every instantiation path.
+    /// bugs/facet-component-local-child-dangling-receiver.md — find every
+    /// method that hands out its receiver's address.
+    ///
+    /// A bound-method reference (`this.handler` in value position) lowers to a
+    /// function pointer plus the receiver's raw address. A method that produces
+    /// one, and returns a value, has put that address inside what it returned.
+    /// Calling such a method on a *local* therefore stores a pointer to a stack
+    /// slot into a value that outlives the frame — the whole bug.
+    ///
+    /// Syntactic on purpose: it runs before body-checking so a call site can be
+    /// judged no matter which order the impls were declared in. `this.name` is a
+    /// bound reference when `name` is a method of the impl target and NOT a
+    /// field (a real fn-pointer field is an ordinary read), and when it appears
+    /// somewhere other than callee position (`this.name()` is just a call).
+    fn collect_receiver_capturing_methods(&mut self, program: &Program) {
+        // Iterated to a fixpoint, because capturing is TRANSITIVE through the
+        // receiver: `build` may bind nothing itself and just return
+        // `this.picker(...)`, where `picker` does the binding. That is the real
+        // shape in iris's toolbar, and a single pass reported only the methods
+        // that bind directly — three of the five live instances were missed.
+        //
+        // Convergence: the set only grows, and is bounded by the number of
+        // methods, so at most N rounds.
+        loop {
+            let before = self.receiver_capturing.len();
+            for item in &program.items {
+                let ItemKind::Impl(b) = &item.kind else {
+                    continue;
+                };
+                let Some(&sid) = self.struct_by_name.get(&b.target.name) else {
+                    continue;
+                };
+                for m in &b.methods {
+                    // A method returning nothing cannot carry the address out.
+                    if matches!(m.return_type, None) {
+                        continue;
+                    }
+                    let key = (b.target.name.clone(), m.name.name.clone());
+                    if self.receiver_capturing.contains(&key) {
+                        continue;
+                    }
+                    if self.block_binds_this_method(&m.body, sid)
+                        || self.block_calls_capturing_on_this(&m.body, &b.target.name)
+                    {
+                        self.receiver_capturing.insert(key);
+                    }
+                }
+            }
+            if self.receiver_capturing.len() == before {
+                break;
+            }
+        }
+    }
+
+    /// Does this body call an already-known receiver-capturing method on
+    /// `this`? Such a call hands `this`'s address to whatever it returns.
+    fn block_calls_capturing_on_this(&self, b: &Block, target: &str) -> bool {
+        let mut found = false;
+        crate::sema::walk_block_exprs(b, &mut |e: &Expr| {
+            if found {
+                return;
+            }
+            let ExprKind::Call { callee, .. } = &e.kind else {
+                return;
+            };
+            let ExprKind::Field { receiver, name } = &callee.kind else {
+                return;
+            };
+            if !matches!(&receiver.kind, ExprKind::Ident(n) if n == "this" || n == "self") {
+                return;
+            }
+            if self
+                .receiver_capturing
+                .contains(&(target.to_string(), name.name.clone()))
+            {
+                found = true;
+            }
+        });
+        found
+    }
+
+    fn block_binds_this_method(&self, b: &Block, sid: StructId) -> bool {
+        let mut found = false;
+        crate::sema::walk_block_exprs(b, &mut |e: &Expr| {
+            if found {
+                return;
+            }
+            // Skip callee position: `this.m(...)` calls the method, it does not
+            // take a reference to it.
+            let ExprKind::Call { callee, args, .. } = &e.kind else {
+                return;
+            };
+            let _ = callee;
+            for a in args {
+                if self.expr_is_this_bound_method(a, sid) {
+                    found = true;
+                    return;
+                }
+            }
+        });
+        found
+    }
+
+    /// Is `e` the value-position form `this.method` for a method of `sid`?
+    fn expr_is_this_bound_method(&self, e: &Expr, sid: StructId) -> bool {
+        let ExprKind::Field { receiver, name } = &e.kind else {
+            return false;
+        };
+        if !matches!(&receiver.kind, ExprKind::Ident(n) if n == "this" || n == "self") {
+            return false;
+        }
+        let def = &self.structs[sid.0 as usize];
+        // A real fn-pointer FIELD is an ordinary field read, not a binding.
+        if def.fields.iter().any(|(n, _, _)| n == &name.name) {
+            return false;
+        }
+        def.methods.contains_key(&name.name)
+    }
+
+    /// bugs/facet-component-local-child-dangling-receiver.md — reject a
+    /// returned value that captured the address of a local.
+    ///
+    /// Two shapes, both of which put `&local` into the return value:
+    ///   1. direct — `return button().on_click(local.handler)`;
+    ///   2. transitive — `return local.build()`, where `build` itself takes a
+    ///      bound reference to its receiver. This is the documented component
+    ///      composition shape, and the one that actually shipped broken.
+    ///
+    /// The gate is `owns_value`, the same flag E0513 uses: a plain local, a
+    /// `take` parameter and a `take this` all die at return, while a bare/`ref`
+    /// parameter and `this`/`ref this` borrow caller-owned storage and are
+    /// fine. That is why storing the child in a FIELD (`this.child.build()`)
+    /// is accepted while a local is not.
+    fn flag_escaping_local_receivers(&mut self, e: &Expr) {
+        let roots = self.capture_sources(e);
+        if roots.is_empty() {
+            return;
+        }
+        let named = Self::expr_names(e);
+        for root in roots {
+            // Name the binding that carried it out, when the escape is indirect
+            // — otherwise the span points at a `return` that never mentions the
+            // offending local and the message reads like a non-sequitur.
+            let via = if named.contains(&root) {
+                String::new()
+            } else {
+                match self
+                    .capture_taint
+                    .iter()
+                    .find(|(h, v)| v.contains(&root) && named.contains(*h))
+                {
+                    Some((holder, _)) => format!(" (carried out by `{holder}`)"),
+                    None => String::new(),
+                }
+            };
+            self.err(
+                "E0365",
+                format!(
+                    "returning a value that captures the address of `{root}`{via}: it is a local, so a handler bound to it would point at a stack slot that is freed when this function returns. Give it storage that outlives the returned value — a field of `this`, a `static`, or a `Box`"
+                ),
+                e.span,
+            );
+        }
+    }
+
+    /// Every identifier named anywhere in `e`. Used only to phrase the E0365
+    /// message: it tells a direct escape from one carried out through another
+    /// binding, so the diagnostic can name the carrier.
+    fn expr_names(e: &Expr) -> std::collections::HashSet<String> {
+        let mut out = std::collections::HashSet::new();
+        crate::sema::walk_expr_tree(e, &mut |x: &Expr| {
+            if let ExprKind::Ident(n) = &x.kind {
+                out.insert(n.clone());
+            }
+        });
+        out
+    }
+
+    /// The local whose address `e` carries, if any — either because `e` takes a
+    /// bound-method reference to it, calls a receiver-capturing method on it, or
+    /// merely *names* a local already tainted by one of those.
+    ///
+    /// That last clause is what makes the analysis transitive through ordinary
+    /// data flow: once `b` holds `&c`, every expression mentioning `b` carries
+    /// `&c` too.
+    /// `flow_only` narrows the search to captures that the expression's OWN
+    /// result carries: an already-tainted binding, or `local.m(...)` where `m`
+    /// hands out its receiver — in both cases the value in hand IS the carrier.
+    ///
+    /// It deliberately excludes an argument-position bound reference like
+    /// `f(local.handler)`, because whether `f`'s RESULT carries the address is
+    /// a property of `f` that we cannot see. Counting those when propagating
+    /// taint made `let n: i32 = take_handler(c.clicked); return n;` an error —
+    /// an i32 has nowhere to put an address. The return-site check still scans
+    /// for them (`flow_only == false`), since there the value being returned is
+    /// the expression itself.
+    fn capture_sources_flow(&self, e: &Expr) -> Vec<String> {
+        self.capture_sources_inner(e, true)
+    }
+
+    fn capture_sources(&self, e: &Expr) -> Vec<String> {
+        self.capture_sources_inner(e, false)
+    }
+
+    fn capture_sources_inner(&self, e: &Expr, flow_only: bool) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        let mut push = |v: String, out: &mut Vec<String>| {
+            if !out.contains(&v) {
+                out.push(v);
+            }
+        };
+        crate::sema::walk_expr_tree(e, &mut |x: &Expr| {
+            // A local already known to hold captures contributes all of them —
+            // one builder can absorb several children, and each is its own
+            // dangling receiver needing its own fix.
+            if let ExprKind::Ident(n) = &x.kind {
+                if let Some(srcs) = self.capture_taint.get(n) {
+                    for sc in srcs {
+                        push(sc.clone(), &mut out);
+                    }
+                }
+            }
+            let ExprKind::Call { callee, args, .. } = &x.kind else {
+                return;
+            };
+            // Direct: `f(local.handler)`. Only meaningful at a return site.
+            for a in args {
+                if flow_only {
+                    break;
+                }
+                if let ExprKind::Field { receiver, name } = &a.kind {
+                    if let Some(root) = Self::place_root_ident(receiver) {
+                        if let Some(Ty::Struct(sid)) = self.place_ty_quiet(receiver) {
+                            let def = &self.structs[sid.0 as usize];
+                            if !def.fields.iter().any(|(n, _, _)| n == &name.name)
+                                && def.methods.contains_key(&name.name)
+                                && self.local_dies_here(&root)
+                            {
+                                push(root, &mut out);
+                            }
+                        }
+                    }
+                }
+            }
+            // Transitive: `local.m(...)` where `m` binds its own receiver.
+            if let ExprKind::Field { receiver, name } = &callee.kind {
+                if let Some(root) = Self::place_root_ident(receiver) {
+                    if let Some(Ty::Struct(sid)) = self.place_ty_quiet(receiver) {
+                        let sname = self.structs[sid.0 as usize].name.clone();
+                        if self
+                            .receiver_capturing
+                            .contains(&(sname, name.name.clone()))
+                            && self.local_dies_here(&root)
+                        {
+                            push(root, &mut out);
+                        }
+                    }
+                }
+            }
+        });
+        out
+    }
+
+    /// Does this binding's storage die when the current function returns? The
+    /// `owns_value` gate E0513 uses: a plain local, a `take` parameter and
+    /// `take this` do; a bare/`ref` parameter and `this`/`ref this` borrow
+    /// caller-owned storage and do not.
+    fn local_dies_here(&self, root: &str) -> bool {
+        let key: &str = if root == "this" { "self" } else { root };
+        match self.lookup_local(key) {
+            Some(info) => info.owns_value,
+            None => false, // a static / unknown: outlives us
+        }
+    }
+
+    /// Propagate capture taint across one statement, before it is checked.
+    /// Only the shapes that can move a value INTO a longer-lived binding
+    /// matter; anything else cannot make a capture escape further than it
+    /// already has.
+    fn update_capture_taint(&mut self, s: &Stmt) {
+        match &s.kind {
+            // `var b = <expr carrying &c>` — b now holds it.
+            StmtKind::Let {
+                name, init: Some(e), ..
+            } => {
+                let srcs = self.capture_sources_flow(e);
+                if !srcs.is_empty() {
+                    self.capture_taint
+                        .entry(name.name.clone())
+                        .or_default()
+                        .extend(srcs);
+                }
+            }
+            StmtKind::Expr(e) => {
+                // `b.add(c.build())` — the RECEIVER absorbs the argument. This
+                // is the builder shape, and the one the first cut missed.
+                if let ExprKind::Call { callee, args, .. } = &e.kind {
+                    if let ExprKind::Field { receiver, .. } = &callee.kind {
+                        if let Some(dest) = Self::place_root_ident(receiver) {
+                            let mut acc: Vec<String> = Vec::new();
+                            for a in args {
+                                acc.extend(self.capture_sources_flow(a));
+                            }
+                            if !acc.is_empty() {
+                                let slot = self.capture_taint.entry(dest).or_default();
+                                for sc in acc {
+                                    if !slot.contains(&sc) {
+                                        slot.push(sc);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                // `b = <expr carrying &c>`
+                if let ExprKind::Assign { target, value, .. } = &e.kind {
+                    let srcs = self.capture_sources_flow(value);
+                    if !srcs.is_empty() {
+                        if let Some(dest) = Self::place_root_ident(target) {
+                            self.capture_taint.entry(dest).or_default().extend(srcs);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// The root binding of a place expression (`a.b[i].c` → `a`), or None for
+    /// a non-place.
+    fn place_root_ident(e: &Expr) -> Option<String> {
+        match &e.kind {
+            ExprKind::Ident(n) => Some(n.clone()),
+            ExprKind::Field { receiver, .. } | ExprKind::Index { receiver, .. } => {
+                Self::place_root_ident(receiver)
+            }
+            _ => None,
+        }
+    }
+
     fn reconcile_drop_from_methods(&mut self) {
         for s in self.structs.iter_mut() {
             if !s.is_drop && s.methods.contains_key("drop") {
@@ -4194,6 +4555,7 @@ impl SemaCx<'_> {
     }
 
     fn check_method(&mut self, struct_id: StructId, m: &Method) {
+        self.capture_taint.clear();
         // `fn name(this) -> T;` — a header declaration from a binary package's
         // `lib/include/`. Its signature is registered (callers type-check
         // against it); there is no body to check, because the implementation
@@ -5874,6 +6236,7 @@ impl SemaCx<'_> {
     }
 
     fn check_function(&mut self, f: &Function) {
+        self.capture_taint.clear();
         // Phase 5 Slice 5.C: an `export fn name(...) { body }` (with or without
         // `extern`) is a C-callable definition — it gets a bare, unmangled C
         // symbol, so its signature must use only C-ABI-compatible types. The
@@ -6318,6 +6681,7 @@ impl SemaCx<'_> {
     // ---- statements ----
 
     fn check_stmt(&mut self, s: &Stmt) {
+        self.update_capture_taint(s);
         match &s.kind {
             StmtKind::LetDestructure {
                 mutable,
@@ -14009,6 +14373,8 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // this catches the same dangle hidden in a struct/array/tuple the
         // function returns. Runs regardless of return type.
         self.flag_escaping_local_views(e);
+        // bugs/facet-component-local-child-dangling-receiver.md
+        self.flag_escaping_local_receivers(e);
 
         let ret_borrow_shaped = matches!(self.current_return, Ty::Str | Ty::Slice(_));
         // Bug 03: `return temp.view();` returns a view of a statement-scoped
@@ -17225,6 +17591,155 @@ fn walk_stmt_names(
     }
 }
 
+/// Generic pre-order walk over an expression and every sub-expression the
+/// checker cares about. Conservative by construction: a variant not listed
+/// simply is not descended into, which can only cause a missed diagnostic,
+/// never a spurious one. Used by the returned-value capture check
+/// (bugs/facet-component-local-child-dangling-receiver.md).
+pub(crate) fn walk_expr_tree(e: &Expr, f: &mut impl FnMut(&Expr)) {
+    f(e);
+    match &e.kind {
+        ExprKind::Block(b) => walk_block_exprs(b, f),
+        ExprKind::Await(i) | ExprKind::Yield(i) | ExprKind::Cast { expr: i, .. } => {
+            walk_expr_tree(i, f)
+        }
+        ExprKind::Unary { operand, .. } => walk_expr_tree(operand, f),
+        ExprKind::Field { receiver, .. } => walk_expr_tree(receiver, f),
+        ExprKind::Binary { lhs, rhs, .. } => {
+            walk_expr_tree(lhs, f);
+            walk_expr_tree(rhs, f);
+        }
+        ExprKind::Assign { target, value, .. } => {
+            walk_expr_tree(target, f);
+            walk_expr_tree(value, f);
+        }
+        ExprKind::Index { receiver, index } => {
+            walk_expr_tree(receiver, f);
+            walk_expr_tree(index, f);
+        }
+        ExprKind::Range { start, end, .. } => {
+            if let Some(x) = start {
+                walk_expr_tree(x, f);
+            }
+            if let Some(x) = end {
+                walk_expr_tree(x, f);
+            }
+        }
+        ExprKind::If {
+            cond,
+            then,
+            else_branch,
+        } => {
+            walk_expr_tree(cond, f);
+            walk_block_exprs(then, f);
+            if let Some(x) = else_branch {
+                walk_expr_tree(x, f);
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            walk_expr_tree(scrutinee, f);
+            for a in arms {
+                walk_expr_tree(&a.body, f);
+            }
+        }
+        ExprKind::Call { callee, args, .. } => {
+            walk_expr_tree(callee, f);
+            for a in args {
+                walk_expr_tree(a, f);
+            }
+        }
+        ExprKind::StructLit { fields, .. }
+        | ExprKind::InferredStructLit { fields }
+        | ExprKind::GenericStructLit { fields, .. } => {
+            for fl in fields {
+                walk_expr_tree(&fl.value, f);
+            }
+        }
+        ExprKind::ArrayLit { elements }
+        | ExprKind::TupleLit { elements }
+        | ExprKind::GenericEnumCall { args: elements, .. } => {
+            for x in elements {
+                walk_expr_tree(x, f);
+            }
+        }
+        ExprKind::ArrayFill { fill, .. } => walk_expr_tree(fill, f),
+        ExprKind::Intrinsic { args, .. } => {
+            for a in args {
+                walk_expr_tree(a, f);
+            }
+        }
+        ExprKind::InterpStr { parts } => {
+            for pt in parts {
+                if let crate::ast::InterpStrPart::Expr(x) = pt {
+                    walk_expr_tree(x, f);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+pub(crate) fn walk_block_exprs(b: &Block, f: &mut impl FnMut(&Expr)) {
+    for st in &b.stmts {
+        match &st.kind {
+            StmtKind::Let { init: Some(e), .. }
+            | StmtKind::Expr(e)
+            | StmtKind::Return(Some(e))
+            | StmtKind::Defer(e)
+            | StmtKind::Assert(e) => walk_expr_tree(e, f),
+            StmtKind::LetDestructure { init, .. } => walk_expr_tree(init, f),
+            StmtKind::While { cond, body, .. } => {
+                walk_expr_tree(cond, f);
+                walk_block_exprs(body, f);
+            }
+            StmtKind::Loop(body, _) => walk_block_exprs(body, f),
+            StmtKind::For(fl, _) => match fl {
+                ForLoop::Range { iter, body, .. } => {
+                    walk_expr_tree(iter, f);
+                    walk_block_exprs(body, f);
+                }
+                ForLoop::CStyle {
+                    init, cond, update, body,
+                } => {
+                    if let Some(x) = init {
+                        if let StmtKind::Let { init: Some(e), .. } = &x.kind {
+                            walk_expr_tree(e, f);
+                        }
+                    }
+                    if let Some(c) = cond {
+                        walk_expr_tree(c, f);
+                    }
+                    for u in update {
+                        walk_expr_tree(u, f);
+                    }
+                    walk_block_exprs(body, f);
+                }
+            },
+            StmtKind::IfLet {
+                scrutinee, body, else_body, ..
+            } => {
+                walk_expr_tree(scrutinee, f);
+                walk_block_exprs(body, f);
+                if let Some(eb) = else_body {
+                    walk_block_exprs(eb, f);
+                }
+            }
+            StmtKind::WhileLet { scrutinee, body, .. } => {
+                walk_expr_tree(scrutinee, f);
+                walk_block_exprs(body, f);
+            }
+            StmtKind::GuardLet { scrutinee, else_body, .. } => {
+                walk_expr_tree(scrutinee, f);
+                walk_block_exprs(else_body, f);
+            }
+            _ => {}
+        }
+    }
+    if let Some(t) = &b.tail {
+        walk_expr_tree(t, f);
+    }
+}
+
 fn walk_expr_names(
     e: &Expr,
     globals: &std::collections::HashSet<String>,
@@ -19911,6 +20426,197 @@ mod tests {
         assert!(
             !ds.iter().any(|d| d.code.0 == "E0361" || d.code.0 == "E0362"),
             "expected no observer diagnostics; got {:?}",
+            codes_of(&ds)
+        );
+    }
+
+    // ---- E0365: returning a value that captured a local's address ----
+    //
+    // bugs/facet-component-local-child-dangling-receiver.md. The facet shape
+    // is `var child = Child::new(); return child.build();` where `build` binds
+    // an instance handler: the returned node stores `&child`, which dies with
+    // the frame. It did not crash reliably — a handler that never reads a
+    // field just made the control do nothing — so it went undiagnosed.
+
+    const E0365_PRELUDE: &str = "struct Child { clicks: i32 }\n\
+         impl Child {\n\
+           fn clicked(ref this) { this.clicks = this.clicks + 1; return; }\n\
+           fn build(ref this) -> i32 { return take_handler(this.clicked); }\n\
+         }\n\
+         fn take_handler(f: fn(*u8), ctx: *u8 = 0 as *u8) -> i32 { return 1; }\n";
+
+    #[test]
+    fn returning_bound_handler_on_local_is_e0365() {
+        let ds = check_src(&format!(
+            "{E0365_PRELUDE}\
+             fn make() -> i32 {{ var c: Child = Child {{ clicks: 0 }}; return take_handler(c.clicked); }}\n\
+             fn main() -> i32 {{ return 0; }}"
+        ));
+        assert!(
+            ds.iter().any(|d| d.code.0 == "E0365"),
+            "expected E0365; got {:?}",
+            codes_of(&ds)
+        );
+    }
+
+    #[test]
+    fn returning_capturing_call_on_local_is_e0365() {
+        // The transitive form — the binding happens inside the callee, which is
+        // why a call-site-only check could not see it and why the capture set
+        // is precomputed.
+        let ds = check_src(&format!(
+            "{E0365_PRELUDE}\
+             fn make() -> i32 {{ var c: Child = Child {{ clicks: 0 }}; return c.build(); }}\n\
+             fn main() -> i32 {{ return 0; }}"
+        ));
+        assert!(
+            ds.iter().any(|d| d.code.0 == "E0365"),
+            "expected E0365; got {:?}",
+            codes_of(&ds)
+        );
+    }
+
+    #[test]
+    fn capture_escaping_through_a_local_builder_is_e0365() {
+        // REOPENED 2026-07-27. The first cut only inspected the returned
+        // expression, so it caught `return c.build()` but missed the shape
+        // facet actually uses — the capture reaches the return through a
+        // builder local. Five sites in iris compiled clean.
+        let ds = check_src(&format!(
+            "{E0365_PRELUDE}\
+             struct Bag {{ n: i32 }}\n\
+             impl Bag {{\n\
+               fn new() -> Bag {{ return Bag {{ n: 0 }}; }}\n\
+               fn add(ref this, v: i32) {{ this.n = this.n + v; return; }}\n\
+             }}\n\
+             fn wrap(b: Bag) -> i32 {{ return b.n; }}\n\
+             fn make() -> i32 {{\n\
+               var bag: Bag = Bag::new();\n\
+               var c: Child = Child {{ clicks: 0 }};\n\
+               bag.add(c.build());\n\
+               return wrap(bag);\n\
+             }}\n\
+             fn main() -> i32 {{ return 0; }}"
+        ));
+        assert!(
+            ds.iter().any(|d| d.code.0 == "E0365"),
+            "expected E0365 through the builder local; got {:?}",
+            codes_of(&ds)
+        );
+    }
+
+    #[test]
+    fn capture_through_a_transitively_capturing_method_is_e0365() {
+        // The capture set is a fixpoint: `outer` binds nothing itself, it just
+        // returns `this.inner()`, which does the binding. Without the fixpoint
+        // only directly-binding methods were known, which is why iris's
+        // ViewSwitcher (binds in `picker`, composed in `build`) was missed.
+        let ds = check_src(
+            "struct Child {{ clicks: i32 }}\n\
+             impl Child {{\n\
+               fn clicked(ref this) {{ this.clicks = this.clicks + 1; return; }}\n\
+               fn inner(ref this) -> i32 {{ return take_handler(this.clicked); }}\n\
+               fn outer(ref this) -> i32 {{ return this.inner(); }}\n\
+             }}\n\
+             fn take_handler(f: fn(*u8), ctx: *u8 = 0 as *u8) -> i32 {{ return 1; }}\n\
+             fn make() -> i32 {{ var c: Child = Child {{ clicks: 0 }}; return c.outer(); }}\n\
+             fn main() -> i32 {{ return 0; }}"
+                .replace("{{", "{")
+                .replace("}}", "}")
+                .as_str(),
+        );
+        assert!(
+            ds.iter().any(|d| d.code.0 == "E0365"),
+            "expected E0365 through the transitive capture; got {:?}",
+            codes_of(&ds)
+        );
+    }
+
+    #[test]
+    fn non_capturing_local_child_through_builder_is_clean() {
+        // The false-positive guard that matters most after widening: a local
+        // child that binds NO handler is pure view composition and must stay
+        // legal. In iris this is ProjectBadge / BuildStatus — they have the
+        // exact same call shape as the two real hazards and are safe.
+        let ds = check_src(
+            "struct Quiet { n: i32 }\n\
+             impl Quiet {\n\
+               fn new() -> Quiet { return Quiet { n: 1 }; }\n\
+               fn build(ref this) -> i32 { return this.n; }\n\
+             }\n\
+             struct Bag { n: i32 }\n\
+             impl Bag {\n\
+               fn new() -> Bag { return Bag { n: 0 }; }\n\
+               fn add(ref this, v: i32) { this.n = this.n + v; return; }\n\
+             }\n\
+             fn wrap(b: Bag) -> i32 { return b.n; }\n\
+             fn make() -> i32 {\n\
+               var bag: Bag = Bag::new();\n\
+               var q: Quiet = Quiet::new();\n\
+               bag.add(q.build());\n\
+               return wrap(bag);\n\
+             }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(
+            !ds.iter().any(|d| d.code.0 == "E0365"),
+            "a child that binds no handler must stay legal; got {:?}",
+            codes_of(&ds)
+        );
+    }
+
+    #[test]
+    fn returning_capturing_call_on_field_is_clean() {
+        // The CORRECT pattern: the child lives in a field of `this`, which is
+        // caller-owned storage that outlives the returned value. This is the
+        // false-positive guard — if it ever fires, the check has become
+        // useless in practice.
+        let ds = check_src(&format!(
+            "{E0365_PRELUDE}\
+             struct Parent {{ child: Child }}\n\
+             impl Parent {{ fn build(ref this) -> i32 {{ return this.child.build(); }} }}\n\
+             fn main() -> i32 {{ return 0; }}"
+        ));
+        assert!(
+            !ds.iter().any(|d| d.code.0 == "E0365"),
+            "a field-stored child must be accepted; got {:?}",
+            codes_of(&ds)
+        );
+    }
+
+    #[test]
+    fn returning_capturing_call_on_static_is_clean() {
+        // A `static` outlives everything; binding to it is sound.
+        let ds = check_src(&format!(
+            "{E0365_PRELUDE}\
+             static GLOBAL_CHILD: Child = Child {{ clicks: 0 }};\n\
+             fn make() -> i32 {{ return GLOBAL_CHILD.build(); }}\n\
+             fn main() -> i32 {{ return 0; }}"
+        ));
+        assert!(
+            !ds.iter().any(|d| d.code.0 == "E0365"),
+            "a static receiver must be accepted; got {:?}",
+            codes_of(&ds)
+        );
+    }
+
+    #[test]
+    fn local_bound_handler_not_returned_is_clean() {
+        // Binding a handler to a local is only a problem when it ESCAPES. Used
+        // and dropped within the frame, it is fine — banning it outright would
+        // reject every synchronous callback.
+        let ds = check_src(&format!(
+            "{E0365_PRELUDE}\
+             fn run() -> i32 {{\n\
+               var c: Child = Child {{ clicks: 0 }};\n\
+               let n: i32 = take_handler(c.clicked);\n\
+               return n;\n\
+             }}\n\
+             fn main() -> i32 {{ return 0; }}"
+        ));
+        assert!(
+            !ds.iter().any(|d| d.code.0 == "E0365"),
+            "a non-escaping local binding must be accepted; got {:?}",
             codes_of(&ds)
         );
     }
