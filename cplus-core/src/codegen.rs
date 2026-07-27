@@ -214,14 +214,42 @@ impl ModuleMetadata {
     /// allocating the root + the relevant leaf on first use. Pointer
     /// types share a single `"ptr"` leaf.
     ///
-    /// v0.0.8 bench-gap finding 4: aggregate types (struct, enum,
-    /// array, simd, slice, str, string) now get their own leaves too,
-    /// keyed by the type's structural name. Each unique aggregate
-    /// type produces one leaf — `*Entry` vs `*Bucket` no longer
-    /// alias under LLVM's analysis. The naming scheme is whole-type
-    /// (not struct-path), which is enough to disambiguate distinct
-    /// types but not enough to disambiguate two fields within one
-    /// struct. Per-field paths are a v0.0.9+ exercise.
+    /// AGGREGATES GET NO TAG, and that is a soundness requirement, not a
+    /// missing optimization.
+    ///
+    /// v0.0.8 bench-gap finding 4 gave struct/enum/array/simd/slice/str/string
+    /// their own leaves, keyed by structural name, so `*Entry` and `*Bucket`
+    /// would stop aliasing. Every leaf is emitted as a direct child of the root,
+    /// which makes any two leaves SIBLINGS — and sibling TBAA nodes are declared
+    /// not to alias. For two distinct scalar types that is C's strict-aliasing
+    /// rule and it is fine. For an aggregate and its own members it is a lie:
+    /// a whole-struct access provably overlaps the fields inside it, so
+    /// `struct.S` must never claim independence from the `f64` its own field
+    /// uses.
+    ///
+    /// LLVM believed the lie at -O3 and miscompiled every chainable builder in
+    /// the language:
+    ///
+    /// ```text
+    /// fn set_edge(take this, ...) -> S { var n: S = this; n.helper(...); return n; }
+    /// ```
+    ///
+    /// lowers to a `store %S` into `n`, a call whose callee writes `n`'s f64
+    /// fields (tagged `f64`), then a `load %S` from `n` (tagged `struct.S`).
+    /// Told the struct load cannot alias the f64 stores, GVN forwarded the
+    /// pre-call value and the mutation vanished — silently, only in release,
+    /// only for non-Copy structs (a `Copy` struct returns in registers and never
+    /// performs the aggregate load). facet's whole `@facet` API is built from
+    /// exactly this shape, so every release build laid out wrong; with
+    /// `Text`/`Vec` fields the stale aggregate also carried stale pointers and
+    /// lengths, which ASan caught as a null write inside `facet::mount`.
+    /// See bugs/facet-node-builder-mutations-lost-in-release.md.
+    ///
+    /// The sound way to keep the `*Entry` / `*Bucket` win is struct-path TBAA
+    /// (`!{!"S", member, offset, ...}`), where members are declared children of
+    /// their aggregate so LLVM knows they overlap. Until that exists, aggregate
+    /// accesses go untagged and LLVM must assume they may alias anything —
+    /// correct, and cheap, since aggregate copies are memcpy-shaped anyway.
     fn tbaa_tag_for(&self, ty: &Ty, types: &TypeTable) -> Option<u32> {
         let name: String = match ty {
             Ty::I8 => "i8".into(),
@@ -239,46 +267,21 @@ impl ModuleMetadata {
             Ty::F32 => "f32".into(),
             Ty::F64 => "f64".into(),
             Ty::RawPtr(_) | Ty::FnPtr { .. } => "ptr".into(),
-            // v0.0.8 bench-gap finding 4: aggregate leaves keyed by
-            // structural name.
-            Ty::Struct(id) => format!("struct.{}", types.struct_defs[id.0 as usize].name),
-            Ty::Enum(id) => {
-                let info = &types.enum_defs[id.0 as usize];
-                let n = types
-                    .enum_by_name
-                    .iter()
-                    .find_map(|(name, eid)| (*eid == *id).then(|| name.clone()))
-                    .unwrap_or_else(|| format!("enum_{}", id.0));
-                if info.is_tagged {
-                    format!("enum.{n}")
-                } else {
-                    // Plain enums lower to `i32` — share the i32 leaf
-                    // so user code that mixes them with raw i32 reads
-                    // through the same TBAA cell.
-                    "i32".into()
-                }
-            }
-            Ty::Array(elem, n) => {
-                // Recurse to get the element's leaf name; fall back to
-                // a synthetic if the element is itself an aggregate
-                // without a registered leaf (shouldn't happen post-
-                // monomorphization, but keep the helper total).
-                let elem_name = match self.tbaa_leaf_name_for(elem, types) {
-                    Some(s) => s,
-                    None => "any".into(),
-                };
-                format!("arr{n}_{elem_name}")
-            }
-            Ty::Simd { elem, lanes } => {
-                let elem_name = match self.tbaa_leaf_name_for(elem, types) {
-                    Some(s) => s,
-                    None => "any".into(),
-                };
-                format!("{elem_name}x{lanes}")
-            }
-            Ty::Slice(_) => "slice".into(),
-            Ty::Str => "str".into(),
-            Ty::String => "string".into(),
+            // A plain (untagged) enum lowers to `i32` and is a scalar, so it
+            // shares the i32 leaf: user code mixing it with a raw i32 reads
+            // through the same TBAA cell. A TAGGED enum is an aggregate and
+            // falls through to the no-tag arm below with the others.
+            Ty::Enum(id) if !types.enum_defs[id.0 as usize].is_tagged => "i32".into(),
+            // Aggregates: NO TAG. A sibling leaf would claim the aggregate does
+            // not alias its own members, which is false and miscompiles at -O3.
+            // See the doc comment above.
+            Ty::Struct(_)
+            | Ty::Enum(_)
+            | Ty::Array(_, _)
+            | Ty::Simd { .. }
+            | Ty::Slice(_)
+            | Ty::Str
+            | Ty::String => return None,
             // No TBAA for type params (never reach codegen) / Unit / Error.
             _ => return None,
         };
@@ -18066,56 +18069,79 @@ mod tests {
     }
 
     #[test]
-    fn tbaa_tags_aggregate_struct_loads_with_distinct_leaf() {
-        // v0.0.8 bench-gap finding 4: aggregate loads/stores now get
-        // a per-type TBAA leaf so a `*Entry` access doesn't alias a
-        // `*Sphere` access under LLVM's analysis. The whole-struct
-        // load on `let p: Pt = Pt { x: 1, y: 2 };` carries the
-        // `struct.Pt` leaf, distinct from the `i32` leaf used by the
-        // field load.
+    fn aggregate_accesses_carry_no_tbaa_tag() {
+        // The inverse of what v0.0.8 bench-gap finding 4 asserted, and it is a
+        // soundness fix rather than a preference. Every TBAA leaf is a direct
+        // child of the root, so two leaves are SIBLINGS and LLVM treats them as
+        // non-aliasing. Giving an aggregate its own leaf therefore claimed that
+        // a whole-struct access does not alias the `i32`/`f64` its own fields
+        // use — false, and at -O3 GVN acted on it and forwarded a stale
+        // aggregate across a call that had mutated the fields.
+        // See bugs/facet-node-builder-mutations-lost-in-release.md.
         let ir = gen_src(
             "struct Pt { x: i32, y: i32 }\n\
              fn main() -> i32 { let p: Pt = Pt { x: 1, y: 2 }; return p.x; }",
         );
 
-        // Every whole-struct load carries `!tbaa !N`.
-        let aggregate_load_lines: Vec<&str> =
-            ir.lines().filter(|l| l.contains(" = load %Pt,")).collect();
+        // No `struct.Pt` leaf is emitted at all.
         assert!(
-            !aggregate_load_lines.is_empty(),
-            "expected at least one whole-struct load; IR:\n{ir}"
+            !ir.contains("!\"struct.Pt\""),
+            "aggregates must not get a TBAA leaf; IR:\n{ir}"
         );
-        for l in &aggregate_load_lines {
+
+        // Whole-struct loads and stores go untagged.
+        for l in ir.lines().filter(|l| l.contains(" = load %Pt,")) {
             assert!(
-                l.contains("!tbaa "),
-                "whole-struct loads must carry TBAA tag: {l}"
+                !l.contains("!tbaa "),
+                "whole-struct load must be untagged: {l}"
+            );
+        }
+        for l in ir.lines().filter(|l| l.contains("store %Pt ")) {
+            assert!(
+                !l.contains("!tbaa "),
+                "whole-struct store must be untagged: {l}"
             );
         }
 
-        // The struct leaf is distinct from the i32 leaf.
-        let struct_leaf_line = ir
-            .lines()
-            .find(|l| l.contains("!\"struct.Pt\""))
-            .unwrap_or_else(|| panic!("expected struct.Pt TBAA leaf; IR:\n{ir}"));
-        let i32_leaf_line = ir
-            .lines()
-            .find(|l| l.contains("!\"i32\""))
-            .unwrap_or_else(|| panic!("expected i32 TBAA leaf; IR:\n{ir}"));
-        let struct_id = struct_leaf_line.split(" = ").next().unwrap();
-        let i32_id = i32_leaf_line.split(" = ").next().unwrap();
-        assert_ne!(
-            struct_id, i32_id,
-            "struct.Pt and i32 must use distinct TBAA leaves"
-        );
-
-        // And the i32 field load still carries its primitive tag.
-        let field_load_tagged = ir
-            .lines()
-            .any(|l| l.contains(" = load i32,") && l.contains("!tbaa "));
+        // Scalar field access keeps its primitive tag — that is where TBAA is
+        // both sound and useful.
         assert!(
-            field_load_tagged,
-            "expected at least one TBAA-tagged i32 field load; IR:\n{ir}"
+            ir.lines()
+                .any(|l| l.contains(" = load i32,") && l.contains("!tbaa ")),
+            "expected a TBAA-tagged i32 field load; IR:\n{ir}"
         );
+    }
+
+    #[test]
+    fn take_this_builder_mutation_survives_a_ref_helper() {
+        // The exact miscompiled shape: a `take this` builder copies the consumed
+        // receiver into a local, hands that local to a `ref this` helper which
+        // writes a scalar field, then returns the local. The aggregate load of
+        // the local must not be told it cannot alias the helper's scalar store,
+        // or the write is forwarded away at -O3.
+        let ir = gen_src(
+            "struct S { a: i64, l: f64 }\n\
+             impl S {\n\
+                 fn put(ref this, v: f64) { this.l = v; return; }\n\
+                 fn set(take this, v: f64) -> S { var n: S = this; n.put(v); return n; }\n\
+             }\n\
+             fn main() -> i32 {\n\
+                 var s: S = S { a: 1 as i64, l: 0.0f64 };\n\
+                 s = s.set(2.0f64);\n\
+                 if s.l == 2.0f64 { return 0; }\n\
+                 return 1;\n\
+             }",
+        );
+        // The whole-struct traffic through the builder's local must be untagged.
+        for l in ir
+            .lines()
+            .filter(|l| l.contains(" = load %S,") || l.contains("store %S "))
+        {
+            assert!(
+                !l.contains("!tbaa "),
+                "aggregate access in a take-this builder must be untagged: {l}"
+            );
+        }
     }
 
     // ---- v0.0.8 bench-gap fixes ----
