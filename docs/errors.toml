@@ -2786,6 +2786,27 @@ libs = ["boguslib"]
 '''
 
 [[code]]
+id = "W0004"
+title = "`on_value` has the `#[watch]` hook signature but the struct is not `#[watch]`"
+category = "Warnings"
+severity = "warning"
+repro = "checked"
+lang = "cplus"
+verified = true
+emit_site = "cplus-core/src/sema.rs:check_unwatched_watch_hook"
+test = "cplus-core/src/sema.rs:hook_shaped_on_value_without_watch_warns_w0004"
+cause = "`on_value` in the watch-hook shape is a compiler-invoked name: the only thing that calls it is the `#[watch]` write barrier. Without the attribute the method is unreachable, so every field write skips it silently. This is the fail-open half of E0361 — that error stops a `#[watch]` struct from having no hook; this warning stops a hook from having no `#[watch]`."
+fix = "Add `#[watch]` to the struct, or rename the method if it is not meant to be a write hook. Only the two accepted hook shapes are flagged, so an `on_value` with any other signature stays an ordinary method."
+example = '''
+struct Counter { n: i32 }
+impl Counter {
+    fn on_value(ref this, field: str) { return; }   // nothing ever calls this
+}
+// -> W0004 `Counter::on_value` has the `#[watch]` hook signature but
+//    `struct Counter` is not `#[watch]`, so nothing calls it
+'''
+
+[[code]]
 id = "E1002"
 title = "Named arguments not supported yet"
 category = "Compile-time builtins"

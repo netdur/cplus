@@ -268,20 +268,28 @@ snapshot hook shape (E0505, §4.3).
 
 ## 7. Open questions
 
-1. **`impl T: Bound` without `#[watch]` compiles clean and silently never
-   updates.** The one real hole. The binding declarations are valid, the initial
-   paint works, and every later write goes nowhere, because nothing calls
-   `on_value`. Verified: it produces no diagnostic.
+1. **`impl T: Bound` without `#[watch]` — CLOSED 2026-07-27, `W0004`.** This was
+   the tier's one fail-open hole: the declarations were valid, the initial paint
+   worked, and every later write went nowhere because nothing called `on_value`.
+   It produced no diagnostic at all.
 
-   The fix belongs in the compiler, not here — a library cannot see its own
-   consumer's attributes. The shape is an inverse of E0361: a struct that
-   supplies `on_value` but carries no `#[watch]` is *currently legal on purpose*
-   (`unwatched_struct_may_define_on_value_freely` in `sema.rs` pins it), because
-   without the attribute `on_value` is an ordinary method. Making it a warning
-   when the struct also conforms to an interface that declares `on_value` would
-   catch this without special-casing facet. Until then: a one-line test —
-   write a field, assert the element moved — catches it immediately, and the
-   tests in `bound.cplus` are the template.
+   Fixed in the compiler, where it belongs — a library cannot see its consumer's
+   attributes. The rule is stated generally rather than in terms of this
+   interface: `on_value` in the watch-hook shape is a **compiler-invoked name**,
+   called only by the `#[watch]` barrier, so a struct that defines one without
+   the attribute has an unreachable method and `W0004` says so. It is the
+   fail-open half of E0361 — that error stops a `#[watch]` struct from having no
+   hook; this warning stops a hook from having no `#[watch]`.
+
+   A warning rather than an error, because a hook-shaped `on_value` may be called
+   by hand and because adding the attribute changes behaviour (every write gains
+   a call), so the author chooses. It fires only on the two exact hook shapes, so
+   `fn on_value(this) -> i32` stays an ordinary method
+   (`unwatched_struct_may_define_on_value_freely` still pins that). `cpc explain
+   W0004` documents it.
+
+   A one-line test — write a field, assert the element moved — is still the
+   strongest check, and the tests in `bound.cplus` are the template.
 
 2. **Interior writes need a manual `changed`.** `this.rows[i] = x` and
    `(*p).v = 1` do not fire the barrier (that is `#[watch]`'s own open question

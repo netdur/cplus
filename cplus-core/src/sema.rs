@@ -925,6 +925,7 @@ fn check_with_files_inner(
     // gated on the watched struct being `Copy`, which is not known until the
     // Copy/Drop fixpoint above has settled.
     cx.check_watch_hooks(program);
+    cx.check_unwatched_watch_hook(program);
     // Reject infinite-size (value-recursive) type definitions before any later
     // pass tries to compute their layout. `struct S { s: S }` and mutually
     // recursive `A`/`B` have no finite size; left unchecked they leak a clang
@@ -2165,26 +2166,8 @@ impl SemaCx<'_> {
                 continue;
             };
             let self_id = self.struct_by_name.get(&s.name.name).copied();
-            let recv_ok = matches!(sig.receiver, Some(Receiver::Mut));
-            let ret_ok = matches!(sig.return_type, Ty::Unit);
-            // Two accepted shapes. The short one costs nothing; the snapshot
-            // one asks the barrier to copy the struct either side of the store.
-            let is_self = |t: &Ty| match (t, self_id) {
-                (Ty::Struct(a), Some(b)) => *a == b,
-                // A generic template's hook is read off the AST, where the
-                // param type resolves to `Ty::Error` (there is no StructDef to
-                // name). Shape is all we can judge there; the concrete
-                // instantiations are checked normally.
-                _ => self_id.is_none(),
-            };
-            let shape = match sig.params.as_slice() {
-                [f] if f.ty == Ty::Str => Some(HookShape::Plain),
-                [f, old, new] if f.ty == Ty::Str && is_self(&old.ty) && is_self(&new.ty) => {
-                    Some(HookShape::Snapshot)
-                }
-                _ => None,
-            };
-            let Some(shape) = shape.filter(|_| recv_ok && ret_ok) else {
+            let shape = self.watch_hook_shape_of(&sig, self_id);
+            let Some(shape) = shape else {
                 self.err(
                     "E0362",
                     format!(
@@ -2216,6 +2199,103 @@ impl SemaCx<'_> {
                     }
                 }
             }
+        }
+    }
+
+    /// Which watch-hook shape `sig` matches, or `None` if it is not a hook at
+    /// all. The single definition of "looks like a watch hook", shared by
+    /// `check_watch_hooks` (which REQUIRES one) and
+    /// `check_unwatched_watch_hook` (which warns when one is present WITHOUT
+    /// the attribute) so the two can never disagree about the shape.
+    ///
+    /// `ref this` because a handler that cannot write is useless for the
+    /// accumulate/forward cases; `field: str` because field types differ within
+    /// a struct so the name is the only type-uniform thing to hand over; no
+    /// return type because the barrier sits mid-statement.
+    fn watch_hook_shape_of(&self, sig: &MethodSig, self_id: Option<StructId>) -> Option<HookShape> {
+        if !matches!(sig.receiver, Some(Receiver::Mut)) {
+            return None;
+        }
+        if !matches!(sig.return_type, Ty::Unit) {
+            return None;
+        }
+        // A generic template's hook is read off the AST, where a `Self`-typed
+        // param resolves to `Ty::Error` (there is no StructDef to name yet).
+        // Shape is all we can judge there; concrete instantiations are checked
+        // normally.
+        let is_self = |t: &Ty| match (t, self_id) {
+            (Ty::Struct(a), Some(b)) => *a == b,
+            _ => self_id.is_none(),
+        };
+        match sig.params.as_slice() {
+            [f] if f.ty == Ty::Str => Some(HookShape::Plain),
+            [f, old, new] if f.ty == Ty::Str && is_self(&old.ty) && is_self(&new.ty) => {
+                Some(HookShape::Snapshot)
+            }
+            _ => None,
+        }
+    }
+
+    /// W0004: a struct defines a hook-shaped `on_value` but carries no
+    /// `#[watch]`, so nothing ever calls it.
+    ///
+    /// `on_value` in the watch-hook shape is a COMPILER-INVOKED name: the only
+    /// thing that calls it is the write barrier, and the barrier only exists
+    /// when `#[watch]` is present. Without the attribute the method is
+    /// unreachable — every field write skips it silently, which is the same
+    /// silent-no-op failure E0361 exists to prevent, just approached from the
+    /// other side.
+    ///
+    /// This is what made facet's bound-component tier fail open: a component
+    /// conforming to `bound::Bound` (whose contract is exactly
+    /// `fn on_value(ref this, field: str)`) but missing `#[watch]` compiled
+    /// clean, painted its initial state correctly, and then never updated
+    /// again. A library cannot diagnose that — it cannot see its consumer's
+    /// attributes — so the check belongs here, and it is stated generally
+    /// rather than in terms of any one interface.
+    ///
+    /// A WARNING, not an error, for two reasons: a hook-shaped `on_value` may be
+    /// called by hand, and adding the attribute changes program behaviour
+    /// (every write gains a call), so the author has to choose. Silence it by
+    /// adding `#[watch]` or by renaming the method.
+    ///
+    /// Deliberately narrow: it fires only on the exact hook shapes. An
+    /// unwatched struct may still define `on_value` with any other signature as
+    /// an ordinary method — see `unwatched_struct_may_define_on_value_freely`.
+    fn check_unwatched_watch_hook(&mut self, program: &Program) {
+        let mut hits: Vec<(String, ByteSpan)> = Vec::new();
+        for item in &program.items {
+            let ItemKind::Struct(s) = &item.kind else {
+                continue;
+            };
+            if s.attributes.iter().any(|a| a.path.name == "watch") {
+                continue; // has the barrier; `check_watch_hooks` owns it
+            }
+            let Some(sig) = self
+                .struct_by_name
+                .get(&s.name.name)
+                .and_then(|id| self.structs[id.0 as usize].methods.get("on_value").cloned())
+                .or_else(|| {
+                    self.struct_generic_templates
+                        .get(&s.name.name)
+                        .and_then(|_| self.watch_hook_sig_from_ast(program, &s.name.name))
+                })
+            else {
+                continue;
+            };
+            let self_id = self.struct_by_name.get(&s.name.name).copied();
+            if self.watch_hook_shape_of(&sig, self_id).is_some() {
+                hits.push((s.name.name.clone(), s.name.span));
+            }
+        }
+        for (name, span) in hits {
+            self.warn(
+                "W0004",
+                format!(
+                    "`{name}::on_value` has the `#[watch]` hook signature but `struct {name}` is not `#[watch]`, so nothing calls it — every field write skips it. Add `#[watch]` to `struct {name}`, or rename the method if it is not meant to be a write hook"
+                ),
+                span,
+            );
         }
     }
 
@@ -19728,6 +19808,82 @@ mod tests {
             "expected no observer diagnostics; got {:?}",
             codes_of(&ds)
         );
+    }
+
+    #[test]
+    fn hook_shaped_on_value_without_watch_warns_w0003() {
+        // The inverse of E0361, and the fail-open half of the same problem: a
+        // hook-shaped `on_value` is only ever called by the `#[watch]` barrier,
+        // so without the attribute it is unreachable and every field write
+        // skips it silently. This is what made facet's bound-component tier
+        // compile clean, paint its initial state, and then never update.
+        let ds = check_src(
+            "struct S { x: i32 }\n\
+             impl S { fn on_value(ref this, field: str) { return; } }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(
+            ds.iter().any(|d| d.code.0 == "W0004"),
+            "expected W0004; got {:?}",
+            codes_of(&ds)
+        );
+        // A warning, not an error: a hook-shaped `on_value` may be called by
+        // hand, and adding the attribute changes behaviour, so the author picks.
+        assert!(
+            !ds.iter().any(|d| matches!(d.severity, Severity::Error)),
+            "W0004 must not be fatal; got {:?}",
+            codes_of(&ds)
+        );
+    }
+
+    #[test]
+    fn snapshot_shaped_on_value_without_watch_also_warns() {
+        // Both accepted hook shapes are unreachable without the attribute.
+        let ds = check_src(
+            "struct S { x: i32 }\n\
+             impl S { fn on_value(ref this, field: str, old: S, new: S) { return; } }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(
+            ds.iter().any(|d| d.code.0 == "W0004"),
+            "expected W0004 for the snapshot shape; got {:?}",
+            codes_of(&ds)
+        );
+    }
+
+    #[test]
+    fn watched_struct_does_not_warn_w0003() {
+        // With the attribute the hook IS reachable. `check_watch_hooks` owns it.
+        let ds = check_src(
+            "#[watch] struct S { x: i32 }\n\
+             impl S { fn on_value(ref this, field: str) { return; } }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(
+            !ds.iter().any(|d| d.code.0 == "W0004"),
+            "a #[watch] struct must not warn; got {:?}",
+            codes_of(&ds)
+        );
+    }
+
+    #[test]
+    fn non_hook_on_value_without_watch_does_not_warn() {
+        // The narrowness that keeps this usable: only the exact hook shapes are
+        // flagged, so `fn on_value(this) -> i32` stays an ordinary method (see
+        // `unwatched_struct_may_define_on_value_freely`).
+        for src in [
+            "struct S { x: i32 }\nimpl S { fn on_value(this, field: str) { return; } }\nfn main() -> i32 { return 0; }",
+            "struct S { x: i32 }\nimpl S { fn on_value(ref this, field: str) -> i32 { return 0; } }\nfn main() -> i32 { return 0; }",
+            "struct S { x: i32 }\nimpl S { fn on_value(ref this, field: i32) { return; } }\nfn main() -> i32 { return 0; }",
+            "struct S { x: i32 }\nimpl S { fn on_value(ref this) { return; } }\nfn main() -> i32 { return 0; }",
+        ] {
+            let ds = check_src(src);
+            assert!(
+                !ds.iter().any(|d| d.code.0 == "W0004"),
+                "non-hook `on_value` must not warn; src:\n{src}\ngot {:?}",
+                codes_of(&ds)
+            );
+        }
     }
 
     #[test]

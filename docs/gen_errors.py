@@ -58,8 +58,13 @@ def grouped(cat):
 
 def entry_md(c, *, maintainer):
     fence = c.get("lang", "cplus")
-    out = [f'### {c["id"]} · {c["title"]}', "", c["cause"], "",
-           f'```{fence}', c["example"].rstrip("\n"), "```", ""]
+    out = [f'### {c["id"]} · {c["title"]}', "", c["cause"], ""]
+    # `example` is optional. A code that is not currently reachable has nothing
+    # honest to show — E1003 (named args on an indirect call) is shadowed by
+    # E1002 today, so it carries no example. Crashing on that made the whole
+    # file un-regenerable, which silently froze it as codes were added.
+    if c.get("example"):
+        out += [f'```{fence}', c["example"].rstrip("\n"), "```", ""]
     if c.get("note"):
         out += [f'*{c["note"]}*', ""]
     out += [f'**Fix.** {c["fix"]}', ""]

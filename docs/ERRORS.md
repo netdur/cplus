@@ -4,7 +4,7 @@
 
 Every C+ diagnostic carries a numbered code, a source span, and often a machine-applicable suggestion. `cpc --diagnostics=json` emits the same information in a machine-readable shape for editors and agents. Codes prefixed with **W** are non-fatal warnings; the build continues. The normative ranges and what each phase owns are fixed in [§20 of the language specification](/docs/spec).
 
-This is the complete index — **143 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **111** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
+This is the complete index — **160 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **125** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
 
 ## Lexical
 
@@ -105,6 +105,18 @@ fn main() -> i32 { let r = 1 < 2 < 3; 0 }
 **Fix.** Split into separate comparisons joined with `&&`, e.g. `a < b && b < c`.
 
 <sub>repro: checked · cplus-core/src/parser.rs:2245 · test cplus-core/src/parser.rs:non_chainable_comparison_rejected</sub>
+
+### E0103 · Expression or statement nesting too deep
+
+Source nests expressions, statement blocks, prefix operators, or types past the recursive-descent depth limit. Each level costs a native stack frame; without the bound the parser (and the later passes that recurse over the same tree) would overflow the stack and abort the process.
+
+```cplus
+fn main() -> i32 { return ((((((((((… 300 levels …)))))))))); }
+```
+
+**Fix.** Flatten the nesting: introduce intermediate `let` bindings, split deep expressions across statements, or reduce redundant parentheses. A limit this high is only reached by hostile or machine-generated input.
+
+<sub>repro: checked · cplus-core/src/parser.rs:enter_depth · test cplus-core/src/parser.rs:pathological_nesting_reports_e0103_not_stack_overflow</sub>
 
 ## Names, types, and items
 
@@ -539,6 +551,33 @@ fn main() -> i32 { let a = { x: 1 }; return 0; }
 **Fix.** Name the struct (`A { field: ... }`), or give the binding a struct type annotation so the literal's type can be inferred.
 
 <sub>repro: checked · cplus-core/src/sema.rs:check_inferred_struct_lit · test cplus-core/src/sema.rs:inferred_struct_lit_uninferable_e0364</sub>
+
+### E0913 · Recursive type has infinite size
+
+A struct or enum contains itself by value — directly (`struct S { s: S }`), mutually (`A` holds `B`, `B` holds `A`), or through an inline array (`[S; N]`). Such a type has no finite size.
+
+```cplus
+struct S { s: S }
+fn main() -> i32 { return 0; }
+```
+
+**Fix.** Break the cycle with an indirection: store the recursive field behind a pointer (`*S`). A raw-pointer field needs `opaque` or a `fn drop(ref this)` (see E0510).
+
+<sub>repro: checked · cplus-core/src/sema.rs:check_recursive_types · test cplus-core/src/sema.rs:recursive_struct_by_value_rejected_e0913</sub>
+
+### E0917 · Item name contains reserved `__`
+
+A struct, enum, or (non-extern) function name contains an interior `__`. The double underscore is the compiler's monomorphization separator (`Box[i32]` mangles to `Box__i32`), so a literal `Box__i32` next to a `Box[T]` template would collide with the instantiation's symbol — two items under one name, one silently shadowing the other.
+
+```cplus
+struct Box__i32 { v: i32 }
+fn main() -> i32 { return 0; }
+// -> [E0917] struct name `Box__i32` contains `__`, which is reserved for compiler name mangling
+```
+
+**Fix.** Use a single underscore (`box_i32`). Exempt: `extern fn` names (existing C symbols like `__errno_location` never monomorphize) and names whose only `__` is leading (`__x` — an instantiation's template base is never empty).
+
+<sub>repro: checked · cplus-core/src/sema.rs:reject_reserved_double_underscore · test cplus-core/src/sema.rs:double_underscore_item_names_reserved_e0917</sub>
 
 ## Control flow and matching
 
@@ -1120,7 +1159,7 @@ fn f() -> i32 { let n: i32 = 1; let s = n.to_text(); return 0; }
 
 <sub>repro: checked · cplus-core/src/sema.rs:9020 · test cplus-core/src/sema.rs:to_text_without_text_import_rejected_e0613_v0019</sub>
 
-### E0860 · `Send` / `Sync` marker impl has a non-empty body
+### E0915 · `Send` / `Sync` marker impl has a non-empty body
 
 `Send` and `Sync` are marker interfaces with no methods; the assertion is the empty `impl Type: Send {}` itself. A non-empty body is rejected.
 
@@ -1128,14 +1167,14 @@ fn f() -> i32 { let n: i32 = 1; let s = n.to_text(); return 0; }
 struct Handle { opaque p: *u8 }
 impl Handle: Send { fn x(this) -> i32 { return 0; } }
 fn main() -> i32 { return 0; }
-// -> [E0860] `impl Handle: Send` must have an empty body
+// -> [E0915] `impl Handle: Send` must have an empty body
 ```
 
 **Fix.** Make the body empty: `impl Type: Send {}`.
 
-<sub>repro: checked · cplus-core/src/sema.rs:2963 · test cplus-core/src/sema.rs:bare_impl_send_registers_marker_override</sub>
+<sub>repro: checked · cplus-core/src/sema.rs:2963 · test cplus-core/src/sema.rs:nonempty_send_marker_impl_rejected_e0915</sub>
 
-### E0861 · Empty `impl` of an interface that is not `Send` / `Sync`
+### E0916 · Empty `impl` of an interface that is not `Send` / `Sync`
 
 An empty `impl Type: Interface {}` was written for an interface other than `Send` / `Sync`. An empty impl is meaningful only as a `Send` / `Sync` marker assertion; every other interface's methods must be provided.
 
@@ -1144,12 +1183,12 @@ interface Greet { fn hi(this) -> i32; }
 struct S { x: i32 }
 impl S: Greet {}
 fn main() -> i32 { return 0; }
-// -> [E0861] empty `impl` applies only to the `Send` / `Sync` markers
+// -> [E0916] empty `impl` applies only to the `Send` / `Sync` markers
 ```
 
 **Fix.** Implement the interface's methods, or remove the impl.
 
-<sub>repro: checked · cplus-core/src/sema.rs:2993 · test cplus-core/src/sema.rs:empty_impl_on_regular_interface_rejected_e0861</sub>
+<sub>repro: checked · cplus-core/src/sema.rs:2993 · test cplus-core/src/sema.rs:empty_impl_on_regular_interface_rejected_e0916</sub>
 
 ## Modules, paths, and visibility
 
@@ -1535,6 +1574,99 @@ fn main() -> i32 {
 
 <sub>repro: checked · cplus-core/src/sema.rs:5551</sub>
 
+### E1002 · Named arguments not supported yet
+
+A call used a named argument (`f(name: value)`). The parser accepts the syntax, but the argument-matching pass that reorders named arguments into positional order and splices defaults is not implemented yet (see docs/design/named-params-and-defaults.md). This is a temporary guard so a labeled call is rejected cleanly rather than silently bound by position.
+
+```cplus
+fn add(n1: i32, n2: i32) -> i32 { return n1 +% n2; }
+fn main() -> i32 {
+    return add(v: 1);  // -> E1002 on a method/other call form
+}
+```
+
+**Fix.** Pass the arguments positionally for now: `f(value)`.
+
+<sub>repro: checked · cplus-core/src/sema.rs</sub>
+
+### E1003 · Named arguments on an indirect (fn-pointer) call
+
+A call through a function pointer used a named argument. A fn-pointer type records only parameter types, not names, so there are no labels to match against.
+
+**Fix.** Pass the arguments positionally.
+
+<sub>repro: checked · cplus-core/src/sema.rs</sub>
+
+### E1004 · Positional argument after a named argument
+
+A positional argument followed a named one. Positional arguments must all come before any named argument so the call has a single readable shape.
+
+```cplus
+fn add(n1: i32, n2: i32) -> i32 { return n1 +% n2; }
+fn main() -> i32 {
+    return add(n1: 1, 2);  // -> E1004 positional argument after a named argument
+}
+```
+
+**Fix.** Move the positional argument before the first named argument, or give it a label.
+
+<sub>repro: checked · cplus-core/src/lower.rs</sub>
+
+### E1005 · Unknown argument label
+
+A named argument used a label that is not a parameter of the called function.
+
+```cplus
+fn add(n1: i32, n2: i32) -> i32 { return n1 +% n2; }
+fn main() -> i32 {
+    return add(bogus: 1, n2: 2);  // -> E1005 unknown argument label `bogus`
+}
+```
+
+**Fix.** Use a parameter name from the function's signature.
+
+<sub>repro: checked · cplus-core/src/lower.rs</sub>
+
+### E1006 · Argument provided more than once
+
+The same parameter was given a value more than once — by position and by label, or by two labels.
+
+```cplus
+fn add(n1: i32, n2: i32) -> i32 { return n1 +% n2; }
+fn main() -> i32 {
+    return add(n1: 1, n1: 2);  // -> E1006 argument `n1` is provided more than once
+}
+```
+
+**Fix.** Provide each argument exactly once.
+
+<sub>repro: checked · cplus-core/src/lower.rs</sub>
+
+### E1007 · Required parameter after a defaulted one
+
+A parameter without a default value follows one that has a default. Defaults must be trailing so a positional call can omit them unambiguously.
+
+```cplus
+fn f(a: i32 = 0, b: i32) -> i32 { return a +% b; }
+//                ^ -> E1007 required parameter `b` cannot follow a defaulted one
+```
+
+**Fix.** Move the defaulted parameters to the end, or give the later ones defaults too.
+
+<sub>repro: checked · cplus-core/src/lower.rs</sub>
+
+### E1008 · Default value on an extern fn parameter
+
+An `extern fn` parameter declared a default value. The C ABI has no notion of default arguments, and `extern fn` declarations are call-shapes for a foreign symbol.
+
+```cplus
+extern fn g(x: i32 = 0) -> i32;  // -> E1008 extern parameter cannot have a default
+```
+
+**Fix.** Remove the default; pass the argument explicitly at every call.
+
+<sub>repro: checked · cplus-core/src/lower.rs</sub>
+
 ## Real-time contracts
 
 ### E0900 · Borrow-shaped parameter in an `async fn`
@@ -1797,7 +1929,7 @@ fn main() -> i32 { return 0; }
 
 ## const / static / char
 
-### E0X30 · `const`/`static` initializer is not a literal
+### E0911 · `const`/`static` initializer is not a literal
 
 A `const` or `static` initializer used a non-literal shape (arithmetic, an identifier, a call, or a generic struct literal); `const` is literal-only and `static` allows only literals, `#zero::[T]()`, array literals/fills, or non-generic struct literals of such.
 
@@ -1807,9 +1939,9 @@ const FOO: i32 = 1 + 2;
 
 **Fix.** Use a literal initializer (or an accepted `static` shape such as `#zero::[T]()` or an array/struct literal of literals).
 
-<sub>repro: checked · cplus-core/src/lower.rs:729 · test cplus-core/src/sema.rs:const_with_non_literal_initializer_e0x30</sub>
+<sub>repro: checked · cplus-core/src/lower.rs:729 · test cplus-core/src/sema.rs:const_with_non_literal_initializer_e0911</sub>
 
-### E0X36 · Unknown `const` array length
+### E0912 · Unknown `const` array length
 
 An array length named a `const` that is not in scope, is not an integer, is negative, or exceeds the u32 maximum.
 
@@ -1819,7 +1951,23 @@ fn main() -> i32 { let a: [i32; NOPE] = [0; 1]; return a[0]; }
 
 **Fix.** Use an integer literal, or a `const` in scope with a non-negative integer literal initializer.
 
-<sub>repro: checked · cplus-core/src/lower.rs:871 · test cpc/tests/e2e.rs:unknown_const_array_length_rejected_e0x36</sub>
+<sub>repro: checked · cplus-core/src/lower.rs:871 · test cpc/tests/e2e.rs:unknown_const_array_length_rejected_e0912</sub>
+
+### E0918 · Compile-time include/shader path escapes the package
+
+A `#include_bytes` / `#include_str` / `#compile_shader` path resolves outside the including file's package directory — an absolute path or a `..` chain that leaves the package. In project mode (a `Cplus.toml` is present) these compile-time file reads are contained to the package tree, the same boundary imports (E0914) and `[[bin]]`/`[lib]` paths (E0868) enforce, so untrusted source can't bake an arbitrary readable host file into the artifact.
+
+```cplus
+fn main() -> i32 {
+    let _ = #include_bytes("/etc/passwd");
+    return 0;
+}
+// -> [E0918] `#include_bytes` path `/etc/passwd` resolves outside the package directory
+```
+
+**Fix.** Move the asset inside the package and reference it with a package-relative path. A `..` that stays within the package (e.g. `../adapter/asset.bin` from `src/`) is allowed; only paths that leave the package are rejected.
+
+<sub>repro: checked · cplus-core/src/sema.rs:include_path_escapes_package · test cplus-core/src/sema.rs:include_bytes_escaping_package_is_rejected_e0918</sub>
 
 ## Targets and packages
 
@@ -1930,6 +2078,36 @@ fn main() -> i32 { return 0; }
 
 <sub>repro: scenario · cplus-core/src/resolver.rs:728 · test cpc/tests/e2e.rs:vendor_escape_emits_e0859</sub>
 
+### E0860 · Declared `[link].bundled` file missing on host
+
+A vendored package's manifest declares a file in `[link].bundled`, but `lib/<host-triple>/<basename>` does not exist. The manifest says the package ships that binary for this triple; the file is missing.
+
+```toml
+[link]
+triples = ["arm64-apple-darwin"]
+bundled = ["libfoo.a"]
+# lib/arm64-apple-darwin/libfoo.a absent
+# -> [E0860] package declares bundled `libfoo.a` but the file is not present
+```
+
+**Fix.** Add the missing file under `lib/<host-triple>/`, or remove its entry from `[link].bundled`.
+
+<sub>repro: scenario · cpc/src/main.rs:link_bundled_missing · test cpc/tests/e2e.rs:bundled_lib_missing_for_host_triple_is_e0860</sub>
+
+### E0861 · Orphan binary under `lib/` not declared in `[link].bundled`
+
+A binary artifact (`.a`, `.o`, `.lib`) sits under a package's `lib/<triple>/`, but the package manifest does not declare it in `[link].bundled`. The manifest is the single source of truth for shipped binaries.
+
+```toml
+# vendor/foo/lib/arm64-apple-darwin/liborphan.a exists
+# vendor/foo/Cplus.toml has no [link] section
+# -> [E0861] package ships `liborphan.a` but the manifest doesn't declare it
+```
+
+**Fix.** Add the file to `[link].bundled`, or delete it from the package.
+
+<sub>repro: scenario · cpc/src/main.rs:link_orphan_binary · test cpc/tests/e2e.rs (orphan .a under lib/<host> without [link])</sub>
+
 ### E0862 · Host vs target triple mismatch
 
 A dependency declares bundled binaries but its `[link].triples` does not include the triple actually being linked (the host triple for a native build, or the selected `--target`'s artifact triple for a cross build), so no matching prebuilt artifact exists.
@@ -2034,6 +2212,38 @@ fn main() -> i32 { return 0; }
 
 <sub>repro: scenario · cplus-core/src/attrs.rs:559 · test cpc/tests/e2e.rs:target_esp32_async_fn_fires_e0867</sub>
 
+### E0868 · `[lib]` / `[[bin]]` path escapes the package directory
+
+A `[lib].path` or `[[bin]].path` key resolves outside the package directory — an absolute path or a `..` chain. Source targets must live inside the package tree; a hostile vendored manifest must not point compilation at arbitrary host files. `[link]` search paths and `${VAR}`-expanded extra objects are exempt (they legitimately name external SDK locations).
+
+```toml
+[package]
+name = "esc"
+
+[[bin]]
+name = "esc"
+path = "../../outside/main.cplus"
+# -> [E0868] `[[bin]] `esc`` path resolves outside the package directory
+```
+
+**Fix.** Move the source file into the package and use a package-relative path (e.g. `path = "src/main.cplus"`).
+
+<sub>repro: checked · cplus-core/src/manifest.rs:target_path_escapes · test cplus-core/src/manifest.rs:bin_path_escaping_package_is_rejected_e0868</sub>
+
+### E0914 · Relative import escapes the project directory
+
+A file-relative import (`./x` / `../x`) has a `..` chain that resolves to a file outside the importing package's tree — the same escape the vendor import path (E0859) blocks, on the relative path that previously left it open.
+
+```cplus
+import "../../../../etc/whatever" as e;
+fn main() -> i32 { return 0; }
+// -> [E0914] relative import resolves outside the project directory
+```
+
+**Fix.** Keep relative imports inside the package. To use another package, add it to `[dependencies]` and import it by name (`import "dep/module"`).
+
+<sub>repro: scenario · cplus-core/src/resolver.rs:relative_import_escapes_root · test cplus-core/src/resolver.rs:relative_import_escaping_project_is_rejected_e0914</sub>
+
 ## Warnings
 
 ### W0001 · `sum()` / `product()` over narrow integer SIMD lanes silently wraps
@@ -2089,3 +2299,35 @@ libs = ["boguslib"]
 **Fix.** Move them under `[[bin]]` `libs` / `frameworks` (top-level `[link]` libs apply only when the package is a dependency).
 
 <sub>repro: scenario · cpc/src/main.rs:1654 · test cpc/tests/e2e.rs:bin_package_link_libs_warns_w0003</sub>
+
+### W0004 · `on_value` has the `#[watch]` hook signature but the struct is not `#[watch]`
+
+`on_value` in the watch-hook shape is a compiler-invoked name: the only thing that calls it is the `#[watch]` write barrier. Without the attribute the method is unreachable, so every field write skips it silently. This is the fail-open half of E0361 — that error stops a `#[watch]` struct from having no hook; this warning stops a hook from having no `#[watch]`.
+
+```cplus
+struct Counter { n: i32 }
+impl Counter {
+    fn on_value(ref this, field: str) { return; }   // nothing ever calls this
+}
+// -> W0004 `Counter::on_value` has the `#[watch]` hook signature but
+//    `struct Counter` is not `#[watch]`, so nothing calls it
+```
+
+**Fix.** Add `#[watch]` to the struct, or rename the method if it is not meant to be a write hook. Only the two accepted hook shapes are flagged, so an `on_value` with any other signature stays an ordinary method.
+
+<sub>repro: checked · cplus-core/src/sema.rs:check_unwatched_watch_hook · test cplus-core/src/sema.rs:hook_shaped_on_value_without_watch_warns_w0004</sub>
+
+## Generics
+
+### E0910 · Generic instantiation exceeds the recursion limit
+
+A generic function calls itself (directly or through a cycle) with a type argument that grows on every step — `rec::[*T]`, `rec::[[T; 2]]`, `rec::[Box[T]]`. Each step is a distinct concrete type, so monomorphization never converges and the compiler would hang. Two limits catch this: a ceiling on the number of instantiations, and a ceiling on the size of any one synthesized type name. A wrapper that names its parameter more than once (`rec::[Pair[T, T]]`) doubles that name at every step, so it hits the size ceiling while the instantiation count is still small.
+
+```cplus
+fn rec[T]() -> i32 { let _z: i32 = rec::[*T](); return 0; }
+fn main() -> i32 { return rec::[i32](); }
+```
+
+**Fix.** Reduce the type argument toward a non-generic base case, or drop the wrapper so the recursive call reuses the same type (`rec::[T]`). Runtime recursion on a value parameter is fine; only the *type* argument must not grow.
+
+<sub>repro: checked · cplus-core/src/monomorphize.rs:check_instantiation_bounds, cplus-core/src/sema.rs:reject_oversized_instantiation · test cplus-core/src/monomorphize.rs:self_growing_generic_instantiation_reports_e0910, cplus-core/src/sema.rs:self_growing_struct_generic_reports_e0910_not_oom</sub>
