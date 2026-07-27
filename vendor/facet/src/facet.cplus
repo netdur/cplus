@@ -2634,7 +2634,25 @@ impl Handle {
             let reg: *vec::Vec[RouterStaged] = #addr_of(ROUTER_STAGED);
             (*reg).append(RouterStaged { _container: container, _cp: cp, _staged: s });
         }
-        let _ok: bool = this.attach(s);
+        // Cross-outlet reuse is a TRANSFER, and ownership has to move with the
+        // view. `router_staged_of` matches on the component alone, so showing
+        // one instance through a second outlet reuses the first outlet's
+        // staging and physically reparents its root — while the staged record,
+        // and the old outlet's slot, both still claimed it. Evicting the old
+        // outlet then detached and unstaged a tree the new one was displaying.
+        // Hand the old outlet's bookkeeping over before attaching: clear its
+        // "showing" record, then repoint the staged record at the new owner.
+        // `attach` itself pays the on_detach for leaving the old container.
+        let prev_owner: *u8 = router_staged_owner(cp);
+        if prev_owner != (0 as *u8) {
+            if prev_owner != container {
+                router_clear_attached(prev_owner);
+                router_restage_owner(cp, container);
+            }
+        }
+        // Only claim the outlet if the attachment actually happened: on failure
+        // the registries must not record a presentation that is not on screen.
+        if !this.attach(s) { return this; }
         router_set_attached(container, cp);
         // Arm the outlet's eviction hook (idempotent: the registry keeps one
         // entry per container).
@@ -2667,8 +2685,8 @@ impl Handle {
 //         option::Option[*EditorTabs]::Some(et) => { { (*et).open(path) }; }
 //         option::Option[*EditorTabs]::None => { }
 //     }
-fn component_at[C](key: str, cp: *u8 = 0 as *u8) -> option::Option[*C] {
-    let p: *u8 = find(key, cp).component();
+fn component_at[C](key: str) -> option::Option[*C] {
+    let p: *u8 = find(key).component();
     if p == (0 as *u8) { return option::Option[*C]::None; }
     return option::Option[*C]::Some(p as *C);
 }
@@ -2913,19 +2931,26 @@ fn finish_service_job(raw: *u8) {
 }
 
 // Address a mounted element by its `key` — its agent id / accessibilityIdentifier,
-// the SAME handle an external/MCP agent uses through the ACI surface. By default
-// the search is GLOBAL across the app's mounted components, so in-app code
-// addresses the UI exactly as an agent does: `find("save").set_text(...)` — no
-// component context to thread.
+// the SAME handle an external/MCP agent uses through the ACI surface. The search
+// is GLOBAL across the app's mounted components, so in-app code addresses the UI
+// exactly as an agent does: `find("save").set_text(...)` — no component context
+// to thread.
 //
-// `cp` (a component's own address, e.g. `#addr_of(this)` in a handler) narrows the
-// search to that component's subtree — needed only for key ISOLATION when two
-// components mount identical keys. Window-unique keys (namespaced, as apps
-// normally do) never need it.
-fn find(key: str, cp: *u8 = 0 as *u8) -> Handle {
+// There is deliberately no per-component scoped form. It existed until
+// 2026-07-26 as `find(key, cp)`, and it earned nothing: facet's own
+// implementation never used it, real apps used the global form ~5:1, and every
+// key that was passed with a scope was ALREADY namespaced (`terminal:host`,
+// `chat:composer`), so the naming convention — not the scope — was doing the
+// disambiguation. Against that it cost a whole bug class: `present`ed and inline
+// children have no mounted slot, so a scoped lookup from inside one missed
+// every time, silently, because a missing handle no-ops every mutator. Make keys
+// window-unique by namespacing them; that is what apps already do.
+fn find(key: str) -> Handle {
     let f: fn(*u8, str) -> Handle = FIND_FN;
     if f == (0 as fn(*u8, str) -> Handle) { return Handle::missing(); }
-    return f(cp, key);
+    // The backend hook keeps its `cp` slot (0 = global) so the ABI is unchanged;
+    // there is simply no longer a surface way to pass anything else.
+    return f(0 as *u8, key);
 }
 
 // ---- component lifecycle: stage / attach / detach --------------------------
@@ -3143,6 +3168,59 @@ fn router_staged_of(cp: *u8) -> Staged {
         i = i +% (1 as usize);
     }
     return Staged::none();
+}
+
+// The outlet that currently OWNS `cp`'s staging, or 0 when `cp` is not staged.
+// `router_staged_of` deliberately ignores `_container` (a component has at most
+// one parked tree), so this is the reader that tells cross-outlet reuse apart
+// from a first visit.
+fn router_staged_owner(cp: *u8) -> *u8 {
+    let reg: *vec::Vec[RouterStaged] = #addr_of(ROUTER_STAGED);
+    let n: usize = { (*reg).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*reg).at_ptr(i) {
+            option::Option[*RouterStaged]::Some(rp) => {
+                if { (*rp)._cp } == cp { return { (*rp)._container }; }
+            }
+            option::Option[*RouterStaged]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return 0 as *u8;
+}
+
+// Move `cp`'s staging record to a new owning outlet. Without this the staged
+// record kept naming the outlet that first showed the component, so evicting
+// THAT outlet later detached and unstaged a tree another outlet was displaying
+// — see bugs/facet-switch-to-cross-outlet-staging-alias.md.
+fn router_restage_owner(cp: *u8, container: *u8) {
+    let reg: *vec::Vec[RouterStaged] = #addr_of(ROUTER_STAGED);
+    let n: usize = { (*reg).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*reg).at_ptr(i) {
+            option::Option[*RouterStaged]::Some(rp) => {
+                if { (*rp)._cp } == cp { { (*rp)._container = container; } return; }
+            }
+            option::Option[*RouterStaged]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// Clear an outlet's "currently showing" record without evicting its parked
+// trees — the outlet still exists, it just shows nothing now.
+fn router_clear_attached(container: *u8) {
+    let reg: *vec::Vec[RouterSlot] = #addr_of(ROUTER_SLOTS);
+    let si: i64 = router_slot_index(container);
+    if si < (0 as i64) { return; }
+    match (*reg).at_ptr(si as usize) {
+        option::Option[*RouterSlot]::Some(sp) => { { (*sp)._cp = 0 as *u8; } }
+        option::Option[*RouterSlot]::None => { }
+    }
+    return;
 }
 
 // Record `cp` as the attached sibling of `container`.

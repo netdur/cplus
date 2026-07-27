@@ -100,13 +100,14 @@ fn chip(name: str, ok: bool) -> facet::Node {
     return facet::hstack(b);
 }
 
+struct Panel { other: OtherComponent }      // the child is a FIELD, not a local
+
 impl Panel: facet::Component {
     fn build(ref this) -> facet::Node {
-        var p: OtherComponent = OtherComponent::new();
         return @facet {
             vstack {
                 chip("clang", true)          // a plain Node-returning function
-                p.build()                    // another component
+                this.other.build()           // another component, stably stored
             }
         };
     }
@@ -115,6 +116,36 @@ impl Panel: facet::Component {
 
 Both forms are just `Node`s in the tree. There is no component instance kept by
 facet beyond the retained description and the struct you own.
+
+### A composed child must outlive the tree
+
+That last point is a rule, not a remark. Facet retains the returned `Node`; it
+does **not** retain — or extend the lifetime of — the component that produced
+it. A bound handler (`.on_click(this.something)`) stores the receiver's raw
+address in the node's callback context, so the child must live at least as long
+as the mounted tree.
+
+Storing the child in a **field** of the parent (as above), in a `static`, or
+behind a `Box` all satisfy that. Constructing it as a **local** does not:
+
+```cplus
+// WRONG — `p` dies when build() returns; any handler p bound now has a
+// receiver pointing at a dead stack slot.
+fn build(ref this) -> facet::Node {
+    var p: OtherComponent = OtherComponent::new();
+    return @facet { vstack { p.build() } };
+}
+```
+
+`build` is one-shot, so the frame holding `p` is gone by the time a click
+arrives. This does not necessarily crash: if the handler never reads a field of
+its receiver, the call appears to work, and the control simply does nothing.
+That makes the failure easy to misattribute — a dead button reads as a bug in
+whatever feature the button belongs to. It becomes a real memory error the
+moment any handler touches `this`.
+
+A local child is only safe when it binds no instance handlers at all — pure view
+composition. If you cannot guarantee that, give the child stable storage.
 
 ## Why not re-render
 

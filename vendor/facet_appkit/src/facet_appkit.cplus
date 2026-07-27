@@ -3945,14 +3945,21 @@ fn find_impl(cp: *u8, key: str) -> facet::Handle {
         }
         return facet::Handle::missing();
     }
+    // 2026-07-26: the scoped form was removed from the surface (see
+    // `facet::find`), so `cp` is always 0 here and the global path above has
+    // already returned. This arm remains only for a backend caller that still
+    // passes one — it resolves the same way the global walk would, rather than
+    // reintroducing the silent-miss behaviour that made scoped lookup a bug
+    // farm: an unknown scope is not an error, it is just a global search.
     let host: *u8 = ui::host_of(cp);
-    if host == (0 as *u8) { return facet::Handle::missing(); }
+    if host == (0 as *u8) { return find_impl(0 as *u8, key); }
     let view: *u8 = find_view_by_id(host, key);
     if view == (0 as *u8) { return facet::Handle::missing(); }
-    var flexp: *u8 = 0 as *u8;
     let fp: *flex::Node = resolve_flex(cp, view);
-    if fp != (0 as *flex::Node) { flexp = fp as *u8; }
-    return facet::Handle::of(view, flexp, cp, 0 as u32);
+    if fp != (0 as *flex::Node) {
+        return facet::Handle::of(view, fp as *u8, cp, 0 as u32);
+    }
+    return flex_owner_handle(view, cp);
 }
 
 // facet::Handle.set_text hook: edit the located view's text in place, then
@@ -4794,6 +4801,13 @@ struct StageReg {
     _on_detach: fn(*u8),
     opaque _on_detach_ctx: *u8,
     _attached: bool,
+    // The container the root is CURRENTLY attached to (0 when parked).
+    // Without it, `attach` could not tell "attach again to the same outlet"
+    // (which must be idempotent) from "move to a different outlet" (which
+    // owes an on_detach to the outlet being left). It fired on_attach for
+    // both and on_detach for neither — see
+    // bugs/facet-staged-attach-unbalanced-lifecycle.md.
+    opaque _container: *u8,
 }
 
 static STAGED: vec::Vec[StageReg] = #zero::[vec::Vec[StageReg]]();
@@ -4868,7 +4882,7 @@ fn stage_impl(build: fn(*u8) -> facet::Node, ctx: *u8, on_attach: fn(*u8), on_at
     // reflowing on divider drags until re-attached.
     akx::observe_frame_change(root, staged_root_reflow, ctx);
     let reg: *vec::Vec[StageReg] = #addr_of(STAGED);
-    (*reg).append(StageReg { _cp: ctx, _root: root, _on_attach: on_attach, _on_attach_ctx: on_attach_ctx, _on_detach: on_detach, _on_detach_ctx: on_detach_ctx, _attached: false });
+    (*reg).append(StageReg { _cp: ctx, _root: root, _on_attach: on_attach, _on_attach_ctx: on_attach_ctx, _on_detach: on_detach, _on_detach_ctx: on_detach_ctx, _attached: false, _container: 0 as *u8 });
     return facet::Staged::of(ctx, root_raw);
 }
 
@@ -4878,8 +4892,24 @@ fn attach_impl(h: facet::Handle, s: facet::Staged) -> bool {
     let container: *u8 = h.view();
     if container == (0 as *u8) { return false; }
     if !s.valid() { return false; }
-    let sp: *StageReg = stage_ptr(s.cp());
+    var sp: *StageReg = stage_ptr(s.cp());
     if sp == (0 as *StageReg) { return false; }
+    // Already attached to THIS container: idempotent success, no callbacks.
+    // Firing on_attach again would duplicate whatever the component acquires
+    // there — subscriptions, timers, UI-bound resources — with no matching
+    // release.
+    if { (*sp)._attached } {
+        if { (*sp)._container } == container { return true; }
+        // Attached ELSEWHERE: this is a move, so pay the outgoing side first.
+        // detach_impl unplugs the root, clears the state and fires on_detach,
+        // leaving attach/detach paired and the component correctly believing
+        // it left the old presentation.
+        let _d: bool = detach_impl(s);
+        // That callback can mutate STAGED (unstage / re-stage), which may move
+        // the vector's storage — the old `sp` is not safe to reuse.
+        sp = stage_ptr(s.cp());
+        if sp == (0 as *StageReg) { return false; }
+    }
     let root: *u8 = s.root();
     // One parent at a time: if already attached anywhere, unplug first (a move).
     ak::View::from_raw(root).remove_from_superview();
@@ -4892,6 +4922,9 @@ fn attach_impl(h: facet::Handle, s: facet::Staged) -> bool {
     ak::View::from_raw(container).add_subview(ak::View::from_raw(root));
     let _r: bool = ui::relayout(s.cp());   // lay the content out at the container's size
     drain_post_apply();   // size any scroll/split in the attached subtree (deferred at mount)
+    // State before callback: a hook that queries is_attached, or re-enters an
+    // attachment API, must observe the attachment that just happened.
+    { (*sp)._container = container; }
     { (*sp)._attached = true; }
     let cb: fn(*u8) = { (*sp)._on_attach };
     cb({ (*sp)._on_attach_ctx });
@@ -4907,6 +4940,7 @@ fn detach_impl(s: facet::Staged) -> bool {
     if { (*sp)._attached } == false { return false; }
     ak::View::from_raw(s.root()).remove_from_superview();
     { (*sp)._attached = false; }
+    { (*sp)._container = 0 as *u8; }
     let cb: fn(*u8) = { (*sp)._on_detach };
     cb({ (*sp)._on_detach_ctx });
     return true;
@@ -4951,6 +4985,29 @@ fn lc_register_impl(h: facet::Handle, detach: fn(*u8), ctx: *u8) {
     }
     (*reg).append(LcEntry { _container: v, _detach: detach, _ctx: ctx });
     return;
+}
+
+// Build a handle for `view` by finding the mounted slot whose retained tree
+// actually OWNS its flex node, so structural verbs are live rather than inert.
+// `scope_cp` is the fallback owner when no slot's tree contains the node (a
+// view-only handle, same posture as the global find's last resort).
+fn flex_owner_handle(view: *u8, scope_cp: *u8) -> facet::Handle {
+    let n: usize = ui::slot_count();
+    var i: usize = 0 as usize;
+    while i < n {
+        let host_i: *u8 = ui::slot_host_at(i);
+        if host_i != (0 as *u8) {
+            let ocp: *u8 = ui::cp_of_host(host_i);
+            if ocp != (0 as *u8) {
+                let f: *flex::Node = resolve_flex(ocp, view);
+                if f != (0 as *flex::Node) {
+                    return facet::Handle::of(view, f as *u8, ocp, 0 as u32);
+                }
+            }
+        }
+        i = i +% (1 as usize);
+    }
+    return facet::Handle::of(view, 0 as *u8, scope_cp, 0 as u32);
 }
 
 // facet::component_at hook: the component address registered for `h`'s
@@ -5317,7 +5374,7 @@ fn find_set_text_mutates_label_in_place() {
     assert ak::TextField::from_raw(before).as_control().string_value().equals("v0");
 
     // Keyed-direct update: resolve "value" in this component and set it in place.
-    let hv: facet::Handle = facet::find("value", cp);
+    let hv: facet::Handle = facet::find("value");
     assert hv.found();
     let _chain: facet::Handle = hv.set_text("v42");
 
@@ -5327,24 +5384,24 @@ fn find_set_text_mutates_label_in_place() {
     assert ak::TextField::from_raw(after).as_control().string_value().equals("v42");
 
     // A key that resolves to nothing yields a no-op handle (getElementById-null).
-    assert !facet::find("nope", cp).found();
+    assert !facet::find("nope").found();
 
     // set_value on a slider — read it back through the control's own getter.
-    let _sv: facet::Handle = facet::find("vol", cp).set_value(0.5f64);
+    let _sv: facet::Handle = facet::find("vol").set_value(0.5f64);
     let volv: *u8 = find_view_by_id(host.raw(), "vol");
     assert volv != (0 as *u8);
     assert ak::Control::from_raw(volv).double_value() == 0.5f64;
     // the same number through the portable getter (Handle.value); a miss reads 0.
-    assert facet::find("vol", cp).value() == 0.5f64;
-    assert facet::find("nope", cp).value() == 0.0f64;
+    assert facet::find("vol").value() == 0.5f64;
+    assert facet::find("nope").value() == 0.0f64;
 
     // set_on flips a toggle in place; the target resolves and the mutator applies
     // (same plumbing as set_value, which the assertion above proves end to end).
-    assert facet::find("flag", cp).found();
-    let _fo: facet::Handle = facet::find("flag", cp).set_on(true);
+    assert facet::find("flag").found();
+    let _fo: facet::Handle = facet::find("flag").set_on(true);
 
     // set_hidden hides a resolved element without touching anything else.
-    let _fh: facet::Handle = facet::find("inc", cp).set_hidden(true);
+    let _fh: facet::Handle = facet::find("inc").set_hidden(true);
     unmount_all();
 }
 
@@ -5375,9 +5432,9 @@ fn find_resolves_keyed_container() {
     let cp: *u8 = #addr_of(BOX_PANE) as *u8;
 
     // The keyed inner container resolves — proof it carries its id on a real view.
-    assert facet::find("panel", cp).found();
+    assert facet::find("panel").found();
     // A leaf inside it still resolves too (no regression).
-    assert facet::find("inner", cp).found();
+    assert facet::find("inner").found();
     // Its view really carries the accessibilityIdentifier in the hierarchy.
     assert find_view_by_id(host.raw(), "panel") != (0 as *u8);
     unmount_all();
@@ -5402,8 +5459,8 @@ fn run_slot_keyed_by_app_component_ctx_resolves_find() {
     RUN_ROOT = #addr_of(root);
     let _h: f64 = ui::mount(run_root_render, ctx: app_cp, host: content.raw());
     // The keyed-direct verbs resolve against the app-chosen cp.
-    assert facet::find("tabs:tab:1", app_cp).found();
-    assert !facet::find("tabs:tab:2", app_cp).found();
+    assert facet::find("tabs:tab:1").found();
+    assert !facet::find("tabs:tab:2").found();
     // Resize relayout addresses the same cp (run_window's relayout_cp).
     assert ui::relayout(app_cp);
     RUN_ROOT = 0 as *facet::Node;
@@ -5433,7 +5490,7 @@ fn global_find_by_id_resolves_without_cp() {
     // mutate in place through the global handle (carries the owning cp)
     let _s: facet::Handle = facet::find("greet").set_text("hi");
     // the scoped form finds the same element
-    assert facet::find("greet", app_cp).found();
+    assert facet::find("greet").found();
     RUN_ROOT = 0 as *facet::Node;
     unmount_all();
 }
@@ -5452,7 +5509,7 @@ fn run_slot_defaults_to_root_address_ctx() {
     };
     RUN_ROOT = #addr_of(root);
     let _h: f64 = ui::mount(run_root_render, ctx: #addr_of(root) as *u8, host: content.raw());
-    assert facet::find("greet", #addr_of(root) as *u8).found();
+    assert facet::find("greet").found();
     assert ui::relayout(#addr_of(root) as *u8);
     RUN_ROOT = 0 as *facet::Node;
     unmount_all();
@@ -5510,7 +5567,7 @@ fn find_and_structural_verbs_reach_split_pane_content() {
     // find resolves BOTH halves for the pane-hosted keyed container: the view
     // (NSViews nest through the split) AND the flex node (the SPLIT_PANES
     // fallback — this was 0 before, so every structural verb no-op'd).
-    let tabs: facet::Handle = facet::find("tabs", cp);
+    let tabs: facet::Handle = facet::find("tabs");
     assert tabs.found();
     assert tabs.flex() != (0 as *u8);
 
@@ -5523,7 +5580,7 @@ fn find_and_structural_verbs_reach_split_pane_content() {
 
     // portable divider read: Handle.value() on the split reports the leading
     // pane's trailing edge — the arranged_subviews walk, now backend-free.
-    let split_h: facet::Handle = facet::find("the-split", cp);
+    let split_h: facet::Handle = facet::find("the-split");
     assert split_h.found();
     var arr2: vec::Vec[ak::View] = ak::SplitView::from_raw(split_h.view()).arranged_subviews();
     match arr2.at_ptr(0 as usize) {
@@ -5535,7 +5592,7 @@ fn find_and_structural_verbs_reach_split_pane_content() {
     };
 
     // remove_child shrinks it again.
-    assert facet::find("tabs", cp).remove_child("tabs:tab:a");
+    assert facet::find("tabs").remove_child("tabs:tab:a");
     assert find_view_by_id(host.raw(), "tabs:tab:a") == (0 as *u8);
     unmount_all();
 }
@@ -5588,7 +5645,7 @@ fn added_zstack_states_overlap_in_split_pane() {
     };
     ui::relayout_split_panes(sv_ptr);
 
-    let _c: facet::Handle = facet::find("tabs", cp).add_child(t3_tab_item());
+    let _c: facet::Handle = facet::find("tabs").add_child(t3_tab_item());
     let off: rt::Rect = t3_frame_of(host.raw(), "t:off");
     let on: rt::Rect = t3_frame_of(host.raw(), "t:on");
     assert off.w > 0.0f64;
@@ -5699,7 +5756,7 @@ fn iris_tab_anatomy_states_overlap_after_add_and_raise() {
     ui::relayout_split_panes(sv_ptr);
 
     // iris's open(): add the tab, then raise the on state from the strip view.
-    let strip: facet::Handle = facet::find("tabs2", cp);
+    let strip: facet::Handle = facet::find("tabs2");
     assert strip.found();
     let _c: facet::Handle = strip.add_child(t3x_tab_item());
     facet::raise(strip.view(), "tt:on");
@@ -5744,13 +5801,13 @@ fn find_and_structural_verbs_reach_scroll_hosted_content() {
     let _h: f64 = mount_component(SCROLL_ROWS.build, host: host.raw());
     let cp: *u8 = #addr_of(SCROLL_ROWS) as *u8;
 
-    let rows: facet::Handle = facet::find("rows", cp);
+    let rows: facet::Handle = facet::find("rows");
     assert rows.found();
     assert rows.flex() != (0 as *u8);          // SCROLL_CONTENT fallback
 
     let _c: facet::Handle = rows.add_child(facet::label("row-b").key("rows:b"));
     assert find_view_by_id(host.raw(), "rows:b") != (0 as *u8);
-    assert facet::find("rows", cp).remove_child("rows:a");
+    assert facet::find("rows").remove_child("rows:a");
     assert find_view_by_id(host.raw(), "rows:a") == (0 as *u8);
     unmount_all();
 }
@@ -5778,7 +5835,7 @@ fn add_child_of_a_scroll_subtree_drains_post_apply() {
     var sc: facet::Builder = facet::Builder::new();
     sc.add(facet::column(inner).key("panel:rows"));
     let child: facet::Node = facet::scroll(sc).frame(200.0f64, 150.0f64).key("panel");
-    let _c: facet::Handle = facet::find("list", cp).add_child(child);
+    let _c: facet::Handle = facet::find("list").add_child(child);
 
     // the verb drained the queue at its tail: the scroll was filled, none pending.
     assert find_view_by_id(host.raw(), "panel") != (0 as *u8);
@@ -6024,19 +6081,19 @@ fn find_add_and_remove_child() {
     assert ak::View::from_raw(list_v).subviews().count() == (2 as usize);
 
     // add_child: append a keyed row in place -> 3 rows, the new one findable.
-    let _a: facet::Handle = facet::find("list", cp).add_child(facet::label("row-c", size: 12.0f64).key("c"));
+    let _a: facet::Handle = facet::find("list").add_child(facet::label("row-c", size: 12.0f64).key("c"));
     assert ak::View::from_raw(list_v).subviews().count() == (3 as usize);
-    assert facet::find("c", cp).found();
+    assert facet::find("c").found();
 
     // remove_child: drop "a" in place -> 2 rows; b and c survive (order kept).
-    assert facet::find("list", cp).remove_child("a");
+    assert facet::find("list").remove_child("a");
     assert ak::View::from_raw(list_v).subviews().count() == (2 as usize);
-    assert !facet::find("a", cp).found();
-    assert facet::find("b", cp).found();
-    assert facet::find("c", cp).found();
+    assert !facet::find("a").found();
+    assert facet::find("b").found();
+    assert facet::find("c").found();
 
     // Removing a key that is not a direct child returns false.
-    assert facet::find("list", cp).remove_child("zzz") == false;
+    assert facet::find("list").remove_child("zzz") == false;
     unmount_all();
 }
 
@@ -6100,14 +6157,14 @@ fn empty_keyed_row_accepts_runtime_chips() {
     let cp: *u8 = #addr_of(CHIPS_PANE) as *u8;
 
     // An EMPTY keyed container must still mount an addressable backing view.
-    assert facet::find("chips", cp).found();
+    assert facet::find("chips").found();
 
     // First chip lands, is findable, and removes by its key.
-    let _a: facet::Handle = facet::find("chips", cp)
+    let _a: facet::Handle = facet::find("chips")
         .add_child(facet::button("notes.txt").plain().key("chip:1"));
-    assert facet::find("chip:1", cp).found();
-    assert facet::find("chips", cp).remove_child("chip:1");
-    assert !facet::find("chip:1", cp).found();
+    assert facet::find("chip:1").found();
+    assert facet::find("chips").remove_child("chip:1");
+    assert !facet::find("chip:1").found();
     unmount_all();
 }
 
@@ -6321,9 +6378,9 @@ fn e2e_set_font_reflows_a_mounted_label() {
     let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 80.0 });
     let _h: f64 = mount_component(FONT_PANE.build, host: host.raw());
     let cp: *u8 = #addr_of(FONT_PANE) as *u8;
-    assert facet::find("t", cp).found();
-    let _r: facet::Handle = facet::find("t", cp).set_font(24.0f64);
-    let lp: *u8 = facet::find("t", cp).view();
+    assert facet::find("t").found();
+    let _r: facet::Handle = facet::find("t").set_font(24.0f64);
+    let lp: *u8 = facet::find("t").view();
     assert approx(t_point_size(lp), 24.0f64);
     unmount_all();
 }
@@ -6382,45 +6439,45 @@ fn keyed_direct_structural_verbs() {
     assert ak::View::from_raw(list_v).subviews().count() == (2 as usize);   // a, b
 
     // insert_child at 0: "z" becomes the FIRST child (top) -> 3 rows.
-    let _i: facet::Handle = facet::find("list", cp).insert_child(facet::label("z", size: 12.0f64).key("z"), 0 as usize);
+    let _i: facet::Handle = facet::find("list").insert_child(facet::label("z", size: 12.0f64).key("z"), 0 as usize);
     assert ak::View::from_raw(list_v).subviews().count() == (3 as usize);
-    assert facet::find("z", cp).found();
-    assert first_child_is(facet::find("list", cp).flex(), "z");   // ordered, not appended
+    assert facet::find("z").found();
+    assert first_child_is(facet::find("list").flex(), "z");   // ordered, not appended
 
     // insert_child past the end appends (clamps).
-    let _i2: facet::Handle = facet::find("list", cp).insert_child(facet::label("tail", size: 12.0f64).key("tail"), 99 as usize);
+    let _i2: facet::Handle = facet::find("list").insert_child(facet::label("tail", size: 12.0f64).key("tail"), 99 as usize);
     assert ak::View::from_raw(list_v).subviews().count() == (4 as usize);
-    assert facet::find("tail", cp).found();
-    assert first_child_is(facet::find("list", cp).flex(), "z");   // still z first
+    assert facet::find("tail").found();
+    assert first_child_is(facet::find("list").flex(), "z");   // still z first
 
     // replace_child: swap "a" for "a2" at the same position -> count unchanged.
-    assert facet::find("list", cp).replace_child("a", facet::label("a2", size: 12.0f64).key("a2"));
+    assert facet::find("list").replace_child("a", facet::label("a2", size: 12.0f64).key("a2"));
     assert ak::View::from_raw(list_v).subviews().count() == (4 as usize);
-    assert !facet::find("a", cp).found();
-    assert facet::find("a2", cp).found();
-    assert facet::find("b", cp).found();
+    assert !facet::find("a").found();
+    assert facet::find("a2").found();
+    assert facet::find("b").found();
     // replacing a non-child returns false.
-    assert facet::find("list", cp).replace_child("nope", facet::label("x").key("x")) == false;
+    assert facet::find("list").replace_child("nope", facet::label("x").key("x")) == false;
 
     // set_child: collapse the list to ONE fresh child.
-    let _s: facet::Handle = facet::find("list", cp).set_child(facet::label("only", size: 12.0f64).key("only"));
+    let _s: facet::Handle = facet::find("list").set_child(facet::label("only", size: 12.0f64).key("only"));
     assert ak::View::from_raw(list_v).subviews().count() == (1 as usize);
-    assert facet::find("only", cp).found();
-    assert !facet::find("z", cp).found();
-    assert !facet::find("a2", cp).found();
-    assert !facet::find("b", cp).found();
-    assert !facet::find("tail", cp).found();
+    assert facet::find("only").found();
+    assert !facet::find("z").found();
+    assert !facet::find("a2").found();
+    assert !facet::find("b").found();
+    assert !facet::find("tail").found();
 
     // show / hide over set_hidden.
     let btn: *u8 = find_view_by_id(host.raw(), "btn");
     assert btn != (0 as *u8);
-    let _hh: facet::Handle = facet::find("btn", cp).hide();
+    let _hh: facet::Handle = facet::find("btn").hide();
     assert rt::msg_i8(btn, rt::sel(#str_ptr("isHidden\0"))) == (1 as i8);
-    let _sh: facet::Handle = facet::find("btn", cp).show();
+    let _sh: facet::Handle = facet::find("btn").show();
     assert rt::msg_i8(btn, rt::sel(#str_ptr("isHidden\0"))) == (0 as i8);
 
     // find_as native hatch: view() IS the native NSButton — full native API.
-    let btn_h: facet::Handle = facet::find("btn", cp);
+    let btn_h: facet::Handle = facet::find("btn");
     assert btn_h.view() == btn;
     let native: ak::Button = ak::Button::from_raw(btn_h.view());
     native.set_title("native!");
@@ -6428,8 +6485,8 @@ fn keyed_direct_structural_verbs() {
     assert t.view() == "native!";
 
     // structural verbs on a missing container no-op safely.
-    assert facet::find("ghost", cp).remove_child("a") == false;
-    let _ng: facet::Handle = facet::find("ghost", cp).insert_child(facet::label("q").key("q"), 0 as usize);
+    assert facet::find("ghost").remove_child("a") == false;
+    let _ng: facet::Handle = facet::find("ghost").insert_child(facet::label("q").key("q"), 0 as usize);
     unmount_all();
 }
 
@@ -6517,7 +6574,7 @@ fn stage_attach_detach_and_reattach_keeps_views() {
     assert a_title0 != (0 as *u8);
 
     // Route to A: attach fires on_attach; A is live in the outlet.
-    assert facet::find("outlet", nav_cp).attach(a);
+    assert facet::find("outlet").attach(a);
     assert facet::is_attached(a.cp());
     assert SCREEN_A.attaches == 1;
     assert SCREEN_A.detaches == 0;
@@ -6528,14 +6585,14 @@ fn stage_attach_detach_and_reattach_keeps_views() {
     assert !facet::is_attached(a.cp());
     assert SCREEN_A.detaches == 1;
     assert find_view_by_id(a.root(), "title") == a_title0;   // A's views SURVIVED parking
-    assert facet::find("outlet", nav_cp).attach(b);
+    assert facet::find("outlet").attach(b);
     assert facet::is_attached(b.cp());
     assert SCREEN_B.attaches == 1;
     assert ak::View::from_raw(outlet_v).subviews().count() == (1 as usize);   // only B now
 
     // Route BACK to A: detach B, re-attach A — the SAME views, restored.
     assert b.detach();
-    assert facet::find("outlet", nav_cp).attach(a);
+    assert facet::find("outlet").attach(a);
     assert facet::is_attached(a.cp());
     assert SCREEN_A.attaches == 2;                            // attached twice total
     assert find_view_by_id(a.root(), "title") == a_title0;   // ORIGINAL view, not rebuilt
@@ -6554,7 +6611,7 @@ static GUARD_UPDATED: i32 = 0;
 fn guarded_complete(cp: *u8) {
     if !facet::is_attached(cp) { return; }    // parked -> skip the UI update
     GUARD_UPDATED = GUARD_UPDATED + 1;
-    let _u: facet::Handle = facet::find("title", cp).set_text("loaded");
+    let _u: facet::Handle = facet::find("title").set_text("loaded");
     return;
 }
 
@@ -6572,7 +6629,7 @@ fn is_attached_guards_async_completion() {
     let a: facet::Staged = facet::stage(SCREEN_A.build, on_attach: SCREEN_A.on_attach, on_detach: SCREEN_A.on_detach);
 
     // Attached: a completion updates the UI in place.
-    assert facet::find("outlet", nav_cp).attach(a);
+    assert facet::find("outlet").attach(a);
     guarded_complete(a.cp());
     assert GUARD_UPDATED == 1;
     assert ak::TextField::from_raw(find_view_by_id(a.root(), "title")).as_control().string_value().equals("loaded");
@@ -6603,7 +6660,7 @@ fn stage_lifecycle_negatives() {
     let a: facet::Staged = facet::stage(SCREEN_A.build);
 
     // Attaching to a MISSING key returns false (nothing attached).
-    assert facet::find("no-such-outlet", nav_cp).attach(a) == false;
+    assert facet::find("no-such-outlet").attach(a) == false;
     assert !facet::is_attached(a.cp());
     // Detaching something never attached returns false.
     assert a.detach() == false;
@@ -6632,7 +6689,7 @@ fn switch_to_stages_once_parks_and_reattaches() {
     assert outlet_v != (0 as *u8);
 
     // First visit: staged + attached, on_attach fired once.
-    let _1: facet::Handle = facet::find("outlet", nav_cp).switch_to((*ap));
+    let _1: facet::Handle = facet::find("outlet").switch_to((*ap));
     assert facet::is_attached(ap as *u8);
     assert SCREEN_A.attaches == 1;
     assert ak::View::from_raw(outlet_v).subviews().count() == (1 as usize);
@@ -6640,19 +6697,19 @@ fn switch_to_stages_once_parks_and_reattaches() {
     assert a_title != (0 as *u8);
 
     // Switch to B: A parks (on_detach fires, views kept), B stages + attaches.
-    let _2: facet::Handle = facet::find("outlet", nav_cp).switch_to((*bp));
+    let _2: facet::Handle = facet::find("outlet").switch_to((*bp));
     assert SCREEN_A.detaches == 1;
     assert !facet::is_attached(ap as *u8);
     assert SCREEN_B.attaches == 1;
     assert ak::View::from_raw(outlet_v).subviews().count() == (1 as usize);
 
     // Switching to the attached sibling is a no-op.
-    let _3: facet::Handle = facet::find("outlet", nav_cp).switch_to((*bp));
+    let _3: facet::Handle = facet::find("outlet").switch_to((*bp));
     assert SCREEN_B.attaches == 1;
     assert SCREEN_B.detaches == 0;
 
     // Back to A: the SAME views return — parked, not rebuilt.
-    let _4: facet::Handle = facet::find("outlet", nav_cp).switch_to((*ap));
+    let _4: facet::Handle = facet::find("outlet").switch_to((*ap));
     assert SCREEN_A.attaches == 2;
     assert SCREEN_B.detaches == 1;
     assert find_view_by_id(outlet_v, "title") == a_title;
@@ -6675,19 +6732,19 @@ fn switch_to_evicts_with_its_outlet_and_restages() {
     let bp: *RouteScreen = #addr_of(SCREEN_B);
     let outlet_v: *u8 = find_view_by_id(host.raw(), "outlet");
 
-    let _1: facet::Handle = facet::find("outlet", nav_cp).switch_to((*ap));
-    let _2: facet::Handle = facet::find("outlet", nav_cp).switch_to((*bp));   // A parked, B attached
+    let _1: facet::Handle = facet::find("outlet").switch_to((*ap));
+    let _2: facet::Handle = facet::find("outlet").switch_to((*bp));   // A parked, B attached
 
     // A structural swap of the outlet fires the router's eviction: the
     // attached sibling detaches, every parked tree of this outlet is dropped.
-    let _sc: facet::Handle = facet::find("outlet", nav_cp).set_child(facet::box());
+    let _sc: facet::Handle = facet::find("outlet").set_child(facet::box());
     assert SCREEN_B.detaches == 1;
     assert !facet::is_attached(bp as *u8);
     assert !facet::router_staged_of(ap as *u8).valid();
     assert !facet::router_staged_of(bp as *u8).valid();
 
     // The next switch_to re-stages FRESH (a rebuild).
-    let _3: facet::Handle = facet::find("outlet", nav_cp).switch_to((*ap));
+    let _3: facet::Handle = facet::find("outlet").switch_to((*ap));
     assert SCREEN_A.attaches == 2;
     assert facet::is_attached(ap as *u8);
     assert find_view_by_id(outlet_v, "title") != (0 as *u8);
@@ -6710,8 +6767,8 @@ fn switch_to_theme_change_drops_parked_keeps_attached() {
     let bp: *RouteScreen = #addr_of(SCREEN_B);
     let outlet_v: *u8 = find_view_by_id(host.raw(), "outlet");
 
-    let _1: facet::Handle = facet::find("outlet", nav_cp).switch_to((*ap));
-    let _2: facet::Handle = facet::find("outlet", nav_cp).switch_to((*bp));   // A parked, B attached
+    let _1: facet::Handle = facet::find("outlet").switch_to((*ap));
+    let _2: facet::Handle = facet::find("outlet").switch_to((*bp));   // A parked, B attached
     let b_title: *u8 = find_view_by_id(outlet_v, "title");
 
     let old_theme: facet::Theme = facet::theme();
@@ -6725,7 +6782,7 @@ fn switch_to_theme_change_drops_parked_keeps_attached() {
     assert find_view_by_id(outlet_v, "title") == b_title;
 
     // Returning to A re-stages fresh against the new palette.
-    let _3: facet::Handle = facet::find("outlet", nav_cp).switch_to((*ap));
+    let _3: facet::Handle = facet::find("outlet").switch_to((*ap));
     assert SCREEN_A.attaches == 2;
     assert SCREEN_B.detaches == 1;
 
@@ -6745,7 +6802,7 @@ fn switch_to_negatives() {
     let ap: *RouteScreen = #addr_of(SCREEN_A);
 
     // A missing outlet is a full no-op: nothing staged, nothing attached.
-    let _g: facet::Handle = facet::find("no-such-outlet", nav_cp).switch_to((*ap));
+    let _g: facet::Handle = facet::find("no-such-outlet").switch_to((*ap));
     assert SCREEN_A.attaches == 0;
     assert !facet::is_attached(ap as *u8);
     assert !facet::router_staged_of(ap as *u8).valid();
@@ -6786,7 +6843,7 @@ fn switch_to_reflows_on_root_resize() {
     let nav_cp: *u8 = #addr_of(NAV_HOST) as *u8;
     let rp: *ResizeScreen = #addr_of(RESIZE_SCREEN);
 
-    let _1: facet::Handle = facet::find("outlet", nav_cp).switch_to((*rp));
+    let _1: facet::Handle = facet::find("outlet").switch_to((*rp));
     let cp: *u8 = rp as *u8;
     let root: *u8 = facet::router_staged_of(cp).root();
     assert root != (0 as *u8);
@@ -6842,7 +6899,7 @@ impl ScrollScreen {
     // not during on_attach — set_child'ing a fresh scroll into the plain slot.
     fn populate(ref this) {
         let cp: *u8 = #addr_of(this) as *u8;
-        let slot: facet::Handle = facet::find("ss:slot", cp);
+        let slot: facet::Handle = facet::find("ss:slot");
         if slot.found() { let _h: facet::Handle = slot.set_child(this.tall()); }
         return;
     }
@@ -6864,12 +6921,12 @@ fn switch_to_scroll_sizes_document_to_attached_viewport() {
     let nav_cp: *u8 = #addr_of(NAV_HOST) as *u8;
     let sp: *ScrollScreen = #addr_of(SCROLL_SCREEN);
 
-    let _1: facet::Handle = facet::find("outlet", nav_cp).switch_to((*sp));
+    let _1: facet::Handle = facet::find("outlet").switch_to((*sp));
     // The async completion lands AFTER attach fully returned — populate then.
     SCROLL_SCREEN.populate();
     let cp: *u8 = sp as *u8;
 
-    let scroll_v: *u8 = facet::find("ss:scroll", cp).view();
+    let scroll_v: *u8 = facet::find("ss:scroll").view();
     assert scroll_v != (0 as *u8);
     let s: ak::ScrollView = ak::ScrollView::from_raw(scroll_v);
     let viewport_h: f64 = s.as_view().frame().h;
@@ -6936,18 +6993,18 @@ fn switch_to_scroll_sizes_document_inside_a_split_pane() {
 
     // Now switch the scroll screen into the pane-hosted outlet and populate.
     let sp: *ScrollScreen = #addr_of(SCROLL_SCREEN);
-    let _1: facet::Handle = facet::find("outlet", hcp).switch_to((*sp));
+    let _1: facet::Handle = facet::find("outlet").switch_to((*sp));
     SCROLL_SCREEN.populate();
     let cp: *u8 = sp as *u8;
 
     // GLOBAL find (cp=0, the agent-surface path) must resolve a staged
     // component's view AND flex — parity with a presented component, so keyed
     // structural verbs are not silently inert on a staged panel.
-    let gh: facet::Handle = facet::find("ss:scroll", 0 as *u8);
+    let gh: facet::Handle = facet::find("ss:scroll");
     assert gh.found();
     assert gh.flex() != (0 as *u8);
 
-    let scroll_v: *u8 = facet::find("ss:scroll", cp).view();
+    let scroll_v: *u8 = facet::find("ss:scroll").view();
     assert scroll_v != (0 as *u8);
     let s: ak::ScrollView = ak::ScrollView::from_raw(scroll_v);
     let viewport_h: f64 = s.as_view().frame().h;
@@ -6997,27 +7054,27 @@ fn find_reads_text_and_index_portably() {
     let cp: *u8 = #addr_of(READ_PANE) as *u8;
 
     // text_field value read back portably — Control -stringValue under the hood.
-    let nh: facet::Handle = facet::find("rp:name", cp);
+    let nh: facet::Handle = facet::find("rp:name");
     assert nh.found();
     assert nh.text().equals("Iris");
 
     // text_area content: find() resolves the INNER NSTextView (id sunk onto the
     // documentView), so text() must answer via -string, not -stringValue.
-    let dh: facet::Handle = facet::find("rp:desc", cp);
+    let dh: facet::Handle = facet::find("rp:desc");
     assert dh.found();
     assert dh.text().equals("hello world");
 
     // popup selection read back — the initial `selected: 1` row.
-    let ah: facet::Handle = facet::find("rp:agent", cp);
+    let ah: facet::Handle = facet::find("rp:agent");
     assert ah.found();
     assert ah.selected_index() == (1 as i64);
 
     // NEGATIVE: selected_index on a non-popup kind is -1 (no -indexOfSelectedItem).
-    assert facet::find("rp:name", cp).selected_index() == (-1 as i64);
+    assert facet::find("rp:name").selected_index() == (-1 as i64);
     // NEGATIVE: a missing key reads empty / -1, never traps.
-    assert !facet::find("nope", cp).found();
-    assert facet::find("nope", cp).text().equals("");
-    assert facet::find("nope", cp).selected_index() == (-1 as i64);
+    assert !facet::find("nope").found();
+    assert facet::find("nope").text().equals("");
+    assert facet::find("nope").selected_index() == (-1 as i64);
     unmount_all();
 }
 
@@ -7036,12 +7093,12 @@ fn set_text_reaches_editor_field_and_button() {
     let cp: *u8 = #addr_of(READ_PANE) as *u8;
 
     // text_area (inner NSTextView) round-trips through -setString: -> -string.
-    let _d: facet::Handle = facet::find("rp:desc", cp).set_text("changed body");
-    assert facet::find("rp:desc", cp).text().equals("changed body");
+    let _d: facet::Handle = facet::find("rp:desc").set_text("changed body");
+    assert facet::find("rp:desc").text().equals("changed body");
 
     // text_field (NSControl) still routes to -setStringValue: under the new order.
-    let _n: facet::Handle = facet::find("rp:name", cp).set_text("Renamed");
-    assert facet::find("rp:name", cp).text().equals("Renamed");
+    let _n: facet::Handle = facet::find("rp:name").set_text("Renamed");
+    assert facet::find("rp:name").text().equals("Renamed");
 
     // button still routes to -setTitle: (probed after -setString:, which it lacks).
     let bd: facet::Node = facet::button("orig");
@@ -7136,7 +7193,7 @@ fn present_evicts_through_the_registry_in_order() {
     let nav_cp: *u8 = #addr_of(NAV_HOST) as *u8;
 
     ORDER_A.base = 1; ORDER_B.base = 3; LC_ORDER = 0;
-    let outlet: facet::Handle = facet::find("outlet", nav_cp);
+    let outlet: facet::Handle = facet::find("outlet");
     assert outlet.found();
     let outlet_v: *u8 = find_view_by_id(host.raw(), "outlet");
 
@@ -7171,11 +7228,11 @@ fn remove_child_and_unmount_fire_the_registered_detach() {
     let nav_cp: *u8 = #addr_of(NAV_HOST) as *u8;
 
     ORDER_A.base = 1; LC_ORDER = 0;
-    let outlet: facet::Handle = facet::find("outlet", nav_cp);
+    let outlet: facet::Handle = facet::find("outlet");
 
     // remove_child of the presented root notifies it (2) and clears the entry.
     let _p: facet::Handle = outlet.present(ORDER_A);
-    assert facet::find("outlet", nav_cp).remove_child("order:root");
+    assert facet::find("outlet").remove_child("order:root");
     assert LC_ORDER == 12;
     assert lc_entry_count() == (0 as usize);
 
@@ -7234,7 +7291,7 @@ fn open_window_mounts_and_returns_without_blocking() {
     // REACHING here at all is the point: open_window returned instead of
     // blocking in a run loop. The tree is mounted and addressable, and the
     // component slot reads attached — the seam run_component fires on_attach in.
-    assert facet::find("open_check:title", cp).found();
+    assert facet::find("open_check:title").found();
     assert facet::is_attached(cp);
     let _u: bool = unmount(cp);
     assert !facet::is_attached(cp);
@@ -7273,7 +7330,7 @@ fn screen_window_opens_finds_and_fires_on_closed() {
     assert w != (0 as *u8);
     // The slot is retained and keyed by the screen instance address: the
     // keyed-direct path resolves inside the pushed window.
-    assert facet::find("screen_check:title", cp).found();
+    assert facet::find("screen_check:title").found();
     assert facet::is_attached(cp);
     assert SCREEN_CHECK_CLOSED == 0;
     // Programmatic close (the nav::pop path): on_closed fires exactly once and
@@ -7291,7 +7348,7 @@ fn component_at_reads_the_presented_instance() {
     let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 400.0 });
     let _h: f64 = mount_component(NAV_HOST.build, host: host.raw());
     let nav_cp: *u8 = #addr_of(NAV_HOST) as *u8;
-    let outlet: facet::Handle = facet::find("outlet", nav_cp);
+    let outlet: facet::Handle = facet::find("outlet");
     assert outlet.found();
 
     // Nothing presented yet: the reader answers 0 / None.
@@ -7300,7 +7357,7 @@ fn component_at_reads_the_presented_instance() {
     // Present -> the reader recovers the INSTANCE address present registered.
     let _p: facet::Handle = outlet.present(ORDER_A);
     assert outlet.component() == (#addr_of(ORDER_A) as *u8);
-    let typed: option::Option[*OrderScreen] = facet::component_at::[OrderScreen]("outlet", nav_cp);
+    let typed: option::Option[*OrderScreen] = facet::component_at::[OrderScreen]("outlet");
     let hit: bool = match typed {
         option::Option[*OrderScreen]::Some(pp) => (pp as *u8) == (#addr_of(ORDER_A) as *u8),
         option::Option[*OrderScreen]::None => false,
@@ -7314,18 +7371,147 @@ fn component_at_reads_the_presented_instance() {
     // Eviction clears it: a stale instance is unreachable, not dangling.
     let _s: facet::Handle = outlet.set_child(facet::box());
     assert outlet.component() == (0 as *u8);
-    let gone: bool = match facet::component_at::[OrderScreen]("outlet", nav_cp) {
+    let gone: bool = match facet::component_at::[OrderScreen]("outlet") {
         option::Option[*OrderScreen]::Some(pp) => false,
         option::Option[*OrderScreen]::None => true,
     };
     assert gone;
     // An unknown key answers None, never a trap.
-    let missing: bool = match facet::component_at::[OrderScreen]("no:such:slot", nav_cp) {
+    let missing: bool = match facet::component_at::[OrderScreen]("no:such:slot") {
         option::Option[*OrderScreen]::Some(pp) => false,
         option::Option[*OrderScreen]::None => true,
     };
     assert missing;
     unmount_all();
+}
+
+// bugs/facet-inline-child-missing-component-scope.md — a PRESENTED component
+// resolving its own keys from `on_attach`.
+//
+// This originally failed because `present` mounts no slot, so the then-scoped
+// `find(key, #addr_of(this))` had no host to search and returned a missing
+// handle every time — silently, since a missing handle no-ops every mutator.
+// In iris a terminal mounted, its keyed node was in the tree and visible to
+// `describe_ui`, and the `found()` guard in `on_attach` still failed.
+//
+// The scoped form was removed entirely on 2026-07-26 (it earned nothing; see
+// `facet::find`). The contract this now pins is the one that replaced it: a
+// presented component finds its own keys through the ordinary global lookup,
+// including from inside `on_attach`.
+struct ScopedChild {
+    tag: i32,
+    self_found: i32,
+    attaches: i32,
+}
+
+impl ScopedChild: facet::Component {
+    fn build(ref this) -> facet::Node {
+        var b: facet::Builder = facet::Builder::new();
+        b.add(facet::label("initial", size: 12.0f64).key("child:value"));
+        return facet::column(b).grow(1.0f64);
+    }
+}
+
+impl ScopedChild: facet::Lifecycle {
+    fn on_attach(ref this) {
+        this.attaches = this.attaches + 1;
+        let h: facet::Handle = facet::find("child:value");
+        if h.found() { this.self_found = this.self_found + 1; }
+        return;
+    }
+    fn on_detach(ref this) { return; }
+}
+
+static SCOPED_A: ScopedChild = #zero::[ScopedChild]();
+static SCOPED_B: ScopedChild = #zero::[ScopedChild]();
+
+#[test]
+fn presented_component_finds_its_own_keys() {
+    unmount_all();
+    install();
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 400.0 });
+    let _h: f64 = mount_component(NAV_HOST.build, host: host.raw());
+    let outlet: facet::Handle = facet::find("outlet");
+    assert outlet.found();
+
+    SCOPED_A.self_found = 0;
+    SCOPED_A.attaches = 0;
+    let _p: facet::Handle = outlet.present(SCOPED_A);
+    // The assertion that used to fail: attaches == 1 while self_found stayed 0.
+    assert SCOPED_A.attaches == 1;
+    assert SCOPED_A.self_found == 1;
+
+    // Still resolvable after attach, and the handle is LIVE — a presented
+    // child's nodes live in the PRESENTER's flex tree, so the owner has to be
+    // resolved by which tree owns the node. A view-only handle would leave
+    // every structural verb silently inert.
+    let again: facet::Handle = facet::find("child:value");
+    assert again.found();
+    let edited: facet::Handle = again.set_text("updated");
+    assert edited.found();
+
+    // An unknown key still misses — the fallback is a global search, not a
+    // match-anything.
+    assert !facet::find("child:nope").found();
+    unmount_all();
+}
+
+#[test]
+fn sibling_instances_are_distinguished_by_key_not_scope() {
+    // With the scoped form gone, two live instances of one component type are
+    // told apart by making their keys window-unique — the namespacing
+    // convention apps already follow. This test pins that contract, and is the
+    // honest replacement for the isolation test that existed while `find` took
+    // a component address.
+    unmount_all();
+    install();
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 400.0 });
+    let _h: f64 = mount_component(TWO_OUTLET_HOST.build, host: host.raw());
+    let a: facet::Handle = facet::find("outlet-a");
+    let b: facet::Handle = facet::find("outlet-b");
+    assert a.found();
+    assert b.found();
+
+    KEYED_LEFT.which = 0;
+    KEYED_RIGHT.which = 1;
+    let _pa: facet::Handle = a.present(KEYED_LEFT);
+    let _pb: facet::Handle = b.present(KEYED_RIGHT);
+
+    // Distinct keys -> distinct views, each mutable independently.
+    let hl: facet::Handle = facet::find("left:value");
+    let hr: facet::Handle = facet::find("right:value");
+    assert hl.found();
+    assert hr.found();
+    assert hl.view() != hr.view();
+    let _e1: facet::Handle = hl.set_text("L");
+    let _e2: facet::Handle = hr.set_text("R");
+    assert hl.text().equals("L");
+    assert hr.text().equals("R");
+    unmount_all();
+}
+
+struct KeyedChild { which: i32 }
+static KEYED_LEFT: KeyedChild = #zero::[KeyedChild]();
+static KEYED_RIGHT: KeyedChild = #zero::[KeyedChild]();
+impl KeyedChild: facet::Lifecycle { fn on_attach(ref this){return;} fn on_detach(ref this){return;} }
+impl KeyedChild: facet::Component {
+    fn build(ref this) -> facet::Node {
+        var b: facet::Builder = facet::Builder::new();
+        if this.which == 0 { b.add(facet::label("l", size: 12.0f64).key("left:value")); }
+        else { b.add(facet::label("r", size: 12.0f64).key("right:value")); }
+        return facet::column(b).grow(1.0f64);
+    }
+}
+
+struct TwoOutletHost { n: i32 }
+static TWO_OUTLET_HOST: TwoOutletHost = #zero::[TwoOutletHost]();
+impl TwoOutletHost: facet::Component {
+    fn build(ref this) -> facet::Node {
+        var b: facet::Builder = facet::Builder::new();
+        b.add(facet::column(facet::Builder::new()).grow(1.0f64).key("outlet-a"));
+        b.add(facet::column(facet::Builder::new()).grow(1.0f64).key("outlet-b"));
+        return facet::column(b).grow(1.0f64);
+    }
 }
 
 struct EvPanelLike { n: i32 }
@@ -7366,26 +7552,26 @@ fn set_child_evicts_in_component_presented_under_split() {
     let cp: *u8 = #addr_of(EV_PANE_HOST) as *u8;
 
     // The keyed leaf pane resolves BOTH halves now.
-    let pane: facet::Handle = facet::find("ev:pane", cp);
+    let pane: facet::Handle = facet::find("ev:pane");
     assert pane.found();
     assert pane.flex() != (0 as *u8);
 
     // present into the pane mounts (was inert while the pane's tree was
     // dropped); the presented component's outlet is addressable.
-    let _p: facet::Handle = facet::find("ev:pane", cp).present(EV_PANEL);
-    assert facet::find("ev:outlet", cp).found();
+    let _p: facet::Handle = facet::find("ev:pane").present(EV_PANEL);
+    assert facet::find("ev:outlet").found();
 
     // set_child twice into the outlet: the second EVICTS the first.
-    let _a: facet::Handle = facet::find("ev:outlet", cp).set_child(facet::box().frame(10.0f64,10.0f64).key("ev:first"));
-    assert facet::find("ev:first", cp).found();
-    let _b: facet::Handle = facet::find("ev:outlet", cp).set_child(facet::box().frame(10.0f64,10.0f64).key("ev:second"));
-    assert facet::find("ev:second", cp).found();
-    assert !facet::find("ev:first", cp).found();
+    let _a: facet::Handle = facet::find("ev:outlet").set_child(facet::box().frame(10.0f64,10.0f64).key("ev:first"));
+    assert facet::find("ev:first").found();
+    let _b: facet::Handle = facet::find("ev:outlet").set_child(facet::box().frame(10.0f64,10.0f64).key("ev:second"));
+    assert facet::find("ev:second").found();
+    assert !facet::find("ev:first").found();
 
     // A re-present at the PANE level evicts the whole presented subtree too.
-    let _p2: facet::Handle = facet::find("ev:pane", cp).present(EV_PANEL);
-    assert facet::find("ev:outlet", cp).found();
-    assert !facet::find("ev:second", cp).found();
+    let _p2: facet::Handle = facet::find("ev:pane").present(EV_PANEL);
+    assert facet::find("ev:outlet").found();
+    assert !facet::find("ev:second").found();
     unmount_all();
 }
 
@@ -7530,9 +7716,9 @@ fn stage_leak_cycles() -> i32 {
     for k in 0..50 {
         SCREEN_A.tag = text::from_str("A");
         let a: facet::Staged = facet::stage(SCREEN_A.build, on_attach: SCREEN_A.on_attach, on_detach: SCREEN_A.on_detach);
-        let _at: bool = facet::find("outlet", nav_cp).attach(a);
+        let _at: bool = facet::find("outlet").attach(a);
         let _dt: bool = a.detach();
-        let _re: bool = facet::find("outlet", nav_cp).attach(a);
+        let _re: bool = facet::find("outlet").attach(a);
         let _us: bool = a.unstage();
     }
     unmount_all();
@@ -7550,9 +7736,9 @@ fn verb_leak_cycles() -> i32 {
     let _h: f64 = mount_component(VERB_PANE.build, host: host.raw());
     let cp: *u8 = #addr_of(VERB_PANE) as *u8;
     for k in 0..50 {
-        let _i: facet::Handle = facet::find("list", cp).insert_child(facet::label("x", size: 12.0f64).key("x"), 0 as usize);
-        let _r: bool = facet::find("list", cp).replace_child("x", facet::label("y", size: 12.0f64).key("y"));
-        let _s: facet::Handle = facet::find("list", cp).set_child(facet::label("only", size: 12.0f64).key("only"));
+        let _i: facet::Handle = facet::find("list").insert_child(facet::label("x", size: 12.0f64).key("x"), 0 as usize);
+        let _r: bool = facet::find("list").replace_child("x", facet::label("y", size: 12.0f64).key("y"));
+        let _s: facet::Handle = facet::find("list").set_child(facet::label("only", size: 12.0f64).key("only"));
     }
     unmount_all();
     return 0;
@@ -7583,7 +7769,7 @@ static RECON_COUNTER: ReconCounter = #zero::[ReconCounter]();
 fn recon_counter_inc(sender: *u8, ctx: *u8) {
     RECON_COUNTER.count = RECON_COUNTER.count + 1;
     let msg: text::Text = "count ${RECON_COUNTER.count}";
-    let _u: facet::Handle = facet::find("count", ctx).set_text(msg.view());
+    let _u: facet::Handle = facet::find("count").set_text(msg.view());
     return;
 }
 
