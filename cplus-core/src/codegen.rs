@@ -12590,10 +12590,18 @@ impl<'a> FnState<'a> {
         //    the spilled value is the match's to drop. A borrowed-place
         //    scrutinee (`obj.f`, `arr[i]`, `*p`) is NOT ours; its owner drops
         //    it, so leave it alone. (`match f() { ... }` leaked before this.)
+        // ...and only if the match actually BINDS a name. A match that binds
+        // nothing (`Some(_) => ...`, `_ => ...`) reads the discriminant and
+        // leaves every payload in the scrutinee's storage — nothing moved out,
+        // so there is nothing to transfer and no reason to disarm. That keeps
+        // the presence-check idiom non-consuming, which is what makes it
+        // re-matchable (sema's matching E0335 rule is keyed on the same
+        // predicate). See `ast::match_binds_a_name`.
         let consumed_binding = scrutinee_name
             .as_ref()
             .map(|n| self.find_drop_flag(n).is_some())
-            .unwrap_or(false);
+            .unwrap_or(false)
+            && crate::ast::match_binds_a_name(arms);
         // An owned *temporary* — a non-place scrutinee spilled to a temp (call,
         // constructor, block, `if`, ...) of a Drop enum — is the match's to tear
         // down. Same `scrutinee_reads_in_place` predicate as `enum_scrutinee_ptr`

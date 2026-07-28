@@ -609,7 +609,7 @@ fn main() -> i32 { return f(1); }
 
 ### E0335 · Use of a moved value
 
-A non-Copy binding is read after it was moved (into a call, a `take` parameter, or a `let y = x;`). Flow-sensitive: a move only on a branch that `return`s / `break`s does not poison the other path, and it also fires for non-Copy types whose Copy-ness depends on a generic payload.
+A non-Copy binding is read after it was moved (into a call, a `take` parameter, or a `let y = x;`). Flow-sensitive: a move only on a branch that `return`s / `break`s does not poison the other path, and it also fires for non-Copy types whose Copy-ness depends on a generic payload. A `match` also moves: matching an owned binding of a Drop-carrying enum consumes it when any arm binds a name, so the binding cannot be read or matched again.
 
 ```cplus
 struct P { x: i32 }
@@ -622,7 +622,7 @@ fn main() -> i32 {
 }
 ```
 
-**Fix.** Do not read after a `take`; clone the value first, or restructure so the move and the use are on disjoint paths.
+**Fix.** Do not read after a `take`; clone the value first, or restructure so the move and the use are on disjoint paths. For a `match`: bind nothing (`E::A(_)`) if you only need to test the discriminant — that form does not consume, so the binding stays matchable. For a `guard let`, reach the complement payload with `else |E::B(x)|` rather than re-matching the scrutinee in the else block.
 
 <sub>repro: checked · cplus-core/src/sema.rs:13097 · test cplus-core/src/sema.rs:phase5_implicit_non_copy_param_consumes_e0335</sub>
 

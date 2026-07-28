@@ -9000,6 +9000,49 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // a *diverging* arm (the `guard let` else, an early `return`) must not
         // reach the code after the `match`. Snapshot the pre-match moved-state,
         // run each arm from it, and fold in only the fall-through arms' moves.
+        // bugs/moved-from-local-is-readable-and-double-frees.md — the other
+        // half of "the match consumes an owned binding". codegen has always
+        // disarmed the scrutinee's scope-exit drop (`gen_match`'s
+        // `consumed_binding`), but sema never recorded that as a move, so a
+        // second read of the binding handed out a payload the first match had
+        // already dropped: use-after-free, then double free, with no
+        // diagnostic. Mark the binding moved so any later read is E0335.
+        //
+        // Gated exactly as codegen gates the disarm, via the same shared
+        // predicate, so the two cannot drift:
+        //   - a bare `Ident` scrutinee this match OWNS (a projection or
+        //     borrow is Borrowed/Forbidden and never consumed);
+        //   - whose enum carries drop — a drop-free enum has no drop flag to
+        //     disarm, so matching it is a pure read and stays re-matchable;
+        //   - and where some arm BINDS a name. A match that binds nothing is
+        //     the non-consuming presence check.
+        //
+        // Marked BEFORE the pre-arm snapshot because the disarm is emitted in
+        // the pre-switch block, which dominates every arm: the consumption is
+        // already done when any arm body runs, and it reaches past the match
+        // on every path (including through a diverging arm).
+        if crate::ast::match_binds_a_name(arms) && !scrutinee_borrowed {
+            if let ExprKind::Ident(name) = &scrutinee.kind {
+                if self.ty_carries_drop(&Ty::Enum(enum_id)) {
+                    let name = name.clone();
+                    let sp = scrutinee.span;
+                    for scope in self.scopes.iter_mut().rev() {
+                        if let Some(info) = scope.get_mut(&name) {
+                            // Only an owning binding is consumed. `owns_value`
+                            // is what `classify_scrutinee` read to call this
+                            // Owned in the first place; re-check it here so a
+                            // Forbidden classification (already reported) can't
+                            // fall through and mark a borrow moved.
+                            if info.owns_value {
+                                info.moved = true;
+                                info.moved_at = Some(sp);
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+        }
         let moved_pre = self.snapshot_moved();
         let mut nondiverging_arm_moves: Vec<Vec<Vec<(String, bool)>>> = Vec::new();
 
@@ -21575,6 +21618,130 @@ fn main() -> i32 { return 0; }\n";
                 codes.contains(&"E0335"),
                 "[mark-move {sname}] expected E0335 (use after move), got {codes:?}\n--- program ---\n{prog}"
             );
+        }
+    }
+
+    #[test]
+    fn match_on_an_owned_binding_marks_the_move_matrix() {
+        // bugs/moved-from-local-is-readable-and-double-frees.md — a `match`
+        // that binds a name consumes an owned Drop-enum binding (codegen has
+        // always disarmed its drop pre-switch); sema must record that so a
+        // later read is E0335. Before this, the re-read compiled and handed
+        // out an already-dropped payload: use-after-free, then double free,
+        // with no diagnostic at all.
+        //
+        // The matrix pins BOTH halves — what now moves, and what deliberately
+        // does not, so the fix can't be "reject every second match".
+        const PRELUDE: &str = "\
+struct R { opaque data: *u8 }\n\
+impl R { fn drop(ref this) { return; } }\n\
+enum E { A(R), B }\n\
+enum Plain { A(i32), B }\n\
+struct H { e: E }\n\
+fn mkr() -> R { return R { data: { 0 as *u8 } }; }\n\
+fn mke() -> E { return E::A(mkr()); }\n\
+fn mkp() -> Plain { return Plain::A(1); }\n\
+fn main() -> i32 { return 0; }\n";
+
+        // (case, body, expected code | "" = must be clean)
+        let cases: &[(&str, &str, &str)] = &[
+            // ---- binds a name → consumes ----
+            (
+                "payload_binding_then_read",
+                "let e: E = mke(); match e { E::A(v) => { let _k: R = v; } E::B => {} } let _again: E = e;",
+                "E0335",
+            ),
+            (
+                "catchall_binding_then_read",
+                "let e: E = mke(); match e { x => { let _k: E = x; } } let _again: E = e;",
+                "E0335",
+            ),
+            // THE reported bug: presence-check match, then match again.
+            (
+                "bound_presence_check_then_second_match",
+                "let e: E = mke(); match e { E::A(_v) => {} E::B => {} } match e { E::A(w) => { let _k: R = w; } E::B => {} }",
+                "E0335",
+            ),
+            // `_v` is this language's PRIVACY convention, not a wildcard — it
+            // binds and consumes like any other name. Pinned so nobody
+            // "helpfully" makes `_`-prefixed bindings non-consuming.
+            (
+                "underscore_prefixed_name_still_binds",
+                "let e: E = mke(); match e { E::A(_v) => {} E::B => {} } let _again: E = e;",
+                "E0335",
+            ),
+            // The pty shape: the second arm diverges, so only the binding arm
+            // falls through — the consumption still reaches past the match
+            // (codegen disarms in the pre-switch block, which dominates both).
+            (
+                "diverging_sibling_arm_still_consumes",
+                "let e: E = mke(); match e { E::A(v) => { let _k: R = v; } E::B => { return 1; } } let _again: E = e;",
+                "E0335",
+            ),
+            // (`guard let` desugars to this same binding match — covered by
+            // `guard_let_else_cannot_rematch_the_scrutinee` in cpc's e2e
+            // suite, since this harness runs sema without `lower`.)
+            // ---- binds nothing → does NOT consume ----
+            (
+                "presence_check_binds_nothing_then_read",
+                "let e: E = mke(); match e { E::A(_) => {} E::B => {} } let _again: E = e;",
+                "",
+            ),
+            (
+                "wildcard_arm_only_then_read",
+                "let e: E = mke(); match e { _ => {} } let _again: E = e;",
+                "",
+            ),
+            // The whole point of keeping the presence check non-consuming:
+            // check first, then really match.
+            (
+                "presence_check_then_consuming_match",
+                "let e: E = mke(); match e { E::A(_) => {} E::B => {} } match e { E::A(v) => { let _k: R = v; } E::B => {} }",
+                "",
+            ),
+            (
+                "repeated_presence_checks",
+                "let e: E = mke(); match e { E::A(_) => {} E::B => {} } match e { E::A(_) => {} E::B => {} } match e { E::A(_) => {} E::B => {} }",
+                "",
+            ),
+            // A drop-free enum has no drop flag for codegen to disarm, so
+            // matching it is a pure read and stays re-matchable. Gating on
+            // drop is what keeps this rule off ordinary `Option[i32]` code.
+            (
+                "drop_free_enum_is_rematchable",
+                "let p: Plain = mkp(); match p { Plain::A(v) => { let _k: i32 = v; } Plain::B => {} } match p { Plain::A(w) => { let _k2: i32 = w; } Plain::B => {} }",
+                "",
+            ),
+            // A borrowed place is not the match's to consume — the owner still
+            // drops it, so re-reading it is fine.
+            (
+                "borrowed_field_scrutinee_is_not_consumed",
+                "let h: H = H { e: mke() }; match h.e { E::A(_) => {} E::B => {} } match h.e { E::A(_) => {} E::B => {} }",
+                "",
+            ),
+            // Re-initialising the binding clears the move, as for any other
+            // consuming site.
+            (
+                "reassignment_after_the_match_reinits",
+                "var e: E = mke(); match e { E::A(v) => { let _k: R = v; } E::B => {} } e = mke(); match e { E::A(w) => { let _k2: R = w; } E::B => {} }",
+                "",
+            ),
+        ];
+
+        for (name, body, expected) in cases {
+            let prog = format!("{PRELUDE}fn probe_{name}() -> i32 {{ {body} return 0; }}\n");
+            let codes = errors(&prog);
+            if expected.is_empty() {
+                assert!(
+                    codes.is_empty(),
+                    "[match-move {name}] expected NO errors, got {codes:?}\n--- program ---\n{prog}"
+                );
+            } else {
+                assert!(
+                    codes.contains(expected),
+                    "[match-move {name}] expected {expected}, got {codes:?}\n--- program ---\n{prog}"
+                );
+            }
         }
     }
 

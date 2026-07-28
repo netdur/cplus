@@ -366,7 +366,22 @@ What counts as owning (dropped automatically): `Text`, `Vec`/`Box`/other library
 Consequences to know:
 - A struct/enum that owns heap data is **non-Copy** and **move-only** (copying would double-free). Code that gives such a value away needs `take`/`.clone()`.
 - You **cannot move an owning field out** of such an aggregate (**E0509**) — the auto-drop would free it twice. Clone it, or `match` to consume the whole value.
-- `match`ing an *owned* enum **consumes** it (its drop is suppressed; the matched-out payload becomes the caller's). `match`ing through a `borrow` does not.
+- `match`ing an *owned* enum **consumes** it (its drop is suppressed; the matched-out payload becomes the caller's), so the binding cannot be read or matched again afterwards (**E0335**). `match`ing through a `borrow` does not consume.
+- Consumption is triggered by **binding a name** anywhere in the patterns. A match that binds nothing reads only the discriminant and leaves the value intact, which is how you write a presence check on a value you still need:
+
+```cplus
+match maybe_thing {                  // presence check — binds nothing, consumes nothing
+    Option[Text]::Some(_) => {}
+    Option[Text]::None    => { return 0; }
+}
+match maybe_thing {                  // still yours to match for real
+    Option[Text]::Some(t) => { return t.count() as i32; }
+    Option[Text]::None    => { return 0; }
+}
+```
+
+  `Some(_v)` **binds** — the leading `_` is the privacy convention, not a wildcard — so it consumes like any other name. Use `Some(_)` for the non-consuming form.
+- In a `guard let`, the else block must not re-match the scrutinee (E0335): the payload's destructor has already run by then. Bind the complement instead — `guard let E::A(v) = e else |E::B(x)| { ... }`.
 - A container's heap *elements* behind a raw pointer (a `Vec[T]`'s `T`s) are dropped by the container's own `drop` (which walks them via `__cplus_drop_in_place::[T]`), not by auto field-drop. Binding an owning payload from a consumed enum and then *not* moving it out drops it at arm exit (no leak).
 
 ### Raw-pointer accountability (`opaque`)

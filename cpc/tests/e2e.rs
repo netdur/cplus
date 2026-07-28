@@ -315,6 +315,158 @@ fn match_consumes_owned_scrutinee_exactly_once() {
     }
 }
 
+/// bugs/moved-from-local-is-readable-and-double-frees.md, runtime half: a
+/// `match` that binds NOTHING is a pure discriminant read, so it must leave
+/// the owned binding intact — still droppable at scope end, still matchable
+/// again. This is what keeps the presence-check idiom expressible now that
+/// re-reading a *consumed* binding is E0335 (compile-time half below).
+///
+/// Every probe allocates exactly one droppable payload, so every expected
+/// count is 1: more means the value was torn down twice, fewer means it
+/// leaked.
+#[test]
+fn presence_check_match_does_not_consume_the_binding() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("pc.cplus");
+    std::fs::write(
+        &src,
+        "static DROPS: i32 = 0;\n\
+         struct R { opaque data: *u8 }\n\
+         impl R { fn drop(ref this) { { DROPS = DROPS + 1; } return; } }\n\
+         enum E { A(R), B }\n\
+         struct H { e: E }\n\
+         impl H { fn drop(ref this) { return; } }\n\
+         fn mke() -> E { return E::A(R { data: { 0 as *u8 } }); }\n\
+         fn consume(take r: R) -> i32 { return 0; }\n\
+         fn p_check_then_scope_end() { let e: E = mke(); match e { E::A(_) => {} E::B => {} } return; }\n\
+         fn p_check_then_match() { let e: E = mke(); match e { E::A(_) => {} E::B => {} } let _n: i32 = match e { E::A(r) => consume(r), E::B => 0 }; return; }\n\
+         fn p_check_thrice_then_match() { let e: E = mke();\n\
+             match e { E::A(_) => {} E::B => {} }\n\
+             match e { E::A(_) => {} E::B => {} }\n\
+             match e { E::A(_) => {} E::B => {} }\n\
+             let _n: i32 = match e { E::A(r) => consume(r), E::B => 0 }; return; }\n\
+         fn p_wild_then_match() { let e: E = mke(); match e { _ => {} } let _n: i32 = match e { E::A(r) => consume(r), E::B => 0 }; return; }\n\
+         fn p_check_then_bound_payload_unmoved() { let e: E = mke(); match e { E::A(_) => {} E::B => {} } match e { E::A(r) => {} E::B => {} } return; }\n\
+         fn p_field_checked_twice() { let h: H = H { e: mke() }; match h.e { E::A(_) => {} E::B => {} } match h.e { E::A(_) => {} E::B => {} } return; }\n\
+         fn p_temp_binding_nothing_still_drops() { match mke() { E::A(_) => {} E::B => {} } return; }\n\
+         fn main() -> i32 {\n\
+             p_check_then_scope_end();          if { DROPS } != 1 { return 1; } { DROPS = 0; }\n\
+             p_check_then_match();              if { DROPS } != 1 { return 2; } { DROPS = 0; }\n\
+             p_check_thrice_then_match();       if { DROPS } != 1 { return 3; } { DROPS = 0; }\n\
+             p_wild_then_match();               if { DROPS } != 1 { return 4; } { DROPS = 0; }\n\
+             p_check_then_bound_payload_unmoved(); if { DROPS } != 1 { return 5; } { DROPS = 0; }\n\
+             p_field_checked_twice();           if { DROPS } != 1 { return 6; } { DROPS = 0; }\n\
+             p_temp_binding_nothing_still_drops(); if { DROPS } != 1 { return 7; } { DROPS = 0; }\n\
+             return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    for sanitizer in &["", "--asan"] {
+        let bin = dir.join("pc");
+        let mut cmd = Command::new(cpc);
+        cmd.arg(&src).arg("-o").arg(&bin);
+        if !sanitizer.is_empty() {
+            cmd.arg(sanitizer);
+        }
+        assert!(
+            cmd.status().expect("invoke cpc").success(),
+            "build failed ({sanitizer})"
+        );
+        let run = Command::new(&bin).output().expect("run");
+        let stderr = String::from_utf8_lossy(&run.stderr);
+        assert!(
+            !stderr.contains("AddressSanitizer"),
+            "ASan flagged a non-consuming match ({sanitizer}): {stderr}"
+        );
+        assert_eq!(
+            run.status.code(),
+            Some(0),
+            "a name-binding-free match must leave the scrutinee intact and drop it exactly once; failing phase = exit code ({sanitizer})"
+        );
+    }
+}
+
+/// bugs/moved-from-local-is-readable-and-double-frees.md, compile-time half:
+/// a `match` that binds a name consumes an owned Drop-enum binding, so reading
+/// that binding afterwards is E0335. This program used to compile and then
+/// use-after-free, then double-free, at run time.
+#[test]
+fn rematching_a_consumed_binding_rejected_e0335() {
+    assert_compile_fails_with(
+        "struct R { opaque data: *u8 }\n\
+         impl R { fn drop(ref this) { return; } }\n\
+         enum E { A(R), B }\n\
+         fn mke() -> E { return E::A(R { data: { 0 as *u8 } }); }\n\
+         fn main() -> i32 {\n\
+           let e: E = mke();\n\
+           match e { E::A(_v) => {} E::B => { return 1; } }\n\
+           match e { E::A(w) => { let _k: R = w; } E::B => {} }\n\
+           return 0;\n\
+         }\n",
+        "E0335",
+    );
+}
+
+/// The vendor/sqlite shape. `guard let` desugars to a binding match, so its
+/// else block cannot re-match the same local to reach the complement payload —
+/// the payload's destructor has already run by the time the else body starts.
+/// Use the `else |Pat|` complement binding instead (pinned to still work by
+/// `guard_let_complement_binding_reaches_the_payload`).
+#[test]
+fn guard_let_else_cannot_rematch_the_scrutinee() {
+    assert_compile_fails_with(
+        "struct R { opaque data: *u8 }\n\
+         impl R { fn drop(ref this) { return; } }\n\
+         enum E { A(R), B }\n\
+         fn mke() -> E { return E::A(R { data: { 0 as *u8 } }); }\n\
+         fn main() -> i32 {\n\
+           let e: E = mke();\n\
+           guard let E::A(v) = e else {\n\
+             match e { E::A(_) => { return 1; } E::B => { return 2; } }\n\
+           };\n\
+           let _k: R = v;\n\
+           return 0;\n\
+         }\n",
+        "E0335",
+    );
+}
+
+/// The sanctioned replacement for the rejected re-match above: `else |Pat|`
+/// binds the complement payload directly, so it is still live in the else
+/// block and drops exactly once.
+#[test]
+fn guard_let_complement_binding_reaches_the_payload() {
+    let out = compile_and_run_src(
+        "guardcomp",
+        "static DROPS: i32 = 0;\n\
+         struct R { opaque data: *u8 }\n\
+         impl R { fn drop(ref this) { { DROPS = DROPS + 1; } return; } }\n\
+         enum E { A(R), B(R) }\n\
+         fn mkb() -> E { return E::B(R { data: { 0 as *u8 } }); }\n\
+         fn probe() -> i32 {\n\
+           let e: E = mkb();\n\
+           guard let E::A(v) = e else |E::B(bad)| {\n\
+             let _held: R = bad;\n\
+             return 7;\n\
+           };\n\
+           let _k: R = v;\n\
+           return 0;\n\
+         }\n\
+         fn main() -> i32 {\n\
+           if probe() != 7 { return 1; }\n\
+           if { DROPS } != 1 { return 2; }\n\
+           return 0;\n\
+         }\n",
+    );
+    assert!(
+        out.status.success(),
+        "complement-bound payload must be live and drop once; exit: {} stderr: {}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
 /// v0.0.23 unified match ownership model: the paths the model *allows* (after
 /// fixing the over-rejections that the model's first cut caused) must run clean
 /// under ASan. Compile-time rejections (raw-deref of a Drop type, move-out of a

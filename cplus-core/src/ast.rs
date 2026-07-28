@@ -744,6 +744,39 @@ pub fn scrutinee_reads_in_place(e: &Expr) -> bool {
     )
 }
 
+/// Whether a `match` **binds a name** anywhere in its patterns — a catch-all
+/// binding (`x => ...`) or a payload binding (`E::A(v) => ...`). The second
+/// half of the match ownership model, and — like `scrutinee_reads_in_place` —
+/// shared so sema and codegen cannot drift.
+///
+/// A match that binds nothing reads only the discriminant: no payload leaves
+/// the scrutinee's storage, so matching does not consume an owned binding and
+/// its scope-exit drop stays armed. That makes `E::A(_) => ...` the
+/// **non-consuming presence check**, re-matchable and readable afterwards.
+///
+/// A match that binds any name moves the scrutinee: codegen disarms the
+/// source's drop before the switch (which dominates every arm), so the whole
+/// match consumes it even though only one arm runs — and sema marks the
+/// binding moved, making a later read E0335. The granularity is per-match, not
+/// per-arm, precisely because the disarm is pre-switch.
+///
+/// Deliberately name-based, not `_`-prefix-based: `_v` is this language's
+/// privacy convention, not a wildcard marker, so `E::A(_v)` binds and consumes
+/// like any other name.
+///
+/// Note this is about the *scrutinee's* storage only. An owned **temporary**
+/// scrutinee (`match f() { ... }`) has no source binding to keep alive, so the
+/// match must tear it down regardless of what its patterns bind.
+pub fn match_binds_a_name(arms: &[MatchArm]) -> bool {
+    arms.iter().any(|arm| match &arm.pattern.kind {
+        PatternKind::Wildcard => false,
+        PatternKind::Binding(_) => true,
+        PatternKind::Variant { payload, .. } => payload
+            .iter()
+            .any(|p| matches!(p.kind, PatternKind::Binding(_))),
+    })
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExprKind {
     IntLit(u64, NumSuffix),

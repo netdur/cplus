@@ -184,28 +184,16 @@ impl Connection {
     // Returns the number of rows changed (sqlite3_changes64).
     fn execute(ref this, sql: str) -> result::Result[i64, Error] {
         let prep: result::Result[Statement, Error] = this.prepare(sql);
-        guard let result::Result[Statement, Error]::Ok(st0) = prep else {
-            match prep {
-                result::Result[Statement, Error]::Err(e) => {
-                    return result::Result[i64, Error]::Err(e);
-                }
-                result::Result[Statement, Error]::Ok(_) => {
-                    return result::Result[i64, Error]::Err(error_invalid("unreachable"));
-                }
-            }
+        guard let result::Result[Statement, Error]::Ok(st0) = prep
+            else |result::Result[Statement, Error]::Err(e)| {
+            return result::Result[i64, Error]::Err(e);
         };
         var st: Statement = st0;
         loop {
             let step_r: result::Result[Step, Error] = st.step();
-            guard let result::Result[Step, Error]::Ok(s) = step_r else {
-                match step_r {
-                    result::Result[Step, Error]::Err(e) => {
-                        return result::Result[i64, Error]::Err(e);
-                    }
-                    result::Result[Step, Error]::Ok(_) => {
-                        return result::Result[i64, Error]::Err(error_invalid("unreachable"));
-                    }
-                }
+            guard let result::Result[Step, Error]::Ok(s) = step_r
+                else |result::Result[Step, Error]::Err(e)| {
+                return result::Result[i64, Error]::Err(e);
             };
             // Done ends the loop; Row is ignored for execute().
             let done: bool = match s {
@@ -462,6 +450,14 @@ fn expect_step_done(r: result::Result[Step, Error]) {
     return;
 }
 
+fn expect_execute_ok(r: result::Result[i64, Error]) {
+    match r {
+        result::Result[i64, Error]::Ok(_) => { assert true; }
+        result::Result[i64, Error]::Err(_) => { assert false; }
+    };
+    return;
+}
+
 fn expect_step_row(r: result::Result[Step, Error]) {
     match r {
         result::Result[Step, Error]::Ok(s) => {
@@ -571,6 +567,52 @@ fn test_prepare_bad_sql_is_err() {
     match db.prepare("this is not sql !!!") {
         result::Result[Statement, Error]::Ok(_) => { assert false; }
         result::Result[Statement, Error]::Err(e) => {
+            assert e.code != ok_code();
+            assert e.message.count() > (0 as usize);
+        }
+    };
+    return;
+}
+
+// `execute` on SQL that fails to prepare must hand back a LIVE error. The
+// error travels out through `execute`'s `guard let ... else`, which is the
+// shape that used to re-match the already-consumed local: the payload's
+// destructor had run before the else body read it, so `message` arrived with
+// a freed buffer (bugs/moved-from-local-is-readable-and-double-frees.md).
+// Reading `message` here is the point of the test — a bare `code` check
+// passes even on a corrupted error.
+#[test]
+fn test_execute_bad_sql_returns_a_live_error() {
+    guard let result::Result[Connection, Error]::Ok(db0) = Connection::open_memory() else {
+        assert false;
+        return;
+    };
+    var db: Connection = db0;
+    match db.execute("this is not sql !!!") {
+        result::Result[i64, Error]::Ok(_) => { assert false; }
+        result::Result[i64, Error]::Err(e) => {
+            assert e.code != ok_code();
+            assert e.message.count() > (0 as usize);
+        }
+    };
+    return;
+}
+
+// The same path one level deeper: `execute` prepares fine, then `step` fails.
+// A UNIQUE violation surfaces at step time, so this exercises the second
+// `guard let ... else` in `execute`'s loop.
+#[test]
+fn test_execute_step_failure_returns_a_live_error() {
+    guard let result::Result[Connection, Error]::Ok(db0) = Connection::open_memory() else {
+        assert false;
+        return;
+    };
+    var db: Connection = db0;
+    expect_execute_ok(db.execute("CREATE TABLE t (k INTEGER PRIMARY KEY)"));
+    expect_execute_ok(db.execute("INSERT INTO t (k) VALUES (1)"));
+    match db.execute("INSERT INTO t (k) VALUES (1)") {
+        result::Result[i64, Error]::Ok(_) => { assert false; }
+        result::Result[i64, Error]::Err(e) => {
             assert e.code != ok_code();
             assert e.message.count() > (0 as usize);
         }
