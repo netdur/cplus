@@ -1,7 +1,7 @@
 # Bound components
 
-> Status: **spike**. Landed as `facet/bound`, behind no flag, additive: nothing
-> in the existing tier changed. See §7 for what is unresolved.
+> Additive: nothing in the existing tier changed, and a component that never
+> calls a `bind_*` modifier behaves identically.
 > Reading order: [component-model.md](component-model.md) →
 > [updates.md](updates.md) → here.
 > Depends on: [`#[watch]`](../../../docs/design/watch-structs.md).
@@ -14,7 +14,7 @@ In the normal tier a handler does two things:
 
 ```cplus
 fn inc(ref this, sender: *u8) {
-    this.n = this.n + 1;                                        // 1. state
+    this.n = this.n + 1;                                             // 1. state
     let _u: facet::Handle = facet::find("n").set_text("${this.n}");  // 2. view
 }
 ```
@@ -22,12 +22,11 @@ fn inc(ref this, sender: *u8) {
 Step 2 is the bug surface. It is easy to omit, easy to write against the wrong
 key, and it has to be repeated in every handler that touches `n` — so the number
 of places that must agree about how `n` is displayed grows with the number of
-ways `n` can change. When one of them is missed the app does not crash: a
-mutator on a missing or un-updated element is a silent no-op, so the screen just
-goes stale, and stale-by-omission reads as a bug in whatever feature owns the
-button.
+ways `n` can change. When one is missed the app does not crash: a mutator on a
+missing element is a silent no-op, so the screen just goes stale, and
+stale-by-omission reads as a bug in whatever feature owns the button.
 
-A bound component states the relationship **once**:
+A bound component states the relationship **once, at the node**:
 
 ```cplus
 fn inc(ref this, sender: *u8) { this.n = this.n + 1; return; }   // that is all
@@ -35,8 +34,8 @@ fn inc(ref this, sender: *u8) { this.n = this.n + 1; return; }   // that is all
 
 ## 2. Surface
 
-Four blocks. Only the middle two are new, and `impl T: facet::Component` is
-untouched — a component is converted by *adding*, never by editing its tree.
+Three blocks. `impl T: facet::Component` keeps its shape — the tree gains
+modifiers, it is not restructured.
 
 ```cplus
 #[watch]                                     // (a) the barrier
@@ -44,274 +43,244 @@ struct Counter { n: i32, note: text::Text, busy: bool }
 
 impl Counter {
     fn inc(ref this, sender: *u8) { this.n = this.n + 1; return; }
+    // (b) a thunk: an ordinary method computing ONE property
+    fn n_text(ref this, item: *u8) -> text::Text { return "count: ${this.n}"; }
+    fn busy_now(ref this, item: *u8) -> bool { return this.busy; }
 }
 
-impl Counter: facet::Component {             // (b) unchanged
-    fn build(ref this) -> facet::Node { /* ... .key("n") ... */ }
-}
-
-impl Counter: bound::Bound {                 // (c) the declarations
-    fn bindings(ref this, b: bound::Bindings) -> bound::Bindings {
-        return b
-            .int("n", this.n, prefix: "count: ")
-            .text("note", this.note)
-            .shown("spinner", this.busy);
+impl Counter: facet::Component {             // (c) the declarations, on the node
+    fn build(ref this) -> facet::Node {
+        return @facet {
+            label("").key("n").bind_text(this.n_text)
+            spinner().key("spinner").bind_shown(this.busy_now)
+            button("+").on_click(this.inc)
+        };
     }
-    fn on_value(ref this, field: str) { bound::changed(this); return; }
 }
 
-impl Counter: facet::Lifecycle {             // (d) the seam
-    fn on_attach(ref this) { let _m: i64 = bound::bind(this); return; }
-    fn on_detach(ref this) { bound::unbind(this); return; }
+impl Counter: bound::Bound {                 // (d) the wiring, always this line
+    fn on_value(ref this, field: str) { bound::changed(this); return; }
 }
 ```
 
-Then `run_component(Counter { ... })` as usual.
+Then `run_component(Counter { ... })` as usual. There is no `bind` call, no
+binding list, and no `Lifecycle` impl.
 
 ### 2.1 What each piece does
 
 | Piece | Job |
 |---|---|
 | `#[watch]` | Makes every field store call `on_value`. Compiler-emitted; see [watch-structs.md](../../../docs/design/watch-structs.md). |
-| `bindings` | Declares field → element links. Runs **once per attachment**, not per update. |
+| `bind_*` modifier | Declares that one property of this element is computed by this thunk. |
+| a thunk | An ordinary method, `fn(ref this, item: *u8) -> T`. Runs on demand. |
 | `on_value` | Always the same line. The barrier's landing point. |
-| `bind` | Reads the declarations and paints the initial state. Returns the number of keys that did not resolve. |
-| `unbind` | Drops the declarations. Required — see §4.2. |
+| `mount` | Links each declaration to the view it just created. |
 
-### 2.2 Why each binding takes the field as a `ref`
+### 2.2 Why the thunk is a plain method
 
-A binding has to **re-read** its field at every later push, so what it must keep
-is the field's *location*. A by-value parameter would freeze a snapshot at
-declaration time and the element would never move again; a getter function per
-field would work but means writing one, and naming one, for every bound field.
-
-`ref` is the language's existing way to say "pass me the place, not a copy", so
-the declarations take the field itself:
+A binding must **recompute** its property at every later push, so what it has to
+keep is a way to run the expression again. C+ already has one: a method, passed
+as a bound reference.
 
 ```cplus
-fn int(this, key: str, ref src: i32, prefix: str = "", suffix: str = "") -> Bindings
-//                     ^^^^^^^^^^^^ the caller writes `this.n`
+label("").key("n").bind_text(this.n_text)
 ```
 
-That keeps three properties at once:
+`this.n_text` in value position is validated by sema against the modifier's
+fn-pointer type, lowered to a synthesized erased bridge, and the receiver's
+address is filled into the modifier's trailing `cp` slot — the identical
+mechanism `on_click(this.inc)` has always used. This is its second, unrelated
+consumer, which is the best evidence the primitive belongs where it is.
 
-- **Nothing unsafe at the call site.** The single `#addr_of` per kind lives
-  inside `Bindings`, where the retention it implies is the module's documented
-  job. App code names no address and casts nothing.
-- **It is checked.** `this.nope` is E0320, and a `bool` field passed to `.int`
-  is E0302 — the compiler validates the binding, which a field-*name* string
-  could never be.
-- **The address it captures is stable.** The component is retained at a fixed
-  address for the life of its tree — already a rule of the normal tier
-  ([component-model.md](component-model.md) §"A composed child must outlive the
-  tree") — so a field address inside it is stable too.
+That buys three things at once:
 
-All three verified against the compiler: a `ref` parameter does carry the
-caller's place (for scalars and for field projections, not a copy the callee
-could take the address of), `.int("a", this.nope)` is E0320, and
-`.int("b", this.flag)` on a `bool` field is E0302.
+- **Nothing new in the language.** No intrinsic, no parser change, no sema rule.
+  An `#bind(expr)` form capturing an inline expression would be *sugar* over
+  exactly this, and sugar does not earn language surface. The day a profile shows
+  thunk re-evaluation dominating and the fix needs to know which fields a thunk
+  reads — that is genuine introspection no package can do, and it earns a `#`
+  then.
+- **It is checked.** `this.nope` does not resolve; a thunk with the wrong return
+  type is a type error at the modifier.
+- **It is testable.** `assert c.n_text(0 as *u8).equals("count: 5")` is a real
+  unit test. An inline expression could never be one.
 
-The same reasoning applies to `bind` / `unbind` / `changed` / `unresolved`: each
-takes `ref c` and recovers `cp` itself, so a component never spells its own
-address. `sync(cp)` and `unbind_at(cp)` are the address forms, for an erased
-callback that holds a bare `cp` and not the component.
+The thunk's shape is `fn(item, cp) -> T`, mirroring a handler's `(sender, ctx)`.
+The receiver comes **last** because that is where the compiler appends it. The
+`item` slot is the node's `.item()` pointer — the same per-row channel handlers
+use — so one method serves every cell of a grid.
 
 ### 2.3 The binding kinds
 
-All take the field as `ref src`, so the call is `.int("n", this.n)`.
-
-| Method | Field type | Element effect |
+| Modifier | Thunk returns | Element effect |
 |---|---|---|
-| `.text(key, src, prefix:, suffix:)` | `text::Text` | `set_text` |
-| `.int(key, src, prefix:, suffix:)` | `i32` | `set_text`, decimal |
-| `.long(key, src, prefix:, suffix:)` | `i64` | `set_text`, decimal |
-| `.value(key, src)` | `f64` | `set_value` — slider / stepper / progress / gauge |
-| `.on(key, src)` | `bool` | `set_on` — toggle / checkbox / switch |
-| `.hidden(key, src)` | `bool` | `set_hidden(v)` |
-| `.shown(key, src)` | `bool` | `set_hidden(!v)` |
+| `.bind_text(f)` | `text::Text` | `set_text` |
+| `.bind_value(f)` | `f64` | `set_value` — slider / stepper / progress / gauge |
+| `.bind_on(f)` | `bool` | `set_on` — toggle / checkbox / switch |
+| `.bind_hidden(f)` | `bool` | `set_hidden(v)` |
+| `.bind_shown(f)` | `bool` | `set_hidden(!v)` |
 
-`prefix` / `suffix` cover "count: 12 items" without inventing a format
-language. Anything richer goes through a `Text` field the component formats
-itself and binds with `.text` — writing that field fires the barrier, so the
-label still updates itself. That is also the answer for an `f64` shown as text:
-a float has no single right rendering, so `.value` is numeric-controls-only by
-design.
+There is no formatting language and no numeric kind zoo, because the thunk is an
+expression: `"count: ${this.n}"`, `"${this.first.view()} ${this.last.view()}"`,
+`this.done as f64 / this.total as f64` all just work. A value computed from two
+fields needs no derivation concept — it is one method reading two fields.
 
-Two bindings may share one key (`.hidden("note", ...)` alongside
-`.text("note", ...)`) and one field may drive several keys. The registry is a
-flat list; neither side is a map.
+`bind_hidden` / `bind_shown` are what keep conditional display out of the
+structural path: a hidden element is a scalar push, not a rebuild.
 
 ## 3. What makes it cheap: comparison, not dispatch
 
-`on_value` reports *which field* was written. The bindings deliberately ignore
-it. Each binding caches the value it last pushed, and a sync re-reads the source
+`on_value` reports *which field* was written. The rows deliberately ignore it.
+Each row caches the value it last pushed; a sync re-runs the component's thunks
 and pushes only on a real difference.
 
-Ignoring the field name buys four things:
+Ignoring the field name buys three things:
 
-1. **No unchecked strings.** A field name in a binding table would be spelled by
-   hand and validated by nothing — the same silent-miss class that `find(key,
-   cp)` was removed for (see the `find` comment in `facet.cplus`). Passing the
-   field as a `ref` instead (§2.2) makes the compiler check it.
-2. **`"*"` needs no special case.** A whole-struct assign fires the barrier once
-   with `field == "*"` ([watch-structs.md](../../../docs/design/watch-structs.md)
-   §2.4); a value comparison lands it on exactly the members that moved.
-3. **Idempotence.** `n = n`, or a handler that rewrites three fields of which two
+1. **`"*"` needs no special case.** A whole-struct assign fires the barrier once
+   with `field == "*"`
+   ([watch-structs.md](../../../docs/design/watch-structs.md) §2.4); a value
+   comparison lands it on exactly the properties that moved.
+2. **Idempotence.** `n = n`, or a handler that rewrites three fields of which two
    were already correct, costs zero native calls.
-4. **Reentrancy converges.** The static reentrancy suppression covers only
-   `on_value`'s own body, not helpers it calls, so a push that somehow provoked
-   another write would re-enter. The caches make the second pass a no-op, so it
-   terminates.
+3. **Reentrancy converges.** A push that somehow provoked another write would
+   re-enter; the caches make the second pass a no-op.
 
-The cost is one pass over that component's bindings per write: a handful of word
-compares, no tree walk, no allocation once the text caches have warmed (they are
-truncate-and-append, not replace). A component with five bindings pays five
-compares to discover that one label needs a new string.
+**No read-set, on purpose.** Knowing which fields a thunk reads would only let
+us skip work — it can never change the result, because the cache already decides
+what reaches the screen. Tracking it is the first step toward a dependency
+graph, so it stays untracked until a measurement demands it.
 
-## 4. Why the wiring sits where it does
+The cost is one pass over that component's rows per write: for each, running a
+thunk and comparing. A `bind_text` thunk allocates a `Text` per sync even when
+nothing changed. At five to ten bound properties per component that is nothing;
+for a writer touching a field in a loop, `suspend` / `resume` is the answer, and
+the caches make `resume` paint exactly the net delta.
 
-### 4.1 `bind` is called from `on_attach`, not by a runner
+## 4. Lifetimes, and why they are structural
 
-`on_attach` is fired by **every** path that puts a component on screen —
-`run_component`, `run_screen`, `present`, `switch_to`, `stage`/`attach`, and an
-`App` route ([lifecycle.md](lifecycle.md)). Binding at that seam therefore needs:
+### 4.1 A row cannot outlive its view
 
-- no change to `run_component` or `run_screen` (no second copy of twenty window
-  parameters),
-- no `Bound` bound threaded through `App`, `present`, or the router,
-- no change to `facet.cplus` at all.
+`mount` registers a row against the view it just created, and the backend's view
+release drops it — the same call destroys both. There is no discipline to
+follow and no teardown hook to forget.
 
-The whole tier is one new module. The price is the two lifecycle lines, and a
-component that comes on and off screen was implementing `Lifecycle` anyway.
+The other pointer a row holds is the component (the thunk's receiver). A `build`
+that hands out `this.method` is receiver-capturing, and sema already refuses to
+let such a method be called on a local, so that half is checked by the compiler.
 
-The alternative — a `run_bound_component` plus a bound-aware `present` plus a
-bound-aware route — would duplicate the entire runner surface to save two lines
-per component, and every future runner would have to be written twice.
+### 4.2 A binding cannot fail to resolve
 
-### 4.2 `unbind` is not hygiene
+The key never enters the update path. A row holds its view directly, because the
+view was in hand at the moment the link was made. So there is no lookup to miss,
+no `unresolved` count to check, no mistyped-key class, and no window in which an
+element shows a placeholder.
 
-The registry holds the component's **field addresses**. A binding left behind
-after its component dies is a dangling read the next time anything syncs that
-address. `unbind` in `on_detach` is what makes the tier safe, and it is the
-reason `bind` is idempotent: re-attaching a parked component re-declares from
-scratch, which also re-primes the caches so the freshly mounted tree is painted
-from current state rather than inheriting a cache describing views that no
-longer exist.
+Keys remain exactly what they are for: `find`, agents, MCP.
 
-### 4.3 `on_value` lives in the conformance block
+### 4.3 The initial paint waits for the backend
 
-`#[watch]` looks the hook up by name on the type and does not care which `impl`
-block supplies it. Putting it in `impl T: bound::Bound` makes the interlock
-two-sided — omitting it reports both:
+Registration happens during the tree walk; the first push does **not**. A push
+runs the backend's mutator, and a mutator reflows the owning tree — which does
+not exist yet while the walk is still running. Rows stay unprimed until the
+backend calls `facet::paint_new_bindings()`, which it does once the mounted tree
+is stored and reachable (`ui::set_tree_mounted_fn`).
 
-```
-error[E0361]: `#[watch] struct NoHook` has no `on_value` hook
-error[E0503]: `impl NoHook: Bound` is missing method `on_value` required by interface
-```
+This was found the hard way: painting at the end of facet's own recursion is
+still too early, because the backend has not stored the tree at that point.
 
-Only the plain hook shape is part of the contract; the snapshot shape is
-rejected here (`E0505`). Snapshots exist to coalesce a high-rate writer down to
-a repaint tick, which is a different job, and they carry a `Copy` +
-pointer-free restriction (`E0363`) that a component holding a `Text` cannot meet
-anyway.
+### 4.4 A parked component keeps painting
+
+Facet retains a parked component's views, so its rows stay valid and keep
+updating off-screen. Re-attaching shows current state with no re-registration
+and no repaint pass.
 
 ## 5. What this is not
 
-**Not reactive.** No dependency graph, no recompute, no vdom, no diff. `build`
-still runs exactly once, the tree is still retained, and the update is still
-`find(key).set_*()` — the identical keyed-direct write the handler would have
-made by hand. All that moved is *who* makes it: one declaration instead of a
-line in every handler. Nothing here reintroduces the re-render loop that
-[../README.md](../README.md) rejects.
+**Not reactive.** No dependency graph, no recompute of anything larger than one
+property, no vdom, no diff of a tree. `build` still runs exactly once and the
+update is the same in-place native write a handler would have made by hand. All
+that moved is *who* makes it.
 
-**Not two-way.** State → view only. A control's own edits arrive as handlers, the
-same as always; a bound field does not read them back. A handler that wants the
-field to track an input writes the field, and the binding closes the loop.
+The one honest concession: there *is* a diff — at the leaf, over scalars,
+against a slot list fixed before the write happens. Diffing a handful of cached
+values is a different object from reconciling an unbounded tree.
+
+**Depth 1, forever.** A thunk reads state and returns a value. It never reads
+another thunk's output. That rule, and not the absence of a vdom, is what keeps
+this from being a graph — and it is not negotiable.
+
+**A thunk computes a property, never children.** Re-evaluating structure from a
+data comparison is reconciliation. Collections stay `ui::list`, `add_child`,
+`switch_to`. If `@facet` ever grows `for row in this.rows` with re-evaluation,
+this tier has become React from the other end.
+
+**Not two-way.** State → view only. The element is a *projection* of the field;
+nothing reads it back. A control's own edits arrive as handlers, as always.
 
 **Not a replacement for the normal tier.** Anything a binding kind does not
-cover — `set_style`, `set_text_spans`, structural verbs, a native reach-through
-— is still a direct `find(key)` call in a handler. The two mix freely in one
-component.
+cover — `set_text_spans`, structural verbs, a native reach-through — is still a
+direct `find(key)` call. The two mix freely, subject to §6.
 
-## 6. Coverage
+## 6. What a bound property costs you
 
-`vendor/facet/src/bound.cplus` — 15 tests against a recording stub backend:
-initial paint, field write, handler-writes-state-only, push counting (one write
-= one push), same-value suppression, whole-struct assign, `Text` binding, `long`
-/ `value`, all three bool polarities, unresolved-key reporting, `unbind` stops
-every push, rebinding does not double-register, two instances stay independent,
-manual `sync` for interior writes, and no-backend-installed.
+**Opting in is per struct, not per field.** `#[watch]` is a struct attribute, so
+once it is on, every field write in that component runs one pass over its rows,
+including fields nothing is bound to.
 
-`vendor/facet_appkit/src/facet_appkit.cplus` — 3 end-to-end tests against real
+**A bound property belongs to its binding.** Every *other* property of the same
+element stays hand-driven: `find("n").set_style(...)` alongside a bound `text`
+is fine, because the two never touch the same thing. What breaks is
+`find("n").set_text(...)` on a bound `text` — the element changes without
+telling the row, and the row's belief about the screen is now false in the
+"already correct" direction, so it suppresses its own correction.
+
+The cache models the *screen*, not the state. The alternative — comparing
+against the element's real value via `Handle::text()` — self-heals, at the price
+of a native read per row per sync. That is a bad trade at UI write rates, so the
+escape is explicit: `bound::invalidate(this)`.
+
+## 7. Coverage
+
+`vendor/facet/src/bound.cplus` — 16 tests against a recording stub backend:
+initial paint, field write, handler-writes-state-only, a thunk spanning two
+fields, push counting (one write = one push), same-value suppression,
+whole-struct assign, value and all three bool polarities, a per-item thunk
+reading `.item()`, view-release stops every push, two instances painting
+*different* elements, manual `changed` for interior writes, `invalidate` after
+an out-of-band write, `suspend`/`resume` coalescing a 100-iteration loop, a node
+that declares nothing registering nothing, and no-backend-installed.
+
+`vendor/facet_appkit/src/facet_appkit.cplus` — 4 end-to-end tests against real
 NSViews:
 
 - a field write moves a real `NSTextField`'s string (read back through
   `Handle::text()`, which asks the located view, not a facet-side cache) and a
-  real view's `hidden` flag;
-- a detach/re-attach cycle repaints from current state;
+  real view's `hidden` flag; then `unmount_all` drops the rows with the views;
+- unmount and remount repaints the fresh tree from current state;
 - **the whole chain with nothing simulated but the click** — an `NSButton`'s
   wired target/action is fired directly, which runs the bound-method handler,
   whose field store trips the compiler's barrier, which reaches `on_value` →
-  `changed` → `find(key).set_text` → the real label.
+  `changed` → the row's thunk → the real label;
+- a direct `set_text` on a bound property goes stale until `invalidate`, while a
+  `set_background` on the same element coexists with the binding.
 
-`examples/bound_counter` — a runnable window. Its `on_attach` asserts
-`bound::bind(this) == 0`, so launching it is itself the check that the lifecycle
-seam fires late enough for every key to resolve under the real `run_component`.
+`examples/bound_counter` — a runnable window, rebuilt against this surface.
 
-`leaks --atExit` over the `facet_appkit` test root reports no allocation
-originating in this module (the remaining roots are Apple `NSXPCConnection`
-cycles, present before this work and varying run to run).
+## 8. Open
 
-Negative cases verified by hand and recorded here rather than as tests, because
-they are compile failures: missing `on_value` (E0361 + E0503, §4.3) and the
-snapshot hook shape (E0505, §4.3).
-
-## 7. Open questions
-
-1. **`impl T: Bound` without `#[watch]` — CLOSED 2026-07-27, `W0004`.** This was
-   the tier's one fail-open hole: the declarations were valid, the initial paint
-   worked, and every later write went nowhere because nothing called `on_value`.
-   It produced no diagnostic at all.
-
-   Fixed in the compiler, where it belongs — a library cannot see its consumer's
-   attributes. The rule is stated generally rather than in terms of this
-   interface: `on_value` in the watch-hook shape is a **compiler-invoked name**,
-   called only by the `#[watch]` barrier, so a struct that defines one without
-   the attribute has an unreachable method and `W0004` says so. It is the
-   fail-open half of E0361 — that error stops a `#[watch]` struct from having no
-   hook; this warning stops a hook from having no `#[watch]`.
-
-   A warning rather than an error, because a hook-shaped `on_value` may be called
-   by hand and because adding the attribute changes behaviour (every write gains
-   a call), so the author chooses. It fires only on the two exact hook shapes, so
-   `fn on_value(this) -> i32` stays an ordinary method
-   (`unwatched_struct_may_define_on_value_freely` still pins that). `cpc explain
-   W0004` documents it.
-
-   A one-line test — write a field, assert the element moved — is still the
-   strongest check, and the tests in `bound.cplus` are the template.
-
-2. **Interior writes need a manual `changed`.** `this.rows[i] = x` and
-   `(*p).v = 1` do not fire the barrier (that is `#[watch]`'s own open question
-   3), so a component doing either calls `changed(this)` itself. Fixing it
-   upstream fixes it here.
-
-3. **`unresolved` is advisory.** `bind` returns the count of keys that did not
-   resolve, but nothing forces the caller to look. It cannot be a hard failure:
-   a key inside a conditionally built branch may legitimately not exist yet,
-   which is also why the count stays re-readable afterwards. A `#[test]`
-   asserting `bind(...) == 0` is the practical guard.
-
-4. **Declaring bindings in `build` instead.** `.key("n").bind_int(#addr_of(this.n))`
-   at the node would put the two halves next to each other and remove the
-   `bindings` method. It needs `@facet` DSL work and a place to stash the
-   declaration during mount; deferred, not rejected.
-
-5. **No `usize` / `f64`-as-text kinds.** `usize` is common in component state
-   (`vec` counts) and currently needs an `i64` field or a cast into one. `f64`
-   as text needs a decimals policy. Both are additive.
-
-6. **Registry is a flat `Vec` scanned per sync.** Linear in *all* bindings of all
-   live components, filtered by `cp`. At the scale a UI has (tens), that is
-   faster than any index. If a screen ever holds thousands of bound components,
-   sort by `cp` or keep a per-`cp` offset — but measure first.
+1. **Interior writes need a manual `changed`.** `this.rows[i] = x` and
+   `(*p).v = 1` do not fire the barrier (that is `#[watch]`'s own open
+   question), so a component doing either calls `bound::changed(this)`. Fixing
+   it upstream fixes it here.
+2. **No read-set.** §3. Additive, gated on a measurement.
+3. **`bind_*` covers five properties.** Style bindings (background, foreground,
+   corner) are the obvious next set and cost one row kind each. Nothing in the
+   registry is property-specific beyond the push switch.
+4. **A slotless `mount_into` paints at its own tail.** Two call sites in the
+   backend rather than one; a third mount path would need the same line. A
+   backend that forgot it would mount blank elements, and nothing would say so.
+5. **Only the AppKit backend is wired.** A backend owes two calls:
+   `facet::paint_new_bindings()` once a mounted tree is stored, and
+   `facet::forget_view_bindings(view)` when it releases a view. `facet_gtk` has
+   neither — it does not currently build, for reasons that predate this work
+   (`gobject_gir` trips E0917), so it was not wired.

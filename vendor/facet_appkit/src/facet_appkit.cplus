@@ -1353,6 +1353,12 @@ fn install_async_pump() {
 }
 
 fn install() {
+    // State bindings: `mount` registers a row against the view it creates, and
+    // the view's release drops it. Both halves must be wired or neither is —
+    // without the release hook a row would outlive its view.
+    facet::set_resolve_flex_fn(resolve_flex_raw);
+    ui::set_view_released_fn(facet::forget_view_bindings);
+    ui::set_tree_mounted_fn(facet::paint_new_bindings);
     facet::set_list_builder(fak_list);
     facet::set_raise_fn(raise);
     facet::set_key_of_fn(key_of_impl);
@@ -1711,6 +1717,9 @@ fn mount_into(np: *facet::Node, view_ptr: *u8, width: f64, height: f64) -> f64 {
     // dividers). Any `scroll`/`split` in the tree registered a job.
     drain_post_apply();
     let f: flex::Layout = tree.layout_frame();
+    // A slotless mount (no cp, no stored tree) still has to paint its bindings,
+    // and here is where its views become reachable.
+    facet::paint_new_bindings();
     return f.height;
 }
 
@@ -3915,6 +3924,12 @@ fn flex_node_for_view(fp: *flex::Node, view: *u8) -> *flex::Node {
 // OUT of the slot tree at mount, see ui::hosted_flex_for_view). The structural
 // verbs re-run this after mounting a child: a mount can grow a registry vec
 // and move the entry a previously resolved pointer aimed into.
+// `resolve_flex` in the erased shape facet's binding registry installs: a push
+// needs the flex node so a changed string can re-measure and reflow, exactly as
+// a keyed-direct `set_text` does.
+fn resolve_flex_raw(cp: *u8, view: *u8) -> *u8 { return resolve_flex(cp, view) as *u8; }
+
+
 fn resolve_flex(cp: *u8, view: *u8) -> *flex::Node {
     match ui::tree_ptr(cp) {
         option::Option[*flex::Node]::Some(tp) => {
@@ -9392,6 +9407,11 @@ struct BoundCounter {
 }
 
 impl BoundCounter {
+    // The thunks: ordinary methods, each one expression over state. The `item`
+    // slot is the node's second app pointer; unused here.
+    fn n_text(ref this, item: *u8) -> text::Text { return "count: ${this.n}"; }
+    fn note_text(ref this, item: *u8) -> text::Text { return this.note.clone(); }
+    fn busy_now(ref this, item: *u8) -> bool { return this.busy; }
     // A handler that writes state and nothing else — the whole claim of the tier.
     fn inc(ref this, sender: *u8) { this.n = this.n + 1; return; }
 }
@@ -9399,27 +9419,16 @@ impl BoundCounter {
 impl BoundCounter: facet::Component {
     fn build(ref this) -> facet::Node {
         var b: facet::Builder = facet::Builder::new();
-        b.add(facet::label("placeholder").key("bc:n"));
-        b.add(facet::label("placeholder").key("bc:note"));
-        b.add(facet::label("spinner").key("bc:spinner"));
+        b.add(facet::label("").key("bc:n").bind_text(this.n_text));
+        b.add(facet::label("").key("bc:note").bind_text(this.note_text));
+        b.add(facet::label("spinner").key("bc:spinner").bind_shown(this.busy_now));
         b.add(facet::button("+1").on_click(this.inc).key("bc:inc"));
         return facet::vstack(b);
     }
 }
 
 impl BoundCounter: bound::Bound {
-    fn bindings(ref this, b: bound::Bindings) -> bound::Bindings {
-        return b
-            .int("bc:n", this.n, prefix: "count: ")
-            .text("bc:note", this.note)
-            .shown("bc:spinner", this.busy);
-    }
     fn on_value(ref this, field: str) { bound::changed(this); return; }
-}
-
-impl BoundCounter: facet::Lifecycle {
-    fn on_attach(ref this) { let _m: i64 = bound::bind(this); return; }
-    fn on_detach(ref this) { bound::unbind(this); return; }
 }
 
 static BOUND_COUNTER: BoundCounter = #zero::[BoundCounter]();
@@ -9435,13 +9444,10 @@ fn bound_component_updates_real_appkit_views_on_a_field_write() {
     let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
     let _h: f64 = mount_component(BOUND_COUNTER.build, host: host.raw());
 
-    // `build` mounted the literal string "placeholder"; nothing has bound yet.
-    assert facet::find("bc:n").text().equals("placeholder");
-
-    // The lifecycle seam is where binding happens. `run_component` fires this
-    // hook itself; the test stands in for the runner.
-    BOUND_COUNTER.on_attach();
-    assert bound::unresolved(BOUND_COUNTER) == (0 as i64);
+    // `mount` registered each binding against the view it created and painted
+    // it — there is no attach step, no `bind` call, and no window in which the
+    // element shows a placeholder.
+    assert bound::count(BOUND_COUNTER) == (3 as i64);
     assert facet::find("bc:n").text().equals("count: 0");
     assert facet::find("bc:note").text().equals("start");
 
@@ -9457,17 +9463,19 @@ fn bound_component_updates_real_appkit_views_on_a_field_write() {
     BOUND_COUNTER.busy = true;
     assert !ak::View::from_raw(facet::find("bc:spinner").view()).is_hidden();
 
-    BOUND_COUNTER.on_detach();
-    BOUND_COUNTER.n = 99;                       // unbound: the view must not move
-    assert facet::find("bc:n").text().equals("count: 7");
+    // Dropping the tree releases the views, and the rows go with them — the
+    // lifetime invariant, held against real AppKit teardown rather than a stub.
     unmount_all();
+    assert bound::count(BOUND_COUNTER) == (0 as i64);
+    BOUND_COUNTER.n = 99;                       // no rows: nothing to push to
 }
 
 #[test]
-fn bound_component_rebinds_after_a_detach_and_reattach() {
-    // A parked component comes back with its addresses intact but its caches
-    // re-primed, so the re-mounted tree is repainted from current state rather
-    // than inheriting a cache that matches views which no longer exist.
+fn bound_component_repaints_a_freshly_remounted_tree() {
+    // Unmount and mount again: the old rows died with the old views, the new
+    // mount registers fresh ones, and the new tree is painted from CURRENT
+    // state. No stale row survives to write into a released view, and no
+    // re-priming step is needed because the rows are new.
     unmount_all();
     install();
     BOUND_COUNTER.n = 0;
@@ -9476,22 +9484,19 @@ fn bound_component_rebinds_after_a_detach_and_reattach() {
 
     let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
     let _h: f64 = mount_component(BOUND_COUNTER.build, host: host.raw());
-    BOUND_COUNTER.on_attach();
     BOUND_COUNTER.n = 3;
     assert facet::find("bc:n").text().equals("count: 3");
 
-    BOUND_COUNTER.on_detach();
     unmount_all();
+    assert bound::count(BOUND_COUNTER) == (0 as i64);
 
-    // Fresh tree, same component instance and same field addresses.
+    // Fresh tree, same component instance.
     let host2 = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
     let _h2: f64 = mount_component(BOUND_COUNTER.build, host: host2.raw());
-    assert facet::find("bc:n").text().equals("placeholder");
-    BOUND_COUNTER.on_attach();
+    assert bound::count(BOUND_COUNTER) == (3 as i64);
     assert facet::find("bc:n").text().equals("count: 3");
     BOUND_COUNTER.n = 4;
     assert facet::find("bc:n").text().equals("count: 4");
-    BOUND_COUNTER.on_detach();
     unmount_all();
 }
 
@@ -9499,7 +9504,7 @@ fn bound_component_rebinds_after_a_detach_and_reattach() {
 fn bound_component_updates_on_a_real_click_through_target_action() {
     // The full chain in one test, with nothing simulated but the click itself:
     // AppKit target/action -> bound-method handler -> field store -> compiler
-    // write barrier -> on_value -> changed -> find(key).set_text -> NSTextField.
+    // write barrier -> on_value -> changed -> the row's thunk -> NSTextField.
     unmount_all();
     install();
     BOUND_COUNTER.n = 0;
@@ -9508,7 +9513,6 @@ fn bound_component_updates_on_a_real_click_through_target_action() {
 
     let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
     let _h: f64 = mount_component(BOUND_COUNTER.build, host: host.raw());
-    BOUND_COUNTER.on_attach();
     assert facet::find("bc:n").text().equals("count: 0");
 
     let btn: *u8 = facet::find("bc:inc").view();
@@ -9520,8 +9524,40 @@ fn bound_component_updates_on_a_real_click_through_target_action() {
     rt::msg_void_id(tgt, act, btn);
     rt::msg_void_id(tgt, act, btn);
     assert facet::find("bc:n").text().equals("count: 3");
+    unmount_all();
+}
 
-    BOUND_COUNTER.on_detach();
+#[test]
+fn bound_direct_write_to_a_bound_property_needs_invalidate() {
+    // The one rule a bound property imposes, held against a real view: the
+    // element is a PROJECTION of the field. Writing it directly leaves the row
+    // believing something false, and that false belief suppresses its own
+    // correction until `invalidate`.
+    unmount_all();
+    install();
+    BOUND_COUNTER.n = 5;
+    BOUND_COUNTER.note = text::from_str("start");
+    BOUND_COUNTER.busy = false;
+
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
+    let _h: f64 = mount_component(BOUND_COUNTER.build, host: host.raw());
+    assert facet::find("bc:n").text().equals("count: 5");
+
+    // Out of band, straight at the element.
+    let _u: facet::Handle = facet::find("bc:n").set_text("tampered");
+    assert facet::find("bc:n").text().equals("tampered");
+    BOUND_COUNTER.n = 5;                    // same value: the cache suppresses
+    assert facet::find("bc:n").text().equals("tampered");
+
+    bound::invalidate(BOUND_COUNTER);
+    bound::changed(BOUND_COUNTER);
+    assert facet::find("bc:n").text().equals("count: 5");
+
+    // A DIFFERENT property of the same element is not the binding's business:
+    // a style write alongside a bound text is fine and survives a repaint.
+    let _s: facet::Handle = facet::find("bc:note").set_background(facet::Color::accent());
+    BOUND_COUNTER.note = text::from_str("moved");
+    assert facet::find("bc:note").text().equals("moved");
     unmount_all();
 }
 
