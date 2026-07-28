@@ -793,6 +793,8 @@ struct Binds {
     on: fn(*u8, *u8) -> bool,           opaque on_cp: *u8,
     hidden: fn(*u8, *u8) -> bool,       opaque hidden_cp: *u8,
     shown: fn(*u8, *u8) -> bool,        opaque shown_cp: *u8,
+    background: fn(*u8, *u8) -> Color,  opaque background_cp: *u8,
+    foreground: fn(*u8, *u8) -> Color,  opaque foreground_cp: *u8,
 }
 
 impl Binds {
@@ -803,6 +805,8 @@ impl Binds {
             on: 0 as fn(*u8, *u8) -> bool,         on_cp: 0 as *u8,
             hidden: 0 as fn(*u8, *u8) -> bool,     hidden_cp: 0 as *u8,
             shown: 0 as fn(*u8, *u8) -> bool,      shown_cp: 0 as *u8,
+            background: 0 as fn(*u8, *u8) -> Color, background_cp: 0 as *u8,
+            foreground: 0 as fn(*u8, *u8) -> Color, foreground_cp: 0 as *u8,
         };
     }
 
@@ -2513,6 +2517,7 @@ impl Handle {
     // the color / border / corner_radius / font fields today; other `Style`
     // fields take effect as a backend gains live support for them.
     fn set_style(this, s: Style) -> Handle {
+        _bind_note_style_conflict(this._view, s);
         let f: fn(Handle, Style) -> bool = SET_STYLE_FN;
         if f != (0 as fn(Handle, Style) -> bool) { let _ok: bool = f(this, s); }
         return this;
@@ -3021,6 +3026,8 @@ fn prop_value() -> u32 { return 1 as u32; }
 fn prop_on() -> u32 { return 2 as u32; }
 fn prop_hidden() -> u32 { return 3 as u32; }
 fn prop_shown() -> u32 { return 4 as u32; }
+fn prop_background() -> u32 { return 5 as u32; }
+fn prop_foreground() -> u32 { return 6 as u32; }
 
 // One registered link. Exactly one thunk slot is live, selected by `_prop`;
 // three typed slots beat one erased pointer plus casts.
@@ -3039,10 +3046,21 @@ struct _BindRow {
     _f_text: fn(*u8, *u8) -> text::Text,
     _f_num: fn(*u8, *u8) -> f64,
     _f_bool: fn(*u8, *u8) -> bool,
+    _f_color: fn(*u8, *u8) -> Color,
     _txt: text::Text,       // last pushed body   — prop_text
     _num: f64,              // last pushed number — prop_value
     _flag: bool,            // last pushed flag   — prop_on / _hidden / _shown
+    _col: Color,            // last pushed color  — prop_background / _foreground
     _primed: bool,
+}
+
+// Two colors are the same push when every channel matches. Compared rather than
+// trusted by token alone: an `adaptive` pair (token 254) carries a second set of
+// channels, and a `rgb` color carries no meaningful token at all.
+fn _same_color(a: Color, b: Color) -> bool {
+    if a.token != b.token { return false; }
+    if a.r != b.r || a.g != b.g || a.b != b.b || a.a != b.a { return false; }
+    return a.r2 == b.r2 && a.g2 == b.g2 && a.b2 == b.b2 && a.a2 == b.a2;
 }
 
 static _BIND_ROWS: vec::Vec[_BindRow] = #zero::[vec::Vec[_BindRow]]();
@@ -3064,7 +3082,9 @@ fn node_binds_any(np: *Node) -> bool {
     if { (*np).binds.value } != (0 as fn(*u8, *u8) -> f64) { return true; }
     if { (*np).binds.on } != (0 as fn(*u8, *u8) -> bool) { return true; }
     if { (*np).binds.hidden } != (0 as fn(*u8, *u8) -> bool) { return true; }
-    return { (*np).binds.shown } != (0 as fn(*u8, *u8) -> bool);
+    if { (*np).binds.shown } != (0 as fn(*u8, *u8) -> bool) { return true; }
+    if { (*np).binds.background } != (0 as fn(*u8, *u8) -> Color) { return true; }
+    return { (*np).binds.foreground } != (0 as fn(*u8, *u8) -> Color);
 }
 
 // ---- catching a direct write to a bound property ---------------------------
@@ -3096,6 +3116,14 @@ fn _same_property(a: u32, b: u32) -> bool {
     if a == b { return true; }
     if a == prop_hidden() && b == prop_shown() { return true; }
     return a == prop_shown() && b == prop_hidden();
+}
+
+// A style write carries a whole `Style`, so it collides with whichever style
+// property the set fields name.
+fn _bind_note_style_conflict(view: *u8, s: Style) {
+    if s.bg.token != (0 as u32) { _bind_note_conflict(view, prop_background()); }
+    if s.fg.token != (0 as u32) { _bind_note_conflict(view, prop_foreground()); }
+    return;
 }
 
 fn _bind_note_conflict(view: *u8, prop: u32) {
@@ -3132,12 +3160,14 @@ fn _bind_handle(cp: *u8, view: *u8) -> Handle {
 fn _bind_add(cp: *u8, view: *u8, item: *u8, prop: u32,
              ft: fn(*u8, *u8) -> text::Text,
              fn_: fn(*u8, *u8) -> f64,
-             fb: fn(*u8, *u8) -> bool) {
+             fb: fn(*u8, *u8) -> bool,
+             fc: fn(*u8, *u8) -> Color) {
     let reg: *vec::Vec[_BindRow] = #addr_of(_BIND_ROWS);
     (*reg).append(_BindRow {
         _cp: cp, _view: view, _item: item, _prop: prop,
-        _f_text: ft, _f_num: fn_, _f_bool: fb,
-        _txt: text::from_str(""), _num: 0.0f64, _flag: false, _primed: false,
+        _f_text: ft, _f_num: fn_, _f_bool: fb, _f_color: fc,
+        _txt: text::from_str(""), _num: 0.0f64, _flag: false,
+        _col: Color::none(), _primed: false,
     });
     return;
 }
@@ -3151,21 +3181,28 @@ fn register_binds(np: *Node, view: *u8) {
     let nt: fn(*u8, *u8) -> text::Text = 0 as fn(*u8, *u8) -> text::Text;
     let nn: fn(*u8, *u8) -> f64 = 0 as fn(*u8, *u8) -> f64;
     let nb: fn(*u8, *u8) -> bool = 0 as fn(*u8, *u8) -> bool;
+    let nc: fn(*u8, *u8) -> Color = 0 as fn(*u8, *u8) -> Color;
 
     if { (*np).binds.text } != nt {
-        _bind_add({ (*np).binds.text_cp }, view, item, prop_text(), { (*np).binds.text }, nn, nb);
+        _bind_add({ (*np).binds.text_cp }, view, item, prop_text(), { (*np).binds.text }, nn, nb, nc);
     }
     if { (*np).binds.value } != nn {
-        _bind_add({ (*np).binds.value_cp }, view, item, prop_value(), nt, { (*np).binds.value }, nb);
+        _bind_add({ (*np).binds.value_cp }, view, item, prop_value(), nt, { (*np).binds.value }, nb, nc);
     }
     if { (*np).binds.on } != nb {
-        _bind_add({ (*np).binds.on_cp }, view, item, prop_on(), nt, nn, { (*np).binds.on });
+        _bind_add({ (*np).binds.on_cp }, view, item, prop_on(), nt, nn, { (*np).binds.on }, nc);
     }
     if { (*np).binds.hidden } != nb {
-        _bind_add({ (*np).binds.hidden_cp }, view, item, prop_hidden(), nt, nn, { (*np).binds.hidden });
+        _bind_add({ (*np).binds.hidden_cp }, view, item, prop_hidden(), nt, nn, { (*np).binds.hidden }, nc);
     }
     if { (*np).binds.shown } != nb {
-        _bind_add({ (*np).binds.shown_cp }, view, item, prop_shown(), nt, nn, { (*np).binds.shown });
+        _bind_add({ (*np).binds.shown_cp }, view, item, prop_shown(), nt, nn, { (*np).binds.shown }, nc);
+    }
+    if { (*np).binds.background } != nc {
+        _bind_add({ (*np).binds.background_cp }, view, item, prop_background(), nt, nn, nb, { (*np).binds.background });
+    }
+    if { (*np).binds.foreground } != nc {
+        _bind_add({ (*np).binds.foreground_cp }, view, item, prop_foreground(), nt, nn, nb, { (*np).binds.foreground });
     }
     // NOT painted here. A push runs the backend's mutator, which reflows the
     // owning tree — and during the mount walk that tree is half-built and not
@@ -3387,6 +3424,7 @@ fn _bind_push_at(i: usize) {
     var ft: fn(*u8, *u8) -> text::Text = 0 as fn(*u8, *u8) -> text::Text;
     var fnum: fn(*u8, *u8) -> f64 = 0 as fn(*u8, *u8) -> f64;
     var fb: fn(*u8, *u8) -> bool = 0 as fn(*u8, *u8) -> bool;
+    var fc: fn(*u8, *u8) -> Color = 0 as fn(*u8, *u8) -> Color;
     match (*reg).at_ptr(i) {
         option::Option[*_BindRow]::Some(rp) => {
             cp = { (*rp)._cp };
@@ -3397,6 +3435,7 @@ fn _bind_push_at(i: usize) {
             ft = { (*rp)._f_text };
             fnum = { (*rp)._f_num };
             fb = { (*rp)._f_bool };
+            fc = { (*rp)._f_color };
         }
         option::Option[*_BindRow]::None => { return; }
     }
@@ -3448,6 +3487,31 @@ fn _bind_push_at(i: usize) {
         match (*reg).at_ptr(i) {
             option::Option[*_BindRow]::Some(rp) => {
                 { (*rp)._num = cur; }
+                { (*rp)._primed = true; }
+            }
+            option::Option[*_BindRow]::None => { }
+        }
+        return;
+    }
+
+    if prop == prop_background() || prop == prop_foreground() {
+        let cur: Color = fc(item, cp);
+        if primed {
+            var same: bool = false;
+            match (*reg).at_ptr(i) {
+                option::Option[*_BindRow]::Some(rp) => { same = _same_color({ (*rp)._col }, cur); }
+                option::Option[*_BindRow]::None => { return; }
+            }
+            if same { return; }
+        }
+        _BIND_PUSHING = true;
+        let ch: Handle = _bind_handle(cp, view);
+        if prop == prop_background() { let _a: Handle = ch.set_background(cur); }
+        else { let _b: Handle = ch.set_foreground_color(cur); }
+        _BIND_PUSHING = false;
+        match (*reg).at_ptr(i) {
+            option::Option[*_BindRow]::Some(rp) => {
+                { (*rp)._col = cur; }
                 { (*rp)._primed = true; }
             }
             option::Option[*_BindRow]::None => { }
@@ -4121,6 +4185,25 @@ impl Node {
         var n: Node = this;
         n.binds.shown = f;
         n.binds.shown_cp = cp;
+        return n;
+    }
+
+    // A state-driven colour. This is the case that otherwise forces view code
+    // back into a handler — a status dot that goes green or red, a row that
+    // highlights when selected — so it is bound rather than left to
+    // `find(key).set_background(...)`. Rides the same live-restyle path
+    // (`set_style` with one field set), so it composes with a hand-written
+    // restyle of any OTHER field on the same element.
+    fn bind_background(take this, f: fn(*u8, *u8) -> Color, cp: *u8 = 0 as *u8) -> Node {
+        var n: Node = this;
+        n.binds.background = f;
+        n.binds.background_cp = cp;
+        return n;
+    }
+    fn bind_foreground(take this, f: fn(*u8, *u8) -> Color, cp: *u8 = 0 as *u8) -> Node {
+        var n: Node = this;
+        n.binds.foreground = f;
+        n.binds.foreground_cp = cp;
         return n;
     }
 

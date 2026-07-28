@@ -119,6 +119,8 @@ use — so one method serves every cell of a grid.
 | `.bind_on(f)` | `bool` | `set_on` — toggle / checkbox / switch |
 | `.bind_hidden(f)` | `bool` | `set_hidden(v)` |
 | `.bind_shown(f)` | `bool` | `set_hidden(!v)` |
+| `.bind_background(f)` | `Color` | `set_background` — live restyle |
+| `.bind_foreground(f)` | `Color` | `set_foreground_color` — live restyle |
 
 There is no formatting language and no numeric kind zoo, because the thunk is an
 expression: `"count: ${this.n}"`, `"${this.first.view()} ${this.last.view()}"`,
@@ -127,6 +129,14 @@ fields needs no derivation concept — it is one method reading two fields.
 
 `bind_hidden` / `bind_shown` are what keep conditional display out of the
 structural path: a hidden element is a scalar push, not a rebuild.
+
+The two colour kinds exist because state-driven colour is the case that
+otherwise drags view code back into handlers — a status dot that goes green or
+amber, a row that highlights when selected. They ride the same live-restyle path
+(`set_style` with one field set), so a bound background composes with a
+hand-written restyle of any *other* style field on the same element. Corner
+radius and border are deliberately not bound: they are layout-ish constants in
+practice, and nothing has asked for them to move with state.
 
 ## 3. What makes it cheap: comparison, not dispatch
 
@@ -264,14 +274,16 @@ the keyed-direct path is hot. Off, it costs one bool load. Turn it on in tests
 and during development.
 
 It reports only a genuine collision: a binding's own push does not report
-itself, a *different* property of a bound element (a `set_style` next to a bound
-`text`) is not a collision, and an unbound element is never reported. `hidden`
-and `shown` drive one native property from opposite polarities, so a direct
-`set_hidden` collides with either.
+itself, a *different* property of a bound element (a `set_font` next to a bound
+`text`, or a foreground write next to a bound background) is not a collision,
+and an unbound element is never reported. `hidden` and `shown` drive one native
+property from opposite polarities, so a direct `set_hidden` collides with
+either. A `set_style` carries a whole `Style`, so it is checked against
+whichever style property its set fields name — and only those.
 
 ## 7. Coverage
 
-`vendor/facet/src/bound.cplus` — 19 tests against a recording stub backend:
+`vendor/facet/src/bound.cplus` — 21 tests against a recording stub backend:
 initial paint, field write, handler-writes-state-only, a thunk spanning two
 fields, push counting (one write = one push), same-value suppression,
 whole-struct assign, value and all three bool polarities, a per-item thunk
@@ -282,12 +294,17 @@ that declares nothing registering nothing, no-backend-installed, and the
 conflict check (counting a direct write to a bound property, both `hidden`
 polarities, not reporting a binding's own push or a different property or an
 unbound element) plus its being off by default, and `unpainted_bindings`
-reporting rows registered but not yet painted.
+reporting rows registered but not yet painted, colour bindings following
+state (with a constant thunk pushing only once), and a style write to a bound
+colour counting as a conflict while the same element's other style field does
+not.
 
 `vendor/facet_appkit/src/facet_appkit.cplus` — 5 end-to-end tests against real
 NSViews:
 
-- a field write moves a real `NSTextField`'s string (read back through
+- a field write moves a real `NSTextField`'s string, and a bound colour moves
+  a real view through the live-restyle path (read back from the backend's paint
+  note) (read back through
   `Handle::text()`, which asks the located view, not a facet-side cache) and a
   real view's `hidden` flag; then `unmount_all` drops the rows with the views;
 - unmount and remount repaints the fresh tree from current state;
@@ -323,9 +340,11 @@ are compile failures rather than tests:
    question), so a component doing either calls `bound::changed(this)`. Fixing
    it upstream fixes it here.
 2. **No read-set.** §3. Additive, gated on a measurement.
-3. **`bind_*` covers five properties.** Style bindings (background, foreground,
-   corner) are the obvious next set and cost one row kind each. Nothing in the
-   registry is property-specific beyond the push switch.
+3. **`bind_*` covers seven properties** — four portable mutators plus the two
+   colours. Anything else (`set_font`, `set_text_spans`, corner, border) stays a
+   direct `find(key)` call. Adding one is a row kind and a push arm; the tier
+   should grow only when a case actually drags view code back into a handler,
+   which is the argument the colours won.
 4. **A mount path that never fires the tree-mounted hook mounts blank
    elements** — they stay blank until the first field write. Every path in the
    AppKit backend now fires the one hook (`ui::run_tree_mounted_hook`), so a

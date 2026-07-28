@@ -9414,6 +9414,10 @@ impl BoundCounter {
     fn n_text(ref this, item: *u8) -> text::Text { return "count: ${this.n}"; }
     fn note_text(ref this, item: *u8) -> text::Text { return this.note.clone(); }
     fn busy_now(ref this, item: *u8) -> bool { return this.busy; }
+    fn dot_color(ref this, item: *u8) -> facet::Color {
+        if this.busy { return facet::Color::warning(); }
+        return facet::Color::success();
+    }
     // A handler that writes state and nothing else — the whole claim of the tier.
     fn inc(ref this, sender: *u8) { this.n = this.n + 1; return; }
 }
@@ -9422,6 +9426,7 @@ impl BoundCounter: facet::Component {
     fn build(ref this) -> facet::Node {
         var b: facet::Builder = facet::Builder::new();
         b.add(facet::label("").key("bc:n").bind_text(this.n_text));
+        b.add(facet::label("dot").key("bc:dot").bind_background(this.dot_color));
         b.add(facet::label("").key("bc:note").bind_text(this.note_text));
         b.add(facet::label("spinner").key("bc:spinner").bind_shown(this.busy_now));
         b.add(facet::button("+1").on_click(this.inc).key("bc:inc"));
@@ -9449,7 +9454,7 @@ fn bound_component_updates_real_appkit_views_on_a_field_write() {
     // `mount` registered each binding against the view it created and painted
     // it — there is no attach step, no `bind` call, and no window in which the
     // element shows a placeholder.
-    assert bound::count(BOUND_COUNTER) == (3 as i64);
+    assert bound::count(BOUND_COUNTER) == (4 as i64);
     // Every registered row painted — i.e. this mount path fired the hook.
     assert facet::unpainted_bindings() == (0 as i64);
     assert facet::find("bc:n").text().equals("count: 0");
@@ -9464,8 +9469,13 @@ fn bound_component_updates_real_appkit_views_on_a_field_write() {
 
     // A bool binding reaches the real view's `hidden` flag.
     assert ak::View::from_raw(facet::find("bc:spinner").view()).is_hidden();
+    // A colour binding reaches the real restyle path, read back through the
+    // paint note the backend records against the view.
+    let dot: *u8 = facet::find("bc:dot").view();
+    assert t_note_bg_token(dot) == { facet::Color::success().token };
     BOUND_COUNTER.busy = true;
     assert !ak::View::from_raw(facet::find("bc:spinner").view()).is_hidden();
+    assert t_note_bg_token(dot) == { facet::Color::warning().token };
 
     // Dropping the tree releases the views, and the rows go with them — the
     // lifetime invariant, held against real AppKit teardown rather than a stub.
@@ -9497,7 +9507,7 @@ fn bound_component_repaints_a_freshly_remounted_tree() {
     // Fresh tree, same component instance.
     let host2 = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
     let _h2: f64 = mount_component(BOUND_COUNTER.build, host: host2.raw());
-    assert bound::count(BOUND_COUNTER) == (3 as i64);
+    assert bound::count(BOUND_COUNTER) == (4 as i64);
     assert facet::find("bc:n").text().equals("count: 3");
     BOUND_COUNTER.n = 4;
     assert facet::find("bc:n").text().equals("count: 4");
