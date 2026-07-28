@@ -182,11 +182,16 @@ Keys remain exactly what they are for: `find`, agents, MCP.
 Registration happens during the tree walk; the first push does **not**. A push
 runs the backend's mutator, and a mutator reflows the owning tree — which does
 not exist yet while the walk is still running. Rows stay unprimed until the
-backend calls `facet::paint_new_bindings()`, which it does once the mounted tree
-is stored and reachable (`ui::set_tree_mounted_fn`).
+backend fires the tree-mounted hook, which it does once the mounted tree is
+stored and reachable (`ui::set_tree_mounted_fn` → `facet::paint_new_bindings`).
 
 This was found the hard way: painting at the end of facet's own recursion is
 still too early, because the backend has not stored the tree at that point.
+
+Every mount route goes through that one hook — the slot paths and the slotless
+`mount_into` alike — so a backend has one thing to wire rather than one per
+route. `facet::unpainted_bindings()` counts rows that were registered and never
+painted, which is what a missed route looks like (§8.4).
 
 ### 4.4 A parked component keeps painting
 
@@ -266,7 +271,7 @@ and `shown` drive one native property from opposite polarities, so a direct
 
 ## 7. Coverage
 
-`vendor/facet/src/bound.cplus` — 18 tests against a recording stub backend:
+`vendor/facet/src/bound.cplus` — 19 tests against a recording stub backend:
 initial paint, field write, handler-writes-state-only, a thunk spanning two
 fields, push counting (one write = one push), same-value suppression,
 whole-struct assign, value and all three bool polarities, a per-item thunk
@@ -276,9 +281,10 @@ an out-of-band write, `suspend`/`resume` coalescing a 100-iteration loop, a node
 that declares nothing registering nothing, no-backend-installed, and the
 conflict check (counting a direct write to a bound property, both `hidden`
 polarities, not reporting a binding's own push or a different property or an
-unbound element) plus its being off by default.
+unbound element) plus its being off by default, and `unpainted_bindings`
+reporting rows registered but not yet painted.
 
-`vendor/facet_appkit/src/facet_appkit.cplus` — 4 end-to-end tests against real
+`vendor/facet_appkit/src/facet_appkit.cplus` — 5 end-to-end tests against real
 NSViews:
 
 - a field write moves a real `NSTextField`'s string (read back through
@@ -289,6 +295,9 @@ NSViews:
   wired target/action is fired directly, which runs the bound-method handler,
   whose field store trips the compiler's barrier, which reaches `on_value` →
   `changed` → the row's thunk → the real label;
+- the slotless `mount_into` route paints too — and since it registers no slot,
+  `find` cannot address that tree at all, so a binding is the only thing that
+  can update it;
 - a direct `set_text` on a bound property goes stale until `invalidate`, is
   counted by the conflict check, and a `set_background` on the same element
   coexists with the binding and is not counted.
@@ -317,9 +326,13 @@ are compile failures rather than tests:
 3. **`bind_*` covers five properties.** Style bindings (background, foreground,
    corner) are the obvious next set and cost one row kind each. Nothing in the
    registry is property-specific beyond the push switch.
-4. **A slotless `mount_into` paints at its own tail.** Two call sites in the
-   backend rather than one; a third mount path would need the same line. A
-   backend that forgot it would mount blank elements, and nothing would say so.
+4. **A mount path that never fires the tree-mounted hook mounts blank
+   elements** — they stay blank until the first field write. Every path in the
+   AppKit backend now fires the one hook (`ui::run_tree_mounted_hook`), so a
+   backend wires a single thing, and `facet::unpainted_bindings()` reports any
+   row that was registered and never painted. `assert
+   facet::unpainted_bindings() == 0` after mounting is the guard; both real
+   mount paths assert it.
 5. **Only the AppKit backend is wired.** A backend owes two calls:
    `facet::paint_new_bindings()` once a mounted tree is stored, and
    `facet::forget_view_bindings(view)` when it releases a view. `facet_gtk` has

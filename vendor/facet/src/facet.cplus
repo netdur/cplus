@@ -3174,6 +3174,28 @@ fn register_binds(np: *Node, view: *u8) {
     return;
 }
 
+// How many registered rows have never painted. Zero after any mount path
+// completes; non-zero means a mount path did not fire the tree-mounted hook,
+// which shows up as elements that stay blank until the first field write —
+// the one fail-open left in the tier, and this is what makes it loud.
+// `assert facet::unpainted_bindings() == 0` after mounting is the guard.
+fn unpainted_bindings() -> i64 {
+    let reg: *vec::Vec[_BindRow] = #addr_of(_BIND_ROWS);
+    let n: usize = { (*reg).count() };
+    var c: i64 = 0 as i64;
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*reg).at_ptr(i) {
+            option::Option[*_BindRow]::Some(rp) => {
+                if !{ (*rp)._primed } { c = c + (1 as i64); }
+            }
+            option::Option[*_BindRow]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return c;
+}
+
 // Paint every row that has not pushed yet.
 //
 // Called by the BACKEND once a mounted tree is stored and reachable — not at

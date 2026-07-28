@@ -603,6 +603,34 @@ fn bound_suspend_coalesces_a_write_loop() {
 }
 
 #[test]
+fn bound_unpainted_reports_a_mount_path_that_did_not_paint() {
+    // Registration and the first paint are separate, because a push cannot run
+    // during the tree walk. That leaves one fail-open: a mount path that never
+    // fires the tree-mounted hook registers rows that stay blank until the
+    // first field write. `unpainted_bindings` is what makes it loud.
+    _probe_install();
+    var p: _Probe = _Probe::fresh();
+    var n0: core::Node = core::label("").bind_text(p.n_text);
+    core::register_binds(#addr_of(n0), _view(0 as i64));
+    var n1: core::Node = core::label("").bind_text(p.total_text);
+    core::register_binds(#addr_of(n1), _view(1 as i64));
+    // Registered, not yet painted — what a forgotten hook looks like.
+    assert core::unpainted_bindings() == (2 as i64);
+    assert _text_at(0 as i64).equals("");
+
+    core::paint_new_bindings();
+    assert core::unpainted_bindings() == (0 as i64);
+    assert _text_at(0 as i64).equals("count: 0");
+    assert _text_at(1 as i64).equals("0 items");
+
+    // A row that has painted stays painted: a later write does not make it
+    // unpainted again, so the count means "never painted", not "dirty".
+    p.n = 4;
+    assert core::unpainted_bindings() == (0 as i64);
+    _probe_remove();
+}
+
+#[test]
 fn bound_conflict_check_counts_a_direct_write_to_a_bound_property() {
     // The rule "a bound property belongs to its binding" is otherwise
     // invisible. With the check on, the registry reports the collision.

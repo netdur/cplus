@@ -1718,8 +1718,10 @@ fn mount_into(np: *facet::Node, view_ptr: *u8, width: f64, height: f64) -> f64 {
     drain_post_apply();
     let f: flex::Layout = tree.layout_frame();
     // A slotless mount (no cp, no stored tree) still has to paint its bindings,
-    // and here is where its views become reachable.
-    facet::paint_new_bindings();
+    // and here is where its views become reachable. Fired through the SAME hook
+    // the slot paths use, so a backend wires one thing and every mount path
+    // reaches it.
+    ui::run_tree_mounted_hook();
     return f.height;
 }
 
@@ -9448,6 +9450,8 @@ fn bound_component_updates_real_appkit_views_on_a_field_write() {
     // it — there is no attach step, no `bind` call, and no window in which the
     // element shows a placeholder.
     assert bound::count(BOUND_COUNTER) == (3 as i64);
+    // Every registered row painted — i.e. this mount path fired the hook.
+    assert facet::unpainted_bindings() == (0 as i64);
     assert facet::find("bc:n").text().equals("count: 0");
     assert facet::find("bc:note").text().equals("start");
 
@@ -9524,6 +9528,34 @@ fn bound_component_updates_on_a_real_click_through_target_action() {
     rt::msg_void_id(tgt, act, btn);
     rt::msg_void_id(tgt, act, btn);
     assert facet::find("bc:n").text().equals("count: 3");
+    unmount_all();
+}
+
+#[test]
+fn bound_slotless_mount_into_also_paints() {
+    // `mount_component` with no ctx takes the OTHER path — `mount_into`, no
+    // slot, no stored tree. It fires the same hook, so its bindings paint too.
+    // This is the path that would silently mount blank elements if a mount
+    // route forgot the call.
+    unmount_all();
+    install();
+    BOUND_COUNTER.n = 12;
+    BOUND_COUNTER.note = text::from_str("slotless");
+    BOUND_COUNTER.busy = false;
+
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
+    var d: facet::Node = BOUND_COUNTER.build();
+    let _h: f64 = mount_into(#addr_of(d), host.raw(), 300.0f64, 200.0f64);
+
+    assert facet::unpainted_bindings() == (0 as i64);
+    // No slot means `find` cannot address this tree at all — so a binding is
+    // the ONLY way its elements update, and the views are read directly here.
+    assert !facet::find("bc:n").found();
+    let nv: *u8 = find_view_by_id(host.raw(), "bc:n");
+    assert nv != (0 as *u8);
+    assert facet::Handle::of(nv, 0 as *u8, 0 as *u8, 0 as u32).text().equals("count: 12");
+    let ov: *u8 = find_view_by_id(host.raw(), "bc:note");
+    assert facet::Handle::of(ov, 0 as *u8, 0 as *u8, 0 as u32).text().equals("slotless");
     unmount_all();
 }
 
