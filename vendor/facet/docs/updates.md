@@ -145,49 +145,77 @@ impl Counter {
     // Handlers write state and nothing else.
     fn inc(ref this, sender: *u8) { this.n = this.n + 1; return; }
 
-    // ONE place that knows how this component looks.
-    fn repaint(ref this) {
+    // One small method per element, so a write repaints only what moved.
+    fn paint_count(ref this) {
         let _a: facet::Handle = facet::find("count").set_text("count ${this.n}");
+        return;
+    }
+    fn paint_note(ref this) {
         let _b: facet::Handle = facet::find("note").set_text(this.note.view());
+        return;
+    }
+    fn paint_spinner(ref this) {
         let _c: facet::Handle = facet::find("spinner").set_hidden(!this.busy);
         return;
     }
 
-    // The barrier's landing point. Always this line.
-    fn on_value(ref this, field: str) { this.repaint(); return; }
+    // Everything, for the initial paint and for a whole-struct assign.
+    fn paint_all(ref this) {
+        this.paint_count();
+        this.paint_note();
+        this.paint_spinner();
+        return;
+    }
+
+    // The barrier's landing point: route the field that moved to its element.
+    fn on_value(ref this, field: str) {
+        if field == "*" { this.paint_all(); return; }   // whole-struct assign
+        if field == "n" { this.paint_count(); return; }
+        if field == "note" { this.paint_note(); return; }
+        if field == "busy" { this.paint_spinner(); return; }
+        return;
+    }
 }
 
 impl Counter: facet::Lifecycle {
-    // The SAME method paints the initial state, so a displayed value is
+    // The SAME methods paint the initial state, so a displayed value is
     // spelled once — `build` mounts empty elements and never repeats it.
-    fn on_attach(ref this) { this.repaint(); return; }
+    fn on_attach(ref this) { this.paint_all(); return; }
     fn on_detach(ref this) { return; }
 }
 ```
 
-That is the entire thing: an attribute, a method, and two lines of lifecycle.
-Nothing is registered, nothing tracks views, and the update is the same
-`find(key).set_*()` this page describes — only now it is called for you.
+That is the entire thing: an attribute, a few small methods, and two lines of
+lifecycle. Nothing is registered, nothing tracks views, and the update is the
+same `find(key).set_*()` this page describes — only now it is called for you.
 
-**`repaint` is not a re-render.** It pushes current values into existing views.
-No tree is rebuilt, nothing is diffed, and it is free to do anything a handler
-could: `set_style`, structural verbs, a native reach-through.
+**Route on the field; do not repaint everything.** A redundant push is not free:
+`set_text` clears the view's measure cache, marks its flex node content-changed
+and reflows the owning tree, so a blanket `paint_all()` on every write costs one
+reflow per bound element per keystroke. The `field` branch is what keeps a write
+O(what moved).
 
-**Narrow it if you must.** `on_value` receives the field name, so a hot
-component can branch:
+**`"*"` first.** A whole-struct assign (`this = Counter { ... }`) fires the
+barrier once with `field == "*"` rather than once per member, so that branch has
+to come first and repaint everything. Forget it and a `reset` handler updates
+nothing.
+
+**The mapping is many-to-many.** One field may feed several elements — then its
+method pushes all of them. Several fields may feed one element (a label reading
+`first` and `last`) — then both branches call the same method.
+
+**`paint_*` is not a re-render.** Each pushes current values into existing views.
+No tree is rebuilt, nothing is diffed, and they are free to do anything a
+handler could: `set_style`, structural verbs, a native reach-through.
+
+**The field names are unchecked strings.** A typo in `"note"` silently stops that
+element updating, the same class as a mistyped key. The guard is a test, one line
+per field: write it, assert the element moved.
 
 ```cplus
-fn on_value(ref this, field: str) {
-    if field == "n" { this.repaint_count(); return; }
-    this.repaint();
-    return;
-}
+c.note = text::from_str("saved");
+assert facet::find("note").text().equals("saved");
 ```
-
-Reach for that only when a measurement asks. The name is an unchecked string —
-a typo silently stops the update — and a whole-struct assign arrives once as
-`"*"`, which every branch has to remember to handle. One `repaint` has neither
-problem, and pushing an unchanged value is idempotent.
 
 **The keys still have to agree.** `"count"` is spelled in `build` and again in
 `repaint`, checked by nothing — the same condition as any handler on this page.
