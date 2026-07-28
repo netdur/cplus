@@ -16,6 +16,7 @@ import "stdlib/vec" as vec;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/result" as result;
+import "stdlib/status" as status;
 import "json/json" as json;
 import "agent_core/backend" as backend;
 import "agent_core/identity" as identity;
@@ -304,6 +305,75 @@ extern fn write(fd: i32, buf: *u8, count: usize) -> i64;
 extern fn close(fd: i32) -> i32;
 extern fn unlink(path: *u8) -> i32;
 extern fn getpid() -> i32;
+extern fn atexit(f: fn()) -> i32;
+
+// The bound socket path, kept so the exit hook can remove it: `serve_uds` builds
+// its sockaddr in a stack buffer that is gone by the time anything could clean
+// up, and the accept loop it then blocks in never returns.
+// bugs/agent-socket-never-unlinked.md
+static SOCK_PATH: [u8; 110] = [0 as u8; 110];
+static SOCK_HOOK_ARMED: bool = false;
+
+// Remove the bound socket file, once. Registered with `atexit`, so it runs on a
+// normal return, on any `exit()`, and on `-[NSApplication terminate:]` — every
+// ordinary way a UI app goes away, including the paths where the serve thread
+// is still parked in `accept` and its own teardown is unreachable.
+//
+// NOT covered: `SIGKILL` and hard crashes. No in-process hook can cover those,
+// so a client that finds a socket refusing `connect()` should still treat it as
+// dead and may remove it.
+fn unlink_bound_socket() {
+    if SOCK_PATH[0] == (0 as u8) { return; }
+    { unlink(#addr_of(SOCK_PATH[0])); }
+    SOCK_PATH[0] = 0 as u8;   // idempotent: the explicit teardown may also call it
+    return;
+}
+
+// Build the `sockaddr_un` and bind. Returns the bound fd, or the same negative
+// setup code `serve_uds` reports (-4 path too long, -1 socket, -2 bind). Split
+// out of `serve_uds` — which then blocks in `accept` forever — so a test can
+// create a real socket file exactly the way the server does.
+//
+// Arms the exit cleanup as soon as the bind succeeds, BEFORE anything that can
+// fail or block, so every path from here on removes the file.
+fn bind_uds(path: str) -> i32 {
+    let plen: usize = #str_len(path);
+    if plen > (100 as usize) {
+        return - 4 as i32;
+    }
+    var addr: [u8; 110] = [0 as u8; 110];
+    addr[1] = 1 as u8; // sun_family = AF_UNIX
+    let pbytes: *u8 = #str_ptr(path);
+    var i: usize = 0 as usize;
+    while i < plen {
+        addr[(2 as usize) +% i] = { *(pbytes + i) };
+        i = i +% (1 as usize);
+    }
+    let path_c: *u8 = { #addr_of(addr[2]) }; // NUL-terminated path inside the struct
+    let addrlen: u32 = ((2 as usize) +% plen +% (1 as usize)) as u32;
+
+    let fd: i32 = { socket(1 as i32, 1 as i32, 0 as i32) };
+    if fd < (0 as i32) {
+        return - 1 as i32;
+    }
+    { unlink(path_c); }
+    if { bind(fd, #addr_of(addr[0]), addrlen) } != (0 as i32) {
+        { close(fd); }
+        return - 2 as i32;      // bind is what creates the file; none exists yet
+    }
+    // Bound: the file exists now. Remember it and arm the exit hook.
+    var pi: usize = 0 as usize;
+    while pi < plen {
+        SOCK_PATH[pi] = { *(pbytes + pi) };
+        pi = pi +% (1 as usize);
+    }
+    SOCK_PATH[plen] = 0 as u8;
+    if !SOCK_HOOK_ARMED {
+        SOCK_HOOK_ARMED = true;
+        let _hooked: i32 = { atexit(unlink_bound_socket) };
+    }
+    return fd;
+}
 
 // The PID of this process — for an agent socket path like
 // `/tmp/cplus-agent-<pid>.sock` (the path convention is the app's choice).
@@ -378,7 +448,14 @@ fn serve_fd(
 // Bind a Unix-domain socket at `path`, then accept connections and serve each
 // (one at a time) via `serve_fd`. Blocks until `accept` fails. Returns a
 // negative code on a setup error (socket/bind/listen). `path` must be ≤ 100
-// bytes (sun_path limit). Removes the socket file on entry (stale) and exit.
+// bytes (sun_path limit).
+//
+// The socket file is removed on entry (a stale one from a previous run) and on
+// process exit via an `atexit` hook — NOT merely when this function returns.
+// The accept loop below is meant to live for the app's whole life, so in a real
+// app it never returns and any teardown written here alone is unreachable; the
+// entry-unlink does not compensate, because a per-PID path is never reused.
+// See `unlink_bound_socket` and bugs/agent-socket-never-unlinked.md.
 fn serve_uds(
     surf: *u8,
     vt: backend::Backend,
@@ -386,32 +463,13 @@ fn serve_uds(
     policy: fn(auth::Request) -> auth::Decision,
     path: str,
 ) -> i32 {
-    let plen: usize = #str_len(path);
-    if plen > (100 as usize) {
-        return - 4 as i32;
-    }
-    var addr: [u8; 110] = [0 as u8; 110];
-    addr[1] = 1 as u8; // sun_family = AF_UNIX
-    let pbytes: *u8 = #str_ptr(path);
-    var i: usize = 0 as usize;
-    while i < plen {
-        addr[(2 as usize) +% i] = { *(pbytes + i) };
-        i = i +% (1 as usize);
-    }
-    let path_c: *u8 = { #addr_of(addr[2]) }; // NUL-terminated path inside the struct
-    let addrlen: u32 = ((2 as usize) +% plen +% (1 as usize)) as u32;
-
-    let fd: i32 = { socket(1 as i32, 1 as i32, 0 as i32) };
+    let fd: i32 = bind_uds(path);
     if fd < (0 as i32) {
-        return - 1 as i32;
-    }
-    { unlink(path_c); }
-    if { bind(fd, #addr_of(addr[0]), addrlen) } != (0 as i32) {
-        { close(fd); }
-        return - 2 as i32;
+        return fd;
     }
     if { listen(fd, 4 as i32) } != (0 as i32) {
         { close(fd); }
+        unlink_bound_socket();  // the bound file would otherwise be orphaned here
         return - 3 as i32;
     }
     loop {
@@ -423,7 +481,7 @@ fn serve_uds(
         { close(conn); }
     }
     { close(fd); }
-    { unlink(path_c); }
+    unlink_bound_socket();
     return 0;
 }
 
@@ -517,4 +575,77 @@ fn only_the_measured_view_carries_geometry() {
     assert full.contains("\"class\"");
     assert full.contains("33");        // the fixture's width survives the wire
     assert full.contains("44");        // ...and its height
+}
+
+// ---- socket teardown ---------------------------------------------------------
+// bugs/agent-socket-never-unlinked.md
+
+#[link_name = "access"]
+extern fn file_access(path: *u8, mode: i32) -> i32;
+
+// F_OK = 0 — does the path exist?
+fn path_exists(path: str) -> bool {
+    var buf: [u8; 110] = [0 as u8; 110];
+    let n: usize = #str_len(path);
+    let p: *u8 = #str_ptr(path);
+    var i: usize = 0 as usize;
+    while i < n {
+        buf[i] = { *(p + i) };
+        i = i +% (1 as usize);
+    }
+    buf[n] = 0 as u8;
+    return { file_access(#addr_of(buf[0]), 0 as i32) } == (0 as i32);
+}
+
+// Binding creates a file on disk, and it must be removed on the way out. The
+// teardown that shipped sat after `serve_uds`'s accept loop, which never
+// returns in a real app, so nothing ever ran it: every launch leaked one socket
+// (46 of them measured in /tmp before this was fixed).
+//
+// This covers the mechanism — bind arms the cleanup, teardown removes the file,
+// and a second call is harmless. That the hook also fires on process EXIT is
+// `atexit`'s contract and cannot be asserted from inside the process; it is
+// checked by building a binary that binds on a worker and returns from `main`
+// with the worker still parked in `accept`.
+#[test]
+fn binding_arms_the_socket_cleanup() {
+    let path: str = "/tmp/cplus-agent-mcp-teardown-test.sock";
+    let fd: i32 = bind_uds(path);
+    assert fd >= (0 as i32);
+    assert path_exists(path);
+
+    unlink_bound_socket();
+    assert path_exists(path) == false;
+
+    // Idempotent: the explicit teardown and the exit hook both call it, and a
+    // double-unlink must not take out an unrelated file that reused the path.
+    unlink_bound_socket();
+    assert path_exists(path) == false;
+
+    { close(fd); }
+    return;
+}
+
+// A path longer than `sun_path` is rejected before any syscall, and rejecting
+// it must not disturb a cleanup already armed for a different socket.
+#[test]
+fn an_over_long_path_is_rejected_without_disarming() {
+    let good: str = "/tmp/cplus-agent-mcp-armed.sock";
+    let fd: i32 = bind_uds(good);
+    assert fd >= (0 as i32);
+    assert path_exists(good);
+
+    var long_path: text::Text = text::from_str("/tmp/");
+    var i: i32 = 0 as i32;
+    while i < (110 as i32) {
+        let _a: status::Status = long_path.append("x");
+        i = i +% (1 as i32);
+    }
+    assert bind_uds(long_path.view()) == (- 4 as i32);
+
+    // Still armed for `good`, and teardown still removes it.
+    unlink_bound_socket();
+    assert path_exists(good) == false;
+    { close(fd); }
+    return;
 }
