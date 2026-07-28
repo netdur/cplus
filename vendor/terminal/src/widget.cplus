@@ -21,12 +21,16 @@ fn start(
     cwd: str = "",
     max_scrollback: usize = 1048576 as usize,
     font_size: f64 = 13.0f64,
+    // Off by default: an app pane must not write the user's global shell
+    // history. Pass true for a terminal meant to behave like the real one.
+    save_history: bool = false,
 ) -> option::Option[Widget] {
     return match backend::start(
         shell,
         cwd: cwd,
         max_scrollback: max_scrollback,
         font_size: font_size,
+        save_history: save_history,
     ) {
         option::Option[backend::Widget]::Some(w) => {
             option::Option[Widget]::Some(Widget { _backend: w })

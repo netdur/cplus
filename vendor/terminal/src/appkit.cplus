@@ -30,6 +30,9 @@ extern fn dispatch_source_set_cancel_handler_f(source: *u8, handler: fn(*u8));
 extern fn dispatch_resume(object: *u8);
 extern fn dispatch_source_cancel(source: *u8);
 extern fn dispatch_release(object: *u8);
+// Hop to the NEXT main-queue turn. Async even when the caller is already on the
+// main thread, which is the whole point where it is used (repaint_for_focus).
+extern fn dispatch_async_f(queue: *u8, context: *u8, work: fn(*u8));
 
 struct TerminalContext {
     session: pty::Session,
@@ -89,19 +92,69 @@ fn utf16_units(p: *u8, from: usize, to: usize) -> u64 {
     return n;
 }
 
-// The block cursor: the cell under the cursor drawn in reverse video, the way
-// a terminal draws it. Attributes rather than the selection, so selecting text
-// with the mouse and copying it still works.
-fn paint_cursor(tv: ak::TextView, at: rt::Range) {
+// Does the terminal hold the keyboard right now? Both halves matter: the view
+// must be its window's first responder AND that window must be key. Typing goes
+// nowhere if either is false, so both must read as "not focused".
+fn view_has_focus(tv_raw: *u8) -> bool {
+    if tv_raw == (0 as *u8) { return false; }
+    let win: *u8 = rt::msg_id(tv_raw, rt::sel(#str_ptr("window\0")));
+    if win == (0 as *u8) { return false; }
+    if rt::msg_i8(win, rt::sel(#str_ptr("isKeyWindow\0"))) == (0 as i8) { return false; }
+    return rt::msg_id(win, rt::sel(#str_ptr("firstResponder\0"))) == tv_raw;
+}
+
+// The cursor. FOCUSED: the cell in reverse video — a solid block, the way a
+// terminal draws it, meaning "type and it lands here". UNFOCUSED: a thick
+// underline under the same cell — the cursor position is still legible, but it
+// plainly is not taking keys.
+//
+// The two states differ in SHAPE, not shade. Dimming the block would encode
+// focus as a colour difference alone, which is unreadable to anyone who cannot
+// separate close colours, and washes out on a light theme besides. Filled block
+// vs underline survives any palette and any vision, and it is the same
+// distinction Terminal.app and iTerm2 draw (they hollow the block instead).
+//
+// Attributes rather than the selection, so selecting text with the mouse and
+// copying it still works.
+//
+// `set_string` does NOT hand back a clean slate, which is the trap here.
+// `-[NSTextView setString:]` stamps the view's TYPING attributes onto the new
+// text, and NSTextView derives those from the character at the insertion
+// point — which `render` parks directly on the cell we just styled. So the
+// cursor's own attribute is adopted as the typing attribute and the NEXT
+// render paints it across the WHOLE string: one render looks right, and from
+// the second one on the entire line is a cursor. (That is why it read as
+// "the block is enormous" rather than as a missing cursor.)
+//
+// Wiping the range we own before painting it is the fix, and it has to happen
+// on every pass, not just when the style changes.
+fn paint_cursor(tv: ak::TextView, at: rt::Range, focused: bool, full: rt::Range) {
     let bg_name: *u8 = appkit_string_global(#str_ptr("NSBackgroundColorAttributeName\0"));
     let fg_name: *u8 = appkit_string_global(#str_ptr("NSForegroundColorAttributeName\0"));
+    let ul_name: *u8 = appkit_string_global(#str_ptr("NSUnderlineStyleAttributeName\0"));
     if bg_name == (0 as *u8) || fg_name == (0 as *u8) { return; }
     match tv.text_storage() {
         option::Option[ak::TextStorage]::Some(storage) => {
             let s: *u8 = storage.as_mutable_attributed_string().raw();
             let add: *u8 = rt::sel(#str_ptr("addAttribute:value:range:\0"));
-            rt::msg_void_id_id_range(s, add, bg_name, ak::Color::text_color().raw(), at);
-            rt::msg_void_id_id_range(s, add, fg_name, ak::Color::text_background_color().raw(), at);
+            let remove: *u8 = rt::sel(#str_ptr("removeAttribute:range:\0"));
+            // Clean slate over the whole document: drop any inherited cursor
+            // styling, then restore the one attribute the terminal always
+            // wants. Background is left absent so the view's own background
+            // shows through; foreground must be re-applied or the text falls
+            // back to the default black on a dark view.
+            rt::msg_void_id_range(s, remove, bg_name, full);
+            if ul_name != (0 as *u8) { rt::msg_void_id_range(s, remove, ul_name, full); }
+            rt::msg_void_id_id_range(s, add, fg_name, ak::Color::text_color().raw(), full);
+            if focused {
+                rt::msg_void_id_id_range(s, add, bg_name, ak::Color::text_color().raw(), at);
+                rt::msg_void_id_id_range(s, add, fg_name, ak::Color::text_background_color().raw(), at);
+            } else {
+                if ul_name == (0 as *u8) { return; }
+                // NSUnderlineStyleThick = 2.
+                let thick: *u8 = rt::msg_id_i64(rt::get_class(#str_ptr("NSNumber\0")), rt::sel(#str_ptr("numberWithInt:\0")), 2 as i64);
+                rt::msg_void_id_id_range(s, add, ul_name, thick, at);
+            }
         }
         option::Option[ak::TextStorage]::None => {}
     }
@@ -141,7 +194,8 @@ fn render(c: *TerminalContext) {
     if at >= end { at = end -% (1 as u64); }
 
     let cell: rt::Range = rt::Range { location: at, length: 1 as u64 };
-    paint_cursor(tv, cell);
+    let whole: rt::Range = rt::Range { location: 0 as u64, length: end };
+    paint_cursor(tv, cell, view_has_focus({ (*c).text_view }), whole);
     // Empty selection at the cursor: nothing is highlighted (the block is drawn
     // by attributes) and ⌘C with no selection copies nothing, as it should.
     let caret: rt::Range = rt::Range { location: at, length: 0 as u64 };
@@ -264,11 +318,96 @@ fn key_down_imp(self_obj: *u8, cmd: *u8, event_obj: *u8) {
     return;
 }
 
+// Gaining or losing the keyboard produces no PTY output, so nothing would
+// redraw and the cursor would keep whichever shape it had when the last byte
+// arrived — the exact confusion this is meant to remove. Repaint on the
+// transition instead.
+//
+// `objc_msgSendSuper` and the BOOL-returning no-argument `class_addMethod`
+// shape are not in objc/synthesis, so both are declared here (the same way
+// appkit_ext declares its own super trampolines).
+#[repr(C)]
+struct ObjcSuper { opaque receiver: *u8, opaque super_class: *u8 }
+
+#[link_name = "objc_msgSendSuper"]
+extern fn msg_super_i8(sup: *ObjcSuper, sel: *u8) -> i8;
+
+#[link_name = "class_addMethod"]
+extern fn add_method_i8_0(cls: *u8, sel: *u8, imp: fn(*u8, *u8) -> i8, types: *u8) -> i8;
+
+fn call_super_i8(self_obj: *u8, sel: *u8) -> i8 {
+    var sup: ObjcSuper = ObjcSuper { receiver: self_obj, super_class: rt::get_class(#str_ptr("NSTextView\0")) };
+    return { msg_super_i8(#addr_of(sup), sel) };
+}
+
+// Super decides whether the change actually happens, so run it FIRST and only
+// repaint if it agreed — repainting on a refused focus change would draw a
+// state the view is not in.
+//
+// The repaint is DEFERRED by one main-queue turn, and that is load-bearing:
+// -[NSWindow makeFirstResponder:] cannot update its `firstResponder` before
+// calling resignFirstResponder, because resign is allowed to return NO and veto
+// the change. So inside resign, the window still names THIS view as its first
+// responder, view_has_focus still answers true, and a synchronous render would
+// repaint the focused block that is already on screen — leaving a terminal that
+// looks focused forever, since nothing else repaints until the next PTY byte.
+// (becomeFirstResponder runs after the ivar is set and would read correctly;
+// deferring both keeps one path instead of two.)
+fn repaint_for_focus(self_obj: *u8) {
+    let c: *TerminalContext = { synth::get_associated(self_obj, terminal_context_key()) as *TerminalContext };
+    if c == (0 as *TerminalContext) || { (*c).cancel_requested } { return; }
+    // The VIEW travels as the context, retained for the hop — never the
+    // TerminalContext pointer. Widget::drop can free the context between this
+    // responder change and the next turn (it frees synchronously when the source
+    // already finished cancelling), and a queued repaint holding that pointer
+    // would land in freed memory. Drop also clears this associated object first,
+    // so re-reading it below is precisely how the deferred pass learns it must
+    // do nothing.
+    { dispatch_async_f(main_dispatch_queue(), rt::retain(self_obj), repaint_deferred); }
+    return;
+}
+
+// The deferred half. Balances the retain above on every path.
+fn repaint_deferred(ctx: *u8) {
+    let c: *TerminalContext = { synth::get_associated(ctx, terminal_context_key()) as *TerminalContext };
+    if c != (0 as *TerminalContext) && !{ (*c).cancel_requested } { render(c); }
+    rt::release(ctx);
+    return;
+}
+
+fn become_first_responder_imp(self_obj: *u8, cmd: *u8) -> i8 {
+    let ok: i8 = call_super_i8(self_obj, cmd);
+    if ok != (0 as i8) { repaint_for_focus(self_obj); }
+    return ok;
+}
+
+fn resign_first_responder_imp(self_obj: *u8, cmd: *u8) -> i8 {
+    let ok: i8 = call_super_i8(self_obj, cmd);
+    if ok != (0 as i8) { repaint_for_focus(self_obj); }
+    return ok;
+}
+
+// The window becoming or resigning KEY is the other half of focus, and it fires
+// on the window, not the view. Registered with a nil object (any window), which
+// costs a repaint when some other window changes key and saves tracking when
+// this view is mounted, re-parented, or moved between windows.
+fn window_key_changed(ctx: *u8) {
+    let c: *TerminalContext = { ctx as *TerminalContext };
+    if c == (0 as *TerminalContext) || { (*c).cancel_requested } { return; }
+    render(c);
+    return;
+}
+
+fn focus_obs_key_became() -> *u8 { return { 30102 as *u8 }; }
+fn focus_obs_key_resigned() -> *u8 { return { 30103 as *u8 }; }
+
 fn terminal_text_view_class() -> *u8 {
     let existing: *u8 = rt::get_class(#str_ptr("CplusTerminalTextView\0"));
     if existing != (0 as *u8) { return existing; }
     let cls: *u8 = synth::allocate_class_pair(rt::get_class(#str_ptr("NSTextView\0")), #str_ptr("CplusTerminalTextView\0"), 0 as usize);
     let _m: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("keyDown:\0")), key_down_imp, #str_ptr("v@:@\0"));
+    let _b: i8 = { add_method_i8_0(cls, rt::sel(#str_ptr("becomeFirstResponder\0")), become_first_responder_imp, #str_ptr("c@:\0")) };
+    let _r: i8 = { add_method_i8_0(cls, rt::sel(#str_ptr("resignFirstResponder\0")), resign_first_responder_imp, #str_ptr("c@:\0")) };
     synth::register_class_pair(cls);
     return cls;
 }
@@ -296,8 +435,9 @@ fn start(
     cwd: str = "",
     max_scrollback: usize = 1048576 as usize,
     font_size: f64 = 13.0f64,
+    save_history: bool = false,
 ) -> option::Option[Widget] {
-    var session: pty::Session = match pty::start(shell, cwd: cwd) {
+    var session: pty::Session = match pty::start(shell, cwd: cwd, save_history: save_history) {
         option::Option[pty::Session]::Some(s) => s,
         option::Option[pty::Session]::None => { return option::Option[Widget]::None; }
     };
@@ -364,6 +504,10 @@ fn start(
     { dispatch_resume(source); }
 
     akx::observe_frame_change(scroll.as_view(), resize_pty, c as *u8);
+    akx::observe_notification("NSWindowDidBecomeKeyNotification", 0 as *u8, window_key_changed, c as *u8,
+                              pin_on: tv.raw(), pin_key: focus_obs_key_became());
+    akx::observe_notification("NSWindowDidResignKeyNotification", 0 as *u8, window_key_changed, c as *u8,
+                              pin_on: tv.raw(), pin_key: focus_obs_key_resigned());
     resize_pty(c as *u8);
     return option::Option[Widget]::Some(Widget { _scroll: scroll, _ctx: c });
 }

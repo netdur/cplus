@@ -3,8 +3,33 @@ import "./pty" as pty;
 import "./appkit" as terminal_ui;
 import "stdlib/option" as option;
 import "stdlib/text" as text;
+import "objc/runtime" as rt;
+import "appkit/appkit" as ak;
 
 extern fn usleep(us: u32) -> i32;
+
+// Read the master fd until `marker` shows up or the budget runs out. The fd is
+// non-blocking, so this polls rather than hanging the suite when the child
+// never speaks. Returns everything seen either way, so a failed assert shows
+// what the shell actually said.
+fn drain_until(ref sess: pty::Session, marker: str) -> text::Text {
+    var buf: [u8; 4096] = [0 as u8; 4096];
+    var seen: text::Text = text::new();
+    var tries: i32 = 0 as i32;
+    while tries < (1200 as i32) {
+        match sess.read_into(#addr_of(buf) as *u8, 4096 as usize) {
+            pty::ReadResult::Data(n) => {
+                seen.append({ #str_from_raw_parts(#addr_of(buf) as *u8, n) });
+            }
+            pty::ReadResult::WouldBlock => { let _u: i32 = { usleep(5000 as u32) }; }
+            pty::ReadResult::Closed => { break; }
+            pty::ReadResult::Failed => { break; }
+        }
+        if seen.contains(marker) { break; }
+        tries = tries +% (1 as i32);
+    }
+    return seen;
+}
 
 #[test]
 fn transcript_strips_ansi_and_osc() {
@@ -218,5 +243,217 @@ fn widget_focus_reports_failure_off_screen() {
         }
         option::Option[terminal_ui::Widget]::None => { assert false; }
     };
+    return;
+}
+
+#[test]
+fn pty_does_not_persist_shell_history_by_default() {
+    // An app's terminal pane must not write the user's GLOBAL history: what is
+    // typed in iris is iris's business, and macOS keeps only SAVEHIST=1000
+    // entries, so a chatty pane evicts the commands the user actually wants.
+    //
+    // Asking the live shell is the only honest check. Exporting HISTFILE looks
+    // like it works and does not: /etc/zshrc reassigns it unconditionally AFTER
+    // our environment is in place, so a test of the environment alone would
+    // pass while the real shell still wrote to ~/.zsh_history.
+    //
+    // The echoed command shows `$HISTFILE` literally; only the expansion prints
+    // `HF=<>`, so matching that cannot match the echo.
+    match pty::start(shell: "/bin/zsh") {
+        option::Option[pty::Session]::Some(s) => {
+            var sess: pty::Session = s;
+            let _w: isize = sess.write("print -r -- \"HF=[$HISTFILE] SH=[$SAVEHIST]\"\n");
+            let seen: text::Text = drain_until(sess, "SH=[0]");
+            assert seen.contains("HF=[] SH=[0]");
+        }
+        option::Option[pty::Session]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn pty_save_history_true_leaves_the_shell_alone() {
+    // The opt-in must actually opt in, or the default is untestable: with
+    // save_history the shell keeps whatever history configuration the user's
+    // own setup produced.
+    match pty::start(shell: "/bin/zsh", save_history: true) {
+        option::Option[pty::Session]::Some(s) => {
+            var sess: pty::Session = s;
+            let _w: isize = sess.write("print -r -- \"HF=[$HISTFILE]\"\n");
+            let seen: text::Text = drain_until(sess, "HF=[/");
+            assert seen.contains(".zsh_history");
+            assert seen.contains("HF=[]") == false;
+        }
+        option::Option[pty::Session]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn pty_history_opt_out_keeps_the_users_shell_intact() {
+    // The opt-out works by pointing ZDOTDIR at generated rc files, so the risk
+    // it carries is the opposite of the bug: a shell that no longer loads the
+    // user's setup. The shim sources the real dotfiles, so anything they export
+    // must still be there — HOME is the one every environment has.
+    match pty::start(shell: "/bin/zsh") {
+        option::Option[pty::Session]::Some(s) => {
+            var sess: pty::Session = s;
+            let _w: isize = sess.write("print -r -- \"RC=[$HOME] ZD=[$CPLUS_TERM_HOME]\"\n");
+            let seen: text::Text = drain_until(sess, "ZD=[/");
+            assert seen.contains("RC=[/");              // a real absolute HOME
+            assert seen.contains("ZD=[/");               // shim knows the real root
+            assert seen.contains("RC=[]") == false;
+        }
+        option::Option[pty::Session]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn focus_probe_is_false_without_a_key_window() {
+    // What the cursor's shape is keyed on. A null view, and a live-but-unmounted
+    // one, both have no window to hold a first responder — so the answer is
+    // false and the cursor draws its NOT-focused shape. Returning true here
+    // would paint a solid block on a pane that cannot take a keystroke, which
+    // is precisely the confusion the two shapes exist to remove.
+    assert terminal_ui::view_has_focus(0 as *u8) == false;
+    match terminal_ui::start() {
+        option::Option[terminal_ui::Widget]::Some(w) => {
+            assert w.has_focus() == false;
+            // Rendering must survive the no-window state — it is where every
+            // widget starts, and render() paints the cursor on every pass.
+            w.send("printf hi\n");
+            let _u: i32 = { usleep(200000 as u32) };   // let a render pass run
+            assert w.has_focus() == false;
+            w.stop();
+        }
+        option::Option[terminal_ui::Widget]::None => { assert false; }
+    };
+    return;
+}
+
+#[test]
+fn opening_a_second_pane_does_not_recurse_the_shim() {
+    // `setenv` is process-wide, so by the second `start()` the live ZDOTDIR is
+    // already the shim. Deriving the shim's source root from the environment
+    // therefore pointed the generated rc files at THEMSELVES, and each one
+    // sourced itself until zsh bailed out with "job table full or recursion
+    // limit exceeded" — leaving a shell with none of the user's setup and the
+    // history opt-out silently not applied. Opening a second terminal pane was
+    // the whole repro, which no single-session test could ever see.
+    var first: pty::Session = match pty::start(shell: "/bin/zsh") {
+        option::Option[pty::Session]::Some(s) => s,
+        option::Option[pty::Session]::None => { assert false; return; }
+    };
+    let _w1: isize = first.write("print -r -- \"ONE=[$HISTFILE]\"\n");
+    let seen1: text::Text = drain_until(first, "ONE=[]");
+    assert seen1.contains("ONE=[]");
+
+    match pty::start(shell: "/bin/zsh") {
+        option::Option[pty::Session]::Some(s) => {
+            var second: pty::Session = s;
+            let _w2: isize = second.write("print -r -- \"TWO=[$HISTFILE] HOME=[$HOME]\"\n");
+            let seen2: text::Text = drain_until(second, "TWO=[]");
+            assert seen2.contains("recursion") == false;
+            assert seen2.contains("TWO=[]");
+            // ...and the user's environment survived in the second pane too.
+            assert seen2.contains("HOME=[/");
+        }
+        option::Option[pty::Session]::None => { assert false; }
+    }
+    return;
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_attr_at(recv: *u8, sel: *u8, name: *u8, idx: u64, eff: *rt::Range) -> *u8;
+
+// How many characters carry `name`, over a string of `len` UTF-16 units.
+fn attr_span(storage: *u8, name: *u8, len: u64) -> u64 {
+    let q: *u8 = rt::sel(#str_ptr("attribute:atIndex:effectiveRange:\0"));
+    var i: u64 = 0 as u64;
+    var n: u64 = 0 as u64;
+    while i < len {
+        var eff: rt::Range = rt::Range { location: 0 as u64, length: 0 as u64 };
+        if { msg_attr_at(storage, q, name, i, #addr_of(eff)) } != (0 as *u8) { n = n +% (1 as u64); }
+        i = i +% (1 as u64);
+    }
+    return n;
+}
+
+extern fn CFRunLoopRunInMode(mode: *u8, seconds: f64, return_after_source: i8) -> i32;
+
+// Let the main run loop turn so the widget's dispatch read source fires and
+// render() actually runs — several times, which is the point.
+fn pump(times: i32) {
+    let mode: *u8 = terminal_ui::appkit_string_global(#str_ptr("kCFRunLoopDefaultMode\0"));
+    var i: i32 = 0 as i32;
+    while i < times {
+        let _r: i32 = { CFRunLoopRunInMode(mode, 0.05f64, 0 as i8) };
+        i = i +% (1 as i32);
+    }
+    return;
+}
+
+#[test]
+fn the_cursor_stays_one_cell_across_repeated_renders() {
+    // The cursor is drawn with text attributes, and `-[NSTextView setString:]`
+    // stamps the view's TYPING attributes onto the new text. NSTextView derives
+    // those from the character at the insertion point — which render() parks
+    // directly on the cell it just styled. So the cursor's own attribute became
+    // the typing attribute and the NEXT render painted it over the WHOLE
+    // string: the first frame looked right and every frame after drew the
+    // entire line as one enormous cursor.
+    //
+    // This has to drive the REAL widget through REAL renders. Calling
+    // paint_cursor by hand does not reproduce it — the typing attributes are
+    // only re-derived once the view is in a window with a live layout manager
+    // and the run loop is turning. Two earlier versions of this test passed
+    // against the bug for exactly that reason.
+    match terminal_ui::start() {
+        option::Option[terminal_ui::Widget]::Some(w) => {
+            let scroll: *u8 = w.native_handle();
+            let win: ak::Window = ak::Window::new(
+                rt::Rect { x: 0.0f64, y: 0.0f64, w: 500.0f64, h: 200.0f64 },
+                15 as u64, ak::BackingStoreType::NSBackingStoreBuffered, false);
+            win.set_content_view(ak::View::from_raw(scroll));
+            let tv_raw: *u8 = rt::msg_id(scroll, rt::sel(#str_ptr("documentView\0")));
+            assert tv_raw != (0 as *u8);
+            // The insertion point — and therefore the typing attributes that
+            // carried the bug — is only maintained for a first responder in an
+            // ordered-in window. Without these two calls the widget renders but
+            // never re-derives typing attributes, and the test passes against
+            // the bug.
+            win.make_key_and_order_front(0 as *u8);
+            let _fr: i8 = rt::msg_i8_id(win.raw(), rt::sel(#str_ptr("makeFirstResponder:\0")), tv_raw);
+
+            w.send("printf 'ABC'\n");
+            pump(40 as i32);
+            w.send("printf 'DEF'\n");
+            pump(40 as i32);
+
+            let ns: *u8 = rt::msg_id(tv_raw, rt::sel(#str_ptr("string\0")));
+            let len: u64 = rt::msg_u64(ns, rt::sel(#str_ptr("length\0")));
+            assert len > (0 as u64);
+
+            let bg: *u8 = terminal_ui::appkit_string_global(#str_ptr("NSBackgroundColorAttributeName\0"));
+            let ul: *u8 = terminal_ui::appkit_string_global(#str_ptr("NSUnderlineStyleAttributeName\0"));
+            assert bg != (0 as *u8);
+            assert ul != (0 as *u8);
+
+            match ak::TextView::from_raw(tv_raw).text_storage() {
+                option::Option[ak::TextStorage]::Some(st) => {
+                    let s: *u8 = st.as_mutable_attributed_string().raw();
+                    // Not in a key window, so the cursor is the UNFOCUSED shape:
+                    // exactly one underlined cell, and no reverse-video block.
+                    // The bug made both of these the whole document.
+                    assert attr_span(s, ul, len) == (1 as u64);
+                    assert attr_span(s, bg, len) == (0 as u64);
+                }
+                option::Option[ak::TextStorage]::None => { assert false; }
+            }
+            w.stop();
+        }
+        option::Option[terminal_ui::Widget]::None => { assert false; }
+    }
     return;
 }
