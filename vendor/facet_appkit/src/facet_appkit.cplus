@@ -9543,8 +9543,12 @@ fn bound_direct_write_to_a_bound_property_needs_invalidate() {
     let _h: f64 = mount_component(BOUND_COUNTER.build, host: host.raw());
     assert facet::find("bc:n").text().equals("count: 5");
 
-    // Out of band, straight at the element.
+    // Out of band, straight at the element. With the check on, the registry
+    // names the mistake instead of leaving a silently stale label.
+    facet::set_binding_conflict_check(true);
+    facet::reset_binding_conflicts();
     let _u: facet::Handle = facet::find("bc:n").set_text("tampered");
+    assert facet::binding_conflicts() == (1 as i64);
     assert facet::find("bc:n").text().equals("tampered");
     BOUND_COUNTER.n = 5;                    // same value: the cache suppresses
     assert facet::find("bc:n").text().equals("tampered");
@@ -9558,6 +9562,11 @@ fn bound_direct_write_to_a_bound_property_needs_invalidate() {
     let _s: facet::Handle = facet::find("bc:note").set_background(facet::Color::accent());
     BOUND_COUNTER.note = text::from_str("moved");
     assert facet::find("bc:note").text().equals("moved");
+    // A style write is a different property, so it is not a collision — and the
+    // binding's own repaint above did not report itself either.
+    assert facet::binding_conflicts() == (1 as i64);
+    facet::set_binding_conflict_check(false);
+    facet::reset_binding_conflicts();
     unmount_all();
 }
 

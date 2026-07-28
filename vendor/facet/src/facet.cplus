@@ -2441,6 +2441,7 @@ impl Handle {
     // Set the element's text — label / button title / field value — IN PLACE.
     // Chainable; a no-op on a missing handle. No re-render.
     fn set_text(this, s: str) -> Handle {
+        _bind_note_conflict(this._view, prop_text());
         let f: fn(Handle, str) -> bool = SET_TEXT_FN;
         if f != (0 as fn(Handle, str) -> bool) { let _ok: bool = f(this, s); }
         return this;
@@ -2448,6 +2449,7 @@ impl Handle {
 
     // Set a value control's number — slider / stepper / progress. In place.
     fn set_value(this, v: f64) -> Handle {
+        _bind_note_conflict(this._view, prop_value());
         let f: fn(Handle, f64) -> bool = SET_VALUE_FN;
         if f != (0 as fn(Handle, f64) -> bool) { let _ok: bool = f(this, v); }
         return this;
@@ -2483,6 +2485,7 @@ impl Handle {
 
     // Set a toggle / checkbox / switch on or off. In place.
     fn set_on(this, on: bool) -> Handle {
+        _bind_note_conflict(this._view, prop_on());
         let f: fn(Handle, bool) -> bool = SET_ON_FN;
         if f != (0 as fn(Handle, bool) -> bool) { let _ok: bool = f(this, on); }
         return this;
@@ -2490,6 +2493,7 @@ impl Handle {
 
     // Show or hide the element. In place.
     fn set_hidden(this, hidden: bool) -> Handle {
+        _bind_note_conflict(this._view, prop_hidden());
         let f: fn(Handle, bool) -> bool = SET_HIDDEN_FN;
         if f != (0 as fn(Handle, bool) -> bool) { let _ok: bool = f(this, hidden); }
         return this;
@@ -3063,6 +3067,61 @@ fn node_binds_any(np: *Node) -> bool {
     return { (*np).binds.shown } != (0 as fn(*u8, *u8) -> bool);
 }
 
+// ---- catching a direct write to a bound property ---------------------------
+// The one rule a binding imposes (a bound property belongs to its binding) is
+// otherwise invisible: a direct `set_text` on a bound `text` leaves the row
+// believing something false, and the belief being false in the "already
+// correct" direction means it suppresses its own correction. The registry can
+// SEE that happen, so it counts it.
+//
+// A count rather than an abort, because facet's mutators do not panic and
+// cannot return a Status (they return `Handle`, to chain). A count rather than
+// a log, because a test can assert on it: `assert facet::binding_conflicts() ==
+// 0` after exercising a screen is the practical guard.
+//
+// OFF by default: with the check enabled every portable mutator scans the
+// registry, and the keyed-direct path is hot. Off, it costs one bool load.
+static _BIND_CHECK: bool = false;
+static _BIND_CONFLICTS: i64 = 0 as i64;
+// True while a binding is doing its OWN push, so a row does not report itself.
+static _BIND_PUSHING: bool = false;
+
+fn set_binding_conflict_check(on: bool) { _BIND_CHECK = on; return; }
+fn binding_conflicts() -> i64 { return _BIND_CONFLICTS; }
+fn reset_binding_conflicts() { _BIND_CONFLICTS = 0 as i64; return; }
+
+// `hidden` and `shown` drive the same native property from opposite polarities,
+// so a direct `set_hidden` collides with either.
+fn _same_property(a: u32, b: u32) -> bool {
+    if a == b { return true; }
+    if a == prop_hidden() && b == prop_shown() { return true; }
+    return a == prop_shown() && b == prop_hidden();
+}
+
+fn _bind_note_conflict(view: *u8, prop: u32) {
+    if !_BIND_CHECK { return; }
+    if _BIND_PUSHING { return; }
+    if view == (0 as *u8) { return; }
+    let reg: *vec::Vec[_BindRow] = #addr_of(_BIND_ROWS);
+    let n: usize = { (*reg).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*reg).at_ptr(i) {
+            option::Option[*_BindRow]::Some(rp) => {
+                if { (*rp)._view } == view {
+                    if _same_property({ (*rp)._prop }, prop) {
+                        _BIND_CONFLICTS = _BIND_CONFLICTS + (1 as i64);
+                        return;
+                    }
+                }
+            }
+            option::Option[*_BindRow]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
 fn _bind_handle(cp: *u8, view: *u8) -> Handle {
     let f: fn(*u8, *u8) -> *u8 = RESOLVE_FLEX_FN;
     var fx: *u8 = 0 as *u8;
@@ -3329,7 +3388,9 @@ fn _bind_push_at(i: usize) {
             }
             if same { return; }
         }
+        _BIND_PUSHING = true;
         let _h: Handle = _bind_handle(cp, view).set_text(cur.view());
+        _BIND_PUSHING = false;
         match (*reg).at_ptr(i) {
             option::Option[*_BindRow]::Some(rp) => {
                 // Truncate-and-append rather than assigning a fresh `Text` over
@@ -3359,7 +3420,9 @@ fn _bind_push_at(i: usize) {
             }
             if same { return; }
         }
+        _BIND_PUSHING = true;
         let _h: Handle = _bind_handle(cp, view).set_value(cur);
+        _BIND_PUSHING = false;
         match (*reg).at_ptr(i) {
             option::Option[*_BindRow]::Some(rp) => {
                 { (*rp)._num = cur; }
@@ -3380,10 +3443,12 @@ fn _bind_push_at(i: usize) {
         }
         if same { return; }
     }
+    _BIND_PUSHING = true;
     let h: Handle = _bind_handle(cp, view);
     if prop == prop_on() { let _a: Handle = h.set_on(cur); }
     if prop == prop_hidden() { let _b: Handle = h.set_hidden(cur); }
     if prop == prop_shown() { let _c: Handle = h.set_hidden(!cur); }
+    _BIND_PUSHING = false;
     match (*reg).at_ptr(i) {
         option::Option[*_BindRow]::Some(rp) => {
             { (*rp)._flag = cur; }

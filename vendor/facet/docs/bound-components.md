@@ -239,16 +239,44 @@ against the element's real value via `Handle::text()` — self-heals, at the pri
 of a native read per row per sync. That is a bad trade at UI write rates, so the
 escape is explicit: `bound::invalidate(this)`.
 
+### 6.1 Catching it
+
+The registry can *see* the collision, so it counts it:
+
+```cplus
+facet::set_binding_conflict_check(true);       // off by default
+... exercise the screen ...
+assert facet::binding_conflicts() == (0 as i64);
+```
+
+A count rather than an abort, because facet's mutators do not panic and cannot
+return a `Status` (they return `Handle`, to chain). A count rather than a log,
+because a test can assert on it — which is the practical guard, the same way
+`assert bind(...) == 0` used to be.
+
+**Off by default.** With it on, every portable mutator scans the registry, and
+the keyed-direct path is hot. Off, it costs one bool load. Turn it on in tests
+and during development.
+
+It reports only a genuine collision: a binding's own push does not report
+itself, a *different* property of a bound element (a `set_style` next to a bound
+`text`) is not a collision, and an unbound element is never reported. `hidden`
+and `shown` drive one native property from opposite polarities, so a direct
+`set_hidden` collides with either.
+
 ## 7. Coverage
 
-`vendor/facet/src/bound.cplus` — 16 tests against a recording stub backend:
+`vendor/facet/src/bound.cplus` — 18 tests against a recording stub backend:
 initial paint, field write, handler-writes-state-only, a thunk spanning two
 fields, push counting (one write = one push), same-value suppression,
 whole-struct assign, value and all three bool polarities, a per-item thunk
 reading `.item()`, view-release stops every push, two instances painting
 *different* elements, manual `changed` for interior writes, `invalidate` after
 an out-of-band write, `suspend`/`resume` coalescing a 100-iteration loop, a node
-that declares nothing registering nothing, and no-backend-installed.
+that declares nothing registering nothing, no-backend-installed, and the
+conflict check (counting a direct write to a bound property, both `hidden`
+polarities, not reporting a binding's own push or a different property or an
+unbound element) plus its being off by default.
 
 `vendor/facet_appkit/src/facet_appkit.cplus` — 4 end-to-end tests against real
 NSViews:
@@ -261,10 +289,23 @@ NSViews:
   wired target/action is fired directly, which runs the bound-method handler,
   whose field store trips the compiler's barrier, which reaches `on_value` →
   `changed` → the row's thunk → the real label;
-- a direct `set_text` on a bound property goes stale until `invalidate`, while a
-  `set_background` on the same element coexists with the binding.
+- a direct `set_text` on a bound property goes stale until `invalidate`, is
+  counted by the conflict check, and a `set_background` on the same element
+  coexists with the binding and is not counted.
 
 `examples/bound_counter` — a runnable window, rebuilt against this surface.
+
+**Negative cases**, verified against the compiler and recorded here because they
+are compile failures rather than tests:
+
+| Mistake | Diagnostic |
+|---|---|
+| `impl T: Bound` with no `on_value`, block otherwise non-empty | **E0361** (`#[watch]` struct has no hook) **+ E0503** (interface method missing) — the two-sided interlock |
+| ... with the block left empty | E0361 + E0916 (an empty `impl` applies only to `Send`/`Sync`) |
+| Thunk with the wrong return type | **E0823** — bound reference does not fit the expected fn-pointer |
+| Thunk missing the trailing `item: *u8` | E0823, same |
+| `bind_text(this.nope)` — no such method | **E0320** — no field `nope` (a bound reference resolves as a field access first) |
+| `on_value` hook with no `#[watch]` | **W0004** |
 
 ## 8. Open
 

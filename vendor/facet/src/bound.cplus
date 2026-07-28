@@ -603,6 +603,58 @@ fn bound_suspend_coalesces_a_write_loop() {
 }
 
 #[test]
+fn bound_conflict_check_counts_a_direct_write_to_a_bound_property() {
+    // The rule "a bound property belongs to its binding" is otherwise
+    // invisible. With the check on, the registry reports the collision.
+    _probe_install();
+    core::set_binding_conflict_check(true);
+    core::reset_binding_conflicts();
+    var p: _Probe = _Probe::fresh();
+    _wire(p);
+    // The bindings' own pushes must not report themselves.
+    assert core::binding_conflicts() == (0 as i64);
+    p.n = 3;
+    assert core::binding_conflicts() == (0 as i64);
+
+    // A direct write to a BOUND property: view 0 carries `n`'s text.
+    let _bad: bool = _probe_set_text(core::Handle::of(_view(0 as i64), 0 as *u8, 0 as *u8, 0 as u32), "x");
+    assert core::binding_conflicts() == (0 as i64);   // the stub bypasses Handle
+    let _via: core::Handle = core::Handle::of(_view(0 as i64), 0 as *u8, 0 as *u8, 0 as u32).set_text("x");
+    assert core::binding_conflicts() == (1 as i64);
+
+    // `shown` and `hidden` drive one native property, so a direct set_hidden
+    // collides with either polarity — view 4 is bound via `shown`.
+    let _h: core::Handle = core::Handle::of(_view(4 as i64), 0 as *u8, 0 as *u8, 0 as u32).set_hidden(true);
+    assert core::binding_conflicts() == (2 as i64);
+
+    // A DIFFERENT property of a bound element is not the binding's business:
+    // view 0 binds text, so writing its `on` is legitimate.
+    let _ok: core::Handle = core::Handle::of(_view(0 as i64), 0 as *u8, 0 as *u8, 0 as u32).set_on(true);
+    assert core::binding_conflicts() == (2 as i64);
+
+    // An UNBOUND element is never reported.
+    let _free: core::Handle = core::Handle::of(_view(7 as i64), 0 as *u8, 0 as *u8, 0 as u32).set_text("free");
+    assert core::binding_conflicts() == (2 as i64);
+
+    core::set_binding_conflict_check(false);
+    core::reset_binding_conflicts();
+    _probe_remove();
+}
+
+#[test]
+fn bound_conflict_check_is_off_by_default() {
+    // Off, the keyed-direct path pays one bool load and nothing is counted —
+    // the reason this is opt-in rather than always on.
+    _probe_install();
+    core::reset_binding_conflicts();
+    var p: _Probe = _Probe::fresh();
+    _wire(p);
+    let _via: core::Handle = core::Handle::of(_view(0 as i64), 0 as *u8, 0 as *u8, 0 as u32).set_text("x");
+    assert core::binding_conflicts() == (0 as i64);
+    _probe_remove();
+}
+
+#[test]
 fn bound_a_node_that_declares_nothing_registers_nothing() {
     // The tier is inert unless a node opts in: an ordinary component pays one
     // null compare per mounted node and nothing else.
