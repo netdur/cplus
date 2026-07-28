@@ -8,7 +8,6 @@ import "stdlib/text" as text;
 import "flex_layout/flex_layout" as flex;
 import "./facet" as facet;
 import "./nav" as nav;
-import "./bound" as bound;
 
 fn main() -> i32 { return 0; }
 

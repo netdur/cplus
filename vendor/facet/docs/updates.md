@@ -6,11 +6,10 @@ facet updates the screen by addressing one element and mutating it in place. A
 handler mutates a struct field, then pushes that value to the element that shows
 it, found by its `key`. There is no re-render and no diff.
 
-Everything on this page is the manual form, and it is the whole mechanism. A
-component that would rather declare its field → element links once and have the
-push happen on every field write adds the bound tier
-([bound-components.md](bound-components.md)); it resolves to the identical
-`find(key).set_*()` call described here.
+Everything on this page is the whole mechanism. There is no second update model
+— see [§ Letting a field write do the pushing](#letting-a-field-write-do-the-pushing)
+for the one convention that keeps view code out of handlers, which is a pattern
+over this page's calls and not a separate tier.
 
 ## Keys
 
@@ -125,6 +124,78 @@ Two steps, always: write the field, push it to the keyed element. The element's
 view survives; nothing is rebuilt. The handler is a `ref this` method bound at
 the call site; binding the method spends `ctx` on the receiver, so `increment`
 takes only `sender`.
+
+## Letting a field write do the pushing
+
+The canonical handler above does two things, and step 2 is the bug surface: it
+is easy to omit, and it has to be repeated in every handler that touches `n`, so
+the number of places that must agree about how `n` is displayed grows with the
+number of ways `n` can change. A missed one does not crash — a mutator on a
+missing element is a silent no-op — so the screen just goes stale.
+
+`#[watch]` closes that without any framework machinery. It makes every field
+store call `on_value`; point `on_value` at one repaint method and the handlers
+go back to writing state:
+
+```cplus
+#[watch]
+struct Counter { n: i32, note: text::Text, busy: bool }
+
+impl Counter {
+    // Handlers write state and nothing else.
+    fn inc(ref this, sender: *u8) { this.n = this.n + 1; return; }
+
+    // ONE place that knows how this component looks.
+    fn repaint(ref this) {
+        let _a: facet::Handle = facet::find("count").set_text("count ${this.n}");
+        let _b: facet::Handle = facet::find("note").set_text(this.note.view());
+        let _c: facet::Handle = facet::find("spinner").set_hidden(!this.busy);
+        return;
+    }
+
+    // The barrier's landing point. Always this line.
+    fn on_value(ref this, field: str) { this.repaint(); return; }
+}
+
+impl Counter: facet::Lifecycle {
+    // The SAME method paints the initial state, so a displayed value is
+    // spelled once — `build` mounts empty elements and never repeats it.
+    fn on_attach(ref this) { this.repaint(); return; }
+    fn on_detach(ref this) { return; }
+}
+```
+
+That is the entire thing: an attribute, a method, and two lines of lifecycle.
+Nothing is registered, nothing tracks views, and the update is the same
+`find(key).set_*()` this page describes — only now it is called for you.
+
+**`repaint` is not a re-render.** It pushes current values into existing views.
+No tree is rebuilt, nothing is diffed, and it is free to do anything a handler
+could: `set_style`, structural verbs, a native reach-through.
+
+**Narrow it if you must.** `on_value` receives the field name, so a hot
+component can branch:
+
+```cplus
+fn on_value(ref this, field: str) {
+    if field == "n" { this.repaint_count(); return; }
+    this.repaint();
+    return;
+}
+```
+
+Reach for that only when a measurement asks. The name is an unchecked string —
+a typo silently stops the update — and a whole-struct assign arrives once as
+`"*"`, which every branch has to remember to handle. One `repaint` has neither
+problem, and pushing an unchanged value is idempotent.
+
+**The keys still have to agree.** `"count"` is spelled in `build` and again in
+`repaint`, checked by nothing — the same condition as any handler on this page.
+The guard is a test: mount the component and assert every key resolves.
+
+```cplus
+assert facet::find("count").found();
+```
 
 ## Which item fired: `key_of`
 

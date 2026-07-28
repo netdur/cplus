@@ -41,33 +41,8 @@ import "agent_core/identity" as identity;
 // Payload + measure plumbing
 // ==========================================================================
 
-// Notified just before a node-owned view is released, so anything holding a
-// borrowed reference to it can drop that reference in the same breath. Generic
-// on purpose — this module knows nothing about who is listening (facet wires
-// its binding registry here, so a binding row cannot outlive the view it
-// paints). Uninstalled = nobody listening.
-static VIEW_RELEASED_FN: fn(*u8) = #zero::[fn(*u8)]();
-fn set_view_released_fn(f: fn(*u8)) { VIEW_RELEASED_FN = f; return; }
-
-// Notified when a slot's tree has been rendered AND stored — the first moment
-// the mounted tree is reachable for a mutator that reflows it. Generic, like
-// the release notification: this module does not know who listens (facet paints
-// its newly registered bindings here).
-static TREE_MOUNTED_FN: fn() = #zero::[fn()]();
-fn set_tree_mounted_fn(f: fn()) { TREE_MOUNTED_FN = f; return; }
-fn run_tree_mounted_hook() {
-    let f: fn() = TREE_MOUNTED_FN;
-    if f != (0 as fn()) { f(); }
-    return;
-}
-
 // The payload release: the node's owned +1 on its backing view.
-fn release_view(p: *u8) {
-    let f: fn(*u8) = VIEW_RELEASED_FN;
-    if f != (0 as fn(*u8)) { f(p); }
-    rt::release(p);
-    return;
-}
+fn release_view(p: *u8) { rt::release(p); return; }
 
 // Measure a leaf through its backing view's fittingSize. `ctx` is the raw
 // view pointer (borrowed; the same node's payload owns it).
@@ -3180,7 +3155,6 @@ fn render_slot(sp: *Slot) -> f64 {
     let f: flex::Layout = tree.layout_frame();
     tree_store(cp, tree);     // keep for relayout; replaces (drops) the old tree
     run_post_render_hook();   // fill any deferred scroll/split in the subtree
-    run_tree_mounted_hook();
     return f.height;
 }
 
@@ -3223,7 +3197,6 @@ fn render_slot_scroll(sp: *Slot) -> f64 {
     }
     tree_store(cp, tree);     // keep for relayout; replaces (drops) the old tree
     run_post_render_hook();   // fill any deferred scroll/split nested in the rows
-    run_tree_mounted_hook();
     return rf.height;
 }
 

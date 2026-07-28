@@ -9,7 +9,6 @@ backends. Fast start: [tutorial.md](tutorial.md). API tables: [ref.md](ref.md).
 |---|---|
 | Components, state, composition | [component-model.md](component-model.md) |
 | `find` / Handle / structural verbs | [updates.md](updates.md) |
-| Bound components (state → view, declared once) | [bound-components.md](bound-components.md) |
 | Lifecycle, `present`, router, parking | [lifecycle.md](lifecycle.md) |
 | App, Screen, nav (the process tier) | [app-screens.md](app-screens.md) |
 | Theme, color tiers, light/dark | [theme.md](theme.md) |

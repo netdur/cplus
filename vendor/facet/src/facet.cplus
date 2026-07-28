@@ -774,44 +774,6 @@ impl AppMenu {
     }
 }
 
-// A node's declared state -> property links. Each slot holds a THUNK that
-// recomputes ONE property from the component, plus the component's address —
-// filled by the compiler when the modifier is handed a bound method reference
-// (`this.n_text`), the same channel `on_click(this.inc)` already uses.
-//
-// The thunk shape is `fn(item, cp) -> T`, mirroring a handler's `fn(*u8, *u8)`
-// exactly — `(sender, ctx)` there, `(item, receiver)` here. The receiver comes
-// LAST because that is where the compiler appends it when it erases a bound
-// method reference. `item` is the node's second app-owned pointer (`.item`), so
-// a per-item binding needs no per-item method.
-//
-// A null slot is no binding, which is every node that never called a `bind_*`
-// modifier — the whole tier is inert unless a node opts in.
-struct Binds {
-    text: fn(*u8, *u8) -> text::Text,   opaque text_cp: *u8,
-    value: fn(*u8, *u8) -> f64,         opaque value_cp: *u8,
-    on: fn(*u8, *u8) -> bool,           opaque on_cp: *u8,
-    hidden: fn(*u8, *u8) -> bool,       opaque hidden_cp: *u8,
-    shown: fn(*u8, *u8) -> bool,        opaque shown_cp: *u8,
-    background: fn(*u8, *u8) -> Color,  opaque background_cp: *u8,
-    foreground: fn(*u8, *u8) -> Color,  opaque foreground_cp: *u8,
-}
-
-impl Binds {
-    fn none() -> Binds {
-        return Binds {
-            text: 0 as fn(*u8, *u8) -> text::Text, text_cp: 0 as *u8,
-            value: 0 as fn(*u8, *u8) -> f64,       value_cp: 0 as *u8,
-            on: 0 as fn(*u8, *u8) -> bool,         on_cp: 0 as *u8,
-            hidden: 0 as fn(*u8, *u8) -> bool,     hidden_cp: 0 as *u8,
-            shown: 0 as fn(*u8, *u8) -> bool,      shown_cp: 0 as *u8,
-            background: 0 as fn(*u8, *u8) -> Color, background_cp: 0 as *u8,
-            foreground: 0 as fn(*u8, *u8) -> Color, foreground_cp: 0 as *u8,
-        };
-    }
-
-}
-
 // One node. Widget config is read by the platform's per-kind ops; the
 // `_`-prefixed layout props are applied by `mount` and never cross the
 // package boundary. Config is a flat union-of-fields (closed kind set —
@@ -947,7 +909,6 @@ struct Node {
     path_cmds: vec::Vec[PathCmd],     // path kind: the vector segments (empty = none)
     toolbar_items: vec::Vec[Node],    // window toolbar items (buttons); empty = no toolbar
     children: vec::Vec[Node],
-    binds: Binds,                     // declared state -> property links (all null = none)
 }
 
 // One segment of a vector `path`. `op` selects which points are read:
@@ -1075,7 +1036,6 @@ fn blank(kind: u32) -> Node {
         path_cmds: vec::new::[PathCmd](),
         toolbar_items: vec::new::[Node](),
         children: vec::new::[Node](),
-        binds: Binds::none(),
     };
 }
 
@@ -2445,7 +2405,6 @@ impl Handle {
     // Set the element's text — label / button title / field value — IN PLACE.
     // Chainable; a no-op on a missing handle. No re-render.
     fn set_text(this, s: str) -> Handle {
-        _bind_note_conflict(this._view, prop_text());
         let f: fn(Handle, str) -> bool = SET_TEXT_FN;
         if f != (0 as fn(Handle, str) -> bool) { let _ok: bool = f(this, s); }
         return this;
@@ -2453,7 +2412,6 @@ impl Handle {
 
     // Set a value control's number — slider / stepper / progress. In place.
     fn set_value(this, v: f64) -> Handle {
-        _bind_note_conflict(this._view, prop_value());
         let f: fn(Handle, f64) -> bool = SET_VALUE_FN;
         if f != (0 as fn(Handle, f64) -> bool) { let _ok: bool = f(this, v); }
         return this;
@@ -2489,7 +2447,6 @@ impl Handle {
 
     // Set a toggle / checkbox / switch on or off. In place.
     fn set_on(this, on: bool) -> Handle {
-        _bind_note_conflict(this._view, prop_on());
         let f: fn(Handle, bool) -> bool = SET_ON_FN;
         if f != (0 as fn(Handle, bool) -> bool) { let _ok: bool = f(this, on); }
         return this;
@@ -2497,7 +2454,6 @@ impl Handle {
 
     // Show or hide the element. In place.
     fn set_hidden(this, hidden: bool) -> Handle {
-        _bind_note_conflict(this._view, prop_hidden());
         let f: fn(Handle, bool) -> bool = SET_HIDDEN_FN;
         if f != (0 as fn(Handle, bool) -> bool) { let _ok: bool = f(this, hidden); }
         return this;
@@ -2517,7 +2473,6 @@ impl Handle {
     // the color / border / corner_radius / font fields today; other `Style`
     // fields take effect as a backend gains live support for them.
     fn set_style(this, s: Style) -> Handle {
-        _bind_note_style_conflict(this._view, s);
         let f: fn(Handle, Style) -> bool = SET_STYLE_FN;
         if f != (0 as fn(Handle, Style) -> bool) { let _ok: bool = f(this, s); }
         return this;
@@ -2996,553 +2951,6 @@ fn find(key: str) -> Handle {
     // The backend hook keeps its `cp` slot (0 = global) so the ABI is unchanged;
     // there is simply no longer a surface way to pass anything else.
     return f(0 as *u8, key);
-}
-
-// ---- state bindings: the registry ------------------------------------------
-// A binding is a declared link from component state to ONE property of ONE
-// mounted element. `mount` registers it against the view it just created, so —
-// unlike a handler's `find(key)` — a binding cannot miss: the view is in hand
-// at the moment the link is made, and the key never enters the update path at
-// all (it stays what it is for, addressing: `find`, agents, MCP).
-//
-// The registry is a flat list scanned by `cp`. Linear in all bindings of all
-// live components, which at the scale a UI has (tens) beats any index. If a
-// screen ever holds thousands, sort by `cp` — but measure first.
-//
-// LIFETIME. A row holds a borrowed native view, and is dropped by the SAME call
-// that releases that view (`forget_view_bindings`, wired to the backend's view
-// release). A row therefore cannot outlive its view — the invariant is
-// structural, not a discipline. The other pointer a row holds is the component
-// (`cp`, the thunk's receiver); a `build` that hands out `this.method` is
-// receiver-capturing, which sema already refuses to let you call on a local, so
-// that half is checked by the compiler.
-//
-// A PARKED component keeps its views (facet retains them), so its rows stay
-// valid and keep painting off-screen. Re-attaching therefore shows current
-// state with no re-registration and no repaint pass.
-
-fn prop_text() -> u32 { return 0 as u32; }
-fn prop_value() -> u32 { return 1 as u32; }
-fn prop_on() -> u32 { return 2 as u32; }
-fn prop_hidden() -> u32 { return 3 as u32; }
-fn prop_shown() -> u32 { return 4 as u32; }
-fn prop_background() -> u32 { return 5 as u32; }
-fn prop_foreground() -> u32 { return 6 as u32; }
-
-// One registered link. Exactly one thunk slot is live, selected by `_prop`;
-// three typed slots beat one erased pointer plus casts.
-//
-// The caches are what make a write cheap and idempotent: a push happens only
-// when the recomputed value differs from what was last pushed, so a handler
-// that rewrites three fields of which two were already correct costs two
-// compares and one native call. `_primed` makes the FIRST push unconditional,
-// which is why `build` may mount empty content and let registration paint the
-// initial state — a bound element never spells its value twice.
-struct _BindRow {
-    opaque _cp: *u8,        // the component (thunk receiver); compared, and passed back in
-    opaque _view: *u8,      // the element this row paints; the row dies with it
-    opaque _item: *u8,      // the node's second app pointer, handed to the thunk
-    _prop: u32,
-    _f_text: fn(*u8, *u8) -> text::Text,
-    _f_num: fn(*u8, *u8) -> f64,
-    _f_bool: fn(*u8, *u8) -> bool,
-    _f_color: fn(*u8, *u8) -> Color,
-    _txt: text::Text,       // last pushed body   — prop_text
-    _num: f64,              // last pushed number — prop_value
-    _flag: bool,            // last pushed flag   — prop_on / _hidden / _shown
-    _col: Color,            // last pushed color  — prop_background / _foreground
-    _primed: bool,
-}
-
-// Two colors are the same push when every channel matches. Compared rather than
-// trusted by token alone: an `adaptive` pair (token 254) carries a second set of
-// channels, and a `rgb` color carries no meaningful token at all.
-fn _same_color(a: Color, b: Color) -> bool {
-    if a.token != b.token { return false; }
-    if a.r != b.r || a.g != b.g || a.b != b.b || a.a != b.a { return false; }
-    return a.r2 == b.r2 && a.g2 == b.g2 && a.b2 == b.b2 && a.a2 == b.a2;
-}
-
-static _BIND_ROWS: vec::Vec[_BindRow] = #zero::[vec::Vec[_BindRow]]();
-// Components whose pushes are held. Addresses as integers — a suspended `cp` is
-// compared, never dereferenced.
-static _BIND_HELD: vec::Vec[usize] = #zero::[vec::Vec[usize]]();
-
-// Resolve a view's flex node, so a push can mark content changed and let the
-// element re-measure. Backend-installed; without it a text binding still writes
-// the string but the row cannot grow, so the hook is not optional in practice.
-static RESOLVE_FLEX_FN: fn(*u8, *u8) -> *u8 = #zero::[fn(*u8, *u8) -> *u8]();
-fn set_resolve_flex_fn(f: fn(*u8, *u8) -> *u8) { RESOLVE_FLEX_FN = f; return; }
-
-// Does this node declare any binding? Read through the pointer — the slots are
-// probed in place rather than copying the sub-struct out of the node, which is
-// both cheaper and avoids handing a by-value `Binds` around at all.
-fn node_binds_any(np: *Node) -> bool {
-    if { (*np).binds.text } != (0 as fn(*u8, *u8) -> text::Text) { return true; }
-    if { (*np).binds.value } != (0 as fn(*u8, *u8) -> f64) { return true; }
-    if { (*np).binds.on } != (0 as fn(*u8, *u8) -> bool) { return true; }
-    if { (*np).binds.hidden } != (0 as fn(*u8, *u8) -> bool) { return true; }
-    if { (*np).binds.shown } != (0 as fn(*u8, *u8) -> bool) { return true; }
-    if { (*np).binds.background } != (0 as fn(*u8, *u8) -> Color) { return true; }
-    return { (*np).binds.foreground } != (0 as fn(*u8, *u8) -> Color);
-}
-
-// ---- catching a direct write to a bound property ---------------------------
-// The one rule a binding imposes (a bound property belongs to its binding) is
-// otherwise invisible: a direct `set_text` on a bound `text` leaves the row
-// believing something false, and the belief being false in the "already
-// correct" direction means it suppresses its own correction. The registry can
-// SEE that happen, so it counts it.
-//
-// A count rather than an abort, because facet's mutators do not panic and
-// cannot return a Status (they return `Handle`, to chain). A count rather than
-// a log, because a test can assert on it: `assert facet::binding_conflicts() ==
-// 0` after exercising a screen is the practical guard.
-//
-// OFF by default: with the check enabled every portable mutator scans the
-// registry, and the keyed-direct path is hot. Off, it costs one bool load.
-static _BIND_CHECK: bool = false;
-static _BIND_CONFLICTS: i64 = 0 as i64;
-// True while a binding is doing its OWN push, so a row does not report itself.
-static _BIND_PUSHING: bool = false;
-
-fn set_binding_conflict_check(on: bool) { _BIND_CHECK = on; return; }
-fn binding_conflicts() -> i64 { return _BIND_CONFLICTS; }
-fn reset_binding_conflicts() { _BIND_CONFLICTS = 0 as i64; return; }
-
-// `hidden` and `shown` drive the same native property from opposite polarities,
-// so a direct `set_hidden` collides with either.
-fn _same_property(a: u32, b: u32) -> bool {
-    if a == b { return true; }
-    if a == prop_hidden() && b == prop_shown() { return true; }
-    return a == prop_shown() && b == prop_hidden();
-}
-
-// A style write carries a whole `Style`, so it collides with whichever style
-// property the set fields name.
-fn _bind_note_style_conflict(view: *u8, s: Style) {
-    if s.bg.token != (0 as u32) { _bind_note_conflict(view, prop_background()); }
-    if s.fg.token != (0 as u32) { _bind_note_conflict(view, prop_foreground()); }
-    return;
-}
-
-fn _bind_note_conflict(view: *u8, prop: u32) {
-    if !_BIND_CHECK { return; }
-    if _BIND_PUSHING { return; }
-    if view == (0 as *u8) { return; }
-    let reg: *vec::Vec[_BindRow] = #addr_of(_BIND_ROWS);
-    let n: usize = { (*reg).count() };
-    var i: usize = 0 as usize;
-    while i < n {
-        match (*reg).at_ptr(i) {
-            option::Option[*_BindRow]::Some(rp) => {
-                if { (*rp)._view } == view {
-                    if _same_property({ (*rp)._prop }, prop) {
-                        _BIND_CONFLICTS = _BIND_CONFLICTS + (1 as i64);
-                        return;
-                    }
-                }
-            }
-            option::Option[*_BindRow]::None => { }
-        }
-        i = i +% (1 as usize);
-    }
-    return;
-}
-
-fn _bind_handle(cp: *u8, view: *u8) -> Handle {
-    let f: fn(*u8, *u8) -> *u8 = RESOLVE_FLEX_FN;
-    var fx: *u8 = 0 as *u8;
-    if f != (0 as fn(*u8, *u8) -> *u8) { fx = f(cp, view); }
-    return Handle::of(view, fx, cp, 0 as u32);
-}
-
-fn _bind_add(cp: *u8, view: *u8, item: *u8, prop: u32,
-             ft: fn(*u8, *u8) -> text::Text,
-             fn_: fn(*u8, *u8) -> f64,
-             fb: fn(*u8, *u8) -> bool,
-             fc: fn(*u8, *u8) -> Color) {
-    let reg: *vec::Vec[_BindRow] = #addr_of(_BIND_ROWS);
-    (*reg).append(_BindRow {
-        _cp: cp, _view: view, _item: item, _prop: prop,
-        _f_text: ft, _f_num: fn_, _f_bool: fb, _f_color: fc,
-        _txt: text::from_str(""), _num: 0.0f64, _flag: false,
-        _col: Color::none(), _primed: false,
-    });
-    return;
-}
-
-// Register a mounted node's declared bindings against the view just created for
-// it, and paint the initial state. Called by `mount`; apps never call it.
-fn register_binds(np: *Node, view: *u8) {
-    if view == (0 as *u8) { return; }
-    if !node_binds_any(np) { return; }
-    let item: *u8 = { (*np).item };
-    let nt: fn(*u8, *u8) -> text::Text = 0 as fn(*u8, *u8) -> text::Text;
-    let nn: fn(*u8, *u8) -> f64 = 0 as fn(*u8, *u8) -> f64;
-    let nb: fn(*u8, *u8) -> bool = 0 as fn(*u8, *u8) -> bool;
-    let nc: fn(*u8, *u8) -> Color = 0 as fn(*u8, *u8) -> Color;
-
-    if { (*np).binds.text } != nt {
-        _bind_add({ (*np).binds.text_cp }, view, item, prop_text(), { (*np).binds.text }, nn, nb, nc);
-    }
-    if { (*np).binds.value } != nn {
-        _bind_add({ (*np).binds.value_cp }, view, item, prop_value(), nt, { (*np).binds.value }, nb, nc);
-    }
-    if { (*np).binds.on } != nb {
-        _bind_add({ (*np).binds.on_cp }, view, item, prop_on(), nt, nn, { (*np).binds.on }, nc);
-    }
-    if { (*np).binds.hidden } != nb {
-        _bind_add({ (*np).binds.hidden_cp }, view, item, prop_hidden(), nt, nn, { (*np).binds.hidden }, nc);
-    }
-    if { (*np).binds.shown } != nb {
-        _bind_add({ (*np).binds.shown_cp }, view, item, prop_shown(), nt, nn, { (*np).binds.shown }, nc);
-    }
-    if { (*np).binds.background } != nc {
-        _bind_add({ (*np).binds.background_cp }, view, item, prop_background(), nt, nn, nb, { (*np).binds.background });
-    }
-    if { (*np).binds.foreground } != nc {
-        _bind_add({ (*np).binds.foreground_cp }, view, item, prop_foreground(), nt, nn, nb, { (*np).binds.foreground });
-    }
-    // NOT painted here. A push runs the backend's mutator, which reflows the
-    // owning tree — and during the mount walk that tree is half-built and not
-    // yet registered. New rows stay unprimed and are painted by
-    // `paint_new_bindings` when the walk finishes.
-    return;
-}
-
-// How many registered rows have never painted. Zero after any mount path
-// completes; non-zero means a mount path did not fire the tree-mounted hook,
-// which shows up as elements that stay blank until the first field write —
-// the one fail-open left in the tier, and this is what makes it loud.
-// `assert facet::unpainted_bindings() == 0` after mounting is the guard.
-fn unpainted_bindings() -> i64 {
-    let reg: *vec::Vec[_BindRow] = #addr_of(_BIND_ROWS);
-    let n: usize = { (*reg).count() };
-    var c: i64 = 0 as i64;
-    var i: usize = 0 as usize;
-    while i < n {
-        match (*reg).at_ptr(i) {
-            option::Option[*_BindRow]::Some(rp) => {
-                if !{ (*rp)._primed } { c = c + (1 as i64); }
-            }
-            option::Option[*_BindRow]::None => { }
-        }
-        i = i +% (1 as usize);
-    }
-    return c;
-}
-
-// Paint every row that has not pushed yet.
-//
-// Called by the BACKEND once a mounted tree is stored and reachable — not at
-// the end of facet's own tree walk, which is too early: a push runs the
-// backend's mutator, and a mutator reflows the owning tree, which does not
-// exist yet while the walk is still running. This is the first moment the tree
-// is whole enough to be written to.
-//
-// Rows registered outside a mount (a test driving `register_binds` directly)
-// are painted by their own caller.
-fn paint_new_bindings() {
-    let reg: *vec::Vec[_BindRow] = #addr_of(_BIND_ROWS);
-    var i: usize = 0 as usize;
-    while i < { (*reg).count() } {
-        var fresh: bool = false;
-        match (*reg).at_ptr(i) {
-            option::Option[*_BindRow]::Some(rp) => { fresh = !{ (*rp)._primed }; }
-            option::Option[*_BindRow]::None => { }
-        }
-        if fresh { _bind_push_at(i); }
-        i = i +% (1 as usize);
-    }
-    return;
-}
-
-// Drop every row painting `view`. Wired to the backend's view release, so a row
-// and the view it writes to die together. Required, not hygiene.
-fn forget_view_bindings(view: *u8) {
-    if view == (0 as *u8) { return; }
-    let reg: *vec::Vec[_BindRow] = #addr_of(_BIND_ROWS);
-    var i: usize = 0 as usize;
-    while i < { (*reg).count() } {
-        var hit: bool = false;
-        match (*reg).at_ptr(i) {
-            option::Option[*_BindRow]::Some(rp) => { if { (*rp)._view } == view { hit = true; } }
-            option::Option[*_BindRow]::None => { }
-        }
-        if hit {
-            // The removed row drops here, releasing its cached string.
-            let _gone: option::Option[_BindRow] = (*reg).remove(i);
-        } else {
-            i = i +% (1 as usize);
-        }
-    }
-    return;
-}
-
-fn _bind_is_held(cp: *u8) -> bool {
-    let held: *vec::Vec[usize] = #addr_of(_BIND_HELD);
-    let n: usize = { (*held).count() };
-    var i: usize = 0 as usize;
-    while i < n {
-        match (*held).at_ptr(i) {
-            option::Option[*usize]::Some(p) => { if { *p } == (cp as usize) { return true; } }
-            option::Option[*usize]::None => { }
-        }
-        i = i +% (1 as usize);
-    }
-    return false;
-}
-
-// Re-run this component's thunks and push the values that moved. The landing
-// point of the `#[watch]` write barrier (via `bound::changed`), and the manual
-// entry point for a write the barrier does not see — a store INSIDE a field
-// (`this.rows[i] = x`) or through a raw pointer.
-//
-// Cost is one pass over this component's rows. The thunks run unconditionally;
-// the caches decide what reaches the screen. Which fields a thunk READS is
-// deliberately not tracked: knowing it would only skip work, never change the
-// result, and tracking it is the first step toward a dependency graph.
-fn sync_bindings(cp: *u8) {
-    if _bind_is_held(cp) { return; }
-    let reg: *vec::Vec[_BindRow] = #addr_of(_BIND_ROWS);
-    var i: usize = 0 as usize;
-    // Re-read the count each round: a push runs app-reachable code, so the
-    // registry may legitimately shrink underneath this loop.
-    while i < { (*reg).count() } {
-        var mine: bool = false;
-        match (*reg).at_ptr(i) {
-            option::Option[*_BindRow]::Some(rp) => { if { (*rp)._cp } == cp { mine = true; } }
-            option::Option[*_BindRow]::None => { }
-        }
-        if mine { _bind_push_at(i); }
-        i = i +% (1 as usize);
-    }
-    return;
-}
-
-// `sync_bindings` for every row painting one view — the initial paint after
-// registration.
-fn _bind_push_view(view: *u8) {
-    let reg: *vec::Vec[_BindRow] = #addr_of(_BIND_ROWS);
-    var i: usize = 0 as usize;
-    while i < { (*reg).count() } {
-        var mine: bool = false;
-        match (*reg).at_ptr(i) {
-            option::Option[*_BindRow]::Some(rp) => { if { (*rp)._view } == view { mine = true; } }
-            option::Option[*_BindRow]::None => { }
-        }
-        if mine { _bind_push_at(i); }
-        i = i +% (1 as usize);
-    }
-    return;
-}
-
-// Forget what this component's rows believe is on screen, so the next sync
-// repaints unconditionally. The escape for the one thing that breaks a cache: a
-// direct `find(key).set_text(...)` on a property that is bound, which changes
-// the element without telling the row — after which the row's belief is false
-// and, being false in the "already correct" direction, suppresses its own
-// correction.
-fn invalidate_bindings(cp: *u8) {
-    let reg: *vec::Vec[_BindRow] = #addr_of(_BIND_ROWS);
-    let n: usize = { (*reg).count() };
-    var i: usize = 0 as usize;
-    while i < n {
-        match (*reg).at_ptr(i) {
-            option::Option[*_BindRow]::Some(rp) => {
-                if { (*rp)._cp } == cp { { (*rp)._primed = false; } }
-            }
-            option::Option[*_BindRow]::None => { }
-        }
-        i = i +% (1 as usize);
-    }
-    return;
-}
-
-// Hold this component's pushes. For a writer that touches a field in a loop:
-// without it, `while i < 1000 { this.n = i; }` is a thousand native writes; with
-// it, `resume` paints the net result once. The caches make that exact — resume
-// pushes precisely the properties whose value differs from what is on screen.
-fn suspend_bindings(cp: *u8) {
-    if _bind_is_held(cp) { return; }
-    let held: *vec::Vec[usize] = #addr_of(_BIND_HELD);
-    (*held).append(cp as usize);
-    return;
-}
-
-fn resume_bindings(cp: *u8) {
-    let held: *vec::Vec[usize] = #addr_of(_BIND_HELD);
-    var i: usize = 0 as usize;
-    while i < { (*held).count() } {
-        var hit: bool = false;
-        match (*held).at_ptr(i) {
-            option::Option[*usize]::Some(p) => { if { *p } == (cp as usize) { hit = true; } }
-            option::Option[*usize]::None => { }
-        }
-        if hit {
-            let _gone: option::Option[usize] = (*held).remove(i);
-        } else {
-            i = i +% (1 as usize);
-        }
-    }
-    sync_bindings(cp);
-    return;
-}
-
-// How many rows this component owns. Diagnostic; also what a test asserts to
-// prove registration happened at all.
-fn binding_count(cp: *u8) -> i64 {
-    let reg: *vec::Vec[_BindRow] = #addr_of(_BIND_ROWS);
-    let n: usize = { (*reg).count() };
-    var c: i64 = 0 as i64;
-    var i: usize = 0 as usize;
-    while i < n {
-        match (*reg).at_ptr(i) {
-            option::Option[*_BindRow]::Some(rp) => { if { (*rp)._cp } == cp { c = c + (1 as i64); } }
-            option::Option[*_BindRow]::None => { }
-        }
-        i = i +% (1 as usize);
-    }
-    return c;
-}
-
-// Push one row: recompute, compare against what was last pushed, write and
-// re-cache only on a real change.
-//
-// Addressed by INDEX, never by a held `*_BindRow`: the native mutator in the
-// middle is app-reachable, and a re-entrant registration could reallocate the
-// registry's buffer under a retained pointer. Every field is read out before the
-// call and the row is looked up again after it.
-fn _bind_push_at(i: usize) {
-    let reg: *vec::Vec[_BindRow] = #addr_of(_BIND_ROWS);
-    var cp: *u8 = 0 as *u8;
-    var view: *u8 = 0 as *u8;
-    var item: *u8 = 0 as *u8;
-    var prop: u32 = 0 as u32;
-    var primed: bool = false;
-    var ft: fn(*u8, *u8) -> text::Text = 0 as fn(*u8, *u8) -> text::Text;
-    var fnum: fn(*u8, *u8) -> f64 = 0 as fn(*u8, *u8) -> f64;
-    var fb: fn(*u8, *u8) -> bool = 0 as fn(*u8, *u8) -> bool;
-    var fc: fn(*u8, *u8) -> Color = 0 as fn(*u8, *u8) -> Color;
-    match (*reg).at_ptr(i) {
-        option::Option[*_BindRow]::Some(rp) => {
-            cp = { (*rp)._cp };
-            view = { (*rp)._view };
-            item = { (*rp)._item };
-            prop = { (*rp)._prop };
-            primed = { (*rp)._primed };
-            ft = { (*rp)._f_text };
-            fnum = { (*rp)._f_num };
-            fb = { (*rp)._f_bool };
-            fc = { (*rp)._f_color };
-        }
-        option::Option[*_BindRow]::None => { return; }
-    }
-    if prop == prop_text() {
-        let cur: text::Text = ft(item, cp);
-        if primed {
-            var same: bool = false;
-            match (*reg).at_ptr(i) {
-                option::Option[*_BindRow]::Some(rp) => { same = { (*rp)._txt.equals(cur.view()) }; }
-                option::Option[*_BindRow]::None => { return; }
-            }
-            if same { return; }
-        }
-        _BIND_PUSHING = true;
-        let _h: Handle = _bind_handle(cp, view).set_text(cur.view());
-        _BIND_PUSHING = false;
-        match (*reg).at_ptr(i) {
-            option::Option[*_BindRow]::Some(rp) => {
-                // Truncate-and-append rather than assigning a fresh `Text` over
-                // an owned field through a raw pointer: it settles who drops the
-                // old one, and reuses the buffer, so a steady stream of
-                // same-length updates stops allocating.
-                { (*rp)._txt.remove_all(); }
-                { (*rp)._txt.append(cur.view()) };
-                { (*rp)._primed = true; }
-            }
-            option::Option[*_BindRow]::None => { }
-        }
-        return;
-    }
-
-    if prop == prop_value() {
-        let cur: f64 = fnum(item, cp);
-        if primed {
-            var same: bool = false;
-            match (*reg).at_ptr(i) {
-                // Bit-equality is not available, so a NaN source re-pushes on
-                // every sync. A NaN in a value control is already meaningless and
-                // the push is idempotent, so the cost is a redundant native call,
-                // not a wrong screen.
-                option::Option[*_BindRow]::Some(rp) => { same = { (*rp)._num } == cur; }
-                option::Option[*_BindRow]::None => { return; }
-            }
-            if same { return; }
-        }
-        _BIND_PUSHING = true;
-        let _h: Handle = _bind_handle(cp, view).set_value(cur);
-        _BIND_PUSHING = false;
-        match (*reg).at_ptr(i) {
-            option::Option[*_BindRow]::Some(rp) => {
-                { (*rp)._num = cur; }
-                { (*rp)._primed = true; }
-            }
-            option::Option[*_BindRow]::None => { }
-        }
-        return;
-    }
-
-    if prop == prop_background() || prop == prop_foreground() {
-        let cur: Color = fc(item, cp);
-        if primed {
-            var same: bool = false;
-            match (*reg).at_ptr(i) {
-                option::Option[*_BindRow]::Some(rp) => { same = _same_color({ (*rp)._col }, cur); }
-                option::Option[*_BindRow]::None => { return; }
-            }
-            if same { return; }
-        }
-        _BIND_PUSHING = true;
-        let ch: Handle = _bind_handle(cp, view);
-        if prop == prop_background() { let _a: Handle = ch.set_background(cur); }
-        else { let _b: Handle = ch.set_foreground_color(cur); }
-        _BIND_PUSHING = false;
-        match (*reg).at_ptr(i) {
-            option::Option[*_BindRow]::Some(rp) => {
-                { (*rp)._col = cur; }
-                { (*rp)._primed = true; }
-            }
-            option::Option[*_BindRow]::None => { }
-        }
-        return;
-    }
-
-    // The three bool props.
-    let cur: bool = fb(item, cp);
-    if primed {
-        var same: bool = false;
-        match (*reg).at_ptr(i) {
-            option::Option[*_BindRow]::Some(rp) => { same = { (*rp)._flag } == cur; }
-            option::Option[*_BindRow]::None => { return; }
-        }
-        if same { return; }
-    }
-    _BIND_PUSHING = true;
-    let h: Handle = _bind_handle(cp, view);
-    if prop == prop_on() { let _a: Handle = h.set_on(cur); }
-    if prop == prop_hidden() { let _b: Handle = h.set_hidden(cur); }
-    if prop == prop_shown() { let _c: Handle = h.set_hidden(!cur); }
-    _BIND_PUSHING = false;
-    match (*reg).at_ptr(i) {
-        option::Option[*_BindRow]::Some(rp) => {
-            { (*rp)._flag = cur; }
-            { (*rp)._primed = true; }
-        }
-        option::Option[*_BindRow]::None => { }
-    }
-    return;
 }
 
 // ---- component lifecycle: stage / attach / detach --------------------------
@@ -4133,80 +3541,6 @@ impl Node {
         n.click_ctx = ctx;
         return n;
     }
-    // ---- state bindings -----------------------------------------------------
-    // Declare that ONE property of this element is computed from component
-    // state. The argument is an ordinary method — pass it as a bound reference
-    // and the compiler fills the `cp` slot with the receiver's address:
-    //
-    //     impl Counter { fn n_text(ref this, item: *u8) -> text::Text { return "count: ${this.n}"; } }
-    //     label("").key("n").bind_text(this.n_text)
-    //
-    // `mount` registers the link against the created view, so a binding never
-    // goes through `find(key)` and cannot miss: the view is in hand at the
-    // moment the link is made. Writing the field then repaints the element,
-    // provided the component carries `#[watch]` and the one-line `on_value`
-    // hook — see the `bound` module.
-    //
-    // The element is a PROJECTION of the state: nothing reads it back, and a
-    // direct `set_text` on a bound property desynchronizes the binding's cache
-    // (call `invalidate` if you must). A bound property belongs to its binding;
-    // every OTHER property of the same element stays hand-driven as always.
-    fn bind_text(take this, f: fn(*u8, *u8) -> text::Text, cp: *u8 = 0 as *u8) -> Node {
-        var n: Node = this;
-        n.binds.text = f;
-        n.binds.text_cp = cp;
-        return n;
-    }
-    // A numeric control's value: slider / stepper / progress / gauge.
-    fn bind_value(take this, f: fn(*u8, *u8) -> f64, cp: *u8 = 0 as *u8) -> Node {
-        var n: Node = this;
-        n.binds.value = f;
-        n.binds.value_cp = cp;
-        return n;
-    }
-    // A toggle / checkbox / switch.
-    fn bind_on(take this, f: fn(*u8, *u8) -> bool, cp: *u8 = 0 as *u8) -> Node {
-        var n: Node = this;
-        n.binds.on = f;
-        n.binds.on_cp = cp;
-        return n;
-    }
-    // Visibility, both polarities — a flag is named for whichever reads better
-    // (`busy`, `collapsed`), and inverting at the binding beats keeping a second
-    // field in sync. This is also what keeps conditional display OUT of the
-    // structural path: a hidden element is a scalar push, not a rebuild.
-    fn bind_hidden(take this, f: fn(*u8, *u8) -> bool, cp: *u8 = 0 as *u8) -> Node {
-        var n: Node = this;
-        n.binds.hidden = f;
-        n.binds.hidden_cp = cp;
-        return n;
-    }
-    fn bind_shown(take this, f: fn(*u8, *u8) -> bool, cp: *u8 = 0 as *u8) -> Node {
-        var n: Node = this;
-        n.binds.shown = f;
-        n.binds.shown_cp = cp;
-        return n;
-    }
-
-    // A state-driven colour. This is the case that otherwise forces view code
-    // back into a handler — a status dot that goes green or red, a row that
-    // highlights when selected — so it is bound rather than left to
-    // `find(key).set_background(...)`. Rides the same live-restyle path
-    // (`set_style` with one field set), so it composes with a hand-written
-    // restyle of any OTHER field on the same element.
-    fn bind_background(take this, f: fn(*u8, *u8) -> Color, cp: *u8 = 0 as *u8) -> Node {
-        var n: Node = this;
-        n.binds.background = f;
-        n.binds.background_cp = cp;
-        return n;
-    }
-    fn bind_foreground(take this, f: fn(*u8, *u8) -> Color, cp: *u8 = 0 as *u8) -> Node {
-        var n: Node = this;
-        n.binds.foreground = f;
-        n.binds.foreground_cp = cp;
-        return n;
-    }
-
     // Attach a second app-owned pointer, recovered in a handler via
     // `facet::item_of(sender)`. The bound-method `this` fills `click_ctx`; use
     // this for per-item data (a stable `&this.rows[i]` or an int-as-*u8 id) so
@@ -5098,22 +4432,17 @@ fn mount(np: *Node, r: Renderer) -> flex::Node {
     }
     if is_widget {
         call_set_identity(np, r, n.payload(), k);
-        // The view exists and the node's declarations are in hand: link them
-        // here, and a binding can never fail to resolve.
-        register_binds(np, n.payload());
     } else if is_container_kind(k) {
         // A container needs a backing view when it is KEYED (find(key) must
-        // address it), when its Style operates on a view (a background has to
-        // be painted ON something), or when it BINDS a property (there has to
-        // be something to hide). The backend's container op applies the style
-        // to the view it creates.
-        if { (*np).agent_id.view() } != "" || style_wants_view(np) || node_binds_any(np) {
+        // address it) or when its Style operates on a view (a background has
+        // to be painted ON something). The backend's container op applies the
+        // style to the view it creates.
+        if { (*np).agent_id.view() } != "" || style_wants_view(np) {
             let cf: fn(*u8, *Node, *flex::Node) = r.container;
             cf(r.ctx, np, #addr_of(n));
             if n.payload() != (0 as *u8) && { (*np).agent_id.view() } != "" {
                 call_set_identity(np, r, n.payload(), k);
             }
-            register_binds(np, n.payload());
         }
     }
     apply_layout_props(np, #addr_of(n));
