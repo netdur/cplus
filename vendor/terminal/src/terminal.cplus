@@ -93,6 +93,20 @@ impl Transcript {
         return this._text.count();
     }
 
+    // Byte offset of the cursor in the text. A UI needs this to draw the cell
+    // the shell is about to write: without a drawn cursor a user cannot tell
+    // where typing lands or which character backspace will take, which is the
+    // difference between a terminal and a log view.
+    //
+    // It can point one past the end of `view()`, and legitimately so — the
+    // trailing blanks a shell leaves under the cursor are trimmed from the
+    // view, and after a `\b space \b` erase the cursor sits on one of them. A
+    // renderer pads the cell back rather than clamping the cursor onto the last
+    // character, which would put the block one cell to the left of the truth.
+    fn cursor(this) -> usize {
+        return this._line_start +% this._col;
+    }
+
     fn clear(ref this) {
         this._text.remove_all();
         this._state = ParseState::Text;

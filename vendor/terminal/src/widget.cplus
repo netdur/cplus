@@ -47,6 +47,19 @@ impl Widget {
         return;
     }
 
+    // Give the terminal the keyboard, so the user can type into the shell the
+    // way they would in any terminal. Call it after the widget is mounted —
+    // `on_attach` for a launch-ready caret, and again at the end of a handler
+    // that runs one of the app's own controls, since clicking a button can take
+    // focus away. False = not on screen yet.
+    fn focus(this) -> bool {
+        return this._backend.focus();
+    }
+
+    fn has_focus(this) -> bool {
+        return this._backend.has_focus();
+    }
+
     fn text(this) -> text::Text {
         return this._backend.text();
     }

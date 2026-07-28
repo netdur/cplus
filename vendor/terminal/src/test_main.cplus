@@ -1,6 +1,10 @@
 import "./terminal" as terminal;
 import "./pty" as pty;
 import "./appkit" as terminal_ui;
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+
+extern fn usleep(us: u32) -> i32;
 
 #[test]
 fn transcript_strips_ansi_and_osc() {
@@ -107,7 +111,112 @@ fn transcript_keeps_utf8_and_bounds_scrollback() {
 }
 
 #[test]
+fn transcript_cursor_tracks_the_live_line() {
+    // The UI draws a block on this cell, so it has to be the cell the shell
+    // would write next — not the end of the text.
+    var t: terminal::Transcript = terminal::Transcript::new();
+    t.feed("abc");
+    assert t.cursor() == (3 as usize);
+    t.feed("\x08");                       // BS moves left, erases nothing
+    assert t.cursor() == (2 as usize);
+    t.feed("\r");                         // CR is column 0, not a new line
+    assert t.cursor() == (0 as usize);
+    t.feed("hello\n");                    // overwrite, then commit
+    assert t.view() == "hello\n";
+    assert t.cursor() == t.count();       // start of the fresh line
+
+    // Motion steps whole scalars, so the cursor never lands inside one — a
+    // block drawn mid-scalar would split a character in half.
+    var u: terminal::Transcript = terminal::Transcript::new();
+    u.feed("hé");
+    assert u.cursor() == (3 as usize);    // 1 byte + 2 bytes
+    u.feed("\x1b[1D");
+    assert u.cursor() == (1 as usize);    // onto the `é`, not into it
+}
+
+#[test]
+fn transcript_cursor_can_sit_past_the_trimmed_view() {
+    // `view()` drops the blank a shell leaves under the cursor after
+    // `\b space \b`. The cursor still points AT that blank, and a renderer is
+    // expected to pad it back — clamping to the view's end would draw the
+    // block one cell to the left of where the shell actually is.
+    var t: terminal::Transcript = terminal::Transcript::new();
+    t.feed("ab\x08 \x08");
+    assert t.view() == "a";
+    assert t.cursor() == (1 as usize);
+
+    var u: terminal::Transcript = terminal::Transcript::new();
+    u.feed("hi ");                        // trailing blank, cursor after it
+    assert u.view() == "hi";
+    assert u.cursor() == (3 as usize);
+}
+
+#[test]
 fn macos_pty_backend_is_present() {
     assert pty::supported();
     assert terminal_ui::supported();
+}
+
+#[test]
+fn pty_starts_the_child_in_the_requested_cwd() {
+    // The cwd argument had NO coverage, and it was the broken path: `start`
+    // parked the directory in an Option and matched it twice, so the CString
+    // was moved out and freed before forkpty and the child then chdir'd through
+    // a dangling pointer. Every other test here calls `start` with no cwd,
+    // which skips the whole thing — that is how it stayed broken while the
+    // suite passed.
+    //
+    // A real round-trip is the only honest check: the child has to survive to
+    // exec, and `pwd` has to come back naming the directory we asked for. Uses
+    // /usr because /tmp is a symlink and getcwd would resolve it to
+    // /private/tmp.
+    match pty::start(shell: "/bin/sh", cwd: "/usr") {
+        option::Option[pty::Session]::Some(s) => {
+            var sess: pty::Session = s;
+            let _w: isize = sess.write("pwd\n");
+
+            var buf: [u8; 4096] = [0 as u8; 4096];
+            var seen: text::Text = text::new();
+            var tries: i32 = 0 as i32;
+            // Bounded: the master fd is non-blocking, so this polls rather than
+            // hanging the suite if the child never speaks.
+            while tries < (400 as i32) {
+                match sess.read_into(#addr_of(buf) as *u8, 4096 as usize) {
+                    pty::ReadResult::Data(n) => {
+                        seen.append({ #str_from_raw_parts(#addr_of(buf) as *u8, n) });
+                    }
+                    pty::ReadResult::WouldBlock => { let _u: i32 = { usleep(5000 as u32) }; }
+                    pty::ReadResult::Closed => { break; }
+                    pty::ReadResult::Failed => { break; }
+                }
+                if seen.contains("/usr") { break; }
+                tries = tries +% (1 as i32);
+            }
+            assert seen.contains("/usr");
+        }
+        option::Option[pty::Session]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn widget_focus_reports_failure_off_screen() {
+    // Typing is the primary way to drive a terminal, so `focus` is part of the
+    // widget's contract — and its honest answer when the widget is not mounted
+    // is FALSE. A window is what holds a first responder; without one there is
+    // nothing to give the keyboard to, and silently returning true would let an
+    // app believe its pane was ready to type into.
+    match terminal_ui::start() {
+        option::Option[terminal_ui::Widget]::Some(w) => {
+            assert w.is_running();
+            assert !w.focus();
+            assert !w.has_focus();
+            w.stop();
+            assert !w.is_running();
+            // Focus stays false on a stopped widget rather than trapping.
+            assert !w.focus();
+        }
+        option::Option[terminal_ui::Widget]::None => { assert false; }
+    };
+    return;
 }

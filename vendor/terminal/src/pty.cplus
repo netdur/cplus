@@ -62,18 +62,23 @@ fn start(shell: str = "/bin/zsh", cwd: str = "", rows: u16 = 24 as u16, cols: u1
         option::Option[text::CString]::Some(v) => v,
         option::Option[text::CString]::None => { return option::Option[Session]::None; }
     };
+    // The cwd is held as an OWNED CString in a plain local, and its raw pointer
+    // is taken once, here in the parent. It must not live in an Option that is
+    // matched more than once: a match arm binds the payload BY VALUE, which
+    // moves it out of the local and frees it at the end of the arm — and the
+    // local keeps the same bits, so a later match hands the freed pointer out
+    // again. That is a use-after-free plus a double free on every start() that
+    // is given a cwd, which is why passing one blanked the terminal or aborted
+    // in malloc while the no-cwd path looked fine. cpc reports no error for the
+    // second read (bugs/moved-from-local-is-readable-and-double-frees.md).
     var cwd_text: text::Text = text::from_str(cwd);
-    var cwd_c: option::Option[text::CString] = if cwd == "" {
-        option::Option[text::CString]::None
-    } else {
-        cwd_text.c_str()
+    let cwd_c: text::CString = match cwd_text.c_str() {
+        option::Option[text::CString]::Some(v) => v,
+        option::Option[text::CString]::None => { return option::Option[Session]::None; }
     };
-    if cwd != "" {
-        match cwd_c {
-            option::Option[text::CString]::Some(_v) => {}
-            option::Option[text::CString]::None => { return option::Option[Session]::None; }
-        }
-    }
+    // Valid until `start` returns, and therefore across forkpty: the child gets
+    // a copy of this address space, and execs before any drop could run.
+    let cwd_ptr: *u8 = cwd_c.as_ptr();
 
     // TERM/COLORTERM are exported in the PARENT, before the fork, and the child
     // inherits environ. setenv() allocates, and only async-signal-safe calls are
@@ -91,12 +96,7 @@ fn start(shell: str = "/bin/zsh", cwd: str = "", rows: u16 = 24 as u16, cols: u1
     if pid == (0 as i32) {
         // Child: chdir and execl only — both async-signal-safe.
         if cwd != "" {
-            match cwd_c {
-                option::Option[text::CString]::Some(cp) => {
-                    let _cd: i32 = { chdir(cp.as_ptr()) };
-                }
-                option::Option[text::CString]::None => {}
-            }
+            let _cd: i32 = { chdir(cwd_ptr) };
         }
         let _exec: i32 = { execl(shell_c.as_ptr(), shell_c.as_ptr(), #str_ptr("-l\0"), 0 as *u8) };
         { _exit(127 as i32); }
