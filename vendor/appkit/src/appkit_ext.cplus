@@ -428,14 +428,42 @@ fn composer_shift_is_down() -> bool {
     return (flags & ak::event_modifier_flags_n_s_event_modifier_flag_shift) != (0 as u64);
 }
 
-fn composer_did_change_imp(user: *u8, tv: *u8) {
+// The sender behind a delegate/observer argument. An NSNotification carries the
+// real sender in `-object`; anything else already IS the sender. Written as a
+// test rather than an unconditional unwrap so the same helper is correct for
+// both trampoline shapes AppKit uses — some delegate methods pass the view,
+// some pass a notification about it, and a view does not respond to `-object`.
+fn notification_object(arg: *u8) -> *u8 {
+    if arg == { 0 as *u8 } { return 0 as *u8; }
+    let responds: i8 = rt::msg_i8_id(arg, rt::sel(#str_ptr("respondsToSelector:\0")), rt::sel(#str_ptr("object\0")));
+    if responds == (0 as i8) { return arg; }
+    return rt::msg_id(arg, rt::sel(#str_ptr("object\0")));
+}
+
+// `textViewDidChangeSelection:` is a NOTIFICATION method: its argument is the
+// NSNotification, and the text view is the notification's `object`. The sibling
+// trampoline below (`textView:doCommandBySelector:`) takes the view directly,
+// which is what made passing this one straight through look right — the handler
+// contract is `on_change(tv, ctx)` for both.
+//
+// Forwarding the notification handed every composer / text_area `on_change` an
+// NSConcreteNotification where the view was documented. It responds to none of
+// the view selectors a handler reaches for, so the sanctioned
+// `facet::key_of(sender)` threw unrecognized-selector and terminated the app;
+// worse, it DOES respond to `-object`, so a handler reading the edited text got
+// a wrong value with no diagnostic.
+// See bugs/notification-as-sender-unrecognized-selector.md.
+fn composer_did_change_imp(user: *u8, notif: *u8) {
     let c: *ComposerCtx = { user as *ComposerCtx };
     let f: fn(*u8, *u8) = { (*c).on_change };
+    if { f as *u8 } == { 0 as *u8 } { return; }
+    let tv: *u8 = notification_object(notif);
+    if tv == { 0 as *u8 } { return; }
     // (sender, ctx) — the SAME order as every control action (action_ctx_imp),
     // which is the order the compiler's bound-method thunk expects (ctx = the
     // receiver, trailing). ctx-first here dispatched bound methods with
     // `this` = the text view (live bug).
-    if { f as *u8 } != { 0 as *u8 } { f(tv, { (*c).caller_ctx }); }
+    f(tv, { (*c).caller_ctx });
     return;
 }
 

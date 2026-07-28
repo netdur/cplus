@@ -2110,7 +2110,11 @@ fn appkit_should_close(user: *u8, win_ptr: *u8) -> i8 {
     return 0 as i8;
 }
 
-fn appkit_will_close(user: *u8, win_ptr: *u8) {
+// `windowWillClose:` is a notification method — the second argument is the
+// NSNotification, NOT the window (the window is its `-object`). Named for what
+// it is; the body wants the lifecycle box, not the sender. Naming it `win_ptr`
+// is how the composer's `on_change` bug started.
+fn appkit_will_close(user: *u8, notif: *u8) {
     let lifecycle: *WindowLifecycle = user as *WindowLifecycle;
     let will_close: fn(*u8) = { (*lifecycle).will_close };
     will_close({ (*lifecycle).ctx });
@@ -3753,14 +3757,34 @@ fn find_view_by_id(root: *u8, id: str) -> *u8 {
 // view selectors (`window`, `accessibilityIdentifier`) on it would throw
 // unrecognized-selector. If the sender responds to `view` (recognizers do,
 // views don't), take that; otherwise the sender already is the view.
+// An NSNotification names its sender in `-object`, so unwrap that first: a
+// notification-based callback that forwards its argument straight through hands
+// us the notification, and every view selector below would throw on it. That is
+// how a delegate wiring mistake in appkit_ext once terminated the app
+// (bugs/notification-as-sender-unrecognized-selector.md) — a *lookup* helper
+// must not be able to do that, whatever it is handed.
 fn sender_view(sender: *u8) -> *u8 {
     if sender == (0 as *u8) { return 0 as *u8; }
-    let responds: i8 = rt::msg_i8_id(sender, rt::sel(#str_ptr("respondsToSelector:\0")), rt::sel(#str_ptr("view\0")));
-    if responds != (0 as i8) {
-        let v: *u8 = rt::msg_id(sender, rt::sel(#str_ptr("view\0")));
-        if v != (0 as *u8) { return v; }
+    let responds_sel: *u8 = rt::sel(#str_ptr("respondsToSelector:\0"));
+    var s: *u8 = sender;
+    // Recognizer first — the original, known case, tested and unchanged.
+    if rt::msg_i8_id(s, responds_sel, rt::sel(#str_ptr("view\0"))) != (0 as i8) {
+        let v: *u8 = rt::msg_id(s, rt::sel(#str_ptr("view\0")));
+        if v != (0 as *u8) { s = v; }
+    } else {
+        // Otherwise an NSNotification names its sender in `-object`.
+        if rt::msg_i8_id(s, responds_sel, rt::sel(#str_ptr("object\0"))) != (0 as i8) {
+            let o: *u8 = rt::msg_id(s, rt::sel(#str_ptr("object\0")));
+            if o != (0 as *u8) { s = o; }
+        }
     }
-    return sender;
+    // Whatever we ended up with must actually BE a view before the callers walk
+    // it. Anything else (a window, a menu item, a bare NSObject) reports "no
+    // key" instead of throwing.
+    if rt::msg_i8_id(s, responds_sel, rt::sel(#str_ptr("superview\0"))) == (0 as i8) {
+        return 0 as *u8;
+    }
+    return s;
 }
 
 // facet::key_of hook: the sender's key (accessibilityIdentifier) as an owned
@@ -5993,6 +6017,28 @@ fn sender_view_normalizes_recognizer_to_its_view() {
     assert sender_view(g.raw()) == v.raw();
     // The null sender stays null (raise/key_of then no-op).
     assert sender_view(0 as *u8) == (0 as *u8);
+    // A NOTIFICATION names its sender in `-object`.
+    // bugs/notification-as-sender-unrecognized-selector.md
+    let note: *u8 = rt::msg_id_id_id(
+        rt::get_class(#str_ptr("NSNotification\0")),
+        rt::sel(#str_ptr("notificationWithName:object:\0")),
+        bridge::nsstring("CplusProbeNotification"),
+        v.raw());
+    assert sender_view(note) == v.raw();
+    // Anything that is NOT a view reports "no sender" instead of throwing: a
+    // lookup helper must never be able to terminate the process, whatever a
+    // future callback hands it.
+    let obj: *u8 = synth::alloc_init_class(rt::get_class(#str_ptr("NSObject\0")));
+    assert sender_view(obj) == (0 as *u8);
+    assert key_of_impl(obj).count() == (0 as usize);
+    assert item_of_impl(obj) == (0 as *u8);
+    // A notification whose object is a plain NSObject is equally harmless.
+    let bare: *u8 = rt::msg_id_id_id(
+        rt::get_class(#str_ptr("NSNotification\0")),
+        rt::sel(#str_ptr("notificationWithName:object:\0")),
+        bridge::nsstring("CplusProbeNotification"),
+        obj);
+    assert key_of_impl(bare).count() == (0 as usize);
 }
 
 #[test]
@@ -6015,6 +6061,39 @@ fn key_of_reads_sender_key_and_walks_superviews() {
     // And through the facade with the backend installed.
     facet::set_key_of_fn(key_of_impl);
     assert facet::key_of(g.raw()).equals("tabs:tab:42");
+}
+
+// What the composer's change trampoline hands the app.
+static PROBE_SENDER: *u8 = 0 as *u8;
+fn probe_record_sender(sender: *u8, ctx: *u8) { PROBE_SENDER = sender; return; }
+
+// bugs/notification-as-sender-unrecognized-selector.md — end to end.
+//
+// `text_area`/`composer` document `on_change(tv, ctx)`, and the delegate method
+// behind it (`textViewDidChangeSelection:`) is handed an NSNotification. The
+// trampoline used to forward that notification, so the FIRST thing a real
+// handler does with its sender — `facet::key_of(sender)`, to learn which
+// element changed — msgSent `accessibilityIdentifier` to a notification and
+// terminated the app with an uncaught NSInvalidArgumentException.
+//
+// Asserting the pointer identity is the whole test: a class-name check would
+// pass on any text view, and this bug was about getting the WRONG object.
+#[test]
+fn composer_on_change_receives_the_text_view_not_the_notification() {
+    let tv: ak::TextView = ak::TextView::new_with_frame(
+        rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 100.0 });
+    ui::tag_agent(tv.as_view().raw(), "chat:composer", identity::Role::Input);
+    akx::attach_composer_delegate(tv, probe_record_sender, 0 as fn(*u8, *u8), 0 as *u8);
+
+    PROBE_SENDER = 0 as *u8;
+    tv.as_text().set_string("hello");
+    tv.as_text().set_selected_range(rt::Range { location: 1 as u64, length: 0 as u64 });
+
+    // The sender IS the text view, not the notification about it.
+    assert PROBE_SENDER == tv.raw();
+    // ...so the lookup that used to throw resolves the key.
+    facet::set_key_of_fn(key_of_impl);
+    assert facet::key_of(PROBE_SENDER).equals("chat:composer");
 }
 
 #[test]

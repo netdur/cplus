@@ -255,7 +255,27 @@ fn composer_pin_key() -> *u8 ;
 // `+[NSEvent modifierFlags]` — the modifier keys held down right now.
 fn composer_shift_is_down() -> bool ;
 
-fn composer_did_change_imp(user: *u8, tv: *u8) ;
+// The sender behind a delegate/observer argument. An NSNotification carries the
+// real sender in `-object`; anything else already IS the sender. Written as a
+// test rather than an unconditional unwrap so the same helper is correct for
+// both trampoline shapes AppKit uses — some delegate methods pass the view,
+// some pass a notification about it, and a view does not respond to `-object`.
+fn notification_object(arg: *u8) -> *u8 ;
+
+// `textViewDidChangeSelection:` is a NOTIFICATION method: its argument is the
+// NSNotification, and the text view is the notification's `object`. The sibling
+// trampoline below (`textView:doCommandBySelector:`) takes the view directly,
+// which is what made passing this one straight through look right — the handler
+// contract is `on_change(tv, ctx)` for both.
+//
+// Forwarding the notification handed every composer / text_area `on_change` an
+// NSConcreteNotification where the view was documented. It responds to none of
+// the view selectors a handler reaches for, so the sanctioned
+// `facet::key_of(sender)` threw unrecognized-selector and terminated the app;
+// worse, it DOES respond to `-object`, so a handler reading the edited text got
+// a wrong value with no diagnostic.
+// See bugs/notification-as-sender-unrecognized-selector.md.
+fn composer_did_change_imp(user: *u8, notif: *u8) ;
 
 fn composer_do_command_imp(user: *u8, tv: *u8, sel: *u8) -> i8 ;
 
