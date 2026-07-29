@@ -605,12 +605,6 @@ fn mcp_hit_test(p: *u8, id: str) -> surface::HitTest {
     return surface::hit_test_refused(surface::Outcome::Allowed, false);
 }
 
-// No drag/drop plumbing on this backend yet. NotActionable is the honest
-// answer: the nodes may exist, the operation does not.
-fn mcp_drag(p: *u8, from: str, to: str) -> surface::Outcome {
-    return surface::Outcome::NotActionable;
-}
-
 fn mcp_backend() -> mcpb::Backend {
     return mcpb::Backend {
         describe: mcp_describe,
@@ -619,6 +613,5 @@ fn mcp_backend() -> mcpb::Backend {
         set_text: mcp_set_text,
         navigate: mcp_navigate,
         hit_test: mcp_hit_test,
-        drag: mcp_drag,
     };
 }

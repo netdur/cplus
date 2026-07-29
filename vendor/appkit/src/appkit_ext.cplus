@@ -861,23 +861,6 @@ fn drop_perform_imp(self_obj: *u8, cmd: *u8, sender: *u8) -> i8 {
     return 1 as i8;   // YES — accepted
 }
 
-// Deliver a drop from a payload directly, with no NSDraggingInfo and no
-// pointer. Everything after the payload read is what `drop_perform_imp` does,
-// so the handler cannot tell the two apart.
-//
-// A SELECTOR rather than a plain function because the agent surface is the
-// caller and it deliberately does not import appkit — it drives views through
-// the raw ObjC runtime, so a `respondsToSelector:` check is how it recognises
-// a facet drop target without knowing this file's association keys. Same seam
-// as `cplusAgentSelectRow:` on NSTableView.
-fn drop_agent_imp(self_obj: *u8, cmd: *u8, payload: *u8) {
-    synth::retain_associated(self_obj, drop_text_key(), payload);
-    let f: fn(*u8, *u8) = { synth::get_associated(self_obj, drop_handler_key()) as fn(*u8, *u8) };
-    let ctx: *u8 = synth::get_associated(self_obj, drop_ctx_key());
-    if { f as *u8 } != { 0 as *u8 } { f(self_obj, ctx); }
-    return;
-}
-
 fn drop_view_class() -> *u8 {
     let name: *u8 = #str_ptr("FacetDropView\0");
     var cls: *u8 = rt::get_class(name);
@@ -886,7 +869,6 @@ fn drop_view_class() -> *u8 {
         let a1: i8 = synth::add_method_u64_1id(cls, rt::sel(#str_ptr("draggingEntered:\0")), drop_entered_imp, #str_ptr("Q@:@\0"));
         let a2: i8 = synth::add_method_i8_1id(cls, rt::sel(#str_ptr("prepareForDragOperation:\0")), drop_prepare_imp, #str_ptr("c@:@\0"));
         let a3: i8 = synth::add_method_i8_1id(cls, rt::sel(#str_ptr("performDragOperation:\0")), drop_perform_imp, #str_ptr("c@:@\0"));
-        let a4: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("cplusAgentDrop:\0")), drop_agent_imp, #str_ptr("v@:@\0"));
         synth::register_class_pair(cls);
     }
     return cls;
@@ -911,50 +893,6 @@ fn new_drop_view(handler: fn(*u8, *u8), ctx: *u8) -> ak::View {
 fn drop_text_of(drop_view: *u8) -> text::Text {
     let ns: *u8 = synth::get_associated(drop_view, drop_text_key());
     return bridge::to_text(ns);
-}
-
-// Whether `v` is a drop destination at all — has this class's handler pinned on
-// it. Cheaper and more exact than asking for its registered drag types, which a
-// caller could also have registered by hand.
-fn is_drop_view(v: *u8) -> bool {
-    if v == { 0 as *u8 } { return false; }
-    return { synth::get_associated(v, drop_handler_key()) as *u8 } != { 0 as *u8 };
-}
-
-// Deliver a drop to `drop_view` WITHOUT a pointer: pin the payload, then call
-// the app's handler exactly as `drop_perform_imp` does. False when the view is
-// not a drop destination.
-//
-// This is the `dispatchEvent` shape, not a synthetic gesture. In a browser you
-// do not test drag-and-drop by moving a mouse — you fire `dragstart`/`drop` at
-// the two elements with a DataTransfer, and the real listeners run. Same here:
-// the handler receives the same `sender` (this view) and reads the same
-// payload through `drop_text_of`, so a programmatic drop and a human one are
-// indistinguishable FROM INSIDE the handler.
-//
-// What it deliberately does NOT do is enter the drag SOURCE's `mouseDown:`.
-// That path calls `beginDraggingSessionWithItems:`, which runs AppKit's modal
-// drag-tracking loop — it cannot return to a caller waiting on a socket, so a
-// remote driver could never use it. The pointer path is covered by asking
-// (`hit_test`), not by pretending to be a mouse.
-fn deliver_drop(drop_view: *u8, payload: str) -> bool {
-    if !is_drop_view(drop_view) { return false; }
-    drop_agent_imp(drop_view, 0 as *u8, bridge::nsstring(payload));
-    return true;
-}
-
-// The payload a drag SOURCE carries (what `.draggable(text)` pinned), or empty
-// when `v` is not one. This is the string a real drag would put on the
-// pasteboard, read straight from the source rather than invented by the caller
-// — so a programmatic drop carries what the app actually declared.
-fn drag_text_of(v: *u8) -> text::Text {
-    if v == { 0 as *u8 } { return text::from_str(""); }
-    return bridge::to_text(synth::get_associated(v, drag_text_key()));
-}
-
-fn is_drag_view(v: *u8) -> bool {
-    if v == { 0 as *u8 } { return false; }
-    return { synth::get_associated(v, drag_text_key()) as *u8 } != { 0 as *u8 };
 }
 
 // ==========================================================================
@@ -1018,14 +956,6 @@ fn drag_mousedown_imp(self_obj: *u8, cmd: *u8, event: *u8) {
     return;
 }
 
-// The payload this source would put on the pasteboard, as an NSString. The
-// agent surface reads it through this selector so a programmatic drop carries
-// what the app DECLARED, rather than a string the caller made up — the same
-// reason the browser's DataTransfer comes from `dragstart`, not from the test.
-fn drag_text_agent_imp(self_obj: *u8, cmd: *u8) -> *u8 {
-    return synth::get_associated(self_obj, drag_text_key());
-}
-
 fn drag_view_class() -> *u8 {
     let name: *u8 = #str_ptr("FacetDragView\0");
     var cls: *u8 = rt::get_class(name);
@@ -1033,7 +963,6 @@ fn drag_view_class() -> *u8 {
         cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSView\0")), name, 0 as usize);
         let a1: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("mouseDown:\0")), drag_mousedown_imp, #str_ptr("v@:@\0"));
         let a2: i8 = synth::add_method_u64_1id_i64(cls, rt::sel(#str_ptr("draggingSession:sourceOperationMaskForDraggingContext:\0")), drag_source_mask_imp, #str_ptr("Q@:@q\0"));
-        let a3: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("cplusAgentDragText\0")), drag_text_agent_imp, #str_ptr("@@:\0"));
         synth::register_class_pair(cls);
     }
     return cls;

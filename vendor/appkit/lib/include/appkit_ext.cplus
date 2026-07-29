@@ -442,17 +442,6 @@ fn set_drop_text(drop_view: *u8, s: str) ;
 
 fn drop_perform_imp(self_obj: *u8, cmd: *u8, sender: *u8) -> i8 ;
 
-// Deliver a drop from a payload directly, with no NSDraggingInfo and no
-// pointer. Everything after the payload read is what `drop_perform_imp` does,
-// so the handler cannot tell the two apart.
-//
-// A SELECTOR rather than a plain function because the agent surface is the
-// caller and it deliberately does not import appkit — it drives views through
-// the raw ObjC runtime, so a `respondsToSelector:` check is how it recognises
-// a facet drop target without knowing this file's association keys. Same seam
-// as `cplusAgentSelectRow:` on NSTableView.
-fn drop_agent_imp(self_obj: *u8, cmd: *u8, payload: *u8) ;
-
 fn drop_view_class() -> *u8 ;
 
 // A fresh +1 FacetDropView registered for text drops, with `handler`/`ctx`
@@ -462,37 +451,6 @@ fn new_drop_view(handler: fn(*u8, *u8), ctx: *u8) -> ak::View ;
 // The last string dropped on `drop_view` (empty if none / non-text). Call from
 // an on_drop handler with its `sender`.
 fn drop_text_of(drop_view: *u8) -> text::Text ;
-
-// Whether `v` is a drop destination at all — has this class's handler pinned on
-// it. Cheaper and more exact than asking for its registered drag types, which a
-// caller could also have registered by hand.
-fn is_drop_view(v: *u8) -> bool ;
-
-// Deliver a drop to `drop_view` WITHOUT a pointer: pin the payload, then call
-// the app's handler exactly as `drop_perform_imp` does. False when the view is
-// not a drop destination.
-//
-// This is the `dispatchEvent` shape, not a synthetic gesture. In a browser you
-// do not test drag-and-drop by moving a mouse — you fire `dragstart`/`drop` at
-// the two elements with a DataTransfer, and the real listeners run. Same here:
-// the handler receives the same `sender` (this view) and reads the same
-// payload through `drop_text_of`, so a programmatic drop and a human one are
-// indistinguishable FROM INSIDE the handler.
-//
-// What it deliberately does NOT do is enter the drag SOURCE's `mouseDown:`.
-// That path calls `beginDraggingSessionWithItems:`, which runs AppKit's modal
-// drag-tracking loop — it cannot return to a caller waiting on a socket, so a
-// remote driver could never use it. The pointer path is covered by asking
-// (`hit_test`), not by pretending to be a mouse.
-fn deliver_drop(drop_view: *u8, payload: str) -> bool ;
-
-// The payload a drag SOURCE carries (what `.draggable(text)` pinned), or empty
-// when `v` is not one. This is the string a real drag would put on the
-// pasteboard, read straight from the source rather than invented by the caller
-// — so a programmatic drop carries what the app actually declared.
-fn drag_text_of(v: *u8) -> text::Text ;
-
-fn is_drag_view(v: *u8) -> bool ;
 
 // ==========================================================================
 // Drag-and-drop SOURCE -> pasteboard text
@@ -510,12 +468,6 @@ fn drag_text_key() -> *u8 ;
 fn drag_source_mask_imp(self_obj: *u8, cmd: *u8, session: *u8, context: i64) -> u64 ;
 
 fn drag_mousedown_imp(self_obj: *u8, cmd: *u8, event: *u8) ;
-
-// The payload this source would put on the pasteboard, as an NSString. The
-// agent surface reads it through this selector so a programmatic drop carries
-// what the app DECLARED, rather than a string the caller made up — the same
-// reason the browser's DataTransfer comes from `dragstart`, not from the test.
-fn drag_text_agent_imp(self_obj: *u8, cmd: *u8) -> *u8 ;
 
 fn drag_view_class() -> *u8 ;
 

@@ -70,27 +70,30 @@ struct Backend {
     // event and cannot act. Backends that cannot hit-test report
     // `supported: false` rather than a plausible answer.
     //
-    // TWO RULES FOR ANY POINTER VERB ADDED BESIDE THIS ONE (press, drag, hover):
+    // NO GESTURE VERBS HERE. EVER. An agent driving this surface has no hands:
+    // it cannot drag, cannot pinch to zoom, cannot swipe, and no amount of
+    // plumbing changes that. So the answer to "the agent needs to move a card
+    // between lanes" is never a `drag` verb — it is a click path in the UI,
+    // which the app owes its users anyway. Same for Enter-to-commit: a button
+    // beside the field. Every one of those constraints has made the UI better
+    // for people too; a visible button beats a hidden keystroke, and a click
+    // beats a drag for anyone who cannot drag precisely.
     //
-    // 1. ADDRESS BY ID, NEVER BY POINT. Every verb here authorizes a NODE —
-    //    exposure, and for actions the affordance ceiling. A verb taking
-    //    coordinates authorizes nothing, and would let an agent reach unexposed
-    //    UI by pixel. That is a hole in the consent model, not a convenience.
+    // A `drag(from, to)` verb WAS written and reverted (2026-07-29). It did not
+    // synthesize a gesture — it fired the destination's drop handler directly,
+    // the way a browser test dispatches `drop` at an element — and it still had
+    // to go, because the objection is not "that is not a real gesture". It is
+    // that shipping the verb at all makes drag-only affordances viable again,
+    // and the app stops owing anyone a click path. Do not rebuild it.
     //
-    // 2. THEY VERIFY THE HUMAN PATH; THEY DO NOT EXCUSE UI THAT NEEDS ONE.
-    //    This surface has no `key` verb and no `drag` verb on purpose: an app
-    //    driven by both a person and an agent must not require a gesture only
-    //    one of them can make, so Enter-to-commit gets a button beside it and
-    //    drag-to-move gets a click path. Those constraints made the UI better.
-    //    A `drag` verb makes drag-only affordances shippable again — so if one
-    //    is ever added, it is for REGRESSION-TESTING a gesture that already has
-    //    a click path, never for driving one that does not.
+    // `hit_test` below is not an exception to that rule: it CANNOT ACT. It
+    // takes no gesture, sends no event, and changes nothing — it only reports
+    // what is at a node's own centre. Inspection is allowed; actuation is what
+    // is not.
+    //
+    // And whatever is added here, ADDRESS BY ID, NEVER BY POINT. Every verb
+    // authorizes a NODE — exposure, and for actions the affordance ceiling. A
+    // verb taking coordinates authorizes nothing, and would let an agent reach
+    // unexposed UI by pixel: a hole in the consent model, not a convenience.
     hit_test: fn(*u8, str) -> surface::HitTest,
-    // Move a drag source's payload onto a drop destination, both by id. FIRES
-    // the drop rather than performing a gesture — the source's own mouseDown:
-    // starts a modal drag-tracking loop that can never return to a caller
-    // waiting on a socket, so a remote driver could not use it. Verifies the
-    // app's drop handler and the payload it receives; whether a person could
-    // complete the gesture is `hit_test`'s question.
-    drag: fn(*u8, str, str) -> surface::Outcome,
 }
