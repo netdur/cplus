@@ -8822,6 +8822,79 @@ fn draggable_box_is_drag_source() {
     assert rt::msg_i8_id(vp, responds_sel, down_sel) != (0 as i8);
 }
 
+// Stands in for the end of `drag_mousedown_imp`, where its local `items` Vec
+// goes out of scope and each DraggingItem's drop runs. `take` is what makes
+// this consume — a plain by-value parameter BORROWS in C+, which is precisely
+// why `begin_dragging_session_with_items(this, items: vec::Vec[DraggingItem],
+// ...)` does NOT drop the Vec inside the call: it borrows it, and the caller
+// still owns it afterwards.
+fn dt_consume_items(take items: vec::Vec[ak::DraggingItem]) { return; }
+
+fn dt_retain_count(obj: *u8) -> u64 {
+    return rt::msg_u64(obj, rt::sel(#str_ptr("retainCount\0")));
+}
+
+// The ownership contract behind `drag_mousedown_imp`, which over-released its
+// NSDraggingItem and segfaulted on a single click of any `.draggable()` box —
+// at the next autorelease-pool drain, so nothing in the stack named drag.
+// bugs/dragging-item-double-release.md
+//
+// The drag itself cannot be tested here: `beginDraggingSessionWithItems:` runs
+// AppKit's modal drag-tracking loop, which would hang the suite. So this walks
+// the exact retain/release sequence that function performs, using the same
+// public bindings, and asserts the counts — which is where the defect actually
+// lived. Deltas rather than absolutes, so it does not depend on how AppKit
+// happens to initialize these objects.
+#[test]
+fn a_dragging_item_outlives_the_vec_that_carried_it() {
+    // `pbitem` is a raw +1 from alloc/init, held by nothing but us.
+    let pbitem: *u8 = rt::msg_id(rt::msg_id(rt::get_class(#str_ptr("NSPasteboardItem\0")), rt::sel(#str_ptr("alloc\0"))), rt::sel(#str_ptr("init\0")));
+    assert pbitem != (0 as *u8);
+    let pb_alone: u64 = dt_retain_count(pbitem);
+
+    // PasteboardWriting is a NON-owning handle (no retain, no drop), so the only
+    // thing that takes a reference here is `initWithPasteboardWriter:`.
+    let ditem: ak::DraggingItem = ak::DraggingItem::new(ak::PasteboardWriting::from_raw(pbitem));
+    let ditem_raw: *u8 = ditem.raw();
+    assert ditem_raw != (0 as *u8);
+    assert dt_retain_count(pbitem) > pb_alone;
+
+    // Which is why releasing `pbitem` by hand IS correct — it balances the alloc
+    // and leaves the dragging item's own reference standing.
+    rt::release(pbitem);
+    assert dt_retain_count(pbitem) == pb_alone;
+
+    // The dragging item is an OWNING wrapper: +1 from `new`, released by drop.
+    let d_alone: u64 = dt_retain_count(ditem_raw);
+
+    // The session puts it in an NSMutableArray, which retains it. That array
+    // outlives the call — it is autoreleased, and releases its elements when the
+    // pool drains, which is where the crash surfaced.
+    let arr: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+    rt::msg_void_id(arr, rt::sel(#str_ptr("addObject:\0")), ditem_raw);
+    assert dt_retain_count(ditem_raw) == (d_alone +% (1 as u64));
+
+    // Then the caller's Vec goes out of scope, releasing the wrapper's own
+    // reference. Note WHERE that happens: `begin_dragging_session_with_items`
+    // borrows `items`, so the drop is at the end of `drag_mousedown_imp`, not
+    // inside the call — two retains (alloc, addObject:) against one drop.
+    var items: vec::Vec[ak::DraggingItem] = vec::new::[ak::DraggingItem]();
+    items.append(ditem);
+    dt_consume_items(items);
+
+    // THE INVARIANT: one reference left — the array's. The item is ALIVE, and it
+    // must be, because that array will release it later. The bug added a second
+    // release against those two retains, taking this to zero and freeing an
+    // object the drag session still held.
+    assert dt_retain_count(ditem_raw) == d_alone;
+    // Still a live object, not a zombie: it answers a message.
+    assert rt::msg_i8_id(ditem_raw, rt::sel(#str_ptr("respondsToSelector:\0")), rt::sel(#str_ptr("setDraggingFrame:contents:\0"))) != (0 as i8);
+
+    // Let the array release its element, the way the drained pool would.
+    rt::msg_void(arr, rt::sel(#str_ptr("removeAllObjects\0")));
+    return;
+}
+
 fn td_drop_handler(sender: *u8, ctx: *u8) { return; }
 
 #[test]

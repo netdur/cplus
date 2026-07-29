@@ -917,8 +917,15 @@ fn drag_mousedown_imp(self_obj: *u8, cmd: *u8, event: *u8) {
     let pbitem: *u8 = rt::msg_id(rt::msg_id(rt::get_class(#str_ptr("NSPasteboardItem\0")), rt::sel(#str_ptr("alloc\0"))), rt::sel(#str_ptr("init\0")));
     rt::msg_void_id_id(pbitem, rt::sel(#str_ptr("setString:forType:\0")), ns, bridge::nsstring("public.utf8-plain-text"));
     let ditem: ak::DraggingItem = ak::DraggingItem::new(ak::PasteboardWriting::from_raw(pbitem));
-    let ditem_raw: *u8 = ditem.raw();
-    rt::release(pbitem);   // the dragging item retained it
+    // BALANCED, and read the next two lines together — they look alike and are
+    // not. `pbitem` is a RAW +1 from alloc/init: `PasteboardWriting::from_raw`
+    // does not retain and the type has no drop (appkit.cplus, "non-owning
+    // handle"), so nothing but this line will ever balance the alloc, and
+    // `initWithPasteboardWriter:` has taken its own retain. Release is correct.
+    //
+    // `ditem` is the opposite: an OWNING RAII wrapper whose drop releases. It
+    // must NOT be released by hand — see the note at the dragging session below.
+    rt::release(pbitem);
     let view: ak::View = ak::View::from_raw(self_obj);
     let rect: rt::Rect = view.bounds();
     // preview = a snapshot of the view, so something follows the cursor
@@ -936,8 +943,16 @@ fn drag_mousedown_imp(self_obj: *u8, cmd: *u8, event: *u8) {
     if { contents as *u8 } != { 0 as *u8 } { rt::release(contents); }   // the item copied it
     var items: vec::Vec[ak::DraggingItem] = vec::new::[ak::DraggingItem]();
     items.append(ditem);
+    // NO release after this call, however much it looks like the `pbitem` line
+    // above. `DraggingItem` is an owning wrapper (+1 from new, drop releases)
+    // and this method takes `items` BY VALUE, so the Vec drops inside it and
+    // each item's drop runs there — already balancing the alloc against the
+    // retain the session's array took. A manual release here frees an object
+    // the drag session is still holding, and the fault lands much later, when
+    // the autoreleased array drains and releases a dead element. A single
+    // mouseDown: on any `.draggable()` box was enough.
+    // bugs/dragging-item-double-release.md
     let _s: ak::DraggingSession = view.begin_dragging_session_with_items(items, ak::Event::from_raw(event), ak::DraggingSource::from_raw(self_obj));
-    rt::release(ditem_raw);   // the session retained it
     return;
 }
 
