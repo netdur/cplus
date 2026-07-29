@@ -2662,9 +2662,27 @@ fn fill_scroll(s: ak::ScrollView, take rows: flex::Node) -> f64 {
 // document to that natural size, and let the viewport scroll sideways. The
 // caller gives the scroll a definite height (a horizontal scroll cannot derive
 // one from its content through the layout).
+//
+// The SCROLL axis is undefined and the CROSS axis is the viewport height — the
+// mirror of `fill_scroll`, which leaves height undefined and passes the
+// viewport width. Both axes were once undefined here, which meant nothing
+// inside a horizontal scroll could `grow` or `align_items(Stretch)` vertically:
+// there was no parent height to resolve against, so a stretch-sized node
+// settled at 0 and handed that zero faithfully to every descendant. The result
+// was content that mounted, measured and positioned correctly and was invisible
+// — no error, no warning, and a healthy-looking tree unless you asked
+// describe_ui for real frames.
+// bugs/flex-absolute-child-and-horizontal-scroll.md
 fn fill_scroll_h(s: ak::ScrollView, take rows: flex::Node) -> f64 {
+    let sf: rt::Rect = s.as_view().frame();
     var r: flex::Node = rows;
-    r.calculate_layout(flex::undefined(), flex::undefined(), flex::Direction::LTR);
+    // Scroll jobs drain parent-before-child, so the viewport is already sized —
+    // the same guarantee `fill_scroll` leans on to read `sf.w`. A scroll that
+    // somehow has no height yet keeps the old undefined behaviour rather than
+    // resolving every child against a definite 0, which would be worse.
+    var cross: f64 = flex::undefined();
+    if sf.h > 0.0f64 { cross = sf.h; }
+    r.calculate_layout(flex::undefined(), cross, flex::Direction::LTR);
     r.round_to_pixel(2.0f64);
     let rf: flex::Layout = r.layout_frame();
     let doc = akx::new_flipped_view(rt::Rect { x: 0.0, y: 0.0, w: rf.width, h: rf.height });
@@ -4688,6 +4706,85 @@ fn test_fill_scroll_installs_flipped_document() {
             assert flipped == (1 as i8);
             let df: rt::Rect = doc.frame();
             assert approx(df.h, 150.0f64);
+        }
+        option::Option[ak::View]::None => { assert false; }
+    };
+}
+
+// A horizontal scroll must give its content a definite CROSS axis, or nothing
+// inside it can size vertically. `grow(1)` in a row's cross axis and
+// `align_items(Stretch)` are the two ways to ask for "as tall as the viewport";
+// with both axes undefined (the old behaviour) each resolved to 0 and passed
+// that zero down, mounting a complete, correctly-parented, invisible subtree.
+// bugs/flex-absolute-child-and-horizontal-scroll.md
+#[test]
+fn horizontal_scroll_gives_content_the_viewport_height() {
+    let s = ak::ScrollView::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 120.0 });
+    // Three fixed-width columns; each asks to fill the height by stretching.
+    var cols: Builder = Builder::new();
+    cols.add(box().width(150.0f64));
+    cols.add(box().width(150.0f64));
+    cols.add(box().width(150.0f64));
+    var strip: flex::Node = row(cols);
+    strip.set_align_items(flex::Align::Stretch);
+    let h: f64 = fill_scroll_h(s, strip);
+
+    // The strip is as tall as the viewport, not 0.
+    assert approx(h, 120.0f64);
+    match s.document_view() {
+        option::Option[ak::View]::Some(doc) => {
+            let df: rt::Rect = doc.frame();
+            assert approx(df.h, 120.0f64);
+            // The scroll axis is still natural: 3 x 150 overflows the 200pt
+            // viewport, which is the whole point of scrolling sideways.
+            assert approx(df.w, 450.0f64);
+        }
+        option::Option[ak::View]::None => { assert false; }
+    };
+
+    // The layout is what the defect corrupted, so read the laid-out tree back
+    // rather than the views (a bare `box()` carries no style and so synthesizes
+    // no backing NSView — which is exactly how "mounted and invisible" hides).
+    // Every stretched column must have the viewport height, not a zero handed
+    // down from an unresolvable parent.
+    match scroll_content_tree(s.raw()) {
+        option::Option[*flex::Node]::Some(tp) => {
+            assert { (*tp).child_count() } == (3 as usize);
+            var i: usize = 0 as usize;
+            while i < (3 as usize) {
+                match { (*tp).children.at_ptr(i) } {
+                    option::Option[*flex::Node]::Some(cp) => {
+                        let cf: flex::Layout = { (*cp).layout_frame() };
+                        assert approx(cf.height, 120.0f64);
+                        assert approx(cf.width, 150.0f64);
+                    }
+                    option::Option[*flex::Node]::None => { assert false; }
+                }
+                i = i +% (1 as usize);
+            }
+        }
+        option::Option[*flex::Node]::None => { assert false; }
+    };
+}
+
+// A scroll with no height yet must not resolve its children against a definite
+// 0 — that would turn "not measured yet" into "measured as nothing". It keeps
+// the natural-size behaviour instead.
+#[test]
+fn horizontal_scroll_without_a_height_falls_back_to_natural_size() {
+    let s = ak::ScrollView::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 0.0 });
+    var cols: Builder = Builder::new();
+    cols.add(box().width(150.0f64).height(44.0f64));
+    cols.add(box().width(150.0f64).height(44.0f64));
+    var strip: flex::Node = row(cols);
+    strip.set_align_items(flex::Align::Stretch);
+    let h: f64 = fill_scroll_h(s, strip);
+    assert approx(h, 44.0f64);   // natural content height, not 0
+    match s.document_view() {
+        option::Option[ak::View]::Some(doc) => {
+            let df: rt::Rect = doc.frame();
+            assert approx(df.h, 44.0f64);
+            assert approx(df.w, 300.0f64);
         }
         option::Option[ak::View]::None => { assert false; }
     };
