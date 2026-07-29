@@ -597,6 +597,14 @@ fn mcp_describe_exposed(p: *u8) -> vec::Vec[mcpb::UiNode] {
     return out;
 }
 
+// No hit-testing on this backend: it would have to reimplement the toolkit's
+// own pointer resolution to answer, and a plausible guess is worse than an
+// honest refusal — a caller trusting a fabricated "reachable" would conclude
+// the human path is verified when nothing verified it.
+fn mcp_hit_test(p: *u8, id: str) -> surface::HitTest {
+    return surface::hit_test_refused(surface::Outcome::Allowed, false);
+}
+
 fn mcp_backend() -> mcpb::Backend {
     return mcpb::Backend {
         describe: mcp_describe,
@@ -604,5 +612,6 @@ fn mcp_backend() -> mcpb::Backend {
         click: mcp_click,
         set_text: mcp_set_text,
         navigate: mcp_navigate,
+        hit_test: mcp_hit_test,
     };
 }

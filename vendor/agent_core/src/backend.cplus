@@ -65,4 +65,25 @@ struct Backend {
     click: fn(*u8, str) -> surface::Outcome,
     set_text: fn(*u8, str, str, u64) -> surface::Outcome,
     navigate: fn(*u8, str) -> surface::Outcome,
+    // Is this node what a pointer at its own centre would reach, or is
+    // something on top of it? An INSPECTION, not a gesture — it synthesizes no
+    // event and cannot act. Backends that cannot hit-test report
+    // `supported: false` rather than a plausible answer.
+    //
+    // TWO RULES FOR ANY POINTER VERB ADDED BESIDE THIS ONE (press, drag, hover):
+    //
+    // 1. ADDRESS BY ID, NEVER BY POINT. Every verb here authorizes a NODE —
+    //    exposure, and for actions the affordance ceiling. A verb taking
+    //    coordinates authorizes nothing, and would let an agent reach unexposed
+    //    UI by pixel. That is a hole in the consent model, not a convenience.
+    //
+    // 2. THEY VERIFY THE HUMAN PATH; THEY DO NOT EXCUSE UI THAT NEEDS ONE.
+    //    This surface has no `key` verb and no `drag` verb on purpose: an app
+    //    driven by both a person and an agent must not require a gesture only
+    //    one of them can make, so Enter-to-commit gets a button beside it and
+    //    drag-to-move gets a click path. Those constraints made the UI better.
+    //    A `drag` verb makes drag-only affordances shippable again — so if one
+    //    is ever added, it is for REGRESSION-TESTING a gesture that already has
+    //    a click path, never for driving one that does not.
+    hit_test: fn(*u8, str) -> surface::HitTest,
 }

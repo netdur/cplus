@@ -365,3 +365,121 @@ fn describe_survives_a_replaced_tree() {
     let nodes: vec::Vec[agent::AppKitNode] = s.describe();
     assert nodes.count() == (3 as usize);
 }
+
+// ---- hit_test: the pointer question the action verbs cannot ask -------------
+
+// An overlay covering `under`, added AFTER it so it is topmost (hitTest: walks
+// subviews in reverse). Plain NSView: hit-testing is frame + hidden, not paint.
+fn add_overlay(content: ak::View, over: rt::Rect) -> ak::View {
+    let v = ak::View::new(over);
+    content.add_subview(v);
+    return v;
+}
+
+#[test]
+fn hit_test_reports_a_reachable_control() {
+    let win = fixture_window(300.0f64, 200.0f64);
+    let content = content_of(win);
+    let b = add_button(content, "go");
+    agent::set_agent_id(b.as_view().raw(), "go-btn");
+
+    var s: agent::Surface = agent::open(win.raw());
+    let h: surface::HitTest = s.hit_test("go-btn");
+    assert surface::outcome_eq(h.outcome, surface::Outcome::Allowed);
+    assert h.supported;
+    assert h.reachable;
+    assert h.covered == false;
+    assert h.covered_by.view() == "";
+}
+
+// THE CASE THIS VERB EXISTS FOR. `click` cannot tell these apart: it sends
+// `performClick:` straight to the view, so it reports Allowed on a control no
+// person could reach. The assertion on `click` below is the point — it is not
+// a bug, it is the blindness, and hit_test is what sees past it.
+#[test]
+fn hit_test_names_the_exposed_overlay_that_buries_a_control() {
+    let win = fixture_window(300.0f64, 200.0f64);
+    let content = content_of(win);
+    let b = add_button(content, "go");
+    agent::set_agent_id(b.as_view().raw(), "go-btn");
+    // Covers the button's frame (10,10,80,24) completely.
+    let ov = add_overlay(content, rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 100.0 });
+    agent::set_agent_id(ov.raw(), "overlay");
+
+    var s: agent::Surface = agent::open(win.raw());
+    let h: surface::HitTest = s.hit_test("go-btn");
+    assert surface::outcome_eq(h.outcome, surface::Outcome::Allowed);
+    assert h.reachable == false;
+    assert h.covered;
+    assert h.covered_by.view() == "overlay";
+
+    // ...while the action verb still says yes, which is exactly the gap.
+    assert surface::outcome_eq(s.click("go-btn"), surface::Outcome::Allowed);
+    // And the overlay itself is reachable — it is the thing on top.
+    let ho: surface::HitTest = s.hit_test("overlay");
+    assert ho.reachable;
+    assert ho.covered == false;
+}
+
+// The obstruction is reported, its identity is not, when it is UI the app never
+// exposed. Naming it would let an agent enumerate unexposed nodes by putting
+// something under them, which is a hole in the consent model rather than a
+// feature — `covered` still carries the fact.
+#[test]
+fn hit_test_reports_an_unexposed_obstruction_without_naming_it() {
+    let win = fixture_window(300.0f64, 200.0f64);
+    let content = content_of(win);
+    let b = add_button(content, "go");
+    agent::set_agent_id(b.as_view().raw(), "go-btn");
+    let _ov = add_overlay(content, rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 100.0 });   // untagged
+
+    var s: agent::Surface = agent::open(win.raw());
+    let h: surface::HitTest = s.hit_test("go-btn");
+    assert h.reachable == false;
+    assert h.covered;
+    assert h.covered_by.view() == "";
+}
+
+// A hit on a node's own CHILD still means the node is reachable — the pointer
+// got there. Without this a container would always report itself covered by
+// its own content, which is the opposite of the answer wanted.
+#[test]
+fn hit_test_counts_a_hit_on_a_childs_view_as_reaching_the_parent() {
+    let win = fixture_window(300.0f64, 200.0f64);
+    let content = content_of(win);
+    let group = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 100.0 });
+    content.add_subview(group);
+    agent::set_agent_id(group.raw(), "group");
+    let inner = ak::Button::new_with_frame(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 100.0 });
+    group.add_subview(inner.as_view());
+    agent::set_agent_id(inner.as_view().raw(), "inner-btn");
+
+    var s: agent::Surface = agent::open(win.raw());
+    let h: surface::HitTest = s.hit_test("group");
+    assert h.reachable;
+    assert h.covered == false;
+}
+
+#[test]
+fn hit_test_negatives_report_rather_than_guess() {
+    let win = fixture_window(300.0f64, 200.0f64);
+    let content = content_of(win);
+    let b = add_button(content, "go");
+    agent::set_agent_id(b.as_view().raw(), "go-btn");
+    var s: agent::Surface = agent::open(win.raw());
+
+    // Unknown id: no reachability claim at all.
+    let miss: surface::HitTest = s.hit_test("nope");
+    assert surface::outcome_eq(miss.outcome, surface::Outcome::NotFound);
+    assert miss.reachable == false;
+    assert miss.covered == false;
+
+    // A view that left the live UI is Stale, not "unreachable" — the
+    // difference matters: one says re-open the surface, the other says
+    // something is on top.
+    b.as_view().remove_from_superview();
+    let gone: surface::HitTest = s.hit_test("go-btn");
+    assert surface::outcome_eq(gone.outcome, surface::Outcome::Stale);
+    assert gone.reachable == false;
+    assert gone.covered == false;
+}

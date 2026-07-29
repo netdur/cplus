@@ -33,6 +33,7 @@
 import "stdlib/option" as option;
 import "stdlib/result" as result;
 import "stdlib/hash_map" as hash_map;
+import "stdlib/text" as text;
 import "./identity" as identity;
 
 // The result of an authorization check.
@@ -87,6 +88,39 @@ fn authorize_read(reg: identity::Registry, node: usize) -> Outcome {
         return Outcome::NotExposed;
     }
     return Outcome::Allowed;
+}
+
+// The answer to "could a person actually click this?" — the one question the
+// action verbs cannot ask. `click` resolves an id and sends the action straight
+// to the backing widget: deterministic, it names what it acted on, and it
+// cannot miss. That is right for DRIVING an app and it is exactly why it
+// verifies nothing about the human path — no hit-test, no event, no tracking.
+// So a control with something on top of it is indistinguishable, through the
+// agent surface, from one a person can reach.
+//
+// This verb answers that WITHOUT being able to click anything: it asks the view
+// tree what is at the node's own centre point and reports whether that is the
+// node. No event synthesis, so it cannot press, drag, or reach anything by
+// coordinate.
+//
+// Addressed by ID like every other verb, which is what keeps the consent model
+// intact: a POINT-addressed verb would let an agent reach unexposed UI by
+// coordinate, which is a hole, not a feature. For the same reason `covered_by`
+// names the obstruction only when that node is itself exposed — otherwise the
+// verb would leak the identity of UI the app deliberately did not expose, while
+// `covered` still reports the fact truthfully.
+struct HitTest {
+    outcome: Outcome,          // authorization, the same gate as any read verb
+    supported: bool,           // false where the backend cannot hit-test at all
+    reachable: bool,           // the node (or its own subtree) is what is there
+    covered: bool,             // something else is on top
+    covered_by: text::Text,    // that node's id — only when IT is exposed; "" otherwise
+}
+
+// A hit test that never ran: authorization failed, or the backend has no
+// hit-testing. Reports nothing about reachability rather than guessing.
+fn hit_test_refused(o: Outcome, supported: bool) -> HitTest {
+    return HitTest { outcome: o, supported: supported, reachable: false, covered: false, covered_by: text::new() };
 }
 
 // Core-side per-node text version (plan.agent-core.md §5.2). Maintained here, not

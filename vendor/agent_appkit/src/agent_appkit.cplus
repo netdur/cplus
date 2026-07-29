@@ -769,6 +769,71 @@ impl Surface {
         return surface::Outcome::NotFound;
     }
 
+    // READ: is this node what a pointer at its own centre would reach? Gated as
+    // a read (exposure, not the affordance ceiling) — asking whether an
+    // observe-only node is covered is a fair question, and this cannot act on
+    // it either way.
+    //
+    // The verb exists because `click` above cannot answer it: it sends
+    // `performClick:` straight to the view, so it succeeds identically whether
+    // the control is in front of the user or buried under an overlay. That
+    // blindness cost a release once — a single human click on a `.draggable()`
+    // box double-released an NSDraggingItem, and 105 scripted cycles could not
+    // reproduce it because `click` never enters the path that crashes.
+    fn hit_test(this, id: str) -> surface::HitTest {
+        match this.reg.lookup(id) {
+            option::Option[usize]::Some(node) => {
+                let oc: surface::Outcome = surface::authorize_read(this.reg, node);
+                if !surface::outcome_eq(oc, surface::Outcome::Allowed) {
+                    return surface::hit_test_refused(oc, true);
+                }
+                let v: *u8 = this.view_of(node);
+                if is_detached(v) {
+                    return surface::hit_test_refused(surface::Outcome::Stale, true);
+                }
+                let hit: *u8 = view_at_center_of(v);
+                if is_null(hit) {
+                    // Nothing at all is there: zero-sized, or clipped away by an
+                    // ancestor. Not reachable, and not covered BY anything.
+                    return surface::hit_test_refused(surface::Outcome::Allowed, true);
+                }
+                if is_at_or_inside(hit, v) {
+                    return surface::HitTest {
+                        outcome: surface::Outcome::Allowed, supported: true,
+                        reachable: true, covered: false, covered_by: text::new(),
+                    };
+                }
+                // Covered. Name the obstruction only if it is itself exposed —
+                // otherwise the fact is reported and the identity is not.
+                return surface::HitTest {
+                    outcome: surface::Outcome::Allowed, supported: true,
+                    reachable: false, covered: true, covered_by: this.exposed_id_at_or_above(hit),
+                };
+            }
+            option::Option[usize]::None => {}
+        }
+        return surface::hit_test_refused(surface::Outcome::NotFound, true);
+    }
+
+    // The id of the nearest EXPOSED node at or above `v`, or "". Walks up
+    // because the view actually hit is often an untagged inner view of the
+    // thing a person would name.
+    fn exposed_id_at_or_above(this, v: *u8) -> text::Text {
+        var cur: *u8 = v;
+        while !is_null(cur) {
+            let total: usize = this.reg.count();
+            var node: usize = 1 as usize;
+            while node < total {
+                if this.view_of(node) == cur && this.reg.is_exposed(node) {
+                    return text::from_str(this.reg.id_view(node));
+                }
+                node = node +% (1 as usize);
+            }
+            cur = rt::msg_id(cur, rt::sel(#str_ptr("superview\0")));
+        }
+        return text::new();
+    }
+
     // WRITE: set a field's text with optimistic concurrency. `base_version` is
     // the version the agent last read (`text_version`); a racing edit yields
     // `VersionConflict`. On `Allowed`, sends the class-appropriate setter then
@@ -901,6 +966,14 @@ fn mcp_navigate(p: *u8, id: str) -> surface::Outcome {
     refresh_surface(p);
     let s: *Surface = { p as *Surface };
     return (*s).scroll_to(id);
+}
+
+// Refreshes first like every other verb: "is this covered" is a question about
+// the tree as it is NOW, and a stale snapshot would answer about the old one.
+fn mcp_hit_test(p: *u8, id: str) -> surface::HitTest {
+    refresh_surface(p);
+    let s: *Surface = { p as *Surface };
+    return (*s).hit_test(id);
 }
 
 // The vtable agent_mcp drives an AppKit surface through. Pass the surface as
@@ -1038,6 +1111,48 @@ fn select_row_of(v: *u8) -> bool {
     return true;
 }
 
+// ---- pointer reachability ---------------------------------------------------
+// AppKit's own hit-testing, asked a question rather than driven. Nothing here
+// synthesizes an event.
+
+// The topmost view above `v` — the window's content view when there is one, and
+// otherwise the end of the superview chain, so this answers the same question
+// for a surface that is mounted but not yet in a window.
+fn hit_root_of(v: *u8) -> *u8 {
+    var cur: *u8 = v;
+    loop {
+        let sup: *u8 = rt::msg_id(cur, rt::sel(#str_ptr("superview\0")));
+        if is_null(sup) { return cur; }
+        cur = sup;
+    }
+    return cur;
+}
+
+// Is `v` `ancestor`, or inside it? A hit on a node's own child still means the
+// node is reachable — the pointer got there.
+fn is_at_or_inside(v: *u8, ancestor: *u8) -> bool {
+    var cur: *u8 = v;
+    while !is_null(cur) {
+        if cur == ancestor { return true; }
+        cur = rt::msg_id(cur, rt::sel(#str_ptr("superview\0")));
+    }
+    return false;
+}
+
+// What the pointer would reach at `v`'s own centre. Null when nothing is there
+// — a zero-sized or fully clipped node, which is itself an answer.
+fn view_at_center_of(v: *u8) -> *u8 {
+    let b: rt::Rect = rt::msg_rect(v, rt::sel(#str_ptr("bounds\0")));
+    if b.w <= 0.0 || b.h <= 0.0 { return null(); }
+    let center: rt::Point = rt::Point { x: b.x + (b.w / 2.0), y: b.y + (b.h / 2.0) };
+    let root: *u8 = hit_root_of(v);
+    if is_null(root) { return null(); }
+    // `hitTest:` wants the point in the RECEIVER's superview space; converting
+    // to `nil` walks the chain to that space whether or not a window exists.
+    let p: rt::Point = rt::msg_point_point_id(v, rt::sel(#str_ptr("convertPoint:toView:\0")), center, null());
+    return rt::msg_id_point(root, rt::sel(#str_ptr("hitTest:\0")), p);
+}
+
 fn refresh_surface(p: *u8) {
     if on_main_thread() {
         refresh_in_place(p);
@@ -1094,5 +1209,6 @@ fn mcp_backend() -> mcpb::Backend {
         click: mcp_click,
         set_text: mcp_set_text,
         navigate: mcp_navigate,
+        hit_test: mcp_hit_test,
     };
 }
