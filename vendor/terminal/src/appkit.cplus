@@ -269,6 +269,31 @@ fn send(c: *TerminalContext, bytes: str) {
     return;
 }
 
+// Keys, natively — and NOT through facet's `on_key`, which is the portable key
+// primitive and would be the obvious home for this. The decision, recorded
+// because the alternative keeps looking attractive from outside:
+//
+//   * The table below is Darwin virtual key codes (36 Return, 48 Tab, 51
+//     Delete, 123-126 arrows, ...). facet's `key_code` is documented as the
+//     PLATFORM code, so routing through `on_key` would carry these same
+//     constants into the handler — the same backend-specific code, one layer
+//     further from the thing it is specific to. Portability would need facet to
+//     grow named keys, which is a change worth making when something portable
+//     needs them, not to relocate this.
+//   * The Command branch is not key handling at all: it is `copy:`,
+//     `selectAll:` and NSPasteboard on the text view. No portable primitive
+//     covers those, and dropping them would cost the terminal native
+//     selection and paste.
+//   * `on_key` delivers through a process-wide event filter matched by view.
+//     This widget is a first responder with focus-dependent cursor painting
+//     (`view_has_focus` above drives the block-vs-underline shape) and wants
+//     the real responder chain, including the super call for anything it does
+//     not claim.
+//
+// The consequence is accepted, not overlooked: this widget cannot run on a
+// non-AppKit backend. A terminal emulator is a native widget in every toolkit
+// that ships one, and the portable seam it does sit behind is the `terminal`
+// package's own API, not its key path.
 fn key_down_imp(self_obj: *u8, cmd: *u8, event_obj: *u8) {
     let c: *TerminalContext = { synth::get_associated(self_obj, terminal_context_key()) as *TerminalContext };
     if c == (0 as *TerminalContext) || { (*c).cancel_requested } { return; }

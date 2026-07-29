@@ -3645,9 +3645,30 @@ impl Node {
     // Receive raw key events while this element (or something inside it) holds
     // focus. `handler(event, ctx)` reads the event with key_code / key_chars /
     // key_modifiers, and calls consume_key() to stop it reaching the responder
-    // chain. This is the primitive behind shortcut-driven and terminal-style
-    // surfaces — arrows, function keys, Escape and Ctrl chords are otherwise
-    // unreachable, because a text field only reports change and submit.
+    // chain. This is the primitive behind shortcut-driven surfaces — arrows,
+    // function keys, Escape and Ctrl chords are otherwise unreachable, because
+    // a text field only reports change and submit.
+    //
+    // SCOPE. `key_chars` and `key_modifiers` are portable; `key_code` is NOT —
+    // it is the platform's own value, so branching on it is backend-specific
+    // code wherever it is written. That is the line between what this covers
+    // and what it does not:
+    //
+    //   yes — "Escape closes the sheet", "Cmd-Shift-P opens the palette",
+    //         "arrow keys move the selection": read `key_chars` for printable
+    //         input and `key_modifiers` for the chord.
+    //   no  — anything that must map a full keyboard onto a byte protocol
+    //         (a terminal emulator's Return/Tab/Delete/arrow/Home/PageUp →
+    //         escape sequences). That is a table of platform key codes; it
+    //         belongs to a native widget, and building it here would only move
+    //         the platform constants into the handler body. The terminal
+    //         package does exactly that, deliberately — see the note on
+    //         `key_down_imp` in terminal/src/appkit.cplus.
+    //
+    // Delivery is a process-wide event filter matched by view (see
+    // `register_key_target` in the AppKit backend), NOT a first-responder
+    // override — a widget that needs true responder-chain participation wants
+    // a native view, not this.
     fn on_key(take this, handler: fn(*u8, *u8), ctx: *u8 = 0 as *u8) -> Node {
         var n: Node = this;
         n.key_handler = handler;

@@ -298,6 +298,7 @@ fn handle_request(
 
 extern fn socket(domain: i32, ty: i32, protocol: i32) -> i32;
 extern fn bind(fd: i32, addr: *u8, addrlen: u32) -> i32;
+extern fn connect(fd: i32, addr: *u8, addrlen: u32) -> i32;
 extern fn listen(fd: i32, backlog: i32) -> i32;
 extern fn accept(fd: i32, addr: *u8, addrlen: *u32) -> i32;
 extern fn read(fd: i32, buf: *u8, count: usize) -> i64;
@@ -330,9 +331,10 @@ fn unlink_bound_socket() {
 }
 
 // Build the `sockaddr_un` and bind. Returns the bound fd, or the same negative
-// setup code `serve_uds` reports (-4 path too long, -1 socket, -2 bind). Split
-// out of `serve_uds` — which then blocks in `accept` forever — so a test can
-// create a real socket file exactly the way the server does.
+// setup code `serve_uds` reports (-4 path too long, -1 socket, -2 bind, -5 a
+// live server already listening there). Split out of `serve_uds` — which then
+// blocks in `accept` forever — so a test can create a real socket file exactly
+// the way the server does.
 //
 // Arms the exit cleanup as soon as the bind succeeds, BEFORE anything that can
 // fail or block, so every path from here on removes the file.
@@ -355,6 +357,28 @@ fn bind_uds(path: str) -> i32 {
     let fd: i32 = { socket(1 as i32, 1 as i32, 0 as i32) };
     if fd < (0 as i32) {
         return - 1 as i32;
+    }
+    // A file may already be sitting at `path`, and `bind` refuses to overwrite
+    // one — so it has to go before we can bind. Removing it blind is the wrong
+    // way: on a FIXED path (as opposed to the per-PID convention above) that
+    // takes the socket out from under a LIVE server, which keeps accepting on
+    // an fd no client can reach any more, while this process binds a new file
+    // at the same name. So prove the path is dead first, by connecting to it:
+    // a refused or absent peer means nobody is listening and the file is a
+    // leftover, ours to remove. A peer that ANSWERS is a running instance and
+    // this bind is the one that must fail.
+    //
+    // This is also the only cleanup that covers `SIGKILL` — the `atexit` hook
+    // below cannot run for a process that was killed outright, so its socket is
+    // removed here, by whoever binds the path next.
+    let probe: i32 = { socket(1 as i32, 1 as i32, 0 as i32) };
+    if probe >= (0 as i32) {
+        let live: i32 = { connect(probe, #addr_of(addr[0]), addrlen) };
+        { close(probe); }
+        if live == (0 as i32) {
+            { close(fd); }
+            return - 5 as i32;   // someone is serving here; do not steal it
+        }
     }
     { unlink(path_c); }
     if { bind(fd, #addr_of(addr[0]), addrlen) } != (0 as i32) {
@@ -450,12 +474,14 @@ fn serve_fd(
 // negative code on a setup error (socket/bind/listen). `path` must be ≤ 100
 // bytes (sun_path limit).
 //
-// The socket file is removed on entry (a stale one from a previous run) and on
-// process exit via an `atexit` hook — NOT merely when this function returns.
-// The accept loop below is meant to live for the app's whole life, so in a real
-// app it never returns and any teardown written here alone is unreachable; the
-// entry-unlink does not compensate, because a per-PID path is never reused.
-// See `unlink_bound_socket` and bugs/agent-socket-never-unlinked.md.
+// The socket file is removed on entry (a stale one from a previous run, after
+// proving nobody is listening on it) and on process exit via an `atexit` hook —
+// NOT merely when this function returns. The accept loop below is meant to live
+// for the app's whole life, so in a real app it never returns and any teardown
+// written here alone is unreachable; the entry-unlink does not compensate,
+// because a per-PID path is never reused. A path that a live server is already
+// answering on is refused (-5) rather than taken over.
+// See `unlink_bound_socket`, `bind_uds` and bugs/agent-socket-never-unlinked.md.
 fn serve_uds(
     surf: *u8,
     vt: backend::Backend,
@@ -647,5 +673,60 @@ fn an_over_long_path_is_rejected_without_disarming() {
     unlink_bound_socket();
     assert path_exists(good) == false;
     { close(fd); }
+    return;
+}
+
+// A socket file left by a process that died without running its exit hook —
+// SIGKILL, or a hard crash — must not block the next launch. Nobody is
+// listening on it, so binding the same path removes the leftover and succeeds.
+// This is the half of the cleanup `atexit` structurally cannot cover.
+#[test]
+fn a_stale_socket_file_is_reclaimed_by_the_next_bind() {
+    let path: str = "/tmp/cplus-agent-mcp-stale.sock";
+    let dead: i32 = bind_uds(path);
+    assert dead >= (0 as i32);
+    assert path_exists(path);
+
+    // Drop the fd WITHOUT unlinking: exactly the state a killed process leaves,
+    // a file on disk with no listener behind it. (No `listen` was called
+    // either, so the path was never answering.)
+    { close(dead); }
+    assert path_exists(path);
+
+    let fresh: i32 = bind_uds(path);
+    assert fresh >= (0 as i32);
+    assert path_exists(path);
+
+    unlink_bound_socket();
+    assert path_exists(path) == false;
+    { close(fresh); }
+    return;
+}
+
+// The other half: a path a LIVE server is answering on must be refused, not
+// taken over. Unlinking blind would leave the running instance accepting on an
+// fd no client can reach, and the new process bound to a file of the same name
+// — two servers, one path, and every agent reaching only the newcomer. The
+// per-PID convention makes this collision rare; the probe is what makes a
+// FIXED path safe, and what keeps the stale-file cleanup above from being a
+// hijack in disguise.
+#[test]
+fn a_live_server_keeps_its_socket_against_a_second_bind() {
+    let path: str = "/tmp/cplus-agent-mcp-live.sock";
+    let live: i32 = bind_uds(path);
+    assert live >= (0 as i32);
+    assert { listen(live, 4 as i32) } == (0 as i32);   // now it ANSWERS connect
+    assert path_exists(path);
+
+    // Second bind sees a peer on the path and stands down.
+    assert bind_uds(path) == (- 5 as i32);
+    // The live socket's file is untouched — the loser removed nothing.
+    assert path_exists(path);
+
+    // And the refusal did not re-arm the cleanup onto some other path: teardown
+    // still targets the live socket, which is what this process actually owns.
+    unlink_bound_socket();
+    assert path_exists(path) == false;
+    { close(live); }
     return;
 }
