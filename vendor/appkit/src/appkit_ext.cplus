@@ -1064,6 +1064,17 @@ fn drop_text_of(drop_view: *u8) -> text::Text {
 // hand it to the next responder so the enclosing scroll view gets it.
 
 fn scroll_owns_h_key() -> *u8 { return { 28706 as *u8 }; }
+// The decision taken for the CURRENT gesture: 1 = keep, 2 = forward, absent =
+// not decided yet. See scroll_wheel_imp for why this is per-gesture and not
+// per-event.
+fn scroll_lock_key() -> *u8 { return { 28707 as *u8 }; }
+
+// NSEventPhase bits (NSEvent.h): None 0, Began 1<<0, Stationary 1<<1,
+// Changed 1<<2, Ended 1<<3, Cancelled 1<<4, MayBegin 1<<5.
+fn phase_none() -> u64 { return 0 as u64; }
+fn phase_began() -> u64 { return 1 as u64; }
+fn phase_ended() -> u64 { return 8 as u64; }
+fn phase_cancelled() -> u64 { return 16 as u64; }
 
 // Off by default. The probe example turns it on to see what the scroll views
 // actually decide, because none of this is reachable from a test — an agent has
@@ -1099,11 +1110,36 @@ fn scroll_wheel_imp(self_obj: *u8, cmd: *u8, event: *u8) {
     let owns_h: bool = synth::get_associated(self_obj, scroll_owns_h_key()) != { 0 as *u8 };
     let dx: f64 = rt::msg_f64(event, rt::sel(#str_ptr("scrollingDeltaX\0")));
     let dy: f64 = rt::msg_f64(event, rt::sel(#str_ptr("scrollingDeltaY\0")));
-    // Which axis is this gesture asking for? Dominant component wins; a pure
-    // mouse wheel reports only dy, which reads as vertical.
-    let wants_h: bool = f_abs(dx) > f_abs(dy);
-    let mine: bool = wants_h == owns_h;
-    let has_range: bool = scroll_has_range(self_obj, wants_h);
+    let phase: u64 = rt::msg_u64(event, rt::sel(#str_ptr("phase\0")));
+    let momentum: u64 = rt::msg_u64(event, rt::sel(#str_ptr("momentumPhase\0")));
+
+    // DECIDE ONCE PER GESTURE, not per event. A real swipe's deltas wobble, so
+    // deciding from the dominant axis of each event flips a near-diagonal
+    // gesture back and forth between this view and the one above it —
+    // alternating events between two scroll views, each with its own momentum
+    // and rubber-band state. That reads as lag and stutter rather than as a
+    // wrong direction, which is why the axis logic looked correct while feeling
+    // broken. Locking for the gesture is also what `usesPredominantAxisScrolling`
+    // does internally, and the reason a trackpad feels smooth everywhere else.
+    let gesture_start: bool = (phase & phase_began()) != (0 as u64)
+        || (phase == phase_none() && momentum == phase_none());
+    var locked: *u8 = synth::get_associated(self_obj, scroll_lock_key());
+    if gesture_start { locked = 0 as *u8; }
+
+    var wants_h: bool = f_abs(dx) > f_abs(dy);
+    var mine: bool = wants_h == owns_h;
+    var has_range: bool = scroll_has_range(self_obj, wants_h);
+    var forward: bool = !mine || !has_range;
+    if locked != { 0 as *u8 } {
+        // Mid-gesture: honour the decision the first event made.
+        forward = locked == { 2 as *u8 };
+    } else {
+        synth::set_associated(self_obj, scroll_lock_key(), if forward { 2 as *u8 } else { 1 as *u8 });
+    }
+    // The gesture is over: the next one decides afresh.
+    if (phase & (phase_ended() | phase_cancelled())) != (0 as u64) {
+        synth::set_associated(self_obj, scroll_lock_key(), 0 as *u8);
+    }
 
     if SCROLL_DEBUG {
         io::print("scrollWheel: owns=");
@@ -1114,11 +1150,12 @@ fn scroll_wheel_imp(self_obj: *u8, cmd: *u8, event: *u8) {
         io::print(if mine { "yes" } else { "no" });
         io::print(" range=");
         io::print(if has_range { "yes" } else { "no" });
-        io::println(if mine && has_range { " -> KEEP" } else { " -> FORWARD" });
+        io::print(if locked != { 0 as *u8 } { " locked" } else { " fresh" });
+        io::println(if forward { " -> FORWARD" } else { " -> KEEP" });
     }
 
     // Not my axis, or my axis with nothing left to give: hand it up.
-    if !mine || !has_range {
+    if forward {
         if scroll_forward_wheel(self_obj, event) { return; }
     }
     call_super_void_id(self_obj, rt::get_class(#str_ptr("NSScrollView\0")), rt::sel(#str_ptr("scrollWheel:\0")), event);
