@@ -1021,8 +1021,18 @@ impl Node {
             var frozen: vec::Vec[bool] = vec::new::[bool]();
             var mn: vec::Vec[f64] = vec::new::[f64]();      // resolved min main per line item
             var mx: vec::Vec[f64] = vec::new::[f64]();      // resolved max main per line item
-            var idx0: usize = 0 as usize;                   // fill 0..le so index-by-ci works
-            while idx0 < le { frozen.append(false); mn.append(undefined()); mx.append(undefined()); mains.set(size_at(bases, idx0), idx0); idx0 = idx0 +% (1 as usize); }
+            // Sized by the CHILD count, because every read below indexes these
+            // by `ci` — a position among ALL children — while `ls`/`le` are
+            // offsets into `order`, which lists only the in-flow ones. The two
+            // spaces coincide exactly when nothing is out of flow, which is why
+            // sizing by `le` survived: with one absolute child before them, the
+            // last in-flow child's `ci` fell off the end, its `mn`/`mx` writes
+            // were dropped, and `size_at` handed back 0.0 for the missing max —
+            // so `clamp(base, 0, 0)` sized it to nothing. An explicit height did
+            // not help, because the clamp runs after it.
+            // bugs/flex-absolute-child-and-horizontal-scroll.md
+            var idx0: usize = 0 as usize;
+            while idx0 < n { frozen.append(false); mn.append(undefined()); mx.append(undefined()); mains.set(size_at(bases, idx0), idx0); idx0 = idx0 +% (1 as usize); }
             var k: usize = ls;
             while k < le {
                 let ci: usize = usize_at(order, k);
@@ -2459,6 +2469,92 @@ fn test_absolute_left_right_defines_width() {
     assert approx(c.width, 160.0f64);             // 200 - 10 - 30
 }
 
+// An out-of-flow child must not affect the in-flow SIZING of its siblings —
+// that is the entire point of taking it out of flow. It did: with an absolute
+// child anywhere before them, the LAST in-flow sibling came out h=0 even with
+// an explicit height set. Positional, not per-node: moving the absolute child
+// to last restored it. Found on the iris board, where a full-bleed drop overlay
+// sits over a column and zeroed the "+ Add a card" button under it.
+// bugs/flex-absolute-child-and-horizontal-scroll.md
+#[test]
+fn absolute_child_does_not_zero_the_last_in_flow_sibling() {
+    var root: Node = Node::new();
+    root.set_align_items(Align::Stretch);
+    root.set_width(pts(292.0f64));
+
+    var overlay: Node = Node::new();          // the out-of-flow one, FIRST
+    overlay.set_position_type(PositionType::Absolute);
+    overlay.set_position(Edge::Left, pts(0.0f64));
+    overlay.set_position(Edge::Top, pts(0.0f64));
+    overlay.set_position(Edge::Right, pts(0.0f64));
+    overlay.set_position(Edge::Bottom, pts(0.0f64));
+    root.add_child(overlay);
+
+    root.add_child(leaf(292.0f64, 28.0f64));   // header
+    root.add_child(leaf(292.0f64, 65.0f64));   // cards
+    var button: Node = leaf(292.0f64, 38.0f64);
+    button.set_flex_shrink(0.0f64);            // did not help either
+    root.add_child(button);
+
+    root.calculate_layout(292.0f64, undefined(), Direction::LTR);
+
+    // Every in-flow child keeps its own height; the last one is not special.
+    assert approx(must(root.child_layout(1 as usize)).height, 28.0f64);
+    assert approx(must(root.child_layout(2 as usize)).height, 65.0f64);
+    assert approx(must(root.child_layout(3 as usize)).height, 38.0f64);
+    // They stack in order, so the container is the sum of the three.
+    assert approx(must(root.child_layout(1 as usize)).top, 0.0f64);
+    assert approx(must(root.child_layout(2 as usize)).top, 28.0f64);
+    assert approx(must(root.child_layout(3 as usize)).top, 93.0f64);
+    assert approx(root.layout_frame().height, 131.0f64);
+}
+
+// The same tree with the absolute child LAST — the arrangement that always
+// worked — must still work, so the fix is not a shuffle of which index breaks.
+#[test]
+fn absolute_child_last_still_leaves_siblings_alone() {
+    var root: Node = Node::new();
+    root.set_align_items(Align::Stretch);
+    root.set_width(pts(292.0f64));
+    root.add_child(leaf(292.0f64, 28.0f64));
+    root.add_child(leaf(292.0f64, 65.0f64));
+    root.add_child(leaf(292.0f64, 38.0f64));
+    var overlay: Node = Node::new();
+    overlay.set_position_type(PositionType::Absolute);
+    overlay.set_position(Edge::Left, pts(0.0f64));
+    overlay.set_position(Edge::Top, pts(0.0f64));
+    overlay.set_position(Edge::Right, pts(0.0f64));
+    overlay.set_position(Edge::Bottom, pts(0.0f64));
+    root.add_child(overlay);
+    root.calculate_layout(292.0f64, undefined(), Direction::LTR);
+    assert approx(must(root.child_layout(0 as usize)).height, 28.0f64);
+    assert approx(must(root.child_layout(1 as usize)).height, 65.0f64);
+    assert approx(must(root.child_layout(2 as usize)).height, 38.0f64);
+    assert approx(root.layout_frame().height, 131.0f64);
+}
+
+// An absolute child BETWEEN in-flow ones — the general case both of the above
+// bracket, and the one a positional off-by-one is most likely to survive.
+#[test]
+fn absolute_child_in_the_middle_leaves_every_sibling_alone() {
+    var root: Node = Node::new();
+    root.set_align_items(Align::Stretch);
+    root.set_width(pts(100.0f64));
+    root.add_child(leaf(100.0f64, 10.0f64));
+    var overlay: Node = Node::new();
+    overlay.set_position_type(PositionType::Absolute);
+    overlay.set_position(Edge::Left, pts(0.0f64));
+    overlay.set_position(Edge::Top, pts(0.0f64));
+    root.add_child(overlay);
+    root.add_child(leaf(100.0f64, 20.0f64));
+    root.add_child(leaf(100.0f64, 30.0f64));
+    root.calculate_layout(100.0f64, undefined(), Direction::LTR);
+    assert approx(must(root.child_layout(0 as usize)).height, 10.0f64);
+    assert approx(must(root.child_layout(2 as usize)).height, 20.0f64);
+    assert approx(must(root.child_layout(3 as usize)).height, 30.0f64);
+    assert approx(root.layout_frame().height, 60.0f64);
+}
+
 #[test]
 fn test_display_none_excluded_from_flow() {
     var root: Node = Node::new();
@@ -2470,6 +2566,53 @@ fn test_display_none_excluded_from_flow() {
     root.calculate_layout(200.0f64, 50.0f64, Direction::LTR);
     assert approx(must(root.child_layout(0 as usize)).width, 0.0f64);     // hidden collapses
     assert approx(must(root.child_layout(1 as usize)).left, 0.0f64);      // second starts at 0
+    // ...and keeps its own size. This assertion is the one that was missing:
+    // display:none is out of flow exactly as absolute is, so it hit the same
+    // index-space defect, and checking only `left` could not see it.
+    assert approx(must(root.child_layout(1 as usize)).width, 40.0f64);
+}
+
+// `display: none` is the other way out of flow, so it is the other way into the
+// same defect — a hidden child shifted every later sibling's index past the end
+// of the per-line arrays, and the last one clamped to 0.
+// bugs/flex-absolute-child-and-horizontal-scroll.md
+#[test]
+fn hidden_child_does_not_zero_the_last_in_flow_sibling() {
+    var root: Node = Node::new();
+    root.set_align_items(Align::Stretch);
+    root.set_width(pts(100.0f64));
+    var hidden: Node = leaf(100.0f64, 50.0f64);
+    hidden.set_display(Display::None);
+    root.add_child(hidden);
+    root.add_child(leaf(100.0f64, 10.0f64));
+    root.add_child(leaf(100.0f64, 20.0f64));
+    root.calculate_layout(100.0f64, undefined(), Direction::LTR);
+    assert approx(must(root.child_layout(1 as usize)).height, 10.0f64);
+    assert approx(must(root.child_layout(2 as usize)).height, 20.0f64);
+    assert approx(root.layout_frame().height, 30.0f64);   // the hidden one adds nothing
+}
+
+// Both kinds out of flow at once, so the in-flow indices are shifted by two —
+// the arrays must be sized by the CHILD count, not by any count of flow items.
+#[test]
+fn absolute_and_hidden_children_together_leave_the_flow_alone() {
+    var root: Node = Node::new();
+    root.set_align_items(Align::Stretch);
+    root.set_width(pts(100.0f64));
+    var hidden: Node = leaf(100.0f64, 50.0f64);
+    hidden.set_display(Display::None);
+    root.add_child(hidden);
+    var overlay: Node = Node::new();
+    overlay.set_position_type(PositionType::Absolute);
+    overlay.set_position(Edge::Left, pts(0.0f64));
+    overlay.set_position(Edge::Top, pts(0.0f64));
+    root.add_child(overlay);
+    root.add_child(leaf(100.0f64, 12.0f64));
+    root.add_child(leaf(100.0f64, 24.0f64));
+    root.calculate_layout(100.0f64, undefined(), Direction::LTR);
+    assert approx(must(root.child_layout(2 as usize)).height, 12.0f64);
+    assert approx(must(root.child_layout(3 as usize)).height, 24.0f64);
+    assert approx(root.layout_frame().height, 36.0f64);
 }
 
 #[test]
