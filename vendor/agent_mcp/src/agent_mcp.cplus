@@ -184,6 +184,20 @@ fn ok_response(id: f64, take result: json::Value) -> json::Value {
     return json::Value::Object(m);
 }
 
+// A required parameter is absent — JSON-RPC "invalid params" (-32602), naming
+// the method and the parameter so the mistake corrects itself.
+//
+// This exists because absent and empty were the same thing here: every reader
+// falls back ("" for text, 0 for numbers), so `set_text` sent with `text:`
+// instead of `value:` answered {"outcome":"allowed"} and wrote an empty string.
+// A caller cannot tell that from an app that cleared the field, so a typo in a
+// parameter name reads as a broken app — reportedly an hour, every time.
+// Absent is now refused; an explicit `"value": ""` still clears the field.
+fn missing_param(id: f64, method: str, param: str) -> json::Value {
+    let msg: text::Text = "${method}: missing required parameter \"${param}\"";
+    return err_response(id, - 32602 as f64, msg.view());
+}
+
 fn err_response(id: f64, code: f64, msg: str) -> json::Value {
     var e: vec::Vec[json::Member] = vec::new::[json::Member]();
     e.append(member("code", jnum(code)));
@@ -228,16 +242,20 @@ fn dispatch(
         return ok_response(id, describe_to_json((vt.describe_exposed)(surf), false));
     }
     if method == "click" {
+        if !params.has("id") { return missing_param(id, "click", "id"); }
         let target: text::Text = val_as_text(obj_get(params, "id"));
         let o: surface::Outcome = (vt.click)(surf, { target });
         return ok_response(id, outcome_result(o));
     }
     if method == "scroll_to" {
+        if !params.has("id") { return missing_param(id, "scroll_to", "id"); }
         let target: text::Text = val_as_text(obj_get(params, "id"));
         let o: surface::Outcome = (vt.navigate)(surf, { target });
         return ok_response(id, outcome_result(o));
     }
     if method == "set_text" {
+        if !params.has("id") { return missing_param(id, "set_text", "id"); }
+        if !params.has("value") { return missing_param(id, "set_text", "value"); }
         let target: text::Text = val_as_text(obj_get(params, "id"));
         let value: text::Text = val_as_text(obj_get(params, "value"));
         let base: u64 = val_as_number(obj_get(params, "base_version")) as u64;
@@ -601,6 +619,77 @@ fn only_the_measured_view_carries_geometry() {
     assert full.contains("\"class\"");
     assert full.contains("33");        // the fixture's width survives the wire
     assert full.contains("44");        // ...and its height
+}
+
+// ---- required parameters ------------------------------------------------------
+
+// A misspelled parameter name used to be indistinguishable from a working call.
+// Every reader here falls back — "" for text, 0 for numbers — so `set_text` sent
+// with `text:` instead of `value:` answered {"outcome":"allowed"} and wrote an
+// empty string. From the caller's side that is exactly what a working call to
+// clear a field looks like, so the app appeared broken and the RPC appeared
+// fine. Absent is now refused; an explicit empty string still clears.
+#[test]
+fn a_misspelled_set_text_parameter_is_refused_not_silently_emptied() {
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
+
+    // THE TRAP: `text` instead of `value`. Must not report success.
+    let wrong: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"set_text\",\"params\":{\"id\":\"n\",\"text\":\"hello\"},\"id\":1}");
+    assert wrong.contains("-32602");
+    assert wrong.contains("value");        // names the parameter it wanted
+    assert wrong.contains("set_text");     // ...and the method that wanted it
+    assert wrong.contains("allowed") == false;
+
+    // Clearing a field is a legitimate call and still goes through: the check is
+    // ABSENT vs present, not empty vs non-empty.
+    let clear: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"set_text\",\"params\":{\"id\":\"n\",\"value\":\"\"},\"id\":2}");
+    assert clear.contains("allowed");
+    assert clear.contains("-32602") == false;
+
+    // And a correct call is unaffected.
+    let good: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"set_text\",\"params\":{\"id\":\"n\",\"value\":\"hello\"},\"id\":3}");
+    assert good.contains("allowed");
+    return;
+}
+
+// The same fallback hid a missing target on every verb that takes one. A
+// missing `id` reported "not found", which reads as "your id was wrong" rather
+// than "you sent no id" — the same wrong-diagnosis cost, one step smaller.
+#[test]
+fn every_verb_that_takes_a_target_requires_one() {
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
+
+    let c: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"click\",\"params\":{},\"id\":1}");
+    assert c.contains("-32602");
+    assert c.contains("click");
+    assert c.contains("id");
+
+    let s: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"scroll_to\",\"params\":{},\"id\":2}");
+    assert s.contains("-32602");
+    assert s.contains("scroll_to");
+
+    let t: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"set_text\",\"params\":{\"value\":\"x\"},\"id\":3}");
+    assert t.contains("-32602");
+    assert t.contains("id");
+
+    // No params object at all is the same answer, not a crash.
+    let none: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"click\",\"id\":4}");
+    assert none.contains("-32602");
+
+    // Verbs that take no target are untouched.
+    let p: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"poll_event\",\"id\":5}");
+    assert p.contains("-32602") == false;
+    return;
 }
 
 // ---- socket teardown ---------------------------------------------------------
