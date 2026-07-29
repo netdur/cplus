@@ -2644,16 +2644,47 @@ fn reposition_nested(node: *flex::Node, parent_abs: flex::Layout, parent_flipped
 // relayout can re-wrap the rows at a new viewport width; its views live on
 // under the document view either way.
 
+// The available size to lay a scroll's content out at, and the document width
+// that follows — in ONE place, because four call sites have to agree on it and
+// two of them silently did not. A vertical scroll constrains the WIDTH and lets
+// height follow the content; a horizontal scroll is the exact mirror. Get the
+// cross axis wrong and anything sized by `grow` or `align_items(Stretch)` on it
+// resolves against nothing and collapses to 0 — mounted, parented, invisible.
+// bugs/structural-verb-relayout-cross-axis.md
+struct ScrollMeasure { avail_w: f64, avail_h: f64 }
+
+fn scroll_measure_for(horizontal: bool, vf: rt::Rect) -> ScrollMeasure {
+    if !horizontal {
+        return ScrollMeasure { avail_w: vf.w, avail_h: flex::undefined() };
+    }
+    // Scroll axis free so long content keeps its natural length; cross axis
+    // definite. A viewport with no height yet keeps the old undefined
+    // behaviour rather than resolving children against a definite 0, which
+    // would turn "not measured yet" into "measured as nothing".
+    var cross: f64 = flex::undefined();
+    if vf.h > 0.0f64 { cross = vf.h; }
+    return ScrollMeasure { avail_w: flex::undefined(), avail_h: cross };
+}
+
+// The document view's width: the viewport's for a vertical scroll, the
+// content's natural width for a horizontal one (that width IS the scroll
+// range). Height is always the content's.
+fn scroll_doc_w(horizontal: bool, vf: rt::Rect, rf: flex::Layout) -> f64 {
+    if horizontal { return rf.width; }
+    return vf.w;
+}
+
 fn fill_scroll(s: ak::ScrollView, take rows: flex::Node) -> f64 {
     let sf: rt::Rect = s.as_view().frame();
     var r: flex::Node = rows;
-    r.calculate_layout(sf.w, flex::undefined(), flex::Direction::LTR);
+    let m: ScrollMeasure = scroll_measure_for(false, sf);
+    r.calculate_layout(m.avail_w, m.avail_h, flex::Direction::LTR);
     r.round_to_pixel(2.0f64);
     let rf: flex::Layout = r.layout_frame();
-    let doc = akx::new_flipped_view(rt::Rect { x: 0.0, y: 0.0, w: sf.w, h: rf.height });
+    let doc = akx::new_flipped_view(rt::Rect { x: 0.0, y: 0.0, w: scroll_doc_w(false, sf, rf), h: rf.height });
     apply(#addr_of(r), doc.raw(), true);
     s.set_document_view(ak::View::from_raw(doc.raw()));
-    scroll_content_store(s.raw(), r);
+    scroll_content_store(s.raw(), r, false);
     return rf.height;
 }
 
@@ -2677,18 +2708,15 @@ fn fill_scroll_h(s: ak::ScrollView, take rows: flex::Node) -> f64 {
     let sf: rt::Rect = s.as_view().frame();
     var r: flex::Node = rows;
     // Scroll jobs drain parent-before-child, so the viewport is already sized —
-    // the same guarantee `fill_scroll` leans on to read `sf.w`. A scroll that
-    // somehow has no height yet keeps the old undefined behaviour rather than
-    // resolving every child against a definite 0, which would be worse.
-    var cross: f64 = flex::undefined();
-    if sf.h > 0.0f64 { cross = sf.h; }
-    r.calculate_layout(flex::undefined(), cross, flex::Direction::LTR);
+    // the same guarantee `fill_scroll` leans on to read `sf.w`.
+    let m: ScrollMeasure = scroll_measure_for(true, sf);
+    r.calculate_layout(m.avail_w, m.avail_h, flex::Direction::LTR);
     r.round_to_pixel(2.0f64);
     let rf: flex::Layout = r.layout_frame();
-    let doc = akx::new_flipped_view(rt::Rect { x: 0.0, y: 0.0, w: rf.width, h: rf.height });
+    let doc = akx::new_flipped_view(rt::Rect { x: 0.0, y: 0.0, w: scroll_doc_w(true, sf, rf), h: rf.height });
     apply(#addr_of(r), doc.raw(), true);
     s.set_document_view(ak::View::from_raw(doc.raw()));
-    scroll_content_store(s.raw(), r);
+    scroll_content_store(s.raw(), r, true);
     return rf.height;
 }
 
@@ -2706,6 +2734,12 @@ fn fill_scroll_h(s: ak::ScrollView, take rows: flex::Node) -> f64 {
 struct ScrollContent {
     opaque _scroll: *u8,   // +1 on the NSScrollView; released in drop
     _tree: flex::Node,     // the laid-out row tree (owns the row views' +1s)
+    // Which axis this scroll owns, recorded at fill time. A relayout has to
+    // re-measure with the SAME available size the fill used, and the two fills
+    // are mirror images — vertical passes the viewport width and leaves height
+    // undefined, horizontal does the opposite. Without this the incremental
+    // path silently used the vertical shape for both.
+    _horizontal: bool,
 }
 
 impl ScrollContent {
@@ -2725,13 +2759,31 @@ static SCROLL_CONTENT: vec::Vec[ScrollContent] = #zero::[vec::Vec[ScrollContent]
 // store also prunes entries whose scroll left the view hierarchy — the
 // one-shot mount paths (mount_into / run) fill scrolls nobody unregisters,
 // so without this a mount-per-frame caller would grow the registry forever.
-fn scroll_content_store(scroll: *u8, take rows: flex::Node) {
+fn scroll_content_store(scroll: *u8, take rows: flex::Node, horizontal: bool) {
     if scroll == { 0 as *u8 } { return; }
     let _had: bool = scroll_content_remove(scroll);
     prune_detached_scroll_content();
     let reg: *vec::Vec[ScrollContent] = #addr_of(SCROLL_CONTENT);
-    (*reg).append(ScrollContent { _scroll: rt::retain(scroll), _tree: rows });
+    (*reg).append(ScrollContent { _scroll: rt::retain(scroll), _tree: rows, _horizontal: horizontal });
     return;
+}
+
+// Does `scroll` scroll SIDEWAYS? False for an unregistered scroll, which keeps
+// the vertical shape — the behaviour before the axis was recorded.
+fn scroll_content_is_horizontal(scroll: *u8) -> bool {
+    let reg: *vec::Vec[ScrollContent] = #addr_of(SCROLL_CONTENT);
+    let n: usize = { (*reg).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*reg).at_ptr(i) {
+            option::Option[*ScrollContent]::Some(ep) => {
+                if { (*ep)._scroll } == scroll { return { (*ep)._horizontal }; }
+            }
+            option::Option[*ScrollContent]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return false;
 }
 
 // Drop every entry whose scroll view has no superview (its owner discarded
@@ -2829,15 +2881,17 @@ fn reflow_scroll_content(scroll: *u8) -> bool {
         option::Option[*flex::Node]::Some(tp) => {
             let s: ak::ScrollView = ak::ScrollView::from_raw(scroll);
             let sf: rt::Rect = s.as_view().frame();
-            { (*tp).calculate_layout(sf.w, flex::undefined(), flex::Direction::LTR); }
+            let horizontal: bool = scroll_content_is_horizontal(scroll);
+            let m: ScrollMeasure = scroll_measure_for(horizontal, sf);
+            { (*tp).calculate_layout(m.avail_w, m.avail_h, flex::Direction::LTR); }
             { (*tp).round_to_pixel(2.0f64); }
-            // Unchanged viewport width ⇒ full cache hit ⇒ every row frame
+            // Unchanged available size ⇒ full cache hit ⇒ every row frame
             // (and every nested scroll's content) is exactly as last pass.
             if { (*tp).layout_changed() } == false { return true; }
             let rf: flex::Layout = (*tp).layout_frame();
             match s.document_view() {
                 option::Option[ak::View]::Some(dv) => {
-                    dv.set_frame(rt::Rect { x: 0.0, y: 0.0, w: sf.w, h: rf.height });
+                    dv.set_frame(rt::Rect { x: 0.0, y: 0.0, w: scroll_doc_w(horizontal, sf, rf), h: rf.height });
                 }
                 option::Option[ak::View]::None => { return false; }
             }
@@ -3476,16 +3530,27 @@ fn relayout(cp: *u8) -> bool {
 // the viewport's current width, resize the reused document view, reposition.
 fn relayout_scroll_host(host_ptr: *u8, tp: *flex::Node) {
     let s: ak::ScrollView = ak::ScrollView::from_raw(host_ptr);
-    let width: f64 = s.as_view().frame().w;
-    { (*tp).calculate_layout(width, flex::undefined(), flex::Direction::LTR); }
+    let vf: rt::Rect = s.as_view().frame();
+    // Re-measure with the SAME available size the fill used, which depends on
+    // which axis this scroll owns. A horizontal scroll is the mirror: natural
+    // width, viewport height. Using the vertical shape for both left anything
+    // depending on `grow` or `align_items(Stretch)` on the cross axis resolving
+    // against nothing — a lane whose cards were all still mounted, correctly
+    // parented and sanely framed, inside a column of height 0. A single
+    // `add_child` was enough; a full rebuild put it back, which is what made it
+    // look like a mystery rather than a mirror-image bug.
+    // bugs/structural-verb-relayout-cross-axis.md
+    let horizontal: bool = scroll_content_is_horizontal(host_ptr);
+    let m: ScrollMeasure = scroll_measure_for(horizontal, vf);
+    { (*tp).calculate_layout(m.avail_w, m.avail_h, flex::Direction::LTR); }
     { (*tp).round_to_pixel(2.0f64); }
-    // Same viewport width ⇒ full cache hit ⇒ content-sized doc + every row
+    // Same available size ⇒ full cache hit ⇒ content-sized doc + every row
     // frame unchanged; nothing to move.
     if { (*tp).layout_changed() } == false { return; }
     let rf: flex::Layout = (*tp).layout_frame();
     match s.document_view() {
         option::Option[ak::View]::Some(dv) => {
-            dv.set_frame(rt::Rect { x: 0.0, y: 0.0, w: width, h: rf.height });
+            dv.set_frame(rt::Rect { x: 0.0, y: 0.0, w: scroll_doc_w(horizontal, vf, rf), h: rf.height });
         }
         option::Option[ak::View]::None => { return; }   // never applied: nothing to move
     }
