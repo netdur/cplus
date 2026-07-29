@@ -702,3 +702,92 @@ fn a_view_without_a_payload_never_arms_the_threshold() {
     { pool_pop(pool); }
     return;
 }
+
+// ---- drag auto-scroll: an edge BAND, not "outside the view" ----------------
+
+fn near(a: f64, b: f64) -> bool {
+    let d: f64 = if a > b { a - b } else { b - a };
+    return d < 0.001f64;
+}
+
+// `autoscroll:` only fires when the pointer leaves the view's bounds, so it
+// worked on a lane (small clip) and never on the board strip (clip the size of
+// the window — a pointer anywhere inside it is "not outside"). The band is the
+// fix, and this is its arithmetic: a viewport spanning 0..500 with a 40pt band.
+// bugs/drag-autoscroll-only-on-an-overflowing-clip-view.md
+#[test]
+fn autoscroll_band_is_proportional_and_only_near_the_edges() {
+    // Dead centre: nothing. This is the case that must NOT jitter.
+    assert near(akx::autoscroll_delta(250.0f64, 0.0f64, 500.0f64), 0.0f64);
+    // Just inside the band, either side: nothing.
+    assert near(akx::autoscroll_delta(41.0f64, 0.0f64, 500.0f64), 0.0f64);
+    assert near(akx::autoscroll_delta(459.0f64, 0.0f64, 500.0f64), 0.0f64);
+
+    // At the leading edge: full step, negative (scroll back toward the start).
+    assert near(akx::autoscroll_delta(0.0f64, 0.0f64, 500.0f64), 0.0f64 - 16.0f64);
+    // At the trailing edge: full step, positive.
+    assert near(akx::autoscroll_delta(500.0f64, 0.0f64, 500.0f64), 16.0f64);
+
+    // Halfway into the band: half the step, so the nudge grows with depth
+    // rather than jumping.
+    assert near(akx::autoscroll_delta(20.0f64, 0.0f64, 500.0f64), 0.0f64 - 8.0f64);
+    assert near(akx::autoscroll_delta(480.0f64, 0.0f64, 500.0f64), 8.0f64);
+
+    // BEYOND the edge — which is all `autoscroll:` could ever detect — clamps to
+    // the full step rather than running away. This is how the band subsumes the
+    // old behaviour instead of replacing it.
+    assert near(akx::autoscroll_delta(-200.0f64, 0.0f64, 500.0f64), 0.0f64 - 16.0f64);
+    assert near(akx::autoscroll_delta(900.0f64, 0.0f64, 500.0f64), 16.0f64);
+
+    // A scrolled viewport: the band follows the visible range, not the document.
+    assert near(akx::autoscroll_delta(1000.0f64, 1000.0f64, 1500.0f64), 0.0f64 - 16.0f64);
+    assert near(akx::autoscroll_delta(1250.0f64, 1000.0f64, 1500.0f64), 0.0f64);
+    return;
+}
+
+// A clip view whose document FITS has no range on that axis and must not move —
+// the jitter the report called out. Both axes, and through the real callback.
+#[test]
+fn autoscroll_leaves_a_clip_view_with_nothing_to_scroll_alone() {
+    let win = fixture_window(400.0f64, 300.0f64);
+    let content = content_of(win);
+    let sv = ak::ScrollView::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 200.0 });
+    content.add_subview(sv.as_view());
+    // Document SMALLER than the viewport: no range in either direction.
+    let doc = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 100.0, h: 100.0 });
+    sv.set_document_view(doc);
+
+    let clip: *u8 = { rt::msg_id(sv.raw(), rt::sel(#str_ptr("contentView\0"))) };
+    assert clip != (0 as *u8);
+    let before: rt::Rect = rt::msg_rect(clip, rt::sel(#str_ptr("bounds\0")));
+    // A pointer hard against the corner — deep in both bands.
+    akx::autoscroll_clip(clip, rt::Point { x: 0.0, y: 0.0 });
+    let after: rt::Rect = rt::msg_rect(clip, rt::sel(#str_ptr("bounds\0")));
+    assert near(after.x, before.x);
+    assert near(after.y, before.y);
+    return;
+}
+
+// ...and one that DOES overflow moves, on the axis with range. This is the half
+// that never worked: the strip is the size of the window, so nothing was ever
+// "outside" it.
+#[test]
+fn autoscroll_moves_a_clip_view_that_has_range() {
+    let win = fixture_window(400.0f64, 300.0f64);
+    let content = content_of(win);
+    let sv = ak::ScrollView::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 200.0 });
+    content.add_subview(sv.as_view());
+    // Wide document: horizontal range, no vertical range.
+    let doc = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 2000.0, h: 100.0 });
+    sv.set_document_view(doc);
+
+    let clip: *u8 = { rt::msg_id(sv.raw(), rt::sel(#str_ptr("contentView\0"))) };
+    let before: rt::Rect = rt::msg_rect(clip, rt::sel(#str_ptr("bounds\0")));
+    // Pointer at the RIGHT edge of the clip, in window coords (the clip sits at
+    // the content view's origin, so window x ~ clip x here).
+    akx::autoscroll_clip(clip, rt::Point { x: 199.0, y: 100.0 });
+    let after: rt::Rect = rt::msg_rect(clip, rt::sel(#str_ptr("bounds\0")));
+    assert after.x > before.x;          // walked toward the far end
+    assert near(after.y, before.y);     // the axis with no range stayed put
+    return;
+}

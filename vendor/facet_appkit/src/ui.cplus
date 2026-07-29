@@ -2666,6 +2666,28 @@ fn scroll_measure_for(horizontal: bool, vf: rt::Rect) -> ScrollMeasure {
     return ScrollMeasure { avail_w: flex::undefined(), avail_h: cross };
 }
 
+// An axis with NO RANGE must refuse the wheel too, not rubber-band on it. The
+// cross axis is set to `None` once at creation (it never has range by
+// construction), but the OWNED axis only has range while the content overflows
+// the viewport — and an elastic axis absorbs the event whether or not it has
+// anywhere to go. A lane holding two cards in a 552pt viewport could scroll
+// nothing in any direction and still swallowed everything.
+//
+// So this is re-evaluated wherever the content is measured: `None` while the
+// owned axis is short, `Automatic` once it overflows (which restores the normal
+// rubber-band at the ends).
+// bugs/scroll-cross-axis-still-eaten-by-the-elastic-owned-axis.md
+fn scroll_sync_owned_elasticity(s: ak::ScrollView, horizontal: bool, vf: rt::Rect, rf: flex::Layout) {
+    let has_range: bool = if horizontal { rf.width > vf.w } else { rf.height > vf.h };
+    let e: ak::ScrollElasticity = if has_range {
+        ak::ScrollElasticity::Automatic
+    } else {
+        ak::ScrollElasticity::None
+    };
+    if horizontal { s.set_horizontal_scroll_elasticity(e); } else { s.set_vertical_scroll_elasticity(e); }
+    return;
+}
+
 // The document view's width: the viewport's for a vertical scroll, the
 // content's natural width for a horizontal one (that width IS the scroll
 // range). Height is always the content's.
@@ -2681,6 +2703,7 @@ fn fill_scroll(s: ak::ScrollView, take rows: flex::Node) -> f64 {
     r.calculate_layout(m.avail_w, m.avail_h, flex::Direction::LTR);
     r.round_to_pixel(2.0f64);
     let rf: flex::Layout = r.layout_frame();
+    scroll_sync_owned_elasticity(s, false, sf, rf);
     let doc = akx::new_flipped_view(rt::Rect { x: 0.0, y: 0.0, w: scroll_doc_w(false, sf, rf), h: rf.height });
     apply(#addr_of(r), doc.raw(), true);
     s.set_document_view(ak::View::from_raw(doc.raw()));
@@ -2713,6 +2736,7 @@ fn fill_scroll_h(s: ak::ScrollView, take rows: flex::Node) -> f64 {
     r.calculate_layout(m.avail_w, m.avail_h, flex::Direction::LTR);
     r.round_to_pixel(2.0f64);
     let rf: flex::Layout = r.layout_frame();
+    scroll_sync_owned_elasticity(s, true, sf, rf);
     let doc = akx::new_flipped_view(rt::Rect { x: 0.0, y: 0.0, w: scroll_doc_w(true, sf, rf), h: rf.height });
     apply(#addr_of(r), doc.raw(), true);
     s.set_document_view(ak::View::from_raw(doc.raw()));
@@ -2889,6 +2913,7 @@ fn reflow_scroll_content(scroll: *u8) -> bool {
             // (and every nested scroll's content) is exactly as last pass.
             if { (*tp).layout_changed() } == false { return true; }
             let rf: flex::Layout = (*tp).layout_frame();
+            scroll_sync_owned_elasticity(s, horizontal, sf, rf);
             match s.document_view() {
                 option::Option[ak::View]::Some(dv) => {
                     dv.set_frame(rt::Rect { x: 0.0, y: 0.0, w: scroll_doc_w(horizontal, sf, rf), h: rf.height });
@@ -3548,6 +3573,7 @@ fn relayout_scroll_host(host_ptr: *u8, tp: *flex::Node) {
     // frame unchanged; nothing to move.
     if { (*tp).layout_changed() } == false { return; }
     let rf: flex::Layout = (*tp).layout_frame();
+    scroll_sync_owned_elasticity(s, horizontal, vf, rf);
     match s.document_view() {
         option::Option[ak::View]::Some(dv) => {
             dv.set_frame(rt::Rect { x: 0.0, y: 0.0, w: scroll_doc_w(horizontal, vf, rf), h: rf.height });

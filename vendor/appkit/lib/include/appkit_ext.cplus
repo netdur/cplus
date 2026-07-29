@@ -464,6 +464,31 @@ fn drop_exited_imp(self_obj: *u8, cmd: *u8, sender: *u8) ;
 //
 // No app policy in "scroll when the pointer is near the edge", so facet does it
 // without being asked. Returning Copy keeps the destination advertised.
+
+fn autoscroll_band() -> f64 ;
+fn autoscroll_step() -> f64 ;
+
+// How far to move one axis this callback: 0 outside the band, rising to the full
+// step at the edge and staying there beyond it — so a pointer dragged clean out
+// of the view is just the far end of the band, which is how this SUBSUMES
+// `autoscroll:` rather than merely replacing it.
+fn autoscroll_delta(pos: f64, lo: f64, hi: f64) -> f64 ;
+
+// Scroll one clip view if the pointer (in WINDOW coordinates) is inside an edge
+// band of it, on an axis that has somewhere to go. Per-axis, and only where that
+// axis can actually scroll — otherwise a lane whose cards fit would jitter its
+// clip view on every draggingUpdated:.
+fn autoscroll_clip(clip: *u8, win_pt: rt::Point) ;
+
+// NOT `-[NSView autoscroll:]`, which was shipped first and only ever worked on
+// one axis. Its contract is "scroll if the event is OUTSIDE the receiver's
+// bounds" — an I-have-dragged-out-of-this-view gesture, not an I-am-near-its-edge
+// one. So whether it fires depends on the size of the enclosing clip view: a
+// lane's 292x552 clip is small enough that dragging above it IS outside, while
+// the strip's clip is the size of the visible board, so a pointer anywhere in
+// the window is inside it and nothing ever scrolled sideways. Nothing about the
+// axes was asymmetric; the sizes were.
+// bugs/drag-autoscroll-only-on-an-overflowing-clip-view.md
 fn drop_updated_imp(self_obj: *u8, cmd: *u8, sender: *u8) -> u64 ;
 
 fn drop_prepare_imp(self_obj: *u8, cmd: *u8, sender: *u8) -> i8 ;

@@ -1529,11 +1529,21 @@ fn ak_scroll(ctx: *u8, np: *facet::Node, take content: flex::Node) -> flex::Node
         sv.set_has_vertical_scroller(true);
         sv.set_horizontal_scroll_elasticity(ak::ScrollElasticity::None);
     }
-    // Predominant-axis locking pins a two-finger swipe to whichever axis it
-    // started on. Right for a document, wrong for a lane inside a sideways
-    // strip: a swipe that begins slightly vertical stays locked to the axis
-    // this view just refused, and the strip never sees it.
-    sv.set_uses_predominant_axis_scrolling(false);
+    // `usesPredominantAxisScrolling` STAYS AT ITS DEFAULT (on). Turning it off
+    // was tried and made this worse, and the two changes worked against each
+    // other: locking off means an event keeps BOTH deltas, no real trackpad
+    // swipe is perfectly axis-aligned, and so a horizontal swipe arrives
+    // carrying a small vertical delta. The lane's own axis is elastic (it owns
+    // it), that delta gets absorbed, the event is consumed, and the horizontal
+    // part never reaches the strip. With locking on, a horizontal-dominant
+    // swipe is presented as horizontal ONLY, the lane refuses it, and AppKit
+    // forwards — which is the behaviour the rest of the system has.
+    //
+    // The worry that motivated turning it off — a swipe starting slightly
+    // vertical getting locked to vertical — is not a defect: the lane owns
+    // vertical, handling it is correct, and someone who wants to go sideways
+    // starts a sideways gesture.
+    // bugs/scroll-cross-axis-still-eaten-by-the-elastic-owned-axis.md
     sv.set_draws_background(false);
     sv.set_autohides_scrollers(true);
     let jobs: *vec::Vec[ScrollJob] = { #addr_of(SCROLL_JOBS) };
@@ -5855,15 +5865,21 @@ fn iris_tab_anatomy_states_overlap_after_add_and_raise() {
     unmount_all();
 }
 
-// A scroll must REFUSE the axis it does not own, so a wheel event it cannot
-// use reaches the scroll around it. AppKit forwards on its own; what stops it
-// is an ELASTIC axis, which rubber-bands rather than passing the event on.
-// Hiding the scroller is not the same thing — the scroller is chrome.
+// A scroll must REFUSE any axis it cannot move, so a wheel event it cannot use
+// reaches the scroll around it. AppKit forwards on its own; what stops it is an
+// ELASTIC axis, which absorbs and rubber-bands whether or not it has anywhere to
+// go. Two axes, two reasons:
 //
-// The board case: columns scrolling cards vertically inside a strip scrolling
-// sideways. With the pointer over a column NEITHER axis moved, while the gaps
-// between columns still scrolled the strip.
-// bugs/scroll-nested-axis-forwarding.md
+//   CROSS axis — never has range by construction, so `None` at creation.
+//   OWNED axis — only has range while the content overflows the viewport, so
+//                re-evaluated every time the content is measured.
+//
+// The board case: lanes scrolling cards vertically inside a strip scrolling
+// sideways. First "neither axis moves" (cross axis elastic), then — after that
+// was fixed — sideways still dead with the pointer over a lane, because a short
+// lane's OWNED axis was still elastic and absorbed the vertical component that
+// every real trackpad swipe carries.
+// bugs/scroll-cross-axis-still-eaten-by-the-elastic-owned-axis.md
 struct AxisPanes { n: i64 }
 
 impl AxisPanes: facet::Component {
@@ -5875,7 +5891,7 @@ impl AxisPanes: facet::Component {
 
         var lane_content: facet::Builder = facet::Builder::new();
         lane_content.add(facet::vstack(card));
-        // The LANE: a vertical scroll, the thing the pointer sits over.
+        // A SHORT lane: one label in 300pt, so its owned axis has no range.
         let lane: facet::Node = facet::scroll(lane_content)
             .frame(200.0f64, 300.0f64)
             .key("lane");
@@ -5884,7 +5900,7 @@ impl AxisPanes: facet::Component {
         strip_row.add(lane);
         var strip_content: facet::Builder = facet::Builder::new();
         strip_content.add(facet::hstack(strip_row));
-        // The STRIP: a sideways scroll holding the lane.
+        // A SHORT strip too: 200pt of lane in a 400pt viewport.
         return facet::scroll(strip_content, horizontal: true)
             .frame(400.0f64, 300.0f64)
             .key("strip");
@@ -5892,6 +5908,25 @@ impl AxisPanes: facet::Component {
 }
 
 static AXIS_PANES: AxisPanes = #zero::[AxisPanes]();
+
+// A lane whose cards OVERFLOW, so its owned axis really does have range.
+struct TallPane { n: i64 }
+
+impl TallPane: facet::Component {
+    fn build(ref this) -> facet::Node {
+        var cards: facet::Builder = facet::Builder::new();
+        for i in 0..40 {
+            cards.add(facet::label("card").height(30.0f64));
+        }
+        var lane_content: facet::Builder = facet::Builder::new();
+        lane_content.add(facet::vstack(cards));
+        return facet::scroll(lane_content)
+            .frame(200.0f64, 300.0f64)
+            .key("tall");
+    }
+}
+
+static TALL_PANE: TallPane = #zero::[TallPane]();
 
 fn elasticity_of(scroll_host: *u8, vertical: bool) -> i64 {
     let sel: *u8 = if vertical {
@@ -5903,7 +5938,7 @@ fn elasticity_of(scroll_host: *u8, vertical: bool) -> i64 {
 }
 
 #[test]
-fn a_scroll_refuses_the_axis_it_does_not_own() {
+fn a_scroll_refuses_every_axis_it_cannot_move() {
     unmount_all();
     install();
     let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 400.0, h: 300.0 });
@@ -5914,23 +5949,42 @@ fn a_scroll_refuses_the_axis_it_does_not_own() {
     assert strip != (0 as *u8);
     assert lane != (0 as *u8);
 
-    // NSScrollElasticityNone = 1, Automatic = 0. The VERTICAL lane refuses
-    // horizontal, so a sideways wheel over a column reaches the strip...
+    // NSScrollElasticityNone = 1, Automatic = 0.
+    // CROSS axis, both directions: refused by construction.
     assert elasticity_of(lane, false) == (1 as i64);
-    // ...and the SIDEWAYS strip refuses vertical, which it never did before:
-    // it hid its vertical scroller but stayed elastic, so it had always
-    // absorbed vertical wheel. Invisible until something above it wanted them.
     assert elasticity_of(strip, true) == (1 as i64);
 
-    // Each still owns its OWN axis — refusing the cross axis must not disable
-    // the scroll itself.
-    assert elasticity_of(lane, true) != (1 as i64);
-    assert elasticity_of(strip, false) != (1 as i64);
+    // OWNED axis with NO RANGE: also refused. This is the half that was missing
+    // — a lane holding two cards could scroll nothing in any direction and still
+    // swallowed the event, so the strip never saw it.
+    assert elasticity_of(lane, true) == (1 as i64);
+    assert elasticity_of(strip, false) == (1 as i64);
 
-    // Predominant-axis locking off on both: a swipe that starts slightly off
-    // the wanted axis must not stay pinned to the one this view just refused.
-    assert rt::msg_i8(lane, rt::sel(#str_ptr("usesPredominantAxisScrolling\0"))) == (0 as i8);
-    assert rt::msg_i8(strip, rt::sel(#str_ptr("usesPredominantAxisScrolling\0"))) == (0 as i8);
+    // `usesPredominantAxisScrolling` STAYS ON (AppKit's default = YES). Turning
+    // it off was tried and defeated the elasticity fix: with locking off an
+    // event keeps both deltas, and no real swipe is perfectly axis-aligned, so
+    // a sideways swipe always carried a vertical component for the lane's own
+    // axis to absorb. This assertion is that regression's guard.
+    assert rt::msg_i8(lane, rt::sel(#str_ptr("usesPredominantAxisScrolling\0"))) != (0 as i8);
+    assert rt::msg_i8(strip, rt::sel(#str_ptr("usesPredominantAxisScrolling\0"))) != (0 as i8);
+    unmount_all();
+}
+
+// ...and an axis that CAN move keeps its elasticity, so the normal rubber-band
+// at the ends survives. Refusing unconditionally would have been the easy wrong
+// fix — it would make every scroll in the app feel dead at its limits.
+#[test]
+fn an_axis_with_range_keeps_its_elasticity() {
+    unmount_all();
+    install();
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 400.0, h: 300.0 });
+    let _h: f64 = mount_component(TALL_PANE.build, host: host.raw());
+    let tall: *u8 = facet::find("tall").view();
+    assert tall != (0 as *u8);
+    // 40 x 30pt of cards in a 300pt viewport ⇒ real vertical range ⇒ elastic.
+    assert elasticity_of(tall, true) == (0 as i64);
+    // Cross axis is still refused.
+    assert elasticity_of(tall, false) == (1 as i64);
     unmount_all();
 }
 
