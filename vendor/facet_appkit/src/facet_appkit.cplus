@@ -1039,7 +1039,24 @@ fn ak_date_picker(ctx: *u8, np: *facet::Node) -> flex::Node {
 // this view — identical to the view it would otherwise synthesize lazily, but
 // created early enough for mount to pin the container's agent id on it.
 fn fak_container(ctx: *u8, np: *facet::Node, node: *flex::Node) {
-    let bv: ak::View = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 });
+    // A container that declares `.on_drop` / `.draggable` becomes the same
+    // specialised view a `box` would, so that the ANCESTOR of the content is the
+    // registered one. AppKit finds a dragging destination by hit-testing to the
+    // deepest view under the pointer and walking UP the superview chain — a
+    // sibling is not on that chain. While only `ak_box` could build a drop view,
+    // a drop zone could never cover its own content: a card, or a scroll view
+    // over the cards, sat on top and the drop was silently refused exactly where
+    // a person aims.
+    let drop: fn(*u8, *u8) = { (*np).drop_handler };
+    let dtp: *text::Text = { #addr_of((*np).drag_text) };
+    let drag: str = { (*dtp).view() };
+    let bv: ak::View = if drag != "" {
+        akx::new_drag_view(drag)
+    } else if drop != facet::null_fn() {
+        akx::new_drop_view(drop, { (*np).drop_ctx })
+    } else {
+        ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 })
+    };
     let bp: *u8 = rt::retain(bv.raw());
     { (*node).set_payload(bp, ui::release_view); }
     // The container's own Style paints on this backing view (background /
@@ -1053,12 +1070,16 @@ fn ak_box(ctx: *u8, np: *facet::Node) -> flex::Node {
     let drop: fn(*u8, *u8) = { (*np).drop_handler };
     let dtp: *text::Text = { #addr_of((*np).drag_text) };
     let drag: str = { (*dtp).view() };
-    var v: ak::View = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 });
-    if drag != "" {
-        v = akx::new_drag_view(drag);              // drag SOURCE
+    // Built in ONE branch rather than made-then-replaced: `ak::View` is a
+    // non-owning handle with no drop, so an NSView assigned over leaked its +1 —
+    // one per drag or drop box, every mount.
+    let v: ak::View = if drag != "" {
+        akx::new_drag_view(drag)                            // drag SOURCE
     } else if drop != facet::null_fn() {
-        v = akx::new_drop_view(drop, { (*np).drop_ctx });   // drop DESTINATION
-    }
+        akx::new_drop_view(drop, { (*np).drop_ctx })        // drop DESTINATION
+    } else {
+        ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 })
+    };
     var n: flex::Node = ui::fixed_view(v);
     apply_style(n.payload(), facet::kind_box(), np);
     return n;
@@ -8896,6 +8917,136 @@ fn a_dragging_item_outlives_the_vec_that_carried_it() {
 }
 
 fn td_drop_handler(sender: *u8, ctx: *u8) { return; }
+
+// --- a drop destination must be an ANCESTOR of the content it covers ---------
+
+fn cd_is_drop_view(v: *u8) -> bool {
+    if v == (0 as *u8) { return false; }
+    let types: *u8 = rt::msg_id(v, rt::sel(#str_ptr("registeredDraggedTypes\0")));
+    if types == (0 as *u8) { return false; }
+    return rt::msg_u64(types, rt::sel(#str_ptr("count\0"))) >= (1 as u64);
+}
+
+// The nearest registered drop destination at or above `v` — the same walk
+// AppKit does from the view under the pointer. Null when there is none, which
+// is what "the drop is silently refused here" looks like from the inside.
+fn cd_drop_ancestor(v: *u8) -> *u8 {
+    var cur: *u8 = v;
+    while cur != (0 as *u8) {
+        if cd_is_drop_view(cur) { return cur; }
+        cur = rt::msg_id(cur, rt::sel(#str_ptr("superview\0")));
+    }
+    return 0 as *u8;
+}
+
+// A drop zone could only ever be a `box`, i.e. a LEAF, so it could only ever be
+// a SIBLING of the content it was meant to cover. AppKit resolves a dragging
+// destination by hit-testing to the deepest view under the pointer and walking
+// UP the superview chain; a sibling is not on that chain. So a drop landed only
+// where the zone itself was topmost — the empty part of a lane — and was
+// silently refused over any card, which is exactly where a person aims.
+#[test]
+fn a_container_with_on_drop_is_the_destination_for_its_own_content() {
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 300.0 });
+    let dh: fn(*u8, *u8) = td_drop_handler;
+    var root: facet::Node = @facet {
+        vstack {
+            vstack {
+                box().frame(160.0f64, 40.0f64).agent_id("card-1")
+                box().frame(160.0f64, 40.0f64).agent_id("card-2")
+            }.agent_id("lane").on_drop(dh, 0 as *u8)
+        }
+    };
+    let h: f64 = mount_into(#addr_of(root), content.raw(), 200.0f64, 300.0f64);
+    assert h > 0.0f64;
+
+    // The container itself is the registered destination.
+    let lane: *u8 = find_view_by_id(content.raw(), "lane");
+    assert lane != (0 as *u8);
+    assert cd_is_drop_view(lane);
+
+    // THE PROPERTY: from a card — what the pointer actually hits — the walk up
+    // finds the lane. Sibling geometry could never satisfy this.
+    let c1: *u8 = find_view_by_id(content.raw(), "card-1");
+    let c2: *u8 = find_view_by_id(content.raw(), "card-2");
+    assert c1 != (0 as *u8);
+    assert c2 != (0 as *u8);
+    assert cd_drop_ancestor(c1) == lane;
+    assert cd_drop_ancestor(c2) == lane;
+    // ...and the cards are not themselves destinations; the lane is.
+    assert cd_is_drop_view(c1) == false;
+    assert cd_is_drop_view(c2) == false;
+    return;
+}
+
+// The gate that decides whether a container gets a backing view at all knew
+// about keys and styles, not drop handlers — so an unkeyed, unstyled
+// `column(b).on_drop(...)` produced no view and was not on the walk at ALL.
+// The child here carries the only id in the tree.
+#[test]
+fn an_unkeyed_unstyled_container_with_on_drop_still_becomes_a_view() {
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 300.0 });
+    let dh: fn(*u8, *u8) = td_drop_handler;
+    var root: facet::Node = @facet {
+        vstack {
+            vstack {
+                box().frame(160.0f64, 40.0f64).agent_id("bare-card")
+            }.on_drop(dh, 0 as *u8)
+        }
+    };
+    let h: f64 = mount_into(#addr_of(root), content.raw(), 200.0f64, 300.0f64);
+    assert h > 0.0f64;
+    let card: *u8 = find_view_by_id(content.raw(), "bare-card");
+    assert card != (0 as *u8);
+    let dest: *u8 = cd_drop_ancestor(card);
+    assert dest != (0 as *u8);
+    assert dest != card;             // the CONTAINER, not the card itself
+    return;
+}
+
+// `.draggable()` on a container was the same defect wearing the other hat: no
+// backing view, so nothing to start a drag from. Covered here because the two
+// share a code path and an asymmetry would be the same silent no-op.
+#[test]
+fn a_container_with_draggable_becomes_a_drag_source() {
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 300.0 });
+    var root: facet::Node = @facet {
+        vstack {
+            vstack {
+                box().frame(160.0f64, 40.0f64)
+            }.agent_id("card").draggable("card-payload")
+        }
+    };
+    let h: f64 = mount_into(#addr_of(root), content.raw(), 200.0f64, 300.0f64);
+    assert h > 0.0f64;
+    let card: *u8 = find_view_by_id(content.raw(), "card");
+    assert card != (0 as *u8);
+    let responds: *u8 = rt::sel(#str_ptr("respondsToSelector:\0"));
+    assert rt::msg_i8_id(card, responds, rt::sel(#str_ptr("draggingSession:sourceOperationMaskForDraggingContext:\0"))) != (0 as i8);
+    assert rt::msg_i8_id(card, responds, rt::sel(#str_ptr("mouseDown:\0"))) != (0 as i8);
+    return;
+}
+
+// A container with neither is still a plain backing view — the change must not
+// register every keyed container for drags.
+#[test]
+fn a_plain_keyed_container_is_not_a_drop_destination() {
+    let content = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 300.0 });
+    var root: facet::Node = @facet {
+        vstack {
+            vstack {
+                box().frame(160.0f64, 40.0f64).agent_id("plain-card")
+            }.agent_id("plain-lane")
+        }
+    };
+    let h: f64 = mount_into(#addr_of(root), content.raw(), 200.0f64, 300.0f64);
+    assert h > 0.0f64;
+    let lane: *u8 = find_view_by_id(content.raw(), "plain-lane");
+    assert lane != (0 as *u8);
+    assert cd_is_drop_view(lane) == false;
+    assert cd_drop_ancestor(find_view_by_id(content.raw(), "plain-card")) == (0 as *u8);
+    return;
+}
 
 #[test]
 fn drop_zone_box_registers_for_text() {

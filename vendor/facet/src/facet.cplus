@@ -4205,6 +4205,17 @@ fn is_container_kind(k: u32) -> bool {
 // transform) — such a container needs a backing view too, or the style is a
 // silent no-op (there is nothing to paint a background ON). Text-only fields
 // (fg, font) don't count: a container has no text of its own.
+// Drag and drop are the third reason a container needs a real backing view —
+// the platform resolves a drop destination by walking UP from the view under
+// the pointer, so an unkeyed, unstyled `column(b).on_drop(...)` still has to
+// become a view or it is not on that walk at all. Portable: the backend decides
+// WHAT kind of view, this only decides THAT there must be one.
+fn node_wants_drag_view(np: *Node) -> bool {
+    if { (*np).drop_handler } != null_fn() { return true; }
+    if { (*np).drag_text.view() } != "" { return true; }
+    return false;
+}
+
 fn style_wants_view(np: *Node) -> bool {
     let s: Style = { (*np).style };
     if s.bg.is_set() { return true; }
@@ -4455,10 +4466,12 @@ fn mount(np: *Node, r: Renderer) -> flex::Node {
         call_set_identity(np, r, n.payload(), k);
     } else if is_container_kind(k) {
         // A container needs a backing view when it is KEYED (find(key) must
-        // address it) or when its Style operates on a view (a background has
-        // to be painted ON something). The backend's container op applies the
-        // style to the view it creates.
-        if { (*np).agent_id.view() } != "" || style_wants_view(np) {
+        // address it), when its Style operates on a view (a background has to
+        // be painted ON something), or when it takes part in DRAG AND DROP —
+        // a drop destination has to be a real view for the platform to find it,
+        // and it has to be the CONTAINER so the search from a child reaches it.
+        // The backend's container op applies the style to the view it creates.
+        if { (*np).agent_id.view() } != "" || style_wants_view(np) || node_wants_drag_view(np) {
             let cf: fn(*u8, *Node, *flex::Node) = r.container;
             cf(r.ctx, np, #addr_of(n));
             if n.payload() != (0 as *u8) && { (*np).agent_id.view() } != "" {
