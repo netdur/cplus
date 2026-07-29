@@ -1507,7 +1507,11 @@ static SCROLL_JOBS: vec::Vec[ScrollJob] = #zero::[vec::Vec[ScrollJob]]();
 fn ak_scroll(ctx: *u8, np: *facet::Node, take content: flex::Node) -> flex::Node {
     // soft_wrap is the axis flag for a scroll: false = scroll sideways.
     let horizontal: bool = !{ (*np).soft_wrap };
-    let sv: ak::ScrollView = ak::ScrollView::new(rt::Rect { x: 0.0, y: 0.0, w: 10.0, h: 10.0 });
+    // A FacetScrollView, not a plain NSScrollView: it forwards the axis it does
+    // not own to the scroll around it. Elasticity alone could not do that —
+    // NSScrollView consumes the wheel whenever it can scroll on EITHER axis, so
+    // a lane with range swallowed every sideways swipe. See appkit_ext.
+    let sv: ak::ScrollView = akx::new_scroll_view(rt::Rect { x: 0.0, y: 0.0, w: 10.0, h: 10.0 }, horizontal);
     // A scroll must REFUSE the axis it does not own, or it silently eats wheel
     // events meant for a scroll around it. AppKit already forwards an event a
     // scroll view cannot use to the enclosing one — that is why nested scrolls
@@ -5959,6 +5963,14 @@ fn a_scroll_refuses_every_axis_it_cannot_move() {
     // swallowed the event, so the strip never saw it.
     assert elasticity_of(lane, true) == (1 as i64);
     assert elasticity_of(strip, false) == (1 as i64);
+
+    // The scroll views are FacetScrollViews — the class that forwards the axis
+    // it does not own. Elasticity is a hint; this override is the mechanism, and
+    // asserting the class is what keeps a future simplification from quietly
+    // dropping back to a plain NSScrollView.
+    let fsv: *u8 = rt::get_class(#str_ptr("FacetScrollView\0"));
+    assert rt::msg_i8_id(lane, rt::sel(#str_ptr("isKindOfClass:\0")), fsv) != (0 as i8);
+    assert rt::msg_i8_id(strip, rt::sel(#str_ptr("isKindOfClass:\0")), fsv) != (0 as i8);
 
     // `usesPredominantAxisScrolling` STAYS ON (AppKit's default = YES). Turning
     // it off was tried and defeated the elasticity fix: with locking off an

@@ -9,6 +9,7 @@
 
 import "objc/runtime" as rt;
 import "objc/synthesis" as synth;
+import "stdlib/io" as io;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/vec" as vec;
@@ -1044,6 +1045,103 @@ fn new_drop_view(handler: fn(*u8, *u8), ctx: *u8) -> ak::View {
 fn drop_text_of(drop_view: *u8) -> text::Text {
     let ns: *u8 = synth::get_associated(drop_view, drop_text_key());
     return bridge::to_text(ns);
+}
+
+// ==========================================================================
+// FacetScrollView — a nested scroll that hands back the axis it does not own
+// ==========================================================================
+//
+// Setting `horizontalScrollElasticity = None` is NOT enough, which two shipped
+// fixes learned the hard way. NSScrollView consumes `scrollWheel:` whenever it
+// can scroll on EITHER axis; elasticity governs rubber-banding at the limits,
+// not whether the event is passed on. So a lane with 20 cards — real vertical
+// range — swallowed every sideways swipe no matter what its horizontal
+// elasticity said, and the strip holding the lanes never moved.
+//
+// The reliable answer is an explicit override, which is what every app with a
+// scroll inside a scroll ends up writing: look at the event's dominant axis, and
+// if it is not the axis this view owns (or is an axis with nowhere left to go),
+// hand it to the next responder so the enclosing scroll view gets it.
+
+fn scroll_owns_h_key() -> *u8 { return { 28706 as *u8 }; }
+
+// Off by default. The probe example turns it on to see what the scroll views
+// actually decide, because none of this is reachable from a test — an agent has
+// no hands, so a wheel event is not something the suite can produce.
+static SCROLL_DEBUG: bool = false;
+fn set_scroll_debug(on: bool) { SCROLL_DEBUG = on; return; }
+
+fn f_abs(v: f64) -> f64 { if v < 0.0f64 { return 0.0f64 - v; } return v; }
+
+// Can this scroll view still move along `horizontal`? "Has range at all" rather
+// than "has range in this direction" — a scroll parked at its end should keep
+// the event so the rubber-band happens, which is what the platform does.
+fn scroll_has_range(self_obj: *u8, horizontal: bool) -> bool {
+    let clip: *u8 = { rt::msg_id(self_obj, rt::sel(#str_ptr("contentView\0"))) };
+    if clip == { 0 as *u8 } { return false; }
+    let doc: *u8 = { rt::msg_id(clip, rt::sel(#str_ptr("documentView\0"))) };
+    if doc == { 0 as *u8 } { return false; }
+    let b: rt::Rect = rt::msg_rect(clip, rt::sel(#str_ptr("bounds\0")));
+    let d: rt::Rect = rt::msg_rect(doc, rt::sel(#str_ptr("frame\0")));
+    if horizontal { return d.w > b.w + 0.5f64; }
+    return d.h > b.h + 0.5f64;
+}
+
+fn scroll_forward_wheel(self_obj: *u8, event: *u8) -> bool {
+    let nr: *u8 = { rt::msg_id(self_obj, rt::sel(#str_ptr("nextResponder\0"))) };
+    if nr == { 0 as *u8 } { return false; }
+    if rt::msg_i8_id(nr, rt::sel(#str_ptr("respondsToSelector:\0")), rt::sel(#str_ptr("scrollWheel:\0"))) == (0 as i8) { return false; }
+    rt::msg_void_id(nr, rt::sel(#str_ptr("scrollWheel:\0")), event);
+    return true;
+}
+
+fn scroll_wheel_imp(self_obj: *u8, cmd: *u8, event: *u8) {
+    let owns_h: bool = synth::get_associated(self_obj, scroll_owns_h_key()) != { 0 as *u8 };
+    let dx: f64 = rt::msg_f64(event, rt::sel(#str_ptr("scrollingDeltaX\0")));
+    let dy: f64 = rt::msg_f64(event, rt::sel(#str_ptr("scrollingDeltaY\0")));
+    // Which axis is this gesture asking for? Dominant component wins; a pure
+    // mouse wheel reports only dy, which reads as vertical.
+    let wants_h: bool = f_abs(dx) > f_abs(dy);
+    let mine: bool = wants_h == owns_h;
+    let has_range: bool = scroll_has_range(self_obj, wants_h);
+
+    if SCROLL_DEBUG {
+        io::print("scrollWheel: owns=");
+        io::print(if owns_h { "H" } else { "V" });
+        io::print(" wants=");
+        io::print(if wants_h { "H" } else { "V" });
+        io::print(" mine=");
+        io::print(if mine { "yes" } else { "no" });
+        io::print(" range=");
+        io::print(if has_range { "yes" } else { "no" });
+        io::println(if mine && has_range { " -> KEEP" } else { " -> FORWARD" });
+    }
+
+    // Not my axis, or my axis with nothing left to give: hand it up.
+    if !mine || !has_range {
+        if scroll_forward_wheel(self_obj, event) { return; }
+    }
+    call_super_void_id(self_obj, rt::get_class(#str_ptr("NSScrollView\0")), rt::sel(#str_ptr("scrollWheel:\0")), event);
+    return;
+}
+
+fn scroll_view_class() -> *u8 {
+    let name: *u8 = #str_ptr("FacetScrollView\0");
+    var cls: *u8 = rt::get_class(name);
+    if cls == { 0 as *u8 } {
+        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSScrollView\0")), name, 0 as usize);
+        let a1: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("scrollWheel:\0")), scroll_wheel_imp, #str_ptr("v@:@\0"));
+        synth::register_class_pair(cls);
+    }
+    return cls;
+}
+
+// A fresh +1 FacetScrollView that owns `horizontal` and forwards the other axis.
+fn new_scroll_view(frame: rt::Rect, horizontal: bool) -> ak::ScrollView {
+    let v: *u8 = { rt::msg_id_rect(rt::msg_id(scroll_view_class(), rt::sel(#str_ptr("alloc\0"))), rt::sel(#str_ptr("initWithFrame:\0")), frame) };
+    // A non-null marker for "owns horizontal"; the value is never read.
+    if horizontal { synth::set_associated(v, scroll_owns_h_key(), { 1 as *u8 }); }
+    return ak::ScrollView::from_raw(v);
 }
 
 // ==========================================================================

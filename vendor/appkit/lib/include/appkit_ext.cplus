@@ -9,6 +9,7 @@
 
 import "objc/runtime" as rt;
 import "objc/synthesis" as synth;
+import "stdlib/io" as io;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/vec" as vec;
@@ -513,6 +514,46 @@ fn new_drop_view(handler: fn(*u8, *u8), ctx: *u8) -> ak::View ;
 // The last string dropped on `drop_view` (empty if none / non-text). Call from
 // an on_drop handler with its `sender`.
 fn drop_text_of(drop_view: *u8) -> text::Text ;
+
+// ==========================================================================
+// FacetScrollView — a nested scroll that hands back the axis it does not own
+// ==========================================================================
+//
+// Setting `horizontalScrollElasticity = None` is NOT enough, which two shipped
+// fixes learned the hard way. NSScrollView consumes `scrollWheel:` whenever it
+// can scroll on EITHER axis; elasticity governs rubber-banding at the limits,
+// not whether the event is passed on. So a lane with 20 cards — real vertical
+// range — swallowed every sideways swipe no matter what its horizontal
+// elasticity said, and the strip holding the lanes never moved.
+//
+// The reliable answer is an explicit override, which is what every app with a
+// scroll inside a scroll ends up writing: look at the event's dominant axis, and
+// if it is not the axis this view owns (or is an axis with nowhere left to go),
+// hand it to the next responder so the enclosing scroll view gets it.
+
+fn scroll_owns_h_key() -> *u8 ;
+
+// Off by default. The probe example turns it on to see what the scroll views
+// actually decide, because none of this is reachable from a test — an agent has
+// no hands, so a wheel event is not something the suite can produce.
+static SCROLL_DEBUG: bool = false;
+fn set_scroll_debug(on: bool) ;
+
+fn f_abs(v: f64) -> f64 ;
+
+// Can this scroll view still move along `horizontal`? "Has range at all" rather
+// than "has range in this direction" — a scroll parked at its end should keep
+// the event so the rubber-band happens, which is what the platform does.
+fn scroll_has_range(self_obj: *u8, horizontal: bool) -> bool ;
+
+fn scroll_forward_wheel(self_obj: *u8, event: *u8) -> bool ;
+
+fn scroll_wheel_imp(self_obj: *u8, cmd: *u8, event: *u8) ;
+
+fn scroll_view_class() -> *u8 ;
+
+// A fresh +1 FacetScrollView that owns `horizontal` and forwards the other axis.
+fn new_scroll_view(frame: rt::Rect, horizontal: bool) -> ak::ScrollView ;
 
 // ==========================================================================
 // Drag-and-drop SOURCE -> pasteboard text
