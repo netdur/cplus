@@ -815,6 +815,54 @@ impl Surface {
         return surface::hit_test_refused(surface::Outcome::NotFound, true);
     }
 
+    // WRITE: move a payload from a drag SOURCE to a drop DESTINATION, both by
+    // id. Authorized as an action on BOTH ends — it activates the source and
+    // mutates the target, so either being unexposed or observe-only refuses it.
+    //
+    // This fires the drop, it does not perform a gesture; see `deliver_drop` in
+    // appkit_ext for why that is the only realistic shape for a remote driver.
+    // What it therefore VERIFIES is the app's drop handler and the payload it
+    // receives — the kanban "did the card actually move" question. What it does
+    // NOT verify is that a person could complete the gesture: whether the
+    // target is reachable is `hit_test`'s question, and the source's own
+    // `mouseDown:` is not entered at all. Neither verb pretends to be the other.
+    fn drag(this, from: str, to: str) -> surface::Outcome {
+        let src_node: usize = match this.reg.lookup(from) {
+            option::Option[usize]::Some(n) => n,
+            option::Option[usize]::None => { return surface::Outcome::NotFound; }
+        };
+        let dst_node: usize = match this.reg.lookup(to) {
+            option::Option[usize]::Some(n) => n,
+            option::Option[usize]::None => { return surface::Outcome::NotFound; }
+        };
+        let src_ok: surface::Outcome = surface::authorize_action(this.reg, src_node);
+        if !surface::outcome_eq(src_ok, surface::Outcome::Allowed) { return src_ok; }
+        let dst_ok: surface::Outcome = surface::authorize_action(this.reg, dst_node);
+        if !surface::outcome_eq(dst_ok, surface::Outcome::Allowed) { return dst_ok; }
+
+        let sv: *u8 = this.view_of(src_node);
+        let dv: *u8 = this.view_of(dst_node);
+        if is_detached(sv) || is_detached(dv) { return surface::Outcome::Stale; }
+
+        // The source must actually be draggable — refuse rather than invent a
+        // payload for a node the app never declared as a drag source.
+        if !responds_to(sv, #str_ptr("cplusAgentDragText\0")) {
+            return surface::Outcome::NotActionable;
+        }
+        let payload: *u8 = rt::msg_id(sv, rt::sel(#str_ptr("cplusAgentDragText\0")));
+        if is_null(payload) { return surface::Outcome::NotActionable; }
+
+        // Resolve the destination the way the platform does: up from the
+        // addressed node to the nearest drop target. Dropping ON a card lands
+        // in the lane that holds it, which is exactly where a person's drop
+        // lands, so the agent and the human reach the same handler.
+        let dest: *u8 = drop_target_at_or_above(dv);
+        if is_null(dest) { return surface::Outcome::NotActionable; }
+
+        perform_on_main(dest, rt::sel(#str_ptr("cplusAgentDrop:\0")), payload);
+        return surface::Outcome::Allowed;
+    }
+
     // The id of the nearest EXPOSED node at or above `v`, or "". Walks up
     // because the view actually hit is often an untagged inner view of the
     // thing a person would name.
@@ -974,6 +1022,12 @@ fn mcp_hit_test(p: *u8, id: str) -> surface::HitTest {
     refresh_surface(p);
     let s: *Surface = { p as *Surface };
     return (*s).hit_test(id);
+}
+
+fn mcp_drag(p: *u8, from: str, to: str) -> surface::Outcome {
+    refresh_surface(p);
+    let s: *Surface = { p as *Surface };
+    return (*s).drag(from, to);
 }
 
 // The vtable agent_mcp drives an AppKit surface through. Pass the surface as
@@ -1153,6 +1207,18 @@ fn view_at_center_of(v: *u8) -> *u8 {
     return rt::msg_id_point(root, rt::sel(#str_ptr("hitTest:\0")), p);
 }
 
+// The nearest drop destination at or above `v` — the same superview walk AppKit
+// does to find one. Recognised by the selector facet's drop view answers, so
+// this file still needs no knowledge of appkit_ext beyond the name.
+fn drop_target_at_or_above(v: *u8) -> *u8 {
+    var cur: *u8 = v;
+    while !is_null(cur) {
+        if responds_to(cur, #str_ptr("cplusAgentDrop:\0")) { return cur; }
+        cur = rt::msg_id(cur, rt::sel(#str_ptr("superview\0")));
+    }
+    return null();
+}
+
 fn refresh_surface(p: *u8) {
     if on_main_thread() {
         refresh_in_place(p);
@@ -1210,5 +1276,6 @@ fn mcp_backend() -> mcpb::Backend {
         set_text: mcp_set_text,
         navigate: mcp_navigate,
         hit_test: mcp_hit_test,
+        drag: mcp_drag,
     };
 }

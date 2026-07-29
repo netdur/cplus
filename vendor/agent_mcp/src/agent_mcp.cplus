@@ -264,6 +264,18 @@ fn dispatch(
         let o: surface::Outcome = (vt.click)(surf, { target });
         return ok_response(id, outcome_result(o));
     }
+    // `from` and `to`, not a path of points: this fires the app's drop handler
+    // with the SOURCE's declared payload, the way a browser test dispatches
+    // `drop` at an element rather than moving a mouse. Both ends are ids, so
+    // both are authorized as nodes.
+    if method == "drag" {
+        if !params.has("from") { return missing_param(id, "drag", "from"); }
+        if !params.has("to") { return missing_param(id, "drag", "to"); }
+        let src: text::Text = val_as_text(obj_get(params, "from"));
+        let dst: text::Text = val_as_text(obj_get(params, "to"));
+        let o: surface::Outcome = (vt.drag)(surf, { src }, { dst });
+        return ok_response(id, outcome_result(o));
+    }
     if method == "hit_test" {
         if !params.has("id") { return missing_param(id, "hit_test", "id"); }
         let target: text::Text = val_as_text(obj_get(params, "id"));
@@ -588,6 +600,17 @@ fn fake_click(p: *u8, id: str) -> surface::Outcome { return surface::Outcome::Al
 fn fake_set_text(p: *u8, id: str, v: str, base: u64) -> surface::Outcome { return surface::Outcome::Allowed; }
 fn fake_nav(p: *u8, id: str) -> surface::Outcome { return surface::Outcome::Allowed; }
 
+// Records the pair so the test can prove the two ids reached the backend in the
+// right roles — a from/to swap is exactly the mistake the wire could hide.
+static DRAG_FROM: text::Text = #zero::[text::Text]();
+static DRAG_TO: text::Text = #zero::[text::Text]();
+fn fake_drag(p: *u8, from: str, to: str) -> surface::Outcome {
+    DRAG_FROM = text::from_str(from);
+    DRAG_TO = text::from_str(to);
+    if from == "not-a-source" { return surface::Outcome::NotActionable; }
+    return surface::Outcome::Allowed;
+}
+
 // Three shapes the wire has to carry distinctly: reachable, covered by an
 // EXPOSED node (named), and covered by one that is not (fact without identity).
 fn fake_hit_test(p: *u8, id: str) -> surface::HitTest {
@@ -617,6 +640,7 @@ fn fake_backend() -> backend::Backend {
         set_text: fake_set_text,
         navigate: fake_nav,
         hit_test: fake_hit_test,
+        drag: fake_drag,
     };
 }
 
@@ -715,6 +739,44 @@ fn hit_test_is_behind_the_consent_gate() {
         "{\"method\":\"hit_test\",\"params\":{\"id\":\"btn\"},\"id\":1}");
     assert denied.contains("-32001");
     assert denied.contains("reachable") == false;
+    return;
+}
+
+// `drag` takes two ids and no coordinates. The from/to roles are the thing the
+// wire could plausibly get backwards, so the fixture records the pair and this
+// checks which reached the backend as which.
+#[test]
+fn drag_carries_both_ids_in_the_right_roles() {
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
+
+    let ok: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"drag\",\"params\":{\"from\":\"card-7\",\"to\":\"lane-2\"},\"id\":1}");
+    assert ok.contains("allowed");
+    assert DRAG_FROM.view() == "card-7";
+    assert DRAG_TO.view() == "lane-2";
+
+    // A refusal from the backend travels as an outcome, not an error envelope —
+    // "that node is not a drag source" is an answer, not a malformed request.
+    let refused: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"drag\",\"params\":{\"from\":\"not-a-source\",\"to\":\"lane-2\"},\"id\":2}");
+    assert refused.contains("not_actionable");
+    assert refused.contains("-32602") == false;
+
+    // Both ends are required: half a drag is a malformed request.
+    let no_to: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"drag\",\"params\":{\"from\":\"card-7\"},\"id\":3}");
+    assert no_to.contains("-32602");
+    assert no_to.contains("to");
+    let no_from: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"drag\",\"params\":{\"to\":\"lane-2\"},\"id\":4}");
+    assert no_from.contains("-32602");
+    assert no_from.contains("from");
+
+    // And it is behind the consent gate like everything else.
+    let denied: text::Text = handle_request(surf, fake_backend(), sub, auth::deny_all(),
+        "{\"method\":\"drag\",\"params\":{\"from\":\"card-7\",\"to\":\"lane-2\"},\"id\":5}");
+    assert denied.contains("-32001");
     return;
 }
 

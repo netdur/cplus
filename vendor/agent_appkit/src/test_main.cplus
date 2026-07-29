@@ -9,6 +9,7 @@
 import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "appkit/appkit" as ak;
+import "appkit/appkit_ext" as akx;
 import "agent_core/identity" as identity;
 import "agent_core/surface" as surface;
 import "stdlib/vec" as vec;
@@ -17,6 +18,8 @@ import "stdlib/option" as option;
 import "./agent_appkit" as agent;
 
 fn main() -> i32 { return 0; }
+
+fn null_ctx() -> *u8 { return { 0 as *u8 }; }
 
 // One titled window with a content view; the app is initialized once
 // (shared_application is idempotent).
@@ -482,4 +485,135 @@ fn hit_test_negatives_report_rather_than_guess() {
     assert surface::outcome_eq(gone.outcome, surface::Outcome::Stale);
     assert gone.reachable == false;
     assert gone.covered == false;
+}
+
+// ---- drag: fire the drop, do not perform a gesture --------------------------
+
+static DROPPED: text::Text = #zero::[text::Text]();
+static DROP_HITS: i32 = 0;
+fn on_test_drop(sender: *u8, ctx: *u8) {
+    DROP_HITS = DROP_HITS + 1;
+    DROPPED = akx::drop_text_of(sender);
+    return;
+}
+
+// The kanban case, end to end: a card declares a payload, a lane accepts drops,
+// and `drag(card, lane)` runs the lane's real handler with the card's real
+// payload. No pointer, no event, no modal drag loop — the browser's
+// `dispatchEvent` shape rather than a synthetic mouse.
+#[test]
+fn drag_fires_the_destination_handler_with_the_sources_payload() {
+    let win = fixture_window(400.0f64, 300.0f64);
+    let content = content_of(win);
+
+    let lane = akx::new_drop_view(on_test_drop, null_ctx());
+    lane.set_frame(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 200.0 });
+    content.add_subview(lane);
+    agent::set_agent_id(lane.raw(), "lane-2");
+
+    let card = akx::new_drag_view("card-7");
+    card.set_frame(rt::Rect { x: 220.0, y: 0.0, w: 100.0, h: 40.0 });
+    content.add_subview(card);
+    agent::set_agent_id(card.raw(), "card-7");
+
+    DROP_HITS = 0;
+    var s: agent::Surface = agent::open(win.raw());
+    assert surface::outcome_eq(s.drag("card-7", "lane-2"), surface::Outcome::Allowed);
+
+    // The app's own handler ran, once, and read the payload the SOURCE
+    // declared — not one the caller invented.
+    assert DROP_HITS == (1 as i32);
+    assert DROPPED.view() == "card-7";
+}
+
+// Dropping ON a card lands in the lane that holds it, because the destination
+// is resolved by walking UP — the same walk AppKit does, so the agent's drop
+// reaches the same handler a person's would.
+#[test]
+fn drag_resolves_the_destination_upward_like_the_platform_does() {
+    let win = fixture_window(400.0f64, 300.0f64);
+    let content = content_of(win);
+
+    let lane = akx::new_drop_view(on_test_drop, null_ctx());
+    lane.set_frame(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 200.0 });
+    content.add_subview(lane);
+    agent::set_agent_id(lane.raw(), "lane");
+
+    // A card INSIDE the lane — the thing a person aims at.
+    let sitting = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 180.0, h: 40.0 });
+    lane.add_subview(sitting);
+    agent::set_agent_id(sitting.raw(), "card-in-lane");
+
+    let card = akx::new_drag_view("card-9");
+    card.set_frame(rt::Rect { x: 220.0, y: 0.0, w: 100.0, h: 40.0 });
+    content.add_subview(card);
+    agent::set_agent_id(card.raw(), "card-9");
+
+    DROP_HITS = 0;
+    var s: agent::Surface = agent::open(win.raw());
+    assert surface::outcome_eq(s.drag("card-9", "card-in-lane"), surface::Outcome::Allowed);
+    assert DROP_HITS == (1 as i32);
+    assert DROPPED.view() == "card-9";
+}
+
+#[test]
+fn drag_refuses_what_is_not_a_source_or_not_a_destination() {
+    let win = fixture_window(400.0f64, 300.0f64);
+    let content = content_of(win);
+
+    let lane = akx::new_drop_view(on_test_drop, null_ctx());
+    lane.set_frame(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 200.0 });
+    content.add_subview(lane);
+    agent::set_agent_id(lane.raw(), "lane");
+
+    let card = akx::new_drag_view("card-1");
+    card.set_frame(rt::Rect { x: 220.0, y: 0.0, w: 100.0, h: 40.0 });
+    content.add_subview(card);
+    agent::set_agent_id(card.raw(), "card-1");
+
+    let plain = add_button(content, "just a button");
+    agent::set_agent_id(plain.as_view().raw(), "btn");
+
+    DROP_HITS = 0;
+    var s: agent::Surface = agent::open(win.raw());
+
+    // A node that declares no payload is not a source — refuse rather than
+    // invent one.
+    assert surface::outcome_eq(s.drag("btn", "lane"), surface::Outcome::NotActionable);
+    // A node with no drop target at or above it is not a destination.
+    assert surface::outcome_eq(s.drag("card-1", "btn"), surface::Outcome::NotActionable);
+    // Unknown ids on either end.
+    assert surface::outcome_eq(s.drag("nope", "lane"), surface::Outcome::NotFound);
+    assert surface::outcome_eq(s.drag("card-1", "nope"), surface::Outcome::NotFound);
+    // Nothing fired on any refusal.
+    assert DROP_HITS == (0 as i32);
+
+    // A destination that left the live UI is Stale, not a silent no-op.
+    lane.remove_from_superview();
+    assert surface::outcome_eq(s.drag("card-1", "lane"), surface::Outcome::Stale);
+    assert DROP_HITS == (0 as i32);
+}
+
+// Both ends are authorized as ACTIONS, so an observe-only node refuses in
+// either role — a drag is a mutation, not a read.
+#[test]
+fn drag_respects_the_affordance_ceiling_on_both_ends() {
+    let win = fixture_window(400.0f64, 300.0f64);
+    let content = content_of(win);
+
+    let lane = akx::new_drop_view(on_test_drop, null_ctx());
+    lane.set_frame(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 200.0 });
+    content.add_subview(lane);
+    agent::set_agent_id(lane.raw(), "ro-lane");
+    agent::set_affordance_drive(lane.raw(), identity::Role::Group, identity::drive_none());
+
+    let card = akx::new_drag_view("card-1");
+    card.set_frame(rt::Rect { x: 220.0, y: 0.0, w: 100.0, h: 40.0 });
+    content.add_subview(card);
+    agent::set_agent_id(card.raw(), "card-1");
+
+    DROP_HITS = 0;
+    var s: agent::Surface = agent::open(win.raw());
+    assert surface::outcome_eq(s.drag("card-1", "ro-lane"), surface::Outcome::NotActionable);
+    assert DROP_HITS == (0 as i32);
 }
