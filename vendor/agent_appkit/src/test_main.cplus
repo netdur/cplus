@@ -19,6 +19,8 @@ import "./agent_appkit" as agent;
 
 fn main() -> i32 { return 0; }
 
+fn null_ctx() -> *u8 { return { 0 as *u8 }; }
+
 // One titled window with a content view; the app is initialized once
 // (shared_application is idempotent).
 fn fixture_window(w: f64, h: f64) -> ak::Window {
@@ -534,4 +536,169 @@ fn a_real_mouse_down_on_a_draggable_survives_the_pool_drain() {
     { pool_pop(pool); }
 
     assert true;   // reached here: no over-release, no zombie, no SIGSEGV
+}
+
+// ---- gap 1: the drag's visual layer, and coexisting with a click -----------
+
+static ENTERS: i32 = 0;
+static EXITS: i32 = 0;
+fn on_enter_probe(sender: *u8, ctx: *u8) { ENTERS = ENTERS + 1; return; }
+fn on_exit_probe(sender: *u8, ctx: *u8) { EXITS = EXITS + 1; return; }
+fn on_drop_probe(sender: *u8, ctx: *u8) { return; }
+
+fn mouse_at(win: ak::Window, ty: ak::EventType, x: f64, y: f64) -> ak::Event {
+    let at: rt::Point = rt::Point { x: x, y: y };
+    let nilctx: ak::GraphicsContext = ak::GraphicsContext::from_raw(0 as *u8);
+    let wnum: i64 = rt::msg_i64(win.raw(), rt::sel(#str_ptr("windowNumber\0")));
+    return match ak::Event::mouse_event_with_type(ty, at, 0 as u64, 0.0f64, wnum, nilctx, 0 as i64, 1 as i64, 1.0f32) {
+        option::Option[ak::Event]::Some(e) => e,
+        option::Option[ak::Event]::None => { ak::Event::from_raw(0 as *u8) }
+    };
+}
+
+// (c) A lane must be able to highlight while a card is over it. Ordinary hover
+// cannot do this — AppKit suppresses mouse-tracking for the duration of a drag
+// — so the destination's own callbacks are the only source. And a DROP counts
+// as an exit: nothing else fires afterwards, so a highlight lit on enter and
+// never cleared stays lit forever.
+#[test]
+fn a_drop_target_reports_drag_enter_and_exit_including_on_drop() {
+    let win = fixture_window(400.0f64, 300.0f64);
+    let content = content_of(win);
+    let lane = akx::new_drop_view(on_drop_probe, null_ctx());
+    lane.set_frame(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 200.0 });
+    content.add_subview(lane);
+    akx::set_drag_over(lane.raw(), on_enter_probe, on_exit_probe, null_ctx());
+
+    ENTERS = 0;
+    EXITS = 0;
+    let entered_sel: *u8 = rt::sel(#str_ptr("draggingEntered:\0"));
+    let exited_sel: *u8 = rt::sel(#str_ptr("draggingExited:\0"));
+    assert rt::msg_i8_id(lane.raw(), rt::sel(#str_ptr("respondsToSelector:\0")), exited_sel) != (0 as i8);
+
+    // Enter fires the handler and still advertises Copy (=1) to the dragger.
+    assert rt::msg_u64_id(lane.raw(), entered_sel, 0 as *u8) == (1 as u64);
+    assert ENTERS == (1 as i32);
+    assert EXITS == (0 as i32);
+
+    // Leaving without dropping.
+    rt::msg_void_id(lane.raw(), exited_sel, 0 as *u8);
+    assert EXITS == (1 as i32);
+
+    // Dropping ALSO exits — the case a highlight would otherwise survive.
+    assert rt::msg_u64_id(lane.raw(), entered_sel, 0 as *u8) == (1 as u64);
+    assert ENTERS == (2 as i32);
+    let _ok: i8 = rt::msg_i8_id(lane.raw(), rt::sel(#str_ptr("performDragOperation:\0")), 0 as *u8);
+    assert EXITS == (2 as i32);
+}
+
+// (d) A destination must implement draggingUpdated:, which is where it walks
+// the enclosing scroll view as the pointer nears an edge. Without it a column
+// that is off-screen cannot be reached at all, and wheel-scrolling mid-drag is
+// not a gesture anyone makes with a card in hand.
+#[test]
+fn a_drop_target_answers_dragging_updated_for_autoscroll() {
+    let win = fixture_window(400.0f64, 300.0f64);
+    let content = content_of(win);
+    let lane = akx::new_drop_view(on_drop_probe, null_ctx());
+    lane.set_frame(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 200.0 });
+    content.add_subview(lane);
+
+    let updated: *u8 = rt::sel(#str_ptr("draggingUpdated:\0"));
+    assert rt::msg_i8_id(lane.raw(), rt::sel(#str_ptr("respondsToSelector:\0")), updated) != (0 as i8);
+    // Still advertises Copy, and survives a nil sender (no window, no drag).
+    assert rt::msg_u64_id(lane.raw(), updated, 0 as *u8) == (1 as u64);
+}
+
+// (b) THE ONE THAT MATTERS. A press that never travels is a CLICK: no drag
+// session starts, and the event is handed to the next responder so whatever
+// would have had it still gets it. This is what lets the drag source be the
+// card itself rather than a separate grip rail — and with the card as the
+// source, its own snapshot becomes the drag preview, so (a) needs no API.
+#[test]
+fn a_press_without_movement_is_a_click_not_a_drag() {
+    let win = fixture_window(400.0f64, 300.0f64);
+    let content = content_of(win);
+    let card = akx::new_drag_view("card-1");
+    card.set_frame(rt::Rect { x: 20.0, y: 20.0, w: 200.0, h: 100.0 });
+    content.add_subview(card);
+
+    let responds: *u8 = rt::sel(#str_ptr("respondsToSelector:\0"));
+    assert rt::msg_i8_id(card.raw(), responds, rt::sel(#str_ptr("mouseDragged:\0"))) != (0 as i8);
+    assert rt::msg_i8_id(card.raw(), responds, rt::sel(#str_ptr("mouseUp:\0"))) != (0 as i8);
+
+    let pool: *u8 = { pool_push() };
+    // Press: ARMED, and no session — the old behaviour began one right here.
+    rt::msg_void_id(card.raw(), rt::sel(#str_ptr("mouseDown:\0")), mouse_at(win, ak::EventType::LeftMouseDown, 100.0f64, 60.0f64).raw());
+    assert akx::drag_is_armed(card.raw());
+    // Release without travel: disarmed, and the event went to the next
+    // responder rather than being swallowed.
+    rt::msg_void_id(card.raw(), rt::sel(#str_ptr("mouseUp:\0")), mouse_at(win, ak::EventType::LeftMouseUp, 100.0f64, 60.0f64).raw());
+    assert akx::drag_is_armed(card.raw()) == false;
+    { pool_pop(pool); }
+    return;
+}
+
+// A press that moves less than the threshold is still a click — the tremor a
+// deliberate click carries must not turn into a drag.
+#[test]
+fn a_press_within_the_threshold_is_still_a_click() {
+    let win = fixture_window(400.0f64, 300.0f64);
+    let content = content_of(win);
+    let card = akx::new_drag_view("card-2");
+    card.set_frame(rt::Rect { x: 20.0, y: 20.0, w: 200.0, h: 100.0 });
+    content.add_subview(card);
+
+    let pool: *u8 = { pool_push() };
+    rt::msg_void_id(card.raw(), rt::sel(#str_ptr("mouseDown:\0")), mouse_at(win, ak::EventType::LeftMouseDown, 100.0f64, 60.0f64).raw());
+    // ~1.4pt of travel, under the 3pt threshold: still a click in progress.
+    rt::msg_void_id(card.raw(), rt::sel(#str_ptr("mouseDragged:\0")), mouse_at(win, ak::EventType::LeftMouseDragged, 101.0f64, 61.0f64).raw());
+    assert akx::drag_is_armed(card.raw());
+    rt::msg_void_id(card.raw(), rt::sel(#str_ptr("mouseUp:\0")), mouse_at(win, ak::EventType::LeftMouseUp, 101.0f64, 61.0f64).raw());
+    assert akx::drag_is_armed(card.raw()) == false;
+    { pool_pop(pool); }
+    return;
+}
+
+// ...and past it, the press BECOMES a drag: the session starts and the press
+// state is consumed, so one press can only ever produce one session.
+#[test]
+fn a_press_past_the_threshold_becomes_a_drag() {
+    let win = fixture_window(400.0f64, 300.0f64);
+    let content = content_of(win);
+    let card = akx::new_drag_view("card-3");
+    card.set_frame(rt::Rect { x: 20.0, y: 20.0, w: 200.0, h: 100.0 });
+    content.add_subview(card);
+
+    let pool: *u8 = { pool_push() };
+    rt::msg_void_id(card.raw(), rt::sel(#str_ptr("mouseDown:\0")), mouse_at(win, ak::EventType::LeftMouseDown, 100.0f64, 60.0f64).raw());
+    assert akx::drag_is_armed(card.raw());
+    // 40pt of travel — unambiguously a drag.
+    rt::msg_void_id(card.raw(), rt::sel(#str_ptr("mouseDragged:\0")), mouse_at(win, ak::EventType::LeftMouseDragged, 140.0f64, 60.0f64).raw());
+    assert akx::drag_is_armed(card.raw()) == false;   // consumed by the session
+    // A second drag in the same press starts nothing more.
+    rt::msg_void_id(card.raw(), rt::sel(#str_ptr("mouseDragged:\0")), mouse_at(win, ak::EventType::LeftMouseDragged, 180.0f64, 60.0f64).raw());
+    rt::msg_void_id(card.raw(), rt::sel(#str_ptr("mouseUp:\0")), mouse_at(win, ak::EventType::LeftMouseUp, 180.0f64, 60.0f64).raw());
+    { pool_pop(pool); }
+    return;
+}
+
+// A view with no payload is not a drag source at all, and must not accumulate
+// press state — the guard that keeps a plain container from leaking a boxed
+// point on every click.
+#[test]
+fn a_view_without_a_payload_never_arms_the_threshold() {
+    let win = fixture_window(400.0f64, 300.0f64);
+    let content = content_of(win);
+    let plain: *u8 = { rt::msg_id(rt::msg_id(akx::drag_view_class(), rt::sel(#str_ptr("alloc\0"))), rt::sel(#str_ptr("init\0"))) };
+    ak::View::from_raw(plain).set_frame(rt::Rect { x: 0.0, y: 0.0, w: 50.0, h: 50.0 });
+    content.add_subview(ak::View::from_raw(plain));
+
+    let pool: *u8 = { pool_push() };
+    rt::msg_void_id(plain, rt::sel(#str_ptr("mouseDown:\0")), mouse_at(win, ak::EventType::LeftMouseDown, 10.0f64, 10.0f64).raw());
+    rt::msg_void_id(plain, rt::sel(#str_ptr("mouseDragged:\0")), mouse_at(win, ak::EventType::LeftMouseDragged, 90.0f64, 90.0f64).raw());
+    assert akx::drag_is_armed(plain) == false;   // never armed
+    rt::msg_void_id(plain, rt::sel(#str_ptr("mouseUp:\0")), mouse_at(win, ak::EventType::LeftMouseUp, 90.0f64, 90.0f64).raw());
+    { pool_pop(pool); }
+    return;
 }

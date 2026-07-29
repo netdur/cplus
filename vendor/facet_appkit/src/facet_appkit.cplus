@@ -1050,19 +1050,35 @@ fn fak_container(ctx: *u8, np: *facet::Node, node: *flex::Node) {
     let drop: fn(*u8, *u8) = { (*np).drop_handler };
     let dtp: *text::Text = { #addr_of((*np).drag_text) };
     let drag: str = { (*dtp).view() };
+    let wants_dest: bool = drop != facet::null_fn()
+        || { (*np).drag_enter_handler } != facet::null_fn()
+        || { (*np).drag_exit_handler } != facet::null_fn();
     let bv: ak::View = if drag != "" {
         akx::new_drag_view(drag)
-    } else if drop != facet::null_fn() {
+    } else if wants_dest {
         akx::new_drop_view(drop, { (*np).drop_ctx })
     } else {
         ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 })
     };
+    if wants_dest { wire_drag_over(bv.raw(), np); }
     let bp: *u8 = rt::retain(bv.raw());
     { (*node).set_payload(bp, ui::release_view); }
     // The container's own Style paints on this backing view (background /
     // border / gradient / corner / opacity ...) — mount creates the view for
     // exactly the keyed and the styled containers.
     apply_style(bp, { (*np).kind }, np);
+    return;
+}
+
+
+// Attach drag-over feedback if the node declared any. A node may want enter/exit
+// WITHOUT a drop handler (a lane that only highlights), so this runs whenever a
+// drop-capable view was built, not only when on_drop is set.
+fn wire_drag_over(v: *u8, np: *facet::Node) {
+    let en: fn(*u8, *u8) = { (*np).drag_enter_handler };
+    let ex: fn(*u8, *u8) = { (*np).drag_exit_handler };
+    if en == facet::null_fn() && ex == facet::null_fn() { return; }
+    akx::set_drag_over(v, en, ex, { (*np).drag_over_ctx });
     return;
 }
 
@@ -1073,13 +1089,17 @@ fn ak_box(ctx: *u8, np: *facet::Node) -> flex::Node {
     // Built in ONE branch rather than made-then-replaced: `ak::View` is a
     // non-owning handle with no drop, so an NSView assigned over leaked its +1 —
     // one per drag or drop box, every mount.
+    let wants_dest: bool = drop != facet::null_fn()
+        || { (*np).drag_enter_handler } != facet::null_fn()
+        || { (*np).drag_exit_handler } != facet::null_fn();
     let v: ak::View = if drag != "" {
         akx::new_drag_view(drag)                            // drag SOURCE
-    } else if drop != facet::null_fn() {
+    } else if wants_dest {
         akx::new_drop_view(drop, { (*np).drop_ctx })        // drop DESTINATION
     } else {
         ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 })
     };
+    if wants_dest { wire_drag_over(v.raw(), np); }
     var n: flex::Node = ui::fixed_view(v);
     apply_style(n.payload(), facet::kind_box(), np);
     return n;

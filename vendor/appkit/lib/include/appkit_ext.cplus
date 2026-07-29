@@ -240,6 +240,7 @@ fn new_clickable_view(frame: rt::Rect) -> ak::View ;
 // ==========================================================================
 
 extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
 
 // The context the trampolines dispatch through. `caller_ctx` is the component /
 // user pointer the app passed; either fn-pointer may be null (a null `on_change`
@@ -431,9 +432,40 @@ fn attach_line_number_ruler(scroll: ak::ScrollView, tv: ak::TextView, thickness:
 fn drop_handler_key() -> *u8 ;
 fn drop_ctx_key() -> *u8 ;
 fn drop_text_key() -> *u8 ;
+fn drag_enter_key() -> *u8 ;
+fn drag_exit_key() -> *u8 ;
+fn drag_over_ctx_key() -> *u8 ;
+
+// --- drag-over feedback ------------------------------------------------------
+// The one piece of feedback that tells you the drop will land: the lane
+// changing under the card you are holding. It cannot be built from ordinary
+// hover — AppKit SUPPRESSES mouse-tracking for the duration of a drag session,
+// so `clickable(on_hover_in:)` never fires while a card is in hand. The
+// dragging destination's own callbacks are the only source.
+//
+// Enter/exit fire the app's handlers; the app restyles by key with the live
+// style setters it already has, so this adds no painting surface.
+
+fn drop_fire(self_obj: *u8, key: *u8) ;
 
 // NSDragOperationCopy = 1.
 fn drop_entered_imp(self_obj: *u8, cmd: *u8, sender: *u8) -> u64 ;
+
+// Leaving, and being dropped on, are BOTH exits as far as feedback goes: a
+// highlight that survives the drop stays lit forever, because no further
+// dragging callback is coming. So `performDragOperation:` fires exit too.
+fn drop_exited_imp(self_obj: *u8, cmd: *u8, sender: *u8) ;
+
+// draggingUpdated: — the destination's per-move callback, and where a scroll
+// walks itself as the pointer nears an edge. `-[NSView autoscroll:]` takes the
+// dragging event and scrolls the nearest enclosing clip view; called from here
+// it is what makes an off-screen lane reachable at all, since wheel-scrolling
+// mid-drag is not a gesture anyone makes with a card in hand.
+//
+// No app policy in "scroll when the pointer is near the edge", so facet does it
+// without being asked. Returning Copy keeps the destination advertised.
+fn drop_updated_imp(self_obj: *u8, cmd: *u8, sender: *u8) -> u64 ;
+
 fn drop_prepare_imp(self_obj: *u8, cmd: *u8, sender: *u8) -> i8 ;
 
 // Pin `s` as `drop_view`'s current payload — the same association a performed
@@ -443,6 +475,11 @@ fn set_drop_text(drop_view: *u8, s: str) ;
 fn drop_perform_imp(self_obj: *u8, cmd: *u8, sender: *u8) -> i8 ;
 
 fn drop_view_class() -> *u8 ;
+
+// Attach the drag-over feedback handlers to an existing drop view. Separate
+// from `new_drop_view` because a node may declare enter/exit without a drop
+// handler (a lane that only highlights) and vice versa.
+fn set_drag_over(drop_view: *u8, on_enter: fn(*u8, *u8), on_exit: fn(*u8, *u8), ctx: *u8) ;
 
 // A fresh +1 FacetDropView registered for text drops, with `handler`/`ctx`
 // attached. Frame is set later by the layout pass.
@@ -467,7 +504,48 @@ fn drag_text_key() -> *u8 ;
 // NSDragOperationCopy = 1, for a local or cross-app drag.
 fn drag_source_mask_imp(self_obj: *u8, cmd: *u8, session: *u8, context: i64) -> u64 ;
 
+// Where the press started, and whether this gesture has become a drag yet.
+// Boxed so the state is per-VIEW: two draggable cards can be pressed in
+// sequence and must not share a threshold.
+fn drag_origin_key() -> *u8 ;
+
+// How far the pointer must travel before a press becomes a drag. AppKit's own
+// convention for a view that is both draggable and clickable; 3pt is the usual
+// value and is below the noise floor of a deliberate click.
+fn drag_threshold() -> f64 ;
+
+fn drag_origin_of(self_obj: *u8) -> rt::Point ;
+
+// PRESS, not drag. Recording the point and waiting is what lets a card be both
+// draggable AND clickable: starting the session here — which is what this did —
+// swallows every click, so the drag source had to be a separate grip rail
+// rather than the card, and the card's own buttons went dead.
+//
+// The threshold is also what fixes the PREVIEW. The drag image is always a
+// snapshot of the drag view itself, so a 20pt rail drags a 20pt sliver of
+// nothing; once the card can be the source, its own snapshot is the ghost and
+// the preview is right without any new API.
+// components.txt gap 1 (a) + (b)
 fn drag_mousedown_imp(self_obj: *u8, cmd: *u8, event: *u8) ;
+
+// Past the threshold ⇒ this is a drag. Begins the session with the CURRENT
+// event, which AppKit accepts and which carries the live pointer position.
+fn drag_mousedragged_imp(self_obj: *u8, cmd: *u8, event: *u8) ;
+
+// Released without ever passing the threshold ⇒ it was a CLICK. Hand it to the
+// next responder so it lands on whatever would have had it — the pass-through
+// that lets click-to-open survive on a draggable card.
+fn drag_mouseup_imp(self_obj: *u8, cmd: *u8, event: *u8) ;
+
+// Is a press in progress that has NOT yet become a drag? The threshold's whole
+// state, exposed so the click-vs-drag decision is testable without a trackpad:
+// armed after mouseDown, still armed under the threshold, cleared once the
+// session starts or the press is released as a click.
+fn drag_is_armed(self_obj: *u8) -> bool ;
+
+fn drag_clear_origin(self_obj: *u8) ;
+
+fn drag_begin_session(self_obj: *u8, event: *u8) ;
 
 fn drag_view_class() -> *u8 ;
 
