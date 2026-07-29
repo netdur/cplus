@@ -3,6 +3,36 @@
 // The public Session surface is intentionally small and backend-shaped. A
 // future platform module can replace this implementation without changing the
 // widget: start, read, write, resize, and close.
+//
+// WHY THIS EXISTS ALONGSIDE stdlib/pty. stdlib/pty binds the same syscalls and
+// argues against forkpty by name: it forks, and in a threaded app only
+// async-signal-safe calls are legal before exec, so it uses openpty +
+// posix_spawn(POSIX_SPAWN_SETSID) instead. Folding this file into a thin
+// convenience over stdlib's PtyChild is the obvious consolidation, and it is
+// NOT the right trade:
+//
+//   * Everything below is verified against LIVE shells from `cpc test` — the
+//     cwd round trip execs /bin/sh and reads `pwd` back, and the three history
+//     tests start /bin/zsh and ask it what $HISTFILE and $SAVEHIST actually
+//     are. That last one cannot be replaced by a cheaper check: /etc/zshrc
+//     reassigns HISTFILE after our environment is in place, so testing the
+//     environment alone passes while the real shell still writes history.
+//   * stdlib/pty's `spawn` has no live coverage at all, and says why: a child
+//     spawned inside the test driver deadlocks the harness (the same limit
+//     process.cplus documents). Its tests cover the pure pieces only.
+//
+// So the consolidation would move a live-tested path onto a spawn mechanism
+// that cannot be tested here, trading verified behaviour for tidiness. The fork
+// hazard is real but contained and deliberate: the child below does chdir and
+// execl and nothing else, both async-signal-safe, and every environment
+// variable is set in the PARENT before the fork.
+//
+// The one genuine wart that structure would have fixed is that parent-side
+// setenv mutates the HOST process environment — which is why the ZDOTDIR
+// capture/restore below exists at all. If that ever needs closing, the fix is
+// `execle` with an envp built in the parent, NOT a change of spawn mechanism:
+// exec takes the vector directly, it stays async-signal-safe in the child, and
+// the live tests above keep working as the oracle.
 
 import "stdlib/option" as option;
 import "stdlib/text" as text;

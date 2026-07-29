@@ -16,6 +16,20 @@
 //
 // The master end is an ordinary fd: hand `read_fd()` to the async reactor
 // (`net::read_fd_async`) exactly as with a pipe.
+//
+// SCOPE, and the terminal package. `terminal/pty` binds the same syscalls the
+// other way (forkpty) and is the only pty consumer that exists. It is not going
+// to be rebuilt on this module, and the reason is coverage, not preference:
+// terminal/pty is verified against live shells from `cpc test`, while `spawn`
+// below cannot be exercised there at all (see the note above the tests). Moving
+// a live-tested path onto an untestable one is the wrong direction, so the two
+// stay separate — deliberately, not by neglect. The full reasoning is recorded
+// at the top of terminal/src/pty.cplus.
+//
+// What that leaves this module for: a pty child that is NOT an interactive
+// shell pane — driving a CLI that refuses to run without a tty, or one that
+// needs Ctrl-C and SIGWINCH, from code that is not the terminal widget. It has
+// no such consumer today.
 
 
 import "./text" as text;
