@@ -542,8 +542,12 @@ fn a_real_mouse_down_on_a_draggable_survives_the_pool_drain() {
 
 static ENTERS: i32 = 0;
 static EXITS: i32 = 0;
-fn on_enter_probe(sender: *u8, ctx: *u8) { ENTERS = ENTERS + 1; return; }
-fn on_exit_probe(sender: *u8, ctx: *u8) { EXITS = EXITS + 1; return; }
+// One handler for both edges; which edge it is comes from the SENDER. A handler
+// that had to be told would be a handler that can be told wrong.
+fn on_target_probe(sender: *u8, ctx: *u8) {
+    if akx::drag_targeted(sender) { ENTERS = ENTERS + 1; } else { EXITS = EXITS + 1; }
+    return;
+}
 fn on_drop_probe(sender: *u8, ctx: *u8) { return; }
 
 fn mouse_at(win: ak::Window, ty: ak::EventType, x: f64, y: f64) -> ak::Event {
@@ -568,7 +572,7 @@ fn a_drop_target_reports_drag_enter_and_exit_including_on_drop() {
     let lane = akx::new_drop_view(on_drop_probe, null_ctx());
     lane.set_frame(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 200.0 });
     content.add_subview(lane);
-    akx::set_drag_over(lane.raw(), on_enter_probe, on_exit_probe, null_ctx());
+    akx::set_drag_over(lane.raw(), on_target_probe, null_ctx());
 
     ENTERS = 0;
     EXITS = 0;
@@ -576,20 +580,35 @@ fn a_drop_target_reports_drag_enter_and_exit_including_on_drop() {
     let exited_sel: *u8 = rt::sel(#str_ptr("draggingExited:\0"));
     assert rt::msg_i8_id(lane.raw(), rt::sel(#str_ptr("respondsToSelector:\0")), exited_sel) != (0 as i8);
 
-    // Enter fires the handler and still advertises Copy (=1) to the dragger.
+    assert akx::drag_targeted(lane.raw()) == false;
+
+    // Enter sets the state BEFORE calling, so the handler already reads true —
+    // and still advertises Copy (=1) to the dragger.
     assert rt::msg_u64_id(lane.raw(), entered_sel, 0 as *u8) == (1 as u64);
     assert ENTERS == (1 as i32);
     assert EXITS == (0 as i32);
+    assert akx::drag_targeted(lane.raw());
+
+    // IDEMPOTENT: re-entering an already-targeted view fires nothing, so a
+    // handler cannot be made to count edges that did not happen.
+    assert rt::msg_u64_id(lane.raw(), entered_sel, 0 as *u8) == (1 as u64);
+    assert ENTERS == (1 as i32);
 
     // Leaving without dropping.
     rt::msg_void_id(lane.raw(), exited_sel, 0 as *u8);
     assert EXITS == (1 as i32);
+    assert akx::drag_targeted(lane.raw()) == false;
+    // ...and leaving twice is also idempotent.
+    rt::msg_void_id(lane.raw(), exited_sel, 0 as *u8);
+    assert EXITS == (1 as i32);
 
-    // Dropping ALSO exits — the case a highlight would otherwise survive.
+    // Dropping ALSO clears it — the case a highlight would otherwise survive
+    // forever, and the reason the framework owns this edge rather than the app.
     assert rt::msg_u64_id(lane.raw(), entered_sel, 0 as *u8) == (1 as u64);
     assert ENTERS == (2 as i32);
     let _ok: i8 = rt::msg_i8_id(lane.raw(), rt::sel(#str_ptr("performDragOperation:\0")), 0 as *u8);
     assert EXITS == (2 as i32);
+    assert akx::drag_targeted(lane.raw()) == false;
 }
 
 // (d) A destination must implement draggingUpdated:, which is where it walks

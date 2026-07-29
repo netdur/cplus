@@ -858,11 +858,11 @@ struct Node {
     // isn't shadowed by a same-named field.
     drop_handler: fn(*u8, *u8), // null-fn when the box is not a drop target
     opaque drop_ctx: *u8,       // borrowed identity value passed to the handler
-    // Drag-over feedback. Separate from drop_handler because a node may want
-    // one without the other — a lane that only highlights, or a drop target
-    // with no visual response. Both share drag_over_ctx.
-    drag_enter_handler: fn(*u8, *u8),
-    drag_exit_handler: fn(*u8, *u8),
+    // Drag-over feedback: ONE handler, called on entry AND on the way out, with
+    // the current state readable from the sender (`drag_targeted`). Separate
+    // from drop_handler because a node may want one without the other — a lane
+    // that only highlights, or a drop target with no visual response.
+    drag_target_handler: fn(*u8, *u8),
     opaque drag_over_ctx: *u8,
     drag_text: text::Text,      // drag-and-drop SOURCE payload; "" = not draggable
     // layout
@@ -997,8 +997,7 @@ fn blank(kind: u32) -> Node {
         key_ctx: 0 as *u8,
         drop_handler: none,
         drop_ctx: 0 as *u8,
-        drag_enter_handler: none,
-        drag_exit_handler: none,
+        drag_target_handler: none,
         drag_over_ctx: 0 as *u8,
         drag_text: text::from_str(""),
         _grow: 0.0f64,
@@ -3650,28 +3649,32 @@ impl Node {
         n.drop_ctx = ctx;
         return n;
     }
-    // Feedback while a drag is OVER this node: `on_drag_enter` when a dragged
-    // item arrives, `on_drag_exit` when it leaves — or is dropped, since no
-    // further callback follows a drop and a highlight left lit stays lit.
+    // Feedback while a drag is OVER this node. ONE handler for both edges, with
+    // the state read from the sender:
     //
-    // Ordinary hover cannot stand in. The platform SUPPRESSES mouse-tracking
+    //     fn lane_targeted(ref this, sender: *u8) {
+    //         let on: bool = facet::drag_targeted(sender);
+    //         let _h = facet::find("lane").set_background(if on { hot } else { cold });
+    //     }
+    //     ...column(b).on_drag_target(this.lane_targeted).on_drop(this.dropped)
+    //
+    // This is SwiftUI's `.dropDestination(isTargeted:)` shape rather than a
+    // pair of enter/exit callbacks, and the reason is a bug the pair invites: a
+    // drop fires no further dragging callback, so a highlight lit on enter and
+    // cleared only on exit stays lit forever. With one handler the framework
+    // owns the falling edge and calls it on drop too, so the app cannot
+    // desync — it just paints whatever `drag_targeted` says.
+    //
+    // Ordinary hover cannot stand in: the platform SUPPRESSES mouse-tracking
     // for the duration of a drag, so `.on_hover_in` never fires with a card in
-    // hand; the dragging destination's own callbacks are the only source.
-    // Restyle by key from the handler — the live style setters already exist,
-    // so this needs no painting surface of its own.
-    fn on_drag_enter(take this, handler: fn(*u8, *u8), ctx: *u8 = 0 as *u8) -> Node {
+    // hand. Restyle by key from the handler — the live style setters already
+    // exist, so this needs no painting surface of its own.
+    fn on_drag_target(take this, handler: fn(*u8, *u8), ctx: *u8 = 0 as *u8) -> Node {
         var n: Node = this;
-        n.drag_enter_handler = handler;
+        n.drag_target_handler = handler;
         n.drag_over_ctx = ctx;
         return n;
     }
-    fn on_drag_exit(take this, handler: fn(*u8, *u8), ctx: *u8 = 0 as *u8) -> Node {
-        var n: Node = this;
-        n.drag_exit_handler = handler;
-        n.drag_over_ctx = ctx;
-        return n;
-    }
-
 
     // Receive raw key events while this element (or something inside it) holds
     // focus. `handler(event, ctx)` reads the event with key_code / key_chars /
@@ -3706,6 +3709,7 @@ impl Node {
         n.key_ctx = ctx;
         return n;
     }
+
     // `.draggable(text)` — make a `box` a drag SOURCE that carries `text` on the
     // pasteboard (SwiftUI `.draggable`). A box is either draggable OR a drop
     // target, not both (they need distinct backing views).
@@ -4244,10 +4248,9 @@ fn is_container_kind(k: u32) -> bool {
 fn node_wants_drag_view(np: *Node) -> bool {
     if { (*np).drop_handler } != null_fn() { return true; }
     if { (*np).drag_text.view() } != "" { return true; }
-    // Enter/exit alone is enough: a lane that only highlights is still a
-    // dragging DESTINATION, and a destination has to be a real view.
-    if { (*np).drag_enter_handler } != null_fn() { return true; }
-    if { (*np).drag_exit_handler } != null_fn() { return true; }
+    // Feedback alone is enough: a lane that only highlights is still a dragging
+    // DESTINATION, and a destination has to be a real view.
+    if { (*np).drag_target_handler } != null_fn() { return true; }
     return false;
 }
 

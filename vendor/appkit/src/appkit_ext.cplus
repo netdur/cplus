@@ -841,8 +841,8 @@ fn attach_line_number_ruler(scroll: ak::ScrollView, tv: ak::TextView, thickness:
 fn drop_handler_key() -> *u8 { return { 28690 as *u8 }; }
 fn drop_ctx_key() -> *u8 { return { 28691 as *u8 }; }
 fn drop_text_key() -> *u8 { return { 28692 as *u8 }; }
-fn drag_enter_key() -> *u8 { return { 28702 as *u8 }; }
-fn drag_exit_key() -> *u8 { return { 28703 as *u8 }; }
+fn drag_target_key() -> *u8 { return { 28702 as *u8 }; }
+fn drag_targeted_key() -> *u8 { return { 28703 as *u8 }; }
 fn drag_over_ctx_key() -> *u8 { return { 28704 as *u8 }; }
 
 // --- drag-over feedback ------------------------------------------------------
@@ -855,8 +855,22 @@ fn drag_over_ctx_key() -> *u8 { return { 28704 as *u8 }; }
 // Enter/exit fire the app's handlers; the app restyles by key with the live
 // style setters it already has, so this adds no painting surface.
 
-fn drop_fire(self_obj: *u8, key: *u8) {
-    let f: fn(*u8, *u8) = { synth::get_associated(self_obj, key) as fn(*u8, *u8) };
+// Is a drag currently over `drop_view`? What an `on_drag_target` handler reads
+// off its sender. False once the drag leaves OR drops, because the framework
+// sets it before calling — the app never tracks the edge itself.
+fn drag_targeted(drop_view: *u8) -> bool {
+    if drop_view == { 0 as *u8 } { return false; }
+    return synth::get_associated(drop_view, drag_targeted_key()) != { 0 as *u8 };
+}
+
+// Set the targeted state, then tell the app — in that order, so the handler's
+// `drag_targeted(sender)` already reads the NEW value. Idempotent: re-entering
+// a view that is already targeted fires nothing, so a handler cannot be made to
+// count edges that did not happen.
+fn drop_set_targeted(self_obj: *u8, on: bool) {
+    if drag_targeted(self_obj) == on { return; }
+    synth::set_associated(self_obj, drag_targeted_key(), if on { 1 as *u8 } else { 0 as *u8 });
+    let f: fn(*u8, *u8) = { synth::get_associated(self_obj, drag_target_key()) as fn(*u8, *u8) };
     if { f as *u8 } == { 0 as *u8 } { return; }
     f(self_obj, synth::get_associated(self_obj, drag_over_ctx_key()));
     return;
@@ -864,15 +878,16 @@ fn drop_fire(self_obj: *u8, key: *u8) {
 
 // NSDragOperationCopy = 1.
 fn drop_entered_imp(self_obj: *u8, cmd: *u8, sender: *u8) -> u64 {
-    drop_fire(self_obj, drag_enter_key());
+    drop_set_targeted(self_obj, true);
     return 1 as u64;
 }
 
-// Leaving, and being dropped on, are BOTH exits as far as feedback goes: a
-// highlight that survives the drop stays lit forever, because no further
-// dragging callback is coming. So `performDragOperation:` fires exit too.
+// Leaving, and being dropped on, are BOTH un-targeted as far as feedback goes:
+// a highlight that survives the drop stays lit forever, because no further
+// dragging callback is coming. So `performDragOperation:` clears it too, and
+// because the framework owns that edge the app cannot forget to.
 fn drop_exited_imp(self_obj: *u8, cmd: *u8, sender: *u8) {
-    drop_fire(self_obj, drag_exit_key());
+    drop_set_targeted(self_obj, false);
     return;
 }
 
@@ -994,9 +1009,9 @@ fn drop_perform_imp(self_obj: *u8, cmd: *u8, sender: *u8) -> i8 {
     let f: fn(*u8, *u8) = { synth::get_associated(self_obj, drop_handler_key()) as fn(*u8, *u8) };
     let ctx: *u8 = synth::get_associated(self_obj, drop_ctx_key());
     if { f as *u8 } != { 0 as *u8 } { f(self_obj, ctx); }
-    // The drop IS an exit: no further dragging callback is coming, so a
-    // highlight left lit here stays lit forever.
-    drop_fire(self_obj, drag_exit_key());
+    // The drop clears the targeted state: no further dragging callback is
+    // coming, so anything left lit here stays lit forever.
+    drop_set_targeted(self_obj, false);
     return 1 as i8;   // YES — accepted
 }
 
@@ -1018,10 +1033,9 @@ fn drop_view_class() -> *u8 {
 // Attach the drag-over feedback handlers to an existing drop view. Separate
 // from `new_drop_view` because a node may declare enter/exit without a drop
 // handler (a lane that only highlights) and vice versa.
-fn set_drag_over(drop_view: *u8, on_enter: fn(*u8, *u8), on_exit: fn(*u8, *u8), ctx: *u8) {
+fn set_drag_over(drop_view: *u8, on_target: fn(*u8, *u8), ctx: *u8) {
     if drop_view == { 0 as *u8 } { return; }
-    synth::set_associated(drop_view, drag_enter_key(), { on_enter as *u8 });
-    synth::set_associated(drop_view, drag_exit_key(), { on_exit as *u8 });
+    synth::set_associated(drop_view, drag_target_key(), { on_target as *u8 });
     synth::set_associated(drop_view, drag_over_ctx_key(), ctx);
     return;
 }
