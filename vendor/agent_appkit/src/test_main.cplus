@@ -617,3 +617,55 @@ fn drag_respects_the_affordance_ceiling_on_both_ends() {
     assert surface::outcome_eq(s.drag("card-1", "ro-lane"), surface::Outcome::NotActionable);
     assert DROP_HITS == (0 as i32);
 }
+
+// ---- the real mouseDown: path ----------------------------------------------
+
+#[link_name = "objc_autoreleasePoolPush"]
+extern fn pool_push() -> *u8;
+#[link_name = "objc_autoreleasePoolPop"]
+extern fn pool_pop(p: *u8);
+
+// The regression test for bugs/dragging-item-double-release.md, driving the
+// path that actually crashed rather than modelling it.
+//
+// `drag_mousedown_imp` over-released its NSDraggingItem, so the drag session's
+// autoreleased array was left holding freed memory. The fault did not land at
+// the click — it landed at the next autorelease-pool DRAIN, which is why the
+// stack named nothing of ours and why 105 scripted agent cycles never saw it
+// (the ACI's `click` sends `performClick:` and never enters `mouseDown:`).
+//
+// So: a real NSEvent, a real `mouseDown:` on a real FacetDragView in a real
+// window, then drain the pool inside the test. With the bug present this
+// process dies here; the assertion below is simply that it did not.
+#[test]
+fn a_real_mouse_down_on_a_draggable_survives_the_pool_drain() {
+    let win = fixture_window(400.0f64, 300.0f64);
+    let content = content_of(win);
+    let card = akx::new_drag_view("card-payload");
+    card.set_frame(rt::Rect { x: 20.0, y: 20.0, w: 120.0, h: 60.0 });
+    content.add_subview(card);
+
+    let wnum: i64 = rt::msg_i64(win.raw(), rt::sel(#str_ptr("windowNumber\0")));
+    let at: rt::Point = rt::Point { x: 80.0, y: 50.0 };
+    let nilctx: ak::GraphicsContext = ak::GraphicsContext::from_raw(0 as *u8);
+    let pool: *u8 = { pool_push() };
+    match ak::Event::mouse_event_with_type(
+        ak::EventType::LeftMouseDown,
+        at,
+        0 as u64, 0.0f64, wnum,
+        nilctx,
+        0 as i64, 1 as i64, 1.0f32,
+    ) {
+        option::Option[ak::Event]::Some(ev) => {
+            // THE CLICK. One mouseDown: was the whole trigger — no drag, no
+            // drop, no movement.
+            rt::msg_void_id(card.raw(), rt::sel(#str_ptr("mouseDown:\0")), ev.raw());
+        }
+        option::Option[ak::Event]::None => { assert false; }
+    }
+    // THE CRASH SITE. Releases the drag session's array, which releases its
+    // elements — one of which used to be freed memory.
+    { pool_pop(pool); }
+
+    assert true;   // reached here: no over-release, no zombie, no SIGSEGV
+}
