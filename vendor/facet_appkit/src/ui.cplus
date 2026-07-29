@@ -1689,6 +1689,27 @@ fn tree(root: *TreeNode, on_select: fn(*u8, *u8) = 0 as fn(*u8, *u8), ctx: *u8 =
     return fixed_view(scroll.as_view());
 }
 
+// Resolve the view a tree's handle returns to the NSOutlineView underneath.
+// `tree` mounts as a tagged NSScrollView host, so `find(key).view()` hands back
+// the scroll view; passing the outline itself works too (it has no
+// `documentView`). Null in, null out — every verb below guards on that.
+fn tree_outline(view: *u8) -> *u8 {
+    if view == { 0 as *u8 } { return 0 as *u8; }
+    let has_doc: i8 = rt::msg_i8_id(view, rt::sel(#str_ptr("respondsToSelector:\0")), rt::sel(#str_ptr("documentView\0")));
+    if has_doc == (0 as i8) { return view; }
+    let doc: *u8 = { rt::msg_id(view, rt::sel(#str_ptr("documentView\0"))) };
+    if doc == (0 as *u8) { return view; }
+    return doc;
+}
+
+// The model root `tree` pinned on the outline, or null when `view` is null or
+// is not a tree. The path->item walk every verb below does starts here.
+fn tree_root_of(view: *u8) -> *TreeNode {
+    let ov: *u8 = tree_outline(view);
+    if ov == { 0 as *u8 } { return 0 as *TreeNode; }
+    return { synth::get_associated(ov, tree_root_key()) as *TreeNode };
+}
+
 // Clear an outline's row selection. `view` is whatever the tree's handle
 // resolves to — the tagged NSScrollView host (what `find(key).view()` returns)
 // or the NSOutlineView itself; the document view is unwrapped as needed. The
@@ -1697,13 +1718,8 @@ fn tree(root: *TreeNode, on_select: fn(*u8, *u8) = 0 as fn(*u8, *u8), ctx: *u8 =
 // already-selected row — so after an external "this item closed" event, clear
 // the selection and the next click is a fresh selection again.
 fn tree_deselect(view: *u8) {
-    if view == { 0 as *u8 } { return; }
-    var ov: *u8 = view;
-    let has_doc: i8 = rt::msg_i8_id(view, rt::sel(#str_ptr("respondsToSelector:\0")), rt::sel(#str_ptr("documentView\0")));
-    if has_doc != (0 as i8) {
-        let doc: *u8 = { rt::msg_id(view, rt::sel(#str_ptr("documentView\0"))) };
-        if doc != (0 as *u8) { ov = doc; }
-    }
+    let ov: *u8 = tree_outline(view);
+    if ov == { 0 as *u8 } { return; }
     let can: i8 = rt::msg_i8_id(ov, rt::sel(#str_ptr("respondsToSelector:\0")), rt::sel(#str_ptr("deselectAll:\0")));
     if can == (0 as i8) { return; }
     rt::msg_void_id(ov, rt::sel(#str_ptr("deselectAll:\0")), 0 as *u8);
@@ -1741,15 +1757,10 @@ fn tree_find_chain(node: *TreeNode, path: str, chain: *vec::Vec[*u8]) -> bool {
 // `view` is the tagged scroll host a facet handle returns, or the outline.
 // No-op when `path` is "" or not in the model.
 fn tree_select_path(view: *u8, path: str) {
-    if view == { 0 as *u8 } { return; }
     if #str_len(path) == (0 as usize) { return; }
-    var ov: *u8 = view;
-    let has_doc: i8 = rt::msg_i8_id(view, rt::sel(#str_ptr("respondsToSelector:\0")), rt::sel(#str_ptr("documentView\0")));
-    if has_doc != (0 as i8) {
-        let doc: *u8 = { rt::msg_id(view, rt::sel(#str_ptr("documentView\0"))) };
-        if doc != (0 as *u8) { ov = doc; }
-    }
-    let root: *TreeNode = { synth::get_associated(ov, tree_root_key()) as *TreeNode };
+    let ov: *u8 = tree_outline(view);
+    if ov == { 0 as *u8 } { return; }
+    let root: *TreeNode = tree_root_of(view);
     if { root as *u8 } == { 0 as *u8 } { return; }
     var chain: vec::Vec[*u8] = vec::new::[*u8]();
     if tree_find_chain(root, path, #addr_of(chain)) == false { return; }
@@ -1777,6 +1788,142 @@ fn tree_select_path(view: *u8, path: str) {
     rt::msg_void_id_i8(ov, rt::sel(#str_ptr("selectRowIndexes:byExtendingSelection:\0")), ixset, 0 as i8);
     TREE_SUPPRESS_SELECT = 0;
     rt::msg_void_i64(ov, rt::sel(#str_ptr("scrollRowToVisible:\0")), row);
+    return;
+}
+
+// ---- expansion state ------------------------------------------------------
+// Which branches are open is the one part of a tree's state that lives in the
+// outline view and NOT in the caller's model, so an app that restores
+// everything else it owns — window frame, dividers, selection, open documents —
+// still reopens with every folder collapsed. These verbs read that state out
+// and put it back, over the same path->item mapping `tree_select_path` walks.
+//
+//   let open: vec::Vec[text::Text] = ui::tree_expanded_paths(h.view());  // save
+//   ui::tree_set_expanded_paths(h.view(), restored);                     // restore
+//
+// Expansion is independent of selection: none of these fire `on_select`.
+
+// Append the path of every expanded branch under `node`, depth-first, parents
+// before children. `node` itself is never reported — the model root is the
+// outline's implicit root (`item == nil`), not a row.
+fn tree_collect_expanded(ov: *u8, node: *TreeNode, out: *vec::Vec[text::Text]) {
+    let is_exp: *u8 = rt::sel(#str_ptr("isItemExpanded:\0"));
+    let n: usize = { (*node).children.count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match { (*node).children.at_ptr(i) } {
+            option::Option[**TreeNode]::Some(cp) => {
+                let child: *TreeNode = { *cp };
+                if { (*child).is_dir } {
+                    if rt::msg_i8_id(ov, is_exp, { (*child).item }) != (0 as i8) {
+                        (*out).append(text::from_str({ (*child).path }.view()));
+                    }
+                    // Recurse whether or not this branch is open: NSOutlineView
+                    // remembers the expansion of items inside a collapsed
+                    // parent, and that has to survive a save/restore round trip
+                    // or reopening a folder loses everything under it.
+                    tree_collect_expanded(ov, child, out);
+                }
+            }
+            option::Option[**TreeNode]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// The paths of every currently-expanded branch, parents before children —
+// persist this and hand it back to `tree_set_expanded_paths`. Empty when `view`
+// is null, is not a tree, or has nothing open.
+fn tree_expanded_paths(view: *u8) -> vec::Vec[text::Text] {
+    var out: vec::Vec[text::Text] = vec::new::[text::Text]();
+    let ov: *u8 = tree_outline(view);
+    if ov == { 0 as *u8 } { return out; }
+    let root: *TreeNode = tree_root_of(view);
+    if { root as *u8 } == { 0 as *u8 } { return out; }
+    tree_collect_expanded(ov, root, #addr_of(out));
+    return out;
+}
+
+// Expand the branch at `path`, revealing it: ancestors are expanded first, so a
+// path several folders deep opens from a fully collapsed tree and a saved list
+// replays in any order. No-op for "", an unknown path, or a leaf (a
+// non-expandable item ignores `expandItem:`). Unlike `tree_select_path` this
+// touches only expansion — the selection is left exactly where it was.
+fn tree_expand_path(view: *u8, path: str) {
+    if #str_len(path) == (0 as usize) { return; }
+    let ov: *u8 = tree_outline(view);
+    if ov == { 0 as *u8 } { return; }
+    let root: *TreeNode = tree_root_of(view);
+    if { root as *u8 } == { 0 as *u8 } { return; }
+    var chain: vec::Vec[*u8] = vec::new::[*u8]();
+    if tree_find_chain(root, path, #addr_of(chain)) == false { return; }
+    // The chain is target-first, so walk it backwards (root side down). Unlike
+    // the reveal in `tree_select_path` this includes index 0 — the target is
+    // what we are here to expand, not just to make visible.
+    var i: i64 = (chain.count() as i64) - (1 as i64);
+    while i >= (0 as i64) {
+        match chain.at(i as usize) {
+            option::Option[*u8]::Some(it) => {
+                rt::msg_void_id(ov, rt::sel(#str_ptr("expandItem:\0")), it);
+            }
+            option::Option[*u8]::None => { }
+        }
+        i = i - (1 as i64);
+    }
+    return;
+}
+
+// Collapse the branch at `path`. Ancestors are untouched, and the branch's own
+// children keep the expansion they had, so reopening it restores them — the
+// native behaviour, and what makes a collapse/expand round trip lossless.
+// No-op for "", an unknown path, or a leaf.
+fn tree_collapse_path(view: *u8, path: str) {
+    if #str_len(path) == (0 as usize) { return; }
+    let ov: *u8 = tree_outline(view);
+    if ov == { 0 as *u8 } { return; }
+    let root: *TreeNode = tree_root_of(view);
+    if { root as *u8 } == { 0 as *u8 } { return; }
+    var chain: vec::Vec[*u8] = vec::new::[*u8]();
+    if tree_find_chain(root, path, #addr_of(chain)) == false { return; }
+    match chain.at(0 as usize) {
+        option::Option[*u8]::Some(target) => {
+            rt::msg_void_id(ov, rt::sel(#str_ptr("collapseItem:\0")), target);
+        }
+        option::Option[*u8]::None => { }
+    }
+    return;
+}
+
+// Restore a tree's expansion to EXACTLY `paths`. Everything collapses first,
+// then each path is expanded with its ancestors — so the result is the saved
+// set, not the saved set unioned with whatever happened to be open, and the
+// order of the list does not matter. Paths no longer in the model are skipped,
+// which is what makes it safe to replay a set saved before files moved.
+//
+// RESTORE EXPANSION BEFORE SELECTION. The opening collapse drops every row, and
+// NSOutlineView clears a selection whose row goes away — so a `tree_select_path`
+// done first is undone here. Expansion, then selection, is the order that lands
+// both (and `tree_select_path` re-expands whatever it needs to reveal anyway).
+fn tree_set_expanded_paths(view: *u8, take paths: vec::Vec[text::Text]) {
+    let ov: *u8 = tree_outline(view);
+    if ov == { 0 as *u8 } { return; }
+    // The pinned root is what proves `ov` is an outline. Without this the
+    // collapse below would send `collapseItem:collapseChildren:` to whatever
+    // view was passed — an unrecognized selector, i.e. an abort, on the exact
+    // wrong-handle mistake the other verbs already tolerate.
+    if { tree_root_of(view) as *u8 } == { 0 as *u8 } { return; }
+    // nil item + collapseChildren:YES — collapse the whole outline.
+    rt::msg_void_id_i8(ov, rt::sel(#str_ptr("collapseItem:collapseChildren:\0")), 0 as *u8, 1 as i8);
+    let n: usize = paths.count();
+    var i: usize = 0 as usize;
+    while i < n {
+        match paths.at_ptr(i) {
+            option::Option[*text::Text]::Some(tp) => { tree_expand_path(view, { (*tp).view() }); }
+            option::Option[*text::Text]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
     return;
 }
 
@@ -5271,6 +5418,244 @@ fn tree_select_path_reveals_selects_and_stays_silent() {
     // And the deselect pairing still works after a programmatic reveal.
     tree_deselect(scroll_raw);
     assert { rt::msg_i64(ov, rt::sel(#str_ptr("selectedRow\0"))) } == (-1 as i64);
+    assert TREE_SEL_HITS == 0;
+    return;
+}
+
+// --- expansion state -------------------------------------------------------
+
+// /proj > src > nested (both dirs, nested holds a leaf), plus a top-level leaf.
+// Three levels is the minimum that distinguishes "expand the target" from
+// "reveal the target's ancestors" and exercises the depth-first collect order.
+fn tree_expansion_fixture() -> *TreeNode {
+    let root: *TreeNode = tree_node("proj", "/proj", true);
+    let src: *TreeNode = tree_node("src", "/proj/src", true);
+    let nested: *TreeNode = tree_node("nested", "/proj/src/nested", true);
+    tree_add_child(nested, tree_node("deep.cplus", "/proj/src/nested/deep.cplus", false));
+    tree_add_child(src, nested);
+    tree_add_child(root, src);
+    tree_add_child(root, tree_node("README.md", "/proj/README.md", false));
+    return root;
+}
+
+// The wrapper item for a path, or nil. (`tree_find_chain` is the same walk the
+// verbs do; this just takes its head.)
+fn tree_item_for_path(root: *TreeNode, path: str) -> *u8 {
+    var chain: vec::Vec[*u8] = vec::new::[*u8]();
+    if tree_find_chain(root, path, #addr_of(chain)) == false { return 0 as *u8; }
+    return match chain.at(0 as usize) {
+        option::Option[*u8]::Some(it) => it,
+        option::Option[*u8]::None => 0 as *u8,
+    };
+}
+
+fn tree_paths_contains(ref paths: vec::Vec[text::Text], want: str) -> bool {
+    let n: usize = paths.count();
+    var i: usize = 0 as usize;
+    while i < n {
+        match paths.at_ptr(i) {
+            option::Option[*text::Text]::Some(tp) => {
+                if { (*tp).equals(want) } { return true; }
+            }
+            option::Option[*text::Text]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
+
+// A fresh tree reports nothing expanded, and `tree_expand_path` opens the
+// target ITSELF (not merely its ancestors, which is all the reveal in
+// `tree_select_path` does) — read back through the scroll host a handle returns.
+#[test]
+fn tree_expand_path_opens_the_target_and_is_readable() {
+    let root: *TreeNode = tree_expansion_fixture();
+    var n: flex::Node = tree(root);
+    let scroll_raw: *u8 = n.payload();
+
+    var none: vec::Vec[text::Text] = tree_expanded_paths(scroll_raw);
+    assert none.count() == (0 as usize);
+
+    tree_expand_path(scroll_raw, "/proj/src");
+    var one: vec::Vec[text::Text] = tree_expanded_paths(scroll_raw);
+    assert one.count() == (1 as usize);
+    assert tree_paths_contains(one, "/proj/src");
+    assert tree_paths_contains(one, "/proj/src/nested") == false;
+    return;
+}
+
+// Expanding a nested branch from a fully collapsed tree opens its ancestors
+// too, so the deep row materializes — the property that lets a saved list be
+// replayed in any order. Reported parents-before-children.
+#[test]
+fn tree_expand_path_expands_ancestors_and_reports_depth_first() {
+    let root: *TreeNode = tree_expansion_fixture();
+    var n: flex::Node = tree(root);
+    let scroll_raw: *u8 = n.payload();
+    let ov: *u8 = { rt::msg_id(scroll_raw, rt::sel(#str_ptr("documentView\0"))) };
+
+    tree_expand_path(scroll_raw, "/proj/src/nested");
+    var paths: vec::Vec[text::Text] = tree_expanded_paths(scroll_raw);
+    assert paths.count() == (2 as usize);
+    // Parent before child: the restore replay depends on this order holding
+    // even though `tree_expand_path` no longer needs it.
+    match paths.at_ptr(0 as usize) {
+        option::Option[*text::Text]::Some(tp) => { assert { (*tp).equals("/proj/src") }; }
+        option::Option[*text::Text]::None => { assert false; }
+    }
+    match paths.at_ptr(1 as usize) {
+        option::Option[*text::Text]::Some(tp) => { assert { (*tp).equals("/proj/src/nested") }; }
+        option::Option[*text::Text]::None => { assert false; }
+    }
+    // Both ancestors open ⇒ the leaf two levels down has a real row.
+    let leaf_row: i64 = rt::msg_i64_id(ov, rt::sel(#str_ptr("rowForItem:\0")), tree_item_for_path(root, "/proj/src/nested/deep.cplus"));
+    assert leaf_row >= (0 as i64);
+    return;
+}
+
+// Collapse closes the target and leaves its ancestors open; the branch's own
+// children keep their state, so expanding it again restores them unchanged.
+#[test]
+fn tree_collapse_path_closes_one_branch_and_round_trips() {
+    let root: *TreeNode = tree_expansion_fixture();
+    var n: flex::Node = tree(root);
+    let scroll_raw: *u8 = n.payload();
+
+    tree_expand_path(scroll_raw, "/proj/src/nested");
+    assert tree_expanded_paths(scroll_raw).count() == (2 as usize);
+
+    // Close the CHILD: the parent stays open, so one branch remains.
+    tree_collapse_path(scroll_raw, "/proj/src/nested");
+    var after: vec::Vec[text::Text] = tree_expanded_paths(scroll_raw);
+    assert after.count() == (1 as usize);
+    assert tree_paths_contains(after, "/proj/src");
+
+    // Reopening it brings the child's own state back — lossless round trip.
+    tree_expand_path(scroll_raw, "/proj/src/nested");
+    assert tree_expanded_paths(scroll_raw).count() == (2 as usize);
+    return;
+}
+
+// The save/restore pairing iris needs: read the set, collapse everything (the
+// "reopened app" state), replay the saved set, and land on exactly what was
+// saved. Restore must also SUBTRACT — a branch opened after the save is closed
+// by the restore, or the set would only ever grow.
+#[test]
+fn tree_set_expanded_paths_restores_exactly_the_saved_set() {
+    let root: *TreeNode = tree_expansion_fixture();
+    var n: flex::Node = tree(root);
+    let scroll_raw: *u8 = n.payload();
+
+    tree_expand_path(scroll_raw, "/proj/src/nested");
+    var saved: vec::Vec[text::Text] = tree_expanded_paths(scroll_raw);
+    assert saved.count() == (2 as usize);
+
+    // "Reopened": nothing is expanded.
+    rt::msg_void_id_i8(tree_outline(scroll_raw), rt::sel(#str_ptr("collapseItem:collapseChildren:\0")), 0 as *u8, 1 as i8);
+    assert tree_expanded_paths(scroll_raw).count() == (0 as usize);
+
+    tree_set_expanded_paths(scroll_raw, saved);
+    var restored: vec::Vec[text::Text] = tree_expanded_paths(scroll_raw);
+    assert restored.count() == (2 as usize);
+    assert tree_paths_contains(restored, "/proj/src");
+    assert tree_paths_contains(restored, "/proj/src/nested");
+
+    // Restore SUBTRACTS: with only the parent saved, the child must close.
+    var just_parent: vec::Vec[text::Text] = vec::new::[text::Text]();
+    just_parent.append(text::from_str("/proj/src"));
+    tree_set_expanded_paths(scroll_raw, just_parent);
+    var narrowed: vec::Vec[text::Text] = tree_expanded_paths(scroll_raw);
+    assert narrowed.count() == (1 as usize);
+    assert tree_paths_contains(narrowed, "/proj/src");
+    return;
+}
+
+// Negative cases. Every verb is a no-op on a null view, a non-tree view, an
+// unknown path, "" and a LEAF — a restore replaying a list saved before files
+// moved must not fault or half-apply. `tree_expanded_paths` returns empty
+// rather than faulting on a view that was never a tree.
+#[test]
+fn tree_expansion_verbs_are_no_ops_on_bad_input() {
+    let root: *TreeNode = tree_expansion_fixture();
+    var n: flex::Node = tree(root);
+    let scroll_raw: *u8 = n.payload();
+    tree_expand_path(scroll_raw, "/proj/src");
+    let baseline: usize = tree_expanded_paths(scroll_raw).count();
+    assert baseline == (1 as usize);
+
+    // Null view.
+    tree_expand_path(0 as *u8, "/proj/src");
+    tree_collapse_path(0 as *u8, "/proj/src");
+    assert tree_expanded_paths(0 as *u8).count() == (0 as usize);
+
+    // A real view that is not a tree — no pinned root, so no walk to do.
+    let plain: ak::View = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 10.0, h: 10.0 });
+    tree_expand_path(plain.raw(), "/proj/src");
+    tree_collapse_path(plain.raw(), "/proj/src");
+    assert tree_expanded_paths(plain.raw()).count() == (0 as usize);
+
+    // Empty, unknown, and leaf paths against a real tree: state unchanged.
+    tree_expand_path(scroll_raw, "");
+    tree_expand_path(scroll_raw, "/proj/nope");
+    tree_expand_path(scroll_raw, "/proj/README.md");        // leaf: not expandable
+    tree_collapse_path(scroll_raw, "");
+    tree_collapse_path(scroll_raw, "/proj/nope");
+    tree_collapse_path(scroll_raw, "/proj/README.md");
+    assert tree_expanded_paths(scroll_raw).count() == baseline;
+
+    // A restore list of stale paths collapses everything and expands nothing —
+    // it must not fault, and it must not silently keep the old set either.
+    var stale: vec::Vec[text::Text] = vec::new::[text::Text]();
+    stale.append(text::from_str("/proj/moved"));
+    stale.append(text::from_str("/proj/src/gone"));
+    tree_set_expanded_paths(scroll_raw, stale);
+    assert tree_expanded_paths(scroll_raw).count() == (0 as usize);
+
+    // Restoring an empty set onto a null / non-tree view is also a no-op.
+    tree_set_expanded_paths(0 as *u8, vec::new::[text::Text]());
+    tree_set_expanded_paths(plain.raw(), vec::new::[text::Text]());
+    return;
+}
+
+// Expansion never touches selection, and selection never touches the reported
+// expansion set: `tree_select_path` reveals ancestors (which IS expansion, and
+// must show up), while `tree_expand_path` leaves the selected row alone.
+#[test]
+fn tree_expansion_and_selection_stay_independent() {
+    let root: *TreeNode = tree_expansion_fixture();
+    TREE_SEL_HITS = 0;
+    var n: flex::Node = tree(root, on_select: tree_sel_probe);
+    let scroll_raw: *u8 = n.payload();
+    let ov: *u8 = { rt::msg_id(scroll_raw, rt::sel(#str_ptr("documentView\0"))) };
+
+    // A reveal expands the ancestors it walked — visible to the reader.
+    tree_select_path(scroll_raw, "/proj/src/nested/deep.cplus");
+    let row: i64 = { rt::msg_i64(ov, rt::sel(#str_ptr("selectedRow\0"))) };
+    assert row >= (0 as i64);
+    var after_reveal: vec::Vec[text::Text] = tree_expanded_paths(scroll_raw);
+    assert after_reveal.count() == (2 as usize);
+
+    // Expanding and collapsing does not disturb the selection, and stays silent.
+    // Collapsing a branch that CONTAINS the selection drops the selected row,
+    // and NSOutlineView clears the selection rather than moving it to the
+    // branch. That is native behaviour, not something these verbs choose — and
+    // it is why a restore must set expansion BEFORE selection (see the note on
+    // `tree_set_expanded_paths`). Still silent: `tree_selection_imp` returns on
+    // `row < 0`, so the app sees no phantom "selected nothing" event.
+    tree_collapse_path(scroll_raw, "/proj/src/nested");
+    assert { rt::msg_i64(ov, rt::sel(#str_ptr("selectedRow\0"))) } == (-1 as i64);
+    assert TREE_SEL_HITS == 0;
+
+    // An UNRELATED branch is the real independence case: select the top-level
+    // leaf, then expand a branch that does not contain it. The selected ITEM
+    // survives (its row INDEX shifts as rows appear above it, which is why this
+    // compares items, not indices), and nothing fires.
+    tree_select_path(scroll_raw, "/proj/README.md");
+    let readme: *u8 = tree_item_for_path(root, "/proj/README.md");
+    tree_expand_path(scroll_raw, "/proj/src/nested");
+    let sel_row: i64 = { rt::msg_i64(ov, rt::sel(#str_ptr("selectedRow\0"))) };
+    assert sel_row >= (0 as i64);
+    assert { rt::msg_id_i64(ov, rt::sel(#str_ptr("itemAtRow:\0")), sel_row) } == readme;
     assert TREE_SEL_HITS == 0;
     return;
 }
