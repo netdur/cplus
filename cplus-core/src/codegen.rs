@@ -1383,20 +1383,35 @@ pub fn generate_with_options(
 ///
 /// The project's user-defined `fn main` (if any) is *not* emitted; the
 /// synthesized driver replaces it.
+/// `sanitizers` and `fp_contract` are the caller's, NOT defaults. They used to
+/// be hardcoded here (`&[]` and `true`), which made `cpc test --asan` link the
+/// ASan runtime against UNINSTRUMENTED IR: `free` was intercepted and poisoned
+/// the region, but no load was ever checked, so a plain heap-use-after-free ran
+/// clean. Every suite ASan run was silent rather than clean — a real
+/// use-after-free (bugs/terminal-key-observer-outlives-its-context.md) lived in
+/// the tree through several green sweeps.
+///
+/// This is the THIRD site to drop these on the floor: `cpc build` did it once
+/// (fixed in v0.0.3 Phase 5 Slice 5D) and the test LINK step did it once (fixed
+/// with the `run_clang` call). Both of those left a comment; neither reached
+/// codegen for tests.
+/// bugs/cpc-test-asan-does-not-instrument.md
 pub fn generate_test_binary(
     program: &Program,
     mode: BuildMode,
     tests: &[crate::attrs::TestFn],
     json: bool,
     mono: &crate::sema::MonoInfo,
+    fp_contract: bool,
+    sanitizers: &[&str],
 ) -> String {
     generate_inner(
         program,
         mode,
-        true,
+        fp_contract,
         Some(TestDriverConfig { tests, json }),
         None,
-        &[],
+        sanitizers,
         false,
         &mono.compile_time_blobs,
         &mono.env_vars,

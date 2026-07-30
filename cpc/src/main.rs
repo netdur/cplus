@@ -788,7 +788,7 @@ fn main() -> ExitCode {
         (Some(Subcommand::EmitLlProject), _) => emit_ll_project(diag_mode, build_mode, fp_contract),
         (Some(Subcommand::Fmt), _) => run_fmt(fmt_inputs, fmt_opts, diag_mode),
         (Some(Subcommand::Test), _) => {
-            run_test(test_input, test_opts, diag_mode, build_mode, &sanitizers)
+            run_test(test_input, test_opts, diag_mode, build_mode, &sanitizers, fp_contract)
         }
         (Some(Subcommand::Lsp), _) => run_lsp(lsp_args),
         (Some(Subcommand::Check), Some(path)) => run_check(path, diag_mode),
@@ -2912,6 +2912,12 @@ fn run_test(
     diag_mode: DiagMode,
     build_mode: BuildMode,
     sanitizers: &[&str],
+    // Both of these used to stop at the door: codegen for the test driver
+    // hardcoded `&[]` sanitizers and `true` fp_contract, so `cpc test --asan`
+    // linked the ASan runtime against uninstrumented IR and
+    // `cpc test --fp-contract=off` was ignored.
+    // bugs/cpc-test-asan-does-not-instrument.md
+    fp_contract: bool,
 ) -> ExitCode {
     let (program, _src_for_diags, mono, link_args) = match file {
         Some(path) => {
@@ -3051,7 +3057,7 @@ fn run_test(
     }
     ensure_coro_end_probed();
     let ir = prune_ir(codegen::generate_test_binary(
-        &program, build_mode, &tests, opts.json, &mono,
+        &program, build_mode, &tests, opts.json, &mono, fp_contract, sanitizers,
     ));
     // Debug hook: `CPC_TEST_IR=path` writes the generated test-driver IR out.
     // The driver module is otherwise unreachable — it exists only inside this
