@@ -13978,6 +13978,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
     }
 
     fn check_arg_with_move(&mut self, arg: &Expr, expected: &ParamSig) {
+        self.check_capture_arg_escape(arg);
         // Bound method reference: already validated against the fn-pointer
         // param by `try_bound_method_refs`; monomorphize rewrites it to the
         // bridge fn. Skip normal checking (as a Field expr it would fail
@@ -14795,6 +14796,52 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     "storing a value that captures the address of `{root}`{via} into {dest}: `{root}` is a local, so a handler bound to it would point at a stack slot that is freed when this function returns, while {dest} outlives it. Give it storage that outlives the stored value — a field of `this`, a `static`, or a `Box`"
                 ),
                 value.span,
+            );
+            break;
+        }
+    }
+
+    /// bugs/e0365-catches-the-return-but-not-the-assignment.md, third round —
+    /// the escape that is neither a `return` nor an assignment: handing the
+    /// capturing value to a CALL that keeps it.
+    ///
+    /// ```text
+    /// find("list").add_child(clickable(b).on_click(w.on_click));
+    /// ```
+    ///
+    /// `add_child` puts the node in facet's retained tree, which outlives the
+    /// frame exactly as a static does. Nothing in either function is wrong on
+    /// its own — the callee stores a PARAMETER, which is how every registry
+    /// works — so the violation exists only across the pair, and the callee is
+    /// often reached through a fn-pointer static that no analysis can trace.
+    ///
+    /// So this does not try to prove the callee keeps it. It refuses to hand a
+    /// frame-local's address across a call boundary at all, which is sound
+    /// (over-approximate) and, measured across every vendor package and
+    /// example, costs NOTHING: real code binds a handler to `this` or to a
+    /// field, and the `owns_value` gate passes both. Binding one to a local and
+    /// then handing it onward is the bug essentially every time.
+    ///
+    /// Note what does NOT fire: the binding site itself. `take_handler(c.clicked)`
+    /// has a bare bound reference as its argument, and whether the RESULT
+    /// carries the address is a property of the callee — `capture_sources`
+    /// finds a capture only once the value in hand already carries one. That is
+    /// what keeps ordinary composition legal.
+    fn check_capture_arg_escape(&mut self, arg: &Expr) {
+        for root in self.capture_sources(arg) {
+            let key: &str = if root == "this" { "self" } else { &root };
+            let Some(info) = self.lookup_local(key) else {
+                continue;
+            };
+            if !info.owns_value {
+                continue;
+            }
+            self.err(
+                "E0365",
+                format!(
+                    "passing a value that captures the address of `{root}` to a call: `{root}` is a local, so if the callee keeps the value — a registry, a retained view tree, a static — the handler bound to `{root}` would point at a stack slot freed when this function returns. Give `{root}` storage that outlives the call — a field of `this`, a `static`, or a `Box`"
+                ),
+                arg.span,
             );
             break;
         }
@@ -20671,6 +20718,65 @@ mod tests {
         assert!(
             !ds.iter().any(|d| d.code.0 == "E0365"),
             "a handler bound to `this` must not fire E0365; got {:?}",
+            codes_of(&ds)
+        );
+    }
+
+    // THIRD ROUND 2026-07-30: the escape that is neither return nor assignment
+    // — handing the capturing value to a call that keeps it. Measured to cost
+    // nothing: zero hits across every vendor package and example, because real
+    // code binds handlers to `this` or a field.
+
+    #[test]
+    fn passing_a_captured_local_to_a_call_is_e0365() {
+        let ds = check_src(&format!(
+            "{E0365_PRELUDE}\
+             fn sink(v: i32) {{ return; }}\n\
+             fn hand_over() {{ var c: Child = Child {{ clicks: 0 }}; sink(take_handler(c.clicked)); return; }}\n\
+             fn main() -> i32 {{ return 0; }}"
+        ));
+        assert!(
+            ds.iter().any(|d| d.code.0 == "E0365"),
+            "expected E0365 on the call argument; got {:?}",
+            codes_of(&ds)
+        );
+    }
+
+    #[test]
+    fn binding_a_handler_to_a_local_is_still_fine() {
+        // THE LINE THIS MUST NOT CROSS. `take_handler(c.clicked)` is the
+        // BINDING site: whether its result carries the address is a property of
+        // the callee, so a bare bound reference as an argument does not fire.
+        // Rejecting this would reject every handler in every component.
+        let ds = check_src(&format!(
+            "{E0365_PRELUDE}\
+             fn build_it() {{ var c: Child = Child {{ clicks: 0 }}; var n: i32 = take_handler(c.clicked); return; }}\n\
+             fn main() -> i32 {{ return 0; }}"
+        ));
+        assert!(
+            !ds.iter().any(|d| d.code.0 == "E0365"),
+            "binding a handler to a local must stay legal; got {:?}",
+            codes_of(&ds)
+        );
+    }
+
+    #[test]
+    fn passing_a_handler_bound_to_this_to_a_call_is_fine() {
+        // `this` is caller-owned, so it outlives the call — the `owns_value`
+        // gate is the whole reason this check costs nothing in real code.
+        let ds = check_src(
+            "struct Screen { n: i32 }\n\
+             impl Screen {\n\
+               fn clicked(ref this) { this.n = this.n + 1; return; }\n\
+               fn hand(ref this) { sink(take_handler(this.clicked)); return; }\n\
+             }\n\
+             fn take_handler(f: fn(*u8), ctx: *u8 = 0 as *u8) -> i32 { return 1; }\n\
+             fn sink(v: i32) { return; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(
+            !ds.iter().any(|d| d.code.0 == "E0365"),
+            "a handler bound to `this` must not fire; got {:?}",
             codes_of(&ds)
         );
     }
