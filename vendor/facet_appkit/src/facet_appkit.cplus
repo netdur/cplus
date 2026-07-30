@@ -1178,6 +1178,34 @@ fn fak_observe_size(h: facet::Handle, cb: fn(*u8), ctx: *u8) -> u64 {
     return akx::observe_frame(ak::View::from_raw(v), cb, ctx);
 }
 
+// Where `screen` (a screen-coordinate point) falls inside `v`, normalized to
+// a top-left origin whichever way `v` is flipped. Split from the hook so the
+// conversion is testable with a crafted point; the hook feeds it the live
+// pointer. None when the view is not in any window.
+fn point_in_view_space(v: *u8, screen: rt::Point) -> option::Option[facet::Point] {
+    let vw: ak::View = ak::View::from_raw(v);
+    guard let option::Option[ak::Window]::Some(win) = vw.window() else {
+        return option::Option[facet::Point]::None;
+    };
+    let at_win: rt::Point = win.convert_point_from_screen(screen);
+    let nil_v: ak::View = ak::View::from_raw(0 as *u8);
+    let at_view: rt::Point = vw.convert_point(at_win, nil_v);
+    var y: f64 = at_view.y;
+    if vw.is_flipped() == false {
+        let b: rt::Rect = vw.bounds();
+        y = b.h - y;
+    }
+    return option::Option[facet::Point]::Some(facet::Point { x: at_view.x, y: y });
+}
+
+fn fak_pointer_position(h: facet::Handle) -> option::Option[facet::Point] {
+    let v: *u8 = h.view();
+    if v == (0 as *u8) { return option::Option[facet::Point]::None; }
+    // +[NSEvent mouseLocation] is accurate inside performDragOperation:, which
+    // is what makes this usable from a drop handler.
+    return point_in_view_space(v, ak::Event::mouse_location());
+}
+
 // Window geometry, for the runtime facade's window_frame()/set_window_frame().
 // AppKit's frame is bottom-left-origin screen points; the facade hands the
 // same convention back to the setter, so nothing converts.
@@ -1494,6 +1522,7 @@ fn install() {
     facet::set_get_size_fn(fak_get_size);
     facet::set_observe_size_fn(fak_observe_size);
     facet::set_cancel_observe_size_fn(akx::cancel_observe_frame);
+    facet::set_pointer_position_fn(fak_pointer_position);
     facet::set_after_fn(akx::after);
     facet::set_cancel_after_fn(akx::cancel_after);
     facet::set_is_dark_fn(is_dark_impl);
@@ -6658,6 +6687,58 @@ fn a_dropped_observe_size_handle_cancels_the_observation() {
     // A missing handle arms nothing: an already-cancelled Cancellable.
     var m: facet::Cancellable = facet::observe_size(facet::Handle::missing(), obs_count_fire);
     assert m.pending() == false;
+}
+
+#[test]
+fn pointer_position_normalizes_flipped_and_unflipped_alike() {
+    // A borderless window at a KNOWN frame, so screen->view math is exact:
+    // content view == the whole frame, no titlebar to subtract.
+    let _app: ak::Application = ak::Application::shared_application();
+    let win = ak::Window::new(
+        rt::Rect { x: 100.0, y: 100.0, w: 400.0, h: 300.0 },
+        0 as u64,                                    // borderless
+        ak::BackingStoreType::NSBackingStoreBuffered,
+        false,
+    );
+    rt::retain(win.raw());
+    let plain: ak::View = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 400.0, h: 300.0 });
+    win.set_content_view(ak::View::from_raw(plain.raw()));
+
+    // Screen (150, 150) inside a (100,100)+(400x300) window is 50 points from
+    // the left and 50 up from the BOTTOM — so 250 down from the top.
+    let probe: rt::Point = rt::Point { x: 150.0f64, y: 150.0f64 };
+    match point_in_view_space(plain.raw(), probe) {
+        option::Option[facet::Point]::Some(p) => {
+            assert p.x == 50.0f64;
+            assert p.y == 250.0f64;
+        }
+        option::Option[facet::Point]::None => { assert false; }
+    }
+
+    // The same geometry through a FLIPPED view (NSTableView) must give the
+    // SAME normalized answer — the invariant the normalization exists for.
+    let tbl: ak::TableView = ak::TableView::new(rt::Rect { x: 0.0, y: 0.0, w: 400.0, h: 300.0 });
+    assert tbl.as_view().is_flipped();
+    win.set_content_view(tbl.as_view());
+    match point_in_view_space(tbl.raw(), probe) {
+        option::Option[facet::Point]::Some(p) => {
+            assert p.x == 50.0f64;
+            assert p.y == 250.0f64;
+        }
+        option::Option[facet::Point]::None => { assert false; }
+    }
+
+    // A view in no window: None. A missing handle through the hook: None.
+    let orphan: ak::View = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 10.0, h: 10.0 });
+    match point_in_view_space(orphan.raw(), probe) {
+        option::Option[facet::Point]::Some(p) => { assert false; }
+        option::Option[facet::Point]::None => { }
+    }
+    match fak_pointer_position(facet::Handle::missing()) {
+        option::Option[facet::Point]::Some(p) => { assert false; }
+        option::Option[facet::Point]::None => { }
+    }
+    win.close();
 }
 
 #[test]

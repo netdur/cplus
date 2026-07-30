@@ -1655,6 +1655,14 @@ struct Rect {
     height: f64,
 }
 
+// A point in an element's own coordinate space — top-left origin, +y down,
+// layout's convention, REGARDLESS of how the platform orients views. What
+// `Handle::pointer_position()` returns.
+struct Point {
+    x: f64,
+    y: f64,
+}
+
 struct Handle {
     opaque _view: *u8,     // located native view (0 = not found), owned by its superview
     opaque _flex: *u8,     // retained layout node (re-measure / relayout), owned by the tree
@@ -1693,6 +1701,8 @@ static SET_LIST_COUNT_FN: fn(Handle, i64, bool, bool) -> bool = #zero::[fn(Handl
 fn set_set_list_count_fn(f: fn(Handle, i64, bool, bool) -> bool) { SET_LIST_COUNT_FN = f; return; }
 static GET_SIZE_FN: fn(Handle) -> Size = #zero::[fn(Handle) -> Size]();
 fn set_get_size_fn(f: fn(Handle) -> Size) { GET_SIZE_FN = f; return; }
+static POINTER_POSITION_FN: fn(Handle) -> option::Option[Point] = #zero::[fn(Handle) -> option::Option[Point]]();
+fn set_pointer_position_fn(f: fn(Handle) -> option::Option[Point]) { POINTER_POSITION_FN = f; return; }
 fn set_get_value_fn(f: fn(Handle) -> f64) { GET_VALUE_FN = f; return; }
 fn set_get_text_fn(f: fn(Handle) -> text::Text) { GET_TEXT_FN = f; return; }
 fn set_get_index_fn(f: fn(Handle) -> i64) { GET_INDEX_FN = f; return; }
@@ -2559,6 +2569,20 @@ impl Handle {
     fn size(this) -> Size {
         let f: fn(Handle) -> Size = GET_SIZE_FN;
         if f == (0 as fn(Handle) -> Size) { return Size { width: 0.0f64, height: 0.0f64 }; }
+        return f(this);
+    }
+
+    // Where the pointer is RIGHT NOW, in this element's own coordinate space —
+    // top-left origin, +y down, however the platform orients its views. None
+    // on a miss, with no backend, or when the element is not in any window.
+    // Still accurate inside a drop handler, which is the reason it exists: a
+    // drop reports the node hit and the text carried, and an app reordering a
+    // lane needs to know WHERE in the node the pointer was. This is the app
+    // READING a human's pointer — not an agent verb; the agent surface has no
+    // gesture and gets none.
+    fn pointer_position(this) -> option::Option[Point] {
+        let f: fn(Handle) -> option::Option[Point] = POINTER_POSITION_FN;
+        if f == (0 as fn(Handle) -> option::Option[Point]) { return option::Option[Point]::None; }
         return f(this);
     }
 
@@ -6830,4 +6854,33 @@ fn observe_size_cancels_through_its_own_slot_not_the_timer_slot() {
     CANCEL_OBSERVE_SIZE_FN = #zero::[fn(u64)]();
     AFTER_FN = #zero::[fn(f64, fn(*u8), *u8) -> u64]();
     CANCEL_AFTER_FN = #zero::[fn(u64)]();
+}
+
+// ---- pointer position -------------------------------------------------------
+
+static PPOS_CALLS: i32 = 0;
+fn ppos_fake(h: Handle) -> option::Option[Point] {
+    PPOS_CALLS = PPOS_CALLS + 1;
+    return option::Option[Point]::Some(Point { x: 12.0f64, y: 34.0f64 });
+}
+
+#[test]
+fn pointer_position_forwards_and_defaults_to_none() {
+    // No slot: None, never a trap.
+    POINTER_POSITION_FN = #zero::[fn(Handle) -> option::Option[Point]]();
+    match Handle::missing().pointer_position() {
+        option::Option[Point]::Some(p) => { assert false; }
+        option::Option[Point]::None => { }
+    }
+    set_pointer_position_fn(ppos_fake);
+    PPOS_CALLS = 0;
+    match Handle::missing().pointer_position() {
+        option::Option[Point]::Some(p) => {
+            assert p.x == 12.0f64;
+            assert p.y == 34.0f64;
+        }
+        option::Option[Point]::None => { assert false; }
+    }
+    assert PPOS_CALLS == 1;
+    POINTER_POSITION_FN = #zero::[fn(Handle) -> option::Option[Point]]();
 }
