@@ -14741,6 +14741,65 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         }
     }
 
+    /// bugs/e0365-catches-the-return-but-not-the-assignment.md — the same rule
+    /// E0365 applies at `return`, applied where a value LEAVES the frame by
+    /// ASSIGNMENT instead.
+    ///
+    /// E0365 was written as a rule about the returned expression, so every other
+    /// way out of the frame was open: a `static`, a field reached through a `ref`
+    /// parameter, anything the frame does not own. The escape is identical —
+    /// `&local` ends up in a handler context that is read some number of
+    /// event-loop turns later — and it is the one a component tree invites,
+    /// because composing a child as a local and hanging its node somewhere is
+    /// the obvious way to write a widget.
+    ///
+    /// Same destinations as `check_view_store_escape` (a `static`, or a `ref` /
+    /// `ref this` target aliasing the caller's storage), and the same
+    /// `owns_value` gate on the captured root, so storing a child held in a
+    /// FIELD stays legal while a local does not.
+    fn check_capture_store_escape(&mut self, target: &Expr, value: &Expr) {
+        let Some(troot) = self.place_root_name(target) else {
+            return;
+        };
+        let target_is_static = self.statics_table.contains_key(&troot);
+        let target_is_ref = self.current_fn_ref_targets.contains(&troot);
+        if !(target_is_static || target_is_ref) {
+            return;
+        }
+        let roots = self.capture_sources(value);
+        if roots.is_empty() {
+            return;
+        }
+        let named = Self::expr_names(value);
+        let dest = if target_is_static {
+            format!("static `{troot}`")
+        } else {
+            format!("`ref` target `{troot}`")
+        };
+        for root in roots {
+            let via = if named.contains(&root) {
+                String::new()
+            } else {
+                match self
+                    .capture_taint
+                    .iter()
+                    .find(|(h, v)| v.contains(&root) && named.contains(*h))
+                {
+                    Some((holder, _)) => format!(" (carried out by `{holder}`)"),
+                    None => String::new(),
+                }
+            };
+            self.err(
+                "E0365",
+                format!(
+                    "storing a value that captures the address of `{root}`{via} into {dest}: `{root}` is a local, so a handler bound to it would point at a stack slot that is freed when this function returns, while {dest} outlives it. Give it storage that outlives the stored value — a field of `this`, a `static`, or a `Box`"
+                ),
+                value.span,
+            );
+            break;
+        }
+    }
+
     /// True iff `receiver.method(...)` produces a `str`/slice VIEW that borrows
     /// the receiver — the shape-based generalization of the old `as_str` /
     /// `as_slice` name allowlist. A method qualifies when the receiver's type
@@ -15333,6 +15392,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     // Bug 03: `static S = temp.view()` — view of a temporary.
                     if matches!(op, AssignOp::Assign) {
                         self.check_view_store_escape(target, value, &info.ty);
+                        self.check_capture_store_escape(target, value);
                         if matches!(info.ty, Ty::Str | Ty::Slice(_)) {
                             self.flag_view_of_temp(value);
                         }
@@ -15469,6 +15529,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         self.check_compound_assign_op_type(op, &target_ty, &value_ty, span);
         if matches!(op, AssignOp::Assign) {
             self.check_view_store_escape(target, value, &target_ty);
+            self.check_capture_store_escape(target, value);
             // Bug 03: `s = temp.view();` into any view-typed place.
             if matches!(target_ty, Ty::Str | Ty::Slice(_)) {
                 self.flag_view_of_temp(value);
@@ -20515,6 +20576,101 @@ mod tests {
         assert!(
             ds.iter().any(|d| d.code.0 == "E0365"),
             "expected E0365; got {:?}",
+            codes_of(&ds)
+        );
+    }
+
+    // REOPENED again 2026-07-30
+    // (bugs/e0365-catches-the-return-but-not-the-assignment.md): the rule was
+    // written about the RETURNED expression, so every other way out of the
+    // frame was open. Assignment into a `static` is the same escape one
+    // keystroke away, and it is the one a component tree invites.
+
+    #[test]
+    fn storing_a_captured_local_into_a_static_is_e0365() {
+        let ds = check_src(&format!(
+            "{E0365_PRELUDE}\
+             static SLOT: i32 = 0;\n\
+             fn stash() {{ var c: Child = Child {{ clicks: 0 }}; SLOT = take_handler(c.clicked); return; }}\n\
+             fn main() -> i32 {{ return 0; }}"
+        ));
+        assert!(
+            ds.iter().any(|d| d.code.0 == "E0365"),
+            "expected E0365 on the static store; got {:?}",
+            codes_of(&ds)
+        );
+    }
+
+    #[test]
+    fn storing_a_transitively_captured_local_into_a_static_is_e0365() {
+        // The callee-binds form, through the assignment path.
+        let ds = check_src(&format!(
+            "{E0365_PRELUDE}\
+             static SLOT: i32 = 0;\n\
+             fn stash() {{ var c: Child = Child {{ clicks: 0 }}; SLOT = c.build(); return; }}\n\
+             fn main() -> i32 {{ return 0; }}"
+        ));
+        assert!(
+            ds.iter().any(|d| d.code.0 == "E0365"),
+            "expected E0365; got {:?}",
+            codes_of(&ds)
+        );
+    }
+
+    #[test]
+    fn storing_a_captured_local_into_a_ref_param_is_e0365() {
+        // A `ref` target aliases the CALLER's storage, so it outlives this
+        // frame exactly as a static does — the same destination set
+        // `check_view_store_escape` already uses.
+        let ds = check_src(&format!(
+            "{E0365_PRELUDE}\
+             fn stash(ref out: i32) {{ var c: Child = Child {{ clicks: 0 }}; out = take_handler(c.clicked); return; }}\n\
+             fn main() -> i32 {{ return 0; }}"
+        ));
+        assert!(
+            ds.iter().any(|d| d.code.0 == "E0365"),
+            "expected E0365 on the ref-param store; got {:?}",
+            codes_of(&ds)
+        );
+    }
+
+    #[test]
+    fn storing_a_captured_local_into_a_local_is_fine() {
+        // The destination dies with the frame too, so nothing outlives
+        // anything. Over-firing here would reject the ordinary way to build a
+        // node before returning it.
+        let ds = check_src(&format!(
+            "{E0365_PRELUDE}\
+             fn build_it() {{ var c: Child = Child {{ clicks: 0 }}; var n: i32 = take_handler(c.clicked); return; }}\n\
+             fn main() -> i32 {{ return 0; }}"
+        ));
+        assert!(
+            !ds.iter().any(|d| d.code.0 == "E0365"),
+            "local destination must not fire E0365; got {:?}",
+            codes_of(&ds)
+        );
+    }
+
+    #[test]
+    fn storing_a_handler_bound_to_this_into_a_static_is_fine() {
+        // `this` is caller-owned storage, not frame-dying — the `owns_value`
+        // gate is what keeps a field-held child legal while a local is not.
+        let ds = check_src(
+            "struct Screen {{ n: i32 }}\n\
+             impl Screen {{\n\
+               fn clicked(ref this) {{ this.n = this.n + 1; return; }}\n\
+               fn stash(ref this) {{ SLOT = take_handler(this.clicked); return; }}\n\
+             }}\n\
+             fn take_handler(f: fn(*u8), ctx: *u8 = 0 as *u8) -> i32 {{ return 1; }}\n\
+             static SLOT: i32 = 0;\n\
+             fn main() -> i32 {{ return 0; }}"
+                .replace("{{", "{")
+                .replace("}}", "}")
+                .as_str(),
+        );
+        assert!(
+            !ds.iter().any(|d| d.code.0 == "E0365"),
+            "a handler bound to `this` must not fire E0365; got {:?}",
             codes_of(&ds)
         );
     }
