@@ -16,3 +16,13 @@ path = "src/test_main.cplus"
 [dependencies]
 stdlib      = "*"
 flex_layout = "*"
+
+# The per-platform backends the runtime facades import (runtime_macos.cplus /
+# runtime_linux.cplus). Declared here so facet resolves on its own instead of
+# leaning on whatever the root package happens to vendor.
+
+[macos.dependencies]
+facet_appkit = "*"
+
+[linux.dependencies]
+facet_gtk = "*"
