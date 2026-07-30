@@ -23,6 +23,7 @@
 
 import "stdlib/vec" as vec;
 import "stdlib/text" as text;
+import "stdlib/atomic" as atomic;
 import "stdlib/option" as option;
 import "stdlib/box" as box;
 import "stdlib/thread" as thread;
@@ -3042,6 +3043,7 @@ interface Service {
 // reached through its address). Needs a backend for the main-thread hop
 // (run_on_main): without one the produced result is never applied.
 fn load_service[S: Service](ref svc: S, on_ready: fn(*u8) = service_ready_noop, ctx: *u8 = 0 as *u8) {
+    services_inflight_add(1 as u64);
     let job: ServiceJob = ServiceJob {
         svc_addr: { #addr_of(svc) as *u8 } as usize,
         produce: service_produce_tramp::[S],
@@ -3050,6 +3052,63 @@ fn load_service[S: Service](ref svc: S, on_ready: fn(*u8) = service_ready_noop, 
         ctx_addr: ctx as usize,
     };
     let _bg: thread::JoinHandle[i32] = thread::spawn_with::[ServiceJob, i32](job, run_service_job);
+    return;
+}
+
+// ---- in-flight services ------------------------------------------------------
+//
+// `load_service` states "svc must outlive the flight" and, until 2026-07-30,
+// handed the caller nothing to honour it with: the JoinHandle was discarded and
+// `JoinHandle::drop` DETACHES by design ("true fire-and-forget"). So a screen
+// that started a service and was then torn down freed memory a live worker was
+// still writing. Found by ASan on iris at quit — `Text.drop` on a worker thread
+// reading a `Welcome` already freed by `Box[Welcome].drop` in main.
+//
+// The count is what makes the contract keepable. `wait_for_services` blocks
+// until every worker has finished touching its service, and the runtime calls
+// it before dropping screens, so an app gets the guarantee without writing
+// anything. A caller tearing a component down early can call it directly.
+//
+// Counted rather than joined: the JoinHandle is consumed by `join` and there is
+// nowhere to keep one per flight without a registry that outlives the caller —
+// the count needs no ownership at all.
+//
+// It is decremented when PRODUCE returns, not after `apply`. Apply runs on the
+// main thread, which is the thread that owns the data, so it is not part of the
+// race being waited out — and waiting for it would deadlock, since the main
+// thread cannot deliver a `run_on_main` hop while it is blocked in the wait.
+// bugs/load-service-worker-outlives-its-service.md
+#[link_name = "sched_yield"]
+extern fn sched_yield_raw() -> i32;
+
+// Give a worker its turn rather than burning the core. The wait is a teardown
+// step, not a poll loop.
+fn sched_yield_once() { let _r: i32 = { sched_yield_raw() }; return; }
+
+static SERVICES_IN_FLIGHT: u64 = 0 as u64;
+
+fn services_inflight_add(d: u64) {
+    let p: *u64 = { #addr_of(SERVICES_IN_FLIGHT) };
+    let _prev: u64 = atomic::fetch_add_u64(p, d, atomic::Ordering::AcqRel);
+    return;
+}
+
+fn services_inflight_sub(d: u64) {
+    let p: *u64 = { #addr_of(SERVICES_IN_FLIGHT) };
+    let _prev: u64 = atomic::fetch_sub_u64(p, d, atomic::Ordering::AcqRel);
+    return;
+}
+
+// How many service workers may still be touching their service.
+fn services_in_flight() -> u64 {
+    let p: *u64 = { #addr_of(SERVICES_IN_FLIGHT) };
+    return atomic::load_u64(p, atomic::Ordering::Acquire);
+}
+
+// Block until no worker is touching a service. Call before dropping anything a
+// service was given — the runtime does this for screens at teardown.
+fn wait_for_services() {
+    while services_in_flight() != (0 as u64) { sched_yield_once(); }
     return;
 }
 
@@ -3082,6 +3141,7 @@ struct ServiceJob {
 fn run_service_job(take job: ServiceJob) -> i32 {
     let produce: fn(*u8) = job.produce;
     produce(job.svc_addr as *u8);   // the slow read, OFF the main thread
+    services_inflight_sub(1 as u64);   // done touching the service
     match box::new::[ServiceJob](job) {
         option::Option[box::Box[ServiceJob]]::Some(b) => {
             run_on_main(finish_service_job, b.into_raw());
@@ -6535,4 +6595,68 @@ fn styled_or_keyed_containers_get_backing_views() {
     var hroot: Node = column(hid).opacity(0.5f64);
     let _h: flex::Node = mount(#addr_of(hroot), fake_renderer());
     assert FAKE_CONTAINERS == 3;
+}
+
+// ---- load_service lifetime ---------------------------------------------------
+
+struct SlowSvc {
+    label: text::Text,
+    done: i32,
+}
+
+impl SlowSvc: Service {
+    fn produce(ref this) {
+        // Long enough that the caller's frame is gone before this runs.
+        let _s: i32 = svc_spin(40000000 as i64);
+        this.label = text::from_str("produced");
+        this.done = this.done + 1;
+        return;
+    }
+    fn apply(ref this) { return; }
+}
+
+fn svc_spin(n: i64) -> i32 {
+    var i: i64 = 0 as i64;
+    var acc: i32 = 0;
+    while i < n { acc = acc + (1 as i32); i = i +% (1 as i64); }
+    return acc;
+}
+
+// `load_service` documents "svc must outlive the flight" and gives the caller
+// NOTHING to honour it with: the JoinHandle is discarded, and its drop DETACHES
+// (fire-and-forget, by design). So a screen that starts a service and is then
+// torn down frees memory a live worker thread is still writing.
+//
+// Found by ASan on iris at quit: `Text.drop` on a worker thread reading a
+// `Welcome` freed by `Box[Welcome].drop` in main.
+// bugs/load-service-worker-outlives-its-service.md
+// `wait_for_services` is what makes "svc must outlive the flight" TRUE rather
+// than merely documented — the subject cannot die while a worker is in it.
+fn arm_and_wait() {
+    var svc: SlowSvc = SlowSvc { label: text::from_str("start"), done: 0 };
+    load_service::[SlowSvc](svc);
+    assert services_in_flight() >= (1 as u64) || svc.done > (0 as i32);
+    wait_for_services();
+    return;   // safe: no worker is touching `svc` any more
+}
+
+#[test]
+fn waiting_for_services_keeps_the_subject_alive() {
+    arm_and_wait();
+    // Nothing a worker writes can land in the dead frame. Without the wait this
+    // was a stack-use-after-return in Text.drop — the same function ASan named
+    // on iris at quit.
+    let _w: i32 = svc_spin(200000000 as i64);
+    assert true;
+}
+
+// ...and the wait really waited: produce has run and its result is visible.
+#[test]
+fn wait_for_services_blocks_until_produce_finishes() {
+    var svc: SlowSvc = SlowSvc { label: text::from_str("start"), done: 0 };
+    load_service::[SlowSvc](svc);
+    wait_for_services();
+    assert services_in_flight() == (0 as u64);
+    assert svc.done == (1 as i32);
+    assert svc.label.view() == "produced";
 }

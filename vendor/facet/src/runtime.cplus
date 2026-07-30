@@ -487,6 +487,17 @@ impl App {
             backend::run_loop();     // blocks until this screen's window closes
             app_close_all_pushed();  // replacing the root dismisses pushed screens
             sb.on_detach();          // loop stopped, views still alive
+            // A service worker may still be inside this screen's data. `sb`
+            // is freed a few lines down, so waiting here is what stops the
+            // worker writing into freed memory — the crash-on-quit ASan
+            // caught on iris (`Text.drop` on a worker, reading a `Welcome`
+            // already freed by `Box[Welcome].drop`).
+            //
+            // After `on_detach` on purpose: the app has been told the screen
+            // is going, so a service it cancels there is already winding down
+            // and this waits for less.
+            // bugs/load-service-worker-outlives-its-service.md
+            core::wait_for_services();
             backend::unmount_all();
             CURRENT_WIN = 0 as *u8;
             // sb drops here: the screen instance is freed before the next shows.
