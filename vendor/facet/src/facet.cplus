@@ -1644,6 +1644,17 @@ struct Size {
     height: f64,
 }
 
+// A rectangle in points — pure data, no platform type. What the runtime's
+// `window_frame()` reads and `set_window_frame()` writes; the origin lives in
+// whatever corner the platform puts it, so a frame read back is always safe
+// to hand to the setter unchanged.
+struct Rect {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+}
+
 struct Handle {
     opaque _view: *u8,     // located native view (0 = not found), owned by its superview
     opaque _flex: *u8,     // retained layout node (re-measure / relayout), owned by the tree

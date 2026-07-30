@@ -1178,6 +1178,26 @@ fn fak_observe_size(h: facet::Handle, cb: fn(*u8), ctx: *u8) -> u64 {
     return akx::observe_frame(ak::View::from_raw(v), cb, ctx);
 }
 
+// Window geometry, for the runtime facade's window_frame()/set_window_frame().
+// AppKit's frame is bottom-left-origin screen points; the facade hands the
+// same convention back to the setter, so nothing converts.
+fn window_frame_of(w: *u8) -> facet::Rect {
+    if w == (0 as *u8) { return facet::Rect { x: 0.0f64, y: 0.0f64, width: 0.0f64, height: 0.0f64 }; }
+    let f: rt::Rect = rt::msg_rect(w, rt::sel(#str_ptr("frame\0")));
+    return facet::Rect { x: f.x, y: f.y, width: f.w, height: f.h };
+}
+
+fn set_window_frame_of(w: *u8, frame: facet::Rect) {
+    if w == (0 as *u8) { return; }
+    let r: rt::Rect = rt::Rect { x: frame.x, y: frame.y, w: frame.width, h: frame.height };
+    // setFrame:display: takes TWO arguments — sent through the two-arg binding
+    // so the BOOL is a real argument, not whatever sat in the register. AppKit
+    // clamps a frame that would land off every screen, so a stale saved frame
+    // cannot strand the window somewhere unreachable.
+    rt::msg_void_rect_i8(w, rt::sel(#str_ptr("setFrame:display:\0")), r, 1 as i8);
+    return;
+}
+
 fn ak_gauge(ctx: *u8, np: *facet::Node) -> flex::Node {
     let li: ak::LevelIndicator = ak::LevelIndicator::new();
     li.set_min_value({ (*np).min_val });
@@ -6638,6 +6658,26 @@ fn a_dropped_observe_size_handle_cancels_the_observation() {
     // A missing handle arms nothing: an already-cancelled Cancellable.
     var m: facet::Cancellable = facet::observe_size(facet::Handle::missing(), obs_count_fire);
     assert m.pending() == false;
+}
+
+#[test]
+fn window_frame_reads_and_writes_the_real_window() {
+    let win: ak::Window = e2e_window(400.0f64, 300.0f64);
+    var f: facet::Rect = window_frame_of(win.raw());
+    assert f.width > 0.0f64;
+    assert f.height > 0.0f64;
+    // Write a new frame, read the same one back. Coordinates stay in the
+    // platform's own convention end to end, so no drift on a round trip.
+    set_window_frame_of(win.raw(), facet::Rect { x: 60.0f64, y: 80.0f64, width: 520.0f64, height: 340.0f64 });
+    let g: facet::Rect = window_frame_of(win.raw());
+    assert g.x == 60.0f64;
+    assert g.width == 520.0f64;
+    assert g.height == 340.0f64;
+    // No window: zero rect out, no-op in — never a message to nil.
+    let z: facet::Rect = window_frame_of(0 as *u8);
+    assert z.width == 0.0f64;
+    set_window_frame_of(0 as *u8, g);
+    win.close();
 }
 
 // ---- appearance, adaptive tokens, drop payload (portable read hooks) --------

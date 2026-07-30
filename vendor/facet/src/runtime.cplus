@@ -260,6 +260,23 @@ fn window_close(sender: *u8) { backend::window_close(sender); return; }
 fn window_minimize(sender: *u8) { backend::window_minimize(sender); return; }
 fn window_zoom(sender: *u8) { backend::window_zoom(sender); return; }
 
+// The current screen's window frame, in the platform's screen coordinates
+// (bottom-left origin on macOS). A zero rect when no window is up. Read it to
+// persist per-project window placement — something the platform's own one-
+// frame-per-name autosave cannot do — and hand the same rect back to
+// set_window_frame unchanged.
+fn window_frame() -> core::Rect {
+    return backend::window_frame_of(CURRENT_WIN);
+}
+
+// Move and resize the current screen's window. A no-op when no window is up.
+// The platform clamps a frame that would land off every screen, so a frame
+// saved on a monitor that is no longer attached cannot strand the window.
+fn set_window_frame(frame: core::Rect) {
+    backend::set_window_frame_of(CURRENT_WIN, frame);
+    return;
+}
+
 // ---- run_screen -------------------------------------------------------------
 // run_component with the window read from the SCREEN itself: the component
 // also conforms to `Screen`, so its `chrome()` supplies what the 15 window

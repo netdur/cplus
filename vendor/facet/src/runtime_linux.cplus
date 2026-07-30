@@ -78,6 +78,13 @@ fn window_close(sender: *u8) { backend::window_close(sender); return; }
 fn window_minimize(sender: *u8) { backend::window_minimize(sender); return; }
 fn window_zoom(sender: *u8) { backend::window_zoom(sender); return; }
 
+// Window geometry (parity with the macOS facade). Not yet honored by the gtk
+// backend: reads come back zero, writes are no-ops.
+fn window_frame() -> core::Rect {
+    return core::Rect { x: 0.0f64, y: 0.0f64, width: 0.0f64, height: 0.0f64 };
+}
+fn set_window_frame(frame: core::Rect) { return; }
+
 // ---- screens + App (parity with the macOS facade — see runtime.cplus) -------
 // The gtk backend has no open/loop split yet: backend::run blocks per window.
 // run_screen and App keep the same shape and semantics an app writes against;
