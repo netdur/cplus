@@ -232,6 +232,16 @@ fn colored_label(text: str, color: ak::Color, size: f64 = 13.0f64, bold: bool = 
 // A multi-line label that wraps to its flexed width.
 fn wrap_label(text: str, size: f64 = 13.0f64, secondary: bool = false, agent_id: str = "") -> flex::Node {
     let l = ak::TextField::wrapping_label_with_string(text);
+    // `+[NSTextField wrappingLabelWithString:]` returns a SELECTABLE field,
+    // unlike `labelWithString:` — so a wrapping label put a text I-beam under
+    // the pointer and let its text be drag-selected, while a plain `label` in
+    // the same card showed an arrow. Nothing asked for that; it rode in with
+    // the factory, because wrapping is the only reason to use it.
+    //
+    // Off, so the two label kinds agree. If selectable text is wanted it should
+    // be the OPT-IN — a label that eats the pointer is the surprising default.
+    // bugs/wrap-label-is-selectable-so-labels-show-an-i-beam.md
+    l.set_selectable(false);
     l.as_control().set_font(ak::Font::system_font_of_size(size));
     if secondary { l.set_text_color(ak::Color::secondary_label_color()); }
     tag_agent(l.as_view().raw(), agent_id, identity::Role::Text);
@@ -2685,6 +2695,32 @@ fn scroll_sync_owned_elasticity(s: ak::ScrollView, horizontal: bool, vf: rt::Rec
         ak::ScrollElasticity::None
     };
     if horizontal { s.set_horizontal_scroll_elasticity(e); } else { s.set_vertical_scroll_elasticity(e); }
+
+    // SECOND DEFENCE: if the CROSS axis overflows, say so instead of clipping
+    // silently. Content should exactly fill the cross axis — that is what
+    // `scroll_measure_for` arranges — so overflow here means something upstream
+    // is wrong, and a person's first symptom was content simply unreachable
+    // (every lane's "+ Add a card" button 175pt below the bottom edge, with no
+    // scroller offering to go there). Autohide means the scroller only appears
+    // when it is actually needed.
+    // bugs/scroll-content-not-relaid-out-when-the-viewport-resizes.md
+    let cross_over: bool = if horizontal { rf.height > vf.h + 0.5f64 } else { rf.width > vf.w + 0.5f64 };
+    if horizontal { s.set_has_vertical_scroller(cross_over); } else { s.set_has_horizontal_scroller(cross_over); }
+    return;
+}
+
+// A scroll's viewport changed size, so its content has to be measured again
+// against the new one. `ctx` is the NSScrollView.
+//
+// The content is laid out at FILL time against the viewport's measured size,
+// which is what makes a lane stretch to the board's height in the first place.
+// There was no equivalent on RESIZE: opening a drawer shrank the strip from
+// 664pt to 459pt and left every lane 634pt tall inside it, 175pt hanging below
+// the bottom edge with no vertical scroll to reach it. `reflow_scroll_content`
+// was already the right machinery — a structural verb takes the same path —
+// nothing was calling it when the viewport's own frame moved.
+fn scroll_viewport_resized(ctx: *u8) {
+    let _r: bool = reflow_scroll_content(ctx);
     return;
 }
 
@@ -2708,6 +2744,7 @@ fn fill_scroll(s: ak::ScrollView, take rows: flex::Node) -> f64 {
     apply(#addr_of(r), doc.raw(), true);
     s.set_document_view(ak::View::from_raw(doc.raw()));
     scroll_content_store(s.raw(), r, false);
+    akx::observe_frame_change(s.as_view(), scroll_viewport_resized, s.raw());
     return rf.height;
 }
 
@@ -2741,6 +2778,7 @@ fn fill_scroll_h(s: ak::ScrollView, take rows: flex::Node) -> f64 {
     apply(#addr_of(r), doc.raw(), true);
     s.set_document_view(ak::View::from_raw(doc.raw()));
     scroll_content_store(s.raw(), r, true);
+    akx::observe_frame_change(s.as_view(), scroll_viewport_resized, s.raw());
     return rf.height;
 }
 
@@ -5340,6 +5378,32 @@ fn tree_live_outline_itematrow_messages_items_safely() {
         r = r +% (1 as i64);
     }
     return;
+}
+
+// A label is not a text editor. `+[NSTextField wrappingLabelWithString:]`
+// returns a SELECTABLE field while `labelWithString:` does not, so a wrapping
+// label put an I-beam under the pointer and let its text be drag-selected,
+// while a plain label beside it showed an arrow. On a card you click and drag,
+// that reads as broken.
+// bugs/wrap-label-is-selectable-so-labels-show-an-i-beam.md
+#[test]
+fn both_label_kinds_are_non_selectable() {
+    let sel: *u8 = rt::sel(#str_ptr("isSelectable\0"));
+
+    var w: flex::Node = wrap_label("a wrapping label", size: 12.0f64);
+    assert w.has_payload();
+    assert rt::msg_i8(w.payload(), sel) == (0 as i8);
+
+    // The plain one was always right; asserted so the two cannot drift apart
+    // again, which is how this was noticed at all.
+    var l: flex::Node = label("a plain label");
+    assert l.has_payload();
+    assert rt::msg_i8(l.payload(), sel) == (0 as i8);
+
+    // An editable field IS selectable — the fix must not reach past labels.
+    var f: flex::Node = text_field(value: "typed");
+    assert f.has_payload();
+    assert rt::msg_i8(f.payload(), sel) != (0 as i8);
 }
 
 #[test]

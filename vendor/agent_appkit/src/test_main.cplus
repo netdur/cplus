@@ -810,3 +810,67 @@ fn autoscroll_moves_a_clip_view_that_has_range() {
     assert near(after.y, before.y);     // the axis with no range stayed put
     return;
 }
+
+// ---- set_text must tell the app, for controls that are told ----------------
+
+static SLIDER_CHANGES: i32 = 0;
+static FIELD_ACTIONS: i32 = 0;
+fn on_slider_changed(sender: *u8, ctx: *u8) { SLIDER_CHANGES = SLIDER_CHANGES + 1; return; }
+fn on_field_action(sender: *u8, ctx: *u8) { FIELD_ACTIONS = FIELD_ACTIONS + 1; return; }
+
+// A slider has no read-on-demand moment — the app learns its value from
+// `on_change` — so writing it without firing that leaves the UI and the model
+// disagreeing with nothing to say which is right. Measured on iris: an agent
+// `set_text` moved the knob while the percent field mirroring it kept the old
+// number.
+// bugs/agent-set-text-does-not-notify-the-app.md
+#[test]
+fn set_text_on_a_value_control_fires_the_apps_change_handler() {
+    let win = fixture_window(320.0f64, 200.0f64);
+    let content = content_of(win);
+    let sl = ak::Slider::new();
+    sl.set_min_value(0.0f64);
+    sl.set_max_value(1.0f64);
+    sl.as_control().set_double_value(0.55f64);
+    sl.as_view().set_frame(rt::Rect { x: 10.0, y: 10.0, w: 200.0, h: 24.0 });
+    content.add_subview(sl.as_view());
+    akx::set_control_action_ctx(sl.as_control(), on_slider_changed, null_ctx());
+    agent::set_agent_id(sl.as_view().raw(), "progress");
+    agent::set_affordance_drive(sl.as_view().raw(), identity::Role::Input, identity::drive_text());
+
+    SLIDER_CHANGES = 0;
+    var s: agent::Surface = agent::open(win.raw());
+    assert surface::outcome_eq(
+        s.set_text("progress", "0.7", s.text_version("progress")),
+        surface::Outcome::Allowed);
+
+    // The control moved...
+    let got: f64 = sl.as_control().double_value();
+    assert got > 0.65f64;
+    assert got < 0.75f64;
+    // ...AND the app was told, which is the whole bug.
+    assert SLIDER_CHANGES == (1 as i32);
+}
+
+// A text field must NOT be notified: its action is the ENTER key, so firing it
+// from a write would turn "type into this field" into "submit this form" — a
+// worse surprise than the one being fixed. A field is read on demand.
+#[test]
+fn set_text_on_a_field_does_not_fire_its_enter_action() {
+    let win = fixture_window(320.0f64, 200.0f64);
+    let content = content_of(win);
+    let f = ak::TextField::new_with_frame(rt::Rect { x: 10.0, y: 50.0, w: 200.0, h: 24.0 });
+    content.add_subview(f.as_view());
+    akx::set_control_action_ctx(f.as_control(), on_field_action, null_ctx());
+    agent::set_agent_id(f.as_view().raw(), "name");
+
+    FIELD_ACTIONS = 0;
+    var s: agent::Surface = agent::open(win.raw());
+    assert surface::outcome_eq(
+        s.set_text("name", "typed", s.text_version("name")),
+        surface::Outcome::Allowed);
+
+    let txt: text::Text = bridge::to_text(rt::msg_id(f.as_view().raw(), rt::sel(#str_ptr("stringValue\0"))));
+    assert txt.view() == "typed";      // the write landed
+    assert FIELD_ACTIONS == (0 as i32); // and submitted nothing
+}

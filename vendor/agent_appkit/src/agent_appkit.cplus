@@ -106,6 +106,61 @@ fn ensure_scroll_method() {
     return;
 }
 
+// Tell the app the value changed, the way a real edit would.
+//
+// A VALUE control — slider, stepper, popup, switch — reports through its
+// target/action; that is how `facet::slider(..., on_change, ctx)` learns
+// anything at all, because a slider has no read-on-demand moment the way a text
+// field does. Writing the control without firing it left the UI and the app's
+// model silently disagreeing: iris's card sheet mirrors a slider and a typed
+// percent field, and an agent `set_text` on the slider moved the knob while the
+// field kept the old number, with nothing in describe_ui saying which was right.
+//
+// NOT fired for text. An NSTextField's action is its ENTER key, so firing it
+// here would turn a field write into a form submission — a much worse surprise
+// than the one being fixed. A field is read on demand, so nothing is owed.
+// bugs/agent-set-text-does-not-notify-the-app.md
+static SEND_ACTION_METHOD_REGISTERED: bool = false;
+
+fn cplus_agent_send_action(view: *u8, _cmd: *u8, _sender: *u8) {
+    if !responds_to(view, #str_ptr("sendAction:to:\0")) { return; }
+    let action: *u8 = rt::msg_id(view, rt::sel(#str_ptr("action\0")));
+    if is_null(action) { return; }
+    let target: *u8 = rt::msg_id(view, rt::sel(#str_ptr("target\0")));
+    let _sent: i8 = rt::msg_i8_id_id(view, rt::sel(#str_ptr("sendAction:to:\0")), action, target);
+    return;
+}
+
+fn ensure_send_action_method() {
+    if { SEND_ACTION_METHOD_REGISTERED } { return; }
+    let cls: *u8 = rt::get_class(#str_ptr("NSControl\0"));
+    if !is_null(cls) {
+        rt::add_method_action(
+            cls,
+            rt::sel(#str_ptr("cplusAgentSendAction:\0")),
+            cplus_agent_send_action,
+            #str_ptr("v@:@\0"),
+        );
+    }
+    { SEND_ACTION_METHOD_REGISTERED = true; }
+    return;
+}
+
+// Whether writing this view's value owes the app a notification.
+fn value_control_notifies(v: *u8) -> bool {
+    if is_null(v) { return false; }
+    if is_kind(v, #str_ptr("NSTextField\0")) { return false; }
+    if is_kind(v, #str_ptr("NSTextView\0")) { return false; }
+    return is_kind(v, #str_ptr("NSControl\0"));
+}
+
+fn notify_value_changed_on_main(view: *u8) {
+    if !value_control_notifies(view) { return; }
+    ensure_send_action_method();
+    perform_on_main(view, rt::sel(#str_ptr("cplusAgentSendAction:\0")), null());
+    return;
+}
+
 // Scroll `view`'s bounds into view on the main thread.
 fn scroll_visible_on_main(view: *u8) {
     if on_main_thread() {
@@ -870,6 +925,11 @@ impl Surface {
                     #str_ptr("setStringValue:\0")
                 };
                 perform_on_main(v, rt::sel(sel_name), ns);
+                // ...and tell the app, for controls whose contract is "you are
+                // told when I change". `click` fires the handler it authorizes;
+                // without this, `set_text` was the one verb that drove a control
+                // behind the app's back.
+                notify_value_changed_on_main(v);
                 this.versions.bump(node);
                 return surface::Outcome::Allowed;
             }

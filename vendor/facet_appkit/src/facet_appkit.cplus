@@ -5997,6 +5997,66 @@ fn an_axis_with_range_keeps_its_elasticity() {
     unmount_all();
 }
 
+// A scroll must re-lay-out its content when its VIEWPORT resizes. The content
+// is measured against the viewport at fill time — that is what makes a lane
+// stretch to the board's height — and there was no equivalent on resize.
+//
+// Measured on iris, opening the terminal drawer: the strip resized correctly
+// (664 -> 459, so the flex tree above it did re-lay-out) while every lane
+// stayed 634pt tall inside it. 175pt of each lane hung below the bottom edge,
+// and because the strip scrolls sideways there was no vertical scroll to reach
+// it — the "+ Add a card" button was simply unreachable until the drawer closed.
+// bugs/scroll-content-not-relaid-out-when-the-viewport-resizes.md
+struct DrawerBoard { n: i64 }
+
+impl DrawerBoard: facet::Component {
+    fn build(ref this) -> facet::Node {
+        var cards: facet::Builder = facet::Builder::new();
+        cards.add(facet::label("card").key("dl:card"));
+        var col: facet::Builder = facet::Builder::new();
+        // grow(1) on the cross axis is what needs a definite viewport height.
+        col.add(facet::vstack(cards).key("dl:lane").grow(1.0f64));
+        var strip: facet::Builder = facet::Builder::new();
+        strip.add(facet::hstack(col));
+        return facet::scroll(strip, horizontal: true)
+            .frame(400.0f64, 300.0f64)
+            .key("dl:strip");
+    }
+}
+
+static DRAWER_BOARD: DrawerBoard = #zero::[DrawerBoard]();
+
+#[test]
+fn a_scroll_relays_out_its_content_when_the_viewport_resizes() {
+    unmount_all();
+    install();
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 400.0, h: 300.0 });
+    let _h: f64 = mount_component(DRAWER_BOARD.build, host: host.raw());
+
+    let strip: *u8 = facet::find("dl:strip").view();
+    assert strip != (0 as *u8);
+    let lane_fp: *u8 = facet::find("dl:lane").flex();
+    assert lane_fp != (0 as *u8);
+
+    // Opened at the viewport height.
+    let opened: f64 = { (*(lane_fp as *flex::Node)).layout_frame().height };
+    assert approx(opened, 300.0f64);
+
+    // THE DRAWER OPENS: the scroll view shrinks. Setting the frame posts
+    // NSViewFrameDidChangeNotification, which is the seam the fix hangs on.
+    ak::View::from_raw(strip).set_frame(rt::Rect { x: 0.0, y: 0.0, w: 400.0, h: 180.0 });
+
+    // The content followed. Before the fix it stayed at 300 inside a 180pt
+    // viewport — 120pt hanging below the edge, unreachable.
+    let after: f64 = { (*(lane_fp as *flex::Node)).layout_frame().height };
+    assert approx(after, 180.0f64);
+
+    // And back again, so this is a re-measure and not a one-way clamp.
+    ak::View::from_raw(strip).set_frame(rt::Rect { x: 0.0, y: 0.0, w: 400.0, h: 300.0 });
+    assert approx({ (*(lane_fp as *flex::Node)).layout_frame().height }, 300.0f64);
+    unmount_all();
+}
+
 // A structural verb inside a horizontal scroll must re-measure with the same
 // available size the FILL used. `fill_scroll_h` passes the viewport height as
 // the definite cross axis (aa01a3c); the incremental path kept the vertical
