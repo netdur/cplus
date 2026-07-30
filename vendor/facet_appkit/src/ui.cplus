@@ -1366,6 +1366,7 @@ struct TreeNode {
     is_dir: bool,
     children: vec::Vec[*TreeNode],        // stable boxed child pointers
     opaque item: *u8,                    // cached objc wrapper (NSValue over this node; app-lifetime, leaked)
+    opaque payload: *u8,                 // caller's data behind this node (facet_appkit hangs the portable facet::TreeNode here)
 }
 
 // The outline view's shared delegate context: selection + (optionally) the
@@ -1470,9 +1471,24 @@ fn tree_node_is_dir(item: *u8) -> bool {
 // (recover it with `tree_node_path`). Add children with `tree_add_child`.
 fn tree_node(label: str, path: str, is_dir: bool) -> *TreeNode {
     let node: *TreeNode = { malloc(#size_of::[TreeNode]()) as *TreeNode };
-    { *node = TreeNode { label: text::from_str(label), path: text::from_str(path), is_dir: is_dir, children: vec::new::[*TreeNode](), item: 0 as *u8 }; }
+    { *node = TreeNode { label: text::from_str(label), path: text::from_str(path), is_dir: is_dir, children: vec::new::[*TreeNode](), item: 0 as *u8, payload: 0 as *u8 }; }
     { (*node).item = tree_wrap_node(node); }
     return node;
+}
+
+// Hang caller data behind a node / read it back off a wrapper item. The slot
+// is the caller's alone — this module never reads it. facet_appkit uses it to
+// map an outline item back to the portable facet::TreeNode it mirrors.
+fn tree_node_set_payload(node: *TreeNode, payload: *u8) {
+    { (*node).payload = payload; }
+    return;
+}
+
+fn tree_node_payload(item: *u8) -> *u8 {
+    if item == { 0 as *u8 } { return 0 as *u8; }
+    let n: *TreeNode = tree_unwrap(item);
+    if { n as *u8 } == { 0 as *u8 } { return 0 as *u8; }
+    return { (*n).payload };
 }
 
 // Append `child` to `parent`'s children, in order. `parent` should be a branch

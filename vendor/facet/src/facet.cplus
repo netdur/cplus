@@ -1496,6 +1496,71 @@ fn list(count: i64, row: fn(i64, *u8) -> Node, ctx: *u8 = 0 as *u8) -> Node {
     return f(count, row, ctx);
 }
 
+// ---- tree: the hierarchical sibling of `list` -------------------------------
+// The MODEL is portable and the ROWS are portable; only the outline widget is
+// native. Build a `TreeNode` model — pure data, safe to build OFF the main
+// thread — then describe it with `tree(root, row: ...)`, whose row builder
+// returns a facet `Node` like every other builder in this file. The backend
+// mounts the model into its native outline and renders each row's description.
+//
+// Nodes are heap-boxed and LEAKED on purpose (app-lifetime): a native outline
+// caches item identity by pointer for the life of the widget, so a freed node
+// behind a cached item is a use-after-free inside the toolkit. To refresh,
+// build a NEW tree and describe it again; never mutate a mounted one.
+
+extern fn malloc(n: usize) -> *u8;
+
+struct TreeNode {
+    label: text::Text,             // display name (basename)
+    path: text::Text,              // stable identity + the on_select payload
+    is_dir: bool,                  // branch (disclosure triangle) vs leaf
+    children: vec::Vec[*TreeNode],
+    opaque backend: *u8,           // the backend's per-node cache slot; apps never touch it
+}
+
+// A new node. `is_dir: true` marks an expandable branch even before it has
+// children — set it for a directory filled lazily. Add children in order with
+// `tree_add_child`.
+fn tree_node(label: str, path: str, is_dir: bool) -> *TreeNode {
+    let node: *TreeNode = { malloc(#size_of::[TreeNode]()) as *TreeNode };
+    { *node = TreeNode { label: text::from_str(label), path: text::from_str(path), is_dir: is_dir, children: vec::new::[*TreeNode](), backend: 0 as *u8 }; }
+    return node;
+}
+
+fn tree_add_child(parent: *TreeNode, child: *TreeNode) {
+    { (*parent).children.append(child); }
+    return;
+}
+
+// Everything `tree()` collected, handed to the backend as one unit so the
+// builder slot's signature survives growing a parameter.
+struct TreeSpec {
+    opaque root: *TreeNode,        // leaked app-lifetime nodes — nothing here frees them
+    on_select: fn(*TreeNode, *u8),             // ctx TRAILS — a component method binds directly
+    opaque select_ctx: *u8,
+    row: fn(*TreeNode, *u8) -> Node,           // returns the PORTABLE description; null = plain text cell
+    opaque row_ctx: *u8,
+    row_id: fn(*TreeNode, *u8) -> text::Text,  // per-row stable agent key; null = untagged rows
+    opaque row_id_ctx: *u8,
+    row_height: f64,                           // fixed row height; <= 0 = measure each row
+}
+
+static TREE_BUILDER: fn(*TreeSpec) -> Node = #zero::[fn(*TreeSpec) -> Node]();
+fn set_tree_builder(f: fn(*TreeSpec) -> Node) { TREE_BUILDER = f; return; }
+
+// A hierarchical outline over `root`. `row` builds each row's description and
+// receives the row's `*TreeNode` (read `label`/`path`/`is_dir` straight off
+// it); `on_select` fires with the selected node. Key the returned Node as
+// usual to name the tree for `find` and the agent surface. Read and drive the
+// mounted tree through the `Handle::tree_*` verbs. No backend: an empty box,
+// the same posture as `list`.
+fn tree(root: *TreeNode, on_select: fn(*TreeNode, *u8) = 0 as fn(*TreeNode, *u8), ctx: *u8 = 0 as *u8, row: fn(*TreeNode, *u8) -> Node = 0 as fn(*TreeNode, *u8) -> Node, row_ctx: *u8 = 0 as *u8, row_id: fn(*TreeNode, *u8) -> text::Text = 0 as fn(*TreeNode, *u8) -> text::Text, row_id_ctx: *u8 = 0 as *u8, row_height: f64 = 0.0f64) -> Node {
+    let f: fn(*TreeSpec) -> Node = TREE_BUILDER;
+    if f == (0 as fn(*TreeSpec) -> Node) { return box(); }
+    var spec: TreeSpec = TreeSpec { root: root, on_select: on_select, select_ctx: ctx, row: row, row_ctx: row_ctx, row_id: row_id, row_id_ctx: row_id_ctx, row_height: row_height };
+    return f(#addr_of(spec));
+}
+
 // ---- raise: the by-key update verb (bring a keyed element to the front) ------
 // facet is not reactive: to switch which of several overlapping elements shows,
 // you don't rebuild — you address the one tagged `key` and bring it to the front
@@ -1701,6 +1766,18 @@ static SET_LIST_COUNT_FN: fn(Handle, i64, bool, bool) -> bool = #zero::[fn(Handl
 fn set_set_list_count_fn(f: fn(Handle, i64, bool, bool) -> bool) { SET_LIST_COUNT_FN = f; return; }
 static GET_SIZE_FN: fn(Handle) -> Size = #zero::[fn(Handle) -> Size]();
 fn set_get_size_fn(f: fn(Handle) -> Size) { GET_SIZE_FN = f; return; }
+static TREE_SELECT_PATH_FN: fn(Handle, str) -> bool = #zero::[fn(Handle, str) -> bool]();
+fn set_tree_select_path_fn(f: fn(Handle, str) -> bool) { TREE_SELECT_PATH_FN = f; return; }
+static TREE_DESELECT_FN: fn(Handle) -> bool = #zero::[fn(Handle) -> bool]();
+fn set_tree_deselect_fn(f: fn(Handle) -> bool) { TREE_DESELECT_FN = f; return; }
+static TREE_EXPANDED_PATHS_FN: fn(Handle) -> vec::Vec[text::Text] = #zero::[fn(Handle) -> vec::Vec[text::Text]]();
+fn set_tree_expanded_paths_fn(f: fn(Handle) -> vec::Vec[text::Text]) { TREE_EXPANDED_PATHS_FN = f; return; }
+static TREE_EXPAND_PATH_FN: fn(Handle, str) -> bool = #zero::[fn(Handle, str) -> bool]();
+fn set_tree_expand_path_fn(f: fn(Handle, str) -> bool) { TREE_EXPAND_PATH_FN = f; return; }
+static TREE_COLLAPSE_PATH_FN: fn(Handle, str) -> bool = #zero::[fn(Handle, str) -> bool]();
+fn set_tree_collapse_path_fn(f: fn(Handle, str) -> bool) { TREE_COLLAPSE_PATH_FN = f; return; }
+static TREE_SET_EXPANDED_PATHS_FN: fn(Handle, take vec::Vec[text::Text]) -> bool = #zero::[fn(Handle, take vec::Vec[text::Text]) -> bool]();
+fn set_tree_set_expanded_paths_fn(f: fn(Handle, take vec::Vec[text::Text]) -> bool) { TREE_SET_EXPANDED_PATHS_FN = f; return; }
 static POINTER_POSITION_FN: fn(Handle) -> option::Option[Point] = #zero::[fn(Handle) -> option::Option[Point]]();
 fn set_pointer_position_fn(f: fn(Handle) -> option::Option[Point]) { POINTER_POSITION_FN = f; return; }
 fn set_get_value_fn(f: fn(Handle) -> f64) { GET_VALUE_FN = f; return; }
@@ -2547,6 +2624,60 @@ impl Handle {
     fn set_scroll_offset(this, x: f64, y: f64) -> Handle {
         let f: fn(Handle, f64, f64) -> bool = SET_SCROLL_OFFSET_FN;
         if f != (0 as fn(Handle, f64, f64) -> bool) { let _ok: bool = f(this, x, y); }
+        return this;
+    }
+
+    // ---- tree verbs (a handle on a `tree` element; no-ops elsewhere) --------
+
+    // Reveal + select the row for `path`: ancestors expand, the row selects
+    // and scrolls visible, and on_select does NOT fire — a reveal driven by an
+    // "active item changed" event must not re-emit that event. Chainable; a
+    // no-op on a miss, an empty path, or a path not in the model.
+    fn tree_select_path(this, path: str) -> Handle {
+        let f: fn(Handle, str) -> bool = TREE_SELECT_PATH_FN;
+        if f != (0 as fn(Handle, str) -> bool) { let _ok: bool = f(this, path); }
+        return this;
+    }
+
+    // Clear the selection without firing on_select. The native outline does
+    // not re-fire selection for a click on the already-selected row, so after
+    // an external "this item closed" event, deselect — then the next click is
+    // a fresh selection again.
+    fn tree_deselect(this) -> Handle {
+        let f: fn(Handle) -> bool = TREE_DESELECT_FN;
+        if f != (0 as fn(Handle) -> bool) { let _ok: bool = f(this); }
+        return this;
+    }
+
+    // The expanded branch paths, depth-first. Persist this and hand it back to
+    // tree_set_expanded_paths to restore a session. Empty on a miss.
+    fn tree_expanded_paths(this) -> vec::Vec[text::Text] {
+        let f: fn(Handle) -> vec::Vec[text::Text] = TREE_EXPANDED_PATHS_FN;
+        if f == (0 as fn(Handle) -> vec::Vec[text::Text]) { return vec::new::[text::Text](); }
+        return f(this);
+    }
+
+    // Expand the branch at `path`, expanding its ancestors as needed.
+    fn tree_expand_path(this, path: str) -> Handle {
+        let f: fn(Handle, str) -> bool = TREE_EXPAND_PATH_FN;
+        if f != (0 as fn(Handle, str) -> bool) { let _ok: bool = f(this, path); }
+        return this;
+    }
+
+    // Collapse the branch at `path` (ancestors stay open).
+    fn tree_collapse_path(this, path: str) -> Handle {
+        let f: fn(Handle, str) -> bool = TREE_COLLAPSE_PATH_FN;
+        if f != (0 as fn(Handle, str) -> bool) { let _ok: bool = f(this, path); }
+        return this;
+    }
+
+    // Restore exactly this expansion set (collapse everything, then expand the
+    // saved paths). RESTORE EXPANSION BEFORE SELECTION: the opening collapse
+    // drops every row, and a selection whose row goes away is cleared — so a
+    // tree_select_path done first would be undone here.
+    fn tree_set_expanded_paths(this, take paths: vec::Vec[text::Text]) -> Handle {
+        let f: fn(Handle, take vec::Vec[text::Text]) -> bool = TREE_SET_EXPANDED_PATHS_FN;
+        if f != (0 as fn(Handle, take vec::Vec[text::Text]) -> bool) { let _ok: bool = f(this, paths); }
         return this;
     }
 
@@ -6883,4 +7014,103 @@ fn pointer_position_forwards_and_defaults_to_none() {
     }
     assert PPOS_CALLS == 1;
     POINTER_POSITION_FN = #zero::[fn(Handle) -> option::Option[Point]]();
+}
+
+// ---- portable tree ----------------------------------------------------------
+
+static TB_ROOT_PATH: text::Text = #zero::[text::Text]();
+static TB_ROW_HEIGHT: f64 = 0.0f64;
+static TB_HAD_ROW: bool = false;
+
+fn tb_fake(spec: *TreeSpec) -> Node {
+    TB_ROOT_PATH = text::from_str({ (*(*spec).root).path }.view());
+    TB_ROW_HEIGHT = { (*spec).row_height };
+    TB_HAD_ROW = { (*spec).row } != (0 as fn(*TreeNode, *u8) -> Node);
+    return label("tree-here");
+}
+
+fn tb_row(item: *TreeNode, ctx: *u8) -> Node { return label("row"); }
+
+#[test]
+fn tree_nodes_build_a_pure_data_model() {
+    let root: *TreeNode = tree_node("proj", "/p", true);
+    let dir: *TreeNode = tree_node("src", "/p/src", true);
+    let file: *TreeNode = tree_node("main.cplus", "/p/src/main.cplus", false);
+    tree_add_child(root, dir);
+    tree_add_child(dir, file);
+    assert { (*root).label.view() } == "proj";
+    assert { (*root).children.count() } == (1 as usize);
+    assert { (*dir).children.count() } == (1 as usize);
+    assert { (*file).is_dir } == false;
+    // The backend slot starts empty — the model itself touches no platform.
+    assert { (*root).backend } == (0 as *u8);
+}
+
+#[test]
+fn tree_forwards_the_spec_to_the_backend_slot() {
+    // No slot: an empty box, the same no-backend posture as `list`.
+    TREE_BUILDER = #zero::[fn(*TreeSpec) -> Node]();
+    let root: *TreeNode = tree_node("proj", "/p", true);
+    let none: Node = tree(root);
+    assert none.kind == kind_box();
+    // Registered: the spec arrives intact and the builder's node comes back.
+    set_tree_builder(tb_fake);
+    let n: Node = tree(root, row: tb_row, row_height: 34.0f64);
+    assert TB_ROOT_PATH.view() == "/p";
+    assert TB_ROW_HEIGHT == 34.0f64;
+    assert TB_HAD_ROW;
+    assert n.kind == kind_label();
+    TREE_BUILDER = #zero::[fn(*TreeSpec) -> Node]();
+}
+
+static TV_SELECTED: text::Text = #zero::[text::Text]();
+static TV_DESELECTS: i32 = 0;
+static TV_EXPANDED: text::Text = #zero::[text::Text]();
+static TV_COLLAPSED: text::Text = #zero::[text::Text]();
+static TV_RESTORED: usize = 0 as usize;
+
+fn tv_select_fake(h: Handle, path: str) -> bool { TV_SELECTED = text::from_str(path); return true; }
+fn tv_deselect_fake(h: Handle) -> bool { TV_DESELECTS = TV_DESELECTS + 1; return true; }
+fn tv_expand_fake(h: Handle, path: str) -> bool { TV_EXPANDED = text::from_str(path); return true; }
+fn tv_collapse_fake(h: Handle, path: str) -> bool { TV_COLLAPSED = text::from_str(path); return true; }
+fn tv_restore_fake(h: Handle, take paths: vec::Vec[text::Text]) -> bool { TV_RESTORED = paths.count(); return true; }
+fn tv_expanded_fake(h: Handle) -> vec::Vec[text::Text] {
+    var v: vec::Vec[text::Text] = vec::new::[text::Text]();
+    v.append(text::from_str("/p/src"));
+    return v;
+}
+
+#[test]
+fn handle_tree_verbs_forward_and_noop_without_a_backend() {
+    let m: Handle = Handle::missing();
+    // No slots: every verb chains as a no-op, the reader answers empty.
+    TREE_SELECT_PATH_FN = #zero::[fn(Handle, str) -> bool]();
+    TREE_EXPANDED_PATHS_FN = #zero::[fn(Handle) -> vec::Vec[text::Text]]();
+    let _a: Handle = m.tree_select_path("/p/x").tree_deselect().tree_expand_path("/p").tree_collapse_path("/p");
+    assert m.tree_expanded_paths().count() == (0 as usize);
+    // Registered: each verb reaches its own slot.
+    set_tree_select_path_fn(tv_select_fake);
+    set_tree_deselect_fn(tv_deselect_fake);
+    set_tree_expanded_paths_fn(tv_expanded_fake);
+    set_tree_expand_path_fn(tv_expand_fake);
+    set_tree_collapse_path_fn(tv_collapse_fake);
+    set_tree_set_expanded_paths_fn(tv_restore_fake);
+    TV_DESELECTS = 0;
+    let _b: Handle = m.tree_select_path("/p/src/main.cplus").tree_deselect();
+    assert TV_SELECTED.view() == "/p/src/main.cplus";
+    assert TV_DESELECTS == 1;
+    let _c: Handle = m.tree_expand_path("/p/a").tree_collapse_path("/p/b");
+    assert TV_EXPANDED.view() == "/p/a";
+    assert TV_COLLAPSED.view() == "/p/b";
+    let open: vec::Vec[text::Text] = m.tree_expanded_paths();
+    assert open.count() == (1 as usize);
+    let _d: Handle = m.tree_set_expanded_paths(open);
+    assert TV_RESTORED == (1 as usize);
+    // Put the no-backend posture back.
+    TREE_SELECT_PATH_FN = #zero::[fn(Handle, str) -> bool]();
+    TREE_DESELECT_FN = #zero::[fn(Handle) -> bool]();
+    TREE_EXPANDED_PATHS_FN = #zero::[fn(Handle) -> vec::Vec[text::Text]]();
+    TREE_EXPAND_PATH_FN = #zero::[fn(Handle, str) -> bool]();
+    TREE_COLLAPSE_PATH_FN = #zero::[fn(Handle, str) -> bool]();
+    TREE_SET_EXPANDED_PATHS_FN = #zero::[fn(Handle, take vec::Vec[text::Text]) -> bool]();
 }

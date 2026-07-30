@@ -1457,6 +1457,120 @@ fn fak_list(count: i64, row: fn(i64, *u8) -> facet::Node, ctx: *u8) -> facet::No
     return native_widget(ui::list(count, facet_list_row_bridge, bx as *u8));
 }
 
+// ---- tree: bridge facet's portable tree to the @ui outline ------------------
+// facet::tree hands us a portable TreeNode model plus portable callbacks; the
+// @ui outline wants its own (objc-wrapped) node type and callbacks that take
+// wrapper items. Mirror the model once per node — the facet node's backend
+// slot caches its twin, so a re-mount of the same model reuses the wrappers
+// (outline item identity survives) instead of minting new ones — and hang the
+// facet node behind the twin, so every bridge recovers it from the item.
+
+struct FacetTreeCtx {
+    on_select: fn(*facet::TreeNode, *u8),
+    opaque select_ctx: *u8,
+    row: fn(*facet::TreeNode, *u8) -> facet::Node,
+    opaque row_ctx: *u8,
+    row_id: fn(*facet::TreeNode, *u8) -> text::Text,
+    opaque row_id_ctx: *u8,
+}
+
+fn fak_tree_item_node(item: *u8) -> *facet::TreeNode {
+    return { ui::tree_node_payload(item) as *facet::TreeNode };
+}
+
+fn fak_tree_select_bridge(item: *u8, ctx: *u8) {
+    let c: *FacetTreeCtx = { ctx as *FacetTreeCtx };
+    let f: fn(*facet::TreeNode, *u8) = { (*c).on_select };
+    if f == (0 as fn(*facet::TreeNode, *u8)) { return; }
+    let n: *facet::TreeNode = fak_tree_item_node(item);
+    if { n as *u8 } == { 0 as *u8 } { return; }
+    f(n, { (*c).select_ctx });
+    return;
+}
+
+fn fak_tree_row_bridge(item: *u8, ctx: *u8) -> flex::Node {
+    let c: *FacetTreeCtx = { ctx as *FacetTreeCtx };
+    let f: fn(*facet::TreeNode, *u8) -> facet::Node = { (*c).row };
+    let n: *facet::TreeNode = fak_tree_item_node(item);
+    if { n as *u8 } == { 0 as *u8 } {
+        var empty: facet::Node = facet::box();
+        return mount(#addr_of(empty));
+    }
+    var node: facet::Node = f(n, { (*c).row_ctx });
+    return mount(#addr_of(node));
+}
+
+fn fak_tree_row_id_bridge(item: *u8, ctx: *u8) -> text::Text {
+    let c: *FacetTreeCtx = { ctx as *FacetTreeCtx };
+    let f: fn(*facet::TreeNode, *u8) -> text::Text = { (*c).row_id };
+    let n: *facet::TreeNode = fak_tree_item_node(item);
+    if { n as *u8 } == { 0 as *u8 } { return text::from_str(""); }
+    return f(n, { (*c).row_id_ctx });
+}
+
+fn fak_tree_convert(n: *facet::TreeNode) -> *ui::TreeNode {
+    let cached: *u8 = { (*n).backend };
+    if cached != (0 as *u8) { return { cached as *ui::TreeNode }; }
+    let u: *ui::TreeNode = ui::tree_node({ (*n).label.view() }, { (*n).path.view() }, { (*n).is_dir });
+    ui::tree_node_set_payload(u, n as *u8);
+    { (*n).backend = u as *u8; }
+    let cnt: usize = { (*n).children.count() };
+    var i: usize = 0 as usize;
+    while i < cnt {
+        match { (*n).children.at_ptr(i) } {
+            option::Option[**facet::TreeNode]::Some(cp) => {
+                ui::tree_add_child(u, fak_tree_convert({ *cp }));
+            }
+            option::Option[**facet::TreeNode]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return u;
+}
+
+fn fak_tree(spec: *facet::TreeSpec) -> facet::Node {
+    let root: *facet::TreeNode = { (*spec).root };
+    if { root as *u8 } == { 0 as *u8 } { return facet::box(); }
+    let uroot: *ui::TreeNode = fak_tree_convert(root);
+    let bx: *FacetTreeCtx = { malloc(#size_of::[FacetTreeCtx]()) as *FacetTreeCtx };
+    { *bx = FacetTreeCtx { on_select: { (*spec).on_select }, select_ctx: { (*spec).select_ctx }, row: { (*spec).row }, row_ctx: { (*spec).row_ctx }, row_id: { (*spec).row_id }, row_id_ctx: { (*spec).row_id_ctx } }; }
+    // Null portable callbacks stay null at the @ui layer (its sentinel picks
+    // the native text cell / no selection hook / untagged rows).
+    var sel_bridge: fn(*u8, *u8) = 0 as fn(*u8, *u8);
+    if { (*spec).on_select } != (0 as fn(*facet::TreeNode, *u8)) { sel_bridge = fak_tree_select_bridge; }
+    var row_bridge: fn(*u8, *u8) -> flex::Node = 0 as fn(*u8, *u8) -> flex::Node;
+    if { (*spec).row } != (0 as fn(*facet::TreeNode, *u8) -> facet::Node) { row_bridge = fak_tree_row_bridge; }
+    var rid_bridge: fn(*u8, *u8) -> text::Text = 0 as fn(*u8, *u8) -> text::Text;
+    if { (*spec).row_id } != (0 as fn(*facet::TreeNode, *u8) -> text::Text) { rid_bridge = fak_tree_row_id_bridge; }
+    return native_widget(ui::tree(uroot, on_select: sel_bridge, ctx: bx as *u8, row: row_bridge, row_ctx: bx as *u8, row_id: rid_bridge, row_id_ctx: bx as *u8, row_height: { (*spec).row_height }));
+}
+
+// The Handle tree verbs: thin over the @ui outline verbs, which already take
+// whatever the handle's view resolves to (scroll host or outline alike).
+fn fak_tree_select_path(h: facet::Handle, path: str) -> bool {
+    ui::tree_select_path(h.view(), path);
+    return true;
+}
+fn fak_tree_deselect(h: facet::Handle) -> bool {
+    ui::tree_deselect(h.view());
+    return true;
+}
+fn fak_tree_expanded_paths(h: facet::Handle) -> vec::Vec[text::Text] {
+    return ui::tree_expanded_paths(h.view());
+}
+fn fak_tree_expand_path(h: facet::Handle, path: str) -> bool {
+    ui::tree_expand_path(h.view(), path);
+    return true;
+}
+fn fak_tree_collapse_path(h: facet::Handle, path: str) -> bool {
+    ui::tree_collapse_path(h.view(), path);
+    return true;
+}
+fn fak_tree_set_expanded_paths(h: facet::Handle, take paths: vec::Vec[text::Text]) -> bool {
+    ui::tree_set_expanded_paths(h.view(), paths);
+    return true;
+}
+
 // Register this backend's implementations of facet's neutral verbs (the native
 // recycling list, the by-key `raise`). Call once at startup, before the first
 // render (facet/runtime `run` does this).
@@ -1509,6 +1623,13 @@ fn install_async_pump() {
 
 fn install() {
     facet::set_list_builder(fak_list);
+    facet::set_tree_builder(fak_tree);
+    facet::set_tree_select_path_fn(fak_tree_select_path);
+    facet::set_tree_deselect_fn(fak_tree_deselect);
+    facet::set_tree_expanded_paths_fn(fak_tree_expanded_paths);
+    facet::set_tree_expand_path_fn(fak_tree_expand_path);
+    facet::set_tree_collapse_path_fn(fak_tree_collapse_path);
+    facet::set_tree_set_expanded_paths_fn(fak_tree_set_expanded_paths);
     facet::set_raise_fn(raise);
     facet::set_key_of_fn(key_of_impl);
     facet::set_item_of_fn(item_of_impl);
@@ -6626,6 +6747,101 @@ fn handle_set_count_drives_a_mounted_list_in_place() {
     let hp: facet::Handle = facet::Handle::of(plain.raw(), 0 as *u8, 0 as *u8, 0 as u32);
     let _p: facet::Handle = hp.set_count(5 as i64);
     let _m: facet::Handle = facet::Handle::missing().set_count(1 as i64);
+}
+
+static FTREE_SELECTED: text::Text = #zero::[text::Text]();
+
+fn ftree_on_select(n: *facet::TreeNode, ctx: *u8) {
+    FTREE_SELECTED = text::from_str({ (*n).path.view() });
+    return;
+}
+
+fn ftree_row(n: *facet::TreeNode, ctx: *u8) -> facet::Node {
+    return facet::label({ (*n).label.view() });
+}
+
+fn ftree_row_id(n: *facet::TreeNode, ctx: *u8) -> text::Text {
+    return "t:row:${(*n).path.view()}";
+}
+
+fn ftree_fixture() -> *facet::TreeNode {
+    let root: *facet::TreeNode = facet::tree_node("proj", "/p", true);
+    let dir: *facet::TreeNode = facet::tree_node("src", "/p/src", true);
+    let a: *facet::TreeNode = facet::tree_node("main.cplus", "/p/src/main.cplus", false);
+    let b: *facet::TreeNode = facet::tree_node("README.md", "/p/README.md", false);
+    facet::tree_add_child(root, dir);
+    facet::tree_add_child(dir, a);
+    facet::tree_add_child(root, b);
+    return root;
+}
+
+fn ftree_paths_contain(ref paths: vec::Vec[text::Text], want: str) -> bool {
+    var i: usize = 0 as usize;
+    while i < paths.count() {
+        match paths.at_ptr(i) {
+            option::Option[*text::Text]::Some(tp) => { if { (*tp).equals(want) } { return true; } }
+            option::Option[*text::Text]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
+
+#[test]
+fn facet_tree_mounts_the_portable_model_and_wires_the_bridges() {
+    install();
+    let root: *facet::TreeNode = ftree_fixture();
+    var n: facet::Node = facet::tree(root, on_select: ftree_on_select, row: ftree_row, row_id: ftree_row_id, row_height: 30.0f64);
+    var t: flex::Node = mount(#addr_of(n));
+    let sv: *u8 = t.payload();
+    assert sv != (0 as *u8);
+
+    // The outline's pinned model root is the ui TWIN of the portable root:
+    // same shape, and its wrapper item maps straight back to the facet node.
+    let uroot: *ui::TreeNode = ui::tree_root_of(sv);
+    assert { uroot as *u8 } != (0 as *u8);
+    assert { (*uroot).path.view() } == "/p";
+    assert { (*uroot).children.count() } == (2 as usize);
+    assert { fak_tree_item_node({ (*uroot).item }) as *u8 } == { root as *u8 };
+    // Conversion caches through the backend slot: converting again returns
+    // the SAME twin — outline item identity survives a re-mount.
+    assert { fak_tree_convert(root) as *u8 } == { uroot as *u8 };
+
+    // The row bridge renders the PORTABLE row description into a real cell.
+    var bctx: FacetTreeCtx = FacetTreeCtx { on_select: ftree_on_select, select_ctx: 0 as *u8, row: ftree_row, row_ctx: 0 as *u8, row_id: ftree_row_id, row_id_ctx: 0 as *u8 };
+    let cell: flex::Node = fak_tree_row_bridge({ (*uroot).item }, #addr_of(bctx) as *u8);
+    assert cell.payload() != (0 as *u8);
+    // ...and the select bridge fires the portable callback with the facet node.
+    FTREE_SELECTED = text::from_str("");
+    var dir_item: *u8 = 0 as *u8;
+    match { (*uroot).children.at_ptr(0 as usize) } {
+        option::Option[**ui::TreeNode]::Some(cp) => { dir_item = { (*(*cp)).item }; }
+        option::Option[**ui::TreeNode]::None => { assert false; }
+    }
+    fak_tree_select_bridge(dir_item, #addr_of(bctx) as *u8);
+    assert FTREE_SELECTED.view() == "/p/src";
+
+    // The Handle verbs drive the mounted outline PORTABLY: expansion round
+    // trip, then reveal-select (which must NOT fire on_select) and deselect.
+    let h: facet::Handle = facet::Handle::of(sv, 0 as *u8, 0 as *u8, 0 as u32);
+    let _e: facet::Handle = h.tree_expand_path("/p/src");
+    var open: vec::Vec[text::Text] = h.tree_expanded_paths();
+    assert ftree_paths_contain(open, "/p/src");
+    let _c: facet::Handle = h.tree_collapse_path("/p/src");
+    var open2: vec::Vec[text::Text] = h.tree_expanded_paths();
+    assert ftree_paths_contain(open2, "/p/src") == false;
+    let _r: facet::Handle = h.tree_set_expanded_paths(open);
+    var open3: vec::Vec[text::Text] = h.tree_expanded_paths();
+    assert ftree_paths_contain(open3, "/p/src");
+
+    FTREE_SELECTED = text::from_str("");
+    let _s: facet::Handle = h.tree_select_path("/p/src/main.cplus");
+    let ov: *u8 = ui::tree_outline(sv);
+    assert ak::OutlineView::from_raw(ov).as_table_view().selected_row() >= (0 as i64);
+    assert FTREE_SELECTED.is_empty();     // reveal-select stays silent
+    let _d: facet::Handle = h.tree_deselect();
+    assert ak::OutlineView::from_raw(ov).as_table_view().selected_row() == (-1 as i64);
+    unmount_all();
 }
 
 #[test]
