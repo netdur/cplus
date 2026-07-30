@@ -3106,7 +3106,23 @@ fn run_test(
     // Run the test binary. Its stdout is what `cpc test` prints; its exit
     // code equals the number of failing tests (clamped into [0, 255] so the
     // process-exit-code-as-u8 convention still fits).
-    let status = Command::new(&bin_out).status();
+    let mut run = Command::new(&bin_out);
+    // Stack-use-after-return is instrumented by clang but gated OFF at runtime
+    // (`-fsanitize-address-use-after-return=runtime` is the default), so an
+    // ASan run does not look for it unless asked. That is the class where a
+    // handler bound to a LOCAL outlives its frame — the one E0365 exists to
+    // reject — so a sanitizer sweep that cannot see it is missing the failure
+    // this project has actually shipped.
+    //
+    // Measured across all ten packages after the instrumentation fix: no cost
+    // outside noise (13.05s -> 13.01s on the slowest suite) and nothing new
+    // found. Free coverage, so it is on.
+    //
+    // A caller's own ASAN_OPTIONS wins — this is a default, not a policy.
+    if !sanitizers.is_empty() && std::env::var_os("ASAN_OPTIONS").is_none() {
+        run.env("ASAN_OPTIONS", "detect_stack_use_after_return=1");
+    }
+    let status = run.status();
     drop(bin_path);
     match status {
         Ok(s) => {
