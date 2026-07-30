@@ -3080,6 +3080,10 @@ struct Cancellable {
 }
 
 impl Cancellable {
+    // The inert handle: nothing pending, cancel is a no-op. For a struct field
+    // that a later call arms — the drop still cancels whatever was last armed.
+    fn none() -> Cancellable { return Cancellable { _id: 0 as u64, _cancel: #zero::[fn(u64)]() }; }
+
     // Idempotent, and safe after the callback has already run.
     fn cancel(ref this) {
         if this._id == (0 as u64) { return; }
