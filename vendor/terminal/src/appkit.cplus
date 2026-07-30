@@ -204,8 +204,21 @@ fn render(c: *TerminalContext) {
     return;
 }
 
+// Freeing the context also CLEARS the association that points at it. Every
+// handler below reaches the context by looking it up through the view, so
+// clearing it here is what makes them all safe at once — and it happens in the
+// one place that knows the memory is going away.
+//
+// This used to live only in `Widget::drop`, which left the two in sync by
+// convention. `destroy_context` is reachable from the dispatch cancel handler
+// as well, so a terminal torn down that way left the association pointing at
+// freed memory.
+// bugs/terminal-key-observer-outlives-its-context.md
 fn destroy_context(c: *TerminalContext) {
     if c == (0 as *TerminalContext) { return; }
+    // Read the view BEFORE dropping — the field is gone after drop_in_place.
+    let tv: *u8 = { (*c).text_view };
+    if tv != (0 as *u8) { synth::set_associated(tv, terminal_context_key(), 0 as *u8); }
     { #drop_in_place::[TerminalContext](c); }
     { free(c as *u8); }
     return;
@@ -416,8 +429,27 @@ fn resign_first_responder_imp(self_obj: *u8, cmd: *u8) -> i8 {
 // on the window, not the view. Registered with a nil object (any window), which
 // costs a repaint when some other window changes key and saves tracking when
 // this view is mounted, re-parented, or moved between windows.
+// `ctx` is the TEXT VIEW, not the context — the context is looked up through it,
+// exactly as `repaint_deferred` does.
+//
+// Carrying the raw `*TerminalContext` here was a crash on quit, every time: the
+// observer is pinned to the text view, which outlives the context, so after the
+// widget was dropped the handler still held a pointer to freed memory and the
+// next window key change read it. The guard was itself the use-after-free —
+// `cancel_requested` lives INSIDE the freed block, and a null check cannot help
+// because the pointer is dangling, not null.
+//
+// Going through the association fixes it by construction: `destroy_context`
+// nils it, so after teardown the lookup returns null and there is no dangling
+// pointer left to dereference.
+// bugs/terminal-key-observer-outlives-its-context.md
+static KEY_NOTE_CALLS: i32 = 0;
+fn key_note_calls() -> i32 { return KEY_NOTE_CALLS; }
+
 fn window_key_changed(ctx: *u8) {
-    let c: *TerminalContext = { ctx as *TerminalContext };
+    KEY_NOTE_CALLS = KEY_NOTE_CALLS + 1;
+    if ctx == (0 as *u8) { return; }
+    let c: *TerminalContext = { synth::get_associated(ctx, terminal_context_key()) as *TerminalContext };
     if c == (0 as *TerminalContext) || { (*c).cancel_requested } { return; }
     render(c);
     return;
@@ -443,8 +475,13 @@ fn new_terminal_text_view(frame: rt::Rect) -> ak::TextView {
     return ak::TextView::from_raw(rt::autorelease(inited));
 }
 
+// Same shape as `window_key_changed`, and the report did not name it: this is
+// registered through `observe_frame_change`, which pins the observer to the
+// SCROLL view — another lifetime that outlives the context. `ctx` is the text
+// view here too, so one lookup rule covers every observer.
 fn resize_pty(ctx: *u8) {
-    let c: *TerminalContext = { ctx as *TerminalContext };
+    if ctx == (0 as *u8) { return; }
+    let c: *TerminalContext = { synth::get_associated(ctx, terminal_context_key()) as *TerminalContext };
     if c == (0 as *TerminalContext) || { (*c).cancel_requested } { return; }
     let size: rt::Size = ak::ScrollView::from_raw({ (*c).scroll_view }).content_size();
     var cols: u16 = (size.w / { (*c).cell_width }) as u16;
@@ -528,16 +565,47 @@ fn start(
     { dispatch_source_set_cancel_handler_f(source, cancel_finished); }
     { dispatch_resume(source); }
 
-    akx::observe_frame_change(scroll.as_view(), resize_pty, c as *u8);
-    akx::observe_notification("NSWindowDidBecomeKeyNotification", 0 as *u8, window_key_changed, c as *u8,
+    // Every observer carries the TEXT VIEW as its context, never the raw
+    // `*TerminalContext`. The observers are pinned to views, which outlive the
+    // context, so a raw pointer here is a dangling read waiting for the next
+    // notification. The view is what the pin already ties them to.
+    akx::observe_frame_change(scroll.as_view(), resize_pty, tv.raw());
+    akx::observe_notification("NSWindowDidBecomeKeyNotification", 0 as *u8, window_key_changed, tv.raw(),
                               pin_on: tv.raw(), pin_key: focus_obs_key_became());
-    akx::observe_notification("NSWindowDidResignKeyNotification", 0 as *u8, window_key_changed, c as *u8,
+    akx::observe_notification("NSWindowDidResignKeyNotification", 0 as *u8, window_key_changed, tv.raw(),
                               pin_on: tv.raw(), pin_key: focus_obs_key_resigned());
-    resize_pty(c as *u8);
+    resize_pty(tv.raw());
     return option::Option[Widget]::Some(Widget { _scroll: scroll, _ctx: c });
 }
 
 fn release_view(p: *u8) { rt::release(p); return; }
+
+// ---- test seams -------------------------------------------------------------
+// The lifetime bug this file had is only observable from outside if a test can
+// see the text view, ask what the association currently points at, and force
+// teardown without waiting for the dispatch source to finish cancelling.
+
+fn text_view_of(w: Widget) -> *u8 { return { (*w._ctx).text_view }; }
+
+fn context_of(tv: *u8) -> *u8 {
+    if tv == (0 as *u8) { return 0 as *u8; }
+    return synth::get_associated(tv, terminal_context_key());
+}
+
+// Tear the context down NOW rather than when the source's cancel handler runs.
+// A test cannot pump the dispatch queue, and the bug is about what survives the
+// free — so the free has to be reachable synchronously.
+// `ref` so the widget's own `_ctx` can be cleared: a plain by-value parameter
+// BORROWS, so the caller's Widget would still drop afterwards and free the same
+// context a second time.
+fn force_destroy(ref w: Widget) {
+    let c: *TerminalContext = w._ctx;
+    if c == (0 as *TerminalContext) { return; }
+    w._ctx = 0 as *TerminalContext;
+    { (*c).session.close(); }
+    destroy_context(c);
+    return;
+}
 
 impl Widget {
     // Owned AppKit view handle. The Widget must stay alive while the terminal
@@ -598,6 +666,9 @@ impl Widget {
     fn drop(ref this) {
         let c: *TerminalContext = this._ctx;
         if c == (0 as *TerminalContext) { return; }
+        // Cleared here too, not only in `destroy_context`: teardown may be
+        // DEFERRED to the cancel handler, and a dropped widget must stop
+        // responding at once rather than when the source finishes.
         synth::set_associated({ (*c).text_view }, terminal_context_key(), 0 as *u8);
         { (*c).dispose_requested = true; }
         if { (*c).cancel_finished } {

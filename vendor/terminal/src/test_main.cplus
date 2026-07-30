@@ -4,6 +4,8 @@ import "./appkit" as terminal_ui;
 import "stdlib/option" as option;
 import "stdlib/text" as text;
 import "objc/runtime" as rt;
+import "objc/bridge" as bridge;
+import "stdlib/io" as io;
 import "appkit/appkit" as ak;
 
 extern fn usleep(us: u32) -> i32;
@@ -457,3 +459,64 @@ fn the_cursor_stays_one_cell_across_repeated_renders() {
     }
     return;
 }
+
+// ---- the window-key observer must not outlive the context ------------------
+
+// Post a notification by name with a nil object — what AppKit does when a
+// window becomes or resigns key. Every registered observer for that name runs.
+fn post_note(name: str) {
+    let nc: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSNotificationCenter\0")),
+                             rt::sel(#str_ptr("defaultCenter\0")));
+    rt::msg_void_id_id(nc, rt::sel(#str_ptr("postNotificationName:object:\0")),
+                       bridge::nsstring(name), 0 as *u8);
+    return;
+}
+
+// CRASH ON QUIT, every time, once the widget was dropped and the window then
+// closed: the key observer is pinned to the TEXT VIEW, which outlives the
+// malloc'd context it dereferenced. The guard was itself the use-after-free —
+// `cancel_requested` lives inside the freed block.
+//
+// Silent without ASan (freed-but-mapped memory reads as garbage and the process
+// exits), which is why it survived. Under ASan this is a heap-use-after-free on
+// the first post; run this file with `cpc test --asan` to see it fail without
+// the fix.
+// bugs/terminal-key-observer-outlives-its-context.md
+#[test]
+fn a_key_notification_after_teardown_touches_nothing() {
+    match terminal_ui::start() {
+        option::Option[terminal_ui::Widget]::Some(w) => {
+            var wv: terminal_ui::Widget = w;
+            assert wv.is_running();
+            let tv: *u8 = terminal_ui::text_view_of(wv);
+            assert tv != (0 as *u8);
+            // Alive: the context is reachable through the view.
+            assert terminal_ui::context_of(tv) != (0 as *u8);
+
+            wv.stop();
+            terminal_ui::force_destroy(wv);
+
+            // The association is cleared BY the free, so every observer that
+            // goes through it now finds nothing — no dangling pointer is left
+            // to dereference.
+            assert terminal_ui::context_of(tv) == (0 as *u8);
+
+            // The observers are still registered (pinned to a live view) and
+            // still fire. Before the fix each of these read freed memory.
+            // The observers are still registered (pinned to a live view) and
+            // still FIRE — asserted, because a test that proves the handler is
+            // safe while never invoking it proves nothing. Counted with `>`
+            // rather than an exact delta: widgets from earlier tests leave
+            // their own observers registered, so each post reaches several.
+            let before: i32 = terminal_ui::key_note_calls();
+            post_note("NSWindowDidBecomeKeyNotification");
+            let after_became: i32 = terminal_ui::key_note_calls();
+            assert after_became > before;
+            post_note("NSWindowDidResignKeyNotification");
+            assert terminal_ui::key_note_calls() > after_became;
+        }
+        option::Option[terminal_ui::Widget]::None => { assert false; }
+    };
+    return;
+}
+
