@@ -1062,6 +1062,117 @@ fn drop_text_of(drop_view: *u8) -> text::Text {
 }
 
 // ==========================================================================
+// after — a one-shot delayed callback that can be called off
+// ==========================================================================
+//
+// `performSelector:withObject:afterDelay:` schedules on the current run loop and
+// `cancelPreviousPerformRequestsWithTarget:` calls it off. The subtlety is the
+// TARGET: cancelling by target only works while we still hold the same object,
+// and a fired callback must not leave a target behind that a later cancel could
+// message. So each pending call gets an id, the registry owns its target's +1,
+// and both firing and cancelling go through the registry — an id that is not
+// there is a no-op, which is what makes `Cancellable.cancel()` safe to call
+// twice, or after the callback already ran.
+
+#[link_name = "objc_msgSend"]
+extern fn msg_perform_after(recv: *u8, sel: *u8, a_sel: *u8, obj: *u8, delay: f64);
+#[link_name = "objc_msgSend"]
+extern fn msg_cancel_perform(cls: *u8, sel: *u8, target: *u8, a_sel: *u8, obj: *u8);
+
+struct Pending {
+    _id: u64,
+    opaque _target: *u8,   // +1, released when it fires or is cancelled
+}
+
+static PENDING: vec::Vec[Pending] = #zero::[vec::Vec[Pending]]();
+static NEXT_AFTER_ID: u64 = 1 as u64;
+
+fn after_sel() -> *u8 { return rt::sel(#str_ptr("cplusAfterFire:\0")); }
+fn after_cb_key() -> *u8 { return { 28710 as *u8 }; }
+fn after_ctx_key() -> *u8 { return { 28711 as *u8 }; }
+fn after_id_key() -> *u8 { return { 28712 as *u8 }; }
+
+// Drop the registry entry for `id`, returning its target (+1, now the caller's
+// to release) or null when the id is unknown — already fired, or cancelled.
+fn after_take(id: u64) -> *u8 {
+    let reg: *vec::Vec[Pending] = { #addr_of(PENDING) };
+    let n: usize = { (*reg).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*reg).at_ptr(i) {
+            option::Option[*Pending]::Some(ep) => {
+                if { (*ep)._id } == id {
+                    let t: *u8 = { (*ep)._target };
+                    let _g: option::Option[Pending] = (*reg).swap_remove(i);
+                    return t;
+                }
+            }
+            option::Option[*Pending]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return 0 as *u8;
+}
+
+fn after_fire_imp(self_obj: *u8, cmd: *u8, sender: *u8) {
+    let id: u64 = { synth::get_associated(self_obj, after_id_key()) as u64 };
+    // Claim the id FIRST: a callback that re-arms (a debounce does) must not
+    // race its own entry, and a cancel arriving during the callback must find
+    // nothing to cancel.
+    let owned: *u8 = after_take(id);
+    let f: fn(*u8) = { synth::get_associated(self_obj, after_cb_key()) as fn(*u8) };
+    if { f as *u8 } != { 0 as *u8 } { f(synth::get_associated(self_obj, after_ctx_key())); }
+    if owned != { 0 as *u8 } { rt::release(owned); }
+    return;
+}
+
+fn after_target_class() -> *u8 {
+    let name: *u8 = #str_ptr("CplusExt_AfterTarget\0");
+    var cls: *u8 = rt::get_class(name);
+    if cls == { 0 as *u8 } {
+        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), name, 0 as usize);
+        let added: i8 = cplus_ext_add_action_method(cls, after_sel(), after_fire_imp, #str_ptr("v@:@\0"));
+        synth::register_class_pair(cls);
+    }
+    return cls;
+}
+
+// Schedule `cb(ctx)` after `seconds`; returns the id to cancel with (0 if the
+// target could not be made). Main-thread run loop, so the callback lands where
+// touching views is safe.
+fn after(seconds: f64, cb: fn(*u8), ctx: *u8) -> u64 {
+    let t: *u8 = synth::alloc_init_class(after_target_class());
+    if t == { 0 as *u8 } { return 0 as u64; }
+    let id: u64 = NEXT_AFTER_ID;
+    NEXT_AFTER_ID = NEXT_AFTER_ID +% (1 as u64);
+    synth::set_associated(t, after_cb_key(), { cb as *u8 });
+    synth::set_associated(t, after_ctx_key(), ctx);
+    synth::set_associated(t, after_id_key(), { id as *u8 });
+    let reg: *vec::Vec[Pending] = { #addr_of(PENDING) };
+    (*reg).append(Pending { _id: id, _target: t });   // the registry holds the +1
+    msg_perform_after(t, rt::sel(#str_ptr("performSelector:withObject:afterDelay:\0")),
+                      after_sel(), 0 as *u8, seconds);
+    return id;
+}
+
+// Call off a pending `after`. A no-op for an id that already fired or was
+// already cancelled, which is what lets `Cancellable.cancel()` be idempotent
+// and safe from a drop.
+fn cancel_after(id: u64) {
+    if id == (0 as u64) { return; }
+    let t: *u8 = after_take(id);
+    if t == { 0 as *u8 } { return; }
+    msg_cancel_perform(rt::get_class(#str_ptr("NSObject\0")),
+                       rt::sel(#str_ptr("cancelPreviousPerformRequestsWithTarget:selector:object:\0")),
+                       t, after_sel(), 0 as *u8);
+    rt::release(t);
+    return;
+}
+
+// How many callbacks are still pending — for tests and leak checks.
+fn after_pending_count() -> usize { return { PENDING.count() }; }
+
+// ==========================================================================
 // FacetScrollView — a nested scroll that hands back the axis it does not own
 // ==========================================================================
 //

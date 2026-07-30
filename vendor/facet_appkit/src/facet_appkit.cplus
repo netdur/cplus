@@ -1108,6 +1108,59 @@ fn dropped_text(sender: *u8) -> text::Text {
     return akx::drop_text_of(sender);
 }
 
+fn fak_drag_targeted(sender: *u8) -> bool {
+    return akx::drag_targeted(sender);
+}
+
+// ---- scroll offset ----------------------------------------------------------
+// A Handle resolves to the NSScrollView for a `scroll{}`; its clip view's bounds
+// origin IS the offset. Nothing here for a handle that is not a scroll: 0 on
+// read, no-op on write, the convention `value()` uses.
+fn scroll_clip_of(h: facet::Handle) -> *u8 {
+    let v: *u8 = h.view();
+    if v == (0 as *u8) { return 0 as *u8; }
+    if rt::msg_i8_id(v, rt::sel(#str_ptr("isKindOfClass:\0")), rt::get_class(#str_ptr("NSScrollView\0"))) == (0 as i8) {
+        return 0 as *u8;
+    }
+    return { rt::msg_id(v, rt::sel(#str_ptr("contentView\0"))) };
+}
+
+fn fak_scroll_offset_x(h: facet::Handle) -> f64 {
+    let clip: *u8 = scroll_clip_of(h);
+    if clip == (0 as *u8) { return 0.0f64; }
+    return rt::msg_rect(clip, rt::sel(#str_ptr("bounds\0"))).x;
+}
+
+fn fak_scroll_offset_y(h: facet::Handle) -> f64 {
+    let clip: *u8 = scroll_clip_of(h);
+    if clip == (0 as *u8) { return 0.0f64; }
+    return rt::msg_rect(clip, rt::sel(#str_ptr("bounds\0"))).y;
+}
+
+fn fak_set_scroll_offset(h: facet::Handle, x: f64, y: f64) -> bool {
+    let clip: *u8 = scroll_clip_of(h);
+    if clip == (0 as *u8) { return false; }
+    let doc: *u8 = { rt::msg_id(clip, rt::sel(#str_ptr("documentView\0"))) };
+    if doc == (0 as *u8) { return false; }
+    let b: rt::Rect = rt::msg_rect(clip, rt::sel(#str_ptr("bounds\0")));
+    let d: rt::Rect = rt::msg_rect(doc, rt::sel(#str_ptr("frame\0")));
+    // CLAMP: a saved offset replayed onto shorter content should land at the end
+    // rather than past it, which would show empty space below real rows.
+    var to: rt::Point = rt::Point { x: x, y: y };
+    let max_x: f64 = d.w - b.w;
+    let max_y: f64 = d.h - b.h;
+    if to.x < 0.0f64 { to.x = 0.0f64; }
+    if to.y < 0.0f64 { to.y = 0.0f64; }
+    if to.x > max_x { to.x = if max_x > 0.0f64 { max_x } else { 0.0f64 }; }
+    if to.y > max_y { to.y = if max_y > 0.0f64 { max_y } else { 0.0f64 }; }
+    rt::msg_void_point(clip, rt::sel(#str_ptr("scrollToPoint:\0")), to);
+    let sv: *u8 = h.view();
+    if rt::msg_i8_id(sv, rt::sel(#str_ptr("respondsToSelector:\0")), rt::sel(#str_ptr("reflectScrolledClipView:\0"))) != (0 as i8) {
+        rt::msg_void_id(sv, rt::sel(#str_ptr("reflectScrolledClipView:\0")), clip);
+    }
+    return true;
+}
+
 fn ak_gauge(ctx: *u8, np: *facet::Node) -> flex::Node {
     let li: ak::LevelIndicator = ak::LevelIndicator::new();
     li.set_min_value({ (*np).min_val });
@@ -1395,6 +1448,13 @@ fn install() {
     facet::set_key_of_fn(key_of_impl);
     facet::set_item_of_fn(item_of_impl);
     facet::set_dropped_text_fn(dropped_text);
+    facet::set_drag_targeted_fn(fak_drag_targeted);
+    facet::set_key_named_fn(key_named_impl);
+    facet::set_scroll_offset_x_fn(fak_scroll_offset_x);
+    facet::set_scroll_offset_y_fn(fak_scroll_offset_y);
+    facet::set_set_scroll_offset_fn(fak_set_scroll_offset);
+    facet::set_after_fn(akx::after);
+    facet::set_cancel_after_fn(akx::cancel_after);
     facet::set_is_dark_fn(is_dark_impl);
     facet::set_theme_changed_fn(theme_repaint);
     facet::set_component_at_fn(component_at_impl);
@@ -4405,6 +4465,12 @@ struct KeyTarget {
 }
 
 static KEY_TARGETS: vec::Vec[KeyTarget] = #zero::[vec::Vec[KeyTarget]]();
+
+// How many elements are currently registered to receive keys. The only way to
+// observe that `.on_key` actually took: a container gets a backing view LAZILY
+// from `apply` either way, so the view tree looks identical whether or not the
+// handler was wired — which is exactly why this failed in silence.
+fn key_target_count() -> usize { return { KEY_TARGETS.count() }; }
 static KEY_MONITOR: *u8 = 0 as *u8;
 
 // Is `view` the responder itself, or an ancestor of it? A composer's keys land
@@ -4489,6 +4555,30 @@ fn key_chars_impl(event: *u8) -> text::Text {
         option::Option[text::Text]::None => text::from_str(""),
     };
 }
+// Darwin virtual key codes mapped onto facet's named keys, the same way the
+// modifier flags below are mapped — so a screen branching on Escape holds no
+// platform constant. Unnamed keys report `key_none()`; the app reads
+// `key_chars` for text or `key_code` for the raw value.
+fn key_named_impl(event: *u8) -> i64 {
+    if event == (0 as *u8) { return facet::key_none(); }
+    let c: i64 = ak::Event::from_raw(event).key_code() as i64;
+    if c == (36 as i64) || c == (76 as i64) { return facet::key_return(); }   // Return / keypad Enter
+    if c == (48 as i64) { return facet::key_tab(); }
+    if c == (49 as i64) { return facet::key_space(); }
+    if c == (51 as i64) { return facet::key_delete(); }
+    if c == (117 as i64) { return facet::key_forward_delete(); }
+    if c == (53 as i64) { return facet::key_escape(); }
+    if c == (123 as i64) { return facet::key_arrow_left(); }
+    if c == (124 as i64) { return facet::key_arrow_right(); }
+    if c == (126 as i64) { return facet::key_arrow_up(); }
+    if c == (125 as i64) { return facet::key_arrow_down(); }
+    if c == (115 as i64) { return facet::key_home(); }
+    if c == (119 as i64) { return facet::key_end(); }
+    if c == (116 as i64) { return facet::key_page_up(); }
+    if c == (121 as i64) { return facet::key_page_down(); }
+    return facet::key_none();
+}
+
 // AppKit's flags mapped onto facet's portable bits, so an app never sees an
 // NSEventModifierFlag: shift 1<<17, control 1<<18, option 1<<19, command 1<<20.
 fn map_modifier_flags(f: u64) -> u64 {
@@ -6055,6 +6145,202 @@ fn a_scroll_relays_out_its_content_when_the_viewport_resizes() {
     ak::View::from_raw(strip).set_frame(rt::Rect { x: 0.0, y: 0.0, w: 400.0, h: 300.0 });
     assert approx({ (*(lane_fp as *flex::Node)).layout_frame().height }, 300.0f64);
     unmount_all();
+}
+
+// `.on_key` on a container was DROPPED unless something else happened to give
+// it a backing view — keys register against `view_ptr`, and a container only got
+// one when keyed or styled. Adding `.key(...)` for no reason but the key made it
+// work, which is the shape of a framework bug that reads as an app bug.
+//
+// The same silence applied to everything else `apply_style` pins on the view, so
+// this covers tooltip and accessibility too.
+// bugs/on-key-needs-a-view-that-on-key-does-not-ask-for.md
+fn ok_noop(event: *u8, ctx: *u8) { return; }
+
+struct KeyPane { n: i64 }
+
+impl KeyPane: facet::Component {
+    fn build(ref this) -> facet::Node {
+        var inner: facet::Builder = facet::Builder::new();
+        inner.add(facet::label("x"));
+        var page: facet::Builder = facet::Builder::new();
+        // NO key, NO style — only the declaration itself.
+        page.add(facet::vstack(inner).on_key(ok_noop));
+        var t: facet::Builder = facet::Builder::new();
+        t.add(facet::label("y"));
+        page.add(facet::vstack(t).tooltip("help"));
+        var a: facet::Builder = facet::Builder::new();
+        a.add(facet::label("z"));
+        page.add(facet::vstack(a).accessibility_label("named"));
+        return facet::column(page).key("kp:root");
+    }
+}
+
+static KEY_PANE: KeyPane = #zero::[KeyPane]();
+
+#[test]
+fn a_declaration_applied_to_a_view_forces_one_to_exist() {
+    unmount_all();
+    install();
+    let before: usize = key_target_count();
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 });
+    let _h: f64 = mount_component(KEY_PANE.build, host: host.raw());
+    assert facet::find("kp:root").view() != (0 as *u8);
+    // The KEY TARGET is the assertion, not the view tree. A container gets a
+    // backing view lazily from `apply` either way, so the hierarchy looks the
+    // same whether or not the handler was wired — two earlier versions of this
+    // test passed with the fix removed for exactly that reason. What differs is
+    // whether `apply_style` had a view to register against at mount time.
+    assert key_target_count() == before +% (1 as usize);
+    unmount_all();
+}
+
+// A strip WIDER than its viewport, so there is a real offset to save.
+struct WideStrip { n: i64 }
+
+impl WideStrip: facet::Component {
+    fn build(ref this) -> facet::Node {
+        var lanes: facet::Builder = facet::Builder::new();
+        for i in 0..4 {
+            var one: facet::Builder = facet::Builder::new();
+            one.add(facet::label("lane"));
+            lanes.add(facet::vstack(one).width(292.0f64));
+        }
+        var inner: facet::Builder = facet::Builder::new();
+        inner.add(facet::hstack(lanes));
+        return facet::scroll(inner, horizontal: true)
+            .frame(400.0f64, 300.0f64)
+            .key("ws:strip");
+    }
+}
+
+static WIDE_STRIP: WideStrip = #zero::[WideStrip]();
+
+// The scroll offset an app can save and restore. A rebuilt scroll starts at its
+// origin, so a strip rebuilt on every structural change snapped to the far left.
+#[test]
+fn a_scroll_offset_reads_writes_and_clamps() {
+    unmount_all();
+    install();
+    let host = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 400.0, h: 300.0 });
+    let _h: f64 = mount_component(WIDE_STRIP.build, host: host.raw());
+    let strip: facet::Handle = facet::find("ws:strip");
+    assert strip.found();
+
+    // 4 x 292 = 1168pt of lanes in a 400pt viewport: real range.
+    assert approx(strip.scroll_offset_x(), 0.0f64);
+    let _c: facet::Handle = strip.set_scroll_offset(40.0f64, 0.0f64);
+    assert approx(facet::find("ws:strip").scroll_offset_x(), 40.0f64);
+
+    // CLAMPED: past the end lands at the end, not beyond it — what a saved
+    // offset replayed onto shorter content must do.
+    let _c2: facet::Handle = facet::find("ws:strip").set_scroll_offset(99999.0f64, 0.0f64);
+    let clamped: f64 = facet::find("ws:strip").scroll_offset_x();
+    assert clamped > 40.0f64;        // it did move on
+    assert clamped < 99999.0f64;     // ...but landed at the end, not past it
+    // ...and negative clamps to the origin.
+    let _c3: facet::Handle = facet::find("ws:strip").set_scroll_offset(-500.0f64, -500.0f64);
+    assert approx(facet::find("ws:strip").scroll_offset_x(), 0.0f64);
+    assert approx(facet::find("ws:strip").scroll_offset_y(), 0.0f64);
+
+    // A handle that is not a scroll reads 0 and ignores the write, the same
+    // convention `value()` uses.
+    let miss: facet::Handle = facet::find("no-such-key");
+    assert approx(miss.scroll_offset_x(), 0.0f64);
+    let _c4: facet::Handle = miss.set_scroll_offset(10.0f64, 10.0f64);
+    assert approx(miss.scroll_offset_x(), 0.0f64);
+    unmount_all();
+}
+
+// ---- after: delayed work that can be called off ----------------------------
+
+static AFTER_FIRES: i32 = 0;
+fn after_probe(ctx: *u8) { AFTER_FIRES = AFTER_FIRES + 1; return; }
+
+// Run the main run loop for `secs` so a scheduled perform can land — the tests
+// have no App loop of their own.
+#[link_name = "objc_msgSend"]
+extern fn msg_run_until(recv: *u8, sel: *u8, date: *u8);
+fn pump(secs: f64) {
+    let d: *u8 = rt::msg_id_f64(rt::get_class(#str_ptr("NSDate\0")),
+        rt::sel(#str_ptr("dateWithTimeIntervalSinceNow:\0")), secs);
+    let rl: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSRunLoop\0")), rt::sel(#str_ptr("currentRunLoop\0")));
+    msg_run_until(rl, rt::sel(#str_ptr("runUntilDate:\0")), d);
+    return;
+}
+
+// The plain case: it fires, once, and the registry lets go of it afterwards.
+#[test]
+fn after_fires_once_and_releases_its_target() {
+    AFTER_FIRES = 0;
+    let before: usize = akx::after_pending_count();
+    let id: u64 = akx::after(0.02f64, after_probe, 0 as *u8);
+    assert id != (0 as u64);
+    assert akx::after_pending_count() == before +% (1 as usize);
+
+    pump(0.2f64);
+    assert AFTER_FIRES == (1 as i32);
+    // Claimed on fire, so a later cancel finds nothing — which is what makes
+    // cancelling a fired handle safe.
+    assert akx::after_pending_count() == before;
+    akx::cancel_after(id);
+    assert AFTER_FIRES == (1 as i32);
+}
+
+// Cancelling before the deadline means it never runs. This is the debounce:
+// every keystroke calls off the pending write and arms a new one.
+#[test]
+fn a_cancelled_after_never_fires() {
+    AFTER_FIRES = 0;
+    let before: usize = akx::after_pending_count();
+    let id: u64 = akx::after(0.15f64, after_probe, 0 as *u8);
+    akx::cancel_after(id);
+    assert akx::after_pending_count() == before;
+
+    pump(0.3f64);
+    assert AFTER_FIRES == (0 as i32);
+
+    // Idempotent: cancelling twice, and cancelling an id that never existed,
+    // are both no-ops. `Cancellable.cancel()` and its drop both land here.
+    akx::cancel_after(id);
+    akx::cancel_after(99999 as u64);
+    assert AFTER_FIRES == (0 as i32);
+}
+
+// Re-arming — the shape three of the four callers wanted. Only the last one
+// standing fires, and the registry does not grow while doing it.
+#[test]
+fn re_arming_after_leaves_exactly_one_pending() {
+    AFTER_FIRES = 0;
+    let before: usize = akx::after_pending_count();
+    var id: u64 = akx::after(0.4f64, after_probe, 0 as *u8);
+    for i in 0..5 {
+        akx::cancel_after(id);
+        id = akx::after(0.02f64, after_probe, 0 as *u8);
+    }
+    assert akx::after_pending_count() == before +% (1 as usize);
+
+    pump(0.25f64);
+    assert AFTER_FIRES == (1 as i32);
+    assert akx::after_pending_count() == before;
+}
+
+// The facet-level handle: a dropped Cancellable cancels, because forgetting to
+// is the mistake this type exists to prevent. A pending callback holds a raw
+// `this`, so a missed cancel is a use-after-free in a run-loop callback.
+#[test]
+fn a_dropped_cancellable_cancels() {
+    AFTER_FIRES = 0;
+    let before: usize = akx::after_pending_count();
+    {
+        var c: facet::Cancellable = facet::after(0.15f64, after_probe, 0 as *u8);
+        assert c.pending();
+        assert akx::after_pending_count() == before +% (1 as usize);
+    }   // c drops here
+    assert akx::after_pending_count() == before;
+
+    pump(0.3f64);
+    assert AFTER_FIRES == (0 as i32);
 }
 
 // A structural verb inside a horizontal scroll must re-measure with the same

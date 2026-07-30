@@ -526,6 +526,58 @@ fn new_drop_view(handler: fn(*u8, *u8), ctx: *u8) -> ak::View ;
 fn drop_text_of(drop_view: *u8) -> text::Text ;
 
 // ==========================================================================
+// after — a one-shot delayed callback that can be called off
+// ==========================================================================
+//
+// `performSelector:withObject:afterDelay:` schedules on the current run loop and
+// `cancelPreviousPerformRequestsWithTarget:` calls it off. The subtlety is the
+// TARGET: cancelling by target only works while we still hold the same object,
+// and a fired callback must not leave a target behind that a later cancel could
+// message. So each pending call gets an id, the registry owns its target's +1,
+// and both firing and cancelling go through the registry — an id that is not
+// there is a no-op, which is what makes `Cancellable.cancel()` safe to call
+// twice, or after the callback already ran.
+
+#[link_name = "objc_msgSend"]
+extern fn msg_perform_after(recv: *u8, sel: *u8, a_sel: *u8, obj: *u8, delay: f64);
+#[link_name = "objc_msgSend"]
+extern fn msg_cancel_perform(cls: *u8, sel: *u8, target: *u8, a_sel: *u8, obj: *u8);
+
+struct Pending {
+    _id: u64,
+    opaque _target: *u8,   // +1, released when it fires or is cancelled
+}
+
+static PENDING: vec::Vec[Pending] = #zero::[vec::Vec[Pending]]();
+static NEXT_AFTER_ID: u64 = 1 as u64;
+
+fn after_sel() -> *u8 ;
+fn after_cb_key() -> *u8 ;
+fn after_ctx_key() -> *u8 ;
+fn after_id_key() -> *u8 ;
+
+// Drop the registry entry for `id`, returning its target (+1, now the caller's
+// to release) or null when the id is unknown — already fired, or cancelled.
+fn after_take(id: u64) -> *u8 ;
+
+fn after_fire_imp(self_obj: *u8, cmd: *u8, sender: *u8) ;
+
+fn after_target_class() -> *u8 ;
+
+// Schedule `cb(ctx)` after `seconds`; returns the id to cancel with (0 if the
+// target could not be made). Main-thread run loop, so the callback lands where
+// touching views is safe.
+fn after(seconds: f64, cb: fn(*u8), ctx: *u8) -> u64 ;
+
+// Call off a pending `after`. A no-op for an id that already fired or was
+// already cancelled, which is what lets `Cancellable.cancel()` be idempotent
+// and safe from a drop.
+fn cancel_after(id: u64) ;
+
+// How many callbacks are still pending — for tests and leak checks.
+fn after_pending_count() -> usize ;
+
+// ==========================================================================
 // FacetScrollView — a nested scroll that hands back the axis it does not own
 // ==========================================================================
 //
