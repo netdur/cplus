@@ -1637,6 +1637,13 @@ fn notify_appearance_changed() {
 // A `Handle` is a NON-OWNING view onto a mounted element: it sets content, it
 // never moves or drops the node (that is `take`). Its fields are opaque plumbing
 // the backend fills; apps only call the mutators. It is chainable and Copy.
+// An element's size in points — pure data, no platform type. What
+// `Handle::size()` returns.
+struct Size {
+    width: f64,
+    height: f64,
+}
+
 struct Handle {
     opaque _view: *u8,     // located native view (0 = not found), owned by its superview
     opaque _flex: *u8,     // retained layout node (re-measure / relayout), owned by the tree
@@ -1673,6 +1680,8 @@ static SET_SCROLL_OFFSET_FN: fn(Handle, f64, f64) -> bool = #zero::[fn(Handle, f
 fn set_set_scroll_offset_fn(f: fn(Handle, f64, f64) -> bool) { SET_SCROLL_OFFSET_FN = f; return; }
 static SET_LIST_COUNT_FN: fn(Handle, i64, bool, bool) -> bool = #zero::[fn(Handle, i64, bool, bool) -> bool]();
 fn set_set_list_count_fn(f: fn(Handle, i64, bool, bool) -> bool) { SET_LIST_COUNT_FN = f; return; }
+static GET_SIZE_FN: fn(Handle) -> Size = #zero::[fn(Handle) -> Size]();
+fn set_get_size_fn(f: fn(Handle) -> Size) { GET_SIZE_FN = f; return; }
 fn set_get_value_fn(f: fn(Handle) -> f64) { GET_VALUE_FN = f; return; }
 fn set_get_text_fn(f: fn(Handle) -> text::Text) { GET_TEXT_FN = f; return; }
 fn set_get_index_fn(f: fn(Handle) -> i64) { GET_INDEX_FN = f; return; }
@@ -2532,6 +2541,16 @@ impl Handle {
         return this;
     }
 
+    // The element's laid-out size in points — what layout actually gave it,
+    // not what the description asked for. (0, 0) on a miss or before the
+    // first layout. Turning a split's divider position into a pane height
+    // needs this; `value()` alone cannot.
+    fn size(this) -> Size {
+        let f: fn(Handle) -> Size = GET_SIZE_FN;
+        if f == (0 as fn(Handle) -> Size) { return Size { width: 0.0f64, height: 0.0f64 }; }
+        return f(this);
+    }
+
     // Read the element's natural value: a `split`'s divider position (the leading
     // pane's trailing edge, in points), or a value control's number (slider /
     // stepper / progress / gauge). 0 on a miss or a kind with no value. The
@@ -2886,17 +2905,20 @@ static CANCEL_AFTER_FN: fn(u64) = #zero::[fn(u64)]();
 fn set_after_fn(f: fn(f64, fn(*u8), *u8) -> u64) { AFTER_FN = f; return; }
 fn set_cancel_after_fn(f: fn(u64)) { CANCEL_AFTER_FN = f; return; }
 
-// A pending `after`. Cancel it explicitly, or let it drop — a dropped handle
+// A pending revocable registration — an `after` timer, an `observe_size`
+// observation. Cancel it explicitly, or let it drop — a dropped handle
 // cancels, because the common mistake is forgetting to.
 struct Cancellable {
     _id: u64,          // 0 = nothing pending (never armed, already fired, or cancelled)
+    _cancel: fn(u64),  // the revoke slot `_id` came from; zero falls back to the timer slot
 }
 
 impl Cancellable {
     // Idempotent, and safe after the callback has already run.
     fn cancel(ref this) {
         if this._id == (0 as u64) { return; }
-        let f: fn(u64) = CANCEL_AFTER_FN;
+        var f: fn(u64) = this._cancel;
+        if f == (0 as fn(u64)) { f = CANCEL_AFTER_FN; }
         if f != (0 as fn(u64)) { f(this._id); }
         this._id = 0 as u64;
         return;
@@ -2916,8 +2938,32 @@ impl Cancellable {
 // handle — including by letting it drop.
 fn after(seconds: f64, cb: fn(*u8), ctx: *u8 = 0 as *u8) -> Cancellable {
     let f: fn(f64, fn(*u8), *u8) -> u64 = AFTER_FN;
-    if f == (0 as fn(f64, fn(*u8), *u8) -> u64) { return Cancellable { _id: 0 as u64 }; }
-    return Cancellable { _id: f(seconds, cb, ctx) };
+    if f == (0 as fn(f64, fn(*u8), *u8) -> u64) { return Cancellable { _id: 0 as u64, _cancel: #zero::[fn(u64)]() }; }
+    return Cancellable { _id: f(seconds, cb, ctx), _cancel: CANCEL_AFTER_FN };
+}
+
+// ---- element geometry -------------------------------------------------------
+// The laid-out size a node actually got — and a way to hear when it changes.
+// `Handle::value()` can read a split's divider position, but a divider position
+// is not a pane height, and intent flags (`drawer_open`) never learn about a
+// divider DRAG. The read half is `Handle::size()`; the event half is
+// `observe_size`, whose callback fires on the UI thread after every resize of
+// that element — divider drag, window resize, relayout.
+
+static OBSERVE_SIZE_FN: fn(Handle, fn(*u8), *u8) -> u64 = #zero::[fn(Handle, fn(*u8), *u8) -> u64]();
+static CANCEL_OBSERVE_SIZE_FN: fn(u64) = #zero::[fn(u64)]();
+fn set_observe_size_fn(f: fn(Handle, fn(*u8), *u8) -> u64) { OBSERVE_SIZE_FN = f; return; }
+fn set_cancel_observe_size_fn(f: fn(u64)) { CANCEL_OBSERVE_SIZE_FN = f; return; }
+
+// Run `cb(ctx)` on the UI thread whenever `h`'s element changes size. Cancel
+// through the returned handle — including by letting it drop — and cancel
+// BEFORE the observed element leaves the tree; an observation must not outlive
+// its subject. No backend, or a missing handle: an already-cancelled handle,
+// the same posture as `after`.
+fn observe_size(h: Handle, cb: fn(*u8), ctx: *u8 = 0 as *u8) -> Cancellable {
+    let f: fn(Handle, fn(*u8), *u8) -> u64 = OBSERVE_SIZE_FN;
+    if f == (0 as fn(Handle, fn(*u8), *u8) -> u64) { return Cancellable { _id: 0 as u64, _cancel: #zero::[fn(u64)]() }; }
+    return Cancellable { _id: f(h, cb, ctx), _cancel: CANCEL_OBSERVE_SIZE_FN };
 }
 
 // ---- async tasks on the UI thread -------------------------------------------
@@ -6710,4 +6756,67 @@ fn handle_set_count_forwards_to_the_backend_slot() {
     assert SLC_FORCE;
     // Put the no-backend posture back for the tests that follow.
     SET_LIST_COUNT_FN = #zero::[fn(Handle, i64, bool, bool) -> bool]();
+}
+
+// ---- portable geometry: size + observe_size ---------------------------------
+
+static GSZ_W: f64 = 0.0f64;
+static GSZ_H: f64 = 0.0f64;
+fn gsz_fake(h: Handle) -> Size { return Size { width: GSZ_W, height: GSZ_H }; }
+fn geo_noop(ctx: *u8) { return; }
+
+static OBS_CANCELLED: u64 = 0 as u64;
+static TMR_CANCELLED: u64 = 0 as u64;
+fn obs_arm_fake(h: Handle, cb: fn(*u8), ctx: *u8) -> u64 { return 7 as u64; }
+fn obs_cancel_fake(id: u64) { OBS_CANCELLED = id; return; }
+fn tmr_arm_fake(s: f64, cb: fn(*u8), ctx: *u8) -> u64 { return 9 as u64; }
+fn tmr_cancel_fake(id: u64) { TMR_CANCELLED = id; return; }
+
+#[test]
+fn handle_size_reads_through_the_backend_slot() {
+    // No slot: (0, 0), never a trap — the no-backend posture.
+    GET_SIZE_FN = #zero::[fn(Handle) -> Size]();
+    let m: Handle = Handle::missing();
+    let z: Size = m.size();
+    assert z.width == 0.0f64;
+    assert z.height == 0.0f64;
+    set_get_size_fn(gsz_fake);
+    GSZ_W = 320.0f64;
+    GSZ_H = 200.0f64;
+    let s: Size = m.size();
+    assert s.width == 320.0f64;
+    assert s.height == 200.0f64;
+    GET_SIZE_FN = #zero::[fn(Handle) -> Size]();
+}
+
+#[test]
+fn observe_size_cancels_through_its_own_slot_not_the_timer_slot() {
+    OBS_CANCELLED = 0 as u64;
+    TMR_CANCELLED = 0 as u64;
+    // No backend: an already-cancelled handle, the same posture as `after`.
+    OBSERVE_SIZE_FN = #zero::[fn(Handle, fn(*u8), *u8) -> u64]();
+    var none: Cancellable = observe_size(Handle::missing(), geo_noop);
+    assert none.pending() == false;
+    // Both slot pairs registered: each Cancellable revokes through the slot
+    // family that armed it — an observation must never cancel a timer's id.
+    set_observe_size_fn(obs_arm_fake);
+    set_cancel_observe_size_fn(obs_cancel_fake);
+    set_after_fn(tmr_arm_fake);
+    set_cancel_after_fn(tmr_cancel_fake);
+    var o: Cancellable = observe_size(Handle::missing(), geo_noop);
+    assert o.pending();
+    o.cancel();
+    assert OBS_CANCELLED == (7 as u64);
+    assert TMR_CANCELLED == (0 as u64);
+    assert o.pending() == false;
+    o.cancel();                                    // idempotent
+    assert OBS_CANCELLED == (7 as u64);
+    var t: Cancellable = after(1.0f64, geo_noop);
+    t.cancel();
+    assert TMR_CANCELLED == (9 as u64);
+    // Put the no-backend posture back for the tests that follow.
+    OBSERVE_SIZE_FN = #zero::[fn(Handle, fn(*u8), *u8) -> u64]();
+    CANCEL_OBSERVE_SIZE_FN = #zero::[fn(u64)]();
+    AFTER_FN = #zero::[fn(f64, fn(*u8), *u8) -> u64]();
+    CANCEL_AFTER_FN = #zero::[fn(u64)]();
 }

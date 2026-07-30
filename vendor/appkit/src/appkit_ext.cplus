@@ -614,7 +614,7 @@ fn observe_frame_change(view: ak::View, on_resize: fn(*u8), ctx: *u8) {
 // `object`, pinning the observer target to `pin_on` (it lives as long as that
 // owner; selector-based observers auto-unregister on dealloc). `pin_key` keeps
 // different observer kinds on the same owner from evicting each other.
-fn observe_notification(name: str, object: *u8, handler: fn(*u8), ctx: *u8, pin_on: *u8, pin_key: *u8) {
+fn frame_obs_class() -> *u8 {
     let cls_name: *u8 = #str_ptr("CplusExt_FrameObserver\0");
     var cls: *u8 = rt::get_class(cls_name);
     if cls == { 0 as *u8 } {
@@ -622,7 +622,11 @@ fn observe_notification(name: str, object: *u8, handler: fn(*u8), ctx: *u8, pin_
         let added: i8 = cplus_ext_add_action_method(cls, frame_obs_sel(), frame_obs_imp, #str_ptr("v@:@\0"));
         synth::register_class_pair(cls);
     }
-    let t: *u8 = synth::alloc_init_class(cls);
+    return cls;
+}
+
+fn observe_notification(name: str, object: *u8, handler: fn(*u8), ctx: *u8, pin_on: *u8, pin_key: *u8) {
+    let t: *u8 = synth::alloc_init_class(frame_obs_class());
     synth::set_associated(t, frame_obs_handler_key(), { handler as *u8 });
     synth::set_associated(t, frame_obs_ctx_key(), ctx);
     let nc: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSNotificationCenter\0")), rt::sel(#str_ptr("defaultCenter\0")));
@@ -1171,6 +1175,80 @@ fn cancel_after(id: u64) {
 
 // How many callbacks are still pending — for tests and leak checks.
 fn after_pending_count() -> usize { return { PENDING.count() }; }
+
+// ==========================================================================
+// observe_frame — a frame-change observation that can be called off
+// ==========================================================================
+//
+// `observe_frame_change` pins its observer to the view: the observation lives
+// exactly as long as the view, and nothing can stop it earlier. facet's
+// `observe_size` needs the other lifetime — the OBSERVER decides when to stop
+// (a `Cancellable` drops). Same registry discipline as `after`: each
+// observation gets an id, the registry owns its target's +1, and cancelling an
+// id that is not there is a no-op. Cancelling before the observed view goes
+// away is the caller's discipline, same as a service worker not outliving its
+// service.
+
+struct FrameObs {
+    _id: u64,
+    opaque _target: *u8,   // +1, released on cancel
+}
+
+static FRAME_OBS: vec::Vec[FrameObs] = #zero::[vec::Vec[FrameObs]]();
+static NEXT_FRAME_OBS_ID: u64 = 1 as u64;
+
+fn frame_obs_take(id: u64) -> *u8 {
+    let reg: *vec::Vec[FrameObs] = { #addr_of(FRAME_OBS) };
+    let n: usize = { (*reg).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*reg).at_ptr(i) {
+            option::Option[*FrameObs]::Some(ep) => {
+                if { (*ep)._id } == id {
+                    let t: *u8 = { (*ep)._target };
+                    let _g: option::Option[FrameObs] = (*reg).swap_remove(i);
+                    return t;
+                }
+            }
+            option::Option[*FrameObs]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return 0 as *u8;
+}
+
+// Observe `view`'s frame changes; `on_resize(ctx)` fires on the main thread on
+// every one. Returns the id to cancel with (0 if the observer could not be
+// made).
+fn observe_frame(view: ak::View, on_resize: fn(*u8), ctx: *u8) -> u64 {
+    let t: *u8 = synth::alloc_init_class(frame_obs_class());
+    if t == { 0 as *u8 } { return 0 as u64; }
+    view.set_posts_frame_changed_notifications(true);
+    synth::set_associated(t, frame_obs_handler_key(), { on_resize as *u8 });
+    synth::set_associated(t, frame_obs_ctx_key(), ctx);
+    let nc: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSNotificationCenter\0")), rt::sel(#str_ptr("defaultCenter\0")));
+    rt::msg_void_id_id_id_id(nc, rt::sel(#str_ptr("addObserver:selector:name:object:\0")), t, frame_obs_sel(), bridge::nsstring("NSViewFrameDidChangeNotification"), view.raw());
+    let id: u64 = NEXT_FRAME_OBS_ID;
+    NEXT_FRAME_OBS_ID = NEXT_FRAME_OBS_ID +% (1 as u64);
+    let reg: *vec::Vec[FrameObs] = { #addr_of(FRAME_OBS) };
+    (*reg).append(FrameObs { _id: id, _target: t });
+    return id;
+}
+
+// Stop a frame observation. A no-op for an id that was already cancelled —
+// what lets `Cancellable.cancel()` be idempotent and safe from a drop.
+fn cancel_observe_frame(id: u64) {
+    if id == (0 as u64) { return; }
+    let t: *u8 = frame_obs_take(id);
+    if t == { 0 as *u8 } { return; }
+    let nc: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSNotificationCenter\0")), rt::sel(#str_ptr("defaultCenter\0")));
+    rt::msg_void_id(nc, rt::sel(#str_ptr("removeObserver:\0")), t);
+    rt::release(t);
+    return;
+}
+
+// How many frame observations are live — for tests and leak checks.
+fn frame_obs_pending_count() -> usize { return { FRAME_OBS.count() }; }
 
 // ==========================================================================
 // FacetScrollView — a nested scroll that hands back the axis it does not own

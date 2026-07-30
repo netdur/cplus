@@ -1165,6 +1165,19 @@ fn fak_set_list_count(h: facet::Handle, count: i64, scroll_to_end: bool, force_e
     return ui::list_set_count(h.view(), count, scroll_to_end: scroll_to_end, force_end: force_end);
 }
 
+fn fak_get_size(h: facet::Handle) -> facet::Size {
+    let v: *u8 = h.view();
+    if v == (0 as *u8) { return facet::Size { width: 0.0f64, height: 0.0f64 }; }
+    let f: rt::Rect = rt::msg_rect(v, rt::sel(#str_ptr("frame\0")));
+    return facet::Size { width: f.w, height: f.h };
+}
+
+fn fak_observe_size(h: facet::Handle, cb: fn(*u8), ctx: *u8) -> u64 {
+    let v: *u8 = h.view();
+    if v == (0 as *u8) { return 0 as u64; }
+    return akx::observe_frame(ak::View::from_raw(v), cb, ctx);
+}
+
 fn ak_gauge(ctx: *u8, np: *facet::Node) -> flex::Node {
     let li: ak::LevelIndicator = ak::LevelIndicator::new();
     li.set_min_value({ (*np).min_val });
@@ -1458,6 +1471,9 @@ fn install() {
     facet::set_scroll_offset_y_fn(fak_scroll_offset_y);
     facet::set_set_scroll_offset_fn(fak_set_scroll_offset);
     facet::set_set_list_count_fn(fak_set_list_count);
+    facet::set_get_size_fn(fak_get_size);
+    facet::set_observe_size_fn(fak_observe_size);
+    facet::set_cancel_observe_size_fn(akx::cancel_observe_frame);
     facet::set_after_fn(akx::after);
     facet::set_cancel_after_fn(akx::cancel_after);
     facet::set_is_dark_fn(is_dark_impl);
@@ -6561,6 +6577,67 @@ fn handle_set_count_drives_a_mounted_list_in_place() {
     let hp: facet::Handle = facet::Handle::of(plain.raw(), 0 as *u8, 0 as *u8, 0 as u32);
     let _p: facet::Handle = hp.set_count(5 as i64);
     let _m: facet::Handle = facet::Handle::missing().set_count(1 as i64);
+}
+
+#[test]
+fn handle_size_reads_the_real_laid_out_frame() {
+    let v: ak::View = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 120.0, h: 48.0 });
+    let h: facet::Handle = facet::Handle::of(v.raw(), 0 as *u8, 0 as *u8, 0 as u32);
+    facet::set_get_size_fn(fak_get_size);
+    let s: facet::Size = h.size();
+    assert s.width == 120.0f64;
+    assert s.height == 48.0f64;
+    // A missing handle reads (0, 0) — never a message to nil.
+    let z: facet::Size = facet::Handle::missing().size();
+    assert z.width == 0.0f64;
+    assert z.height == 0.0f64;
+}
+
+static OBS_FIRES: i32 = 0;
+fn obs_count_fire(ctx: *u8) { OBS_FIRES = OBS_FIRES + 1; return; }
+
+#[test]
+fn observe_size_fires_on_resize_and_cancel_is_final() {
+    OBS_FIRES = 0;
+    let v: ak::View = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 100.0, h: 100.0 });
+    let h: facet::Handle = facet::Handle::of(v.raw(), 0 as *u8, 0 as *u8, 0 as u32);
+    facet::set_observe_size_fn(fak_observe_size);
+    facet::set_cancel_observe_size_fn(akx::cancel_observe_frame);
+    let live0: usize = akx::frame_obs_pending_count();
+    var c: facet::Cancellable = facet::observe_size(h, obs_count_fire);
+    assert c.pending();
+    assert akx::frame_obs_pending_count() == live0 +% (1 as usize);
+    // NSView posts the frame notification synchronously from set_frame.
+    v.set_frame(rt::Rect { x: 0.0, y: 0.0, w: 150.0, h: 100.0 });
+    assert OBS_FIRES > (0 as i32);
+    let fired: i32 = OBS_FIRES;
+    c.cancel();
+    assert akx::frame_obs_pending_count() == live0;
+    v.set_frame(rt::Rect { x: 0.0, y: 0.0, w: 180.0, h: 100.0 });
+    assert OBS_FIRES == fired;                      // cancelled: no more fires
+    // Cancelling again, and cancelling an unknown id, are no-ops.
+    c.cancel();
+    akx::cancel_observe_frame(99999 as u64);
+}
+
+#[test]
+fn a_dropped_observe_size_handle_cancels_the_observation() {
+    OBS_FIRES = 0;
+    let v: ak::View = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 100.0, h: 100.0 });
+    let h: facet::Handle = facet::Handle::of(v.raw(), 0 as *u8, 0 as *u8, 0 as u32);
+    facet::set_observe_size_fn(fak_observe_size);
+    facet::set_cancel_observe_size_fn(akx::cancel_observe_frame);
+    let live0: usize = akx::frame_obs_pending_count();
+    {
+        var c: facet::Cancellable = facet::observe_size(h, obs_count_fire);
+        assert akx::frame_obs_pending_count() == live0 +% (1 as usize);
+    }   // c drops here
+    assert akx::frame_obs_pending_count() == live0;
+    v.set_frame(rt::Rect { x: 0.0, y: 0.0, w: 130.0, h: 100.0 });
+    assert OBS_FIRES == (0 as i32);
+    // A missing handle arms nothing: an already-cancelled Cancellable.
+    var m: facet::Cancellable = facet::observe_size(facet::Handle::missing(), obs_count_fire);
+    assert m.pending() == false;
 }
 
 // ---- appearance, adaptive tokens, drop payload (portable read hooks) --------
