@@ -1161,6 +1161,10 @@ fn fak_set_scroll_offset(h: facet::Handle, x: f64, y: f64) -> bool {
     return true;
 }
 
+fn fak_set_list_count(h: facet::Handle, count: i64, scroll_to_end: bool, force_end: bool) -> bool {
+    return ui::list_set_count(h.view(), count, scroll_to_end: scroll_to_end, force_end: force_end);
+}
+
 fn ak_gauge(ctx: *u8, np: *facet::Node) -> flex::Node {
     let li: ak::LevelIndicator = ak::LevelIndicator::new();
     li.set_min_value({ (*np).min_val });
@@ -1453,6 +1457,7 @@ fn install() {
     facet::set_scroll_offset_x_fn(fak_scroll_offset_x);
     facet::set_scroll_offset_y_fn(fak_scroll_offset_y);
     facet::set_set_scroll_offset_fn(fak_set_scroll_offset);
+    facet::set_set_list_count_fn(fak_set_list_count);
     facet::set_after_fn(akx::after);
     facet::set_cancel_after_fn(akx::cancel_after);
     facet::set_is_dark_fn(is_dark_impl);
@@ -6529,6 +6534,33 @@ fn list_row_scroll_leaves_no_lingering_post_apply_job() {
     // it is a safe no-op instead of retaining a freed scroll view.
     drain_post_apply();
     unmount_all();
+}
+
+fn slc_label_row(i: i64, ctx: *u8) -> flex::Node {
+    var b: facet::Builder = facet::Builder::new();
+    b.add(facet::label("row"));
+    var node: facet::Node = facet::column(b);
+    return mount(#addr_of(node));
+}
+
+#[test]
+fn handle_set_count_drives_a_mounted_list_in_place() {
+    // The portable update verb for a `facet::list`: the handle wraps the
+    // scroll payload, the hook digs to the table and updates the pinned ctx —
+    // the app never touches `h.view()`.
+    let n: flex::Node = ui::list(count: 2 as i64, row: slc_label_row);
+    let h: facet::Handle = facet::Handle::of(n.payload(), 0 as *u8, 0 as *u8, 0 as u32);
+    facet::set_set_list_count_fn(fak_set_list_count);
+    let _g: facet::Handle = h.set_count(7 as i64);
+    let tbl: *u8 = { rt::msg_id(n.payload(), rt::sel(#str_ptr("documentView\0"))) };
+    assert ak::TableView::from_raw(tbl).number_of_rows() == (7 as i64);
+    let _s: facet::Handle = h.set_count(3 as i64, scroll_to_end: true);
+    assert ak::TableView::from_raw(tbl).number_of_rows() == (3 as i64);
+    // A handle on a view that is not a list no-ops; missing() never traps.
+    let plain: ak::View = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 10.0, h: 10.0 });
+    let hp: facet::Handle = facet::Handle::of(plain.raw(), 0 as *u8, 0 as *u8, 0 as u32);
+    let _p: facet::Handle = hp.set_count(5 as i64);
+    let _m: facet::Handle = facet::Handle::missing().set_count(1 as i64);
 }
 
 // ---- appearance, adaptive tokens, drop payload (portable read hooks) --------

@@ -1671,6 +1671,8 @@ static SCROLL_OFFSET_Y_FN: fn(Handle) -> f64 = #zero::[fn(Handle) -> f64]();
 fn set_scroll_offset_y_fn(f: fn(Handle) -> f64) { SCROLL_OFFSET_Y_FN = f; return; }
 static SET_SCROLL_OFFSET_FN: fn(Handle, f64, f64) -> bool = #zero::[fn(Handle, f64, f64) -> bool]();
 fn set_set_scroll_offset_fn(f: fn(Handle, f64, f64) -> bool) { SET_SCROLL_OFFSET_FN = f; return; }
+static SET_LIST_COUNT_FN: fn(Handle, i64, bool, bool) -> bool = #zero::[fn(Handle, i64, bool, bool) -> bool]();
+fn set_set_list_count_fn(f: fn(Handle, i64, bool, bool) -> bool) { SET_LIST_COUNT_FN = f; return; }
 fn set_get_value_fn(f: fn(Handle) -> f64) { GET_VALUE_FN = f; return; }
 fn set_get_text_fn(f: fn(Handle) -> text::Text) { GET_TEXT_FN = f; return; }
 fn set_get_index_fn(f: fn(Handle) -> i64) { GET_INDEX_FN = f; return; }
@@ -2515,6 +2517,18 @@ impl Handle {
     fn set_scroll_offset(this, x: f64, y: f64) -> Handle {
         let f: fn(Handle, f64, f64) -> bool = SET_SCROLL_OFFSET_FN;
         if f != (0 as fn(Handle, f64, f64) -> bool) { let _ok: bool = f(this, x, y); }
+        return this;
+    }
+
+    // Tell an existing `list` its row count changed — IN PLACE, no rebuild.
+    // The backend re-queries the row builder for the new rows only; a grow
+    // keeps the measured heights of the rows it already has. `scroll_to_end`
+    // keeps the tail pinned only when the list is already near it (a reader
+    // scrolled up stays put); `force_end` pins unconditionally. Chainable; a
+    // no-op on a miss or a kind with no rows.
+    fn set_count(this, count: i64, scroll_to_end: bool = false, force_end: bool = false) -> Handle {
+        let f: fn(Handle, i64, bool, bool) -> bool = SET_LIST_COUNT_FN;
+        if f != (0 as fn(Handle, i64, bool, bool) -> bool) { let _ok: bool = f(this, count, scroll_to_end, force_end); }
         return this;
     }
 
@@ -6659,4 +6673,41 @@ fn wait_for_services_blocks_until_produce_finishes() {
     assert services_in_flight() == (0 as u64);
     assert svc.done == (1 as i32);
     assert svc.label.view() == "produced";
+}
+
+// ---- portable list-count verb (the §"update an existing list" slot) ---------
+
+static SLC_CALLS: i32 = 0;
+static SLC_COUNT: i64 = 0;
+static SLC_TAIL: bool = false;
+static SLC_FORCE: bool = false;
+
+fn slc_record(h: Handle, count: i64, scroll_to_end: bool, force_end: bool) -> bool {
+    SLC_CALLS = SLC_CALLS + 1;
+    SLC_COUNT = count;
+    SLC_TAIL = scroll_to_end;
+    SLC_FORCE = force_end;
+    return true;
+}
+
+#[test]
+fn handle_set_count_forwards_to_the_backend_slot() {
+    // No slot registered: chainable no-op — the no-backend posture every
+    // Handle verb keeps.
+    SET_LIST_COUNT_FN = #zero::[fn(Handle, i64, bool, bool) -> bool]();
+    let m: Handle = Handle::missing();
+    let _a: Handle = m.set_count(3 as i64);
+    assert SLC_CALLS == 0;
+    // Registered: count and both flags pass through, defaults included.
+    set_set_list_count_fn(slc_record);
+    let _b: Handle = m.set_count(7 as i64, scroll_to_end: true);
+    assert SLC_CALLS == 1;
+    assert SLC_COUNT == (7 as i64);
+    assert SLC_TAIL;
+    assert SLC_FORCE == false;
+    let _c: Handle = m.set_count(2 as i64, force_end: true);
+    assert SLC_CALLS == 2;
+    assert SLC_FORCE;
+    // Put the no-backend posture back for the tests that follow.
+    SET_LIST_COUNT_FN = #zero::[fn(Handle, i64, bool, bool) -> bool]();
 }
