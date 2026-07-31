@@ -201,7 +201,7 @@ It has no dependency on the flex algorithm or a platform UI toolkit.
 
 | Type | API |
 |---|---|
-| `ResponsiveConfig` | `::new(fallback)`, `add_breakpoint(name, up_to:)`, `remove_breakpoint(name)`, `remove_all_breakpoints()`, `set_fallback(name)`, `breakpoint_count()`, `resolve(width, height)` |
+| `ResponsiveConfig` | `::new(fallback)`, `add_breakpoint(name, up_to:) -> Status`, `remove_breakpoint(name) -> Option[f64]` (the threshold it had), `remove_all_breakpoints()`, `set_fallback(name) -> Status`, `breakpoint_count()`, `resolve(width, height)` |
 | `LayoutEnvironment` | `width()`, `height()`, `class_name()`, `is(name)`, `breakpoint_width() -> Option[f64]`, `orientation()`, `is_same_class(other)` |
 | `Orientation` | `Portrait`, `Landscape`, `Square` |
 
