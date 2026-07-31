@@ -602,16 +602,24 @@ static NEXT_FRAME_OBS_ID: u64 = 1 as u64;
 
 fn frame_obs_take(id: u64) -> *u8 ;
 
+// Observe any notification `name` from `object` (null = any sender), through
+// the same registry: `handler(ctx)` fires on the posting thread. Returns the
+// id to cancel with (0 if the observer could not be made).
+fn observe_named(name: str, object: *u8, handler: fn(*u8), ctx: *u8) -> u64 ;
+
 // Observe `view`'s frame changes; `on_resize(ctx)` fires on the main thread on
 // every one. Returns the id to cancel with (0 if the observer could not be
 // made).
 fn observe_frame(view: ak::View, on_resize: fn(*u8), ctx: *u8) -> u64 ;
 
-// Stop a frame observation. A no-op for an id that was already cancelled —
-// what lets `Cancellable.cancel()` be idempotent and safe from a drop.
+// Stop an observation made by observe_named/observe_frame. A no-op for an id
+// that was already cancelled — what lets `Cancellable.cancel()` be idempotent
+// and safe from a drop.
+fn cancel_observe(id: u64) ;
+
 fn cancel_observe_frame(id: u64) ;
 
-// How many frame observations are live — for tests and leak checks.
+// How many observations are live — for tests and leak checks.
 fn frame_obs_pending_count() -> usize ;
 
 // ==========================================================================

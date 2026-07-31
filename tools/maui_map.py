@@ -95,9 +95,9 @@ OVERLAY = {
     # -- drag & drop: facet's drop half exists; the source half is the adopt --
     ("DropGestureRecognizer", "Drop"): ("KEEP-FACET", "on_drop + dropped_text + pointer_position", "shipped surface"),
     ("DropGestureRecognizer", "DragOver"): ("KEEP-FACET", "drag_targeted", "shipped 1c71b20"),
-    ("DropGestureRecognizer", "AllowDrop"): ("ADOPT", "set_accepts_drop", "portable toggle for a drop target"),
-    ("DragGestureRecognizer", "DragStarting"): ("ADOPT", "on_drag_start", "the SOURCE half facet lacks — start payload set portably"),
-    ("DragGestureRecognizer", "CanDrag"): ("ADOPT", "set_draggable", "portable toggle for a drag source"),
+    ("DropGestureRecognizer", "AllowDrop"): ("KEEP-FACET", "Node.on_drop at build", "declaring a drop handler IS accepting drops"),
+    ("DragGestureRecognizer", "DragStarting"): ("FUTURE", "", "payload is fixed at build (draggable(text)); a lazy start-callback waits for a consumer"),
+    ("DragGestureRecognizer", "CanDrag"): ("KEEP-FACET", "Node.draggable(text)", "build-time source payload; empty = not draggable — iris board uses it"),
     ("TapGestureRecognizer", "Tapped"): ("KEEP-FACET", "on_click", "facet's click"),
     ("TapGestureRecognizer", "NumberOfTapsRequired"): ("ADOPT", "on_double_click (as its own hook)", "double-click is the real demand"),
     ("PinchGestureRecognizer", "PinchUpdated"): ("KEEP-FACET", "Chrome zoomable (app-level)", "facet zooms the window content, not per-node"),

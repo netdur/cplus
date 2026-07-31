@@ -2491,6 +2491,11 @@ impl Cancellable {
     // that a later call arms — the drop still cancels whatever was last armed.
     fn none() -> Cancellable { return Cancellable { _id: 0 as u64, _cancel: #zero::[fn(u64)]() }; }
 
+    // Mint a live handle over a backend registration: `id` from the arming
+    // call, `cancel` the slot that revokes it. For runtime facades and
+    // backends — the fields are file-private, so this is their only door.
+    fn of(id: u64, cancel: fn(u64)) -> Cancellable { return Cancellable { _id: id, _cancel: cancel }; }
+
     // Idempotent, and safe after the callback has already run.
     fn cancel(ref this) {
         if this._id == (0 as u64) { return; }

@@ -1217,17 +1217,16 @@ fn frame_obs_take(id: u64) -> *u8 {
     return 0 as *u8;
 }
 
-// Observe `view`'s frame changes; `on_resize(ctx)` fires on the main thread on
-// every one. Returns the id to cancel with (0 if the observer could not be
-// made).
-fn observe_frame(view: ak::View, on_resize: fn(*u8), ctx: *u8) -> u64 {
+// Observe any notification `name` from `object` (null = any sender), through
+// the same registry: `handler(ctx)` fires on the posting thread. Returns the
+// id to cancel with (0 if the observer could not be made).
+fn observe_named(name: str, object: *u8, handler: fn(*u8), ctx: *u8) -> u64 {
     let t: *u8 = synth::alloc_init_class(frame_obs_class());
     if t == { 0 as *u8 } { return 0 as u64; }
-    view.set_posts_frame_changed_notifications(true);
-    synth::set_associated(t, frame_obs_handler_key(), { on_resize as *u8 });
+    synth::set_associated(t, frame_obs_handler_key(), { handler as *u8 });
     synth::set_associated(t, frame_obs_ctx_key(), ctx);
     let nc: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSNotificationCenter\0")), rt::sel(#str_ptr("defaultCenter\0")));
-    rt::msg_void_id_id_id_id(nc, rt::sel(#str_ptr("addObserver:selector:name:object:\0")), t, frame_obs_sel(), bridge::nsstring("NSViewFrameDidChangeNotification"), view.raw());
+    rt::msg_void_id_id_id_id(nc, rt::sel(#str_ptr("addObserver:selector:name:object:\0")), t, frame_obs_sel(), bridge::nsstring(name), object);
     let id: u64 = NEXT_FRAME_OBS_ID;
     NEXT_FRAME_OBS_ID = NEXT_FRAME_OBS_ID +% (1 as u64);
     let reg: *vec::Vec[FrameObs] = { #addr_of(FRAME_OBS) };
@@ -1235,9 +1234,18 @@ fn observe_frame(view: ak::View, on_resize: fn(*u8), ctx: *u8) -> u64 {
     return id;
 }
 
-// Stop a frame observation. A no-op for an id that was already cancelled —
-// what lets `Cancellable.cancel()` be idempotent and safe from a drop.
-fn cancel_observe_frame(id: u64) {
+// Observe `view`'s frame changes; `on_resize(ctx)` fires on the main thread on
+// every one. Returns the id to cancel with (0 if the observer could not be
+// made).
+fn observe_frame(view: ak::View, on_resize: fn(*u8), ctx: *u8) -> u64 {
+    view.set_posts_frame_changed_notifications(true);
+    return observe_named("NSViewFrameDidChangeNotification", view.raw(), on_resize, ctx);
+}
+
+// Stop an observation made by observe_named/observe_frame. A no-op for an id
+// that was already cancelled — what lets `Cancellable.cancel()` be idempotent
+// and safe from a drop.
+fn cancel_observe(id: u64) {
     if id == (0 as u64) { return; }
     let t: *u8 = frame_obs_take(id);
     if t == { 0 as *u8 } { return; }
@@ -1247,7 +1255,12 @@ fn cancel_observe_frame(id: u64) {
     return;
 }
 
-// How many frame observations are live — for tests and leak checks.
+fn cancel_observe_frame(id: u64) {
+    cancel_observe(id);
+    return;
+}
+
+// How many observations are live — for tests and leak checks.
 fn frame_obs_pending_count() -> usize { return { FRAME_OBS.count() }; }
 
 // ==========================================================================

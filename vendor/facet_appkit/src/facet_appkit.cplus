@@ -6859,6 +6859,28 @@ fn observe_size_fires_on_resize_and_cancel_is_final() {
     akx::cancel_observe_frame(99999 as u64);
 }
 
+static NAMED_OBS_FIRES: i32 = 0;
+fn named_obs_fire(ctx: *u8) { NAMED_OBS_FIRES = NAMED_OBS_FIRES + 1; return; }
+
+#[test]
+fn observe_named_fires_on_post_and_cancel_is_final() {
+    // The generalized registry behind observe_size AND the runtime facade's
+    // window active/inactive verbs. Deterministic: post the notification by
+    // hand instead of waiting for AppKit to.
+    NAMED_OBS_FIRES = 0;
+    let live0: usize = akx::frame_obs_pending_count();
+    let id: u64 = akx::observe_named("CplusTestPing", 0 as *u8, named_obs_fire, 0 as *u8);
+    assert id != (0 as u64);
+    let nc: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSNotificationCenter\0")), rt::sel(#str_ptr("defaultCenter\0")));
+    rt::msg_void_id_id(nc, rt::sel(#str_ptr("postNotificationName:object:\0")), bridge::nsstring("CplusTestPing"), 0 as *u8);
+    assert NAMED_OBS_FIRES == 1;
+    akx::cancel_observe(id);
+    assert akx::frame_obs_pending_count() == live0;
+    rt::msg_void_id_id(nc, rt::sel(#str_ptr("postNotificationName:object:\0")), bridge::nsstring("CplusTestPing"), 0 as *u8);
+    assert NAMED_OBS_FIRES == 1;   // cancelled: no more fires
+    akx::cancel_observe(id);       // idempotent
+}
+
 #[test]
 fn a_dropped_observe_size_handle_cancels_the_observation() {
     OBS_FIRES = 0;

@@ -8,6 +8,7 @@ import "./facet" as core;
 import "./nav" as nav;
 import "facet_appkit/facet_appkit" as backend;
 import "facet_appkit/contract_appkit" as genc;
+import "appkit/appkit_ext" as akx;
 import "stdlib/option" as option;
 import "stdlib/text" as text;
 import "stdlib/vec" as vec;
@@ -262,6 +263,21 @@ fn present_window(take root: Node, title: str, width: f64, height: f64) {
 fn window_close(sender: *u8) { backend::window_close(sender); return; }
 fn window_minimize(sender: *u8) { backend::window_minimize(sender); return; }
 fn window_zoom(sender: *u8) { backend::window_zoom(sender); return; }
+
+// The window gaining or losing key status — the app-level focus/blur pair.
+// `cb(ctx)` fires on the main thread; any window of the process counts (facet
+// apps are one-key-window programs; a per-window filter can come with a
+// consumer). Cancel through the returned handle — including by letting it
+// drop — and hold it in a field, or the observation dies immediately.
+fn observe_window_active(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> core::Cancellable {
+    let id: u64 = akx::observe_named("NSWindowDidBecomeKeyNotification", 0 as *u8, cb, ctx);
+    return core::Cancellable::of(id, akx::cancel_observe);
+}
+
+fn observe_window_inactive(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> core::Cancellable {
+    let id: u64 = akx::observe_named("NSWindowDidResignKeyNotification", 0 as *u8, cb, ctx);
+    return core::Cancellable::of(id, akx::cancel_observe);
+}
 
 // The current screen's window frame, in the platform's screen coordinates
 // (bottom-left origin on macOS). A zero rect when no window is up. Read it to

@@ -78,6 +78,14 @@ fn window_close(sender: *u8) { backend::window_close(sender); return; }
 fn window_minimize(sender: *u8) { backend::window_minimize(sender); return; }
 fn window_zoom(sender: *u8) { backend::window_zoom(sender); return; }
 
+// Window focus/blur (parity with the macOS facade): inert handles here.
+fn observe_window_active(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> core::Cancellable {
+    return core::Cancellable::none();
+}
+fn observe_window_inactive(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> core::Cancellable {
+    return core::Cancellable::none();
+}
+
 // Window geometry (parity with the macOS facade). Not yet honored by the gtk
 // backend: reads come back zero, writes are no-ops.
 fn window_frame() -> core::Rect {
