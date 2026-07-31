@@ -467,6 +467,7 @@ pub fn load_project_full(
         program: merged,
         entry_file_id,
         files: file_sources,
+        imports: edges,
     })
 }
 
@@ -934,6 +935,12 @@ pub struct LoadedProject {
     /// names (`src.math`, etc.), so sema looks up by `current_file`
     /// without further plumbing.
     pub files: std::collections::BTreeMap<String, (PathBuf, String)>,
+    /// EXT.2: the import graph, `file_id → the file ids it imports directly`.
+    /// The merged `Program` drops per-file `import` declarations, but an
+    /// extension method is only visible where the module that wrote it was
+    /// imported — so sema needs the edges the merge walked. Every loaded file
+    /// has an entry (empty when it imports nothing).
+    pub imports: std::collections::BTreeMap<String, Vec<String>>,
 }
 
 // ---------------- internals ----------------

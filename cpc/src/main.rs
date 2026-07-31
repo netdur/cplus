@@ -2622,11 +2622,12 @@ fn load_and_check_project_full(
     // Slice 4C: hand sema the per-file source map so cross-file
     // diagnostics render against the right file's line/column. Sema
     // routes via each item's `origin_file`.
-    let (diags, mono) = sema::check_multi_with_mono(
+    let (diags, mono) = sema::check_multi_with_mono_imports(
         &loaded.program,
         entry.to_path_buf(),
         &entry_src,
         loaded.files.clone(),
+        &loaded.imports,
     );
     let had_errors = diags.iter().any(|d| matches!(d.severity, Severity::Error));
     for d in &diags {
@@ -3484,11 +3485,12 @@ fn run_realtime_report(json: bool) -> ExitCode {
     }
     // Run sema and KEEP the diagnostics (don't early-return on errors — the
     // whole point is to surface the contract violations).
-    let (diags, _mono) = sema::check_multi_with_mono(
+    let (diags, _mono) = sema::check_multi_with_mono_imports(
         &loaded.program,
         entry_path.clone(),
         &entry_src,
         loaded.files.clone(),
+        &loaded.imports,
     );
 
     // Map a real-time diagnostic code to its contract name.
@@ -4146,7 +4148,7 @@ fn build_ir(
     // path. That keeps the single-file fast path (which dominates the
     // sample-program e2e suite) unchanged.
     let has_imports = src.contains("\nimport ") || src.starts_with("import ");
-    let (mut prog, files_map) = if has_imports {
+    let (mut prog, files_map, import_edges) = if has_imports {
         // v0.0.12 G-029 (llama.cplus G-028): walk up from FILE's parent
         // looking for `Cplus.toml`. If found, use that directory as the
         // manifest root and pull `[dependencies]` from it so vendor
@@ -4187,7 +4189,7 @@ fn build_ir(
                 return Err(ExitCode::FAILURE);
             }
         };
-        (loaded.program, loaded.files)
+        (loaded.program, loaded.files, loaded.imports)
     } else {
         let toks = match lexer::tokenize(src) {
             Ok(t) => t,
@@ -4207,7 +4209,11 @@ fn build_ir(
                 return Err(ExitCode::FAILURE);
             }
         };
-        (prog, std::collections::BTreeMap::new())
+        (
+            prog,
+            std::collections::BTreeMap::new(),
+            std::collections::BTreeMap::new(),
+        )
     };
     // Phase 5 slice 5ATTR.1: validate attributes before lower / sema.
     let attr_diags = if files_map.is_empty() {
@@ -4241,8 +4247,13 @@ fn build_ir(
     if lower_errors {
         return Err(ExitCode::FAILURE);
     }
-    let (diags, mono) =
-        sema::check_multi_with_mono(&prog, file.to_path_buf(), src, files_map.clone());
+    let (diags, mono) = sema::check_multi_with_mono_imports(
+        &prog,
+        file.to_path_buf(),
+        src,
+        files_map.clone(),
+        &import_edges,
+    );
     let had_errors = diags.iter().any(|d| matches!(d.severity, Severity::Error));
     for d in &diags {
         emit_diag_multi(d, mode, src, &files_map);

@@ -2242,6 +2242,7 @@ mod tests {
             program,
             entry_file_id: "src".to_string(),
             files,
+            imports: BTreeMap::new(),
         }
     }
 

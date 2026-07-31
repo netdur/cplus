@@ -420,36 +420,34 @@ impl StructDef {
 /// Dart model: public by default, `_` to hide). A bare `_` (wildcard) and
 /// compiler-internal `__cplus_*` names are never user cross-module access sites,
 /// so the simple prefix test is sufficient.
-/// EXT.1 (v0.0.27): the package identity of an origin-file id is its first
-/// dot-segment ("stdlib.src.text" -> "stdlib"). Single-file mode has no
-/// origins; two `None`s count as the same unit — the same escape the E0507
-/// orphan rule uses — while a `None`/`Some` mix never matches.
-fn same_package(a: &Option<String>, b: &Option<String>) -> bool {
-    match (a, b) {
-        (None, None) => true,
-        (Some(x), Some(y)) => x.split('.').next() == y.split('.').next(),
-        _ => false,
-    }
+/// EXT.2: the source-level name inside a resolver-mangled type name
+/// (`geom.src.geom.Point` → `Point`). Collection-time diagnostics only have
+/// the mangled form; call-site ones go through `ty_display_named`.
+fn short_type_name(mangled: &str) -> &str {
+    mangled.rsplit('.').next().unwrap_or(mangled)
 }
 
-fn package_of(origin: &Option<String>) -> &str {
-    match origin {
-        Some(s) => s.split('.').next().unwrap_or(s.as_str()),
-        None => "<single-file>",
-    }
+/// EXT.2: a file id rendered as the import path that reaches it —
+/// `stdlib.src.text` → `stdlib/text`, `app.src.util.strings` →
+/// `app/util/strings`. Best-effort, for the "add this import" note.
+fn import_path_of(file_id: &str) -> String {
+    let parts: Vec<&str> = file_id.split('.').filter(|s| *s != "src").collect();
+    parts.join("/")
 }
 
-fn extension_outside_package_msg(
-    target: &str,
-    target_origin: &Option<String>,
-    impl_origin: &Option<String>,
-) -> String {
-    format!(
-        "`impl {}` outside the type's package — inherent methods may only be declared by the package that declares the type (`{}`); this file is in `{}`. A foreign package composes free functions instead",
-        target,
-        package_of(target_origin),
-        package_of(impl_origin),
-    )
+/// EXT.2: identifies one extension method — `(is_enum, type id, method
+/// name)`. Structs and enums have independent id spaces, hence the
+/// discriminating flag.
+type ExtKey = (bool, u32, String);
+
+/// EXT.2: where an extension method was declared. The method itself belongs
+/// to the type — it compiles under the type's name, and there is only ever
+/// one of it in a program. This records which module a reader has to import
+/// to see it, nothing more.
+#[derive(Debug, Clone)]
+struct ExtOrigin {
+    /// The file id declaring the `impl` block.
+    file: String,
 }
 
 pub fn is_private_name(name: &str) -> bool {
@@ -784,7 +782,48 @@ pub fn check_multi_with_mono(
     entry_src: &str,
     files: std::collections::BTreeMap<String, (PathBuf, String)>,
 ) -> (Vec<Diagnostic>, MonoInfo) {
-    check_with_files_inner(program, entry_file, entry_src, files, false)
+    check_with_files_inner(program, entry_file, entry_src, files, false, None)
+}
+
+/// EXT.2: `check_multi_with_mono` plus the resolver's import graph
+/// (`file_id → the file ids it imports directly`, i.e.
+/// `LoadedProject::imports`). Only the compile path has that graph, and only
+/// it needs it: without one, an extension method is visible everywhere in the
+/// build rather than only where its module was imported.
+pub fn check_multi_with_mono_imports(
+    program: &Program,
+    entry_file: PathBuf,
+    entry_src: &str,
+    files: std::collections::BTreeMap<String, (PathBuf, String)>,
+    imports: &std::collections::BTreeMap<String, Vec<String>>,
+) -> (Vec<Diagnostic>, MonoInfo) {
+    check_with_files_inner(
+        program,
+        entry_file,
+        entry_src,
+        files,
+        false,
+        Some(ext_visibility(imports)),
+    )
+}
+
+/// EXT.2: fold the import graph into "which modules' extensions may this file
+/// see" — itself, plus every file it imports directly. Packages play no part:
+/// an extension is reached by importing the module that wrote it, whether
+/// that module sits next door or in a vendored dependency. Not transitive —
+/// a file's method set stays answerable from its own import list.
+fn ext_visibility(
+    imports: &std::collections::BTreeMap<String, Vec<String>>,
+) -> HashMap<String, std::collections::HashSet<String>> {
+    imports
+        .iter()
+        .map(|(fid, targets)| {
+            let mut files = std::collections::HashSet::new();
+            files.insert(fid.clone());
+            files.extend(targets.iter().cloned());
+            (fid.clone(), files)
+        })
+        .collect()
 }
 
 /// v0.0.14 graph value-depth entry: like `check_multi_with_mono`, but also
@@ -797,7 +836,7 @@ pub fn check_multi_with_value_types(
     entry_src: &str,
     files: std::collections::BTreeMap<String, (PathBuf, String)>,
 ) -> (Vec<Diagnostic>, MonoInfo) {
-    check_with_files_inner(program, entry_file, entry_src, files, true)
+    check_with_files_inner(program, entry_file, entry_src, files, true, None)
 }
 
 /// Multi-file entry: as `check`, but with a `files` map providing
@@ -822,7 +861,7 @@ fn check_with_files(
     src: &str,
     files_raw: std::collections::BTreeMap<String, (PathBuf, String)>,
 ) -> Vec<Diagnostic> {
-    check_with_files_inner(program, file, src, files_raw, false).0
+    check_with_files_inner(program, file, src, files_raw, false, None).0
 }
 
 fn check_with_files_inner(
@@ -831,6 +870,7 @@ fn check_with_files_inner(
     src: &str,
     files_raw: std::collections::BTreeMap<String, (PathBuf, String)>,
     record_types: bool,
+    ext_visible: Option<HashMap<String, std::collections::HashSet<String>>>,
 ) -> (Vec<Diagnostic>, MonoInfo) {
     let lm = LineMap::new(src);
     let mut sink = DiagSink::new();
@@ -861,6 +901,9 @@ fn check_with_files_inner(
         designated_string_struct: None,
         builtin_str_methods: HashMap::new(),
         str_impl_origin: None,
+        ext_origins: HashMap::new(),
+        ext_conflicts: std::collections::HashSet::new(),
+        ext_visible,
         type_aliases: HashMap::new(),
         resolving_aliases: std::collections::HashSet::new(),
         fnptr_field_names: None,
@@ -1230,6 +1273,21 @@ struct SemaCx<'a> {
     /// `#[lang("string")]` designation, blessing is uniqueness-only:
     /// a second `impl str` anywhere is E0385, naming this file.
     str_impl_origin: Option<Option<String>>,
+    /// EXT.2: for every method contributed by an extension (an `impl` in a
+    /// module other than the one declaring the type), which module wrote it.
+    /// Methods declared beside their type are absent — they come with the
+    /// type, as they always have.
+    ext_origins: HashMap<ExtKey, ExtOrigin>,
+    /// EXT.2: methods that already reported a duplicate declaration (E0326).
+    /// The gate goes quiet for them: a file that imported the *losing* module
+    /// would otherwise be told to import the winner, which is not the fix.
+    ext_conflicts: std::collections::HashSet<ExtKey>,
+    /// EXT.2: per-file set of modules whose extensions that file may see —
+    /// itself plus every file it imports directly. `None` when the caller
+    /// supplied no import graph
+    /// (single-file mode, LSP, unit tests): the gate is then off and every
+    /// extension is visible, which is exactly today's behavior.
+    ext_visible: Option<HashMap<String, std::collections::HashSet<String>>>,
     /// Phase 11 polish (2026-05-13): `type Foo = Bar;` aliases. Maps
     /// the alias name to its target AST `Type`. Resolved on every use
     /// via `resolve_type` — transparent (Foo and Bar are identical at
@@ -3589,7 +3647,10 @@ impl SemaCx<'_> {
     /// Third pass: collect methods from `impl` blocks. Runs after structs
     /// are fully typed so methods can reference any type by name. Reports
     /// E0325 (unknown / non-struct impl target), E0326 (duplicate method),
-    /// and E0387 (EXT.1 — inherent impl outside the type's package).
+    /// E0387 (a generic impl away from its template's file), and E0389 (an
+    /// extension declaring a destructor). A concrete inherent impl in a
+    /// module other than the type's own is an EXTENSION (EXT.2): legal,
+    /// recorded in `ext_origins`, gated at every call site.
     fn collect_methods(&mut self, p: &Program) {
         // v0.0.3 Slice 1P.2 — two-phase: register every generic-impl-method
         // template BEFORE resolving any concrete impl method signature.
@@ -3625,23 +3686,13 @@ impl SemaCx<'_> {
                 // `EnumDef::methods`. Generic enum impls still pending
                 // (block-level generic_params already routed above).
                 if let Some(&enum_id) = self.enum_by_name.get(&b.target.name) {
-                    if b.interface_name.is_none() {
-                        let target_origin =
-                            self.enums[enum_id.0 as usize].origin_file.clone();
-                        if !same_package(&item.origin_file, &target_origin) {
-                            self.err(
-                                "E0387",
-                                extension_outside_package_msg(
-                                    &b.target.name,
-                                    &target_origin,
-                                    &item.origin_file,
-                                ),
-                                b.target.span,
-                            );
-                            continue;
-                        }
-                    }
-                    self.collect_enum_impl_methods(enum_id, b);
+                    let ext = if b.interface_name.is_none() {
+                        let target_origin = self.enums[enum_id.0 as usize].origin_file.clone();
+                        Self::ext_origin_for(&item.origin_file, &target_origin)
+                    } else {
+                        None
+                    };
+                    self.collect_enum_impl_methods(enum_id, b, ext);
                     continue;
                 }
                 // STRM (v0.0.27): the builtin string view gets its method set
@@ -3661,27 +3712,21 @@ impl SemaCx<'_> {
             };
             // EXT.1 (v0.0.27) — same-package extension: an inherent `impl`
             // may live in any FILE of the package that declares the type
-            // (what lets a generator own a whole file of methods), but a
-            // foreign package may not add methods at all — a type's full
-            // method set stays answerable by reading its own package.
+            // (what lets a generator own a whole file of methods).
+            // EXT.2 — extension: an inherent `impl` in any file other than
+            // the type's own. Its methods join the type's table like any
+            // other, and there is still exactly one of each name; they carry
+            // provenance so a call site only sees them where that module was
+            // imported.
             // Conformance impls are governed by the E0507 orphan rule
-            // instead, and single-file programs (both origins `None`) pass
-            // the same way they pass E0507.
-            if b.interface_name.is_none() {
+            // instead, and single-file programs (both origins `None`) are
+            // one unit — nothing to gate.
+            let ext = if b.interface_name.is_none() {
                 let target_origin = self.structs[id.0 as usize].origin_file.clone();
-                if !same_package(&item.origin_file, &target_origin) {
-                    self.err(
-                        "E0387",
-                        extension_outside_package_msg(
-                            &b.target.name,
-                            &target_origin,
-                            &item.origin_file,
-                        ),
-                        b.target.span,
-                    );
-                    continue;
-                }
-            }
+                Self::ext_origin_for(&item.origin_file, &target_origin)
+            } else {
+                None
+            };
             // Slice 7GEN.4: `This` inside an impl body resolves to the
             // target type's concrete `Ty`. Push for the duration of this
             // impl block so method-signature resolution sees it.
@@ -3727,9 +3772,29 @@ impl SemaCx<'_> {
                 {
                     self.err(
                         "E0326",
+                        self.duplicate_method_msg(
+                            &b.target.name,
+                            &m.name.name,
+                            (false, id.0),
+                            ext.as_ref(),
+                        ),
+                        m.name.span,
+                    );
+                    self.ext_conflicts
+                        .insert((false, id.0, m.name.name.clone()));
+                    continue;
+                }
+                // EXT.2: a destructor is not extensible. `drop` decides
+                // the type's Drop-ness for every owner of a value, in every
+                // file — a property no import can be allowed to switch on and
+                // off. It also usually needs the private fields it frees,
+                // which an extension cannot see. It belongs beside the type.
+                if ext.is_some() && m.name.name == "drop" {
+                    self.err(
+                        "E0389",
                         format!(
-                            "duplicate method `{}` in impl `{}`",
-                            m.name.name, b.target.name
+                            "an extension may not declare `{}::drop` — a destructor belongs to the module that declares the type",
+                            short_type_name(&b.target.name)
                         ),
                         m.name.span,
                     );
@@ -3775,11 +3840,101 @@ impl SemaCx<'_> {
                         generic_bounds,
                     },
                 );
+                if let Some(o) = &ext {
+                    self.ext_origins
+                        .insert((false, id.0, m.name.name.clone()), o.clone());
+                }
             }
             self.self_type_stack.pop();
         }
         self.current_file = None;
         self.backfill_generic_struct_methods();
+    }
+
+    /// EXT.2: classify one inherent `impl` block. `Some` when the block lives
+    /// in a file other than the one declaring the type — an extension, whose
+    /// methods a reader only sees after importing that file. `None` when the
+    /// block sits with its type (including single-file mode, where there is
+    /// one file and nothing to gate) or when its own file id is unknown.
+    /// Packages do not enter into it: next door or vendored, the rule is the
+    /// same.
+    fn ext_origin_for(
+        impl_origin: &Option<String>,
+        target_origin: &Option<String>,
+    ) -> Option<ExtOrigin> {
+        if impl_origin == target_origin {
+            return None;
+        }
+        let file = impl_origin.as_ref()?;
+        Some(ExtOrigin { file: file.clone() })
+    }
+
+    /// EXT.2: the gate. `Some(origin)` when the named method exists only
+    /// because some other module extended the type, and the file being
+    /// checked never imported that module — the method is real, and there is
+    /// exactly one of it, but it is not in scope here. `None` in every other
+    /// case: a method declared with the type, an extension whose module is
+    /// imported, or a build that supplied no import graph (single-file, LSP,
+    /// unit tests), where the whole program is one scope.
+    fn ext_out_of_scope(&self, is_enum: bool, id: u32, method: &str) -> Option<ExtOrigin> {
+        let key = (is_enum, id, method.to_string());
+        if self.ext_conflicts.contains(&key) {
+            return None;
+        }
+        let origin = self.ext_origins.get(&key)?;
+        let visible = self.ext_visible.as_ref()?;
+        let here = self.current_file.as_ref()?;
+        let files = visible.get(here)?;
+        if files.contains(&origin.file) {
+            None
+        } else {
+            Some(origin.clone())
+        }
+    }
+
+    /// EXT.2: report a method that exists but is not in scope, naming the
+    /// import that would bring it in.
+    fn err_ext_out_of_scope(&mut self, type_name: &str, method: &Ident, origin: &ExtOrigin) -> Ty {
+        self.err_note(
+            "E0388",
+            format!(
+                "`{}` extends `{}` with `{}`, and this file does not import it",
+                import_path_of(&origin.file),
+                type_name,
+                method.name
+            ),
+            method.span,
+            vec![format!(
+                "add `import \"{}\" as ...;` to use it here",
+                import_path_of(&origin.file)
+            )],
+        );
+        Ty::Error
+    }
+
+    /// EXT.2: E0326's message, told from the right side. First declaration
+    /// wins the name; whichever block the collector reaches second is the one
+    /// that reports, and it names the module already holding the name —
+    /// which its author usually cannot see.
+    fn duplicate_method_msg(
+        &self,
+        target: &str,
+        method: &str,
+        key: (bool, u32),
+        ext: Option<&ExtOrigin>,
+    ) -> String {
+        let existing = self.ext_origins.get(&(key.0, key.1, method.to_string()));
+        let target = short_type_name(target);
+        match (ext, existing) {
+            (_, Some(prev)) => format!(
+                "`{target}::{method}` is already declared — `{}` extends `{target}` with it, and a method is declared once",
+                import_path_of(&prev.file)
+            ),
+            (Some(_), None) => format!(
+                "`{target}::{method}` is already declared by `{target}`'s own module — an extension adds a method, it never replaces one"
+            ),
+            (None, None) => format!("duplicate method `{method}` in impl `{target}`"),
+        }
     }
 
     /// STRM (v0.0.27): collect the single blessed `impl str { ... }` block
@@ -4008,7 +4163,12 @@ impl SemaCx<'_> {
     /// `EnumDef::methods`, `This` resolves to `Ty::Enum(enum_id)`, no
     /// destructor detection (enums don't carry Drop yet; relaxes when
     /// the no-Drop-payload rule does).
-    fn collect_enum_impl_methods(&mut self, enum_id: EnumId, b: &ImplBlock) {
+    fn collect_enum_impl_methods(
+        &mut self,
+        enum_id: EnumId,
+        b: &ImplBlock,
+        ext: Option<ExtOrigin>,
+    ) {
         self.self_type_stack.push(Ty::Enum(enum_id));
         for m in &b.methods {
             let mut mscope = std::collections::HashSet::new();
@@ -4044,12 +4204,16 @@ impl SemaCx<'_> {
             {
                 self.err(
                     "E0326",
-                    format!(
-                        "duplicate method `{}` in impl `{}`",
-                        m.name.name, b.target.name
+                    self.duplicate_method_msg(
+                        &b.target.name,
+                        &m.name.name,
+                        (true, enum_id.0),
+                        ext.as_ref(),
                     ),
                     m.name.span,
                 );
+                self.ext_conflicts
+                    .insert((true, enum_id.0, m.name.name.clone()));
                 continue;
             }
             // Reject a *user-written* `drop` on enums (E0338): v0.0.14 tears
@@ -4087,6 +4251,10 @@ impl SemaCx<'_> {
                     generic_bounds,
                 },
             );
+            if let Some(o) = &ext {
+                self.ext_origins
+                    .insert((true, enum_id.0, m.name.name.clone()), o.clone());
+            }
         }
         self.self_type_stack.pop();
     }
@@ -12105,6 +12273,14 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 }
                 return Ty::Error;
             };
+            // EXT.2: same gate as the struct path.
+            if let Some(origin) = self.ext_out_of_scope(true, eid.0, &name.name) {
+                let shown = self.ty_display_named(&Ty::Enum(eid));
+                for a in args {
+                    let _ = self.check_expr(a, None);
+                }
+                return self.err_ext_out_of_scope(&shown, name, &origin);
+            }
             return self.check_enum_method_call(
                 eid, &enum_name, name, &sig, type_args, args, call_span, receiver,
             );
@@ -12164,6 +12340,15 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             }
             return Ty::Error;
         };
+        // EXT.2: the method exists, but if another module added it, it is
+        // only in scope where that module was imported.
+        if let Some(origin) = self.ext_out_of_scope(false, id.0, &name.name) {
+            let shown = self.ty_display_named(&Ty::Struct(id));
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
+            return self.err_ext_out_of_scope(&shown, name, &origin);
+        }
         // v0.0.23: enforce impl-block generic bounds at the call site. A method
         // from `impl Box[T: Copy] { fn get }` requires the receiver's concrete
         // `T` to satisfy `Copy` — but only when *that* method is called, so a
@@ -14071,6 +14256,18 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         args: &[Expr],
         call_span: ByteSpan,
     ) -> Ty {
+        // EXT.2: `Type::make()` is gated exactly like `value.make()`.
+        let (is_enum, owner_id) = match owner {
+            MethodOwner::Struct(id) => (false, id.0),
+            MethodOwner::Enum(id) => (true, id.0),
+        };
+        if let Some(origin) = self.ext_out_of_scope(is_enum, owner_id, &method_seg.name) {
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
+            let name = type_name.to_string();
+            return self.err_ext_out_of_scope(&name, method_seg, &origin);
+        }
         if sig.receiver.is_some() {
             self.err(
                 "E0327",
@@ -21572,6 +21769,60 @@ mod tests {
         )
     }
 
+    /// EXT.2: `check_multifile_src` plus the import graph the resolver hands
+    /// the compile path — `(file id, the file ids it imports)`. Only with a
+    /// graph is the extension gate live; the plain
+    /// helper leaves it off, which is what every other multi-file test wants.
+    fn check_multifile_src_imports(
+        entry_file: &str,
+        files: &[(&str, &str)],
+        imports: &[(&str, &[&str])],
+    ) -> Vec<Diagnostic> {
+        let mut items = Vec::new();
+        let mut file_map = std::collections::BTreeMap::new();
+        let mut entry_src = "";
+        for (file_id, src) in files {
+            let toks = tokenize(src).expect("lex");
+            let mut prog = parse(toks).expect("parse");
+            for item in &mut prog.items {
+                item.origin_file = Some((*file_id).to_string());
+            }
+            items.extend(prog.items);
+            file_map.insert(
+                (*file_id).to_string(),
+                (
+                    PathBuf::from(format!("{file_id}.cplus")),
+                    (*src).to_string(),
+                ),
+            );
+            if *file_id == entry_file {
+                entry_src = src;
+            }
+        }
+        let mut edges: std::collections::BTreeMap<String, Vec<String>> = files
+            .iter()
+            .map(|(fid, _)| ((*fid).to_string(), Vec::new()))
+            .collect();
+        for (fid, targets) in imports {
+            edges.insert(
+                (*fid).to_string(),
+                targets.iter().map(|t| (*t).to_string()).collect(),
+            );
+        }
+        let prog = crate::ast::Program {
+            imports: Vec::new(),
+            items,
+        };
+        check_multi_with_mono_imports(
+            &prog,
+            PathBuf::from(format!("{entry_file}.cplus")),
+            entry_src,
+            file_map,
+            &edges,
+        )
+        .0
+    }
+
     fn errors(src: &str) -> Vec<&'static str> {
         check_src(src)
             .into_iter()
@@ -21652,11 +21903,63 @@ fn go() { let c: C = C { n: 0 }; c.bump(); return; }\n";
         );
     }
 
-    // ---- EXT.1 (v0.0.27): same-package impl extensions ----
+    // ---- EXT.2: extensions, gated on importing the module that wrote them.
+    // Packages play no part; `a`/`b`/`c`/`d` below are file ids that happen
+    // to sit in different packages precisely to show it makes no difference.
 
     #[test]
-    fn ext_inherent_impl_across_files_same_package_clean() {
-        let diags = check_multifile_src(
+    fn ext_resolves_where_the_extending_module_is_imported() {
+        // `b` extends `a`'s type; `c` imports both and calls the method.
+        let diags = check_multifile_src_imports(
+            "app.src.c",
+            &[
+                ("a.src.a", "struct abc { f2: i32 }\n"),
+                ("b.src.b", "impl abc { fn one(this) -> i32 { return this.f2; } }\n"),
+                (
+                    "app.src.c",
+                    "fn main() -> i32 { let v: abc = abc { f2: 7 }; return v.one(); }\n",
+                ),
+            ],
+            &[
+                ("b.src.b", &["a.src.a"]),
+                ("app.src.c", &["a.src.a", "b.src.b"]),
+            ],
+        );
+        let codes = error_codes(diags);
+        assert!(
+            codes.is_empty(),
+            "importing the extending module brings its method; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn ext_hidden_without_the_import_e0388() {
+        // Same build — `b` is compiled, someone imported it. This file did
+        // not, so `one` is not in its scope.
+        let diags = check_multifile_src_imports(
+            "app.src.c",
+            &[
+                ("a.src.a", "struct abc { f2: i32 }\n"),
+                ("b.src.b", "impl abc { fn one(this) -> i32 { return this.f2; } }\n"),
+                (
+                    "app.src.c",
+                    "fn main() -> i32 { let v: abc = abc { f2: 7 }; return v.one(); }\n",
+                ),
+            ],
+            &[("b.src.b", &["a.src.a"]), ("app.src.c", &["a.src.a"])],
+        );
+        let codes = error_codes(diags);
+        assert!(
+            codes.contains(&"E0388"),
+            "an extension is invisible without its import; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn ext_same_package_still_needs_the_import_e0388() {
+        // The rule is the module, not the package. Two files of ONE package:
+        // the caller must still import the one that wrote the method.
+        let diags = check_multifile_src_imports(
             "acme.src.main",
             &[
                 ("acme.src.geom", "struct Point { x: i32, y: i32 }\n"),
@@ -21669,42 +21972,186 @@ fn go() { let c: C = C { n: 0 }; c.bump(); return; }\n";
                     "fn main() -> i32 { let p: Point = Point { x: 3, y: 4 }; return p.sum(); }\n",
                 ),
             ],
+            &[
+                ("acme.src.ext", &["acme.src.geom"]),
+                ("acme.src.main", &["acme.src.geom"]),
+            ],
         );
         let codes = error_codes(diags);
         assert!(
-            codes.is_empty(),
-            "same-package extension is legal and its method resolves; got {codes:?}"
+            codes.contains(&"E0388"),
+            "a sibling file's extension is gated like anyone else's; got {codes:?}"
         );
     }
 
     #[test]
-    fn ext_inherent_impl_foreign_package_e0387() {
-        let diags = check_multifile_src(
-            "other.src.main",
+    fn ext_declared_beside_its_type_needs_no_import() {
+        // An `impl` in the type's OWN file is not an extension — it comes
+        // with the type, as it always has.
+        let diags = check_multifile_src_imports(
+            "acme.src.main",
             &[
-                ("acme.src.geom", "struct Point { x: i32, y: i32 }\n"),
                 (
-                    "other.src.main",
-                    "impl Point { fn sum(this) -> i32 { return this.x + this.y; } }\n\
+                    "acme.src.geom",
+                    "struct Point { x: i32, y: i32 }\n\
+                     impl Point { fn sum(this) -> i32 { return this.x + this.y; } }\n",
+                ),
+                (
+                    "acme.src.main",
+                    "fn main() -> i32 { let p: Point = Point { x: 3, y: 4 }; return p.sum(); }\n",
+                ),
+            ],
+            &[("acme.src.main", &["acme.src.geom"])],
+        );
+        let codes = error_codes(diags);
+        assert!(
+            codes.is_empty(),
+            "a method declared with its type needs no import; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn ext_ungated_without_an_import_graph() {
+        // Callers with no import graph (single-file mode, LSP, most of these
+        // tests) treat the build as one scope. Extensions stay legal; it is
+        // only the gate that needs edges to enforce.
+        let diags = check_multifile_src(
+            "b.src.b",
+            &[
+                ("a.src.a", "struct abc { f2: i32 }\n"),
+                (
+                    "b.src.b",
+                    "impl abc { fn one(this) -> i32 { return this.f2; } }\n\
+                     fn main() -> i32 { let v: abc = abc { f2: 7 }; return v.one(); }\n",
+                ),
+            ],
+        );
+        let codes = error_codes(diags);
+        assert!(
+            codes.is_empty(),
+            "with no import graph the whole build is one scope; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn ext_may_not_replace_a_method_of_the_types_own_module_e0326() {
+        let diags = check_multifile_src(
+            "b.src.b",
+            &[
+                (
+                    "a.src.a",
+                    "struct abc { f2: i32 }\n\
+                     impl abc { fn one(this) -> i32 { return 0; } }\n",
+                ),
+                (
+                    "b.src.b",
+                    "impl abc { fn one(this) -> i32 { return this.f2; } }\n\
                      fn main() -> i32 { return 0; }\n",
                 ),
             ],
         );
         let codes = error_codes(diags);
         assert!(
-            codes.contains(&"E0387"),
-            "a foreign package adding inherent methods is E0387; got {codes:?}"
+            codes.contains(&"E0326"),
+            "an extension adds a method, it never replaces one; got {codes:?}"
         );
     }
 
     #[test]
-    fn ext_enum_impl_across_files_same_package_clean() {
+    fn ext_second_declaration_of_one_name_is_e0326_first_come_first_served() {
+        // `b` and `d` both extend `abc` with `one`. There is one `abc.one`
+        // in a program: whichever the collector reaches first holds the name,
+        // the second reports. True whether or not any file imports both.
         let diags = check_multifile_src(
+            "app.src.main",
+            &[
+                ("a.src.a", "struct abc { f2: i32 }\n"),
+                ("b.src.b", "impl abc { fn one(this) -> i32 { return 1; } }\n"),
+                ("d.src.d", "impl abc { fn one(this) -> i32 { return 2; } }\n"),
+                ("app.src.main", "fn main() -> i32 { return 0; }\n"),
+            ],
+        );
+        let codes = error_codes(diags);
+        assert!(
+            codes.contains(&"E0326"),
+            "a second `abc::one` anywhere in the build is an error; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn ext_may_not_declare_a_destructor_e0389() {
+        let diags = check_multifile_src(
+            "b.src.b",
+            &[
+                ("a.src.a", "struct abc { _f1: *u8, f2: i32 }\n"),
+                (
+                    "b.src.b",
+                    "impl abc { fn drop(ref this) { } }\n\
+                     fn main() -> i32 { return 0; }\n",
+                ),
+            ],
+        );
+        let codes = error_codes(diags);
+        assert!(
+            codes.contains(&"E0389"),
+            "a destructor belongs to the module that declares the type; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn ext_assoc_fn_hidden_without_import_e0388() {
+        let diags = check_multifile_src_imports(
+            "app.src.c",
+            &[
+                ("a.src.a", "struct abc { f2: i32 }\n"),
+                (
+                    "b.src.b",
+                    "impl abc { fn zero() -> abc { return abc { f2: 0 }; } }\n",
+                ),
+                (
+                    "app.src.c",
+                    "fn main() -> i32 { let v: abc = abc::zero(); return v.f2; }\n",
+                ),
+            ],
+            &[("b.src.b", &["a.src.a"]), ("app.src.c", &["a.src.a"])],
+        );
+        let codes = error_codes(diags);
+        assert!(
+            codes.contains(&"E0388"),
+            "an extension's associated fn is gated like its methods; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn ext_private_field_stays_off_limits_to_an_extension_e0403() {
+        // The extension gets the type's PUBLIC surface, nothing more — `_f1`
+        // is the declaring module's business, which is why `drop` is too.
+        let diags = check_multifile_src(
+            "b.src.b",
+            &[
+                ("a.src.a", "struct abc { _f1: *u8, f2: i32 }\n"),
+                (
+                    "b.src.b",
+                    "impl abc { fn peek(this) -> *u8 { return this._f1; } }\n\
+                     fn main() -> i32 { return 0; }\n",
+                ),
+            ],
+        );
+        let codes = error_codes(diags);
+        assert!(
+            codes.contains(&"E0403"),
+            "an extension may not read a `_` field; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn ext_enum_hidden_without_import_e0388() {
+        let diags = check_multifile_src_imports(
             "acme.src.main",
             &[
                 ("acme.src.modes", "enum Mode { A, B }\n"),
                 (
-                    "acme.src.ext",
+                    "b.src.b",
                     "impl Mode { fn tag(this) -> i32 { return 7; } }\n",
                 ),
                 (
@@ -21712,31 +22159,42 @@ fn go() { let c: C = C { n: 0 }; c.bump(); return; }\n";
                     "fn main() -> i32 { let m: Mode = Mode::A; return m.tag(); }\n",
                 ),
             ],
-        );
-        let codes = error_codes(diags);
-        assert!(
-            codes.is_empty(),
-            "same-package enum extension is legal; got {codes:?}"
-        );
-    }
-
-    #[test]
-    fn ext_enum_impl_foreign_package_e0387() {
-        let diags = check_multifile_src(
-            "other.src.main",
             &[
-                ("acme.src.modes", "enum Mode { A, B }\n"),
-                (
-                    "other.src.main",
-                    "impl Mode { fn tag(this) -> i32 { return 7; } }\n\
-                     fn main() -> i32 { return 0; }\n",
-                ),
+                ("b.src.b", &["acme.src.modes"]),
+                ("acme.src.main", &["acme.src.modes"]),
             ],
         );
         let codes = error_codes(diags);
         assert!(
-            codes.contains(&"E0387"),
-            "a foreign package extending an enum is E0387; got {codes:?}"
+            codes.contains(&"E0388"),
+            "an enum extension is gated like a struct one; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn ext_enum_resolves_where_imported() {
+        let diags = check_multifile_src_imports(
+            "other.src.main",
+            &[
+                ("acme.src.modes", "enum Mode { A, B }\n"),
+                (
+                    "other.src.ext",
+                    "impl Mode { fn tag(this) -> i32 { return 7; } }\n",
+                ),
+                (
+                    "other.src.main",
+                    "fn main() -> i32 { let m: Mode = Mode::A; return m.tag(); }\n",
+                ),
+            ],
+            &[
+                ("other.src.ext", &["acme.src.modes"]),
+                ("other.src.main", &["acme.src.modes", "other.src.ext"]),
+            ],
+        );
+        let codes = error_codes(diags);
+        assert!(
+            codes.is_empty(),
+            "an enum extension resolves where imported; got {codes:?}"
         );
     }
 

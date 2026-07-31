@@ -21261,20 +21261,18 @@ fn same_package_impl_extension_compiles_and_runs() {
     assert_eq!(run.code(), Some(7), "extension method must run: 3 + 4");
 }
 
-#[test]
-fn foreign_package_impl_extension_is_e0387() {
-    // EXT.1's line: another PACKAGE may not add inherent methods. The app
-    // depends on `dep` and tries `impl d::Point` — rejected, with the
-    // packages named.
-    let cpc = env!("CARGO_BIN_EXE_cpc");
+/// EXT.2 spike: lay down an app that depends on `dep` (declares `Point`) and
+/// on `ext` (adds `sum` to it). `src/main.cplus` is written by the caller.
+fn ext_project(main_src: &str, extra: &[(&str, &str)]) -> std::path::PathBuf {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"app\"\n\n[[bin]]\nname = \"app\"\npath = \"src/main.cplus\"\n\n[dependencies]\ndep = \"*\"\n",
+        "[package]\nname = \"app\"\n\n[[bin]]\nname = \"app\"\npath = \"src/main.cplus\"\n\n[dependencies]\ndep = \"*\"\next = \"*\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/dep/src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/ext/src")).unwrap();
     std::fs::write(
         dir.join("vendor/dep/Cplus.toml"),
         "[package]\nname = \"dep\"\n",
@@ -21282,14 +21280,62 @@ fn foreign_package_impl_extension_is_e0387() {
     .unwrap();
     std::fs::write(
         dir.join("vendor/dep/src/dep.cplus"),
-        "struct Point { x: i32, y: i32 }\n",
+        "struct Point { x: i32, y: i32 }\nimpl Point { fn area(this) -> i32 { return this.x * this.y; } }\n",
     )
     .unwrap();
     std::fs::write(
-        dir.join("src/main.cplus"),
-        "import \"dep/dep\" as d;\nimpl d::Point { fn sum(this) -> i32 { return this.x + this.y; } }\nfn main() -> i32 { return 0; }\n",
+        dir.join("vendor/ext/Cplus.toml"),
+        "[package]\nname = \"ext\"\n",
     )
     .unwrap();
+    std::fs::write(
+        dir.join("vendor/ext/src/ext.cplus"),
+        "import \"dep/dep\" as d;\nimpl d::Point { fn sum(this) -> i32 { return this.x + this.y; } }\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("src/main.cplus"), main_src).unwrap();
+    for (rel, src) in extra {
+        std::fs::write(dir.join(rel), src).unwrap();
+    }
+    dir
+}
+
+#[test]
+fn extension_runs_where_the_extending_module_is_imported() {
+    // EXT.2's line: any module may add methods to any type, and they are real
+    // methods — `p.sum()` from `ext` beside `p.area()` from `dep`. Two
+    // packages here only to show the package boundary is not the rule.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = ext_project(
+        "import \"dep/dep\" as d;\nimport \"ext/ext\" as e;\n\
+         fn main() -> i32 { let p: d::Point = d::Point { x: 3, y: 4 }; return p.sum() + p.area(); }\n",
+        &[],
+    );
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("cpc build");
+    assert!(st.success(), "an imported extension must compile");
+    let run = Command::new(dir.join("target/debug/app"))
+        .status()
+        .expect("run binary");
+    assert_eq!(run.code(), Some(19), "3 + 4 from `ext`, 3 * 4 from `dep`");
+}
+
+#[test]
+fn extension_is_invisible_without_the_import_e0388() {
+    // The extension is in the build (main imports it), but `helper.cplus`
+    // never named `ext/ext` — so `sum` is not in ITS scope.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = ext_project(
+        "import \"dep/dep\" as d;\nimport \"ext/ext\" as e;\nimport \"./helper\" as h;\n\
+         fn main() -> i32 { let p: d::Point = d::Point { x: 3, y: 4 }; return h::probe(p); }\n",
+        &[(
+            "src/helper.cplus",
+            "import \"dep/dep\" as d;\nfn probe(p: d::Point) -> i32 { return p.sum(); }\n",
+        )],
+    );
     let out = Command::new(cpc)
         .arg("check")
         .current_dir(&dir)
@@ -21300,10 +21346,119 @@ fn foreign_package_impl_extension_is_e0387() {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    assert!(!out.status.success(), "foreign-package extension must be rejected");
-    assert!(all.contains("E0387"), "expected E0387, got: {all}");
     assert!(
-        all.contains("`dep`") && all.contains("`app`"),
-        "the diagnostic names both packages; got: {all}"
+        !out.status.success(),
+        "an unimported extension must not resolve"
     );
+    assert!(all.contains("E0388"), "expected E0388, got: {all}");
+    assert!(
+        all.contains("ext/ext"),
+        "the diagnostic names the import to add; got: {all}"
+    );
+}
+
+#[test]
+fn two_modules_may_not_declare_the_same_extension_method_e0326() {
+    // The discriminating program: `ext/ext` and `./mine` both add `sum` to
+    // `Point`, and NO file imports both — `h1` reaches one, `h2` the other.
+    // There is still exactly one `Point.sum` in a program, so this is an
+    // error, not two methods.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = ext_project(
+        "import \"./h1\" as h1;\nimport \"./h2\" as h2;\n\
+         fn main() -> i32 { return h1::a() + h2::b(); }\n",
+        &[
+            (
+                "src/mine.cplus",
+                "import \"dep/dep\" as d;\nimpl d::Point { fn sum(this) -> i32 { return 0; } }\n",
+            ),
+            (
+                "src/h1.cplus",
+                "import \"dep/dep\" as d;\nimport \"ext/ext\" as e;\n\
+                 fn a() -> i32 { let p: d::Point = d::Point { x: 1, y: 2 }; return p.sum(); }\n",
+            ),
+            (
+                "src/h2.cplus",
+                "import \"dep/dep\" as d;\nimport \"./mine\" as m;\n\
+                 fn b() -> i32 { let p: d::Point = d::Point { x: 1, y: 2 }; return p.sum(); }\n",
+            ),
+        ],
+    );
+    let out = Command::new(cpc)
+        .arg("check")
+        .current_dir(&dir)
+        .output()
+        .expect("cpc check");
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!out.status.success(), "a second `Point.sum` must be rejected");
+    assert!(all.contains("E0326"), "expected E0326, got: {all}");
+    assert!(
+        all.contains("already declared"),
+        "the message says the name is taken; got: {all}"
+    );
+}
+
+#[test]
+fn sibling_file_extension_still_needs_the_import_e0388() {
+    // Same package, next-door file: the gate does not care. `helper.cplus`
+    // must import the module that wrote `twice`, exactly as it would for a
+    // vendored one.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = ext_project(
+        "import \"dep/dep\" as d;\nimport \"./mine\" as m;\nimport \"./helper\" as h;\n\
+         fn main() -> i32 { return h::probe(); }\n",
+        &[
+            (
+                "src/mine.cplus",
+                "import \"dep/dep\" as d;\nimpl d::Point { fn twice(this) -> i32 { return this.x * 2; } }\n",
+            ),
+            (
+                "src/helper.cplus",
+                "import \"dep/dep\" as d;\n\
+                 fn probe() -> i32 { let p: d::Point = d::Point { x: 1, y: 2 }; return p.twice(); }\n",
+            ),
+        ],
+    );
+    let out = Command::new(cpc)
+        .arg("check")
+        .current_dir(&dir)
+        .output()
+        .expect("cpc check");
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!out.status.success(), "a sibling extension is gated too");
+    assert!(all.contains("E0388"), "expected E0388, got: {all}");
+}
+
+#[test]
+fn extension_may_not_replace_an_existing_method_e0326() {
+    // `ext` already adds `sum`; here it also tries to redefine `area`, which
+    // `dep` declares. An extension adds, it never overrides.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = ext_project(
+        "import \"dep/dep\" as d;\nimport \"ext/ext\" as e;\nfn main() -> i32 { return 0; }\n",
+        &[(
+            "vendor/ext/src/ext.cplus",
+            "import \"dep/dep\" as d;\nimpl d::Point { fn area(this) -> i32 { return 0; } }\n",
+        )],
+    );
+    let out = Command::new(cpc)
+        .arg("check")
+        .current_dir(&dir)
+        .output()
+        .expect("cpc check");
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!out.status.success(), "an override must be rejected");
+    assert!(all.contains("E0326"), "expected E0326, got: {all}");
 }

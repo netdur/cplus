@@ -4,7 +4,7 @@
 
 Every C+ diagnostic carries a numbered code, a source span, and often a machine-applicable suggestion. `cpc --diagnostics=json` emits the same information in a machine-readable shape for editors and agents. Codes prefixed with **W** are non-fatal warnings; the build continues. The normative ranges and what each phase owns are fixed in [§20 of the language specification](/docs/spec).
 
-This is the complete index — **163 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **128** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
+This is the complete index — **165 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **127** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
 
 ## Lexical
 
@@ -423,7 +423,7 @@ fn main() -> i32 { return 0; }
 
 ### E0326 · Duplicate method in `impl`
 
-Two methods in the same `impl` block share a name.
+Two methods on the same type share a name. Same block, two blocks, or an extension (E0388) walking into a name the type already has — an extension adds a method, it never replaces one. A method is declared once per program: two modules may not both add `one` to `abc`, whether or not any single file imports both. First declaration holds the name; the second reports.
 
 ```cplus
 struct P {}
@@ -579,19 +579,34 @@ fn main() -> i32 { return 0; }
 
 <sub>repro: checked · cplus-core/src/sema.rs:collect_str_impl_methods · test cplus-core/src/sema.rs:impl_str_bad_members_e0386</sub>
 
-### E0387 · Impl outside the type's package
+### E0387 · Generic impl away from its template
 
-An inherent `impl` names a type declared by another package, or a generic impl sits in a different file than its template. A package may extend its own concrete types from any of its files (`impl core::Handle` after importing the declaring module) — that is what lets a generated file own a method set. A foreign package may not add methods at all: a type's full method surface stays answerable by reading its own package, so a call site never depends on which other packages happen to be vendored. Generic impls stay in the template's own file (concrete-only extension, v1).
+An `impl` on a generic type sits in a different file than the template it names. Concrete types may be extended from any module under the import gate (E0388); generic types may not — a generic impl stays in the template's own file.
 
 ```cplus
-import "dep/dep" as d;
-impl d::Point { fn sum(this) -> i32 { return this.x + this.y; } }
+# in acme/src/a.cplus:  struct Holder[T] { v: T }
+# in acme/src/b.cplus:
+impl Holder[T] { fn get(this) -> T { return this.v; } }
 fn main() -> i32 { return 0; }
 ```
 
-**Fix.** Move the impl into a file of the package that declares the type, or compose free functions over the type's public surface instead. For a generic impl, keep it next to its template.
+**Fix.** Move the impl next to the `struct Name[T]` / `enum Name[T]` it extends.
 
-<sub>repro: checked · cplus-core/src/sema.rs:collect_methods · test cplus-core/src/sema.rs:ext_inherent_impl_foreign_package_e0387</sub>
+<sub>repro: scenario · cplus-core/src/sema.rs:collect_generic_impl_methods · test cplus-core/src/sema.rs:ext_generic_impl_away_from_template_file_e0387</sub>
+
+### E0389 · Extension declares a destructor
+
+An extension declares `drop`. Every other extension method is opt-in — you see it where you imported it — but `drop` decides whether values of the type are torn down at all, everywhere they are owned. That cannot depend on which files imported what. A destructor also usually needs the private fields it releases, which an extension cannot see. It belongs to the module that declares the type.
+
+```cplus
+# in ext/ext.cplus, where `Point` is declared in dep/dep.cplus:
+import "dep/dep" as d;
+impl d::Point { fn drop(ref this) { } }
+```
+
+**Fix.** Move the destructor beside the `struct` it tears down, or expose a named release method the caller invokes.
+
+<sub>repro: scenario · cplus-core/src/sema.rs:collect_methods · test cplus-core/src/sema.rs:ext_cross_package_may_not_declare_a_destructor_e0389</sub>
 
 ### E0913 · Recursive type has infinite size
 
@@ -1232,6 +1247,21 @@ fn main() -> i32 { return 0; }
 <sub>repro: checked · cplus-core/src/sema.rs:2993 · test cplus-core/src/sema.rs:empty_impl_on_regular_interface_rejected_e0916</sub>
 
 ## Modules, paths, and visibility
+
+### E0388 · Extension method not in scope
+
+A module other than the one declaring the type added this method, and the file making the call never imported that module. Extensions travel with their import: a file's method set is its types' own methods plus whatever the modules it imports added. Packages play no part — a sibling file is gated exactly like a vendored dependency. The method is real and there is exactly one of it in the program; it is simply not in scope here.
+
+```cplus
+# in ext/ext.cplus:  impl d::Point { fn sum(this) -> i32 { ... } }
+# in this file — ext/ext never imported:
+import "dep/dep" as d;
+fn probe(p: d::Point) -> i32 { return p.sum(); }
+```
+
+**Fix.** Import the extending module in this file, or call a method declared with the type itself.
+
+<sub>repro: scenario · cplus-core/src/sema.rs:err_ext_out_of_scope · test cplus-core/src/sema.rs:ext_cross_package_extension_hidden_without_import_e0388</sub>
 
 ### E0401 · Imported file not found
 
