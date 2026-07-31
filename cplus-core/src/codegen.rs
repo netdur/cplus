@@ -14943,6 +14943,54 @@ impl<'a> FnState<'a> {
                 return Some(self.gen_eq_intrinsic(&lv, &rv, &lt));
             }
         }
+        // STRM v2 (2026-07-31): blessed `count()` / `is_empty()` on the
+        // builtin slice and array views. Slice: extractvalue of the
+        // `{ ptr, i64 }` len field (the `#slice_len` lowering). Array: the
+        // length is the type's static N. Falls through on every other
+        // receiver type — struct `count` methods (Vec, Text) dispatch below.
+        if (name.name == "count" || name.name == "is_empty") && args.is_empty() {
+            let us = usize_llvm_ty();
+            // Probe the receiver type without a second evaluation: an rvalue
+            // receiver sits pre-evaluated in `pre`; a place receiver goes
+            // through side-effect-free `gen_place` (the generic path's own
+            // `gen_place` then duplicates at most an address chain — DCE
+            // fodder, same class as the other blessed arms' probe loads).
+            let len_operand: Option<String> = match &pre {
+                Some((v, t)) => match t {
+                    Ty::Slice(_) => {
+                        let r = self.next_tmp();
+                        self.emit(&format!("{r} = extractvalue {{ ptr, {us} }} {v}, 1"));
+                        Some(r)
+                    }
+                    Ty::Array(_, n) => Some(format!("{n}")),
+                    _ => None,
+                },
+                None => {
+                    let (ptr, t) = self.gen_place(receiver);
+                    match &t {
+                        Ty::Slice(_) => {
+                            let lp = self.next_tmp();
+                            self.emit(&format!(
+                                "{lp} = getelementptr inbounds {{ ptr, {us} }}, ptr {ptr}, i32 0, i32 1"
+                            ));
+                            let lv = self.next_tmp();
+                            self.gen_load(&lv, &Ty::Usize, &lp);
+                            Some(lv)
+                        }
+                        Ty::Array(_, n) => Some(format!("{n}")),
+                        _ => None,
+                    }
+                }
+            };
+            if let Some(len_val) = len_operand {
+                if name.name == "count" {
+                    return Some((len_val, Ty::Usize));
+                }
+                let r = self.next_tmp();
+                self.emit(&format!("{r} = icmp eq {us} {len_val}, 0"));
+                return Some((r, Ty::Bool));
+            }
+        }
         // v0.0.12 G-024: blessed `is_null()` / `is_not_null()` on raw
         // pointers. Single `icmp eq/ne ptr %p, null` — no memory access,
         // safe in any context. Sema rejected the call on any non-pointer
@@ -14986,11 +15034,11 @@ impl<'a> FnState<'a> {
             }
             None => self.gen_place(receiver),
         };
-        // Phase 8 slice 8.STR.3: blessed methods on `Text` are
-        // intrinsic — no MethodSig lookup, no mangled-name call.
-        if matches!(recv_ty, Ty::String) {
-            return Some(self.gen_string_method_call(&recv_ptr, &name.name, args));
-        }
+        // STRM v2 (2026-07-31): the Phase-8 `Ty::String` blessed-method arm
+        // (`len`/`is_empty`/`as_str`/`clone`) was deleted as unreachable —
+        // no expression types as the legacy internal string in receiver
+        // position anymore (interpolation is the designated `Text` struct
+        // or E0613; user-visible `string` was removed in v0.0.18).
         // v0.0.6 Slice 1B: SIMD instance methods. Load the vector value
         // from the receiver's slot and dispatch. v0.0.9 follow-up: also
         // catch `Ty::Mask` — masks share the SIMD LLVM lowering and go
@@ -16977,81 +17025,6 @@ impl<'a> FnState<'a> {
                 (v, Ty::String)
             }
             _ => unreachable!("sema validated method `string::{method}`"),
-        }
-    }
-
-    /// Methods on a `Text` receiver. The receiver is materialized as a
-    /// `ptr` to the local slot (24-byte aggregate); we load whichever
-    /// fields the method needs via `getelementptr`/`load`.
-    fn gen_string_method_call(
-        &mut self,
-        recv_ptr: &str,
-        method: &str,
-        args: &[Expr],
-    ) -> (String, Ty) {
-        let us = usize_llvm_ty();
-        let _ = args; // every v1 method is zero-arg
-        match method {
-            "len" => {
-                let lp = self.next_tmp();
-                self.emit(&format!("{lp} = getelementptr inbounds {{ ptr, {us}, {us} }}, ptr {recv_ptr}, i32 0, i32 1"));
-                let lv = self.next_tmp();
-                // v0.0.7 Slice 1.2: Text fat-pointer len field — usize leaf.
-                self.gen_load(&lv, &Ty::Usize, &lp);
-                (lv, Ty::Usize)
-            }
-            "is_empty" => {
-                let lp = self.next_tmp();
-                self.emit(&format!("{lp} = getelementptr inbounds {{ ptr, {us}, {us} }}, ptr {recv_ptr}, i32 0, i32 1"));
-                let lv = self.next_tmp();
-                self.gen_load(&lv, &Ty::Usize, &lp);
-                let cmp = self.next_tmp();
-                self.emit(&format!("{cmp} = icmp eq i64 {lv}, 0"));
-                (cmp, Ty::Bool)
-            }
-            "as_str" => {
-                // Extract ptr + len; package as `str` fat-pointer `{ ptr, i64 }`.
-                let pp = self.next_tmp();
-                self.emit(&format!("{pp} = getelementptr inbounds {{ ptr, {us}, {us} }}, ptr {recv_ptr}, i32 0, i32 0"));
-                let pv = self.next_tmp();
-                // v0.0.7 Slice 1.2: Text ptr field — ptr leaf.
-                self.gen_load(&pv, &Ty::RawPtr(Box::new(Ty::Unit)), &pp);
-                let lp = self.next_tmp();
-                self.emit(&format!("{lp} = getelementptr inbounds {{ ptr, {us}, {us} }}, ptr {recv_ptr}, i32 0, i32 1"));
-                let lv = self.next_tmp();
-                self.gen_load(&lv, &Ty::Usize, &lp);
-                let s0 = self.next_tmp();
-                self.emit(&format!(
-                    "{s0} = insertvalue {{ ptr, {us} }} undef, ptr {pv}, 0"
-                ));
-                let s1 = self.next_tmp();
-                self.emit(&format!(
-                    "{s1} = insertvalue {{ ptr, {us} }} {s0}, {us} {lv}, 1"
-                ));
-                (s1, Ty::Str)
-            }
-            "clone" => {
-                // Load len, malloc a fresh buffer of size len (cap = len in
-                // the clone), memcpy bytes, build a new aggregate.
-                let pp = self.next_tmp();
-                self.emit(&format!("{pp} = getelementptr inbounds {{ ptr, {us}, {us} }}, ptr {recv_ptr}, i32 0, i32 0"));
-                let pv = self.next_tmp();
-                // v0.0.7 Slice 1.2: Text.clone() — ptr + len reads.
-                self.gen_load(&pv, &Ty::RawPtr(Box::new(Ty::Unit)), &pp);
-                let lp = self.next_tmp();
-                self.emit(&format!("{lp} = getelementptr inbounds {{ ptr, {us}, {us} }}, ptr {recv_ptr}, i32 0, i32 1"));
-                let lv = self.next_tmp();
-                self.gen_load(&lv, &Ty::Usize, &lp);
-                let buf = self.next_tmp();
-                self.emit(&format!("{buf} = call ptr @malloc(i64 {lv})"));
-                let _cpy = self.next_tmp();
-                self.emit(&format!(
-                    "{_cpy} = call ptr @memcpy(ptr {buf}, ptr {pv}, i64 {lv})"
-                ));
-                let v = self.string_aggregate(&buf, &lv, &lv);
-                (v, Ty::String)
-            }
-            _ => unreachable!("sema validated `string.{method}`"),
         }
     }
 

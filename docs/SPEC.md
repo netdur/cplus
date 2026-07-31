@@ -353,11 +353,14 @@ pointers (`str`, slices) carry a pointer and a `usize` length.
   `()` is unit.
 - **array** `[T; N]` — fixed length `N` (an integer literal or a
   non-negative integer `const`); the fill form `[expr; N]` initializes
-  every slot. Indexing is bounds-checked at runtime.
+  every slot. Indexing is bounds-checked at runtime. `arr.count()` and
+  `arr.is_empty()` are compiler-provided (the stdlib `count` convention).
 - **slice** `T[]` — a `{ptr, len}` view over a contiguous run of `T`;
   Copy (it is a view, not an owner). Constructed via
-  `#slice_from_raw_parts`; `#slice_ptr` / `#slice_len` read its parts.
-  Indexing is bounds-checked.
+  `#slice_from_raw_parts`; `#slice_ptr` / `#slice_len` read its parts
+  (the FFI tier). `xs.count()` and `xs.is_empty()` are compiler-provided.
+  Indexing is bounds-checked. A fuller slice/array method set awaits a
+  generic-impl story for builtin type constructors.
 
 ### 4.3 Strings
 

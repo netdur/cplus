@@ -6130,6 +6130,62 @@ fn str_builtin_methods_compile_and_run() {
 }
 
 #[test]
+fn slice_array_count_and_to_f64_run() {
+    // STRM v2 (2026-07-31): blessed `count()`/`is_empty()` on slice and
+    // array receivers (rvalue and place shapes), plus `str::to_f64` via
+    // the shape-scan + strtod path.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"sc\"\n\n[[bin]]\nname = \"sc\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::os::unix::fs::symlink(
+        format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
+        dir.join("vendor"),
+    )
+    .unwrap();
+    let prog = "import \"stdlib/vec\" as vec;\n\
+         import \"stdlib/str\" as str_methods;\n\
+         import \"stdlib/option\" as option;\n\
+         fn measure(xs: i32[]) -> usize {\n\
+             if xs.is_empty() { return 100 as usize; }\n\
+             return xs.count();\n\
+         }\n\
+         fn main() -> i32 {\n\
+             var v = vec::Vec[i32]::new();\n\
+             v.append(1);\n\
+             v.append(2);\n\
+             let s: i32[] = v.as_slice();\n\
+             if s.count() != (2 as usize) { return 1; }\n\
+             let arr: [i32; 4] = [9, 9, 9, 9];\n\
+             if arr.count() != (4 as usize) { return 2; }\n\
+             if arr.is_empty() { return 3; }\n\
+             if measure(s) != (2 as usize) { return 4; }\n\
+             match \"2.5\".to_f64() {\n\
+                 option::Option[f64]::Some(f) => {\n\
+                     if f * 2.0 != 5.0 { return 5; }\n\
+                 }\n\
+                 option::Option[f64]::None => { return 6; }\n\
+             }\n\
+             match \"2.5.1\".to_f64() {\n\
+                 option::Option[f64]::Some(_f) => { return 7; }\n\
+                 option::Option[f64]::None => {}\n\
+             }\n\
+             return 0;\n\
+         }\n";
+    std::fs::write(dir.join("src/main.cplus"), prog).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("cpc build");
+    assert!(st.success(), "slice/array/to_f64 program must compile");
+    let run = Command::new(dir.join("target/debug/sc"))
+        .output()
+        .expect("run binary");
+    assert_eq!(run.status.code(), Some(0), "all checks must pass");
+}
+
+#[test]
 fn str_builtin_methods_negative_paths() {
     // STRM (v0.0.27): (a) no stdlib/str in the build → E0324 with the
     // import note; (b) a second `impl str` next to stdlib's → E0385;

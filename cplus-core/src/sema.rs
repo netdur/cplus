@@ -3137,8 +3137,37 @@ impl SemaCx<'_> {
     /// message names the actual type — important for agents locating the fix.
     fn ty_display_named(&self, ty: &Ty) -> String {
         match ty {
-            Ty::Struct(id) => name_leaf(&self.structs[id.0 as usize].name).to_string(),
-            Ty::Enum(id) => name_leaf(&self.enums[id.0 as usize].name).to_string(),
+            // STRM v2 (2026-07-31): render generic instantiations as the
+            // user spells them (`Vec[i32]`), not the internal mangled name
+            // (`stdlib.src.vec.Vec__i32`) — mangling is internal-only.
+            Ty::Struct(id) => {
+                let sd = &self.structs[id.0 as usize];
+                match &sd.generic_origin {
+                    Some((tmpl, args)) => format!(
+                        "{}[{}]",
+                        name_leaf(tmpl),
+                        args.iter()
+                            .map(|a| self.ty_display_named(a))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                    None => name_leaf(&sd.name).to_string(),
+                }
+            }
+            Ty::Enum(id) => {
+                let ed = &self.enums[id.0 as usize];
+                match &ed.generic_origin {
+                    Some((tmpl, args)) => format!(
+                        "{}[{}]",
+                        name_leaf(tmpl),
+                        args.iter()
+                            .map(|a| self.ty_display_named(a))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                    None => name_leaf(&ed.name).to_string(),
+                }
+            }
             Ty::Array(elem, n) => format!("[{}; {}]", self.ty_display_named(elem), n),
             Ty::RawPtr(inner) => format!("*{}", self.ty_display_named(inner)),
             _ => ty_display(ty),
@@ -11702,17 +11731,13 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // receivers (string / SIMD / raw-ptr / iterator) are not in the map and
         // are handled at their own sites below (e.g. `to_string`).
         self.check_method_contract(&recv_ty, &name.name, call_span);
-        // Phase 8 slice 8.STR.3: blessed methods on the owned-string type (`Text`).
-        if matches!(recv_ty, Ty::String) {
-            if !type_args.is_empty() {
-                self.err(
-                    "E0501",
-                    "blessed `Text` methods take no type arguments".to_string(),
-                    call_span,
-                );
-            }
-            return self.check_string_method_call(name, args, call_span);
-        }
+        // STRM v2 (2026-07-31): the Phase-8 blessed method arm for the legacy
+        // internal `Ty::String` (`len`/`is_empty`/`as_str`/`clone`) was
+        // deleted as unreachable. Interpolation types as the designated
+        // `Text` struct when `stdlib/text` is imported and is E0613
+        // otherwise, and the user-visible `string` type was removed in
+        // v0.0.18 — no expression types as `Ty::String` in receiver
+        // position anymore.
         // v0.0.6 Slice 1B: blessed methods on SIMD vector receivers.
         // v0.0.9 follow-up: also catch `Ty::Mask` receivers — the
         // method body checks `is_mask` to route Simd-only ops
@@ -11872,6 +11897,30 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 return Ty::Unit;
             }
         }
+        // STRM v2 (2026-07-31): blessed `count()` / `is_empty()` on the
+        // builtin slice and array views — the same two reads every stdlib
+        // container spells `count`. These are element-type-agnostic, so they
+        // take the same compiler-defined shape as `is_null()` on raw
+        // pointers; a full slice/array method set needs a generic-impl
+        // story and stays future work. Struct receivers named `count`
+        // (Vec, Text) never reach this arm.
+        if matches!(recv_ty, Ty::Slice(_) | Ty::Array(_, _))
+            && args.is_empty()
+            && (name.name == "count" || name.name == "is_empty")
+        {
+            if !type_args.is_empty() {
+                self.err(
+                    "E0501",
+                    format!("`{}` takes no type arguments", name.name),
+                    call_span,
+                );
+            }
+            return if name.name == "count" {
+                Ty::Usize
+            } else {
+                Ty::Bool
+            };
+        }
         // STRM (v0.0.27): methods on the builtin `str` view, declared by the
         // single blessed `impl str` block (stdlib/src/str.cplus). Placed
         // after the compiler-provided arms (`to_text`/`hash`/`eq` stay
@@ -11934,7 +11983,11 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             let Some(sig) = self.enums[eid.0 as usize].methods.get(&name.name).cloned() else {
                 self.err(
                     "E0324",
-                    format!("no method `{}` on enum `{}`", name.name, enum_name),
+                    format!(
+                        "no method `{}` on enum `{}`",
+                        name.name,
+                        self.ty_display_named(&Ty::Enum(eid))
+                    ),
                     name.span,
                 );
                 for a in args {
@@ -11989,7 +12042,11 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         let Some(sig) = self.structs[id.0 as usize].methods.get(&name.name).cloned() else {
             self.err(
                 "E0324",
-                format!("no method `{}` on struct `{}`", name.name, struct_name),
+                format!(
+                    "no method `{}` on struct `{}`",
+                    name.name,
+                    self.ty_display_named(&Ty::Struct(id))
+                ),
                 name.span,
             );
             for a in args {
@@ -13548,57 +13605,6 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                         ty_display(recv)
                     ),
                     method.span,
-                );
-                for a in args {
-                    let _ = self.check_expr(a, None);
-                }
-                Ty::Error
-            }
-        }
-    }
-
-    fn check_string_method_call(&mut self, name: &Ident, args: &[Expr], call_span: ByteSpan) -> Ty {
-        let no_args = |this: &mut Self| -> bool {
-            if !args.is_empty() {
-                this.err(
-                    "E0308",
-                    format!(
-                        "`string::{}` takes 0 argument(s), got {}",
-                        name.name,
-                        args.len()
-                    ),
-                    call_span,
-                );
-                for a in args {
-                    let _ = this.check_expr(a, None);
-                }
-                false
-            } else {
-                true
-            }
-        };
-        match name.name.as_str() {
-            "len" => {
-                let _ = no_args(self);
-                Ty::Usize
-            }
-            "is_empty" => {
-                let _ = no_args(self);
-                Ty::Bool
-            }
-            "as_str" => {
-                let _ = no_args(self);
-                Ty::Str
-            }
-            "clone" => {
-                let _ = no_args(self);
-                Ty::String
-            }
-            _ => {
-                self.err(
-                    "E0324",
-                    format!("no method `{}` on type `Text`", name.name),
-                    name.span,
                 );
                 for a in args {
                     let _ = self.check_expr(a, None);
@@ -24309,6 +24315,52 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
             d.notes.iter().any(|n| n.contains("count()")),
             "expected the `count()` note; got {:?}",
             d.notes
+        );
+    }
+
+    // ── STRM v2 (2026-07-31): slice/array count + diagnostic display ──
+
+    #[test]
+    fn slice_array_count_is_empty_blessed() {
+        assert_clean(
+            "fn f(xs: i32[]) -> usize { if xs.is_empty() { return 0 as usize; } return xs.count(); }\n\
+             fn main() -> i32 {\n\
+                 let arr: [i32; 3] = [1, 2, 3];\n\
+                 let n = arr.count();\n\
+                 if arr.is_empty() { return 1; }\n\
+                 return n as i32;\n\
+             }",
+        );
+    }
+
+    #[test]
+    fn slice_other_methods_still_e0324() {
+        let codes = errors(
+            "fn f(xs: i32[]) -> usize { return xs.foo(); }\nfn main() -> i32 { return 0; }",
+        );
+        assert!(codes.contains(&"E0324"));
+    }
+
+    #[test]
+    fn e0324_displays_user_spelling_not_mangled() {
+        let ds = check_src(
+            "struct Box[T] { v: T }\n\
+             impl Box[T] { fn get(this) -> T { return this.v; } }\n\
+             fn main() -> i32 { let b: Box[i32] = Box[i32] { v: 3 }; return b.missing(); }",
+        );
+        let d = ds
+            .iter()
+            .find(|d| d.code.0 == "E0324")
+            .expect("E0324 expected");
+        assert!(
+            d.message.contains("Box[i32]"),
+            "expected user spelling; got: {}",
+            d.message
+        );
+        assert!(
+            !d.message.contains("__"),
+            "mangled name leaked into diagnostic: {}",
+            d.message
         );
     }
 

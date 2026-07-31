@@ -282,8 +282,12 @@ s.drop_first(); s.drop_last(count: 2);
 s.removing_prefix("src/"); s.removing_suffix(".txt");
 s.trim(); s.trim_start(); s.trim_end();                         // views — endpoints move, no copy
 s.split(separator: ",");                                        // Vec[str] of views (allocates the Vec)
-s.to_i64();                                                     // Option[i64] — strict decimal
+s.to_i64();  s.to_f64();                                        // Option — strict decimal shapes
 ```
+
+Importing `stdlib/text` brings the str methods in transitively (text
+delegates its reads to them). Slices and arrays carry the same two core
+reads — `xs.count()`, `xs.is_empty()` — with `#slice_*` as their FFI tier.
 
 There is still **no `+` concatenation**: build strings with interpolation (below) or `Text::append`. Operations that must allocate (uppercasing, replacing, padding) live on `Text` — convert with `s.to_text()`. The `#str_ptr(s)` / `#str_len(s)` / `#str_from_raw_parts(p, n)` intrinsics remain the FFI tier — passing bytes to C and building views over foreign memory — not the way to do string work.
 
