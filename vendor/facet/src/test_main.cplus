@@ -7,6 +7,7 @@ import "stdlib/time" as time;
 import "stdlib/text" as text;
 import "flex_layout/flex_layout" as flex;
 import "./facet" as facet;
+import "./contract" as contract;
 import "./nav" as nav;
 
 fn main() -> i32 { return 0; }
