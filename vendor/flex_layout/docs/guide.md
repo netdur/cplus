@@ -348,7 +348,9 @@ Engine only produces numbers.
 - **Move semantics:** `add_child` and fluent DSL consume; mutate a `var` with
   `set_*`, not `n = n.width(...)`.
 - **Cursor lifetime:** a `*Node` from `child_ptr` dies when that node (or an
-  ancestor) is removed — never from sibling churn or reorders.
+  ancestor) is removed — never from sibling churn or reorders. To hold one
+  across possible removals, capture `flex::removal_count()` with it and
+  re-derive when the count changed (see ref.md).
 - **Absolute frames:** always root-relative until the adapter subtracts.
 - **Measure context:** borrowed; adapter owns the view lifetime.
 - **Overflow** is stored for adapters; it does not change layout math.

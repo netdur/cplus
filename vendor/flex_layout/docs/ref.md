@@ -51,6 +51,7 @@ the sentinel directly.
 | `child_count` | `(this) -> usize` |
 | `child_ptr` | `(this, at: usize) -> Option[*Node]` — borrowed cursor for traversal |
 | `child_index` | `(this, of: *Node) -> Option[usize]` — a cursor's current index (identity compare) |
+| `flex::removal_count` | `() -> u64` — process-wide monotonic removal counter (free fn) |
 
 **Node identity is stable.** Children live in their own heap slots, so a
 `*Node` from `child_ptr` stays valid from the node's insertion until that node
@@ -60,6 +61,19 @@ event that kills cursors into a subtree. Every structural verb invalidates the
 incremental layout cache, so the next `calculate_layout` re-places what moved.
 `remove_child` returns the live subtree: drop it to delete, or reinsert it
 (under any parent) to reparent.
+
+**Detecting staleness without dereferencing.** Only removals kill cursors, and
+`removal_count()` counts exactly those. A holder that captures the count with
+a cursor can later prove the cursor live by a counter compare alone: unchanged
+means no node anywhere has died since capture. On a change, re-derive the
+cursor (re-find by key) instead of trusting it — the only false positive is an
+unrelated removal, and re-deriving is then correct anyway. The counter does
+not observe whole-tree teardown: a cursor must not outlive its tree.
+
+```cplus
+struct Handle { node: *flex::Node, seen: u64 }        // capture: removal_count()
+// use: if h.seen == flex::removal_count() { deref } else { re-find by key }
+```
 
 ### Layout & read-back
 

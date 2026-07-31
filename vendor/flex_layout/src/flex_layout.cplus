@@ -462,6 +462,7 @@ impl Node {
         match this._children.remove(at) {
             option::Option[box::Box[Node]]::Some(b) => {
                 this._cached_valid = false;
+                REMOVAL_COUNT = REMOVAL_COUNT +% (1 as u64);
                 return option::Option[Node]::Some(b.unwrap());
             }
             option::Option[box::Box[Node]]::None => { return option::Option[Node]::None; }
@@ -754,6 +755,21 @@ impl Node {
         return option::Option[usize]::None;
     }
 }
+
+// Process-wide, monotonic count of node removals (bumped by every successful
+// `remove_child`; moves and inserts never bump — they don't kill cursors).
+// Single-threaded, like the rest of the engine.
+static REMOVAL_COUNT: u64 = 0u64;
+
+// The staleness primitive for cursor holders. A `*Node` cursor is proven
+// still-live by a counter check alone — no dereference: capture
+// `removal_count()` alongside the cursor; while it is unchanged, NO removal
+// has happened anywhere, so no node has died and the cursor is valid. If it
+// changed, treat the cursor as suspect and re-derive it (e.g. re-find by key)
+// — conservative in the safe direction, since the only false positive is "some
+// unrelated node was removed". Does not cover a whole tree being dropped
+// (teardown); a cursor must not outlive its tree.
+fn removal_count() -> u64 { return REMOVAL_COUNT; }
 
 // Does an Edge shorthand touch a given PHYSICAL edge? Start/End are logical and
 // handled separately (resolved to left/right at layout time per direction).
@@ -4389,6 +4405,30 @@ fn test_measure_swap_and_clear_invalidate() {
     }
     root.calculate_layout();
     assert approx(root.frame().height, 0.0f64);  // no content, no style size
+    return;
+}
+
+// The cursor-revalidation primitive: unchanged count == proof no cursor died.
+// Only successful removals bump; churn that cursors survive must not.
+#[test]
+fn test_removal_count_bumps_only_on_removal() {
+    var root: Node = Node::new();
+    let c0: u64 = removal_count();
+    root.add_child(leaf(10.0f64, 10.0f64));
+    root.add_child(leaf(20.0f64, 20.0f64));
+    assert root.insert_child(leaf(30.0f64, 30.0f64), at: 0 as usize) == status::Status::Ok;
+    assert root.move_child(from: 0 as usize, to: 2 as usize) == status::Status::Ok;
+    assert removal_count() == c0;                    // appends/inserts/moves: no bump
+    match root.remove_child(at: 5 as usize) {
+        option::Option[Node]::Some(_x) => { assert false; }
+        option::Option[Node]::None => { }
+    }
+    assert removal_count() == c0;                    // failed remove: no bump
+    match root.remove_child(at: 0 as usize) {
+        option::Option[Node]::Some(_taken) => { }
+        option::Option[Node]::None => { assert false; }
+    }
+    assert removal_count() == c0 +% (1 as u64);      // the one event that kills cursors
     return;
 }
 
