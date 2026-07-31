@@ -69,6 +69,8 @@ incremental layout cache, so the next `calculate_layout` re-places what moved.
 | `frame` | `(this) -> Frame` — the computed frame |
 | `child_frame` | `(this, at: usize) -> Option[Frame]` |
 | `resolved_direction` | `(this) -> Direction` — resolved LTR/RTL |
+| `layout_changed` | `(this) -> bool` — did the last pass re-lay this node (false = cache kept every frame in the subtree) |
+| `mark_content_changed` | `(ref this)` — measured content edited in place (text, image); forces re-measure next pass. The measure-fn analog of a style write |
 | `overflow` / `display` / `position_type` | `(this) -> Overflow / Display / PositionType` |
 
 An omitted `calculate_layout` axis is unconstrained (content-sized); the
