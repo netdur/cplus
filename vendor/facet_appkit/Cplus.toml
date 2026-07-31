@@ -1,25 +1,9 @@
 [package]
 name    = "facet_appkit"
-version = "0.0.2"
+version = "0.0.1"
 edition = "2026"
 
-# facet_appkit — facet's AppKit backend, two modules:
-#   ui           the `@ui` contextual-builder layer (widgets + containers over
-#                flex_layout and the typed appkit binding), usable standalone
-#   facet_appkit the facet Renderer ops + mount/run hosts + MVU app runtime
-# facet owns the tree walk and all layout (shared flex engine).
-
-# Test root doubles as the leak harness (`leaks --atExit`).
-[[bin]]
-name = "facet_appkit_tests"
-path = "src/test_main.cplus"
+# facet_appkit — facet's AppKit backend. Empty scaffold.
 
 [dependencies]
-stdlib      = "*"
-objc        = "*"
-quartzcore  = "*"
-appkit      = "*"
-flex_layout = "*"
-facet       = "*"
-agent_core  = "*"
-agent_appkit = "*"
+stdlib = "*"

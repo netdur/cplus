@@ -1,0 +1,28 @@
+[package]
+name    = "facet"
+version = "0.0.2"
+edition = "2026"
+
+# facet — platform-free UI description + @facet DSL; keyed-direct updates.
+# Backends (facet_appkit, …) mount Nodes via runtime. See docs/
+# (tutorial / guide / ref + topical deep dives).
+
+# Test root: its import closure covers the package, so `cpc test` runs the
+# literal `@facet`-syntax tests plus the module tests.
+[[bin]]
+name = "facet_tests"
+path = "src/test_main.cplus"
+
+[dependencies]
+stdlib      = "*"
+flex_layout = "*"
+
+# The per-platform backends the runtime facades import (runtime_macos.cplus /
+# runtime_linux.cplus). Declared here so facet resolves on its own instead of
+# leaning on whatever the root package happens to vendor.
+
+[macos.dependencies]
+facet_appkit = "*"
+
+[linux.dependencies]
+facet_gtk = "*"
