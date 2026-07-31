@@ -525,8 +525,8 @@ lang = "cplus"
 verified = true
 emit_site = "cplus-core/src/sema.rs:7379"
 test = "cplus-core/src/sema.rs:no_such_method_e0324"
-cause = "A method call names a method (or free fn in the type's module) that the struct does not have."
-fix = "Call a method the type actually declares, or define it in an `impl`."
+cause = "A method call names a method (or free fn in the type's module) that the receiver's type does not have. On a `str` receiver this includes the `len()` habit (the stdlib spells it `count()`) and builds that never import `stdlib/str`, whose blessed `impl str` block declares the method set."
+fix = "Call a method the type actually declares, or define it in an `impl`. For `str`: use `count()`, add `import \"stdlib/str\"` somewhere in the build, or convert with `to_text()` when the operation needs an owned string."
 example = '''
 struct P {}
 impl P {}
@@ -1304,6 +1304,41 @@ fn caller() {
   write_and_take(y, y);
   return;
 }
+'''
+
+[[code]]
+id = "E0385"
+title = "Duplicate `impl str`"
+category = "Names, types, and items"
+severity = "error"
+repro = "checked"
+lang = "cplus"
+verified = true
+emit_site = "cplus-core/src/sema.rs:collect_str_impl_methods"
+test = "cplus-core/src/sema.rs:impl_str_duplicate_block_e0385"
+cause = "The builtin `str` view takes its method set from exactly one `impl str { ... }` block program-wide — stdlib's `src/str.cplus`. A second block, in any file or package, is a conflict."
+fix = "Remove the extra block. To add operations over `str`, write free functions taking a `str` parameter, or convert with `to_text()` and use `Text`."
+example = '''
+impl str { fn a(this) -> usize { return #str_len(this); } }
+impl str { fn b(this) -> usize { return #str_len(this); } }
+fn main() -> i32 { return 0; }
+'''
+
+[[code]]
+id = "E0386"
+title = "Unsupported member in `impl str`"
+category = "Names, types, and items"
+severity = "error"
+repro = "checked"
+lang = "cplus"
+verified = true
+emit_site = "cplus-core/src/sema.rs:collect_str_impl_methods"
+test = "cplus-core/src/sema.rs:impl_str_bad_members_e0386"
+cause = "A method in the blessed `impl str` block has a shape the builtin does not support: generic parameters, `gen`/`async`, an associated fn (no receiver), a `ref this`/`take this` receiver (`str` is a Copy view — the receiver is always plain `this`), an interface conformance block, or a redeclaration of the compiler-provided `to_text`/`hash`/`eq`."
+fix = "Declare the method as a plain `fn name(this, ...)`; keep generics, interface impls, and the compiler-provided names off the block."
+example = '''
+impl str { fn m(ref this) -> usize { return #str_len(this); } }
+fn main() -> i32 { return 0; }
 '''
 
 [[code]]

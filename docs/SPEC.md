@@ -362,7 +362,10 @@ pointers (`str`, slices) carry a pointer and a `usize` length.
 ### 4.3 Strings
 
 - **`str`** — a borrowed fat-pointer view `{ptr, len}` over UTF-8 bytes
-  (string literals, `#include_str`, `#env`). Copy.
+  (string literals, `#include_str`, `#env`). Copy. Its method set
+  (`count`, `find`, `trim`, `split`, `to_i64`, …) is declared by stdlib's
+  blessed `impl str` block (§9.3) and is available when `stdlib/str` is
+  imported anywhere in the build.
 - **`Text`** — the owned, growable string type. `Text` is a library type
   with one compiler lang-item hook (interpolation builds a `Text`); it
   must be imported like any other type. A borrowed `Text` coerces to its
@@ -547,6 +550,18 @@ error.
 
 `impl Type { ... }` adds methods; `impl Type: Interface { ... }` provides
 an interface (the `:` reads "Type is an Interface"). Both may be generic.
+
+**The builtin `str` block.** The builtin string view accepts exactly ONE
+`impl str { ... }` block program-wide — stdlib ships it in `src/str.cplus`
+— so stdlib is `str`'s declaring package of record. A second block
+anywhere is **E0385**. Members are restricted to plain concrete methods
+`fn name(this, ...)`: generic parameters, `gen`/`async`, associated fns,
+`ref this`/`take this` receivers, interface conformance, and
+redeclaration of the compiler-provided `to_text`/`hash`/`eq` are all
+**E0386**. Methods lower to ordinary functions with the receiver first
+(`{ptr, len}` by value; `str` is Copy). Calling a `str` method in a build
+that does not include `stdlib/str` is **E0324** with a note naming the
+import.
 
 ### 9.4 Marker interfaces
 

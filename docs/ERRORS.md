@@ -4,7 +4,7 @@
 
 Every C+ diagnostic carries a numbered code, a source span, and often a machine-applicable suggestion. `cpc --diagnostics=json` emits the same information in a machine-readable shape for editors and agents. Codes prefixed with **W** are non-fatal warnings; the build continues. The normative ranges and what each phase owns are fixed in [§20 of the language specification](/docs/spec).
 
-This is the complete index — **160 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **125** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
+This is the complete index — **162 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **127** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
 
 ## Lexical
 
@@ -396,7 +396,7 @@ fn main() -> i32 { let x: i32 = 5; let _v: i32 = x.foo; return 0; }
 
 ### E0324 · Unknown method
 
-A method call names a method (or free fn in the type's module) that the struct does not have.
+A method call names a method (or free fn in the type's module) that the receiver's type does not have. On a `str` receiver this includes the `len()` habit (the stdlib spells it `count()`) and builds that never import `stdlib/str`, whose blessed `impl str` block declares the method set.
 
 ```cplus
 struct P {}
@@ -404,7 +404,7 @@ impl P {}
 fn main() -> i32 { let p: P = P {}; return p.missing(); }
 ```
 
-**Fix.** Call a method the type actually declares, or define it in an `impl`.
+**Fix.** Call a method the type actually declares, or define it in an `impl`. For `str`: use `count()`, add `import "stdlib/str"` somewhere in the build, or convert with `to_text()` when the operation needs an owned string.
 
 <sub>repro: checked · cplus-core/src/sema.rs:7379 · test cplus-core/src/sema.rs:no_such_method_e0324</sub>
 
@@ -551,6 +551,33 @@ fn main() -> i32 { let a = { x: 1 }; return 0; }
 **Fix.** Name the struct (`A { field: ... }`), or give the binding a struct type annotation so the literal's type can be inferred.
 
 <sub>repro: checked · cplus-core/src/sema.rs:check_inferred_struct_lit · test cplus-core/src/sema.rs:inferred_struct_lit_uninferable_e0364</sub>
+
+### E0385 · Duplicate `impl str`
+
+The builtin `str` view takes its method set from exactly one `impl str { ... }` block program-wide — stdlib's `src/str.cplus`. A second block, in any file or package, is a conflict.
+
+```cplus
+impl str { fn a(this) -> usize { return #str_len(this); } }
+impl str { fn b(this) -> usize { return #str_len(this); } }
+fn main() -> i32 { return 0; }
+```
+
+**Fix.** Remove the extra block. To add operations over `str`, write free functions taking a `str` parameter, or convert with `to_text()` and use `Text`.
+
+<sub>repro: checked · cplus-core/src/sema.rs:collect_str_impl_methods · test cplus-core/src/sema.rs:impl_str_duplicate_block_e0385</sub>
+
+### E0386 · Unsupported member in `impl str`
+
+A method in the blessed `impl str` block has a shape the builtin does not support: generic parameters, `gen`/`async`, an associated fn (no receiver), a `ref this`/`take this` receiver (`str` is a Copy view — the receiver is always plain `this`), an interface conformance block, or a redeclaration of the compiler-provided `to_text`/`hash`/`eq`.
+
+```cplus
+impl str { fn m(ref this) -> usize { return #str_len(this); } }
+fn main() -> i32 { return 0; }
+```
+
+**Fix.** Declare the method as a plain `fn name(this, ...)`; keep generics, interface impls, and the compiler-provided names off the block.
+
+<sub>repro: checked · cplus-core/src/sema.rs:collect_str_impl_methods · test cplus-core/src/sema.rs:impl_str_bad_members_e0386</sub>
 
 ### E0913 · Recursive type has infinite size
 

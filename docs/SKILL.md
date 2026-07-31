@@ -262,14 +262,30 @@ Always write source-level type args (`Option[i32]::Some(v)`). Mangled names like
 ```cplus
 let a: str = "hello";                             // literal — always str
 let b: Text = Text::from("hello");                // copies to heap
-#str_ptr(s); #str_len(s);                           // accessors
-#str_from_raw_parts(p, n);                          // view over a *u8 + len
-b.len(); b.is_empty(); b.clone();                 // Text methods
+b.count(); b.is_empty(); b.clone();               // Text methods
+a.count(); a.contains("ell");                     // str methods (import "stdlib/str")
 ```
 
 A borrowed `Text` **coerces to `str`** at argument, binding, and return positions, and when compared with a `str` (`name == "x"`), so a `str`-typed slot accepts a `Text` directly — no `.as_str()`. The coercion borrows; returning the view of a *local* `Text` is rejected (E0513). `Text::clone` copies/owns. `str` is forbidden in `async fn` signatures (E0900); pass `Text` instead.
 
-> **String ops are sparse.** There is **no `+` concatenation** and **no stdlib `split` / `parse` / `slice` / `find`** on strings. Build strings with interpolation (below), and do byte-level work via `str_ptr` / `str_len` + manual pointer logic (see the `http_get` recipe online).
+**`str` methods.** stdlib declares the builtin view's method set (`import "stdlib/str"` anywhere in the build enables it; the alias can go unused). Everything reads or returns sub-views of the same buffer — no allocation except `split`:
+
+```cplus
+s.count(); s.is_empty(); s.char_count(); s.is_ascii();          // NOT len()
+s.byte_at(index: 0);                                            // Option[u8]
+s.has_prefix("ab"); s.has_suffix("yz"); s.contains("x");
+s.find("x"); s.rfind("x");                                      // Option[usize]
+s.count_of(","); s.compare(other); s.equals_ignoring_case(t);
+s.slice(from: 1, to: 4);                                        // Option[str] — a view, no copy
+s.prefix(count: 2); s.suffix(count: 2);                         // clamped views
+s.drop_first(); s.drop_last(count: 2);
+s.removing_prefix("src/"); s.removing_suffix(".txt");
+s.trim(); s.trim_start(); s.trim_end();                         // views — endpoints move, no copy
+s.split(separator: ",");                                        // Vec[str] of views (allocates the Vec)
+s.to_i64();                                                     // Option[i64] — strict decimal
+```
+
+There is still **no `+` concatenation**: build strings with interpolation (below) or `Text::append`. Operations that must allocate (uppercasing, replacing, padding) live on `Text` — convert with `s.to_text()`. The `#str_ptr(s)` / `#str_len(s)` / `#str_from_raw_parts(p, n)` intrinsics remain the FFI tier — passing bytes to C and building views over foreign memory — not the way to do string work.
 
 ### String interpolation
 ```cplus
