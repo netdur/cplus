@@ -300,6 +300,10 @@ pub struct EnumDef {
     /// ... }`. Keyed by method name; same shape as `StructDef::methods`.
     /// Empty for enums without an explicit impl block.
     pub methods: HashMap<String, MethodSig>,
+    /// EXT.1 (v0.0.27): the file that declared this enum (mirrors
+    /// `StructDef::origin_file`). Generic instantiations inherit the
+    /// template's origin. `None` in single-file mode.
+    pub origin_file: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -416,6 +420,38 @@ impl StructDef {
 /// Dart model: public by default, `_` to hide). A bare `_` (wildcard) and
 /// compiler-internal `__cplus_*` names are never user cross-module access sites,
 /// so the simple prefix test is sufficient.
+/// EXT.1 (v0.0.27): the package identity of an origin-file id is its first
+/// dot-segment ("stdlib.src.text" -> "stdlib"). Single-file mode has no
+/// origins; two `None`s count as the same unit — the same escape the E0507
+/// orphan rule uses — while a `None`/`Some` mix never matches.
+fn same_package(a: &Option<String>, b: &Option<String>) -> bool {
+    match (a, b) {
+        (None, None) => true,
+        (Some(x), Some(y)) => x.split('.').next() == y.split('.').next(),
+        _ => false,
+    }
+}
+
+fn package_of(origin: &Option<String>) -> &str {
+    match origin {
+        Some(s) => s.split('.').next().unwrap_or(s.as_str()),
+        None => "<single-file>",
+    }
+}
+
+fn extension_outside_package_msg(
+    target: &str,
+    target_origin: &Option<String>,
+    impl_origin: &Option<String>,
+) -> String {
+    format!(
+        "`impl {}` outside the type's package — inherent methods may only be declared by the package that declares the type (`{}`); this file is in `{}`. A foreign package composes free functions instead",
+        target,
+        package_of(target_origin),
+        package_of(impl_origin),
+    )
+}
+
 pub fn is_private_name(name: &str) -> bool {
     name.starts_with('_')
 }
@@ -868,6 +904,7 @@ fn check_with_files_inner(
         assoc_method_dispatches: std::collections::HashSet::new(),
         struct_generic_templates: HashMap::new(),
         struct_template_origins: HashMap::new(),
+        enum_template_origins: HashMap::new(),
         copy_flags_settled: false,
         struct_instantiations: std::collections::BTreeMap::new(),
         enum_generic_templates: HashMap::new(),
@@ -1431,6 +1468,9 @@ struct SemaCx<'a> {
     /// inherits this as its `origin_file` so cross-file `_`-field privacy fires
     /// for generic types exactly as it does for concrete ones.
     struct_template_origins: HashMap<String, Option<String>>,
+    /// EXT.1 mirror of `struct_template_origins` for generic ENUM templates,
+    /// so the generic-impl same-file guard (E0387) can name both kinds.
+    enum_template_origins: HashMap<String, Option<String>>,
     /// True once the initial struct/enum Copy-flag fixpoint has run. Before
     /// that point (type collection), generic instantiations are classified by
     /// the fixpoint + drop reconciliation, so the per-instantiation
@@ -1816,6 +1856,8 @@ impl SemaCx<'_> {
                         }
                         self.enum_generic_templates
                             .insert(e.name.name.clone(), e.clone());
+                        self.enum_template_origins
+                            .insert(e.name.name.clone(), self.current_file.clone());
                         continue;
                     }
                     let mut seen: HashMap<String, ()> = HashMap::new();
@@ -1859,6 +1901,7 @@ impl SemaCx<'_> {
                         generic_base: None,
                         generic_origin: None,
                         methods: HashMap::new(),
+                        origin_file: self.current_file.clone(),
                     });
                     self.enum_by_name.insert(e.name.name.clone(), id);
                 }
@@ -3545,7 +3588,8 @@ impl SemaCx<'_> {
 
     /// Third pass: collect methods from `impl` blocks. Runs after structs
     /// are fully typed so methods can reference any type by name. Reports
-    /// E0325 (unknown / non-struct impl target) and E0326 (duplicate method).
+    /// E0325 (unknown / non-struct impl target), E0326 (duplicate method),
+    /// and E0387 (EXT.1 — inherent impl outside the type's package).
     fn collect_methods(&mut self, p: &Program) {
         // v0.0.3 Slice 1P.2 — two-phase: register every generic-impl-method
         // template BEFORE resolving any concrete impl method signature.
@@ -3581,6 +3625,22 @@ impl SemaCx<'_> {
                 // `EnumDef::methods`. Generic enum impls still pending
                 // (block-level generic_params already routed above).
                 if let Some(&enum_id) = self.enum_by_name.get(&b.target.name) {
+                    if b.interface_name.is_none() {
+                        let target_origin =
+                            self.enums[enum_id.0 as usize].origin_file.clone();
+                        if !same_package(&item.origin_file, &target_origin) {
+                            self.err(
+                                "E0387",
+                                extension_outside_package_msg(
+                                    &b.target.name,
+                                    &target_origin,
+                                    &item.origin_file,
+                                ),
+                                b.target.span,
+                            );
+                            continue;
+                        }
+                    }
                     self.collect_enum_impl_methods(enum_id, b);
                     continue;
                 }
@@ -3599,6 +3659,29 @@ impl SemaCx<'_> {
                 );
                 continue;
             };
+            // EXT.1 (v0.0.27) — same-package extension: an inherent `impl`
+            // may live in any FILE of the package that declares the type
+            // (what lets a generator own a whole file of methods), but a
+            // foreign package may not add methods at all — a type's full
+            // method set stays answerable by reading its own package.
+            // Conformance impls are governed by the E0507 orphan rule
+            // instead, and single-file programs (both origins `None`) pass
+            // the same way they pass E0507.
+            if b.interface_name.is_none() {
+                let target_origin = self.structs[id.0 as usize].origin_file.clone();
+                if !same_package(&item.origin_file, &target_origin) {
+                    self.err(
+                        "E0387",
+                        extension_outside_package_msg(
+                            &b.target.name,
+                            &target_origin,
+                            &item.origin_file,
+                        ),
+                        b.target.span,
+                    );
+                    continue;
+                }
+            }
             // Slice 7GEN.4: `This` inside an impl body resolves to the
             // target type's concrete `Ty`. Push for the duration of this
             // impl block so method-signature resolution sees it.
@@ -4028,6 +4111,33 @@ impl SemaCx<'_> {
                 "E0325",
                 format!(
                     "`impl` target `{}` is not a known generic type",
+                    b.target.name
+                ),
+                b.target.span,
+            );
+            return;
+        }
+        // EXT.1 (v0.0.27): a generic impl stays in the FILE that declares its
+        // template — same-package extension is concrete-only in v1. Generic
+        // method registration predates instantiation, and both method-mono
+        // paths would need to learn a second declaration site; keep them out
+        // until a generic-impl story exists (the slice/array follow-on).
+        let template_origin = if is_struct {
+            self.struct_template_origins
+                .get(&b.target.name)
+                .cloned()
+                .flatten()
+        } else {
+            self.enum_template_origins
+                .get(&b.target.name)
+                .cloned()
+                .flatten()
+        };
+        if template_origin != self.current_file {
+            self.err(
+                "E0387",
+                format!(
+                    "`impl {}` away from its generic template — a generic impl lives in the template's own file; same-package extension (EXT.1) covers concrete types only",
                     b.target.name
                 ),
                 b.target.span,
@@ -17199,6 +17309,8 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             generic_base: Some(name.to_string()),
             generic_origin: Some((name.to_string(), arg_tys.clone())),
             methods: HashMap::new(),
+            // EXT.1: an instantiation belongs where its template lives.
+            origin_file: self.enum_template_origins.get(name).cloned().flatten(),
         });
         self.enum_by_name.insert(mangled, id);
         self.enum_instantiations.insert(key, id);
@@ -21537,6 +21649,168 @@ fn go() { let c: C = C { n: 0 }; c.bump(); return; }\n";
             codes.contains(&code),
             "expected error {code}, got: {:#?}",
             check_src(src)
+        );
+    }
+
+    // ---- EXT.1 (v0.0.27): same-package impl extensions ----
+
+    #[test]
+    fn ext_inherent_impl_across_files_same_package_clean() {
+        let diags = check_multifile_src(
+            "acme.src.main",
+            &[
+                ("acme.src.geom", "struct Point { x: i32, y: i32 }\n"),
+                (
+                    "acme.src.ext",
+                    "impl Point { fn sum(this) -> i32 { return this.x + this.y; } }\n",
+                ),
+                (
+                    "acme.src.main",
+                    "fn main() -> i32 { let p: Point = Point { x: 3, y: 4 }; return p.sum(); }\n",
+                ),
+            ],
+        );
+        let codes = error_codes(diags);
+        assert!(
+            codes.is_empty(),
+            "same-package extension is legal and its method resolves; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn ext_inherent_impl_foreign_package_e0387() {
+        let diags = check_multifile_src(
+            "other.src.main",
+            &[
+                ("acme.src.geom", "struct Point { x: i32, y: i32 }\n"),
+                (
+                    "other.src.main",
+                    "impl Point { fn sum(this) -> i32 { return this.x + this.y; } }\n\
+                     fn main() -> i32 { return 0; }\n",
+                ),
+            ],
+        );
+        let codes = error_codes(diags);
+        assert!(
+            codes.contains(&"E0387"),
+            "a foreign package adding inherent methods is E0387; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn ext_enum_impl_across_files_same_package_clean() {
+        let diags = check_multifile_src(
+            "acme.src.main",
+            &[
+                ("acme.src.modes", "enum Mode { A, B }\n"),
+                (
+                    "acme.src.ext",
+                    "impl Mode { fn tag(this) -> i32 { return 7; } }\n",
+                ),
+                (
+                    "acme.src.main",
+                    "fn main() -> i32 { let m: Mode = Mode::A; return m.tag(); }\n",
+                ),
+            ],
+        );
+        let codes = error_codes(diags);
+        assert!(
+            codes.is_empty(),
+            "same-package enum extension is legal; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn ext_enum_impl_foreign_package_e0387() {
+        let diags = check_multifile_src(
+            "other.src.main",
+            &[
+                ("acme.src.modes", "enum Mode { A, B }\n"),
+                (
+                    "other.src.main",
+                    "impl Mode { fn tag(this) -> i32 { return 7; } }\n\
+                     fn main() -> i32 { return 0; }\n",
+                ),
+            ],
+        );
+        let codes = error_codes(diags);
+        assert!(
+            codes.contains(&"E0387"),
+            "a foreign package extending an enum is E0387; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn ext_generic_impl_away_from_template_file_e0387() {
+        // Concrete-only in v1: a generic impl must stay in the file that
+        // declares its template, even inside the same package.
+        let diags = check_multifile_src(
+            "acme.src.b",
+            &[
+                ("acme.src.a", "struct Holder[T] { v: T }\n"),
+                (
+                    "acme.src.b",
+                    "impl Holder[T] { fn get(this) -> T { return this.v; } }\n\
+                     fn main() -> i32 { return 0; }\n",
+                ),
+            ],
+        );
+        let codes = error_codes(diags);
+        assert!(
+            codes.contains(&"E0387"),
+            "a generic impl away from its template file is E0387; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn ext_underscore_field_from_extension_file_e0403() {
+        // The `_` privacy rule reads the same across files INSIDE a package:
+        // an extension block is another file, so `_` fields stay off-limits —
+        // exactly the restriction the maui-regen plan promises for generated
+        // contract files.
+        let diags = check_multifile_src(
+            "acme.src.ext",
+            &[
+                (
+                    "acme.src.geom",
+                    "struct Point { _x: i32 }\n\
+                     impl Point { fn new() -> Point { return Point { _x: 5 }; } }\n",
+                ),
+                (
+                    "acme.src.ext",
+                    "impl Point { fn peek(this) -> i32 { return this._x; } }\n\
+                     fn main() -> i32 { return 0; }\n",
+                ),
+            ],
+        );
+        let codes = error_codes(diags);
+        assert!(
+            codes.contains(&"E0403"),
+            "an extension file reading a `_` field is E0403; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn ext_duplicate_method_across_files_e0326() {
+        let diags = check_multifile_src(
+            "acme.src.main",
+            &[
+                (
+                    "acme.src.geom",
+                    "struct Point { x: i32 }\n\
+                     impl Point { fn sum(this) -> i32 { return this.x; } }\n",
+                ),
+                (
+                    "acme.src.ext",
+                    "impl Point { fn sum(this) -> i32 { return 0; } }\n",
+                ),
+                ("acme.src.main", "fn main() -> i32 { return 0; }\n"),
+            ],
+        );
+        let codes = error_codes(diags);
+        assert!(
+            codes.contains(&"E0326"),
+            "the same method declared in two files of the package is a duplicate; got {codes:?}"
         );
     }
 

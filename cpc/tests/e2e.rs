@@ -21220,3 +21220,90 @@ fn self_import_of_a_missing_module_is_still_an_error() {
         "expected the ordinary undeclared-package error, got: {stderr}"
     );
 }
+
+#[test]
+fn same_package_impl_extension_compiles_and_runs() {
+    // EXT.1 (v0.0.27): a package extends its own type from another of its
+    // files — the layout a generator-owned contract file needs. The method
+    // must resolve at a third file's call site and RUN.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"app\"\n\n[[bin]]\nname = \"app\"\npath = \"src/main.cplus\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/geom.cplus"),
+        "struct Point { x: i32, y: i32 }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/ext.cplus"),
+        "import \"./geom\" as g;\nimpl g::Point { fn sum(this) -> i32 { return this.x + this.y; } }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"./geom\" as g;\nimport \"./ext\" as e;\nfn main() -> i32 { let p: g::Point = g::Point { x: 3, y: 4 }; return p.sum(); }\n",
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("cpc build");
+    assert!(st.success(), "same-package extension must compile");
+    let run = Command::new(dir.join("target/debug/app"))
+        .status()
+        .expect("run binary");
+    assert_eq!(run.code(), Some(7), "extension method must run: 3 + 4");
+}
+
+#[test]
+fn foreign_package_impl_extension_is_e0387() {
+    // EXT.1's line: another PACKAGE may not add inherent methods. The app
+    // depends on `dep` and tries `impl d::Point` — rejected, with the
+    // packages named.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"app\"\n\n[[bin]]\nname = \"app\"\npath = \"src/main.cplus\"\n\n[dependencies]\ndep = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/dep/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/dep/Cplus.toml"),
+        "[package]\nname = \"dep\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("vendor/dep/src/dep.cplus"),
+        "struct Point { x: i32, y: i32 }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"dep/dep\" as d;\nimpl d::Point { fn sum(this) -> i32 { return this.x + this.y; } }\nfn main() -> i32 { return 0; }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("check")
+        .current_dir(&dir)
+        .output()
+        .expect("cpc check");
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!out.status.success(), "foreign-package extension must be rejected");
+    assert!(all.contains("E0387"), "expected E0387, got: {all}");
+    assert!(
+        all.contains("`dep`") && all.contains("`app`"),
+        "the diagnostic names both packages; got: {all}"
+    );
+}

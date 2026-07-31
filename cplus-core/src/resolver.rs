@@ -2307,11 +2307,17 @@ fn rewrite_item(item: &Item, ctx: &RewriteCtx) -> Result<Item, ResolveError> {
         }
         ItemKind::Impl(b) => {
             let mut b = b.clone();
-            // impl target must live in same file (4A doesn't enforce yet —
-            // sema's normal "unknown type" error will surface if the user
-            // tries `impl ForeignType {}`). Qualify against locals.
+            // The target: a local name qualifies against this file; an
+            // import-alias path (`impl core::Handle` — EXT.1 same-package
+            // extension) resolves through the same machinery as type names,
+            // so pub-gating and unknown-prefix errors match type references.
+            // A bare foreign name stays as-is and surfaces as sema's E0325;
+            // the package rule itself (E0387) is sema's, where both origins
+            // are known.
             if ctx.local_items.contains(&b.target.name) {
                 b.target.name = ctx.qualify_local(&b.target.name);
+            } else if b.target.name.contains("::") {
+                b.target.name = rewrite_type_name(&b.target.name, b.target.span, ctx)?;
             }
             qualify_bounds(&mut b.target_generic_params, ctx)?;
             for m in &mut b.methods {
@@ -3935,5 +3941,43 @@ mod tests {
             _ => false,
         });
         assert!(has_impl);
+    }
+
+    #[test]
+    fn impl_target_alias_path_rewrites_to_qualified_name() {
+        // EXT.1: `impl g::Point` in a sibling file resolves through the same
+        // machinery as a type reference — the merged AST carries the
+        // qualified target, so sema sees one name for the type and both of
+        // its impl blocks.
+        let dir = tmpdir();
+        fs::write(dir.join("Cplus.toml"), "[package]\nname=\"x\"").unwrap();
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(
+            dir.join("src/geom.cplus"),
+            "struct Point { x: i32, y: i32 }\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("src/ext.cplus"),
+            "import \"geom.cplus\" as g;\nimpl g::Point { fn sum(this) -> i32 { return this.x + this.y; } }\n",
+        )
+        .unwrap();
+        let main_src = "import \"geom.cplus\" as g;\nimport \"ext.cplus\" as e;\nfn main() -> i32 { let p: g::Point = g::Point { x: 3, y: 4 }; return p.sum(); }\n";
+        let main = dir.join("src/main.cplus");
+        fs::write(&main, main_src).unwrap();
+        let p = load_project(&main, &dir).unwrap();
+        let impl_targets: Vec<String> = p
+            .program
+            .items
+            .iter()
+            .filter_map(|it| match &it.kind {
+                ItemKind::Impl(b) => Some(b.target.name.clone()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            impl_targets.iter().any(|t| t == "x.src.geom.Point"),
+            "alias-path impl target must rewrite to the qualified type name; got {impl_targets:?}"
+        );
     }
 }

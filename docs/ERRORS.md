@@ -4,7 +4,7 @@
 
 Every C+ diagnostic carries a numbered code, a source span, and often a machine-applicable suggestion. `cpc --diagnostics=json` emits the same information in a machine-readable shape for editors and agents. Codes prefixed with **W** are non-fatal warnings; the build continues. The normative ranges and what each phase owns are fixed in [§20 of the language specification](/docs/spec).
 
-This is the complete index — **162 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **127** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
+This is the complete index — **163 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **128** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
 
 ## Lexical
 
@@ -578,6 +578,20 @@ fn main() -> i32 { return 0; }
 **Fix.** Declare the method as a plain `fn name(this, ...)`; keep generics, interface impls, and the compiler-provided names off the block.
 
 <sub>repro: checked · cplus-core/src/sema.rs:collect_str_impl_methods · test cplus-core/src/sema.rs:impl_str_bad_members_e0386</sub>
+
+### E0387 · Impl outside the type's package
+
+An inherent `impl` names a type declared by another package, or a generic impl sits in a different file than its template. A package may extend its own concrete types from any of its files (`impl core::Handle` after importing the declaring module) — that is what lets a generated file own a method set. A foreign package may not add methods at all: a type's full method surface stays answerable by reading its own package, so a call site never depends on which other packages happen to be vendored. Generic impls stay in the template's own file (concrete-only extension, v1).
+
+```cplus
+import "dep/dep" as d;
+impl d::Point { fn sum(this) -> i32 { return this.x + this.y; } }
+fn main() -> i32 { return 0; }
+```
+
+**Fix.** Move the impl into a file of the package that declares the type, or compose free functions over the type's public surface instead. For a generic impl, keep it next to its template.
+
+<sub>repro: checked · cplus-core/src/sema.rs:collect_methods · test cplus-core/src/sema.rs:ext_inherent_impl_foreign_package_e0387</sub>
 
 ### E0913 · Recursive type has infinite size
 

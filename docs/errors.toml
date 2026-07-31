@@ -1342,6 +1342,24 @@ fn main() -> i32 { return 0; }
 '''
 
 [[code]]
+id = "E0387"
+title = "Impl outside the type's package"
+category = "Names, types, and items"
+severity = "error"
+repro = "checked"
+lang = "cplus"
+verified = true
+emit_site = "cplus-core/src/sema.rs:collect_methods"
+test = "cplus-core/src/sema.rs:ext_inherent_impl_foreign_package_e0387"
+cause = "An inherent `impl` names a type declared by another package, or a generic impl sits in a different file than its template. A package may extend its own concrete types from any of its files (`impl core::Handle` after importing the declaring module) — that is what lets a generated file own a method set. A foreign package may not add methods at all: a type's full method surface stays answerable by reading its own package, so a call site never depends on which other packages happen to be vendored. Generic impls stay in the template's own file (concrete-only extension, v1)."
+fix = "Move the impl into a file of the package that declares the type, or compose free functions over the type's public surface instead. For a generic impl, keep it next to its template."
+example = """
+import "dep/dep" as d;
+impl d::Point { fn sum(this) -> i32 { return this.x + this.y; } }
+fn main() -> i32 { return 0; }
+"""
+
+[[code]]
 id = "E0401"
 title = "Imported file not found"
 category = "Modules, paths, and visibility"

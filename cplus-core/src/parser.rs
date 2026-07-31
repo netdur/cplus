@@ -710,7 +710,11 @@ impl Parser {
         // interface impls deferred), so params bind to the target, parsed right
         // after its ident. The `[...]` generic params are consumed before the
         // connector, so their inner `:` bounds never clash with this `:`.
-        let target = self.expect_ident()?;
+        // EXT.1 (v0.0.27): the target may be an import-alias path
+        // (`impl core::Handle { ... }`) so a package can extend its own type
+        // from another of its files. The resolver rewrites the path exactly
+        // like a type reference; sema enforces the same-package rule (E0387).
+        let target = self.parse_ident_path()?;
         let target_generic_params = self.parse_optional_generic_params()?;
         let interface_name = if self.eat(&TokenKind::Colon) {
             Some(self.parse_ident_path()?)
