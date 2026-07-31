@@ -6068,6 +6068,138 @@ fn str_view_cannot_outlive_owner() {
 }
 
 #[test]
+fn str_builtin_methods_compile_and_run() {
+    // STRM (v0.0.27): the blessed `impl str` block in stdlib/src/str.cplus.
+    // One program exercises the whole pipeline: resolution on a builtin
+    // receiver, sub-view returns, default-param splicing (`drop_first()`),
+    // named params, `split -> Vec[str]` (sret return), `to_i64 -> Option`,
+    // a method call inside another fn, and chained-receiver single
+    // evaluation (the side-effecting producer must run exactly once).
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"sm\"\n\n[[bin]]\nname = \"sm\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::os::unix::fs::symlink(
+        format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
+        dir.join("vendor"),
+    )
+    .unwrap();
+    let prog = "import \"stdlib/str\" as str_methods;\n\
+         import \"stdlib/option\" as option;\n\
+         import \"stdlib/io\" as io;\n\
+         fn produced() -> str {\n\
+             io::println(\"produced\");\n\
+             return \"  a,b,c  \";\n\
+         }\n\
+         fn main() -> i32 {\n\
+             let t = produced().trim();\n\
+             if t != \"a,b,c\" { return 1; }\n\
+             if t.count() != (5 as usize) { return 2; }\n\
+             if t.drop_first() != \",b,c\" { return 3; }\n\
+             let parts = t.split(separator: \",\");\n\
+             if parts.count() != (3 as usize) { return 4; }\n\
+             match parts.at(index: 1 as usize) {\n\
+                 option::Option[str]::Some(p) => { if p != \"b\" { return 5; } }\n\
+                 option::Option[str]::None => { return 6; }\n\
+             }\n\
+             match \"-42\".to_i64() {\n\
+                 option::Option[i64]::Some(v) => {\n\
+                     if v != ((0 as i64) - (42 as i64)) { return 7; }\n\
+                 }\n\
+                 option::Option[i64]::None => { return 8; }\n\
+             }\n\
+             return 0;\n\
+         }\n";
+    std::fs::write(dir.join("src/main.cplus"), prog).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("cpc build");
+    assert!(st.success(), "str-methods program must compile");
+    let run = Command::new(dir.join("target/debug/sm"))
+        .output()
+        .expect("run binary");
+    assert_eq!(run.status.code(), Some(0), "all method checks must pass");
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert_eq!(
+        stdout.matches("produced").count(),
+        1,
+        "chained rvalue receiver must evaluate exactly once; got: {stdout}"
+    );
+}
+
+#[test]
+fn str_builtin_methods_negative_paths() {
+    // STRM (v0.0.27): (a) no stdlib/str in the build → E0324 with the
+    // import note; (b) a second `impl str` next to stdlib's → E0385;
+    // (c) `#[no_alloc]` fn calling the allocating `split` → E0901.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"sn\"\n\n[[bin]]\nname = \"sn\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::os::unix::fs::symlink(
+        format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
+        dir.join("vendor"),
+    )
+    .unwrap();
+
+    let check = |src: &str| -> (bool, String) {
+        std::fs::write(dir.join("src/main.cplus"), src).unwrap();
+        let out = Command::new(cpc).arg("check").current_dir(&dir).output().expect("cpc");
+        let all = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        (out.status.success(), all)
+    };
+
+    let (ok, all) =
+        check("fn main() -> i32 { let s = \"x\"; return s.count() as i32; }\n");
+    assert!(!ok, "str method without stdlib/str must reject");
+    assert!(all.contains("E0324"), "expected E0324, got: {all}");
+    assert!(
+        all.contains("import \"stdlib/str\""),
+        "expected the import note, got: {all}"
+    );
+
+    let (ok, all) = check(
+        "import \"stdlib/str\" as str_methods;\n\
+         impl str { fn mine(this) -> usize { return #str_len(this); } }\n\
+         fn main() -> i32 { return 0; }\n",
+    );
+    assert!(!ok, "a second `impl str` must reject");
+    assert!(all.contains("E0385"), "expected E0385, got: {all}");
+
+    let (ok, all) = check(
+        "import \"stdlib/str\" as str_methods;\n\
+         import \"stdlib/vec\" as vec;\n\
+         #[no_alloc]\n\
+         fn f(s: str) -> usize {\n\
+             let parts: vec::Vec[str] = s.split(separator: \",\");\n\
+             return parts.count();\n\
+         }\n\
+         fn main() -> i32 { return f(\"a,b\") as i32; }\n",
+    );
+    assert!(!ok, "`#[no_alloc]` calling `split` must reject");
+    assert!(all.contains("E0901"), "expected E0901, got: {all}");
+
+    // Positive tail: `#[no_alloc]` over the pure reads stays legal.
+    let (ok, all) = check(
+        "import \"stdlib/str\" as str_methods;\n\
+         #[no_alloc]\n\
+         fn f(s: str) -> usize { return s.trim().count(); }\n\
+         fn main() -> i32 { return f(\" x \") as i32; }\n",
+    );
+    assert!(ok, "`#[no_alloc]` over pure str reads must stay legal: {all}");
+}
+
+#[test]
 fn generic_vec_slice_view_invalidation_rejected() {
     // Bug 08 (2026-07-22): a slice view of a GENERIC container (`Vec[i32]`)
     // must pin it exactly like a non-generic owner — borrowck runs pre-mono, so

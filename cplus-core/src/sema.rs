@@ -823,6 +823,8 @@ fn check_with_files_inner(
         structs: Vec::new(),
         struct_by_name: HashMap::new(),
         designated_string_struct: None,
+        builtin_str_methods: HashMap::new(),
+        str_impl_origin: None,
         type_aliases: HashMap::new(),
         resolving_aliases: std::collections::HashSet::new(),
         fnptr_field_names: None,
@@ -1180,6 +1182,17 @@ struct SemaCx<'a> {
     /// collected (e.g. a program that doesn't import `stdlib/text`). A string
     /// literal in this type's context lowers to its `from_str` constructor.
     designated_string_struct: Option<StructId>,
+    /// STRM (v0.0.27): methods declared by the single blessed
+    /// `impl str { ... }` block (stdlib/src/str.cplus). The builtin `str`
+    /// has no `StructDef`, so its method set lives here, name-keyed.
+    /// Empty when the build doesn't include the stdlib str module — then
+    /// `s.count()` stays E0324 (with an import note), mirroring how
+    /// `to_text()` is gated on the `#[lang("string")]` struct.
+    builtin_str_methods: HashMap<String, MethodSig>,
+    /// Origin file of the first `impl str` block collected. Like the
+    /// `#[lang("string")]` designation, blessing is uniqueness-only:
+    /// a second `impl str` anywhere is E0385, naming this file.
+    str_impl_origin: Option<Option<String>>,
     /// Phase 11 polish (2026-05-13): `type Foo = Bar;` aliases. Maps
     /// the alias name to its target AST `Type`. Resolved on every use
     /// via `resolve_type` — transparent (Foo and Bar are identical at
@@ -3542,6 +3555,14 @@ impl SemaCx<'_> {
                     self.collect_enum_impl_methods(enum_id, b);
                     continue;
                 }
+                // STRM (v0.0.27): the builtin string view gets its method set
+                // from a single `impl str { ... }` block (stdlib/src/str.cplus).
+                // Only reached when no user struct/enum shadows the name, so a
+                // pathological single-file `struct str` keeps today's behavior.
+                if b.target.name == "str" {
+                    self.collect_str_impl_methods(item.origin_file.clone(), b);
+                    continue;
+                }
                 self.err(
                     "E0325",
                     format!("`impl` target `{}` is not a known type", b.target.name),
@@ -3647,6 +3668,139 @@ impl SemaCx<'_> {
         }
         self.current_file = None;
         self.backfill_generic_struct_methods();
+    }
+
+    /// STRM (v0.0.27): collect the single blessed `impl str { ... }` block
+    /// into `builtin_str_methods`. Mirrors the struct arm of
+    /// `collect_methods`, restricted to the v1 shape: every method takes the
+    /// receiver by value (`this` — `str` is a Copy view, so `ref`/`take` buy
+    /// nothing), no method-level generics, no `gen`/`async`, no associated
+    /// fns, and no redeclaration of the compiler-provided `to_text`/`hash`/
+    /// `eq` (or `drop` — a Copy view cannot be Drop). Blessing is
+    /// uniqueness-only, exactly like `#[lang("string")]`: the first block
+    /// wins; a second block anywhere is E0385.
+    fn collect_str_impl_methods(&mut self, origin: Option<String>, b: &crate::ast::ImplBlock) {
+        if b.interface_name.is_some() {
+            self.err(
+                "E0386",
+                "`impl str: Interface` is not supported — the builtin `str` only \
+                 takes the inherent method block"
+                    .to_string(),
+                b.target.span,
+            );
+            return;
+        }
+        if let Some(prev) = &self.str_impl_origin {
+            let where_ = prev.clone().unwrap_or_else(|| "another file".to_string());
+            self.err(
+                "E0385",
+                format!(
+                    "duplicate `impl str` — the `str` method set is already declared \
+                     in `{where_}`; there can be only one block"
+                ),
+                b.target.span,
+            );
+            return;
+        }
+        self.str_impl_origin = Some(origin);
+        self.self_type_stack.push(Ty::Str);
+        for m in &b.methods {
+            if !m.generic_params.is_empty() {
+                self.err(
+                    "E0386",
+                    format!(
+                        "method `{}` in `impl str` declares generic parameters — \
+                         builtin methods are concrete",
+                        m.name.name
+                    ),
+                    m.name.span,
+                );
+                continue;
+            }
+            if m.is_gen || m.is_async {
+                self.err(
+                    "E0386",
+                    format!(
+                        "method `{}` in `impl str` is `{}` — builtin methods are plain fns",
+                        m.name.name,
+                        if m.is_gen { "gen" } else { "async" }
+                    ),
+                    m.name.span,
+                );
+                continue;
+            }
+            match m.receiver {
+                Some(Receiver::Read) => {}
+                Some(_) => {
+                    self.err(
+                        "E0386",
+                        format!(
+                            "method `{}` in `impl str` takes `ref this`/`take this` — \
+                             `str` is a Copy view; the receiver is always plain `this`",
+                            m.name.name
+                        ),
+                        m.name.span,
+                    );
+                    continue;
+                }
+                None => {
+                    self.err(
+                        "E0386",
+                        format!(
+                            "`{}` in `impl str` has no receiver — associated fns are not \
+                             supported on the builtin `str`",
+                            m.name.name
+                        ),
+                        m.name.span,
+                    );
+                    continue;
+                }
+            }
+            if matches!(m.name.name.as_str(), "to_text" | "hash" | "eq" | "drop") {
+                self.err(
+                    "E0386",
+                    format!(
+                        "method `{}` in `impl str` redeclares a compiler-provided method",
+                        m.name.name
+                    ),
+                    m.name.span,
+                );
+                continue;
+            }
+            if self.builtin_str_methods.contains_key(&m.name.name) {
+                self.err(
+                    "E0326",
+                    format!("duplicate method `{}` in impl `str`", m.name.name),
+                    m.name.span,
+                );
+                continue;
+            }
+            let params: Vec<ParamSig> = m
+                .params
+                .iter()
+                .map(|p| ParamSig {
+                    ty: self.resolve_type(&p.ty),
+                    mutable: p.mutable,
+                    move_: p.move_,
+                    borrow_: p.borrow_ || matches!(p.ty.kind, TypeKind::Borrowed { .. }),
+                })
+                .collect();
+            let return_type = match &m.return_type {
+                Some(t) => self.resolve_type(t),
+                None => Ty::Unit,
+            };
+            self.builtin_str_methods.insert(
+                m.name.name.clone(),
+                MethodSig {
+                    receiver: m.receiver,
+                    params,
+                    return_type,
+                    generic_params: Vec::new(),
+                    generic_bounds: Vec::new(),
+                },
+            );
+        }
+        self.self_type_stack.pop();
     }
 
     /// G-022 fix: backfill methods on generic struct instantiations that
@@ -4377,6 +4531,13 @@ impl SemaCx<'_> {
                 }
                 continue;
             }
+            // STRM (v0.0.27): bodies of the blessed `impl str` block.
+            if b.target.name == "str" {
+                for m in &b.methods {
+                    self.check_str_method(m);
+                }
+                continue;
+            }
             // A generic-target impl block (`impl Box[T] { ... }`) has no
             // concrete struct/enum id yet — its methods are checked per
             // instantiation. But nothing name-resolves the TEMPLATE body, so an
@@ -4551,6 +4712,95 @@ impl SemaCx<'_> {
         self.current_gen_yield_ty = prev_gen_ty;
         self.current_fn_is_async = prev_async;
         self.pop_type_params();
+        self.self_type_stack.pop();
+    }
+
+    /// STRM (v0.0.27): type-check the body of a method declared inside the
+    /// blessed `impl str { ... }` block. Mirror of `check_enum_method` with
+    /// `This` resolving to `Ty::Str`. Members the collector rejected
+    /// (E0385/E0386) are absent from `builtin_str_methods` and skip out on
+    /// the sig-miss guard. `gen`/`async`/generic shapes were rejected at
+    /// collection, so none of that state-threading applies — the gen/async
+    /// flags are still explicitly cleared (and restored) so a previous
+    /// body's state cannot leak in.
+    fn check_str_method(&mut self, m: &Method) {
+        if m.is_declaration {
+            return;
+        }
+        let Some(sig) = self.builtin_str_methods.get(&m.name.name).cloned() else {
+            return;
+        };
+        self.self_type_stack.push(Ty::Str);
+        self.current_return = sig.return_type.clone();
+        let prev_gen = self.current_fn_is_gen;
+        let prev_gen_ty = self.current_gen_yield_ty.clone();
+        let prev_async = self.current_fn_is_async;
+        self.current_fn_is_gen = false;
+        self.current_gen_yield_ty = None;
+        self.current_fn_is_async = false;
+        self.scopes.push(HashMap::new());
+        if let Some(rcv) = sig.receiver {
+            let mutable = matches!(rcv, Receiver::Mut | Receiver::Move);
+            self.scopes.last_mut().unwrap().insert(
+                "self".to_string(),
+                LocalInfo {
+                    ty: Ty::Str,
+                    mutable,
+                    moved: false,
+                    moved_at: None,
+                    assigned: true,
+                    borrow_roots: BTreeSet::new(),
+                    // Mirrors the struct/enum paths; moot for a Copy view.
+                    owns_value: matches!(rcv, Receiver::Move),
+                },
+            );
+        }
+        for (param, psig) in m.params.iter().zip(sig.params.iter()) {
+            // E0334: `ref` and `take` are mutually exclusive ownership markers.
+            if param.mutable && param.move_ {
+                self.err("E0334",
+                    "parameter cannot have both `ref` and `take`; these markers are mutually exclusive".to_string(),
+                    param.span);
+            }
+            if param.restrict && !matches!(psig.ty, Ty::RawPtr(_)) {
+                self.err(
+                    "E0411",
+                    "`restrict` is only valid on raw pointer (`*T`) parameters".to_string(),
+                    param.span,
+                );
+            }
+            let param_owns_value = if matches!(param.ty.kind, crate::ast::TypeKind::Borrowed { .. })
+            {
+                !param.mutable
+            } else {
+                param.move_ || self.is_copy(&psig.ty)
+            };
+            self.scopes.last_mut().unwrap().insert(
+                param.name.name.clone(),
+                LocalInfo {
+                    ty: psig.ty.clone(),
+                    mutable: param.mutable,
+                    moved: false,
+                    moved_at: None,
+                    assigned: true,
+                    borrow_roots: BTreeSet::new(),
+                    owns_value: param_owns_value,
+                },
+            );
+        }
+        self.setup_returned_borrow_ctx(&m.params, &m.return_type, m.receiver);
+        self.check_function_body(
+            &m.body,
+            self.current_return.clone(),
+            m.body.span,
+            marks_no_alloc(&m.attributes),
+            marks_no_block(&m.attributes),
+            has_attr_named(&m.attributes, "naked"),
+        );
+        self.scopes.pop();
+        self.current_fn_is_gen = prev_gen;
+        self.current_gen_yield_ty = prev_gen_ty;
+        self.current_fn_is_async = prev_async;
         self.self_type_stack.pop();
     }
 
@@ -5407,6 +5657,10 @@ impl SemaCx<'_> {
                     None => ed.name.clone(),
                 })
             }
+            // STRM (v0.0.27): the blessed `impl str` block registers its
+            // contracts under the source name `str`, so `#[no_alloc]` /
+            // `#[no_block]` enforcement reaches builtin-receiver methods.
+            Ty::Str => Some("str".to_string()),
             _ => None,
         }
     }
@@ -11233,6 +11487,9 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                         .unwrap_or_else(|| d.name.clone()),
                 )
             }
+            // STRM (v0.0.27): defaults on blessed `impl str` methods key
+            // under the source name, same as the contracts table.
+            Ty::Str => Some("str".to_string()),
             _ => None,
         };
         let Some(key_ty) = key_ty else {
@@ -11614,6 +11871,60 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 }
                 return Ty::Unit;
             }
+        }
+        // STRM (v0.0.27): methods on the builtin `str` view, declared by the
+        // single blessed `impl str` block (stdlib/src/str.cplus). Placed
+        // after the compiler-provided arms (`to_text`/`hash`/`eq` stay
+        // compiler-owned; the collector rejects redeclaration) and before
+        // the nominal paths. A miss is E0324 with targeted guidance —
+        // `len`/`length` habit, missing stdlib import, or a Text-only
+        // (allocating) method name.
+        if matches!(recv_ty, Ty::Str) {
+            if let Some(sig) = self.builtin_str_methods.get(&name.name).cloned() {
+                if !self.check_method_receiver(
+                    receiver, &Ty::Str, name, &sig, args, call_span, "str",
+                ) {
+                    return Ty::Error;
+                }
+                return self.check_method_args_and_return(
+                    name,
+                    &sig,
+                    &HashMap::new(),
+                    type_args,
+                    args,
+                    "str",
+                    call_span,
+                );
+            }
+            let mut notes: Vec<String> = Vec::new();
+            if matches!(name.name.as_str(), "len" | "length" | "size")
+                && self.builtin_str_methods.contains_key("count")
+            {
+                notes.push("`str` spells it `count()`".to_string());
+            } else if self.builtin_str_methods.is_empty() {
+                notes.push(
+                    "the `str` method set is declared by stdlib — add \
+                     `import \"stdlib/str\"` (any file in the build suffices)"
+                        .to_string(),
+                );
+            } else if let Some(tid) = self.designated_string_struct {
+                if self.structs[tid.0 as usize].methods.contains_key(&name.name) {
+                    notes.push(format!(
+                        "`{}` needs an owned string — convert with `.to_text()`",
+                        name.name
+                    ));
+                }
+            }
+            self.err_note(
+                "E0324",
+                format!("no method `{}` on type `str`", name.name),
+                name.span,
+                notes,
+            );
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
+            return Ty::Error;
         }
         // v0.0.5 Phase 2C: dispatch on enum receivers via the new
         // `EnumDef::methods` table. Same shape as the struct path —
@@ -23907,6 +24218,110 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
             "struct P {}\nimpl P {}\nfn main() -> i32 { let p: P = P {}; return p.missing(); }",
         );
         assert!(codes.contains(&"E0324"));
+    }
+
+    // ── STRM (v0.0.27): the blessed `impl str` block ────────────────────
+
+    #[test]
+    fn impl_str_methods_resolve_and_check_clean() {
+        assert_clean(
+            "impl str {\n\
+                 fn twice_count(this) -> usize { return #str_len(this) *% (2 as usize); }\n\
+                 fn second_half(this) -> str {\n\
+                     let n: usize = #str_len(this);\n\
+                     let half: usize = n / (2 as usize);\n\
+                     let p: *u8 = { #str_ptr(this) + half };\n\
+                     return { #str_from_raw_parts(p, n -% half) };\n\
+                 }\n\
+             }\n\
+             fn main() -> i32 {\n\
+                 let s = \"abcd\";\n\
+                 let n = s.twice_count();\n\
+                 let t = s.second_half();\n\
+                 return (n +% #str_len(t)) as i32;\n\
+             }",
+        );
+    }
+
+    #[test]
+    fn impl_str_duplicate_block_e0385() {
+        let codes = errors(
+            "impl str { fn a(this) -> usize { return #str_len(this); } }\n\
+             impl str { fn b(this) -> usize { return #str_len(this); } }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.contains(&"E0385"), "second `impl str` must be E0385; got {codes:?}");
+    }
+
+    #[test]
+    fn impl_str_bad_members_e0386() {
+        // Generic method, `ref this`, `take this`, an associated fn, and a
+        // redeclared compiler-provided name — each is E0386.
+        let codes = errors(
+            "impl str {\n\
+                 fn g[T](this) -> usize { return #str_len(this); }\n\
+                 fn m(ref this) -> usize { return #str_len(this); }\n\
+                 fn t(take this) -> usize { return #str_len(this); }\n\
+                 fn assoc() -> i32 { return 0; }\n\
+                 fn to_text(this) -> usize { return #str_len(this); }\n\
+             }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        let n = codes.iter().filter(|c| **c == "E0386").count();
+        assert_eq!(n, 5, "five E0386 rejections expected; got {codes:?}");
+    }
+
+    #[test]
+    fn impl_str_interface_block_e0386() {
+        let codes = errors(
+            "interface Shape { fn area(this) -> i32; }\n\
+             impl str: Shape { fn area(this) -> i32 { return 0; } }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.contains(&"E0386"), "`impl str: Interface` must be E0386; got {codes:?}");
+    }
+
+    #[test]
+    fn str_method_miss_is_e0324_and_primitives_unchanged() {
+        // No blessed block in this program: a str method call is E0324 …
+        let codes = errors(
+            "fn main() -> i32 { let s = \"x\"; return s.count() as i32; }",
+        );
+        assert!(codes.contains(&"E0324"));
+        // … and non-str builtins keep the plain E0324 they had before.
+        let codes = errors("fn main() -> i32 { let x = 3; return x.abs(); }");
+        assert!(codes.contains(&"E0324"));
+    }
+
+    #[test]
+    fn str_method_len_miss_gets_count_note() {
+        // With a blessed block that declares `count`, the `len` habit gets
+        // the targeted note.
+        let ds = check_src(
+            "impl str { fn count(this) -> usize { return #str_len(this); } }\n\
+             fn main() -> i32 { let s = \"x\"; return s.len() as i32; }",
+        );
+        let d = ds
+            .iter()
+            .find(|d| d.code.0 == "E0324")
+            .expect("E0324 expected");
+        assert!(
+            d.notes.iter().any(|n| n.contains("count()")),
+            "expected the `count()` note; got {:?}",
+            d.notes
+        );
+    }
+
+    #[test]
+    fn impl_str_dup_method_within_block_e0326() {
+        let codes = errors(
+            "impl str {\n\
+                 fn a(this) -> usize { return #str_len(this); }\n\
+                 fn a(this) -> usize { return #str_len(this); }\n\
+             }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.contains(&"E0326"), "duplicate method in impl str; got {codes:?}");
     }
 
     #[test]

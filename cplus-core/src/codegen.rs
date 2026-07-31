@@ -1716,6 +1716,19 @@ fn generate_inner(
                             &tramps,
                         );
                     }
+                } else if b.target.name == "str" {
+                    // STRM (v0.0.27): the blessed `impl str` block — methods
+                    // emit as plain fns `str.<name>` with the receiver as
+                    // first param (`{ ptr, i64 }` by value).
+                    for m in &b.methods {
+                        if !m.generic_params.is_empty() {
+                            continue;
+                        }
+                        gen_str_method(
+                            &mut out, m, &sigs, &types, &str_lits, mode, test_mode, &md, &tramps,
+                            is_lib,
+                        );
+                    }
                 }
             }
             // Slice 7GEN.3: interface declarations have no runtime
@@ -2180,6 +2193,13 @@ struct TypeTable {
     enum_defs: Vec<EnumInfo>,
     struct_by_name: HashMap<String, StructId>,
     struct_defs: Vec<StructInfo>,
+    /// STRM (v0.0.27): methods of the blessed `impl str { ... }` block,
+    /// name-keyed. Re-derived from the post-mono AST like everything else
+    /// in this table (id-universe rule); empty when the build has no
+    /// stdlib str module. The builtin `str` has no StructInfo — its
+    /// methods are ordinary fns `str.<name>` with a by-value
+    /// `{ ptr, i64 }` receiver first.
+    str_methods: HashMap<String, MethodInfo>,
 }
 
 #[derive(Debug, Clone)]
@@ -2592,6 +2612,44 @@ fn collect_types(p: &Program) -> TypeTable {
                         params,
                         return_type,
                         trivial_inline,
+                    },
+                );
+            }
+            continue;
+        }
+        // STRM (v0.0.27): the blessed `impl str` block. Sema validated the
+        // shape (plain `this` receiver, concrete, no gen/async); mirror the
+        // struct param resolution below. No fields exist, so no
+        // trivial_inline. Guarded on name-table misses so a pathological
+        // user type named `str` keeps its own path.
+        if b.target.name == "str"
+            && !t.struct_by_name.contains_key("str")
+            && !t.enum_by_name.contains_key("str")
+        {
+            for m in &b.methods {
+                if t.str_methods.contains_key(&m.name.name) || !m.generic_params.is_empty() {
+                    continue;
+                }
+                let params: Vec<(Ty, bool, bool, bool)> = m
+                    .params
+                    .iter()
+                    .map(|p| {
+                        let ty = ty_from(&p.ty, &t);
+                        let mv = effective_move(p, &ty, &t);
+                        (ty, mv, p.mutable, p.restrict)
+                    })
+                    .collect();
+                let return_type = match &m.return_type {
+                    Some(ty) => ty_from(ty, &t),
+                    None => Ty::Unit,
+                };
+                t.str_methods.insert(
+                    m.name.name.clone(),
+                    MethodInfo {
+                        receiver: m.receiver,
+                        params,
+                        return_type,
+                        trivial_inline: None,
                     },
                 );
             }
@@ -8262,6 +8320,200 @@ fn gen_method(
             seed.insert(format!("%{ssa_idx}"), idx_in_set);
         }
         state.body = annotate_alias_scope_metadata(&state.body, &seed, &this_lists, &other_lists);
+    }
+
+    for line in &state.allocas {
+        out.push_str("  ");
+        out.push_str(line);
+        out.push('\n');
+    }
+    out.push_str(&state.body);
+    out.push_str("}\n\n");
+}
+
+/// STRM (v0.0.27): emit one method of the blessed `impl str { ... }` block.
+/// Mirror of `gen_method` with the builtin view as the owner: the symbol is
+/// `str.<name>` and the receiver is always plain `this` on a Copy type, so
+/// it passes by value as `{ ptr, i64 }` (the same rule `gen_method` applies
+/// to Copy struct receivers). No drop / gen / async / generic shapes exist
+/// here — sema rejected them at collection (E0386). Alias-scope metadata is
+/// intentionally skipped: it only annotates pointer-passed `ref`/`take`
+/// params, and the blessed set has none — if one ever appears, mirror
+/// `gen_method`'s metadata block.
+fn gen_str_method(
+    out: &mut String,
+    m: &Method,
+    sigs: &HashMap<String, FnSig>,
+    types: &TypeTable,
+    str_lits: &StrLitTable,
+    mode: BuildMode,
+    test_mode: bool,
+    md: &ModuleMetadata,
+    tramps: &ThreadTrampolines,
+    is_lib: bool,
+) {
+    let Some(sig) = types.str_methods.get(&m.name.name) else {
+        // Not in the table: rejected at collection or shadowed. Nothing to emit.
+        return;
+    };
+    let sig = sig.clone();
+    let mangled = mangle("str", &m.name.name);
+    let return_ty = sig.return_type.clone();
+    let recv_ty = Ty::Str;
+
+    let lib_public = lib_public_name(is_lib, &m.name.name);
+    let cc_prefix = if !m.is_pub && md.is_fastcc(&mangled) {
+        "fastcc "
+    } else {
+        ""
+    };
+    let fn_attrs = inline_fn_attr(&m.attributes);
+    let linkage = if m.is_pub {
+        ""
+    } else if lib_public {
+        "weak_odr "
+    } else {
+        "internal "
+    };
+    let uses_sret = return_passes_by_sret_widened(&return_ty, types);
+    let return_ty_str = if uses_sret {
+        "void".to_string()
+    } else {
+        llvm_ty(&return_ty, types)
+    };
+    let (keyword, linkage, cc_prefix) = if m.is_declaration {
+        ("declare", "", "")
+    } else {
+        ("define", linkage, cc_prefix)
+    };
+    write!(
+        out,
+        "{} {}{}{} @{}(",
+        keyword, linkage, cc_prefix, return_ty_str, mangled
+    )
+    .unwrap();
+    let mut llvm_idx: u32 = 0;
+    let mut first = true;
+    if uses_sret {
+        let (sz, al) = static_layout(&return_ty, types).expect("sret return type has layout");
+        let ret_ty_inner = llvm_ty(&return_ty, types);
+        write!(
+            out,
+            "ptr sret({}) noalias nonnull noundef writable dereferenceable({}) align {} %{}",
+            ret_ty_inner, sz, al, llvm_idx
+        )
+        .unwrap();
+        llvm_idx += 1;
+        first = false;
+    }
+    // Receiver: Read on a Copy view — by value, mirroring `gen_method`'s
+    // `self_by_ptr = false` branch.
+    {
+        if !first {
+            out.push_str(", ");
+        }
+        let attrs = param_attrs(&recv_ty, false, false, false, false, types);
+        let base_ty = llvm_ty(&recv_ty, types);
+        if attrs.is_empty() {
+            write!(out, "{} %{llvm_idx}", base_ty).unwrap();
+        } else {
+            write!(out, "{} {} %{llvm_idx}", base_ty, attrs).unwrap();
+        }
+        llvm_idx += 1;
+        first = false;
+    }
+    for (_param, (pty, move_flag, mut_flag, restrict_flag)) in
+        m.params.iter().zip(sig.params.iter())
+    {
+        if !first {
+            out.push_str(", ");
+        }
+        let by_ptr = param_passes_by_ptr(pty, *move_flag, *mut_flag, types);
+        let attrs = param_attrs(pty, *move_flag, *mut_flag, *restrict_flag, by_ptr, types);
+        let base_ty = if by_ptr {
+            "ptr".to_string()
+        } else {
+            llvm_ty(pty, types)
+        };
+        if attrs.is_empty() {
+            write!(out, "{} %{}", base_ty, llvm_idx).unwrap();
+        } else {
+            write!(out, "{} {} %{}", base_ty, attrs, llvm_idx).unwrap();
+        }
+        llvm_idx += 1;
+        first = false;
+    }
+    out.push(')');
+    // Declaration: the signature is the whole emission.
+    if m.is_declaration {
+        out.push('\n');
+        return;
+    }
+    out.push_str(&fn_attrs);
+    out.push_str(" {\n");
+    out.push_str("entry:\n");
+
+    let mut state = FnState::new(
+        return_ty.clone(),
+        sigs,
+        types,
+        str_lits,
+        mode,
+        test_mode,
+        md,
+        tramps,
+    );
+    state.collect_moved_bindings(&m.body);
+    let mut next_idx: u32 = 0;
+    if uses_sret {
+        state.sret_slot = Some("%0".to_string());
+        next_idx = 1;
+    }
+    // Copy by-value receiver: spill into a named slot so `this` keeps the
+    // place shape body codegen expects (mirror of `gen_method`).
+    {
+        let slot = state.alloca_named("self", recv_ty.clone());
+        state.body.push_str(&format!(
+            "  store {} %{}, ptr {}\n",
+            llvm_ty(&recv_ty, types),
+            next_idx,
+            slot
+        ));
+        state.bind("self", slot, recv_ty.clone());
+        next_idx += 1;
+    }
+    for (i, (param, (pty, move_flag, mut_flag, _restrict_flag))) in
+        m.params.iter().zip(sig.params.iter()).enumerate()
+    {
+        let idx = next_idx + i as u32;
+        if param_passes_by_ptr(pty, *move_flag, *mut_flag, types) {
+            state.bind(&param.name.name, format!("%{idx}"), pty.clone());
+            state.borrowed_params.insert(param.name.name.clone());
+            continue;
+        }
+        let slot = state.alloca_named(&param.name.name, pty.clone());
+        state.body.push_str(&format!(
+            "  store {} %{}, ptr {}\n",
+            llvm_ty(pty, types),
+            idx,
+            slot
+        ));
+        state.bind(&param.name.name, slot.clone(), pty.clone());
+        if !*move_flag && matches!(pty, Ty::String) {
+            state.borrowed_params.insert(param.name.name.clone());
+        }
+        if *move_flag {
+            state.register_value_drop(&param.name.name, &slot, pty, true);
+        }
+    }
+
+    state.gen_body_block(&m.body);
+
+    if !state.terminated {
+        match &return_ty {
+            Ty::Unit => state.emit_terminator("ret void"),
+            _ => state.emit_terminator("unreachable"),
+        }
     }
 
     for line in &state.allocas {
@@ -14756,6 +15008,85 @@ impl<'a> FnState<'a> {
                 return None;
             }
             return Some((rv, rt));
+        }
+        // STRM (v0.0.27): methods on the builtin `str` view. Sema resolved
+        // the name against the blessed block's table; this is an ordinary
+        // call to `str.<name>` with the receiver first — `{ ptr, i64 }` by
+        // value (str is Copy and the receiver is always plain `this`).
+        // Mirrors the struct tail below: same arg passing, same sret rule
+        // for non-Copy aggregate returns, same fastcc def/call symmetry via
+        // the shared pre-pass set.
+        if matches!(recv_ty, Ty::Str) {
+            let info = self
+                .types
+                .str_methods
+                .get(&name.name)
+                .expect("sema validated")
+                .clone();
+            let mangled = mangle("str", &name.name);
+            let recv_val = self.next_tmp();
+            self.gen_load(&recv_val, &recv_ty, &recv_ptr);
+            let mut arg_parts: Vec<String> = vec![format!("{} {recv_val}", self.lty(&recv_ty))];
+            for (a, (pty, move_flag, mut_flag, restrict_flag)) in
+                args.iter().zip(info.params.iter())
+            {
+                if param_passes_by_ptr(pty, *move_flag, *mut_flag, self.types) {
+                    let (addr, _) = self.gen_arg_place(a, pty);
+                    if !*move_flag && !Self::is_place_expr(a) && self.needs_drop(pty) {
+                        self.register_temp(addr.clone(), pty.clone());
+                    }
+                    let attrs =
+                        param_attrs(pty, *move_flag, *mut_flag, *restrict_flag, true, self.types);
+                    if attrs.is_empty() {
+                        arg_parts.push(format!("ptr {addr}"));
+                    } else {
+                        arg_parts.push(format!("ptr {attrs} {addr}"));
+                    }
+                } else {
+                    let (v, _) = self.gen_value_arg(a, pty);
+                    let lty = self.lty(pty);
+                    if *restrict_flag && matches!(pty, Ty::RawPtr(_)) {
+                        arg_parts.push(format!("{lty} noalias noundef {v}"));
+                    } else {
+                        arg_parts.push(format!("{lty} {v}"));
+                    }
+                    if *move_flag {
+                        if let ExprKind::Ident(n) = &a.kind {
+                            self.mark_moved(n);
+                        }
+                    }
+                }
+            }
+            let arg_str = arg_parts.join(", ");
+            let cc = self.md.fastcc_prefix(&mangled);
+            if return_passes_by_sret_widened(&info.return_type, self.types) {
+                let ret = info.return_type.clone();
+                let _ = self.lty(&ret);
+                let slot = self.alloca_anon(ret.clone());
+                let mut head = format!("ptr {slot}");
+                if !arg_str.is_empty() {
+                    head.push_str(", ");
+                    head.push_str(&arg_str);
+                }
+                self.emit(&format!("call {cc}void @{mangled}({head})"));
+                let v = self.next_tmp();
+                self.gen_load(&v, &ret, &slot);
+                return Some((v, ret));
+            }
+            return match info.return_type.clone() {
+                Ty::Unit => {
+                    self.emit(&format!("call {cc}void @{mangled}({arg_str})"));
+                    None
+                }
+                ret => {
+                    let v = self.next_tmp();
+                    self.emit(&format!(
+                        "{v} = call {cc}{} @{mangled}({arg_str})",
+                        self.lty(&ret)
+                    ));
+                    Some((v, ret))
+                }
+            };
         }
         // v0.0.5 Phase 2C: enum receivers route through the enum
         // method-table (`enum_defs[id].methods`). Same call shape as

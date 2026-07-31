@@ -10,6 +10,7 @@
 
 import "./status" as status;
 import "./option" as option;
+import "./str" as str_methods;
 import "./result" as result;
 import "./io" as io;
 import "./vec" as vec;

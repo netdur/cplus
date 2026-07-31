@@ -1,0 +1,716 @@
+// stdlib/str.cplus — the method set of the builtin string view `str`.
+//
+// `str` is a compiler builtin (`{ptr, len}`, Copy, borrowed view). It has no
+// declaring file of its own, so the compiler admits exactly ONE
+// `impl str { ... }` block program-wide — this one. A second block anywhere
+// is E0385; the shapes a builtin method may take are checked as E0386
+// (plain `this` receiver only, no generics, no `gen`/`async`, and the
+// compiler-provided `to_text`/`hash`/`eq` stay compiler-owned).
+//
+// Everything here reads bytes or returns a sub-view of the SAME buffer —
+// nothing allocates except `split` (one Vec of views). A sub-view shares the
+// receiver's pointer, so it is valid exactly as long as the receiver's
+// backing bytes are (a literal: forever; a Text's view: until the Text
+// mutates or drops). Empty results return the `""` literal rather than a
+// zero-length slice of the buffer, mirroring `Text::view` — every `str`
+// this module returns has a valid non-null pointer.
+//
+// The raw tier stays where it was: `#str_ptr` / `#str_len` /
+// `#str_from_raw_parts` remain the FFI door (and the implementation
+// primitives used below). For owned-string operations — building, mutating,
+// uppercasing, concatenating — convert with `to_text()` and use `Text`.
+
+import "./option" as option;
+import "./vec" as vec;
+
+extern fn memcmp(a: *u8, b: *u8, n: usize) -> i32;
+
+#[no_alloc]
+fn is_ascii_ws(b: u8) -> bool {
+    return b == (32 as u8) || b == (9 as u8) || b == (10 as u8) || b == (13 as u8);
+}
+
+// True if the `n` bytes at `needle` equal the `n` bytes of `hay` starting at
+// byte offset `off`. The caller guarantees `off +% n <= hay length`.
+#[no_alloc]
+fn region_matches(hay: *u8, off: usize, needle: *u8, n: usize) -> bool {
+    if n == (0 as usize) {
+        return true;
+    }
+    let a: *u8 = { hay + off };
+    return { memcmp(a, needle, n) } == (0 as i32);
+}
+
+// ASCII lowercase of one byte; non-letters pass through.
+#[no_alloc]
+fn fold_ascii(b: u8) -> u8 {
+    if b >= (65 as u8) && b <= (90 as u8) {
+        return b +% (32 as u8);
+    }
+    return b;
+}
+
+// The sub-view `[start, end)` of `s`. Caller guarantees `start <= end <= len`.
+// An empty range returns the `""` literal so the result always carries a
+// valid non-null pointer (the same belt-and-braces `Text::view` applies).
+#[no_alloc]
+fn sub_view(s: str, start: usize, end: usize) -> str {
+    if start >= end {
+        return "";
+    }
+    let p: *u8 = { #str_ptr(s) + start };
+    return { #str_from_raw_parts(p, end -% start) };
+}
+
+impl str {
+    // ── Reads: length and shape ──────────────────────────────────────────
+
+    // Byte length of the view. (The stdlib convention is `count`, matching
+    // `Text::count` and `Vec::count` — there is no `len()`.)
+    #[no_alloc]
+    fn count(this) -> usize {
+        return #str_len(this);
+    }
+
+    #[no_alloc]
+    fn is_empty(this) -> bool {
+        return #str_len(this) == (0 as usize);
+    }
+
+    // Number of Unicode scalars, assuming well-formed UTF-8: counts the
+    // bytes that are not continuation bytes (`10xxxxxx`).
+    #[no_alloc]
+    fn char_count(this) -> usize {
+        let p: *u8 = #str_ptr(this);
+        let n: usize = #str_len(this);
+        var count: usize = 0 as usize;
+        var i: usize = 0 as usize;
+        while i < n {
+            let b: u8 = { p[i] };
+            if (b & (0xC0 as u8)) != (0x80 as u8) {
+                count = count +% (1 as usize);
+            }
+            i = i +% (1 as usize);
+        }
+        return count;
+    }
+
+    #[no_alloc]
+    fn is_ascii(this) -> bool {
+        let p: *u8 = #str_ptr(this);
+        let n: usize = #str_len(this);
+        var i: usize = 0 as usize;
+        while i < n {
+            if { p[i] } >= (0x80 as u8) {
+                return false;
+            }
+            i = i +% (1 as usize);
+        }
+        return true;
+    }
+
+    // Bounds-checked byte read: the byte at `index`, or None past the end.
+    #[no_alloc]
+    fn byte_at(this, index: usize) -> option::Option[u8] {
+        if index >= #str_len(this) {
+            return option::Option[u8]::None;
+        }
+        let p: *u8 = #str_ptr(this);
+        return option::Option[u8]::Some({ p[index] });
+    }
+
+    // ── Reads: search ────────────────────────────────────────────────────
+
+    #[no_alloc]
+    fn has_prefix(this, prefix: str) -> bool {
+        let n: usize = #str_len(prefix);
+        if n > #str_len(this) {
+            return false;
+        }
+        return region_matches(#str_ptr(this), 0 as usize, #str_ptr(prefix), n);
+    }
+
+    #[no_alloc]
+    fn has_suffix(this, suffix: str) -> bool {
+        let n: usize = #str_len(suffix);
+        if n > #str_len(this) {
+            return false;
+        }
+        return region_matches(#str_ptr(this), #str_len(this) -% n, #str_ptr(suffix), n);
+    }
+
+    // Byte offset of the first occurrence of `needle`, or None. An empty
+    // needle matches at 0. (Mirrors `Text::find`.)
+    #[no_alloc]
+    fn find(this, needle: str) -> option::Option[usize] {
+        let n: usize = #str_len(needle);
+        if n == (0 as usize) {
+            return option::Option[usize]::Some(0 as usize);
+        }
+        if n > #str_len(this) {
+            return option::Option[usize]::None;
+        }
+        let hay: *u8 = #str_ptr(this);
+        let p: *u8 = #str_ptr(needle);
+        let last: usize = #str_len(this) -% n; // inclusive last start index
+        var i: usize = 0 as usize;
+        while i <= last {
+            if region_matches(hay, i, p, n) {
+                return option::Option[usize]::Some(i);
+            }
+            i = i +% (1 as usize);
+        }
+        return option::Option[usize]::None;
+    }
+
+    #[no_alloc]
+    fn contains(this, needle: str) -> bool {
+        var found: bool = false;
+        match this.find(needle) {
+            option::Option[usize]::Some(_idx) => { found = true; }
+            option::Option[usize]::None => { found = false; }
+        }
+        return found;
+    }
+
+    // Byte offset of the last occurrence of `needle`, or None. An empty
+    // needle matches at `count()`. (Mirrors `Text::rfind`.)
+    #[no_alloc]
+    fn rfind(this, needle: str) -> option::Option[usize] {
+        let n: usize = #str_len(needle);
+        if n == (0 as usize) {
+            return option::Option[usize]::Some(#str_len(this));
+        }
+        if n > #str_len(this) {
+            return option::Option[usize]::None;
+        }
+        let hay: *u8 = #str_ptr(this);
+        let p: *u8 = #str_ptr(needle);
+        var i: usize = #str_len(this) -% n; // inclusive last start index
+        loop {
+            if region_matches(hay, i, p, n) {
+                return option::Option[usize]::Some(i);
+            }
+            if i == (0 as usize) {
+                return option::Option[usize]::None;
+            }
+            i = i -% (1 as usize);
+        }
+        return option::Option[usize]::None;
+    }
+
+    // Number of non-overlapping occurrences of `needle`. An empty needle
+    // counts 0.
+    #[no_alloc]
+    fn count_of(this, needle: str) -> usize {
+        let n: usize = #str_len(needle);
+        if n == (0 as usize) || n > #str_len(this) {
+            return 0 as usize;
+        }
+        let hay: *u8 = #str_ptr(this);
+        let p: *u8 = #str_ptr(needle);
+        var found: usize = 0 as usize;
+        var i: usize = 0 as usize;
+        while (i +% n) <= #str_len(this) {
+            if region_matches(hay, i, p, n) {
+                found = found +% (1 as usize);
+                i = i +% n;
+            } else {
+                i = i +% (1 as usize);
+            }
+        }
+        return found;
+    }
+
+    // ── Reads: comparison ────────────────────────────────────────────────
+
+    // ASCII-case-insensitive equality (`==` is the case-sensitive form).
+    #[no_alloc]
+    fn equals_ignoring_case(this, other: str) -> bool {
+        let n: usize = #str_len(this);
+        if n != #str_len(other) {
+            return false;
+        }
+        let a: *u8 = #str_ptr(this);
+        let b: *u8 = #str_ptr(other);
+        var i: usize = 0 as usize;
+        while i < n {
+            if fold_ascii({ a[i] }) != fold_ascii({ b[i] }) {
+                return false;
+            }
+            i = i +% (1 as usize);
+        }
+        return true;
+    }
+
+    // Byte-lexicographic order: -1 if this < other, 0 if equal, 1 if greater.
+    #[no_alloc]
+    fn compare(this, other: str) -> i32 {
+        let an: usize = #str_len(this);
+        let bn: usize = #str_len(other);
+        var n: usize = an;
+        if bn < n {
+            n = bn;
+        }
+        if n > (0 as usize) {
+            let r: i32 = { memcmp(#str_ptr(this), #str_ptr(other), n) };
+            if r < (0 as i32) {
+                return 0 - 1;
+            }
+            if r > (0 as i32) {
+                return 1;
+            }
+        }
+        if an < bn {
+            return 0 - 1;
+        }
+        if an > bn {
+            return 1;
+        }
+        return 0;
+    }
+
+    // ── Sub-views: same buffer, new endpoints — no allocation ────────────
+
+    // The byte range `[from, to)` as a view into the same buffer, or None if
+    // out of bounds / inverted. Unlike `Text::slice`, nothing is copied.
+    #[no_alloc]
+    fn slice(this, from: usize, to: usize) -> option::Option[str] {
+        if from > to {
+            return option::Option[str]::None;
+        }
+        if to > #str_len(this) {
+            return option::Option[str]::None;
+        }
+        return option::Option[str]::Some(sub_view(this, from, to));
+    }
+
+    // The first `count` bytes — the whole view if it is shorter. Never traps.
+    #[no_alloc]
+    fn prefix(this, count: usize) -> str {
+        var n: usize = count;
+        if n > #str_len(this) {
+            n = #str_len(this);
+        }
+        return sub_view(this, 0 as usize, n);
+    }
+
+    // The last `count` bytes — the whole view if it is shorter. Never traps.
+    #[no_alloc]
+    fn suffix(this, count: usize) -> str {
+        let len: usize = #str_len(this);
+        var n: usize = count;
+        if n > len {
+            n = len;
+        }
+        return sub_view(this, len -% n, len);
+    }
+
+    // The view without its first `count` bytes; empty if `count >= count()`.
+    #[no_alloc]
+    fn drop_first(this, count: usize = 1) -> str {
+        let len: usize = #str_len(this);
+        if count >= len {
+            return "";
+        }
+        return sub_view(this, count, len);
+    }
+
+    // The view without its last `count` bytes; empty if `count >= count()`.
+    #[no_alloc]
+    fn drop_last(this, count: usize = 1) -> str {
+        let len: usize = #str_len(this);
+        if count >= len {
+            return "";
+        }
+        return sub_view(this, 0 as usize, len -% count);
+    }
+
+    // The view with `prefix` removed when present; unchanged otherwise.
+    #[no_alloc]
+    fn removing_prefix(this, prefix: str) -> str {
+        if this.has_prefix(prefix) {
+            return sub_view(this, #str_len(prefix), #str_len(this));
+        }
+        return this;
+    }
+
+    // The view with `suffix` removed when present; unchanged otherwise.
+    #[no_alloc]
+    fn removing_suffix(this, suffix: str) -> str {
+        if this.has_suffix(suffix) {
+            return sub_view(this, 0 as usize, #str_len(this) -% #str_len(suffix));
+        }
+        return this;
+    }
+
+    // Leading ASCII whitespace removed — endpoints move, no bytes copied
+    // (unlike `Text::trim_start`, which allocates an owned copy).
+    #[no_alloc]
+    fn trim_start(this) -> str {
+        let p: *u8 = #str_ptr(this);
+        let len: usize = #str_len(this);
+        var start: usize = 0 as usize;
+        while start < len {
+            if is_ascii_ws({ p[start] }) == false {
+                break;
+            }
+            start = start +% (1 as usize);
+        }
+        return sub_view(this, start, len);
+    }
+
+    // Trailing ASCII whitespace removed.
+    #[no_alloc]
+    fn trim_end(this) -> str {
+        let p: *u8 = #str_ptr(this);
+        var end: usize = #str_len(this);
+        while end > (0 as usize) {
+            if is_ascii_ws({ p[end -% (1 as usize)] }) == false {
+                break;
+            }
+            end = end -% (1 as usize);
+        }
+        return sub_view(this, 0 as usize, end);
+    }
+
+    // Leading and trailing ASCII whitespace removed.
+    #[no_alloc]
+    fn trim(this) -> str {
+        let p: *u8 = #str_ptr(this);
+        let len: usize = #str_len(this);
+        var start: usize = 0 as usize;
+        while start < len {
+            if is_ascii_ws({ p[start] }) == false {
+                break;
+            }
+            start = start +% (1 as usize);
+        }
+        var end: usize = len;
+        while end > start {
+            if is_ascii_ws({ p[end -% (1 as usize)] }) == false {
+                break;
+            }
+            end = end -% (1 as usize);
+        }
+        return sub_view(this, start, end);
+    }
+
+    // ── Split: the one allocating member (one Vec; the pieces are views) ─
+
+    // Split on every non-overlapping occurrence of `separator`. The pieces
+    // are sub-views of this buffer — one Vec allocation total, where
+    // `Text::split` copies every piece. An empty separator yields the whole
+    // view as one piece. `"a,b,c".split(separator: ",")` → `["a", "b", "c"]`.
+    fn split(this, separator: str) -> vec::Vec[str] {
+        var out: vec::Vec[str] = vec::new::[str]();
+        let n: usize = #str_len(separator);
+        let len: usize = #str_len(this);
+        if n == (0 as usize) {
+            out.append(sub_view(this, 0 as usize, len));
+            return out;
+        }
+        let hay: *u8 = #str_ptr(this);
+        let p: *u8 = #str_ptr(separator);
+        var start: usize = 0 as usize;
+        var i: usize = 0 as usize;
+        while (i +% n) <= len {
+            if region_matches(hay, i, p, n) {
+                out.append(sub_view(this, start, i));
+                i = i +% n;
+                start = i;
+            } else {
+                i = i +% (1 as usize);
+            }
+        }
+        out.append(sub_view(this, start, len));
+        return out;
+    }
+
+    // ── Parse ────────────────────────────────────────────────────────────
+
+    // Parse the whole view as a decimal i64: optional `+`/`-` sign, then one
+    // or more ASCII digits, nothing else. None on empty input, stray bytes,
+    // or overflow. (No whitespace tolerance — `trim()` first if needed.)
+    #[no_alloc]
+    fn to_i64(this) -> option::Option[i64] {
+        let p: *u8 = #str_ptr(this);
+        let len: usize = #str_len(this);
+        if len == (0 as usize) {
+            return option::Option[i64]::None;
+        }
+        var i: usize = 0 as usize;
+        var negative: bool = false;
+        let first: u8 = { p[0 as usize] };
+        if first == (43 as u8) || first == (45 as u8) {
+            negative = first == (45 as u8);
+            i = 1 as usize;
+            if i >= len {
+                return option::Option[i64]::None;
+            }
+        }
+        // Accumulate in u64 against the signed limit: 2^63 for a negative
+        // result, 2^63 - 1 for a positive one.
+        var limit: u64 = 9223372036854775807 as u64;
+        if negative {
+            limit = limit +% (1 as u64);
+        }
+        var acc: u64 = 0 as u64;
+        while i < len {
+            let b: u8 = { p[i] };
+            if b < (48 as u8) || b > (57 as u8) {
+                return option::Option[i64]::None;
+            }
+            let d: u64 = (b -% (48 as u8)) as u64;
+            // acc*10 + d <= limit  ⇔  acc <= (limit - d) / 10; d <= 9 <= limit.
+            if acc > ((limit -% d) / (10 as u64)) {
+                return option::Option[i64]::None;
+            }
+            acc = (acc *% (10 as u64)) +% d;
+            i = i +% (1 as usize);
+        }
+        if negative {
+            // acc <= 2^63: two's-complement negate lands exactly, including
+            // i64::MIN (acc == 2^63 wraps to the right bit pattern).
+            return option::Option[i64]::Some((0 as i64) -% (acc as i64));
+        }
+        return option::Option[i64]::Some(acc as i64);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Tests
+// ─────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn str_count_and_empties() {
+    assert "hello".count() == (5 as usize);
+    assert "".count() == (0 as usize);
+    assert "".is_empty();
+    assert "x".is_empty() == false;
+}
+
+#[test]
+fn str_char_count_utf8() {
+    assert "abc".char_count() == (3 as usize);
+    assert "héllo".char_count() == (5 as usize);
+    assert "héllo".count() == (6 as usize);
+    assert "日本語".char_count() == (3 as usize);
+    assert "".char_count() == (0 as usize);
+}
+
+#[test]
+fn str_is_ascii() {
+    assert "hello".is_ascii();
+    assert "".is_ascii();
+    assert "héllo".is_ascii() == false;
+}
+
+#[test]
+fn str_byte_at_bounds() {
+    match "abc".byte_at(index: 0 as usize) {
+        option::Option[u8]::Some(b) => { assert b == (97 as u8); }
+        option::Option[u8]::None => { assert false; }
+    }
+    match "abc".byte_at(index: 3 as usize) {
+        option::Option[u8]::Some(_b) => { assert false; }
+        option::Option[u8]::None => {}
+    }
+    match "".byte_at(index: 0 as usize) {
+        option::Option[u8]::Some(_b) => { assert false; }
+        option::Option[u8]::None => {}
+    };
+}
+
+#[test]
+fn str_prefix_suffix_predicates() {
+    assert "hello world".has_prefix("hello");
+    assert "hello world".has_suffix("world");
+    assert "hello".has_prefix("hello");
+    assert "hello".has_prefix("");
+    assert "hello".has_suffix("");
+    assert "hi".has_prefix("hello") == false;
+    assert "hi".has_suffix("hello") == false;
+}
+
+#[test]
+fn str_find_rfind_contains() {
+    match "abcabc".find("bc") {
+        option::Option[usize]::Some(i) => { assert i == (1 as usize); }
+        option::Option[usize]::None => { assert false; }
+    }
+    match "abcabc".rfind("bc") {
+        option::Option[usize]::Some(i) => { assert i == (4 as usize); }
+        option::Option[usize]::None => { assert false; }
+    }
+    match "abc".find("") {
+        option::Option[usize]::Some(i) => { assert i == (0 as usize); }
+        option::Option[usize]::None => { assert false; }
+    }
+    match "abc".rfind("") {
+        option::Option[usize]::Some(i) => { assert i == (3 as usize); }
+        option::Option[usize]::None => { assert false; }
+    }
+    match "abc".find("zz") {
+        option::Option[usize]::Some(_i) => { assert false; }
+        option::Option[usize]::None => {}
+    }
+    assert "hello world".contains("o w");
+    assert "hello".contains("zz") == false;
+}
+
+#[test]
+fn str_count_of_nonoverlapping() {
+    assert "aaaa".count_of("aa") == (2 as usize);
+    assert "a,b,c".count_of(",") == (2 as usize);
+    assert "abc".count_of("") == (0 as usize);
+    assert "abc".count_of("zzz") == (0 as usize);
+}
+
+#[test]
+fn str_compare_and_case_fold() {
+    assert "abc".compare("abd") == (0 - 1);
+    assert "abd".compare("abc") == 1;
+    assert "abc".compare("abc") == 0;
+    assert "ab".compare("abc") == (0 - 1);
+    assert "abc".compare("ab") == 1;
+    assert "Hello".equals_ignoring_case("hELLO");
+    assert "Hello".equals_ignoring_case("hELLo!") == false;
+    assert "".equals_ignoring_case("");
+}
+
+#[test]
+fn str_slice_views() {
+    match "hello".slice(from: 1 as usize, to: 4 as usize) {
+        option::Option[str]::Some(s) => { assert s == "ell"; }
+        option::Option[str]::None => { assert false; }
+    }
+    match "hello".slice(from: 3 as usize, to: 2 as usize) {
+        option::Option[str]::Some(_s) => { assert false; }
+        option::Option[str]::None => {}
+    }
+    match "hello".slice(from: 0 as usize, to: 6 as usize) {
+        option::Option[str]::Some(_s) => { assert false; }
+        option::Option[str]::None => {}
+    }
+    match "hello".slice(from: 2 as usize, to: 2 as usize) {
+        option::Option[str]::Some(s) => { assert s.is_empty(); }
+        option::Option[str]::None => { assert false; }
+    };
+}
+
+#[test]
+fn str_prefix_suffix_drops() {
+    assert "hello".prefix(count: 2 as usize) == "he";
+    assert "hello".prefix(count: 99 as usize) == "hello";
+    assert "hello".suffix(count: 2 as usize) == "lo";
+    assert "hello".suffix(count: 99 as usize) == "hello";
+    assert "hello".drop_first() == "ello";
+    assert "hello".drop_first(count: 2 as usize) == "llo";
+    assert "hello".drop_first(count: 99 as usize) == "";
+    assert "hello".drop_last() == "hell";
+    assert "hello".drop_last(count: 2 as usize) == "hel";
+    assert "hello".drop_last(count: 99 as usize) == "";
+}
+
+#[test]
+fn str_removing_affixes() {
+    assert "foo.txt".removing_suffix(".txt") == "foo";
+    assert "foo.txt".removing_suffix(".md") == "foo.txt";
+    assert "src/main".removing_prefix("src/") == "main";
+    assert "src/main".removing_prefix("x/") == "src/main";
+}
+
+#[test]
+fn str_trim_family() {
+    assert "  hi  ".trim() == "hi";
+    assert "  hi  ".trim_start() == "hi  ";
+    assert "  hi  ".trim_end() == "  hi";
+    assert "\t\n hi \r\n".trim() == "hi";
+    assert "   ".trim() == "";
+    assert "".trim() == "";
+    assert "hi".trim() == "hi";
+}
+
+#[test]
+fn str_split_views() {
+    let parts: vec::Vec[str] = "a,b,c".split(separator: ",");
+    assert parts.count() == (3 as usize);
+    match parts.at(index: 0 as usize) {
+        option::Option[str]::Some(s) => { assert s == "a"; }
+        option::Option[str]::None => { assert false; }
+    }
+    match parts.at(index: 2 as usize) {
+        option::Option[str]::Some(s) => { assert s == "c"; }
+        option::Option[str]::None => { assert false; }
+    }
+    let empties: vec::Vec[str] = ",x,".split(separator: ",");
+    assert empties.count() == (3 as usize);
+    match empties.at(index: 0 as usize) {
+        option::Option[str]::Some(s) => { assert s.is_empty(); }
+        option::Option[str]::None => { assert false; }
+    }
+    let whole: vec::Vec[str] = "abc".split(separator: "");
+    assert whole.count() == (1 as usize);
+    let nosep: vec::Vec[str] = "abc".split(separator: ",");
+    assert nosep.count() == (1 as usize);
+}
+
+#[test]
+fn str_to_i64_parses() {
+    match "42".to_i64() {
+        option::Option[i64]::Some(v) => { assert v == (42 as i64); }
+        option::Option[i64]::None => { assert false; }
+    }
+    match "-7".to_i64() {
+        option::Option[i64]::Some(v) => { assert v == ((0 as i64) - (7 as i64)); }
+        option::Option[i64]::None => { assert false; }
+    }
+    match "+7".to_i64() {
+        option::Option[i64]::Some(v) => { assert v == (7 as i64); }
+        option::Option[i64]::None => { assert false; }
+    }
+    match "0".to_i64() {
+        option::Option[i64]::Some(v) => { assert v == (0 as i64); }
+        option::Option[i64]::None => { assert false; }
+    }
+    match "9223372036854775807".to_i64() {
+        option::Option[i64]::Some(v) => { assert v == (9223372036854775807 as i64); }
+        option::Option[i64]::None => { assert false; }
+    }
+    match "-9223372036854775808".to_i64() {
+        option::Option[i64]::Some(v) => {
+            let min: i64 = ((0 as i64) - (9223372036854775807 as i64)) - (1 as i64);
+            assert v == min;
+        }
+        option::Option[i64]::None => { assert false; }
+    };
+}
+
+#[test]
+fn str_to_i64_rejects() {
+    match "".to_i64() {
+        option::Option[i64]::Some(_v) => { assert false; }
+        option::Option[i64]::None => {}
+    }
+    match "-".to_i64() {
+        option::Option[i64]::Some(_v) => { assert false; }
+        option::Option[i64]::None => {}
+    }
+    match "12x".to_i64() {
+        option::Option[i64]::Some(_v) => { assert false; }
+        option::Option[i64]::None => {}
+    }
+    match " 12".to_i64() {
+        option::Option[i64]::Some(_v) => { assert false; }
+        option::Option[i64]::None => {}
+    }
+    match "9223372036854775808".to_i64() {
+        option::Option[i64]::Some(_v) => { assert false; }
+        option::Option[i64]::None => {}
+    }
+    match "-9223372036854775809".to_i64() {
+        option::Option[i64]::Some(_v) => { assert false; }
+        option::Option[i64]::None => {}
+    };
+}
