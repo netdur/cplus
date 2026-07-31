@@ -30,6 +30,11 @@
 import "./option" as option;
 import "./vec" as vec;
 import "./status" as status;
+// STRM v2 (2026-07-31): text delegates its read methods to the builtin
+// `str` method set (the blessed block in ./str). The alias is unused —
+// the import exists to include the module, which also means every
+// program importing stdlib/text gets `str` methods transitively.
+import "./str" as str_view;
 
 extern fn malloc(n: usize) -> *u8;
 extern fn realloc(p: *u8, n: usize) -> *u8;
@@ -69,11 +74,6 @@ fn next_capacity(current: usize, required: usize) -> usize {
         }
     }
     return out;
-}
-
-// ASCII whitespace: space, tab, LF, CR. Used by the `trim*` helpers.
-fn is_ascii_ws(b: u8) -> bool {
-    return b == (32 as u8) || b == (9 as u8) || b == (10 as u8) || b == (13 as u8);
 }
 
 // True if the `n` bytes at `needle` equal the `n` bytes of `hay` starting at
@@ -389,74 +389,27 @@ impl Text {
     }
 
     fn has_prefix(this, prefix: str) -> bool {
-        let n: usize = #str_len(prefix);
-        if n > this._len {
-            return false;
-        }
-        return region_matches(this._ptr, 0 as usize, #str_ptr(prefix), n);
+        return this.view().has_prefix(prefix);
     }
 
     fn has_suffix(this, suffix: str) -> bool {
-        let n: usize = #str_len(suffix);
-        if n > this._len {
-            return false;
-        }
-        return region_matches(this._ptr, this._len -% n, #str_ptr(suffix), n);
+        return this.view().has_suffix(suffix);
     }
 
     // Byte offset of the first occurrence of `needle`, or None. An empty
     // needle matches at 0.
     fn find(this, needle: str) -> option::Option[usize] {
-        let n: usize = #str_len(needle);
-        if n == (0 as usize) {
-            return option::Option[usize]::Some(0 as usize);
-        }
-        if n > this._len {
-            return option::Option[usize]::None;
-        }
-        let p: *u8 = #str_ptr(needle);
-        let last: usize = this._len -% n; // inclusive last start index
-        var i: usize = 0 as usize;
-        while i <= last {
-            if region_matches(this._ptr, i, p, n) {
-                return option::Option[usize]::Some(i);
-            }
-            i = i +% (1 as usize);
-        }
-        return option::Option[usize]::None;
+        return this.view().find(needle);
     }
 
     fn contains(this, needle: str) -> bool {
-        var found: bool = false;
-        match this.find(needle) {
-            option::Option[usize]::Some(_idx) => { found = true; }
-            option::Option[usize]::None => { found = false; }
-        }
-        return found;
+        return this.view().contains(needle);
     }
 
     // Byte offset of the *last* occurrence of `needle`, or None. An empty needle
     // matches at `len`.
     fn rfind(this, needle: str) -> option::Option[usize] {
-        let n: usize = #str_len(needle);
-        if n == (0 as usize) {
-            return option::Option[usize]::Some(this._len);
-        }
-        if n > this._len {
-            return option::Option[usize]::None;
-        }
-        let p: *u8 = #str_ptr(needle);
-        var i: usize = this._len -% n; // inclusive last start index
-        loop {
-            if region_matches(this._ptr, i, p, n) {
-                return option::Option[usize]::Some(i);
-            }
-            if i == (0 as usize) {
-                return option::Option[usize]::None;
-            }
-            i = i -% (1 as usize);
-        }
-        return option::Option[usize]::None;
+        return this.view().rfind(needle);
     }
 
     // Safe, bounds-checked byte read: the byte at `i`, or None if `i >= len`.
@@ -464,10 +417,7 @@ impl Text {
     // callers that have already proven `i < len` (loop bodies below) use the
     // unchecked `_byte_at_raw` directly to skip the redundant check.
     fn byte_at(this, index: usize) -> option::Option[u8] {
-        if index >= this._len {
-            return option::Option[u8]::None;
-        }
-        return option::Option[u8]::Some(this._byte_at_raw(index));
+        return this.view().byte_at(index: index);
     }
 
     // Unchecked byte read — caller guarantees `i < len`. Module-private (the
@@ -496,56 +446,30 @@ impl Text {
     // Owned copy of the byte range `[from, to)`, or None if out of bounds /
     // inverted. (Copies — the result owns its bytes.) e.g. `t.slice(from: 2, to: 5)`.
     fn slice(this, from: usize, to: usize) -> option::Option[Text] {
-        if from > to {
-            return option::Option[Text]::None;
+        match this.view().slice(from: from, to: to) {
+            option::Option[str]::Some(s) => {
+                return option::Option[Text]::Some(s.to_text());
+            }
+            option::Option[str]::None => {
+                return option::Option[Text]::None;
+            }
         }
-        if to > this._len {
-            return option::Option[Text]::None;
-        }
-        return option::Option[Text]::Some(this._copy_range(from, to));
+        return option::Option[Text]::None;
     }
 
     // Owned copy with leading ASCII whitespace removed.
     fn trim_start(this) -> Text {
-        var start: usize = 0 as usize;
-        while start < this._len {
-            if is_ascii_ws(this._byte_at_raw(start)) == false {
-                break;
-            }
-            start = start +% (1 as usize);
-        }
-        return this._copy_range(start, this._len);
+        return this.view().trim_start().to_text();
     }
 
     // Owned copy with trailing ASCII whitespace removed.
     fn trim_end(this) -> Text {
-        var end: usize = this._len;
-        while end > (0 as usize) {
-            if is_ascii_ws(this._byte_at_raw(end -% (1 as usize))) == false {
-                break;
-            }
-            end = end -% (1 as usize);
-        }
-        return this._copy_range(0 as usize, end);
+        return this.view().trim_end().to_text();
     }
 
     // Owned copy with leading and trailing ASCII whitespace removed.
     fn trim(this) -> Text {
-        var start: usize = 0 as usize;
-        while start < this._len {
-            if is_ascii_ws(this._byte_at_raw(start)) == false {
-                break;
-            }
-            start = start +% (1 as usize);
-        }
-        var end: usize = this._len;
-        while end > start {
-            if is_ascii_ws(this._byte_at_raw(end -% (1 as usize))) == false {
-                break;
-            }
-            end = end -% (1 as usize);
-        }
-        return this._copy_range(start, end);
+        return this.view().trim().to_text();
     }
 
     // ASCII-lowercased owned copy (`A`–`Z` → `a`–`z`; other bytes unchanged).
@@ -641,41 +565,25 @@ impl Text {
     // Owned copy of the first `count` bytes — the whole string if it is shorter.
     // Swift's `String.prefix(_:)`. Never traps.
     fn prefix(this, count: usize) -> Text {
-        var n: usize = count;
-        if n > this._len {
-            n = this._len;
-        }
-        return this._copy_range(0 as usize, n);
+        return this.view().prefix(count: count).to_text();
     }
 
     // Owned copy of the last `count` bytes — the whole string if it is shorter.
     // Swift's `String.suffix(_:)`.
     fn suffix(this, count: usize) -> Text {
-        var n: usize = count;
-        if n > this._len {
-            n = this._len;
-        }
-        return this._copy_range(this._len -% n, this._len);
+        return this.view().suffix(count: count).to_text();
     }
 
     // Owned copy with the first `count` bytes dropped (Swift `dropFirst`,
     // which defaults to 1).
     fn drop_first(this, count: usize = 1) -> Text {
-        var n: usize = count;
-        if n > this._len {
-            n = this._len;
-        }
-        return this._copy_range(n, this._len);
+        return this.view().drop_first(count: count).to_text();
     }
 
     // Owned copy with the last `count` bytes dropped (Swift `dropLast`,
     // which defaults to 1).
     fn drop_last(this, count: usize = 1) -> Text {
-        var n: usize = count;
-        if n > this._len {
-            n = this._len;
-        }
-        return this._copy_range(0 as usize, this._len -% n);
+        return this.view().drop_last(count: count).to_text();
     }
 
     // Owned copy with `s` appended — non-mutating, leaving `this` untouched.
@@ -688,43 +596,17 @@ impl Text {
 
     // True when this text's bytes equal `other` exactly (Swift `==`).
     fn equals(this, other: str) -> bool {
-        let n: usize = #str_len(other);
-        if n != this._len {
-            return false;
-        }
-        return region_matches(this._ptr, 0 as usize, #str_ptr(other), n);
+        return this.view() == other;
     }
 
     // True when every byte is ASCII (< 128). Mirrors Swift `String.isASCII`.
     fn is_ascii(this) -> bool {
-        var i: usize = 0 as usize;
-        while i < this._len {
-            if this._byte_at_raw(i) >= (128 as u8) {
-                return false;
-            }
-            i = i +% (1 as usize);
-        }
-        return true;
+        return this.view().is_ascii();
     }
 
     // Count of non-overlapping occurrences of `needle`. An empty needle is 0.
     fn count_of(this, needle: str) -> usize {
-        let n: usize = #str_len(needle);
-        if n == (0 as usize) || n > this._len {
-            return 0 as usize;
-        }
-        let p: *u8 = #str_ptr(needle);
-        var total: usize = 0 as usize;
-        var i: usize = 0 as usize;
-        while (i +% n) <= this._len {
-            if region_matches(this._ptr, i, p, n) {
-                total = total +% (1 as usize);
-                i = i +% n;
-            } else {
-                i = i +% (1 as usize);
-            }
-        }
-        return total;
+        return this.view().count_of(needle);
     }
 
     // Owned copy with every (non-overlapping) occurrence of `of` replaced by
@@ -758,16 +640,7 @@ impl Text {
     // not a UTF-8 continuation byte (0x80–0xBF). For all-ASCII text the two
     // agree. Assumes well-formed UTF-8 (see `from_utf8`).
     fn char_count(this) -> usize {
-        var total: usize = 0 as usize;
-        var i: usize = 0 as usize;
-        while i < this._len {
-            let b: u8 = this._byte_at_raw(i);
-            if b < (0x80 as u8) || b >= (0xC0 as u8) {
-                total = total +% (1 as usize);
-            }
-            i = i +% (1 as usize);
-        }
-        return total;
+        return this.view().char_count();
     }
 
     // Lexicographic byte comparison (unsigned): `-1` if `this` sorts before
@@ -775,73 +648,27 @@ impl Text {
     // of the other. The ordering primitive for sorting Texts (`strcmp` /
     // `compareTo`); `equals` is the equality-only fast path.
     fn compare(this, other: str) -> i32 {
-        let on: usize = #str_len(other);
-        var m: usize = this._len;
-        if on < m {
-            m = on;
-        }
-        if m != (0 as usize) {
-            let c: i32 = { memcmp(this._ptr, #str_ptr(other), m) };
-            if c < (0 as i32) {
-                return -1 as i32;
-            }
-            if c > (0 as i32) {
-                return 1 as i32;
-            }
-        }
-        if this._len < on {
-            return -1 as i32;
-        }
-        if this._len > on {
-            return 1 as i32;
-        }
-        return 0 as i32;
+        return this.view().compare(other);
     }
 
     // ASCII case-insensitive equality: like `equals` but treating `A`–`Z` and
     // `a`–`z` as the same letter. Non-letter bytes must still match exactly.
     // (ASCII only — no Unicode case folding.)
     fn equals_ignoring_case(this, other: str) -> bool {
-        let n: usize = #str_len(other);
-        if n != this._len {
-            return false;
-        }
-        let op: *u8 = #str_ptr(other);
-        var i: usize = 0 as usize;
-        while i < this._len {
-            var a: u8 = this._byte_at_raw(i);
-            var b: u8 = { *(op + i) };
-            if a >= (65 as u8) && a <= (90 as u8) {
-                a = a +% (32 as u8);
-            }
-            if b >= (65 as u8) && b <= (90 as u8) {
-                b = b +% (32 as u8);
-            }
-            if a != b {
-                return false;
-            }
-            i = i +% (1 as usize);
-        }
-        return true;
+        return this.view().equals_ignoring_case(other);
     }
 
     // Owned copy with `prefix` removed from the front if present; an unchanged
     // copy otherwise (Rust `strip_prefix`, non-trapping). An empty prefix is a
     // plain copy.
     fn removing_prefix(this, prefix: str) -> Text {
-        if this.has_prefix(prefix) {
-            return this._copy_range(#str_len(prefix), this._len);
-        }
-        return this.clone();
+        return this.view().removing_prefix(prefix).to_text();
     }
 
     // Owned copy with `suffix` removed from the end if present; an unchanged
     // copy otherwise (Rust `strip_suffix`). An empty suffix is a plain copy.
     fn removing_suffix(this, suffix: str) -> Text {
-        if this.has_suffix(suffix) {
-            return this._copy_range(0 as usize, this._len -% #str_len(suffix));
-        }
-        return this.clone();
+        return this.view().removing_suffix(suffix).to_text();
     }
 
     // Owned copy left-padded with `with` (a space by default) until it is at

@@ -24,6 +24,8 @@ import "./option" as option;
 import "./vec" as vec;
 
 extern fn memcmp(a: *u8, b: *u8, n: usize) -> i32;
+extern fn memcpy(dest: *u8, src: *u8, n: usize) -> *u8;
+extern fn strtod(s: *u8, endptr: *u8) -> f64;
 
 #[no_alloc]
 fn is_ascii_ws(b: u8) -> bool {
@@ -476,6 +478,80 @@ impl str {
         }
         return option::Option[i64]::Some(acc as i64);
     }
+
+    // Parse the whole view as a decimal f64: optional `+`/`-`, digits, an
+    // optional `.digits` fraction, an optional `e`/`E` exponent with its own
+    // optional sign — `-12.5e-3` shapes. None on empty input, stray bytes,
+    // a bare `.` or exponent, or inputs over 63 bytes (any finite f64 has a
+    // far shorter spelling). This scan decides VALIDITY — strict, so
+    // `inf`/`nan`/hex floats and locale quirks never pass; libc `strtod`
+    // over a NUL-terminated stack copy then supplies the VALUE, so rounding
+    // is correct to the last bit. No heap allocation.
+    fn to_f64(this) -> option::Option[f64] {
+        let len: usize = #str_len(this);
+        if len == (0 as usize) || len > (63 as usize) {
+            return option::Option[f64]::None;
+        }
+        let p: *u8 = #str_ptr(this);
+        var i: usize = 0 as usize;
+        let first: u8 = { p[0 as usize] };
+        if first == (43 as u8) || first == (45 as u8) {
+            i = 1 as usize;
+        }
+        var int_digits: usize = 0 as usize;
+        while i < len {
+            let b: u8 = { p[i] };
+            if b < (48 as u8) || b > (57 as u8) {
+                break;
+            }
+            int_digits = int_digits +% (1 as usize);
+            i = i +% (1 as usize);
+        }
+        if int_digits == (0 as usize) {
+            return option::Option[f64]::None;
+        }
+        if i < len && { p[i] } == (46 as u8) {
+            i = i +% (1 as usize);
+            var frac_digits: usize = 0 as usize;
+            while i < len {
+                let b: u8 = { p[i] };
+                if b < (48 as u8) || b > (57 as u8) {
+                    break;
+                }
+                frac_digits = frac_digits +% (1 as usize);
+                i = i +% (1 as usize);
+            }
+            if frac_digits == (0 as usize) {
+                return option::Option[f64]::None;
+            }
+        }
+        if i < len && ({ p[i] } == (101 as u8) || { p[i] } == (69 as u8)) {
+            i = i +% (1 as usize);
+            if i < len && ({ p[i] } == (43 as u8) || { p[i] } == (45 as u8)) {
+                i = i +% (1 as usize);
+            }
+            var exp_digits: usize = 0 as usize;
+            while i < len {
+                let b: u8 = { p[i] };
+                if b < (48 as u8) || b > (57 as u8) {
+                    break;
+                }
+                exp_digits = exp_digits +% (1 as usize);
+                i = i +% (1 as usize);
+            }
+            if exp_digits == (0 as usize) {
+                return option::Option[f64]::None;
+            }
+        }
+        if i != len {
+            return option::Option[f64]::None;
+        }
+        var buf: [u8; 64] = [0 as u8; 64];
+        let dst: *u8 = #addr_of(buf) as *u8;
+        { memcpy(dst, p, len) };
+        *(dst + len) = 0 as u8;
+        return option::Option[f64]::Some({ strtod(dst, 0 as *u8) });
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -712,5 +788,65 @@ fn str_to_i64_rejects() {
     match "-9223372036854775809".to_i64() {
         option::Option[i64]::Some(_v) => { assert false; }
         option::Option[i64]::None => {}
+    };
+}
+
+#[test]
+fn str_to_f64_parses() {
+    match "3.5".to_f64() {
+        option::Option[f64]::Some(v) => { assert v == 3.5; }
+        option::Option[f64]::None => { assert false; }
+    }
+    match "42".to_f64() {
+        option::Option[f64]::Some(v) => { assert v == 42.0; }
+        option::Option[f64]::None => { assert false; }
+    }
+    match "+0.5".to_f64() {
+        option::Option[f64]::Some(v) => { assert v == 0.5; }
+        option::Option[f64]::None => { assert false; }
+    }
+    match "-12.5e-3".to_f64() {
+        option::Option[f64]::Some(v) => { assert v == (0.0 - 0.0125); }
+        option::Option[f64]::None => { assert false; }
+    }
+    match "1E3".to_f64() {
+        option::Option[f64]::Some(v) => { assert v == 1000.0; }
+        option::Option[f64]::None => { assert false; }
+    };
+}
+
+#[test]
+fn str_to_f64_rejects() {
+    match "".to_f64() {
+        option::Option[f64]::Some(_v) => { assert false; }
+        option::Option[f64]::None => {}
+    }
+    match ".5".to_f64() {
+        option::Option[f64]::Some(_v) => { assert false; }
+        option::Option[f64]::None => {}
+    }
+    match "5.".to_f64() {
+        option::Option[f64]::Some(_v) => { assert false; }
+        option::Option[f64]::None => {}
+    }
+    match "1e".to_f64() {
+        option::Option[f64]::Some(_v) => { assert false; }
+        option::Option[f64]::None => {}
+    }
+    match "1e+".to_f64() {
+        option::Option[f64]::Some(_v) => { assert false; }
+        option::Option[f64]::None => {}
+    }
+    match "1.2.3".to_f64() {
+        option::Option[f64]::Some(_v) => { assert false; }
+        option::Option[f64]::None => {}
+    }
+    match " 1".to_f64() {
+        option::Option[f64]::Some(_v) => { assert false; }
+        option::Option[f64]::None => {}
+    }
+    match "inf".to_f64() {
+        option::Option[f64]::Some(_v) => { assert false; }
+        option::Option[f64]::None => {}
     };
 }
