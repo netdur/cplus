@@ -30,13 +30,13 @@ var content: flex::Node = flex::Node::new();
 content.set_flex_grow(1.0f64);
 root.add_child(content);
 
-root.calculate_layout(1024.0f64, 768.0f64, flex::Direction::LTR);
+root.calculate_layout(width: 1024.0f64, height: 768.0f64);
 
-match root.child_layout(1 as usize) {
-    option::Option[flex::Layout]::Some(f) => {
+match root.child_frame(1 as usize) {
+    option::Option[flex::Frame]::Some(f) => {
         // f.left / f.top / f.width / f.height — absolute in root space
     }
-    option::Option[flex::Layout]::None => {}
+    option::Option[flex::Frame]::None => {}
 }
 ```
 
@@ -55,7 +55,7 @@ var root: flex::Node = @flex {
         box().grow(1.0)
     }
 };
-root.calculate_layout(1024.0f64, 768.0f64, flex::Direction::LTR);
+root.calculate_layout(width: 1024.0f64, height: 768.0f64);
 ```
 
 HIG shell (margins + card padding):
@@ -78,7 +78,7 @@ var g: flex::Node = flex::Node::new();
 g.set_display(flex::Display::Grid);
 g.add_grid_column(flex::GridTrack::points(200.0f64));
 g.add_grid_column(flex::GridTrack::fr(1.0f64));
-g.set_gap(flex::Gutter::All, 12.0f64);
+g.set_gap(flex::Gutter::All, flex::StyleLength::points(12.0f64));
 // add_child cells… then calculate_layout
 ```
 
@@ -99,4 +99,4 @@ label.set_measure(measure_label);
   origin for superview-relative placement.
 - `add_child` / fluent DSL **move** the child; use `set_*` on a held `var`.
 - Engine is UI-kit-agnostic: numbers only; you apply them to views.
-- Unconstrained axis: `flex::undefined()` as available width/height.
+- Unconstrained axis: omit the width/height argument (defaults are unconstrained).

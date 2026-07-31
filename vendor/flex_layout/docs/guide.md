@@ -7,8 +7,7 @@ Signatures: [ref.md](ref.md).
 ## The node model
 
 A layout tree is a tree of `Node`s. A node owns its children (the parent owns
-them by value), carries a `Style`, and — after layout — a computed `Layout`
-frame.
+them by value), carries a `Style`, and — after layout — a computed `Frame`.
 
 ```cplus
 var n: flex::Node = flex::Node::new();   // default: Column, align-items stretch
@@ -26,22 +25,22 @@ parent.add_child(child_b);
 ## Running layout
 
 ```cplus
-root.calculate_layout(available_width, available_height, flex::Direction::LTR);
+root.calculate_layout(width: available_width, height: available_height);
 ```
 
-- Either available axis may be `flex::undefined()` for **unconstrained**
-  (content-sized) layout.
+- Every parameter has a default: an omitted axis is **unconstrained**
+  (content-sized) layout, and the default direction resolves to LTR —
+  `root.calculate_layout()` lays out fully content-sized.
 - Root is at `(0, 0)`; every frame is **absolute in the root’s coordinate
   space**. For a superview-relative frame: `child.left - parent.left`,
   `child.top - parent.top`.
 
 ```cplus
-root.layout_left()  root.layout_top()  root.layout_width()  root.layout_height()
-root.layout_frame()                 // -> Layout
-root.child_layout(i)                // -> Option[Layout]
+root.frame()                        // -> Frame (left/top/width/height)
+root.child_frame(i)                 // -> Option[Frame]
 ```
 
-Deeper than direct children: walk `children` and call `child_layout` on that
+Deeper than direct children: walk `children` and call `child_frame` on that
 node.
 
 ## Sizing a box
@@ -81,8 +80,8 @@ child.set_margin(flex::Edge::Left, flex::StyleLength::auto());
 
 ```cplus
 n.set_padding(flex::Edge::All, flex::StyleLength::points(8.0f64));
-n.set_gap(flex::Gutter::All, 8.0f64);
-n.set_gap_length(flex::Gutter::Column, flex::StyleLength::percent(2.0f64));
+n.set_gap(flex::Gutter::All, flex::StyleLength::points(8.0f64));
+n.set_gap(flex::Gutter::Column, flex::StyleLength::percent(2.0f64));
 n.set_box_sizing(flex::BoxSizing::ContentBox);   // default is border-box
 ```
 
@@ -130,7 +129,7 @@ g.set_display(flex::Display::Grid);
 g.add_grid_column(flex::GridTrack::points(200.0f64));
 g.add_grid_column(flex::GridTrack::fr(1.0f64));
 g.add_grid_column(flex::GridTrack::auto());
-g.set_gap(flex::Gutter::All, 12.0f64);
+g.set_gap(flex::Gutter::All, flex::StyleLength::points(12.0f64));
 ```
 
 - **`points(v)`** — fixed.
@@ -149,16 +148,20 @@ photo.set_grid_row_span(2);
 
 ### Named lines
 
+A track's `line:` argument names the grid line before it, matching CSS
+`[sidebar] 200px [main] 1fr`:
+
 ```cplus
-g.name_grid_column_line("sidebar");
-g.add_grid_column(flex::GridTrack::points(200.0f64));
-g.name_grid_column_line("main");
-g.add_grid_column(flex::GridTrack::fr(1.0f64));
-content.set_grid_column_start(g.column_line("main"));  // -1 if unknown
+g.add_grid_column(flex::GridTrack::points(200.0f64), line: "sidebar");
+g.add_grid_column(flex::GridTrack::fr(1.0f64), line: "main");
+match g.column_line(named: "main") {
+    option::Option[i32]::Some(l) => { content.set_grid_column_start(l); }
+    option::Option[i32]::None => { }
+}
 ```
 
-Explicit starts: `set_grid_column_start` / `set_grid_row_start` (0-based, -1 =
-auto).
+Explicit starts: `set_grid_column_start` / `set_grid_row_start` (0-based; -1
+resets to auto).
 
 ### Subgrid
 
@@ -188,8 +191,8 @@ label.set_measure(measure_label);
 `MeasureMode`: `Exactly` / `AtMost` / `Undefined`. Optional baseline callback
 for `align-items: baseline`.
 
-Owned payload (retain/release a view with the node): `set_payload` /
-`clear_payload` — see [ref.md](ref.md).
+Owned attachment (retain/release a view with the node): `attach` / `detach` —
+see [ref.md](ref.md).
 
 ## `@flex` DSL and HIG
 
@@ -224,7 +227,7 @@ on its own leading-dot line is a use-after-move.
 | Modifier | Effect |
 |---|---|
 | `.width` / `.height` | points |
-| `.width_pct` / `.height_pct` | percent of parent |
+| `.width_percent` / `.height_percent` | percent of parent |
 | `.grow` / `.shrink` | flex factors |
 | `.padding` / `.margin` | uniform points |
 | `.gap` | container gap |
@@ -266,12 +269,12 @@ root.set_direction(flex::Direction::RTL);
 child.set_margin(flex::Edge::Start, flex::StyleLength::points(16.0f64));
 ```
 
-`owner_dir` on `calculate_layout` also seeds inheritance.
+The `direction:` argument of `calculate_layout` also seeds inheritance.
 
 ## Pixel-grid rounding
 
 ```cplus
-root.round_to_pixel(1.0f64);   // integer points
+root.round_to_pixel();         // integer points (scale defaults to 1)
 root.round_to_pixel(2.0f64);   // retina half-points
 ```
 
@@ -291,8 +294,8 @@ import "flex_layout/responsive" as responsive;
 
 var screens: responsive::ResponsiveConfig =
     responsive::ResponsiveConfig::new("desktop");
-screens.add_breakpoint("mobile", 300.0f64);
-screens.add_breakpoint("tablet", 900.0f64);
+screens.add_breakpoint("mobile", up_to: 300.0f64);
+screens.add_breakpoint("tablet", up_to: 900.0f64);
 
 let env: responsive::LayoutEnvironment =
     screens.resolve(viewport_width, viewport_height);
@@ -302,7 +305,7 @@ var root: flex::Node = if env.is("mobile") {
 } else {
     regular_layout()
 };
-root.calculate_layout(env.width(), env.height(), flex::Direction::LTR);
+root.calculate_layout(width: env.width(), height: env.height());
 ```
 
 Each breakpoint is an inclusive maximum width. The smallest matching maximum
@@ -314,17 +317,18 @@ Thresholds are expressed in the same logical unit as `viewport_width`: AppKit
 points, CSS pixels, or another unit selected by the host. The module does not
 perform DPI conversion or inspect a physical display.
 
-On resize, resolve again. When `next.same_class(previous)` is true, the existing
-tree can be passed straight to `calculate_layout`. When it is false, reapply the
+On resize, resolve again. When `next.is_same_class(previous)` is true, the
+existing tree can be passed straight to `calculate_layout`. When it is false,
+reapply the
 new class's styles or rebuild the tree before layout. This split keeps ordinary
 fluid resizing cheap while leaving structural adaptation under application or
 adapter control.
 
 ## Adapter sketch
 
-Walk the node tree with your view tree; set frames from `layout_frame()`;
-apply `overflow()` (e.g. clip). Leaves measure via `fittingSize`-style
-callbacks. Engine only produces numbers.
+Walk the node tree with your view tree; set frames from `frame()`; apply
+`overflow()` (e.g. clip). Leaves measure via `fittingSize`-style callbacks.
+Engine only produces numbers.
 
 ## Gotchas
 

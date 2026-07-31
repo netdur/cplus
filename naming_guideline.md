@@ -102,3 +102,16 @@ concern from `facet`.
 - json: partially aligned.
 - appkit: thin ObjC binding; labeled parameters, default values, role-based
   type names, `Option` returns, and `Text` parameters are not yet applied.
+- flex_layout (pass done 2026-07-31): `Layout` renamed `Frame` (named for what
+  it is) and the scalar `layout_*` getters collapsed into `frame()` /
+  `child_frame(at:)`; `calculate_layout(width:, height:, direction:)` fully
+  defaulted (omitted axis = unconstrained, so the NaN sentinel stays internal);
+  the owned payload renamed `attach` / `attachment() -> Option[*u8]` /
+  `detach`; grid line naming folded into `add_grid_column(track, line:)` with
+  `column_line(named:) -> Option[i32]`; `set_gap_length` merged into one
+  `set_gap(gutter, length: StyleLength)`; `undef`/`is_undef`/`_pct`
+  abbreviations spelled out; responsive `add_breakpoint(name, up_to:)`,
+  `breakpoint_width() -> Option[f64]` (replaces the `breakpoint()` +
+  `matched_breakpoint()` pair), `is_same_class`. `Node::new()` deliberately
+  stays a bare constructor — ~30 style properties make a content-taking
+  initializer worse, and the `@flex` DSL is the phrase-reading layer.

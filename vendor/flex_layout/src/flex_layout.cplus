@@ -67,20 +67,20 @@ enum Direction { Inherit, LTR, RTL }
 // ==========================================================================
 
 // "No value" is represented as NaN (the undefined sentinel). A resolved
-// length is an f64 that is NaN when undefined. `is_undef` detects it (NaN is the
+// length is an f64 that is NaN when undefined. `is_undefined` detects it (NaN is the
 // only value not equal to itself).
 fn undefined() -> f64 {
     let zero: f64 = 0.0f64;
     return zero / zero;      // NaN
 }
 // NaN detection: NaN is the only value not equal to itself (`!=` is unordered).
-fn is_undef(x: f64) -> bool { return x != x; }
-fn is_def(x: f64) -> bool { return !is_undef(x); }
+fn is_undefined(x: f64) -> bool { return x != x; }
+fn is_defined(x: f64) -> bool { return !is_undefined(x); }
 // Two available-size values are "the same" if both undefined or numerically equal
 // (used to key the measurement memo, where an axis can be `undefined()`).
 fn same_avail(a: f64, b: f64) -> bool {
-    if is_undef(a) && is_undef(b) { return true; }
-    return is_def(a) && is_def(b) && a == b;
+    if is_undefined(a) && is_undefined(b) { return true; }
+    return is_defined(a) && is_defined(b) && a == b;
 }
 
 fn f_max(a: f64, b: f64) -> f64 { if a > b { return a; } return b; }
@@ -89,8 +89,8 @@ fn f_min(a: f64, b: f64) -> f64 { if a < b { return a; } return b; }
 // Clamp `v` to [lo, hi]; either bound may be undefined (NaN) meaning "no bound".
 fn clamp(v: f64, lo: f64, hi: f64) -> f64 {
     var out: f64 = v;
-    if is_def(hi) && out > hi { out = hi; }
-    if is_def(lo) && out < lo { out = lo; }
+    if is_defined(hi) && out > hi { out = hi; }
+    if is_defined(lo) && out < lo { out = lo; }
     return out;
 }
 
@@ -110,7 +110,7 @@ impl StyleLength {
     fn points(v: f64) -> StyleLength { return StyleLength { value: v, unit: Unit::Point }; }
     fn percent(v: f64) -> StyleLength { return StyleLength { value: v, unit: Unit::Percent }; }
     fn auto() -> StyleLength { return StyleLength { value: 0.0f64, unit: Unit::Auto }; }
-    fn undef() -> StyleLength { return StyleLength { value: 0.0f64, unit: Unit::Undefined }; }
+    fn undefined() -> StyleLength { return StyleLength { value: 0.0f64, unit: Unit::Undefined }; }
 
     fn is_auto(this) -> bool { return match this.unit { Unit::Auto => true, _ => false }; }
     fn is_defined(this) -> bool {
@@ -122,7 +122,7 @@ impl StyleLength {
     fn resolve(this, reference: f64) -> f64 {
         return match this.unit {
             Unit::Point => this.value,
-            Unit::Percent => if is_undef(reference) { undefined() } else { this.value / 100.0f64 * reference },
+            Unit::Percent => if is_undefined(reference) { undefined() } else { this.value / 100.0f64 * reference },
             Unit::Auto => undefined(),
             Unit::Undefined => undefined(),
         };
@@ -215,7 +215,7 @@ impl Style {
     // margins/padding/border/insets undefined.
     fn new() -> Style {
         let a: StyleLength = StyleLength::auto();
-        let u: StyleLength = StyleLength::undef();
+        let u: StyleLength = StyleLength::undefined();
         return Style {
             direction: Direction::Inherit,
             flex_direction: FlexDirection::Column,
@@ -254,19 +254,19 @@ impl Style {
 }
 
 // ==========================================================================
-// Payload — an owned opaque pointer + its release fn
+// Attachment — an owned opaque pointer + its release fn
 // ==========================================================================
 //
-// A node can own one opaque payload (an adapter's view handle, for
-// example). The engine never reads through the pointer; it only promises
+// A node can own one opaque attachment (an adapter's retained view handle,
+// for example). The engine never reads through the pointer; it only promises
 // to call the release fn exactly once — when the owning node drops, or
-// when the payload is replaced or cleared. This is the owning
+// when the attachment is replaced or detached. This is the owning
 // counterpart to `node_ctx`, which stays a borrowed context for the
 // measure/baseline callbacks.
 
 fn release_none(p: *u8) { return; }
 
-struct Payload {
+struct Attachment {
     // Owned by contract: released through `_release` in `drop`. The
     // release goes through a fn pointer, which the raw-pointer
     // accountability check cannot prove, hence the `opaque` marker.
@@ -275,13 +275,13 @@ struct Payload {
     _armed: bool,
 }
 
-impl Payload {
-    fn none() -> Payload {
-        return Payload { _ptr: 0 as *u8, _release: release_none, _armed: false };
+impl Attachment {
+    fn none() -> Attachment {
+        return Attachment { _ptr: 0 as *u8, _release: release_none, _armed: false };
     }
 
-    fn own(p: *u8, release: fn(*u8)) -> Payload {
-        return Payload { _ptr: p, _release: release, _armed: true };
+    fn own(p: *u8, release: fn(*u8)) -> Attachment {
+        return Attachment { _ptr: p, _release: release, _armed: true };
     }
 
     fn get(this) -> *u8 {
@@ -305,7 +305,7 @@ impl Payload {
 // Node — persistent, mutable
 // ==========================================================================
 
-struct Layout {
+struct Frame {
     left: f64,
     top: f64,
     width: f64,
@@ -320,7 +320,7 @@ struct Node {
     baseline: fn(*u8, f64, f64) -> f64,   // ascent from top, given (ctx, width, height)
     has_baseline: bool,
     opaque node_ctx: *u8,            // borrowed context for measure/baseline (adapter owns it)
-    node_payload: Payload,           // owned opaque payload (released on drop/replace)
+    node_attachment: Attachment,     // owned opaque attachment (released on drop/detach)
     grid_cols: vec::Vec[GridTrack],  // grid-template-columns (display:grid only)
     grid_rows: vec::Vec[GridTrack],  // grid-template-rows
     grid_col_span: i32,              // how many columns this item spans (>=1)
@@ -340,7 +340,7 @@ struct Node {
     sub_row_gap: f64,
     has_sub_cols: bool,
     has_sub_rows: bool,
-    layout: Layout,
+    layout: Frame,
     rdir: Direction,     // resolved direction (LTR/RTL) filled in during layout
 
     // Within-pass intrinsic-measurement memo (reset at the start of each
@@ -357,7 +357,7 @@ struct Node {
     // snapshot below to the live values — no per-setter dirty flag to forget.
     cached_valid: bool,
     cached_style: Style,
-    cached_box: Layout,
+    cached_box: Frame,
     cached_dir: Direction,
     cached_child_count: usize,
     cached_grid_sig: f64,
@@ -382,7 +382,7 @@ impl Node {
             baseline: baseline_none,
             has_baseline: false,
             node_ctx: 0 as *u8,
-            node_payload: Payload::none(),
+            node_attachment: Attachment::none(),
             grid_cols: vec::new::[GridTrack](),
             grid_rows: vec::new::[GridTrack](),
             grid_col_span: 1,
@@ -400,7 +400,7 @@ impl Node {
             sub_row_gap: 0.0f64,
             has_sub_cols: false,
             has_sub_rows: false,
-            layout: Layout { left: 0.0f64, top: 0.0f64, width: 0.0f64, height: 0.0f64 },
+            layout: Frame { left: 0.0f64, top: 0.0f64, width: 0.0f64, height: 0.0f64 },
             rdir: Direction::LTR,
             measured: false,
             m_avail_w: 0.0f64,
@@ -409,7 +409,7 @@ impl Node {
             m_size_h: 0.0f64,
             cached_valid: false,
             cached_style: Style::new(),
-            cached_box: Layout { left: 0.0f64, top: 0.0f64, width: 0.0f64, height: 0.0f64 },
+            cached_box: Frame { left: 0.0f64, top: 0.0f64, width: 0.0f64, height: 0.0f64 },
             cached_dir: Direction::LTR,
             cached_child_count: 0 as usize,
             cached_grid_sig: 0.0f64,
@@ -423,116 +423,127 @@ impl Node {
     fn child_count(this) -> usize { return this.children.count(); }
 
     // ---- grid template (display:grid) ----
-    fn add_grid_column(ref this, t: GridTrack) { this.grid_cols.append(t); return; }
-    fn add_grid_row(ref this, t: GridTrack) { this.grid_rows.append(t); return; }
-    fn set_grid_dense(ref this, v: bool) { this.grid_dense = v; return; }        // container
-    fn set_grid_column_span(ref this, v: i32) { this.grid_col_span = if v < 1 { 1 } else { v }; return; }  // item
-    fn set_grid_row_span(ref this, v: i32) { this.grid_row_span = if v < 1 { 1 } else { v }; return; }     // item
-    // Explicit placement: 0-based start line (column index) for this item; -1 = auto.
-    fn set_grid_column_start(ref this, v: i32) { this.grid_col_start = v; return; }  // item
-    fn set_grid_row_start(ref this, v: i32) { this.grid_row_start = v; return; }     // item
+    // `line` (optional) names the grid line *before* the added track, as in CSS
+    // `[sidebar] 200px`. Look indices up later with `column_line(named:)`.
+    fn add_grid_column(ref this, track: GridTrack, line: str = "") {
+        if #str_len(line) > (0 as usize) {
+            let idx: usize = this.grid_cols.count();
+            while this.grid_col_line_names.count() <= idx { this.grid_col_line_names.append("".to_text()); }
+            this.grid_col_line_names.set(line.to_text(), idx);
+        }
+        this.grid_cols.append(track);
+        return;
+    }
+    fn add_grid_row(ref this, track: GridTrack, line: str = "") {
+        if #str_len(line) > (0 as usize) {
+            let idx: usize = this.grid_rows.count();
+            while this.grid_row_line_names.count() <= idx { this.grid_row_line_names.append("".to_text()); }
+            this.grid_row_line_names.set(line.to_text(), idx);
+        }
+        this.grid_rows.append(track);
+        return;
+    }
+    fn set_grid_dense(ref this, dense: bool) { this.grid_dense = dense; return; }        // container
+    fn set_grid_column_span(ref this, count: i32) { this.grid_col_span = if count < 1 { 1 } else { count }; return; }  // item
+    fn set_grid_row_span(ref this, count: i32) { this.grid_row_span = if count < 1 { 1 } else { count }; return; }     // item
+    // Explicit placement: 0-based start line (column index) for this item; -1 resets to auto.
+    fn set_grid_column_start(ref this, line: i32) { this.grid_col_start = line; return; }  // item
+    fn set_grid_row_start(ref this, line: i32) { this.grid_row_start = line; return; }     // item
     // Subgrid: this (grid) item adopts the parent grid's tracks over its span,
     // so its own children align to the parent's grid lines.
-    fn set_grid_columns_subgrid(ref this, v: bool) { this.grid_cols_subgrid = v; return; }
-    fn set_grid_rows_subgrid(ref this, v: bool) { this.grid_rows_subgrid = v; return; }
+    fn set_grid_columns_subgrid(ref this, enabled: bool) { this.grid_cols_subgrid = enabled; return; }
+    fn set_grid_rows_subgrid(ref this, enabled: bool) { this.grid_rows_subgrid = enabled; return; }
 
-    // Named grid lines (container). `name_grid_column_line(name)` names the line at
-    // the *current* column count (i.e. the line before the next column added).
-    // `column_line(name)` returns that line's index, or -1 if unknown.
-    fn name_grid_column_line(ref this, name: str) {
-        let idx: usize = this.grid_cols.count();
-        while this.grid_col_line_names.count() <= idx { this.grid_col_line_names.append("".to_text()); }
-        this.grid_col_line_names.set(name.to_text(), idx);
-        return;
+    // Named grid lines (container). `add_grid_column(track, line: "sidebar")`
+    // names the line *before* the added track, matching CSS `[sidebar] 200px`.
+    // `column_line(named:)` returns that line's index, or None if unknown.
+    fn column_line(this, named: str) -> option::Option[i32] {
+        let idx: i32 = line_index(this.grid_col_line_names, named);
+        if idx < 0 { return option::Option[i32]::None; }
+        return option::Option[i32]::Some(idx);
     }
-    fn name_grid_row_line(ref this, name: str) {
-        let idx: usize = this.grid_rows.count();
-        while this.grid_row_line_names.count() <= idx { this.grid_row_line_names.append("".to_text()); }
-        this.grid_row_line_names.set(name.to_text(), idx);
-        return;
+    fn row_line(this, named: str) -> option::Option[i32] {
+        let idx: i32 = line_index(this.grid_row_line_names, named);
+        if idx < 0 { return option::Option[i32]::None; }
+        return option::Option[i32]::Some(idx);
     }
-    fn column_line(this, name: str) -> i32 { return line_index(this.grid_col_line_names, name); }
-    fn row_line(this, name: str) -> i32 { return line_index(this.grid_row_line_names, name); }
 
     // ---- style setters (fluent-ish, imperative) ----
-    fn set_direction(ref this, v: Direction) { this.style.direction = v; return; }
-    fn set_flex_direction(ref this, v: FlexDirection) { this.style.flex_direction = v; return; }
-    fn set_justify_content(ref this, v: Justify) { this.style.justify_content = v; return; }
-    fn set_align_items(ref this, v: Align) { this.style.align_items = v; return; }
-    fn set_align_self(ref this, v: Align) { this.style.align_self = v; return; }
-    fn set_align_content(ref this, v: Align) { this.style.align_content = v; return; }
-    fn set_flex_wrap(ref this, v: Wrap) { this.style.flex_wrap = v; return; }
-    fn set_overflow(ref this, v: Overflow) { this.style.overflow = v; return; }
-    fn set_aspect_ratio(ref this, v: f64) { this.style.aspect_ratio = v; return; }
-    fn set_gap(ref this, gutter: Gutter, v: f64) {
-        this.set_gap_length(gutter, StyleLength::points(v));
-        return;
-    }
-    // Gap as a full length (e.g. a percent of the container's axis extent).
-    fn set_gap_length(ref this, gutter: Gutter, v: StyleLength) {
+    fn set_direction(ref this, direction: Direction) { this.style.direction = direction; return; }
+    fn set_flex_direction(ref this, direction: FlexDirection) { this.style.flex_direction = direction; return; }
+    fn set_justify_content(ref this, justify: Justify) { this.style.justify_content = justify; return; }
+    fn set_align_items(ref this, align: Align) { this.style.align_items = align; return; }
+    fn set_align_self(ref this, align: Align) { this.style.align_self = align; return; }
+    fn set_align_content(ref this, align: Align) { this.style.align_content = align; return; }
+    fn set_flex_wrap(ref this, wrap: Wrap) { this.style.flex_wrap = wrap; return; }
+    fn set_overflow(ref this, overflow: Overflow) { this.style.overflow = overflow; return; }
+    fn set_aspect_ratio(ref this, ratio: f64) { this.style.aspect_ratio = ratio; return; }
+    // One gap per gutter; points are `StyleLength::points`, a container-relative
+    // gap is `StyleLength::percent`.
+    fn set_gap(ref this, gutter: Gutter, length: StyleLength) {
         match gutter {
-            Gutter::Row => { this.style.gap_row = v; }
-            Gutter::Column => { this.style.gap_column = v; }
-            Gutter::All => { this.style.gap_row = v; this.style.gap_column = v; }
+            Gutter::Row => { this.style.gap_row = length; }
+            Gutter::Column => { this.style.gap_column = length; }
+            Gutter::All => { this.style.gap_row = length; this.style.gap_column = length; }
         }
         return;
     }
-    fn set_position_type(ref this, v: PositionType) { this.style.position_type = v; return; }
-    fn set_display(ref this, v: Display) { this.style.display = v; return; }
-    fn set_z_index(ref this, v: i32) { this.style.z_index = v; return; }
-    fn set_box_sizing(ref this, v: BoxSizing) { this.style.box_sizing = v; return; }
+    fn set_position_type(ref this, position: PositionType) { this.style.position_type = position; return; }
+    fn set_display(ref this, display: Display) { this.style.display = display; return; }
+    fn set_z_index(ref this, z: i32) { this.style.z_index = z; return; }
+    fn set_box_sizing(ref this, sizing: BoxSizing) { this.style.box_sizing = sizing; return; }
 
-    fn set_flex_grow(ref this, v: f64) { this.style.flex_grow = v; return; }
-    fn set_flex_shrink(ref this, v: f64) { this.style.flex_shrink = v; return; }
-    fn set_flex_basis(ref this, v: StyleLength) { this.style.flex_basis = v; return; }
+    fn set_flex_grow(ref this, factor: f64) { this.style.flex_grow = factor; return; }
+    fn set_flex_shrink(ref this, factor: f64) { this.style.flex_shrink = factor; return; }
+    fn set_flex_basis(ref this, basis: StyleLength) { this.style.flex_basis = basis; return; }
     // The `flex: n` shorthand == grow n, shrink 1, basis 0 (the common "share the
     // space" case). Use the individual setters for other combinations.
-    fn set_flex(ref this, v: f64) {
-        this.style.flex_grow = v;
+    fn set_flex(ref this, factor: f64) {
+        this.style.flex_grow = factor;
         this.style.flex_shrink = 1.0f64;
         this.style.flex_basis = StyleLength::points(0.0f64);
         return;
     }
 
-    fn set_width(ref this, v: StyleLength) { this.style.width = v; return; }
-    fn set_height(ref this, v: StyleLength) { this.style.height = v; return; }
-    fn set_min_width(ref this, v: StyleLength) { this.style.min_width = v; return; }
-    fn set_min_height(ref this, v: StyleLength) { this.style.min_height = v; return; }
-    fn set_max_width(ref this, v: StyleLength) { this.style.max_width = v; return; }
-    fn set_max_height(ref this, v: StyleLength) { this.style.max_height = v; return; }
+    fn set_width(ref this, length: StyleLength) { this.style.width = length; return; }
+    fn set_height(ref this, length: StyleLength) { this.style.height = length; return; }
+    fn set_min_width(ref this, length: StyleLength) { this.style.min_width = length; return; }
+    fn set_min_height(ref this, length: StyleLength) { this.style.min_height = length; return; }
+    fn set_max_width(ref this, length: StyleLength) { this.style.max_width = length; return; }
+    fn set_max_height(ref this, length: StyleLength) { this.style.max_height = length; return; }
 
     // Edge shorthands (All / Horizontal / Vertical / Start / End) expand onto the
     // four physical slots. Start/End map to left/right (LTR; RTL is Phase 2).
-    fn set_margin(ref this, edge: Edge, v: StyleLength) {
-        if edge_hits_left(edge) { this.style.margin_left = v; }
-        if edge_hits_right(edge) { this.style.margin_right = v; }
-        if edge_hits_top(edge) { this.style.margin_top = v; }
-        if edge_hits_bottom(edge) { this.style.margin_bottom = v; }
-        match edge { Edge::Start => { this.style.margin_start = v; } Edge::End => { this.style.margin_end = v; } _ => {} }
+    fn set_margin(ref this, edge: Edge, length: StyleLength) {
+        if edge_hits_left(edge) { this.style.margin_left = length; }
+        if edge_hits_right(edge) { this.style.margin_right = length; }
+        if edge_hits_top(edge) { this.style.margin_top = length; }
+        if edge_hits_bottom(edge) { this.style.margin_bottom = length; }
+        match edge { Edge::Start => { this.style.margin_start = length; } Edge::End => { this.style.margin_end = length; } _ => {} }
         return;
     }
-    fn set_padding(ref this, edge: Edge, v: StyleLength) {
-        if edge_hits_left(edge) { this.style.padding_left = v; }
-        if edge_hits_right(edge) { this.style.padding_right = v; }
-        if edge_hits_top(edge) { this.style.padding_top = v; }
-        if edge_hits_bottom(edge) { this.style.padding_bottom = v; }
-        match edge { Edge::Start => { this.style.padding_start = v; } Edge::End => { this.style.padding_end = v; } _ => {} }
+    fn set_padding(ref this, edge: Edge, length: StyleLength) {
+        if edge_hits_left(edge) { this.style.padding_left = length; }
+        if edge_hits_right(edge) { this.style.padding_right = length; }
+        if edge_hits_top(edge) { this.style.padding_top = length; }
+        if edge_hits_bottom(edge) { this.style.padding_bottom = length; }
+        match edge { Edge::Start => { this.style.padding_start = length; } Edge::End => { this.style.padding_end = length; } _ => {} }
         return;
     }
-    fn set_border(ref this, edge: Edge, v: StyleLength) {
-        if edge_hits_left(edge) { this.style.border_left = v; }
-        if edge_hits_right(edge) { this.style.border_right = v; }
-        if edge_hits_top(edge) { this.style.border_top = v; }
-        if edge_hits_bottom(edge) { this.style.border_bottom = v; }
-        match edge { Edge::Start => { this.style.border_start = v; } Edge::End => { this.style.border_end = v; } _ => {} }
+    fn set_border(ref this, edge: Edge, length: StyleLength) {
+        if edge_hits_left(edge) { this.style.border_left = length; }
+        if edge_hits_right(edge) { this.style.border_right = length; }
+        if edge_hits_top(edge) { this.style.border_top = length; }
+        if edge_hits_bottom(edge) { this.style.border_bottom = length; }
+        match edge { Edge::Start => { this.style.border_start = length; } Edge::End => { this.style.border_end = length; } _ => {} }
         return;
     }
-    fn set_position(ref this, edge: Edge, v: StyleLength) {
-        if edge_hits_left(edge) { this.style.position_left = v; }
-        if edge_hits_right(edge) { this.style.position_right = v; }
-        if edge_hits_top(edge) { this.style.position_top = v; }
-        if edge_hits_bottom(edge) { this.style.position_bottom = v; }
-        match edge { Edge::Start => { this.style.position_start = v; } Edge::End => { this.style.position_end = v; } _ => {} }
+    fn set_position(ref this, edge: Edge, length: StyleLength) {
+        if edge_hits_left(edge) { this.style.position_left = length; }
+        if edge_hits_right(edge) { this.style.position_right = length; }
+        if edge_hits_top(edge) { this.style.position_top = length; }
+        if edge_hits_bottom(edge) { this.style.position_bottom = length; }
+        match edge { Edge::Start => { this.style.position_start = length; } Edge::End => { this.style.position_end = length; } _ => {} }
         return;
     }
 
@@ -542,16 +553,18 @@ impl Node {
     fn set_context(ref this, ctx: *u8) { this.node_ctx = ctx; return; }
     fn context(this) -> *u8 { return this.node_ctx; }
 
-    // Owned opaque payload (an adapter's view handle). The node releases
-    // it through `release` exactly once: on node drop, or when a
-    // replacement/clear overwrites it (assignment drops the old payload).
-    fn set_payload(ref this, p: *u8, release: fn(*u8)) {
-        this.node_payload = Payload::own(p, release);
+    // Attach an owned opaque pointer to the node — typically the adapter's
+    // retained backing view. The node releases it through `release` exactly
+    // once: on node drop, on `detach()`, or when a new `attach` replaces it.
+    fn attach(ref this, ptr: *u8, release: fn(*u8)) {
+        this.node_attachment = Attachment::own(ptr, release);
         return;
     }
-    fn payload(this) -> *u8 { return this.node_payload.get(); }
-    fn has_payload(this) -> bool { return this.node_payload.armed(); }
-    fn clear_payload(ref this) { this.node_payload = Payload::none(); return; }
+    fn attachment(this) -> option::Option[*u8] {
+        if this.node_attachment.armed() { return option::Option[*u8]::Some(this.node_attachment.get()); }
+        return option::Option[*u8]::None;
+    }
+    fn detach(ref this) { this.node_attachment = Attachment::none(); return; }
 
     fn set_measure(ref this, f: fn(*u8, f64, MeasureMode, f64, MeasureMode) -> Size) {
         this.measure = f;
@@ -567,12 +580,9 @@ impl Node {
     }
 
     // ---- computed layout getters ----
-    fn layout_left(this) -> f64 { return this.layout.left; }
-    fn layout_top(this) -> f64 { return this.layout.top; }
-    fn layout_width(this) -> f64 { return this.layout.width; }
-    fn layout_height(this) -> f64 { return this.layout.height; }
-    fn layout_frame(this) -> Layout { return this.layout; }
-    fn layout_direction(this) -> Direction { return this.rdir; }
+    // The computed frame — absolute in the root's coordinate space.
+    fn frame(this) -> Frame { return this.layout; }
+    fn resolved_direction(this) -> Direction { return this.rdir; }
 
     // ---- style read-back (for adapters: e.g. overflow -> NSView.clipsToBounds) ----
     fn overflow(this) -> Overflow { return this.style.overflow; }
@@ -582,10 +592,10 @@ impl Node {
 
     // Copy of a direct child's computed frame (None if out of range). Frames are
     // absolute in the root's coordinate space.
-    fn child_layout(this, index: usize) -> option::Option[Layout] {
-        return match this.children.at_ptr(index) {
-            option::Option[*Node]::Some(p) => option::Option[Layout]::Some({ (*p).layout }),
-            option::Option[*Node]::None => option::Option[Layout]::None,
+    fn child_frame(this, at: usize) -> option::Option[Frame] {
+        return match this.children.at_ptr(at) {
+            option::Option[*Node]::Some(p) => option::Option[Frame]::Some({ (*p).layout }),
+            option::Option[*Node]::None => option::Option[Frame]::None,
         };
     }
 }
@@ -650,34 +660,39 @@ fn is_reverse(fd: FlexDirection) -> bool {
 
 impl Node {
     // Public entry: lay this node out as the root of a tree, given the space it
-    // has available. `avail_w`/`avail_h` may be `undefined()` for an unconstrained
-    // axis (the node then sizes to its style / content). The root is placed at
-    // (0, 0); every descendant's frame is filled in, absolute in root space.
-    fn calculate_layout(ref this, avail_w: f64, avail_h: f64, owner_dir: Direction) {
-        let dir: Direction = resolve_dir(this.style.direction, owner_dir);
+    // has available. Either axis may be omitted (or passed `undefined()`) for an
+    // unconstrained axis — the node then sizes to its style / content. The
+    // default direction (`Inherit` at the root) resolves to LTR. The root is
+    // placed at (0, 0); every descendant's frame is filled in, absolute in root
+    // space.
+    //
+    //   root.calculate_layout(width: 1024.0f64, height: 768.0f64);
+    //   root.calculate_layout();                       // fully content-sized
+    fn calculate_layout(ref this, width: f64 = undefined(), height: f64 = undefined(), direction: Direction = Direction::Inherit) {
+        let dir: Direction = resolve_dir(this.style.direction, direction);
         this.aggregate_changed();     // stamp subtree_changed across the tree
         this.clear_measure_cache();   // measurement memo is per-pass; start clean
 
         // Resolve the root's own box from its style against the available space,
         // falling back to the available space when the style says auto.
         this.rdir = dir;
-        var w: f64 = this.style.width.resolve(avail_w);
-        var h: f64 = this.style.height.resolve(avail_h);
-        if is_undef(w) { w = avail_w; }
-        if is_undef(h) { h = avail_h; }
+        var w: f64 = this.style.width.resolve(width);
+        var h: f64 = this.style.height.resolve(height);
+        if is_undefined(w) { w = width; }
+        if is_undefined(h) { h = height; }
         // With no style size and no available space on an axis, the root sizes to
         // its content (intrinsic).
-        if is_undef(w) || is_undef(h) {
-            let isz: Size = this.intrinsic_size(avail_w, avail_h);
-            if is_undef(w) { w = isz.width; }
-            if is_undef(h) { h = isz.height; }
+        if is_undefined(w) || is_undefined(h) {
+            let isz: Size = this.intrinsic_size(width, height);
+            if is_undefined(w) { w = isz.width; }
+            if is_undefined(h) { h = isz.height; }
         }
-        if is_undef(w) { w = 0.0f64; }
-        if is_undef(h) { h = 0.0f64; }
-        w = clamp(w, this.style.min_width.resolve(avail_w), this.style.max_width.resolve(avail_w));
-        h = clamp(h, this.style.min_height.resolve(avail_h), this.style.max_height.resolve(avail_h));
+        if is_undefined(w) { w = 0.0f64; }
+        if is_undefined(h) { h = 0.0f64; }
+        w = clamp(w, this.style.min_width.resolve(width), this.style.max_width.resolve(width));
+        h = clamp(h, this.style.min_height.resolve(height), this.style.max_height.resolve(height));
 
-        this.apply_layout(Layout { left: 0.0f64, top: 0.0f64, width: w, height: h }, dir);
+        this.apply_layout(Frame { left: 0.0f64, top: 0.0f64, width: w, height: h }, dir);
         return;
     }
 
@@ -735,7 +750,7 @@ impl Node {
     // Lay this node out in `box` under direction `dir`, OR skip when the subtree is
     // unchanged and the box+direction match the last pass (frames stay valid). On a
     // real layout, snapshot the cache for next time.
-    fn apply_layout(ref this, frame: Layout, dir: Direction) {
+    fn apply_layout(ref this, frame: Frame, dir: Direction) {
         if this.cached_valid && !this.subtree_changed
             && layout_eq(this.cached_box, frame) && dir_eq(this.cached_dir, dir) {
             this.layout = frame;   // identical to cached; descendant frames unchanged
@@ -775,7 +790,7 @@ impl Node {
     // integer points, 2.0 = retina half-points). Rounds each node's leading edge
     // and its trailing edge, deriving size from the difference — so adjacent frames
     // stay seamless (no cumulative rounding gaps). Call after `calculate_layout`.
-    fn round_to_pixel(ref this, scale: f64) {
+    fn round_to_pixel(ref this, scale: f64 = 1.0f64) {
         if scale <= 0.0f64 { return; }
         let left: f64 = this.layout.left;
         let top: f64 = this.layout.top;
@@ -783,7 +798,7 @@ impl Node {
         let rt: f64 = round_scaled(top, scale);
         let rr: f64 = round_scaled(left + this.layout.width, scale);
         let rb: f64 = round_scaled(top + this.layout.height, scale);
-        this.layout = Layout { left: rl, top: rt, width: f_max(0.0f64, rr - rl), height: f_max(0.0f64, rb - rt) };
+        this.layout = Frame { left: rl, top: rt, width: f_max(0.0f64, rr - rl), height: f_max(0.0f64, rb - rt) };
         let n: usize = this.children.count();
         var i: usize = 0 as usize;
         while i < n {
@@ -899,7 +914,7 @@ impl Node {
             } else {
                 let main_dim: StyleLength = if row { cs.width } else { cs.height };
                 let resolved: f64 = resolve_border_box(main_dim, cs, row, main_inner, node_w);
-                base = if is_def(resolved) { f_max(0.0f64, resolved) } else { if row { isz.width } else { isz.height } };
+                base = if is_defined(resolved) { f_max(0.0f64, resolved) } else { if row { isz.width } else { isz.height } };
             }
             bases.append(base);
             grows.append(cs.flex_grow);
@@ -910,7 +925,7 @@ impl Node {
             // (stretch, applied at placement, overrides a non-explicit cross size).
             let cross_dim: StyleLength = if row { cs.height } else { cs.width };
             let cross_resolved: f64 = resolve_border_box(cross_dim, cs, !row, cross_inner, node_w);
-            let has_cross: bool = is_def(cross_resolved);
+            let has_cross: bool = is_defined(cross_resolved);
             cross_explicit.append(has_cross);
             cross_sizes.append(if has_cross { cross_resolved } else { if row { isz.height } else { isz.width } });
 
@@ -1153,7 +1168,7 @@ impl Node {
                 // aspect-ratio ties the cross size to the (possibly flexed) main size
                 // unless the cross dimension was set explicitly. An auto cross margin
                 // suppresses stretch (the item keeps its size, the margin absorbs space).
-                if is_def(cs.aspect_ratio) && cs.aspect_ratio > 0.0f64 && !bool_at(cross_explicit, ci) {
+                if is_defined(cs.aspect_ratio) && cs.aspect_ratio > 0.0f64 && !bool_at(cross_explicit, ci) {
                     cross_size = if row { main_size / cs.aspect_ratio } else { main_size * cs.aspect_ratio };
                 } else if is_stretch(align) && !bool_at(cross_explicit, ci) && !has_auto_cross {
                     cross_size = f_max(0.0f64, this_line_cross - mc);
@@ -1196,10 +1211,10 @@ impl Node {
                 if match cs.position_type { PositionType::Relative => true, _ => false } {
                     let pl2: f64 = cs.position_left.resolve(node_w);
                     let pr2: f64 = cs.position_right.resolve(node_w);
-                    off_x = if is_def(pl2) { pl2 } else if is_def(pr2) { 0.0f64 - pr2 } else { 0.0f64 };
+                    off_x = if is_defined(pl2) { pl2 } else if is_defined(pr2) { 0.0f64 - pr2 } else { 0.0f64 };
                     let pt2: f64 = cs.position_top.resolve(node_h);
                     let pb2: f64 = cs.position_bottom.resolve(node_h);
-                    off_y = if is_def(pt2) { pt2 } else if is_def(pb2) { 0.0f64 - pb2 } else { 0.0f64 };
+                    off_y = if is_defined(pt2) { pt2 } else if is_defined(pb2) { 0.0f64 - pb2 } else { 0.0f64 };
                 }
 
                 let child_left: f64 = this.layout.left + off_x + (if row { main_pos } else { cross_pos });
@@ -1385,8 +1400,8 @@ impl Node {
             // explicit size wins, else stretch to the (spanned) cell.
             let ew: f64 = resolve_border_box(cs.width, cs, true, cell_w, node_w);
             let eh: f64 = resolve_border_box(cs.height, cs, false, cell_h, node_w);
-            let iw: f64 = if is_def(ew) { ew } else { cell_w };
-            let ih: f64 = if is_def(eh) { eh } else { cell_h };
+            let iw: f64 = if is_defined(ew) { ew } else { cell_w };
+            let ih: f64 = if is_defined(eh) { eh } else { cell_h };
 
             // If the child is a subgrid, hand it our track slice over its span so
             // its children align to our lines.
@@ -1546,12 +1561,12 @@ impl Node {
         // aspect-ratio (width / height) derives whichever dimension is unset from
         // the one that is.
         let ar: f64 = this.style.aspect_ratio;
-        if is_def(ar) && ar > 0.0f64 {
-            if is_def(w) && is_undef(h) { h = w / ar; }
-            else if is_def(h) && is_undef(w) { w = h * ar; }
+        if is_defined(ar) && ar > 0.0f64 {
+            if is_defined(w) && is_undefined(h) { h = w / ar; }
+            else if is_defined(h) && is_undefined(w) { w = h * ar; }
         }
-        let have_w: bool = is_def(w);
-        let have_h: bool = is_def(h);
+        let have_w: bool = is_defined(w);
+        let have_h: bool = is_defined(h);
 
         // Padding + border (resolve against available width, CSS rule). The axis
         // *sum* is direction-invariant (start+end == left+right), so measuring in
@@ -1615,7 +1630,7 @@ impl Node {
         let fc: usize = cmain.count();
         var content_main_raw: f64 = 0.0f64;
         var content_cross_raw: f64 = 0.0f64;
-        if !wrapping || is_undef(inner_avail_main) {
+        if !wrapping || is_undefined(inner_avail_main) {
             content_main_raw = sum_f(cmain) + (if fc > (0 as usize) { main_gap * ((fc - (1 as usize)) as f64) } else { 0.0f64 });
             content_cross_raw = max_f(ccross);
         } else {
@@ -1653,7 +1668,7 @@ impl Node {
     fn zero_child(ref this, index: usize) {
         match this.children.at_ptr(index) {
             option::Option[*Node]::Some(p) => {
-                { (*p).layout = Layout { left: 0.0f64, top: 0.0f64, width: 0.0f64, height: 0.0f64 }; }
+                { (*p).layout = Frame { left: 0.0f64, top: 0.0f64, width: 0.0f64, height: 0.0f64 }; }
             }
             option::Option[*Node]::None => {}
         }
@@ -1667,7 +1682,7 @@ impl Node {
         match this.children.at_ptr(index) {
             option::Option[*Node]::Some(p) => {
                 let cdir: Direction = resolve_dir({ (*p).style.direction }, parent_dir);
-                { (*p).apply_layout(Layout { left: left, top: top, width: width, height: height }, cdir); }
+                { (*p).apply_layout(Frame { left: left, top: top, width: width, height: height }, cdir); }
             }
             option::Option[*Node]::None => {}
         }
@@ -1685,12 +1700,12 @@ impl Node {
         let left_in: f64 = cs.position_left.resolve(node_w);
         let right_in: f64 = cs.position_right.resolve(node_w);
         var cw: f64 = cs.width.resolve(node_w);
-        if is_undef(cw) {
-            if is_def(left_in) && is_def(right_in) { cw = f_max(0.0f64, main_or_cross_w(row, main_inner, cross_inner) - left_in - right_in); }
+        if is_undefined(cw) {
+            if is_defined(left_in) && is_defined(right_in) { cw = f_max(0.0f64, main_or_cross_w(row, main_inner, cross_inner) - left_in - right_in); }
             else { cw = 0.0f64; }
         }
-        var cx: f64 = if is_def(left_in) { (if row { main_lead } else { cross_lead }) + left_in }
-                      else if is_def(right_in) { (if row { main_lead } else { cross_lead }) + main_or_cross_w(row, main_inner, cross_inner) - right_in - cw }
+        var cx: f64 = if is_defined(left_in) { (if row { main_lead } else { cross_lead }) + left_in }
+                      else if is_defined(right_in) { (if row { main_lead } else { cross_lead }) + main_or_cross_w(row, main_inner, cross_inner) - right_in - cw }
                       else { if row { main_lead } else { cross_lead } };
 
         // Vertical.
@@ -1698,12 +1713,12 @@ impl Node {
         let top_in: f64 = cs.position_top.resolve(node_h);
         let bottom_in: f64 = cs.position_bottom.resolve(node_h);
         var ch: f64 = cs.height.resolve(node_h);
-        if is_undef(ch) {
-            if is_def(top_in) && is_def(bottom_in) { ch = f_max(0.0f64, main_or_cross_h(row, main_inner, cross_inner) - top_in - bottom_in); }
+        if is_undefined(ch) {
+            if is_defined(top_in) && is_defined(bottom_in) { ch = f_max(0.0f64, main_or_cross_h(row, main_inner, cross_inner) - top_in - bottom_in); }
             else { ch = 0.0f64; }
         }
-        var cy: f64 = if is_def(top_in) { (if row { cross_lead } else { main_lead }) + top_in }
-                      else if is_def(bottom_in) { (if row { cross_lead } else { main_lead }) + main_or_cross_h(row, main_inner, cross_inner) - bottom_in - ch }
+        var cy: f64 = if is_defined(top_in) { (if row { cross_lead } else { main_lead }) + top_in }
+                      else if is_defined(bottom_in) { (if row { cross_lead } else { main_lead }) + main_or_cross_h(row, main_inner, cross_inner) - bottom_in - ch }
                       else { if row { cross_lead } else { main_lead } };
 
         let child_left: f64 = this.layout.left + cx;
@@ -1725,7 +1740,7 @@ fn main_or_cross_h(row: bool, main_inner: f64, cross_inner: f64) -> f64 {
 fn edge_px(padding: StyleLength, border: StyleLength, ref_w: f64) -> f64 {
     return or_zero(padding.resolve(ref_w)) + or_zero(border.resolve(ref_w));
 }
-fn or_zero(x: f64) -> f64 { if is_undef(x) { return 0.0f64; } return x; }
+fn or_zero(x: f64) -> f64 { if is_undefined(x) { return 0.0f64; } return x; }
 
 // Round `v` (a non-negative coordinate) to the nearest 1/scale, half-up.
 fn round_scaled(v: f64, scale: f64) -> f64 {
@@ -1748,7 +1763,7 @@ fn is_content_box(cs: Style) -> bool {
 // the style value is the content area, so padding+border are added.
 fn resolve_border_box(len: StyleLength, cs: Style, is_width: bool, ref_dim: f64, ref_w: f64) -> f64 {
     let v: f64 = len.resolve(ref_dim);
-    if is_undef(v) { return v; }
+    if is_undefined(v) { return v; }
     if is_content_box(cs) { return v + box_extra(cs, is_width, ref_w); }
     return v;
 }
@@ -1756,7 +1771,7 @@ fn resolve_border_box(len: StyleLength, cs: Style, is_width: bool, ref_dim: f64,
 // Subtract `b` from an available length, preserving "undefined" (an unconstrained
 // axis stays unconstrained after removing padding).
 fn sub_or_undef(a: f64, b: f64) -> f64 {
-    if is_undef(a) { return undefined(); }
+    if is_undefined(a) { return undefined(); }
     return f_max(0.0f64, a - b);
 }
 
@@ -1848,7 +1863,7 @@ fn dir_eq(a: Direction, b: Direction) -> bool { return dir_disc(a) == dir_disc(b
 
 // Bit-stable f64 equality that also treats NaN==NaN (both are "undefined").
 fn bits_eq(a: f64, b: f64) -> bool {
-    if is_undef(a) && is_undef(b) { return true; }
+    if is_undefined(a) && is_undefined(b) { return true; }
     return a == b;
 }
 fn sl_eq(a: StyleLength, b: StyleLength) -> bool {
@@ -1887,7 +1902,7 @@ fn style_eq(a: Style, b: Style) -> bool {
         && sl_eq(a.gap_row, b.gap_row) && sl_eq(a.gap_column, b.gap_column)
         && bits_eq(a.aspect_ratio, b.aspect_ratio);
 }
-fn layout_eq(a: Layout, b: Layout) -> bool {
+fn layout_eq(a: Frame, b: Frame) -> bool {
     return bits_eq(a.left, b.left) && bits_eq(a.top, b.top) && bits_eq(a.width, b.width) && bits_eq(a.height, b.height);
 }
 
@@ -2094,7 +2109,7 @@ fn justify_gap(j: Justify, remaining: f64, count: f64) -> f64 {
 //           box().grow(1.0).padding(8.0)         // content fills the rest
 //       }
 //   };
-//   ui.calculate_layout(1024.0f64, 768.0f64, flex::Direction::LTR);
+//   ui.calculate_layout(width: 1024.0f64, height: 768.0f64);
 //
 // `if` / `for` work as Flutter-style collection flow control inside the block.
 
@@ -2135,11 +2150,11 @@ impl Node {
     fn shrink(take this, v: f64) -> Node { var n: Node = this; n.style.flex_shrink = v; return n; }
     fn width(take this, v: f64) -> Node { var n: Node = this; n.style.width = StyleLength::points(v); return n; }
     fn height(take this, v: f64) -> Node { var n: Node = this; n.style.height = StyleLength::points(v); return n; }
-    fn width_pct(take this, v: f64) -> Node { var n: Node = this; n.style.width = StyleLength::percent(v); return n; }
-    fn height_pct(take this, v: f64) -> Node { var n: Node = this; n.style.height = StyleLength::percent(v); return n; }
+    fn width_percent(take this, v: f64) -> Node { var n: Node = this; n.style.width = StyleLength::percent(v); return n; }
+    fn height_percent(take this, v: f64) -> Node { var n: Node = this; n.style.height = StyleLength::percent(v); return n; }
     fn padding(take this, v: f64) -> Node { var n: Node = this; n.set_padding(Edge::All, StyleLength::points(v)); return n; }
     fn margin(take this, v: f64) -> Node { var n: Node = this; n.set_margin(Edge::All, StyleLength::points(v)); return n; }
-    fn gap(take this, v: f64) -> Node { var n: Node = this; n.set_gap(Gutter::All, v); return n; }
+    fn gap(take this, v: f64) -> Node { var n: Node = this; n.set_gap(Gutter::All, StyleLength::points(v)); return n; }
     fn justify(take this, v: Justify) -> Node { var n: Node = this; n.style.justify_content = v; return n; }
     fn align(take this, v: Align) -> Node { var n: Node = this; n.style.align_items = v; return n; }
     fn wrap(take this, v: Wrap) -> Node { var n: Node = this; n.style.flex_wrap = v; return n; }
@@ -2164,21 +2179,21 @@ const HIG_TAP_MIN:  f64 = 44.0f64;   // minimum tap target (iOS/touch); visionOS
 
 // ---- preset containers (standard 8pt inter-item spacing) ----
 // A vertical stack of related items, 8pt apart.
-fn vstack(take b: Builder) -> Node { var n: Node = column(b); n.set_gap(Gutter::Row, HIG_SPACE_S); return n; }
+fn vstack(take b: Builder) -> Node { var n: Node = column(b); n.set_gap(Gutter::Row, StyleLength::points(HIG_SPACE_S)); return n; }
 // A horizontal stack of related items, 8pt apart.
-fn hstack(take b: Builder) -> Node { var n: Node = row(b); n.set_gap(Gutter::Column, HIG_SPACE_S); return n; }
+fn hstack(take b: Builder) -> Node { var n: Node = row(b); n.set_gap(Gutter::Column, StyleLength::points(HIG_SPACE_S)); return n; }
 // A window/screen root: a vertical stack with standard 20pt edge margins.
 fn screen(take b: Builder) -> Node {
     var n: Node = column(b);
     n.set_padding(Edge::All, StyleLength::points(HIG_SPACE_L));
-    n.set_gap(Gutter::Row, HIG_SPACE_S);
+    n.set_gap(Gutter::Row, StyleLength::points(HIG_SPACE_S));
     return n;
 }
 // A card: grouped content with 16pt padding and 8pt inter-item spacing.
 fn card(take b: Builder) -> Node {
     var n: Node = column(b);
     n.set_padding(Edge::All, StyleLength::points(HIG_SPACE_M));
-    n.set_gap(Gutter::Row, HIG_SPACE_S);
+    n.set_gap(Gutter::Row, StyleLength::points(HIG_SPACE_S));
     return n;
 }
 
@@ -2211,10 +2226,10 @@ fn approx(a: f64, b: f64) -> bool {
 
 fn pts(v: f64) -> StyleLength { return StyleLength::points(v); }
 
-fn must(o: option::Option[Layout]) -> Layout {
+fn must(o: option::Option[Frame]) -> Frame {
     return match o {
-        option::Option[Layout]::Some(l) => l,
-        option::Option[Layout]::None => Layout { left: -999.0f64, top: -999.0f64, width: 0.0f64, height: 0.0f64 },
+        option::Option[Frame]::Some(l) => l,
+        option::Option[Frame]::None => Frame { left: -999.0f64, top: -999.0f64, width: 0.0f64, height: 0.0f64 },
     };
 }
 
@@ -2230,8 +2245,25 @@ fn leaf(w: f64, h: f64) -> Node {
 fn test_root_takes_available_size() {
     var root: Node = Node::new();
     root.calculate_layout(200.0f64, 100.0f64, Direction::LTR);
-    assert approx(root.layout_width(), 200.0f64);
-    assert approx(root.layout_height(), 100.0f64);
+    assert approx(root.frame().width, 200.0f64);
+    assert approx(root.frame().height, 100.0f64);
+}
+
+// The defaulted entry: no arguments = both axes unconstrained (content-sized),
+// direction Inherit -> LTR. Labels may also be passed in free order.
+#[test]
+fn test_calculate_layout_defaults() {
+    var root: Node = Node::new();
+    root.add_child(leaf(30.0f64, 30.0f64));
+    root.add_child(leaf(40.0f64, 40.0f64));
+    root.calculate_layout();                       // fully content-sized
+    assert approx(root.frame().width, 40.0f64);    // widest child
+    assert approx(root.frame().height, 70.0f64);   // stacked column
+    assert root.resolved_direction() == Direction::LTR;
+
+    root.calculate_layout(height: 200.0f64, width: 100.0f64);   // labels, free order
+    assert approx(root.frame().width, 100.0f64);
+    assert approx(root.frame().height, 200.0f64);
 }
 
 #[test]
@@ -2240,8 +2272,8 @@ fn test_root_explicit_size_wins() {
     root.set_width(pts(50.0f64));
     root.set_height(pts(40.0f64));
     root.calculate_layout(200.0f64, 100.0f64, Direction::LTR);
-    assert approx(root.layout_width(), 50.0f64);
-    assert approx(root.layout_height(), 40.0f64);
+    assert approx(root.frame().width, 50.0f64);
+    assert approx(root.frame().height, 40.0f64);
 }
 
 #[test]
@@ -2250,8 +2282,8 @@ fn test_column_stacks_children() {
     root.add_child(leaf(20.0f64, 30.0f64));
     root.add_child(leaf(20.0f64, 40.0f64));
     root.calculate_layout(100.0f64, 200.0f64, Direction::LTR);
-    let a: Layout = must(root.child_layout(0 as usize));
-    let b: Layout = must(root.child_layout(1 as usize));
+    let a: Frame = must(root.child_frame(0 as usize));
+    let b: Frame = must(root.child_frame(1 as usize));
     assert approx(a.top, 0.0f64);
     assert approx(a.height, 30.0f64);
     assert approx(b.top, 30.0f64);
@@ -2265,8 +2297,8 @@ fn test_row_places_children_horizontally() {
     root.add_child(leaf(30.0f64, 20.0f64));
     root.add_child(leaf(50.0f64, 20.0f64));
     root.calculate_layout(200.0f64, 100.0f64, Direction::LTR);
-    let a: Layout = must(root.child_layout(0 as usize));
-    let b: Layout = must(root.child_layout(1 as usize));
+    let a: Frame = must(root.child_frame(0 as usize));
+    let b: Frame = must(root.child_frame(1 as usize));
     assert approx(a.left, 0.0f64);
     assert approx(a.width, 30.0f64);
     assert approx(b.left, 30.0f64);
@@ -2282,8 +2314,8 @@ fn test_flex_grow_distributes() {
     root.add_child(a);
     root.add_child(b);
     root.calculate_layout(400.0f64, 50.0f64, Direction::LTR);
-    assert approx(must(root.child_layout(0 as usize)).width, 100.0f64);
-    assert approx(must(root.child_layout(1 as usize)).width, 300.0f64);
+    assert approx(must(root.child_frame(0 as usize)).width, 100.0f64);
+    assert approx(must(root.child_frame(1 as usize)).width, 300.0f64);
 }
 
 #[test]
@@ -2295,8 +2327,8 @@ fn test_flex_shrink_removes_overflow() {
     root.add_child(a);
     root.add_child(b);
     root.calculate_layout(400.0f64, 50.0f64, Direction::LTR);   // 600 wanted, 400 avail
-    assert approx(must(root.child_layout(0 as usize)).width, 200.0f64);
-    assert approx(must(root.child_layout(1 as usize)).width, 200.0f64);
+    assert approx(must(root.child_frame(0 as usize)).width, 200.0f64);
+    assert approx(must(root.child_frame(1 as usize)).width, 200.0f64);
 }
 
 #[test]
@@ -2306,7 +2338,7 @@ fn test_align_items_stretch_default() {
     var a: Node = Node::new(); a.set_width(pts(40.0f64));   // height auto -> stretch
     root.add_child(a);
     root.calculate_layout(200.0f64, 100.0f64, Direction::LTR);
-    let c: Layout = must(root.child_layout(0 as usize));
+    let c: Frame = must(root.child_frame(0 as usize));
     assert approx(c.height, 100.0f64);
 }
 
@@ -2317,7 +2349,7 @@ fn test_align_items_center() {
     root.set_align_items(Align::Center);
     root.add_child(leaf(40.0f64, 20.0f64));
     root.calculate_layout(200.0f64, 100.0f64, Direction::LTR);
-    let c: Layout = must(root.child_layout(0 as usize));
+    let c: Frame = must(root.child_frame(0 as usize));
     assert approx(c.top, 40.0f64);            // (100 - 20) / 2
     assert approx(c.height, 20.0f64);
 }
@@ -2331,7 +2363,7 @@ fn test_align_self_overrides_items() {
     a.set_align_self(Align::FlexEnd);
     root.add_child(a);
     root.calculate_layout(200.0f64, 100.0f64, Direction::LTR);
-    let c: Layout = must(root.child_layout(0 as usize));
+    let c: Frame = must(root.child_frame(0 as usize));
     assert approx(c.top, 80.0f64);            // pushed to the cross end
 }
 
@@ -2342,7 +2374,7 @@ fn test_justify_center() {
     root.set_justify_content(Justify::Center);
     root.add_child(leaf(40.0f64, 20.0f64));
     root.calculate_layout(200.0f64, 50.0f64, Direction::LTR);
-    assert approx(must(root.child_layout(0 as usize)).left, 80.0f64);
+    assert approx(must(root.child_frame(0 as usize)).left, 80.0f64);
 }
 
 #[test]
@@ -2354,9 +2386,9 @@ fn test_justify_space_between() {
     root.add_child(leaf(40.0f64, 20.0f64));
     root.add_child(leaf(40.0f64, 20.0f64));
     root.calculate_layout(200.0f64, 50.0f64, Direction::LTR);   // 80 free_space / 2 gaps = 40
-    assert approx(must(root.child_layout(0 as usize)).left, 0.0f64);
-    assert approx(must(root.child_layout(1 as usize)).left, 80.0f64);
-    assert approx(must(root.child_layout(2 as usize)).left, 160.0f64);
+    assert approx(must(root.child_frame(0 as usize)).left, 0.0f64);
+    assert approx(must(root.child_frame(1 as usize)).left, 80.0f64);
+    assert approx(must(root.child_frame(2 as usize)).left, 160.0f64);
 }
 
 #[test]
@@ -2368,7 +2400,7 @@ fn test_padding_offsets_and_shrinks_content() {
     var a: Node = Node::new(); a.set_flex_grow(1.0f64);
     root.add_child(a);
     root.calculate_layout(200.0f64, 100.0f64, Direction::LTR);
-    let c: Layout = must(root.child_layout(0 as usize));
+    let c: Frame = must(root.child_frame(0 as usize));
     assert approx(c.left, 10.0f64);
     assert approx(c.top, 15.0f64);
     assert approx(c.width, 190.0f64);         // 200 - 10 left padding
@@ -2383,7 +2415,7 @@ fn test_margin_pushes_child() {
     a.set_margin(Edge::Left, pts(25.0f64));
     root.add_child(a);
     root.calculate_layout(200.0f64, 50.0f64, Direction::LTR);
-    assert approx(must(root.child_layout(0 as usize)).left, 25.0f64);
+    assert approx(must(root.child_frame(0 as usize)).left, 25.0f64);
 }
 
 #[test]
@@ -2395,7 +2427,7 @@ fn test_percent_width() {
     a.set_height(pts(10.0f64));
     root.add_child(a);
     root.calculate_layout(200.0f64, 100.0f64, Direction::LTR);
-    assert approx(must(root.child_layout(0 as usize)).width, 100.0f64);
+    assert approx(must(root.child_frame(0 as usize)).width, 100.0f64);
 }
 
 #[test]
@@ -2405,7 +2437,7 @@ fn test_min_width_clamps_grow() {
     var a: Node = Node::new(); a.set_flex_grow(1.0f64); a.set_max_width(pts(60.0f64));
     root.add_child(a);
     root.calculate_layout(400.0f64, 50.0f64, Direction::LTR);
-    assert approx(must(root.child_layout(0 as usize)).width, 60.0f64);   // capped by max
+    assert approx(must(root.child_frame(0 as usize)).width, 60.0f64);   // capped by max
 }
 
 #[test]
@@ -2420,18 +2452,18 @@ fn test_nested_absolute_coordinates() {
     root.add_child(inner);
     root.calculate_layout(200.0f64, 200.0f64, Direction::LTR);
 
-    let inner_frame: Layout = must(root.child_layout(0 as usize));
+    let inner_frame: Frame = must(root.child_frame(0 as usize));
     assert approx(inner_frame.left, 10.0f64);     // at outer padding origin
     assert approx(inner_frame.top, 10.0f64);
 
     // grandchildren are absolute in root space
-    let g0: Layout = match root.children.at_ptr(0 as usize) {
-        option::Option[*Node]::Some(p) => must({ (*p).child_layout(0 as usize) }),
-        option::Option[*Node]::None => Layout { left: 0.0f64, top: 0.0f64, width: 0.0f64, height: 0.0f64 },
+    let g0: Frame = match root.children.at_ptr(0 as usize) {
+        option::Option[*Node]::Some(p) => must({ (*p).child_frame(0 as usize) }),
+        option::Option[*Node]::None => Frame { left: 0.0f64, top: 0.0f64, width: 0.0f64, height: 0.0f64 },
     };
-    let g1: Layout = match root.children.at_ptr(0 as usize) {
-        option::Option[*Node]::Some(p) => must({ (*p).child_layout(1 as usize) }),
-        option::Option[*Node]::None => Layout { left: 0.0f64, top: 0.0f64, width: 0.0f64, height: 0.0f64 },
+    let g1: Frame = match root.children.at_ptr(0 as usize) {
+        option::Option[*Node]::Some(p) => must({ (*p).child_frame(1 as usize) }),
+        option::Option[*Node]::None => Frame { left: 0.0f64, top: 0.0f64, width: 0.0f64, height: 0.0f64 },
     };
     assert approx(g0.left, 10.0f64);
     assert approx(g1.left, 40.0f64);              // 10 + 30
@@ -2448,7 +2480,7 @@ fn test_absolute_child_insets() {
     a.set_height(pts(30.0f64));
     root.add_child(a);
     root.calculate_layout(200.0f64, 200.0f64, Direction::LTR);
-    let c: Layout = must(root.child_layout(0 as usize));
+    let c: Frame = must(root.child_frame(0 as usize));
     assert approx(c.left, 20.0f64);
     assert approx(c.top, 15.0f64);
     assert approx(c.width, 30.0f64);
@@ -2464,7 +2496,7 @@ fn test_absolute_left_right_defines_width() {
     a.set_height(pts(10.0f64));
     root.add_child(a);
     root.calculate_layout(200.0f64, 200.0f64, Direction::LTR);
-    let c: Layout = must(root.child_layout(0 as usize));
+    let c: Frame = must(root.child_frame(0 as usize));
     assert approx(c.left, 10.0f64);
     assert approx(c.width, 160.0f64);             // 200 - 10 - 30
 }
@@ -2499,14 +2531,14 @@ fn absolute_child_does_not_zero_the_last_in_flow_sibling() {
     root.calculate_layout(292.0f64, undefined(), Direction::LTR);
 
     // Every in-flow child keeps its own height; the last one is not special.
-    assert approx(must(root.child_layout(1 as usize)).height, 28.0f64);
-    assert approx(must(root.child_layout(2 as usize)).height, 65.0f64);
-    assert approx(must(root.child_layout(3 as usize)).height, 38.0f64);
+    assert approx(must(root.child_frame(1 as usize)).height, 28.0f64);
+    assert approx(must(root.child_frame(2 as usize)).height, 65.0f64);
+    assert approx(must(root.child_frame(3 as usize)).height, 38.0f64);
     // They stack in order, so the container is the sum of the three.
-    assert approx(must(root.child_layout(1 as usize)).top, 0.0f64);
-    assert approx(must(root.child_layout(2 as usize)).top, 28.0f64);
-    assert approx(must(root.child_layout(3 as usize)).top, 93.0f64);
-    assert approx(root.layout_frame().height, 131.0f64);
+    assert approx(must(root.child_frame(1 as usize)).top, 0.0f64);
+    assert approx(must(root.child_frame(2 as usize)).top, 28.0f64);
+    assert approx(must(root.child_frame(3 as usize)).top, 93.0f64);
+    assert approx(root.frame().height, 131.0f64);
 }
 
 // The same tree with the absolute child LAST — the arrangement that always
@@ -2527,10 +2559,10 @@ fn absolute_child_last_still_leaves_siblings_alone() {
     overlay.set_position(Edge::Bottom, pts(0.0f64));
     root.add_child(overlay);
     root.calculate_layout(292.0f64, undefined(), Direction::LTR);
-    assert approx(must(root.child_layout(0 as usize)).height, 28.0f64);
-    assert approx(must(root.child_layout(1 as usize)).height, 65.0f64);
-    assert approx(must(root.child_layout(2 as usize)).height, 38.0f64);
-    assert approx(root.layout_frame().height, 131.0f64);
+    assert approx(must(root.child_frame(0 as usize)).height, 28.0f64);
+    assert approx(must(root.child_frame(1 as usize)).height, 65.0f64);
+    assert approx(must(root.child_frame(2 as usize)).height, 38.0f64);
+    assert approx(root.frame().height, 131.0f64);
 }
 
 // An absolute child BETWEEN in-flow ones — the general case both of the above
@@ -2549,10 +2581,10 @@ fn absolute_child_in_the_middle_leaves_every_sibling_alone() {
     root.add_child(leaf(100.0f64, 20.0f64));
     root.add_child(leaf(100.0f64, 30.0f64));
     root.calculate_layout(100.0f64, undefined(), Direction::LTR);
-    assert approx(must(root.child_layout(0 as usize)).height, 10.0f64);
-    assert approx(must(root.child_layout(2 as usize)).height, 20.0f64);
-    assert approx(must(root.child_layout(3 as usize)).height, 30.0f64);
-    assert approx(root.layout_frame().height, 60.0f64);
+    assert approx(must(root.child_frame(0 as usize)).height, 10.0f64);
+    assert approx(must(root.child_frame(2 as usize)).height, 20.0f64);
+    assert approx(must(root.child_frame(3 as usize)).height, 30.0f64);
+    assert approx(root.frame().height, 60.0f64);
 }
 
 #[test]
@@ -2564,12 +2596,12 @@ fn test_display_none_excluded_from_flow() {
     root.add_child(hidden);
     root.add_child(leaf(40.0f64, 20.0f64));
     root.calculate_layout(200.0f64, 50.0f64, Direction::LTR);
-    assert approx(must(root.child_layout(0 as usize)).width, 0.0f64);     // hidden collapses
-    assert approx(must(root.child_layout(1 as usize)).left, 0.0f64);      // second starts at 0
+    assert approx(must(root.child_frame(0 as usize)).width, 0.0f64);     // hidden collapses
+    assert approx(must(root.child_frame(1 as usize)).left, 0.0f64);      // second starts at 0
     // ...and keeps its own size. This assertion is the one that was missing:
     // display:none is out of flow exactly as absolute is, so it hit the same
     // index-space defect, and checking only `left` could not see it.
-    assert approx(must(root.child_layout(1 as usize)).width, 40.0f64);
+    assert approx(must(root.child_frame(1 as usize)).width, 40.0f64);
 }
 
 // `display: none` is the other way out of flow, so it is the other way into the
@@ -2587,9 +2619,9 @@ fn hidden_child_does_not_zero_the_last_in_flow_sibling() {
     root.add_child(leaf(100.0f64, 10.0f64));
     root.add_child(leaf(100.0f64, 20.0f64));
     root.calculate_layout(100.0f64, undefined(), Direction::LTR);
-    assert approx(must(root.child_layout(1 as usize)).height, 10.0f64);
-    assert approx(must(root.child_layout(2 as usize)).height, 20.0f64);
-    assert approx(root.layout_frame().height, 30.0f64);   // the hidden one adds nothing
+    assert approx(must(root.child_frame(1 as usize)).height, 10.0f64);
+    assert approx(must(root.child_frame(2 as usize)).height, 20.0f64);
+    assert approx(root.frame().height, 30.0f64);   // the hidden one adds nothing
 }
 
 // Both kinds out of flow at once, so the in-flow indices are shifted by two —
@@ -2610,9 +2642,9 @@ fn absolute_and_hidden_children_together_leave_the_flow_alone() {
     root.add_child(leaf(100.0f64, 12.0f64));
     root.add_child(leaf(100.0f64, 24.0f64));
     root.calculate_layout(100.0f64, undefined(), Direction::LTR);
-    assert approx(must(root.child_layout(2 as usize)).height, 12.0f64);
-    assert approx(must(root.child_layout(3 as usize)).height, 24.0f64);
-    assert approx(root.layout_frame().height, 36.0f64);
+    assert approx(must(root.child_frame(2 as usize)).height, 12.0f64);
+    assert approx(must(root.child_frame(3 as usize)).height, 24.0f64);
+    assert approx(root.frame().height, 36.0f64);
 }
 
 #[test]
@@ -2623,7 +2655,7 @@ fn test_column_reverse_positions_from_end() {
     root.add_child(leaf(20.0f64, 40.0f64));
     root.calculate_layout(100.0f64, 200.0f64, Direction::LTR);
     // first child sits at the bottom
-    let a: Layout = must(root.child_layout(0 as usize));
+    let a: Frame = must(root.child_frame(0 as usize));
     assert approx(a.top, 170.0f64);               // 200 - 30
 }
 
@@ -2634,7 +2666,7 @@ fn test_measure_leaf_sizes_from_callback() {
     m.set_measure(measure_fixed_80x24);
     root.add_child(m);
     root.calculate_layout(200.0f64, 200.0f64, Direction::LTR);
-    let c: Layout = must(root.child_layout(0 as usize));
+    let c: Frame = must(root.child_frame(0 as usize));
     // column direction: main is height -> 24 from measure; cross stretches to 200
     assert approx(c.height, 24.0f64);
     assert approx(c.width, 200.0f64);
@@ -2649,9 +2681,9 @@ fn test_child_layout_out_of_range_none() {
     var root: Node = Node::new();
     root.add_child(leaf(10.0f64, 10.0f64));
     root.calculate_layout(100.0f64, 100.0f64, Direction::LTR);
-    match root.child_layout(9 as usize) {
-        option::Option[Layout]::Some(x) => { assert false; }
-        option::Option[Layout]::None => { assert true; }
+    match root.child_frame(9 as usize) {
+        option::Option[Frame]::Some(x) => { assert false; }
+        option::Option[Frame]::None => { assert true; }
     }
     return;
 }
@@ -2666,8 +2698,8 @@ fn test_column_auto_height_hugs_children() {
     root.add_child(leaf(20.0f64, 30.0f64));
     root.add_child(leaf(20.0f64, 40.0f64));
     root.calculate_layout(undefined(), undefined(), Direction::LTR);
-    assert approx(root.layout_height(), 70.0f64);   // 30 + 40
-    assert approx(root.layout_width(), 100.0f64);
+    assert approx(root.frame().height, 70.0f64);   // 30 + 40
+    assert approx(root.frame().width, 100.0f64);
 }
 
 #[test]
@@ -2678,7 +2710,7 @@ fn test_row_auto_width_hugs_children() {
     root.add_child(leaf(30.0f64, 20.0f64));
     root.add_child(leaf(45.0f64, 20.0f64));
     root.calculate_layout(undefined(), undefined(), Direction::LTR);
-    assert approx(root.layout_width(), 75.0f64);    // 30 + 45
+    assert approx(root.frame().width, 75.0f64);    // 30 + 45
 }
 
 #[test]
@@ -2690,8 +2722,8 @@ fn test_auto_cross_is_max_child() {
     root.add_child(leaf(20.0f64, 40.0f64));
     root.add_child(leaf(20.0f64, 25.0f64));
     root.calculate_layout(undefined(), undefined(), Direction::LTR);
-    assert approx(root.layout_height(), 40.0f64);
-    assert approx(root.layout_width(), 60.0f64);
+    assert approx(root.frame().height, 40.0f64);
+    assert approx(root.frame().width, 60.0f64);
 }
 
 #[test]
@@ -2705,9 +2737,9 @@ fn test_nested_container_content_size() {
     inner.add_child(leaf(50.0f64, 20.0f64));
     outer.add_child(inner);
     outer.calculate_layout(undefined(), undefined(), Direction::LTR);
-    assert approx(outer.layout_height(), 30.0f64);   // tallest inner child
-    assert approx(outer.layout_width(), 80.0f64);    // 30 + 50 flows through
-    let inner_frame: Layout = must(outer.child_layout(0 as usize));
+    assert approx(outer.frame().height, 30.0f64);   // tallest inner child
+    assert approx(outer.frame().width, 80.0f64);    // 30 + 50 flows through
+    let inner_frame: Frame = must(outer.child_frame(0 as usize));
     assert approx(inner_frame.width, 80.0f64);
     assert approx(inner_frame.height, 30.0f64);
 }
@@ -2718,8 +2750,8 @@ fn test_padding_included_in_content_size() {
     root.set_padding(Edge::All, pts(10.0f64));
     root.add_child(leaf(20.0f64, 30.0f64));
     root.calculate_layout(undefined(), undefined(), Direction::LTR);
-    assert approx(root.layout_height(), 50.0f64);    // 30 + 10 + 10 padding
-    assert approx(root.layout_width(), 40.0f64);     // 20 + 10 + 10
+    assert approx(root.frame().height, 50.0f64);    // 30 + 10 + 10 padding
+    assert approx(root.frame().width, 40.0f64);     // 20 + 10 + 10
 }
 
 #[test]
@@ -2731,7 +2763,7 @@ fn test_measure_leaf_intrinsic_when_parent_auto() {
     m.set_measure(measure_fixed_80x24);
     root.add_child(m);
     root.calculate_layout(undefined(), undefined(), Direction::LTR);
-    assert approx(root.layout_height(), 24.0f64);
+    assert approx(root.frame().height, 24.0f64);
 }
 
 #[test]
@@ -2747,7 +2779,7 @@ fn test_auto_child_cross_not_stretched_uses_intrinsic() {
     col.add_child(leaf(40.0f64, 30.0f64));
     root.add_child(col);
     root.calculate_layout(300.0f64, 200.0f64, Direction::LTR);
-    let c: Layout = must(root.child_layout(0 as usize));
+    let c: Frame = must(root.child_frame(0 as usize));
     assert approx(c.height, 30.0f64);             // hugged content, not 200
 }
 
@@ -2766,9 +2798,9 @@ fn test_wrap_breaks_into_lines() {
     root.add_child(leaf(40.0f64, 30.0f64));
     root.add_child(leaf(40.0f64, 30.0f64));
     root.calculate_layout(100.0f64, 200.0f64, Direction::LTR);
-    let a: Layout = must(root.child_layout(0 as usize));
-    let b: Layout = must(root.child_layout(1 as usize));
-    let c: Layout = must(root.child_layout(2 as usize));
+    let a: Frame = must(root.child_frame(0 as usize));
+    let b: Frame = must(root.child_frame(1 as usize));
+    let c: Frame = must(root.child_frame(2 as usize));
     assert approx(a.left, 0.0f64);   assert approx(a.top, 0.0f64);
     assert approx(b.left, 40.0f64);  assert approx(b.top, 0.0f64);
     assert approx(c.left, 0.0f64);   assert approx(c.top, 30.0f64);   // wrapped down a line
@@ -2783,8 +2815,8 @@ fn test_nowrap_keeps_single_line() {
     root.add_child(leaf(40.0f64, 30.0f64));
     root.add_child(leaf(40.0f64, 30.0f64));                 // overflows, but stays on the line
     root.calculate_layout(100.0f64, 200.0f64, Direction::LTR);
-    assert approx(must(root.child_layout(2 as usize)).top, 0.0f64);
-    assert approx(must(root.child_layout(2 as usize)).left, 80.0f64);
+    assert approx(must(root.child_frame(2 as usize)).top, 0.0f64);
+    assert approx(must(root.child_frame(2 as usize)).left, 80.0f64);
 }
 
 #[test]
@@ -2798,8 +2830,8 @@ fn test_wrap_line_cross_positions_stack() {
     root.add_child(leaf(60.0f64, 25.0f64));                 // line 1 (height 25)
     root.add_child(leaf(60.0f64, 40.0f64));                 // wraps -> line 2
     root.calculate_layout(100.0f64, 200.0f64, Direction::LTR);
-    assert approx(must(root.child_layout(0 as usize)).top, 0.0f64);
-    assert approx(must(root.child_layout(1 as usize)).top, 25.0f64);   // below line 1's cross size
+    assert approx(must(root.child_frame(0 as usize)).top, 0.0f64);
+    assert approx(must(root.child_frame(1 as usize)).top, 25.0f64);   // below line 1's cross size
 }
 
 #[test]
@@ -2815,8 +2847,8 @@ fn test_align_content_center() {
     root.add_child(leaf(60.0f64, 30.0f64));
     root.add_child(leaf(60.0f64, 30.0f64));
     root.calculate_layout(100.0f64, 200.0f64, Direction::LTR);
-    assert approx(must(root.child_layout(0 as usize)).top, 70.0f64);
-    assert approx(must(root.child_layout(1 as usize)).top, 100.0f64);
+    assert approx(must(root.child_frame(0 as usize)).top, 70.0f64);
+    assert approx(must(root.child_frame(1 as usize)).top, 100.0f64);
 }
 
 #[test]
@@ -2829,7 +2861,7 @@ fn test_wrap_auto_cross_sizes_to_all_lines() {
     root.add_child(leaf(60.0f64, 25.0f64));
     root.add_child(leaf(60.0f64, 40.0f64));                 // 2 lines: 25 + 40 = 65
     root.calculate_layout(100.0f64, undefined(), Direction::LTR);
-    assert approx(root.layout_height(), 65.0f64);
+    assert approx(root.frame().height, 65.0f64);
 }
 
 // ---- Phase 2c: gap / gutters ----
@@ -2838,51 +2870,51 @@ fn test_wrap_auto_cross_sizes_to_all_lines() {
 fn test_column_gap_between_items() {
     var root: Node = Node::new();
     root.set_flex_direction(FlexDirection::Row);
-    root.set_gap(Gutter::Column, 10.0f64);
+    root.set_gap(Gutter::Column, pts(10.0f64));
     root.add_child(leaf(30.0f64, 20.0f64));
     root.add_child(leaf(30.0f64, 20.0f64));
     root.add_child(leaf(30.0f64, 20.0f64));
     root.calculate_layout(300.0f64, 50.0f64, Direction::LTR);
-    assert approx(must(root.child_layout(0 as usize)).left, 0.0f64);
-    assert approx(must(root.child_layout(1 as usize)).left, 40.0f64);   // 30 + 10 gap
-    assert approx(must(root.child_layout(2 as usize)).left, 80.0f64);
+    assert approx(must(root.child_frame(0 as usize)).left, 0.0f64);
+    assert approx(must(root.child_frame(1 as usize)).left, 40.0f64);   // 30 + 10 gap
+    assert approx(must(root.child_frame(2 as usize)).left, 80.0f64);
 }
 
 #[test]
 fn test_row_gap_between_column_items() {
     var root: Node = Node::new();                 // Column
-    root.set_gap(Gutter::Row, 8.0f64);
+    root.set_gap(Gutter::Row, pts(8.0f64));
     root.add_child(leaf(20.0f64, 30.0f64));
     root.add_child(leaf(20.0f64, 30.0f64));
     root.calculate_layout(100.0f64, 200.0f64, Direction::LTR);
-    assert approx(must(root.child_layout(1 as usize)).top, 38.0f64);    // 30 + 8 gap
+    assert approx(must(root.child_frame(1 as usize)).top, 38.0f64);    // 30 + 8 gap
 }
 
 #[test]
 fn test_gap_reduces_grow_space() {
     var root: Node = Node::new();
     root.set_flex_direction(FlexDirection::Row);
-    root.set_gap(Gutter::Column, 20.0f64);
+    root.set_gap(Gutter::Column, pts(20.0f64));
     var a: Node = Node::new(); a.set_flex_grow(1.0f64);
     var b: Node = Node::new(); b.set_flex_grow(1.0f64);
     root.add_child(a);
     root.add_child(b);
     root.calculate_layout(220.0f64, 50.0f64, Direction::LTR);
     // 220 - 20 gap = 200 split evenly -> 100 each
-    assert approx(must(root.child_layout(0 as usize)).width, 100.0f64);
-    assert approx(must(root.child_layout(1 as usize)).width, 100.0f64);
-    assert approx(must(root.child_layout(1 as usize)).left, 120.0f64);  // 100 + 20 gap
+    assert approx(must(root.child_frame(0 as usize)).width, 100.0f64);
+    assert approx(must(root.child_frame(1 as usize)).width, 100.0f64);
+    assert approx(must(root.child_frame(1 as usize)).left, 120.0f64);  // 100 + 20 gap
 }
 
 #[test]
 fn test_gap_included_in_content_size() {
     var root: Node = Node::new();                 // Column, auto height
-    root.set_gap(Gutter::Row, 10.0f64);
+    root.set_gap(Gutter::Row, pts(10.0f64));
     root.add_child(leaf(20.0f64, 30.0f64));
     root.add_child(leaf(20.0f64, 30.0f64));
     root.add_child(leaf(20.0f64, 30.0f64));
     root.calculate_layout(undefined(), undefined(), Direction::LTR);
-    assert approx(root.layout_height(), 110.0f64);   // 3*30 + 2*10 gaps
+    assert approx(root.frame().height, 110.0f64);   // 3*30 + 2*10 gaps
 }
 
 #[test]
@@ -2892,16 +2924,16 @@ fn test_gap_affects_wrap_breaking() {
     var root: Node = Node::new();
     root.set_flex_direction(FlexDirection::Row);
     root.set_flex_wrap(Wrap::Wrap);
-    root.set_gap(Gutter::All, 10.0f64);
+    root.set_gap(Gutter::All, pts(10.0f64));
     root.set_width(pts(100.0f64));
     root.set_height(pts(200.0f64));
     root.add_child(leaf(40.0f64, 20.0f64));
     root.add_child(leaf(40.0f64, 20.0f64));
     root.add_child(leaf(40.0f64, 20.0f64));
     root.calculate_layout(100.0f64, 200.0f64, Direction::LTR);
-    assert approx(must(root.child_layout(1 as usize)).left, 50.0f64);   // 40 + 10 gap
-    assert approx(must(root.child_layout(2 as usize)).top, 30.0f64);    // wrapped: line1 height 20 + 10 gap
-    assert approx(must(root.child_layout(2 as usize)).left, 0.0f64);
+    assert approx(must(root.child_frame(1 as usize)).left, 50.0f64);   // 40 + 10 gap
+    assert approx(must(root.child_frame(2 as usize)).top, 30.0f64);    // wrapped: line1 height 20 + 10 gap
+    assert approx(must(root.child_frame(2 as usize)).left, 0.0f64);
 }
 
 // ---- Phase 3: aspect-ratio ----
@@ -2914,7 +2946,7 @@ fn test_aspect_ratio_derives_height_from_width() {
     a.set_aspect_ratio(2.0f64);         // w/h = 2 -> h = 50
     root.add_child(a);
     root.calculate_layout(200.0f64, 200.0f64, Direction::LTR);
-    let c: Layout = must(root.child_layout(0 as usize));
+    let c: Frame = must(root.child_frame(0 as usize));
     assert approx(c.width, 100.0f64);
     assert approx(c.height, 50.0f64);
 }
@@ -2928,7 +2960,7 @@ fn test_aspect_ratio_derives_width_from_height() {
     a.set_aspect_ratio(1.5f64);         // w = h*1.5 = 60
     root.add_child(a);
     root.calculate_layout(300.0f64, 100.0f64, Direction::LTR);
-    let c: Layout = must(root.child_layout(0 as usize));
+    let c: Frame = must(root.child_frame(0 as usize));
     assert approx(c.height, 40.0f64);
     assert approx(c.width, 60.0f64);
 }
@@ -2944,7 +2976,7 @@ fn test_aspect_ratio_follows_flexed_main() {
     a.set_aspect_ratio(3.0f64);
     root.add_child(a);
     root.calculate_layout(120.0f64, 200.0f64, Direction::LTR);
-    let c: Layout = must(root.child_layout(0 as usize));
+    let c: Frame = must(root.child_frame(0 as usize));
     assert approx(c.width, 120.0f64);
     assert approx(c.height, 40.0f64);   // not stretched to 200 — aspect wins
 }
@@ -2960,8 +2992,8 @@ fn test_rtl_row_flows_right_to_left() {
     root.add_child(leaf(50.0f64, 20.0f64));
     root.calculate_layout(200.0f64, 100.0f64, Direction::RTL);
     // first child sits at the right edge
-    let a: Layout = must(root.child_layout(0 as usize));
-    let b: Layout = must(root.child_layout(1 as usize));
+    let a: Frame = must(root.child_frame(0 as usize));
+    let b: Frame = must(root.child_frame(1 as usize));
     assert approx(a.left, 170.0f64);   // 200 - 30
     assert approx(b.left, 120.0f64);   // 200 - 30 - 50
 }
@@ -2972,7 +3004,7 @@ fn test_rtl_inherits_from_owner() {
     root.set_flex_direction(FlexDirection::Row);
     root.add_child(leaf(40.0f64, 20.0f64));
     root.calculate_layout(200.0f64, 100.0f64, Direction::RTL);   // owner RTL
-    assert approx(must(root.child_layout(0 as usize)).left, 160.0f64);   // right-aligned
+    assert approx(must(root.child_frame(0 as usize)).left, 160.0f64);   // right-aligned
 }
 
 #[test]
@@ -2984,7 +3016,7 @@ fn test_rtl_column_cross_on_right() {
     root.set_direction(Direction::RTL);
     root.add_child(leaf(40.0f64, 30.0f64));
     root.calculate_layout(200.0f64, 100.0f64, Direction::RTL);
-    assert approx(must(root.child_layout(0 as usize)).left, 160.0f64);   // 200 - 40
+    assert approx(must(root.child_frame(0 as usize)).left, 160.0f64);   // 200 - 40
 }
 
 #[test]
@@ -2996,8 +3028,8 @@ fn test_rtl_row_reverse_cancels() {
     root.add_child(leaf(30.0f64, 20.0f64));
     root.add_child(leaf(50.0f64, 20.0f64));
     root.calculate_layout(200.0f64, 100.0f64, Direction::RTL);
-    assert approx(must(root.child_layout(0 as usize)).left, 0.0f64);
-    assert approx(must(root.child_layout(1 as usize)).left, 30.0f64);
+    assert approx(must(root.child_frame(0 as usize)).left, 0.0f64);
+    assert approx(must(root.child_frame(1 as usize)).left, 30.0f64);
 }
 
 // ---- Phase 3: box-sizing content-box ----
@@ -3014,7 +3046,7 @@ fn test_content_box_adds_padding_to_size() {
     a.set_padding(Edge::All, pts(10.0f64));
     root.add_child(a);
     root.calculate_layout(400.0f64, 200.0f64, Direction::LTR);
-    let c: Layout = must(root.child_layout(0 as usize));
+    let c: Frame = must(root.child_frame(0 as usize));
     assert approx(c.width, 120.0f64);    // 100 + 10 + 10
     assert approx(c.height, 70.0f64);    // 50 + 10 + 10
 }
@@ -3030,7 +3062,7 @@ fn test_border_box_default_includes_padding() {
     a.set_padding(Edge::All, pts(10.0f64));
     root.add_child(a);
     root.calculate_layout(400.0f64, 200.0f64, Direction::LTR);
-    assert approx(must(root.child_layout(0 as usize)).width, 100.0f64);
+    assert approx(must(root.child_frame(0 as usize)).width, 100.0f64);
 }
 
 // ---- Phase 3: pixel-grid rounding ----
@@ -3048,9 +3080,9 @@ fn test_round_to_integer_pixels_seamless() {
     root.add_child(a); root.add_child(b); root.add_child(c);
     root.calculate_layout(100.0f64, 20.0f64, Direction::LTR);
     root.round_to_pixel(1.0f64);
-    let la: Layout = must(root.child_layout(0 as usize));
-    let lb: Layout = must(root.child_layout(1 as usize));
-    let lc: Layout = must(root.child_layout(2 as usize));
+    let la: Frame = must(root.child_frame(0 as usize));
+    let lb: Frame = must(root.child_frame(1 as usize));
+    let lc: Frame = must(root.child_frame(2 as usize));
     // integer edges
     assert approx(la.left, 0.0f64);
     assert approx(la.left + la.width, lb.left);     // seamless abut
@@ -3068,7 +3100,7 @@ fn test_round_half_scale() {
     root.add_child(a);
     root.calculate_layout(100.0f64, 100.0f64, Direction::LTR);
     root.round_to_pixel(2.0f64);
-    assert approx(must(root.child_layout(0 as usize)).width, 10.5f64);   // 10.3 -> 10.5
+    assert approx(must(root.child_frame(0 as usize)).width, 10.5f64);   // 10.3 -> 10.5
 }
 
 // ---- Phase 3: baseline align ----
@@ -3085,9 +3117,9 @@ fn test_align_items_baseline_aligns_bottoms() {
     root.add_child(leaf(20.0f64, 50.0f64));   // tallest -> defines the baseline
     root.add_child(leaf(20.0f64, 30.0f64));
     root.calculate_layout(200.0f64, 100.0f64, Direction::LTR);
-    let a: Layout = must(root.child_layout(0 as usize));
-    let b: Layout = must(root.child_layout(1 as usize));
-    let c: Layout = must(root.child_layout(2 as usize));
+    let a: Frame = must(root.child_frame(0 as usize));
+    let b: Frame = must(root.child_frame(1 as usize));
+    let c: Frame = must(root.child_frame(2 as usize));
     // bottoms all at 50 (the max ascent)
     assert approx(a.top + a.height, 50.0f64);
     assert approx(b.top + b.height, 50.0f64);
@@ -3109,8 +3141,8 @@ fn test_overflow_readback_for_adapter() {
     root.set_height(pts(50.0f64));
     root.add_child(leaf(200.0f64, 20.0f64));
     root.calculate_layout(50.0f64, 50.0f64, Direction::LTR);
-    assert approx(root.layout_width(), 50.0f64);
-    assert approx(must(root.child_layout(0 as usize)).width, 200.0f64);   // not clamped
+    assert approx(root.frame().width, 50.0f64);
+    assert approx(must(root.child_frame(0 as usize)).width, 200.0f64);   // not clamped
 }
 
 // ---- Phase 4b: margin: auto ----
@@ -3126,7 +3158,7 @@ fn test_margin_auto_left_pushes_right() {
     a.set_margin(Edge::Left, auto_len());
     root.add_child(a);
     root.calculate_layout(200.0f64, 50.0f64, Direction::LTR);
-    assert approx(must(root.child_layout(0 as usize)).left, 160.0f64);   // 200 - 40
+    assert approx(must(root.child_frame(0 as usize)).left, 160.0f64);   // 200 - 40
 }
 
 #[test]
@@ -3138,7 +3170,7 @@ fn test_margin_auto_both_centers() {
     a.set_margin(Edge::Right, auto_len());
     root.add_child(a);
     root.calculate_layout(200.0f64, 50.0f64, Direction::LTR);
-    assert approx(must(root.child_layout(0 as usize)).left, 80.0f64);    // (200-40)/2
+    assert approx(must(root.child_frame(0 as usize)).left, 80.0f64);    // (200-40)/2
 }
 
 #[test]
@@ -3152,8 +3184,8 @@ fn test_margin_auto_splits_between_two() {
     root.add_child(a);
     root.add_child(b);
     root.calculate_layout(200.0f64, 50.0f64, Direction::LTR);
-    assert approx(must(root.child_layout(0 as usize)).left, 0.0f64);
-    assert approx(must(root.child_layout(1 as usize)).left, 160.0f64);   // 200 - 40
+    assert approx(must(root.child_frame(0 as usize)).left, 0.0f64);
+    assert approx(must(root.child_frame(1 as usize)).left, 160.0f64);   // 200 - 40
 }
 
 #[test]
@@ -3168,7 +3200,7 @@ fn test_margin_auto_cross_centers_vertically() {
     a.set_margin(Edge::Bottom, auto_len());
     root.add_child(a);
     root.calculate_layout(200.0f64, 100.0f64, Direction::LTR);
-    assert approx(must(root.child_layout(0 as usize)).top, 40.0f64);     // (100-20)/2
+    assert approx(must(root.child_frame(0 as usize)).top, 40.0f64);     // (100-20)/2
 }
 
 // ---- Phase 4c/4d: flex shorthand + position:static vs relative ----
@@ -3182,8 +3214,8 @@ fn test_flex_shorthand_shares_space() {
     root.add_child(a);
     root.add_child(b);
     root.calculate_layout(300.0f64, 50.0f64, Direction::LTR);
-    assert approx(must(root.child_layout(0 as usize)).width, 100.0f64);   // 1/3
-    assert approx(must(root.child_layout(1 as usize)).width, 200.0f64);   // 2/3
+    assert approx(must(root.child_frame(0 as usize)).width, 100.0f64);   // 1/3
+    assert approx(must(root.child_frame(1 as usize)).width, 200.0f64);   // 2/3
 }
 
 #[test]
@@ -3196,7 +3228,7 @@ fn test_relative_offsets_by_insets() {
     a.set_position(Edge::Top, pts(10.0f64));
     root.add_child(a);
     root.calculate_layout(200.0f64, 100.0f64, Direction::LTR);
-    let c: Layout = must(root.child_layout(0 as usize));
+    let c: Frame = must(root.child_frame(0 as usize));
     assert approx(c.left, 15.0f64);      // flowed at 0, offset +15
     assert approx(c.top, 10.0f64);
 }
@@ -3210,7 +3242,7 @@ fn test_static_ignores_insets() {
     a.set_position(Edge::Left, pts(15.0f64));    // ignored under static
     root.add_child(a);
     root.calculate_layout(200.0f64, 100.0f64, Direction::LTR);
-    assert approx(must(root.child_layout(0 as usize)).left, 0.0f64);
+    assert approx(must(root.child_frame(0 as usize)).left, 0.0f64);
 }
 
 // ---- Phase 4e: percent gap + baseline callback ----
@@ -3219,12 +3251,12 @@ fn test_static_ignores_insets() {
 fn test_percent_gap() {
     var root: Node = Node::new();
     root.set_flex_direction(FlexDirection::Row);
-    root.set_gap_length(Gutter::Column, StyleLength::percent(10.0f64));   // 10% of 200 = 20
+    root.set_gap(Gutter::Column, StyleLength::percent(10.0f64));   // 10% of 200 = 20
     root.set_width(pts(200.0f64));
     root.add_child(leaf(30.0f64, 20.0f64));
     root.add_child(leaf(30.0f64, 20.0f64));
     root.calculate_layout(200.0f64, 50.0f64, Direction::LTR);
-    assert approx(must(root.child_layout(1 as usize)).left, 50.0f64);     // 30 + 20 gap
+    assert approx(must(root.child_frame(1 as usize)).left, 50.0f64);     // 30 + 20 gap
 }
 
 fn baseline_at_15(ctx: *u8, width: f64, height: f64) -> f64 { return 15.0f64; }
@@ -3242,8 +3274,8 @@ fn test_baseline_callback_aligns_reported_baselines() {
     root.add_child(a);
     root.add_child(b);
     root.calculate_layout(200.0f64, 100.0f64, Direction::LTR);
-    let la: Layout = must(root.child_layout(0 as usize));
-    let lb: Layout = must(root.child_layout(1 as usize));
+    let la: Frame = must(root.child_frame(0 as usize));
+    let lb: Frame = must(root.child_frame(1 as usize));
     // baseline of a at top+15, of b at top+5; both equal the line's max ascent (15)
     assert approx(la.top + 15.0f64, lb.top + 5.0f64);
     assert approx(la.top, 0.0f64);       // tallest ascent sits at line origin
@@ -3263,11 +3295,11 @@ fn test_grow_redistributes_after_max_clamp() {
     var c: Node = Node::new(); c.set_flex_grow(1.0f64);
     root.add_child(a); root.add_child(b); root.add_child(c);
     root.calculate_layout(300.0f64, 50.0f64, Direction::LTR);
-    assert approx(must(root.child_layout(0 as usize)).width, 40.0f64);
-    assert approx(must(root.child_layout(1 as usize)).width, 130.0f64);
-    assert approx(must(root.child_layout(2 as usize)).width, 130.0f64);
+    assert approx(must(root.child_frame(0 as usize)).width, 40.0f64);
+    assert approx(must(root.child_frame(1 as usize)).width, 130.0f64);
+    assert approx(must(root.child_frame(2 as usize)).width, 130.0f64);
     // fills the container exactly
-    assert approx(must(root.child_layout(2 as usize)).left + 130.0f64, 300.0f64);
+    assert approx(must(root.child_frame(2 as usize)).left + 130.0f64, 300.0f64);
 }
 
 #[test]
@@ -3280,8 +3312,8 @@ fn test_shrink_redistributes_after_min_clamp() {
     var b: Node = Node::new(); b.set_width(pts(300.0f64)); b.set_flex_shrink(1.0f64);
     root.add_child(a); root.add_child(b);
     root.calculate_layout(400.0f64, 50.0f64, Direction::LTR);
-    assert approx(must(root.child_layout(0 as usize)).width, 250.0f64);   // clamped at min
-    assert approx(must(root.child_layout(1 as usize)).width, 150.0f64);   // absorbs the rest
+    assert approx(must(root.child_frame(0 as usize)).width, 250.0f64);   // clamped at min
+    assert approx(must(root.child_frame(1 as usize)).width, 150.0f64);   // absorbs the rest
 }
 
 // ---- Phase 4g: CSS Grid ----
@@ -3299,10 +3331,10 @@ fn test_grid_fixed_columns_auto_flow() {
     var i: i32 = 0;
     while i < 4 { root.add_child(hcell(30.0f64)); i = i + 1; }
     root.calculate_layout(200.0f64, 200.0f64, Direction::LTR);
-    let c0: Layout = must(root.child_layout(0 as usize));
-    let c1: Layout = must(root.child_layout(1 as usize));
-    let c2: Layout = must(root.child_layout(2 as usize));
-    let c3: Layout = must(root.child_layout(3 as usize));
+    let c0: Frame = must(root.child_frame(0 as usize));
+    let c1: Frame = must(root.child_frame(1 as usize));
+    let c2: Frame = must(root.child_frame(2 as usize));
+    let c3: Frame = must(root.child_frame(3 as usize));
     assert approx(c0.left, 0.0f64);   assert approx(c0.top, 0.0f64);
     assert approx(c1.left, 60.0f64);  assert approx(c1.top, 0.0f64);
     assert approx(c2.left, 0.0f64);   assert approx(c2.top, 30.0f64);   // wraps to row 2
@@ -3320,9 +3352,9 @@ fn test_grid_fr_columns_share_space() {
     root.add_child(hcell(20.0f64));
     root.add_child(hcell(20.0f64));
     root.calculate_layout(300.0f64, 100.0f64, Direction::LTR);
-    assert approx(must(root.child_layout(0 as usize)).width, 100.0f64);
-    assert approx(must(root.child_layout(1 as usize)).width, 200.0f64);
-    assert approx(must(root.child_layout(1 as usize)).left, 100.0f64);
+    assert approx(must(root.child_frame(0 as usize)).width, 100.0f64);
+    assert approx(must(root.child_frame(1 as usize)).width, 200.0f64);
+    assert approx(must(root.child_frame(1 as usize)).left, 100.0f64);
 }
 
 #[test]
@@ -3330,15 +3362,15 @@ fn test_grid_fixed_plus_fr_with_gap() {
     // 50px + 1fr, column-gap 10, width 200 -> 50, then fr = 200-50-10 = 140.
     var root: Node = Node::new();
     root.set_display(Display::Grid);
-    root.set_gap(Gutter::Column, 10.0f64);
+    root.set_gap(Gutter::Column, pts(10.0f64));
     root.add_grid_column(GridTrack::points(50.0f64));
     root.add_grid_column(GridTrack::fr(1.0f64));
     root.add_child(hcell(20.0f64));
     root.add_child(hcell(20.0f64));
     root.calculate_layout(200.0f64, 100.0f64, Direction::LTR);
-    assert approx(must(root.child_layout(0 as usize)).width, 50.0f64);
-    assert approx(must(root.child_layout(1 as usize)).width, 140.0f64);
-    assert approx(must(root.child_layout(1 as usize)).left, 60.0f64);   // 50 + 10 gap
+    assert approx(must(root.child_frame(0 as usize)).width, 50.0f64);
+    assert approx(must(root.child_frame(1 as usize)).width, 140.0f64);
+    assert approx(must(root.child_frame(1 as usize)).left, 60.0f64);   // 50 + 10 gap
 }
 
 #[test]
@@ -3347,14 +3379,14 @@ fn test_grid_implicit_rows_from_content() {
     var root: Node = Node::new();
     root.set_display(Display::Grid);
     root.add_grid_column(GridTrack::points(100.0f64));
-    root.set_gap(Gutter::Row, 5.0f64);
+    root.set_gap(Gutter::Row, pts(5.0f64));
     root.add_child(leaf(10.0f64, 20.0f64));
     root.add_child(leaf(10.0f64, 40.0f64));
     root.add_child(leaf(10.0f64, 30.0f64));
     root.calculate_layout(200.0f64, 300.0f64, Direction::LTR);
-    assert approx(must(root.child_layout(0 as usize)).top, 0.0f64);
-    assert approx(must(root.child_layout(1 as usize)).top, 25.0f64);   // 20 + 5 gap
-    assert approx(must(root.child_layout(2 as usize)).top, 70.0f64);   // 25 + 40 + 5
+    assert approx(must(root.child_frame(0 as usize)).top, 0.0f64);
+    assert approx(must(root.child_frame(1 as usize)).top, 25.0f64);   // 20 + 5 gap
+    assert approx(must(root.child_frame(2 as usize)).top, 70.0f64);   // 25 + 40 + 5
 }
 
 #[test]
@@ -3367,9 +3399,9 @@ fn test_grid_explicit_row_tracks() {
     root.add_child(Node::new());
     root.add_child(Node::new());
     root.calculate_layout(200.0f64, 200.0f64, Direction::LTR);
-    assert approx(must(root.child_layout(0 as usize)).height, 30.0f64);
-    assert approx(must(root.child_layout(1 as usize)).top, 30.0f64);
-    assert approx(must(root.child_layout(1 as usize)).height, 70.0f64);
+    assert approx(must(root.child_frame(0 as usize)).height, 30.0f64);
+    assert approx(must(root.child_frame(1 as usize)).top, 30.0f64);
+    assert approx(must(root.child_frame(1 as usize)).height, 70.0f64);
 }
 
 // ---- Phase 4h: measurement memo soundness (re-layout is identical) ----
@@ -3386,14 +3418,14 @@ fn test_relayout_is_idempotent() {
     root.add_child(leaf(40.0f64, 10.0f64));
 
     root.calculate_layout(undefined(), undefined(), Direction::LTR);
-    let w1: f64 = root.layout_width();
-    let h1: f64 = root.layout_height();
-    let c1: Layout = must(root.child_layout(0 as usize));
+    let w1: f64 = root.frame().width;
+    let h1: f64 = root.frame().height;
+    let c1: Frame = must(root.child_frame(0 as usize));
 
     root.calculate_layout(undefined(), undefined(), Direction::LTR);
-    assert approx(root.layout_width(), w1);
-    assert approx(root.layout_height(), h1);
-    let c2: Layout = must(root.child_layout(0 as usize));
+    assert approx(root.frame().width, w1);
+    assert approx(root.frame().height, h1);
+    let c2: Frame = must(root.child_frame(0 as usize));
     assert approx(c2.width, c1.width);
     assert approx(c2.height, c1.height);
 }
@@ -3408,7 +3440,7 @@ fn test_logical_margin_start_is_left_in_ltr() {
     a.set_margin(Edge::Start, pts(25.0f64));      // start = left in LTR
     root.add_child(a);
     root.calculate_layout(200.0f64, 50.0f64, Direction::LTR);
-    assert approx(must(root.child_layout(0 as usize)).left, 25.0f64);
+    assert approx(must(root.child_frame(0 as usize)).left, 25.0f64);
 }
 
 #[test]
@@ -3421,7 +3453,7 @@ fn test_logical_margin_start_is_right_in_rtl() {
     root.add_child(a);
     root.calculate_layout(200.0f64, 50.0f64, Direction::RTL);
     // item flows from the right edge; a 25 start(=right) margin pushes it left of the edge
-    assert approx(must(root.child_layout(0 as usize)).left, 135.0f64);   // 200 - 40 - 25
+    assert approx(must(root.child_frame(0 as usize)).left, 135.0f64);   // 200 - 40 - 25
 }
 
 #[test]
@@ -3436,7 +3468,7 @@ fn test_logical_padding_start_container() {
     root.add_child(a);
     root.calculate_layout(200.0f64, 50.0f64, Direction::RTL);
     // inner right edge = 200 - 20 padding; item at inner right: 180 - 40 = 140
-    assert approx(must(root.child_layout(0 as usize)).left, 140.0f64);
+    assert approx(must(root.child_frame(0 as usize)).left, 140.0f64);
 }
 
 #[test]
@@ -3448,7 +3480,7 @@ fn test_physical_edge_wins_over_logical() {
     a.set_margin(Edge::Left, pts(10.0f64));       // physical left explicitly set -> wins
     root.add_child(a);
     root.calculate_layout(200.0f64, 50.0f64, Direction::LTR);
-    assert approx(must(root.child_layout(0 as usize)).left, 10.0f64);
+    assert approx(must(root.child_frame(0 as usize)).left, 10.0f64);
 }
 
 // ---- Phase 5b: grid spanning + dense auto-flow ----
@@ -3466,8 +3498,8 @@ fn test_grid_column_span() {
     root.add_child(a);
     root.add_child(hcell(30.0f64));
     root.calculate_layout(200.0f64, 200.0f64, Direction::LTR);
-    let la: Layout = must(root.child_layout(0 as usize));
-    let lb: Layout = must(root.child_layout(1 as usize));
+    let la: Frame = must(root.child_frame(0 as usize));
+    let lb: Frame = must(root.child_frame(1 as usize));
     assert approx(la.left, 0.0f64);   assert approx(la.width, 100.0f64);   // spans cols 0-1
     assert approx(lb.left, 100.0f64); assert approx(lb.width, 50.0f64);    // col 2
 }
@@ -3477,14 +3509,14 @@ fn test_grid_span_with_gap() {
     // 3 cols of 40, column-gap 10. A 2-span item = 40 + 10 + 40 = 90 wide.
     var root: Node = Node::new();
     root.set_display(Display::Grid);
-    root.set_gap(Gutter::Column, 10.0f64);
+    root.set_gap(Gutter::Column, pts(10.0f64));
     root.add_grid_column(GridTrack::points(40.0f64));
     root.add_grid_column(GridTrack::points(40.0f64));
     root.add_grid_column(GridTrack::points(40.0f64));
     var a: Node = hcell(20.0f64); a.set_grid_column_span(2);
     root.add_child(a);
     root.calculate_layout(300.0f64, 100.0f64, Direction::LTR);
-    assert approx(must(root.child_layout(0 as usize)).width, 90.0f64);
+    assert approx(must(root.child_frame(0 as usize)).width, 90.0f64);
 }
 
 #[test]
@@ -3501,9 +3533,9 @@ fn test_grid_row_span() {
     root.add_child(Node::new());
     root.add_child(Node::new());
     root.calculate_layout(200.0f64, 200.0f64, Direction::LTR);
-    let la: Layout = must(root.child_layout(0 as usize));
-    let lb: Layout = must(root.child_layout(1 as usize));
-    let lc: Layout = must(root.child_layout(2 as usize));
+    let la: Frame = must(root.child_frame(0 as usize));
+    let lb: Frame = must(root.child_frame(1 as usize));
+    let lc: Frame = must(root.child_frame(2 as usize));
     assert approx(la.height, 60.0f64);   // spans both rows
     assert approx(lb.left, 50.0f64);     assert approx(lb.top, 0.0f64);   // (row0, col1)
     assert approx(lc.left, 50.0f64);     assert approx(lc.top, 30.0f64);  // (row1, col1)
@@ -3525,7 +3557,7 @@ fn test_grid_dense_backfills_gap() {
     var c: Node = hcell(20.0f64);
     root.add_child(a); root.add_child(b); root.add_child(c);
     root.calculate_layout(200.0f64, 200.0f64, Direction::LTR);
-    let lc: Layout = must(root.child_layout(2 as usize));
+    let lc: Frame = must(root.child_frame(2 as usize));
     assert approx(lc.left, 80.0f64);   // col 2
     assert approx(lc.top, 0.0f64);     // dense backfilled row 0
 }
@@ -3544,7 +3576,15 @@ fn test_grid_explicit_column_start() {
     a.set_grid_column_start(2);        // third column
     root.add_child(a);
     root.calculate_layout(200.0f64, 100.0f64, Direction::LTR);
-    assert approx(must(root.child_layout(0 as usize)).left, 100.0f64);   // col index 2
+    assert approx(must(root.child_frame(0 as usize)).left, 100.0f64);   // col index 2
+}
+
+// column_line/row_line return Option; collapse to an index for asserts (-1 = missing).
+fn line_or(o: option::Option[i32], fallback: i32) -> i32 {
+    return match o {
+        option::Option[i32]::Some(i) => i,
+        option::Option[i32]::None => fallback,
+    };
 }
 
 #[test]
@@ -3552,20 +3592,18 @@ fn test_grid_named_column_line() {
     // Name lines while building the template; place an item at the "main" line.
     var root: Node = Node::new();
     root.set_display(Display::Grid);
-    root.name_grid_column_line("sidebar");     // line 0
-    root.add_grid_column(GridTrack::points(60.0f64));
-    root.name_grid_column_line("main");        // line 1
-    root.add_grid_column(GridTrack::points(140.0f64));
-    assert root.column_line("main") == 1;
-    assert root.column_line("sidebar") == 0;
-    assert root.column_line("missing") == -1;
+    root.add_grid_column(GridTrack::points(60.0f64), line: "sidebar");    // line 0
+    root.add_grid_column(GridTrack::points(140.0f64), line: "main");      // line 1
+    assert line_or(root.column_line(named: "main"), -1) == 1;
+    assert line_or(root.column_line(named: "sidebar"), -1) == 0;
+    assert line_or(root.column_line(named: "missing"), -1) == -1;
 
     var a: Node = hcell(20.0f64);
-    a.set_grid_column_start(root.column_line("main"));
+    a.set_grid_column_start(line_or(root.column_line(named: "main"), -1));
     root.add_child(a);
     root.calculate_layout(200.0f64, 100.0f64, Direction::LTR);
-    assert approx(must(root.child_layout(0 as usize)).left, 60.0f64);    // "main" starts after sidebar
-    assert approx(must(root.child_layout(0 as usize)).width, 140.0f64);
+    assert approx(must(root.child_frame(0 as usize)).left, 60.0f64);    // "main" starts after sidebar
+    assert approx(must(root.child_frame(0 as usize)).width, 140.0f64);
 }
 
 #[test]
@@ -3579,7 +3617,7 @@ fn test_grid_explicit_row_start() {
     a.set_grid_row_start(1);            // second row
     root.add_child(a);
     root.calculate_layout(200.0f64, 200.0f64, Direction::LTR);
-    assert approx(must(root.child_layout(0 as usize)).top, 30.0f64);
+    assert approx(must(root.child_frame(0 as usize)).top, 30.0f64);
 }
 
 // ---- Phase 5d: cross-call incremental cache soundness ----
@@ -3591,7 +3629,7 @@ fn test_cache_invalidates_on_style_change() {
     var a: Node = Node::new(); a.set_width(pts(40.0f64)); a.set_height(pts(20.0f64));
     root.add_child(a);
     root.calculate_layout(200.0f64, 50.0f64, Direction::LTR);
-    assert approx(must(root.child_layout(0 as usize)).width, 40.0f64);
+    assert approx(must(root.child_frame(0 as usize)).width, 40.0f64);
 
     // mutate the child's width, re-layout -> must reflect the new width
     match root.children.at_ptr(0 as usize) {
@@ -3599,7 +3637,7 @@ fn test_cache_invalidates_on_style_change() {
         option::Option[*Node]::None => {}
     }
     root.calculate_layout(200.0f64, 50.0f64, Direction::LTR);
-    assert approx(must(root.child_layout(0 as usize)).width, 90.0f64);   // not the stale 40
+    assert approx(must(root.child_frame(0 as usize)).width, 90.0f64);   // not the stale 40
 }
 
 #[test]
@@ -3609,10 +3647,10 @@ fn test_cache_invalidates_on_box_change() {
     var a: Node = Node::new(); a.set_flex_grow(1.0f64);
     root.add_child(a);
     root.calculate_layout(200.0f64, 50.0f64, Direction::LTR);
-    assert approx(must(root.child_layout(0 as usize)).width, 200.0f64);
+    assert approx(must(root.child_frame(0 as usize)).width, 200.0f64);
     // re-layout with a different available width (root box changes) -> child follows
     root.calculate_layout(300.0f64, 50.0f64, Direction::LTR);
-    assert approx(must(root.child_layout(0 as usize)).width, 300.0f64);
+    assert approx(must(root.child_frame(0 as usize)).width, 300.0f64);
 }
 
 #[test]
@@ -3625,7 +3663,7 @@ fn test_cache_invalidates_on_deep_mutation_through_contentfit() {
     inner.add_child(leaf(20.0f64, 30.0f64));
     outer.add_child(inner);
     outer.calculate_layout(undefined(), undefined(), Direction::LTR);
-    assert approx(outer.layout_height(), 30.0f64);
+    assert approx(outer.frame().height, 30.0f64);
 
     // change the grandchild height to 55
     match outer.children.at_ptr(0 as usize) {
@@ -3638,7 +3676,7 @@ fn test_cache_invalidates_on_deep_mutation_through_contentfit() {
         option::Option[*Node]::None => {}
     }
     outer.calculate_layout(undefined(), undefined(), Direction::LTR);
-    assert approx(outer.layout_height(), 55.0f64);   // propagated up, not stale 30
+    assert approx(outer.frame().height, 55.0f64);   // propagated up, not stale 30
 }
 
 #[test]
@@ -3647,11 +3685,11 @@ fn test_cache_invalidates_on_add_child() {
     root.set_width(pts(50.0f64));
     root.add_child(leaf(20.0f64, 20.0f64));
     root.calculate_layout(undefined(), undefined(), Direction::LTR);
-    assert approx(root.layout_height(), 20.0f64);
+    assert approx(root.frame().height, 20.0f64);
     root.add_child(leaf(20.0f64, 30.0f64));       // structural change
     root.calculate_layout(undefined(), undefined(), Direction::LTR);
-    assert approx(root.layout_height(), 50.0f64);  // 20 + 30
-    assert approx(must(root.child_layout(1 as usize)).top, 20.0f64);
+    assert approx(root.frame().height, 50.0f64);  // 20 + 30
+    assert approx(must(root.child_frame(1 as usize)).top, 20.0f64);
 }
 
 #[test]
@@ -3706,18 +3744,18 @@ fn test_mark_content_changed_forces_remeasure() {
     leaf.set_measure(measure_from_static);
     root.add_child(leaf);
     root.calculate_layout(100.0f64, 50.0f64, Direction::LTR);
-    assert approx(must(root.child_layout(0 as usize)).height, 20.0f64);
+    assert approx(must(root.child_frame(0 as usize)).height, 20.0f64);
 
     CONTENT_H = 35.0f64;                   // content grew; styles unchanged
     root.calculate_layout(100.0f64, 50.0f64, Direction::LTR);
-    assert approx(must(root.child_layout(0 as usize)).height, 20.0f64);   // cache soundly stale — needs the mark
+    assert approx(must(root.child_frame(0 as usize)).height, 20.0f64);   // cache soundly stale — needs the mark
 
     match root.children.at_ptr(0 as usize) {
         option::Option[*Node]::Some(p) => { { (*p).mark_content_changed(); } }
         option::Option[*Node]::None => { assert false; }
     }
     root.calculate_layout(100.0f64, 50.0f64, Direction::LTR);
-    assert approx(must(root.child_layout(0 as usize)).height, 35.0f64);   // re-measured
+    assert approx(must(root.child_frame(0 as usize)).height, 35.0f64);   // re-measured
     assert root.layout_changed();
     return;
 }
@@ -3744,13 +3782,13 @@ fn test_subgrid_columns_adopt_parent_tracks() {
     root.add_child(sub);
     root.calculate_layout(200.0f64, 200.0f64, Direction::LTR);
 
-    let subframe: Layout = must(root.child_layout(0 as usize));
+    let subframe: Frame = must(root.child_frame(0 as usize));
     assert approx(subframe.width, 200.0f64);   // spans 40+60+100
 
     // grandchildren align to parent column tracks
-    let g0: Layout = grandchild(root, 0 as usize, 0 as usize);
-    let g1: Layout = grandchild(root, 0 as usize, 1 as usize);
-    let g2: Layout = grandchild(root, 0 as usize, 2 as usize);
+    let g0: Frame = grandchild(root, 0 as usize, 0 as usize);
+    let g1: Frame = grandchild(root, 0 as usize, 1 as usize);
+    let g2: Frame = grandchild(root, 0 as usize, 2 as usize);
     assert approx(g0.left, 0.0f64);    assert approx(g0.width, 40.0f64);
     assert approx(g1.left, 40.0f64);   assert approx(g1.width, 60.0f64);
     assert approx(g2.left, 100.0f64);  assert approx(g2.width, 100.0f64);
@@ -3762,7 +3800,7 @@ fn test_subgrid_with_gap_aligns_to_parent_gap() {
     // 0 and 70 (50 + 20 gap), matching the parent's gap.
     var root: Node = Node::new();
     root.set_display(Display::Grid);
-    root.set_gap(Gutter::Column, 20.0f64);
+    root.set_gap(Gutter::Column, pts(20.0f64));
     root.add_grid_column(GridTrack::points(50.0f64));
     root.add_grid_column(GridTrack::points(50.0f64));
     var sub: Node = Node::new();
@@ -3773,20 +3811,20 @@ fn test_subgrid_with_gap_aligns_to_parent_gap() {
     sub.add_child(hcell(20.0f64));
     root.add_child(sub);
     root.calculate_layout(200.0f64, 100.0f64, Direction::LTR);
-    let g0: Layout = grandchild(root, 0 as usize, 0 as usize);
-    let g1: Layout = grandchild(root, 0 as usize, 1 as usize);
+    let g0: Frame = grandchild(root, 0 as usize, 0 as usize);
+    let g1: Frame = grandchild(root, 0 as usize, 1 as usize);
     assert approx(g0.left, 0.0f64);
     assert approx(g1.left, 70.0f64);   // 50 + 20 gap — inherited from parent
 }
 
 // read grandchild (child ci of root's child pi) frame
-fn grandchild(root: Node, pi: usize, ci: usize) -> Layout {
+fn grandchild(root: Node, pi: usize, ci: usize) -> Frame {
     return match root.children.at_ptr(pi) {
         option::Option[*Node]::Some(pp) => match { (*pp).children.at_ptr(ci) } {
             option::Option[*Node]::Some(pg) => { (*pg).layout },
-            option::Option[*Node]::None => Layout { left: -1.0f64, top: -1.0f64, width: 0.0f64, height: 0.0f64 },
+            option::Option[*Node]::None => Frame { left: -1.0f64, top: -1.0f64, width: 0.0f64, height: 0.0f64 },
         },
-        option::Option[*Node]::None => Layout { left: -1.0f64, top: -1.0f64, width: 0.0f64, height: 0.0f64 },
+        option::Option[*Node]::None => Frame { left: -1.0f64, top: -1.0f64, width: 0.0f64, height: 0.0f64 },
     };
 }
 
@@ -3799,8 +3837,8 @@ fn test_hig_vstack_uses_8pt_spacing() {
     b.add(leaf(40.0f64, 30.0f64));
     var root: Node = vstack(b);
     root.calculate_layout(200.0f64, 200.0f64, Direction::LTR);
-    assert approx(must(root.child_layout(0 as usize)).top, 0.0f64);
-    assert approx(must(root.child_layout(1 as usize)).top, 38.0f64);   // 30 + 8pt HIG gap
+    assert approx(must(root.child_frame(0 as usize)).top, 0.0f64);
+    assert approx(must(root.child_frame(1 as usize)).top, 38.0f64);   // 30 + 8pt HIG gap
 }
 
 #[test]
@@ -3810,7 +3848,7 @@ fn test_hig_screen_uses_20pt_margins() {
     b.add(content);
     var root: Node = screen(b);
     root.calculate_layout(400.0f64, 300.0f64, Direction::LTR);
-    let c: Layout = must(root.child_layout(0 as usize));
+    let c: Frame = must(root.child_frame(0 as usize));
     assert approx(c.left, 20.0f64);                 // 20pt window margin
     assert approx(c.top, 20.0f64);
     assert approx(c.width, 360.0f64);               // 400 - 20 - 20
@@ -3824,7 +3862,7 @@ fn test_hig_card_uses_16pt_padding() {
     var root: Node = card(b);
     root.set_width(pts(200.0f64));
     root.calculate_layout(200.0f64, 200.0f64, Direction::LTR);
-    assert approx(must(root.child_layout(0 as usize)).left, 16.0f64);   // 16pt card padding
+    assert approx(must(root.child_frame(0 as usize)).left, 16.0f64);   // 16pt card padding
 }
 
 #[test]
@@ -3835,7 +3873,7 @@ fn test_hig_tappable_enforces_44pt_minimum() {
     // asks for 20x20 but .tappable() enforces the 44pt minimum
     root.add_child(Node::new().width(20.0f64).height(20.0f64).tappable());
     root.calculate_layout(300.0f64, 300.0f64, Direction::LTR);
-    let c: Layout = must(root.child_layout(0 as usize));
+    let c: Frame = must(root.child_frame(0 as usize));
     assert approx(c.width, 44.0f64);                // clamped up to the 44pt minimum
     assert approx(c.height, 44.0f64);
 }
@@ -3867,90 +3905,95 @@ fn test_measure_context_distinguishes_nodes() {
     root.calculate_layout(undefined(), 100.0f64, Direction::LTR);
 
     // one measure fn, two contexts -> two distinct sizes (the reported use case)
-    assert approx(must(root.child_layout(0 as usize)).width, 60.0f64);
-    assert approx(must(root.child_layout(1 as usize)).width, 120.0f64);
-    assert approx(must(root.child_layout(0 as usize)).height, 24.0f64);
+    assert approx(must(root.child_frame(0 as usize)).width, 60.0f64);
+    assert approx(must(root.child_frame(1 as usize)).width, 120.0f64);
+    assert approx(must(root.child_frame(0 as usize)).height, 24.0f64);
 }
 
-// ---- owned payload ----
+// ---- owned attachment ----
 
-static PAYLOAD_RELEASES: i32 = 0;
-static PAYLOAD_LAST: i64 = 0;
+static ATTACH_RELEASES: i32 = 0;
+static ATTACH_LAST: i64 = 0;
 
 fn counting_release(p: *u8) {
-    PAYLOAD_RELEASES = PAYLOAD_RELEASES + 1;
-    PAYLOAD_LAST = p as i64;
+    ATTACH_RELEASES = ATTACH_RELEASES + 1;
+    ATTACH_LAST = p as i64;
     return;
 }
 
+// The attachment as an integer: -1 when none (for asserts).
+fn attachment_or(o: option::Option[*u8], fallback: i64) -> i64 {
+    return match o {
+        option::Option[*u8]::Some(p) => p as i64,
+        option::Option[*u8]::None => fallback,
+    };
+}
+
 #[test]
-fn test_payload_default_none() {
+fn test_attachment_default_none() {
     var n: Node = Node::new();
-    assert n.has_payload() == false;
-    assert (n.payload() as i64) == (0 as i64);
+    assert attachment_or(n.attachment(), -1) == (-1 as i64);
 }
 
 #[test]
-fn test_payload_released_once_on_drop() {
-    PAYLOAD_RELEASES = 0;
+fn test_attachment_released_once_on_drop() {
+    ATTACH_RELEASES = 0;
     {
         var n: Node = Node::new();
-        n.set_payload(7 as *u8, counting_release);
-        assert n.has_payload();
-        assert (n.payload() as i64) == (7 as i64);
-        assert PAYLOAD_RELEASES == 0;   // owned, not yet released
+        n.attach(7 as *u8, counting_release);
+        assert attachment_or(n.attachment(), -1) == (7 as i64);
+        assert ATTACH_RELEASES == 0;    // owned, not yet released
     }
-    assert PAYLOAD_RELEASES == 1;       // exactly once, at node drop
-    assert PAYLOAD_LAST == (7 as i64);
+    assert ATTACH_RELEASES == 1;        // exactly once, at node drop
+    assert ATTACH_LAST == (7 as i64);
 }
 
 #[test]
-fn test_payload_replace_releases_old() {
-    PAYLOAD_RELEASES = 0;
+fn test_attachment_replace_releases_old() {
+    ATTACH_RELEASES = 0;
     {
         var n: Node = Node::new();
-        n.set_payload(7 as *u8, counting_release);
-        n.set_payload(9 as *u8, counting_release);   // replaces: releases 7
-        assert PAYLOAD_RELEASES == 1;
-        assert PAYLOAD_LAST == (7 as i64);
-        assert (n.payload() as i64) == (9 as i64);
+        n.attach(7 as *u8, counting_release);
+        n.attach(9 as *u8, counting_release);   // replaces: releases 7
+        assert ATTACH_RELEASES == 1;
+        assert ATTACH_LAST == (7 as i64);
+        assert attachment_or(n.attachment(), -1) == (9 as i64);
     }
-    assert PAYLOAD_RELEASES == 2;        // 9 released at drop
-    assert PAYLOAD_LAST == (9 as i64);
+    assert ATTACH_RELEASES == 2;         // 9 released at drop
+    assert ATTACH_LAST == (9 as i64);
 }
 
 #[test]
-fn test_payload_clear_releases_and_disarms() {
-    PAYLOAD_RELEASES = 0;
+fn test_detach_releases_and_disarms() {
+    ATTACH_RELEASES = 0;
     {
         var n: Node = Node::new();
-        n.set_payload(7 as *u8, counting_release);
-        n.clear_payload();
-        assert PAYLOAD_RELEASES == 1;
-        assert n.has_payload() == false;
-        assert (n.payload() as i64) == (0 as i64);
+        n.attach(7 as *u8, counting_release);
+        n.detach();
+        assert ATTACH_RELEASES == 1;
+        assert attachment_or(n.attachment(), -1) == (-1 as i64);
     }
-    assert PAYLOAD_RELEASES == 1;        // nothing further at drop
+    assert ATTACH_RELEASES == 1;         // nothing further at drop
 }
 
 #[test]
-fn test_payload_travels_with_child_into_parent() {
-    PAYLOAD_RELEASES = 0;
+fn test_attachment_travels_with_child_into_parent() {
+    ATTACH_RELEASES = 0;
     {
         var root: Node = Node::new();
         var c: Node = Node::new();
-        c.set_payload(11 as *u8, counting_release);
-        root.add_child(c);               // node moves in; payload rides along
-        assert PAYLOAD_RELEASES == 0;
+        c.attach(11 as *u8, counting_release);
+        root.add_child(c);               // node moves in; attachment rides along
+        assert ATTACH_RELEASES == 0;
         match root.children.at_ptr(0 as usize) {
             option::Option[*Node]::Some(p) => {
-                assert ({ (*p).payload() } as i64) == (11 as i64);
+                assert attachment_or({ (*p).attachment() }, -1) == (11 as i64);
             }
             option::Option[*Node]::None => { assert false; }
         }
     }
-    assert PAYLOAD_RELEASES == 1;        // released when the tree drops
-    assert PAYLOAD_LAST == (11 as i64);
+    assert ATTACH_RELEASES == 1;         // released when the tree drops
+    assert ATTACH_LAST == (11 as i64);
 }
 
 // ===== grow propagation through nested containers =====
@@ -3967,7 +4010,7 @@ fn test_grow_fills_directly_under_a_definite_parent() {
     var a: Node = Node::new(); a.set_flex_grow(1.0f64);
     root.add_child(a);
     root.calculate_layout(400.0f64, 600.0f64, Direction::LTR);
-    assert approx(must(root.child_layout(0 as usize)).height, 600.0f64);
+    assert approx(must(root.child_frame(0 as usize)).height, 600.0f64);
 }
 
 #[test]
@@ -3980,7 +4023,7 @@ fn test_grow_collapses_under_an_auto_intermediate() {
     mid.add_child(a);
     root.add_child(mid);
     root.calculate_layout(400.0f64, 600.0f64, Direction::LTR);
-    assert approx(must(root.child_layout(0 as usize)).height, 0.0f64);
+    assert approx(must(root.child_frame(0 as usize)).height, 0.0f64);
 }
 
 #[test]
@@ -3992,11 +4035,11 @@ fn test_grow_needs_growing_ancestors() {
     mid.add_child(a);
     root.add_child(mid);
     root.calculate_layout(400.0f64, 600.0f64, Direction::LTR);
-    assert approx(must(root.child_layout(0 as usize)).height, 600.0f64);
+    assert approx(must(root.child_frame(0 as usize)).height, 600.0f64);
     // grandchild fills the (now definite) mid.
     match root.children.at_ptr(0 as usize) {
         option::Option[*Node]::Some(pm) => {
-            assert approx(must({ (*pm).child_layout(0 as usize) }).height, 600.0f64);
+            assert approx(must({ (*pm).child_frame(0 as usize) }).height, 600.0f64);
         }
         option::Option[*Node]::None => { assert false; }
     }
@@ -4017,7 +4060,7 @@ fn test_grow_fills_through_deeply_nested_growing_wrappers() {
     root.add_child(head);
     root.add_child(wrapper);
     root.calculate_layout(400.0f64, 600.0f64, Direction::LTR);
-    assert approx(must(root.child_layout(1 as usize)).height, 576.0f64);
+    assert approx(must(root.child_frame(1 as usize)).height, 576.0f64);
 }
 
 

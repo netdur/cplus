@@ -71,14 +71,14 @@ extern fn g_application_run(app: *u8, argc: i32, argv: *u8) -> i32;
 fn null() -> *u8 { return { 0 as *u8 }; }
 
 // ==========================================================================
-// Payload + measure plumbing (mirrors facet_appkit/ui `view`/`measure_view`)
+// Attachment + measure plumbing (mirrors facet_appkit/ui `view`/`measure_view`)
 // ==========================================================================
 
-// The payload release: drop the backend's ref on the backing widget.
+// The attachment release: drop the backend's ref on the backing widget.
 fn release_widget(p: *u8) { g::object_unref(p); return; }
 
 // Measure a leaf through GtkWidget's natural size. `ctx` is the raw widget
-// pointer (borrowed; the same node's payload owns it). Width first (unbounded),
+// pointer (borrowed; the same node's attachment owns it). Width first (unbounded),
 // then height for that natural width.
 fn measure_widget(ctx: *u8, avail_w: f64, wmode: flex::MeasureMode, avail_h: f64, hmode: flex::MeasureMode) -> flex::Size {
     var min_w: i32 = 0 as i32;
@@ -108,7 +108,7 @@ fn measure_widget(ctx: *u8, avail_w: f64, wmode: flex::MeasureMode, avail_h: f64
 fn widget_leaf(w: gtk::Widget) -> flex::Node {
     let p: *u8 = g::object_ref_sink(w.raw());
     var n: flex::Node = flex::Node::new();
-    n.set_payload(p, release_widget);
+    n.attach(p, release_widget);
     n.set_context(p);
     n.set_measure(measure_widget);
     return n;
@@ -413,7 +413,7 @@ fn gtk_set_identity(ctx: *u8, handle: *u8, id: str, role: u32) {
 // The vtable value. `ctx` is an unused backend-context slot (a future backend
 // context — theme, window — can ride here); the ops don't read it.
 // Keyed-container backing view (approach A). The GTK backend is type-checked
-// only; a real port would create a GtkBox here and set it as the flex payload.
+// only; a real port would create a GtkBox here and attach it to the flex node.
 fn gtk_container(ctx: *u8, np: *facet::Node, node: *flex::Node) {
     return;
 }
@@ -462,30 +462,33 @@ fn renderer() -> facet::Renderer {
 // mount + apply (flex tree -> GtkFixed frames)
 // ==========================================================================
 
-// Description tree -> flex tree with GtkWidgets in the payloads.
+// Description tree -> flex tree with GtkWidgets as node attachments.
 fn mount(np: *facet::Node) -> flex::Node {
     return facet::mount(np, renderer());
 }
 
 // Lay each computed frame into a GtkFixed. GTK uses top-left origin (y-down),
 // same as flex's absolute coordinates — no vertical flip (unlike AppKit).
-// A payload node is a leaf widget: size + `put` it. A payload-less node with
+// An attached node is a leaf widget: size + `put` it. An attachment-free node with
 // children is a container: make a nested GtkFixed, `put` it, and recurse.
 fn apply(root: *flex::Node, fixed_ptr: *u8) {
-    apply_nested(root, fixed_ptr, { (*root).layout_frame() });
+    apply_nested(root, fixed_ptr, { (*root).frame() });
     return;
 }
 
-fn apply_nested(node: *flex::Node, parent_fixed: *u8, parent_abs: flex::Layout) {
+fn apply_nested(node: *flex::Node, parent_fixed: *u8, parent_abs: flex::Frame) {
     let kc: usize = { (*node).child_count() };
     var i: usize = 0 as usize;
     while i < kc {
         match { (*node).children.at_ptr(i) } {
             option::Option[*flex::Node]::Some(cn) => {
-                let cf: flex::Layout = { (*cn).layout_frame() };   // absolute
+                let cf: flex::Frame = { (*cn).frame() };   // absolute
                 let x: f64 = cf.left - parent_abs.left;            // parent-relative
                 let y: f64 = cf.top - parent_abs.top;
-                let cp: *u8 = { (*cn).payload() };
+                let cp: *u8 = match { (*cn).attachment() } {
+                    option::Option[*u8]::Some(ap) => ap,
+                    option::Option[*u8]::None => null(),
+                };
                 if cp != null() {
                     let w: gtk::Widget = gtk::Widget::from_raw(cp);
                     w.set_size_request(cf.width as i32, cf.height as i32);
@@ -512,7 +515,7 @@ fn mount_into(np: *facet::Node, fixed_ptr: *u8, width: f64, height: f64) -> f64 
     tree.calculate_layout(width, height, flex::Direction::LTR);
     tree.round_to_pixel(1.0f64);
     apply({ #addr_of(tree) }, fixed_ptr);
-    let f: flex::Layout = tree.layout_frame();
+    let f: flex::Frame = tree.frame();
     return f.height;
 }
 

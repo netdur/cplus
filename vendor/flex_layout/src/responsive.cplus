@@ -10,8 +10,8 @@
 // Example:
 //
 //   var config: ResponsiveConfig = ResponsiveConfig::new("desktop");
-//   config.add_breakpoint("mobile", 300.0f64);
-//   config.add_breakpoint("tablet", 900.0f64);
+//   config.add_breakpoint("mobile", up_to: 300.0f64);
+//   config.add_breakpoint("tablet", up_to: 900.0f64);
 //
 //   let env: LayoutEnvironment = config.resolve(view_width, view_height);
 //   if env.is("mobile") { ... build/configure a compact layout ... }
@@ -47,10 +47,12 @@ impl LayoutEnvironment {
     fn class_name(this) -> str { return this._class_name.view(); }
     fn is(this, name: str) -> bool { return this._class_name.equals(name); }
 
-    // The inclusive max width of the matched class. Only meaningful when
-    // `matched_breakpoint()` is true; fallback classes have no maximum.
-    fn breakpoint(this) -> f64 { return this._breakpoint; }
-    fn matched_breakpoint(this) -> bool { return this._matched_breakpoint; }
+    // The inclusive max width of the matched breakpoint, or None when the
+    // fallback class applied (fallbacks have no maximum).
+    fn breakpoint_width(this) -> option::Option[f64] {
+        if this._matched_breakpoint { return option::Option[f64]::Some(this._breakpoint); }
+        return option::Option[f64]::None;
+    }
 
     fn orientation(this) -> Orientation {
         if this._width < this._height { return Orientation::Portrait; }
@@ -61,7 +63,7 @@ impl LayoutEnvironment {
     // Useful to a host on resize: true means fluid flex/grid layout can simply
     // be recalculated; false means class-specific styles or structure should
     // be reapplied/rebuilt first.
-    fn same_class(this, other: LayoutEnvironment) -> bool {
+    fn is_same_class(this, other: LayoutEnvironment) -> bool {
         return this._class_name.equals(other._class_name.view());
     }
 }
@@ -88,14 +90,14 @@ impl ResponsiveConfig {
         return true;
     }
 
-    // Add an inclusive width class (`name <= max_width`). Reusing a name
-    // updates its threshold, which makes configuration reloads idempotent.
-    // Empty names, NaN, zero, and negative widths are rejected.
-    fn add_breakpoint(ref this, name: str, max_width: f64) -> bool {
+    // Add an inclusive width class (`name <= up_to`). Reusing a name updates
+    // its threshold, which makes configuration reloads idempotent. Empty
+    // names, NaN, zero, and negative widths are rejected.
+    fn add_breakpoint(ref this, name: str, up_to: f64) -> bool {
         if #str_len(name) == (0 as usize) { return false; }
         // Written as a positive predicate so NaN is rejected under ordered
         // floating-point comparison semantics too.
-        if !(max_width > 0.0f64) { return false; }
+        if !(up_to > 0.0f64) { return false; }
 
         let n: usize = this._breakpoints.count();
         var i: usize = 0 as usize;
@@ -103,7 +105,7 @@ impl ResponsiveConfig {
             match this._breakpoints.at_ptr(i) {
                 option::Option[*Breakpoint]::Some(p) => {
                     if { (*p).name.equals(name) } {
-                        { (*p).max_width = max_width; }
+                        { (*p).max_width = up_to; }
                         return true;
                     }
                 }
@@ -114,7 +116,7 @@ impl ResponsiveConfig {
 
         this._breakpoints.append(Breakpoint {
             name: text::from_str(name),
-            max_width: max_width,
+            max_width: up_to,
         });
         return true;
     }
@@ -200,6 +202,14 @@ impl ResponsiveConfig {
 // Tests
 // ==========================================================================
 
+// Collapse Option[f64] for asserts: the width, or `fallback` when None.
+fn width_or(o: option::Option[f64], fallback: f64) -> f64 {
+    return match o {
+        option::Option[f64]::Some(w) => w,
+        option::Option[f64]::None => fallback,
+    };
+}
+
 fn standard_config() -> ResponsiveConfig {
     var c: ResponsiveConfig = ResponsiveConfig::new("desktop");
     c.add_breakpoint("tablet", 900.0f64); // deliberately registered out of order
@@ -212,12 +222,11 @@ fn narrowest_matching_breakpoint_wins() {
     let c: ResponsiveConfig = standard_config();
     let mobile: LayoutEnvironment = c.resolve(280.0f64, 640.0f64);
     assert mobile.is("mobile");
-    assert mobile.matched_breakpoint();
-    assert mobile.breakpoint() == 300.0f64;
+    assert width_or(mobile.breakpoint_width(), -1.0f64) == 300.0f64;
 
     let tablet: LayoutEnvironment = c.resolve(700.0f64, 900.0f64);
     assert tablet.is("tablet");
-    assert tablet.breakpoint() == 900.0f64;
+    assert width_or(tablet.breakpoint_width(), -1.0f64) == 900.0f64;
 }
 
 #[test]
@@ -235,7 +244,7 @@ fn fallback_applies_above_every_breakpoint() {
     assert env.is("desktop");
     assert env.class_name() == "desktop";
     assert c.fallback() == "desktop";
-    assert !env.matched_breakpoint();
+    assert width_or(env.breakpoint_width(), -1.0f64) == -1.0f64;   // fallback: no maximum
 }
 
 #[test]
@@ -281,8 +290,8 @@ fn environment_reports_orientation_and_class_transition() {
 
     assert portrait.orientation() == Orientation::Portrait;
     assert landscape.orientation() == Orientation::Landscape;
-    assert portrait.same_class(portrait_again);
-    assert !portrait.same_class(landscape);
+    assert portrait.is_same_class(portrait_again);
+    assert !portrait.is_same_class(landscape);
 }
 
 #[test]
