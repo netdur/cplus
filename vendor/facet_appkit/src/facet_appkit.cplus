@@ -1661,9 +1661,6 @@ fn install() {
     contract::set_minimum_fn(set_minimum_impl);
     contract::set_maximum_fn(set_maximum_impl);
     contract::set_minimum_track_color_fn(set_minimum_track_color_impl);
-    contract::set_maximum_track_color_fn(set_maximum_track_color_impl);
-    contract::set_thumb_color_fn(set_thumb_color_impl);
-    contract::set_thumb_image_fn(set_thumb_image_impl);
     contract::set_background_color_fn(c_set_background_color);
     contract::set_is_enabled_fn(c_set_is_enabled);
     contract::set_is_read_only_fn(c_set_is_read_only);
@@ -3099,8 +3096,10 @@ fn generated_slider_contract_reaches_the_native() {
     let _b: facet::Handle = h.set_maximum(9.0f64);
     assert sl.min_value() == 3.0f64;    // portable slot drove the native
     assert sl.max_value() == 9.0f64;
-    // An UNSUPPORTED slot degrades gracefully — callable, no crash, no effect.
-    let _c: facet::Handle = h.set_thumb_color(facet::Color::text());
+    // The UNSUPPORTED slider knobs (thumb/track colors, thumb image) no longer
+    // exist as methods AT ALL — calling one is a compile error, and the
+    // manifest carries the reason. That posture replaced "callable, no
+    // effect" in the v2 disposition pass.
 }
 
 static T_MENU_ENABLED: i32 = 1;
@@ -4351,18 +4350,6 @@ fn set_minimum_track_color_impl(h: facet::Handle, v: facet::Color) -> bool {
     if view == (0 as *u8) { return false; }
     ak::Slider::from_raw(view).set_track_fill_color(ns_color(v));
     return true;
-}
-fn set_maximum_track_color_impl(h: facet::Handle, v: facet::Color) -> bool {
-    // UNSUPPORTED on AppKit: NSSlider has no MaximumTrackColor equivalent.
-    return false;
-}
-fn set_thumb_color_impl(h: facet::Handle, v: facet::Color) -> bool {
-    // UNSUPPORTED on AppKit: NSSlider has no ThumbColor equivalent.
-    return false;
-}
-fn set_thumb_image_impl(h: facet::Handle, v: str) -> bool {
-    // UNSUPPORTED on AppKit: NSSlider has no ThumbImageSource equivalent.
-    return false;
 }
 // Two shared helpers for the verified per-slot backings below. Each backing
 // sends its OWN ABI-correct message (the send-kind matches the real AppKit

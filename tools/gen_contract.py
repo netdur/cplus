@@ -40,7 +40,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # appkit status: "wired" or "UNSUPPORTED: reason" — manifest content, and the
 # wired flag is what permits emission at all.
 SLOTS = [
-    ("set_background_color", "Color", ("VisualElement", "Background"), "wired: setBackgroundColor:"),
+    ("set_background_color", "Color", ("VisualElement", "BackgroundColor"), "wired: setBackgroundColor:"),
     ("set_is_enabled", "bool", ("VisualElement", "IsEnabled"), "wired: setEnabled:"),
     ("set_is_focused", "bool", ("VisualElement", "IsFocused"), "wired: responder chain (hand impl — focus is a behavior, not a setter)"),
     ("set_is_read_only", "bool", ("InputView", "IsReadOnly"), "wired: setEditable: (inverted)"),
@@ -52,14 +52,12 @@ SLOTS = [
     ("set_minimum", "f64", ("Slider", "Minimum"), "wired: setMinValue:"),
     ("set_maximum", "f64", ("Slider", "Maximum"), "wired: setMaxValue:"),
     ("set_minimum_track_color", "Color", ("Slider", "MinimumTrackColor"), "wired: setTrackFillColor:"),
-    ("set_maximum_track_color", "Color", ("Slider", "MaximumTrackColor"), "UNSUPPORTED on AppKit: NSSlider has no equivalent"),
-    ("set_thumb_color", "Color", ("Slider", "ThumbColor"), "UNSUPPORTED on AppKit: NSSlider has no equivalent"),
-    ("set_thumb_image", "str", ("Slider", "ThumbImageSource"), "UNSUPPORTED on AppKit: NSSlider has no equivalent"),
     # ---- Phase 3 expansion: every slot below ships with a GENERATED impl and
     # a GENERATED round-trip probe test in contract_appkit.cplus.
     ("set_max_lines", "i64", ("Label", "MaxLines"), "wired: setMaximumNumberOfLines: (probe-verified)"),
     ("set_selected_index", "i64", ("Picker", "SelectedIndex"), "wired: selectItemAtIndex: (probe-verified)"),
     ("set_increment", "f64", ("Stepper", "Increment"), "wired: setIncrement: (probe-verified)"),
+    ("set_is_animation_playing", "bool", ("Image", "IsAnimationPlaying"), "wired: setAnimates: (probe-verified)"),
 ]
 
 # ---- Phase 3 NATIVE table: slot -> generated AppKit backing + probe.
@@ -98,15 +96,25 @@ NATIVE = {
         setup=[],
         probe_value="5.0f64", probe_expect="5.0f64",
     ),
+    "set_is_animation_playing": dict(
+        kind="bool", set_sel="setAnimates:", get_sel="animates",
+        relayout=False,
+        decl='let probe_p: *u8 = synth::alloc_init_class(rt::get_class(#str_ptr("NSImageView\\0")));',
+        view="probe_p",
+        setup=[],
+        probe_value="true", probe_expect="true",
+    ),
 }
 
 SEND = {
     "i64": "rt::msg_void_i64(view, s, v);",
     "f64": "rt::msg_void_f64(view, s, v);",
+    "bool": "var b: i8 = 0 as i8;\n    if v { b = 1 as i8; }\n    rt::msg_void_i8(view, s, b);",
 }
 GETTER = {
     "i64": lambda sel: f'rt::msg_i64(v, rt::sel(#str_ptr("{sel}\\0")))',
     "f64": lambda sel: f'rt::msg_f64(v, rt::sel(#str_ptr("{sel}\\0")))',
+    "bool": lambda sel: f'(rt::msg_i8(v, rt::sel(#str_ptr("{sel}\\0"))) != (0 as i8))',
 }
 
 
@@ -123,6 +131,7 @@ def emit_backend():
         'import "facet/contract" as contract;\n',
         'import "objc/runtime" as rt;\n',
         'import "objc/bridge" as bridge;\n',
+        'import "objc/synthesis" as synth;\n',
         'import "appkit/appkit" as ak;\n',
         'import "flex_layout/flex_layout" as flex;\n',
         'import "./facet_appkit" as impl_mod;\n',
@@ -228,10 +237,51 @@ def emit_manifest():
     for name, ty, prov, note in SLOTS:
         lines.append(f"| `{name}` | {ty} | {prov[0]}.{prov[1]} | {note} |\n")
     lines.append("\nGTK: nothing wired yet — every slot above is UNSUPPORTED there.\n")
+    lines.append("\n## UNSUPPORTED on AppKit (no slot emitted — calling one is a compile error)\n\n")
+    lines.append("| MAUI provenance | reason |\n|---|---|\n")
+    for (ty, member), note in unsupported_rows():
+        lines.append(f"| {ty}.{member} | {note} |\n")
+    lines.append("\nThe full 536-row disposition ledger (KEEP-FACET, FUTURE, DROP, with\n")
+    lines.append("reasons) is plans/facet/maui-map-draft.md in the C+ tree; the curation\n")
+    lines.append("itself is tools/maui_map.py. The generator fails if any ADOPT row lacks\n")
+    lines.append("a slot, so this manifest cannot drift from the MAP.\n")
     return "".join(lines)
 
 
+def adopt_rows():
+    import json
+    spec = json.load(open(os.path.join(ROOT, "plans", "facet", "spec", "maui-spec.json")))
+    rows = []
+    for ty, bands in spec.items():
+        for band in ("writes", "reads", "events", "methods"):
+            for member, vt in bands.get(band, {}).items():
+                valuety = vt if isinstance(vt, str) else ""
+                st, _f, _n = maui_map.OVERLAY.get(
+                    (ty, member), maui_map.default_row(ty, member, band, valuety))
+                if st == "ADOPT":
+                    rows.append((ty, member))
+    return rows
+
+
+def unsupported_rows():
+    return sorted(
+        (prov, note)
+        for prov, (st, _f, note) in maui_map.OVERLAY.items()
+        if st == "UNSUPPORTED"
+    )
+
+
+def check_completeness():
+    covered = {prov for (_n, _t, prov, _note) in SLOTS}
+    missing = [r for r in adopt_rows() if r not in covered]
+    if missing:
+        raise SystemExit(
+            "MAP has ADOPT rows with no slot — disposition them (wire, or move "
+            f"to UNSUPPORTED/FUTURE/KEEP-FACET with a reason): {missing}")
+
+
 def main():
+    check_completeness()
     cp = os.path.join(ROOT, "vendor", "facet", "src", "contract.cplus")
     with open(cp, "w") as f:
         f.write(emit_contract())

@@ -9,7 +9,7 @@ band only.
 
 | slot | type | MAUI provenance | AppKit |
 |---|---|---|---|
-| `set_background_color` | Color | VisualElement.Background | wired: setBackgroundColor: |
+| `set_background_color` | Color | VisualElement.BackgroundColor | wired: setBackgroundColor: |
 | `set_is_enabled` | bool | VisualElement.IsEnabled | wired: setEnabled: |
 | `set_is_focused` | bool | VisualElement.IsFocused | wired: responder chain (hand impl — focus is a behavior, not a setter) |
 | `set_is_read_only` | bool | InputView.IsReadOnly | wired: setEditable: (inverted) |
@@ -21,11 +21,54 @@ band only.
 | `set_minimum` | f64 | Slider.Minimum | wired: setMinValue: |
 | `set_maximum` | f64 | Slider.Maximum | wired: setMaxValue: |
 | `set_minimum_track_color` | Color | Slider.MinimumTrackColor | wired: setTrackFillColor: |
-| `set_maximum_track_color` | Color | Slider.MaximumTrackColor | UNSUPPORTED on AppKit: NSSlider has no equivalent |
-| `set_thumb_color` | Color | Slider.ThumbColor | UNSUPPORTED on AppKit: NSSlider has no equivalent |
-| `set_thumb_image` | str | Slider.ThumbImageSource | UNSUPPORTED on AppKit: NSSlider has no equivalent |
 | `set_max_lines` | i64 | Label.MaxLines | wired: setMaximumNumberOfLines: (probe-verified) |
 | `set_selected_index` | i64 | Picker.SelectedIndex | wired: selectItemAtIndex: (probe-verified) |
 | `set_increment` | f64 | Stepper.Increment | wired: setIncrement: (probe-verified) |
+| `set_is_animation_playing` | bool | Image.IsAnimationPlaying | wired: setAnimates: (probe-verified) |
 
 GTK: nothing wired yet — every slot above is UNSUPPORTED there.
+
+## UNSUPPORTED on AppKit (no slot emitted — calling one is a compile error)
+
+| MAUI provenance | reason |
+|---|---|
+| ActivityIndicator.Color | NSProgressIndicator has no public tint API |
+| Button.CharacterSpacing | needs the attributed-string pipeline |
+| Button.TextColor | NSButton titles color via attributed strings only |
+| CheckBox.Color | NSButton checkbox has no tint API |
+| DatePicker.CharacterSpacing | needs the attributed-string pipeline |
+| DatePicker.Format | NSDatePicker uses element flags, not format strings |
+| DatePicker.IsOpen | no popover control API |
+| Entry.IsPassword | NSSecureTextField is a class, not a flag — use facet::secure_field |
+| Image.IsOpaque | NSImageView has no opacity toggle; set_opacity covers alpha |
+| InputView.CharacterSpacing | needs the attributed-string pipeline |
+| InputView.MaxLength | needs a formatter/delegate, not a property |
+| InputView.PlaceholderColor | placeholder color needs the attributed-string pipeline |
+| Label.CharacterSpacing | needs the attributed-string pipeline |
+| Label.LineHeight | needs the attributed-string pipeline |
+| Picker.CharacterSpacing | needs the attributed-string pipeline |
+| Picker.IsOpen | NSPopUpButton has no open/close API |
+| Picker.TextColor | NSPopUpButton renders its title via the menu; no text-color API |
+| Picker.TitleColor | menu-rendered title; no color API |
+| ProgressBar.ProgressColor | NSProgressIndicator has no public tint API |
+| RadioButton.BorderColor | NSButton radio draws its own bezel |
+| RadioButton.BorderWidth | NSButton radio draws its own bezel |
+| RadioButton.CharacterSpacing | needs the attributed-string pipeline |
+| RadioButton.CornerRadius | NSButton radio draws its own bezel |
+| RadioButton.TextColor | attributed title needed; same as Button.TextColor |
+| SearchBar.CancelButtonColor | NSSearchField cell internals; no public API |
+| SearchBar.SearchIconColor | NSSearchField cell internals; no public API |
+| Slider.MaximumTrackColor | NSSlider has no equivalent |
+| Slider.ThumbColor | NSSlider has no equivalent |
+| Slider.ThumbImageSource | NSSlider has no equivalent |
+| Switch.OffColor | NSSwitch has no tint API |
+| Switch.OnColor | NSSwitch has no tint API |
+| Switch.ThumbColor | NSSwitch has no tint API |
+| TimePicker.CharacterSpacing | needs the attributed-string pipeline |
+| TimePicker.Format | NSDatePicker uses element flags, not format strings |
+| TimePicker.IsOpen | no popover control API |
+
+The full 536-row disposition ledger (KEEP-FACET, FUTURE, DROP, with
+reasons) is plans/facet/maui-map-draft.md in the C+ tree; the curation
+itself is tools/maui_map.py. The generator fails if any ADOPT row lacks
+a slot, so this manifest cannot drift from the MAP.
