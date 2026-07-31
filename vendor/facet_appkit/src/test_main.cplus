@@ -12,6 +12,7 @@ import "appkit/appkit" as ak;
 import "appkit/appkit_ext" as akx;
 import "facet/facet" as facet;
 import "./facet_appkit" as fak;
+import "./contract_appkit" as genc;
 import "./ui" as ui;
 import "flex_layout/flex_layout" as flex;
 

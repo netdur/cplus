@@ -7,6 +7,7 @@
 import "./facet" as core;
 import "./nav" as nav;
 import "facet_appkit/facet_appkit" as backend;
+import "facet_appkit/contract_appkit" as genc;
 import "stdlib/option" as option;
 import "stdlib/text" as text;
 import "stdlib/vec" as vec;
@@ -89,7 +90,8 @@ fn null_enabled_fn() -> fn(*u8) -> bool { return core::null_enabled_fn(); }
 fn null_title_fn() -> fn(*u8) -> text::Text { return core::null_title_fn(); }
 
 fn run[W: Window](take window: W) {
-    backend::install();   // register this backend's facet verbs (list, raise) before any render uses them
+    backend::install();
+    genc::install_generated();   // register this backend's facet verbs (list, raise) before any render uses them
     var owned_window: W = window;
     let root: Node = owned_window.root();
     var app_menu: AppMenu = core::empty_app_menu();
@@ -186,7 +188,8 @@ fn run_component[C: core::Component + core::Lifecycle](
     will_close: fn(*u8) = 0 as fn(*u8),
     ctx: *u8 = 0 as *u8,
 ) -> C {
-    backend::install();   // register this backend's facet verbs before any render
+    backend::install();
+    genc::install_generated();   // register this backend's facet verbs before any render
     var owned: C = component;                   // the runtime holds the instance
     let cp: *u8 = #addr_of(owned) as *u8;       // stable address in this blocking frame
     let root: Node = owned.build();             // build(ref this) wires handlers at cp
@@ -447,6 +450,7 @@ impl App {
     // allocation failed) — the loop cannot continue without a screen.
     fn run(ref this, initial: str, arg: str = "") -> status::Status {
         backend::install();
+    genc::install_generated();
         nav::reset(arg);
         RUNNING_APP = #addr_of(this) as *u8;
         nav::set_close_fn(app_close_current);

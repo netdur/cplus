@@ -70,6 +70,18 @@ fn set_thumb_color_fn(f: fn(core::Handle, core::Color) -> bool) { SET_THUMB_COLO
 static SET_THUMB_IMAGE_FN: fn(core::Handle, str) -> bool = #zero::[fn(core::Handle, str) -> bool]();
 fn set_thumb_image_fn(f: fn(core::Handle, str) -> bool) { SET_THUMB_IMAGE_FN = f; return; }
 
+// Label.MaxLines — wired: setMaximumNumberOfLines: (probe-verified)
+static SET_MAX_LINES_FN: fn(core::Handle, i64) -> bool = #zero::[fn(core::Handle, i64) -> bool]();
+fn set_max_lines_fn(f: fn(core::Handle, i64) -> bool) { SET_MAX_LINES_FN = f; return; }
+
+// Picker.SelectedIndex — wired: selectItemAtIndex: (probe-verified)
+static SET_SELECTED_INDEX_FN: fn(core::Handle, i64) -> bool = #zero::[fn(core::Handle, i64) -> bool]();
+fn set_selected_index_fn(f: fn(core::Handle, i64) -> bool) { SET_SELECTED_INDEX_FN = f; return; }
+
+// Stepper.Increment — wired: setIncrement: (probe-verified)
+static SET_INCREMENT_FN: fn(core::Handle, f64) -> bool = #zero::[fn(core::Handle, f64) -> bool]();
+fn set_increment_fn(f: fn(core::Handle, f64) -> bool) { SET_INCREMENT_FN = f; return; }
+
 impl core::Handle {
     // VisualElement.Background. Chainable; a no-op on a miss, a kind
     // without the property, or a backend that has not wired it.
@@ -188,6 +200,30 @@ impl core::Handle {
     fn set_thumb_image(this, v: str) -> core::Handle {
         let f: fn(core::Handle, str) -> bool = SET_THUMB_IMAGE_FN;
         if f != (0 as fn(core::Handle, str) -> bool) { let _ok: bool = f(this, v); }
+        return this;
+    }
+
+    // Label.MaxLines. Chainable; a no-op on a miss, a kind
+    // without the property, or a backend that has not wired it.
+    fn set_max_lines(this, v: i64) -> core::Handle {
+        let f: fn(core::Handle, i64) -> bool = SET_MAX_LINES_FN;
+        if f != (0 as fn(core::Handle, i64) -> bool) { let _ok: bool = f(this, v); }
+        return this;
+    }
+
+    // Picker.SelectedIndex. Chainable; a no-op on a miss, a kind
+    // without the property, or a backend that has not wired it.
+    fn set_selected_index(this, v: i64) -> core::Handle {
+        let f: fn(core::Handle, i64) -> bool = SET_SELECTED_INDEX_FN;
+        if f != (0 as fn(core::Handle, i64) -> bool) { let _ok: bool = f(this, v); }
+        return this;
+    }
+
+    // Stepper.Increment. Chainable; a no-op on a miss, a kind
+    // without the property, or a backend that has not wired it.
+    fn set_increment(this, v: f64) -> core::Handle {
+        let f: fn(core::Handle, f64) -> bool = SET_INCREMENT_FN;
+        if f != (0 as fn(core::Handle, f64) -> bool) { let _ok: bool = f(this, v); }
         return this;
     }
 

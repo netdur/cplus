@@ -24,5 +24,8 @@ band only.
 | `set_maximum_track_color` | Color | Slider.MaximumTrackColor | UNSUPPORTED on AppKit: NSSlider has no equivalent |
 | `set_thumb_color` | Color | Slider.ThumbColor | UNSUPPORTED on AppKit: NSSlider has no equivalent |
 | `set_thumb_image` | str | Slider.ThumbImageSource | UNSUPPORTED on AppKit: NSSlider has no equivalent |
+| `set_max_lines` | i64 | Label.MaxLines | wired: setMaximumNumberOfLines: (probe-verified) |
+| `set_selected_index` | i64 | Picker.SelectedIndex | wired: selectItemAtIndex: (probe-verified) |
+| `set_increment` | f64 | Stepper.Increment | wired: setIncrement: (probe-verified) |
 
 GTK: nothing wired yet — every slot above is UNSUPPORTED there.
