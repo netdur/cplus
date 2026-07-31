@@ -68,6 +68,10 @@ n.set_min_width(flex::StyleLength::points(80.0f64));
 n.set_max_width(flex::StyleLength::points(320.0f64));
 ```
 
+Style reads back through the public `style` field (`n.style.width`,
+`n.style.flex_grow`) — requested values, as distinct from the computed
+`frame()`. Direct writes to `style` are as cache-safe as the setters.
+
 ## Flex distribution
 
 ```cplus

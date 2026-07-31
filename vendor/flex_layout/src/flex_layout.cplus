@@ -264,7 +264,7 @@ impl Style {
 // for example). The engine never reads through the pointer; it only promises
 // to call the release fn exactly once — when the owning node drops, or
 // when the attachment is replaced or detached. This is the owning
-// counterpart to `node_ctx`, which stays a borrowed context for the
+// counterpart to `_node_ctx`, which stays a borrowed context for the
 // measure/baseline callbacks.
 
 fn release_none(p: *u8) { return; }
@@ -316,55 +316,59 @@ struct Frame {
 }
 
 struct Node {
+    // The one public field: the node's layout style, plain data. Read it
+    // directly (`n.style.width`); write through the `set_*` sugar or directly
+    // — both are equally cache-safe, because change detection compares the
+    // whole style against last pass's snapshot instead of trusting setters.
     style: Style,
     _children: vec::Vec[box::Box[Node]],
-    measure: fn(*u8, f64, MeasureMode, f64, MeasureMode) -> Size,
-    has_measure: bool,
-    baseline: fn(*u8, f64, f64) -> f64,   // ascent from top, given (ctx, width, height)
-    has_baseline: bool,
-    opaque node_ctx: *u8,            // borrowed context for measure/baseline (adapter owns it)
-    node_attachment: Attachment,     // owned opaque attachment (released on drop/detach)
-    grid_cols: vec::Vec[GridTrack],  // grid-template-columns (display:grid only)
-    grid_rows: vec::Vec[GridTrack],  // grid-template-rows
-    grid_col_span: i32,              // how many columns this item spans (>=1)
-    grid_row_span: i32,              // how many rows this item spans (>=1)
-    grid_dense: bool,                // grid-auto-flow: dense (container)
-    grid_col_start: i32,             // explicit start column line, 0-based (-1 = auto)
-    grid_row_start: i32,             // explicit start row line, 0-based (-1 = auto)
-    grid_col_line_names: vec::Vec[text::Text], // container: name registered at each line index
-    grid_row_line_names: vec::Vec[text::Text],
-    grid_cols_subgrid: bool,         // columns adopt the parent grid's tracks
-    grid_rows_subgrid: bool,         // rows adopt the parent grid's tracks
+    _measure: fn(*u8, f64, MeasureMode, f64, MeasureMode) -> Size,
+    _has_measure: bool,
+    _baseline: fn(*u8, f64, f64) -> f64,   // ascent from top, given (ctx, width, height)
+    _has_baseline: bool,
+    opaque _node_ctx: *u8,            // borrowed context for measure/baseline (adapter owns it)
+    _attachment: Attachment,          // owned opaque attachment (released on drop/detach)
+    _grid_cols: vec::Vec[GridTrack],  // grid-template-columns (display:grid only)
+    _grid_rows: vec::Vec[GridTrack],  // grid-template-rows
+    _grid_col_span: i32,              // how many columns this item spans (>=1)
+    _grid_row_span: i32,              // how many rows this item spans (>=1)
+    _grid_dense: bool,                // grid-auto-flow: dense (container)
+    _grid_col_start: i32,             // explicit start column line, 0-based (-1 = auto)
+    _grid_row_start: i32,             // explicit start row line, 0-based (-1 = auto)
+    _grid_col_line_names: vec::Vec[text::Text], // container: name registered at each line index
+    _grid_row_line_names: vec::Vec[text::Text],
+    _grid_cols_subgrid: bool,         // columns adopt the parent grid's tracks
+    _grid_rows_subgrid: bool,         // rows adopt the parent grid's tracks
     // Transient: track sizes inherited from the parent for a subgrid axis, written
     // by the parent before it recurses. Not user input; not part of the cache key.
-    sub_cols: vec::Vec[f64],
-    sub_rows: vec::Vec[f64],
-    sub_col_gap: f64,
-    sub_row_gap: f64,
-    has_sub_cols: bool,
-    has_sub_rows: bool,
-    layout: Frame,
-    rdir: Direction,     // resolved direction (LTR/RTL) filled in during layout
+    _sub_cols: vec::Vec[f64],
+    _sub_rows: vec::Vec[f64],
+    _sub_col_gap: f64,
+    _sub_row_gap: f64,
+    _has_sub_cols: bool,
+    _has_sub_rows: bool,
+    _layout: Frame,
+    _rdir: Direction,     // resolved direction (LTR/RTL) filled in during layout
 
     // Within-pass intrinsic-measurement memo (reset at the start of each
     // calculate_layout, so it is always sound and never stale across passes).
-    measured: bool,
-    m_avail_w: f64,
-    m_avail_h: f64,
-    m_size_w: f64,
-    m_size_h: f64,
+    _measured: bool,
+    _m_avail_w: f64,
+    _m_avail_h: f64,
+    _m_size_w: f64,
+    _m_size_h: f64,
 
     // Cross-call incremental cache. A subtree whose style/grid/children are all
     // unchanged since the last layout, and which is handed the same box+direction,
     // keeps its computed frames (no re-layout). Change is detected by comparing the
     // snapshot below to the live values — no per-setter dirty flag to forget.
-    cached_valid: bool,
-    cached_style: Style,
-    cached_box: Frame,
-    cached_dir: Direction,
-    cached_child_count: usize,
-    cached_grid_sig: f64,
-    subtree_changed: bool,   // scratch, recomputed each pass
+    _cached_valid: bool,
+    _cached_style: Style,
+    _cached_box: Frame,
+    _cached_dir: Direction,
+    _cached_child_count: usize,
+    _cached_grid_sig: f64,
+    _subtree_changed: bool,   // scratch, recomputed each pass
 
     // Whether the last calculate_layout actually re-laid this node out.
     // false = the incremental cache kept the whole subtree's frames — every
@@ -372,7 +376,7 @@ struct Node {
     // adapter can then skip re-applying that subtree to its view tree. Only
     // meaningful along paths whose ancestors are all fresh: a skipped node's
     // DESCENDANTS keep their stale flags (they were never visited).
-    layout_fresh: bool,
+    _layout_fresh: bool,
 }
 
 impl Node {
@@ -380,44 +384,44 @@ impl Node {
         return Node {
             style: Style::new(),
             _children: vec::new::[box::Box[Node]](),
-            measure: measure_none,
-            has_measure: false,
-            baseline: baseline_none,
-            has_baseline: false,
-            node_ctx: 0 as *u8,
-            node_attachment: Attachment::none(),
-            grid_cols: vec::new::[GridTrack](),
-            grid_rows: vec::new::[GridTrack](),
-            grid_col_span: 1,
-            grid_row_span: 1,
-            grid_dense: false,
-            grid_col_start: -1,
-            grid_row_start: -1,
-            grid_col_line_names: vec::new::[text::Text](),
-            grid_row_line_names: vec::new::[text::Text](),
-            grid_cols_subgrid: false,
-            grid_rows_subgrid: false,
-            sub_cols: vec::new::[f64](),
-            sub_rows: vec::new::[f64](),
-            sub_col_gap: 0.0f64,
-            sub_row_gap: 0.0f64,
-            has_sub_cols: false,
-            has_sub_rows: false,
-            layout: Frame { left: 0.0f64, top: 0.0f64, width: 0.0f64, height: 0.0f64 },
-            rdir: Direction::LTR,
-            measured: false,
-            m_avail_w: 0.0f64,
-            m_avail_h: 0.0f64,
-            m_size_w: 0.0f64,
-            m_size_h: 0.0f64,
-            cached_valid: false,
-            cached_style: Style::new(),
-            cached_box: Frame { left: 0.0f64, top: 0.0f64, width: 0.0f64, height: 0.0f64 },
-            cached_dir: Direction::LTR,
-            cached_child_count: 0 as usize,
-            cached_grid_sig: 0.0f64,
-            subtree_changed: true,
-            layout_fresh: true,
+            _measure: measure_none,
+            _has_measure: false,
+            _baseline: baseline_none,
+            _has_baseline: false,
+            _node_ctx: 0 as *u8,
+            _attachment: Attachment::none(),
+            _grid_cols: vec::new::[GridTrack](),
+            _grid_rows: vec::new::[GridTrack](),
+            _grid_col_span: 1,
+            _grid_row_span: 1,
+            _grid_dense: false,
+            _grid_col_start: -1,
+            _grid_row_start: -1,
+            _grid_col_line_names: vec::new::[text::Text](),
+            _grid_row_line_names: vec::new::[text::Text](),
+            _grid_cols_subgrid: false,
+            _grid_rows_subgrid: false,
+            _sub_cols: vec::new::[f64](),
+            _sub_rows: vec::new::[f64](),
+            _sub_col_gap: 0.0f64,
+            _sub_row_gap: 0.0f64,
+            _has_sub_cols: false,
+            _has_sub_rows: false,
+            _layout: Frame { left: 0.0f64, top: 0.0f64, width: 0.0f64, height: 0.0f64 },
+            _rdir: Direction::LTR,
+            _measured: false,
+            _m_avail_w: 0.0f64,
+            _m_avail_h: 0.0f64,
+            _m_size_w: 0.0f64,
+            _m_size_h: 0.0f64,
+            _cached_valid: false,
+            _cached_style: Style::new(),
+            _cached_box: Frame { left: 0.0f64, top: 0.0f64, width: 0.0f64, height: 0.0f64 },
+            _cached_dir: Direction::LTR,
+            _cached_child_count: 0 as usize,
+            _cached_grid_sig: 0.0f64,
+            _subtree_changed: true,
+            _layout_fresh: true,
         };
     }
 
@@ -443,7 +447,7 @@ impl Node {
         match box::new(child) {
             option::Option[box::Box[Node]]::Some(b) => {
                 let s: status::Status = this._children.insert(b, at);
-                this.cached_valid = false;
+                this._cached_valid = false;
                 return s;
             }
             option::Option[box::Box[Node]]::None => { return status::Status::OutOfMemory; }
@@ -457,7 +461,7 @@ impl Node {
     fn remove_child(ref this, at: usize) -> option::Option[Node] {
         match this._children.remove(at) {
             option::Option[box::Box[Node]]::Some(b) => {
-                this.cached_valid = false;
+                this._cached_valid = false;
                 return option::Option[Node]::Some(b.unwrap());
             }
             option::Option[box::Box[Node]]::None => { return option::Option[Node]::None; }
@@ -472,7 +476,7 @@ impl Node {
         match this._children.remove(from) {
             option::Option[box::Box[Node]]::Some(b) => {
                 let s: status::Status = this._children.insert(b, to);
-                this.cached_valid = false;
+                this._cached_valid = false;
                 return s;
             }
             option::Option[box::Box[Node]]::None => { return status::Status::OutOfBounds; }
@@ -495,43 +499,43 @@ impl Node {
     // `[sidebar] 200px`. Look indices up later with `column_line(named:)`.
     fn add_grid_column(ref this, track: GridTrack, line: str = "") {
         if #str_len(line) > (0 as usize) {
-            let idx: usize = this.grid_cols.count();
-            while this.grid_col_line_names.count() <= idx { this.grid_col_line_names.append("".to_text()); }
-            this.grid_col_line_names.set(line.to_text(), idx);
+            let idx: usize = this._grid_cols.count();
+            while this._grid_col_line_names.count() <= idx { this._grid_col_line_names.append("".to_text()); }
+            this._grid_col_line_names.set(line.to_text(), idx);
         }
-        this.grid_cols.append(track);
+        this._grid_cols.append(track);
         return;
     }
     fn add_grid_row(ref this, track: GridTrack, line: str = "") {
         if #str_len(line) > (0 as usize) {
-            let idx: usize = this.grid_rows.count();
-            while this.grid_row_line_names.count() <= idx { this.grid_row_line_names.append("".to_text()); }
-            this.grid_row_line_names.set(line.to_text(), idx);
+            let idx: usize = this._grid_rows.count();
+            while this._grid_row_line_names.count() <= idx { this._grid_row_line_names.append("".to_text()); }
+            this._grid_row_line_names.set(line.to_text(), idx);
         }
-        this.grid_rows.append(track);
+        this._grid_rows.append(track);
         return;
     }
-    fn set_grid_dense(ref this, dense: bool) { this.grid_dense = dense; return; }        // container
-    fn set_grid_column_span(ref this, count: i32) { this.grid_col_span = if count < 1 { 1 } else { count }; return; }  // item
-    fn set_grid_row_span(ref this, count: i32) { this.grid_row_span = if count < 1 { 1 } else { count }; return; }     // item
+    fn set_grid_dense(ref this, dense: bool) { this._grid_dense = dense; return; }        // container
+    fn set_grid_column_span(ref this, count: i32) { this._grid_col_span = if count < 1 { 1 } else { count }; return; }  // item
+    fn set_grid_row_span(ref this, count: i32) { this._grid_row_span = if count < 1 { 1 } else { count }; return; }     // item
     // Explicit placement: 0-based start line (column index) for this item; -1 resets to auto.
-    fn set_grid_column_start(ref this, line: i32) { this.grid_col_start = line; return; }  // item
-    fn set_grid_row_start(ref this, line: i32) { this.grid_row_start = line; return; }     // item
+    fn set_grid_column_start(ref this, line: i32) { this._grid_col_start = line; return; }  // item
+    fn set_grid_row_start(ref this, line: i32) { this._grid_row_start = line; return; }     // item
     // Subgrid: this (grid) item adopts the parent grid's tracks over its span,
     // so its own children align to the parent's grid lines.
-    fn set_grid_columns_subgrid(ref this, enabled: bool) { this.grid_cols_subgrid = enabled; return; }
-    fn set_grid_rows_subgrid(ref this, enabled: bool) { this.grid_rows_subgrid = enabled; return; }
+    fn set_grid_columns_subgrid(ref this, enabled: bool) { this._grid_cols_subgrid = enabled; return; }
+    fn set_grid_rows_subgrid(ref this, enabled: bool) { this._grid_rows_subgrid = enabled; return; }
 
     // Named grid lines (container). `add_grid_column(track, line: "sidebar")`
     // names the line *before* the added track, matching CSS `[sidebar] 200px`.
     // `column_line(named:)` returns that line's index, or None if unknown.
     fn column_line(this, named: str) -> option::Option[i32] {
-        let idx: i32 = line_index(this.grid_col_line_names, named);
+        let idx: i32 = line_index(this._grid_col_line_names, named);
         if idx < 0 { return option::Option[i32]::None; }
         return option::Option[i32]::Some(idx);
     }
     fn row_line(this, named: str) -> option::Option[i32] {
-        let idx: i32 = line_index(this.grid_row_line_names, named);
+        let idx: i32 = line_index(this._grid_row_line_names, named);
         if idx < 0 { return option::Option[i32]::None; }
         return option::Option[i32]::Some(idx);
     }
@@ -617,54 +621,137 @@ impl Node {
 
     // Opaque per-node context handed to the measure / baseline callbacks — a
     // platform adapter stores the backing view here so the callback can size that
-    // specific view. Pass `0 as *u8` to clear.
-    fn set_context(ref this, ctx: *u8) { this.node_ctx = ctx; return; }
-    fn context(this) -> *u8 { return this.node_ctx; }
+    // specific view. Pass `0 as *u8` to clear. Invalidates: the measure callback
+    // reads the context, so a new context can mean a new measured size.
+    fn set_context(ref this, ctx: *u8) {
+        this._node_ctx = ctx;
+        this._cached_valid = false;
+        return;
+    }
+    fn context(this) -> *u8 { return this._node_ctx; }
 
     // Attach an owned opaque pointer to the node — typically the adapter's
     // retained backing view. The node releases it through `release` exactly
     // once: on node drop, on `detach()`, or when a new `attach` replaces it.
     fn attach(ref this, ptr: *u8, release: fn(*u8)) {
-        this.node_attachment = Attachment::own(ptr, release);
+        this._attachment = Attachment::own(ptr, release);
         return;
     }
     fn attachment(this) -> option::Option[*u8] {
-        if this.node_attachment.armed() { return option::Option[*u8]::Some(this.node_attachment.get()); }
+        if this._attachment.armed() { return option::Option[*u8]::Some(this._attachment.get()); }
         return option::Option[*u8]::None;
     }
-    fn detach(ref this) { this.node_attachment = Attachment::none(); return; }
+    fn detach(ref this) { this._attachment = Attachment::none(); return; }
 
+    // Setting, swapping, or clearing a callback invalidates the node's cache
+    // entry — the cache compares styles, and a callback change is invisible to
+    // it (the same reason `mark_content_changed` exists).
     fn set_measure(ref this, f: fn(*u8, f64, MeasureMode, f64, MeasureMode) -> Size) {
-        this.measure = f;
-        this.has_measure = true;
+        this._measure = f;
+        this._has_measure = true;
+        this._cached_valid = false;
+        return;
+    }
+    fn has_measure(this) -> bool { return this._has_measure; }
+    // Back to no measure fn: the node sizes from style / children / content-fit.
+    fn clear_measure(ref this) {
+        this._measure = measure_none;
+        this._has_measure = false;
+        this._cached_valid = false;
         return;
     }
     // Provide a baseline (ascent from the top, given ctx + the item's width/height)
     // for align-items: baseline — e.g. a text view's first-line baseline.
     fn set_baseline(ref this, f: fn(*u8, f64, f64) -> f64) {
-        this.baseline = f;
-        this.has_baseline = true;
+        this._baseline = f;
+        this._has_baseline = true;
+        this._cached_valid = false;
+        return;
+    }
+    fn has_baseline(this) -> bool { return this._has_baseline; }
+    fn clear_baseline(ref this) {
+        this._baseline = baseline_none;
+        this._has_baseline = false;
+        this._cached_valid = false;
         return;
     }
 
     // ---- computed layout getters ----
     // The computed frame — absolute in the root's coordinate space.
-    fn frame(this) -> Frame { return this.layout; }
-    fn resolved_direction(this) -> Direction { return this.rdir; }
+    fn frame(this) -> Frame { return this._layout; }
+    fn resolved_direction(this) -> Direction { return this._rdir; }
 
     // ---- style read-back (for adapters: e.g. overflow -> NSView.clipsToBounds) ----
+    // Everything else in the style is read directly off the public `style`
+    // field (`n.style.width`, `n.style.flex_grow`, `n.style.margin_left`, …).
+    // The methods below exist where a plain field read would hand back a
+    // sentinel, or where the data lives outside `style`.
     fn overflow(this) -> Overflow { return this.style.overflow; }
     fn display(this) -> Display { return this.style.display; }
     fn z_index(this) -> i32 { return this.style.z_index; }
     fn position_type(this) -> PositionType { return this.style.position_type; }
+    // The width/height ratio, or None when unset (stored as the NaN sentinel).
+    fn aspect_ratio(this) -> option::Option[f64] {
+        if is_undefined(this.style.aspect_ratio) { return option::Option[f64]::None; }
+        return option::Option[f64]::Some(this.style.aspect_ratio);
+    }
+
+    // ---- grid read-back ----
+    fn grid_column_count(this) -> usize { return this._grid_cols.count(); }
+    fn grid_row_count(this) -> usize { return this._grid_rows.count(); }
+    fn grid_column(this, at: usize) -> option::Option[GridTrack] {
+        return match this._grid_cols.at_ptr(at) {
+            option::Option[*GridTrack]::Some(p) => option::Option[GridTrack]::Some({ (*p) }),
+            option::Option[*GridTrack]::None => option::Option[GridTrack]::None,
+        };
+    }
+    fn grid_row(this, at: usize) -> option::Option[GridTrack] {
+        return match this._grid_rows.at_ptr(at) {
+            option::Option[*GridTrack]::Some(p) => option::Option[GridTrack]::Some({ (*p) }),
+            option::Option[*GridTrack]::None => option::Option[GridTrack]::None,
+        };
+    }
+    fn grid_column_span(this) -> i32 { return this._grid_col_span; }
+    fn grid_row_span(this) -> i32 { return this._grid_row_span; }
+    // The explicit start line, or None when placement is auto.
+    fn grid_column_start(this) -> option::Option[i32] {
+        if this._grid_col_start < 0 { return option::Option[i32]::None; }
+        return option::Option[i32]::Some(this._grid_col_start);
+    }
+    fn grid_row_start(this) -> option::Option[i32] {
+        if this._grid_row_start < 0 { return option::Option[i32]::None; }
+        return option::Option[i32]::Some(this._grid_row_start);
+    }
+    fn is_grid_dense(this) -> bool { return this._grid_dense; }
+    fn is_grid_columns_subgrid(this) -> bool { return this._grid_cols_subgrid; }
+    fn is_grid_rows_subgrid(this) -> bool { return this._grid_rows_subgrid; }
 
     // Copy of a direct child's computed frame (None if out of range). Frames are
     // absolute in the root's coordinate space.
     fn child_frame(this, at: usize) -> option::Option[Frame] {
         return match this.child_ptr(at) {
-            option::Option[*Node]::Some(p) => option::Option[Frame]::Some({ (*p).layout }),
+            option::Option[*Node]::Some(p) => option::Option[Frame]::Some({ (*p)._layout }),
             option::Option[*Node]::None => option::Option[Frame]::None,
         };
+    }
+
+    // Where a cursor sits in this node's child list right now (None if it is
+    // not a direct child). Identity comparison — the inverse of `child_ptr`,
+    // for verbs that need an index (`remove_child`, `move_child`) when all
+    // you hold is the `*Node`.
+    fn child_index(this, of: *Node) -> option::Option[usize] {
+        let n: usize = this._children.count();
+        var i: usize = 0 as usize;
+        while i < n {
+            match this.child_ptr(i) {
+                option::Option[*Node]::Some(p) => {
+                    if p == of { return option::Option[usize]::Some(i); }
+                }
+                option::Option[*Node]::None => { }
+            }
+            i = i +% (1 as usize);
+        }
+        return option::Option[usize]::None;
     }
 }
 
@@ -743,7 +830,7 @@ impl Node {
 
         // Resolve the root's own box from its style against the available space,
         // falling back to the available space when the style says auto.
-        this.rdir = dir;
+        this._rdir = dir;
         var w: f64 = this.style.width.resolve(width);
         var h: f64 = this.style.height.resolve(height);
         if is_undefined(w) { w = width; }
@@ -769,10 +856,10 @@ impl Node {
     // last layout, or any descendant did. Read-only detection — no dirty flags.
     fn aggregate_changed(ref this) -> bool {
         var changed: bool = false;
-        if !this.cached_valid { changed = true; }
-        if !style_eq(this.style, this.cached_style) { changed = true; }
-        if this.cached_child_count != this._children.count() { changed = true; }
-        if !bits_eq(this.cached_grid_sig, this.grid_sig()) { changed = true; }
+        if !this._cached_valid { changed = true; }
+        if !style_eq(this.style, this._cached_style) { changed = true; }
+        if this._cached_child_count != this._children.count() { changed = true; }
+        if !bits_eq(this._cached_grid_sig, this.grid_sig()) { changed = true; }
         let n: usize = this._children.count();
         var i: usize = 0 as usize;
         while i < n {
@@ -782,31 +869,31 @@ impl Node {
             }
             i = i +% (1 as usize);
         }
-        this.subtree_changed = changed;
+        this._subtree_changed = changed;
         return changed;
     }
 
     // A checksum of the grid inputs that affect layout (template tracks + this
     // item's span/placement). Cheap; collisions are astronomically unlikely.
     fn grid_sig(this) -> f64 {
-        var s: f64 = (this.grid_col_span as f64) * 7.0f64 + (this.grid_row_span as f64) * 13.0f64
-                   + (this.grid_col_start as f64) * 17.0f64 + (this.grid_row_start as f64) * 19.0f64
-                   + (if this.grid_dense { 1.0f64 } else { 0.0f64 }) * 23.0f64
-                   + (if this.grid_cols_subgrid { 1.0f64 } else { 0.0f64 }) * 29.0f64
-                   + (if this.grid_rows_subgrid { 1.0f64 } else { 0.0f64 }) * 41.0f64;
+        var s: f64 = (this._grid_col_span as f64) * 7.0f64 + (this._grid_row_span as f64) * 13.0f64
+                   + (this._grid_col_start as f64) * 17.0f64 + (this._grid_row_start as f64) * 19.0f64
+                   + (if this._grid_dense { 1.0f64 } else { 0.0f64 }) * 23.0f64
+                   + (if this._grid_cols_subgrid { 1.0f64 } else { 0.0f64 }) * 29.0f64
+                   + (if this._grid_rows_subgrid { 1.0f64 } else { 0.0f64 }) * 41.0f64;
         var i: usize = 0 as usize;
-        let nc: usize = this.grid_cols.count();
+        let nc: usize = this._grid_cols.count();
         while i < nc {
-            match this.grid_cols.at_ptr(i) {
+            match this._grid_cols.at_ptr(i) {
                 option::Option[*GridTrack]::Some(p) => { s = s + ((i as f64) + 1.0f64) * ({ (*p).value } * 31.0f64 + (tu_disc({ (*p).unit }) as f64) + 1.0f64); }
                 option::Option[*GridTrack]::None => {}
             }
             i = i +% (1 as usize);
         }
         i = 0 as usize;
-        let nr: usize = this.grid_rows.count();
+        let nr: usize = this._grid_rows.count();
         while i < nr {
-            match this.grid_rows.at_ptr(i) {
+            match this._grid_rows.at_ptr(i) {
                 option::Option[*GridTrack]::Some(p) => { s = s + ((i as f64) + 1.0f64) * ({ (*p).value } * 37.0f64 + (tu_disc({ (*p).unit }) as f64) + 2.0f64); }
                 option::Option[*GridTrack]::None => {}
             }
@@ -819,22 +906,22 @@ impl Node {
     // unchanged and the box+direction match the last pass (frames stay valid). On a
     // real layout, snapshot the cache for next time.
     fn apply_layout(ref this, frame: Frame, dir: Direction) {
-        if this.cached_valid && !this.subtree_changed
-            && layout_eq(this.cached_box, frame) && dir_eq(this.cached_dir, dir) {
-            this.layout = frame;   // identical to cached; descendant frames unchanged
-            this.layout_fresh = false;
+        if this._cached_valid && !this._subtree_changed
+            && layout_eq(this._cached_box, frame) && dir_eq(this._cached_dir, dir) {
+            this._layout = frame;   // identical to cached; descendant frames unchanged
+            this._layout_fresh = false;
             return;
         }
-        this.layout = frame;
-        this.layout_fresh = true;
-        this.rdir = dir;
+        this._layout = frame;
+        this._layout_fresh = true;
+        this._rdir = dir;
         this.layout_children();
-        this.cached_valid = true;
-        this.cached_style = this.style;
-        this.cached_box = frame;
-        this.cached_dir = dir;
-        this.cached_child_count = this._children.count();
-        this.cached_grid_sig = this.grid_sig();
+        this._cached_valid = true;
+        this._cached_style = this.style;
+        this._cached_box = frame;
+        this._cached_dir = dir;
+        this._cached_child_count = this._children.count();
+        this._cached_grid_sig = this.grid_sig();
         return;
     }
 
@@ -844,7 +931,7 @@ impl Node {
     // re-applying the whole subtree. Only meaningful along all-fresh paths
     // (a skipped node's descendants keep stale flags — never read them
     // without checking the ancestor first).
-    fn layout_changed(this) -> bool { return this.layout_fresh; }
+    fn layout_changed(this) -> bool { return this._layout_fresh; }
 
     // The node's CONTENT changed in place (an adapter edited the measured
     // text of an existing leaf, say) without any style change the cache
@@ -852,7 +939,7 @@ impl Node {
     // `calculate_layout` re-measures and re-lays it (and, via the bottom-up
     // change aggregation, every ancestor that depends on its size). The
     // measure-fn analog of a style write.
-    fn mark_content_changed(ref this) { this.cached_valid = false; return; }
+    fn mark_content_changed(ref this) { this._cached_valid = false; return; }
 
     // Snap every frame to a device pixel grid of `scale` pixels per point (1.0 =
     // integer points, 2.0 = retina half-points). Rounds each node's leading edge
@@ -860,13 +947,13 @@ impl Node {
     // stay seamless (no cumulative rounding gaps). Call after `calculate_layout`.
     fn round_to_pixel(ref this, scale: f64 = 1.0f64) {
         if scale <= 0.0f64 { return; }
-        let left: f64 = this.layout.left;
-        let top: f64 = this.layout.top;
+        let left: f64 = this._layout.left;
+        let top: f64 = this._layout.top;
         let rl: f64 = round_scaled(left, scale);
         let rt: f64 = round_scaled(top, scale);
-        let rr: f64 = round_scaled(left + this.layout.width, scale);
-        let rb: f64 = round_scaled(top + this.layout.height, scale);
-        this.layout = Frame { left: rl, top: rt, width: f_max(0.0f64, rr - rl), height: f_max(0.0f64, rb - rt) };
+        let rr: f64 = round_scaled(left + this._layout.width, scale);
+        let rb: f64 = round_scaled(top + this._layout.height, scale);
+        this._layout = Frame { left: rl, top: rt, width: f_max(0.0f64, rr - rl), height: f_max(0.0f64, rb - rt) };
         let n: usize = this._children.count();
         var i: usize = 0 as usize;
         while i < n {
@@ -879,7 +966,7 @@ impl Node {
         return;
     }
 
-    // Lay out this node's children within its already-known box (this.layout.width
+    // Lay out this node's children within its already-known box (this._layout.width
     // / height). Recurses into each child once its box is known.
     fn layout_children(ref this) {
         let n: usize = this._children.count();
@@ -891,13 +978,13 @@ impl Node {
         }
 
         let row: bool = is_row(this.style.flex_direction);
-        let node_w: f64 = this.layout.width;
-        let node_h: f64 = this.layout.height;
+        let node_w: f64 = this._layout.width;
+        let node_h: f64 = this._layout.height;
 
         // RTL flips the row main axis (items flow right-to-left) and the column
         // cross axis (cross start on the right). `flip_main` folds together
         // *-reverse and RTL (XOR).
-        let rtl: bool = match this.rdir { Direction::RTL => true, _ => false };
+        let rtl: bool = match this._rdir { Direction::RTL => true, _ => false };
         let flip_main: bool = is_reverse(this.style.flex_direction) != (row && rtl);
         let flip_cross: bool = (!row) && rtl;
 
@@ -1285,8 +1372,8 @@ impl Node {
                     off_y = if is_defined(pt2) { pt2 } else if is_defined(pb2) { 0.0f64 - pb2 } else { 0.0f64 };
                 }
 
-                let child_left: f64 = this.layout.left + off_x + (if row { main_pos } else { cross_pos });
-                let child_top: f64 = this.layout.top + off_y + (if row { cross_pos } else { main_pos });
+                let child_left: f64 = this._layout.left + off_x + (if row { main_pos } else { cross_pos });
+                let child_top: f64 = this._layout.top + off_y + (if row { cross_pos } else { main_pos });
                 this.set_child_box(ci, child_left, child_top,
                                    if row { main_size } else { cross_size },
                                    if row { cross_size } else { main_size });
@@ -1324,9 +1411,9 @@ impl Node {
     // Each item stretches to its cell unless it has an explicit size.
     fn grid_layout(ref this) {
         let n: usize = this._children.count();
-        let node_w: f64 = this.layout.width;
-        let node_h: f64 = this.layout.height;
-        let grtl: bool = match this.rdir { Direction::RTL => true, _ => false };
+        let node_w: f64 = this._layout.width;
+        let node_h: f64 = this._layout.height;
+        let grtl: bool = match this._rdir { Direction::RTL => true, _ => false };
         let own: Style = normalize_edges(this.style, grtl);
         let pad_l: f64 = edge_px(own.padding_left, own.border_left, node_w);
         let pad_t: f64 = edge_px(own.padding_top, own.border_top, node_w);
@@ -1338,14 +1425,14 @@ impl Node {
         // Subgrid: consume any tracks the parent handed us (consume-once; the parent
         // re-feeds every time it lays us out). When present they replace our own
         // template + gap on that axis, so our children align to the parent's lines.
-        let use_sub_cols: bool = this.has_sub_cols;
-        let use_sub_rows: bool = this.has_sub_rows;
-        var sub_cols_local: vec::Vec[f64] = copy_f64(this.sub_cols);
-        var sub_rows_local: vec::Vec[f64] = copy_f64(this.sub_rows);
-        this.has_sub_cols = false;
-        this.has_sub_rows = false;
-        let col_gap: f64 = if use_sub_cols { this.sub_col_gap } else { or_zero(this.style.gap_column.resolve(inner_w)) };
-        let row_gap: f64 = if use_sub_rows { this.sub_row_gap } else { or_zero(this.style.gap_row.resolve(inner_h)) };
+        let use_sub_cols: bool = this._has_sub_cols;
+        let use_sub_rows: bool = this._has_sub_rows;
+        var sub_cols_local: vec::Vec[f64] = copy_f64(this._sub_cols);
+        var sub_rows_local: vec::Vec[f64] = copy_f64(this._sub_rows);
+        this._has_sub_cols = false;
+        this._has_sub_rows = false;
+        let col_gap: f64 = if use_sub_cols { this._sub_col_gap } else { or_zero(this.style.gap_column.resolve(inner_w)) };
+        let row_gap: f64 = if use_sub_rows { this._sub_row_gap } else { or_zero(this.style.gap_row.resolve(inner_h)) };
 
         // Grid (in-flow) item indices.
         var items: vec::Vec[usize] = vec::new::[usize]();
@@ -1359,10 +1446,10 @@ impl Node {
         }
         let item_count: usize = items.count();
 
-        let explicit_cols: usize = this.grid_cols.count();
+        let explicit_cols: usize = this._grid_cols.count();
         let col_count: usize = if use_sub_cols { f_max_usize(1 as usize, sub_cols_local.count()) }
                                else if explicit_cols > (0 as usize) { explicit_cols } else { 1 as usize };
-        let dense: bool = this.grid_dense;
+        let dense: bool = this._grid_dense;
 
         // --- auto-flow placement into cells, honoring col/row spans + dense ---
         var item_col: vec::Vec[usize] = vec::new::[usize]();
@@ -1419,7 +1506,7 @@ impl Node {
             it = it +% (1 as usize);
         }
         var row_count: usize = max_row;
-        if this.grid_rows.count() > row_count { row_count = this.grid_rows.count(); }
+        if this._grid_rows.count() > row_count { row_count = this._grid_rows.count(); }
         if use_sub_rows && sub_rows_local.count() > row_count { row_count = sub_rows_local.count(); }
 
         // --- track auto content: a spanning item contributes its size / span to
@@ -1446,8 +1533,8 @@ impl Node {
             while rr < r + rspan && rr < row_count { row_auto.set(f_max(size_at(row_auto, rr), h_share), rr); rr = rr +% (1 as usize); }
             it = it +% (1 as usize);
         }
-        let col_widths: vec::Vec[f64] = if use_sub_cols { pad_tracks(sub_cols_local, col_count) } else { resolve_tracks(this.grid_cols, col_count, inner_w, col_gap, col_auto) };
-        let row_heights: vec::Vec[f64] = if use_sub_rows { pad_tracks(sub_rows_local, row_count) } else { resolve_tracks(this.grid_rows, row_count, inner_h, row_gap, row_auto) };
+        let col_widths: vec::Vec[f64] = if use_sub_cols { pad_tracks(sub_cols_local, col_count) } else { resolve_tracks(this._grid_cols, col_count, inner_w, col_gap, col_auto) };
+        let row_heights: vec::Vec[f64] = if use_sub_rows { pad_tracks(sub_rows_local, row_count) } else { resolve_tracks(this._grid_rows, row_count, inner_h, row_gap, row_auto) };
         let col_x: vec::Vec[f64] = track_offsets(col_widths, col_gap, pad_l);
         let row_y: vec::Vec[f64] = track_offsets(row_heights, row_gap, pad_t);
 
@@ -1480,7 +1567,7 @@ impl Node {
                 let sub_r: vec::Vec[f64] = if sr { track_slice(row_heights, r, rspan) } else { vec::new::[f64]() };
                 this.feed_subgrid(ci, sub_c, sub_r, sc, sr, col_gap, row_gap);
             }
-            this.set_child_box(ci, this.layout.left + cx, this.layout.top + cy, iw, ih);
+            this.set_child_box(ci, this._layout.left + cx, this._layout.top + cy, iw, ih);
             it = it +% (1 as usize);
         }
 
@@ -1504,7 +1591,7 @@ impl Node {
     // --- small per-child readers/writers (encapsulate the one raw-ptr use) ---
 
     fn child_style(this, index: usize) -> Style {
-        let rtl: bool = match this.rdir { Direction::RTL => true, _ => false };
+        let rtl: bool = match this._rdir { Direction::RTL => true, _ => false };
         return match this.child_ptr(index) {
             option::Option[*Node]::Some(p) => normalize_edges({ (*p).style }, rtl),
             option::Option[*Node]::None => Style::new(),
@@ -1513,37 +1600,37 @@ impl Node {
 
     fn child_col_span(this, index: usize) -> usize {
         return match this.child_ptr(index) {
-            option::Option[*Node]::Some(p) => { let s: i32 = { (*p).grid_col_span }; if s < 1 { 1 as usize } else { s as usize } }
+            option::Option[*Node]::Some(p) => { let s: i32 = { (*p)._grid_col_span }; if s < 1 { 1 as usize } else { s as usize } }
             option::Option[*Node]::None => 1 as usize,
         };
     }
     fn child_row_span(this, index: usize) -> usize {
         return match this.child_ptr(index) {
-            option::Option[*Node]::Some(p) => { let s: i32 = { (*p).grid_row_span }; if s < 1 { 1 as usize } else { s as usize } }
+            option::Option[*Node]::Some(p) => { let s: i32 = { (*p)._grid_row_span }; if s < 1 { 1 as usize } else { s as usize } }
             option::Option[*Node]::None => 1 as usize,
         };
     }
     fn child_col_start(this, index: usize) -> i32 {
         return match this.child_ptr(index) {
-            option::Option[*Node]::Some(p) => { (*p).grid_col_start }
+            option::Option[*Node]::Some(p) => { (*p)._grid_col_start }
             option::Option[*Node]::None => -1,
         };
     }
     fn child_row_start(this, index: usize) -> i32 {
         return match this.child_ptr(index) {
-            option::Option[*Node]::Some(p) => { (*p).grid_row_start }
+            option::Option[*Node]::Some(p) => { (*p)._grid_row_start }
             option::Option[*Node]::None => -1,
         };
     }
     fn child_cols_subgrid(this, index: usize) -> bool {
         return match this.child_ptr(index) {
-            option::Option[*Node]::Some(p) => { (*p).grid_cols_subgrid }
+            option::Option[*Node]::Some(p) => { (*p)._grid_cols_subgrid }
             option::Option[*Node]::None => false,
         };
     }
     fn child_rows_subgrid(this, index: usize) -> bool {
         return match this.child_ptr(index) {
-            option::Option[*Node]::Some(p) => { (*p).grid_rows_subgrid }
+            option::Option[*Node]::Some(p) => { (*p)._grid_rows_subgrid }
             option::Option[*Node]::None => false,
         };
     }
@@ -1554,13 +1641,13 @@ impl Node {
                     has_cols: bool, has_rows: bool, col_gap: f64, row_gap: f64) {
         match this.child_ptr(index) {
             option::Option[*Node]::Some(p) => {
-                { (*p).sub_cols = sub_cols; }
-                { (*p).sub_rows = sub_rows; }
-                { (*p).has_sub_cols = has_cols; }
-                { (*p).has_sub_rows = has_rows; }
-                { (*p).sub_col_gap = col_gap; }
-                { (*p).sub_row_gap = row_gap; }
-                { (*p).subtree_changed = true; }   // derived inputs → never skip
+                { (*p)._sub_cols = sub_cols; }
+                { (*p)._sub_rows = sub_rows; }
+                { (*p)._has_sub_cols = has_cols; }
+                { (*p)._has_sub_rows = has_rows; }
+                { (*p)._sub_col_gap = col_gap; }
+                { (*p)._sub_row_gap = row_gap; }
+                { (*p)._subtree_changed = true; }   // derived inputs → never skip
             }
             option::Option[*Node]::None => {}
         }
@@ -1571,7 +1658,7 @@ impl Node {
     fn child_ascent(this, index: usize, width: f64, height: f64) -> f64 {
         return match this.child_ptr(index) {
             option::Option[*Node]::Some(p) => {
-                if { (*p).has_baseline } { let bf: fn(*u8, f64, f64) -> f64 = { (*p).baseline }; bf({ (*p).node_ctx }, width, height) }
+                if { (*p)._has_baseline } { let bf: fn(*u8, f64, f64) -> f64 = { (*p)._baseline }; bf({ (*p)._node_ctx }, width, height) }
                 else { height }
             }
             option::Option[*Node]::None => height,
@@ -1595,21 +1682,21 @@ impl Node {
     // subtree and the available size; within one layout pass the tree is immutable,
     // so a memo keyed on (avail_w, avail_h) is sound. Reset each pass.
     fn intrinsic_size(ref this, avail_w: f64, avail_h: f64) -> Size {
-        if this.measured && same_avail(this.m_avail_w, avail_w) && same_avail(this.m_avail_h, avail_h) {
-            return Size { width: this.m_size_w, height: this.m_size_h };
+        if this._measured && same_avail(this._m_avail_w, avail_w) && same_avail(this._m_avail_h, avail_h) {
+            return Size { width: this._m_size_w, height: this._m_size_h };
         }
         let r: Size = this.intrinsic_compute(avail_w, avail_h);
-        this.measured = true;
-        this.m_avail_w = avail_w;
-        this.m_avail_h = avail_h;
-        this.m_size_w = r.width;
-        this.m_size_h = r.height;
+        this._measured = true;
+        this._m_avail_w = avail_w;
+        this._m_avail_h = avail_h;
+        this._m_size_w = r.width;
+        this._m_size_h = r.height;
         return r;
     }
 
     // Reset the measurement memo across the whole subtree.
     fn clear_measure_cache(ref this) {
-        this.measured = false;
+        this._measured = false;
         let n: usize = this._children.count();
         var i: usize = 0 as usize;
         while i < n {
@@ -1651,9 +1738,9 @@ impl Node {
 
         if n == (0 as usize) {
             // Leaf: measure callback supplies content, else the box is just padding.
-            if this.has_measure && (!have_w || !have_h) {
-                let mf: fn(*u8, f64, MeasureMode, f64, MeasureMode) -> Size = this.measure;
-                let s: Size = mf(this.node_ctx, sub_or_undef(avail_w, pad_w), MeasureMode::AtMost,
+            if this._has_measure && (!have_w || !have_h) {
+                let mf: fn(*u8, f64, MeasureMode, f64, MeasureMode) -> Size = this._measure;
+                let s: Size = mf(this._node_ctx, sub_or_undef(avail_w, pad_w), MeasureMode::AtMost,
                                  sub_or_undef(avail_h, pad_h), MeasureMode::AtMost);
                 if !have_w { w = s.width + pad_w; }
                 if !have_h { h = s.height + pad_h; }
@@ -1736,7 +1823,7 @@ impl Node {
     fn zero_child(ref this, index: usize) {
         match this.child_ptr(index) {
             option::Option[*Node]::Some(p) => {
-                { (*p).layout = Frame { left: 0.0f64, top: 0.0f64, width: 0.0f64, height: 0.0f64 }; }
+                { (*p)._layout = Frame { left: 0.0f64, top: 0.0f64, width: 0.0f64, height: 0.0f64 }; }
             }
             option::Option[*Node]::None => {}
         }
@@ -1746,7 +1833,7 @@ impl Node {
     // Set a child's absolute frame, then recurse to lay out its own children.
     // The one place the engine mutates a child in place (via `at_ptr`).
     fn set_child_box(ref this, index: usize, left: f64, top: f64, width: f64, height: f64) {
-        let parent_dir: Direction = this.rdir;
+        let parent_dir: Direction = this._rdir;
         match this.child_ptr(index) {
             option::Option[*Node]::Some(p) => {
                 let cdir: Direction = resolve_dir({ (*p).style.direction }, parent_dir);
@@ -1762,7 +1849,7 @@ impl Node {
     fn place_absolute(ref this, index: usize, main_lead: f64, cross_lead: f64,
                       main_inner: f64, cross_inner: f64, row: bool) {
         let cs: Style = this.child_style(index);
-        let node_w: f64 = this.layout.width;
+        let node_w: f64 = this._layout.width;
 
         // Horizontal.
         let left_in: f64 = cs.position_left.resolve(node_w);
@@ -1777,7 +1864,7 @@ impl Node {
                       else { if row { main_lead } else { cross_lead } };
 
         // Vertical.
-        let node_h: f64 = this.layout.height;
+        let node_h: f64 = this._layout.height;
         let top_in: f64 = cs.position_top.resolve(node_h);
         let bottom_in: f64 = cs.position_bottom.resolve(node_h);
         var ch: f64 = cs.height.resolve(node_h);
@@ -1789,8 +1876,8 @@ impl Node {
                       else if is_defined(bottom_in) { (if row { cross_lead } else { main_lead }) + main_or_cross_h(row, main_inner, cross_inner) - bottom_in - ch }
                       else { if row { cross_lead } else { main_lead } };
 
-        let child_left: f64 = this.layout.left + cx;
-        let child_top: f64 = this.layout.top + cy;
+        let child_left: f64 = this._layout.left + cx;
+        let child_top: f64 = this._layout.top + cy;
         this.set_child_box(index, child_left, child_top, cw, ch);
         return;
     }
@@ -3889,7 +3976,7 @@ fn test_subgrid_with_gap_aligns_to_parent_gap() {
 fn grandchild(root: Node, pi: usize, ci: usize) -> Frame {
     return match root.child_ptr(pi) {
         option::Option[*Node]::Some(pp) => match { (*pp).child_ptr(ci) } {
-            option::Option[*Node]::Some(pg) => { (*pg).layout },
+            option::Option[*Node]::Some(pg) => { (*pg)._layout },
             option::Option[*Node]::None => Frame { left: -1.0f64, top: -1.0f64, width: 0.0f64, height: 0.0f64 },
         },
         option::Option[*Node]::None => Frame { left: -1.0f64, top: -1.0f64, width: 0.0f64, height: 0.0f64 },
@@ -4176,6 +4263,149 @@ fn test_remove_then_reinsert_reparents_subtree() {
         option::Option[*Node]::None => { assert false; }
     }
     return;
+}
+
+// ---- style & grid read-back ----
+
+fn index_or(o: option::Option[usize], fallback: usize) -> usize {
+    return match o {
+        option::Option[usize]::Some(i) => i,
+        option::Option[usize]::None => fallback,
+    };
+}
+
+fn ratio_or(o: option::Option[f64], fallback: f64) -> f64 {
+    return match o {
+        option::Option[f64]::Some(v) => v,
+        option::Option[f64]::None => fallback,
+    };
+}
+
+// The public `style` field is the read path — and a direct field WRITE is as
+// cache-safe as a setter, because change detection snapshots the whole style.
+#[test]
+fn test_style_field_reads_back_and_direct_write_relayouts() {
+    var root: Node = Node::new();
+    var c: Node = leaf(20.0f64, 20.0f64);
+    c.set_flex_shrink(0.5f64);
+    assert approx(c.style.flex_shrink, 0.5f64);
+    assert approx(c.style.width.value, 20.0f64);
+    assert c.style.width.is_defined();
+    root.add_child(c);
+    root.calculate_layout(100.0f64, 100.0f64, Direction::LTR);
+    assert approx(must(root.child_frame(0 as usize)).height, 20.0f64);
+
+    // Direct field write through a cursor, no setter: must still relayout.
+    match root.child_ptr(0 as usize) {
+        option::Option[*Node]::Some(p) => {
+            { (*p).style.height = StyleLength::points(35.0f64); }
+        }
+        option::Option[*Node]::None => { assert false; }
+    }
+    root.calculate_layout(100.0f64, 100.0f64, Direction::LTR);
+    assert approx(must(root.child_frame(0 as usize)).height, 35.0f64);
+}
+
+#[test]
+fn test_aspect_ratio_reads_back_as_option() {
+    var n: Node = Node::new();
+    assert ratio_or(n.aspect_ratio(), -1.0f64) == -1.0f64;      // unset -> None
+    n.set_aspect_ratio(2.0f64);
+    assert approx(ratio_or(n.aspect_ratio(), -1.0f64), 2.0f64);
+}
+
+#[test]
+fn test_grid_template_and_item_read_back() {
+    var g: Node = Node::new();
+    g.set_display(Display::Grid);
+    g.add_grid_column(GridTrack::points(200.0f64), line: "side");
+    g.add_grid_column(GridTrack::fr(1.0f64));
+    g.add_grid_row(GridTrack::auto());
+    assert g.grid_column_count() == (2 as usize);
+    assert g.grid_row_count() == (1 as usize);
+    match g.grid_column(0 as usize) {
+        option::Option[GridTrack]::Some(t) => {
+            assert t.unit == TrackUnit::Points;
+            assert approx(t.value, 200.0f64);
+        }
+        option::Option[GridTrack]::None => { assert false; }
+    }
+    match g.grid_column(5 as usize) {
+        option::Option[GridTrack]::Some(_t) => { assert false; }
+        option::Option[GridTrack]::None => { }
+    }
+
+    var item: Node = Node::new();
+    assert item.grid_column_span() == 1;
+    assert line_or(item.grid_column_start(), -1) == -1;          // auto -> None
+    item.set_grid_column_span(2);
+    item.set_grid_column_start(1);
+    assert item.grid_column_span() == 2;
+    assert line_or(item.grid_column_start(), -1) == 1;
+    item.set_grid_column_start(-1);                              // reset to auto
+    assert line_or(item.grid_column_start(), -1) == -1;
+
+    assert !g.is_grid_dense();
+    g.set_grid_dense(true);
+    assert g.is_grid_dense();
+    assert !item.is_grid_columns_subgrid();
+    item.set_grid_columns_subgrid(true);
+    assert item.is_grid_columns_subgrid();
+    return;
+}
+
+fn measure_fixed_40x10(ctx: *u8, w: f64, wm: MeasureMode, h: f64, hm: MeasureMode) -> Size {
+    return Size { width: 40.0f64, height: 10.0f64 };
+}
+
+// Swapping or clearing a measure fn must invalidate the cache — the styles are
+// unchanged, so without the explicit invalidation the old frames would stick.
+#[test]
+fn test_measure_swap_and_clear_invalidate() {
+    var root: Node = Node::new();
+    var c: Node = Node::new();
+    assert !c.has_measure();
+    c.set_measure(measure_fixed_80x24);
+    assert c.has_measure();
+    root.add_child(c);
+    root.calculate_layout();                     // content-sized
+    assert approx(root.frame().width, 80.0f64);
+    assert approx(root.frame().height, 24.0f64);
+
+    match root.child_ptr(0 as usize) {
+        option::Option[*Node]::Some(p) => { { (*p).set_measure(measure_fixed_40x10); } }
+        option::Option[*Node]::None => { assert false; }
+    }
+    root.calculate_layout();
+    assert approx(root.frame().width, 40.0f64);  // stale 80 without invalidation
+    assert approx(root.frame().height, 10.0f64);
+
+    match root.child_ptr(0 as usize) {
+        option::Option[*Node]::Some(p) => {
+            { (*p).clear_measure(); }
+            assert !{ (*p).has_measure() };
+        }
+        option::Option[*Node]::None => { assert false; }
+    }
+    root.calculate_layout();
+    assert approx(root.frame().height, 0.0f64);  // no content, no style size
+    return;
+}
+
+#[test]
+fn test_child_index_finds_by_identity() {
+    var root: Node = Node::new();
+    root.add_child(leaf(10.0f64, 10.0f64));
+    root.add_child(leaf(20.0f64, 20.0f64));
+    root.add_child(leaf(30.0f64, 30.0f64));
+    let p1: *Node = match root.child_ptr(1 as usize) {
+        option::Option[*Node]::Some(p) => p,
+        option::Option[*Node]::None => 0 as *Node,
+    };
+    assert index_or(root.child_index(of: p1), 999 as usize) == (1 as usize);
+    assert root.move_child(from: 1 as usize, to: 0 as usize) == status::Status::Ok;
+    assert index_or(root.child_index(of: p1), 999 as usize) == (0 as usize);   // followed the move
+    assert index_or(root.child_index(of: { #addr_of(root) }), 999 as usize) == (999 as usize);   // not a child
 }
 
 // ===== grow propagation through nested containers =====

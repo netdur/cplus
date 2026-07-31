@@ -50,6 +50,7 @@ the sentinel directly.
 | `move_child` | `(ref this, from: usize, to: usize) -> Status` — reorder; `to` is the final index |
 | `child_count` | `(this) -> usize` |
 | `child_ptr` | `(this, at: usize) -> Option[*Node]` — borrowed cursor for traversal |
+| `child_index` | `(this, of: *Node) -> Option[usize]` — a cursor's current index (identity compare) |
 
 **Node identity is stable.** Children live in their own heap slots, so a
 `*Node` from `child_ptr` stays valid from the node's insertion until that node
@@ -80,6 +81,29 @@ default `direction` resolves to LTR at the root. Labels pass in free order:
 Every frame is **absolute in the root's coordinate space** (it includes all
 ancestor offsets). To place a node into a per-superview view tree, subtract the
 parent node's frame origin: `child.left - parent.left`, `child.top - parent.top`.
+
+### Style read & write
+
+`Node.style` is a public plain-data field and the one read path for layout
+style: `n.style.width`, `n.style.flex_grow`, `n.style.margin_left`, and so on
+(per-edge slots are `margin_/padding_/border_/position_` + `left/right/top/
+bottom/start/end`; gaps are `gap_row` / `gap_column`). Writing the field
+directly is exactly as cache-safe as the `set_*` sugar — change detection
+compares the whole style against last pass's snapshot, not setter calls.
+
+Methods exist only where a field read would hand back a sentinel, or the data
+lives outside `style`:
+
+| Method | Signature |
+|---|---|
+| `aspect_ratio` | `(this) -> Option[f64]` — None when unset |
+| `overflow` / `display` / `position_type` / `z_index` | style shorthands (adapter read-back) |
+| `grid_column_count` / `grid_row_count` | `(this) -> usize` |
+| `grid_column` / `grid_row` | `(this, at: usize) -> Option[GridTrack]` |
+| `grid_column_span` / `grid_row_span` | `(this) -> i32` |
+| `grid_column_start` / `grid_row_start` | `(this) -> Option[i32]` — None when auto |
+| `is_grid_dense` / `is_grid_columns_subgrid` / `is_grid_rows_subgrid` | `(this) -> bool` |
+| `has_measure` / `has_baseline` | `(this) -> bool` |
 
 ### Flex style setters
 
@@ -117,8 +141,12 @@ physical `Left`/`Right` wins if also set. An `auto` margin absorbs free space.
 |---|---|
 | `set_context` | `(ref this, ctx: *u8)` — opaque, borrowed; handed to the callbacks |
 | `context` | `(this) -> *u8` |
-| `set_measure` | `(ref this, fn(*u8, f64, MeasureMode, f64, MeasureMode) -> Size)` |
-| `set_baseline` | `(ref this, fn(*u8, f64, f64) -> f64)` — `(ctx, width, height) -> ascent` |
+| `set_measure` / `clear_measure` | `(ref this, fn(*u8, f64, MeasureMode, f64, MeasureMode) -> Size)` / `(ref this)` |
+| `set_baseline` / `clear_baseline` | `(ref this, fn(*u8, f64, f64) -> f64)` — `(ctx, width, height) -> ascent` / `(ref this)` |
+
+Setting, swapping, or clearing a callback (and `set_context`) invalidates the
+node's cache entry: callback changes are invisible to the style snapshot, the
+same reason `mark_content_changed` exists.
 
 The callback's first argument is the node's context. An adapter stores the
 backing view there so one `fn` can size any view (cast `ctx` back, ask for its
