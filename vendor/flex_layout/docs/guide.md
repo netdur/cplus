@@ -22,6 +22,15 @@ parent.add_child(child_a);   // child_a is moved in
 parent.add_child(child_b);
 ```
 
+The tree is DOM-like: retained and mutable in place. Beyond `add_child` there
+are `insert_child(node, at:)`, `remove_child(at:)` (returns the detached
+subtree — drop it or reinsert it elsewhere to reparent), and
+`move_child(from:, to:)` for reordering. Each child occupies its own heap
+slot, so a `*Node` cursor from `child_ptr(at:)` stays valid until that node is
+removed — no re-searching after appends, and reorders never move a node.
+Structural verbs invalidate the incremental cache themselves; just run
+`calculate_layout` again.
+
 ## Running layout
 
 ```cplus
@@ -40,8 +49,8 @@ root.frame()                        // -> Frame (left/top/width/height)
 root.child_frame(i)                 // -> Option[Frame]
 ```
 
-Deeper than direct children: walk `children` and call `child_frame` on that
-node.
+Deeper than direct children: walk down with `child_ptr` and call `child_frame`
+on that node.
 
 ## Sizing a box
 
@@ -334,6 +343,8 @@ Engine only produces numbers.
 
 - **Move semantics:** `add_child` and fluent DSL consume; mutate a `var` with
   `set_*`, not `n = n.width(...)`.
+- **Cursor lifetime:** a `*Node` from `child_ptr` dies when that node (or an
+  ancestor) is removed — never from sibling churn or reorders.
 - **Absolute frames:** always root-relative until the adapter subtracts.
 - **Measure context:** borrowed; adapter owns the view lifetime.
 - **Overflow** is stored for adapters; it does not change layout math.

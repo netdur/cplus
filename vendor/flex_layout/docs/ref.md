@@ -44,9 +44,21 @@ the sentinel directly.
 | Method | Signature |
 |---|---|
 | `Node::new` | `-> Node` — a default column node |
-| `add_child` | `(ref this, take Node)` |
+| `add_child` | `(ref this, take Node) -> Status` — append |
+| `insert_child` | `(ref this, take Node, at: usize) -> Status` — `at == child_count` appends |
+| `remove_child` | `(ref this, at: usize) -> Option[Node]` — detach and return the subtree |
+| `move_child` | `(ref this, from: usize, to: usize) -> Status` — reorder; `to` is the final index |
 | `child_count` | `(this) -> usize` |
-| `children` | public field, `Vec[Node]` — walk with `at_ptr` for deep traversal |
+| `child_ptr` | `(this, at: usize) -> Option[*Node]` — borrowed cursor for traversal |
+
+**Node identity is stable.** Children live in their own heap slots, so a
+`*Node` from `child_ptr` stays valid from the node's insertion until that node
+itself is removed — sibling appends, inserts, removals, and `move_child`
+reorders never move it. `remove_child` (of the node or an ancestor) is the one
+event that kills cursors into a subtree. Every structural verb invalidates the
+incremental layout cache, so the next `calculate_layout` re-places what moved.
+`remove_child` returns the live subtree: drop it to delete, or reinsert it
+(under any parent) to reparent.
 
 ### Layout & read-back
 

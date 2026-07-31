@@ -68,6 +68,15 @@ impl Box[T: Copy] {
 }
 
 impl Box[T] {
+    // Borrow the payload as a raw pointer (does not consume; the box keeps
+    // ownership). Valid until the box drops or `unwrap`/`into_raw` consumes
+    // it — `set` overwrites in place, so the pointer survives it. The raw
+    // counterpart to `Vec::at_ptr`, for reaching a boxed value without a
+    // copy (e.g. a tree node held by its parent).
+    fn ptr(this) -> *T {
+        return this._p;
+    }
+
     // Overwrite the boxed value, dropping the value previously there first
     // (mirrors `Vec::set`). The box always holds an initialized T by the time
     // `set` is callable (`new` initialized it), so the drop-then-store is sound
@@ -136,6 +145,24 @@ impl Box[T] {
 fn box_new_and_get() {
     match new::[i32](42) {
         option::Option[Box[i32]]::Some(b) => { assert b.value() == 42; }
+        option::Option[Box[i32]]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn box_ptr_borrows_and_survives_set() {
+    match new::[i32](5) {
+        option::Option[Box[i32]]::Some(b) => {
+            var bb: Box[i32] = b;
+            let p: *i32 = bb.ptr();
+            assert { *p } == 5;
+            { *p = 6; }                       // write through the borrow
+            assert bb.value() == 6;
+            bb.set(9);                        // in-place overwrite...
+            assert bb.ptr() == p;             // ...same heap slot
+            assert { *p } == 9;
+        }
         option::Option[Box[i32]]::None => { assert false; }
     }
     return;

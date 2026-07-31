@@ -23,13 +23,16 @@
 // named line placement, subgrid, gaps). Full CSS Flexbox + Grid coverage. 167
 // tests, ASan-clean.
 //
-// Note: the mutable layout descent uses `children.at_ptr` in one internal helper
-// — the only raw pointer in the engine. A stdlib `at_mut(i) -> ref T` would
-// remove it. Read traversal uses the safe borrow accessors.
+// Note: children are heap-boxed (`Vec[Box[Node]]`), which makes every node's
+// address stable from insertion until its removal — the DOM-cursor contract
+// adapters and facet build on. All traversal (internal descent included) goes
+// through `child_ptr(at:) -> Option[*Node]`.
 
 import "stdlib/vec" as vec;
 import "stdlib/option" as option;
 import "stdlib/text" as text;
+import "stdlib/box" as box;
+import "stdlib/status" as status;
 
 // ==========================================================================
 // Enums — flexbox / grid property values
@@ -314,7 +317,7 @@ struct Frame {
 
 struct Node {
     style: Style,
-    children: vec::Vec[Node],
+    _children: vec::Vec[box::Box[Node]],
     measure: fn(*u8, f64, MeasureMode, f64, MeasureMode) -> Size,
     has_measure: bool,
     baseline: fn(*u8, f64, f64) -> f64,   // ascent from top, given (ctx, width, height)
@@ -376,7 +379,7 @@ impl Node {
     fn new() -> Node {
         return Node {
             style: Style::new(),
-            children: vec::new::[Node](),
+            _children: vec::new::[box::Box[Node]](),
             measure: measure_none,
             has_measure: false,
             baseline: baseline_none,
@@ -419,8 +422,73 @@ impl Node {
     }
 
     // ---- tree ----
-    fn add_child(ref this, take child: Node) { this.children.append(child); return; }
-    fn child_count(this) -> usize { return this.children.count(); }
+    //
+    // Children live in their own heap slots (`Box[Node]`), so a node's address
+    // is STABLE from insertion until that node itself is removed: appends,
+    // inserts, removals of siblings, and `move_child` reorders never move it.
+    // A `*Node` cursor from `child_ptr` therefore stays valid for the node's
+    // whole time in the tree — it dies only with the node it points at
+    // (`remove_child` of it or an ancestor). Every structural verb also
+    // invalidates the incremental layout cache, so the next
+    // `calculate_layout` re-places the affected children.
+
+    // Append `child` as the last child.
+    fn add_child(ref this, take child: Node) -> status::Status {
+        return this.insert_child(child, at: this._children.count());
+    }
+
+    // Insert `child` so it ends up at index `at` (`at == child_count` appends).
+    fn insert_child(ref this, take child: Node, at: usize) -> status::Status {
+        if at > this._children.count() { return status::Status::OutOfBounds; }
+        match box::new(child) {
+            option::Option[box::Box[Node]]::Some(b) => {
+                let s: status::Status = this._children.insert(b, at);
+                this.cached_valid = false;
+                return s;
+            }
+            option::Option[box::Box[Node]]::None => { return status::Status::OutOfMemory; }
+        }
+    }
+
+    // Remove and return the subtree at `at` (None if out of range). The
+    // returned node owns its whole subtree — drop it, or reinsert it (possibly
+    // under another parent) to move it. Cursors into the removed subtree are
+    // dead either way: removal is the one event that moves a node.
+    fn remove_child(ref this, at: usize) -> option::Option[Node] {
+        match this._children.remove(at) {
+            option::Option[box::Box[Node]]::Some(b) => {
+                this.cached_valid = false;
+                return option::Option[Node]::Some(b.unwrap());
+            }
+            option::Option[box::Box[Node]]::None => { return option::Option[Node]::None; }
+        }
+    }
+
+    // Reorder: the child at `from` ends up at index `to` (indices in the
+    // resulting list). Node addresses are untouched — cursors survive a move.
+    fn move_child(ref this, from: usize, to: usize) -> status::Status {
+        if from >= this._children.count() { return status::Status::OutOfBounds; }
+        if to >= this._children.count() { return status::Status::OutOfBounds; }
+        match this._children.remove(from) {
+            option::Option[box::Box[Node]]::Some(b) => {
+                let s: status::Status = this._children.insert(b, to);
+                this.cached_valid = false;
+                return s;
+            }
+            option::Option[box::Box[Node]]::None => { return status::Status::OutOfBounds; }
+        }
+    }
+
+    fn child_count(this) -> usize { return this._children.count(); }
+
+    // Borrow the child at `at` as a raw cursor (None if out of range). See the
+    // stability contract above; for the frame alone, `child_frame(at:)` copies.
+    fn child_ptr(this, at: usize) -> option::Option[*Node] {
+        return match this._children.at_ptr(at) {
+            option::Option[*box::Box[Node]]::Some(bp) => option::Option[*Node]::Some({ (*bp).ptr() }),
+            option::Option[*box::Box[Node]]::None => option::Option[*Node]::None,
+        };
+    }
 
     // ---- grid template (display:grid) ----
     // `line` (optional) names the grid line *before* the added track, as in CSS
@@ -593,7 +661,7 @@ impl Node {
     // Copy of a direct child's computed frame (None if out of range). Frames are
     // absolute in the root's coordinate space.
     fn child_frame(this, at: usize) -> option::Option[Frame] {
-        return match this.children.at_ptr(at) {
+        return match this.child_ptr(at) {
             option::Option[*Node]::Some(p) => option::Option[Frame]::Some({ (*p).layout }),
             option::Option[*Node]::None => option::Option[Frame]::None,
         };
@@ -703,12 +771,12 @@ impl Node {
         var changed: bool = false;
         if !this.cached_valid { changed = true; }
         if !style_eq(this.style, this.cached_style) { changed = true; }
-        if this.cached_child_count != this.children.count() { changed = true; }
+        if this.cached_child_count != this._children.count() { changed = true; }
         if !bits_eq(this.cached_grid_sig, this.grid_sig()) { changed = true; }
-        let n: usize = this.children.count();
+        let n: usize = this._children.count();
         var i: usize = 0 as usize;
         while i < n {
-            match this.children.at_ptr(i) {
+            match this.child_ptr(i) {
                 option::Option[*Node]::Some(p) => { if { (*p).aggregate_changed() } { changed = true; } }
                 option::Option[*Node]::None => {}
             }
@@ -765,7 +833,7 @@ impl Node {
         this.cached_style = this.style;
         this.cached_box = frame;
         this.cached_dir = dir;
-        this.cached_child_count = this.children.count();
+        this.cached_child_count = this._children.count();
         this.cached_grid_sig = this.grid_sig();
         return;
     }
@@ -799,10 +867,10 @@ impl Node {
         let rr: f64 = round_scaled(left + this.layout.width, scale);
         let rb: f64 = round_scaled(top + this.layout.height, scale);
         this.layout = Frame { left: rl, top: rt, width: f_max(0.0f64, rr - rl), height: f_max(0.0f64, rb - rt) };
-        let n: usize = this.children.count();
+        let n: usize = this._children.count();
         var i: usize = 0 as usize;
         while i < n {
-            match this.children.at_ptr(i) {
+            match this.child_ptr(i) {
                 option::Option[*Node]::Some(p) => { { (*p).round_to_pixel(scale); } }
                 option::Option[*Node]::None => {}
             }
@@ -814,7 +882,7 @@ impl Node {
     // Lay out this node's children within its already-known box (this.layout.width
     // / height). Recurses into each child once its box is known.
     fn layout_children(ref this) {
-        let n: usize = this.children.count();
+        let n: usize = this._children.count();
         if n == (0 as usize) { return; }
 
         if match this.style.display { Display::Grid => true, _ => false } {
@@ -1255,7 +1323,7 @@ impl Node {
     // auto (max content). Rows beyond the explicit template are implicit (auto).
     // Each item stretches to its cell unless it has an explicit size.
     fn grid_layout(ref this) {
-        let n: usize = this.children.count();
+        let n: usize = this._children.count();
         let node_w: f64 = this.layout.width;
         let node_h: f64 = this.layout.height;
         let grtl: bool = match this.rdir { Direction::RTL => true, _ => false };
@@ -1437,44 +1505,44 @@ impl Node {
 
     fn child_style(this, index: usize) -> Style {
         let rtl: bool = match this.rdir { Direction::RTL => true, _ => false };
-        return match this.children.at_ptr(index) {
+        return match this.child_ptr(index) {
             option::Option[*Node]::Some(p) => normalize_edges({ (*p).style }, rtl),
             option::Option[*Node]::None => Style::new(),
         };
     }
 
     fn child_col_span(this, index: usize) -> usize {
-        return match this.children.at_ptr(index) {
+        return match this.child_ptr(index) {
             option::Option[*Node]::Some(p) => { let s: i32 = { (*p).grid_col_span }; if s < 1 { 1 as usize } else { s as usize } }
             option::Option[*Node]::None => 1 as usize,
         };
     }
     fn child_row_span(this, index: usize) -> usize {
-        return match this.children.at_ptr(index) {
+        return match this.child_ptr(index) {
             option::Option[*Node]::Some(p) => { let s: i32 = { (*p).grid_row_span }; if s < 1 { 1 as usize } else { s as usize } }
             option::Option[*Node]::None => 1 as usize,
         };
     }
     fn child_col_start(this, index: usize) -> i32 {
-        return match this.children.at_ptr(index) {
+        return match this.child_ptr(index) {
             option::Option[*Node]::Some(p) => { (*p).grid_col_start }
             option::Option[*Node]::None => -1,
         };
     }
     fn child_row_start(this, index: usize) -> i32 {
-        return match this.children.at_ptr(index) {
+        return match this.child_ptr(index) {
             option::Option[*Node]::Some(p) => { (*p).grid_row_start }
             option::Option[*Node]::None => -1,
         };
     }
     fn child_cols_subgrid(this, index: usize) -> bool {
-        return match this.children.at_ptr(index) {
+        return match this.child_ptr(index) {
             option::Option[*Node]::Some(p) => { (*p).grid_cols_subgrid }
             option::Option[*Node]::None => false,
         };
     }
     fn child_rows_subgrid(this, index: usize) -> bool {
-        return match this.children.at_ptr(index) {
+        return match this.child_ptr(index) {
             option::Option[*Node]::Some(p) => { (*p).grid_rows_subgrid }
             option::Option[*Node]::None => false,
         };
@@ -1484,7 +1552,7 @@ impl Node {
     // re-lay-out (its tracks are derived from us, not from its own cached style).
     fn feed_subgrid(ref this, index: usize, take sub_cols: vec::Vec[f64], take sub_rows: vec::Vec[f64],
                     has_cols: bool, has_rows: bool, col_gap: f64, row_gap: f64) {
-        match this.children.at_ptr(index) {
+        match this.child_ptr(index) {
             option::Option[*Node]::Some(p) => {
                 { (*p).sub_cols = sub_cols; }
                 { (*p).sub_rows = sub_rows; }
@@ -1501,7 +1569,7 @@ impl Node {
 
     // A child's baseline ascent from its top edge (default: its height).
     fn child_ascent(this, index: usize, width: f64, height: f64) -> f64 {
-        return match this.children.at_ptr(index) {
+        return match this.child_ptr(index) {
             option::Option[*Node]::Some(p) => {
                 if { (*p).has_baseline } { let bf: fn(*u8, f64, f64) -> f64 = { (*p).baseline }; bf({ (*p).node_ctx }, width, height) }
                 else { height }
@@ -1513,7 +1581,7 @@ impl Node {
     // The child's intrinsic (content) outer size, computed bottom-up within the
     // available space. Encapsulates the raw-ptr read + recursion.
     fn child_intrinsic(this, index: usize, avail_w: f64, avail_h: f64) -> Size {
-        return match this.children.at_ptr(index) {
+        return match this.child_ptr(index) {
             option::Option[*Node]::Some(p) => { (*p).intrinsic_size(avail_w, avail_h) },
             option::Option[*Node]::None => Size { width: 0.0f64, height: 0.0f64 },
         };
@@ -1542,10 +1610,10 @@ impl Node {
     // Reset the measurement memo across the whole subtree.
     fn clear_measure_cache(ref this) {
         this.measured = false;
-        let n: usize = this.children.count();
+        let n: usize = this._children.count();
         var i: usize = 0 as usize;
         while i < n {
-            match this.children.at_ptr(i) {
+            match this.child_ptr(i) {
                 option::Option[*Node]::Some(p) => { { (*p).clear_measure_cache(); } }
                 option::Option[*Node]::None => {}
             }
@@ -1579,7 +1647,7 @@ impl Node {
         let pad_w: f64 = pl + pr;
         let pad_h: f64 = pt + pb;
 
-        let n: usize = this.children.count();
+        let n: usize = this._children.count();
 
         if n == (0 as usize) {
             // Leaf: measure callback supplies content, else the box is just padding.
@@ -1666,7 +1734,7 @@ impl Node {
     }
 
     fn zero_child(ref this, index: usize) {
-        match this.children.at_ptr(index) {
+        match this.child_ptr(index) {
             option::Option[*Node]::Some(p) => {
                 { (*p).layout = Frame { left: 0.0f64, top: 0.0f64, width: 0.0f64, height: 0.0f64 }; }
             }
@@ -1679,7 +1747,7 @@ impl Node {
     // The one place the engine mutates a child in place (via `at_ptr`).
     fn set_child_box(ref this, index: usize, left: f64, top: f64, width: f64, height: f64) {
         let parent_dir: Direction = this.rdir;
-        match this.children.at_ptr(index) {
+        match this.child_ptr(index) {
             option::Option[*Node]::Some(p) => {
                 let cdir: Direction = resolve_dir({ (*p).style.direction }, parent_dir);
                 { (*p).apply_layout(Frame { left: left, top: top, width: width, height: height }, cdir); }
@@ -2457,11 +2525,11 @@ fn test_nested_absolute_coordinates() {
     assert approx(inner_frame.top, 10.0f64);
 
     // grandchildren are absolute in root space
-    let g0: Frame = match root.children.at_ptr(0 as usize) {
+    let g0: Frame = match root.child_ptr(0 as usize) {
         option::Option[*Node]::Some(p) => must({ (*p).child_frame(0 as usize) }),
         option::Option[*Node]::None => Frame { left: 0.0f64, top: 0.0f64, width: 0.0f64, height: 0.0f64 },
     };
-    let g1: Frame = match root.children.at_ptr(0 as usize) {
+    let g1: Frame = match root.child_ptr(0 as usize) {
         option::Option[*Node]::Some(p) => must({ (*p).child_frame(1 as usize) }),
         option::Option[*Node]::None => Frame { left: 0.0f64, top: 0.0f64, width: 0.0f64, height: 0.0f64 },
     };
@@ -3632,7 +3700,7 @@ fn test_cache_invalidates_on_style_change() {
     assert approx(must(root.child_frame(0 as usize)).width, 40.0f64);
 
     // mutate the child's width, re-layout -> must reflect the new width
-    match root.children.at_ptr(0 as usize) {
+    match root.child_ptr(0 as usize) {
         option::Option[*Node]::Some(p) => { { (*p).set_width(pts(90.0f64)); } }
         option::Option[*Node]::None => {}
     }
@@ -3666,9 +3734,9 @@ fn test_cache_invalidates_on_deep_mutation_through_contentfit() {
     assert approx(outer.frame().height, 30.0f64);
 
     // change the grandchild height to 55
-    match outer.children.at_ptr(0 as usize) {
+    match outer.child_ptr(0 as usize) {
         option::Option[*Node]::Some(pinner) => {
-            match { (*pinner).children.at_ptr(0 as usize) } {
+            match { (*pinner).child_ptr(0 as usize) } {
                 option::Option[*Node]::Some(pg) => { { (*pg).set_height(pts(55.0f64)); } }
                 option::Option[*Node]::None => {}
             }
@@ -3713,11 +3781,11 @@ fn test_layout_changed_reports_cache_skips() {
     // The fixed leading child kept its box (same position, same size) — the
     // cache skipped it even though the row itself was re-laid out; the
     // growing sibling changed and reports fresh.
-    match root.children.at_ptr(0 as usize) {
+    match root.child_ptr(0 as usize) {
         option::Option[*Node]::Some(p) => { assert { (*p).layout_changed() } == false; }
         option::Option[*Node]::None => { assert false; }
     }
-    match root.children.at_ptr(1 as usize) {
+    match root.child_ptr(1 as usize) {
         option::Option[*Node]::Some(p) => { assert { (*p).layout_changed() }; }
         option::Option[*Node]::None => { assert false; }
     }
@@ -3750,7 +3818,7 @@ fn test_mark_content_changed_forces_remeasure() {
     root.calculate_layout(100.0f64, 50.0f64, Direction::LTR);
     assert approx(must(root.child_frame(0 as usize)).height, 20.0f64);   // cache soundly stale — needs the mark
 
-    match root.children.at_ptr(0 as usize) {
+    match root.child_ptr(0 as usize) {
         option::Option[*Node]::Some(p) => { { (*p).mark_content_changed(); } }
         option::Option[*Node]::None => { assert false; }
     }
@@ -3819,8 +3887,8 @@ fn test_subgrid_with_gap_aligns_to_parent_gap() {
 
 // read grandchild (child ci of root's child pi) frame
 fn grandchild(root: Node, pi: usize, ci: usize) -> Frame {
-    return match root.children.at_ptr(pi) {
-        option::Option[*Node]::Some(pp) => match { (*pp).children.at_ptr(ci) } {
+    return match root.child_ptr(pi) {
+        option::Option[*Node]::Some(pp) => match { (*pp).child_ptr(ci) } {
             option::Option[*Node]::Some(pg) => { (*pg).layout },
             option::Option[*Node]::None => Frame { left: -1.0f64, top: -1.0f64, width: 0.0f64, height: 0.0f64 },
         },
@@ -3985,7 +4053,7 @@ fn test_attachment_travels_with_child_into_parent() {
         c.attach(11 as *u8, counting_release);
         root.add_child(c);               // node moves in; attachment rides along
         assert ATTACH_RELEASES == 0;
-        match root.children.at_ptr(0 as usize) {
+        match root.child_ptr(0 as usize) {
             option::Option[*Node]::Some(p) => {
                 assert attachment_or({ (*p).attachment() }, -1) == (11 as i64);
             }
@@ -3994,6 +4062,120 @@ fn test_attachment_travels_with_child_into_parent() {
     }
     assert ATTACH_RELEASES == 1;         // released when the tree drops
     assert ATTACH_LAST == (11 as i64);
+}
+
+// ---- tree structure: stable addresses, insert/remove/move ----
+
+#[test]
+fn test_child_address_stable_across_append_and_move() {
+    var root: Node = Node::new();
+    root.add_child(leaf(10.0f64, 10.0f64));
+    // Cursor to child 0, taken BEFORE more appends (which realloc the vec).
+    let p0: *Node = match root.child_ptr(0 as usize) {
+        option::Option[*Node]::Some(p) => p,
+        option::Option[*Node]::None => 0 as *Node,
+    };
+    root.add_child(leaf(20.0f64, 20.0f64));
+    root.add_child(leaf(30.0f64, 30.0f64));
+    root.add_child(leaf(40.0f64, 40.0f64));
+    assert root.move_child(from: 0 as usize, to: 3 as usize) == status::Status::Ok;
+    root.calculate_layout(100.0f64, 200.0f64, Direction::LTR);
+    // The cursor still points at the same node: 10pt wide, now laid out last.
+    assert approx({ (*p0).frame().width }, 10.0f64);
+    assert approx({ (*p0).frame().top }, 90.0f64);   // 20 + 30 + 40 above it
+    // And it is the node child_ptr(3) reaches now.
+    match root.child_ptr(3 as usize) {
+        option::Option[*Node]::Some(p3) => { assert p3 == p0; }
+        option::Option[*Node]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn test_insert_child_orders_and_bounds() {
+    var root: Node = Node::new();
+    root.add_child(leaf(20.0f64, 20.0f64));                                    // B
+    assert root.insert_child(leaf(10.0f64, 10.0f64), at: 0 as usize) == status::Status::Ok;   // A before B
+    assert root.insert_child(leaf(15.0f64, 15.0f64), at: 1 as usize) == status::Status::Ok;   // between
+    assert root.insert_child(leaf(1.0f64, 1.0f64), at: 9 as usize) == status::Status::OutOfBounds;
+    assert root.child_count() == (3 as usize);
+    root.calculate_layout(100.0f64, 200.0f64, Direction::LTR);
+    assert approx(must(root.child_frame(0 as usize)).height, 10.0f64);
+    assert approx(must(root.child_frame(1 as usize)).height, 15.0f64);
+    assert approx(must(root.child_frame(2 as usize)).height, 20.0f64);
+}
+
+#[test]
+fn test_remove_child_returns_subtree_and_releases() {
+    ATTACH_RELEASES = 0;
+    var root: Node = Node::new();
+    var c: Node = leaf(10.0f64, 10.0f64);
+    c.attach(21 as *u8, counting_release);
+    root.add_child(c);
+    root.add_child(leaf(20.0f64, 20.0f64));
+    {
+        match root.remove_child(at: 0 as usize) {
+            option::Option[Node]::Some(taken) => {
+                // The subtree came back intact; its attachment is still owned.
+                assert attachment_or(taken.attachment(), -1) == (21 as i64);
+                assert ATTACH_RELEASES == 0;
+            }
+            option::Option[Node]::None => { assert false; }
+        }
+    }
+    assert ATTACH_RELEASES == 1;             // released when the taken node dropped
+    assert root.child_count() == (1 as usize);
+    match root.remove_child(at: 5 as usize) {
+        option::Option[Node]::Some(_x) => { assert false; }
+        option::Option[Node]::None => { }
+    }
+    return;
+}
+
+// The reorder cache trap: two same-styled subtrees swapped in place used to
+// fool subtree-equality change detection. The verb invalidates explicitly.
+#[test]
+fn test_move_child_relayouts_swapped_positions() {
+    var root: Node = Node::new();
+    root.add_child(leaf(10.0f64, 30.0f64));
+    root.add_child(leaf(10.0f64, 40.0f64));
+    root.calculate_layout(100.0f64, 200.0f64, Direction::LTR);
+    assert approx(must(root.child_frame(0 as usize)).top, 0.0f64);
+    assert approx(must(root.child_frame(1 as usize)).top, 30.0f64);
+
+    assert root.move_child(from: 0 as usize, to: 1 as usize) == status::Status::Ok;
+    root.calculate_layout(100.0f64, 200.0f64, Direction::LTR);
+    // index 0 is now the 40-tall child at the top; the 30-tall sits below it.
+    assert approx(must(root.child_frame(0 as usize)).height, 40.0f64);
+    assert approx(must(root.child_frame(0 as usize)).top, 0.0f64);
+    assert approx(must(root.child_frame(1 as usize)).height, 30.0f64);
+    assert approx(must(root.child_frame(1 as usize)).top, 40.0f64);
+}
+
+#[test]
+fn test_remove_then_reinsert_reparents_subtree() {
+    ATTACH_RELEASES = 0;
+    var a: Node = Node::new();
+    var b: Node = Node::new();
+    var c: Node = leaf(10.0f64, 10.0f64);
+    c.attach(31 as *u8, counting_release);
+    a.add_child(c);
+    match a.remove_child(at: 0 as usize) {
+        option::Option[Node]::Some(taken) => { b.add_child(taken); }
+        option::Option[Node]::None => { assert false; }
+    }
+    assert ATTACH_RELEASES == 0;             // moved, never dropped
+    assert a.child_count() == (0 as usize);
+    assert b.child_count() == (1 as usize);
+    b.calculate_layout(100.0f64, 100.0f64, Direction::LTR);
+    assert approx(must(b.child_frame(0 as usize)).width, 10.0f64);
+    match b.child_ptr(0 as usize) {
+        option::Option[*Node]::Some(p) => {
+            assert attachment_or({ (*p).attachment() }, -1) == (31 as i64);
+        }
+        option::Option[*Node]::None => { assert false; }
+    }
+    return;
 }
 
 // ===== grow propagation through nested containers =====
@@ -4037,7 +4219,7 @@ fn test_grow_needs_growing_ancestors() {
     root.calculate_layout(400.0f64, 600.0f64, Direction::LTR);
     assert approx(must(root.child_frame(0 as usize)).height, 600.0f64);
     // grandchild fills the (now definite) mid.
-    match root.children.at_ptr(0 as usize) {
+    match root.child_ptr(0 as usize) {
         option::Option[*Node]::Some(pm) => {
             assert approx(must({ (*pm).child_frame(0 as usize) }).height, 600.0f64);
         }
