@@ -706,6 +706,11 @@ struct FnEntry {
     /// — i.e. a call result that can transport its arguments' taint.
     /// Drives taint-through-calls in the receiver-flow pass.
     ret_view: bool,
+    /// Computed free-fn flows: (src param, dst ref-param) pairs — a view
+    /// param that may end up stored inside a `ref` param's target (via a
+    /// keeps-method call on it or a direct field store). Callers tie the
+    /// dst argument's root to the src argument's owners.
+    computed_ref_flows: Vec<(usize, usize)>,
     /// Declared (UNsubstituted) parameter types. For methods of generic
     /// impls the tie machinery substitutes the receiver's type arguments
     /// into these at the call site before asking view-ness — `Vec[str]`'s
@@ -785,6 +790,7 @@ impl SigTable {
                                 .map(|p| oracle.type_contains_view(&p.ty))
                                 .collect(),
                             computed_keeps: Vec::new(),
+                            computed_ref_flows: Vec::new(),
                             ret_view: f.return_type.as_ref().is_some_and(|t| {
                                 oracle.type_contains_view(t) || oracle.definitely_non_copy(t)
                             }),
@@ -842,6 +848,7 @@ impl SigTable {
                                     .map(|p| oracle.type_contains_view(&p.ty))
                                     .collect(),
                                 computed_keeps: Vec::new(),
+                                computed_ref_flows: Vec::new(),
                                 ret_view: m.return_type.as_ref().is_some_and(|t| {
                                     oracle.type_contains_view(t) || oracle.definitely_non_copy(t)
                                 }),
@@ -1254,6 +1261,56 @@ fn compute_receiver_flows(prog: &Program, sigs: &mut SigTable) {
                         entry.computed_keeps = new_flags;
                         changed = true;
                     }
+                }
+            }
+        }
+        for item in &prog.items {
+            let ItemKind::Function(f) = &item.kind else {
+                continue;
+            };
+            if !f.generic_params.is_empty() || f.is_extern || f.is_declaration {
+                continue;
+            }
+            let name = f.name.name.clone();
+            let mut ctx = FlowCtx {
+                sigs,
+                taint: HashMap::new(),
+                types: HashMap::new(),
+                receiver_bits: 0,
+            };
+            for (i, p) in f.params.iter().enumerate() {
+                let Some(entry) = sigs.fns.get(&name) else {
+                    continue;
+                };
+                let is_source = entry.param_view_flags.get(i).copied().unwrap_or(false)
+                    || (!p.move_
+                        && matches!(&p.ty.kind, TypeKind::Path(_) | TypeKind::Generic { .. }));
+                if is_source && i < 64 {
+                    ctx.taint.insert(p.name.name.clone(), 1u64 << i);
+                } else {
+                    ctx.taint.insert(p.name.name.clone(), 0);
+                }
+                if let TypeKind::Path(tp) = &p.ty.kind {
+                    ctx.types.insert(p.name.name.clone(), tp.clone());
+                }
+            }
+            ctx.walk_block(&f.body);
+            let mut flows: Vec<(usize, usize)> = Vec::new();
+            for (j, pj) in f.params.iter().enumerate() {
+                if !(pj.mutable && !pj.move_) {
+                    continue;
+                }
+                let bits = ctx.taint.get(&pj.name.name).copied().unwrap_or(0);
+                for i in 0..f.params.len().min(64) {
+                    if i != j && bits & (1u64 << i) != 0 {
+                        flows.push((i, j));
+                    }
+                }
+            }
+            if let Some(entry) = sigs.fns.get_mut(&name) {
+                if entry.computed_ref_flows != flows && !flows.is_empty() {
+                    entry.computed_ref_flows = flows;
+                    changed = true;
                 }
             }
         }
@@ -4181,6 +4238,47 @@ impl Analyzer<'_> {
             }
             if !sources.is_empty() {
                 self.extend_borrows(sources, &recv_name, callee.span, state);
+            }
+        }
+
+        // Contract §5, free-fn half: computed (src → ref-param dst) flows.
+        // The dst argument's root becomes a borrower of the src argument's
+        // owners — `store_in(ref h, t.view())` ties h ← t.
+        if let ExprKind::Ident(fn_name) = &callee.kind {
+            let flows = self
+                .sigs
+                .fns
+                .get(fn_name)
+                .map(|e| e.computed_ref_flows.clone())
+                .unwrap_or_default();
+            for (src, dst) in flows {
+                let Some(dst_place) = args.get(dst).and_then(place_from_expr) else {
+                    continue;
+                };
+                let Some(src_arg) = args.get(src) else {
+                    continue;
+                };
+                let mut srcs = self.classify_borrow_source(src_arg);
+                if srcs.is_empty() {
+                    if let Some(place) = place_from_expr(src_arg) {
+                        if let Some(owners) = self.binding_borrows_from.get(&place.root) {
+                            for o in owners.clone() {
+                                srcs.push((o, BorrowFlavor::Shared));
+                            }
+                        }
+                        if self.binding_is_non_copy(&place.root) {
+                            srcs.push((place, BorrowFlavor::Shared));
+                        }
+                    }
+                }
+                let srcs: Vec<_> = srcs
+                    .into_iter()
+                    .filter(|(p, _)| p.root != dst_place.root)
+                    .collect();
+                if !srcs.is_empty() {
+                    let borrower = dst_place.root.clone();
+                    self.extend_borrows(srcs, &borrower, callee.span, state);
+                }
             }
         }
     }

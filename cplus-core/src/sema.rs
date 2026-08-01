@@ -922,6 +922,7 @@ fn check_with_files_inner(
         fn_return_borrows: crate::borrowck::free_fn_return_borrows(program),
         current_fn_ref_targets: std::collections::HashSet::new(),
         current_fn_keeps_this: false,
+        current_fn_has_keeps: false,
         current_fn_param_regions: HashMap::new(),
         current_fn_return_region: None,
         current_fn_no_alloc: false,
@@ -1384,6 +1385,11 @@ struct SemaCx<'a> {
     /// stored into the receiver (E0515 is lifted for `this`-rooted targets;
     /// borrowck makes every caller tie the receiver to the argument owners).
     current_fn_keeps_this: bool,
+    /// Contract §5 mandatory choice: true iff the current fn carries ANY
+    /// `#[keeps(...)]`. A fn that stores view-typed data through a raw
+    /// pointer must declare its flows (E0516) — silence at the raw seam is
+    /// an error, mirroring drop-or-`opaque` (E0510).
+    current_fn_has_keeps: bool,
     /// v0.0.12 (#2 region enforcement): map from parameter name to the explicit
     /// `borrow REGION T` region it carried, for parameters that had one. Used
     /// to validate that a region-annotated return borrows a same-region param.
@@ -5013,6 +5019,8 @@ impl SemaCx<'_> {
         }
         self.setup_returned_borrow_ctx(&m.params, &m.return_type, m.receiver);
         self.current_fn_keeps_this = crate::attrs::has_keeps(&m.attributes, "this");
+        self.current_fn_has_keeps = self.current_fn_keeps_this
+            || crate::attrs::has_keeps(&m.attributes, "nothing");
         self.check_function_body(
             &m.body,
             self.current_return.clone(),
@@ -5104,6 +5112,8 @@ impl SemaCx<'_> {
         }
         self.setup_returned_borrow_ctx(&m.params, &m.return_type, m.receiver);
         self.current_fn_keeps_this = crate::attrs::has_keeps(&m.attributes, "this");
+        self.current_fn_has_keeps = self.current_fn_keeps_this
+            || crate::attrs::has_keeps(&m.attributes, "nothing");
         self.check_function_body(
             &m.body,
             self.current_return.clone(),
@@ -5276,6 +5286,8 @@ impl SemaCx<'_> {
         }
         self.setup_returned_borrow_ctx(&m.params, &m.return_type, m.receiver);
         self.current_fn_keeps_this = crate::attrs::has_keeps(&m.attributes, "this");
+        self.current_fn_has_keeps = self.current_fn_keeps_this
+            || crate::attrs::has_keeps(&m.attributes, "nothing");
         self.check_function_body(
             &m.body,
             self.current_return.clone(),
@@ -6997,6 +7009,8 @@ impl SemaCx<'_> {
         }
         self.setup_returned_borrow_ctx(&f.params, &f.return_type, None);
         self.current_fn_keeps_this = crate::attrs::has_keeps(&f.attributes, "this");
+        self.current_fn_has_keeps = self.current_fn_keeps_this
+            || crate::attrs::has_keeps(&f.attributes, "nothing");
         self.check_function_body(
             &f.body,
             body_return,
@@ -15365,6 +15379,36 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
     /// parameter, or a `take this` receiver) that is freed on return, so the
     /// escaped view would dangle. A view of a bare / `ref` *parameter* is
     /// caller-tied and left alone (only `owns_value` owners are flagged).
+    /// Contract §5, mandatory choice at the raw seam (E0516): a store of
+    /// view-typed data through a raw-pointer deref is invisible to every
+    /// flow analysis, so the function must DECLARE its flows with some
+    /// `#[keeps(...)]` — the exact doctrine E0510 applies to raw-pointer
+    /// fields (drop-or-`opaque`). Bytes stores (`*p = b`) and pointer
+    /// stores never fire; only a view/carrier VALUE does.
+    fn check_raw_store_declaration(&mut self, target: &Expr, value: &Expr, target_ty: &Ty) {
+        if self.current_fn_has_keeps {
+            return;
+        }
+        if !(matches!(target_ty, Ty::Str | Ty::Slice(_)) || self.ty_contains_view(target_ty)) {
+            return;
+        }
+        if !matches!(
+            &target.kind,
+            ExprKind::Unary {
+                op: UnaryOp::Deref,
+                ..
+            }
+        ) {
+            return;
+        }
+        self.err(
+            "E0516",
+            "storing a view through a raw pointer without a declared flow: no analysis can see where these bytes end up, so the function must declare it — `#[keeps(this)]` if the view survives in the receiver, `#[keeps(nothing)]` if the bytes are copied and nothing borrowed escapes"
+                .to_string(),
+            value.span,
+        );
+    }
+
     fn check_view_store_escape(&mut self, target: &Expr, value: &Expr, target_ty: &Ty) {
         // STRM v3 (2026-08-01): also engage when the target CARRIES views —
         // `SLOT = store(local.view(), 1)` stores a struct whose `str` field
@@ -16228,6 +16272,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     // Bug 03: `static S = temp.view()` — view of a temporary.
                     if matches!(op, AssignOp::Assign) {
                         self.check_view_store_escape(target, value, &info.ty);
+                        self.check_raw_store_declaration(target, value, &info.ty);
                         self.check_capture_store_escape(target, value);
                         if matches!(info.ty, Ty::Str | Ty::Slice(_)) {
                             self.flag_view_of_temp(value);
@@ -16367,6 +16412,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         self.check_compound_assign_op_type(op, &target_ty, &value_ty, span);
         if matches!(op, AssignOp::Assign) {
             self.check_view_store_escape(target, value, &target_ty);
+            self.check_raw_store_declaration(target, value, &target_ty);
             self.check_capture_store_escape(target, value);
             // Bug 03: `s = temp.view();` into any view-typed place.
             if matches!(target_ty, Ty::Str | Ty::Slice(_)) {

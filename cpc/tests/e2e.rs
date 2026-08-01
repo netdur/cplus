@@ -5977,6 +5977,55 @@ fn transitive_keeps_wrapper_caller_ties_e0514() {
 }
 
 #[test]
+fn raw_view_store_requires_keeps_e0516() {
+    // Contract §5 mandatory choice: a view stored through a raw deref is
+    // invisible to flow analysis — the fn must declare with #[keeps(...)].
+    let (ok, stderr) = try_compile_snippet(
+        "fn stash(slot: *str, v: str) {
+             *slot = v;
+             return;
+         }
+         fn main() -> i32 { return 0; }
+",
+    );
+    assert!(!ok && stderr.contains("E0516"), "expected E0516, got ok={ok}: {stderr}");
+    let (ok, stderr) = try_compile_snippet(
+        "#[keeps(nothing)]
+         fn stash(slot: *str, v: str) {
+             *slot = v;
+             return;
+         }
+         fn main() -> i32 { return 0; }
+",
+    );
+    assert!(ok, "declared raw store must compile; stderr: {stderr}");
+}
+
+#[test]
+fn free_fn_ref_param_flow_ties_e0514() {
+    // Contract §5, free-fn half: an undeclared free fn forwarding its view
+    // param into a keeps-method on a ref param ties the caller's dst arg.
+    let (ok, stderr) = try_compile_snippet(&format!(
+        "{LANG_STR_PRELUDE}struct Holder {{ view: str }}
+         impl Holder {{
+             #[keeps(this)]
+             fn set(ref this, k: str) {{ this.view = k; return; }}
+         }}
+         fn store_in(ref h: Holder, k: str) {{ h.set(k); return; }}
+         fn main() -> i32 {{
+             var h: Holder = Holder {{ view: \"\" }};
+             {{
+                 let t: LStr = mk();
+                 store_in(h, t);
+             }}
+             return 0;
+         }}
+"
+    ));
+    assert!(!ok && stderr.contains("E0514"), "expected E0514 via ref-param flow, got ok={ok}: {stderr}");
+}
+
+#[test]
 fn keeps_nothing_unties_view_return() {
     // `#[keeps(nothing)]` suppresses the conservative Rule E-VIEW-FN tie:
     // an intern-shaped fn's result may outlive the argument's owner. The

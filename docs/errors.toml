@@ -1894,6 +1894,25 @@ impl Holder {
 '''
 
 [[code]]
+id = "E0516"
+title = "Storing a view through a raw pointer without a declared flow"
+category = "Ownership and borrowing"
+severity = "error"
+repro = "checked"
+lang = "cplus"
+verified = true
+emit_site = "cplus-core/src/sema.rs (check_raw_store_declaration)"
+test = "cpc/tests/e2e.rs:raw_view_store_requires_keeps_e0516"
+cause = "A `str` / `T[]` / view-carrying value is stored through a raw-pointer deref (`*slot = v`). No flow analysis can see where those bytes end up, so the function's effect on view lifetimes is unknowable — silence at the raw seam is not neutral, the same doctrine as the raw-pointer field rule (drop-or-`opaque`, E0510)."
+fix = "Declare the function's flow: `#[keeps(this)]` if the view survives inside the receiver (callers then tie the receiver to the argument's owner), or `#[keeps(nothing)]` if the bytes are copied and no borrowed view escapes. Byte and pointer stores never trigger this — only a view value does."
+example = '''
+fn stash(slot: *str, v: str) {
+    *slot = v;
+    return;
+}
+'''
+
+[[code]]
 id = "E0612"
 title = "Interpolated type does not implement `ToText`"
 category = "Ownership and borrowing"

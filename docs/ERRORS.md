@@ -4,7 +4,7 @@
 
 Every C+ diagnostic carries a numbered code, a source span, and often a machine-applicable suggestion. `cpc --diagnostics=json` emits the same information in a machine-readable shape for editors and agents. Codes prefixed with **W** are non-fatal warnings; the build continues. The normative ranges and what each phase owns are fixed in [§20 of the language specification](/docs/spec).
 
-This is the complete index — **167 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **129** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
+This is the complete index — **168 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **130** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
 
 ## Lexical
 
@@ -1227,6 +1227,21 @@ impl Holder {
 **Fix.** Own the bytes (a `Text` field), intern them (`text::intern` returns a process-lifetime view), or — for the receiver-store case only — declare the method `#[keeps(this)]`: the store becomes a declared flow and every caller ties the receiver to the argument's owner (E0372/E0514 then guard the owner).
 
 <sub>repro: checked · cplus-core/src/sema.rs (check_view_store_escape, param-view arm) · test cpc/tests/e2e.rs:view_param_stored_into_ref_this_rejected_e0515</sub>
+
+### E0516 · Storing a view through a raw pointer without a declared flow
+
+A `str` / `T[]` / view-carrying value is stored through a raw-pointer deref (`*slot = v`). No flow analysis can see where those bytes end up, so the function's effect on view lifetimes is unknowable — silence at the raw seam is not neutral, the same doctrine as the raw-pointer field rule (drop-or-`opaque`, E0510).
+
+```cplus
+fn stash(slot: *str, v: str) {
+    *slot = v;
+    return;
+}
+```
+
+**Fix.** Declare the function's flow: `#[keeps(this)]` if the view survives inside the receiver (callers then tie the receiver to the argument's owner), or `#[keeps(nothing)]` if the bytes are copied and no borrowed view escapes. Byte and pointer stores never trigger this — only a view value does.
+
+<sub>repro: checked · cplus-core/src/sema.rs (check_raw_store_declaration) · test cpc/tests/e2e.rs:raw_view_store_requires_keeps_e0516</sub>
 
 ### E0612 · Interpolated type does not implement `ToText`
 
