@@ -2,6 +2,7 @@
 
 Manual for the `flex_layout` package. Signatures and behavior only.
 Walkthrough: [tutorial.md](tutorial.md). Concepts: [guide.md](guide.md).
+Upgrading, and the known-unmigrated consumers: [migration.md](migration.md).
 
 All items live in the `flex_layout` package (imported here as `flex`).
 
