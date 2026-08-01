@@ -21005,6 +21005,89 @@ fn gen_fn_protocol_survives_nested_option_instantiation() {
     assert_eq!(run.code(), Some(0), "filter must keep 2+3 = 5");
 }
 
+/// reports/bug-02: of the nine hand-rolled function-definition emitters in
+/// codegen, `gen_async_function` and `gen_gen_function` were the two that never
+/// ran `param_passes_by_ptr` — they emitted every parameter as a plain SSA
+/// value. The call side pointer-passes a `ref` param, so the definition read a
+/// pointer bit-pattern as an integer: the printed result was stack garbage and
+/// the write-back never reached the caller, with no diagnostic. Their method
+/// twins (`gen_async_method` / `gen_gen_method`) always classified correctly and
+/// are what the fix copies.
+///
+/// Strict C ABI symmetry is a hard project requirement, so this pins the
+/// OBSERVABLE contract at runtime: the value the coroutine computes and the
+/// write-back the caller sees, for both `async fn` and `gen fn`.
+#[test]
+fn async_and_gen_fns_pointer_pass_ref_params() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"coro_ref\"\n\n[[bin]]\nname = \"coro_ref\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::os::unix::fs::symlink(
+        format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
+        dir.join("vendor"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/future\" as future;\n\
+         import \"stdlib/reactor\" as _;\n\
+         import \"stdlib/iterator\" as _;\n\
+         \n\
+         async fn bump(ref n: i64) -> i64 {\n\
+             n = n + 1;\n\
+             return n;\n\
+         }\n\
+         \n\
+         gen fn steps(ref n: i64) -> i64 {\n\
+             n = n + 1;\n\
+             yield n;\n\
+             n = n + 1;\n\
+             yield n;\n\
+             return;\n\
+         }\n\
+         \n\
+         fn main() -> i32 {\n\
+             var x: i64 = 5;\n\
+             let f: future::Future[i64] = bump(x);\n\
+             let r: i64 = #block_on::[i64](f);\n\
+             var y: i64 = 5;\n\
+             var total: i64 = 0;\n\
+             for v in steps(y) {\n\
+                 total = total + v;\n\
+             }\n\
+             // r = 6 (result), x = 6 (async write-back),\n\
+             // total = 6 + 7 = 13, y = 7 (gen write-back).\n\
+             return ((r + x) as i32) - 12 + ((total + y) as i32) - 20;\n\
+         }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc build");
+    assert!(
+        out.status.success(),
+        "coroutine `ref` param program must build: {}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    let run = Command::new(dir.join("target/debug/coro_ref"))
+        .status()
+        .expect("run coro_ref");
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "async/gen `ref` params must read their value and write back; got {:?}",
+        run.code()
+    );
+}
+
 #[test]
 fn empty_text_coerces_to_valid_str_view() {
     // 2026-07-06 (bugs/empty-json-string-null-cstring-crash.md): an empty

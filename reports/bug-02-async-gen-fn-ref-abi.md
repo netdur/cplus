@@ -1,6 +1,8 @@
 # Bug 02 — `async fn` / `gen fn` ignore the borrow ABI: def/call prototype mismatch
 
-- Status: reproduced 2026-08-01 with `target/release/cpc` (prints stack garbage, write-back lost)
+- Status: FIXED 2026-08-01, commit 310c1b7 — both emitters classify parameters and
+  bind the prologue like their method twins
+- Status (original): reproduced 2026-08-01 with `target/release/cpc` (prints stack garbage, write-back lost)
 - Severity: miscompile
 - Area: codegen (`cplus-core/src/codegen.rs`)
 - Master report: `core-drift-audit-2026-08-01.md` (B2)
@@ -95,13 +97,18 @@ consume). The tactical fix above is correct on its own and should land first.
 
 ## Verification
 
-1. The repro prints `6` / `6`.
-2. Add a codegen unit test asserting the emitted IR for an `async fn f(ref n: i64)` defines
-   `ptr` for the param (copy a neighboring IR-text assertion test in codegen.rs's test
-   module).
-3. Add a runtime e2e test (cpc/tests/e2e.rs) for async + gen fns with `ref` params
-   verifying result and write-back.
-4. Full suites: `cargo test -p cplus-core && cargo test -p cpc --test e2e`.
+1. The repro prints `6` / `6`. Verified; the `gen fn` twin was also run and now
+   prints `13` / `7` (it printed `-686668237` / `5` before).
+2. ~~Add a codegen unit test asserting the emitted IR~~ — NOT REACHABLE. codegen's
+   `gen_src` test helper runs sema on a single unvendored snippet, and both
+   `async fn` and `gen fn` are rejected there (E1000: "`gen fn` requires
+   `Iterator[T]` from `stdlib/iterator`"). `--emit-ll` is single-file only, so a
+   project build cannot be inspected as IR text either. The runtime e2e test below
+   pins the same contract end-to-end, which is what the miscompile actually broke.
+3. DONE: `async_and_gen_fns_pointer_pass_ref_params` in cpc/tests/e2e.rs — one
+   project exercising both `async fn` and `gen fn` with `ref` params, asserting the
+   computed result AND the caller-visible write-back.
+4. Full suites green.
 
 ## Notes
 

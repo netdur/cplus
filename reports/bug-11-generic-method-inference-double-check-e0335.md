@@ -1,6 +1,6 @@
 # Bug 11 — Generic-method inference type-checks each argument twice: false E0335
 
-- Status: FIXED 2026-08-01 (commit pending) — fix option 1 (snapshot/restore the
+- Status: FIXED 2026-08-01, commit c071b39 — fix option 1 (snapshot/restore the
   probe pass), landed with bug-01
 - Status (original): reproduced 2026-08-01 with `target/release/cpc check`
 - Severity: false error (rejects valid programs)

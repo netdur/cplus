@@ -7223,14 +7223,30 @@ fn gen_gen_function(
         linkage, cc, iter_llvm, f.name.name
     )
     .unwrap();
-    for (i, (param, (pty, _move_flag, _mut_flag, _restrict_flag))) in
+    // Same ABI classification as every other def emitter — `ref` and non-Copy
+    // params arrive by pointer, and `gen_named_call` pointer-passes them at the
+    // call site. This loop used to emit every param as a plain SSA value, so a
+    // `gen fn f(ref n: i64)` declared `(i64)` while the caller passed a `ptr`:
+    // the body read a pointer bit-pattern as an integer and the write-back was
+    // lost, with no diagnostic (reports/bug-02).
+    for (i, (_param, (pty, move_flag, mut_flag, restrict_flag))) in
         f.params.iter().zip(sig.params.iter()).enumerate()
     {
         if i > 0 {
             out.push_str(", ");
         }
-        write!(out, "{} %{}", llvm_ty(pty, types), i as u32).unwrap();
-        let _ = param;
+        let by_ptr = param_passes_by_ptr(pty, *move_flag, *mut_flag, types);
+        let attrs = param_attrs(pty, *move_flag, *mut_flag, *restrict_flag, by_ptr, types);
+        let base_ty = if by_ptr {
+            "ptr".to_string()
+        } else {
+            llvm_ty(pty, types)
+        };
+        if attrs.is_empty() {
+            write!(out, "{} %{}", base_ty, i as u32).unwrap();
+        } else {
+            write!(out, "{} {} %{}", base_ty, attrs, i as u32).unwrap();
+        }
     }
     out.push_str(") presplitcoroutine {\nentry:\n");
 
@@ -7266,15 +7282,24 @@ fn gen_gen_function(
     ));
     state.collect_moved_bindings(&f.body);
 
-    for (i, (param, (pty, _, _, _))) in f.params.iter().zip(sig.params.iter()).enumerate() {
-        let slot = state.alloca_named(&param.name.name, pty.clone());
-        state.body.push_str(&format!(
-            "  store {} %{}, ptr {}\n",
-            llvm_ty(pty, types),
-            i as u32,
-            slot
-        ));
-        state.bind(&param.name.name, slot.clone(), pty.clone());
+    // Prologue mirrors the signature: a pointer-passed param IS its slot (so a
+    // `ref` param's writes reach the caller); a value-passed one spills to a
+    // fresh alloca. Copied from `gen_gen_method`, which had it right.
+    for (i, (param, (pty, move_flag, mut_flag, _restrict_flag))) in
+        f.params.iter().zip(sig.params.iter()).enumerate()
+    {
+        if param_passes_by_ptr(pty, *move_flag, *mut_flag, types) {
+            state.bind(&param.name.name, format!("%{}", i as u32), pty.clone());
+        } else {
+            let slot = state.alloca_named(&param.name.name, pty.clone());
+            state.body.push_str(&format!(
+                "  store {} %{}, ptr {}\n",
+                llvm_ty(pty, types),
+                i as u32,
+                slot
+            ));
+            state.bind(&param.name.name, slot.clone(), pty.clone());
+        }
     }
 
     let _body_value = state.gen_block_expr(&f.body);
@@ -7368,14 +7393,30 @@ fn gen_async_function(
         linkage, cc, future_llvm, f.name.name
     )
     .unwrap();
-    for (i, (param, (pty, _move_flag, _mut_flag, _restrict_flag))) in
+    // Same ABI classification as every other def emitter — `ref` and non-Copy
+    // params arrive by pointer, and `gen_named_call` pointer-passes them at the
+    // call site. This loop used to emit every param as a plain SSA value, so an
+    // `async fn f(ref n: i64)` declared `(i64)` while the caller passed a `ptr`:
+    // the body read a pointer bit-pattern as an integer and the write-back was
+    // lost, with no diagnostic (reports/bug-02).
+    for (i, (_param, (pty, move_flag, mut_flag, restrict_flag))) in
         f.params.iter().zip(sig.params.iter()).enumerate()
     {
         if i > 0 {
             out.push_str(", ");
         }
-        write!(out, "{} %{}", llvm_ty(pty, types), i as u32).unwrap();
-        let _ = param;
+        let by_ptr = param_passes_by_ptr(pty, *move_flag, *mut_flag, types);
+        let attrs = param_attrs(pty, *move_flag, *mut_flag, *restrict_flag, by_ptr, types);
+        let base_ty = if by_ptr {
+            "ptr".to_string()
+        } else {
+            llvm_ty(pty, types)
+        };
+        if attrs.is_empty() {
+            write!(out, "{} %{}", base_ty, i as u32).unwrap();
+        } else {
+            write!(out, "{} {} %{}", base_ty, attrs, i as u32).unwrap();
+        }
     }
     out.push_str(") presplitcoroutine {\nentry:\n");
 
@@ -7437,18 +7478,25 @@ fn gen_async_function(
     state.body.push_str(""); // body collects after entry
     state.collect_moved_bindings(&f.body);
 
-    // Bind params to allocas (mirrors the non-async path's simple
-    // value-passed handling).
+    // Prologue mirrors the signature: a pointer-passed param IS its slot (so a
+    // `ref` param's writes reach the caller); a value-passed one spills to a
+    // fresh alloca. Copied from `gen_async_method`, which had it right.
     let body_start_offset = state.body.len();
-    for (i, (param, (pty, _, _, _))) in f.params.iter().zip(sig.params.iter()).enumerate() {
-        let slot = state.alloca_named(&param.name.name, pty.clone());
-        state.body.push_str(&format!(
-            "  store {} %{}, ptr {}\n",
-            llvm_ty(pty, types),
-            i as u32,
-            slot
-        ));
-        state.bind(&param.name.name, slot.clone(), pty.clone());
+    for (i, (param, (pty, move_flag, mut_flag, _restrict_flag))) in
+        f.params.iter().zip(sig.params.iter()).enumerate()
+    {
+        if param_passes_by_ptr(pty, *move_flag, *mut_flag, types) {
+            state.bind(&param.name.name, format!("%{}", i as u32), pty.clone());
+        } else {
+            let slot = state.alloca_named(&param.name.name, pty.clone());
+            state.body.push_str(&format!(
+                "  store {} %{}, ptr {}\n",
+                llvm_ty(pty, types),
+                i as u32,
+                slot
+            ));
+            state.bind(&param.name.name, slot.clone(), pty.clone());
+        }
     }
 
     let _body_value = state.gen_block_expr(&f.body);

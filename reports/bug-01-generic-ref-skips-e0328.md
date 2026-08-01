@@ -1,6 +1,6 @@
 # Bug 01 — Generic call paths skip the `ref`-argument writability rule (E0328)
 
-- Status: FIXED 2026-08-01 (commit pending) — all three generic spellings now emit E0328
+- Status: FIXED 2026-08-01, commit c071b39 — all three generic spellings now emit E0328
 - Status (original): reproduced 2026-08-01 with `target/release/cpc` (program compiles and exits 99; concrete control correctly errors)
 - Severity: soundness (immutable binding mutated at runtime)
 - Area: sema (`cplus-core/src/sema.rs`)
