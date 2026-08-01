@@ -47,21 +47,21 @@ fn collection(
     on_reorder_completed_ctx: *u8 = 0 as *u8,
 ) -> core::Node {
     var p: props::CollectionProps = props::CollectionProps::new();
-    p.horizontal_scroll_bar_visibility = horizontal_scroll_bar_visibility;
-    p.items_updating_scroll_mode = items_updating_scroll_mode;
-    p.remaining_items_threshold = remaining_items_threshold;
-    p.vertical_scroll_bar_visibility = vertical_scroll_bar_visibility;
-    p.item_sizing_strategy = item_sizing_strategy;
-    p.selection_mode = selection_mode;
-    p.is_grouped = is_grouped;
-    p.can_mix_groups = can_mix_groups;
-    p.can_reorder_items = can_reorder_items;
-    p.on_remaining_items_threshold_reached = on_remaining_items_threshold_reached;
-    p.on_remaining_items_threshold_reached_ctx = on_remaining_items_threshold_reached_ctx;
-    p.on_selection_changed = on_selection_changed;
-    p.on_selection_changed_ctx = on_selection_changed_ctx;
-    p.on_reorder_completed = on_reorder_completed;
-    p.on_reorder_completed_ctx = on_reorder_completed_ctx;
+    p.items_view.horizontal_scroll_bar_visibility = horizontal_scroll_bar_visibility;
+    p.items_view.items_updating_scroll_mode = items_updating_scroll_mode;
+    p.items_view.remaining_items_threshold = remaining_items_threshold;
+    p.items_view.vertical_scroll_bar_visibility = vertical_scroll_bar_visibility;
+    p.structured_items_view.item_sizing_strategy = item_sizing_strategy;
+    p.selectable_items_view.selection_mode = selection_mode;
+    p.groupable_items_view.is_grouped = is_grouped;
+    p.reorderable_items_view.can_mix_groups = can_mix_groups;
+    p.reorderable_items_view.can_reorder_items = can_reorder_items;
+    p.items_view.on_remaining_items_threshold_reached = on_remaining_items_threshold_reached;
+    p.items_view.on_remaining_items_threshold_reached_ctx = on_remaining_items_threshold_reached_ctx;
+    p.selectable_items_view.on_selection_changed = on_selection_changed;
+    p.selectable_items_view.on_selection_changed_ctx = on_selection_changed_ctx;
+    p.reorderable_items_view.on_reorder_completed = on_reorder_completed;
+    p.reorderable_items_view.on_reorder_completed_ctx = on_reorder_completed_ctx;
     return match box::new::[props::CollectionProps](p) {
         option::Option[box::Box[props::CollectionProps]]::Some(b) =>
             core::node_with(key, props::K_COLLECTION, b.into_raw(), props::release_collection_props),
@@ -95,7 +95,7 @@ impl Collection {
     fn set_horizontal_scroll_bar_visibility(this, v: vocab::ScrollBars) -> Collection {
         let p: *props::CollectionProps = this._props();
         if p == (0 as *props::CollectionProps) { return this; }
-        { (*p).horizontal_scroll_bar_visibility = v };
+        { (*p).items_view.horizontal_scroll_bar_visibility = v };
         core::touch(this._p, P_HORIZONTAL_SCROLL_BAR_VISIBILITY);
         return this;
     }
@@ -104,7 +104,7 @@ impl Collection {
     fn set_items_updating_scroll_mode(this, v: vocab::ScrollAnchor) -> Collection {
         let p: *props::CollectionProps = this._props();
         if p == (0 as *props::CollectionProps) { return this; }
-        { (*p).items_updating_scroll_mode = v };
+        { (*p).items_view.items_updating_scroll_mode = v };
         core::touch(this._p, P_ITEMS_UPDATING_SCROLL_MODE);
         return this;
     }
@@ -113,7 +113,7 @@ impl Collection {
     fn set_remaining_items_threshold(this, v: i64) -> Collection {
         let p: *props::CollectionProps = this._props();
         if p == (0 as *props::CollectionProps) { return this; }
-        { (*p).remaining_items_threshold = v };
+        { (*p).items_view.remaining_items_threshold = v };
         core::touch(this._p, P_REMAINING_ITEMS_THRESHOLD);
         return this;
     }
@@ -122,7 +122,7 @@ impl Collection {
     fn set_vertical_scroll_bar_visibility(this, v: vocab::ScrollBars) -> Collection {
         let p: *props::CollectionProps = this._props();
         if p == (0 as *props::CollectionProps) { return this; }
-        { (*p).vertical_scroll_bar_visibility = v };
+        { (*p).items_view.vertical_scroll_bar_visibility = v };
         core::touch(this._p, P_VERTICAL_SCROLL_BAR_VISIBILITY);
         return this;
     }
@@ -131,7 +131,7 @@ impl Collection {
     fn set_item_sizing_strategy(this, v: vocab::ItemSizing) -> Collection {
         let p: *props::CollectionProps = this._props();
         if p == (0 as *props::CollectionProps) { return this; }
-        { (*p).item_sizing_strategy = v };
+        { (*p).structured_items_view.item_sizing_strategy = v };
         core::touch(this._p, P_ITEM_SIZING_STRATEGY);
         return this;
     }
@@ -140,7 +140,7 @@ impl Collection {
     fn set_selection_mode(this, v: vocab::SelectionMode) -> Collection {
         let p: *props::CollectionProps = this._props();
         if p == (0 as *props::CollectionProps) { return this; }
-        { (*p).selection_mode = v };
+        { (*p).selectable_items_view.selection_mode = v };
         core::touch(this._p, P_SELECTION_MODE);
         return this;
     }
@@ -149,7 +149,7 @@ impl Collection {
     fn set_is_grouped(this, v: bool) -> Collection {
         let p: *props::CollectionProps = this._props();
         if p == (0 as *props::CollectionProps) { return this; }
-        { (*p).is_grouped = v };
+        { (*p).groupable_items_view.is_grouped = v };
         core::touch(this._p, P_IS_GROUPED);
         return this;
     }
@@ -158,7 +158,7 @@ impl Collection {
     fn set_can_mix_groups(this, v: bool) -> Collection {
         let p: *props::CollectionProps = this._props();
         if p == (0 as *props::CollectionProps) { return this; }
-        { (*p).can_mix_groups = v };
+        { (*p).reorderable_items_view.can_mix_groups = v };
         core::touch(this._p, P_CAN_MIX_GROUPS);
         return this;
     }
@@ -167,7 +167,7 @@ impl Collection {
     fn set_can_reorder_items(this, v: bool) -> Collection {
         let p: *props::CollectionProps = this._props();
         if p == (0 as *props::CollectionProps) { return this; }
-        { (*p).can_reorder_items = v };
+        { (*p).reorderable_items_view.can_reorder_items = v };
         core::touch(this._p, P_CAN_REORDER_ITEMS);
         return this;
     }
@@ -175,55 +175,55 @@ impl Collection {
     fn horizontal_scroll_bar_visibility(this) -> vocab::ScrollBars {
         let p: *props::CollectionProps = this._props();
         if p == (0 as *props::CollectionProps) { return vocab::ScrollBars::Always; }
-        return { (*p).horizontal_scroll_bar_visibility };
+        return { (*p).items_view.horizontal_scroll_bar_visibility };
     }
 
     fn items_updating_scroll_mode(this) -> vocab::ScrollAnchor {
         let p: *props::CollectionProps = this._props();
         if p == (0 as *props::CollectionProps) { return vocab::ScrollAnchor::KeepItemsInView; }
-        return { (*p).items_updating_scroll_mode };
+        return { (*p).items_view.items_updating_scroll_mode };
     }
 
     fn remaining_items_threshold(this) -> i64 {
         let p: *props::CollectionProps = this._props();
         if p == (0 as *props::CollectionProps) { return 0 as i64; }
-        return { (*p).remaining_items_threshold };
+        return { (*p).items_view.remaining_items_threshold };
     }
 
     fn vertical_scroll_bar_visibility(this) -> vocab::ScrollBars {
         let p: *props::CollectionProps = this._props();
         if p == (0 as *props::CollectionProps) { return vocab::ScrollBars::Always; }
-        return { (*p).vertical_scroll_bar_visibility };
+        return { (*p).items_view.vertical_scroll_bar_visibility };
     }
 
     fn item_sizing_strategy(this) -> vocab::ItemSizing {
         let p: *props::CollectionProps = this._props();
         if p == (0 as *props::CollectionProps) { return vocab::ItemSizing::MeasureAllItems; }
-        return { (*p).item_sizing_strategy };
+        return { (*p).structured_items_view.item_sizing_strategy };
     }
 
     fn selection_mode(this) -> vocab::SelectionMode {
         let p: *props::CollectionProps = this._props();
         if p == (0 as *props::CollectionProps) { return vocab::SelectionMode::Multiple; }
-        return { (*p).selection_mode };
+        return { (*p).selectable_items_view.selection_mode };
     }
 
     fn is_grouped(this) -> bool {
         let p: *props::CollectionProps = this._props();
         if p == (0 as *props::CollectionProps) { return false; }
-        return { (*p).is_grouped };
+        return { (*p).groupable_items_view.is_grouped };
     }
 
     fn can_mix_groups(this) -> bool {
         let p: *props::CollectionProps = this._props();
         if p == (0 as *props::CollectionProps) { return false; }
-        return { (*p).can_mix_groups };
+        return { (*p).reorderable_items_view.can_mix_groups };
     }
 
     fn can_reorder_items(this) -> bool {
         let p: *props::CollectionProps = this._props();
         if p == (0 as *props::CollectionProps) { return false; }
-        return { (*p).can_reorder_items };
+        return { (*p).reorderable_items_view.can_reorder_items };
     }
 
     // --- the shared band: one-line forwards, no generic element type ---

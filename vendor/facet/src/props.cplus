@@ -63,6 +63,146 @@ const C_INPUT_TRANSPARENT: u64 = 36028797018963968u64;
 const C_FLOW_DIRECTION: u64 = 72057594037927936u64;
 const C_TRANSFORM: u64 = 144115188075855872u64;
 
+// ---- GroupableItemsView — shared by every control MAUI derives from it 
+
+struct GroupableItemsViewProps {
+    is_grouped: bool,    // GroupableItemsView.IsGrouped
+}
+
+impl GroupableItemsViewProps {
+    fn new() -> GroupableItemsViewProps {
+        return GroupableItemsViewProps {
+            is_grouped: false,
+        };
+    }
+}
+
+// ---- InputView — shared by every control MAUI derives from it -----
+
+struct InputViewProps {
+    character_spacing: f64,    // InputView.CharacterSpacing
+    cursor_position: i64,    // InputView.CursorPosition
+    font_attributes: vocab::FontStyle,    // InputView.FontAttributes
+    font_auto_scaling_enabled: bool,    // InputView.FontAutoScalingEnabled
+    font_family: text::Text,    // InputView.FontFamily
+    font_size: f64,    // InputView.FontSize
+    is_read_only: bool,    // InputView.IsReadOnly
+    is_spell_check_enabled: bool,    // InputView.IsSpellCheckEnabled
+    is_text_prediction_enabled: bool,    // InputView.IsTextPredictionEnabled
+    keyboard: vocab::Keyboard,    // InputView.Keyboard
+    max_length: i64,    // InputView.MaxLength
+    placeholder: text::Text,    // InputView.Placeholder
+    placeholder_color: vocab::Color,    // InputView.PlaceholderColor
+    selection_length: i64,    // InputView.SelectionLength
+    text: text::Text,    // InputView.Text
+    text_color: vocab::Color,    // InputView.TextColor
+    text_transform: vocab::TextTransform,    // InputView.TextTransform
+    on_text_changed: fn(*u8, *u8),    // InputView.TextChanged
+    opaque on_text_changed_ctx: *u8,
+}
+
+impl InputViewProps {
+    fn new() -> InputViewProps {
+        return InputViewProps {
+            character_spacing: 0.0f64,
+            cursor_position: 0 as i64,
+            font_attributes: vocab::FontStyle::Bold,
+            font_auto_scaling_enabled: false,
+            font_family: text::new(),
+            font_size: 0.0f64,
+            is_read_only: false,
+            is_spell_check_enabled: false,
+            is_text_prediction_enabled: false,
+            keyboard: vocab::Keyboard::Default,
+            max_length: 0 as i64,
+            placeholder: text::new(),
+            placeholder_color: vocab::Color::clear(),
+            selection_length: 0 as i64,
+            text: text::new(),
+            text_color: vocab::Color::clear(),
+            text_transform: vocab::TextTransform::Default,
+            on_text_changed: no_handler,
+            on_text_changed_ctx: 0 as *u8,
+        };
+    }
+}
+
+// ---- ItemsView — shared by every control MAUI derives from it -----
+
+struct ItemsViewProps {
+    horizontal_scroll_bar_visibility: vocab::ScrollBars,    // ItemsView.HorizontalScrollBarVisibility
+    items_updating_scroll_mode: vocab::ScrollAnchor,    // ItemsView.ItemsUpdatingScrollMode
+    remaining_items_threshold: i64,    // ItemsView.RemainingItemsThreshold
+    vertical_scroll_bar_visibility: vocab::ScrollBars,    // ItemsView.VerticalScrollBarVisibility
+    on_remaining_items_threshold_reached: fn(*u8, *u8),    // ItemsView.RemainingItemsThresholdReached
+    opaque on_remaining_items_threshold_reached_ctx: *u8,
+}
+
+impl ItemsViewProps {
+    fn new() -> ItemsViewProps {
+        return ItemsViewProps {
+            horizontal_scroll_bar_visibility: vocab::ScrollBars::Always,
+            items_updating_scroll_mode: vocab::ScrollAnchor::KeepItemsInView,
+            remaining_items_threshold: 0 as i64,
+            vertical_scroll_bar_visibility: vocab::ScrollBars::Always,
+            on_remaining_items_threshold_reached: no_handler,
+            on_remaining_items_threshold_reached_ctx: 0 as *u8,
+        };
+    }
+}
+
+// ---- ReorderableItemsView — shared by every control MAUI derives from it 
+
+struct ReorderableItemsViewProps {
+    can_mix_groups: bool,    // ReorderableItemsView.CanMixGroups
+    can_reorder_items: bool,    // ReorderableItemsView.CanReorderItems
+    on_reorder_completed: fn(*u8, *u8),    // ReorderableItemsView.ReorderCompleted
+    opaque on_reorder_completed_ctx: *u8,
+}
+
+impl ReorderableItemsViewProps {
+    fn new() -> ReorderableItemsViewProps {
+        return ReorderableItemsViewProps {
+            can_mix_groups: false,
+            can_reorder_items: false,
+            on_reorder_completed: no_handler,
+            on_reorder_completed_ctx: 0 as *u8,
+        };
+    }
+}
+
+// ---- SelectableItemsView — shared by every control MAUI derives from it 
+
+struct SelectableItemsViewProps {
+    selection_mode: vocab::SelectionMode,    // SelectableItemsView.SelectionMode
+    on_selection_changed: fn(*u8, *u8),    // SelectableItemsView.SelectionChanged
+    opaque on_selection_changed_ctx: *u8,
+}
+
+impl SelectableItemsViewProps {
+    fn new() -> SelectableItemsViewProps {
+        return SelectableItemsViewProps {
+            selection_mode: vocab::SelectionMode::Multiple,
+            on_selection_changed: no_handler,
+            on_selection_changed_ctx: 0 as *u8,
+        };
+    }
+}
+
+// ---- StructuredItemsView — shared by every control MAUI derives from it 
+
+struct StructuredItemsViewProps {
+    item_sizing_strategy: vocab::ItemSizing,    // StructuredItemsView.ItemSizingStrategy
+}
+
+impl StructuredItemsViewProps {
+    fn new() -> StructuredItemsViewProps {
+        return StructuredItemsViewProps {
+            item_sizing_strategy: vocab::ItemSizing::MeasureAllItems,
+        };
+    }
+}
+
 // ---- spinner — MAUI ActivityIndicator ----------------------
 
 struct SpinnerProps {
@@ -210,6 +350,8 @@ fn release_button_props(p: *u8) {
 // ---- carousel — MAUI CarouselView --------------------------
 
 struct CarouselProps {
+    items_view: ItemsViewProps,    // embedded, not restated
+    structured_items_view: StructuredItemsViewProps,    // embedded, not restated
     is_bounce_enabled: bool,    // CarouselView.IsBounceEnabled
     is_scroll_animated: bool,    // CarouselView.IsScrollAnimated
     is_scrolling: bool,    // CarouselView.IsScrolling
@@ -224,18 +366,13 @@ struct CarouselProps {
     opaque on_current_item_changed_ctx: *u8,
     on_position_changed: fn(*u8, *u8),    // CarouselView.PositionChanged
     opaque on_position_changed_ctx: *u8,
-    horizontal_scroll_bar_visibility: vocab::ScrollBars,    // ItemsView.HorizontalScrollBarVisibility  (from ItemsView)
-    items_updating_scroll_mode: vocab::ScrollAnchor,    // ItemsView.ItemsUpdatingScrollMode  (from ItemsView)
-    remaining_items_threshold: i64,    // ItemsView.RemainingItemsThreshold  (from ItemsView)
-    vertical_scroll_bar_visibility: vocab::ScrollBars,    // ItemsView.VerticalScrollBarVisibility  (from ItemsView)
-    on_remaining_items_threshold_reached: fn(*u8, *u8),    // ItemsView.RemainingItemsThresholdReached
-    opaque on_remaining_items_threshold_reached_ctx: *u8,
-    item_sizing_strategy: vocab::ItemSizing,    // StructuredItemsView.ItemSizingStrategy  (from StructuredItemsView)
 }
 
 impl CarouselProps {
     fn new() -> CarouselProps {
         return CarouselProps {
+            items_view: ItemsViewProps::new(),
+            structured_items_view: StructuredItemsViewProps::new(),
             is_bounce_enabled: false,
             is_scroll_animated: false,
             is_scrolling: false,
@@ -250,13 +387,6 @@ impl CarouselProps {
             on_current_item_changed_ctx: 0 as *u8,
             on_position_changed: no_handler,
             on_position_changed_ctx: 0 as *u8,
-            horizontal_scroll_bar_visibility: vocab::ScrollBars::Always,
-            items_updating_scroll_mode: vocab::ScrollAnchor::KeepItemsInView,
-            remaining_items_threshold: 0 as i64,
-            vertical_scroll_bar_visibility: vocab::ScrollBars::Always,
-            on_remaining_items_threshold_reached: no_handler,
-            on_remaining_items_threshold_reached_ctx: 0 as *u8,
-            item_sizing_strategy: vocab::ItemSizing::MeasureAllItems,
         };
     }
 }
@@ -302,41 +432,21 @@ fn release_checkbox_props(p: *u8) {
 // ---- collection — MAUI CollectionView ----------------------
 
 struct CollectionProps {
-    horizontal_scroll_bar_visibility: vocab::ScrollBars,    // ItemsView.HorizontalScrollBarVisibility  (from ItemsView)
-    items_updating_scroll_mode: vocab::ScrollAnchor,    // ItemsView.ItemsUpdatingScrollMode  (from ItemsView)
-    remaining_items_threshold: i64,    // ItemsView.RemainingItemsThreshold  (from ItemsView)
-    vertical_scroll_bar_visibility: vocab::ScrollBars,    // ItemsView.VerticalScrollBarVisibility  (from ItemsView)
-    on_remaining_items_threshold_reached: fn(*u8, *u8),    // ItemsView.RemainingItemsThresholdReached
-    opaque on_remaining_items_threshold_reached_ctx: *u8,
-    item_sizing_strategy: vocab::ItemSizing,    // StructuredItemsView.ItemSizingStrategy  (from StructuredItemsView)
-    selection_mode: vocab::SelectionMode,    // SelectableItemsView.SelectionMode  (from SelectableItemsView)
-    on_selection_changed: fn(*u8, *u8),    // SelectableItemsView.SelectionChanged
-    opaque on_selection_changed_ctx: *u8,
-    is_grouped: bool,    // GroupableItemsView.IsGrouped  (from GroupableItemsView)
-    can_mix_groups: bool,    // ReorderableItemsView.CanMixGroups  (from ReorderableItemsView)
-    can_reorder_items: bool,    // ReorderableItemsView.CanReorderItems  (from ReorderableItemsView)
-    on_reorder_completed: fn(*u8, *u8),    // ReorderableItemsView.ReorderCompleted
-    opaque on_reorder_completed_ctx: *u8,
+    items_view: ItemsViewProps,    // embedded, not restated
+    structured_items_view: StructuredItemsViewProps,    // embedded, not restated
+    selectable_items_view: SelectableItemsViewProps,    // embedded, not restated
+    groupable_items_view: GroupableItemsViewProps,    // embedded, not restated
+    reorderable_items_view: ReorderableItemsViewProps,    // embedded, not restated
 }
 
 impl CollectionProps {
     fn new() -> CollectionProps {
         return CollectionProps {
-            horizontal_scroll_bar_visibility: vocab::ScrollBars::Always,
-            items_updating_scroll_mode: vocab::ScrollAnchor::KeepItemsInView,
-            remaining_items_threshold: 0 as i64,
-            vertical_scroll_bar_visibility: vocab::ScrollBars::Always,
-            on_remaining_items_threshold_reached: no_handler,
-            on_remaining_items_threshold_reached_ctx: 0 as *u8,
-            item_sizing_strategy: vocab::ItemSizing::MeasureAllItems,
-            selection_mode: vocab::SelectionMode::Multiple,
-            on_selection_changed: no_handler,
-            on_selection_changed_ctx: 0 as *u8,
-            is_grouped: false,
-            can_mix_groups: false,
-            can_reorder_items: false,
-            on_reorder_completed: no_handler,
-            on_reorder_completed_ctx: 0 as *u8,
+            items_view: ItemsViewProps::new(),
+            structured_items_view: StructuredItemsViewProps::new(),
+            selectable_items_view: SelectableItemsViewProps::new(),
+            groupable_items_view: GroupableItemsViewProps::new(),
+            reorderable_items_view: ReorderableItemsViewProps::new(),
         };
     }
 }
@@ -406,59 +516,23 @@ fn release_date_picker_props(p: *u8) {
 // ---- text_area — MAUI Editor -------------------------------
 
 struct TextAreaProps {
+    input_view: InputViewProps,    // embedded, not restated
     auto_size: vocab::AutoSize,    // Editor.AutoSize
     horizontal_text_alignment: vocab::TextAlign,    // Editor.HorizontalTextAlignment
     vertical_text_alignment: vocab::TextAlign,    // Editor.VerticalTextAlignment
     on_submit: fn(*u8, *u8),    // Editor.Completed
     opaque on_submit_ctx: *u8,
-    character_spacing: f64,    // InputView.CharacterSpacing  (from InputView)
-    cursor_position: i64,    // InputView.CursorPosition  (from InputView)
-    font_attributes: vocab::FontStyle,    // InputView.FontAttributes  (from InputView)
-    font_auto_scaling_enabled: bool,    // InputView.FontAutoScalingEnabled  (from InputView)
-    font_family: text::Text,    // InputView.FontFamily  (from InputView)
-    font_size: f64,    // InputView.FontSize  (from InputView)
-    is_read_only: bool,    // InputView.IsReadOnly  (from InputView)
-    is_spell_check_enabled: bool,    // InputView.IsSpellCheckEnabled  (from InputView)
-    is_text_prediction_enabled: bool,    // InputView.IsTextPredictionEnabled  (from InputView)
-    keyboard: vocab::Keyboard,    // InputView.Keyboard  (from InputView)
-    max_length: i64,    // InputView.MaxLength  (from InputView)
-    placeholder: text::Text,    // InputView.Placeholder  (from InputView)
-    placeholder_color: vocab::Color,    // InputView.PlaceholderColor  (from InputView)
-    selection_length: i64,    // InputView.SelectionLength  (from InputView)
-    text: text::Text,    // InputView.Text  (from InputView)
-    text_color: vocab::Color,    // InputView.TextColor  (from InputView)
-    text_transform: vocab::TextTransform,    // InputView.TextTransform  (from InputView)
-    on_text_changed: fn(*u8, *u8),    // InputView.TextChanged
-    opaque on_text_changed_ctx: *u8,
 }
 
 impl TextAreaProps {
     fn new() -> TextAreaProps {
         return TextAreaProps {
+            input_view: InputViewProps::new(),
             auto_size: vocab::AutoSize::Disabled,
             horizontal_text_alignment: vocab::TextAlign::Center,
             vertical_text_alignment: vocab::TextAlign::Center,
             on_submit: no_handler,
             on_submit_ctx: 0 as *u8,
-            character_spacing: 0.0f64,
-            cursor_position: 0 as i64,
-            font_attributes: vocab::FontStyle::Bold,
-            font_auto_scaling_enabled: false,
-            font_family: text::new(),
-            font_size: 0.0f64,
-            is_read_only: false,
-            is_spell_check_enabled: false,
-            is_text_prediction_enabled: false,
-            keyboard: vocab::Keyboard::Default,
-            max_length: 0 as i64,
-            placeholder: text::new(),
-            placeholder_color: vocab::Color::clear(),
-            selection_length: 0 as i64,
-            text: text::new(),
-            text_color: vocab::Color::clear(),
-            text_transform: vocab::TextTransform::Default,
-            on_text_changed: no_handler,
-            on_text_changed_ctx: 0 as *u8,
         };
     }
 }
@@ -474,6 +548,7 @@ fn release_text_area_props(p: *u8) {
 // ---- text_field — MAUI Entry -------------------------------
 
 struct TextFieldProps {
+    input_view: InputViewProps,    // embedded, not restated
     clear_button_visibility: vocab::ClearButton,    // Entry.ClearButtonVisibility
     horizontal_text_alignment: vocab::TextAlign,    // Entry.HorizontalTextAlignment
     is_secure: bool,    // Entry.IsPassword
@@ -481,30 +556,12 @@ struct TextFieldProps {
     vertical_text_alignment: vocab::TextAlign,    // Entry.VerticalTextAlignment
     on_submit: fn(*u8, *u8),    // Entry.Completed
     opaque on_submit_ctx: *u8,
-    character_spacing: f64,    // InputView.CharacterSpacing  (from InputView)
-    cursor_position: i64,    // InputView.CursorPosition  (from InputView)
-    font_attributes: vocab::FontStyle,    // InputView.FontAttributes  (from InputView)
-    font_auto_scaling_enabled: bool,    // InputView.FontAutoScalingEnabled  (from InputView)
-    font_family: text::Text,    // InputView.FontFamily  (from InputView)
-    font_size: f64,    // InputView.FontSize  (from InputView)
-    is_read_only: bool,    // InputView.IsReadOnly  (from InputView)
-    is_spell_check_enabled: bool,    // InputView.IsSpellCheckEnabled  (from InputView)
-    is_text_prediction_enabled: bool,    // InputView.IsTextPredictionEnabled  (from InputView)
-    keyboard: vocab::Keyboard,    // InputView.Keyboard  (from InputView)
-    max_length: i64,    // InputView.MaxLength  (from InputView)
-    placeholder: text::Text,    // InputView.Placeholder  (from InputView)
-    placeholder_color: vocab::Color,    // InputView.PlaceholderColor  (from InputView)
-    selection_length: i64,    // InputView.SelectionLength  (from InputView)
-    text: text::Text,    // InputView.Text  (from InputView)
-    text_color: vocab::Color,    // InputView.TextColor  (from InputView)
-    text_transform: vocab::TextTransform,    // InputView.TextTransform  (from InputView)
-    on_text_changed: fn(*u8, *u8),    // InputView.TextChanged
-    opaque on_text_changed_ctx: *u8,
 }
 
 impl TextFieldProps {
     fn new() -> TextFieldProps {
         return TextFieldProps {
+            input_view: InputViewProps::new(),
             clear_button_visibility: vocab::ClearButton::Never,
             horizontal_text_alignment: vocab::TextAlign::Center,
             is_secure: false,
@@ -512,25 +569,6 @@ impl TextFieldProps {
             vertical_text_alignment: vocab::TextAlign::Center,
             on_submit: no_handler,
             on_submit_ctx: 0 as *u8,
-            character_spacing: 0.0f64,
-            cursor_position: 0 as i64,
-            font_attributes: vocab::FontStyle::Bold,
-            font_auto_scaling_enabled: false,
-            font_family: text::new(),
-            font_size: 0.0f64,
-            is_read_only: false,
-            is_spell_check_enabled: false,
-            is_text_prediction_enabled: false,
-            keyboard: vocab::Keyboard::Default,
-            max_length: 0 as i64,
-            placeholder: text::new(),
-            placeholder_color: vocab::Color::clear(),
-            selection_length: 0 as i64,
-            text: text::new(),
-            text_color: vocab::Color::clear(),
-            text_transform: vocab::TextTransform::Default,
-            on_text_changed: no_handler,
-            on_text_changed_ctx: 0 as *u8,
         };
     }
 }
@@ -1126,6 +1164,7 @@ fn release_scroll_props(p: *u8) {
 // ---- search_field — MAUI SearchBar -------------------------
 
 struct SearchFieldProps {
+    input_view: InputViewProps,    // embedded, not restated
     cancel_button_color: vocab::Color,    // SearchBar.CancelButtonColor
     horizontal_text_alignment: vocab::TextAlign,    // SearchBar.HorizontalTextAlignment
     return_type: vocab::ReturnKey,    // SearchBar.ReturnType
@@ -1133,30 +1172,12 @@ struct SearchFieldProps {
     vertical_text_alignment: vocab::TextAlign,    // SearchBar.VerticalTextAlignment
     on_submit: fn(*u8, *u8),    // SearchBar.SearchButtonPressed
     opaque on_submit_ctx: *u8,
-    character_spacing: f64,    // InputView.CharacterSpacing  (from InputView)
-    cursor_position: i64,    // InputView.CursorPosition  (from InputView)
-    font_attributes: vocab::FontStyle,    // InputView.FontAttributes  (from InputView)
-    font_auto_scaling_enabled: bool,    // InputView.FontAutoScalingEnabled  (from InputView)
-    font_family: text::Text,    // InputView.FontFamily  (from InputView)
-    font_size: f64,    // InputView.FontSize  (from InputView)
-    is_read_only: bool,    // InputView.IsReadOnly  (from InputView)
-    is_spell_check_enabled: bool,    // InputView.IsSpellCheckEnabled  (from InputView)
-    is_text_prediction_enabled: bool,    // InputView.IsTextPredictionEnabled  (from InputView)
-    keyboard: vocab::Keyboard,    // InputView.Keyboard  (from InputView)
-    max_length: i64,    // InputView.MaxLength  (from InputView)
-    placeholder: text::Text,    // InputView.Placeholder  (from InputView)
-    placeholder_color: vocab::Color,    // InputView.PlaceholderColor  (from InputView)
-    selection_length: i64,    // InputView.SelectionLength  (from InputView)
-    text: text::Text,    // InputView.Text  (from InputView)
-    text_color: vocab::Color,    // InputView.TextColor  (from InputView)
-    text_transform: vocab::TextTransform,    // InputView.TextTransform  (from InputView)
-    on_text_changed: fn(*u8, *u8),    // InputView.TextChanged
-    opaque on_text_changed_ctx: *u8,
 }
 
 impl SearchFieldProps {
     fn new() -> SearchFieldProps {
         return SearchFieldProps {
+            input_view: InputViewProps::new(),
             cancel_button_color: vocab::Color::clear(),
             horizontal_text_alignment: vocab::TextAlign::Center,
             return_type: vocab::ReturnKey::Default,
@@ -1164,25 +1185,6 @@ impl SearchFieldProps {
             vertical_text_alignment: vocab::TextAlign::Center,
             on_submit: no_handler,
             on_submit_ctx: 0 as *u8,
-            character_spacing: 0.0f64,
-            cursor_position: 0 as i64,
-            font_attributes: vocab::FontStyle::Bold,
-            font_auto_scaling_enabled: false,
-            font_family: text::new(),
-            font_size: 0.0f64,
-            is_read_only: false,
-            is_spell_check_enabled: false,
-            is_text_prediction_enabled: false,
-            keyboard: vocab::Keyboard::Default,
-            max_length: 0 as i64,
-            placeholder: text::new(),
-            placeholder_color: vocab::Color::clear(),
-            selection_length: 0 as i64,
-            text: text::new(),
-            text_color: vocab::Color::clear(),
-            text_transform: vocab::TextTransform::Default,
-            on_text_changed: no_handler,
-            on_text_changed_ctx: 0 as *u8,
         };
     }
 }
