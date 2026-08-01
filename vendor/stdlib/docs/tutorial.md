@@ -68,6 +68,27 @@ io::println(view);
 `str` is a borrowed view; `Text` is the owned growable string. Prefer `str`
 parameters at APIs; own with `Text` when you need to store or build.
 
+`str` has methods of its own (importing `stdlib/text` — or `stdlib/str`
+directly — brings them in). It spells length `count()`, like every stdlib
+container; there is no `len()`:
+
+```cplus
+let s = "  a,b,c  ";
+let t = s.trim();                          // "a,b,c" — a view, nothing copied
+t.count();                                 // 5 (bytes)
+t.contains("b");                           // true
+t.has_prefix("a");  t.find(",");           // bool / Option[usize]
+let parts = t.split(separator: ",");       // Vec[str] of views
+"42".to_i64();  "2.5".to_f64();            // Option — strict, trim() first
+"file.txt".removing_suffix(".txt");        // "file" — view, unchanged if absent
+```
+
+Sub-view results (`trim`, `slice`, `prefix`, `split` pieces, …) borrow the
+same bytes as the receiver, so they follow the same lifetime rule as
+`view()`. Operations that must allocate — uppercasing, replacing, padding,
+building — live on `Text`; convert with `s.to_text()`. Slices and arrays
+have the same two core reads: `xs.count()`, `xs.is_empty()`.
+
 ## Print
 
 ```cplus

@@ -34,6 +34,7 @@ Cross-module use inside stdlib is normal (`vec` imports `option`, `status`,
 | Module | Role |
 |---|---|
 | `vec` | Growable `Vec[T]`; no bitwise copy of non-`Copy` `T` out of storage |
+| `str` | The builtin `str` view's methods (`count`, `find`, `trim`, `split`, `to_i64`, …) — comes in with `text` |
 | `text` | Owned `Text`, `CString`; `str` views |
 | `hash_map` | `HashMap[K, V]` with `K: Copy, V: Copy` |
 | `hash_set` | `HashSet[T]` with `T: Copy` |

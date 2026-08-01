@@ -22,6 +22,7 @@ Source of truth for edge cases: the header comment and impl in
 | [`result`](#result) | `Result[T, E]`, `IoError`, `ok` / `err` / `io_ok` / `io_err` |
 | [`status`](#status) | `Status` |
 | [`vec`](#vec) | `Vec[T]` |
+| [`str`](#str) | the builtin `str` view's method set (the one `impl str` block) |
 | [`text`](#text) | `Text`, `CString` |
 | [`io`](#io) | `print`, `println`, `eprintln` |
 | [`fs`](#fs) | `File`, path helpers |
@@ -152,7 +153,86 @@ Does not bitwise-copy non-`Copy` `T` out of the buffer.
 
 ---
 
+## str
+
+Methods on the builtin string view. `str` itself is a language type
+(`{ptr, len}`, Copy, borrowed); this module holds the single `impl str`
+block that declares its method set — the compiler admits exactly one such
+block program-wide (a second is E0385, anywhere).
+
+Available in any file once the build imports `stdlib/str` — directly, or
+transitively via `stdlib/text` (text imports str for its own reads, so
+most programs already have it). With neither import, `s.count()` is E0324
+with a note naming the fix.
+
+```cplus
+import "stdlib/str" as str_methods;   // or just import "stdlib/text"
+
+"user@example.com".drop_first(count: 5);   // "example.com" — a view, no copy
+"  42  ".trim().to_i64();                  // Option[i64]::Some(42)
+"a,b,c".split(separator: ",").count();     // 3
+```
+
+```cplus
+impl str {
+    // reads — all #[no_alloc]
+    fn count(this) -> usize                    // byte length; there is NO len()
+    fn is_empty(this) -> bool
+    fn char_count(this) -> usize               // Unicode scalars, not bytes
+    fn is_ascii(this) -> bool
+    fn byte_at(this, index: usize) -> option::Option[u8]
+    fn has_prefix(this, prefix: str) -> bool
+    fn has_suffix(this, suffix: str) -> bool
+    fn contains(this, needle: str) -> bool
+    fn find(this, needle: str) -> option::Option[usize]
+    fn rfind(this, needle: str) -> option::Option[usize]
+    fn count_of(this, needle: str) -> usize    // non-overlapping
+    fn equals_ignoring_case(this, other: str) -> bool
+    fn compare(this, other: str) -> i32        // -1 / 0 / 1, byte order
+
+    // sub-views — endpoints move, no bytes copied; all #[no_alloc]
+    fn slice(this, from: usize, to: usize) -> option::Option[str]
+    fn prefix(this, count: usize) -> str       // clamps, never traps
+    fn suffix(this, count: usize) -> str
+    fn drop_first(this, count: usize = 1) -> str
+    fn drop_last(this, count: usize = 1) -> str
+    fn removing_prefix(this, prefix: str) -> str
+    fn removing_suffix(this, suffix: str) -> str
+    fn trim(this) -> str
+    fn trim_start(this) -> str
+    fn trim_end(this) -> str
+
+    // the one allocating member: one Vec, pieces are views
+    fn split(this, separator: str) -> vec::Vec[str]
+
+    // parse — strict, no whitespace tolerance (trim() first)
+    fn to_i64(this) -> option::Option[i64]
+    fn to_f64(this) -> option::Option[f64]
+}
+```
+
+- A sub-view shares the receiver's buffer: valid exactly as long as the
+  backing bytes (a literal: forever; a `Text`'s view: until the `Text`
+  mutates or drops). Empty results are the `""` literal, so the pointer is
+  always valid and non-null.
+- `to_i64`: optional `+`/`-`, decimal digits, `None` on stray bytes or
+  overflow. `to_f64`: sign, digits, optional `.digits`, optional `e`/`E`
+  exponent, at most 63 bytes; the value comes from libc `strtod`, so
+  rounding is correct to the last bit; `inf`/`nan`/hex never pass.
+- Compiler-provided, not from this block: `to_text()` (owned copy; needs
+  `stdlib/text`), `hash()`, `eq()`.
+- The `#str_ptr` / `#str_len` / `#str_from_raw_parts` intrinsics remain
+  the FFI tier — for crossing into C, not for string work.
+- Slices and arrays carry the same two core reads, compiler-provided:
+  `xs.count()`, `xs.is_empty()` (their FFI tier is `#slice_*`).
+
+---
+
 ## text
+
+Reads are the same operations `str` has — `Text` delegates them through
+`view()` — with the difference that `Text`'s transform family returns
+owned copies where `str`'s returns borrowed sub-views.
 
 ```cplus
 struct Text { /* private owned buffer */ }
