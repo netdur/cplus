@@ -71,7 +71,22 @@ TYMAP = {
     "Microsoft.Maui.Controls.Page": "Node",
     "Microsoft.Maui.Controls.TableRoot": "Node",
     "Microsoft.Maui.ITitleBar": "Node",
-    "Microsoft.Maui.Controls.Window": "Node",
+    "Microsoft.Maui.Controls.Window": "Window",
+    # Stage 1 closure additions
+    "Microsoft.Maui.Graphics.Point": "Point",
+    "Microsoft.Maui.IView": "Node",
+    "Microsoft.Maui.Controls.VisualElement": "Node",
+    "Microsoft.Maui.Controls.WebViewSource": "str",
+    "Microsoft.Maui.Graphics.IDrawable": "Drawable",
+    "Microsoft.Maui.Controls.SwipeItems": "SwipeItem[]",
+    "System.Collections.Generic.IList<Microsoft.Maui.Controls.KeyboardAccelerator!>": "KeyboardAccelerator[]",
+    "System.Collections.Generic.IList<Microsoft.Maui.Controls.MenuBarItem>": "MenuBarItem[]",
+    "System.Collections.Generic.IList<Microsoft.Maui.Controls.ToolbarItem>": "ToolbarItem[]",
+    "System.Collections.Generic.IEnumerable<Microsoft.Maui.Controls.ToolbarItem>": "ToolbarItem[]",
+    "System.Collections.Generic.IList<Microsoft.Maui.IView!>": "Node[]",
+    "System.Collections.Generic.IReadOnlyList<Microsoft.Maui.Controls.Element>": "Node[]",
+    "System.Collections.ObjectModel.ObservableCollection<Microsoft.Maui.Controls.View>": "Node[]",
+    "System.Collections.Generic.IReadOnlyList<Microsoft.Maui.Controls.Window!>": "Window[]",
 }
 
 # ---- MAUI enums -> facet enums. Vocabulary facet must DECLARE, not a drop. ---
@@ -101,6 +116,11 @@ ENUMS = {
     "Microsoft.Maui.Controls.TableIntent": "TableStyle",
     "Microsoft.Maui.Controls.Shapes.PenLineCap": "LineCap",
     "Microsoft.Maui.Controls.Shapes.PenLineJoin": "LineJoin",
+    "Microsoft.Maui.ScrollOrientation": "ScrollAxis",
+    "Microsoft.Maui.ApplicationModel.AppTheme": "Appearance",
+    "Microsoft.Maui.Controls.IndicatorShape": "DotShape",
+    "Microsoft.Maui.KeyboardAcceleratorModifiers": "KeyModifiers",
+    "Microsoft.Maui.Controls.ToolbarItemOrder": "ToolbarPlacement",
 }
 
 # ---- types that carry MAUI's model, wherever they appear ---------------------
@@ -126,6 +146,12 @@ DROP_TYPES = {
     "Microsoft.Maui.Controls.ListViewCachingStrategy": ENGINE,
     "System.Collections.Generic.IReadOnlyCollection<Microsoft.Maui.IWindowOverlay!>": ENGINE,
     "Microsoft.Maui.IVisualDiagnosticsOverlay": ENGINE,
+    "System.Net.CookieContainer": ENGINE,
+    "Microsoft.Maui.Controls.IAppLinks": ENGINE,
+    "Microsoft.Maui.Controls.Internals.NavigationProxy": ENGINE,
+    "Microsoft.Maui.IElementHandler": ENGINE,
+    "Microsoft.Maui.Controls.Application": ENGINE,
+    "Microsoft.Maui.Controls.IBindableLayout": LAYOUT,
 }
 
 # ---- member-name rules, applied before the type rules -----------------------
@@ -145,7 +171,8 @@ DROP_PATTERNS = [
                 r"Batched|BatchCommitted|"
                 r"MeasureInvalidated|FocusChangeRequested|ChildrenReordered|"
                 r"ScrollToRequested|ModelChanged|PlatformSizeChanged|"
-                r"HandlerChanged|HandlerChanging|Window|Visual)$"), ENGINE),
+                r"Handler|HandlerChanged|HandlerChanging|Visual|"
+                r"InternalChildren)$"), ENGINE),
 ]
 
 # Methods that are the layout engine's, not MAUI's bookkeeping. Same verdict
@@ -172,9 +199,6 @@ METHOD_VOCABULARY = {
     ("VisualElement", "Measure"): "measure(width:height:)",
     ("VisualElement", "BatchBegin"): "begin_updates",
     ("VisualElement", "BatchCommit"): "end_updates",
-    ("VisualElement", "GetChildElements"): "children()",
-    ("View", "GetChildElements"): "children()",
-    ("Label", "GetChildElements"): "children()",
     ("ProgressBar", "ProgressTo"): "animate_progress(to:duration:)",
     ("ItemsView", "ScrollTo"): "scroll_to(index:)",
     ("ListView", "ScrollTo"): "scroll_to(index:)",
@@ -196,6 +220,11 @@ OVERLAY = {
     # it. A read, not a write — the backend owns what it points at.
     ("VisualElement", "Handler"): ("ADOPT", "native()", "*u8 (read-only) — deliberately platform-specific; the one row that names a backend"),
 
+    ("VisualElement", "GetChildElements"): ("ADOPT", "children()", "Node[] (read-only)"),
+    ("View", "GetChildElements"): ("ADOPT", "children()", "Node[] (read-only)"),
+    ("Label", "GetChildElements"): ("ADOPT", "children()", "Node[] (read-only)"),
+    ("ScrollView", "Children"): ("ADOPT", "children()", "Node[] (read-only)"),
+
     # Window.Page is the root subtree, not a page object.
     ("Window", "Page"): ("ADOPT", "set_root / root()", "Node"),
     # TableView.Root is the same idea one level down: the content subtree.
@@ -214,6 +243,13 @@ OVERLAY = {
     # and BoxView's as a 4-corner struct; facet carries Corners everywhere.
     ("Button", "CornerRadius"): ("ADOPT", "set_corner_radius / corner_radius()", "Corners"),
     ("RadioButton", "CornerRadius"): ("ADOPT", "set_corner_radius / corner_radius()", "Corners"),
+    ("ImageButton", "CornerRadius"): ("ADOPT", "set_corner_radius / corner_radius()", "Corners"),
+
+    # Two different thresholds. MAUI names both `Threshold`: the recognizer's
+    # is the distance that counts as a swipe, the view's is how far you drag
+    # to reveal the actions. Distances are f64 in facet, not MAUI's uint.
+    ("SwipeGestureRecognizer", "Threshold"): ("ADOPT", "set_swipe_threshold / swipe_threshold()", "f64"),
+    ("SwipeView", "Threshold"): ("ADOPT", "set_reveal_threshold / reveal_threshold()", "f64"),
 
     # Name corrections where snake_case reads wrong at the call site.
     ("VisualElement", "IsVisible"): ("ADOPT", "set_is_visible / is_visible()", "bool"),

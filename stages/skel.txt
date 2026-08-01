@@ -1,0 +1,271 @@
+// SKEL — the whole model as code. Bodies elided; every type and signature real.
+// Built on flex_layout's DOM-grade tree (02666a7): node addresses are stable,
+// so a *Node cursor survives tree churn.
+// Read top to bottom: tree -> vocabulary -> one control -> shared verbs ->
+// backend -> app.
+
+
+// ============================================================
+// HAND   vendor/facet/src/facet.cplus     the tree
+// ============================================================
+
+import "flex_layout/flex_layout" as flex;
+import "stdlib/text" as text;
+import "stdlib/option" as option;
+import "stdlib/status" as status;
+
+type Node = flex::Node;          // facet's tree IS flex's tree
+type Frame = flex::Frame;        // { left, top, width, height }, absolute
+
+enum Props {
+    Button(ButtonProps),
+    Label(LabelProps),
+    Slider(SliderProps),
+    // one variant per control
+}
+
+struct Data {                    // rides in flex's owned attachment slot
+    key: str,                    // set once at build, never changes
+    props: Props,
+    opaque view: *u8,            // native view; 0 until mounted
+    dirty: u64,
+}
+
+fn release_data(p: *u8) { ... }  // flex calls this on drop / detach / replace
+
+// A str field is only sound while its bytes outlive the struct. Literals do;
+// a computed key ("row_${i}") does not, and the borrow check does NOT catch it
+// when the view arrives as a parameter — verified: it compiles clean and ASan
+// reports heap-use-after-free on the first read. Interning fixes it without
+// giving up str: the table owns the bytes for the process, so the stored view
+// is permanently valid, and key comparison in slot() becomes a pointer compare
+// instead of a memcmp.
+fn intern(s: str) -> str { ... }        // returns the table's copy
+
+impl flex::Node {                // extension: cross-package, gated on import
+    fn data(this) -> *Data { ... }              // attachment() -> *Data
+    fn key(this) -> str { ... }
+    fn slot(ref this, key: str) -> option::Option[*Node] { ... }   // walks child_ptr
+}
+
+fn touch(n: *Node, bit: u64) { ... }        // mark dirty; the ONE seam to the backend
+fn root_of(cp: *u8) -> *Node { ... }        // component address -> its mounted root
+
+// Tree edits are flex's own verbs, used directly:
+//   add_child(take Node) -> Status
+//   insert_child(take Node, at: usize) -> Status
+//   remove_child(at: usize) -> Option[Node]      detach; reinsert to reparent
+//   move_child(from: usize, to: usize) -> Status
+//   child_ptr(at: usize) -> Option[*Node]        the cursor
+//   child_index(of: *Node) -> Option[usize]
+// A cursor dies only when its own node (or an ancestor) is removed.
+
+
+// ============================================================
+// GEN    vendor/facet/src/vocabulary.cplus     the named types
+// ============================================================
+
+enum FontStyle { Regular, Bold, Italic }                    // MAUI FontAttributes
+
+enum LineBreak {                                            // MAUI LineBreakMode
+    NoWrap, WordWrap, CharacterWrap,
+    HeadTruncation, MiddleTruncation, TailTruncation,
+}
+
+struct Color { r: f64, g: f64, b: f64, a: f64 }
+
+struct Corners {                                            // MAUI CornerRadius
+    top_leading: f64, top_trailing: f64,
+    bottom_leading: f64, bottom_trailing: f64,
+}
+impl Corners {
+    fn all(v: f64) -> Corners { ... }
+}
+
+
+// ============================================================
+// GEN    vendor/facet/src/button.cplus     one control, whole
+// ============================================================
+
+import "./facet" as core;
+import "./vocabulary" as vocab;
+
+// --- state: one field per adopted row ---
+
+// str when the value never changes, Text when it does. Every prop here has a
+// setter, so every string is owned; `key` above is the build-time-only case.
+struct ButtonProps {
+    label: text::Text,                  // Button.Text
+    text_color: vocab::Color,           // Button.TextColor
+    corner_radius: vocab::Corners,      // Button.CornerRadius
+    font_style: vocab::FontStyle,       // Button.FontAttributes
+    font_size: f64,                     // Button.FontSize
+    line_break: vocab::LineBreak,       // Button.LineBreakMode
+    image: text::Text,                  // Button.ImageSource
+    is_pressed: bool,                   // Button.IsPressed  (backend writes)
+    on_click: fn(*u8, *u8),             // Button.Clicked
+    on_click_ctx: *u8,
+    on_pressed: fn(*u8, *u8),           // Button.Pressed
+    on_pressed_ctx: *u8,
+}
+
+const P_LABEL: u64 = 1u64;
+const P_TEXT_COLOR: u64 = 2u64;
+const P_CORNER_RADIUS: u64 = 4u64;
+const P_FONT_SIZE: u64 = 8u64;
+
+// --- build: owns a node while you configure it ---
+
+struct Button { node: core::Node }
+
+impl Button {
+    fn new(label: str, key: str = "") -> Button { ... }
+
+    fn label(take this, v: str) -> Button { ... }
+    fn text_color(take this, v: vocab::Color) -> Button { ... }
+    fn corner_radius(take this, v: vocab::Corners) -> Button { ... }
+    fn font_size(take this, v: f64) -> Button { ... }
+    fn on_click(take this, cb: fn(*u8, *u8), ctx: *u8 = 0 as *u8) -> Button { ... }
+
+    fn into_node(take this) -> core::Node { return this.node; }
+}
+
+// --- live: typed cursor into the mounted tree ---
+// One word, Copy, non-owning. Valid until its node is removed.
+
+struct LiveButton { opaque _p: *core::Node }
+
+impl LiveButton {
+    fn set_label(this, v: str) -> LiveButton { ... }              // write props, touch(P_LABEL)
+    fn set_text_color(this, v: vocab::Color) -> LiveButton { ... }
+    fn set_corner_radius(this, v: vocab::Corners) -> LiveButton { ... }
+    fn set_font_size(this, v: f64) -> LiveButton { ... }
+
+    fn label(this) -> text::Text { ... }
+    fn is_pressed(this) -> bool { ... }
+    fn frame(this) -> core::Frame { ... }                         // flex's computed frame
+
+    fn element(this) -> core::LiveElement { ... }                 // the shared verbs
+}
+
+// --- lookup: key, then kind ---
+
+impl core::Node {
+    fn button(ref this, key: str) -> option::Option[LiveButton] { ... }
+}
+
+
+// ============================================================
+// GEN    vendor/facet/src/element.cplus
+// The 41 verbs EVERY node carries. One cursor, reached from any typed one,
+// instead of generating them onto all 37.   <-- OPEN: this or duplication
+// ============================================================
+
+struct LiveElement { opaque _p: *Node }
+
+impl LiveElement {
+    fn set_is_enabled(this, v: bool) -> LiveElement { ... }
+    fn set_is_visible(this, v: bool) -> LiveElement { ... }
+    fn set_opacity(this, v: f64) -> LiveElement { ... }
+    fn set_background_color(this, v: vocab::Color) -> LiveElement { ... }
+    fn set_z_index(this, v: i64) -> LiveElement { ... }
+    // ... 16 more writes
+
+    fn bounds(this) -> Frame { ... }
+    fn is_focused(this) -> bool { ... }
+    fn is_attached(this) -> bool { ... }
+    fn native(this) -> *u8 { ... }
+    // ... 5 more reads
+
+    fn focus(this) { ... }
+    fn blur(this) { ... }
+    fn relayout(this) { ... }
+
+    // structural verbs pass straight through to flex
+    fn add(this, take n: Node) -> status::Status { ... }
+    fn insert(this, take n: Node, at: usize) -> status::Status { ... }
+    fn remove(this, at: usize) -> option::Option[Node] { ... }
+    fn move_child(this, from: usize, to: usize) -> status::Status { ... }
+    fn child(this, at: usize) -> option::Option[*Node] { ... }
+}
+
+
+// ============================================================
+// GEN    vendor/facet_appkit/src/button_appkit.cplus
+// One mount + one apply per control. 37 pairs, not 338 registrars.
+// ============================================================
+
+import "facet/facet" as core;
+import "facet/button" as button;
+import "appkit/appkit" as ak;
+
+fn mount_button(n: *core::Node) -> *u8 { ... }        // create NSButton, store in Data.view
+
+fn apply_button(n: *core::Node, dirty: u64) {
+    let d: *core::Data = { (*n).data() };
+    let v: *u8 = { (*d).view };
+    if (dirty & button::P_LABEL) != 0u64 { ... }              // setTitle:
+    if (dirty & button::P_CORNER_RADIUS) != 0u64 { ... }      // layer.cornerRadius
+    if (dirty & button::P_FONT_SIZE) != 0u64 { ... }          // setFont:
+    // P_TEXT_COLOR absent: NSButton colors titles only via attributed strings.
+    // Recorded in the backend manifest; facet still declares the verb.
+    return;
+}
+
+// After calculate_layout, place only what moved: flex's layout_changed() is
+// false for a subtree the incremental cache kept.
+fn place(n: *core::Node) { ... }
+
+fn install() { ... }        // register (kind -> mount, apply) for every control
+
+
+// ============================================================
+// APP
+// ============================================================
+
+import "facet/facet" as facet;
+import "facet/button" as button;          // gates the button vocabulary
+import "stdlib/option" as option;
+
+struct SaveScreen { saving: bool }
+
+impl SaveScreen: facet::Component {
+    fn build(ref this) -> facet::Node {
+        var b: facet::Builder = facet::Builder::new();
+        b.add(button::Button::new("Save", key: "save")
+                 .font_size(13.0f64)
+                 .grow(1.0f64)                                  // flex's own modifier
+                 .on_click(save_clicked, #addr_of(this) as *u8)
+                 .into_node());
+        return facet::column(b);
+    }
+}
+
+fn save_clicked(sender: *u8, cp: *u8) {
+    match { (*facet::root_of(cp)).button("save") } {
+        option::Option[button::LiveButton]::Some(b) => {
+            b.set_label("Saving…");
+            b.element().set_is_enabled(false);
+        },
+        option::Option[button::LiveButton]::None => {},
+    };
+    return;
+}
+
+
+// ============================================================
+ // OPEN
+// ============================================================
+//
+// 1. RESOLVED by flex_layout 02666a7 — children are Vec[Box[Node]], so a
+//    *Node cursor survives sibling appends, inserts, removals and reorders.
+//    It dies only when its own node or an ancestor is removed.
+//
+// 2. LiveElement above assumes ONE shared cursor reached via .element().
+//    Alternative is generating all 41 verbs onto each of the 37 Live* types.
+//
+// 3. Values the platform learns first (is_pressed, typed text) need a write
+//    path back into Props.
+//
+// 4. A cursor held across remove_child of its own subtree is still dangling.
+//    Nothing detects that today.
