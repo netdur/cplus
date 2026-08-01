@@ -55,8 +55,8 @@ pub const INSTANTIATION_LIMIT: usize = 4096;
 /// string back to the `Ty::Struct(id)` that sema used as a key would
 /// require sema's id table — which doesn't survive the handoff. Indexing
 /// by rendered name sidesteps the id round-trip.
-struct StructLookup {
-    by_names: std::collections::HashMap<(String, Vec<String>), String>,
+struct StructLookup<'a> {
+    by_names: &'a std::collections::HashMap<(String, Vec<String>), String>,
     /// 2026-07-16: generic-FN instantiations keyed the same way —
     /// `(generic_fn_name, [mangled arg names])` → mangled fn name. The
     /// free-fn dispatch rewrite (`Vec[Item[T]]::new()` → `vec.new`) inside a
@@ -64,7 +64,34 @@ struct StructLookup {
     /// type-checks those spans per instantiation) and the AST→`Ty` fallback
     /// can't resolve NOMINAL type-args, so it resolves the callee by mangled
     /// NAME instead — the same trick `by_names` plays for the type half.
-    fn_by_names: std::collections::HashMap<(String, Vec<String>), String>,
+    fn_by_names: &'a std::collections::HashMap<(String, Vec<String>), String>,
+    /// Set only while expanding a generic impl's methods: the concrete
+    /// instance name that `Self` stands for in that body. Carrying it here
+    /// — the context object the rewrite walker already threads everywhere —
+    /// is what lets ONE walker do the substitution. It used to be a second
+    /// pass over the same tree through `rewrite_expr_self`, a partial clone
+    /// of `rewrite_expr` with fewer arms; statements it did not recurse into
+    /// (`loop`, `defer`, `assert`, destructuring lets) kept `Self`
+    /// unsubstituted and reached codegen as `Ty::Error` (reports/bug-07).
+    self_name: Option<&'a str>,
+}
+
+impl<'a> StructLookup<'a> {
+    /// The same tables with `Self` bound to `name`.
+    fn with_self(&self, name: &'a str) -> StructLookup<'a> {
+        StructLookup {
+            by_names: self.by_names,
+            fn_by_names: self.fn_by_names,
+            self_name: Some(name),
+        }
+    }
+
+    /// Resolve a source-level type/struct-literal name through the active
+    /// `Self` binding. Returns `None` when the name is not `Self` or no
+    /// binding is in scope.
+    fn resolve_self(&self, name: &str) -> Option<&'a str> {
+        (name == "Self").then_some(self.self_name).flatten()
+    }
 }
 
 /// Public entry point. Consumes the input `Program` and returns a new
@@ -118,10 +145,8 @@ pub fn monomorphize(
         .collect();
     // `fn_by_names` is filled after fn-instantiation propagation below —
     // its instance set isn't final yet.
-    let mut struct_lookup = StructLookup {
-        by_names,
-        fn_by_names: std::collections::HashMap::new(),
-    };
+    let mut fn_by_names: std::collections::HashMap<(String, Vec<String>), String> =
+        std::collections::HashMap::new();
     // v0.0.4 Phase 1B: propagate fn-instantiation set to a fixed point.
     //
     // Sema records each generic-fn call site's type-args once, using the
@@ -163,11 +188,13 @@ pub fn monomorphize(
             .iter()
             .map(|t| mangle_ty(t, type_name_of))
             .collect();
-        struct_lookup
-            .fn_by_names
-            .insert((i.generic_name.clone(), names), i.mangled.clone());
+        fn_by_names.insert((i.generic_name.clone(), names), i.mangled.clone());
     }
-    let struct_lookup = struct_lookup;
+    let struct_lookup = StructLookup {
+        by_names: &by_names,
+        fn_by_names: &fn_by_names,
+        self_name: None,
+    };
     // Walk the program's items: pass through everything except generic
     // fns; for those, swap each instantiation for a concrete-typed
     // clone. Also rewrite all `Call` sites whose callee is `Ident(name)`
@@ -863,10 +890,10 @@ fn rewrite_self_in_type(ty: &Type, mangled_name: &str) -> Type {
     }
 }
 
-/// Slice 7GEN.5e step 3: walk a method body, recursively applying
-/// the existing rewrite_block logic AND replacing any `Path("Self")`
-/// type references with `Path(mangled)`. This is used only when
-/// monomorphizing methods inside generic-typed impl blocks.
+/// Slice 7GEN.5e step 3: walk a generic impl method's body with `Self` bound
+/// to the concrete instance name. One traversal — `rewrite_block` does the
+/// subst + call-site rewriting AND resolves `Self`, because the binding rides
+/// on `StructLookup` (see `StructLookup::self_name`).
 fn rewrite_block_with_self(
     block: &Block,
     subst: &std::collections::HashMap<String, Ty>,
@@ -877,228 +904,15 @@ fn rewrite_block_with_self(
     struct_lookup: &StructLookup,
     mangled_name: &str,
 ) -> Block {
-    // First run the generic rewrite that handles subst + generic-fn
-    // call-site rewriting, then do a second pass that replaces Self.
-    let pass1 = rewrite_block(
+    rewrite_block(
         block,
         subst,
         generic_names,
         inst_lookup,
         mono,
         type_name_of,
-        struct_lookup,
-    );
-    rewrite_block_self(&pass1, mangled_name)
-}
-
-fn rewrite_block_self(block: &Block, mangled_name: &str) -> Block {
-    Block {
-        stmts: block
-            .stmts
-            .iter()
-            .map(|s| rewrite_stmt_self(s, mangled_name))
-            .collect(),
-        tail: block
-            .tail
-            .as_ref()
-            .map(|e| Box::new(rewrite_expr_self(e, mangled_name))),
-        span: block.span,
-    }
-}
-
-fn rewrite_stmt_self(stmt: &Stmt, mangled_name: &str) -> Stmt {
-    let kind = match &stmt.kind {
-        StmtKind::Let {
-            mutable,
-            name,
-            ty,
-            init,
-        } => StmtKind::Let {
-            mutable: *mutable,
-            name: name.clone(),
-            ty: ty.as_ref().map(|t| rewrite_self_in_type(t, mangled_name)),
-            init: init.as_ref().map(|e| rewrite_expr_self(e, mangled_name)),
-        },
-        StmtKind::Expr(e) => StmtKind::Expr(rewrite_expr_self(e, mangled_name)),
-        StmtKind::Return(e) => {
-            StmtKind::Return(e.as_ref().map(|e| rewrite_expr_self(e, mangled_name)))
-        }
-        StmtKind::While {
-            cond,
-            body,
-            attributes,
-        } => StmtKind::While {
-            cond: rewrite_expr_self(cond, mangled_name),
-            body: rewrite_block_self(body, mangled_name),
-            attributes: attributes.clone(),
-        },
-        StmtKind::For(forloop, attributes) => {
-            StmtKind::For(rewrite_for_self(forloop, mangled_name), attributes.clone())
-        }
-        other => other.clone(),
-    };
-    Stmt {
-        kind,
-        span: stmt.span,
-    }
-}
-
-fn rewrite_for_self(f: &ForLoop, mangled_name: &str) -> ForLoop {
-    match f {
-        ForLoop::Range { var, iter, body } => ForLoop::Range {
-            var: var.clone(),
-            iter: rewrite_expr_self(iter, mangled_name),
-            body: rewrite_block_self(body, mangled_name),
-        },
-        ForLoop::CStyle {
-            init,
-            cond,
-            update,
-            body,
-        } => ForLoop::CStyle {
-            init: init
-                .as_ref()
-                .map(|s| Box::new(rewrite_stmt_self(s, mangled_name))),
-            cond: cond.as_ref().map(|e| rewrite_expr_self(e, mangled_name)),
-            update: update
-                .iter()
-                .map(|e| rewrite_expr_self(e, mangled_name))
-                .collect(),
-            body: rewrite_block_self(body, mangled_name),
-        },
-    }
-}
-
-fn rewrite_expr_self(expr: &Expr, mangled_name: &str) -> Expr {
-    let kind = match &expr.kind {
-        ExprKind::Path { segments } if segments.len() == 1 && segments[0].name == "Self" => {
-            ExprKind::Path {
-                segments: vec![Ident {
-                    name: mangled_name.to_string(),
-                    span: segments[0].span,
-                }],
-            }
-        }
-        // Most expressions don't carry types, so the only thing we
-        // really need to chase is nested blocks/cast/etc.
-        ExprKind::Block(b) => ExprKind::Block(rewrite_block_self(b, mangled_name)),
-        ExprKind::If {
-            cond,
-            then,
-            else_branch,
-        } => ExprKind::If {
-            cond: Box::new(rewrite_expr_self(cond, mangled_name)),
-            then: rewrite_block_self(then, mangled_name),
-            else_branch: else_branch
-                .as_ref()
-                .map(|e| Box::new(rewrite_expr_self(e, mangled_name))),
-        },
-        ExprKind::Cast { expr: inner, ty } => ExprKind::Cast {
-            expr: Box::new(rewrite_expr_self(inner, mangled_name)),
-            ty: rewrite_self_in_type(ty, mangled_name),
-        },
-        ExprKind::Call {
-            callee,
-            args,
-            type_args,
-            arg_labels: _,
-        } => ExprKind::Call {
-            callee: Box::new(rewrite_expr_self(callee, mangled_name)),
-            args: args
-                .iter()
-                .map(|a| rewrite_expr_self(a, mangled_name))
-                .collect(),
-            type_args: type_args
-                .iter()
-                .map(|t| rewrite_self_in_type(t, mangled_name))
-                .collect(),
-            arg_labels: Vec::new(),
-        },
-        ExprKind::Binary { op, lhs, rhs } => ExprKind::Binary {
-            op: *op,
-            lhs: Box::new(rewrite_expr_self(lhs, mangled_name)),
-            rhs: Box::new(rewrite_expr_self(rhs, mangled_name)),
-        },
-        ExprKind::Unary { op, operand } => ExprKind::Unary {
-            op: *op,
-            operand: Box::new(rewrite_expr_self(operand, mangled_name)),
-        },
-        ExprKind::Field { receiver, name } => ExprKind::Field {
-            receiver: Box::new(rewrite_expr_self(receiver, mangled_name)),
-            name: name.clone(),
-        },
-        ExprKind::Index { receiver, index } => ExprKind::Index {
-            receiver: Box::new(rewrite_expr_self(receiver, mangled_name)),
-            index: Box::new(rewrite_expr_self(index, mangled_name)),
-        },
-        ExprKind::Assign { op, target, value } => ExprKind::Assign {
-            op: *op,
-            target: Box::new(rewrite_expr_self(target, mangled_name)),
-            value: Box::new(rewrite_expr_self(value, mangled_name)),
-        },
-        ExprKind::Match { scrutinee, arms } => ExprKind::Match {
-            scrutinee: Box::new(rewrite_expr_self(scrutinee, mangled_name)),
-            arms: arms
-                .iter()
-                .map(|a| MatchArm {
-                    pattern: a.pattern.clone(),
-                    body: rewrite_expr_self(&a.body, mangled_name),
-                    span: a.span,
-                })
-                .collect(),
-        },
-        ExprKind::StructLit { name, fields } => {
-            let new_name = if name.name == "Self" {
-                Ident {
-                    name: mangled_name.to_string(),
-                    span: name.span,
-                }
-            } else {
-                name.clone()
-            };
-            ExprKind::StructLit {
-                name: new_name,
-                fields: fields
-                    .iter()
-                    .map(|f| StructLitField {
-                        name: f.name.clone(),
-                        value: rewrite_expr_self(&f.value, mangled_name),
-                        span: f.span,
-                    })
-                    .collect(),
-            }
-        }
-        ExprKind::ArrayLit { elements } => ExprKind::ArrayLit {
-            elements: elements
-                .iter()
-                .map(|e| rewrite_expr_self(e, mangled_name))
-                .collect(),
-        },
-        ExprKind::ArrayFill { fill, count, .. } => ExprKind::ArrayFill {
-            fill: Box::new(rewrite_expr_self(fill, mangled_name)),
-            count: *count,
-            count_name: None,
-        },
-        ExprKind::Intrinsic {
-            name,
-            type_args,
-            args,
-            ret_ty,
-        } => ExprKind::Intrinsic {
-            name: name.clone(),
-            type_args: type_args.clone(),
-            args: args
-                .iter()
-                .map(|a| rewrite_expr_self(a, mangled_name))
-                .collect(),
-            ret_ty: ret_ty.clone(),
-        },
-        other => other.clone(),
-    };
-    Expr {
-        kind,
-        span: expr.span,
-    }
+        &struct_lookup.with_self(mangled_name),
+    )
 }
 
 /// Build the param-name → concrete-type substitution for a single
@@ -1321,6 +1135,19 @@ fn visit_ident_calls(expr: &Expr, f: &mut impl FnMut(&str, &[Type], crate::lexer
         ExprKind::Intrinsic { args, .. } => {
             for a in args {
                 visit_ident_calls(a, f);
+            }
+        }
+        // TupleLit and Asm operands: kept in lockstep with `rewrite_expr`'s
+        // arms for the same kinds — a construct one walker traverses and the
+        // other does not is a call to a deleted template (reports/bug-04).
+        ExprKind::TupleLit { elements } => {
+            for e in elements {
+                visit_ident_calls(e, f);
+            }
+        }
+        ExprKind::Asm { operands, .. } => {
+            for o in operands {
+                visit_ident_calls(&o.value, f);
             }
         }
         _ => {}
@@ -1802,6 +1629,14 @@ fn subst_type_ast(
 ) -> Type {
     let kind = match &ty.kind {
         TypeKind::Path(name) => {
+            // In a generic impl's method body, `Self` names the concrete
+            // instance being expanded (reports/bug-07).
+            if let Some(self_name) = struct_lookup.resolve_self(name) {
+                return Type {
+                    kind: TypeKind::Path(self_name.to_string()),
+                    span: ty.span,
+                };
+            }
             if let Some(concrete) = subst.get(name) {
                 // v0.0.3 Phase 5 Slice 5D: round-trip through
                 // `ty_to_type_ast` so non-Path Tys (RawPtr, FnPtr,
@@ -2585,7 +2420,14 @@ fn rewrite_expr(
                     // ("sema validated"). A non-param segment (a concrete
                     // `P::func()` in a generic body) isn't in `subst`, so it is
                     // left unchanged.
-                    if let Some(concrete) = subst.get(&segments[0].name) {
+                    // `Self::func()` resolves the same way, through the active
+                    // `Self` binding rather than `subst` (reports/bug-07).
+                    if let Some(self_name) = struct_lookup.resolve_self(&segments[0].name) {
+                        new_segs[0] = Ident {
+                            name: self_name.to_string(),
+                            span: segments[0].span,
+                        };
+                    } else if let Some(concrete) = subst.get(&segments[0].name) {
                         new_segs[0] = Ident {
                             name: type_name_of(concrete),
                             span: segments[0].span,
@@ -2847,7 +2689,14 @@ fn rewrite_expr(
             struct_lookup,
         ))),
         ExprKind::StructLit { name, fields } => ExprKind::StructLit {
-            name: name.clone(),
+            // `Self { .. }` in a generic impl's method body (reports/bug-07).
+            name: match struct_lookup.resolve_self(&name.name) {
+                Some(self_name) => Ident {
+                    name: self_name.to_string(),
+                    span: name.span,
+                },
+                None => name.clone(),
+            },
             fields: fields
                 .iter()
                 .map(|f| StructLitField {
@@ -3236,6 +3085,75 @@ fn rewrite_expr(
             ret_ty: ret_ty
                 .as_ref()
                 .map(|t| subst_type_ast(t, subst, type_name_of, struct_lookup)),
+        },
+        // reports/bug-04. A generic call in a tuple element was DISCOVERED by
+        // `visit_ident_calls` (so the instantiation got synthesized) but never
+        // rewritten here, so the call site kept the template name while the
+        // template itself was deleted — codegen then panicked looking it up.
+        // The same discovery/rewrite asymmetry the Await/Yield arms above are
+        // commented for.
+        ExprKind::TupleLit { elements } => ExprKind::TupleLit {
+            elements: elements
+                .iter()
+                .map(|e| {
+                    rewrite_expr(
+                        e,
+                        subst,
+                        generic_names,
+                        inst_lookup,
+                        mono,
+                        type_name_of,
+                        struct_lookup,
+                    )
+                })
+                .collect(),
+        },
+        // reports/bug-06. Same asymmetry inside `"${...}"`.
+        ExprKind::InterpStr { parts } => ExprKind::InterpStr {
+            parts: parts
+                .iter()
+                .map(|p| match p {
+                    InterpStrPart::Expr(e) => InterpStrPart::Expr(Box::new(rewrite_expr(
+                        e,
+                        subst,
+                        generic_names,
+                        inst_lookup,
+                        mono,
+                        type_name_of,
+                        struct_lookup,
+                    ))),
+                    other => other.clone(),
+                })
+                .collect(),
+        },
+        // reports/bug-04 step 2: `#asm` operand values were absent from BOTH
+        // walkers. Discovery is added alongside in `visit_ident_calls`, so the
+        // two traverse the same set.
+        ExprKind::Asm {
+            template,
+            operands,
+            clobbers,
+        } => ExprKind::Asm {
+            template: template.clone(),
+            operands: operands
+                .iter()
+                .map(|o| AsmOperand {
+                    name: o.name.clone(),
+                    dir: o.dir.clone(),
+                    reg: o.reg.clone(),
+                    value: Box::new(rewrite_expr(
+                        &o.value,
+                        subst,
+                        generic_names,
+                        inst_lookup,
+                        mono,
+                        type_name_of,
+                        struct_lookup,
+                    )),
+                    span: o.span,
+                })
+                .collect(),
+            clobbers: clobbers.clone(),
         },
         other => other.clone(),
     };
@@ -3918,6 +3836,105 @@ mod tests {
                 });
             }
         }
+    }
+
+    /// reports/bug-04 (tuple literal), bug-06 (interpolation), and bug-04
+    /// step 2 (`#asm` operands). Each is a position where the DISCOVERY walker
+    /// `visit_ident_calls` synthesized the instantiation but the REWRITE
+    /// walker `rewrite_expr` had no arm, so the call site kept the template
+    /// name while the template was deleted — codegen then panicked looking it
+    /// up. `#asm` operands were missing from BOTH walkers.
+    ///
+    /// The assertion is the invariant codegen depends on: every rewritten
+    /// callee names an emitted function, and no template name survives.
+    #[test]
+    fn generic_calls_in_tuple_asm_and_interp_positions_are_rewritten() {
+        for (label, src) in [
+            (
+                "tuple literal",
+                "fn id_it[T](take x: T) -> T { return x; }\n\
+                 struct W { a: i32 }\n\
+                 fn main() -> i32 {\n\
+                   let t: (W, i32) = (W { a: id_it::[i32](7) }, 1);\n\
+                   return t.0.a - 7;\n\
+                 }",
+            ),
+            (
+                "asm operand",
+                "fn id_it[T](take x: T) -> T { return x; }\n\
+                 fn main() -> i32 {\n\
+                   var out: i64 = 0;\n\
+                   #asm(\"mov {v}, {o}\", o = out(reg) out, v = in(reg) id_it::[i64](7));\n\
+                   return (out as i32) - 7;\n\
+                 }",
+            ),
+        ] {
+            let out = run_with_driver_names(src);
+            let defined: std::collections::HashSet<String> =
+                emitted_fn_names(&out).into_iter().collect();
+            assert!(
+                defined.iter().any(|n| n.starts_with("id_it__")),
+                "[{label}] the instantiation was never synthesized: {defined:?}"
+            );
+            for item in &out.items {
+                let ItemKind::Function(f) = &item.kind else {
+                    continue;
+                };
+                let caller = f.name.name.clone();
+                visit_ident_calls_in_block(&f.body, &mut |callee, _args, _span| {
+                    assert_ne!(
+                        callee, "id_it",
+                        "[{label}] `{caller}` still calls the deleted template"
+                    );
+                });
+            }
+        }
+    }
+
+    /// reports/bug-07. `Self` substitution used to run as a SECOND pass over
+    /// the method body through `rewrite_expr_self`, a partial clone of
+    /// `rewrite_expr` with fewer arms — statements it did not recurse into
+    /// (`loop`, `defer`, `assert`, destructuring lets) kept `Self`
+    /// unsubstituted and reached codegen as `Ty::Error`. It is now one walker,
+    /// with the binding carried on `StructLookup`.
+    #[test]
+    fn self_is_substituted_in_every_statement_position() {
+        let out = run_with_driver_names(
+            "struct Holder[T] { v: T }\n\
+             impl Holder[T] {\n\
+               fn spin(this) -> i32 {\n\
+                 loop {\n\
+                   let h: Self = Self { v: this.v };\n\
+                   return h.v;\n\
+                 }\n\
+               }\n\
+               fn deferred(this) -> i32 {\n\
+                 var n: i32 = 0;\n\
+                 {\n\
+                   defer n = n;\n\
+                   let h: Self = Self { v: this.v };\n\
+                   n = h.v;\n\
+                 }\n\
+                 return n;\n\
+               }\n\
+               fn asserted(this) -> i32 {\n\
+                 assert Self { v: this.v }.v == 3;\n\
+                 return 1;\n\
+               }\n\
+               fn assoc() -> i32 { return 5; }\n\
+               fn viaassoc(this) -> i32 { return Self::assoc(); }\n\
+             }\n\
+             fn main() -> i32 {\n\
+               let b: Holder[i32] = Holder[i32] { v: 3 };\n\
+               return b.spin() + b.deferred() + b.asserted() + b.viaassoc() - 9;\n\
+             }",
+        );
+        // `Self` must not survive anywhere in the expanded impl.
+        let rendered = format!("{:?}", out);
+        assert!(
+            !rendered.contains("\"Self\""),
+            "an unsubstituted `Self` survived monomorphize"
+        );
     }
 
     // Controls: the shapes that already worked must keep working. `*T` and a

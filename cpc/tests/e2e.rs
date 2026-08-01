@@ -2961,6 +2961,99 @@ fn main() -> i32 {
     }
 }
 
+/// reports/bug-04, bug-06, bug-07 — monomorphize's walkers missing arms. Each
+/// of these compiled to a compiler panic, not a diagnostic: a generic call in a
+/// tuple element or an `#asm` operand kept the template name after the template
+/// was deleted, and `Self` inside a `loop` was never substituted. The
+/// interpolation case (bug-06) needs stdlib and is covered by
+/// `generic_call_in_interpolation_monomorphizes` below.
+#[test]
+fn mono_rewrites_generic_calls_and_self_in_every_position() {
+    let (_dir, bin) = compile_program(
+        "fn id_it[T](take x: T) -> T { return x; }\n\
+         struct W { a: i32 }\n\
+         struct Holder[T] { v: T }\n\
+         impl Holder[T] {\n\
+           fn spin(this) -> i32 {\n\
+             loop {\n\
+               let h: Self = Self { v: this.v };\n\
+               return h.v;\n\
+             }\n\
+           }\n\
+           fn deferred(this) -> i32 {\n\
+             var n: i32 = 0;\n\
+             {\n\
+               defer n = n;\n\
+               let h: Self = Self { v: this.v };\n\
+               n = h.v;\n\
+             }\n\
+             return n;\n\
+           }\n\
+           fn assoc() -> i32 { return 5; }\n\
+           fn viaassoc(this) -> i32 { return Self::assoc(); }\n\
+         }\n\
+         fn main() -> i32 {\n\
+           let t: (W, i32) = (W { a: id_it::[i32](7) }, 1);\n\
+           var out: i64 = 0;\n\
+           #asm(\"mov {v}, {o}\", o = out(reg) out, v = in(reg) id_it::[i64](2));\n\
+           let b: Holder[i32] = Holder[i32] { v: 3 };\n\
+           return t.0.a + (out as i32) + b.spin() + b.deferred() + b.viaassoc() - 20;\n\
+         }",
+        false,
+    );
+    let run = Command::new(&bin).status().expect("run mono probe");
+    assert_eq!(run.code(), Some(0), "unexpected exit: {run}");
+}
+
+/// reports/bug-06: a generic call inside `"${...}"` was discovered by
+/// `visit_ident_calls` but had no `rewrite_expr` arm, so the call site kept the
+/// deleted template's name. Needs stdlib, since interpolation builds a `Text`.
+#[test]
+fn generic_call_in_interpolation_monomorphizes() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"interpmono\"\n\n[[bin]]\nname = \"interpmono\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::os::unix::fs::symlink(
+        format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
+        dir.join("vendor"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/io\" as io;\n\
+         import \"stdlib/text\" as text;\n\
+         \n\
+         fn double_it[T](take x: T) -> T { return x; }\n\
+         \n\
+         fn main() -> i32 {\n\
+             let t: text::Text = \"v=${double_it::[i32](7)}\";\n\
+             io::println(t.view());\n\
+             return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc build");
+    assert!(
+        out.status.success(),
+        "generic call in interpolation must build: {}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    let run = Command::new(dir.join("target/debug/interpmono"))
+        .output()
+        .expect("run interpmono");
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "v=7\n");
+}
+
 #[test]
 fn divide_by_zero_traps_in_debug() {
     let (_dir, bin) = compile_program(DIV_ZERO_PROGRAM, false);

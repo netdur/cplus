@@ -1,6 +1,10 @@
 # Bug 07 — `Self` rewrite walker is a partial clone: `Self { .. }` inside `loop` ICEs
 
-- Status: reproduced 2026-08-01 with `target/release/cpc` (panic at codegen.rs:4379 `codegen reached Ty::Error`; control without `loop` compiles and runs)
+- Status: FIXED 2026-08-01, commit f212467 — took the PREFERRED fix: `Self` is now
+  resolved by the main walker (binding carried on `StructLookup`), and the partial-clone
+  `rewrite_block_self` / `rewrite_stmt_self` / `rewrite_expr_self` / `rewrite_for_self`
+  are deleted
+- Status (original): reproduced 2026-08-01 with `target/release/cpc` (panic at codegen.rs:4379 `codegen reached Ty::Error`; control without `loop` compiles and runs)
 - Severity: ICE
 - Area: monomorphize (`cplus-core/src/monomorphize.rs`)
 - Master report: `core-drift-audit-2026-08-01.md` (B7)
@@ -71,10 +75,26 @@ Structural companions: `issue-01-generic-ast-walker.md` (default-recursion walke
 `issue-10-merge-method-mono-paths.md` (Self-as-subst-key is part of merging the twin
 expansion paths).
 
+## Note on how the preferred fix was made small
+
+Threading `self_target: Option<&str>` as an 8th parameter through
+`rewrite_expr`/`rewrite_stmt`/`rewrite_block`/`subst_type_ast` would have been a ~40-site
+mechanical diff. Instead the binding rides on `StructLookup`, the context object the
+walker ALREADY threads through every recursive call. `StructLookup` now borrows its two
+name tables instead of owning them, so `with_self(name)` is a free copy rather than a
+per-method clone of two program-wide HashMaps. `Self` is then resolved in the three
+positions it can appear: `TypeKind::Path` inside `subst_type_ast`, `StructLit`'s name, and
+the leading segment of a `Path` callee (`Self::assoc()`).
+
 ## Verification
 
 1. `selfloop.cplus` compiles and exits 0; `selfok.cplus` still does.
-2. Unit tests in monomorphize.rs: `Self` inside `loop`, inside `defer`, in a tuple
-   literal, in an interpolation, and as `Self::assoc()` if supported.
-3. e2e runtime test with the repro.
-4. Full suites.
+2. DONE: `self_is_substituted_in_every_statement_position` in monomorphize.rs covers
+   `loop`, `defer`, `assert`, and `Self::assoc()`, asserting no `"Self"` survives anywhere
+   in the expanded program.
+3. DONE: `mono_rewrites_generic_calls_and_self_in_every_position` in cpc/tests/e2e.rs.
+4. DONE: full suites green.
+
+NOT covered, and NOT this bug: `let p: (Self, i32)` — any tuple TYPE naming a type
+parameter inside a generic body ICEs with "codegen reached TypeKind::Tuple", identically
+on the pre-fix binary. Written up separately as `bug-27-tuple-type-in-generic-body-ice.md`.

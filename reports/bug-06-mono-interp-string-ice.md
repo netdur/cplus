@@ -1,6 +1,7 @@
 # Bug 06 — Generic call inside string interpolation: discovered but never rewritten (ICE)
 
-- Status: reproduced 2026-08-01 with `target/release/cpc` (panic: missing mangled fn)
+- Status: FIXED 2026-08-01, commit f212467 — InterpStr arm in `rewrite_expr`
+- Status (original): reproduced 2026-08-01 with `target/release/cpc` (panic: missing mangled fn)
 - Severity: ICE
 - Area: monomorphize (`cplus-core/src/monomorphize.rs`)
 - Master report: `core-drift-audit-2026-08-01.md` (B6)
@@ -77,7 +78,10 @@ walker).
 ## Verification
 
 1. The repro project builds and prints `v=7`.
-2. Unit test in monomorphize.rs's test module: interp string containing a generic call is
-   rewritten (assert the mangled name appears in the rewritten AST or emitted program).
-3. e2e runtime test with the repro program.
-4. Full suites.
+2. Covered by the e2e test rather than a mono unit test: interpolation needs stdlib's
+   `Text`, which the mono test harness (`run_with_driver_names`) cannot supply — it lexes
+   and sema-checks one unvendored snippet. The sibling positions (tuple literal, `#asm`
+   operand) ARE unit-tested there.
+3. DONE: `generic_call_in_interpolation_monomorphizes` in cpc/tests/e2e.rs asserts the
+   built program prints `v=7`.
+4. DONE: full suites green.

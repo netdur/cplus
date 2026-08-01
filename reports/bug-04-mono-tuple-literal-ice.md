@@ -1,6 +1,7 @@
 # Bug 04 — Generic call inside a tuple literal: monomorphize never rewrites it (ICE)
 
-- Status: reproduced 2026-08-01 with `target/release/cpc` (panic at codegen.rs:13640)
+- Status: FIXED 2026-08-01, commit f212467 — TupleLit + Asm arms in both walkers
+- Status (original): reproduced 2026-08-01 with `target/release/cpc` (panic at codegen.rs:13640)
 - Severity: ICE
 - Area: monomorphize (`cplus-core/src/monomorphize.rs`)
 - Master report: `core-drift-audit-2026-08-01.md` (B4)
@@ -61,8 +62,13 @@ bug-06 (InterpStr), bug-07 (Self walker).
 ## Verification
 
 1. `tup.cplus` compiles and exits 0.
-2. Add unit tests in monomorphize.rs's test module: generic call in tuple literal, in
-   nested tuple, and in an asm operand if supported (copy a neighboring rewrite test's
-   pattern).
-3. Add an e2e runtime test (cpc/tests/e2e.rs) with the repro program.
-4. Full suites.
+2. DONE: `generic_calls_in_tuple_asm_and_interp_positions_are_rewritten` in
+   monomorphize.rs. The `#asm` operand case was a REAL ICE, not a hypothetical — verified
+   against the pre-fix binary ("sema validated function exists: missing `id_it`").
+3. DONE: `mono_rewrites_generic_calls_and_self_in_every_position` in cpc/tests/e2e.rs.
+4. DONE: full suites green.
+
+A NESTED tuple index (`t.0.0`) does not parse — the lexer reads `0.0` as a float literal.
+Separate from this bug; the nested case is covered through a struct wrapper instead.
+`let p: (T, i32)` inside a generic body is a separate pre-existing ICE, written up as
+`bug-27-tuple-type-in-generic-body-ice.md`.
