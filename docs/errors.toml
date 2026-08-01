@@ -1844,6 +1844,34 @@ fn bad() -> str {
 '''
 
 [[code]]
+id = "E0514"
+title = "Owner goes out of scope while a view of it is still live"
+category = "Ownership and borrowing"
+severity = "error"
+repro = "checked"
+lang = "cplus"
+verified = true
+emit_site = "cplus-core/src/borrowck.rs (walk_block_in_scope scope-exit check)"
+test = "cplus-core/src/borrowck.rs:scope_exit_under_live_borrow_fires_e0514"
+cause = "A binding declared inside a block owns bytes that a view (or a view-carrying struct/enum) bound OUTSIDE the block still reads. The owner is dropped when the block ends, so the outer binding dangles from that point on. Assigning a view outward is the same escape as moving the owner while borrowed (E0372), caught at the scope boundary instead of at a move."
+fix = "Declare the borrower inside the block, extend the owner's scope past the borrower's last use, or store owned bytes instead: `Text`, or `text::intern` when a set-once process-lifetime view is wanted."
+example = '''
+struct Buf { x: i32 }
+impl Buf {
+    fn drop(ref this) { return; }
+    fn view(this) -> str { return ""; }
+}
+fn bad() {
+    var s: str = "";
+    {
+        let t: Buf = Buf { x: 1 };
+        s = t.view();
+    }
+    return;
+}
+'''
+
+[[code]]
 id = "E0612"
 title = "Interpolated type does not implement `ToText`"
 category = "Ownership and borrowing"

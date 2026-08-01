@@ -2772,14 +2772,53 @@ impl Analyzer<'_> {
         // be dropped (block-local bindings not present in `outer`).
         // This decrements the source-place's `BorrowedShared(N)` count or
         // restores it to `Owned` when the last borrower dies.
-        let dropping: Vec<String> = state
+        let dying: std::collections::BTreeSet<String> = state
             .keys()
             .filter(|k| !outer.contains_key(*k))
             .map(|k| k.root.clone())
             .collect();
-        for borrower in &dropping {
+        for borrower in &dying {
             self.drop_borrower(borrower, state);
         }
+        // E0514 (memory-model contract §3.3): a block-local owner may not
+        // die while a borrower declared outside the block still holds a
+        // view of it. Dying borrowers released their claims above, so any
+        // borrower still registered against a dying place outlives its
+        // owner — the view dangles the moment the block ends. One report
+        // per owner root; the edges are then dropped so a reported escape
+        // doesn't cascade into unrelated E0372/E0383 noise.
+        let mut escaped_owners: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        let mut escapes: Vec<(String, String, Span)> = Vec::new();
+        for (place, borrowers) in self.live_borrows.iter() {
+            if !dying.contains(&place.root) || !escaped_owners.insert(place.root.clone()) {
+                continue;
+            }
+            if let Some((borrower, span)) = borrowers.iter().next() {
+                escapes.push((place.root.clone(), borrower.clone(), *span));
+            }
+        }
+        for (owner, borrower, borrow_span) in escapes {
+            self.diags.push(RawDiag {
+                code: "E0514",
+                message: format!(
+                    "`{owner}` does not live long enough: `{borrower}` still borrows it when `{owner}` goes out of scope"
+                ),
+                primary: borrow_span,
+                suggestion: Some((
+                    borrow_span,
+                    String::new(),
+                    format!(
+                        "`{borrower}` outlives this block but views memory owned by `{owner}`, \
+                         which is dropped at the block's end. Declare `{borrower}` inside the \
+                         block, extend `{owner}`'s scope past the last use of `{borrower}`, or \
+                         store an owned value instead (`Text`, or `text::intern` for a \
+                         process-lifetime view)."
+                    ),
+                )),
+                label: None,
+            });
+        }
+        self.live_borrows.retain(|p, _| !dying.contains(&p.root));
         // Drop branch-local bindings (keys not in `outer`).
         state.retain(|k, _| outer.contains_key(k));
     }
@@ -5234,6 +5273,134 @@ fn caller() {
         assert!(
             !codes.iter().any(|c| c == "E0372"),
             "E0372 should not fire after borrower's scope exits; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn scope_exit_under_live_borrow_fires_e0514() {
+        // Memory-model contract §3.3: assigning a view outward and letting
+        // the owner die at the block's end dangles the outer binding —
+        // the scope-exit twin of E0372's move-while-borrowed.
+        let src = "\
+struct B { x: i32 }
+impl B {
+  fn drop(ref this) { return; }
+  fn view(this) -> str { return \"\"; }
+}
+fn caller() {
+  var s: str = \"\";
+  {
+    let t: B = B { x: 1 };
+    s = t.view();
+  }
+  return;
+}";
+        let codes = check_src(src);
+        assert!(
+            codes.iter().any(|c| c == "E0514"),
+            "expected E0514 on owner scope exit under live borrow; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn scope_exit_with_borrower_dying_together_no_e0514() {
+        // Owner and borrower die in the same block: released together,
+        // nothing survives to dangle.
+        let src = "\
+struct B { x: i32 }
+impl B {
+  fn drop(ref this) { return; }
+  fn view(this) -> str { return \"\"; }
+}
+fn caller() {
+  {
+    let t: B = B { x: 1 };
+    let s: str = t.view();
+  }
+  return;
+}";
+        let codes = check_src(src);
+        assert!(
+            !codes.iter().any(|c| c == "E0514"),
+            "E0514 must not fire when owner and borrower die together; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn scope_exit_outer_owner_inner_borrower_no_e0514() {
+        // The sound direction: the owner outlives the block-local view.
+        let src = "\
+struct B { x: i32 }
+impl B {
+  fn drop(ref this) { return; }
+  fn view(this) -> str { return \"\"; }
+}
+fn caller() {
+  let t: B = B { x: 1 };
+  {
+    let s: str = t.view();
+  }
+  return;
+}";
+        let codes = check_src(src);
+        assert!(
+            !codes.iter().any(|c| c == "E0514"),
+            "E0514 must not fire when the owner outlives the borrower; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn loop_body_owner_view_assigned_outward_fires_e0514() {
+        // The per-iteration owner dies at each body exit while the outer
+        // binding keeps the view.
+        let src = "\
+struct B { x: i32 }
+impl B {
+  fn drop(ref this) { return; }
+  fn view(this) -> str { return \"\"; }
+}
+fn caller(n: i32) {
+  var s: str = \"\";
+  var i: i32 = 0;
+  while i < n {
+    let t: B = B { x: 1 };
+    s = t.view();
+    i = i + 1;
+  }
+  return;
+}";
+        let codes = check_src(src);
+        assert!(
+            codes.iter().any(|c| c == "E0514"),
+            "expected E0514 for loop-body owner viewed by outer binding; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn scope_exit_carrier_through_call_fires_e0514() {
+        // The aggregate route: the view rides inside a returned carrier
+        // (`make`), the tie comes from Rule E-VIEW-FN, and the scope
+        // check must still see the dying owner under the outer carrier.
+        let src = "\
+struct B { x: i32 }
+impl B {
+  fn drop(ref this) { return; }
+  fn view(this) -> str { return \"\"; }
+}
+struct Data { key: str }
+fn make(k: str) -> Data { return Data { key: k }; }
+fn caller() {
+  var d: Data = Data { key: \"\" };
+  {
+    let t: B = B { x: 1 };
+    d = make(t.view());
+  }
+  return;
+}";
+        let codes = check_src(src);
+        assert!(
+            codes.iter().any(|c| c == "E0514"),
+            "expected E0514 for carrier assigned outward over a dying owner; got {codes:?}"
         );
     }
 
