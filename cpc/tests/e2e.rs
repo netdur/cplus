@@ -5951,6 +5951,32 @@ fn keeps_this_sound_orders_compile() {
 }
 
 #[test]
+fn transitive_keeps_wrapper_caller_ties_e0514() {
+    // Contract §5, computed half: an UNDECLARED wrapper that forwards its
+    // view param to a #[keeps(this)] method must tie its callers exactly
+    // like the declared method — the flow pass computes the transitive
+    // param→receiver flow from the body.
+    let (ok, stderr) = try_compile_snippet(&format!(
+        "{LANG_STR_PRELUDE}struct Holder {{ view: str }}\n\
+         impl Holder {{\n\
+             #[keeps(this)]\n\
+             fn set(ref this, k: str) {{ this.view = k; return; }}\n\
+             fn set_outer(ref this, k: str) {{ this.set(k); return; }}\n\
+         }}\n\
+         fn main() -> i32 {{\n\
+             var h: Holder = Holder {{ view: \"\" }};\n\
+             {{\n\
+                 let t: LStr = mk();\n\
+                 h.set_outer(t);\n\
+             }}\n\
+             return 0;\n\
+         }}\n"
+    ));
+    assert!(!ok, "expected E0514 through the undeclared wrapper");
+    assert!(stderr.contains("E0514"), "expected E0514, got: {stderr}");
+}
+
+#[test]
 fn keeps_nothing_unties_view_return() {
     // `#[keeps(nothing)]` suppresses the conservative Rule E-VIEW-FN tie:
     // an intern-shaped fn's result may outlive the argument's owner. The

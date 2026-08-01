@@ -614,6 +614,18 @@ struct FnEntry {
     /// is a view or transitively carries one. Selects which arguments a
     /// `keeps(this)` call ties.
     param_view_flags: Vec<bool>,
+    /// Memory-model contract §5, COMPUTED half: per-param may-flow-into-
+    /// receiver bits derived from the method body (direct `this.f = arg`
+    /// stores are already denied by E0515 unless declared, so in practice
+    /// these mark TRANSITIVE flows: a wrapper forwarding its param to a
+    /// `keeps` callee on `this`). Same call-site tie as the declared form.
+    /// Empty for free fns and for methods the flow pass skips (generic
+    /// impls, declarations).
+    computed_keeps: Vec<bool>,
+    /// True iff the return type is a view, carries a view, or is non-Copy
+    /// — i.e. a call result that can transport its arguments' taint.
+    /// Drives taint-through-calls in the receiver-flow pass.
+    ret_view: bool,
 }
 
 #[derive(Debug, Default)]
@@ -682,6 +694,10 @@ impl SigTable {
                                 .iter()
                                 .map(|p| oracle.type_contains_view(&p.ty))
                                 .collect(),
+                            computed_keeps: Vec::new(),
+                            ret_view: f.return_type.as_ref().is_some_and(|t| {
+                                oracle.type_contains_view(t) || oracle.definitely_non_copy(t)
+                            }),
                         },
                     );
                 }
@@ -724,6 +740,10 @@ impl SigTable {
                                     .iter()
                                     .map(|p| oracle.type_contains_view(&p.ty))
                                     .collect(),
+                                computed_keeps: Vec::new(),
+                                ret_view: m.return_type.as_ref().is_some_and(|t| {
+                                    oracle.type_contains_view(t) || oracle.definitely_non_copy(t)
+                                }),
                             },
                         );
                     }
@@ -739,11 +759,371 @@ impl SigTable {
     }
 
     /// Slice 6BC.1: per-parameter `ref` flag list. Parallel shape to
-    /// `fn_param_moves`. Used by `apply_call` to claim a
+    /// `fn_param_muts`. Used by `apply_call` to claim a
     /// `BorrowedExclusive` against each `ref`-marked non-Copy argument
     /// and detect the four intra-call conflict patterns.
     fn fn_param_muts(&self, name: &str) -> Option<&Vec<bool>> {
         self.fns.get(name).map(|e| &e.param_muts)
+    }
+
+    /// The effective per-param keeps flags for an entry: declared
+    /// (`#[keeps(this)]` gated to view-typed positions) unioned with the
+    /// computed transitive flows. Empty vec means "ties nothing".
+    fn effective_keeps(entry: &FnEntry) -> Vec<bool> {
+        let n = entry.param_view_flags.len().max(entry.computed_keeps.len());
+        (0..n)
+            .map(|i| {
+                (entry.keeps_this && entry.param_view_flags.get(i).copied().unwrap_or(false))
+                    || entry.computed_keeps.get(i).copied().unwrap_or(false)
+            })
+            .collect()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Memory-model contract §5 — computed receiver flows (the summary engine's
+// first computed fact family).
+//
+// For every method of a concrete impl, compute which parameters MAY flow
+// into the receiver: a union-over-all-paths taint walk of the body, no
+// condition analysis (a store under `if` counts — the same posture as the
+// rest of the borrow model). Direct `this.f = param` stores are already
+// denied by E0515 unless declared `#[keeps(this)]`, so what this pass adds
+// is the TRANSITIVE route the declared form cannot see:
+//
+//     #[keeps(this)] fn set(ref this, k: str) { this.view = k; }
+//     fn set_outer(ref this, k: str) { this.set(k); }   // undeclared!
+//
+// Without the computed bits, callers of `set_outer` tie nothing and the
+// stored view dangles when the argument's owner dies — verified safe-code
+// UAF. With them, `set_outer` ties exactly like `set`.
+//
+// Scope (documented in the contract): concrete impls only — generic impls
+// are pre-mono here and their receivers don't resolve at call sites; their
+// direct stores keep the E0515 deny. Unresolvable callees contribute no
+// taint (their return ties are enforced by the existing E-rules at the
+// real call sites).
+// ---------------------------------------------------------------------------
+
+struct FlowCtx<'a> {
+    sigs: &'a SigTable,
+    /// binding name -> source-param bitmask (bit i = param i may be here).
+    taint: HashMap<String, u64>,
+    /// binding name -> declared Path type (for method resolution).
+    types: HashMap<String, String>,
+    /// accumulated: bits that reached the receiver.
+    receiver_bits: u64,
+}
+
+impl<'a> FlowCtx<'a> {
+    fn is_receiver_root(root: &str) -> bool {
+        root == "self" || root == "this"
+    }
+
+    fn walk_block(&mut self, b: &Block) -> u64 {
+        for s in &b.stmts {
+            self.walk_stmt(s);
+        }
+        match &b.tail {
+            Some(t) => self.expr_taint(t),
+            None => 0,
+        }
+    }
+
+    fn walk_stmt(&mut self, s: &Stmt) {
+        match &s.kind {
+            StmtKind::Let { name, ty, init, .. } => {
+                let t = init.as_ref().map(|e| self.expr_taint(e)).unwrap_or(0);
+                self.taint.insert(name.name.clone(), t);
+                if let Some(decl) = ty {
+                    if let TypeKind::Path(p) = &decl.kind {
+                        self.types.insert(name.name.clone(), p.clone());
+                    }
+                }
+            }
+            StmtKind::LetDestructure { fields, init, .. } => {
+                let t = self.expr_taint(init);
+                for f in fields {
+                    self.taint.insert(f.name.clone(), t);
+                }
+            }
+            StmtKind::Return(Some(e)) | StmtKind::Expr(e) | StmtKind::Defer(e)
+            | StmtKind::Assert(e) => {
+                self.expr_taint(e);
+            }
+            StmtKind::Return(None) | StmtKind::Break | StmtKind::Continue => {}
+            StmtKind::While { cond, body, .. } => {
+                self.expr_taint(cond);
+                // Twice: loop-carried taint (bottom feeds top) stabilizes in
+                // one extra pass for a union-only lattice.
+                self.walk_block(body);
+                self.walk_block(body);
+            }
+            StmtKind::Loop(b, _) => {
+                self.walk_block(b);
+                self.walk_block(b);
+            }
+            StmtKind::For(fl, _) => match fl {
+                ForLoop::CStyle {
+                    init,
+                    cond,
+                    update,
+                    body,
+                } => {
+                    if let Some(i) = init {
+                        self.walk_stmt(i);
+                    }
+                    if let Some(c) = cond {
+                        self.expr_taint(c);
+                    }
+                    for u in update {
+                        self.expr_taint(u);
+                    }
+                    self.walk_block(body);
+                    self.walk_block(body);
+                }
+                ForLoop::Range { var, iter, body } => {
+                    self.expr_taint(iter);
+                    self.taint.insert(var.name.clone(), 0);
+                    self.walk_block(body);
+                    self.walk_block(body);
+                }
+            },
+            StmtKind::IfLet { .. } | StmtKind::GuardLet { .. } | StmtKind::WhileLet { .. } => {}
+        }
+    }
+
+    fn expr_taint(&mut self, e: &Expr) -> u64 {
+        match &e.kind {
+            ExprKind::Ident(name) => self.taint.get(name).copied().unwrap_or(0),
+            ExprKind::Field { .. } | ExprKind::Index { .. } => match place_from_expr(e) {
+                Some(p) => {
+                    if let ExprKind::Index { index, .. } = &e.kind {
+                        self.expr_taint(index);
+                    }
+                    self.taint.get(&p.root).copied().unwrap_or(0)
+                }
+                None => {
+                    // Non-place chain (call receiver etc.) — taint of the
+                    // receiver expression flows through the projection.
+                    match &e.kind {
+                        ExprKind::Field { receiver, .. } => self.expr_taint(receiver),
+                        ExprKind::Index { receiver, index } => {
+                            self.expr_taint(index);
+                            self.expr_taint(receiver)
+                        }
+                        _ => 0,
+                    }
+                }
+            },
+            ExprKind::Assign { target, value, .. } => {
+                let vt = self.expr_taint(value);
+                if let Some(place) = place_from_expr(target) {
+                    if Self::is_receiver_root(&place.root) {
+                        self.receiver_bits |= vt;
+                    } else {
+                        *self.taint.entry(place.root).or_insert(0) |= vt;
+                    }
+                }
+                0
+            }
+            ExprKind::Call { callee, args, .. } => {
+                let arg_taints: Vec<u64> = args.iter().map(|a| self.expr_taint(a)).collect();
+                match &callee.kind {
+                    ExprKind::Field {
+                        receiver,
+                        name: method,
+                    } => {
+                        let rtaint = self.expr_taint(receiver);
+                        let recv_root = place_from_expr(receiver).map(|p| p.root);
+                        let recv_ty = match recv_root.as_deref() {
+                            Some(r) if Self::is_receiver_root(r) => {
+                                self.types.get("self").cloned()
+                            }
+                            Some(r) => self.types.get(r).cloned(),
+                            None => None,
+                        };
+                        let entry = recv_ty
+                            .and_then(|t| self.sigs.methods.get(&format!("{t}.{}", method.name)));
+                        if let Some(entry) = entry {
+                            let keeps = SigTable::effective_keeps(entry);
+                            let mut kept: u64 = 0;
+                            for (i, k) in keeps.iter().enumerate() {
+                                if *k {
+                                    kept |= arg_taints.get(i).copied().unwrap_or(0);
+                                }
+                            }
+                            if kept != 0 {
+                                if let Some(root) = recv_root {
+                                    if Self::is_receiver_root(&root) {
+                                        self.receiver_bits |= kept;
+                                    } else {
+                                        *self.taint.entry(root).or_insert(0) |= kept;
+                                    }
+                                }
+                            }
+                            if entry.ret_view {
+                                return rtaint | arg_taints.iter().fold(0, |a, t| a | t);
+                            }
+                            return 0;
+                        }
+                        0
+                    }
+                    ExprKind::Ident(name) => match self.sigs.fns.get(name) {
+                        Some(entry) if entry.ret_view => {
+                            arg_taints.iter().fold(0, |a, t| a | t)
+                        }
+                        _ => 0,
+                    },
+                    _ => {
+                        self.expr_taint(callee);
+                        0
+                    }
+                }
+            }
+            ExprKind::StructLit { fields, .. } => fields
+                .iter()
+                .fold(0, |a, f| a | self.expr_taint(&f.value)),
+            ExprKind::InferredStructLit { fields } => fields
+                .iter()
+                .fold(0, |a, f| a | self.expr_taint(&f.value)),
+            ExprKind::Block(b) => self.walk_block(b),
+            ExprKind::If {
+                cond,
+                then,
+                else_branch,
+            } => {
+                self.expr_taint(cond);
+                let t = self.walk_block(then);
+                let e2 = else_branch.as_ref().map(|e| self.expr_taint(e)).unwrap_or(0);
+                t | e2
+            }
+            ExprKind::Match { scrutinee, arms } => {
+                let st = self.expr_taint(scrutinee);
+                let mut out = 0;
+                for a in arms {
+                    // Payload bindings inherit the scrutinee's taint
+                    // (`match opt { Some(v) => this.f = v, .. }`).
+                    for name in pattern_binding_names(&a.pattern) {
+                        self.taint.insert(name, st);
+                    }
+                    out |= self.expr_taint(&a.body);
+                }
+                out
+            }
+            ExprKind::Cast { expr, .. } => self.expr_taint(expr),
+            ExprKind::Await(inner) | ExprKind::Yield(inner) => self.expr_taint(inner),
+            ExprKind::Unary { operand, .. } => {
+                self.expr_taint(operand);
+                0
+            }
+            ExprKind::Binary { lhs, rhs, .. } => {
+                self.expr_taint(lhs);
+                self.expr_taint(rhs);
+                0
+            }
+            ExprKind::InterpStr { parts } => {
+                for p in parts {
+                    if let crate::ast::InterpStrPart::Expr(e) = p {
+                        self.expr_taint(e);
+                    }
+                }
+                0
+            }
+            ExprKind::Intrinsic { args, .. } => {
+                // #str_from_raw_parts etc. — walk for side effects; the
+                // produced view's provenance is raw (out of contract §4).
+                for a in args {
+                    self.expr_taint(a);
+                }
+                0
+            }
+            _ => 0,
+        }
+    }
+}
+
+/// Best-effort binding-name extraction from a match pattern, for taint
+/// inheritance. Unknown pattern shapes contribute no names (their bindings
+/// just carry no taint — an under-approximation the E0515 deny backstops).
+fn pattern_binding_names(p: &Pattern) -> Vec<String> {
+    let mut out = Vec::new();
+    collect_pattern_names(p, &mut out);
+    out
+}
+
+fn collect_pattern_names(p: &Pattern, out: &mut Vec<String>) {
+    match &p.kind {
+        PatternKind::Binding(name) => out.push(name.name.clone()),
+        PatternKind::Variant { payload, .. } => {
+            for b in payload {
+                collect_pattern_names(b, out);
+            }
+        }
+        PatternKind::Wildcard => {}
+    }
+}
+
+/// Run the receiver-flow fixpoint over every concrete impl method and
+/// patch each `FnEntry.computed_keeps`. Monotone (bits only grow), so the
+/// round cap is a backstop, not a correctness device.
+fn compute_receiver_flows(prog: &Program, sigs: &mut SigTable) {
+    for _round in 0..8 {
+        let mut changed = false;
+        for item in &prog.items {
+            let ItemKind::Impl(b) = &item.kind else {
+                continue;
+            };
+            if !b.target_generic_params.is_empty() {
+                continue;
+            }
+            for m in &b.methods {
+                if !m.generic_params.is_empty() || m.is_declaration {
+                    continue;
+                }
+                if m.receiver.is_none() {
+                    continue;
+                }
+                let key = format!("{}.{}", b.target.name, m.name.name);
+                let mut ctx = FlowCtx {
+                    sigs,
+                    taint: HashMap::new(),
+                    types: HashMap::new(),
+                    receiver_bits: 0,
+                };
+                ctx.types.insert("self".to_string(), b.target.name.clone());
+                for (i, p) in m.params.iter().enumerate() {
+                    let Some(entry) = sigs.methods.get(&key) else {
+                        continue;
+                    };
+                    let is_source = entry.param_view_flags.get(i).copied().unwrap_or(false)
+                        || (!p.move_
+                            && matches!(&p.ty.kind, TypeKind::Path(_) | TypeKind::Generic { .. }));
+                    if is_source && i < 64 {
+                        ctx.taint.insert(p.name.name.clone(), 1u64 << i);
+                    } else {
+                        ctx.taint.insert(p.name.name.clone(), 0);
+                    }
+                    if let TypeKind::Path(tp) = &p.ty.kind {
+                        ctx.types.insert(p.name.name.clone(), tp.clone());
+                    }
+                }
+                ctx.walk_block(&m.body);
+                let bits = ctx.receiver_bits;
+                let n_params = m.params.len();
+                let new_flags: Vec<bool> =
+                    (0..n_params).map(|i| i < 64 && bits & (1u64 << i) != 0).collect();
+                if let Some(entry) = sigs.methods.get_mut(&key) {
+                    if entry.computed_keeps != new_flags && new_flags.iter().any(|b| *b) {
+                        entry.computed_keeps = new_flags;
+                        changed = true;
+                    }
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
     }
 }
 
@@ -2551,7 +2931,11 @@ fn any_return_rooted_in_expr(e: &Expr, param_names: &[&str]) -> bool {
 
 fn analyze_with_diags(prog: &Program) -> (ProgramAnalysis, Vec<(Option<String>, RawDiag)>) {
     let oracle = CopyOracle::build(prog);
-    let sigs = SigTable::collect(prog, &oracle);
+    let mut sigs = SigTable::collect(prog, &oracle);
+    // Contract §5: patch computed receiver flows (transitive keeps) into
+    // the method entries before any body is analyzed.
+    compute_receiver_flows(prog, &mut sigs);
+    let sigs = sigs;
     let mut analysis = ProgramAnalysis {
         functions: BTreeMap::new(),
     };
@@ -3517,9 +3901,40 @@ impl Analyzer<'_> {
                         mut_flags = Some(entry.param_muts.clone());
                     }
                     receiver_claim = entry.receiver_claim.map(|k| (k, &**receiver));
-                    if entry.keeps_this {
-                        keeps_this_tie =
-                            Some((recv_name.clone(), entry.param_view_flags.clone()));
+                    let keeps = SigTable::effective_keeps(&entry);
+                    if keeps.iter().any(|b| *b) {
+                        keeps_this_tie = Some((recv_name.clone(), keeps));
+                    }
+                }
+            } else if let Some(place) = place_from_expr(receiver) {
+                // Field-path receiver (`holder.field.set(k)`): resolve the
+                // receiver's type through the declared-field table so the
+                // keeps tie still lands — the borrower is the ROOT binding
+                // (over-approximate and sound: pinning the whole aggregate
+                // pins the field). Claims/flags stay Ident-only; this
+                // branch only feeds the §5 tie.
+                let mut ty = self.binding_type(&place.root).and_then(|bt| match &bt.kind {
+                    TypeKind::Path(n) => Some(n.clone()),
+                    _ => None,
+                });
+                for proj in &place.projections {
+                    let (Some(t), Projection::Field(f)) = (ty.as_ref(), proj) else {
+                        ty = None;
+                        break;
+                    };
+                    ty = self.sigs.struct_fields.get(t).and_then(|fs| {
+                        fs.get(f).and_then(|ft| match &ft.kind {
+                            TypeKind::Path(n) => Some(n.clone()),
+                            _ => None,
+                        })
+                    });
+                }
+                if let Some(t) = ty {
+                    if let Some(entry) = self.sigs.methods.get(&format!("{t}.{}", method.name)) {
+                        let keeps = SigTable::effective_keeps(entry);
+                        if keeps.iter().any(|b| *b) {
+                            keeps_this_tie = Some((place.root.clone(), keeps));
+                        }
                     }
                 }
             }
@@ -5486,6 +5901,101 @@ fn caller(n: i32) {
         assert!(
             codes.iter().any(|c| c == "E0514"),
             "expected E0514 for loop-body owner viewed by outer binding; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn transitive_wrapper_of_keeps_method_ties_e0514() {
+        // Contract §5, computed half: `set_outer` never declares
+        // #[keeps(this)] and has no direct store, but its body forwards
+        // the param to a keeps method on `this`. The flow pass computes
+        // the transitive param→receiver flow and the caller ties exactly
+        // as for the declared form.
+        let src = "\
+struct B { x: i32 }
+impl B {
+  fn drop(ref this) { return; }
+  fn view(this) -> str { return \"\"; }
+}
+struct Holder { view: str }
+impl Holder {
+  #[keeps(this)]
+  fn set(ref this, k: str) { this.view = k; return; }
+  fn set_outer(ref this, k: str) { this.set(k); return; }
+}
+fn caller() {
+  var h: Holder = Holder { view: \"\" };
+  {
+    let t: B = B { x: 1 };
+    h.set_outer(t.view());
+  }
+  return;
+}";
+        let codes = check_src(src);
+        assert!(
+            codes.iter().any(|c| c == "E0514"),
+            "expected E0514 through the undeclared wrapper; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn field_path_receiver_keeps_tie_e0514() {
+        // `p.h.set(...)` — the receiver is a field path. The tie resolves
+        // the receiver type through the declared-field table and pins the
+        // ROOT binding (over-approximate, sound).
+        let src = "\
+struct B { x: i32 }
+impl B {
+  fn drop(ref this) { return; }
+  fn view(this) -> str { return \"\"; }
+}
+struct Holder { view: str }
+impl Holder {
+  #[keeps(this)]
+  fn set(ref this, k: str) { this.view = k; return; }
+}
+struct Panel { h: Holder }
+fn caller() {
+  var p: Panel = Panel { h: Holder { view: \"\" } };
+  {
+    let t: B = B { x: 1 };
+    p.h.set(t.view());
+  }
+  return;
+}";
+        let codes = check_src(src);
+        assert!(
+            codes.iter().any(|c| c == "E0514"),
+            "expected E0514 through the field-path receiver; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn wrapper_not_reaching_keeps_ties_nothing() {
+        // Negative: a method that only READS its view param (no store, no
+        // keeps callee) must compute no receiver flow — callers stay free.
+        let src = "\
+struct B { x: i32 }
+impl B {
+  fn drop(ref this) { return; }
+  fn view(this) -> str { return \"\"; }
+}
+struct Holder { view: str, n: usize }
+impl Holder {
+  fn measure(ref this, k: str) { this.n = #str_len(k); return; }
+}
+fn caller() {
+  var h: Holder = Holder { view: \"\", n: 0 as usize };
+  {
+    let t: B = B { x: 1 };
+    h.measure(t.view());
+  }
+  return;
+}";
+        let codes = check_src(src);
+        assert!(
+            !codes.iter().any(|c| c == "E0514"),
+            "a read-only method must not tie; got {codes:?}"
         );
     }
 
