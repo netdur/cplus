@@ -3531,12 +3531,15 @@ fn static_layout(ty: &Ty, types: &TypeTable) -> Option<(u64, u64)> {
 ///
 /// Returns the rewritten body. `scope_idx_for_ssa` maps the param SSA name
 /// to an index into `this_lists`/`other_lists`; both lists are indexed by
-/// scope index so callers don't have to re-thread which scope is which.
+/// scope index so callers don't have to re-thread which scope is which. An
+/// `other_lists` entry of `None` means the scope has nothing it can claim
+/// disjointness from, so the access carries `!alias.scope` (so OTHER scopes
+/// can name it) with no `!noalias` clause.
 fn annotate_alias_scope_metadata(
     body: &str,
     seed: &HashMap<String, usize>,
     this_lists: &[u32],
-    other_lists: &[u32],
+    other_lists: &[Option<u32>],
 ) -> String {
     let mut scope_map: HashMap<String, usize> = seed.clone();
     let mut out = String::with_capacity(body.len());
@@ -3552,11 +3555,20 @@ fn annotate_alias_scope_metadata(
     out
 }
 
+/// `, !alias.scope !T` plus `, !noalias !O` when the scope has anything to be
+/// disjoint from.
+fn alias_scope_suffix(line: &str, this_list: u32, other_list: Option<u32>) -> String {
+    match other_list {
+        Some(o) => format!("{line}, !alias.scope !{this_list}, !noalias !{o}"),
+        None => format!("{line}, !alias.scope !{this_list}"),
+    }
+}
+
 fn annotate_one_line(
     line: &str,
     scope_map: &mut HashMap<String, usize>,
     this_lists: &[u32],
-    other_lists: &[u32],
+    other_lists: &[Option<u32>],
 ) -> String {
     // Split on " = " to find an SSA def (load / GEP / etc.). Stores have
     // no LHS — handle separately below.
@@ -3577,10 +3589,7 @@ fn annotate_one_line(
             if rhs.starts_with("load ") {
                 if let Some(src) = extract_ptr_operand(rhs) {
                     if let Some(&s) = scope_map.get(&src) {
-                        return format!(
-                            "{line}, !alias.scope !{}, !noalias !{}",
-                            this_lists[s], other_lists[s]
-                        );
+                        return alias_scope_suffix(line, this_lists[s], other_lists[s]);
                     }
                 }
                 return line.to_string();
@@ -3592,14 +3601,82 @@ fn annotate_one_line(
     } else if trimmed.starts_with("store ") {
         if let Some(src) = extract_ptr_operand(trimmed) {
             if let Some(&s) = scope_map.get(&src) {
-                return format!(
-                    "{line}, !alias.scope !{}, !noalias !{}",
-                    this_lists[s], other_lists[s]
-                );
+                return alias_scope_suffix(line, this_lists[s], other_lists[s]);
             }
         }
     }
     line.to_string()
+}
+
+/// Register one function's alias domain + scopes and stamp the metadata onto
+/// its body. Shared by `gen_function` and `gen_method` so the scope SET and the
+/// disjointness CLAIM cannot drift between them (they already had: only the
+/// free-fn side included local slots).
+///
+/// `param_ssas` are the SSA indices of the pointer-passed `ref`/`take`
+/// parameters, receiver included when it is `ref this` / `take this`;
+/// `local_slots` are the SSA names of the non-Copy local allocas.
+///
+/// WHAT IS PROMISED, AND WHAT IS NOT. A param scope's `!noalias` list holds
+/// only LOCAL scopes — sibling PARAM scopes are deliberately absent. Param↔param
+/// disjointness is precisely the claim the `noalias` *attribute* made on borrow
+/// params until 2026-07-27, when it was removed as "a promise the borrow checker
+/// cannot keep": the checker denies-by-design at the statics and raw-pointer
+/// seams, so two `ref` params reached through `#addr_of` legally alias. The
+/// metadata form states the same thing and outlived that fix, so `-O3` went on
+/// hoisting a load across a store through a legally-aliasing pair — the probe in
+/// reports/bug-03 printed 23 in debug and 20 in release.
+///
+/// Locals stay, and carry the optimization value: an alloca in THIS frame is
+/// neither the pointer the caller handed in nor any other alloca, so local↔local
+/// and local↔param are disjoint by construction. The consequence is that a
+/// function whose only scope sources are params publishes nothing — it has no
+/// sound pair to state.
+fn publish_alias_scopes(
+    body: &str,
+    domain_label: &str,
+    param_ssas: &[u32],
+    local_slots: &[String],
+    md: &ModuleMetadata,
+) -> String {
+    let n_params = param_ssas.len();
+    let n_locals = local_slots.len();
+    // Every sound pair has a local on one side of it.
+    if n_locals == 0 || n_params + n_locals < 2 {
+        return body.to_string();
+    }
+    let domain = md.register_alias_domain(domain_label);
+    let mut scopes: Vec<u32> = Vec::with_capacity(n_params + n_locals);
+    for i in 0..n_params {
+        scopes.push(md.register_alias_scope(domain, &format!("p{i}")));
+    }
+    for i in 0..n_locals {
+        scopes.push(md.register_alias_scope(domain, &format!("l{i}")));
+    }
+    let this_lists: Vec<u32> = scopes
+        .iter()
+        .map(|&s| md.register_alias_scope_list(&[s]))
+        .collect();
+    let other_lists: Vec<Option<u32>> = (0..scopes.len())
+        .map(|i| {
+            let others: Vec<u32> = scopes
+                .iter()
+                .enumerate()
+                // Keep a pair only when at least one side is a local.
+                .filter(|(j, _)| *j != i && (*j >= n_params || i >= n_params))
+                .map(|(_, &s)| s)
+                .collect();
+            (!others.is_empty()).then(|| md.register_alias_scope_list(&others))
+        })
+        .collect();
+    let mut seed: HashMap<String, usize> = HashMap::new();
+    for (idx, &param_ssa) in param_ssas.iter().enumerate() {
+        seed.insert(format!("%{param_ssa}"), idx);
+    }
+    for (idx, slot) in local_slots.iter().enumerate() {
+        seed.insert(slot.clone(), n_params + idx);
+    }
+    annotate_alias_scope_metadata(body, &seed, &this_lists, &other_lists)
 }
 
 /// Find the first `, ptr %X` operand in `s` and return `"%X"`. Used by
@@ -6639,16 +6716,11 @@ fn gen_function(
         }
     }
 
-    // Slice 1C: scoped alias metadata for noalias-shaped params. Run the
-    // dataflow over `state.body` (allocas in `state.allocas` never touch
-    // these ptrs — they're fresh slots, not derived from a param).
-    //
-    // v0.0.3 Slice 3C: extended to include non-Copy local allocas. Each
-    // gets its own scope; the borrow checker proves locals are disjoint
-    // from each other AND from noalias params (otherwise we'd have a
-    // double-ownership E0335/E0370). After-inlining this metadata still
-    // applies to the loads/stores it tags, which is exactly the case
-    // where param attrs degrade.
+    // Slice 1C: scoped alias metadata for noalias-shaped params + v0.0.3
+    // Slice 3C's non-Copy local allocas. Run the dataflow over `state.body`
+    // (allocas in `state.allocas` never touch these ptrs — they're fresh
+    // slots, not derived from a param). What the scopes are allowed to claim
+    // lives in `publish_alias_scopes`.
     let noalias_params: Vec<u32> = f
         .params
         .iter()
@@ -6659,40 +6731,13 @@ fn gen_function(
         })
         .collect();
     let local_slots = state.noalias_local_slots.clone();
-    let total_scopes = noalias_params.len() + local_slots.len();
-    if total_scopes >= 2 {
-        let domain = md.register_alias_domain(&f.name.name);
-        let mut scopes: Vec<u32> = Vec::with_capacity(total_scopes);
-        for i in 0..noalias_params.len() {
-            scopes.push(md.register_alias_scope(domain, &format!("p{i}")));
-        }
-        for i in 0..local_slots.len() {
-            scopes.push(md.register_alias_scope(domain, &format!("l{i}")));
-        }
-        let this_lists: Vec<u32> = scopes
-            .iter()
-            .map(|&s| md.register_alias_scope_list(&[s]))
-            .collect();
-        let other_lists: Vec<u32> = (0..scopes.len())
-            .map(|i| {
-                let others: Vec<u32> = scopes
-                    .iter()
-                    .enumerate()
-                    .filter(|(j, _)| *j != i)
-                    .map(|(_, &s)| s)
-                    .collect();
-                md.register_alias_scope_list(&others)
-            })
-            .collect();
-        let mut seed: HashMap<String, usize> = HashMap::new();
-        for (idx, &param_ssa) in noalias_params.iter().enumerate() {
-            seed.insert(format!("%{param_ssa}"), idx);
-        }
-        for (idx, slot) in local_slots.iter().enumerate() {
-            seed.insert(slot.clone(), noalias_params.len() + idx);
-        }
-        state.body = annotate_alias_scope_metadata(&state.body, &seed, &this_lists, &other_lists);
-    }
+    state.body = publish_alias_scopes(
+        &state.body,
+        &f.name.name,
+        &noalias_params,
+        &local_slots,
+        md,
+    );
 
     // Glue: allocas first (in entry), then body
     for line in &state.allocas {
@@ -8330,7 +8375,11 @@ fn gen_method(
         // anyway. So the Mut/Move match already excludes the by-value
         // path.)
         if matches!(rcv, Receiver::Mut | Receiver::Move) {
-            noalias_ssas.push(0);
+            // The receiver is `%1` when the method returns via sret, since
+            // `%0` is then the sret slot — the same offset the prologue
+            // applies. A hard-coded 0 handed the receiver's scope to the
+            // sret slot instead.
+            noalias_ssas.push(if uses_sret { 1 } else { 0 });
         }
     }
     for (i, (_, (pty, mv, mu, _restrict_flag))) in
@@ -8341,34 +8390,10 @@ fn gen_method(
             noalias_ssas.push(idx);
         }
     }
-    if noalias_ssas.len() >= 2 {
-        let domain = md.register_alias_domain(&mangled);
-        let scopes: Vec<u32> = noalias_ssas
-            .iter()
-            .enumerate()
-            .map(|(i, _)| md.register_alias_scope(domain, &format!("p{i}")))
-            .collect();
-        let this_lists: Vec<u32> = scopes
-            .iter()
-            .map(|&s| md.register_alias_scope_list(&[s]))
-            .collect();
-        let other_lists: Vec<u32> = (0..scopes.len())
-            .map(|i| {
-                let others: Vec<u32> = scopes
-                    .iter()
-                    .enumerate()
-                    .filter(|(j, _)| *j != i)
-                    .map(|(_, &s)| s)
-                    .collect();
-                md.register_alias_scope_list(&others)
-            })
-            .collect();
-        let mut seed: HashMap<String, usize> = HashMap::new();
-        for (idx_in_set, &ssa_idx) in noalias_ssas.iter().enumerate() {
-            seed.insert(format!("%{ssa_idx}"), idx_in_set);
-        }
-        state.body = annotate_alias_scope_metadata(&state.body, &seed, &this_lists, &other_lists);
-    }
+    // Non-Copy locals join the scope set here exactly as they do in
+    // `gen_function`; the method side used to omit them.
+    let local_slots = state.noalias_local_slots.clone();
+    state.body = publish_alias_scopes(&state.body, &mangled, &noalias_ssas, &local_slots, md);
 
     for line in &state.allocas {
         out.push_str("  ");
@@ -21113,16 +21138,84 @@ mod tests {
 
     // ---- Phase v0.0.2 Slice 1C: scoped !alias.scope / !noalias ----
     //
-    // Borrowck proves that for every pointer-passed `ref`/`take` non-Copy
-    // param, no other live pointer in the same function reaches the same
-    // memory. Slice 1A encodes this as the `noalias` param attribute —
-    // which degrades after inlining. Scoped alias metadata survives
+    // Non-Copy local allocas are fresh slots: disjoint from each other and
+    // from any pointer the caller handed in. Slice 1C publishes that as
+    // scoped alias metadata, which (unlike a param attribute) survives
     // inlining and feeds the loop vectorizer.
+    //
+    // What is NOT published is param↔param disjointness — see
+    // `publish_alias_scopes` and reports/bug-03. The tests below pin both
+    // halves: the claim that is made, and the claim that is not.
+
+    /// The body of `@name` in `ir`, from the `define` line to its closing `}`.
+    fn fn_body<'a>(ir: &'a str, name: &str) -> &'a str {
+        let start = ir
+            .find(&format!("@{name}("))
+            .unwrap_or_else(|| panic!("@{name} not emitted:\n{ir}"));
+        let end = ir[start..]
+            .find("\n}\n")
+            .unwrap_or_else(|| panic!("@{name} has no close:\n{ir}"));
+        &ir[start..start + end]
+    }
+
+    /// The operand text of metadata node `!id` (e.g. `"!100003, !100004"`).
+    fn md_node<'a>(ir: &'a str, id: &str) -> &'a str {
+        let key = format!("\n!{id} = ");
+        let start = ir
+            .find(&key)
+            .unwrap_or_else(|| panic!("metadata !{id} not defined:\n{ir}"))
+            + key.len();
+        let line = &ir[start..];
+        let end = line.find('\n').unwrap_or(line.len());
+        line[..end].trim_start_matches("!{").trim_end_matches('}')
+    }
+
+    /// The SSA name a field GEP off `base` produces (field accesses are
+    /// annotated on the GEP's RESULT, not on the base pointer).
+    fn gep_result(body: &str, base: &str) -> String {
+        let line = body
+            .lines()
+            .find(|l| l.contains("getelementptr") && l.contains(&format!(", ptr {base},")))
+            .unwrap_or_else(|| panic!("no GEP off {base}:\n{body}"));
+        line.trim_start()
+            .split(' ')
+            .next()
+            .expect("GEP result")
+            .to_string()
+    }
+
+    /// The `!alias.scope !X` / `!noalias !Y` node ids on the first body line
+    /// matching `needle`.
+    fn scope_ids_on(body: &str, needle: &str) -> (String, Option<String>) {
+        let line = body
+            .lines()
+            .find(|l| l.contains(needle) && l.contains("!alias.scope"))
+            .unwrap_or_else(|| panic!("no scope-tagged line matching `{needle}`:\n{body}"));
+        let after = line.split("!alias.scope !").nth(1).expect("scope id");
+        let this = after
+            .split(|c: char| c == ',' || c.is_whitespace())
+            .next()
+            .expect("scope id token")
+            .to_string();
+        let other = line.split("!noalias !").nth(1).map(|s| {
+            s.split(|c: char| c == ',' || c.is_whitespace())
+                .next()
+                .expect("noalias id token")
+                .to_string()
+        });
+        (this, other)
+    }
 
     #[test]
-    fn two_mut_noncopy_params_emit_domain_and_scopes() {
-        // `swap(ref a: Tag, ref b: Tag)` has two noalias-shaped pointers.
-        // The function gets one domain MD node and two scope nodes.
+    fn two_mut_noncopy_params_alone_publish_nothing() {
+        // reports/bug-03. `swap(ref a: Tag, ref b: Tag)` has two
+        // pointer-passed params and no non-Copy local, so every pair it could
+        // state is param↔param — exactly the promise the `noalias` ATTRIBUTE
+        // was dropped for on 2026-07-27 (the borrow checker denies by design
+        // at the statics and raw-pointer seams, so two `ref` params reached
+        // through `#addr_of` legally alias). The metadata form said the same
+        // thing and made `-O3` hoist a load across a store. Nothing sound is
+        // left to publish here, so nothing is.
         let ir = gen_src(
             "struct Tag { v: i32 }\n\
              impl Tag { fn drop(ref this) { return; } }\n\
@@ -21140,18 +21233,57 @@ mod tests {
                return x.v;\n\
              }",
         );
-        // Domain (self-referential, labeled with fn name).
+        let body = fn_body(&ir, "swap");
         assert!(
-            ir.contains("distinct !{") && ir.contains("\"swap\""),
-            "expected swap domain MD node, got:\n{ir}"
+            !body.contains("!alias.scope"),
+            "param↔param disjointness must not be published, got:\n{body}"
         );
-        // Two scopes labeled `p0` and `p1`.
-        assert!(ir.contains("\"p0\""), "expected scope p0, got:\n{ir}");
-        assert!(ir.contains("\"p1\""), "expected scope p1, got:\n{ir}");
-        // Loads through the params carry alias.scope+noalias.
         assert!(
-            ir.contains(", !alias.scope ") && ir.contains(", !noalias !"),
-            "expected alias-scope annotated loads/stores, got:\n{ir}"
+            !ir.contains("!\"swap\""),
+            "no scope source survives, so `swap` needs no domain either:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn param_scopes_claim_disjointness_from_locals_only() {
+        // The positive half of the rule above: a frame holding both `ref`
+        // params and a non-Copy local DOES publish — a local alloca is
+        // neither the caller's pointer nor another alloca. Each param scope's
+        // `!noalias` list must hold the LOCAL scope and nothing else; the
+        // local's list holds both params.
+        let ir = gen_src(
+            "struct T { v: i32 }\n\
+             impl T { fn drop(ref this) { return; } }\n\
+             fn touch(ref a: T, ref b: T) -> i32 {\n\
+               var loc: T = T { v: 5 };\n\
+               loc.v = a.v + b.v;\n\
+               a.v = loc.v;\n\
+               return loc.v;\n\
+             }\n\
+             fn main() -> i32 {\n\
+               var x: T = T { v: 1 };\n\
+               var y: T = T { v: 2 };\n\
+               return touch(x, y) - 3;\n\
+             }",
+        );
+        let body = fn_body(&ir, "touch");
+        // Resolve p0's scope id and p0's noalias list.
+        let p0_field = gep_result(body, "%0");
+        let (p0_this, p0_other) = scope_ids_on(body, &format!(", ptr {p0_field}"));
+        let (l0_this, l0_other) = scope_ids_on(body, "%loc.addr");
+        let p0_scope = md_node(&ir, &p0_this);
+        let l0_scope = md_node(&ir, &l0_this);
+        assert_ne!(p0_scope, l0_scope, "param and local need distinct scopes");
+        let p0_noalias = md_node(&ir, &p0_other.expect("param access carries !noalias"));
+        assert_eq!(
+            p0_noalias, l0_scope,
+            "a param's !noalias list must hold the LOCAL scope and nothing else \
+             (a sibling param scope here is the bug-03 miscompile):\n{ir}"
+        );
+        let l0_noalias = md_node(&ir, &l0_other.expect("local access carries !noalias"));
+        assert!(
+            l0_noalias.contains(p0_scope) && l0_noalias.split(", ").count() == 2,
+            "the local must claim disjointness from BOTH params, got `{l0_noalias}`:\n{ir}"
         );
     }
 
@@ -21159,25 +21291,31 @@ mod tests {
     fn scope_propagates_through_gep_to_field_loads() {
         // A direct field read on a `ref` non-Copy param GEPs off the param's
         // SSA, then loads. The post-pass should propagate the scope from the
-        // GEP source to the load.
+        // GEP source to the load. The non-Copy local is what gives the params
+        // something sound to be disjoint from (see bug-03).
         let ir = gen_src(
             "struct P { v: i32 }\n\
              impl P { fn drop(ref this) { return; } }\n\
-             fn pair(ref a: P, ref b: P) -> i32 { return a.v + b.v; }\n\
+             fn pair(ref a: P, ref b: P) -> i32 {\n\
+               var acc: P = P { v: 0 };\n\
+               acc.v = a.v + b.v;\n\
+               return acc.v;\n\
+             }\n\
              fn main() -> i32 {\n\
                var p: P = P { v: 1 };\n\
                var q: P = P { v: 2 };\n\
-               return pair(p, q);\n\
+               return pair(p, q) - 3;\n\
              }",
         );
-        // Both loads (one per param) must be annotated.
-        let load_count = ir
+        // Both param loads (one per param) must be annotated.
+        let body = fn_body(&ir, "pair");
+        let load_count = body
             .lines()
             .filter(|l| l.contains("load i32") && l.contains("!alias.scope"))
             .count();
         assert!(
             load_count >= 2,
-            "expected >=2 scope-tagged loads, got {load_count}:\n{ir}"
+            "expected >=2 scope-tagged loads, got {load_count}:\n{body}"
         );
     }
 
@@ -21228,14 +21366,19 @@ mod tests {
 
     #[test]
     fn method_receiver_and_mut_param_participate_in_scope_set() {
-        // `ref this` is pointer-passed-and-exclusive; combined with a
-        // separate `ref other: T` param, we have two scopes.
+        // `ref this` is pointer-passed-and-exclusive and joins the param set
+        // alongside `ref other: T`. The non-Copy local is what they can
+        // soundly be disjoint FROM (bug-03) — and it also pins that the method
+        // emitter includes local slots at all, which it used to skip while the
+        // free-fn emitter included them.
         let ir = gen_src(
             "struct T { v: i32 }\n\
              impl T {\n\
                fn drop(ref this) { return; }\n\
                fn merge(ref this, ref other: T) {\n\
-                 this.v = this.v + other.v;\n\
+                 var tmp: T = T { v: 0 };\n\
+                 tmp.v = this.v + other.v;\n\
+                 this.v = tmp.v;\n\
                  other.v = 0;\n\
                  return;\n\
                }\n\
@@ -21251,25 +21394,20 @@ mod tests {
             ir.contains("\"T.merge\""),
             "expected T.merge domain MD, got:\n{ir}"
         );
-        // Both p0 (self) and p1 (other) scopes present.
+        // p0 (self), p1 (other) and l0 (tmp) scopes are all present.
+        for label in ["\"p0\"", "\"p1\"", "\"l0\""] {
+            assert!(ir.contains(label), "expected scope {label}, got:\n{ir}");
+        }
+        let body = fn_body(&ir, "T.merge");
         assert!(
-            ir.contains("\"p0\""),
-            "expected p0 (self) scope, got:\n{ir}"
-        );
-        assert!(
-            ir.contains("\"p1\""),
-            "expected p1 (other) scope, got:\n{ir}"
-        );
-        // Annotated load+store pairs in body.
-        assert!(
-            ir.lines()
+            body.lines()
                 .any(|l| l.contains("load") && l.contains("!alias.scope")),
-            "expected scope-tagged load in T.merge, got:\n{ir}"
+            "expected scope-tagged load in T.merge, got:\n{body}"
         );
         assert!(
-            ir.lines()
+            body.lines()
                 .any(|l| l.contains("store") && l.contains("!alias.scope")),
-            "expected scope-tagged store in T.merge, got:\n{ir}"
+            "expected scope-tagged store in T.merge, got:\n{body}"
         );
     }
 
@@ -21320,25 +21458,28 @@ mod tests {
     fn alias_scope_dataflow_propagates_through_chained_gep() {
         // GEPs feed off other GEPs (nested struct access). The dataflow
         // should propagate the scope along the chain so the final load is
-        // annotated.
+        // annotated. `acc` gives the params a sound scope partner (bug-03).
         let ir = gen_src(
             "struct Inner { x: i32 }\n\
              struct Outer { inner: Inner, tag: i32 }\n\
              impl Outer { fn drop(ref this) { return; } }\n\
              fn touch_both(ref a: Outer, ref b: Outer) -> i32 {\n\
-               return a.inner.x + b.tag;\n\
+               var acc: Outer = Outer { inner: Inner { x: 0 }, tag: 0 };\n\
+               acc.tag = a.inner.x + b.tag;\n\
+               return acc.tag;\n\
              }\n\
              fn main() -> i32 {\n\
                var p: Outer = Outer { inner: Inner { x: 7 }, tag: 1 };\n\
                var q: Outer = Outer { inner: Inner { x: 3 }, tag: 2 };\n\
-               return touch_both(p, q);\n\
+               return touch_both(p, q) - 9;\n\
              }",
         );
         // Nested load (a.inner.x) must carry alias.scope.
+        let body = fn_body(&ir, "touch_both");
         assert!(
-            ir.lines()
+            body.lines()
                 .any(|l| l.contains("load i32") && l.contains("!alias.scope")),
-            "expected nested-load scope annotation, got:\n{ir}"
+            "expected nested-load scope annotation, got:\n{body}"
         );
     }
 
@@ -23124,19 +23265,20 @@ mod tests {
             "struct T { v: i32 }\n\
              impl T { fn drop(ref this) { return; } }\n\
              fn swap_bump(ref a: T, ref b: T) {\n\
-               let tmp: i32 = a.v;\n\
+               var tmp: T = T { v: 0 };\n\
+               tmp.v = a.v;\n\
                a.v = b.v;\n\
-               b.v = tmp;\n\
+               b.v = tmp.v;\n\
                return;\n\
              }\n\
              fn main() -> i32 {\n\
                var x: T = T { v: 1 };\n\
                var y: T = T { v: 2 };\n\
                swap_bump(x, y);\n\
-               return x.v + y.v;\n\
+               return x.v + y.v - 3;\n\
              }",
         );
-        // One domain, two scopes for the function. Match by label
+        // One domain; two param scopes plus the local's. Match by label
         // rather than literal node IDs — IDs shift when other
         // module-level metadata (TBAA, range, etc.) is allocated
         // earlier in the pass.
@@ -23147,16 +23289,17 @@ mod tests {
             "expected swap_bump domain definition, got:\n{ir}"
         );
         assert!(
-            ir.contains("!\"p0\"}") && ir.contains("!\"p1\"}"),
-            "expected p0 and p1 scopes for the params, got:\n{ir}"
+            ir.contains("!\"p0\"}") && ir.contains("!\"p1\"}") && ir.contains("!\"l0\"}"),
+            "expected p0/p1/l0 scopes, got:\n{ir}"
         );
         // Loads/stores through both params carry alias.scope + noalias.
-        let scope_lines = ir
+        let body = fn_body(&ir, "swap_bump");
+        let scope_lines = body
             .lines()
             .filter(|l| l.contains("!alias.scope") && l.contains("!noalias"))
             .count();
         assert!(scope_lines >= 4,
-            "expected at least 4 annotated load/store lines (2 loads + 2 stores), got {scope_lines}:\n{ir}");
+            "expected at least 4 annotated load/store lines (2 loads + 2 stores), got {scope_lines}:\n{body}");
     }
 
     #[test]
@@ -23232,14 +23375,17 @@ mod tests {
 
     #[test]
     fn method_mut_self_plus_mut_param_get_scopes() {
-        // `ref this` (Receiver::Mut → noalias-shaped, idx 0) and a
-        // non-Copy ref param both participate.
+        // `ref this` (Receiver::Mut → noalias-shaped) and a non-Copy ref
+        // param both participate, with a non-Copy local as the sound
+        // disjointness partner (bug-03).
         let ir = gen_src(
             "struct T { v: i32 }\n\
              impl T {\n\
                fn drop(ref this) { return; }\n\
                fn merge(ref this, ref other: T) {\n\
-                 this.v = this.v + other.v;\n\
+                 var tmp: T = T { v: 0 };\n\
+                 tmp.v = this.v + other.v;\n\
+                 this.v = tmp.v;\n\
                  other.v = 0;\n\
                  return;\n\
                }\n\
@@ -23248,7 +23394,7 @@ mod tests {
                var a: T = T { v: 1 };\n\
                var b: T = T { v: 2 };\n\
                a.merge(b);\n\
-               return a.v;\n\
+               return a.v - 3;\n\
              }",
         );
         // Method-mangled domain.
@@ -23257,13 +23403,67 @@ mod tests {
             "expected T.merge domain, got:\n{ir}"
         );
         // Loads/stores annotated.
-        let scope_lines = ir
+        let body = fn_body(&ir, "T.merge");
+        let scope_lines = body
             .lines()
             .filter(|l| l.contains("!alias.scope") && l.contains("!noalias"))
             .count();
         assert!(
             scope_lines >= 2,
-            "expected at least 2 annotated load/store lines in T.merge, got {scope_lines}:\n{ir}"
+            "expected at least 2 annotated load/store lines in T.merge, got {scope_lines}:\n{body}"
+        );
+    }
+
+    #[test]
+    fn sret_method_scopes_the_receiver_not_the_sret_slot() {
+        // reports/bug-03 step 3. When a method returns via sret, `%0` is the
+        // sret slot and the receiver is `%1` — the offset the prologue
+        // already applies. The alias-scope seed hard-coded 0, handing the
+        // receiver's scope to the return slot and leaving real receiver
+        // accesses untagged. (Invisible until the method emitter also
+        // started including local slots, since one param alone published
+        // nothing.)
+        let ir = gen_src(&format!(
+            "{OWNED24}\
+             struct T {{ v: i32 }}\n\
+             impl T {{\n\
+               fn drop(ref this) {{ return; }}\n\
+               fn build(ref this) -> S24 {{\n\
+                 var loc: T = T {{ v: 3 }};\n\
+                 this.v = loc.v;\n\
+                 return mk24();\n\
+               }}\n\
+             }}\n\
+             fn main() -> i32 {{\n\
+               var t: T = T {{ v: 1 }};\n\
+               let s: S24 = t.build();\n\
+               return t.v - 3;\n\
+             }}"
+        ));
+        let body = fn_body(&ir, "T.build");
+        assert!(
+            body.contains("ptr sret(%S24)"),
+            "test needs the sret shape to be meaningful:\n{body}"
+        );
+        // The write through the receiver (%1) is scoped...
+        let recv_gep = body
+            .lines()
+            .find(|l| l.contains("getelementptr") && l.contains(", ptr %1,"))
+            .expect("a GEP off the receiver");
+        let recv_tmp = recv_gep.trim_start().split(' ').next().expect("GEP result");
+        assert!(
+            body.lines()
+                .any(|l| l.contains(&format!(", ptr {recv_tmp}")) && l.contains("!alias.scope")),
+            "the receiver's own access must carry its scope:\n{body}"
+        );
+        // ...and the sret slot is not a scope source.
+        assert!(
+            !body
+                .lines()
+                .any(|l| l.trim_start().starts_with("store")
+                    && l.contains(", ptr %0")
+                    && l.contains("!alias.scope")),
+            "the sret slot must not inherit the receiver's scope:\n{body}"
         );
     }
 
@@ -23271,29 +23471,33 @@ mod tests {
     fn alias_scope_propagates_through_gep_chain() {
         // gen_field GEPs off the param's slot. The post-pass dataflow
         // should propagate the scope through the GEP so the eventual
-        // load carries it.
+        // load carries it. Counted inside `@touch` only — counting over the
+        // whole module let `main`'s own locals satisfy the assertion.
         let ir = gen_src(
             "struct Inner { n: i32 }\n\
              struct Outer { inner: Inner, tag: i32 }\n\
              impl Outer { fn drop(ref this) { return; } }\n\
              fn touch(ref a: Outer, ref b: Outer) -> i32 {\n\
+               var acc: Outer = Outer { inner: Inner { n: 0 }, tag: 0 };\n\
                a.inner.n = b.tag;\n\
-               return a.inner.n + b.tag;\n\
+               acc.tag = a.inner.n + b.tag;\n\
+               return acc.tag;\n\
              }\n\
              fn main() -> i32 {\n\
                var x: Outer = Outer { inner: Inner { n: 0 }, tag: 7 };\n\
                var y: Outer = Outer { inner: Inner { n: 0 }, tag: 9 };\n\
-               return touch(x, y);\n\
+               return touch(x, y) - 18;\n\
              }",
         );
         // Two-level GEP chain (Outer → Inner → n) — both loads/stores
         // through the chain should carry scope metadata.
-        let touched = ir
+        let body = fn_body(&ir, "touch");
+        let touched = body
             .lines()
             .filter(|l| l.contains("!alias.scope") && l.contains("!noalias"))
             .count();
         assert!(touched >= 2,
-            "expected at least 2 scope-annotated loads/stores through GEP chains, got {touched}:\n{ir}");
+            "expected at least 2 scope-annotated loads/stores through GEP chains, got {touched}:\n{body}");
     }
 
     // ---- v0.0.4 raytracer-port bug fixes (2026-05-17) ----

@@ -1,6 +1,7 @@
 # Bug 03 — `!alias.scope`/`!noalias` metadata on `ref` params: release-only miscompile
 
-- Status: reproduced 2026-08-01 with `target/release/cpc` (debug prints 23, `--release` prints 20)
+- Status: FIXED 2026-08-01, commit cd226d9 — param↔param disjointness no longer published; locals kept
+- Status (original): reproduced 2026-08-01 with `target/release/cpc` (debug prints 23, `--release` prints 20)
 - Severity: miscompile (release builds only)
 - Area: codegen (`cplus-core/src/codegen.rs`)
 - Master report: `core-drift-audit-2026-08-01.md` (B3)
@@ -97,14 +98,22 @@ of re-parsing IR text). The metadata-content fix above is independent and urgent
 
 ## Verification
 
-1. Repro prints 23 in debug AND `--release`.
-2. `cpc test --release` on the repo suites (release mode is where this family bites).
-3. Add a codegen unit test asserting that a two-`ref`-param function's IR does NOT put
-   sibling param scopes in each other's `!noalias` lists, and DOES still scope locals.
-4. Grep codegen.rs tests for existing `alias.scope` assertions and update them
-   deliberately — they may currently pin the unsound shape.
-5. Full suites; then run the vendor suites the project usually checks (`cd vendor/stdlib
-   && cpc test`) in release if configured.
+1. DONE: repro prints 23 in debug AND `--release`. Pinned as the e2e test
+   `aliasing_ref_params_are_not_promised_disjoint`, which runs the probe in both modes.
+2. DONE: `cd vendor/stdlib && cpc test --release` — 290 passed.
+3. DONE: `param_scopes_claim_disjointness_from_locals_only` resolves the metadata nodes
+   and asserts a param's `!noalias` list holds the LOCAL scope and nothing else, while
+   the local's list holds both params.
+4. DONE, and the update was substantive — six codegen tests pinned the unsound shape.
+   Five used a params-only function (which now, correctly, publishes nothing) and were
+   reshaped to include a non-Copy local so they still exercise the GEP dataflow;
+   `two_mut_noncopy_params_emit_domain_and_scopes` became
+   `two_mut_noncopy_params_alone_publish_nothing`, asserting the opposite of what it
+   used to. `alias_scope_propagates_through_gep_chain` was counting annotated lines
+   across the whole module, so `main`'s own locals were satisfying it — now scoped to
+   the function under test. New: `sret_method_scopes_the_receiver_not_the_sret_slot`
+   for step 3.
+5. DONE: full suites green.
 
 ## Notes
 

@@ -2918,6 +2918,49 @@ fn release_mode_wraps_on_overflow() {
     assert_eq!(String::from_utf8_lossy(&run.stdout), "-2147483648\n");
 }
 
+/// reports/bug-03: `!alias.scope` / `!noalias` metadata claimed that two
+/// pointer-passed `ref` params could not alias. That is the promise the
+/// `noalias` ATTRIBUTE was stripped of on 2026-07-27 — the borrow checker
+/// denies by design at the statics and raw-pointer seams, so two `ref` params
+/// reached through `#addr_of` legally DO alias. The metadata form outlived the
+/// attribute fix, and at `-O3` LLVM hoisted both reads of `y.a` above the
+/// stores through `x`: the program printed 23 in debug and 20 in release.
+///
+/// The correct answer is 11 + 12 = 23 in both modes. Debug is the control:
+/// if it ever stops printing 23 the probe itself has drifted.
+#[test]
+fn aliasing_ref_params_are_not_promised_disjoint() {
+    const PROBE: &str = "\
+struct S { a: i64 }
+impl S { fn drop(ref this) { } }
+fn cross(ref x: S, ref y: S) -> i64 {
+    x.a = x.a + 1;
+    let v: i64 = y.a;
+    x.a = x.a + 1;
+    let w: i64 = y.a;
+    return v + w;
+}
+fn main() -> i32 {
+    var s: S = S { a: 10 };
+    let p: *S = #addr_of(s);
+    var r: i64 = 0;
+    r = cross(*p, *p);
+    return (r as i32) - 23;
+}
+";
+    for release in [false, true] {
+        let (_dir, bin) = compile_program(PROBE, release);
+        let run = Command::new(&bin).status().expect("run alias probe");
+        assert_eq!(
+            run.code(),
+            Some(0),
+            "aliasing `ref` params must observe each other's writes ({}); \
+             a non-zero code is the read that got hoisted",
+            if release { "--release" } else { "debug" }
+        );
+    }
+}
+
 #[test]
 fn divide_by_zero_traps_in_debug() {
     let (_dir, bin) = compile_program(DIV_ZERO_PROGRAM, false);
