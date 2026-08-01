@@ -11652,43 +11652,22 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 subst.insert(gp_name.clone(), concrete.clone());
                 concrete_args.push(concrete);
             }
-            // Now check each arg against the substituted parameter type.
-            // v0.0.3 Phase 5 Slice 5C: thread through the param's move/
-            // mutable flags via `check_arg_with_move` so `take`-marked
-            // params in a turbofish call correctly mark the source
-            // binding as moved. Without this, calls like
-            // `thread::spawn_with::[Text, i64](s, f)` leave `s`
-            // un-marked and post-move use is silently accepted.
+            // Now check each arg against the substituted parameter type,
+            // through the SAME gate the concrete path uses: E0302 comes from
+            // `check_expr`'s central expected-type comparison, then E0328
+            // (`ref` needs a writable place) and by-value move consumption.
+            // Routing through `check_arg_with_move` is what keeps a rule from
+            // existing on concrete calls only (bug-01: E0328 was enforced
+            // nowhere on this path, so a generic `ref` param mutated a frozen
+            // `let`). The old inline copy also re-reported the mismatch with
+            // the resolver-qualified callee name — a duplicate diagnostic
+            // leaking an internal name.
             let mut had_err = false;
             for (param, arg) in gsig.params.iter().zip(args.iter()) {
-                let expected = self.subst_ty_deep(&param.ty, &subst);
-                let actual_before = self.check_expr(arg, Some(expected.clone()));
-                if !matches!(actual_before, Ty::Error) && actual_before != expected {
-                    self.err(
-                        "E0302",
-                        format!(
-                            "type mismatch in call to `{}`: expected `{}`, got `{}`",
-                            name,
-                            ty_display(&expected),
-                            actual_before.name()
-                        ),
-                        arg.span,
-                    );
+                let expected = self.subst_param_sig(param, &subst);
+                let actual = self.check_arg_with_move(arg, &expected);
+                if !matches!(actual, Ty::Error) && actual != expected.ty {
                     had_err = true;
-                }
-                // v0.0.14 soundness: consume non-Copy args, matching the
-                // non-generic path. v0.0.24 #9: only a `take` param consumes —
-                // a bare param is a read-only borrow (the caller keeps and drops
-                // it), so it must NOT move the arg (else a use-after-call is a
-                // spurious E0335). `consume_arg_place` peels wrappers and
-                // handles each leaf: a whole-binding Ident moves; a
-                // Field/Index/Deref projection is a partial move (E0337);
-                // rvalues (struct/enum literals, fresh call results) own their
-                // value and pass through untouched. v0.0.23: peel closes the
-                // `g({ x })` hole (no `is_addr_of_place` gate, which skipped
-                // wrapped bindings).
-                if !matches!(actual_before, Ty::Error) {
-                    self.consume_generic_take_arg(param, arg, &expected);
                 }
             }
             if had_err {
@@ -11756,15 +11735,21 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 }
             }
         }
-        // Same `take` consumption as the turbofish branch. Deferred to here
-        // (not the unification loop) because the substituted param type needs
-        // the completed `subst`; every declared generic param is bound at this
-        // point. Without this the inference path type-checked `take` args but
-        // never marked them moved — the caller kept using a value whose drop
-        // had already run inside the callee (safe-code use-after-free).
+        // Same argument gate as the turbofish branch — E0328 plus `take`
+        // consumption. Deferred to here (not the unification loop) because the
+        // substituted param type needs the completed `subst`; every declared
+        // generic param is bound at this point. The arguments were already
+        // type-checked once above, so this runs `gate_checked_arg` rather than
+        // the full `check_arg_with_move`: a second `check_expr` would re-mark a
+        // nested consuming call's operand as moved (false E0335). Without the
+        // gate the inference path type-checked `take` args but never marked
+        // them moved — the caller kept using a value whose drop had already run
+        // inside the callee (safe-code use-after-free) — and never ran E0328, so
+        // a generic `ref` param mutated a frozen `let` (bug-01).
         for (param, arg) in gsig.params.iter().zip(args.iter()) {
-            let expected = self.subst_ty_deep(&param.ty, &subst);
-            self.consume_generic_take_arg(param, arg, &expected);
+            let expected = self.subst_param_sig(param, &subst);
+            self.check_capture_arg_escape(arg);
+            self.gate_checked_arg(arg, &expected);
         }
         // Slice 7GEN.5e step 4: bound check at the inference path.
         self.check_generic_bounds(
@@ -11781,21 +11766,6 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         self.call_monos.insert(call_span, concrete_args.clone());
         // Substitute the return type and return it as the call's type.
         self.subst_ty_deep(&gsig.return_type, &subst)
-    }
-
-    /// v0.0.14 soundness + v0.0.24 #9 for generic calls: a `take` param
-    /// consumes its non-Copy argument (partial-move rejection + move marking
-    /// through wrappers); a bare param is a read-only borrow and must not
-    /// move. Shared by BOTH branches of `check_generic_named_call` — the
-    /// turbofish branch had this inline while the inference branch shipped
-    /// without it, so `sink(s)` left `s` live after its drop ran inside the
-    /// callee (safe-code use-after-free). `expected` is the param type after
-    /// substitution.
-    fn consume_generic_take_arg(&mut self, param: &ParamSig, arg: &Expr, expected: &Ty) {
-        if param.move_ && !self.is_copy(expected) {
-            self.reject_partial_move_of_drop(arg, expected);
-            self.mark_moved_through_wrappers(arg, expected);
-        }
     }
 
     /// 2026-07-16: collect every impl method's parameter defaults, keyed by
@@ -12560,6 +12530,17 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             }
         } else {
             // Infer: walk params, unify Ty::Param against arg type.
+            //
+            // This is a PROBE, not the authoritative check: `check_expr` is
+            // side-effecting (it marks moves and emits diagnostics) and the
+            // loop below re-checks every argument against the substituted
+            // parameter type. Snapshot the binding state and the diagnostic
+            // sink across the probe and restore them, so a nested consuming
+            // call (`s.g(eat(r))`) is not marked moved twice — the double-mark
+            // was a false E0335 on legal code (bug-11). Same idiom as the loop
+            // move-check pre-pass.
+            let saved_scopes = self.scopes.clone();
+            let diag_mark = self.sink.len();
             for (param_sig, arg) in sig.params.iter().zip(args.iter()) {
                 let arg_ty = self.check_expr(arg, None);
                 if matches!(arg_ty, Ty::Error) {
@@ -12573,6 +12554,8 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     &self.enums,
                 );
             }
+            self.sink.truncate(diag_mark);
+            self.scopes = saved_scopes;
             // Every declared generic param must be pinned.
             for gp in &sig.generic_params {
                 if !subst.contains_key(gp) {
@@ -12589,34 +12572,15 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 }
             }
         }
-        // Type-check each arg against the *substituted* parameter type, then
-        // consume it (move semantics) via the shared `consume_value_arg` — a
-        // generic method call moves its by-value non-Copy args exactly like a
-        // concrete one; without this a use-after-move through a generic method
-        // slipped (the arg was never marked moved).
-        for (a, expected) in args.iter().zip(sig.params.iter()) {
-            let expected_ty = self.subst_ty_deep(&expected.ty, &subst);
-            let arg_ty = self.check_expr(a, Some(expected_ty.clone()));
-            if !matches!(arg_ty, Ty::Error) && arg_ty != expected_ty {
-                self.err(
-                    "E0302",
-                    format!(
-                        "type mismatch in method `{}::{}` arg: expected `{}`, got `{}`",
-                        struct_name,
-                        name.name,
-                        ty_display(&expected_ty),
-                        ty_display(&arg_ty),
-                    ),
-                    a.span,
-                );
-            }
-            let expected_subst = ParamSig {
-                ty: expected_ty,
-                mutable: expected.mutable,
-                move_: expected.move_,
-                borrow_: expected.borrow_,
-            };
-            self.consume_value_arg(a, &expected_subst);
+        // Type-check each arg against the *substituted* parameter type through
+        // the SAME gate the concrete path uses: `check_expr`'s central E0302,
+        // then E0328 (`ref` needs a writable place) and by-value move
+        // consumption. The hand-rolled loop this replaces skipped E0328
+        // entirely (bug-01) and re-reported the mismatch with the
+        // resolver-qualified owner name.
+        for (a, param) in args.iter().zip(sig.params.iter()) {
+            let expected = self.subst_param_sig(param, &subst);
+            let _ = self.check_arg_with_move(a, &expected);
         }
         for a in args.iter().skip(sig.params.len()) {
             let _ = self.check_expr(a, None);
@@ -14666,47 +14630,64 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         }
     }
 
-    fn check_arg_with_move(&mut self, arg: &Expr, expected: &ParamSig) {
+    fn check_arg_with_move(&mut self, arg: &Expr, expected: &ParamSig) -> Ty {
         self.check_capture_arg_escape(arg);
-        // Bound method reference: already validated against the fn-pointer
-        // param by `try_bound_method_refs`; monomorphize rewrites it to the
-        // bridge fn. Skip normal checking (as a Field expr it would fail
-        // with an unknown-field diagnostic).
-        if self.bound_ref_arg_spans.contains(&arg.span) {
-            return;
+        if self.arg_bypasses_check(arg, expected) {
+            return expected.ty.clone();
         }
-        // TEXT.R1c: a string literal where an *owned* `Text` is expected
-        // constructs an owned Text (an rvalue — nothing to consume). Scoped to
-        // owning, implicit-move params (not `ref`/`take`): those are
-        // exactly the non-Copy by-ptr params whose call-site lowering
-        // (`gen_place_coerced`) materializes the literal into a temp. A literal
-        // for a `ref` param makes no sense (no place to mutate / borrow)
-        // and still needs `from_str`.
-        if matches!(arg.kind, ExprKind::StrLit(_))
+        let actual = self.check_expr(arg, Some(expected.ty.clone()));
+        self.gate_checked_arg(arg, expected);
+        actual
+    }
+
+    /// True for the two argument shapes that must not go through the normal
+    /// `check_expr` + gate sequence: a bound method reference (already
+    /// validated against the fn-pointer param by `try_bound_method_refs`;
+    /// monomorphize rewrites it to the bridge fn, and as a Field expr it would
+    /// fail here with an unknown-field diagnostic), and TEXT.R1c — a string
+    /// literal where an *owned* `Text` is expected constructs an owned Text (an
+    /// rvalue, nothing to consume). The Text case is scoped to owning,
+    /// implicit-move params (not `ref`/`take`): those are exactly the non-Copy
+    /// by-ptr params whose call-site lowering (`gen_place_coerced`)
+    /// materializes the literal into a temp. A literal for a `ref` param makes
+    /// no sense (no place to mutate / borrow) and still needs `from_str`.
+    fn arg_bypasses_check(&self, arg: &Expr, expected: &ParamSig) -> bool {
+        if self.bound_ref_arg_spans.contains(&arg.span) {
+            return true;
+        }
+        matches!(arg.kind, ExprKind::StrLit(_))
             && !expected.mutable
             && !expected.borrow_
             && !expected.move_
             && matches!(&expected.ty, Ty::Struct(id)
                 if self.designated_string_struct == Some(*id))
-        {
+    }
+
+    /// The post-type-check half of `check_arg_with_move`: the `ref`
+    /// writability rule (E0328) and by-value move consumption. Split out so a
+    /// call form that has ALREADY type-checked the argument runs exactly the
+    /// same rules without a second, move-marking `check_expr` walk (a second
+    /// walk re-marks a nested consuming call's operand — false E0335).
+    ///
+    /// v0.0.24 de-Rust (#9 stage 3c): a `ref` parameter writes back to the
+    /// caller's value, so the argument must be a `var` (writable) place —
+    /// passing a `let`/`const`/temporary would silently mutate an immutable
+    /// binding (the live hole: E0305 catches direct/field writes but not the
+    /// write across the parameter boundary). Single `is_var` check from the
+    /// signature's `ref`, no callee-body inspection, so it stays modular
+    /// through fn-pointers / interfaces / generics. The receiver analogue
+    /// (`ref this`) is the E0328 check at the method-call site; this is the
+    /// same rule for value parameters.
+    ///
+    /// Applies to every `ref` parameter regardless of type (#9 stage 3c-copy):
+    /// a Copy `ref` now lowers to a `T*` out-parameter and writes back just
+    /// like a non-Copy one (`ref n: i32` ⇒ `i32*`), so the `var` requirement
+    /// has teeth for all types. (bare read-only params have `mutable == false`;
+    /// `take` consumes rather than writes back.)
+    fn gate_checked_arg(&mut self, arg: &Expr, expected: &ParamSig) {
+        if self.arg_bypasses_check(arg, expected) {
             return;
         }
-        let _ = self.check_expr(arg, Some(expected.ty.clone()));
-        // v0.0.24 de-Rust (#9 stage 3c): a `ref` parameter writes back to the
-        // caller's value, so the argument must be a `var` (writable) place —
-        // passing a `let`/`const`/temporary would silently mutate an immutable
-        // binding (the live hole: E0305 catches direct/field writes but not the
-        // write across the parameter boundary). Single `is_var` check from the
-        // signature's `ref`, no callee-body inspection, so it stays modular
-        // through fn-pointers / interfaces / generics. The receiver analogue
-        // (`ref this`) is the E0328 check at the method-call site; this is the
-        // same rule for value parameters.
-        //
-        // Applies to every `ref` parameter regardless of type (#9 stage 3c-copy):
-        // a Copy `ref` now lowers to a `T*` out-parameter and writes back just
-        // like a non-Copy one (`ref n: i32` ⇒ `i32*`), so the `var` requirement
-        // has teeth for all types. (bare read-only params have `mutable == false`;
-        // `take` consumes rather than writes back.)
         if expected.mutable
             && !expected.move_
             && !expected.borrow_
@@ -14721,6 +14702,21 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             );
         }
         self.consume_value_arg(arg, expected);
+    }
+
+    /// A generic call's parameter signature with the inferred/explicit type
+    /// arguments substituted in — the concrete `ParamSig` the generic call
+    /// paths hand to `check_arg_with_move` / `gate_checked_arg` so the
+    /// argument rules (E0328, move consumption, capture escape) are the SAME
+    /// ones the concrete path runs. Hand-rolled per-path argument loops were
+    /// how E0328 came to be enforced on concrete calls only (bug-01).
+    fn subst_param_sig(&mut self, param: &ParamSig, subst: &HashMap<String, Ty>) -> ParamSig {
+        ParamSig {
+            ty: self.subst_ty_deep(&param.ty, subst),
+            mutable: param.mutable,
+            move_: param.move_,
+            borrow_: param.borrow_,
+        }
     }
 
     /// Apply by-value move-consumption for one argument, given the (already

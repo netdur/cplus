@@ -7538,6 +7538,142 @@ fn main() -> i32 {
     );
 }
 
+/// reports/bug-01: E0328 (a `ref` parameter writes back, so the argument must
+/// be a `var` place) lived only inside `check_arg_with_move`, which the
+/// CONCRETE call path uses. The generic paths hand-rolled their own argument
+/// loops and never ran it, so `bump_g(y, 99)` on a frozen `let` compiled and
+/// mutated it at runtime (the probe exited 99). All three generic spellings —
+/// inference, turbofish, generic method — must reject exactly like the
+/// concrete control, and the `var` versions must still compile and write back.
+#[test]
+fn generic_call_paths_enforce_ref_writable_place_e0328() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let frozen = "\
+fn bump_g[T: Copy](ref x: T, v: T) { x = v; }
+struct S { m: i32 }
+impl S { fn setg[T: Copy](this, ref x: T, v: T) { x = v; } }
+fn main() -> i32 {
+    let a = 5;
+    let b = 5;
+    let c = 5;
+    let s = S { m: 0 };
+    bump_g(a, 99);
+    bump_g::[i32](b, 99);
+    s.setg(c, 99);
+    return a + b + c - 297;
+}
+";
+    let dir = tempdir();
+    let src = dir.join("frozen.cplus");
+    std::fs::write(&src, frozen).unwrap();
+    let out = Command::new(cpc)
+        .arg("check")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "a `ref` generic arg on a `let` must not compile"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        stderr.matches("E0328").count(),
+        3,
+        "expected one E0328 per generic spelling (inference, turbofish, method), got: {stderr}"
+    );
+
+    // The `var` versions stay legal and the write-back reaches the caller.
+    let good = frozen.replace("    let a = 5;", "    var a = 5;")
+        .replace("    let b = 5;", "    var b = 5;")
+        .replace("    let c = 5;", "    var c = 5;");
+    let gsrc = dir.join("ok.cplus");
+    std::fs::write(&gsrc, good).unwrap();
+    let bin = dir.join("ok");
+    let compile = Command::new(cpc)
+        .arg(&gsrc)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        compile.status.success(),
+        "`var` places must still pass: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(&bin).status().expect("run ok");
+    assert_eq!(run.code(), Some(0), "write-back lost: {run}");
+}
+
+/// reports/bug-11: `check_generic_method_call`'s inference branch type-checked
+/// every argument TWICE — once with no expected type to unify against, once
+/// against the substituted parameter type. `check_expr` is side-effecting, so
+/// the first pass already marked the nested `eat(r)` consuming call's operand
+/// moved and the second reported a false E0335 on legal code. The inference
+/// pass is now a restored probe. The second half of the test pins that a REAL
+/// double use is still rejected.
+#[test]
+fn generic_method_inference_does_not_double_mark_moves() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let prelude = "\
+struct R { n: i64 }
+impl R { fn drop(ref this) { } }
+fn eat(take r: R) -> i32 { return 1; }
+struct S { m: i32 }
+impl S { fn g[T](this, take v: T) -> T { return v; } }
+";
+    let dir = tempdir();
+    let src = dir.join("once.cplus");
+    std::fs::write(
+        &src,
+        format!(
+            "{prelude}fn main() -> i32 {{\n\
+             let s = S {{ m: 1 }};\n\
+             let r = R {{ n: 2 }};\n\
+             let x = s.g(eat(r));\n\
+             return x - 1;\n\
+             }}\n"
+        ),
+    )
+    .unwrap();
+    let bin = dir.join("once");
+    let compile = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        compile.status.success(),
+        "one consuming use through a generic method must compile: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(&bin).status().expect("run once");
+    assert_eq!(run.code(), Some(0), "unexpected exit: {run}");
+
+    let bad = dir.join("twice.cplus");
+    std::fs::write(
+        &bad,
+        format!(
+            "{prelude}fn main() -> i32 {{\n\
+             let s = S {{ m: 1 }};\n\
+             let r = R {{ n: 2 }};\n\
+             let x = s.g(eat(r));\n\
+             let y = s.g(eat(r));\n\
+             return x + y;\n\
+             }}\n"
+        ),
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("check")
+        .arg(&bad)
+        .output()
+        .expect("invoke cpc");
+    assert!(!out.status.success(), "a real double move must be rejected");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0335"), "expected E0335, got: {stderr}");
+}
+
 #[test]
 fn e0374_cross_statement_subfield_borrow_blocks_parent_read() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
