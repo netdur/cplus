@@ -711,6 +711,10 @@ struct FnEntry {
     /// keeps-method call on it or a direct field store). Callers tie the
     /// dst argument's root to the src argument's owners.
     computed_ref_flows: Vec<(usize, usize)>,
+    /// Declared (UNsubstituted) return type — feeds unannotated-let
+    /// inference (`let h = mk();` resolves h's methods through mk's
+    /// declared return).
+    ret_ty: Option<Type>,
     /// Declared (UNsubstituted) parameter types. For methods of generic
     /// impls the tie machinery substitutes the receiver's type arguments
     /// into these at the call site before asking view-ness — `Vec[str]`'s
@@ -735,6 +739,12 @@ struct SigTable {
     /// aggregates (views in the payload borrow like any aggregate capture)
     /// rather than associated-fn calls.
     enums: std::collections::HashSet<String>,
+    /// Enum payload types: enum name -> variant name -> positional payload
+    /// types (unsubstituted). Lets match-arm payload bindings get inferred
+    /// types so a payload-bound receiver still resolves its methods.
+    enum_payloads: HashMap<String, HashMap<String, Vec<Type>>>,
+    /// Generic-enum param names, parallel to `impl_generics` for enums.
+    enum_generics: HashMap<String, Vec<String>>,
     /// Generic-impl targets: target name -> ordered generic-param names
     /// (`impl Vec[T]` records `Vec -> [T]`). Call sites zip these with the
     /// receiver's type arguments to substitute before view classification.
@@ -795,6 +805,7 @@ impl SigTable {
                                 oracle.type_contains_view(t) || oracle.definitely_non_copy(t)
                             }),
                             param_tys: f.params.iter().map(|p| p.ty.clone()).collect(),
+                            ret_ty: f.return_type.clone(),
                         },
                     );
                 }
@@ -809,6 +820,22 @@ impl SigTable {
                 }
                 ItemKind::Enum(e) => {
                     t.enums.insert(e.name.name.clone());
+                    t.enum_payloads.insert(
+                        e.name.name.clone(),
+                        e.variants
+                            .iter()
+                            .map(|v| (v.name.name.clone(), v.payload.clone()))
+                            .collect(),
+                    );
+                    if !e.generic_params.is_empty() {
+                        t.enum_generics.insert(
+                            e.name.name.clone(),
+                            e.generic_params
+                                .iter()
+                                .map(|g| g.name.name.clone())
+                                .collect(),
+                        );
+                    }
                 }
                 ItemKind::Impl(b) => {
                     if !b.target_generic_params.is_empty() {
@@ -853,6 +880,7 @@ impl SigTable {
                                     oracle.type_contains_view(t) || oracle.definitely_non_copy(t)
                                 }),
                                 param_tys: m.params.iter().map(|p| p.ty.clone()).collect(),
+                                ret_ty: m.return_type.clone(),
                             },
                         );
                     }
@@ -2451,6 +2479,13 @@ struct Analyzer<'p> {
     sigs: &'p SigTable,
     oracle: &'p CopyOracle,
     binding_types: HashMap<String, BindingType>,
+    /// Unannotated-binding inference (contract follow-through 2026-08-01):
+    /// types derived from initializer SHAPE — a call's declared return, a
+    /// struct literal's name, an ident's type, a match payload's declared
+    /// position. Consulted by `binding_type` as the fallback for Unknown,
+    /// so receiver resolution (and every tie built on it) works without
+    /// annotations. Declared truth only — never guessed.
+    inferred_types: HashMap<String, Type>,
     diags: Vec<RawDiag>,
     /// 5BC.3b: per-place set of currently-live borrower bindings.
     /// Place X is `BorrowedShared(N)` iff `live_borrows[X].len() == N`.
@@ -2494,6 +2529,7 @@ impl<'p> Analyzer<'p> {
             sigs,
             oracle,
             binding_types: HashMap::new(),
+            inferred_types: HashMap::new(),
             diags: Vec::new(),
             live_borrows: BTreeMap::new(),
             binding_borrows_from: HashMap::new(),
@@ -2837,9 +2873,142 @@ impl<'p> Analyzer<'p> {
     /// before its `let` was recorded — should not happen in well-formed
     /// programs).
     fn binding_type(&self, name: &str) -> Option<&Type> {
-        match self.binding_types.get(name)? {
-            BindingType::Known(t) => Some(t),
-            BindingType::Unknown => None,
+        match self.binding_types.get(name) {
+            Some(BindingType::Known(t)) => Some(t),
+            Some(BindingType::Unknown) | None => self.inferred_types.get(name),
+        }
+    }
+
+    /// Structural type inference for initializer expressions. Only
+    /// declared facts flow through: fn/method return types (generic
+    /// receivers substituted), struct-literal names, idents, casts,
+    /// literals, value-producing control-flow tails. None means "no
+    /// declared truth reachable" — the binding stays untyped and every
+    /// type-gated diagnostic keeps skipping it.
+    fn infer_expr_type(&self, e: &Expr) -> Option<Type> {
+        let path = |n: &str| Type {
+            kind: TypeKind::Path(n.to_string()),
+            span: e.span,
+        };
+        match &e.kind {
+            ExprKind::Ident(n) => self.binding_type(n).cloned(),
+            ExprKind::StrLit(_) => Some(path("str")),
+            ExprKind::Cast { ty, .. } => Some(ty.clone()),
+            ExprKind::StructLit { name, .. } => Some(path(&name.name)),
+            ExprKind::GenericStructLit {
+                name, type_args, ..
+            } => Some(Type {
+                kind: TypeKind::Generic {
+                    name: name.name.clone(),
+                    args: type_args.clone(),
+                },
+                span: e.span,
+            }),
+            ExprKind::GenericEnumCall {
+                enum_name,
+                type_args,
+                ..
+            } => Some(Type {
+                kind: TypeKind::Generic {
+                    name: enum_name.name.clone(),
+                    args: type_args.clone(),
+                },
+                span: e.span,
+            }),
+            ExprKind::Call { callee, .. } => match &callee.kind {
+                ExprKind::Ident(f) => self.sigs.fns.get(f).and_then(|e2| e2.ret_ty.clone()),
+                ExprKind::Field {
+                    receiver,
+                    name: method,
+                } => {
+                    let recv_ty = self.infer_expr_type(receiver)?;
+                    match &recv_ty.kind {
+                        TypeKind::Path(t) => self
+                            .sigs
+                            .methods
+                            .get(&format!("{t}.{}", method.name))
+                            .and_then(|e2| e2.ret_ty.clone()),
+                        TypeKind::Generic { name, args } => {
+                            let entry =
+                                self.sigs.methods.get(&format!("{name}.{}", method.name))?;
+                            let params = self.sigs.impl_generics.get(name)?;
+                            let map: HashMap<String, Type> = params
+                                .iter()
+                                .cloned()
+                                .zip(args.iter().cloned())
+                                .collect();
+                            entry.ret_ty.as_ref().map(|t| subst_type(t, &map))
+                        }
+                        _ => None,
+                    }
+                }
+                _ => None,
+            },
+            ExprKind::Field { receiver, name } => {
+                let recv_ty = self.infer_expr_type(receiver)?;
+                let TypeKind::Path(t) = &recv_ty.kind else {
+                    return None;
+                };
+                self.sigs
+                    .struct_fields
+                    .get(t)
+                    .and_then(|fs| fs.get(&name.name).cloned())
+            }
+            ExprKind::Block(b) => b.tail.as_ref().and_then(|t| self.infer_expr_type(t)),
+            ExprKind::If { then, .. } => {
+                then.tail.as_ref().and_then(|t| self.infer_expr_type(t))
+            }
+            ExprKind::Match { arms, .. } => {
+                arms.first().and_then(|a| self.infer_expr_type(&a.body))
+            }
+            _ => None,
+        }
+    }
+
+    /// Unannotated-binding inference, match-payload arm: bind each
+    /// `PatternKind::Binding` in a variant pattern to its declared payload
+    /// type. Generic enums substitute the pattern's explicit type args
+    /// when present, else the scrutinee's inferred `Generic` args.
+    fn register_pattern_types(&mut self, pat: &Pattern, scrutinee: &Expr) {
+        let PatternKind::Variant {
+            enum_name,
+            type_args,
+            variant_name,
+            payload,
+        } = &pat.kind
+        else {
+            return;
+        };
+        let Some(variants) = self.sigs.enum_payloads.get(&enum_name.name) else {
+            return;
+        };
+        let Some(ptys) = variants.get(&variant_name.name) else {
+            return;
+        };
+        let map: HashMap<String, Type> = match self.sigs.enum_generics.get(&enum_name.name) {
+            None => HashMap::new(),
+            Some(gp) => {
+                let args: Vec<Type> = if !type_args.is_empty() {
+                    type_args.clone()
+                } else {
+                    match self.infer_expr_type(scrutinee).map(|t| t.kind) {
+                        Some(TypeKind::Generic { name, args }) if name == enum_name.name => args,
+                        _ => return,
+                    }
+                };
+                gp.iter().cloned().zip(args).collect()
+            }
+        };
+        let hits: Vec<(String, Type)> = payload
+            .iter()
+            .zip(ptys.iter())
+            .filter_map(|(bp, t)| match &bp.kind {
+                PatternKind::Binding(id) => Some((id.name.clone(), subst_type(t, &map))),
+                _ => None,
+            })
+            .collect();
+        for (n, t) in hits {
+            self.inferred_types.insert(n, t);
         }
     }
 
@@ -3338,6 +3507,11 @@ impl Analyzer<'_> {
                     Some(t) => BindingType::Known(t.clone()),
                     None => BindingType::Unknown,
                 };
+                if ty.is_none() {
+                    if let Some(inferred) = init.as_ref().and_then(|e| self.infer_expr_type(e)) {
+                        self.inferred_types.insert(name.name.clone(), inferred);
+                    }
+                }
                 self.binding_types.insert(name.name.clone(), bt);
                 state.insert(Place::root(&name.name), PlaceState::Owned);
                 // 5BC.3b/5BC.4/6BC.2: acquire borrows if the initializer
@@ -3366,6 +3540,22 @@ impl Analyzer<'_> {
                 // together, so over-pinning is harmless). Owning-field
                 // destructures classify to no sources and stay plain `Owned`.
                 let borrow_sources = self.classify_borrow_source(init);
+                let init_ty = self.infer_expr_type(init);
+                if let Some(Type {
+                    kind: TypeKind::Path(sname),
+                    ..
+                }) = &init_ty
+                {
+                    if let Some(fs) = self.sigs.struct_fields.get(sname) {
+                        let hits: Vec<(String, Type)> = fields
+                            .iter()
+                            .filter_map(|f| fs.get(&f.name).map(|t| (f.name.clone(), t.clone())))
+                            .collect();
+                        for (n, t) in hits {
+                            self.inferred_types.insert(n, t);
+                        }
+                    }
+                }
                 self.apply_expr(init, state);
                 for f in fields {
                     self.binding_types
@@ -3778,6 +3968,14 @@ impl Analyzer<'_> {
                     // visible from outside the arm). For tracking inside
                     // the arm, the existing `apply_expr` walk on the arm
                     // body is enough.
+                    //
+                    // Unannotated-binding inference: payload bindings get
+                    // their DECLARED positional types (generic enums
+                    // substituted via the pattern's type args, else via
+                    // the scrutinee's), so a payload-bound receiver still
+                    // resolves its methods. Shadowing is E0363, so a
+                    // per-arm overwrite is exact for this arm's body.
+                    self.register_pattern_types(&a.pattern, scrutinee);
                     self.apply_expr(&a.body, &mut s);
                     s.retain(|k, _| pre.contains_key(k));
                     arm_diverges.push(crate::lower::expr_diverges(&a.body));
@@ -5285,13 +5483,12 @@ fn caller() {
 
     #[test]
     fn e0370_does_not_fire_on_unknown_binding_type() {
-        // `let y = ...;` without annotation — borrowck treats it as
-        // Unknown and conservatively skips E0370 emission. 5BC.2/5BC.4
-        // (sema integration) will tighten this.
-        //
-        // This program would actually be caught by sema-level E0335
-        // already (sema's move tracking) — recording the behavior here
-        // is about confirming borrowck doesn't double-fire / fire-where-it-can't-prove.
+        // The promised 5BC.2/5BC.4 tightening landed 2026-08-01 as
+        // structural inference: `let y = B { x: 1 };` resolves to B, so
+        // E0370 now correctly fires on the move-and-borrow call below.
+        // The Unknown-stays-silent guard moves to a GENUINELY
+        // unresolvable initializer (a call through a fn-pointer local —
+        // no declared return type reachable).
         let src = "\
 struct B { x: i32 }
 impl B { fn drop(ref this) { return; } }
@@ -5303,12 +5500,24 @@ fn caller() {
   return;
 }";
         let codes = check_src(src);
-        // We're asserting borrowck does NOT fire E0370 here; sema may or
-        // may not fire E0335 — that's not our concern. We use check_src
-        // which goes through borrowck only.
+        assert!(
+            codes.iter().any(|c| c == "E0370"),
+            "inferred binding type must enable E0370; got {codes:?}"
+        );
+        let src = "\
+struct B { x: i32 }
+impl B { fn drop(ref this) { return; } }
+fn drain(take b: B, n: i32) { return; }
+fn peek(b: B) -> i32 { return b.x; }
+fn caller(make: fn() -> B) {
+  let y = make();
+  drain(y, peek(y));
+  return;
+}";
+        let codes = check_src(src);
         assert!(
             !codes.iter().any(|c| c == "E0370"),
-            "E0370 should not fire on bindings of unknown type; got {codes:?}"
+            "E0370 must stay silent on a genuinely unresolvable binding; got {codes:?}"
         );
     }
 
