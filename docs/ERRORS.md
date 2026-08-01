@@ -1165,7 +1165,7 @@ fn main() -> i32 { return 0; }
 
 ### E0513 · Returning a `str` / `T[]` view of a local that drops
 
-A returned `str` / `T[]` view is rooted at a function-local non-Copy owned value (a coerced `Text`, or an explicit `as_str` / `as_slice` view, including inside a returned aggregate), so the view would dangle when that local is freed at return.
+A `str` / `T[]` view rooted at a function-local non-Copy owned value escapes the frame — returned directly, returned inside an aggregate (a struct with a `str` field CARRIES the view's borrow, including when built through a call like `store(local.view(), ..)` or returned via an alias), or stored into a place that outlives the frame (a `static`, or a `ref` target). The local is freed at return, so the escaped view would dangle.
 
 ```cplus
 extern fn malloc(n: usize) -> *u8;
@@ -1182,7 +1182,7 @@ fn bad() -> str {
 }
 ```
 
-**Fix.** Return an owned value (`Text` / `Vec[T]`), or borrow from a parameter.
+**Fix.** Own the bytes instead: store/return `Text` / `Vec[T]`, or borrow the view from a non-`take` parameter. Literal-backed views ('static bytes) escape freely.
 
 <sub>repro: checked · cplus-core/src/sema.rs:12259 · test cpc/tests/e2e.rs:return_borrow_of_local_owned_rejected_e0513</sub>
 

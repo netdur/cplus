@@ -7424,12 +7424,22 @@ impl SemaCx<'_> {
                         s.span,
                     );
                 }
+                // STRM v3 (2026-08-01): view-CARRYING aggregates (a struct
+                // with a `str` field, built by a call like
+                // `store(t.view(), 1)`) track roots exactly like bare views,
+                // so alias returns and static stores can be checked. The
+                // temp flag stays view-typed-only (an aggregate binding
+                // owns its aggregate; only its view fields borrow).
                 let borrow_roots = if matches!(final_ty, Ty::Str | Ty::Slice(_)) {
                     // Bug 03: `let s: str = temp.view();` binds a view of a
                     // statement-scoped temporary that drops immediately.
                     if let Some(e) = init.as_ref() {
                         self.flag_view_of_temp(e);
                     }
+                    init.as_ref()
+                        .map(|e| self.returned_borrow_roots(e))
+                        .unwrap_or_default()
+                } else if self.ty_contains_view(&final_ty) {
                     init.as_ref()
                         .map(|e| self.returned_borrow_roots(e))
                         .unwrap_or_default()
@@ -15045,6 +15055,13 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         self.flag_escaping_local_receivers(e);
 
         let ret_borrow_shaped = matches!(self.current_return, Ty::Str | Ty::Slice(_));
+        // STRM v3 (2026-08-01): a view-CARRYING return (a struct with a str
+        // field) escapes exactly like a bare view — `return d;` where `d`
+        // was built from `store(local.view(), ..)` dangles just as hard as
+        // `return local.view();`. The aggregate-literal walk above only sees
+        // literal returns; this closes the alias/call-result path.
+        let ret_view_carrying =
+            !ret_borrow_shaped && self.ty_contains_view(&self.current_return.clone());
         // Bug 03: `return temp.view();` returns a view of a statement-scoped
         // temporary — dangles even harder than a local (the temp is already
         // gone by the time the caller reads it).
@@ -15052,7 +15069,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             self.flag_view_of_temp(e);
         }
         let ret_region = self.current_fn_return_region.clone();
-        if !ret_borrow_shaped && ret_region.is_none() {
+        if !ret_borrow_shaped && !ret_view_carrying && ret_region.is_none() {
             return;
         }
         let roots = self.returned_borrow_roots(e);
@@ -15086,14 +15103,22 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // old "every parameter name is a safe root" heuristic that let
         // `return take_param.as_str()` / `return this.as_str()` (take this)
         // escape.
-        if ret_borrow_shaped {
+        if ret_borrow_shaped || ret_view_carrying {
             for root in &roots {
                 let key: &str = if root == "this" { "self" } else { root };
                 let Some(info) = self.lookup_local(key) else {
                     continue;
                 };
                 if info.owns_value && !self.is_copy(&info.ty) {
-                    self.err("E0513", self.dangling_view_root_message(root), e.span);
+                    let msg = if ret_borrow_shaped {
+                        self.dangling_view_root_message(root)
+                    } else {
+                        format!(
+                            "the returned value holds a view of {}: it owns heap that is freed when the function returns, so the stored view would dangle. Store an owned `Text` / `Vec[T]` in the field, or borrow the view from a non-`take` parameter",
+                            self.view_owner_desc(root)
+                        )
+                    };
+                    self.err("E0513", msg, e.span);
                     return;
                 }
             }
@@ -15331,7 +15356,12 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
     /// escaped view would dangle. A view of a bare / `ref` *parameter* is
     /// caller-tied and left alone (only `owns_value` owners are flagged).
     fn check_view_store_escape(&mut self, target: &Expr, value: &Expr, target_ty: &Ty) {
-        if !matches!(target_ty, Ty::Str | Ty::Slice(_)) {
+        // STRM v3 (2026-08-01): also engage when the target CARRIES views —
+        // `SLOT = store(local.view(), 1)` stores a struct whose `str` field
+        // dangles exactly like a bare view store (the str_dangle_repro
+        // shape). `returned_borrow_roots` traces the aggregate value the
+        // same way it traces a view.
+        if !(matches!(target_ty, Ty::Str | Ty::Slice(_)) || self.ty_contains_view(target_ty)) {
             return;
         }
         let Some(troot) = self.place_root_name(target) else {
@@ -15348,10 +15378,11 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 continue;
             };
             if info.owns_value && !self.is_copy(&info.ty) {
+                let troot_leaf = troot.rsplit('.').next().unwrap_or(&troot);
                 let dest = if target_is_static {
-                    format!("static `{troot}`")
+                    format!("static `{troot_leaf}`")
                 } else {
-                    format!("`ref` target `{troot}`")
+                    format!("`ref` target `{troot_leaf}`")
                 };
                 self.err(
                     "E0513",
@@ -15486,6 +15517,11 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         let sig = match &ty {
             Ty::Struct(id) => self.structs[id.0 as usize].methods.get(method),
             Ty::Enum(id) => self.enums[id.0 as usize].methods.get(method),
+            // STRM v3 (2026-08-01): the blessed `impl str` block's sub-view
+            // methods (`trim`/`slice`/`prefix`/...) return views of the
+            // receiver — `v.trim()` borrows whatever `v` borrows. Without
+            // this arm a trimmed view of a dying local escaped E0513.
+            Ty::Str => self.builtin_str_methods.get(method),
             _ => None,
         };
         let Some(sig) = sig else {
@@ -15493,6 +15529,57 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         };
         matches!(sig.receiver, Some(Receiver::Read) | Some(Receiver::Mut))
             && matches!(sig.return_type, Ty::Str | Ty::Slice(_))
+    }
+
+    /// STRM v3 (2026-08-01): true iff a value of `ty` can CARRY a borrowed
+    /// view — it is a view itself (`str` / `T[]`) or an aggregate with a
+    /// view-typed field / payload, transitively. Written in the
+    /// `ty_carries_drop` style: by-value containment is acyclic, and heap
+    /// containers (Vec/Box/Text) break recursion via raw-pointer fields —
+    /// raw pointers are deliberately NOT counted (§6.6 accountability), so
+    /// `Text` is an owner, not a carrier, and container ELEMENTS behind heap
+    /// indirection stay outside this analysis (recorded limitation).
+    fn ty_contains_view(&self, ty: &Ty) -> bool {
+        self.ty_contains_view_inner(ty, &mut Vec::new())
+    }
+
+    /// Recursion worker with an explicit cycle guard (the `marker_blocked`
+    /// pattern): recursive generic payloads (`List[T]` through an
+    /// instantiated self-reference) would otherwise loop. A cycle without an
+    /// intervening view leaf carries no view along that path, so revisiting
+    /// answers `false`.
+    fn ty_contains_view_inner(&self, ty: &Ty, visiting: &mut Vec<(bool, u32)>) -> bool {
+        match ty {
+            Ty::Str | Ty::Slice(_) => true,
+            Ty::Struct(id) => {
+                if visiting.contains(&(true, id.0)) {
+                    return false;
+                }
+                visiting.push((true, id.0));
+                let def = &self.structs[id.0 as usize];
+                let r = def
+                    .fields
+                    .iter()
+                    .any(|f| self.ty_contains_view_inner(&f.1, visiting));
+                visiting.pop();
+                r
+            }
+            Ty::Enum(id) => {
+                if visiting.contains(&(false, id.0)) {
+                    return false;
+                }
+                visiting.push((false, id.0));
+                let def = &self.enums[id.0 as usize];
+                let r = def
+                    .variants
+                    .iter()
+                    .any(|v| v.payload.iter().any(|t| self.ty_contains_view_inner(t, visiting)));
+                visiting.pop();
+                r
+            }
+            Ty::Array(elem, _) => self.ty_contains_view_inner(elem, visiting),
+            _ => false,
+        }
     }
 
     /// The set of *root bindings* a returned view borrows from, traced by
@@ -15519,6 +15606,29 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 operand,
             } => {
                 roots.extend(self.view_source_roots(operand));
+            }
+            // STRM v3 (2026-08-01): aggregate literals — a view built inside
+            // `Data { key: t.view(), .. }` roots the AGGREGATE value in `t`,
+            // mirroring borrowck's E-VIEW aggregate arm. Copy-typed field
+            // roots that slip in (an `i32` local) are filtered by every
+            // consumer's `owns_value && !is_copy` gate. Recurses so nested
+            // aggregates compose.
+            ExprKind::StructLit { fields, .. }
+            | ExprKind::InferredStructLit { fields }
+            | ExprKind::GenericStructLit { fields, .. } => {
+                for f in fields {
+                    roots.extend(self.view_source_roots(&f.value));
+                }
+            }
+            ExprKind::ArrayLit { elements }
+            | ExprKind::TupleLit { elements }
+            | ExprKind::GenericEnumCall { args: elements, .. } => {
+                for el in elements {
+                    roots.extend(self.view_source_roots(el));
+                }
+            }
+            ExprKind::ArrayFill { fill, .. } => {
+                roots.extend(self.view_source_roots(fill));
             }
             ExprKind::Call { callee, args, .. } => match &callee.kind {
                 ExprKind::Field { receiver, name } => {
@@ -16100,7 +16210,9 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     } else {
                         let _ = self.check_expr(value, None);
                     }
-                    let borrow_roots = if matches!(target_ty, Ty::Str | Ty::Slice(_)) {
+                    let borrow_roots = if matches!(target_ty, Ty::Str | Ty::Slice(_))
+                        || self.ty_contains_view(&target_ty)
+                    {
                         self.returned_borrow_roots(value)
                     } else {
                         BTreeSet::new()
@@ -16208,7 +16320,9 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         }
         if matches!(op, AssignOp::Assign) {
             if let ExprKind::Ident(name) = &target.kind {
-                let borrow_roots = if matches!(target_ty, Ty::Str | Ty::Slice(_)) {
+                let borrow_roots = if matches!(target_ty, Ty::Str | Ty::Slice(_))
+                    || self.ty_contains_view(&target_ty)
+                {
                     self.returned_borrow_roots(value)
                 } else {
                     BTreeSet::new()
@@ -25047,6 +25161,125 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
             d.notes.iter().any(|n| n.contains("count()")),
             "expected the `count()` note; got {:?}",
             d.notes
+        );
+    }
+
+    // ── STRM v3 (2026-08-01): view-carrying aggregates inherit borrows ──
+    // (the str_dangle_repro family: a `str` field must not launder a view
+    // of dying storage past the frame)
+
+    #[test]
+    fn view_carrying_struct_literal_to_static_e0513() {
+        // Owner is a Drop struct with a view accessor; storing a struct
+        // literal that holds its view into a static must reject.
+        let codes = errors(
+            "struct Buf { p: *u8 }\n\
+             impl Buf { fn drop(ref this) { return; } fn view(this) -> str { return \"x\"; } }\n\
+             struct Data { key: str, n: i32 }\n\
+             static SLOT: Data = #zero::[Data]();\n\
+             fn build() {\n\
+                 let owner: Buf = Buf { p: 0 as *u8 };\n\
+                 SLOT = Data { key: owner.view(), n: 1 };\n\
+                 return;\n\
+             }\n\
+             fn main() -> i32 { build(); return 0; }",
+        );
+        assert!(codes.contains(&"E0513"), "static store of view-carrying literal; got {codes:?}");
+    }
+
+    #[test]
+    fn view_carrying_call_result_to_static_e0513() {
+        // The original repro shape: the view is laundered through a fn
+        // param into a returned struct, then stored into a static.
+        let codes = errors(
+            "struct Buf { p: *u8 }\n\
+             impl Buf { fn drop(ref this) { return; } fn view(this) -> str { return \"x\"; } }\n\
+             struct Data { key: str, n: i32 }\n\
+             static SLOT: Data = #zero::[Data]();\n\
+             fn store(key: str, n: i32) -> Data { return Data { key: key, n: n }; }\n\
+             fn build() {\n\
+                 let owner: Buf = Buf { p: 0 as *u8 };\n\
+                 SLOT = store(owner.view(), 2);\n\
+                 return;\n\
+             }\n\
+             fn main() -> i32 { build(); return 0; }",
+        );
+        assert!(codes.contains(&"E0513"), "repro shape must reject; got {codes:?}");
+    }
+
+    #[test]
+    fn view_carrying_whole_struct_to_ref_target_e0513() {
+        let codes = errors(
+            "struct Buf { p: *u8 }\n\
+             impl Buf { fn drop(ref this) { return; } fn view(this) -> str { return \"x\"; } }\n\
+             struct Data { key: str, n: i32 }\n\
+             fn put(ref out: Data) {\n\
+                 let owner: Buf = Buf { p: 0 as *u8 };\n\
+                 out = Data { key: owner.view(), n: 1 };\n\
+                 return;\n\
+             }\n\
+             fn main() -> i32 { var d: Data = Data { key: \"x\", n: 0 }; put(d); return 0; }",
+        );
+        assert!(codes.contains(&"E0513"), "ref-target whole-struct store; got {codes:?}");
+    }
+
+    #[test]
+    fn view_carrying_alias_return_e0513() {
+        let codes = errors(
+            "struct Buf { p: *u8 }\n\
+             impl Buf { fn drop(ref this) { return; } fn view(this) -> str { return \"x\"; } }\n\
+             struct Data { key: str, n: i32 }\n\
+             fn store(key: str, n: i32) -> Data { return Data { key: key, n: n }; }\n\
+             fn make() -> Data {\n\
+                 let owner: Buf = Buf { p: 0 as *u8 };\n\
+                 let d: Data = store(owner.view(), 1);\n\
+                 return d;\n\
+             }\n\
+             fn main() -> i32 { let d: Data = make(); return d.n; }",
+        );
+        assert!(codes.contains(&"E0513"), "alias return of rooted carrier; got {codes:?}");
+    }
+
+    #[test]
+    fn builtin_str_method_chain_return_e0513() {
+        // A sub-view method from the blessed `impl str` block extends the
+        // receiver's borrow: returning `v.second()` where `v` views a dying
+        // local dangles exactly like returning `v`.
+        let codes = errors(
+            "impl str {\n\
+                 fn second(this) -> str {\n\
+                     let p: *u8 = { #str_ptr(this) + (1 as usize) };\n\
+                     return { #str_from_raw_parts(p, #str_len(this) -% (1 as usize)) };\n\
+                 }\n\
+             }\n\
+             struct Buf { p: *u8 }\n\
+             impl Buf { fn drop(ref this) { return; } fn view(this) -> str { return \"xy\"; } }\n\
+             fn peek() -> str {\n\
+                 let owner: Buf = Buf { p: 0 as *u8 };\n\
+                 let v: str = owner.view();\n\
+                 return v.second();\n\
+             }\n\
+             fn main() -> i32 { return #str_len(peek()) as i32; }",
+        );
+        assert!(codes.contains(&"E0513"), "builtin sub-view chain return; got {codes:?}");
+    }
+
+    #[test]
+    fn view_carrying_sound_patterns_stay_legal() {
+        // Literal-backed views may live anywhere, and a carrier whose owner
+        // stays put is fine.
+        assert_clean(
+            "struct Buf { opaque p: *u8 }\n\
+             impl Buf { fn drop(ref this) { return; } fn view(this) -> str { return \"x\"; } }\n\
+             struct Data { key: str, n: i32 }\n\
+             static SLOT: Data = #zero::[Data]();\n\
+             fn store(key: str, n: i32) -> Data { return Data { key: key, n: n }; }\n\
+             fn main() -> i32 {\n\
+                 SLOT = store(\"row_1\", 1);\n\
+                 let owner: Buf = Buf { p: 0 as *u8 };\n\
+                 let d: Data = Data { key: owner.view(), n: 1 };\n\
+                 return d.n;\n\
+             }",
         );
     }
 

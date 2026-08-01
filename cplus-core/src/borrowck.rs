@@ -272,6 +272,13 @@ fn fmt_state(s: &PlaceState) -> String {
 #[derive(Debug, Default, Clone)]
 pub struct CopyOracle {
     types: HashMap<String, TypeInfo>,
+    /// STRM v3 (2026-08-01): names of struct/enum types that transitively
+    /// CONTAIN a view (`str` / `T[]` field or payload). Drives the widened
+    /// Rule E-VIEW: a fn returning such a type from view-typed / view-
+    /// carrying params ties its result like a bare view return. Raw
+    /// pointers are deliberately not counted (container elements behind
+    /// heap indirection stay outside this analysis).
+    view_carrying: std::collections::HashSet<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -369,7 +376,55 @@ impl CopyOracle {
             }
         }
 
+        // STRM v3 pass 4: fixpoint for view-carrying type names. Monotone
+        // upward: a name joins the set when any field / payload contains a
+        // view, directly or through an already-joined name.
+        loop {
+            let mut changed = false;
+            for item in &prog.items {
+                match &item.kind {
+                    ItemKind::Struct(s) => {
+                        if oracle.view_carrying.contains(&s.name.name) {
+                            continue;
+                        }
+                        if s.fields.iter().any(|f| oracle.type_contains_view(&f.ty)) {
+                            oracle.view_carrying.insert(s.name.name.clone());
+                            changed = true;
+                        }
+                    }
+                    ItemKind::Enum(e) => {
+                        if oracle.view_carrying.contains(&e.name.name) {
+                            continue;
+                        }
+                        if e.variants
+                            .iter()
+                            .any(|v| v.payload.iter().any(|t| oracle.type_contains_view(t)))
+                        {
+                            oracle.view_carrying.insert(e.name.name.clone());
+                            changed = true;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+
         oracle
+    }
+
+    /// STRM v3: true iff `ty` IS a view (`str` / slice) or names a type in
+    /// the view-carrying set. AST-level twin of sema's `ty_contains_view`;
+    /// the two must agree.
+    pub fn type_contains_view(&self, ty: &Type) -> bool {
+        match &ty.kind {
+            TypeKind::Slice(_) => true,
+            TypeKind::Path(name) => name == "str" || self.view_carrying.contains(name),
+            TypeKind::Array { elem, .. } => self.type_contains_view(elem),
+            _ => false,
+        }
     }
 
     /// True iff `ty` is provably Copy. Returns `false` if the type is
@@ -783,10 +838,15 @@ fn detect_fn_elision_with_flavor(
 /// a view only reads. `take` params never contribute (the value is
 /// consumed; a view into it is a different bug, caught by drop order).
 fn detect_fn_view(f: &Function, oracle: &CopyOracle) -> Option<ReturnBorrowSource> {
+    // STRM v3 (2026-08-01): widened in both directions. Return side: a fn
+    // returning a view-CARRYING aggregate (`fn store(k: str) -> Data` where
+    // `Data` has a `str` field) launders the borrow exactly like a bare
+    // view return — the str_dangle_repro hole. Param side: a view-typed /
+    // view-carrying parameter is itself a borrow the result may extend, so
+    // it contributes even though `str` is Copy (the old `definitely_non_copy`
+    // filter silently excluded every `str` param).
     let ret = f.return_type.as_ref()?;
-    let is_view = matches!(&ret.kind, TypeKind::Slice(_))
-        || matches!(&ret.kind, TypeKind::Path(p) if p == "str");
-    if !is_view {
+    if !oracle.type_contains_view(ret) {
         return None;
     }
     let mut indices: Vec<u32> = Vec::new();
@@ -794,7 +854,7 @@ fn detect_fn_view(f: &Function, oracle: &CopyOracle) -> Option<ReturnBorrowSourc
         if p.move_ {
             continue;
         }
-        if !oracle.definitely_non_copy(&p.ty) {
+        if !(oracle.definitely_non_copy(&p.ty) || oracle.type_contains_view(&p.ty)) {
             continue;
         }
         indices.push(i as u32);
@@ -915,17 +975,20 @@ fn detect_method_view(
     if !matches!(m.receiver, Some(Receiver::Read) | Some(Receiver::Mut)) {
         return None;
     }
+    // STRM v3 (2026-08-01): widened. Receiver side: a view-typed receiver
+    // (the blessed `impl str` block's sub-view methods — `v.trim()`) or a
+    // view-carrying one qualifies even though it is Copy: the result
+    // extends whatever the receiver borrows. Return side: view-carrying
+    // aggregates tie like bare views.
     let synth = Type {
         kind: TypeKind::Path(b.target.name.clone()),
         span: Span::new(0, 0),
     };
-    if !oracle.definitely_non_copy(&synth) {
+    if !(oracle.definitely_non_copy(&synth) || oracle.type_contains_view(&synth)) {
         return None;
     }
     let ret = m.return_type.as_ref()?;
-    let is_view = matches!(&ret.kind, TypeKind::Slice(_))
-        || matches!(&ret.kind, TypeKind::Path(p) if p == "str");
-    if !is_view {
+    if !oracle.type_contains_view(ret) {
         return None;
     }
     Some(ReturnBorrowSource::SelfReceiver)
