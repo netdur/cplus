@@ -279,6 +279,13 @@ pub struct CopyOracle {
     /// pointers are deliberately not counted (container elements behind
     /// heap indirection stay outside this analysis).
     view_carrying: std::collections::HashSet<String>,
+    /// Generic-impl ties (2026-08-01): per generic struct/enum, whether each
+    /// generic param appears in a STORED position (a field / payload type,
+    /// transitively through Generic args, slices, arrays). A param that only
+    /// parameterizes fn-pointer signatures or raw pointers is not stored —
+    /// `SignalSubscription[Change]` holds no `Change`, so instantiating it
+    /// with a view-carrier must not make it a carrier.
+    generic_param_stored: HashMap<String, Vec<bool>>,
 }
 
 #[derive(Debug, Clone)]
@@ -290,6 +297,22 @@ struct TypeInfo {
 }
 
 impl CopyOracle {
+    /// True iff `name` appears in a STORED position of `ty`: the type
+    /// itself, a Generic argument, a slice/array element. Fn-pointer
+    /// signatures and raw pointers are NOT storage (a `fn(T, *u8)` field
+    /// holds no `T`; `*T` is out of contract §6.6).
+    fn type_mentions_param(ty: &Type, name: &str) -> bool {
+        match &ty.kind {
+            TypeKind::Path(p) => p == name,
+            TypeKind::Generic { args, .. } => {
+                args.iter().any(|a| Self::type_mentions_param(a, name))
+            }
+            TypeKind::Slice(inner) => Self::type_mentions_param(inner, name),
+            TypeKind::Array { elem, .. } => Self::type_mentions_param(elem, name),
+            _ => false,
+        }
+    }
+
     pub fn build(prog: &Program) -> Self {
         let mut oracle = CopyOracle::default();
 
@@ -316,6 +339,45 @@ impl CopyOracle {
                             is_drop: false,
                         },
                     );
+                }
+                _ => {}
+            }
+        }
+
+        // Generic-impl ties: record which generic params each generic
+        // struct/enum actually STORES, so `S[str]` only counts as a
+        // carrier when `S` can hold the argument.
+        for item in &prog.items {
+            match &item.kind {
+                ItemKind::Struct(s) if !s.generic_params.is_empty() => {
+                    let stored = s
+                        .generic_params
+                        .iter()
+                        .map(|g| {
+                            s.fields
+                                .iter()
+                                .any(|f| Self::type_mentions_param(&f.ty, &g.name.name))
+                        })
+                        .collect();
+                    oracle
+                        .generic_param_stored
+                        .insert(s.name.name.clone(), stored);
+                }
+                ItemKind::Enum(e) if !e.generic_params.is_empty() => {
+                    let stored = e
+                        .generic_params
+                        .iter()
+                        .map(|g| {
+                            e.variants.iter().any(|v| {
+                                v.payload
+                                    .iter()
+                                    .any(|t| Self::type_mentions_param(t, &g.name.name))
+                            })
+                        })
+                        .collect();
+                    oracle
+                        .generic_param_stored
+                        .insert(e.name.name.clone(), stored);
                 }
                 _ => {}
             }
@@ -423,6 +485,24 @@ impl CopyOracle {
             TypeKind::Slice(_) => true,
             TypeKind::Path(name) => name == "str" || self.view_carrying.contains(name),
             TypeKind::Array { elem, .. } => self.type_contains_view(elem),
+            // Contract §5 / generic-impl ties (2026-08-01): an instantiated
+            // generic carries a view when its base is a known carrier, or a
+            // view-carrying ARGUMENT lands in a stored position of the base
+            // (`Option[str]` stores its payload; `SignalSubscription[Change]`
+            // never stores a `Change` — its param only parameterizes
+            // fn-pointer signatures — so it stays clean). Unknown bases fall
+            // back to any-arg, the sound direction.
+            TypeKind::Generic { name, args } => {
+                if self.view_carrying.contains(name) {
+                    return true;
+                }
+                match self.generic_param_stored.get(name) {
+                    Some(stored) => args.iter().enumerate().any(|(i, a)| {
+                        stored.get(i).copied().unwrap_or(true) && self.type_contains_view(a)
+                    }),
+                    None => args.iter().any(|a| self.type_contains_view(a)),
+                }
+            }
             _ => false,
         }
     }
@@ -626,6 +706,12 @@ struct FnEntry {
     /// — i.e. a call result that can transport its arguments' taint.
     /// Drives taint-through-calls in the receiver-flow pass.
     ret_view: bool,
+    /// Declared (UNsubstituted) parameter types. For methods of generic
+    /// impls the tie machinery substitutes the receiver's type arguments
+    /// into these at the call site before asking view-ness — `Vec[str]`'s
+    /// `take item: T` becomes `str` (tie), `Vec[Text]`'s becomes `Text`
+    /// (a real move, no tie).
+    param_tys: Vec<Type>,
 }
 
 #[derive(Debug, Default)]
@@ -644,6 +730,10 @@ struct SigTable {
     /// aggregates (views in the payload borrow like any aggregate capture)
     /// rather than associated-fn calls.
     enums: std::collections::HashSet<String>,
+    /// Generic-impl targets: target name -> ordered generic-param names
+    /// (`impl Vec[T]` records `Vec -> [T]`). Call sites zip these with the
+    /// receiver's type arguments to substitute before view classification.
+    impl_generics: HashMap<String, Vec<String>>,
 }
 
 /// v0.0.24 #9: the borrowck mirror of codegen's `effective_move` — does passing
@@ -698,6 +788,7 @@ impl SigTable {
                             ret_view: f.return_type.as_ref().is_some_and(|t| {
                                 oracle.type_contains_view(t) || oracle.definitely_non_copy(t)
                             }),
+                            param_tys: f.params.iter().map(|p| p.ty.clone()).collect(),
                         },
                     );
                 }
@@ -714,6 +805,16 @@ impl SigTable {
                     t.enums.insert(e.name.name.clone());
                 }
                 ItemKind::Impl(b) => {
+                    if !b.target_generic_params.is_empty() {
+                        t.impl_generics
+                            .entry(b.target.name.clone())
+                            .or_insert_with(|| {
+                                b.target_generic_params
+                                    .iter()
+                                    .map(|g| g.name.name.clone())
+                                    .collect()
+                            });
+                    }
                     for m in &b.methods {
                         let key = format!("{}.{}", b.target.name, m.name.name);
                         let (return_borrow, return_borrow_flavor) =
@@ -744,6 +845,7 @@ impl SigTable {
                                 ret_view: m.return_type.as_ref().is_some_and(|t| {
                                     oracle.type_contains_view(t) || oracle.definitely_non_copy(t)
                                 }),
+                                param_tys: m.params.iter().map(|p| p.ty.clone()).collect(),
                             },
                         );
                     }
@@ -804,6 +906,40 @@ impl SigTable {
 // taint (their return ties are enforced by the existing E-rules at the
 // real call sites).
 // ---------------------------------------------------------------------------
+
+/// Contract §5 / generic-impl ties: substitute generic-param names with the
+/// receiver's type arguments. Purely structural — no monomorphization, no
+/// sema types; just enough to ask `type_contains_view` of an instantiated
+/// signature (`take item: T` under `Vec[str]` → `str`).
+fn subst_type(ty: &Type, map: &HashMap<String, Type>) -> Type {
+    let kind = match &ty.kind {
+        TypeKind::Path(name) => {
+            if let Some(t) = map.get(name) {
+                return t.clone();
+            }
+            TypeKind::Path(name.clone())
+        }
+        TypeKind::Generic { name, args } => TypeKind::Generic {
+            name: name.clone(),
+            args: args.iter().map(|a| subst_type(a, map)).collect(),
+        },
+        TypeKind::Slice(inner) => TypeKind::Slice(Box::new(subst_type(inner, map))),
+        TypeKind::Array {
+            elem,
+            len,
+            len_name,
+        } => TypeKind::Array {
+            elem: Box::new(subst_type(elem, map)),
+            len: *len,
+            len_name: len_name.clone(),
+        },
+        other => other.clone(),
+    };
+    Type {
+        kind,
+        span: ty.span,
+    }
+}
 
 struct FlowCtx<'a> {
     sigs: &'a SigTable,
@@ -2347,6 +2483,41 @@ impl<'p> Analyzer<'p> {
                 BorrowFlavor::Exclusive => PlaceState::BorrowedExclusive(borrower.to_string()),
             };
             state.insert(place, new_state);
+        }
+    }
+
+    /// Contract §5: per-position keeps flags for a method reached through a
+    /// receiver of the given declared type. Path receivers use the entry's
+    /// effective flags (declared ∪ computed). Generic receivers substitute
+    /// the type arguments into the declared param types first — the
+    /// `Vec[str]` route — and gate on the declared `#[keeps(this)]` only
+    /// (the flow pass skips generic impls). Returns None when nothing ties.
+    fn keeps_flags_for_receiver_ty(&self, kind: &TypeKind, method: &str) -> Option<Vec<bool>> {
+        match kind {
+            TypeKind::Path(t) => {
+                let entry = self.sigs.methods.get(&format!("{t}.{method}"))?;
+                let keeps = SigTable::effective_keeps(entry);
+                keeps.iter().any(|b| *b).then_some(keeps)
+            }
+            TypeKind::Generic { name, args } => {
+                let entry = self.sigs.methods.get(&format!("{name}.{method}"))?;
+                if !entry.keeps_this {
+                    return None;
+                }
+                let params = self.sigs.impl_generics.get(name)?;
+                let map: HashMap<String, Type> = params
+                    .iter()
+                    .cloned()
+                    .zip(args.iter().cloned())
+                    .collect();
+                let keeps: Vec<bool> = entry
+                    .param_tys
+                    .iter()
+                    .map(|t| self.oracle.type_contains_view(&subst_type(t, &map)))
+                    .collect();
+                keeps.iter().any(|b| *b).then_some(keeps)
+            }
+            _ => None,
         }
     }
 
@@ -3901,8 +4072,11 @@ impl Analyzer<'_> {
                         mut_flags = Some(entry.param_muts.clone());
                     }
                     receiver_claim = entry.receiver_claim.map(|k| (k, &**receiver));
-                    let keeps = SigTable::effective_keeps(&entry);
-                    if keeps.iter().any(|b| *b) {
+                }
+                // §5 tie — resolved from the binding's declared TYPE KIND,
+                // covering Path AND Generic receivers (`Vec[str]`).
+                if let Some(kind) = self.binding_type(recv_name).map(|t| t.kind.clone()) {
+                    if let Some(keeps) = self.keeps_flags_for_receiver_ty(&kind, &method.name) {
                         keeps_this_tie = Some((recv_name.clone(), keeps));
                     }
                 }
@@ -3912,29 +4086,24 @@ impl Analyzer<'_> {
                 // keeps tie still lands — the borrower is the ROOT binding
                 // (over-approximate and sound: pinning the whole aggregate
                 // pins the field). Claims/flags stay Ident-only; this
-                // branch only feeds the §5 tie.
-                let mut ty = self.binding_type(&place.root).and_then(|bt| match &bt.kind {
-                    TypeKind::Path(n) => Some(n.clone()),
-                    _ => None,
-                });
+                // branch only feeds the §5 tie. The final field may be
+                // Path- or Generic-typed (`panel.names: Vec[str]`).
+                let mut ty: Option<TypeKind> = self.binding_type(&place.root).map(|t| t.kind.clone());
                 for proj in &place.projections {
-                    let (Some(t), Projection::Field(f)) = (ty.as_ref(), proj) else {
+                    let (Some(TypeKind::Path(t)), Projection::Field(f)) = (ty.as_ref(), proj)
+                    else {
                         ty = None;
                         break;
                     };
-                    ty = self.sigs.struct_fields.get(t).and_then(|fs| {
-                        fs.get(f).and_then(|ft| match &ft.kind {
-                            TypeKind::Path(n) => Some(n.clone()),
-                            _ => None,
-                        })
-                    });
+                    ty = self
+                        .sigs
+                        .struct_fields
+                        .get(t)
+                        .and_then(|fs| fs.get(f).map(|ft| ft.kind.clone()));
                 }
-                if let Some(t) = ty {
-                    if let Some(entry) = self.sigs.methods.get(&format!("{t}.{}", method.name)) {
-                        let keeps = SigTable::effective_keeps(entry);
-                        if keeps.iter().any(|b| *b) {
-                            keeps_this_tie = Some((place.root.clone(), keeps));
-                        }
+                if let Some(kind) = ty {
+                    if let Some(keeps) = self.keeps_flags_for_receiver_ty(&kind, &method.name) {
+                        keeps_this_tie = Some((place.root.clone(), keeps));
                     }
                 }
             }
@@ -5967,6 +6136,85 @@ fn caller() {
         assert!(
             codes.iter().any(|c| c == "E0514"),
             "expected E0514 through the field-path receiver; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn generic_keeps_ties_only_view_instantiations() {
+        // Contract §5 / generic ties: `#[keeps(this)]` on a generic-impl
+        // method ties per INSTANTIATION — the receiver's type args are
+        // substituted into the declared param types before view
+        // classification. `Store[str]` ties (E0514 when the owner dies
+        // first); `Store[i32]` must not.
+        let src = "\
+struct B { x: i32 }
+impl B {
+  fn drop(ref this) { return; }
+  fn view(this) -> str { return \"\"; }
+}
+struct Store[T] { opaque p: *u8 }
+impl Store[T] {
+  #[keeps(this)]
+  fn put(ref this, take item: T) { return; }
+}
+fn view_case() {
+  var s: Store[str] = Store[str] { p: 0 as *u8 };
+  {
+    let t: B = B { x: 1 };
+    s.put(t.view());
+  }
+  return;
+}
+fn copy_case() {
+  var s: Store[i32] = Store[i32] { p: 0 as *u8 };
+  {
+    let t: B = B { x: 1 };
+    s.put(t.x);
+  }
+  return;
+}";
+        let codes = check_src(src);
+        assert!(
+            codes.iter().any(|c| c == "E0514"),
+            "Store[str] must tie and fire E0514; got {codes:?}"
+        );
+        assert_eq!(
+            codes.iter().filter(|c| *c == "E0514").count(),
+            1,
+            "Store[i32] must NOT tie; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn generic_with_unstored_param_is_not_a_carrier() {
+        // A generic whose param only appears in fn-pointer positions holds
+        // no value of that type — instantiating it with a view-carrier must
+        // not create a carrier (the SignalSubscription[Change] false-tie
+        // regression).
+        let src = "\
+struct B { x: i32 }
+impl B {
+  fn drop(ref this) { return; }
+  fn view(this) -> str { return \"\"; }
+}
+struct Payload { s: str }
+struct Handle[T] { cb: fn(T, *u8), ctx: *u8 }
+impl B {
+  fn subscribe(ref this, cb: fn(Payload, *u8)) -> Handle[Payload] {
+    return Handle[Payload] { cb: cb, ctx: 0 as *u8 };
+  }
+}
+fn noop(p: Payload, c: *u8) { return; }
+fn caller() {
+  var b: B = B { x: 1 };
+  let h: Handle[Payload] = b.subscribe(noop);
+  let n: i32 = b.x;
+  return;
+}";
+        let codes = check_src(src);
+        assert!(
+            !codes.iter().any(|c| c == "E0381" || c == "E0383"),
+            "an unstored-param generic must not tie its producer; got {codes:?}"
         );
     }
 

@@ -102,6 +102,9 @@ impl HashMap[K, V] {
 
     // Insert or overwrite `k -> v`. Key + value are bitwise-copied into
     // the table (their `Copy` bound makes this safe).
+    // Contract §5: the element is stored behind the raw buffer, which the
+    // flow pass cannot read through — declared, like `opaque` for drop.
+    #[keeps(this)]
     fn insert(ref this, take k: K, take v: V) -> status::Status {
         if this._cap == (0 as usize) {
             let st: status::Status = this.grow_to(16 as usize);

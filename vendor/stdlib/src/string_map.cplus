@@ -96,6 +96,9 @@ impl StringMap[V] {
     // function returns — so neither leaks and nothing is double-freed. Returns
     // `OutOfMemory` (map unchanged, `key` and `value` dropped) if a needed grow
     // fails.
+    // Contract §5: the element is stored behind the raw buffer, which the
+    // flow pass cannot read through — declared, like `opaque` for drop.
+    #[keeps(this)]
     fn insert(ref this, take key: text::Text, take value: V) -> status::Status {
         if this._cap == (0 as usize) {
             let st: status::Status = this.grow_to(16 as usize);

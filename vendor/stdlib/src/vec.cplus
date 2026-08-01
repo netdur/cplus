@@ -169,6 +169,9 @@ impl Vec[T] {
     // the vec unchanged; `value` is dropped as the function returns, so nothing
     // leaks and there is no partial state. The caller may check the status or
     // ignore it — either way the vec stays valid.
+    // Contract §5: the element is stored behind the raw buffer, which the
+    // flow pass cannot read through — declared, like `opaque` for drop.
+    #[keeps(this)]
     fn append(ref this, take value: T) -> status::Status {
         var required: usize = 0 as usize;
         match required_len(this._len, 1 as usize) {
@@ -191,6 +194,9 @@ impl Vec[T] {
     // onward one place to the right. `at == count` appends. Returns `OutOfBounds`
     // if `at > count` and `OutOfMemory` if the vec cannot grow — in both cases
     // `value` is dropped as the function returns and the vec is left unchanged.
+    // Contract §5: the element is stored behind the raw buffer, which the
+    // flow pass cannot read through — declared, like `opaque` for drop.
+    #[keeps(this)]
     fn insert(ref this, take value: T, at: usize) -> status::Status {
         if at > this._len {
             return status::Status::OutOfBounds;
@@ -404,6 +410,9 @@ impl Vec[T] {
     // the function returns, the vec is left unchanged, nothing leaks — and `Ok`
     // on success. On success the previous element's Drop runs before the new
     // value is moved in, so there is no leak and no double free.
+    // Contract §5: the element is stored behind the raw buffer, which the
+    // flow pass cannot read through — declared, like `opaque` for drop.
+    #[keeps(this)]
     fn set(ref this, take value: T, at: usize) -> status::Status {
         if at >= this._len {
             return status::Status::OutOfBounds;
@@ -505,6 +514,9 @@ impl Vec[T: Copy] {
 
     // Append every element of slice `s` (bitwise copy). Returns `OutOfMemory`
     // (vec unchanged) if it cannot grow.
+    // Contract §5: the element is stored behind the raw buffer, which the
+    // flow pass cannot read through — declared, like `opaque` for drop.
+    #[keeps(this)]
     fn append_slice(ref this, s: T[]) -> status::Status {
         let n: usize = #slice_len(s);
         if n == (0 as usize) {
