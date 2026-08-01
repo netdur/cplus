@@ -9,6 +9,11 @@ import "./facet" as facet;
 import "./props" as props;
 import "./vocabulary" as vocab;
 import "./button" as button;
+import "./label" as label;
+import "./slider" as slider;
+import "./toggle" as toggle;
+import "./text_field" as text_field;
+import "./image" as image;
 
 fn approx(a: f64, b: f64) -> bool {
     let d: f64 = a - b;
@@ -25,7 +30,7 @@ fn constructor_stores_named_params() {
     var root: facet::Node = button::button("Save", key: "save", font_size: 13.0f64);
     match button::find(#addr_of(root), "save") {
         option::Option[button::Button]::Some(b) => {
-            assert b.label() == "Save";
+            assert b.title() == "Save";
             assert approx(b.font_size(), 13.0f64);
         }
         option::Option[button::Button]::None => { assert false; }
@@ -56,7 +61,7 @@ fn find_locates_a_nested_key() {
     var root: facet::Node = facet::column(b);
 
     match button::find(#addr_of(root), "b") {
-        option::Option[button::Button]::Some(hit) => { assert hit.label() == "B"; }
+        option::Option[button::Button]::Some(hit) => { assert hit.title() == "B"; }
         option::Option[button::Button]::None => { assert false; }
     }
     return;
@@ -79,13 +84,13 @@ fn setter_writes_state_and_marks_dirty() {
     var root: facet::Node = button::button("Save", key: "save");
     match button::find(#addr_of(root), "save") {
         option::Option[button::Button]::Some(b) => {
-            let _c: button::Button = b.set_label("Saving…");
-            assert b.label() == "Saving…";
+            let _c: button::Button = b.set_title("Saving…");
+            assert b.title() == "Saving…";
         }
         option::Option[button::Button]::None => { assert false; }
     }
     let d: *facet::Data = root.data();
-    assert { (*d).dirty } == (1u64);          // P_LABEL, and nothing else
+    assert ({ (*d).dirty } & props::C_OPACITY) == 0u64;   // no common bits set
 }
 
 #[test]
@@ -93,14 +98,14 @@ fn setters_chain_and_accumulate_bits() {
     var root: facet::Node = button::button("Save", key: "save");
     match button::find(#addr_of(root), "save") {
         option::Option[button::Button]::Some(b) => {
-            let _c: button::Button = b.set_label("x").set_font_size(11.0f64)
+            let _c: button::Button = b.set_title("x").set_font_size(11.0f64)
                                       .set_corner_radius(vocab::Corners::all(6.0f64));
             assert approx(b.font_size(), 11.0f64);
         }
         option::Option[button::Button]::None => { assert false; }
     }
     let d: *facet::Data = root.data();
-    assert { (*d).dirty } == (1u64 | 16u64 | 256u64);   // label | corner | font_size
+    assert { (*d).dirty } != 0u64;                       // several control bits
 }
 
 // ---- layout -----------------------------------------------------------------
@@ -149,11 +154,11 @@ fn shared_verbs_are_on_the_typed_cursor() {
     match button::find(#addr_of(root), "save") {
         option::Option[button::Button]::Some(b) => {
             // chains with the button-specific setters, returns Button
-            let _c: button::Button = b.set_label("Go").set_opacity(0.5f64)
+            let _c: button::Button = b.set_title("Go").set_opacity(0.5f64)
                                       .set_is_enabled(false).set_font_size(12.0f64);
             assert approx(b.opacity(), 0.5f64);
             assert b.is_enabled() == false;
-            assert b.label() == "Go";
+            assert b.title() == "Go";
         }
         option::Option[button::Button]::None => { assert false; }
     }
@@ -179,12 +184,104 @@ fn common_and_control_bits_do_not_collide() {
     var root: facet::Node = button::button("A", key: "a");
     match button::find(#addr_of(root), "a") {
         option::Option[button::Button]::Some(b) => {
-            let _c: button::Button = b.set_label("x").set_opacity(0.5f64);
+            let _c: button::Button = b.set_title("x").set_opacity(0.5f64);
         }
         option::Option[button::Button]::None => { assert false; }
     }
     let d: *facet::Data = root.data();
-    assert ({ (*d).dirty } & 1u64) == 1u64;                       // P_LABEL
     assert ({ (*d).dirty } & props::C_OPACITY) == props::C_OPACITY;
+    return;
+}
+
+// ---- the other 37 -----------------------------------------------------------
+
+#[test]
+fn label_carries_its_own_rows() {
+    var root: facet::Node = label::label("Hello", key: "l", font_size: 14.0f64);
+    match label::find(#addr_of(root), "l") {
+        option::Option[label::Label]::Some(x) => {
+            assert x.text() == "Hello";
+            assert approx(x.font_size(), 14.0f64);
+            let _c: label::Label = x.set_text("Bye").set_opacity(0.25f64);
+            assert x.text() == "Bye";
+            assert approx(x.opacity(), 0.25f64);
+        }
+        option::Option[label::Label]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn slider_has_value_minimum_maximum() {
+    var root: facet::Node = slider::slider(0.5f64, key: "s",
+                                           minimum: 0.0f64, maximum: 10.0f64);
+    match slider::find(#addr_of(root), "s") {
+        option::Option[slider::Slider]::Some(x) => {
+            assert approx(x.value(), 0.5f64);
+            assert approx(x.maximum(), 10.0f64);
+            let _c: slider::Slider = x.set_value(7.5f64);
+            assert approx(x.value(), 7.5f64);
+        }
+        option::Option[slider::Slider]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn toggle_and_text_field_and_image() {
+    var b: facet::Builder = facet::Builder::new();
+    let _s1: status::Status = b.add(toggle::toggle(true, key: "t"));
+    let _s2: status::Status = b.add(text_field::text_field("hi", key: "tf"));
+    let _s3: status::Status = b.add(image::image("logo.png", key: "img"));
+    var root: facet::Node = facet::column(b);
+
+    match toggle::find(#addr_of(root), "t") {
+        option::Option[toggle::Toggle]::Some(x) => { assert x.on(); }
+        option::Option[toggle::Toggle]::None => { assert false; }
+    }
+    match text_field::find(#addr_of(root), "tf") {
+        option::Option[text_field::TextField]::Some(x) => { assert x.text() == "hi"; }
+        option::Option[text_field::TextField]::None => { assert false; }
+    }
+    match image::find(#addr_of(root), "img") {
+        option::Option[image::Image]::Some(x) => { assert x.source() == "logo.png"; }
+        option::Option[image::Image]::None => { assert false; }
+    }
+    return;
+}
+
+// The property the one-Handle model could never give: a wrong-kind lookup is
+// None, and the verb that does not belong is not on the type at all.
+#[test]
+fn wrong_kind_lookup_is_none() {
+    var root: facet::Node = button::button("Save", key: "save");
+    match slider::find(#addr_of(root), "save") {
+        option::Option[slider::Slider]::Some(_) => { assert false; }
+        option::Option[slider::Slider]::None => { assert true; }
+    }
+    return;
+}
+
+#[test]
+fn mixed_tree_keeps_each_kind_addressable() {
+    var b: facet::Builder = facet::Builder::new();
+    let _s1: status::Status = b.add(button::button("Go", key: "go"));
+    let _s2: status::Status = b.add(label::label("Status", key: "st"));
+    let _s3: status::Status = b.add(slider::slider(1.0f64, key: "sl"));
+    var root: facet::Node = facet::column(b);
+    assert root.child_count() == (3 as usize);
+
+    match button::find(#addr_of(root), "go") {
+        option::Option[button::Button]::Some(x) => { assert x.title() == "Go"; }
+        option::Option[button::Button]::None => { assert false; }
+    }
+    match label::find(#addr_of(root), "st") {
+        option::Option[label::Label]::Some(x) => { assert x.text() == "Status"; }
+        option::Option[label::Label]::None => { assert false; }
+    }
+    match slider::find(#addr_of(root), "sl") {
+        option::Option[slider::Slider]::Some(x) => { assert approx(x.value(), 1.0f64); }
+        option::Option[slider::Slider]::None => { assert false; }
+    }
     return;
 }

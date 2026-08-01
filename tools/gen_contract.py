@@ -1,298 +1,630 @@
 #!/usr/bin/env python3
-"""gen_contract.py v2 — emit facet's generated contract as a WHOLE FILE.
+"""gen_contract.py — emit facet's declared contract from the Stage 1 ledger.
 
-maui-regen Phase 2. The v1 generator patched marker regions inside
-hand-written files; that interleaving is what let 67 silently-no-op slots
-drift in. v2 owns entire files instead (legal since EXT.1, the same-package
-impl-extension feature): regeneration is file replacement, and facet.cplus
-never carries generated code again.
+Stage 2. Input is the curated MAP (tools/maui_map.py) over the extracted spec
+(tools/maui_spec.py). Output is whole generated files under vendor/facet/src —
+the generator owns them entirely, so regeneration is file replacement and no
+hand edit can drift.
 
-Outputs:
-  vendor/facet/src/contract.cplus   hook statics + registrars (backend-facing;
-                                    apps never import this module) + one
-                                    `impl core::Handle` extension block with
-                                    the app-facing methods
-  vendor/facet/docs/contract.md     the generated manifest — the answer to
-                                    "does facet have X?" is one grep of this
+Shape, settled by the slice in commit c20c4e5:
 
-Emission policy (the no-silent-slot rule): a slot is emitted ONLY when at
-least one backend wires it with a verified backing. Everything else stays in
-the MAP as ADOPT/FUTURE and lands here when its backing + probe arrive
-(Phase 3). UNSUPPORTED-per-backend is recorded in the manifest, and a backend
-impl may return false at runtime for a kind mismatch — but a slot with NO
-backing anywhere emits NO method at all: a compile error at the call site
-beats a silent no-op.
+  a control  =  a props struct
+              + dirty bits
+              + a constructor (every prop a defaulted named parameter)
+              + a typed cursor (the live handle `find` hands back)
 
-The SLOTS table below is the v2 seed: exactly the surface that was wired and
-verified in v1 (minus set_is_visible — killed in favor of the hand-written
-set_hidden, one visibility verb, per the MAP). Each entry is checked against
-tools/maui_map.py so a slot the MAP dropped cannot be emitted.
+  the shared band (21 verbs every element carries) lives ONCE on Node in the
+  hand-written facet.cplus, reached through generated one-line forwards on
+  each cursor. There is no generic element type: `find` returns the control,
+  with everything it can do and nothing it cannot.
+
+Emission is unconditional: facet declares the whole vocabulary, and a backend
+answers it or states that it cannot. A verb absent from a control is absent
+because the ledger dropped that row, never because nothing wired it.
+
+  python3 tools/gen_contract.py
 """
+import json
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import maui_map  # noqa: E402 — the curated MAP is the authority
+import maui_spec  # noqa: E402 — the control list and its facet names
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SRC = os.path.join(ROOT, "vendor", "facet", "src")
+DOCS = os.path.join(ROOT, "vendor", "facet", "docs")
 
-# slot name -> (facet value type, MAUI (Type, Member) provenance, appkit status note)
-# appkit status: "wired" or "UNSUPPORTED: reason" — manifest content, and the
-# wired flag is what permits emission at all.
-SLOTS = [
-    ("set_background_color", "Color", ("VisualElement", "BackgroundColor"), "wired: setBackgroundColor:"),
-    ("set_is_enabled", "bool", ("VisualElement", "IsEnabled"), "wired: setEnabled:"),
-    ("set_is_focused", "bool", ("VisualElement", "IsFocused"), "wired: responder chain (hand impl — focus is a behavior, not a setter)"),
-    ("set_is_read_only", "bool", ("InputView", "IsReadOnly"), "wired: setEditable: (inverted)"),
-    ("set_opacity", "f64", ("VisualElement", "Opacity"), "wired: setAlphaValue:"),
-    ("set_placeholder", "str", ("Entry", "Placeholder"), "wired: setPlaceholderString:"),
-    ("set_progress", "f64", ("ProgressBar", "Progress"), "wired: setDoubleValue:"),
-    ("set_text_color", "Color", ("Label", "TextColor"), "wired: setTextColor:"),
-    ("set_title", "str", ("Button", "Text"), "wired: setTitle:"),
-    ("set_minimum", "f64", ("Slider", "Minimum"), "wired: setMinValue:"),
-    ("set_maximum", "f64", ("Slider", "Maximum"), "wired: setMaxValue:"),
-    ("set_minimum_track_color", "Color", ("Slider", "MinimumTrackColor"), "wired: setTrackFillColor:"),
-    # ---- Phase 3 expansion: every slot below ships with a GENERATED impl and
-    # a GENERATED round-trip probe test in contract_appkit.cplus.
-    ("set_max_lines", "i64", ("Label", "MaxLines"), "wired: setMaximumNumberOfLines: (probe-verified)"),
-    ("set_selected_index", "i64", ("Picker", "SelectedIndex"), "wired: selectItemAtIndex: (probe-verified)"),
-    ("set_increment", "f64", ("Stepper", "Increment"), "wired: setIncrement: (probe-verified)"),
-    ("set_is_animation_playing", "bool", ("Image", "IsAnimationPlaying"), "wired: setAnimates: (probe-verified)"),
+# ---------------------------------------------------------------------------
+# Which shared bases merge into which control. MAUI expresses this with
+# inheritance; C+ has none, so the generator does the merge and every control
+# ends up carrying its own copy of what it inherits.
+COMMON_BASES = ["VisualElement", "View", "GestureElement"]
+
+EXTRA_BASES = {
+    "Entry": ["InputView"], "Editor": ["InputView"], "SearchBar": ["InputView"],
+    "CollectionView": ["ItemsView", "StructuredItemsView", "SelectableItemsView",
+                       "GroupableItemsView", "ReorderableItemsView"],
+    "CarouselView": ["ItemsView", "StructuredItemsView"],
+}
+
+# Module + cursor names. maui_spec's facet_widget values are prose in places.
+MODULE = {
+    "Label": "label", "Button": "button", "Entry": "text_field",
+    "Editor": "text_area", "SearchBar": "search_field", "Picker": "popup",
+    "Slider": "slider", "Stepper": "stepper", "Switch": "toggle",
+    "DatePicker": "date_picker", "TimePicker": "time_picker",
+    "ProgressBar": "progress", "ActivityIndicator": "spinner",
+    "Image": "image", "CollectionView": "collection", "ListView": "list",
+    "TableView": "table", "TabbedPage": "tabs", "CheckBox": "checkbox",
+    "RadioButton": "radio", "BoxView": "box", "Border": "bordered",
+    "ScrollView": "scroll", "ImageButton": "icon_button", "WebView": "web",
+    "HybridWebView": "hybrid_web", "GraphicsView": "canvas",
+    "RefreshView": "refreshable", "SwipeView": "swipeable",
+    "SwipeItem": "swipe_item", "CarouselView": "carousel",
+    "IndicatorView": "page_dots", "Span": "span", "MenuItem": "menu_item",
+    "MenuBarItem": "menu", "MenuFlyout": "context_menu",
+    "MenuFlyoutItem": "context_menu_item", "ToolbarItem": "toolbar_item",
+}
+
+# ---------------------------------------------------------------------------
+# facet types -> (C+ type, zero value, is_owned_string)
+TYPES = {
+    "str":   ("text::Text", "text::new()", "str"),
+    "f64":   ("f64", "0.0f64", None),
+    "i64":   ("i64", "0 as i64", None),
+    "bool":  ("bool", "false", None),
+    "Color": ("vocab::Color", "vocab::Color::clear()", None),
+    "Corners": ("vocab::Corners", "vocab::Corners::none()", None),
+    "Insets": ("vocab::Insets", "vocab::Insets::zero()", None),
+    "Point": ("vocab::Point", "vocab::Point::zero()", None),
+    "Rect":  ("vocab::Rect", "vocab::Rect::zero()", None),
+    "Size":  ("vocab::Size", "vocab::Size::zero()", None),
+    "Brush": ("vocab::Brush", "vocab::Brush::none()", None),
+    "Shadow": ("vocab::Shadow", "vocab::Shadow::none()", None),
+    "Shape": ("vocab::Shape", "vocab::Shape::none()", None),
+    "Spans": ("vocab::Spans", "vocab::Spans::none()", None),
+    "Drawable": ("vocab::Drawable", "vocab::Drawable::none()", None),
+    "Date":  ("vocab::Date", "vocab::Date::zero()", None),
+    "Duration": ("vocab::Duration", "vocab::Duration::zero()", None),
+    "Window": ("vocab::WindowRef", "vocab::WindowRef::none()", None),
+}
+
+# Collection-shaped facet types become a count + an opaque owner the backend
+# fills; the description carries children as real tree nodes instead.
+SKIP_TYPES = {"Node", "Node[]", "str[]", "f64[]", "SwipeItem[]", "Window[]",
+              "ToolbarItem[]", "MenuBarItem[]", "KeyboardAccelerator[]",
+              "*u8", "Drawable"}
+
+
+def cplus_type(t):
+    if t in TYPES:
+        return TYPES[t][0]
+    if t in ENUM_BY_FACET:
+        return "vocab::" + t
+    return None
+
+
+def zero_of(t):
+    if t in TYPES:
+        return TYPES[t][1]
+    if t in ENUM_BY_FACET:
+        return "vocab::" + t + "::" + ENUM_BY_FACET[t][0][0]
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Enum members, read out of the two PublicAPI manifests. Four enums have no
+# machine-readable source (MAUI models them as classes or they live outside
+# both manifests); those are authored here and marked.
+HAND_ENUMS = {
+    "Appearance": ["Unspecified", "Light", "Dark"],
+    "Keyboard": ["Default", "Plain", "Chat", "Email", "Numeric", "Telephone", "Url", "Text"],
+    "SafeArea": ["Default", "None", "Container", "Content", "All"],
+    "ContentLayout": ["ImageLeft", "ImageTop", "ImageRight", "ImageBottom"],
+}
+
+MANIFESTS = [
+    os.path.join(ROOT, "plans", "facet", "spec", "maui_PublicAPI.Shipped.txt"),
+    os.path.join(ROOT, "plans", "facet", "spec", "maui_PublicAPI.Unshipped.txt"),
+    os.path.join(ROOT, "plans", "facet", "spec", "maui_Core_PublicAPI.Shipped.txt"),
 ]
 
-# ---- Phase 3 NATIVE table: slot -> generated AppKit backing + probe.
-# kind picks the ABI-correct send; ctor/setup build the probe widget headless;
-# probe_value round-trips through the raw getter. A slot NOT here keeps its
-# hand backing (the v1 seed) or is UNSUPPORTED.
-NATIVE = {
-    "set_max_lines": dict(
-        kind="i64", set_sel="setMaximumNumberOfLines:", get_sel="maximumNumberOfLines",
-        relayout=True,
-        # The widget must OUTLIVE the probe: .payload()/.raw() on a temporary
-        # drops the owner at statement end and frees the view (the temp-drop
-        # rule) — the segfault class this comment exists to prevent.
-        decl="var probe_w: flex::Node = ui::label(\"probe\", size: 13.0f64);",
-        view="probe_w.payload()",
-        setup=[],
-        probe_value="3 as i64", probe_expect="3 as i64",
-    ),
-    "set_selected_index": dict(
-        kind="i64", set_sel="selectItemAtIndex:", get_sel="indexOfSelectedItem",
-        relayout=False,
-        decl="let probe_w: ak::PopUpButton = ak::PopUpButton::new(rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 }, false);",
-        view="probe_w.raw()",
-        setup=[
-            'rt::msg_void_id(v, rt::sel(#str_ptr("addItemWithTitle:\\0")), bridge::nsstring("a"));',
-            'rt::msg_void_id(v, rt::sel(#str_ptr("addItemWithTitle:\\0")), bridge::nsstring("b"));',
-            'rt::msg_void_id(v, rt::sel(#str_ptr("addItemWithTitle:\\0")), bridge::nsstring("c"));',
-        ],
-        probe_value="1 as i64", probe_expect="1 as i64",
-    ),
-    "set_increment": dict(
-        kind="f64", set_sel="setIncrement:", get_sel="increment",
-        relayout=False,
-        decl="let probe_w: ak::Stepper = ak::Stepper::new();",
-        view="probe_w.raw()",
-        setup=[],
-        probe_value="5.0f64", probe_expect="5.0f64",
-    ),
-    "set_is_animation_playing": dict(
-        kind="bool", set_sel="setAnimates:", get_sel="animates",
-        relayout=False,
-        decl='let probe_p: *u8 = synth::alloc_init_class(rt::get_class(#str_ptr("NSImageView\\0")));',
-        view="probe_p",
-        setup=[],
-        probe_value="true", probe_expect="true",
-    ),
+
+def read_enums():
+    """facet enum name -> (members, provenance). Manifest first, then HAND."""
+    blob = ""
+    for p in MANIFESTS:
+        if os.path.exists(p):
+            blob += open(p).read()
+    out = {}
+    for maui, facet in maui_map.ENUMS.items():
+        ms = re.findall(rf"^{re.escape(maui)}\.(\w+) = -?\d+ ->", blob, re.M)
+        if ms and facet not in out:
+            out[facet] = (sorted(set(ms)), maui)
+    for facet, ms in HAND_ENUMS.items():
+        if facet not in out:
+            src = [m for m, f in maui_map.ENUMS.items() if f == facet]
+            out[facet] = (ms, (src[0] if src else "hand") + " (authored: no manifest source)")
+    return out
+
+
+ENUM_BY_FACET = {}
+
+
+def snake(name):
+    s = re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
+    return s.replace("__", "_")
+
+
+def pascal(mod):
+    return "".join(p.capitalize() for p in mod.split("_"))
+
+
+# ---------------------------------------------------------------------------
+def control_rows():
+    """control -> {writes, reads, events} of ADOPT rows, bases merged in."""
+    rows, undecided = maui_map.rows()
+    assert not undecided
+    by_type = {}
+    for ty, member, band, vt, st, fn, note in rows:
+        if st != "ADOPT":
+            continue
+        by_type.setdefault(ty, []).append((member, band, fn, note))
+
+    out = {}
+    for maui in MODULE:
+        merged, seen = [], set()
+        for src in [maui] + EXTRA_BASES.get(maui, []):
+            for member, band, fn, note in by_type.get(src, []):
+                verb = fn.split(" / ")[0].split("(")[0].strip()
+                if verb in seen:
+                    continue
+                seen.add(verb)
+                merged.append((member, band, fn, note, src))
+        out[maui] = merged
+    return out, by_type
+
+
+# The content parameter: naming_guideline's "constructors take their content".
+# It leads the signature, then `key`, then everything else defaulted.
+PRIMARY = {
+    "Button": "title", "Label": "text", "Entry": "text", "Editor": "text",
+    "SearchBar": "text", "Picker": "title", "Slider": "value",
+    "Stepper": "value", "Switch": "on", "CheckBox": "on", "RadioButton": "on",
+    "Image": "source", "ImageButton": "source", "ProgressBar": "progress",
+    "Span": "text", "MenuItem": "text", "MenuFlyoutItem": "text",
+    "ToolbarItem": "text", "MenuBarItem": "text", "WebView": "source",
+    "HybridWebView": "source", "BoxView": "color", "ActivityIndicator": "color",
+    "DatePicker": "date", "TimePicker": "time", "IndicatorView": "count",
 }
 
-SEND = {
-    "i64": "rt::msg_void_i64(view, s, v);",
-    "f64": "rt::msg_void_f64(view, s, v);",
-    "bool": "var b: i8 = 0 as i8;\n    if v { b = 1 as i8; }\n    rt::msg_void_i8(view, s, b);",
+# MAUI member names that collide with C+ keywords. Renamed once, here.
+RESERVED = {
+    "loop": "wraps", "type": "kind", "match": "matches", "ref": "reference",
+    "static": "is_static", "const": "constant", "return": "result",
+    "break": "breaks", "continue": "continues", "as": "as_kind",
+    "if": "condition", "else": "otherwise", "for": "target", "while": "during",
+    "fn": "callback", "impl": "implementation", "enum": "choice",
+    "struct": "shape", "let": "binding", "var": "variable", "this": "self",
+    "true": "yes", "false": "no", "take": "takes", "defer": "deferred",
+    "assert": "asserts", "export": "exported", "import": "imported",
+    "interface": "protocol", "unsafe": "unchecked", "extern": "external",
 }
-GETTER = {
-    "i64": lambda sel: f'rt::msg_i64(v, rt::sel(#str_ptr("{sel}\\0")))',
-    "f64": lambda sel: f'rt::msg_f64(v, rt::sel(#str_ptr("{sel}\\0")))',
-    "bool": lambda sel: f'(rt::msg_i8(v, rt::sel(#str_ptr("{sel}\\0"))) != (0 as i8))',
+
+
+def prop_of(fn, note):
+    """(field name, facet type) for a write/read row, or None if unmappable."""
+    verb = fn.split(" / ")[0].split("(")[0].strip()
+    field = verb[4:] if verb.startswith("set_") else verb
+    field = RESERVED.get(field, field)
+    ty = note.split(" — ")[0].replace(" (read-only)", "").strip()
+    if ty in SKIP_TYPES or cplus_type(ty) is None:
+        return None
+    return (field, ty)
+
+
+VALUE_TYPES_SRC = '''
+// ---- value types the contract carries by name -------------------------------
+
+struct Color { r: f64, g: f64, b: f64, a: f64 }
+impl Color {
+    fn rgba(r: f64, g: f64, b: f64, a: f64 = 1.0f64) -> Color { return Color { r: r, g: g, b: b, a: a }; }
+    fn clear() -> Color { return Color::rgba(0.0f64, 0.0f64, 0.0f64, 0.0f64); }
 }
 
+struct Corners { top_leading: f64, top_trailing: f64, bottom_leading: f64, bottom_trailing: f64 }
+impl Corners {
+    fn all(v: f64) -> Corners { return Corners { top_leading: v, top_trailing: v, bottom_leading: v, bottom_trailing: v }; }
+    fn none() -> Corners { return Corners::all(0.0f64); }
+}
 
-def emit_backend():
-    lines = [
-        "// GENERATED by tools/gen_contract.py — DO NOT EDIT.\n",
-        "// facet_appkit's generated backings: one impl per NATIVE-table slot,\n",
-        "// registered by install_generated() (called from the runtime facade\n",
-        "// beside backend::install()), each verified by its own round-trip\n",
-        "// probe test below — write through the Handle, read back through the\n",
-        "// raw getter. A slot that cannot pass its probe does not ship.\n",
-        "\n",
-        'import "facet/facet" as facet;\n',
-        'import "facet/contract" as contract;\n',
-        'import "objc/runtime" as rt;\n',
-        'import "objc/bridge" as bridge;\n',
-        'import "objc/synthesis" as synth;\n',
-        'import "appkit/appkit" as ak;\n',
-        'import "flex_layout/flex_layout" as flex;\n',
-        'import "./facet_appkit" as impl_mod;\n',
-        'import "./ui" as ui;\n',
-        "\n",
-    ]
-    gen = [(n, t, pr, note) for (n, t, pr, note) in SLOTS if n in NATIVE]
-    for name, ty, prov, note in gen:
-        nt = NATIVE[name]
-        lines.append(f"// {prov[0]}.{prov[1]} -> {nt['set_sel']}\n")
-        lines.append(f"fn g_{name}(h: facet::Handle, v: {FNTY[ty].replace('core::', 'facet::')}) -> bool {{\n")
-        lines.append("    let view: *u8 = h.view();\n")
-        lines.append("    if view == (0 as *u8) { return false; }\n")
-        lines.append(f'    let s: *u8 = rt::sel(#str_ptr("{nt["set_sel"]}\\0"));\n')
-        lines.append("    if !impl_mod::slot_responds(view, s) { return false; }\n")
-        lines.append(f"    {SEND[nt['kind']]}\n")
-        if nt["relayout"]:
-            lines.append("    impl_mod::slot_relayout(h, view);\n")
-        lines.append("    return true;\n}\n\n")
-    lines.append("// Register every generated backing. The runtime facade calls this right\n")
-    lines.append("// beside backend::install().\n")
-    lines.append("fn install_generated() {\n")
-    for name, ty, prov, note in gen:
-        lines.append(f"    contract::{name}_fn(g_{name});\n")
-    lines.append("    return;\n}\n\n")
-    for name, ty, prov, note in gen:
-        nt = NATIVE[name]
-        lines.append("#[test]\n")
-        lines.append(f"fn probe_{name}_round_trips() {{\n")
-        lines.append(f"    contract::{name}_fn(g_{name});\n")
-        lines.append(f"    {nt['decl']}\n")
-        lines.append(f"    let v: *u8 = {nt['view']};\n")
-        for su in nt["setup"]:
-            lines.append(f"    {su}\n")
-        lines.append("    let h: facet::Handle = facet::Handle::of(v, 0 as *u8, 0 as *u8, 0 as u32);\n")
-        lines.append(f"    let _r: facet::Handle = h.{name}({nt['probe_value']});\n")
-        lines.append(f"    assert {GETTER[nt['kind']](nt['get_sel'])} == ({nt['probe_expect']});\n")
-        lines.append("}\n\n")
-    return "".join(lines)
+struct Insets { leading: f64, top: f64, trailing: f64, bottom: f64 }
+impl Insets {
+    fn all(v: f64) -> Insets { return Insets { leading: v, top: v, trailing: v, bottom: v }; }
+    fn zero() -> Insets { return Insets::all(0.0f64); }
+}
 
-FNTY = {"Color": "core::Color", "f64": "f64", "bool": "bool", "str": "str", "i64": "i64"}
+struct Point { x: f64, y: f64 }
+impl Point { fn zero() -> Point { return Point { x: 0.0f64, y: 0.0f64 }; } }
 
+struct Size { width: f64, height: f64 }
+impl Size { fn zero() -> Size { return Size { width: 0.0f64, height: 0.0f64 }; } }
 
-def map_status(prov):
-    """The MAP's verdict for a (Type, Member) row — emission guard."""
-    row = maui_map.OVERLAY.get(prov)
-    if row:
-        return row[0]
-    return "ADOPT"  # default-adoptable band; the MAP would have dropped it otherwise
+struct Rect { x: f64, y: f64, width: f64, height: f64 }
+impl Rect { fn zero() -> Rect { return Rect { x: 0.0f64, y: 0.0f64, width: 0.0f64, height: 0.0f64 }; } }
+
+// A fill: a flat colour, or a gradient the backend resolves.
+struct Brush { start: Color, end: Color, angle: f64, is_gradient: bool }
+impl Brush {
+    fn solid(c: Color) -> Brush { return Brush { start: c, end: c, angle: 0.0f64, is_gradient: false }; }
+    fn none() -> Brush { return Brush::solid(Color::clear()); }
+}
+
+struct Shadow { color: Color, offset: Point, radius: f64, opacity: f64 }
+impl Shadow {
+    fn none() -> Shadow { return Shadow { color: Color::clear(), offset: Point::zero(), radius: 0.0f64, opacity: 0.0f64 }; }
+}
+
+// A clip / stroke outline. `kind` 0 = none, 1 = rect, 2 = rounded, 3 = ellipse.
+struct Shape { kind: i64, corners: Corners }
+impl Shape {
+    fn none() -> Shape { return Shape { kind: 0 as i64, corners: Corners::none() }; }
+    fn rounded(r: f64) -> Shape { return Shape { kind: 2 as i64, corners: Corners::all(r) }; }
+}
+
+// Styled runs over a text surface. Empty until a run is added.
+struct Spans { count: i64 }
+impl Spans { fn none() -> Spans { return Spans { count: 0 as i64 }; } }
+
+// A draw callback for a canvas: (ctx, width, height).
+struct Drawable { draw: fn(*u8, f64, f64), opaque ctx: *u8 }
+fn draw_none(ctx: *u8, w: f64, h: f64) { return; }
+impl Drawable { fn none() -> Drawable { return Drawable { draw: draw_none, ctx: 0 as *u8 }; } }
+
+struct Date { year: i64, month: i64, day: i64 }
+impl Date { fn zero() -> Date { return Date { year: 0 as i64, month: 0 as i64, day: 0 as i64 }; } }
+
+struct Duration { seconds: f64 }
+impl Duration { fn zero() -> Duration { return Duration { seconds: 0.0f64 }; } }
+
+// A live window. Opaque until a backend mounts one.
+struct WindowRef { opaque _w: *u8 }
+impl WindowRef {
+    fn none() -> WindowRef { return WindowRef { _w: 0 as *u8 }; }
+    fn is_open(this) -> bool { return this._w != (0 as *u8); }
+}
+'''
 
 
-def emit_contract():
-    lines = [
-        "// GENERATED by tools/gen_contract.py — DO NOT EDIT.\n",
-        "// facet's generated contract module: hook statics + registrars\n",
-        "// (backend-facing — apps never import facet/contract) and the\n",
-        "// app-facing Handle methods, attached through a same-package impl\n",
-        "// extension (EXT.1). Regenerate with:\n",
-        "//   python3 tools/gen_contract.py\n",
-        "// The slot list is tools/gen_contract.py's SLOTS table, guarded by\n",
-        "// the curated MAP (tools/maui_map.py). docs/contract.md is the\n",
-        "// manifest twin of this file.\n",
-        "\n",
-        "import \"./facet\" as core;\n",
-        "\n",
-    ]
-    for name, ty, prov, note in SLOTS:
-        st = map_status(prov)
-        if st == "DROP":
-            raise SystemExit(f"slot {name} is DROP in the MAP; refusing to emit")
-        f = FNTY[ty]
-        up = name.upper()
-        lines.append(f"// {prov[0]}.{prov[1]} — {note}\n")
-        lines.append(f"static {up}_FN: fn(core::Handle, {f}) -> bool = #zero::[fn(core::Handle, {f}) -> bool]();\n")
-        lines.append(f"fn {name}_fn(f: fn(core::Handle, {f}) -> bool) {{ {up}_FN = f; return; }}\n\n")
-    lines.append("impl core::Handle {\n")
-    for name, ty, prov, note in SLOTS:
-        f = FNTY[ty]
-        up = name.upper()
-        lines.append(f"    // {prov[0]}.{prov[1]}. Chainable; a no-op on a miss, a kind\n")
-        lines.append("    // without the property, or a backend that has not wired it.\n")
-        lines.append(f"    fn {name}(this, v: {f}) -> core::Handle {{\n")
-        lines.append(f"        let f: fn(core::Handle, {f}) -> bool = {up}_FN;\n")
-        lines.append(f"        if f != (0 as fn(core::Handle, {f}) -> bool) {{ let _ok: bool = f(this, v); }}\n")
-        lines.append("        return this;\n")
-        lines.append("    }\n\n")
-    lines.append("}\n")
-    return "".join(lines)
+def emit_vocabulary():
+    out = ["// GENERATED by tools/gen_contract.py — DO NOT EDIT.\n",
+           "// The types facet's contract names. Enums are seeded from MAUI's, renamed\n",
+           "// per naming_guideline.md; members come from the PublicAPI manifests.\n\n"]
+    for facet in sorted(ENUM_BY_FACET):
+        members, prov = ENUM_BY_FACET[facet]
+        out.append(f"// {prov}\n")
+        out.append(f"enum {facet} {{\n")
+        for m in members:
+            out.append(f"    {m},\n")
+        out.append("}\n\n")
+    out.append(VALUE_TYPES_SRC.lstrip("\n"))
+    return "".join(out)
 
 
-def emit_manifest():
-    lines = [
-        "# facet contract manifest — GENERATED by tools/gen_contract.py\n\n",
-        "Every generated contract slot, its type, its MAUI provenance, and its\n",
-        "per-backend status. A slot absent from this file does not exist —\n",
-        "calling it is a compile error, never a silent no-op. The hand-written\n",
-        "contract (find/set_text/tree/size/observe_size/...) lives in\n",
-        "facet.cplus and is documented in ref.md; this file is the generated\n",
-        "band only.\n\n",
-        "| slot | type | MAUI provenance | AppKit |\n",
-        "|---|---|---|---|\n",
-    ]
-    for name, ty, prov, note in SLOTS:
-        lines.append(f"| `{name}` | {ty} | {prov[0]}.{prov[1]} | {note} |\n")
-    lines.append("\nGTK: nothing wired yet — every slot above is UNSUPPORTED there.\n")
-    lines.append("\n## UNSUPPORTED on AppKit (no slot emitted — calling one is a compile error)\n\n")
-    lines.append("| MAUI provenance | reason |\n|---|---|\n")
-    for (ty, member), note in unsupported_rows():
-        lines.append(f"| {ty}.{member} | {note} |\n")
-    lines.append("\nThe full 536-row disposition ledger (KEEP-FACET, FUTURE, DROP, with\n")
-    lines.append("reasons) is plans/facet/maui-map-draft.md in the C+ tree; the curation\n")
-    lines.append("itself is tools/maui_map.py. The generator fails if any ADOPT row lacks\n")
-    lines.append("a slot, so this manifest cannot drift from the MAP.\n")
-    return "".join(lines)
+COMMON_SRC = '''
+// ---- the shared band --------------------------------------------------------
+// The write rows every element carries (MAUI VisualElement), minus the ones
+// flex already owns and the ones only the platform knows. Inline in Data, not
+// boxed: every node has exactly one, so no allocation and no cast.
+
+struct CommonProps {
+    opacity: f64,
+    background_color: vocab::Color,
+    background: vocab::Brush,
+    shadow: vocab::Shadow,
+    clip: vocab::Shape,
+    is_enabled: bool,
+    is_visible: bool,
+    input_transparent: bool,
+    flow_direction: vocab::FlowDirection,
+    rotation: f64, rotation_x: f64, rotation_y: f64,
+    scale: f64, scale_x: f64, scale_y: f64,
+    translation_x: f64, translation_y: f64,
+    anchor_x: f64, anchor_y: f64,
+}
+
+impl CommonProps {
+    fn new() -> CommonProps {
+        return CommonProps {
+            opacity: 1.0f64,
+            background_color: vocab::Color::clear(),
+            background: vocab::Brush::none(),
+            shadow: vocab::Shadow::none(),
+            clip: vocab::Shape::none(),
+            is_enabled: true,
+            is_visible: true,
+            input_transparent: false,
+            flow_direction: vocab::FlowDirection::MatchParent,
+            rotation: 0.0f64, rotation_x: 0.0f64, rotation_y: 0.0f64,
+            scale: 1.0f64, scale_x: 1.0f64, scale_y: 1.0f64,
+            translation_x: 0.0f64, translation_y: 0.0f64,
+            anchor_x: 0.5f64, anchor_y: 0.5f64,
+        };
+    }
+}
+
+// Common bits live at the top of the word; per-control bits start at 0.
+const C_OPACITY: u64 = 281474976710656u64;
+const C_BACKGROUND_COLOR: u64 = 562949953421312u64;
+const C_BACKGROUND: u64 = 1125899906842624u64;
+const C_SHADOW: u64 = 2251799813685248u64;
+const C_CLIP: u64 = 4503599627370496u64;
+const C_IS_ENABLED: u64 = 9007199254740992u64;
+const C_IS_VISIBLE: u64 = 18014398509481984u64;
+const C_INPUT_TRANSPARENT: u64 = 36028797018963968u64;
+const C_FLOW_DIRECTION: u64 = 72057594037927936u64;
+const C_TRANSFORM: u64 = 144115188075855872u64;
+'''
 
 
-def adopt_rows():
-    import json
-    spec = json.load(open(os.path.join(ROOT, "plans", "facet", "spec", "maui-spec.json")))
-    rows = []
-    for ty, bands in spec.items():
-        for band in ("writes", "reads", "events", "methods"):
-            for member, vt in bands.get(band, {}).items():
-                valuety = vt if isinstance(vt, str) else ""
-                st, _f, _n = maui_map.OVERLAY.get(
-                    (ty, member), maui_map.default_row(ty, member, band, valuety))
-                if st == "ADOPT":
-                    rows.append((ty, member))
-    return rows
+def emit_props(rows_by_control):
+    out = ["// GENERATED by tools/gen_contract.py — DO NOT EDIT.\n",
+           "// Per-control state. Data carries a kind tag plus an owned pointer to one\n",
+           "// of these; NOT a tagged union, because an enum payload cannot be moved out\n",
+           "// through the raw pointer flex's attachment hands back (E0509), and a union\n",
+           "// would size every node by its largest variant.\n\n",
+           'import "stdlib/text" as text;\n',
+           'import "stdlib/box" as box;\n',
+           'import "./vocabulary" as vocab;\n',
+           "\nfn no_handler(sender: *u8, ctx: *u8) { return; }\n",
+           COMMON_SRC]
+
+    for i, (maui, merged) in enumerate(sorted(rows_by_control.items())):
+        mod = MODULE[maui]
+        name = pascal(mod) + "Props"
+        fields, inits = [], []
+        for member, band, fn, note, src in merged:
+            if band in ("writes", "reads"):
+                p = prop_of(fn, note)
+                if p is None:
+                    continue
+                field, ty = p
+                origin = "" if src == maui else f"  (from {src})"
+                fields.append(f"    {field}: {cplus_type(ty)},"
+                              f"    // {src}.{member}{origin}\n")
+                inits.append(f"            {field}: {zero_of(ty)},\n")
+            elif band == "events":
+                verb = fn.split(" / ")[0].strip()
+                if not verb.startswith("on_"):
+                    continue
+                fields.append(f"    {verb}: fn(*u8, *u8),    // {src}.{member}\n")
+                fields.append(f"    opaque {verb}_ctx: *u8,\n")
+                inits.append(f"            {verb}: no_handler,\n")
+                inits.append(f"            {verb}_ctx: 0 as *u8,\n")
+
+        out.append(f"\n// ---- {mod} — MAUI {maui} " + "-" * max(0, 46 - len(mod) - len(maui)) + "\n\n")
+        out.append(f"struct {name} {{\n")
+        out.extend(fields if fields else ["    _unused: bool,\n"])
+        out.append("}\n\n")
+        out.append(f"impl {name} {{\n    fn new() -> {name} {{\n        return {name} {{\n")
+        out.extend(inits if inits else ["            _unused: false,\n"])
+        out.append("        };\n    }\n}\n\n")
+        out.append(f"const K_{mod.upper()}: u32 = {i + 1}u32;\n\n")
+        out.append(f"fn release_{mod}_props(p: *u8) {{\n"
+                   f"    if p == (0 as *u8) {{ return; }}\n"
+                   f"    let _b: box::Box[{name}] = box::from_raw::[{name}](p);\n"
+                   f"    return;\n}}\n")
+    return "".join(out)
 
 
-def unsupported_rows():
-    return sorted(
-        (prov, note)
-        for prov, (st, _f, note) in maui_map.OVERLAY.items()
-        if st == "UNSUPPORTED"
-    )
+# The shared band forwards, generated onto every cursor. Kept here so the
+# per-control emitters stay a single loop.
+SHARED_FORWARDS = [
+    ("set_opacity", "v: f64", "core::set_opacity(this._p, v)", None),
+    ("opacity", "", "return core::opacity(this._p)", "f64"),
+    ("set_is_enabled", "v: bool", "core::set_is_enabled(this._p, v)", None),
+    ("is_enabled", "", "return core::is_enabled(this._p)", "bool"),
+    ("set_is_visible", "v: bool", "core::set_is_visible(this._p, v)", None),
+    ("is_visible", "", "return core::is_visible(this._p)", "bool"),
+    ("set_background_color", "v: vocab::Color", "core::set_background_color(this._p, v)", None),
+    ("background_color", "", "return core::background_color(this._p)", "vocab::Color"),
+    ("set_rotation", "v: f64", "core::set_rotation(this._p, v)", None),
+    ("set_scale", "v: f64", "core::set_scale(this._p, v)", None),
+    ("width", "", "return core::width_of(this._p)", "f64"),
+    ("height", "", "return core::height_of(this._p)", "f64"),
+    ("x", "", "return core::x_of(this._p)", "f64"),
+    ("y", "", "return core::y_of(this._p)", "f64"),
+    ("child_count", "", "return core::child_count_of(this._p)", "usize"),
+]
 
 
-def check_completeness():
-    covered = {prov for (_n, _t, prov, _note) in SLOTS}
-    missing = [r for r in adopt_rows() if r not in covered]
-    if missing:
-        raise SystemExit(
-            "MAP has ADOPT rows with no slot — disposition them (wire, or move "
-            f"to UNSUPPORTED/FUTURE/KEEP-FACET with a reason): {missing}")
+def emit_control(maui, merged):
+    mod = MODULE[maui]
+    cur = pascal(mod)
+    props = cur + "Props"
+    up = mod.upper()
+
+    writes, reads, events = [], [], []
+    for member, band, fn, note, src in merged:
+        if band in ("writes", "reads"):
+            p = prop_of(fn, note)
+            if p is None:
+                continue
+            (writes if band == "writes" else reads).append((p[0], p[1], member, src))
+        elif band == "events":
+            verb = fn.split(" / ")[0].strip()
+            if verb.startswith("on_"):
+                events.append((verb, member, src))
+
+    o = [f"// GENERATED by tools/gen_contract.py — DO NOT EDIT.\n",
+         f"// {mod} — MAUI {maui}. {len(writes)} writes, {len(reads)} reads, "
+         f"{len(events)} events.\n",
+         "//\n",
+         "// Importing this module is what makes these verbs exist; without it a call\n",
+         "// is E0324, not a silent no-op.\n\n",
+         'import "flex_layout/flex_layout" as flex;\n',
+         'import "stdlib/text" as text;\n',
+         'import "stdlib/option" as option;\n',
+         'import "stdlib/box" as box;\n',
+         'import "./facet" as core;\n',
+         'import "./props" as props;\n',
+         'import "./vocabulary" as vocab;\n\n']
+
+    o.append("// ---- dirty bits --------------------------------------------------------\n\n")
+    for i, (field, ty, member, src) in enumerate(writes):
+        o.append(f"const P_{field.upper()}: u64 = {1 << i}u64;\n")
+    o.append("\n")
+
+    # ---- constructor
+    o.append("// ---- build -------------------------------------------------------------\n")
+    o.append("// Typed by the parameter list: a verb another control owns is not a\n")
+    o.append("// parameter here, so passing it is a compile error.\n\n")
+    o.append(f"fn {mod}(\n")
+    primary = PRIMARY.get(maui)
+    ordered = writes
+    if primary is not None and any(f == primary for f, _t, _m, _s in writes):
+        ordered = ([w for w in writes if w[0] == primary]
+                   + [w for w in writes if w[0] != primary])
+        f0, t0, _m0, _s0 = ordered[0]
+        p0 = "str" if t0 == "str" else cplus_type(t0)
+        o.append(f"    {f0}: {p0},\n")
+        ordered = ordered[1:]
+    o.append("    key: str = \"\",\n")
+    for field, ty, member, src in ordered:
+        pty = "str" if ty == "str" else cplus_type(ty)
+        o.append(f"    {field}: {pty} = {'\"\"' if ty == 'str' else zero_of(ty)},\n")
+    for verb, member, src in events:
+        o.append(f"    {verb}: fn(*u8, *u8) = props::no_handler,\n")
+        o.append(f"    {verb}_ctx: *u8 = 0 as *u8,\n")
+    o.append(") -> core::Node {\n")
+    o.append(f"    var p: props::{props} = props::{props}::new();\n")
+    _ = ordered
+    for field, ty, member, src in writes:
+        rhs = f"text::from_str({field})" if ty == "str" else field
+        o.append(f"    p.{field} = {rhs};\n")
+    for verb, member, src in events:
+        o.append(f"    p.{verb} = {verb};\n")
+        o.append(f"    p.{verb}_ctx = {verb}_ctx;\n")
+    o.append(f"    return match box::new::[props::{props}](p) {{\n")
+    o.append(f"        option::Option[box::Box[props::{props}]]::Some(b) =>\n")
+    o.append(f"            core::node_with(key, props::K_{up}, b.into_raw(), props::release_{mod}_props),\n")
+    o.append(f"        option::Option[box::Box[props::{props}]]::None =>\n")
+    o.append(f"            core::node_with(key, props::K_{up}, 0 as *u8, props::release_{mod}_props),\n")
+    o.append("    };\n}\n\n")
+
+    # ---- cursor
+    o.append("// ---- live --------------------------------------------------------------\n")
+    o.append("// The typed handle `find` hands back. Copy, non-owning. `_seen` is flex's\n")
+    o.append("// removal_count() at lookup: while it matches, no node anywhere has been\n")
+    o.append("// removed, so `_p` is provably live without dereferencing it.\n\n")
+    o.append(f"struct {cur} {{\n    opaque _p: *core::Node,\n    _seen: u64,\n}}\n\n")
+    o.append(f"impl {cur} {{\n")
+    o.append(f"    fn of(p: *core::Node) -> {cur} {{ return {cur} {{ _p: p, _seen: flex::removal_count() }}; }}\n")
+    o.append("    fn is_live(this) -> bool { return this._seen == flex::removal_count(); }\n\n")
+    o.append(f"    fn _props(this) -> *props::{props} {{\n")
+    o.append("        let d: *core::Data = { (*this._p).data() };\n")
+    o.append(f"        if d == (0 as *core::Data) {{ return 0 as *props::{props}; }}\n")
+    o.append(f"        if {{ (*d).kind }} != props::K_{up} {{ return 0 as *props::{props}; }}\n")
+    o.append(f"        return {{ (*d).props }} as *props::{props};\n    }}\n")
+
+    for field, ty, member, src in writes:
+        pty = "str" if ty == "str" else cplus_type(ty)
+        rhs = f"text::from_str(v)" if ty == "str" else "v"
+        o.append(f"\n    // {src}.{member}\n")
+        o.append(f"    fn set_{field}(this, v: {pty}) -> {cur} {{\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return this; }}\n")
+        o.append(f"        {{ (*p).{field} = {rhs} }};\n")
+        o.append(f"        core::touch(this._p, P_{field.upper()});\n")
+        o.append("        return this;\n    }\n")
+
+    for field, ty, member, src in writes + reads:
+        rty = "str" if ty == "str" else cplus_type(ty)
+        body = f"{{ (*p).{field}.view() }}" if ty == "str" else f"{{ (*p).{field} }}"
+        dflt = '""' if ty == "str" else zero_of(ty)
+        o.append(f"\n    fn {field}(this) -> {rty} {{\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return {dflt}; }}\n")
+        o.append(f"        return {body};\n    }}\n")
+
+    o.append("\n    // --- the shared band: one-line forwards, no generic element type ---\n")
+    for name, arg, body, ret in SHARED_FORWARDS:
+        sig = f"fn {name}(this{', ' + arg if arg else ''})"
+        if ret is None:
+            o.append(f"    {sig} -> {cur} {{ {body}; return this; }}\n")
+        else:
+            o.append(f"    {sig} -> {ret} {{ {body}; }}\n")
+    o.append("    fn frame(this) -> core::Frame { return core::frame_of(this._p); }\n")
+    o.append("}\n\n")
+
+    # ---- lookup
+    o.append("// ---- lookup: resolve the key, then check the kind -----------------------\n\n")
+    o.append(f"fn find(root: *core::Node, key: str) -> option::Option[{cur}] {{\n")
+    o.append("    return match core::find_in(root, key) {\n")
+    o.append("        option::Option[*core::Node]::Some(p) => {\n")
+    o.append("            let d: *core::Data = { (*p).data() };\n")
+    o.append(f"            if d == (0 as *core::Data) {{ return option::Option[{cur}]::None; }}\n")
+    o.append(f"            if {{ (*d).kind }} != props::K_{up} {{ return option::Option[{cur}]::None; }}\n")
+    o.append(f"            option::Option[{cur}]::Some({cur}::of(p))\n")
+    o.append("        }\n")
+    o.append(f"        option::Option[*core::Node]::None => option::Option[{cur}]::None,\n")
+    o.append("    };\n}\n")
+    return "".join(o)
+
+
+def emit_manifest(rows_by_control):
+    o = ["# facet contract manifest — GENERATED by tools/gen_contract.py\n\n",
+         "Every declared word, its type, and the MAUI row it came from. A verb\n",
+         "absent here does not exist: calling it is a compile error, never a\n",
+         "silent no-op. What a backend cannot implement is recorded in that\n",
+         "backend's own manifest, not here.\n\n"]
+    total = 0
+    for maui, merged in sorted(rows_by_control.items(), key=lambda kv: MODULE[kv[0]]):
+        mod = MODULE[maui]
+        o.append(f"\n## {mod} — MAUI {maui}\n\n")
+        o.append("| verb | type | provenance |\n|---|---|---|\n")
+        for member, band, fn, note, src in merged:
+            if band in ("writes", "reads"):
+                p = prop_of(fn, note)
+                if p is None:
+                    continue
+                field, ty = p
+                verb = f"`set_{field}` / `{field}()`" if band == "writes" else f"`{field}()`"
+                o.append(f"| {verb} | {ty} | {src}.{member} |\n")
+                total += 1
+            elif band == "events":
+                verb = fn.split(" / ")[0].strip()
+                if verb.startswith("on_"):
+                    o.append(f"| `{verb}` | callback + ctx | {src}.{member} |\n")
+                    total += 1
+    o.insert(5, f"{total} declared verbs over {len(rows_by_control)} controls, plus the\n"
+                "shared band every element carries.\n\n")
+    return "".join(o)
 
 
 def main():
-    check_completeness()
-    cp = os.path.join(ROOT, "vendor", "facet", "src", "contract.cplus")
-    with open(cp, "w") as f:
-        f.write(emit_contract())
-    bp = os.path.join(ROOT, "vendor", "facet_appkit", "src", "contract_appkit.cplus")
-    with open(bp, "w") as f:
-        f.write(emit_backend())
-    mp = os.path.join(ROOT, "vendor", "facet", "docs", "contract.md")
-    with open(mp, "w") as f:
-        f.write(emit_manifest())
-    print(f"wrote {os.path.relpath(cp, ROOT)} ({len(SLOTS)} slots), "
-          f"{os.path.relpath(bp, ROOT)} ({len(NATIVE)} generated backings) + docs/contract.md")
+    global ENUM_BY_FACET
+    ENUM_BY_FACET = read_enums()
+    rows_by_control, _ = control_rows()
+
+    os.makedirs(SRC, exist_ok=True)
+    os.makedirs(DOCS, exist_ok=True)
+    with open(os.path.join(SRC, "vocabulary.cplus"), "w") as f:
+        f.write(emit_vocabulary())
+    with open(os.path.join(SRC, "props.cplus"), "w") as f:
+        f.write(emit_props(rows_by_control))
+    for maui, merged in rows_by_control.items():
+        with open(os.path.join(SRC, MODULE[maui] + ".cplus"), "w") as f:
+            f.write(emit_control(maui, merged))
+    with open(os.path.join(DOCS, "contract.md"), "w") as f:
+        f.write(emit_manifest(rows_by_control))
+
+    print(f"{len(ENUM_BY_FACET)} enums, {len(rows_by_control)} controls")
+    print(f"wrote vendor/facet/src/{{vocabulary,props}}.cplus + "
+          f"{len(rows_by_control)} control modules + docs/contract.md")
 
 
 if __name__ == "__main__":
