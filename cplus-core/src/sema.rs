@@ -10517,7 +10517,14 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         let then_ty = self.check_block_as_expr(then);
         let after_then = self.snapshot_assigned();
         let moved_after_then = self.snapshot_moved();
-        let then_diverges = block_diverges(then);
+        // `crate::lower`'s is the one divergence predicate — the same one this
+        // file already uses for match arms and fn-tail checking. `check_if`
+        // used to carry a private pair with no `Match`/`Await`/`Yield` arms and
+        // no recursion into a trailing statement, so a then-branch ending in an
+        // all-arms-return `match` read as `()` and produced a spurious E0302,
+        // while its moves were wrongly unioned into the fall-through state
+        // (reports/bug-10).
+        let then_diverges = crate::lower::block_diverges(then);
         self.restore_assigned(&pre_if);
         self.restore_moved(&moved_pre);
         let else_ty = match else_branch {
@@ -10530,7 +10537,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         };
         let after_else = self.snapshot_assigned();
         let moved_after_else = self.snapshot_moved();
-        let else_diverges = else_branch.is_some_and(expr_diverges);
+        let else_diverges = else_branch.is_some_and(crate::lower::expr_diverges);
         // Definite-assignment merge must credit divergence, exactly as the
         // move-merge below does: a branch that `return`s / `break`s /
         // `continue`s never falls through, so it imposes NO constraint on what
@@ -21080,6 +21087,13 @@ fn is_ffi_builtin_name(name: &str) -> bool {
 /// compile without a dead trailing `return` (an infinite loop never falls
 /// through). A loop that *can* `break` is NOT diverging — it still needs a
 /// return after it.
+///
+/// The ONE construct that keeps this separate from `crate::lower::block_diverges`
+/// (which every other divergence question in this file now goes through) is that
+/// `StmtKind::Loop` arm: a break-less `loop` never falls through, and E0306 needs
+/// to know it. The lower predicate deliberately treats a loop as fall-through,
+/// which is the conservative answer for move-flow. Fold this in only alongside
+/// teaching the lower predicate about break-less loops.
 fn body_returns_or_diverges(b: &Block) -> bool {
     if let Some(t) = &b.tail {
         return expr_returns_or_diverges(t);
@@ -21192,37 +21206,6 @@ fn expr_can_break(e: &Expr) -> bool {
         // sub-expression is possible in theory but vanishingly rare — stay
         // conservative (treat the loop as breakable, i.e. require the return).
         _ => true,
-    }
-}
-
-/// v0.0.15 flow-sensitive moves: does this block *diverge* — i.e. never fall
-/// through to the code after it? True when its last statement is a
-/// `return`/`break`/`continue` (or its tail is a diverging `if`/`match`). Used
-/// so moves performed only on a diverging branch don't poison the binding for
-/// the code that runs when the branch is *not* taken.
-fn block_diverges(b: &Block) -> bool {
-    if let Some(t) = &b.tail {
-        return expr_diverges(t);
-    }
-    b.stmts.last().is_some_and(|s| {
-        matches!(
-            s.kind,
-            StmtKind::Return(_) | StmtKind::Break | StmtKind::Continue
-        )
-    })
-}
-
-/// Companion to `block_diverges` for an expression in branch position. A bare
-/// `if`/`else` diverges only if *both* arms do; a block defers to
-/// `block_diverges`. Anything else is treated as falling through (conservative
-/// for moves: its moves are kept).
-fn expr_diverges(e: &Expr) -> bool {
-    match &e.kind {
-        ExprKind::Block(b) => block_diverges(b),
-        ExprKind::If {
-            then, else_branch, ..
-        } => block_diverges(then) && else_branch.as_deref().is_some_and(expr_diverges),
-        _ => false,
     }
 }
 

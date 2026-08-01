@@ -1,6 +1,8 @@
 # Bug 09 — `-g` silently loses all debug info when any tail call exists
 
-- Status: reproduced 2026-08-01 with `target/release/cpc` (clang: "ignoring invalid debug info")
+- Status: FIXED 2026-08-02, commit 5d0fcaa — matcher covers every tail marker, AND the
+  clang warning is now fatal under `-g`
+- Status (original): reproduced 2026-08-01 with `target/release/cpc` (clang: "ignoring invalid debug info")
 - Severity: tooling (debug builds ship without symbols, silently)
 - Area: codegen (`cplus-core/src/codegen.rs`)
 - Master report: `core-drift-audit-2026-08-01.md` (B9)
@@ -62,16 +64,23 @@ Structural (companion `issue-08-emit-time-metadata.md`):
 
 ## Verification
 
-1. Compile the repro with `-g`: no clang debug-info warnings; `dsymutil mt && dwarfdump
-   --debug-line mt.dSYM | head` (or `lldb ./mt -o "b helper" -o run`) shows line info and
-   symbols.
-2. Add a codegen unit test: IR for a self-recursive fn under `-g` has `!dbg` on the
-   `musttail call` line (grep the test module for an existing `-g`/`!dbg` assertion to
-   copy the harness).
-3. Full suites.
+1. DONE: the repro compiles with `-g` and clang emits no debug-info warnings.
+   `dsymutil` cannot be used to confirm on macOS — cpc deletes the temp object, and DWARF
+   lives in the object until dsymutil links it, so `dsymutil` reports "unable to open
+   object file" for ANY cpc `-g` build, fixed or not. The absence of clang's rejection is
+   the signal, and the unit test below pins the IR-level cause directly.
+2. DONE: `every_call_form_gets_a_dbg_location_under_g` in codegen.rs — asserts the probe
+   really does emit `musttail call`, then walks every call/invoke inside every function
+   the pass stamped with a DISubprogram and requires a `!dbg`. There was no existing `-g`
+   assertion to copy; the test builds through `generate_with_debug` against a temp file.
+   (Synthesized glue — coro helpers, trampolines — gets no DISubprogram and correctly
+   needs no locations; the test scopes to functions that carry one.)
+3. DONE: full suites green.
 
 ## Notes
 
-- The failure is silent in normal builds (warnings scroll by); consider promoting the
-  clang "ignoring invalid debug info" warning to a hard cpc error in `-g` builds so any
-  future gap fails loudly instead of shipping symbol-less binaries.
+- The report's suggestion to promote clang's "ignoring invalid debug info" warning to a
+  hard error WAS taken, in `run_clang` (cpc/src/main.rs), scoped to `-g` builds so
+  ordinary builds keep streaming clang's stderr live. Verified by re-narrowing the
+  matcher and confirming the build then fails with a pointed message instead of silently
+  producing a symbol-less binary.

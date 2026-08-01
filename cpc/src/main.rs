@@ -4494,12 +4494,44 @@ fn run_clang(
     if cfg!(windows) {
         cmd.arg("-lws2_32");
     }
-    let status = cmd.arg("-o").arg(out).status();
-    match status {
-        Ok(s) if s.success() => ExitCode::SUCCESS,
-        Ok(s) => {
-            eprintln!("cpc: clang exited with {s}");
-            ExitCode::from(s.code().unwrap_or(1).clamp(1, 255) as u8)
+    cmd.arg("-o").arg(out);
+    // Under `-g`, clang DISCARDS the whole module's debug info — with only a
+    // warning — if any inlinable call lacks a `!dbg` location. A `-g` build
+    // that shipped without symbols therefore looked like a successful build
+    // (reports/bug-09: the DWARF post-pass didn't recognize `musttail call`,
+    // so every self-recursive fn silently cost the binary its debug info).
+    // Capture stderr in this mode only and make that warning fatal, so the
+    // next gap in the matcher fails loudly instead of degrading in silence.
+    // Non-`-g` builds keep clang's stderr streaming live.
+    if !debug_info {
+        return match cmd.status() {
+            Ok(s) if s.success() => ExitCode::SUCCESS,
+            Ok(s) => {
+                eprintln!("cpc: clang exited with {s}");
+                ExitCode::from(s.code().unwrap_or(1).clamp(1, 255) as u8)
+            }
+            Err(e) => {
+                eprintln!("cpc: failed to invoke clang: {e}");
+                ExitCode::FAILURE
+            }
+        };
+    }
+    match cmd.output() {
+        Ok(o) => {
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            eprint!("{stderr}");
+            if !o.status.success() {
+                eprintln!("cpc: clang exited with {}", o.status);
+                return ExitCode::from(o.status.code().unwrap_or(1).clamp(1, 255) as u8);
+            }
+            if stderr.contains("ignoring invalid debug info") {
+                eprintln!(
+                    "cpc: clang rejected the debug metadata, so `-g` produced a binary with \
+                     NO debug info. This is a compiler bug — please report it."
+                );
+                return ExitCode::FAILURE;
+            }
+            ExitCode::SUCCESS
         }
         Err(e) => {
             eprintln!("cpc: failed to invoke clang: {e}");

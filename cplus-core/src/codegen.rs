@@ -1987,12 +1987,25 @@ fn emit_dwarf_metadata(
         // or `invoke` instruction so clang accepts the DI block.
         if let Some(loc) = current_loc_id {
             let trimmed = line.trim_start();
-            let is_call = trimmed.starts_with("call ")
-                || trimmed.starts_with("invoke ")
-                // SSA-assignment form: `%v = call ...`.
-                || (trimmed.starts_with('%')
-                    && trimmed.contains("= call ")
-                    && !trimmed.contains("!dbg"));
+            // Both the statement form (`call ...`) and the SSA-assignment form
+            // (`%v = call ...`), across every tail marker. `musttail` was
+            // missing, and self-recursive `return f(...)` emits exactly that:
+            // the call got no `!dbg`, and LLVM's rule that every inlinable call
+            // in a debug-info function must carry a location made clang discard
+            // the WHOLE module's debug info — with a warning, so `-g` builds
+            // silently shipped without symbols (reports/bug-09).
+            let after_assign = trimmed
+                .strip_prefix('%')
+                .and_then(|r| r.split_once("= "))
+                .map(|(_, rhs)| rhs)
+                .unwrap_or(trimmed);
+            let is_call = ["", "tail ", "musttail ", "notail "]
+                .iter()
+                .any(|m| {
+                    after_assign
+                        .strip_prefix(m)
+                        .is_some_and(|r| r.starts_with("call ") || r.starts_with("invoke "))
+                });
             if is_call && !line.contains("!dbg") {
                 out.push_str(line);
                 out.push_str(&format!(", !dbg !{loc}"));
@@ -21226,6 +21239,69 @@ mod tests {
                 .to_string()
         });
         (this, other)
+    }
+
+    /// reports/bug-09. The DWARF post-pass re-parses the emitted IR text to
+    /// attach `!dbg` to call instructions, and its matcher knew only bare
+    /// `call` / `= call`. A self-recursive `return f(...)` emits
+    /// `musttail call`, which slipped through — and LLVM's rule that every
+    /// inlinable call in a debug-info function must carry a location made
+    /// clang discard the ENTIRE module's debug info. With only a warning, so
+    /// `-g` builds silently shipped without symbols.
+    #[test]
+    fn every_call_form_gets_a_dbg_location_under_g() {
+        let src = "fn helper(n: i32, acc: i32) -> i32 {\n\
+                   if n == 0 { return acc; }\n\
+                   return helper(n - 1, acc + n);\n\
+                   }\n\
+                   fn main() -> i32 { return helper(10, 0) - 55; }\n";
+        let dir = tempfile::Builder::new()
+            .prefix("cpc-dbg-")
+            .tempdir()
+            .expect("tempdir");
+        let path = dir.path().join("mt.cplus");
+        std::fs::write(&path, src).expect("write source");
+        let toks = tokenize(src).expect("lex");
+        let prog = parse(toks).expect("parse");
+        let diags = sema::check(&prog, path.clone(), src);
+        assert!(diags.is_empty(), "sema errors: {diags:#?}");
+        let ir = generate_with_debug(&prog, BuildMode::Debug, &path);
+
+        // The shape the bug needed to exist at all.
+        assert!(
+            ir.contains("musttail call"),
+            "test needs a musttail call to be meaningful:\n{ir}"
+        );
+        // LLVM's rule applies to functions that HAVE debug info: those are
+        // exactly the ones the pass stamped `!dbg !N` on their `define` line.
+        // Compiler-synthesized glue (coro helpers, trampolines) gets no
+        // DISubprogram and so needs no locations.
+        let mut in_body = false;
+        let mut saw_dbg_fn = false;
+        for line in ir.lines() {
+            if line.starts_with("define ") {
+                in_body = line.contains("!dbg !");
+                saw_dbg_fn |= in_body;
+            } else if line == "}" {
+                in_body = false;
+            } else if in_body {
+                let t = line.trim_start();
+                let rhs = t
+                    .strip_prefix('%')
+                    .and_then(|r| r.split_once("= "))
+                    .map(|(_, r)| r)
+                    .unwrap_or(t);
+                let is_call = ["", "tail ", "musttail ", "notail "].iter().any(|m| {
+                    rhs.strip_prefix(m)
+                        .is_some_and(|r| r.starts_with("call ") || r.starts_with("invoke "))
+                });
+                assert!(
+                    !is_call || line.contains("!dbg"),
+                    "call without !dbg — clang drops the whole module's debug info:\n{line}"
+                );
+            }
+        }
+        assert!(saw_dbg_fn, "no function carried a DISubprogram:\n{ir}");
     }
 
     #[test]

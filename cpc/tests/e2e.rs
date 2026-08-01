@@ -21231,6 +21231,36 @@ fn gen_fn_protocol_survives_nested_option_instantiation() {
     assert_eq!(run.code(), Some(0), "filter must keep 2+3 = 5");
 }
 
+/// reports/bug-10: `check_if` asked "does this branch diverge" through a
+/// private predicate with no `Match` arm, so a then-branch ending in a match
+/// whose every arm returns read as `()` and collided with the else-branch's
+/// type. The same match in fn-tail position already compiled — that path used
+/// the canonical `crate::lower::expr_diverges`, which `check_if` now uses too.
+#[test]
+fn if_branch_diverging_through_a_match_imposes_no_type() {
+    const SRC: &str = "\
+enum E { A, B }
+
+fn f(c: bool, e: E) -> i32 {
+    let v: i32 = 7;
+    let x: i32 = if c {
+        match e { E::A => { return 1; }, E::B => { return 2; } }
+    } else {
+        v
+    };
+    return x;
+}
+
+fn main() -> i32 { return f(RETURNS_TRUE, E::B); }
+";
+    // c = false takes the else arm (7); c = true diverges through the match (2).
+    for (cond, want) in [("false", 7), ("true", 2)] {
+        let (_dir, bin) = compile_program(&SRC.replace("RETURNS_TRUE", cond), false);
+        let run = Command::new(&bin).status().expect("run diverge probe");
+        assert_eq!(run.code(), Some(want), "c = {cond}: {run}");
+    }
+}
+
 /// reports/bug-08: codegen identified compiler-synthesized coroutine shapes by
 /// SUBSTRING-matching the mangled name — `name.rfind("Iterator__")`. Generic
 /// mangling is `Base__Arg`, so any user generic whose base name ends in
