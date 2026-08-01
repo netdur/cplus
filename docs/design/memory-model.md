@@ -52,18 +52,17 @@ annotations.
    letting the owner fall out of scope is an error, the same as moving the
    owner.
 
-Current enforcement state (2026-08-01, final pass): the endpoint. Concrete
-impl methods need NO declaration — the flow pass computes every receiver
-store (direct and transitive), unannotated bindings resolve through
-structural inference (declared return types, struct-literal names,
-destructure fields, match payloads), and all resolvable call sites tie.
-The E0515 receiver-store deny is lifted for concrete methods; it remains
-for statics and `ref`-parameter targets in free fns (cross-module free-fn
-call resolution is name-shaped, so those flows do not reliably reach
-callers yet). `#[keeps(...)]` remains required exactly where the contract
-says declarations live: opaque bodies (raw-pointer stores, E0516) and
-generic impls (whose bodies the pre-mono passes do not check — their
-mutators declare, as `Vec` does).
+Current enforcement state (2026-08-01, closing pass): readable bodies need
+no declarations, anywhere. The flow pass analyzes concrete AND generic
+impl methods (the store structure is type-agnostic; instantiations gate at
+call sites via substitution) plus free fns; unannotated bindings resolve
+through structural inference; cross-module calls resolve because the
+resolver collapses `prefix::item` to qualified idents. The E0515 deny
+remains in exactly three places, each for a stated reason: statics (no
+owner to tie — intern or own), free fns whose ADDRESS is taken (indirect
+calls through fn pointers carry no computed flows), and, with E0516, any
+store the analysis cannot see through (the raw seam). `#[keeps(...)]`
+is required only there — the opaque boundary — as §5 always said.
 
 ## 4. Out of contract
 

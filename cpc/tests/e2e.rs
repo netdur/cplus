@@ -6046,6 +6046,66 @@ fn free_fn_ref_param_flow_ties_e0514() {
 }
 
 #[test]
+fn undeclared_generic_setter_ties_e0514() {
+    // Final pass: the flow pass analyzes GENERIC impl bodies too (the
+    // param→receiver structure is type-agnostic); the Generic receiver
+    // resolution substitutes at call sites to gate which instantiations
+    // tie. An undeclared generic setter needs no attribute.
+    let (ok, stderr) = try_compile_snippet(&format!(
+        "{LANG_STR_PRELUDE}struct GenHolder[T] {{ opaque p: *u8, view: str }}\n\
+         impl GenHolder[T] {{\n\
+             fn gset(ref this, k: str) {{ this.view = k; return; }}\n\
+         }}\n\
+         fn main() -> i32 {{\n\
+             var g: GenHolder[str] = GenHolder[str] {{ p: 0 as *u8, view: \"\" }};\n\
+             {{\n\
+                 let t: LStr = mk();\n\
+                 g.gset(t);\n\
+             }}\n\
+             return 0;\n\
+         }}\n"
+    ));
+    assert!(
+        !ok && stderr.contains("E0514"),
+        "undeclared generic setter must tie via computed flows, got ok={ok}: {stderr}"
+    );
+}
+
+#[test]
+fn free_fn_ref_store_narrowed_but_address_taken_denied() {
+    // Final pass: a concrete free fn storing a view param into a ref
+    // param compiles (flows exported, direct callers tie) — but taking
+    // the fn's ADDRESS keeps the E0515 deny, because indirect calls
+    // carry no computed flows.
+    let (ok, stderr) = try_compile_snippet(&format!(
+        "{LANG_STR_PRELUDE}struct Holder {{ view: str }}\n\
+         fn put(ref h: Holder, k: str) {{ h.view = k; return; }}\n\
+         fn main() -> i32 {{\n\
+             var h: Holder = Holder {{ view: \"\" }};\n\
+             {{\n\
+                 let t: LStr = mk();\n\
+                 put(h, t);\n\
+             }}\n\
+             return 0;\n\
+         }}\n"
+    ));
+    assert!(
+        !ok && stderr.contains("E0514"),
+        "undeclared free-fn ref store must compile and tie callers, got ok={ok}: {stderr}"
+    );
+    let (ok, stderr) = try_compile_snippet(
+        "struct Holder { view: str }\n\
+         fn put(ref h: Holder, k: str) { h.view = k; return; }\n\
+         fn consume(f: fn(ref Holder, str)) { return; }\n\
+         fn main() -> i32 { consume(put); return 0; }\n",
+    );
+    assert!(
+        !ok && stderr.contains("E0515"),
+        "address-taken storing fn must keep the E0515 deny, got ok={ok}: {stderr}"
+    );
+}
+
+#[test]
 fn keeps_nothing_unties_view_return() {
     // `#[keeps(nothing)]` suppresses the conservative Rule E-VIEW-FN tie:
     // an intern-shaped fn's result may outlive the argument's owner. The

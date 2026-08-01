@@ -1235,6 +1235,193 @@ fn collect_pattern_names(p: &Pattern, out: &mut Vec<String>) {
     }
 }
 
+/// Contract §3 narrowing support: every fn whose ADDRESS is taken — its
+/// name appears as a value (fn-pointer arg, fn-ptr-typed binding, value
+/// turbofish) rather than as a call's callee. Indirect calls through the
+/// resulting pointers carry only the type-level `ref`/`take` markers, not
+/// computed flows, so a storing fn that escapes into a pointer keeps its
+/// definition-site deny (E0515). Missing an exotic expression shape here
+/// under-scans, which fails SAFE only because sema treats membership as
+/// "keep the deny" — so the walker errs on visiting everything it knows.
+pub fn fns_with_address_taken(prog: &Program) -> std::collections::HashSet<String> {
+    let mut fn_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for item in &prog.items {
+        if let ItemKind::Function(f) = &item.kind {
+            fn_names.insert(f.name.name.clone());
+        }
+    }
+    let mut taken = std::collections::HashSet::new();
+    fn walk_e(
+        e: &Expr,
+        fns: &std::collections::HashSet<String>,
+        out: &mut std::collections::HashSet<String>,
+    ) {
+        match &e.kind {
+            ExprKind::Ident(n) => {
+                if fns.contains(n) {
+                    out.insert(n.clone());
+                }
+            }
+            ExprKind::FnRef { callee, .. } => {
+                if let ExprKind::Ident(n) = &callee.kind {
+                    out.insert(n.clone());
+                }
+            }
+            ExprKind::Call { callee, args, .. } => {
+                // The callee position is a CALL, not an address-take — but
+                // its sub-expressions (a field-call's receiver) still walk.
+                if let ExprKind::Field { receiver, .. } = &callee.kind {
+                    walk_e(receiver, fns, out);
+                } else if !matches!(&callee.kind, ExprKind::Ident(_) | ExprKind::Path { .. }) {
+                    walk_e(callee, fns, out);
+                }
+                for a in args {
+                    walk_e(a, fns, out);
+                }
+            }
+            ExprKind::Assign { target, value, .. } => {
+                walk_e(target, fns, out);
+                walk_e(value, fns, out);
+            }
+            ExprKind::Field { receiver, .. } => walk_e(receiver, fns, out),
+            ExprKind::Index { receiver, index } => {
+                walk_e(receiver, fns, out);
+                walk_e(index, fns, out);
+            }
+            ExprKind::Cast { expr, .. } => walk_e(expr, fns, out),
+            ExprKind::Unary { operand, .. } => walk_e(operand, fns, out),
+            ExprKind::Binary { lhs, rhs, .. } => {
+                walk_e(lhs, fns, out);
+                walk_e(rhs, fns, out);
+            }
+            ExprKind::StructLit { fields, .. }
+            | ExprKind::InferredStructLit { fields }
+            | ExprKind::GenericStructLit { fields, .. } => {
+                for f in fields {
+                    walk_e(&f.value, fns, out);
+                }
+            }
+            ExprKind::ArrayLit { elements }
+            | ExprKind::TupleLit { elements }
+            | ExprKind::GenericEnumCall { args: elements, .. } => {
+                for el in elements {
+                    walk_e(el, fns, out);
+                }
+            }
+            ExprKind::ArrayFill { fill, .. } => walk_e(fill, fns, out),
+            ExprKind::Block(b) => walk_b(b, fns, out),
+            ExprKind::If {
+                cond,
+                then,
+                else_branch,
+            } => {
+                walk_e(cond, fns, out);
+                walk_b(then, fns, out);
+                if let Some(eb) = else_branch {
+                    walk_e(eb, fns, out);
+                }
+            }
+            ExprKind::Match { scrutinee, arms } => {
+                walk_e(scrutinee, fns, out);
+                for a in arms {
+                    walk_e(&a.body, fns, out);
+                }
+            }
+            ExprKind::Await(inner) | ExprKind::Yield(inner) => walk_e(inner, fns, out),
+            ExprKind::InterpStr { parts } => {
+                for pt in parts {
+                    if let crate::ast::InterpStrPart::Expr(e2) = pt {
+                        walk_e(e2, fns, out);
+                    }
+                }
+            }
+            ExprKind::Intrinsic { args, .. } => {
+                for a in args {
+                    walk_e(a, fns, out);
+                }
+            }
+            ExprKind::Asm { operands, .. } => {
+                for op in operands {
+                    walk_e(&op.value, fns, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    fn walk_b(
+        b: &Block,
+        fns: &std::collections::HashSet<String>,
+        out: &mut std::collections::HashSet<String>,
+    ) {
+        for s in &b.stmts {
+            walk_s(s, fns, out);
+        }
+        if let Some(t) = &b.tail {
+            walk_e(t, fns, out);
+        }
+    }
+    fn walk_s(
+        s: &Stmt,
+        fns: &std::collections::HashSet<String>,
+        out: &mut std::collections::HashSet<String>,
+    ) {
+        match &s.kind {
+            StmtKind::Let { init, .. } => {
+                if let Some(e) = init {
+                    walk_e(e, fns, out);
+                }
+            }
+            StmtKind::LetDestructure { init, .. } => walk_e(init, fns, out),
+            StmtKind::Return(Some(e))
+            | StmtKind::Expr(e)
+            | StmtKind::Defer(e)
+            | StmtKind::Assert(e) => walk_e(e, fns, out),
+            StmtKind::Return(None) | StmtKind::Break | StmtKind::Continue => {}
+            StmtKind::While { cond, body, .. } => {
+                walk_e(cond, fns, out);
+                walk_b(body, fns, out);
+            }
+            StmtKind::Loop(b, _) => walk_b(b, fns, out),
+            StmtKind::For(fl, _) => match fl {
+                ForLoop::CStyle {
+                    init,
+                    cond,
+                    update,
+                    body,
+                } => {
+                    if let Some(i) = init {
+                        walk_s(i, fns, out);
+                    }
+                    if let Some(c) = cond {
+                        walk_e(c, fns, out);
+                    }
+                    for u in update {
+                        walk_e(u, fns, out);
+                    }
+                    walk_b(body, fns, out);
+                }
+                ForLoop::Range { iter, body, .. } => {
+                    walk_e(iter, fns, out);
+                    walk_b(body, fns, out);
+                }
+            },
+            StmtKind::IfLet { .. } | StmtKind::GuardLet { .. } | StmtKind::WhileLet { .. } => {}
+        }
+    }
+    for item in &prog.items {
+        match &item.kind {
+            ItemKind::Function(f) => walk_b(&f.body, &fn_names, &mut taken),
+            ItemKind::Impl(b) => {
+                for m in &b.methods {
+                    walk_b(&m.body, &fn_names, &mut taken);
+                }
+            }
+            _ => {}
+        }
+    }
+    taken
+}
+
 /// Run the receiver-flow fixpoint over every concrete impl method and
 /// patch each `FnEntry.computed_keeps`. Monotone (bits only grow), so the
 /// round cap is a backstop, not a correctness device.
@@ -1245,9 +1432,10 @@ fn compute_receiver_flows(prog: &Program, sigs: &mut SigTable) {
             let ItemKind::Impl(b) = &item.kind else {
                 continue;
             };
-            if !b.target_generic_params.is_empty() {
-                continue;
-            }
+            // Generic impls are analyzed too (2026-08-01 final pass): the
+            // param→receiver STRUCTURE of a body is type-agnostic, and the
+            // Generic receiver resolution substitutes at call sites to gate
+            // WHICH instantiations tie. The old skip predated that.
             for m in &b.methods {
                 if !m.generic_params.is_empty() || m.is_declaration {
                     continue;
@@ -2594,19 +2782,25 @@ impl<'p> Analyzer<'p> {
             }
             TypeKind::Generic { name, args } => {
                 let entry = self.sigs.methods.get(&format!("{name}.{method}"))?;
-                if !entry.keeps_this {
-                    return None;
-                }
                 let params = self.sigs.impl_generics.get(name)?;
                 let map: HashMap<String, Type> = params
                     .iter()
                     .cloned()
                     .zip(args.iter().cloned())
                     .collect();
+                // Declared keeps ties every view-typed position; computed
+                // bits tie their own positions. Both are gated by the
+                // SUBSTITUTED type — GenHolder[str].set ties, GenHolder[i32]
+                // does not, with or without the attribute.
                 let keeps: Vec<bool> = entry
                     .param_tys
                     .iter()
-                    .map(|t| self.oracle.type_contains_view(&subst_type(t, &map)))
+                    .enumerate()
+                    .map(|(i, t)| {
+                        (entry.keeps_this
+                            || entry.computed_keeps.get(i).copied().unwrap_or(false))
+                            && self.oracle.type_contains_view(&subst_type(t, &map))
+                    })
                     .collect();
                 keeps.iter().any(|b| *b).then_some(keeps)
             }

@@ -924,6 +924,8 @@ fn check_with_files_inner(
         current_fn_keeps_this: false,
         current_fn_has_keeps: false,
         current_method_concrete: false,
+        current_freefn_exported: false,
+        addr_taken_fns: crate::borrowck::fns_with_address_taken(program),
         current_fn_param_regions: HashMap::new(),
         current_fn_return_region: None,
         current_fn_no_alloc: false,
@@ -1398,6 +1400,14 @@ struct SemaCx<'a> {
     /// lifted without requiring `#[keeps(this)]`. Generic impls and free
     /// fns keep the deny (their receivers/targets don't all resolve).
     current_method_concrete: bool,
+    /// Contract §3 narrowing, free-fn half: true iff the current fn is a
+    /// concrete free fn whose address is never taken — its computed
+    /// (param → ref-param) flows reach every caller (all calls are direct),
+    /// so the E0515 ref-target deny is lifted. Address-taken or generic
+    /// fns keep the deny: indirect calls carry no computed flows.
+    current_freefn_exported: bool,
+    /// Fns whose address is taken anywhere in the program (borrowck scan).
+    addr_taken_fns: std::collections::HashSet<String>,
     /// v0.0.12 (#2 region enforcement): map from parameter name to the explicit
     /// `borrow REGION T` region it carried, for parameters that had one. Used
     /// to validate that a region-annotated return borrows a same-region param.
@@ -4849,6 +4859,7 @@ impl SemaCx<'_> {
                 for m in &b.methods {
                     self.current_method_concrete =
                         b.target_generic_params.is_empty() && m.generic_params.is_empty();
+                    self.current_freefn_exported = false;
                     self.check_method(id, m);
                 }
                 self.current_method_concrete = false;
@@ -4859,6 +4870,7 @@ impl SemaCx<'_> {
                 for m in &b.methods {
                     self.current_method_concrete =
                         b.target_generic_params.is_empty() && m.generic_params.is_empty();
+                    self.current_freefn_exported = false;
                     self.check_enum_method(enum_id, m);
                 }
                 self.current_method_concrete = false;
@@ -7023,6 +7035,10 @@ impl SemaCx<'_> {
         }
         self.setup_returned_borrow_ctx(&f.params, &f.return_type, None);
         self.current_method_concrete = false;
+        self.current_freefn_exported = f.generic_params.is_empty()
+            && !f.is_extern
+            && !f.is_declaration
+            && !self.addr_taken_fns.contains(&f.name.name);
         self.current_fn_keeps_this = crate::attrs::has_keeps(&f.attributes, "this");
         self.current_fn_has_keeps = self.current_fn_keeps_this
             || crate::attrs::has_keeps(&f.attributes, "nothing");
@@ -15490,6 +15506,14 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 if target_is_receiver
                     && (self.current_fn_keeps_this || self.current_method_concrete)
                 {
+                    continue;
+                }
+                // Concrete, never-address-taken free fns: ref-param stores
+                // are exported as (src → dst) flows and every caller is a
+                // direct call that ties. Statics stay denied (no owner to
+                // tie); address-taken fns stay denied (indirect calls carry
+                // no flows).
+                if !target_is_receiver && !target_is_static && self.current_freefn_exported {
                     continue;
                 }
                 let troot_leaf = troot.rsplit('.').next().unwrap_or(&troot);
