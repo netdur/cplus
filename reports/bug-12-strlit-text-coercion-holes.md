@@ -1,6 +1,8 @@
 # Bug 12 — StrLit→Text coercion is per-site: enum payloads and generic args miss it
 
-- Status: probed 2026-08-01 during the audit (spurious E0302 confirmed); re-verify repros before fixing
+- Status: FIXED 2026-08-02, commit 1c08f2c — one predicate for the rule; enum-payload
+  position added on BOTH sides (sema coercion + codegen owning lowering)
+- Status (original): probed 2026-08-01 during the audit (spurious E0302 confirmed); re-verify repros before fixing
 - Severity: false error (rejects valid programs)
 - Area: sema (`cplus-core/src/sema.rs`), with codegen twins
 - Master report: `core-drift-audit-2026-08-01.md` (B12)
@@ -67,28 +69,43 @@ future expression position starts rejecting until someone adds a sixth copy. Eac
 site also has a codegen twin keyed by the same detection ("so sema and codegen stay in
 lockstep", comment near sema.rs:7425).
 
-## Fix
+## Fix — what was actually done, and why not the preferred one
 
-Structural (preferred — this is how the OPPOSITE direction already works):
+Both repros were re-verified and both fired.
 
-1. Move the rule into `check_expr`'s expected-type path, exactly like the Text→str
-   coercion at sema.rs:7879-7886: when `expected` is the designated string struct, the
-   actual is `str`, and the expression is a `StrLit`, record the span in a coercion table
-   and return the struct type.
-2. Codegen consumes the recorded spans (one table lookup at literal emission) instead of
-   re-detecting per site; delete the five inline sema copies and their codegen twins.
-3. Re-express the `==` carve-out through the same mechanism if possible (thread the
-   expected type into the BinOp-Eq operand check).
+The generic-argument half was ALREADY closed by bug-01: routing the generic call paths
+through `check_arg_with_move` means they inherit that site's copy of the rule. Confirmed —
+`g_bare::[text::Text]("lit")` now compiles. `take_g::[text::Text]("lit")` still errors, and
+that is CORRECT, not a residual hole: the concrete `fn f(take t: Text)` called as
+`f("lit")` errors identically. The rule is deliberately scoped to owning implicit-move
+params, because only that call-site lowering (`gen_place_coerced`) materializes the
+literal into a temp. The report's "Expected: compiles" for the `take` spelling would have
+made the generic path MORE permissive than the concrete one.
 
-Tactical (if the table change is too wide now): add the missing condition to the
-enum-payload check and both generic-arg paths — noting each is another copy of the drift.
+The preferred structural move (rule into `check_expr` + span table) was NOT taken, and
+should not be taken as stated. Each site's `WHETHER` differs — the arg site excludes
+`ref`/`take` for the codegen-capability reason above — so a blanket `check_expr` coercion
+would silently start accepting `f(ref t: Text)("lit")`, for which no lowering exists.
+
+What was done instead: the five inline copies now all call `is_str_lit_to_lang_string`,
+which already existed with one caller. Each site keeps its own `whether`; none restates
+the `what`. Then the missing position was added on BOTH sides:
+
+- sema: the enum-payload arg loop coerces (was: spurious E0302).
+- codegen: the enum-variant construction path lowers a `Text`-typed payload literal
+  through `gen_strlit_as_lang_string`, the twin of the struct-lit field arm.
+
+The codegen half is not optional. With only the sema fix the program compiled, printed
+correctly, and then ABORTED: the payload held a view of the static `@.str` and the enum's
+drop called `free()` on a constant.
 
 ## Verification
 
-1. Both repros compile; `Holder::Some("lit")` constructs a live `Text` (print it via a
-   match to verify content end-to-end).
-2. All five existing positions still coerce (let/return/field/arg/assign) — the e2e suite
-   has string tests; grep for `Text` coercion tests and run full suites.
-3. Negative control unchanged: passing a literal where `str` is expected stays `str`
-   (no accidental double-coercion), and `Text == Text` still errors if that is the current
-   contract (check the E0302 carve-out tests).
+1. DONE: both repros compile. The enum-payload one is run, not just compiled — and under
+   `--asan` as well, which is what caught the missing codegen half.
+2. DONE: all five original positions still coerce, pinned together with the new one in
+   `str_literal_coerces_to_text_in_every_owning_position` (cpc/tests/e2e.rs), which checks
+   stdout so a wrong-but-compiling lowering fails too.
+3. DONE: full suites green; `ref`/`take` params still reject a literal, matching the
+   concrete path.
+

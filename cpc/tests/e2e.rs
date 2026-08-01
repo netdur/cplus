@@ -21231,6 +21231,87 @@ fn gen_fn_protocol_survives_nested_option_instantiation() {
     assert_eq!(run.code(), Some(0), "filter must keep 2+3 = 5");
 }
 
+/// reports/bug-12: the `str` literal → owned `Text` rule was an inline copy at
+/// each value position, so the positions nobody copied it to rejected valid
+/// code — an enum payload gave a spurious E0302. The rule now has one home
+/// (`is_str_lit_to_lang_string`), and the enum-payload position has BOTH halves:
+/// sema's coercion and codegen's owning lowering. Half a fix is worse than none
+/// here — a coerced payload that codegen left as a view of the static `@.str`
+/// made the enum's drop `free()` a constant, so this test runs the program.
+#[test]
+fn str_literal_coerces_to_text_in_every_owning_position() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"textco\"\n\n[[bin]]\nname = \"textco\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::os::unix::fs::symlink(
+        format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
+        dir.join("vendor"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/io\" as io;\n\
+         import \"stdlib/text\" as text;\n\
+         \n\
+         enum Holder { Some(text::Text), None }\n\
+         struct S { t: text::Text }\n\
+         fn ret() -> text::Text { return \"ret\"; }\n\
+         fn arg(t: text::Text) -> i32 { return 0; }\n\
+         fn generic[T](v: T) -> i32 { return 0; }\n\
+         \n\
+         fn main() -> i32 {\n\
+             let a: text::Text = \"let\";\n\
+             var b: text::Text = \"init\";\n\
+             b = \"assign\";\n\
+             let s: S = S { t: \"field\" };\n\
+             let r: text::Text = ret();\n\
+             let n: i32 = arg(\"call-arg\") + generic::[text::Text](\"generic-arg\");\n\
+             // The position that had no copy of the rule.\n\
+             let h: Holder = Holder::Some(\"payload\");\n\
+             match h {\n\
+                 Holder::Some(t) => { io::println(t.view()); },\n\
+                 Holder::None => { io::println(\"none\"); },\n\
+             }\n\
+             io::println(a.view());\n\
+             io::println(b.view());\n\
+             io::println(s.t.view());\n\
+             io::println(r.view());\n\
+             return n;\n\
+         }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc build");
+    assert!(
+        out.status.success(),
+        "every owning position must coerce a literal: {}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    let run = Command::new(dir.join("target/debug/textco"))
+        .output()
+        .expect("run textco");
+    // Running it is the point: a coerced-but-not-lowered payload frees a
+    // constant at drop time and aborts.
+    assert!(
+        run.status.success(),
+        "coerced Text values must be owned, not views of the static literal: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "payload\nlet\nassign\nfield\nret\n"
+    );
+}
+
 /// reports/bug-10: `check_if` asked "does this branch diverge" through a
 /// private predicate with no `Match` arm, so a then-branch ending in a match
 /// whose every arm returns read as `()` and collided with the else-branch's

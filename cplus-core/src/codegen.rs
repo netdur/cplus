@@ -15611,9 +15611,25 @@ impl<'a> FnState<'a> {
                 .variants
                 .get(method_name)
             {
+                let payload_tys = self.types.enum_defs[enum_id.0 as usize]
+                    .variant_payloads
+                    .get(tag as usize)
+                    .cloned()
+                    .unwrap_or_default();
                 let mut payload_vals: Vec<(String, Ty)> = Vec::new();
-                for a in args {
-                    let (v, t) = self.gen_expr(a).expect("variant payload has value");
+                for (i, a) in args.iter().enumerate() {
+                    // TEXT.R1c: a string literal for a `Text`-typed payload
+                    // constructs an owned Text — the twin of the struct-lit
+                    // field arm, and of sema's `is_str_lit_to_lang_string`.
+                    // Without it the payload held a view of the static `@.str`
+                    // and the enum's drop `free()`d a constant (reports/bug-12).
+                    let declared = payload_tys.get(i);
+                    let (v, t) = match (&a.kind, declared) {
+                        (ExprKind::StrLit(s), Some(pty)) if self.is_lang_string_ty(pty) => {
+                            (self.gen_strlit_as_lang_string(s, pty), pty.clone())
+                        }
+                        _ => self.gen_expr(a).expect("variant payload has value"),
+                    };
                     // v0.0.3 drop-tracking fix: when a non-Copy value is consumed
                     // by a variant constructor (`Result::Ok(local_vec)`), the
                     // source binding's drop must be disarmed — the new enum value

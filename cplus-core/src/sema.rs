@@ -7421,14 +7421,11 @@ impl SemaCx<'_> {
                 let declared = ty.as_ref().map(|t| self.resolve_type(t));
                 // TEXT.R1: a bare string literal in a `Text`-typed `let`
                 // constructs an owned `Text` (codegen lowers the literal to a
-                // heap copy). Scoped to the `let` site — and only a bare literal
-                // — so sema and codegen stay in lockstep; elsewhere a literal is
-                // still `str` and an owned `Text` needs `from_str`.
-                let is_lang_string_literal_let = init
-                    .as_ref()
-                    .is_some_and(|e| matches!(e.kind, ExprKind::StrLit(_)))
-                    && matches!(&declared, Some(Ty::Struct(id))
-                        if self.designated_string_struct == Some(*id));
+                // heap copy). See `is_str_lit_to_lang_string`.
+                let is_lang_string_literal_let = match (init.as_ref(), declared.as_ref()) {
+                    (Some(e), Some(d)) => self.is_str_lit_to_lang_string(e, d),
+                    _ => false,
+                };
                 let (final_ty, assigned) = match init {
                     Some(_) if is_lang_string_literal_let => (declared.clone().unwrap(), true),
                     Some(init_expr) => {
@@ -7535,12 +7532,9 @@ impl SemaCx<'_> {
                 let ret = self.current_return.clone();
                 match (value, &ret) {
                     // TEXT.R1c: `return "literal";` from a `Text`-returning fn
-                    // constructs an owned Text (an rvalue — no partial move, no
-                    // borrow to track). Mirrors the let-site coercion; codegen
-                    // builds the owned value at the return site.
-                    (Some(e), Ty::Struct(id))
-                        if matches!(e.kind, ExprKind::StrLit(_))
-                            && self.designated_string_struct == Some(*id) => {}
+                    // constructs an owned Text; codegen builds the owned value
+                    // at the return site. See `is_str_lit_to_lang_string`.
+                    (Some(e), _) if self.is_str_lit_to_lang_string(e, &ret) => {}
                     (Some(e), _) => {
                         let t = self.check_expr(e, Some(ret.clone()));
                         // E0509: `return drop_typed.field;` moves a field out
@@ -10273,11 +10267,9 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                         );
                     }
                     // TEXT.R1c: a string literal for a `Text`-typed field
-                    // constructs an owned Text (an rvalue — no partial move).
-                    // Matches codegen's struct-lit field lowering.
-                    let is_lang_string_field = matches!(lit_field.value.kind, ExprKind::StrLit(_))
-                        && matches!(t, Ty::Struct(fid)
-                                if self.designated_string_struct == Some(*fid));
+                    // constructs an owned Text; matches codegen's struct-lit
+                    // field lowering. See `is_str_lit_to_lang_string`.
+                    let is_lang_string_field = self.is_str_lit_to_lang_string(&lit_field.value, t);
                     if !is_lang_string_field {
                         let vty = self.check_expr(&lit_field.value, Some(t.clone()));
                         // v0.0.14 soundness: the value is moved into the new
@@ -14219,6 +14211,14 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 );
             }
             for (a, expected_ty) in args.iter().zip(vdef.payload.iter()) {
+                // TEXT.R1c: a string literal for a `Text`-typed payload
+                // constructs an owned Text, exactly as it does for a
+                // `Text`-typed struct field. This position had no copy of the
+                // rule, so `Holder::Some("lit")` was a spurious E0302
+                // (reports/bug-12). See `is_str_lit_to_lang_string`.
+                if self.is_str_lit_to_lang_string(a, expected_ty) {
+                    continue;
+                }
                 let vty = self.check_expr(a, Some(expected_ty.clone()));
                 // v0.0.14 soundness: the payload value is moved into the new
                 // variant; reject a partial move of a non-Copy field/index out
@@ -14676,12 +14676,10 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         if self.bound_ref_arg_spans.contains(&arg.span) {
             return true;
         }
-        matches!(arg.kind, ExprKind::StrLit(_))
-            && !expected.mutable
+        !expected.mutable
             && !expected.borrow_
             && !expected.move_
-            && matches!(&expected.ty, Ty::Struct(id)
-                if self.designated_string_struct == Some(*id))
+            && self.is_str_lit_to_lang_string(arg, &expected.ty)
     }
 
     /// The post-type-check half of `check_arg_with_move`: the `ref`
@@ -16243,10 +16241,18 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
 
     /// TEXT.R1 (assignment): a bare string literal assigned into a binding of
     /// the designated owned-string type (`Text`) is constructed into an owned
-    /// `Text`, exactly like the `let`-init and `return` sites already do. Only a
-    /// literal coerces — an arbitrary `str` value still needs `.to_text()`. Used
-    /// to skip the would-be `str`-vs-`struct` mismatch at the assignment site so
-    /// `let mut s: Text = "a"; s = "b";` works like the `let`.
+    /// `Text`. Only a literal coerces — an arbitrary `str` value still needs
+    /// `.to_text()`. The coercion produces an rvalue: nothing to consume, no
+    /// partial move, no borrow to track, so a site that recognizes it skips the
+    /// would-be `str`-vs-`struct` mismatch and the move bookkeeping alike.
+    ///
+    /// THE one place this condition is written. It used to be an inline copy at
+    /// every value position — `let`, `return`, struct-literal field, call
+    /// argument, assignment — and the positions nobody copied it to rejected
+    /// valid code: an enum payload (`Holder::Some("lit")`) gave a spurious E0302
+    /// (reports/bug-12). Each site still decides WHETHER the rule applies to it
+    /// (a `ref`/`take` parameter is excluded — see `arg_bypasses_check`), but
+    /// none of them restates WHAT the rule is.
     fn is_str_lit_to_lang_string(&self, value: &Expr, target_ty: &Ty) -> bool {
         matches!(value.kind, ExprKind::StrLit(_))
             && matches!(target_ty, Ty::Struct(id) if self.designated_string_struct == Some(*id))
