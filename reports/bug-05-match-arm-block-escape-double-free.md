@@ -1,6 +1,8 @@
 # Bug 05 — Match arm `=> { x }` bypasses the E0337 borrowed-payload escape check (double-free)
 
-- Status: reproduced 2026-08-01 with `target/release/cpc` (bare `=> x` rejected, `=> { x }` accepted)
+- Status: FIXED 2026-08-01, commit bb24fee — escape found through value-transparent
+  wrappers via `collect_value_leaves`
+- Status (original): reproduced 2026-08-01 with `target/release/cpc` (bare `=> x` rejected, `=> { x }` accepted)
 - Severity: soundness (double-free)
 - Area: sema (`cplus-core/src/sema.rs`)
 - Master report: `core-drift-audit-2026-08-01.md` (B5)
@@ -77,13 +79,16 @@ also slip through.
 
 ## Verification
 
-1. `m5.cplus`: both `peek` and `peek2` now fail with E0337; deleting the `impl R { fn drop }`
-   block makes both compile (no Drop, no hazard).
-2. Add negative e2e tests for `=> { x }` and a nested block `=> { { x } }`.
-3. If a runtime double-free proof is wanted before fixing: give `R.drop` a counter and
-   drive `peek2` from `main`; ASan (`cpc test --asan` equivalent or direct clang -fsanitize)
-   flags the double drop.
-4. Full suites; grep e2e for existing E0337 tests to confirm they still pass.
+1. DONE: `m5.cplus` — both `peek` and `peek2` fail with E0337; deleting the
+   `impl R { fn drop }` block makes both compile (no Drop, no hazard).
+2. DONE: `match_arm_block_body_cannot_escape_a_borrowed_drop_payload` covers `=> x`,
+   `=> { x }`, and `=> { { x } }` in one table.
+3. Not needed — the defect is now a compile error, and step 2 pins it. The
+   companion test `match_arm_block_body_still_allows_reads_and_fresh_values` is the
+   more valuable one: it runs the shapes that must NOT start erroring (reading through
+   the payload, constructing a fresh value, and the same `=> { x }` body on a
+   non-Drop type).
+4. DONE: full suites green; the existing E0337 tests still pass.
 
 ## Notes
 

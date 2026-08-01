@@ -2221,6 +2221,96 @@ fn generic_move_self_through_bound_on_borrow_rejected_e0337() {
     );
 }
 
+/// reports/bug-05: the borrowed-payload escape check sniffed the arm body for
+/// a bare `Ident`, so `=> { x }` walked past it — sema said nothing and codegen
+/// bit-copied the Drop payload out of a field the owner still drops, a
+/// double-free. The check now peels value-transparent wrappers with
+/// `collect_value_leaves`, the same peeler the consuming sites use.
+#[test]
+fn match_arm_block_body_cannot_escape_a_borrowed_drop_payload() {
+    const PRELUDE: &str = "struct R { n: i64 }\n\
+         impl R { fn drop(ref this) { return; } }\n\
+         enum Holder { Some(R), None }\n\
+         struct Bag { h: Holder }\n";
+    // Every wrapper shape around the escape is rejected, the bare one included.
+    for body in ["x", "{ x }", "{ { x } }"] {
+        assert_compile_fails_with(
+            &format!(
+                "{PRELUDE}fn peek(b: Bag) -> R {{\n\
+                 let t: R = match b.h {{\n\
+                 Holder::Some(x) => {body},\n\
+                 Holder::None => R {{ n: 0 }},\n\
+                 }};\n\
+                 return t;\n\
+                 }}\n\
+                 fn main() -> i32 {{ return 0; }}\n"
+            ),
+            "E0337",
+        );
+    }
+}
+
+/// The other half of reports/bug-05: the shapes that must STAY legal. Reading
+/// through the borrowed payload and constructing a fresh value are not escapes,
+/// and without a `drop` there is no double-free to prevent — so the same
+/// `=> { x }` body compiles.
+#[test]
+fn match_arm_block_body_still_allows_reads_and_fresh_values() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("ok.cplus");
+    std::fs::write(
+        &src,
+        "struct D { n: i64 }\n\
+         impl D { fn drop(ref this) { return; } }\n\
+         enum HasDrop { Some(D), None }\n\
+         struct DropBag { h: HasDrop }\n\
+         struct P { n: i64 }\n\
+         enum Plain { Some(P), None }\n\
+         struct PlainBag { h: Plain }\n\
+         fn read_through(b: DropBag) -> i64 {\n\
+           return match b.h {\n\
+             HasDrop::Some(x) => { x.n },\n\
+             HasDrop::None => 0,\n\
+           };\n\
+         }\n\
+         fn fresh_value(b: DropBag) -> D {\n\
+           return match b.h {\n\
+             HasDrop::Some(x) => { D { n: x.n } },\n\
+             HasDrop::None => { D { n: 0 } },\n\
+           };\n\
+         }\n\
+         fn no_drop_no_hazard(b: PlainBag) -> P {\n\
+           return match b.h {\n\
+             Plain::Some(x) => { x },\n\
+             Plain::None => P { n: 0 },\n\
+           };\n\
+         }\n\
+         fn main() -> i32 {\n\
+           let d: DropBag = DropBag { h: HasDrop::Some(D { n: 7 }) };\n\
+           let p: PlainBag = PlainBag { h: Plain::Some(P { n: 2 }) };\n\
+           let a: i64 = read_through(d);\n\
+           let c: P = no_drop_no_hazard(p);\n\
+           return (a as i32) + (c.n as i32) - 9;\n\
+         }\n",
+    )
+    .unwrap();
+    let bin = dir.join("ok");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "non-escaping arm bodies must stay legal: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = Command::new(&bin).status().expect("run ok");
+    assert_eq!(run.code(), Some(0), "unexpected exit: {run}");
+}
+
 #[test]
 fn fn_pointer_to_c_struct_by_value_c_abi() {
     // C-ABI unification: a fn-pointer to a real C function that takes a struct

@@ -9727,24 +9727,38 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             // non-Copy binding fires. An OWNED scrutinee skips this — its
             // payloads are the match's to move.
             if scrutinee_borrowed {
-                // A bare-Ident arm body (`E::A(x) => x`) returns the borrowed
-                // payload AS the match value — an escape no consuming *site*
-                // sees (the match-result consumption happens outside this arm
-                // scope, where `x` is no longer visible), so it must be caught
+                // An arm body that RETURNS the borrowed payload as the match
+                // value (`E::A(x) => x`) is an escape no consuming *site*
+                // sees — the match-result consumption happens outside this arm
+                // scope, where `x` is no longer visible — so it must be caught
                 // here. Every OTHER escape — `=> consume(move x)`, `=> Wrap(x)`,
-                // `=> { let q = x; .. }` — moves `x` at a consuming site that now
-                // rejects it as a `BorrowedBinding` partial move (E0337), so this
-                // check handles only the bare return (no double-report).
-                let returned = match &arm.body.kind {
-                    ExprKind::Ident(n) => Some(n.clone()),
-                    _ => None,
-                };
+                // `=> { let q = x; .. }` — moves `x` at a consuming site that
+                // rejects it as a `BorrowedBinding` partial move (E0337), so
+                // this check handles only the returned value (no double-report).
+                //
+                // The escape must be found through value-transparent wrappers,
+                // not off the arm body's own syntax: `=> { x }` and `=> if c { x }
+                // else { y }` return the payload just as `=> x` does. Sniffing
+                // for a bare `Ident` let `=> { x }` through, and codegen then
+                // bit-copied the Drop payload out of a field the owner still
+                // drops — a double-free (reports/bug-05). `collect_value_leaves`
+                // is the in-file peeler the consuming sites already use, so the
+                // two agree on what "the value this expression produces" means.
+                let mut leaves: Vec<&Expr> = Vec::new();
+                collect_value_leaves(&arm.body, &mut leaves);
+                let returned: Vec<&str> = leaves
+                    .iter()
+                    .filter_map(|l| match &l.kind {
+                        ExprKind::Ident(n) => Some(n.as_str()),
+                        _ => None,
+                    })
+                    .collect();
                 for bn in match_pattern_binding_names(&arm.pattern) {
                     let ty = match self.lookup_local(&bn) {
                         Some(i) => i.ty.clone(),
                         None => continue,
                     };
-                    let escaped = returned.as_deref() == Some(bn.as_str());
+                    let escaped = returned.contains(&bn.as_str());
                     if escaped && !self.is_copy(&ty) {
                         self.err(
                             "E0337",
