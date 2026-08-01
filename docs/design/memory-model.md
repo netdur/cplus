@@ -37,17 +37,29 @@ annotations.
 ## 3. What the compiler enforces
 
 1. **Locally**: a view of a local owner cannot be returned (E0513), stored
-   into a static or through a `ref` target that outlives it, or kept live
-   across the owner's move (E0372) or scope exit.
+   into a static or through a `ref` target that outlives it (E0513/E0515),
+   or kept live across the owner's move (E0372).
 2. **Across calls**: a function's effect on view lifetimes is a set of flows
    from sources (parameters, receiver) to sinks (return, receiver, `ref`
    parameters, statics). Callers apply those flows: a returned view ties the
    result to the argument's owner; a kept view ties the receiver to the
    argument's owner. Flows are derived from the function body where the body
-   is readable, and from declarations (§5) where it is not.
+   is readable, and from declarations (§5) where it is not. A view parameter
+   stored into an escaping sink without a declared or computed flow is
+   rejected at the definition (E0515).
 3. **At scope exit**: a binding may not die while a live binding in an outer
-   scope holds a view of it. Assigning a view or carrier outward and letting
-   the owner fall out of scope is an error, the same as moving the owner.
+   scope holds a view of it (E0514). Assigning a view or carrier outward and
+   letting the owner fall out of scope is an error, the same as moving the
+   owner.
+
+Current enforcement state (2026-08-01): receiver flows are computed for
+concrete impl methods (transitive wrappers of `#[keeps(this)]` methods tie
+their callers with no declaration). The direct-store deny (E0515) stays in
+force even where a flow could be computed, because receiver shapes that do
+not resolve at call sites (generic impls, `Box[T]`-typed receivers) cannot
+be tied yet; a definition-site error is preferred over a silent gap. When
+receiver resolution moves post-monomorphization, the deny narrows to the
+genuinely opaque cases.
 
 ## 4. Out of contract
 
