@@ -3,6 +3,7 @@ import "events/events" as events;
 import "stdlib/fs" as fs;
 import "stdlib/io" as io;
 import "stdlib/result" as result;
+import "stdlib/text" as text;
 import "stdlib/vec" as vec;
 
 extern fn rmdir(path: *u8) -> i32;
@@ -24,7 +25,10 @@ fn reset_events(expected: str = "") {
     REMOVED = 0;
     RENAMED = 0;
     MATCHED = 0;
-    EXPECTED = expected;
+    // E0515: a borrowed view param cannot be stored into a static — the
+    // callee can't know the argument is a literal. Interning makes the
+    // stored view process-lifetime regardless of what the caller passes.
+    EXPECTED = text::intern(expected);
     return;
 }
 

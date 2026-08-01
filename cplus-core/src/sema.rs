@@ -921,6 +921,7 @@ fn check_with_files_inner(
         current_fn_param_names: std::collections::HashSet::new(),
         fn_return_borrows: crate::borrowck::free_fn_return_borrows(program),
         current_fn_ref_targets: std::collections::HashSet::new(),
+        current_fn_keeps_this: false,
         current_fn_param_regions: HashMap::new(),
         current_fn_return_region: None,
         current_fn_no_alloc: false,
@@ -1378,6 +1379,11 @@ struct SemaCx<'a> {
     /// the same class as storing into a `static` (bug 09). A `take` parameter
     /// is NOT here — it owns its value and dies with the frame.
     current_fn_ref_targets: std::collections::HashSet<String>,
+    /// Memory-model contract §5: true iff the function being body-checked is
+    /// declared `#[keeps(this)]` — its view parameters are allowed to be
+    /// stored into the receiver (E0515 is lifted for `this`-rooted targets;
+    /// borrowck makes every caller tie the receiver to the argument owners).
+    current_fn_keeps_this: bool,
     /// v0.0.12 (#2 region enforcement): map from parameter name to the explicit
     /// `borrow REGION T` region it carried, for parameters that had one. Used
     /// to validate that a region-annotated return borrows a same-region param.
@@ -5006,6 +5012,7 @@ impl SemaCx<'_> {
             );
         }
         self.setup_returned_borrow_ctx(&m.params, &m.return_type, m.receiver);
+        self.current_fn_keeps_this = crate::attrs::has_keeps(&m.attributes, "this");
         self.check_function_body(
             &m.body,
             self.current_return.clone(),
@@ -5096,6 +5103,7 @@ impl SemaCx<'_> {
             );
         }
         self.setup_returned_borrow_ctx(&m.params, &m.return_type, m.receiver);
+        self.current_fn_keeps_this = crate::attrs::has_keeps(&m.attributes, "this");
         self.check_function_body(
             &m.body,
             self.current_return.clone(),
@@ -5267,6 +5275,7 @@ impl SemaCx<'_> {
             );
         }
         self.setup_returned_borrow_ctx(&m.params, &m.return_type, m.receiver);
+        self.current_fn_keeps_this = crate::attrs::has_keeps(&m.attributes, "this");
         self.check_function_body(
             &m.body,
             self.current_return.clone(),
@@ -6987,6 +6996,7 @@ impl SemaCx<'_> {
             );
         }
         self.setup_returned_borrow_ctx(&f.params, &f.return_type, None);
+        self.current_fn_keeps_this = crate::attrs::has_keeps(&f.attributes, "this");
         self.check_function_body(
             &f.body,
             body_return,
@@ -15389,6 +15399,43 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     format!(
                         "cannot store a view of {} into {dest}: the view's owner is freed when the function returns, but {dest} outlives it, so the stored view would dangle",
                         self.view_owner_desc(&vroot)
+                    ),
+                    value.span,
+                );
+                break;
+            }
+            // E0515 (memory-model contract §3/§5): the root is a borrowed
+            // view PARAMETER (or view-carrying receiver) — the caller only
+            // guarantees those bytes for the duration of this call, so
+            // storing them into a target that outlives the call dangles as
+            // soon as the caller's owner drops. `str` is Copy, so the
+            // owns_value arm above never sees this shape (owns_value is
+            // true-but-irrelevant for Copy params — the historical
+            // laundering path). `#[keeps(this)]` lifts the receiver-store
+            // case: the store becomes a declared flow and borrowck makes
+            // every CALLER tie the receiver to the argument's owner.
+            let root_is_param_view = self.current_fn_param_names.contains(key)
+                && (matches!(info.ty, Ty::Str | Ty::Slice(_)) || self.ty_contains_view(&info.ty));
+            if root_is_param_view {
+                let target_is_receiver = troot == "self" || troot == "this";
+                if self.current_fn_keeps_this && target_is_receiver {
+                    continue;
+                }
+                let troot_leaf = troot.rsplit('.').next().unwrap_or(&troot);
+                let dest = if target_is_static {
+                    format!("static `{troot_leaf}`")
+                } else {
+                    format!("`ref` target `{troot_leaf}`")
+                };
+                let hint = if target_is_receiver {
+                    " Own the bytes (a `Text` field), intern them (`text::intern`), or declare the method `#[keeps(this)]` so every caller ties the receiver to the argument's owner."
+                } else {
+                    " Own the bytes (`Text`), or intern them (`text::intern`) for a process-lifetime view."
+                };
+                self.err(
+                    "E0515",
+                    format!(
+                        "cannot store the view parameter `{vroot}` into {dest}: the caller only guarantees `{vroot}`'s bytes for this call, but {dest} outlives it, so the stored view would dangle.{hint}"
                     ),
                     value.span,
                 );

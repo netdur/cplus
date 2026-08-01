@@ -1872,6 +1872,28 @@ fn bad() {
 '''
 
 [[code]]
+id = "E0515"
+title = "Storing a borrowed view parameter into a target that outlives the call"
+category = "Ownership and borrowing"
+severity = "error"
+repro = "checked"
+lang = "cplus"
+verified = true
+emit_site = "cplus-core/src/sema.rs (check_view_store_escape, param-view arm)"
+test = "cpc/tests/e2e.rs:view_param_stored_into_ref_this_rejected_e0515"
+cause = "A `str` / `T[]` parameter (or a view-carrying one) is stored into a `static`, a `ref` parameter target, or a field of `ref this`. The caller only guarantees the view's bytes for the duration of the call; the target outlives it, so the stored view dangles as soon as the caller's owner drops. `str` params previously slipped through the owned-root check because `str` is Copy — this was the laundering path behind the stored-key use-after-free family."
+fix = "Own the bytes (a `Text` field), intern them (`text::intern` returns a process-lifetime view), or — for the receiver-store case only — declare the method `#[keeps(this)]`: the store becomes a declared flow and every caller ties the receiver to the argument's owner (E0372/E0514 then guard the owner)."
+example = '''
+struct Holder { view: str }
+impl Holder {
+    fn set(ref this, k: str) {
+        this.view = k;
+        return;
+    }
+}
+'''
+
+[[code]]
 id = "E0612"
 title = "Interpolated type does not implement `ToText`"
 category = "Ownership and borrowing"

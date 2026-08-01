@@ -5833,6 +5833,151 @@ fn text_coercion_param_root_compiles() {
     assert!(ok, "a param-rooted coerced view must compile; stderr: {stderr}");
 }
 
+// ── Memory-model contract §3.3 / §5 (2026-08-01): the scope-exit and
+// param-store escapes. The compile-clean-then-ASan-UAF probes behind these
+// live in bugs/mem/; each route below was a verified safe-code
+// use-after-free before the checks landed.
+
+#[test]
+fn carrier_assigned_outward_over_dying_owner_rejected_e0514() {
+    // skel.txt's route: the view arrives as a str param, escapes in the
+    // returned carrier (`make`), the carrier is assigned to an OUTER
+    // binding, and the owner dies at the block's end. The tie machinery
+    // records the borrow (moving the owner already fired E0372) — the
+    // scope exit must reject it too.
+    let (ok, stderr) = try_compile_snippet(&format!(
+        "{LANG_STR_PRELUDE}struct Data {{ key: str }}\n\
+         fn make(k: str) -> Data {{ return Data {{ key: k }}; }}\n\
+         fn main() -> i32 {{\n\
+             var d: Data = Data {{ key: \"\" }};\n\
+             {{\n\
+                 let s: LStr = mk();\n\
+                 d = make(s);\n\
+             }}\n\
+             return 0;\n\
+         }}\n"
+    ));
+    assert!(!ok, "expected E0514 on carrier outliving its owner's scope");
+    assert!(stderr.contains("E0514"), "expected E0514, got: {stderr}");
+}
+
+#[test]
+fn view_param_stored_into_ref_this_rejected_e0515() {
+    // The flow FnEntry's return-borrow vocabulary cannot express: a view
+    // param stored through the receiver. Without `#[keeps(this)]` the
+    // definition itself is rejected.
+    let (ok, stderr) = try_compile_snippet(
+        "struct Holder { view: str }\n\
+         impl Holder {\n\
+             fn set(ref this, k: str) {\n\
+                 this.view = k;\n\
+                 return;\n\
+             }\n\
+         }\n\
+         fn main() -> i32 { return 0; }\n",
+    );
+    assert!(!ok, "expected E0515 on an undeclared view-param store");
+    assert!(stderr.contains("E0515"), "expected E0515, got: {stderr}");
+}
+
+#[test]
+fn view_param_stored_into_static_rejected_e0515() {
+    let (ok, stderr) = try_compile_snippet(
+        "static KEY: str = \"\";\n\
+         fn stash(k: str) {\n\
+             KEY = k;\n\
+             return;\n\
+         }\n\
+         fn main() -> i32 { return 0; }\n",
+    );
+    assert!(!ok, "expected E0515 on a view param stored into a static");
+    assert!(stderr.contains("E0515"), "expected E0515, got: {stderr}");
+}
+
+#[test]
+fn keeps_this_setter_compiles_and_caller_ties_e0514() {
+    // `#[keeps(this)]` lifts E0515 at the definition — the store becomes a
+    // declared flow — and the CALLER now owes the lifetime: the receiver
+    // borrows the argument's owner, so the owner dying first is E0514.
+    let (ok, stderr) = try_compile_snippet(&format!(
+        "{LANG_STR_PRELUDE}struct Holder {{ view: str }}\n\
+         impl Holder {{\n\
+             #[keeps(this)]\n\
+             fn set(ref this, k: str) {{\n\
+                 this.view = k;\n\
+                 return;\n\
+             }}\n\
+         }}\n\
+         fn main() -> i32 {{\n\
+             var h: Holder = Holder {{ view: \"\" }};\n\
+             {{\n\
+                 let t: LStr = mk();\n\
+                 h.set(t);\n\
+             }}\n\
+             return 0;\n\
+         }}\n"
+    ));
+    assert!(!ok, "expected E0514 at the keeps(this) call site");
+    assert!(stderr.contains("E0514"), "expected E0514, got: {stderr}");
+}
+
+#[test]
+fn keeps_this_sound_orders_compile() {
+    // Positive guards: owner outliving the receiver, a literal argument
+    // (static bytes, nothing to tie), and a block-local receiver under an
+    // outer owner must all stay legal.
+    let (ok, stderr) = try_compile_snippet(&format!(
+        "{LANG_STR_PRELUDE}struct Holder {{ view: str }}\n\
+         impl Holder {{\n\
+             #[keeps(this)]\n\
+             fn set(ref this, k: str) {{\n\
+                 this.view = k;\n\
+                 return;\n\
+             }}\n\
+         }}\n\
+         fn main() -> i32 {{\n\
+             let t: LStr = mk();\n\
+             var h: Holder = Holder {{ view: \"\" }};\n\
+             h.set(t);\n\
+             h.set(\"literal\");\n\
+             {{\n\
+                 var inner: Holder = Holder {{ view: \"\" }};\n\
+                 inner.set(t);\n\
+             }}\n\
+             return 0;\n\
+         }}\n"
+    ));
+    assert!(ok, "sound keeps(this) orders must compile; stderr: {stderr}");
+}
+
+#[test]
+fn keeps_nothing_unties_view_return() {
+    // `#[keeps(nothing)]` suppresses the conservative Rule E-VIEW-FN tie:
+    // an intern-shaped fn's result may outlive the argument's owner. The
+    // same program without the attribute is the E0514 control below.
+    let with_attr = format!(
+        "{LANG_STR_PRELUDE}#[keeps(nothing)]\n\
+         fn intern_like(s: str) -> str {{ return \"\"; }}\n\
+         fn main() -> i32 {{\n\
+             var key: str = \"\";\n\
+             {{\n\
+                 let t: LStr = mk();\n\
+                 key = intern_like(t);\n\
+             }}\n\
+             return 0;\n\
+         }}\n"
+    );
+    let (ok, stderr) = try_compile_snippet(&with_attr);
+    assert!(ok, "keeps(nothing) must untie the return; stderr: {stderr}");
+
+    let without_attr = with_attr.replace("#[keeps(nothing)]\n", "");
+    let (ok, stderr) = try_compile_snippet(&without_attr);
+    assert!(
+        !ok && stderr.contains("E0514"),
+        "without keeps(nothing) the conservative tie must fire E0514; got ok={ok}, stderr: {stderr}"
+    );
+}
+
 #[test]
 fn let_str_eq_if_expression_compiles_and_runs() {
     // v0.0.12 regression: `let v: str = if cond { "a" } else { "b" };` crashed

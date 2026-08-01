@@ -4,7 +4,7 @@
 
 Every C+ diagnostic carries a numbered code, a source span, and often a machine-applicable suggestion. `cpc --diagnostics=json` emits the same information in a machine-readable shape for editors and agents. Codes prefixed with **W** are non-fatal warnings; the build continues. The normative ranges and what each phase owns are fixed in [§20 of the language specification](/docs/spec).
 
-This is the complete index — **165 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **127** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
+This is the complete index — **167 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **129** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
 
 ## Lexical
 
@@ -1185,6 +1185,48 @@ fn bad() -> str {
 **Fix.** Own the bytes instead: store/return `Text` / `Vec[T]`, or borrow the view from a non-`take` parameter. Literal-backed views ('static bytes) escape freely.
 
 <sub>repro: checked · cplus-core/src/sema.rs:12259 · test cpc/tests/e2e.rs:return_borrow_of_local_owned_rejected_e0513</sub>
+
+### E0514 · Owner goes out of scope while a view of it is still live
+
+A binding declared inside a block owns bytes that a view (or a view-carrying struct/enum) bound OUTSIDE the block still reads. The owner is dropped when the block ends, so the outer binding dangles from that point on. Assigning a view outward is the same escape as moving the owner while borrowed (E0372), caught at the scope boundary instead of at a move.
+
+```cplus
+struct Buf { x: i32 }
+impl Buf {
+    fn drop(ref this) { return; }
+    fn view(this) -> str { return ""; }
+}
+fn bad() {
+    var s: str = "";
+    {
+        let t: Buf = Buf { x: 1 };
+        s = t.view();
+    }
+    return;
+}
+```
+
+**Fix.** Declare the borrower inside the block, extend the owner's scope past the borrower's last use, or store owned bytes instead: `Text`, or `text::intern` when a set-once process-lifetime view is wanted.
+
+<sub>repro: checked · cplus-core/src/borrowck.rs (walk_block_in_scope scope-exit check) · test cplus-core/src/borrowck.rs:scope_exit_under_live_borrow_fires_e0514</sub>
+
+### E0515 · Storing a borrowed view parameter into a target that outlives the call
+
+A `str` / `T[]` parameter (or a view-carrying one) is stored into a `static`, a `ref` parameter target, or a field of `ref this`. The caller only guarantees the view's bytes for the duration of the call; the target outlives it, so the stored view dangles as soon as the caller's owner drops. `str` params previously slipped through the owned-root check because `str` is Copy — this was the laundering path behind the stored-key use-after-free family.
+
+```cplus
+struct Holder { view: str }
+impl Holder {
+    fn set(ref this, k: str) {
+        this.view = k;
+        return;
+    }
+}
+```
+
+**Fix.** Own the bytes (a `Text` field), intern them (`text::intern` returns a process-lifetime view), or — for the receiver-store case only — declare the method `#[keeps(this)]`: the store becomes a declared flow and every caller ties the receiver to the argument's owner (E0372/E0514 then guard the owner).
+
+<sub>repro: checked · cplus-core/src/sema.rs (check_view_store_escape, param-view arm) · test cpc/tests/e2e.rs:view_param_stored_into_ref_this_rejected_e0515</sub>
 
 ### E0612 · Interpolated type does not implement `ToText`
 

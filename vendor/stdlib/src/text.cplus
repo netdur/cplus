@@ -808,6 +808,63 @@ impl CString {
     }
 }
 
+// ─────────────────────────── intern table ───────────────────────────
+// A process-lifetime string table. `intern(s)` copies `s`'s bytes into the
+// table (once per distinct string) and returns a view of the table's copy.
+// The table is never freed, so the returned `str` is valid for the rest of
+// the process: it can sit in a set-once `str` field (a widget key, a label)
+// with no tie to the argument's owner. Equal strings intern to the SAME
+// bytes, so comparing two interned keys can be a pointer compare.
+//
+// `#[keeps(nothing)]` is the declared summary (memory-model contract §5):
+// the returned view borrows no argument — without it the checker's
+// conservative tie would pin the argument's owner for the view's lifetime,
+// which is exactly what interning exists to avoid.
+//
+// Not thread-safe: intern from one thread (keys are built on the UI/main
+// thread). Node layout: { next: *u8 @0, hash: u64 @8, len: usize @16,
+// bytes @24 }, singly linked, newest first; lookup compares hash, then
+// length, then bytes.
+
+static INTERN_HEAD: *u8 = 0 as *u8;
+
+#[keeps(nothing)]
+fn intern(s: str) -> str {
+    let n: usize = #str_len(s);
+    if n == (0 as usize) {
+        return "";
+    }
+    let h: u64 = hash_str(s);
+    var node: *u8 = INTERN_HEAD;
+    while node.is_not_null() {
+        let node_hash: u64 = { *((node + (8 as usize)) as *u64) };
+        let node_len: usize = { *((node + (16 as usize)) as *usize) };
+        if node_hash == h {
+            if node_len == n {
+                let bytes: *u8 = { node + (24 as usize) };
+                if region_matches(bytes, 0 as usize, { #str_ptr(s) }, n) {
+                    return { #str_from_raw_parts(bytes, node_len) };
+                }
+            }
+        }
+        node = { *(node as **u8) };
+    }
+    let raw: *u8 = { malloc((24 as usize) +% n) };
+    if raw.is_null() {
+        // Allocation failure: a value producer recovers — the empty view is
+        // always valid. The caller sees a missing key, not a trap.
+        return "";
+    }
+    {
+        *(raw as **u8) = INTERN_HEAD;
+        *((raw + (8 as usize)) as *u64) = h;
+        *((raw + (16 as usize)) as *usize) = n;
+        memcpy(raw + (24 as usize), #str_ptr(s), n);
+        INTERN_HEAD = raw;
+    }
+    return { #str_from_raw_parts(raw + (24 as usize), n) };
+}
+
 // ───────────────────────────── tests ─────────────────────────────
 // Package unit tests for Text. Run standalone (no e2e):
 //     cd vendor/stdlib && cpc test
@@ -1510,5 +1567,44 @@ fn from_utf8_accepts_max_scalar_and_rejects_above() {
         option::Option[Text]::Some(_t) => { assert false; }
         option::Option[Text]::None => { }
     }
+    return;
+}
+
+#[test]
+fn intern_view_outlives_its_source_text() {
+    var key: str = "";
+    {
+        let t: Text = from_str("row_").appending("42");
+        key = intern(t);
+    }
+    assert key.count() == (6 as usize);
+    assert key.compare("row_42") == (0 as i32);
+    return;
+}
+
+#[test]
+fn intern_dedups_equal_strings_to_one_pointer() {
+    let a: str = intern("dedup_key");
+    let t: Text = from_str("dedup_").appending("key");
+    let b: str = intern(t);
+    assert ({ #str_ptr(a) } as usize) == ({ #str_ptr(b) } as usize);
+    assert a.compare(b) == (0 as i32);
+    return;
+}
+
+#[test]
+fn intern_distinct_strings_get_distinct_bytes() {
+    let a: str = intern("alpha_key");
+    let b: str = intern("beta_key");
+    assert ({ #str_ptr(a) } as usize) != ({ #str_ptr(b) } as usize);
+    assert a.compare("alpha_key") == (0 as i32);
+    assert b.compare("beta_key") == (0 as i32);
+    return;
+}
+
+#[test]
+fn intern_empty_is_empty() {
+    let e: str = intern("");
+    assert e.is_empty();
     return;
 }

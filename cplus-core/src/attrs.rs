@@ -63,6 +63,19 @@ struct AttrSpec {
     allow_duplicate: bool,
 }
 
+/// Memory-model contract §5 (docs/design/memory-model.md): true iff `attrs`
+/// carries `#[keeps(ARG)]` for the given argument (`"this"` / `"nothing"`).
+/// Shared by sema (E0515 exemption, return-tie suppression) and borrowck
+/// (caller-side receiver ties, elision short-circuit).
+pub fn has_keeps(attrs: &[Attribute], arg: &str) -> bool {
+    attrs.iter().any(|a| {
+        a.path.name == "keeps"
+            && a.args
+                .iter()
+                .any(|g| matches!(g, AttrArg::Ident(i) if i.name == arg))
+    })
+}
+
 const KNOWN_ATTRS: &[AttrSpec] = &[
     AttrSpec {
         name: "test",
@@ -97,6 +110,21 @@ const KNOWN_ATTRS: &[AttrSpec] = &[
         name: "link_name",
         args: ArgsSpec::ExactlyOneStr,
         targets: TARGET_FN,
+        allow_duplicate: false,
+    },
+    // Memory-model contract §5: `#[keeps(...)]` — a declared view-flow
+    // summary for a function whose body the checker cannot read through
+    // (raw-pointer stores, extern). `keeps(this)` = view arguments survive
+    // inside the receiver (callers tie the receiver to each view argument's
+    // owner; the callee-side store deny E0515 is lifted). `keeps(nothing)` =
+    // the function copies what it needs; its returned view borrows no
+    // argument (suppresses the Rule E-VIEW/E1/E3 conservative tie —
+    // `text::intern` is the canonical case). Trusted, not verified — the
+    // same accountability model as `opaque` on a raw-pointer field.
+    AttrSpec {
+        name: "keeps",
+        args: ArgsSpec::OneIdentFrom(&["this", "nothing"]),
+        targets: TARGET_FN | TARGET_METHOD,
         allow_duplicate: false,
     },
     // v0.0.10 Phase 1: `#[no_alloc]` — verifiable real-time contract.

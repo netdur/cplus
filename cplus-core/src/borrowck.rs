@@ -606,6 +606,14 @@ struct FnEntry {
     /// `Shared` so the Default-derive stays sound for entries that lack
     /// elision info entirely.
     return_borrow_flavor: Option<BorrowFlavor>,
+    /// Memory-model contract §5: declared `#[keeps(this)]` — view
+    /// arguments survive inside the receiver. `apply_call` makes the
+    /// receiver a live borrower of every view argument's owner.
+    keeps_this: bool,
+    /// Parallel to `param_moves`: true iff the parameter's declared type
+    /// is a view or transitively carries one. Selects which arguments a
+    /// `keeps(this)` call ties.
+    param_view_flags: Vec<bool>,
 }
 
 #[derive(Debug, Default)]
@@ -668,6 +676,12 @@ impl SigTable {
                             param_muts: f.params.iter().map(|p| p.mutable).collect(),
                             return_borrow,
                             return_borrow_flavor,
+                            keeps_this: crate::attrs::has_keeps(&f.attributes, "this"),
+                            param_view_flags: f
+                                .params
+                                .iter()
+                                .map(|p| oracle.type_contains_view(&p.ty))
+                                .collect(),
                         },
                     );
                 }
@@ -704,6 +718,12 @@ impl SigTable {
                                 param_muts: m.params.iter().map(|p| p.mutable).collect(),
                                 return_borrow,
                                 return_borrow_flavor,
+                                keeps_this: crate::attrs::has_keeps(&m.attributes, "this"),
+                                param_view_flags: m
+                                    .params
+                                    .iter()
+                                    .map(|p| oracle.type_contains_view(&p.ty))
+                                    .collect(),
                             },
                         );
                     }
@@ -806,6 +826,12 @@ fn detect_fn_elision_with_flavor(
     f: &Function,
     oracle: &CopyOracle,
 ) -> (Option<ReturnBorrowSource>, Option<BorrowFlavor>) {
+    // Memory-model contract §5: `#[keeps(nothing)]` declares the return
+    // borrows no argument (the body copies what it needs — `text::intern`).
+    // Declared summaries beat guessed ones: skip the whole rule ladder.
+    if crate::attrs::has_keeps(&f.attributes, "nothing") {
+        return (None, None);
+    }
     // 6BC.5: explicit annotations short-circuit elision.
     if let Some((src, flavor)) = detect_fn_explicit_regions(f, oracle) {
         return (Some(src), Some(flavor));
@@ -944,6 +970,11 @@ fn detect_method_elision_with_flavor(
     m: &Method,
     oracle: &CopyOracle,
 ) -> (Option<ReturnBorrowSource>, Option<BorrowFlavor>) {
+    // Memory-model contract §5: `#[keeps(nothing)]` — declared no-tie
+    // summary, same as the free-fn form.
+    if crate::attrs::has_keeps(&m.attributes, "nothing") {
+        return (None, None);
+    }
     if let Some(s) = detect_method_e2_mut(b, m, oracle) {
         return (Some(s), Some(BorrowFlavor::Exclusive));
     }
@@ -1928,6 +1959,44 @@ impl<'p> Analyzer<'p> {
             borrower.to_string(),
             unique.iter().map(|(p, _)| p.clone()).collect(),
         );
+        for (place, flavor) in unique {
+            let set = self.live_borrows.entry(place.clone()).or_default();
+            set.insert(borrower.to_string(), borrower_span);
+            let new_state = match flavor {
+                BorrowFlavor::Shared => PlaceState::BorrowedShared(set.len() as u32),
+                BorrowFlavor::Exclusive => PlaceState::BorrowedExclusive(borrower.to_string()),
+            };
+            state.insert(place, new_state);
+        }
+    }
+
+    /// Memory-model contract §5: like `acquire_borrows`, but UNIONS into
+    /// the borrower's existing back-pointer list instead of replacing it.
+    /// A `#[keeps(this)]` receiver accumulates a borrow per call
+    /// (`names.push(a); names.push(b);` pins both owners); replacing the
+    /// list would leak the earlier edge at release time and leave a stale
+    /// `live_borrows` entry to false-fire E0372/E0514 later.
+    fn extend_borrows(
+        &mut self,
+        places: Vec<(Place, BorrowFlavor)>,
+        borrower: &str,
+        borrower_span: Span,
+        state: &mut BTreeMap<Place, PlaceState>,
+    ) {
+        let mut seen = std::collections::BTreeSet::new();
+        let unique: Vec<(Place, BorrowFlavor)> = places
+            .into_iter()
+            .filter(|(p, _)| seen.insert(p.clone()))
+            .collect();
+        let back = self
+            .binding_borrows_from
+            .entry(borrower.to_string())
+            .or_default();
+        for (p, _) in &unique {
+            if !back.contains(p) {
+                back.push(p.clone());
+            }
+        }
         for (place, flavor) in unique {
             let set = self.live_borrows.entry(place.clone()).or_default();
             set.insert(borrower.to_string(), borrower_span);
@@ -3423,6 +3492,7 @@ impl Analyzer<'_> {
         // lookup the cross-statement receiver check uses) and record the
         // receiver as a claim of its declared kind.
         let mut receiver_claim: Option<(ClaimKind, &Expr)> = None;
+        let mut keeps_this_tie: Option<(String, Vec<bool>)> = None;
         if let ExprKind::Field {
             receiver,
             name: method,
@@ -3447,6 +3517,10 @@ impl Analyzer<'_> {
                         mut_flags = Some(entry.param_muts.clone());
                     }
                     receiver_claim = entry.receiver_claim.map(|k| (k, &**receiver));
+                    if entry.keeps_this {
+                        keeps_this_tie =
+                            Some((recv_name.clone(), entry.param_view_flags.clone()));
+                    }
                 }
             }
         }
@@ -3485,6 +3559,45 @@ impl Analyzer<'_> {
                 }
             }
             self.apply_expr(arg, state);
+        }
+
+        // Memory-model contract §5: a `#[keeps(this)]` method stores its
+        // view arguments in the receiver. The receiver becomes a live
+        // borrower of each view argument's owner, so the owner can neither
+        // move (E0372) nor die at scope exit (E0514) while the receiver
+        // lives. A view-binding argument contributes the owners it already
+        // borrows; an owner passed by coercion (`push(t)`) contributes its
+        // own place. Literal arguments have no root and tie nothing
+        // ('static bytes).
+        if let Some((recv_name, view_flags)) = keeps_this_tie {
+            let mut sources: Vec<(Place, BorrowFlavor)> = Vec::new();
+            for (i, arg) in args.iter().enumerate() {
+                if !view_flags.get(i).copied().unwrap_or(false) {
+                    continue;
+                }
+                // A view-producing call argument (`h.set(t.view())`)
+                // classifies to its owner places directly. A bare place
+                // argument is either the owner itself (coercion:
+                // `h.set(t)`) or a view binding whose recorded owners we
+                // inherit (`h.set(s)`).
+                let mut arg_sources = self.classify_borrow_source(arg);
+                if arg_sources.is_empty() {
+                    if let Some(place) = place_from_expr(arg) {
+                        if let Some(owners) = self.binding_borrows_from.get(&place.root) {
+                            for o in owners.clone() {
+                                arg_sources.push((o, BorrowFlavor::Shared));
+                            }
+                        }
+                        if self.binding_is_non_copy(&place.root) {
+                            arg_sources.push((place, BorrowFlavor::Shared));
+                        }
+                    }
+                }
+                sources.extend(arg_sources.into_iter().filter(|(p, _)| p.root != recv_name));
+            }
+            if !sources.is_empty() {
+                self.extend_borrows(sources, &recv_name, callee.span, state);
+            }
         }
     }
 

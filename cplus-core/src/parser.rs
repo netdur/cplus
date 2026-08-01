@@ -536,6 +536,19 @@ impl Parser {
                 self.bump();
                 Ok(AttrArg::Str(s, tok.span))
             }
+            // Memory-model contract §5: `#[keeps(this)]` names the receiver
+            // in argument position. `this` lexes as a keyword
+            // (TokenKind::SelfLower), so admit it here as the bare-ident
+            // arg "this"; the attrs validator's allow-list decides where
+            // it's legal.
+            TokenKind::SelfLower => {
+                let tok = self.peek().clone();
+                self.bump();
+                Ok(AttrArg::Ident(Ident {
+                    name: "this".to_string(),
+                    span: tok.span,
+                }))
+            }
             TokenKind::Ident(_) => {
                 let name = self.expect_ident()?;
                 if self.eat(&TokenKind::Eq) {
