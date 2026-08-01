@@ -2368,6 +2368,44 @@ fn card(take b: Builder) -> Node {
     return n;
 }
 
+// ---- flexible space + stacking ----
+// Two containers the primitives above express but nothing named: both are
+// layout and nothing else, so they belong beside row/column rather than in a
+// consumer.
+
+// A flexible gap: an empty box that absorbs the leftover main-axis space.
+// Between two items it pushes them apart; before one it pushes it to the end.
+//
+//     row { box().width(40.0f64)  spacer()  box().width(40.0f64) }
+//
+fn spacer() -> Node {
+    var n: Node = Node::new();
+    n.style.flex_grow = 1.0f64;
+    n.style.flex_shrink = 1.0f64;
+    n.style.flex_basis = StyleLength::points(0.0f64);
+    return n;
+}
+
+// Children stacked on one another instead of in sequence: every child is taken
+// out of flow, so they share the container's origin and the container sizes
+// from its own style rather than from their sum. Give a child insets
+// (`set_position`) to place it within the box.
+fn zstack(take b: Builder) -> Node {
+    var n: Node = column(b);
+    let count: usize = n.child_count();
+    var i: usize = 0 as usize;
+    while i < count {
+        match n.child_ptr(i) {
+            option::Option[*Node]::Some(c) => {
+                { (*c).style.position_type = PositionType::Absolute };
+            }
+            option::Option[*Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return n;
+}
+
 // ---- HIG modifiers (fluent) ----
 impl Node {
     // Guarantee the 44x44pt minimum tap target — the item never lays out smaller.
@@ -4515,4 +4553,64 @@ fn test_grow_fills_through_deeply_nested_growing_wrappers() {
     assert approx(must(root.child_frame(1 as usize)).height, 576.0f64);
 }
 
+// ---- spacer / zstack ----
 
+#[test]
+fn test_spacer_pushes_siblings_apart() {
+    var b: Builder = Builder::new();
+    b.add(box().width(40.0f64).height(20.0f64));
+    b.add(spacer());
+    b.add(box().width(40.0f64).height(20.0f64));
+    var root: Node = row(b);
+    root.calculate_layout(width: 200.0f64, height: 40.0f64);
+    assert approx(must(root.child_frame(0 as usize)).left, 0.0f64);
+    assert approx(must(root.child_frame(2 as usize)).left, 160.0f64);
+}
+
+#[test]
+fn test_spacer_leading_pushes_one_item_to_the_end() {
+    var b: Builder = Builder::new();
+    b.add(spacer());
+    b.add(box().width(50.0f64).height(20.0f64));
+    var root: Node = row(b);
+    root.calculate_layout(width: 200.0f64, height: 40.0f64);
+    assert approx(must(root.child_frame(1 as usize)).left, 150.0f64);
+}
+
+#[test]
+fn test_spacer_splits_free_space_evenly() {
+    var b: Builder = Builder::new();
+    b.add(spacer());
+    b.add(box().width(20.0f64).height(20.0f64));
+    b.add(spacer());
+    var root: Node = row(b);
+    root.calculate_layout(width: 120.0f64, height: 40.0f64);
+    assert approx(must(root.child_frame(1 as usize)).left, 50.0f64);
+}
+
+#[test]
+fn test_zstack_children_share_an_origin() {
+    var b: Builder = Builder::new();
+    b.add(box().width(30.0f64).height(30.0f64));
+    b.add(box().width(60.0f64).height(10.0f64));
+    var root: Node = zstack(b);
+    root.calculate_layout(width: 100.0f64, height: 100.0f64);
+    let a: Frame = must(root.child_frame(0 as usize));
+    let c: Frame = must(root.child_frame(1 as usize));
+    assert approx(a.left, c.left);
+    assert approx(a.top, c.top);
+    assert approx(a.width, 30.0f64);
+    assert approx(c.width, 60.0f64);
+}
+
+#[test]
+fn test_zstack_does_not_sum_its_children() {
+    var b: Builder = Builder::new();
+    b.add(box().width(30.0f64).height(30.0f64));
+    b.add(box().width(30.0f64).height(30.0f64));
+    var root: Node = zstack(b);
+    root.style.width = StyleLength::points(80.0f64);
+    root.calculate_layout();
+    assert approx(root.frame().width, 80.0f64);
+    assert approx(root.frame().height, 0.0f64);   // out of flow: nothing to stack
+}

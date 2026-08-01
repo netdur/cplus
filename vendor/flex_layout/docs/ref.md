@@ -201,11 +201,20 @@ Line naming matches CSS `[sidebar] 200px`:
 | Piece | Names |
 |---|---|
 | Builder | `Builder::new` / `add(take)` / `finish` |
-| Containers | `row` / `column` / `box` |
+| Containers | `row` / `column` / `box` / `zstack` |
+| Flexible space | `spacer()` — an empty box that absorbs leftover main-axis space |
 | Fluent | `width`, `height`, `width_percent`, `height_percent`, `grow`, `shrink`, `padding`, `margin`, `gap`, `justify`, `align`, `wrap` |
 | HIG containers | `vstack` / `hstack` / `screen` / `card` |
 | HIG modifiers | `.tappable()` / `.card_padding()` / `.screen_margins()` / `.std_gap()` |
 | HIG constants | `HIG_SPACE_XS/S/M/L/XL` (4/8/16/20/32), `HIG_TAP_MIN` (44) |
+
+`zstack` takes its children out of flow, so they share the container's origin
+and the container sizes from its own style rather than from their sum. Place a
+child within the box with `set_position`.
+
+`spacer()` is `flex_grow: 1, flex_shrink: 1, flex_basis: 0`. Between two items
+it pushes them apart; leading, it pushes the item to the end; two of them split
+the free space evenly.
 
 Usage rules and examples: [guide.md](guide.md) (`@flex` DSL and HIG).
 

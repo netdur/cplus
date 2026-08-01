@@ -203,22 +203,5 @@ fn vstack(take b: Builder) -> Node { return flex::vstack(b); }
 fn screen(take b: Builder) -> Node { return flex::screen(b); }
 fn card(take b: Builder) -> Node { return flex::card(b); }
 
-// A flexible gap that eats the leftover main-axis space.
-fn spacer() -> Node { return flex::box().grow(1.0f64); }
-
-// Children stacked on one another: every child out of flow, pinned to the box.
-fn zstack(take b: Builder) -> Node {
-    var n: Node = flex::column(b);
-    let count: usize = n.child_count();
-    var i: usize = 0 as usize;
-    while i < count {
-        match n.child_ptr(i) {
-            option::Option[*Node]::Some(c) => {
-                { (*c).style.position_type = flex::PositionType::Absolute };
-            }
-            option::Option[*Node]::None => { }
-        }
-        i = i +% (1 as usize);
-    }
-    return n;
-}
+fn spacer() -> Node { return flex::spacer(); }
+fn zstack(take b: Builder) -> Node { return flex::zstack(b); }
