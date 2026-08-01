@@ -21,6 +21,12 @@
 
 import "./option" as option;
 
+// `#[lang("iterator")]` is how the backend RECOGNIZES an instantiation of
+// this struct as a coroutine iterator. It used to classify by looking for
+// the substring `Iterator__` in the mangled name, which any user generic
+// whose base name ends in `Iterator` (`LineIterator[Token]`) also matched —
+// their `next()` was hijacked by the blessed lowering.
+#[lang("iterator")]
 struct Iterator[T] {
     opaque _handle: *u8,
 }

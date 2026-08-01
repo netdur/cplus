@@ -16,6 +16,11 @@
 // shouldn't depend on the layout — it may shift when sret-aware
 // return rewriting lands.
 
+// `#[lang("future")]` is how the backend RECOGNIZES an instantiation of this
+// struct as a coroutine future — see the note on `Iterator[T]`; classifying
+// by the substring `Future__` in the mangled name hijacked any user generic
+// whose base name ended in `Future`.
+#[lang("future")]
 struct Future[T] {
     // The LLVM coroutine frame, managed by the executor/coro runtime — not
     // freed by this struct (same as `Iterator.handle`). Hence `opaque`.

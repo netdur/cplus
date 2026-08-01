@@ -880,9 +880,15 @@ fn best_mangled_match<'a>(
     best.map(|(idx, _)| idx)
 }
 
-fn lookup_future_ty(inner: &Ty, types: &TypeTable) -> Ty {
+/// Resolve `<Wrapper>__<mangle(inner)>` among the coroutine-shape structs, or
+/// fail loudly. The old `None => Ty::Struct(StructId(0))` fallback silently
+/// returned whichever struct happened to be collected first, then codegen
+/// emitted coro intrinsics against it. `lookup_option_ty` was hardened to a
+/// panic for exactly this reason and the hardening was never back-ported
+/// (reports/bug-08).
+fn lookup_coro_shape_ty(inner: &Ty, types: &TypeTable, wrapper: &str) -> Ty {
     let target = format!(
-        "Future__{}",
+        "{wrapper}__{}",
         mangle_o_for_tramp_with_types(inner, Some(types))
     );
     let names = types
@@ -892,25 +898,17 @@ fn lookup_future_ty(inner: &Ty, types: &TypeTable) -> Ty {
         .map(|(i, d)| (i, d.name.as_str()));
     match best_mangled_match(names, &target) {
         Some(idx) => Ty::Struct(StructId(idx as u32)),
-        None => Ty::Struct(StructId(0)),
+        None => panic!("codegen: no `{wrapper}` instantiation found for element {inner:?}"),
     }
+}
+
+fn lookup_future_ty(inner: &Ty, types: &TypeTable) -> Ty {
+    lookup_coro_shape_ty(inner, types, "Future")
 }
 
 /// v0.0.4 Phase 4 Slice 4A: mirror of `lookup_future_ty` for `Iterator[T]`.
 fn lookup_iterator_ty(inner: &Ty, types: &TypeTable) -> Ty {
-    let target = format!(
-        "Iterator__{}",
-        mangle_o_for_tramp_with_types(inner, Some(types))
-    );
-    let names = types
-        .struct_defs
-        .iter()
-        .enumerate()
-        .map(|(i, d)| (i, d.name.as_str()));
-    match best_mangled_match(names, &target) {
-        Some(idx) => Ty::Struct(StructId(idx as u32)),
-        None => Ty::Struct(StructId(0)),
-    }
+    lookup_coro_shape_ty(inner, types, "Iterator")
 }
 
 /// v0.0.3 Phase 5 Slice 5E.3: given the monomorphized struct name of
@@ -2268,6 +2266,19 @@ struct StructInfo {
     /// type (`Text`). A string literal in this type's context is lowered to an
     /// owned `{ ptr, len, cap }` buffer instead of a `str` view.
     is_lang_string: bool,
+    /// This struct is an instantiation of stdlib's `#[lang("iterator")]` /
+    /// `#[lang("future")]` coroutine shape — the thing a `gen fn` / `async fn`
+    /// returns, whose `next()` and `await` are lowered to coro intrinsics.
+    ///
+    /// The classification used to be `name.rfind("Iterator__")`, which any
+    /// user generic whose base name ends in `Iterator` also satisfied
+    /// (`LineIterator[Token]` mangles to `LineIterator__Token`): its `next()`
+    /// was hijacked by the blessed lowering, giving an ICE, or — when
+    /// `Option[T]` happened to be instantiated — `llvm.coro.done` against a
+    /// plain struct, a silent miscompile (reports/bug-08). Same pattern as
+    /// `is_lang_string`: identity comes from a marker, not from a substring.
+    is_lang_iterator: bool,
+    is_lang_future: bool,
     /// OBS.1: this struct carries `#[watch]`. Every field store through a
     /// safe owned place is followed by a call to its `on_value(ref this,
     /// field: str)` hook. Re-derived from the post-mono AST rather than
@@ -2478,10 +2489,17 @@ fn collect_types(p: &Program) -> TypeTable {
                     continue;
                 }
                 let id = StructId(t.struct_defs.len() as u32);
-                let is_lang_string = s.attributes.iter().any(|a| {
-                    a.path.name == "lang"
-                        && matches!(a.args.first(), Some(AttrArg::Str(v, _)) if v == "string")
-                });
+                let lang_item = |want: &str| {
+                    s.attributes.iter().any(|a| {
+                        a.path.name == "lang"
+                            && matches!(a.args.first(), Some(AttrArg::Str(v, _)) if v == want)
+                    })
+                };
+                let is_lang_string = lang_item("string");
+                // Monomorphize carries the template's attributes onto each
+                // instantiation, so `Iterator__i32` arrives here marked.
+                let is_lang_iterator = lang_item("iterator");
+                let is_lang_future = lang_item("future");
                 // OBS.1: presence-only, same shape as the `repr` read in sema.
                 let is_watched = s.attributes.iter().any(|a| a.path.name == "watch");
                 t.struct_defs.push(StructInfo {
@@ -2491,6 +2509,8 @@ fn collect_types(p: &Program) -> TypeTable {
                     is_drop: false,
                     is_copy: false, // computed in `compute_copy_flags`
                     is_lang_string,
+                    is_lang_iterator,
+                    is_lang_future,
                     is_watched,
                 });
                 t.struct_by_name.insert(s.name.name.clone(), id);
@@ -14408,20 +14428,13 @@ impl<'a> FnState<'a> {
         let (inner_v, inner_ty) = self.gen_expr(inner_expr).expect("await on void expr");
         // Inner must be Future[U]. Pull U out via the struct's generic origin.
         let u_ty = match &inner_ty {
-            Ty::Struct(id) => {
-                let def = &self.types.struct_defs[id.0 as usize];
-                // Codegen StructInfo doesn't carry generic_origin; rely
-                // on the convention that Future[U] is `{ ptr }` and U
-                // comes from the surrounding expectation. Easiest path:
-                // ask sema-side via the resolver's TypeKind, but we
-                // don't have that here. Fall back to the field type +
-                // expected-type from context. For v0.0.3, await
-                // expressions always appear in contexts where the
-                // outer's body's coro_promise tells us the type we
-                // ultimately stash — but that's the OUTER's T, not
-                // the inner's U. Instead, look up by struct name
-                // ending with `Future__<u>` and parse the suffix.
-                let inner_struct_name = &def.name;
+            // The receiver must be an instantiation of stdlib's
+            // `#[lang("future")]` shape — checked by the marker, not by the
+            // name (reports/bug-08). Codegen's StructInfo carries no
+            // generic_origin, so U is then recovered from the mangled suffix,
+            // which the marker has already established is `Future__<U>`.
+            Ty::Struct(id) if self.types.struct_defs[id.0 as usize].is_lang_future => {
+                let inner_struct_name = &self.types.struct_defs[id.0 as usize].name;
                 ty_from_future_name(inner_struct_name, self.types)
             }
             _ => panic!("await of non-Future at codegen — sema should have rejected"),
@@ -16406,27 +16419,36 @@ impl<'a> FnState<'a> {
         )
     }
 
-    /// v0.0.4 Phase 4 Slice 4B: given a `Ty::Struct(id)` whose name
-    /// matches `Iterator__<U>`, recover U. Returns None for non-Iterator
-    /// types.
+    /// v0.0.4 Phase 4 Slice 4B: given a coroutine `Iterator[U]`, recover U.
+    /// Returns None for anything that is not one.
+    ///
+    /// The CLASSIFICATION is the `#[lang("iterator")]` marker carried onto the
+    /// instantiation, never the shape of the name — matching `Iterator__` as a
+    /// substring meant every user generic ending in `Iterator` was treated as
+    /// a coroutine (reports/bug-08). Recovering U from the mangled suffix is a
+    /// separate matter and stays: mono records the type argument only in the
+    /// name, and by the time we are here the marker has already established
+    /// that this name IS `<qualified>.Iterator__<U>`.
     fn unwrap_iterator_ty(&self, ty: &Ty) -> Option<Ty> {
         let Ty::Struct(id) = ty else {
             return None;
         };
-        let name = self.types.struct_defs[id.0 as usize].name.clone();
-        // G-026 fix: the inner T's mangled name can contain `.` (e.g.
-        // `Iterator__src.main.Value` when Value lives in src/main).
-        // Don't naively split on the rightmost `.` — find the
-        // `Iterator__` marker anywhere in the qualified name and take
-        // everything after it. Prefer the LAST occurrence so a type
-        // literally named `Iterator__Iterator__T` would resolve to its
-        // outermost Iterator wrap.
+        let def = &self.types.struct_defs[id.0 as usize];
+        if !def.is_lang_iterator {
+            return None;
+        }
+        let name = def.name.clone();
+        // G-026: the inner U's mangled name can itself contain `.` (e.g.
+        // `Iterator__src.main.Value` when Value lives in src/main), so take
+        // everything after the separator rather than splitting on the
+        // rightmost `.`. Prefer the LAST occurrence so `Iterator[Iterator[T]]`
+        // resolves to its outermost wrap.
         let suffix = if let Some(idx) = name.rfind("Iterator__") {
             &name[idx + "Iterator__".len()..]
         } else if let Some(rest) = name.strip_prefix("Iterator__") {
             rest
         } else {
-            return None;
+            panic!("`#[lang(\"iterator\")]` instantiation `{name}` is not mangled `Iterator__<U>`");
         };
         // Reuse the future-name-decoder; the suffix grammar is identical.
         let synthetic = format!("Future__{suffix}");

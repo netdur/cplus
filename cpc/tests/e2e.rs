@@ -21231,6 +21231,77 @@ fn gen_fn_protocol_survives_nested_option_instantiation() {
     assert_eq!(run.code(), Some(0), "filter must keep 2+3 = 5");
 }
 
+/// reports/bug-08: codegen identified compiler-synthesized coroutine shapes by
+/// SUBSTRING-matching the mangled name — `name.rfind("Iterator__")`. Generic
+/// mangling is `Base__Arg`, so any user generic whose base name ends in
+/// `Iterator` collided: `LineIterator[Token]` mangles to `LineIterator__Token`,
+/// the blessed `next()` lowering fired before user-method dispatch, and the
+/// program ICEd (or, when `Option[T]` happened to be instantiated, emitted
+/// `llvm.coro.done` against a plain struct — a silent miscompile). Identity now
+/// comes from `#[lang("iterator")]` on the stdlib template.
+///
+/// The real `gen fn` in the same program is the regression guard for the other
+/// direction: recognition must not have been lost along with the substring.
+#[test]
+fn user_generic_named_iterator_is_not_a_coroutine() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"hijack\"\n\n[[bin]]\nname = \"hijack\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::os::unix::fs::symlink(
+        format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
+        dir.join("vendor"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/iterator\" as _;\n\
+         \n\
+         struct Token { v: i32 }\n\
+         struct LineIterator[T] { cur: T }\n\
+         impl LineIterator[T] {\n\
+           fn next(this) -> T { return this.cur; }\n\
+         }\n\
+         \n\
+         gen fn nums() -> i32 {\n\
+           yield 1;\n\
+           yield 2;\n\
+           return;\n\
+         }\n\
+         \n\
+         fn main() -> i32 {\n\
+           let it: LineIterator[Token] = LineIterator[Token] { cur: Token { v: 7 } };\n\
+           let t: Token = it.next();\n\
+           var acc: i32 = 0;\n\
+           for v in nums() {\n\
+             acc = acc + v;\n\
+           }\n\
+           // 7 from the user's own next(), 1+2 from the real coroutine.\n\
+           return t.v + acc - 10;\n\
+         }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc build");
+    assert!(
+        out.status.success(),
+        "a user generic named `*Iterator` must not be treated as a coroutine: {}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    let run = Command::new(dir.join("target/debug/hijack"))
+        .status()
+        .expect("run hijack");
+    assert_eq!(run.code(), Some(0), "unexpected exit: {run}");
+}
+
 /// reports/bug-02: of the nine hand-rolled function-definition emitters in
 /// codegen, `gen_async_function` and `gen_gen_function` were the two that never
 /// ran `param_passes_by_ptr` — they emitted every parameter as a plain SSA

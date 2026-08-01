@@ -1,6 +1,8 @@
 # Bug 08 — `Iterator__` substring hijack of user types (ICE or silent miscompile)
 
-- Status: reproduced 2026-08-01 with `target/release/cpc` (panic at codegen.rs:16536)
+- Status: FIXED 2026-08-01, commit cb93037 — identity via `#[lang("iterator")]` /
+  `#[lang("future")]`, loud-miss back-ported
+- Status (original): reproduced 2026-08-01 with `target/release/cpc` (panic at codegen.rs:16536)
 - Severity: ICE; silent miscompile when `Option[T]` happens to be instantiated
 - Area: codegen (`cplus-core/src/codegen.rs`)
 - Master report: `core-drift-audit-2026-08-01.md` (B8)
@@ -72,11 +74,25 @@ struct — a silent miscompile. Any user generic base name ending in `Iterator`
 Companion: `issue-06-lang-item-registry.md` (the same identity-by-structure move for
 stdlib Option/Iterator/Future on the sema side).
 
+## Note on what the marker does and does not replace
+
+The marker replaces the CLASSIFICATION only. Recovering the element type U from the
+mangled suffix stays, because mono records the type argument only in the name — and by
+the time the suffix is parsed the marker has already established that the name IS
+`Iterator__<U>`, so the parse can no longer be handed a foreign shape. Where it used to
+`return None` on an unparseable name it now panics: reaching that arm would mean a
+`#[lang("iterator")]` struct that mono did not mangle, which is a compiler bug, not a
+program error.
+
+`#[lang]` needed no attrs-pass change — its spec is already `ExactlyOneStr` on structs,
+and sema reacts only to the `"string"` value.
+
 ## Verification
 
-1. The repro compiles and returns 7.
-2. Real coroutines still work: run the existing gen/async e2e tests (grep e2e.rs for
-   `gen fn` / `yield` tests) — these are the regression guard for step 2.
-3. Add e2e: user `struct FooIterator[T]` with its own `next()` compiles and dispatches to
-   the user method; a `gen fn` in the same program still iterates correctly.
-4. Full suites.
+1. DONE: the repro compiles and returns 7.
+2. DONE: full e2e suite green, including the existing gen/async tests.
+3. DONE: `user_generic_named_iterator_is_not_a_coroutine` in cpc/tests/e2e.rs — a user
+   `LineIterator[T]` with its own `next()` AND a real `gen fn` in one program, asserting
+   both dispatch correctly.
+4. DONE: full suites green; `cd vendor/stdlib && cpc test` — 290 passed (the stdlib
+   source is what carries the two new markers).
