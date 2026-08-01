@@ -268,7 +268,7 @@ a.count(); a.contains("ell");                     // str methods (import "stdlib
 
 A borrowed `Text` **coerces to `str`** at argument, binding, and return positions, and when compared with a `str` (`name == "x"`), so a `str`-typed slot accepts a `Text` directly — no `.as_str()`. The coercion borrows; returning the view of a *local* `Text` is rejected (E0513). `Text::clone` copies/owns. `str` is forbidden in `async fn` signatures (E0900); pass `Text` instead.
 
-**`str` methods.** stdlib declares the builtin view's method set (`import "stdlib/str"` anywhere in the build enables it; the alias can go unused). Everything reads or returns sub-views of the same buffer — no allocation except `split`:
+**`str` methods.** stdlib declares the builtin view's method set (`import "stdlib/str" as _;` anywhere in the build enables it — `as _` is the discard alias for extension-only imports; importing `stdlib/text` brings it in transitively). Everything reads or returns sub-views of the same buffer — no allocation except `split`:
 
 ```cplus
 s.count(); s.is_empty(); s.char_count(); s.is_ascii();          // NOT len()

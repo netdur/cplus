@@ -319,7 +319,22 @@ impl Parser {
         };
         self.bump();
         self.expect(&TokenKind::As, "`as`")?;
-        let as_name = self.expect_ident()?;
+        // STRM v3 (2026-08-01): `import "path" as _;` — the discard alias.
+        // The module joins the build (its impls / extensions register as
+        // usual) but no name is bound, so `_::x` never resolves. This is
+        // the idiomatic spelling for extension-only imports, where a named
+        // alias would sit unused. The `as` clause itself stays mandatory —
+        // one import grammar, with `_` as the one discard form.
+        let as_name = if matches!(self.peek().kind, TokenKind::Underscore) {
+            let tok = self.peek().clone();
+            self.bump();
+            Ident {
+                name: "_".to_string(),
+                span: tok.span,
+            }
+        } else {
+            self.expect_ident()?
+        };
         let end = self.expect(&TokenKind::Semi, "`;`")?.span;
         Ok(ImportDecl {
             path,

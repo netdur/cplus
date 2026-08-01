@@ -290,7 +290,15 @@ Each `.cplus` file is a module. A file imports another with
 ```cplus
 import "./math" as math;       // local path — starts with ./ or ../
 import "stdlib/io" as io;      // vendored — first segment is the dependency name
+import "stdlib/str" as _;      // discard alias — inclusion only, no name bound
 ```
+
+The `as` clause is mandatory. `as _` is the one discard form: the module
+joins the build — its `impl` blocks and extensions register as usual —
+but no name is bound, so `_::x` never parses as a module reference. Any
+number of discard imports may coexist in one file (the duplicate-alias
+rule does not apply to `_`). Use it for imports that exist only to bring
+a method set into the build.
 
 A local path resolves relative to the importing file's directory; the
 `.cplus` extension is omitted. A vendored path's first segment names a

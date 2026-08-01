@@ -166,7 +166,7 @@ most programs already have it). With neither import, `s.count()` is E0324
 with a note naming the fix.
 
 ```cplus
-import "stdlib/str" as str_methods;   // or just import "stdlib/text"
+import "stdlib/str" as _;   // discard alias — or just import "stdlib/text"
 
 "user@example.com".drop_first(count: 5);   // "example.com" — a view, no copy
 "  42  ".trim().to_i64();                  // Option[i64]::Some(42)

@@ -1938,6 +1938,14 @@ fn merge(
         let mut imports_map: BTreeMap<String, String> = BTreeMap::new();
         let mut first_span_for: BTreeMap<String, Span> = BTreeMap::new();
         for imp in &unit.program.imports {
+            // STRM v3 (2026-08-01): `as _` binds no name — skip the alias
+            // maps entirely (so `_::x` never resolves) and exempt it from
+            // duplicate-prefix detection (any number of discard imports is
+            // legal). The file itself was already pulled into the build by
+            // the loader's path walk, which is alias-independent.
+            if imp.as_name.name == "_" {
+                continue;
+            }
             if let Some(first) = first_span_for.get(&imp.as_name.name) {
                 return Err(ResolveError::DuplicatePrefix {
                     file: unit.canonical_path.clone(),

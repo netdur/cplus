@@ -68,8 +68,9 @@ io::println(view);
 `str` is a borrowed view; `Text` is the owned growable string. Prefer `str`
 parameters at APIs; own with `Text` when you need to store or build.
 
-`str` has methods of its own (importing `stdlib/text` — or `stdlib/str`
-directly — brings them in). It spells length `count()`, like every stdlib
+`str` has methods of its own (importing `stdlib/text` brings them in;
+without text, write `import "stdlib/str" as _;` — the discard alias, for
+imports that exist only to bring a method set into the build). It spells length `count()`, like every stdlib
 container; there is no `len()`:
 
 ```cplus

@@ -6186,6 +6186,53 @@ fn slice_array_count_and_to_f64_run() {
 }
 
 #[test]
+fn discard_import_alias_underscore() {
+    // STRM v3 (2026-08-01): `import "path" as _;` — the discard alias for
+    // extension-only imports. The module joins the build (str methods
+    // resolve, program runs); multiple discard imports coexist; `_::x`
+    // does not parse as a module reference.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"di\"\n\n[[bin]]\nname = \"di\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::os::unix::fs::symlink(
+        format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
+        dir.join("vendor"),
+    )
+    .unwrap();
+    let prog = "import \"stdlib/str\" as _;\n\
+         import \"stdlib/text\" as _;\n\
+         fn main() -> i32 {\n\
+             let n = \"  hi  \".trim().count();\n\
+             if n != (2 as usize) { return 1; }\n\
+             return 0;\n\
+         }\n";
+    std::fs::write(dir.join("src/main.cplus"), prog).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("cpc build");
+    assert!(st.success(), "discard-import program must compile");
+    let run = Command::new(dir.join("target/debug/di"))
+        .output()
+        .expect("run binary");
+    assert_eq!(run.status.code(), Some(0), "methods via `as _` must work");
+
+    let bad = "import \"stdlib/text\" as _;\n\
+         fn main() -> i32 { let t = _::from_str(\"x\"); return 0; }\n";
+    std::fs::write(dir.join("src/main.cplus"), bad).unwrap();
+    let out = Command::new(cpc).arg("check").current_dir(&dir).output().expect("cpc");
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!out.status.success(), "`_::x` must not resolve");
+    assert!(all.contains("E0100"), "expected a parse error, got: {all}");
+}
+
+#[test]
 fn str_builtin_methods_negative_paths() {
     // STRM (v0.0.27): (a) no stdlib/str in the build → E0324 with the
     // import note; (b) a second `impl str` next to stdlib's → E0385;

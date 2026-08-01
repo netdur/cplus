@@ -12241,7 +12241,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             } else if self.builtin_str_methods.is_empty() {
                 notes.push(
                     "the `str` method set is declared by stdlib — add \
-                     `import \"stdlib/str\"` (any file in the build suffices)"
+                     `import \"stdlib/str\" as _;` (any file in the build suffices)"
                         .to_string(),
                 );
             } else if let Some(tid) = self.designated_string_struct {
