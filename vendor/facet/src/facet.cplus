@@ -190,23 +190,35 @@ fn find_in(n: *Node, key: str) -> option::Option[*Node] {
 }
 
 // ---- containers -------------------------------------------------------------
+// flex already owns these: Builder, column, row, hstack, vstack, screen, card,
+// box, and the HIG spacing constants. facet does not reimplement them, it
+// re-exports them so an application imports facet alone.
 
-struct Builder { items: vec::Vec[Node] }
+type Builder = flex::Builder;
 
-impl Builder {
-    fn new() -> Builder { return Builder { items: vec::new::[Node]() }; }
-    fn add(ref this, take n: Node) -> status::Status { return this.items.append(n); }
-}
+fn column(take b: Builder) -> Node { return flex::column(b); }
+fn row(take b: Builder) -> Node { return flex::row(b); }
+fn hstack(take b: Builder) -> Node { return flex::hstack(b); }
+fn vstack(take b: Builder) -> Node { return flex::vstack(b); }
+fn screen(take b: Builder) -> Node { return flex::screen(b); }
+fn card(take b: Builder) -> Node { return flex::card(b); }
 
-fn column(take b: Builder) -> Node {
-    var root: Node = flex::Node::new();
-    let Builder { items } = b;          // destructure: Builder implements drop
-    var list: vec::Vec[Node] = items;
-    while list.count() > (0 as usize) {
-        match list.remove(at: 0 as usize) {
-            option::Option[Node]::Some(child) => { let _s: status::Status = root.add_child(child); }
-            option::Option[Node]::None => { }
+// A flexible gap that eats the leftover main-axis space.
+fn spacer() -> Node { return flex::box().grow(1.0f64); }
+
+// Children stacked on one another: every child out of flow, pinned to the box.
+fn zstack(take b: Builder) -> Node {
+    var n: Node = flex::column(b);
+    let count: usize = n.child_count();
+    var i: usize = 0 as usize;
+    while i < count {
+        match n.child_ptr(i) {
+            option::Option[*Node]::Some(c) => {
+                { (*c).style.position_type = flex::PositionType::Absolute };
+            }
+            option::Option[*Node]::None => { }
         }
+        i = i +% (1 as usize);
     }
-    return root;
+    return n;
 }

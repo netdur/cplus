@@ -56,8 +56,8 @@ fn defaults_apply_when_omitted() {
 #[test]
 fn find_locates_a_nested_key() {
     var b: facet::Builder = facet::Builder::new();
-    let _s1: status::Status = b.add(button::button("A", key: "a"));
-    let _s2: status::Status = b.add(button::button("B", key: "b"));
+    b.add(button::button("A", key: "a"));
+    b.add(button::button("B", key: "b"));
     var root: facet::Node = facet::column(b);
 
     match button::find(#addr_of(root), "b") {
@@ -113,8 +113,8 @@ fn setters_chain_and_accumulate_bits() {
 #[test]
 fn layout_frames_come_from_flex() {
     var b: facet::Builder = facet::Builder::new();
-    let _s1: status::Status = b.add(button::button("A", key: "a"));
-    let _s2: status::Status = b.add(button::button("B", key: "b"));
+    b.add(button::button("A", key: "a"));
+    b.add(button::button("B", key: "b"));
     var root: facet::Node = facet::column(b);
 
     root.style.width = flex::StyleLength::points(200.0f64);
@@ -131,8 +131,8 @@ fn layout_frames_come_from_flex() {
 #[test]
 fn cursor_is_live_until_a_removal() {
     var b: facet::Builder = facet::Builder::new();
-    let _s1: status::Status = b.add(button::button("A", key: "a"));
-    let _s2: status::Status = b.add(button::button("B", key: "b"));
+    b.add(button::button("A", key: "a"));
+    b.add(button::button("B", key: "b"));
     var root: facet::Node = facet::column(b);
 
     match button::find(#addr_of(root), "a") {
@@ -230,9 +230,9 @@ fn slider_has_value_minimum_maximum() {
 #[test]
 fn toggle_and_text_field_and_image() {
     var b: facet::Builder = facet::Builder::new();
-    let _s1: status::Status = b.add(toggle::toggle(true, key: "t"));
-    let _s2: status::Status = b.add(text_field::text_field("hi", key: "tf"));
-    let _s3: status::Status = b.add(image::image("logo.png", key: "img"));
+    b.add(toggle::toggle(true, key: "t"));
+    b.add(text_field::text_field("hi", key: "tf"));
+    b.add(image::image("logo.png", key: "img"));
     var root: facet::Node = facet::column(b);
 
     match toggle::find(#addr_of(root), "t") {
@@ -265,9 +265,9 @@ fn wrong_kind_lookup_is_none() {
 #[test]
 fn mixed_tree_keeps_each_kind_addressable() {
     var b: facet::Builder = facet::Builder::new();
-    let _s1: status::Status = b.add(button::button("Go", key: "go"));
-    let _s2: status::Status = b.add(label::label("Status", key: "st"));
-    let _s3: status::Status = b.add(slider::slider(1.0f64, key: "sl"));
+    b.add(button::button("Go", key: "go"));
+    b.add(label::label("Status", key: "st"));
+    b.add(slider::slider(1.0f64, key: "sl"));
     var root: facet::Node = facet::column(b);
     assert root.child_count() == (3 as usize);
 
@@ -282,6 +282,62 @@ fn mixed_tree_keeps_each_kind_addressable() {
     match slider::find(#addr_of(root), "sl") {
         option::Option[slider::Slider]::Some(x) => { assert approx(x.value(), 1.0f64); }
         option::Option[slider::Slider]::None => { assert false; }
+    }
+    return;
+}
+
+// ---- containers come from flex, not from a facet reimplementation ----------
+
+#[test]
+fn hstack_lays_out_horizontally() {
+    var b: facet::Builder = facet::Builder::new();
+    b.add(button::button("A", key: "a").width(50.0f64).height(20.0f64));
+    b.add(button::button("B", key: "b").width(50.0f64).height(20.0f64));
+    var root: facet::Node = facet::hstack(b);
+    root.calculate_layout(width: 300.0f64, height: 100.0f64);
+    match button::find(#addr_of(root), "b") {
+        option::Option[button::Button]::Some(x) => {
+            assert x.x() > 50.0f64;
+            assert approx(x.y(), 0.0f64);
+        }
+        option::Option[button::Button]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn spacer_eats_the_leftover_space() {
+    var b: facet::Builder = facet::Builder::new();
+    b.add(button::button("A", key: "a").width(40.0f64).height(20.0f64));
+    b.add(facet::spacer());
+    b.add(button::button("B", key: "b").width(40.0f64).height(20.0f64));
+    var root: facet::Node = facet::row(b);
+    root.calculate_layout(width: 200.0f64, height: 40.0f64);
+    match button::find(#addr_of(root), "b") {
+        option::Option[button::Button]::Some(x) => { assert approx(x.x(), 160.0f64); }
+        option::Option[button::Button]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn zstack_overlaps_its_children() {
+    var b: facet::Builder = facet::Builder::new();
+    b.add(button::button("A", key: "a").width(30.0f64).height(30.0f64));
+    b.add(button::button("B", key: "b").width(30.0f64).height(30.0f64));
+    var root: facet::Node = facet::zstack(b);
+    root.calculate_layout(width: 100.0f64, height: 100.0f64);
+    match button::find(#addr_of(root), "a") {
+        option::Option[button::Button]::Some(a) => {
+            match button::find(#addr_of(root), "b") {
+                option::Option[button::Button]::Some(bb) => {
+                    assert approx(a.x(), bb.x());
+                    assert approx(a.y(), bb.y());
+                }
+                option::Option[button::Button]::None => { assert false; }
+            }
+        }
+        option::Option[button::Button]::None => { assert false; }
     }
     return;
 }
