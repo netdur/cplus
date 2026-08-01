@@ -923,6 +923,7 @@ fn check_with_files_inner(
         current_fn_ref_targets: std::collections::HashSet::new(),
         current_fn_keeps_this: false,
         current_fn_has_keeps: false,
+        current_method_concrete: false,
         current_fn_param_regions: HashMap::new(),
         current_fn_return_region: None,
         current_fn_no_alloc: false,
@@ -1390,6 +1391,13 @@ struct SemaCx<'a> {
     /// pointer must declare its flows (E0516) — silence at the raw seam is
     /// an error, mirroring drop-or-`opaque` (E0510).
     current_fn_has_keeps: bool,
+    /// Contract §3 narrowing (2026-08-01): true iff the body being checked
+    /// is a method of a CONCRETE impl with no method-level generics. For
+    /// these, the borrowck flow pass computes every receiver store and all
+    /// resolvable call sites tie — so the E0515 receiver-store deny is
+    /// lifted without requiring `#[keeps(this)]`. Generic impls and free
+    /// fns keep the deny (their receivers/targets don't all resolve).
+    current_method_concrete: bool,
     /// v0.0.12 (#2 region enforcement): map from parameter name to the explicit
     /// `borrow REGION T` region it carried, for parameters that had one. Used
     /// to validate that a region-annotated return borrows a same-region param.
@@ -4839,15 +4847,21 @@ impl SemaCx<'_> {
             // file as its type (enforced by the resolver).
             if let Some(&id) = self.struct_by_name.get(&b.target.name) {
                 for m in &b.methods {
+                    self.current_method_concrete =
+                        b.target_generic_params.is_empty() && m.generic_params.is_empty();
                     self.check_method(id, m);
                 }
+                self.current_method_concrete = false;
                 continue;
             }
             // v0.0.5 Phase 2C: enum impl bodies.
             if let Some(&enum_id) = self.enum_by_name.get(&b.target.name) {
                 for m in &b.methods {
+                    self.current_method_concrete =
+                        b.target_generic_params.is_empty() && m.generic_params.is_empty();
                     self.check_enum_method(enum_id, m);
                 }
+                self.current_method_concrete = false;
                 continue;
             }
             // STRM (v0.0.27): bodies of the blessed `impl str` block.
@@ -7008,6 +7022,7 @@ impl SemaCx<'_> {
             );
         }
         self.setup_returned_borrow_ctx(&f.params, &f.return_type, None);
+        self.current_method_concrete = false;
         self.current_fn_keeps_this = crate::attrs::has_keeps(&f.attributes, "this");
         self.current_fn_has_keeps = self.current_fn_keeps_this
             || crate::attrs::has_keeps(&f.attributes, "nothing");
@@ -15470,7 +15485,11 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     || (!info.owns_value && !self.is_copy(&info.ty)));
             if root_is_param_view {
                 let target_is_receiver = troot == "self" || troot == "this";
-                if self.current_fn_keeps_this && target_is_receiver {
+                // Concrete methods: the flow pass exports every receiver
+                // store and call sites tie — the deny is unnecessary.
+                if target_is_receiver
+                    && (self.current_fn_keeps_this || self.current_method_concrete)
+                {
                     continue;
                 }
                 let troot_leaf = troot.rsplit('.').next().unwrap_or(&troot);

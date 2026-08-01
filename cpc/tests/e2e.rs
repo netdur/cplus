@@ -5862,22 +5862,42 @@ fn carrier_assigned_outward_over_dying_owner_rejected_e0514() {
 }
 
 #[test]
-fn view_param_stored_into_ref_this_rejected_e0515() {
-    // The flow FnEntry's return-borrow vocabulary cannot express: a view
-    // param stored through the receiver. Without `#[keeps(this)]` the
-    // definition itself is rejected.
-    let (ok, stderr) = try_compile_snippet(
-        "struct Holder { view: str }\n\
-         impl Holder {\n\
-             fn set(ref this, k: str) {\n\
-                 this.view = k;\n\
-                 return;\n\
-             }\n\
-         }\n\
-         fn main() -> i32 { return 0; }\n",
+fn undeclared_concrete_setter_compiles_and_caller_ties_e0514() {
+    // Contract §3 narrowing (2026-08-01): a CONCRETE method storing a view
+    // param needs no #[keeps(this)] — the flow pass computes the store and
+    // every resolvable call site ties. The definition compiles; the caller
+    // with a dying owner is rejected.
+    let (ok, stderr) = try_compile_snippet(&format!(
+        "{LANG_STR_PRELUDE}struct Holder {{ view: str }}\n\
+         impl Holder {{\n\
+             fn set(ref this, k: str) {{ this.view = k; return; }}\n\
+         }}\n\
+         fn main() -> i32 {{\n\
+             let t: LStr = mk();\n\
+             var h: Holder = Holder {{ view: \"\" }};\n\
+             h.set(t);\n\
+             return 0;\n\
+         }}\n"
+    ));
+    assert!(ok, "undeclared concrete setter with sound order must compile; stderr: {stderr}");
+    let (ok, stderr) = try_compile_snippet(&format!(
+        "{LANG_STR_PRELUDE}struct Holder {{ view: str }}\n\
+         impl Holder {{\n\
+             fn set(ref this, k: str) {{ this.view = k; return; }}\n\
+         }}\n\
+         fn main() -> i32 {{\n\
+             var h: Holder = Holder {{ view: \"\" }};\n\
+             {{\n\
+                 let t: LStr = mk();\n\
+                 h.set(t);\n\
+             }}\n\
+             return 0;\n\
+         }}\n"
+    ));
+    assert!(
+        !ok && stderr.contains("E0514"),
+        "caller of undeclared setter must tie via computed flows, got ok={ok}: {stderr}"
     );
-    assert!(!ok, "expected E0515 on an undeclared view-param store");
-    assert!(stderr.contains("E0515"), "expected E0515, got: {stderr}");
 }
 
 #[test]

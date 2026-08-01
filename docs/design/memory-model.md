@@ -52,14 +52,18 @@ annotations.
    letting the owner fall out of scope is an error, the same as moving the
    owner.
 
-Current enforcement state (2026-08-01): receiver flows are computed for
-concrete impl methods (transitive wrappers of `#[keeps(this)]` methods tie
-their callers with no declaration). The direct-store deny (E0515) stays in
-force even where a flow could be computed, because receiver shapes that do
-not resolve at call sites (generic impls, `Box[T]`-typed receivers) cannot
-be tied yet; a definition-site error is preferred over a silent gap. When
-receiver resolution moves post-monomorphization, the deny narrows to the
-genuinely opaque cases.
+Current enforcement state (2026-08-01, final pass): the endpoint. Concrete
+impl methods need NO declaration — the flow pass computes every receiver
+store (direct and transitive), unannotated bindings resolve through
+structural inference (declared return types, struct-literal names,
+destructure fields, match payloads), and all resolvable call sites tie.
+The E0515 receiver-store deny is lifted for concrete methods; it remains
+for statics and `ref`-parameter targets in free fns (cross-module free-fn
+call resolution is name-shaped, so those flows do not reliably reach
+callers yet). `#[keeps(...)]` remains required exactly where the contract
+says declarations live: opaque bodies (raw-pointer stores, E0516) and
+generic impls (whose bodies the pre-mono passes do not check — their
+mutators declare, as `Vec` does).
 
 ## 4. Out of contract
 
