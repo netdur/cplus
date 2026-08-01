@@ -15414,8 +15414,16 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             // laundering path). `#[keeps(this)]` lifts the receiver-store
             // case: the store becomes a declared flow and borrowck makes
             // every CALLER tie the receiver to the argument's owner.
+            // Three borrowed-root shapes, one rule: a view-typed param, a
+            // view-carrying param, or a view PROJECTED from a borrowed
+            // non-Copy param (`this.f = k.view()` with `k: Text` — Text is
+            // not view-carrying because raw-ptr fields are excluded from
+            // the carrier fixpoint, and a bare non-Copy param is not
+            // `owns_value`, so both earlier gates miss it).
             let root_is_param_view = self.current_fn_param_names.contains(key)
-                && (matches!(info.ty, Ty::Str | Ty::Slice(_)) || self.ty_contains_view(&info.ty));
+                && (matches!(info.ty, Ty::Str | Ty::Slice(_))
+                    || self.ty_contains_view(&info.ty)
+                    || (!info.owns_value && !self.is_copy(&info.ty)));
             if root_is_param_view {
                 let target_is_receiver = troot == "self" || troot == "this";
                 if self.current_fn_keeps_this && target_is_receiver {
