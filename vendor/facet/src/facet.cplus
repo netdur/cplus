@@ -1,1 +1,212 @@
-// facet — empty scaffold.
+// facet — the tree. HAND-WRITTEN; the generator never touches this file.
+//
+// facet's tree IS flex_layout's tree. A node's geometry, style and children
+// are flex's; facet's per-node data rides in the owned attachment slot flex
+// already releases for us. Nothing is stored twice.
+
+import "flex_layout/flex_layout" as flex;
+import "stdlib/text" as text;
+import "stdlib/option" as option;
+import "stdlib/status" as status;
+import "stdlib/box" as box;
+import "stdlib/vec" as vec;
+import "./props" as props;
+import "./vocabulary" as vocab;
+
+type Node = flex::Node;
+type Frame = flex::Frame;
+// What facet hangs off each flex node.
+struct Data {
+    key: str,               // set once at build; literal or interned
+    kind: u32,              // which control — the tag the cast is checked against
+    opaque props: *u8,      // owned *<Control>Props
+    release: fn(*u8),       // frees `props` with the right type
+    common: props::CommonProps,  // the band every node carries — inline
+    opaque view: *u8,       // native view; 0 until a backend mounts it
+    dirty: u64,             // props changed since the backend last synced
+}
+
+// flex calls this on node drop, on detach, and when an attach replaces it.
+fn release_data(p: *u8) {
+    if p == (0 as *u8) { return; }
+    let d: *Data = p as *Data;
+    let f: fn(*u8) = { (*d).release };
+    if f != (0 as fn(*u8)) { f({ (*d).props }); }
+    let _b: box::Box[Data] = box::from_raw::[Data](p);
+    return;
+}
+
+// Build a node carrying `props` under `key`. The one place Data is created.
+fn node_with(key: str, kind: u32, props_ptr: *u8, release: fn(*u8)) -> Node {
+    var n: Node = flex::Node::new();
+    let d: Data = Data { key: key, kind: kind, props: props_ptr,
+                         release: release, common: props::CommonProps::new(),
+                         view: 0 as *u8, dirty: 0u64 };
+    match box::new::[Data](d) {
+        option::Option[box::Box[Data]]::Some(b) => { n.attach(b.into_raw(), release_data); }
+        option::Option[box::Box[Data]]::None => { }
+    }
+    return n;
+}
+
+impl flex::Node {
+    // facet's data for this node, or null when it carries none.
+    fn data(this) -> *Data {
+        return match this.attachment() {
+            option::Option[*u8]::Some(p) => p as *Data,
+            option::Option[*u8]::None => 0 as *Data,
+        };
+    }
+
+    fn key(this) -> str {
+        let d: *Data = this.data();
+        if d == (0 as *Data) { return ""; }
+        return { (*d).key };
+    }
+}
+
+// Mark a prop changed. The ONE seam from a setter to the backend: no
+// per-verb function pointer, no registrar.
+fn touch(n: *Node, bit: u64) {
+    if n == (0 as *Node) { return; }
+    let d: *Data = { (*n).data() };
+    if d == (0 as *Data) { return; }
+    { (*d).dirty = { (*d).dirty } | bit };
+    return;
+}
+
+// ---- the shared band --------------------------------------------------------
+// The 21 verbs every element carries live HERE, once, operating on Data.common.
+// Each control cursor gets a generated one-line forward, so a call site is
+// always typed (`b.set_opacity(...)` returns Button) and no generic element
+// type exists anywhere in the package.
+
+fn set_opacity(n: *Node, v: f64) {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).common.opacity = v };
+    touch(n, props::C_OPACITY);
+    return;
+}
+
+fn opacity(n: *Node) -> f64 {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return 1.0f64; }
+    return { (*d).common.opacity };
+}
+
+fn set_is_enabled(n: *Node, v: bool) {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).common.is_enabled = v };
+    touch(n, props::C_IS_ENABLED);
+    return;
+}
+
+fn is_enabled(n: *Node) -> bool {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return true; }
+    return { (*d).common.is_enabled };
+}
+
+fn set_is_visible(n: *Node, v: bool) {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).common.is_visible = v };
+    touch(n, props::C_IS_VISIBLE);
+    return;
+}
+
+fn is_visible(n: *Node) -> bool {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return true; }
+    return { (*d).common.is_visible };
+}
+
+fn set_background_color(n: *Node, v: vocab::Color) {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).common.background_color = v };
+    touch(n, props::C_BACKGROUND_COLOR);
+    return;
+}
+
+fn background_color(n: *Node) -> vocab::Color {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return vocab::Color::clear(); }
+    return { (*d).common.background_color };
+}
+
+fn set_rotation(n: *Node, v: f64) {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).common.rotation = v };
+    touch(n, props::C_TRANSFORM);
+    return;
+}
+
+fn set_scale(n: *Node, v: f64) {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).common.scale = v };
+    touch(n, props::C_TRANSFORM);
+    return;
+}
+
+// Reads flex already owns: forward, store nothing.
+fn frame_of(n: *Node) -> Frame { return { (*n).frame() }; }
+fn width_of(n: *Node) -> f64 { return { (*n).frame() }.width; }
+fn height_of(n: *Node) -> f64 { return { (*n).frame() }.height; }
+fn x_of(n: *Node) -> f64 { return { (*n).frame() }.left; }
+fn y_of(n: *Node) -> f64 { return { (*n).frame() }.top; }
+fn child_count_of(n: *Node) -> usize { return { (*n).child_count() }; }
+
+// A free-fn twin of Node::data, callable where a method on *Node is not.
+fn node_data(n: *Node) -> *Data {
+    if n == (0 as *Node) { return 0 as *Data; }
+    return { (*n).data() };
+}
+
+// Depth-first search for a key. Returns a cursor: flex node addresses are
+// stable, so this stays valid until its node or an ancestor is removed.
+fn find_in(n: *Node, key: str) -> option::Option[*Node] {
+    if n == (0 as *Node) { return option::Option[*Node]::None; }
+    if { (*n).key() } == key { return option::Option[*Node]::Some(n); }
+    let count: usize = { (*n).child_count() };
+    var i: usize = 0 as usize;
+    while i < count {
+        match { (*n).child_ptr(i) } {
+            option::Option[*Node]::Some(c) => {
+                match find_in(c, key) {
+                    option::Option[*Node]::Some(hit) => { return option::Option[*Node]::Some(hit); }
+                    option::Option[*Node]::None => { }
+                }
+            }
+            option::Option[*Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return option::Option[*Node]::None;
+}
+
+// ---- containers -------------------------------------------------------------
+
+struct Builder { items: vec::Vec[Node] }
+
+impl Builder {
+    fn new() -> Builder { return Builder { items: vec::new::[Node]() }; }
+    fn add(ref this, take n: Node) -> status::Status { return this.items.append(n); }
+}
+
+fn column(take b: Builder) -> Node {
+    var root: Node = flex::Node::new();
+    let Builder { items } = b;          // destructure: Builder implements drop
+    var list: vec::Vec[Node] = items;
+    while list.count() > (0 as usize) {
+        match list.remove(at: 0 as usize) {
+            option::Option[Node]::Some(child) => { let _s: status::Status = root.add_child(child); }
+            option::Option[Node]::None => { }
+        }
+    }
+    return root;
+}

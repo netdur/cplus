@@ -1,0 +1,190 @@
+// facet tests — Stage 2 slice. No backend: the tree is facet's own state, so
+// everything below is exercised headlessly.
+
+import "flex_layout/flex_layout" as flex;
+import "stdlib/text" as text;
+import "stdlib/option" as option;
+import "stdlib/status" as status;
+import "./facet" as facet;
+import "./props" as props;
+import "./vocabulary" as vocab;
+import "./button" as button;
+
+fn approx(a: f64, b: f64) -> bool {
+    let d: f64 = a - b;
+    if d < 0.0f64 { return (0.0f64 - d) < 0.0001f64; }
+    return d < 0.0001f64;
+}
+
+fn clicked(sender: *u8, ctx: *u8) { return; }
+
+// ---- build ------------------------------------------------------------------
+
+#[test]
+fn constructor_stores_named_params() {
+    var root: facet::Node = button::button("Save", key: "save", font_size: 13.0f64);
+    match button::find(#addr_of(root), "save") {
+        option::Option[button::Button]::Some(b) => {
+            assert b.label() == "Save";
+            assert approx(b.font_size(), 13.0f64);
+        }
+        option::Option[button::Button]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn defaults_apply_when_omitted() {
+    var root: facet::Node = button::button("Ok", key: "ok");
+    match button::find(#addr_of(root), "ok") {
+        option::Option[button::Button]::Some(b) => {
+            assert approx(b.font_size(), 0.0f64);
+            assert b.is_pressed() == false;
+        }
+        option::Option[button::Button]::None => { assert false; }
+    }
+    return;
+}
+
+// ---- find -------------------------------------------------------------------
+
+#[test]
+fn find_locates_a_nested_key() {
+    var b: facet::Builder = facet::Builder::new();
+    let _s1: status::Status = b.add(button::button("A", key: "a"));
+    let _s2: status::Status = b.add(button::button("B", key: "b"));
+    var root: facet::Node = facet::column(b);
+
+    match button::find(#addr_of(root), "b") {
+        option::Option[button::Button]::Some(hit) => { assert hit.label() == "B"; }
+        option::Option[button::Button]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn find_misses_an_unknown_key() {
+    var root: facet::Node = button::button("A", key: "a");
+    match button::find(#addr_of(root), "nope") {
+        option::Option[button::Button]::Some(_) => { assert false; }
+        option::Option[button::Button]::None => { assert true; }
+    }
+    return;
+}
+
+// ---- mutate -----------------------------------------------------------------
+
+#[test]
+fn setter_writes_state_and_marks_dirty() {
+    var root: facet::Node = button::button("Save", key: "save");
+    match button::find(#addr_of(root), "save") {
+        option::Option[button::Button]::Some(b) => {
+            let _c: button::Button = b.set_label("Saving…");
+            assert b.label() == "Saving…";
+        }
+        option::Option[button::Button]::None => { assert false; }
+    }
+    let d: *facet::Data = root.data();
+    assert { (*d).dirty } == (1u64);          // P_LABEL, and nothing else
+}
+
+#[test]
+fn setters_chain_and_accumulate_bits() {
+    var root: facet::Node = button::button("Save", key: "save");
+    match button::find(#addr_of(root), "save") {
+        option::Option[button::Button]::Some(b) => {
+            let _c: button::Button = b.set_label("x").set_font_size(11.0f64)
+                                      .set_corner_radius(vocab::Corners::all(6.0f64));
+            assert approx(b.font_size(), 11.0f64);
+        }
+        option::Option[button::Button]::None => { assert false; }
+    }
+    let d: *facet::Data = root.data();
+    assert { (*d).dirty } == (1u64 | 16u64 | 256u64);   // label | corner | font_size
+}
+
+// ---- layout -----------------------------------------------------------------
+
+#[test]
+fn layout_frames_come_from_flex() {
+    var b: facet::Builder = facet::Builder::new();
+    let _s1: status::Status = b.add(button::button("A", key: "a"));
+    let _s2: status::Status = b.add(button::button("B", key: "b"));
+    var root: facet::Node = facet::column(b);
+
+    root.style.width = flex::StyleLength::points(200.0f64);
+    root.style.height = flex::StyleLength::points(100.0f64);
+    root.calculate_layout();
+
+    let f: flex::Frame = root.frame();
+    assert approx(f.width, 200.0f64);
+    assert approx(f.height, 100.0f64);
+}
+
+// ---- cursor staleness -------------------------------------------------------
+
+#[test]
+fn cursor_is_live_until_a_removal() {
+    var b: facet::Builder = facet::Builder::new();
+    let _s1: status::Status = b.add(button::button("A", key: "a"));
+    let _s2: status::Status = b.add(button::button("B", key: "b"));
+    var root: facet::Node = facet::column(b);
+
+    match button::find(#addr_of(root), "a") {
+        option::Option[button::Button]::Some(hit) => {
+            assert hit.is_live();
+            let _gone: option::Option[facet::Node] = root.remove_child(at: 1 as usize);
+            assert hit.is_live() == false;      // a removal happened; re-derive
+        }
+        option::Option[button::Button]::None => { assert false; }
+    }
+    return;
+}
+
+// ---- the shared band --------------------------------------------------------
+
+#[test]
+fn shared_verbs_are_on_the_typed_cursor() {
+    var root: facet::Node = button::button("Save", key: "save");
+    match button::find(#addr_of(root), "save") {
+        option::Option[button::Button]::Some(b) => {
+            // chains with the button-specific setters, returns Button
+            let _c: button::Button = b.set_label("Go").set_opacity(0.5f64)
+                                      .set_is_enabled(false).set_font_size(12.0f64);
+            assert approx(b.opacity(), 0.5f64);
+            assert b.is_enabled() == false;
+            assert b.label() == "Go";
+        }
+        option::Option[button::Button]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn shared_defaults_are_sane() {
+    var root: facet::Node = button::button("A", key: "a");
+    match button::find(#addr_of(root), "a") {
+        option::Option[button::Button]::Some(b) => {
+            assert approx(b.opacity(), 1.0f64);
+            assert b.is_enabled();
+            assert b.is_visible();
+        }
+        option::Option[button::Button]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn common_and_control_bits_do_not_collide() {
+    var root: facet::Node = button::button("A", key: "a");
+    match button::find(#addr_of(root), "a") {
+        option::Option[button::Button]::Some(b) => {
+            let _c: button::Button = b.set_label("x").set_opacity(0.5f64);
+        }
+        option::Option[button::Button]::None => { assert false; }
+    }
+    let d: *facet::Data = root.data();
+    assert ({ (*d).dirty } & 1u64) == 1u64;                       // P_LABEL
+    assert ({ (*d).dirty } & props::C_OPACITY) == props::C_OPACITY;
+    return;
+}

@@ -3,7 +3,12 @@ name    = "facet"
 version = "0.0.1"
 edition = "2026"
 
-# facet — UI description layer. Empty scaffold.
+# facet — the UI vocabulary. Stage 2 slice: `button` only.
+
+[[bin]]
+name = "facet_tests"
+path = "src/test_main.cplus"
 
 [dependencies]
-stdlib = "*"
+stdlib      = "*"
+flex_layout = "*"
