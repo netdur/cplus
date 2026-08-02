@@ -1792,7 +1792,11 @@ fn exported_name(name: &str) -> bool {
 /// scoped case: private to its declaring module, so importers don't inherit libc
 /// names bare into their namespace.
 fn extern_stays_global(f: &Function) -> bool {
-    f.is_extern && (f.is_pub || f.name.name.starts_with("__cplus_"))
+    f.is_extern
+        && (f.is_pub
+            || f.name
+                .name
+                .starts_with(crate::mangling::RUNTIME_ABI_PREFIX))
 }
 
 fn merge(

@@ -429,7 +429,7 @@ impl ThreadTrampolines {
                 .borrow_mut()
                 .push(TrampolineSpec::Spawn { o: o_ty.clone() });
         }
-        format!("__cplus_thread_tramp_{suffix}")
+        format!("{}thread_tramp_{suffix}", crate::mangling::RUNTIME_ABI_PREFIX)
     }
 
     /// Register a `spawn_with[I, O]` trampoline. The (I, O) pair gets
@@ -440,7 +440,10 @@ impl ThreadTrampolines {
         let key = format!("with:{:?}:{:?}", i_ty, o_ty);
         let mut seen = self.seen.borrow_mut();
         if let Some(&idx) = seen.get(&key) {
-            return format!("__cplus_thread_tramp_with_{idx}");
+            return format!(
+                "{}thread_tramp_with_{idx}",
+                crate::mangling::RUNTIME_ABI_PREFIX
+            );
         }
         let idx = self.specs.borrow().len();
         seen.insert(key, idx);
@@ -448,7 +451,7 @@ impl ThreadTrampolines {
             i: i_ty.clone(),
             o: o_ty.clone(),
         });
-        format!("__cplus_thread_tramp_with_{idx}")
+        format!("{}thread_tramp_with_{idx}", crate::mangling::RUNTIME_ABI_PREFIX)
     }
 }
 

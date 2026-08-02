@@ -55,6 +55,21 @@
 use crate::ast::{Type, TypeKind};
 use crate::sema::Ty;
 
+/// issue-06 step 6: the prefix the compiler reserves for its own runtime ABI.
+///
+/// `#reactor_get_state` reaches `__cplus_reactor_get_state`; codegen emits
+/// thread trampolines and bound-method bridges under the same prefix; the
+/// resolver keeps these names global rather than module-scoping them, because
+/// emitted code calls them from anywhere. Three passes agreeing on one string
+/// is a convention, and a convention spelled out in three places is one that
+/// drifts — so it is spelled once, here, beside the rest of the naming
+/// grammar the compiler owns.
+///
+/// A source declaration under this prefix must carry `#[runtime_abi]`
+/// (E0919): it is claiming to name a symbol the compiler generates, and that
+/// is a claim to make out loud rather than by spelling.
+pub const RUNTIME_ABI_PREFIX: &str = "__cplus_";
+
 /// Where a rendered type goes. `String` builds the name; `Counter` measures it
 /// without materializing — the instantiation-size guard needs the length of a
 /// name it is about to refuse to build.

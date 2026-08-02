@@ -2002,6 +2002,34 @@ impl SemaCx<'_> {
         false
     }
 
+    /// issue-06 step 6: `__cplus_` is the compiler's own runtime-ABI prefix
+    /// (see [`crate::mangling::RUNTIME_ABI_PREFIX`]). A source declaration
+    /// under it is claiming to name a symbol the compiler generates — the
+    /// reactor helpers, the coroutine hooks, the thread trampolines — and
+    /// that claim needs `#[runtime_abi]`, for the same reason `opaque` and
+    /// `#[lang]` exist: the small trusted surface is the one that is written
+    /// down. Without the marker, a program could name a runtime symbol by
+    /// accident or on purpose and be linked against in its place.
+    fn reject_unmarked_runtime_abi_name(&mut self, name: &Ident, attributes: &[Attribute]) {
+        let leaf = name_leaf(&name.name);
+        if !leaf.starts_with(crate::mangling::RUNTIME_ABI_PREFIX) {
+            return;
+        }
+        if attributes.iter().any(|a| a.path.name == "runtime_abi") {
+            return;
+        }
+        self.err(
+            "E0919",
+            format!(
+                "`{leaf}` starts with `{}`, the compiler's reserved runtime-ABI prefix. \
+                 If this declares a symbol the compiler generates, mark it \
+                 `#[runtime_abi]`; otherwise pick a name outside the prefix",
+                crate::mangling::RUNTIME_ABI_PREFIX
+            ),
+            name.span,
+        );
+    }
+
     fn collect_type_names(&mut self, p: &Program) {
         for item in &p.items {
             // Slice 4C: set current_file so diagnostics route to the
@@ -5555,6 +5583,7 @@ impl SemaCx<'_> {
             } else {
                 self.reject_reserved_double_underscore("function", &f.name);
             }
+            self.reject_unmarked_runtime_abi_name(&f.name, &f.attributes);
             // Phase 11 / ObjC interop: `#[link_name = "..."]` symbol alias.
             // Extract here once and stash on FnSig; gate placement on extern.
             let mut link_name = extract_link_name(&f.attributes);
@@ -8388,7 +8417,7 @@ impl SemaCx<'_> {
                 // spelling); the bare `__cplus_*(...)` call form was removed, so
                 // the `#` sigil is the only way to reach them. (`ret_ty`
                 // ascription is never used by these — they're call-shaped.)
-                let legacy = format!("__cplus_{name}");
+                let legacy = format!("{}{name}", crate::mangling::RUNTIME_ABI_PREFIX);
                 let synth = Expr {
                     kind: ExprKind::Ident(legacy.clone()),
                     span,
@@ -11131,7 +11160,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     "E0308",
                     format!(
                         "`#{}` takes {} argument(s), got {}",
-                        &name["__cplus_".len()..],
+                        &name[crate::mangling::RUNTIME_ABI_PREFIX.len()..],
                         expected_args,
                         args.len()
                     ),
@@ -11153,7 +11182,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     "E0302",
                     format!(
                         "`#{}` first argument must be `*{}`, got `{}`",
-                        &name["__cplus_".len()..],
+                        &name[crate::mangling::RUNTIME_ABI_PREFIX.len()..],
                         spec.ty.name(),
                         ty_display(&p_actual)
                     ),
@@ -11165,7 +11194,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                         "E0302",
                         format!(
                             "`#{}` first argument must be `*{}`, got `{}`",
-                            &name["__cplus_".len()..],
+                            &name[crate::mangling::RUNTIME_ABI_PREFIX.len()..],
                             spec.ty.name(),
                             ty_display(&p_actual)
                         ),
@@ -11189,7 +11218,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     "E0308",
                     format!(
                         "`#{}` takes 0 arguments, got {}",
-                        &name["__cplus_".len()..],
+                        &name[crate::mangling::RUNTIME_ABI_PREFIX.len()..],
                         args.len()
                     ),
                     call_span,
@@ -14885,7 +14914,12 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 .chars()
                 .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
                 .collect();
-            let bridge_name = format!("__cplus_bound_{}__{}", sanitized, name.name);
+            let bridge_name = format!(
+                "{}bound_{}__{}",
+                crate::mangling::RUNTIME_ABI_PREFIX,
+                sanitized,
+                name.name
+            );
             self.bound_method_refs.insert(
                 args[i].span,
                 BoundMethodRefInfo {
@@ -28947,6 +28981,28 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
              }",
         );
         assert!(codes.contains(&"E0502"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn unmarked_runtime_abi_prefix_rejected_e0919() {
+        // issue-06 step 6: `__cplus_` names symbols the compiler generates.
+        // Claiming one without saying so could displace it at link time.
+        let codes = errors(
+            "extern fn __cplus_reactor_get_state() -> *u8;\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.contains(&"E0919"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn marked_runtime_abi_declaration_is_accepted() {
+        // The stdlib's reactor bindings are the legitimate case: they DO name
+        // compiler-generated symbols, and now they say so.
+        assert_clean(
+            "#[runtime_abi]\n\
+             extern fn __cplus_reactor_get_state() -> *u8;\n\
+             fn main() -> i32 { return 0; }",
+        );
     }
 
     #[test]

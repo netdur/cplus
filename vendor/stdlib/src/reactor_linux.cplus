@@ -52,11 +52,15 @@ extern fn read(fd: i32, buf: *u8, n: usize) -> isize;
 
 // LLVM coroutine intrinsics — surfaced via stable wrapper symbols
 // emitted by codegen, so stdlib can call them as plain extern fns.
+#[runtime_abi]
 extern fn __cplus_coro_resume(hdl: *u8);
+#[runtime_abi]
 extern fn __cplus_coro_done(hdl: *u8) -> i32;
 
 // Reactor-state-slot accessors emitted in the codegen preamble.
+#[runtime_abi]
 extern fn __cplus_reactor_get_state() -> *u8;
+#[runtime_abi]
 extern fn __cplus_reactor_set_state(p: *u8);
 
 // epoll constants (Linux, asm-generic).

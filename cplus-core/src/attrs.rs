@@ -121,6 +121,17 @@ const KNOWN_ATTRS: &[AttrSpec] = &[
         targets: TARGET_FN,
         allow_duplicate: false,
     },
+    // issue-06 step 6: `#[runtime_abi]` — this declaration names a symbol the
+    // COMPILER generates (`__cplus_*`: the reactor helpers, coroutine hooks,
+    // thread trampolines). The prefix is reserved, so a declaration under it
+    // must say what it is doing (E0919); without the marker a program could
+    // quietly claim a runtime symbol and be linked against instead of it.
+    AttrSpec {
+        name: "runtime_abi",
+        args: ArgsSpec::None,
+        targets: TARGET_FN,
+        allow_duplicate: false,
+    },
     // Memory-model contract §5: `#[keeps(...)]` — a declared view-flow
     // summary for a function whose body the checker cannot read through
     // (raw-pointer stores, extern). `keeps(this)` = view arguments survive

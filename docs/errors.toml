@@ -2838,6 +2838,24 @@ fn main() -> i32 { return 0; }
 '''
 
 [[code]]
+id = "E0919"
+title = "Declaration claims the reserved `__cplus_` runtime-ABI prefix"
+category = "Names, types, and items"
+severity = "error"
+repro = "checked"
+lang = "cplus"
+verified = true
+emit_site = "cplus-core/src/sema.rs:reject_unmarked_runtime_abi_name"
+test = "cplus-core/src/sema.rs:unmarked_runtime_abi_prefix_rejected_e0919"
+cause = "A function is declared with a name starting `__cplus_`, the prefix the compiler reserves for symbols it generates itself — the reactor helpers `#reactor_get_state` lowers to, the coroutine hooks, the thread trampolines, the bound-method bridges. A declaration under that prefix is claiming to name one of those symbols, and an unmarked one could take a runtime symbol's place at link time by accident or on purpose."
+fix = "If the declaration really does name a compiler-generated symbol (the stdlib reactor bindings do), mark it `#[runtime_abi]` — the same doctrine as `opaque` and `#[lang]`: a small trusted surface, written down. Otherwise pick a name outside the prefix."
+example = '''
+extern fn __cplus_reactor_get_state() -> *u8;
+fn main() -> i32 { return 0; }
+// -> [E0919] `__cplus_reactor_get_state` starts with `__cplus_`, the compiler's reserved runtime-ABI prefix
+'''
+
+[[code]]
 id = "E0918"
 title = "Compile-time include/shader path escapes the package"
 category = "const / static / char"

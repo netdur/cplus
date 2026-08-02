@@ -2097,6 +2097,20 @@ fn main() -> i32 {
 
 <sub>repro: checked · cplus-core/src/sema.rs:include_path_escapes_package · test cplus-core/src/sema.rs:include_bytes_escaping_package_is_rejected_e0918</sub>
 
+### E0919 · Declaration claims the reserved `__cplus_` runtime-ABI prefix
+
+A function is declared with a name starting `__cplus_`, the prefix the compiler reserves for symbols it generates itself — the reactor helpers `#reactor_get_state` lowers to, the coroutine hooks, the thread trampolines, the bound-method bridges. A declaration under that prefix is claiming to name one of those symbols, and an unmarked one could take a runtime symbol's place at link time by accident or on purpose.
+
+```cplus
+extern fn __cplus_reactor_get_state() -> *u8;
+fn main() -> i32 { return 0; }
+// -> [E0919] `__cplus_reactor_get_state` starts with `__cplus_`, the compiler's reserved runtime-ABI prefix
+```
+
+**Fix.** If the declaration really does name a compiler-generated symbol (the stdlib reactor bindings do), mark it `#[runtime_abi]` — the same doctrine as `opaque` and `#[lang]`: a small trusted surface, written down. Otherwise pick a name outside the prefix.
+
+<sub>repro: checked · cplus-core/src/sema.rs:reject_unmarked_runtime_abi_name · test cplus-core/src/sema.rs:unmarked_runtime_abi_prefix_rejected_e0919</sub>
+
 ## Targets and packages
 
 ### E0852 · Import names an undeclared dependency (or no manifest is reachable)
