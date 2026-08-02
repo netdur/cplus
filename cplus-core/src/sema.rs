@@ -651,6 +651,11 @@ pub struct MonoInfo {
     /// would not terminate. Empty otherwise, and read by nothing in the
     /// pipeline.
     pub drop_classification: Vec<(String, bool)>,
+    /// issue-15(b): `(type name, size, align)` from the shared [`layout_of`],
+    /// the differential codegen's own tables must reproduce. Same clean-check
+    /// guard and the same "read by nothing in the pipeline" status as
+    /// `drop_classification`.
+    pub layout_classification: Vec<(String, u64, u64)>,
     pub instantiations: std::collections::BTreeSet<(String, Vec<Ty>)>,
     /// Maps each generic-fn call site to its concrete arg list, keyed by
     /// the call expression's span. v0.0.22 file-aware spans carry their
@@ -858,6 +863,27 @@ pub fn classify_carries_drop(
         "classify_carries_drop expects a clean program; got {diags:#?}"
     );
     let mut out = mono.drop_classification;
+    out.sort();
+    out
+}
+
+/// issue-15(b): `name -> (size, align)` for every struct and enum this compile
+/// classified, from the shared [`layout_of`]. The differential half: codegen
+/// builds its own tables from the post-mono AST and must lay the same type
+/// out the same way. A test hook, for the same reason
+/// [`classify_carries_drop`] is one.
+pub fn classify_layout(
+    program: &Program,
+    entry_file: PathBuf,
+    entry_src: &str,
+    files: std::collections::BTreeMap<String, (PathBuf, String)>,
+) -> Vec<(String, u64, u64)> {
+    let (diags, mono) = check_with_files_inner(program, entry_file, entry_src, files, false, None);
+    assert!(
+        !diags.iter().any(|d| matches!(d.severity, Severity::Error)),
+        "classify_layout expects a clean program; got {diags:#?}"
+    );
+    let mut out = mono.layout_classification;
     out.sort();
     out
 }
@@ -1333,9 +1359,21 @@ fn check_with_files_inner(
             }))
             .collect()
     };
+    let layout_classification: Vec<(String, u64, u64)> = if cx.sink.has_errors() {
+        Vec::new()
+    } else {
+        (0..cx.structs.len())
+            .map(|i| (cx.structs[i].name.clone(), Ty::Struct(StructId(i as u32))))
+            .chain(
+                (0..cx.enums.len()).map(|i| (cx.enums[i].name.clone(), Ty::Enum(EnumId(i as u32)))),
+            )
+            .filter_map(|(n, ty)| layout_of(&ty, &cx).map(|(sz, al)| (n, sz, al)))
+            .collect()
+    };
     let mono = MonoInfo {
         type_classification,
         drop_classification,
+        layout_classification,
         instantiations,
         call_monos: std::mem::take(&mut cx.call_monos),
         assoc_free_fn_dispatches: std::mem::take(&mut cx.assoc_free_fn_dispatches),
@@ -1752,28 +1790,30 @@ struct SemaCx<'a> {
     text_to_str_coercion_table: std::collections::HashSet<ByteSpan>,
 }
 
-/// issue-13(b): the two facts the "does this need teardown?" question asks of
-/// a type table.
+/// issue-13(b), issue-15(b): what a type table has to answer for the rules
+/// that BOTH sema and codegen need — "does this need teardown?" and "how big
+/// is it?".
 ///
 /// Sema and codegen each keep their own tables, in their own id universes —
 /// a sema `StructId` and a codegen `StructId` number different things, and
-/// nothing may pass one to the other. But the RULE is one rule, and it used
-/// to be written twice: sema's `ty_carries_drop` and codegen's `needs_drop`,
-/// the second labelled "mirrors sema's ty_carries_drop". Widening drop
-/// semantics on one side silently desynced the other, and the failure mode is
-/// a leak or a double-free, not a diagnostic. This trait is the seam: each
-/// side answers about its OWN ids, and [`carries_drop`] is the only place the
-/// recursion is written.
-pub trait DropShape {
+/// nothing may pass one to the other. But the RULES are one rule each, and
+/// each used to be written twice: `ty_carries_drop` against `needs_drop`
+/// ("mirrors sema's ty_carries_drop"), and `layout_of` against
+/// `static_layout` ("mirrors codegen's `static_layout` ABI rules (the two
+/// must agree)"). A comment is not a mechanism, and both failure modes are
+/// silent — a leak or a double-free on one side, a wrong stack budget on the
+/// other. This trait is the seam: each side answers about its OWN ids, and
+/// [`carries_drop`] / [`layout_of`] are the only places the recursions live.
+pub trait TypeShape {
     /// Does this struct declare a destructor of its own?
     fn struct_has_drop(&self, id: StructId) -> bool;
     /// Its field types, in declaration order.
     fn struct_field_tys(&self, id: StructId) -> Vec<Ty>;
     /// Does this enum carry payloads at all? A plain enum is a bare tag with
-    /// nothing to tear down.
+    /// nothing to tear down and no payload area.
     fn enum_is_tagged(&self, id: EnumId) -> bool;
-    /// Every variant payload type, flattened.
-    fn enum_payload_tys(&self, id: EnumId) -> Vec<Ty>;
+    /// Per-variant payload type lists, in declaration order.
+    fn enum_variant_payloads(&self, id: EnumId) -> Vec<Vec<Ty>>;
 }
 
 /// v0.0.14 auto field-drop: does a value of `ty` need teardown?
@@ -1793,11 +1833,11 @@ pub trait DropShape {
 /// and both would have overflowed the stack the first time anyone declared a
 /// value of such a type. Revisiting a type mid-walk answers `false` for that
 /// path: a cycle with no drop-carrying leaf on it carries no drop.
-pub fn carries_drop(ty: &Ty, tables: &dyn DropShape) -> bool {
+pub fn carries_drop(ty: &Ty, tables: &dyn TypeShape) -> bool {
     carries_drop_inner(ty, tables, &mut Vec::new())
 }
 
-fn carries_drop_inner(ty: &Ty, tables: &dyn DropShape, visiting: &mut Vec<(bool, u32)>) -> bool {
+fn carries_drop_inner(ty: &Ty, tables: &dyn TypeShape, visiting: &mut Vec<(bool, u32)>) -> bool {
     match ty {
         Ty::String => true,
         Ty::Struct(id) => {
@@ -1824,9 +1864,9 @@ fn carries_drop_inner(ty: &Ty, tables: &dyn DropShape, visiting: &mut Vec<(bool,
             }
             visiting.push((false, id.0));
             let r = tables
-                .enum_payload_tys(*id)
+                .enum_variant_payloads(*id)
                 .iter()
-                .any(|t| carries_drop_inner(t, tables, visiting));
+                .any(|v| v.iter().any(|t| carries_drop_inner(t, tables, visiting)));
             visiting.pop();
             r
         }
@@ -1835,7 +1875,132 @@ fn carries_drop_inner(ty: &Ty, tables: &dyn DropShape, visiting: &mut Vec<(bool,
     }
 }
 
-impl DropShape for SemaCx<'_> {
+/// issue-15(b): the byte size and alignment of a type, as the ABI lays it out.
+///
+/// This was two walks: codegen's `static_layout`, which decides what is
+/// actually emitted, and sema's `layout_of`, whose doc said it "mirrors
+/// codegen's `static_layout` ABI rules (the two must agree)". They did not:
+/// sema hard-coded 8 bytes for every pointer-shaped type while codegen asks
+/// the active target, so on a 32-bit target (`esp32c3-riscv32`, `wasm32`)
+/// sema's `#[max_stack]` estimate over-counted every pointer, slice and
+/// `Text` in the frame — the budget rejecting a program that fits.
+///
+/// `None` for types with no static size (`Param` before monomorphization,
+/// `Error`); callers decide what that means for them.
+///
+/// Cycle-guarded for the reason [`carries_drop`] is: `[T; 0]` embeds nothing,
+/// so a type may contain itself through one and still be finite.
+pub fn layout_of(ty: &Ty, tables: &dyn TypeShape) -> Option<(u64, u64)> {
+    layout_of_inner(ty, tables, &mut Vec::new())
+}
+
+/// The tagged-enum payload area, in 8-byte slots: each payload value padded
+/// up to a slot boundary, summed per variant, maxed across variants.
+///
+/// Kept beside [`layout_of`] because the emitted type (`{ i32, [N x i64] }`)
+/// and the size this function reports have to be the same N — codegen builds
+/// the array from this count and then lays the whole enum out with the rule
+/// above.
+pub fn enum_payload_slots(variants: &[Vec<Ty>], tables: &dyn TypeShape) -> u64 {
+    payload_slots_inner(variants, tables, &mut Vec::new())
+}
+
+fn payload_slots_inner(
+    variants: &[Vec<Ty>],
+    tables: &dyn TypeShape,
+    visiting: &mut Vec<(bool, u32)>,
+) -> u64 {
+    let mut max_slots: u64 = 0;
+    for v in variants {
+        let mut bytes: u64 = 0;
+        for pty in v {
+            if let Some((sz, _)) = layout_of_inner(pty, tables, visiting) {
+                bytes = bytes.saturating_add((sz + 7) & !7);
+            }
+        }
+        max_slots = max_slots.max(bytes.div_ceil(8));
+    }
+    max_slots
+}
+
+fn layout_of_inner(
+    ty: &Ty,
+    tables: &dyn TypeShape,
+    visiting: &mut Vec<(bool, u32)>,
+) -> Option<(u64, u64)> {
+    fn align_up(off: u64, al: u64) -> u64 {
+        if al == 0 {
+            off
+        } else {
+            (off + al - 1) & !(al - 1)
+        }
+    }
+    let ptr = (crate::target::active_target().pointer_width / 8) as u64;
+    match ty {
+        Ty::I8 | Ty::U8 | Ty::Bool => Some((1, 1)),
+        Ty::I16 | Ty::U16 | Ty::F16 => Some((2, 2)),
+        Ty::I32 | Ty::U32 | Ty::F32 => Some((4, 4)),
+        Ty::I64 | Ty::U64 | Ty::F64 => Some((8, 8)),
+        Ty::Isize | Ty::Usize | Ty::RawPtr(_) | Ty::FnPtr { .. } => Some((ptr, ptr)),
+        // Fat pointers: `{ ptr, usize }` and `{ ptr, usize, usize }`.
+        Ty::Str | Ty::Slice(_) => Some((2 * ptr, ptr)),
+        Ty::String => Some((3 * ptr, ptr)),
+        Ty::Unit => Some((0, 1)),
+        // No trailing pad on arrays — LLVM lays `[N x T]` out as N * size(T).
+        Ty::Array(elem, n) => {
+            let (esz, ea) = layout_of_inner(elem, tables, visiting)?;
+            Some((esz.saturating_mul(*n as u64), ea))
+        }
+        Ty::Struct(id) => {
+            if visiting.contains(&(true, id.0)) {
+                return Some((0, 1));
+            }
+            visiting.push((true, id.0));
+            let mut off: u64 = 0;
+            let mut max_al: u64 = 1;
+            let mut ok = true;
+            for fty in tables.struct_field_tys(*id) {
+                match layout_of_inner(&fty, tables, visiting) {
+                    Some((sz, al)) => {
+                        max_al = max_al.max(al);
+                        off = align_up(off, al);
+                        off = off.saturating_add(sz);
+                    }
+                    None => ok = false,
+                }
+            }
+            visiting.pop();
+            ok.then(|| (align_up(off, max_al), max_al.max(1)))
+        }
+        Ty::Enum(id) => {
+            if !tables.enum_is_tagged(*id) {
+                // Plain enum: a bare i32 tag.
+                return Some((4, 4));
+            }
+            if visiting.contains(&(false, id.0)) {
+                return Some((0, 1));
+            }
+            visiting.push((false, id.0));
+            let slots = payload_slots_inner(&tables.enum_variant_payloads(*id), tables, visiting);
+            visiting.pop();
+            // `{ i32 tag, [N x i64] payload }` — the tag pads up to 8.
+            Some((8u64.saturating_add(slots.saturating_mul(8)), 8))
+        }
+        // A fixed-width vector is `lanes * size(elem)`, aligned to its own
+        // size when that is a power of two (LLVM's natural `<N x T>`
+        // alignment) and to the lane's alignment otherwise. Masks lower to
+        // the same LLVM type.
+        Ty::Simd { elem, lanes } | Ty::Mask { elem, lanes } => {
+            let (esz, ea) = layout_of_inner(elem, tables, visiting)?;
+            let size = esz.saturating_mul(*lanes as u64);
+            let align = if size.is_power_of_two() { size } else { ea };
+            Some((size, align))
+        }
+        Ty::Error | Ty::Param(_) => None,
+    }
+}
+
+impl TypeShape for SemaCx<'_> {
     fn struct_has_drop(&self, id: StructId) -> bool {
         self.structs[id.0 as usize].is_drop
     }
@@ -1849,11 +2014,11 @@ impl DropShape for SemaCx<'_> {
     fn enum_is_tagged(&self, id: EnumId) -> bool {
         self.enums[id.0 as usize].is_tagged
     }
-    fn enum_payload_tys(&self, id: EnumId) -> Vec<Ty> {
+    fn enum_variant_payloads(&self, id: EnumId) -> Vec<Vec<Ty>> {
         self.enums[id.0 as usize]
             .variants
             .iter()
-            .flat_map(|v| v.payload.iter().cloned())
+            .map(|v| v.payload.clone())
             .collect()
     }
 }
@@ -3493,24 +3658,6 @@ impl SemaCx<'_> {
             }
         }
         true
-    }
-
-    /// For an instantiated generic struct or enum, the trailing segment of its
-    /// template name (`stdlib.rc.Rc` → `"Rc"`). `None` for non-nominal or
-    /// non-generic types. Used to recognize stdlib marker types and match
-    /// marker-`impl` overrides structurally rather than by mangled name.
-    fn nominal_template_leaf(&self, ty: &Ty) -> Option<&str> {
-        match ty {
-            Ty::Struct(id) => self.structs[id.0 as usize]
-                .generic_origin
-                .as_ref()
-                .map(|(tmpl, _)| tmpl.rsplit('.').next().unwrap_or(tmpl)),
-            Ty::Enum(id) => self.enums[id.0 as usize]
-                .generic_origin
-                .as_ref()
-                .map(|(tmpl, _)| tmpl.rsplit('.').next().unwrap_or(tmpl)),
-            _ => None,
-        }
     }
 
     /// v0.0.14 graph value-depth: render a resolved `Ty` to a display string
@@ -7052,78 +7199,12 @@ impl SemaCx<'_> {
         }
     }
 
-    /// Static byte size of a type for the `#[max_stack]` estimate. Mirrors
-    /// codegen's `static_layout` ABI rules (the two must agree); kept in sema
-    /// so the bounded-stack pass needs no codegen type table. Unsizable types
-    /// (`Param`, `Error`) contribute 0 — a generic frame can't be sized
-    /// before monomorphization.
+    /// Static byte size of a type for the `#[max_stack]` estimate — the ABI
+    /// layout, from the one [`layout_of`] codegen also lays out with.
+    /// Unsizable types (`Param`, `Error`) contribute 0: a generic frame
+    /// cannot be sized before monomorphization.
     fn stack_size_of(&self, ty: &Ty) -> u64 {
-        self.layout_of(ty).0
-    }
-
-    fn layout_of(&self, ty: &Ty) -> (u64, u64) {
-        fn align_up(off: u64, al: u64) -> u64 {
-            if al == 0 {
-                off
-            } else {
-                (off + al - 1) & !(al - 1)
-            }
-        }
-        match ty {
-            Ty::I8 | Ty::U8 | Ty::Bool => (1, 1),
-            Ty::I16 | Ty::U16 | Ty::F16 => (2, 2),
-            Ty::I32 | Ty::U32 | Ty::F32 => (4, 4),
-            Ty::I64 | Ty::U64 | Ty::Isize | Ty::Usize | Ty::F64 => (8, 8),
-            Ty::RawPtr(_) | Ty::FnPtr { .. } => (8, 8),
-            Ty::Str | Ty::Slice(_) => (16, 8),
-            Ty::String => (24, 8),
-            Ty::Unit => (0, 1),
-            Ty::Array(elem, n) => {
-                let (esz, ea) = self.layout_of(elem);
-                (esz.saturating_mul(*n as u64), ea)
-            }
-            Ty::Struct(id) => {
-                let info = &self.structs[id.0 as usize];
-                let mut off: u64 = 0;
-                let mut max_al: u64 = 1;
-                for (_, fty, _) in &info.fields {
-                    let (sz, al) = self.layout_of(fty);
-                    if al > max_al {
-                        max_al = al;
-                    }
-                    off = align_up(off, al);
-                    off = off.saturating_add(sz);
-                }
-                (align_up(off, max_al), max_al.max(1))
-            }
-            Ty::Enum(id) => {
-                let info = &self.enums[id.0 as usize];
-                if !info.is_tagged {
-                    (4, 4)
-                } else {
-                    let mut max_slots: u64 = 0;
-                    for v in &info.variants {
-                        let mut bytes: u64 = 0;
-                        for pty in &v.payload {
-                            let (sz, _) = self.layout_of(pty);
-                            bytes = bytes.saturating_add((sz + 7) & !7);
-                        }
-                        let slots = bytes.div_ceil(8);
-                        if slots > max_slots {
-                            max_slots = slots;
-                        }
-                    }
-                    (8u64.saturating_add(max_slots.saturating_mul(8)), 8)
-                }
-            }
-            Ty::Simd { elem, lanes } | Ty::Mask { elem, lanes } => {
-                let (esz, ea) = self.layout_of(elem);
-                let size = esz.saturating_mul(*lanes as u64);
-                let align = if size.is_power_of_two() { size } else { ea };
-                (size, align)
-            }
-            Ty::Error | Ty::Param(_) => (0, 0),
-        }
+        layout_of(ty, self).map(|(sz, _)| sz).unwrap_or(0)
     }
 
     /// Phase 5 slice 5ATTR.2 — validate sema-level rules for `#[test]` fns:

@@ -2054,7 +2054,7 @@ struct TypeTable {
     str_methods: HashMap<String, MethodInfo>,
 }
 
-impl crate::sema::DropShape for TypeTable {
+impl crate::sema::TypeShape for TypeTable {
     fn struct_has_drop(&self, id: StructId) -> bool {
         self.struct_defs[id.0 as usize].is_drop
     }
@@ -2068,12 +2068,8 @@ impl crate::sema::DropShape for TypeTable {
     fn enum_is_tagged(&self, id: EnumId) -> bool {
         self.enum_defs[id.0 as usize].is_tagged
     }
-    fn enum_payload_tys(&self, id: EnumId) -> Vec<Ty> {
-        self.enum_defs[id.0 as usize]
-            .variant_payloads
-            .iter()
-            .flat_map(|p| p.iter().cloned())
-            .collect()
+    fn enum_variant_payloads(&self, id: EnumId) -> Vec<Vec<Ty>> {
+        self.enum_defs[id.0 as usize].variant_payloads.clone()
     }
 }
 
@@ -2418,22 +2414,15 @@ fn collect_types(p: &Program) -> TypeTable {
         let Some(&id) = t.enum_by_name.get(&e.name.name) else {
             continue;
         };
-        let mut max_slots: u32 = 0;
-        let mut payloads: Vec<Vec<Ty>> = Vec::with_capacity(e.variants.len());
-        for v in &e.variants {
-            let p: Vec<Ty> = v.payload.iter().map(|ty| ty_from(ty, &t)).collect();
-            // Sum payload bytes; round up to i64-aligned slot count.
-            let mut bytes: u64 = 0;
-            for ty in &p {
-                if let Some((sz, _al)) = static_layout(ty, &t) {
-                    // Pad each value up to 8 bytes (i64-aligned slots).
-                    bytes += (sz + 7) & !7;
-                }
-            }
-            let slots = bytes.div_ceil(8) as u32;
-            max_slots = max_slots.max(slots);
-            payloads.push(p);
-        }
+        let payloads: Vec<Vec<Ty>> = e
+            .variants
+            .iter()
+            .map(|v| v.payload.iter().map(|ty| ty_from(ty, &t)).collect())
+            .collect();
+        // issue-15(b): the slot count comes from the same rule the enum's own
+        // layout is computed with, so the emitted `[N x i64]` and the size
+        // every consumer reports cannot disagree.
+        let max_slots = crate::sema::enum_payload_slots(&payloads, &t) as u32;
         t.enum_defs[id.0 as usize].variant_payloads = payloads;
         t.enum_defs[id.0 as usize].payload_slots = max_slots;
     }
@@ -3456,92 +3445,7 @@ fn enum_payload_byte_offset(payload_tys: &[Ty], pi: usize, types: &TypeTable) ->
 }
 
 fn static_layout(ty: &Ty, types: &TypeTable) -> Option<(u64, u64)> {
-    fn align_up(off: u64, al: u64) -> u64 {
-        (off + al - 1) & !(al - 1)
-    }
-    match ty {
-        Ty::I8 | Ty::U8 | Ty::Bool => Some((1, 1)),
-        Ty::I16 | Ty::U16 | Ty::F16 => Some((2, 2)),
-        Ty::I32 | Ty::U32 | Ty::F32 => Some((4, 4)),
-        Ty::I64 | Ty::U64 | Ty::F64 => Some((8, 8)),
-        // Pointer-sized (v0.0.21 32-bit slice): 8/8 on 64-bit targets
-        // (unchanged), 4/4 on 32-bit ones.
-        Ty::Isize | Ty::Usize | Ty::RawPtr(_) | Ty::FnPtr { .. } => {
-            let p = ptr_size_bytes();
-            Some((p, p))
-        }
-        // Fat pointers (Phase 8 / 11): { ptr, usize } and
-        // { ptr, usize, usize } — two/three pointer-sized words.
-        Ty::Str | Ty::Slice(_) => {
-            let p = ptr_size_bytes();
-            Some((2 * p, p))
-        }
-        Ty::String => {
-            let p = ptr_size_bytes();
-            Some((3 * p, p))
-        }
-        Ty::Unit => Some((0, 1)),
-        Ty::Array(elem, n) => {
-            let (esz, ea) = static_layout(elem, types)?;
-            // No trailing pad on arrays — LLVM lays out [N x T] as N * size(T).
-            Some((esz.saturating_mul(*n as u64), ea))
-        }
-        Ty::Struct(id) => {
-            let info = &types.struct_defs[id.0 as usize];
-            let mut off: u64 = 0;
-            let mut max_al: u64 = 1;
-            for (_, fty) in &info.fields {
-                let (sz, al) = static_layout(fty, types)?;
-                if al > max_al {
-                    max_al = al;
-                }
-                off = align_up(off, al);
-                off = off.saturating_add(sz);
-            }
-            // Pad to struct alignment.
-            let total = if max_al == 0 {
-                off
-            } else {
-                align_up(off, max_al)
-            };
-            Some((total, max_al.max(1)))
-        }
-        Ty::Enum(id) => {
-            let info = &types.enum_defs[id.0 as usize];
-            if !info.is_tagged {
-                // Plain enum: bare i32.
-                Some((4, 4))
-            } else {
-                // Tagged enum: { i32 tag, [N x i64] payload } — align 8.
-                let payload_bytes = info.payload_slots as u64 * 8;
-                // tag is i32, padded up to 8 before the array.
-                let size = 8u64.saturating_add(payload_bytes);
-                Some((size, 8))
-            }
-        }
-        // v0.0.6 Slice 1B: fixed-width SIMD vector — `lanes` * size(elem),
-        // aligned to the natural vector alignment (the total size, capped
-        // by the lane scalar's alignment for short widths and rounded up
-        // to a power of 2 otherwise). LLVM lays `<N x T>` exactly this way.
-        Ty::Simd { elem, lanes } => {
-            let (esz, ea) = static_layout(elem, types)?;
-            let size = esz.saturating_mul(*lanes as u64);
-            // Natural alignment for power-of-two-sized vectors equals the
-            // size itself (4/8/16/32-byte alignment); otherwise the lane
-            // alignment.
-            let align = if size.is_power_of_two() { size } else { ea };
-            Some((size, align))
-        }
-        // Masks lower to the same `<N x iN>` LLVM type as the matching
-        // Simd — share the layout calculation verbatim.
-        Ty::Mask { elem, lanes } => {
-            let (esz, ea) = static_layout(elem, types)?;
-            let size = esz.saturating_mul(*lanes as u64);
-            let align = if size.is_power_of_two() { size } else { ea };
-            Some((size, align))
-        }
-        Ty::Error | Ty::Param(_) => None,
-    }
+    crate::sema::layout_of(ty, types)
 }
 
 /// Slice 1C: scoped `!alias.scope` / `!noalias` metadata publication.
@@ -4419,9 +4323,6 @@ fn usize_llvm_ty() -> &'static str {
 }
 
 /// Byte size of a pointer (and of `usize`/`isize`) on the active target.
-fn ptr_size_bytes() -> u64 {
-    (active_target().pointer_width / 8) as u64
-}
 
 /// The AArch64/Apple + SysV ABI extension attribute for a narrow (< 32-bit)
 /// integer that crosses the C boundary (extern arg/return): unsigned → `zeroext`,
@@ -18314,6 +18215,160 @@ fn main() -> i32 {\n\
         assert!(!says("CopyPayload"));
         assert!(!says("Gen__i32"));
         assert!(says("Gen__HasPtr"));
+    }
+
+    /// issue-15(b): the two passes must lay the same type out the same way.
+    /// The RULE is shared now, so what this pins is that each side's tables
+    /// feed it the same shape — field order and types on the struct side,
+    /// tagged-ness and per-variant payloads on the enum side — and that a
+    /// packing change shows up here rather than as a silently wrong
+    /// `#[max_stack]` budget.
+    #[test]
+    fn sema_and_codegen_agree_on_layout() {
+        use crate::ast::ItemKind;
+        let src = "\
+struct Pad { a: u8, b: i64, c: u8 }\n\
+struct Nested { p: Pad, n: i32 }\n\
+struct Arr { xs: [i64; 3], flag: bool }\n\
+struct Views { s: str, opaque p: *u8 }\n\
+struct Vec4 { v: f32x4 }\n\
+struct Gen[T] { v: T, n: i32 }\n\
+enum PlainTag { A, B, C }\n\
+enum Mixed { None, One(i64), Two(i64, i64), Big(Pad) }\n\
+fn main() -> i32 {\n\
+    let g: Gen[i64] = Gen[i64] { v: 1, n: 2 };\n\
+    return (g.n as i32) - 2;\n\
+}\n";
+        let toks = tokenize(src).expect("lex");
+        let prog = parse(toks).expect("parse");
+        let file_path = PathBuf::from("t.cplus");
+        let mut files: std::collections::BTreeMap<String, (PathBuf, String)> =
+            std::collections::BTreeMap::new();
+        files.insert("t.cplus".to_string(), (file_path.clone(), src.to_string()));
+        let sema_answers = sema::classify_layout(&prog, file_path.clone(), src, files.clone());
+
+        let (diags, mono) = sema::check_multi_with_mono(&prog, file_path, src, files);
+        assert!(diags.is_empty(), "sema errors: {diags:#?}");
+        let mut struct_names: Vec<String> = Vec::new();
+        let mut enum_names: Vec<String> = Vec::new();
+        for item in &prog.items {
+            match &item.kind {
+                ItemKind::Struct(s) if s.generic_params.is_empty() => {
+                    struct_names.push(s.name.name.clone())
+                }
+                ItemKind::Enum(e) if e.generic_params.is_empty() => {
+                    enum_names.push(e.name.name.clone())
+                }
+                _ => {}
+            }
+        }
+        for info in mono.struct_instantiations.values() {
+            let slot = info.id as usize;
+            if struct_names.len() <= slot {
+                struct_names.resize(slot + 1, String::from("?"));
+            }
+            struct_names[slot] = info.mangled_name.clone();
+        }
+        for info in mono.enum_instantiations.values() {
+            let slot = info.id as usize;
+            if enum_names.len() <= slot {
+                enum_names.resize(slot + 1, String::from("?"));
+            }
+            enum_names[slot] = info.mangled_name.clone();
+        }
+        let name_of = {
+            let struct_names = struct_names.clone();
+            let enum_names = enum_names.clone();
+            move |ty: &sema::Ty| -> String {
+                match ty {
+                    sema::Ty::Struct(id) => struct_names
+                        .get(id.0 as usize)
+                        .cloned()
+                        .unwrap_or_else(|| "?".into()),
+                    sema::Ty::Enum(id) => enum_names
+                        .get(id.0 as usize)
+                        .cloned()
+                        .unwrap_or_else(|| "?".into()),
+                    other => other.name().to_string(),
+                }
+            }
+        };
+        let post = crate::monomorphize::monomorphize(prog, &mono, &name_of);
+        let tables = collect_types(&post);
+
+        let mut checked = 0;
+        for (name, id) in &tables.struct_by_name {
+            let Some((_, sz, al)) = sema_answers.iter().find(|(n, _, _)| n == name) else {
+                continue;
+            };
+            assert_eq!(
+                Some((*sz, *al)),
+                static_layout(&sema::Ty::Struct(*id), &tables),
+                "struct `{name}`"
+            );
+            checked += 1;
+        }
+        for (name, id) in &tables.enum_by_name {
+            let Some((_, sz, al)) = sema_answers.iter().find(|(n, _, _)| n == name) else {
+                continue;
+            };
+            assert_eq!(
+                Some((*sz, *al)),
+                static_layout(&sema::Ty::Enum(*id), &tables),
+                "enum `{name}`"
+            );
+            // The CACHED slot count decides the emitted `[N x i64]`; the
+            // layout above recomputes it. A payload area emitted at one size
+            // and reported at another is the v0.0.3 stomp-past-the-allocation
+            // bug, so pin that they are the same number.
+            let info = &tables.enum_defs[id.0 as usize];
+            assert_eq!(
+                info.payload_slots as u64,
+                crate::sema::enum_payload_slots(&info.variant_payloads, &tables),
+                "enum `{name}`: emitted slot count vs the layout's"
+            );
+            checked += 1;
+        }
+        assert!(
+            checked >= 7,
+            "expected to compare the whole corpus, compared {checked}"
+        );
+        // Pin the numbers too, so a packing change is a decision rather than
+        // two passes quietly agreeing on something new.
+        let sz = |n: &str| {
+            sema_answers
+                .iter()
+                .find(|(name, _, _)| name == n)
+                .unwrap_or_else(|| panic!("`{n}` not classified: {sema_answers:?}"))
+        };
+        assert_eq!((sz("Pad").1, sz("Pad").2), (24, 8)); // u8 pad i64 u8 pad
+        assert_eq!((sz("Nested").1, sz("Nested").2), (32, 8));
+        assert_eq!((sz("Arr").1, sz("Arr").2), (32, 8));
+        assert_eq!((sz("Vec4").1, sz("Vec4").2), (16, 16));
+        assert_eq!((sz("PlainTag").1, sz("PlainTag").2), (4, 4)); // bare tag
+        assert_eq!((sz("Mixed").1, sz("Mixed").2), (32, 8)); // tag + 3 slots (Pad)
+    }
+
+    /// issue-15(b): sema hard-coded 8 bytes for every pointer-shaped type
+    /// while codegen asked the active target. On a 32-bit target that made
+    /// the `#[max_stack]` estimate over-count every pointer, slice and `Text`
+    /// in the frame. One rule, one answer.
+    #[test]
+    fn layout_follows_the_target_pointer_width() {
+        let t = TypeTable::default();
+        // The host is 64-bit; these are the widths the shared rule reports
+        // for it, and the ones sema used to hard-code for every target.
+        assert_eq!(static_layout(&Ty::RawPtr(Box::new(Ty::U8)), &t), Some((8, 8)));
+        assert_eq!(static_layout(&Ty::Str, &t), Some((16, 8)));
+        assert_eq!(static_layout(&Ty::String, &t), Some((24, 8)));
+        assert_eq!(static_layout(&Ty::Usize, &t), Some((8, 8)));
+        // Whatever the target says, every pointer-shaped type says the same.
+        let p = (crate::target::active_target().pointer_width / 8) as u64;
+        assert_eq!(
+            static_layout(&Ty::Usize, &t).map(|(s, _)| s),
+            Some(p),
+            "usize must be one pointer wide"
+        );
     }
 
     #[test]
