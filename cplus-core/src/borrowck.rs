@@ -3274,6 +3274,9 @@ struct ViewRules<'a> {
     /// for recognizing a store whose source is a caller-owned view.
     param_names: HashSet<String>,
     return_ty: Option<Type>,
+    /// Contract §5: the definition carries some `#[keeps(...)]` — it has
+    /// declared its flows, which is the whole ask at an opaque boundary.
+    declares_flows: bool,
     diags: Vec<RawDiag>,
 }
 
@@ -3285,6 +3288,7 @@ impl<'a> ViewRules<'a> {
         receiver_ty: Option<Type>,
         params: &[Param],
         return_ty: Option<Type>,
+        attributes: &[Attribute],
     ) -> Self {
         let mut base: HashMap<String, ViewLocal> = HashMap::new();
         let mut param_names = HashSet::new();
@@ -3316,6 +3320,8 @@ impl<'a> ViewRules<'a> {
             scopes: vec![base],
             param_names,
             return_ty,
+            declares_flows: crate::attrs::has_keeps(attributes, "this")
+                || crate::attrs::has_keeps(attributes, "nothing"),
             diags: Vec::new(),
         }
     }
@@ -3737,6 +3743,58 @@ impl<'a> ViewRules<'a> {
         }
     }
 
+    /// The declared type of a WRITE target. Same structural resolution as
+    /// any other expression, plus the raw-pointer deref the rest of the
+    /// analysis has no reason to type: `*p` where `p: *T` stores a `T`.
+    fn place_ty(&self, e: &Expr) -> Option<Type> {
+        match &e.kind {
+            ExprKind::Unary {
+                op: UnaryOp::Deref,
+                operand,
+            } => match self.infer_ty(operand).map(|t| t.kind) {
+                Some(TypeKind::RawPtr(inner)) => Some(*inner),
+                _ => None,
+            },
+            _ => self.infer_ty(e),
+        }
+    }
+
+    /// Contract §5, the mandatory choice at the raw seam: a store of
+    /// view-typed data through a raw-pointer deref is invisible to every
+    /// flow analysis, so the function must DECLARE its flows. This is the
+    /// doctrine E0510 applies to raw-pointer fields (drop-or-`opaque`), one
+    /// accountability question later: `opaque` answers who frees, `keeps`
+    /// answers who outlives.
+    ///
+    /// Byte stores (`*p = b`) and pointer stores never fire; only a view or
+    /// a carrier VALUE does.
+    fn check_raw_store(&mut self, target: &Expr, value: &Expr) {
+        if self.declares_flows {
+            return;
+        }
+        if !matches!(
+            &target.kind,
+            ExprKind::Unary {
+                op: UnaryOp::Deref,
+                ..
+            }
+        ) {
+            return;
+        }
+        let Some(ty) = self.place_ty(target) else {
+            return;
+        };
+        if !(Self::is_view_ty(&ty) || self.oracle.type_contains_view(&ty)) {
+            return;
+        }
+        self.err(
+            "E0516",
+            "storing a view through a raw pointer without a declared flow: no analysis can see where these bytes end up, so the function must declare it — `#[keeps(this)]` if the view survives in the receiver, `#[keeps(nothing)]` if the bytes are copied and nothing borrowed escapes"
+                .to_string(),
+            value.span,
+        );
+    }
+
     // -- the walk ----------------------------------------------------------
 
     /// Record what a `let` / `var` introduces: an owning binding, plus the
@@ -3916,6 +3974,7 @@ impl<'a> ViewRules<'a> {
                 if *op != AssignOp::Assign {
                     return;
                 }
+                self.check_raw_store(target, value);
                 let ExprKind::Ident(n) = &target.kind else {
                     return;
                 };
@@ -3992,8 +4051,15 @@ fn collect_view_diagnostics(
                 if f.is_extern || f.is_declaration {
                     continue;
                 }
-                let mut r =
-                    ViewRules::new(sigs, oracle, None, None, &f.params, f.return_type.clone());
+                let mut r = ViewRules::new(
+                    sigs,
+                    oracle,
+                    None,
+                    None,
+                    &f.params,
+                    f.return_type.clone(),
+                    &f.attributes,
+                );
                 r.walk_block(&f.body);
                 diags.extend(r.diags.into_iter().map(|d| (item.origin_file.clone(), d)));
             }
@@ -4013,6 +4079,7 @@ fn collect_view_diagnostics(
                         recv_ty,
                         &m.params,
                         m.return_type.clone(),
+                        &m.attributes,
                     );
                     r.walk_block(&m.body);
                     diags.extend(r.diags.into_iter().map(|d| (item.origin_file.clone(), d)));
@@ -8727,6 +8794,52 @@ fn mk() -> LStr { return LStr { ptr: { 0 as *u8 }, len: { 0 as usize }, cap: { 0
             let codes = check_src(&format!("{VIEW_PRELUDE}{tail}"));
             assert!(
                 !codes.iter().any(|c| c == "E0513"),
+                "[{name}] must not be denied, got {codes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn raw_view_store_without_a_declaration_denied_e0516() {
+        // Contract §5: nothing can see through a raw-pointer store, so the
+        // function has to say what it does with the bytes.
+        let codes = check_src("fn stash(slot: *str, v: str) { *slot = v; return; }");
+        assert!(
+            codes.iter().any(|c| c == "E0516"),
+            "expected E0516 on an undeclared raw view store, got {codes:?}"
+        );
+        let codes = check_src(
+            "struct Data { key: str }\n\
+             fn stash2(slot: *Data, v: Data) { *slot = v; return; }",
+        );
+        assert!(
+            codes.iter().any(|c| c == "E0516"),
+            "a carrier through a raw pointer is the same store, got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn declared_or_non_view_raw_store_stays_clean() {
+        let clean: &[(&str, &str)] = &[
+            (
+                "keeps_nothing",
+                "#[keeps(nothing)]\nfn stash(slot: *str, v: str) { *slot = v; return; }",
+            ),
+            (
+                "keeps_this",
+                "struct S { n: i32 }\n\
+                 impl S { #[keeps(this)] fn put(this, slot: *str, v: str) { *slot = v; return; } }",
+            ),
+            ("bytes", "fn poke(p: *u8, b: u8) { *p = b; return; }"),
+            (
+                "pointer_store",
+                "fn relink(pp: **u8, p: *u8) { *pp = p; return; }",
+            ),
+        ];
+        for (name, src) in clean {
+            let codes = check_src(src);
+            assert!(
+                !codes.iter().any(|c| c == "E0516"),
                 "[{name}] must not be denied, got {codes:?}"
             );
         }
