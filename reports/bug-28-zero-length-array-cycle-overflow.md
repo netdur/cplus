@@ -1,13 +1,13 @@
 # Bug 28 — a value of a zero-length-array-recursive struct overflows the compiler's stack
 
-- Status: PARTIAL 2026-08-02 — the HANG is fixed (`issue-15 (b)`, the shared
-  `layout_of` cycle guard). What remains is a lowering gap: the emitted LLVM
-  type is self-referential and clang rejects it. Found while landing
-  issue-13 (b).
-- Type: was a compiler hang (stack overflow, `SIGABRT`); now a late,
-  wrong-layer error from clang
-- Area: `cplus-core/src/codegen.rs` — the struct-body emitter
-- Severity: low reachability. The failure is loud either way now.
+- Status: FIXED 2026-08-02 — the hang in `b818a1b` (issue-15 (b)'s shared
+  `layout_of` cycle guard), the lowering in `<this commit>`. Found while
+  landing issue-13 (b).
+- Type: was a compiler hang (stack overflow, `SIGABRT`), then a late,
+  wrong-layer clang error
+- Area: `cplus-core/src/sema.rs` (the shared layout walk),
+  `cplus-core/src/codegen.rs` (the struct-body emitter)
+- Severity: low reachability, hard failure. Both halves were loud.
 
 ## Repro
 
@@ -28,29 +28,34 @@ constructing a VALUE that hangs. `#zero::[Node]()` is the only constructor
 available: an empty array literal is rejected (E0332, "empty array literals
 not supported in Phase 2"), so a plain struct literal cannot build one.
 
-## What is fixed, and what is left
+## The two halves
 
-The stack overflow is gone: `layout_of` is now one cycle-guarded walk shared
-by sema and codegen (issue-15 (b)), and a revisit answers "zero size, align
-1" for that path. Both repros above, and the mutual-recursion variant, now
-reach the end of the compiler.
+**The hang.** `layout_of` is now one cycle-guarded walk shared by sema and
+codegen (issue-15 (b)); a revisit answers "zero size, align 1" for that path.
+That took the repro from an abort to a clang error.
 
-They do not link. Codegen emits the struct body verbatim:
+**The lowering.** Codegen used to emit the struct body verbatim:
 
 ```llvm
 %Node = type { [0 x %Node], i32 }
 ```
 
-and clang rejects it — `identified structure type 'Node' is recursive`. The
-diagnostic is real but it arrives from the wrong tool at the wrong layer,
-naming a definition the user did write but in terms of an IR type they never
-saw.
+which clang rejects — `identified structure type 'Node' is recursive`. A real
+diagnostic, from the wrong tool, naming an IR type the user never saw.
 
-The fix is in the struct-body emitter, not in layout: a zero-length array
-contributes no storage, so `[0 x %Node]` can be emitted as `[0 x i8]` — same
-size (0), same alignment contribution (1), no self-reference. Any zero-length
-array of a type currently being emitted needs the same treatment, since that
-is precisely when the reference would close a cycle.
+The element type of an EMPTY array is unobservable: nothing can index it and
+its size is zero. So the cycle is cut with `i8`, and only where it is a cycle:
+`llvm_field_ty` renders a field of a named-struct definition, and replaces
+`[0 x T]` with `[0 x i8]` exactly when `T` reaches back to the struct being
+defined. That is the same place `layout_of`'s guard cuts, which is what keeps
+the emitted type and the computed layout the same shape — the guard reports
+"zero size, align 1" for the revisited struct, and `[0 x i8]` is a field of
+zero size and alignment 1.
+
+A zero-length array that closes NO cycle keeps its element type, and with it
+the alignment `layout_of` reports for the field: `struct Pad0 { xs: [i64; 0],
+n: i32 }` stays `%Pad0 = type { [0 x i64], i32 }`, size 8 align 8 on both
+sides. Cutting those to `i8` would have silently changed their layout.
 
 ## Why the type is legal
 
@@ -82,16 +87,15 @@ second copy of the same blind spot in the layout walk. Guarding that one — as
 part of merging sema's `layout_of` with codegen's `static_layout` — is what
 took the repro from a hang to a clang error.
 
-## Verification when the lowering is fixed
+## Verification (as run)
 
-- The repro above compiles and runs (`x.n == 0`).
-- Add it as an e2e case beside `zero_length_array_recursion_is_clean`, which
-  today only pins that the DECLARATION is accepted.
-- Mutual recursion through zero-length arrays too — confirmed to overflow the
-  same way:
-
-  ```cplus
-  struct A { b: [B; 0], n: i32 }
-  struct B { a: [A; 0], m: i32 }
-  fn main() -> i32 { let x: A = #zero::[A](); return x.n; }
-  ```
+- e2e `a_value_of_a_zero_length_array_recursive_struct_builds_and_runs`
+  compiles AND runs four shapes: the direct cycle, the mutual pair, one
+  closed through a by-value field (`S { f: Inner }`, `Inner { xs: [S; 0] }`),
+  and one with a destructor. `zero_length_array_recursion_is_clean` in sema
+  only ever pinned that the declaration is accepted.
+- codegen `a_zero_length_array_cycle_is_cut_but_a_plain_one_is_not` pins the
+  emitted IR for all four, including the control that must NOT be cut.
+- `--emit-ll` byte-identical over the 40 `docs/examples` programs, and the
+  vendor-wide `cpc check` sweep unchanged: no existing program contains a
+  zero-length array of an aggregate, so nothing else moved.

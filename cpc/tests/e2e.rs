@@ -5990,6 +5990,64 @@ const OPT_PRELUDE: &str = "enum Opt { S(Buf), N }\n\
      fn take_it() -> Opt { return Opt::S(mk()); }\n";
 
 #[test]
+fn a_value_of_a_zero_length_array_recursive_struct_builds_and_runs() {
+    // bug-28: `[T; 0]` embeds nothing, so E0913 correctly accepts a type that
+    // contains itself through one. Declaring it was always fine; constructing
+    // a VALUE walked the containment cycle forever and aborted the compiler
+    // with a stack overflow, then — once the layout walk was guarded — died
+    // in clang on a recursive LLVM type. Both ends now work.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    for (label, src) in [
+        (
+            "direct",
+            "struct Node { kids: [Node; 0], n: i32 }\n\
+             fn main() -> i32 { let x: Node = #zero::[Node](); return x.n; }\n",
+        ),
+        (
+            "mutual",
+            "struct A { b: [B; 0], n: i32 }\n\
+             struct B { a: [A; 0], m: i32 }\n\
+             fn main() -> i32 { let x: A = #zero::[A](); return x.n; }\n",
+        ),
+        (
+            "through-a-by-value-field",
+            "struct Inner { xs: [S; 0], y: i32 }\n\
+             struct S { f: Inner }\n\
+             fn main() -> i32 { let x: S = #zero::[S](); return x.f.y; }\n",
+        ),
+        (
+            "with-a-destructor",
+            "extern fn free(p: *u8);\n\
+             struct Node { kids: [Node; 0], p: *u8 }\n\
+             impl Node { fn drop(ref this) { { free(this.p); } return; } }\n\
+             fn main() -> i32 { let n: Node = #zero::[Node](); return 0; }\n",
+        ),
+    ] {
+        let dir = tempdir();
+        let path = dir.join("t.cplus");
+        let bin = dir.join("t");
+        std::fs::write(&path, src).unwrap();
+        let out = Command::new(cpc)
+            .arg(&path)
+            .arg("-o")
+            .arg(&bin)
+            .output()
+            .expect("invoke cpc");
+        assert!(
+            out.status.success(),
+            "[{label}] must compile; stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let run = Command::new(&bin).output().expect("run");
+        assert_eq!(
+            run.status.code(),
+            Some(0),
+            "[{label}] must run and return 0"
+        );
+    }
+}
+
+#[test]
 fn view_of_match_payload_of_owned_scrutinee_rejected_e0513() {
     // issue-07: a payload bound out of a scrutinee the match OWNS (here a
     // call result — a temporary) owns its part of it, so it is freed at

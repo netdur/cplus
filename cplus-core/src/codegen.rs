@@ -4039,6 +4039,72 @@ fn scan_moves_in_expr(
     }
 }
 
+/// bug-28: does `ty` reach struct `target` by CONTAINMENT — through fields,
+/// array elements (of any length) and enum payloads? Asked only while a named
+/// struct definition is being written, to find the edges that would make the
+/// definition self-referential.
+fn ty_reaches_struct(ty: &Ty, target: StructId, types: &TypeTable, seen: &mut Vec<u32>) -> bool {
+    match ty {
+        Ty::Struct(id) => {
+            if *id == target {
+                return true;
+            }
+            if seen.contains(&id.0) {
+                return false;
+            }
+            seen.push(id.0);
+            let r = types.struct_defs[id.0 as usize]
+                .fields
+                .clone()
+                .iter()
+                .any(|(_, f)| ty_reaches_struct(f, target, types, seen));
+            seen.pop();
+            r
+        }
+        Ty::Enum(id) => {
+            if seen.contains(&(id.0 | 0x8000_0000)) {
+                return false;
+            }
+            seen.push(id.0 | 0x8000_0000);
+            let r = types.enum_defs[id.0 as usize]
+                .variant_payloads
+                .clone()
+                .iter()
+                .any(|p| p.iter().any(|t| ty_reaches_struct(t, target, types, seen)));
+            seen.pop();
+            r
+        }
+        Ty::Array(elem, _) => ty_reaches_struct(elem, target, types, seen),
+        _ => false,
+    }
+}
+
+/// bug-28: the LLVM type of one field, as written INSIDE `owner`'s named-type
+/// definition.
+///
+/// Identical to [`llvm_ty`] except for the one edge that can make a
+/// definition refer to itself. `[T; 0]` holds no elements, so E0913 accepts a
+/// type that contains itself through one — `struct Node { kids: [Node; 0] }`
+/// is finite — but the obvious lowering is `%Node = type { [0 x %Node] }`,
+/// which clang rejects as a recursive identified structure. The element type
+/// of an empty array is unobservable (nothing can index it, its size is 0),
+/// so the cycle is cut with `i8`.
+///
+/// The cut lands exactly where `sema::layout_of`'s cycle guard lands, which is
+/// what keeps the emitted type and the computed layout the same shape: the
+/// guard answers "zero size, align 1" for a revisited struct, and `[0 x i8]`
+/// is a field of zero size and alignment 1. Zero-length arrays that close no
+/// cycle keep their element type, and with it the alignment `layout_of`
+/// reports for them.
+fn llvm_field_ty(ty: &Ty, types: &TypeTable, owner: StructId) -> String {
+    if let Ty::Array(elem, 0) = ty {
+        if ty_reaches_struct(elem, owner, types, &mut Vec::new()) {
+            return "[0 x i8]".to_string();
+        }
+    }
+    llvm_ty(ty, types)
+}
+
 fn write_struct_decls(out: &mut String, types: &TypeTable, _p: &Program) {
     let any_struct = !types.struct_defs.is_empty();
     let any_tagged_enum = types.enum_defs.iter().any(|e| e.is_tagged);
@@ -4046,8 +4112,13 @@ fn write_struct_decls(out: &mut String, types: &TypeTable, _p: &Program) {
         return;
     }
     // Struct named-type declarations (Phase 2B).
-    for s in &types.struct_defs {
-        let inner: Vec<String> = s.fields.iter().map(|(_, t)| llvm_ty(t, types)).collect();
+    for (i, s) in types.struct_defs.iter().enumerate() {
+        let owner = StructId(i as u32);
+        let inner: Vec<String> = s
+            .fields
+            .iter()
+            .map(|(_, t)| llvm_field_ty(t, types, owner))
+            .collect();
         writeln!(out, "%{} = type {{ {} }}", s.name, inner.join(", ")).unwrap();
     }
     // Tagged-enum named-type declarations (Phase 3I). Layout is
@@ -18368,6 +18439,47 @@ fn main() -> i32 {\n\
             static_layout(&Ty::Usize, &t).map(|(s, _)| s),
             Some(p),
             "usize must be one pointer wide"
+        );
+    }
+
+    /// bug-28: `[T; 0]` holds nothing, so E0913 accepts a type that contains
+    /// itself through one — and the obvious lowering is a recursive LLVM
+    /// identified structure, which clang rejects. The element type of an
+    /// empty array is unobservable, so the cycle is cut with `i8`. A
+    /// zero-length array that closes NO cycle keeps its element type, because
+    /// its alignment is the one `layout_of` reports for the field.
+    #[test]
+    fn a_zero_length_array_cycle_is_cut_but_a_plain_one_is_not() {
+        let direct = gen_src("struct Node { kids: [Node; 0], n: i32 }\n\
+             fn main() -> i32 { return 0; }");
+        assert!(
+            direct.contains("%Node = type { [0 x i8], i32 }"),
+            "self-referential zero-length array must be cut; got:\n{direct}"
+        );
+        let mutual = gen_src("struct A { b: [B; 0], n: i32 }\n\
+             struct B { a: [A; 0], m: i32 }\n\
+             fn main() -> i32 { return 0; }");
+        assert!(
+            mutual.contains("%A = type { [0 x i8], i32 }")
+                && mutual.contains("%B = type { [0 x i8], i32 }"),
+            "a mutual cycle must be cut on both sides; got:\n{mutual}"
+        );
+        // Through a by-value field, not just directly.
+        let indirect = gen_src("struct Inner { xs: [S; 0], y: i32 }\n\
+             struct S { f: Inner }\n\
+             fn main() -> i32 { return 0; }");
+        assert!(
+            indirect.contains("%Inner = type { [0 x i8], i32 }")
+                && indirect.contains("%S = type { %Inner }"),
+            "the cut belongs on the zero-length edge, not the by-value one; got:\n{indirect}"
+        );
+        // The control: no cycle, so the element type — and the alignment it
+        // carries — survives.
+        let plain = gen_src("struct Pad0 { xs: [i64; 0], n: i32 }\n\
+             fn main() -> i32 { return 0; }");
+        assert!(
+            plain.contains("%Pad0 = type { [0 x i64], i32 }"),
+            "a zero-length array closing no cycle keeps its element type; got:\n{plain}"
         );
     }
 
