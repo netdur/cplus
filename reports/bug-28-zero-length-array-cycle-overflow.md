@@ -1,7 +1,7 @@
 # Bug 28 — a value of a zero-length-array-recursive struct overflows the compiler's stack
 
 - Status: FIXED 2026-08-02 — the hang in `b818a1b` (issue-15 (b)'s shared
-  `layout_of` cycle guard), the lowering in `<this commit>`. Found while
+  `layout_of` cycle guard), the lowering in `892799f`. Found while
   landing issue-13 (b).
 - Type: was a compiler hang (stack overflow, `SIGABRT`), then a late,
   wrong-layer clang error
