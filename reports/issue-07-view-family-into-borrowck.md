@@ -1,6 +1,6 @@
 # Issue 07 — Move the view-diagnostic family (E0513/E0515/E0516) into borrowck
 
-- Status: PARTIAL 2026-08-02, commit <pending> — step 6 (the dead codegen net)
+- Status: PARTIAL 2026-08-02, commit dc5aa6e — step 6 (the dead codegen net)
   done and step 1 (the inventory) below; steps 2-5, the emission port itself,
   NOT done. See "Why the port is not in this commit".
 - Type: structural consolidation (finishes the borrowck rework)
