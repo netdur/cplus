@@ -3419,12 +3419,37 @@ impl<'a> ViewRules<'a> {
 
     /// Types resolve through the scope stack first, then module `static`s —
     /// a `static` is a place like any other, and store targets name them.
+    ///
+    /// An associated call (`Buf::new()`) is resolved here rather than in the
+    /// shared inference: it is how an unnamed owner is most often produced,
+    /// and the rest of the pass has no reason to start typing paths.
     fn infer_ty(&self, e: &Expr) -> Option<Type> {
+        if let Some(t) = self.assoc_call_ret_ty(e) {
+            return Some(t);
+        }
         infer_expr_type_with(e, self.sigs, &|n| {
             self.lookup(n)
                 .and_then(|l| l.ty.clone())
                 .or_else(|| self.statics.get(Self::canonical(n)).cloned())
         })
+    }
+
+    /// The declared return type of `Type::assoc(...)`.
+    fn assoc_call_ret_ty(&self, e: &Expr) -> Option<Type> {
+        let ExprKind::Call { callee, .. } = &e.kind else {
+            return None;
+        };
+        let ExprKind::Path { segments } = &callee.kind else {
+            return None;
+        };
+        let [ty, assoc] = segments.as_slice() else {
+            return None;
+        };
+        self.sigs
+            .methods
+            .get(&format!("{}.{}", ty.name, assoc.name))?
+            .ret_ty
+            .clone()
     }
 
     /// A view proper: `str` or a slice. (View-CARRYING aggregates are a
@@ -3626,6 +3651,9 @@ impl<'a> ViewRules<'a> {
         let ret_carries_view = !ret_is_view && self.oracle.type_contains_view(&ret);
         if !(ret_is_view || ret_carries_view) {
             return;
+        }
+        if ret_is_view {
+            self.check_view_of_temp(e);
         }
         for root in self.borrow_roots_of(e) {
             if !self.root_dies_at_return(&root) {
@@ -3838,6 +3866,49 @@ impl<'a> ViewRules<'a> {
         );
     }
 
+    /// Contract §3.1, the temporary: `let s: str = mk().view();` binds a
+    /// view of a value nothing named, so the statement drops the owner and
+    /// the binding dangles before it is ever read. Only a NON-place
+    /// receiver is a temporary — a named place is somebody's binding, and
+    /// the `owns_value` gate judges that one. Passing such a view straight
+    /// to a call is sound (the temporary outlives the call) and never
+    /// routes here.
+    fn check_view_of_temp(&mut self, value: &Expr) {
+        let ExprKind::Call { callee, .. } = &value.kind else {
+            return;
+        };
+        let ExprKind::Field { receiver, name } = &callee.kind else {
+            return;
+        };
+        if Self::place_root(receiver).is_some() {
+            return;
+        }
+        let Some(rty) = self.infer_ty(receiver) else {
+            return;
+        };
+        // The temporary must be a non-Copy owner that actually drops (a
+        // view temporary is itself a Copy fat pointer — nothing to dangle).
+        if self.oracle.is_copy(&rty) {
+            return;
+        }
+        if !self.method_produces_view(receiver, &name.name) {
+            return;
+        }
+        let tyname = match &rty.kind {
+            TypeKind::Path(n) => n.clone(),
+            TypeKind::Generic { name, .. } => name.clone(),
+            _ => return,
+        };
+        let m = &name.name;
+        self.err(
+            "E0513",
+            format!(
+                "cannot bind the view returned by `.{m}()` on a temporary `{tyname}`: the temporary is dropped at the end of this statement, so the view would dangle. Bind the owner to a named local first (`let owner = ...; owner.{m}()`)"
+            ),
+            value.span,
+        );
+    }
+
     /// The base binding name of a place expression. `None` for anything
     /// that is not a place.
     fn place_root(e: &Expr) -> Option<String> {
@@ -3989,9 +4060,15 @@ impl<'a> ViewRules<'a> {
     /// `return alias;` is judged against the real owner).
     fn bind_let(&mut self, name: &str, ty: &Option<Type>, init: Option<&Expr>) {
         let resolved = ty.clone().or_else(|| init.and_then(|e| self.infer_ty(e)));
+        let is_view = resolved.as_ref().is_some_and(Self::is_view_ty);
         let carries_view = resolved
             .as_ref()
             .is_some_and(|t| Self::is_view_ty(t) || self.oracle.type_contains_view(t));
+        if is_view {
+            if let Some(e) = init {
+                self.check_view_of_temp(e);
+            }
+        }
         let borrow_roots = match (carries_view, init) {
             (true, Some(e)) => self.borrow_roots_of(e),
             _ => BTreeSet::new(),
@@ -4163,6 +4240,9 @@ impl<'a> ViewRules<'a> {
                 }
                 self.check_store_escape(target, value);
                 self.check_raw_store(target, value);
+                if self.place_ty(target).as_ref().is_some_and(Self::is_view_ty) {
+                    self.check_view_of_temp(value);
+                }
                 let ExprKind::Ident(n) = &target.kind else {
                     return;
                 };
@@ -9144,6 +9224,53 @@ fn mk() -> LStr { return LStr { ptr: { 0 as *u8 }, len: { 0 as usize }, cap: { 0
             assert!(
                 !codes.iter().any(|c| c == "E0515"),
                 "[{name}] an exported store must not be denied, got {codes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn view_of_an_unnamed_temporary_denied_e0513() {
+        // Nothing names the receiver, so the statement drops it and the
+        // view is dead before it is read. All three binding positions.
+        let cases: &[(&str, &str)] = &[
+            ("let", "fn f() { let s: str = Buf::new().view(); return; }"),
+            ("return", "fn f() -> str { return Buf::new().view(); }"),
+            (
+                "assign",
+                "fn f() { var s: str = \"\"; s = Buf::new().view(); return; }",
+            ),
+        ];
+        for (name, tail) in cases {
+            let codes = check_src(&format!("{VIEW_PRELUDE}{tail}"));
+            assert!(
+                codes.iter().any(|c| c == "E0513"),
+                "[{name}] expected E0513, got {codes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn view_of_a_named_owner_is_not_the_temporary_rule() {
+        // A named receiver is somebody's binding; whether it dangles is the
+        // `owns_value` question, not this one. As a direct call argument the
+        // temporary is still alive, so that stays legal too.
+        let clean: &[(&str, &str)] = &[
+            (
+                "named_owner",
+                "fn peek(x: str) -> i32 { return 0; }\n\
+                 fn f() -> i32 { let b: Buf = Buf::new(); let s: str = b.view(); return peek(s); }",
+            ),
+            (
+                "temp_as_argument",
+                "fn peek(x: str) -> i32 { return 0; }\n\
+                 fn f() -> i32 { return peek(Buf::new().view()); }",
+            ),
+        ];
+        for (name, tail) in clean {
+            let codes = check_src(&format!("{VIEW_PRELUDE}{tail}"));
+            assert!(
+                !codes.iter().any(|c| c == "E0513"),
+                "[{name}] must not be denied, got {codes:?}"
             );
         }
     }
