@@ -1,6 +1,8 @@
 # Bug 24 — f16 missing from the blessed `to_text` / interpolation table
 
-- Status: probed 2026-08-01 during the audit (E0324 on `(1.5f16).to_text()`); re-verify before fixing
+- Status: FIXED 2026-08-02, commit c7c7051 — f16 added to BOTH tables, and the float
+  widening now reads the receiver's own type
+- Status (original): probed 2026-08-01 during the audit (E0324 on `(1.5f16).to_text()`); re-verify before fixing
 - Severity: gap (inconsistent type support)
 - Area: sema (`cplus-core/src/sema.rs`), possibly codegen for the formatting lowering
 - Master report: `core-drift-audit-2026-08-01.md` (B24)
@@ -50,6 +52,18 @@ instead of N match arms.
 
 ## Verification
 
-1. The repro compiles; printing the f16 text produces `1.5`.
-2. `"${x}"` interpolation with an f16 compiles and prints correctly (e2e).
-3. Full suites.
+1. DONE: re-verified the repro fired (E0324), then fixed. `(2.5f16).to_text()` prints
+   `2.5`.
+2. DONE: `"v=${half}"` with an f16 prints `v=3.5`. This needed a THIRD edit — the
+   interpolation lowering in codegen keeps its own float receiver set, separate from both
+   `is_blessed_to_text_receiver` tables, and hit `unreachable!("sema validated interp expr
+   type")` until f16 was added there too. Step 3's "verify interpolation picks it up
+   automatically" does not hold: sema's table is shared, codegen's is not.
+3. DONE: full suites and the stdlib suite green.
+
+## Note on step 1 (the codegen lowering)
+
+No widening-at-the-call-site was needed and no precision decision arises: the float
+formatter already widens to `double` for `%g`. It just hard-coded `fpext float` as the
+source type, which is wrong for the `half` an f16 holds. It now reads the receiver's own
+LLVM type, so f16 formats at full precision — `1.5`, not a re-rounded value.

@@ -1,6 +1,8 @@
 # Bug 21 — `i32` has `hash()` for dispatch but does not satisfy `[T: Hash]` bounds
 
-- Status: probed 2026-08-01 during the audit (E0502 at the bounded call); re-verify before fixing
+- Status: FIXED 2026-08-02, commit c7c7051 — `satisfies_bound` consults the blessed
+  dispatch tables
+- Status (original): probed 2026-08-01 during the audit (E0502 at the bounded call); re-verify before fixing
 - Severity: inconsistency (bounded generics unusable at primitives)
 - Area: sema (`cplus-core/src/sema.rs`)
 - Master report: `core-drift-audit-2026-08-01.md` (B21)
@@ -53,11 +55,23 @@ to "does i32 have hash()".
 Companion: `issue-06-lang-item-registry.md` (single blessed-capability registry is the
 end state; this fix is the sema-side alignment).
 
+## Scope: three bounds, not five
+
+Step 1 lists Hash/Eq/Ord/Clone/ToText. Only Hash, Eq and ToText have a blessed PRIMITIVE
+dispatch arm — there is no `5.cmp(6)` and no `5.clone()`. Admitting `Ord`/`Clone` would
+create the mirror-image mismatch this report is about: a bound that type-checks and a body
+that cannot call the method. So the alignment covers exactly the three that have both
+sides.
+
+Design note (step 2): "a primitive satisfies a blessed bound" is now official. Aligning in
+the permissive direction is the only choice that does not break existing code, and it
+matches what the stdlib containers already do after monomorphization.
+
 ## Verification
 
-1. The repro compiles; `hash_it(5)` returns the same value as `5.hash()` (runtime e2e).
-2. A genuinely unsatisfied bound still rejects: `hash_it(SomeStructWithoutHash {...})` →
-   E0502 (negative e2e).
-3. `HashMap[K, V]` with a BOUNDED K now compiles if written that way; existing unbounded
-   usage unchanged.
-4. Full suites.
+1. DONE: re-verified the repro fired, then fixed. `hash_it::[i32](5)` and `5.hash()` return
+   the same value at runtime.
+2. DONE: `hash_it::[NoHash](...)` still gives E0502 — pinned in the same e2e test, because
+   a permissive alignment is only correct if it did not make bounds vacuous.
+3. Existing unbounded usage is unchanged (full suites + the stdlib suite are the guard).
+4. DONE.

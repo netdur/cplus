@@ -1,6 +1,8 @@
 # Bug 20 — `impl Foo: ToText` is impossible: blessed signature still uses legacy `Ty::String`
 
-- Status: probed 2026-08-01 during the audit (E0505 on the documented impl shape); re-verify before fixing
+- Status: FIXED 2026-08-02, commit c7c7051 — `ToText` registers the DESIGNATED string
+  struct; `Ty::String` in a blessed signature also compares equal to it
+- Status (original): probed 2026-08-01 during the audit (E0505 on the documented impl shape); re-verify before fixing
 - Severity: broken user surface (documented feature cannot be used)
 - Area: sema (`cplus-core/src/sema.rs`)
 - Master report: `core-drift-audit-2026-08-01.md` (B20)
@@ -57,8 +59,15 @@ consumer of `Ty::String`.
 
 ## Verification
 
-1. The repro compiles; calling `to_text()` on `Foo` through a `[T: ToText]`-bounded
-   generic returns the right text at runtime (e2e test).
-2. Interp strings on a user ToText type work if that is part of the contract (check the
-   interp blessing table — see bug-24 for the table location).
-3. Full suites.
+1. DONE: re-verified the repro fired (E0505), then fixed. The impl compiles AND
+   `show::[Foo](f)` through a `[T: ToText]` bound prints `foo` at runtime.
+   BOTH halves of the fix were needed: the comparison change alone made the impl legal
+   but left the bound's dispatch returning `Ty::String`, so the generic body failed with
+   "expected `struct`, found `string`". Registering the return as the designated struct is
+   what makes the surface actually usable; the comparison change keeps a `Ty::String`
+   signature comparing equal for the primitive impls in a program with no stdlib/text.
+2. Interp strings already accepted user ToText types (`check_interp_str` has its own
+   `interface_impls` arm) — unchanged.
+3. DONE: collateral swept — `check_interp_str`'s doc claimed a `Ty::String` result it has
+   not produced since v0.0.24, and its unreachable `matches!(&ty, Ty::String)` arm is
+   gone. Full suites and the stdlib suite green.

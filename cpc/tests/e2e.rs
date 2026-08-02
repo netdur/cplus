@@ -21231,6 +21231,101 @@ fn gen_fn_protocol_survives_nested_option_instantiation() {
     assert_eq!(run.code(), Some(0), "filter must keep 2+3 = 5");
 }
 
+/// reports/bug-20, bug-21, bug-24 — three gaps in the blessed-capability
+/// tables, all of the same shape: two places answering one question.
+///
+/// bug-20: `ToText`'s blessed signature returned the legacy internal
+/// `Ty::String`, which nothing has produced since v0.0.24. A user impl writes
+/// `Text`, so the signatures never matched and `impl Foo: ToText` was
+/// impossible for everyone — zero in-tree impls is why no test caught it.
+///
+/// bug-21: `i32` dispatched `x.hash()` but did not satisfy `[T: Hash]`, so
+/// bounded generic containers were unusable at exactly the key types they are
+/// for. Bounds now consult the dispatch tables.
+///
+/// bug-24: `f16` was missing from the `to_text` receiver set while the sibling
+/// `to_bits` had it.
+#[test]
+fn blessed_capabilities_agree_between_bounds_dispatch_and_impls() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(dir.join("Cplus.toml"), "[package]\nname = \"blessed\"\n\n[[bin]]\nname = \"blessed\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n").unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::os::unix::fs::symlink(
+        format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
+        dir.join("vendor"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/io\" as io;\n\
+         import \"stdlib/text\" as text;\n\
+         \n\
+         struct Foo { v: i32 }\n\
+         // bug-20: the documented user surface.\n\
+         impl Foo: ToText {\n\
+             fn to_text(this) -> text::Text { return \"foo\"; }\n\
+         }\n\
+         \n\
+         fn hash_it[T: Hash](v: T) -> u64 { return v.hash(); }\n\
+         fn eq_it[T: Eq](a: T, b: T) -> bool { return a.eq(b); }\n\
+         fn show[T: ToText](v: T) -> text::Text { return v.to_text(); }\n\
+         \n\
+         fn main() -> i32 {\n\
+             // bug-21: the bound and the dispatch must give the same answer.\n\
+             let direct: u64 = (5 as i32).hash();\n\
+             let bounded: u64 = hash_it::[i32](5);\n\
+             if direct != bounded { return 1; }\n\
+             if !eq_it::[i32](3, 3) { return 2; }\n\
+             // bug-20 again: a user impl reached through the bound.\n\
+             io::println(show::[Foo](Foo { v: 1 }).view());\n\
+             // bug-24, through both paths that format a float: the blessed\n\
+             // `to_text()` and interpolation, which keep separate tables.\n\
+             io::println(show::[f16]((1.5f16)).view());\n\
+             io::println(show::[f32]((2.5f32)).view());\n\
+             let half: f16 = 3.5f16;\n\
+             let interp: text::Text = \"v=${half}\";\n\
+             io::println(interp.view());\n\
+             return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc build");
+    assert!(
+        out.status.success(),
+        "blessed surfaces must compile: {}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    let run = Command::new(dir.join("target/debug/blessed"))
+        .output()
+        .expect("run blessed");
+    assert!(run.status.success(), "unexpected exit: {}", run.status);
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "foo\n1.5\n2.5\nv=3.5\n");
+
+    // Aligning permissively must not make every bound vacuous: a type with no
+    // impl and no blessed dispatch is still rejected.
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "struct NoHash { v: i32 }\n\
+         fn hash_it[T: Hash](v: T) -> u64 { return v.hash(); }\n\
+         fn main() -> i32 { return hash_it::[NoHash](NoHash { v: 1 }) as i32; }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("check")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc check");
+    assert!(!out.status.success(), "an unsatisfied bound must be rejected");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("E0502"), "expected E0502, got: {err}");
+}
+
 /// reports/bug-18: the resolver read `Cplus.toml` with a hand-rolled scanner
 /// whose value was `v.trim().trim_matches('"').trim()` — which keeps a trailing
 /// comment. The package name is the mangled-symbol prefix, so

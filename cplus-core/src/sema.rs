@@ -3460,6 +3460,28 @@ impl SemaCx<'_> {
         if bound == "Sync" {
             return self.is_sync(ty);
         }
+        // A primitive satisfies a blessed bound exactly when the blessed
+        // DISPATCH accepts it as a receiver — one table, asked by both.
+        // These used to be two tables with two answers: `x.hash()` compiled on
+        // an `i32` while `fn h[T: Hash]` rejected `i32`, which made bounded
+        // generic containers unusable at precisely the key types they are for.
+        // The in-code workaround was to leave the parameter UNBOUNDED and rely
+        // on blessed dispatch after monomorphization — i.e. not to use the
+        // bound system where it was wanted (reports/bug-21). Aligning
+        // permissively is the only direction that does not break existing
+        // code, and it matches what the stdlib containers already do post-mono.
+        //
+        // Only the three bounds that HAVE a blessed dispatch arm are listed.
+        // `Ord` and `Clone` are blessed interfaces with no primitive dispatch
+        // — `5.cmp(6)` and `5.clone()` do not resolve — so admitting them here
+        // would create the mirror-image mismatch: a bound that type-checks and
+        // a body that cannot call the method.
+        match bound {
+            "Hash" if Self::is_blessed_hash_receiver(ty) => return true,
+            "Eq" if Self::is_blessed_eq_receiver(ty) => return true,
+            "ToText" if Self::is_blessed_to_text_receiver(ty) => return true,
+            _ => {}
+        }
         match ty {
             Ty::Struct(id) => {
                 let name = &self.structs[id.0 as usize].name;
@@ -4557,6 +4579,18 @@ impl SemaCx<'_> {
         );
         // Single-method interfaces with shared shape.
         // (name, method_name, return_type, takes_other_param)
+        // `ToText` returns the DESIGNATED owned-string type — the stdlib
+        // struct marked `#[lang("string")]`, recorded by `collect_type_names`,
+        // which runs before this pass. It used to be registered as the legacy
+        // internal `Ty::String`, which nothing has produced since v0.0.24: a
+        // user impl necessarily writes `Text`, so the signatures never matched
+        // and `impl Foo: ToText` was impossible (reports/bug-20). The
+        // `Ty::String` fallback keeps the blessed primitive impls working in a
+        // program that never imported stdlib/text.
+        let to_text_ret = match self.designated_string_struct {
+            Some(id) => Ty::Struct(id),
+            None => Ty::String,
+        };
         let single: &[(&str, &str, Ty, bool)] = &[
             ("Eq", "eq", Ty::Bool, true),
             ("Ord", "cmp", Ty::I32, true),
@@ -4568,7 +4602,7 @@ impl SemaCx<'_> {
             // `impl Foo: ToText { fn to_text(this) -> Text }` surface.
             // (Was `ToString`/`to_string` until v0.0.19; renamed to track the
             // surviving owned-string type after `string` → `Text`.)
-            ("ToText", "to_text", Ty::String, false),
+            ("ToText", "to_text", to_text_ret, false),
         ];
         for (name, mname, ret, has_other) in single {
             let mut methods = HashMap::new();
@@ -4861,7 +4895,14 @@ impl SemaCx<'_> {
                     continue;
                 };
                 // E0505 — signature equality after Self substitution.
-                if !method_sig_matches(&self.structs, &self.enums, iface_sig, impl_sig, &target_ty)
+                if !method_sig_matches(
+                    &self.structs,
+                    &self.enums,
+                    iface_sig,
+                    impl_sig,
+                    &target_ty,
+                    self.designated_string_struct,
+                )
                 {
                     let span = b
                         .methods
@@ -12704,7 +12745,10 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
     /// Phase 8 slice 8.STR.B: type-check an interpolated string literal.
     /// Walk each part; each `Expr` part must have a type that satisfies
     /// `ToText` (blessed primitives + `str`, or a user-declared
-    /// `impl Foo: ToText`). Result type is `Ty::String`.
+    /// `impl Foo: ToText`). The result is the DESIGNATED owned-string type
+    /// (the `#[lang("string")]` struct), or E0613 when the file has not
+    /// imported it — the doc used to say `Ty::String`, the legacy internal
+    /// type this stopped producing in v0.0.24.
     fn check_interp_str(&mut self, parts: &[crate::ast::InterpStrPart], span: ByteSpan) -> Ty {
         use crate::ast::InterpStrPart;
         for part in parts {
@@ -12714,7 +12758,6 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     continue;
                 }
                 let ok = Self::is_blessed_to_text_receiver(&ty)
-                    || matches!(&ty, Ty::String)
                     // TEXT.R2: an owned `Text` embeds directly (its bytes are
                     // copied into the result).
                     || matches!(&ty, Ty::Struct(id)
@@ -12780,6 +12823,9 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 | Ty::U32
                 | Ty::U64
                 | Ty::Usize
+                // f16 was the one float missing here while the sibling
+                // `to_bits` table had it (reports/bug-24).
+                | Ty::F16
                 | Ty::F32
                 | Ty::F64
                 | Ty::Bool
@@ -20213,20 +20259,32 @@ fn ty_eq_modulo_self(
     iface_ty: &Ty,
     impl_ty: &Ty,
     target: &Ty,
+    designated_string: Option<StructId>,
 ) -> bool {
     match iface_ty {
         Ty::Param(name) if name == "Self" => impl_ty == target,
+        // The blessed `ToText` signature registers its return as `Ty::String`,
+        // the legacy internal owned-string type, which since v0.0.24 nothing
+        // produces — the owned string is the stdlib struct marked
+        // `#[lang("string")]`. A user impl necessarily writes THAT, so the two
+        // never compared equal and `impl Foo: ToText` was impossible for
+        // everyone (reports/bug-20). Treat `Ty::String` in a blessed signature
+        // as naming the designated struct, which is what it means.
+        Ty::String => {
+            matches!(impl_ty, Ty::String)
+                || matches!(impl_ty, Ty::Struct(id) if designated_string == Some(*id))
+        }
         Ty::Array(elem, len) => {
             matches!(impl_ty, Ty::Array(belem, blen)
-                if len == blen && ty_eq_modulo_self(structs, enums, elem, belem, target))
+                if len == blen && ty_eq_modulo_self(structs, enums, elem, belem, target, designated_string))
         }
         Ty::Slice(elem) => {
             matches!(impl_ty, Ty::Slice(belem)
-                if ty_eq_modulo_self(structs, enums, elem, belem, target))
+                if ty_eq_modulo_self(structs, enums, elem, belem, target, designated_string))
         }
         Ty::RawPtr(inner) => {
             matches!(impl_ty, Ty::RawPtr(binner)
-                if ty_eq_modulo_self(structs, enums, inner, binner, target))
+                if ty_eq_modulo_self(structs, enums, inner, binner, target, designated_string))
         }
         Ty::FnPtr {
             params,
@@ -20246,8 +20304,8 @@ fn ty_eq_modulo_self(
                     && params
                         .iter()
                         .zip(bparams.iter())
-                        .all(|(p, b)| ty_eq_modulo_self(structs, enums, p, b, target))
-                    && ty_eq_modulo_self(structs, enums, return_type, breturn, target)
+                        .all(|(p, b)| ty_eq_modulo_self(structs, enums, p, b, target, designated_string))
+                    && ty_eq_modulo_self(structs, enums, return_type, breturn, target, designated_string)
             }
             _ => false,
         },
@@ -20261,7 +20319,7 @@ fn ty_eq_modulo_self(
                         && iargs
                             .iter()
                             .zip(bargs.iter())
-                            .all(|(p, b)| ty_eq_modulo_self(structs, enums, p, b, target));
+                            .all(|(p, b)| ty_eq_modulo_self(structs, enums, p, b, target, designated_string));
                 }
             }
             iface_ty == impl_ty
@@ -20276,7 +20334,7 @@ fn ty_eq_modulo_self(
                         && iargs
                             .iter()
                             .zip(bargs.iter())
-                            .all(|(p, b)| ty_eq_modulo_self(structs, enums, p, b, target));
+                            .all(|(p, b)| ty_eq_modulo_self(structs, enums, p, b, target, designated_string));
                 }
             }
             iface_ty == impl_ty
@@ -20301,6 +20359,7 @@ fn method_sig_matches(
     iface: &MethodSig,
     impl_: &MethodSig,
     target: &Ty,
+    designated_string: Option<StructId>,
 ) -> bool {
     if iface.receiver != impl_.receiver {
         return false;
@@ -20318,7 +20377,7 @@ fn method_sig_matches(
         if a.borrow_ != b.borrow_ {
             return false;
         }
-        if !ty_eq_modulo_self(structs, enums, &a.ty, &b.ty, target) {
+        if !ty_eq_modulo_self(structs, enums, &a.ty, &b.ty, target, designated_string) {
             return false;
         }
     }
@@ -20328,6 +20387,7 @@ fn method_sig_matches(
         &iface.return_type,
         &impl_.return_type,
         target,
+        designated_string,
     )
 }
 

@@ -16353,7 +16353,11 @@ impl<'a> FnState<'a> {
                             Ty::String => (v, false, s),
                             Ty::Str => (self.gen_to_string_str(&v).0, true, s),
                             Ty::Bool => (self.gen_to_string_bool(&v).0, true, s),
-                            Ty::F32 | Ty::F64 => (self.gen_to_string_float(&v, &t).0, true, s),
+                            // A third copy of the float receiver set; f16 was
+                            // missing from all of them (reports/bug-24).
+                            Ty::F16 | Ty::F32 | Ty::F64 => {
+                                (self.gen_to_string_float(&v, &t).0, true, s)
+                            }
                             ref rt if rt.is_signed_int() => {
                                 (self.gen_to_string_signed(&v, rt).0, true, s)
                             }
@@ -16441,6 +16445,9 @@ impl<'a> FnState<'a> {
                 | Ty::U32
                 | Ty::U64
                 | Ty::Usize
+                // Mirrors sema's table — f16 was missing from both while the
+                // sibling `to_bits` supported it (reports/bug-24).
+                | Ty::F16
                 | Ty::F32
                 | Ty::F64
                 | Ty::Bool
@@ -16849,7 +16856,7 @@ impl<'a> FnState<'a> {
         match rt {
             Ty::Bool => self.gen_to_string_bool(rv),
             Ty::Str => self.gen_to_string_str(rv),
-            Ty::F32 | Ty::F64 => self.gen_to_string_float(rv, rt),
+            Ty::F16 | Ty::F32 | Ty::F64 => self.gen_to_string_float(rv, rt),
             _ if rt.is_signed_int() => self.gen_to_string_signed(rv, rt),
             _ if rt.is_unsigned_int() => self.gen_to_string_unsigned(rv, rt),
             _ => unreachable!("sema validated to_string receiver: {:?}", rt),
@@ -16903,12 +16910,14 @@ impl<'a> FnState<'a> {
 
     fn gen_to_string_float(&mut self, rv: &str, rt: &Ty) -> (String, Ty) {
         let us = usize_llvm_ty();
-        // Widen f32 → f64 for "%g".
+        // Widen to f64 for "%g", FROM the receiver's own type — this used to
+        // hard-code `float`, which is wrong for the `half` an f16 receiver
+        // holds (reports/bug-24).
         let widened = match rt {
             Ty::F64 => rv.to_string(),
             _ => {
                 let w = self.next_tmp();
-                self.emit(&format!("{w} = fpext float {rv} to double"));
+                self.emit(&format!("{w} = fpext {} {rv} to double", self.lty(rt)));
                 w
             }
         };
