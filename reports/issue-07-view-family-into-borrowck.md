@@ -1,5 +1,8 @@
 # Issue 07 — Move the view-diagnostic family (E0513/E0515/E0516) into borrowck
 
+- Status: PARTIAL 2026-08-02, commit <pending> — step 6 (the dead codegen net)
+  done and step 1 (the inventory) below; steps 2-5, the emission port itself,
+  NOT done. See "Why the port is not in this commit".
 - Type: structural consolidation (finishes the borrowck rework)
 - Area: `cplus-core/src/sema.rs` → `borrowck.rs`; dead-code fallout in `codegen.rs`
 - Effort: L
@@ -94,3 +97,66 @@ coverage.
   rules.
 - Highest-stakes refactor in the set; the phase-3 assert release is the safety net.
   Do not skip it.
+
+## Step 6 — the dead codegen net, deleted
+
+Verified first, as the report required. `fn echo(x: Text) -> Text { return x; }`
+— the exact shape the auto-clone-on-return net existed to compensate for — is
+now rejected at check time:
+
+```
+error[E0337]: cannot move `x` into an owned value: it is a borrowed binding
+(a `borrow`/`mut`/`self` parameter, or a payload matched from a borrowed value)
+whose owner still drops it — the move would create a second owner (double-free).
+```
+
+Sema/borrowck errors bail before codegen runs, so the net could only fire for a
+program the checker let through — and a compensating deep clone for such a
+program hides the hole rather than closing it, which is the shape this project
+distrusts (the same reasoning that removed the unsound `noalias`). Deleted: the
+match arm in `StmtKind::Return`, the `borrowed_params` field, and all six
+insert sites across the definition emitters. `clone_string_aggregate` stays —
+it has another caller.
+
+## Step 1 — the inventory (so the port can start cold)
+
+Sema still emits the family at these sites, all in `sema.rs`:
+
+| Site | Code | What it denies |
+| --- | --- | --- |
+| `check_returned_borrow` (~15363) | E0513 | returning a view rooted in a local |
+| `flag_view_leaves` (~15473) | E0513 | a view leaking through a carrier |
+| `check_raw_store_declaration` (~15680) | E0516 | a raw store whose declaration cannot be tied |
+| `check_view_store_escape` (~15704) | E0513, E0515 | a view stored somewhere outliving its owner |
+| `method_produces_view` (~15916) | — | the shape twin of borrowck's `detect_method_view` |
+
+The lift conditions that encode a belief about borrowck's coverage
+(`current_fn_keeps_this`, `current_method_concrete`, `current_freefn_exported`,
+and the three-disjunct `root_is_param_view`) are all inside
+`check_view_store_escape`. Borrowck emits E0514 at ~23 sites and no E0513.
+
+The pinning tests: 44 assertions across `cpc/tests/e2e.rs` mention E0513/E0515/
+E0516, plus 5 in-sema unit tests around line 25576 (static store of a
+view-carrying literal, the ref-target whole-struct store, the alias return of a
+rooted carrier, the builtin sub-view chain return). Those are the corpus the
+port must keep green — and, per the report, the error-ORDER note applies: sema
+bails the pipeline before borrowck, so any test asserting a sema error AND a
+view error from one compile will see them one at a time after the move.
+
+## Why the port is not in this commit
+
+Steps 2-5 move a live, load-bearing diagnostic family between passes and change
+which pass reports it, with a transition release of debug-asserts as the safety
+net (step 3), and the report itself calls it the highest-stakes refactor in the
+set. It is not a change to land at the end of a session alongside eight others:
+it wants its own pass with the memory-model e2e groups run at each rule, and the
+assert release actually shipped rather than compressed into the same commit.
+The inventory above is what a cold start needs; nothing in this commit
+constrains how the port is done.
+
+## Verification (as run, for step 6)
+
+- The compensated shape reproduces as E0337 at check time on the current binary.
+- `cargo test -p cplus-core` 1847 + 8, `cargo test -p cpc` 607 + 16 + 5 + 6;
+  `cpc test` in `vendor/stdlib` 290 green in debug and `--release` — the runs
+  that would surface a double-free the net had been hiding.

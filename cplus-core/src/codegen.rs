@@ -2690,14 +2690,14 @@ fn param_passes_by_ptr(p: &ParamAbi, t: &TypeTable) -> bool {
 ///
 /// `Ty::String` was the same class (bugs/string-param-store-double-free): a bare
 /// `Text` value param used the borrow ABI (caller keeps the drop) guarded only
-/// by an auto-clone-on-*return* net (`borrowed_params`). That net never fired
+/// by an auto-clone-on-*return* net. That net never fired
 /// when the param was *stored or forwarded* instead of returned (e.g.
 /// `this.v.push(s)`, `this.field = s`), so the caller's drop and the new owner's
 /// drop freed the same buffer. Routing `Ty::String` through the move lowering —
 /// value-pass, caller `mark_moved`, callee `register_value_drop` — frees it
 /// exactly once: by the callee at scope exit, or by whoever it is forwarded to.
-/// The auto-clone-on-return net now only matters for explicit `s: Text`
-/// params, which keep the borrow ABI.
+/// (The auto-clone-on-return net that used to cover the remaining `s: Text`
+/// case is gone — borrowck rejects the program it compensated for; issue-07.)
 ///
 /// `Vec[T]` and other generic owning containers are `Ty::Struct` after
 /// monomorphization, so they are already covered by the struct arm.
@@ -2859,8 +2859,7 @@ const METHOD_ABI: AbiCtx = AbiCtx {
 /// a bare (shared-borrow) non-Copy STRUCT is pointer-passed with `readonly`,
 /// while a non-Copy ENUM or a `Text` in the same position is copied as a raw
 /// aggregate. Definition and call agree in both cases, so it is sound, but one
-/// semantic class has two ABIs — and the aggregate copy is what makes `Text`
-/// need the `borrowed_params` auto-clone-on-return net. Extending the
+/// semantic class has two ABIs. Extending the
 /// pointer-pass to enums and `Text` is the cleaner end state; it changes
 /// emitted signatures, so it needs its own test pass and its own commit.
 fn classify_param(p: &ParamAbi, cx: AbiCtx, types: &TypeTable) -> PassBy {
@@ -6587,12 +6586,6 @@ fn gen_function(
         }
         if matches!(param_abis[i], PassBy::Ptr { .. }) {
             state.bind(&param.name.name, format!("%{llvm_idx}"), pty.clone());
-            // v0.0.5 Slice 1A: track params that share heap with the
-            // caller (so the body cannot return the binding as-is
-            // without a deep clone — both ends would Drop the same
-            // heap). For pointer-passed non-Copy structs, the binding
-            // IS the caller's pointer.
-            state.borrowed_params.insert(param.name.name.clone());
             continue;
         }
         let slot = state.alloca_named(&param.name.name, pty.clone());
@@ -6612,7 +6605,6 @@ fn gen_function(
         // auto-cloned — Vec[T] and similar need T::clone glue, their
         // own slice).
         if !move_flag && matches!(pty, Ty::String) {
-            state.borrowed_params.insert(param.name.name.clone());
         }
         if move_flag {
             // A moved-in owning value (Text, struct with owning fields, or
@@ -8140,8 +8132,6 @@ fn gen_method(
         let idx = next_idx + i as u32;
         if param_passes_by_ptr(ps, types) {
             state.bind(&param.name.name, format!("%{idx}"), pty.clone());
-            // v0.0.5 Slice 1A: track for auto-clone-on-return (see gen_function).
-            state.borrowed_params.insert(param.name.name.clone());
             continue;
         }
         let slot = state.alloca_named(&param.name.name, pty.clone());
@@ -8154,7 +8144,6 @@ fn gen_method(
         state.bind(&param.name.name, slot.clone(), pty.clone());
         // v0.0.5 Slice 1A: value-passed non-`take` Ty::String shares heap.
         if !move_flag && matches!(pty, Ty::String) {
-            state.borrowed_params.insert(param.name.name.clone());
         }
         if move_flag {
             // A moved-in owning value (Text, struct with owning fields, or
@@ -8365,7 +8354,6 @@ fn gen_str_method(
         let idx = next_idx + i as u32;
         if param_passes_by_ptr(ps, types) {
             state.bind(&param.name.name, format!("%{idx}"), pty.clone());
-            state.borrowed_params.insert(param.name.name.clone());
             continue;
         }
         let slot = state.alloca_named(&param.name.name, pty.clone());
@@ -8377,7 +8365,6 @@ fn gen_str_method(
         ));
         state.bind(&param.name.name, slot.clone(), pty.clone());
         if !move_flag && matches!(pty, Ty::String) {
-            state.borrowed_params.insert(param.name.name.clone());
         }
         if move_flag {
             state.register_value_drop(&param.name.name, &slot, pty, true);
@@ -8611,18 +8598,6 @@ struct FnState<'a> {
     /// when present, `return X` lowers to "store X to coro.promise
     /// then `br .coro.final_suspend`" instead of the usual `ret X`.
     coro_promise: Option<(String, String, u32)>,
-    /// v0.0.5 Slice 1A: names of parameters bound via shared-borrow ABI
-    /// (passed as `ptr readonly` with the caller still owning the value).
-    /// `StmtKind::Return` consults this to detect `return X` where X is
-    /// borrowed-not-owned — the body would otherwise hand the caller's
-    /// pointer back, and the caller would then double-free (caller's
-    /// original binding + caller's result binding both Drop the same
-    /// heap). Closes the long-open `fn echo(x: Text) -> Text { return x; }`
-    /// runtime bug documented in plan.md Slice 1A. The fix: when this set
-    /// contains the returned ident and the return type has heap-owned
-    /// Drop semantics (currently `Ty::String`), emit a deep clone so the
-    /// caller's result is an independent heap allocation.
-    borrowed_params: std::collections::HashSet<String>,
     /// v0.0.8 bench-gap finding 1: per-expression field-read memo.
     /// Maps `(local_binding_name, field_name)` to the SSA name of the
     /// already-loaded field value. Hit when the same field appears
@@ -8682,7 +8657,6 @@ impl<'a> FnState<'a> {
             coerce_ret: None,
             tramps,
             coro_promise: None,
-            borrowed_params: std::collections::HashSet::new(),
             field_load_cache: std::collections::HashMap::new(),
         }
     }
@@ -9952,30 +9926,19 @@ impl<'a> FnState<'a> {
                             }
                             return;
                         }
-                        let raw = v.expect("non-Unit return value").0;
-                        // v0.0.5 Slice 1A: auto-clone-on-return-of-borrowed.
-                        // `fn echo(x: Text) -> Text { return x; }` lifts
-                        // the caller's pointer into the result slot; the
-                        // caller's source binding stays live → both Drop the
-                        // same heap → double-free at exit.
-                        //
-                        // When the returned expression is a bare Ident bound
-                        // to a shared-borrow parameter AND the return type
-                        // is `Text` (the only currently-supported heap-
-                        // owning Drop type), emit a deep clone so the result
-                        // is an independent allocation. Other heap-owning
-                        // generic containers (Vec[T], HashMap[K,V]) still
-                        // need explicit `take` — their element-level clone
-                        // needs T::clone glue which is its own slice.
-                        let cloned = match (&e.kind, &ret_ty) {
-                            (ExprKind::Ident(name), Ty::String)
-                                if self.borrowed_params.contains(name) =>
-                            {
-                                Some(self.clone_string_aggregate(&raw))
-                            }
-                            _ => None,
-                        };
-                        Some(cloned.unwrap_or(raw))
+                        // issue-07: `fn echo(x: Text) -> Text { return x; }`
+                        // used to reach here and be papered over with a deep
+                        // clone of the borrowed parameter, because the pointer
+                        // handed back would otherwise be dropped by both the
+                        // caller's binding and its result. Borrowck rejects
+                        // that program now — E0337, "cannot move `x` into an
+                        // owned value: it is a borrowed binding whose owner
+                        // still drops it" — and sema errors bail before
+                        // codegen, so the net was unreachable. A compensating
+                        // clone for a program the checker lets through is the
+                        // shape this project distrusts: it hides the hole
+                        // rather than closing it.
+                        Some(v.expect("non-Unit return value").0)
                     }
                     None => None,
                 };
