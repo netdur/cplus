@@ -1,6 +1,6 @@
 # Issue 09 — Resolver: one ProgramIndex, one prefix resolver, one explicit config
 
-- Status: PARTIAL 2026-08-02, commit <pending> — part (B) done; (A) and (C) not
+- Status: PARTIAL 2026-08-02, commit 5b5fa82 — part (B) done; (A) and (C) not
   done, see "What is still open"
 - Type: structural consolidation
 - Area: `cplus-core/src/resolver.rs`; driver call sites in `cpc/src/main.rs`; consumers
