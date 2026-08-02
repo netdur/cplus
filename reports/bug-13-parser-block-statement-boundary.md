@@ -1,6 +1,8 @@
 # Bug 13 — Statement-position blocks absorb the next statement (E0312 family)
 
-- Status: reproduced 2026-08-01 with `target/release/cpc check` (five misparse forms)
+- Status: FIXED 2026-08-02, commit fbd4fcd — a statement-position block ends at end of
+  line; same-line continuations still parse as one expression
+- Status (original): reproduced 2026-08-01 with `target/release/cpc check` (five misparse forms)
 - Severity: misparse (valid programs rejected with misleading errors)
 - Area: parser (`cplus-core/src/parser.rs`)
 - Master report: `core-drift-audit-2026-08-01.md` (B13)
@@ -110,13 +112,37 @@ The lexer already stamps `nl_before` on every token (lexer.rs:333-357) if a line
 rule is ever preferred, but the statement-position rule above is the smaller, principled
 change.
 
+## Which fix was taken, and why not step 1 as written
+
+Step 1 as written — "return immediately after the closing brace", Rust's model — BREAKS
+currently-legal code. `{ { 1 } as i64 }` and `{ if c { 1 } else { 2 } as i64 }` both
+compile today (they are the tail of a nested block, and a fn body cannot have an implicit
+tail at all, so this is where block-as-value actually appears). Under the Rust rule the
+`as` follows a statement and is a parse error.
+
+The rule taken instead is the line-aware one the report offers as the alternative: a
+statement-position block-like ends at END OF LINE. Every reported form puts the next
+statement on a new line, so all six are fixed; every same-line continuation still parses
+as one expression. The language already relies on this kind of line sensitivity in the
+builder DSL (`stop_line_dot`), so it is consistent rather than novel.
+
+Implementation is `parse_stmt_expr`: parse the block-like primary, and if the next token
+is NOT at a line boundary, rewind and re-parse the whole thing as one expression.
+Backtracking is safe here — the parser carries no state but position and the two context
+flags, and every synthesized binding name is span-derived, not counter-derived.
+`is_block_like` is still used (by the caller's stmt-vs-tail decision), so step 3 does not
+apply.
+
 ## Verification
 
-1. All five repros parse and run (each returns 0).
-2. Block-as-value still works: `let x = if c { 1 } else { 2 };`, match-as-value, block
-   tail expressions, and `if c { 1 } else { 2 } as i64` if currently legal — grep parser
-   tests for `is_block_like` and if-expression tests and keep them green.
-3. Builder DSL (`@facet { ... }`) and match-arm parsing untouched: run the full suites —
-   `cargo test -p cplus-core && cargo test -p cpc --test e2e` — plus a facet example
-   build if available.
-4. Add parser unit tests for each of the five forms.
+1. DONE: all six repros parse and run. t3's own repro needed an enum — `match x` on an
+   `i32` is rejected by sema for an unrelated reason (literal patterns, bug-25); the
+   misparse itself is gone.
+2. DONE: `same_line_continuation_of_a_block_still_parses_as_one_expression` pins
+   `{ 1 } as i64`, and the nested-block-tail forms were verified by hand.
+3. DONE: full suites green; every vendor package produces byte-identical diagnostics
+   before and after (compared across all of `vendor/*`), and every `examples/*` project
+   has the same error count as before.
+4. DONE: `statement_after_a_block_is_its_own_statement` in parser.rs covers `(`, `[`,
+   `-`, `*` after both an `if` and a bare block; the e2e test
+   `parser_statement_boundaries_and_delimited_struct_literals` runs them.

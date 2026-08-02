@@ -1,6 +1,8 @@
 # Bug 16 — Recursion-depth guard has holes: deep patterns abort the compiler
 
-- Status: reproduced 2026-08-01 with `target/release/cpc check` (`fatal runtime error: stack overflow, aborting`)
+- Status: FIXED 2026-08-02, commit fbd4fcd — `enter_depth` on `parse_pattern` and the
+  builder-if chain
+- Status (original): reproduced 2026-08-01 with `target/release/cpc check` (`fatal runtime error: stack overflow, aborting`)
 - Severity: crash (compiler aborts instead of erroring)
 - Area: parser (`cplus-core/src/parser.rs`)
 - Master report: `core-drift-audit-2026-08-01.md` (B16)
@@ -51,8 +53,8 @@ parser's existing depth-limit diagnostic.
 
 ## Verification
 
-1. The generated repro produces the depth-limit diagnostic and exits nonzero cleanly (no
-   abort). Reduce n to just above the limit to keep the test fast.
+1. DONE: the 200k-deep repro now produces E0103 ("expression or statement nesting too
+   deep") and exits cleanly. The unit test uses `MAX_PARSE_DEPTH + 10` to stay fast.
 2. A reasonable nesting depth (say 100) still parses — add a parser unit test for a
    moderately nested pattern.
 3. Builder nesting: a deep `@facet` else-if chain gets the diagnostic too (unit test with

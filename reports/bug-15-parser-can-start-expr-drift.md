@@ -1,6 +1,8 @@
 # Bug 15 — `can_start_expr` drifted from `parse_primary`: `0..this.n` fails to parse
 
-- Status: reproduced 2026-08-01 with `target/release/cpc check`
+- Status: FIXED 2026-08-02, commit fbd4fcd — took the ALTERNATIVE (invert the question);
+  `tok_name` is now exhaustive
+- Status (original): reproduced 2026-08-01 with `target/release/cpc check`
 - Severity: misparse (common method-body shapes rejected)
 - Area: parser (`cplus-core/src/parser.rs`)
 - Master report: `core-drift-audit-2026-08-01.md` (B15)
@@ -65,7 +67,12 @@ Related diagnostic-quality hole surfaced by the same repro: `tok_name`
 
 ## Verification
 
-1. t12 returns 3; t13 returns 18; t14 parses (whatever its semantic fate).
+1. DONE: t12 returns 3. t13 as written uses `#len`, which is not an intrinsic (the name is
+   `#slice_len`) — with the real name it parses, where before it was E0100. The parse
+   defect is what this report is about; the remaining diagnostics are semantic.
+   A bonus: `for i in 0.. { }` never worked either — the old predicate accepted `{`, so
+   the loop BODY was eaten as the range's bound. It now parses correctly and sema gives an
+   honest "open ranges are not supported here".
 2. Open-ended ranges still work: `0..` in the slicing/iteration positions the suite
    already covers (grep parser and e2e tests for `..`).
 3. Error messages: a deliberate misparse now names the real token, not "token".

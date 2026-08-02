@@ -21231,6 +21231,70 @@ fn gen_fn_protocol_survives_nested_option_instantiation() {
     assert_eq!(run.code(), Some(0), "filter must keep 2+3 = 5");
 }
 
+/// reports/bug-13 and bug-14 end-to-end: programs that were VALID and did not
+/// compile. A statement-position block used to swallow the next line, and a
+/// struct literal inside a delimiter inside an `if`/`for` header failed to
+/// parse even when parenthesized — which the flag's own documentation named as
+/// the escape hatch. Runs the result so a fix that merely parses is not enough.
+#[test]
+fn parser_statement_boundaries_and_delimited_struct_literals() {
+    let (_dir, bin) = compile_program(
+        "struct Foo { x: i32 }\n\
+         fn check(f: Foo) -> bool { return f.x == 1; }\n\
+         fn deref_me() -> *i32 { return 0 as *i32; }\n\
+         fn noop() {}\n\
+         fn main() -> i32 {\n\
+           var x = 1;\n\
+           // bug-13: each of these lines is its own statement.\n\
+           if x == 1 { noop(); }\n\
+           (x + 1);\n\
+           { noop(); }\n\
+           [1, 2];\n\
+           if x == 1 { x = 2; }\n\
+           -x;\n\
+           if x == 2 { x = 3; }\n\
+           *deref_me();\n\
+           // bug-14: a delimiter inside a header re-allows struct literals.\n\
+           if check(Foo { x: 1 }) { x = x + 10; }\n\
+           if (Foo { x: 1 }).x == 1 { x = x + 100; }\n\
+           // The ambiguity the flag exists for stays resolved.\n\
+           let y = 113;\n\
+           if x == y { return 0; }\n\
+           return 1;\n\
+         }\n",
+        false,
+    );
+    let run = Command::new(&bin).status().expect("run parser probe");
+    assert_eq!(run.code(), Some(0), "unexpected exit: {run}");
+}
+
+/// reports/bug-15: `can_start_expr`, a hand-copied duplicate of
+/// `parse_primary`'s FIRST set, had drifted — so a range bounded by `this.n`
+/// read as an OPEN range and the parser then choked on the "extra" expression.
+#[test]
+fn range_bounds_accept_any_expression() {
+    let (_dir, bin) = compile_program(
+        "struct S { n: i32 }\n\
+         impl S {\n\
+           fn sum(this) -> i32 {\n\
+             var t = 0;\n\
+             for i in 0..this.n { t = t + i; }\n\
+             return t;\n\
+           }\n\
+         }\n\
+         fn size() -> i32 { return 3; }\n\
+         fn main() -> i32 {\n\
+           let s = S { n: 3 };\n\
+           var u = 0;\n\
+           for i in 0..size() { u = u + i; }\n\
+           return s.sum() + u - 6;\n\
+         }\n",
+        false,
+    );
+    let run = Command::new(&bin).status().expect("run range probe");
+    assert_eq!(run.code(), Some(0), "unexpected exit: {run}");
+}
+
 /// reports/bug-12: the `str` literal → owned `Text` rule was an inline copy at
 /// each value position, so the positions nobody copied it to rejected valid
 /// code — an enum payload gave a spurious E0302. The rule now has one home

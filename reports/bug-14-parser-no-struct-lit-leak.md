@@ -1,6 +1,7 @@
 # Bug 14 — `no_struct_lit` never restored at delimiter recursion (three misparses)
 
-- Status: reproduced 2026-08-01 with `target/release/cpc check`
+- Status: FIXED 2026-08-02, commit fbd4fcd — `ExprCtx` + one `in_delimited` combinator
+- Status (original): reproduced 2026-08-01 with `target/release/cpc check`
 - Severity: misparse (documented escape hatch does not work)
 - Area: parser (`cplus-core/src/parser.rs`)
 - Master report: `core-drift-audit-2026-08-01.md` (B14)
@@ -79,7 +80,9 @@ joins the struct instead of repeating the disease.
 
 ## Verification
 
-1. All three repros compile and run.
+1. DONE: t9 and t10 compile and run. t11 parses; `for … in` over an array literal is
+   rejected for an unrelated reason (E0312 — the iterator must be a range or an
+   `Iterator[T]`), which is a language limitation, not the misparse.
 2. The original ambiguity stays resolved: `if x == y { return 1; }` where `y` is a plain
    variable must still parse the `{` as the if-body (grep parser tests for no_struct_lit
    / struct-literal-in-if tests).

@@ -65,23 +65,41 @@ pub fn parse(tokens: Vec<Token>) -> Result<Program, ParseError> {
     p.parse_program()
 }
 
-struct Parser {
-    tokens: Vec<Token>,
-    pos: usize,
-    /// True while parsing the head of an `if`/`while`/`for-in <iter>` —
-    /// in those positions an `Ident` followed by `{` is the cond/iter
-    /// followed by the body block, NOT a struct literal. Force the literal
-    /// by parenthesizing.
-    no_struct_lit: bool,
+/// The context bits that travel with an expression parse. Both exist because
+/// an enclosing construct made the grammar locally ambiguous, and both are
+/// cleared by the same thing — recursing inside a delimiter, where the
+/// ambiguity does not exist. Keeping them together is what makes
+/// `in_delimited` able to reset all of them; they were two loose `bool` fields
+/// and only one of them was ever reset (reports/bug-14).
+#[derive(Clone, Copy)]
+struct ExprCtx {
+    /// False while parsing the head of an `if`/`while`/`for-in <iter>` or a
+    /// `match` scrutinee — in those positions an `Ident` followed by `{` is the
+    /// cond/iter followed by the body block, NOT a struct literal. Force the
+    /// literal by parenthesizing.
+    allow_struct_lit: bool,
     /// v0.0.22 DSL.1: true while parsing a builder-block entry expression
     /// (an item line or a modifier's right-hand side). In that position a
     /// line-leading `.` / `(` / `[` (token `nl_before`) ends the
     /// expression instead of continuing the postfix chain — that's what
     /// separates `text("title")` from the `.font = bigger` modifier line
-    /// below it. Reset inside delimiter recursion (call args, indexing,
-    /// grouping, array literals, blocks) so only the entry's own
-    /// top-level postfix chain is line-sensitive.
-    stop_line_dot: bool,
+    /// below it.
+    line_sensitive: bool,
+}
+
+impl Default for ExprCtx {
+    fn default() -> Self {
+        Self {
+            allow_struct_lit: true,
+            line_sensitive: false,
+        }
+    }
+}
+
+struct Parser {
+    tokens: Vec<Token>,
+    pos: usize,
+    ctx: ExprCtx,
     /// Recursive-descent nesting depth, incremented at each expression /
     /// statement-block recursion point and checked against [`MAX_PARSE_DEPTH`]
     /// so pathological nesting fails as a diagnostic instead of a stack
@@ -94,8 +112,7 @@ impl Parser {
         Self {
             tokens,
             pos: 0,
-            no_struct_lit: false,
-            stop_line_dot: false,
+            ctx: ExprCtx::default(),
             depth: 0,
         }
     }
@@ -122,35 +139,46 @@ impl Parser {
         self.depth = self.depth.saturating_sub(1);
     }
 
-    /// Run `f` with `no_struct_lit` flipped on, restoring it afterward.
+    /// Run `f` with struct literals disallowed, restoring the context
+    /// afterward. Used for the head of an `if`/`while`/`for … in <iter>` and a
+    /// `match` scrutinee.
     fn with_no_struct_lit<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
-        let prev = self.no_struct_lit;
-        self.no_struct_lit = true;
+        let prev = self.ctx;
+        self.ctx.allow_struct_lit = false;
         let r = f(self);
-        self.no_struct_lit = prev;
+        self.ctx = prev;
         r
     }
 
-    /// v0.0.22 DSL.1: run `f` with `stop_line_dot` flipped on, restoring
-    /// it afterward. Used for builder-block item lines and modifier
-    /// right-hand sides.
+    /// v0.0.22 DSL.1: run `f` line-sensitively, restoring the context
+    /// afterward. Used for builder-block item lines and modifier right-hand
+    /// sides.
     fn with_stop_line_dot<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
-        let prev = self.stop_line_dot;
-        self.stop_line_dot = true;
+        let prev = self.ctx;
+        self.ctx.line_sensitive = true;
         let r = f(self);
-        self.stop_line_dot = prev;
+        self.ctx = prev;
         r
     }
 
-    /// v0.0.22 DSL.1: run `f` with `stop_line_dot` off, restoring it
-    /// afterward. Applied when recursing inside delimiters so a
-    /// multi-line subexpression (wrapped call args, an index, a nested
-    /// block) is not line-sensitive.
-    fn with_line_dots_allowed<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
-        let prev = self.stop_line_dot;
-        self.stop_line_dot = false;
+    /// Run `f` inside a delimiter — `(`, `[`, `{` — with a NEUTRAL expression
+    /// context, restoring the caller's afterward.
+    ///
+    /// THE one place a delimiter recursion resets context, and it resets every
+    /// bit at once. Both bits exist because an outer construct made the
+    /// grammar ambiguous, and a delimiter removes that ambiguity: inside
+    /// parentheses `Foo { x: 1 }` cannot be an `if` body, and a multi-line
+    /// subexpression is not a builder line. When only `line_sensitive` was
+    /// reset here, `allow_struct_lit` leaked all the way down — so
+    /// `if check(Foo { x: 1 })` failed to parse, and so did
+    /// `if (Foo { x: 1 }).x == 1`, which the flag's own documentation named as
+    /// the escape hatch (reports/bug-14). A third context bit joins `ExprCtx`
+    /// instead of repeating that.
+    fn in_delimited<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        let prev = self.ctx;
+        self.ctx = ExprCtx::default();
         let r = f(self);
-        self.stop_line_dot = prev;
+        self.ctx = prev;
         r
     }
 
@@ -262,7 +290,7 @@ impl Parser {
             } else {
                 None
             };
-            args.push(self.with_line_dots_allowed(|p| p.parse_expr())?);
+            args.push(self.in_delimited(|p| p.parse_expr())?);
             labels.push(label);
             if !self.eat(&TokenKind::Comma) {
                 break;
@@ -697,7 +725,7 @@ impl Parser {
                 }
             };
             self.expect(&TokenKind::RParen, "`)` after asm register spec")?;
-            let value = self.parse_expr()?;
+            let value = self.in_delimited(|p| p.parse_expr())?;
             let span = opname.span;
             operands.push(AsmOperand {
                 name: opname.name,
@@ -1991,7 +2019,7 @@ impl Parser {
         // block → stmt → block here (not through `parse_expr`), so it needs
         // its own guard against a stack-overflow abort.
         self.enter_depth()?;
-        let r = self.with_line_dots_allowed(|p| p.parse_block_body());
+        let r = self.in_delimited(|p| p.parse_block_body());
         self.exit_depth();
         r
     }
@@ -2148,7 +2176,7 @@ impl Parser {
                 _ => {}
             }
             // Otherwise, parse an expression and decide stmt vs tail.
-            let expr = self.parse_expr()?;
+            let expr = self.parse_stmt_expr()?;
             if self.eat(&TokenKind::Semi) {
                 let span = expr.span;
                 stmts.push(Stmt {
@@ -2173,6 +2201,45 @@ impl Parser {
             tail,
             span: start.merge(end),
         })
+    }
+
+    /// The expression of an expression-statement.
+    ///
+    /// A statement that STARTS with a block-like expression (`if`, `match`, a
+    /// bare `{ }`) ends at the end of its line. Without that rule the block is
+    /// an ordinary primary, so `parse_postfix_chain` and the binary cascade
+    /// keep extending it across the newline and SWALLOW the next statement:
+    /// `(x + 1);` parsed as a call of the `if`'s value, `[1, 2];` as an index,
+    /// `-x;` as a subtraction, `*p();` as a multiplication — and the
+    /// diagnostic pointed at the block, not at the line that "continued" it
+    /// (reports/bug-13). Every one of those is a statement people write.
+    ///
+    /// A continuation on the SAME line still parses as one expression
+    /// (`{ 1 } as i64`, `if c { 1 } else { 2 } + 1`), which is what
+    /// block-as-value code in this tree looks like. The rule mirrors the line
+    /// sensitivity the builder DSL already depends on (`stop_line_dot`); the
+    /// lexer stamps `nl_before` on every token for exactly this purpose.
+    fn parse_stmt_expr(&mut self) -> Result<Expr, ParseError> {
+        if !matches!(
+            self.peek_kind(),
+            TokenKind::If | TokenKind::Match | TokenKind::LBrace
+        ) {
+            return self.parse_expr();
+        }
+        let start = self.pos;
+        let saved = self.ctx;
+        let block_like = self.parse_primary()?;
+        // End of line, or the statement/block already ends here: done.
+        if self.peek().nl_before || self.at(&TokenKind::Semi) || self.at(&TokenKind::RBrace) {
+            return Ok(block_like);
+        }
+        // Same line with something after it: re-parse from the top as one
+        // expression. Backtracking is safe — the parser carries no state
+        // besides position and these two context flags, and every synthesized
+        // binding name is derived from a span rather than a counter.
+        self.pos = start;
+        self.ctx = saved;
+        self.parse_expr()
     }
 
     fn parse_let_stmt(&mut self) -> Result<Stmt, ParseError> {
@@ -2602,7 +2669,7 @@ impl Parser {
                 // `for (let [mut] i ...; ...)`.
                 Some(Box::new(self.parse_let_no_semi()?))
             } else {
-                let e = self.parse_expr()?;
+                let e = self.in_delimited(|p| p.parse_expr())?;
                 let span = e.span;
                 Some(Box::new(Stmt {
                     kind: StmtKind::Expr(e),
@@ -2613,14 +2680,14 @@ impl Parser {
             let cond = if self.at(&TokenKind::Semi) {
                 None
             } else {
-                Some(self.parse_expr()?)
+                Some(self.in_delimited(|p| p.parse_expr())?)
             };
             self.expect(&TokenKind::Semi, "`;` in for header")?;
             let mut update = Vec::new();
             if !self.at(&TokenKind::RParen) {
-                update.push(self.parse_expr()?);
+                update.push(self.in_delimited(|p| p.parse_expr())?);
                 while self.eat(&TokenKind::Comma) {
-                    update.push(self.parse_expr()?);
+                    update.push(self.in_delimited(|p| p.parse_expr())?);
                 }
             }
             self.expect(&TokenKind::RParen, "`)`")?;
@@ -2730,6 +2797,32 @@ impl Parser {
         Ok(lhs)
     }
 
+    /// True when a `..` has no right bound — the next token closes the range's
+    /// enclosing construct rather than starting an expression.
+    ///
+    /// Asked THIS way round the predicate cannot drift. The terminator set is
+    /// fixed by the grammar's delimiters; the set of tokens that can START an
+    /// expression grows every time the language does. `can_start_expr` was a
+    /// hand-copied duplicate of `parse_primary`'s FIRST set and had fallen
+    /// behind by at least `this`, `#name(…)`, `[`, `await`, `yield`, c-string
+    /// and interpolated literals — so `for i in 0..this.n` read as an OPEN
+    /// range and then choked on the "extra" expression (reports/bug-15).
+    ///
+    /// `{` ends a range only in a header position (`for i in 0.. { }`), which
+    /// is exactly where `allow_struct_lit` is already off; elsewhere a block
+    /// is an ordinary expression and may be a bound.
+    fn at_range_end(&self) -> bool {
+        matches!(
+            self.peek_kind(),
+            TokenKind::Semi
+                | TokenKind::Comma
+                | TokenKind::RParen
+                | TokenKind::RBracket
+                | TokenKind::RBrace
+                | TokenKind::Eof
+        ) || (!self.ctx.allow_struct_lit && self.at(&TokenKind::LBrace))
+    }
+
     fn parse_range(&mut self) -> Result<Expr, ParseError> {
         let lhs = self.parse_or()?;
         let inclusive = match self.peek_kind() {
@@ -2739,10 +2832,10 @@ impl Parser {
         };
         self.bump();
         // RHS may or may not be present (e.g. `a..` is open-ended).
-        let rhs = if can_start_expr(self.peek_kind()) {
-            Some(Box::new(self.parse_or()?))
-        } else {
+        let rhs = if self.at_range_end() {
             None
+        } else {
+            Some(Box::new(self.parse_or()?))
         };
         let span = match &rhs {
             Some(r) => lhs.span.merge(r.span),
@@ -3078,7 +3171,7 @@ impl Parser {
             // modifier line, and a line-leading `(`/`[` would otherwise
             // silently chain onto the previous line's item, which is never
             // what a builder line means.
-            if self.stop_line_dot
+            if self.ctx.line_sensitive
                 && self.peek().nl_before
                 && matches!(
                     self.peek_kind(),
@@ -3186,7 +3279,7 @@ impl Parser {
                 }
                 TokenKind::LBracket => {
                     self.bump();
-                    let index = self.with_line_dots_allowed(|p| p.parse_expr())?;
+                    let index = self.in_delimited(|p| p.parse_expr())?;
                     let end = self.expect(&TokenKind::RBracket, "`]`")?.span;
                     let span = e.span.merge(end);
                     e = Expr {
@@ -3222,7 +3315,7 @@ impl Parser {
         // Entries parse with the line-dot flag off at the boundary: each
         // item line / modifier RHS turns it on for itself, and a nested
         // builder block must not inherit the enclosing entry's state.
-        let entries = self.with_line_dots_allowed(|p| p.parse_builder_entries())?;
+        let entries = self.in_delimited(|p| p.parse_builder_entries())?;
         let end = self.expect(&TokenKind::RBrace, "`}`")?.span;
         Ok(Expr {
             kind: ExprKind::BuilderBlock {
@@ -3244,7 +3337,7 @@ impl Parser {
         &mut self,
     ) -> Result<(Span, Vec<BuilderEntry>, Span), ParseError> {
         let lbrace = self.expect(&TokenKind::LBrace, "`{`")?.span;
-        let entries = self.with_line_dots_allowed(|p| p.parse_builder_entries())?;
+        let entries = self.in_delimited(|p| p.parse_builder_entries())?;
         let rbrace = self.expect(&TokenKind::RBrace, "`}`")?.span;
         Ok((lbrace, entries, rbrace))
     }
@@ -3342,7 +3435,18 @@ impl Parser {
     /// v0.0.22 DSL.4: `if COND { ENTRIES } [else { ENTRIES } | else if ...]`
     /// as builder item-control. The condition parses in a struct-lit-
     /// suppressing context so the `{` opens the branch, not a literal.
+    /// A builder `else if` chain recurses back into this function, so it
+    /// carries the same depth guard as every other self-recursive parse point
+    /// — the pattern parser's missing one aborted the compiler outright
+    /// (reports/bug-16).
     fn parse_builder_if(&mut self) -> Result<BuilderEntry, ParseError> {
+        self.enter_depth()?;
+        let r = self.parse_builder_if_inner();
+        self.exit_depth();
+        r
+    }
+
+    fn parse_builder_if_inner(&mut self) -> Result<BuilderEntry, ParseError> {
         self.expect(&TokenKind::If, "`if`")?;
         let cond = self.with_no_struct_lit(|p| p.parse_expr())?;
         let (_, then, _) = self.parse_builder_braced_entries()?;
@@ -3409,7 +3513,7 @@ impl Parser {
                 self.bump();
                 let mut args = Vec::new();
                 while !self.at(&TokenKind::RParen) {
-                    args.push(self.with_line_dots_allowed(|p| p.parse_expr())?);
+                    args.push(self.in_delimited(|p| p.parse_expr())?);
                     if !self.eat(&TokenKind::Comma) {
                         break;
                     }
@@ -3436,7 +3540,7 @@ impl Parser {
     /// a type-name `Ident` that was just consumed. `start_span` is the span
     /// of the first source token of the literal (used to anchor the overall
     /// `Expr` span). Caller has already verified that the next token is `{`
-    /// and that `no_struct_lit` is off.
+    /// and that `allow_struct_lit` is on.
     /// Slice 7GEN.5c: parse the `{ field: value, ... }` body of a
     /// generic struct literal `Pair[i32, bool] { ... }`. The caller
     /// has already consumed the type-arg brackets.
@@ -3451,7 +3555,7 @@ impl Parser {
         while !self.at(&TokenKind::RBrace) {
             let fname = self.expect_ident()?;
             self.expect(&TokenKind::Colon, "`:`")?;
-            let value = self.parse_expr()?;
+            let value = self.in_delimited(|p| p.parse_expr())?;
             let span = fname.span.merge(value.span);
             fields.push(StructLitField {
                 name: fname,
@@ -3480,7 +3584,7 @@ impl Parser {
         while !self.at(&TokenKind::RBrace) {
             let fname = self.expect_ident()?;
             self.expect(&TokenKind::Colon, "`:`")?;
-            let value = self.parse_expr()?;
+            let value = self.in_delimited(|p| p.parse_expr())?;
             let span = fname.span.merge(value.span);
             fields.push(StructLitField {
                 name: fname,
@@ -3508,7 +3612,7 @@ impl Parser {
         while !self.at(&TokenKind::RBrace) {
             let fname = self.expect_ident()?;
             self.expect(&TokenKind::Colon, "`:`")?;
-            let value = self.parse_expr()?;
+            let value = self.in_delimited(|p| p.parse_expr())?;
             let span = fname.span.merge(value.span);
             fields.push(StructLitField {
                 name: fname,
@@ -3648,7 +3752,7 @@ impl Parser {
                 self.expect(&TokenKind::LParen, "`(` after `#name`")?;
                 let mut args: Vec<Expr> = Vec::new();
                 while !self.at(&TokenKind::RParen) {
-                    args.push(self.parse_expr()?);
+                    args.push(self.in_delimited(|p| p.parse_expr())?);
                     if !self.eat(&TokenKind::Comma) {
                         break;
                     }
@@ -3712,7 +3816,7 @@ impl Parser {
                     // position, treat the qualified name as a struct literal
                     // type. The resolver later splits the `::`-joined name
                     // and applies the import-alias rewrite.
-                    if !self.no_struct_lit && matches!(self.peek_kind(), TokenKind::LBrace) {
+                    if self.ctx.allow_struct_lit && matches!(self.peek_kind(), TokenKind::LBrace) {
                         let qualified: String = segments
                             .iter()
                             .map(|s| s.name.as_str())
@@ -3750,7 +3854,7 @@ impl Parser {
                                 let mut args = Vec::new();
                                 let end_span = if self.eat(&TokenKind::LParen) {
                                     while !self.at(&TokenKind::RParen) {
-                                        args.push(self.parse_expr()?);
+                                        args.push(self.in_delimited(|p| p.parse_expr())?);
                                         if !self.eat(&TokenKind::Comma) {
                                             break;
                                         }
@@ -3778,7 +3882,7 @@ impl Parser {
                                     span: tok.span.merge(end_span),
                                 });
                             }
-                            if !self.no_struct_lit
+                            if self.ctx.allow_struct_lit
                                 && matches!(&self.tokens[after_bracket].kind, TokenKind::LBrace)
                             {
                                 self.bump(); // `[`
@@ -3835,7 +3939,7 @@ impl Parser {
                             let mut args = Vec::new();
                             let end_span = if self.eat(&TokenKind::LParen) {
                                 while !self.at(&TokenKind::RParen) {
-                                    args.push(self.parse_expr()?);
+                                    args.push(self.in_delimited(|p| p.parse_expr())?);
                                     if !self.eat(&TokenKind::Comma) {
                                         break;
                                     }
@@ -3864,7 +3968,7 @@ impl Parser {
                 // in expression position. Distinguished from `arr[i]` indexing
                 // by peeking past the matching `]` for a `{`. If found, the
                 // brackets carry type args, not an index expression.
-                if !self.no_struct_lit && matches!(self.peek_kind(), TokenKind::LBracket) {
+                if self.ctx.allow_struct_lit && matches!(self.peek_kind(), TokenKind::LBracket) {
                     if let Some(after_bracket) = self.scan_past_bracket() {
                         if matches!(&self.tokens[after_bracket].kind, TokenKind::LBrace) {
                             // Consume `[`, parse type args, consume `]`, then
@@ -3902,7 +4006,7 @@ impl Parser {
                 }
                 // Struct literal: `Foo { field: value, ... }` — only outside
                 // the head of `if`/`while`/`for-in`, where `{` starts the body.
-                if !self.no_struct_lit && matches!(self.peek_kind(), TokenKind::LBrace) {
+                if self.ctx.allow_struct_lit && matches!(self.peek_kind(), TokenKind::LBrace) {
                     let name_ident = Ident {
                         name: n,
                         span: tok.span,
@@ -3922,11 +4026,11 @@ impl Parser {
                 // tuple. `()` (empty parens) would be the unit value
                 // but the parser doesn't accept that today — `()` is
                 // strictly a type-position spelling.
-                let first = self.with_line_dots_allowed(|p| p.parse_expr())?;
+                let first = self.in_delimited(|p| p.parse_expr())?;
                 if self.eat(&TokenKind::Comma) {
                     let mut elements: Vec<Expr> = vec![first];
                     while !self.at(&TokenKind::RParen) {
-                        elements.push(self.with_line_dots_allowed(|p| p.parse_expr())?);
+                        elements.push(self.in_delimited(|p| p.parse_expr())?);
                         if !self.eat(&TokenKind::Comma) {
                             break;
                         }
@@ -3958,7 +4062,7 @@ impl Parser {
                         span: start.merge(end),
                     });
                 }
-                let first = self.with_line_dots_allowed(|p| p.parse_expr())?;
+                let first = self.in_delimited(|p| p.parse_expr())?;
                 if self.eat(&TokenKind::Semi) {
                     // Fill-array form: `[EXPR; N]`.
                     let count_tok = self.peek().clone();
@@ -3997,7 +4101,7 @@ impl Parser {
                 let mut elements = vec![first];
                 if self.eat(&TokenKind::Comma) {
                     while !self.at(&TokenKind::RBracket) {
-                        elements.push(self.parse_expr()?);
+                        elements.push(self.in_delimited(|p| p.parse_expr())?);
                         if !self.eat(&TokenKind::Comma) {
                             break;
                         }
@@ -4013,11 +4117,11 @@ impl Parser {
                 // v0.0.24 de-Rust: type-inferred struct literal `{ field: ... }`.
                 // A block can never begin with `Ident :` (C+ has no labels or
                 // statement-level type ascription), so `{` + `Ident` + `:` is
-                // syntactically unambiguous. Gated on `!no_struct_lit` like the
+                // syntactically unambiguous. Gated on `allow_struct_lit` like the
                 // named `Type { .. }` form, so an if/while/for/match body `{`
                 // still parses as a block. The struct type is inferred from the
                 // expected type at sema time.
-                if !self.no_struct_lit
+                if self.ctx.allow_struct_lit
                     && matches!(self.peek_kind_n(1), TokenKind::Ident(_))
                     && matches!(self.peek_kind_n(2), TokenKind::Colon)
                 {
@@ -4108,7 +4212,7 @@ impl Parser {
             }
             (expr, span)
         } else {
-            let expr = self.parse_expr()?;
+            let expr = self.in_delimited(|p| p.parse_expr())?;
             let span = expr.span;
             // Comma required between expr arms unless this is the last arm
             // before `}`.
@@ -4125,7 +4229,19 @@ impl Parser {
         })
     }
 
+    /// A variant pattern's payload recurses back into `parse_pattern`, so it
+    /// needs the same depth guard the expression, block and type parsers
+    /// carry — without it a deeply nested pattern ABORTED the compiler with a
+    /// stack overflow instead of producing the nesting diagnostic
+    /// (reports/bug-16).
     fn parse_pattern(&mut self) -> Result<Pattern, ParseError> {
+        self.enter_depth()?;
+        let r = self.parse_pattern_inner();
+        self.exit_depth();
+        r
+    }
+
+    fn parse_pattern_inner(&mut self) -> Result<Pattern, ParseError> {
         match self.peek_kind() {
             TokenKind::Underscore => {
                 let tok = self.bump();
@@ -4279,27 +4395,6 @@ fn is_block_like(kind: &ExprKind) -> bool {
     )
 }
 
-fn can_start_expr(kind: &TokenKind) -> bool {
-    matches!(
-        kind,
-        TokenKind::Int(_, _)
-            | TokenKind::Float(_, _)
-            | TokenKind::Str(_)
-            | TokenKind::True
-            | TokenKind::False
-            | TokenKind::Ident(_)
-            | TokenKind::LParen
-            | TokenKind::LBrace
-            | TokenKind::If
-            | TokenKind::Match
-            | TokenKind::Minus
-            | TokenKind::Bang
-            | TokenKind::Tilde
-            | TokenKind::Star
-            | TokenKind::Amp
-    )
-}
-
 fn peek_cmp_op(kind: &TokenKind) -> Option<BinOp> {
     Some(match kind {
         TokenKind::EqEq => BinOp::Eq,
@@ -4367,7 +4462,82 @@ fn tok_name(k: &TokenKind) -> &'static str {
         TokenKind::Eq => "`=`",
         TokenKind::EqEq => "`==`",
         TokenKind::Eof => "end of input",
-        _ => "token",
+        // Exhaustive by design: no `_` arm, so adding a `TokenKind` without a
+        // display name fails to COMPILE instead of silently rendering as the
+        // word "token" in a diagnostic. `expected `{`, found token` is what a
+        // misparse of `for i in 0..this.n` used to say (reports/bug-15).
+        TokenKind::CStr(_) => "c-string literal",
+        TokenKind::InterpStr(_) => "interpolated string literal",
+        TokenKind::LineComment(_) | TokenKind::BlockComment(_) => "comment",
+        TokenKind::Const => "`const`",
+        TokenKind::Static => "`static`",
+        TokenKind::Unsafe => "`unsafe`",
+        TokenKind::Extern => "`extern`",
+        TokenKind::Struct => "`struct`",
+        TokenKind::Enum => "`enum`",
+        TokenKind::Match => "`match`",
+        TokenKind::Impl => "`impl`",
+        TokenKind::Pub => "`pub`",
+        TokenKind::Export => "`export`",
+        TokenKind::SelfLower => "`this`",
+        TokenKind::SelfUpper => "`Self`",
+        TokenKind::Defer => "`defer`",
+        TokenKind::Break => "`break`",
+        TokenKind::Continue => "`continue`",
+        TokenKind::Loop => "`loop`",
+        TokenKind::Move => "`take`",
+        TokenKind::Restrict => "`restrict`",
+        TokenKind::Opaque => "`opaque`",
+        TokenKind::Guard => "`guard`",
+        TokenKind::Assert => "`assert`",
+        TokenKind::Async => "`async`",
+        TokenKind::Await => "`await`",
+        TokenKind::Gen => "`gen`",
+        TokenKind::Yield => "`yield`",
+        TokenKind::Borrow => "`borrow`",
+        TokenKind::Interface => "`interface`",
+        TokenKind::TypeKw => "`type`",
+        TokenKind::Underscore => "`_`",
+        TokenKind::LBracket => "`[`",
+        TokenKind::RBracket => "`]`",
+        TokenKind::Pound => "`#`",
+        TokenKind::Plus => "`+`",
+        TokenKind::Minus => "`-`",
+        TokenKind::Star => "`*`",
+        TokenKind::Slash => "`/`",
+        TokenKind::Percent => "`%`",
+        TokenKind::PlusPercent => "`+%`",
+        TokenKind::MinusPercent => "`-%`",
+        TokenKind::StarPercent => "`*%`",
+        TokenKind::Bang => "`!`",
+        TokenKind::BangEq => "`!=`",
+        TokenKind::Lt => "`<`",
+        TokenKind::Le => "`<=`",
+        TokenKind::Gt => "`>`",
+        TokenKind::Ge => "`>=`",
+        TokenKind::Amp => "`&`",
+        TokenKind::AmpAmp => "`&&`",
+        TokenKind::Pipe => "`|`",
+        TokenKind::PipePipe => "`||`",
+        TokenKind::Caret => "`^`",
+        TokenKind::Tilde => "`~`",
+        TokenKind::Shl => "`<<`",
+        TokenKind::Shr => "`>>`",
+        TokenKind::PlusEq => "`+=`",
+        TokenKind::MinusEq => "`-=`",
+        TokenKind::StarEq => "`*=`",
+        TokenKind::SlashEq => "`/=`",
+        TokenKind::PercentEq => "`%=`",
+        TokenKind::AmpEq => "`&=`",
+        TokenKind::PipeEq => "`|=`",
+        TokenKind::CaretEq => "`^=`",
+        TokenKind::ShlEq => "`<<=`",
+        TokenKind::ShrEq => "`>>=`",
+        TokenKind::FatArrow => "`=>`",
+        TokenKind::DotDot => "`..`",
+        TokenKind::DotDotEq => "`..=`",
+        TokenKind::Ellipsis => "`...`",
+        TokenKind::ColonColon => "`::`",
     }
 }
 
@@ -6707,6 +6877,21 @@ mod tests {
         &f.body.stmts[0].kind
     }
 
+    /// The `n`th statement of the LAST function item — the last one so a test
+    /// can put helper `fn`s and type declarations ahead of the subject.
+    fn last_fn_stmt_n(p: &Program, n: usize) -> &StmtKind {
+        let last_fn = p
+            .items
+            .iter()
+            .rev()
+            .find_map(|i| match &i.kind {
+                ItemKind::Function(f) => Some(f),
+                _ => None,
+            })
+            .expect("expected a function item");
+        &last_fn.body.stmts[n].kind
+    }
+
     #[test]
     fn guard_var_parses_mutable() {
         let p = parse_src("fn f() -> i32 { guard var M::S(v) = m else { return 0; }; return v; }")
@@ -6786,5 +6971,165 @@ mod tests {
             matches!(first_fn_stmt(&p), StmtKind::Expr(_)),
             "`if var {{ ... }}` must parse as a plain if expression, not if-let"
         );
+    }
+
+    // ---- reports/bug-13: a statement-position block ends at end of line ----
+
+    /// A block-like expression is an ordinary primary, so the postfix chain and
+    /// the binary cascade used to keep extending it across the newline and
+    /// swallow the NEXT statement. Each of these is a statement people write:
+    /// `(x)` parsed as a CALL of the block's value, `[1, 2]` as an INDEX, `-x`
+    /// as a subtraction, `*p()` as a multiplication — and the diagnostic
+    /// pointed at the block, not at the line that continued it.
+    #[test]
+    fn statement_after_a_block_is_its_own_statement() {
+        for (label, next) in [
+            ("paren", "(x);"),
+            ("bracket", "[1, 2];"),
+            ("minus", "-x;"),
+            ("star", "*x;"),
+        ] {
+            for opener in ["if x == x { }", "{ }"] {
+                let src = format!("fn f() {{ var x = 1;\n{opener}\n{next}\n}}");
+                let p = parse_src(&src)
+                    .unwrap_or_else(|e| panic!("[{label} after {opener}] {e:?}\n{src}"));
+                let StmtKind::Expr(e) = last_fn_stmt_n(&p, 1) else {
+                    panic!("[{label} after {opener}] expected an expression statement");
+                };
+                assert!(
+                    is_block_like(&e.kind),
+                    "[{label} after {opener}] the block absorbed the next line: {:?}",
+                    e.kind
+                );
+            }
+        }
+    }
+
+    /// The other half of the rule: a continuation on the SAME line still parses
+    /// as one expression, which is what block-as-value code looks like.
+    #[test]
+    fn same_line_continuation_of_a_block_still_parses_as_one_expression() {
+        let p = parse_src("fn f() -> i64 { let v: i64 = { 1 } as i64; return v; }").unwrap();
+        let StmtKind::Let { init: Some(e), .. } = first_fn_stmt(&p) else {
+            panic!("expected a let with an initializer");
+        };
+        assert!(
+            matches!(e.kind, ExprKind::Cast { .. }),
+            "`{{ 1 }} as i64` must stay one cast expression, got {:?}",
+            e.kind
+        );
+    }
+
+    // ---- reports/bug-14: delimiters reset the whole expression context ----
+
+    /// `no_struct_lit` was set at nine header sites and cleared by no delimiter
+    /// recursion, so a struct literal inside a call — or inside the parentheses
+    /// the flag's own documentation named as the escape hatch — failed to
+    /// parse. Both bits now live in `ExprCtx` and `in_delimited` resets them
+    /// together.
+    #[test]
+    fn a_delimiter_inside_a_header_re_allows_struct_literals() {
+        for src in [
+            "struct F { x: i32 }\nfn c(f: F) -> bool { return true; }\nfn m() { if c(F { x: 1 }) { return; } }",
+            "struct F { x: i32 }\nfn m() { if (F { x: 1 }).x == 1 { return; } }",
+            "struct F { x: i32 }\nfn m() { for i in [F { x: 1 }] { return; } }",
+            "struct F { x: i32 }\nfn c(f: F) -> bool { return true; }\nfn m() { while c(F { x: 1 }) { return; } }",
+        ] {
+            parse_src(src).unwrap_or_else(|e| panic!("{e:?}\n{src}"));
+        }
+    }
+
+    /// …and the ambiguity the flag exists for stays resolved: at header level a
+    /// `{` is still the body, not a struct literal.
+    #[test]
+    fn a_header_level_brace_is_still_the_body() {
+        let p = parse_src("fn m() -> i32 { let x = 1; let y = 1; if x == y { return 0; } return 1; }")
+            .unwrap();
+        let StmtKind::Expr(e) = last_fn_stmt_n(&p, 2) else {
+            panic!("expected the `if` as an expression statement");
+        };
+        assert!(
+            matches!(e.kind, ExprKind::If { .. }),
+            "the `{{` after `x == y` must be the if body, got {:?}",
+            e.kind
+        );
+    }
+
+    // ---- reports/bug-15: a range's right bound ----
+
+    /// `can_start_expr` was a hand-copied duplicate of `parse_primary`'s FIRST
+    /// set and had drifted, so a range bounded by `this.n`, an intrinsic, or an
+    /// `await` read as OPEN and then choked on the "extra" expression. The
+    /// question is now asked from the terminator side, which cannot drift.
+    #[test]
+    fn a_range_bound_can_be_any_expression() {
+        for bound in ["this.n", "#slice_len(s)", "-n", "(n)", "[1, 2][0]", "\"a\".count()"] {
+            let src = format!(
+                "struct S {{ n: i32 }}\nimpl S {{ fn f(this, s: i32[], n: i32) {{ for i in 0..{bound} {{ return; }} }} }}"
+            );
+            parse_src(&src).unwrap_or_else(|e| panic!("bound `{bound}`: {e:?}"));
+        }
+    }
+
+    /// An open-ended range still parses as open at every terminator.
+    #[test]
+    fn an_open_range_stays_open() {
+        for (label, src) in [
+            ("header brace", "fn f() { for i in 0.. { return; } }"),
+            ("bracket", "fn f(a: i32[]) { let s = a[1..]; }"),
+            ("paren", "fn g(r: i32) {} fn f() { g(1..); }"),
+            ("semicolon", "fn f() { let r = 1..; }"),
+        ] {
+            let p = parse_src(src).unwrap_or_else(|e| panic!("[{label}] {e:?}"));
+            let rendered = format!("{p:?}");
+            assert!(
+                rendered.contains("end: None"),
+                "[{label}] expected an open range, got:\n{rendered}"
+            );
+        }
+    }
+
+    // ---- reports/bug-16: depth guards ----
+
+    /// A deeply nested pattern ABORTED the compiler with a stack overflow:
+    /// `parse_pattern`'s payload recursion had no depth guard. Sized just past
+    /// the limit so the test stays fast.
+    #[test]
+    fn deep_nesting_is_a_diagnostic_not_a_stack_overflow() {
+        let n = (MAX_PARSE_DEPTH as usize) + 10;
+        let src = format!(
+            "enum A {{ B(i32), C }}\nfn f() {{ let x = A::C; match x {{ {}_{} => {{ return; }}, _ => {{}} }} }}",
+            "A::B(".repeat(n),
+            ")".repeat(n)
+        );
+        let err = parse_src(&src).expect_err("deep pattern nesting must be rejected");
+        assert!(
+            matches!(err.kind, ParseErrorKind::NestingTooDeep),
+            "expected the nesting diagnostic, got {:?}",
+            err.kind
+        );
+
+        // The builder `else if` chain is the same class.
+        let chain = format!(
+            "fn f() {{ let v = @ui {{ {} text(\"x\") {} }}; }}",
+            "if c { ".repeat(n),
+            "}".repeat(n)
+        );
+        let err = parse_src(&chain).expect_err("deep builder if-nesting must be rejected");
+        assert!(
+            matches!(err.kind, ParseErrorKind::NestingTooDeep),
+            "expected the nesting diagnostic, got {:?}",
+            err.kind
+        );
+    }
+
+    /// Ordinary nesting is unaffected.
+    #[test]
+    fn ordinary_pattern_nesting_still_parses() {
+        parse_src(
+            "enum E { A(i32), B }\n\
+             fn f() -> i32 { let e = E::A(3); match e { E::A(v) => { return v; }, E::B => { return 1; } } }",
+        )
+        .expect("a normal variant pattern must parse");
     }
 }
