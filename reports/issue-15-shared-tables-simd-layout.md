@@ -1,6 +1,6 @@
 # Issue 15 — Shared tables: SIMD triplicate, layout duo, scalar-list gap
 
-- Status: PARTIAL 2026-08-02, commit <pending> — (a) and (c) done; (b), the
+- Status: PARTIAL 2026-08-02, commit d6d3bd0 — (a) and (c) done; (b), the
   layout duo, not done, see below
 - Type: consolidation (small, mechanical)
 - Area: `cplus-core/src/sema.rs`, `codegen.rs`
