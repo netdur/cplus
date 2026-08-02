@@ -1,5 +1,7 @@
 # Issue 17 — Parser shared helpers: one list parser, one FIRST set, one contextual-keyword check
 
+- Status: DONE 2026-08-02, commit <pending> — (a)–(e); (f) was the umbrella and
+  its two owners landed in the bug tier
 - Type: consolidation
 - Area: `cplus-core/src/parser.rs`
 - Effort: S
@@ -67,3 +69,49 @@ raw indexing — remaining hits should be inside the peek helpers only.
   fields treat labels first and match).
 - (e) gains tests: `fn(ref (i32, i32))` and `fn(ref [i32; 2])` parse as fn-ptr types
   with ref-mode tuple/array params.
+
+## Outcome
+
+**(a) One bracketed type-arg parser.** `parse_bracketed_type_args(close_msg)`
+replaces ten copies of the same `while !RBracket { parse_type(); eat(Comma) }`
+loop — type position, three turbofish forms, the qualified and bare enum-ctor
+and struct-literal heads, and two pattern spots. Each site kept its own closing-
+bracket message, which is the one thing that legitimately differed, so that is
+the parameter.
+
+**(b) One generic-parameter parser.** `parse_optional_generic_params` is a
+one-line delegation to `parse_generic_params`. They were the same grammar with
+different span math (the name's span vs name-through-last-bound) and different
+error strings; the surviving one keeps the wider span, which is what a
+bounds-related diagnostic wants to underline.
+
+**(c) Enum-ctor arguments go through `parse_call_args`.** Both spellings —
+`dep::Maybe[i32]::Some(x)` and `Maybe[i32]::Some(x)` — re-implemented
+positional-only argument parsing, so a named argument was silently dropped
+instead of desugared or rejected. They call the shared parser now, which is
+also where the line-dot reset lives (bug-14's `in_delimited`).
+
+**(d) One pattern-let head predicate.** `at_pattern_let_head()` replaces three
+copies of the `while`/`if` + (`Let` | `var`-leads-pattern) guard, each of which
+reached into `self.tokens[self.pos + 1]` by raw index rather than through the
+peek helpers. One raw-index site remains in the parser
+(`at_destructure_binding`), which the report's (f) grep target allows for.
+
+**(e) One contextual-keyword follow-set for fn-pointer params — and a fix.**
+`fn_ptr_param_marker_at(kw)` is the shared check, and consolidating exposed the
+divergence the report predicted: the follow-set was `Ident | Star | Fn`, so
+`fn(ref (i32, i32))` and `fn(ref [i32; 2])` parsed `ref` as a TYPE NAME and
+failed with a confusing error. Every token that can begin a type is in the set
+now. `fn_pointer_param_markers_accept_every_type_start` pins both the new
+spellings and the old ones, plus the case that must NOT change: a type genuinely
+named `ref`, with no type following, is still a type.
+
+**(f)** The umbrella. Its two named owners — `in_delimited` (bug-14) and
+`starts_expr` (bug-15) — landed in the bug tier; this issue's items now route
+through them rather than around them.
+
+## Verification (as run)
+
+`cargo test -p cplus-core` 1851 + 8 (the ~172 parser unit tests included),
+`cargo test -p cpc` 608 + 16 + 5 + 6, `cpc test` in `vendor/stdlib` 290, and the
+vendor-wide `cpc check` sweep at its recorded baseline for all 54 packages.

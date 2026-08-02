@@ -275,6 +275,27 @@ impl Parser {
     /// is `args.len()` long with `None` for positional slots. Disambiguation is
     /// a two-token lookahead: an `Ident` immediately followed by `:` (not `::`,
     /// which is a path) begins a named argument.
+    /// issue-17(a): the comma-separated type list between `[` and `]`, parsed
+    /// once. The caller has already consumed the `[`; this consumes through the
+    /// `]` and returns the types.
+    ///
+    /// The same six-line loop appeared at ten sites — type position, three
+    /// turbofish forms, qualified and bare enum-ctor and struct-literal heads,
+    /// and two pattern spots — each with its own closing-bracket message. A
+    /// grammar change (a trailing comma rule, a bound, a default) had to be
+    /// made ten times.
+    fn parse_bracketed_type_args(&mut self, close_msg: &'static str) -> Result<(Vec<Type>, Span), ParseError> {
+        let mut args: Vec<Type> = Vec::new();
+        while !self.at(&TokenKind::RBracket) {
+            args.push(self.parse_type()?);
+            if !self.eat(&TokenKind::Comma) {
+                break;
+            }
+        }
+        let end = self.expect(&TokenKind::RBracket, close_msg)?.span;
+        Ok((args, end))
+    }
+
     fn parse_call_args(&mut self) -> Result<(Vec<Expr>, Vec<Option<Ident>>), ParseError> {
         let mut args: Vec<Expr> = Vec::new();
         let mut labels: Vec<Option<Ident>> = Vec::new();
@@ -621,36 +642,12 @@ impl Parser {
     /// Parse an optional `[T, U: Bound + Bound2]` generic-param list. Shared
     /// by inherent-impl targets and `impl Arc[T: Send + Sync]: Send`
     /// conditional marker impls. Returns an empty Vec when no `[` follows.
+    /// issue-17(b): the generic-parameter list, parsed once. This was a second
+    /// copy of `parse_generic_params` with different span math (the name's span
+    /// rather than name-through-last-bound) and a different error string, so a
+    /// change to the bounds grammar had to be made twice.
     fn parse_optional_generic_params(&mut self) -> Result<Vec<GenericParam>, ParseError> {
-        if !self.at(&TokenKind::LBracket) {
-            return Ok(Vec::new());
-        }
-        self.bump(); // `[`
-        let mut params = Vec::new();
-        while !self.at(&TokenKind::RBracket) {
-            let pname = self.expect_ident()?;
-            let mut bounds = Vec::new();
-            if self.eat(&TokenKind::Colon) {
-                bounds.push(self.parse_ident_path()?);
-                while self.eat(&TokenKind::Plus) {
-                    bounds.push(self.parse_ident_path()?);
-                }
-            }
-            let pspan = pname.span;
-            params.push(GenericParam {
-                name: pname,
-                bounds,
-                span: pspan,
-            });
-            if !self.eat(&TokenKind::Comma) {
-                break;
-            }
-        }
-        self.expect(&TokenKind::RBracket, "`]`")?;
-        if params.is_empty() {
-            return Err(self.err_at_peek("expected at least one generic param inside `[ ]`"));
-        }
-        Ok(params)
+        self.parse_generic_params()
     }
 
     /// v0.0.14 inline asm Tier 2 operand grammar. Cursor is just past `asm`.
@@ -1848,20 +1845,11 @@ impl Parser {
                     // Tier 2: or the `ref` (exclusive write-back) marker —
                     // `fn(ref R)`, pointer-passed like a named `ref x: T`
                     // param. A bare `fn(R)` param is a read-only borrow.
-                    let refs = matches!(self.peek_kind(), TokenKind::Ident(s) if s == "ref")
-                        && matches!(
-                            self.peek_kind_n(1),
-                            TokenKind::Ident(_) | TokenKind::Star | TokenKind::Fn
-                        );
+                    let refs = self.fn_ptr_param_marker_at("ref");
                     if refs {
                         self.bump();
                     }
-                    let takes = !refs
-                        && matches!(self.peek_kind(), TokenKind::Ident(s) if s == "take")
-                        && matches!(
-                            self.peek_kind_n(1),
-                            TokenKind::Ident(_) | TokenKind::Star | TokenKind::Fn
-                        );
+                    let takes = !refs && self.fn_ptr_param_marker_at("take");
                     if takes {
                         self.bump();
                     }
@@ -1928,13 +1916,8 @@ impl Parser {
                         });
                     }
                     let mut args = Vec::new();
-                    while !self.at(&TokenKind::RBracket) {
-                        args.push(self.parse_type()?);
-                        if !self.eat(&TokenKind::Comma) {
-                            break;
-                        }
-                    }
-                    let end = self.expect(&TokenKind::RBracket, "`]`")?.span;
+                    let (args_parsed, end) = self.parse_bracketed_type_args("`]`")?;
+                    args.extend(args_parsed);
                     return Ok(Type {
                         kind: TypeKind::Generic { name, args },
                         span: tok.span.merge(end),
@@ -2048,10 +2031,7 @@ impl Parser {
                 let attrs = self.parse_attributes()?;
                 match self.peek_kind() {
                     TokenKind::While
-                        if matches!(
-                            self.tokens.get(self.pos + 1).map(|t| &t.kind),
-                            Some(TokenKind::Let)
-                        ) || self.var_leads_pattern_at(1) =>
+                        if self.at_pattern_let_head() =>
                     {
                         // while-let attributes — lower to `loop { match }`
                         // attaches the attrs to the synthesized loop in
@@ -2117,10 +2097,7 @@ impl Parser {
                     continue;
                 }
                 TokenKind::While
-                    if matches!(
-                        self.tokens.get(self.pos + 1).map(|t| &t.kind),
-                        Some(TokenKind::Let)
-                    ) || self.var_leads_pattern_at(1) =>
+                    if self.at_pattern_let_head() =>
                 {
                     stmts.push(self.parse_while_let_stmt()?);
                     continue;
@@ -2165,10 +2142,7 @@ impl Parser {
                 // (`if var {` / `if var == x {` stay on the plain-if
                 // expression path).
                 TokenKind::If
-                    if matches!(
-                        self.tokens.get(self.pos + 1).map(|t| &t.kind),
-                        Some(TokenKind::Let)
-                    ) || self.var_leads_pattern_at(1) =>
+                    if self.at_pattern_let_head() =>
                 {
                     stmts.push(self.parse_if_let_stmt()?);
                     continue;
@@ -2349,6 +2323,38 @@ impl Parser {
     }
 
     /// True when the current position starts a struct-destructuring binding:
+    /// issue-17(e): is the cursor on the contextual keyword `kw` acting as a
+    /// fn-pointer PARAMETER marker (`fn(take R)`, `fn(ref R)`) rather than as a
+    /// type named `ref`/`take`? It is a marker when a type follows it.
+    ///
+    /// The follow-set used to be spelled per site as `Ident | Star | Fn`, which
+    /// left out the tuple and array type starts: `fn(ref (i32, i32))` and
+    /// `fn(ref [i32; 2])` parsed `ref` as the type NAME and failed with a
+    /// confusing error. Every token that can begin a type counts here.
+    fn fn_ptr_param_marker_at(&self, kw: &str) -> bool {
+        matches!(self.peek_kind(), TokenKind::Ident(s) if s == kw)
+            && matches!(
+                self.peek_kind_n(1),
+                TokenKind::Ident(_)
+                    | TokenKind::Star
+                    | TokenKind::Fn
+                    | TokenKind::LParen
+                    | TokenKind::LBracket
+            )
+    }
+
+    /// issue-17(d): does the keyword at the cursor introduce a PATTERN-let
+    /// statement — `while let` / `if let`, or their `var` spellings? Both
+    /// spellings have to be checked because `var` is contextual: it counts only
+    /// when it leads a pattern (`if var {` stays on the plain-if path).
+    ///
+    /// The same two-clause guard was copy-pasted at three dispatch sites, each
+    /// reaching into `self.tokens[self.pos + 1]` by raw index rather than
+    /// through the peek helpers.
+    fn at_pattern_let_head(&self) -> bool {
+        matches!(self.peek_kind_n(1), TokenKind::Let) || self.var_leads_pattern_at(1)
+    }
+
     /// `TYPE {` — a (simple-name) type path immediately followed by `{`. Lets
     /// `let`/`var` dispatch to [`Self::parse_let_destructure`] vs an ordinary
     /// `let NAME ...` binding (where the name is followed by `:`/`=`/`;`).
@@ -3142,13 +3148,8 @@ impl Parser {
         {
             self.bump(); // `::`
             self.bump(); // `[`
-            while !self.at(&TokenKind::RBracket) {
-                type_args.push(self.parse_type()?);
-                if !self.eat(&TokenKind::Comma) {
-                    break;
-                }
-            }
-            self.expect(&TokenKind::RBracket, "`]` after method `::[...]` turbofish")?;
+            let (type_args_parsed, _) = self.parse_bracketed_type_args("`]` after method `::[...]` turbofish")?;
+            type_args.extend(type_args_parsed);
         }
         Ok(type_args)
     }
@@ -3196,13 +3197,9 @@ impl Parser {
                 self.bump(); // `::`
                 self.bump(); // `[`
                 let mut type_args = Vec::new();
-                while !self.at(&TokenKind::RBracket) {
-                    type_args.push(self.parse_type()?);
-                    if !self.eat(&TokenKind::Comma) {
-                        break;
-                    }
-                }
-                let rbracket = self.expect(&TokenKind::RBracket, "`]`")?;
+                let (type_args_parsed, rbracket) = self.parse_bracketed_type_args("`]`")?;
+                let rbracket = rbracket;
+                type_args.extend(type_args_parsed);
                 // A `(args)` after the turbofish makes it a CALL. Its absence
                 // makes it a VALUE: a fn-pointer to the instantiation
                 // (value-turbofish, `f::[T]`), lowered by monomorphize to the
@@ -3222,7 +3219,7 @@ impl Parser {
                         span,
                     };
                 } else {
-                    let span = e.span.merge(rbracket.span);
+                    let span = e.span.merge(rbracket);
                     e = Expr {
                         kind: ExprKind::FnRef {
                             callee: Box::new(e),
@@ -3740,13 +3737,8 @@ impl Parser {
                 {
                     self.bump(); // `::`
                     self.bump(); // `[`
-                    while !self.at(&TokenKind::RBracket) {
-                        type_args.push(self.parse_type()?);
-                        if !self.eat(&TokenKind::Comma) {
-                            break;
-                        }
-                    }
-                    self.expect(&TokenKind::RBracket, "`]` after `#name::[...]`")?;
+                    let (type_args_parsed, _) = self.parse_bracketed_type_args("`]` after `#name::[...]`")?;
+                    type_args.extend(type_args_parsed);
                 }
                 // Required `(args)`.
                 self.expect(&TokenKind::LParen, "`(` after `#name`")?;
@@ -3842,24 +3834,21 @@ impl Parser {
                             if matches!(&self.tokens[after_bracket].kind, TokenKind::ColonColon) {
                                 self.bump(); // `[`
                                 let mut type_args = Vec::new();
-                                while !self.at(&TokenKind::RBracket) {
-                                    type_args.push(self.parse_type()?);
-                                    if !self.eat(&TokenKind::Comma) {
-                                        break;
-                                    }
-                                }
-                                self.expect(&TokenKind::RBracket, "`]`")?;
+                                let (type_args_parsed, _) = self.parse_bracketed_type_args("`]`")?;
+                                type_args.extend(type_args_parsed);
                                 self.expect(&TokenKind::ColonColon, "`::`")?;
                                 let variant = self.expect_ident()?;
                                 let method_type_args = self.parse_opt_method_turbofish()?;
                                 let mut args = Vec::new();
+                                // issue-17(c): the SAME argument parser every
+                                // other call form uses. This loop used to be
+                                // re-implemented here, positional-only, so a
+                                // named argument in `Maybe[i32]::of(v: 1)` was
+                                // silently dropped rather than desugared or
+                                // rejected.
                                 let end_span = if self.eat(&TokenKind::LParen) {
-                                    while !self.at(&TokenKind::RParen) {
-                                        args.push(self.in_delimited(|p| p.parse_expr())?);
-                                        if !self.eat(&TokenKind::Comma) {
-                                            break;
-                                        }
-                                    }
+                                    let (parsed, _labels) = self.parse_call_args()?;
+                                    args.extend(parsed);
                                     self.expect(&TokenKind::RParen, "`)`")?.span
                                 } else {
                                     variant.span
@@ -3888,13 +3877,8 @@ impl Parser {
                             {
                                 self.bump(); // `[`
                                 let mut type_args = Vec::new();
-                                while !self.at(&TokenKind::RBracket) {
-                                    type_args.push(self.parse_type()?);
-                                    if !self.eat(&TokenKind::Comma) {
-                                        break;
-                                    }
-                                }
-                                let end = self.expect(&TokenKind::RBracket, "`]`")?.span;
+                                let (type_args_parsed, end) = self.parse_bracketed_type_args("`]`")?;
+                                type_args.extend(type_args_parsed);
                                 let qualified: String = segments
                                     .iter()
                                     .map(|s| s.name.as_str())
@@ -3927,24 +3911,17 @@ impl Parser {
                             // `Ident[args]::Variant` — generic enum call.
                             self.bump(); // `[`
                             let mut type_args = Vec::new();
-                            while !self.at(&TokenKind::RBracket) {
-                                type_args.push(self.parse_type()?);
-                                if !self.eat(&TokenKind::Comma) {
-                                    break;
-                                }
-                            }
-                            self.expect(&TokenKind::RBracket, "`]`")?;
+                            let (type_args_parsed, _) = self.parse_bracketed_type_args("`]`")?;
+                            type_args.extend(type_args_parsed);
                             self.expect(&TokenKind::ColonColon, "`::`")?;
                             let variant = self.expect_ident()?;
                             let method_type_args = self.parse_opt_method_turbofish()?;
                             let mut args = Vec::new();
+                            // issue-17(c): the shared argument parser — see the
+                            // qualified spelling above.
                             let end_span = if self.eat(&TokenKind::LParen) {
-                                while !self.at(&TokenKind::RParen) {
-                                    args.push(self.in_delimited(|p| p.parse_expr())?);
-                                    if !self.eat(&TokenKind::Comma) {
-                                        break;
-                                    }
-                                }
+                                let (parsed, _labels) = self.parse_call_args()?;
+                                args.extend(parsed);
                                 self.expect(&TokenKind::RParen, "`)`")?.span
                             } else {
                                 variant.span
@@ -3976,13 +3953,8 @@ impl Parser {
                             // bake the generic name and call struct-lit body.
                             self.bump(); // `[`
                             let mut args = Vec::new();
-                            while !self.at(&TokenKind::RBracket) {
-                                args.push(self.parse_type()?);
-                                if !self.eat(&TokenKind::Comma) {
-                                    break;
-                                }
-                            }
-                            let end = self.expect(&TokenKind::RBracket, "`]`")?.span;
+                            let (args_parsed, end) = self.parse_bracketed_type_args("`]`")?;
+                            args.extend(args_parsed);
                             // `Pair[i32, bool] { .. }` parses to
                             // `ExprKind::GenericStructLit`, which carries the
                             // template name and the type-args unresolved: the
@@ -4303,13 +4275,8 @@ impl Parser {
                 let mut type_args: Vec<Type> = if self.at(&TokenKind::LBracket) {
                     self.bump(); // `[`
                     let mut args = Vec::new();
-                    while !self.at(&TokenKind::RBracket) {
-                        args.push(self.parse_type()?);
-                        if !self.eat(&TokenKind::Comma) {
-                            break;
-                        }
-                    }
-                    self.expect(&TokenKind::RBracket, "`]`")?;
+                    let (args_parsed, _) = self.parse_bracketed_type_args("`]`")?;
+                    args.extend(args_parsed);
                     args
                 } else {
                     Vec::new()
@@ -4324,13 +4291,8 @@ impl Parser {
                     if type_args.is_empty() && self.at(&TokenKind::LBracket) {
                         self.bump(); // `[`
                         let mut args = Vec::new();
-                        while !self.at(&TokenKind::RBracket) {
-                            args.push(self.parse_type()?);
-                            if !self.eat(&TokenKind::Comma) {
-                                break;
-                            }
-                        }
-                        self.expect(&TokenKind::RBracket, "`]`")?;
+                        let (args_parsed, _) = self.parse_bracketed_type_args("`]`")?;
+                        args.extend(args_parsed);
                         type_args = args;
                     }
                     // Three-segment shape: `prefix::Enum::Variant(...)` or
@@ -4595,6 +4557,33 @@ mod tests {
     // names are deliberately module-scoped (so two packages can both declare
     // `extern fn malloc` without colliding), which makes them unreachable
     // across a package boundary — E0403. Hence a distinct form.
+
+    /// issue-17(e): the fn-pointer parameter markers `ref` and `take` are
+    /// contextual keywords, so they count only when a TYPE follows. The
+    /// follow-set was spelled per site as `Ident | Star | Fn`, which left out
+    /// the tuple and array type starts — `fn(ref (i32, i32))` parsed `ref` as
+    /// the type name and failed with a confusing error.
+    #[test]
+    fn fn_pointer_param_markers_accept_every_type_start() {
+        for src in [
+            "fn f(cb: fn(ref (i32, i32))) -> i32 { return 0; }",
+            "fn f(cb: fn(ref [i32; 2])) -> i32 { return 0; }",
+            "fn f(cb: fn(take (i32, i32))) -> i32 { return 0; }",
+            "fn f(cb: fn(take [i32; 2])) -> i32 { return 0; }",
+            // The pre-existing spellings keep working.
+            "fn f(cb: fn(ref i32)) -> i32 { return 0; }",
+            "fn f(cb: fn(take *u8)) -> i32 { return 0; }",
+            "fn f(cb: fn(ref fn(i32))) -> i32 { return 0; }",
+        ] {
+            assert!(
+                parse_src(src).is_ok(),
+                "should parse as a fn-pointer param marker: {src}"
+            );
+        }
+        // A type genuinely NAMED `ref` (no type after it) still parses as a
+        // type — the marker rule is "a type follows", not "the word appears".
+        assert!(parse_src("fn f(cb: fn(ref)) -> i32 { return 0; }").is_ok());
+    }
 
     #[test]
     fn body_less_free_fn_parses_as_a_declaration() {
