@@ -21231,6 +21231,133 @@ fn gen_fn_protocol_survives_nested_option_instantiation() {
     assert_eq!(run.code(), Some(0), "filter must keep 2+3 = 5");
 }
 
+/// reports/bug-18: the resolver read `Cplus.toml` with a hand-rolled scanner
+/// whose value was `v.trim().trim_matches('"').trim()` — which keeps a trailing
+/// comment. The package name is the mangled-symbol prefix, so
+/// `name = "tomly" # the app` produced `_tomly____the_app.src.util.helper`.
+/// It now reads through `manifest::load`, the same parser everyone else uses.
+#[test]
+fn a_comment_after_the_package_name_stays_out_of_symbols() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"tomly\" # the app\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"./util\" as util;\nfn main() -> i32 { return util::helper() - 2; }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/util.cplus"),
+        "fn helper() -> i32 { return 2; }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc build");
+    assert!(
+        out.status.success(),
+        "build failed: {}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    let nm = Command::new(nm_prog())
+        .arg(dir.join("target/debug/tomly"))
+        .output()
+        .expect("invoke nm");
+    let syms = String::from_utf8_lossy(&nm.stdout);
+    let helper = syms
+        .lines()
+        .find(|l| l.contains("util.helper"))
+        .unwrap_or_else(|| panic!("no helper symbol in:\n{syms}"));
+    assert!(
+        helper.contains("tomly.src.util.helper"),
+        "the comment leaked into the package identity: {helper}"
+    );
+    let run = Command::new(dir.join("target/debug/tomly"))
+        .status()
+        .expect("run tomly");
+    assert_eq!(run.code(), Some(0), "unexpected exit: {run}");
+}
+
+/// reports/bug-19 and bug-22 — method visibility across a module boundary.
+///
+/// bug-19: privacy was enforced for the `Type::method(recv)` path spelling
+/// only, because that path goes through the resolver, which can see it
+/// syntactically. `recv.method()` resolves through sema, which had no
+/// method-privacy check at all — so the same call was rejected written one way
+/// and accepted written the other.
+///
+/// bug-22: a method that does not exist was reported as "is private (drop the
+/// `_` to export)" — advice about a `_` that isn't there. The pub-only method
+/// table could not tell absent from private.
+#[test]
+fn method_privacy_and_unknown_methods_across_modules() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(dir.join("Cplus.toml"), "[package]\nname = \"privtest\"\n").unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/lib_mod.cplus"),
+        "struct Gadget { v: i32 }\n\
+         impl Gadget {\n\
+           fn make() -> Gadget { return Gadget { v: 3 }; }\n\
+           fn value(this) -> i32 { return this._hidden(); }\n\
+           fn _hidden(this) -> i32 { return this.v; }\n\
+         }\n",
+    )
+    .unwrap();
+    let check = |main: &str| -> String {
+        std::fs::write(dir.join("src/main.cplus"), main).unwrap();
+        let out = Command::new(cpc)
+            .arg("check")
+            .current_dir(&dir)
+            .output()
+            .expect("invoke cpc check");
+        String::from_utf8_lossy(&out.stderr).into_owned()
+    };
+
+    // Both spellings of the private method are refused, identically.
+    for call in ["lib::Gadget::_hidden(g)", "g._hidden()"] {
+        let err = check(&format!(
+            "import \"./lib_mod\" as lib;\n\
+             fn main() -> i32 {{ let g = lib::Gadget::make(); return {call}; }}\n"
+        ));
+        assert!(
+            err.contains("E0403") && err.contains("_hidden"),
+            "[{call}] expected the privacy error, got: {err}"
+        );
+    }
+
+    // A method that does not exist is unknown, not private.
+    let err = check(
+        "import \"./lib_mod\" as lib;\n\
+         fn main() -> i32 { let g = lib::Gadget::make(); return lib::Gadget::nonexistent(g); }\n",
+    );
+    assert!(
+        err.contains("no method named `nonexistent`"),
+        "expected an unknown-method error, got: {err}"
+    );
+    assert!(
+        !err.contains("is private"),
+        "a missing method must not be reported as a privacy violation: {err}"
+    );
+
+    // The public surface still works, including the module's own use of its
+    // private helper.
+    let err = check(
+        "import \"./lib_mod\" as lib;\n\
+         fn main() -> i32 { let g = lib::Gadget::make(); return g.value() - 3; }\n",
+    );
+    assert!(err.is_empty(), "the public path must compile clean: {err}");
+}
+
 /// reports/bug-13 and bug-14 end-to-end: programs that were VALID and did not
 /// compile. A statement-position block used to swallow the next line, and a
 /// struct literal inside a delimiter inside an `if`/`for` header failed to

@@ -302,7 +302,7 @@ impl CodeGraph {
                         name,
                         location: resolve(&fid, f.name.span),
                         signature: Some(fn_signature(f)),
-                        is_pub: !f.name.name.starts_with('_'),
+                        is_pub: name_is_public(&f.name.name),
                     });
                     g.edges.push(Edge {
                         from: fid.clone(),
@@ -343,7 +343,7 @@ impl CodeGraph {
                         name,
                         location: resolve(&fid, s.name.span),
                         signature: None,
-                        is_pub: !s.name.name.starts_with('_'),
+                        is_pub: name_is_public(&s.name.name),
                     });
                     g.edges.push(Edge {
                         from: fid.clone(),
@@ -358,7 +358,7 @@ impl CodeGraph {
                             name: field.name.name.clone(),
                             location: resolve(&fid, field.name.span),
                             signature: Some(type_to_string(&field.ty)),
-                            is_pub: !field.name.name.starts_with('_'),
+                            is_pub: name_is_public(&field.name.name),
                         });
                         g.edges.push(Edge {
                             from: id.clone(),
@@ -386,7 +386,7 @@ impl CodeGraph {
                         name,
                         location: resolve(&fid, e.name.span),
                         signature: None,
-                        is_pub: !e.name.name.starts_with('_'),
+                        is_pub: name_is_public(&e.name.name),
                     });
                     g.edges.push(Edge {
                         from: fid.clone(),
@@ -407,7 +407,7 @@ impl CodeGraph {
                             name: v.name.name.clone(),
                             location: resolve(&fid, v.name.span),
                             signature: sig,
-                            is_pub: !e.name.name.starts_with('_'),
+                            is_pub: name_is_public(&e.name.name),
                         });
                         g.edges.push(Edge {
                             from: id.clone(),
@@ -438,7 +438,7 @@ impl CodeGraph {
                         name,
                         location: resolve(&fid, it.name.span),
                         signature: None,
-                        is_pub: !it.name.name.starts_with('_'),
+                        is_pub: name_is_public(&it.name.name),
                     });
                     g.edges.push(Edge {
                         from: fid.clone(),
@@ -455,7 +455,7 @@ impl CodeGraph {
                         name,
                         location: resolve(&fid, a.name.span),
                         signature: Some(type_to_string(&a.target)),
-                        is_pub: !a.name.name.starts_with('_'),
+                        is_pub: name_is_public(&a.name.name),
                     });
                     push_type_refs(&a.target, &fid, &id, &resolve, &mut sig_type_refs);
                     g.edges.push(Edge {
@@ -473,7 +473,7 @@ impl CodeGraph {
                         name,
                         location: resolve(&fid, c.name.span),
                         signature: Some(type_to_string(&c.ty)),
-                        is_pub: !c.name.name.starts_with('_'),
+                        is_pub: name_is_public(&c.name.name),
                     });
                     push_type_refs(&c.ty, &fid, &id, &resolve, &mut sig_type_refs);
                     g.edges.push(Edge {
@@ -491,7 +491,7 @@ impl CodeGraph {
                         name,
                         location: resolve(&fid, s.name.span),
                         signature: Some(type_to_string(&s.ty)),
-                        is_pub: !s.name.name.starts_with('_'),
+                        is_pub: name_is_public(&s.name.name),
                     });
                     push_type_refs(&s.ty, &fid, &id, &resolve, &mut sig_type_refs);
                     g.edges.push(Edge {
@@ -1160,7 +1160,7 @@ fn add_impl_methods<'a>(
             name: mname.to_string(),
             location: resolve(fid, m.name.span),
             signature: Some(method_signature(m)),
-            is_pub: !m.name.name.starts_with('_'),
+            is_pub: name_is_public(&m.name.name),
         });
         g.edges.push(Edge {
             from: type_id.clone(),
@@ -1850,6 +1850,18 @@ fn short_name(name: &str) -> &str {
     name.rsplit('.').next().unwrap_or(name)
 }
 
+/// C+ privacy is name-based: a leading `_` on the item's OWN name marks it
+/// module-private. The test must therefore run on the leaf, not on the
+/// resolver-qualified path — `gt.src.util._secret` does not start with `_`, so
+/// asking the qualified name reported every private top-level item in every
+/// multi-file project as public (reports/bug-17). This is the third copy of
+/// the visibility predicate in the tree (resolver `exported_name`, sema
+/// `is_private_name`) and the one that drifted; at least it is now a single
+/// copy within this file.
+fn name_is_public(qualified: &str) -> bool {
+    !short_name(qualified).starts_with('_')
+}
+
 // ---- v0.0.15 graph value-depth: scope-aware value-flow walk ----
 
 /// One accumulating binding definition: its name, definition span, kind
@@ -2292,6 +2304,49 @@ mod tests {
         assert!(!node(&g, "src::Point::_y").is_pub);
         let members = g.members("Point");
         assert_eq!(members.len(), 2, "Point has two fields");
+    }
+
+    /// reports/bug-17. In a multi-file project the resolver QUALIFIES top-level
+    /// names before graph.rs runs, so the item is `gt.src.util._secret` — which
+    /// does not start with `_`. Testing the qualified name reported every
+    /// private top-level item in every multi-file project as public. Privacy is
+    /// a property of the item's own name, so the test runs on the leaf.
+    #[test]
+    fn qualified_names_do_not_hide_the_privacy_marker() {
+        let src = "fn gt.src.util._secret() -> i32 { return 1; }\n\
+                   fn gt.src.util.open() -> i32 { return 2; }\n";
+        // The parser cannot read a dotted fn name, so build the qualified
+        // shape the way the resolver hands it over: parse bare, then rename.
+        let mut program = parse_ok(
+            "fn _secret() -> i32 { return 1; }\nfn open() -> i32 { return 2; }\nstruct _Hidden { x: i32 }\n",
+        );
+        for item in &mut program.items {
+            match &mut item.kind {
+                ItemKind::Function(f) => f.name.name = format!("gt.src.util.{}", f.name.name),
+                ItemKind::Struct(s) => s.name.name = format!("gt.src.util.{}", s.name.name),
+                _ => {}
+            }
+        }
+        let mut files = BTreeMap::new();
+        files.insert(
+            "src".to_string(),
+            (PathBuf::from("src/util.cplus"), src.to_string()),
+        );
+        let g = CodeGraph::build(&LoadedProject {
+            program,
+            entry_file_id: "src".to_string(),
+            files,
+            imports: BTreeMap::new(),
+        });
+        assert!(
+            !node(&g, "src::_secret").is_pub,
+            "a `_`-prefixed leaf is private however the name is qualified"
+        );
+        assert!(
+            !node(&g, "src::_Hidden").is_pub,
+            "the same rule applies to every item kind, not just functions"
+        );
+        assert!(node(&g, "src::open").is_pub);
     }
 
     #[test]

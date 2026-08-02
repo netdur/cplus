@@ -84,6 +84,17 @@ pub enum ResolveError {
         owner: String, // file id of the target module
         name: String,
     },
+    /// A `Type::method` path names a method the type does not have. The
+    /// METHOD twin of `UnknownItem` — v0.0.12 split unknown from private for
+    /// top-level items so a typo stopped being reported as a privacy
+    /// violation, and the method path was never given the same split
+    /// (reports/bug-22).
+    UnknownMethod {
+        file: PathBuf,
+        span: Span,
+        owner: String, // the type name
+        name: String,
+    },
     /// Generic I/O error while reading a `.cplus` file the import graph
     /// reaches. Distinct from `ImportNotFound`: the file exists but
     /// couldn't be read (permission denied, etc.).
@@ -259,6 +270,15 @@ impl std::fmt::Display for ResolveError {
                 write!(
                     f,
                     "[E0405] {}: no item named `{name}` in module `{owner}`",
+                    file.display(),
+                )
+            }
+            ResolveError::UnknownMethod {
+                file, owner, name, ..
+            } => {
+                write!(
+                    f,
+                    "[E0405] {}: no method named `{name}` on `{owner}`",
                     file.display(),
                 )
             }
@@ -508,6 +528,7 @@ impl LoadFailure {
             ResolveError::UnknownPrefix { file, .. } => Some(file),
             ResolveError::PrivateAccess { file, .. } => Some(file),
             ResolveError::UnknownItem { file, .. } => Some(file),
+            ResolveError::UnknownMethod { file, .. } => Some(file),
             ResolveError::Cycle { chain } => chain.first().map(|p| p.as_path()),
             ResolveError::Parse { path, .. } => Some(path),
             ResolveError::Lex { path, .. } => Some(path),
@@ -684,6 +705,15 @@ impl LoadFailure {
                 name,
             } => {
                 let msg = format!("no item named `{name}` in module `{owner}`");
+                ("E0405", msg, span_in(file, *span))
+            }
+            ResolveError::UnknownMethod {
+                file,
+                span,
+                owner,
+                name,
+            } => {
+                let msg = format!("no method named `{name}` on `{owner}`");
                 ("E0405", msg, span_in(file, *span))
             }
             ResolveError::Io { path, source } => (
@@ -1006,31 +1036,25 @@ impl Loader {
     }
 
     /// Read `[package].name` from the project's manifest, once.
+    /// The package name comes from the real manifest parser.
+    ///
+    /// It used to come from a hand-rolled line scan whose value was
+    /// `v.trim().trim_matches('"').trim()` — which keeps a trailing comment. A
+    /// manifest reading `name = "tomly" # the app` gave the resolver the
+    /// package identity `tomly # the app`, sanitized into the linker symbol
+    /// `_tomly____the_app.src.util.helper` (reports/bug-18). The package name
+    /// is the mangled-symbol prefix, the self-import rule's input, and the
+    /// prebuilt-archive linkage key, so the resolver's idea of the package
+    /// disagreed with every other subsystem's.
+    ///
+    /// A malformed or absent manifest leaves the name unset, exactly as the
+    /// scanner's early returns did — the resolver is not the place that
+    /// reports manifest errors.
     fn load_package_name(&mut self) {
-        let manifest = self.manifest_root.join("Cplus.toml");
-        let Ok(text) = std::fs::read_to_string(&manifest) else {
-            return;
-        };
-        let mut in_package = false;
-        for line in text.lines() {
-            let t = line.trim();
-            if t.starts_with('#') {
-                continue;
-            }
-            if t.starts_with('[') {
-                in_package = t == "[package]";
-                continue;
-            }
-            if in_package {
-                if let Some((k, v)) = t.split_once('=') {
-                    if k.trim() == "name" {
-                        let v = v.trim().trim_matches('"').trim();
-                        if !v.is_empty() {
-                            self.package_name = Some(v.to_string());
-                        }
-                        return;
-                    }
-                }
+        let path = self.manifest_root.join("Cplus.toml");
+        if let Ok(m) = crate::manifest::load(&path) {
+            if !m.package.name.is_empty() {
+                self.package_name = Some(m.package.name);
             }
         }
     }
@@ -1499,43 +1523,19 @@ fn platform_override(p: PathBuf) -> PathBuf {
 /// imported module. A package with no manifest, or one that fails to parse, is
 /// treated as source-only — the conservative answer, since it keeps the build
 /// compiling from `src/` rather than silently switching to headers.
+/// The decision comes from the manifest's own `BuildSpec`.
+///
+/// This was a second hand-rolled scan, whose final line was a verbatim copy of
+/// `BuildSpec::resolves_through_headers` — one decision stated in two places,
+/// reading the file two different ways. The stated excuse ("parsing the whole
+/// manifest here would pull the manifest module into the resolver's dependency
+/// surface") does not hold: it is the same crate (reports/bug-18).
 fn package_resolves_through_headers(pkg_root: &Path) -> bool {
-    let manifest = pkg_root.join("Cplus.toml");
-    let Ok(text) = std::fs::read_to_string(&manifest) else {
+    let Ok(m) = crate::manifest::load(&pkg_root.join("Cplus.toml")) else {
         return false;
     };
-    // A cheap line scan over the three keys that matter. Parsing the whole
-    // manifest here would pull the manifest module into the resolver's
-    // dependency surface for one boolean.
-    let (mut ships_bundled, mut prebuild, mut dev) = (false, false, false);
-    let mut section = "";
-    for line in text.lines() {
-        let t = line.trim();
-        if t.starts_with('#') {
-            continue;
-        }
-        if t.starts_with('[') {
-            section = if t == "[link]" {
-                "link"
-            } else if t == "[build]" {
-                "build"
-            } else {
-                ""
-            };
-            continue;
-        }
-        let Some((key, rhs)) = t.split_once('=') else {
-            continue;
-        };
-        let (key, rhs) = (key.trim(), rhs.trim());
-        match (section, key) {
-            ("link", "bundled") => ships_bundled = rhs.starts_with('[') && rhs != "[]",
-            ("build", "prebuild") => prebuild = rhs == "true",
-            ("build", "dev") => dev = rhs == "true",
-            _ => {}
-        }
-    }
-    !dev && (prebuild || ships_bundled)
+    let ships_bundled = m.link.as_ref().is_some_and(|l| !l.bundled.is_empty());
+    m.build.resolves_through_headers(ships_bundled)
 }
 
 /// `derive_file_id`, but qualified with the project's own package name when the
@@ -1831,11 +1831,17 @@ fn merge(
     let mut local_items: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut pub_items: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut pub_methods: BTreeMap<String, BTreeMap<String, BTreeSet<String>>> = BTreeMap::new();
+    // Existence, separately from exportedness — the same `local_items` /
+    // `pub_items` pairing the item side already has. Without it a name that is
+    // simply ABSENT is indistinguishable from one that is present and private,
+    // so a typo was reported as a privacy violation (reports/bug-22).
+    let mut all_methods: BTreeMap<String, BTreeMap<String, BTreeSet<String>>> = BTreeMap::new();
     let mut item_kind: BTreeMap<String, BTreeMap<String, ItemKindTag>> = BTreeMap::new();
     for (fid, unit) in &files {
         let mut all: BTreeSet<String> = BTreeSet::new();
         let mut pubs: BTreeSet<String> = BTreeSet::new();
         let mut methods: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        let mut all_meths: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         let mut kinds: BTreeMap<String, ItemKindTag> = BTreeMap::new();
         for it in &unit.program.items {
             match &it.kind {
@@ -1877,7 +1883,9 @@ fn merge(
                 }
                 ItemKind::Impl(b) => {
                     let entry = methods.entry(b.target.name.clone()).or_default();
+                    let all_entry = all_meths.entry(b.target.name.clone()).or_default();
                     for m in &b.methods {
+                        all_entry.insert(m.name.name.clone());
                         if exported_name(&m.name.name) {
                             entry.insert(m.name.name.clone());
                         }
@@ -1930,6 +1938,7 @@ fn merge(
         local_items.insert(fid.clone(), all);
         pub_items.insert(fid.clone(), pubs);
         pub_methods.insert(fid.clone(), methods);
+        all_methods.insert(fid.clone(), all_meths);
         item_kind.insert(fid.clone(), kinds);
     }
 
@@ -2015,6 +2024,7 @@ fn merge(
             local_items: local_items.get(fid).cloned().unwrap_or_default(),
             pub_items: pub_items.clone(),
             pub_methods: pub_methods.clone(),
+            all_methods: all_methods.clone(),
             item_kind: item_kind.clone(),
             alias_targets: alias_targets.clone(),
         };
@@ -2076,6 +2086,10 @@ struct RewriteCtx {
     /// ignores these.
     pub_items: BTreeMap<String, BTreeSet<String>>,
     pub_methods: BTreeMap<String, BTreeMap<String, BTreeSet<String>>>,
+    /// Every method name per type, exported or not — the method twin of
+    /// `local_items`. Paired with `pub_methods` so a cross-file method access
+    /// can tell "no such method" from "private method" (reports/bug-22).
+    all_methods: BTreeMap<String, BTreeMap<String, BTreeSet<String>>>,
     /// `item_kind[file_id][name]` tags each top-level item as Function /
     /// Struct / Enum. Used to pick the right error phrasing for E0403 and
     /// to decide if a 3-segment path is `Enum::Variant` (variants inherit
@@ -2217,12 +2231,30 @@ impl RewriteCtx {
         if target_id == self.self_file_id {
             return Ok(());
         }
+        // Three-way, mirroring the item side's UnknownItem/PrivateAccess split:
+        // absent, present-but-private, or exported. `unwrap_or(false)` on the
+        // pub-only table conflated the first two, so `Gadget::nonexistent(g)`
+        // was reported as "is private (drop the `_` to export)" — advice about
+        // a `_` that isn't there, on a method that doesn't exist
+        // (reports/bug-22).
+        let exists = self
+            .all_methods
+            .get(target_id)
+            .and_then(|m| m.get(type_name))
+            .is_some_and(|s| s.contains(method));
+        if !exists {
+            return Err(ResolveError::UnknownMethod {
+                file: self.self_file_path.clone(),
+                span,
+                owner: type_name.to_string(),
+                name: method.to_string(),
+            });
+        }
         let is_pub = self
             .pub_methods
             .get(target_id)
             .and_then(|m| m.get(type_name))
-            .map(|s| s.contains(method))
-            .unwrap_or(false);
+            .is_some_and(|s| s.contains(method));
         if !is_pub {
             return Err(ResolveError::PrivateAccess {
                 file: self.self_file_path.clone(),

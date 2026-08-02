@@ -1,6 +1,7 @@
 # Bug 22 — Nonexistent methods reported as "private" with bogus fix-it advice
 
-- Status: reproduced 2026-08-01 with `target/release/cpc`
+- Status: FIXED 2026-08-02, commit 8054dc6 — `all_methods` table + a three-way check
+- Status (original): reproduced 2026-08-01 with `target/release/cpc`
 - Severity: wrong diagnostic
 - Area: resolver (`cplus-core/src/resolver.rs`)
 - Master report: `core-drift-audit-2026-08-01.md` (B22)
@@ -61,7 +62,13 @@ and method index is its part A; this fix falls out of it).
 
 ## Verification
 
-1. The repro reports unknown-method; a genuinely private method still reports the privacy
-   message (bug-19's fixture covers it).
-2. Negative e2e tests for both messages.
-3. `cargo test -p cplus-core && cargo test -p cpc --test e2e`.
+1. DONE: `no method named `nonexistent` on `Gadget`` (E0405), and a genuinely private
+   method still reports E0403.
+2. DONE: `method_privacy_and_unknown_methods_across_modules` in cpc/tests/e2e.rs asserts
+   both messages AND that the unknown case does NOT mention privacy.
+3. DONE: suites green.
+
+Step 3 (a nearest-name suggestion via `edit_distance`) was NOT taken — it is a separate
+diagnostic-quality improvement, not part of telling absent from private, and the
+item-side `UnknownItem` does not offer one either. Adding it to one and not the other
+would be a new asymmetry.

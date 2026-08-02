@@ -1,6 +1,7 @@
 # Bug 17 — Knowledge graph reports every private item as public in multi-file projects
 
-- Status: reproduced 2026-08-01 with `target/release/cpc graph`
+- Status: FIXED 2026-08-02, commit 8054dc6 — one `name_is_public` helper, applied to the leaf
+- Status (original): reproduced 2026-08-01 with `target/release/cpc graph`
 - Severity: wrong output (the agent-facing graph lies about visibility)
 - Area: graph (`cplus-core/src/graph.rs`)
 - Master report: `core-drift-audit-2026-08-01.md` (B17)
@@ -74,9 +75,14 @@ Structural (companion `issue-09-resolver-program-index.md`):
 
 ## Verification
 
-1. `cpc graph` on the repro reports `_secret` private and `open`/`main` public.
-2. Single-file project: names are unqualified there — confirm the leaf test is correct in
-   both modes.
-3. Add a graph unit test with a qualified `_`-leaf name (copy a neighboring graph test's
-   fixture pattern).
-4. `cargo test -p cplus-core`.
+1. DONE: `cpc graph` on the repro reports `_secret` private and `open` public.
+2. DONE: the leaf of an unqualified name is the name itself, so single-file mode is
+   unchanged — the existing `struct_fields_become_nodes_with_has_field_edges` test covers
+   it and still passes.
+3. DONE: `qualified_names_do_not_hide_the_privacy_marker` in graph.rs, over both a
+   function and a struct.
+4. DONE: suites green.
+
+Took the tactical fix (step 1). Step 2 — the resolver stamping exportedness into the AST
+so nobody re-derives it — belongs to issue-09 and would retire all three predicate copies;
+this one only removes the ten copies WITHIN graph.rs.

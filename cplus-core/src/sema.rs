@@ -902,6 +902,7 @@ fn check_with_files_inner(
         builtin_str_methods: HashMap::new(),
         str_impl_origin: None,
         ext_origins: HashMap::new(),
+        method_origins: HashMap::new(),
         ext_conflicts: std::collections::HashSet::new(),
         ext_visible,
         type_aliases: HashMap::new(),
@@ -1283,6 +1284,15 @@ struct SemaCx<'a> {
     /// Methods declared beside their type are absent — they come with the
     /// type, as they always have.
     ext_origins: HashMap<ExtKey, ExtOrigin>,
+    /// The file that DECLARED each method, extension or not. `ext_origins`
+    /// records only extensions, because the import gate is the only thing it
+    /// answers; name-based privacy needs the declaring file for every method,
+    /// so a `_`-prefixed one can be refused across a module boundary the way a
+    /// `_`-prefixed field already is. Without it, method privacy was enforced
+    /// on the `Type::method(recv)` path spelling only (that one goes through
+    /// the resolver) and `recv.method()` walked straight past it
+    /// (reports/bug-19).
+    method_origins: HashMap<ExtKey, String>,
     /// EXT.2: methods that already reported a duplicate declaration (E0326).
     /// The gate goes quiet for them: a file that imported the *losing* module
     /// would otherwise be told to import the winner, which is not the fix.
@@ -3722,7 +3732,7 @@ impl SemaCx<'_> {
                     } else {
                         None
                     };
-                    self.collect_enum_impl_methods(enum_id, b, ext);
+                    self.collect_enum_impl_methods(enum_id, b, ext, item.origin_file.clone());
                     continue;
                 }
                 // STRM (v0.0.27): the builtin string view gets its method set
@@ -3757,6 +3767,7 @@ impl SemaCx<'_> {
             } else {
                 None
             };
+            let impl_origin = item.origin_file.clone();
             // Slice 7GEN.4: `This` inside an impl body resolves to the
             // target type's concrete `Ty`. Push for the duration of this
             // impl block so method-signature resolution sees it.
@@ -3874,6 +3885,10 @@ impl SemaCx<'_> {
                     self.ext_origins
                         .insert((false, id.0, m.name.name.clone()), o.clone());
                 }
+                if let Some(f) = &impl_origin {
+                    self.method_origins
+                        .insert((false, id.0, m.name.name.clone()), f.clone());
+                }
             }
             self.self_type_stack.pop();
         }
@@ -3920,6 +3935,47 @@ impl SemaCx<'_> {
         } else {
             Some(origin.clone())
         }
+    }
+
+    /// Name-based privacy for methods: a `_`-prefixed method is private to the
+    /// module that DECLARED it, exactly as a `_`-prefixed field is private to
+    /// the module declaring the struct.
+    ///
+    /// This lives at dispatch because only sema resolves a receiver to its
+    /// method's defining impl. The resolver enforces the rule for the
+    /// `Type::method(recv)` path spelling — it can see that path syntactically
+    /// — and the ordinary `recv.method()` spelling walked straight past it, so
+    /// the same call was rejected written one way and accepted written the
+    /// other (reports/bug-19).
+    ///
+    /// Returns true (and reports) when the call is refused.
+    fn deny_private_method(
+        &mut self,
+        is_enum: bool,
+        id: u32,
+        type_name: &str,
+        method: &Ident,
+    ) -> bool {
+        if !is_private_name(&method.name) {
+            return false;
+        }
+        let origin = self
+            .method_origins
+            .get(&(is_enum, id, method.name.clone()))
+            .cloned();
+        if !self.is_cross_file_access(&origin) {
+            return false;
+        }
+        self.err(
+            "E0403",
+            format!(
+                "method `{}::{}` is private (its leading `_` marks it module-private; drop the `_` to export)",
+                short_type_name(type_name),
+                method.name
+            ),
+            method.span,
+        );
+        true
     }
 
     /// EXT.2: report a method that exists but is not in scope, naming the
@@ -4198,6 +4254,7 @@ impl SemaCx<'_> {
         enum_id: EnumId,
         b: &ImplBlock,
         ext: Option<ExtOrigin>,
+        impl_origin: Option<String>,
     ) {
         self.self_type_stack.push(Ty::Enum(enum_id));
         for m in &b.methods {
@@ -4284,6 +4341,10 @@ impl SemaCx<'_> {
             if let Some(o) = &ext {
                 self.ext_origins
                     .insert((true, enum_id.0, m.name.name.clone()), o.clone());
+            }
+            if let Some(f) = &impl_origin {
+                self.method_origins
+                    .insert((true, enum_id.0, m.name.name.clone()), f.clone());
             }
         }
         self.self_type_stack.pop();
@@ -12329,6 +12390,13 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 }
                 return self.err_ext_out_of_scope(&shown, name, &origin);
             }
+            let shown = self.ty_display_named(&Ty::Enum(eid));
+            if self.deny_private_method(true, eid.0, &shown, name) {
+                for a in args {
+                    let _ = self.check_expr(a, None);
+                }
+                return Ty::Error;
+            }
             return self.check_enum_method_call(
                 eid, &enum_name, name, &sig, type_args, args, call_span, receiver,
             );
@@ -12396,6 +12464,13 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 let _ = self.check_expr(a, None);
             }
             return self.err_ext_out_of_scope(&shown, name, &origin);
+        }
+        let shown = self.ty_display_named(&Ty::Struct(id));
+        if self.deny_private_method(false, id.0, &shown, name) {
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
+            return Ty::Error;
         }
         // v0.0.23: enforce impl-block generic bounds at the call site. A method
         // from `impl Box[T: Copy] { fn get }` requires the receiver's concrete
@@ -14317,6 +14392,12 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             }
             let name = type_name.to_string();
             return self.err_ext_out_of_scope(&name, method_seg, &origin);
+        }
+        if self.deny_private_method(is_enum, owner_id, type_name, method_seg) {
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
+            return Ty::Error;
         }
         if sig.receiver.is_some() {
             self.err(

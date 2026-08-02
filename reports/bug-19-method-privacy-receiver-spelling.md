@@ -1,6 +1,8 @@
 # Bug 19 — Method privacy enforced for the path spelling only; `g._hidden()` compiles
 
-- Status: reproduced 2026-08-01 with `target/release/cpc`
+- Status: FIXED 2026-08-02, commit 8054dc6 — `deny_private_method` at sema dispatch,
+  fed by a new per-method declaring-file table
+- Status (original): reproduced 2026-08-01 with `target/release/cpc`
 - Severity: visibility hole
 - Area: resolver (`cplus-core/src/resolver.rs`) + sema (`cplus-core/src/sema.rs`)
 - Master report: `core-drift-audit-2026-08-01.md` (B19)
@@ -81,9 +83,18 @@ resolves the method to its defining impl):
 
 ## Verification
 
-1. Cross-file `g._hidden()` → E0403; path spelling still E0403.
-2. Same-file `g._hidden()` and internal `this._hidden()` compile.
-3. Extension methods: a cross-package extension defining `_helper` for its own use — pick
-   the intended semantics (defining module = the extension's module) and add a test
-   pinning it.
-4. Negative e2e tests for both spellings; full suites.
+1. DONE: both spellings now give E0403, with the same message.
+2. DONE: same-file `g._hidden()` and internal `this._hidden()` compile.
+3. Semantics chosen: the defining module is the module whose `impl` block declares the
+   METHOD, not the one declaring the type. That is what a new `method_origins` table
+   records (`ext_origins` only covers extensions, since the import gate is all it answers).
+   So an extension's own `_helper` is private to the extension's module — the reading that
+   matches "privacy is a property of the declaring module".
+4. DONE: `method_privacy_and_unknown_methods_across_modules` in cpc/tests/e2e.rs covers
+   both spellings, the module's own use of its private helper, and bug-22's
+   unknown-method case. Full suites green, and no vendor package trips the new rule
+   (checked across all of `vendor/*`).
+
+Step 2's "cover ALL dispatch paths": the gate is placed at each of the three sites that
+already call `ext_out_of_scope` — struct receiver, enum receiver, and the `Type::method`
+assoc path — which is the same surface that gate covers.

@@ -1,6 +1,8 @@
 # Bug 18 — Resolver's hand-rolled TOML scanner leaks comment text into linker symbols
 
-- Status: reproduced 2026-08-01 (nm-verified symbol `_tomly____the_app.src.util.helper`)
+- Status: FIXED 2026-08-02, commit 8054dc6 — both scanners deleted; the resolver calls
+  `manifest::load`
+- Status (original): reproduced 2026-08-01 (nm-verified symbol `_tomly____the_app.src.util.helper`)
 - Severity: wrong symbols (package identity diverges between subsystems)
 - Area: resolver (`cplus-core/src/resolver.rs`), duplicating manifest (`manifest.rs`)
 - Master report: `core-drift-audit-2026-08-01.md` (B18)
@@ -55,25 +57,26 @@ The in-code excuse ("would pull the manifest module into the resolver's dependen
 surface") is void: same crate, and every driver call site already holds the parsed
 `Manifest` (cpc/src/main.rs:2553, 3431, 3669, 4177).
 
-## Fix
+## Fix — the smaller version of the same move
 
-1. Extend the resolver's project-loading entry points (`load_project_full` family,
-   resolver.rs:369-411) to accept the package name and per-dependency `BuildSpec` data
-   from the caller.
-2. In cpc's driver, pass them from the already-parsed `Manifest` at the four call sites.
-3. Delete both scanners (`load_package_name`,
-   `package_resolves_through_headers`'s TOML-reading half — keep the decision logic by
-   calling `BuildSpec::resolves_through_headers`).
+Both scanners are deleted and both functions now call `crate::manifest::load`, which is
+the real parser, and `BuildSpec::resolves_through_headers`, which is the real decision.
+The report's excuse-refutation is the whole fix: it is the same crate, so there is nothing
+to thread.
+
+Threading the already-parsed `Manifest` down from the driver (steps 1-2) is a strictly
+larger change — four call sites plus the `load_project_full` family — and its value is
+avoiding a re-parse, not correctness. That is issue-09's `ResolveConfig`, and this leaves
+it exactly as far along as it was.
 
 Structural companion: `issue-09-resolver-program-index.md` part B (a `ResolveConfig`
 carrying manifest + target/platform explicitly) — this fix is its first slice.
 
 ## Verification
 
-1. The repro builds with clean symbols: `nm target/debug/tomly | grep helper` shows
-   `_tomly.src.util.helper`.
-2. A comment-free project builds byte-identically to before the change (compare `nm`
-   output).
-3. Header-resolved / prebuilt deps still classify identically (the
-   resolves_through_headers decision) — run the platform_deps test file:
-   `cargo test -p cpc --test platform_deps`, plus full suites.
+1. DONE: `nm` shows `_tomly.src.util.helper`. Pinned as
+   `a_comment_after_the_package_name_stays_out_of_symbols` in cpc/tests/e2e.rs.
+2. DONE: a comment-free project's `nm` output is byte-identical before and after
+   (diffed the sorted symbol tables).
+3. DONE: `cargo test -p cpc --test platform_deps` — 5 passed; full suites green; every
+   vendor package still produces identical diagnostics.
