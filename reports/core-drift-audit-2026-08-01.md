@@ -75,12 +75,17 @@
 > rules also turned out to be missing a cycle guard; that is `bug-28`, found here, its
 > compiler-hang half fixed and its lowering half written up.
 >
-> Not done, and scoped in their own reports: issue-07 step 5 (the E0365 capture-taint
-> port — separable, and now SIZED in its file: ~13 functions, 16 tests, same shape and
-> same budget as the view port, and it wants the same transition assert), issue-14's
-> migration off the classification fixpoint (its characterization harness is in the
-> tree), issue-03 step 4, issue-08 steps 1 and 3, issue-09 parts (A) and (C), issue-11
-> items 1, 2, 3, 5, 7, 8, and `bug-28`'s struct-body emitter.
+> `bug-28` is FIXED end to end (`b818a1b` the hang, `892799f` the lowering) and
+> issue-07 step 5 is now PREPARED rather than merely deferred: its e2e corpus exists
+> (`f3a5a4e`), written against the pre-port binary, which is the safety net the family
+> was missing — it had none, where the view family had 44 assertions and still needed
+> the transition assert to catch three holes.
+>
+> Not done, and scoped in their own reports: issue-07 step 5 itself (sized in its file:
+> ~13 functions, 16 unit tests, same shape and budget as the view port, and it wants
+> the same transition assert), issue-14's migration off the classification fixpoint
+> (its characterization harness is in the tree), issue-03 step 4, issue-08 steps 1 and
+> 3, issue-09 parts (A) and (C), and issue-11 items 1, 2, 3, 5, 7, 8.
 >
 > Corrections to this report, found while fixing (details in each bug's file):
 > - B12's generic-argument half was already closed by the B1 fix; its `take` spelling

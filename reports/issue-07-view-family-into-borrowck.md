@@ -295,8 +295,18 @@ re-measure. It is the same size as the view port, not a follow-up trim:
   the `local_dies_here` gate, and the three emission sites
   (`flag_escaping_local_receivers`, `check_capture_store_escape`,
   `check_capture_arg_escape`).
-- 16 sema unit tests, 47 assertions on E0365. No e2e coverage at all — worth
-  adding on the way through, since these are the tests that would move.
+- 16 sema unit tests, 47 assertions on E0365. **The e2e corpus now exists**
+  (`f3a5a4e`): `a_capture_of_a_local_escaping_the_frame_is_rejected_e0365`
+  covers all four escape positions in direct and transitive form plus the
+  builder route, and `a_capture_that_outlives_nothing_still_compiles` pins
+  the controls — `this`-bound handlers and the binding site — that make the
+  rule cost nothing in real code. Written against the pre-port binary, so it
+  does not move when the emission does. That was the missing safety net; the
+  sema unit tests are the ones that will move.
+- One control there is a documented TRUST boundary, not a soundness claim:
+  `var n: i32 = take_handler(c.clicked); return n;` compiles because the
+  analysis does not read callees. A port must preserve it deliberately or
+  change it on purpose.
 - Everything it needs already exists on the borrowck side: `ViewRules`
   supplies the scoped walk, the `owns_value` gate `local_dies_here`
   duplicates, and `infer_ty` for `place_ty_quiet`'s field-vs-method
