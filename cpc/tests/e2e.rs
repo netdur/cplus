@@ -5976,6 +5976,35 @@ fn view_of_match_payload_of_borrowed_scrutinee_compiles() {
 }
 
 #[test]
+fn view_escaping_through_a_tuple_return_rejected_e0513() {
+    // issue-07: a tuple has no type NAME until monomorphize synthesizes its
+    // struct, but `(str, i32)` transports a view out of the frame today.
+    // Both the built leaf and the alias route must be rejected.
+    for tail in [
+        "fn bad() -> (str, i32) { let b: Buf = mk(); return (b.view(), 1); }",
+        "fn bad() -> (str, i32) { let b: Buf = mk(); let s: str = b.view(); return (s, 1); }",
+    ] {
+        let (ok, stderr) =
+            try_compile_snippet(&format!("{VIEW_PRELUDE}{tail}\nfn main() -> i32 {{ return 0; }}\n"));
+        assert!(!ok, "expected E0513 for `{tail}`, compiled instead");
+        assert!(stderr.contains("E0513"), "expected E0513 for `{tail}`, got: {stderr}");
+    }
+}
+
+#[test]
+fn view_of_local_stored_into_static_element_rejected_e0513() {
+    // issue-07: an ELEMENT of an array `static` outlives the frame exactly
+    // as the static does.
+    let (ok, stderr) = try_compile_snippet(&format!(
+        "{VIEW_PRELUDE}static A: [str; 2] = [\"\", \"\"];\n\
+         fn bad() {{ let b: Buf = mk(); A[0] = b.view(); return; }}\n\
+         fn main() -> i32 {{ return 0; }}\n"
+    ));
+    assert!(!ok, "expected E0513 on a view stored into a static's element");
+    assert!(stderr.contains("E0513"), "expected E0513, got: {stderr}");
+}
+
+#[test]
 fn return_borrow_of_local_owned_rejected_e0513() {
     // v0.0.12 (#3): returning a `str` view into a function-local owned value
     // (which drops at function exit) dangles — reject it.

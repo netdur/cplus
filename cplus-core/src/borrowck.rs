@@ -3452,8 +3452,21 @@ impl<'a> ViewRules<'a> {
             .clone()
     }
 
+    /// Does a value of this type carry a borrow? The oracle's answer, plus
+    /// tuples: the oracle classifies the named types the rest of the pass
+    /// reasons about, and a tuple has no name until monomorphize synthesizes
+    /// its struct — but `(str, i32)` transports a view today, and a returned
+    /// one launders it out of the frame. Kept here rather than widened in
+    /// the oracle so no existing rule starts tying on a shape it never did.
+    fn carries_view(&self, ty: &Type) -> bool {
+        match &ty.kind {
+            TypeKind::Tuple(elems) => elems.iter().any(|t| self.carries_view(t)),
+            _ => self.oracle.type_contains_view(ty),
+        }
+    }
+
     /// A view proper: `str` or a slice. (View-CARRYING aggregates are a
-    /// separate question — `CopyOracle::type_contains_view`.)
+    /// separate question — `carries_view`.)
     fn is_view_ty(ty: &Type) -> bool {
         match &ty.kind {
             TypeKind::Slice(_) => true,
@@ -3486,7 +3499,7 @@ impl<'a> ViewRules<'a> {
         entry
             .ret_ty
             .as_ref()
-            .is_some_and(|r| self.oracle.type_contains_view(r))
+            .is_some_and(|r| self.carries_view(r))
     }
 
     /// The set of root bindings a view expression borrows from, traced by
@@ -3648,7 +3661,7 @@ impl<'a> ViewRules<'a> {
             return;
         };
         let ret_is_view = Self::is_view_ty(&ret);
-        let ret_carries_view = !ret_is_view && self.oracle.type_contains_view(&ret);
+        let ret_carries_view = !ret_is_view && self.carries_view(&ret);
         if !(ret_is_view || ret_carries_view) {
             return;
         }
@@ -3814,18 +3827,31 @@ impl<'a> ViewRules<'a> {
         }
     }
 
-    /// The declared type of a WRITE target. Same structural resolution as
-    /// any other expression, plus the raw-pointer deref the rest of the
-    /// analysis has no reason to type: `*p` where `p: *T` stores a `T`.
+    /// The declared type of a WRITE target: a place chain resolved step by
+    /// step. Two steps the rest of the analysis never has to type appear
+    /// only here — `*p` where `p: *T` stores a `T`, and `a[i]` where `a` is
+    /// an array or slice stores its element. Everything else defers to the
+    /// shared inference.
     fn place_ty(&self, e: &Expr) -> Option<Type> {
         match &e.kind {
             ExprKind::Unary {
                 op: UnaryOp::Deref,
                 operand,
-            } => match self.infer_ty(operand).map(|t| t.kind) {
+            } => match self.place_ty(operand).map(|t| t.kind) {
                 Some(TypeKind::RawPtr(inner)) => Some(*inner),
                 _ => None,
             },
+            ExprKind::Index { receiver, .. } => {
+                Self::element_ty(self.place_ty(receiver).as_ref())
+            }
+            ExprKind::Field { receiver, name } => {
+                let base = match self.place_ty(receiver)?.kind {
+                    TypeKind::Path(n) => n,
+                    TypeKind::Generic { name, .. } => name,
+                    _ => return None,
+                };
+                self.field_ty(&base, &name.name)
+            }
             _ => self.infer_ty(e),
         }
     }
@@ -3855,7 +3881,7 @@ impl<'a> ViewRules<'a> {
         let Some(ty) = self.place_ty(target) else {
             return;
         };
-        if !(Self::is_view_ty(&ty) || self.oracle.type_contains_view(&ty)) {
+        if !(Self::is_view_ty(&ty) || self.carries_view(&ty)) {
             return;
         }
         self.err(
@@ -4009,7 +4035,7 @@ impl<'a> ViewRules<'a> {
         let Some(ty) = self.place_ty(target) else {
             return;
         };
-        if !(Self::is_view_ty(&ty) || self.oracle.type_contains_view(&ty)) {
+        if !(Self::is_view_ty(&ty) || self.carries_view(&ty)) {
             return;
         }
         let Some(troot_raw) = Self::place_root(target) else {
@@ -4052,7 +4078,7 @@ impl<'a> ViewRules<'a> {
             // an owner, not a carrier, and a bare parameter is not
             // `owns_value`, so neither earlier gate sees it).
             let root_is_param_view = self.param_names.contains(&key)
-                && (self.oracle.type_contains_view(&vty)
+                && (self.carries_view(&vty)
                     || (!local.owns_value && !self.oracle.is_copy(&vty)));
             if !root_is_param_view {
                 continue;
@@ -4125,7 +4151,7 @@ impl<'a> ViewRules<'a> {
         let is_view = resolved.as_ref().is_some_and(Self::is_view_ty);
         let carries_view = resolved
             .as_ref()
-            .is_some_and(|t| Self::is_view_ty(t) || self.oracle.type_contains_view(t));
+            .is_some_and(|t| Self::is_view_ty(t) || self.carries_view(t));
         if is_view {
             if let Some(e) = init {
                 self.check_view_of_temp(e);
@@ -4314,7 +4340,7 @@ impl<'a> ViewRules<'a> {
                 let Some(ty) = self.lookup(n).and_then(|l| l.ty.clone()) else {
                     return;
                 };
-                let roots = if Self::is_view_ty(&ty) || self.oracle.type_contains_view(&ty) {
+                let roots = if Self::is_view_ty(&ty) || self.carries_view(&ty) {
                     self.borrow_roots_of(value)
                 } else {
                     BTreeSet::new()
@@ -9487,5 +9513,37 @@ fn mk() -> LStr { return LStr { ptr: { 0 as *u8 }, len: { 0 as usize }, cap: { 0
             !codes.iter().any(|c| c == "E0513"),
             "a payload borrowed from a field must not be denied, got {codes:?}"
         );
+    }
+
+    #[test]
+    fn view_escaping_through_a_tuple_or_an_index_denied_e0513() {
+        // Two place/type shapes the port did not reach at first, both found
+        // by the transition assert. A tuple has no name until monomorphize
+        // synthesizes its struct, but `(str, i32)` transports a view out of
+        // the frame today; and an element of an array `static` is a write
+        // target like any other.
+        let cases: &[(&str, &str)] = &[
+            (
+                "tuple_leaf",
+                "fn bad() -> (str, i32) { let b: Buf = Buf::new(); return (b.view(), 1); }",
+            ),
+            (
+                "tuple_alias",
+                "fn bad2() -> (str, i32) { let b: Buf = Buf::new(); let s: str = b.view(); \
+                 return (s, 1); }",
+            ),
+            (
+                "static_element",
+                "static A: [str; 2] = [\"\", \"\"];\n\
+                 fn bad3() { let b: Buf = Buf::new(); A[0] = b.view(); return; }",
+            ),
+        ];
+        for (name, tail) in cases {
+            let codes = check_src(&format!("{VIEW_PRELUDE}{tail}"));
+            assert!(
+                codes.iter().any(|c| c == "E0513"),
+                "[{name}] expected E0513, got {codes:?}"
+            );
+        }
     }
 }
