@@ -23,6 +23,7 @@ import "./text" as text;
 extern fn malloc(n: usize) -> *u8;
 extern fn free(p: *u8);
 
+#[lang("rc")]
 struct Rc[T] {
     _ctrl: *u8,
 }

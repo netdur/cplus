@@ -268,7 +268,15 @@ const KNOWN_ATTRS: &[AttrSpec] = &[
 
 /// issue-06: every lang item the compiler resolves. A `#[lang("...")]` naming
 /// anything else is E0359 — see the `lang` spec above.
-pub const LANG_ITEMS: &[&str] = &["string", "iterator", "future", "option", "join_handle"];
+pub const LANG_ITEMS: &[&str] = &[
+    "string",
+    "iterator",
+    "future",
+    "option",
+    "join_handle",
+    "rc",
+    "mutex_guard",
+];
 
 /// Single-file entry point. Mirrors `sema::check`.
 pub fn check(prog: &Program, file: PathBuf, src: &str) -> Vec<Diagnostic> {

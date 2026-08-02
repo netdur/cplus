@@ -1768,6 +1768,14 @@ struct LangItems {
     option: Option<String>,
     /// What `#thread_spawn` returns.
     join_handle: Option<String>,
+    /// The shared-ownership handle that is neither `Send` nor `Sync` — its
+    /// refcount is not atomic. Designated rather than recognized by name:
+    /// "any type called `Rc`" was the old rule, and it made a user struct in
+    /// an unrelated package silently unsendable.
+    rc: Option<String>,
+    /// The lock guard that is `!Send` — it is bound to the thread that
+    /// acquired it. Same reason for designating it.
+    mutex_guard: Option<String>,
 }
 
 /// issue-05: which type a method call dispatches on, for `run_method_gates`.
@@ -3160,27 +3168,30 @@ impl SemaCx<'_> {
     }
 
     /// Does `ty` carry something that blocks `marker`? A raw-pointer *field*
-    /// blocks; an `Rc`/`MutexGuard` blocks (by template-leaf name, even with
-    /// no literal pointer field); a sub-aggregate blocks if it does. A bare
-    /// `impl T: Send/Sync {}` override on a nominal type short-circuits — making it
-    /// (and any container holding it) unblocked, subject to the conditional
-    /// bounds. `visited` breaks struct/enum reference cycles.
+    /// blocks; the designated `#[lang("rc")]` / `#[lang("mutex_guard")]` types
+    /// block (even with no literal pointer field); a sub-aggregate blocks if
+    /// it does. A bare `impl T: Send/Sync {}` override on a nominal type
+    /// short-circuits — making it (and any container holding it) unblocked,
+    /// subject to the conditional bounds. `visited` breaks struct/enum
+    /// reference cycles.
+    ///
+    /// issue-06 step 4: every one of those questions is asked of the type's
+    /// RESOLVED identity — its generic template's declared name, or its own —
+    /// never of the leaf. Two packages may each declare a `Handle`, and an
+    /// `impl Handle: Send {}` in one of them says nothing about the other.
     fn marker_blocked(&self, ty: &Ty, marker: &str, visited: &mut Vec<u32>) -> bool {
         match ty {
             Ty::RawPtr(_) => true,
             Ty::Array(elem, _) => self.marker_blocked(elem, marker, visited),
             Ty::Struct(id) => {
-                let leaf = self
-                    .nominal_template_leaf(ty)
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| name_leaf(&self.structs[id.0 as usize].name).to_string());
+                let ident = self.nominal_identity(ty);
                 if let Some(bounds) = self
                     .marker_overrides
-                    .get(&(marker.to_string(), leaf.clone()))
+                    .get(&(marker.to_string(), ident.clone()))
                 {
                     return !self.override_satisfied(ty, bounds);
                 }
-                if Self::is_builtin_marker_blocked(&leaf, marker) {
+                if self.is_builtin_marker_blocked(&ident, marker) {
                     return true;
                 }
                 if visited.contains(&id.0) {
@@ -3195,17 +3206,14 @@ impl SemaCx<'_> {
                 blocked
             }
             Ty::Enum(id) => {
-                let leaf = self
-                    .nominal_template_leaf(ty)
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| name_leaf(&self.enums[id.0 as usize].name).to_string());
+                let ident = self.nominal_identity(ty);
                 if let Some(bounds) = self
                     .marker_overrides
-                    .get(&(marker.to_string(), leaf.clone()))
+                    .get(&(marker.to_string(), ident.clone()))
                 {
                     return !self.override_satisfied(ty, bounds);
                 }
-                if Self::is_builtin_marker_blocked(&leaf, marker) {
+                if self.is_builtin_marker_blocked(&ident, marker) {
                     return true;
                 }
                 if visited.contains(&id.0) {
@@ -3229,15 +3237,39 @@ impl SemaCx<'_> {
         }
     }
 
-    /// The stdlib types that block a marker structurally, recognized by
-    /// template-leaf name so a renamed instantiation or a pointer-free
-    /// stand-in still trips the rule. `Rc` is `!Send` and `!Sync`;
-    /// `MutexGuard` is `!Send` (bound to its acquiring thread).
-    fn is_builtin_marker_blocked(leaf: &str, marker: &str) -> bool {
+    /// The types that block a marker structurally: the designated
+    /// `#[lang("rc")]` (neither `Send` nor `Sync` — its refcount is not
+    /// atomic) and `#[lang("mutex_guard")]` (`!Send`, bound to the thread
+    /// that acquired the lock). Asked of the resolved identity, so a build
+    /// without those lang items blocks nothing and a user type that merely
+    /// shares the name is unaffected.
+    fn is_builtin_marker_blocked(&self, ident: &str, marker: &str) -> bool {
+        let is = |slot: &Option<String>| slot.as_deref() == Some(ident);
         match marker {
-            "Send" => matches!(leaf, "Rc" | "MutexGuard"),
-            "Sync" => leaf == "Rc",
+            "Send" => is(&self.lang.rc) || is(&self.lang.mutex_guard),
+            "Sync" => is(&self.lang.rc),
             _ => false,
+        }
+    }
+
+    /// The RESOLVED identity of a nominal type: the declared name of the
+    /// generic template it was instantiated from, or its own declared name.
+    /// Both are fully qualified by the resolver and both are the keys the
+    /// template tables use, so a registration site holding an `impl` target
+    /// name and a use site holding a `Ty` agree without either one guessing.
+    fn nominal_identity(&self, ty: &Ty) -> String {
+        let origin = match ty {
+            Ty::Struct(id) => &self.structs[id.0 as usize].generic_origin,
+            Ty::Enum(id) => &self.enums[id.0 as usize].generic_origin,
+            _ => &None,
+        };
+        if let Some((tmpl, _)) = origin {
+            return tmpl.clone();
+        }
+        match ty {
+            Ty::Struct(id) => self.structs[id.0 as usize].name.clone(),
+            Ty::Enum(id) => self.enums[id.0 as usize].name.clone(),
+            _ => String::new(),
         }
     }
 
@@ -3704,11 +3736,15 @@ impl SemaCx<'_> {
         }
     }
 
-    /// v0.0.14 `#[no_alloc]` drop-glue: record the leaf names of types whose
-    /// `drop` method carries `#[no_alloc]`/`#[realtime]`. Such a `drop` body
-    /// has already been verified non-allocating by `check_no_alloc`, so
-    /// running it implicitly at scope exit is allowed inside a `#[no_alloc]`
-    /// function.
+    /// v0.0.14 `#[no_alloc]` drop-glue: record the types whose `drop` method
+    /// carries `#[no_alloc]`/`#[realtime]`. Such a `drop` body has already
+    /// been verified non-allocating by `check_no_alloc`, so running it
+    /// implicitly at scope exit is allowed inside a `#[no_alloc]` function.
+    ///
+    /// issue-06 step 4: recorded under the RESOLVED name. Under the leaf, a
+    /// `#[no_alloc] fn drop` on one package's `Foo` blessed another package's
+    /// allocating `Foo` — the blessing is the whole point of the check, so
+    /// handing it to the wrong type defeated it.
     fn collect_no_alloc_drop_types(&mut self, p: &Program) {
         for item in &p.items {
             let ItemKind::Impl(b) = &item.kind else {
@@ -3720,8 +3756,7 @@ impl SemaCx<'_> {
             }
             for m in &b.methods {
                 if m.name.name == "drop" && marks_no_alloc(&m.attributes) {
-                    self.no_alloc_drop_types
-                        .insert(name_leaf(&b.target.name).to_string());
+                    self.no_alloc_drop_types.insert(b.target.name.clone());
                 }
             }
         }
@@ -3738,7 +3773,7 @@ impl SemaCx<'_> {
             Ty::String => false,
             Ty::Struct(id) => {
                 let def = &self.structs[id.0 as usize];
-                if def.is_drop && !self.no_alloc_drop_types.contains(name_leaf(&def.name)) {
+                if def.is_drop && !self.no_alloc_drop_types.contains(&self.nominal_identity(ty)) {
                     return false;
                 }
                 let fields = def.fields.clone();
@@ -4883,16 +4918,13 @@ impl SemaCx<'_> {
                     .iter()
                     .map(|gp| gp.bounds.iter().map(|bn| bn.name.clone()).collect())
                     .collect();
-                // Key on the leaf so a qualified multi-file target name
-                // (`vendor.stdlib.src.arc.Arc`) matches the instantiation's
-                // template leaf (`Arc`) at the use site.
-                self.marker_overrides.insert(
-                    (
-                        iface_name.name.clone(),
-                        name_leaf(&b.target.name).to_string(),
-                    ),
-                    bounds,
-                );
+                // issue-06 step 4: key on the RESOLVED target name — the same
+                // string the template tables are keyed under, and the same one
+                // `nominal_identity` produces at the use site. Keying on the
+                // leaf made an `impl Handle: Send {}` in one package vouch for
+                // every type named `Handle` in the build.
+                self.marker_overrides
+                    .insert((iface_name.name.clone(), b.target.name.clone()), bounds);
                 continue;
             }
             // Empty interface impls are meaningful only for marker assertions.
@@ -12119,6 +12151,8 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 "future" => &mut self.lang.future,
                 "option" => &mut self.lang.option,
                 "join_handle" => &mut self.lang.join_handle,
+                "rc" => &mut self.lang.rc,
+                "mutex_guard" => &mut self.lang.mutex_guard,
                 // "string" is a concrete struct, recorded where concrete
                 // structs are; anything else was rejected by attrs (E0390).
                 _ => continue,
@@ -28838,10 +28872,12 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
 
     #[test]
     fn send_bound_rejects_rc_e0502() {
-        // `Rc[T]` is `!Send` — passing one to a `Send`-bounded generic fails.
-        // (Matched by template-name leaf, so a local `Rc` exercises the rule.)
+        // The designated `#[lang("rc")]` type is `!Send` — passing one to a
+        // `Send`-bounded generic fails. The marker is what makes it that
+        // type; see `a_struct_named_rc_without_the_marker_is_send`.
         let codes = errors(
-            "struct Rc[T] { v: T }\n\
+            "#[lang(\"rc\")]\n\
+             struct Rc[T] { v: T }\n\
              fn ship[T: Send](take v: T) -> T { return v; }\n\
              fn main() -> i32 {\n\
                  let r: Rc[i32] = Rc[i32] { v: 5 };\n\
@@ -28886,7 +28922,8 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
     #[test]
     fn send_bound_rejects_mutex_guard_e0502() {
         let codes = errors(
-            "struct MutexGuard[T] { v: T }\n\
+            "#[lang(\"mutex_guard\")]\n\
+             struct MutexGuard[T] { v: T }\n\
              fn ship[T: Send](take v: T) -> T { return v; }\n\
              fn main() -> i32 {\n\
                  let g: MutexGuard[i32] = MutexGuard[i32] { v: 5 };\n\
@@ -28900,7 +28937,8 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
     #[test]
     fn sync_bound_rejects_rc_e0502() {
         let codes = errors(
-            "struct Rc[T] { v: T }\n\
+            "#[lang(\"rc\")]\n\
+             struct Rc[T] { v: T }\n\
              fn share[T: Sync](take x: T) -> T { return x; }\n\
              fn main() -> i32 {\n\
                  let r: Rc[i32] = Rc[i32] { v: 5 };\n\
@@ -28909,6 +28947,22 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
              }",
         );
         assert!(codes.contains(&"E0502"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn a_struct_named_rc_without_the_marker_is_send() {
+        // issue-06 step 4: the `!Send` rule keys on the designated identity,
+        // not on the name. A package that happens to call its own type `Rc`
+        // gets no unsendability from the coincidence.
+        assert_clean(
+            "struct Rc[T] { v: T }\n\
+             fn ship[T: Send](take v: T) -> T { return v; }\n\
+             fn main() -> i32 {\n\
+                 let r: Rc[i32] = Rc[i32] { v: 5 };\n\
+                 let _q: Rc[i32] = ship::[Rc[i32]](r);\n\
+                 return 0;\n\
+             }",
+        );
     }
 
     #[test]

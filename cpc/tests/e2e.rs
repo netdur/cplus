@@ -1486,6 +1486,59 @@ fn multi_file_static_init_error_points_at_imported_file_gap3() {
 }
 
 #[test]
+fn a_send_marker_in_one_module_does_not_vouch_for_a_same_named_type_in_another() {
+    // issue-06 step 4: `impl Handle: Send {}` used to be recorded under the
+    // LEAF name, so it unblocked every type called `Handle` in the build —
+    // including one in an unrelated module holding a raw pointer, which is
+    // exactly the type the structural rule exists to stop.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    // `vouched` vouches for its own Handle; `other` does not for its.
+    std::fs::write(
+        dir.join("src/vouched.cplus"),
+        "struct Handle { opaque p: *u8 }\n\
+         impl Handle: Send {}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/other.cplus"),
+        "struct Handle { opaque p: *u8 }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"./vouched\" as vouched;\n\
+         import \"./other\" as other;\n\
+         fn ship[T: Send](take v: T) -> T { return v; }\n\
+         fn main() -> i32 {\n\
+             let a: vouched::Handle = vouched::Handle { p: 0 as *u8 };\n\
+             let _b: vouched::Handle = ship::[vouched::Handle](a);\n\
+             let c: other::Handle = other::Handle { p: 0 as *u8 };\n\
+             let _d: other::Handle = ship::[other::Handle](c);\n\
+             return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("check")
+        .arg(dir.join("src/main.cplus"))
+        .output()
+        .expect("invoke cpc check");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success() && stderr.contains("E0502"),
+        "the unvouched Handle must stay !Send, got status {:?}: {stderr}",
+        out.status
+    );
+    assert_eq!(
+        stderr.matches("E0502").count(),
+        1,
+        "only the unvouched Handle may be rejected: {stderr}"
+    );
+}
+
+#[test]
 fn cross_module_unknown_item_reports_e0405_g030() {
     // v0.0.12 G-030 bonus: pre-fix, the resolver lumped "name doesn't
     // exist in module X" into PrivateAccess (E0403) with the misleading

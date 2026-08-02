@@ -54,10 +54,11 @@ struct Mutex[T] {
 // not required — only one thread holds the lock (and thus touches `T`) at a
 // time. The raw `_ctrl` pointer makes the structural rule reject it by default;
 // this vouches for the locking discipline. (`MutexGuard[T]` stays `!Send` — it
-// is bound to the acquiring thread — via the builtin name rule.)
+// is bound to the acquiring thread — via its `#[lang("mutex_guard")]` marker.)
 impl Mutex[T: Send]: Send {}
 impl Mutex[T: Send]: Sync {}
 
+#[lang("mutex_guard")]
 struct MutexGuard[T] {
     // Same heap block the originating Mutex carries. #5: the guard co-owns a
     // reference — `lock` bumped the refcount — so it can safely outlive the
