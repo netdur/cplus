@@ -2278,6 +2278,47 @@ impl RewriteCtx {
         )
     }
 
+    /// issue-09: resolve ONE possibly-prefixed item name to its qualified
+    /// form. Every syntactic position that can name a type or an item — a
+    /// struct literal, a generic struct literal, a generic enum call, a
+    /// variant pattern, a type reference — asks this.
+    ///
+    /// It used to be inlined at seven arms with divergent behavior: a type
+    /// reference to an unknown prefix was E0402 here in the resolver, while
+    /// the same typo in a struct literal fell silently through to sema's
+    /// E0303 ("unknown type"), which names a type the user never wrote. Two
+    /// error universes for one mistake. And the alias-facade hop
+    /// (`resolve_alias_target`) was consulted for a plain struct literal but
+    /// not for the generic one, so a re-exported generic type resolved in one
+    /// spelling and not the other.
+    ///
+    /// `Ok(None)` means "not prefixed, not local" — a primitive, a builtin, a
+    /// generic parameter: leave the name alone.
+    fn resolve_item_name(&self, name: &str, span: Span) -> Result<Option<String>, ResolveError> {
+        if let Some((prefix, rest)) = name.split_once("::") {
+            let Some(target_id) = self.imports.get(prefix) else {
+                return Err(ResolveError::UnknownPrefix {
+                    file: self.self_file_path.clone(),
+                    span,
+                    prefix: prefix.to_string(),
+                });
+            };
+            // Slice 4B: a cross-file reference requires the item to be
+            // exported (non-`_`). Field-level visibility is sema's.
+            self.check_pub_item(target_id, rest, span)?;
+            // A module may re-export another module's type; follow the facade
+            // so every spelling lands on the declaring module.
+            return Ok(Some(match self.resolve_alias_target(target_id, rest) {
+                Some(t) => self.qualify_external(&t.target_id, &t.name),
+                None => self.qualify_external(target_id, rest),
+            }));
+        }
+        if self.local_items.contains(name) {
+            return Ok(Some(self.qualify_local(name)));
+        }
+        Ok(None)
+    }
+
     fn resolve_alias_target(&self, target_id: &str, name: &str) -> Option<AliasTarget> {
         let mut current_id = target_id.to_string();
         let mut current_name = name.to_string();
@@ -2575,25 +2616,9 @@ fn rewrite_type(ty: &mut Type, ctx: &RewriteCtx) -> Result<(), ResolveError> {
 fn rewrite_type_name(s: &str, span: Span, ctx: &RewriteCtx) -> Result<String, ResolveError> {
     // Cross-file: `prefix::Type` (and only that shape — types can't be
     // 3-segment because there's no Type::Variant in type position).
-    if let Some((prefix, rest)) = s.split_once("::") {
-        let Some(target_id) = ctx.imports.get(prefix) else {
-            return Err(ResolveError::UnknownPrefix {
-                file: ctx.self_file_path.clone(),
-                span,
-                prefix: prefix.to_string(),
-            });
-        };
-        // Slice 4B: the referenced type must be exported (non-`_`) in the
-        // target file.
-        ctx.check_pub_item(target_id, rest, span)?;
-        return Ok(ctx.qualify_external(target_id, rest));
-    }
-    // Unqualified: if it names a local item, qualify it; otherwise leave
-    // alone (primitive, builtin, generic param, etc.).
-    if ctx.local_items.contains(s) {
-        return Ok(ctx.qualify_local(s));
-    }
-    Ok(s.to_string())
+    // Unqualified and not a local item: a primitive, a builtin or a generic
+    // parameter — leave it alone.
+    Ok(ctx.resolve_item_name(s, span)?.unwrap_or_else(|| s.to_string()))
 }
 
 fn rewrite_block(
@@ -3134,26 +3159,8 @@ fn rewrite_expr(
             }
         }
         ExprKind::StructLit { name, fields } => {
-            if ctx.local_items.contains(&name.name) {
-                name.name = ctx.qualify_local(&name.name);
-            } else if let Some((prefix, rest)) = name
-                .name
-                .clone()
-                .split_once("::")
-                .map(|(a, b)| (a.to_string(), b.to_string()))
-            {
-                if let Some(target_id) = ctx.imports.get(&prefix) {
-                    // Slice 4B: cross-file struct literal requires the
-                    // struct to be exported (non-`_`). Field visibility is
-                    // enforced by sema (it has the field-level info after
-                    // resolver-rewrite).
-                    ctx.check_pub_item(target_id, &rest, name.span)?;
-                    if let Some(target) = ctx.resolve_alias_target(target_id, &rest) {
-                        name.name = ctx.qualify_external(&target.target_id, &target.name);
-                    } else {
-                        name.name = ctx.qualify_external(target_id, &rest);
-                    }
-                }
+            if let Some(q) = ctx.resolve_item_name(&name.name, name.span)? {
+                name.name = q;
             }
             for f in fields {
                 rewrite_expr(&mut f.value, ctx, scope)?;
@@ -3176,18 +3183,8 @@ fn rewrite_expr(
             type_args,
             fields,
         } => {
-            if ctx.local_items.contains(&name.name) {
-                name.name = ctx.qualify_local(&name.name);
-            } else if let Some((prefix, rest)) = name
-                .name
-                .clone()
-                .split_once("::")
-                .map(|(a, b)| (a.to_string(), b.to_string()))
-            {
-                if let Some(target_id) = ctx.imports.get(&prefix) {
-                    ctx.check_pub_item(target_id, &rest, name.span)?;
-                    name.name = ctx.qualify_external(target_id, &rest);
-                }
+            if let Some(q) = ctx.resolve_item_name(&name.name, name.span)? {
+                name.name = q;
             }
             for ta in type_args.iter_mut() {
                 rewrite_type(ta, ctx)?;
@@ -3213,18 +3210,8 @@ fn rewrite_expr(
             args,
             ..
         } => {
-            if ctx.local_items.contains(&enum_name.name) {
-                enum_name.name = ctx.qualify_local(&enum_name.name);
-            } else if let Some((prefix, rest)) = enum_name
-                .name
-                .clone()
-                .split_once("::")
-                .map(|(a, b)| (a.to_string(), b.to_string()))
-            {
-                if let Some(target_id) = ctx.imports.get(&prefix) {
-                    ctx.check_pub_item(target_id, &rest, enum_name.span)?;
-                    enum_name.name = ctx.qualify_external(target_id, &rest);
-                }
+            if let Some(q) = ctx.resolve_item_name(&enum_name.name, enum_name.span)? {
+                enum_name.name = q;
             }
             for ta in type_args.iter_mut() {
                 rewrite_type(ta, ctx)?;
@@ -3277,19 +3264,8 @@ fn rewrite_pattern(
             //   `Enum::Variant`            — `enum_name = "EnumName"`        (local; payload captured)
             //   `prefix::Enum::Variant`    — `enum_name = "prefix::Enum"`    (cross-file)
             //   `Option[i32]::Variant`     — generic-enum pattern (slice 7GEN.5e); type_args walked below.
-            if let Some((prefix, rest)) = enum_name
-                .name
-                .clone()
-                .split_once("::")
-                .map(|(a, b)| (a.to_string(), b.to_string()))
-            {
-                // Cross-file: rewrite to the qualified enum name.
-                if let Some(target_id) = ctx.imports.get(&prefix) {
-                    ctx.check_pub_item(target_id, &rest, enum_name.span)?;
-                    enum_name.name = ctx.qualify_external(target_id, &rest);
-                }
-            } else if ctx.local_items.contains(&enum_name.name) {
-                enum_name.name = ctx.qualify_local(&enum_name.name);
+            if let Some(q) = ctx.resolve_item_name(&enum_name.name, enum_name.span)? {
+                enum_name.name = q;
             }
             for ta in type_args.iter_mut() {
                 rewrite_type(ta, ctx)?;

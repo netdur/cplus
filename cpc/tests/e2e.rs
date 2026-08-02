@@ -23091,3 +23091,71 @@ fn a_user_type_named_like_a_lang_item_does_not_shadow_it() {
         assert_eq!(run.code(), Some(0), "unexpected exit: {run}");
     }
 }
+
+/// reports/issue-09: a typo'd import prefix used to mean two different things
+/// depending on where it was written. `rewrite_type_name` reported E0402
+/// ("unknown import prefix"), naming the mistake; the struct-literal, generic
+/// struct-literal, generic enum-call and variant-pattern arms had no `else`
+/// branch at all, so the name fell through unqualified and sema reported E0303
+/// ("unknown type") against a type the user never wrote. One helper resolves
+/// all five now, so one mistake gets one answer.
+#[test]
+fn a_typoed_import_prefix_reports_the_same_error_in_every_position() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let positions: [(&str, &str); 5] = [
+        ("type", "fn probe(p: wrong::Point) -> i32 { return 0; }"),
+        (
+            "struct literal",
+            "fn probe() -> i32 { let q: i32 = 0; let _r = wrong::Point { x: 1 }; return q; }",
+        ),
+        (
+            "generic struct literal",
+            "fn probe() -> i32 { let _r = wrong::Holder[i32] { v: 1 }; return 0; }",
+        ),
+        (
+            "generic enum call",
+            "fn probe() -> i32 { let _r = wrong::Maybe[i32]::None; return 0; }",
+        ),
+        (
+            "variant pattern",
+            "fn probe(m: dep::Color) -> i32 { match m { wrong::Color::Red => { return 0; }, _ => { return 1; } } }",
+        ),
+    ];
+    for (what, body) in positions {
+        let dir = tempdir();
+        std::fs::write(
+            dir.join("Cplus.toml"),
+            "[package]\nname = \"typo\"\n\n[[bin]]\nname = \"typo\"\npath = \"src/main.cplus\"\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(
+            dir.join("src/dep.cplus"),
+            "struct Point { x: i32 }\nstruct Holder[T] { v: T }\nenum Maybe[T] { None, Some }\nenum Color { Red, Blue }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("src/main.cplus"),
+            format!("import \"./dep\" as dep;\n{body}\nfn main() -> i32 {{ return 0; }}\n"),
+        )
+        .unwrap();
+        let out = Command::new(cpc)
+            .arg("check")
+            .current_dir(&dir)
+            .output()
+            .expect("cpc check");
+        let all = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            !out.status.success(),
+            "{what}: a typo'd prefix must be rejected, got:\n{all}"
+        );
+        assert!(
+            all.contains("E0402") && all.contains("wrong"),
+            "{what}: expected E0402 naming the prefix, got:\n{all}"
+        );
+    }
+}

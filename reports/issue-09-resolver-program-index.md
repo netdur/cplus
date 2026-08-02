@@ -1,5 +1,7 @@
 # Issue 09 — Resolver: one ProgramIndex, one prefix resolver, one explicit config
 
+- Status: PARTIAL 2026-08-02, commit <pending> — part (B) done; (A) and (C) not
+  done, see "What is still open"
 - Type: structural consolidation
 - Area: `cplus-core/src/resolver.rs`; driver call sites in `cpc/src/main.rs`; consumers
   `graph.rs`, `sema.rs`
@@ -99,3 +101,60 @@ graph. Drop `"println"` from `is_builtin` (sema owns that gate).
 - `_`-privacy semantics must not change; only WHERE they are computed.
 - Keep `import "x" as _;` discard-alias and EXT.2 extension-gate behavior pinned by
   their existing tests throughout.
+
+## Outcome — part (B), one prefix resolver
+
+```rust
+fn resolve_item_name(&self, name: &str, span: Span) -> Result<Option<String>, ResolveError>
+```
+
+`Ok(Some(qualified))` when it resolved, `Ok(None)` when the name is neither
+prefixed nor local (a primitive, a builtin, a generic parameter — leave it
+alone), `Err(UnknownPrefix)` when the prefix is not an import. Five arms now ask
+it: struct literal, generic struct literal, generic enum call, variant pattern
+and `rewrite_type_name`.
+
+Two inconsistencies disappear with the duplication:
+
+- **One typo, one error.** Four of the five arms had no `else` branch: a
+  reference through an unknown prefix fell through unqualified, and sema then
+  reported E0303 "unknown type `wrong::Point`" — naming a type the user never
+  wrote — while the same typo in a type position was E0402 "unknown import
+  prefix", which names the actual mistake. All five are E0402 now, pinned by
+  e2e `a_typoed_import_prefix_reports_the_same_error_in_every_position`.
+- **Alias facades resolve in every spelling.** The re-export hop
+  (`resolve_alias_target`) was consulted for a plain struct literal only, so a
+  module re-exporting another module's generic type resolved as `Holder` in one
+  spelling and `dep::Holder` in the other. It is inside the helper now.
+
+The two remaining `split_once("::")` sites in the resolver are a different
+question (an import path's own shape, and a 2/3-segment CALL path), not item
+resolution.
+
+## What is still open
+
+- **(A) ProgramIndex.** Every file still deep-clones four whole-project maps
+  into its `RewriteCtx`, and the pub-only shape is why a nonexistent method
+  reports as private. bug-22 added the existence table beside `pub_methods`, so
+  the user-visible half is fixed; the clone-per-file and the exportedness stamp
+  (which would delete graph's re-derivation, bug-17's class) are not.
+- **(C) ResolveConfig.** Configuration is still re-derived from process globals
+  populated as a side effect of a driver call that eight call sites must
+  remember to make first. bug-18 deleted both hand-rolled TOML scanners (the
+  resolver reads `manifest::load` now), which was the sharp edge; the ordering
+  hazard, the `deps: None`/`Some(&[])` mode pun and the silent vendor-sibling
+  fallback remain.
+
+Both are threading changes across the driver and the graph, not local edits, and
+neither is a prerequisite for (B).
+
+## Verification (as run)
+
+- e2e `a_typoed_import_prefix_reports_the_same_error_in_every_position`: the
+  same typo in all five positions, in a real two-file project (single-file mode
+  never runs the resolver rewrite, so the test has to be project-shaped).
+- `cargo test -p cplus-core` 1847 + 8, `cargo test -p cpc` 608 + 16 + 5 + 6,
+  including `--test platform_deps`, the riskiest consumer of the resolver's
+  configuration.
+- Vendor-wide `cpc check` across 54 packages: every package matches its recorded
+  baseline count.
