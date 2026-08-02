@@ -1,7 +1,7 @@
 # Issue 13 — Drop/move machinery: fail loudly, classify once
 
-- Status: PARTIAL 2026-08-02, commit 2db5cb7 — (a), (c), (d), (e) done; (b),
-  the `carries_drop` bit, not done
+- Status: DONE 2026-08-02 — (a), (c), (d), (e) in `2db5cb7`; (b) in
+  `f7704c8`, as a shared rule rather than the proposed cached bit
 - Type: structural consolidation + targeted fixes
 - Area: `cplus-core/src/codegen.rs`
 - Effort: M
@@ -138,3 +138,34 @@ doing, and that is its own piece of work.
   `cpc test` in `vendor/stdlib` 290 — all with the `mark_moved` assertion live.
 - `--emit-ll` over 40 `docs/examples` plus the ABI, C-ABI and method probes:
   byte-identical.
+
+## (b) as landed — one rule, not a mirrored bit
+
+The report proposed a cached `carries_drop` bit on `StructInfo`/`EnumInfo`
+plus a check that sema and codegen agree, on the assumption that sharing was
+impossible across the id universes. It is not: codegen already uses sema's
+`Ty`, so the two copies differed only in which table they indexed.
+`sema::carries_drop` is now the one place the recursion is written, and
+`TypeShape` is the seam each side implements over its OWN ids — nothing
+crosses. (issue-15(b) then joined the layout rule to the same trait.)
+
+A cached bit would also have been the wrong instrument: a memo that can go
+stale is the disease issue-14 is about, not the cure.
+
+The differential is a test — both passes over a corpus, compared per type
+NAME, with the answers themselves pinned so a regime change is visible rather
+than two passes quietly agreeing on the wrong thing. Mutation-probed by
+forcing codegen's `is_drop` to false.
+
+**Correction found while landing it.** Both copies claimed cycle-safety
+"because by-value containment is acyclic". That is true of SIZE and false of
+the containment graph: `struct S { s: [S; 0] }` embeds nothing, is accepted
+(E0913 correctly sees a finite size), and following it does not terminate.
+Enumerating every declared type through the shared rule overflowed the stack
+on sema's own `zero_length_array_recursion_is_clean` corpus. The rule now
+carries a visiting set, the same guard `ty_contains_view` uses. The layout
+walk had the identical blind spot — see `bug-28`, found here and fixed
+(as to the hang) by issue-15(b).
+
+`MonoInfo::type_classification`'s doc claimed its third element was
+`carries_drop`; it stores "has an explicit destructor". Fixed.

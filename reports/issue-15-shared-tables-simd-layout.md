@@ -1,7 +1,6 @@
 # Issue 15 — Shared tables: SIMD triplicate, layout duo, scalar-list gap
 
-- Status: PARTIAL 2026-08-02, commit d6d3bd0 — (a) and (c) done; (b), the
-  layout duo, not done, see below
+- Status: DONE 2026-08-02 — (a) and (c) in `d6d3bd0`; (b) in `b818a1b`.
 - Type: consolidation (small, mechanical)
 - Area: `cplus-core/src/sema.rs`, `codegen.rs`
 - Effort: S
@@ -93,3 +92,36 @@ together; the audit found no live divergence, so nothing is broken today.
 - `cargo test -p cplus-core` 1850 + 8 (two new tests), `cargo test -p cpc` 608 +
   16 + 5 + 6, `cpc test` in `vendor/stdlib` 290.
 - `--emit-ll` over 40 `docs/examples` plus the ABI probes: byte-identical.
+
+**(b) The layout duo, merged — and it was live.** The report said "the audit
+found none live, but the test is the point". Writing the differential first,
+as it instructed, found one: sema hard-coded 8 bytes for every pointer-shaped
+type (`*T`, `fn`, `usize`/`isize`, `str`, `T[]`, `Text`) while codegen asked
+`active_target().pointer_width`. On a 32-bit target — `esp32c3-riscv32`,
+`wasm32`, both supported — sema's `#[max_stack]` estimate over-counted every
+pointer in the frame, so the budget could reject a program that fits. Nothing
+else consumes sema's layout, which is why it went unnoticed.
+
+`sema::layout_of` is now the rule, over the same `TypeShape` seam issue-13(b)
+introduced for the drop rule — one trait rather than two, because both rules
+ask the same tables the same questions and a second near-identical trait would
+be the disease again. `enum_payload_slots` lives beside it, so the emitted
+`{ i32, [N x i64] }` and the size every consumer reports come from one count
+instead of two copies of the `(sz+7)&!7 … div_ceil(8)` formula. Codegen's
+`static_layout` is a one-line delegation; `ptr_size_bytes` is gone (the shared
+rule asks the target directly).
+
+The differential (`sema_and_codegen_agree_on_layout`) walks a corpus covering
+padding, nesting, arrays, views, SIMD, generic instantiation, and plain and
+payload-carrying enums; compares size and align per type NAME across the two
+passes; pins the numbers themselves so a packing change is a decision rather
+than two passes quietly agreeing on something new; and separately asserts the
+CACHED slot count equals the layout's recomputation — the v0.0.3
+stomp-past-the-allocation bug in one line. Mutation-probed by dropping the
+struct's trailing pad.
+
+Side effect worth recording: the shared walk carries a cycle guard, which
+fixes the compiler HANG in `bug-28` (`struct Node { kids: [Node; 0] }` is
+finite in size but cyclic in the containment graph). That bug stays open
+against the struct-body emitter, which still emits a self-referential LLVM
+type clang rejects — narrowed and re-scoped in its own file.
