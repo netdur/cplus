@@ -1,6 +1,6 @@
 # Issue 05 — One argument path and one dispatch-gate sequence for every call form
 
-- Status: DONE 2026-08-02, commit <pending>
+- Status: DONE 2026-08-02, commit 8f874b8
 - Type: structural consolidation
 - Area: `cplus-core/src/sema.rs`
 - Effort: M-L
