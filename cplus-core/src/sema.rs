@@ -638,11 +638,19 @@ pub struct BoundMethodRefInfo {
 
 #[derive(Debug, Default, Clone)]
 pub struct MonoInfo {
-    /// issue-14 step 1: `(type name, is_copy, carries_drop)` for every struct
-    /// and enum the compile classified — the characterization harness behind
+    /// issue-14 step 1: `(type name, is_copy, has an explicit destructor)` for
+    /// every struct and enum the compile classified — the characterization harness behind
     /// `classify_types`. Cheap to fill (it is a walk of two tables already
     /// built) and read by nothing in the pipeline.
     pub type_classification: Vec<(String, bool, bool)>,
+    /// issue-13(b): `(type name, carries_drop)` for every struct and enum,
+    /// computed with the shared [`carries_drop`] rule — the differential
+    /// codegen's own tables must reproduce. Filled only when the program
+    /// checked clean: the recursion has no visiting set, and a mutually
+    /// recursive type (rejected by E0913, but only after the tables exist)
+    /// would not terminate. Empty otherwise, and read by nothing in the
+    /// pipeline.
+    pub drop_classification: Vec<(String, bool)>,
     pub instantiations: std::collections::BTreeSet<(String, Vec<Ty>)>,
     /// Maps each generic-fn call site to its concrete arg list, keyed by
     /// the call expression's span. v0.0.22 file-aware spans carry their
@@ -824,6 +832,32 @@ pub fn classify_types(
         .iter()
         .map(|(n, c, d)| (n.clone(), *c, *d))
         .collect();
+    out.sort();
+    out
+}
+
+/// issue-13(b): the composed drop answer — `name -> carries_drop` — for every
+/// struct and enum this compile classified, computed with the same
+/// [`carries_drop`] the pipeline uses. The differential half of the
+/// single-sourcing: codegen builds its own tables from the post-mono AST and
+/// must reach the same conclusion for the same type name.
+///
+/// A TEST hook, not a pipeline product, for the reason `type_classification`
+/// records: the recursion has no visiting set, so a mutually recursive type
+/// would not terminate here — sema rejects those (E0913), but only after the
+/// tables exist. Call it on programs that check clean.
+pub fn classify_carries_drop(
+    program: &Program,
+    entry_file: PathBuf,
+    entry_src: &str,
+    files: std::collections::BTreeMap<String, (PathBuf, String)>,
+) -> Vec<(String, bool)> {
+    let (diags, mono) = check_with_files_inner(program, entry_file, entry_src, files, false, None);
+    assert!(
+        !diags.iter().any(|d| matches!(d.severity, Severity::Error)),
+        "classify_carries_drop expects a clean program; got {diags:#?}"
+    );
+    let mut out = mono.drop_classification;
     out.sort();
     out
 }
@@ -1281,8 +1315,27 @@ fn check_with_files_inner(
         .map(|d| (d.name.clone(), d.is_copy, d.is_drop))
         .chain(cx.enums.iter().map(|d| (d.name.clone(), d.is_copy, false)))
         .collect();
+    // issue-13(b): the composed answer, for the codegen differential. Guarded
+    // on a clean check for the reason the note above gives — the recursion
+    // has no visiting set, and E0913 has not fired yet on a program that has
+    // other errors.
+    let drop_classification: Vec<(String, bool)> = if cx.sink.has_errors() {
+        Vec::new()
+    } else {
+        (0..cx.structs.len())
+            .map(|i| {
+                let ty = Ty::Struct(StructId(i as u32));
+                (cx.structs[i].name.clone(), carries_drop(&ty, &cx))
+            })
+            .chain((0..cx.enums.len()).map(|i| {
+                let ty = Ty::Enum(EnumId(i as u32));
+                (cx.enums[i].name.clone(), carries_drop(&ty, &cx))
+            }))
+            .collect()
+    };
     let mono = MonoInfo {
         type_classification,
+        drop_classification,
         instantiations,
         call_monos: std::mem::take(&mut cx.call_monos),
         assoc_free_fn_dispatches: std::mem::take(&mut cx.assoc_free_fn_dispatches),
@@ -1697,6 +1750,112 @@ struct SemaCx<'a> {
     /// v0.0.24 #11: spans of `Text`→`str` coercion sites (see
     /// [`MonoInfo::text_to_str_coercions`]).
     text_to_str_coercion_table: std::collections::HashSet<ByteSpan>,
+}
+
+/// issue-13(b): the two facts the "does this need teardown?" question asks of
+/// a type table.
+///
+/// Sema and codegen each keep their own tables, in their own id universes —
+/// a sema `StructId` and a codegen `StructId` number different things, and
+/// nothing may pass one to the other. But the RULE is one rule, and it used
+/// to be written twice: sema's `ty_carries_drop` and codegen's `needs_drop`,
+/// the second labelled "mirrors sema's ty_carries_drop". Widening drop
+/// semantics on one side silently desynced the other, and the failure mode is
+/// a leak or a double-free, not a diagnostic. This trait is the seam: each
+/// side answers about its OWN ids, and [`carries_drop`] is the only place the
+/// recursion is written.
+pub trait DropShape {
+    /// Does this struct declare a destructor of its own?
+    fn struct_has_drop(&self, id: StructId) -> bool;
+    /// Its field types, in declaration order.
+    fn struct_field_tys(&self, id: StructId) -> Vec<Ty>;
+    /// Does this enum carry payloads at all? A plain enum is a bare tag with
+    /// nothing to tear down.
+    fn enum_is_tagged(&self, id: EnumId) -> bool;
+    /// Every variant payload type, flattened.
+    fn enum_payload_tys(&self, id: EnumId) -> Vec<Ty>;
+}
+
+/// v0.0.14 auto field-drop: does a value of `ty` need teardown?
+///
+/// - `Text` owns a heap buffer.
+/// - A struct carries drop if it declares one OR any field does (transitive
+///   auto field-drop).
+/// - A tagged enum carries drop if any variant payload does; a plain enum is
+///   a bare tag.
+/// - An array carries drop if its element does.
+///
+/// Cycle-guarded. E0913 rejects value-recursive types, so the ordinary
+/// containment graph is acyclic — but not every cycle is infinite-size:
+/// `struct S { s: [S; 0] }` embeds nothing and is accepted, and following it
+/// without a guard does not terminate. Both hand-written copies of this rule
+/// carried a comment claiming cycle-safety "because containment is acyclic",
+/// and both would have overflowed the stack the first time anyone declared a
+/// value of such a type. Revisiting a type mid-walk answers `false` for that
+/// path: a cycle with no drop-carrying leaf on it carries no drop.
+pub fn carries_drop(ty: &Ty, tables: &dyn DropShape) -> bool {
+    carries_drop_inner(ty, tables, &mut Vec::new())
+}
+
+fn carries_drop_inner(ty: &Ty, tables: &dyn DropShape, visiting: &mut Vec<(bool, u32)>) -> bool {
+    match ty {
+        Ty::String => true,
+        Ty::Struct(id) => {
+            if tables.struct_has_drop(*id) {
+                return true;
+            }
+            if visiting.contains(&(true, id.0)) {
+                return false;
+            }
+            visiting.push((true, id.0));
+            let r = tables
+                .struct_field_tys(*id)
+                .iter()
+                .any(|t| carries_drop_inner(t, tables, visiting));
+            visiting.pop();
+            r
+        }
+        Ty::Enum(id) => {
+            if !tables.enum_is_tagged(*id) {
+                return false;
+            }
+            if visiting.contains(&(false, id.0)) {
+                return false;
+            }
+            visiting.push((false, id.0));
+            let r = tables
+                .enum_payload_tys(*id)
+                .iter()
+                .any(|t| carries_drop_inner(t, tables, visiting));
+            visiting.pop();
+            r
+        }
+        Ty::Array(elem, _) => carries_drop_inner(elem, tables, visiting),
+        _ => false,
+    }
+}
+
+impl DropShape for SemaCx<'_> {
+    fn struct_has_drop(&self, id: StructId) -> bool {
+        self.structs[id.0 as usize].is_drop
+    }
+    fn struct_field_tys(&self, id: StructId) -> Vec<Ty> {
+        self.structs[id.0 as usize]
+            .fields
+            .iter()
+            .map(|(_, t, _)| t.clone())
+            .collect()
+    }
+    fn enum_is_tagged(&self, id: EnumId) -> bool {
+        self.enums[id.0 as usize].is_tagged
+    }
+    fn enum_payload_tys(&self, id: EnumId) -> Vec<Ty> {
+        self.enums[id.0 as usize]
+            .variants
+            .iter()
+            .flat_map(|v| v.payload.iter().cloned())
+            .collect()
+    }
 }
 
 /// v0.0.9 Phase 4: sema-resolved info for a module-scope `static`.
@@ -3736,32 +3895,10 @@ impl SemaCx<'_> {
 
     /// True iff `ty` itself carries a destructor (its scope-exit drop is
     /// non-trivial). Mirror of `is_copy` for the Drop side. Used by the
-    /// tagged-enum payload rule (§3.3 of the design note).
+    /// tagged-enum payload rule (§3.3 of the design note). The rule lives in
+    /// [`carries_drop`] — codegen asks the same question of its own tables.
     fn ty_carries_drop(&self, ty: &Ty) -> bool {
-        match ty {
-            // v0.0.14 auto field-drop: the owned-string type (`Text`) owns a heap buffer.
-            Ty::String => true,
-            // A struct carries drop if it has an explicit `drop` OR any field
-            // is itself drop-carrying (transitive auto field-drop). Cycle-safe:
-            // by-value struct containment is acyclic (infinite-size structs are
-            // rejected), and Vec/Box break recursion via raw-pointer fields.
-            Ty::Struct(id) => {
-                let def = &self.structs[id.0 as usize];
-                def.is_drop || def.fields.iter().any(|f| self.ty_carries_drop(&f.1))
-            }
-            // v0.0.14 enum-variant drop: a tagged enum carries drop if any
-            // variant payload does. Cycle-safe for the same reason as structs.
-            Ty::Enum(id) => {
-                let def = &self.enums[id.0 as usize];
-                def.is_tagged
-                    && def
-                        .variants
-                        .iter()
-                        .any(|v| v.payload.iter().any(|t| self.ty_carries_drop(t)))
-            }
-            Ty::Array(elem, _) => self.ty_carries_drop(elem),
-            _ => false,
-        }
+        carries_drop(ty, self)
     }
 
     /// v0.0.14 `#[no_alloc]` drop-glue: record the types whose `drop` method

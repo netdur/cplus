@@ -2054,6 +2054,29 @@ struct TypeTable {
     str_methods: HashMap<String, MethodInfo>,
 }
 
+impl crate::sema::DropShape for TypeTable {
+    fn struct_has_drop(&self, id: StructId) -> bool {
+        self.struct_defs[id.0 as usize].is_drop
+    }
+    fn struct_field_tys(&self, id: StructId) -> Vec<Ty> {
+        self.struct_defs[id.0 as usize]
+            .fields
+            .iter()
+            .map(|(_, t)| t.clone())
+            .collect()
+    }
+    fn enum_is_tagged(&self, id: EnumId) -> bool {
+        self.enum_defs[id.0 as usize].is_tagged
+    }
+    fn enum_payload_tys(&self, id: EnumId) -> Vec<Ty> {
+        self.enum_defs[id.0 as usize]
+            .variant_payloads
+            .iter()
+            .flat_map(|p| p.iter().cloned())
+            .collect()
+    }
+}
+
 #[derive(Debug, Clone)]
 struct EnumInfo {
     /// Variant name → declaration-order index (the runtime tag value).
@@ -9226,28 +9249,15 @@ impl<'a> FnState<'a> {
     }
 
     /// v0.0.14 auto field-drop: does a value of this type need teardown?
-    /// Mirrors sema's `ty_carries_drop` so codegen registers/emits drops for
-    /// exactly the types the front end treats as owning. Recursive and
-    /// cycle-safe (by-value containment is acyclic; Vec/Box break recursion
-    /// via raw-pointer fields).
+    ///
+    /// issue-13(b): this used to be a hand-kept mirror of sema's
+    /// `ty_carries_drop`, labelled as such — two copies of one rule, where a
+    /// widening on either side desyncs the other and the failure mode is a
+    /// leak or a double-free rather than a diagnostic. The rule now lives in
+    /// [`crate::sema::carries_drop`]; codegen supplies its OWN tables, so no
+    /// id crosses the seam.
     fn needs_drop(&self, ty: &Ty) -> bool {
-        match ty {
-            Ty::String => true,
-            Ty::Struct(id) => {
-                let def = &self.types.struct_defs[id.0 as usize];
-                def.is_drop || def.fields.iter().any(|f| self.needs_drop(&f.1))
-            }
-            Ty::Enum(id) => {
-                let info = &self.types.enum_defs[id.0 as usize];
-                info.is_tagged
-                    && info
-                        .variant_payloads
-                        .iter()
-                        .any(|p| p.iter().any(|t| self.needs_drop(t)))
-            }
-            Ty::Array(elem, _) => self.needs_drop(elem),
-            _ => false,
-        }
+        crate::sema::carries_drop(ty, self.types)
     }
 
     /// Emit the teardown for a value of type `ty` stored at pointer `p_val`.
@@ -18164,6 +18174,146 @@ mod tests {
         // every table to empty and tests of `#selector` / `#msg_send` /
         // `#compile_shader` would panic in their pre-pass lookups.
         generate_with_mono(&post, BuildMode::Debug, true, None, &[], false, &mono)
+    }
+
+    /// issue-13(b): the two passes must reach the same drop conclusion for the
+    /// same type. The RULE is shared now (`sema::carries_drop`), so what this
+    /// pins is the inputs — sema's `is_drop` / `is_tagged` against codegen's,
+    /// each derived independently, one pre-mono and one from the post-mono AST.
+    /// A widening on either side that the other misses shows up here as a
+    /// name whose answers differ.
+    #[test]
+    fn sema_and_codegen_agree_on_which_types_carry_drop() {
+        use crate::ast::ItemKind;
+        let src = "\
+extern fn free(p: *u8);\n\
+struct Plain { a: i32, b: bool }\n\
+struct HasPtr { p: *u8 }\n\
+impl HasPtr { fn drop(ref this) { { free(this.p); } return; } }\n\
+struct WrapsDrop { inner: HasPtr, n: i32 }\n\
+struct WrapsWrapper { deep: WrapsDrop }\n\
+struct HoldsArray { xs: [HasPtr; 2] }\n\
+struct Gen[T] { v: T }\n\
+enum PlainTag { A, B }\n\
+enum Payload { None, Some(HasPtr) }\n\
+enum CopyPayload { None, Some(i32) }\n\
+fn main() -> i32 {\n\
+    let g: Gen[i32] = Gen[i32] { v: 1 };\n\
+    let h: Gen[HasPtr] = Gen[HasPtr] { v: HasPtr { p: 0 as *u8 } };\n\
+    return g.v - 1;\n\
+}\n";
+        let toks = tokenize(src).expect("lex");
+        let prog = parse(toks).expect("parse");
+        let file_path = PathBuf::from("t.cplus");
+        let mut files: std::collections::BTreeMap<String, (PathBuf, String)> =
+            std::collections::BTreeMap::new();
+        files.insert("t.cplus".to_string(), (file_path.clone(), src.to_string()));
+        let sema_answers =
+            sema::classify_carries_drop(&prog, file_path.clone(), src, files.clone());
+        assert!(
+            !sema_answers.is_empty(),
+            "the corpus must classify something"
+        );
+
+        // Rebuild the post-mono program the way the pipeline does, then ask
+        // codegen's own tables.
+        let (diags, mono) = sema::check_multi_with_mono(&prog, file_path, src, files);
+        assert!(diags.is_empty(), "sema errors: {diags:#?}");
+        let mut struct_names: Vec<String> = Vec::new();
+        let mut enum_names: Vec<String> = Vec::new();
+        for item in &prog.items {
+            match &item.kind {
+                ItemKind::Struct(s) if s.generic_params.is_empty() => {
+                    struct_names.push(s.name.name.clone())
+                }
+                ItemKind::Enum(e) if e.generic_params.is_empty() => {
+                    enum_names.push(e.name.name.clone())
+                }
+                _ => {}
+            }
+        }
+        for info in mono.struct_instantiations.values() {
+            let slot = info.id as usize;
+            if struct_names.len() <= slot {
+                struct_names.resize(slot + 1, String::from("?"));
+            }
+            struct_names[slot] = info.mangled_name.clone();
+        }
+        for info in mono.enum_instantiations.values() {
+            let slot = info.id as usize;
+            if enum_names.len() <= slot {
+                enum_names.resize(slot + 1, String::from("?"));
+            }
+            enum_names[slot] = info.mangled_name.clone();
+        }
+        let name_of = {
+            let struct_names = struct_names.clone();
+            let enum_names = enum_names.clone();
+            move |ty: &sema::Ty| -> String {
+                match ty {
+                    sema::Ty::Struct(id) => struct_names
+                        .get(id.0 as usize)
+                        .cloned()
+                        .unwrap_or_else(|| "?".into()),
+                    sema::Ty::Enum(id) => enum_names
+                        .get(id.0 as usize)
+                        .cloned()
+                        .unwrap_or_else(|| "?".into()),
+                    other => other.name().to_string(),
+                }
+            }
+        };
+        let post = crate::monomorphize::monomorphize(prog, &mono, &name_of);
+        let tables = collect_types(&post);
+
+        // Every type codegen knows about, answered by codegen's tables.
+        let mut checked = 0;
+        for (name, id) in &tables.struct_by_name {
+            let Some((_, sema_says)) = sema_answers.iter().find(|(n, _)| n == name) else {
+                continue;
+            };
+            let codegen_says = crate::sema::carries_drop(&sema::Ty::Struct(*id), &tables);
+            assert_eq!(
+                *sema_says, codegen_says,
+                "struct `{name}`: sema says carries_drop={sema_says}, codegen says {codegen_says}"
+            );
+            checked += 1;
+        }
+        for (name, id) in &tables.enum_by_name {
+            let Some((_, sema_says)) = sema_answers.iter().find(|(n, _)| n == name) else {
+                continue;
+            };
+            let codegen_says = crate::sema::carries_drop(&sema::Ty::Enum(*id), &tables);
+            assert_eq!(
+                *sema_says, codegen_says,
+                "enum `{name}`: sema says carries_drop={sema_says}, codegen says {codegen_says}"
+            );
+            checked += 1;
+        }
+        // Guard the guard: a comparison that compared nothing would pass.
+        assert!(
+            checked >= 8,
+            "expected to compare the whole corpus, compared {checked}"
+        );
+        // And pin the answers themselves, so a regime change is visible here
+        // rather than only as two passes quietly agreeing on the wrong thing.
+        let says = |n: &str| {
+            sema_answers
+                .iter()
+                .find(|(name, _)| name == n)
+                .unwrap_or_else(|| panic!("`{n}` not classified: {sema_answers:?}"))
+                .1
+        };
+        assert!(!says("Plain"));
+        assert!(says("HasPtr"));
+        assert!(says("WrapsDrop"));
+        assert!(says("WrapsWrapper"));
+        assert!(says("HoldsArray"));
+        assert!(!says("PlainTag"));
+        assert!(says("Payload"));
+        assert!(!says("CopyPayload"));
+        assert!(!says("Gen__i32"));
+        assert!(says("Gen__HasPtr"));
     }
 
     #[test]
