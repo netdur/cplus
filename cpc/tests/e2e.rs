@@ -5989,6 +5989,136 @@ fn view_lifetime_sound_forms_still_compile() {
 const OPT_PRELUDE: &str = "enum Opt { S(Buf), N }\n\
      fn take_it() -> Opt { return Opt::S(mk()); }\n";
 
+// ── E0365: a value that captured the address of a LOCAL must not outlive it.
+// The whole family lived in sema unit tests until 2026-08-02; these are the
+// same shapes through the real pipeline, written before the rules move
+// (issue-07 step 5 ports them into borrowck) so the port has a corpus that
+// does not move with the emission. Each denial below is a stack slot a
+// handler would read some number of event-loop turns after the frame died.
+
+const CAPTURE_PRELUDE: &str = "struct Child { clicks: i32 }\n\
+     impl Child {\n\
+         fn clicked(ref this) { this.clicks = this.clicks + 1; return; }\n\
+         fn build(ref this) -> i32 { return take_handler(this.clicked); }\n\
+     }\n\
+     fn take_handler(f: fn(*u8), ctx: *u8 = 0 as *u8) -> i32 { return 1; }\n\
+     fn sink(v: i32) { return; }\n\
+     static SLOT: i32 = 0;\n";
+
+#[test]
+fn a_capture_of_a_local_escaping_the_frame_is_rejected_e0365() {
+    // Every way OUT of the frame, which is why the rule wants to be a borrow
+    // class rather than one patch per position: return, store into a
+    // `static`, store through a `ref` parameter, and hand-off to a call.
+    // Each in both the direct form (the handler is bound here) and the
+    // transitive one (the callee does the binding), plus the builder route
+    // where the capture reaches the exit through an intermediate local.
+    for (label, tail) in [
+        (
+            "return-direct",
+            "fn make() -> i32 { var c: Child = Child { clicks: 0 }; \
+             return take_handler(c.clicked); }",
+        ),
+        (
+            "return-transitive",
+            "fn make() -> i32 { var c: Child = Child { clicks: 0 }; return c.build(); }",
+        ),
+        (
+            "static-direct",
+            "fn stash() { var c: Child = Child { clicks: 0 }; \
+             SLOT = take_handler(c.clicked); return; }",
+        ),
+        (
+            "static-transitive",
+            "fn stash() { var c: Child = Child { clicks: 0 }; SLOT = c.build(); return; }",
+        ),
+        (
+            "ref-param",
+            "fn stash(ref out: i32) { var c: Child = Child { clicks: 0 }; \
+             out = take_handler(c.clicked); return; }",
+        ),
+        (
+            "call-argument",
+            "fn hand_over() { var c: Child = Child { clicks: 0 }; \
+             sink(take_handler(c.clicked)); return; }",
+        ),
+        (
+            "through-a-builder-local",
+            // The shape a component tree actually writes: the capture reaches
+            // the exit through an intermediate that absorbed it.
+            "struct Bag { n: i32 }\n\
+             impl Bag {\n\
+                 fn new() -> Bag { return Bag { n: 0 }; }\n\
+                 fn add(ref this, v: i32) { this.n = this.n + v; return; }\n\
+             }\n\
+             fn wrap(b: Bag) -> i32 { return b.n; }\n\
+             fn make() -> i32 {\n\
+                 var bag: Bag = Bag::new();\n\
+                 var c: Child = Child { clicks: 0 };\n\
+                 bag.add(c.build());\n\
+                 return wrap(bag);\n\
+             }",
+        ),
+    ] {
+        let (ok, stderr) = try_compile_snippet(&format!(
+            "{CAPTURE_PRELUDE}{tail}\nfn main() -> i32 {{ return 0; }}\n"
+        ));
+        assert!(!ok, "[{label}] expected E0365, compiled instead");
+        assert!(
+            stderr.contains("E0365"),
+            "[{label}] expected E0365, got: {stderr}"
+        );
+    }
+}
+
+#[test]
+fn a_capture_that_outlives_nothing_still_compiles() {
+    // The line the rule must not cross. Measured at zero cost across every
+    // vendor package and example precisely because of these: real code binds
+    // handlers to `this` or to a field, and the BINDING site itself is not an
+    // escape — whether `take_handler`'s result carries the address is a
+    // property of the callee, so a bare bound reference as an argument says
+    // nothing on its own. Rejecting these would reject every handler in every
+    // component.
+    for (label, tail) in [
+        (
+            "destination-dies-with-the-frame",
+            "fn build_it() { var c: Child = Child { clicks: 0 }; \
+             var n: i32 = take_handler(c.clicked); return; }",
+        ),
+        (
+            "bound-to-this-into-a-static",
+            "impl Child { fn stash(ref this) { SLOT = take_handler(this.clicked); return; } }",
+        ),
+        (
+            "bound-to-this-into-a-call",
+            "impl Child { fn hand(ref this) { sink(take_handler(this.clicked)); return; } }",
+        ),
+        (
+            "bound-to-this-returned",
+            "impl Child { fn mk(ref this) -> i32 { return take_handler(this.clicked); } }",
+        ),
+        (
+            // The documented trust boundary, recorded so a port preserves it
+            // deliberately rather than by accident. `take_handler(c.clicked)`
+            // is the BINDING site; whether its result carries the address is
+            // a property of the callee, and the analysis does not read
+            // callees. Here the result is an `i32` and genuinely carries
+            // nothing — but a callee returning a struct that stored the
+            // pointer would escape unseen. That is the stated cost of not
+            // rejecting every handler in every component.
+            "the-binding-site-result-is-trusted",
+            "fn make() -> i32 { var c: Child = Child { clicks: 0 }; \
+             var n: i32 = take_handler(c.clicked); return n; }",
+        ),
+    ] {
+        let (ok, stderr) = try_compile_snippet(&format!(
+            "{CAPTURE_PRELUDE}{tail}\nfn main() -> i32 {{ return 0; }}\n"
+        ));
+        assert!(ok, "[{label}] must compile; stderr: {stderr}");
+    }
+}
+
 #[test]
 fn a_value_of_a_zero_length_array_recursive_struct_builds_and_runs() {
     // bug-28: `[T; 0]` embeds nothing, so E0913 correctly accepts a type that
