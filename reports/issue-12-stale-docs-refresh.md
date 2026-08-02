@@ -1,5 +1,6 @@
 # Issue 12 — Stale documentation refresh (pure-comment PR)
 
+- Status: DONE 2026-08-02, commit <pending>
 - Type: cleanup (comments/docs only, zero behavior change)
 - Area: sema.rs, monomorphize.rs, prune.rs, parser.rs, lexer.rs, attrs.rs
 - Effort: S
@@ -92,3 +93,45 @@ to match the mask.
 
 `cargo build --release` (comments cannot break it, but the diff review should confirm
 zero non-comment lines changed) and one full `cargo test -p cplus-core` for hygiene.
+
+## Outcome
+
+All ten, each verified against the current tree before editing. Two had already
+been fixed by earlier work and needed no edit — noted below rather than
+silently skipped.
+
+1. **sema.rs header** — replaced "Phase 1 scope: only `i32` and `bool` types"
+   with the actual regions, in the order they run, and the fact that a sema
+   error bails before borrowck.
+2. **monomorphize.rs header** — rewritten. The old one was false in four
+   separate claims (no bound checking, no turbofish, methods deferred, generic
+   types have no instantiation surface); it now describes the seven steps the
+   pass performs and points at `crate::mangling` for the name grammar.
+3. **prune.rs** — it is one reachability walk from roots, not an iterated
+   fixpoint. Same result, different sentence.
+4. **parser.rs** — the "lines 1707 and 1816 below" cross-reference now names
+   the function instead (line numbers rot; names do not), and the half-edited
+   design musing about a `__generic_lit__` sentinel is replaced by what the
+   code actually does.
+5. **sema.rs `check_interp_str`** — already corrected: the doc says the
+   designated `#[lang("string")]` struct, and records that it used to say
+   `Ty::String`.
+6. **sema.rs `borrow_` doc** — unchanged; issue-11 item 1 (which deletes the
+   field) is still open, so the doc still describes a live field.
+7. **monomorphize.rs `synthesize_fn`** — the "defaults are vestigial" claim is
+   replaced by the real three-pass split (lower splices by name and arity, sema
+   records what lower could not, mono appends), and why an instance signature
+   needs no default of its own.
+8. **monomorphize.rs `mangle_call_from_ast`** — the file-less-`ByteSpan`
+   rationale is now past tense (v0.0.22 made spans file-aware) with the actual
+   reason it is kept.
+9. **lexer.rs `nl_before`** — "no other grammar reads it" now lists the
+   statement-boundary rule (bug-13) alongside builder blocks.
+10. **attrs.rs `#[no_alloc]`** — "free functions only" contradicted its own
+    target mask; the sentence matches the mask.
+
+## Verification (as run)
+
+`cargo build --release` clean and `cargo test -p cplus-core` 1847 + 8 green. The
+diff contains no non-comment lines — checked by filtering the diff for lines
+that are not comments or blank, which comes back empty.

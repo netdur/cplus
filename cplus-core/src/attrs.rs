@@ -139,9 +139,9 @@ const KNOWN_ATTRS: &[AttrSpec] = &[
     // v0.0.10 Phase 1: `#[no_alloc]` — verifiable real-time contract.
     // A `#[no_alloc]`-marked function and everything it transitively calls
     // must not heap-allocate. Surface-shape only; the call-graph walk and
-    // E0901 emission live in sema (see `check_no_alloc`). Free functions
-    // only — methods get the marker via their impl block's fn after sema's
-    // collect_methods normalizes them to FnSig entries.
+    // E0901 emission live in sema (see `check_no_alloc`). Accepted on free
+    // functions and on methods — sema's `collect_methods` normalizes both to
+    // FnSig entries, and the walk reads the marker from there.
     AttrSpec {
         name: "no_alloc",
         args: ArgsSpec::None,

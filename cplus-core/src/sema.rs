@@ -1,7 +1,20 @@
-//! Semantic analysis: name resolution + type checking, single pass.
+//! Semantic analysis: the pass between the resolver and borrowck.
 //!
-//! Phase 1 scope: only `i32` and `bool` types. Reports every Phase-1 rejection
-//! case from `docs/design/phase1-grammar.md` §7.2.
+//! Regions of this file, roughly in the order they run:
+//!
+//!   - type-table construction — structs, enums, interfaces, the Copy/Drop
+//!     classification fixpoint, and the `#[lang("...")]` registry;
+//!   - expression and statement checking: types, flow-sensitive move checking,
+//!     divergence, and the argument pipeline every call form shares;
+//!   - method resolution — the dispatch paths (struct, enum, associated fn,
+//!     builtin `str`, interface bound on a type parameter) and the gates they
+//!     all run;
+//!   - generic instantiation recording: what monomorphize needs, including the
+//!     propagation passes that reach sites inside generic template bodies;
+//!   - the view/borrow gates that pre-screen for borrowck.
+//!
+//! An error here bails the pipeline before borrowck runs, so a program with
+//! both a sema error and a borrow error reports the sema one first.
 //!
 //! Error code allocation:
 //! - E0300: undefined name

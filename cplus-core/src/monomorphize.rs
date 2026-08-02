@@ -1,37 +1,35 @@
-//! Slice 7GEN.5a: monomorphization pass for generic functions.
+//! Monomorphization: the pass between sema and codegen.
 //!
-//! Runs after sema. Consumes the `MonoInfo` sema produced (the set of
-//! unique generic-fn instantiations + per-call-site type-arg mapping)
-//! and emits a new `Program` where:
+//! Consumes the `MonoInfo` sema produced — the instantiation sets, the
+//! per-call-site type-args, and the span-keyed decisions sema made that the AST
+//! does not carry — and emits a `Program` in which nothing is generic.
 //!
-//!   - Each unique `(generic_fn_name, [concrete_types])` pair becomes
-//!     a synthesized concrete `Function` item with the type-param
-//!     references in its signature and body rewritten to the concrete
-//!     types. The synthesized fn's name is the mangled form (e.g.
-//!     `identity__i32`).
-//!   - Every `Call { callee: Ident(generic_fn_name), ... }` is
-//!     rewritten so the callee names the mangled fn instead.
-//!   - The original generic-fn templates are *removed* — they're no
-//!     longer reachable through any call site, and codegen would have
-//!     skipped them anyway. Removing them keeps the post-mono program
-//!     uniform (every fn it contains is concrete).
+//! The pass, in order:
 //!
-//! Scope kept narrow for the first cut:
-//!   - Generic *functions* only — generic types (`struct Pair[A, B]`,
-//!     `enum Option[T]`) parse but don't yet have an instantiation
-//!     surface (no constructor sugar that names them with type args).
-//!   - Inference rule: each generic param must appear as the top-level
-//!     type of at least one parameter. Nested-only / return-only
-//!     params fire E0500 at the call site (handled in sema).
-//!   - No bound checking yet (E0502 deferred).
-//!   - No turbofish `::[T]` syntax (every call must be type-inferable).
-//!   - Generic methods inside `impl` blocks are deferred.
+//!   1. **Type aliases** are substituted away (`rewrite_aliases_in_program`).
+//!   2. **Instantiation propagation** runs to a fixed point
+//!      (`propagate_all_instantiations`): a generic body's own calls discover
+//!      further instantiations, and the walk is capped at
+//!      `INSTANTIATION_LIMIT` so a self-growing generic
+//!      (`fn rec[T]() { rec::[*T](); }`) reports E0910 instead of hanging. The
+//!      driver runs the same fixpoint ahead of time for that diagnostic.
+//!   3. **Concrete items are synthesized**: one `Function` per generic-fn
+//!      instantiation, one struct/enum item per type instantiation (including
+//!      the synthesized tuple structs), and one concrete `impl` per generic
+//!      struct instantiation (`synthesize_generic_typed_impls`).
+//!   4. **Generic methods are expanded** — `expand_generic_method`, once per
+//!      `(owner, method, type-args)`, for both concrete-struct and
+//!      generic-struct impls.
+//!   5. **Call sites are rewritten** to the mangled names, along with the
+//!      node kinds codegen never sees: `GenericStructLit`, `GenericEnumCall`,
+//!      `InferredStructLit`, `FnRef`, and `Self`.
+//!   6. **Bound-method bridges** are synthesized for `recv.method` in
+//!      handler position (`synth_bound_bridge`).
+//!   7. **Templates are removed**, so every item the program still contains is
+//!      concrete.
 //!
-//! The mangled name format follows the design note: `name__T1__T2`,
-//! with each `Ti` rendered by `mangle_ty` (primitives use their
-//! literal name, structs/enums use their `name`, arrays render as
-//! `arrN_<elem>` so the structure is preserved without bracket
-//! characters LLVM rejects in identifiers).
+//! The mangled-name grammar lives in `crate::mangling` — printer and parser in
+//! one place, with the round-trip test that keeps them agreeing.
 
 use crate::ast::*;
 use crate::lexer::Span;
@@ -1468,8 +1466,14 @@ fn synthesize_fn(
                 move_: p.move_,
                 restrict: p.restrict,
                 borrow_: p.borrow_,
-                // Defaults are already spliced into every call site by `lower`
-                // (which runs before mono), so the signature default is vestigial.
+                // A default value on the SIGNATURE is not needed on a
+                // synthesized instance: splicing happens at the call site, in
+                // three places that divide the work by what each pass knows —
+                // `lower` splices what it can decide from name and arity,
+                // sema records what lower could not (a bare method name shared
+                // across types), and this pass appends those records
+                // (`default_splices`, in the `Call` rewrite). None of them
+                // reads the instance signature's own default.
                 default: None,
                 span: p.span,
             })
@@ -2310,11 +2314,15 @@ fn mangle_name(name: &str, args: &[Ty], type_name_of: &dyn Fn(&Ty) -> String) ->
 // equals `type_name_of(resolved_ty)`.
 //
 // Why this exists: the resolved type-args otherwise come from `call_monos`,
-// keyed by a file-less `ByteSpan` — so two turbofish calls at the same byte
-// offset in *different files* collide and one gets the other's type-args (a
-// `Vec[A]` value miscompiled into a `Vec[B]` slot). The turbofish AST is
-// per-call and collision-free, so for turbofish calls we mangle from it directly
-// and never consult `call_monos`.
+// which was keyed by a FILE-LESS `ByteSpan` — so two turbofish calls at the
+// same byte offset in different files collided and one got the other's
+// type-args (a `Vec[A]` value miscompiled into a `Vec[B]` slot).
+//
+// v0.0.22 made spans file-aware, so that collision is gone and this path is no
+// longer load-bearing for correctness. It is kept because it is the shorter
+// answer for a call that already states its type-args — mangling from the AST
+// needs no side table at all. Folding it into the resolved-`Ty` path is the
+// consolidation direction recorded in `crate::mangling`'s header.
 fn mangle_call_from_ast(
     name: &str,
     type_args: &[Type],

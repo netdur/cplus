@@ -45,8 +45,9 @@
 //!   - a name referenced from outside any function body (a global initialiser,
 //!     an alias, metadata) is treated as a root.
 //!
-//! Removal is iterated to a fixed point, because deleting a function drops the
-//! references its body made, which can strand its callees in turn.
+//! Removal is decided by one reachability walk from the roots: a definition is
+//! kept when the walk reaches it, so a function stranded by the removal of its
+//! only caller is simply never reached, without a second pass.
 
 use std::collections::{HashMap, HashSet};
 

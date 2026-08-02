@@ -3833,8 +3833,9 @@ impl Parser {
                     // `mod::Struct[A, B] { ... }` (struct lit). After
                     // collecting all `::`-segments (last is the enum/struct
                     // name), peek past the matching `]` for `::` (enum) or
-                    // `{` (struct lit). Mirrors the bare-Ident paths at
-                    // lines 1707 and 1816 below; they only triggered on
+                    // `{` (struct lit). Mirrors the bare-Ident handling in
+                    // `parse_primary`'s identifier arm (generic struct literal
+                    // and generic enum call); those only triggered on
                     // unqualified names before this slice.
                     if matches!(self.peek_kind(), TokenKind::LBracket) {
                         if let Some(after_bracket) = self.scan_past_bracket() {
@@ -3982,19 +3983,13 @@ impl Parser {
                                 }
                             }
                             let end = self.expect(&TokenKind::RBracket, "`]`")?.span;
-                            // Encode the generic name as a synthetic Ident
-                            // whose `name` field carries the mangled
-                            // post-monomorphize identifier — but we don't
-                            // yet know the mangled form at parse time.
-                            // Instead, embed a special marker the resolver
-                            // and sema will recognize: `__generic_lit__`
-                            // is a sentinel here is overkill. Cleaner:
-                            // extend ExprKind with a new variant.
-                            //
-                            // For 7GEN.5c MVP: synthesize the AST shape
-                            // by parsing the body, then wrap into a
-                            // dedicated generic-struct-lit form. We'll
-                            // add `ExprKind::GenericStructLit` for this.
+                            // `Pair[i32, bool] { .. }` parses to
+                            // `ExprKind::GenericStructLit`, which carries the
+                            // template name and the type-args unresolved: the
+                            // mangled name does not exist until monomorphize
+                            // has the instantiation. Mono rewrites the node to
+                            // a plain `StructLit`, so no pass after it sees
+                            // one.
                             let name_ident = Ident {
                                 name: n,
                                 span: tok.span,

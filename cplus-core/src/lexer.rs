@@ -58,7 +58,9 @@ pub struct Token {
     /// the previous token, or it is the first token of the input.
     /// Stamped centrally by `tokenize_inner`. Builder blocks consult it
     /// to tell a leading-dot modifier line (`.font = bigger`) from
-    /// ordinary same-line postfix access; no other grammar reads it.
+    /// ordinary same-line postfix access. The statement-boundary rule reads it
+    /// too (bug-13): a `(` that opens a line starts a new statement rather than
+    /// calling the previous line's value.
     pub nl_before: bool,
 }
 
