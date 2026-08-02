@@ -816,15 +816,25 @@ fn best_mangled_match<'a>(
 /// emitted coro intrinsics against it. `lookup_option_ty` was hardened to a
 /// panic for exactly this reason and the hardening was never back-ported
 /// (reports/bug-08).
-fn lookup_coro_shape_ty(inner: &Ty, types: &TypeTable, wrapper: &str) -> Ty {
+fn lookup_coro_shape_ty(
+    inner: &Ty,
+    types: &TypeTable,
+    wrapper: &str,
+    is_shape: fn(&StructInfo) -> bool,
+) -> Ty {
     let target = format!(
         "{wrapper}__{}",
         mangle_o_for_tramp_with_types(inner, Some(types))
     );
+    // issue-06: only the instantiations of the `#[lang(...)]`-marked template
+    // are candidates. Name-matching alone let a user generic whose leaf name
+    // is `Iterator` / `Future` compete for the match — the same identity-by-
+    // name mistake as the sema-side locators, one layer down.
     let names = types
         .struct_defs
         .iter()
         .enumerate()
+        .filter(|(_, d)| is_shape(d))
         .map(|(i, d)| (i, d.name.as_str()));
     match best_mangled_match(names, &target) {
         Some(idx) => Ty::Struct(StructId(idx as u32)),
@@ -833,12 +843,12 @@ fn lookup_coro_shape_ty(inner: &Ty, types: &TypeTable, wrapper: &str) -> Ty {
 }
 
 fn lookup_future_ty(inner: &Ty, types: &TypeTable) -> Ty {
-    lookup_coro_shape_ty(inner, types, "Future")
+    lookup_coro_shape_ty(inner, types, "Future", |d| d.is_lang_future)
 }
 
 /// v0.0.4 Phase 4 Slice 4A: mirror of `lookup_future_ty` for `Iterator[T]`.
 fn lookup_iterator_ty(inner: &Ty, types: &TypeTable) -> Ty {
-    lookup_coro_shape_ty(inner, types, "Iterator")
+    lookup_coro_shape_ty(inner, types, "Iterator", |d| d.is_lang_iterator)
 }
 
 /// v0.0.3 Phase 5 Slice 5E.3: given the monomorphized struct name of
@@ -2056,6 +2066,11 @@ struct EnumInfo {
     /// v0.0.5 Phase 2C: inherent methods declared via `impl EnumName`.
     /// Keyed by method name; same shape as `StructInfo::methods`.
     methods: HashMap<String, MethodInfo>,
+    /// issue-06: this enum is an instantiation of stdlib's
+    /// `#[lang("option")]` — what `Iterator::next()` returns. Same rule as
+    /// `StructInfo::is_lang_iterator`: identity comes from the marker, not
+    /// from the name, so a user enum called `Option` is a different type.
+    is_lang_option: bool,
 }
 
 /// OBS.1: the `field` argument the hook receives when an entire watched
@@ -2259,6 +2274,12 @@ fn collect_types(p: &Program) -> TypeTable {
                     empty_payloads.push(Vec::new()); // resolved in pass 2 below
                 }
                 let is_tagged = e.variants.iter().any(|v| !v.payload.is_empty());
+                // Monomorphize carries the template's attributes onto each
+                // instantiation, so `Option__i32` arrives here marked.
+                let is_lang_option = e.attributes.iter().any(|a| {
+                    a.path.name == "lang"
+                        && matches!(a.args.first(), Some(AttrArg::Str(v, _)) if v == "option")
+                });
                 t.enum_defs.push(EnumInfo {
                     variants,
                     variant_payloads: empty_payloads,
@@ -2268,6 +2289,7 @@ fn collect_types(p: &Program) -> TypeTable {
                     // resolved by the fixpoint in `compute_copy_flags`.
                     is_copy: !is_tagged,
                     methods: HashMap::new(),
+                    is_lang_option,
                 });
                 t.enum_by_name.insert(e.name.name.clone(), id);
             }
@@ -16353,8 +16375,14 @@ impl<'a> FnState<'a> {
         // `mangled_name_matches` rejects that shape outright; the tie-break
         // keeps genuinely duplicated short names (two packages each defining
         // an `Option`) stable across builds.
+        // issue-06: only instantiations of the `#[lang("option")]` enum are
+        // candidates — a user enum named `Option` is a different type, and
+        // matching it here handed the gen-fn protocol a foreign layout.
         let mut best: Option<(&String, EnumId)> = None;
         for (name, id) in &self.types.enum_by_name {
+            if !self.types.enum_defs[id.0 as usize].is_lang_option {
+                continue;
+            }
             if mangled_name_matches(name, &target) && best.map_or(true, |(bn, _)| name < bn) {
                 best = Some((name, *id));
             }
@@ -22305,7 +22333,7 @@ mod tests {
     // ---- v0.0.3 Phase 5 Slice 5B: thread::spawn + JoinHandle::join ----
 
     const THREAD_PRELUDE: &str =
-        "struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } fn worker() -> i64 { return 7 as i64; } ";
+        "#[lang(\"join_handle\")] struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } fn worker() -> i64 { return 7 as i64; } ";
 
     #[test]
     fn thread_spawn_emits_pthread_create_and_trampoline() {
@@ -22370,7 +22398,7 @@ mod tests {
 
     #[test]
     fn thread_spawn_for_bool_uses_align_1() {
-        let src = "struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
+        let src = "#[lang(\"join_handle\")] struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
                    fn flag() -> bool { return true; } \
                    fn main() -> i32 { \
                        let h: JoinHandle[bool] = { #thread_spawn::[bool](flag) }; \
@@ -22413,7 +22441,7 @@ mod tests {
 
     #[test]
     fn thread_spawn_with_emits_pthread_create_and_indexed_trampoline() {
-        let src = "struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
+        let src = "#[lang(\"join_handle\")] struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
                    fn double(x: i32) -> i32 { return x +% x; } \
                    fn main() -> i32 { \
                        let h: JoinHandle[i32] = { #thread_spawn_with::[i32, i32](21 as i32, double) }; \
@@ -22445,7 +22473,7 @@ mod tests {
         //   fn_ptr:      @ 8
         //   result_slot: @ 16 (i32, 4 bytes — slot ends at 20)
         //   input_slot:  @ 20 (i32, aligned)
-        let src = "struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
+        let src = "#[lang(\"join_handle\")] struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
                    fn double(x: i32) -> i32 { return x +% x; } \
                    fn main() -> i32 { \
                        let h: JoinHandle[i32] = { #thread_spawn_with::[i32, i32](7 as i32, double) }; \
@@ -22464,7 +22492,7 @@ mod tests {
     fn thread_spawn_with_for_i64_input_lives_at_offset_16() {
         // i64 result is 8 bytes; result slot at offset 8..16. i64
         // input aligned to 8 = offset 16.
-        let src = "struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
+        let src = "#[lang(\"join_handle\")] struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
                    fn negate(x: i64) -> i64 { return (0 as i64) -% x; } \
                    fn main() -> i32 { \
                        let h: JoinHandle[i64] = { #thread_spawn_with::[i64, i64](5 as i64, negate) }; \
@@ -22485,7 +22513,7 @@ mod tests {
 
     #[test]
     fn thread_spawn_with_distinct_io_pairs_get_distinct_trampolines() {
-        let src = "struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
+        let src = "#[lang(\"join_handle\")] struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
                    fn d32(x: i32) -> i32 { return x; } \
                    fn d64(x: i64) -> i64 { return x; } \
                    fn main() -> i32 { \
@@ -22510,7 +22538,7 @@ mod tests {
     // non-Copy aggregates take widened sret. Before the fix both trampolines
     // called by raw value — SIGBUS/SIGSEGV on every aggregate I/O shape.
 
-    const SPAWN_ABI_PRELUDE: &str = "struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
+    const SPAWN_ABI_PRELUDE: &str = "#[lang(\"join_handle\")] struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
          struct Big { a: i64, b: i64, c: i64 } \
          struct Odd { a: i32, b: i32, c: i32 } ";
 
@@ -22663,7 +22691,7 @@ mod tests {
     }
     #[test]
     fn thread_spawn_with_wrong_type_arg_count_is_rejected() {
-        let src = "struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
+        let src = "#[lang(\"join_handle\")] struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
                    fn double(x: i32) -> i32 { return x +% x; } \
                    fn main() -> i32 { \
                        let h: JoinHandle[i32] = { #thread_spawn_with::[i32](21 as i32, double) }; \

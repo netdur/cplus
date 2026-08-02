@@ -1,5 +1,8 @@
 # Issue 06 — Lang-item registry: identity by structure, not by name suffix
 
+- Status: PARTIAL 2026-08-02, commit <pending> — steps 1, 2, 3, 5 done; steps 4
+  (marker/no_alloc re-keying) and 6 (the `__cplus_` constant) not done, see
+  "What is still open"
 - Type: structural consolidation
 - Area: `cplus-core/src/sema.rs`, `codegen.rs`, `attrs.rs`; `vendor/stdlib/src`
 - Effort: M
@@ -96,3 +99,71 @@ can declare `extern fn __cplus_x` to squat the namespace.
 - `import "x" as _;` discard-alias imports and the transitive-gate rules must keep
   working for stdlib modules that now carry lang attrs (no import-surface change
   expected; test one).
+
+## Outcome
+
+`#[lang("...")]` now designates five things, and the attribute is the identity:
+`string` (already), plus `iterator`, `future`, `option` and `join_handle`. The
+marker reaches enums as well as structs (`Option` is an enum), and a name
+outside the known set is **E0390** rather than a designation of nothing.
+
+- `attrs.rs`: `LANG_ITEMS` is the list; the spec targets structs and enums;
+  `emit_unknown_lang_item` rejects a typo. Two unit tests.
+- `sema.rs`: `LangItems` holds the four generic templates by the name their
+  template table is keyed under, recorded at template-registration time by
+  `record_lang_item` (a second claim on the same item is E0301, the same answer
+  duplicate `#[lang("string")]` already got). `lang_template` is the ONE place
+  that produces "your build has no `X`" for a feature that needs one.
+- All six locator sites read the registry: `wrap_in_iterator`,
+  `instantiate_option`, `unwrap_iterator`, `wrap_in_future`, `unwrap_future`,
+  `resolve_join_handle_ty`. `unwrap_lang_struct` is the shared unwrapper. No
+  `ends_with(".Iterator")` remains.
+- `vendor/stdlib`: `#[lang("option")]` on `Option[T]`, `#[lang("join_handle")]`
+  on `JoinHandle[O]` (`iterator`/`future` were annotated with bug-08).
+- **codegen (step 5)**: `lookup_iterator_ty` / `lookup_future_ty` filter
+  candidates by `StructInfo::is_lang_iterator` / `is_lang_future`, and
+  `EnumInfo` gained `is_lang_option` so `lookup_option_ty` does the same. This
+  turned out to be load-bearing, not cleanup — see below.
+
+### The user-shadowing repro, and what it took
+
+The report asked for a negative test: a user type named like a lang item must
+not shadow it. Writing it found that the sema fix alone is not enough.
+
+On the pre-change binary, a program declaring its own `Iterator[T]` alongside
+`stdlib/iterator` fails to compile — with an E0302 inside stdlib's OWN
+`iterator.cplus`, because the user's template won the suffix match and stdlib's
+adapters were then type-checked against it. With the sema registry in place the
+program got further and died in codegen instead: `lookup_iterator_ty` and
+`lookup_option_ty` matched candidates by mangled NAME, so the user's
+`Iterator__i32` / `Option__i32` competed for the coroutine protocol's lookup.
+Filtering those three lookups by the lang flag is what makes the program build
+and run. e2e `a_user_type_named_like_a_lang_item_does_not_shadow_it` builds and
+runs it four times (the failure it replaces was per-process random).
+
+## What is still open
+
+- **Step 4** — markers (`impl T: Send {}`), the builtin `!Send` list and
+  `#[no_alloc] fn drop` are still keyed by LEAF name, so two same-named types in
+  two packages share one answer. That is the same disease but a different
+  mechanism (no attribute to hang identity on — it needs resolution at
+  registration time into ids or fully-qualified names) and a separable change.
+- **Step 6** — the `__cplus_` runtime-ABI prefix is still built by format
+  string in two places and sniffed in a third, with no shared constant and no
+  rejection of user code declaring `extern fn __cplus_x`.
+
+## Verification (as run)
+
+- `cargo test -p cplus-core` 1845 + 8 (including 2 new attrs tests),
+  `cargo test -p cpc` 607 + 16 + 5 + 6; `cpc test` in `vendor/stdlib` 290 green
+  in debug and `--release`.
+- Test fixtures that stand in for the stdlib declarations (inline `JoinHandle`,
+  `Future`, `Iterator`, `Option` in codegen/sema/mono unit tests and three e2e
+  programs) now carry the marker — 20 sites, updated deliberately: they are
+  claiming to BE the lang item, and that claim is now written down.
+- Vendor-wide `cpc check`: the new binary reproduces the same per-package error
+  counts as the pre-change baseline (22 for the gtk family, 12 static-arena, 2
+  terminal, 0 elsewhere). The A/B script's "before" column is meaningless for
+  this change — the old binary rejects the annotated stdlib outright (E0356,
+  `#[lang]` on an enum), which is exactly the ordering constraint the report
+  called out.

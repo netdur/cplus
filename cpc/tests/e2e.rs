@@ -8689,7 +8689,7 @@ fn phase7_generic_enum_option_runs() {
     let src = dir.join("p7d.cplus");
     std::fs::write(
         &src,
-        "enum Option[T] { Some(T), None }\n\
+        "#[lang(\"option\")] enum Option[T] { Some(T), None }\n\
          fn unwrap_or(o: Option[i32], default: i32) -> i32 {\n\
              return match o {\n\
                  Option[i32]::Some(v) => v,\n\
@@ -9768,7 +9768,7 @@ fn phase7_generic_enum_unqualified_pattern_runs() {
     let src = dir.join("p7e_unqual.cplus");
     std::fs::write(
         &src,
-        "enum Option[T] { Some(T), None }\n\
+        "#[lang(\"option\")] enum Option[T] { Some(T), None }\n\
          fn unwrap_or(o: Option[i32], default: i32) -> i32 {\n\
              return match o {\n\
                  Option::Some(v) => v,\n\
@@ -9813,7 +9813,7 @@ fn phase7_generic_enum_emits_distinct_types() {
     let src = dir.join("p7d_ir.cplus");
     std::fs::write(
         &src,
-        "enum Option[T] { Some(T), None }\n\
+        "#[lang(\"option\")] enum Option[T] { Some(T), None }\n\
          fn use_i32(o: Option[i32]) -> i32 { return 0; }\n\
          fn use_bool(o: Option[bool]) -> i32 { return 0; }\n\
          fn main() -> i32 { return 0; }\n",
@@ -23021,4 +23021,73 @@ fn impl_block_bounds_are_enforced_on_every_dispatch_path() {
         hits >= 4,
         "expected the bounds gate on all four dispatch paths, got {hits}:\n{all}"
     );
+}
+
+/// reports/issue-06: the well-known stdlib types used to be located by
+/// suffix-matching the template tables' KEYS (`k == "Iterator" ||
+/// k.ends_with(".Iterator")`). A user type with the same leaf name satisfies
+/// that too, and when both are present the winner is whichever the HashMap
+/// yields first — per-process nondeterministic. Identity is now the
+/// `#[lang("...")]` marker, so a user `Iterator` / `Option` / `Future` is
+/// simply a different type that coexists.
+#[test]
+fn a_user_type_named_like_a_lang_item_does_not_shadow_it() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"shadow\"\n\n[[bin]]\nname = \"shadow\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::os::unix::fs::symlink(
+        format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
+        dir.join("vendor"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/iterator\" as _;\n\
+         import \"stdlib/option\" as _;\n\
+         \n\
+         // Same leaf names as two lang items, no markers: ordinary user types.\n\
+         struct Iterator[T] { v: T }\n\
+         enum Option[T] { Nothing, Just }\n\
+         \n\
+         gen fn nums() -> i64 {\n\
+             yield (1 as i64);\n\
+             yield (2 as i64);\n\
+             return;\n\
+         }\n\
+         \n\
+         fn main() -> i32 {\n\
+             // The generator still resolves the STDLIB Iterator/Option.\n\
+             var total: i64 = 0;\n\
+             for v in nums() { total = total + v; }\n\
+             // ... and the user types are usable in the same program.\n\
+             let mine: Iterator[i32] = Iterator[i32] { v: 7 };\n\
+             let opt: Option[i32] = Option[i32]::Nothing;\n\
+             let tag: i32 = match opt { Option[i32]::Nothing => 1, _ => 2 };\n\
+             return ((total - 3) as i32) + (mine.v - 7) + (tag - 1);\n\
+         }\n",
+    )
+    .unwrap();
+    // Repeated because the failure mode it replaces was per-process random.
+    for _ in 0..4 {
+        let out = Command::new(cpc)
+            .arg("build")
+            .arg("-o")
+            .arg(dir.join("shadow"))
+            .current_dir(&dir)
+            .output()
+            .expect("cpc build");
+        assert!(
+            out.status.success(),
+            "build failed: {}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let run = Command::new(dir.join("shadow")).status().expect("run");
+        assert_eq!(run.code(), Some(0), "unexpected exit: {run}");
+    }
 }

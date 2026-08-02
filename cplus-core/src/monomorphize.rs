@@ -2983,7 +2983,7 @@ mod tests {
     #[test]
     fn generic_call_under_await_is_rewritten() {
         let prog = run(
-            "struct Future[T] { opaque handle: *u8 }\n\
+            "#[lang(\"future\")] struct Future[T] { opaque handle: *u8 }\n\
              async fn hold[T: Send](take v: T) -> T { return v; }\n\
              async fn caller() -> i32 {\n\
                  let v: i32 = await hold(7);\n\

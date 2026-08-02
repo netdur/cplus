@@ -41,6 +41,10 @@ extern fn pthread_join(tid: u64, retval: *u8) -> i32;
 extern fn pthread_detach(tid: u64) -> i32;
 extern fn free(p: *u8);
 
+// `#[lang("join_handle")]` designates the type `#thread_spawn` returns — see
+// the note on `Option` in stdlib/option.cplus for why a name match is not
+// enough.
+#[lang("join_handle")]
 struct JoinHandle[O] {
     _tid: u64,
     // opaque: SHARED (refcounted) ownership, not a plainly-owned pointer — the

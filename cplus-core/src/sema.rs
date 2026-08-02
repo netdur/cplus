@@ -906,6 +906,7 @@ fn check_with_files_inner(
         structs: Vec::new(),
         struct_by_name: HashMap::new(),
         designated_string_struct: None,
+        lang: LangItems::default(),
         builtin_str_methods: HashMap::new(),
         str_impl_origin: None,
         ext_origins: HashMap::new(),
@@ -1276,6 +1277,8 @@ struct SemaCx<'a> {
     /// collected (e.g. a program that doesn't import `stdlib/text`). A string
     /// literal in this type's context lowers to its `from_str` constructor.
     designated_string_struct: Option<StructId>,
+    /// issue-06: the `#[lang("...")]` generic templates. See [`LangItems`].
+    lang: LangItems,
     /// STRM (v0.0.27): methods declared by the single blessed
     /// `impl str { ... }` block (stdlib/src/str.cplus). The builtin `str`
     /// has no `StructDef`, so its method set lives here, name-keyed.
@@ -1720,6 +1723,28 @@ pub struct GenericImplMethodTemplate {
 /// `check_generic_method_call` records the instantiation against the right
 /// table (`method_instantiations` for structs, `enum_method_instantiations`
 /// for enums). Both export to the same String-keyed MonoInfo set; this just
+/// issue-06: the generic templates a `#[lang("...")]` attribute designates,
+/// by the name their template table is keyed under (resolver-qualified, e.g.
+/// `vendor.stdlib.src.iterator.Iterator`).
+///
+/// These used to be located by suffix-matching the template tables' KEYS —
+/// `k == "Iterator" || k.ends_with(".Iterator")` — which any user type of the
+/// same leaf name also satisfies, and which on a two-key match picked whichever
+/// the `HashMap` happened to yield first: per-process nondeterministic. That is
+/// the bug-08 family. The marker is the same mechanism `#[lang("string")]`
+/// already used.
+#[derive(Default, Clone)]
+struct LangItems {
+    /// `gen fn`'s protocol type — what a generator returns.
+    iterator: Option<String>,
+    /// `async fn`'s protocol type.
+    future: Option<String>,
+    /// What `Iterator::next()` returns.
+    option: Option<String>,
+    /// What `#thread_spawn` returns.
+    join_handle: Option<String>,
+}
+
 /// issue-05: which type a method call dispatches on, for `run_method_gates`.
 #[derive(Clone, Copy)]
 enum GateOwner {
@@ -1985,6 +2010,7 @@ impl SemaCx<'_> {
                             );
                             continue;
                         }
+                        self.record_lang_item(&e.attributes, &e.name);
                         self.enum_generic_templates
                             .insert(e.name.name.clone(), e.clone());
                         self.enum_template_origins
@@ -2055,6 +2081,7 @@ impl SemaCx<'_> {
                     // sema synthesizes a concrete StructDef per unique
                     // instantiation lazily via `resolve_generic_instantiation`.
                     if !s.generic_params.is_empty() {
+                        self.record_lang_item(&s.attributes, &s.name);
                         self.struct_generic_templates
                             .insert(s.name.name.clone(), s.clone());
                         self.struct_template_origins
@@ -5657,27 +5684,14 @@ impl SemaCx<'_> {
     /// The `Iterator` template must be in scope — it lives at
     /// `stdlib/iterator.cplus`.
     fn wrap_in_iterator(&mut self, inner: &Ty, span: ByteSpan) -> Ty {
-        let key = self
-            .struct_generic_templates
-            .keys()
-            .find(|k| k.as_str() == "Iterator" || k.ends_with(".Iterator"))
-            .cloned();
-        let template_name = match key {
-            Some(k) => k,
-            None => {
-                self.err(
-                    "E1000",
-                    "`gen fn` requires `Iterator[T]` from `stdlib/iterator`".to_string(),
-                    span,
-                );
-                return Ty::Error;
-            }
+        let Some(template_name) = self.lang_template("iterator", span) else {
+            return Ty::Error;
         };
         let template = self
             .struct_generic_templates
             .get(&template_name)
             .cloned()
-            .unwrap();
+            .expect("the lang item was recorded from this table");
         self.instantiate_struct_from_arg_tys(&template_name, &template, vec![inner.clone()])
     }
 
@@ -5685,75 +5699,46 @@ impl SemaCx<'_> {
     /// `stdlib/option`. Used by `Iterator::next()`'s blessed-method
     /// return type and by `for x in ...` desugaring.
     fn instantiate_option(&mut self, inner: &Ty, span: ByteSpan) -> Ty {
-        let key = self
-            .enum_generic_templates
-            .keys()
-            .find(|k| k.as_str() == "Option" || k.ends_with(".Option"))
-            .cloned();
-        let template_name = match key {
-            Some(k) => k,
-            None => {
-                self.err(
-                    "E1000",
-                    "`Iterator::next` requires `Option[T]` from `stdlib/option`".to_string(),
-                    span,
-                );
-                return Ty::Error;
-            }
+        let Some(template_name) = self.lang_template("option", span) else {
+            return Ty::Error;
         };
         let template = self
             .enum_generic_templates
             .get(&template_name)
             .cloned()
-            .unwrap();
+            .expect("the lang item was recorded from this table");
         self.instantiate_enum_from_arg_tys(&template_name, &template, vec![inner.clone()])
     }
 
     /// v0.0.4 Phase 4 Slice 4A: given `Iterator[T]`, return T.
     fn unwrap_iterator(&self, ty: &Ty) -> Option<Ty> {
-        match ty {
-            Ty::Struct(id) => {
-                let def = &self.structs[id.0 as usize];
-                match &def.generic_origin {
-                    Some((name, args))
-                        if (name == "Iterator" || name.ends_with(".Iterator"))
-                            && args.len() == 1 =>
-                    {
-                        Some(args[0].clone())
-                    }
-                    _ => None,
-                }
-            }
+        self.unwrap_lang_struct(ty, self.lang.iterator.as_deref())
+    }
+
+    /// issue-06: given an instantiation of the struct designated by a lang
+    /// item, its single type argument. Identity is the designated template's
+    /// name, not a suffix — a user generic whose leaf name matches is a
+    /// different type and answers `None`.
+    fn unwrap_lang_struct(&self, ty: &Ty, template: Option<&str>) -> Option<Ty> {
+        let template = template?;
+        let Ty::Struct(id) = ty else {
+            return None;
+        };
+        match &self.structs[id.0 as usize].generic_origin {
+            Some((name, args)) if name == template && args.len() == 1 => Some(args[0].clone()),
             _ => None,
         }
     }
 
     fn wrap_in_future(&mut self, inner: &Ty, span: ByteSpan) -> Ty {
-        // v0.0.3 Phase 5 Slice 5E.3: the resolver qualifies struct
-        // names per-file (`<file_id>.Future`), so a bare-name lookup
-        // misses imports. Suffix-match `.Future` (or the bare name in
-        // single-file builds) like Slice 5B's JoinHandle path.
-        let key = self
-            .struct_generic_templates
-            .keys()
-            .find(|k| k.as_str() == "Future" || k.ends_with(".Future"))
-            .cloned();
-        let template_name = match key {
-            Some(k) => k,
-            None => {
-                self.err(
-                    "E0300",
-                    "`async fn` requires `Future[T]` from `stdlib/future`".to_string(),
-                    span,
-                );
-                return Ty::Error;
-            }
+        let Some(template_name) = self.lang_template("future", span) else {
+            return Ty::Error;
         };
         let template = self
             .struct_generic_templates
             .get(&template_name)
             .cloned()
-            .unwrap();
+            .expect("the lang item was recorded from this table");
         self.instantiate_struct_from_arg_tys(&template_name, &template, vec![inner.clone()])
     }
 
@@ -5762,21 +5747,7 @@ impl SemaCx<'_> {
     /// type isn't a Future. Used by `await EXPR` type-checking and
     /// by async-body return-type checks.
     fn unwrap_future(&self, ty: &Ty) -> Option<Ty> {
-        // Match on file-qualified template names (see `wrap_in_future`).
-        match ty {
-            Ty::Struct(id) => {
-                let def = &self.structs[id.0 as usize];
-                match &def.generic_origin {
-                    Some((name, args))
-                        if (name == "Future" || name.ends_with(".Future")) && args.len() == 1 =>
-                    {
-                        Some(args[0].clone())
-                    }
-                    _ => None,
-                }
-            }
-            _ => None,
-        }
+        self.unwrap_lang_struct(ty, self.lang.future.as_deref())
     }
 
     /// v0.0.9 Phase 4: collect module-scope `const` and `static` items
@@ -11424,21 +11395,11 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
     /// parameter (generic-body checking). Returns `Ty::Error` if `JoinHandle`
     /// can't be resolved (the caller then emits the helpful E0300).
     fn resolve_join_handle_ty(&mut self, o_arg: &Type, span: ByteSpan) -> Ty {
-        // The template is keyed bare ("JoinHandle") when `thread.cplus` is the
-        // entry file, but module-qualified ("vendor.stdlib.src.thread.JoinHandle")
-        // when it is imported — the resolver qualifies user AST type references,
-        // but the intrinsic's hardcoded name is not qualified. Find the key
-        // either way (prefer an exact bare match, else a unique `.JoinHandle`
-        // suffix).
-        let key = if self.struct_generic_templates.contains_key("JoinHandle") {
-            Some("JoinHandle".to_string())
-        } else {
-            self.struct_generic_templates
-                .keys()
-                .find(|k| k.ends_with(".JoinHandle"))
-                .cloned()
-        };
-        let Some(key) = key else {
+        // issue-06: the template is keyed bare when `thread.cplus` is the entry
+        // file and module-qualified when it is imported, so the name cannot be
+        // hardcoded here — `#[lang("join_handle")]` designates it and sema
+        // recorded whichever key it was registered under.
+        let Some(key) = self.lang_template("join_handle", span) else {
             return Ty::Error;
         };
         let jh_ast = crate::ast::Type {
@@ -12173,6 +12134,74 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
     /// `Maybe[NonCopy].get()` bit-copy an owning value (double-free). Struct
     /// declaration bounds are enforced separately at instantiation.
     /// `generic_origin` is the receiver def's `(template_name, concrete_args)`.
+    /// issue-06: record a `#[lang("...")]` designation on a generic template.
+    /// The attrs pass has already validated the shape and the name; a SECOND
+    /// declaration claiming the same item is E0301, the same answer duplicate
+    /// `#[lang("string")]` gets.
+    fn record_lang_item(&mut self, attributes: &[Attribute], name: &Ident) {
+        for a in attributes {
+            if a.path.name != "lang" {
+                continue;
+            }
+            let Some(AttrArg::Str(item, _)) = a.args.first() else {
+                continue;
+            };
+            let slot = match item.as_str() {
+                "iterator" => &mut self.lang.iterator,
+                "future" => &mut self.lang.future,
+                "option" => &mut self.lang.option,
+                "join_handle" => &mut self.lang.join_handle,
+                // "string" is a concrete struct, recorded where concrete
+                // structs are; anything else was rejected by attrs (E0390).
+                _ => continue,
+            };
+            match slot {
+                Some(prev) => {
+                    let prev = prev.clone();
+                    self.err(
+                        "E0301",
+                        format!("duplicate `#[lang(\"{item}\")]` — already on `{prev}`"),
+                        name.span,
+                    );
+                }
+                None => *slot = Some(name.name.clone()),
+            }
+        }
+    }
+
+    /// issue-06: the template designated by `#[lang(item)]`, or a diagnostic
+    /// naming the stdlib module that declares it. One place produces the
+    /// "your build has no `X`" error for every feature that needs one.
+    fn lang_template(&mut self, item: &str, span: ByteSpan) -> Option<String> {
+        let (slot, code, need) = match item {
+            "iterator" => (
+                self.lang.iterator.clone(),
+                "E1000",
+                "`gen fn` requires `Iterator[T]` from `stdlib/iterator`",
+            ),
+            "future" => (
+                self.lang.future.clone(),
+                "E0300",
+                "`async fn` requires `Future[T]` from `stdlib/future`",
+            ),
+            "option" => (
+                self.lang.option.clone(),
+                "E1000",
+                "`Iterator::next` requires `Option[T]` from `stdlib/option`",
+            ),
+            "join_handle" => (
+                self.lang.join_handle.clone(),
+                "E1000",
+                "`#thread_spawn` requires `JoinHandle[O]` from `stdlib/thread`",
+            ),
+            other => unreachable!("unknown lang item `{other}`"),
+        };
+        if slot.is_none() {
+            self.err(code, need.to_string(), span);
+        }
+        slot
+    }
+
     /// issue-05: run every gate a method call must pass before its arguments
     /// are checked — extension scope, `_`-privacy, and the impl block's
     /// generic bounds — in ONE order for every dispatch path.
@@ -27473,7 +27502,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
     #[test]
     fn generic_enum_used_at_type_position_clean() {
         assert_clean(
-            "enum Option[T] { Some(T), None } \
+            "#[lang(\"option\")] enum Option[T] { Some(T), None } \
              fn use_o(o: Option[i32]) -> i32 { return 0; } \
              fn main() -> i32 { return 0; }",
         );
@@ -27482,7 +27511,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
     #[test]
     fn generic_enum_constructor_clean() {
         assert_clean(
-            "enum Option[T] { Some(T), None } \
+            "#[lang(\"option\")] enum Option[T] { Some(T), None } \
              fn main() -> i32 { \
                  let a: Option[i32] = Option[i32]::Some(7); \
                  let b: Option[i32] = Option[i32]::None; \
@@ -27494,7 +27523,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
     #[test]
     fn generic_enum_wrong_arity_e0501() {
         let codes = errors(
-            "enum Option[T] { Some(T), None } \
+            "#[lang(\"option\")] enum Option[T] { Some(T), None } \
              fn main() -> i32 { \
                  let a: Option[i32, bool] = Option[i32, bool]::None; \
                  return 0; \
@@ -27729,7 +27758,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
         // The headline of 7GEN.5e: `Option[i32]::Some(v)` in pattern
         // position. No mangled name in source.
         assert_clean(
-            "enum Option[T] { Some(T), None } \
+            "#[lang(\"option\")] enum Option[T] { Some(T), None } \
              fn unwrap_or(o: Option[i32], default: i32) -> i32 { \
                  return match o { \
                      Option[i32]::Some(v) => v, \
@@ -27746,7 +27775,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
         // against an `Option[i32]` scrutinee via the EnumDef's
         // `generic_base` field.
         assert_clean(
-            "enum Option[T] { Some(T), None } \
+            "#[lang(\"option\")] enum Option[T] { Some(T), None } \
              fn unwrap_or(o: Option[i32], default: i32) -> i32 { \
                  return match o { \
                      Option::Some(v) => v, \
@@ -27762,7 +27791,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
         // `Option[bool]::Some` against an `Option[i32]` scrutinee
         // resolves to a different EnumId and is rejected.
         let codes = errors(
-            "enum Option[T] { Some(T), None } \
+            "#[lang(\"option\")] enum Option[T] { Some(T), None } \
              fn pick(o: Option[i32]) -> i32 { \
                  return match o { \
                      Option[bool]::Some(_) => 1, \
@@ -29034,7 +29063,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
         // The bound payload (`v`) must have the concrete instantiation
         // type (`i32`), not `Ty::Param("T")`. Use it as an `i32`.
         assert_clean(
-            "enum Option[T] { Some(T), None } \
+            "#[lang(\"option\")] enum Option[T] { Some(T), None } \
              fn add_one_or(o: Option[i32], default: i32) -> i32 { \
                  return match o { \
                      Option[i32]::Some(v) => v + 1, \
@@ -29586,7 +29615,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
 
     // ---- v0.0.3 Phase 5 Slice 5E.2: async fn + await sema ----
 
-    const FUTURE_PRELUDE: &str = "struct Future[T] { opaque handle: *u8 } ";
+    const FUTURE_PRELUDE: &str = "#[lang(\"future\")] struct Future[T] { opaque handle: *u8 } ";
 
     // R4: a minimal user-defined owned (non-Copy, Drop) struct. Replaces the
     // blessed `string` in tests that just need "some owned heap-ish type" now

@@ -231,16 +231,22 @@ const KNOWN_ATTRS: &[AttrSpec] = &[
         targets: TARGET_LOOP_STMT,
         allow_duplicate: false,
     },
-    // TEXT.R1: `#[lang("string")]` — lang-item marker. Tags the one stdlib
-    // struct that is the designated owned-string type (`Text`). The compiler
-    // records its `StructId` during collection and lowers string literals (and,
-    // later, interpolation) in a `Text` context into calls to its `from_str`
-    // constructor. Surface-shape only here; the designation + lowering live in
-    // sema. One string arg names the lang item.
+    // TEXT.R1 / issue-06: `#[lang("...")]` — lang-item marker. Tags the ONE
+    // stdlib declaration the compiler treats as a well-known type: the owned
+    // string (`Text`), the `gen fn` protocol type (`Iterator`), the `async fn`
+    // protocol type (`Future`), `Option` (what `Iterator::next` returns) and
+    // `JoinHandle`. The compiler records it during collection and reads it
+    // where the feature needs it. The alternative — locating these types by
+    // suffix-matching their NAME — is shadowable by any user type and, on a
+    // two-key match, per-process nondeterministic (reports/bug-08).
+    //
+    // Surface shape only here (one string arg, from the known set); the
+    // designation and the lowering live in sema.
     AttrSpec {
         name: "lang",
         args: ArgsSpec::ExactlyOneStr,
-        targets: TARGET_STRUCT,
+        // issue-06: `Option` is an enum, so the marker has to reach enums too.
+        targets: TARGET_STRUCT | TARGET_ENUM,
         allow_duplicate: false,
     },
     // OBS.1: `#[watch]` — field-write barrier. Every store to a field of
@@ -259,6 +265,10 @@ const KNOWN_ATTRS: &[AttrSpec] = &[
         allow_duplicate: false,
     },
 ];
+
+/// issue-06: every lang item the compiler resolves. A `#[lang("...")]` naming
+/// anything else is E0359 — see the `lang` spec above.
+pub const LANG_ITEMS: &[&str] = &["string", "iterator", "future", "option", "join_handle"];
 
 /// Single-file entry point. Mirrors `sema::check`.
 pub fn check(prog: &Program, file: PathBuf, src: &str) -> Vec<Diagnostic> {
@@ -583,6 +593,16 @@ impl Ctx {
                 let ok = matches!(attr.args.as_slice(), [AttrArg::Str(_, _)]);
                 if !ok {
                     self.emit_expected_str_arg(attr, spec);
+                    return;
+                }
+                // issue-06: a lang item names something the compiler knows
+                // about. A typo used to designate nothing, silently.
+                if spec.name == "lang" {
+                    if let [AttrArg::Str(v, _)] = attr.args.as_slice() {
+                        if !LANG_ITEMS.contains(&v.as_str()) {
+                            self.emit_unknown_lang_item(attr, v);
+                        }
+                    }
                 }
             }
             ArgsSpec::ExactlyOneInt => {
@@ -647,6 +667,26 @@ impl Ctx {
             message: format!(
                 "attribute `#[{}]` requires exactly one string-literal argument (e.g. `#[{} = \"value\"]`)",
                 spec.name, spec.name
+            ),
+            primary,
+            labels: Vec::new(),
+            notes: Vec::new(),
+            suggestions: Vec::new(),
+        });
+    }
+
+    /// issue-06: `#[lang("...")]` naming something the compiler does not
+    /// resolve. Silently designating nothing is how a typo becomes "the
+    /// feature quietly stopped working".
+    fn emit_unknown_lang_item(&mut self, attr: &Attribute, name: &str) {
+        let primary = self.make_span(attr.span);
+        self.diags.push(Diagnostic {
+            severity: Severity::Error,
+            code: DiagCode("E0390"),
+            message: format!(
+                "unknown lang item `{}` — the compiler resolves: {}",
+                name,
+                LANG_ITEMS.join(", ")
             ),
             primary,
             labels: Vec::new(),
@@ -938,6 +978,40 @@ mod tests {
     }
 
     // ---- TEXT.R1: `#[lang("string")]` ----
+
+    /// issue-06: a lang item names something the compiler resolves. A typo
+    /// used to designate nothing at all, and the feature that needed the type
+    /// reported a missing-stdlib error somewhere else entirely.
+    #[test]
+    fn lang_item_name_must_be_one_the_compiler_knows() {
+        let diags = check_src("#[lang(\"iterater\")] struct Iterator[T] { opaque h: *u8 }");
+        assert_eq!(codes(&diags), vec!["E0390"]);
+        assert!(
+            diags[0].message.contains("iterator"),
+            "the message lists what IS known, got: {}",
+            diags[0].message
+        );
+    }
+
+    /// The four lang items beyond `string`, on the declaration kinds they
+    /// actually appear on — `option` is an ENUM, which the marker did not
+    /// reach before.
+    #[test]
+    fn every_lang_item_is_accepted_on_its_declaration() {
+        for (item, decl) in [
+            ("iterator", "struct Iterator[T] { opaque h: *u8 }"),
+            ("future", "struct Future[T] { opaque h: *u8 }"),
+            ("join_handle", "struct JoinHandle[O] { tid: u64 }"),
+            ("option", "enum Option[T] { Some(T), None }"),
+        ] {
+            let diags = check_src(&format!("#[lang(\"{item}\")] {decl}"));
+            assert!(
+                diags.is_empty(),
+                "`{item}` rejected: {:?}",
+                codes(&diags)
+            );
+        }
+    }
 
     #[test]
     fn lang_string_on_struct_clean() {

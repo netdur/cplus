@@ -9,6 +9,12 @@
 // Result's `Err` implies a fault path. Both shapes coexist — pick the
 // one that matches caller intent.
 
+// `#[lang("option")]` is how the compiler RECOGNIZES this enum as the one
+// `Iterator[T]::next()` returns. It used to be located by matching the name
+// `Option` (or any key ending in `.Option`) across the template table, which a
+// user enum of the same leaf name also satisfies — and on a two-key match the
+// winner was whichever the hash map yielded first.
+#[lang("option")]
 enum Option[T] {
     Some(T),
     None,

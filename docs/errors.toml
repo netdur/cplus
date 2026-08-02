@@ -1398,6 +1398,22 @@ impl d::Point { fn drop(ref this) { } }
 """
 
 [[code]]
+id = "E0390"
+title = "Unknown lang item"
+category = "Names, types, and items"
+severity = "error"
+repro = "scenario"
+lang = "cplus"
+verified = true
+emit_site = "cplus-core/src/attrs.rs:emit_unknown_lang_item"
+test = "cplus-core/src/attrs.rs:lang_item_name_must_be_one_the_compiler_knows"
+cause = "`#[lang(\"...\")]` designates a declaration as one of the handful of types the compiler itself reaches for — the owned string, the `gen fn` and `async fn` protocol types, `Option`, `JoinHandle`. A name outside that set designates nothing, so the feature that was meant to find this type keeps looking and reports a missing-stdlib error somewhere else entirely."
+fix = "Spell the lang item as one of the names the message lists, or drop the attribute."
+example = """
+#[lang("iterater")] struct Iterator[T] { opaque _handle: *u8 }
+"""
+
+[[code]]
 id = "E0401"
 title = "Imported file not found"
 category = "Modules, paths, and visibility"
