@@ -53,11 +53,23 @@
 >   not a bug: the AST cannot tell a type parameter from a struct of the same name, and
 >   the resulting lookup miss is the right answer.
 >
-> Not done, and scoped in their own reports: issue-07's port of the view family into
-> borrowck (its step-1 inventory is in the file), issue-14's migration off the
-> classification fixpoint (its characterization harness is in the tree), issue-03 step 4,
-> issue-08 steps 1 and 3, issue-09 parts (A) and (C), issue-13 (b), issue-15 (b), and
-> issue-11 items 1, 2, 3, 5, 7, 8.
+> **Status 2026-08-02 (third pass) — issue-07 is DONE (`f4e5a62`..`66836d1`, 10
+> commits) and issue-06 is DONE (`1e33595`, `1c7cce4`, `4c83e57`).** The view family
+> (E0513/E0515/E0516) now lives in borrowck as `ViewRules`, and the lift is asked of
+> the flow pass instead of hand-encoded in sema, so §3's silent-unsoundness seam is
+> closed by construction. The transition release the report insisted on found three
+> real coverage holes that no test and no vendor program exercised — match payloads,
+> tuple returns, index write targets — each of which the port would otherwise have
+> shipped as silence. §4's leaf-name identity is closed for the marker family too:
+> `impl T: Send {}`, the builtin `!Send` list and the `#[no_alloc] fn drop` blessing
+> all key on resolved identity now, and `__cplus_` is one constant with a
+> `#[runtime_abi]` claim marker (E0919).
+>
+> Not done, and scoped in their own reports: issue-07 step 5 (the E0365 capture-taint
+> port — separable, and written up), issue-14's migration off the classification
+> fixpoint (its characterization harness is in the tree), issue-03 step 4, issue-08
+> steps 1 and 3, issue-09 parts (A) and (C), issue-13 (b), issue-15 (b), and issue-11
+> items 1, 2, 3, 5, 7, 8.
 >
 > Corrections to this report, found while fixing (details in each bug's file):
 > - B12's generic-argument half was already closed by the B1 fix; its `take` spelling
