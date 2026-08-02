@@ -618,7 +618,8 @@ fn emit_spawn_tramp(out: &mut String, o_ty: &Ty, types: &TypeTable) {
             let (sz, al) = static_layout(o_ty, types).expect("sret thread-spawn O has layout");
             out.push_str("  %slot = getelementptr i8, ptr %arg, i64 16\n");
             out.push_str(&format!(
-                "  call void %f(ptr sret({llvm_t}) noalias nonnull noundef writable dereferenceable({sz}) align {al} %slot)\n"
+                "  call void %f({})\n",
+                sret_fragment_for(&llvm_t, sz, al, "%slot")
             ));
         }
         TrampRetAbi::Coerce {
@@ -687,11 +688,7 @@ fn emit_spawn_with_tramp(out: &mut String, idx: usize, i_ty: &Ty, o_ty: &Ty, typ
             // The worker reads its by-value param through the pointer; the
             // input slot stays alive until the trampoline's refcount
             // decrement below, which is after the call completes.
-            if indirect_uses_byval() {
-                format!("ptr byval({i_llvm}) align {i_align} %input_slot")
-            } else {
-                "ptr %input_slot".to_string()
-            }
+            format!("{} %input_slot", indirect_arg_ty(&i_llvm, i_align))
         }
         CAbiClass::Direct => {
             out.push_str(&format!(
@@ -709,7 +706,8 @@ fn emit_spawn_with_tramp(out: &mut String, idx: usize, i_ty: &Ty, o_ty: &Ty, typ
             let (sz, al) = static_layout(o_ty, types).expect("sret spawn_with O has layout");
             out.push_str("  %result_slot = getelementptr i8, ptr %arg, i64 16\n");
             out.push_str(&format!(
-                "  call void %f(ptr sret({o_llvm}) noalias nonnull noundef writable dereferenceable({sz}) align {al} %result_slot, {in_arg})\n"
+                "  call void %f({}, {in_arg})\n",
+                sret_fragment_for(&o_llvm, sz, al, "%result_slot")
             ));
         }
         TrampRetAbi::Coerce {
@@ -1226,6 +1224,19 @@ fn generate_inner(
                             && m.name.name != "drop"
                             && !lib_public_name(is_lib, &m.name.name)
                         {
+                            // issue-03 step 7: the free-fn arm above excludes
+                            // address-taken names, because a `fastcc` function
+                            // cannot be called through a C-cc fn pointer. This
+                            // arm skips that check on the grounds that a method
+                            // has no address-taking syntax — a bound method
+                            // reference goes through a synthesized free-fn
+                            // BRIDGE, which the free-fn arm covers. Asserted
+                            // rather than asserted-in-a-comment.
+                            debug_assert!(
+                                !address_taken.contains(&mangle(target_name, &m.name.name)),
+                                "method `{}` is address-taken but the fastcc gate assumed methods never are",
+                                mangle(target_name, &m.name.name)
+                            );
                             fastcc.insert(mangle(target_name, &m.name.name));
                         }
                     }
@@ -2672,6 +2683,201 @@ fn effective_move(p: &Param, ty: &Ty, t: &TypeTable) -> bool {
     // v0.0.24 de-Rust (#9 stage 3e): only `take` (move_) transfers ownership; a
     // bare `x: T` is a read-only borrow (pointer-passed, caller keeps the drop).
     p.move_ && matches!(ty, Ty::Struct(_) | Ty::Enum(_) | Ty::String) && !is_copy_ty(ty, t)
+}
+
+/// issue-03: the per-emitter facts a parameter classification depends on.
+/// Everything else — the borrow ABI, the C-ABI register classification, the
+/// `byval` question — is a property of the type and the mode, decided once in
+/// [`classify_param`].
+#[derive(Clone, Copy)]
+struct AbiCtx {
+    /// This signature is a C-ABI boundary (an `export extern fn` definition or
+    /// an import declaration): narrow integer parameters carry
+    /// `zeroext`/`signext`, matching what clang emits on the C side.
+    c_export: bool,
+    /// Copy STRUCT parameters take the platform C-ABI classification (register
+    /// coercion, or MEMORY-class indirect) instead of passing as raw LLVM
+    /// aggregates.
+    ///
+    /// True for free functions, false in two cases, and the difference is not
+    /// an accident:
+    ///   - a `fastcc` function is cpc-internal by construction (never
+    ///     `export`, address never taken), so both ends are ours and LLVM's own
+    ///     convention passes a Copy aggregate in registers instead of taking
+    ///     the AAPCS64 >16B hidden-pointer path;
+    ///   - every METHOD emitter passes Copy aggregates raw, and its call sites
+    ///     agree. Sound, but it does mean one semantic class has two ABIs
+    ///     depending on whether it crosses a method boundary. Unifying is a
+    ///     behavior change with its own test pass, so it is recorded here
+    ///     rather than done in passing.
+    coerce_copy_aggregates: bool,
+}
+
+/// issue-03: how ONE parameter crosses the boundary. Every definition,
+/// declaration and call site derives its text from this, so a site cannot
+/// forget the `byval` alignment or an attribute — the two ABI breaks in this
+/// area (the Xtensa byval def/call drift and the `#msg_send` sret clobber)
+/// were both a site that knew the rule and spelled it differently.
+enum PassBy {
+    /// By value as its own LLVM type.
+    Value {
+        llvm_ty: String,
+        attrs: String,
+        ext: &'static str,
+    },
+    /// As a `ptr` to the caller's place: the §2.9 borrow ABI, or a C
+    /// out-parameter.
+    Ptr { attrs: String },
+    /// MEMORY-class aggregate — see [`indirect_arg_ty`].
+    Indirect { ty: String },
+    /// C-ABI register coercion: the aggregate travels as `llvm_ty`.
+    Coerced {
+        llvm_ty: String,
+        size: u64,
+        align: u64,
+    },
+}
+
+impl PassBy {
+    /// The parameter's text in a `define` / `declare` signature, including its
+    /// SSA name.
+    fn sig_fragment(&self, idx: u32) -> String {
+        match self {
+            PassBy::Value {
+                llvm_ty,
+                attrs,
+                ext,
+            } => {
+                let mut prefix = String::new();
+                if !attrs.is_empty() {
+                    prefix.push_str(attrs);
+                    prefix.push(' ');
+                }
+                if !ext.is_empty() {
+                    prefix.push_str(ext);
+                    prefix.push(' ');
+                }
+                format!("{llvm_ty} {prefix}%{idx}")
+            }
+            PassBy::Ptr { attrs } => {
+                if attrs.is_empty() {
+                    format!("ptr %{idx}")
+                } else {
+                    format!("ptr {attrs} %{idx}")
+                }
+            }
+            PassBy::Indirect { ty } => format!("{ty} %{idx}"),
+            PassBy::Coerced { llvm_ty, .. } => format!("{llvm_ty} %{idx}"),
+        }
+    }
+}
+
+/// The canonical hidden-return-slot argument. `writable` is load-bearing (it
+/// tells LLVM the callee may write the slot before it is initialized) and was
+/// hand-typed at a dozen sites; four call sites spelled it as a bare `ptr`
+/// and only worked through LLVM's direct-call callee-attribute fallback —
+/// the same fallback whose absence produced the `objc_msgSend` receiver
+/// clobber.
+fn sret_fragment_for(inner: &str, size: u64, align: u64, name: &str) -> String {
+    format!(
+        "ptr sret({inner}) noalias nonnull noundef writable dereferenceable({size}) align {align} {name}"
+    )
+}
+
+/// issue-03: does a CALL to this signature use the C-ABI return
+/// classification? The definition-side twin is `want_c_abi_ret` in
+/// `gen_function`, and it keys on the same two facts: the callee crosses the C
+/// boundary, or it returns a Copy aggregate and is not `fastcc` (a `fastcc`
+/// function is cpc-internal, keeps its raw aggregate return, and stays
+/// musttail-able).
+///
+/// The definition asks `f.is_extern && f.is_pub` where this asks
+/// `sig.is_extern`: an extern IMPORT is a declaration, and its return travels
+/// by the C ABI whether or not the import was written `pub`.
+fn call_wants_c_abi_ret(sig: &FnSig, symbol: &str, md: &ModuleMetadata, types: &TypeTable) -> bool {
+    let ret_is_copy_struct =
+        matches!(sig.return_type, Ty::Struct(_)) && is_copy_ty(&sig.return_type, types);
+    sig.is_extern || (ret_is_copy_struct && !md.is_fastcc(symbol))
+}
+
+/// The TYPE half of a MEMORY-class argument: `ptr byval(T) align A` on the
+/// targets whose C ABI materializes a caller-side stack copy, a bare `ptr`
+/// elsewhere. Every indirect-lowering site asks this — a definition emitting
+/// `byval` while its call sites passed bare pointers is a recorded ABI break
+/// (the Xtensa drift), and per-site spelling is how it happened.
+fn indirect_arg_ty(inner: &str, align: u64) -> String {
+    if indirect_uses_byval() {
+        format!("ptr byval({inner}) align {align}")
+    } else {
+        // Win64 (and aarch64-darwin): a plain `ptr` to the caller's copy.
+        "ptr".to_string()
+    }
+}
+
+/// The sret argument for a value of type `ty` landing in `name`. For sites
+/// that have already decided the return is indirect.
+fn sret_fragment(ty: &Ty, types: &TypeTable, name: &str) -> String {
+    let (size, align) = static_layout(ty, types).expect("sret return type has a known layout");
+    sret_fragment_for(&llvm_ty(ty, types), size, align, name)
+}
+
+/// A method / coroutine signature: never a C-ABI boundary, and Copy
+/// aggregates pass raw on both sides. See `AbiCtx`.
+const METHOD_ABI: AbiCtx = AbiCtx {
+    c_export: false,
+    coerce_copy_aggregates: false,
+};
+
+/// issue-03: decide how one parameter is passed. THE answer — a definition, a
+/// declaration and a call site all ask this and cannot disagree.
+///
+/// One asymmetry is deliberate and recorded here rather than fixed in passing:
+/// a bare (shared-borrow) non-Copy STRUCT is pointer-passed with `readonly`,
+/// while a non-Copy ENUM or a `Text` in the same position is copied as a raw
+/// aggregate. Definition and call agree in both cases, so it is sound, but one
+/// semantic class has two ABIs — and the aggregate copy is what makes `Text`
+/// need the `borrowed_params` auto-clone-on-return net. Extending the
+/// pointer-pass to enums and `Text` is the cleaner end state; it changes
+/// emitted signatures, so it needs its own test pass and its own commit.
+fn classify_param(p: &ParamAbi, cx: AbiCtx, types: &TypeTable) -> PassBy {
+    // The borrow ABI comes first and overrides the C-ABI classification: a
+    // `ref x: T` is a C out-parameter `T*` (write-back through the address),
+    // so it is a bare `ptr` regardless of T's value class — including a Copy
+    // struct that would otherwise coerce to `i64`.
+    if param_passes_by_ptr(p, types) {
+        return PassBy::Ptr {
+            attrs: param_attrs(p, true, types),
+        };
+    }
+    if cx.coerce_copy_aggregates && matches!(p.ty, Ty::Struct(_)) && is_copy_ty(&p.ty, types) {
+        match classify_c_abi(&p.ty, types) {
+            CAbiClass::Coerce {
+                llvm_ty,
+                size,
+                align,
+            } => return PassBy::Coerced {
+                llvm_ty,
+                size,
+                align,
+            },
+            CAbiClass::Indirect => {
+                let (_sz, al) = static_layout(&p.ty, types).unwrap_or((8, 8));
+                return PassBy::Indirect {
+                    ty: indirect_arg_ty(&llvm_ty(&p.ty, types), al),
+                };
+            }
+            CAbiClass::Direct => {}
+        }
+    }
+    PassBy::Value {
+        llvm_ty: llvm_ty(&p.ty, types),
+        attrs: param_attrs(p, false, types),
+        ext: if cx.c_export {
+            abi_ext_attr(&p.ty)
+        } else {
+            ""
+        },
+    }
 }
 
 /// Slice 1A: full parameter attribute set (v0.0.2 LLVM information dividend).
@@ -6006,12 +6212,10 @@ fn gen_function(
             let ret_inner = llvm_ty(&return_ty, types);
             let (sz, al) = static_layout(&return_ty, types)
                 .expect("extern sret return type must have a known layout");
-            write!(
-                out,
-                "ptr sret({}) noalias nonnull noundef writable dereferenceable({}) align {}",
-                ret_inner, sz, al
-            )
-            .unwrap();
+            // The declaration's slot has no SSA name — the attributes are the
+            // whole point, and they must match the definition's exactly.
+            let frag = sret_fragment_for(&ret_inner, sz, al, "");
+            out.push_str(frag.trim_end());
             if !f.params.is_empty() || f.is_variadic {
                 out.push_str(", ");
             }
@@ -6049,14 +6253,8 @@ fn gen_function(
             // and Xtensa pass a `byval` stack copy (see indirect_uses_byval).
             match classify_c_abi(pty, types) {
                 CAbiClass::Indirect => {
-                    if indirect_uses_byval() {
-                        let (_sz, al) = static_layout(pty, types).unwrap_or((8, 8));
-                        let inner = llvm_ty(pty, types);
-                        out.push_str(&format!("ptr byval({inner}) align {al}"));
-                    } else {
-                        // Win64 (and aarch64-darwin): plain `ptr` to a caller copy.
-                        out.push_str("ptr");
-                    }
+                    let (_sz, al) = static_layout(pty, types).unwrap_or((8, 8));
+                    out.push_str(&indirect_arg_ty(&llvm_ty(pty, types), al));
                 }
                 CAbiClass::Coerce { llvm_ty, .. } => out.push_str(&llvm_ty),
                 CAbiClass::Direct => {
@@ -6128,23 +6326,15 @@ fn gen_function(
     // fn (e.g. a raytracer's `ray_color` taking a 24-byte `Ray` by value), with
     // no FFI impact — C callees and fn-pointers are never `fastcc`. The call side
     // (`gen_named_call`) mirrors this on the same `is_fastcc` key.
-    let _ = is_c_export;
     let fn_is_fastcc = md.is_fastcc(&f.name.name);
-    let param_abis: Vec<CAbiClass> = sig
+    let abi_cx = AbiCtx {
+        c_export: is_c_export,
+        coerce_copy_aggregates: !fn_is_fastcc,
+    };
+    let param_abis: Vec<PassBy> = sig
         .params
         .iter()
-        .map(|ps| {
-            let pty = &ps.ty;
-            if matches!(pty, Ty::Struct(_))
-                && is_copy_ty(pty, types)
-                && !param_passes_by_ptr(ps, types)
-                && !fn_is_fastcc
-            {
-                classify_c_abi(pty, types)
-            } else {
-                CAbiClass::Direct
-            }
-        })
+        .map(|ps| classify_param(ps, abi_cx, types))
         .collect();
 
     // Existing Slice 1D path: owned `Text` returns use sret. 5.D adds
@@ -6270,89 +6460,16 @@ fn gen_function(
         // sret slot: caller-allocated, callee-writable, exact size + align.
         let (sz, al) =
             static_layout(&return_ty, types).expect("sret return type must have a known layout");
-        write!(
-            out,
-            "ptr sret({}) noalias nonnull noundef writable dereferenceable({}) align {} %0",
-            ret_ty_str, sz, al
-        )
-        .unwrap();
+        out.push_str(&sret_fragment_for(&ret_ty_str, sz, al, "%0"));
         if !f.params.is_empty() {
             out.push_str(", ");
         }
     }
-    for (i, (_param, ps)) in f.params.iter().zip(sig.params.iter()).enumerate() {
-        let pty = &ps.ty;
+    for (i, pass) in param_abis.iter().enumerate() {
         if i > 0 {
             out.push_str(", ");
         }
-        let llvm_idx = i as u32 + sret_param_offset;
-        // Phase 5 Slice 5.D: when this fn is a C-ABI export, override the
-        // LLVM signature for value-passed aggregates per the platform PCS:
-        //   ≤8 bytes → i64
-        //   9..16   → [2 x i64]
-        //   >16     → ptr (caller-allocated; no `byval` on aarch64-darwin)
-        //
-        // A `ref x: T` param is a C out-parameter `T*` (write-back through the
-        // address), so it is passed as a bare `ptr` in the C ABI regardless of
-        // T's value-class — including a Copy struct that would otherwise be
-        // Coerce/Indirect (`ref p: Point` is `Point*`, not a coerced `i64`).
-        // Mirrors the native side (`param_passes_by_ptr`).
-        let ref_by_ptr = param_passes_by_ptr(ps, types);
-        if ref_by_ptr {
-            let attrs = param_attrs(ps, true, types);
-            if attrs.is_empty() {
-                write!(out, "ptr %{}", llvm_idx).unwrap();
-            } else {
-                write!(out, "ptr {} %{}", attrs, llvm_idx).unwrap();
-            }
-            continue;
-        }
-        match &param_abis[i] {
-            CAbiClass::Coerce { llvm_ty, .. } => {
-                write!(out, "{} %{}", llvm_ty, llvm_idx).unwrap();
-            }
-            CAbiClass::Indirect => {
-                // v0.0.3 Slice 3F: x86_64-sysv requires `byval(<ty>) align <A>`
-                // on indirect args so the backend knows to materialize a
-                // caller-side copy that the callee can mutate. aarch64-darwin
-                // doesn't use byval — caller and callee implicitly share
-                // the layout via the bare pointer. Xtensa (per the esp-clang
-                // probe) passes >24-byte aggregates `byval` like sysv.
-                if indirect_uses_byval() {
-                    let (_sz, al) = static_layout(pty, types).unwrap_or((8, 8));
-                    let inner = llvm_ty(pty, types);
-                    write!(out, "ptr byval({inner}) align {al} %{llvm_idx}").unwrap();
-                } else {
-                    // Win64 (and aarch64-darwin): plain `ptr` to a caller copy.
-                    write!(out, "ptr %{}", llvm_idx).unwrap();
-                }
-            }
-            CAbiClass::Direct => {
-                let by_ptr = param_passes_by_ptr(ps, types);
-                let attrs = param_attrs(ps, by_ptr, types);
-                let base_ty = if by_ptr {
-                    "ptr".to_string()
-                } else {
-                    llvm_ty(pty, types)
-                };
-                // C-ABI: a narrow-int C-export param carries zero/sign-extension.
-                let ext = if is_c_export && !by_ptr {
-                    abi_ext_attr(pty)
-                } else {
-                    ""
-                };
-                let mut prefix = String::new();
-                if !attrs.is_empty() {
-                    prefix.push_str(&attrs);
-                    prefix.push(' ');
-                }
-                if !ext.is_empty() {
-                    prefix.push_str(ext);
-                    prefix.push(' ');
-                }
-                write!(out, "{} {}%{}", base_ty, prefix, llvm_idx).unwrap();
-            }
-        }
+        out.push_str(&pass.sig_fragment(i as u32 + sret_param_offset));
     }
     out.push(')');
     // Declaration: the signature is the whole emission. Stop before the body —
@@ -6431,7 +6548,7 @@ fn gen_function(
         // C-ABI coerced param: alloca with coerced size, store the coerced
         // value, bind as original struct type. The alloca uses the
         // coerced LLVM type because it dominates the size + align needed.
-        if let CAbiClass::Coerce {
+        if let PassBy::Coerced {
             llvm_ty: clty,
             align,
             ..
@@ -6446,11 +6563,11 @@ fn gen_function(
         }
         // C-ABI indirect param: the SSA arg is a pointer to the caller's
         // by-value slot. Bind directly; no alloca, no initial copy.
-        if matches!(param_abis[i], CAbiClass::Indirect) {
+        if matches!(param_abis[i], PassBy::Indirect { .. }) {
             state.bind(&param.name.name, format!("%{llvm_idx}"), pty.clone());
             continue;
         }
-        if param_passes_by_ptr(ps, types) {
+        if matches!(param_abis[i], PassBy::Ptr { .. }) {
             state.bind(&param.name.name, format!("%{llvm_idx}"), pty.clone());
             // v0.0.5 Slice 1A: track params that share heap with the
             // caller (so the body cannot return the binding as-is
@@ -6641,22 +6758,10 @@ fn gen_async_method(
         first = false;
     }
     for (_param, ps) in m.params.iter().zip(sig.params.iter()) {
-        let pty = &ps.ty;
         if !first {
             out.push_str(", ");
         }
-        let by_ptr = param_passes_by_ptr(ps, types);
-        let attrs = param_attrs(ps, by_ptr, types);
-        let base_ty = if by_ptr {
-            "ptr".to_string()
-        } else {
-            llvm_ty(pty, types)
-        };
-        if attrs.is_empty() {
-            write!(out, "{} %{}", base_ty, llvm_idx).unwrap();
-        } else {
-            write!(out, "{} {} %{}", base_ty, attrs, llvm_idx).unwrap();
-        }
+        out.push_str(&classify_param(ps, METHOD_ABI, types).sig_fragment(llvm_idx));
         llvm_idx += 1;
         first = false;
     }
@@ -6872,22 +6977,10 @@ fn gen_gen_method(
         first = false;
     }
     for (_param, ps) in m.params.iter().zip(sig.params.iter()) {
-        let pty = &ps.ty;
         if !first {
             out.push_str(", ");
         }
-        let by_ptr = param_passes_by_ptr(ps, types);
-        let attrs = param_attrs(ps, by_ptr, types);
-        let base_ty = if by_ptr {
-            "ptr".to_string()
-        } else {
-            llvm_ty(pty, types)
-        };
-        if attrs.is_empty() {
-            write!(out, "{} %{}", base_ty, llvm_idx).unwrap();
-        } else {
-            write!(out, "{} {} %{}", base_ty, attrs, llvm_idx).unwrap();
-        }
+        out.push_str(&classify_param(ps, METHOD_ABI, types).sig_fragment(llvm_idx));
         llvm_idx += 1;
         first = false;
     }
@@ -7059,22 +7152,10 @@ fn gen_gen_function(
     // the body read a pointer bit-pattern as an integer and the write-back was
     // lost, with no diagnostic (reports/bug-02).
     for (i, (_param, ps)) in f.params.iter().zip(sig.params.iter()).enumerate() {
-        let pty = &ps.ty;
         if i > 0 {
             out.push_str(", ");
         }
-        let by_ptr = param_passes_by_ptr(ps, types);
-        let attrs = param_attrs(ps, by_ptr, types);
-        let base_ty = if by_ptr {
-            "ptr".to_string()
-        } else {
-            llvm_ty(pty, types)
-        };
-        if attrs.is_empty() {
-            write!(out, "{} %{}", base_ty, i as u32).unwrap();
-        } else {
-            write!(out, "{} {} %{}", base_ty, attrs, i as u32).unwrap();
-        }
+        out.push_str(&classify_param(ps, METHOD_ABI, types).sig_fragment(i as u32));
     }
     out.push_str(") presplitcoroutine {\nentry:\n");
 
@@ -7227,22 +7308,10 @@ fn gen_async_function(
     // the body read a pointer bit-pattern as an integer and the write-back was
     // lost, with no diagnostic (reports/bug-02).
     for (i, (_param, ps)) in f.params.iter().zip(sig.params.iter()).enumerate() {
-        let pty = &ps.ty;
         if i > 0 {
             out.push_str(", ");
         }
-        let by_ptr = param_passes_by_ptr(ps, types);
-        let attrs = param_attrs(ps, by_ptr, types);
-        let base_ty = if by_ptr {
-            "ptr".to_string()
-        } else {
-            llvm_ty(pty, types)
-        };
-        if attrs.is_empty() {
-            write!(out, "{} %{}", base_ty, i as u32).unwrap();
-        } else {
-            write!(out, "{} {} %{}", base_ty, attrs, i as u32).unwrap();
-        }
+        out.push_str(&classify_param(ps, METHOD_ABI, types).sig_fragment(i as u32));
     }
     out.push_str(") presplitcoroutine {\nentry:\n");
 
@@ -7481,12 +7550,12 @@ fn gen_enum_method(
     if uses_sret {
         let (sz, al) = static_layout(&return_ty, types).expect("sret return type has layout");
         let ret_ty_inner = llvm_ty(&return_ty, types);
-        write!(
-            out,
-            "ptr sret({}) noalias nonnull noundef writable dereferenceable({}) align {} %{}",
-            ret_ty_inner, sz, al, llvm_idx
-        )
-        .unwrap();
+        out.push_str(&sret_fragment_for(
+            &ret_ty_inner,
+            sz,
+            al,
+            &format!("%{llvm_idx}"),
+        ));
         llvm_idx += 1;
         first = false;
     }
@@ -7505,22 +7574,10 @@ fn gen_enum_method(
         first = false;
     }
     for (_param, ps) in m.params.iter().zip(sig.params.iter()) {
-        let pty = &ps.ty;
         if !first {
             out.push_str(", ");
         }
-        let by_ptr = param_passes_by_ptr(ps, types);
-        let attrs = param_attrs(ps, by_ptr, types);
-        let base_ty = if by_ptr {
-            "ptr".to_string()
-        } else {
-            llvm_ty(pty, types)
-        };
-        if attrs.is_empty() {
-            write!(out, "{} %{}", base_ty, llvm_idx).unwrap();
-        } else {
-            write!(out, "{} {} %{}", base_ty, attrs, llvm_idx).unwrap();
-        }
+        out.push_str(&classify_param(ps, METHOD_ABI, types).sig_fragment(llvm_idx));
         llvm_idx += 1;
         first = false;
     }
@@ -7644,22 +7701,10 @@ fn gen_gen_enum_method(
         first = false;
     }
     for (_param, ps) in m.params.iter().zip(sig.params.iter()) {
-        let pty = &ps.ty;
         if !first {
             out.push_str(", ");
         }
-        let by_ptr = param_passes_by_ptr(ps, types);
-        let attrs = param_attrs(ps, by_ptr, types);
-        let base_ty = if by_ptr {
-            "ptr".to_string()
-        } else {
-            llvm_ty(pty, types)
-        };
-        if attrs.is_empty() {
-            write!(out, "{} %{}", base_ty, llvm_idx).unwrap();
-        } else {
-            write!(out, "{} {} %{}", base_ty, attrs, llvm_idx).unwrap();
-        }
+        out.push_str(&classify_param(ps, METHOD_ABI, types).sig_fragment(llvm_idx));
         llvm_idx += 1;
         first = false;
     }
@@ -7924,12 +7969,12 @@ fn gen_method(
     if uses_sret {
         let (sz, al) = static_layout(&return_ty, types).expect("sret return type has layout");
         let ret_ty_inner = llvm_ty(&return_ty, types);
-        write!(
-            out,
-            "ptr sret({}) noalias nonnull noundef writable dereferenceable({}) align {} %{}",
-            ret_ty_inner, sz, al, llvm_idx
-        )
-        .unwrap();
+        out.push_str(&sret_fragment_for(
+            &ret_ty_inner,
+            sz,
+            al,
+            &format!("%{llvm_idx}"),
+        ));
         llvm_idx += 1;
         first = false;
     }
@@ -7976,22 +8021,10 @@ fn gen_method(
         first = false;
     }
     for (_param, ps) in m.params.iter().zip(sig.params.iter()) {
-        let pty = &ps.ty;
         if !first {
             out.push_str(", ");
         }
-        let by_ptr = param_passes_by_ptr(ps, types);
-        let attrs = param_attrs(ps, by_ptr, types);
-        let base_ty = if by_ptr {
-            "ptr".to_string()
-        } else {
-            llvm_ty(pty, types)
-        };
-        if attrs.is_empty() {
-            write!(out, "{} %{}", base_ty, llvm_idx).unwrap();
-        } else {
-            write!(out, "{} {} %{}", base_ty, attrs, llvm_idx).unwrap();
-        }
+        out.push_str(&classify_param(ps, METHOD_ABI, types).sig_fragment(llvm_idx));
         llvm_idx += 1;
         first = false;
     }
@@ -8233,12 +8266,12 @@ fn gen_str_method(
     if uses_sret {
         let (sz, al) = static_layout(&return_ty, types).expect("sret return type has layout");
         let ret_ty_inner = llvm_ty(&return_ty, types);
-        write!(
-            out,
-            "ptr sret({}) noalias nonnull noundef writable dereferenceable({}) align {} %{}",
-            ret_ty_inner, sz, al, llvm_idx
-        )
-        .unwrap();
+        out.push_str(&sret_fragment_for(
+            &ret_ty_inner,
+            sz,
+            al,
+            &format!("%{llvm_idx}"),
+        ));
         llvm_idx += 1;
         first = false;
     }
@@ -8263,22 +8296,10 @@ fn gen_str_method(
         first = false;
     }
     for (_param, ps) in m.params.iter().zip(sig.params.iter()) {
-        let pty = &ps.ty;
         if !first {
             out.push_str(", ");
         }
-        let by_ptr = param_passes_by_ptr(ps, types);
-        let attrs = param_attrs(ps, by_ptr, types);
-        let base_ty = if by_ptr {
-            "ptr".to_string()
-        } else {
-            llvm_ty(pty, types)
-        };
-        if attrs.is_empty() {
-            write!(out, "{} %{}", base_ty, llvm_idx).unwrap();
-        } else {
-            write!(out, "{} {} %{}", base_ty, attrs, llvm_idx).unwrap();
-        }
+        out.push_str(&classify_param(ps, METHOD_ABI, types).sig_fragment(llvm_idx));
         llvm_idx += 1;
         first = false;
     }
@@ -11716,11 +11737,7 @@ impl<'a> FnState<'a> {
                     let (_, al) = static_layout(&t, self.types).expect("indirect arg has layout");
                     let slot = self.alloca_anon(t.clone());
                     self.emit(&format!("store {t_lty} {v}, ptr {slot}, align {al}"));
-                    if indirect_uses_byval() {
-                        format!("ptr byval({t_lty}) align {al} {slot}")
-                    } else {
-                        format!("ptr {slot}")
-                    }
+                    format!("{} {slot}", indirect_arg_ty(&t_lty, al))
                 }
                 CAbiClass::Direct => {
                     let ext = abi_ext_attr(&t);
@@ -11766,8 +11783,8 @@ impl<'a> FnState<'a> {
                     "objc_msgSend"
                 };
                 self.emit(&format!(
-                    "call void @{symbol}(ptr sret({inner}) noalias nonnull noundef \
-                     writable dereferenceable({sz}) align {al} {slot}, {argstr})"
+                    "call void @{symbol}({}, {argstr})",
+                    sret_fragment_for(&inner, sz, al, &slot)
                 ));
                 let v = self.next_tmp();
                 self.gen_load(&v, &ret_ty, &slot);
@@ -13280,12 +13297,7 @@ impl<'a> FnState<'a> {
                         // x86_64-sysv and Xtensa pass MEMORY-class aggregates
                         // on the stack via `byval`; aarch64-darwin and Win64
                         // share the slot through a bare pointer.
-                        let ty_str = if indirect_uses_byval() {
-                            format!("ptr byval({pty_lty}) align {al}")
-                        } else {
-                            // Win64 (and aarch64-darwin): plain `ptr` to the copy.
-                            "ptr".to_string()
-                        };
+                        let ty_str = indirect_arg_ty(&pty_lty, al);
                         arg_vals.push((slot, ty_str));
                         continue;
                     }
@@ -13336,9 +13348,7 @@ impl<'a> FnState<'a> {
                         .expect("sret return type has layout");
                     let inner = self.lty(return_type);
                     let slot = self.alloca_anon(return_type.clone());
-                    let sret_arg = format!(
-                        "ptr sret({inner}) noalias nonnull noundef writable dereferenceable({sz}) align {al} {slot}"
-                    );
+                    let sret_arg = sret_fragment_for(&inner, sz, al, &slot);
                     let head = if arg_str.is_empty() {
                         sret_arg
                     } else {
@@ -13378,9 +13388,7 @@ impl<'a> FnState<'a> {
                 static_layout(return_type, self.types).expect("sret return type has layout");
             let inner = self.lty(return_type);
             let slot = self.alloca_anon(return_type.clone());
-            let sret_arg = format!(
-                "ptr sret({inner}) noalias nonnull noundef writable dereferenceable({sz}) align {al} {slot}"
-            );
+            let sret_arg = sret_fragment_for(&inner, sz, al, &slot);
             let head = if arg_str.is_empty() {
                 sret_arg
             } else {
@@ -13604,13 +13612,7 @@ impl<'a> FnState<'a> {
                             // x86_64-sysv and Xtensa pass MEMORY-class
                             // aggregates on the stack via `byval` — matching
                             // the import-decl side and the clang callee.
-                            let ty_str = if indirect_uses_byval() {
-                                let inner = self.lty(pty);
-                                format!("ptr byval({inner}) align {al}")
-                            } else {
-                                // Win64 (and aarch64-darwin): plain `ptr` to the copy.
-                                "ptr".to_string()
-                            };
+                            let ty_str = indirect_arg_ty(&self.lty(pty), al);
                             arg_vals.push((slot, ty_str));
                             if move_flag {
                                 if let ExprKind::Ident(name) = &a.kind {
@@ -13717,13 +13719,7 @@ impl<'a> FnState<'a> {
         // subsumes the old `extern_sret`. Non-Copy struct returns keep cpc's
         // widened sret (ownership / drop-after-move).
         let ret_c_abi = classify_c_abi_return(&sig.return_type, self.types);
-        let ret_is_copy_struct =
-            matches!(sig.return_type, Ty::Struct(_)) && is_copy_ty(&sig.return_type, self.types);
-        // C-ABI return iff the callee crosses the C boundary: extern, or a
-        // non-`fastcc` (address-taken / exported) native fn. A `fastcc` internal
-        // fn keeps its raw aggregate return (musttail-able). Must match the
-        // def-side gate in `gen_function`.
-        let want_c_abi_ret = sig.is_extern || (ret_is_copy_struct && !self.md.is_fastcc(symbol));
+        let want_c_abi_ret = call_wants_c_abi_ret(&sig, symbol, self.md, self.types);
         let c_abi_sret =
             !sig.is_variadic && want_c_abi_ret && matches!(ret_c_abi, CAbiClass::Indirect);
         let uses_sret = !sig.is_variadic
@@ -13753,14 +13749,7 @@ impl<'a> FnState<'a> {
                     // Mirror the attribute string used at the callee's
                     // declaration site ([codegen.rs] sret in
                     // emit_function_signature and emit_method_signature).
-                    let (sret_sz, sret_al) =
-                        static_layout(&ret, self.types).expect("sret return type has layout");
-                    let sret_inner = self.lty(&ret);
-                    let sret_attrs = format!(
-                        "ptr sret({}) noalias nonnull noundef writable dereferenceable({}) align {} {}",
-                        sret_inner, sret_sz, sret_al, caller_slot
-                    );
-                    let mut head = sret_attrs;
+                    let mut head = sret_fragment(&ret, self.types, &caller_slot);
                     if !arg_str.is_empty() {
                         head.push_str(", ");
                         head.push_str(&arg_str);
@@ -13802,13 +13791,7 @@ impl<'a> FnState<'a> {
             // establish x8 passing. clang emits the same call-site `sret(...)`. The
             // indirect (fn-pointer) and musttail sret paths already attribute the
             // slot; this is the direct-call companion that had been left bare.
-            let (sret_sz, sret_al) =
-                static_layout(&ret, self.types).expect("sret return type has layout");
-            let sret_inner = self.lty(&ret);
-            let mut head = format!(
-                "ptr sret({}) noalias nonnull noundef writable dereferenceable({}) align {} {}",
-                sret_inner, sret_sz, sret_al, slot
-            );
+            let mut head = sret_fragment(&ret, self.types, &slot);
             if !arg_str.is_empty() {
                 head.push_str(", ");
                 head.push_str(&arg_str);
@@ -14960,7 +14943,12 @@ impl<'a> FnState<'a> {
                 let ret = info.return_type.clone();
                 let _ = self.lty(&ret);
                 let slot = self.alloca_anon(ret.clone());
-                let mut head = format!("ptr {slot}");
+                // issue-03 step 5: the slot carries the full sret attribute set,
+                // like every other sret site. It used to be a bare `ptr`, which
+                // works only through LLVM's direct-call callee-attribute
+                // fallback — the fallback whose absence produced the
+                // `objc_msgSend` receiver clobber a few lines below.
+                let mut head = sret_fragment(&ret, self.types, &slot);
                 if !arg_str.is_empty() {
                     head.push_str(", ");
                     head.push_str(&arg_str);
@@ -15175,7 +15163,8 @@ impl<'a> FnState<'a> {
             let ret = info.return_type.clone();
             let _ = self.lty(&ret);
             let slot = self.alloca_anon(ret.clone());
-            let mut head = format!("ptr {slot}");
+            // issue-03 step 5: full sret attributes here too — see above.
+            let mut head = sret_fragment(&ret, self.types, &slot);
             if !arg_str.is_empty() {
                 head.push_str(", ");
                 head.push_str(&arg_str);
@@ -15278,7 +15267,8 @@ impl<'a> FnState<'a> {
             let ret = info.return_type.clone();
             let _ = self.lty(&ret);
             let slot = self.alloca_anon(ret.clone());
-            let mut head = format!("ptr {slot}");
+            // issue-03 step 5: full sret attributes here too — see above.
+            let mut head = sret_fragment(&ret, self.types, &slot);
             if !arg_str.is_empty() {
                 head.push_str(", ");
                 head.push_str(&arg_str);
@@ -15460,7 +15450,8 @@ impl<'a> FnState<'a> {
             let ret = info.return_type.clone();
             let lty = self.lty(&ret);
             let slot = self.alloca_anon(ret.clone());
-            let mut head = format!("ptr {slot}");
+            // issue-03 step 5: full sret attributes here too — see above.
+            let mut head = sret_fragment(&ret, self.types, &slot);
             if !arg_str.is_empty() {
                 head.push_str(", ");
                 head.push_str(&arg_str);
@@ -21785,6 +21776,28 @@ mod tests {
         assert!(
             ir.contains("call void @make_str(ptr "),
             "extern fn returning 24B aggregate must call with sret slot, got:\n{ir}"
+        );
+    }
+
+    /// reports/issue-03 step 5: a method whose return uses the widened sret
+    /// path is called with a bare `ptr` slot before this issue — the callee's
+    /// definition declares `sret(...)`, and the call site relied on LLVM's
+    /// direct-call callee-attribute fallback to agree. That fallback is
+    /// exactly what the `objc_msgSend` receiver clobber proved cannot be
+    /// relied on. Both ends now carry the same attribute string, built in one
+    /// place (`sret_fragment_for`).
+    #[test]
+    fn a_method_sret_call_site_carries_the_full_attribute_set() {
+        let ir = gen_src(
+            "struct Owner { opaque p: *u8 }\n             impl Owner {\n                 fn drop(ref this) { }\n                 fn make() -> Owner { return Owner { p: 0 as *u8 }; }\n             }\n             fn main() -> i32 {\n                 let o: Owner = Owner::make();\n                 return 0;\n             }",
+        );
+        assert!(
+            ir.contains("@Owner.make(ptr sret(%Owner) noalias nonnull noundef writable dereferenceable("),
+            "definition must take an attributed sret slot, got:\n{ir}"
+        );
+        assert!(
+            ir.contains("call fastcc void @Owner.make(ptr sret(%Owner) noalias nonnull noundef writable dereferenceable("),
+            "call site must pass the SAME attributed slot, got:\n{ir}"
         );
     }
 

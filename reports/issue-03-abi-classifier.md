@@ -1,5 +1,7 @@
 # Issue 03 — One ABI classifier (clang-ABIInfo shape) for all def/call/declare sites
 
+- Status: PARTIAL 2026-08-02, commit <pending> — steps 1, 2, 3, 5, 6, 7, 8 done;
+  step 4 (the call-site parameter families) not done, see "What is still open"
 - Type: structural consolidation
 - Area: `cplus-core/src/codegen.rs` (new submodule or top section)
 - Effort: L (mechanical but wide)
@@ -105,3 +107,115 @@ prologue consume it — the model exists in-file; this issue extracts and shares
   hold at every intermediate commit — hence the one-family-per-step plan.
 - Do not change WHICH convention any signature uses in steps 1-7 (pure consolidation);
   step 8 is the only behavior change and is optional.
+
+## Outcome
+
+```rust
+struct AbiCtx { c_export: bool, coerce_copy_aggregates: bool }
+
+enum PassBy {
+    Value { llvm_ty: String, attrs: String, ext: &'static str },
+    Ptr { attrs: String },
+    Indirect { ty: String },              // byval or bare ptr, already decided
+    Coerced { llvm_ty: String, size: u64, align: u64 },
+}
+
+fn classify_param(p: &ParamAbi, cx: AbiCtx, types: &TypeTable) -> PassBy;
+impl PassBy { fn sig_fragment(&self, idx: u32) -> String }
+
+fn sret_fragment_for(inner: &str, size: u64, align: u64, name: &str) -> String;
+fn sret_fragment(ty: &Ty, types: &TypeTable, name: &str) -> String;
+fn indirect_arg_ty(inner: &str, align: u64) -> String;
+fn call_wants_c_abi_ret(sig: &FnSig, symbol: &str, md: &ModuleMetadata, types: &TypeTable) -> bool;
+```
+
+The report's key property holds: the byval decision and the sret attribute
+string are inside the shared result, so a site cannot forget them.
+
+**Step 1 + 2 — the nine definition emitters.** `gen_function`,
+`gen_async_method`, `gen_gen_method`, `gen_gen_function`, `gen_async_function`,
+`gen_enum_method`, `gen_gen_enum_method`, `gen_method`, `gen_str_method` all
+emit their parameter list as `classify_param(..).sig_fragment(idx)`. The ten-line
+by_ptr/attrs/base_ty block that had been copied into eight of them is gone.
+`gen_function`'s prologue binds off the same `PassBy` values its signature was
+written from, so the two cannot disagree about which parameter is a pointer.
+
+`AbiCtx` is where the per-emitter difference now lives, and writing it down is
+half the value: free functions apply the C-ABI classification to Copy
+aggregates, `fastcc` functions and every method emitter do not. That was
+previously implicit in which emitter you happened to be reading.
+
+**Step 3 — extern declare/export.** The declaration path shares `gen_function`'s
+signature emission (it already did) and now its sret fragment too.
+
+**Step 5 — the bare-sret call sites, a deliberate IR change.** The four method /
+str-method / enum-method call sites that emitted `ptr %slot` with no attributes
+now emit the same attributed fragment the callee's definition declares. They
+worked only through LLVM's direct-call callee-attribute fallback — the fallback
+whose absence produced the `objc_msgSend` receiver clobber. Pinned by the new
+codegen test `a_method_sret_call_site_carries_the_full_attribute_set`. This is
+the only IR difference the whole issue produces: five of the 40 `docs/examples`
+programs change exactly one line each, all of the form
+`call fastcc void @T.m(ptr %slot)` → `... (ptr sret(%T) noalias nonnull noundef
+writable dereferenceable(N) align A %slot)`.
+
+**Step 6 — byval.** All six indirect-lowering sites (fn definition, extern
+declaration, native call, fn-pointer call, thread trampoline, `#msg_send`) build
+their argument type with `indirect_arg_ty`. `indirect_uses_byval()` has no
+callers outside it and the classifier.
+
+Every one of the twelve hand-built sret attribute strings now comes from
+`sret_fragment_for`, including the two thread trampolines, `#msg_send`, the
+musttail forwarding path and both fn-pointer call paths.
+
+**Step 7 — the fastcc method arm.** `debug_assert!` that a method name is never
+in the address-taken set, replacing the comment that asserted it in prose. (The
+invariant holds because a bound method reference goes through a synthesized
+free-fn bridge, which the free-fn arm covers.)
+
+**Step 8 — the borrow-ABI decision.** Recorded in `classify_param`'s doc rather
+than changed: a bare non-Copy STRUCT is pointer-passed with `readonly`, while a
+non-Copy enum or a `Text` is copied as a raw aggregate; both ends agree, so it
+is sound, and the aggregate copy is what makes `Text` need the
+`borrowed_params` net. Unifying changes emitted signatures and needs its own
+test pass.
+
+### A correction to the report
+
+The report lists the musttail return-coercion predicate (`callee_ret_coerced`)
+as "a third, divergent copy of the `want_c_abi_ret` gate". It is a third copy,
+but it is not divergent: it asks only about an EXTERN callee, and the
+non-extern half of the gate is already covered two lines above by
+`enclosing_ret_coerced` — the predicate requires the callee's return type to
+equal the enclosing fn's and their calling conventions to match, so a
+coerced-return callee implies a coerced-return caller. The gate is now a named
+function (`call_wants_c_abi_ret`) shared by the call-site return path, and the
+musttail predicate keeps its narrower question with the reasoning written down.
+Widening it would only lose valid tail calls.
+
+## What is still open
+
+Step 4 — adopting the classifier in `gen_named_call` and `gen_indirect_call`'s
+PARAMETER paths — is not done. The TYPE half of those sites is already shared
+(`indirect_arg_ty` for byval, `sret_fragment` for the return slot); what
+remains is the value half, where each call site materializes an argument
+(alloca, store, coerced load) before naming its type. That needs `PassBy` to
+grow a `call_fragment` that can emit instructions, which is a different shape
+from the pure-text `sig_fragment` and a larger change than the rest of this
+issue combined. The def/call symmetry that broke in the past (Xtensa byval, the
+sret attribute set) is now shared; what is left is the argument-materialization
+code, which has never been the thing that drifted.
+
+## Verification (as run)
+
+- IR byte-identity after steps 1, 2, 3, 6, 7 and the shared return gate:
+  `--emit-ll` over all 40 `docs/examples` plus three purpose-built probes (an
+  ABI probe covering by-ref write-back, `take`, non-Copy borrow, Copy struct,
+  `restrict`, all three receivers and an extern import; a C-ABI probe covering
+  8/16/24-byte `#[repr(C)]` struct params and returns, an HFA, narrow-int
+  extension and a C out-parameter; a method/enum probe) — identical.
+- Step 5's IR change isolated to the five example programs named above, with a
+  new codegen test pinning both ends of the attribute string.
+- `cargo test -p cplus-core` 1845 + 8, `cargo test -p cpc` 605 + 16 + 5 + 6;
+  `cpc test` in `vendor/stdlib` 290 green in debug and `--release`; vendor-wide
+  `cpc check` parity across 54 packages — no change.
