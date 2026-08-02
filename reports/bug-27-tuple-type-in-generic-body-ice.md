@@ -1,6 +1,6 @@
 # Bug 27 — A tuple TYPE naming a type parameter inside a generic body: ICE
 
-- Status: FIXED 2026-08-02, commit 9c36226 — with one sub-case left open, see
+- Status: FIXED 2026-08-02, commit afe362c — with one sub-case left open, see
   "What is still broken" below
 - Severity: ICE
 - Area: monomorphize (`cplus-core/src/monomorphize.rs`) + sema instantiation recording

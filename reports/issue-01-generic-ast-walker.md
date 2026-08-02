@@ -1,6 +1,6 @@
 # Issue 01 — Generic mutable AST traversal (kill the missing-arm bug family)
 
-- Status: DONE 2026-08-02, commit e0de12c
+- Status: DONE 2026-08-02, commit d4c1a53
 - Type: structural consolidation
 - Area: `cplus-core/src/ast.rs` (new walker), `monomorphize.rs`, `lower.rs`
 - Effort: M
