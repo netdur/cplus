@@ -163,13 +163,7 @@ pub fn monomorphize(
     // through recorded inner call args, and add the resolved
     // `(callee, concrete_args)` to the instantiation set. Iterate until
     // no new pair is produced.
-    let (propagated_instantiations, _overflow) = propagate_fn_instantiations(
-        &program,
-        &mono.instantiations,
-        &mono.call_monos,
-        &mono.struct_instantiations,
-        &mono.method_instantiations,
-    );
+    let (propagated_instantiations, _overflow) = propagate_all_instantiations(&program, mono);
     // Build the substitution context for each instantiation up front
     // so call-site rewriting and template-expansion share one source.
     let mut instances: Vec<MonoInstance> = Vec::new();
@@ -693,19 +687,12 @@ fn synthesize_generic_typed_impls(
         if args.len() != impl_param_names.len() {
             continue;
         }
-        let _ = &mangled_from_info; // kept for parity with prior shape
-                                    // Re-resolve mangled name from the appropriate instantiation
-                                    // map (we know `sname == target_name` and arities match).
-        let info_mangled: String = mono
-            .struct_instantiations
-            .get(&(sname.clone(), args.clone()))
-            .map(|i| i.mangled_name.clone())
-            .or_else(|| {
-                mono.enum_instantiations
-                    .get(&(sname.clone(), args.clone()))
-                    .map(|i| i.mangled_name.clone())
-            })
-            .expect("instantiation present (just iterated)");
+        // issue-10: the mangled name came off the instantiation we are
+        // iterating. It used to be discarded (`let _ = &mangled_from_info; //
+        // kept for parity with prior shape`) and then looked up again in the
+        // same two maps with an `.expect("instantiation present (just
+        // iterated)")` — a fossil of an earlier shape.
+        let info_mangled: String = mangled_from_info;
         // Subst: impl-level T → concrete Ty; "Self" → Path(mangled)
         // handled separately by inserting Self into subst with the
         // concrete struct's Ty rendered by type_name_of.
@@ -740,37 +727,17 @@ fn synthesize_generic_typed_impls(
                     if msname != &mangled_name || mname != &m.name.name {
                         continue;
                     }
-                    let mut method_subst = subst.clone();
-                    method_subst.extend(build_subst(&m.generic_params, margs));
-                    let mut clone = m.clone();
-                    clone.name = Ident {
-                        name: mangle_name(&m.name.name, margs, type_name_of),
-                        span: m.name.span,
-                    };
-                    clone.generic_params = Vec::new();
-                    for p in &mut clone.params {
-                        p.ty = rewrite_self_in_type(
-                            &subst_type_ast(&p.ty, &method_subst, type_name_of, struct_lookup),
-                            &mangled_name,
-                        );
-                    }
-                    if let Some(rt) = &mut clone.return_type {
-                        *rt = rewrite_self_in_type(
-                            &subst_type_ast(rt, &method_subst, type_name_of, struct_lookup),
-                            &mangled_name,
-                        );
-                    }
-                    clone.body = rewrite_block_with_self(
-                        &m.body,
-                        &method_subst,
+                    new_methods.push(expand_generic_method(
+                        m,
+                        &subst,
+                        margs,
+                        Some(&mangled_name),
                         generic_names,
                         inst_lookup,
                         mono,
                         type_name_of,
                         struct_lookup,
-                        &mangled_name,
-                    );
-                    new_methods.push(clone);
+                    ));
                 }
                 // Drop the template (no push).
                 continue;
@@ -881,6 +848,71 @@ fn rewrite_self_in_type(ty: &Type, mangled_name: &str) -> Type {
 /// to the concrete instance name. One traversal — `rewrite_block` does the
 /// subst + call-site rewriting AND resolves `Self`, because the binding rides
 /// on `StructLookup` (see `StructLookup::self_name`).
+/// issue-10: expand ONE generic method for ONE method-instantiation. Both
+/// expansion paths call this — the concrete-struct impl arm in
+/// `rewrite_item_calls` and the synthesized generic-struct impls in
+/// `synthesize_generic_typed_impls`.
+///
+/// They used to be ~40 duplicated lines apiece with a comment on each saying
+/// the other exists and must mirror it ("The non-generic-struct path does the
+/// same at the `ItemKind::Impl` arm; this is its generic-struct counterpart").
+/// A divergence between them produced a codegen panic once already.
+///
+/// `outer_subst` is the impl block's own substitution — empty for a concrete
+/// struct, `T -> i32` inside `impl Box[T]`. `self_target` is the concrete
+/// instance name `Self` stands for in that second case; `None` when the impl
+/// target is already concrete and `Self` needs no rewriting.
+fn expand_generic_method(
+    m: &Method,
+    outer_subst: &std::collections::HashMap<String, Ty>,
+    margs: &[Ty],
+    self_target: Option<&str>,
+    generic_names: &std::collections::HashSet<String>,
+    inst_lookup: &std::collections::HashMap<(String, Vec<Ty>), String>,
+    mono: &MonoInfo,
+    type_name_of: &dyn Fn(&Ty) -> String,
+    struct_lookup: &StructLookup,
+) -> Method {
+    // A method-level-generic method on a generic-struct impl carries TWO
+    // substitutions — the struct's `T` from this instantiation and the
+    // method's own `U` from the call site.
+    let mut subst = outer_subst.clone();
+    subst.extend(build_subst(&m.generic_params, margs));
+    // The mangled name must match what the call site rewrote to
+    // (`b.id::[i32]` → `b.id__i32`).
+    let mut clone = m.clone();
+    clone.name = Ident {
+        name: mangle_name(&m.name.name, margs, type_name_of),
+        span: m.name.span,
+    };
+    clone.generic_params = Vec::new();
+    let with_self = self_target.map(|t| struct_lookup.with_self(t));
+    let lookup = with_self.as_ref().unwrap_or(struct_lookup);
+    let subst_ty = |t: &Type| {
+        let substituted = subst_type_ast(t, &subst, type_name_of, struct_lookup);
+        match self_target {
+            Some(name) => rewrite_self_in_type(&substituted, name),
+            None => substituted,
+        }
+    };
+    for p in &mut clone.params {
+        p.ty = subst_ty(&p.ty);
+    }
+    if let Some(rt) = &mut clone.return_type {
+        *rt = subst_ty(rt);
+    }
+    clone.body = rewrite_block(
+        &m.body,
+        &subst,
+        generic_names,
+        inst_lookup,
+        mono,
+        type_name_of,
+        lookup,
+    );
+    clone
+}
+
 fn rewrite_block_with_self(
     block: &Block,
     subst: &std::collections::HashMap<String, Ty>,
@@ -1063,13 +1095,36 @@ fn report_ident_call(e: &Expr, f: &mut impl FnMut(&str, &[Type], crate::lexer::S
 }
 
 
+/// issue-10: THE call into the fn-instantiation fixpoint. Two callers run it —
+/// `check_instantiation_bounds`, the driver's E0910 pre-check, and
+/// `monomorphize` itself — and they must feed it the same inputs or the
+/// hang-guard stops describing the expansion it is guarding. They used to pass
+/// five arguments each, separately.
+///
+/// The fixpoint still runs twice per compile; that is a cost, not a hazard, and
+/// removing it means threading the result from the driver through
+/// `monomorphize`'s public signature.
+fn propagate_all_instantiations(
+    program: &Program,
+    mono: &MonoInfo,
+) -> (
+    std::collections::BTreeSet<(String, Vec<Ty>)>,
+    Option<String>,
+) {
+    propagate_fn_instantiations(
+        program,
+        &mono.instantiations,
+        &mono.struct_instantiations,
+        &mono.method_instantiations,
+    )
+}
+
 /// v0.0.4 Phase 1B: fixed-point propagation of fn instantiations through
 /// transitive generic calls. See the explanatory comment at the call site
 /// in `monomorphize()`.
 fn propagate_fn_instantiations(
     program: &Program,
     initial: &std::collections::BTreeSet<(String, Vec<Ty>)>,
-    _call_monos: &std::collections::HashMap<crate::lexer::Span, Vec<Ty>>,
     struct_instantiations: &std::collections::BTreeMap<
         (String, Vec<Ty>),
         crate::sema::StructInstantiationInfo,
@@ -1334,13 +1389,7 @@ pub fn check_instantiation_bounds(
     files: &std::collections::BTreeMap<String, (std::path::PathBuf, String)>,
 ) -> Vec<crate::diagnostics::Diagnostic> {
     use crate::diagnostics::{DiagCode, Diagnostic, LineMap, Severity};
-    let (_set, culprit) = propagate_fn_instantiations(
-        program,
-        &mono.instantiations,
-        &mono.call_monos,
-        &mono.struct_instantiations,
-        &mono.method_instantiations,
-    );
+    let (_set, culprit) = propagate_all_instantiations(program, mono);
     let Some(name) = culprit else {
         return Vec::new();
     };
@@ -1615,6 +1664,19 @@ fn rewrite_item_calls(
             // entry in mono.method_instantiations. Non-generic methods
             // just get their bodies rewritten in place.
             let target_name = b.target.name.clone();
+            // issue-10: `method_instantiations` is one set holding two key
+            // universes — this path matches by the SOURCE struct name, and
+            // `synthesize_generic_typed_impls` matches by the MANGLED instance
+            // name sema recorded for a generic receiver. They are disjoint only
+            // because E0917 reserves interior `__` in user identifiers, which
+            // is what makes a mangled name unmistakable. Asserted here rather
+            // than left as a comment; the fix is a `(type, method)` key, which
+            // is a sema-side change.
+            debug_assert!(
+                !target_name.contains("__"),
+                "a source struct name with interior `__` collides with the \
+                 mangled-instance key universe in `method_instantiations`: {target_name}"
+            );
             let mut new_methods: Vec<Method> = Vec::with_capacity(b.methods.len());
             for m in b.methods {
                 if m.generic_params.is_empty() {
@@ -1636,35 +1698,24 @@ fn rewrite_item_calls(
                     );
                     new_methods.push(m2);
                 } else {
-                    // Synthesize one concrete method per instantiation.
+                    // Synthesize one concrete method per instantiation; the
+                    // impl target is already concrete, so there is no outer
+                    // substitution and `Self` needs no rewriting.
                     for (sname, mname, args) in &mono.method_instantiations {
                         if sname != &target_name || mname != &m.name.name {
                             continue;
                         }
-                        let subst = build_subst(&m.generic_params, args);
-                        let mangled = mangle_name(&m.name.name, args, type_name_of);
-                        let mut clone = m.clone();
-                        clone.name = Ident {
-                            name: mangled,
-                            span: m.name.span,
-                        };
-                        clone.generic_params = Vec::new();
-                        for p in &mut clone.params {
-                            p.ty = subst_type_ast(&p.ty, &subst, type_name_of, struct_lookup);
-                        }
-                        if let Some(rt) = &mut clone.return_type {
-                            *rt = subst_type_ast(rt, &subst, type_name_of, struct_lookup);
-                        }
-                        clone.body = rewrite_block(
-                            &m.body,
-                            &subst,
+                        new_methods.push(expand_generic_method(
+                            &m,
+                            &empty_subst,
+                            args,
+                            None,
                             generic_names,
                             inst_lookup,
                             mono,
                             type_name_of,
                             struct_lookup,
-                        );
-                        new_methods.push(clone);
+                        ));
                     }
                     // Drop the template (no push).
                 }

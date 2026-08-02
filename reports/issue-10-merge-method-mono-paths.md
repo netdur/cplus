@@ -1,5 +1,7 @@
 # Issue 10 — Merge the twin method-monomorphization paths; Self as an ordinary subst key
 
+- Status: DONE 2026-08-02, commit <pending> — with one part deliberately left,
+  see "What is still open"
 - Type: structural consolidation
 - Area: `cplus-core/src/monomorphize.rs` (+ a sema note)
 - Effort: M
@@ -89,3 +91,62 @@ body rewrite is one rewriter invocation.
 
 - Do not change mangled-name output at any step (symbol stability); the extraction is
   behavior-preserving until step 5's key change, which alters only INTERNAL matching.
+
+## Outcome
+
+```rust
+fn expand_generic_method(
+    m: &Method,
+    outer_subst: &HashMap<String, Ty>,  // the impl block's own subst; empty for a concrete struct
+    margs: &[Ty],                       // the method-level instantiation
+    self_target: Option<&str>,          // the instance name `Self` stands for, inside a generic impl
+    ..ctx..
+) -> Method
+```
+
+Both expansion paths call it: the concrete-struct arm in `rewrite_item_calls`
+(`outer_subst` empty, `self_target` `None`) and `synthesize_generic_typed_impls`
+(the impl's subst, `Some(mangled_instance)`). The ~40 duplicated lines apiece —
+each carrying a comment naming the other and saying they must mirror — are one
+function.
+
+Step 3 (`Self` as a substitution key) had already landed in the bug tier:
+`StructLookup::with_self` carries it, and the walker pair bug-07 came from is
+gone. `expand_generic_method` uses that mechanism for bodies and
+`rewrite_self_in_type` for signature types, which is the only place the two
+paths still differ — and now they differ by one `Option`, in one function.
+
+Also in this commit, from the same-file cleanup list:
+
+- **One entry into the fixpoint.** `propagate_all_instantiations(program, mono)`
+  is what both callers use — `check_instantiation_bounds`, the driver's E0910
+  pre-check, and `monomorphize` itself. They each used to spell out five
+  arguments, and the report's hazard is exactly that: if the two argument lists
+  drift, the hang-guard stops describing the expansion it guards. (The fixpoint
+  still RUNS twice; that is a cost, not a hazard, and removing it means
+  threading the result through `monomorphize`'s public signature.)
+- **The dead `_call_monos` parameter** is gone.
+- **The parity fossil**: `let _ = &mangled_from_info; // kept for parity with
+  prior shape`, followed by re-fetching the same value from the same two maps
+  with `.expect("instantiation present (just iterated)")`. It uses the value it
+  already had.
+- **The key-universe hazard is asserted.** `method_instantiations` is one set
+  holding two key universes — the source struct name (path A) and the mangled
+  instance name (path B) — disjoint only because E0917 reserves interior `__`.
+  A `debug_assert` says so at the matching site.
+
+## What is still open
+
+The receiver-blind match (`mname == name && margs == args`, ignoring the struct)
+needs sema to record `(type, method)` per span; changing the key touches both
+paths' matching and sema's recording, and it is safe today for the reason the
+assert now states. Left as its own change, per the report's own step 5.
+
+## Verification (as run)
+
+- `--emit-ll` over 40 `docs/examples` plus the ABI probes: byte-identical
+  through the merge and through the cleanups — mangled names unchanged, which
+  is the report's hard constraint.
+- `cargo test -p cplus-core` 1847 + 8, `cargo test -p cpc` 608 + 16 + 5 + 6
+  (the generic-struct × generic-method combo tests are in there), `cpc test` in
+  `vendor/stdlib` 290 green.
