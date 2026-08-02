@@ -1,6 +1,6 @@
 # Issue 06 — Lang-item registry: identity by structure, not by name suffix
 
-- Status: PARTIAL 2026-08-02, commit <pending> — steps 1, 2, 3, 5 done; steps 4
+- Status: PARTIAL 2026-08-02, commit 3ec30cf — steps 1, 2, 3, 5 done; steps 4
   (marker/no_alloc re-keying) and 6 (the `__cplus_` constant) not done, see
   "What is still open"
 - Type: structural consolidation
