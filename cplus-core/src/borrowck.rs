@@ -3598,6 +3598,145 @@ impl<'a> ViewRules<'a> {
         }
     }
 
+    /// Contract §3.1, the aggregate half: a view LEAF built inside a
+    /// returned aggregate literal — `return Holder { view: local.view() };`
+    /// — dangles exactly like a bare view return, and says so in the leaf's
+    /// own terms. Runs whatever the return type is, so the escape is still
+    /// named when the returned type itself cannot be classified.
+    ///
+    /// Only unambiguous view leaves are flagged, so moving an owned value
+    /// into an owned field (`Holder { text: local }`) is never mistaken for
+    /// a borrow.
+    fn check_returned_aggregate(&mut self, e: &Expr) {
+        if !matches!(
+            &e.kind,
+            ExprKind::StructLit { .. }
+                | ExprKind::InferredStructLit { .. }
+                | ExprKind::GenericStructLit { .. }
+                | ExprKind::ArrayLit { .. }
+                | ExprKind::TupleLit { .. }
+                | ExprKind::ArrayFill { .. }
+        ) {
+            return;
+        }
+        let expected = self.return_ty.clone();
+        self.flag_view_leaves(e, expected.as_ref());
+    }
+
+    /// The declared type of one field of a named struct.
+    fn field_ty(&self, struct_name: &str, field: &str) -> Option<Type> {
+        self.sigs
+            .struct_fields
+            .get(struct_name)
+            .and_then(|fs| fs.get(field))
+            .cloned()
+    }
+
+    /// The element type an aggregate literal's elements are stored at.
+    fn element_ty(expected: Option<&Type>) -> Option<Type> {
+        match expected.map(|t| &t.kind) {
+            Some(TypeKind::Slice(inner)) => Some((**inner).clone()),
+            Some(TypeKind::Array { elem, .. }) => Some((**elem).clone()),
+            _ => None,
+        }
+    }
+
+    fn flag_view_leaves(&mut self, e: &Expr, expected: Option<&Type>) {
+        match &e.kind {
+            ExprKind::StructLit { name, fields } | ExprKind::GenericStructLit { name, fields, .. } => {
+                for f in fields {
+                    let fty = self.field_ty(&name.name, &f.name.name);
+                    self.flag_view_leaves(&f.value, fty.as_ref());
+                }
+            }
+            ExprKind::InferredStructLit { fields } => {
+                let sname = match expected.map(|t| &t.kind) {
+                    Some(TypeKind::Path(n)) => Some(n.clone()),
+                    Some(TypeKind::Generic { name, .. }) => Some(name.clone()),
+                    _ => None,
+                };
+                for f in fields {
+                    let fty = sname.as_ref().and_then(|s| self.field_ty(s, &f.name.name));
+                    self.flag_view_leaves(&f.value, fty.as_ref());
+                }
+            }
+            ExprKind::ArrayLit { elements } => {
+                let ety = Self::element_ty(expected);
+                for el in elements {
+                    self.flag_view_leaves(el, ety.as_ref());
+                }
+            }
+            ExprKind::TupleLit { elements } => {
+                let etys = match expected.map(|t| &t.kind) {
+                    Some(TypeKind::Tuple(ts)) => ts.clone(),
+                    _ => Vec::new(),
+                };
+                for (i, el) in elements.iter().enumerate() {
+                    self.flag_view_leaves(el, etys.get(i));
+                }
+            }
+            ExprKind::ArrayFill { fill, .. } => {
+                let ety = Self::element_ty(expected);
+                self.flag_view_leaves(fill, ety.as_ref());
+            }
+            _ => {
+                for root in self.view_leaf_roots(e, expected) {
+                    if !self.root_dies_at_return(&root) {
+                        continue;
+                    }
+                    let what = if root == "self" || root == "this" {
+                        "the `take this` receiver".to_string()
+                    } else if self.param_names.contains(&root) {
+                        format!("`take` parameter `{root}`")
+                    } else {
+                        format!("local `{root}`")
+                    };
+                    self.err(
+                        "E0513",
+                        format!(
+                            "view of {what} escapes inside the returned value: it is freed when the function returns, so the stored view would dangle. Store an owned `Text` / `Vec[T]`, or borrow the view from a non-`take` parameter"
+                        ),
+                        e.span,
+                    );
+                }
+            }
+        }
+    }
+
+    /// View-source roots of an aggregate LEAF — but only for a leaf that is
+    /// genuinely a view: a view-producing call, or an owner READ AS a view
+    /// where the field expects one (the `Text`→`str` coercion, which has no
+    /// accessor to key on). A leaf that moves an owned value into an owned
+    /// field is not a view and must never be flagged; that would reject a
+    /// valid ownership transfer.
+    fn view_leaf_roots(&self, e: &Expr, expected: Option<&Type>) -> BTreeSet<String> {
+        match &e.kind {
+            ExprKind::Call { callee, .. }
+                if matches!(&callee.kind, ExprKind::Field { .. } | ExprKind::Ident(_)) =>
+            {
+                self.view_source_roots(e)
+            }
+            _ if self.is_coercion_to_view(e, expected) => self.view_source_roots(e),
+            _ => BTreeSet::new(),
+        }
+    }
+
+    /// True iff `e` is an owner being read where a view is expected — the
+    /// coercion an owning string performs at a `str` position. The owner
+    /// must be non-Copy (it has bytes to free) and not already a view.
+    fn is_coercion_to_view(&self, e: &Expr, expected: Option<&Type>) -> bool {
+        let Some(want) = expected else {
+            return false;
+        };
+        if !Self::is_view_ty(want) {
+            return false;
+        }
+        match self.infer_ty(e) {
+            Some(t) => !Self::is_view_ty(&t) && !self.oracle.is_copy(&t),
+            None => false,
+        }
+    }
+
     // -- the walk ----------------------------------------------------------
 
     /// Record what a `let` / `var` introduces: an owning binding, plus the
@@ -3671,6 +3810,7 @@ impl<'a> ViewRules<'a> {
             }
             StmtKind::Return(Some(e)) => {
                 self.walk_expr(e);
+                self.check_returned_aggregate(e);
                 self.check_return(e);
             }
             StmtKind::Return(None) => {}
@@ -8521,5 +8661,74 @@ fn mk() -> LStr { return LStr { ptr: { 0 as *u8 }, len: { 0 as usize }, cap: { 0
             !codes.iter().any(|c| c == "E0513"),
             "a param-rooted coerced view must not be denied, got {codes:?}"
         );
+    }
+
+    #[test]
+    fn view_leaf_inside_returned_aggregate_denied_e0513() {
+        // The leaf half of §3.1: the dangle is named where it is built,
+        // whatever the returned type turns out to be.
+        let cases: &[(&str, &str)] = &[
+            (
+                "struct_field",
+                "fn keep() -> Slot { let b: Buf = Buf::new(); return Slot { s: b.view() }; }",
+            ),
+            (
+                "nested_struct",
+                "fn keep2() -> Nest { let b: Buf = Buf::new(); \
+                 return Nest { inner: Slot { s: b.view() } }; }",
+            ),
+            (
+                "array_element",
+                "fn keep3() -> [str; 1] { let b: Buf = Buf::new(); return [b.view()]; }",
+            ),
+        ];
+        for (name, tail) in cases {
+            let codes = check_src(&format!("{VIEW_PRELUDE}{tail}"));
+            assert!(
+                codes.iter().any(|c| c == "E0513"),
+                "[{name}] expected E0513, got {codes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn coerced_owner_leaf_in_returned_aggregate_denied_e0513() {
+        // The coercion route has no accessor to key on: a lang-string local
+        // stored where the field declares `str` is read AS a view.
+        let codes = check_src(&format!(
+            "{LANG_STR_PRELUDE}struct Holder {{ view: str }}\n\
+             fn keep() -> Holder {{ let s: LStr = mk(); return Holder {{ view: s }}; }}"
+        ));
+        assert!(
+            codes.iter().any(|c| c == "E0513"),
+            "expected E0513 on a coerced view escaping in an aggregate, got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn owned_leaf_moved_into_returned_aggregate_stays_clean() {
+        // Ownership transfer is not a borrow. `Holder { b: b }` moves the
+        // value in; nothing is left pointing at freed storage.
+        let clean: &[(&str, &str)] = &[
+            (
+                "moved_owner",
+                "fn wrap(take b: Buf) -> Holder { return Holder { b: b }; }",
+            ),
+            (
+                "param_rooted_leaf",
+                "fn wrap2(b: Buf) -> Slot { return Slot { s: b.view() }; }",
+            ),
+            (
+                "literal_leaf",
+                "fn wrap3() -> Slot { return Slot { s: \"lit\" }; }",
+            ),
+        ];
+        for (name, tail) in clean {
+            let codes = check_src(&format!("{VIEW_PRELUDE}{tail}"));
+            assert!(
+                !codes.iter().any(|c| c == "E0513"),
+                "[{name}] must not be denied, got {codes:?}"
+            );
+        }
     }
 }
