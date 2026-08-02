@@ -1,8 +1,7 @@
 # Issue 06 — Lang-item registry: identity by structure, not by name suffix
 
-- Status: PARTIAL 2026-08-02, commit 3ec30cf — steps 1, 2, 3, 5 done; steps 4
-  (marker/no_alloc re-keying) and 6 (the `__cplus_` constant) not done, see
-  "What is still open"
+- Status: DONE 2026-08-02 — steps 1, 2, 3, 5 in `3ec30cf`; step 4 in
+  `1e33595`; step 6 in `1c7cce4`.
 - Type: structural consolidation
 - Area: `cplus-core/src/sema.rs`, `codegen.rs`, `attrs.rs`; `vendor/stdlib/src`
 - Effort: M
@@ -141,16 +140,45 @@ Filtering those three lookups by the lang flag is what makes the program build
 and run. e2e `a_user_type_named_like_a_lang_item_does_not_shadow_it` builds and
 runs it four times (the failure it replaces was per-process random).
 
-## What is still open
+## Step 4 — markers and the no-alloc blessing, re-keyed (`1e33595`)
 
-- **Step 4** — markers (`impl T: Send {}`), the builtin `!Send` list and
-  `#[no_alloc] fn drop` are still keyed by LEAF name, so two same-named types in
-  two packages share one answer. That is the same disease but a different
-  mechanism (no attribute to hang identity on — it needs resolution at
-  registration time into ids or fully-qualified names) and a separable change.
-- **Step 6** — the `__cplus_` runtime-ABI prefix is still built by format
-  string in two places and sniffed in a third, with no shared constant and no
-  rejection of user code declaring `extern fn __cplus_x`.
+Three mechanisms keyed on the LEAF name, so two packages that each declared a
+`Handle` shared one answer:
+
+- `impl Handle: Send {}` in one module vouched for every type called `Handle`
+  in the build — including one wrapping a raw pointer, which is the type the
+  structural rule exists to stop. The report asked for a two-package test and
+  it is `a_send_marker_in_one_module_does_not_vouch_for_a_same_named_type_in_another`
+  (e2e, three files): on the pre-change binary the program compiles clean.
+- the builtin `!Send` list matched `"Rc" | "MutexGuard"` by leaf.
+- `#[no_alloc] fn drop` on one package's `Foo` blessed another package's
+  allocating `Foo`.
+
+All three now key on `nominal_identity`: a type's generic template's declared
+name, or its own. Both are qualified by the resolver, and both are what the
+template tables are keyed under — which is why a registration site holding an
+`impl` target name and a use site holding a `Ty` agree without either guessing.
+
+`Rc` and `MutexGuard` became designated lang items, which is what the registry
+from steps 1-3 was for: `#[lang("rc")]` and `#[lang("mutex_guard")]` on the
+stdlib declarations, and a build without them blocks nothing. Three sema tests
+that relied on leaf matching now carry the marker — they were claiming to BE
+those types — and `a_struct_named_rc_without_the_marker_is_send` pins the
+other direction.
+
+## Step 6 — the prefix constant and the claim marker (`1c7cce4`)
+
+`__cplus_` was built by format string in sema and codegen and sniffed in the
+resolver. It is now `mangling::RUNTIME_ABI_PREFIX`, read by every producer and
+consumer.
+
+The squatting half took a decision the report left open: the stdlib
+legitimately declares twelve `extern fn __cplus_*` bindings, so a blanket
+rejection was not available and "is this the stdlib package?" is not a
+question sema can ask. The answer is the same one this issue used for lang
+items — write the claim down. `#[runtime_abi]` marks a declaration that names
+a compiler-generated symbol; an unmarked one is **E0919**. The stdlib's twelve
+now say so.
 
 ## Verification (as run)
 
