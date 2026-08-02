@@ -1,6 +1,6 @@
 # Issue 16 — Span-keyed side tables: assert the contracts, fix the span policy, scope NodeId
 
-- Status: PARTIAL 2026-08-02, commit <pending> — items 1 and 2 done; item 3 is
+- Status: PARTIAL 2026-08-02, commit 717ca0d — items 1 and 2 done; item 3 is
   the design note below; item 4 not done
 - Type: hazard hardening + design note
 - Area: `cplus-core/src/sema.rs`, `monomorphize.rs`, `lower.rs`, `codegen.rs`
