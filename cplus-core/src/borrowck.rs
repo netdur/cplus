@@ -3909,6 +3909,68 @@ impl<'a> ViewRules<'a> {
         );
     }
 
+    /// Does a `match` OWN the value it destructures, so that a payload
+    /// binding owns its part of it? A call result or a constructor is a
+    /// temporary the match owns outright; a whole binding owns what that
+    /// binding owns; a projection or a deref names storage owned elsewhere,
+    /// so the payload is a borrow the owner still drops.
+    fn scrutinee_is_owned(&self, e: &Expr) -> bool {
+        match &e.kind {
+            ExprKind::Ident(n) => self.lookup(n).is_some_and(|l| l.owns_value),
+            ExprKind::Field { .. } | ExprKind::Index { .. } => false,
+            ExprKind::Unary {
+                op: UnaryOp::Deref, ..
+            } => false,
+            _ => true,
+        }
+    }
+
+    /// The declared type of each payload binding in a variant pattern, with
+    /// the enum's type arguments substituted — from the pattern's own
+    /// turbofish where it has one, else from the scrutinee's type. Without
+    /// these a payload binding is untyped and every type-gated rule skips
+    /// it, which is how a view of a matched-out owner escaped.
+    fn payload_types(&self, pat: &Pattern, scrutinee: &Expr) -> HashMap<String, Type> {
+        let mut out = HashMap::new();
+        let PatternKind::Variant {
+            enum_name,
+            type_args,
+            variant_name,
+            payload,
+        } = &pat.kind
+        else {
+            return out;
+        };
+        let Some(ptys) = self
+            .sigs
+            .enum_payloads
+            .get(&enum_name.name)
+            .and_then(|vs| vs.get(&variant_name.name))
+        else {
+            return out;
+        };
+        let map: HashMap<String, Type> = match self.sigs.enum_generics.get(&enum_name.name) {
+            None => HashMap::new(),
+            Some(gp) => {
+                let args: Vec<Type> = if !type_args.is_empty() {
+                    type_args.clone()
+                } else {
+                    match self.infer_ty(scrutinee).map(|t| t.kind) {
+                        Some(TypeKind::Generic { name, args }) if name == enum_name.name => args,
+                        _ => return out,
+                    }
+                };
+                gp.iter().cloned().zip(args).collect()
+            }
+        };
+        for (bp, t) in payload.iter().zip(ptys.iter()) {
+            if let PatternKind::Binding(id) = &bp.kind {
+                out.insert(id.name.clone(), subst_type(t, &map));
+            }
+        }
+        out
+    }
+
     /// The base binding name of a place expression. `None` for anything
     /// that is not a place.
     fn place_root(e: &Expr) -> Option<String> {
@@ -4208,17 +4270,20 @@ impl<'a> ViewRules<'a> {
             }
             ExprKind::Match { scrutinee, arms } => {
                 self.walk_expr(scrutinee);
+                let owned = self.scrutinee_is_owned(scrutinee);
                 let before = self.scopes.clone();
                 let mut per_arm = Vec::with_capacity(arms.len());
                 for a in arms {
                     self.scopes = before.clone();
                     self.scopes.push(HashMap::new());
+                    let payload_tys = self.payload_types(&a.pattern, scrutinee);
                     for n in pattern_binding_names(&a.pattern) {
+                        let ty = payload_tys.get(&n).cloned();
                         self.bind(
                             &n,
                             ViewLocal {
-                                ty: None,
-                                owns_value: false,
+                                ty,
+                                owns_value: owned,
                                 borrow_roots: BTreeSet::new(),
                             },
                         );
@@ -9388,5 +9453,39 @@ fn mk() -> LStr { return LStr { ptr: { 0 as *u8 }, len: { 0 as usize }, cap: { 0
              fn main() -> i32 { return #str_len(peek()) as i32; }",
         );
         assert!(codes.iter().any(|c| c == "E0513"), "builtin sub-view chain return; got {codes:?}");
+    }
+
+    #[test]
+    fn view_of_a_matched_out_owner_denied_e0513() {
+        // A payload bound out of an OWNED scrutinee owns its part of it.
+        // The transition assert found this shape missing: without payload
+        // types and payload ownership the binding was untyped, so every
+        // type-gated rule skipped it.
+        let codes = check_src(&format!(
+            "{VIEW_PRELUDE}enum Opt {{ S(Buf), N }}\n\
+             fn take_it() -> Opt {{ return Opt::S(Buf::new()); }}\n\
+             fn bad() -> str {{ match take_it() {{ Opt::S(b) => {{ return b.view(); }} \
+             Opt::N => {{ return \"zz\"; }} }} }}"
+        ));
+        assert!(
+            codes.iter().any(|c| c == "E0513"),
+            "expected E0513 on a view of a matched-out owner, got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn view_of_a_payload_borrowed_from_a_field_stays_clean() {
+        // Matching a FIELD names storage the receiver still owns, so the
+        // payload is a borrow of something that outlives the call.
+        let codes = check_src(&format!(
+            "{VIEW_PRELUDE}enum Opt {{ S(Buf), N }}\n\
+             struct Box2 {{ o: Opt }}\n\
+             impl Box2 {{ fn get(this) -> str {{ match this.o {{ Opt::S(b) => {{ return b.view(); }} \
+             Opt::N => {{ return \"zz\"; }} }} }} }}"
+        ));
+        assert!(
+            !codes.iter().any(|c| c == "E0513"),
+            "a payload borrowed from a field must not be denied, got {codes:?}"
+        );
     }
 }

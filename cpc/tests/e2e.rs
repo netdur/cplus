@@ -5933,6 +5933,48 @@ fn view_lifetime_sound_forms_still_compile() {
     }
 }
 
+const OPT_PRELUDE: &str = "enum Opt { S(Buf), N }\n\
+     fn take_it() -> Opt { return Opt::S(mk()); }\n";
+
+#[test]
+fn view_of_match_payload_of_owned_scrutinee_rejected_e0513() {
+    // issue-07: a payload bound out of a scrutinee the match OWNS (here a
+    // call result — a temporary) owns its part of it, so it is freed at
+    // return and a view of it dangles, exactly like a view of a local.
+    let (ok, stderr) = try_compile_snippet(&format!(
+        "{VIEW_PRELUDE}{OPT_PRELUDE}\
+         fn bad() -> str {{\n\
+             match take_it() {{\n\
+                 Opt::S(b) => {{ return b.view(); }}\n\
+                 Opt::N => {{ return \"zz\"; }}\n\
+             }}\n\
+         }}\n\
+         fn main() -> i32 {{ return 0; }}\n"
+    ));
+    assert!(!ok, "expected E0513 on a view of a matched-out owner, compiled instead");
+    assert!(stderr.contains("E0513"), "expected E0513, got: {stderr}");
+}
+
+#[test]
+fn view_of_match_payload_of_borrowed_scrutinee_compiles() {
+    // The control: matching a FIELD names storage the receiver still owns,
+    // so the payload is a borrow of something that outlives the call and a
+    // view of it is caller-tied.
+    let (ok, stderr) = try_compile_snippet(&format!(
+        "{VIEW_PRELUDE}{OPT_PRELUDE}struct Box2 {{ o: Opt }}\n\
+         impl Box2 {{\n\
+             fn get(this) -> str {{\n\
+                 match this.o {{\n\
+                     Opt::S(b) => {{ return b.view(); }}\n\
+                     Opt::N => {{ return \"zz\"; }}\n\
+                 }}\n\
+             }}\n\
+         }}\n\
+         fn main() -> i32 {{ return 0; }}\n"
+    ));
+    assert!(ok, "a payload borrowed from a field must compile; stderr: {stderr}");
+}
+
 #[test]
 fn return_borrow_of_local_owned_rejected_e0513() {
     // v0.0.12 (#3): returning a `str` view into a function-local owned value
