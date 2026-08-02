@@ -919,21 +919,7 @@ pub fn discover_tests(prog: &Program) -> Vec<TestFn> {
     tests
 }
 
-fn edit_distance(a: &str, b: &str) -> usize {
-    let a: Vec<char> = a.chars().collect();
-    let b: Vec<char> = b.chars().collect();
-    let mut prev: Vec<usize> = (0..=b.len()).collect();
-    let mut curr: Vec<usize> = vec![0; b.len() + 1];
-    for i in 1..=a.len() {
-        curr[0] = i;
-        for j in 1..=b.len() {
-            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
-            curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
-        }
-        std::mem::swap(&mut prev, &mut curr);
-    }
-    prev[b.len()]
-}
+use crate::diagnostics::edit_distance;
 
 #[cfg(test)]
 mod tests {

@@ -1,5 +1,8 @@
 # Issue 11 — Dead code sweep (verified-vestigial paths, one checklist per item)
 
+- Status: PARTIAL 2026-08-02, commit <pending> — items 4, 6, 9, 10 and the
+  `edit_distance` duplicate are done (4, 9 and 10 by earlier issues); 1, 2, 3,
+  5, 7, 8 are not. Per-item status below.
 - Type: cleanup
 - Area: parser, ast, sema, lower, borrowck, monomorphize, codegen, resolver, graph
 - Effort: S per item; M total
@@ -112,3 +115,40 @@ it and the 6 feeder inserts (6584, 6604, 8236, 8249, 8491, 8503).
 Full suites after every item; after items 1-2, grep the whole crate for
 `Borrowed|borrow_|UnaryOp::Ref` — zero hits outside comments/tests that pin the new
 hints. Build one facet example and the vendor suites at the end.
+
+## Per-item status
+
+| Item | Status |
+| --- | --- |
+| 1 — `TypeKind::Borrowed` + `Param.borrow_` | **open**. ~25 sites across 7 files, and the generic AST walker (issue-01) now has a `Borrowed` arm too. Mechanical but wide; nothing depends on it. |
+| 2 — `&x` / `&mut x` → retired-syntax hint | **open**. Sema's E0312 still says references are "not yet supported (Phase 5/6)"; v0.0.24 removed them by design, so the message is false as written. Small, user-facing. |
+| 3 — while-let scaffold | **open**. |
+| 4 — mono/lower dead pattern-let arms | **done, by issue-01**. Both hand-rolled walkers are gone; the generic `ast::walk_stmt` handles pattern-lets uniformly, so there is no duplicated defensive arm left to turn into an `unreachable!`. Making the SHARED walker assert would be wrong — it runs before lower's desugar as well as after. |
+| 5 — legacy `Ty::String` dual path | **open, and it is a language decision** (require `stdlib/text` for string features). Not a sweep item. |
+| 6 — `satisfies_bound` enum arm + E0325 args | **done here** (below). |
+| 7 — `StructDef` field `is_pub` dead slot | **open**. Verified dead — every read is `_is_pub` — but it is a tuple-slot change through every construction and read site, for no behavior. |
+| 8 — narrow `return_passes_by_sret` | **open**. Verified: its only non-subsumed caller is the C-export branch, where a `Text` return classifies `Indirect` anyway (and sema bars Drop at the C boundary, so it cannot arise). Deleting it moves five unit tests onto `_widened`, which is churn without a reader-facing gain now that issue-03 routes both through one classifier. |
+| 9 — parity fossil + dead `_call_monos` | **done, by issue-10**. |
+| 10 — `borrowed_params` auto-clone net | **done, by issue-07**. Verified against the current tree first, exactly as this report required: borrowck rejects the compensated shape with E0337. |
+| minor — duplicated `edit_distance` | **done here**. |
+
+## What landed here
+
+**Item 6.** E0325's message interpolated its arguments backwards: source
+`impl E: Sized2` was quoted back as `` `impl Sized2: E` `` — a spelling the
+language does not have (C+ is type-first). Fixed.
+
+The unreachable enum arm in `satisfies_bound` is now a `debug_assert` instead of
+a silent `false`. The reason it is unreachable is that
+`validate_interface_impls` resolves impl targets through `struct_by_name` and
+rejects anything else with E0325 before the sole insert into `interface_impls`.
+If that ever changes, an enum quietly failing every bound is the wrong way to
+find out.
+
+**Minor.** `edit_distance` was two verbatim copies (attrs and resolver); it is
+one in `diagnostics.rs`, which both already import.
+
+## Verification (as run)
+
+`cargo test -p cplus-core` 1847 + 8 and `cargo test -p cpc --test e2e` 608
+green.

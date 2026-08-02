@@ -3548,10 +3548,20 @@ impl SemaCx<'_> {
                 self.interface_impls
                     .contains(&(bound.to_string(), name.clone()))
             }
+            // issue-11 item 6: no `(interface, enum)` pair can reach
+            // `interface_impls` — `validate_interface_impls` resolves the
+            // target through `struct_by_name` and rejects anything else with
+            // E0325 before the sole insert. An enum answering a bound would
+            // mean that changed; a `false` here would then be a silent wrong
+            // answer, so it says so instead.
             Ty::Enum(id) => {
-                let name = &self.enums[id.0 as usize].name;
-                self.interface_impls
-                    .contains(&(bound.to_string(), name.clone()))
+                let name = self.enums[id.0 as usize].name.clone();
+                debug_assert!(
+                    !self.interface_impls.contains(&(bound.to_string(), name)),
+                    "an enum registered an interface impl — `satisfies_bound`'s \
+                     enum arm was unreachable by construction"
+                );
+                false
             }
             _ => false,
         }
@@ -4889,9 +4899,13 @@ impl SemaCx<'_> {
             let Some(&target_id) = self.struct_by_name.get(&b.target.name) else {
                 diags.push(Diag {
                     code: "E0325",
+                    // issue-11 item 6: type-first, like the source. This read
+                    // `impl {iface}: {target}`, so `impl E: Sized2` was quoted
+                    // back as `impl Sized2: E` — a spelling the language does
+                    // not have.
                     msg: format!(
                         "`impl {}: {}` — `{}` is not a known struct",
-                        iface_name.name, b.target.name, b.target.name
+                        b.target.name, iface_name.name, b.target.name
                     ),
                     span: b.target.span,
                     origin_file: item.origin_file.clone(),

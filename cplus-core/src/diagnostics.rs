@@ -707,3 +707,22 @@ mod tests {
         assert_eq!(d.render_short(), "foo.cplus:12:5: error[E0001]: boom");
     }
 }
+
+/// issue-11: Levenshtein distance, for did-you-mean suggestions. The attribute
+/// checker and the resolver each carried a verbatim copy of this; a shared one
+/// means a fix to the metric reaches both.
+pub fn edit_distance(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut curr: Vec<usize> = vec![0; b.len() + 1];
+    for i in 1..=a.len() {
+        curr[0] = i;
+        for j in 1..=b.len() {
+            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
+            curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+    prev[b.len()]
+}
