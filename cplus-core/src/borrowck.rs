@@ -62,7 +62,9 @@ use crate::ast::*;
 use crate::diagnostics::{Applicability, DiagCode, Diagnostic, LineMap, Severity, Suggestion};
 use crate::lexer::Span;
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 // ---------------------------------------------------------------------------
@@ -3074,90 +3076,11 @@ impl<'p> Analyzer<'p> {
         }
     }
 
-    /// Structural type inference for initializer expressions. Only
-    /// declared facts flow through: fn/method return types (generic
-    /// receivers substituted), struct-literal names, idents, casts,
-    /// literals, value-producing control-flow tails. None means "no
-    /// declared truth reachable" — the binding stays untyped and every
-    /// type-gated diagnostic keeps skipping it.
+    /// Structural type inference for initializer expressions — see
+    /// [`infer_expr_type_with`]; this binds it to the walker's own
+    /// two-tier binding map.
     fn infer_expr_type(&self, e: &Expr) -> Option<Type> {
-        let path = |n: &str| Type {
-            kind: TypeKind::Path(n.to_string()),
-            span: e.span,
-        };
-        match &e.kind {
-            ExprKind::Ident(n) => self.binding_type(n).cloned(),
-            ExprKind::StrLit(_) => Some(path("str")),
-            ExprKind::Cast { ty, .. } => Some(ty.clone()),
-            ExprKind::StructLit { name, .. } => Some(path(&name.name)),
-            ExprKind::GenericStructLit {
-                name, type_args, ..
-            } => Some(Type {
-                kind: TypeKind::Generic {
-                    name: name.name.clone(),
-                    args: type_args.clone(),
-                },
-                span: e.span,
-            }),
-            ExprKind::GenericEnumCall {
-                enum_name,
-                type_args,
-                ..
-            } => Some(Type {
-                kind: TypeKind::Generic {
-                    name: enum_name.name.clone(),
-                    args: type_args.clone(),
-                },
-                span: e.span,
-            }),
-            ExprKind::Call { callee, .. } => match &callee.kind {
-                ExprKind::Ident(f) => self.sigs.fns.get(f).and_then(|e2| e2.ret_ty.clone()),
-                ExprKind::Field {
-                    receiver,
-                    name: method,
-                } => {
-                    let recv_ty = self.infer_expr_type(receiver)?;
-                    match &recv_ty.kind {
-                        TypeKind::Path(t) => self
-                            .sigs
-                            .methods
-                            .get(&format!("{t}.{}", method.name))
-                            .and_then(|e2| e2.ret_ty.clone()),
-                        TypeKind::Generic { name, args } => {
-                            let entry =
-                                self.sigs.methods.get(&format!("{name}.{}", method.name))?;
-                            let params = self.sigs.impl_generics.get(name)?;
-                            let map: HashMap<String, Type> = params
-                                .iter()
-                                .cloned()
-                                .zip(args.iter().cloned())
-                                .collect();
-                            entry.ret_ty.as_ref().map(|t| subst_type(t, &map))
-                        }
-                        _ => None,
-                    }
-                }
-                _ => None,
-            },
-            ExprKind::Field { receiver, name } => {
-                let recv_ty = self.infer_expr_type(receiver)?;
-                let TypeKind::Path(t) = &recv_ty.kind else {
-                    return None;
-                };
-                self.sigs
-                    .struct_fields
-                    .get(t)
-                    .and_then(|fs| fs.get(&name.name).cloned())
-            }
-            ExprKind::Block(b) => b.tail.as_ref().and_then(|t| self.infer_expr_type(t)),
-            ExprKind::If { then, .. } => {
-                then.tail.as_ref().and_then(|t| self.infer_expr_type(t))
-            }
-            ExprKind::Match { arms, .. } => {
-                arms.first().and_then(|a| self.infer_expr_type(&a.body))
-            }
-            _ => None,
-        }
+        infer_expr_type_with(e, self.sigs, &|n| self.binding_type(n).cloned())
     }
 
     /// Unannotated-binding inference, match-payload arm: bind each
@@ -3213,6 +3136,755 @@ impl<'p> Analyzer<'p> {
         match self.binding_type(name) {
             Some(t) => self.oracle.definitely_non_copy(t),
             None => false,
+        }
+    }
+}
+
+/// Structural type inference for expressions. Only declared facts flow
+/// through: fn/method return types (generic receivers substituted),
+/// struct-literal names, idents, casts, literals, value-producing
+/// control-flow tails. `None` means "no declared truth reachable" — the
+/// expression stays untyped and every type-gated diagnostic keeps skipping
+/// it.
+///
+/// `lookup` resolves a binding name to its recorded type. The flow walker
+/// and the view rules keep their bindings in different shapes (a two-tier
+/// declared/inferred map vs. a lexical scope stack) and differ in nothing
+/// else, so the inference itself lives here once.
+fn infer_expr_type_with(
+    e: &Expr,
+    sigs: &SigTable,
+    lookup: &dyn Fn(&str) -> Option<Type>,
+) -> Option<Type> {
+    let path = |n: &str| Type {
+        kind: TypeKind::Path(n.to_string()),
+        span: e.span,
+    };
+    match &e.kind {
+        ExprKind::Ident(n) => lookup(n),
+        ExprKind::StrLit(_) => Some(path("str")),
+        ExprKind::Cast { ty, .. } => Some(ty.clone()),
+        ExprKind::StructLit { name, .. } => Some(path(&name.name)),
+        ExprKind::GenericStructLit {
+            name, type_args, ..
+        } => Some(Type {
+            kind: TypeKind::Generic {
+                name: name.name.clone(),
+                args: type_args.clone(),
+            },
+            span: e.span,
+        }),
+        ExprKind::GenericEnumCall {
+            enum_name,
+            type_args,
+            ..
+        } => Some(Type {
+            kind: TypeKind::Generic {
+                name: enum_name.name.clone(),
+                args: type_args.clone(),
+            },
+            span: e.span,
+        }),
+        ExprKind::Call { callee, .. } => match &callee.kind {
+            ExprKind::Ident(f) => sigs.fns.get(f).and_then(|e2| e2.ret_ty.clone()),
+            ExprKind::Field {
+                receiver,
+                name: method,
+            } => {
+                let recv_ty = infer_expr_type_with(receiver, sigs, lookup)?;
+                match &recv_ty.kind {
+                    TypeKind::Path(t) => sigs
+                        .methods
+                        .get(&format!("{t}.{}", method.name))
+                        .and_then(|e2| e2.ret_ty.clone()),
+                    TypeKind::Generic { name, args } => {
+                        let entry = sigs.methods.get(&format!("{name}.{}", method.name))?;
+                        let params = sigs.impl_generics.get(name)?;
+                        let map: HashMap<String, Type> =
+                            params.iter().cloned().zip(args.iter().cloned()).collect();
+                        entry.ret_ty.as_ref().map(|t| subst_type(t, &map))
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        },
+        ExprKind::Field { receiver, name } => {
+            let recv_ty = infer_expr_type_with(receiver, sigs, lookup)?;
+            let TypeKind::Path(t) = &recv_ty.kind else {
+                return None;
+            };
+            sigs.struct_fields
+                .get(t)
+                .and_then(|fs| fs.get(&name.name).cloned())
+        }
+        ExprKind::Block(b) => b
+            .tail
+            .as_ref()
+            .and_then(|t| infer_expr_type_with(t, sigs, lookup)),
+        ExprKind::If { then, .. } => then
+            .tail
+            .as_ref()
+            .and_then(|t| infer_expr_type_with(t, sigs, lookup)),
+        ExprKind::Match { arms, .. } => arms
+            .first()
+            .and_then(|a| infer_expr_type_with(&a.body, sigs, lookup)),
+        _ => None,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Memory-model contract §3.1 — view escapes, judged at the definition.
+//
+// Ported from sema (issue-07): sema used to emit E0513/E0515/E0516 and
+// hand-encode where it believed this pass would tie instead. Two passes
+// co-owning one rule family, synchronized by belief, is a silent-unsoundness
+// seam — if the flow pass's coverage shrinks, the skip conditions stay and
+// nothing denies. Here the two are one analysis: the flow pass ties, or the
+// rule denies.
+// ---------------------------------------------------------------------------
+
+/// What the view rules need to know about one binding in scope.
+#[derive(Debug, Clone)]
+struct ViewLocal {
+    /// Declared or structurally inferred type; `None` when nothing
+    /// declared reaches it (every type-gated rule then skips the binding).
+    ty: Option<Type>,
+    /// True iff this binding OWNS the storage it names — a `let`/`var`
+    /// local, a `take` parameter, or a `take this` receiver. False for a
+    /// bare or `ref` parameter and a `this` / `ref this` receiver, which
+    /// name storage the caller owns and outlives the frame with. This is
+    /// the gate the whole family turns on: only an owner's storage dies at
+    /// return.
+    owns_value: bool,
+    /// For a view-shaped binding, the owners its bytes come from
+    /// (`let s = t.view();` records `t`). Empty means literal / static /
+    /// untraceable provenance. Consulted so an ALIAS of a view is judged
+    /// against the real owner, not against itself.
+    borrow_roots: BTreeSet<String>,
+}
+
+/// The definition-site view rules. One instance per function/method body.
+struct ViewRules<'a> {
+    sigs: &'a SigTable,
+    oracle: &'a CopyOracle,
+    /// Lexical scope stack; scope 0 holds the receiver and parameters.
+    scopes: Vec<HashMap<String, ViewLocal>>,
+    /// Parameter (and receiver) names, for phrasing owner descriptions and
+    /// for recognizing a store whose source is a caller-owned view.
+    param_names: HashSet<String>,
+    return_ty: Option<Type>,
+    diags: Vec<RawDiag>,
+}
+
+impl<'a> ViewRules<'a> {
+    fn new(
+        sigs: &'a SigTable,
+        oracle: &'a CopyOracle,
+        receiver: Option<Receiver>,
+        receiver_ty: Option<Type>,
+        params: &[Param],
+        return_ty: Option<Type>,
+    ) -> Self {
+        let mut base: HashMap<String, ViewLocal> = HashMap::new();
+        let mut param_names = HashSet::new();
+        if let Some(r) = receiver {
+            param_names.insert("self".to_string());
+            base.insert(
+                "self".to_string(),
+                ViewLocal {
+                    ty: receiver_ty,
+                    owns_value: r == Receiver::Move,
+                    borrow_roots: BTreeSet::new(),
+                },
+            );
+        }
+        for p in params {
+            param_names.insert(p.name.name.clone());
+            base.insert(
+                p.name.name.clone(),
+                ViewLocal {
+                    ty: Some(p.ty.clone()),
+                    owns_value: p.move_,
+                    borrow_roots: BTreeSet::new(),
+                },
+            );
+        }
+        ViewRules {
+            sigs,
+            oracle,
+            scopes: vec![base],
+            param_names,
+            return_ty,
+            diags: Vec::new(),
+        }
+    }
+
+    /// `this` and `self` name the same binding; every lookup goes through
+    /// the receiver's canonical name.
+    fn canonical(name: &str) -> &str {
+        if name == "this" {
+            "self"
+        } else {
+            name
+        }
+    }
+
+    fn lookup(&self, name: &str) -> Option<&ViewLocal> {
+        let key = Self::canonical(name);
+        self.scopes.iter().rev().find_map(|s| s.get(key))
+    }
+
+    fn bind(&mut self, name: &str, local: ViewLocal) {
+        self.scopes
+            .last_mut()
+            .expect("scope stack is never empty")
+            .insert(Self::canonical(name).to_string(), local);
+    }
+
+    /// Re-point a live binding's view provenance. A plain `=` replaces it:
+    /// the binding now reads the new value's bytes and nothing else. Branch
+    /// merges union instead — see `walk_expr`'s `If` / `Match` arms.
+    fn set_roots(&mut self, name: &str, roots: BTreeSet<String>) {
+        let key = Self::canonical(name);
+        for scope in self.scopes.iter_mut().rev() {
+            if let Some(l) = scope.get_mut(key) {
+                l.borrow_roots = roots;
+                return;
+            }
+        }
+    }
+
+    /// Union another path's view provenance into the current state. The
+    /// contract is flow-insensitive about conditions (§2): a flow that
+    /// happens on any path counts as happening, so a dangling branch cannot
+    /// hide behind a sound one.
+    fn union_roots_from(&mut self, other: &[HashMap<String, ViewLocal>]) {
+        for (depth, scope) in other.iter().enumerate() {
+            let Some(mine) = self.scopes.get_mut(depth) else {
+                break;
+            };
+            for (name, l) in scope {
+                if let Some(m) = mine.get_mut(name) {
+                    m.borrow_roots.extend(l.borrow_roots.iter().cloned());
+                }
+            }
+        }
+    }
+
+    fn infer_ty(&self, e: &Expr) -> Option<Type> {
+        infer_expr_type_with(e, self.sigs, &|n| {
+            self.lookup(n).and_then(|l| l.ty.clone())
+        })
+    }
+
+    /// A view proper: `str` or a slice. (View-CARRYING aggregates are a
+    /// separate question — `CopyOracle::type_contains_view`.)
+    fn is_view_ty(ty: &Type) -> bool {
+        match &ty.kind {
+            TypeKind::Slice(_) => true,
+            TypeKind::Path(n) => n == "str",
+            _ => false,
+        }
+    }
+
+    /// True iff `receiver.method(...)` produces a view that borrows the
+    /// receiver. The answer is the flow pass's own `detect_method_view`
+    /// verdict — a borrow receiver plus a view-carrying return, recorded as
+    /// `SelfReceiver` — filtered to returns that actually carry a view, so
+    /// Rule E2's non-Copy-aggregate returns don't count. Sema used to
+    /// re-derive this from its own tables; one answer, one place.
+    fn method_produces_view(&self, receiver: &Expr, method: &str) -> bool {
+        let Some(ty) = self.infer_ty(receiver) else {
+            return false;
+        };
+        let base = match &ty.kind {
+            TypeKind::Path(n) => n.clone(),
+            TypeKind::Generic { name, .. } => name.clone(),
+            _ => return false,
+        };
+        let Some(entry) = self.sigs.methods.get(&format!("{base}.{method}")) else {
+            return false;
+        };
+        if entry.return_borrow != Some(ReturnBorrowSource::SelfReceiver) {
+            return false;
+        }
+        entry
+            .ret_ty
+            .as_ref()
+            .is_some_and(|r| self.oracle.type_contains_view(r))
+    }
+
+    /// The set of root bindings a view expression borrows from, traced by
+    /// SHAPE. Covers place chains, a view-producing method call, a free-fn
+    /// call whose signature returns a borrow of its parameters, aggregate
+    /// literals, and control-flow expressions (the union of every
+    /// value-producing arm, so a dangling arm cannot hide behind a sound
+    /// one). A bare `Ident` is a root itself; alias expansion happens in
+    /// `borrow_roots_of`.
+    fn view_source_roots(&self, e: &Expr) -> BTreeSet<String> {
+        let mut roots = BTreeSet::new();
+        match &e.kind {
+            ExprKind::Ident(n) => {
+                roots.insert(n.clone());
+            }
+            ExprKind::Field { receiver, .. } | ExprKind::Index { receiver, .. } => {
+                roots.extend(self.view_source_roots(receiver));
+            }
+            ExprKind::Unary {
+                op: UnaryOp::Deref,
+                operand,
+            } => {
+                roots.extend(self.view_source_roots(operand));
+            }
+            ExprKind::StructLit { fields, .. }
+            | ExprKind::InferredStructLit { fields }
+            | ExprKind::GenericStructLit { fields, .. } => {
+                for f in fields {
+                    roots.extend(self.view_source_roots(&f.value));
+                }
+            }
+            ExprKind::ArrayLit { elements }
+            | ExprKind::TupleLit { elements }
+            | ExprKind::GenericEnumCall { args: elements, .. } => {
+                for el in elements {
+                    roots.extend(self.view_source_roots(el));
+                }
+            }
+            ExprKind::ArrayFill { fill, .. } => {
+                roots.extend(self.view_source_roots(fill));
+            }
+            ExprKind::Call { callee, args, .. } => match &callee.kind {
+                ExprKind::Field { receiver, name } => {
+                    if self.method_produces_view(receiver, &name.name) {
+                        roots.extend(self.view_source_roots(receiver));
+                    }
+                }
+                ExprKind::Ident(fn_name) => {
+                    match self.sigs.fns.get(fn_name).and_then(|f| f.return_borrow.as_ref()) {
+                        Some(ReturnBorrowSource::Param(i)) => {
+                            if let Some(a) = args.get(*i as usize) {
+                                roots.extend(self.view_source_roots(a));
+                            }
+                        }
+                        Some(ReturnBorrowSource::MultiParam(is)) => {
+                            for &i in is {
+                                if let Some(a) = args.get(i as usize) {
+                                    roots.extend(self.view_source_roots(a));
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
+            },
+            ExprKind::If {
+                then, else_branch, ..
+            } => {
+                if let Some(t) = &then.tail {
+                    roots.extend(self.view_source_roots(t));
+                }
+                if let Some(eb) = else_branch {
+                    roots.extend(self.view_source_roots(eb));
+                }
+            }
+            ExprKind::Block(b) => {
+                if let Some(t) = &b.tail {
+                    roots.extend(self.view_source_roots(t));
+                }
+            }
+            ExprKind::Match { arms, .. } => {
+                for a in arms {
+                    roots.extend(self.view_source_roots(&a.body));
+                }
+            }
+            _ => {}
+        }
+        roots
+    }
+
+    /// `view_source_roots` with aliases expanded: a view binding that
+    /// itself borrows other owners (`let s = t.view(); return s;`)
+    /// contributes those owners, not its own name.
+    fn borrow_roots_of(&self, e: &Expr) -> BTreeSet<String> {
+        let mut roots = BTreeSet::new();
+        for root in self.view_source_roots(e) {
+            match self.lookup(&root) {
+                Some(l) if !l.borrow_roots.is_empty() => {
+                    roots.extend(l.borrow_roots.iter().cloned());
+                }
+                _ => {
+                    roots.insert(root);
+                }
+            }
+        }
+        roots
+    }
+
+    /// True iff a view rooted at `root` reads storage that this frame frees
+    /// on the way out — the `owns_value` gate, plus non-Copy (a Copy root
+    /// owns no heap to free).
+    fn root_dies_at_return(&self, root: &str) -> bool {
+        match self.lookup(root) {
+            Some(l) => {
+                l.owns_value
+                    && l.ty
+                        .as_ref()
+                        .is_some_and(|t| !self.oracle.is_copy(t))
+            }
+            None => false,
+        }
+    }
+
+    /// Human description of an owner root — a `take this` receiver, a
+    /// `take` parameter, or a plain local — so the fix is obvious from the
+    /// message.
+    fn owner_desc(&self, root: &str) -> String {
+        if root == "self" || root == "this" {
+            "the `take this` receiver".to_string()
+        } else if self.param_names.contains(root) {
+            format!("`take` parameter `{root}`")
+        } else {
+            format!("local `{root}`")
+        }
+    }
+
+    fn err(&mut self, code: &'static str, message: String, primary: Span) {
+        self.diags.push(RawDiag {
+            code,
+            message,
+            primary,
+            suggestion: None,
+            label: None,
+        });
+    }
+
+    // -- the rules ---------------------------------------------------------
+
+    /// Contract §3.1: a view (or view-carrying value) returned from the
+    /// frame may not be rooted in storage the frame frees. The gate is the
+    /// root's `owns_value` flag, not "is it a parameter": a plain local, a
+    /// `take` parameter, and a `take this` receiver ALL own their storage
+    /// and drop it at return, so a returned view of any of them dangles. A
+    /// bare / `ref` parameter and a `this` / `ref this` receiver borrow
+    /// caller-owned storage, so a view of them is caller-tied and sound.
+    fn check_return(&mut self, e: &Expr) {
+        let Some(ret) = self.return_ty.clone() else {
+            return;
+        };
+        let ret_is_view = Self::is_view_ty(&ret);
+        let ret_carries_view = !ret_is_view && self.oracle.type_contains_view(&ret);
+        if !(ret_is_view || ret_carries_view) {
+            return;
+        }
+        for root in self.borrow_roots_of(e) {
+            if !self.root_dies_at_return(&root) {
+                continue;
+            }
+            let msg = if ret_is_view {
+                format!(
+                    "cannot return a borrow of {}: it owns heap that is freed when the function returns, so the returned view would dangle. Return an owned value (`Text` / `Vec[T]`) instead, or borrow from a non-`take` parameter",
+                    self.owner_desc(&root)
+                )
+            } else {
+                format!(
+                    "the returned value holds a view of {}: it owns heap that is freed when the function returns, so the stored view would dangle. Store an owned `Text` / `Vec[T]` in the field, or borrow the view from a non-`take` parameter",
+                    self.owner_desc(&root)
+                )
+            };
+            self.err("E0513", msg, e.span);
+            return;
+        }
+    }
+
+    // -- the walk ----------------------------------------------------------
+
+    /// Record what a `let` / `var` introduces: an owning binding, plus the
+    /// owners its bytes come from when it is view-shaped (so a later
+    /// `return alias;` is judged against the real owner).
+    fn bind_let(&mut self, name: &str, ty: &Option<Type>, init: Option<&Expr>) {
+        let resolved = ty.clone().or_else(|| init.and_then(|e| self.infer_ty(e)));
+        let carries_view = resolved
+            .as_ref()
+            .is_some_and(|t| Self::is_view_ty(t) || self.oracle.type_contains_view(t));
+        let borrow_roots = match (carries_view, init) {
+            (true, Some(e)) => self.borrow_roots_of(e),
+            _ => BTreeSet::new(),
+        };
+        self.bind(
+            name,
+            ViewLocal {
+                ty: resolved,
+                owns_value: true,
+                borrow_roots,
+            },
+        );
+    }
+
+    fn walk_block(&mut self, b: &Block) {
+        self.scopes.push(HashMap::new());
+        for s in &b.stmts {
+            self.walk_stmt(s);
+        }
+        if let Some(t) = &b.tail {
+            self.walk_expr(t);
+        }
+        self.scopes.pop();
+    }
+
+    fn walk_stmt(&mut self, s: &Stmt) {
+        match &s.kind {
+            StmtKind::Let {
+                name, ty, init, ..
+            } => {
+                if let Some(e) = init {
+                    self.walk_expr(e);
+                }
+                self.bind_let(&name.name, ty, init.as_ref());
+            }
+            StmtKind::LetDestructure {
+                type_name,
+                fields,
+                init,
+                ..
+            } => {
+                self.walk_expr(init);
+                // Each field binding re-owns its field of the decomposed
+                // value; its type comes from the named struct.
+                for f in fields {
+                    let fty = self
+                        .sigs
+                        .struct_fields
+                        .get(&type_name.name)
+                        .and_then(|fs| fs.get(&f.name))
+                        .cloned();
+                    self.bind(
+                        &f.name,
+                        ViewLocal {
+                            ty: fty,
+                            owns_value: true,
+                            borrow_roots: BTreeSet::new(),
+                        },
+                    );
+                }
+            }
+            StmtKind::Return(Some(e)) => {
+                self.walk_expr(e);
+                self.check_return(e);
+            }
+            StmtKind::Return(None) => {}
+            StmtKind::While { cond, body, .. } => {
+                self.walk_expr(cond);
+                self.walk_block(body);
+            }
+            StmtKind::For(f, _) => {
+                self.walk_for(f);
+            }
+            StmtKind::Loop(b, _) => self.walk_block(b),
+            StmtKind::Expr(e) | StmtKind::Defer(e) | StmtKind::Assert(e) => self.walk_expr(e),
+            StmtKind::Break | StmtKind::Continue => {}
+            // Lowered away before this pass runs.
+            StmtKind::IfLet { .. } | StmtKind::WhileLet { .. } | StmtKind::GuardLet { .. } => {}
+        }
+    }
+
+    fn walk_for(&mut self, f: &ForLoop) {
+        self.scopes.push(HashMap::new());
+        match f {
+            ForLoop::CStyle {
+                init,
+                cond,
+                update,
+                body,
+            } => {
+                if let Some(i) = init {
+                    self.walk_stmt(i);
+                }
+                if let Some(c) = cond {
+                    self.walk_expr(c);
+                }
+                for u in update {
+                    self.walk_expr(u);
+                }
+                self.walk_block(body);
+            }
+            ForLoop::Range { var, iter, body } => {
+                self.walk_expr(iter);
+                // The loop variable names an element read out of the
+                // iterable; it owns no storage the frame frees.
+                self.bind(
+                    &var.name,
+                    ViewLocal {
+                        ty: None,
+                        owns_value: false,
+                        borrow_roots: BTreeSet::new(),
+                    },
+                );
+                self.walk_block(body);
+            }
+        }
+        self.scopes.pop();
+    }
+
+    fn walk_expr(&mut self, e: &Expr) {
+        match &e.kind {
+            ExprKind::Block(b) => self.walk_block(b),
+            ExprKind::If {
+                cond,
+                then,
+                else_branch,
+            } => {
+                self.walk_expr(cond);
+                let before = self.scopes.clone();
+                self.walk_block(then);
+                let after_then = std::mem::replace(&mut self.scopes, before);
+                if let Some(eb) = else_branch {
+                    self.walk_expr(eb);
+                }
+                self.union_roots_from(&after_then);
+            }
+            ExprKind::Match { scrutinee, arms } => {
+                self.walk_expr(scrutinee);
+                let before = self.scopes.clone();
+                let mut per_arm = Vec::with_capacity(arms.len());
+                for a in arms {
+                    self.scopes = before.clone();
+                    self.scopes.push(HashMap::new());
+                    for n in pattern_binding_names(&a.pattern) {
+                        self.bind(
+                            &n,
+                            ViewLocal {
+                                ty: None,
+                                owns_value: false,
+                                borrow_roots: BTreeSet::new(),
+                            },
+                        );
+                    }
+                    self.walk_expr(&a.body);
+                    self.scopes.pop();
+                    per_arm.push(std::mem::take(&mut self.scopes));
+                }
+                self.scopes = before;
+                for arm_state in &per_arm {
+                    self.union_roots_from(arm_state);
+                }
+            }
+            ExprKind::Assign { op, target, value } => {
+                self.walk_expr(value);
+                self.walk_expr(target);
+                if *op != AssignOp::Assign {
+                    return;
+                }
+                let ExprKind::Ident(n) = &target.kind else {
+                    return;
+                };
+                let Some(ty) = self.lookup(n).and_then(|l| l.ty.clone()) else {
+                    return;
+                };
+                let roots = if Self::is_view_ty(&ty) || self.oracle.type_contains_view(&ty) {
+                    self.borrow_roots_of(value)
+                } else {
+                    BTreeSet::new()
+                };
+                self.set_roots(n, roots);
+            }
+            _ => walk_expr_children(e, &mut |c| self.walk_expr(c)),
+        }
+    }
+}
+
+/// Every immediate sub-expression of `e`, for walkers that only need to
+/// reach nested blocks. Scope-introducing shapes (block / if / match) are
+/// handled by the caller before this is reached.
+fn walk_expr_children(e: &Expr, f: &mut dyn FnMut(&Expr)) {
+    match &e.kind {
+        ExprKind::Call { callee, args, .. } => {
+            f(callee);
+            for a in args {
+                f(a);
+            }
+        }
+        ExprKind::Binary { lhs, rhs, .. } => {
+            f(lhs);
+            f(rhs);
+        }
+        ExprKind::Unary { operand, .. } => f(operand),
+        ExprKind::Field { receiver, .. } => f(receiver),
+        ExprKind::Index { receiver, index } => {
+            f(receiver);
+            f(index);
+        }
+        ExprKind::Assign { target, value, .. } => {
+            f(target);
+            f(value);
+        }
+        ExprKind::Cast { expr, .. } => f(expr),
+        ExprKind::StructLit { fields, .. }
+        | ExprKind::InferredStructLit { fields }
+        | ExprKind::GenericStructLit { fields, .. } => {
+            for fl in fields {
+                f(&fl.value);
+            }
+        }
+        ExprKind::ArrayLit { elements }
+        | ExprKind::TupleLit { elements }
+        | ExprKind::GenericEnumCall { args: elements, .. } => {
+            for el in elements {
+                f(el);
+            }
+        }
+        ExprKind::ArrayFill { fill, .. } => f(fill),
+        _ => {}
+    }
+}
+
+/// Run the definition-site view rules over every function and method body.
+fn collect_view_diagnostics(
+    prog: &Program,
+    sigs: &SigTable,
+    oracle: &CopyOracle,
+    diags: &mut Vec<(Option<String>, RawDiag)>,
+) {
+    for item in &prog.items {
+        match &item.kind {
+            ItemKind::Function(f) => {
+                if f.is_extern || f.is_declaration {
+                    continue;
+                }
+                let mut r =
+                    ViewRules::new(sigs, oracle, None, None, &f.params, f.return_type.clone());
+                r.walk_block(&f.body);
+                diags.extend(r.diags.into_iter().map(|d| (item.origin_file.clone(), d)));
+            }
+            ItemKind::Impl(b) => {
+                for m in &b.methods {
+                    if m.is_declaration {
+                        continue;
+                    }
+                    let recv_ty = m.receiver.map(|_| Type {
+                        kind: TypeKind::Path(b.target.name.clone()),
+                        span: b.target.span,
+                    });
+                    let mut r = ViewRules::new(
+                        sigs,
+                        oracle,
+                        m.receiver,
+                        recv_ty,
+                        &m.params,
+                        m.return_type.clone(),
+                    );
+                    r.walk_block(&m.body);
+                    diags.extend(r.diags.into_iter().map(|d| (item.origin_file.clone(), d)));
+                }
+            }
+            ItemKind::Struct(_)
+            | ItemKind::Enum(_)
+            | ItemKind::Interface(_)
+            | ItemKind::TypeAlias(_)
+            | ItemKind::Const(_)
+            | ItemKind::Static(_)
+            | ItemKind::ModuleAsm(_) => {}
         }
     }
 }
@@ -3544,6 +4216,11 @@ fn analyze_with_diags(prog: &Program) -> (ProgramAnalysis, Vec<(Option<String>, 
     // Fresh-value-on-every-path functions stay silent — the return
     // is owned, no annotation needed.
     collect_e0384_diagnostics(prog, &sigs, &oracle, &mut all_diags);
+    // Memory-model contract §3.1 (issue-07) — the definition-site view
+    // rules: a view escaping the frame it is rooted in. Syntax-directed
+    // like the E0384 pass above, and reading the same signature table the
+    // flow pass publishes, so there is one answer about what ties.
+    collect_view_diagnostics(prog, &sigs, &oracle, &mut all_diags);
     for item in &prog.items {
         match &item.kind {
             ItemKind::Function(f) => {
@@ -7737,5 +8414,112 @@ fn consume_h(take h: Holder) -> i32 { return 0; }
                 "[clean {cname}] unexpected E0372: {codes:?}"
             );
         }
+    }
+
+    // -- Memory-model contract §3.1: view escapes at the definition ------
+    // (issue-07 — ported from sema, which used to emit these while
+    // hand-encoding where it believed this pass would tie instead.)
+
+    /// A `#[lang("string")]` owner, so the `Text`→`str` coercion routes are
+    /// reachable without the stdlib. `opaque` exempts the pointer from
+    /// raw-pointer drop accounting; the `drop` makes it non-Copy, which is
+    /// what makes a view of a LOCAL one dangle.
+    const LANG_STR_PRELUDE: &str = "\
+#[lang(\"string\")]
+struct LStr { opaque ptr: *u8, len: usize, cap: usize }
+impl LStr { fn drop(ref this) { return; } }
+fn mk() -> LStr { return LStr { ptr: { 0 as *u8 }, len: { 0 as usize }, cap: { 0 as usize } }; }
+";
+
+    #[test]
+    fn returned_view_of_local_owner_denied_e0513() {
+        // The root gate is `owns_value`, not "is it a parameter": a local, a
+        // `take` parameter and a `take this` receiver all free their storage
+        // on the way out, so a view of any of them dangles at the caller.
+        let cases: &[(&str, &str)] = &[
+            ("local", "fn bad() -> str { let b: Buf = Buf::new(); return b.view(); }"),
+            (
+                "alias",
+                "fn bad() -> str { let b: Buf = Buf::new(); let s: str = b.view(); return s; }",
+            ),
+            ("take_param", "fn steal(take b: Buf) -> str { return b.view(); }"),
+            (
+                "take_this",
+                "impl Buf { fn into_view(take this) -> str { return this.view(); } }",
+            ),
+            (
+                "through_free_fn",
+                "fn head(b: Buf) -> str { return b.view(); }\n\
+                 fn bad() -> str { let b: Buf = Buf::new(); return head(b); }",
+            ),
+            (
+                "carrying_aggregate",
+                "fn keep() -> Slot { let b: Buf = Buf::new(); return Slot { s: b.view() }; }",
+            ),
+            (
+                "branch_alias",
+                "fn bad(flag: bool) -> str { let b: Buf = Buf::new(); \
+                 var v: str; if flag { v = b.view(); } else { v = \"lit\"; } return v; }",
+            ),
+        ];
+        for (name, tail) in cases {
+            let codes = check_src(&format!("{VIEW_PRELUDE}{tail}"));
+            assert!(
+                codes.iter().any(|c| c == "E0513"),
+                "[{name}] expected E0513, got {codes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn returned_view_coerced_from_a_local_owner_denied_e0513() {
+        // The coercion route has no accessor to key on: a lang-string local
+        // returned where `str` is expected is the same dangle.
+        let codes = check_src(&format!(
+            "{LANG_STR_PRELUDE}fn bad() -> str {{ let s: LStr = mk(); return s; }}"
+        ));
+        assert!(
+            codes.iter().any(|c| c == "E0513"),
+            "expected E0513 on a returned local-string view, got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn returned_view_of_caller_owned_storage_stays_clean() {
+        // Controls. A bare / `ref` parameter and a `this` receiver name
+        // storage the caller owns and outlives the call with, so a view of
+        // them is caller-tied; a literal is static. None may be denied.
+        let clean: &[(&str, &str)] = &[
+            ("bare_param", "fn head(b: Buf) -> str { return b.view(); }"),
+            ("this_receiver", "impl Buf { fn v2(this) -> str { return this.view(); } }"),
+            ("literal", "fn ok() -> str { let s: str = \"lit\"; return s; }"),
+            ("view_param", "fn first(s: str) -> str { return s; }"),
+            (
+                "param_rooted_aggregate",
+                "fn wrap(b: Buf) -> Slot { return Slot { s: b.view() }; }",
+            ),
+            (
+                "moved_owned_field",
+                "fn wrap2(take b: Buf) -> Holder { return Holder { b: b }; }",
+            ),
+        ];
+        for (name, tail) in clean {
+            let codes = check_src(&format!("{VIEW_PRELUDE}{tail}"));
+            assert!(
+                !codes.iter().any(|c| c == "E0513"),
+                "[{name}] must not be denied, got {codes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn returned_view_of_param_lang_string_stays_clean() {
+        let codes = check_src(&format!(
+            "{LANG_STR_PRELUDE}fn bare(p: LStr) -> str {{ return p; }}"
+        ));
+        assert!(
+            !codes.iter().any(|c| c == "E0513"),
+            "a param-rooted coerced view must not be denied, got {codes:?}"
+        );
     }
 }
