@@ -283,6 +283,32 @@ in this session is that steps 2-4 moved a live diagnostic family between
 passes and that deserved the whole budget, including a transition release
 that found three real holes.
 
+### What it will take, sized (2026-08-02)
+
+Scoped after steps 2-4 landed, so the next session does not have to
+re-measure. It is the same size as the view port, not a follow-up trim:
+
+- ~13 functions, ~400 lines in `sema.rs`: the `receiver_capturing` fixpoint
+  (`collect_receiver_capturing_methods`, `block_calls_capturing_on_this`,
+  `block_binds_this_method`), the per-body `capture_taint` dataflow
+  (`update_capture_taint`, `capture_sources_inner`, `capture_sources_flow`),
+  the `local_dies_here` gate, and the three emission sites
+  (`flag_escaping_local_receivers`, `check_capture_store_escape`,
+  `check_capture_arg_escape`).
+- 16 sema unit tests, 47 assertions on E0365. No e2e coverage at all — worth
+  adding on the way through, since these are the tests that would move.
+- Everything it needs already exists on the borrowck side: `ViewRules`
+  supplies the scoped walk, the `owns_value` gate `local_dies_here`
+  duplicates, and `infer_ty` for `place_ty_quiet`'s field-vs-method
+  disambiguation (`sigs.struct_fields` + `sigs.methods`). The
+  `receiver_capturing` fixpoint is purely syntactic and ports as-is.
+- Shape: ONE source classifier and ONE ownership gate, with the sinks being
+  the walk's own structure rather than three patched positions. A fourth
+  escape position is then a place the walk already visits.
+- Do it with the transition assert. It is what caught the three holes in
+  steps 2-4, none of which any test or vendor program exercised, and this
+  family has thinner test coverage than the view one did.
+
 ## Verification (as run)
 
 At every commit: `cargo test -p cplus-core` (1869 at the end, 15 new tests),

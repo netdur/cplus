@@ -65,11 +65,22 @@
 > all key on resolved identity now, and `__cplus_` is one constant with a
 > `#[runtime_abi]` claim marker (E0919).
 >
+> issue-13 (b) and issue-15 (b) are DONE too (`f7704c8`, `b818a1b`), and both took a
+> different shape than their reports prescribed: the drop rule and the layout rule are
+> now each written ONCE, over a shared `TypeShape` seam each pass implements over its
+> own ids, rather than mirrored with a check that the mirrors agree. issue-15 (b)'s
+> differential — written first, as the report insisted — found a live divergence the
+> audit had missed: sema hard-coded 8 bytes for every pointer-shaped type while codegen
+> asked the target, so `#[max_stack]` over-counted every pointer on a 32-bit build. Both
+> rules also turned out to be missing a cycle guard; that is `bug-28`, found here, its
+> compiler-hang half fixed and its lowering half written up.
+>
 > Not done, and scoped in their own reports: issue-07 step 5 (the E0365 capture-taint
-> port — separable, and written up), issue-14's migration off the classification
-> fixpoint (its characterization harness is in the tree), issue-03 step 4, issue-08
-> steps 1 and 3, issue-09 parts (A) and (C), issue-13 (b), issue-15 (b), and issue-11
-> items 1, 2, 3, 5, 7, 8.
+> port — separable, and now SIZED in its file: ~13 functions, 16 tests, same shape and
+> same budget as the view port, and it wants the same transition assert), issue-14's
+> migration off the classification fixpoint (its characterization harness is in the
+> tree), issue-03 step 4, issue-08 steps 1 and 3, issue-09 parts (A) and (C), issue-11
+> items 1, 2, 3, 5, 7, 8, and `bug-28`'s struct-body emitter.
 >
 > Corrections to this report, found while fixing (details in each bug's file):
 > - B12's generic-argument half was already closed by the B1 fix; its `take` spelling
