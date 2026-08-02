@@ -1028,6 +1028,7 @@ fn check_with_files_inner(
         shader_blobs_table: HashMap::new(),
         msg_send_shapes: std::collections::BTreeSet::new(),
         text_to_str_coercion_table: std::collections::HashSet::new(),
+        view_findings: Vec::new(),
     };
     cx.record_value_types = record_types;
     cx.register_builtins();
@@ -1099,6 +1100,24 @@ fn check_with_files_inner(
     cx.lint_generic_fn_bodies(program);
     cx.check_functions(program);
     cx.check_methods(program);
+    // issue-07 transition: E0513/E0515/E0516 moved to borrowck, which is the
+    // pass that computes the flows the lift depends on. Sema still DETECTS
+    // the family for one release and reports nothing; this checks, in debug
+    // builds, that borrowck denied everything sema would have. It only asks
+    // the question on a program sema found otherwise well-typed — sema's own
+    // roots are built from resolved types, and after an error those are
+    // `Ty::Error` and say nothing useful. Goes away with the detection.
+    #[cfg(debug_assertions)]
+    if !cx.sink.has_errors() && !cx.view_findings.is_empty() {
+        let found = crate::borrowck::view_findings(program);
+        for (code, span) in &cx.view_findings {
+            assert!(
+                found.iter().any(|(c, s)| c == code && s == span),
+                "issue-07: sema would have denied {code} at {span:?}, borrowck did not \
+                 (borrowck found {found:?}) — the port lost a shape"
+            );
+        }
+    }
     // v0.0.10 Phase 1: `#[no_alloc]` real-time contract.
     // Walks every `#[no_alloc]`-marked function's body, resolves direct
     // callee names, and rejects calls into the allocator blocklist or
@@ -1738,6 +1757,10 @@ struct SemaCx<'a> {
     /// v0.0.24 #11: spans of `Text`→`str` coercion sites (see
     /// [`MonoInfo::text_to_str_coercions`]).
     text_to_str_coercion_table: std::collections::HashSet<ByteSpan>,
+    /// issue-07 transition: view-family denials sema detected but did not
+    /// report, checked against borrowck's answer in debug builds. Removed
+    /// with the detection once the assert has shipped a release.
+    view_findings: Vec<(&'static str, ByteSpan)>,
 }
 
 /// v0.0.9 Phase 4: sema-resolved info for a module-scope `static`.
@@ -1862,6 +1885,14 @@ impl SemaCx<'_> {
             Some(fc) => fc.lm.span(&fc.path, span, &fc.src),
             None => self.lm.span(&self.file, span, self.src),
         }
+    }
+
+    /// issue-07 transition: a view-family denial sema still DETECTS but no
+    /// longer reports — borrowck owns E0513/E0515/E0516 now. Recorded so a
+    /// debug-build assertion can confirm borrowck found the same thing, for
+    /// one release. Both this and the detection go with the assert.
+    fn view_finding(&mut self, code: &'static str, span: ByteSpan) {
+        self.view_findings.push((code, span));
     }
 
     fn err(&mut self, code: &'static str, msg: String, span: ByteSpan) {
@@ -15506,29 +15537,11 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     continue;
                 };
                 if info.owns_value && !self.is_copy(&info.ty) {
-                    let msg = if ret_borrow_shaped {
-                        self.dangling_view_root_message(root)
-                    } else {
-                        format!(
-                            "the returned value holds a view of {}: it owns heap that is freed when the function returns, so the stored view would dangle. Store an owned `Text` / `Vec[T]` in the field, or borrow the view from a non-`take` parameter",
-                            self.view_owner_desc(root)
-                        )
-                    };
-                    self.err("E0513", msg, e.span);
+                    self.view_finding("E0513", e.span);
                     return;
                 }
             }
         }
-    }
-
-    /// The E0513 message for a returned view whose owner dies at return,
-    /// tailored to what the root actually is — a `take` receiver, a `take`
-    /// parameter, or a plain local — so the fix is obvious from the text.
-    fn dangling_view_root_message(&self, root: &str) -> String {
-        format!(
-            "cannot return a borrow of {}: it owns heap that is freed when the function returns, so the returned view would dangle. Return an owned value (`Text` / `Vec[T]`) instead, or borrow from a non-`take` parameter",
-            self.view_owner_desc(root)
-        )
     }
 
     /// v0.0.13 (Tier 1): walk a returned **aggregate literal** and flag any
@@ -15579,20 +15592,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                         continue;
                     };
                     if info.owns_value && !self.is_copy(&info.ty) {
-                        self.err(
-                            "E0513",
-                            format!(
-                                "view of {} escapes inside the returned value: it is freed when the function returns, so the stored view would dangle. Store an owned `Text` / `Vec[T]`, or borrow the view from a non-`take` parameter",
-                                if root == "self" || root == "this" {
-                                    "the `take this` receiver".to_string()
-                                } else if self.current_fn_param_names.contains(&root) {
-                                    format!("`take` parameter `{root}`")
-                                } else {
-                                    format!("local `{root}`")
-                                }
-                            ),
-                            e.span,
-                        );
+                        self.view_finding("E0513", e.span);
                     }
                 }
             }
@@ -15702,16 +15702,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         if matches!(sig.receiver, Some(Receiver::Read) | Some(Receiver::Mut))
             && matches!(sig.return_type, Ty::Str | Ty::Slice(_))
         {
-            self.err(
-                "E0513",
-                format!(
-                    "cannot bind the view returned by `.{}()` on a temporary `{}`: the temporary is dropped at the end of this statement, so the view would dangle. Bind the owner to a named local first (`let owner = ...; owner.{}()`)",
-                    name.name,
-                    ty_display(&rty),
-                    name.name
-                ),
-                value.span,
-            );
+            self.view_finding("E0513", value.span);
         }
     }
 
@@ -15728,19 +15719,6 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 operand,
             } => self.place_root_name(operand),
             _ => None,
-        }
-    }
-
-    /// Human description of a view-owner root for diagnostics: distinguishes a
-    /// `take this` receiver, a `take` parameter, and a plain local — the three
-    /// `owns_value` kinds whose storage dies when the function returns.
-    fn view_owner_desc(&self, root: &str) -> String {
-        if root == "self" || root == "this" {
-            "the `take this` receiver".to_string()
-        } else if self.current_fn_param_names.contains(root) {
-            format!("`take` parameter `{root}`")
-        } else {
-            format!("local `{root}`")
         }
     }
 
@@ -15773,12 +15751,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         ) {
             return;
         }
-        self.err(
-            "E0516",
-            "storing a view through a raw pointer without a declared flow: no analysis can see where these bytes end up, so the function must declare it — `#[keeps(this)]` if the view survives in the receiver, `#[keeps(nothing)]` if the bytes are copied and nothing borrowed escapes"
-                .to_string(),
-            value.span,
-        );
+        self.view_finding("E0516", value.span);
     }
 
     fn check_view_store_escape(&mut self, target: &Expr, value: &Expr, target_ty: &Ty) {
@@ -15804,20 +15777,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 continue;
             };
             if info.owns_value && !self.is_copy(&info.ty) {
-                let troot_leaf = troot.rsplit('.').next().unwrap_or(&troot);
-                let dest = if target_is_static {
-                    format!("static `{troot_leaf}`")
-                } else {
-                    format!("`ref` target `{troot_leaf}`")
-                };
-                self.err(
-                    "E0513",
-                    format!(
-                        "cannot store a view of {} into {dest}: the view's owner is freed when the function returns, but {dest} outlives it, so the stored view would dangle",
-                        self.view_owner_desc(&vroot)
-                    ),
-                    value.span,
-                );
+                self.view_finding("E0513", value.span);
                 break;
             }
             // E0515 (memory-model contract §3/§5): the root is a borrowed
@@ -15857,24 +15817,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 if !target_is_receiver && !target_is_static && self.current_freefn_exported {
                     continue;
                 }
-                let troot_leaf = troot.rsplit('.').next().unwrap_or(&troot);
-                let dest = if target_is_static {
-                    format!("static `{troot_leaf}`")
-                } else {
-                    format!("`ref` target `{troot_leaf}`")
-                };
-                let hint = if target_is_receiver {
-                    " Own the bytes (a `Text` field), intern them (`text::intern`), or declare the method `#[keeps(this)]` so every caller ties the receiver to the argument's owner."
-                } else {
-                    " Own the bytes (`Text`), or intern them (`text::intern`) for a process-lifetime view."
-                };
-                self.err(
-                    "E0515",
-                    format!(
-                        "cannot store the view parameter `{vroot}` into {dest}: the caller only guarantees `{vroot}`'s bytes for this call, but {dest} outlives it, so the stored view would dangle.{hint}"
-                    ),
-                    value.span,
-                );
+                self.view_finding("E0515", value.span);
                 break;
             }
         }
@@ -25477,106 +25420,6 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
             "expected the `count()` note; got {:?}",
             d.notes
         );
-    }
-
-    // ── STRM v3 (2026-08-01): view-carrying aggregates inherit borrows ──
-    // (the str_dangle_repro family: a `str` field must not launder a view
-    // of dying storage past the frame)
-
-    #[test]
-    fn view_carrying_struct_literal_to_static_e0513() {
-        // Owner is a Drop struct with a view accessor; storing a struct
-        // literal that holds its view into a static must reject.
-        let codes = errors(
-            "struct Buf { p: *u8 }\n\
-             impl Buf { fn drop(ref this) { return; } fn view(this) -> str { return \"x\"; } }\n\
-             struct Data { key: str, n: i32 }\n\
-             static SLOT: Data = #zero::[Data]();\n\
-             fn build() {\n\
-                 let owner: Buf = Buf { p: 0 as *u8 };\n\
-                 SLOT = Data { key: owner.view(), n: 1 };\n\
-                 return;\n\
-             }\n\
-             fn main() -> i32 { build(); return 0; }",
-        );
-        assert!(codes.contains(&"E0513"), "static store of view-carrying literal; got {codes:?}");
-    }
-
-    #[test]
-    fn view_carrying_call_result_to_static_e0513() {
-        // The original repro shape: the view is laundered through a fn
-        // param into a returned struct, then stored into a static.
-        let codes = errors(
-            "struct Buf { p: *u8 }\n\
-             impl Buf { fn drop(ref this) { return; } fn view(this) -> str { return \"x\"; } }\n\
-             struct Data { key: str, n: i32 }\n\
-             static SLOT: Data = #zero::[Data]();\n\
-             fn store(key: str, n: i32) -> Data { return Data { key: key, n: n }; }\n\
-             fn build() {\n\
-                 let owner: Buf = Buf { p: 0 as *u8 };\n\
-                 SLOT = store(owner.view(), 2);\n\
-                 return;\n\
-             }\n\
-             fn main() -> i32 { build(); return 0; }",
-        );
-        assert!(codes.contains(&"E0513"), "repro shape must reject; got {codes:?}");
-    }
-
-    #[test]
-    fn view_carrying_whole_struct_to_ref_target_e0513() {
-        let codes = errors(
-            "struct Buf { p: *u8 }\n\
-             impl Buf { fn drop(ref this) { return; } fn view(this) -> str { return \"x\"; } }\n\
-             struct Data { key: str, n: i32 }\n\
-             fn put(ref out: Data) {\n\
-                 let owner: Buf = Buf { p: 0 as *u8 };\n\
-                 out = Data { key: owner.view(), n: 1 };\n\
-                 return;\n\
-             }\n\
-             fn main() -> i32 { var d: Data = Data { key: \"x\", n: 0 }; put(d); return 0; }",
-        );
-        assert!(codes.contains(&"E0513"), "ref-target whole-struct store; got {codes:?}");
-    }
-
-    #[test]
-    fn view_carrying_alias_return_e0513() {
-        let codes = errors(
-            "struct Buf { p: *u8 }\n\
-             impl Buf { fn drop(ref this) { return; } fn view(this) -> str { return \"x\"; } }\n\
-             struct Data { key: str, n: i32 }\n\
-             fn store(key: str, n: i32) -> Data { return Data { key: key, n: n }; }\n\
-             fn make() -> Data {\n\
-                 let owner: Buf = Buf { p: 0 as *u8 };\n\
-                 let d: Data = store(owner.view(), 1);\n\
-                 return d;\n\
-             }\n\
-             fn main() -> i32 { let d: Data = make(); return d.n; }",
-        );
-        assert!(codes.contains(&"E0513"), "alias return of rooted carrier; got {codes:?}");
-    }
-
-    #[test]
-    fn builtin_str_method_chain_return_e0513() {
-        // A sub-view method from the blessed `impl str` block extends the
-        // receiver's borrow: returning `v.second()` where `v` views a dying
-        // local dangles exactly like returning `v`.
-        let codes = errors(
-            "impl str {\n\
-                 fn second(this) -> str {\n\
-                     let p: *u8 = { #str_ptr(this) + (1 as usize) };\n\
-                     return { #str_from_raw_parts(p, #str_len(this) -% (1 as usize)) };\n\
-                 }\n\
-             }\n\
-             struct Buf { p: *u8 }\n\
-             impl Buf { fn drop(ref this) { return; } fn view(this) -> str { return \"xy\"; } }\n\
-             fn peek() -> str {\n\
-                 let owner: Buf = Buf { p: 0 as *u8 };\n\
-                 let v: str = owner.view();\n\
-                 return v.second();\n\
-             }\n\
-             fn main() -> i32 { return #str_len(peek()) as i32; }",
-        );
-        assert!(codes.contains(&"E0513"), "builtin sub-view chain return; got {codes:?}");
     }
 
     #[test]

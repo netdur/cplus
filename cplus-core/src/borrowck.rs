@@ -4384,6 +4384,20 @@ fn collect_view_diagnostics(
 // Entry points
 // ---------------------------------------------------------------------------
 
+/// Transition hook (issue-07): the `(code, span)` pairs the definition-site
+/// view rules produce for this program. Sema keeps detecting the same family
+/// for one release and asserts, in debug builds, that everything it would
+/// have denied appears here — the safety net for moving a live rule family
+/// between passes. Goes away with the assert.
+pub fn view_findings(prog: &Program) -> Vec<(&'static str, Span)> {
+    let oracle = CopyOracle::build(prog);
+    let mut sigs = SigTable::collect(prog, &oracle);
+    compute_receiver_flows(prog, &mut sigs);
+    let mut diags: Vec<(Option<String>, RawDiag)> = Vec::new();
+    collect_view_diagnostics(prog, &sigs, &oracle, &mut diags);
+    diags.into_iter().map(|(_, d)| (d.code, d.primary)).collect()
+}
+
 /// Snapshot-only entry. Returns the per-function state trace; produces
 /// no diagnostics. Used by unit tests via `dump()`.
 pub fn analyze(prog: &Program) -> ProgramAnalysis {
@@ -9273,5 +9287,106 @@ fn mk() -> LStr { return LStr { ptr: { 0 as *u8 }, len: { 0 as usize }, cap: { 0
                 "[{name}] must not be denied, got {codes:?}"
             );
         }
+    }
+
+    // ── STRM v3 (2026-08-01): view-carrying aggregates inherit borrows ──
+    // (the str_dangle_repro family: a `str` field must not launder a view of
+    // dying storage past the frame). Moved here from sema with the rules
+    // themselves — issue-07.
+
+    #[test]
+    fn view_carrying_struct_literal_to_static_e0513() {
+        // Owner is a Drop struct with a view accessor; storing a struct
+        // literal that holds its view into a static must reject.
+        let codes = check_src(
+            "struct Buf { p: *u8 }\n\
+             impl Buf { fn drop(ref this) { return; } fn view(this) -> str { return \"x\"; } }\n\
+             struct Data { key: str, n: i32 }\n\
+             static SLOT: Data = #zero::[Data]();\n\
+             fn build() {\n\
+                 let owner: Buf = Buf { p: 0 as *u8 };\n\
+                 SLOT = Data { key: owner.view(), n: 1 };\n\
+                 return;\n\
+             }\n\
+             fn main() -> i32 { build(); return 0; }",
+        );
+        assert!(codes.iter().any(|c| c == "E0513"), "static store of view-carrying literal; got {codes:?}");
+    }
+
+    #[test]
+    fn view_carrying_call_result_to_static_e0513() {
+        // The original repro shape: the view is laundered through a fn
+        // param into a returned struct, then stored into a static.
+        let codes = check_src(
+            "struct Buf { p: *u8 }\n\
+             impl Buf { fn drop(ref this) { return; } fn view(this) -> str { return \"x\"; } }\n\
+             struct Data { key: str, n: i32 }\n\
+             static SLOT: Data = #zero::[Data]();\n\
+             fn store(key: str, n: i32) -> Data { return Data { key: key, n: n }; }\n\
+             fn build() {\n\
+                 let owner: Buf = Buf { p: 0 as *u8 };\n\
+                 SLOT = store(owner.view(), 2);\n\
+                 return;\n\
+             }\n\
+             fn main() -> i32 { build(); return 0; }",
+        );
+        assert!(codes.iter().any(|c| c == "E0513"), "repro shape must reject; got {codes:?}");
+    }
+
+    #[test]
+    fn view_carrying_whole_struct_to_ref_target_e0513() {
+        let codes = check_src(
+            "struct Buf { p: *u8 }\n\
+             impl Buf { fn drop(ref this) { return; } fn view(this) -> str { return \"x\"; } }\n\
+             struct Data { key: str, n: i32 }\n\
+             fn put(ref out: Data) {\n\
+                 let owner: Buf = Buf { p: 0 as *u8 };\n\
+                 out = Data { key: owner.view(), n: 1 };\n\
+                 return;\n\
+             }\n\
+             fn main() -> i32 { var d: Data = Data { key: \"x\", n: 0 }; put(d); return 0; }",
+        );
+        assert!(codes.iter().any(|c| c == "E0513"), "ref-target whole-struct store; got {codes:?}");
+    }
+
+    #[test]
+    fn view_carrying_alias_return_e0513() {
+        let codes = check_src(
+            "struct Buf { p: *u8 }\n\
+             impl Buf { fn drop(ref this) { return; } fn view(this) -> str { return \"x\"; } }\n\
+             struct Data { key: str, n: i32 }\n\
+             fn store(key: str, n: i32) -> Data { return Data { key: key, n: n }; }\n\
+             fn make() -> Data {\n\
+                 let owner: Buf = Buf { p: 0 as *u8 };\n\
+                 let d: Data = store(owner.view(), 1);\n\
+                 return d;\n\
+             }\n\
+             fn main() -> i32 { let d: Data = make(); return d.n; }",
+        );
+        assert!(codes.iter().any(|c| c == "E0513"), "alias return of rooted carrier; got {codes:?}");
+    }
+
+    #[test]
+    fn builtin_str_method_chain_return_e0513() {
+        // A sub-view method from the blessed `impl str` block extends the
+        // receiver's borrow: returning `v.second()` where `v` views a dying
+        // local dangles exactly like returning `v`.
+        let codes = check_src(
+            "impl str {\n\
+                 fn second(this) -> str {\n\
+                     let p: *u8 = { #str_ptr(this) + (1 as usize) };\n\
+                     return { #str_from_raw_parts(p, #str_len(this) -% (1 as usize)) };\n\
+                 }\n\
+             }\n\
+             struct Buf { p: *u8 }\n\
+             impl Buf { fn drop(ref this) { return; } fn view(this) -> str { return \"xy\"; } }\n\
+             fn peek() -> str {\n\
+                 let owner: Buf = Buf { p: 0 as *u8 };\n\
+                 let v: str = owner.view();\n\
+                 return v.second();\n\
+             }\n\
+             fn main() -> i32 { return #str_len(peek()) as i32; }",
+        );
+        assert!(codes.iter().any(|c| c == "E0513"), "builtin sub-view chain return; got {codes:?}");
     }
 }
