@@ -1,6 +1,6 @@
 # Issue 11 — Dead code sweep (verified-vestigial paths, one checklist per item)
 
-- Status: PARTIAL 2026-08-02, commit <pending> — items 4, 6, 9, 10 and the
+- Status: PARTIAL 2026-08-02, commit 1daaf46 — items 4, 6, 9, 10 and the
   `edit_distance` duplicate are done (4, 9 and 10 by earlier issues); 1, 2, 3,
   5, 7, 8 are not. Per-item status below.
 - Type: cleanup
