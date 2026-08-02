@@ -1,6 +1,6 @@
 # Issue 13 — Drop/move machinery: fail loudly, classify once
 
-- Status: PARTIAL 2026-08-02, commit <pending> — (a), (c), (d), (e) done; (b),
+- Status: PARTIAL 2026-08-02, commit 2db5cb7 — (a), (c), (d), (e) done; (b),
   the `carries_drop` bit, not done
 - Type: structural consolidation + targeted fixes
 - Area: `cplus-core/src/codegen.rs`
