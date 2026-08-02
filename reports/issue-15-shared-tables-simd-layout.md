@@ -1,5 +1,7 @@
 # Issue 15 — Shared tables: SIMD triplicate, layout duo, scalar-list gap
 
+- Status: PARTIAL 2026-08-02, commit <pending> — (a) and (c) done; (b), the
+  layout duo, not done, see below
 - Type: consolidation (small, mechanical)
 - Area: `cplus-core/src/sema.rs`, `codegen.rs`
 - Effort: S
@@ -52,3 +54,42 @@ lists (or better: derive the scalar predicate from one list the others use).
 ## Verification (all)
 
 Full suites; codegen IR-text tests asserting `noundef` on an f16 param after (c).
+
+## Outcome
+
+**(a) The SIMD table, once.** `sema::SIMD_TYPES` is `&[(&str, Ty, u8, bool)]` —
+name, lane element, lane count, is-mask — and all three consumers read it:
+sema's `resolve_type` arm, `simd_ty_from_name` (path dispatch), and codegen's
+`codegen_simd_ty_from_name`, which is now a one-line delegation. Three ~150-line
+matches, kept in step by a comment on the first one, are 35 data rows.
+
+Sharing this crosses none of the sema/codegen id-universe separation: it is
+name→shape data with no id in it.
+
+The new test `every_simd_name_resolves_the_same_way_everywhere` walks the table
+and asserts, for each entry, that the name lookup and the TYPE-POSITION path
+(`fn probe(v: f32x4)`, which goes through `resolve_type`) agree — the check the
+comment used to ask a reader to perform by hand.
+
+**(c) `is_scalar_ty` gained `Ty::F16` and `Ty::Mask`.** Every sibling list
+(`is_copy_ty`, the TBAA leaf table, `static_layout`) already had f16, so a
+value-passed `f16` parameter was the only scalar losing its `noundef`. Pinned by
+`f16_and_mask_params_carry_noundef`. The arm now carries a note naming the four
+lists a new scalar type belongs in — they answer different questions, which is
+why they are separate, and nothing but that note says so.
+
+## What is still open
+
+**(b) The layout duo.** Sema's `layout_of` and codegen's `align_of_ty` plus the
+payload-slot computation still derive sizes independently, with no cross-check.
+The report's own recommendation is to write the differential test FIRST — for a
+corpus of structs and enums, assert sema's size/align/offsets equal what codegen
+derives — and only then unify behind a shared function with a small table trait.
+That test is the deliverable, and it is a bigger piece of work than (a) and (c)
+together; the audit found no live divergence, so nothing is broken today.
+
+## Verification (as run)
+
+- `cargo test -p cplus-core` 1850 + 8 (two new tests), `cargo test -p cpc` 608 +
+  16 + 5 + 6, `cpc test` in `vendor/stdlib` 290.
+- `--emit-ll` over 40 `docs/examples` plus the ABI probes: byte-identical.

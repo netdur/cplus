@@ -3718,6 +3718,12 @@ fn is_scalar_ty(ty: &Ty, types: &TypeTable) -> bool {
         | Ty::U64
         | Ty::Isize
         | Ty::Usize
+        // issue-15(c): `f16` belongs here for the same reason every other
+        // float does — it lowers to LLVM `half`, a register value with no
+        // padding. It was missing while every sibling type list (`is_copy_ty`,
+        // the TBAA table, `static_layout`) had it, so a value-passed `f16`
+        // parameter silently lost its `noundef`.
+        | Ty::F16
         | Ty::F32
         | Ty::F64
         | Ty::Bool
@@ -3727,8 +3733,12 @@ fn is_scalar_ty(ty: &Ty, types: &TypeTable) -> bool {
         Ty::Enum(id) => !types.enum_defs[id.0 as usize].is_tagged,
         // v0.0.6 Slice 1C: SIMD vectors are register-passed scalars in
         // LLVM (no aggregate `poison` padding); `noundef` is sound at
-        // the whole-value level.
-        Ty::Simd { .. } => true,
+        // the whole-value level. A mask is the same shape — `<N x i1>` — and
+        // was omitted here alone.
+        Ty::Simd { .. } | Ty::Mask { .. } => true,
+        // A new scalar type belongs in FOUR lists: here, `is_copy_ty`, the
+        // TBAA leaf table and `static_layout`. They are separate because they
+        // answer different questions; they drift because nothing says so.
         _ => false,
     }
 }
@@ -17543,153 +17553,11 @@ fn loop_attr_int_value(a: &Attribute) -> Option<i64> {
     }
 }
 
+/// issue-15(a): SIMD/mask name → `Ty`, from the one shared table
+/// (`sema::SIMD_TYPES`). This used to be a verbatim third copy of sema's
+/// match, kept in step by a comment.
 fn codegen_simd_ty_from_name(name: &str) -> Option<Ty> {
-    match name {
-        "f32x4" => Some(Ty::Simd {
-            elem: Box::new(Ty::F32),
-            lanes: 4,
-        }),
-        "f64x2" => Some(Ty::Simd {
-            elem: Box::new(Ty::F64),
-            lanes: 2,
-        }),
-        "i32x4" => Some(Ty::Simd {
-            elem: Box::new(Ty::I32),
-            lanes: 4,
-        }),
-        "i64x2" => Some(Ty::Simd {
-            elem: Box::new(Ty::I64),
-            lanes: 2,
-        }),
-        "u64x2" => Some(Ty::Simd {
-            elem: Box::new(Ty::U64),
-            lanes: 2,
-        }),
-        "u32x4" => Some(Ty::Simd {
-            elem: Box::new(Ty::U32),
-            lanes: 4,
-        }),
-        "i8x16" => Some(Ty::Simd {
-            elem: Box::new(Ty::I8),
-            lanes: 16,
-        }),
-        "i16x8" => Some(Ty::Simd {
-            elem: Box::new(Ty::I16),
-            lanes: 8,
-        }),
-        "u8x16" => Some(Ty::Simd {
-            elem: Box::new(Ty::U8),
-            lanes: 16,
-        }),
-        "u16x8" => Some(Ty::Simd {
-            elem: Box::new(Ty::U16),
-            lanes: 8,
-        }),
-        // v0.0.12 SIMD Tier-1 (G-039a): 64-bit (sub-128) widths.
-        "i8x8" => Some(Ty::Simd {
-            elem: Box::new(Ty::I8),
-            lanes: 8,
-        }),
-        "u8x8" => Some(Ty::Simd {
-            elem: Box::new(Ty::U8),
-            lanes: 8,
-        }),
-        "i16x4" => Some(Ty::Simd {
-            elem: Box::new(Ty::I16),
-            lanes: 4,
-        }),
-        "u16x4" => Some(Ty::Simd {
-            elem: Box::new(Ty::U16),
-            lanes: 4,
-        }),
-        "i32x2" => Some(Ty::Simd {
-            elem: Box::new(Ty::I32),
-            lanes: 2,
-        }),
-        "u32x2" => Some(Ty::Simd {
-            elem: Box::new(Ty::U32),
-            lanes: 2,
-        }),
-        "f32x2" => Some(Ty::Simd {
-            elem: Box::new(Ty::F32),
-            lanes: 2,
-        }),
-        // v0.0.7 Slice 2.2: 256-bit widths.
-        "f32x8" => Some(Ty::Simd {
-            elem: Box::new(Ty::F32),
-            lanes: 8,
-        }),
-        "f64x4" => Some(Ty::Simd {
-            elem: Box::new(Ty::F64),
-            lanes: 4,
-        }),
-        "i8x32" => Some(Ty::Simd {
-            elem: Box::new(Ty::I8),
-            lanes: 32,
-        }),
-        "u8x32" => Some(Ty::Simd {
-            elem: Box::new(Ty::U8),
-            lanes: 32,
-        }),
-        "i16x16" => Some(Ty::Simd {
-            elem: Box::new(Ty::I16),
-            lanes: 16,
-        }),
-        "u16x16" => Some(Ty::Simd {
-            elem: Box::new(Ty::U16),
-            lanes: 16,
-        }),
-        "i32x8" => Some(Ty::Simd {
-            elem: Box::new(Ty::I32),
-            lanes: 8,
-        }),
-        "u32x8" => Some(Ty::Simd {
-            elem: Box::new(Ty::U32),
-            lanes: 8,
-        }),
-        "i64x4" => Some(Ty::Simd {
-            elem: Box::new(Ty::I64),
-            lanes: 4,
-        }),
-        "u64x4" => Some(Ty::Simd {
-            elem: Box::new(Ty::U64),
-            lanes: 4,
-        }),
-        // v0.0.7 Slice 2.1: mask types alias the matching signed-int SIMD.
-        "mask8x16" => Some(Ty::Simd {
-            elem: Box::new(Ty::I8),
-            lanes: 16,
-        }),
-        "mask16x8" => Some(Ty::Simd {
-            elem: Box::new(Ty::I16),
-            lanes: 8,
-        }),
-        "mask32x4" => Some(Ty::Simd {
-            elem: Box::new(Ty::I32),
-            lanes: 4,
-        }),
-        "mask64x2" => Some(Ty::Simd {
-            elem: Box::new(Ty::I64),
-            lanes: 2,
-        }),
-        "mask8x32" => Some(Ty::Simd {
-            elem: Box::new(Ty::I8),
-            lanes: 32,
-        }),
-        "mask16x16" => Some(Ty::Simd {
-            elem: Box::new(Ty::I16),
-            lanes: 16,
-        }),
-        "mask32x8" => Some(Ty::Simd {
-            elem: Box::new(Ty::I32),
-            lanes: 8,
-        }),
-        "mask64x4" => Some(Ty::Simd {
-            elem: Box::new(Ty::I64),
-            lanes: 4,
-        }),
-        _ => None,
-    }
+    crate::sema::simd_ty_from_name(name)
 }
 
 /// Minimum alignment for the *lane scalar* of a SIMD vector. Used by
@@ -20619,6 +20487,23 @@ mod tests {
         let types = collect_types(&prog);
         let id = types.struct_by_name["S"];
         assert_eq!(static_layout(&Ty::Struct(id), &types), Some((12, 4)));
+    }
+
+    #[test]
+    /// issue-15(c): `f16` and a SIMD mask are register values with no padding,
+    /// exactly like every other float and vector — they were missing from this
+    /// one list while present in every sibling list, so a value-passed `f16`
+    /// parameter lost its `noundef`.
+    #[test]
+    fn f16_and_mask_params_carry_noundef() {
+        let ir = gen_src(
+            "fn half(x: f16) -> f16 { return x; }\n             fn main() -> i32 { let h: f16 = half(1.0 as f16); return 0; }",
+        );
+        assert!(
+            ir.contains("define internal fastcc half @half(half noundef %0)")
+                || ir.contains("@half(half noundef "),
+            "an f16 param must carry noundef, got:\n{ir}"
+        );
     }
 
     #[test]

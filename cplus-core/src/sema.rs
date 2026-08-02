@@ -16950,164 +16950,13 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             // through this name path. `Ty::Unit` is the same unit type
             // implicit `fn f() { ... }` returns.
             "()" => Ty::Unit,
-            // v0.0.6 Slice 1B: SIMD type names. Each entry here must also
-            // appear in `simd_ty_from_name` (free fn below) for path
-            // dispatch, and in codegen's `simd_ty_from_name` mirror.
-            "f32x4" => Ty::Simd {
-                elem: Box::new(Ty::F32),
-                lanes: 4,
-            },
-            "f64x2" => Ty::Simd {
-                elem: Box::new(Ty::F64),
-                lanes: 2,
-            },
-            "i32x4" => Ty::Simd {
-                elem: Box::new(Ty::I32),
-                lanes: 4,
-            },
-            "i64x2" => Ty::Simd {
-                elem: Box::new(Ty::I64),
-                lanes: 2,
-            },
-            "u64x2" => Ty::Simd {
-                elem: Box::new(Ty::U64),
-                lanes: 2,
-            },
-            "u32x4" => Ty::Simd {
-                elem: Box::new(Ty::U32),
-                lanes: 4,
-            },
-            "i8x16" => Ty::Simd {
-                elem: Box::new(Ty::I8),
-                lanes: 16,
-            },
-            "i16x8" => Ty::Simd {
-                elem: Box::new(Ty::I16),
-                lanes: 8,
-            },
-            "u8x16" => Ty::Simd {
-                elem: Box::new(Ty::U8),
-                lanes: 16,
-            },
-            "u16x8" => Ty::Simd {
-                elem: Box::new(Ty::U16),
-                lanes: 8,
-            },
-            // v0.0.12 SIMD Tier-1 (G-039a): 64-bit (sub-128) widths — the
-            // NEON D-register family. Mostly produced by `i8x16::low`/`high`
-            // and consumed by `widen` / `combine`; also constructible
-            // directly via `splat`/`new`. Same elem leaves, half the lanes.
-            "i8x8" => Ty::Simd {
-                elem: Box::new(Ty::I8),
-                lanes: 8,
-            },
-            "u8x8" => Ty::Simd {
-                elem: Box::new(Ty::U8),
-                lanes: 8,
-            },
-            "i16x4" => Ty::Simd {
-                elem: Box::new(Ty::I16),
-                lanes: 4,
-            },
-            "u16x4" => Ty::Simd {
-                elem: Box::new(Ty::U16),
-                lanes: 4,
-            },
-            "i32x2" => Ty::Simd {
-                elem: Box::new(Ty::I32),
-                lanes: 2,
-            },
-            "u32x2" => Ty::Simd {
-                elem: Box::new(Ty::U32),
-                lanes: 2,
-            },
-            "f32x2" => Ty::Simd {
-                elem: Box::new(Ty::F32),
-                lanes: 2,
-            },
-            // v0.0.7 Slice 2.2: 256-bit widths. AArch64 splits these
-            // into two 128-bit ops at codegen; AVX2 / SVE2 hosts use
-            // native 256-bit vectors. Same elem-type leaves as the
-            // 128-bit family — the type-name and lane-count are the
-            // only thing that changes.
-            "f32x8" => Ty::Simd {
-                elem: Box::new(Ty::F32),
-                lanes: 8,
-            },
-            "f64x4" => Ty::Simd {
-                elem: Box::new(Ty::F64),
-                lanes: 4,
-            },
-            "i8x32" => Ty::Simd {
-                elem: Box::new(Ty::I8),
-                lanes: 32,
-            },
-            "u8x32" => Ty::Simd {
-                elem: Box::new(Ty::U8),
-                lanes: 32,
-            },
-            "i16x16" => Ty::Simd {
-                elem: Box::new(Ty::I16),
-                lanes: 16,
-            },
-            "u16x16" => Ty::Simd {
-                elem: Box::new(Ty::U16),
-                lanes: 16,
-            },
-            "i32x8" => Ty::Simd {
-                elem: Box::new(Ty::I32),
-                lanes: 8,
-            },
-            "u32x8" => Ty::Simd {
-                elem: Box::new(Ty::U32),
-                lanes: 8,
-            },
-            "i64x4" => Ty::Simd {
-                elem: Box::new(Ty::I64),
-                lanes: 4,
-            },
-            "u64x4" => Ty::Simd {
-                elem: Box::new(Ty::U64),
-                lanes: 4,
-            },
-            // v0.0.9 follow-up: mask types are a distinct `Ty::Mask`
-            // variant. Codegen lowers them identically to the matching
-            // signed-int SIMD, but sema rejects Mask <-> Simd implicit
-            // assignment, requires `Ty::Mask` for `select` / `any` /
-            // `all`, and rejects arithmetic. Use `.to_bits()` /
-            // `.to_mask()` for explicit conversions.
-            "mask8x16" => Ty::Mask {
-                elem: Box::new(Ty::I8),
-                lanes: 16,
-            },
-            "mask16x8" => Ty::Mask {
-                elem: Box::new(Ty::I16),
-                lanes: 8,
-            },
-            "mask32x4" => Ty::Mask {
-                elem: Box::new(Ty::I32),
-                lanes: 4,
-            },
-            "mask64x2" => Ty::Mask {
-                elem: Box::new(Ty::I64),
-                lanes: 2,
-            },
-            "mask8x32" => Ty::Mask {
-                elem: Box::new(Ty::I8),
-                lanes: 32,
-            },
-            "mask16x16" => Ty::Mask {
-                elem: Box::new(Ty::I16),
-                lanes: 16,
-            },
-            "mask32x8" => Ty::Mask {
-                elem: Box::new(Ty::I32),
-                lanes: 8,
-            },
-            "mask64x4" => Ty::Mask {
-                elem: Box::new(Ty::I64),
-                lanes: 4,
-            },
+            // v0.0.6 Slice 1B: SIMD/mask type names. One table
+            // (`SIMD_TYPES`), read here, by `simd_ty_from_name` for path
+            // dispatch, and by codegen — it used to be three ~150-line
+            // matches kept in step by this comment.
+            n if simd_ty_from_name(n).is_some() => {
+                simd_ty_from_name(n).expect("just matched")
+            }
             _ => {
                 // Slice 7GEN.4: `This` inside an `impl Type { ... }` body
                 // resolves to the impl target's concrete `Ty`. Inside an
@@ -19874,160 +19723,67 @@ fn matching_signed_int_lane(elem: &Ty) -> Ty {
     }
 }
 
-/// v0.0.6 Slice 1B: parse a SIMD type name (`f32x4`, etc.) back to its
-/// `Ty::Simd` representation. Used by `check_assoc_call` to recognize
-/// `f32x4::splat(...)`-style paths before falling through to enum/struct
-/// dispatch. First cut: only `f32x4`; other widths land in follow-on
-/// slices.
-fn simd_ty_from_name(name: &str) -> Option<Ty> {
-    match name {
-        "f32x4" => Some(Ty::Simd {
-            elem: Box::new(Ty::F32),
-            lanes: 4,
-        }),
-        "f64x2" => Some(Ty::Simd {
-            elem: Box::new(Ty::F64),
-            lanes: 2,
-        }),
-        "i32x4" => Some(Ty::Simd {
-            elem: Box::new(Ty::I32),
-            lanes: 4,
-        }),
-        "i64x2" => Some(Ty::Simd {
-            elem: Box::new(Ty::I64),
-            lanes: 2,
-        }),
-        "u64x2" => Some(Ty::Simd {
-            elem: Box::new(Ty::U64),
-            lanes: 2,
-        }),
-        "u32x4" => Some(Ty::Simd {
-            elem: Box::new(Ty::U32),
-            lanes: 4,
-        }),
-        "i8x16" => Some(Ty::Simd {
-            elem: Box::new(Ty::I8),
-            lanes: 16,
-        }),
-        "i16x8" => Some(Ty::Simd {
-            elem: Box::new(Ty::I16),
-            lanes: 8,
-        }),
-        "u8x16" => Some(Ty::Simd {
-            elem: Box::new(Ty::U8),
-            lanes: 16,
-        }),
-        "u16x8" => Some(Ty::Simd {
-            elem: Box::new(Ty::U16),
-            lanes: 8,
-        }),
-        // v0.0.12 SIMD Tier-1 (G-039a): 64-bit (sub-128) widths.
-        "i8x8" => Some(Ty::Simd {
-            elem: Box::new(Ty::I8),
-            lanes: 8,
-        }),
-        "u8x8" => Some(Ty::Simd {
-            elem: Box::new(Ty::U8),
-            lanes: 8,
-        }),
-        "i16x4" => Some(Ty::Simd {
-            elem: Box::new(Ty::I16),
-            lanes: 4,
-        }),
-        "u16x4" => Some(Ty::Simd {
-            elem: Box::new(Ty::U16),
-            lanes: 4,
-        }),
-        "i32x2" => Some(Ty::Simd {
-            elem: Box::new(Ty::I32),
-            lanes: 2,
-        }),
-        "u32x2" => Some(Ty::Simd {
-            elem: Box::new(Ty::U32),
-            lanes: 2,
-        }),
-        "f32x2" => Some(Ty::Simd {
-            elem: Box::new(Ty::F32),
-            lanes: 2,
-        }),
-        // v0.0.7 Slice 2.2: 256-bit widths.
-        "f32x8" => Some(Ty::Simd {
-            elem: Box::new(Ty::F32),
-            lanes: 8,
-        }),
-        "f64x4" => Some(Ty::Simd {
-            elem: Box::new(Ty::F64),
-            lanes: 4,
-        }),
-        "i8x32" => Some(Ty::Simd {
-            elem: Box::new(Ty::I8),
-            lanes: 32,
-        }),
-        "u8x32" => Some(Ty::Simd {
-            elem: Box::new(Ty::U8),
-            lanes: 32,
-        }),
-        "i16x16" => Some(Ty::Simd {
-            elem: Box::new(Ty::I16),
-            lanes: 16,
-        }),
-        "u16x16" => Some(Ty::Simd {
-            elem: Box::new(Ty::U16),
-            lanes: 16,
-        }),
-        "i32x8" => Some(Ty::Simd {
-            elem: Box::new(Ty::I32),
-            lanes: 8,
-        }),
-        "u32x8" => Some(Ty::Simd {
-            elem: Box::new(Ty::U32),
-            lanes: 8,
-        }),
-        "i64x4" => Some(Ty::Simd {
-            elem: Box::new(Ty::I64),
-            lanes: 4,
-        }),
-        "u64x4" => Some(Ty::Simd {
-            elem: Box::new(Ty::U64),
-            lanes: 4,
-        }),
-        // v0.0.9 follow-up: mask types resolve to `Ty::Mask`, a sema-
-        // level type distinct from Ty::Simd. Codegen lowers both to the
-        // same `<N x iN>` LLVM type, so layout/ABI is unchanged.
-        "mask8x16" => Some(Ty::Mask {
-            elem: Box::new(Ty::I8),
-            lanes: 16,
-        }),
-        "mask16x8" => Some(Ty::Mask {
-            elem: Box::new(Ty::I16),
-            lanes: 8,
-        }),
-        "mask32x4" => Some(Ty::Mask {
-            elem: Box::new(Ty::I32),
-            lanes: 4,
-        }),
-        "mask64x2" => Some(Ty::Mask {
-            elem: Box::new(Ty::I64),
-            lanes: 2,
-        }),
-        "mask8x32" => Some(Ty::Mask {
-            elem: Box::new(Ty::I8),
-            lanes: 32,
-        }),
-        "mask16x16" => Some(Ty::Mask {
-            elem: Box::new(Ty::I16),
-            lanes: 16,
-        }),
-        "mask32x8" => Some(Ty::Mask {
-            elem: Box::new(Ty::I32),
-            lanes: 8,
-        }),
-        "mask64x4" => Some(Ty::Mask {
-            elem: Box::new(Ty::I64),
-            lanes: 4,
-        }),
-        _ => None,
-    }
+/// issue-15(a): the SIMD/mask type names, once. `(source name, lane element,
+/// lane count, is-mask)`.
+///
+/// This was three ~150-line matches — sema's `resolve_type` arm, sema's
+/// `simd_ty_from_name`, and codegen's `codegen_simd_ty_from_name` — kept in
+/// step by a comment on the first one ("Each entry here must also appear in
+/// `simd_ty_from_name` … and in codegen's mirror"). It is name→shape DATA, so
+/// sharing it crosses none of the sema/codegen id-universe separation: there
+/// is no id in it.
+pub const SIMD_TYPES: &[(&str, Ty, u8, bool)] = &[
+    ("f32x4", Ty::F32, 4, false),
+    ("f64x2", Ty::F64, 2, false),
+    ("i32x4", Ty::I32, 4, false),
+    ("i64x2", Ty::I64, 2, false),
+    ("u64x2", Ty::U64, 2, false),
+    ("u32x4", Ty::U32, 4, false),
+    ("i8x16", Ty::I8, 16, false),
+    ("i16x8", Ty::I16, 8, false),
+    ("u8x16", Ty::U8, 16, false),
+    ("u16x8", Ty::U16, 8, false),
+    ("i8x8", Ty::I8, 8, false),
+    ("u8x8", Ty::U8, 8, false),
+    ("i16x4", Ty::I16, 4, false),
+    ("u16x4", Ty::U16, 4, false),
+    ("i32x2", Ty::I32, 2, false),
+    ("u32x2", Ty::U32, 2, false),
+    ("f32x2", Ty::F32, 2, false),
+    ("f32x8", Ty::F32, 8, false),
+    ("f64x4", Ty::F64, 4, false),
+    ("i8x32", Ty::I8, 32, false),
+    ("u8x32", Ty::U8, 32, false),
+    ("i16x16", Ty::I16, 16, false),
+    ("u16x16", Ty::U16, 16, false),
+    ("i32x8", Ty::I32, 8, false),
+    ("u32x8", Ty::U32, 8, false),
+    ("i64x4", Ty::I64, 4, false),
+    ("u64x4", Ty::U64, 4, false),
+    ("mask8x16", Ty::I8, 16, true),
+    ("mask16x8", Ty::I16, 8, true),
+    ("mask32x4", Ty::I32, 4, true),
+    ("mask64x2", Ty::I64, 2, true),
+    ("mask8x32", Ty::I8, 32, true),
+    ("mask16x16", Ty::I16, 16, true),
+    ("mask32x8", Ty::I32, 8, true),
+    ("mask64x4", Ty::I64, 4, true),
+];
+
+/// The `Ty` a SIMD/mask type name denotes, from [`SIMD_TYPES`].
+pub fn simd_ty_from_name(name: &str) -> Option<Ty> {
+    SIMD_TYPES.iter().find_map(|(n, elem, lanes, is_mask)| {
+        if *n != name {
+            return None;
+        }
+        let elem = Box::new(elem.clone());
+        let lanes = *lanes as u32;
+        Some(if *is_mask {
+            Ty::Mask { elem, lanes }
+        } else {
+            Ty::Simd { elem, lanes }
+        })
+    })
 }
 
 /// Bit width of a SIMD lane scalar type. `isize`/`usize` are 64-bit on the
@@ -21536,6 +21292,42 @@ mod tests {
     const WATCH_OK: &str = "#[watch] struct S { x: i32 }\n\
          impl S { fn on_value(ref this, field: str) { return; } }\n\
          fn main() -> i32 { return 0; }";
+
+    /// issue-15(a): the three consumers of the SIMD name table — `resolve_type`,
+    /// `simd_ty_from_name` (path dispatch) and codegen's mirror — read ONE
+    /// table now. This asserts they agree entry for entry, which is what the
+    /// comment on the first copy used to ask a reader to maintain by hand.
+    #[test]
+    fn every_simd_name_resolves_the_same_way_everywhere() {
+        for (name, elem, lanes, is_mask) in SIMD_TYPES {
+            let expected = if *is_mask {
+                Ty::Mask {
+                    elem: Box::new(elem.clone()),
+                    lanes: *lanes as u32,
+                }
+            } else {
+                Ty::Simd {
+                    elem: Box::new(elem.clone()),
+                    lanes: *lanes as u32,
+                }
+            };
+            assert_eq!(
+                simd_ty_from_name(name),
+                Some(expected.clone()),
+                "`{name}` disagrees between the table and the name lookup"
+            );
+            // The type-position path: `let v: f32x4 = ...` resolves through
+            // `resolve_type`, which reads the same table.
+            let src = format!("fn probe(v: {name}) -> i32 {{ return 0; }}\nfn main() -> i32 {{ return 0; }}\n");
+            let toks = tokenize(&src).expect("lex");
+            let prog = parse(toks).expect("parse");
+            let diags = check(&prog, PathBuf::from("t.cplus"), &src);
+            assert!(
+                diags.is_empty(),
+                "`{name}` did not resolve in type position: {diags:#?}"
+            );
+        }
+    }
 
     #[test]
     fn watch_with_correct_hook_clean() {
