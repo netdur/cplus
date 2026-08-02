@@ -1,5 +1,6 @@
 # Issue 02 — One mangling module (5 printers, 2 parsers, already diverged)
 
+- Status: DONE 2026-08-02, commit <pending>
 - Type: structural consolidation
 - Area: new `cplus-core/src/mangling.rs`; `sema.rs`, `monomorphize.rs`, `codegen.rs`
 - Effort: S-M (mostly moves)
@@ -99,3 +100,92 @@ SIMD/mask, raw pointers) asserting `take(render(ty)) == ty` and
   module must not leak into error messages.
 - Symbol-name changes invalidate any prebuilt/vendored archives keyed by symbol; the
   project has none shipped today (binary packages are parked), but note it in the commit.
+
+## Outcome
+
+`cplus-core/src/mangling.rs` now holds the grammar, written once:
+
+```rust
+pub fn render(ty: &Ty, nominal: &dyn Fn(&Ty) -> String) -> String;
+pub fn render_len(ty: &Ty, nominal: &dyn Fn(&Ty) -> String) -> usize;
+pub fn render_ast(t: &Type) -> String;
+pub fn join(base: &str, args: &[String]) -> String;
+pub fn join_len(base: &str, arg_lens: impl Iterator<Item = usize>) -> usize;
+pub fn take<'a>(s: &'a str, nominal: &dyn Fn(&str) -> Option<(Ty, usize)>) -> Option<(Ty, &'a str)>;
+pub fn from_suffix(suffix: &str, nominal: &..., fallback: &dyn Fn(&str) -> Option<Ty>) -> Ty;
+```
+
+The id universes stay local, as the report required: every nominal lookup is a
+callback the caller supplies from its own tables. Sema keeps `nominal_name`
+over its `StructDef`/`EnumDef` slices, codegen keeps `nominal_name`,
+`nominal_prefix` (longest name at a token boundary) and `nominal_tail_match`
+(the qualified-tail fallback) over its own re-derived table.
+
+Two API differences from the report's sketch, both from writing it:
+
+- `render_len` is not a re-implementation and not `render().len()` either.
+  Both go through one `write_ty` over a `Sink`, which is either a `String` or a
+  counter — a shared grammar that never materializes the name the
+  instantiation-size guard is about to refuse to build.
+- `from_suffix` takes the same prefix-matching `nominal` callback as `take`
+  rather than a separate "exact" one, and derives the exact test from it
+  (consumed == whole length). The fn-pointer branch delegates to `take`, which
+  needs the prefix form anyway.
+
+Now pointing at it: sema's `mangle_ty_for_name`, `mangled_ty_name_len`,
+`mangle_generic_struct_name`, `projected_generic_name_len`; monomorphize's
+`mangle_ty`, `mangle_type_ast_arg`, `mangle_name`, `mangle_call_from_ast`;
+codegen's `mangle_o_for_tramp_with_types`, `tuple_elem_mangle`,
+`ty_from_suffix`. Codegen's `mangled_ty_take` is deleted — its callers go
+through `crate::mangling::take`.
+
+### The divergences
+
+1. **fn-ptr unit return — a live ICE, now fixed and covered by an e2e test.**
+   `Cell[fn(i32) -> ()]` (a generic instantiated at a unit-returning
+   fn-pointer) aborted with "codegen reached TypeKind::Generic — monomorphize
+   did not rewrite this site" on the pre-change binary: the AST printer built
+   the key `fn_i32_ret_unit`, the Ty printer had registered `fn_i32`, the lookup
+   missed and the node was left alone. e2e
+   `a_generic_over_a_unit_returning_fn_pointer_instantiates`.
+2. **`Ty::Param` vs a bare AST `Path` — NOT a divergence to fix.** The AST
+   cannot tell an unsubstituted parameter `T` from a struct named `T`, so it
+   renders `T` where the `Ty` side renders `Param_T`. The consequence is a
+   lookup miss on an instantiation that still mentions a type parameter — which
+   is the correct answer, since that is not a concrete instantiation. Recorded
+   in `render_ast`'s doc comment rather than "fixed".
+3. **`f16` in the whole-string parser** — fixed; one keyword table now serves
+   both parsers, so a primitive cannot be missing from one of them. Unit test.
+   No end-to-end repro was found: the async/thread paths that call the parser
+   resolve `Future__f16` by name match before the suffix decode is reached.
+4. **SIMD/mask in the tokenizing parser** — fixed; both vector forms parse in
+   both parsers, including inside a fn-pointer parameter list
+   (`fn_f32x4_maskf32x4`). Unit test.
+5. **A struct named like a vector** — fixed, and the fix is a DECISION worth
+   recording: `i8x2` is both a legal struct name and a legal vector spelling.
+   Both parsers now resolve a declared nominal name first, so the user's
+   declaration wins; a vector spelling no nominal name shadows still decodes.
+   The prefix rules (`ptr_`, `slice_`, `arr`, `fn`, `Param_`) still beat a
+   nominal name, which is what every earlier parser did — a struct called `ptr`
+   does not capture `ptr_i32`.
+
+The property test (`every_type_round_trips_through_the_grammar`) runs a corpus
+of primitives, nominals (including a qualified one), pointers, slices, arrays,
+fn-pointers with take/ref modes and unit/non-unit returns, and SIMD/mask
+vectors, asserting `take(render(ty)) == ty`, `from_suffix(render(ty)) == ty`
+and `render_len(ty) == render(ty).len()`. Two exclusions, both documented in the
+test: `ERR` in composite position (`Ty::Error` doubles as the parser's "did not
+parse"), and any structural type whose rendering a nominal name shadows (case 5
+above).
+
+## Verification (as run)
+
+- 7 unit tests in `mangling.rs` (the property test plus one per divergence).
+- e2e `a_generic_over_a_unit_returning_fn_pointer_instantiates`.
+- `cargo test -p cplus-core` 1844 + 8, `cargo test -p cpc` 605 + 16 + 5 + 6;
+  `cpc test` in `vendor/stdlib` 290 green in debug and `--release`; vendor-wide
+  `cpc check` diagnostic parity across 54 packages — no change.
+- Symbol-name impact: only the `_ret_unit` case changes, and it changes from a
+  name that resolved to nothing. No prebuilt archive in the tree is keyed by a
+  symbol name (binary packages are parked), so nothing needs rebuilding beyond
+  a normal `cpc build`.

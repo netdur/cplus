@@ -22944,3 +22944,32 @@ fn ast_walk_reaches_constructs_the_hand_rolled_walkers_skipped() {
     let run = Command::new(&bin).status().expect("run walker probe");
     assert_eq!(run.code(), Some(0), "unexpected exit: {run}");
 }
+
+/// reports/issue-02: the mangling grammar had five printers and two parsers.
+/// One of the divergences between them was live: the AST-side printer spelled
+/// a fn-pointer's UNIT return (`fn_i32_ret_unit`) where every Ty-side printer
+/// omits it (`fn_i32`), so a generic instantiated at a unit-returning
+/// fn-pointer built a lookup key that matched nothing — monomorphize left the
+/// node alone and codegen aborted with "reached TypeKind::Generic —
+/// monomorphize did not rewrite this site". One grammar, one spelling.
+#[test]
+fn a_generic_over_a_unit_returning_fn_pointer_instantiates() {
+    let (_dir, bin) = compile_program(
+        "struct Cell[T] { v: T }\n\
+         static SEEN: i32 = 0;\n\
+         fn nothing(x: i32) -> () { SEEN = SEEN + x; return; }\n\
+         fn takes(x: i32) -> i32 { return x + 1; }\n\
+         fn main() -> i32 {\n\
+           let c: Cell[fn(i32) -> ()] = Cell[fn(i32) -> ()] { v: nothing };\n\
+           c.v(7);\n\
+           if SEEN != 7 { return 1; }\n\
+           // The non-unit return still mangles the same way it always did.\n\
+           let d: Cell[fn(i32) -> i32] = Cell[fn(i32) -> i32] { v: takes };\n\
+           if d.v(1) != 2 { return 2; }\n\
+           return 0;\n\
+         }\n",
+        false,
+    );
+    let run = Command::new(&bin).status().expect("run fn-ptr mangling probe");
+    assert_eq!(run.code(), Some(0), "unexpected exit: {run}");
+}

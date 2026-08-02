@@ -20223,39 +20223,9 @@ pub const MAX_MANGLED_TYPE_NAME: usize = 65536;
 /// allocating it, so this must never concatenate: for `Ty::Struct`/`Ty::Enum`
 /// it reads the stored name's length (O(1)) instead of cloning it.
 fn mangled_ty_name_len(ty: &Ty, structs: &[StructDef], enums: &[EnumDef]) -> usize {
-    match ty {
-        Ty::Struct(id) => structs.get(id.0 as usize).map_or(1, |d| d.name.len()),
-        Ty::Enum(id) => enums.get(id.0 as usize).map_or(1, |d| d.name.len()),
-        Ty::Slice(inner) => "slice_".len() + mangled_ty_name_len(inner, structs, enums),
-        Ty::RawPtr(inner) => "ptr_".len() + mangled_ty_name_len(inner, structs, enums),
-        Ty::Array(elem, n) => {
-            format!("arr{n}_").len() + mangled_ty_name_len(elem, structs, enums)
-        }
-        Ty::FnPtr {
-            params,
-            param_takes,
-            param_refs,
-            return_type,
-        } => {
-            let mut n = "fn".len();
-            for (i, p) in params.iter().enumerate() {
-                n += 1;
-                if param_takes.get(i).copied().unwrap_or(false) {
-                    n += "take_".len();
-                } else if param_refs.get(i).copied().unwrap_or(false) {
-                    n += "ref_".len();
-                }
-                n += mangled_ty_name_len(p, structs, enums);
-            }
-            if !matches!(**return_type, Ty::Unit) {
-                n += "_ret_".len() + mangled_ty_name_len(return_type, structs, enums);
-            }
-            n
-        }
-        // Primitives and other leaf kinds: exact, and safe to render because
-        // none of these arms reach a stored struct/enum name.
-        other => mangle_ty_for_name(other, structs, enums).len(),
-    }
+    // Measured, not built: this feeds the instantiation-size guard, which is
+    // deciding whether to REFUSE to build the name.
+    crate::mangling::render_len(ty, &|t| nominal_name(t, structs, enums))
 }
 
 /// Length `mangle_generic_struct_name` would produce for `name[args]`.
@@ -20265,11 +20235,10 @@ fn projected_generic_name_len(
     structs: &[StructDef],
     enums: &[EnumDef],
 ) -> usize {
-    name.len()
-        + args
-            .iter()
-            .map(|a| "__".len() + mangled_ty_name_len(a, structs, enums))
-            .sum::<usize>()
+    crate::mangling::join_len(
+        name,
+        args.iter().map(|a| mangled_ty_name_len(a, structs, enums)),
+    )
 }
 
 fn mangle_generic_struct_name(
@@ -20278,68 +20247,27 @@ fn mangle_generic_struct_name(
     structs: &[StructDef],
     enums: &[EnumDef],
 ) -> String {
-    let mut s = name.to_string();
-    for arg in args {
-        s.push_str("__");
-        s.push_str(&mangle_ty_for_name(arg, structs, enums));
-    }
-    s
+    crate::mangling::join(
+        name,
+        &args
+            .iter()
+            .map(|a| mangle_ty_for_name(a, structs, enums))
+            .collect::<Vec<_>>(),
+    )
 }
 
 fn mangle_ty_for_name(ty: &Ty, structs: &[StructDef], enums: &[EnumDef]) -> String {
+    crate::mangling::render(ty, &|t| nominal_name(t, structs, enums))
+}
+
+/// The name sema's tables give a nominal type. Sema's ids, sema's tables —
+/// the grammar is shared with monomorphize and codegen (`crate::mangling`),
+/// the id universe is not.
+fn nominal_name(ty: &Ty, structs: &[StructDef], enums: &[EnumDef]) -> String {
     match ty {
-        Ty::I8 => "i8".into(),
-        Ty::I16 => "i16".into(),
-        Ty::I32 => "i32".into(),
-        Ty::I64 => "i64".into(),
-        Ty::U8 => "u8".into(),
-        Ty::U16 => "u16".into(),
-        Ty::U32 => "u32".into(),
-        Ty::U64 => "u64".into(),
-        Ty::Isize => "isize".into(),
-        Ty::Usize => "usize".into(),
-        Ty::F16 => "f16".into(),
-        Ty::F32 => "f32".into(),
-        Ty::F64 => "f64".into(),
-        Ty::Bool => "bool".into(),
-        Ty::Unit => "unit".into(),
-        Ty::Str => "str".into(),
-        Ty::String => "string".into(),
-        Ty::Slice(inner) => format!("slice_{}", mangle_ty_for_name(inner, structs, enums)),
-        Ty::RawPtr(inner) => format!("ptr_{}", mangle_ty_for_name(inner, structs, enums)),
-        Ty::FnPtr {
-            params,
-            param_takes,
-            param_refs,
-            return_type,
-        } => {
-            let mut s = String::from("fn");
-            for (i, p) in params.iter().enumerate() {
-                s.push('_');
-                if param_takes.get(i).copied().unwrap_or(false) {
-                    s.push_str("take_");
-                } else if param_refs.get(i).copied().unwrap_or(false) {
-                    s.push_str("ref_");
-                }
-                s.push_str(&mangle_ty_for_name(p, structs, enums));
-            }
-            if !matches!(**return_type, Ty::Unit) {
-                s.push_str("_ret_");
-                s.push_str(&mangle_ty_for_name(return_type, structs, enums));
-            }
-            s
-        }
         Ty::Struct(id) => structs[id.0 as usize].name.clone(),
         Ty::Enum(id) => enums[id.0 as usize].name.clone(),
-        Ty::Array(elem, n) => format!("arr{}_{}", n, mangle_ty_for_name(elem, structs, enums)),
-        Ty::Simd { elem, lanes } => {
-            format!("{}x{}", mangle_ty_for_name(elem, structs, enums), lanes)
-        }
-        Ty::Mask { elem, lanes } => {
-            format!("mask{}x{}", mangle_ty_for_name(elem, structs, enums), lanes)
-        }
-        Ty::Param(n) => format!("Param_{n}"),
-        Ty::Error => "ERR".into(),
+        other => crate::mangling::render(other, &|_| String::new()),
     }
 }
 

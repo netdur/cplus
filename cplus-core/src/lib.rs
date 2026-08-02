@@ -23,6 +23,7 @@ pub mod graph;
 pub mod header;
 pub mod lexer;
 pub mod lower;
+pub mod mangling;
 pub mod manifest;
 pub mod monomorphize;
 pub mod parser;

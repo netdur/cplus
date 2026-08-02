@@ -447,80 +447,12 @@ impl ThreadTrampolines {
 /// reachable in error-recovery paths where the sema-side mangle would
 /// also have produced a placeholder).
 fn mangle_o_for_tramp_with_types(ty: &Ty, types: Option<&TypeTable>) -> String {
-    match ty {
-        Ty::I8 => "i8".into(),
-        Ty::I16 => "i16".into(),
-        Ty::I32 => "i32".into(),
-        Ty::I64 => "i64".into(),
-        Ty::U8 => "u8".into(),
-        Ty::U16 => "u16".into(),
-        Ty::U32 => "u32".into(),
-        Ty::U64 => "u64".into(),
-        Ty::Isize => "isize".into(),
-        Ty::Usize => "usize".into(),
-        Ty::F16 => "f16".into(),
-        Ty::F32 => "f32".into(),
-        Ty::F64 => "f64".into(),
-        Ty::Bool => "bool".into(),
-        Ty::Unit => "unit".into(),
-        Ty::Str => "str".into(),
-        Ty::String => "string".into(),
-        Ty::RawPtr(inner) => format!("ptr_{}", mangle_o_for_tramp_with_types(inner, types)),
-        Ty::Slice(inner) => format!("slice_{}", mangle_o_for_tramp_with_types(inner, types)),
-        Ty::Array(elem, n) => format!("arr{}_{}", n, mangle_o_for_tramp_with_types(elem, types)),
-        Ty::FnPtr {
-            params,
-            param_takes,
-            param_refs,
-            return_type,
-        } => {
-            let mut s = String::from("fn");
-            for (i, p) in params.iter().enumerate() {
-                s.push('_');
-                if param_takes.get(i).copied().unwrap_or(false) {
-                    s.push_str("take_");
-                } else if param_refs.get(i).copied().unwrap_or(false) {
-                    s.push_str("ref_");
-                }
-                s.push_str(&mangle_o_for_tramp_with_types(p, types));
-            }
-            if !matches!(**return_type, Ty::Unit) {
-                s.push_str("_ret_");
-                s.push_str(&mangle_o_for_tramp_with_types(return_type, types));
-            }
-            s
-        }
-        Ty::Struct(id) => match types {
-            Some(t) => t.struct_defs[id.0 as usize].name.clone(),
-            None => "struct?".into(),
-        },
-        Ty::Enum(id) => match types {
-            // codegen's `EnumInfo` doesn't carry the source name; reverse
-            // through `enum_by_name`. Slow but only fires when a thread/
-            // async return is enum-typed, which is rare.
-            Some(t) => t
-                .enum_by_name
-                .iter()
-                .find_map(|(name, eid)| (eid == id).then(|| name.clone()))
-                .unwrap_or_else(|| "enum?".into()),
-            None => "enum?".into(),
-        },
-        Ty::Simd { elem, lanes } => {
-            format!("{}x{}", mangle_o_for_tramp_with_types(elem, types), lanes)
-        }
-        // Masks share LLVM lowering with the matching Simd; use a
-        // distinct mangled prefix so the trampoline tables don't clash
-        // if both forms ever fly across a thread boundary.
-        Ty::Mask { elem, lanes } => {
-            format!(
-                "mask{}x{}",
-                mangle_o_for_tramp_with_types(elem, types),
-                lanes
-            )
-        }
-        Ty::Param(n) => format!("Param_{n}"),
-        Ty::Error => "ERR".into(),
-    }
+    crate::mangling::render(ty, &|t| match types {
+        Some(tt) => nominal_name(t, tt),
+        // Only reachable in error-recovery paths, where the sema-side mangle
+        // would also have produced a placeholder.
+        None => "struct?".to_string(),
+    })
 }
 
 /// Whether a fully-qualified mangled type name denotes the same
@@ -920,101 +852,15 @@ fn ty_from_future_name(name: &str, types: &TypeTable) -> Ty {
     ty_from_suffix(suffix, types)
 }
 
-/// Consume exactly ONE mangled type from the FRONT of `s` (the tokenizing
-/// inverse of `mangle_o_for_tramp_with_types`), returning the parsed `Ty` and
-/// the unconsumed remainder. `ty_from_suffix` decodes a *whole* single-type
-/// suffix; this variant tokenizes so it can walk a fn-pointer's `_`-separated
-/// parameter list (`fn_i64_ret_i64` etc.). Returns `None` if the front does
-/// not parse. A mangled type token ends at the next `_` or end of string.
-fn mangled_ty_take<'a>(s: &'a str, types: &TypeTable) -> Option<(Ty, &'a str)> {
+/// The longest struct / enum name that prefixes `s` and ends at a mangled-type
+/// boundary, with the byte length it consumed. Names may be qualified (contain
+/// `.`); the E0917 reservation of interior `__` is what makes this
+/// unambiguous. This is the table half of the parser — the grammar half lives
+/// in `crate::mangling`.
+fn nominal_prefix(s: &str, types: &TypeTable) -> Option<(Ty, usize)> {
     fn boundary(rest: &str) -> bool {
         rest.is_empty() || rest.starts_with('_')
     }
-    // Leaf keyword at the front, only if it ends at a boundary. `string` is
-    // tried before `str` (prefix); the sized numerics are unambiguous once a
-    // boundary is required after them.
-    let leaf = |kw: &str| -> Option<&'a str> { s.strip_prefix(kw).filter(|r| boundary(r)) };
-    if let Some(r) = leaf("isize") { return Some((Ty::Isize, r)); }
-    if let Some(r) = leaf("usize") { return Some((Ty::Usize, r)); }
-    if let Some(r) = leaf("i8") { return Some((Ty::I8, r)); }
-    if let Some(r) = leaf("i16") { return Some((Ty::I16, r)); }
-    if let Some(r) = leaf("i32") { return Some((Ty::I32, r)); }
-    if let Some(r) = leaf("i64") { return Some((Ty::I64, r)); }
-    if let Some(r) = leaf("u8") { return Some((Ty::U8, r)); }
-    if let Some(r) = leaf("u16") { return Some((Ty::U16, r)); }
-    if let Some(r) = leaf("u32") { return Some((Ty::U32, r)); }
-    if let Some(r) = leaf("u64") { return Some((Ty::U64, r)); }
-    if let Some(r) = leaf("f16") { return Some((Ty::F16, r)); }
-    if let Some(r) = leaf("f32") { return Some((Ty::F32, r)); }
-    if let Some(r) = leaf("f64") { return Some((Ty::F64, r)); }
-    if let Some(r) = leaf("bool") { return Some((Ty::Bool, r)); }
-    if let Some(r) = leaf("unit") { return Some((Ty::Unit, r)); }
-    if let Some(r) = leaf("string") { return Some((Ty::String, r)); }
-    if let Some(r) = leaf("str") { return Some((Ty::Str, r)); }
-    if let Some(r) = leaf("ERR") { return Some((Ty::Error, r)); }
-
-    if let Some(rest) = s.strip_prefix("ptr_") {
-        let (inner, r) = mangled_ty_take(rest, types)?;
-        return Some((Ty::RawPtr(Box::new(inner)), r));
-    }
-    if let Some(rest) = s.strip_prefix("slice_") {
-        let (inner, r) = mangled_ty_take(rest, types)?;
-        return Some((Ty::Slice(Box::new(inner)), r));
-    }
-    if let Some(rest) = s.strip_prefix("arr") {
-        let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-        if !digits.is_empty() {
-            if let Some(elem_s) = rest[digits.len()..].strip_prefix('_') {
-                if let Ok(n) = digits.parse::<usize>() {
-                    let (elem, r) = mangled_ty_take(elem_s, types)?;
-                    return Some((Ty::Array(Box::new(elem), n.try_into().ok()?), r));
-                }
-            }
-        }
-    }
-    // fn-pointer: `fn` then `_[take_|ref_]<param>` repeated, then optional
-    // `_ret_<ret>`. Only commit when `fn` ends at a boundary (a struct named
-    // `fnord` falls through to the name match below).
-    if let Some(after_fn) = s.strip_prefix("fn") {
-        if boundary(after_fn) {
-            let mut params: Vec<Ty> = Vec::new();
-            let mut param_takes: Vec<bool> = Vec::new();
-            let mut param_refs: Vec<bool> = Vec::new();
-            let mut return_type = Ty::Unit;
-            let mut rest = after_fn;
-            loop {
-                let Some(after_us) = rest.strip_prefix('_') else { break; };
-                if let Some(ret_s) = after_us.strip_prefix("ret_") {
-                    let (rty, r) = mangled_ty_take(ret_s, types)?;
-                    return_type = rty;
-                    rest = r;
-                    break;
-                }
-                let (is_take, is_ref, tys) = if let Some(r) = after_us.strip_prefix("take_") {
-                    (true, false, r)
-                } else if let Some(r) = after_us.strip_prefix("ref_") {
-                    (false, true, r)
-                } else {
-                    (false, false, after_us)
-                };
-                let (pty, r) = mangled_ty_take(tys, types)?;
-                params.push(pty);
-                param_takes.push(is_take);
-                param_refs.push(is_ref);
-                rest = r;
-            }
-            return Some((
-                Ty::FnPtr { params, param_takes, param_refs, return_type: Box::new(return_type) },
-                rest,
-            ));
-        }
-    }
-    if let Some(rest) = s.strip_prefix("Param_") {
-        let name: String = rest.chars().take_while(|&c| c != '_').collect();
-        return Some((Ty::Param(name.clone()), &rest[name.len()..]));
-    }
-    // Struct / enum: the longest name that is a prefix of `s` ending at a
-    // boundary. Names may be qualified (contain `.`); `strip_prefix` handles it.
     let mut best: Option<(usize, Ty)> = None;
     for (idx, d) in types.struct_defs.iter().enumerate() {
         if let Some(r) = s.strip_prefix(d.name.as_str()) {
@@ -1030,158 +876,45 @@ fn mangled_ty_take<'a>(s: &'a str, types: &TypeTable) -> Option<(Ty, &'a str)> {
             }
         }
     }
-    best.map(|(len, ty)| (ty, &s[len..]))
+    best.map(|(len, ty)| (ty, len))
 }
 
 fn ty_from_suffix(suffix: &str, types: &TypeTable) -> Ty {
-    // Fn-pointer element types are `_`-tokenized, so the flat whole-string
-    // matches below can't decode them (they'd fall through to `Ty::Error`,
-    // which then panics in `lookup_option_ty`). Parse them structurally.
-    if suffix == "fn" || suffix.starts_with("fn_") {
-        if let Some((ty, rest)) = mangled_ty_take(suffix, types) {
-            if rest.is_empty() {
-                return ty;
-            }
-        }
-    }
-    if suffix == "i8" {
-        return Ty::I8;
-    }
-    if suffix == "i16" {
-        return Ty::I16;
-    }
-    if suffix == "i32" {
-        return Ty::I32;
-    }
-    if suffix == "i64" {
-        return Ty::I64;
-    }
-    if suffix == "u8" {
-        return Ty::U8;
-    }
-    if suffix == "u16" {
-        return Ty::U16;
-    }
-    if suffix == "u32" {
-        return Ty::U32;
-    }
-    if suffix == "u64" {
-        return Ty::U64;
-    }
-    if suffix == "isize" {
-        return Ty::Isize;
-    }
-    if suffix == "usize" {
-        return Ty::Usize;
-    }
-    if suffix == "f32" {
-        return Ty::F32;
-    }
-    if suffix == "f64" {
-        return Ty::F64;
-    }
-    if suffix == "bool" {
-        return Ty::Bool;
-    }
-    if suffix == "unit" {
-        return Ty::Unit;
-    }
-    if suffix == "str" {
-        return Ty::Str;
-    }
-    if suffix == "string" {
-        return Ty::String;
-    }
-    if suffix == "ERR" {
-        return Ty::Error;
-    }
+    crate::mangling::from_suffix(
+        suffix,
+        &|s| nominal_prefix(s, types),
+        &|s| nominal_tail_match(s, types),
+    )
+}
 
-    if let Some(inner_suffix) = suffix.strip_prefix("ptr_") {
-        let inner_ty = ty_from_suffix(inner_suffix, types);
-        if inner_ty == Ty::Error {
-            return Ty::Error;
-        }
-        return Ty::RawPtr(Box::new(inner_ty));
-    }
-
-    if let Some(inner_suffix) = suffix.strip_prefix("slice_") {
-        let inner_ty = ty_from_suffix(inner_suffix, types);
-        if inner_ty == Ty::Error {
-            return Ty::Error;
-        }
-        return Ty::Slice(Box::new(inner_ty));
-    }
-
-    if suffix.starts_with("arr") {
-        if let Some(idx) = suffix.find('_') {
-            if let Ok(n) = suffix[3..idx].parse::<usize>() {
-                let elem_suffix = &suffix[idx + 1..];
-                let elem_ty = ty_from_suffix(elem_suffix, types);
-                if elem_ty == Ty::Error {
-                    return Ty::Error;
-                }
-                return Ty::Array(Box::new(elem_ty), n.try_into().unwrap());
-            }
-        }
-    }
-
-    if let Some(idx) = suffix.rfind('x') {
-        if let Ok(lanes) = suffix[idx + 1..].parse::<usize>() {
-            let elem_suffix = &suffix[..idx];
-            let elem_ty = ty_from_suffix(elem_suffix, types);
-            if elem_ty != Ty::Error {
-                return Ty::Simd {
-                    elem: Box::new(elem_ty),
-                    lanes: lanes.try_into().unwrap(),
-                };
-            }
-        }
-    }
-
-    if let Some(inner_suffix) = suffix.strip_prefix("Param_") {
-        return Ty::Param(inner_suffix.to_string());
-    }
-
-    // Prefer an EXACT name match over a qualified-tail match. The mono
-    // suffix is the exact name sema mangled the type argument to — SHORT for a
-    // root-module type, fully-qualified for an imported one. When two packages
-    // define the same short-named type (NSLayoutManager and CALayoutManager
-    // both strip to `LayoutManager`), the exact match is the one sema intended;
-    // the tail fallback would otherwise pick whichever qualified type
-    // happens to come first in `struct_defs`, diverging from sema and producing
-    // a wrong-instantiation miscompile. The fallback still resolves a short
-    // suffix that only exists in qualified form; `mangled_name_matches` keeps
-    // it from landing inside another instantiation's argument list, and the
-    // enum pass picks the smallest matching name so a multi-candidate tie
-    // resolves the same way every build (`enum_by_name` is a HashMap).
-    for (idx, d) in types.struct_defs.iter().enumerate() {
-        if d.name == suffix {
-            return Ty::Struct(StructId(idx as u32));
-        }
-    }
-    for (name, id) in &types.enum_by_name {
-        if name == suffix {
-            return Ty::Enum(*id);
-        }
-    }
+/// The looser nominal lookup, consulted only after every grammar rule and the
+/// exact-name match have failed.
+///
+/// The mono suffix is the exact name sema mangled the type argument to — SHORT
+/// for a root-module type, fully-qualified for an imported one. When two
+/// packages define the same short-named type (NSLayoutManager and
+/// CALayoutManager both strip to `LayoutManager`), the EXACT match is the one
+/// sema intended, which is why it is tried first and this is the fallback: it
+/// would otherwise pick whichever qualified type comes first in `struct_defs`,
+/// diverging from sema and producing a wrong-instantiation miscompile. The
+/// fallback still resolves a short suffix that only exists in qualified form;
+/// `mangled_name_matches` keeps it from landing inside another instantiation's
+/// argument list, and the enum pass picks the smallest matching name so a
+/// multi-candidate tie resolves the same way every build (`enum_by_name` is a
+/// HashMap).
+fn nominal_tail_match(suffix: &str, types: &TypeTable) -> Option<Ty> {
     for (idx, d) in types.struct_defs.iter().enumerate() {
         if mangled_name_matches(&d.name, suffix) {
-            return Ty::Struct(StructId(idx as u32));
+            return Some(Ty::Struct(StructId(idx as u32)));
         }
     }
     let mut best_enum: Option<(&String, EnumId)> = None;
     for (name, id) in &types.enum_by_name {
-        if mangled_name_matches(name, suffix)
-            && best_enum.map_or(true, |(bn, _)| name < bn)
-        {
+        if mangled_name_matches(name, suffix) && best_enum.map_or(true, |(bn, _)| name < bn) {
             best_enum = Some((name, *id));
         }
     }
-    if let Some((_, id)) = best_enum {
-        return Ty::Enum(id);
-    }
-
-    Ty::Error
+    best_enum.map(|(_, id)| Ty::Enum(id))
 }
 
 /// v0.0.3 Phase 5 Slice 5C input eligibility. Like
@@ -2396,59 +2129,24 @@ fn tuple_struct_name(elem_tys: &[Ty], types: &TypeTable) -> String {
 }
 
 fn tuple_elem_mangle(ty: &Ty, types: &TypeTable) -> String {
+    crate::mangling::render(ty, &|t| nominal_name(t, types))
+}
+
+/// The name CODEGEN's tables give a nominal type. Codegen re-derives its own
+/// struct/enum numbering from the post-mono AST, so this is deliberately not
+/// sema's table (see the id-universe note in `crate::mangling`).
+fn nominal_name(ty: &Ty, types: &TypeTable) -> String {
     match ty {
-        Ty::I8 => "i8".into(),
-        Ty::I16 => "i16".into(),
-        Ty::I32 => "i32".into(),
-        Ty::I64 => "i64".into(),
-        Ty::U8 => "u8".into(),
-        Ty::U16 => "u16".into(),
-        Ty::U32 => "u32".into(),
-        Ty::U64 => "u64".into(),
-        Ty::Isize => "isize".into(),
-        Ty::Usize => "usize".into(),
-        Ty::F16 => "f16".into(),
-        Ty::F32 => "f32".into(),
-        Ty::F64 => "f64".into(),
-        Ty::Bool => "bool".into(),
-        Ty::Unit => "unit".into(),
-        Ty::Str => "str".into(),
-        Ty::String => "string".into(),
-        Ty::Slice(inner) => format!("slice_{}", tuple_elem_mangle(inner, types)),
-        Ty::RawPtr(inner) => format!("ptr_{}", tuple_elem_mangle(inner, types)),
-        Ty::FnPtr {
-            params,
-            param_takes,
-            param_refs,
-            return_type,
-        } => {
-            let mut s = String::from("fn");
-            for (i, p) in params.iter().enumerate() {
-                s.push('_');
-                if param_takes.get(i).copied().unwrap_or(false) {
-                    s.push_str("take_");
-                } else if param_refs.get(i).copied().unwrap_or(false) {
-                    s.push_str("ref_");
-                }
-                s.push_str(&tuple_elem_mangle(p, types));
-            }
-            if !matches!(**return_type, Ty::Unit) {
-                s.push_str("_ret_");
-                s.push_str(&tuple_elem_mangle(return_type, types));
-            }
-            s
-        }
         Ty::Struct(id) => types.struct_defs[id.0 as usize].name.clone(),
+        // codegen's `EnumInfo` doesn't carry the source name; reverse through
+        // `enum_by_name`. Slow, but only fires for an enum-typed thread/async
+        // return or tuple element.
         Ty::Enum(id) => types
             .enum_by_name
             .iter()
-            .find_map(|(n, eid)| if eid == id { Some(n.clone()) } else { None })
+            .find_map(|(n, eid)| (eid == id).then(|| n.clone()))
             .unwrap_or_else(|| "<enum>".to_string()),
-        Ty::Array(elem, n) => format!("arr{}_{}", n, tuple_elem_mangle(elem, types)),
-        Ty::Simd { elem, lanes } => format!("{}x{}", tuple_elem_mangle(elem, types), lanes),
-        Ty::Mask { elem, lanes } => format!("mask{}x{}", tuple_elem_mangle(elem, types), lanes),
-        Ty::Param(name) => format!("Param_{name}"),
-        Ty::Error => "ERR".into(),
+        other => crate::mangling::render(other, &|_| String::new()),
     }
 }
 

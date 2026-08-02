@@ -2256,12 +2256,13 @@ fn rewrite_block(
 /// The `type_name_of` closure maps a `Ty` to its source-level name,
 /// which is sema's source of truth for struct / enum names.
 fn mangle_name(name: &str, args: &[Ty], type_name_of: &dyn Fn(&Ty) -> String) -> String {
-    let mut s = name.to_string();
-    for arg in args {
-        s.push_str("__");
-        s.push_str(&mangle_ty(arg, type_name_of));
-    }
-    s
+    crate::mangling::join(
+        name,
+        &args
+            .iter()
+            .map(|a| mangle_ty(a, type_name_of))
+            .collect::<Vec<_>>(),
+    )
 }
 
 // v0.0.19: mangle a generic call's callee straight from its explicit turbofish
@@ -2283,13 +2284,13 @@ fn mangle_call_from_ast(
     type_name_of: &dyn Fn(&Ty) -> String,
     struct_lookup: &StructLookup,
 ) -> String {
-    let mut s = name.to_string();
-    for t in type_args {
-        let resolved = subst_type_ast(t, subst, type_name_of, struct_lookup);
-        s.push_str("__");
-        s.push_str(&mangle_type_ast_arg(&resolved));
-    }
-    s
+    crate::mangling::join(
+        name,
+        &type_args
+            .iter()
+            .map(|t| mangle_type_ast_arg(&subst_type_ast(t, subst, type_name_of, struct_lookup)))
+            .collect::<Vec<_>>(),
+    )
 }
 
 /// Phase 11 polish (2026-05-13): walk the program and substitute every
@@ -2475,60 +2476,7 @@ fn rewrite_alias_ident(ident: &mut Ident, aliases: &std::collections::BTreeMap<S
 /// literal `"Box__i32"` here. Falls back to a best-effort spelling for
 /// AST shapes that don't appear inside generic args today.
 fn mangle_type_ast_arg(t: &Type) -> String {
-    match &t.kind {
-        // v0.0.12 G-026: `()` source-spelled unit type. Sema's `mangle_ty`
-        // renders Ty::Unit as "unit"; the AST-side mangler has to match
-        // that name so the struct-lookup map hits when the same type is
-        // reached via the AST instead of via Ty.
-        TypeKind::Path(name) if name == "()" => "unit".to_string(),
-        TypeKind::Path(name) => name.clone(),
-        TypeKind::Array { elem, len, .. } => format!("arr{}_{}", len, mangle_type_ast_arg(elem)),
-        TypeKind::Borrowed { inner, .. } => mangle_type_ast_arg(inner),
-        TypeKind::RawPtr(inner) => format!("ptr_{}", mangle_type_ast_arg(inner)),
-        TypeKind::FnPtr {
-            params,
-            param_takes,
-            param_refs,
-            return_type,
-        } => {
-            let mut s = String::from("fn");
-            for (i, p) in params.iter().enumerate() {
-                s.push('_');
-                if param_takes.get(i).copied().unwrap_or(false) {
-                    s.push_str("take_");
-                } else if param_refs.get(i).copied().unwrap_or(false) {
-                    s.push_str("ref_");
-                }
-                s.push_str(&mangle_type_ast_arg(p));
-            }
-            if let Some(rt) = return_type {
-                s.push_str("_ret_");
-                s.push_str(&mangle_type_ast_arg(rt));
-            }
-            s
-        }
-        TypeKind::Generic { name, args } => {
-            // After subst_type_ast recursion this should be unreachable
-            // (Generic→Path rewrite consumes Generic nodes). If it shows
-            // up, render best-effort so an unresolved key falls through
-            // to the unchanged Generic branch in subst_type_ast.
-            let mut s = name.clone();
-            for a in args {
-                s.push_str("__");
-                s.push_str(&mangle_type_ast_arg(a));
-            }
-            s
-        }
-        TypeKind::Slice(inner) => format!("slice_{}", mangle_type_ast_arg(inner)),
-        TypeKind::Tuple(elems) => {
-            let mut s = format!("tuple{}", elems.len());
-            for e in elems {
-                s.push('_');
-                s.push_str(&mangle_type_ast_arg(e));
-            }
-            s
-        }
-    }
+    crate::mangling::render_ast(t)
 }
 
 /// Render a `Ty` as a name-safe string for mangling. Primitives use
@@ -2536,55 +2484,7 @@ fn mangle_type_ast_arg(t: &Type) -> String {
 /// name. Arrays render as `arrN_<elem>` so the structure round-trips
 /// without bracket characters LLVM identifiers reject.
 fn mangle_ty(ty: &Ty, type_name_of: &dyn Fn(&Ty) -> String) -> String {
-    match ty {
-        Ty::I8 => "i8".into(),
-        Ty::I16 => "i16".into(),
-        Ty::I32 => "i32".into(),
-        Ty::I64 => "i64".into(),
-        Ty::U8 => "u8".into(),
-        Ty::U16 => "u16".into(),
-        Ty::U32 => "u32".into(),
-        Ty::U64 => "u64".into(),
-        Ty::Isize => "isize".into(),
-        Ty::Usize => "usize".into(),
-        Ty::F16 => "f16".into(),
-        Ty::F32 => "f32".into(),
-        Ty::F64 => "f64".into(),
-        Ty::Bool => "bool".into(),
-        Ty::Unit => "unit".into(),
-        Ty::Str => "str".into(),
-        Ty::String => "string".into(),
-        Ty::Slice(inner) => format!("slice_{}", mangle_ty(inner, type_name_of)),
-        Ty::RawPtr(inner) => format!("ptr_{}", mangle_ty(inner, type_name_of)),
-        Ty::FnPtr {
-            params,
-            param_takes,
-            param_refs,
-            return_type,
-        } => {
-            let mut s = String::from("fn");
-            for (i, p) in params.iter().enumerate() {
-                s.push('_');
-                if param_takes.get(i).copied().unwrap_or(false) {
-                    s.push_str("take_");
-                } else if param_refs.get(i).copied().unwrap_or(false) {
-                    s.push_str("ref_");
-                }
-                s.push_str(&mangle_ty(p, type_name_of));
-            }
-            if !matches!(**return_type, Ty::Unit) {
-                s.push_str("_ret_");
-                s.push_str(&mangle_ty(return_type, type_name_of));
-            }
-            s
-        }
-        Ty::Struct(_) | Ty::Enum(_) => type_name_of(ty),
-        Ty::Array(elem, n) => format!("arr{}_{}", n, mangle_ty(elem, type_name_of)),
-        Ty::Simd { elem, lanes } => format!("{}x{}", mangle_ty(elem, type_name_of), lanes),
-        Ty::Mask { elem, lanes } => format!("mask{}x{}", mangle_ty(elem, type_name_of), lanes),
-        Ty::Param(name) => format!("Param_{name}"),
-        Ty::Error => "ERR".into(),
-    }
+    crate::mangling::render(ty, type_name_of)
 }
 
 // Suppress unused-import warning on StructId / EnumId — kept for
