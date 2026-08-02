@@ -1041,197 +1041,40 @@ fn subst_ty_plain(ty: &Ty, subst: &std::collections::HashMap<String, Ty>) -> Ty 
 
 /// v0.0.4 Phase 1B: walk a body and call `f` with
 /// `(callee_name, type_args, span)` for every `Call` whose callee is a
-/// plain `Ident`. Used by the fn-instantiation propagation pass.
-fn visit_ident_calls(expr: &Expr, f: &mut impl FnMut(&str, &[Type], crate::lexer::Span)) {
-    match &expr.kind {
-        ExprKind::Call {
-            callee,
-            args,
-            type_args,
-            arg_labels: _,
-        } => {
-            if let ExprKind::Ident(name) = &callee.kind {
-                f(name, type_args, expr.span);
-            }
-            visit_ident_calls(callee, f);
-            for a in args {
-                visit_ident_calls(a, f);
-            }
-        }
-        ExprKind::FnRef { callee, type_args } => {
-            // Value-turbofish (`f::[T]`) discovers the same instantiation a
-            // call to `f::[T](...)` would, so propagation synthesizes `f__T`.
-            if let ExprKind::Ident(name) = &callee.kind {
-                f(name, type_args, expr.span);
-            }
-        }
-        ExprKind::Block(b) => visit_ident_calls_in_block(b, f),
-        ExprKind::If {
-            cond,
-            then,
-            else_branch,
-        } => {
-            visit_ident_calls(cond, f);
-            visit_ident_calls_in_block(then, f);
-            if let Some(e) = else_branch {
-                visit_ident_calls(e, f);
-            }
-        }
-        ExprKind::Binary { lhs, rhs, .. } => {
-            visit_ident_calls(lhs, f);
-            visit_ident_calls(rhs, f);
-        }
-        ExprKind::Unary { operand, .. } => visit_ident_calls(operand, f),
-        ExprKind::Range { start, end, .. } => {
-            if let Some(s) = start {
-                visit_ident_calls(s, f);
-            }
-            if let Some(e) = end {
-                visit_ident_calls(e, f);
-            }
-        }
-        ExprKind::Assign { target, value, .. } => {
-            visit_ident_calls(target, f);
-            visit_ident_calls(value, f);
-        }
-        ExprKind::Field { receiver, .. } => visit_ident_calls(receiver, f),
-        ExprKind::Index { receiver, index } => {
-            visit_ident_calls(receiver, f);
-            visit_ident_calls(index, f);
-        }
-        ExprKind::Cast { expr, .. } => visit_ident_calls(expr, f),
-        ExprKind::StructLit { fields, .. }
-        | ExprKind::InferredStructLit { fields }
-        | ExprKind::GenericStructLit { fields, .. } => {
-            for sf in fields {
-                visit_ident_calls(&sf.value, f);
-            }
-        }
-        ExprKind::ArrayLit { elements } => {
-            for e in elements {
-                visit_ident_calls(e, f);
-            }
-        }
-        ExprKind::ArrayFill { fill, .. } => visit_ident_calls(fill, f),
-        ExprKind::GenericEnumCall { args, .. } => {
-            for a in args {
-                visit_ident_calls(a, f);
-            }
-        }
-        ExprKind::Match { scrutinee, arms } => {
-            visit_ident_calls(scrutinee, f);
-            for arm in arms {
-                visit_ident_calls(&arm.body, f);
-            }
-        }
-        ExprKind::Await(inner) | ExprKind::Yield(inner) => visit_ident_calls(inner, f),
-        ExprKind::InterpStr { parts } => {
-            for p in parts {
-                if let InterpStrPart::Expr(e) = p {
-                    visit_ident_calls(e, f);
-                }
-            }
-        }
-        ExprKind::Intrinsic { args, .. } => {
-            for a in args {
-                visit_ident_calls(a, f);
-            }
-        }
-        // TupleLit and Asm operands: kept in lockstep with `rewrite_expr`'s
-        // arms for the same kinds — a construct one walker traverses and the
-        // other does not is a call to a deleted template (reports/bug-04).
-        ExprKind::TupleLit { elements } => {
-            for e in elements {
-                visit_ident_calls(e, f);
-            }
-        }
-        ExprKind::Asm { operands, .. } => {
-            for o in operands {
-                visit_ident_calls(&o.value, f);
-            }
-        }
-        _ => {}
-    }
-}
-
+/// plain `Ident`, and for every value-turbofish `f::[T]` (which discovers the
+/// same instantiation a call would). Used by the fn-instantiation propagation
+/// pass.
+///
+/// issue-01: this is the read-only adapter over `ast::walk_expr` — the SAME
+/// traversal the rewrite uses. It used to be a hand-rolled match, and the two
+/// drifted: a construct discovery descended into but the rewrite did not left
+/// the call site naming a template that had already been deleted
+/// (reports/bug-04, bug-06), and a construct the rewrite descended into but
+/// discovery did not left the instantiation unsynthesized. Neither is
+/// expressible now.
 fn visit_ident_calls_in_block(
     block: &Block,
     f: &mut impl FnMut(&str, &[Type], crate::lexer::Span),
 ) {
-    for stmt in &block.stmts {
-        match &stmt.kind {
-            StmtKind::Let { init: Some(e), .. } => visit_ident_calls(e, f),
-            StmtKind::Let { init: None, .. } => {}
-            StmtKind::LetDestructure { init, .. } => visit_ident_calls(init, f),
-            StmtKind::Expr(e) => visit_ident_calls(e, f),
-            StmtKind::Return(e) => {
-                if let Some(e) = e {
-                    visit_ident_calls(e, f);
-                }
-            }
-            StmtKind::While { cond, body, .. } => {
-                visit_ident_calls(cond, f);
-                visit_ident_calls_in_block(body, f);
-            }
-            StmtKind::For(forloop, _) => match forloop {
-                ForLoop::Range { iter, body, .. } => {
-                    visit_ident_calls(iter, f);
-                    visit_ident_calls_in_block(body, f);
-                }
-                ForLoop::CStyle {
-                    init,
-                    cond,
-                    update,
-                    body,
-                } => {
-                    if let Some(s) = init.as_deref() {
-                        let wrap = Block {
-                            stmts: vec![s.clone()],
-                            tail: None,
-                            span: stmt.span,
-                        };
-                        visit_ident_calls_in_block(&wrap, f);
-                    }
-                    if let Some(c) = cond {
-                        visit_ident_calls(c, f);
-                    }
-                    for u in update {
-                        visit_ident_calls(u, f);
-                    }
-                    visit_ident_calls_in_block(body, f);
-                }
-            },
-            StmtKind::Defer(e) | StmtKind::Assert(e) => visit_ident_calls(e, f),
-            StmtKind::Loop(body, _) => visit_ident_calls_in_block(body, f),
-            // Lowering pass converts IfLet / WhileLet / GuardLet to
-            // match/loop+match before monomorphize, but cover them
-            // defensively in case a sample reaches us pre-lowering.
-            StmtKind::IfLet {
-                scrutinee,
-                body,
-                else_body,
-                ..
-            } => {
-                visit_ident_calls(scrutinee, f);
-                visit_ident_calls_in_block(body, f);
-                if let Some(b) = else_body {
-                    visit_ident_calls_in_block(b, f);
-                }
-            }
-            StmtKind::WhileLet {
-                scrutinee, body, ..
-            } => {
-                visit_ident_calls(scrutinee, f);
-                visit_ident_calls_in_block(body, f);
-            }
-            StmtKind::GuardLet { scrutinee, .. } => visit_ident_calls(scrutinee, f),
-            StmtKind::Break | StmtKind::Continue => {}
-        }
-    }
-    if let Some(t) = &block.tail {
-        visit_ident_calls(t, f);
+    visit_exprs_in_block(block, &mut |e| report_ident_call(e, f));
+}
+
+/// The one node shape the propagation pass cares about, tested per node.
+fn report_ident_call(e: &Expr, f: &mut impl FnMut(&str, &[Type], crate::lexer::Span)) {
+    let (callee, type_args) = match &e.kind {
+        ExprKind::Call {
+            callee, type_args, ..
+        } => (callee, type_args),
+        // Value-turbofish (`f::[T]`) discovers the same instantiation a
+        // call to `f::[T](...)` would, so propagation synthesizes `f__T`.
+        ExprKind::FnRef { callee, type_args } => (callee, type_args),
+        _ => return,
+    };
+    if let ExprKind::Ident(name) = &callee.kind {
+        f(name, type_args, e.span);
     }
 }
+
 
 /// v0.0.4 Phase 1B: fixed-point propagation of fn instantiations through
 /// transitive generic calls. See the explanatory comment at the call site
@@ -1887,6 +1730,504 @@ fn rewrite_item_calls(
     }
 }
 
+/// issue-01: monomorphize's AST rewriter. Everything this pass changes about a
+/// body — call-site mangling, `Self` resolution, generic literal lowering and
+/// type substitution — lives in the two hooks below. Every other node kind is
+/// walked by `ast::walk_*`, whose matches are exhaustive, so a node this pass
+/// has no opinion about can no longer be silently left un-rewritten: that
+/// asymmetry is what reports/bug-04 (tuple literals), bug-06 (interpolated
+/// strings) and bug-07 (`Self` under `loop`/`defer`) each were.
+struct MonoRewriter<'a> {
+    subst: &'a std::collections::HashMap<String, Ty>,
+    generic_names: &'a std::collections::HashSet<String>,
+    inst_lookup: &'a std::collections::HashMap<(String, Vec<Ty>), String>,
+    mono: &'a MonoInfo,
+    type_name_of: &'a dyn Fn(&Ty) -> String,
+    struct_lookup: &'a StructLookup<'a>,
+}
+
+impl ExprRewriter for MonoRewriter<'_> {
+    /// Every type position in a body resolves through the active subst — a
+    /// `let` annotation, a cast target, a turbofish, an intrinsic's type-arg,
+    /// a pattern's type-args. `subst_type_ast` already recurses, so the node's
+    /// children are not walked again.
+    fn visit_type(&mut self, t: &Type) -> Option<Type> {
+        Some(subst_type_ast(
+            t,
+            self.subst,
+            self.type_name_of,
+            self.struct_lookup,
+        ))
+    }
+
+    fn visit_expr(&mut self, expr: &Expr) -> Option<Expr> {
+        let kind = match &expr.kind {
+            // Value-turbofish `f::[T]` (a fn-pointer VALUE): lower to the address
+            // of the concrete instantiation — the SAME symbol the turbofish CALL
+            // path mangles (mangle_call_from_ast), resolved through the active
+            // subst so `f::[C]` inside `caller[Widget]` becomes `@f__Widget`.
+            // Codegen's `Ident` arm emits it as a fn-pointer with zero extra work.
+            ExprKind::FnRef { callee, type_args } => {
+                let ExprKind::Ident(cname) = &callee.kind else {
+                    return None;
+                };
+                ExprKind::Ident(mangle_call_from_ast(
+                    cname,
+                    type_args,
+                    self.subst,
+                    self.type_name_of,
+                    self.struct_lookup,
+                ))
+            }
+            ExprKind::Call {
+                callee,
+                args,
+                type_args,
+                arg_labels: _,
+            } => {
+                // Inspect the callee for a generic-fn / generic-method
+                // dispatch and rewrite to the mangled name where applicable.
+                // Slice 7GEN.5e: extended from generic-fn (Ident callee) only
+                // to also include generic methods (Field callee) and
+                // generic associated functions (Path callee).
+                // v0.0.22 file-aware spans: the span carries its file id, so
+                // same-offset call sites in different files key distinctly on
+                // their own.
+                let args_for_call_opt = self.mono.call_monos.get(&expr.span);
+                // v0.0.4 Phase 1B: resolve the call site's effective concrete
+                // type-args. Two sources:
+                //   - `call_monos`: sema's record (may contain `Ty::Param(T)`
+                //     when this call is inside a non-generic enclosing fn
+                //     that references a type-param of its impl block; or in
+                //     mixed cases).
+                //   - AST `type_args` (turbofish): direct user-supplied
+                //     types. The propagation pass uses these to discover
+                //     transitive generic instantiations inside generic-fn
+                //     bodies (sema doesn't type-check those, so `call_monos`
+                //     is empty for spans inside them).
+                // In both cases the active `subst` resolves remaining Params
+                // to the outer instantiation's concrete types.
+                let resolved_args_for_call: Option<Vec<Ty>> = if let Some(args) = args_for_call_opt
+                {
+                    Some(args.iter().map(|t| subst_ty_plain(t, self.subst)).collect())
+                } else if !type_args.is_empty() {
+                    type_args
+                        .iter()
+                        .map(|t| type_ast_to_ty_with_subst(t, self.subst))
+                        .collect()
+                } else {
+                    None
+                };
+                let new_callee: Expr = match (&callee.kind, resolved_args_for_call.as_ref()) {
+                    // v0.0.19: a turbofish generic-fn call mangles its callee
+                    // directly from the (collision-free) AST type-args, never
+                    // consulting `call_monos`. See `mangle_call_from_ast`.
+                    (ExprKind::Ident(cname), _)
+                        if self.generic_names.contains(cname) && !type_args.is_empty() =>
+                    {
+                        Expr {
+                            kind: ExprKind::Ident(mangle_call_from_ast(
+                                cname,
+                                type_args,
+                                self.subst,
+                                self.type_name_of,
+                                self.struct_lookup,
+                            )),
+                            span: callee.span,
+                        }
+                    }
+                    (ExprKind::Ident(cname), Some(args_for_call))
+                        if self.generic_names.contains(cname) =>
+                    {
+                        match self
+                            .inst_lookup
+                            .get(&(cname.clone(), args_for_call.clone()))
+                        {
+                            Some(mangled) => Expr {
+                                kind: ExprKind::Ident(mangled.clone()),
+                                span: callee.span,
+                            },
+                            None => walk_expr(callee, self),
+                        }
+                    }
+                    (ExprKind::Field { receiver, name }, Some(args_for_call)) => {
+                        let is_generic = self
+                            .mono
+                            .method_instantiations
+                            .iter()
+                            .any(|(_, mname, margs)| mname == &name.name && margs == args_for_call);
+                        if is_generic {
+                            let mangled = mangle_name(&name.name, args_for_call, self.type_name_of);
+                            let new_recv = walk_expr(receiver, self);
+                            Expr {
+                                kind: ExprKind::Field {
+                                    receiver: Box::new(new_recv),
+                                    name: Ident {
+                                        name: mangled,
+                                        span: name.span,
+                                    },
+                                },
+                                span: callee.span,
+                            }
+                        } else {
+                            walk_expr(callee, self)
+                        }
+                    }
+                    (ExprKind::Path { segments }, maybe_args) if segments.len() == 2 => {
+                        let mut new_segs = segments.clone();
+                        // `T::func()` — substitute a generic type-param TYPE segment
+                        // to its concrete type name so codegen's `Type::func` lookup
+                        // resolves it. Done for ANY arg shape (a no-arg `T::make()`
+                        // has no resolved call-args, so this must not depend on them);
+                        // without it the literal `T` reaches codegen and panics
+                        // ("sema validated"). A non-param segment (a concrete
+                        // `P::func()` in a generic body) isn't in `subst`, so it is
+                        // left unchanged.
+                        // `Self::func()` resolves the same way, through the active
+                        // `Self` binding rather than `subst` (reports/bug-07).
+                        if let Some(self_name) = self.struct_lookup.resolve_self(&segments[0].name)
+                        {
+                            new_segs[0] = Ident {
+                                name: self_name.to_string(),
+                                span: segments[0].span,
+                            };
+                        } else if let Some(concrete) = self.subst.get(&segments[0].name) {
+                            new_segs[0] = Ident {
+                                name: (self.type_name_of)(concrete),
+                                span: segments[0].span,
+                            };
+                        }
+                        // A method-level-generic associated fn also mangles the
+                        // method segment by its type-arg instantiation.
+                        if let Some(args_for_call) = maybe_args {
+                            let method_seg_name = &segments[1].name;
+                            let is_generic =
+                                self.mono.method_instantiations.iter().any(
+                                    |(_, mname, margs)| {
+                                        mname == method_seg_name && margs == args_for_call
+                                    },
+                                );
+                            if is_generic {
+                                new_segs[1] = Ident {
+                                    name: mangle_name(
+                                        method_seg_name,
+                                        args_for_call,
+                                        self.type_name_of,
+                                    ),
+                                    span: segments[1].span,
+                                };
+                            }
+                        }
+                        Expr {
+                            kind: ExprKind::Path { segments: new_segs },
+                            span: callee.span,
+                        }
+                    }
+                    _ => walk_expr(callee, self),
+                };
+                let mut new_args: Vec<Expr> = args.iter().map(|a| walk_expr(a, self)).collect();
+                // 2026-07-16: sema-side default splices — trailing defaulted
+                // args sema resolved when lower could not (the bare method name
+                // is shared across types). Appended BEFORE the bound-ref rewrite
+                // below so a ctx slot that came from a splice exists to
+                // overwrite.
+                if let Some(splices) = self.mono.default_splices.get(&expr.span) {
+                    for sp in splices {
+                        new_args.push(walk_expr(sp, self));
+                    }
+                }
+                // 2026-07-06 bound method references: an arg sema recorded as
+                // `recv.method` in handler position becomes the erased bridge
+                // fn, and the FOLLOWING arg slot (the spliced ctx default —
+                // sema guaranteed it exists) becomes `#addr_of(recv) as *u8`.
+                for (i, a) in args.iter().enumerate() {
+                    if let Some(br) = self.mono.bound_method_refs.get(&a.span) {
+                        new_args[i] = Expr {
+                            kind: ExprKind::Ident(br.bridge_name.clone()),
+                            span: a.span,
+                        };
+                        if i + 1 < new_args.len() {
+                            new_args[i + 1] = bound_ref_ctx_arg(br, a.span);
+                        }
+                    }
+                }
+                // Substitute type-parameter references in turbofish type_args
+                // through the active subst map. Without this, `size_of::[T]()`
+                // (or any future intrinsic taking a type arg) inside a generic
+                // body would keep the literal `T` and panic at codegen when
+                // the LLVM type-renderer hits `Ty::Param("T")`.
+                let new_type_args: Vec<Type> =
+                    type_args.iter().map(|t| walk_type(t, self)).collect();
+                ExprKind::Call {
+                    callee: Box::new(new_callee),
+                    args: new_args,
+                    type_args: new_type_args,
+                    arg_labels: Vec::new(),
+                }
+            }
+            // `Self { .. }` in a generic impl's method body (reports/bug-07).
+            // Any other struct literal is walked generically.
+            ExprKind::StructLit { name, fields } => {
+                let Some(self_name) = self.struct_lookup.resolve_self(&name.name) else {
+                    return None;
+                };
+                ExprKind::StructLit {
+                    name: Ident {
+                        name: self_name.to_string(),
+                        span: name.span,
+                    },
+                    fields: fields
+                        .iter()
+                        .map(|f| StructLitField {
+                            name: f.name.clone(),
+                            value: walk_expr(&f.value, self),
+                            span: f.span,
+                        })
+                        .collect(),
+                }
+            }
+            // v0.0.24 de-Rust: rewrite the type-inferred literal `{ ... }` to a
+            // plain StructLit using the concrete struct name sema recorded for
+            // this span. Same convert-in-mono / panic-in-codegen discipline as
+            // GenericStructLit below — codegen never sees an InferredStructLit.
+            ExprKind::InferredStructLit { fields } => {
+                let rewritten_fields: Vec<StructLitField> = fields
+                    .iter()
+                    .map(|f| StructLitField {
+                        name: f.name.clone(),
+                        value: walk_expr(&f.value, self),
+                        span: f.span,
+                    })
+                    .collect();
+                match self.mono.inferred_struct_lits.get(&expr.span) {
+                    Some(struct_name) => ExprKind::StructLit {
+                        name: Ident {
+                            name: struct_name.clone(),
+                            span: expr.span,
+                        },
+                        fields: rewritten_fields,
+                    },
+                    // Sema records every type-checked inferred literal, so a miss
+                    // here is a compiler bug; keep the node so codegen's panic-arm
+                    // surfaces it loudly rather than silently miscompiling.
+                    None => ExprKind::InferredStructLit {
+                        fields: rewritten_fields,
+                    },
+                }
+            }
+            // Slice 7GEN.5c: rewrite `Pair[i32, bool] { ... }` to a plain
+            // StructLit with the mangled name. Same approach as the type-side
+            // Generic → Path rewrite: substitute fn-generic params first,
+            // then look up the mangled name in struct_lookup.
+            ExprKind::GenericStructLit {
+                name,
+                type_args,
+                fields,
+            } => {
+                let resolved_args: Vec<Type> =
+                    type_args.iter().map(|a| walk_type(a, self)).collect();
+                let arg_names: Vec<String> =
+                    resolved_args.iter().map(mangle_type_ast_arg).collect();
+                let mangled_name = self
+                    .struct_lookup
+                    .by_names
+                    .get(&(name.name.clone(), arg_names))
+                    .cloned()
+                    .unwrap_or_else(|| name.name.clone());
+                ExprKind::StructLit {
+                    name: Ident {
+                        name: mangled_name,
+                        span: name.span,
+                    },
+                    fields: fields
+                        .iter()
+                        .map(|f| StructLitField {
+                            name: f.name.clone(),
+                            value: walk_expr(&f.value, self),
+                            span: f.span,
+                        })
+                        .collect(),
+                }
+            }
+            // Slice 7GEN.5d: rewrite `Option[i32]::Some(7)` to a regular
+            // `Call { callee: Path([mangled_enum, variant]), args }`.
+            // Codegen never sees GenericEnumCall.
+            //
+            // v0.0.4 Phase 1C: also handles the `Type[args]::name(...)` shape
+            // when `name` is a free generic fn in the same module as the
+            // struct (not an impl-block method). Sema's
+            // `check_generic_enum_call` recorded the dispatch decision in
+            // `mono.assoc_free_fn_dispatches`; mirror it here by rewriting
+            // to `Call { callee: Ident(qualified_fn_name), type_args, args }`.
+            ExprKind::GenericEnumCall {
+                enum_name,
+                type_args,
+                variant,
+                method_type_args,
+                args,
+            } => {
+                let resolved_args: Vec<Type> =
+                    type_args.iter().map(|a| walk_type(a, self)).collect();
+                // v0.0.4 Phase 1C: free-fn fallback.
+                if let Some(qualified_fn_name) =
+                    self.mono.assoc_free_fn_dispatches.get(&expr.span).cloned()
+                {
+                    let new_args: Vec<Expr> = args.iter().map(|a| walk_expr(a, self)).collect();
+                    // Try to mangle to the monomorphized fn name. The
+                    // outer walk doesn't re-process the Call we construct
+                    // here, so this mangling needs to land inline.
+                    //
+                    // Prefer sema's authoritative resolved type-args (recorded in
+                    // `call_monos` for this call's span) over re-deriving them from
+                    // the AST. `type_ast_to_ty_with_subst` mis-resolves a *nominal*
+                    // type-arg (a user struct/enum) — it can't see the type table —
+                    // producing a `Ty` that doesn't equal the `Ty::Struct(id)` sema
+                    // used to key `inst_lookup`. That mismatch left a struct-element
+                    // `Vec[Point]::new()` mangled to the bare generic name, which
+                    // codegen then can't find (panic). Primitives matched by luck
+                    // (their AST→Ty mapping is exact). The AST path stays as a
+                    // fallback for spans sema didn't record (calls synthesized
+                    // inside generic bodies, reached via the outer `subst`).
+                    let arg_tys: Option<Vec<Ty>> = match self.mono.call_monos.get(&expr.span) {
+                        Some(recorded) => Some(
+                            recorded
+                                .iter()
+                                .map(|t| subst_ty_plain(t, self.subst))
+                                .collect(),
+                        ),
+                        None => resolved_args
+                            .iter()
+                            .map(|t| type_ast_to_ty_with_subst(t, self.subst))
+                            .collect(),
+                    };
+                    let by_ty: Option<String> = arg_tys.and_then(|tys| {
+                        self.inst_lookup
+                            .get(&(qualified_fn_name.clone(), tys))
+                            .cloned()
+                    });
+                    let final_name = by_ty.unwrap_or_else(|| {
+                        // 2026-07-16: no usable `Ty` route — either the span has
+                        // no `call_monos` record (it sits inside a generic
+                        // template body sema never type-checks per instantiation)
+                        // and the AST fallback couldn't produce `Ty`s (NOMINAL
+                        // type-args), or the produced `Ty`s don't match sema's
+                        // key forms. The substituted AST args still NAME the
+                        // instantiation exactly, so resolve the callee by mangled
+                        // name — the same route the `mangled_enum` lookup below
+                        // takes for the type half.
+                        let arg_names: Vec<String> =
+                            resolved_args.iter().map(mangle_type_ast_arg).collect();
+                        self.struct_lookup
+                            .fn_by_names
+                            .get(&(qualified_fn_name.clone(), arg_names))
+                            .cloned()
+                            .unwrap_or(qualified_fn_name)
+                    });
+                    let callee_expr = Expr {
+                        kind: ExprKind::Ident(final_name),
+                        span: variant.span,
+                    };
+                    ExprKind::Call {
+                        callee: Box::new(callee_expr),
+                        args: new_args,
+                        type_args: Vec::new(),
+                        arg_labels: Vec::new(),
+                    }
+                } else {
+                    let arg_names: Vec<String> =
+                        resolved_args.iter().map(mangle_type_ast_arg).collect();
+                    let mangled_enum = self
+                        .struct_lookup
+                        .by_names
+                        .get(&(enum_name.name.clone(), arg_names))
+                        .cloned()
+                        .unwrap_or_else(|| enum_name.name.clone());
+                    // A generic-struct ASSOCIATED-fn call with a method-level
+                    // generic (`Box[i32]::make::[U](..)`, or inferred
+                    // `Box[i32]::make(..)`) must mangle the method name to the
+                    // monomorphized callee (`make__i32`), matching the synthesized
+                    // method. Sema's authoritative record (`call_monos` at this
+                    // span) is preferred; the AST turbofish is the fallback for
+                    // spans inside generic bodies sema didn't type-check. A
+                    // non-generic method / enum-variant constructor has neither,
+                    // so the name passes through unchanged.
+                    let method_arg_tys: Option<Vec<Ty>> = match self.mono.call_monos.get(&expr.span)
+                    {
+                        Some(m) if !m.is_empty() => {
+                            Some(m.iter().map(|t| subst_ty_plain(t, self.subst)).collect())
+                        }
+                        _ if !method_type_args.is_empty() => method_type_args
+                            .iter()
+                            .map(|t| type_ast_to_ty_with_subst(t, self.subst))
+                            .collect(),
+                        _ => None,
+                    };
+                    let variant_ident = match &method_arg_tys {
+                        Some(tys) if !tys.is_empty() => Ident {
+                            name: mangle_name(&variant.name, tys, self.type_name_of),
+                            span: variant.span,
+                        },
+                        _ => variant.clone(),
+                    };
+                    let segments = vec![
+                        Ident {
+                            name: mangled_enum,
+                            span: enum_name.span,
+                        },
+                        variant_ident,
+                    ];
+                    // A payload-less variant written without parens (`Maybe::None`)
+                    // lowers to a bare Path. An associated FUNCTION lowers to a
+                    // Call even with no args — the AST can't tell `Type[..]::None`
+                    // from `Type[..]::make()` (both have empty args), so sema's
+                    // `assoc_method_dispatches` is the deciding signal.
+                    let is_assoc_fn = self.mono.assoc_method_dispatches.contains(&expr.span);
+                    if args.is_empty() && !is_assoc_fn {
+                        ExprKind::Path { segments }
+                    } else {
+                        let path_expr = Expr {
+                            kind: ExprKind::Path { segments },
+                            span: enum_name.span,
+                        };
+                        let new_args: Vec<Expr> = args.iter().map(|a| walk_expr(a, self)).collect();
+                        ExprKind::Call {
+                            callee: Box::new(path_expr),
+                            args: new_args,
+                            type_args: Vec::new(),
+                            arg_labels: Vec::new(),
+                        }
+                    }
+                }
+            }
+            // Everything else: no monomorphize-specific handling, so the
+            // generic walk recurses into its children.
+            _ => return None,
+        };
+        Some(Expr {
+            kind,
+            span: expr.span,
+        })
+    }
+}
+
+fn mono_rewriter<'a>(
+    subst: &'a std::collections::HashMap<String, Ty>,
+    generic_names: &'a std::collections::HashSet<String>,
+    inst_lookup: &'a std::collections::HashMap<(String, Vec<Ty>), String>,
+    mono: &'a MonoInfo,
+    type_name_of: &'a dyn Fn(&Ty) -> String,
+    struct_lookup: &'a StructLookup<'a>,
+) -> MonoRewriter<'a> {
+    MonoRewriter {
+        subst,
+        generic_names,
+        inst_lookup,
+        mono,
+        type_name_of,
+        struct_lookup,
+    }
+}
+
 fn rewrite_block(
     block: &Block,
     subst: &std::collections::HashMap<String, Ty>,
@@ -1896,1272 +2237,19 @@ fn rewrite_block(
     type_name_of: &dyn Fn(&Ty) -> String,
     struct_lookup: &StructLookup,
 ) -> Block {
-    Block {
-        stmts: block
-            .stmts
-            .iter()
-            .map(|s| {
-                rewrite_stmt(
-                    s,
-                    subst,
-                    generic_names,
-                    inst_lookup,
-                    mono,
-                    type_name_of,
-                    struct_lookup,
-                )
-            })
-            .collect(),
-        tail: block.tail.as_ref().map(|e| {
-            Box::new(rewrite_expr(
-                e,
-                subst,
-                generic_names,
-                inst_lookup,
-                mono,
-                type_name_of,
-                struct_lookup,
-            ))
-        }),
-        span: block.span,
-    }
-}
-
-fn rewrite_stmt(
-    stmt: &Stmt,
-    subst: &std::collections::HashMap<String, Ty>,
-    generic_names: &std::collections::HashSet<String>,
-    inst_lookup: &std::collections::HashMap<(String, Vec<Ty>), String>,
-    mono: &MonoInfo,
-    type_name_of: &dyn Fn(&Ty) -> String,
-    struct_lookup: &StructLookup,
-) -> Stmt {
-    let kind = match &stmt.kind {
-        StmtKind::Let {
-            mutable,
-            name,
-            ty,
-            init,
-        } => StmtKind::Let {
-            mutable: *mutable,
-            name: name.clone(),
-            ty: ty
-                .as_ref()
-                .map(|t| subst_type_ast(t, subst, type_name_of, struct_lookup)),
-            init: init.as_ref().map(|e| {
-                rewrite_expr(
-                    e,
-                    subst,
-                    generic_names,
-                    inst_lookup,
-                    mono,
-                    type_name_of,
-                    struct_lookup,
-                )
-            }),
-        },
-        StmtKind::LetDestructure {
-            mutable,
-            type_name,
-            fields,
-            init,
-        } => StmtKind::LetDestructure {
-            mutable: *mutable,
-            type_name: type_name.clone(),
-            fields: fields.clone(),
-            init: rewrite_expr(
-                init,
-                subst,
-                generic_names,
-                inst_lookup,
-                mono,
-                type_name_of,
-                struct_lookup,
-            ),
-        },
-        StmtKind::Return(opt) => StmtKind::Return(opt.as_ref().map(|e| {
-            rewrite_expr(
-                e,
-                subst,
-                generic_names,
-                inst_lookup,
-                mono,
-                type_name_of,
-                struct_lookup,
-            )
-        })),
-        StmtKind::While {
-            cond,
-            body,
-            attributes,
-        } => StmtKind::While {
-            cond: rewrite_expr(
-                cond,
-                subst,
-                generic_names,
-                inst_lookup,
-                mono,
-                type_name_of,
-                struct_lookup,
-            ),
-            body: rewrite_block(
-                body,
-                subst,
-                generic_names,
-                inst_lookup,
-                mono,
-                type_name_of,
-                struct_lookup,
-            ),
-            attributes: attributes.clone(),
-        },
-        StmtKind::For(forloop, attributes) => StmtKind::For(
-            rewrite_for(
-                forloop,
-                subst,
-                generic_names,
-                inst_lookup,
-                mono,
-                type_name_of,
-                struct_lookup,
-            ),
-            attributes.clone(),
+    walk_block(
+        block,
+        &mut mono_rewriter(
+            subst,
+            generic_names,
+            inst_lookup,
+            mono,
+            type_name_of,
+            struct_lookup,
         ),
-        StmtKind::Expr(e) => StmtKind::Expr(rewrite_expr(
-            e,
-            subst,
-            generic_names,
-            inst_lookup,
-            mono,
-            type_name_of,
-            struct_lookup,
-        )),
-        StmtKind::Defer(e) => StmtKind::Defer(rewrite_expr(
-            e,
-            subst,
-            generic_names,
-            inst_lookup,
-            mono,
-            type_name_of,
-            struct_lookup,
-        )),
-        StmtKind::Assert(e) => StmtKind::Assert(rewrite_expr(
-            e,
-            subst,
-            generic_names,
-            inst_lookup,
-            mono,
-            type_name_of,
-            struct_lookup,
-        )),
-        // `if let` / `guard let` / `while let` are lowered to plain match
-        // before sema, but the lower pass runs *before* monomorphize
-        // currently — we still see these. Rewrite their components.
-        StmtKind::IfLet {
-            pattern,
-            scrutinee,
-            body,
-            else_body,
-            mutable,
-        } => StmtKind::IfLet {
-            mutable: *mutable,
-            pattern: pattern.clone(),
-            scrutinee: rewrite_expr(
-                scrutinee,
-                subst,
-                generic_names,
-                inst_lookup,
-                mono,
-                type_name_of,
-                struct_lookup,
-            ),
-            body: rewrite_block(
-                body,
-                subst,
-                generic_names,
-                inst_lookup,
-                mono,
-                type_name_of,
-                struct_lookup,
-            ),
-            else_body: else_body.as_ref().map(|b| {
-                rewrite_block(
-                    b,
-                    subst,
-                    generic_names,
-                    inst_lookup,
-                    mono,
-                    type_name_of,
-                    struct_lookup,
-                )
-            }),
-        },
-        StmtKind::Break | StmtKind::Continue => stmt.kind.clone(),
-        StmtKind::GuardLet {
-            pattern,
-            scrutinee,
-            else_body,
-            complement,
-            mutable,
-        } => StmtKind::GuardLet {
-            mutable: *mutable,
-            pattern: pattern.clone(),
-            scrutinee: rewrite_expr(
-                scrutinee,
-                subst,
-                generic_names,
-                inst_lookup,
-                mono,
-                type_name_of,
-                struct_lookup,
-            ),
-            else_body: rewrite_block(
-                else_body,
-                subst,
-                generic_names,
-                inst_lookup,
-                mono,
-                type_name_of,
-                struct_lookup,
-            ),
-            complement: complement.clone(),
-        },
-        StmtKind::Loop(body, attributes) => StmtKind::Loop(
-            rewrite_block(
-                body,
-                subst,
-                generic_names,
-                inst_lookup,
-                mono,
-                type_name_of,
-                struct_lookup,
-            ),
-            attributes.clone(),
-        ),
-        StmtKind::WhileLet {
-            pattern,
-            scrutinee,
-            body,
-            mutable,
-        } => StmtKind::WhileLet {
-            mutable: *mutable,
-            pattern: pattern.clone(),
-            scrutinee: rewrite_expr(
-                scrutinee,
-                subst,
-                generic_names,
-                inst_lookup,
-                mono,
-                type_name_of,
-                struct_lookup,
-            ),
-            body: rewrite_block(
-                body,
-                subst,
-                generic_names,
-                inst_lookup,
-                mono,
-                type_name_of,
-                struct_lookup,
-            ),
-        },
-    };
-    Stmt {
-        kind,
-        span: stmt.span,
-    }
+    )
 }
 
-fn rewrite_for(
-    f: &ForLoop,
-    subst: &std::collections::HashMap<String, Ty>,
-    generic_names: &std::collections::HashSet<String>,
-    inst_lookup: &std::collections::HashMap<(String, Vec<Ty>), String>,
-    mono: &MonoInfo,
-    type_name_of: &dyn Fn(&Ty) -> String,
-    struct_lookup: &StructLookup,
-) -> ForLoop {
-    match f {
-        ForLoop::Range { var, iter, body } => ForLoop::Range {
-            var: var.clone(),
-            iter: rewrite_expr(
-                iter,
-                subst,
-                generic_names,
-                inst_lookup,
-                mono,
-                type_name_of,
-                struct_lookup,
-            ),
-            body: rewrite_block(
-                body,
-                subst,
-                generic_names,
-                inst_lookup,
-                mono,
-                type_name_of,
-                struct_lookup,
-            ),
-        },
-        ForLoop::CStyle {
-            init,
-            cond,
-            update,
-            body,
-        } => ForLoop::CStyle {
-            init: init.as_ref().map(|s| {
-                Box::new(rewrite_stmt(
-                    s,
-                    subst,
-                    generic_names,
-                    inst_lookup,
-                    mono,
-                    type_name_of,
-                    struct_lookup,
-                ))
-            }),
-            cond: cond.as_ref().map(|e| {
-                rewrite_expr(
-                    e,
-                    subst,
-                    generic_names,
-                    inst_lookup,
-                    mono,
-                    type_name_of,
-                    struct_lookup,
-                )
-            }),
-            update: update
-                .iter()
-                .map(|e| {
-                    rewrite_expr(
-                        e,
-                        subst,
-                        generic_names,
-                        inst_lookup,
-                        mono,
-                        type_name_of,
-                        struct_lookup,
-                    )
-                })
-                .collect(),
-            body: rewrite_block(
-                body,
-                subst,
-                generic_names,
-                inst_lookup,
-                mono,
-                type_name_of,
-                struct_lookup,
-            ),
-        },
-    }
-}
-
-fn rewrite_expr(
-    expr: &Expr,
-    subst: &std::collections::HashMap<String, Ty>,
-    generic_names: &std::collections::HashSet<String>,
-    inst_lookup: &std::collections::HashMap<(String, Vec<Ty>), String>,
-    mono: &MonoInfo,
-    type_name_of: &dyn Fn(&Ty) -> String,
-    struct_lookup: &StructLookup,
-) -> Expr {
-    let kind = match &expr.kind {
-        // Value-turbofish `f::[T]` (a fn-pointer VALUE): lower to the address
-        // of the concrete instantiation — the SAME symbol the turbofish CALL
-        // path mangles (mangle_call_from_ast), resolved through the active
-        // subst so `f::[C]` inside `caller[Widget]` becomes `@f__Widget`.
-        // Codegen's `Ident` arm emits it as a fn-pointer with zero extra work.
-        ExprKind::FnRef { callee, type_args } => {
-            if let ExprKind::Ident(cname) = &callee.kind {
-                ExprKind::Ident(mangle_call_from_ast(
-                    cname,
-                    type_args,
-                    subst,
-                    type_name_of,
-                    struct_lookup,
-                ))
-            } else {
-                ExprKind::FnRef {
-                    callee: Box::new(rewrite_expr(
-                        callee,
-                        subst,
-                        generic_names,
-                        inst_lookup,
-                        mono,
-                        type_name_of,
-                        struct_lookup,
-                    )),
-                    type_args: type_args.clone(),
-                }
-            }
-        }
-        ExprKind::Call {
-            callee,
-            args,
-            type_args,
-            arg_labels: _,
-        } => {
-            // Inspect the callee for a generic-fn / generic-method
-            // dispatch and rewrite to the mangled name where applicable.
-            // Slice 7GEN.5e: extended from generic-fn (Ident callee) only
-            // to also include generic methods (Field callee) and
-            // generic associated functions (Path callee).
-            // v0.0.22 file-aware spans: the span carries its file id, so
-            // same-offset call sites in different files key distinctly on
-            // their own.
-            let args_for_call_opt = mono.call_monos.get(&expr.span);
-            // v0.0.4 Phase 1B: resolve the call site's effective concrete
-            // type-args. Two sources:
-            //   - `call_monos`: sema's record (may contain `Ty::Param(T)`
-            //     when this call is inside a non-generic enclosing fn
-            //     that references a type-param of its impl block; or in
-            //     mixed cases).
-            //   - AST `type_args` (turbofish): direct user-supplied
-            //     types. The propagation pass uses these to discover
-            //     transitive generic instantiations inside generic-fn
-            //     bodies (sema doesn't type-check those, so `call_monos`
-            //     is empty for spans inside them).
-            // In both cases the active `subst` resolves remaining Params
-            // to the outer instantiation's concrete types.
-            let resolved_args_for_call: Option<Vec<Ty>> = if let Some(args) = args_for_call_opt {
-                Some(args.iter().map(|t| subst_ty_plain(t, subst)).collect())
-            } else if !type_args.is_empty() {
-                type_args
-                    .iter()
-                    .map(|t| type_ast_to_ty_with_subst(t, subst))
-                    .collect()
-            } else {
-                None
-            };
-            let new_callee: Expr = match (&callee.kind, resolved_args_for_call.as_ref()) {
-                // v0.0.19: a turbofish generic-fn call mangles its callee
-                // directly from the (collision-free) AST type-args, never
-                // consulting `call_monos`. See `mangle_call_from_ast`.
-                (ExprKind::Ident(cname), _)
-                    if generic_names.contains(cname) && !type_args.is_empty() =>
-                {
-                    Expr {
-                        kind: ExprKind::Ident(mangle_call_from_ast(
-                            cname,
-                            type_args,
-                            subst,
-                            type_name_of,
-                            struct_lookup,
-                        )),
-                        span: callee.span,
-                    }
-                }
-                (ExprKind::Ident(cname), Some(args_for_call)) if generic_names.contains(cname) => {
-                    if let Some(mangled) = inst_lookup.get(&(cname.clone(), args_for_call.clone()))
-                    {
-                        Expr {
-                            kind: ExprKind::Ident(mangled.clone()),
-                            span: callee.span,
-                        }
-                    } else {
-                        rewrite_expr(
-                            callee,
-                            subst,
-                            generic_names,
-                            inst_lookup,
-                            mono,
-                            type_name_of,
-                            struct_lookup,
-                        )
-                    }
-                }
-                (ExprKind::Field { receiver, name }, Some(args_for_call)) => {
-                    let is_generic = mono
-                        .method_instantiations
-                        .iter()
-                        .any(|(_, mname, margs)| mname == &name.name && margs == args_for_call);
-                    if is_generic {
-                        let mangled = mangle_name(&name.name, args_for_call, type_name_of);
-                        let new_recv = rewrite_expr(
-                            receiver,
-                            subst,
-                            generic_names,
-                            inst_lookup,
-                            mono,
-                            type_name_of,
-                            struct_lookup,
-                        );
-                        Expr {
-                            kind: ExprKind::Field {
-                                receiver: Box::new(new_recv),
-                                name: Ident {
-                                    name: mangled,
-                                    span: name.span,
-                                },
-                            },
-                            span: callee.span,
-                        }
-                    } else {
-                        rewrite_expr(
-                            callee,
-                            subst,
-                            generic_names,
-                            inst_lookup,
-                            mono,
-                            type_name_of,
-                            struct_lookup,
-                        )
-                    }
-                }
-                (ExprKind::Path { segments }, maybe_args) if segments.len() == 2 => {
-                    let mut new_segs = segments.clone();
-                    // `T::func()` — substitute a generic type-param TYPE segment
-                    // to its concrete type name so codegen's `Type::func` lookup
-                    // resolves it. Done for ANY arg shape (a no-arg `T::make()`
-                    // has no resolved call-args, so this must not depend on them);
-                    // without it the literal `T` reaches codegen and panics
-                    // ("sema validated"). A non-param segment (a concrete
-                    // `P::func()` in a generic body) isn't in `subst`, so it is
-                    // left unchanged.
-                    // `Self::func()` resolves the same way, through the active
-                    // `Self` binding rather than `subst` (reports/bug-07).
-                    if let Some(self_name) = struct_lookup.resolve_self(&segments[0].name) {
-                        new_segs[0] = Ident {
-                            name: self_name.to_string(),
-                            span: segments[0].span,
-                        };
-                    } else if let Some(concrete) = subst.get(&segments[0].name) {
-                        new_segs[0] = Ident {
-                            name: type_name_of(concrete),
-                            span: segments[0].span,
-                        };
-                    }
-                    // A method-level-generic associated fn also mangles the
-                    // method segment by its type-arg instantiation.
-                    if let Some(args_for_call) = maybe_args {
-                        let method_seg_name = &segments[1].name;
-                        let is_generic =
-                            mono.method_instantiations.iter().any(|(_, mname, margs)| {
-                                mname == method_seg_name && margs == args_for_call
-                            });
-                        if is_generic {
-                            new_segs[1] = Ident {
-                                name: mangle_name(method_seg_name, args_for_call, type_name_of),
-                                span: segments[1].span,
-                            };
-                        }
-                    }
-                    Expr {
-                        kind: ExprKind::Path { segments: new_segs },
-                        span: callee.span,
-                    }
-                }
-                _ => rewrite_expr(
-                    callee,
-                    subst,
-                    generic_names,
-                    inst_lookup,
-                    mono,
-                    type_name_of,
-                    struct_lookup,
-                ),
-            };
-            let mut new_args: Vec<Expr> = args
-                .iter()
-                .map(|a| {
-                    rewrite_expr(
-                        a,
-                        subst,
-                        generic_names,
-                        inst_lookup,
-                        mono,
-                        type_name_of,
-                        struct_lookup,
-                    )
-                })
-                .collect();
-            // 2026-07-16: sema-side default splices — trailing defaulted
-            // args sema resolved when lower could not (the bare method name
-            // is shared across types). Appended BEFORE the bound-ref rewrite
-            // below so a ctx slot that came from a splice exists to
-            // overwrite.
-            if let Some(splices) = mono.default_splices.get(&expr.span) {
-                for sp in splices {
-                    new_args.push(rewrite_expr(
-                        sp,
-                        subst,
-                        generic_names,
-                        inst_lookup,
-                        mono,
-                        type_name_of,
-                        struct_lookup,
-                    ));
-                }
-            }
-            // 2026-07-06 bound method references: an arg sema recorded as
-            // `recv.method` in handler position becomes the erased bridge
-            // fn, and the FOLLOWING arg slot (the spliced ctx default —
-            // sema guaranteed it exists) becomes `#addr_of(recv) as *u8`.
-            for (i, a) in args.iter().enumerate() {
-                if let Some(br) = mono.bound_method_refs.get(&a.span) {
-                    new_args[i] = Expr {
-                        kind: ExprKind::Ident(br.bridge_name.clone()),
-                        span: a.span,
-                    };
-                    if i + 1 < new_args.len() {
-                        new_args[i + 1] = bound_ref_ctx_arg(br, a.span);
-                    }
-                }
-            }
-            // Substitute type-parameter references in turbofish type_args
-            // through the active subst map. Without this, `size_of::[T]()`
-            // (or any future intrinsic taking a type arg) inside a generic
-            // body would keep the literal `T` and panic at codegen when
-            // the LLVM type-renderer hits `Ty::Param("T")`.
-            let new_type_args: Vec<Type> = type_args
-                .iter()
-                .map(|t| subst_type_ast(t, subst, type_name_of, struct_lookup))
-                .collect();
-            ExprKind::Call {
-                callee: Box::new(new_callee),
-                args: new_args,
-                type_args: new_type_args,
-                arg_labels: Vec::new(),
-            }
-        }
-        ExprKind::Block(b) => ExprKind::Block(rewrite_block(
-            b,
-            subst,
-            generic_names,
-            inst_lookup,
-            mono,
-            type_name_of,
-            struct_lookup,
-        )),
-        ExprKind::If {
-            cond,
-            then,
-            else_branch,
-        } => ExprKind::If {
-            cond: Box::new(rewrite_expr(
-                cond,
-                subst,
-                generic_names,
-                inst_lookup,
-                mono,
-                type_name_of,
-                struct_lookup,
-            )),
-            then: rewrite_block(
-                then,
-                subst,
-                generic_names,
-                inst_lookup,
-                mono,
-                type_name_of,
-                struct_lookup,
-            ),
-            else_branch: else_branch.as_ref().map(|e| {
-                Box::new(rewrite_expr(
-                    e,
-                    subst,
-                    generic_names,
-                    inst_lookup,
-                    mono,
-                    type_name_of,
-                    struct_lookup,
-                ))
-            }),
-        },
-        ExprKind::Binary { op, lhs, rhs } => ExprKind::Binary {
-            op: *op,
-            lhs: Box::new(rewrite_expr(
-                lhs,
-                subst,
-                generic_names,
-                inst_lookup,
-                mono,
-                type_name_of,
-                struct_lookup,
-            )),
-            rhs: Box::new(rewrite_expr(
-                rhs,
-                subst,
-                generic_names,
-                inst_lookup,
-                mono,
-                type_name_of,
-                struct_lookup,
-            )),
-        },
-        ExprKind::Unary { op, operand } => ExprKind::Unary {
-            op: *op,
-            operand: Box::new(rewrite_expr(
-                operand,
-                subst,
-                generic_names,
-                inst_lookup,
-                mono,
-                type_name_of,
-                struct_lookup,
-            )),
-        },
-        ExprKind::Range {
-            start,
-            end,
-            inclusive,
-        } => ExprKind::Range {
-            start: start.as_ref().map(|e| {
-                Box::new(rewrite_expr(
-                    e,
-                    subst,
-                    generic_names,
-                    inst_lookup,
-                    mono,
-                    type_name_of,
-                    struct_lookup,
-                ))
-            }),
-            end: end.as_ref().map(|e| {
-                Box::new(rewrite_expr(
-                    e,
-                    subst,
-                    generic_names,
-                    inst_lookup,
-                    mono,
-                    type_name_of,
-                    struct_lookup,
-                ))
-            }),
-            inclusive: *inclusive,
-        },
-        ExprKind::Assign { op, target, value } => ExprKind::Assign {
-            op: *op,
-            target: Box::new(rewrite_expr(
-                target,
-                subst,
-                generic_names,
-                inst_lookup,
-                mono,
-                type_name_of,
-                struct_lookup,
-            )),
-            value: Box::new(rewrite_expr(
-                value,
-                subst,
-                generic_names,
-                inst_lookup,
-                mono,
-                type_name_of,
-                struct_lookup,
-            )),
-        },
-        ExprKind::Cast { expr: inner, ty } => ExprKind::Cast {
-            expr: Box::new(rewrite_expr(
-                inner,
-                subst,
-                generic_names,
-                inst_lookup,
-                mono,
-                type_name_of,
-                struct_lookup,
-            )),
-            ty: subst_type_ast(ty, subst, type_name_of, struct_lookup),
-        },
-        // A generic call under `await` (`await on_worker::[I, O](...)`) must be
-        // rewritten like any other call site — without these arms the awaited
-        // subtree kept its bare template name and codegen faulted on the
-        // unmangled symbol (discovery at `visit_ident_calls` already descended,
-        // so the instantiation existed; only the call site was left behind).
-        ExprKind::Await(inner) => ExprKind::Await(Box::new(rewrite_expr(
-            inner,
-            subst,
-            generic_names,
-            inst_lookup,
-            mono,
-            type_name_of,
-            struct_lookup,
-        ))),
-        ExprKind::Yield(inner) => ExprKind::Yield(Box::new(rewrite_expr(
-            inner,
-            subst,
-            generic_names,
-            inst_lookup,
-            mono,
-            type_name_of,
-            struct_lookup,
-        ))),
-        ExprKind::StructLit { name, fields } => ExprKind::StructLit {
-            // `Self { .. }` in a generic impl's method body (reports/bug-07).
-            name: match struct_lookup.resolve_self(&name.name) {
-                Some(self_name) => Ident {
-                    name: self_name.to_string(),
-                    span: name.span,
-                },
-                None => name.clone(),
-            },
-            fields: fields
-                .iter()
-                .map(|f| StructLitField {
-                    name: f.name.clone(),
-                    value: rewrite_expr(
-                        &f.value,
-                        subst,
-                        generic_names,
-                        inst_lookup,
-                        mono,
-                        type_name_of,
-                        struct_lookup,
-                    ),
-                    span: f.span,
-                })
-                .collect(),
-        },
-        // v0.0.24 de-Rust: rewrite the type-inferred literal `{ ... }` to a
-        // plain StructLit using the concrete struct name sema recorded for
-        // this span. Same convert-in-mono / panic-in-codegen discipline as
-        // GenericStructLit below — codegen never sees an InferredStructLit.
-        ExprKind::InferredStructLit { fields } => {
-            let rewritten_fields: Vec<StructLitField> = fields
-                .iter()
-                .map(|f| StructLitField {
-                    name: f.name.clone(),
-                    value: rewrite_expr(
-                        &f.value,
-                        subst,
-                        generic_names,
-                        inst_lookup,
-                        mono,
-                        type_name_of,
-                        struct_lookup,
-                    ),
-                    span: f.span,
-                })
-                .collect();
-            match mono.inferred_struct_lits.get(&expr.span) {
-                Some(struct_name) => ExprKind::StructLit {
-                    name: Ident {
-                        name: struct_name.clone(),
-                        span: expr.span,
-                    },
-                    fields: rewritten_fields,
-                },
-                // Sema records every type-checked inferred literal, so a miss
-                // here is a compiler bug; keep the node so codegen's panic-arm
-                // surfaces it loudly rather than silently miscompiling.
-                None => ExprKind::InferredStructLit {
-                    fields: rewritten_fields,
-                },
-            }
-        }
-        // Slice 7GEN.5c: rewrite `Pair[i32, bool] { ... }` to a plain
-        // StructLit with the mangled name. Same approach as the type-side
-        // Generic → Path rewrite: substitute fn-generic params first,
-        // then look up the mangled name in struct_lookup.
-        ExprKind::GenericStructLit {
-            name,
-            type_args,
-            fields,
-        } => {
-            let resolved_args: Vec<Type> = type_args
-                .iter()
-                .map(|a| subst_type_ast(a, subst, type_name_of, struct_lookup))
-                .collect();
-            let arg_names: Vec<String> = resolved_args.iter().map(mangle_type_ast_arg).collect();
-            let mangled_name = struct_lookup
-                .by_names
-                .get(&(name.name.clone(), arg_names))
-                .cloned()
-                .unwrap_or_else(|| name.name.clone());
-            ExprKind::StructLit {
-                name: Ident {
-                    name: mangled_name,
-                    span: name.span,
-                },
-                fields: fields
-                    .iter()
-                    .map(|f| StructLitField {
-                        name: f.name.clone(),
-                        value: rewrite_expr(
-                            &f.value,
-                            subst,
-                            generic_names,
-                            inst_lookup,
-                            mono,
-                            type_name_of,
-                            struct_lookup,
-                        ),
-                        span: f.span,
-                    })
-                    .collect(),
-            }
-        }
-        ExprKind::Field { receiver, name } => ExprKind::Field {
-            receiver: Box::new(rewrite_expr(
-                receiver,
-                subst,
-                generic_names,
-                inst_lookup,
-                mono,
-                type_name_of,
-                struct_lookup,
-            )),
-            name: name.clone(),
-        },
-        // Slice 7GEN.5d: rewrite `Option[i32]::Some(7)` to a regular
-        // `Call { callee: Path([mangled_enum, variant]), args }`.
-        // Codegen never sees GenericEnumCall.
-        //
-        // v0.0.4 Phase 1C: also handles the `Type[args]::name(...)` shape
-        // when `name` is a free generic fn in the same module as the
-        // struct (not an impl-block method). Sema's
-        // `check_generic_enum_call` recorded the dispatch decision in
-        // `mono.assoc_free_fn_dispatches`; mirror it here by rewriting
-        // to `Call { callee: Ident(qualified_fn_name), type_args, args }`.
-        ExprKind::GenericEnumCall {
-            enum_name,
-            type_args,
-            variant,
-            method_type_args,
-            args,
-        } => {
-            let resolved_args: Vec<Type> = type_args
-                .iter()
-                .map(|a| subst_type_ast(a, subst, type_name_of, struct_lookup))
-                .collect();
-            // v0.0.4 Phase 1C: free-fn fallback.
-            if let Some(qualified_fn_name) = mono.assoc_free_fn_dispatches.get(&expr.span) {
-                let new_args: Vec<Expr> = args
-                    .iter()
-                    .map(|a| {
-                        rewrite_expr(
-                            a,
-                            subst,
-                            generic_names,
-                            inst_lookup,
-                            mono,
-                            type_name_of,
-                            struct_lookup,
-                        )
-                    })
-                    .collect();
-                // Try to mangle to the monomorphized fn name. The
-                // outer rewrite_expr doesn't re-process the Call we
-                // construct here, so this mangling needs to land
-                // inline.
-                //
-                // Prefer sema's authoritative resolved type-args (recorded in
-                // `call_monos` for this call's span) over re-deriving them from
-                // the AST. `type_ast_to_ty_with_subst` mis-resolves a *nominal*
-                // type-arg (a user struct/enum) — it can't see the type table —
-                // producing a `Ty` that doesn't equal the `Ty::Struct(id)` sema
-                // used to key `inst_lookup`. That mismatch left a struct-element
-                // `Vec[Point]::new()` mangled to the bare generic name, which
-                // codegen then can't find (panic). Primitives matched by luck
-                // (their AST→Ty mapping is exact). The AST path stays as a
-                // fallback for spans sema didn't record (calls synthesized
-                // inside generic bodies, reached via the outer `subst`).
-                let arg_tys: Option<Vec<Ty>> = match mono.call_monos.get(&expr.span) {
-                    Some(recorded) => {
-                        Some(recorded.iter().map(|t| subst_ty_plain(t, subst)).collect())
-                    }
-                    None => resolved_args
-                        .iter()
-                        .map(|t| type_ast_to_ty_with_subst(t, subst))
-                        .collect(),
-                };
-                let by_ty: Option<String> = arg_tys.and_then(|tys| {
-                    inst_lookup
-                        .get(&(qualified_fn_name.clone(), tys))
-                        .cloned()
-                });
-                let final_name = by_ty.unwrap_or_else(|| {
-                    // 2026-07-16: no usable `Ty` route — either the span has
-                    // no `call_monos` record (it sits inside a generic
-                    // template body sema never type-checks per instantiation)
-                    // and the AST fallback couldn't produce `Ty`s (NOMINAL
-                    // type-args), or the produced `Ty`s don't match sema's
-                    // key forms. The substituted AST args still NAME the
-                    // instantiation exactly, so resolve the callee by mangled
-                    // name — the same route the `mangled_enum` lookup below
-                    // takes for the type half.
-                    let arg_names: Vec<String> =
-                        resolved_args.iter().map(mangle_type_ast_arg).collect();
-                    struct_lookup
-                        .fn_by_names
-                        .get(&(qualified_fn_name.clone(), arg_names))
-                        .cloned()
-                        .unwrap_or_else(|| qualified_fn_name.clone())
-                });
-                let callee_expr = Expr {
-                    kind: ExprKind::Ident(final_name),
-                    span: variant.span,
-                };
-                ExprKind::Call {
-                    callee: Box::new(callee_expr),
-                    args: new_args,
-                    type_args: Vec::new(),
-                    arg_labels: Vec::new(),
-                }
-            } else {
-                let arg_names: Vec<String> =
-                    resolved_args.iter().map(mangle_type_ast_arg).collect();
-                let mangled_enum = struct_lookup
-                    .by_names
-                    .get(&(enum_name.name.clone(), arg_names))
-                    .cloned()
-                    .unwrap_or_else(|| enum_name.name.clone());
-                // A generic-struct ASSOCIATED-fn call with a method-level
-                // generic (`Box[i32]::make::[U](..)`, or inferred
-                // `Box[i32]::make(..)`) must mangle the method name to the
-                // monomorphized callee (`make__i32`), matching the synthesized
-                // method. Sema's authoritative record (`call_monos` at this
-                // span) is preferred; the AST turbofish is the fallback for
-                // spans inside generic bodies sema didn't type-check. A
-                // non-generic method / enum-variant constructor has neither,
-                // so the name passes through unchanged.
-                let method_arg_tys: Option<Vec<Ty>> = match mono.call_monos.get(&expr.span) {
-                    Some(m) if !m.is_empty() => {
-                        Some(m.iter().map(|t| subst_ty_plain(t, subst)).collect())
-                    }
-                    _ if !method_type_args.is_empty() => method_type_args
-                        .iter()
-                        .map(|t| type_ast_to_ty_with_subst(t, subst))
-                        .collect(),
-                    _ => None,
-                };
-                let variant_ident = match &method_arg_tys {
-                    Some(tys) if !tys.is_empty() => Ident {
-                        name: mangle_name(&variant.name, tys, type_name_of),
-                        span: variant.span,
-                    },
-                    _ => variant.clone(),
-                };
-                let segments = vec![
-                    Ident {
-                        name: mangled_enum,
-                        span: enum_name.span,
-                    },
-                    variant_ident,
-                ];
-                // A payload-less variant written without parens (`Maybe::None`)
-                // lowers to a bare Path. An associated FUNCTION lowers to a
-                // Call even with no args — the AST can't tell `Type[..]::None`
-                // from `Type[..]::make()` (both have empty args), so sema's
-                // `assoc_method_dispatches` is the deciding signal.
-                let is_assoc_fn = mono.assoc_method_dispatches.contains(&expr.span);
-                if args.is_empty() && !is_assoc_fn {
-                    ExprKind::Path { segments }
-                } else {
-                    let path_expr = Expr {
-                        kind: ExprKind::Path { segments },
-                        span: enum_name.span,
-                    };
-                    let new_args: Vec<Expr> = args
-                        .iter()
-                        .map(|a| {
-                            rewrite_expr(
-                                a,
-                                subst,
-                                generic_names,
-                                inst_lookup,
-                                mono,
-                                type_name_of,
-                                struct_lookup,
-                            )
-                        })
-                        .collect();
-                    ExprKind::Call {
-                        callee: Box::new(path_expr),
-                        args: new_args,
-                        type_args: Vec::new(),
-                        arg_labels: Vec::new(),
-                    }
-                }
-            }
-        }
-        ExprKind::ArrayLit { elements } => ExprKind::ArrayLit {
-            elements: elements
-                .iter()
-                .map(|e| {
-                    rewrite_expr(
-                        e,
-                        subst,
-                        generic_names,
-                        inst_lookup,
-                        mono,
-                        type_name_of,
-                        struct_lookup,
-                    )
-                })
-                .collect(),
-        },
-        ExprKind::Index { receiver, index } => ExprKind::Index {
-            receiver: Box::new(rewrite_expr(
-                receiver,
-                subst,
-                generic_names,
-                inst_lookup,
-                mono,
-                type_name_of,
-                struct_lookup,
-            )),
-            index: Box::new(rewrite_expr(
-                index,
-                subst,
-                generic_names,
-                inst_lookup,
-                mono,
-                type_name_of,
-                struct_lookup,
-            )),
-        },
-        ExprKind::Match { scrutinee, arms } => ExprKind::Match {
-            scrutinee: Box::new(rewrite_expr(
-                scrutinee,
-                subst,
-                generic_names,
-                inst_lookup,
-                mono,
-                type_name_of,
-                struct_lookup,
-            )),
-            arms: arms
-                .iter()
-                .map(|a| MatchArm {
-                    pattern: a.pattern.clone(),
-                    body: rewrite_expr(
-                        &a.body,
-                        subst,
-                        generic_names,
-                        inst_lookup,
-                        mono,
-                        type_name_of,
-                        struct_lookup,
-                    ),
-                    span: a.span,
-                })
-                .collect(),
-        },
-        ExprKind::ArrayFill { fill, count, .. } => ExprKind::ArrayFill {
-            fill: Box::new(rewrite_expr(
-                fill,
-                subst,
-                generic_names,
-                inst_lookup,
-                mono,
-                type_name_of,
-                struct_lookup,
-            )),
-            count: *count,
-            count_name: None,
-        },
-        // v0.0.11 Phase 4: subst type-parameter references in `#name`
-        // intrinsics' turbofish type_args (e.g. `#size_of::[T]()` inside
-        // a generic body) through the active subst map. Without this,
-        // codegen sees `Ty::Param("T")` and panics.
-        ExprKind::Intrinsic {
-            name,
-            type_args,
-            args,
-            ret_ty,
-        } => ExprKind::Intrinsic {
-            name: name.clone(),
-            type_args: type_args
-                .iter()
-                .map(|t| subst_type_ast(t, subst, type_name_of, struct_lookup))
-                .collect(),
-            args: args
-                .iter()
-                .map(|a| {
-                    rewrite_expr(
-                        a,
-                        subst,
-                        generic_names,
-                        inst_lookup,
-                        mono,
-                        type_name_of,
-                        struct_lookup,
-                    )
-                })
-                .collect(),
-            ret_ty: ret_ty
-                .as_ref()
-                .map(|t| subst_type_ast(t, subst, type_name_of, struct_lookup)),
-        },
-        // reports/bug-04. A generic call in a tuple element was DISCOVERED by
-        // `visit_ident_calls` (so the instantiation got synthesized) but never
-        // rewritten here, so the call site kept the template name while the
-        // template itself was deleted — codegen then panicked looking it up.
-        // The same discovery/rewrite asymmetry the Await/Yield arms above are
-        // commented for.
-        ExprKind::TupleLit { elements } => ExprKind::TupleLit {
-            elements: elements
-                .iter()
-                .map(|e| {
-                    rewrite_expr(
-                        e,
-                        subst,
-                        generic_names,
-                        inst_lookup,
-                        mono,
-                        type_name_of,
-                        struct_lookup,
-                    )
-                })
-                .collect(),
-        },
-        // reports/bug-06. Same asymmetry inside `"${...}"`.
-        ExprKind::InterpStr { parts } => ExprKind::InterpStr {
-            parts: parts
-                .iter()
-                .map(|p| match p {
-                    InterpStrPart::Expr(e) => InterpStrPart::Expr(Box::new(rewrite_expr(
-                        e,
-                        subst,
-                        generic_names,
-                        inst_lookup,
-                        mono,
-                        type_name_of,
-                        struct_lookup,
-                    ))),
-                    other => other.clone(),
-                })
-                .collect(),
-        },
-        // reports/bug-04 step 2: `#asm` operand values were absent from BOTH
-        // walkers. Discovery is added alongside in `visit_ident_calls`, so the
-        // two traverse the same set.
-        ExprKind::Asm {
-            template,
-            operands,
-            clobbers,
-        } => ExprKind::Asm {
-            template: template.clone(),
-            operands: operands
-                .iter()
-                .map(|o| AsmOperand {
-                    name: o.name.clone(),
-                    dir: o.dir.clone(),
-                    reg: o.reg.clone(),
-                    value: Box::new(rewrite_expr(
-                        &o.value,
-                        subst,
-                        generic_names,
-                        inst_lookup,
-                        mono,
-                        type_name_of,
-                        struct_lookup,
-                    )),
-                    span: o.span,
-                })
-                .collect(),
-            clobbers: clobbers.clone(),
-        },
-        other => other.clone(),
-    };
-    Expr {
-        kind,
-        span: expr.span,
-    }
-}
 
 /// Build the mangled name for a `(generic_fn_name, [concrete_types])`
 /// pair. Uses double-underscore as separator (per design note §6).
@@ -3316,214 +2404,53 @@ fn rewrite_alias_type(t: &mut Type, aliases: &std::collections::BTreeMap<String,
     }
 }
 
+/// issue-01: the alias pass's body walk. Only two node shapes matter — a type
+/// position and a struct-literal NAME that spells an alias — so everything
+/// else rides the generic walk. The hand-rolled version this replaced had an
+/// `_ => {}` fallthrough with the usual consequence: `(x as Meters, 1)` — an
+/// aliased cast inside a tuple literal, an interpolated string or an `#asm`
+/// operand — kept the alias name, and codegen died on a type that no longer
+/// existed ("codegen reached Ty::Error").
+struct AliasRewriter<'a> {
+    aliases: &'a std::collections::BTreeMap<String, Type>,
+}
+
+impl ExprRewriter for AliasRewriter<'_> {
+    fn visit_type(&mut self, t: &Type) -> Option<Type> {
+        let mut resolved = t.clone();
+        rewrite_alias_type(&mut resolved, self.aliases);
+        Some(resolved)
+    }
+
+    fn visit_expr(&mut self, e: &Expr) -> Option<Expr> {
+        // `Alias { .. }` — a struct literal naming the type through an alias.
+        // Every other expression is walked generically.
+        let ExprKind::StructLit { name, fields } = &e.kind else {
+            return None;
+        };
+        let mut resolved = name.clone();
+        rewrite_alias_ident(&mut resolved, self.aliases);
+        Some(Expr {
+            kind: ExprKind::StructLit {
+                name: resolved,
+                fields: fields
+                    .iter()
+                    .map(|f| StructLitField {
+                        name: f.name.clone(),
+                        value: walk_expr(&f.value, self),
+                        span: f.span,
+                    })
+                    .collect(),
+            },
+            span: e.span,
+        })
+    }
+}
+
 fn rewrite_alias_block(b: &mut Block, aliases: &std::collections::BTreeMap<String, Type>) {
-    for s in &mut b.stmts {
-        rewrite_alias_stmt(s, aliases);
-    }
-    if let Some(e) = &mut b.tail {
-        rewrite_alias_expr(e, aliases);
-    }
+    *b = walk_block(b, &mut AliasRewriter { aliases });
 }
 
-fn rewrite_alias_stmt(s: &mut Stmt, aliases: &std::collections::BTreeMap<String, Type>) {
-    match &mut s.kind {
-        StmtKind::Let { ty, init, .. } => {
-            if let Some(t) = ty {
-                rewrite_alias_type(t, aliases);
-            }
-            if let Some(e) = init {
-                rewrite_alias_expr(e, aliases);
-            }
-        }
-        StmtKind::LetDestructure { init, .. } => rewrite_alias_expr(init, aliases),
-        StmtKind::Return(opt) => {
-            if let Some(e) = opt {
-                rewrite_alias_expr(e, aliases);
-            }
-        }
-        StmtKind::While { cond, body, .. } => {
-            rewrite_alias_expr(cond, aliases);
-            rewrite_alias_block(body, aliases);
-        }
-        StmtKind::Loop(b, _) => rewrite_alias_block(b, aliases),
-        StmtKind::For(fl, _) => match fl {
-            ForLoop::Range { iter, body, .. } => {
-                rewrite_alias_expr(iter, aliases);
-                rewrite_alias_block(body, aliases);
-            }
-            ForLoop::CStyle {
-                init,
-                cond,
-                update,
-                body,
-            } => {
-                if let Some(i) = init {
-                    rewrite_alias_stmt(i, aliases);
-                }
-                if let Some(c) = cond {
-                    rewrite_alias_expr(c, aliases);
-                }
-                for u in update {
-                    rewrite_alias_expr(u, aliases);
-                }
-                rewrite_alias_block(body, aliases);
-            }
-        },
-        StmtKind::Expr(e) | StmtKind::Defer(e) | StmtKind::Assert(e) => {
-            rewrite_alias_expr(e, aliases)
-        }
-        StmtKind::IfLet {
-            scrutinee,
-            body,
-            else_body,
-            ..
-        } => {
-            rewrite_alias_expr(scrutinee, aliases);
-            rewrite_alias_block(body, aliases);
-            if let Some(b) = else_body {
-                rewrite_alias_block(b, aliases);
-            }
-        }
-        StmtKind::GuardLet {
-            scrutinee,
-            else_body,
-            ..
-        } => {
-            rewrite_alias_expr(scrutinee, aliases);
-            rewrite_alias_block(else_body, aliases);
-        }
-        StmtKind::WhileLet {
-            scrutinee, body, ..
-        } => {
-            rewrite_alias_expr(scrutinee, aliases);
-            rewrite_alias_block(body, aliases);
-        }
-        StmtKind::Break | StmtKind::Continue => {}
-    }
-}
-
-fn rewrite_alias_expr(e: &mut Expr, aliases: &std::collections::BTreeMap<String, Type>) {
-    match &mut e.kind {
-        ExprKind::Cast { expr, ty } => {
-            rewrite_alias_expr(expr, aliases);
-            rewrite_alias_type(ty, aliases);
-        }
-        ExprKind::Call {
-            callee,
-            args,
-            type_args,
-            arg_labels: _,
-        } => {
-            rewrite_alias_expr(callee, aliases);
-            for a in args {
-                rewrite_alias_expr(a, aliases);
-            }
-            for t in type_args {
-                rewrite_alias_type(t, aliases);
-            }
-        }
-        ExprKind::Block(b) => rewrite_alias_block(b, aliases),
-        ExprKind::If {
-            cond,
-            then,
-            else_branch,
-        } => {
-            rewrite_alias_expr(cond, aliases);
-            rewrite_alias_block(then, aliases);
-            if let Some(eb) = else_branch {
-                rewrite_alias_expr(eb, aliases);
-            }
-        }
-        ExprKind::Binary { lhs, rhs, .. } => {
-            rewrite_alias_expr(lhs, aliases);
-            rewrite_alias_expr(rhs, aliases);
-        }
-        ExprKind::Unary { operand, .. } => rewrite_alias_expr(operand, aliases),
-        ExprKind::Range { start, end, .. } => {
-            if let Some(e2) = start {
-                rewrite_alias_expr(e2, aliases);
-            }
-            if let Some(e2) = end {
-                rewrite_alias_expr(e2, aliases);
-            }
-        }
-        ExprKind::Assign { target, value, .. } => {
-            rewrite_alias_expr(target, aliases);
-            rewrite_alias_expr(value, aliases);
-        }
-        ExprKind::Field { receiver, .. } => rewrite_alias_expr(receiver, aliases),
-        ExprKind::StructLit { name, fields } => {
-            rewrite_alias_ident(name, aliases);
-            for f in fields {
-                rewrite_alias_expr(&mut f.value, aliases);
-            }
-        }
-        ExprKind::InferredStructLit { fields } => {
-            for f in fields {
-                rewrite_alias_expr(&mut f.value, aliases);
-            }
-        }
-        ExprKind::GenericStructLit {
-            fields, type_args, ..
-        } => {
-            for f in fields {
-                rewrite_alias_expr(&mut f.value, aliases);
-            }
-            for t in type_args {
-                rewrite_alias_type(t, aliases);
-            }
-        }
-        ExprKind::GenericEnumCall {
-            type_args,
-            method_type_args,
-            args,
-            ..
-        } => {
-            for t in type_args {
-                rewrite_alias_type(t, aliases);
-            }
-            for t in method_type_args {
-                rewrite_alias_type(t, aliases);
-            }
-            for a in args {
-                rewrite_alias_expr(a, aliases);
-            }
-        }
-        ExprKind::ArrayLit { elements } => {
-            for el in elements {
-                rewrite_alias_expr(el, aliases);
-            }
-        }
-        ExprKind::ArrayFill { fill, .. } => rewrite_alias_expr(fill, aliases),
-        ExprKind::Index { receiver, index } => {
-            rewrite_alias_expr(receiver, aliases);
-            rewrite_alias_expr(index, aliases);
-        }
-        ExprKind::Match { scrutinee, arms } => {
-            rewrite_alias_expr(scrutinee, aliases);
-            for a in arms {
-                rewrite_alias_expr(&mut a.body, aliases);
-            }
-        }
-        ExprKind::Intrinsic {
-            type_args,
-            args,
-            ret_ty,
-            ..
-        } => {
-            for t in type_args {
-                rewrite_alias_type(t, aliases);
-            }
-            for a in args {
-                rewrite_alias_expr(a, aliases);
-            }
-            if let Some(rt) = ret_ty {
-                rewrite_alias_type(rt, aliases);
-            }
-        }
-        _ => {}
-    }
-}
 
 fn rewrite_alias_ident(ident: &mut Ident, aliases: &std::collections::BTreeMap<String, Type>) {
     let mut current = ident.name.clone();

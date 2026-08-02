@@ -1,5 +1,6 @@
 # Issue 01 — Generic mutable AST traversal (kill the missing-arm bug family)
 
+- Status: DONE 2026-08-02, commit e0de12c
 - Type: structural consolidation
 - Area: `cplus-core/src/ast.rs` (new walker), `monomorphize.rs`, `lower.rs`
 - Effort: M
@@ -88,3 +89,84 @@ Rules:
 - Behavior lock: the walkers must preserve exact span/attribute propagation of the
   current code — the span-keyed side tables (see issue-16) depend on spans surviving
   rewrites unchanged.
+
+## Outcome
+
+Landed as described, with the migration order the report set out. What is in the
+tree now:
+
+- `ast.rs` — `ExprRewriter` (four hooks: expr, stmt, type, pattern) plus
+  `walk_expr` / `walk_expr_kind` / `walk_stmt` / `walk_block` / `walk_for_loop` /
+  `walk_type` / `walk_pattern`, every one an exhaustive match with no catch-all,
+  and `visit_exprs` / `visit_exprs_in_block`, the read-only adapter over the
+  same walk. `walk_expr_kind` is the child half of `walk_expr`, for a hook that
+  keeps a node but changes something about the node itself (`Respan` does).
+- `monomorphize.rs` — `MonoRewriter` (visit_expr for FnRef/Call/StructLit/
+  InferredStructLit/GenericStructLit/GenericEnumCall, visit_type for every type
+  position) replaces `rewrite_expr` / `rewrite_stmt` / `rewrite_for`;
+  `AliasRewriter` replaces `rewrite_alias_expr` / `_stmt` / `_block`;
+  `visit_ident_calls_in_block` is now the read-only adapter.
+- `lower.rs` — `ConstSubst` replaces `subst_expr` / `subst_stmt`, `LenResolver`
+  replaces `resolve_lens_in_expr` / `_stmt` / `_block`, and `Respan` replaces
+  `respan_tree`'s hand-rolled recursion.
+
+Step 4 (delete the `Self` walker pair) had already landed in the bug tier: `Self`
+is a substitution carried on `StructLookup`.
+
+### Three live bugs the migration fixed
+
+Each is a construct one of the fallthroughs skipped; each reproduces on the
+pre-migration binary and is covered by the e2e test
+`ast_walk_reaches_constructs_the_hand_rolled_walkers_skipped`:
+
+1. `(7 as Meters, 1)` — a type alias inside a tuple literal. `rewrite_alias_expr`
+   had no TupleLit arm, so the alias survived into codegen: "codegen reached
+   Ty::Error — sema should have rejected the program".
+2. `([5; N], 2)` — a const-named array-fill length inside a tuple literal.
+   `resolve_lens_in_expr` had no TupleLit arm, so `count_name` was never
+   resolved and sema reported `E0330: array literal has 0 element(s)`.
+3. `let b: Buf = { data: [6; N] };` — the same lens inside an INFERRED struct
+   literal, which `resolve_lens_in_expr` also had no arm for. Same bogus E0330.
+
+`respan_tree`'s fallthrough was a fourth, milder one: it covered only the const
+initializer shapes that existed when it was written, so when that grammar grew
+struct and array literals, their field values kept definition-site spans in a
+cross-file diagnostic.
+
+### Deliberate scope limits
+
+- `subst_ty_plain`'s `other => other.clone()` in monomorphize stays. It matches
+  on `Ty` (sema's semantic types), not on the AST, and the arm is over leaf
+  primitives — a different enum with a different walker, out of this issue's
+  scope.
+- Patterns: `walk_pattern` descends into payload sub-patterns, a literal
+  pattern's expression, and a variant pattern's type-args. That last one is
+  new — the previous walkers cloned patterns wholesale — and it is safe because
+  codegen reads only `variant_name` and `payload` from a pattern; `enum_name`
+  and `type_args` are dead by then.
+- Builder blocks are walked too, though they are desugared before sema and no
+  rewriting pass should meet one. A walker with a blind spot is the bug this
+  module exists to prevent.
+
+### Cost
+
+`cpc check` on the largest single source in the tree (`vendor/uikit`, 76k lines)
+goes 1.18s → 1.23s, about 4%, from the read-only discovery walk now
+reconstructing the tree it throws away. Returning a leaf placeholder from the
+adapter to skip that reconstruction was measured and is not faster. The full
+e2e suite (604 compile-and-run programs) is unchanged at ~93s, and clang
+dominates any real build, so the trade — one exhaustive walker for a 4% front-end
+cost on an outlier file — was taken deliberately.
+
+## Verification (as run)
+
+- `ast.rs` unit tests: no-op-rewriter identity round-trip over a sample program
+  covering every construct family; read-only visit and rewrite walk agree on
+  node count; the walk reaches interpolated-string parts, tuple elements and
+  array-fill values.
+- e2e `ast_walk_reaches_constructs_the_hand_rolled_walkers_skipped` (the three
+  bugs above).
+- `cargo test -p cplus-core` 1837 + 8, `cargo test -p cpc` 604 + 16 + 5 + 6, all
+  green; `cpc test` in `vendor/stdlib` 290 green in debug and `--release`;
+  vendor-wide `cpc check` diagnostic-count parity against the pre-change binary
+  across all 54 packages — no change.

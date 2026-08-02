@@ -1500,98 +1500,19 @@ impl Lower {
         }
     }
 
+    /// issue-01: both const-length lenses ride the generic walk. The
+    /// hand-rolled expression walk this replaced had an `_ => {}`
+    /// fallthrough, so `[v; N]` nested in a tuple literal, an inferred struct
+    /// literal, an interpolated string or an `await` kept `count_name` unset
+    /// and sema then rejected the fill as a 0-element array literal (E0330) —
+    /// a diagnostic about a program the user did not write.
     fn resolve_lens_in_block(
         &mut self,
         b: &mut Block,
         consts: &std::collections::HashMap<String, (Expr, Type)>,
     ) {
-        for s in &mut b.stmts {
-            self.resolve_lens_in_stmt(s, consts);
-        }
-        if let Some(t) = &mut b.tail {
-            self.resolve_lens_in_expr(t, consts);
-        }
-    }
-
-    fn resolve_lens_in_stmt(
-        &mut self,
-        s: &mut Stmt,
-        consts: &std::collections::HashMap<String, (Expr, Type)>,
-    ) {
-        match &mut s.kind {
-            StmtKind::Let { ty, init, .. } => {
-                if let Some(t) = ty {
-                    self.resolve_lens_in_type(t, consts);
-                }
-                if let Some(e) = init {
-                    self.resolve_lens_in_expr(e, consts);
-                }
-            }
-            StmtKind::LetDestructure { init, .. } => self.resolve_lens_in_expr(init, consts),
-            StmtKind::Return(opt) => {
-                if let Some(e) = opt {
-                    self.resolve_lens_in_expr(e, consts);
-                }
-            }
-            StmtKind::While { cond, body, .. } => {
-                self.resolve_lens_in_expr(cond, consts);
-                self.resolve_lens_in_block(body, consts);
-            }
-            StmtKind::Loop(b, _) => self.resolve_lens_in_block(b, consts),
-            StmtKind::For(fl, _) => match fl {
-                ForLoop::Range { iter, body, .. } => {
-                    self.resolve_lens_in_expr(iter, consts);
-                    self.resolve_lens_in_block(body, consts);
-                }
-                ForLoop::CStyle {
-                    init,
-                    cond,
-                    update,
-                    body,
-                } => {
-                    if let Some(i) = init {
-                        self.resolve_lens_in_stmt(i, consts);
-                    }
-                    if let Some(c) = cond {
-                        self.resolve_lens_in_expr(c, consts);
-                    }
-                    for u in update {
-                        self.resolve_lens_in_expr(u, consts);
-                    }
-                    self.resolve_lens_in_block(body, consts);
-                }
-            },
-            StmtKind::Expr(e) | StmtKind::Defer(e) | StmtKind::Assert(e) => {
-                self.resolve_lens_in_expr(e, consts)
-            }
-            StmtKind::IfLet {
-                scrutinee,
-                body,
-                else_body,
-                ..
-            } => {
-                self.resolve_lens_in_expr(scrutinee, consts);
-                self.resolve_lens_in_block(body, consts);
-                if let Some(b) = else_body {
-                    self.resolve_lens_in_block(b, consts);
-                }
-            }
-            StmtKind::GuardLet {
-                scrutinee,
-                else_body,
-                ..
-            } => {
-                self.resolve_lens_in_expr(scrutinee, consts);
-                self.resolve_lens_in_block(else_body, consts);
-            }
-            StmtKind::WhileLet {
-                scrutinee, body, ..
-            } => {
-                self.resolve_lens_in_expr(scrutinee, consts);
-                self.resolve_lens_in_block(body, consts);
-            }
-            StmtKind::Break | StmtKind::Continue => {}
-        }
+        let resolved = walk_block(b, &mut LenResolver { lower: self, consts });
+        *b = resolved;
     }
 
     fn resolve_lens_in_expr(
@@ -1599,125 +1520,10 @@ impl Lower {
         e: &mut Expr,
         consts: &std::collections::HashMap<String, (Expr, Type)>,
     ) {
-        let span = e.span;
-        match &mut e.kind {
-            ExprKind::ArrayFill {
-                fill,
-                count,
-                count_name,
-            } => {
-                if let Some(name) = count_name.take() {
-                    *count = self.resolve_one_len(&name, span, consts);
-                }
-                self.resolve_lens_in_expr(fill, consts);
-            }
-            ExprKind::Cast { expr, ty } => {
-                self.resolve_lens_in_expr(expr, consts);
-                self.resolve_lens_in_type(ty, consts);
-            }
-            ExprKind::Call {
-                callee,
-                args,
-                type_args,
-                arg_labels: _,
-            } => {
-                self.resolve_lens_in_expr(callee, consts);
-                for a in args {
-                    self.resolve_lens_in_expr(a, consts);
-                }
-                for t in type_args {
-                    self.resolve_lens_in_type(t, consts);
-                }
-            }
-            ExprKind::Block(b) => self.resolve_lens_in_block(b, consts),
-            ExprKind::If {
-                cond,
-                then,
-                else_branch,
-            } => {
-                self.resolve_lens_in_expr(cond, consts);
-                self.resolve_lens_in_block(then, consts);
-                if let Some(eb) = else_branch {
-                    self.resolve_lens_in_expr(eb, consts);
-                }
-            }
-            ExprKind::Binary { lhs, rhs, .. } => {
-                self.resolve_lens_in_expr(lhs, consts);
-                self.resolve_lens_in_expr(rhs, consts);
-            }
-            ExprKind::Unary { operand, .. } => self.resolve_lens_in_expr(operand, consts),
-            ExprKind::Range { start, end, .. } => {
-                if let Some(e2) = start {
-                    self.resolve_lens_in_expr(e2, consts);
-                }
-                if let Some(e2) = end {
-                    self.resolve_lens_in_expr(e2, consts);
-                }
-            }
-            ExprKind::Assign { target, value, .. } => {
-                self.resolve_lens_in_expr(target, consts);
-                self.resolve_lens_in_expr(value, consts);
-            }
-            ExprKind::Field { receiver, .. } => self.resolve_lens_in_expr(receiver, consts),
-            ExprKind::StructLit { fields, .. } => {
-                for f in fields {
-                    self.resolve_lens_in_expr(&mut f.value, consts);
-                }
-            }
-            ExprKind::GenericStructLit {
-                fields, type_args, ..
-            } => {
-                for f in fields {
-                    self.resolve_lens_in_expr(&mut f.value, consts);
-                }
-                for t in type_args {
-                    self.resolve_lens_in_type(t, consts);
-                }
-            }
-            ExprKind::GenericEnumCall {
-                type_args, args, ..
-            } => {
-                for t in type_args {
-                    self.resolve_lens_in_type(t, consts);
-                }
-                for a in args {
-                    self.resolve_lens_in_expr(a, consts);
-                }
-            }
-            ExprKind::ArrayLit { elements } => {
-                for el in elements {
-                    self.resolve_lens_in_expr(el, consts);
-                }
-            }
-            ExprKind::Index { receiver, index } => {
-                self.resolve_lens_in_expr(receiver, consts);
-                self.resolve_lens_in_expr(index, consts);
-            }
-            ExprKind::Match { scrutinee, arms } => {
-                self.resolve_lens_in_expr(scrutinee, consts);
-                for a in arms {
-                    self.resolve_lens_in_expr(&mut a.body, consts);
-                }
-            }
-            ExprKind::Intrinsic {
-                type_args,
-                args,
-                ret_ty,
-                ..
-            } => {
-                for t in type_args {
-                    self.resolve_lens_in_type(t, consts);
-                }
-                for a in args {
-                    self.resolve_lens_in_expr(a, consts);
-                }
-                if let Some(rt) = ret_ty {
-                    self.resolve_lens_in_type(rt, consts);
-                }
-            }
-            _ => {}
-        }
+        let resolved = walk_expr(e, &mut LenResolver { lower: self, consts });
+        *e = resolved;
     }
+
 }
 
 /// v0.0.9 Phase 4: returns true iff `e` is a shape accepted as a
@@ -1815,250 +1621,118 @@ fn is_static_initializer(e: &Expr) -> bool {
 
 /// v0.0.9 Phase 4: walk a Block and substitute every const-name Ident
 /// in it.
-fn subst_block(b: &mut Block, consts: &std::collections::HashMap<String, (Expr, Type)>) {
-    for s in &mut b.stmts {
-        subst_stmt(s, consts);
+/// issue-01: the const-length lens resolver. Two node shapes carry a lens —
+/// an array TYPE (`[T; N]`) and an array-fill EXPRESSION (`[v; N]`) — and
+/// both resolve through `Lower::resolve_one_len`, which needs `&mut Lower` to
+/// report E0912.
+struct LenResolver<'a> {
+    lower: &'a mut Lower,
+    consts: &'a std::collections::HashMap<String, (Expr, Type)>,
+}
+
+impl ExprRewriter for LenResolver<'_> {
+    fn visit_type(&mut self, t: &Type) -> Option<Type> {
+        let mut resolved = t.clone();
+        self.lower.resolve_lens_in_type(&mut resolved, self.consts);
+        Some(resolved)
     }
-    if let Some(t) = &mut b.tail {
-        subst_expr(t, consts);
+
+    fn visit_expr(&mut self, e: &Expr) -> Option<Expr> {
+        let ExprKind::ArrayFill {
+            fill, count_name, ..
+        } = &e.kind
+        else {
+            return None;
+        };
+        // No lens on this fill: let the generic walk handle its children.
+        let name = count_name.clone()?;
+        let count = self.lower.resolve_one_len(&name, e.span, self.consts);
+        Some(Expr {
+            kind: ExprKind::ArrayFill {
+                fill: Box::new(walk_expr(fill, self)),
+                count,
+                count_name: None,
+            },
+            span: e.span,
+        })
     }
 }
 
-fn subst_stmt(s: &mut Stmt, consts: &std::collections::HashMap<String, (Expr, Type)>) {
-    match &mut s.kind {
-        StmtKind::Let { init, .. } => {
-            if let Some(e) = init {
-                subst_expr(e, consts);
-            }
-        }
-        StmtKind::LetDestructure { init, .. } => subst_expr(init, consts),
-        StmtKind::Return(opt) => {
-            if let Some(e) = opt {
-                subst_expr(e, consts);
-            }
-        }
-        StmtKind::While { cond, body, .. } => {
-            subst_expr(cond, consts);
-            subst_block(body, consts);
-        }
-        StmtKind::For(fl, _) => match fl {
-            ForLoop::CStyle {
-                init,
-                cond,
-                update,
-                body,
-            } => {
-                if let Some(i) = init {
-                    subst_stmt(i, consts);
-                }
-                if let Some(c) = cond {
-                    subst_expr(c, consts);
-                }
-                for u in update {
-                    subst_expr(u, consts);
-                }
-                subst_block(body, consts);
-            }
-            ForLoop::Range { iter, body, .. } => {
-                subst_expr(iter, consts);
-                subst_block(body, consts);
-            }
-        },
-        StmtKind::Expr(e) => subst_expr(e, consts),
-        StmtKind::Defer(e) => subst_expr(e, consts),
-        StmtKind::Loop(b, _) => subst_block(b, consts),
-        StmtKind::Assert(e) => subst_expr(e, consts),
-        // After the slice-4A.5 lowering, IfLet / WhileLet / GuardLet
-        // are rewritten into match-using forms; no original nodes
-        // survive here. The arms are defense-in-depth no-ops in case
-        // a future change orders the passes differently.
-        StmtKind::IfLet {
-            scrutinee,
-            body,
-            else_body,
-            ..
-        } => {
-            subst_expr(scrutinee, consts);
-            subst_block(body, consts);
-            if let Some(eb) = else_body {
-                subst_block(eb, consts);
-            }
-        }
-        StmtKind::WhileLet {
-            scrutinee, body, ..
-        } => {
-            subst_expr(scrutinee, consts);
-            subst_block(body, consts);
-        }
-        StmtKind::GuardLet {
-            scrutinee,
-            else_body,
-            ..
-        } => {
-            subst_expr(scrutinee, consts);
-            subst_block(else_body, consts);
-        }
-        StmtKind::Break | StmtKind::Continue => {}
+/// issue-01: const substitution rides the generic walk — the only node it has
+/// an opinion about is an `Ident` naming a `const`.
+struct ConstSubst<'a> {
+    consts: &'a std::collections::HashMap<String, (Expr, Type)>,
+}
+
+impl ExprRewriter for ConstSubst<'_> {
+    fn visit_expr(&mut self, e: &Expr) -> Option<Expr> {
+        // Replace this node entirely if it's an Ident naming a const. Span
+        // is taken from the original use site so diagnostics still point
+        // there if a later pass complains about the substituted literal.
+        //
+        // The substituted expression is wrapped in `Cast { expr: literal,
+        // ty: declared_ty }` so the const's declared type pins the value
+        // at every use site — independent of surrounding inference. Without
+        // the cast, an unsuffixed `176` substituted into a `usize`-typed
+        // binary op falls back to `i32` per sema's literal default and
+        // fires a type-mismatch.
+        let ExprKind::Ident(name) = &e.kind else {
+            return None;
+        };
+        let (value, decl_ty) = self.consts.get(name)?;
+        // GAP 3 (v0.0.19): the cloned const *value* still carries the
+        // const's definition-site byte spans. With multi-file builds, a
+        // const defined in file A but used in file B would, on a downstream
+        // type error against the substituted literal, render at file A's
+        // offsets while sema believes it is in file B (current_file = B) —
+        // the wrong file, and a clamped/wrong line. Re-stamp the whole
+        // cloned subtree to the use site so any such diagnostic points where
+        // the user actually wrote the reference.
+        let mut value = value.clone();
+        respan_tree(&mut value, e.span);
+        Some(Expr {
+            kind: ExprKind::Cast {
+                expr: Box::new(value),
+                ty: decl_ty.clone(),
+            },
+            span: e.span,
+        })
     }
+}
+
+fn subst_block(b: &mut Block, consts: &std::collections::HashMap<String, (Expr, Type)>) {
+    let resolved = walk_block(b, &mut ConstSubst { consts });
+    *b = resolved;
 }
 
 /// GAP 3 (v0.0.19): overwrite the span of `e` and every sub-expression it
 /// contains with `span`. Used when a `const` value is substituted into a use
 /// site in (possibly) another file: the cloned literal must not keep its
 /// definition-site coordinates, or a downstream diagnostic would render against
-/// the wrong file. Const initializers are restricted to literal forms
-/// (`is_const_initializer`), so the recursion only needs to cover those.
-fn respan_tree(e: &mut Expr, span: Span) {
-    e.span = span;
-    match &mut e.kind {
-        ExprKind::Unary { operand, .. } => respan_tree(operand, span),
-        ExprKind::Cast { expr, .. } => respan_tree(expr, span),
-        ExprKind::Intrinsic { args, .. } => {
-            for a in args {
-                respan_tree(a, span);
-            }
-        }
-        // All other const-initializer-legal shapes are leaf literals
-        // (IntLit / FloatLit / BoolLit / StrLit / CStrLit) with no
-        // sub-expressions to re-stamp.
-        _ => {}
+/// the wrong file.
+///
+/// issue-01: this used to cover only the shapes `is_const_initializer` accepted
+/// at the time, with an `_ => {}` for the rest — so when that grammar grew
+/// (struct-literal and array initializers), their field values kept the
+/// definition-site spans. The generic walk has no such list to keep in sync.
+struct Respan {
+    span: Span,
+}
+
+impl ExprRewriter for Respan {
+    fn visit_expr(&mut self, e: &Expr) -> Option<Expr> {
+        // Rebuild the children first (the rewriter is re-entered on each of
+        // them), then stamp this node's span.
+        Some(Expr {
+            kind: walk_expr_kind(e, self),
+            span: self.span,
+        })
     }
 }
 
-fn subst_expr(e: &mut Expr, consts: &std::collections::HashMap<String, (Expr, Type)>) {
-    // Replace this node entirely if it's an Ident naming a const. Span
-    // is taken from the original use site so diagnostics still point
-    // there if a later pass complains about the substituted literal.
-    //
-    // The substituted expression is wrapped in `Cast { expr: literal,
-    // ty: declared_ty }` so the const's declared type pins the value
-    // at every use site — independent of surrounding inference. Without
-    // the cast, an unsuffixed `176` substituted into a `usize`-typed
-    // binary op falls back to `i32` per sema's literal default and
-    // fires a type-mismatch.
-    if let ExprKind::Ident(name) = &e.kind {
-        if let Some((value, decl_ty)) = consts.get(name) {
-            let use_span = e.span;
-            // GAP 3 (v0.0.19): the cloned const *value* still carries the
-            // const's definition-site byte spans. With multi-file builds, a
-            // const defined in file A but used in file B would, on a downstream
-            // type error against the substituted literal, render at file A's
-            // offsets while sema believes it is in file B (current_file = B) —
-            // the wrong file, and a clamped/wrong line. Re-stamp the whole
-            // cloned subtree to the use site so any such diagnostic points where
-            // the user actually wrote the reference.
-            let mut value = value.clone();
-            respan_tree(&mut value, use_span);
-            *e = Expr {
-                kind: ExprKind::Cast {
-                    expr: Box::new(value),
-                    ty: decl_ty.clone(),
-                },
-                span: use_span,
-            };
-            return;
-        }
-    }
-    match &mut e.kind {
-        ExprKind::IntLit(_, _)
-        | ExprKind::FloatLit(_, _)
-        | ExprKind::BoolLit(_)
-        | ExprKind::StrLit(_)
-        | ExprKind::CStrLit(_)
-        | ExprKind::Ident(_)
-        | ExprKind::Path { .. }
-        | ExprKind::IncludeBytes { .. }
-        | ExprKind::IncludeStr { .. }
-        | ExprKind::EnvVar { .. } => {}
-        ExprKind::Intrinsic { args, .. } => {
-            for a in args {
-                subst_expr(a, consts);
-            }
-        }
-        ExprKind::Asm { operands, .. } => {
-            for op in operands {
-                subst_expr(&mut op.value, consts);
-            }
-        }
-        ExprKind::InterpStr { parts } => {
-            for p in parts {
-                if let InterpStrPart::Expr(inner) = p {
-                    subst_expr(inner, consts);
-                }
-            }
-        }
-        ExprKind::Block(b) => subst_block(b, consts),
-        ExprKind::Await(inner) | ExprKind::Yield(inner) => subst_expr(inner, consts),
-        ExprKind::If {
-            cond,
-            then,
-            else_branch,
-        } => {
-            subst_expr(cond, consts);
-            subst_block(then, consts);
-            if let Some(eb) = else_branch {
-                subst_expr(eb, consts);
-            }
-        }
-        ExprKind::FnRef { callee, .. } => subst_expr(callee, consts),
-        ExprKind::Call { callee, args, .. } => {
-            subst_expr(callee, consts);
-            for a in args {
-                subst_expr(a, consts);
-            }
-        }
-        ExprKind::Binary { lhs, rhs, .. } => {
-            subst_expr(lhs, consts);
-            subst_expr(rhs, consts);
-        }
-        ExprKind::Unary { operand, .. } => subst_expr(operand, consts),
-        ExprKind::Range { start, end, .. } => {
-            if let Some(s) = start {
-                subst_expr(s, consts);
-            }
-            if let Some(en) = end {
-                subst_expr(en, consts);
-            }
-        }
-        ExprKind::Assign { target, value, .. } => {
-            subst_expr(target, consts);
-            subst_expr(value, consts);
-        }
-        ExprKind::Cast { expr, .. } => subst_expr(expr, consts),
-        ExprKind::StructLit { fields, .. }
-        | ExprKind::InferredStructLit { fields }
-        | ExprKind::GenericStructLit { fields, .. } => {
-            for f in fields {
-                subst_expr(&mut f.value, consts);
-            }
-        }
-        ExprKind::GenericEnumCall { args, .. } => {
-            for a in args {
-                subst_expr(a, consts);
-            }
-        }
-        ExprKind::Field { receiver, .. } => subst_expr(receiver, consts),
-        ExprKind::ArrayFill { fill, .. } => subst_expr(fill, consts),
-        ExprKind::ArrayLit { elements } | ExprKind::TupleLit { elements } => {
-            for el in elements {
-                subst_expr(el, consts);
-            }
-        }
-        ExprKind::Index { receiver, index } => {
-            subst_expr(receiver, consts);
-            subst_expr(index, consts);
-        }
-        ExprKind::Match { scrutinee, arms } => {
-            subst_expr(scrutinee, consts);
-            for a in arms {
-                subst_expr(&mut a.body, consts);
-            }
-        }
-        // v0.0.22 DSL.2: never reached — the per-item lower pass desugars
-        // builder blocks before `substitute_consts` runs, so no
-        // `BuilderBlock` node survives to here.
-        ExprKind::BuilderBlock { .. } => {}
-    }
+fn respan_tree(e: &mut Expr, span: Span) {
+    let respanned = walk_expr(e, &mut Respan { span });
+    *e = respanned;
 }
 
 /// v0.0.22 DSL.2/DSL.4: desugar a builder block into an ordinary block

@@ -22905,3 +22905,42 @@ fn tuple_types_naming_a_type_parameter_instantiate() {
     let run = Command::new(&bin).status().expect("run tuple-generic probe");
     assert_eq!(run.code(), Some(0), "unexpected exit: {run}");
 }
+
+/// reports/issue-01: three walkers in monomorphize and lower each matched on
+/// ExprKind with an `_` fallthrough, so a construct they had no arm for was
+/// silently skipped. Every case below failed on the pre-migration binary and
+/// is one of those blind spots, reached through the SAME parent node the
+/// walkers did descend into:
+///
+///   - a type alias inside a tuple literal — the alias pass never rewrote it,
+///     and codegen aborted with "reached Ty::Error";
+///   - `[v; N]` (a const-named fill length) inside a tuple literal and inside
+///     an inferred struct literal — the const-length pass never resolved the
+///     lens, so sema rejected the fill as a 0-element array (E0330).
+///
+/// The generic walk in ast.rs matches exhaustively, so none of these is
+/// expressible any more: a new ExprKind fails to compile until it is handled
+/// in the one walker.
+#[test]
+fn ast_walk_reaches_constructs_the_hand_rolled_walkers_skipped() {
+    let (_dir, bin) = compile_program(
+        "type Meters = i32;\n\
+         const N: i32 = 4;\n\
+         struct Buf { data: [i32; 4] }\n\
+         fn main() -> i32 {\n\
+           // Alias inside a tuple literal (monomorphize's alias walk).\n\
+           let t: (i32, i32) = (7 as Meters, 1);\n\
+           if t.0 != 7 { return 1; }\n\
+           // Const-named fill length inside a tuple literal (lower's lens walk).\n\
+           let f: ([i32; 4], i32) = ([5; N], 2);\n\
+           if f.0[3] != 5 { return 2; }\n\
+           // ... and inside an inferred struct literal.\n\
+           let b: Buf = { data: [6; N] };\n\
+           if b.data[3] != 6 { return 3; }\n\
+           return 0;\n\
+         }\n",
+        false,
+    );
+    let run = Command::new(&bin).status().expect("run walker probe");
+    assert_eq!(run.code(), Some(0), "unexpected exit: {run}");
+}

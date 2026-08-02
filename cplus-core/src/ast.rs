@@ -1272,3 +1272,672 @@ pub enum AssignOp {
     ShlAssign,
     ShrAssign,
 }
+
+// ---------------------------------------------------------------------------
+// Generic AST traversal (issue-01)
+// ---------------------------------------------------------------------------
+//
+// Every pass that rewrites the AST used to hand-roll its own match over
+// `ExprKind` / `StmtKind` with an `other => other.clone()` fallthrough. A node
+// kind missing from one of those matches is not a compile error — it is a
+// silently un-rewritten subtree, which is how the tuple-literal, interpolated-
+// string and Self-in-loop ICEs (reports/bug-04, bug-06, bug-07) each shipped.
+// The walkers below are the single place that knows the shape of the tree:
+// they match EXHAUSTIVELY, with no catch-all arm, so a new `ExprKind` variant
+// fails to compile until it is handled here, once.
+//
+// A rewriter overrides only the node kinds it cares about. Returning
+// `Some(node)` REPLACES the node and its children are not visited (the
+// override is responsible for recursing into whatever children it keeps —
+// call `walk_expr` with the same rewriter). Returning `None` keeps the node
+// and recurses into every child.
+
+/// The hooks a rewriting walk calls. Every method defaults to "no change,
+/// recurse into children", so an implementor writes only the arms it changes.
+pub trait ExprRewriter {
+    fn visit_expr(&mut self, _e: &Expr) -> Option<Expr> {
+        None
+    }
+    fn visit_stmt(&mut self, _s: &Stmt) -> Option<Stmt> {
+        None
+    }
+    fn visit_type(&mut self, _t: &Type) -> Option<Type> {
+        None
+    }
+    fn visit_pattern(&mut self, _p: &Pattern) -> Option<Pattern> {
+        None
+    }
+}
+
+/// Rewrite one expression: ask the rewriter first, otherwise reconstruct the
+/// node with rewritten children. Spans are preserved exactly — the span-keyed
+/// side tables sema hands to monomorphize are keyed on them.
+pub fn walk_expr<R: ExprRewriter + ?Sized>(e: &Expr, r: &mut R) -> Expr {
+    if let Some(replacement) = r.visit_expr(e) {
+        return replacement;
+    }
+    Expr {
+        kind: walk_expr_kind(e, r),
+        span: e.span,
+    }
+}
+
+/// The child half of [`walk_expr`]: rebuild this node's KIND with rewritten
+/// children, without re-offering the node itself to the rewriter. A hook that
+/// keeps the node but changes something about the node itself (its span, say)
+/// calls this to recurse without looping.
+pub fn walk_expr_kind<R: ExprRewriter + ?Sized>(e: &Expr, r: &mut R) -> ExprKind {
+    match &e.kind {
+        // Leaves: no child nodes of any kind.
+        ExprKind::IntLit(v, s) => ExprKind::IntLit(*v, *s),
+        ExprKind::FloatLit(v, s) => ExprKind::FloatLit(*v, *s),
+        ExprKind::BoolLit(b) => ExprKind::BoolLit(*b),
+        ExprKind::StrLit(s) => ExprKind::StrLit(s.clone()),
+        ExprKind::CStrLit(s) => ExprKind::CStrLit(s.clone()),
+        ExprKind::Ident(n) => ExprKind::Ident(n.clone()),
+        ExprKind::Path { segments } => ExprKind::Path {
+            segments: segments.clone(),
+        },
+        ExprKind::IncludeBytes { path } => ExprKind::IncludeBytes { path: path.clone() },
+        ExprKind::IncludeStr { path } => ExprKind::IncludeStr { path: path.clone() },
+        ExprKind::EnvVar { name } => ExprKind::EnvVar { name: name.clone() },
+
+        ExprKind::InterpStr { parts } => ExprKind::InterpStr {
+            parts: parts
+                .iter()
+                .map(|p| match p {
+                    InterpStrPart::Expr(inner) => {
+                        InterpStrPart::Expr(Box::new(walk_expr(inner, r)))
+                    }
+                    InterpStrPart::Lit(s) => InterpStrPart::Lit(s.clone()),
+                })
+                .collect(),
+        },
+        ExprKind::Block(b) => ExprKind::Block(walk_block(b, r)),
+        ExprKind::Await(inner) => ExprKind::Await(Box::new(walk_expr(inner, r))),
+        ExprKind::Yield(inner) => ExprKind::Yield(Box::new(walk_expr(inner, r))),
+        ExprKind::If {
+            cond,
+            then,
+            else_branch,
+        } => ExprKind::If {
+            cond: Box::new(walk_expr(cond, r)),
+            then: walk_block(then, r),
+            else_branch: else_branch
+                .as_ref()
+                .map(|b| Box::new(walk_expr(b, r))),
+        },
+        ExprKind::Call {
+            callee,
+            args,
+            arg_labels,
+            type_args,
+        } => ExprKind::Call {
+            callee: Box::new(walk_expr(callee, r)),
+            args: args.iter().map(|a| walk_expr(a, r)).collect(),
+            arg_labels: arg_labels.clone(),
+            type_args: type_args.iter().map(|t| walk_type(t, r)).collect(),
+        },
+        ExprKind::FnRef { callee, type_args } => ExprKind::FnRef {
+            callee: Box::new(walk_expr(callee, r)),
+            type_args: type_args.iter().map(|t| walk_type(t, r)).collect(),
+        },
+        ExprKind::Binary { op, lhs, rhs } => ExprKind::Binary {
+            op: *op,
+            lhs: Box::new(walk_expr(lhs, r)),
+            rhs: Box::new(walk_expr(rhs, r)),
+        },
+        ExprKind::Unary { op, operand } => ExprKind::Unary {
+            op: *op,
+            operand: Box::new(walk_expr(operand, r)),
+        },
+        ExprKind::Range {
+            start,
+            end,
+            inclusive,
+        } => ExprKind::Range {
+            start: start.as_ref().map(|s| Box::new(walk_expr(s, r))),
+            end: end.as_ref().map(|s| Box::new(walk_expr(s, r))),
+            inclusive: *inclusive,
+        },
+        ExprKind::Assign { op, target, value } => ExprKind::Assign {
+            op: *op,
+            target: Box::new(walk_expr(target, r)),
+            value: Box::new(walk_expr(value, r)),
+        },
+        ExprKind::Cast { expr, ty } => ExprKind::Cast {
+            expr: Box::new(walk_expr(expr, r)),
+            ty: walk_type(ty, r),
+        },
+        ExprKind::StructLit { name, fields } => ExprKind::StructLit {
+            name: name.clone(),
+            fields: walk_struct_lit_fields(fields, r),
+        },
+        ExprKind::InferredStructLit { fields } => ExprKind::InferredStructLit {
+            fields: walk_struct_lit_fields(fields, r),
+        },
+        ExprKind::GenericStructLit {
+            name,
+            type_args,
+            fields,
+        } => ExprKind::GenericStructLit {
+            name: name.clone(),
+            type_args: type_args.iter().map(|t| walk_type(t, r)).collect(),
+            fields: walk_struct_lit_fields(fields, r),
+        },
+        ExprKind::GenericEnumCall {
+            enum_name,
+            type_args,
+            variant,
+            method_type_args,
+            args,
+        } => ExprKind::GenericEnumCall {
+            enum_name: enum_name.clone(),
+            type_args: type_args.iter().map(|t| walk_type(t, r)).collect(),
+            variant: variant.clone(),
+            method_type_args: method_type_args.iter().map(|t| walk_type(t, r)).collect(),
+            args: args.iter().map(|a| walk_expr(a, r)).collect(),
+        },
+        ExprKind::Field { receiver, name } => ExprKind::Field {
+            receiver: Box::new(walk_expr(receiver, r)),
+            name: name.clone(),
+        },
+        ExprKind::ArrayLit { elements } => ExprKind::ArrayLit {
+            elements: elements.iter().map(|el| walk_expr(el, r)).collect(),
+        },
+        ExprKind::ArrayFill {
+            fill,
+            count,
+            count_name,
+        } => ExprKind::ArrayFill {
+            fill: Box::new(walk_expr(fill, r)),
+            count: *count,
+            count_name: count_name.clone(),
+        },
+        ExprKind::Index { receiver, index } => ExprKind::Index {
+            receiver: Box::new(walk_expr(receiver, r)),
+            index: Box::new(walk_expr(index, r)),
+        },
+        ExprKind::TupleLit { elements } => ExprKind::TupleLit {
+            elements: elements.iter().map(|el| walk_expr(el, r)).collect(),
+        },
+        ExprKind::Match { scrutinee, arms } => ExprKind::Match {
+            scrutinee: Box::new(walk_expr(scrutinee, r)),
+            arms: arms
+                .iter()
+                .map(|a| MatchArm {
+                    pattern: walk_pattern(&a.pattern, r),
+                    body: walk_expr(&a.body, r),
+                    span: a.span,
+                })
+                .collect(),
+        },
+        ExprKind::Intrinsic {
+            name,
+            type_args,
+            args,
+            ret_ty,
+        } => ExprKind::Intrinsic {
+            name: name.clone(),
+            type_args: type_args.iter().map(|t| walk_type(t, r)).collect(),
+            args: args.iter().map(|a| walk_expr(a, r)).collect(),
+            ret_ty: ret_ty.as_ref().map(|t| walk_type(t, r)),
+        },
+        ExprKind::Asm {
+            template,
+            operands,
+            clobbers,
+        } => ExprKind::Asm {
+            template: template.clone(),
+            operands: operands
+                .iter()
+                .map(|o| AsmOperand {
+                    name: o.name.clone(),
+                    dir: o.dir.clone(),
+                    reg: o.reg.clone(),
+                    value: Box::new(walk_expr(&o.value, r)),
+                    span: o.span,
+                })
+                .collect(),
+            clobbers: clobbers.clone(),
+        },
+        // Builder blocks are desugared to ordinary calls before sema, so no
+        // pass that rewrites should meet one. Recursed anyway: a walker with
+        // a blind spot is the bug this module exists to prevent.
+        ExprKind::BuilderBlock {
+            context,
+            body,
+            container,
+        } => ExprKind::BuilderBlock {
+            context: context.clone(),
+            body: walk_builder_block(body, r),
+            container: container.clone(),
+        },
+    }
+}
+
+fn walk_struct_lit_fields<R: ExprRewriter + ?Sized>(
+    fields: &[StructLitField],
+    r: &mut R,
+) -> Vec<StructLitField> {
+    fields
+        .iter()
+        .map(|f| StructLitField {
+            name: f.name.clone(),
+            value: walk_expr(&f.value, r),
+            span: f.span,
+        })
+        .collect()
+}
+
+fn walk_builder_block<R: ExprRewriter + ?Sized>(b: &BuilderBlock, r: &mut R) -> BuilderBlock {
+    BuilderBlock {
+        entries: b.entries.iter().map(|e| walk_builder_entry(e, r)).collect(),
+        span: b.span,
+    }
+}
+
+fn walk_builder_entry<R: ExprRewriter + ?Sized>(e: &BuilderEntry, r: &mut R) -> BuilderEntry {
+    match e {
+        BuilderEntry::Let(s) => BuilderEntry::Let(Box::new(walk_stmt(s, r))),
+        BuilderEntry::Item { expr, modifiers } => BuilderEntry::Item {
+            expr: walk_expr(expr, r),
+            modifiers: modifiers
+                .iter()
+                .map(|m| BuilderModifier {
+                    name: m.name.clone(),
+                    kind: match &m.kind {
+                        BuilderModifierKind::Assign(v) => {
+                            BuilderModifierKind::Assign(walk_expr(v, r))
+                        }
+                        BuilderModifierKind::Call(args) => BuilderModifierKind::Call(
+                            args.iter().map(|a| walk_expr(a, r)).collect(),
+                        ),
+                    },
+                    span: m.span,
+                })
+                .collect(),
+        },
+        BuilderEntry::If { cond, then, else_ } => BuilderEntry::If {
+            cond: walk_expr(cond, r),
+            then: then.iter().map(|t| walk_builder_entry(t, r)).collect(),
+            else_: else_
+                .as_ref()
+                .map(|es| es.iter().map(|t| walk_builder_entry(t, r)).collect()),
+        },
+        BuilderEntry::For { var, iter, body } => BuilderEntry::For {
+            var: var.clone(),
+            iter: walk_expr(iter, r),
+            body: body.iter().map(|t| walk_builder_entry(t, r)).collect(),
+        },
+    }
+}
+
+pub fn walk_block<R: ExprRewriter + ?Sized>(b: &Block, r: &mut R) -> Block {
+    Block {
+        stmts: b.stmts.iter().map(|s| walk_stmt(s, r)).collect(),
+        tail: b.tail.as_ref().map(|t| Box::new(walk_expr(t, r))),
+        span: b.span,
+    }
+}
+
+pub fn walk_stmt<R: ExprRewriter + ?Sized>(s: &Stmt, r: &mut R) -> Stmt {
+    if let Some(replacement) = r.visit_stmt(s) {
+        return replacement;
+    }
+    let kind = match &s.kind {
+        StmtKind::Let {
+            mutable,
+            name,
+            ty,
+            init,
+        } => StmtKind::Let {
+            mutable: *mutable,
+            name: name.clone(),
+            ty: ty.as_ref().map(|t| walk_type(t, r)),
+            init: init.as_ref().map(|e| walk_expr(e, r)),
+        },
+        StmtKind::LetDestructure {
+            mutable,
+            type_name,
+            fields,
+            init,
+        } => StmtKind::LetDestructure {
+            mutable: *mutable,
+            type_name: type_name.clone(),
+            fields: fields.clone(),
+            init: walk_expr(init, r),
+        },
+        StmtKind::Return(e) => StmtKind::Return(e.as_ref().map(|e| walk_expr(e, r))),
+        StmtKind::While {
+            cond,
+            body,
+            attributes,
+        } => StmtKind::While {
+            cond: walk_expr(cond, r),
+            body: walk_block(body, r),
+            attributes: attributes.clone(),
+        },
+        StmtKind::For(f, attributes) => StmtKind::For(walk_for_loop(f, r), attributes.clone()),
+        StmtKind::Expr(e) => StmtKind::Expr(walk_expr(e, r)),
+        StmtKind::Defer(e) => StmtKind::Defer(walk_expr(e, r)),
+        StmtKind::Assert(e) => StmtKind::Assert(walk_expr(e, r)),
+        StmtKind::Break => StmtKind::Break,
+        StmtKind::Continue => StmtKind::Continue,
+        StmtKind::Loop(body, attributes) => {
+            StmtKind::Loop(walk_block(body, r), attributes.clone())
+        }
+        StmtKind::IfLet {
+            pattern,
+            scrutinee,
+            body,
+            else_body,
+            mutable,
+        } => StmtKind::IfLet {
+            pattern: walk_pattern(pattern, r),
+            scrutinee: walk_expr(scrutinee, r),
+            body: walk_block(body, r),
+            else_body: else_body.as_ref().map(|b| walk_block(b, r)),
+            mutable: *mutable,
+        },
+        StmtKind::WhileLet {
+            pattern,
+            scrutinee,
+            body,
+            mutable,
+        } => StmtKind::WhileLet {
+            pattern: walk_pattern(pattern, r),
+            scrutinee: walk_expr(scrutinee, r),
+            body: walk_block(body, r),
+            mutable: *mutable,
+        },
+        StmtKind::GuardLet {
+            pattern,
+            scrutinee,
+            complement,
+            else_body,
+            mutable,
+        } => StmtKind::GuardLet {
+            pattern: walk_pattern(pattern, r),
+            scrutinee: walk_expr(scrutinee, r),
+            complement: complement.as_ref().map(|p| walk_pattern(p, r)),
+            else_body: walk_block(else_body, r),
+            mutable: *mutable,
+        },
+    };
+    Stmt { kind, span: s.span }
+}
+
+pub fn walk_for_loop<R: ExprRewriter + ?Sized>(f: &ForLoop, r: &mut R) -> ForLoop {
+    match f {
+        ForLoop::Range { var, iter, body } => ForLoop::Range {
+            var: var.clone(),
+            iter: walk_expr(iter, r),
+            body: walk_block(body, r),
+        },
+        ForLoop::CStyle {
+            init,
+            cond,
+            update,
+            body,
+        } => ForLoop::CStyle {
+            init: init.as_ref().map(|s| Box::new(walk_stmt(s, r))),
+            cond: cond.as_ref().map(|c| walk_expr(c, r)),
+            update: update.iter().map(|u| walk_expr(u, r)).collect(),
+            body: walk_block(body, r),
+        },
+    }
+}
+
+pub fn walk_type<R: ExprRewriter + ?Sized>(t: &Type, r: &mut R) -> Type {
+    if let Some(replacement) = r.visit_type(t) {
+        return replacement;
+    }
+    let kind = match &t.kind {
+        TypeKind::Path(n) => TypeKind::Path(n.clone()),
+        TypeKind::Array {
+            elem,
+            len,
+            len_name,
+        } => TypeKind::Array {
+            elem: Box::new(walk_type(elem, r)),
+            len: *len,
+            len_name: len_name.clone(),
+        },
+        TypeKind::Borrowed { region, inner } => TypeKind::Borrowed {
+            region: region.clone(),
+            inner: Box::new(walk_type(inner, r)),
+        },
+        TypeKind::Generic { name, args } => TypeKind::Generic {
+            name: name.clone(),
+            args: args.iter().map(|a| walk_type(a, r)).collect(),
+        },
+        TypeKind::RawPtr(inner) => TypeKind::RawPtr(Box::new(walk_type(inner, r))),
+        TypeKind::FnPtr {
+            params,
+            param_takes,
+            param_refs,
+            return_type,
+        } => TypeKind::FnPtr {
+            params: params.iter().map(|p| walk_type(p, r)).collect(),
+            param_takes: param_takes.clone(),
+            param_refs: param_refs.clone(),
+            return_type: return_type.as_ref().map(|rt| Box::new(walk_type(rt, r))),
+        },
+        TypeKind::Slice(inner) => TypeKind::Slice(Box::new(walk_type(inner, r))),
+        TypeKind::Tuple(elems) => {
+            TypeKind::Tuple(elems.iter().map(|e| walk_type(e, r)).collect())
+        }
+    };
+    Type { kind, span: t.span }
+}
+
+pub fn walk_pattern<R: ExprRewriter + ?Sized>(p: &Pattern, r: &mut R) -> Pattern {
+    if let Some(replacement) = r.visit_pattern(p) {
+        return replacement;
+    }
+    let kind = match &p.kind {
+        PatternKind::Wildcard => PatternKind::Wildcard,
+        PatternKind::Binding(i) => PatternKind::Binding(i.clone()),
+        PatternKind::Lit(e) => PatternKind::Lit(Box::new(walk_expr(e, r))),
+        PatternKind::Variant {
+            enum_name,
+            type_args,
+            variant_name,
+            payload,
+        } => PatternKind::Variant {
+            enum_name: enum_name.clone(),
+            type_args: type_args.iter().map(|t| walk_type(t, r)).collect(),
+            variant_name: variant_name.clone(),
+            payload: payload.iter().map(|sp| walk_pattern(sp, r)).collect(),
+        },
+    };
+    Pattern { kind, span: p.span }
+}
+
+/// Read-only traversal: invoke `f` on every expression node in the subtree,
+/// parents before children. Implemented as an adapter over [`walk_expr`] so
+/// discovery and rewriting provably visit the SAME node set — a construct one
+/// walker descends into and the other does not is precisely reports/bug-04
+/// (the call was discovered, the instantiation was synthesized, and the call
+/// site kept the template name).
+pub fn visit_exprs(e: &Expr, f: &mut impl FnMut(&Expr)) {
+    let mut v = ReadOnly { f };
+    let _ = walk_expr(e, &mut v);
+}
+
+/// Read-only traversal of a block; see [`visit_exprs`].
+pub fn visit_exprs_in_block(b: &Block, f: &mut impl FnMut(&Expr)) {
+    let mut v = ReadOnly { f };
+    let _ = walk_block(b, &mut v);
+}
+
+struct ReadOnly<'a, F: FnMut(&Expr)> {
+    f: &'a mut F,
+}
+
+impl<F: FnMut(&Expr)> ExprRewriter for ReadOnly<'_, F> {
+    fn visit_expr(&mut self, e: &Expr) -> Option<Expr> {
+        (self.f)(e);
+        // `None` keeps the walk going into the children; the reconstructed
+        // tree is dropped by the caller. Returning a leaf placeholder here to
+        // skip the reconstruction was measured and is not faster — the walk
+        // still rebuilds one level per node either way.
+        None
+    }
+}
+
+#[cfg(test)]
+mod walker_tests {
+    use super::*;
+    use crate::lexer::tokenize;
+    use crate::parser::parse;
+
+    /// One program per construct family the walkers have to descend into.
+    /// Parse-only — none of this has to type-check.
+    const SAMPLE: &str = r#"
+struct P[T] { v: T }
+enum E { A, B }
+fn helper(x: i32) -> i32 { return x; }
+fn id[U](take u: U) -> U { return u; }
+fn sample[T](take t: T, p: *i32, cb: fn(i32) -> i32) -> i32 {
+    let pair: (i32, i32) = (helper(1), 2);
+    let arr: [i32; 3] = [helper(1), 2, 3];
+    let fill: [i32; 4] = [helper(0); 4];
+    var acc: i32 = pair.0 + arr[1] - fill[0];
+    let s: Text = "a ${helper(2)} b ${acc} c";
+    let q: P[i32] = P[i32] { v: helper(3) };
+    let g: fn(i32) -> i32 = id::[i32];
+    let n: i32 = acc as i32;
+    let neg: i32 = -acc;
+    let r: bool = acc > 1 && acc < 9;
+    while acc < 3 { acc = acc + 1; }
+    for i in 0..3 { acc = acc + i; }
+    for (var j: i32 = 0; j < 2; j = j + 1) { acc = acc + j; }
+    loop { break; }
+    if acc > 1 { acc = helper(4); } else { acc = 0; }
+    let m: i32 = match acc { _ => helper(5) };
+    match acc { 0 => { acc = 1; }, _ => { acc = 2; } }
+    defer helper(6);
+    assert acc >= 0;
+    let blk: i32 = { helper(7) };
+    acc = acc + *p;
+    acc = acc + cb(8);
+    let never: i32 = #size_of::[i32]() as i32;
+    return acc + m + n + neg + blk;
+}
+"#;
+
+    fn sample_fn_bodies() -> Vec<Block> {
+        let toks = tokenize(SAMPLE).expect("lex sample");
+        let prog = parse(toks).expect("parse sample");
+        prog.items
+            .into_iter()
+            .filter_map(|i| match i.kind {
+                ItemKind::Function(f) => Some(f.body),
+                _ => None,
+            })
+            .collect()
+    }
+
+    struct NoOp;
+    impl ExprRewriter for NoOp {}
+
+    /// The identity property the whole design rests on: a rewriter that
+    /// changes nothing reproduces the tree exactly — same nodes, same spans.
+    /// A walker arm that forgets a child (or invents one) fails here.
+    #[test]
+    fn walking_with_a_noop_rewriter_reproduces_the_tree() {
+        let bodies = sample_fn_bodies();
+        assert!(bodies.len() >= 3, "sample lost its functions");
+        for body in &bodies {
+            let walked = walk_block(body, &mut NoOp);
+            assert_eq!(&walked, body, "no-op walk changed the tree");
+        }
+    }
+
+    struct RenameIdents;
+    impl ExprRewriter for RenameIdents {
+        fn visit_expr(&mut self, e: &Expr) -> Option<Expr> {
+            let ExprKind::Ident(n) = &e.kind else {
+                return None;
+            };
+            Some(Expr {
+                kind: ExprKind::Ident(format!("{n}__seen")),
+                span: e.span,
+            })
+        }
+    }
+
+    /// Discovery and rewriting must traverse the same node set — the
+    /// asymmetry between them is what reports/bug-04 and bug-06 were. The
+    /// read-only visitor is an adapter over the same walk, so this holds by
+    /// construction; the test pins it against a future divergence.
+    #[test]
+    fn read_only_visit_sees_every_node_the_rewrite_walk_rewrites() {
+        for body in &sample_fn_bodies() {
+            let mut seen = 0usize;
+            visit_exprs_in_block(body, &mut |e| {
+                if matches!(e.kind, ExprKind::Ident(_)) {
+                    seen += 1;
+                }
+            });
+            let rewritten = walk_block(body, &mut RenameIdents);
+            let mut renamed = 0usize;
+            visit_exprs_in_block(&rewritten, &mut |e| {
+                if let ExprKind::Ident(n) = &e.kind {
+                    assert!(n.ends_with("__seen"), "missed an ident: {n}");
+                    renamed += 1;
+                }
+            });
+            assert_eq!(seen, renamed, "walk and visit disagree on node count");
+            assert!(seen > 0, "sample has no idents to rewrite");
+        }
+    }
+
+    /// Idents nested in the places hand-rolled walkers historically forgot:
+    /// interpolated-string parts, tuple elements, array fills, match arms,
+    /// defer bodies, C-style for updates.
+    #[test]
+    fn the_walk_reaches_the_arms_hand_rolled_walkers_forgot() {
+        let bodies = sample_fn_bodies();
+        let body = bodies.last().expect("sample fn");
+        let rewritten = walk_block(body, &mut RenameIdents);
+        let mut in_interp = 0usize;
+        let mut in_tuple = 0usize;
+        let mut in_fill = 0usize;
+        visit_exprs_in_block(&rewritten, &mut |e| match &e.kind {
+            ExprKind::InterpStr { parts } => {
+                for p in parts {
+                    if let InterpStrPart::Expr(inner) = p {
+                        visit_exprs(inner, &mut |x| {
+                            if matches!(x.kind, ExprKind::Ident(_)) {
+                                in_interp += 1;
+                            }
+                        });
+                    }
+                }
+            }
+            ExprKind::TupleLit { elements } => {
+                for el in elements {
+                    visit_exprs(el, &mut |x| {
+                        if matches!(x.kind, ExprKind::Ident(_)) {
+                            in_tuple += 1;
+                        }
+                    });
+                }
+            }
+            ExprKind::ArrayFill { fill, .. } => {
+                visit_exprs(fill, &mut |x| {
+                    if matches!(x.kind, ExprKind::Ident(_)) {
+                        in_fill += 1;
+                    }
+                });
+            }
+            _ => {}
+        });
+        assert!(in_interp > 0, "interp-string parts were not walked");
+        assert!(in_tuple > 0, "tuple elements were not walked");
+        assert!(in_fill > 0, "array-fill value was not walked");
+    }
+}
