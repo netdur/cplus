@@ -9140,17 +9140,44 @@ impl<'a> FnState<'a> {
 
     /// Look up a Drop binding's flag slot by binding name. Walks scope
     /// frames from innermost to outermost (matches `lookup` semantics).
+    /// issue-13(a): the flag slot for a Drop binding, or `None` when there is
+    /// no flag to write.
+    ///
+    /// An `Always`-disposition entry has no real flag — the syntactic
+    /// move-scanner proved the binding is never moved, so scope exit drops it
+    /// unconditionally and `register_drop` fabricated the name
+    /// `%x.drop_flag.unused` for the record. This used to be RETURNED, so a
+    /// scanner miss (the scanner must over-approximate every emission-time
+    /// `mark_moved`, and its own comments record four historical misses) made
+    /// `mark_moved` store to an SSA name that was never declared — invalid IR
+    /// at best, a double free at worst. Returning `None` for those entries
+    /// means a miss is caught by the assertion in `mark_moved` instead.
     fn find_drop_flag(&self, name: &str) -> Option<String> {
         for frame in self.scope_exits.iter().rev() {
             for entry in frame.iter().rev() {
                 if let ScopeExit::Drop(d) = entry {
                     if d.binding_name == name {
-                        return Some(d.flag_slot.clone());
+                        return match d.disposition {
+                            DropDisposition::Runtime => Some(d.flag_slot.clone()),
+                            DropDisposition::Always => None,
+                        };
                     }
                 }
             }
         }
         None
+    }
+
+    /// Does `name` name a Drop binding the scanner classified as never-moved?
+    /// Used only by the assertion in `mark_moved`.
+    fn is_always_drop_binding(&self, name: &str) -> bool {
+        self.scope_exits.iter().rev().any(|frame| {
+            frame.iter().rev().any(|entry| {
+                matches!(entry, ScopeExit::Drop(d)
+                    if d.binding_name == name
+                        && matches!(d.disposition, DropDisposition::Always))
+            })
+        })
     }
 
     /// Flip a Drop binding's flag to `false`, suppressing its scope-exit
@@ -9349,6 +9376,17 @@ impl<'a> FnState<'a> {
     }
 
     fn mark_moved(&mut self, name: &str) {
+        // issue-13(a): the syntactic move-scanner has to OVER-approximate every
+        // one of the ~35 emission-time `mark_moved` sites. If it missed this
+        // one, the binding is `Always`-disposition — scope exit will drop it
+        // unconditionally even though it was just moved out of, which is a
+        // double free. Fail here, in the test suite, rather than in the user's
+        // program.
+        debug_assert!(
+            !self.is_always_drop_binding(name),
+            "`{name}` is moved at emission but the move-scanner classified it \
+             as never-moved — the scanner missed a mark_moved site"
+        );
         if let Some(flag) = self.find_drop_flag(name) {
             // v0.0.7 Slice 1.2: drop-flag write — bool leaf.
             self.gen_store(&Ty::Bool, "false", &flag);
@@ -13248,6 +13286,12 @@ impl<'a> FnState<'a> {
         return_type: &Ty,
         args: &[Expr],
     ) -> Option<(String, Ty)> {
+        // issue-13(d): a call can mutate a local through a `ref` parameter, so
+        // the per-expression field-load cache cannot survive one. The direct
+        // and method call paths invalidated; this one and `gen_assoc_call` did
+        // not, so `s.f` cached before a fn-pointer call that writes `s.f`
+        // through a `ref` param was read back stale within the same statement.
+        self.invalidate_field_load_cache();
         // Evaluate each arg to a value. v0.0.24 #9: a fn-pointer carries each
         // param's ownership convention. A `fn(R)` param BORROWS — the callee
         // does not drop it, the caller keeps ownership, so we must NOT
@@ -14672,20 +14716,13 @@ impl<'a> FnState<'a> {
     /// the `trivial_block_tail` `{ *p }` shortcut and the deref `*p` arm — so
     /// the method-call pre-evaluation only fires on genuine rvalue receivers
     /// and never diverts a place read into a bit-copy.
+    /// issue-13(c): a character-identical copy of [`Self::is_place_expr`] used
+    /// to live here. The v0.0.26 temp-drop semantics depend on the two
+    /// answering the same way — a receiver the method call treats as a place
+    /// while the drop path treats it as a temporary is a double free — so
+    /// there is one of them.
     fn method_receiver_is_place(&self, e: &Expr) -> bool {
-        if let Some(inner) = Self::trivial_block_tail(e) {
-            return self.method_receiver_is_place(inner);
-        }
-        matches!(
-            &e.kind,
-            ExprKind::Ident(_)
-                | ExprKind::Field { .. }
-                | ExprKind::Index { .. }
-                | ExprKind::Unary {
-                    op: UnaryOp::Deref,
-                    ..
-                }
-        )
+        Self::is_place_expr(e)
     }
 
     /// Receiver VALUE for a blessed-name handler: reuse the once-evaluated
@@ -15315,6 +15352,9 @@ impl<'a> FnState<'a> {
     }
 
     fn gen_assoc_call(&mut self, segments: &[Ident], args: &[Expr]) -> Option<(String, Ty)> {
+        // issue-13(d): same as `gen_indirect_call` — an associated fn can write
+        // a local through a `ref` argument, so the field-load cache goes.
+        self.invalidate_field_load_cache();
         // Sema verified `Type::method` is either an associated function
         // (struct path) or a tagged-enum variant constructor (enum path).
         // Dispatch on the type-segment's kind.
@@ -16271,10 +16311,9 @@ impl<'a> FnState<'a> {
         let join_bb = self.next_block_label();
         self.emit_terminator(&format!("br i1 {done}, label %{none_bb}, label %{some_bb}"));
 
-        // None arm: discriminant 1 (Option's variants are Some=0, None=1
-        // by declaration order in stdlib/option.cplus).
+        // None arm.
         self.open_block(&none_bb);
-        let none_agg = self.build_option_none_aggregate(&option_llvm);
+        let none_agg = self.build_option_none_aggregate(&option_ty, &option_llvm);
         self.emit(&format!(
             "store {option_llvm} {none_agg}, ptr {result_slot}, align {option_align}"
         ));
@@ -16306,11 +16345,31 @@ impl<'a> FnState<'a> {
     }
 
     /// Build an `Option::None` aggregate value (just the tag set to 1).
-    fn build_option_none_aggregate(&mut self, option_llvm: &str) -> String {
+    /// issue-13(e): the runtime tag of an `Option` variant, by NAME.
+    ///
+    /// The coroutine lowering used to hardcode `Some = 0` / `None = 1` "by
+    /// declaration order in stdlib/option.cplus". Every other construction path
+    /// reads the enum's own variant table, so reordering the stdlib enum would
+    /// have flipped the tags here and nowhere else — a miscompile confined to
+    /// `gen fn` protocols.
+    fn option_variant_tag(&self, option_ty: &Ty, variant: &str) -> u32 {
+        let Ty::Enum(id) = option_ty else {
+            panic!("the Option protocol type is an enum");
+        };
+        *self.types.enum_defs[id.0 as usize]
+            .variants
+            .get(variant)
+            .unwrap_or_else(|| panic!("`Option` has no `{variant}` variant"))
+    }
+
+    fn build_option_none_aggregate(&mut self, option_ty: &Ty, option_llvm: &str) -> String {
         // Option[T] lowers as `%enum.<id> = type { i32, [N x i64] }` per
-        // the v0.0.2 tagged-enum scheme. None = tag 1, payload undef.
+        // the v0.0.2 tagged-enum scheme: tag, then an undef payload.
+        let tag = self.option_variant_tag(option_ty, "None");
         let t1 = self.next_tmp();
-        self.emit(&format!("{t1} = insertvalue {option_llvm} undef, i32 1, 0"));
+        self.emit(&format!(
+            "{t1} = insertvalue {option_llvm} undef, i32 {tag}, 0"
+        ));
         t1
     }
 
@@ -16335,8 +16394,11 @@ impl<'a> FnState<'a> {
         self.emit(&format!(
             "call void @llvm.memset.p0.i64(ptr {slot}, i8 0, i64 ptrtoint (ptr getelementptr ({option_llvm}, ptr null, i64 1) to i64), i1 false)"
         ));
-        // Tag at offset 0 (i32).
-        self.emit(&format!("store i32 0, ptr {slot}, align {option_align}"));
+        // Tag at offset 0 (i32), read from the enum's own variant table.
+        let tag = self.option_variant_tag(option_ty, "Some");
+        self.emit(&format!(
+            "store i32 {tag}, ptr {slot}, align {option_align}"
+        ));
         // Payload starts at offset 8 (i32 tag + 4 bytes padding to align
         // for the 8-byte payload field). Get a payload pointer via GEP
         // into the aggregate's payload member (field 1, index 0).

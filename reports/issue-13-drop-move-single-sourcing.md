@@ -1,5 +1,7 @@
 # Issue 13 — Drop/move machinery: fail loudly, classify once
 
+- Status: PARTIAL 2026-08-02, commit <pending> — (a), (c), (d), (e) done; (b),
+  the `carries_drop` bit, not done
 - Type: structural consolidation + targeted fixes
 - Area: `cplus-core/src/codegen.rs`
 - Effort: M
@@ -81,3 +83,58 @@ suite; (e) add a unit test pinning tag-by-name; (f) a drop-counter e2e.
   their own bugs, do not widen the sentinel back.
 - Do not touch the deliberate name-rederivation seam; (b)'s bit lives on codegen's own
   collected infos.
+
+## Outcome
+
+**(a) Scanner/emitter drift fails loudly.** `find_drop_flag` returns `None` for
+an `Always`-disposition entry instead of the `%x.drop_flag.unused` sentinel
+`register_drop` fabricates for the record. A scanner miss — the syntactic
+pre-pass must over-approximate every one of the ~35 emission-time `mark_moved`
+sites, and its own comments record four historical misses — used to store to an
+SSA name that was never declared: invalid IR at best, a double free at worst.
+`mark_moved` now `debug_assert`s that the binding it is flipping was not
+classified never-moved, so the drift shows up while the test suite runs rather
+than in a user's program. The assertion is silent across the 608 e2e programs
+and the stdlib suite, which is the evidence that the scanner currently
+over-approximates correctly.
+
+The long-term direction the report records — export sema/borrowck's
+flow-sensitive move sites and delete the syntactic scanner — is untouched here.
+
+**(c) One place predicate.** `method_receiver_is_place` was a
+character-identical copy of `is_place_expr`; it delegates. The v0.0.26 temp-drop
+semantics depend on the two agreeing — a receiver the call path treats as a
+place while the drop path treats it as a temporary is a double free.
+
+**(d) The field-load cache is invalidated wherever a call is emitted.**
+`gen_indirect_call` and `gen_assoc_call` were the two paths that did not, so a
+cached `s.f` could be read back stale after a fn-pointer or associated call
+mutated `s.f` through a `ref` parameter, within one statement. Both invalidate
+now. No live repro was found — a probe of exactly that shape emits identical IR
+before and after, because the second read did not hit the cache for an unrelated
+reason — so this closes a gap rather than fixing an observed miscompile, and the
+IR across the whole example corpus is unchanged.
+
+**(e) Option variant tags come from the variant table.** The coroutine lowering
+hardcoded `Some = 0` / `None = 1` "by declaration order in
+stdlib/option.cplus". Every other construction path reads the enum's own table,
+so reordering the stdlib enum would have flipped the tags in coroutine lowering
+alone. `option_variant_tag(option_ty, "Some" | "None")` asks the table.
+
+## What is still open
+
+**(b) `carries_drop` decided once.** "Does this type need drop" is computed in
+sema (`ty_carries_drop`), mirrored in codegen (`needs_drop`, whose doc says
+"Mirrors sema's ty_carries_drop"), and restated a third time inside
+`register_value_drop`. The report's plan — precompute the bit on
+StructInfo/EnumInfo at `collect_types` and have both codegen sites read it —
+is a clean change; it is left because the differential test it wants (compile a
+corpus, compare sema's answer with codegen's) is the part that makes it worth
+doing, and that is its own piece of work.
+
+## Verification (as run)
+
+- `cargo test -p cplus-core` 1851 + 8, `cargo test -p cpc` 608 + 16 + 5 + 6,
+  `cpc test` in `vendor/stdlib` 290 — all with the `mark_moved` assertion live.
+- `--emit-ll` over 40 `docs/examples` plus the ABI, C-ABI and method probes:
+  byte-identical.
