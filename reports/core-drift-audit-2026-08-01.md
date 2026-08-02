@@ -1,5 +1,35 @@
 # cplus-core drift audit — 2026-08-01
 
+> **Status 2026-08-02 — the whole BUG tier is fixed and committed (13 commits,
+> `c071b39`..`8abe7b6`).** All 26 bug reports are marked FIXED with their commit sha, and
+> each carries a Verification section rewritten to say what was actually done — including
+> where a report's own expectation turned out to be wrong. Regression tests: 26 new e2e
+> tests plus unit tests in parser/codegen/mono/graph/attrs. Green at every commit:
+> `cargo test -p cplus-core` (1834), `cargo test -p cpc` (629 across 5 files), the stdlib
+> suite in BOTH debug and release (290 each), and diagnostic parity against the pre-audit
+> binary across every `vendor/*` package and every `examples/*` project.
+>
+> Not done: the 17 structural issues (§6 Tier 1 and Tier 2). They are untouched — no
+> partial migrations to unpick.
+>
+> Corrections to this report, found while fixing (details in each bug's file):
+> - B12's generic-argument half was already closed by the B1 fix; its `take` spelling
+>   errors CORRECTLY, matching the concrete path.
+> - B10's secondary move-join effect is not reproducible, before or after — the match's own
+>   arm handling already drops a diverging arm's moves.
+> - B13's prescribed fix (Rust's expr-with-block rule) would have REJECTED code that
+>   compiles today; the report's line-aware alternative was taken instead.
+> - B21's alignment covers 3 of the 5 bounds listed — `Ord` and `Clone` have no primitive
+>   dispatch, so admitting them would create the mirror-image mismatch.
+> - B15's t13 repro names an intrinsic that does not exist (`#len`, not `#slice_len`);
+>   B11's repro has a second, unrelated pre-existing error; B10's expected exit code is
+>   wrong (7, not 2).
+>
+> One new bug was found while verifying and is written up rather than folded in:
+> `bug-27-tuple-type-in-generic-body-ice.md` — a tuple TYPE naming a type parameter inside
+> a generic body ICEs, identically before and after this work. Its fix is a new
+> instantiation-propagation pass, not a missing arm.
+
 Scope: every pass except borrowck (recently reworked, explicitly excluded; nothing found against
 it incidentally either). Method: seven parallel deep-reads over sema (type core + checking/flow),
 codegen (ABI + emission), parser/lexer, monomorphize/lower/prune, resolver/graph/attrs, each
