@@ -1,6 +1,6 @@
 # Issue 03 — One ABI classifier (clang-ABIInfo shape) for all def/call/declare sites
 
-- Status: PARTIAL 2026-08-02, commit <pending> — steps 1, 2, 3, 5, 6, 7, 8 done;
+- Status: PARTIAL 2026-08-02, commit 2996cc8 — steps 1, 2, 3, 5, 6, 7, 8 done;
   step 4 (the call-site parameter families) not done, see "What is still open"
 - Type: structural consolidation
 - Area: `cplus-core/src/codegen.rs` (new submodule or top section)
