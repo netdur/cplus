@@ -1,5 +1,6 @@
 # Issue 05 — One argument path and one dispatch-gate sequence for every call form
 
+- Status: DONE 2026-08-02, commit <pending>
 - Type: structural consolidation
 - Area: `cplus-core/src/sema.rs`
 - Effort: M-L
@@ -88,3 +89,60 @@ side-effect-free probe or from a checked-once result, never re-check).
   note it in the code as an explicit exception.
 - Behavior-lock the receiver rules: `this`-consuming methods and take-receiver
   consumption have their own tests — keep them green at every step.
+
+## Outcome
+
+Steps 1-3 and 5 (the per-argument pipelines) landed with bug-01 in the bug
+tier: `check_arg_with_move` / `gate_checked_arg` / `consume_value_arg` are the
+one pipeline, `subst_param_sig` hands the generic paths a concrete `ParamSig`
+so they run the same rules, and `consume_generic_take_arg` is gone. This commit
+is step 4, the dispatch-gate half.
+
+```rust
+enum GateOwner { Struct(StructId), Enum(EnumId), NoNominal }
+
+fn run_method_gates(&mut self, owner: GateOwner, shown: &str, name: &Ident,
+                    args: &[Expr], call_span: ByteSpan) -> Result<(), Ty>
+```
+
+One function runs extension scope, `_`-privacy and impl-block generic bounds,
+in one order, for every dispatch path: struct methods, enum methods,
+associated fns of both, the builtin `str` methods and interface methods reached
+through a type parameter's bound. `Err(ty)` means a gate rejected and the
+arguments have already been walked for recovery, so the shape of the rejection
+is shared too — that recovery walk was copied six times.
+
+The two paths with no nominal owner now SAY so (`GateOwner::NoNominal`) rather
+than simply not calling the gates. That is the whole point: a path that omits
+a gate and a path that has nothing to check are indistinguishable in the old
+shape, which is how the enum path shipped for a release without the bounds
+gate — the bound that keeps a non-Copy payload from being bit-copied, i.e. a
+double-free.
+
+The exemptions are real, and the reasons are in the enum's doc comment: all
+three gates key on a nominal type id (an extension extends a named type,
+`_`-privacy is a name on a named type, impl-block bounds come from a named
+type's `generic_origin`), and a builtin receiver or a type parameter has none.
+An interface method's bounds are checked where the instantiation is created.
+
+### One deliberate diagnostic change
+
+On the associated-fn path the bounds gate now runs BEFORE the receiver-less
+(E0327) and arity (E0308) diagnostics rather than after. A call that is wrong in
+both ways reports both errors instead of only the first. No test or vendor
+package changed.
+
+### Not in scope, as the report set out
+
+SIMD keeps its separate dispatch world.
+
+## Verification (as run)
+
+- New e2e `impl_block_bounds_are_enforced_on_every_dispatch_path`: one program
+  calling a `T: Copy`-bounded method and associated fn on both a struct and an
+  enum instantiated at a non-Copy type, asserting E0502 on all four paths.
+- `--emit-ll` over 40 `docs/examples` plus the ABI probes: identical (this is a
+  checking change, not a lowering one).
+- `cargo test -p cplus-core` 1845 + 8, `cargo test -p cpc` 606 + 16 + 5 + 6;
+  `cpc test` in `vendor/stdlib` 290 green; vendor-wide `cpc check` parity across
+  54 packages — no change.

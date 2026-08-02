@@ -22973,3 +22973,52 @@ fn a_generic_over_a_unit_returning_fn_pointer_instantiates() {
     let run = Command::new(&bin).status().expect("run fn-ptr mangling probe");
     assert_eq!(run.code(), Some(0), "unexpected exit: {run}");
 }
+
+/// reports/issue-05: every method-dispatch path now runs the same three gates
+/// (extension scope, `_`-privacy, impl-block bounds) through `run_method_gates`
+/// rather than each spelling out its own subset — the enum path had shipped
+/// without the bounds gate, so the bound that keeps a non-Copy payload from
+/// being bit-copied was unenforced for enum receivers. This pins the gate on
+/// both the struct and enum paths, and on the associated-fn form of each.
+#[test]
+fn impl_block_bounds_are_enforced_on_every_dispatch_path() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("prog.cplus");
+    std::fs::write(
+        &src,
+        "struct NC { opaque p: *u8 }\n\
+         impl NC { fn drop(ref this) { } }\n\
+         struct Holder[T] { v: T }\n\
+         impl Holder[T: Copy] { fn get(this) -> T { return this.v; } fn make(v: T) -> Holder[T] { return Holder[T] { v: v }; } }\n\
+         enum Maybe[T] { None, Some }\n\
+         impl Maybe[T: Copy] { fn tag(this) -> i32 { return 1; } fn build() -> i32 { return 0; } }\n\
+         fn main() -> i32 {\n\
+           let h: Holder[NC] = Holder[NC] { v: NC { p: 0 as *u8 } };\n\
+           let _a: NC = h.get();\n\
+           let _b: Holder[NC] = Holder[NC]::make(NC { p: 0 as *u8 });\n\
+           let m: Maybe[NC] = Maybe[NC]::None;\n\
+           let _c: i32 = m.tag();\n\
+           let _d: i32 = Maybe[NC]::build();\n\
+           return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("check")
+        .arg(&src)
+        .output()
+        .expect("cpc check");
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!out.status.success(), "a Copy bound on a non-Copy arg must be rejected");
+    // One per call: struct method, struct assoc fn, enum method, enum assoc fn.
+    let hits = all.matches("E0502").count();
+    assert!(
+        hits >= 4,
+        "expected the bounds gate on all four dispatch paths, got {hits}:\n{all}"
+    );
+}

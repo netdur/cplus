@@ -1720,6 +1720,24 @@ pub struct GenericImplMethodTemplate {
 /// `check_generic_method_call` records the instantiation against the right
 /// table (`method_instantiations` for structs, `enum_method_instantiations`
 /// for enums). Both export to the same String-keyed MonoInfo set; this just
+/// issue-05: which type a method call dispatches on, for `run_method_gates`.
+#[derive(Clone, Copy)]
+enum GateOwner {
+    Struct(StructId),
+    Enum(EnumId),
+    /// No nominal owner: a builtin receiver (`str`, a SIMD vector) or an
+    /// interface method reached through a type parameter's bound. All three
+    /// gates key on a nominal type id — an extension extends a named type,
+    /// `_`-privacy is a field/method name on a named type, and impl-block
+    /// bounds come from a named type's `generic_origin` — so there is nothing
+    /// for them to check. Stating the exemption is the point: a path that
+    /// simply omitted the gates is indistinguishable from one that forgot.
+    NoNominal,
+}
+
+/// `check_generic_method_call` records the instantiation against the right
+/// table (`method_instantiations` for structs, `enum_method_instantiations`
+/// for enums). Both export to the same String-keyed MonoInfo set; this just
 /// keeps one code path for struct and enum generic-method dispatch instead
 /// of two that drift.
 #[derive(Clone, Copy)]
@@ -12155,6 +12173,65 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
     /// `Maybe[NonCopy].get()` bit-copy an owning value (double-free). Struct
     /// declaration bounds are enforced separately at instantiation.
     /// `generic_origin` is the receiver def's `(template_name, concrete_args)`.
+    /// issue-05: run every gate a method call must pass before its arguments
+    /// are checked — extension scope, `_`-privacy, and the impl block's
+    /// generic bounds — in ONE order for every dispatch path.
+    ///
+    /// The gates used to be spelled out per path, and each path picked its own
+    /// subset: the enum path shipped without the bounds gate, so the bound that
+    /// prevents a non-Copy bit-copy was silently unenforced for enum receivers
+    /// (a double-free). A path now names its owner and gets all three, or names
+    /// `GateOwner::NoNominal` and states that it has nothing to check.
+    ///
+    /// `Err(ty)` means a gate rejected: the arguments have already been walked
+    /// for recovery, so the caller returns `ty` unchanged.
+    fn run_method_gates(
+        &mut self,
+        owner: GateOwner,
+        shown: &str,
+        name: &Ident,
+        args: &[Expr],
+        call_span: ByteSpan,
+    ) -> Result<(), Ty> {
+        let (is_enum, owner_id, origin) = match owner {
+            GateOwner::Struct(id) => (
+                false,
+                id.0,
+                self.structs
+                    .get(id.0 as usize)
+                    .and_then(|d| d.generic_origin.clone()),
+            ),
+            GateOwner::Enum(id) => (
+                true,
+                id.0,
+                self.enums
+                    .get(id.0 as usize)
+                    .and_then(|d| d.generic_origin.clone()),
+            ),
+            GateOwner::NoNominal => return Ok(()),
+        };
+        // EXT.2: the method exists, but if another module added it, it is only
+        // in scope where that module was imported.
+        if let Some(ext) = self.ext_out_of_scope(is_enum, owner_id, &name.name) {
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
+            return Err(self.err_ext_out_of_scope(shown, name, &ext));
+        }
+        if self.deny_private_method(is_enum, owner_id, shown, name) {
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
+            return Err(Ty::Error);
+        }
+        // v0.0.23: a method from `impl Box[T: Copy] { fn get }` requires the
+        // receiver's concrete `T` to satisfy `Copy` — but only when THAT method
+        // is called, so a non-Copy `Box[R]` stays usable through its unbounded
+        // methods.
+        self.check_impl_block_bounds_at_call(origin, &name.name, call_span);
+        Ok(())
+    }
+
     fn check_impl_block_bounds_at_call(
         &mut self,
         generic_origin: Option<(String, Vec<Ty>)>,
@@ -12403,6 +12480,13 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // (allocating) method name.
         if matches!(recv_ty, Ty::Str) {
             if let Some(sig) = self.builtin_str_methods.get(&name.name).cloned() {
+                // issue-05: `str` is a builtin with no nominal owner — see
+                // `GateOwner::NoNominal`. Stated, not skipped.
+                if let Err(ty) =
+                    self.run_method_gates(GateOwner::NoNominal, "str", name, args, call_span)
+                {
+                    return ty;
+                }
                 if !self.check_method_receiver(
                     receiver, &Ty::Str, name, &sig, args, call_span, "str",
                 ) {
@@ -12468,20 +12552,11 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 }
                 return Ty::Error;
             };
-            // EXT.2: same gate as the struct path.
-            if let Some(origin) = self.ext_out_of_scope(true, eid.0, &name.name) {
-                let shown = self.ty_display_named(&Ty::Enum(eid));
-                for a in args {
-                    let _ = self.check_expr(a, None);
-                }
-                return self.err_ext_out_of_scope(&shown, name, &origin);
-            }
             let shown = self.ty_display_named(&Ty::Enum(eid));
-            if self.deny_private_method(true, eid.0, &shown, name) {
-                for a in args {
-                    let _ = self.check_expr(a, None);
-                }
-                return Ty::Error;
+            if let Err(ty) =
+                self.run_method_gates(GateOwner::Enum(eid), &shown, name, args, call_span)
+            {
+                return ty;
             }
             return self.check_enum_method_call(
                 eid, &enum_name, name, &sig, type_args, args, call_span, receiver,
@@ -12504,15 +12579,25 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // concrete impl's method.
         if let Ty::Param(ref pname) = recv_ty {
             if let Some(msig) = self.lookup_bound_method(pname, &name.name) {
+                // issue-05: the method comes from an INTERFACE bound, not from
+                // a nominal type's impl block — see `GateOwner::NoNominal`.
+                // The concrete instantiation's bounds are checked where the
+                // instantiation is created (`check_generic_bounds`).
+                let pname = pname.clone();
+                if let Err(ty) =
+                    self.run_method_gates(GateOwner::NoNominal, &pname, name, args, call_span)
+                {
+                    return ty;
+                }
                 if !self
-                    .check_method_receiver(receiver, &recv_ty, name, &msig, args, call_span, pname)
+                    .check_method_receiver(receiver, &recv_ty, name, &msig, args, call_span, &pname)
                 {
                     return Ty::Error;
                 }
                 let mut subst = HashMap::new();
                 subst.insert("Self".to_string(), recv_ty.clone());
                 return self
-                    .check_method_args_and_return(name, &msig, &subst, type_args, args, pname, call_span);
+                    .check_method_args_and_return(name, &msig, &subst, type_args, args, &pname, call_span);
             }
         }
         let Ty::Struct(id) = recv_ty else {
@@ -12542,29 +12627,11 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             }
             return Ty::Error;
         };
-        // EXT.2: the method exists, but if another module added it, it is
-        // only in scope where that module was imported.
-        if let Some(origin) = self.ext_out_of_scope(false, id.0, &name.name) {
-            let shown = self.ty_display_named(&Ty::Struct(id));
-            for a in args {
-                let _ = self.check_expr(a, None);
-            }
-            return self.err_ext_out_of_scope(&shown, name, &origin);
-        }
         let shown = self.ty_display_named(&Ty::Struct(id));
-        if self.deny_private_method(false, id.0, &shown, name) {
-            for a in args {
-                let _ = self.check_expr(a, None);
-            }
-            return Ty::Error;
+        if let Err(ty) = self.run_method_gates(GateOwner::Struct(id), &shown, name, args, call_span)
+        {
+            return ty;
         }
-        // v0.0.23: enforce impl-block generic bounds at the call site. A method
-        // from `impl Box[T: Copy] { fn get }` requires the receiver's concrete
-        // `T` to satisfy `Copy` — but only when *that* method is called, so a
-        // non-Copy `Box[R]` stays usable through its unbounded methods (`new`,
-        // `set`, `unwrap`). Shared with the enum path via the helper.
-        let struct_origin = self.structs[id.0 as usize].generic_origin.clone();
-        self.check_impl_block_bounds_at_call(struct_origin, &name.name, call_span);
         if !self.check_method_receiver(
             receiver,
             &Ty::Struct(id),
@@ -12620,12 +12687,8 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         call_span: ByteSpan,
         receiver: &Expr,
     ) -> Ty {
-        // Enforce `impl Maybe[T: Copy] { fn get }` block bounds at the call
-        // site, exactly as the struct path does — the enum path omitted this,
-        // so the bound that prevents a non-Copy bit-copy (double-free) was
-        // silently unenforced for enum receivers.
-        let enum_origin = self.enums[enum_id.0 as usize].generic_origin.clone();
-        self.check_impl_block_bounds_at_call(enum_origin, &name.name, call_span);
+        // The impl-block bounds gate ran in `run_method_gates` at the dispatch
+        // site, with the extension-scope and privacy gates (issue-05).
         // Same shared receiver check as the struct + generic paths.
         if !self.check_method_receiver(
             receiver,
@@ -14473,22 +14536,14 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         call_span: ByteSpan,
     ) -> Ty {
         // EXT.2: `Type::make()` is gated exactly like `value.make()`.
-        let (is_enum, owner_id) = match owner {
-            MethodOwner::Struct(id) => (false, id.0),
-            MethodOwner::Enum(id) => (true, id.0),
+        let gate_owner = match owner {
+            MethodOwner::Struct(id) => GateOwner::Struct(id),
+            MethodOwner::Enum(id) => GateOwner::Enum(id),
         };
-        if let Some(origin) = self.ext_out_of_scope(is_enum, owner_id, &method_seg.name) {
-            for a in args {
-                let _ = self.check_expr(a, None);
-            }
-            let name = type_name.to_string();
-            return self.err_ext_out_of_scope(&name, method_seg, &origin);
-        }
-        if self.deny_private_method(is_enum, owner_id, type_name, method_seg) {
-            for a in args {
-                let _ = self.check_expr(a, None);
-            }
-            return Ty::Error;
+        if let Err(ty) =
+            self.run_method_gates(gate_owner, type_name, method_seg, args, call_span)
+        {
+            return ty;
         }
         if sig.receiver.is_some() {
             self.err(
@@ -14517,21 +14572,11 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 call_span,
             );
         }
-        // Enforce `impl Box[T: Copy] { fn make }` block bounds for an
-        // associated-fn call (`Box[NC]::make()`), same as the instance-method
-        // paths — the receiver's concrete args live on the owner def's
-        // `generic_origin`.
-        let assoc_origin = match owner {
-            MethodOwner::Struct(id) => self
-                .structs
-                .get(id.0 as usize)
-                .and_then(|d| d.generic_origin.clone()),
-            MethodOwner::Enum(id) => self
-                .enums
-                .get(id.0 as usize)
-                .and_then(|d| d.generic_origin.clone()),
-        };
-        self.check_impl_block_bounds_at_call(assoc_origin, &method_seg.name, call_span);
+        // The impl-block bounds gate for an associated-fn call
+        // (`Box[NC]::make()`) ran in `run_method_gates` above, with the
+        // extension-scope and privacy gates (issue-05). It now runs BEFORE the
+        // receiver-less (E0327) and arity (E0308) diagnostics rather than
+        // after, so a call that is wrong in both ways reports both.
         // Slice 7GEN.5e: generic-method dispatch on assoc-call form
         // (`Type::method(...)` / `Type::method::[T](...)`).
         if !sig.generic_params.is_empty() {

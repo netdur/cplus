@@ -2730,10 +2730,12 @@ enum PassBy {
     Ptr { attrs: String },
     /// MEMORY-class aggregate — see [`indirect_arg_ty`].
     Indirect { ty: String },
-    /// C-ABI register coercion: the aggregate travels as `llvm_ty`.
+    /// C-ABI register coercion: the aggregate travels as `llvm_ty`. The
+    /// prologue allocas at the COERCED size and alignment, which dominate the
+    /// struct's own — a store of the coerced value into a struct-sized slot
+    /// would overflow it.
     Coerced {
         llvm_ty: String,
-        size: u64,
         align: u64,
     },
 }
@@ -2852,14 +2854,8 @@ fn classify_param(p: &ParamAbi, cx: AbiCtx, types: &TypeTable) -> PassBy {
     if cx.coerce_copy_aggregates && matches!(p.ty, Ty::Struct(_)) && is_copy_ty(&p.ty, types) {
         match classify_c_abi(&p.ty, types) {
             CAbiClass::Coerce {
-                llvm_ty,
-                size,
-                align,
-            } => return PassBy::Coerced {
-                llvm_ty,
-                size,
-                align,
-            },
+                llvm_ty, align, ..
+            } => return PassBy::Coerced { llvm_ty, align },
             CAbiClass::Indirect => {
                 let (_sz, al) = static_layout(&p.ty, types).unwrap_or((8, 8));
                 return PassBy::Indirect {
