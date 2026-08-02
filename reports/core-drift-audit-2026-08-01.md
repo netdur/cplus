@@ -9,8 +9,55 @@
 > suite in BOTH debug and release (290 each), and diagnostic parity against the pre-audit
 > binary across every `vendor/*` package and every `examples/*` project.
 >
-> Not done: the 17 structural issues (§6 Tier 1 and Tier 2). They are untouched — no
-> partial migrations to unpick.
+> **Status 2026-08-02 (second pass) — the ISSUES tier is worked, in number order
+> (`afe362c`..`cdc6f04`, 34 commits: one per issue plus its stamp).** Every one of the 17
+> reports carries `Status: DONE` or `Status: PARTIAL` with the commit that landed it, and
+> a written-up outcome saying what was done, what was deliberately left, and what the
+> report itself got wrong. Six are DONE (01, 02, 04, 05, 10, 12, 17); the rest are PARTIAL
+> with the remainder scoped in their own file. Green at every commit: `cargo test -p
+> cplus-core` (1852), `cargo test -p cpc` (608 + 16 + 5 + 6), the stdlib suite in debug and
+> release (290 each), vendor-wide `cpc check` parity across all 54 packages, and — for
+> every codegen-touching commit — `--emit-ll` byte-identity over the 40 `docs/examples`
+> programs plus purpose-built ABI, C-ABI and method probes.
+>
+> Bugs fixed as a side effect of the structural work, each with a regression test:
+> - bug-27 (the tuple-in-generic ICE this report found) — three of its four shapes;
+> - a type alias inside a tuple literal reached codegen as `Ty::Error` (issue-01);
+> - `[v; N]` inside a tuple literal or an inferred struct literal never resolved its
+>   const length, and sema rejected it as a 0-element array (issue-01);
+> - a generic instantiated at a unit-returning fn-pointer ICE'd, because the AST and `Ty`
+>   printers spelled the return differently (issue-02);
+> - four method-call sites passed a bare `ptr` where the callee declared `sret(...)`,
+>   working only through an LLVM fallback the `objc_msgSend` clobber proved unreliable
+>   (issue-03);
+> - the impl-block bounds gate was unenforced on the enum dispatch path (issue-05);
+> - a user type named `Iterator`/`Option` shadowed the stdlib one, per-process randomly
+>   (issue-06);
+> - a typo'd import prefix reported two different errors depending on syntactic position,
+>   one of them naming a type the user never wrote (issue-09);
+> - E0325 quoted `impl E: I` back as `impl I: E` (issue-11);
+> - a value-passed `f16` parameter lost its `noundef` (issue-15);
+> - `fn(ref (i32, i32))` and `fn(ref [i32; 2])` misparsed `ref` as a type name (issue-17).
+>
+> Corrections to the issue reports, found while implementing (details in each file):
+> - issue-03's claim that the musttail return-coercion predicate is a divergent third copy
+>   of the `want_c_abi_ret` gate is wrong: it asks a narrower question that the
+>   enclosing-side check already covers.
+> - issue-04's `ParamSig` name collides with `sema::ParamSig`, which means the SURFACE
+>   flags where the new type means the LOWERED ones; it is `ParamAbi`.
+> - issue-06's sema-side fix is not sufficient on its own — codegen's coroutine and
+>   Option lookups match by mangled name too, and the negative test only passes once they
+>   filter on the lang flag.
+> - issue-11 items 4, 9 and 10 were already done by issues 01, 10 and 07.
+> - issue-02's `Ty::Param`-vs-bare-`Path` divergence is not fixable in the printer and is
+>   not a bug: the AST cannot tell a type parameter from a struct of the same name, and
+>   the resulting lookup miss is the right answer.
+>
+> Not done, and scoped in their own reports: issue-07's port of the view family into
+> borrowck (its step-1 inventory is in the file), issue-14's migration off the
+> classification fixpoint (its characterization harness is in the tree), issue-03 step 4,
+> issue-08 steps 1 and 3, issue-09 parts (A) and (C), issue-13 (b), issue-15 (b), and
+> issue-11 items 1, 2, 3, 5, 7, 8.
 >
 > Corrections to this report, found while fixing (details in each bug's file):
 > - B12's generic-argument half was already closed by the B1 fix; its `take` spelling
