@@ -24,15 +24,24 @@ use crate::diagnostics::*;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-const TARGET_FN: u8 = 0b0_0000_0001;
-const TARGET_METHOD: u8 = 0b0_0000_0010;
-const TARGET_STRUCT: u8 = 0b0_0000_0100;
-const TARGET_ENUM: u8 = 0b0_0000_1000;
-const TARGET_FIELD: u8 = 0b0_0001_0000;
-const TARGET_VARIANT: u8 = 0b0_0010_0000;
+const TARGET_FN: u16 = 0b0_0000_0001;
+const TARGET_METHOD: u16 = 0b0_0000_0010;
+const TARGET_STRUCT: u16 = 0b0_0000_0100;
+const TARGET_ENUM: u16 = 0b0_0000_1000;
+const TARGET_FIELD: u16 = 0b0_0001_0000;
+const TARGET_VARIANT: u16 = 0b0_0010_0000;
 /// v0.0.7 Slice 1.3: attribute on a loop statement (`while`, `loop`,
 /// `for`). Used by `#[unroll(N)]` / `#[vectorize_width(N)]`.
-const TARGET_LOOP_STMT: u8 = 0b0_0100_0000;
+const TARGET_LOOP_STMT: u16 = 0b0_0100_0000;
+/// Interfaces get their OWN bit, which no attribute currently sets — so every
+/// attribute on an interface is E0356, which is the correct state today. They
+/// used to be validated with `TARGET_STRUCT`, so `#[watch]`, `#[repr(C)]` and
+/// `#[lang]` passed validation there and then did nothing: the write-barrier
+/// machinery, the layout rule and the lang-item registry all look only at
+/// structs. A user who wrote one believed a feature was active
+/// (reports/bug-26). An attribute meant to be legal on interfaces adds this
+/// bit to its own registration, and a consumer alongside it.
+const TARGET_INTERFACE: u16 = 0b1_0000_0000;
 
 enum ArgsSpec {
     /// `#[name]` — no args allowed.
@@ -58,7 +67,7 @@ struct AttrSpec {
     name: &'static str,
     args: ArgsSpec,
     /// Bitmask of legal placements.
-    targets: u8,
+    targets: u16,
     /// True iff the attribute may appear multiple times on the same item.
     allow_duplicate: bool,
 }
@@ -302,7 +311,7 @@ pub fn check_multi(
             // attributes (e.g. `#[sealed]`) get added to KNOWN_ATTRS
             // when introduced. For now, validate as-if struct/enum.
             ItemKind::Interface(i) => {
-                ctx.check_attrs(&i.attributes, TARGET_STRUCT, "interface");
+                ctx.check_attrs(&i.attributes, TARGET_INTERFACE, "interface");
             }
             // Phase 11 polish: type aliases admit no attributes (the
             // parser rejects them at the source level too).
@@ -505,7 +514,7 @@ impl Ctx {
         lm.span(&path, span, src)
     }
 
-    fn check_attrs(&mut self, attrs: &[Attribute], target: u8, target_label: &str) {
+    fn check_attrs(&mut self, attrs: &[Attribute], target: u16, target_label: &str) {
         // Track seen names for duplicate detection (only matters for attrs
         // whose spec disallows duplicates).
         let mut seen: BTreeMap<String, usize> = BTreeMap::new();
@@ -518,7 +527,7 @@ impl Ctx {
     fn check_one_attr(
         &mut self,
         attr: &Attribute,
-        target: u8,
+        target: u16,
         target_label: &str,
         seen: &BTreeMap<String, usize>,
     ) {
@@ -764,7 +773,7 @@ impl Ctx {
     }
 }
 
-fn describe_targets(mask: u8) -> String {
+fn describe_targets(mask: u16) -> String {
     let mut parts: Vec<&str> = Vec::new();
     if mask & TARGET_FN != 0 {
         parts.push("functions");
@@ -786,6 +795,9 @@ fn describe_targets(mask: u8) -> String {
     }
     if mask & TARGET_LOOP_STMT != 0 {
         parts.push("loop statements");
+    }
+    if mask & TARGET_INTERFACE != 0 {
+        parts.push("interfaces");
     }
     match parts.len() {
         0 => "(no targets)".to_string(),
@@ -1356,6 +1368,24 @@ mod tests {
     fn watch_duplicate_e0357() {
         let diags = check_src("#[watch] #[watch] struct S { x: i32 }");
         assert_eq!(codes(&diags), vec!["E0357"]);
+    }
+
+    /// reports/bug-26. Interfaces were validated with the STRUCT target mask,
+    /// so struct-only attributes passed there and then did nothing —
+    /// `#[watch]`'s write barrier, `#[repr(C)]`'s layout rule and `#[lang]`'s
+    /// registry all look only at structs. A user who wrote one believed a
+    /// feature was on. Interfaces have their own bit now, which no attribute
+    /// sets, so any attribute on an interface is E0356.
+    #[test]
+    fn struct_only_attributes_on_an_interface_rejected_e0356() {
+        for src in [
+            "#[watch] interface I { fn p(this) -> i32; }",
+            "#[repr(C)] interface I { fn p(this) -> i32; }",
+            "#[lang(\"string\")] interface I { fn p(this) -> i32; }",
+        ] {
+            let diags = check_src(src);
+            assert_eq!(codes(&diags), vec!["E0356"], "for: {src}");
+        }
     }
 
     #[test]

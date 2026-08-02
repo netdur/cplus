@@ -6268,11 +6268,29 @@ fn gen_function(
                 out.push_str(", ");
             }
         }
-        for (i, (_param, (pty, _move_flag, _mut_flag, _restrict_flag))) in
+        for (i, (_param, (pty, move_flag, mut_flag, restrict_flag))) in
             f.params.iter().zip(sig.params.iter()).enumerate()
         {
             if i > 0 {
                 out.push_str(", ");
+            }
+            // A `ref x: T` param is a C out-parameter `T*`, passed as a bare
+            // `ptr` regardless of T's value class — the same rule the EXPORT
+            // path applies ("Mirrors the native side") and the same one the
+            // call site uses. The import declare classified on the type alone,
+            // so `extern fn frob(ref n: i64)` DECLARED `void @frob(i64)` while
+            // every call passed a `ptr`. Runtime was right by accident (the
+            // call site governs lowering and the C callee wants the pointer),
+            // but the declaration was false — which is what LTO's signature
+            // check and anything else reading declares goes on (reports/bug-23).
+            if param_passes_by_ptr(pty, *move_flag, *mut_flag, types) {
+                let attrs = param_attrs(pty, *move_flag, *mut_flag, *restrict_flag, true, types);
+                if attrs.is_empty() {
+                    out.push_str("ptr");
+                } else {
+                    out.push_str(&format!("ptr {attrs}"));
+                }
+                continue;
             }
             // Classify each param too — symmetric with the export path.
             // For Indirect, the C ABI passes by pointer; for Coerce, an
@@ -18102,6 +18120,47 @@ mod tests {
         assert!(
             !ir.contains("define internal fastcc i32 @answer("),
             "must NOT emit a definition — the empty body would silently return garbage:\n{ir}"
+        );
+    }
+
+    /// reports/bug-23. A `ref n: i64` param is a C out-parameter `int64_t*`,
+    /// and the call site pointer-passes it — but the extern-IMPORT declare
+    /// classified on the type alone and emitted `declare void @frob(i64)`. The
+    /// declaration contradicted every call to it. Runtime was right by accident
+    /// (the call site governs lowering, and the C callee wants the pointer),
+    /// but LTO's signature check and anything else that reads declares was
+    /// being told something false.
+    #[test]
+    fn an_extern_declare_pointer_passes_ref_params_like_the_call_site() {
+        let ir = gen_src(
+            "extern fn frob(ref n: i64);\n\
+             fn main() -> i32 { var x: i64 = 5; frob(x); return 0; }",
+        );
+        let declare = ir
+            .lines()
+            .find(|l| l.starts_with("declare") && l.contains("@frob("))
+            .unwrap_or_else(|| panic!("no declare for @frob:\n{ir}"));
+        let call = ir
+            .lines()
+            .find(|l| l.contains("call") && l.contains("@frob("))
+            .unwrap_or_else(|| panic!("no call to @frob:\n{ir}"));
+        // The parameter list must be identical on both sides, attributes
+        // included — that is the whole property.
+        let params = |l: &str| {
+            let open = l.find("@frob(").unwrap() + "@frob(".len();
+            let close = l[open..].find(')').unwrap() + open;
+            l[open..close].to_string()
+        };
+        let declared = params(declare);
+        // The call site adds the SSA operand name after the attributes.
+        let called = params(call);
+        assert!(
+            declared.starts_with("ptr"),
+            "a `ref` param must be declared `ptr`, got `{declared}`"
+        );
+        assert!(
+            called.starts_with(&declared),
+            "declare and call disagree:\n  declare: {declared}\n  call:    {called}"
         );
     }
 

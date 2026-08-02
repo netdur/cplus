@@ -1,6 +1,7 @@
 # Bug 26 — Struct-only attributes on an interface are silently accepted and ignored
 
-- Status: verified 2026-08-01 during the audit (`#[watch]` / `#[repr(C)]` on an interface: exit 0, no effect)
+- Status: FIXED 2026-08-02, commit 987ab01 — interfaces get their own target bit
+- Status (original): verified 2026-08-01 during the audit (`#[watch]` / `#[repr(C)]` on an interface: exit 0, no effect)
 - Severity: silent no-op (user believes a feature is active)
 - Area: attrs (`cplus-core/src/attrs.rs`)
 - Master report: `core-drift-audit-2026-08-01.md` (resolver/attrs audit F6)
@@ -49,9 +50,12 @@ The interface arm borrows the struct target mask instead of having its own.
 
 ## Verification
 
-1. The repro now fails with E0356 naming the interface target.
-2. Attributes on structs/enums/fns unchanged: `cargo test -p cplus-core` (attrs.rs has
-   ~80 unit tests; add one for the interface case following the neighboring E0356 tests).
-3. Grep vendor/ and examples/ for attributes on interfaces to confirm nothing legitimate
-   breaks (`grep -rn '#\[' vendor/*/src --include=*.cplus | grep -B1 interface` style
-   sweep, or just build the vendor suites).
+1. DONE: `#[watch]`, `#[repr(C)]` and `#[lang(...)]` on an interface all give
+   "attribute `#[X]` may only appear on structs, not on interface".
+2. DONE: `struct_only_attributes_on_an_interface_rejected_e0356` in attrs.rs; the
+   existing ~80 attribute tests are unchanged and green.
+3. DONE: no attribute appears on any interface in vendor/ or examples/, and every vendor
+   package still produces identical diagnostics.
+
+Step 3's "if some attribute is meant to be legal on interfaces": none is today, so no
+registration sets the new bit. The target mask widened from `u8` to `u16` to hold it.

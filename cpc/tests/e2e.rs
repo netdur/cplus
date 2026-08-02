@@ -1663,6 +1663,68 @@ fn extern_struct_return_sret_cross_language_g027() {
     );
 }
 
+/// reports/bug-23 against a real C callee. The extern-IMPORT declare
+/// classified parameters on the type alone, so `extern fn frob(ref n: i64)`
+/// declared `void @frob(i64)` while every call passed a `ptr`. This links a C
+/// function that genuinely takes `int64_t*` and checks the write-back, so a
+/// declaration that lies about the ABI cannot pass by looking correct.
+#[test]
+fn extern_ref_param_is_a_c_out_parameter() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let c_src = dir.join("c_side.c");
+    let c_obj = dir.join("c_side.o");
+    let cplus_src = dir.join("main.cplus");
+    let ll = dir.join("main.ll");
+    let bin = dir.join("extref");
+    std::fs::write(
+        &c_src,
+        "void frob(long long *n) { *n = *n + 37; }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        &cplus_src,
+        "extern fn frob(ref n: i64);\n\
+         fn main() -> i32 {\n\
+             var x: i64 = 5;\n\
+             frob(x);\n\
+             return (x as i32) - 42;\n\
+         }\n",
+    )
+    .unwrap();
+    let clang_c = Command::new("clang")
+        .args(["-c", "-o"])
+        .arg(&c_obj)
+        .arg(&c_src)
+        .status()
+        .expect("invoke clang for C side");
+    assert!(clang_c.success(), "clang -c failed for C side");
+    let ll_out = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&cplus_src)
+        .output()
+        .expect("invoke cpc --emit-ll");
+    assert!(ll_out.status.success(), "cpc --emit-ll failed");
+    let ir = String::from_utf8_lossy(&ll_out.stdout);
+    assert!(
+        ir.lines()
+            .any(|l| l.starts_with("declare") && l.contains("@frob(ptr")),
+        "the declare must say `ptr`:\n{ir}"
+    );
+    std::fs::write(&ll, &ll_out.stdout).unwrap();
+    let link = Command::new("clang")
+        .arg("-Wno-override-module")
+        .arg(&ll)
+        .arg(&c_obj)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke clang to link");
+    assert!(link.success(), "clang link failed");
+    let run = Command::new(&bin).status().expect("run extref");
+    assert_eq!(run.code(), Some(0), "the C side's write-back must land: {run}");
+}
+
 #[test]
 fn extern_struct_param_abi_cross_language_g034() {
     // v0.0.12 G-034 (llama.cplus G-033): call-site mirror of G-027 on

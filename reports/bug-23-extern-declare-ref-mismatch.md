@@ -1,6 +1,8 @@
 # Bug 23 — Extern-import `declare` drops the `ref` rule: declaration lies about the ABI
 
-- Status: IR-verified 2026-08-01 (declare says `i64`, call passes `ptr`)
+- Status: FIXED 2026-08-02, commit 987ab01 — the import declare applies the same
+  pointer-passing rule as the export path and the call site
+- Status (original): IR-verified 2026-08-01 (declare says `i64`, call passes `ptr`)
 - Severity: latent ABI (right-by-accident at runtime; poisons LTO and anything trusting declares)
 - Area: codegen (`cplus-core/src/codegen.rs`)
 - Master report: `core-drift-audit-2026-08-01.md` (B23)
@@ -59,9 +61,16 @@ and call all render from the same `PassBy` and cannot disagree.
 
 ## Verification
 
-1. Emitted IR: declare and call agree for the repro (`ptr` in both).
-2. Add a codegen unit test asserting the declare shape for `extern fn f(ref n: i64)`
-   (copy a neighboring declare-assertion test in codegen.rs's test module).
-3. Link a real C callee taking `int64_t*` in an e2e test if the harness supports linking
-   C (grep e2e.rs for existing extern-C link tests); verify write-back.
-4. Full suites.
+1. DONE: `declare void @frob(ptr nonnull noundef dereferenceable(8) align 8)` — attribute
+   for attribute identical to the call.
+2. DONE: `an_extern_declare_pointer_passes_ref_params_like_the_call_site` in codegen.rs
+   compares the two parameter lists rather than asserting a literal string, so the
+   property tested is the agreement itself.
+3. DONE: `extern_ref_param_is_a_c_out_parameter` in cpc/tests/e2e.rs links a C function
+   taking `long long *`, and checks the write-back reaches the C+ caller.
+4. DONE: full suites green.
+
+Step 2's audit of the other pointer-passing classes: the fix is written as
+`param_passes_by_ptr`, the same predicate the export path and the call site use, so every
+parameter class it covers — `ref`, and non-Copy borrows — is covered here too, not just
+`ref`.
