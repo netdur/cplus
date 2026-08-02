@@ -1184,7 +1184,7 @@ fn bad() -> str {
 
 **Fix.** Own the bytes instead: store/return `Text` / `Vec[T]`, or borrow the view from a non-`take` parameter. Literal-backed views ('static bytes) escape freely.
 
-<sub>repro: checked · cplus-core/src/sema.rs:12259 · test cpc/tests/e2e.rs:return_borrow_of_local_owned_rejected_e0513</sub>
+<sub>repro: checked · cplus-core/src/borrowck.rs (ViewRules: check_return / flag_view_leaves / check_view_of_temp / check_store_escape) · test cpc/tests/e2e.rs:return_borrow_of_local_owned_rejected_e0513</sub>
 
 ### E0514 · Owner goes out of scope while a view of it is still live
 
@@ -1226,7 +1226,7 @@ impl Holder {
 
 **Fix.** Own the bytes (a `Text` field), intern them (`text::intern` returns a process-lifetime view), or — for the receiver-store case only — declare the method `#[keeps(this)]`: the store becomes a declared flow and every caller ties the receiver to the argument's owner (E0372/E0514 then guard the owner).
 
-<sub>repro: checked · cplus-core/src/sema.rs (check_view_store_escape, param-view arm) · test cpc/tests/e2e.rs:view_param_stored_into_ref_this_rejected_e0515</sub>
+<sub>repro: checked · cplus-core/src/borrowck.rs (ViewRules::check_store_escape, param-view arm) · test cpc/tests/e2e.rs:view_param_stored_into_static_rejected_e0515</sub>
 
 ### E0516 · Storing a view through a raw pointer without a declared flow
 
@@ -1241,7 +1241,7 @@ fn stash(slot: *str, v: str) {
 
 **Fix.** Declare the function's flow: `#[keeps(this)]` if the view survives inside the receiver (callers then tie the receiver to the argument's owner), or `#[keeps(nothing)]` if the bytes are copied and no borrowed view escapes. Byte and pointer stores never trigger this — only a view value does.
 
-<sub>repro: checked · cplus-core/src/sema.rs (check_raw_store_declaration) · test cpc/tests/e2e.rs:raw_view_store_requires_keeps_e0516</sub>
+<sub>repro: checked · cplus-core/src/borrowck.rs (ViewRules::check_raw_store) · test cpc/tests/e2e.rs:raw_view_store_requires_keeps_e0516</sub>
 
 ### E0612 · Interpolated type does not implement `ToText`
 

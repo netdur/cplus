@@ -1548,25 +1548,6 @@ pub fn return_borrow_source(prog: &Program, fn_name: &str) -> Option<ReturnBorro
     sigs.fns.get(fn_name)?.return_borrow.clone()
 }
 
-/// The free-function return-borrow map for a whole program: every free fn
-/// whose body was detected (Rules E1 / E1-mut / E3) to return a `str`/slice
-/// view of one or more of its parameters, keyed by fn name. Sema reuses this
-/// as the single source of truth for its E0513 return-escape check — so a
-/// `return head(local)` where `head(x) -> str` returns a view of `x` is
-/// traced to `local` and rejected, exactly as the direct `return local.view()`
-/// form is. Built once (walks the program); the caller should cache it.
-pub fn free_fn_return_borrows(prog: &Program) -> HashMap<String, ReturnBorrowSource> {
-    let oracle = CopyOracle::build(prog);
-    let sigs = SigTable::collect(prog, &oracle);
-    sigs.fns
-        .into_iter()
-        .filter_map(|(name, e)| e.return_borrow.map(|rb| (name, rb)))
-        .collect()
-}
-
-/// Public test hook (5BC.3a): given a parsed program, the impl target
-/// type name, and the method name, return the elision rule's detected
-/// return-borrow source if any.
 pub fn method_return_borrow_source(
     prog: &Program,
     target: &str,
