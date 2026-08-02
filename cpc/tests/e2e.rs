@@ -21552,6 +21552,74 @@ fn parser_statement_boundaries_and_delimited_struct_literals() {
     assert_eq!(run.code(), Some(0), "unexpected exit: {run}");
 }
 
+/// reports/bug-25: `match x { 0 => ... }` did not parse — the pattern model
+/// had no literal node at all. It has one now, and `lower` desugars a
+/// literal-arm match into a temp binding plus an if/else chain, so no pass
+/// after lower learns a new pattern kind. The temp is what makes a
+/// side-effecting scrutinee evaluate exactly once, which repeated equality
+/// tests would otherwise not guarantee — the last case checks that.
+#[test]
+fn literal_patterns_dispatch_and_evaluate_the_scrutinee_once() {
+    let (_dir, bin) = compile_program(
+        "static CALLS: i32 = 0;\n\
+         fn tick() -> i32 { CALLS = CALLS + 1; return 2; }\n\
+         fn classify(x: i32) -> i32 {\n\
+           match x {\n\
+             0 => { return 10; },\n\
+             1 => { return 20; },\n\
+             -1 => { return 30; },\n\
+             n => { return n * 2; },\n\
+           }\n\
+         }\n\
+         fn from_bool(b: bool) -> i32 { match b { true => { return 1; }, _ => { return 2; } } }\n\
+         fn wide(x: i64) -> i32 { match x { 0 => { return 1; }, _ => { return 2; } } }\n\
+         fn main() -> i32 {\n\
+           if classify(0) != 10 { return 1; }\n\
+           if classify(1) != 20 { return 2; }\n\
+           if classify(-1) != 30 { return 3; }\n\
+           if classify(7) != 14 { return 4; }\n\
+           if from_bool(true) + from_bool(false) != 3 { return 5; }\n\
+           if wide(0 as i64) + wide(9 as i64) != 3 { return 6; }\n\
+           // As a value, not just a statement.\n\
+           let v: i32 = match tick() { 1 => 10, 2 => 20, _ => 30 };\n\
+           if v != 20 { return 7; }\n\
+           if CALLS != 1 { return 8; }\n\
+           return 0;\n\
+         }\n",
+        false,
+    );
+    let run = Command::new(&bin).status().expect("run literal-pattern probe");
+    assert_eq!(run.code(), Some(0), "unexpected exit: {run}");
+}
+
+/// The refusals that come with reports/bug-25. Literal arms cover one value
+/// each, so a catch-all is required; and the two shapes the desugar
+/// deliberately does not handle say so instead of misbehaving.
+#[test]
+fn literal_pattern_refusals_are_specific() {
+    for (src, code) in [
+        (
+            "fn f(x: i32) -> i32 { match x { 0 => { return 1; } } }\n\
+             fn main() -> i32 { return f(0); }\n",
+            "E0344",
+        ),
+        (
+            "enum E { A(i32), B }\n\
+             fn f(e: E) -> i32 { match e { E::A(0) => { return 1; }, _ => { return 2; } } }\n\
+             fn main() -> i32 { return f(E::B); }\n",
+            "E0341",
+        ),
+        (
+            "enum E { A, B }\n\
+             fn f(e: E) -> i32 { match e { E::A => { return 1; }, 0 => { return 2; }, _ => { return 3; } } }\n\
+             fn main() -> i32 { return f(E::B); }\n",
+            "E0343",
+        ),
+    ] {
+        assert_compile_fails_with(src, code);
+    }
+}
+
 /// reports/bug-15: `can_start_expr`, a hand-copied duplicate of
 /// `parse_primary`'s FIRST set, had drifted — so a range bounded by `this.n`
 /// read as an OPEN range and the parser then choked on the "extra" expression.

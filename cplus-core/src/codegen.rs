@@ -13109,6 +13109,11 @@ impl<'a> FnState<'a> {
             self.push_scope();
             // Bind pattern values into the arm scope.
             match &arm.pattern.kind {
+                // `lower` desugars every literal-pattern match into a temp
+                // binding plus an if/else chain, so codegen never sees one.
+                PatternKind::Lit(_) => {
+                    unreachable!("literal pattern reached codegen — lower did not desugar it")
+                }
                 PatternKind::Wildcard => {
                     // A wildcard arm binds nothing, but matching *consumed* the
                     // scrutinee (its scope-exit drop was disarmed above). Drop

@@ -25,7 +25,7 @@
 //! - E0340: non-exhaustive `match` (variant not covered)
 //! - E0341: pattern type doesn't match scrutinee
 //! - E0342: wrong number of payload patterns / construction args for variant
-//! - E0343: literal pattern not supported in Phase 3
+//! - E0343: a `match` mixes literal and variant patterns
 //! - E0344: (retired v0.0.14) tagged-enum Drop payloads are now supported via synthesized enum-variant drop
 //! - E0345: use of possibly-unassigned binding (definite-assignment failure)
 //! - E0346: uninitialized `let` requires a type annotation
@@ -9665,7 +9665,11 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             other => {
                 self.err(
                     "E0341",
-                    format!("`match` scrutinee must be an enum type; found `{}`. Literal patterns are deferred (E0343).", other.name()),
+                    format!(
+                        "`match` on `{}` needs literal arms (`0 => ...`) plus a catch-all; \
+                         only an enum can be matched by variant",
+                        other.name()
+                    ),
                     scrutinee.span,
                 );
                 for arm in arms {
@@ -9946,6 +9950,11 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         scrutinee_owned: bool,
     ) {
         match &pat.kind {
+            // `lower` desugars a literal-pattern match into a temp binding
+            // plus an if/else chain, so sema never sees one.
+            PatternKind::Lit(_) => {
+                unreachable!("literal pattern reached sema — lower did not desugar it")
+            }
             PatternKind::Wildcard => {
                 *has_catchall = true;
             }
@@ -10062,6 +10071,21 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 // allowed in payload positions (no nested Variant).
                 for (pp, pty) in payload.iter().zip(vdef.payload.iter()) {
                     match &pp.kind {
+                        // A literal in PAYLOAD position, e.g. `Some(0)`. The
+                        // literal-match desugar in `lower` only handles a
+                        // top-level literal arm; refusing here is the clean
+                        // "not yet" the payload rule already gives nested
+                        // variant patterns (reports/bug-25).
+                        PatternKind::Lit(_) => {
+                            self.err(
+                                "E0341",
+                                "literal payload patterns are not supported (payload patterns \
+                                 must be `_` or a binding name); match the payload to a name \
+                                 and compare it in the arm body"
+                                    .to_string(),
+                                pp.span,
+                            );
+                        }
                         PatternKind::Wildcard => {}
                         PatternKind::Binding(name) => {
                             self.scopes.last_mut().unwrap().insert(
@@ -18450,7 +18474,7 @@ fn match_pattern_binding_names(p: &Pattern) -> Vec<String> {
                 _ => None,
             })
             .collect(),
-        PatternKind::Wildcard => Vec::new(),
+        PatternKind::Wildcard | PatternKind::Lit(_) => Vec::new(),
     }
 }
 
@@ -18631,7 +18655,7 @@ fn name_in_scope(name: &str, globals: &std::collections::HashSet<String>, scopes
 
 fn collect_pattern_bindings(p: &Pattern, out: &mut std::collections::HashSet<String>) {
     match &p.kind {
-        PatternKind::Wildcard => {}
+        PatternKind::Wildcard | PatternKind::Lit(_) => {}
         PatternKind::Binding(id) => {
             out.insert(id.name.clone());
         }

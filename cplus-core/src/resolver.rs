@@ -3259,7 +3259,10 @@ fn rewrite_pattern(
     scope: &mut HashSet<String>,
 ) -> Result<(), ResolveError> {
     match &mut p.kind {
-        PatternKind::Wildcard => {}
+        // A literal pattern declares no name. It is desugared away by `lower`,
+        // but the resolver walks the AST BEFORE lower runs, so this arm is
+        // reachable and must simply do nothing.
+        PatternKind::Wildcard | PatternKind::Lit(_) => {}
         PatternKind::Binding(ident) => {
             scope.insert(ident.name.clone());
         }

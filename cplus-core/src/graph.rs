@@ -2109,7 +2109,8 @@ impl ScopedFlows {
                     }
                 }
             }
-            PatternKind::Wildcard => {}
+            // Binds nothing, and `lower` desugars it away before this runs.
+            PatternKind::Wildcard | PatternKind::Lit(_) => {}
         }
     }
 }

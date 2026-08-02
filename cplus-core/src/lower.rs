@@ -680,6 +680,15 @@ impl Lower {
             self.lower_expr(e);
             return;
         }
+        // reports/bug-25: a `match` with literal arms becomes a temp binding
+        // plus an if/else chain over equality tests. Same discipline as the
+        // pattern-let and builder desugars above: the new AST node exists
+        // between the parser and here and nowhere else, so sema, borrowck,
+        // monomorphize and codegen never learn a new pattern kind.
+        if self.desugar_literal_match(e) {
+            self.lower_expr(e);
+            return;
+        }
         let espan = e.span;
         match &mut e.kind {
             ExprKind::IntLit(..)
@@ -794,6 +803,146 @@ impl Lower {
                 unreachable!("BuilderBlock handled in lower_expr pre-check")
             }
         }
+    }
+
+    /// reports/bug-25. `match SCRUT { L1 => B1, L2 => B2, n => BD }` where the
+    /// arms are literals becomes
+    ///
+    /// ```text
+    /// { let __lit_m<span> = SCRUT;
+    ///   if __lit_m == L1 { B1 } else if __lit_m == L2 { B2 } else { let n = __lit_m; BD } }
+    /// ```
+    ///
+    /// The temp is what makes a side-effecting scrutinee (`match f() { .. }`)
+    /// evaluate once, which the repeated equality tests would otherwise not
+    /// guarantee.
+    ///
+    /// Exhaustiveness: a literal arm covers one value out of a type's whole
+    /// range, so a catch-all is REQUIRED and must come last — there is no
+    /// finite set of literals that exhausts an integer, and the desugar needs
+    /// a final `else`. E0344 (the existing non-exhaustive-match code) says so.
+    ///
+    /// Returns true when it rewrote `e`.
+    fn desugar_literal_match(&mut self, e: &mut Expr) -> bool {
+        let ExprKind::Match { scrutinee, arms } = &e.kind else {
+            return false;
+        };
+        if !arms
+            .iter()
+            .any(|a| matches!(a.pattern.kind, PatternKind::Lit(_)))
+        {
+            return false;
+        }
+        let span = e.span;
+        let tmp = format!("__lit_m{}", span.start);
+        // Split into the literal arms and the trailing catch-all.
+        let mut tests: Vec<(Expr, Expr)> = Vec::new();
+        let mut fallback: Option<(Option<Ident>, Expr)> = None;
+        for arm in arms {
+            if fallback.is_some() {
+                self.err(
+                    "E0344",
+                    "unreachable `match` arm: an earlier arm already matches every value"
+                        .to_string(),
+                    arm.pattern.span,
+                );
+                break;
+            }
+            match &arm.pattern.kind {
+                PatternKind::Lit(lit) => tests.push(((**lit).clone(), arm.body.clone())),
+                PatternKind::Wildcard => fallback = Some((None, arm.body.clone())),
+                PatternKind::Binding(name) => {
+                    fallback = Some((Some(name.clone()), arm.body.clone()))
+                }
+                PatternKind::Variant { .. } => {
+                    self.err(
+                        "E0343",
+                        "a `match` cannot mix literal patterns with variant patterns — \
+                         literals match a value, variants match a case"
+                            .to_string(),
+                        arm.pattern.span,
+                    );
+                    return false;
+                }
+            }
+        }
+        let Some((bind, fallback_body)) = fallback else {
+            self.err(
+                "E0344",
+                "non-exhaustive `match`: literal arms cover one value each, so a \
+                 catch-all arm (`_` or a binding) is required"
+                    .to_string(),
+                span,
+            );
+            return false;
+        };
+        let ident = |name: &str| Expr {
+            kind: ExprKind::Ident(name.to_string()),
+            span,
+        };
+        let as_block = |body: Expr| match body.kind {
+            ExprKind::Block(b) => b,
+            _ => Block {
+                stmts: Vec::new(),
+                tail: Some(Box::new(body)),
+                span,
+            },
+        };
+        // Innermost `else`: the catch-all, with its binding (if any) rebound
+        // to the temp so the arm body reads as written.
+        let mut chain_else = as_block(fallback_body);
+        if let Some(name) = bind {
+            chain_else.stmts.insert(
+                0,
+                Stmt {
+                    kind: StmtKind::Let {
+                        mutable: false,
+                        name,
+                        ty: None,
+                        init: Some(ident(&tmp)),
+                    },
+                    span,
+                },
+            );
+        }
+        let mut chain = Expr {
+            kind: ExprKind::Block(chain_else),
+            span,
+        };
+        for (lit, body) in tests.into_iter().rev() {
+            chain = Expr {
+                kind: ExprKind::If {
+                    cond: Box::new(Expr {
+                        kind: ExprKind::Binary {
+                            op: BinOp::Eq,
+                            lhs: Box::new(ident(&tmp)),
+                            rhs: Box::new(lit),
+                        },
+                        span,
+                    }),
+                    then: as_block(body),
+                    else_branch: Some(Box::new(chain)),
+                },
+                span,
+            };
+        }
+        e.kind = ExprKind::Block(Block {
+            stmts: vec![Stmt {
+                kind: StmtKind::Let {
+                    mutable: false,
+                    name: Ident {
+                        name: tmp,
+                        span,
+                    },
+                    ty: None,
+                    init: Some((**scrutinee).clone()),
+                },
+                span,
+            }],
+            tail: Some(Box::new(chain)),
+            span,
+        });
+        true
     }
 
     /// `if let PAT = E { B }` →  `match E { PAT => { B; }, _ => {} }`
@@ -1058,6 +1207,10 @@ impl Lower {
         // and trivially disjoint, so accept and return.
         match &complement.kind {
             PatternKind::Wildcard | PatternKind::Binding(_) => return,
+            // A literal complement covers exactly one value, so it can never
+            // be exhaustive with the success pattern. Reported below by the
+            // "both must be Variant" path, which it also fails.
+            PatternKind::Lit(_) => {}
             PatternKind::Variant { .. } => {}
         }
         // Otherwise: both patterns must be Variant. Reject overlap if they
@@ -2231,7 +2384,8 @@ fn placeholder_stmt(span: Span) -> StmtKind {
 fn is_refutable(p: &Pattern) -> bool {
     match &p.kind {
         PatternKind::Wildcard | PatternKind::Binding(_) => false,
-        PatternKind::Variant { .. } => true,
+        // A literal matches one value out of many.
+        PatternKind::Lit(_) | PatternKind::Variant { .. } => true,
     }
 }
 
@@ -2244,7 +2398,7 @@ fn is_refutable(p: &Pattern) -> bool {
 fn mutable_rebinds(pattern: &mut Pattern) -> Vec<Stmt> {
     fn walk(p: &mut Pattern, out: &mut Vec<Stmt>) {
         match &mut p.kind {
-            PatternKind::Wildcard => {}
+            PatternKind::Wildcard | PatternKind::Lit(_) => {}
             PatternKind::Binding(id) => {
                 let user = id.clone();
                 id.name = format!("__var{}_{}", id.span.start, id.name);
@@ -2276,7 +2430,7 @@ fn mutable_rebinds(pattern: &mut Pattern) -> Vec<Stmt> {
 fn collect_pattern_bindings(p: &Pattern) -> Vec<Ident> {
     fn walk(p: &Pattern, out: &mut Vec<Ident>) {
         match &p.kind {
-            PatternKind::Wildcard => {}
+            PatternKind::Wildcard | PatternKind::Lit(_) => {}
             PatternKind::Binding(i) => out.push(i.clone()),
             PatternKind::Variant { payload, .. } => {
                 for sub in payload {

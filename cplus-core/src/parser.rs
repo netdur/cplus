@@ -4250,6 +4250,48 @@ impl Parser {
                     span: tok.span,
                 })
             }
+            // reports/bug-25: a literal pattern — `0`, `-1`, `true`. Parsed as
+            // an ordinary literal expression so its value, suffix and span
+            // come from the same code expression position uses; `lower`
+            // desugars the whole match into an if/else chain over equality
+            // tests, so no later pass meets `PatternKind::Lit`.
+            TokenKind::Int(..)
+            | TokenKind::Float(..)
+            | TokenKind::True
+            | TokenKind::False
+            | TokenKind::Minus => {
+                let start = self.peek().span;
+                let neg = self.eat(&TokenKind::Minus);
+                let lit = self.parse_primary()?;
+                if !matches!(
+                    lit.kind,
+                    ExprKind::IntLit(..) | ExprKind::FloatLit(..) | ExprKind::BoolLit(_)
+                ) {
+                    return Err(ParseError {
+                        kind: ParseErrorKind::Unexpected {
+                            found: "an expression".to_string(),
+                            expected: "a literal pattern — an integer, float, or bool",
+                        },
+                        span: lit.span,
+                    });
+                }
+                let span = start.merge(lit.span);
+                let value = if neg {
+                    Expr {
+                        kind: ExprKind::Unary {
+                            op: UnaryOp::Neg,
+                            operand: Box::new(lit),
+                        },
+                        span,
+                    }
+                } else {
+                    lit
+                };
+                Ok(Pattern {
+                    kind: PatternKind::Lit(Box::new(value)),
+                    span,
+                })
+            }
             TokenKind::Ident(_) => {
                 // Either a bare binding `name`, a path `Enum::Variant`,
                 // a cross-file path `prefix::Enum::Variant`, or — slice
@@ -7121,6 +7163,41 @@ mod tests {
             "expected the nesting diagnostic, got {:?}",
             err.kind
         );
+    }
+
+    // ---- reports/bug-25: literal patterns ----
+
+    /// The pattern model had no literal node, so `match x { 0 => ... }` failed
+    /// at parse time with "expected pattern, found integer literal".
+    #[test]
+    fn literal_patterns_parse() {
+        for lit in ["0", "-1", "true", "false", "1.5"] {
+            let src = format!(
+                "fn f(x: i32) -> i32 {{ match x {{ {lit} => {{ return 1; }}, _ => {{ return 0; }} }} }}"
+            );
+            let p = parse_src(&src).unwrap_or_else(|e| panic!("literal `{lit}`: {e:?}"));
+            let ItemKind::Function(f) = &p.items[0].kind else {
+                panic!("expected a function");
+            };
+            // The match is the body's tail expression.
+            let tail = f.body.tail.as_ref().expect("body tail");
+            let ExprKind::Match { arms, .. } = &tail.kind else {
+                panic!("expected a match, got {:?}", tail.kind);
+            };
+            assert!(
+                matches!(arms[0].pattern.kind, PatternKind::Lit(_)),
+                "literal `{lit}` did not parse as a literal pattern: {:?}",
+                arms[0].pattern.kind
+            );
+        }
+    }
+
+    /// A `-` in pattern position introduces a negative literal and nothing
+    /// else; anything past a literal is not a pattern.
+    #[test]
+    fn a_non_literal_in_pattern_position_is_rejected() {
+        parse_src("fn f(x: i32) -> i32 { match x { \"s\" => { return 1; }, _ => { return 0; } } }")
+            .expect_err("a string literal is not a pattern");
     }
 
     /// Ordinary nesting is unaffected.

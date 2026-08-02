@@ -1231,7 +1231,8 @@ fn collect_pattern_names(p: &Pattern, out: &mut Vec<String>) {
                 collect_pattern_names(b, out);
             }
         }
-        PatternKind::Wildcard => {}
+        // Binds nothing, and `lower` desugars it away before this runs.
+        PatternKind::Wildcard | PatternKind::Lit(_) => {}
     }
 }
 
@@ -6095,9 +6096,10 @@ fn weird(b: B) -> B {
         // E1 should reject because the only return-path doesn't root at
         // `b`.
         //
-        // Caveat: match on i32 literal isn't currently supported (E0343).
-        // This test may not be reachable until match-on-int is added.
-        // For now we assert that whatever happens, it's not Some(Param(0)).
+        // (Literal `match` arms landed with reports/bug-25, and `lower`
+        // desugars them to an if/else chain before borrowck runs — so this
+        // shape reaches borrowck as ordinary control flow either way.)
+        // Assert only that the result is not Some(Param(0)).
         assert_eq!(return_borrow_source(&prog, "weird"), None);
     }
 

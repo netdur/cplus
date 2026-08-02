@@ -769,7 +769,8 @@ pub fn scrutinee_reads_in_place(e: &Expr) -> bool {
 /// match must tear it down regardless of what its patterns bind.
 pub fn match_binds_a_name(arms: &[MatchArm]) -> bool {
     arms.iter().any(|arm| match &arm.pattern.kind {
-        PatternKind::Wildcard => false,
+        // A literal pattern binds nothing; `lower` desugars it away entirely.
+        PatternKind::Wildcard | PatternKind::Lit(_) => false,
         PatternKind::Binding(_) => true,
         PatternKind::Variant { payload, .. } => payload
             .iter()
@@ -1190,6 +1191,15 @@ pub enum PatternKind {
     /// resolution from the scrutinee's type. Never holds the
     /// internal monomorphized mangled name — that's an
     /// implementation detail invisible at the source level.
+    /// A literal value: `0`, `-1`, `true`. Holds the literal as an ordinary
+    /// `Expr` so the equality test the lowering builds has its operand
+    /// already, and so literal typing follows the same rules it does in
+    /// expression position.
+    ///
+    /// Nothing after `lower` sees this: a `match` containing literal arms is
+    /// desugared there into a temp binding plus an if/else chain, the same
+    /// way `if let` is desugared into a `match` (reports/bug-25).
+    Lit(Box<Expr>),
     Variant {
         enum_name: Ident,
         type_args: Vec<Type>,

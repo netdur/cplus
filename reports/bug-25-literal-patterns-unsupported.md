@@ -1,6 +1,8 @@
 # Bug 25 — Literal patterns unsupported: `match x { 0 => ... }` rejected
 
-- Status: reproduced 2026-08-01 with `target/release/cpc check` (known open gap, root cause located)
+- Status: FIXED 2026-08-02, commit aecadfd — `PatternKind::Lit` + a `lower` desugar to
+  a temp binding and an if/else chain
+- Status (original): reproduced 2026-08-01 with `target/release/cpc check` (known open gap, root cause located)
 - Severity: language gap (common match shape unusable)
 - Area: parser (`cplus-core/src/parser.rs`) + ast + lower + sema
 - Master report: `core-drift-audit-2026-08-01.md` (parser audit, known bug 2)
@@ -55,12 +57,41 @@ The `|0|` spelling fails the same way. Expected: literal patterns work for integ
 
 ## Verification
 
-1. The repro compiles; `match` on 0/1/-1/bool/u8-char all dispatch correctly (runtime
-   e2e with asserted returns).
-2. Non-exhaustive literal match without `_` → error (negative e2e).
-3. Nested: `Some(0)`-style variant-with-literal-payload patterns if step 1 allows nesting
-   — decide and test either support or a clean "not yet" diagnostic.
-4. Full suites.
+1. DONE: `match` on 0 / 1 / -1 / bool dispatches correctly, over i32 and i64 scrutinees,
+   as a statement AND as a value, with either `_` or a binding as the catch-all
+   (`literal_patterns_dispatch_and_evaluate_the_scrutinee_once` in cpc/tests/e2e.rs). A u8
+   CHAR literal is not covered — C+ has no char-literal token; a byte is written as an
+   integer and matches as one.
+2. DONE: no catch-all → E0344, saying why (each literal covers one value).
+3. DECIDED: a clean "not yet". `Some(0)` gives E0341, the same code the payload rule
+   already uses for nested variant patterns, with a message pointing at the workaround
+   (bind the payload, compare in the body). The desugar handles top-level literal arms
+   only. Mixing literal and variant arms in one match is E0343 with its own message.
+4. DONE: full suites, the stdlib suite, and vendor-wide diagnostic parity.
+
+## What was built
+
+- ast.rs: `PatternKind::Lit(Box<Expr>)` — the literal as an ordinary expression, so its
+  value, suffix and span come from the code expression position already uses, and the
+  equality test the desugar builds has its operand ready.
+- parser.rs: a literal arm in `parse_pattern_inner`, including a leading `-`.
+- lower.rs: `desugar_literal_match` rewrites the whole match to
+  `{ let __lit_m<span> = SCRUT; if __lit_m == L1 { .. } else ... else { .. } }`. The temp
+  is load-bearing: without it a side-effecting scrutinee (`match tick() { .. }`) would be
+  evaluated once per equality test. Pinned by the `CALLS != 1` assertion in the e2e test.
+- Everything downstream is unchanged in behavior: sema and codegen carry an
+  `unreachable!` for `Lit`, since lower removes it; the resolver and the AST/borrowck/graph
+  binding-collectors treat it as binding-nothing, because they walk BEFORE lower.
+
+Step 5's prediction held — no new codegen was needed.
+
+## Collateral
+
+Two stale statements went with it: sema's module header said "E0343: literal pattern not
+supported in Phase 3", and the non-enum scrutinee message said "Literal patterns are
+deferred (E0343)" — which is now the wrong advice, since the fix is to write literal arms.
+Both now describe what the codes actually mean. A borrowck test comment claiming
+match-on-int was unreachable is corrected too.
 
 ## Notes
 
