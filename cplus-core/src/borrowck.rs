@@ -3264,16 +3264,36 @@ struct ViewLocal {
     borrow_roots: BTreeSet<String>,
 }
 
+/// The enclosing definition, in the terms the E0515 question asks about:
+/// did the flow pass export this store, so that call sites tie?
+enum ViewSite {
+    /// A free function. `exported` is false when its ADDRESS is taken —
+    /// indirect calls through a fn pointer carry no computed flows, so
+    /// nothing at the call site can apply them.
+    Free { name: String, exported: bool },
+    /// A method, keyed `Type.method` for the signature table.
+    Method { key: String },
+}
+
 /// The definition-site view rules. One instance per function/method body.
 struct ViewRules<'a> {
     sigs: &'a SigTable,
     oracle: &'a CopyOracle,
+    /// Module `static`s by name — the sinks with no owner to tie to.
+    statics: &'a HashMap<String, Type>,
     /// Lexical scope stack; scope 0 holds the receiver and parameters.
     scopes: Vec<HashMap<String, ViewLocal>>,
     /// Parameter (and receiver) names, for phrasing owner descriptions and
     /// for recognizing a store whose source is a caller-owned view.
     param_names: HashSet<String>,
+    /// Parameter positions, so a store can ask the flow pass whether THIS
+    /// source reached THAT sink.
+    param_index: HashMap<String, usize>,
+    /// Write targets that outlive the frame: `ref` parameters and a
+    /// `ref this` receiver, which alias the caller's storage.
+    ref_targets: HashSet<String>,
     return_ty: Option<Type>,
+    site: ViewSite,
     /// Contract §5: the definition carries some `#[keeps(...)]` — it has
     /// declared its flows, which is the whole ask at an opaque boundary.
     declares_flows: bool,
@@ -3281,9 +3301,12 @@ struct ViewRules<'a> {
 }
 
 impl<'a> ViewRules<'a> {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         sigs: &'a SigTable,
         oracle: &'a CopyOracle,
+        statics: &'a HashMap<String, Type>,
+        site: ViewSite,
         receiver: Option<Receiver>,
         receiver_ty: Option<Type>,
         params: &[Param],
@@ -3292,8 +3315,15 @@ impl<'a> ViewRules<'a> {
     ) -> Self {
         let mut base: HashMap<String, ViewLocal> = HashMap::new();
         let mut param_names = HashSet::new();
+        let mut param_index = HashMap::new();
+        let mut ref_targets = HashSet::new();
         if let Some(r) = receiver {
             param_names.insert("self".to_string());
+            if r == Receiver::Mut {
+                // `ref this` aliases the caller's receiver — a write target
+                // that outlives the call.
+                ref_targets.insert("self".to_string());
+            }
             base.insert(
                 "self".to_string(),
                 ViewLocal {
@@ -3303,8 +3333,13 @@ impl<'a> ViewRules<'a> {
                 },
             );
         }
-        for p in params {
+        for (i, p) in params.iter().enumerate() {
             param_names.insert(p.name.name.clone());
+            param_index.insert(p.name.name.clone(), i);
+            // `ref x: T` borrows the caller's storage and writes back.
+            if p.mutable && !p.move_ {
+                ref_targets.insert(p.name.name.clone());
+            }
             base.insert(
                 p.name.name.clone(),
                 ViewLocal {
@@ -3317,9 +3352,13 @@ impl<'a> ViewRules<'a> {
         ViewRules {
             sigs,
             oracle,
+            statics,
             scopes: vec![base],
             param_names,
+            param_index,
+            ref_targets,
             return_ty,
+            site,
             declares_flows: crate::attrs::has_keeps(attributes, "this")
                 || crate::attrs::has_keeps(attributes, "nothing"),
             diags: Vec::new(),
@@ -3378,9 +3417,13 @@ impl<'a> ViewRules<'a> {
         }
     }
 
+    /// Types resolve through the scope stack first, then module `static`s —
+    /// a `static` is a place like any other, and store targets name them.
     fn infer_ty(&self, e: &Expr) -> Option<Type> {
         infer_expr_type_with(e, self.sigs, &|n| {
-            self.lookup(n).and_then(|l| l.ty.clone())
+            self.lookup(n)
+                .and_then(|l| l.ty.clone())
+                .or_else(|| self.statics.get(Self::canonical(n)).cloned())
         })
     }
 
@@ -3795,6 +3838,150 @@ impl<'a> ViewRules<'a> {
         );
     }
 
+    /// The base binding name of a place expression. `None` for anything
+    /// that is not a place.
+    fn place_root(e: &Expr) -> Option<String> {
+        match &e.kind {
+            ExprKind::Ident(n) => Some(n.clone()),
+            ExprKind::Field { receiver, .. } | ExprKind::Index { receiver, .. } => {
+                Self::place_root(receiver)
+            }
+            ExprKind::Unary {
+                op: UnaryOp::Deref,
+                operand,
+            } => Self::place_root(operand),
+            _ => None,
+        }
+    }
+
+    /// Contract §3.1 / §5: a view stored into a place that OUTLIVES the
+    /// frame — a module `static`, or a `ref` / `ref this` target aliasing
+    /// the caller's storage. Two ways for that to dangle, and they read the
+    /// same store:
+    ///
+    /// - the view's owner is storage THIS frame frees (a local, a `take`
+    ///   parameter, a `take this` receiver) — E0513, unconditionally;
+    /// - the view's owner is the CALLER's, guaranteed only for the duration
+    ///   of the call — E0515, unless the flow pass exported this store, in
+    ///   which case every call site ties the sink to the argument's owner
+    ///   and the lifetime is the caller's to get right.
+    ///
+    /// That second clause is the whole point of the port. Sema used to
+    /// answer it by hand — "a concrete method's stores are exported, so
+    /// skip"; "a concrete free fn whose address is untaken is exported, so
+    /// skip" — which is the NEGATION of this pass's coverage, maintained by
+    /// belief. Here the store asks the flow pass directly, so a store the
+    /// analysis stopped covering is denied instead of silently allowed.
+    fn check_store_escape(&mut self, target: &Expr, value: &Expr) {
+        let Some(ty) = self.place_ty(target) else {
+            return;
+        };
+        if !(Self::is_view_ty(&ty) || self.oracle.type_contains_view(&ty)) {
+            return;
+        }
+        let Some(troot_raw) = Self::place_root(target) else {
+            return;
+        };
+        let troot = Self::canonical(&troot_raw).to_string();
+        let target_is_static = self.statics.contains_key(&troot);
+        let target_is_ref = self.ref_targets.contains(&troot);
+        if !(target_is_static || target_is_ref) {
+            return;
+        }
+        let target_is_receiver = troot == "self";
+        let dest = if target_is_static {
+            format!("static `{troot}`")
+        } else {
+            format!("`ref` target `{troot_raw}`")
+        };
+        for vroot in self.borrow_roots_of(value) {
+            let key = Self::canonical(&vroot).to_string();
+            let Some(local) = self.lookup(&key).cloned() else {
+                continue;
+            };
+            let Some(vty) = local.ty.clone() else {
+                continue;
+            };
+            if local.owns_value && !self.oracle.is_copy(&vty) {
+                let owner = self.owner_desc(&vroot);
+                self.err(
+                    "E0513",
+                    format!(
+                        "cannot store a view of {owner} into {dest}: the view's owner is freed when the function returns, but {dest} outlives it, so the stored view would dangle"
+                    ),
+                    value.span,
+                );
+                return;
+            }
+            // The root is a borrowed view the CALLER owns: a view-typed or
+            // view-carrying parameter, or a view PROJECTED from a borrowed
+            // non-Copy one (`this.f = k.view()` with `k: Text` — `Text` is
+            // an owner, not a carrier, and a bare parameter is not
+            // `owns_value`, so neither earlier gate sees it).
+            let root_is_param_view = self.param_names.contains(&key)
+                && (self.oracle.type_contains_view(&vty)
+                    || (!local.owns_value && !self.oracle.is_copy(&vty)));
+            if !root_is_param_view {
+                continue;
+            }
+            if !target_is_static && self.store_is_tied(&key, target_is_receiver, &troot) {
+                continue;
+            }
+            let hint = if target_is_receiver {
+                " Own the bytes (a `Text` field), intern them (`text::intern`), or declare the method `#[keeps(this)]` so every caller ties the receiver to the argument's owner."
+            } else {
+                " Own the bytes (`Text`), or intern them (`text::intern`) for a process-lifetime view."
+            };
+            self.err(
+                "E0515",
+                format!(
+                    "cannot store the view parameter `{vroot}` into {dest}: the caller only guarantees `{vroot}`'s bytes for this call, but {dest} outlives it, so the stored view would dangle.{hint}"
+                ),
+                value.span,
+            );
+            return;
+        }
+    }
+
+    /// Did the flow pass export this parameter→sink store, so that call
+    /// sites tie? A `static` never reaches here: it has no owner to tie to.
+    fn store_is_tied(&self, src: &str, target_is_receiver: bool, target_root: &str) -> bool {
+        if target_is_receiver {
+            // A view of the receiver stored back into the receiver outlives
+            // nothing.
+            if src == "self" {
+                return true;
+            }
+            let ViewSite::Method { key } = &self.site else {
+                return false;
+            };
+            let (Some(entry), Some(i)) = (self.sigs.methods.get(key), self.param_index.get(src))
+            else {
+                return false;
+            };
+            return SigTable::effective_keeps(entry)
+                .get(*i)
+                .copied()
+                .unwrap_or(false);
+        }
+        // A `ref` parameter target. Only a free fn publishes (src → dst)
+        // flows, and only a directly-called one can have them applied.
+        let ViewSite::Free { name, exported } = &self.site else {
+            return false;
+        };
+        if !exported {
+            return false;
+        }
+        let (Some(entry), Some(src_i), Some(dst_i)) = (
+            self.sigs.fns.get(name),
+            self.param_index.get(src),
+            self.param_index.get(target_root),
+        ) else {
+            return false;
+        };
+        entry.computed_ref_flows.contains(&(*src_i, *dst_i))
+    }
+
     // -- the walk ----------------------------------------------------------
 
     /// Record what a `let` / `var` introduces: an owning binding, plus the
@@ -3974,6 +4161,7 @@ impl<'a> ViewRules<'a> {
                 if *op != AssignOp::Assign {
                     return;
                 }
+                self.check_store_escape(target, value);
                 self.check_raw_store(target, value);
                 let ExprKind::Ident(n) = &target.kind else {
                     return;
@@ -4045,6 +4233,13 @@ fn collect_view_diagnostics(
     oracle: &CopyOracle,
     diags: &mut Vec<(Option<String>, RawDiag)>,
 ) {
+    let mut statics: HashMap<String, Type> = HashMap::new();
+    for item in &prog.items {
+        if let ItemKind::Static(s) = &item.kind {
+            statics.insert(s.name.name.clone(), s.ty.clone());
+        }
+    }
+    let addr_taken = fns_with_address_taken(prog);
     for item in &prog.items {
         match &item.kind {
             ItemKind::Function(f) => {
@@ -4054,6 +4249,11 @@ fn collect_view_diagnostics(
                 let mut r = ViewRules::new(
                     sigs,
                     oracle,
+                    &statics,
+                    ViewSite::Free {
+                        name: f.name.name.clone(),
+                        exported: !addr_taken.contains(&f.name.name),
+                    },
                     None,
                     None,
                     &f.params,
@@ -4075,6 +4275,10 @@ fn collect_view_diagnostics(
                     let mut r = ViewRules::new(
                         sigs,
                         oracle,
+                        &statics,
+                        ViewSite::Method {
+                            key: format!("{}.{}", b.target.name, m.name.name),
+                        },
                         m.receiver,
                         recv_ty,
                         &m.params,
@@ -8841,6 +9045,105 @@ fn mk() -> LStr { return LStr { ptr: { 0 as *u8 }, len: { 0 as usize }, cap: { 0
             assert!(
                 !codes.iter().any(|c| c == "E0516"),
                 "[{name}] must not be denied, got {codes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn view_of_a_local_stored_into_an_outliving_place_denied_e0513() {
+        // A `static` and a `ref` target both outlive the frame, and the
+        // view's owner does not.
+        let cases: &[(&str, &str)] = &[
+            (
+                "static_view",
+                "static S: str = \"\";\n\
+                 fn bad() { let b: Buf = Buf::new(); S = b.view(); return; }",
+            ),
+            (
+                "static_field",
+                "static W: Slot = Slot { s: \"\" };\n\
+                 fn bad() { let b: Buf = Buf::new(); W.s = b.view(); return; }",
+            ),
+            (
+                "ref_out_param",
+                "fn stash(ref w: Slot) { let b: Buf = Buf::new(); w.s = b.view(); return; }",
+            ),
+        ];
+        for (name, tail) in cases {
+            let codes = check_src(&format!("{VIEW_PRELUDE}{tail}"));
+            assert!(
+                codes.iter().any(|c| c == "E0513"),
+                "[{name}] expected E0513, got {codes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn view_param_stored_where_nothing_ties_denied_e0515() {
+        // The three places contract §3 says the deny survives: a `static`
+        // (no owner to tie), a fn whose ADDRESS is taken (indirect calls
+        // carry no flows), and a store the flow pass does not analyze (a
+        // method with its own generic params).
+        let cases: &[(&str, &str)] = &[
+            (
+                "static_sink",
+                "static KEY: str = \"\";\nfn stash(k: str) { KEY = k; return; }",
+            ),
+            (
+                "address_taken",
+                "struct Holder { view: str }\n\
+                 fn put(ref h: Holder, k: str) { h.view = k; return; }\n\
+                 fn consume(f: fn(ref Holder, str)) { return; }\n\
+                 fn main() -> i32 { consume(put); return 0; }",
+            ),
+            (
+                "generic_method_receiver_store",
+                "struct Holder { view: str }\n\
+                 impl Holder { fn set[U](ref this, k: str, u: U) { this.view = k; return; } }",
+            ),
+        ];
+        for (name, src) in cases {
+            let codes = check_src(src);
+            assert!(
+                codes.iter().any(|c| c == "E0515"),
+                "[{name}] expected E0515, got {codes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn view_param_store_the_flow_pass_exports_stays_clean() {
+        // Where the flow pass publishes the store, call sites tie and the
+        // definition needs no deny — declared `#[keeps(this)]`, a computed
+        // concrete receiver store, a computed generic-impl receiver store,
+        // and a computed free-fn ref-param flow.
+        let clean: &[(&str, &str)] = &[
+            (
+                "keeps_this",
+                "struct Holder { view: str }\n\
+                 impl Holder { #[keeps(this)] fn set(ref this, k: str) { this.view = k; return; } }",
+            ),
+            (
+                "computed_concrete_setter",
+                "struct Holder { view: str }\n\
+                 impl Holder { fn set(ref this, k: str) { this.view = k; return; } }",
+            ),
+            (
+                "computed_generic_setter",
+                "struct GenHolder[T] { opaque p: *u8, view: str }\n\
+                 impl GenHolder[T] { fn gset(ref this, k: str) { this.view = k; return; } }",
+            ),
+            (
+                "computed_free_fn_ref_flow",
+                "struct Holder { view: str }\n\
+                 fn put(ref h: Holder, k: str) { h.view = k; return; }",
+            ),
+        ];
+        for (name, src) in clean {
+            let codes = check_src(src);
+            assert!(
+                !codes.iter().any(|c| c == "E0515"),
+                "[{name}] an exported store must not be denied, got {codes:?}"
             );
         }
     }
