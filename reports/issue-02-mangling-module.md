@@ -1,6 +1,6 @@
 # Issue 02 — One mangling module (5 printers, 2 parsers, already diverged)
 
-- Status: DONE 2026-08-02, commit <pending>
+- Status: DONE 2026-08-02, commit 63e8fe7
 - Type: structural consolidation
 - Area: new `cplus-core/src/mangling.rs`; `sema.rs`, `monomorphize.rs`, `codegen.rs`
 - Effort: S-M (mostly moves)
