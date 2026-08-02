@@ -1732,7 +1732,7 @@ fn subst_type_ast(
             let arg_names: Vec<String> = resolved.iter().map(mangle_type_ast_arg).collect();
             if let Some(mangled) = struct_lookup
                 .by_names
-                .get(&("__Tuple".to_string(), arg_names))
+                .get(&(crate::sema::TUPLE_TEMPLATE.to_string(), arg_names))
             {
                 TypeKind::Path(mangled.clone())
             } else {

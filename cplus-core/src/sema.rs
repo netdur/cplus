@@ -597,6 +597,13 @@ pub fn check(program: &Program, file: PathBuf, src: &str) -> Vec<Diagnostic> {
     check_with_files(program, file, src, std::collections::BTreeMap::new())
 }
 
+/// The pseudo-template name a synthesized tuple struct is registered under
+/// in `struct_instantiations` / `generic_origin`. Tuples have no
+/// `StructDecl` template — every consumer that walks generic origins has to
+/// special-case this key, so it is spelled once here (sema and monomorphize
+/// both key off it).
+pub const TUPLE_TEMPLATE: &str = "__Tuple";
+
 /// Slice 7GEN.5a: instantiation info produced by sema and consumed by
 /// the `monomorphize` pass. `instantiations` is the deduplicated set
 /// of `(generic_fn_name, [concrete_args])` pairs that need synthesized
@@ -949,6 +956,7 @@ fn check_with_files_inner(
         fns_generic: HashMap::new(),
         fn_instantiations: std::collections::BTreeSet::new(),
         call_monos: HashMap::new(),
+        tuple_lit_elems: HashMap::new(),
         assoc_free_fn_dispatches: HashMap::new(),
         assoc_method_dispatches: std::collections::HashSet::new(),
         struct_generic_templates: HashMap::new(),
@@ -1546,6 +1554,13 @@ struct SemaCx<'a> {
     /// sites in different files don't collide (a `ByteSpan` is file-less);
     /// the file component is `current_file` at record time.
     call_monos: HashMap<ByteSpan, Vec<Ty>>,
+    /// bug-27: per-tuple-literal element types, as checked. A tuple literal
+    /// inside a generic FREE-fn body is checked in `Ty::Param` form, so the
+    /// tuple struct it synthesizes (`("__Tuple", [Param "T", i32])`) is not
+    /// the one the instantiated body needs. `propagate_body_instantiations`
+    /// replays this record under each concrete subst — the same trick
+    /// `BodySite::FnCall` plays with `call_monos`.
+    tuple_lit_elems: HashMap<ByteSpan, Vec<Ty>>,
     /// v0.0.4 Phase 1C: `Type[args]::name(...)` call sites that resolved
     /// to a free generic fn (not an impl method). Maps the
     /// `GenericEnumCall`'s span to the qualified free fn name sema
@@ -9544,7 +9559,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             Some(Ty::Struct(id)) => {
                 let def = &self.structs[id.0 as usize];
                 match &def.generic_origin {
-                    Some((name, args)) if name == "__Tuple" && args.len() == elements.len() => {
+                    Some((name, args)) if name == TUPLE_TEMPLATE && args.len() == elements.len() => {
                         args.iter().map(|t| Some(t.clone())).collect()
                     }
                     _ => vec![None; elements.len()],
@@ -9568,6 +9583,12 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         if elem_tys.iter().any(|t| matches!(t, Ty::Error)) {
             return Ty::Error;
         }
+        // bug-27: remember what this literal's elements checked as. Inside a
+        // generic template the element types are `Ty::Param`, and the struct
+        // synthesized below is the wrong one for every instantiation;
+        // `propagate_body_instantiations` replays this record under each
+        // concrete subst to register the ones codegen will actually demand.
+        self.tuple_lit_elems.insert(span, elem_tys.clone());
         self.synthesize_tuple_struct(&elem_tys, span)
     }
 
@@ -9579,7 +9600,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
     /// pseudo-template name `"__Tuple"` so monomorphize emits an AST
     /// struct item per unique tuple at codegen-handoff time.
     fn synthesize_tuple_struct(&mut self, elem_tys: &[Ty], _span: ByteSpan) -> Ty {
-        let key = ("__Tuple".to_string(), elem_tys.to_vec());
+        let key = (TUPLE_TEMPLATE.to_string(), elem_tys.to_vec());
         if let Some(&existing) = self.struct_instantiations.get(&key) {
             return Ty::Struct(existing);
         }
@@ -9609,7 +9630,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             is_repr_c: false,
             is_pub: false,
             origin_file: None,
-            generic_origin: Some(("__Tuple".to_string(), elem_tys.to_vec())),
+            generic_origin: Some((TUPLE_TEMPLATE.to_string(), elem_tys.to_vec())),
         });
         self.struct_by_name.insert(mangled.clone(), id);
         self.struct_instantiations.insert(key, id);
@@ -17331,6 +17352,14 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 if new_args == args {
                     return ty.clone();
                 }
+                // bug-27: a synthesized tuple carries the pseudo-template name
+                // `"__Tuple"`, which has no `StructDecl` to look up — it is
+                // re-instantiated by synthesizing the substituted element list.
+                // Without this arm, `fn f[T]() -> (T, i32)` panicked here the
+                // moment the signature was substituted for a concrete T.
+                if name == TUPLE_TEMPLATE {
+                    return self.synthesize_tuple_struct(&new_args, ByteSpan::new(0, 0));
+                }
                 // Re-instantiate. The template lookup must succeed — we
                 // wouldn't have a generic_origin recorded otherwise.
                 let template = self
@@ -17877,6 +17906,37 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             }
             BodySite::VariantPattern { enum_name, type_args } => {
                 self.try_instantiate_enum_from_pattern_args(&enum_name, &type_args, subst);
+            }
+            // bug-27: `let p: (T, i32)` in a template body. Sema registered
+            // `("__Tuple", [Param "T", i32])` while checking the template;
+            // monomorphize needs the substituted instantiation to exist or it
+            // leaves `TypeKind::Tuple` in the AST and codegen has no lowering.
+            BodySite::TupleType { elems } => {
+                if elems.len() < 2 {
+                    return;
+                }
+                let Some(resolved) = self.resolve_body_type_args(&elems, subst) else {
+                    return;
+                };
+                self.synthesize_tuple_struct(&resolved, ByteSpan::new(0, 0));
+            }
+            // bug-27: `let p = (x, 1)` — no type annotation to walk, so the
+            // element types come from sema's record for the literal's span.
+            BodySite::TupleLit { span } => {
+                let Some(recorded) = self.tuple_lit_elems.get(&span).cloned() else {
+                    return;
+                };
+                let resolved: Vec<Ty> = recorded
+                    .iter()
+                    .map(|t| self.subst_ty_deep(t, subst))
+                    .collect();
+                if resolved
+                    .iter()
+                    .any(|t| ty_contains_param(t, &self.structs, &self.enums) || matches!(t, Ty::Error))
+                {
+                    return;
+                }
+                self.synthesize_tuple_struct(&resolved, span);
             }
         }
     }
@@ -19156,6 +19216,16 @@ enum BodySite {
         enum_name: String,
         type_args: Vec<Type>,
     },
+    /// bug-27: a `TypeKind::Tuple` in any type position of the body. Tuples
+    /// have no template to instantiate — the concrete struct is synthesized
+    /// from the substituted element list.
+    TupleType { elems: Vec<Type> },
+    /// bug-27: a tuple LITERAL. Its element types can't be read off the AST,
+    /// so this replays sema's `tuple_lit_elems` record for the span under the
+    /// enclosing subst. Free-fn template bodies are type-checked (in `Param`
+    /// form) so the record exists; generic IMPL-method bodies are not checked
+    /// at all, so there is nothing to replay — see the report.
+    TupleLit { span: ByteSpan },
 }
 
 /// Collect every `TypeKind::Generic` nested anywhere in a type AST.
@@ -19188,6 +19258,9 @@ fn walk_type_sites(ty: &Type, out: &mut Vec<BodySite>) {
             }
         }
         TypeKind::Tuple(elems) => {
+            out.push(BodySite::TupleType {
+                elems: elems.clone(),
+            });
             for e in elems {
                 walk_type_sites(e, out);
             }
@@ -19455,7 +19528,13 @@ fn walk_body_sites_in_expr(expr: &Expr, out: &mut Vec<BodySite>) {
                 walk_body_sites_in_expr(&f.value, out);
             }
         }
-        ExprKind::ArrayLit { elements } | ExprKind::TupleLit { elements } => {
+        ExprKind::ArrayLit { elements } => {
+            for e in elements {
+                walk_body_sites_in_expr(e, out);
+            }
+        }
+        ExprKind::TupleLit { elements } => {
+            out.push(BodySite::TupleLit { span: expr.span });
             for e in elements {
                 walk_body_sites_in_expr(e, out);
             }

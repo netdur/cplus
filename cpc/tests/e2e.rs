@@ -22852,3 +22852,56 @@ fn extension_may_not_replace_an_existing_method_e0326() {
     assert!(!out.status.success(), "an override must be rejected");
     assert!(all.contains("E0326"), "expected E0326, got: {all}");
 }
+
+/// reports/bug-27: a tuple whose element types come from a type parameter,
+/// used inside a generic template. Sema type-checks the TEMPLATE, so it
+/// registers `("__Tuple", [Param "T", i32])` — the instantiation
+/// `("__Tuple", [i32, i32])` that the substituted body actually needs was
+/// never registered, monomorphize left `TypeKind::Tuple` in the AST, and
+/// codegen panicked with no source location. Every shape below is one of the
+/// four distinct panics that reproduced: a `let` annotation in a generic fn
+/// and in a generic impl method (mono fallthrough), a tuple in a generic
+/// signature (`subst_ty_deep` had no `__Tuple` arm), and a tuple literal
+/// whose type is inferred (the element types are replayed from sema's
+/// per-span record).
+#[test]
+fn tuple_types_naming_a_type_parameter_instantiate() {
+    let (_dir, bin) = compile_program(
+        "struct H[T] { v: T }\n\
+         impl H[T] {\n\
+           // Annotated tuple type in a generic impl-method body.\n\
+           fn tup(this) -> i32 { let p: (T, i32) = (this.v, 1); return p.1; }\n\
+           // Tuple in the SIGNATURE of a generic impl method.\n\
+           fn pair(take this) -> (T, i32) { return (this.v, 2); }\n\
+         }\n\
+         // Annotated tuple type in a generic free-fn body.\n\
+         fn pack[T](take x: T) -> i32 { let p: (T, i32) = (x, 3); return p.1; }\n\
+         // Tuple in a generic free fn's return type, and in a parameter.\n\
+         fn wrap[T](take x: T) -> (T, i32) { return (x, 4); }\n\
+         fn snd[T](take p: (T, i32)) -> i32 { return p.1; }\n\
+         // Tuple LITERAL with no annotation anywhere — element types come\n\
+         // from the type parameter through inference.\n\
+         fn inferred[T](take a: T, take b: T) -> T { let p = (a, b); return p.0; }\n\
+         fn main() -> i32 {\n\
+           let h: H[i32] = H[i32] { v: 7 };\n\
+           if h.tup() != 1 { return 1; }\n\
+           let h2: H[i32] = H[i32] { v: 7 };\n\
+           let pr: (i32, i32) = h2.pair();\n\
+           if pr.0 != 7 { return 2; }\n\
+           if pr.1 != 2 { return 3; }\n\
+           if pack::[i32](5) != 3 { return 4; }\n\
+           let w: (i32, i32) = wrap::[i32](6);\n\
+           if w.1 != 4 { return 5; }\n\
+           if snd::[i32](w) != 4 { return 6; }\n\
+           if inferred::[i32](8, 9) != 8 { return 7; }\n\
+           // A second element type keeps the mangling honest: this must be a\n\
+           // DIFFERENT synthesized struct, not a reuse of the i32 one.\n\
+           let wb: (bool, i32) = wrap::[bool](true);\n\
+           if wb.1 != 4 { return 8; }\n\
+           return 0;\n\
+         }\n",
+        false,
+    );
+    let run = Command::new(&bin).status().expect("run tuple-generic probe");
+    assert_eq!(run.code(), Some(0), "unexpected exit: {run}");
+}
