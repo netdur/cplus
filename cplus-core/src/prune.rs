@@ -67,6 +67,17 @@ pub fn prune_unreachable(ir: &str) -> (String, usize) {
     let lines: Vec<&str> = ir.lines().collect();
     let blocks = collect_blocks(&lines);
     if blocks.is_empty() {
+        // issue-08 step 4: this pass reads codegen's own text and contracts its
+        // exact shape — `define ` at column 0, a closing `}` alone at column 0.
+        // A formatting change on the emitter side turns pruning into a silent
+        // no-op: conservative, so nothing breaks, and nothing says so either
+        // (the module just stops shrinking). A module with `define ` in it and
+        // no blocks parsed means the contract broke.
+        debug_assert!(
+            !ir.contains("\ndefine "),
+            "prune found no blocks in a module that defines functions — \
+             codegen's text shape and this parser have diverged"
+        );
         return (ir.to_string(), 0);
     }
 

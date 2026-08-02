@@ -28,6 +28,19 @@ use std::fmt::Write;
 #[derive(Default)]
 struct ModuleMetadata {
     next_id: Cell<u32>,
+    /// issue-08: the `sanitize_*` function attributes this build needs, with a
+    /// leading space, or empty. clang's sanitizer passes only instrument
+    /// functions carrying these, and cpc emits IR directly, so every `define`
+    /// has to carry them.
+    ///
+    /// They used to be attached by re-parsing the finished module for lines
+    /// starting with `define ` — one of three post-passes that read codegen's
+    /// own text back. Every such pass fails OPEN: a definition the matcher
+    /// does not recognize silently loses its annotation, and for a sanitizer
+    /// attribute that means the function is quietly not instrumented. Attached
+    /// at emission now, with a debug assertion over the finished module that
+    /// no emitter was missed.
+    sanitizer_attrs: RefCell<String>,
     nodes: RefCell<Vec<String>>,
     /// Cache so equal (lo, hi, ty_str) tuples share one MD node.
     cache: RefCell<HashMap<(i64, i64, &'static str), u32>>,
@@ -482,7 +495,12 @@ fn mangled_name_matches(name: &str, target: &str) -> bool {
 /// it, and writes the result at offset 8. Returns `null` (pthread's
 /// `void*` return is ignored — the result-passing channel is the
 /// context buffer that `join` reads from).
-fn emit_thread_trampolines(out: &mut String, tramps: &ThreadTrampolines, types: &TypeTable) {
+fn emit_thread_trampolines(
+    out: &mut String,
+    tramps: &ThreadTrampolines,
+    types: &TypeTable,
+    sanitizer_attrs: &str,
+) {
     let specs = tramps.specs.borrow().clone();
     if specs.is_empty() {
         return;
@@ -490,8 +508,10 @@ fn emit_thread_trampolines(out: &mut String, tramps: &ThreadTrampolines, types: 
     out.push_str("\n; --- v0.0.3 Phase 5 Slice 5B/5C: thread spawn trampolines ---\n");
     for (idx, spec) in specs.iter().enumerate() {
         match spec {
-            TrampolineSpec::Spawn { o } => emit_spawn_tramp(out, o, types),
-            TrampolineSpec::SpawnWith { i, o } => emit_spawn_with_tramp(out, idx, i, o, types),
+            TrampolineSpec::Spawn { o } => emit_spawn_tramp(out, o, types, sanitizer_attrs),
+            TrampolineSpec::SpawnWith { i, o } => {
+                emit_spawn_with_tramp(out, idx, i, o, types, sanitizer_attrs)
+            }
         }
     }
     out.push('\n');
@@ -591,7 +611,7 @@ fn spawn_with_ctx_layout(i_ty: &Ty, o_ty: &Ty, types: &TypeTable) -> (u64, u64) 
     (input_off, input_off + slot_size)
 }
 
-fn emit_spawn_tramp(out: &mut String, o_ty: &Ty, types: &TypeTable) {
+fn emit_spawn_tramp(out: &mut String, o_ty: &Ty, types: &TypeTable, sanitizer_attrs: &str) {
     let suffix = mangle_o_for_tramp_with_types(o_ty, Some(types));
     let llvm_t = llvm_ty(o_ty, types);
     let align = align_of_ty(o_ty, types);
@@ -602,7 +622,7 @@ fn emit_spawn_tramp(out: &mut String, o_ty: &Ty, types: &TypeTable) {
     // refcount lets `JoinHandle::drop` switch from blocking-join to true
     // fire-and-forget detach without racing the worker.
     out.push_str(&format!(
-        "define internal ptr @__cplus_thread_tramp_{suffix}(ptr %arg) {{\n"
+        "define internal ptr @__cplus_thread_tramp_{suffix}(ptr %arg){sanitizer_attrs} {{\n"
     ));
     out.push_str("entry:\n");
     out.push_str("  %fptr = getelementptr inbounds i8, ptr %arg, i64 8\n");
@@ -652,7 +672,14 @@ fn emit_spawn_tramp(out: &mut String, o_ty: &Ty, types: &TypeTable) {
     out.push_str("}\n");
 }
 
-fn emit_spawn_with_tramp(out: &mut String, idx: usize, i_ty: &Ty, o_ty: &Ty, types: &TypeTable) {
+fn emit_spawn_with_tramp(
+    out: &mut String,
+    idx: usize,
+    i_ty: &Ty,
+    o_ty: &Ty,
+    types: &TypeTable,
+    sanitizer_attrs: &str,
+) {
     let i_llvm = llvm_ty(i_ty, types);
     let o_llvm = llvm_ty(o_ty, types);
     let o_align = align_of_ty(o_ty, types);
@@ -661,7 +688,7 @@ fn emit_spawn_with_tramp(out: &mut String, idx: usize, i_ty: &Ty, o_ty: &Ty, typ
     // `spawn_with_ctx_layout` — the two must agree byte-for-byte.
     let (input_off, _total) = spawn_with_ctx_layout(i_ty, o_ty, types);
     out.push_str(&format!(
-        "define internal ptr @__cplus_thread_tramp_with_{idx}(ptr %arg) {{\n"
+        "define internal ptr @__cplus_thread_tramp_with_{idx}(ptr %arg){sanitizer_attrs} {{\n"
     ));
     out.push_str("entry:\n");
     out.push_str("  %fptr = getelementptr inbounds i8, ptr %arg, i64 8\n");
@@ -1189,6 +1216,8 @@ fn generate_inner(
     let md = ModuleMetadata::new();
     // B-10: record the fp-contraction policy before any function body emits.
     md.fp_contract.set(fp_contract);
+    // issue-08: the sanitizer attributes every `define` in this module carries.
+    *md.sanitizer_attrs.borrow_mut() = sanitizer_fn_attrs(sanitizers);
     // v0.0.24 #11: stash the Text→str coercion sites so gen_expr can extract
     // the `{ptr,len}` prefix at each. No global emission — just the span set.
     *md.text_to_str_coercions.borrow_mut() = text_to_str_coercions.clone();
@@ -1256,7 +1285,7 @@ fn generate_inner(
         }
     }
     let tramps = ThreadTrampolines::new();
-    write_preamble(&mut out);
+    write_preamble(&mut out, &md.sanitizer_attrs.borrow());
     if test_mode {
         // Shared per-test failure flag — written by `assert` in any function
         // called by a test, read by the driver `main` after each test call.
@@ -1519,7 +1548,7 @@ fn generate_inner(
     // per unique O type registered during function-body codegen. Done
     // before metadata flushing so the trampoline bodies don't get
     // tangled with the metadata block.
-    emit_thread_trampolines(&mut out, &tramps, &types);
+    emit_thread_trampolines(&mut out, &tramps, &types, &md.sanitizer_attrs.borrow());
     // Slice 1B: flush the accumulated `!N = !{...}` range metadata table
     // before DWARF (which writes its own metadata block). DWARF allocates
     // IDs starting at 0; our range table starts at 100_000 — disjoint.
@@ -1534,19 +1563,16 @@ fn generate_inner(
         let src = std::fs::read_to_string(path).ok();
         emit_dwarf_metadata(&mut out, program, path, src.as_deref());
     }
-    if !sanitizers.is_empty() {
-        attach_sanitizer_attrs(&mut out, sanitizers);
-    }
+    #[cfg(debug_assertions)]
+    assert_every_define_is_sanitized(&out, &md.sanitizer_attrs.borrow());
     out
 }
 
-/// Phase 11 polish (2026-05-13): attach `sanitize_*` attributes to
-/// every user-defined `define` line. clang's sanitizer passes only
-/// instrument functions carrying these attributes; for source compiled
-/// via clang the C frontend auto-attaches them, but cpc emits IR
-/// directly so we do it here. Inline-attribute syntax keeps the IR
-/// trivially diff-able without dragging in attribute groups.
-fn attach_sanitizer_attrs(out: &mut String, sanitizers: &[&str]) {
+/// issue-08: the `sanitize_*` attributes for this build, with a leading space
+/// so a caller can append it unconditionally. clang's sanitizer passes only
+/// instrument functions carrying these; a C frontend attaches them itself, and
+/// cpc emits IR directly, so every `define` has to.
+fn sanitizer_fn_attrs(sanitizers: &[&str]) -> String {
     let attrs: Vec<&str> = sanitizers
         .iter()
         .filter_map(|s| match *s {
@@ -1560,45 +1586,27 @@ fn attach_sanitizer_attrs(out: &mut String, sanitizers: &[&str]) {
         })
         .collect();
     if attrs.is_empty() {
-        return;
+        String::new()
+    } else {
+        format!(" {}", attrs.join(" "))
     }
-    let attr_str = attrs.join(" ");
-    let original = std::mem::take(out);
-    for line in original.lines() {
-        if line.starts_with("define ") {
-            // Insert ` <attrs>` after the params' closing `)` and
-            // before the `{`. v0.0.3 Slice 5D fix: track paren depth
-            // so we don't land inside a nested `sret(%T)`-style
-            // attribute. The function's param list opens at depth 1
-            // and closes at depth 0; we attach right after that.
-            let mut depth: i32 = 0;
-            let mut close_idx: Option<usize> = None;
-            for (i, c) in line.char_indices() {
-                match c {
-                    '(' => depth += 1,
-                    ')' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            close_idx = Some(i);
-                            break;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            if let Some(close_paren) = close_idx {
-                let after = &line[close_paren + 1..];
-                let head = &line[..=close_paren];
-                out.push_str(head);
-                out.push(' ');
-                out.push_str(&attr_str);
-                out.push_str(after);
-                out.push('\n');
-                continue;
-            }
-        }
-        out.push_str(line);
-        out.push('\n');
+}
+
+/// issue-08: every `define` carries the module's sanitizer attributes. The
+/// attachment happens at emission; this is the check that no emitter was
+/// missed — the failure mode it replaces is a function silently not
+/// instrumented, which no test notices.
+#[cfg(debug_assertions)]
+fn assert_every_define_is_sanitized(ir: &str, attrs: &str) {
+    let Some(first) = attrs.split_whitespace().next() else {
+        return;
+    };
+    for line in ir.lines() {
+        assert!(
+            !line.starts_with("define ") || line.contains(first),
+            "a `define` was emitted without the module's sanitizer attributes \
+             — an emitter is missing `md.sanitizer_attrs`:\n{line}"
+        );
     }
 }
 
@@ -4552,7 +4560,7 @@ fn coro_end_call_ir() -> String {
     }
 }
 
-fn write_preamble(out: &mut String) {
+fn write_preamble(out: &mut String, sanitizer_attrs: &str) {
     let us = usize_llvm_ty();
     out.push_str("; C+ Phase 1 codegen output\n");
     // v0.0.21 multi-backend slice 1: an explicit `--target` pins the IR to
@@ -4564,7 +4572,11 @@ fn write_preamble(out: &mut String) {
         out.push_str(&format!("target triple = \"{triple}\"\n"));
     }
     out.push('\n');
-    out.push_str(windows_binary_mode_ctor_ir());
+    // The Windows binary-mode ctor is compiler glue like the shims above.
+    out.push_str(
+        &windows_binary_mode_ctor_ir()
+            .replace("@__cpc_set_binary_mode() {", &format!("@__cpc_set_binary_mode(){sanitizer_attrs} {{")),
+    );
     // Format string used by `#println(i32)`. Module-private constant.
     out.push_str(
         "@.fmt_int_nl = private unnamed_addr constant [4 x i8] c\"%d\\0A\\00\", align 1\n",
@@ -4900,36 +4912,36 @@ fn write_preamble(out: &mut String) {
     // remain global-free; stdlib calls these as plain extern fns.
     out.push_str("\n; v0.0.4 Phase 3 Slice 3A.1: reactor state slot.\n");
     out.push_str("@__cplus_reactor_state = internal global ptr null, align 8\n");
-    out.push_str(
-        "define internal ptr @__cplus_reactor_get_state() {\n  \
+    out.push_str(&format!(
+        "define internal ptr @__cplus_reactor_get_state(){sanitizer_attrs} {{\n  \
          %p = load ptr, ptr @__cplus_reactor_state, align 8\n  \
          ret ptr %p\n\
-         }\n",
-    );
-    out.push_str(
-        "define internal void @__cplus_reactor_set_state(ptr %p) {\n  \
+         }}\n"
+    ));
+    out.push_str(&format!(
+        "define internal void @__cplus_reactor_set_state(ptr %p){sanitizer_attrs} {{\n  \
          store ptr %p, ptr @__cplus_reactor_state, align 8\n  \
          ret void\n\
-         }\n",
-    );
+         }}\n"
+    ));
     // FFI-callable wrappers around the `llvm.coro.*` intrinsics so
     // stdlib/reactor.cplus can call them as plain extern fns. The
     // intrinsics themselves aren't FFI-callable directly (the LLVM
     // verifier rejects calls to them from non-coroutine functions
     // unless wrapped).
-    out.push_str(
-        "define internal void @__cplus_coro_resume(ptr %h) {\n  \
+    out.push_str(&format!(
+        "define internal void @__cplus_coro_resume(ptr %h){sanitizer_attrs} {{\n  \
          call void @llvm.coro.resume(ptr %h)\n  \
          ret void\n\
-         }\n",
-    );
-    out.push_str(
-        "define internal i32 @__cplus_coro_done(ptr %h) {\n  \
+         }}\n"
+    ));
+    out.push_str(&format!(
+        "define internal i32 @__cplus_coro_done(ptr %h){sanitizer_attrs} {{\n  \
          %d = call i1 @llvm.coro.done(ptr %h)\n  \
          %r = zext i1 %d to i32\n  \
          ret i32 %r\n\
-         }\n",
-    );
+         }}\n"
+    ));
     // Checked-arithmetic intrinsics used in debug mode for signed integers
     // of every supported width. Always declared; LLVM drops unused ones.
     for op in ["sadd", "ssub", "smul"] {
@@ -6497,6 +6509,7 @@ fn gen_function(
         out.push('\n');
         return;
     }
+    out.push_str(&md.sanitizer_attrs.borrow());
     out.push_str(inline_fn_attr(&f.attributes));
     let is_naked = has_naked_attr(&f.attributes);
     if is_naked {
@@ -6775,7 +6788,9 @@ fn gen_async_method(
         llvm_idx += 1;
         first = false;
     }
-    out.push_str(") presplitcoroutine {\nentry:\n");
+    out.push(')');
+    out.push_str(&md.sanitizer_attrs.borrow());
+    out.push_str(" presplitcoroutine {\nentry:\n");
 
     // Promise allocation. Unit-returning async methods use an i8 placeholder
     // so the promise pointer is addressable but never written through.
@@ -6994,7 +7009,9 @@ fn gen_gen_method(
         llvm_idx += 1;
         first = false;
     }
-    out.push_str(") presplitcoroutine {\nentry:\n");
+    out.push(')');
+    out.push_str(&md.sanitizer_attrs.borrow());
+    out.push_str(" presplitcoroutine {\nentry:\n");
 
     let promise_ty: &str = if matches!(inner_ty, Ty::Unit) {
         "i8"
@@ -7167,7 +7184,9 @@ fn gen_gen_function(
         }
         out.push_str(&classify_param(ps, METHOD_ABI, types).sig_fragment(i as u32));
     }
-    out.push_str(") presplitcoroutine {\nentry:\n");
+    out.push(')');
+    out.push_str(&md.sanitizer_attrs.borrow());
+    out.push_str(" presplitcoroutine {\nentry:\n");
 
     // Promise alloca holds the yielded value. Unit-typed gen fns are
     // unusual (a yield-less generator), but still need a valid promise
@@ -7323,7 +7342,9 @@ fn gen_async_function(
         }
         out.push_str(&classify_param(ps, METHOD_ABI, types).sig_fragment(i as u32));
     }
-    out.push_str(") presplitcoroutine {\nentry:\n");
+    out.push(')');
+    out.push_str(&md.sanitizer_attrs.borrow());
+    out.push_str(" presplitcoroutine {\nentry:\n");
 
     // v0.0.4 Phase 1E: properly allocate the coroutine promise.
     // Previously we passed `ptr null` as the promise arg to `coro.id`
@@ -7591,8 +7612,9 @@ fn gen_enum_method(
         llvm_idx += 1;
         first = false;
     }
-    out.push_str(") {\n");
-    out.push_str("entry:\n");
+    out.push(')');
+    out.push_str(&md.sanitizer_attrs.borrow());
+    out.push_str(" {\nentry:\n");
 
     let mut state = FnState::new(
         return_ty.clone(),
@@ -7718,7 +7740,9 @@ fn gen_gen_enum_method(
         llvm_idx += 1;
         first = false;
     }
-    out.push_str(") presplitcoroutine {\nentry:\n");
+    out.push(')');
+    out.push_str(&md.sanitizer_attrs.borrow());
+    out.push_str(" presplitcoroutine {\nentry:\n");
 
     let promise_ty: &str = if matches!(inner_ty, Ty::Unit) {
         "i8"
@@ -8044,6 +8068,7 @@ fn gen_method(
         out.push('\n');
         return;
     }
+    out.push_str(&md.sanitizer_attrs.borrow());
     out.push_str(fn_attrs);
     out.push_str(" {\n");
     out.push_str("entry:\n");

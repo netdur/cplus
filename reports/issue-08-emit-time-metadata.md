@@ -1,5 +1,7 @@
 # Issue 08 — Attach IR metadata at emission; stop re-parsing our own IR text
 
+- Status: PARTIAL 2026-08-02, commit <pending> — steps 2 and 4 done; steps 1
+  (`!dbg`) and 3 (alias scopes) not done, see "What is still open"
 - Type: structural consolidation
 - Area: `cplus-core/src/codegen.rs`; small guard in `prune.rs`
 - Effort: M
@@ -80,3 +82,56 @@ fn emit_call(&mut self, callee: .., args: .., meta: InstrMeta)
   the (correct) attachment mechanism. Doing both at once muddies bisection.
 - IR attribute changes are the project's known miscompile family — every step needs the
   release-mode e2e run, not just debug.
+
+## Outcome
+
+**Step 2 — sanitizer attributes, attached at emission.** `ModuleMetadata`
+carries the module's `sanitize_*` string, computed once by
+`sanitizer_fn_attrs`, and every emitter appends it where it opens the body: the
+nine function/method/coroutine emitters, and the compiler's own glue — the
+reactor state accessors, the two `llvm.coro.*` wrappers, both thread
+trampolines and the Windows binary-mode ctor. `attach_sanitizer_attrs`, which
+re-parsed the finished module for lines starting with `define `, is gone.
+
+`assert_every_define_is_sanitized` runs over the finished module in debug builds
+and asserts what the post-pass used to do. That assertion earned its keep
+immediately: the first version of this change missed the runtime glue (six
+`define`s emitted as raw text, which the old text pass had happily instrumented
+along with everything else), and the assertion named the exact line rather than
+letting an ASan build quietly not instrument the reactor.
+
+**Step 4 — the prune guard.** `prune_unreachable` reads codegen's finished text
+and contracts its exact shape. Finding zero blocks in a module that contains
+`define ` now trips a debug assertion instead of silently pruning nothing: the
+failure was conservative and therefore invisible — the module just stops
+shrinking.
+
+## What is still open
+
+**Step 1 — `!dbg` at emission.** The DWARF pass still re-parses call lines to
+attach `!dbg`. Attaching at emission needs the current source span available at
+every `emit` — `FnState` knows the function but not the statement — so it is a
+threading change through the instruction emitters, not a move. bug-09 fixed the
+matcher tactically and `run_clang` now fails hard on clang's "ignoring invalid
+debug info", so a regression in this class is loud rather than silent, which
+takes the urgency out of it.
+
+**Step 3 — alias scopes.** `annotate_alias_scope_metadata` still re-parses
+function bodies. This one attaches aliasing PROMISES, so it is the one that most
+wants moving — but it is also next door to the project's recorded
+unsound-IR-attribute family, and moving it means deciding scope membership at
+`gen_load`/`gen_store` from known provenance rather than re-inferred text. That
+is a change worth doing with the release-mode e2e run per rule, not at the tail
+of a session.
+
+## Verification (as run)
+
+- `cargo test -p cplus-core` 1847 + 8, `cargo test -p cpc` 607 + 16 + 5 + 6;
+  `cpc test` in `vendor/stdlib` 290 green.
+- IR identity without sanitizers: `--emit-ll` over 40 `docs/examples` plus the
+  ABI probes — unchanged.
+- IR identity WITH `--asan`: a probe covering a free fn, a struct method and an
+  enum method is byte-identical before and after the move, and both carry
+  `sanitize_address`.
+- `phase11_asan_attaches_function_attr` and `phase11_ubsan_no_function_attr`
+  green (the second pins that UBSan attaches nothing).
