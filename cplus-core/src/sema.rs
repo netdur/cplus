@@ -642,6 +642,11 @@ pub struct BoundMethodRefInfo {
 
 #[derive(Debug, Default, Clone)]
 pub struct MonoInfo {
+    /// issue-14 step 1: `(type name, is_copy, carries_drop)` for every struct
+    /// and enum the compile classified — the characterization harness behind
+    /// `classify_types`. Cheap to fill (it is a walk of two tables already
+    /// built) and read by nothing in the pipeline.
+    pub type_classification: Vec<(String, bool, bool)>,
     pub instantiations: std::collections::BTreeSet<(String, Vec<Ty>)>,
     /// Maps each generic-fn call site to its concrete arg list, keyed by
     /// the call expression's span. v0.0.22 file-aware spans carry their
@@ -796,6 +801,37 @@ pub struct EnumInstantiationInfo {
 /// Slice 7GEN.5a: like `check_multi`, but also returns the
 /// monomorphization data so a follow-up pass can synthesize the
 /// concrete fn instantiations + rewrite call sites.
+/// issue-14 step 1: the Copy/Drop classification of every type in a compile,
+/// as `(type name, is_copy, has_explicit_drop)` sorted by name.
+///
+/// Copy-ness and Drop-ness are currently decided by TWO regimes joined by a
+/// boolean: an alternation fixpoint during the main pass sequence, and a
+/// creation-time finalizer for instantiations synthesized after it
+/// (`copy_flags_settled`). The plan is to replace both with one memoized
+/// on-demand derivation — and the plan's own first step is to be able to SEE
+/// the current answers, so the replacement can be asserted equal to them
+/// across a corpus before anything is deleted. Wrong answers here are silent
+/// double-frees or leaks; a characterization harness is what makes the change
+/// checkable rather than hopeful.
+///
+/// This is that harness. It runs the ordinary checker and reports what the
+/// current regime concluded.
+pub fn classify_types(
+    program: &Program,
+    entry_file: PathBuf,
+    entry_src: &str,
+    files: std::collections::BTreeMap<String, (PathBuf, String)>,
+) -> Vec<(String, bool, bool)> {
+    let (_diags, mono) = check_with_files_inner(program, entry_file, entry_src, files, false, None);
+    let mut out: Vec<(String, bool, bool)> = mono
+        .type_classification
+        .iter()
+        .map(|(n, c, d)| (n.clone(), *c, *d))
+        .collect();
+    out.sort();
+    out
+}
+
 pub fn check_multi_with_mono(
     program: &Program,
     entry_file: PathBuf,
@@ -1239,7 +1275,24 @@ fn check_with_files_inner(
                     .any(|a| ty_contains_param(a, &cx.structs, &cx.enums))
             })
             .collect();
+    // issue-14 step 1: snapshot what the current Copy/Drop regime concluded for
+    // every struct and enum — the two STORED flags, `is_copy` (the fixpoint's
+    // or the late finalizer's answer) and `is_drop` (an explicit destructor).
+    //
+    // Deliberately not the recursive `ty_carries_drop` derivation: it walks
+    // fields without a visiting set, so on a mutually recursive type — which
+    // sema REJECTS with E0913, but only after the tables are built — it does
+    // not terminate. That is worth knowing about the memoized replacement's
+    // design (it needs the visiting set the report specifies) and it is not
+    // something a characterization harness should trip over.
+    let type_classification: Vec<(String, bool, bool)> = cx
+        .structs
+        .iter()
+        .map(|d| (d.name.clone(), d.is_copy, d.is_drop))
+        .chain(cx.enums.iter().map(|d| (d.name.clone(), d.is_copy, false)))
+        .collect();
     let mono = MonoInfo {
+        type_classification,
         instantiations,
         call_monos: std::mem::take(&mut cx.call_monos),
         assoc_free_fn_dispatches: std::mem::take(&mut cx.assoc_free_fn_dispatches),
@@ -21300,6 +21353,57 @@ mod tests {
     /// `simd_ty_from_name` (path dispatch) and codegen's mirror — read ONE
     /// table now. This asserts they agree entry for entry, which is what the
     /// comment on the first copy used to ask a reader to maintain by hand.
+    /// issue-14 step 1: the characterization harness the migration plan starts
+    /// with. It pins the CURRENT Copy/Drop answers for the shapes the two
+    /// regimes disagree about most easily — a struct whose Copy-ness depends on
+    /// a field's, a struct with an explicit destructor, an enum whose payload
+    /// carries drop, and a generic instantiation synthesized late (after the
+    /// classification fixpoint has already run, which is the whole reason the
+    /// `copy_flags_settled` finalizers exist).
+    ///
+    /// When the memoized derivation replaces the fixpoint, these answers are
+    /// what it has to reproduce.
+    #[test]
+    fn copy_and_drop_classification_is_characterized() {
+        let src = "\
+struct Plain { a: i32, b: bool }\n\
+struct HasPtr { opaque p: *u8 }\n\
+impl HasPtr { fn drop(ref this) { } }\n\
+struct WrapsDrop { inner: HasPtr }\n\
+struct Box2[T] { v: T }\n\
+enum Tag { A, B }\n\
+enum Payload { None, Some(HasPtr) }\n\
+fn main() -> i32 {\n\
+    let a: Box2[i32] = Box2[i32] { v: 1 };\n\
+    return a.v - 1;\n\
+}\n";
+        let toks = tokenize(src).expect("lex");
+        let prog = parse(toks).expect("parse");
+        let table = classify_types(
+            &prog,
+            PathBuf::from("t.cplus"),
+            src,
+            std::collections::BTreeMap::new(),
+        );
+        let get = |name: &str| {
+            table
+                .iter()
+                .find(|(n, _, _)| n == name)
+                .unwrap_or_else(|| panic!("`{name}` not classified; table: {table:?}"))
+        };
+        // (is_copy, has an explicit destructor)
+        assert_eq!((get("Plain").1, get("Plain").2), (true, false));
+        assert_eq!((get("HasPtr").1, get("HasPtr").2), (false, true));
+        // A struct with no destructor of its own is still non-Copy because a
+        // field carries one — the fixpoint's job.
+        assert_eq!((get("WrapsDrop").1, get("WrapsDrop").2), (false, false));
+        assert_eq!((get("Tag").1, get("Tag").2), (true, false));
+        assert_eq!((get("Payload").1, get("Payload").2), (false, false));
+        // The late-synthesized instantiation: created after the fixpoint, so
+        // its flags come from the `copy_flags_settled` finalizer.
+        assert_eq!((get("Box2__i32").1, get("Box2__i32").2), (true, false));
+    }
+
     #[test]
     fn every_simd_name_resolves_the_same_way_everywhere() {
         for (name, elem, lanes, is_mask) in SIMD_TYPES {

@@ -1,5 +1,8 @@
 # Issue 14 — Copy/Drop classification: replace the fixpoint + settled-flag with memoized derivation
 
+- Status: PARTIAL 2026-08-02, commit <pending> — step 1 (the characterization
+  harness) done; steps 2-5, the migration itself, NOT done. See "Why the
+  migration is not in this commit".
 - Type: structural consolidation (highest-risk item in the set — characterize first)
 - Area: `cplus-core/src/sema.rs`
 - Effort: M-L
@@ -82,3 +85,55 @@ answer as everything else because the answer is derived when asked.
   dual-running-with-assert step; do not skip it.
 - Keep the blessed-bounds semantics unchanged (Copy-bound checking uses these answers;
   bug-21's fix may land near here — coordinate).
+
+## Step 1 — the characterization harness
+
+```rust
+pub fn classify_types(program, entry_file, entry_src, files)
+    -> Vec<(String /* type */, bool /* is_copy */, bool /* has explicit drop */)>
+```
+
+It runs the ordinary checker and reports what the current two-regime
+classification concluded, sorted by name; `MonoInfo::type_classification`
+carries the snapshot and nothing in the pipeline reads it. Step 2 — running the
+memoized derivation alongside the old regime and asserting equality over a
+corpus — is what this exists for, and the report is right that it is the gate:
+a wrong Copy/Drop answer is a silent double-free or a leak, not a failed
+assertion somewhere visible.
+
+The unit test `copy_and_drop_classification_is_characterized` pins the answers
+for the shapes the two regimes disagree about most easily: a Copy struct of Copy
+fields, a struct with an explicit destructor, a struct that is non-Copy only
+because a FIELD carries one (the fixpoint's job), a plain enum, a tagged enum
+with a Drop payload, and — the reason the second regime exists at all — a
+generic instantiation synthesized after the fixpoint has run, whose flags come
+from the `copy_flags_settled` finalizer.
+
+### One finding, worth carrying into the design
+
+The harness first reported the recursive `ty_carries_drop` derivation and
+promptly overflowed the stack on `mutually_recursive_structs_rejected_e0913`:
+that walk has no visiting set, and although sema REJECTS mutually recursive
+types (E0913), it does so after the tables are built, so the derivation is
+reachable on a cyclic shape. The report's target design already specifies a
+visiting set ("the in-file precedent for the shape is `marker_blocked`") — this
+is the concrete demonstration that it is load-bearing rather than tidy, and the
+memoized version must have it before it replaces anything. The harness reports
+the stored flags instead.
+
+## Why the migration is not in this commit
+
+Steps 2-5 replace the classification regime for every type in the language. The
+plan's own sequencing — implement the memoized pair ALONGSIDE the old one, assert
+equality across a corpus for a full commit, and only then flip consumers and
+delete the fixpoint — is not something to compress into the tail of a session
+that has already landed thirteen other issues. A half-flip is precisely the
+failure the report warns about: the answers are silent when wrong.
+
+What the next session needs is now in the tree: the harness, a test that pins
+the current answers, and the visiting-set finding above.
+
+## Verification (as run)
+
+`cargo test -p cplus-core` 1852 + 8, `cargo test -p cpc` 608 + 16 + 5 + 6,
+`cpc test` in `vendor/stdlib` 290 green in debug and `--release`.
