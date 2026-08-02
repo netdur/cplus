@@ -1,6 +1,6 @@
 # Issue 14 — Copy/Drop classification: replace the fixpoint + settled-flag with memoized derivation
 
-- Status: PARTIAL 2026-08-02, commit <pending> — step 1 (the characterization
+- Status: PARTIAL 2026-08-02, commit d050e3d — step 1 (the characterization
   harness) done; steps 2-5, the migration itself, NOT done. See "Why the
   migration is not in this commit".
 - Type: structural consolidation (highest-risk item in the set — characterize first)
