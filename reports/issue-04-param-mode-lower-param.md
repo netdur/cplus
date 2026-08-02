@@ -1,6 +1,6 @@
 # Issue 04 — `ParamMode` enum + one `lower_param` constructor (de-boolify the ABI plumbing)
 
-- Status: DONE 2026-08-02, commit <pending> — step 4 (fn-pointer bool-vec pair)
+- Status: DONE 2026-08-02, commit 3739388 — step 4 (fn-pointer bool-vec pair)
   deliberately deferred, see "What was not done"
 - Type: structural consolidation
 - Area: `cplus-core/src/codegen.rs` primarily; touches sema/mono AST-side helpers
