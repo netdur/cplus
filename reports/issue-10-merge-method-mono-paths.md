@@ -1,6 +1,6 @@
 # Issue 10 — Merge the twin method-monomorphization paths; Self as an ordinary subst key
 
-- Status: DONE 2026-08-02, commit <pending> — with one part deliberately left,
+- Status: DONE 2026-08-02, commit 85f80c6 — with one part deliberately left,
   see "What is still open"
 - Type: structural consolidation
 - Area: `cplus-core/src/monomorphize.rs` (+ a sema note)
