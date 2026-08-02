@@ -1,6 +1,6 @@
 # Issue 08 — Attach IR metadata at emission; stop re-parsing our own IR text
 
-- Status: PARTIAL 2026-08-02, commit <pending> — steps 2 and 4 done; steps 1
+- Status: PARTIAL 2026-08-02, commit a9dd146 — steps 2 and 4 done; steps 1
   (`!dbg`) and 3 (alias scopes) not done, see "What is still open"
 - Type: structural consolidation
 - Area: `cplus-core/src/codegen.rs`; small guard in `prune.rs`
