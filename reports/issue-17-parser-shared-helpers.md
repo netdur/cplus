@@ -1,6 +1,6 @@
 # Issue 17 — Parser shared helpers: one list parser, one FIRST set, one contextual-keyword check
 
-- Status: DONE 2026-08-02, commit <pending> — (a)–(e); (f) was the umbrella and
+- Status: DONE 2026-08-02, commit b186b9f — (a)–(e); (f) was the umbrella and
   its two owners landed in the bug tier
 - Type: consolidation
 - Area: `cplus-core/src/parser.rs`
