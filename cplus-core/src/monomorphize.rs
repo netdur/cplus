@@ -277,6 +277,15 @@ pub fn monomorphize(
     // generic-enum instantiation. Variant payload types are already
     // concrete `Ty` values from sema; render them back to AST `Type`
     // nodes.
+    // issue-16 item 2: the synthesized ITEM declarations below carry
+    // `Span::new(0, 0)`. That is safe for a reason worth stating, because a
+    // fabricated span is exactly how a span-keyed side table mis-keys: every one
+    // of the eleven tables sema hands downstream is keyed by an EXPRESSION's
+    // span (a call, an argument, a literal, a coercion site). None is keyed by a
+    // declaration's name span or by a type node, which is all that is fabricated
+    // here — these decls exist only to give codegen a shape to lay out. A
+    // synthesized EXPRESSION must copy its originating node's span instead;
+    // `synth_bound_bridge` does.
     for ((_, _args), info) in &mono.enum_instantiations {
         let variants: Vec<EnumVariant> = info
             .variants
@@ -1988,9 +1997,21 @@ impl ExprRewriter for MonoRewriter<'_> {
                             kind: ExprKind::Ident(br.bridge_name.clone()),
                             span: a.span,
                         };
-                        if i + 1 < new_args.len() {
-                            new_args[i + 1] = bound_ref_ctx_arg(br, a.span);
-                        }
+                        // issue-16 item 1: the ctx slot is a POSITIONAL
+                        // contract spanning three passes — lower splices a
+                        // default it can decide from name and arity, sema
+                        // records what lower could not, and this pass appends
+                        // those. Sema validated the shape before recording the
+                        // bound-method ref, so a missing slot here means one of
+                        // those three disagreed about the argument list, and
+                        // the receiver would silently never reach the callback.
+                        assert!(
+                            i + 1 < new_args.len(),
+                            "bound method reference `{}` has no ctx slot after it \
+                             — the default splice that reserves it did not happen",
+                            br.bridge_name
+                        );
+                        new_args[i + 1] = bound_ref_ctx_arg(br, a.span);
                     }
                 }
                 // Substitute type-parameter references in turbofish type_args

@@ -1,5 +1,7 @@
 # Issue 16 — Span-keyed side tables: assert the contracts, fix the span policy, scope NodeId
 
+- Status: PARTIAL 2026-08-02, commit <pending> — items 1 and 2 done; item 3 is
+  the design note below; item 4 not done
 - Type: hazard hardening + design note
 - Area: `cplus-core/src/sema.rs`, `monomorphize.rs`, `lower.rs`, `codegen.rs`
 - Effort: S now (items 1-2); design-only for item 3; M optional for item 4
@@ -72,3 +74,67 @@ Two live fragility exhibits:
 
 - Do not convert any table to NodeId ad hoc before the design note exists — a half
   migration doubles the identity schemes in flight.
+
+## Outcome
+
+**Item 1 — the ctx-slot contract asserts.** The bound-method-ref rewrite in
+monomorphize overwrites `new_args[i + 1]` on the contract that the slot after a
+bound method reference is the spliced ctx default. It used to check
+`if i + 1 < new_args.len()` and, when the slot was absent, do nothing: the
+handler would be installed with whatever context the callee's own default put
+there, and the receiver would silently never arrive. It asserts now, naming the
+contract and the three passes that maintain it (lower splices what it can decide
+from name and arity, sema records what lower could not, mono appends). The suite
+runs silent.
+
+**Item 2 — the synthesized-span policy, stated where it is used.** Every
+fabricated `Span::new(0, 0)` in the four files was audited. They are all
+synthesized ITEM declarations (the struct/enum decls mono emits per
+instantiation) and TYPE nodes; every one of the eleven span-keyed tables is
+keyed by an EXPRESSION span — a call, an argument, a literal, a coercion site —
+so none can see them. That reasoning is now a comment at the fabrication site
+rather than a fact a reader has to re-derive. The one synthesized EXPRESSION
+site, `synth_bound_bridge`, already copies the method's own span.
+
+## Item 3 — `NodeId`, the design note (scope only, not implemented)
+
+The eleven tables key on `ByteSpan` as a stand-in for node identity. That is
+sound only while three things hold: every node the tables key on comes from
+source (never fabricated), spans are unique per node, and no pass re-spans a
+node it did not create. The first is now stated; the second held only after
+v0.0.22 made spans file-aware, because a cross-file collision had already fired;
+the third is convention.
+
+The replacement:
+
+- **Allocation.** A `NodeId(u32)` stamped at parse time from a per-file counter,
+  paired with the file id the lexer already interns — the same two components a
+  file-aware span has, but assigned rather than derived, so two nodes cannot
+  collide however they are moved.
+- **Preservation.** Every rewrite copies the id verbatim. This is mechanical
+  now: `ast::walk_expr` reconstructs nodes in ONE place (issue-01), so
+  preservation is a property of the walker rather than of every pass.
+  Synthesized nodes take a fresh id, which is the honest answer — a fabricated
+  node is not the node the table recorded.
+- **Migration.** The next side table added uses `NodeId`, not a span. The
+  existing eleven migrate one at a time; each migration is mechanical once the
+  walker preserves ids, and each removes one way to mis-key.
+- **The assertion that makes it real.** After lowering, no two live nodes share
+  an id. Run it in debug builds over the merged program; the failure mode it
+  catches — a pass cloning a subtree wholesale — is exactly the one spans
+  cannot catch, because a clone keeps the span too.
+
+Not started here deliberately: the report's own constraint is that a half
+migration doubles the identity schemes in flight.
+
+## What is still open
+
+**Item 4** — replacing `text_to_str_coercions` and its suppress cell with an
+explicit coercion node in the AST. Worth doing with bug-12's `StrLit → Text`
+recording, so both directions end in one mechanism rather than two side tables.
+
+## Verification (as run)
+
+`cargo test -p cplus-core` 1850 + 8 and `cargo test -p cpc --test e2e` 608 green
+with the assertion live — including the bound-method-reference tests, which are
+the surface it guards.

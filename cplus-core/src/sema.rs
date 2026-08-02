@@ -17308,6 +17308,9 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 // Without this arm, `fn f[T]() -> (T, i32)` panicked here the
                 // moment the signature was substituted for a concrete T.
                 if name == TUPLE_TEMPLATE {
+                    // The span is unused by `synthesize_tuple_struct` (it takes
+                    // one for symmetry with the checking path) and no
+                    // span-keyed table sees a synthesized STRUCT — issue-16.
                     return self.synthesize_tuple_struct(&new_args, ByteSpan::new(0, 0));
                 }
                 // Re-instantiate. The template lookup must succeed — we
