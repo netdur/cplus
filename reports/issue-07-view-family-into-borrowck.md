@@ -1,8 +1,8 @@
 # Issue 07 — Move the view-diagnostic family (E0513/E0515/E0516) into borrowck
 
-- Status: PARTIAL 2026-08-02, commit dc5aa6e — step 6 (the dead codegen net)
-  done and step 1 (the inventory) below; steps 2-5, the emission port itself,
-  NOT done. See "Why the port is not in this commit".
+- Status: DONE 2026-08-02, commits `f4e5a62`..`62d0213` (9 commits) — steps 1-4
+  and 6 done; step 5 (the E0365 capture-taint port) deliberately NOT done and
+  still open, scoped below. Step 6 landed earlier in `dc5aa6e`.
 - Type: structural consolidation (finishes the borrowck rework)
 - Area: `cplus-core/src/sema.rs` → `borrowck.rs`; dead-code fallout in `codegen.rs`
 - Effort: L
@@ -143,20 +143,159 @@ port must keep green — and, per the report, the error-ORDER note applies: sema
 bails the pipeline before borrowck, so any test asserting a sema error AND a
 view error from one compile will see them one at a time after the move.
 
-## Why the port is not in this commit
+## Outcome — steps 2-4, as landed
 
-Steps 2-5 move a live, load-bearing diagnostic family between passes and change
-which pass reports it, with a transition release of debug-asserts as the safety
-net (step 3), and the report itself calls it the highest-stakes refactor in the
-set. It is not a change to land at the end of a session alongside eight others:
-it wants its own pass with the memory-model e2e groups run at each rule, and the
-assert release actually shipped rather than compressed into the same commit.
-The inventory above is what a cold start needs; nothing in this commit
-constrains how the port is done.
+One rule per commit, sema silent and asserting from `7dd8de9`, sema's
+detection gone in `62d0213`.
 
-## Verification (as run, for step 6)
+| Commit | Rule | Code |
+| --- | --- | --- |
+| `f4e5a62` | `check_returned_borrow`'s root walk | E0513 |
+| `b5e46b2` | `flag_view_leaves` (aggregate leaf, incl. the coercion route) | E0513 |
+| `17bad67` | `check_raw_store_declaration` | E0516 |
+| `ae0ca8b` | `check_view_store_escape` | E0513, E0515 |
+| `1f5b084` | `flag_view_of_temp` — **not in the step-1 inventory** | E0513 |
+| `7dd8de9` | transition: sema records, debug-asserts borrowck agreed | — |
+| `87a34c2`, `6508285` | the three gaps the assert found | E0513 |
+| `62d0213` | deletion: emission, detection, lift flags, `method_produces_view` | — |
 
-- The compensated shape reproduces as E0337 at check time on the current binary.
-- `cargo test -p cplus-core` 1847 + 8, `cargo test -p cpc` 607 + 16 + 5 + 6;
-  `cpc test` in `vendor/stdlib` 290 green in debug and `--release` — the runs
-  that would surface a double-free the net had been hiding.
+They live in `borrowck.rs` as `ViewRules`, a syntax-directed pass over every
+body, run from `analyze_with_diags` beside the existing E0384 pass. It reads
+the same `SigTable` the flow pass publishes, so there is one answer about
+what ties.
+
+### The lift, deleted as the report asked
+
+Sema decided the E0515 lift by hand — skip for a receiver store in a
+concrete method, skip for a `ref`-param store in a concrete free fn whose
+address is untaken. The port asks the summary instead:
+`SigTable::effective_keeps(entry)[i]` for a receiver store,
+`computed_ref_flows.contains(&(src, dst))` for a `ref`-param store, and a
+`static` is never tied. A store the flow pass does not cover is denied,
+which is the answer that fails safe — the failure mode the issue was written
+about (coverage shrinks, sema's skip stays, nothing denies) is now
+structurally impossible.
+
+Three denies survive, exactly the three memory-model.md §3 names: a
+`static`, an address-taken fn, and any store the analysis cannot see through
+(the raw seam, E0516). One difference from sema's hand-encoding, in the
+right direction: a method with its OWN generic params is now denied, because
+`compute_receiver_flows` skips it. Sema's "concrete method" test happened to
+agree there by accident rather than by asking.
+
+`root_is_param_view` lost a disjunct: `str`/slice is already
+`type_contains_view`, so three collapse to two with no change of answer.
+
+### Corrections to this report
+
+1. **The step-1 inventory missed a fifth rule.** `flag_view_of_temp`
+   (sema.rs, E0513 on a view of an unnamed temporary receiver) was emitted
+   from four call sites — let, return, static assign, assign. Leaving it
+   behind would have lost the coverage at the deletion. Ported in `1f5b084`.
+
+2. **`method_produces_view` was not only a twin — it was a slightly wrong
+   one.** Sema asked its own tables; the port asks borrowck's recorded
+   `detect_method_view` verdict. One consequence: a `#[keeps(nothing)]`
+   method no longer counts as producing a receiver view, which sema's copy
+   got wrong.
+
+3. **The anticipated error-ORDER churn did not materialise as predicted.**
+   No test asserted a sema error and a view error from one compile, so
+   nothing needed updating. The churn shows up in the opposite direction:
+   two probe programs (a view of a loop-body local stored into a `static`)
+   now report E0513 **and** a complementary E0514, because sema's E0513 used
+   to bail the pipeline before borrowck could say the second thing. More
+   information, not less.
+
+4. **E0512 went with the port.** Its only trigger was the returned-borrow
+   root walk, and the `borrow REGION T` syntax it read was retired in
+   v0.0.24 #9, so `current_fn_param_regions` has been permanently empty and
+   the check could not fire. It had no test and no `errors.toml` entry.
+   E0511 (the signature-level region rule) is untouched.
+
+5. **`docs/errors.toml` was stale in two ways.** E0513's `emit_site` pointed
+   at `sema.rs:12259`, a line number that had drifted; E0515's `test` field
+   named `view_param_stored_into_ref_this_rejected_e0515`, which does not
+   exist. Both fixed, along with the generated rows in `docs/ERRORS.md`.
+
+### What the transition assert found
+
+The step-3 assert is the reason this issue insisted on a transition release,
+and it earned that insistence three times. Each of these was a program the
+pre-port binary rejected and the ported rules accepted:
+
+- **match payloads** (`87a34c2`) — sema types payload bindings and knows
+  whether the match owns the value they came from; borrowck bound them
+  untyped and borrowing, so `match take_it() { Opt::S(b) => return b.view() }`
+  compiled. Ownership now comes from the scrutinee (a call result or
+  constructor is a temporary the match owns; a projection names storage
+  owned elsewhere, so matching a FIELD and returning a view of the payload
+  stays legal), and types from the enum's declared payloads with type
+  arguments substituted.
+- **tuple returns** (`6508285`) — `CopyOracle::type_contains_view` answers
+  for NAMED types, and a tuple has no name until monomorphize synthesizes
+  its struct, so `(str, i32)` read as carrying nothing. `return (s, 1);`
+  where `s` views a dying local produced no diagnostic at all. Handled with
+  a tuple arm in the view rules rather than in the oracle, so no existing
+  rule starts tying on a shape it never did — see the follow-up below.
+- **index write targets** (`6508285`) — nothing typed `a[i]`, so
+  `A[0] = b.view()` into an array `static` walked past the store rules.
+  Write targets now resolve step by step: deref, index, field.
+
+None of the three was caught by the 44 pinned e2e assertions or by any
+vendor or examples program. They were found by aiming probe programs at the
+assert. Compressing step 3 into the port commits, as the report warned,
+would have shipped all three as silent coverage losses.
+
+### Follow-up this surfaced (not done)
+
+`CopyOracle::type_contains_view` returns `false` for `TypeKind::Tuple`.
+That is a gap in borrowck's EXISTING rules too, not only in the ported ones:
+a fn returning `(str, i32)` built from a `str` parameter does not tie its
+result to the argument's owner under Rule E-VIEW-FN. Repro shape:
+
+```
+fn pack(s: str) -> (str, i32) { return (s, 1); }
+```
+
+Fixing it means widening the oracle, which changes what the existing tie
+rules do — out of scope for a port that was required not to modify them, and
+worth its own change with its own sweep. The view rules cover themselves via
+a local `carries_view` wrapper in the meantime.
+
+## Step 5 — the capture-taint / E0365 port, NOT done
+
+Skipped deliberately, as the report allows. It is separable: E0365 is the
+capture-taint family (`&local` reaching a handler context), not the view
+family, and it shares nothing with what moved except the `owns_value` gate
+and `place_root_name`. Its three position-patched escape sites (return
+`sema.rs`'s `flag_escaping_local_receivers`, assignment
+`check_capture_store_escape`, call-arg `check_capture_arg_escape`) and the
+`collect_receiver_capturing_methods` / `capture_sources_inner` /
+`update_capture_taint` fixpoint are all still in sema and all still working.
+`check_returned_borrow` survives as the return-position hook and does
+nothing else.
+
+The case for doing it is unchanged and still good: position enumeration
+means a fourth escape position needs a fourth patch, and as a borrow class
+judged at frame exit the positions stop mattering. The case for not doing it
+in this session is that steps 2-4 moved a live diagnostic family between
+passes and that deserved the whole budget, including a transition release
+that found three real holes.
+
+## Verification (as run)
+
+At every commit: `cargo test -p cplus-core` (1869 at the end, 15 new tests),
+`cargo test -p cpc` (612 + 16 + 5 + 6, 4 new e2e), the stdlib suite in debug
+and release (290 each). From the transition commit on, everything ran in
+BOTH modes with the assert live in debug.
+
+Differential, against a `cpc` built at `a60a355` in a separate worktree:
+
+- vendor-wide `cpc check` over all 225 sources of all 54 packages —
+  byte-identical, in release and in debug, with no panic in either;
+- every `examples/*` source (46 files) — byte-identical;
+- 31 purpose-built probe programs covering loops, `defer`, destructuring,
+  nested scopes, shadowing, generic owners, slices, raw derefs, tuples,
+  array elements, match payloads, and every escape sink — identical
+  code-for-code except the two E0514 additions noted above.
