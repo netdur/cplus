@@ -880,11 +880,9 @@ fn nominal_prefix(s: &str, types: &TypeTable) -> Option<(Ty, usize)> {
 }
 
 fn ty_from_suffix(suffix: &str, types: &TypeTable) -> Ty {
-    crate::mangling::from_suffix(
-        suffix,
-        &|s| nominal_prefix(s, types),
-        &|s| nominal_tail_match(s, types),
-    )
+    crate::mangling::from_suffix(suffix, &|s| nominal_prefix(s, types), &|s| {
+        nominal_tail_match(s, types)
+    })
 }
 
 /// The looser nominal lookup, consulted only after every grammar rule and the
@@ -1732,13 +1730,11 @@ fn emit_dwarf_metadata(
                 .and_then(|r| r.split_once("= "))
                 .map(|(_, rhs)| rhs)
                 .unwrap_or(trimmed);
-            let is_call = ["", "tail ", "musttail ", "notail "]
-                .iter()
-                .any(|m| {
-                    after_assign
-                        .strip_prefix(m)
-                        .is_some_and(|r| r.starts_with("call ") || r.starts_with("invoke "))
-                });
+            let is_call = ["", "tail ", "musttail ", "notail "].iter().any(|m| {
+                after_assign
+                    .strip_prefix(m)
+                    .is_some_and(|r| r.starts_with("call ") || r.starts_with("invoke "))
+            });
             if is_call && !line.contains("!dbg") {
                 out.push_str(line);
                 out.push_str(&format!(", !dbg !{loc}"));
@@ -1814,20 +1810,108 @@ fn escape_dwarf_str(s: &str) -> String {
     out
 }
 
+/// issue-04: how one parameter is passed. Mutually exclusive by construction —
+/// the three used to be two independent bools (`move_`, `mutable`) with
+/// "both true" representable and meaningless, decided at each site by an
+/// if/else chain that had to be written the same way every time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ParamMode {
+    /// A bare `x: T`: a read-only borrow. Non-Copy aggregates are
+    /// pointer-passed with `readonly`; scalars are copied.
+    Borrow,
+    /// `ref x: T`: an exclusive borrow. Always pointer-passed, so the callee's
+    /// writes land in the caller's place.
+    Ref,
+    /// `take x: T` on a type that actually owns something: ownership transfers.
+    /// Value-passed, caller flips the drop flag, callee registers one.
+    ///
+    /// NOTE this is `effective_move`, not the surface `take` keyword: `take
+    /// x: i32` on a Copy type transfers nothing and stays `Borrow`. Building a
+    /// `ParamAbi` is the only way to get here, which is what keeps the rule
+    /// from being re-derived (a signature-collection site that used the raw
+    /// `p.move_` flag instead was the v0.0.15 vendor/json double-free).
+    Take,
+}
+
+impl ParamMode {
+    fn is_take(self) -> bool {
+        matches!(self, ParamMode::Take)
+    }
+
+    fn is_ref(self) -> bool {
+        matches!(self, ParamMode::Ref)
+    }
+}
+
+/// issue-04: one parameter's ABI-relevant facts, as a codegen signature
+/// carries them.
+///
+/// Named `ParamAbi`, not `ParamSig` as issue-02's sketch had it, because
+/// `sema::ParamSig` already exists and means something different: the SURFACE
+/// flags (`take`/`ref` as written). This is the LOWERED form — `mode` has
+/// already been through `effective_move`, so `take x: i32` on a Copy type is
+/// `Borrow` here and `move_ = true` there. Two types with one name, differing
+/// in exactly the rule that has caused double-frees, was not worth the
+/// symmetry.
+#[derive(Debug, Clone, PartialEq)]
+struct ParamAbi {
+    ty: Ty,
+    mode: ParamMode,
+    /// v0.0.8 (post-bench-gap): `restrict x: *T` — opt-in `noalias` for
+    /// raw-pointer params. Sema enforces that it only appears on `*T` (E0411);
+    /// codegen flips the scalar-pointer attr from `noundef` to
+    /// `noalias noundef` at both the definition and the call site.
+    restrict: bool,
+}
+
+impl ParamAbi {
+    /// THE constructor from an AST parameter. Owns the `effective_move` rule.
+    fn lower(p: &Param, types: &TypeTable) -> ParamAbi {
+        let ty = ty_from(&p.ty, types);
+        let mode = if effective_move(p, &ty, types) {
+            ParamMode::Take
+        } else if p.mutable {
+            ParamMode::Ref
+        } else {
+            ParamMode::Borrow
+        };
+        ParamAbi {
+            ty,
+            mode,
+            restrict: p.restrict,
+        }
+    }
+
+    /// A signature built from a `Ty` directly, for the synthesized parameters
+    /// codegen invents (trampolines, bridges) that have no AST `Param`.
+    fn of(ty: Ty, mode: ParamMode) -> ParamAbi {
+        ParamAbi {
+            ty,
+            mode,
+            restrict: false,
+        }
+    }
+}
+
+/// The parameter mode a method receiver implies: `this` borrows, `ref this`
+/// borrows exclusively, `take this` consumes. The three used to be spelled as
+/// a `(move_, mutable)` pair per site, with `take this` written `(true, true)`
+/// — a state the pair could hold but nothing could mean.
+fn receiver_mode(r: Receiver) -> ParamMode {
+    match r {
+        Receiver::Read => ParamMode::Borrow,
+        Receiver::Mut => ParamMode::Ref,
+        Receiver::Move => ParamMode::Take,
+    }
+}
+
 #[derive(Debug, Clone)]
 struct FnSig {
-    /// Parameter info: type, `move_` flag, `mutable` flag.
-    ///   - `move_` decides whether a Drop-bearing argument transfers ownership
-    ///     across the call (caller flips its drop-flag, callee registers one).
-    ///   - `mutable` paired with non-Copy struct type triggers the §2.9
-    ///     exclusive-borrow ABI: callee receives a `ptr`, not a value copy,
-    ///     so field writes propagate back to the caller (slice 5BC.codegen).
-    ///   - `restrict` (4th flag) — v0.0.8 post-bench-gap: opt-in `noalias`
-    ///     for raw-pointer (`*T`) params. Sema enforces `restrict` only
-    ///     appears on `*T` types (E0411). codegen-side, the flag flips
-    ///     the scalar-pointer attr from `noundef` to `noalias noundef`
-    ///     at both def and call sites.
-    params: Vec<(Ty, bool, bool, bool)>,
+    /// One entry per parameter — see [`ParamAbi`]. `mode` decides both the
+    /// ownership question (a `Take` argument transfers: the caller flips its
+    /// drop flag, the callee registers one) and the §2.9 borrow ABI (a `Ref`
+    /// is pointer-passed so field writes propagate back to the caller).
+    params: Vec<ParamAbi>,
     return_type: Ty,
     /// Slice 10.FFI.4: variadic extern fn. Call sites for these emit
     /// `call ret_ty (fixed_types, ...) @name(args)` — the full
@@ -1855,7 +1939,7 @@ fn collect_sigs(p: &Program, types: &TypeTable) -> HashMap<String, FnSig> {
     sigs.insert(
         "println".to_string(),
         FnSig {
-            params: vec![(Ty::I32, false, false, false)],
+            params: vec![ParamAbi::of(Ty::I32, ParamMode::Borrow)],
             return_type: Ty::Unit,
             is_variadic: false,
             link_name: None,
@@ -1871,15 +1955,7 @@ fn collect_sigs(p: &Program, types: &TypeTable) -> HashMap<String, FnSig> {
         if !f.generic_params.is_empty() {
             continue;
         }
-        let params: Vec<(Ty, bool, bool, bool)> = f
-            .params
-            .iter()
-            .map(|p| {
-                let ty = ty_from(&p.ty, types);
-                let mv = effective_move(p, &ty, types);
-                (ty, mv, p.mutable, p.restrict)
-            })
-            .collect();
+        let params: Vec<ParamAbi> = f.params.iter().map(|p| ParamAbi::lower(p, types)).collect();
         let declared_ret = match &f.return_type {
             Some(t) => ty_from(t, types),
             None => Ty::Unit,
@@ -2036,12 +2112,8 @@ struct StructInfo {
 #[derive(Debug, Clone)]
 struct MethodInfo {
     receiver: Option<Receiver>,
-    /// Parameter info, excluding the receiver:
-    /// `(ty, move_, mutable, restrict)`. `move_` drives call-site
-    /// drop-flag flips; `mutable` drives the §2.9 pointer-pass ABI for
-    /// non-Copy struct params (slice 5BC.codegen); `restrict` (v0.0.8
-    /// post-bench-gap) opt-in `noalias` for raw-pointer params.
-    params: Vec<(Ty, bool, bool, bool)>,
+    /// Parameter info, excluding the receiver — see [`ParamAbi`].
+    params: Vec<ParamAbi>,
     return_type: Ty,
     /// v0.0.8 bench-gap fix D: if this method's body matches a known
     /// "trivial" pattern, the call-site emitter substitutes the
@@ -2315,15 +2387,8 @@ fn collect_types(p: &Program) -> TypeTable {
                 if !m.generic_params.is_empty() {
                     continue;
                 }
-                let params: Vec<(Ty, bool, bool, bool)> = m
-                    .params
-                    .iter()
-                    .map(|p| {
-                        let ty = ty_from(&p.ty, &t);
-                        let mv = effective_move(p, &ty, &t);
-                        (ty, mv, p.mutable, p.restrict)
-                    })
-                    .collect();
+                let params: Vec<ParamAbi> =
+                    m.params.iter().map(|p| ParamAbi::lower(p, &t)).collect();
                 let declared_ret = match &m.return_type {
                     Some(ty) => ty_from(ty, &t),
                     None => Ty::Unit,
@@ -2361,15 +2426,8 @@ fn collect_types(p: &Program) -> TypeTable {
                 if t.str_methods.contains_key(&m.name.name) || !m.generic_params.is_empty() {
                     continue;
                 }
-                let params: Vec<(Ty, bool, bool, bool)> = m
-                    .params
-                    .iter()
-                    .map(|p| {
-                        let ty = ty_from(&p.ty, &t);
-                        let mv = effective_move(p, &ty, &t);
-                        (ty, mv, p.mutable, p.restrict)
-                    })
-                    .collect();
+                let params: Vec<ParamAbi> =
+                    m.params.iter().map(|p| ParamAbi::lower(p, &t)).collect();
                 let return_type = match &m.return_type {
                     Some(ty) => ty_from(ty, &t),
                     None => Ty::Unit,
@@ -2409,15 +2467,7 @@ fn collect_types(p: &Program) -> TypeTable {
             // (notably `Vec[T]::push(x: T)`) was treated as a borrow: the caller
             // never `mark_moved` it, so a heap-owning argument was double-freed
             // (the vendor/json `elems.push(v)` use-after-free).
-            let params: Vec<(Ty, bool, bool, bool)> = m
-                .params
-                .iter()
-                .map(|p| {
-                    let ty = ty_from(&p.ty, &t);
-                    let mv = effective_move(p, &ty, &t);
-                    (ty, mv, p.mutable, p.restrict)
-                })
-                .collect();
+            let params: Vec<ParamAbi> = m.params.iter().map(|p| ParamAbi::lower(p, &t)).collect();
             let declared_ret = match &m.return_type {
                 Some(ty) => ty_from(ty, &t),
                 None => Ty::Unit,
@@ -2559,8 +2609,9 @@ fn is_copy_ty(ty: &Ty, t: &TypeTable) -> bool {
 /// branch — `effective_move` (below) rewrites it to `move_`, so it is value-passed
 /// like an explicit `take x: T`. `take x: T` stays value-passed (the value is the
 /// transfer; the caller's drop flag flip suppresses the caller-side drop).
-fn param_passes_by_ptr(ty: &Ty, move_: bool, mutable: bool, t: &TypeTable) -> bool {
-    if move_ {
+fn param_passes_by_ptr(p: &ParamAbi, t: &TypeTable) -> bool {
+    let ty = &p.ty;
+    if p.mode.is_take() {
         return false;
     }
     // v0.0.24 #9 (3c-copy): `ref x: T` is an exclusive borrow that writes back to
@@ -2569,7 +2620,7 @@ fn param_passes_by_ptr(ty: &Ty, move_: bool, mutable: bool, t: &TypeTable) -> bo
     // structs. Value-passing a Copy `ref` (the old behavior) silently dropped the
     // write. This mirrors `ref this`, which is already pointer-passed on Copy
     // receivers (`b.set(42); b.get()` observes the write).
-    if mutable {
+    if p.mode.is_ref() {
         return true;
     }
     // A bare `x: T` is a read-only (shared) borrow: pointer-passed for non-Copy
@@ -2650,14 +2701,8 @@ fn effective_move(p: &Param, ty: &Ty, t: &TypeTable) -> bool {
 ///
 /// Returned string has no trailing space; callers append a separator before
 /// the SSA name (e.g. `"ptr {attrs} %{i}"`).
-fn param_attrs(
-    ty: &Ty,
-    move_: bool,
-    mutable: bool,
-    restrict: bool,
-    pointer_passed: bool,
-    types: &TypeTable,
-) -> String {
+fn param_attrs(p: &ParamAbi, pointer_passed: bool, types: &TypeTable) -> String {
+    let ty = &p.ty;
     if pointer_passed {
         let mut s = String::new();
         // NO `noalias` ON BORROW PARAMS — 2026-07-27. It is a promise the
@@ -2705,7 +2750,7 @@ fn param_attrs(
         // through the pointer, which the callee's own body proves. It says
         // nothing about other pointers, so a callback writing the same object
         // does not violate it.
-        if !(move_ || mutable) {
+        if matches!(p.mode, ParamMode::Borrow) {
             s.push_str("readonly ");
         }
         s.push_str("nonnull noundef");
@@ -2723,7 +2768,7 @@ fn param_attrs(
         // params already pick up `noalias` via the pointer_passed
         // branch above. Sema (E0411) gates `restrict` to `*T` shapes,
         // so the attribute is only emitted when it's sound.
-        if restrict && matches!(ty, Ty::RawPtr(_)) {
+        if p.restrict && matches!(ty, Ty::RawPtr(_)) {
             "noalias noundef".to_string()
         } else {
             "noundef".to_string()
@@ -3571,10 +3616,9 @@ fn scan_moves_in_expr(
             // adds that binding to the moved set.
             if let ExprKind::Ident(fn_name) = &callee.kind {
                 if let Some(sig) = sigs.get(fn_name) {
-                    for (arg, (_pty, move_flag, _mut_flag, _restrict_flag)) in
-                        args.iter().zip(sig.params.iter())
-                    {
-                        if *move_flag {
+                    for (arg, ps) in args.iter().zip(sig.params.iter()) {
+                        let move_flag = ps.mode.is_take();
+                        if move_flag {
                             if let ExprKind::Ident(n) = &arg.kind {
                                 set.insert(n.clone());
                             }
@@ -3645,10 +3689,9 @@ fn scan_moves_in_expr(
                 // the receiver path — multiple matches are safe.
                 for sdef in &types.struct_defs {
                     if let Some(mi) = sdef.methods.get(&m.name) {
-                        for (a, (_ty, move_flag, _mut_flag, _restr)) in
-                            args.iter().zip(mi.params.iter())
-                        {
-                            if *move_flag {
+                        for (a, ps) in args.iter().zip(mi.params.iter()) {
+                            let move_flag = ps.mode.is_take();
+                            if move_flag {
                                 if let ExprKind::Ident(n) = &a.kind {
                                     set.insert(n.clone());
                                 }
@@ -4600,7 +4643,7 @@ fn write_preamble(out: &mut String) {
     // `async fn` lowering. The `presplitcoroutine` function attribute
     // on each async fn triggers LLVM's CoroSplit pass during the
     // standard middle-end pipeline (also runs at -O0 because the
-    // intrinsics are illegal in finalized IR — the pass *must* run).
+    // intrinsics are illegal in finalized IR — the pass must* run).
     // We use the "promise" pattern for the per-coroutine result slot
     // so async fns returning T ≤ 8 bytes stash their result at a
     // known offset in the frame, retrievable by the poll loop.
@@ -5376,7 +5419,9 @@ fn emit_statics(
         };
         let storage = if info.is_mut { "global" } else { "constant" };
         let linkage = static_linkage(qname);
-        out.push_str(&format!("@{qname} = {linkage}{storage} {lltype} {llvalue}\n"));
+        out.push_str(&format!(
+            "@{qname} = {linkage}{storage} {lltype} {llvalue}\n"
+        ));
         md.statics.borrow_mut().insert(qname.clone(), sty.clone());
     }
     out.push('\n');
@@ -5951,7 +5996,12 @@ fn gen_function(
         } else {
             format!("{ret_ext} ")
         };
-        write!(out, "declare {}{} @{}(", ret_ext, sig_ret_ty, resolved_symbol).unwrap();
+        write!(
+            out,
+            "declare {}{} @{}(",
+            ret_ext, sig_ret_ty, resolved_symbol
+        )
+        .unwrap();
         if uses_sret {
             let ret_inner = llvm_ty(&return_ty, types);
             let (sz, al) = static_layout(&return_ty, types)
@@ -5966,9 +6016,8 @@ fn gen_function(
                 out.push_str(", ");
             }
         }
-        for (i, (_param, (pty, move_flag, mut_flag, restrict_flag))) in
-            f.params.iter().zip(sig.params.iter()).enumerate()
-        {
+        for (i, (_param, ps)) in f.params.iter().zip(sig.params.iter()).enumerate() {
+            let pty = &ps.ty;
             if i > 0 {
                 out.push_str(", ");
             }
@@ -5981,8 +6030,8 @@ fn gen_function(
             // call site governs lowering and the C callee wants the pointer),
             // but the declaration was false — which is what LTO's signature
             // check and anything else reading declares goes on (reports/bug-23).
-            if param_passes_by_ptr(pty, *move_flag, *mut_flag, types) {
-                let attrs = param_attrs(pty, *move_flag, *mut_flag, *restrict_flag, true, types);
+            if param_passes_by_ptr(ps, types) {
+                let attrs = param_attrs(ps, true, types);
                 if attrs.is_empty() {
                     out.push_str("ptr");
                 } else {
@@ -6084,10 +6133,11 @@ fn gen_function(
     let param_abis: Vec<CAbiClass> = sig
         .params
         .iter()
-        .map(|(pty, move_, mut_, _)| {
+        .map(|ps| {
+            let pty = &ps.ty;
             if matches!(pty, Ty::Struct(_))
                 && is_copy_ty(pty, types)
-                && !param_passes_by_ptr(pty, *move_, *mut_, types)
+                && !param_passes_by_ptr(ps, types)
                 && !fn_is_fastcc
             {
                 classify_c_abi(pty, types)
@@ -6230,9 +6280,8 @@ fn gen_function(
             out.push_str(", ");
         }
     }
-    for (i, (_param, (pty, move_flag, mut_flag, restrict_flag))) in
-        f.params.iter().zip(sig.params.iter()).enumerate()
-    {
+    for (i, (_param, ps)) in f.params.iter().zip(sig.params.iter()).enumerate() {
+        let pty = &ps.ty;
         if i > 0 {
             out.push_str(", ");
         }
@@ -6248,9 +6297,9 @@ fn gen_function(
         // T's value-class — including a Copy struct that would otherwise be
         // Coerce/Indirect (`ref p: Point` is `Point*`, not a coerced `i64`).
         // Mirrors the native side (`param_passes_by_ptr`).
-        let ref_by_ptr = param_passes_by_ptr(pty, *move_flag, *mut_flag, types);
+        let ref_by_ptr = param_passes_by_ptr(ps, types);
         if ref_by_ptr {
-            let attrs = param_attrs(pty, *move_flag, *mut_flag, *restrict_flag, true, types);
+            let attrs = param_attrs(ps, true, types);
             if attrs.is_empty() {
                 write!(out, "ptr %{}", llvm_idx).unwrap();
             } else {
@@ -6279,8 +6328,8 @@ fn gen_function(
                 }
             }
             CAbiClass::Direct => {
-                let by_ptr = param_passes_by_ptr(pty, *move_flag, *mut_flag, types);
-                let attrs = param_attrs(pty, *move_flag, *mut_flag, *restrict_flag, by_ptr, types);
+                let by_ptr = param_passes_by_ptr(ps, types);
+                let attrs = param_attrs(ps, by_ptr, types);
                 let base_ty = if by_ptr {
                     "ptr".to_string()
                 } else {
@@ -6336,7 +6385,7 @@ fn gen_function(
     state.collect_moved_bindings(&f.body);
     // Slice 1E: record this fn's parameter types so the Return-statement
     // predicate can check musttail signature equality against the callee.
-    state.enclosing_params = sig.params.iter().map(|(t, _, _, _)| t.clone()).collect();
+    state.enclosing_params = sig.params.iter().map(|ps| ps.ty.clone()).collect();
     state.tail_call_eligible = true;
     // v0.0.8 fix C: musttail requires caller and callee to share a cc.
     // Record the enclosing fn's cc decision so the Return-stmt predicate
@@ -6370,13 +6419,14 @@ fn gen_function(
     // A `#[naked]` function materializes no params: the body is inline asm
     // that reads arguments straight from their ABI registers. Skipping the
     // prologue is the whole point (the SSA args stay unused, which is legal).
-    for (i, (param, (pty, move_flag, mut_flag, _restrict_flag))) in f
+    for (i, (param, ps)) in f
         .params
         .iter()
         .zip(sig.params.iter())
         .enumerate()
         .filter(|_| !is_naked)
     {
+        let (pty, move_flag) = (&ps.ty, ps.mode.is_take());
         let llvm_idx = i as u32 + sret_param_offset;
         // C-ABI coerced param: alloca with coerced size, store the coerced
         // value, bind as original struct type. The alloca uses the
@@ -6400,7 +6450,7 @@ fn gen_function(
             state.bind(&param.name.name, format!("%{llvm_idx}"), pty.clone());
             continue;
         }
-        if param_passes_by_ptr(pty, *move_flag, *mut_flag, types) {
+        if param_passes_by_ptr(ps, types) {
             state.bind(&param.name.name, format!("%{llvm_idx}"), pty.clone());
             // v0.0.5 Slice 1A: track params that share heap with the
             // caller (so the body cannot return the binding as-is
@@ -6426,10 +6476,10 @@ fn gen_function(
         // clone-on-return path (today only Ty::String returns are
         // auto-cloned — Vec[T] and similar need T::clone glue, their
         // own slice).
-        if !*move_flag && matches!(pty, Ty::String) {
+        if !move_flag && matches!(pty, Ty::String) {
             state.borrowed_params.insert(param.name.name.clone());
         }
-        if *move_flag {
+        if move_flag {
             // A moved-in owning value (Text, struct with owning fields, or
             // tagged enum with owning payloads) is the callee's to tear down.
             // `register_value_drop` is a no-op for trivially-droppable types and
@@ -6475,18 +6525,13 @@ fn gen_function(
         .iter()
         .zip(sig.params.iter())
         .enumerate()
-        .filter_map(|(i, (_, (pty, mv, mu, _restrict_flag)))| {
-            (param_passes_by_ptr(pty, *mv, *mu, types) && (*mv || *mu)).then_some(i as u32)
+        .filter_map(|(i, (_, ps))| {
+            let (mv, mu) = (ps.mode.is_take(), ps.mode.is_ref());
+            (param_passes_by_ptr(ps, types) && (mv || mu)).then_some(i as u32)
         })
         .collect();
     let local_slots = state.noalias_local_slots.clone();
-    state.body = publish_alias_scopes(
-        &state.body,
-        &f.name.name,
-        &noalias_params,
-        &local_slots,
-        md,
-    );
+    state.body = publish_alias_scopes(&state.body, &f.name.name, &noalias_params, &local_slots, md);
 
     // Glue: allocas first (in entry), then body
     for line in &state.allocas {
@@ -6569,11 +6614,7 @@ fn gen_async_method(
     let mut first = true;
     let struct_ty = Ty::Struct(struct_id);
     if let Some(rcv) = sig.receiver {
-        let (mv, mu) = match rcv {
-            Receiver::Read => (false, false),
-            Receiver::Mut => (false, true),
-            Receiver::Move => (true, true),
-        };
+        let recv_sig = ParamAbi::of(struct_ty.clone(), receiver_mode(rcv));
         if !first {
             out.push_str(", ");
         }
@@ -6581,7 +6622,7 @@ fn gen_async_method(
         // the call-site lowering in `gen_method_call` (which doesn't
         // distinguish async/gen/sync) matches this signature.
         let self_by_ptr = !is_copy_ty(&struct_ty, types) || !matches!(rcv, Receiver::Read);
-        let attrs = param_attrs(&struct_ty, mv, mu, false, self_by_ptr, types);
+        let attrs = param_attrs(&recv_sig, self_by_ptr, types);
         if self_by_ptr {
             if attrs.is_empty() {
                 write!(out, "ptr %{llvm_idx}").unwrap();
@@ -6599,14 +6640,13 @@ fn gen_async_method(
         llvm_idx += 1;
         first = false;
     }
-    for (_param, (pty, move_flag, mut_flag, restrict_flag)) in
-        m.params.iter().zip(sig.params.iter())
-    {
+    for (_param, ps) in m.params.iter().zip(sig.params.iter()) {
+        let pty = &ps.ty;
         if !first {
             out.push_str(", ");
         }
-        let by_ptr = param_passes_by_ptr(pty, *move_flag, *mut_flag, types);
-        let attrs = param_attrs(pty, *move_flag, *mut_flag, *restrict_flag, by_ptr, types);
+        let by_ptr = param_passes_by_ptr(ps, types);
+        let attrs = param_attrs(ps, by_ptr, types);
         let base_ty = if by_ptr {
             "ptr".to_string()
         } else {
@@ -6683,9 +6723,9 @@ fn gen_async_method(
         }
         next_idx += 1;
     }
-    for (param, (pty, move_flag, mut_flag, _restrict_flag)) in m.params.iter().zip(sig.params.iter())
-    {
-        let by_ptr = param_passes_by_ptr(pty, *move_flag, *mut_flag, types);
+    for (param, ps) in m.params.iter().zip(sig.params.iter()) {
+        let pty = &ps.ty;
+        let by_ptr = param_passes_by_ptr(ps, types);
         if by_ptr {
             state.bind(&param.name.name, format!("%{}", next_idx), pty.clone());
         } else {
@@ -6805,11 +6845,7 @@ fn gen_gen_method(
     let mut first = true;
     let struct_ty = Ty::Struct(struct_id);
     if let Some(rcv) = sig.receiver {
-        let (mv, mu) = match rcv {
-            Receiver::Read => (false, false),
-            Receiver::Mut => (false, true),
-            Receiver::Move => (true, true),
-        };
+        let recv_sig = ParamAbi::of(struct_ty.clone(), receiver_mode(rcv));
         if !first {
             out.push_str(", ");
         }
@@ -6817,7 +6853,7 @@ fn gen_gen_method(
         // the call-site lowering in `gen_method_call` (which doesn't
         // distinguish gen/sync) matches this signature.
         let self_by_ptr = !is_copy_ty(&struct_ty, types) || !matches!(rcv, Receiver::Read);
-        let attrs = param_attrs(&struct_ty, mv, mu, false, self_by_ptr, types);
+        let attrs = param_attrs(&recv_sig, self_by_ptr, types);
         if self_by_ptr {
             if attrs.is_empty() {
                 write!(out, "ptr %{llvm_idx}").unwrap();
@@ -6835,14 +6871,13 @@ fn gen_gen_method(
         llvm_idx += 1;
         first = false;
     }
-    for (_param, (pty, move_flag, mut_flag, restrict_flag)) in
-        m.params.iter().zip(sig.params.iter())
-    {
+    for (_param, ps) in m.params.iter().zip(sig.params.iter()) {
+        let pty = &ps.ty;
         if !first {
             out.push_str(", ");
         }
-        let by_ptr = param_passes_by_ptr(pty, *move_flag, *mut_flag, types);
-        let attrs = param_attrs(pty, *move_flag, *mut_flag, *restrict_flag, by_ptr, types);
+        let by_ptr = param_passes_by_ptr(ps, types);
+        let attrs = param_attrs(ps, by_ptr, types);
         let base_ty = if by_ptr {
             "ptr".to_string()
         } else {
@@ -6910,9 +6945,9 @@ fn gen_gen_method(
         next_idx += 1;
     }
     // Bind params to allocas (value-passed) or pointer slots (pointer-passed).
-    for (param, (pty, move_flag, mut_flag, _restrict_flag)) in m.params.iter().zip(sig.params.iter())
-    {
-        let by_ptr = param_passes_by_ptr(pty, *move_flag, *mut_flag, types);
+    for (param, ps) in m.params.iter().zip(sig.params.iter()) {
+        let pty = &ps.ty;
+        let by_ptr = param_passes_by_ptr(ps, types);
         if by_ptr {
             state.bind(&param.name.name, format!("%{}", next_idx), pty.clone());
         } else {
@@ -7023,14 +7058,13 @@ fn gen_gen_function(
     // `gen fn f(ref n: i64)` declared `(i64)` while the caller passed a `ptr`:
     // the body read a pointer bit-pattern as an integer and the write-back was
     // lost, with no diagnostic (reports/bug-02).
-    for (i, (_param, (pty, move_flag, mut_flag, restrict_flag))) in
-        f.params.iter().zip(sig.params.iter()).enumerate()
-    {
+    for (i, (_param, ps)) in f.params.iter().zip(sig.params.iter()).enumerate() {
+        let pty = &ps.ty;
         if i > 0 {
             out.push_str(", ");
         }
-        let by_ptr = param_passes_by_ptr(pty, *move_flag, *mut_flag, types);
-        let attrs = param_attrs(pty, *move_flag, *mut_flag, *restrict_flag, by_ptr, types);
+        let by_ptr = param_passes_by_ptr(ps, types);
+        let attrs = param_attrs(ps, by_ptr, types);
         let base_ty = if by_ptr {
             "ptr".to_string()
         } else {
@@ -7079,10 +7113,9 @@ fn gen_gen_function(
     // Prologue mirrors the signature: a pointer-passed param IS its slot (so a
     // `ref` param's writes reach the caller); a value-passed one spills to a
     // fresh alloca. Copied from `gen_gen_method`, which had it right.
-    for (i, (param, (pty, move_flag, mut_flag, _restrict_flag))) in
-        f.params.iter().zip(sig.params.iter()).enumerate()
-    {
-        if param_passes_by_ptr(pty, *move_flag, *mut_flag, types) {
+    for (i, (param, ps)) in f.params.iter().zip(sig.params.iter()).enumerate() {
+        let pty = &ps.ty;
+        if param_passes_by_ptr(ps, types) {
             state.bind(&param.name.name, format!("%{}", i as u32), pty.clone());
         } else {
             let slot = state.alloca_named(&param.name.name, pty.clone());
@@ -7193,14 +7226,13 @@ fn gen_async_function(
     // `async fn f(ref n: i64)` declared `(i64)` while the caller passed a `ptr`:
     // the body read a pointer bit-pattern as an integer and the write-back was
     // lost, with no diagnostic (reports/bug-02).
-    for (i, (_param, (pty, move_flag, mut_flag, restrict_flag))) in
-        f.params.iter().zip(sig.params.iter()).enumerate()
-    {
+    for (i, (_param, ps)) in f.params.iter().zip(sig.params.iter()).enumerate() {
+        let pty = &ps.ty;
         if i > 0 {
             out.push_str(", ");
         }
-        let by_ptr = param_passes_by_ptr(pty, *move_flag, *mut_flag, types);
-        let attrs = param_attrs(pty, *move_flag, *mut_flag, *restrict_flag, by_ptr, types);
+        let by_ptr = param_passes_by_ptr(ps, types);
+        let attrs = param_attrs(ps, by_ptr, types);
         let base_ty = if by_ptr {
             "ptr".to_string()
         } else {
@@ -7276,10 +7308,9 @@ fn gen_async_function(
     // `ref` param's writes reach the caller); a value-passed one spills to a
     // fresh alloca. Copied from `gen_async_method`, which had it right.
     let body_start_offset = state.body.len();
-    for (i, (param, (pty, move_flag, mut_flag, _restrict_flag))) in
-        f.params.iter().zip(sig.params.iter()).enumerate()
-    {
-        if param_passes_by_ptr(pty, *move_flag, *mut_flag, types) {
+    for (i, (param, ps)) in f.params.iter().zip(sig.params.iter()).enumerate() {
+        let pty = &ps.ty;
+        if param_passes_by_ptr(ps, types) {
             state.bind(&param.name.name, format!("%{}", i as u32), pty.clone());
         } else {
             let slot = state.alloca_named(&param.name.name, pty.clone());
@@ -7460,15 +7491,11 @@ fn gen_enum_method(
         first = false;
     }
     if let Some(rcv) = sig.receiver {
-        let (mv, mu) = match rcv {
-            Receiver::Read => (false, false),
-            Receiver::Mut => (false, true),
-            Receiver::Move => (true, true),
-        };
+        let recv_sig = ParamAbi::of(enum_ty.clone(), receiver_mode(rcv));
         if !first {
             out.push_str(", ");
         }
-        let attrs = param_attrs(&enum_ty, mv, mu, false, true, types);
+        let attrs = param_attrs(&recv_sig, true, types);
         if attrs.is_empty() {
             write!(out, "ptr %{llvm_idx}").unwrap();
         } else {
@@ -7477,14 +7504,13 @@ fn gen_enum_method(
         llvm_idx += 1;
         first = false;
     }
-    for (_param, (pty, move_flag, mut_flag, restrict_flag)) in
-        m.params.iter().zip(sig.params.iter())
-    {
+    for (_param, ps) in m.params.iter().zip(sig.params.iter()) {
+        let pty = &ps.ty;
         if !first {
             out.push_str(", ");
         }
-        let by_ptr = param_passes_by_ptr(pty, *move_flag, *mut_flag, types);
-        let attrs = param_attrs(pty, *move_flag, *mut_flag, *restrict_flag, by_ptr, types);
+        let by_ptr = param_passes_by_ptr(ps, types);
+        let attrs = param_attrs(ps, by_ptr, types);
         let base_ty = if by_ptr {
             "ptr".to_string()
         } else {
@@ -7522,9 +7548,9 @@ fn gen_enum_method(
         state.bind("self", recv_name, Ty::Enum(enum_id));
         next_idx += 1;
     }
-    for (param, (pty, move_flag, mut_flag, _restrict_flag)) in m.params.iter().zip(sig.params.iter())
-    {
-        let by_ptr = param_passes_by_ptr(pty, *move_flag, *mut_flag, types);
+    for (param, ps) in m.params.iter().zip(sig.params.iter()) {
+        let pty = &ps.ty;
+        let by_ptr = param_passes_by_ptr(ps, types);
         if by_ptr {
             state.bind(&param.name.name, format!("%{}", next_idx), pty.clone());
         } else {
@@ -7604,15 +7630,11 @@ fn gen_gen_enum_method(
     let mut llvm_idx: u32 = 0;
     let mut first = true;
     if let Some(rcv) = sig.receiver {
-        let (mv, mu) = match rcv {
-            Receiver::Read => (false, false),
-            Receiver::Mut => (false, true),
-            Receiver::Move => (true, true),
-        };
+        let recv_sig = ParamAbi::of(enum_ty.clone(), receiver_mode(rcv));
         if !first {
             out.push_str(", ");
         }
-        let attrs = param_attrs(&enum_ty, mv, mu, false, true, types);
+        let attrs = param_attrs(&recv_sig, true, types);
         if attrs.is_empty() {
             write!(out, "ptr %{llvm_idx}").unwrap();
         } else {
@@ -7621,14 +7643,13 @@ fn gen_gen_enum_method(
         llvm_idx += 1;
         first = false;
     }
-    for (_param, (pty, move_flag, mut_flag, restrict_flag)) in
-        m.params.iter().zip(sig.params.iter())
-    {
+    for (_param, ps) in m.params.iter().zip(sig.params.iter()) {
+        let pty = &ps.ty;
         if !first {
             out.push_str(", ");
         }
-        let by_ptr = param_passes_by_ptr(pty, *move_flag, *mut_flag, types);
-        let attrs = param_attrs(pty, *move_flag, *mut_flag, *restrict_flag, by_ptr, types);
+        let by_ptr = param_passes_by_ptr(ps, types);
+        let attrs = param_attrs(ps, by_ptr, types);
         let base_ty = if by_ptr {
             "ptr".to_string()
         } else {
@@ -7678,9 +7699,9 @@ fn gen_gen_enum_method(
         state.bind("self", format!("%{}", next_idx), Ty::Enum(enum_id));
         next_idx += 1;
     }
-    for (param, (pty, move_flag, mut_flag, _restrict_flag)) in m.params.iter().zip(sig.params.iter())
-    {
-        let by_ptr = param_passes_by_ptr(pty, *move_flag, *mut_flag, types);
+    for (param, ps) in m.params.iter().zip(sig.params.iter()) {
+        let pty = &ps.ty;
+        let by_ptr = param_passes_by_ptr(ps, types);
         if by_ptr {
             state.bind(&param.name.name, format!("%{}", next_idx), pty.clone());
         } else {
@@ -7918,11 +7939,7 @@ fn gen_method(
         //   Read => (false, false) → readonly
         //   Mut  => (false, true)  → noalias
         //   Move => (true,  true)  → noalias (callee owns; exclusive)
-        let (mv, mu) = match rcv {
-            Receiver::Read => (false, false),
-            Receiver::Mut => (false, true),
-            Receiver::Move => (true, true),
-        };
+        let recv_sig = ParamAbi::of(struct_ty.clone(), receiver_mode(rcv));
         if !first {
             out.push_str(", ");
         }
@@ -7940,7 +7957,7 @@ fn gen_method(
         // place (see `phase7_generic_typed_impl_mut_self_runs` e2e test:
         // `b.set(42); b.get()` must observe the write).
         let self_by_ptr = !is_copy_ty(&struct_ty, types) || !matches!(rcv, Receiver::Read);
-        let attrs = param_attrs(&struct_ty, mv, mu, false, self_by_ptr, types);
+        let attrs = param_attrs(&recv_sig, self_by_ptr, types);
         if self_by_ptr {
             if attrs.is_empty() {
                 write!(out, "ptr %{llvm_idx}").unwrap();
@@ -7958,14 +7975,13 @@ fn gen_method(
         llvm_idx += 1;
         first = false;
     }
-    for (_param, (pty, move_flag, mut_flag, restrict_flag)) in
-        m.params.iter().zip(sig.params.iter())
-    {
+    for (_param, ps) in m.params.iter().zip(sig.params.iter()) {
+        let pty = &ps.ty;
         if !first {
             out.push_str(", ");
         }
-        let by_ptr = param_passes_by_ptr(pty, *move_flag, *mut_flag, types);
-        let attrs = param_attrs(pty, *move_flag, *mut_flag, *restrict_flag, by_ptr, types);
+        let by_ptr = param_passes_by_ptr(ps, types);
+        let attrs = param_attrs(ps, by_ptr, types);
         let base_ty = if by_ptr {
             "ptr".to_string()
         } else {
@@ -8068,11 +8084,10 @@ fn gen_method(
     // params register a scope-exit drop. Non-`take` value-passed params are
     // bit-duplicates of the caller's value, so codegen does NOT register a
     // drop for them (the caller still owns the original).
-    for (i, (param, (pty, move_flag, mut_flag, _restrict_flag))) in
-        m.params.iter().zip(sig.params.iter()).enumerate()
-    {
+    for (i, (param, ps)) in m.params.iter().zip(sig.params.iter()).enumerate() {
+        let (pty, move_flag) = (&ps.ty, ps.mode.is_take());
         let idx = next_idx + i as u32;
-        if param_passes_by_ptr(pty, *move_flag, *mut_flag, types) {
+        if param_passes_by_ptr(ps, types) {
             state.bind(&param.name.name, format!("%{idx}"), pty.clone());
             // v0.0.5 Slice 1A: track for auto-clone-on-return (see gen_function).
             state.borrowed_params.insert(param.name.name.clone());
@@ -8087,10 +8102,10 @@ fn gen_method(
         ));
         state.bind(&param.name.name, slot.clone(), pty.clone());
         // v0.0.5 Slice 1A: value-passed non-`take` Ty::String shares heap.
-        if !*move_flag && matches!(pty, Ty::String) {
+        if !move_flag && matches!(pty, Ty::String) {
             state.borrowed_params.insert(param.name.name.clone());
         }
-        if *move_flag {
+        if move_flag {
             // A moved-in owning value (Text, struct with owning fields, or
             // tagged enum with owning payloads) is the callee's to tear down.
             // `register_value_drop` is a no-op for trivially-droppable types and
@@ -8131,11 +8146,10 @@ fn gen_method(
             noalias_ssas.push(if uses_sret { 1 } else { 0 });
         }
     }
-    for (i, (_, (pty, mv, mu, _restrict_flag))) in
-        m.params.iter().zip(sig.params.iter()).enumerate()
-    {
+    for (i, (_, ps)) in m.params.iter().zip(sig.params.iter()).enumerate() {
+        let (mv, mu) = (ps.mode.is_take(), ps.mode.is_ref());
         let idx = next_idx + i as u32;
-        if param_passes_by_ptr(pty, *mv, *mu, types) && (*mv || *mu) {
+        if param_passes_by_ptr(ps, types) && (mv || mu) {
             noalias_ssas.push(idx);
         }
     }
@@ -8234,7 +8248,11 @@ fn gen_str_method(
         if !first {
             out.push_str(", ");
         }
-        let attrs = param_attrs(&recv_ty, false, false, false, false, types);
+        let attrs = param_attrs(
+            &ParamAbi::of(recv_ty.clone(), ParamMode::Borrow),
+            false,
+            types,
+        );
         let base_ty = llvm_ty(&recv_ty, types);
         if attrs.is_empty() {
             write!(out, "{} %{llvm_idx}", base_ty).unwrap();
@@ -8244,14 +8262,13 @@ fn gen_str_method(
         llvm_idx += 1;
         first = false;
     }
-    for (_param, (pty, move_flag, mut_flag, restrict_flag)) in
-        m.params.iter().zip(sig.params.iter())
-    {
+    for (_param, ps) in m.params.iter().zip(sig.params.iter()) {
+        let pty = &ps.ty;
         if !first {
             out.push_str(", ");
         }
-        let by_ptr = param_passes_by_ptr(pty, *move_flag, *mut_flag, types);
-        let attrs = param_attrs(pty, *move_flag, *mut_flag, *restrict_flag, by_ptr, types);
+        let by_ptr = param_passes_by_ptr(ps, types);
+        let attrs = param_attrs(ps, by_ptr, types);
         let base_ty = if by_ptr {
             "ptr".to_string()
         } else {
@@ -8304,11 +8321,10 @@ fn gen_str_method(
         state.bind("self", slot, recv_ty.clone());
         next_idx += 1;
     }
-    for (i, (param, (pty, move_flag, mut_flag, _restrict_flag))) in
-        m.params.iter().zip(sig.params.iter()).enumerate()
-    {
+    for (i, (param, ps)) in m.params.iter().zip(sig.params.iter()).enumerate() {
+        let (pty, move_flag) = (&ps.ty, ps.mode.is_take());
         let idx = next_idx + i as u32;
-        if param_passes_by_ptr(pty, *move_flag, *mut_flag, types) {
+        if param_passes_by_ptr(ps, types) {
             state.bind(&param.name.name, format!("%{idx}"), pty.clone());
             state.borrowed_params.insert(param.name.name.clone());
             continue;
@@ -8321,10 +8337,10 @@ fn gen_str_method(
             slot
         ));
         state.bind(&param.name.name, slot.clone(), pty.clone());
-        if !*move_flag && matches!(pty, Ty::String) {
+        if !move_flag && matches!(pty, Ty::String) {
             state.borrowed_params.insert(param.name.name.clone());
         }
-        if *move_flag {
+        if move_flag {
             state.register_value_drop(&param.name.name, &slot, pty, true);
         }
     }
@@ -9750,7 +9766,7 @@ impl<'a> FnState<'a> {
                                 if !pending_drops {
                                     if let Some(sig) = self.sigs.get(name) {
                                         let callee_params: Vec<&Ty> =
-                                            sig.params.iter().map(|(t, _, _, _)| t).collect();
+                                            sig.params.iter().map(|ps| &ps.ty).collect();
                                         let enclosing: Vec<&Ty> =
                                             self.enclosing_params.iter().collect();
                                         // v0.0.8 fix C: musttail requires
@@ -10717,14 +10733,17 @@ impl<'a> FnState<'a> {
                 // the source-level name.
                 if let Some(sig) = self.sigs.get(name).cloned() {
                     let symbol: String = sig.link_name.clone().unwrap_or_else(|| name.to_string());
-                    let params: Vec<Ty> = sig.params.iter().map(|(t, _, _, _)| t.clone()).collect();
-                    // FnSig params are `(ty, move_, mutable, restrict)`: element 1
-                    // is the `take` marker, element 2 the `ref` marker. (This
-                    // previously read element 2 into `param_takes` — latent, as
-                    // annotated `let`s use the declared type, but wrong for any
-                    // consumer of this expression-side type.)
-                    let param_takes: Vec<bool> = sig.params.iter().map(|(_, m, _, _)| *m).collect();
-                    let param_refs: Vec<bool> = sig.params.iter().map(|(_, _, r, _)| *r).collect();
+                    let params: Vec<Ty> = sig.params.iter().map(|ps| ps.ty.clone()).collect();
+                    // The fn-pointer type carries the modes as two parallel bool
+                    // vectors; `ParamMode` is the single source they come from,
+                    // so the take/ref pair cannot be transposed here (it once
+                    // was — latent, since an annotated `let` uses the declared
+                    // type, but wrong for any consumer of this expression-side
+                    // type).
+                    let param_takes: Vec<bool> =
+                        sig.params.iter().map(|ps| ps.mode.is_take()).collect();
+                    let param_refs: Vec<bool> =
+                        sig.params.iter().map(|ps| ps.mode.is_ref()).collect();
                     let ty = Ty::FnPtr {
                         params,
                         param_takes,
@@ -11687,7 +11706,9 @@ impl<'a> FnState<'a> {
                     let slot = self.alloca_named_raw("msg.arg.coerce", &llvm_ty, align);
                     self.emit(&format!("store {t_lty} {v}, ptr {slot}, align {struct_al}"));
                     let coerced = self.next_tmp();
-                    self.emit(&format!("{coerced} = load {llvm_ty}, ptr {slot}, align {align}"));
+                    self.emit(&format!(
+                        "{coerced} = load {llvm_ty}, ptr {slot}, align {align}"
+                    ));
                     format!("{llvm_ty} {coerced}")
                 }
                 CAbiClass::Indirect => {
@@ -12571,11 +12592,12 @@ impl<'a> FnState<'a> {
         debug_assert_eq!(segments.len(), 2, "Phase 2A paths are 2 segments");
         let enum_name = &segments[0].name;
         let variant_name = &segments[1].name;
-        let id = *self
-            .types
-            .enum_by_name
-            .get(enum_name)
-            .unwrap_or_else(|| panic!("sema validated enum name: missing `{}::{}`", enum_name, variant_name));
+        let id = *self.types.enum_by_name.get(enum_name).unwrap_or_else(|| {
+            panic!(
+                "sema validated enum name: missing `{}::{}`",
+                enum_name, variant_name
+            )
+        });
         let info = &self.types.enum_defs[id.0 as usize];
         let idx = info
             .variants
@@ -12982,7 +13004,11 @@ impl<'a> FnState<'a> {
             let to = ty_from(target, self.types);
             if to.is_int() {
                 let bits = ty_bit_width(&to);
-                let masked = if bits >= 64 { *v } else { *v & ((1u64 << bits) - 1) };
+                let masked = if bits >= 64 {
+                    *v
+                } else {
+                    *v & ((1u64 << bits) - 1)
+                };
                 return (masked.to_string(), to);
             }
         }
@@ -13207,7 +13233,8 @@ impl<'a> FnState<'a> {
             // `T*` out-param, never a coerced value.
             if param_refs.get(i).copied().unwrap_or(false) {
                 let (addr, _) = self.gen_place(a);
-                let attrs = param_attrs(pty, false, true, false, true, self.types);
+                let attrs =
+                    param_attrs(&ParamAbi::of(pty.clone(), ParamMode::Ref), true, self.types);
                 let ty_str = if attrs.is_empty() {
                     "ptr".to_string()
                 } else {
@@ -13347,8 +13374,8 @@ impl<'a> FnState<'a> {
         // absent sret register -> SIGBUS. Mirrors the direct-call / def-side
         // predicate `return_passes_by_sret_widened`. (bugs/fnptr-drop-sret)
         if !ret_is_copy_struct && return_passes_by_sret_widened(return_type, self.types) {
-            let (sz, al) = static_layout(return_type, self.types)
-                .expect("sret return type has layout");
+            let (sz, al) =
+                static_layout(return_type, self.types).expect("sret return type has layout");
             let inner = self.lty(return_type);
             let slot = self.alloca_anon(return_type.clone());
             let sret_arg = format!(
@@ -13497,18 +13524,18 @@ impl<'a> FnState<'a> {
         // noundef dereferenceable(N) align A` set on both sides; this
         // helps LLVM's inter-procedural analysis before inlining and
         // matches the IR shape clang produces.
-        for (a, (pty, move_flag, mut_flag, restrict_flag)) in args.iter().zip(sig.params.iter()) {
-            if param_passes_by_ptr(pty, *move_flag, *mut_flag, self.types) {
+        for (a, ps) in args.iter().zip(sig.params.iter()) {
+            let (pty, move_flag, restrict_flag) = (&ps.ty, ps.mode.is_take(), ps.restrict);
+            if param_passes_by_ptr(ps, self.types) {
                 let (addr, _) = self.gen_arg_place(a, pty);
                 // v0.0.26: an owned Drop rvalue passed by-ptr as a *borrow* (no
                 // `take`) is a temporary — `gen_place` spilled it to a fresh slot,
                 // so drop it at end of statement. A `take` arg (move_flag) is
                 // consumed by the callee; a place arg is owned by its binding.
-                if !*move_flag && !Self::is_place_expr(a) && self.needs_drop(pty) {
+                if !move_flag && !Self::is_place_expr(a) && self.needs_drop(pty) {
                     self.register_temp(addr.clone(), pty.clone());
                 }
-                let attrs =
-                    param_attrs(pty, *move_flag, *mut_flag, *restrict_flag, true, self.types);
+                let attrs = param_attrs(ps, true, self.types);
                 let ty_str = if attrs.is_empty() {
                     "ptr".to_string()
                 } else {
@@ -13533,7 +13560,8 @@ impl<'a> FnState<'a> {
                 // so this subsumes the old `sig.is_extern` gate. Skipped for a
                 // `fastcc` callee: it takes Copy structs as raw aggregates
                 // (registers), matching its def-side signature in `gen_function`.
-                if matches!(pty, Ty::Struct(_)) && is_copy_ty(pty, self.types) && !callee_is_fastcc {
+                if matches!(pty, Ty::Struct(_)) && is_copy_ty(pty, self.types) && !callee_is_fastcc
+                {
                     match classify_c_abi(pty, self.types) {
                         CAbiClass::Coerce {
                             llvm_ty,
@@ -13557,7 +13585,7 @@ impl<'a> FnState<'a> {
                                 "{coerced} = load {llvm_ty}, ptr {slot}, align {align}"
                             ));
                             arg_vals.push((coerced, llvm_ty));
-                            if *move_flag {
+                            if move_flag {
                                 if let ExprKind::Ident(name) = &a.kind {
                                     self.mark_moved(name);
                                 }
@@ -13584,7 +13612,7 @@ impl<'a> FnState<'a> {
                                 "ptr".to_string()
                             };
                             arg_vals.push((slot, ty_str));
-                            if *move_flag {
+                            if move_flag {
                                 if let ExprKind::Ident(name) = &a.kind {
                                     self.mark_moved(name);
                                 }
@@ -13598,7 +13626,7 @@ impl<'a> FnState<'a> {
                 // v0.0.8 post-bench-gap: mirror `restrict *T` at the
                 // scalar-arg call site so it matches the callee's
                 // `ptr noalias noundef` signature.
-                let ty_str = if *restrict_flag && matches!(pty, Ty::RawPtr(_)) {
+                let ty_str = if restrict_flag && matches!(pty, Ty::RawPtr(_)) {
                     format!("{} noalias noundef", self.lty(pty))
                 } else if sig.is_extern && !abi_ext_attr(pty).is_empty() {
                     // C-ABI: a narrow (<32-bit) integer extern arg is zero/sign-extended
@@ -13610,7 +13638,7 @@ impl<'a> FnState<'a> {
                     self.lty(pty)
                 };
                 arg_vals.push((v, ty_str));
-                if *move_flag {
+                if move_flag {
                     if let ExprKind::Ident(name) = &a.kind {
                         self.mark_moved(name);
                     }
@@ -13637,7 +13665,8 @@ impl<'a> FnState<'a> {
         // variadic call sites. `call retty (fixed_types, ...) @name(args)`.
         let type_prefix = if sig.is_variadic {
             let mut s = String::from(" (");
-            for (i, (pty, _, _, _)) in sig.params.iter().enumerate() {
+            for (i, ps) in sig.params.iter().enumerate() {
+                let pty = &ps.ty;
                 if i > 0 {
                     s.push_str(", ");
                 }
@@ -14667,7 +14696,9 @@ impl<'a> FnState<'a> {
     fn blessed_recv_value(&mut self, receiver: &Expr, pre: &Option<(String, Ty)>) -> (String, Ty) {
         match pre {
             Some(v) => v.clone(),
-            None => self.gen_expr(receiver).expect("blessed receiver has a value"),
+            None => self
+                .gen_expr(receiver)
+                .expect("blessed receiver has a value"),
         }
     }
 
@@ -14895,16 +14926,14 @@ impl<'a> FnState<'a> {
             let recv_val = self.next_tmp();
             self.gen_load(&recv_val, &recv_ty, &recv_ptr);
             let mut arg_parts: Vec<String> = vec![format!("{} {recv_val}", self.lty(&recv_ty))];
-            for (a, (pty, move_flag, mut_flag, restrict_flag)) in
-                args.iter().zip(info.params.iter())
-            {
-                if param_passes_by_ptr(pty, *move_flag, *mut_flag, self.types) {
+            for (a, ps) in args.iter().zip(info.params.iter()) {
+                let (pty, move_flag, restrict_flag) = (&ps.ty, ps.mode.is_take(), ps.restrict);
+                if param_passes_by_ptr(ps, self.types) {
                     let (addr, _) = self.gen_arg_place(a, pty);
-                    if !*move_flag && !Self::is_place_expr(a) && self.needs_drop(pty) {
+                    if !move_flag && !Self::is_place_expr(a) && self.needs_drop(pty) {
                         self.register_temp(addr.clone(), pty.clone());
                     }
-                    let attrs =
-                        param_attrs(pty, *move_flag, *mut_flag, *restrict_flag, true, self.types);
+                    let attrs = param_attrs(ps, true, self.types);
                     if attrs.is_empty() {
                         arg_parts.push(format!("ptr {addr}"));
                     } else {
@@ -14913,12 +14942,12 @@ impl<'a> FnState<'a> {
                 } else {
                     let (v, _) = self.gen_value_arg(a, pty);
                     let lty = self.lty(pty);
-                    if *restrict_flag && matches!(pty, Ty::RawPtr(_)) {
+                    if restrict_flag && matches!(pty, Ty::RawPtr(_)) {
                         arg_parts.push(format!("{lty} noalias noundef {v}"));
                     } else {
                         arg_parts.push(format!("{lty} {v}"));
                     }
-                    if *move_flag {
+                    if move_flag {
                         if let ExprKind::Ident(n) = &a.kind {
                             self.mark_moved(n);
                         }
@@ -15083,12 +15112,8 @@ impl<'a> FnState<'a> {
             self.gen_load(&v, &recv_ty, &recv_ptr);
             format!("{} {v}", self.lty(&recv_ty))
         } else {
-            let (mv, mu) = match rcv {
-                Receiver::Read => (false, false),
-                Receiver::Mut => (false, true),
-                Receiver::Move => (true, true),
-            };
-            let attrs = param_attrs(&recv_ty, mv, mu, false, true, self.types);
+            let recv_sig = ParamAbi::of(recv_ty.clone(), receiver_mode(rcv));
+            let attrs = param_attrs(&recv_sig, true, self.types);
             if attrs.is_empty() {
                 format!("ptr {recv_ptr}")
             } else {
@@ -15096,18 +15121,18 @@ impl<'a> FnState<'a> {
             }
         };
         let mut arg_parts: Vec<String> = vec![recv_arg];
-        for (a, (pty, move_flag, mut_flag, restrict_flag)) in args.iter().zip(info.params.iter()) {
-            if param_passes_by_ptr(pty, *move_flag, *mut_flag, self.types) {
+        for (a, ps) in args.iter().zip(info.params.iter()) {
+            let (pty, move_flag, restrict_flag) = (&ps.ty, ps.mode.is_take(), ps.restrict);
+            if param_passes_by_ptr(ps, self.types) {
                 let (addr, _) = self.gen_arg_place(a, pty);
                 // v0.0.26: an owned Drop rvalue passed by-ptr as a *borrow* (no
                 // `take`) is a temporary — `gen_place` spilled it to a fresh slot,
                 // so drop it at end of statement. A `take` arg (move_flag) is
                 // consumed by the callee; a place arg is owned by its binding.
-                if !*move_flag && !Self::is_place_expr(a) && self.needs_drop(pty) {
+                if !move_flag && !Self::is_place_expr(a) && self.needs_drop(pty) {
                     self.register_temp(addr.clone(), pty.clone());
                 }
-                let attrs =
-                    param_attrs(pty, *move_flag, *mut_flag, *restrict_flag, true, self.types);
+                let attrs = param_attrs(ps, true, self.types);
                 if attrs.is_empty() {
                     arg_parts.push(format!("ptr {addr}"));
                 } else {
@@ -15119,12 +15144,12 @@ impl<'a> FnState<'a> {
                 // at the scalar-arg call site to match the callee's
                 // `ptr noalias noundef` signature.
                 let lty = self.lty(pty);
-                if *restrict_flag && matches!(pty, Ty::RawPtr(_)) {
+                if restrict_flag && matches!(pty, Ty::RawPtr(_)) {
                     arg_parts.push(format!("{lty} noalias noundef {v}"));
                 } else {
                     arg_parts.push(format!("{lty} {v}"));
                 }
-                if *move_flag {
+                if move_flag {
                     if let ExprKind::Ident(name) = &a.kind {
                         self.mark_moved(name);
                     }
@@ -15200,12 +15225,8 @@ impl<'a> FnState<'a> {
         let enum_ty = Ty::Enum(enum_id);
         let recv_arg = match info.receiver {
             Some(rcv) => {
-                let (mv, mu) = match rcv {
-                    Receiver::Read => (false, false),
-                    Receiver::Mut => (false, true),
-                    Receiver::Move => (true, true),
-                };
-                let attrs = param_attrs(&enum_ty, mv, mu, false, true, self.types);
+                let recv_sig = ParamAbi::of(enum_ty.clone(), receiver_mode(rcv));
+                let attrs = param_attrs(&recv_sig, true, self.types);
                 if attrs.is_empty() {
                     format!("ptr {recv_ptr}")
                 } else {
@@ -15215,18 +15236,18 @@ impl<'a> FnState<'a> {
             None => format!("ptr {recv_ptr}"),
         };
         let mut arg_parts: Vec<String> = vec![recv_arg];
-        for (a, (pty, move_flag, mut_flag, restrict_flag)) in args.iter().zip(info.params.iter()) {
-            if param_passes_by_ptr(pty, *move_flag, *mut_flag, self.types) {
+        for (a, ps) in args.iter().zip(info.params.iter()) {
+            let (pty, move_flag, restrict_flag) = (&ps.ty, ps.mode.is_take(), ps.restrict);
+            if param_passes_by_ptr(ps, self.types) {
                 let (addr, _) = self.gen_arg_place(a, pty);
                 // v0.0.26: an owned Drop rvalue passed by-ptr as a *borrow* (no
                 // `take`) is a temporary — `gen_place` spilled it to a fresh slot,
                 // so drop it at end of statement. A `take` arg (move_flag) is
                 // consumed by the callee; a place arg is owned by its binding.
-                if !*move_flag && !Self::is_place_expr(a) && self.needs_drop(pty) {
+                if !move_flag && !Self::is_place_expr(a) && self.needs_drop(pty) {
                     self.register_temp(addr.clone(), pty.clone());
                 }
-                let attrs =
-                    param_attrs(pty, *move_flag, *mut_flag, *restrict_flag, true, self.types);
+                let attrs = param_attrs(ps, true, self.types);
                 if attrs.is_empty() {
                     arg_parts.push(format!("ptr {addr}"));
                 } else {
@@ -15238,12 +15259,12 @@ impl<'a> FnState<'a> {
                 // at the scalar-arg call site to match the callee's
                 // `ptr noalias noundef` signature.
                 let lty = self.lty(pty);
-                if *restrict_flag && matches!(pty, Ty::RawPtr(_)) {
+                if restrict_flag && matches!(pty, Ty::RawPtr(_)) {
                     arg_parts.push(format!("{lty} noalias noundef {v}"));
                 } else {
                     arg_parts.push(format!("{lty} {v}"));
                 }
-                if *move_flag {
+                if move_flag {
                     if let ExprKind::Ident(name) = &a.kind {
                         self.mark_moved(name);
                     }
@@ -15393,18 +15414,18 @@ impl<'a> FnState<'a> {
         // v0.0.8 fix B (finish): mirror the callee's param attrs at the
         // call site (associated functions have no receiver — just args).
         let mut arg_parts: Vec<String> = Vec::new();
-        for (a, (pty, move_flag, mut_flag, restrict_flag)) in args.iter().zip(info.params.iter()) {
-            if param_passes_by_ptr(pty, *move_flag, *mut_flag, self.types) {
+        for (a, ps) in args.iter().zip(info.params.iter()) {
+            let (pty, move_flag, restrict_flag) = (&ps.ty, ps.mode.is_take(), ps.restrict);
+            if param_passes_by_ptr(ps, self.types) {
                 let (addr, _) = self.gen_arg_place(a, pty);
                 // v0.0.26: an owned Drop rvalue passed by-ptr as a *borrow* (no
                 // `take`) is a temporary — `gen_place` spilled it to a fresh slot,
                 // so drop it at end of statement. A `take` arg (move_flag) is
                 // consumed by the callee; a place arg is owned by its binding.
-                if !*move_flag && !Self::is_place_expr(a) && self.needs_drop(pty) {
+                if !move_flag && !Self::is_place_expr(a) && self.needs_drop(pty) {
                     self.register_temp(addr.clone(), pty.clone());
                 }
-                let attrs =
-                    param_attrs(pty, *move_flag, *mut_flag, *restrict_flag, true, self.types);
+                let attrs = param_attrs(ps, true, self.types);
                 if attrs.is_empty() {
                     arg_parts.push(format!("ptr {addr}"));
                 } else {
@@ -15416,12 +15437,12 @@ impl<'a> FnState<'a> {
                 // at the scalar-arg call site to match the callee's
                 // `ptr noalias noundef` signature.
                 let lty = self.lty(pty);
-                if *restrict_flag && matches!(pty, Ty::RawPtr(_)) {
+                if restrict_flag && matches!(pty, Ty::RawPtr(_)) {
                     arg_parts.push(format!("{lty} noalias noundef {v}"));
                 } else {
                     arg_parts.push(format!("{lty} {v}"));
                 }
-                if *move_flag {
+                if move_flag {
                     if let ExprKind::Ident(name) = &a.kind {
                         self.mark_moved(name);
                     }
@@ -15643,9 +15664,10 @@ impl<'a> FnState<'a> {
         // moment the previous value still exists anywhere. Nothing is retained
         // between calls: both snapshots are stack copies produced from memory
         // that already exists.
-        let old = barrier.as_ref().filter(|b| b.wants_snapshot).map(|b| {
-            self.snapshot_watched(&b.receiver, &b.struct_ty, "old")
-        });
+        let old = barrier
+            .as_ref()
+            .filter(|b| b.wants_snapshot)
+            .map(|b| self.snapshot_watched(&b.receiver, &b.struct_ty, "old"));
         self.gen_assign_inner(op, target, value);
         if let Some(b) = barrier {
             let new = old
@@ -15758,12 +15780,7 @@ impl<'a> FnState<'a> {
     /// pointer-passing, the `str` fat-pointer argument, and the calling
     /// convention (`fastcc` for a non-`export` method) all stay in lockstep
     /// with how every other method call in the module is emitted.
-    fn gen_watch_notify(
-        &mut self,
-        receiver: &Expr,
-        field: &str,
-        snapshots: Option<(Expr, Expr)>,
-    ) {
+    fn gen_watch_notify(&mut self, receiver: &Expr, field: &str, snapshots: Option<(Expr, Expr)>) {
         let span = receiver.span;
         let name = Ident {
             name: "on_value".to_string(),
@@ -15784,7 +15801,6 @@ impl<'a> FnState<'a> {
     }
 
     fn gen_assign_inner(&mut self, op: AssignOp, target: &Expr, value: &Expr) {
-
         // v0.0.8 bench-gap finding 2: `place = StructLit{...}` fast
         // path. Bypass the intermediate-alloca-and-aggregate-copy
         // dance by storing each RHS field directly into the
@@ -16797,9 +16813,13 @@ impl<'a> FnState<'a> {
         let lv = self.next_tmp();
         self.gen_load(&lv, &Ty::Usize, &lptr);
         let t1 = self.next_tmp();
-        self.emit(&format!("{t1} = insertvalue {{ ptr, {us} }} undef, ptr {safe}, 0"));
+        self.emit(&format!(
+            "{t1} = insertvalue {{ ptr, {us} }} undef, ptr {safe}, 0"
+        ));
         let t2 = self.next_tmp();
-        self.emit(&format!("{t2} = insertvalue {{ ptr, {us} }} {t1}, {us} {lv}, 1"));
+        self.emit(&format!(
+            "{t2} = insertvalue {{ ptr, {us} }} {t1}, {us} {lv}, 1"
+        ));
         (t2, Ty::Str)
     }
 
@@ -17794,7 +17814,9 @@ fn sanitize(s: &str) -> String {
     // (Unicode idents, `-`/quoted names), a stray metacharacter can't inject a
     // second SSA token or a newline into the emitted IR: keep `[A-Za-z0-9_.]`
     // (all valid in unquoted LLVM local names), map everything else to `_`.
-    if s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'.') {
+    if s.bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'.')
+    {
         return s.to_string();
     }
     s.chars()
@@ -17872,8 +17894,14 @@ mod tests {
         // `declare` carries no cc, so `call fastcc @answer` would be an ABI
         // mismatch against the archive that actually defines it.
         let ir = gen_src("fn answer(seed: i32) -> i32;\nfn main() -> i32 { return answer(1); }");
-        assert!(ir.contains("call i32 @answer("), "call should use the default cc:\n{ir}");
-        assert!(!ir.contains("call fastcc i32 @answer("), "cc mismatch with the declare:\n{ir}");
+        assert!(
+            ir.contains("call i32 @answer("),
+            "call should use the default cc:\n{ir}"
+        );
+        assert!(
+            !ir.contains("call fastcc i32 @answer("),
+            "cc mismatch with the declare:\n{ir}"
+        );
     }
 
     #[test]
@@ -17881,7 +17909,10 @@ mod tests {
         // internal linkage is exactly what makes a symbol unreachable from
         // another object file, which is where the implementation lives.
         let ir = gen_src("fn answer(seed: i32) -> i32;\nfn main() -> i32 { return answer(1); }");
-        assert!(!ir.contains("declare internal"), "declare must not be internal:\n{ir}");
+        assert!(
+            !ir.contains("declare internal"),
+            "declare must not be internal:\n{ir}"
+        );
     }
     use super::*;
     use crate::lexer::tokenize;
@@ -17893,7 +17924,14 @@ mod tests {
     fn sanitize_is_noop_for_current_ir_name_shapes_and_filters_metachars() {
         // Every hint codegen passes today (idents + dotted literals) is a
         // no-op — output must not shift.
-        for s in ["msg.arg.coerce", "ret.coerce", "my_binding", "x", "T0", "a.b.c"] {
+        for s in [
+            "msg.arg.coerce",
+            "ret.coerce",
+            "my_binding",
+            "x",
+            "T0",
+            "a.b.c",
+        ] {
             assert_eq!(sanitize(s), s.to_string(), "must not rewrite `{s}`");
         }
         // Hypothetical widened-grammar inputs: no char that could open a new
@@ -18850,9 +18888,7 @@ mod tests {
         // Call site now mirrors the same attrs. v0.0.8 fix C: `bump`
         // is non-export so the call site also picks up `fastcc`.
         assert!(
-            ir.contains(
-                "call fastcc void @bump(ptr nonnull noundef dereferenceable(4) align 4 "
-            ),
+            ir.contains("call fastcc void @bump(ptr nonnull noundef dereferenceable(4) align 4 "),
             "bump call site missing param attrs (or fastcc), got:\n{ir}"
         );
     }
@@ -19189,7 +19225,9 @@ mod tests {
             .find(|l| l.contains("call") && l.contains("@shade("))
             .unwrap_or("");
         assert!(
-            call_line.contains("fastcc") && !call_line.contains("ptr") && !call_line.contains("byval"),
+            call_line.contains("fastcc")
+                && !call_line.contains("ptr")
+                && !call_line.contains("byval"),
             "fastcc call must pass Ray by value, agreeing with the def, got call:\n{call_line}"
         );
     }
@@ -19730,10 +19768,19 @@ mod tests {
         // Match C / IEEE (clang-verified): `!=` is UNORDERED (`une`, true for NaN, so
         // `x != x` detects NaN), `==` is ORDERED (`oeq`, false for NaN).
         let ne = gen_src("fn main() -> i32 { let a: f64 = 1.0; let b: f64 = 2.0; return if a != b { 0 } else { 1 }; }");
-        assert!(ne.contains(" = fcmp une double "), "!= must be unordered `une`:\n{ne}");
-        assert!(!ne.contains(" = fcmp one double "), "!= must NOT be ordered `one`:\n{ne}");
+        assert!(
+            ne.contains(" = fcmp une double "),
+            "!= must be unordered `une`:\n{ne}"
+        );
+        assert!(
+            !ne.contains(" = fcmp one double "),
+            "!= must NOT be ordered `one`:\n{ne}"
+        );
         let eq = gen_src("fn main() -> i32 { let a: f64 = 1.0; let b: f64 = 2.0; return if a == b { 0 } else { 1 }; }");
-        assert!(eq.contains(" = fcmp oeq double "), "== must be ordered `oeq`:\n{eq}");
+        assert!(
+            eq.contains(" = fcmp oeq double "),
+            "== must be ordered `oeq`:\n{eq}"
+        );
     }
 
     #[test]
@@ -20528,7 +20575,7 @@ mod tests {
             return_type: Box::new(ret),
         };
         let cases = vec![
-            fnp(vec![], vec![], vec![], Ty::Unit), // fn()
+            fnp(vec![], vec![], vec![], Ty::Unit),                 // fn()
             fnp(vec![Ty::I64], vec![false], vec![false], Ty::I64), // fn(i64) -> i64
             fnp(
                 vec![Ty::RawPtr(Box::new(Ty::U8)), Ty::RawPtr(Box::new(Ty::U8))],
@@ -21786,16 +21833,43 @@ mod tests {
                  return 0;\n\
              }",
         );
-        assert!(ir.contains("declare void @take_u8(i8 zeroext)"), "u8 param zeroext:\n{ir}");
-        assert!(ir.contains("call void @take_u8(i8 zeroext "), "u8 arg zeroext:\n{ir}");
-        assert!(ir.contains("declare void @take_i8(i8 signext)"), "i8 param signext:\n{ir}");
-        assert!(ir.contains("call void @take_i8(i8 signext "), "i8 arg signext:\n{ir}");
-        assert!(ir.contains("declare void @take_u16(i16 zeroext)"), "u16 param zeroext:\n{ir}");
-        assert!(ir.contains("declare signext i8 @ret_i8()"), "i8 return signext (declare):\n{ir}");
-        assert!(ir.contains("= call signext i8 @ret_i8()"), "i8 return signext (call):\n{ir}");
+        assert!(
+            ir.contains("declare void @take_u8(i8 zeroext)"),
+            "u8 param zeroext:\n{ir}"
+        );
+        assert!(
+            ir.contains("call void @take_u8(i8 zeroext "),
+            "u8 arg zeroext:\n{ir}"
+        );
+        assert!(
+            ir.contains("declare void @take_i8(i8 signext)"),
+            "i8 param signext:\n{ir}"
+        );
+        assert!(
+            ir.contains("call void @take_i8(i8 signext "),
+            "i8 arg signext:\n{ir}"
+        );
+        assert!(
+            ir.contains("declare void @take_u16(i16 zeroext)"),
+            "u16 param zeroext:\n{ir}"
+        );
+        assert!(
+            ir.contains("declare signext i8 @ret_i8()"),
+            "i8 return signext (declare):\n{ir}"
+        );
+        assert!(
+            ir.contains("= call signext i8 @ret_i8()"),
+            "i8 return signext (call):\n{ir}"
+        );
         // 32-bit fills a register slot exactly — no extension attribute.
-        assert!(ir.contains("declare void @take_u32(i32)"), "u32 has no ext attr:\n{ir}");
-        assert!(!ir.contains("i32 zeroext"), "u32 must not be extended:\n{ir}");
+        assert!(
+            ir.contains("declare void @take_u32(i32)"),
+            "u32 has no ext attr:\n{ir}"
+        );
+        assert!(
+            !ir.contains("i32 zeroext"),
+            "u32 must not be extended:\n{ir}"
+        );
     }
 
     #[test]
@@ -21808,9 +21882,18 @@ mod tests {
              export extern fn neg_i8(a: i8) -> i8 { return 0 as i8 -% a; }\n\
              fn main() -> i32 { return 0; }",
         );
-        assert!(ir.contains("define zeroext i8 @add_u8("), "u8 return zeroext:\n{ir}");
-        assert!(ir.contains("@add_u8(i8 noundef zeroext %0, i8 noundef zeroext %1)"), "u8 params zeroext:\n{ir}");
-        assert!(ir.contains("define signext i8 @neg_i8(i8 noundef signext %0)"), "i8 param+return signext:\n{ir}");
+        assert!(
+            ir.contains("define zeroext i8 @add_u8("),
+            "u8 return zeroext:\n{ir}"
+        );
+        assert!(
+            ir.contains("@add_u8(i8 noundef zeroext %0, i8 noundef zeroext %1)"),
+            "u8 params zeroext:\n{ir}"
+        );
+        assert!(
+            ir.contains("define signext i8 @neg_i8(i8 noundef signext %0)"),
+            "i8 param+return signext:\n{ir}"
+        );
     }
 
     #[test]
@@ -23343,11 +23426,9 @@ mod tests {
         );
         // ...and the sret slot is not a scope source.
         assert!(
-            !body
-                .lines()
-                .any(|l| l.trim_start().starts_with("store")
-                    && l.contains(", ptr %0")
-                    && l.contains("!alias.scope")),
+            !body.lines().any(|l| l.trim_start().starts_with("store")
+                && l.contains(", ptr %0")
+                && l.contains("!alias.scope")),
             "the sret slot must not inherit the receiver's scope:\n{body}"
         );
     }
@@ -24050,7 +24131,6 @@ mod tests {
         assert!(!ir.contains("alwaysinline"), "IR:\n{ir}");
     }
 
-
     #[test]
     fn conditional_temp_receiver_drop_is_flag_guarded() {
         // Regression: a Drop temporary created only inside an `if` body, whose
@@ -24076,7 +24156,10 @@ mod tests {
         );
         // The temp's drop must be reached through a liveness flag, never
         // straight-line at the join.
-        assert!(ir.contains("tmp.drop_flag"), "no temp drop flag emitted:\n{ir}");
+        assert!(
+            ir.contains("tmp.drop_flag"),
+            "no temp drop flag emitted:\n{ir}"
+        );
         assert!(
             ir.contains("store i1 false, ptr %tmp.drop_flag"),
             "temp flag must start false in the entry block:\n{ir}"

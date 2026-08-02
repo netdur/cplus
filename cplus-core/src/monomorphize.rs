@@ -443,19 +443,14 @@ fn synth_bound_bridge(br: &BoundMethodRefInfo, items: &[Item]) -> Option<Item> {
         span,
     };
     let mut params: Vec<Param> = method.params.clone();
-    params.push(Param {
-        name: Ident {
+    params.push(Param::synth(
+        Ident {
             name: "__bctx".to_string(),
             span,
         },
-        ty: u8_ptr,
-        mutable: false,
-        move_: false,
-        restrict: false,
-        borrow_: false,
-        default: None,
+        u8_ptr,
         span,
-    });
+    ));
     // let __r: *S = __bctx as *S;
     let let_stmt = Stmt {
         kind: StmtKind::Let {
@@ -530,27 +525,19 @@ fn synth_bound_bridge(br: &BoundMethodRefInfo, items: &[Item]) -> Option<Item> {
         });
     }
     Some(Item {
-        kind: ItemKind::Function(Function {
-            name: Ident {
+        kind: ItemKind::Function(Function::synth(
+            Ident {
                 name: br.bridge_name.clone(),
                 span,
             },
             params,
-            return_type: method.return_type.clone(),
-            body: Block {
+            method.return_type.clone(),
+            Block {
                 stmts,
                 tail: None,
                 span,
             },
-            is_declaration: false,
-        is_extern: false,
-            is_variadic: false,
-            is_pub: false,
-            attributes: Vec::new(),
-            generic_params: Vec::new(),
-            is_async: false,
-            is_gen: false,
-        }),
+        )),
         span,
         origin_file: None,
     })

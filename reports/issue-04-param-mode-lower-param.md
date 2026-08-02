@@ -1,5 +1,7 @@
 # Issue 04 — `ParamMode` enum + one `lower_param` constructor (de-boolify the ABI plumbing)
 
+- Status: DONE 2026-08-02, commit <pending> — step 4 (fn-pointer bool-vec pair)
+  deliberately deferred, see "What was not done"
 - Type: structural consolidation
 - Area: `cplus-core/src/codegen.rs` primarily; touches sema/mono AST-side helpers
 - Effort: S-M (mechanical, wide)
@@ -78,3 +80,75 @@ pub fn lower_param(p: &Param, t: &TypeTable) -> ParamSig;
 
 - Do not "fix" any classification while migrating — transpositions discovered en route
   (if any) get their own bug report first, so the mechanical change stays reviewable.
+
+## Outcome
+
+```rust
+enum ParamMode { Borrow, Ref, Take }   // codegen.rs
+
+struct ParamAbi { ty: Ty, mode: ParamMode, restrict: bool }
+
+impl ParamAbi {
+    fn lower(p: &Param, types: &TypeTable) -> ParamAbi;  // owns effective_move
+    fn of(ty: Ty, mode: ParamMode) -> ParamAbi;          // synthesized params
+}
+
+fn receiver_mode(r: Receiver) -> ParamMode;              // this / ref this / take this
+```
+
+- `FnSig::params` and `MethodInfo::params` are `Vec<ParamAbi>`; the
+  `(Ty, bool, bool, bool)` tuple is gone from both.
+- The four `effective_move` collection sites are four calls to `ParamAbi::lower`.
+  `effective_move` itself is now reachable only from that constructor, so a
+  fifth site cannot re-derive it wrong — which is what the v0.0.15 vendor/json
+  double-free was.
+- `param_attrs(&ParamAbi, pointer_passed, types)` and
+  `param_passes_by_ptr(&ParamAbi, types)` replace the six- and four-argument
+  bool lists at all 26 + 29 call sites. No call site spells a positional bool
+  any more.
+- Method receivers go through `receiver_mode`. `take this` used to be written
+  `(move_: true, mutable: true)` at each of the six receiver sites — a state the
+  pair could hold and nothing could mean.
+- AST-side: `Function::synth` and `Param::synth` (ast.rs) build a synthesized fn
+  / parameter naming only what the caller decides; `synth_bound_bridge`'s eight
+  and six positional flags are gone.
+
+### Named `ParamAbi`, not `ParamSig`
+
+`sema::ParamSig` already exists and means the SURFACE flags (`take`/`ref` as
+written). This type is the LOWERED form: its `mode` has been through
+`effective_move`, so `take x: i32` on a Copy type is `Borrow` here and
+`move_ = true` there. Two same-named types differing in exactly the rule that
+has produced double-frees was not worth the symmetry with the sketch.
+
+### What was not done
+
+Step 4 — collapsing `Ty::FnPtr`'s parallel `param_takes` / `param_refs` bool
+vectors (and the AST's `TypeKind::FnPtr` pair) into one `Vec<ParamMode>` — is
+NOT in this commit. It is 158 references across 8 files, 69 of them in sema's
+fn-pointer checking, and it carries no ABI content: those vectors describe a
+fn-pointer TYPE, and the mangler reads them in one place now that issue-02
+landed. It is separable from the ABI plumbing this issue is about and from
+issue-03, which consumes `ParamAbi`. Left as its own change rather than
+inflating a behavior-preserving diff by a factor of three.
+
+Note that the two vectors are now WRITTEN from `ParamMode` in the one place
+codegen builds a fn-pointer type from a signature, so the take/ref pair cannot
+be transposed there — which it once was.
+
+## Verification (as run)
+
+- IR identity, the check the report asked for: `--emit-ll` over all 40
+  `docs/examples` programs plus a purpose-built 518-line ABI probe (by-ref
+  write-back, `take` of a Drop-bearing struct, non-Copy borrow, Copy struct by
+  value, `restrict *u8`, all three receiver kinds, an extern import) — byte-
+  identical before and after, both after the `param_attrs` conversion and after
+  the AST-builder step.
+- `cargo test -p cplus-core` 1844 + 8, `cargo test -p cpc` 605 + 16 + 5 + 6;
+  `cpc test` in `vendor/stdlib` 290 green in debug and `--release`; vendor-wide
+  `cpc check` parity across 54 packages — no change.
+- No classification was "fixed" en route; the one thing that looked like a bug
+  (the transposed take/ref pair when building a fn-pointer type from a
+  signature) had already been fixed in place and is noted above.
+- `codegen.rs` is rustfmt-clean as of this commit; the crate as a whole is not,
+  so `cargo fmt` was applied to this file only.

@@ -434,6 +434,35 @@ pub struct Function {
 /// Slice 7GEN.1: a single type parameter declaration in a generic
 /// item's `[T: Bound1 + Bound2, ...]` list. Used by `Function`,
 /// `StructDecl`, `EnumDecl`, and (slice 7GEN.3) interfaces.
+impl Function {
+    /// issue-04: a SYNTHESIZED free function — concrete, private, non-variadic,
+    /// no attributes, defined here rather than parsed. Compiler-built bridges
+    /// and desugars go through this so a construction site names only what it
+    /// decides; the eight flags used to be spelled out positionally at every
+    /// one, where a transposition is silent.
+    pub fn synth(
+        name: Ident,
+        params: Vec<Param>,
+        return_type: Option<Type>,
+        body: Block,
+    ) -> Function {
+        Function {
+            name,
+            params,
+            return_type,
+            body,
+            is_extern: false,
+            is_declaration: false,
+            is_variadic: false,
+            is_pub: false,
+            attributes: Vec::new(),
+            generic_params: Vec::new(),
+            is_async: false,
+            is_gen: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct GenericParam {
     pub name: Ident,
@@ -1206,6 +1235,23 @@ pub enum PatternKind {
         variant_name: Ident,
         payload: Vec<Pattern>,
     },
+}
+
+impl Param {
+    /// issue-04: a SYNTHESIZED parameter — a plain by-borrow binding with no
+    /// default and no modifiers. See [`Function::synth`].
+    pub fn synth(name: Ident, ty: Type, span: Span) -> Param {
+        Param {
+            name,
+            ty,
+            mutable: false,
+            move_: false,
+            restrict: false,
+            borrow_: false,
+            default: None,
+            span,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
