@@ -1,6 +1,6 @@
 # Issue 12 — Stale documentation refresh (pure-comment PR)
 
-- Status: DONE 2026-08-02, commit <pending>
+- Status: DONE 2026-08-02, commit d7c7c3b
 - Type: cleanup (comments/docs only, zero behavior change)
 - Area: sema.rs, monomorphize.rs, prune.rs, parser.rs, lexer.rs, attrs.rs
 - Effort: S
