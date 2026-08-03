@@ -5074,21 +5074,6 @@ fn collect_view_diagnostics(
 // Entry points
 // ---------------------------------------------------------------------------
 
-/// Transition hook (issue-07): the `(code, span)` pairs the definition-site
-/// rules produce for this program — the view family in steps 2-4, the
-/// capture family (E0365) in step 5. Sema keeps detecting the family being
-/// moved for one release and asserts, in debug builds, that everything it
-/// would have denied appears here — the safety net for moving a live rule
-/// family between passes. Goes away with the assert.
-pub fn view_findings(prog: &Program) -> Vec<(&'static str, Span)> {
-    let oracle = CopyOracle::build(prog);
-    let mut sigs = SigTable::collect(prog, &oracle);
-    compute_receiver_flows(prog, &mut sigs);
-    let mut diags: Vec<(Option<String>, RawDiag)> = Vec::new();
-    collect_view_diagnostics(prog, &sigs, &oracle, &mut diags);
-    diags.into_iter().map(|(_, d)| (d.code, d.primary)).collect()
-}
-
 /// Snapshot-only entry. Returns the per-function state trace; produces
 /// no diagnostics. Used by unit tests via `dump()`.
 pub fn analyze(prog: &Program) -> ProgramAnalysis {

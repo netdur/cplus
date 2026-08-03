@@ -1022,9 +1022,6 @@ fn check_with_files_inner(
         resolving_aliases: std::collections::HashSet::new(),
         fnptr_field_names: None,
         bound_method_refs: HashMap::new(),
-        receiver_capturing: std::collections::HashSet::new(),
-        capture_taint: HashMap::new(),
-        capture_findings: Vec::new(),
         method_defaults: HashMap::new(),
         default_splices: HashMap::new(),
         bound_ref_arg_spans: std::collections::HashSet::new(),
@@ -1033,10 +1030,6 @@ fn check_with_files_inner(
         current_fn_is_async: false,
         current_fn_is_gen: false,
         current_gen_yield_ty: None,
-        current_fn_param_names: std::collections::HashSet::new(),
-        current_fn_ref_targets: std::collections::HashSet::new(),
-        current_fn_param_regions: HashMap::new(),
-        current_fn_return_region: None,
         current_fn_no_alloc: false,
         current_fn_no_block: false,
         method_contracts: HashMap::new(),
@@ -1100,7 +1093,6 @@ fn check_with_files_inner(
     cx.collect_enum_payloads(program);
     cx.collect_methods(program);
     cx.collect_method_contracts(program);
-    cx.collect_receiver_capturing_methods(program);
     cx.reconcile_drop_from_methods();
     // Struct and enum Copy-ness are mutually recursive (a struct may hold an
     // enum field; an enum payload may be a struct), and each pass is a monotone
@@ -1150,24 +1142,6 @@ fn check_with_files_inner(
     cx.lint_generic_fn_bodies(program);
     cx.check_functions(program);
     cx.check_methods(program);
-    // issue-07 step 5 transition: E0365 moved to borrowck, which already
-    // owns the rest of the escape family and runs the walk these sinks hang
-    // off. Sema still DETECTS the capture family for one release and reports
-    // nothing; this checks, in debug builds, that borrowck denied everything
-    // sema would have. It only asks on a program sema found otherwise
-    // well-typed — after a type error sema's receiver types are `Ty::Error`
-    // and the classifier says nothing useful. Goes away with the detection.
-    #[cfg(debug_assertions)]
-    if !cx.sink.has_errors() && !cx.capture_findings.is_empty() {
-        let found = crate::borrowck::view_findings(program);
-        for (code, span) in &cx.capture_findings {
-            assert!(
-                found.iter().any(|(c, s)| c == code && s == span),
-                "issue-07 step 5: sema would have denied {code} at {span:?}, borrowck did not \
-                 (borrowck found {found:?}) — the port lost a shape"
-            );
-        }
-    }
     // v0.0.10 Phase 1: `#[no_alloc]` real-time contract.
     // Walks every `#[no_alloc]`-marked function's body, resolves direct
     // callee names, and rejects calls into the allocator blocklist or
@@ -1513,29 +1487,6 @@ struct SemaCx<'a> {
     /// monomorphize rewrites the arg to the synthesized bridge fn and
     /// fills the following ctx slot with the receiver's address.
     bound_method_refs: HashMap<ByteSpan, BoundMethodRefInfo>,
-    /// 2026-07-26 (bugs/facet-component-local-child-dangling-receiver.md):
-    /// `(struct_name, method_name)` pairs whose body takes a bound-method
-    /// reference to `this` — i.e. calling the method hands out the receiver's
-    /// raw address, so whatever it returns captures that address. Computed
-    /// syntactically after `collect_methods`, before any body is checked, so
-    /// the answer does not depend on the order impls appear in.
-    receiver_capturing: std::collections::HashSet<(String, String)>,
-    /// 2026-07-27 (reopened): locals that have ABSORBED a capture of another
-    /// local's address, mapped to the local whose address was captured.
-    ///
-    /// The first cut of E0365 only inspected the returned expression, which
-    /// caught `return c.build()` but missed the shape facet actually uses:
-    ///     var b = Builder::new();
-    ///     b.add(c.build());        // b now holds &c
-    ///     return column(b);        // ...and b escapes
-    /// Five live instances of that shape in iris compiled clean. Cleared at
-    /// each function/method body.
-    capture_taint: HashMap<String, Vec<String>>,
-    /// issue-07 step 5 transition: capture-family denials sema still DETECTS
-    /// but no longer reports — borrowck owns E0365 now. Checked against
-    /// borrowck's answer by a debug-build assertion, for one release. Both
-    /// this and the detection go with the assert.
-    capture_findings: Vec<(&'static str, ByteSpan)>,
     /// Arg spans validated as bound references — `check_arg_with_move`
     /// skips them (as Field exprs they would fail "unknown field").
     bound_ref_arg_spans: std::collections::HashSet<ByteSpan>,
@@ -1556,28 +1507,6 @@ struct SemaCx<'a> {
     /// surrounding `gen fn`. `None` outside a gen fn or when the
     /// return type is malformed.
     current_gen_yield_ty: Option<Ty>,
-    /// v0.0.12 (returned-borrow checking): names bound as parameters (plus
-    /// `this` for methods) of the function currently being checked. Lets the
-    /// `return` site tell a parameter-rooted borrow (caller-tied, sound) from a
-    /// local-rooted one (dropped at function exit → dangling). Set fresh at the
-    /// top of `check_function` / `check_method`.
-    current_fn_param_names: std::collections::HashSet<String>,
-    /// Names of the current function's *borrowing write targets* — `ref`
-    /// parameters and a `ref this` receiver (`self`/`this`). These outlive the
-    /// call frame (they alias the caller's storage), so storing a view of
-    /// function-dying storage into them is a dangling-view escape (bug 02-C),
-    /// the same class as storing into a `static` (bug 09). A `take` parameter
-    /// is NOT here — it owns its value and dies with the frame.
-    current_fn_ref_targets: std::collections::HashSet<String>,
-    /// v0.0.12 (#2 region enforcement): map from parameter name to the explicit
-    /// `borrow REGION T` region it carried, for parameters that had one. Used
-    /// to validate that a region-annotated return borrows a same-region param.
-    /// The `borrow REGION T` syntax is retired (v0.0.24 #9), so this stays empty.
-    current_fn_param_regions: HashMap<String, String>,
-    /// v0.0.12 (#2 region enforcement): the explicit region on the current
-    /// function's return type (`-> borrow REGION T`), if any. Retired syntax
-    /// (v0.0.24 #9), so always `None`.
-    current_fn_return_region: Option<String>,
     /// v0.0.12 realtime Phase 1 (method-dispatch hole): whether the function
     /// whose body is currently being checked carries `#[no_alloc]` (directly
     /// or via `#[realtime]` / a `[profile.realtime]` injection). Set fresh at
@@ -2753,307 +2682,6 @@ impl SemaCx<'_> {
     /// `Node { Branch(Vec[Node]) }` / json `Value::Array(Vec[Value])` gap).
     /// Running after `collect_methods` (method tables fully populated) and before
     /// the fixpoints fixes the classification for every instantiation path.
-    /// bugs/facet-component-local-child-dangling-receiver.md — find every
-    /// method that hands out its receiver's address.
-    ///
-    /// A bound-method reference (`this.handler` in value position) lowers to a
-    /// function pointer plus the receiver's raw address. A method that produces
-    /// one, and returns a value, has put that address inside what it returned.
-    /// Calling such a method on a *local* therefore stores a pointer to a stack
-    /// slot into a value that outlives the frame — the whole bug.
-    ///
-    /// Syntactic on purpose: it runs before body-checking so a call site can be
-    /// judged no matter which order the impls were declared in. `this.name` is a
-    /// bound reference when `name` is a method of the impl target and NOT a
-    /// field (a real fn-pointer field is an ordinary read), and when it appears
-    /// somewhere other than callee position (`this.name()` is just a call).
-    fn collect_receiver_capturing_methods(&mut self, program: &Program) {
-        // Iterated to a fixpoint, because capturing is TRANSITIVE through the
-        // receiver: `build` may bind nothing itself and just return
-        // `this.picker(...)`, where `picker` does the binding. That is the real
-        // shape in iris's toolbar, and a single pass reported only the methods
-        // that bind directly — three of the five live instances were missed.
-        //
-        // Convergence: the set only grows, and is bounded by the number of
-        // methods, so at most N rounds.
-        loop {
-            let before = self.receiver_capturing.len();
-            for item in &program.items {
-                let ItemKind::Impl(b) = &item.kind else {
-                    continue;
-                };
-                let Some(&sid) = self.struct_by_name.get(&b.target.name) else {
-                    continue;
-                };
-                for m in &b.methods {
-                    // A method returning nothing cannot carry the address out.
-                    if matches!(m.return_type, None) {
-                        continue;
-                    }
-                    let key = (b.target.name.clone(), m.name.name.clone());
-                    if self.receiver_capturing.contains(&key) {
-                        continue;
-                    }
-                    if self.block_binds_this_method(&m.body, sid)
-                        || self.block_calls_capturing_on_this(&m.body, &b.target.name)
-                    {
-                        self.receiver_capturing.insert(key);
-                    }
-                }
-            }
-            if self.receiver_capturing.len() == before {
-                break;
-            }
-        }
-    }
-
-    /// Does this body call an already-known receiver-capturing method on
-    /// `this`? Such a call hands `this`'s address to whatever it returns.
-    fn block_calls_capturing_on_this(&self, b: &Block, target: &str) -> bool {
-        let mut found = false;
-        crate::sema::walk_block_exprs(b, &mut |e: &Expr| {
-            if found {
-                return;
-            }
-            let ExprKind::Call { callee, .. } = &e.kind else {
-                return;
-            };
-            let ExprKind::Field { receiver, name } = &callee.kind else {
-                return;
-            };
-            if !matches!(&receiver.kind, ExprKind::Ident(n) if n == "this" || n == "self") {
-                return;
-            }
-            if self
-                .receiver_capturing
-                .contains(&(target.to_string(), name.name.clone()))
-            {
-                found = true;
-            }
-        });
-        found
-    }
-
-    fn block_binds_this_method(&self, b: &Block, sid: StructId) -> bool {
-        let mut found = false;
-        crate::sema::walk_block_exprs(b, &mut |e: &Expr| {
-            if found {
-                return;
-            }
-            // Skip callee position: `this.m(...)` calls the method, it does not
-            // take a reference to it.
-            let ExprKind::Call { callee, args, .. } = &e.kind else {
-                return;
-            };
-            let _ = callee;
-            for a in args {
-                if self.expr_is_this_bound_method(a, sid) {
-                    found = true;
-                    return;
-                }
-            }
-        });
-        found
-    }
-
-    /// Is `e` the value-position form `this.method` for a method of `sid`?
-    fn expr_is_this_bound_method(&self, e: &Expr, sid: StructId) -> bool {
-        let ExprKind::Field { receiver, name } = &e.kind else {
-            return false;
-        };
-        if !matches!(&receiver.kind, ExprKind::Ident(n) if n == "this" || n == "self") {
-            return false;
-        }
-        let def = &self.structs[sid.0 as usize];
-        // A real fn-pointer FIELD is an ordinary field read, not a binding.
-        if def.fields.iter().any(|(n, _, _)| n == &name.name) {
-            return false;
-        }
-        def.methods.contains_key(&name.name)
-    }
-
-    /// bugs/facet-component-local-child-dangling-receiver.md — reject a
-    /// returned value that captured the address of a local.
-    ///
-    /// Two shapes, both of which put `&local` into the return value:
-    ///   1. direct — `return button().on_click(local.handler)`;
-    ///   2. transitive — `return local.build()`, where `build` itself takes a
-    ///      bound reference to its receiver. This is the documented component
-    ///      composition shape, and the one that actually shipped broken.
-    ///
-    /// The gate is `owns_value`, the same flag E0513 uses: a plain local, a
-    /// `take` parameter and a `take this` all die at return, while a bare/`ref`
-    /// parameter and `this`/`ref this` borrow caller-owned storage and are
-    /// fine. That is why storing the child in a FIELD (`this.child.build()`)
-    /// is accepted while a local is not.
-    fn flag_escaping_local_receivers(&mut self, e: &Expr) {
-        for _ in self.capture_sources(e) {
-            self.capture_findings.push(("E0365", e.span));
-        }
-    }
-
-    /// The local whose address `e` carries, if any — either because `e` takes a
-    /// bound-method reference to it, calls a receiver-capturing method on it, or
-    /// merely *names* a local already tainted by one of those.
-    ///
-    /// That last clause is what makes the analysis transitive through ordinary
-    /// data flow: once `b` holds `&c`, every expression mentioning `b` carries
-    /// `&c` too.
-    /// `flow_only` narrows the search to captures that the expression's OWN
-    /// result carries: an already-tainted binding, or `local.m(...)` where `m`
-    /// hands out its receiver — in both cases the value in hand IS the carrier.
-    ///
-    /// It deliberately excludes an argument-position bound reference like
-    /// `f(local.handler)`, because whether `f`'s RESULT carries the address is
-    /// a property of `f` that we cannot see. Counting those when propagating
-    /// taint made `let n: i32 = take_handler(c.clicked); return n;` an error —
-    /// an i32 has nowhere to put an address. The return-site check still scans
-    /// for them (`flow_only == false`), since there the value being returned is
-    /// the expression itself.
-    fn capture_sources_flow(&self, e: &Expr) -> Vec<String> {
-        self.capture_sources_inner(e, true)
-    }
-
-    fn capture_sources(&self, e: &Expr) -> Vec<String> {
-        self.capture_sources_inner(e, false)
-    }
-
-    fn capture_sources_inner(&self, e: &Expr, flow_only: bool) -> Vec<String> {
-        let mut out: Vec<String> = Vec::new();
-        let mut push = |v: String, out: &mut Vec<String>| {
-            if !out.contains(&v) {
-                out.push(v);
-            }
-        };
-        crate::sema::walk_expr_tree(e, &mut |x: &Expr| {
-            // A local already known to hold captures contributes all of them —
-            // one builder can absorb several children, and each is its own
-            // dangling receiver needing its own fix.
-            if let ExprKind::Ident(n) = &x.kind {
-                if let Some(srcs) = self.capture_taint.get(n) {
-                    for sc in srcs {
-                        push(sc.clone(), &mut out);
-                    }
-                }
-            }
-            let ExprKind::Call { callee, args, .. } = &x.kind else {
-                return;
-            };
-            // Direct: `f(local.handler)`. Only meaningful at a return site.
-            for a in args {
-                if flow_only {
-                    break;
-                }
-                if let ExprKind::Field { receiver, name } = &a.kind {
-                    if let Some(root) = Self::place_root_ident(receiver) {
-                        if let Some(Ty::Struct(sid)) = self.place_ty_quiet(receiver) {
-                            let def = &self.structs[sid.0 as usize];
-                            if !def.fields.iter().any(|(n, _, _)| n == &name.name)
-                                && def.methods.contains_key(&name.name)
-                                && self.local_dies_here(&root)
-                            {
-                                push(root, &mut out);
-                            }
-                        }
-                    }
-                }
-            }
-            // Transitive: `local.m(...)` where `m` binds its own receiver.
-            if let ExprKind::Field { receiver, name } = &callee.kind {
-                if let Some(root) = Self::place_root_ident(receiver) {
-                    if let Some(Ty::Struct(sid)) = self.place_ty_quiet(receiver) {
-                        let sname = self.structs[sid.0 as usize].name.clone();
-                        if self
-                            .receiver_capturing
-                            .contains(&(sname, name.name.clone()))
-                            && self.local_dies_here(&root)
-                        {
-                            push(root, &mut out);
-                        }
-                    }
-                }
-            }
-        });
-        out
-    }
-
-    /// Does this binding's storage die when the current function returns? The
-    /// `owns_value` gate E0513 uses: a plain local, a `take` parameter and
-    /// `take this` do; a bare/`ref` parameter and `this`/`ref this` borrow
-    /// caller-owned storage and do not.
-    fn local_dies_here(&self, root: &str) -> bool {
-        let key: &str = if root == "this" { "self" } else { root };
-        match self.lookup_local(key) {
-            Some(info) => info.owns_value,
-            None => false, // a static / unknown: outlives us
-        }
-    }
-
-    /// Propagate capture taint across one statement, before it is checked.
-    /// Only the shapes that can move a value INTO a longer-lived binding
-    /// matter; anything else cannot make a capture escape further than it
-    /// already has.
-    fn update_capture_taint(&mut self, s: &Stmt) {
-        match &s.kind {
-            // `var b = <expr carrying &c>` — b now holds it.
-            StmtKind::Let {
-                name, init: Some(e), ..
-            } => {
-                let srcs = self.capture_sources_flow(e);
-                if !srcs.is_empty() {
-                    self.capture_taint
-                        .entry(name.name.clone())
-                        .or_default()
-                        .extend(srcs);
-                }
-            }
-            StmtKind::Expr(e) => {
-                // `b.add(c.build())` — the RECEIVER absorbs the argument. This
-                // is the builder shape, and the one the first cut missed.
-                if let ExprKind::Call { callee, args, .. } = &e.kind {
-                    if let ExprKind::Field { receiver, .. } = &callee.kind {
-                        if let Some(dest) = Self::place_root_ident(receiver) {
-                            let mut acc: Vec<String> = Vec::new();
-                            for a in args {
-                                acc.extend(self.capture_sources_flow(a));
-                            }
-                            if !acc.is_empty() {
-                                let slot = self.capture_taint.entry(dest).or_default();
-                                for sc in acc {
-                                    if !slot.contains(&sc) {
-                                        slot.push(sc);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                // `b = <expr carrying &c>`
-                if let ExprKind::Assign { target, value, .. } = &e.kind {
-                    let srcs = self.capture_sources_flow(value);
-                    if !srcs.is_empty() {
-                        if let Some(dest) = Self::place_root_ident(target) {
-                            self.capture_taint.entry(dest).or_default().extend(srcs);
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    /// The root binding of a place expression (`a.b[i].c` → `a`), or None for
-    /// a non-place.
-    fn place_root_ident(e: &Expr) -> Option<String> {
-        match &e.kind {
-            ExprKind::Ident(n) => Some(n.clone()),
-            ExprKind::Field { receiver, .. } | ExprKind::Index { receiver, .. } => {
-                Self::place_root_ident(receiver)
-            }
-            _ => None,
-        }
-    }
-
     fn reconcile_drop_from_methods(&mut self) {
         for s in self.structs.iter_mut() {
             if !s.is_drop && s.methods.contains_key("drop") {
@@ -5563,7 +5191,7 @@ impl SemaCx<'_> {
                 },
             );
         }
-        self.setup_returned_borrow_ctx(&m.params, &m.return_type, m.receiver);
+        self.check_return_region_declared(&m.params, &m.return_type);
         self.check_function_body(
             &m.body,
             self.current_return.clone(),
@@ -5651,7 +5279,7 @@ impl SemaCx<'_> {
                 },
             );
         }
-        self.setup_returned_borrow_ctx(&m.params, &m.return_type, m.receiver);
+        self.check_return_region_declared(&m.params, &m.return_type);
         self.check_function_body(
             &m.body,
             self.current_return.clone(),
@@ -5668,7 +5296,6 @@ impl SemaCx<'_> {
     }
 
     fn check_method(&mut self, struct_id: StructId, m: &Method) {
-        self.capture_taint.clear();
         // `fn name(this) -> T;` — a header declaration from a binary package's
         // `lib/include/`. Its signature is registered (callers type-check
         // against it); there is no body to check, because the implementation
@@ -5820,7 +5447,7 @@ impl SemaCx<'_> {
                 },
             );
         }
-        self.setup_returned_borrow_ctx(&m.params, &m.return_type, m.receiver);
+        self.check_return_region_declared(&m.params, &m.return_type);
         self.check_function_body(
             &m.body,
             self.current_return.clone(),
@@ -7230,7 +6857,6 @@ impl SemaCx<'_> {
     }
 
     fn check_function(&mut self, f: &Function) {
-        self.capture_taint.clear();
         // Phase 5 Slice 5.C: an `export fn name(...) { body }` (with or without
         // `extern`) is a C-callable definition — it gets a bare, unmangled C
         // symbol, so its signature must use only C-ABI-compatible types. The
@@ -7418,7 +7044,7 @@ impl SemaCx<'_> {
                 },
             );
         }
-        self.setup_returned_borrow_ctx(&f.params, &f.return_type, None);
+        self.check_return_region_declared(&f.params, &f.return_type);
         self.check_function_body(
             &f.body,
             body_return,
@@ -7674,7 +7300,6 @@ impl SemaCx<'_> {
     // ---- statements ----
 
     fn check_stmt(&mut self, s: &Stmt) {
-        self.update_capture_taint(s);
         match &s.kind {
             StmtKind::LetDestructure {
                 mutable,
@@ -7902,9 +7527,6 @@ impl SemaCx<'_> {
                         // function — consume it (through wrappers) so a sibling use
                         // can't alias the returned value.
                         self.mark_moved_through_wrappers(e, &moved_ty);
-                        // E0512/E0513: returned borrow must outlive the call —
-                        // region-matched (#2) and not rooted at a dropped local (#3).
-                        self.check_returned_borrow(e);
                     }
                     (None, &Ty::Unit) | (None, &Ty::Error) => {}
                     (None, _) => {
@@ -12119,7 +11741,6 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // a generic `ref` param mutated a frozen `let` (bug-01).
         for (param, arg) in gsig.params.iter().zip(args.iter()) {
             let expected = self.subst_param_sig(param, &subst);
-            self.check_capture_arg_escape(arg);
             self.gate_checked_arg(arg, &expected);
         }
         // Slice 7GEN.5e step 4: bound check at the inference path.
@@ -15137,7 +14758,6 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
     }
 
     fn check_arg_with_move(&mut self, arg: &Expr, expected: &ParamSig) -> Ty {
-        self.check_capture_arg_escape(arg);
         if self.arg_bypasses_check(arg, expected) {
             return expected.ty.clone();
         }
@@ -15526,159 +15146,36 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         }
     }
 
-    /// v0.0.12 (#2/#3 returned-borrow checking): record the param names,
-    /// per-param borrow regions, and return region of the function/method
-    /// about to be body-checked, and validate the signature-level region rule
-    /// (E0511). Call once before checking the body; the `return`-site checks
-    /// (`check_returned_borrow`) read this state.
-    fn setup_returned_borrow_ctx(
-        &mut self,
-        params: &[Param],
-        ret_ty: &Option<Type>,
-        receiver: Option<Receiver>,
-    ) {
-        let mut names = std::collections::HashSet::new();
-        let mut regions: HashMap<String, String> = HashMap::new();
-        let mut ref_targets = std::collections::HashSet::new();
-        if receiver.is_some() {
-            names.insert("self".to_string());
-        }
-        // `ref this` aliases the caller's receiver — a borrowing write target.
-        if receiver == Some(Receiver::Mut) {
-            ref_targets.insert("self".to_string());
-            ref_targets.insert("this".to_string());
-        }
-        for p in params {
-            names.insert(p.name.name.clone());
-            // A `ref x: T` parameter (mutable, not `take`) borrows the caller's
-            // storage and writes back — it outlives the frame.
-            if p.mutable && !p.move_ {
-                ref_targets.insert(p.name.name.clone());
-            }
-            if let TypeKind::Borrowed { region, .. } = &p.ty.kind {
-                regions.insert(p.name.name.clone(), region.clone());
-            }
-        }
-        self.current_fn_ref_targets = ref_targets;
-        let ret_region = match ret_ty {
-            Some(t) => match &t.kind {
-                TypeKind::Borrowed { region, .. } => Some(region.clone()),
-                _ => None,
-            },
-            None => None,
-        };
-        // E0511: a return region must be declared on some parameter — otherwise
-        // the borrow it names has no provenance and the annotation is inert.
-        if let Some(r) = &ret_region {
-            if !regions.values().any(|pr| pr == r) {
-                if let Some(t) = ret_ty {
-                    self.err(
-                        "E0511",
-                        format!(
-                            "return type names borrow region `{r}`, but no parameter declares region `{r}` — a returned borrow must originate from a same-region parameter"
-                        ),
-                        t.span,
-                    );
-                }
-            }
-        }
-        self.current_fn_param_names = names;
-        self.current_fn_param_regions = regions;
-        self.current_fn_return_region = ret_region;
-    }
-
-    /// bugs/facet-component-local-child-dangling-receiver.md — a returned
-    /// value that captured the address of a local. The view family this used
-    /// to carry (E0512's vestigial region provenance and E0513's dangling
-    /// roots) moved to borrowck with issue-07; the capture-taint escape is
-    /// all that is left here.
-    fn check_returned_borrow(&mut self, e: &Expr) {
-        self.flag_escaping_local_receivers(e);
-    }
-
-    /// The base binding name of a place expression (Ident / field / index /
-    /// deref chain). `None` for non-place expressions.
-    fn place_root_name(&self, e: &Expr) -> Option<String> {
-        match &e.kind {
-            ExprKind::Ident(n) => Some(n.clone()),
-            ExprKind::Field { receiver, .. } | ExprKind::Index { receiver, .. } => {
-                self.place_root_name(receiver)
-            }
-            ExprKind::Unary {
-                op: UnaryOp::Deref,
-                operand,
-            } => self.place_root_name(operand),
-            _ => None,
-        }
-    }
-
-    /// bugs/e0365-catches-the-return-but-not-the-assignment.md — the same rule
-    /// E0365 applies at `return`, applied where a value LEAVES the frame by
-    /// ASSIGNMENT instead.
+    /// E0511: a return region must be declared on some parameter — otherwise
+    /// the borrow it names has no provenance and the annotation is inert.
     ///
-    /// E0365 was written as a rule about the returned expression, so every other
-    /// way out of the frame was open: a `static`, a field reached through a `ref`
-    /// parameter, anything the frame does not own. The escape is identical —
-    /// `&local` ends up in a handler context that is read some number of
-    /// event-loop turns later — and it is the one a component tree invites,
-    /// because composing a child as a local and hanging its node somewhere is
-    /// the obvious way to write a widget.
-    ///
-    /// Same destinations as `check_view_store_escape` (a `static`, or a `ref` /
-    /// `ref this` target aliasing the caller's storage), and the same
-    /// `owns_value` gate on the captured root, so storing a child held in a
-    /// FIELD stays legal while a local does not.
-    fn check_capture_store_escape(&mut self, target: &Expr, value: &Expr) {
-        let Some(troot) = self.place_root_name(target) else {
+    /// All that is left of v0.0.12's returned-borrow context. The state it
+    /// used to record for the `return` site — param names, `ref` write
+    /// targets, per-param regions — has no readers here any more: E0512 and
+    /// E0513 moved to borrowck with issue-07, E0365 with step 5, and
+    /// borrowck derives the same facts from the signature itself.
+    fn check_return_region_declared(&mut self, params: &[Param], ret_ty: &Option<Type>) {
+        let TypeKind::Borrowed { region, .. } = &(match ret_ty {
+            Some(t) => t,
+            None => return,
+        })
+        .kind
+        else {
             return;
         };
-        let target_is_static = self.statics_table.contains_key(&troot);
-        let target_is_ref = self.current_fn_ref_targets.contains(&troot);
-        if !(target_is_static || target_is_ref) {
-            return;
-        }
-        if !self.capture_sources(value).is_empty() {
-            self.capture_findings.push(("E0365", value.span));
-        }
-    }
-
-    /// bugs/e0365-catches-the-return-but-not-the-assignment.md, third round —
-    /// the escape that is neither a `return` nor an assignment: handing the
-    /// capturing value to a CALL that keeps it.
-    ///
-    /// ```text
-    /// find("list").add_child(clickable(b).on_click(w.on_click));
-    /// ```
-    ///
-    /// `add_child` puts the node in facet's retained tree, which outlives the
-    /// frame exactly as a static does. Nothing in either function is wrong on
-    /// its own — the callee stores a PARAMETER, which is how every registry
-    /// works — so the violation exists only across the pair, and the callee is
-    /// often reached through a fn-pointer static that no analysis can trace.
-    ///
-    /// So this does not try to prove the callee keeps it. It refuses to hand a
-    /// frame-local's address across a call boundary at all, which is sound
-    /// (over-approximate) and, measured across every vendor package and
-    /// example, costs NOTHING: real code binds a handler to `this` or to a
-    /// field, and the `owns_value` gate passes both. Binding one to a local and
-    /// then handing it onward is the bug essentially every time.
-    ///
-    /// Note what does NOT fire: the binding site itself. `take_handler(c.clicked)`
-    /// has a bare bound reference as its argument, and whether the RESULT
-    /// carries the address is a property of the callee — `capture_sources`
-    /// finds a capture only once the value in hand already carries one. That is
-    /// what keeps ordinary composition legal.
-    fn check_capture_arg_escape(&mut self, arg: &Expr) {
-        for root in self.capture_sources(arg) {
-            let key: &str = if root == "this" { "self" } else { &root };
-            let Some(info) = self.lookup_local(key) else {
-                continue;
-            };
-            if !info.owns_value {
-                continue;
+        let declared = params.iter().any(|p| {
+            matches!(&p.ty.kind, TypeKind::Borrowed { region: pr, .. } if pr == region)
+        });
+        if !declared {
+            if let Some(t) = ret_ty {
+                self.err(
+                    "E0511",
+                    format!(
+                        "return type names borrow region `{region}`, but no parameter declares region `{region}` — a returned borrow must originate from a same-region parameter"
+                    ),
+                    t.span,
+                );
             }
-            self.capture_findings.push(("E0365", arg.span));
-            break;
         }
     }
 
@@ -16143,9 +15640,6 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     // resolution only — the operator's legality still applies,
                     // so `FLAG += true` (bool static) is rejected like a local.
                     self.check_compound_assign_op_type(op, &info.ty, &value_ty, span);
-                    if matches!(op, AssignOp::Assign) {
-                        self.check_capture_store_escape(target, value);
-                    }
                     return Ty::Unit;
                 }
             }
@@ -16270,9 +15764,6 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             self.mark_moved_through_wrappers(value, &value_ty);
         }
         self.check_compound_assign_op_type(op, &target_ty, &value_ty, span);
-        if matches!(op, AssignOp::Assign) {
-            self.check_capture_store_escape(target, value);
-        }
         if matches!(op, AssignOp::Assign) {
             if let ExprKind::Ident(name) = &target.kind {
                 for scope in self.scopes.iter_mut().rev() {
@@ -18317,155 +17808,6 @@ fn walk_stmt_names(
             frame.extend(binds);
         }
         StmtKind::Break | StmtKind::Continue => {}
-    }
-}
-
-/// Generic pre-order walk over an expression and every sub-expression the
-/// checker cares about. Conservative by construction: a variant not listed
-/// simply is not descended into, which can only cause a missed diagnostic,
-/// never a spurious one. Used by the returned-value capture check
-/// (bugs/facet-component-local-child-dangling-receiver.md).
-pub(crate) fn walk_expr_tree(e: &Expr, f: &mut impl FnMut(&Expr)) {
-    f(e);
-    match &e.kind {
-        ExprKind::Block(b) => walk_block_exprs(b, f),
-        ExprKind::Await(i) | ExprKind::Yield(i) | ExprKind::Cast { expr: i, .. } => {
-            walk_expr_tree(i, f)
-        }
-        ExprKind::Unary { operand, .. } => walk_expr_tree(operand, f),
-        ExprKind::Field { receiver, .. } => walk_expr_tree(receiver, f),
-        ExprKind::Binary { lhs, rhs, .. } => {
-            walk_expr_tree(lhs, f);
-            walk_expr_tree(rhs, f);
-        }
-        ExprKind::Assign { target, value, .. } => {
-            walk_expr_tree(target, f);
-            walk_expr_tree(value, f);
-        }
-        ExprKind::Index { receiver, index } => {
-            walk_expr_tree(receiver, f);
-            walk_expr_tree(index, f);
-        }
-        ExprKind::Range { start, end, .. } => {
-            if let Some(x) = start {
-                walk_expr_tree(x, f);
-            }
-            if let Some(x) = end {
-                walk_expr_tree(x, f);
-            }
-        }
-        ExprKind::If {
-            cond,
-            then,
-            else_branch,
-        } => {
-            walk_expr_tree(cond, f);
-            walk_block_exprs(then, f);
-            if let Some(x) = else_branch {
-                walk_expr_tree(x, f);
-            }
-        }
-        ExprKind::Match { scrutinee, arms } => {
-            walk_expr_tree(scrutinee, f);
-            for a in arms {
-                walk_expr_tree(&a.body, f);
-            }
-        }
-        ExprKind::Call { callee, args, .. } => {
-            walk_expr_tree(callee, f);
-            for a in args {
-                walk_expr_tree(a, f);
-            }
-        }
-        ExprKind::StructLit { fields, .. }
-        | ExprKind::InferredStructLit { fields }
-        | ExprKind::GenericStructLit { fields, .. } => {
-            for fl in fields {
-                walk_expr_tree(&fl.value, f);
-            }
-        }
-        ExprKind::ArrayLit { elements }
-        | ExprKind::TupleLit { elements }
-        | ExprKind::GenericEnumCall { args: elements, .. } => {
-            for x in elements {
-                walk_expr_tree(x, f);
-            }
-        }
-        ExprKind::ArrayFill { fill, .. } => walk_expr_tree(fill, f),
-        ExprKind::Intrinsic { args, .. } => {
-            for a in args {
-                walk_expr_tree(a, f);
-            }
-        }
-        ExprKind::InterpStr { parts } => {
-            for pt in parts {
-                if let crate::ast::InterpStrPart::Expr(x) = pt {
-                    walk_expr_tree(x, f);
-                }
-            }
-        }
-        _ => {}
-    }
-}
-
-pub(crate) fn walk_block_exprs(b: &Block, f: &mut impl FnMut(&Expr)) {
-    for st in &b.stmts {
-        match &st.kind {
-            StmtKind::Let { init: Some(e), .. }
-            | StmtKind::Expr(e)
-            | StmtKind::Return(Some(e))
-            | StmtKind::Defer(e)
-            | StmtKind::Assert(e) => walk_expr_tree(e, f),
-            StmtKind::LetDestructure { init, .. } => walk_expr_tree(init, f),
-            StmtKind::While { cond, body, .. } => {
-                walk_expr_tree(cond, f);
-                walk_block_exprs(body, f);
-            }
-            StmtKind::Loop(body, _) => walk_block_exprs(body, f),
-            StmtKind::For(fl, _) => match fl {
-                ForLoop::Range { iter, body, .. } => {
-                    walk_expr_tree(iter, f);
-                    walk_block_exprs(body, f);
-                }
-                ForLoop::CStyle {
-                    init, cond, update, body,
-                } => {
-                    if let Some(x) = init {
-                        if let StmtKind::Let { init: Some(e), .. } = &x.kind {
-                            walk_expr_tree(e, f);
-                        }
-                    }
-                    if let Some(c) = cond {
-                        walk_expr_tree(c, f);
-                    }
-                    for u in update {
-                        walk_expr_tree(u, f);
-                    }
-                    walk_block_exprs(body, f);
-                }
-            },
-            StmtKind::IfLet {
-                scrutinee, body, else_body, ..
-            } => {
-                walk_expr_tree(scrutinee, f);
-                walk_block_exprs(body, f);
-                if let Some(eb) = else_body {
-                    walk_block_exprs(eb, f);
-                }
-            }
-            StmtKind::WhileLet { scrutinee, body, .. } => {
-                walk_expr_tree(scrutinee, f);
-                walk_block_exprs(body, f);
-            }
-            StmtKind::GuardLet { scrutinee, else_body, .. } => {
-                walk_expr_tree(scrutinee, f);
-                walk_block_exprs(else_body, f);
-            }
-            _ => {}
-        }
-    }
-    if let Some(t) = &b.tail {
-        walk_expr_tree(t, f);
     }
 }
 
