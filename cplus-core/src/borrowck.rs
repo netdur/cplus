@@ -4188,11 +4188,25 @@ impl<'a> ViewRules<'a> {
     /// `this` / `ref this` receiver name the caller's storage and do not. A
     /// `static` or an unknown name outlives us.
     ///
-    /// No Copy gate, unlike `root_dies_at_return`: what dangles here is the
-    /// binding's ADDRESS, and a Copy struct's frame slot is freed at return
-    /// exactly like any other.
+    /// The Copy filter runs the other way from `root_dies_at_return`, and
+    /// that difference is the whole reason the two questions need two
+    /// gates. A view of a Copy root is harmless — a Copy root owns no heap
+    /// to free — so the view rules drop it. A capture of one is the
+    /// hazard: what a handler bound to a by-value Copy PARAMETER points at
+    /// is this frame's copy, not the caller's storage, and that copy is
+    /// gone at return. So a by-value parameter widens the gate when its
+    /// type is Copy, which is what sema's `owns_value` meant by
+    /// `param.move_ || is_copy(ty)`. The receiver does not widen: `this`
+    /// names the caller's object however it is passed.
     fn capture_root_dies(&self, root: &str) -> bool {
-        self.lookup(root).is_some_and(|l| l.owns_value)
+        let key = Self::canonical(root);
+        let Some(l) = self.lookup(key) else {
+            return false;
+        };
+        l.owns_value
+            || (key != "self"
+                && self.param_names.contains(key)
+                && l.ty.as_ref().is_some_and(|t| self.oracle.is_copy(t)))
     }
 
     /// The locals whose address `e` carries — because it hands a bound
@@ -10133,6 +10147,22 @@ fn mk() -> LStr { return LStr { ptr: { 0 as *u8 }, len: { 0 as usize }, cap: { 0
          fn sink(v: i32) { return; }\n\
          static SLOT: i32 = 0;\n";
 
+    // A capturing method reachable from a read receiver, so a by-value
+    // parameter can be the receiver at all, plus a non-Copy twin (`drop`
+    // makes it non-Copy) for the control.
+    const COPY_CAPTURE_PRELUDE: &str = "struct Ro { n: i32 }\n\
+         impl Ro {\n\
+           fn tap(this) { return; }\n\
+           fn build(this) -> i32 { return take_handler(this.tap); }\n\
+         }\n\
+         struct Heavy { n: i32 }\n\
+         impl Heavy {\n\
+           fn drop(ref this) { return; }\n\
+           fn htap(this) { return; }\n\
+           fn hbuild(this) -> i32 { return take_handler(this.htap); }\n\
+         }\n\
+         fn take_handler(f: fn(*u8), ctx: *u8 = 0 as *u8) -> i32 { return 1; }\n";
+
     #[test]
     fn returned_capture_of_a_local_denied_e0365() {
         // The address of a frame-local reaches the caller bound into a
@@ -10243,6 +10273,51 @@ fn mk() -> LStr { return LStr { ptr: { 0 as *u8 }, len: { 0 as usize }, cap: { 0
             assert!(
                 !codes.iter().any(|c| c == "E0365"),
                 "[{name}] must not be denied, got {codes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_capture_of_a_by_value_copy_parameter_is_denied_e0365() {
+        // Found by the transition assert, exercised by no test and no
+        // vendor program. A by-value parameter of a Copy type is the
+        // frame's OWN copy, so a handler bound to it points at this stack
+        // slot; the view family filters exactly this case out because a
+        // Copy root owns no heap. A non-Copy by-value parameter is the
+        // caller's storage and stays legal — that is the control.
+        let cases: &[(&str, &str, bool)] = &[
+            (
+                "copy_by_value",
+                "fn steal(c: Ro) -> i32 { return c.build(); }",
+                true,
+            ),
+            (
+                "copy_take",
+                "fn steal2(take c: Ro) -> i32 { return c.build(); }",
+                true,
+            ),
+            (
+                "copy_ref",
+                "fn steal3(ref c: Ro) -> i32 { return c.build(); }",
+                true,
+            ),
+            (
+                "non_copy_by_value",
+                "fn borrowed(h: Heavy) -> i32 { return h.hbuild(); }",
+                false,
+            ),
+            (
+                "this_receiver_is_not_widened",
+                "impl Ro { fn keepit(this) -> i32 { return this.build(); } }",
+                false,
+            ),
+        ];
+        for (name, tail, denied) in cases {
+            let codes = check_src(&format!("{COPY_CAPTURE_PRELUDE}{tail}"));
+            assert_eq!(
+                codes.iter().any(|c| c == "E0365"),
+                *denied,
+                "[{name}] expected denied={denied}, got {codes:?}"
             );
         }
     }
