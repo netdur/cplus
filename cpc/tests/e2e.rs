@@ -7717,6 +7717,50 @@ fn a_bound_method_reference_in_a_generic_impl_body_is_rejected_not_an_ice() {
 }
 
 #[test]
+fn an_infinite_loop_containing_an_intrinsic_still_diverges() {
+    // bug-30: `expr_can_break`'s catch-all read "this loop can break" for any
+    // expression kind it did not name, and intrinsics / aggregate literals /
+    // interpolation were not named. So a `loop` with no `break` was judged
+    // breakable the moment it mentioned one, and the function was asked for a
+    // `return` after an infinite loop — code that can never run. The default
+    // is still "can break" for anything unnamed: claiming a breakable loop
+    // diverges would let a function fall off its end with no return at all.
+    let cases: &[(&str, &str)] = &[
+        ("intrinsic", "#size_of::[i32]() > (0 as usize)"),
+        ("intrinsic_reversed", "(0 as usize) < #align_of::[i32]()"),
+        ("intrinsic_on_a_view", "#str_len(\"ab\") > (0 as usize)"),
+    ];
+    for (name, cond) in cases {
+        let (ok, stderr) = try_compile_snippet(&format!(
+            "enum R {{ Value(i32), Closed }}\n\
+             fn recv() -> R {{\n\
+               loop {{\n\
+                 if {cond} {{ return R::Value(1); }}\n\
+                 let x: usize = (1 as usize);\n\
+               }}\n\
+             }}\n\
+             fn main() -> i32 {{ return match recv() {{ R::Value(v) => v - 1, \
+             R::Closed => 9 }}; }}\n"
+        ));
+        assert!(ok, "[{name}] must compile; stderr: {stderr}");
+    }
+    // The control: a loop that CAN break still needs the trailing return.
+    let (ok, stderr) = try_compile_snippet(
+        "enum R { Value(i32), Closed }\n\
+         fn recv() -> R {\n\
+           loop {\n\
+             if #size_of::[i32]() > (0 as usize) { break; }\n\
+           }\n\
+         }\n\
+         fn main() -> i32 { return match recv() { R::Value(v) => v, R::Closed => 9 }; }\n",
+    );
+    assert!(
+        !ok && stderr.contains("E0306"),
+        "a breakable loop must still require the return; got ok={ok} {stderr}"
+    );
+}
+
+#[test]
 fn features_inside_a_generic_impl_body_reach_codegen_intact() {
     // The generic impl-method body seam: sema records what later passes read
     // WHILE CHECKING A BODY, and these bodies were never checked — so every

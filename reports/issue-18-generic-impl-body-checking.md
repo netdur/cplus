@@ -1,7 +1,9 @@
 # Issue 18 — Generic impl-method bodies: check them, then decide what to report
 
 - Status: PARTIAL 2026-08-03 — the RECORDING half is done and closes five
-  ICEs plus bug-27 shape 4; the REPORTING half is open and scoped below.
+  ICEs plus bug-27 shape 4; the REPORTING half is open and now blocked on
+  exactly ONE question (E0337 in the raw-pointer containers), the other three
+  classes having been closed or shown to be measurement artifacts.
 - Type: bug family, then a rules decision
 - Area: `cplus-core/src/sema.rs` (`check_methods` / `check_generic_impl_methods`)
 - Master report: `core-drift-audit-2026-08-01.md`
@@ -59,9 +61,20 @@ today. That is the whole difference between this and the reporting half.
 
 ## Why reporting is not turned on
 
-Because it does not pass. Enabling it emits **~250 diagnostics against the
-stdlib itself**, in `box.cplus`, `vec.cplus`, `rc.cplus`, `arc.cplus`,
-`channel.cplus`, `hash_map.cplus` and `hash_set.cplus`, in four classes:
+**Measured properly (2026-08-03):** the first count was taken by checking each
+stdlib file standalone and reading the whole output, which mixed in errors
+those files produce out of package context anyway — `io.cplus` alone reports a
+duplicate `println` on the PRE-PORT binary too. The honest number is the delta
+between this pass reporting and not, per file. It is:
+
+| Class | Count | Status |
+| --- | --- | --- |
+| E0337 | 93 | the real question, below |
+| E0324 | 24 → **0** | fixed: the hash containers now declare `K: Hash + Eq + Copy` |
+| E0306 | 2 → **0** | fixed: **bug-30**, and it was never about generics |
+| E0301 / E0302 | — | measurement artifact, not from this pass |
+
+So one class remains. What it was, and what each turned out to be:
 
 1. **E0337 (238)** — `let v: T = { *p };`, the move-out-of-raw-pointer that
    IS what a container does. `Box::into_inner`, `Vec::pop`,
@@ -70,32 +83,33 @@ stdlib itself**, in `box.cplus`, `vec.cplus`, `rc.cplus`, `arc.cplus`,
    rule has to learn that a container moving a value out of storage it owns
    and is about to free is the sanctioned case, or these have to be written
    differently.
-2. **E0324** — `no method 'hash' / 'eq' on type 'type-param'` in the hash
-   containers. The first guess was that this pass dropped the bounds, and an
-   impl block DOES re-declare a target's parameters without them, so the
-   merge was written (it is in the fix, and it is correct in general). It is
-   not what this was. `struct HashMap[K: Copy, V: Copy]` never declares
-   `Hash` or `Eq` at all — the module's own header comment says "`K.hash()`
-   and `K.eq(other)` are required" as PROSE, and the body calls them. The
-   contract is undeclared, and it works only because these bodies were never
-   checked and each instantiation resolves the call concretely at mono time.
-   Declaring `K: Hash + Eq` is expressible today and is the fix.
-3. **E0509 / E0302 / E0306 / E0301** — moving a field out of a Drop
-   container (same family as (1)), an `#str_len` call on an `i32` where the
-   abstract `T` cannot be a `str`, a body whose tail is not a `return`, and
-   a duplicate `println` definition.
+2. **E0324, CLOSED** — `no method 'hash' / 'eq' on type 'type-param'`. The
+   first guess was that this pass dropped the bounds, and an impl block DOES
+   re-declare a target's parameters without them, so the merge was written
+   (it is in, and it is correct in general). It was not the cause.
+   `struct HashMap[K: Copy, V: Copy]` never declared `Hash` or `Eq` at all —
+   the module's header comment said "`K.hash()` and `K.eq(other)` are
+   required" as PROSE and the body called them anyway, which worked only
+   because these bodies were never checked. The bounds are declared now
+   (`K: Hash + Eq + Copy`), which bug-21's alignment made expressible; the
+   274-file sweep is unchanged, so no caller loses.
+3. **E0306, CLOSED — and it was never about generics.** `expr_can_break`
+   treated every unnamed expression kind as able to `break`, and intrinsics
+   were unnamed, so a `loop` with no `break` was judged breakable the moment
+   it mentioned one and the function was asked for an unreachable `return`.
+   Reduced to a concrete eight-line program that fails on the pre-port binary
+   too: **bug-30**. The two instances here were only its first sighting,
+   because the shape lives in `channel.cplus`'s generic bodies.
 
-(1) is the real question, and it is a language question, not a cleanup:
-**the stdlib's container primitives do not satisfy sema's own move rules,
-and nothing has been checking.** (2) is the same shape one level up: a
-generic contract asserted in a comment instead of in the type. Both are
-what the audit keeps finding — a rule and its only real consumer having
-drifted apart with no pass in between.
+(1) is what is left, and it is a language question, not a cleanup: **the
+stdlib's container primitives do not satisfy sema's own move rules, and
+nothing has been checking.** (2) was the same shape one level up — a generic
+contract asserted in a comment instead of in the type. Both are what the
+audit keeps finding: a rule and its only real consumer drifted apart with no
+pass in between.
 
 ## What is still open
 
-- Declare the hash containers' real bounds (`struct HashMap[K: Hash + Eq +
-  Copy, V: Copy]`), so the contract lives in the type rather than a comment.
 - Decide (1): a container exception in the move rules, or a rewrite of the
   raw-pointer primitives in the seven stdlib files. Then delete the
   `sink.truncate` and let the pass report. To measure progress, comment out

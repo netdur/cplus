@@ -57,7 +57,7 @@ extern fn malloc(n: usize) -> *u8;
 extern fn free(p: *u8);
 extern fn memset(b: *u8, c: i32, len: usize) -> *u8;
 
-struct HashSet[T: Copy] {
+struct HashSet[T: Hash + Eq + Copy] {
     _slots: *T,
     _occupied: *u8,
     _cap: usize,

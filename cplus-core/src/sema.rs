@@ -20259,6 +20259,29 @@ fn expr_can_break(e: &Expr) -> bool {
             start.as_ref().is_some_and(|e| expr_can_break(e))
                 || end.as_ref().is_some_and(|e| expr_can_break(e))
         }
+        // Composites that carry sub-expressions: recurse, the same as every
+        // other composite above. These used to fall into the conservative
+        // catch-all, which reads "this loop can break" and therefore asks the
+        // function for a `return` after an infinite loop — an unwritable one,
+        // since the code after it is unreachable. `loop { if #size_of::[T]()
+        // > 0 { return v; } ... }` is the shape that hit it: ANY intrinsic in
+        // the loop was enough (bug-30).
+        ExprKind::Intrinsic { args, .. } => args.iter().any(expr_can_break),
+        ExprKind::StructLit { fields, .. }
+        | ExprKind::InferredStructLit { fields }
+        | ExprKind::GenericStructLit { fields, .. } => {
+            fields.iter().any(|f| expr_can_break(&f.value))
+        }
+        ExprKind::ArrayLit { elements }
+        | ExprKind::TupleLit { elements }
+        | ExprKind::GenericEnumCall { args: elements, .. } => {
+            elements.iter().any(expr_can_break)
+        }
+        ExprKind::ArrayFill { fill, .. } => expr_can_break(fill),
+        ExprKind::InterpStr { parts } => parts.iter().any(|p| match p {
+            crate::ast::InterpStrPart::Expr(x) => expr_can_break(x),
+            _ => false,
+        }),
         // Leaves — cannot contain a statement-level `break`.
         ExprKind::IntLit(..)
         | ExprKind::FloatLit(..)
@@ -20266,10 +20289,11 @@ fn expr_can_break(e: &Expr) -> bool {
         | ExprKind::StrLit(..)
         | ExprKind::CStrLit(..)
         | ExprKind::Ident(..)
+        | ExprKind::FnRef { .. }
         | ExprKind::Path { .. } => false,
-        // Aggregate literals / interpolation / intrinsics: a `break` buried in a
-        // sub-expression is possible in theory but vanishingly rare — stay
-        // conservative (treat the loop as breakable, i.e. require the return).
+        // Anything not named above. The default stays "can break", which is
+        // the safe direction: claiming a breakable loop diverges would let a
+        // function fall off its end with no return at all.
         _ => true,
     }
 }

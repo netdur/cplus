@@ -62,7 +62,7 @@ extern fn free(p: *u8);
 extern fn memcpy(dest: *u8, src: *u8, n: usize) -> *u8;
 extern fn memset(b: *u8, c: i32, len: usize) -> *u8;
 
-struct HashMap[K: Copy, V: Copy] {
+struct HashMap[K: Hash + Eq + Copy, V: Copy] {
     _keys: *K,
     _vals: *V,
     _occupied: *u8,
