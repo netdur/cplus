@@ -114,8 +114,28 @@
 > (`5f511e7`), found while probing step 5 and present identically before it. Generic-impl
 > method bodies are never TYPE-checked, so sema never recorded the reference,
 > monomorphize never rewrote it, and codegen read `this.handler` as a field:
-> `.expect("sema validated")`. Refused at check time now (E0822). Same root cause as
-> bug-27 shape 4 — that seam is now two known bugs deep and worth its own issue.
+> `.expect("sema validated")`. Refused at check time now (E0822).
+>
+> **Status 2026-08-03 (fifth pass) — that seam is a bug FAMILY, now
+> `reports/issue-18-generic-impl-body-checking.md` (`ee10963`, `469c2b3`).** Probing it
+> with one program per span-keyed record — each written twice, once in a generic impl
+> body and once in a generic free fn as the control — found FIVE distinct ICEs on
+> ordinary source (`#env`, `#include_str`, an inferred struct literal, an inferred
+> generic call, an inferred tuple literal) plus a false E0300 on a turbofish type
+> argument. Every free-fn control worked, which is what identified the seam: free-fn
+> bodies were given exactly this treatment earlier, after the same class of crash.
+> Generic impl-method bodies are type-checked now — the target instantiated at its own
+> parameters — which closes all five and **bug-27 shape 4** with it.
+>
+> The typed pass's DIAGNOSTICS are deliberately discarded, because turning them on is a
+> separate decision with real work behind it: it reports ~250 diagnostics against the
+> stdlib's own containers. The two that matter are findings in their own right —
+> `let v: T = { *p }` in `Box`/`Vec`/`Rc`/`Arc`/`channel` does not satisfy E0337 (a
+> container moving a value out of storage it owns and is about to free), and
+> `struct HashMap[K: Copy, V: Copy]` calls `k.hash()` / `k.eq()` on a parameter that
+> bounds neither, a contract asserted in a header comment instead of in the type. Both
+> are the audit's recurring shape: a rule and its only real consumer drifted apart with
+> no pass in between.
 >
 > Not done, and scoped in their own reports: issue-14's migration off the classification
 > fixpoint (its characterization harness is in the tree), issue-03 step 4, issue-08 steps
