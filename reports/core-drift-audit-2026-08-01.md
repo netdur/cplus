@@ -99,8 +99,23 @@
 > a generic impl panics at `codegen.rs:2233`, identically before and after — which wants
 > its own bug file.
 >
-> `docs/errors.toml` has no E0365 entry, contrary to what the step-5 handoff assumed:
-> the catalog jumps E0364 → E0384. Adding it is a real, separate gap.
+> That E0365 was missing from `docs/errors.toml` turned out not to be one gap. An audit
+> of every `E####` the compiler emits against the catalog found ELEVEN live codes with no
+> entry (E0343, E0344, E0362, E0365, E0383, E0384, E0822, E0823, E0824, E0869, E1900) and
+> THREE entries for codes it can no longer emit (E0862, E0863 — the `[link].triples` key
+> they check is now a parse error — and E1003, shadowed by E1002). All twelve now match
+> the compiler (`170b1b7`), every `repro = "checked"` example was compiled and confirmed
+> to emit its own code, and the three that could not honestly claim it say why in a note.
+> Two of those are a finding in themselves: **E0383 and E0384 are live in borrowck but
+> unreachable through the driver**, because returning a borrow of a parameter is a sema
+> E0337 and sema bails before borrowck runs.
+>
+> **bug-29 — a bound method reference inside a generic impl body ICEs codegen**
+> (`5f511e7`), found while probing step 5 and present identically before it. Generic-impl
+> method bodies are never TYPE-checked, so sema never recorded the reference,
+> monomorphize never rewrote it, and codegen read `this.handler` as a field:
+> `.expect("sema validated")`. Refused at check time now (E0822). Same root cause as
+> bug-27 shape 4 — that seam is now two known bugs deep and worth its own issue.
 >
 > Not done, and scoped in their own reports: issue-14's migration off the classification
 > fixpoint (its characterization harness is in the tree), issue-03 step 4, issue-08 steps
