@@ -148,6 +148,23 @@
 > those files produce out of package context anyway). **One class is left: E0337 in the
 > raw-pointer containers**, and it is a language question.
 >
+> That one is now answered too (`1d990dd`): **`#take::[T](p) -> T`**, the mirror of the
+> `#drop_in_place::[T](p)` that `Vec::drop` already calls. It declares that a raw read
+> TRANSFERS ownership because the caller disarms the source — the same doctrine as
+> `opaque` (E0510) and `#[keeps]` (E0516) at the same seam, needing no new grammar and
+> no exception in the E0337 rule. Nine sites in `box`/`vec`/`rc`/`arc`/`channel`, and
+> the typed pass now reports NOTHING against the stdlib.
+>
+> Reporting was then turned on and **turned back off**, which is the finding worth
+> keeping. Six unit tests fail on a shape no vendor package contains:
+> `impl Box[T] { fn replace(ref this, new_value: T) { this.value = new_value; } }` — a
+> bare parameter BORROWS, so storing it is a move out of a borrow, correctly E0337
+> because `Box[Text]` would double-free. It compiles today only because the program
+> instantiates `Box[i32]`. Enforcing the abstract rule means every generic method that
+> stores its parameter must say `take`: a breaking change to every generic setter in the
+> ecosystem. So issue-18 stays record-only, with the decision and its measured cost
+> written down instead of taken.
+>
 > Not done, and scoped in their own reports: issue-14's migration off the classification
 > fixpoint (its characterization harness is in the tree), issue-03 step 4, issue-08 steps
 > 1 and 3, issue-09 parts (A) and (C), and issue-11 items 1, 2, 3, 5, 7, 8.
