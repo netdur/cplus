@@ -3262,6 +3262,13 @@ struct ViewRules<'a> {
     oracle: &'a CopyOracle,
     /// Module `static`s by name — the sinks with no owner to tie to.
     statics: &'a HashMap<String, Type>,
+    /// `(Type, method)` pairs whose returned value carries the address of
+    /// its receiver — the program-wide fixpoint the capture rules read.
+    capturing: &'a BTreeSet<(String, String)>,
+    /// Per-body capture taint: binding name -> the locals whose address the
+    /// value it holds carries. Flat, not scoped: a capture that reached a
+    /// binding stays reachable through it for the rest of the body.
+    capture_taint: BTreeMap<String, Vec<String>>,
     /// Lexical scope stack; scope 0 holds the receiver and parameters.
     scopes: Vec<HashMap<String, ViewLocal>>,
     /// Parameter (and receiver) names, for phrasing owner descriptions and
@@ -3287,6 +3294,7 @@ impl<'a> ViewRules<'a> {
         sigs: &'a SigTable,
         oracle: &'a CopyOracle,
         statics: &'a HashMap<String, Type>,
+        capturing: &'a BTreeSet<(String, String)>,
         site: ViewSite,
         receiver: Option<Receiver>,
         receiver_ty: Option<Type>,
@@ -3334,6 +3342,8 @@ impl<'a> ViewRules<'a> {
             sigs,
             oracle,
             statics,
+            capturing,
+            capture_taint: BTreeMap::new(),
             scopes: vec![base],
             param_names,
             param_index,
@@ -4122,6 +4132,261 @@ impl<'a> ViewRules<'a> {
         entry.computed_ref_flows.contains(&(*src_i, *dst_i))
     }
 
+    // -- capture escapes (E0365) -------------------------------------------
+    //
+    // The view family's sibling, ported from sema with issue-07 step 5. A
+    // view carries BYTES the owner frees; a capture carries the owner's
+    // ADDRESS, bound into a handler that some later event-loop turn calls.
+    // The escape is the same question — does the value outlive the storage
+    // it points at — and it turns on the same `owns_value` gate, which is
+    // why a child held in a field of `this` is legal where a local is not.
+    //
+    // Sema asked it at three separately-patched POSITIONS (return,
+    // assignment, call argument), so a fourth way out of the frame needed a
+    // fourth patch. Here there is one source classifier and one ownership
+    // gate; the sinks are places the walk already visits.
+
+    /// The root binding of a place expression (`a.b[i].c` → `a`), or `None`
+    /// for a non-place. Deliberately not `place_root`: a deref step is NOT
+    /// followed, because `(*p).handler` binds a method to the pointee, not
+    /// to `p`'s own frame slot, and the pointee's lifetime is not this
+    /// frame's question.
+    fn capture_place_root(e: &Expr) -> Option<String> {
+        match &e.kind {
+            ExprKind::Ident(n) => Some(n.clone()),
+            ExprKind::Field { receiver, .. } | ExprKind::Index { receiver, .. } => {
+                Self::capture_place_root(receiver)
+            }
+            _ => None,
+        }
+    }
+
+    /// The struct type named by a place expression, when it is one. Both
+    /// capture questions are about a struct's methods, so a non-struct
+    /// receiver (an enum, a primitive, an untypeable place) answers no.
+    fn struct_name_of(&self, e: &Expr) -> Option<String> {
+        let base = match self.place_ty(e)?.kind {
+            TypeKind::Path(n) => n,
+            TypeKind::Generic { name, .. } => name,
+            _ => return None,
+        };
+        self.sigs.struct_fields.contains_key(&base).then_some(base)
+    }
+
+    /// Is `<place>.name` a bound METHOD reference rather than a field read?
+    /// A real fn-pointer FIELD is an ordinary read and binds nothing.
+    fn is_bound_method_ref(&self, base: &str, name: &str) -> bool {
+        let Some(fields) = self.sigs.struct_fields.get(base) else {
+            return false;
+        };
+        !fields.contains_key(name) && self.sigs.methods.contains_key(&format!("{base}.{name}"))
+    }
+
+    /// Does this binding's storage die when the frame returns? The same
+    /// `owns_value` flag the view rules turn on: a plain local, a `take`
+    /// parameter and a `take this` do; a bare / `ref` parameter and a
+    /// `this` / `ref this` receiver name the caller's storage and do not. A
+    /// `static` or an unknown name outlives us.
+    ///
+    /// No Copy gate, unlike `root_dies_at_return`: what dangles here is the
+    /// binding's ADDRESS, and a Copy struct's frame slot is freed at return
+    /// exactly like any other.
+    fn capture_root_dies(&self, root: &str) -> bool {
+        self.lookup(root).is_some_and(|l| l.owns_value)
+    }
+
+    /// The locals whose address `e` carries — because it hands a bound
+    /// method reference to a call, because it calls a receiver-capturing
+    /// method on one, or because it merely NAMES a binding already tainted
+    /// by one of those. That last clause is what makes the analysis
+    /// transitive through ordinary data flow: once `b` holds `&c`, every
+    /// expression mentioning `b` carries `&c` too.
+    ///
+    /// `flow_only` narrows the answer to captures the expression's OWN
+    /// result carries: an already-tainted binding, or `local.m(...)` where
+    /// `m` hands out its receiver — in both cases the value in hand IS the
+    /// carrier. It excludes an argument-position bound reference like
+    /// `f(local.handler)`, because whether `f`'s RESULT carries the address
+    /// is a property of `f` that this analysis cannot see; counting those
+    /// when propagating taint made `var n: i32 = take_handler(c.clicked);`
+    /// an error, and an `i32` has nowhere to put an address. The sinks scan
+    /// for them (`flow_only == false`), since there the value leaving the
+    /// frame is the expression itself.
+    fn capture_sources_inner(&self, e: &Expr, flow_only: bool) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for_each_expr(e, &mut |x: &Expr| {
+            // A binding already known to hold captures contributes all of
+            // them — one builder can absorb several children, and each is
+            // its own dangling receiver needing its own fix.
+            if let ExprKind::Ident(n) = &x.kind {
+                if let Some(srcs) = self.capture_taint.get(n) {
+                    for sc in srcs {
+                        if !out.contains(sc) {
+                            out.push(sc.clone());
+                        }
+                    }
+                }
+            }
+            let ExprKind::Call { callee, args, .. } = &x.kind else {
+                return;
+            };
+            // Direct: `f(local.handler)`. Only meaningful at a sink.
+            if !flow_only {
+                for a in args {
+                    let ExprKind::Field { receiver, name } = &a.kind else {
+                        continue;
+                    };
+                    let (Some(root), Some(base)) = (
+                        Self::capture_place_root(receiver),
+                        self.struct_name_of(receiver),
+                    ) else {
+                        continue;
+                    };
+                    if self.is_bound_method_ref(&base, &name.name)
+                        && self.capture_root_dies(&root)
+                        && !out.contains(&root)
+                    {
+                        out.push(root);
+                    }
+                }
+            }
+            // Transitive: `local.m(...)` where `m` binds its own receiver.
+            let ExprKind::Field { receiver, name } = &callee.kind else {
+                return;
+            };
+            let (Some(root), Some(base)) = (
+                Self::capture_place_root(receiver),
+                self.struct_name_of(receiver),
+            ) else {
+                return;
+            };
+            if self.capturing.contains(&(base, name.name.clone()))
+                && self.capture_root_dies(&root)
+                && !out.contains(&root)
+            {
+                out.push(root);
+            }
+        });
+        out
+    }
+
+    fn capture_sources(&self, e: &Expr) -> Vec<String> {
+        self.capture_sources_inner(e, false)
+    }
+
+    fn capture_sources_flow(&self, e: &Expr) -> Vec<String> {
+        self.capture_sources_inner(e, true)
+    }
+
+    /// Propagate capture taint across one statement, before the statement
+    /// is checked. Only the shapes that move a value INTO a longer-lived
+    /// binding matter; anything else cannot make a capture escape further
+    /// than it already has.
+    fn update_capture_taint(&mut self, s: &Stmt) {
+        match &s.kind {
+            // `var b = <expr carrying &c>` — `b` now holds it.
+            StmtKind::Let {
+                name, init: Some(e), ..
+            } => {
+                let srcs = self.capture_sources_flow(e);
+                if !srcs.is_empty() {
+                    self.taint(name.name.clone(), srcs);
+                }
+            }
+            StmtKind::Expr(e) => {
+                // `b.add(c.build())` — the RECEIVER absorbs the argument.
+                // This is the builder shape, and the one a component tree
+                // actually writes.
+                if let ExprKind::Call { callee, args, .. } = &e.kind {
+                    if let ExprKind::Field { receiver, .. } = &callee.kind {
+                        if let Some(dest) = Self::capture_place_root(receiver) {
+                            let acc: Vec<String> = args
+                                .iter()
+                                .flat_map(|a| self.capture_sources_flow(a))
+                                .collect();
+                            self.taint(dest, acc);
+                        }
+                    }
+                }
+                // `b = <expr carrying &c>`
+                if let ExprKind::Assign { target, value, .. } = &e.kind {
+                    let srcs = self.capture_sources_flow(value);
+                    if let Some(dest) = Self::capture_place_root(target) {
+                        self.taint(dest, srcs);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn taint(&mut self, dest: String, srcs: Vec<String>) {
+        if srcs.is_empty() {
+            return;
+        }
+        let slot = self.capture_taint.entry(dest).or_default();
+        for sc in srcs {
+            if !slot.contains(&sc) {
+                slot.push(sc);
+            }
+        }
+    }
+
+    /// Every identifier named anywhere in `e`. Used only to phrase the
+    /// E0365 message.
+    fn expr_names(e: &Expr) -> HashSet<String> {
+        let mut out = HashSet::new();
+        for_each_expr(e, &mut |x: &Expr| {
+            if let ExprKind::Ident(n) = &x.kind {
+                out.insert(n.clone());
+            }
+        });
+        out
+    }
+
+    /// Name the binding that carried the capture out, when the escape is
+    /// indirect — otherwise the span points at a statement that never
+    /// mentions the offending local and the message reads like a
+    /// non-sequitur.
+    fn carried_out_by(&self, root: &str, named: &HashSet<String>) -> String {
+        if named.contains(root) {
+            return String::new();
+        }
+        match self
+            .capture_taint
+            .iter()
+            .find(|(h, v)| v.iter().any(|r| r == root) && named.contains(*h))
+        {
+            Some((holder, _)) => format!(" (carried out by `{holder}`)"),
+            None => String::new(),
+        }
+    }
+
+    /// bugs/facet-component-local-child-dangling-receiver.md — a returned
+    /// value that captured the address of a local. Two shapes, both of
+    /// which put `&local` into the returned value: direct — `return
+    /// button().on_click(local.handler)` — and transitive — `return
+    /// local.build()`, where `build` binds a reference to its own receiver.
+    /// The second is the documented component-composition shape, and the
+    /// one that actually shipped broken.
+    fn check_capture_return(&mut self, e: &Expr) {
+        let roots = self.capture_sources(e);
+        if roots.is_empty() {
+            return;
+        }
+        let named = Self::expr_names(e);
+        for root in roots {
+            let via = self.carried_out_by(&root, &named);
+            self.err(
+                "E0365",
+                format!(
+                    "returning a value that captures the address of `{root}`{via}: it is a local, so a handler bound to it would point at a stack slot that is freed when this function returns. Give it storage that outlives the returned value — a field of `this`, a `static`, or a `Box`"
+                ),
+                e.span,
+            );
+        }
+    }
+
     // -- the walk ----------------------------------------------------------
 
     /// Record what a `let` / `var` introduces: an owning binding, plus the
@@ -4164,6 +4429,9 @@ impl<'a> ViewRules<'a> {
     }
 
     fn walk_stmt(&mut self, s: &Stmt) {
+        // Before the statement is checked: a capture that reaches a binding
+        // here is carried by every later expression naming it.
+        self.update_capture_taint(s);
         match &s.kind {
             StmtKind::Let {
                 name, ty, init, ..
@@ -4203,6 +4471,7 @@ impl<'a> ViewRules<'a> {
                 self.walk_expr(e);
                 self.check_returned_aggregate(e);
                 self.check_return(e);
+                self.check_capture_return(e);
             }
             StmtKind::Return(None) => {}
             StmtKind::While { cond, body, .. } => {
@@ -4378,6 +4647,233 @@ fn walk_expr_children(e: &Expr, f: &mut dyn FnMut(&Expr)) {
     }
 }
 
+/// Every expression in `e`, itself first, then its sub-expressions —
+/// including the ones inside nested blocks, so a capture bound deep in an
+/// `if` arm is seen. `walk_expr_children` is the shallow, scope-aware
+/// version the stateful walk uses; this one is for the syntactic questions
+/// that have no state to keep.
+fn for_each_expr(e: &Expr, f: &mut dyn FnMut(&Expr)) {
+    f(e);
+    match &e.kind {
+        ExprKind::Block(b) => for_each_expr_in_block(b, f),
+        ExprKind::Await(i) | ExprKind::Yield(i) | ExprKind::Cast { expr: i, .. } => {
+            for_each_expr(i, f)
+        }
+        ExprKind::Unary { operand, .. } => for_each_expr(operand, f),
+        ExprKind::Field { receiver, .. } => for_each_expr(receiver, f),
+        ExprKind::Binary { lhs, rhs, .. } => {
+            for_each_expr(lhs, f);
+            for_each_expr(rhs, f);
+        }
+        ExprKind::Assign { target, value, .. } => {
+            for_each_expr(target, f);
+            for_each_expr(value, f);
+        }
+        ExprKind::Index { receiver, index } => {
+            for_each_expr(receiver, f);
+            for_each_expr(index, f);
+        }
+        ExprKind::Range { start, end, .. } => {
+            if let Some(x) = start {
+                for_each_expr(x, f);
+            }
+            if let Some(x) = end {
+                for_each_expr(x, f);
+            }
+        }
+        ExprKind::If {
+            cond,
+            then,
+            else_branch,
+        } => {
+            for_each_expr(cond, f);
+            for_each_expr_in_block(then, f);
+            if let Some(x) = else_branch {
+                for_each_expr(x, f);
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            for_each_expr(scrutinee, f);
+            for a in arms {
+                for_each_expr(&a.body, f);
+            }
+        }
+        ExprKind::Call { callee, args, .. } => {
+            for_each_expr(callee, f);
+            for a in args {
+                for_each_expr(a, f);
+            }
+        }
+        ExprKind::StructLit { fields, .. }
+        | ExprKind::InferredStructLit { fields }
+        | ExprKind::GenericStructLit { fields, .. } => {
+            for fl in fields {
+                for_each_expr(&fl.value, f);
+            }
+        }
+        ExprKind::ArrayLit { elements }
+        | ExprKind::TupleLit { elements }
+        | ExprKind::GenericEnumCall { args: elements, .. } => {
+            for x in elements {
+                for_each_expr(x, f);
+            }
+        }
+        ExprKind::ArrayFill { fill, .. } => for_each_expr(fill, f),
+        ExprKind::Intrinsic { args, .. } => {
+            for a in args {
+                for_each_expr(a, f);
+            }
+        }
+        ExprKind::InterpStr { parts } => {
+            for pt in parts {
+                if let crate::ast::InterpStrPart::Expr(x) = pt {
+                    for_each_expr(x, f);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// `for_each_expr` over every expression a block contains. The `let`-family
+/// statements this pass never sees (`if let` and friends are lowered before
+/// it runs) are absent by the same reasoning as `ViewRules::walk_stmt`.
+fn for_each_expr_in_block(b: &Block, f: &mut dyn FnMut(&Expr)) {
+    for s in &b.stmts {
+        match &s.kind {
+            StmtKind::Let { init: Some(e), .. }
+            | StmtKind::Expr(e)
+            | StmtKind::Return(Some(e))
+            | StmtKind::Defer(e)
+            | StmtKind::Assert(e) => for_each_expr(e, f),
+            StmtKind::LetDestructure { init, .. } => for_each_expr(init, f),
+            StmtKind::While { cond, body, .. } => {
+                for_each_expr(cond, f);
+                for_each_expr_in_block(body, f);
+            }
+            StmtKind::Loop(body, _) => for_each_expr_in_block(body, f),
+            StmtKind::For(fl, _) => match fl {
+                ForLoop::Range { iter, body, .. } => {
+                    for_each_expr(iter, f);
+                    for_each_expr_in_block(body, f);
+                }
+                ForLoop::CStyle {
+                    init,
+                    cond,
+                    update,
+                    body,
+                } => {
+                    if let Some(StmtKind::Let { init: Some(e), .. }) = init.as_ref().map(|i| &i.kind)
+                    {
+                        for_each_expr(e, f);
+                    }
+                    if let Some(c) = cond {
+                        for_each_expr(c, f);
+                    }
+                    for u in update {
+                        for_each_expr(u, f);
+                    }
+                    for_each_expr_in_block(body, f);
+                }
+            },
+            _ => {}
+        }
+    }
+    if let Some(t) = &b.tail {
+        for_each_expr(t, f);
+    }
+}
+
+/// The receiver-capturing method set: every `(Type, method)` whose returned
+/// value can carry the address of its receiver, so that `local.m(...)`
+/// hands `&local` to whatever comes back.
+///
+/// Syntactic on purpose — it runs before any body is walked, so a call site
+/// is judged the same no matter which order the impls were declared in.
+/// `this.name` is a bound reference when `name` is a method of the impl
+/// target and NOT a field (a real fn-pointer field is an ordinary read) and
+/// it appears somewhere other than callee position (`this.name()` is just a
+/// call).
+///
+/// Iterated to a fixpoint, because capturing is TRANSITIVE through the
+/// receiver: `build` may bind nothing itself and just return
+/// `this.picker(...)`, where `picker` does the binding. That is the real
+/// shape in a component tree, and a single pass reported only the methods
+/// that bind directly. The set only grows and is bounded by the number of
+/// methods, so it converges in at most that many rounds.
+fn receiver_capturing_methods(prog: &Program, sigs: &SigTable) -> BTreeSet<(String, String)> {
+    let mut set: BTreeSet<(String, String)> = BTreeSet::new();
+    loop {
+        let before = set.len();
+        for item in &prog.items {
+            let ItemKind::Impl(b) = &item.kind else {
+                continue;
+            };
+            let target = &b.target.name;
+            let Some(fields) = sigs.struct_fields.get(target) else {
+                continue;
+            };
+            for m in &b.methods {
+                // A method returning nothing cannot carry the address out.
+                if m.return_type.is_none() {
+                    continue;
+                }
+                let key = (target.clone(), m.name.name.clone());
+                if set.contains(&key) {
+                    continue;
+                }
+                let mut binds = false;
+                for_each_expr_in_block(&m.body, &mut |e: &Expr| {
+                    if binds {
+                        return;
+                    }
+                    let ExprKind::Call { callee, args, .. } = &e.kind else {
+                        return;
+                    };
+                    // A bound reference handed to a call: `f(this.handler)`.
+                    for a in args {
+                        let ExprKind::Field { receiver, name } = &a.kind else {
+                            continue;
+                        };
+                        if !expr_is_receiver(receiver) {
+                            continue;
+                        }
+                        if !fields.contains_key(&name.name)
+                            && sigs
+                                .methods
+                                .contains_key(&format!("{target}.{}", name.name))
+                        {
+                            binds = true;
+                            return;
+                        }
+                    }
+                    // A call to an already-known capturing method on `this`
+                    // hands `this`'s address to whatever it returns.
+                    let ExprKind::Field { receiver, name } = &callee.kind else {
+                        return;
+                    };
+                    if expr_is_receiver(receiver)
+                        && set.contains(&(target.clone(), name.name.clone()))
+                    {
+                        binds = true;
+                    }
+                });
+                if binds {
+                    set.insert(key);
+                }
+            }
+        }
+        if set.len() == before {
+            return set;
+        }
+    }
+}
+
+/// Is this expression the receiver binding itself?
+fn expr_is_receiver(e: &Expr) -> bool {
+    matches!(&e.kind, ExprKind::Ident(n) if n == "this" || n == "self")
+}
+
 /// Run the definition-site view rules over every function and method body.
 fn collect_view_diagnostics(
     prog: &Program,
@@ -4392,6 +4888,7 @@ fn collect_view_diagnostics(
         }
     }
     let addr_taken = fns_with_address_taken(prog);
+    let capturing = receiver_capturing_methods(prog, sigs);
     for item in &prog.items {
         match &item.kind {
             ItemKind::Function(f) => {
@@ -4402,6 +4899,7 @@ fn collect_view_diagnostics(
                     sigs,
                     oracle,
                     &statics,
+                    &capturing,
                     ViewSite::Free {
                         name: f.name.name.clone(),
                         exported: !addr_taken.contains(&f.name.name),
@@ -4428,6 +4926,7 @@ fn collect_view_diagnostics(
                         sigs,
                         oracle,
                         &statics,
+                        &capturing,
                         ViewSite::Method {
                             key: format!("{}.{}", b.target.name, m.name.name),
                         },
@@ -9524,6 +10023,122 @@ fn mk() -> LStr { return LStr { ptr: { 0 as *u8 }, len: { 0 as usize }, cap: { 0
             assert!(
                 codes.iter().any(|c| c == "E0513"),
                 "[{name}] expected E0513, got {codes:?}"
+            );
+        }
+    }
+
+    // --- capture escapes (E0365), ported from sema with issue-07 step 5 ---
+
+    const CAPTURE_PRELUDE: &str = "struct Child { clicks: i32 }\n\
+         impl Child {\n\
+           fn clicked(ref this) { this.clicks = this.clicks + 1; return; }\n\
+           fn build(ref this) -> i32 { return take_handler(this.clicked); }\n\
+         }\n\
+         fn take_handler(f: fn(*u8), ctx: *u8 = 0 as *u8) -> i32 { return 1; }\n\
+         fn sink(v: i32) { return; }\n\
+         static SLOT: i32 = 0;\n";
+
+    #[test]
+    fn returned_capture_of_a_local_denied_e0365() {
+        // The address of a frame-local reaches the caller bound into a
+        // handler that some later event-loop turn calls. Direct (the
+        // handler is bound here), transitive (the callee binds it), and
+        // through an intermediate that absorbed it.
+        let cases: &[(&str, &str)] = &[
+            (
+                "direct",
+                "fn make() -> i32 { var c: Child = Child { clicks: 0 }; \
+                 return take_handler(c.clicked); }",
+            ),
+            (
+                "transitive",
+                "fn make() -> i32 { var c: Child = Child { clicks: 0 }; return c.build(); }",
+            ),
+            (
+                "through_a_builder_local",
+                "struct Bag { n: i32 }\n\
+                 impl Bag {\n\
+                   fn new() -> Bag { return Bag { n: 0 }; }\n\
+                   fn add(ref this, v: i32) { this.n = this.n + v; return; }\n\
+                 }\n\
+                 fn wrap(b: Bag) -> i32 { return b.n; }\n\
+                 fn make() -> i32 { var bag: Bag = Bag::new(); \
+                 var c: Child = Child { clicks: 0 }; bag.add(c.build()); return wrap(bag); }",
+            ),
+        ];
+        for (name, tail) in cases {
+            let codes = check_src(&format!("{CAPTURE_PRELUDE}{tail}"));
+            assert!(
+                codes.iter().any(|c| c == "E0365"),
+                "[{name}] expected E0365, got {codes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn returned_capture_through_a_transitively_capturing_method_denied_e0365() {
+        // The capture set is a fixpoint: `outer` binds nothing itself, it
+        // returns `this.inner()`, which does the binding. Without the
+        // fixpoint only directly-binding methods are known, and a component
+        // that composes its handler one level down is missed.
+        let codes = check_src(
+            "struct Child { clicks: i32 }\n\
+             impl Child {\n\
+               fn clicked(ref this) { this.clicks = this.clicks + 1; return; }\n\
+               fn inner(ref this) -> i32 { return take_handler(this.clicked); }\n\
+               fn outer(ref this) -> i32 { return this.inner(); }\n\
+             }\n\
+             fn take_handler(f: fn(*u8), ctx: *u8 = 0 as *u8) -> i32 { return 1; }\n\
+             fn make() -> i32 { var c: Child = Child { clicks: 0 }; return c.outer(); }",
+        );
+        assert!(
+            codes.iter().any(|c| c == "E0365"),
+            "expected E0365 through the transitive capture, got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn returned_capture_of_storage_that_outlives_the_frame_stays_clean() {
+        // The line the rule must not cross. Real code binds handlers to
+        // `this` or to a field, and the BINDING site itself is not an
+        // escape — whether the callee's RESULT carries the address is a
+        // property of the callee, which this analysis does not read.
+        // Rejecting these would reject every handler in every component.
+        let clean: &[(&str, &str)] = &[
+            (
+                "bound_to_this",
+                "impl Child { fn mk(ref this) -> i32 { return take_handler(this.clicked); } }",
+            ),
+            (
+                "child_in_a_field",
+                "struct Parent { child: Child }\n\
+                 impl Parent { fn build(ref this) -> i32 { return this.child.build(); } }",
+            ),
+            (
+                "static_receiver",
+                "static GLOBAL_CHILD: Child = Child { clicks: 0 };\n\
+                 fn make() -> i32 { return GLOBAL_CHILD.build(); }",
+            ),
+            (
+                "binding_site_result_is_trusted",
+                "fn make() -> i32 { var c: Child = Child { clicks: 0 }; \
+                 var n: i32 = take_handler(c.clicked); return n; }",
+            ),
+            (
+                "child_binds_no_handler",
+                "struct Quiet { n: i32 }\n\
+                 impl Quiet {\n\
+                   fn new() -> Quiet { return Quiet { n: 1 }; }\n\
+                   fn build(ref this) -> i32 { return this.n; }\n\
+                 }\n\
+                 fn make() -> i32 { var q: Quiet = Quiet::new(); return q.build(); }",
+            ),
+        ];
+        for (name, tail) in clean {
+            let codes = check_src(&format!("{CAPTURE_PRELUDE}{tail}"));
+            assert!(
+                !codes.iter().any(|c| c == "E0365"),
+                "[{name}] must not be denied, got {codes:?}"
             );
         }
     }
