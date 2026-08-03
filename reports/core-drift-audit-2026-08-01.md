@@ -81,11 +81,30 @@
 > was missing — it had none, where the view family had 44 assertions and still needed
 > the transition assert to catch three holes.
 >
-> Not done, and scoped in their own reports: issue-07 step 5 itself (sized in its file:
-> ~13 functions, 16 unit tests, same shape and budget as the view port, and it wants
-> the same transition assert), issue-14's migration off the classification fixpoint
-> (its characterization harness is in the tree), issue-03 step 4, issue-08 steps 1 and
-> 3, issue-09 parts (A) and (C), and issue-11 items 1, 2, 3, 5, 7, 8.
+> **Status 2026-08-03 (fourth pass) — issue-07 is DONE END TO END (`59e8a73`..`53235d5`,
+> 7 commits).** Step 5 ported the capture family (E0365) into `ViewRules` as one
+> classifier, one ownership gate and three sinks the walk already visits, and deleted
+> sema's copy — the fixpoint, the taint dataflow, `check_returned_borrow`, and the two
+> walkers that existed only for it. Sema now emits no view or capture diagnostic and
+> holds no belief about borrowck's coverage, which is what §3 was written about.
+>
+> The transition assert earned its release again: it found that sema's `owns_value`
+> means `param.move_ || is_copy(ty)`, so a capture of a by-value **Copy parameter**
+> dangles where a VIEW of one is harmless — the two families read identically in prose
+> and disagree on exactly that shape. Nothing exercised it: not the 16 sema unit tests,
+> not the new e2e corpus, not one of 274 vendor and examples sources. The A/B sweep,
+> which sees the direction the assert cannot, caught one over-fire in the other
+> direction (an enum-constructor argument is not a call that can keep anything). Probing
+> also surfaced an unrelated pre-existing codegen ICE — a bound-method reference inside
+> a generic impl panics at `codegen.rs:2233`, identically before and after — which wants
+> its own bug file.
+>
+> `docs/errors.toml` has no E0365 entry, contrary to what the step-5 handoff assumed:
+> the catalog jumps E0364 → E0384. Adding it is a real, separate gap.
+>
+> Not done, and scoped in their own reports: issue-14's migration off the classification
+> fixpoint (its characterization harness is in the tree), issue-03 step 4, issue-08 steps
+> 1 and 3, issue-09 parts (A) and (C), and issue-11 items 1, 2, 3, 5, 7, 8.
 >
 > Corrections to this report, found while fixing (details in each bug's file):
 > - B12's generic-argument half was already closed by the B1 fix; its `take` spelling

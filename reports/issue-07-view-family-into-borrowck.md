@@ -1,8 +1,9 @@
 # Issue 07 — Move the view-diagnostic family (E0513/E0515/E0516) into borrowck
 
-- Status: DONE 2026-08-02, commits `f4e5a62`..`62d0213` (9 commits) — steps 1-4
-  and 6 done; step 5 (the E0365 capture-taint port) deliberately NOT done and
-  still open, scoped below. Step 6 landed earlier in `dc5aa6e`.
+- Status: DONE 2026-08-03. Steps 1-4 and 6 in `f4e5a62`..`62d0213` (9 commits,
+  2026-08-02); step 5, the E0365 capture-taint port, in `59e8a73`..`53235d5`
+  (7 commits, 2026-08-03). Step 6 landed earlier in `dc5aa6e`. Sema now holds
+  no view or capture diagnostic and no belief about borrowck's coverage.
 - Type: structural consolidation (finishes the borrowck rework)
 - Area: `cplus-core/src/sema.rs` → `borrowck.rs`; dead-code fallout in `codegen.rs`
 - Effort: L
@@ -263,9 +264,155 @@ rules do — out of scope for a port that was required not to modify them, and
 worth its own change with its own sweep. The view rules cover themselves via
 a local `carries_view` wrapper in the meantime.
 
-## Step 5 — the capture-taint / E0365 port, NOT done
+## Step 5 — the capture-taint / E0365 port, DONE 2026-08-03
 
-Skipped deliberately, as the report allows. It is separable: E0365 is the
+Same shape as steps 2-4, one rule per commit, sema silent and asserting from
+`752afd3`, sema's detection gone in `53235d5`.
+
+| Commit | What | Code |
+| --- | --- | --- |
+| `59e8a73` | the `receiver_capturing` fixpoint, the taint dataflow, the classifier, the return sink | E0365 |
+| `413237f` | the store sink (`static` / `ref` target) | E0365 |
+| `cc846b2` | the call-argument sink | E0365 |
+| `752afd3` | transition: sema records, debug-asserts borrowck agreed | — |
+| `b8e5c35` | the gap the assert found — a by-value Copy parameter | E0365 |
+| `7079f48` | the over-fire probing found — an enum constructor argument | E0365 |
+| `53235d5` | deletion: sema's detection, the taint map, the fixpoint, `check_returned_borrow` | — |
+
+The rules live in `borrowck.rs` inside `ViewRules`, under their own heading.
+One source classifier, one ownership gate, and the sinks are places the walk
+already visits: `walk_stmt`'s `Return`, `walk_expr`'s `Assign`, and a `Call`
+arm that asks each argument before descending into it. The `update_capture_taint`
+hook runs at the top of `walk_stmt`, where sema ran it. A fourth escape
+position is now a place the walk already goes, which was the whole argument
+for moving it.
+
+### What the transition assert found
+
+One hole, on the first probe aimed at it, and it is a good one:
+**a by-value parameter of a Copy type**.
+
+The gate had been ported as `owns_value`, which is what sema's own prose
+says. But sema's `owns_value` for a parameter is `param.move_ || is_copy(ty)`,
+and the second half is exactly the capture question: a by-value `Copy`
+parameter is the frame's OWN copy, so a handler bound to it points at this
+stack slot, which is gone at return. The view family never noticed, because
+it filters that case out one gate later — `root_dies_at_return` requires
+`owns_value && !is_copy`, since a Copy root owns no heap to free.
+
+So the two questions read identically in prose and disagree on exactly one
+shape. They now say so in the code instead of sharing a helper. Controls: a
+NON-Copy by-value parameter names the caller's storage and stays legal, and
+a `this` receiver never widens — `this` names the caller's object however it
+is passed, and widening there would reject every handler in every component.
+
+Nothing exercised this: not the 16 sema unit tests, not the new e2e corpus,
+not one of the 274 vendor and examples sources. A probe found it, which is
+the third time in this issue that the transition assert has earned the
+release it costs.
+
+### What probing found, in the direction the assert cannot see
+
+The assert only checks sema ⊆ borrowck. The other direction — borrowck
+denying what sema allowed — needs the A/B sweep, and it caught one
+**over-fire**: the argument sink was hung on every `ExprKind::Call`, and
+`Enum::Variant(payload)` parses as a call. There is no callee there to keep
+anything, so `var h: Holder = Holder::Some(c.build());` — where `h` dies
+with the frame — was denied when sema allowed it. `SigTable::enums` already
+existed for exactly this distinction on the view side. The payload is still
+judged where the value it built actually escapes.
+
+### One deliberate widening, and a pre-existing ICE it uncovered
+
+A capture through a GENERIC receiver is now denied where sema could not see
+it: sema's `place_ty_quiet` yields the instantiation, whose name does not
+match the `impl Cell[T]` target key its fixpoint recorded, so the lookup
+missed. Borrowck reads `TypeKind::Generic`'s base name, like the rest of the
+pass, and finds it. It is a true positive — `var c: Cell[i32] = ...;
+return c.build();` returns a value holding `&c`.
+
+Probing that shape surfaced an unrelated pre-existing bug: a bound-method
+reference inside a generic impl (`take_handler(this.tap)` in `impl Cell[T]`)
+panics in codegen at `codegen.rs:2233` with "sema validated". Confirmed
+orthogonal — the pre-port and post-port binaries ICE identically on a
+program with no capture escape (`this.c.build()` from a field). The port
+only masks it for programs that also have an escape. Not fixed here; worth
+its own bug file.
+
+### Corrections to the handoff and to this report
+
+1. **`docs/errors.toml` has no E0365 entry.** The handoff said both it and
+   the generated `docs/ERRORS.md` carry an `emit_site` for E0365 to update at
+   the deletion commit. Neither mentions the code at all — the catalog jumps
+   E0364 → E0384. Nothing to update, and nothing was: `gen_errors.py` was not
+   run. Adding the missing entry is a separate, real gap (the catalog calls
+   itself the single source of truth).
+
+2. **The error-ORDER churn is real here, unlike in steps 2-4.** Several
+   probe programs report one fewer diagnostic than before, always because
+   they ALSO have a sema type error: sema bails the pipeline before borrowck,
+   so the capture denial now appears only after the type error is fixed. Two
+   of the shapes this hides are ordinary — calling a `ref this` method on a
+   `let` binding or on a match payload is E0328 first — so it will be seen.
+
+3. **Diagnostic ORDER changed** where a method and a free function both deny
+   in one program: sema checked every function before every method, borrowck
+   walks items in source order. Same content, different sequence. No test
+   pinned it.
+
+4. **The port does not follow a deref to find the capture root**, where the
+   rest of borrowck's place handling does. `(*p).handler` binds a method to
+   the pointee, whose lifetime is not this frame's question — that matches
+   sema's `place_root_ident`, which also stopped at a deref, and it is now
+   stated rather than incidental.
+
+5. **The taint map is ordered** (`BTreeMap`, where sema used a `HashMap`).
+   The "carried out by `x`" phrasing picks a carrier by iterating it, so with
+   two carriers sema's message depended on hash order. It is now the same
+   every run.
+
+### What the deletion took with it
+
+`check_returned_borrow` went, as the handoff predicted — the capture escape
+was its last job. That left `setup_returned_borrow_ctx` recording state
+nothing reads (param names, `ref` write targets, per-param regions, the
+return region), so it is now `check_return_region_declared`: the E0511
+signature rule, which is all it still does. `walk_expr_tree` and
+`walk_block_exprs` had no other caller and went too; the port has its own
+`for_each_expr`, scoped to the questions with no state to keep. So did the
+`view_findings` transition hook — both asserts have now shipped their
+release.
+
+### Verification (as run, step 5)
+
+At every commit: `cargo test -p cplus-core` (1869 at the end, 8 new tests),
+`cargo test -p cpc` (616 + 16 + 5 + 6, no new e2e — the corpus was written
+first, in `f3a5a4e`), the stdlib suite in debug and release (290 each). From
+the transition commit on, everything ran in BOTH modes with the assert live
+in debug.
+
+Differential, against a `cpc` built at `3a7601d`:
+
+- vendor + examples: all 274 `.cplus` sources — byte-identical `cpc check`
+  output in release, and no assert or panic under the debug binary;
+- 80 purpose-built probe programs covering every sink, loops (`while`,
+  `for`-range, C-style, `loop`), `defer`, nested scopes, shadowing, match
+  payloads (owned and field-borrowed), destructuring, tuples, array
+  elements, derefs, generic receivers, enum constructors, associated
+  calls, fn-pointer FIELDS vs bound method references, methods split
+  across impl blocks, two-hop taint, and every ownership flavour of
+  parameter and receiver — identical except the two documented above (the
+  generic-receiver widening, and one pure ordering difference).
+
+## Step 5 — the capture-taint / E0365 port, as it was scoped
+
+Kept for the record: this is what the sizing said before the port ran, and
+it held up — the function inventory, the trust boundary, and the insistence
+on the transition assert were all accurate. The one thing it got wrong is
+noted above: it said `owns_value` was shared between the two families, and
+the assert proved the two gates differ on Copy parameters.
+
+Skipped deliberately at the time, as the report allows. It is separable: E0365 is the
 capture-taint family (`&local` reaching a handler context), not the view
 family, and it shares nothing with what moved except the `owns_value` gate
 and `place_root_name`. Its three position-patched escape sites (return
