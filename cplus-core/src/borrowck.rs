@@ -4697,11 +4697,22 @@ impl<'a> ViewRules<'a> {
                 self.set_roots(n, roots);
             }
             // The third escape sink. Every argument leaves the frame if the
-            // callee keeps it, so each is asked before it is descended into.
+            // callee keeps it, so each is asked before it is descended into
+            // — except an `Enum::Variant(payload)`, which has no callee to
+            // keep anything. That is a payload aggregate: the value it
+            // builds escapes at its own sink, or it dies with the frame.
             ExprKind::Call { callee, args, .. } => {
                 self.walk_expr(callee);
+                let is_enum_ctor = match &callee.kind {
+                    ExprKind::Path { segments } => {
+                        segments.len() == 2 && self.sigs.enums.contains(&segments[0].name)
+                    }
+                    _ => false,
+                };
                 for a in args {
-                    self.check_capture_arg(a);
+                    if !is_enum_ctor {
+                        self.check_capture_arg(a);
+                    }
                     self.walk_expr(a);
                 }
             }
@@ -10333,6 +10344,31 @@ fn mk() -> LStr { return LStr { ptr: { 0 as *u8 }, len: { 0 as usize }, cap: { 0
         assert!(
             codes.iter().any(|c| c == "E0365"),
             "expected E0365 on the call argument, got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn an_enum_payload_is_judged_at_its_own_sink_not_at_the_constructor() {
+        // `Enum::Variant(payload)` parses as a call, but there is no callee
+        // to keep anything — it builds a value. Asking the argument sink
+        // there would deny a payload that never leaves the frame. The
+        // escape is still denied when the value it built escapes.
+        let prelude = format!("{CAPTURE_PRELUDE}enum Holder2 {{ Some2(i32), None2 }}\n");
+        let codes = check_src(&format!(
+            "{prelude}fn make() -> i32 {{ var c: Child = Child {{ clicks: 0 }}; \
+             var h: Holder2 = Holder2::Some2(c.build()); return 0; }}"
+        ));
+        assert!(
+            !codes.iter().any(|c| c == "E0365"),
+            "a payload that dies with the frame must not be denied, got {codes:?}"
+        );
+        let codes = check_src(&format!(
+            "{prelude}fn make() -> Holder2 {{ var c: Child = Child {{ clicks: 0 }}; \
+             return Holder2::Some2(c.build()); }}"
+        ));
+        assert!(
+            codes.iter().any(|c| c == "E0365"),
+            "a returned payload still escapes, got {codes:?}"
         );
     }
 
