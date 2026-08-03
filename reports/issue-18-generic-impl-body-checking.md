@@ -70,27 +70,38 @@ stdlib itself**, in `box.cplus`, `vec.cplus`, `rc.cplus`, `arc.cplus`,
    rule has to learn that a container moving a value out of storage it owns
    and is about to free is the sanctioned case, or these have to be written
    differently.
-2. **E0324 (12)** — `no method 'hash' on type 'type-param'` in the hash
-   containers. The bound lives on the STRUCT template's generic parameters
-   (`struct HashMap[K: Hash, V]`); the impl block re-declares `K` without it,
-   so the bound frame this pass pushes is empty. This one is a straightforward
-   gap in the port: merge the template's bounds into the impl's.
-3. **E0509 (12)** — moving a field out of a Drop container, same family as (1).
-4. **E0306 (1)** — one body's tail is not a `return`.
+2. **E0324** — `no method 'hash' / 'eq' on type 'type-param'` in the hash
+   containers. The first guess was that this pass dropped the bounds, and an
+   impl block DOES re-declare a target's parameters without them, so the
+   merge was written (it is in the fix, and it is correct in general). It is
+   not what this was. `struct HashMap[K: Copy, V: Copy]` never declares
+   `Hash` or `Eq` at all — the module's own header comment says "`K.hash()`
+   and `K.eq(other)` are required" as PROSE, and the body calls them. The
+   contract is undeclared, and it works only because these bodies were never
+   checked and each instantiation resolves the call concretely at mono time.
+   Declaring `K: Hash + Eq` is expressible today and is the fix.
+3. **E0509 / E0302 / E0306 / E0301** — moving a field out of a Drop
+   container (same family as (1)), an `#str_len` call on an `i32` where the
+   abstract `T` cannot be a `str`, a body whose tail is not a `return`, and
+   a duplicate `println` definition.
 
-(2) is a bug in this change and should be fixed first, because it is noise
-hiding the real signal. (1) and (3) are the actual question, and it is a
-language question, not a cleanup: **the stdlib's container primitives do not
-satisfy sema's own move rules, and nothing has been checking.** That is worth
-knowing on its own — it is the same shape as the audit's other findings, a
-rule and its only real consumer having drifted apart with no pass in between.
+(1) is the real question, and it is a language question, not a cleanup:
+**the stdlib's container primitives do not satisfy sema's own move rules,
+and nothing has been checking.** (2) is the same shape one level up: a
+generic contract asserted in a comment instead of in the type. Both are
+what the audit keeps finding — a rule and its only real consumer having
+drifted apart with no pass in between.
 
 ## What is still open
 
-- Merge the struct template's generic-param bounds into the impl block's when
-  pushing type params (closes the E0324 class).
-- Decide (1)/(3): a container exception in the move rules, or a rewrite of the
-  seven stdlib files. Then delete the `sink.truncate` and let the pass report.
+- Declare the hash containers' real bounds (`struct HashMap[K: Hash + Eq +
+  Copy, V: Copy]`), so the contract lives in the type rather than a comment.
+- Decide (1): a container exception in the move rules, or a rewrite of the
+  raw-pointer primitives in the seven stdlib files. Then delete the
+  `sink.truncate` and let the pass report. To measure progress, comment out
+  that one line and re-run the sweep — deliberately not an env var, because a
+  compiler with a hidden diagnostic mode is worse than one that needs a
+  rebuild.
 - With reporting on, `check_generic_method_body_names` becomes redundant —
   real typing subsumes name resolution — and should go.
 

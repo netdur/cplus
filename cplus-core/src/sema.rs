@@ -5094,7 +5094,38 @@ impl SemaCx<'_> {
             self.check_generic_method_body_names(b, m);
         }
         let mark = self.sink.len();
-        self.push_type_params(&b.target_generic_params);
+        // An impl block re-declares the target's parameters and usually
+        // drops their bounds: `struct HashMap[K: Hash, V]` is implemented as
+        // `impl HashMap[K, V]`. The bound is a property of the TYPE, so a
+        // body checked with only the impl's spelling cannot resolve
+        // `k.hash()` and reports E0324 against a bound the type declares.
+        // Merge them by position, which is how the instantiation zips them
+        // everywhere else.
+        let template_bounds: Vec<Vec<Ident>> = self
+            .struct_generic_templates
+            .get(&b.target.name)
+            .map(|t| t.generic_params.iter().map(|g| g.bounds.clone()).collect())
+            .or_else(|| {
+                self.enum_generic_templates
+                    .get(&b.target.name)
+                    .map(|t| t.generic_params.iter().map(|g| g.bounds.clone()).collect())
+            })
+            .unwrap_or_default();
+        let params: Vec<GenericParam> = b
+            .target_generic_params
+            .iter()
+            .enumerate()
+            .map(|(i, g)| {
+                let mut g = g.clone();
+                for extra in template_bounds.get(i).into_iter().flatten() {
+                    if !g.bounds.iter().any(|b| b.name == extra.name) {
+                        g.bounds.push(extra.clone());
+                    }
+                }
+                g
+            })
+            .collect();
+        self.push_type_params(&params);
         let args: Vec<Type> = b
             .target_generic_params
             .iter()
