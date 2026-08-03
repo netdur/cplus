@@ -832,6 +832,39 @@ fn main() -> i32 { let m: M = M::A(1, 2); return match m { M::A(v) => v }; }
 '''
 
 [[code]]
+id = "E0343"
+title = "A `match` mixes literal and variant patterns"
+category = "Control flow and matching"
+severity = "error"
+repro = "checked"
+lang = "cplus"
+verified = true
+emit_site = "cplus-core/src/lower.rs:859"
+test = "cpc/tests/e2e.rs:literal_pattern_refusals_are_specific"
+cause = "One `match` used both literal patterns (`1 => ...`) and variant patterns (`M::A => ...`). The two ask different questions — a literal matches a VALUE, a variant matches a CASE — and they lower to different code, so a mixed match has no single meaning."
+fix = "Split the match, or convert the literal arms into variants of the same enum."
+example = '''
+enum M { A, B }
+fn main() -> i32 { let m: M = M::A; return match m { 1 => 0, M::B => 1 }; }
+'''
+
+[[code]]
+id = "E0344"
+title = "Literal `match` is non-exhaustive or has an unreachable arm"
+category = "Control flow and matching"
+severity = "error"
+repro = "checked"
+lang = "cplus"
+verified = true
+emit_site = "cplus-core/src/lower.rs:844 (unreachable arm), :871 (non-exhaustive)"
+test = "cpc/tests/e2e.rs:literal_pattern_refusals_are_specific"
+cause = "A `match` over literals either has no catch-all — each literal arm covers exactly one value, so the compiler cannot prove the rest are handled — or it has an arm after a catch-all, which can never run."
+fix = "End a literal match with `_` or a binding arm, and put nothing after it."
+example = '''
+fn main() -> i32 { let n: i32 = 3; return match n { 1 => 10, 2 => 20 }; }
+'''
+
+[[code]]
 id = "E0345"
 title = "Use of a possibly-unassigned binding"
 category = "Control flow and matching"
@@ -1098,6 +1131,23 @@ fn main() -> i32 { return 0; }
 '''
 
 [[code]]
+id = "E0362"
+title = "`#[watch]` hook has the wrong signature"
+category = "Attributes"
+severity = "error"
+repro = "checked"
+lang = "cplus"
+verified = true
+emit_site = "cplus-core/src/sema.rs:2745"
+test = "cpc/tests/e2e.rs:watch_struct_without_valid_hook_is_rejected"
+cause = "A `#[watch]` struct's `on_value` is the write barrier the compiler calls on every field write, so its shape is fixed. It must be `fn on_value(ref this, field: str)` or the snapshot form `fn on_value(ref this, field: str, old: S, new: S)` for the struct's own type."
+fix = "Give the hook one of the two accepted signatures. The snapshot form additionally requires the struct to be `Copy` (see E0361)."
+example = '''
+#[watch] struct S { x: i32 }
+impl S { fn on_value(ref this, field: i32) { return; } }
+'''
+
+[[code]]
 id = "E0363"
 title = "Name already declared in this scope (no same-scope shadowing)"
 category = "Control flow and matching"
@@ -1128,6 +1178,31 @@ fix = "Name the struct (`A { field: ... }`), or give the binding a struct type a
 example = '''
 struct A { x: i32 }
 fn main() -> i32 { let a = { x: 1 }; return 0; }
+'''
+
+[[code]]
+id = "E0365"
+title = "A value that captured a local's address escapes the frame"
+category = "Ownership and borrowing"
+severity = "error"
+repro = "checked"
+lang = "cplus"
+verified = true
+emit_site = "cplus-core/src/borrowck.rs (ViewRules::check_capture_return / _store / _arg)"
+test = "cpc/tests/e2e.rs:a_capture_of_a_local_escaping_the_frame_is_rejected_e0365"
+cause = "A bound method reference (`obj.handler` in value position) lowers to a function pointer plus the receiver's raw ADDRESS. When the receiver is storage this frame frees — a local, a `take` parameter, a `take this`, or a by-value parameter of a `Copy` type — and the value holding that address then leaves the frame (returned, stored into a `static` or a `ref` target, or handed to a call), the handler points at a stack slot that is gone before it fires. The analysis is transitive: a method that binds its own receiver taints every value it returns, and a binding that absorbs such a value carries the capture onward."
+fix = "Give the receiver storage that outlives the escaping value — a field of `this`, a `static`, or a `Box`. Binding a handler to a local is legal as long as it does not escape; binding to `this` or to a field is always legal, which is why this costs nothing in ordinary component code."
+example = '''
+struct Child { clicks: i32 }
+impl Child {
+    fn clicked(ref this) { this.clicks = this.clicks + 1; return; }
+    fn build(ref this) -> i32 { return take_handler(this.clicked); }
+}
+fn take_handler(f: fn(*u8), ctx: *u8 = 0 as *u8) -> i32 { return 1; }
+fn make() -> i32 {
+    var c: Child = Child { clicks: 0 };
+    return c.build();
+}
 '''
 
 [[code]]
@@ -1305,6 +1380,54 @@ fn caller() {
   return;
 }
 '''
+
+[[code]]
+id = "E0383"
+title = "Access to a binding while it is exclusively borrowed"
+category = "Ownership and borrowing"
+severity = "error"
+repro = "scenario"
+lang = "cplus"
+verified = false
+emit_site = "cplus-core/src/borrowck.rs:6081 (projected read), :6889 (method call)"
+test = "cplus-core/src/borrowck.rs:e0383_releases_when_exclusive_borrower_is_moved"
+cause = "A place is read, or has a method called on it, while an exclusive borrow of that same place is still live. The exclusive borrow claims the place for its whole lifetime, so no overlapping access is admitted. E0374 is the same rule for a place that only partially overlaps; E0381 is the shared-borrow twin."
+fix = "End the borrow before the access — let the borrower go out of scope, or move it — or restructure so the two do not overlap."
+example = '''
+struct B { x: i32 }
+impl B { fn drop(ref this) { return; } }
+fn cursor(ref b: B) -> B { return b; }
+fn peek(b: B) -> i32 { return b.x; }
+fn caller() {
+  var v: B = B { x: 1 };
+  let cur: B = cursor(v);
+  let n: i32 = peek(v);
+  return;
+}
+'''
+note = "Not reachable through the driver as of v0.0.26: a function that returns a borrow of a `ref` parameter is rejected by sema (E0337) first, and sema errors bail the pipeline before borrowck runs. The rule is live in borrowck and pinned by its unit tests."
+
+[[code]]
+id = "E0384"
+title = "Cannot infer which parameter a returned borrow comes from"
+category = "Ownership and borrowing"
+severity = "error"
+repro = "scenario"
+lang = "cplus"
+verified = false
+emit_site = "cplus-core/src/borrowck.rs:5264 (build_e0384)"
+test = "cplus-core/src/borrowck.rs (6BC.4 elision tests)"
+cause = "A function with two or more borrow-like parameters returns a value rooted at one of them, but the elision rules cannot pick which — so the caller has nothing to tie the returned borrow's lifetime to."
+fix = "Return an owned value (`Text` / `Vec[T]`), or restructure so exactly one parameter can be the borrow's source. The `borrow REGION T` annotation this once suggested is retired and is not the remedy."
+example = '''
+struct B { x: i32 }
+impl B { fn drop(ref this) { return; } }
+fn longest(ref a: B, ref b: B) -> B {
+  if a.x > b.x { return a; }
+  return b;
+}
+'''
+note = "Not reachable through the driver as of v0.0.26, for the same reason as E0383: returning a parameter is a sema E0337, which bails before borrowck runs."
 
 [[code]]
 id = "E0385"
@@ -2001,6 +2124,63 @@ fn main() -> i32 { let f: fn(i32) -> i32 = identity; return 0; }
 '''
 
 [[code]]
+id = "E0822"
+title = "Method cannot be used as a bound reference"
+category = "Names, types, and items"
+severity = "error"
+repro = "checked"
+lang = "cplus"
+verified = true
+emit_site = "cplus-core/src/sema.rs:14629, :14640, :14655"
+test = "cpc/tests/e2e.rs:bound_method_reference_misuse_rejected"
+cause = "`obj.method` in value position builds a handler from a function pointer plus the receiver's address. Not every method can be one: a `take this` method would consume the receiver on its first fire, a receiverless method has nothing to bind, and a generic method or one with `take` / `ref` parameters has no single fn-pointer shape to lower to."
+fix = "Give the method a `this` or `ref this` receiver and only by-value parameters, or pass a plain `fn` directly instead of a bound reference."
+example = '''
+struct S { n: i32 }
+impl S { fn eat(take this) { return; } }
+fn take_handler(f: fn(*u8), ctx: *u8 = 0 as *u8) -> i32 { return 1; }
+fn main() -> i32 { var s: S = S { n: 0 }; return take_handler(s.eat); }
+'''
+
+[[code]]
+id = "E0823"
+title = "Bound method reference does not fit the expected handler"
+category = "Names, types, and items"
+severity = "error"
+repro = "checked"
+lang = "cplus"
+verified = true
+emit_site = "cplus-core/src/sema.rs:14617 (receiver place), :14673 (shape)"
+test = "cpc/tests/e2e.rs:bound_method_reference_misuse_rejected"
+cause = "Either the parameter's fn-pointer type does not match the method — a handler type must be the method's parameters plus a trailing `*u8` context, with the same return type — or the method takes `ref this` while the receiver expression is not a writable place (a `let` binding is not; a `var`, a field of one, or a `static` is)."
+fix = "Match the handler's declared fn-pointer shape, and bind a `ref this` method only to a writable receiver."
+example = '''
+struct S { n: i32 }
+impl S { fn tick(ref this) { this.n = this.n + 1; return; } }
+fn take_handler(f: fn(*u8), ctx: *u8 = 0 as *u8) -> i32 { return 1; }
+fn main() -> i32 { let s: S = S { n: 0 }; return take_handler(s.tick); }
+'''
+
+[[code]]
+id = "E0824"
+title = "Callee has no context slot for a bound method reference"
+category = "Names, types, and items"
+severity = "error"
+repro = "checked"
+lang = "cplus"
+verified = true
+emit_site = "cplus-core/src/sema.rs:14688, :14707, :14726"
+test = "cpc/tests/e2e.rs:bound_method_reference_misuse_rejected"
+cause = "A bound reference passes the receiver's address in the argument slot right after the handler, so the callee must declare a defaulted `*u8` context parameter there — and the call site must leave it to the compiler. Either the parameter is missing (or not a defaulted `*u8`), or the call wrote an explicit argument the bound reference would silently clobber."
+fix = "Declare `ctx: *u8 = 0 as *u8` immediately after the handler parameter, and omit it at the call site."
+example = '''
+struct S { n: i32 }
+impl S { fn tick(ref this) { this.n = this.n + 1; return; } }
+fn take_handler(f: fn(*u8)) -> i32 { return 1; }
+fn main() -> i32 { var s: S = S { n: 0 }; return take_handler(s.tick); }
+'''
+
+[[code]]
 id = "E0852"
 title = "Import names an undeclared dependency (or no manifest is reachable)"
 category = "Targets and packages"
@@ -2174,51 +2354,6 @@ example = '''
 '''
 
 [[code]]
-id = "E0862"
-title = "Host vs target triple mismatch"
-category = "Targets and packages"
-severity = "error"
-repro = "scenario"
-lang = "toml"
-verified = true
-emit_site = "cpc/src/main.rs:1361"
-test = "cpc/tests/e2e.rs:host_triple_unsupported_emits_e0862"
-cause = "A dependency declares bundled binaries but its `[link].triples` does not include the triple actually being linked (the host triple for a native build, or the selected `--target`'s artifact triple for a cross build), so no matching prebuilt artifact exists."
-fix = "Add the host/target triple to `[link].triples` and ship the matching binaries, or build the package from source for that triple."
-example = '''
-# vendor/foo/Cplus.toml
-[package]
-name = "foo"
-[link]
-bundled = ["libfoo.a"]
-triples = ["aarch64-apple-darwin"]
-# linking on/ for a triple not in that list:
-# -> [E0862] package `foo` does not ship a build for host/target triple `<triple>`
-'''
-
-[[code]]
-id = "E0863"
-title = "`[link].bundled` set without `[link].triples`"
-category = "Targets and packages"
-severity = "error"
-repro = "scenario"
-lang = "toml"
-verified = true
-emit_site = "cplus-core/src/manifest.rs:345"
-test = "cpc/tests/e2e.rs:bundled_without_triples_emits_e0863_via_build"
-cause = "A manifest's `[link].bundled` lists prebuilt binaries but `[link].triples` is empty, so the compiler cannot tell which host triples those binaries are built for."
-fix = "Declare the host triples your bundled binaries target, e.g. `triples = [\"aarch64-apple-darwin\"]`."
-example = '''
-# vendor/foo/Cplus.toml
-[package]
-name = "foo"
-[link]
-bundled = ["libfoo.a"]
-# no triples = [...]
-# -> [E0863] `[link].bundled` is non-empty but `[link].triples` is empty
-'''
-
-[[code]]
 id = "E0864"
 title = "`[link]` extra-objects entry not found"
 category = "Targets and packages"
@@ -2321,6 +2456,29 @@ name = "esc"
 name = "esc"
 path = "../../outside/main.cplus"
 # -> [E0868] `[[bin]] `esc`` path resolves outside the package directory
+'''
+
+[[code]]
+id = "E0869"
+title = "Conflicting declarations of one dependency"
+category = "Targets and packages"
+severity = "error"
+repro = "scenario"
+lang = "toml"
+verified = true
+emit_site = "cplus-core/src/manifest.rs:459"
+test = "cpc/tests/platform_deps.rs:conflicting_dependency_declarations_fail_with_e0869"
+cause = "One package name is declared in two places that could both apply — `[dependencies]` and a platform section, or two platform sections — with different specs. There is no conflict resolver by design: the compiler will not silently pick a winner."
+fix = "Declare the package once, or give every declaration the same spec. Platform sections are for packages that only apply to that platform."
+example = '''
+[package]
+name = "app"
+
+[dependencies]
+objc = "*"
+
+[macos.dependencies]
+objc = "*"
 '''
 
 [[code]]
@@ -2838,24 +2996,6 @@ fn main() -> i32 { return 0; }
 '''
 
 [[code]]
-id = "E0919"
-title = "Declaration claims the reserved `__cplus_` runtime-ABI prefix"
-category = "Names, types, and items"
-severity = "error"
-repro = "checked"
-lang = "cplus"
-verified = true
-emit_site = "cplus-core/src/sema.rs:reject_unmarked_runtime_abi_name"
-test = "cplus-core/src/sema.rs:unmarked_runtime_abi_prefix_rejected_e0919"
-cause = "A function is declared with a name starting `__cplus_`, the prefix the compiler reserves for symbols it generates itself — the reactor helpers `#reactor_get_state` lowers to, the coroutine hooks, the thread trampolines, the bound-method bridges. A declaration under that prefix is claiming to name one of those symbols, and an unmarked one could take a runtime symbol's place at link time by accident or on purpose."
-fix = "If the declaration really does name a compiler-generated symbol (the stdlib reactor bindings do), mark it `#[runtime_abi]` — the same doctrine as `opaque` and `#[lang]`: a small trusted surface, written down. Otherwise pick a name outside the prefix."
-example = '''
-extern fn __cplus_reactor_get_state() -> *u8;
-fn main() -> i32 { return 0; }
-// -> [E0919] `__cplus_reactor_get_state` starts with `__cplus_`, the compiler's reserved runtime-ABI prefix
-'''
-
-[[code]]
 id = "E0918"
 title = "Compile-time include/shader path escapes the package"
 category = "const / static / char"
@@ -2873,6 +3013,24 @@ fn main() -> i32 {
     return 0;
 }
 // -> [E0918] `#include_bytes` path `/etc/passwd` resolves outside the package directory
+'''
+
+[[code]]
+id = "E0919"
+title = "Declaration claims the reserved `__cplus_` runtime-ABI prefix"
+category = "Names, types, and items"
+severity = "error"
+repro = "checked"
+lang = "cplus"
+verified = true
+emit_site = "cplus-core/src/sema.rs:reject_unmarked_runtime_abi_name"
+test = "cplus-core/src/sema.rs:unmarked_runtime_abi_prefix_rejected_e0919"
+cause = "A function is declared with a name starting `__cplus_`, the prefix the compiler reserves for symbols it generates itself — the reactor helpers `#reactor_get_state` lowers to, the coroutine hooks, the thread trampolines, the bound-method bridges. A declaration under that prefix is claiming to name one of those symbols, and an unmarked one could take a runtime symbol's place at link time by accident or on purpose."
+fix = "If the declaration really does name a compiler-generated symbol (the stdlib reactor bindings do), mark it `#[runtime_abi]` — the same doctrine as `opaque` and `#[lang]`: a small trusted surface, written down. Otherwise pick a name outside the prefix."
+example = '''
+extern fn __cplus_reactor_get_state() -> *u8;
+fn main() -> i32 { return 0; }
+// -> [E0919] `__cplus_reactor_get_state` starts with `__cplus_`, the compiler's reserved runtime-ABI prefix
 '''
 
 [[code]]
@@ -3019,18 +3177,6 @@ fn main() -> i32 {
 '''
 
 [[code]]
-id = "E1003"
-title = "Named arguments on an indirect (fn-pointer) call"
-category = "Compile-time builtins"
-severity = "error"
-repro = "checked"
-lang = "cplus"
-verified = false
-emit_site = "cplus-core/src/sema.rs"
-cause = "A call through a function pointer used a named argument. A fn-pointer type records only parameter types, not names, so there are no labels to match against."
-fix = "Pass the arguments positionally."
-
-[[code]]
 id = "E1004"
 title = "Positional argument after a named argument"
 category = "Compile-time builtins"
@@ -3114,3 +3260,20 @@ fix = "Remove the default; pass the argument explicitly at every call."
 example = '''
 extern fn g(x: i32 = 0) -> i32;  // -> E1008 extern parameter cannot have a default
 '''
+
+[[code]]
+id = "E1900"
+title = "Construct is outside the wasm subset"
+category = "Targets and packages"
+severity = "error"
+repro = "scenario"
+lang = "cplus"
+verified = false
+emit_site = "cplus-core/src/wasm_emit.rs:200"
+test = "cpc/tests/wasm_differential.rs"
+cause = "The wasm backend accepts a deliberately small subset of C+ — scalar types, arithmetic, control flow and direct calls — and the program uses something outside it. It is the single code the backend emits for any unsupported construct."
+fix = "Keep wasm-targeted code inside the subset, or build for a native target instead."
+example = '''
+fn main() -> i32 { let s: str = "hello"; return 0; }
+'''
+note = "Emitted only by the in-process wasm backend, which the browser playground drives. The native driver refuses the wasm32 target before reaching it."

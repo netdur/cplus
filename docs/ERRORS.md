@@ -4,7 +4,7 @@
 
 Every C+ diagnostic carries a numbered code, a source span, and often a machine-applicable suggestion. `cpc --diagnostics=json` emits the same information in a machine-readable shape for editors and agents. Codes prefixed with **W** are non-fatal warnings; the build continues. The normative ranges and what each phase owns are fixed in [§20 of the language specification](/docs/spec).
 
-This is the complete index — **168 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **130** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
+This is the complete index — **178 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **137** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
 
 ## Lexical
 
@@ -608,6 +608,63 @@ impl d::Point { fn drop(ref this) { } }
 
 <sub>repro: scenario · cplus-core/src/sema.rs:collect_methods · test cplus-core/src/sema.rs:ext_cross_package_may_not_declare_a_destructor_e0389</sub>
 
+### E0390 · Unknown lang item
+
+`#[lang("...")]` designates a declaration as one of the handful of types the compiler itself reaches for — the owned string, the `gen fn` and `async fn` protocol types, `Option`, `JoinHandle`. A name outside that set designates nothing, so the feature that was meant to find this type keeps looking and reports a missing-stdlib error somewhere else entirely.
+
+```cplus
+#[lang("iterater")] struct Iterator[T] { opaque _handle: *u8 }
+```
+
+**Fix.** Spell the lang item as one of the names the message lists, or drop the attribute.
+
+<sub>repro: scenario · cplus-core/src/attrs.rs:emit_unknown_lang_item · test cplus-core/src/attrs.rs:lang_item_name_must_be_one_the_compiler_knows</sub>
+
+### E0822 · Method cannot be used as a bound reference
+
+`obj.method` in value position builds a handler from a function pointer plus the receiver's address. Not every method can be one: a `take this` method would consume the receiver on its first fire, a receiverless method has nothing to bind, and a generic method or one with `take` / `ref` parameters has no single fn-pointer shape to lower to.
+
+```cplus
+struct S { n: i32 }
+impl S { fn eat(take this) { return; } }
+fn take_handler(f: fn(*u8), ctx: *u8 = 0 as *u8) -> i32 { return 1; }
+fn main() -> i32 { var s: S = S { n: 0 }; return take_handler(s.eat); }
+```
+
+**Fix.** Give the method a `this` or `ref this` receiver and only by-value parameters, or pass a plain `fn` directly instead of a bound reference.
+
+<sub>repro: checked · cplus-core/src/sema.rs:14629, :14640, :14655 · test cpc/tests/e2e.rs:bound_method_reference_misuse_rejected</sub>
+
+### E0823 · Bound method reference does not fit the expected handler
+
+Either the parameter's fn-pointer type does not match the method — a handler type must be the method's parameters plus a trailing `*u8` context, with the same return type — or the method takes `ref this` while the receiver expression is not a writable place (a `let` binding is not; a `var`, a field of one, or a `static` is).
+
+```cplus
+struct S { n: i32 }
+impl S { fn tick(ref this) { this.n = this.n + 1; return; } }
+fn take_handler(f: fn(*u8), ctx: *u8 = 0 as *u8) -> i32 { return 1; }
+fn main() -> i32 { let s: S = S { n: 0 }; return take_handler(s.tick); }
+```
+
+**Fix.** Match the handler's declared fn-pointer shape, and bind a `ref this` method only to a writable receiver.
+
+<sub>repro: checked · cplus-core/src/sema.rs:14617 (receiver place), :14673 (shape) · test cpc/tests/e2e.rs:bound_method_reference_misuse_rejected</sub>
+
+### E0824 · Callee has no context slot for a bound method reference
+
+A bound reference passes the receiver's address in the argument slot right after the handler, so the callee must declare a defaulted `*u8` context parameter there — and the call site must leave it to the compiler. Either the parameter is missing (or not a defaulted `*u8`), or the call wrote an explicit argument the bound reference would silently clobber.
+
+```cplus
+struct S { n: i32 }
+impl S { fn tick(ref this) { this.n = this.n + 1; return; } }
+fn take_handler(f: fn(*u8)) -> i32 { return 1; }
+fn main() -> i32 { var s: S = S { n: 0 }; return take_handler(s.tick); }
+```
+
+**Fix.** Declare `ctx: *u8 = 0 as *u8` immediately after the handler parameter, and omit it at the call site.
+
+<sub>repro: checked · cplus-core/src/sema.rs:14688, :14707, :14726 · test cpc/tests/e2e.rs:bound_method_reference_misuse_rejected</sub>
+
 ### E0913 · Recursive type has infinite size
 
 A struct or enum contains itself by value — directly (`struct S { s: S }`), mutually (`A` holds `B`, `B` holds `A`), or through an inline array (`[S; N]`). Such a type has no finite size.
@@ -634,6 +691,20 @@ fn main() -> i32 { return 0; }
 **Fix.** Use a single underscore (`box_i32`). Exempt: `extern fn` names (existing C symbols like `__errno_location` never monomorphize) and names whose only `__` is leading (`__x` — an instantiation's template base is never empty).
 
 <sub>repro: checked · cplus-core/src/sema.rs:reject_reserved_double_underscore · test cplus-core/src/sema.rs:double_underscore_item_names_reserved_e0917</sub>
+
+### E0919 · Declaration claims the reserved `__cplus_` runtime-ABI prefix
+
+A function is declared with a name starting `__cplus_`, the prefix the compiler reserves for symbols it generates itself — the reactor helpers `#reactor_get_state` lowers to, the coroutine hooks, the thread trampolines, the bound-method bridges. A declaration under that prefix is claiming to name one of those symbols, and an unmarked one could take a runtime symbol's place at link time by accident or on purpose.
+
+```cplus
+extern fn __cplus_reactor_get_state() -> *u8;
+fn main() -> i32 { return 0; }
+// -> [E0919] `__cplus_reactor_get_state` starts with `__cplus_`, the compiler's reserved runtime-ABI prefix
+```
+
+**Fix.** If the declaration really does name a compiler-generated symbol (the stdlib reactor bindings do), mark it `#[runtime_abi]` — the same doctrine as `opaque` and `#[lang]`: a small trusted surface, written down. Otherwise pick a name outside the prefix.
+
+<sub>repro: checked · cplus-core/src/sema.rs:reject_unmarked_runtime_abi_name · test cplus-core/src/sema.rs:unmarked_runtime_abi_prefix_rejected_e0919</sub>
 
 ## Control flow and matching
 
@@ -733,6 +804,31 @@ fn main() -> i32 { let m: M = M::A(1, 2); return match m { M::A(v) => v }; }
 **Fix.** Match the variant's declared payload arity in both the pattern and the constructor.
 
 <sub>repro: checked · cplus-core/src/sema.rs:7266 · test cplus-core/src/sema.rs:match_wrong_payload_arity_e0342</sub>
+
+### E0343 · A `match` mixes literal and variant patterns
+
+One `match` used both literal patterns (`1 => ...`) and variant patterns (`M::A => ...`). The two ask different questions — a literal matches a VALUE, a variant matches a CASE — and they lower to different code, so a mixed match has no single meaning.
+
+```cplus
+enum M { A, B }
+fn main() -> i32 { let m: M = M::A; return match m { 1 => 0, M::B => 1 }; }
+```
+
+**Fix.** Split the match, or convert the literal arms into variants of the same enum.
+
+<sub>repro: checked · cplus-core/src/lower.rs:859 · test cpc/tests/e2e.rs:literal_pattern_refusals_are_specific</sub>
+
+### E0344 · Literal `match` is non-exhaustive or has an unreachable arm
+
+A `match` over literals either has no catch-all — each literal arm covers exactly one value, so the compiler cannot prove the rest are handled — or it has an arm after a catch-all, which can never run.
+
+```cplus
+fn main() -> i32 { let n: i32 = 3; return match n { 1 => 10, 2 => 20 }; }
+```
+
+**Fix.** End a literal match with `_` or a binding arm, and put nothing after it.
+
+<sub>repro: checked · cplus-core/src/lower.rs:844 (unreachable arm), :871 (non-exhaustive) · test cpc/tests/e2e.rs:literal_pattern_refusals_are_specific</sub>
 
 ### E0345 · Use of a possibly-unassigned binding
 
@@ -881,6 +977,27 @@ fn main() -> i32 { return 0; }
 **Fix.** Take the value by value (`take`) so the callee owns it, or `.clone()` it; return an owned value rather than a borrow.
 
 <sub>repro: checked · cplus-core/src/sema.rs:11226 · test cplus-core/src/sema.rs:return_borrow_marker_param_rejected_e0337</sub>
+
+### E0365 · A value that captured a local's address escapes the frame
+
+A bound method reference (`obj.handler` in value position) lowers to a function pointer plus the receiver's raw ADDRESS. When the receiver is storage this frame frees — a local, a `take` parameter, a `take this`, or a by-value parameter of a `Copy` type — and the value holding that address then leaves the frame (returned, stored into a `static` or a `ref` target, or handed to a call), the handler points at a stack slot that is gone before it fires. The analysis is transitive: a method that binds its own receiver taints every value it returns, and a binding that absorbs such a value carries the capture onward.
+
+```cplus
+struct Child { clicks: i32 }
+impl Child {
+    fn clicked(ref this) { this.clicks = this.clicks + 1; return; }
+    fn build(ref this) -> i32 { return take_handler(this.clicked); }
+}
+fn take_handler(f: fn(*u8), ctx: *u8 = 0 as *u8) -> i32 { return 1; }
+fn make() -> i32 {
+    var c: Child = Child { clicks: 0 };
+    return c.build();
+}
+```
+
+**Fix.** Give the receiver storage that outlives the escaping value — a field of `this`, a `static`, or a `Box`. Binding a handler to a local is legal as long as it does not escape; binding to `this` or to a field is always legal, which is why this costs nothing in ordinary component code.
+
+<sub>repro: checked · cplus-core/src/borrowck.rs (ViewRules::check_capture_return / _store / _arg) · test cpc/tests/e2e.rs:a_capture_of_a_local_escaping_the_frame_is_rejected_e0365</sub>
 
 ### E0370 · Move and shared-borrow of the same binding in one call
 
@@ -1034,6 +1151,48 @@ fn caller() {
 **Fix.** Split into two statements so the exclusive borrow and the move do not overlap.
 
 <sub>repro: checked · cplus-core/src/borrowck.rs:1482 · test cplus-core/src/borrowck.rs:e0382_fires_on_mut_arg_with_sibling_move</sub>
+
+### E0383 · Access to a binding while it is exclusively borrowed
+
+A place is read, or has a method called on it, while an exclusive borrow of that same place is still live. The exclusive borrow claims the place for its whole lifetime, so no overlapping access is admitted. E0374 is the same rule for a place that only partially overlaps; E0381 is the shared-borrow twin.
+
+```cplus
+struct B { x: i32 }
+impl B { fn drop(ref this) { return; } }
+fn cursor(ref b: B) -> B { return b; }
+fn peek(b: B) -> i32 { return b.x; }
+fn caller() {
+  var v: B = B { x: 1 };
+  let cur: B = cursor(v);
+  let n: i32 = peek(v);
+  return;
+}
+```
+
+*Not reachable through the driver as of v0.0.26: a function that returns a borrow of a `ref` parameter is rejected by sema (E0337) first, and sema errors bail the pipeline before borrowck runs. The rule is live in borrowck and pinned by its unit tests.*
+
+**Fix.** End the borrow before the access — let the borrower go out of scope, or move it — or restructure so the two do not overlap.
+
+<sub>repro: scenario · cplus-core/src/borrowck.rs:6081 (projected read), :6889 (method call) · test cplus-core/src/borrowck.rs:e0383_releases_when_exclusive_borrower_is_moved</sub>
+
+### E0384 · Cannot infer which parameter a returned borrow comes from
+
+A function with two or more borrow-like parameters returns a value rooted at one of them, but the elision rules cannot pick which — so the caller has nothing to tie the returned borrow's lifetime to.
+
+```cplus
+struct B { x: i32 }
+impl B { fn drop(ref this) { return; } }
+fn longest(ref a: B, ref b: B) -> B {
+  if a.x > b.x { return a; }
+  return b;
+}
+```
+
+*Not reachable through the driver as of v0.0.26, for the same reason as E0383: returning a parameter is a sema E0337, which bails before borrowck runs.*
+
+**Fix.** Return an owned value (`Text` / `Vec[T]`), or restructure so exactly one parameter can be the borrow's source. The `borrow REGION T` annotation this once suggested is retired and is not the remedy.
+
+<sub>repro: scenario · cplus-core/src/borrowck.rs:5264 (build_e0384) · test cplus-core/src/borrowck.rs (6BC.4 elision tests)</sub>
 
 ### E0503 · Interface impl missing a required method
 
@@ -1717,14 +1876,6 @@ fn main() -> i32 {
 
 <sub>repro: checked · cplus-core/src/sema.rs</sub>
 
-### E1003 · Named arguments on an indirect (fn-pointer) call
-
-A call through a function pointer used a named argument. A fn-pointer type records only parameter types, not names, so there are no labels to match against.
-
-**Fix.** Pass the arguments positionally.
-
-<sub>repro: checked · cplus-core/src/sema.rs</sub>
-
 ### E1004 · Positional argument after a named argument
 
 A positional argument followed a named one. Positional arguments must all come before any named argument so the call has a single readable shape.
@@ -1999,6 +2150,19 @@ fn main() -> i32 { return 0; }
 
 <sub>repro: checked · cplus-core/src/sema.rs:4874 · test cplus-core/src/sema.rs:test_fn_export_rejected_e0359</sub>
 
+### E0362 · `#[watch]` hook has the wrong signature
+
+A `#[watch]` struct's `on_value` is the write barrier the compiler calls on every field write, so its shape is fixed. It must be `fn on_value(ref this, field: str)` or the snapshot form `fn on_value(ref this, field: str, old: S, new: S)` for the struct's own type.
+
+```cplus
+#[watch] struct S { x: i32 }
+impl S { fn on_value(ref this, field: i32) { return; } }
+```
+
+**Fix.** Give the hook one of the two accepted signatures. The snapshot form additionally requires the struct to be `Copy` (see E0361).
+
+<sub>repro: checked · cplus-core/src/sema.rs:2745 · test cpc/tests/e2e.rs:watch_struct_without_valid_hook_is_rejected</sub>
+
 ### E0890 · Duplicate `#asm` operand name
 
 Two operands of an inline `#asm(...)` share the same operand name.
@@ -2096,20 +2260,6 @@ fn main() -> i32 {
 **Fix.** Move the asset inside the package and reference it with a package-relative path. A `..` that stays within the package (e.g. `../adapter/asset.bin` from `src/`) is allowed; only paths that leave the package are rejected.
 
 <sub>repro: checked · cplus-core/src/sema.rs:include_path_escapes_package · test cplus-core/src/sema.rs:include_bytes_escaping_package_is_rejected_e0918</sub>
-
-### E0919 · Declaration claims the reserved `__cplus_` runtime-ABI prefix
-
-A function is declared with a name starting `__cplus_`, the prefix the compiler reserves for symbols it generates itself — the reactor helpers `#reactor_get_state` lowers to, the coroutine hooks, the thread trampolines, the bound-method bridges. A declaration under that prefix is claiming to name one of those symbols, and an unmarked one could take a runtime symbol's place at link time by accident or on purpose.
-
-```cplus
-extern fn __cplus_reactor_get_state() -> *u8;
-fn main() -> i32 { return 0; }
-// -> [E0919] `__cplus_reactor_get_state` starts with `__cplus_`, the compiler's reserved runtime-ABI prefix
-```
-
-**Fix.** If the declaration really does name a compiler-generated symbol (the stdlib reactor bindings do), mark it `#[runtime_abi]` — the same doctrine as `opaque` and `#[lang]`: a small trusted surface, written down. Otherwise pick a name outside the prefix.
-
-<sub>repro: checked · cplus-core/src/sema.rs:reject_unmarked_runtime_abi_name · test cplus-core/src/sema.rs:unmarked_runtime_abi_prefix_rejected_e0919</sub>
 
 ## Targets and packages
 
@@ -2250,43 +2400,6 @@ A binary artifact (`.a`, `.o`, `.lib`) sits under a package's `lib/<triple>/`, b
 
 <sub>repro: scenario · cpc/src/main.rs:link_orphan_binary · test cpc/tests/e2e.rs (orphan .a under lib/<host> without [link])</sub>
 
-### E0862 · Host vs target triple mismatch
-
-A dependency declares bundled binaries but its `[link].triples` does not include the triple actually being linked (the host triple for a native build, or the selected `--target`'s artifact triple for a cross build), so no matching prebuilt artifact exists.
-
-```toml
-# vendor/foo/Cplus.toml
-[package]
-name = "foo"
-[link]
-bundled = ["libfoo.a"]
-triples = ["aarch64-apple-darwin"]
-# linking on/ for a triple not in that list:
-# -> [E0862] package `foo` does not ship a build for host/target triple `<triple>`
-```
-
-**Fix.** Add the host/target triple to `[link].triples` and ship the matching binaries, or build the package from source for that triple.
-
-<sub>repro: scenario · cpc/src/main.rs:1361 · test cpc/tests/e2e.rs:host_triple_unsupported_emits_e0862</sub>
-
-### E0863 · `[link].bundled` set without `[link].triples`
-
-A manifest's `[link].bundled` lists prebuilt binaries but `[link].triples` is empty, so the compiler cannot tell which host triples those binaries are built for.
-
-```toml
-# vendor/foo/Cplus.toml
-[package]
-name = "foo"
-[link]
-bundled = ["libfoo.a"]
-# no triples = [...]
-# -> [E0863] `[link].bundled` is non-empty but `[link].triples` is empty
-```
-
-**Fix.** Declare the host triples your bundled binaries target, e.g. `triples = ["aarch64-apple-darwin"]`.
-
-<sub>repro: scenario · cplus-core/src/manifest.rs:345 · test cpc/tests/e2e.rs:bundled_without_triples_emits_e0863_via_build</sub>
-
 ### E0864 · `[link]` extra-objects entry not found
 
 A `[link].extra-objects` path (resolved relative to the manifest) does not exist on disk, caught before clang is invoked so the user gets a clean diagnostic instead of a linker error.
@@ -2372,6 +2485,25 @@ path = "../../outside/main.cplus"
 
 <sub>repro: checked · cplus-core/src/manifest.rs:target_path_escapes · test cplus-core/src/manifest.rs:bin_path_escaping_package_is_rejected_e0868</sub>
 
+### E0869 · Conflicting declarations of one dependency
+
+One package name is declared in two places that could both apply — `[dependencies]` and a platform section, or two platform sections — with different specs. There is no conflict resolver by design: the compiler will not silently pick a winner.
+
+```toml
+[package]
+name = "app"
+
+[dependencies]
+objc = "*"
+
+[macos.dependencies]
+objc = "*"
+```
+
+**Fix.** Declare the package once, or give every declaration the same spec. Platform sections are for packages that only apply to that platform.
+
+<sub>repro: scenario · cplus-core/src/manifest.rs:459 · test cpc/tests/platform_deps.rs:conflicting_dependency_declarations_fail_with_e0869</sub>
+
 ### E0914 · Relative import escapes the project directory
 
 A file-relative import (`./x` / `../x`) has a `..` chain that resolves to a file outside the importing package's tree — the same escape the vendor import path (E0859) blocks, on the relative path that previously left it open.
@@ -2385,6 +2517,20 @@ fn main() -> i32 { return 0; }
 **Fix.** Keep relative imports inside the package. To use another package, add it to `[dependencies]` and import it by name (`import "dep/module"`).
 
 <sub>repro: scenario · cplus-core/src/resolver.rs:relative_import_escapes_root · test cplus-core/src/resolver.rs:relative_import_escaping_project_is_rejected_e0914</sub>
+
+### E1900 · Construct is outside the wasm subset
+
+The wasm backend accepts a deliberately small subset of C+ — scalar types, arithmetic, control flow and direct calls — and the program uses something outside it. It is the single code the backend emits for any unsupported construct.
+
+```cplus
+fn main() -> i32 { let s: str = "hello"; return 0; }
+```
+
+*Emitted only by the in-process wasm backend, which the browser playground drives. The native driver refuses the wasm32 target before reaching it.*
+
+**Fix.** Keep wasm-targeted code inside the subset, or build for a native target instead.
+
+<sub>repro: scenario · cplus-core/src/wasm_emit.rs:200 · test cpc/tests/wasm_differential.rs</sub>
 
 ## Warnings
 
