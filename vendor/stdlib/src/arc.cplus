@@ -190,7 +190,7 @@ impl Arc[T] {
         // now sees strong 0 -> None). Move it out, then release the implicit
         // weak; free only if no `Weak` handles remain.
         let value_ptr: *T = { (this._ctrl + (16 as usize)) as *T };
-        let v: T = { *value_ptr };
+        let v: T = { #take::[T](value_ptr) };
         let weak: *u64 = { (this._ctrl + (8 as usize)) as *u64 };
         let prevw: u64 = {
             atomic::fetch_sub_u64(weak, 1 as u64, atomic::Ordering::AcqRel)

@@ -102,7 +102,7 @@ impl Box[T] {
         // cleanup. Without this nulling, the v0.0.5 inner-T Drop
         // would double-free the inner value while it's also live in
         // the caller's binding.
-        let v: T = { *this._p };
+        let v: T = { #take::[T](this._p) };
         let free_p: *u8 = { this._p as *u8 };
         { this._p = 0 as *T; }
         { free(free_p); }

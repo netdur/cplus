@@ -1,9 +1,11 @@
 # Issue 18 — Generic impl-method bodies: check them, then decide what to report
 
 - Status: PARTIAL 2026-08-03 — the RECORDING half is done and closes five
-  ICEs plus bug-27 shape 4; the REPORTING half is open and now blocked on
-  exactly ONE question (E0337 in the raw-pointer containers), the other three
-  classes having been closed or shown to be measurement artifacts.
+  ICEs plus bug-27 shape 4. The REPORTING half was ATTEMPTED and reverted:
+  the stdlib containers now pass (`#take` shipped for them), but reporting
+  turns out to be blocked one level deeper — sema's abstract-`T` rules are
+  stricter than any instantiation needs, and enforcing them is a breaking
+  language change. Measured, below.
 - Type: bug family, then a rules decision
 - Area: `cplus-core/src/sema.rs` (`check_methods` / `check_generic_impl_methods`)
 - Master report: `core-drift-audit-2026-08-01.md`
@@ -101,21 +103,55 @@ So one class remains. What it was, and what each turned out to be:
    too: **bug-30**. The two instances here were only its first sighting,
    because the shape lives in `channel.cplus`'s generic bodies.
 
-(1) is what is left, and it is a language question, not a cleanup: **the
-stdlib's container primitives do not satisfy sema's own move rules, and
-nothing has been checking.** (2) was the same shape one level up — a generic
-contract asserted in a comment instead of in the type. Both are what the
-audit keeps finding: a rule and its only real consumer drifted apart with no
-pass in between.
+(1) was the last stdlib blocker, and it is CLOSED — see `#take` below. (2)
+was the same shape one level up: a generic contract asserted in a comment
+instead of in the type.
+
+## `#take`, and what turning reporting on actually costs
+
+(1) is answered by an intrinsic, not a rule exception: `#take::[T](p) -> T`,
+the mirror of the `#drop_in_place::[T](p)` that `Vec::drop` already calls —
+one destroys the value where it lies, the other takes it away. It needs no
+new grammar (`#name::[T](args)` accepts any identifier), it is ~25 lines of
+sema modeled on its twin, and the E0337 rule needs NO exception: the read is
+an intrinsic call rather than a `*p` deref, so `classify_partial_move_leaf`
+simply never sees the shape it is about. Nine call sites across `box`,
+`vec`, `rc`, `arc` and `channel`.
+
+It is a claim, not a proof — the same class as `opaque` (E0510) and
+`#[keeps]` (E0516), which is the established doctrine at this seam. What it
+buys: the claim is local to the line that makes it, greppable across the
+program, and the E0337 rule keeps reporting everywhere else.
+
+With the stdlib clean, reporting was turned on. **It was then turned back
+off**, because six unit tests failed on shapes vendor code does not contain.
+The representative one:
+
+```cplus
+impl Box[T] { fn replace(ref this, new_value: T) { this.value = new_value; } }
+```
+
+A bare by-value parameter BORROWS, so storing it into a field is a move out
+of a borrow — E0337, and correctly so: `Box[Text]` would double-free. It
+compiles today only because the program instantiates `Box[i32]`, where `T` is
+Copy. Enforcing the abstract rule means every generic method that stores a
+`T` must be written `take new_value: T`.
+
+That is the real shape of the remaining decision, and it is much larger than
+the containers were: it is a breaking change to every generic setter in the
+ecosystem, and the alternative — making the abstract rule instantiation-aware
+— is a change to how generic bodies are checked at all. Either way it is a
+language call, not a tidy-up, so the pass stays record-only and the ICEs stay
+fixed.
 
 ## What is still open
 
-- Decide (1): a container exception in the move rules, or a rewrite of the
-  raw-pointer primitives in the seven stdlib files. Then delete the
-  `sink.truncate` and let the pass report. To measure progress, comment out
-  that one line and re-run the sweep — deliberately not an env var, because a
-  compiler with a hidden diagnostic mode is worse than one that needs a
-  rebuild.
+- Decide the abstract-`T` question above: require `take` on generic methods
+  that store their parameter, or make the rule instantiation-aware. Then
+  delete the `sink.truncate` and let the pass report. To measure, comment out
+  that one line and re-run the sweep plus `cargo test -p cplus-core` —
+  deliberately not an env var, because a compiler with a hidden diagnostic
+  mode is worse than one that needs a rebuild.
 - With reporting on, `check_generic_method_body_names` becomes redundant —
   real typing subsumes name resolution — and should go.
 

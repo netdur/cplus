@@ -13519,6 +13519,18 @@ impl<'a> FnState<'a> {
         if name == "__cplus_reactor_yield_now" {
             return Some(self.gen_reactor_yield_now());
         }
+        // `#take::[T](p: *T) -> T` → the same load `*p` emits. It differs from
+        // a plain deref only in what it CLAIMS: the caller has disarmed the
+        // source, so this read transfers ownership rather than aliasing it.
+        // That claim is sema's business (it is what lets E0337 stay quiet
+        // here); the emitted code is identical.
+        if name == "__cplus_take" {
+            let t = ty_from(&type_args[0], self.types);
+            let (p_val, _) = self.gen_expr(&args[0]).expect("take ptr arg");
+            let r = self.next_tmp();
+            self.gen_load(&r, &t, &p_val);
+            return Some(Some((r, t)));
+        }
         // `#drop_in_place::[T](p: *T)` → call the monomorphized `T::drop(p)`
         // when T has Drop, else nothing.
         if name == "__cplus_drop_in_place" {

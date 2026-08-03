@@ -5152,7 +5152,8 @@ impl SemaCx<'_> {
         }
         self.pop_type_params();
         // Record-only: drop everything the typed pass reported. The
-        // name-resolution diagnostics are below the mark and survive.
+        // name-resolution diagnostics are below the mark and survive. See the
+        // note above for what turning this off would cost.
         self.sink.truncate(mark);
     }
 
@@ -11096,6 +11097,56 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
     ) -> Option<Ty> {
         if name == "__cplus_thread_spawn" || name == "__cplus_thread_join" {
             return Some(self.check_thread_intrinsic(name, callee, args, type_args, call_span));
+        }
+        // `#take::[T](p: *T) -> T` — move the value at `*p` OUT, transferring
+        // ownership to the result. The mirror of `#drop_in_place`: one destroys
+        // the value where it lies, this one takes it away.
+        //
+        // Reading `*p` by value is E0337 whenever the pointee may carry Drop,
+        // because a bit-copy out of a pointer makes a second owner and both
+        // will run the destructor. A container doing this is the sanctioned
+        // exception — it takes the value and then DISARMS the source so the
+        // original owner never drops it (`Box::unwrap` nulls `_p`;
+        // `Vec::remove_last` shrinks `_len` past the slot). That disarm is a
+        // later, separate write to a raw pointer or a length field, which no
+        // analysis here can see, so the author declares it instead. Same
+        // doctrine as `opaque` on a raw-pointer field (E0510) and `#[keeps]`
+        // at an opaque store (E0516): the analysis stops at the raw seam and
+        // the contract is stated rather than inferred.
+        //
+        // It is a claim, not a proof. What it buys is that the claim is
+        // LOCAL to the line that makes it, greppable across the program, and
+        // that the E0337 rule can keep reporting everywhere else — including
+        // inside generic container bodies, which nothing checked before.
+        if name == "__cplus_take" {
+            if type_args.len() != 1 {
+                self.err(
+                    "E0501",
+                    format!(
+                        "`#take` takes exactly 1 type argument, got {}",
+                        type_args.len()
+                    ),
+                    callee.span,
+                );
+                for a in args {
+                    let _ = self.check_expr(a, None);
+                }
+                return Some(Ty::Error);
+            }
+            let target_ty = self.resolve_type(&type_args[0]);
+            if args.len() != 1 {
+                self.err(
+                    "E0308",
+                    format!("`#take` takes 1 value argument, got {}", args.len()),
+                    call_span,
+                );
+                for a in args {
+                    let _ = self.check_expr(a, None);
+                }
+                return Some(target_ty);
+            }
+            let _ = self.check_expr(&args[0], Some(Ty::RawPtr(Box::new(target_ty.clone()))));
+            return Some(target_ty);
         }
         // `#drop_in_place::[T](p: *T)` — drop the value at *p in place. Lowers to
         // `T::drop(p)` for the monomorphized T (or a no-op when T has no Drop).

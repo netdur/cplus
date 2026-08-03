@@ -206,7 +206,7 @@ impl Channel[T] {
                 let buf: *u8 = { *buf_ptr_slot };
                 let elem_bytes: usize = #size_of::[T]();
                 let slot: *T = { (buf + (head *% elem_bytes)) as *T };
-                let v: T = { *slot };
+                let v: T = { #take::[T](slot) };
                 { *head_ptr = head +% (1 as usize); }
                 let _eu: i32 = { pthread_mutex_unlock(mutex_ptr) };
                 return ReceiveResult[T]::Value(v);

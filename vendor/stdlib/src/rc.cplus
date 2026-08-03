@@ -160,7 +160,7 @@ impl Rc[T] {
         // Sole strong owner: retire this strong handle and move the value out.
         { *strong = 0 as u64; }
         let value_ptr: *T = { (this._ctrl + (16 as usize)) as *T };
-        let v: T = { *value_ptr };
+        let v: T = { #take::[T](value_ptr) };
         // Release the implicit weak; free the block only if no `Weak` remains.
         let weak: *u64 = { (this._ctrl + (8 as usize)) as *u64 };
         { *weak = { *weak } -% (1 as u64); }

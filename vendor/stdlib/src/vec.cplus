@@ -236,7 +236,7 @@ impl Vec[T] {
         }
         let new_len: usize = this._len -% (1 as usize);
         let slot: *T = { this._ptr + new_len };
-        let value: T = { *slot };
+        let value: T = { #take::[T](slot) };
         this._len = new_len;
         return option::Option[T]::Some(value);
     }
@@ -247,10 +247,10 @@ impl Vec[T] {
         }
         let last: usize = this._len -% (1 as usize);
         let slot: *T = { this._ptr + at };
-        let value: T = { *slot };
+        let value: T = { #take::[T](slot) };
         if at != last {
             let last_slot: *T = { this._ptr + last };
-            { *slot = *last_slot; }
+            { *slot = #take::[T](last_slot); }
         }
         this._len = last;
         return option::Option[T]::Some(value);
@@ -263,13 +263,13 @@ impl Vec[T] {
             return option::Option[T]::None;
         }
         let slot: *T = { this._ptr + at };
-        let value: T = { *slot };
+        let value: T = { #take::[T](slot) };
         let last: usize = this._len -% (1 as usize);
         var i: usize = at;
         while i < last {
             let dst: *T = { this._ptr + i };
             let src: *T = { this._ptr + (i +% (1 as usize)) };
-            { *dst = *src; }
+            { *dst = #take::[T](src); }
             i = i +% (1 as usize);
         }
         this._len = last;
