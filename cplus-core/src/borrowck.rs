@@ -4410,6 +4410,49 @@ impl<'a> ViewRules<'a> {
         );
     }
 
+    /// bugs/e0365-catches-the-return-but-not-the-assignment.md, third round
+    /// — the escape that is neither a `return` nor an assignment: handing
+    /// the capturing value to a CALL that keeps it.
+    ///
+    /// ```text
+    /// find("list").add_child(clickable(b).on_click(w.on_click));
+    /// ```
+    ///
+    /// `add_child` puts the node in a retained tree, which outlives the
+    /// frame exactly as a `static` does. Nothing in either function is wrong
+    /// on its own — the callee stores a PARAMETER, which is how every
+    /// registry works — so the violation exists only across the pair, and
+    /// the callee is often reached through a fn-pointer static no analysis
+    /// can trace.
+    ///
+    /// So this does not try to prove the callee keeps it. It refuses to hand
+    /// a frame-local's address across a call boundary at all, which is
+    /// over-approximate and, measured across every vendor package and
+    /// example, costs nothing: real code binds a handler to `this` or to a
+    /// field, and the ownership gate passes both.
+    ///
+    /// What does NOT fire is the binding site itself. `take_handler(c.clicked)`
+    /// has a bare bound reference as its argument, and whether the RESULT
+    /// carries the address is a property of the callee — the classifier
+    /// finds a capture only once the value in hand already carries one.
+    /// That is what keeps ordinary composition legal.
+    fn check_capture_arg(&mut self, arg: &Expr) {
+        let Some(root) = self
+            .capture_sources(arg)
+            .into_iter()
+            .find(|r| self.capture_root_dies(r))
+        else {
+            return;
+        };
+        self.err(
+            "E0365",
+            format!(
+                "passing a value that captures the address of `{root}` to a call: `{root}` is a local, so if the callee keeps the value — a registry, a retained view tree, a static — the handler bound to `{root}` would point at a stack slot freed when this function returns. Give `{root}` storage that outlives the call — a field of `this`, a `static`, or a `Box`"
+            ),
+            arg.span,
+        );
+    }
+
     fn check_capture_return(&mut self, e: &Expr) {
         let roots = self.capture_sources(e);
         if roots.is_empty() {
@@ -4638,6 +4681,15 @@ impl<'a> ViewRules<'a> {
                     BTreeSet::new()
                 };
                 self.set_roots(n, roots);
+            }
+            // The third escape sink. Every argument leaves the frame if the
+            // callee keeps it, so each is asked before it is descended into.
+            ExprKind::Call { callee, args, .. } => {
+                self.walk_expr(callee);
+                for a in args {
+                    self.check_capture_arg(a);
+                    self.walk_expr(a);
+                }
             }
             _ => walk_expr_children(e, &mut |c| self.walk_expr(c)),
         }
@@ -10192,6 +10244,34 @@ fn mk() -> LStr { return LStr { ptr: { 0 as *u8 }, len: { 0 as usize }, cap: { 0
                 "[{name}] must not be denied, got {codes:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_capture_handed_to_a_call_is_denied_e0365() {
+        // The callee may be a registry or a retained tree; nothing here can
+        // prove it is not, and the pair is where the violation lives.
+        let codes = check_src(&format!(
+            "{CAPTURE_PRELUDE}fn hand_over() {{ var c: Child = Child {{ clicks: 0 }}; \
+             sink(take_handler(c.clicked)); return; }}"
+        ));
+        assert!(
+            codes.iter().any(|c| c == "E0365"),
+            "expected E0365 on the call argument, got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn a_capture_of_caller_owned_storage_handed_to_a_call_stays_clean() {
+        // `this` is the caller's, so it outlives the call — the gate is the
+        // whole reason this sink costs nothing in real code.
+        let codes = check_src(&format!(
+            "{CAPTURE_PRELUDE}impl Child {{ fn hand(ref this) {{ \
+             sink(take_handler(this.clicked)); return; }} }}"
+        ));
+        assert!(
+            !codes.iter().any(|c| c == "E0365"),
+            "a handler bound to `this` must not be denied, got {codes:?}"
+        );
     }
 
     #[test]
