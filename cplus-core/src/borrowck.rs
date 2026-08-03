@@ -4369,6 +4369,47 @@ impl<'a> ViewRules<'a> {
     /// local.build()`, where `build` binds a reference to its own receiver.
     /// The second is the documented component-composition shape, and the
     /// one that actually shipped broken.
+    /// bugs/e0365-catches-the-return-but-not-the-assignment.md — the same
+    /// rule, applied where the value leaves the frame by ASSIGNMENT. The
+    /// first cut was written about the returned EXPRESSION, so every other
+    /// way out was open: a `static`, a field reached through a `ref`
+    /// parameter, anything the frame does not own. The escape is identical,
+    /// and it is the one a component tree invites, because composing a child
+    /// as a local and hanging its node somewhere is the obvious way to write
+    /// a widget.
+    ///
+    /// Same destination set as `check_store_escape` — a `static`, or a
+    /// `ref` / `ref this` target aliasing the caller's storage — and the
+    /// same ownership gate on the captured root, so storing a child held in
+    /// a FIELD stays legal while a local does not.
+    fn check_capture_store(&mut self, target: &Expr, value: &Expr) {
+        let Some(troot_raw) = Self::place_root(target) else {
+            return;
+        };
+        let troot = Self::canonical(&troot_raw).to_string();
+        let target_is_static = self.statics.contains_key(&troot);
+        if !(target_is_static || self.ref_targets.contains(&troot)) {
+            return;
+        }
+        let roots = self.capture_sources(value);
+        let Some(root) = roots.first().cloned() else {
+            return;
+        };
+        let dest = if target_is_static {
+            format!("static `{troot}`")
+        } else {
+            format!("`ref` target `{troot_raw}`")
+        };
+        let via = self.carried_out_by(&root, &Self::expr_names(value));
+        self.err(
+            "E0365",
+            format!(
+                "storing a value that captures the address of `{root}`{via} into {dest}: `{root}` is a local, so a handler bound to it would point at a stack slot that is freed when this function returns, while {dest} outlives it. Give it storage that outlives the stored value — a field of `this`, a `static`, or a `Box`"
+            ),
+            value.span,
+        );
+    }
+
     fn check_capture_return(&mut self, e: &Expr) {
         let roots = self.capture_sources(e);
         if roots.is_empty() {
@@ -4581,6 +4622,7 @@ impl<'a> ViewRules<'a> {
                 }
                 self.check_store_escape(target, value);
                 self.check_raw_store(target, value);
+                self.check_capture_store(target, value);
                 if self.place_ty(target).as_ref().is_some_and(Self::is_view_ty) {
                     self.check_view_of_temp(value);
                 }
@@ -10095,6 +10137,61 @@ fn mk() -> LStr { return LStr { ptr: { 0 as *u8 }, len: { 0 as usize }, cap: { 0
             codes.iter().any(|c| c == "E0365"),
             "expected E0365 through the transitive capture, got {codes:?}"
         );
+    }
+
+    #[test]
+    fn stored_capture_of_a_local_denied_e0365() {
+        // The escape that is not a `return`: a `static`, or a `ref` target
+        // aliasing the caller's storage. Both outlive the frame, so both
+        // read the stack slot after it is gone.
+        let cases: &[(&str, &str)] = &[
+            (
+                "static_direct",
+                "fn stash() { var c: Child = Child { clicks: 0 }; \
+                 SLOT = take_handler(c.clicked); return; }",
+            ),
+            (
+                "static_transitive",
+                "fn stash() { var c: Child = Child { clicks: 0 }; SLOT = c.build(); return; }",
+            ),
+            (
+                "ref_param",
+                "fn stash(ref out: i32) { var c: Child = Child { clicks: 0 }; \
+                 out = take_handler(c.clicked); return; }",
+            ),
+        ];
+        for (name, tail) in cases {
+            let codes = check_src(&format!("{CAPTURE_PRELUDE}{tail}"));
+            assert!(
+                codes.iter().any(|c| c == "E0365"),
+                "[{name}] expected E0365, got {codes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn stored_capture_that_outlives_nothing_stays_clean() {
+        // A destination that dies with the frame outlives nothing, and a
+        // handler bound to `this` points at caller-owned storage. Over-firing
+        // on either would reject the ordinary way to build a node.
+        let clean: &[(&str, &str)] = &[
+            (
+                "local_destination",
+                "fn build_it() { var c: Child = Child { clicks: 0 }; \
+                 var n: i32 = 0; n = take_handler(c.clicked); return; }",
+            ),
+            (
+                "bound_to_this_into_a_static",
+                "impl Child { fn stash(ref this) { SLOT = take_handler(this.clicked); return; } }",
+            ),
+        ];
+        for (name, tail) in clean {
+            let codes = check_src(&format!("{CAPTURE_PRELUDE}{tail}"));
+            assert!(
+                !codes.iter().any(|c| c == "E0365"),
+                "[{name}] must not be denied, got {codes:?}"
+            );
+        }
     }
 
     #[test]
