@@ -974,7 +974,7 @@ fn keep(b: B) -> B { return b; }
 fn main() -> i32 { return 0; }
 ```
 
-**Fix.** Take the value by value (`take`) so the callee owns it, or `.clone()` it; return an owned value rather than a borrow.
+**Fix.** Take the value by value (`take`) so the callee owns it, or `.clone()` it; return an owned value rather than a borrow. For the raw-pointer case in a container — reading a value OUT of storage the container owns and then disarming the source so it is never dropped twice — use `#take::[T](p)`, which states that ownership transfers here; the analysis cannot see the disarm, so it is declared, the same way `opaque` (E0510) and `#[keeps]` (E0516) declare at the raw seam.
 
 <sub>repro: checked · cplus-core/src/sema.rs:11226 · test cplus-core/src/sema.rs:return_borrow_marker_param_rejected_e0337</sub>
 

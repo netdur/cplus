@@ -736,7 +736,7 @@ verified = true
 emit_site = "cplus-core/src/sema.rs:11226"
 test = "cplus-core/src/sema.rs:return_borrow_marker_param_rejected_e0337"
 cause = "A bare (read-only borrow) parameter, a raw-pointer dereference, or a value matched out of a borrow is made to outlive the call — returned, stored in a field, or re-passed to a `take` parameter. The borrow has no owner to keep its storage alive past the call."
-fix = "Take the value by value (`take`) so the callee owns it, or `.clone()` it; return an owned value rather than a borrow."
+fix = "Take the value by value (`take`) so the callee owns it, or `.clone()` it; return an owned value rather than a borrow. For the raw-pointer case in a container — reading a value OUT of storage the container owns and then disarming the source so it is never dropped twice — use `#take::[T](p)`, which states that ownership transfers here; the analysis cannot see the disarm, so it is declared, the same way `opaque` (E0510) and `#[keeps]` (E0516) declare at the raw seam."
 example = '''
 struct B { x: i32 }
 impl B { fn drop(ref this) {} }
