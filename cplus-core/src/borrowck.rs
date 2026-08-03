@@ -5050,10 +5050,11 @@ fn collect_view_diagnostics(
 // ---------------------------------------------------------------------------
 
 /// Transition hook (issue-07): the `(code, span)` pairs the definition-site
-/// view rules produce for this program. Sema keeps detecting the same family
-/// for one release and asserts, in debug builds, that everything it would
-/// have denied appears here — the safety net for moving a live rule family
-/// between passes. Goes away with the assert.
+/// rules produce for this program — the view family in steps 2-4, the
+/// capture family (E0365) in step 5. Sema keeps detecting the family being
+/// moved for one release and asserts, in debug builds, that everything it
+/// would have denied appears here — the safety net for moving a live rule
+/// family between passes. Goes away with the assert.
 pub fn view_findings(prog: &Program) -> Vec<(&'static str, Span)> {
     let oracle = CopyOracle::build(prog);
     let mut sigs = SigTable::collect(prog, &oracle);
@@ -10302,13 +10303,23 @@ fn mk() -> LStr { return LStr { ptr: { 0 as *u8 }, len: { 0 as usize }, cap: { 0
                  var n: i32 = take_handler(c.clicked); return n; }",
             ),
             (
+                // The false-positive guard that matters most after widening:
+                // a local child that binds NO handler is pure composition,
+                // and it has the same call shape as the real hazard.
                 "child_binds_no_handler",
                 "struct Quiet { n: i32 }\n\
                  impl Quiet {\n\
                    fn new() -> Quiet { return Quiet { n: 1 }; }\n\
                    fn build(ref this) -> i32 { return this.n; }\n\
                  }\n\
-                 fn make() -> i32 { var q: Quiet = Quiet::new(); return q.build(); }",
+                 struct Bag { n: i32 }\n\
+                 impl Bag {\n\
+                   fn new() -> Bag { return Bag { n: 0 }; }\n\
+                   fn add(ref this, v: i32) { this.n = this.n + v; return; }\n\
+                 }\n\
+                 fn wrap(b: Bag) -> i32 { return b.n; }\n\
+                 fn make() -> i32 { var bag: Bag = Bag::new(); var q: Quiet = Quiet::new(); \
+                 bag.add(q.build()); return wrap(bag); }",
             ),
         ];
         for (name, tail) in clean {

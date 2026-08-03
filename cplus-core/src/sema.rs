@@ -1024,6 +1024,7 @@ fn check_with_files_inner(
         bound_method_refs: HashMap::new(),
         receiver_capturing: std::collections::HashSet::new(),
         capture_taint: HashMap::new(),
+        capture_findings: Vec::new(),
         method_defaults: HashMap::new(),
         default_splices: HashMap::new(),
         bound_ref_arg_spans: std::collections::HashSet::new(),
@@ -1149,6 +1150,24 @@ fn check_with_files_inner(
     cx.lint_generic_fn_bodies(program);
     cx.check_functions(program);
     cx.check_methods(program);
+    // issue-07 step 5 transition: E0365 moved to borrowck, which already
+    // owns the rest of the escape family and runs the walk these sinks hang
+    // off. Sema still DETECTS the capture family for one release and reports
+    // nothing; this checks, in debug builds, that borrowck denied everything
+    // sema would have. It only asks on a program sema found otherwise
+    // well-typed — after a type error sema's receiver types are `Ty::Error`
+    // and the classifier says nothing useful. Goes away with the detection.
+    #[cfg(debug_assertions)]
+    if !cx.sink.has_errors() && !cx.capture_findings.is_empty() {
+        let found = crate::borrowck::view_findings(program);
+        for (code, span) in &cx.capture_findings {
+            assert!(
+                found.iter().any(|(c, s)| c == code && s == span),
+                "issue-07 step 5: sema would have denied {code} at {span:?}, borrowck did not \
+                 (borrowck found {found:?}) — the port lost a shape"
+            );
+        }
+    }
     // v0.0.10 Phase 1: `#[no_alloc]` real-time contract.
     // Walks every `#[no_alloc]`-marked function's body, resolves direct
     // callee names, and rejects calls into the allocator blocklist or
@@ -1512,6 +1531,11 @@ struct SemaCx<'a> {
     /// Five live instances of that shape in iris compiled clean. Cleared at
     /// each function/method body.
     capture_taint: HashMap<String, Vec<String>>,
+    /// issue-07 step 5 transition: capture-family denials sema still DETECTS
+    /// but no longer reports — borrowck owns E0365 now. Checked against
+    /// borrowck's answer by a debug-build assertion, for one release. Both
+    /// this and the detection go with the assert.
+    capture_findings: Vec<(&'static str, ByteSpan)>,
     /// Arg spans validated as bound references — `check_arg_with_move`
     /// skips them (as Field exprs they would fail "unknown field").
     bound_ref_arg_spans: std::collections::HashSet<ByteSpan>,
@@ -2863,48 +2887,9 @@ impl SemaCx<'_> {
     /// fine. That is why storing the child in a FIELD (`this.child.build()`)
     /// is accepted while a local is not.
     fn flag_escaping_local_receivers(&mut self, e: &Expr) {
-        let roots = self.capture_sources(e);
-        if roots.is_empty() {
-            return;
+        for _ in self.capture_sources(e) {
+            self.capture_findings.push(("E0365", e.span));
         }
-        let named = Self::expr_names(e);
-        for root in roots {
-            // Name the binding that carried it out, when the escape is indirect
-            // — otherwise the span points at a `return` that never mentions the
-            // offending local and the message reads like a non-sequitur.
-            let via = if named.contains(&root) {
-                String::new()
-            } else {
-                match self
-                    .capture_taint
-                    .iter()
-                    .find(|(h, v)| v.contains(&root) && named.contains(*h))
-                {
-                    Some((holder, _)) => format!(" (carried out by `{holder}`)"),
-                    None => String::new(),
-                }
-            };
-            self.err(
-                "E0365",
-                format!(
-                    "returning a value that captures the address of `{root}`{via}: it is a local, so a handler bound to it would point at a stack slot that is freed when this function returns. Give it storage that outlives the returned value — a field of `this`, a `static`, or a `Box`"
-                ),
-                e.span,
-            );
-        }
-    }
-
-    /// Every identifier named anywhere in `e`. Used only to phrase the E0365
-    /// message: it tells a direct escape from one carried out through another
-    /// binding, so the diagnostic can name the carrier.
-    fn expr_names(e: &Expr) -> std::collections::HashSet<String> {
-        let mut out = std::collections::HashSet::new();
-        crate::sema::walk_expr_tree(e, &mut |x: &Expr| {
-            if let ExprKind::Ident(n) = &x.kind {
-                out.insert(n.clone());
-            }
-        });
-        out
     }
 
     /// The local whose address `e` carries, if any — either because `e` takes a
@@ -15652,37 +15637,8 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         if !(target_is_static || target_is_ref) {
             return;
         }
-        let roots = self.capture_sources(value);
-        if roots.is_empty() {
-            return;
-        }
-        let named = Self::expr_names(value);
-        let dest = if target_is_static {
-            format!("static `{troot}`")
-        } else {
-            format!("`ref` target `{troot}`")
-        };
-        for root in roots {
-            let via = if named.contains(&root) {
-                String::new()
-            } else {
-                match self
-                    .capture_taint
-                    .iter()
-                    .find(|(h, v)| v.contains(&root) && named.contains(*h))
-                {
-                    Some((holder, _)) => format!(" (carried out by `{holder}`)"),
-                    None => String::new(),
-                }
-            };
-            self.err(
-                "E0365",
-                format!(
-                    "storing a value that captures the address of `{root}`{via} into {dest}: `{root}` is a local, so a handler bound to it would point at a stack slot that is freed when this function returns, while {dest} outlives it. Give it storage that outlives the stored value — a field of `this`, a `static`, or a `Box`"
-                ),
-                value.span,
-            );
-            break;
+        if !self.capture_sources(value).is_empty() {
+            self.capture_findings.push(("E0365", value.span));
         }
     }
 
@@ -15721,13 +15677,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             if !info.owns_value {
                 continue;
             }
-            self.err(
-                "E0365",
-                format!(
-                    "passing a value that captures the address of `{root}` to a call: `{root}` is a local, so if the callee keeps the value — a registry, a retained view tree, a static — the handler bound to `{root}` would point at a stack slot freed when this function returns. Give `{root}` storage that outlives the call — a field of `this`, a `static`, or a `Box`"
-                ),
-                arg.span,
-            );
+            self.capture_findings.push(("E0365", arg.span));
             break;
         }
     }
@@ -21136,351 +21086,6 @@ fn main() -> i32 {\n\
         assert!(
             !ds.iter().any(|d| d.code.0 == "E0361" || d.code.0 == "E0362"),
             "expected no observer diagnostics; got {:?}",
-            codes_of(&ds)
-        );
-    }
-
-    // ---- E0365: returning a value that captured a local's address ----
-    //
-    // bugs/facet-component-local-child-dangling-receiver.md. The facet shape
-    // is `var child = Child::new(); return child.build();` where `build` binds
-    // an instance handler: the returned node stores `&child`, which dies with
-    // the frame. It did not crash reliably — a handler that never reads a
-    // field just made the control do nothing — so it went undiagnosed.
-
-    const E0365_PRELUDE: &str = "struct Child { clicks: i32 }\n\
-         impl Child {\n\
-           fn clicked(ref this) { this.clicks = this.clicks + 1; return; }\n\
-           fn build(ref this) -> i32 { return take_handler(this.clicked); }\n\
-         }\n\
-         fn take_handler(f: fn(*u8), ctx: *u8 = 0 as *u8) -> i32 { return 1; }\n";
-
-    #[test]
-    fn returning_bound_handler_on_local_is_e0365() {
-        let ds = check_src(&format!(
-            "{E0365_PRELUDE}\
-             fn make() -> i32 {{ var c: Child = Child {{ clicks: 0 }}; return take_handler(c.clicked); }}\n\
-             fn main() -> i32 {{ return 0; }}"
-        ));
-        assert!(
-            ds.iter().any(|d| d.code.0 == "E0365"),
-            "expected E0365; got {:?}",
-            codes_of(&ds)
-        );
-    }
-
-    #[test]
-    fn returning_capturing_call_on_local_is_e0365() {
-        // The transitive form — the binding happens inside the callee, which is
-        // why a call-site-only check could not see it and why the capture set
-        // is precomputed.
-        let ds = check_src(&format!(
-            "{E0365_PRELUDE}\
-             fn make() -> i32 {{ var c: Child = Child {{ clicks: 0 }}; return c.build(); }}\n\
-             fn main() -> i32 {{ return 0; }}"
-        ));
-        assert!(
-            ds.iter().any(|d| d.code.0 == "E0365"),
-            "expected E0365; got {:?}",
-            codes_of(&ds)
-        );
-    }
-
-    // REOPENED again 2026-07-30
-    // (bugs/e0365-catches-the-return-but-not-the-assignment.md): the rule was
-    // written about the RETURNED expression, so every other way out of the
-    // frame was open. Assignment into a `static` is the same escape one
-    // keystroke away, and it is the one a component tree invites.
-
-    #[test]
-    fn storing_a_captured_local_into_a_static_is_e0365() {
-        let ds = check_src(&format!(
-            "{E0365_PRELUDE}\
-             static SLOT: i32 = 0;\n\
-             fn stash() {{ var c: Child = Child {{ clicks: 0 }}; SLOT = take_handler(c.clicked); return; }}\n\
-             fn main() -> i32 {{ return 0; }}"
-        ));
-        assert!(
-            ds.iter().any(|d| d.code.0 == "E0365"),
-            "expected E0365 on the static store; got {:?}",
-            codes_of(&ds)
-        );
-    }
-
-    #[test]
-    fn storing_a_transitively_captured_local_into_a_static_is_e0365() {
-        // The callee-binds form, through the assignment path.
-        let ds = check_src(&format!(
-            "{E0365_PRELUDE}\
-             static SLOT: i32 = 0;\n\
-             fn stash() {{ var c: Child = Child {{ clicks: 0 }}; SLOT = c.build(); return; }}\n\
-             fn main() -> i32 {{ return 0; }}"
-        ));
-        assert!(
-            ds.iter().any(|d| d.code.0 == "E0365"),
-            "expected E0365; got {:?}",
-            codes_of(&ds)
-        );
-    }
-
-    #[test]
-    fn storing_a_captured_local_into_a_ref_param_is_e0365() {
-        // A `ref` target aliases the CALLER's storage, so it outlives this
-        // frame exactly as a static does — the same destination set
-        // `check_view_store_escape` already uses.
-        let ds = check_src(&format!(
-            "{E0365_PRELUDE}\
-             fn stash(ref out: i32) {{ var c: Child = Child {{ clicks: 0 }}; out = take_handler(c.clicked); return; }}\n\
-             fn main() -> i32 {{ return 0; }}"
-        ));
-        assert!(
-            ds.iter().any(|d| d.code.0 == "E0365"),
-            "expected E0365 on the ref-param store; got {:?}",
-            codes_of(&ds)
-        );
-    }
-
-    #[test]
-    fn storing_a_captured_local_into_a_local_is_fine() {
-        // The destination dies with the frame too, so nothing outlives
-        // anything. Over-firing here would reject the ordinary way to build a
-        // node before returning it.
-        let ds = check_src(&format!(
-            "{E0365_PRELUDE}\
-             fn build_it() {{ var c: Child = Child {{ clicks: 0 }}; var n: i32 = take_handler(c.clicked); return; }}\n\
-             fn main() -> i32 {{ return 0; }}"
-        ));
-        assert!(
-            !ds.iter().any(|d| d.code.0 == "E0365"),
-            "local destination must not fire E0365; got {:?}",
-            codes_of(&ds)
-        );
-    }
-
-    #[test]
-    fn storing_a_handler_bound_to_this_into_a_static_is_fine() {
-        // `this` is caller-owned storage, not frame-dying — the `owns_value`
-        // gate is what keeps a field-held child legal while a local is not.
-        let ds = check_src(
-            "struct Screen {{ n: i32 }}\n\
-             impl Screen {{\n\
-               fn clicked(ref this) {{ this.n = this.n + 1; return; }}\n\
-               fn stash(ref this) {{ SLOT = take_handler(this.clicked); return; }}\n\
-             }}\n\
-             fn take_handler(f: fn(*u8), ctx: *u8 = 0 as *u8) -> i32 {{ return 1; }}\n\
-             static SLOT: i32 = 0;\n\
-             fn main() -> i32 {{ return 0; }}"
-                .replace("{{", "{")
-                .replace("}}", "}")
-                .as_str(),
-        );
-        assert!(
-            !ds.iter().any(|d| d.code.0 == "E0365"),
-            "a handler bound to `this` must not fire E0365; got {:?}",
-            codes_of(&ds)
-        );
-    }
-
-    // THIRD ROUND 2026-07-30: the escape that is neither return nor assignment
-    // — handing the capturing value to a call that keeps it. Measured to cost
-    // nothing: zero hits across every vendor package and example, because real
-    // code binds handlers to `this` or a field.
-
-    #[test]
-    fn passing_a_captured_local_to_a_call_is_e0365() {
-        let ds = check_src(&format!(
-            "{E0365_PRELUDE}\
-             fn sink(v: i32) {{ return; }}\n\
-             fn hand_over() {{ var c: Child = Child {{ clicks: 0 }}; sink(take_handler(c.clicked)); return; }}\n\
-             fn main() -> i32 {{ return 0; }}"
-        ));
-        assert!(
-            ds.iter().any(|d| d.code.0 == "E0365"),
-            "expected E0365 on the call argument; got {:?}",
-            codes_of(&ds)
-        );
-    }
-
-    #[test]
-    fn binding_a_handler_to_a_local_is_still_fine() {
-        // THE LINE THIS MUST NOT CROSS. `take_handler(c.clicked)` is the
-        // BINDING site: whether its result carries the address is a property of
-        // the callee, so a bare bound reference as an argument does not fire.
-        // Rejecting this would reject every handler in every component.
-        let ds = check_src(&format!(
-            "{E0365_PRELUDE}\
-             fn build_it() {{ var c: Child = Child {{ clicks: 0 }}; var n: i32 = take_handler(c.clicked); return; }}\n\
-             fn main() -> i32 {{ return 0; }}"
-        ));
-        assert!(
-            !ds.iter().any(|d| d.code.0 == "E0365"),
-            "binding a handler to a local must stay legal; got {:?}",
-            codes_of(&ds)
-        );
-    }
-
-    #[test]
-    fn passing_a_handler_bound_to_this_to_a_call_is_fine() {
-        // `this` is caller-owned, so it outlives the call — the `owns_value`
-        // gate is the whole reason this check costs nothing in real code.
-        let ds = check_src(
-            "struct Screen { n: i32 }\n\
-             impl Screen {\n\
-               fn clicked(ref this) { this.n = this.n + 1; return; }\n\
-               fn hand(ref this) { sink(take_handler(this.clicked)); return; }\n\
-             }\n\
-             fn take_handler(f: fn(*u8), ctx: *u8 = 0 as *u8) -> i32 { return 1; }\n\
-             fn sink(v: i32) { return; }\n\
-             fn main() -> i32 { return 0; }",
-        );
-        assert!(
-            !ds.iter().any(|d| d.code.0 == "E0365"),
-            "a handler bound to `this` must not fire; got {:?}",
-            codes_of(&ds)
-        );
-    }
-
-    #[test]
-    fn capture_escaping_through_a_local_builder_is_e0365() {
-        // REOPENED 2026-07-27. The first cut only inspected the returned
-        // expression, so it caught `return c.build()` but missed the shape
-        // facet actually uses — the capture reaches the return through a
-        // builder local. Five sites in iris compiled clean.
-        let ds = check_src(&format!(
-            "{E0365_PRELUDE}\
-             struct Bag {{ n: i32 }}\n\
-             impl Bag {{\n\
-               fn new() -> Bag {{ return Bag {{ n: 0 }}; }}\n\
-               fn add(ref this, v: i32) {{ this.n = this.n + v; return; }}\n\
-             }}\n\
-             fn wrap(b: Bag) -> i32 {{ return b.n; }}\n\
-             fn make() -> i32 {{\n\
-               var bag: Bag = Bag::new();\n\
-               var c: Child = Child {{ clicks: 0 }};\n\
-               bag.add(c.build());\n\
-               return wrap(bag);\n\
-             }}\n\
-             fn main() -> i32 {{ return 0; }}"
-        ));
-        assert!(
-            ds.iter().any(|d| d.code.0 == "E0365"),
-            "expected E0365 through the builder local; got {:?}",
-            codes_of(&ds)
-        );
-    }
-
-    #[test]
-    fn capture_through_a_transitively_capturing_method_is_e0365() {
-        // The capture set is a fixpoint: `outer` binds nothing itself, it just
-        // returns `this.inner()`, which does the binding. Without the fixpoint
-        // only directly-binding methods were known, which is why iris's
-        // ViewSwitcher (binds in `picker`, composed in `build`) was missed.
-        let ds = check_src(
-            "struct Child {{ clicks: i32 }}\n\
-             impl Child {{\n\
-               fn clicked(ref this) {{ this.clicks = this.clicks + 1; return; }}\n\
-               fn inner(ref this) -> i32 {{ return take_handler(this.clicked); }}\n\
-               fn outer(ref this) -> i32 {{ return this.inner(); }}\n\
-             }}\n\
-             fn take_handler(f: fn(*u8), ctx: *u8 = 0 as *u8) -> i32 {{ return 1; }}\n\
-             fn make() -> i32 {{ var c: Child = Child {{ clicks: 0 }}; return c.outer(); }}\n\
-             fn main() -> i32 {{ return 0; }}"
-                .replace("{{", "{")
-                .replace("}}", "}")
-                .as_str(),
-        );
-        assert!(
-            ds.iter().any(|d| d.code.0 == "E0365"),
-            "expected E0365 through the transitive capture; got {:?}",
-            codes_of(&ds)
-        );
-    }
-
-    #[test]
-    fn non_capturing_local_child_through_builder_is_clean() {
-        // The false-positive guard that matters most after widening: a local
-        // child that binds NO handler is pure view composition and must stay
-        // legal. In iris this is ProjectBadge / BuildStatus — they have the
-        // exact same call shape as the two real hazards and are safe.
-        let ds = check_src(
-            "struct Quiet { n: i32 }\n\
-             impl Quiet {\n\
-               fn new() -> Quiet { return Quiet { n: 1 }; }\n\
-               fn build(ref this) -> i32 { return this.n; }\n\
-             }\n\
-             struct Bag { n: i32 }\n\
-             impl Bag {\n\
-               fn new() -> Bag { return Bag { n: 0 }; }\n\
-               fn add(ref this, v: i32) { this.n = this.n + v; return; }\n\
-             }\n\
-             fn wrap(b: Bag) -> i32 { return b.n; }\n\
-             fn make() -> i32 {\n\
-               var bag: Bag = Bag::new();\n\
-               var q: Quiet = Quiet::new();\n\
-               bag.add(q.build());\n\
-               return wrap(bag);\n\
-             }\n\
-             fn main() -> i32 { return 0; }",
-        );
-        assert!(
-            !ds.iter().any(|d| d.code.0 == "E0365"),
-            "a child that binds no handler must stay legal; got {:?}",
-            codes_of(&ds)
-        );
-    }
-
-    #[test]
-    fn returning_capturing_call_on_field_is_clean() {
-        // The CORRECT pattern: the child lives in a field of `this`, which is
-        // caller-owned storage that outlives the returned value. This is the
-        // false-positive guard — if it ever fires, the check has become
-        // useless in practice.
-        let ds = check_src(&format!(
-            "{E0365_PRELUDE}\
-             struct Parent {{ child: Child }}\n\
-             impl Parent {{ fn build(ref this) -> i32 {{ return this.child.build(); }} }}\n\
-             fn main() -> i32 {{ return 0; }}"
-        ));
-        assert!(
-            !ds.iter().any(|d| d.code.0 == "E0365"),
-            "a field-stored child must be accepted; got {:?}",
-            codes_of(&ds)
-        );
-    }
-
-    #[test]
-    fn returning_capturing_call_on_static_is_clean() {
-        // A `static` outlives everything; binding to it is sound.
-        let ds = check_src(&format!(
-            "{E0365_PRELUDE}\
-             static GLOBAL_CHILD: Child = Child {{ clicks: 0 }};\n\
-             fn make() -> i32 {{ return GLOBAL_CHILD.build(); }}\n\
-             fn main() -> i32 {{ return 0; }}"
-        ));
-        assert!(
-            !ds.iter().any(|d| d.code.0 == "E0365"),
-            "a static receiver must be accepted; got {:?}",
-            codes_of(&ds)
-        );
-    }
-
-    #[test]
-    fn local_bound_handler_not_returned_is_clean() {
-        // Binding a handler to a local is only a problem when it ESCAPES. Used
-        // and dropped within the frame, it is fine — banning it outright would
-        // reject every synchronous callback.
-        let ds = check_src(&format!(
-            "{E0365_PRELUDE}\
-             fn run() -> i32 {{\n\
-               var c: Child = Child {{ clicks: 0 }};\n\
-               let n: i32 = take_handler(c.clicked);\n\
-               return n;\n\
-             }}\n\
-             fn main() -> i32 {{ return 0; }}"
-        ));
-        assert!(
-            !ds.iter().any(|d| d.code.0 == "E0365"),
-            "a non-escaping local binding must be accepted; got {:?}",
             codes_of(&ds)
         );
     }
