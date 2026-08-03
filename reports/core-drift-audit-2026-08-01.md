@@ -137,6 +137,17 @@
 > are the audit's recurring shape: a rule and its only real consumer drifted apart with
 > no pass in between.
 >
+> Following that through to the end (`eb02e37`): the hash containers now DECLARE the
+> bounds their bodies always required, which closes the E0324 class, and the E0306 pair
+> reduced to **bug-30** — `expr_can_break` treated every unnamed expression kind as able
+> to break, and intrinsics were unnamed, so ANY intrinsic inside a `loop` made the
+> enclosing function demand an unreachable `return`. Eight lines, no generics, fails on
+> the pre-port binary too; it survived because nothing in the tree was written that way
+> outside a generic body nothing checked. issue-18's remaining diagnostics were also
+> re-measured honestly (a per-file delta, not whole output, which had mixed in errors
+> those files produce out of package context anyway). **One class is left: E0337 in the
+> raw-pointer containers**, and it is a language question.
+>
 > Not done, and scoped in their own reports: issue-14's migration off the classification
 > fixpoint (its characterization harness is in the tree), issue-03 step 4, issue-08 steps
 > 1 and 3, issue-09 parts (A) and (C), and issue-11 items 1, 2, 3, 5, 7, 8.
