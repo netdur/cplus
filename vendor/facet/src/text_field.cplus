@@ -46,7 +46,7 @@ fn text_field(
     key: str = "",
     clear_button_visibility: vocab::ClearButton = vocab::ClearButton::Never,
     horizontal_text_alignment: vocab::TextAlign = vocab::TextAlign::Center,
-    is_secure: bool = false,
+    secure: bool = false,
     return_type: vocab::ReturnKey = vocab::ReturnKey::Default,
     vertical_text_alignment: vocab::TextAlign = vocab::TextAlign::Center,
     character_spacing: f64 = 0.0f64,
@@ -55,9 +55,9 @@ fn text_field(
     font_auto_scaling_enabled: bool = false,
     font_family: str = "",
     font_size: f64 = 0.0f64,
-    is_read_only: bool = false,
-    is_spell_check_enabled: bool = false,
-    is_text_prediction_enabled: bool = false,
+    read_only: bool = false,
+    spell_check_enabled: bool = false,
+    text_prediction_enabled: bool = false,
     keyboard: vocab::Keyboard = vocab::Keyboard::Default,
     max_length: i64 = 0 as i64,
     placeholder: str = "",
@@ -73,7 +73,7 @@ fn text_field(
     var p: props::TextFieldProps = props::TextFieldProps::new();
     p.clear_button_visibility = clear_button_visibility;
     p.horizontal_text_alignment = horizontal_text_alignment;
-    p.is_secure = is_secure;
+    p.is_secure = secure;
     p.return_type = return_type;
     p.vertical_text_alignment = vertical_text_alignment;
     p.input_view.character_spacing = character_spacing;
@@ -82,9 +82,9 @@ fn text_field(
     p.input_view.font_auto_scaling_enabled = font_auto_scaling_enabled;
     p.input_view.font_family = text::from_str(font_family);
     p.input_view.font_size = font_size;
-    p.input_view.is_read_only = is_read_only;
-    p.input_view.is_spell_check_enabled = is_spell_check_enabled;
-    p.input_view.is_text_prediction_enabled = is_text_prediction_enabled;
+    p.input_view.is_read_only = read_only;
+    p.input_view.is_spell_check_enabled = spell_check_enabled;
+    p.input_view.is_text_prediction_enabled = text_prediction_enabled;
     p.input_view.keyboard = keyboard;
     p.input_view.max_length = max_length;
     p.input_view.placeholder = text::from_str(placeholder);
@@ -145,7 +145,7 @@ impl TextField {
     }
 
     // Entry.IsPassword
-    fn set_is_secure(this, v: bool) -> TextField {
+    fn set_secure(this, v: bool) -> TextField {
         let p: *props::TextFieldProps = this._props();
         if p == (0 as *props::TextFieldProps) { return this; }
         { (*p).is_secure = v };
@@ -226,7 +226,7 @@ impl TextField {
     }
 
     // InputView.IsReadOnly
-    fn set_is_read_only(this, v: bool) -> TextField {
+    fn set_read_only(this, v: bool) -> TextField {
         let p: *props::TextFieldProps = this._props();
         if p == (0 as *props::TextFieldProps) { return this; }
         { (*p).input_view.is_read_only = v };
@@ -235,7 +235,7 @@ impl TextField {
     }
 
     // InputView.IsSpellCheckEnabled
-    fn set_is_spell_check_enabled(this, v: bool) -> TextField {
+    fn set_spell_check_enabled(this, v: bool) -> TextField {
         let p: *props::TextFieldProps = this._props();
         if p == (0 as *props::TextFieldProps) { return this; }
         { (*p).input_view.is_spell_check_enabled = v };
@@ -244,7 +244,7 @@ impl TextField {
     }
 
     // InputView.IsTextPredictionEnabled
-    fn set_is_text_prediction_enabled(this, v: bool) -> TextField {
+    fn set_text_prediction_enabled(this, v: bool) -> TextField {
         let p: *props::TextFieldProps = this._props();
         if p == (0 as *props::TextFieldProps) { return this; }
         { (*p).input_view.is_text_prediction_enabled = v };
@@ -459,9 +459,9 @@ impl TextField {
     // --- the shared band: one-line forwards, no generic element type ---
     fn set_opacity(this, v: f64) -> TextField { core::set_opacity(this._p, v); return this; }
     fn opacity(this) -> f64 { return core::opacity(this._p); }
-    fn set_is_enabled(this, v: bool) -> TextField { core::set_is_enabled(this._p, v); return this; }
+    fn set_enabled(this, v: bool) -> TextField { core::set_enabled(this._p, v); return this; }
     fn is_enabled(this) -> bool { return core::is_enabled(this._p); }
-    fn set_is_visible(this, v: bool) -> TextField { core::set_is_visible(this._p, v); return this; }
+    fn set_visible(this, v: bool) -> TextField { core::set_visible(this._p, v); return this; }
     fn is_visible(this) -> bool { return core::is_visible(this._p); }
     fn set_background_color(this, v: vocab::Color) -> TextField { core::set_background_color(this._p, v); return this; }
     fn background_color(this) -> vocab::Color { return core::background_color(this._p); }

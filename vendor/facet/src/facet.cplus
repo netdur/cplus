@@ -95,7 +95,7 @@ fn opacity(n: *Node) -> f64 {
     return { (*d).common.opacity };
 }
 
-fn set_is_enabled(n: *Node, v: bool) {
+fn set_enabled(n: *Node, v: bool) {
     let d: *Data = node_data(n);
     if d == (0 as *Data) { return; }
     { (*d).common.is_enabled = v };
@@ -109,7 +109,7 @@ fn is_enabled(n: *Node) -> bool {
     return { (*d).common.is_enabled };
 }
 
-fn set_is_visible(n: *Node, v: bool) {
+fn set_visible(n: *Node, v: bool) {
     let d: *Data = node_data(n);
     if d == (0 as *Data) { return; }
     { (*d).common.is_visible = v };

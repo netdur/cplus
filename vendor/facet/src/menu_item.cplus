@@ -27,15 +27,15 @@ fn menu_item(
     text: str,
     key: str = "",
     icon_image_source: str = "",
-    is_destructive: bool = false,
-    is_enabled: bool = false,
+    destructive: bool = false,
+    enabled: bool = false,
     on_clicked: fn(*u8, *u8) = props::no_handler,
     on_clicked_ctx: *u8 = 0 as *u8,
 ) -> core::Node {
     var p: props::MenuItemProps = props::MenuItemProps::new();
     p.icon_image_source = text::from_str(icon_image_source);
-    p.is_destructive = is_destructive;
-    p.is_enabled = is_enabled;
+    p.is_destructive = destructive;
+    p.is_enabled = enabled;
     p.text = text::from_str(text);
     p.on_clicked = on_clicked;
     p.on_clicked_ctx = on_clicked_ctx;
@@ -78,7 +78,7 @@ impl MenuItem {
     }
 
     // MenuItem.IsDestructive
-    fn set_is_destructive(this, v: bool) -> MenuItem {
+    fn set_destructive(this, v: bool) -> MenuItem {
         let p: *props::MenuItemProps = this._props();
         if p == (0 as *props::MenuItemProps) { return this; }
         { (*p).is_destructive = v };
@@ -87,7 +87,7 @@ impl MenuItem {
     }
 
     // MenuItem.IsEnabled
-    fn set_is_enabled(this, v: bool) -> MenuItem {
+    fn set_enabled(this, v: bool) -> MenuItem {
         let p: *props::MenuItemProps = this._props();
         if p == (0 as *props::MenuItemProps) { return this; }
         { (*p).is_enabled = v };
@@ -131,9 +131,9 @@ impl MenuItem {
     // --- the shared band: one-line forwards, no generic element type ---
     fn set_opacity(this, v: f64) -> MenuItem { core::set_opacity(this._p, v); return this; }
     fn opacity(this) -> f64 { return core::opacity(this._p); }
-    fn set_is_enabled(this, v: bool) -> MenuItem { core::set_is_enabled(this._p, v); return this; }
+    fn set_enabled(this, v: bool) -> MenuItem { core::set_enabled(this._p, v); return this; }
     fn is_enabled(this) -> bool { return core::is_enabled(this._p); }
-    fn set_is_visible(this, v: bool) -> MenuItem { core::set_is_visible(this._p, v); return this; }
+    fn set_visible(this, v: bool) -> MenuItem { core::set_visible(this._p, v); return this; }
     fn is_visible(this) -> bool { return core::is_visible(this._p); }
     fn set_background_color(this, v: vocab::Color) -> MenuItem { core::set_background_color(this._p, v); return this; }
     fn background_color(this) -> vocab::Color { return core::background_color(this._p); }

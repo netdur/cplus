@@ -37,7 +37,7 @@ fn time_picker(
     font_family: str = "",
     font_size: f64 = 0.0f64,
     format: str = "",
-    is_open: bool = false,
+    open: bool = false,
     text_color: vocab::Color = vocab::Color::clear(),
     on_closed: fn(*u8, *u8) = props::no_handler,
     on_closed_ctx: *u8 = 0 as *u8,
@@ -53,7 +53,7 @@ fn time_picker(
     p.font_family = text::from_str(font_family);
     p.font_size = font_size;
     p.format = text::from_str(format);
-    p.is_open = is_open;
+    p.is_open = open;
     p.text_color = text_color;
     p.time = time;
     p.on_closed = on_closed;
@@ -146,7 +146,7 @@ impl TimePicker {
     }
 
     // TimePicker.IsOpen
-    fn set_is_open(this, v: bool) -> TimePicker {
+    fn set_open(this, v: bool) -> TimePicker {
         let p: *props::TimePickerProps = this._props();
         if p == (0 as *props::TimePickerProps) { return this; }
         { (*p).is_open = v };
@@ -229,9 +229,9 @@ impl TimePicker {
     // --- the shared band: one-line forwards, no generic element type ---
     fn set_opacity(this, v: f64) -> TimePicker { core::set_opacity(this._p, v); return this; }
     fn opacity(this) -> f64 { return core::opacity(this._p); }
-    fn set_is_enabled(this, v: bool) -> TimePicker { core::set_is_enabled(this._p, v); return this; }
+    fn set_enabled(this, v: bool) -> TimePicker { core::set_enabled(this._p, v); return this; }
     fn is_enabled(this) -> bool { return core::is_enabled(this._p); }
-    fn set_is_visible(this, v: bool) -> TimePicker { core::set_is_visible(this._p, v); return this; }
+    fn set_visible(this, v: bool) -> TimePicker { core::set_visible(this._p, v); return this; }
     fn is_visible(this) -> bool { return core::is_visible(this._p); }
     fn set_background_color(this, v: vocab::Color) -> TimePicker { core::set_background_color(this._p, v); return this; }
     fn background_color(this) -> vocab::Color { return core::background_color(this._p); }

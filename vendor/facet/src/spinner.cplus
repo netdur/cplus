@@ -24,11 +24,11 @@ const P_IS_RUNNING: u64 = 2u64;
 fn spinner(
     color: vocab::Color,
     key: str = "",
-    is_running: bool = false,
+    running: bool = false,
 ) -> core::Node {
     var p: props::SpinnerProps = props::SpinnerProps::new();
     p.color = color;
-    p.is_running = is_running;
+    p.is_running = running;
     return match box::new::[props::SpinnerProps](p) {
         option::Option[box::Box[props::SpinnerProps]]::Some(b) =>
             core::node_with(key, props::K_SPINNER, b.into_raw(), props::release_spinner_props),
@@ -68,7 +68,7 @@ impl Spinner {
     }
 
     // ActivityIndicator.IsRunning
-    fn set_is_running(this, v: bool) -> Spinner {
+    fn set_running(this, v: bool) -> Spinner {
         let p: *props::SpinnerProps = this._props();
         if p == (0 as *props::SpinnerProps) { return this; }
         { (*p).is_running = v };
@@ -91,9 +91,9 @@ impl Spinner {
     // --- the shared band: one-line forwards, no generic element type ---
     fn set_opacity(this, v: f64) -> Spinner { core::set_opacity(this._p, v); return this; }
     fn opacity(this) -> f64 { return core::opacity(this._p); }
-    fn set_is_enabled(this, v: bool) -> Spinner { core::set_is_enabled(this._p, v); return this; }
+    fn set_enabled(this, v: bool) -> Spinner { core::set_enabled(this._p, v); return this; }
     fn is_enabled(this) -> bool { return core::is_enabled(this._p); }
-    fn set_is_visible(this, v: bool) -> Spinner { core::set_is_visible(this._p, v); return this; }
+    fn set_visible(this, v: bool) -> Spinner { core::set_visible(this._p, v); return this; }
     fn is_visible(this) -> bool { return core::is_visible(this._p); }
     fn set_background_color(this, v: vocab::Color) -> Spinner { core::set_background_color(this._p, v); return this; }
     fn background_color(this) -> vocab::Color { return core::background_color(this._p); }

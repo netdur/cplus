@@ -24,15 +24,15 @@ const P_REFRESH_COLOR: u64 = 4u64;
 
 fn refreshable(
     key: str = "",
-    is_refresh_enabled: bool = false,
-    is_refreshing: bool = false,
+    refresh_enabled: bool = false,
+    refreshing: bool = false,
     refresh_color: vocab::Color = vocab::Color::clear(),
     on_refreshing: fn(*u8, *u8) = props::no_handler,
     on_refreshing_ctx: *u8 = 0 as *u8,
 ) -> core::Node {
     var p: props::RefreshableProps = props::RefreshableProps::new();
-    p.is_refresh_enabled = is_refresh_enabled;
-    p.is_refreshing = is_refreshing;
+    p.is_refresh_enabled = refresh_enabled;
+    p.is_refreshing = refreshing;
     p.refresh_color = refresh_color;
     p.on_refreshing = on_refreshing;
     p.on_refreshing_ctx = on_refreshing_ctx;
@@ -66,7 +66,7 @@ impl Refreshable {
     }
 
     // RefreshView.IsRefreshEnabled
-    fn set_is_refresh_enabled(this, v: bool) -> Refreshable {
+    fn set_refresh_enabled(this, v: bool) -> Refreshable {
         let p: *props::RefreshableProps = this._props();
         if p == (0 as *props::RefreshableProps) { return this; }
         { (*p).is_refresh_enabled = v };
@@ -75,7 +75,7 @@ impl Refreshable {
     }
 
     // RefreshView.IsRefreshing
-    fn set_is_refreshing(this, v: bool) -> Refreshable {
+    fn set_refreshing(this, v: bool) -> Refreshable {
         let p: *props::RefreshableProps = this._props();
         if p == (0 as *props::RefreshableProps) { return this; }
         { (*p).is_refreshing = v };
@@ -113,9 +113,9 @@ impl Refreshable {
     // --- the shared band: one-line forwards, no generic element type ---
     fn set_opacity(this, v: f64) -> Refreshable { core::set_opacity(this._p, v); return this; }
     fn opacity(this) -> f64 { return core::opacity(this._p); }
-    fn set_is_enabled(this, v: bool) -> Refreshable { core::set_is_enabled(this._p, v); return this; }
+    fn set_enabled(this, v: bool) -> Refreshable { core::set_enabled(this._p, v); return this; }
     fn is_enabled(this) -> bool { return core::is_enabled(this._p); }
-    fn set_is_visible(this, v: bool) -> Refreshable { core::set_is_visible(this._p, v); return this; }
+    fn set_visible(this, v: bool) -> Refreshable { core::set_visible(this._p, v); return this; }
     fn is_visible(this) -> bool { return core::is_visible(this._p); }
     fn set_background_color(this, v: vocab::Color) -> Refreshable { core::set_background_color(this._p, v); return this; }
     fn background_color(this) -> vocab::Color { return core::background_color(this._p); }

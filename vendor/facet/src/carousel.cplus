@@ -33,10 +33,10 @@ const P_ITEM_SIZING_STRATEGY: u64 = 2048u64;
 
 fn carousel(
     key: str = "",
-    is_bounce_enabled: bool = false,
-    is_scroll_animated: bool = false,
-    is_scrolling: bool = false,
-    is_swipe_enabled: bool = false,
+    bounce_enabled: bool = false,
+    scroll_animated: bool = false,
+    scrolling: bool = false,
+    swipe_enabled: bool = false,
     wraps: bool = false,
     peek_area_insets: vocab::Insets = vocab::Insets::zero(),
     position: i64 = 0 as i64,
@@ -53,10 +53,10 @@ fn carousel(
     on_remaining_items_threshold_reached_ctx: *u8 = 0 as *u8,
 ) -> core::Node {
     var p: props::CarouselProps = props::CarouselProps::new();
-    p.is_bounce_enabled = is_bounce_enabled;
-    p.is_scroll_animated = is_scroll_animated;
-    p.is_scrolling = is_scrolling;
-    p.is_swipe_enabled = is_swipe_enabled;
+    p.is_bounce_enabled = bounce_enabled;
+    p.is_scroll_animated = scroll_animated;
+    p.is_scrolling = scrolling;
+    p.is_swipe_enabled = swipe_enabled;
     p.wraps = wraps;
     p.peek_area_insets = peek_area_insets;
     p.position = position;
@@ -101,7 +101,7 @@ impl Carousel {
     }
 
     // CarouselView.IsBounceEnabled
-    fn set_is_bounce_enabled(this, v: bool) -> Carousel {
+    fn set_bounce_enabled(this, v: bool) -> Carousel {
         let p: *props::CarouselProps = this._props();
         if p == (0 as *props::CarouselProps) { return this; }
         { (*p).is_bounce_enabled = v };
@@ -110,7 +110,7 @@ impl Carousel {
     }
 
     // CarouselView.IsScrollAnimated
-    fn set_is_scroll_animated(this, v: bool) -> Carousel {
+    fn set_scroll_animated(this, v: bool) -> Carousel {
         let p: *props::CarouselProps = this._props();
         if p == (0 as *props::CarouselProps) { return this; }
         { (*p).is_scroll_animated = v };
@@ -119,7 +119,7 @@ impl Carousel {
     }
 
     // CarouselView.IsScrolling
-    fn set_is_scrolling(this, v: bool) -> Carousel {
+    fn set_scrolling(this, v: bool) -> Carousel {
         let p: *props::CarouselProps = this._props();
         if p == (0 as *props::CarouselProps) { return this; }
         { (*p).is_scrolling = v };
@@ -128,7 +128,7 @@ impl Carousel {
     }
 
     // CarouselView.IsSwipeEnabled
-    fn set_is_swipe_enabled(this, v: bool) -> Carousel {
+    fn set_swipe_enabled(this, v: bool) -> Carousel {
         let p: *props::CarouselProps = this._props();
         if p == (0 as *props::CarouselProps) { return this; }
         { (*p).is_swipe_enabled = v };
@@ -301,9 +301,9 @@ impl Carousel {
     // --- the shared band: one-line forwards, no generic element type ---
     fn set_opacity(this, v: f64) -> Carousel { core::set_opacity(this._p, v); return this; }
     fn opacity(this) -> f64 { return core::opacity(this._p); }
-    fn set_is_enabled(this, v: bool) -> Carousel { core::set_is_enabled(this._p, v); return this; }
+    fn set_enabled(this, v: bool) -> Carousel { core::set_enabled(this._p, v); return this; }
     fn is_enabled(this) -> bool { return core::is_enabled(this._p); }
-    fn set_is_visible(this, v: bool) -> Carousel { core::set_is_visible(this._p, v); return this; }
+    fn set_visible(this, v: bool) -> Carousel { core::set_visible(this._p, v); return this; }
     fn is_visible(this) -> bool { return core::is_visible(this._p); }
     fn set_background_color(this, v: vocab::Color) -> Carousel { core::set_background_color(this._p, v); return this; }
     fn background_color(this) -> vocab::Color { return core::background_color(this._p); }

@@ -24,12 +24,12 @@ const P_ROW_HEIGHT: u64 = 4u64;
 
 fn table(
     key: str = "",
-    has_uneven_rows: bool = false,
+    uneven_rows: bool = false,
     intent: vocab::TableStyle = vocab::TableStyle::Data,
     row_height: i64 = 0 as i64,
 ) -> core::Node {
     var p: props::TableProps = props::TableProps::new();
-    p.has_uneven_rows = has_uneven_rows;
+    p.has_uneven_rows = uneven_rows;
     p.intent = intent;
     p.row_height = row_height;
     return match box::new::[props::TableProps](p) {
@@ -62,7 +62,7 @@ impl Table {
     }
 
     // TableView.HasUnevenRows
-    fn set_has_uneven_rows(this, v: bool) -> Table {
+    fn set_uneven_rows(this, v: bool) -> Table {
         let p: *props::TableProps = this._props();
         if p == (0 as *props::TableProps) { return this; }
         { (*p).has_uneven_rows = v };
@@ -109,9 +109,9 @@ impl Table {
     // --- the shared band: one-line forwards, no generic element type ---
     fn set_opacity(this, v: f64) -> Table { core::set_opacity(this._p, v); return this; }
     fn opacity(this) -> f64 { return core::opacity(this._p); }
-    fn set_is_enabled(this, v: bool) -> Table { core::set_is_enabled(this._p, v); return this; }
+    fn set_enabled(this, v: bool) -> Table { core::set_enabled(this._p, v); return this; }
     fn is_enabled(this) -> bool { return core::is_enabled(this._p); }
-    fn set_is_visible(this, v: bool) -> Table { core::set_is_visible(this._p, v); return this; }
+    fn set_visible(this, v: bool) -> Table { core::set_visible(this._p, v); return this; }
     fn is_visible(this) -> bool { return core::is_visible(this._p); }
     fn set_background_color(this, v: vocab::Color) -> Table { core::set_background_color(this._p, v); return this; }
     fn background_color(this) -> vocab::Color { return core::background_color(this._p); }

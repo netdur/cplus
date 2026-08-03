@@ -212,7 +212,29 @@ RESERVED = {
     "true": "yes", "false": "no", "take": "takes", "defer": "deferred",
     "assert": "asserts", "export": "exported", "import": "imported",
     "interface": "protocol", "unsafe": "unchecked", "extern": "external",
+    "opaque": "opaque_value",
 }
+
+
+# naming_guideline.md: "Booleans read as assertions: is_editable... A boolean
+# parameter is named so the call reads naturally: set_editable(false)." So the
+# reader keeps the assertion prefix and the setter drops it.
+BOOL_PREFIXES = ("is_", "has_", "can_")
+
+
+def verb_stem(field, ty, taken):
+    """The name a setter and a constructor parameter use for `field`."""
+    if ty != "bool":
+        return field
+    for pre in BOOL_PREFIXES:
+        if field.startswith(pre):
+            stem = field[len(pre):]
+            # a stem that collides with a sibling field or a C+ keyword keeps
+            # the assertion form rather than becoming unspellable
+            if stem and stem not in taken and stem not in RESERVED:
+                return stem
+            return field
+    return field
 
 
 def prop_of(fn, note):
@@ -477,9 +499,9 @@ def emit_props(rows_by_control, by_type):
 SHARED_FORWARDS = [
     ("set_opacity", "v: f64", "core::set_opacity(this._p, v)", None),
     ("opacity", "", "return core::opacity(this._p)", "f64"),
-    ("set_is_enabled", "v: bool", "core::set_is_enabled(this._p, v)", None),
+    ("set_enabled", "v: bool", "core::set_enabled(this._p, v)", None),
     ("is_enabled", "", "return core::is_enabled(this._p)", "bool"),
-    ("set_is_visible", "v: bool", "core::set_is_visible(this._p, v)", None),
+    ("set_visible", "v: bool", "core::set_visible(this._p, v)", None),
     ("is_visible", "", "return core::is_visible(this._p)", "bool"),
     ("set_background_color", "v: vocab::Color", "core::set_background_color(this._p, v)", None),
     ("background_color", "", "return core::background_color(this._p)", "vocab::Color"),
@@ -545,12 +567,14 @@ def emit_control(maui, merged):
                    + [w for w in writes if w[0] != primary])
         f0, t0, _m0, _s0, _p0 = ordered[0]
         p0 = "str" if t0 == "str" else cplus_type(t0)
-        o.append(f"    {f0}: {p0},\n")
+        o.append(f"    {verb_stem(f0, t0, {f for f, _t, _m, _s, _p in writes + reads})}: {p0},\n")
         ordered = ordered[1:]
     o.append("    key: str = \"\",\n")
+    taken = {f for f, _t, _m, _s, _p in writes + reads}
     for field, ty, member, src, path in ordered:
         pty = "str" if ty == "str" else cplus_type(ty)
-        o.append(f"    {field}: {pty} = {'\"\"' if ty == 'str' else zero_of(ty)},\n")
+        nm = verb_stem(field, ty, taken)
+        o.append(f"    {nm}: {pty} = {'\"\"' if ty == 'str' else zero_of(ty)},\n")
     for verb, member, src, path in events:
         o.append(f"    {verb}: fn(*u8, *u8) = props::no_handler,\n")
         o.append(f"    {verb}_ctx: *u8 = 0 as *u8,\n")
@@ -558,7 +582,8 @@ def emit_control(maui, merged):
     o.append(f"    var p: props::{props} = props::{props}::new();\n")
     _ = ordered
     for field, ty, member, src, path in writes:
-        rhs = f"text::from_str({field})" if ty == "str" else field
+        nm = verb_stem(field, ty, taken)
+        rhs = f"text::from_str({nm})" if ty == "str" else nm
         o.append(f"    p.{path} = {rhs};\n")
     for verb, member, src, path in events:
         o.append(f"    p.{path} = {verb};\n")
@@ -589,7 +614,7 @@ def emit_control(maui, merged):
         pty = "str" if ty == "str" else cplus_type(ty)
         rhs = f"text::from_str(v)" if ty == "str" else "v"
         o.append(f"\n    // {src}.{member}\n")
-        o.append(f"    fn set_{field}(this, v: {pty}) -> {cur} {{\n")
+        o.append(f"    fn set_{verb_stem(field, ty, taken)}(this, v: {pty}) -> {cur} {{\n")
         o.append(f"        let p: *props::{props} = this._props();\n")
         o.append(f"        if p == (0 as *props::{props}) {{ return this; }}\n")
         o.append(f"        {{ (*p).{path} = {rhs} }};\n")

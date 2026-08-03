@@ -155,7 +155,7 @@ fn shared_verbs_are_on_the_typed_cursor() {
         option::Option[button::Button]::Some(b) => {
             // chains with the button-specific setters, returns Button
             let _c: button::Button = b.set_title("Go").set_opacity(0.5f64)
-                                      .set_is_enabled(false).set_font_size(12.0f64);
+                                      .set_enabled(false).set_font_size(12.0f64);
             assert approx(b.opacity(), 0.5f64);
             assert b.is_enabled() == false;
             assert b.title() == "Go";

@@ -181,9 +181,9 @@ impl Scroll {
     // --- the shared band: one-line forwards, no generic element type ---
     fn set_opacity(this, v: f64) -> Scroll { core::set_opacity(this._p, v); return this; }
     fn opacity(this) -> f64 { return core::opacity(this._p); }
-    fn set_is_enabled(this, v: bool) -> Scroll { core::set_is_enabled(this._p, v); return this; }
+    fn set_enabled(this, v: bool) -> Scroll { core::set_enabled(this._p, v); return this; }
     fn is_enabled(this) -> bool { return core::is_enabled(this._p); }
-    fn set_is_visible(this, v: bool) -> Scroll { core::set_is_visible(this._p, v); return this; }
+    fn set_visible(this, v: bool) -> Scroll { core::set_visible(this._p, v); return this; }
     fn is_visible(this) -> bool { return core::is_visible(this._p); }
     fn set_background_color(this, v: vocab::Color) -> Scroll { core::set_background_color(this._p, v); return this; }
     fn background_color(this) -> vocab::Color { return core::background_color(this._p); }

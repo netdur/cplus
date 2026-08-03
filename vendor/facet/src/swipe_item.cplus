@@ -24,11 +24,11 @@ const P_IS_VISIBLE: u64 = 2u64;
 fn swipe_item(
     key: str = "",
     background_color: vocab::Color = vocab::Color::clear(),
-    is_visible: bool = false,
+    visible: bool = false,
 ) -> core::Node {
     var p: props::SwipeItemProps = props::SwipeItemProps::new();
     p.background_color = background_color;
-    p.is_visible = is_visible;
+    p.is_visible = visible;
     return match box::new::[props::SwipeItemProps](p) {
         option::Option[box::Box[props::SwipeItemProps]]::Some(b) =>
             core::node_with(key, props::K_SWIPE_ITEM, b.into_raw(), props::release_swipe_item_props),
@@ -68,7 +68,7 @@ impl SwipeItem {
     }
 
     // SwipeItem.IsVisible
-    fn set_is_visible(this, v: bool) -> SwipeItem {
+    fn set_visible(this, v: bool) -> SwipeItem {
         let p: *props::SwipeItemProps = this._props();
         if p == (0 as *props::SwipeItemProps) { return this; }
         { (*p).is_visible = v };
@@ -91,9 +91,9 @@ impl SwipeItem {
     // --- the shared band: one-line forwards, no generic element type ---
     fn set_opacity(this, v: f64) -> SwipeItem { core::set_opacity(this._p, v); return this; }
     fn opacity(this) -> f64 { return core::opacity(this._p); }
-    fn set_is_enabled(this, v: bool) -> SwipeItem { core::set_is_enabled(this._p, v); return this; }
+    fn set_enabled(this, v: bool) -> SwipeItem { core::set_enabled(this._p, v); return this; }
     fn is_enabled(this) -> bool { return core::is_enabled(this._p); }
-    fn set_is_visible(this, v: bool) -> SwipeItem { core::set_is_visible(this._p, v); return this; }
+    fn set_visible(this, v: bool) -> SwipeItem { core::set_visible(this._p, v); return this; }
     fn is_visible(this) -> bool { return core::is_visible(this._p); }
     fn set_background_color(this, v: vocab::Color) -> SwipeItem { core::set_background_color(this._p, v); return this; }
     fn background_color(this) -> vocab::Color { return core::background_color(this._p); }

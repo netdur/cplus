@@ -33,11 +33,11 @@ const P_VERTICAL_SCROLL_BAR_VISIBILITY: u64 = 2048u64;
 
 fn list(
     key: str = "",
-    has_uneven_rows: bool = false,
+    uneven_rows: bool = false,
     horizontal_scroll_bar_visibility: vocab::ScrollBars = vocab::ScrollBars::Always,
-    is_grouping_enabled: bool = false,
-    is_pull_to_refresh_enabled: bool = false,
-    is_refreshing: bool = false,
+    grouping_enabled: bool = false,
+    pull_to_refresh_enabled: bool = false,
+    refreshing: bool = false,
     refresh_allowed: bool = false,
     refresh_control_color: vocab::Color = vocab::Color::clear(),
     row_height: i64 = 0 as i64,
@@ -57,11 +57,11 @@ fn list(
     on_refreshing_ctx: *u8 = 0 as *u8,
 ) -> core::Node {
     var p: props::ListProps = props::ListProps::new();
-    p.has_uneven_rows = has_uneven_rows;
+    p.has_uneven_rows = uneven_rows;
     p.horizontal_scroll_bar_visibility = horizontal_scroll_bar_visibility;
-    p.is_grouping_enabled = is_grouping_enabled;
-    p.is_pull_to_refresh_enabled = is_pull_to_refresh_enabled;
-    p.is_refreshing = is_refreshing;
+    p.is_grouping_enabled = grouping_enabled;
+    p.is_pull_to_refresh_enabled = pull_to_refresh_enabled;
+    p.is_refreshing = refreshing;
     p.refresh_allowed = refresh_allowed;
     p.refresh_control_color = refresh_control_color;
     p.row_height = row_height;
@@ -109,7 +109,7 @@ impl List {
     }
 
     // ListView.HasUnevenRows
-    fn set_has_uneven_rows(this, v: bool) -> List {
+    fn set_uneven_rows(this, v: bool) -> List {
         let p: *props::ListProps = this._props();
         if p == (0 as *props::ListProps) { return this; }
         { (*p).has_uneven_rows = v };
@@ -127,7 +127,7 @@ impl List {
     }
 
     // ListView.IsGroupingEnabled
-    fn set_is_grouping_enabled(this, v: bool) -> List {
+    fn set_grouping_enabled(this, v: bool) -> List {
         let p: *props::ListProps = this._props();
         if p == (0 as *props::ListProps) { return this; }
         { (*p).is_grouping_enabled = v };
@@ -136,7 +136,7 @@ impl List {
     }
 
     // ListView.IsPullToRefreshEnabled
-    fn set_is_pull_to_refresh_enabled(this, v: bool) -> List {
+    fn set_pull_to_refresh_enabled(this, v: bool) -> List {
         let p: *props::ListProps = this._props();
         if p == (0 as *props::ListProps) { return this; }
         { (*p).is_pull_to_refresh_enabled = v };
@@ -145,7 +145,7 @@ impl List {
     }
 
     // ListView.IsRefreshing
-    fn set_is_refreshing(this, v: bool) -> List {
+    fn set_refreshing(this, v: bool) -> List {
         let p: *props::ListProps = this._props();
         if p == (0 as *props::ListProps) { return this; }
         { (*p).is_refreshing = v };
@@ -291,9 +291,9 @@ impl List {
     // --- the shared band: one-line forwards, no generic element type ---
     fn set_opacity(this, v: f64) -> List { core::set_opacity(this._p, v); return this; }
     fn opacity(this) -> f64 { return core::opacity(this._p); }
-    fn set_is_enabled(this, v: bool) -> List { core::set_is_enabled(this._p, v); return this; }
+    fn set_enabled(this, v: bool) -> List { core::set_enabled(this._p, v); return this; }
     fn is_enabled(this) -> bool { return core::is_enabled(this._p); }
-    fn set_is_visible(this, v: bool) -> List { core::set_is_visible(this._p, v); return this; }
+    fn set_visible(this, v: bool) -> List { core::set_visible(this._p, v); return this; }
     fn is_visible(this) -> bool { return core::is_visible(this._p); }
     fn set_background_color(this, v: vocab::Color) -> List { core::set_background_color(this._p, v); return this; }
     fn background_color(this) -> vocab::Color { return core::background_color(this._p); }

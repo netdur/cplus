@@ -36,9 +36,9 @@ fn collection(
     vertical_scroll_bar_visibility: vocab::ScrollBars = vocab::ScrollBars::Always,
     item_sizing_strategy: vocab::ItemSizing = vocab::ItemSizing::MeasureAllItems,
     selection_mode: vocab::SelectionMode = vocab::SelectionMode::Multiple,
-    is_grouped: bool = false,
-    can_mix_groups: bool = false,
-    can_reorder_items: bool = false,
+    grouped: bool = false,
+    mix_groups: bool = false,
+    reorder_items: bool = false,
     on_remaining_items_threshold_reached: fn(*u8, *u8) = props::no_handler,
     on_remaining_items_threshold_reached_ctx: *u8 = 0 as *u8,
     on_selection_changed: fn(*u8, *u8) = props::no_handler,
@@ -53,9 +53,9 @@ fn collection(
     p.items_view.vertical_scroll_bar_visibility = vertical_scroll_bar_visibility;
     p.structured_items_view.item_sizing_strategy = item_sizing_strategy;
     p.selectable_items_view.selection_mode = selection_mode;
-    p.groupable_items_view.is_grouped = is_grouped;
-    p.reorderable_items_view.can_mix_groups = can_mix_groups;
-    p.reorderable_items_view.can_reorder_items = can_reorder_items;
+    p.groupable_items_view.is_grouped = grouped;
+    p.reorderable_items_view.can_mix_groups = mix_groups;
+    p.reorderable_items_view.can_reorder_items = reorder_items;
     p.items_view.on_remaining_items_threshold_reached = on_remaining_items_threshold_reached;
     p.items_view.on_remaining_items_threshold_reached_ctx = on_remaining_items_threshold_reached_ctx;
     p.selectable_items_view.on_selection_changed = on_selection_changed;
@@ -146,7 +146,7 @@ impl Collection {
     }
 
     // GroupableItemsView.IsGrouped
-    fn set_is_grouped(this, v: bool) -> Collection {
+    fn set_grouped(this, v: bool) -> Collection {
         let p: *props::CollectionProps = this._props();
         if p == (0 as *props::CollectionProps) { return this; }
         { (*p).groupable_items_view.is_grouped = v };
@@ -155,7 +155,7 @@ impl Collection {
     }
 
     // ReorderableItemsView.CanMixGroups
-    fn set_can_mix_groups(this, v: bool) -> Collection {
+    fn set_mix_groups(this, v: bool) -> Collection {
         let p: *props::CollectionProps = this._props();
         if p == (0 as *props::CollectionProps) { return this; }
         { (*p).reorderable_items_view.can_mix_groups = v };
@@ -164,7 +164,7 @@ impl Collection {
     }
 
     // ReorderableItemsView.CanReorderItems
-    fn set_can_reorder_items(this, v: bool) -> Collection {
+    fn set_reorder_items(this, v: bool) -> Collection {
         let p: *props::CollectionProps = this._props();
         if p == (0 as *props::CollectionProps) { return this; }
         { (*p).reorderable_items_view.can_reorder_items = v };
@@ -229,9 +229,9 @@ impl Collection {
     // --- the shared band: one-line forwards, no generic element type ---
     fn set_opacity(this, v: f64) -> Collection { core::set_opacity(this._p, v); return this; }
     fn opacity(this) -> f64 { return core::opacity(this._p); }
-    fn set_is_enabled(this, v: bool) -> Collection { core::set_is_enabled(this._p, v); return this; }
+    fn set_enabled(this, v: bool) -> Collection { core::set_enabled(this._p, v); return this; }
     fn is_enabled(this) -> bool { return core::is_enabled(this._p); }
-    fn set_is_visible(this, v: bool) -> Collection { core::set_is_visible(this._p, v); return this; }
+    fn set_visible(this, v: bool) -> Collection { core::set_visible(this._p, v); return this; }
     fn is_visible(this) -> bool { return core::is_visible(this._p); }
     fn set_background_color(this, v: vocab::Color) -> Collection { core::set_background_color(this._p, v); return this; }
     fn background_color(this) -> vocab::Color { return core::background_color(this._p); }
