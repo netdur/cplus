@@ -5043,13 +5043,86 @@ impl SemaCx<'_> {
             // gap for generic methods with a name-resolution pass (no typing —
             // that stays per-instantiation).
             if !b.target_generic_params.is_empty() {
+                self.check_generic_impl_methods(b);
                 for m in &b.methods {
-                    self.check_generic_method_body_names(b, m);
                     self.reject_bound_refs_in_generic_body(m);
                 }
             }
         }
         self.current_file = None;
+    }
+
+    /// Type-check a generic impl block's method bodies, the way generic FREE
+    /// fn bodies are already checked.
+    ///
+    /// The target is instantiated at its OWN parameters — `impl Cell[T]`
+    /// becomes `Cell[Param("T")]` — which gives `this` a real `StructId` to
+    /// resolve fields and methods against while every `T`-typed value stays
+    /// abstract. `is_copy(Ty::Param)` is false, so a `T` is move-only inside
+    /// the body: the rule that holds across every instantiation. The
+    /// placeholder instantiation is filtered out of `MonoInfo` by
+    /// `ty_contains_param`, exactly like the ones sema already records from
+    /// generic bodies today.
+    ///
+    /// Before this, these bodies got name resolution and nothing else, so
+    /// every span-keyed table sema fills WHILE CHECKING A BODY was empty for
+    /// them — and each consumer that later expected an entry crashed at the
+    /// last pass with `.expect("sema validated")`. That was five distinct
+    /// ICEs on ordinary source (`#env`, `#include_str`, an inferred struct
+    /// literal, an inferred generic call, an inferred tuple literal) plus a
+    /// false E0300 on a turbofish type argument, all closed by checking the
+    /// body once. Generic free fns were given this exact treatment earlier,
+    /// after the same class of crash; this is the impl-method half.
+    ///
+    /// **The diagnostics this check produces are discarded.** What the ICEs
+    /// needed was the RECORDS, not the reports, and reporting is a separate
+    /// decision with real work behind it: turning it on emits ~250
+    /// diagnostics against the stdlib's own container primitives — the
+    /// `let v: T = { *p }` move-out-of-raw-pointer that IS what `Box`,
+    /// `Vec`, `Rc`, `Arc` and `channel` do (E0337), a `T: Hash` bound method
+    /// that does not resolve because the bound lives on the struct
+    /// template's parameters rather than the impl block's (E0324), and
+    /// field moves out of Drop containers (E0509). Every one of those is
+    /// either a rule that has to learn about containers or code that has to
+    /// change, and neither belongs inside an ICE fix. Recorded in
+    /// `reports/issue-18-generic-impl-body-checking.md`.
+    fn check_generic_impl_methods(&mut self, b: &crate::ast::ImplBlock) {
+        // The name-resolution pass KEEPS its diagnostics: they are what
+        // users see today, and they are the guard that stops an undefined
+        // name in a template body from reaching codegen.
+        for m in &b.methods {
+            self.check_generic_method_body_names(b, m);
+        }
+        let mark = self.sink.len();
+        self.push_type_params(&b.target_generic_params);
+        let args: Vec<Type> = b
+            .target_generic_params
+            .iter()
+            .map(|g| Type {
+                kind: TypeKind::Path(g.name.name.clone()),
+                span: g.name.span,
+            })
+            .collect();
+        let target = self.resolve_generic_instantiation(&b.target.name, &args, b.target.span);
+        match target {
+            Ty::Struct(id) => {
+                for m in &b.methods {
+                    self.check_method(id, m);
+                }
+            }
+            Ty::Enum(id) => {
+                for m in &b.methods {
+                    self.check_enum_method(id, m);
+                }
+            }
+            // The target names no template, or resolves to something with
+            // no body to check. The name-only pass above already ran.
+            _ => {}
+        }
+        self.pop_type_params();
+        // Record-only: drop everything the typed pass reported. The
+        // name-resolution diagnostics are below the mark and survive.
+        self.sink.truncate(mark);
     }
 
     /// A bound method reference (`recv.handler` passed where an `fn` is

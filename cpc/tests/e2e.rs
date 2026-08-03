@@ -7717,6 +7717,64 @@ fn a_bound_method_reference_in_a_generic_impl_body_is_rejected_not_an_ice() {
 }
 
 #[test]
+fn features_inside_a_generic_impl_body_reach_codegen_intact() {
+    // The generic impl-method body seam: sema records what later passes read
+    // WHILE CHECKING A BODY, and these bodies were never checked — so every
+    // span-keyed record was missing and each consumer crashed at the last
+    // pass with `expect("sema validated")`. Five distinct ICEs on ordinary
+    // source, one per feature below. The same programs written inside a
+    // generic FREE fn always worked, which is what identified the seam.
+    let cases: &[(&str, &str)] = &[
+        (
+            "env_intrinsic",
+            "struct Cell[T] { v: T }\n\
+             impl Cell[T] { fn go(this) -> i32 { let s: str = #env(\"PATH\"); \
+             return #str_len(s) as i32; } }\n\
+             fn main() -> i32 { let c: Cell[i32] = Cell[i32] { v: 0 }; return c.go() - c.go(); }",
+        ),
+        (
+            "inferred_struct_literal",
+            "struct Point { x: i32, y: i32 }\n\
+             fn takes(p: Point) -> i32 { return p.x + p.y; }\n\
+             struct Cell[T] { v: T }\n\
+             impl Cell[T] { fn go(this) -> i32 { return takes({ x: 1, y: 2 }); } }\n\
+             fn main() -> i32 { let c: Cell[i32] = Cell[i32] { v: 0 }; return c.go() - 3; }",
+        ),
+        (
+            "inferred_generic_call",
+            "fn ident[T](take v: T) -> T { return v; }\n\
+             struct Cell[T] { v: T }\n\
+             impl Cell[T] { fn go(this) -> i32 { return ident(7); } }\n\
+             fn main() -> i32 { let c: Cell[i32] = Cell[i32] { v: 0 }; return c.go() - 7; }",
+        ),
+        (
+            // bug-27 shape 4, open since 2026-08-02 and closed by the same
+            // change: an inferred tuple literal has no `tuple_lit_elems`
+            // record to replay unless the body is checked.
+            "inferred_tuple_literal",
+            "struct Cell[T] { v: T }\n\
+             impl Cell[T] { fn go(this) -> i32 { let p = (this.v, 1); return p.1; } }\n\
+             fn main() -> i32 { let c: Cell[i32] = Cell[i32] { v: 3 }; return c.go() - 1; }",
+        ),
+        (
+            "default_argument_splice",
+            "fn withdef(a: i32, b: i32 = 5) -> i32 { return a + b; }\n\
+             struct Cell[T] { v: T }\n\
+             impl Cell[T] { fn go(this) -> i32 { return withdef(1); } }\n\
+             fn main() -> i32 { let c: Cell[i32] = Cell[i32] { v: 0 }; return c.go() - 6; }",
+        ),
+    ];
+    for (name, src) in cases {
+        let (ok, stderr) = try_compile_snippet(&format!("{src}\n"));
+        assert!(
+            !stderr.contains("panicked"),
+            "[{name}] must not ICE: {stderr}"
+        );
+        assert!(ok, "[{name}] must compile; stderr: {stderr}");
+    }
+}
+
+#[test]
 fn cross_module_interface_conformance_and_alias_bounds() {
     // 2026-07-06: `impl T: mod::Interface` + `[C: mod::Interface]` bounds.
     // The interface lives in one module; a struct in another module
