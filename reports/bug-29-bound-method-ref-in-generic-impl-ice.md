@@ -1,6 +1,6 @@
 # bug-29 — a bound method reference inside a generic impl body ICEs codegen
 
-- Status: FIXED 2026-08-03 (`30f0247`) — rejected at check time with E0822.
+- Status: FIXED 2026-08-03 (`5f511e7`) — rejected at check time with E0822.
 - Severity: ICE (`.expect("sema validated")`), reachable from ordinary source
 - Area: `cplus-core/src/sema.rs` (generic-impl template checking) →
   `cplus-core/src/codegen.rs:2233` (where it landed)

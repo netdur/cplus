@@ -2133,7 +2133,7 @@ lang = "cplus"
 verified = true
 emit_site = "cplus-core/src/sema.rs:14629, :14640, :14655"
 test = "cpc/tests/e2e.rs:bound_method_reference_misuse_rejected"
-cause = "`obj.method` in value position builds a handler from a function pointer plus the receiver's address. Not every method can be one: a `take this` method would consume the receiver on its first fire, a receiverless method has nothing to bind, and a generic method or one with `take` / `ref` parameters has no single fn-pointer shape to lower to."
+cause = "`obj.method` in value position builds a handler from a function pointer plus the receiver's address. Not every method can be one: a `take this` method would consume the receiver on its first fire, a receiverless method has nothing to bind, and a generic method or one with `take` / `ref` parameters has no single fn-pointer shape to lower to. It is also refused anywhere inside a GENERIC impl body, whatever the receiver — the bridge is synthesized for one concrete type, and such a body is compiled once per instantiation (bug-29)."
 fix = "Give the method a `this` or `ref this` receiver and only by-value parameters, or pass a plain `fn` directly instead of a bound reference."
 example = '''
 struct S { n: i32 }

@@ -622,7 +622,7 @@ impl d::Point { fn drop(ref this) { } }
 
 ### E0822 · Method cannot be used as a bound reference
 
-`obj.method` in value position builds a handler from a function pointer plus the receiver's address. Not every method can be one: a `take this` method would consume the receiver on its first fire, a receiverless method has nothing to bind, and a generic method or one with `take` / `ref` parameters has no single fn-pointer shape to lower to.
+`obj.method` in value position builds a handler from a function pointer plus the receiver's address. Not every method can be one: a `take this` method would consume the receiver on its first fire, a receiverless method has nothing to bind, and a generic method or one with `take` / `ref` parameters has no single fn-pointer shape to lower to. It is also refused anywhere inside a GENERIC impl body, whatever the receiver — the bridge is synthesized for one concrete type, and such a body is compiled once per instantiation (bug-29).
 
 ```cplus
 struct S { n: i32 }
