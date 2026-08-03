@@ -7657,6 +7657,66 @@ fn bound_method_reference_misuse_rejected() {
 }
 
 #[test]
+fn a_bound_method_reference_in_a_generic_impl_body_is_rejected_not_an_ice() {
+    // A bound reference is a PAIR — a bridge fn synthesized for one concrete
+    // type, plus the receiver's address — recorded against the argument's
+    // span and rewritten by monomorphize. A generic impl body has one span
+    // per argument and N instantiations, so the record has nowhere to live;
+    // sema does not type these bodies either, so nothing was recorded,
+    // nothing was rewritten, and codegen read `this.tap` as a FIELD and
+    // panicked with `expect("sema validated")`. It is refused at check time
+    // now, whatever the receiver is.
+    let cases: &[(&str, &str)] = &[
+        (
+            "receiver_is_this",
+            "struct Cell[T] { v: T }\n\
+             impl Cell[T] {\n\
+               fn tap(ref this) { return; }\n\
+               fn build(ref this) -> i32 { return take_handler(this.tap); }\n\
+             }\n\
+             fn main() -> i32 { var c: Cell[i32] = Cell[i32] { v: 0 }; return c.build(); }",
+        ),
+        (
+            "receiver_is_a_concrete_static",
+            "struct Plain { v: i32 }\n\
+             impl Plain { fn eat(ref this) { this.v = this.v + 1; return; } }\n\
+             static POINT: Plain = Plain { v: 0 };\n\
+             struct Cell[T] { v: T }\n\
+             impl Cell[T] { fn go(ref this) -> i32 { return take_handler(POINT.eat); } }\n\
+             fn main() -> i32 { var c: Cell[i32] = Cell[i32] { v: 0 }; return c.go(); }",
+        ),
+    ];
+    for (name, tail) in cases {
+        let (ok, stderr) = try_compile_snippet(&format!(
+            "fn take_handler(f: fn(*u8), ctx: *u8 = 0 as *u8) -> i32 {{ return 1; }}\n{tail}\n"
+        ));
+        assert!(!ok, "[{name}] expected rejection, compiled instead");
+        assert!(
+            stderr.contains("E0822"),
+            "[{name}] expected E0822, got: {stderr}"
+        );
+        assert!(
+            !stderr.contains("panicked"),
+            "[{name}] must not ICE: {stderr}"
+        );
+    }
+    // The control: a real fn-pointer FIELD read in the same position is an
+    // ordinary value and still lowers.
+    let (ok, stderr) = try_compile_snippet(
+        "struct Cfg { cb: fn(*u8) }\n\
+         struct Cell[T] { v: T, c: Cfg }\n\
+         impl Cell[T] { fn go(ref this) -> i32 { return take_handler(this.c.cb); } }\n\
+         fn nothing(p: *u8) { return; }\n\
+         fn take_handler(f: fn(*u8), ctx: *u8 = 0 as *u8) -> i32 { return 1; }\n\
+         fn main() -> i32 {\n\
+           var c: Cell[i32] = Cell[i32] { v: 0, c: Cfg { cb: nothing } };\n\
+           return c.go();\n\
+         }\n",
+    );
+    assert!(ok, "a fn-pointer field read must still compile: {stderr}");
+}
+
+#[test]
 fn cross_module_interface_conformance_and_alias_bounds() {
     // 2026-07-06: `impl T: mod::Interface` + `[C: mod::Interface]` bounds.
     // The interface lives in one module; a struct in another module

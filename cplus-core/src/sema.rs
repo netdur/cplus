@@ -5045,10 +5045,84 @@ impl SemaCx<'_> {
             if !b.target_generic_params.is_empty() {
                 for m in &b.methods {
                     self.check_generic_method_body_names(b, m);
+                    self.reject_bound_refs_in_generic_body(m);
                 }
             }
         }
         self.current_file = None;
+    }
+
+    /// A bound method reference (`recv.handler` passed where an `fn` is
+    /// expected) is not one value: sema records the receiver and the bridge
+    /// fn against the ARGUMENT's span, monomorphize rewrites that span into
+    /// the bridge plus `#addr_of(recv)`, and codegen emits the pair. A
+    /// generic-impl template has ONE body and one span per argument, but N
+    /// instantiations, each needing its own bridge for its own concrete
+    /// type — so the record has nowhere to live.
+    ///
+    /// Sema does not type these bodies either (`check_methods` runs name
+    /// resolution over them and nothing else), so the reference was never
+    /// recorded, monomorphize never rewrote it, and codegen read
+    /// `this.handler` as a FIELD of a struct that has no such field and hit
+    /// `.expect("sema validated")`. That is the same failure the
+    /// name-resolution pass above was written to stop, one shape further on.
+    ///
+    /// So it is refused here, with the code the concrete path already uses
+    /// for bound references it cannot lower. Only an argument in an
+    /// `fn`-typed parameter position is examined, and a name that IS a
+    /// fn-pointer field somewhere is left alone — that one is an ordinary
+    /// field read, which lowers fine.
+    fn reject_bound_refs_in_generic_body(&mut self, m: &Method) {
+        #[derive(Default)]
+        struct NamedCallProbe {
+            /// `(callee name, [(arg index, field name, arg span)])`
+            calls: Vec<(String, Vec<(usize, String, ByteSpan)>)>,
+        }
+        impl crate::ast::ExprRewriter for NamedCallProbe {
+            fn visit_expr(&mut self, e: &Expr) -> Option<Expr> {
+                let ExprKind::Call { callee, args, .. } = &e.kind else {
+                    return None;
+                };
+                if let ExprKind::Ident(f) = &callee.kind {
+                    let fields: Vec<(usize, String, ByteSpan)> = args
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, a)| match &a.kind {
+                            ExprKind::Field { name, .. } => {
+                                Some((i, name.name.clone(), a.span))
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    if !fields.is_empty() {
+                        self.calls.push((f.clone(), fields));
+                    }
+                }
+                None
+            }
+        }
+        let mut probe = NamedCallProbe::default();
+        crate::ast::walk_block(&m.body, &mut probe);
+        for (callee, fields) in probe.calls {
+            let Some(sig) = self.fns.get(&callee).cloned() else {
+                continue;
+            };
+            for (i, field, span) in fields {
+                if !matches!(sig.params.get(i).map(|p| &p.ty), Some(Ty::FnPtr { .. })) {
+                    continue;
+                }
+                if self.is_fnptr_field_name(&field) {
+                    continue;
+                }
+                self.err(
+                    "E0822",
+                    format!(
+                        "cannot take a bound reference to `{field}` inside a generic impl body: a bound reference pairs the receiver's address with a bridge function synthesized for one concrete type, and this body is compiled once per instantiation. Move the handler onto a concrete `impl`, or pass a plain `fn`"
+                    ),
+                    span,
+                );
+            }
+        }
     }
 
     /// Name-resolution pass over a generic-impl method body. Verifies every
