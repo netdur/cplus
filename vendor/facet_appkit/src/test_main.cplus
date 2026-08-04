@@ -8,6 +8,7 @@
 
 import "stdlib/option" as option;
 import "stdlib/text" as text;
+import "stdlib/io" as io;
 import "flex_layout/flex_layout" as flex;
 import "facet/facet" as core;
 import "facet/props" as props;
@@ -40,6 +41,14 @@ import "facet/context_menu" as context_menu;
 import "facet/context_menu_item" as context_menu_item;
 import "facet/span" as span;
 import "facet/refreshable" as refreshable;
+import "facet/list" as list;
+import "facet/tree" as tree;
+import "facet/menu" as menu;
+import "facet/menu_item" as menu_item;
+import "facet/toolbar_item" as toolbar_item;
+import "facet/canvas" as canvas;
+import "facet/window_chrome" as chrome;
+import "objc/bridge" as bridge;
 import "quartzcore/quartzcore" as quartz;
 import "stdlib/status" as status;
 import "objc/runtime" as rt;
@@ -900,5 +909,194 @@ fn a_decided_absent_kind_still_shows_its_content_and_says_nothing() {
     assert v != (0 as *u8);
     assert ak::View::from_raw(v).is_flipped();
     views::view_release(v);
+    return;
+}
+
+// ---- the collection group ----------------------------------------------------
+
+static ROWS_BUILT: i32 = 0;
+
+fn t_row(ctx: *u8, i: usize) -> flex::Node {
+    ROWS_BUILT = ROWS_BUILT + 1;
+    return label::label("row", key: "r");
+}
+
+#[test]
+fn a_list_materialises_its_rows_as_its_own_children() {
+    // The decision this asserts: a list's rows are ORDINARY CHILDREN, added
+    // with the same structural verb anything else uses. So there is no second
+    // lifetime model and no path a row can take that a child cannot — mount
+    // creates the views, insert puts them in the document view, the frame walk
+    // places them, teardown releases them.
+    ROWS_BUILT = 0;
+    var l: core::Node = list::list(key: "rows");
+    let lp: *core::Node = #addr_of(l);
+    match list::find("rows", within: lp) {
+        option::Option[list::List]::Some(h) => {
+            let h2: list::List = h.set_row(t_row, ctx: 0 as *u8);
+            let _h3: list::List = h2.set_count(3 as usize);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    // create materialises: the walk reads child_count AFTER create returns, so
+    // rows added there are mounted by the same walk with no second pass.
+    let v: *u8 = views::create(0 as *u8, lp);
+    assert v != (0 as *u8);
+    assert ROWS_BUILT == 3;
+    assert l.child_count() == (3 as usize);
+    // A count change rebuilds the sequence rather than patching it: the row
+    // builder and the count are one question, and a partial answer would leave
+    // rows from two models mixed.
+    core::set_view(lp, v, views::view_release);
+    core::clear_dirty(lp);
+    ROWS_BUILT = 0;
+    match list::find("rows", within: lp) {
+        option::Option[list::List]::Some(h) => { let _h: list::List = h.set_count(5 as usize); }
+        option::Option[list::List]::None => { assert false; }
+    }
+    views::apply(0 as *u8, lp);
+    assert ROWS_BUILT == 5;
+    assert l.child_count() == (5 as usize);
+    return;
+}
+
+#[test]
+fn a_list_hosts_its_rows_in_the_scrolls_document_view() {
+    // A sequence host is the same flipped document view a `scroll` uses, so
+    // `host_for` redirects rows into it with no extra case.
+    var l: core::Node = list::list(key: "l2");
+    let v: *u8 = views::create(0 as *u8, #addr_of(l));
+    let host: *u8 = views::host_for(v);
+    assert host != v;
+    assert ak::View::from_raw(host).is_flipped();
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn a_tree_walks_only_through_open_branches() {
+    // The rule that makes a deep tree cheap under a build-everything model: a
+    // CLOSED branch is not descended at all, so its subtree costs nothing.
+    var root: tree::TreeNode = tree::TreeNode::new("root", id: "root");
+    var a: tree::TreeNode = tree::TreeNode::new("a", id: "a");
+    let _deep: status::Status = a.add_child(tree::TreeNode::new("a1", id: "a1"));
+    let _a: status::Status = root.add_child(a);
+    let _b: status::Status = root.add_child(tree::TreeNode::new("b", id: "b"));
+
+    var t: core::Node = tree::tree(root, key: "t");
+    let tp: *core::Node = #addr_of(t);
+    let v: *u8 = views::create(0 as *u8, tp);
+    // Nothing expanded: the root's two children show, "a1" does not.
+    assert t.child_count() == (2 as usize);
+
+    // Expand "a" and its child appears — the model did not change, only which
+    // rows exist, which is why expansion rebuilds like the model does.
+    core::set_view(tp, v, views::view_release);
+    core::clear_dirty(tp);
+    var open: vocab::TextList = vocab::TextList::new();
+    let _o: status::Status = open.add("a");
+    match tree::find("t", within: tp) {
+        option::Option[tree::Tree]::Some(h) => { let _h: tree::Tree = h.set_expanded(open); }
+        option::Option[tree::Tree]::None => { assert false; }
+    }
+    views::apply(0 as *u8, tp);
+    assert t.child_count() == (3 as usize);
+    return;
+}
+
+// ---- the last kinds ----------------------------------------------------------
+
+#[test]
+fn the_menu_bar_tier_builds_but_does_not_occupy_the_tree() {
+    // An NSMenu, an NSMenuItem and an NSToolbarItem are objects the
+    // APPLICATION or the WINDOW owns — not rectangles in a tree. So all three
+    // are non-view kinds, and controls:: builds the AppKit object while the
+    // window tier installs it.
+    var m: core::Node = menu::menu("File", key: "file");
+    assert views::wants_view(#addr_of(m)) == false;
+    var item: core::Node = menu_item::menu_item("Open", key: "open");
+    assert views::wants_view(#addr_of(item)) == false;
+    var ti: core::Node = toolbar_item::toolbar_item("Share", key: "share");
+    assert views::wants_view(#addr_of(ti)) == false;
+
+    let mp: *core::Node = #addr_of(m);
+    assert mount::add_child(mp, menu_item::menu_item("Open", key: "o"));
+    assert mount::add_child(mp, menu_item::menu_item(""));            // a separator
+    assert mount::add_child(mp, menu_item::menu_item("Close", key: "c"));
+    let built: *u8 = controls::build_menu(mp);
+    assert built != (0 as *u8);
+    let ns: ak::Menu = ak::Menu::from_raw(built);
+    assert ns.title().view() == "File";
+    assert ns.number_of_items() == (3 as i64);
+    // The same separator rule as a context menu's items, because they are the
+    // same object — two sets of rules would be two answers to one question.
+    match ns.item_at_index(1 as i64) {
+        option::Option[ak::MenuItem]::Some(sep) => { assert sep.is_separator_item(); }
+        option::Option[ak::MenuItem]::None => { assert false; }
+    }
+    // A toolbar item's identifier is the node's KEY: NSToolbar addresses items
+    // by identifier, facet addresses nodes by key, one need answered once.
+    let tb: *u8 = controls::build_toolbar_item(#addr_of(ti));
+    assert tb != (0 as *u8);
+    let ident: *u8 = { rt::msg_id(tb, rt::sel(#str_ptr("itemIdentifier\0"))) };
+    assert bridge::to_text(ident).view() == "share";
+    // Nothing that is not one builds one.
+    var plain: core::Node = core::column(core::Builder::new(), key: "x");
+    assert controls::build_menu(#addr_of(plain)) == (0 as *u8);
+    assert controls::build_toolbar_item(#addr_of(plain)) == (0 as *u8);
+    return;
+}
+
+#[test]
+fn a_canvas_is_a_view_with_nothing_to_draw_with() {
+    // facet declares NO drawing vocabulary: Drawable is fn(*u8, f64, f64) —
+    // ctx and a size, and nothing to draw WITH. MAUI's IDrawable.Draw takes an
+    // ICanvas; facet's dropped it, and the ledger has no path, fill or stroke.
+    // So this is a gap in the CONTRACT that no backend can close, and the
+    // backing view plus a size callback is the whole of what the signature
+    // supports.
+    var c: core::Node = canvas::canvas(key: "c");
+    let v: *u8 = views::create(0 as *u8, #addr_of(c));
+    assert v != (0 as *u8);
+    assert ak::View::from_raw(v).wants_layer();
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn window_buttons_wait_for_a_window_before_adopting() {
+    // The REAL traffic lights get re-parented, not a drawing of them — so the
+    // green button keeps its hover menu and full-screen behaviour. They can
+    // only be fetched once the view is in a window, and it is not in one at
+    // create time, so the node is an empty box of the right size until then
+    // and adoption happens on a later apply.
+    var wb: core::Node = chrome::window_buttons(key: "wb");
+    let v: *u8 = views::create(0 as *u8, #addr_of(wb));
+    assert v != (0 as *u8);
+    assert ak::View::from_raw(v).subviews().count() == (0 as usize);
+    // Applying off-window is inert rather than a trap.
+    views::apply(0 as *u8, #addr_of(wb));
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn every_kind_now_has_an_answer() {
+    // The sweep's own guard: no kind falls to the unimplemented path any more.
+    // A kind added later without a body will fail here, which is the point.
+    var k: u32 = 1 as u32;
+    while k <= (38 as u32) {
+        // web and hybrid_web are DEFERRED (they need a WebKit binding), not
+        // decided — so they still take the warning path, and the difference
+        // between deferred and decided stays visible.
+        if k != props::K_WEB && k != props::K_HYBRID_WEB { assert views::has_body(k); }
+        k = k +% (1 as u32);
+    }
+    assert views::has_body(props::K_WEB) == false;
+    assert views::has_body(1000 as u32);      // symbol
+    assert views::has_body(1001 as u32);      // tree
+    assert views::has_body(1002 as u32);      // split
+    assert views::has_body(1003 as u32);      // window_buttons
+    assert views::has_body(core::K_NODE);     // the container backing
     return;
 }

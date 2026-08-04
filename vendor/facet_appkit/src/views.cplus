@@ -26,6 +26,8 @@ import "appkit/appkit_ext" as akx;
 import "./paint" as paint;
 import "facet/symbol" as symbol;
 import "facet/split" as split;
+import "facet/tree" as tree;
+import "facet/window_chrome" as chrome;
 import "./controls" as controls;
 
 type Node = flex::Node;
@@ -46,6 +48,11 @@ fn wants_view(n: *core::Node) -> bool {
     // place of its own. They are read as NODES when their parent's view is
     // built — see controls::attach_context_menu.
     if controls::menu_kind(kind) { return false; }
+    // The menu-bar tier is not views either: an NSMenu, an NSMenuItem and an
+    // NSToolbarItem are objects the application or the window owns, not
+    // rectangles in a tree. controls:: builds them; the window tier installs
+    // them (stages/4.md item 5).
+    if controls::menu_bar_kind(kind) { return false; }
     // A span is a styled RUN inside a label, not a thing of its own — the
     // label reads its span children and renders one attributed string.
     if controls::span_kind(kind) { return false; }
@@ -117,6 +124,13 @@ fn create_for_kind(kind: u32, n: *core::Node) -> *u8 {
     // something already answered would train a reader to ignore the warnings
     // that mean something.
     if controls::decided_absent(kind) { return controls::create_passthrough(n); }
+    if kind == props::K_LIST { return controls::create_list(n); }
+    if kind == props::K_COLLECTION { return controls::create_collection(n); }
+    if kind == props::K_TABLE { return controls::create_table(n); }
+    if kind == props::K_CAROUSEL { return controls::create_carousel(n); }
+    if kind == tree::K_TREE { return controls::create_tree(n); }
+    if kind == props::K_CANVAS { return controls::create_canvas(n); }
+    if kind == chrome::K_WINDOW_BUTTONS { return controls::create_window_buttons(n); }
     unimplemented_kind(kind, n);
     return backing_view();
 }
@@ -159,7 +173,46 @@ fn apply_for_kind(kind: u32, v: *u8, n: *core::Node, dirty: u64) {
     if kind == props::K_DATE_PICKER { controls::apply_date_picker(v, n, dirty); return; }
     if kind == props::K_TIME_PICKER { controls::apply_time_picker(v, n, dirty); return; }
     if kind == props::K_TABS { controls::apply_tabs(v, n, dirty); return; }
+    if kind == props::K_LIST { controls::apply_list(v, n, dirty); return; }
+    if kind == props::K_COLLECTION { controls::apply_collection(v, n, dirty); return; }
+    if kind == props::K_TABLE { controls::apply_table(v, n, dirty); return; }
+    if kind == props::K_CAROUSEL { controls::apply_carousel(v, n, dirty); return; }
+    if kind == tree::K_TREE { controls::apply_tree(v, n, dirty); return; }
+    if kind == props::K_CANVAS { controls::apply_canvas(v, n, dirty); return; }
+    if kind == chrome::K_WINDOW_BUTTONS { controls::apply_window_buttons(v, n, dirty); return; }
     return;
+}
+
+// Does this kind have an answer — a body, a decided-absent pass-through, or a
+// non-view builder? The sweep's own guard: a kind that reaches
+// `unimplemented_kind` is a gap, and a test asserts there are none left.
+fn has_body(kind: u32) -> bool {
+    if kind == core::K_NODE { return true; }
+    // The non-view kinds: built from nodes by controls::, never given a view.
+    if controls::menu_kind(kind) { return true; }
+    if controls::menu_bar_kind(kind) { return true; }
+    if controls::span_kind(kind) { return true; }
+    // Decided absent: a silent pass-through, recorded in MANIFEST.md.
+    if controls::decided_absent(kind) { return true; }
+    // web / hybrid_web are deliberately NOT here. They are deferred, not
+    // decided, so they still take the warning path — which is the difference
+    // this whole function exists to keep visible.
+    return kind == props::K_LABEL || kind == props::K_BUTTON
+        || kind == props::K_TEXT_FIELD || kind == props::K_TEXT_AREA
+        || kind == props::K_SEARCH_FIELD || kind == props::K_IMAGE
+        || kind == props::K_ICON_BUTTON || kind == props::K_SCROLL
+        || kind == props::K_BOX || kind == props::K_BORDERED
+        || kind == props::K_CHECKBOX || kind == props::K_RADIO
+        || kind == props::K_TOGGLE || kind == props::K_SLIDER
+        || kind == props::K_PROGRESS || kind == props::K_SPINNER
+        || kind == props::K_STEPPER || kind == props::K_POPUP
+        || kind == props::K_DATE_PICKER || kind == props::K_TIME_PICKER
+        || kind == props::K_TABS || kind == props::K_PAGE_DOTS
+        || kind == props::K_LIST || kind == props::K_COLLECTION
+        || kind == props::K_TABLE || kind == props::K_CAROUSEL
+        || kind == props::K_CANVAS
+        || kind == symbol::K_SYMBOL || kind == tree::K_TREE
+        || kind == split::K_SPLIT || kind == chrome::K_WINDOW_BUTTONS;
 }
 
 // ---- the unimplemented kinds -------------------------------------------------

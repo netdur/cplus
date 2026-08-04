@@ -56,8 +56,16 @@ import "facet/date_picker" as date_picker;
 import "facet/time_picker" as time_picker;
 import "facet/tabs" as tabs;
 import "facet/span" as span;
+import "facet/list" as list;
+import "facet/collection" as collection;
+import "facet/carousel" as carousel;
+import "facet/tree" as tree;
+import "facet/mount" as mount;
+import "facet/window_chrome" as chrome;
+import "facet/canvas" as canvas;
 import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
+import "objc/synthesis" as synth;
 import "appkit/appkit" as ak;
 import "appkit/appkit_ext" as akx;
 import "quartzcore/quartzcore" as quartz;
@@ -1323,4 +1331,452 @@ fn create_passthrough(n: *core::Node) -> *u8 {
 fn decided_absent(kind: u32) -> bool {
     return kind == props::K_REFRESHABLE || kind == props::K_SWIPEABLE
         || kind == props::K_SWIPE_ITEM;
+}
+
+// ---- the collection group ----------------------------------------------------
+// list, collection, table, carousel, tree — every kind whose content is a
+// SEQUENCE rather than a fixed set of children.
+//
+// The shape here is one decision, and it is worth stating because it is not
+// the obvious one. AppKit's answer is NSTableView with a data source: the
+// table asks for row `i` when it needs it, and recycles the views it is done
+// with. That means a synthesized delegate class, a mount-within-a-mount for
+// each cell, and a cache keyed by row.
+//
+// This does something simpler and, for facet, more honest: A LIST MATERIALISES
+// ITS ROWS AS CHILDREN OF ITSELF. `row(ctx, i)` is called for each i, and the
+// resulting Node is added to the list node with the ordinary structural verb.
+// From there facet's own machinery does everything — mount creates the views,
+// insert puts them in the scroll's document view, the frame walk places them,
+// and node teardown releases them. There is no second lifetime model, no
+// per-cell registry, and no path a row can take that an ordinary child cannot.
+//
+// The cost is that a list builds every row up front rather than the visible
+// ones. That is a real limit and MANIFEST.md records it: the pre-regen
+// backend's recycling NSTableView exists and is the upgrade, and it is worth
+// doing when a consumer actually has ten thousand rows. It is NOT worth
+// inventing a second, parallel mount path before then.
+//
+// Materialising happens in `apply` ONLY, and the walk order is what makes the
+// first pass work: `views::create` calls `apply_<kind>` with an all-ones dirty
+// word before returning, and mount_walk reads `child_count_of(n)` only AFTER
+// create returns — so rows built during that first apply are mounted by the
+// same walk, with no second pass and no second code path.
+
+// Drop every row this control materialised. `remove_child` takes the native
+// views out through the Renderer and fires the detach handlers, so a rebuilt
+// list leaves nothing of the old one behind.
+fn clear_rows(n: *core::Node) {
+    while core::child_count_of(n) > (0 as usize) {
+        let _gone: option::Option[core::Node] = mount::remove_child(n, 0 as usize);
+    }
+    return;
+}
+
+// Add one row. During `create` the node is not attached yet and the walk will
+// mount what it finds; afterwards `mount::add_child` mounts it immediately.
+// Both go through the same verb, so there is one code path either way.
+fn add_row(n: *core::Node, take row: core::Node) {
+    let _ok: bool = mount::add_child(n, row);
+    return;
+}
+
+fn fill_rows(n: *core::Node, count: i64, builder: fn(*u8, usize) -> flex::Node, ctx: *u8) {
+    clear_rows(n);
+    if builder == (0 as fn(*u8, usize) -> flex::Node) { return; }
+    var i: i64 = 0 as i64;
+    while i < count {
+        add_row(n, builder(ctx, i as usize));
+        i = i +% (1 as i64);
+    }
+    return;
+}
+
+// A scroll host for a sequence: the same flipped document view a `scroll` uses,
+// so `views::host_for` redirects children into it with no extra case.
+fn create_sequence_host(horizontal: bool) -> *u8 {
+    let s: ak::ScrollView = ak::ScrollView::from_raw(rt::alloc_init(#str_ptr("NSScrollView\0")));
+    let doc: ak::View = akx::new_flipped_view(rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 });
+    s.set_document_view(doc);
+    s.set_draws_background(false);
+    if horizontal {
+        s.set_has_horizontal_scroller(true);
+    } else {
+        s.set_has_vertical_scroller(true);
+    }
+    return rt::retain(s.as_view().raw());
+}
+
+// ---- list --------------------------------------------------------------------
+
+// NOTE the absence of a materialise call. `views::create` calls
+// `apply_<kind>` with an all-ones dirty word straight after this, so the rows
+// are built exactly once, by the same code that rebuilds them later. Doing it
+// here as well built every row twice — the first set cleared by the second.
+// That is the create-calls-apply rule paying for itself.
+fn create_list(n: *core::Node) -> *u8 { return create_sequence_host(false); }
+
+fn materialise_list(n: *core::Node) {
+    let p: *props::ListProps = props_of(n, props::K_LIST) as *props::ListProps;
+    if p == (0 as *props::ListProps) { return; }
+    fill_rows(n, { (*p).count }, { (*p).row }, { (*p).row_ctx });
+    return;
+}
+
+fn apply_list(v: *u8, n: *core::Node, dirty: u64) {
+    // The row builder and the count are one question: either changes the whole
+    // sequence, and a partial answer would leave rows from two models mixed.
+    if (dirty & (list::P_COUNT | list::P_ROW)) != (0 as u64) { materialise_list(n); }
+    return;
+}
+
+// ---- collection --------------------------------------------------------------
+// MAUI's CollectionView. The same sequence, and on this backend the same
+// treatment — the layout differences MAUI expresses through ItemsLayout are
+// flex's job here, on the rows themselves.
+
+fn create_collection(n: *core::Node) -> *u8 { return create_sequence_host(false); }
+
+fn materialise_collection(n: *core::Node) {
+    let p: *props::CollectionProps = props_of(n, props::K_COLLECTION) as *props::CollectionProps;
+    if p == (0 as *props::CollectionProps) { return; }
+    fill_rows(n, { (*p).count }, { (*p).row }, { (*p).row_ctx });
+    return;
+}
+
+fn apply_collection(v: *u8, n: *core::Node, dirty: u64) {
+    if (dirty & (collection::P_COUNT | collection::P_ROW)) != (0 as u64) { materialise_collection(n); }
+    return;
+}
+
+// ---- table -------------------------------------------------------------------
+// MAUI's TableView is a STATIC form, not a data-bound sequence: its rows are
+// written out, so they are already this node's children and nothing needs
+// materialising. It is a scroll of what it was given.
+
+fn create_table(n: *core::Node) -> *u8 { return create_sequence_host(false); }
+
+fn apply_table(v: *u8, n: *core::Node, dirty: u64) { return; }
+
+// ---- carousel ----------------------------------------------------------------
+// A sequence laid along the horizontal axis. The pages are its children, like
+// a table's rows; `position` is which one is showing, which on a scroll view
+// is a scroll offset rather than a selection.
+
+fn create_carousel(n: *core::Node) -> *u8 { return create_sequence_host(true); }
+
+fn apply_carousel(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::CarouselProps = props_of(n, props::K_CAROUSEL) as *props::CarouselProps;
+    if p == (0 as *props::CarouselProps) { return; }
+    if (dirty & carousel::P_POSITION) != (0 as u64) {
+        // Scroll the page at `position` to the leading edge. Its frame is
+        // flex's, so this needs no measurement of its own.
+        match core::child_of(n, { (*p).position } as usize) {
+            option::Option[*core::Node]::Some(page) => {
+                let f: flex::Frame = { (*page).frame() };
+                match ak::ScrollView::from_raw(v).document_view() {
+                    option::Option[ak::View]::Some(doc) => {
+                        doc.scroll_point(rt::Point { x: f.left, y: f.top });
+                    }
+                    option::Option[ak::View]::None => { }
+                }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+    }
+    return;
+}
+
+// ---- tree --------------------------------------------------------------------
+// A hierarchy rather than a sequence, and the one place the model is facet's
+// own: `TreeProps.root` is a TreeNode graph with stable ids, and `expanded`
+// says which of them are open.
+//
+// Materialised the same way, walked depth-first, and only through OPEN nodes —
+// a closed branch contributes nothing, which is what makes a deep tree cheap
+// even under the build-everything rule above. Depth becomes leading padding on
+// the row, because indentation IS layout and layout is flex's.
+
+fn create_tree(n: *core::Node) -> *u8 { return create_sequence_host(false); }
+
+fn indent_step() -> f64 { return 16.0f64; }
+
+fn materialise_tree(n: *core::Node) {
+    let p: *tree::TreeProps = props_of(n, tree::K_TREE) as *tree::TreeProps;
+    if p == (0 as *tree::TreeProps) { return; }
+    clear_rows(n);
+    let root: *tree::TreeNode = { #addr_of((*p).root) };
+    // The root itself is the container, not a row: a tree shows its CHILDREN.
+    emit_branch(n, root, p, 0 as i64, true);
+    return;
+}
+
+// `parent_open` is what stops a closed branch costing anything: the walk does
+// not descend through it at all.
+fn emit_branch(host: *core::Node, node: *tree::TreeNode, p: *tree::TreeProps,
+               depth: i64, is_root: bool) {
+    if !is_root {
+        var row: core::Node = build_tree_row(node, p);
+        // Indentation IS layout, so it is flex's — a leading pad, not a
+        // backend-drawn gutter.
+        row.set_padding(flex::Edge::Left, flex::StyleLength::points((depth as f64) * indent_step()));
+        add_row(host, row);
+        if !is_expanded(p, node) { return; }
+    }
+    var i: usize = 0 as usize;
+    let count: usize = { (*node).child_count() };
+    while i < count {
+        match { (*node).child_ptr(i) } {
+            option::Option[*tree::TreeNode]::Some(c) => {
+                var next: i64 = depth;
+                if !is_root { next = depth +% (1 as i64); }
+                emit_branch(host, c, p, next, false);
+            }
+            option::Option[*tree::TreeNode]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+fn is_expanded(p: *tree::TreeProps, node: *tree::TreeNode) -> bool {
+    let id: str = { (*node).id.view() };
+    if id == "" { return false; }
+    let ex: *vocab::TextList = { #addr_of((*p).expanded) };
+    var i: usize = 0 as usize;
+    let n: usize = { (*ex).count() };
+    while i < n {
+        if { (*ex).at(i) } == id { return true; }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
+
+// The application's row builder, or a plain label of the node's own text when
+// it gave none — a tree with no builder still shows its shape.
+fn build_tree_row(node: *tree::TreeNode, p: *tree::TreeProps) -> core::Node {
+    let f: fn(*tree::TreeNode, *u8) -> flex::Node = { (*p).row };
+    if f != (0 as fn(*tree::TreeNode, *u8) -> flex::Node) { return f(node, { (*p).ctx }); }
+    return label::label({ (*node).label.view() }, key: { (*node).id.view() });
+}
+
+fn apply_tree(v: *u8, n: *core::Node, dirty: u64) {
+    // Expansion changes WHICH rows exist, so it rebuilds like the model does.
+    if (dirty & (tree::P_ROOT | tree::P_ROW | tree::P_EXPANDED)) != (0 as u64) {
+        materialise_tree(n);
+    }
+    return;
+}
+
+// ---- window_buttons ----------------------------------------------------------
+// The close / minimise / zoom group, re-parented into the application's own
+// titlebar. The REAL buttons, not a drawing of them — so the green button
+// keeps its hover menu and its full-screen behaviour, which a redrawn set
+// would silently lose.
+//
+// They can only be fetched once the view is in a window, and a view is not in
+// one when `create` runs. So the adoption happens in `apply`, which the sync
+// tick calls after the window is up; until then the node is an empty box of
+// the right size, which is what it should be.
+
+fn window_buttons_key() -> *u8 { return 29011 as *u8; }
+
+fn adopt_window_buttons(v: *u8, n: *core::Node) {
+    // Once only: re-parenting an already-adopted button would take it out of
+    // its own superview and put it back, losing nothing but doing work on
+    // every apply forever.
+    if { synth::get_associated(v, window_buttons_key()) } != (0 as *u8) { return; }
+    let view: ak::View = ak::View::from_raw(v);
+    match view.window() {
+        option::Option[ak::Window]::Some(w) => {
+            var x: f64 = 0.0f64;
+            let gap: f64 = window_button_gap(n);
+            adopt_one(view, w, ak::WindowButton::NSWindowCloseButton, x);
+            x = x + gap;
+            adopt_one(view, w, ak::WindowButton::NSWindowMiniaturizeButton, x);
+            x = x + gap;
+            adopt_one(view, w, ak::WindowButton::NSWindowZoomButton, x);
+            { synth::set_associated(v, window_buttons_key(), 1 as *u8) };
+        }
+        option::Option[ak::Window]::None => { }
+    }
+    return;
+}
+
+// 0 means the platform's own metric, which is what an application usually
+// wants — and macOS's is 20 points between traffic-light centres.
+fn window_button_gap(n: *core::Node) -> f64 {
+    let p: *chrome::WindowButtonsProps =
+        props_of(n, chrome::K_WINDOW_BUTTONS) as *chrome::WindowButtonsProps;
+    if p == (0 as *chrome::WindowButtonsProps) { return 20.0f64; }
+    let s: f64 = { (*p).spacing };
+    if s > 0.0f64 { return s; }
+    return 20.0f64;
+}
+
+fn adopt_one(host: ak::View, w: ak::Window, which: ak::WindowButton, x: f64) {
+    match w.standard_window_button(which) {
+        option::Option[ak::Button]::Some(btn) => {
+            let bv: ak::View = btn.as_view();
+            let f: rt::Rect = bv.frame();
+            bv.set_hidden(false);
+            host.add_subview(bv);
+            bv.set_frame(rt::Rect { x: x, y: 0.0f64, w: f.w, h: f.h });
+        }
+        option::Option[ak::Button]::None => { }
+    }
+    return;
+}
+
+fn create_window_buttons(n: *core::Node) -> *u8 {
+    let v: ak::View = akx::new_flipped_view(rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 });
+    return rt::retain(v.raw());
+}
+
+fn apply_window_buttons(v: *u8, n: *core::Node, dirty: u64) {
+    adopt_window_buttons(v, n);
+    return;
+}
+
+// ---- canvas ------------------------------------------------------------------
+// A backing view, and nothing more — because there is nothing more to do.
+//
+// facet declares no DRAWING VOCABULARY. `Drawable` is
+// `fn(*u8, f64, f64)`: the callback receives its ctx and a size, and nothing
+// to draw WITH. MAUI's IDrawable.Draw takes an ICanvas; facet's version
+// dropped that parameter, and the ledger has no path, no fill, no stroke, no
+// painter of any kind — so an application cannot express a drawing at all.
+//
+// That is a gap in the CONTRACT, not in this backend, and no backend can close
+// it: there is nothing to implement until facet declares what a drawing is.
+// Recorded in MANIFEST.md and on stages/4.md. The Drawable is invoked with the
+// node's laid-out size so an application that has reached through `native()`
+// for its own CALayer still gets told when to redraw — which is the only
+// useful thing the current signature supports.
+
+fn create_canvas(n: *core::Node) -> *u8 {
+    let v: ak::View = akx::new_flipped_view(rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 });
+    v.set_wants_layer(true);
+    return rt::retain(v.raw());
+}
+
+fn apply_canvas(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::CanvasProps = props_of(n, props::K_CANVAS) as *props::CanvasProps;
+    if p == (0 as *props::CanvasProps) { return; }
+    if (dirty & canvas::P_DRAWABLE) != (0 as u64) || dirty == paint::all_bits() {
+        let d: *vocab::Drawable = { #addr_of((*p).drawable) };
+        let f: fn(*u8, f64, f64) = { (*d).draw };
+        if f != vocab::draw_none {
+            let frame: flex::Frame = { (*n).frame() };
+            f({ (*d).ctx }, frame.width, frame.height);
+        }
+    }
+    return;
+}
+
+// ---- menu, menu_item, toolbar_item -------------------------------------------
+// The rest of the menu tier, and like `context_menu` none of them is a view:
+// an NSMenu, an NSMenuItem and an NSToolbarItem are all objects a WINDOW or
+// the APPLICATION owns, not things that occupy a rectangle in a tree.
+//
+// So all three answer `wants_view` false, and what they describe is built from
+// the nodes by whoever owns the host:
+//
+//   `menu` + `menu_item`  a menu-bar submenu, built by `build_menu` below and
+//                         installed on NSApplication by the window tier.
+//   `toolbar_item`        an NSToolbarItem, built by `build_toolbar_item` and
+//                         installed on the window's NSToolbar.
+//
+// The BUILDERS are here, complete, because that is this module's job — turning
+// a facet node into an AppKit object. The INSTALLERS belong to the window tier
+// (stages/4.md item 5, the app menu and NSToolbar), which is where the thing
+// that owns them lives. Splitting it that way is why `context_menu` needed no
+// installer at all: an NSView owns its own menu, so the node's parent was the
+// owner and it was already in hand.
+
+fn menu_bar_kind(kind: u32) -> bool {
+    return kind == props::K_MENU || kind == props::K_MENU_ITEM
+        || kind == props::K_TOOLBAR_ITEM;
+}
+
+// The NSMenu a `menu` node describes, titled and filled from its
+// `menu_item` children. At +1.
+fn build_menu(n: *core::Node) -> *u8 {
+    if core::kind_of(n) != props::K_MENU { return 0 as *u8; }
+    let p: *props::MenuProps = props_of(n, props::K_MENU) as *props::MenuProps;
+    var title: str = "";
+    if p != (0 as *props::MenuProps) { title = { (*p).text.view() }; }
+    let menu: ak::Menu = ak::Menu::new(title);
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                let item: *u8 = build_menu_item(c);
+                if item != (0 as *u8) { menu.add_item(ak::MenuItem::from_raw(item)); }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return rt::retain(menu.raw());
+}
+
+// One NSMenuItem from a `menu_item` node, or 0 for a node that is not one.
+// Shares every rule with a context menu's items — a titleless item is a
+// separator, the handler rides the same target trampoline — because they are
+// the same object and a second set of rules would be two answers to one
+// question.
+fn build_menu_item(c: *core::Node) -> *u8 {
+    let mi: *props::MenuItemProps = props_of(c, props::K_MENU_ITEM) as *props::MenuItemProps;
+    if mi == (0 as *props::MenuItemProps) { return 0 as *u8; }
+    let title: str = { (*mi).text.view() };
+    if title == "" { return rt::retain(ak::MenuItem::separator_item().raw()); }
+    let item: ak::MenuItem = ak::MenuItem::new(title, 0 as *u8, "");
+    let icon: str = { (*mi).icon.view() };
+    if icon != "" {
+        match resolve_image(icon) {
+            option::Option[ak::Image]::Some(img) => { item.set_image(img); }
+            option::Option[ak::Image]::None => { }
+        }
+    }
+    let h: fn(*u8, *u8) = { (*mi).on_clicked };
+    if h != props::no_handler {
+        item.set_target(akx::action_ctx_target(h, { (*mi).on_clicked_ctx }));
+        item.set_action(akx::action_ctx_sel());
+    }
+    item.set_enabled(core::is_enabled(c));
+    return rt::retain(item.raw());
+}
+
+// One NSToolbarItem from a `toolbar_item` node. Its identifier is the node's
+// KEY — NSToolbar addresses its items by identifier, facet addresses nodes by
+// key, and they are the same need answered once.
+fn build_toolbar_item(c: *core::Node) -> *u8 {
+    let p: *props::ToolbarItemProps = props_of(c, props::K_TOOLBAR_ITEM) as *props::ToolbarItemProps;
+    if p == (0 as *props::ToolbarItemProps) { return 0 as *u8; }
+    let mi: *props::MenuItemProps = { #addr_of((*p).menu_item) };
+    var ident: str = { (*c).key() };
+    if ident == "" { ident = { (*mi).text.view() }; }
+    let alloced: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSToolbarItem\0")), rt::sel(#str_ptr("alloc\0"))) };
+    let item: *u8 = { rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithItemIdentifier:\0")),
+                                    bridge::nsstring(ident)) };
+    if item == (0 as *u8) { return 0 as *u8; }
+    { rt::msg_void_id(item, rt::sel(#str_ptr("setLabel:\0")), bridge::nsstring({ (*mi).text.view() })) };
+    let icon: str = { (*mi).icon.view() };
+    if icon != "" {
+        match resolve_image(icon) {
+            option::Option[ak::Image]::Some(img) => {
+                { rt::msg_void_id(item, rt::sel(#str_ptr("setImage:\0")), img.raw()) };
+            }
+            option::Option[ak::Image]::None => { }
+        }
+    }
+    let h: fn(*u8, *u8) = { (*mi).on_clicked };
+    if h != props::no_handler {
+        { rt::msg_void_id(item, rt::sel(#str_ptr("setTarget:\0")),
+                          akx::action_ctx_target(h, { (*mi).on_clicked_ctx })) };
+        { rt::msg_void_id(item, rt::sel(#str_ptr("setAction:\0")), akx::action_ctx_sel()) };
+    }
+    return item;
 }

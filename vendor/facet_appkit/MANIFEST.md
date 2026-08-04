@@ -8,7 +8,9 @@ happen on a Mac?" by reading it.
 A row here is a commitment, not a note. Nothing is left implicit: a verb that
 is neither implemented nor listed below is a gap, and the gap is a bug.
 
-Status: **Stage 4 item 1 complete**, item 2 at 30 kinds of 42. Items are in
+Status: **Stage 4 items 1 and 2 COMPLETE.** Every one of the 42 kinds has an
+answer — a body, a recorded "AppKit cannot", or a named deferral — and
+`every_kind_now_has_an_answer` in the suite is the guard. Items 3-7 are in
 progress; this file grows a row each time something is decided either way.
 
 ---
@@ -105,6 +107,22 @@ cannot (mobile concept)" when item 5 reaches them.
 
 ## Implemented, with a deviation worth knowing
 
+### `canvas` has nothing to draw with — and that is facet's gap, not AppKit's
+
+facet declares NO drawing vocabulary. `Drawable` is `fn(*u8, f64, f64)`: the
+callback receives its ctx and a size, and **nothing to draw WITH**. MAUI's
+`IDrawable.Draw` takes an `ICanvas`; facet's version dropped that parameter,
+and the ledger has no path, no fill, no stroke, no painter of any kind.
+
+So an application cannot express a drawing at all, and **no backend can close
+this** — there is nothing to implement until facet declares what a drawing
+is. `canvas` gets a layer-backed view and calls the Drawable with the node's
+laid-out size, which is the only useful thing the current signature supports:
+an application that has reached through `native()` for its own CALayer still
+gets told when to redraw.
+
+Recorded on stages/4.md as the second CONTRACT gap this backend found.
+
 ### A span is not a view either
 
 `span` is a styled RUN inside a label, so it has nothing to apply onto. A
@@ -175,13 +193,24 @@ AppKit cannot. They are listed so the difference is never ambiguous.
 | `web` / `hybrid_web` | deferred by the user, 2026-08-04 — needs a `vendor/webkit` bindgen package |
 | The collection group | 2 (the heavy end) |
 
-### The collection group
+### The collection group builds every row, not just the visible ones
 
-`list`, `collection`, `table`, `tree`, `carousel` are the heavy end of the
-sweep: each needs recycling, a row-identity model, and a data source. The
-pre-regen backend's recycling NSTableView (`git show
-eb5b1b7:vendor/facet_appkit/src/ui.cplus`) is the reference and is worth
-quarrying rather than re-deriving.
+`list` and `collection` MATERIALISE their rows as ordinary children of
+themselves: `row(ctx, i)` is called for each i and the result is added with
+the same structural verb anything else uses. From there facet's own machinery
+does everything — mount creates the views, insert puts them in the scroll's
+document view, the frame walk places them, teardown releases them. There is
+no second lifetime model and no path a row can take that a child cannot.
+
+The cost is real and is the one thing to know: a list builds every row up
+front rather than the visible ones. AppKit's answer is NSTableView with a
+data source, which recycles — and the pre-regen backend's recycling
+NSTableView (`git show eb5b1b7:vendor/facet_appkit/src/ui.cplus`) is the
+upgrade when a consumer actually has ten thousand rows. It was not worth
+inventing a second, parallel mount path before then.
+
+`tree` walks only through OPEN branches, which is what keeps a deep tree
+cheap under that rule: a closed branch is not descended at all.
 
 Until item 2 lands, a control kind with no body renders as an empty backing
 view **and says so on stderr**, once per kind. A silent wrong view is the
