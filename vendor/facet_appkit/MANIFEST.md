@@ -8,7 +8,7 @@ happen on a Mac?" by reading it.
 A row here is a commitment, not a note. Nothing is left implicit: a verb that
 is neither implemented nor listed below is a gap, and the gap is a bug.
 
-Status: **Stage 4 item 1 complete**, item 2 at 26 kinds of 42. Items are in
+Status: **Stage 4 item 1 complete**, item 2 at 30 kinds of 42. Items are in
 progress; this file grows a row each time something is decided either way.
 
 ---
@@ -85,6 +85,13 @@ Both are recorded rather than approximated because a half-working gesture is
 worse than an absent one: it teaches an application a shape that will not
 survive on the platform its users are actually on.
 
+They still get a BODY, and it matters that they do: a plain backing view, so
+their content renders exactly as it would have (a `swipeable` shows its
+content and simply reveals nothing), and SILENTLY — a decided kind must not
+take the unimplemented path, because that path warns, and a warning for
+something already answered would train a reader to ignore the warnings that
+mean something.
+
 This is also where the standing rule bites — **an agent has no hands**. A
 gesture-only affordance must have a click path in the UI, never a new agent
 verb. On this backend that click path is the substitute above, not a
@@ -97,6 +104,14 @@ nav-bar back button — have no desktop equivalent and land here as "AppKit
 cannot (mobile concept)" when item 5 reaches them.
 
 ## Implemented, with a deviation worth knowing
+
+### A span is not a view either
+
+`span` is a styled RUN inside a label, so it has nothing to apply onto. A
+label with span children renders one attributed string built from them and
+IGNORES its own `text` — a formatted label's text is its runs, and its own
+`text` would be a second, contradictory answer to the same question. A label
+with no spans renders `text` exactly as before.
 
 ### The menu kinds are not views
 

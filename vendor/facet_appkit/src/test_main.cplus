@@ -38,6 +38,8 @@ import "facet/time_picker" as time_picker;
 import "facet/tabs" as tabs;
 import "facet/context_menu" as context_menu;
 import "facet/context_menu_item" as context_menu_item;
+import "facet/span" as span;
+import "facet/refreshable" as refreshable;
 import "quartzcore/quartzcore" as quartz;
 import "stdlib/status" as status;
 import "objc/runtime" as rt;
@@ -844,6 +846,59 @@ fn a_node_with_a_context_menu_child_gets_it_hung_on_its_view() {
     let hung: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("menu\0"))) };
     assert hung != (0 as *u8);
     assert ak::Menu::from_raw(hung).number_of_items() == (1 as i64);
+    views::view_release(v);
+    return;
+}
+
+// ---- span, and the kinds that are decided rather than missing ----------------
+
+#[test]
+fn a_labels_spans_become_one_attributed_string() {
+    // A span is a styled RUN inside a label, not a thing of its own — so it is
+    // not a view, and the label reads its span children instead of its own
+    // text. A formatted label's text IS its runs; its own `text` would be a
+    // second, contradictory answer to the same question.
+    var l: core::Node = label::label("ignored", key: "styled");
+    let lp: *core::Node = #addr_of(l);
+    assert mount::add_child(lp, span::span("Hello ", key: "a"));
+    assert mount::add_child(lp, span::span("world", key: "b",
+        font_weight: vocab::FontWeight::Bold,
+        text_color: vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64, 1.0f64)));
+    assert controls::has_spans(lp);
+    var lone: core::Node = span::span("x");
+    assert views::wants_view(#addr_of(lone)) == false;
+
+    let v: *u8 = views::create(0 as *u8, lp);
+    let f: ak::TextField = ak::TextField::from_raw(v);
+    // The runs joined, and the label's OWN text nowhere in sight.
+    assert f.as_control().string_value().view() == "Hello world";
+    views::view_release(v);
+
+    // A label with no spans still renders its own text, unchanged.
+    var plain: core::Node = label::label("Save", key: "plain");
+    assert controls::has_spans(#addr_of(plain)) == false;
+    let pv: *u8 = views::create(0 as *u8, #addr_of(plain));
+    assert ak::TextField::from_raw(pv).as_control().string_value().view() == "Save";
+    views::view_release(pv);
+    return;
+}
+
+#[test]
+fn a_decided_absent_kind_still_shows_its_content_and_says_nothing() {
+    // refreshable / swipeable / swipe_item have no macOS equivalent and
+    // MANIFEST.md records what to use instead. They are DECIDED, not missing —
+    // so they get a real backing view (their content renders exactly as it
+    // would have) and they must NOT take the unimplemented path, which warns.
+    // A warning for something already answered trains a reader to ignore the
+    // warnings that mean something.
+    assert controls::decided_absent(props::K_REFRESHABLE);
+    assert controls::decided_absent(props::K_SWIPEABLE);
+    assert controls::decided_absent(props::K_SWIPE_ITEM);
+    assert controls::decided_absent(props::K_BUTTON) == false;
+    var r: core::Node = refreshable::refreshable(key: "r");
+    let v: *u8 = views::create(0 as *u8, #addr_of(r));
+    assert v != (0 as *u8);
+    assert ak::View::from_raw(v).is_flipped();
     views::view_release(v);
     return;
 }

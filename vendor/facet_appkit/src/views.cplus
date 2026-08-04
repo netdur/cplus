@@ -46,6 +46,9 @@ fn wants_view(n: *core::Node) -> bool {
     // place of its own. They are read as NODES when their parent's view is
     // built — see controls::attach_context_menu.
     if controls::menu_kind(kind) { return false; }
+    // A span is a styled RUN inside a label, not a thing of its own — the
+    // label reads its span children and renders one attributed string.
+    if controls::span_kind(kind) { return false; }
     if kind != core::K_NODE { return true; }
     return { (*n).key() } != "";
 }
@@ -108,6 +111,12 @@ fn create_for_kind(kind: u32, n: *core::Node) -> *u8 {
     if kind == props::K_DATE_PICKER { return controls::create_date_picker(n); }
     if kind == props::K_TIME_PICKER { return controls::create_time_picker(n); }
     if kind == props::K_TABS { return controls::create_tabs(n); }
+    // Decided, not missing: MANIFEST.md records why these have no macOS
+    // equivalent and what to use instead. They get a plain backing view so
+    // their content still renders — and SILENTLY, because a warning for
+    // something already answered would train a reader to ignore the warnings
+    // that mean something.
+    if controls::decided_absent(kind) { return controls::create_passthrough(n); }
     unimplemented_kind(kind, n);
     return backing_view();
 }
