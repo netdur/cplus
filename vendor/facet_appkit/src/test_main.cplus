@@ -58,6 +58,7 @@ import "facet/component" as component;
 import "appkit/appkit_ext" as akx;
 import "./input" as input;
 import "./web" as webmod;
+import "./dialogs" as dialogs;
 import "./recycler" as recycler;import "facet/web" as web_ui;
 import "facet/hybrid_web" as hybrid_ui;
 import "./drawing" as drawing;
@@ -2549,5 +2550,87 @@ fn a_resize_that_does_not_change_the_width_schedules_nothing() {
     recycler::resize_to(v, 400.0f64);
     assert akx::after_pending_count() == after_first;
     views::view_release(v);
+    return;
+}
+
+// ---- alert: a sheet an agent can answer --------------------------------------
+
+static AL_ANSWER: i32 = -1;
+fn al_answered(ctx: *u8, which: i32) { AL_ANSWER = which; return; }
+
+#[test]
+fn an_alert_is_a_facet_tree_the_agent_can_address() {
+    backend::install();
+    // The whole reason it stopped being an NSAlert: nothing in an NSAlert has a
+    // key, so an agent cannot reach it — and a dialog an agent cannot answer is
+    // a dialog an agent cannot get past.
+    AL_ANSWER = -1;
+    let before: usize = app::window_count();
+    dialogs::alert_sheet("Discard?", "Three edits will be lost.", "Discard", "Keep",
+                         al_answered, 0 as *u8);
+    // It is a real window of the app, so `find` reaches into it — which is the
+    // same door the agent surface uses.
+    assert app::window_count() == (before + (1 as usize));
+    match label::find("alert:title") {
+        option::Option[label::Label]::Some(l) => { assert l.text() == "Discard?"; }
+        option::Option[label::Label]::None => { assert false; }
+    }
+    match label::find("alert:message") {
+        option::Option[label::Label]::Some(l) => { assert l.text() == "Three edits will be lost."; }
+        option::Option[label::Label]::None => { assert false; }
+    }
+    match button::find("alert:primary") {
+        option::Option[button::Button]::Some(b) => { assert b.title() == "Discard"; }
+        option::Option[button::Button]::None => { assert false; }
+    }
+    match button::find("alert:secondary") {
+        option::Option[button::Button]::Some(b) => { assert b.title() == "Keep"; }
+        option::Option[button::Button]::None => { assert false; }
+    }
+
+    // NON-BLOCKING: control is here, the answer has not arrived, and the app is
+    // free to keep running — which is what lets an agent's own request return.
+    assert AL_ANSWER == (-1 as i32);
+
+    // Answered by CLICKING, the same path a person or an agent takes.
+    click_key("alert:primary");
+    assert AL_ANSWER == 0;
+    assert app::window_count() == before;
+    return;
+}
+
+#[test]
+fn an_alert_with_one_button_has_no_second_one() {
+    backend::install();
+    let before: usize = app::window_count();
+    dialogs::alert_sheet("Saved", "", "OK", "", al_answered, 0 as *u8);
+    match button::find("alert:secondary") {
+        option::Option[button::Button]::Some(_b) => { assert false; }
+        option::Option[button::Button]::None => { }
+    }
+    // ...and no message label either, rather than an empty one taking space.
+    match label::find("alert:message") {
+        option::Option[label::Label]::Some(_l) => { assert false; }
+        option::Option[label::Label]::None => { }
+    }
+    AL_ANSWER = -1;
+    click_key("alert:primary");
+    assert AL_ANSWER == 0;
+    assert app::window_count() == before;
+    return;
+}
+
+// Click the keyed control, the way the agent surface does: find the view, send
+// its action.
+fn click_key(key: str) {
+    match button::find(key) {
+        option::Option[button::Button]::Some(b) => {
+            let v: *u8 = core::view_of(b.node());
+            if v != (0 as *u8) {
+                { rt::msg_void_id(v, rt::sel(#str_ptr("performClick:\0")), 0 as *u8) };
+            }
+        }
+        option::Option[button::Button]::None => { assert false; }
+    }
     return;
 }

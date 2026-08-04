@@ -14,6 +14,13 @@ import "flex_layout/flex_layout" as flex;
 import "facet/facet" as core;
 import "facet/vocabulary" as vocab;
 import "facet/application" as app;
+import "facet/label" as label;
+import "facet/button" as button;
+import "facet/mount" as mount;
+import "stdlib/box" as box;
+import "objc/synthesis" as synth;
+import "appkit/appkit_ext" as akx;
+import "./geometry" as geometry;
 import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "appkit/appkit" as ak;
@@ -127,3 +134,145 @@ fn set_window_frame_of(root: *core::Node, frame: vocab::Rect) {
     );
     return;
 }
+
+// ---- alert: a window-modal SHEET, non-blocking -------------------------------
+//
+// The old one was an NSAlert and `runModal`, which is two problems at once. It
+// BLOCKS — the caller does not return until the user answers — and it is not
+// facet's, so nothing in it has a key, which means AN AGENT CANNOT REACH IT.
+// A dialog an agent cannot answer is a dialog an agent cannot get past.
+//
+// So the sheet is an ordinary facet tree in an ordinary window, attached to its
+// parent with `beginSheet:`. Every part of it is addressable the way every
+// other part of a facet app is:
+//
+//   alert:title     alert:message     alert:primary     alert:secondary
+//
+// Non-blocking: `alert` returns immediately and the answer arrives on the
+// callback. That is the whole reason for the change — a blocking call cannot be
+// driven over MCP, because the agent's own request is what would have to return
+// first.
+//
+// Window-modal, not application-modal: the sheet blocks ITS PARENT, which is
+// what an alert means to a person, while the rest of the app and the agent
+// channel keep running.
+
+struct AlertHost {
+    opaque root: *core::Node,
+    opaque sheet: *u8,
+    opaque parent: *u8,
+    answer: fn(*u8, i32),
+    opaque answer_ctx: *u8,
+}
+
+fn alert_host_key() -> *u8 { return { 28740 as *u8 }; }
+
+fn host_of(sender: *u8) -> *AlertHost {
+    // The sender is a button inside the sheet; the host is pinned to the WINDOW.
+    let w: *u8 = { rt::msg_id(sender, rt::sel(#str_ptr("window\0"))) };
+    if w == (0 as *u8) { return 0 as *AlertHost; }
+    return { synth::get_associated(w, alert_host_key()) as *AlertHost };
+}
+
+fn alert_primary(sender: *u8, ctx: *u8) { dismiss(host_of(sender), 0 as i32); return; }
+fn alert_secondary(sender: *u8, ctx: *u8) { dismiss(host_of(sender), 1 as i32); return; }
+
+fn dismiss(h: *AlertHost, answer: i32) {
+    if h == (0 as *AlertHost) { return; }
+    let sheet: *u8 = { (*h).sheet };
+    let parent: *u8 = { (*h).parent };
+    if parent != (0 as *u8) && sheet != (0 as *u8) {
+        { rt::msg_void_id(parent, rt::sel(#str_ptr("endSheet:\0")), sheet) };
+    }
+    if sheet != (0 as *u8) { { rt::msg_void(sheet, rt::sel(#str_ptr("close\0"))) }; }
+    // The answer goes out BEFORE the tree is dropped, so a handler can still
+    // read anything it wants out of the sheet.
+    let f: fn(*u8, i32) = { (*h).answer };
+    if f != (0 as fn(*u8, i32)) { f({ (*h).answer_ctx }, answer); }
+    let root: *core::Node = { (*h).root };
+    if root != (0 as *core::Node) {
+        mount::unmount(root);
+        let _gone: box::Box[core::Node] = box::from_raw::[core::Node](root as *u8);
+    }
+    let _h: box::Box[AlertHost] = box::from_raw::[AlertHost](h as *u8);
+    return;
+}
+
+// The sheet's own tree. Plain facet — nothing here is special, which is the
+// point: an agent walks it like any other screen.
+fn alert_tree(title: str, message: str, primary: str, secondary: str) -> core::Node {
+    var b: core::Builder = core::Builder::new();
+    b.add(label::label(title, key: "alert:title", font_size: 15.0f64,
+                       font_weight: vocab::FontWeight::Bold,
+                       text_align: vocab::TextAlign::Start));
+    if message != "" {
+        b.add(label::label(message, key: "alert:message", font_size: 13.0f64,
+                           text_align: vocab::TextAlign::Start));
+    }
+    var row: core::Builder = core::Builder::new();
+    if secondary != "" {
+        row.add(button::button(secondary, key: "alert:secondary", on_click: alert_secondary));
+    }
+    row.add(button::button(primary, key: "alert:primary", on_click: alert_primary));
+    b.add(core::row(row, key: "alert:buttons").gap(8.0f64).justify(flex::Justify::FlexEnd));
+    return core::column(b, key: "alert").padding(20.0f64).gap(12.0f64);
+}
+
+fn alert_sheet(title: str, message: str, primary: str, secondary: str = "",
+               on_answer: fn(*u8, i32) = 0 as fn(*u8, i32), ctx: *u8 = 0 as *u8) {
+    let parent: *u8 = app::window_native(app::newest_window_root());
+    var root: core::Node = alert_tree(title, message, primary, secondary);
+
+    // A titleless panel: a sheet draws no titlebar of its own, and one would
+    // sit above the parent's.
+    let sheet: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSWindow\0")),
+                                  rt::sel(#str_ptr("alloc\0"))) };
+    let w: *u8 = { msg_id_rect_u64_u64_i8(sheet,
+        rt::sel(#str_ptr("initWithContentRect:styleMask:backing:defer:\0")),
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: 380.0f64, h: 140.0f64 },
+        1 as u64,        // NSWindowStyleMaskTitled — a sheet needs one to size
+        2 as u64,        // NSBackingStoreBuffered
+        0 as i8) };
+    if w == (0 as *u8) { return; }
+    let content: ak::View = akx::new_flipped_view(
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: 380.0f64, h: 140.0f64 });
+    { rt::msg_void_id(w, rt::sel(#str_ptr("setContentView:\0")), content.raw()) };
+
+    let rp: *core::Node = match box::new::[core::Node](root) {
+        option::Option[box::Box[core::Node]]::Some(b) => { b.into_raw() } as *core::Node,
+        option::Option[box::Box[core::Node]]::None => 0 as *core::Node,
+    };
+    if rp == (0 as *core::Node) { return; }
+    // A real mount: the sheet is a window of the app, so `find` reaches it and
+    // so does the agent surface.
+    let _m: bool = mount::mount(rp);
+    app::set_window_native(rp, w);
+    let rv: *u8 = core::view_of(rp);
+    if rv != (0 as *u8) { content.add_subview(ak::View::from_raw(rv)); }
+    { (*rp).calculate_layout(width: 380.0f64, height: 140.0f64) };
+    geometry::reposition(rp);
+
+    match box::new::[AlertHost](AlertHost {
+        root: rp, sheet: w, parent: parent,
+        answer: on_answer, answer_ctx: ctx,
+    }) {
+        option::Option[box::Box[AlertHost]]::Some(hb) => {
+            let hp: *AlertHost = { hb.into_raw() } as *AlertHost;
+            synth::set_associated(w, alert_host_key(), hp as *u8);
+        }
+        option::Option[box::Box[AlertHost]]::None => { return; }
+    }
+
+    if parent != (0 as *u8) {
+        { rt::msg_void_id(parent, rt::sel(#str_ptr("beginSheet:completionHandler:\0")), w) };
+    } else {
+        // No parent window to attach to: show it as an ordinary window rather
+        // than refusing. An alert with nowhere to hang is still an alert.
+        { rt::msg_void_id(w, rt::sel(#str_ptr("makeKeyAndOrderFront:\0")), 0 as *u8) };
+    }
+    return;
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_id_rect_u64_u64_i8(recv: *u8, sel: *u8, r: rt::Rect, a: u64, b: u64,
+                                 c: i8) -> *u8;

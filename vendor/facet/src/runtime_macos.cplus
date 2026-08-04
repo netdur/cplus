@@ -228,7 +228,31 @@ fn drain_once() {
 
 // ---- modal verbs -------------------------------------------------------------
 
-fn alert(title: str, message: str, primary: str, secondary: str = "") -> i32 {
+// A window-modal sheet, NON-BLOCKING: returns immediately and the answer
+// arrives on `on_answer` with the 0-based index of the button clicked.
+//
+// It used to be an NSAlert and `runModal`, which was two problems at once. It
+// BLOCKED — the caller did not return until the user answered — and it was not
+// facet's, so nothing in it had a key and AN AGENT COULD NOT REACH IT. A dialog
+// an agent cannot answer is a dialog an agent cannot get past.
+//
+// The sheet is an ordinary facet tree in an ordinary window now, so every part
+// of it is addressable the way everything else is: `alert:title`,
+// `alert:message`, `alert:primary`, `alert:secondary`.
+//
+// Window-modal, not application-modal: it blocks its PARENT, which is what an
+// alert means to a person, while the rest of the app and the agent channel keep
+// running.
+fn alert(title: str, message: str, primary: str, secondary: str = "",
+         on_answer: fn(*u8, i32) = 0 as fn(*u8, i32), ctx: *u8 = 0 as *u8) {
+    dialogs::alert_sheet(title, message, primary, secondary, on_answer, ctx);
+    return;
+}
+
+// The blocking NSAlert, kept for the one case a sheet cannot serve: a decision
+// that must be made before the process can go on, with no window to attach to.
+// An agent cannot reach it, which is why it is not the default.
+fn alert_blocking(title: str, message: str, primary: str, secondary: str = "") -> i32 {
     return dialogs::alert(title, message, primary, secondary);
 }
 

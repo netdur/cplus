@@ -249,6 +249,35 @@ an explicit width and height laid out 0x0 — present, correct and invisible.
 It survived because the tests asserted PROPS and the examples sized everything
 by hand; the guard now asserts a FRAME.
 
+### `alert` is a facet tree in a sheet, and non-blocking
+
+It used to be an NSAlert and `runModal`, which was two problems at once. It
+BLOCKED — the caller did not return until the user answered — and nothing in an
+NSAlert has a key, so AN AGENT COULD NOT REACH IT. A dialog an agent cannot
+answer is a dialog an agent cannot get past.
+
+So the sheet is an ordinary facet tree in an ordinary window, attached with
+`beginSheet:`, and every part of it is addressable the way everything else is:
+`alert:title`, `alert:message`, `alert:primary`, `alert:secondary`. The agent
+clicks the button; there is no second path and no simulated one.
+
+Non-blocking is the load-bearing half: a blocking call cannot be driven over
+MCP, because the agent's own request is what would have to return first.
+
+WINDOW-modal, not application-modal — it blocks its parent, which is what an
+alert means to a person, while the rest of the app and the agent channel keep
+running.
+
+`alert_blocking` is kept for the one case a sheet cannot serve: a decision that
+must be made before the process can go on, with no window to attach to. An
+agent cannot reach it, which is exactly why it is not the default.
+
+**The file pickers stay native, and that is a hole.** `choose_file` and
+`choose_directory` are NSOpenPanel, which an agent cannot drive and which
+cannot be reimplemented — the panel IS the sandbox door, and a facet-drawn
+imitation would grant nothing. An application that needs an agent to choose a
+file has to offer a path some other way.
+
 ### The window tier: what a native window is asked
 
 Sixteen ledger rows landed together, and they share a shape — none of them can
