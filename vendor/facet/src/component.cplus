@@ -29,7 +29,7 @@ type Node = flex::Node;
 // that — it addresses the exact element and sets it.)
 //
 // Two ways to update, never a third:
-//   1. by key    — `button::find(root, key)` resolves the one keyed element
+//   1. by key    — `button::find(key, within: root)` resolves the one keyed element
 //                  of that kind in the live tree and hands back its typed
 //                  cursor; the cursor's setters mutate in place.
 //   2. by method — call a method on the component; internally it updates its

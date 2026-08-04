@@ -4,11 +4,15 @@
 // through the raw pointer flex's attachment hands back (E0509), and a union
 // would size every node by its largest variant.
 
+import "flex_layout/flex_layout" as flex;
 import "stdlib/text" as text;
 import "stdlib/box" as box;
 import "./vocabulary" as vocab;
 
 fn no_handler(sender: *u8, ctx: *u8) { return; }
+
+// The row builder a list carries until the application sets one.
+fn no_row(ctx: *u8, index: usize) -> flex::Node { return flex::Node::new(); }
 
 // ---- the shared band --------------------------------------------------------
 // The write rows every element carries (MAUI VisualElement), minus the ones
@@ -29,6 +33,13 @@ struct CommonProps {
     scale: f64, scale_x: f64, scale_y: f64,
     translation_x: f64, translation_y: f64,
     anchor_x: f64, anchor_y: f64,
+    // The shared-band handlers (Stage 3): focus/blur fired by the backend,
+    // attach/detach fired by the mount walk (post-walk, M4). fn + ctx pairs,
+    // the same shape as every control event.
+    on_focus: fn(*u8, *u8), opaque on_focus_ctx: *u8,
+    on_blur: fn(*u8, *u8), opaque on_blur_ctx: *u8,
+    on_attach: fn(*u8, *u8), opaque on_attach_ctx: *u8,
+    on_detach: fn(*u8, *u8), opaque on_detach_ctx: *u8,
 }
 
 impl CommonProps {
@@ -47,6 +58,10 @@ impl CommonProps {
             scale: 1.0f64, scale_x: 1.0f64, scale_y: 1.0f64,
             translation_x: 0.0f64, translation_y: 0.0f64,
             anchor_x: 0.5f64, anchor_y: 0.5f64,
+            on_focus: no_handler, on_focus_ctx: 0 as *u8,
+            on_blur: no_handler, on_blur_ctx: 0 as *u8,
+            on_attach: no_handler, on_attach_ctx: 0 as *u8,
+            on_detach: no_handler, on_detach_ctx: 0 as *u8,
         };
     }
 }
@@ -62,6 +77,13 @@ const C_IS_VISIBLE: u64 = 18014398509481984u64;
 const C_INPUT_TRANSPARENT: u64 = 36028797018963968u64;
 const C_FLOW_DIRECTION: u64 = 72057594037927936u64;
 const C_TRANSFORM: u64 = 144115188075855872u64;
+// Commands, not state: the backend acts on the bit and clears it.
+const C_FOCUS: u64 = 288230376151711744u64;
+const C_BLUR: u64 = 576460752303423488u64;
+const C_FLUSH: u64 = 1152921504606846976u64;
+// One bit for the four shared-band handler pairs — a live handler swap is
+// rare enough that the backend re-reads all four.
+const C_HANDLERS: u64 = 2305843009213693952u64;
 
 // ---- GroupableItemsView — shared by every control MAUI derives from it 
 
@@ -82,13 +104,14 @@ impl GroupableItemsViewProps {
 struct InputViewProps {
     character_spacing: f64,    // InputView.CharacterSpacing
     cursor_position: i64,    // InputView.CursorPosition
-    font_attributes: vocab::FontStyle,    // InputView.FontAttributes
-    font_auto_scaling_enabled: bool,    // InputView.FontAutoScalingEnabled
+    font_weight: vocab::FontWeight,    // InputView.FontAttributes
+    is_italic: bool,    // InputView.FontAttributes (italic axis)
+    font_scales: bool,    // InputView.FontAutoScalingEnabled
     font_family: text::Text,    // InputView.FontFamily
     font_size: f64,    // InputView.FontSize
     is_read_only: bool,    // InputView.IsReadOnly
-    is_spell_check_enabled: bool,    // InputView.IsSpellCheckEnabled
-    is_text_prediction_enabled: bool,    // InputView.IsTextPredictionEnabled
+    checks_spelling: bool,    // InputView.IsSpellCheckEnabled
+    predicts_text: bool,    // InputView.IsTextPredictionEnabled
     keyboard: vocab::Keyboard,    // InputView.Keyboard
     max_length: i64,    // InputView.MaxLength
     placeholder: text::Text,    // InputView.Placeholder
@@ -106,13 +129,14 @@ impl InputViewProps {
         return InputViewProps {
             character_spacing: 0.0f64,
             cursor_position: 0 as i64,
-            font_attributes: vocab::FontStyle::Bold,
-            font_auto_scaling_enabled: false,
+            font_weight: vocab::FontWeight::Default,
+            is_italic: false,
+            font_scales: false,
             font_family: text::new(),
             font_size: 0.0f64,
             is_read_only: false,
-            is_spell_check_enabled: false,
-            is_text_prediction_enabled: false,
+            checks_spelling: false,
+            predicts_text: false,
             keyboard: vocab::Keyboard::Default,
             max_length: 0 as i64,
             placeholder: text::new(),
@@ -130,23 +154,29 @@ impl InputViewProps {
 // ---- ItemsView — shared by every control MAUI derives from it -----
 
 struct ItemsViewProps {
-    horizontal_scroll_bar_visibility: vocab::ScrollBars,    // ItemsView.HorizontalScrollBarVisibility
-    items_updating_scroll_mode: vocab::ScrollAnchor,    // ItemsView.ItemsUpdatingScrollMode
-    remaining_items_threshold: i64,    // ItemsView.RemainingItemsThreshold
-    vertical_scroll_bar_visibility: vocab::ScrollBars,    // ItemsView.VerticalScrollBarVisibility
+    horizontal_scroll_bars: vocab::ScrollBars,    // ItemsView.HorizontalScrollBarVisibility
+    scroll_anchor: vocab::ScrollAnchor,    // ItemsView.ItemsUpdatingScrollMode
+    remaining_threshold: i64,    // ItemsView.RemainingItemsThreshold
+    vertical_scroll_bars: vocab::ScrollBars,    // ItemsView.VerticalScrollBarVisibility
     on_remaining_items_threshold_reached: fn(*u8, *u8),    // ItemsView.RemainingItemsThresholdReached
     opaque on_remaining_items_threshold_reached_ctx: *u8,
+    observe_scrolled: fn(*u8, *u8),    // ItemsView.Scrolled
+    opaque observe_scrolled_ctx: *u8,
+    scroll_to_index: i64,    // ItemsView.ScrollTo, the argument of scroll_to()
 }
 
 impl ItemsViewProps {
     fn new() -> ItemsViewProps {
         return ItemsViewProps {
-            horizontal_scroll_bar_visibility: vocab::ScrollBars::Always,
-            items_updating_scroll_mode: vocab::ScrollAnchor::KeepItemsInView,
-            remaining_items_threshold: 0 as i64,
-            vertical_scroll_bar_visibility: vocab::ScrollBars::Always,
+            horizontal_scroll_bars: vocab::ScrollBars::Always,
+            scroll_anchor: vocab::ScrollAnchor::KeepItemsInView,
+            remaining_threshold: 0 as i64,
+            vertical_scroll_bars: vocab::ScrollBars::Always,
             on_remaining_items_threshold_reached: no_handler,
             on_remaining_items_threshold_reached_ctx: 0 as *u8,
+            observe_scrolled: no_handler,
+            observe_scrolled_ctx: 0 as *u8,
+            scroll_to_index: 0 as i64,
         };
     }
 }
@@ -192,13 +222,13 @@ impl SelectableItemsViewProps {
 // ---- StructuredItemsView — shared by every control MAUI derives from it 
 
 struct StructuredItemsViewProps {
-    item_sizing_strategy: vocab::ItemSizing,    // StructuredItemsView.ItemSizingStrategy
+    item_sizing: vocab::ItemSizing,    // StructuredItemsView.ItemSizingStrategy
 }
 
 impl StructuredItemsViewProps {
     fn new() -> StructuredItemsViewProps {
         return StructuredItemsViewProps {
-            item_sizing_strategy: vocab::ItemSizing::MeasureAllItems,
+            item_sizing: vocab::ItemSizing::MeasureAllItems,
         };
     }
 }
@@ -231,24 +261,26 @@ fn release_spinner_props(p: *u8) {
 
 struct BorderedProps {
     stroke: vocab::Brush,    // Border.Stroke
+    stroke_dash: vocab::Dashes,    // Border.StrokeDashArray
     stroke_dash_offset: f64,    // Border.StrokeDashOffset
-    stroke_line_cap: vocab::LineCap,    // Border.StrokeLineCap
-    stroke_line_join: vocab::LineJoin,    // Border.StrokeLineJoin
+    stroke_cap: vocab::LineCap,    // Border.StrokeLineCap
+    stroke_join: vocab::LineJoin,    // Border.StrokeLineJoin
     stroke_miter_limit: f64,    // Border.StrokeMiterLimit
     stroke_shape: vocab::Shape,    // Border.StrokeShape
-    stroke_thickness: f64,    // Border.StrokeThickness
+    stroke_width: f64,    // Border.StrokeThickness
 }
 
 impl BorderedProps {
     fn new() -> BorderedProps {
         return BorderedProps {
             stroke: vocab::Brush::none(),
+            stroke_dash: vocab::Dashes::none(),
             stroke_dash_offset: 0.0f64,
-            stroke_line_cap: vocab::LineCap::Flat,
-            stroke_line_join: vocab::LineJoin::Bevel,
+            stroke_cap: vocab::LineCap::Flat,
+            stroke_join: vocab::LineJoin::Bevel,
             stroke_miter_limit: 0.0f64,
             stroke_shape: vocab::Shape::none(),
-            stroke_thickness: 0.0f64,
+            stroke_width: 0.0f64,
         };
     }
 }
@@ -293,12 +325,13 @@ struct ButtonProps {
     character_spacing: f64,    // Button.CharacterSpacing
     content_layout: vocab::ContentLayout,    // Button.ContentLayout
     corner_radius: vocab::Corners,    // Button.CornerRadius
-    font_attributes: vocab::FontStyle,    // Button.FontAttributes
-    font_auto_scaling_enabled: bool,    // Button.FontAutoScalingEnabled
+    font_weight: vocab::FontWeight,    // Button.FontAttributes
+    is_italic: bool,    // Button.FontAttributes (italic axis)
+    font_scales: bool,    // Button.FontAutoScalingEnabled
     font_family: text::Text,    // Button.FontFamily
     font_size: f64,    // Button.FontSize
-    image_source: text::Text,    // Button.ImageSource
-    line_break_mode: vocab::LineBreak,    // Button.LineBreakMode
+    image: text::Text,    // Button.ImageSource
+    line_break: vocab::LineBreak,    // Button.LineBreakMode
     title: text::Text,    // Button.Text
     text_color: vocab::Color,    // Button.TextColor
     text_transform: vocab::TextTransform,    // Button.TextTransform
@@ -319,12 +352,13 @@ impl ButtonProps {
             character_spacing: 0.0f64,
             content_layout: vocab::ContentLayout::ImageLeft,
             corner_radius: vocab::Corners::none(),
-            font_attributes: vocab::FontStyle::Bold,
-            font_auto_scaling_enabled: false,
+            font_weight: vocab::FontWeight::Default,
+            is_italic: false,
+            font_scales: false,
             font_family: text::new(),
             font_size: 0.0f64,
-            image_source: text::new(),
-            line_break_mode: vocab::LineBreak::CharacterWrap,
+            image: text::new(),
+            line_break: vocab::LineBreak::CharacterWrap,
             title: text::new(),
             text_color: vocab::Color::clear(),
             text_transform: vocab::TextTransform::Default,
@@ -352,15 +386,15 @@ fn release_button_props(p: *u8) {
 struct CarouselProps {
     items_view: ItemsViewProps,    // embedded, not restated
     structured_items_view: StructuredItemsViewProps,    // embedded, not restated
-    is_bounce_enabled: bool,    // CarouselView.IsBounceEnabled
-    is_scroll_animated: bool,    // CarouselView.IsScrollAnimated
+    bounces: bool,    // CarouselView.IsBounceEnabled
+    animates_scroll: bool,    // CarouselView.IsScrollAnimated
     is_scrolling: bool,    // CarouselView.IsScrolling
-    is_swipe_enabled: bool,    // CarouselView.IsSwipeEnabled
+    is_swipeable: bool,    // CarouselView.IsSwipeEnabled
     wraps: bool,    // CarouselView.Loop
-    peek_area_insets: vocab::Insets,    // CarouselView.PeekAreaInsets
+    peek_insets: vocab::Insets,    // CarouselView.PeekAreaInsets
     position: i64,    // CarouselView.Position
-    animate_current_item_changes: bool,    // CarouselView.AnimateCurrentItemChanges
-    animate_position_changes: bool,    // CarouselView.AnimatePositionChanges
+    animates_item: bool,    // CarouselView.AnimateCurrentItemChanges
+    animates_position: bool,    // CarouselView.AnimatePositionChanges
     is_dragging: bool,    // CarouselView.IsDragging
     on_current_item_changed: fn(*u8, *u8),    // CarouselView.CurrentItemChanged
     opaque on_current_item_changed_ctx: *u8,
@@ -373,15 +407,15 @@ impl CarouselProps {
         return CarouselProps {
             items_view: ItemsViewProps::new(),
             structured_items_view: StructuredItemsViewProps::new(),
-            is_bounce_enabled: false,
-            is_scroll_animated: false,
+            bounces: false,
+            animates_scroll: false,
             is_scrolling: false,
-            is_swipe_enabled: false,
+            is_swipeable: false,
             wraps: false,
-            peek_area_insets: vocab::Insets::zero(),
+            peek_insets: vocab::Insets::zero(),
             position: 0 as i64,
-            animate_current_item_changes: false,
-            animate_position_changes: false,
+            animates_item: false,
+            animates_position: false,
             is_dragging: false,
             on_current_item_changed: no_handler,
             on_current_item_changed_ctx: 0 as *u8,
@@ -437,6 +471,9 @@ struct CollectionProps {
     selectable_items_view: SelectableItemsViewProps,    // embedded, not restated
     groupable_items_view: GroupableItemsViewProps,    // embedded, not restated
     reorderable_items_view: ReorderableItemsViewProps,    // embedded, not restated
+    count: i64,    // facet — how many rows the control shows
+    row: fn(*u8, usize) -> flex::Node,    // facet — builds row `i`
+    opaque row_ctx: *u8,
 }
 
 impl CollectionProps {
@@ -447,6 +484,9 @@ impl CollectionProps {
             selectable_items_view: SelectableItemsViewProps::new(),
             groupable_items_view: GroupableItemsViewProps::new(),
             reorderable_items_view: ReorderableItemsViewProps::new(),
+            count: 0 as i64,
+            row: no_row,
+            row_ctx: 0 as *u8,
         };
     }
 }
@@ -464,8 +504,9 @@ fn release_collection_props(p: *u8) {
 struct DatePickerProps {
     character_spacing: f64,    // DatePicker.CharacterSpacing
     date: vocab::Date,    // DatePicker.Date
-    font_attributes: vocab::FontStyle,    // DatePicker.FontAttributes
-    font_auto_scaling_enabled: bool,    // DatePicker.FontAutoScalingEnabled
+    font_weight: vocab::FontWeight,    // DatePicker.FontAttributes
+    is_italic: bool,    // DatePicker.FontAttributes (italic axis)
+    font_scales: bool,    // DatePicker.FontAutoScalingEnabled
     font_family: text::Text,    // DatePicker.FontFamily
     font_size: f64,    // DatePicker.FontSize
     format: text::Text,    // DatePicker.Format
@@ -486,8 +527,9 @@ impl DatePickerProps {
         return DatePickerProps {
             character_spacing: 0.0f64,
             date: vocab::Date::zero(),
-            font_attributes: vocab::FontStyle::Bold,
-            font_auto_scaling_enabled: false,
+            font_weight: vocab::FontWeight::Default,
+            is_italic: false,
+            font_scales: false,
             font_family: text::new(),
             font_size: 0.0f64,
             format: text::new(),
@@ -518,8 +560,8 @@ fn release_date_picker_props(p: *u8) {
 struct TextAreaProps {
     input_view: InputViewProps,    // embedded, not restated
     auto_size: vocab::AutoSize,    // Editor.AutoSize
-    horizontal_text_alignment: vocab::TextAlign,    // Editor.HorizontalTextAlignment
-    vertical_text_alignment: vocab::TextAlign,    // Editor.VerticalTextAlignment
+    text_align: vocab::TextAlign,    // Editor.HorizontalTextAlignment
+    vertical_align: vocab::TextAlign,    // Editor.VerticalTextAlignment
     on_submit: fn(*u8, *u8),    // Editor.Completed
     opaque on_submit_ctx: *u8,
 }
@@ -529,8 +571,8 @@ impl TextAreaProps {
         return TextAreaProps {
             input_view: InputViewProps::new(),
             auto_size: vocab::AutoSize::Disabled,
-            horizontal_text_alignment: vocab::TextAlign::Center,
-            vertical_text_alignment: vocab::TextAlign::Center,
+            text_align: vocab::TextAlign::Center,
+            vertical_align: vocab::TextAlign::Center,
             on_submit: no_handler,
             on_submit_ctx: 0 as *u8,
         };
@@ -549,11 +591,11 @@ fn release_text_area_props(p: *u8) {
 
 struct TextFieldProps {
     input_view: InputViewProps,    // embedded, not restated
-    clear_button_visibility: vocab::ClearButton,    // Entry.ClearButtonVisibility
-    horizontal_text_alignment: vocab::TextAlign,    // Entry.HorizontalTextAlignment
+    clear_button: vocab::ClearButton,    // Entry.ClearButtonVisibility
+    text_align: vocab::TextAlign,    // Entry.HorizontalTextAlignment
     is_secure: bool,    // Entry.IsPassword
-    return_type: vocab::ReturnKey,    // Entry.ReturnType
-    vertical_text_alignment: vocab::TextAlign,    // Entry.VerticalTextAlignment
+    return_key: vocab::ReturnKey,    // Entry.ReturnType
+    vertical_align: vocab::TextAlign,    // Entry.VerticalTextAlignment
     on_submit: fn(*u8, *u8),    // Entry.Completed
     opaque on_submit_ctx: *u8,
 }
@@ -562,11 +604,11 @@ impl TextFieldProps {
     fn new() -> TextFieldProps {
         return TextFieldProps {
             input_view: InputViewProps::new(),
-            clear_button_visibility: vocab::ClearButton::Never,
-            horizontal_text_alignment: vocab::TextAlign::Center,
+            clear_button: vocab::ClearButton::Never,
+            text_align: vocab::TextAlign::Center,
             is_secure: false,
-            return_type: vocab::ReturnKey::Default,
-            vertical_text_alignment: vocab::TextAlign::Center,
+            return_key: vocab::ReturnKey::Default,
+            vertical_align: vocab::TextAlign::Center,
             on_submit: no_handler,
             on_submit_ctx: 0 as *u8,
         };
@@ -584,13 +626,41 @@ fn release_text_field_props(p: *u8) {
 // ---- canvas — MAUI GraphicsView ----------------------------
 
 struct CanvasProps {
-    _unused: bool,
+    drawable: vocab::Drawable,    // GraphicsView.Drawable
+    on_cancel: fn(*u8, *u8),    // GraphicsView.CancelInteraction
+    opaque on_cancel_ctx: *u8,
+    observe_drag_interaction: fn(*u8, *u8),    // GraphicsView.DragInteraction
+    opaque observe_drag_interaction_ctx: *u8,
+    on_unhover: fn(*u8, *u8),    // GraphicsView.EndHoverInteraction
+    opaque on_unhover_ctx: *u8,
+    on_release: fn(*u8, *u8),    // GraphicsView.EndInteraction
+    opaque on_release_ctx: *u8,
+    observe_move_hover_interaction: fn(*u8, *u8),    // GraphicsView.MoveHoverInteraction
+    opaque observe_move_hover_interaction_ctx: *u8,
+    on_hover: fn(*u8, *u8),    // GraphicsView.StartHoverInteraction
+    opaque on_hover_ctx: *u8,
+    on_press: fn(*u8, *u8),    // GraphicsView.StartInteraction
+    opaque on_press_ctx: *u8,
 }
 
 impl CanvasProps {
     fn new() -> CanvasProps {
         return CanvasProps {
-            _unused: false,
+            drawable: vocab::Drawable::none(),
+            on_cancel: no_handler,
+            on_cancel_ctx: 0 as *u8,
+            observe_drag_interaction: no_handler,
+            observe_drag_interaction_ctx: 0 as *u8,
+            on_unhover: no_handler,
+            on_unhover_ctx: 0 as *u8,
+            on_release: no_handler,
+            on_release_ctx: 0 as *u8,
+            observe_move_hover_interaction: no_handler,
+            observe_move_hover_interaction_ctx: 0 as *u8,
+            on_hover: no_handler,
+            on_hover_ctx: 0 as *u8,
+            on_press: no_handler,
+            on_press_ctx: 0 as *u8,
         };
     }
 }
@@ -608,6 +678,14 @@ fn release_canvas_props(p: *u8) {
 struct HybridWebProps {
     default_file: text::Text,    // HybridWebView.DefaultFile
     hybrid_root: text::Text,    // HybridWebView.HybridRoot
+    on_raw_message_received: fn(*u8, *u8),    // HybridWebView.RawMessageReceived
+    opaque on_raw_message_received_ctx: *u8,
+    on_web_resource_requested: fn(*u8, *u8),    // HybridWebView.WebResourceRequested
+    opaque on_web_resource_requested_ctx: *u8,
+    on_web_view_initialized: fn(*u8, *u8),    // HybridWebView.WebViewInitialized
+    opaque on_web_view_initialized_ctx: *u8,
+    on_web_view_initializing: fn(*u8, *u8),    // HybridWebView.WebViewInitializing
+    opaque on_web_view_initializing_ctx: *u8,
 }
 
 impl HybridWebProps {
@@ -615,6 +693,14 @@ impl HybridWebProps {
         return HybridWebProps {
             default_file: text::new(),
             hybrid_root: text::new(),
+            on_raw_message_received: no_handler,
+            on_raw_message_received_ctx: 0 as *u8,
+            on_web_resource_requested: no_handler,
+            on_web_resource_requested_ctx: 0 as *u8,
+            on_web_view_initialized: no_handler,
+            on_web_view_initialized_ctx: 0 as *u8,
+            on_web_view_initializing: no_handler,
+            on_web_view_initializing_ctx: 0 as *u8,
         };
     }
 }
@@ -630,7 +716,7 @@ fn release_hybrid_web_props(p: *u8) {
 // ---- image — MAUI Image ------------------------------------
 
 struct ImageProps {
-    aspect: vocab::ImageFit,    // Image.Aspect
+    fit: vocab::ImageFit,    // Image.Aspect
     is_animation_playing: bool,    // Image.IsAnimationPlaying
     is_opaque: bool,    // Image.IsOpaque
     source: text::Text,    // Image.Source
@@ -640,7 +726,7 @@ struct ImageProps {
 impl ImageProps {
     fn new() -> ImageProps {
         return ImageProps {
-            aspect: vocab::ImageFit::AspectFill,
+            fit: vocab::ImageFit::AspectFill,
             is_animation_playing: false,
             is_opaque: false,
             source: text::new(),
@@ -660,7 +746,7 @@ fn release_image_props(p: *u8) {
 // ---- icon_button — MAUI ImageButton ------------------------
 
 struct IconButtonProps {
-    aspect: vocab::ImageFit,    // ImageButton.Aspect
+    fit: vocab::ImageFit,    // ImageButton.Aspect
     border_color: vocab::Color,    // ImageButton.BorderColor
     border_width: f64,    // ImageButton.BorderWidth
     corner_radius: vocab::Corners,    // ImageButton.CornerRadius
@@ -679,7 +765,7 @@ struct IconButtonProps {
 impl IconButtonProps {
     fn new() -> IconButtonProps {
         return IconButtonProps {
-            aspect: vocab::ImageFit::AspectFill,
+            fit: vocab::ImageFit::AspectFill,
             border_color: vocab::Color::clear(),
             border_width: 0.0f64,
             corner_radius: vocab::Corners::none(),
@@ -709,26 +795,26 @@ fn release_icon_button_props(p: *u8) {
 
 struct PageDotsProps {
     count: i64,    // IndicatorView.Count
-    hide_single: bool,    // IndicatorView.HideSingle
-    indicator_color: vocab::Color,    // IndicatorView.IndicatorColor
-    indicator_size: f64,    // IndicatorView.IndicatorSize
-    indicators_shape: vocab::DotShape,    // IndicatorView.IndicatorsShape
-    maximum_visible: i64,    // IndicatorView.MaximumVisible
+    hides_single: bool,    // IndicatorView.HideSingle
+    dot_color: vocab::Color,    // IndicatorView.IndicatorColor
+    dot_size: f64,    // IndicatorView.IndicatorSize
+    dot_shape: vocab::DotShape,    // IndicatorView.IndicatorsShape
+    max_dots: i64,    // IndicatorView.MaximumVisible
     position: i64,    // IndicatorView.Position
-    selected_indicator_color: vocab::Color,    // IndicatorView.SelectedIndicatorColor
+    selected_dot_color: vocab::Color,    // IndicatorView.SelectedIndicatorColor
 }
 
 impl PageDotsProps {
     fn new() -> PageDotsProps {
         return PageDotsProps {
             count: 0 as i64,
-            hide_single: false,
-            indicator_color: vocab::Color::clear(),
-            indicator_size: 0.0f64,
-            indicators_shape: vocab::DotShape::Circle,
-            maximum_visible: 0 as i64,
+            hides_single: false,
+            dot_color: vocab::Color::clear(),
+            dot_size: 0.0f64,
+            dot_shape: vocab::DotShape::Circle,
+            max_dots: 0 as i64,
             position: 0 as i64,
-            selected_indicator_color: vocab::Color::clear(),
+            selected_dot_color: vocab::Color::clear(),
         };
     }
 }
@@ -745,42 +831,44 @@ fn release_page_dots_props(p: *u8) {
 
 struct LabelProps {
     character_spacing: f64,    // Label.CharacterSpacing
-    font_attributes: vocab::FontStyle,    // Label.FontAttributes
-    font_auto_scaling_enabled: bool,    // Label.FontAutoScalingEnabled
+    font_weight: vocab::FontWeight,    // Label.FontAttributes
+    is_italic: bool,    // Label.FontAttributes (italic axis)
+    font_scales: bool,    // Label.FontAutoScalingEnabled
     font_family: text::Text,    // Label.FontFamily
     font_size: f64,    // Label.FontSize
     formatted_text: vocab::Spans,    // Label.FormattedText
-    horizontal_text_alignment: vocab::TextAlign,    // Label.HorizontalTextAlignment
-    line_break_mode: vocab::LineBreak,    // Label.LineBreakMode
+    text_align: vocab::TextAlign,    // Label.HorizontalTextAlignment
+    line_break: vocab::LineBreak,    // Label.LineBreakMode
     line_height: f64,    // Label.LineHeight
     max_lines: i64,    // Label.MaxLines
     text: text::Text,    // Label.Text
     text_color: vocab::Color,    // Label.TextColor
-    text_decorations: vocab::TextDecoration,    // Label.TextDecorations
+    text_decoration: vocab::TextDecoration,    // Label.TextDecorations
     text_transform: vocab::TextTransform,    // Label.TextTransform
-    text_type: vocab::TextType,    // Label.TextType
-    vertical_text_alignment: vocab::TextAlign,    // Label.VerticalTextAlignment
+    text_format: vocab::TextFormat,    // Label.TextType
+    vertical_align: vocab::TextAlign,    // Label.VerticalTextAlignment
 }
 
 impl LabelProps {
     fn new() -> LabelProps {
         return LabelProps {
             character_spacing: 0.0f64,
-            font_attributes: vocab::FontStyle::Bold,
-            font_auto_scaling_enabled: false,
+            font_weight: vocab::FontWeight::Default,
+            is_italic: false,
+            font_scales: false,
             font_family: text::new(),
             font_size: 0.0f64,
-            formatted_text: vocab::Spans::none(),
-            horizontal_text_alignment: vocab::TextAlign::Center,
-            line_break_mode: vocab::LineBreak::CharacterWrap,
+            formatted_text: vocab::Spans::new(),
+            text_align: vocab::TextAlign::Center,
+            line_break: vocab::LineBreak::CharacterWrap,
             line_height: 0.0f64,
             max_lines: 0 as i64,
             text: text::new(),
             text_color: vocab::Color::clear(),
-            text_decorations: vocab::TextDecoration::None,
+            text_decoration: vocab::TextDecoration::None,
             text_transform: vocab::TextTransform::Default,
-            text_type: vocab::TextType::Html,
-            vertical_text_alignment: vocab::TextAlign::Center,
+            text_format: vocab::TextFormat::Html,
+            vertical_align: vocab::TextAlign::Center,
         };
     }
 }
@@ -797,17 +885,17 @@ fn release_label_props(p: *u8) {
 
 struct ListProps {
     has_uneven_rows: bool,    // ListView.HasUnevenRows
-    horizontal_scroll_bar_visibility: vocab::ScrollBars,    // ListView.HorizontalScrollBarVisibility
-    is_grouping_enabled: bool,    // ListView.IsGroupingEnabled
-    is_pull_to_refresh_enabled: bool,    // ListView.IsPullToRefreshEnabled
+    horizontal_scroll_bars: vocab::ScrollBars,    // ListView.HorizontalScrollBarVisibility
+    is_grouped: bool,    // ListView.IsGroupingEnabled
+    is_refreshable: bool,    // ListView.IsPullToRefreshEnabled
     is_refreshing: bool,    // ListView.IsRefreshing
-    refresh_allowed: bool,    // ListView.RefreshAllowed
-    refresh_control_color: vocab::Color,    // ListView.RefreshControlColor
+    can_refresh: bool,    // ListView.RefreshAllowed
+    refresh_color: vocab::Color,    // ListView.RefreshControlColor
     row_height: i64,    // ListView.RowHeight
     selection_mode: vocab::SelectionMode,    // ListView.SelectionMode
     separator_color: vocab::Color,    // ListView.SeparatorColor
-    separator_visibility: vocab::SeparatorVisibility,    // ListView.SeparatorVisibility
-    vertical_scroll_bar_visibility: vocab::ScrollBars,    // ListView.VerticalScrollBarVisibility
+    separator: vocab::Separator,    // ListView.SeparatorVisibility
+    vertical_scroll_bars: vocab::ScrollBars,    // ListView.VerticalScrollBarVisibility
     on_item_appearing: fn(*u8, *u8),    // ListView.ItemAppearing
     opaque on_item_appearing_ctx: *u8,
     on_item_disappearing: fn(*u8, *u8),    // ListView.ItemDisappearing
@@ -818,23 +906,29 @@ struct ListProps {
     opaque on_item_tapped_ctx: *u8,
     on_refreshing: fn(*u8, *u8),    // ListView.Refreshing
     opaque on_refreshing_ctx: *u8,
+    observe_scrolled: fn(*u8, *u8),    // ListView.Scrolled
+    opaque observe_scrolled_ctx: *u8,
+    scroll_to_index: i64,    // ListView.ScrollTo, the argument of scroll_to()
+    count: i64,    // facet — how many rows the control shows
+    row: fn(*u8, usize) -> flex::Node,    // facet — builds row `i`
+    opaque row_ctx: *u8,
 }
 
 impl ListProps {
     fn new() -> ListProps {
         return ListProps {
             has_uneven_rows: false,
-            horizontal_scroll_bar_visibility: vocab::ScrollBars::Always,
-            is_grouping_enabled: false,
-            is_pull_to_refresh_enabled: false,
+            horizontal_scroll_bars: vocab::ScrollBars::Always,
+            is_grouped: false,
+            is_refreshable: false,
             is_refreshing: false,
-            refresh_allowed: false,
-            refresh_control_color: vocab::Color::clear(),
+            can_refresh: false,
+            refresh_color: vocab::Color::clear(),
             row_height: 0 as i64,
             selection_mode: vocab::SelectionMode::Multiple,
             separator_color: vocab::Color::clear(),
-            separator_visibility: vocab::SeparatorVisibility::Default,
-            vertical_scroll_bar_visibility: vocab::ScrollBars::Always,
+            separator: vocab::Separator::Default,
+            vertical_scroll_bars: vocab::ScrollBars::Always,
             on_item_appearing: no_handler,
             on_item_appearing_ctx: 0 as *u8,
             on_item_disappearing: no_handler,
@@ -845,6 +939,12 @@ impl ListProps {
             on_item_tapped_ctx: 0 as *u8,
             on_refreshing: no_handler,
             on_refreshing_ctx: 0 as *u8,
+            observe_scrolled: no_handler,
+            observe_scrolled_ctx: 0 as *u8,
+            scroll_to_index: 0 as i64,
+            count: 0 as i64,
+            row: no_row,
+            row_ctx: 0 as *u8,
         };
     }
 }
@@ -860,7 +960,6 @@ fn release_list_props(p: *u8) {
 // ---- menu — MAUI MenuBarItem -------------------------------
 
 struct MenuProps {
-    is_enabled: bool,    // MenuBarItem.IsEnabled
     priority: i64,    // MenuBarItem.Priority
     text: text::Text,    // MenuBarItem.Text
     count: i64,    // MenuBarItem.Count
@@ -870,7 +969,6 @@ struct MenuProps {
 impl MenuProps {
     fn new() -> MenuProps {
         return MenuProps {
-            is_enabled: false,
             priority: 0 as i64,
             text: text::new(),
             count: 0 as i64,
@@ -914,13 +1012,15 @@ fn release_context_menu_props(p: *u8) {
 // ---- context_menu_item — MAUI MenuFlyoutItem ---------------
 
 struct ContextMenuItemProps {
-    _unused: bool,
+    shortcut_key: text::Text,    // MenuFlyoutItem.KeyboardAccelerators, key
+    shortcut_modifiers: vocab::KeyModifiers,    // MenuFlyoutItem.KeyboardAccelerators, modifiers
 }
 
 impl ContextMenuItemProps {
     fn new() -> ContextMenuItemProps {
         return ContextMenuItemProps {
-            _unused: false,
+            shortcut_key: text::new(),
+            shortcut_modifiers: vocab::KeyModifiers::None,
         };
     }
 }
@@ -936,9 +1036,8 @@ fn release_context_menu_item_props(p: *u8) {
 // ---- menu_item — MAUI MenuItem -----------------------------
 
 struct MenuItemProps {
-    icon_image_source: text::Text,    // MenuItem.IconImageSource
+    icon: text::Text,    // MenuItem.IconImageSource
     is_destructive: bool,    // MenuItem.IsDestructive
-    is_enabled: bool,    // MenuItem.IsEnabled
     text: text::Text,    // MenuItem.Text
     on_clicked: fn(*u8, *u8),    // MenuItem.Clicked
     opaque on_clicked_ctx: *u8,
@@ -947,9 +1046,8 @@ struct MenuItemProps {
 impl MenuItemProps {
     fn new() -> MenuItemProps {
         return MenuItemProps {
-            icon_image_source: text::new(),
+            icon: text::new(),
             is_destructive: false,
-            is_enabled: false,
             text: text::new(),
             on_clicked: no_handler,
             on_clicked_ctx: 0 as *u8,
@@ -969,17 +1067,19 @@ fn release_menu_item_props(p: *u8) {
 
 struct PopupProps {
     character_spacing: f64,    // Picker.CharacterSpacing
-    font_attributes: vocab::FontStyle,    // Picker.FontAttributes
-    font_auto_scaling_enabled: bool,    // Picker.FontAutoScalingEnabled
+    font_weight: vocab::FontWeight,    // Picker.FontAttributes
+    is_italic: bool,    // Picker.FontAttributes (italic axis)
+    font_scales: bool,    // Picker.FontAutoScalingEnabled
     font_family: text::Text,    // Picker.FontFamily
     font_size: f64,    // Picker.FontSize
-    horizontal_text_alignment: vocab::TextAlign,    // Picker.HorizontalTextAlignment
+    text_align: vocab::TextAlign,    // Picker.HorizontalTextAlignment
     is_open: bool,    // Picker.IsOpen
     selected_index: i64,    // Picker.SelectedIndex
     text_color: vocab::Color,    // Picker.TextColor
     title: text::Text,    // Picker.Title
     title_color: vocab::Color,    // Picker.TitleColor
-    vertical_text_alignment: vocab::TextAlign,    // Picker.VerticalTextAlignment
+    vertical_align: vocab::TextAlign,    // Picker.VerticalTextAlignment
+    items: vocab::TextList,    // Picker.Items
     on_closed: fn(*u8, *u8),    // Picker.Closed
     opaque on_closed_ctx: *u8,
     on_opened: fn(*u8, *u8),    // Picker.Opened
@@ -992,17 +1092,19 @@ impl PopupProps {
     fn new() -> PopupProps {
         return PopupProps {
             character_spacing: 0.0f64,
-            font_attributes: vocab::FontStyle::Bold,
-            font_auto_scaling_enabled: false,
+            font_weight: vocab::FontWeight::Default,
+            is_italic: false,
+            font_scales: false,
             font_family: text::new(),
             font_size: 0.0f64,
-            horizontal_text_alignment: vocab::TextAlign::Center,
+            text_align: vocab::TextAlign::Center,
             is_open: false,
             selected_index: 0 as i64,
             text_color: vocab::Color::clear(),
             title: text::new(),
             title_color: vocab::Color::clear(),
-            vertical_text_alignment: vocab::TextAlign::Center,
+            vertical_align: vocab::TextAlign::Center,
+            items: vocab::TextList::new(),
             on_closed: no_handler,
             on_closed_ctx: 0 as *u8,
             on_opened: no_handler,
@@ -1026,6 +1128,7 @@ fn release_popup_props(p: *u8) {
 struct ProgressProps {
     progress: f64,    // ProgressBar.Progress
     progress_color: vocab::Color,    // ProgressBar.ProgressColor
+    animate_duration: vocab::Duration,    // ProgressBar.ProgressTo, the argument of animate_progress()
 }
 
 impl ProgressProps {
@@ -1033,6 +1136,7 @@ impl ProgressProps {
         return ProgressProps {
             progress: 0.0f64,
             progress_color: vocab::Color::clear(),
+            animate_duration: vocab::Duration::zero(),
         };
     }
 }
@@ -1052,11 +1156,12 @@ struct RadioProps {
     border_width: f64,    // RadioButton.BorderWidth
     character_spacing: f64,    // RadioButton.CharacterSpacing
     corner_radius: vocab::Corners,    // RadioButton.CornerRadius
-    font_attributes: vocab::FontStyle,    // RadioButton.FontAttributes
-    font_auto_scaling_enabled: bool,    // RadioButton.FontAutoScalingEnabled
+    font_weight: vocab::FontWeight,    // RadioButton.FontAttributes
+    is_italic: bool,    // RadioButton.FontAttributes (italic axis)
+    font_scales: bool,    // RadioButton.FontAutoScalingEnabled
     font_family: text::Text,    // RadioButton.FontFamily
     font_size: f64,    // RadioButton.FontSize
-    group_name: text::Text,    // RadioButton.GroupName
+    group: text::Text,    // RadioButton.GroupName
     on: bool,    // RadioButton.IsChecked
     text_color: vocab::Color,    // RadioButton.TextColor
     text_transform: vocab::TextTransform,    // RadioButton.TextTransform
@@ -1071,11 +1176,12 @@ impl RadioProps {
             border_width: 0.0f64,
             character_spacing: 0.0f64,
             corner_radius: vocab::Corners::none(),
-            font_attributes: vocab::FontStyle::Bold,
-            font_auto_scaling_enabled: false,
+            font_weight: vocab::FontWeight::Default,
+            is_italic: false,
+            font_scales: false,
             font_family: text::new(),
             font_size: 0.0f64,
-            group_name: text::new(),
+            group: text::new(),
             on: false,
             text_color: vocab::Color::clear(),
             text_transform: vocab::TextTransform::Default,
@@ -1096,7 +1202,7 @@ fn release_radio_props(p: *u8) {
 // ---- refreshable — MAUI RefreshView ------------------------
 
 struct RefreshableProps {
-    is_refresh_enabled: bool,    // RefreshView.IsRefreshEnabled
+    is_refreshable: bool,    // RefreshView.IsRefreshEnabled
     is_refreshing: bool,    // RefreshView.IsRefreshing
     refresh_color: vocab::Color,    // RefreshView.RefreshColor
     on_refreshing: fn(*u8, *u8),    // RefreshView.Refreshing
@@ -1106,7 +1212,7 @@ struct RefreshableProps {
 impl RefreshableProps {
     fn new() -> RefreshableProps {
         return RefreshableProps {
-            is_refresh_enabled: false,
+            is_refreshable: false,
             is_refreshing: false,
             refresh_color: vocab::Color::clear(),
             on_refreshing: no_handler,
@@ -1126,29 +1232,31 @@ fn release_refreshable_props(p: *u8) {
 // ---- scroll — MAUI ScrollView ------------------------------
 
 struct ScrollProps {
-    cascade_input_transparent: bool,    // ScrollView.CascadeInputTransparent
-    horizontal_scroll_bar_visibility: vocab::ScrollBars,    // ScrollView.HorizontalScrollBarVisibility
-    layout_area_override: vocab::Rect,    // ScrollView.LayoutAreaOverride
-    orientation: vocab::ScrollAxis,    // ScrollView.Orientation
-    safe_area_edges: vocab::SafeArea,    // ScrollView.SafeAreaEdges
-    vertical_scroll_bar_visibility: vocab::ScrollBars,    // ScrollView.VerticalScrollBarVisibility
+    cascades_input: bool,    // ScrollView.CascadeInputTransparent
+    horizontal_scroll_bars: vocab::ScrollBars,    // ScrollView.HorizontalScrollBarVisibility
+    axis: vocab::ScrollAxis,    // ScrollView.Orientation
+    safe_area: vocab::SafeArea,    // ScrollView.SafeAreaEdges
+    vertical_scroll_bars: vocab::ScrollBars,    // ScrollView.VerticalScrollBarVisibility
     content_size: vocab::Size,    // ScrollView.ContentSize
     scroll_x: f64,    // ScrollView.ScrollX
     scroll_y: f64,    // ScrollView.ScrollY
+    observe_scrolled: fn(*u8, *u8),    // ScrollView.Scrolled
+    opaque observe_scrolled_ctx: *u8,
 }
 
 impl ScrollProps {
     fn new() -> ScrollProps {
         return ScrollProps {
-            cascade_input_transparent: false,
-            horizontal_scroll_bar_visibility: vocab::ScrollBars::Always,
-            layout_area_override: vocab::Rect::zero(),
-            orientation: vocab::ScrollAxis::Both,
-            safe_area_edges: vocab::SafeArea::Default,
-            vertical_scroll_bar_visibility: vocab::ScrollBars::Always,
+            cascades_input: false,
+            horizontal_scroll_bars: vocab::ScrollBars::Always,
+            axis: vocab::ScrollAxis::Both,
+            safe_area: vocab::SafeArea::Default,
+            vertical_scroll_bars: vocab::ScrollBars::Always,
             content_size: vocab::Size::zero(),
             scroll_x: 0.0f64,
             scroll_y: 0.0f64,
+            observe_scrolled: no_handler,
+            observe_scrolled_ctx: 0 as *u8,
         };
     }
 }
@@ -1166,10 +1274,10 @@ fn release_scroll_props(p: *u8) {
 struct SearchFieldProps {
     input_view: InputViewProps,    // embedded, not restated
     cancel_button_color: vocab::Color,    // SearchBar.CancelButtonColor
-    horizontal_text_alignment: vocab::TextAlign,    // SearchBar.HorizontalTextAlignment
-    return_type: vocab::ReturnKey,    // SearchBar.ReturnType
+    text_align: vocab::TextAlign,    // SearchBar.HorizontalTextAlignment
+    return_key: vocab::ReturnKey,    // SearchBar.ReturnType
     search_icon_color: vocab::Color,    // SearchBar.SearchIconColor
-    vertical_text_alignment: vocab::TextAlign,    // SearchBar.VerticalTextAlignment
+    vertical_align: vocab::TextAlign,    // SearchBar.VerticalTextAlignment
     on_submit: fn(*u8, *u8),    // SearchBar.SearchButtonPressed
     opaque on_submit_ctx: *u8,
 }
@@ -1179,10 +1287,10 @@ impl SearchFieldProps {
         return SearchFieldProps {
             input_view: InputViewProps::new(),
             cancel_button_color: vocab::Color::clear(),
-            horizontal_text_alignment: vocab::TextAlign::Center,
-            return_type: vocab::ReturnKey::Default,
+            text_align: vocab::TextAlign::Center,
+            return_key: vocab::ReturnKey::Default,
             search_icon_color: vocab::Color::clear(),
-            vertical_text_alignment: vocab::TextAlign::Center,
+            vertical_align: vocab::TextAlign::Center,
             on_submit: no_handler,
             on_submit_ctx: 0 as *u8,
         };
@@ -1205,7 +1313,7 @@ struct SliderProps {
     minimum: f64,    // Slider.Minimum
     minimum_track_color: vocab::Color,    // Slider.MinimumTrackColor
     thumb_color: vocab::Color,    // Slider.ThumbColor
-    thumb_image_source: text::Text,    // Slider.ThumbImageSource
+    thumb_image: text::Text,    // Slider.ThumbImageSource
     value: f64,    // Slider.Value
     on_drag_completed: fn(*u8, *u8),    // Slider.DragCompleted
     opaque on_drag_completed_ctx: *u8,
@@ -1223,7 +1331,7 @@ impl SliderProps {
             minimum: 0.0f64,
             minimum_track_color: vocab::Color::clear(),
             thumb_color: vocab::Color::clear(),
-            thumb_image_source: text::new(),
+            thumb_image: text::new(),
             value: 0.0f64,
             on_drag_completed: no_handler,
             on_drag_completed_ctx: 0 as *u8,
@@ -1246,32 +1354,32 @@ fn release_slider_props(p: *u8) {
 // ---- span — MAUI Span --------------------------------------
 
 struct SpanProps {
-    background_color: vocab::Color,    // Span.BackgroundColor
     character_spacing: f64,    // Span.CharacterSpacing
-    font_attributes: vocab::FontStyle,    // Span.FontAttributes
-    font_auto_scaling_enabled: bool,    // Span.FontAutoScalingEnabled
+    font_weight: vocab::FontWeight,    // Span.FontAttributes
+    is_italic: bool,    // Span.FontAttributes (italic axis)
+    font_scales: bool,    // Span.FontAutoScalingEnabled
     font_family: text::Text,    // Span.FontFamily
     font_size: f64,    // Span.FontSize
     line_height: f64,    // Span.LineHeight
     text: text::Text,    // Span.Text
     text_color: vocab::Color,    // Span.TextColor
-    text_decorations: vocab::TextDecoration,    // Span.TextDecorations
+    text_decoration: vocab::TextDecoration,    // Span.TextDecorations
     text_transform: vocab::TextTransform,    // Span.TextTransform
 }
 
 impl SpanProps {
     fn new() -> SpanProps {
         return SpanProps {
-            background_color: vocab::Color::clear(),
             character_spacing: 0.0f64,
-            font_attributes: vocab::FontStyle::Bold,
-            font_auto_scaling_enabled: false,
+            font_weight: vocab::FontWeight::Default,
+            is_italic: false,
+            font_scales: false,
             font_family: text::new(),
             font_size: 0.0f64,
             line_height: 0.0f64,
             text: text::new(),
             text_color: vocab::Color::clear(),
-            text_decorations: vocab::TextDecoration::None,
+            text_decoration: vocab::TextDecoration::None,
             text_transform: vocab::TextTransform::Default,
         };
     }
@@ -1320,15 +1428,15 @@ fn release_stepper_props(p: *u8) {
 // ---- swipe_item — MAUI SwipeItem ---------------------------
 
 struct SwipeItemProps {
-    background_color: vocab::Color,    // SwipeItem.BackgroundColor
-    is_visible: bool,    // SwipeItem.IsVisible
+    on_invoked: fn(*u8, *u8),    // SwipeItem.Invoked
+    opaque on_invoked_ctx: *u8,
 }
 
 impl SwipeItemProps {
     fn new() -> SwipeItemProps {
         return SwipeItemProps {
-            background_color: vocab::Color::clear(),
-            is_visible: false,
+            on_invoked: no_handler,
+            on_invoked_ctx: 0 as *u8,
         };
     }
 }
@@ -1345,6 +1453,14 @@ fn release_swipe_item_props(p: *u8) {
 
 struct SwipeableProps {
     reveal_threshold: f64,    // SwipeView.Threshold
+    on_close_requested: fn(*u8, *u8),    // SwipeView.CloseRequested
+    opaque on_close_requested_ctx: *u8,
+    on_open_requested: fn(*u8, *u8),    // SwipeView.OpenRequested
+    opaque on_open_requested_ctx: *u8,
+    observe_swipe_changing: fn(*u8, *u8),    // SwipeView.SwipeChanging
+    opaque observe_swipe_changing_ctx: *u8,
+    on_swipe_ended: fn(*u8, *u8),    // SwipeView.SwipeEnded
+    opaque on_swipe_ended_ctx: *u8,
     on_swipe_started: fn(*u8, *u8),    // SwipeView.SwipeStarted
     opaque on_swipe_started_ctx: *u8,
 }
@@ -1353,6 +1469,14 @@ impl SwipeableProps {
     fn new() -> SwipeableProps {
         return SwipeableProps {
             reveal_threshold: 0.0f64,
+            on_close_requested: no_handler,
+            on_close_requested_ctx: 0 as *u8,
+            on_open_requested: no_handler,
+            on_open_requested_ctx: 0 as *u8,
+            observe_swipe_changing: no_handler,
+            observe_swipe_changing_ctx: 0 as *u8,
+            on_swipe_ended: no_handler,
+            on_swipe_ended_ctx: 0 as *u8,
             on_swipe_started: no_handler,
             on_swipe_started_ctx: 0 as *u8,
         };
@@ -1433,7 +1557,7 @@ fn release_tabs_props(p: *u8) {
 
 struct TableProps {
     has_uneven_rows: bool,    // TableView.HasUnevenRows
-    intent: vocab::TableStyle,    // TableView.Intent
+    style: vocab::TableStyle,    // TableView.Intent
     row_height: i64,    // TableView.RowHeight
 }
 
@@ -1441,7 +1565,7 @@ impl TableProps {
     fn new() -> TableProps {
         return TableProps {
             has_uneven_rows: false,
-            intent: vocab::TableStyle::Data,
+            style: vocab::TableStyle::Data,
             row_height: 0 as i64,
         };
     }
@@ -1459,8 +1583,9 @@ fn release_table_props(p: *u8) {
 
 struct TimePickerProps {
     character_spacing: f64,    // TimePicker.CharacterSpacing
-    font_attributes: vocab::FontStyle,    // TimePicker.FontAttributes
-    font_auto_scaling_enabled: bool,    // TimePicker.FontAutoScalingEnabled
+    font_weight: vocab::FontWeight,    // TimePicker.FontAttributes
+    is_italic: bool,    // TimePicker.FontAttributes (italic axis)
+    font_scales: bool,    // TimePicker.FontAutoScalingEnabled
     font_family: text::Text,    // TimePicker.FontFamily
     font_size: f64,    // TimePicker.FontSize
     format: text::Text,    // TimePicker.Format
@@ -1479,8 +1604,9 @@ impl TimePickerProps {
     fn new() -> TimePickerProps {
         return TimePickerProps {
             character_spacing: 0.0f64,
-            font_attributes: vocab::FontStyle::Bold,
-            font_auto_scaling_enabled: false,
+            font_weight: vocab::FontWeight::Default,
+            is_italic: false,
+            font_scales: false,
             font_family: text::new(),
             font_size: 0.0f64,
             format: text::new(),
@@ -1508,14 +1634,14 @@ fn release_time_picker_props(p: *u8) {
 // ---- toolbar_item — MAUI ToolbarItem -----------------------
 
 struct ToolbarItemProps {
-    order: vocab::ToolbarPlacement,    // ToolbarItem.Order
+    placement: vocab::ToolbarPlacement,    // ToolbarItem.Order
     priority: i64,    // ToolbarItem.Priority
 }
 
 impl ToolbarItemProps {
     fn new() -> ToolbarItemProps {
         return ToolbarItemProps {
-            order: vocab::ToolbarPlacement::Default,
+            placement: vocab::ToolbarPlacement::Default,
             priority: 0 as i64,
         };
     }
@@ -1536,6 +1662,12 @@ struct WebProps {
     user_agent: text::Text,    // WebView.UserAgent
     can_go_back: bool,    // WebView.CanGoBack
     can_go_forward: bool,    // WebView.CanGoForward
+    on_navigated: fn(*u8, *u8),    // WebView.Navigated
+    opaque on_navigated_ctx: *u8,
+    on_navigating: fn(*u8, *u8),    // WebView.Navigating
+    opaque on_navigating_ctx: *u8,
+    on_process_terminated: fn(*u8, *u8),    // WebView.ProcessTerminated
+    opaque on_process_terminated_ctx: *u8,
 }
 
 impl WebProps {
@@ -1545,6 +1677,12 @@ impl WebProps {
             user_agent: text::new(),
             can_go_back: false,
             can_go_forward: false,
+            on_navigated: no_handler,
+            on_navigated_ctx: 0 as *u8,
+            on_navigating: no_handler,
+            on_navigating_ctx: 0 as *u8,
+            on_process_terminated: no_handler,
+            on_process_terminated_ctx: 0 as *u8,
         };
     }
 }

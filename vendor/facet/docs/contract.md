@@ -5,7 +5,7 @@ absent here does not exist: calling it is a compile error, never a
 silent no-op. What a backend cannot implement is recorded in that
 backend's own manifest, not here.
 
-322 declared verbs over 38 controls, plus the
+379 declared verbs over 38 controls, plus the
 shared band every element carries.
 
 
@@ -13,13 +13,15 @@ shared band every element carries.
 
 | verb | type | provenance |
 |---|---|---|
+| `set_content` / `content()` | Node (a named child) | Border.Content |
 | `set_stroke` / `stroke()` | Brush | Border.Stroke |
+| `set_stroke_dash` / `stroke_dash()` | Dashes | Border.StrokeDashArray |
 | `set_stroke_dash_offset` / `stroke_dash_offset()` | f64 | Border.StrokeDashOffset |
-| `set_stroke_line_cap` / `stroke_line_cap()` | LineCap | Border.StrokeLineCap |
-| `set_stroke_line_join` / `stroke_line_join()` | LineJoin | Border.StrokeLineJoin |
+| `set_stroke_cap` / `stroke_cap()` | LineCap | Border.StrokeLineCap |
+| `set_stroke_join` / `stroke_join()` | LineJoin | Border.StrokeLineJoin |
 | `set_stroke_miter_limit` / `stroke_miter_limit()` | f64 | Border.StrokeMiterLimit |
 | `set_stroke_shape` / `stroke_shape()` | Shape | Border.StrokeShape |
-| `set_stroke_thickness` / `stroke_thickness()` | f64 | Border.StrokeThickness |
+| `set_stroke_width` / `stroke_width()` | f64 | Border.StrokeThickness |
 
 ## box — MAUI BoxView
 
@@ -37,12 +39,13 @@ shared band every element carries.
 | `set_character_spacing` / `character_spacing()` | f64 | Button.CharacterSpacing |
 | `set_content_layout` / `content_layout()` | ContentLayout | Button.ContentLayout |
 | `set_corner_radius` / `corner_radius()` | Corners | Button.CornerRadius |
-| `set_font_attributes` / `font_attributes()` | FontStyle | Button.FontAttributes |
-| `set_font_auto_scaling_enabled` / `font_auto_scaling_enabled()` | bool | Button.FontAutoScalingEnabled |
+| `set_font_weight` / `font_weight()` | FontWeight | Button.FontAttributes |
+| `set_italic` / `is_italic()` | bool | Button.FontAttributes (italic axis) |
+| `set_font_scales` / `font_scales()` | bool | Button.FontAutoScalingEnabled |
 | `set_font_family` / `font_family()` | str | Button.FontFamily |
 | `set_font_size` / `font_size()` | f64 | Button.FontSize |
-| `set_image_source` / `image_source()` | str | Button.ImageSource |
-| `set_line_break_mode` / `line_break_mode()` | LineBreak | Button.LineBreakMode |
+| `set_image` / `image()` | str | Button.ImageSource |
+| `set_line_break` / `line_break()` | LineBreak | Button.LineBreakMode |
 | `set_title` / `title()` | str | Button.Text |
 | `set_text_color` / `text_color()` | Color | Button.TextColor |
 | `set_text_transform` / `text_transform()` | TextTransform | Button.TextTransform |
@@ -55,29 +58,42 @@ shared band every element carries.
 
 | verb | type | provenance |
 |---|---|---|
+| `set_drawable` / `drawable()` | Drawable | GraphicsView.Drawable |
+| `on_cancel` | callback + ctx | GraphicsView.CancelInteraction |
+| `observe_drag_interaction` | callback + ctx | GraphicsView.DragInteraction |
+| `on_unhover` | callback + ctx | GraphicsView.EndHoverInteraction |
+| `on_release` | callback + ctx | GraphicsView.EndInteraction |
+| `observe_move_hover_interaction` | callback + ctx | GraphicsView.MoveHoverInteraction |
+| `on_hover` | callback + ctx | GraphicsView.StartHoverInteraction |
+| `on_press` | callback + ctx | GraphicsView.StartInteraction |
 
 ## carousel — MAUI CarouselView
 
 | verb | type | provenance |
 |---|---|---|
-| `set_is_bounce_enabled` / `is_bounce_enabled()` | bool | CarouselView.IsBounceEnabled |
-| `set_is_scroll_animated` / `is_scroll_animated()` | bool | CarouselView.IsScrollAnimated |
-| `set_is_scrolling` / `is_scrolling()` | bool | CarouselView.IsScrolling |
-| `set_is_swipe_enabled` / `is_swipe_enabled()` | bool | CarouselView.IsSwipeEnabled |
+| `set_bounces` / `bounces()` | bool | CarouselView.IsBounceEnabled |
+| `set_animates_scroll` / `animates_scroll()` | bool | CarouselView.IsScrollAnimated |
+| `set_scrolling` / `is_scrolling()` | bool | CarouselView.IsScrolling |
+| `set_swipeable` / `is_swipeable()` | bool | CarouselView.IsSwipeEnabled |
 | `set_wraps` / `wraps()` | bool | CarouselView.Loop |
-| `set_peek_area_insets` / `peek_area_insets()` | Insets | CarouselView.PeekAreaInsets |
+| `set_peek_insets` / `peek_insets()` | Insets | CarouselView.PeekAreaInsets |
 | `set_position` / `position()` | i64 | CarouselView.Position |
-| `animate_current_item_changes()` | bool | CarouselView.AnimateCurrentItemChanges |
-| `animate_position_changes()` | bool | CarouselView.AnimatePositionChanges |
+| `animates_item()` | bool | CarouselView.AnimateCurrentItemChanges |
+| `animates_position()` | bool | CarouselView.AnimatePositionChanges |
 | `is_dragging()` | bool | CarouselView.IsDragging |
 | `on_current_item_changed` | callback + ctx | CarouselView.CurrentItemChanged |
 | `on_position_changed` | callback + ctx | CarouselView.PositionChanged |
-| `set_horizontal_scroll_bar_visibility` / `horizontal_scroll_bar_visibility()` | ScrollBars | ItemsView.HorizontalScrollBarVisibility |
-| `set_items_updating_scroll_mode` / `items_updating_scroll_mode()` | ScrollAnchor | ItemsView.ItemsUpdatingScrollMode |
-| `set_remaining_items_threshold` / `remaining_items_threshold()` | i64 | ItemsView.RemainingItemsThreshold |
-| `set_vertical_scroll_bar_visibility` / `vertical_scroll_bar_visibility()` | ScrollBars | ItemsView.VerticalScrollBarVisibility |
+| `set_empty_view` / `empty_view()` | Node (a named child) | ItemsView.EmptyView |
+| `set_horizontal_scroll_bars` / `horizontal_scroll_bars()` | ScrollBars | ItemsView.HorizontalScrollBarVisibility |
+| `set_scroll_anchor` / `scroll_anchor()` | ScrollAnchor | ItemsView.ItemsUpdatingScrollMode |
+| `set_remaining_threshold` / `remaining_threshold()` | i64 | ItemsView.RemainingItemsThreshold |
+| `set_vertical_scroll_bars` / `vertical_scroll_bars()` | ScrollBars | ItemsView.VerticalScrollBarVisibility |
 | `on_remaining_items_threshold_reached` | callback + ctx | ItemsView.RemainingItemsThresholdReached |
-| `set_item_sizing_strategy` / `item_sizing_strategy()` | ItemSizing | StructuredItemsView.ItemSizingStrategy |
+| `observe_scrolled` | callback + ctx | ItemsView.Scrolled |
+| `scroll_to(index:)` | command | ItemsView.ScrollTo |
+| `set_footer` / `footer()` | Node (a named child) | StructuredItemsView.Footer |
+| `set_header` / `header()` | Node (a named child) | StructuredItemsView.Header |
+| `set_item_sizing` / `item_sizing()` | ItemSizing | StructuredItemsView.ItemSizingStrategy |
 
 ## checkbox — MAUI CheckBox
 
@@ -92,18 +108,25 @@ shared band every element carries.
 
 | verb | type | provenance |
 |---|---|---|
-| `set_horizontal_scroll_bar_visibility` / `horizontal_scroll_bar_visibility()` | ScrollBars | ItemsView.HorizontalScrollBarVisibility |
-| `set_items_updating_scroll_mode` / `items_updating_scroll_mode()` | ScrollAnchor | ItemsView.ItemsUpdatingScrollMode |
-| `set_remaining_items_threshold` / `remaining_items_threshold()` | i64 | ItemsView.RemainingItemsThreshold |
-| `set_vertical_scroll_bar_visibility` / `vertical_scroll_bar_visibility()` | ScrollBars | ItemsView.VerticalScrollBarVisibility |
+| `set_empty_view` / `empty_view()` | Node (a named child) | ItemsView.EmptyView |
+| `set_horizontal_scroll_bars` / `horizontal_scroll_bars()` | ScrollBars | ItemsView.HorizontalScrollBarVisibility |
+| `set_scroll_anchor` / `scroll_anchor()` | ScrollAnchor | ItemsView.ItemsUpdatingScrollMode |
+| `set_remaining_threshold` / `remaining_threshold()` | i64 | ItemsView.RemainingItemsThreshold |
+| `set_vertical_scroll_bars` / `vertical_scroll_bars()` | ScrollBars | ItemsView.VerticalScrollBarVisibility |
 | `on_remaining_items_threshold_reached` | callback + ctx | ItemsView.RemainingItemsThresholdReached |
-| `set_item_sizing_strategy` / `item_sizing_strategy()` | ItemSizing | StructuredItemsView.ItemSizingStrategy |
+| `observe_scrolled` | callback + ctx | ItemsView.Scrolled |
+| `scroll_to(index:)` | command | ItemsView.ScrollTo |
+| `set_footer` / `footer()` | Node (a named child) | StructuredItemsView.Footer |
+| `set_header` / `header()` | Node (a named child) | StructuredItemsView.Header |
+| `set_item_sizing` / `item_sizing()` | ItemSizing | StructuredItemsView.ItemSizingStrategy |
 | `set_selection_mode` / `selection_mode()` | SelectionMode | SelectableItemsView.SelectionMode |
 | `on_selection_changed` | callback + ctx | SelectableItemsView.SelectionChanged |
-| `set_is_grouped` / `is_grouped()` | bool | GroupableItemsView.IsGrouped |
-| `set_can_mix_groups` / `can_mix_groups()` | bool | ReorderableItemsView.CanMixGroups |
-| `set_can_reorder_items` / `can_reorder_items()` | bool | ReorderableItemsView.CanReorderItems |
+| `set_grouped` / `is_grouped()` | bool | GroupableItemsView.IsGrouped |
+| `set_mix_groups` / `can_mix_groups()` | bool | ReorderableItemsView.CanMixGroups |
+| `set_reorder_items` / `can_reorder_items()` | bool | ReorderableItemsView.CanReorderItems |
 | `on_reorder_completed` | callback + ctx | ReorderableItemsView.ReorderCompleted |
+| `set_count` / `count()` | usize | **facet's own** |
+| `set_row(_:ctx:)` / `build_row(at:)` | fn(*u8, usize) -> Node | **facet's own** |
 
 ## context_menu — MAUI MenuFlyout
 
@@ -116,6 +139,7 @@ shared band every element carries.
 
 | verb | type | provenance |
 |---|---|---|
+| `set_shortcut` / `shortcut()` | Shortcut | MenuFlyoutItem.KeyboardAccelerators |
 
 ## date_picker — MAUI DatePicker
 
@@ -123,12 +147,13 @@ shared band every element carries.
 |---|---|---|
 | `set_character_spacing` / `character_spacing()` | f64 | DatePicker.CharacterSpacing |
 | `set_date` / `date()` | Date | DatePicker.Date |
-| `set_font_attributes` / `font_attributes()` | FontStyle | DatePicker.FontAttributes |
-| `set_font_auto_scaling_enabled` / `font_auto_scaling_enabled()` | bool | DatePicker.FontAutoScalingEnabled |
+| `set_font_weight` / `font_weight()` | FontWeight | DatePicker.FontAttributes |
+| `set_italic` / `is_italic()` | bool | DatePicker.FontAttributes (italic axis) |
+| `set_font_scales` / `font_scales()` | bool | DatePicker.FontAutoScalingEnabled |
 | `set_font_family` / `font_family()` | str | DatePicker.FontFamily |
 | `set_font_size` / `font_size()` | f64 | DatePicker.FontSize |
 | `set_format` / `format()` | str | DatePicker.Format |
-| `set_is_open` / `is_open()` | bool | DatePicker.IsOpen |
+| `set_open` / `is_open()` | bool | DatePicker.IsOpen |
 | `set_maximum_date` / `maximum_date()` | Date | DatePicker.MaximumDate |
 | `set_minimum_date` / `minimum_date()` | Date | DatePicker.MinimumDate |
 | `set_text_color` / `text_color()` | Color | DatePicker.TextColor |
@@ -142,12 +167,16 @@ shared band every element carries.
 |---|---|---|
 | `set_default_file` / `default_file()` | str | HybridWebView.DefaultFile |
 | `set_hybrid_root` / `hybrid_root()` | str | HybridWebView.HybridRoot |
+| `on_raw_message_received` | callback + ctx | HybridWebView.RawMessageReceived |
+| `on_web_resource_requested` | callback + ctx | HybridWebView.WebResourceRequested |
+| `on_web_view_initialized` | callback + ctx | HybridWebView.WebViewInitialized |
+| `on_web_view_initializing` | callback + ctx | HybridWebView.WebViewInitializing |
 
 ## icon_button — MAUI ImageButton
 
 | verb | type | provenance |
 |---|---|---|
-| `set_aspect` / `aspect()` | ImageFit | ImageButton.Aspect |
+| `set_fit` / `fit()` | ImageFit | ImageButton.Aspect |
 | `set_border_color` / `border_color()` | Color | ImageButton.BorderColor |
 | `set_border_width` / `border_width()` | f64 | ImageButton.BorderWidth |
 | `set_corner_radius` / `corner_radius()` | Corners | ImageButton.CornerRadius |
@@ -163,8 +192,8 @@ shared band every element carries.
 
 | verb | type | provenance |
 |---|---|---|
-| `set_aspect` / `aspect()` | ImageFit | Image.Aspect |
-| `set_is_animation_playing` / `is_animation_playing()` | bool | Image.IsAnimationPlaying |
+| `set_fit` / `fit()` | ImageFit | Image.Aspect |
+| `set_animation_playing` / `is_animation_playing()` | bool | Image.IsAnimationPlaying |
 | `set_is_opaque` / `is_opaque()` | bool | Image.IsOpaque |
 | `set_source` / `source()` | str | Image.Source |
 | `is_loading()` | bool | Image.IsLoading |
@@ -174,49 +203,59 @@ shared band every element carries.
 | verb | type | provenance |
 |---|---|---|
 | `set_character_spacing` / `character_spacing()` | f64 | Label.CharacterSpacing |
-| `set_font_attributes` / `font_attributes()` | FontStyle | Label.FontAttributes |
-| `set_font_auto_scaling_enabled` / `font_auto_scaling_enabled()` | bool | Label.FontAutoScalingEnabled |
+| `set_font_weight` / `font_weight()` | FontWeight | Label.FontAttributes |
+| `set_italic` / `is_italic()` | bool | Label.FontAttributes (italic axis) |
+| `set_font_scales` / `font_scales()` | bool | Label.FontAutoScalingEnabled |
 | `set_font_family` / `font_family()` | str | Label.FontFamily |
 | `set_font_size` / `font_size()` | f64 | Label.FontSize |
-| `set_formatted_text` / `formatted_text()` | Spans | Label.FormattedText |
-| `set_horizontal_text_alignment` / `horizontal_text_alignment()` | TextAlign | Label.HorizontalTextAlignment |
-| `set_line_break_mode` / `line_break_mode()` | LineBreak | Label.LineBreakMode |
+| `set_formatted_text` / `formatted_text_count()` / `formatted_text_at(at:)` | Spans | Label.FormattedText |
+| `set_text_align` / `text_align()` | TextAlign | Label.HorizontalTextAlignment |
+| `set_line_break` / `line_break()` | LineBreak | Label.LineBreakMode |
 | `set_line_height` / `line_height()` | f64 | Label.LineHeight |
 | `set_max_lines` / `max_lines()` | i64 | Label.MaxLines |
 | `set_text` / `text()` | str | Label.Text |
 | `set_text_color` / `text_color()` | Color | Label.TextColor |
-| `set_text_decorations` / `text_decorations()` | TextDecoration | Label.TextDecorations |
+| `set_text_decoration` / `text_decoration()` | TextDecoration | Label.TextDecorations |
 | `set_text_transform` / `text_transform()` | TextTransform | Label.TextTransform |
-| `set_text_type` / `text_type()` | TextType | Label.TextType |
-| `set_vertical_text_alignment` / `vertical_text_alignment()` | TextAlign | Label.VerticalTextAlignment |
+| `set_text_format` / `text_format()` | TextFormat | Label.TextType |
+| `set_vertical_align` / `vertical_align()` | TextAlign | Label.VerticalTextAlignment |
+| `children` | shared band | Label.GetChildElements |
 
 ## list — MAUI ListView
 
 | verb | type | provenance |
 |---|---|---|
-| `set_has_uneven_rows` / `has_uneven_rows()` | bool | ListView.HasUnevenRows |
-| `set_horizontal_scroll_bar_visibility` / `horizontal_scroll_bar_visibility()` | ScrollBars | ListView.HorizontalScrollBarVisibility |
-| `set_is_grouping_enabled` / `is_grouping_enabled()` | bool | ListView.IsGroupingEnabled |
-| `set_is_pull_to_refresh_enabled` / `is_pull_to_refresh_enabled()` | bool | ListView.IsPullToRefreshEnabled |
-| `set_is_refreshing` / `is_refreshing()` | bool | ListView.IsRefreshing |
-| `set_refresh_allowed` / `refresh_allowed()` | bool | ListView.RefreshAllowed |
-| `set_refresh_control_color` / `refresh_control_color()` | Color | ListView.RefreshControlColor |
+| `set_footer` / `footer()` | Node (a named child) | ListView.Footer |
+| `set_uneven_rows` / `has_uneven_rows()` | bool | ListView.HasUnevenRows |
+| `set_header` / `header()` | Node (a named child) | ListView.Header |
+| `set_horizontal_scroll_bars` / `horizontal_scroll_bars()` | ScrollBars | ListView.HorizontalScrollBarVisibility |
+| `set_grouped` / `is_grouped()` | bool | ListView.IsGroupingEnabled |
+| `set_refreshable` / `is_refreshable()` | bool | ListView.IsPullToRefreshEnabled |
+| `set_refreshing` / `is_refreshing()` | bool | ListView.IsRefreshing |
+| `set_refresh` / `can_refresh()` | bool | ListView.RefreshAllowed |
+| `set_refresh_color` / `refresh_color()` | Color | ListView.RefreshControlColor |
 | `set_row_height` / `row_height()` | i64 | ListView.RowHeight |
 | `set_selection_mode` / `selection_mode()` | SelectionMode | ListView.SelectionMode |
 | `set_separator_color` / `separator_color()` | Color | ListView.SeparatorColor |
-| `set_separator_visibility` / `separator_visibility()` | SeparatorVisibility | ListView.SeparatorVisibility |
-| `set_vertical_scroll_bar_visibility` / `vertical_scroll_bar_visibility()` | ScrollBars | ListView.VerticalScrollBarVisibility |
+| `set_separator` / `separator()` | Separator | ListView.SeparatorVisibility |
+| `set_vertical_scroll_bars` / `vertical_scroll_bars()` | ScrollBars | ListView.VerticalScrollBarVisibility |
 | `on_item_appearing` | callback + ctx | ListView.ItemAppearing |
 | `on_item_disappearing` | callback + ctx | ListView.ItemDisappearing |
 | `on_item_selected` | callback + ctx | ListView.ItemSelected |
 | `on_item_tapped` | callback + ctx | ListView.ItemTapped |
 | `on_refreshing` | callback + ctx | ListView.Refreshing |
+| `observe_scrolled` | callback + ctx | ListView.Scrolled |
+| `begin_refresh()` | command | ListView.BeginRefresh |
+| `end_refresh()` | command | ListView.EndRefresh |
+| `scroll_to(index:)` | command | ListView.ScrollTo |
+| `set_count` / `count()` | usize | **facet's own** |
+| `set_row(_:ctx:)` / `build_row(at:)` | fn(*u8, usize) -> Node | **facet's own** |
 
 ## menu — MAUI MenuBarItem
 
 | verb | type | provenance |
 |---|---|---|
-| `set_is_enabled` / `is_enabled()` | bool | MenuBarItem.IsEnabled |
+| `is_enabled` | shared band | MenuBarItem.IsEnabled |
 | `set_priority` / `priority()` | i64 | MenuBarItem.Priority |
 | `set_text` / `text()` | str | MenuBarItem.Text |
 | `count()` | i64 | MenuBarItem.Count |
@@ -226,9 +265,9 @@ shared band every element carries.
 
 | verb | type | provenance |
 |---|---|---|
-| `set_icon_image_source` / `icon_image_source()` | str | MenuItem.IconImageSource |
-| `set_is_destructive` / `is_destructive()` | bool | MenuItem.IsDestructive |
-| `set_is_enabled` / `is_enabled()` | bool | MenuItem.IsEnabled |
+| `set_icon` / `icon()` | str | MenuItem.IconImageSource |
+| `set_destructive` / `is_destructive()` | bool | MenuItem.IsDestructive |
+| `is_enabled` | shared band | MenuItem.IsEnabled |
 | `set_text` / `text()` | str | MenuItem.Text |
 | `on_clicked` | callback + ctx | MenuItem.Clicked |
 
@@ -237,30 +276,32 @@ shared band every element carries.
 | verb | type | provenance |
 |---|---|---|
 | `set_count` / `count()` | i64 | IndicatorView.Count |
-| `set_hide_single` / `hide_single()` | bool | IndicatorView.HideSingle |
-| `set_indicator_color` / `indicator_color()` | Color | IndicatorView.IndicatorColor |
-| `set_indicator_size` / `indicator_size()` | f64 | IndicatorView.IndicatorSize |
-| `set_indicators_shape` / `indicators_shape()` | DotShape | IndicatorView.IndicatorsShape |
-| `set_maximum_visible` / `maximum_visible()` | i64 | IndicatorView.MaximumVisible |
+| `set_hides_single` / `hides_single()` | bool | IndicatorView.HideSingle |
+| `set_dot_color` / `dot_color()` | Color | IndicatorView.IndicatorColor |
+| `set_dot_size` / `dot_size()` | f64 | IndicatorView.IndicatorSize |
+| `set_dot_shape` / `dot_shape()` | DotShape | IndicatorView.IndicatorsShape |
+| `set_max_dots` / `max_dots()` | i64 | IndicatorView.MaximumVisible |
 | `set_position` / `position()` | i64 | IndicatorView.Position |
-| `set_selected_indicator_color` / `selected_indicator_color()` | Color | IndicatorView.SelectedIndicatorColor |
+| `set_selected_dot_color` / `selected_dot_color()` | Color | IndicatorView.SelectedIndicatorColor |
 
 ## popup — MAUI Picker
 
 | verb | type | provenance |
 |---|---|---|
 | `set_character_spacing` / `character_spacing()` | f64 | Picker.CharacterSpacing |
-| `set_font_attributes` / `font_attributes()` | FontStyle | Picker.FontAttributes |
-| `set_font_auto_scaling_enabled` / `font_auto_scaling_enabled()` | bool | Picker.FontAutoScalingEnabled |
+| `set_font_weight` / `font_weight()` | FontWeight | Picker.FontAttributes |
+| `set_italic` / `is_italic()` | bool | Picker.FontAttributes (italic axis) |
+| `set_font_scales` / `font_scales()` | bool | Picker.FontAutoScalingEnabled |
 | `set_font_family` / `font_family()` | str | Picker.FontFamily |
 | `set_font_size` / `font_size()` | f64 | Picker.FontSize |
-| `set_horizontal_text_alignment` / `horizontal_text_alignment()` | TextAlign | Picker.HorizontalTextAlignment |
-| `set_is_open` / `is_open()` | bool | Picker.IsOpen |
+| `set_text_align` / `text_align()` | TextAlign | Picker.HorizontalTextAlignment |
+| `set_open` / `is_open()` | bool | Picker.IsOpen |
 | `set_selected_index` / `selected_index()` | i64 | Picker.SelectedIndex |
 | `set_text_color` / `text_color()` | Color | Picker.TextColor |
 | `set_title` / `title()` | str | Picker.Title |
 | `set_title_color` / `title_color()` | Color | Picker.TitleColor |
-| `set_vertical_text_alignment` / `vertical_text_alignment()` | TextAlign | Picker.VerticalTextAlignment |
+| `set_vertical_align` / `vertical_align()` | TextAlign | Picker.VerticalTextAlignment |
+| `set_items` / `item_count()` / `item(at:)` | TextList | Picker.Items |
 | `on_closed` | callback + ctx | Picker.Closed |
 | `on_opened` | callback + ctx | Picker.Opened |
 | `on_selected_index_changed` | callback + ctx | Picker.SelectedIndexChanged |
@@ -271,6 +312,7 @@ shared band every element carries.
 |---|---|---|
 | `set_progress` / `progress()` | f64 | ProgressBar.Progress |
 | `set_progress_color` / `progress_color()` | Color | ProgressBar.ProgressColor |
+| `animate_progress(to:, duration:)` | command | ProgressBar.ProgressTo |
 
 ## radio — MAUI RadioButton
 
@@ -279,12 +321,14 @@ shared band every element carries.
 | `set_border_color` / `border_color()` | Color | RadioButton.BorderColor |
 | `set_border_width` / `border_width()` | f64 | RadioButton.BorderWidth |
 | `set_character_spacing` / `character_spacing()` | f64 | RadioButton.CharacterSpacing |
+| `set_content` / `content()` | Node (a named child) | RadioButton.Content |
 | `set_corner_radius` / `corner_radius()` | Corners | RadioButton.CornerRadius |
-| `set_font_attributes` / `font_attributes()` | FontStyle | RadioButton.FontAttributes |
-| `set_font_auto_scaling_enabled` / `font_auto_scaling_enabled()` | bool | RadioButton.FontAutoScalingEnabled |
+| `set_font_weight` / `font_weight()` | FontWeight | RadioButton.FontAttributes |
+| `set_italic` / `is_italic()` | bool | RadioButton.FontAttributes (italic axis) |
+| `set_font_scales` / `font_scales()` | bool | RadioButton.FontAutoScalingEnabled |
 | `set_font_family` / `font_family()` | str | RadioButton.FontFamily |
 | `set_font_size` / `font_size()` | f64 | RadioButton.FontSize |
-| `set_group_name` / `group_name()` | str | RadioButton.GroupName |
+| `set_group` / `group()` | str | RadioButton.GroupName |
 | `set_on` / `on()` | bool | RadioButton.IsChecked |
 | `set_text_color` / `text_color()` | Color | RadioButton.TextColor |
 | `set_text_transform` / `text_transform()` | TextTransform | RadioButton.TextTransform |
@@ -294,8 +338,8 @@ shared band every element carries.
 
 | verb | type | provenance |
 |---|---|---|
-| `set_is_refresh_enabled` / `is_refresh_enabled()` | bool | RefreshView.IsRefreshEnabled |
-| `set_is_refreshing` / `is_refreshing()` | bool | RefreshView.IsRefreshing |
+| `set_refreshable` / `is_refreshable()` | bool | RefreshView.IsRefreshEnabled |
+| `set_refreshing` / `is_refreshing()` | bool | RefreshView.IsRefreshing |
 | `set_refresh_color` / `refresh_color()` | Color | RefreshView.RefreshColor |
 | `on_refreshing` | callback + ctx | RefreshView.Refreshing |
 
@@ -303,35 +347,38 @@ shared band every element carries.
 
 | verb | type | provenance |
 |---|---|---|
-| `set_cascade_input_transparent` / `cascade_input_transparent()` | bool | ScrollView.CascadeInputTransparent |
-| `set_horizontal_scroll_bar_visibility` / `horizontal_scroll_bar_visibility()` | ScrollBars | ScrollView.HorizontalScrollBarVisibility |
-| `set_layout_area_override` / `layout_area_override()` | Rect | ScrollView.LayoutAreaOverride |
-| `set_orientation` / `orientation()` | ScrollAxis | ScrollView.Orientation |
-| `set_safe_area_edges` / `safe_area_edges()` | SafeArea | ScrollView.SafeAreaEdges |
-| `set_vertical_scroll_bar_visibility` / `vertical_scroll_bar_visibility()` | ScrollBars | ScrollView.VerticalScrollBarVisibility |
+| `set_cascades_input` / `cascades_input()` | bool | ScrollView.CascadeInputTransparent |
+| `set_content` / `content()` | Node (a named child) | ScrollView.Content |
+| `set_horizontal_scroll_bars` / `horizontal_scroll_bars()` | ScrollBars | ScrollView.HorizontalScrollBarVisibility |
+| `set_axis` / `axis()` | ScrollAxis | ScrollView.Orientation |
+| `set_safe_area` / `safe_area()` | SafeArea | ScrollView.SafeAreaEdges |
+| `set_vertical_scroll_bars` / `vertical_scroll_bars()` | ScrollBars | ScrollView.VerticalScrollBarVisibility |
+| `children` | shared band | ScrollView.Children |
 | `content_size()` | Size | ScrollView.ContentSize |
 | `scroll_x()` | f64 | ScrollView.ScrollX |
 | `scroll_y()` | f64 | ScrollView.ScrollY |
+| `observe_scrolled` | callback + ctx | ScrollView.Scrolled |
 
 ## search_field — MAUI SearchBar
 
 | verb | type | provenance |
 |---|---|---|
 | `set_cancel_button_color` / `cancel_button_color()` | Color | SearchBar.CancelButtonColor |
-| `set_horizontal_text_alignment` / `horizontal_text_alignment()` | TextAlign | SearchBar.HorizontalTextAlignment |
-| `set_return_type` / `return_type()` | ReturnKey | SearchBar.ReturnType |
+| `set_text_align` / `text_align()` | TextAlign | SearchBar.HorizontalTextAlignment |
+| `set_return_key` / `return_key()` | ReturnKey | SearchBar.ReturnType |
 | `set_search_icon_color` / `search_icon_color()` | Color | SearchBar.SearchIconColor |
-| `set_vertical_text_alignment` / `vertical_text_alignment()` | TextAlign | SearchBar.VerticalTextAlignment |
+| `set_vertical_align` / `vertical_align()` | TextAlign | SearchBar.VerticalTextAlignment |
 | `on_submit` | callback + ctx | SearchBar.SearchButtonPressed |
 | `set_character_spacing` / `character_spacing()` | f64 | InputView.CharacterSpacing |
 | `set_cursor_position` / `cursor_position()` | i64 | InputView.CursorPosition |
-| `set_font_attributes` / `font_attributes()` | FontStyle | InputView.FontAttributes |
-| `set_font_auto_scaling_enabled` / `font_auto_scaling_enabled()` | bool | InputView.FontAutoScalingEnabled |
+| `set_font_weight` / `font_weight()` | FontWeight | InputView.FontAttributes |
+| `set_italic` / `is_italic()` | bool | InputView.FontAttributes (italic axis) |
+| `set_font_scales` / `font_scales()` | bool | InputView.FontAutoScalingEnabled |
 | `set_font_family` / `font_family()` | str | InputView.FontFamily |
 | `set_font_size` / `font_size()` | f64 | InputView.FontSize |
-| `set_is_read_only` / `is_read_only()` | bool | InputView.IsReadOnly |
-| `set_is_spell_check_enabled` / `is_spell_check_enabled()` | bool | InputView.IsSpellCheckEnabled |
-| `set_is_text_prediction_enabled` / `is_text_prediction_enabled()` | bool | InputView.IsTextPredictionEnabled |
+| `set_read_only` / `is_read_only()` | bool | InputView.IsReadOnly |
+| `set_checks_spelling` / `checks_spelling()` | bool | InputView.IsSpellCheckEnabled |
+| `set_predicts_text` / `predicts_text()` | bool | InputView.IsTextPredictionEnabled |
 | `set_keyboard` / `keyboard()` | Keyboard | InputView.Keyboard |
 | `set_max_length` / `max_length()` | i64 | InputView.MaxLength |
 | `set_placeholder` / `placeholder()` | str | InputView.Placeholder |
@@ -351,7 +398,7 @@ shared band every element carries.
 | `set_minimum` / `minimum()` | f64 | Slider.Minimum |
 | `set_minimum_track_color` / `minimum_track_color()` | Color | Slider.MinimumTrackColor |
 | `set_thumb_color` / `thumb_color()` | Color | Slider.ThumbColor |
-| `set_thumb_image_source` / `thumb_image_source()` | str | Slider.ThumbImageSource |
+| `set_thumb_image` / `thumb_image()` | str | Slider.ThumbImageSource |
 | `set_value` / `value()` | f64 | Slider.Value |
 | `on_drag_completed` | callback + ctx | Slider.DragCompleted |
 | `on_drag_started` | callback + ctx | Slider.DragStarted |
@@ -361,16 +408,17 @@ shared band every element carries.
 
 | verb | type | provenance |
 |---|---|---|
-| `set_background_color` / `background_color()` | Color | Span.BackgroundColor |
+| `background_color` | shared band | Span.BackgroundColor |
 | `set_character_spacing` / `character_spacing()` | f64 | Span.CharacterSpacing |
-| `set_font_attributes` / `font_attributes()` | FontStyle | Span.FontAttributes |
-| `set_font_auto_scaling_enabled` / `font_auto_scaling_enabled()` | bool | Span.FontAutoScalingEnabled |
+| `set_font_weight` / `font_weight()` | FontWeight | Span.FontAttributes |
+| `set_italic` / `is_italic()` | bool | Span.FontAttributes (italic axis) |
+| `set_font_scales` / `font_scales()` | bool | Span.FontAutoScalingEnabled |
 | `set_font_family` / `font_family()` | str | Span.FontFamily |
 | `set_font_size` / `font_size()` | f64 | Span.FontSize |
 | `set_line_height` / `line_height()` | f64 | Span.LineHeight |
 | `set_text` / `text()` | str | Span.Text |
 | `set_text_color` / `text_color()` | Color | Span.TextColor |
-| `set_text_decorations` / `text_decorations()` | TextDecoration | Span.TextDecorations |
+| `set_text_decoration` / `text_decoration()` | TextDecoration | Span.TextDecorations |
 | `set_text_transform` / `text_transform()` | TextTransform | Span.TextTransform |
 
 ## spinner — MAUI ActivityIndicator
@@ -378,7 +426,7 @@ shared band every element carries.
 | verb | type | provenance |
 |---|---|---|
 | `set_color` / `color()` | Color | ActivityIndicator.Color |
-| `set_is_running` / `is_running()` | bool | ActivityIndicator.IsRunning |
+| `set_running` / `is_running()` | bool | ActivityIndicator.IsRunning |
 
 ## stepper — MAUI Stepper
 
@@ -394,22 +442,32 @@ shared band every element carries.
 
 | verb | type | provenance |
 |---|---|---|
-| `set_background_color` / `background_color()` | Color | SwipeItem.BackgroundColor |
-| `set_is_visible` / `is_visible()` | bool | SwipeItem.IsVisible |
+| `background_color` | shared band | SwipeItem.BackgroundColor |
+| `is_visible` | shared band | SwipeItem.IsVisible |
+| `on_invoked` | callback + ctx | SwipeItem.Invoked |
 
 ## swipeable — MAUI SwipeView
 
 | verb | type | provenance |
 |---|---|---|
+| `set_bottom_items` / `bottom_items()` | Node (a named child) | SwipeView.BottomItems |
+| `set_left_items` / `left_items()` | Node (a named child) | SwipeView.LeftItems |
+| `set_right_items` / `right_items()` | Node (a named child) | SwipeView.RightItems |
 | `set_reveal_threshold` / `reveal_threshold()` | f64 | SwipeView.Threshold |
+| `set_top_items` / `top_items()` | Node (a named child) | SwipeView.TopItems |
+| `on_close_requested` | callback + ctx | SwipeView.CloseRequested |
+| `on_open_requested` | callback + ctx | SwipeView.OpenRequested |
+| `observe_swipe_changing` | callback + ctx | SwipeView.SwipeChanging |
+| `on_swipe_ended` | callback + ctx | SwipeView.SwipeEnded |
 | `on_swipe_started` | callback + ctx | SwipeView.SwipeStarted |
 
 ## table — MAUI TableView
 
 | verb | type | provenance |
 |---|---|---|
-| `set_has_uneven_rows` / `has_uneven_rows()` | bool | TableView.HasUnevenRows |
-| `set_intent` / `intent()` | TableStyle | TableView.Intent |
+| `set_uneven_rows` / `has_uneven_rows()` | bool | TableView.HasUnevenRows |
+| `set_style` / `style()` | TableStyle | TableView.Intent |
+| `set_content` / `content()` | Node (a named child) | TableView.Root |
 | `set_row_height` / `row_height()` | i64 | TableView.RowHeight |
 
 ## tabs — MAUI TabbedPage
@@ -427,18 +485,19 @@ shared band every element carries.
 | verb | type | provenance |
 |---|---|---|
 | `set_auto_size` / `auto_size()` | AutoSize | Editor.AutoSize |
-| `set_horizontal_text_alignment` / `horizontal_text_alignment()` | TextAlign | Editor.HorizontalTextAlignment |
-| `set_vertical_text_alignment` / `vertical_text_alignment()` | TextAlign | Editor.VerticalTextAlignment |
+| `set_text_align` / `text_align()` | TextAlign | Editor.HorizontalTextAlignment |
+| `set_vertical_align` / `vertical_align()` | TextAlign | Editor.VerticalTextAlignment |
 | `on_submit` | callback + ctx | Editor.Completed |
 | `set_character_spacing` / `character_spacing()` | f64 | InputView.CharacterSpacing |
 | `set_cursor_position` / `cursor_position()` | i64 | InputView.CursorPosition |
-| `set_font_attributes` / `font_attributes()` | FontStyle | InputView.FontAttributes |
-| `set_font_auto_scaling_enabled` / `font_auto_scaling_enabled()` | bool | InputView.FontAutoScalingEnabled |
+| `set_font_weight` / `font_weight()` | FontWeight | InputView.FontAttributes |
+| `set_italic` / `is_italic()` | bool | InputView.FontAttributes (italic axis) |
+| `set_font_scales` / `font_scales()` | bool | InputView.FontAutoScalingEnabled |
 | `set_font_family` / `font_family()` | str | InputView.FontFamily |
 | `set_font_size` / `font_size()` | f64 | InputView.FontSize |
-| `set_is_read_only` / `is_read_only()` | bool | InputView.IsReadOnly |
-| `set_is_spell_check_enabled` / `is_spell_check_enabled()` | bool | InputView.IsSpellCheckEnabled |
-| `set_is_text_prediction_enabled` / `is_text_prediction_enabled()` | bool | InputView.IsTextPredictionEnabled |
+| `set_read_only` / `is_read_only()` | bool | InputView.IsReadOnly |
+| `set_checks_spelling` / `checks_spelling()` | bool | InputView.IsSpellCheckEnabled |
+| `set_predicts_text` / `predicts_text()` | bool | InputView.IsTextPredictionEnabled |
 | `set_keyboard` / `keyboard()` | Keyboard | InputView.Keyboard |
 | `set_max_length` / `max_length()` | i64 | InputView.MaxLength |
 | `set_placeholder` / `placeholder()` | str | InputView.Placeholder |
@@ -453,21 +512,22 @@ shared band every element carries.
 
 | verb | type | provenance |
 |---|---|---|
-| `set_clear_button_visibility` / `clear_button_visibility()` | ClearButton | Entry.ClearButtonVisibility |
-| `set_horizontal_text_alignment` / `horizontal_text_alignment()` | TextAlign | Entry.HorizontalTextAlignment |
-| `set_is_secure` / `is_secure()` | bool | Entry.IsPassword |
-| `set_return_type` / `return_type()` | ReturnKey | Entry.ReturnType |
-| `set_vertical_text_alignment` / `vertical_text_alignment()` | TextAlign | Entry.VerticalTextAlignment |
+| `set_clear_button` / `clear_button()` | ClearButton | Entry.ClearButtonVisibility |
+| `set_text_align` / `text_align()` | TextAlign | Entry.HorizontalTextAlignment |
+| `set_secure` / `is_secure()` | bool | Entry.IsPassword |
+| `set_return_key` / `return_key()` | ReturnKey | Entry.ReturnType |
+| `set_vertical_align` / `vertical_align()` | TextAlign | Entry.VerticalTextAlignment |
 | `on_submit` | callback + ctx | Entry.Completed |
 | `set_character_spacing` / `character_spacing()` | f64 | InputView.CharacterSpacing |
 | `set_cursor_position` / `cursor_position()` | i64 | InputView.CursorPosition |
-| `set_font_attributes` / `font_attributes()` | FontStyle | InputView.FontAttributes |
-| `set_font_auto_scaling_enabled` / `font_auto_scaling_enabled()` | bool | InputView.FontAutoScalingEnabled |
+| `set_font_weight` / `font_weight()` | FontWeight | InputView.FontAttributes |
+| `set_italic` / `is_italic()` | bool | InputView.FontAttributes (italic axis) |
+| `set_font_scales` / `font_scales()` | bool | InputView.FontAutoScalingEnabled |
 | `set_font_family` / `font_family()` | str | InputView.FontFamily |
 | `set_font_size` / `font_size()` | f64 | InputView.FontSize |
-| `set_is_read_only` / `is_read_only()` | bool | InputView.IsReadOnly |
-| `set_is_spell_check_enabled` / `is_spell_check_enabled()` | bool | InputView.IsSpellCheckEnabled |
-| `set_is_text_prediction_enabled` / `is_text_prediction_enabled()` | bool | InputView.IsTextPredictionEnabled |
+| `set_read_only` / `is_read_only()` | bool | InputView.IsReadOnly |
+| `set_checks_spelling` / `checks_spelling()` | bool | InputView.IsSpellCheckEnabled |
+| `set_predicts_text` / `predicts_text()` | bool | InputView.IsTextPredictionEnabled |
 | `set_keyboard` / `keyboard()` | Keyboard | InputView.Keyboard |
 | `set_max_length` / `max_length()` | i64 | InputView.MaxLength |
 | `set_placeholder` / `placeholder()` | str | InputView.Placeholder |
@@ -483,12 +543,13 @@ shared band every element carries.
 | verb | type | provenance |
 |---|---|---|
 | `set_character_spacing` / `character_spacing()` | f64 | TimePicker.CharacterSpacing |
-| `set_font_attributes` / `font_attributes()` | FontStyle | TimePicker.FontAttributes |
-| `set_font_auto_scaling_enabled` / `font_auto_scaling_enabled()` | bool | TimePicker.FontAutoScalingEnabled |
+| `set_font_weight` / `font_weight()` | FontWeight | TimePicker.FontAttributes |
+| `set_italic` / `is_italic()` | bool | TimePicker.FontAttributes (italic axis) |
+| `set_font_scales` / `font_scales()` | bool | TimePicker.FontAutoScalingEnabled |
 | `set_font_family` / `font_family()` | str | TimePicker.FontFamily |
 | `set_font_size` / `font_size()` | f64 | TimePicker.FontSize |
 | `set_format` / `format()` | str | TimePicker.Format |
-| `set_is_open` / `is_open()` | bool | TimePicker.IsOpen |
+| `set_open` / `is_open()` | bool | TimePicker.IsOpen |
 | `set_text_color` / `text_color()` | Color | TimePicker.TextColor |
 | `set_time` / `time()` | Duration | TimePicker.Time |
 | `on_closed` | callback + ctx | TimePicker.Closed |
@@ -509,7 +570,7 @@ shared band every element carries.
 
 | verb | type | provenance |
 |---|---|---|
-| `set_order` / `order()` | ToolbarPlacement | ToolbarItem.Order |
+| `set_placement` / `placement()` | ToolbarPlacement | ToolbarItem.Order |
 | `set_priority` / `priority()` | i64 | ToolbarItem.Priority |
 
 ## web — MAUI WebView
@@ -520,3 +581,97 @@ shared band every element carries.
 | `set_user_agent` / `user_agent()` | str | WebView.UserAgent |
 | `can_go_back()` | bool | WebView.CanGoBack |
 | `can_go_forward()` | bool | WebView.CanGoForward |
+| `on_navigated` | callback + ctx | WebView.Navigated |
+| `on_navigating` | callback + ctx | WebView.Navigating |
+| `on_process_terminated` | callback + ctx | WebView.ProcessTerminated |
+
+## the shared band
+
+Declared once on `Node` and forwarded onto every cursor, so a verb
+every element carries is written in one place and no generic element
+type exists.
+
+| verb | returns |
+|---|---|
+| `set_opacity(v:)` | the cursor, so writes chain |
+| `opacity()` | f64 |
+| `set_background_color(v:)` | the cursor, so writes chain |
+| `background_color()` | vocab::Color |
+| `set_background(v:)` | the cursor, so writes chain |
+| `background()` | vocab::Brush |
+| `set_shadow(v:)` | the cursor, so writes chain |
+| `shadow()` | vocab::Shadow |
+| `set_clip(v:)` | the cursor, so writes chain |
+| `clip()` | vocab::Shape |
+| `set_enabled(v:)` | the cursor, so writes chain |
+| `is_enabled()` | bool |
+| `set_visible(v:)` | the cursor, so writes chain |
+| `is_visible()` | bool |
+| `set_input_transparent(v:)` | the cursor, so writes chain |
+| `input_transparent()` | bool |
+| `set_flow_direction(v:)` | the cursor, so writes chain |
+| `flow_direction()` | vocab::FlowDirection |
+| `set_rotation(v:)` | the cursor, so writes chain |
+| `rotation()` | f64 |
+| `set_rotation_x(v:)` | the cursor, so writes chain |
+| `rotation_x()` | f64 |
+| `set_rotation_y(v:)` | the cursor, so writes chain |
+| `rotation_y()` | f64 |
+| `set_scale(v:)` | the cursor, so writes chain |
+| `scale()` | f64 |
+| `set_scale_x(v:)` | the cursor, so writes chain |
+| `scale_x()` | f64 |
+| `set_scale_y(v:)` | the cursor, so writes chain |
+| `scale_y()` | f64 |
+| `set_translation_x(v:)` | the cursor, so writes chain |
+| `translation_x()` | f64 |
+| `set_translation_y(v:)` | the cursor, so writes chain |
+| `translation_y()` | f64 |
+| `set_anchor_x(v:)` | the cursor, so writes chain |
+| `anchor_x()` | f64 |
+| `set_anchor_y(v:)` | the cursor, so writes chain |
+| `anchor_y()` | f64 |
+| `set_z_index(v:)` | the cursor, so writes chain |
+| `z_index()` | i64 |
+| `width()` | f64 |
+| `height()` | f64 |
+| `x()` | f64 |
+| `y()` | f64 |
+| `bounds()` | vocab::Rect |
+| `is_focused()` | bool |
+| `is_attached()` | bool |
+| `window()` | vocab::WindowRef |
+| `native()` | *u8 |
+| `child_count()` | usize |
+| `child(at:)` | option::Option[*core::Node] |
+| `set_grow(v:)` | the cursor, so writes chain |
+| `set_shrink(v:)` | the cursor, so writes chain |
+| `set_width(v:)` | the cursor, so writes chain |
+| `set_height(v:)` | the cursor, so writes chain |
+| `set_width_percent(v:)` | the cursor, so writes chain |
+| `set_height_percent(v:)` | the cursor, so writes chain |
+| `set_padding(v:)` | the cursor, so writes chain |
+| `set_margin(v:)` | the cursor, so writes chain |
+| `set_gap(v:)` | the cursor, so writes chain |
+| `set_justify(v:)` | the cursor, so writes chain |
+| `set_align(v:)` | the cursor, so writes chain |
+| `set_wrap(v:)` | the cursor, so writes chain |
+| `focus()` | the cursor, so writes chain |
+| `blur()` | the cursor, so writes chain |
+| `relayout()` | the cursor, so writes chain |
+| `measure(width:)` | vocab::Size |
+| `begin_updates()` | the cursor, so writes chain |
+| `end_updates()` | the cursor, so writes chain |
+| `on_focus(f:)` | the cursor, so writes chain |
+| `on_blur(f:)` | the cursor, so writes chain |
+| `on_attach(f:)` | the cursor, so writes chain |
+| `on_detach(f:)` | the cursor, so writes chain |
+| `frame()` | flex::Frame |
+
+1 rows of the ledger's shared band are not forwarded yet. Each is here
+with its reason; the generator fails the run on a row that is in neither
+list.
+
+| verb | why not yet |
+|---|---|
+| `observe_size` | answered in services.cplus — observe_size(n, cb, ctx:) -> Cancellable, the backend-hook shape the whole tier uses (events::Subscription was rejected: it carries a *Bus) |

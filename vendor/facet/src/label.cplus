@@ -11,25 +11,29 @@ import "stdlib/box" as box;
 import "./facet" as core;
 import "./props" as props;
 import "./vocabulary" as vocab;
+import "./mount" as mount;
 
 // ---- dirty bits --------------------------------------------------------
+// One bit per write, then one per owned prop and one per command. The
+// top 16 bits of the word are the shared band's (props::C_*).
 
 const P_CHARACTER_SPACING: u64 = 1u64;
-const P_FONT_ATTRIBUTES: u64 = 2u64;
-const P_FONT_AUTO_SCALING_ENABLED: u64 = 4u64;
-const P_FONT_FAMILY: u64 = 8u64;
-const P_FONT_SIZE: u64 = 16u64;
-const P_FORMATTED_TEXT: u64 = 32u64;
-const P_HORIZONTAL_TEXT_ALIGNMENT: u64 = 64u64;
-const P_LINE_BREAK_MODE: u64 = 128u64;
+const P_FONT_WEIGHT: u64 = 2u64;
+const P_IS_ITALIC: u64 = 4u64;
+const P_FONT_SCALES: u64 = 8u64;
+const P_FONT_FAMILY: u64 = 16u64;
+const P_FONT_SIZE: u64 = 32u64;
+const P_TEXT_ALIGN: u64 = 64u64;
+const P_LINE_BREAK: u64 = 128u64;
 const P_LINE_HEIGHT: u64 = 256u64;
 const P_MAX_LINES: u64 = 512u64;
 const P_TEXT: u64 = 1024u64;
 const P_TEXT_COLOR: u64 = 2048u64;
-const P_TEXT_DECORATIONS: u64 = 4096u64;
+const P_TEXT_DECORATION: u64 = 4096u64;
 const P_TEXT_TRANSFORM: u64 = 8192u64;
-const P_TEXT_TYPE: u64 = 16384u64;
-const P_VERTICAL_TEXT_ALIGNMENT: u64 = 32768u64;
+const P_TEXT_FORMAT: u64 = 16384u64;
+const P_VERTICAL_ALIGN: u64 = 32768u64;
+const P_FORMATTED_TEXT: u64 = 65536u64;
 
 // ---- build -------------------------------------------------------------
 // Typed by the parameter list: a verb another control owns is not a
@@ -39,38 +43,38 @@ fn label(
     text: str,
     key: str = "",
     character_spacing: f64 = 0.0f64,
-    font_attributes: vocab::FontStyle = vocab::FontStyle::Bold,
-    font_auto_scaling_enabled: bool = false,
+    font_weight: vocab::FontWeight = vocab::FontWeight::Default,
+    italic: bool = false,
+    font_scales: bool = false,
     font_family: str = "",
     font_size: f64 = 0.0f64,
-    formatted_text: vocab::Spans = vocab::Spans::none(),
-    horizontal_text_alignment: vocab::TextAlign = vocab::TextAlign::Center,
-    line_break_mode: vocab::LineBreak = vocab::LineBreak::CharacterWrap,
+    text_align: vocab::TextAlign = vocab::TextAlign::Center,
+    line_break: vocab::LineBreak = vocab::LineBreak::CharacterWrap,
     line_height: f64 = 0.0f64,
     max_lines: i64 = 0 as i64,
     text_color: vocab::Color = vocab::Color::clear(),
-    text_decorations: vocab::TextDecoration = vocab::TextDecoration::None,
+    text_decoration: vocab::TextDecoration = vocab::TextDecoration::None,
     text_transform: vocab::TextTransform = vocab::TextTransform::Default,
-    text_type: vocab::TextType = vocab::TextType::Html,
-    vertical_text_alignment: vocab::TextAlign = vocab::TextAlign::Center,
+    text_format: vocab::TextFormat = vocab::TextFormat::Html,
+    vertical_align: vocab::TextAlign = vocab::TextAlign::Center,
 ) -> core::Node {
     var p: props::LabelProps = props::LabelProps::new();
     p.character_spacing = character_spacing;
-    p.font_attributes = font_attributes;
-    p.font_auto_scaling_enabled = font_auto_scaling_enabled;
+    p.font_weight = font_weight;
+    p.is_italic = italic;
+    p.font_scales = font_scales;
     p.font_family = text::from_str(font_family);
     p.font_size = font_size;
-    p.formatted_text = formatted_text;
-    p.horizontal_text_alignment = horizontal_text_alignment;
-    p.line_break_mode = line_break_mode;
+    p.text_align = text_align;
+    p.line_break = line_break;
     p.line_height = line_height;
     p.max_lines = max_lines;
     p.text = text::from_str(text);
     p.text_color = text_color;
-    p.text_decorations = text_decorations;
+    p.text_decoration = text_decoration;
     p.text_transform = text_transform;
-    p.text_type = text_type;
-    p.vertical_text_alignment = vertical_text_alignment;
+    p.text_format = text_format;
+    p.vertical_align = vertical_align;
     return match box::new::[props::LabelProps](p) {
         option::Option[box::Box[props::LabelProps]]::Some(b) =>
             core::node_with(key, props::K_LABEL, b.into_raw(), props::release_label_props),
@@ -90,7 +94,9 @@ struct Label {
 }
 
 impl Label {
-    fn of(p: *core::Node) -> Label { return Label { _p: p, _seen: flex::removal_count() }; }
+    // Unchecked, and module-private for that reason: it trusts the
+    // caller about the kind. `from` is the public door.
+    fn _of(p: *core::Node) -> Label { return Label { _p: p, _seen: flex::removal_count() }; }
     fn is_live(this) -> bool { return this._seen == flex::removal_count(); }
 
     fn _props(this) -> *props::LabelProps {
@@ -110,20 +116,29 @@ impl Label {
     }
 
     // Label.FontAttributes
-    fn set_font_attributes(this, v: vocab::FontStyle) -> Label {
+    fn set_font_weight(this, v: vocab::FontWeight) -> Label {
         let p: *props::LabelProps = this._props();
         if p == (0 as *props::LabelProps) { return this; }
-        { (*p).font_attributes = v };
-        core::touch(this._p, P_FONT_ATTRIBUTES);
+        { (*p).font_weight = v };
+        core::touch(this._p, P_FONT_WEIGHT);
+        return this;
+    }
+
+    // Label.FontAttributes (italic axis)
+    fn set_italic(this, v: bool) -> Label {
+        let p: *props::LabelProps = this._props();
+        if p == (0 as *props::LabelProps) { return this; }
+        { (*p).is_italic = v };
+        core::touch(this._p, P_IS_ITALIC);
         return this;
     }
 
     // Label.FontAutoScalingEnabled
-    fn set_font_auto_scaling_enabled(this, v: bool) -> Label {
+    fn set_font_scales(this, v: bool) -> Label {
         let p: *props::LabelProps = this._props();
         if p == (0 as *props::LabelProps) { return this; }
-        { (*p).font_auto_scaling_enabled = v };
-        core::touch(this._p, P_FONT_AUTO_SCALING_ENABLED);
+        { (*p).font_scales = v };
+        core::touch(this._p, P_FONT_SCALES);
         return this;
     }
 
@@ -145,30 +160,21 @@ impl Label {
         return this;
     }
 
-    // Label.FormattedText
-    fn set_formatted_text(this, v: vocab::Spans) -> Label {
-        let p: *props::LabelProps = this._props();
-        if p == (0 as *props::LabelProps) { return this; }
-        { (*p).formatted_text = v };
-        core::touch(this._p, P_FORMATTED_TEXT);
-        return this;
-    }
-
     // Label.HorizontalTextAlignment
-    fn set_horizontal_text_alignment(this, v: vocab::TextAlign) -> Label {
+    fn set_text_align(this, v: vocab::TextAlign) -> Label {
         let p: *props::LabelProps = this._props();
         if p == (0 as *props::LabelProps) { return this; }
-        { (*p).horizontal_text_alignment = v };
-        core::touch(this._p, P_HORIZONTAL_TEXT_ALIGNMENT);
+        { (*p).text_align = v };
+        core::touch(this._p, P_TEXT_ALIGN);
         return this;
     }
 
     // Label.LineBreakMode
-    fn set_line_break_mode(this, v: vocab::LineBreak) -> Label {
+    fn set_line_break(this, v: vocab::LineBreak) -> Label {
         let p: *props::LabelProps = this._props();
         if p == (0 as *props::LabelProps) { return this; }
-        { (*p).line_break_mode = v };
-        core::touch(this._p, P_LINE_BREAK_MODE);
+        { (*p).line_break = v };
+        core::touch(this._p, P_LINE_BREAK);
         return this;
     }
 
@@ -209,11 +215,11 @@ impl Label {
     }
 
     // Label.TextDecorations
-    fn set_text_decorations(this, v: vocab::TextDecoration) -> Label {
+    fn set_text_decoration(this, v: vocab::TextDecoration) -> Label {
         let p: *props::LabelProps = this._props();
         if p == (0 as *props::LabelProps) { return this; }
-        { (*p).text_decorations = v };
-        core::touch(this._p, P_TEXT_DECORATIONS);
+        { (*p).text_decoration = v };
+        core::touch(this._p, P_TEXT_DECORATION);
         return this;
     }
 
@@ -227,20 +233,20 @@ impl Label {
     }
 
     // Label.TextType
-    fn set_text_type(this, v: vocab::TextType) -> Label {
+    fn set_text_format(this, v: vocab::TextFormat) -> Label {
         let p: *props::LabelProps = this._props();
         if p == (0 as *props::LabelProps) { return this; }
-        { (*p).text_type = v };
-        core::touch(this._p, P_TEXT_TYPE);
+        { (*p).text_format = v };
+        core::touch(this._p, P_TEXT_FORMAT);
         return this;
     }
 
     // Label.VerticalTextAlignment
-    fn set_vertical_text_alignment(this, v: vocab::TextAlign) -> Label {
+    fn set_vertical_align(this, v: vocab::TextAlign) -> Label {
         let p: *props::LabelProps = this._props();
         if p == (0 as *props::LabelProps) { return this; }
-        { (*p).vertical_text_alignment = v };
-        core::touch(this._p, P_VERTICAL_TEXT_ALIGNMENT);
+        { (*p).vertical_align = v };
+        core::touch(this._p, P_VERTICAL_ALIGN);
         return this;
     }
 
@@ -250,16 +256,22 @@ impl Label {
         return { (*p).character_spacing };
     }
 
-    fn font_attributes(this) -> vocab::FontStyle {
+    fn font_weight(this) -> vocab::FontWeight {
         let p: *props::LabelProps = this._props();
-        if p == (0 as *props::LabelProps) { return vocab::FontStyle::Bold; }
-        return { (*p).font_attributes };
+        if p == (0 as *props::LabelProps) { return vocab::FontWeight::Default; }
+        return { (*p).font_weight };
     }
 
-    fn font_auto_scaling_enabled(this) -> bool {
+    fn is_italic(this) -> bool {
         let p: *props::LabelProps = this._props();
         if p == (0 as *props::LabelProps) { return false; }
-        return { (*p).font_auto_scaling_enabled };
+        return { (*p).is_italic };
+    }
+
+    fn font_scales(this) -> bool {
+        let p: *props::LabelProps = this._props();
+        if p == (0 as *props::LabelProps) { return false; }
+        return { (*p).font_scales };
     }
 
     fn font_family(this) -> str {
@@ -274,22 +286,16 @@ impl Label {
         return { (*p).font_size };
     }
 
-    fn formatted_text(this) -> vocab::Spans {
-        let p: *props::LabelProps = this._props();
-        if p == (0 as *props::LabelProps) { return vocab::Spans::none(); }
-        return { (*p).formatted_text };
-    }
-
-    fn horizontal_text_alignment(this) -> vocab::TextAlign {
+    fn text_align(this) -> vocab::TextAlign {
         let p: *props::LabelProps = this._props();
         if p == (0 as *props::LabelProps) { return vocab::TextAlign::Center; }
-        return { (*p).horizontal_text_alignment };
+        return { (*p).text_align };
     }
 
-    fn line_break_mode(this) -> vocab::LineBreak {
+    fn line_break(this) -> vocab::LineBreak {
         let p: *props::LabelProps = this._props();
         if p == (0 as *props::LabelProps) { return vocab::LineBreak::CharacterWrap; }
-        return { (*p).line_break_mode };
+        return { (*p).line_break };
     }
 
     fn line_height(this) -> f64 {
@@ -316,10 +322,10 @@ impl Label {
         return { (*p).text_color };
     }
 
-    fn text_decorations(this) -> vocab::TextDecoration {
+    fn text_decoration(this) -> vocab::TextDecoration {
         let p: *props::LabelProps = this._props();
         if p == (0 as *props::LabelProps) { return vocab::TextDecoration::None; }
-        return { (*p).text_decorations };
+        return { (*p).text_decoration };
     }
 
     fn text_transform(this) -> vocab::TextTransform {
@@ -328,47 +334,151 @@ impl Label {
         return { (*p).text_transform };
     }
 
-    fn text_type(this) -> vocab::TextType {
+    fn text_format(this) -> vocab::TextFormat {
         let p: *props::LabelProps = this._props();
-        if p == (0 as *props::LabelProps) { return vocab::TextType::Html; }
-        return { (*p).text_type };
+        if p == (0 as *props::LabelProps) { return vocab::TextFormat::Html; }
+        return { (*p).text_format };
     }
 
-    fn vertical_text_alignment(this) -> vocab::TextAlign {
+    fn vertical_align(this) -> vocab::TextAlign {
         let p: *props::LabelProps = this._props();
         if p == (0 as *props::LabelProps) { return vocab::TextAlign::Center; }
-        return { (*p).vertical_text_alignment };
+        return { (*p).vertical_align };
     }
+
+    // Label.FormattedText — owned, so it is written whole and read
+    // one element at a time: `-> ref T` does not parse.
+    fn set_formatted_text(this, take v: vocab::Spans) -> Label {
+        let p: *props::LabelProps = this._props();
+        if p == (0 as *props::LabelProps) { return this; }
+        { (*p).formatted_text = v };
+        core::touch(this._p, P_FORMATTED_TEXT);
+        return this;
+    }
+
+    fn formatted_text_count(this) -> usize {
+        let p: *props::LabelProps = this._props();
+        if p == (0 as *props::LabelProps) { return 0 as usize; }
+        return { (*p).formatted_text.count() };
+    }
+
+    fn formatted_text_at(this, at: usize) -> *vocab::TextSpan {
+        let p: *props::LabelProps = this._props();
+        if p == (0 as *props::LabelProps) { return 0 as *vocab::TextSpan; }
+        return { (*p).formatted_text.at(at) };
+    }
+
+    // The flex node this cursor points at. The DOM division, and the
+    // reason facet declares no layout verb of its own:
+    //
+    //   the control's own   b.set_title("Saving…")     this module
+    //   the shared band     b.set_opacity(0.5)         facet.cplus, once
+    //   layout              { (*b.node()).set_width(…) }  ALL of flex
+    //
+    // Reaching flex through the node rather than forwarding its ~40 verbs
+    // onto 42 cursors is what keeps facet from growing a second layout
+    // vocabulary that can disagree with the first.
+    fn node(this) -> *core::Node { return this._p; }
 
     // --- the shared band: one-line forwards, no generic element type ---
     fn set_opacity(this, v: f64) -> Label { core::set_opacity(this._p, v); return this; }
     fn opacity(this) -> f64 { return core::opacity(this._p); }
+    fn set_background_color(this, v: vocab::Color) -> Label { core::set_background_color(this._p, v); return this; }
+    fn background_color(this) -> vocab::Color { return core::background_color(this._p); }
+    fn set_background(this, v: vocab::Brush) -> Label { core::set_background(this._p, v); return this; }
+    fn background(this) -> vocab::Brush { return core::background(this._p); }
+    fn set_shadow(this, v: vocab::Shadow) -> Label { core::set_shadow(this._p, v); return this; }
+    fn shadow(this) -> vocab::Shadow { return core::shadow(this._p); }
+    fn set_clip(this, v: vocab::Shape) -> Label { core::set_clip(this._p, v); return this; }
+    fn clip(this) -> vocab::Shape { return core::clip(this._p); }
     fn set_enabled(this, v: bool) -> Label { core::set_enabled(this._p, v); return this; }
     fn is_enabled(this) -> bool { return core::is_enabled(this._p); }
     fn set_visible(this, v: bool) -> Label { core::set_visible(this._p, v); return this; }
     fn is_visible(this) -> bool { return core::is_visible(this._p); }
-    fn set_background_color(this, v: vocab::Color) -> Label { core::set_background_color(this._p, v); return this; }
-    fn background_color(this) -> vocab::Color { return core::background_color(this._p); }
+    fn set_input_transparent(this, v: bool) -> Label { core::set_input_transparent(this._p, v); return this; }
+    fn input_transparent(this) -> bool { return core::input_transparent(this._p); }
+    fn set_flow_direction(this, v: vocab::FlowDirection) -> Label { core::set_flow_direction(this._p, v); return this; }
+    fn flow_direction(this) -> vocab::FlowDirection { return core::flow_direction(this._p); }
     fn set_rotation(this, v: f64) -> Label { core::set_rotation(this._p, v); return this; }
+    fn rotation(this) -> f64 { return core::rotation(this._p); }
+    fn set_rotation_x(this, v: f64) -> Label { core::set_rotation_x(this._p, v); return this; }
+    fn rotation_x(this) -> f64 { return core::rotation_x(this._p); }
+    fn set_rotation_y(this, v: f64) -> Label { core::set_rotation_y(this._p, v); return this; }
+    fn rotation_y(this) -> f64 { return core::rotation_y(this._p); }
     fn set_scale(this, v: f64) -> Label { core::set_scale(this._p, v); return this; }
+    fn scale(this) -> f64 { return core::scale(this._p); }
+    fn set_scale_x(this, v: f64) -> Label { core::set_scale_x(this._p, v); return this; }
+    fn scale_x(this) -> f64 { return core::scale_x(this._p); }
+    fn set_scale_y(this, v: f64) -> Label { core::set_scale_y(this._p, v); return this; }
+    fn scale_y(this) -> f64 { return core::scale_y(this._p); }
+    fn set_translation_x(this, v: f64) -> Label { core::set_translation_x(this._p, v); return this; }
+    fn translation_x(this) -> f64 { return core::translation_x(this._p); }
+    fn set_translation_y(this, v: f64) -> Label { core::set_translation_y(this._p, v); return this; }
+    fn translation_y(this) -> f64 { return core::translation_y(this._p); }
+    fn set_anchor_x(this, v: f64) -> Label { core::set_anchor_x(this._p, v); return this; }
+    fn anchor_x(this) -> f64 { return core::anchor_x(this._p); }
+    fn set_anchor_y(this, v: f64) -> Label { core::set_anchor_y(this._p, v); return this; }
+    fn anchor_y(this) -> f64 { return core::anchor_y(this._p); }
+    fn set_z_index(this, v: i64) -> Label { core::set_z_index(this._p, v); return this; }
+    fn z_index(this) -> i64 { return core::z_index(this._p); }
     fn width(this) -> f64 { return core::width_of(this._p); }
     fn height(this) -> f64 { return core::height_of(this._p); }
     fn x(this) -> f64 { return core::x_of(this._p); }
     fn y(this) -> f64 { return core::y_of(this._p); }
+    fn bounds(this) -> vocab::Rect { return core::bounds_of(this._p); }
+    fn is_focused(this) -> bool { return core::is_focused(this._p); }
+    fn is_attached(this) -> bool { return core::is_attached(this._p); }
+    fn window(this) -> vocab::WindowRef { return core::window_of(this._p); }
+    fn native(this) -> *u8 { return core::native(this._p); }
     fn child_count(this) -> usize { return core::child_count_of(this._p); }
+    fn child(this, at: usize) -> option::Option[*core::Node] { return core::child_of(this._p, at); }
+    fn set_grow(this, v: f64) -> Label { core::set_grow(this._p, v); return this; }
+    fn set_shrink(this, v: f64) -> Label { core::set_shrink(this._p, v); return this; }
+    fn set_width(this, v: f64) -> Label { core::set_width(this._p, v); return this; }
+    fn set_height(this, v: f64) -> Label { core::set_height(this._p, v); return this; }
+    fn set_width_percent(this, v: f64) -> Label { core::set_width_percent(this._p, v); return this; }
+    fn set_height_percent(this, v: f64) -> Label { core::set_height_percent(this._p, v); return this; }
+    fn set_padding(this, v: f64) -> Label { core::set_padding(this._p, v); return this; }
+    fn set_margin(this, v: f64) -> Label { core::set_margin(this._p, v); return this; }
+    fn set_gap(this, v: f64) -> Label { core::set_gap(this._p, v); return this; }
+    fn set_justify(this, v: flex::Justify) -> Label { core::set_justify(this._p, v); return this; }
+    fn set_align(this, v: flex::Align) -> Label { core::set_align(this._p, v); return this; }
+    fn set_wrap(this, v: flex::Wrap) -> Label { core::set_wrap(this._p, v); return this; }
+    fn focus(this) -> Label { core::focus(this._p); return this; }
+    fn blur(this) -> Label { core::blur(this._p); return this; }
+    fn relayout(this) -> Label { core::relayout(this._p); return this; }
+    fn measure(this, width: f64, height: f64) -> vocab::Size { return core::measure(this._p, width, height); }
+    fn begin_updates(this) -> Label { core::begin_updates(this._p); return this; }
+    fn end_updates(this) -> Label { core::end_updates(this._p); return this; }
+    fn on_focus(this, f: fn(*u8, *u8), ctx: *u8 = 0 as *u8) -> Label { core::set_on_focus(this._p, f, ctx); return this; }
+    fn on_blur(this, f: fn(*u8, *u8), ctx: *u8 = 0 as *u8) -> Label { core::set_on_blur(this._p, f, ctx); return this; }
+    fn on_attach(this, f: fn(*u8, *u8), ctx: *u8 = 0 as *u8) -> Label { core::set_on_attach(this._p, f, ctx); return this; }
+    fn on_detach(this, f: fn(*u8, *u8), ctx: *u8 = 0 as *u8) -> Label { core::set_on_detach(this._p, f, ctx); return this; }
     fn frame(this) -> core::Frame { return core::frame_of(this._p); }
 }
 
-// ---- lookup: resolve the key, then check the kind -----------------------
+// ---- lookup ------------------------------------------------------------
+// `from` narrows a node to this control, the DOM step: a node carries what
+// EVERY node has, and a checked cast adds what only a label has. `None` on
+// a wrong kind — never a cursor whose every verb silently does nothing.
 
-fn find(root: *core::Node, key: str) -> option::Option[Label] {
-    return match core::find_in(root, key) {
-        option::Option[*core::Node]::Some(p) => {
-            let d: *core::Data = { (*p).data() };
-            if d == (0 as *core::Data) { return option::Option[Label]::None; }
-            if { (*d).kind } != props::K_LABEL { return option::Option[Label]::None; }
-            option::Option[Label]::Some(Label::of(p))
-        }
+fn from(p: *core::Node) -> option::Option[Label] {
+    if p == (0 as *core::Node) { return option::Option[Label]::None; }
+    let d: *core::Data = { (*p).data() };
+    if d == (0 as *core::Data) { return option::Option[Label]::None; }
+    if { (*d).kind } != props::K_LABEL { return option::Option[Label]::None; }
+    return option::Option[Label]::Some(Label::_of(p));
+}
+
+// Resolve a key, then narrow through the same checked door.
+
+// `within:` and not `in:` — `in` is a C+ keyword. Defaults to the
+// mounted tree, so an agent holding only a key can address it; pass a
+// subtree to scope the search (stages/3, the global find).
+fn find(key: str, within: *core::Node = mount::mounted_root()) -> option::Option[Label] {
+    if within == (0 as *core::Node) { return option::Option[Label]::None; }
+    return match core::find_in(within, key) {
+        option::Option[*core::Node]::Some(p) => from(p),
         option::Option[*core::Node]::None => option::Option[Label]::None,
     };
 }

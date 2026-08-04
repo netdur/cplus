@@ -220,6 +220,83 @@ fn view_of(n: *Node) -> *u8 {
     return { (*d).view };
 }
 
+// ---- shared-band handlers (Stage 3) -----------------------------------------
+// The four handler pairs every node carries. Focus/blur are fired by the
+// backend when the platform's focus moves; attach/detach are fired by the
+// mount walk, post-walk (M4). Setters are live: a swap touches C_HANDLERS so
+// a mounted backend re-reads.
+
+fn set_on_focus(n: *Node, f: fn(*u8, *u8), ctx: *u8) {
+    let d: *Data = ensure_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).common.on_focus = f };
+    { (*d).common.on_focus_ctx = ctx };
+    touch(n, props::C_HANDLERS);
+    return;
+}
+
+fn set_on_blur(n: *Node, f: fn(*u8, *u8), ctx: *u8) {
+    let d: *Data = ensure_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).common.on_blur = f };
+    { (*d).common.on_blur_ctx = ctx };
+    touch(n, props::C_HANDLERS);
+    return;
+}
+
+fn set_on_attach(n: *Node, f: fn(*u8, *u8), ctx: *u8) {
+    let d: *Data = ensure_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).common.on_attach = f };
+    { (*d).common.on_attach_ctx = ctx };
+    touch(n, props::C_HANDLERS);
+    return;
+}
+
+fn set_on_detach(n: *Node, f: fn(*u8, *u8), ctx: *u8) {
+    let d: *Data = ensure_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).common.on_detach = f };
+    { (*d).common.on_detach_ctx = ctx };
+    touch(n, props::C_HANDLERS);
+    return;
+}
+
+// Fire helpers: sender is the node's native view (0 headless), ctx is what
+// the handler bound. The mount walk uses attach/detach; a backend uses
+// focus/blur from its first-responder observers.
+fn fire_attach_handler(n: *Node) {
+    let d: *Data = { (*n).data() };
+    if d == (0 as *Data) { return; }
+    let f: fn(*u8, *u8) = { (*d).common.on_attach };
+    if f != (0 as fn(*u8, *u8)) && f != props::no_handler { f({ (*d).view }, { (*d).common.on_attach_ctx }); }
+    return;
+}
+
+fn fire_detach_handler(n: *Node) {
+    let d: *Data = { (*n).data() };
+    if d == (0 as *Data) { return; }
+    let f: fn(*u8, *u8) = { (*d).common.on_detach };
+    if f != (0 as fn(*u8, *u8)) && f != props::no_handler { f({ (*d).view }, { (*d).common.on_detach_ctx }); }
+    return;
+}
+
+fn fire_focus_handler(n: *Node) {
+    let d: *Data = { (*n).data() };
+    if d == (0 as *Data) { return; }
+    let f: fn(*u8, *u8) = { (*d).common.on_focus };
+    if f != (0 as fn(*u8, *u8)) && f != props::no_handler { f({ (*d).view }, { (*d).common.on_focus_ctx }); }
+    return;
+}
+
+fn fire_blur_handler(n: *Node) {
+    let d: *Data = { (*n).data() };
+    if d == (0 as *Data) { return; }
+    let f: fn(*u8, *u8) = { (*d).common.on_blur };
+    if f != (0 as fn(*u8, *u8)) && f != props::no_handler { f({ (*d).view }, { (*d).common.on_blur_ctx }); }
+    return;
+}
+
 // The control kind tag — what a backend's create/apply dispatch on.
 // K_NODE (0) is a bare container.
 fn kind_of(n: *Node) -> u32 {

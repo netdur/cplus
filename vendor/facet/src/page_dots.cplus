@@ -11,17 +11,20 @@ import "stdlib/box" as box;
 import "./facet" as core;
 import "./props" as props;
 import "./vocabulary" as vocab;
+import "./mount" as mount;
 
 // ---- dirty bits --------------------------------------------------------
+// One bit per write, then one per owned prop and one per command. The
+// top 16 bits of the word are the shared band's (props::C_*).
 
 const P_COUNT: u64 = 1u64;
-const P_HIDE_SINGLE: u64 = 2u64;
-const P_INDICATOR_COLOR: u64 = 4u64;
-const P_INDICATOR_SIZE: u64 = 8u64;
-const P_INDICATORS_SHAPE: u64 = 16u64;
-const P_MAXIMUM_VISIBLE: u64 = 32u64;
+const P_HIDES_SINGLE: u64 = 2u64;
+const P_DOT_COLOR: u64 = 4u64;
+const P_DOT_SIZE: u64 = 8u64;
+const P_DOT_SHAPE: u64 = 16u64;
+const P_MAX_DOTS: u64 = 32u64;
 const P_POSITION: u64 = 64u64;
-const P_SELECTED_INDICATOR_COLOR: u64 = 128u64;
+const P_SELECTED_DOT_COLOR: u64 = 128u64;
 
 // ---- build -------------------------------------------------------------
 // Typed by the parameter list: a verb another control owns is not a
@@ -30,23 +33,23 @@ const P_SELECTED_INDICATOR_COLOR: u64 = 128u64;
 fn page_dots(
     count: i64,
     key: str = "",
-    hide_single: bool = false,
-    indicator_color: vocab::Color = vocab::Color::clear(),
-    indicator_size: f64 = 0.0f64,
-    indicators_shape: vocab::DotShape = vocab::DotShape::Circle,
-    maximum_visible: i64 = 0 as i64,
+    hides_single: bool = false,
+    dot_color: vocab::Color = vocab::Color::clear(),
+    dot_size: f64 = 0.0f64,
+    dot_shape: vocab::DotShape = vocab::DotShape::Circle,
+    max_dots: i64 = 0 as i64,
     position: i64 = 0 as i64,
-    selected_indicator_color: vocab::Color = vocab::Color::clear(),
+    selected_dot_color: vocab::Color = vocab::Color::clear(),
 ) -> core::Node {
     var p: props::PageDotsProps = props::PageDotsProps::new();
     p.count = count;
-    p.hide_single = hide_single;
-    p.indicator_color = indicator_color;
-    p.indicator_size = indicator_size;
-    p.indicators_shape = indicators_shape;
-    p.maximum_visible = maximum_visible;
+    p.hides_single = hides_single;
+    p.dot_color = dot_color;
+    p.dot_size = dot_size;
+    p.dot_shape = dot_shape;
+    p.max_dots = max_dots;
     p.position = position;
-    p.selected_indicator_color = selected_indicator_color;
+    p.selected_dot_color = selected_dot_color;
     return match box::new::[props::PageDotsProps](p) {
         option::Option[box::Box[props::PageDotsProps]]::Some(b) =>
             core::node_with(key, props::K_PAGE_DOTS, b.into_raw(), props::release_page_dots_props),
@@ -66,7 +69,9 @@ struct PageDots {
 }
 
 impl PageDots {
-    fn of(p: *core::Node) -> PageDots { return PageDots { _p: p, _seen: flex::removal_count() }; }
+    // Unchecked, and module-private for that reason: it trusts the
+    // caller about the kind. `from` is the public door.
+    fn _of(p: *core::Node) -> PageDots { return PageDots { _p: p, _seen: flex::removal_count() }; }
     fn is_live(this) -> bool { return this._seen == flex::removal_count(); }
 
     fn _props(this) -> *props::PageDotsProps {
@@ -86,47 +91,47 @@ impl PageDots {
     }
 
     // IndicatorView.HideSingle
-    fn set_hide_single(this, v: bool) -> PageDots {
+    fn set_hides_single(this, v: bool) -> PageDots {
         let p: *props::PageDotsProps = this._props();
         if p == (0 as *props::PageDotsProps) { return this; }
-        { (*p).hide_single = v };
-        core::touch(this._p, P_HIDE_SINGLE);
+        { (*p).hides_single = v };
+        core::touch(this._p, P_HIDES_SINGLE);
         return this;
     }
 
     // IndicatorView.IndicatorColor
-    fn set_indicator_color(this, v: vocab::Color) -> PageDots {
+    fn set_dot_color(this, v: vocab::Color) -> PageDots {
         let p: *props::PageDotsProps = this._props();
         if p == (0 as *props::PageDotsProps) { return this; }
-        { (*p).indicator_color = v };
-        core::touch(this._p, P_INDICATOR_COLOR);
+        { (*p).dot_color = v };
+        core::touch(this._p, P_DOT_COLOR);
         return this;
     }
 
     // IndicatorView.IndicatorSize
-    fn set_indicator_size(this, v: f64) -> PageDots {
+    fn set_dot_size(this, v: f64) -> PageDots {
         let p: *props::PageDotsProps = this._props();
         if p == (0 as *props::PageDotsProps) { return this; }
-        { (*p).indicator_size = v };
-        core::touch(this._p, P_INDICATOR_SIZE);
+        { (*p).dot_size = v };
+        core::touch(this._p, P_DOT_SIZE);
         return this;
     }
 
     // IndicatorView.IndicatorsShape
-    fn set_indicators_shape(this, v: vocab::DotShape) -> PageDots {
+    fn set_dot_shape(this, v: vocab::DotShape) -> PageDots {
         let p: *props::PageDotsProps = this._props();
         if p == (0 as *props::PageDotsProps) { return this; }
-        { (*p).indicators_shape = v };
-        core::touch(this._p, P_INDICATORS_SHAPE);
+        { (*p).dot_shape = v };
+        core::touch(this._p, P_DOT_SHAPE);
         return this;
     }
 
     // IndicatorView.MaximumVisible
-    fn set_maximum_visible(this, v: i64) -> PageDots {
+    fn set_max_dots(this, v: i64) -> PageDots {
         let p: *props::PageDotsProps = this._props();
         if p == (0 as *props::PageDotsProps) { return this; }
-        { (*p).maximum_visible = v };
-        core::touch(this._p, P_MAXIMUM_VISIBLE);
+        { (*p).max_dots = v };
+        core::touch(this._p, P_MAX_DOTS);
         return this;
     }
 
@@ -140,11 +145,11 @@ impl PageDots {
     }
 
     // IndicatorView.SelectedIndicatorColor
-    fn set_selected_indicator_color(this, v: vocab::Color) -> PageDots {
+    fn set_selected_dot_color(this, v: vocab::Color) -> PageDots {
         let p: *props::PageDotsProps = this._props();
         if p == (0 as *props::PageDotsProps) { return this; }
-        { (*p).selected_indicator_color = v };
-        core::touch(this._p, P_SELECTED_INDICATOR_COLOR);
+        { (*p).selected_dot_color = v };
+        core::touch(this._p, P_SELECTED_DOT_COLOR);
         return this;
     }
 
@@ -154,34 +159,34 @@ impl PageDots {
         return { (*p).count };
     }
 
-    fn hide_single(this) -> bool {
+    fn hides_single(this) -> bool {
         let p: *props::PageDotsProps = this._props();
         if p == (0 as *props::PageDotsProps) { return false; }
-        return { (*p).hide_single };
+        return { (*p).hides_single };
     }
 
-    fn indicator_color(this) -> vocab::Color {
+    fn dot_color(this) -> vocab::Color {
         let p: *props::PageDotsProps = this._props();
         if p == (0 as *props::PageDotsProps) { return vocab::Color::clear(); }
-        return { (*p).indicator_color };
+        return { (*p).dot_color };
     }
 
-    fn indicator_size(this) -> f64 {
+    fn dot_size(this) -> f64 {
         let p: *props::PageDotsProps = this._props();
         if p == (0 as *props::PageDotsProps) { return 0.0f64; }
-        return { (*p).indicator_size };
+        return { (*p).dot_size };
     }
 
-    fn indicators_shape(this) -> vocab::DotShape {
+    fn dot_shape(this) -> vocab::DotShape {
         let p: *props::PageDotsProps = this._props();
         if p == (0 as *props::PageDotsProps) { return vocab::DotShape::Circle; }
-        return { (*p).indicators_shape };
+        return { (*p).dot_shape };
     }
 
-    fn maximum_visible(this) -> i64 {
+    fn max_dots(this) -> i64 {
         let p: *props::PageDotsProps = this._props();
         if p == (0 as *props::PageDotsProps) { return 0 as i64; }
-        return { (*p).maximum_visible };
+        return { (*p).max_dots };
     }
 
     fn position(this) -> i64 {
@@ -190,41 +195,123 @@ impl PageDots {
         return { (*p).position };
     }
 
-    fn selected_indicator_color(this) -> vocab::Color {
+    fn selected_dot_color(this) -> vocab::Color {
         let p: *props::PageDotsProps = this._props();
         if p == (0 as *props::PageDotsProps) { return vocab::Color::clear(); }
-        return { (*p).selected_indicator_color };
+        return { (*p).selected_dot_color };
     }
+
+    // The flex node this cursor points at. The DOM division, and the
+    // reason facet declares no layout verb of its own:
+    //
+    //   the control's own   b.set_title("Saving…")     this module
+    //   the shared band     b.set_opacity(0.5)         facet.cplus, once
+    //   layout              { (*b.node()).set_width(…) }  ALL of flex
+    //
+    // Reaching flex through the node rather than forwarding its ~40 verbs
+    // onto 42 cursors is what keeps facet from growing a second layout
+    // vocabulary that can disagree with the first.
+    fn node(this) -> *core::Node { return this._p; }
 
     // --- the shared band: one-line forwards, no generic element type ---
     fn set_opacity(this, v: f64) -> PageDots { core::set_opacity(this._p, v); return this; }
     fn opacity(this) -> f64 { return core::opacity(this._p); }
+    fn set_background_color(this, v: vocab::Color) -> PageDots { core::set_background_color(this._p, v); return this; }
+    fn background_color(this) -> vocab::Color { return core::background_color(this._p); }
+    fn set_background(this, v: vocab::Brush) -> PageDots { core::set_background(this._p, v); return this; }
+    fn background(this) -> vocab::Brush { return core::background(this._p); }
+    fn set_shadow(this, v: vocab::Shadow) -> PageDots { core::set_shadow(this._p, v); return this; }
+    fn shadow(this) -> vocab::Shadow { return core::shadow(this._p); }
+    fn set_clip(this, v: vocab::Shape) -> PageDots { core::set_clip(this._p, v); return this; }
+    fn clip(this) -> vocab::Shape { return core::clip(this._p); }
     fn set_enabled(this, v: bool) -> PageDots { core::set_enabled(this._p, v); return this; }
     fn is_enabled(this) -> bool { return core::is_enabled(this._p); }
     fn set_visible(this, v: bool) -> PageDots { core::set_visible(this._p, v); return this; }
     fn is_visible(this) -> bool { return core::is_visible(this._p); }
-    fn set_background_color(this, v: vocab::Color) -> PageDots { core::set_background_color(this._p, v); return this; }
-    fn background_color(this) -> vocab::Color { return core::background_color(this._p); }
+    fn set_input_transparent(this, v: bool) -> PageDots { core::set_input_transparent(this._p, v); return this; }
+    fn input_transparent(this) -> bool { return core::input_transparent(this._p); }
+    fn set_flow_direction(this, v: vocab::FlowDirection) -> PageDots { core::set_flow_direction(this._p, v); return this; }
+    fn flow_direction(this) -> vocab::FlowDirection { return core::flow_direction(this._p); }
     fn set_rotation(this, v: f64) -> PageDots { core::set_rotation(this._p, v); return this; }
+    fn rotation(this) -> f64 { return core::rotation(this._p); }
+    fn set_rotation_x(this, v: f64) -> PageDots { core::set_rotation_x(this._p, v); return this; }
+    fn rotation_x(this) -> f64 { return core::rotation_x(this._p); }
+    fn set_rotation_y(this, v: f64) -> PageDots { core::set_rotation_y(this._p, v); return this; }
+    fn rotation_y(this) -> f64 { return core::rotation_y(this._p); }
     fn set_scale(this, v: f64) -> PageDots { core::set_scale(this._p, v); return this; }
+    fn scale(this) -> f64 { return core::scale(this._p); }
+    fn set_scale_x(this, v: f64) -> PageDots { core::set_scale_x(this._p, v); return this; }
+    fn scale_x(this) -> f64 { return core::scale_x(this._p); }
+    fn set_scale_y(this, v: f64) -> PageDots { core::set_scale_y(this._p, v); return this; }
+    fn scale_y(this) -> f64 { return core::scale_y(this._p); }
+    fn set_translation_x(this, v: f64) -> PageDots { core::set_translation_x(this._p, v); return this; }
+    fn translation_x(this) -> f64 { return core::translation_x(this._p); }
+    fn set_translation_y(this, v: f64) -> PageDots { core::set_translation_y(this._p, v); return this; }
+    fn translation_y(this) -> f64 { return core::translation_y(this._p); }
+    fn set_anchor_x(this, v: f64) -> PageDots { core::set_anchor_x(this._p, v); return this; }
+    fn anchor_x(this) -> f64 { return core::anchor_x(this._p); }
+    fn set_anchor_y(this, v: f64) -> PageDots { core::set_anchor_y(this._p, v); return this; }
+    fn anchor_y(this) -> f64 { return core::anchor_y(this._p); }
+    fn set_z_index(this, v: i64) -> PageDots { core::set_z_index(this._p, v); return this; }
+    fn z_index(this) -> i64 { return core::z_index(this._p); }
     fn width(this) -> f64 { return core::width_of(this._p); }
     fn height(this) -> f64 { return core::height_of(this._p); }
     fn x(this) -> f64 { return core::x_of(this._p); }
     fn y(this) -> f64 { return core::y_of(this._p); }
+    fn bounds(this) -> vocab::Rect { return core::bounds_of(this._p); }
+    fn is_focused(this) -> bool { return core::is_focused(this._p); }
+    fn is_attached(this) -> bool { return core::is_attached(this._p); }
+    fn window(this) -> vocab::WindowRef { return core::window_of(this._p); }
+    fn native(this) -> *u8 { return core::native(this._p); }
     fn child_count(this) -> usize { return core::child_count_of(this._p); }
+    fn child(this, at: usize) -> option::Option[*core::Node] { return core::child_of(this._p, at); }
+    fn set_grow(this, v: f64) -> PageDots { core::set_grow(this._p, v); return this; }
+    fn set_shrink(this, v: f64) -> PageDots { core::set_shrink(this._p, v); return this; }
+    fn set_width(this, v: f64) -> PageDots { core::set_width(this._p, v); return this; }
+    fn set_height(this, v: f64) -> PageDots { core::set_height(this._p, v); return this; }
+    fn set_width_percent(this, v: f64) -> PageDots { core::set_width_percent(this._p, v); return this; }
+    fn set_height_percent(this, v: f64) -> PageDots { core::set_height_percent(this._p, v); return this; }
+    fn set_padding(this, v: f64) -> PageDots { core::set_padding(this._p, v); return this; }
+    fn set_margin(this, v: f64) -> PageDots { core::set_margin(this._p, v); return this; }
+    fn set_gap(this, v: f64) -> PageDots { core::set_gap(this._p, v); return this; }
+    fn set_justify(this, v: flex::Justify) -> PageDots { core::set_justify(this._p, v); return this; }
+    fn set_align(this, v: flex::Align) -> PageDots { core::set_align(this._p, v); return this; }
+    fn set_wrap(this, v: flex::Wrap) -> PageDots { core::set_wrap(this._p, v); return this; }
+    fn focus(this) -> PageDots { core::focus(this._p); return this; }
+    fn blur(this) -> PageDots { core::blur(this._p); return this; }
+    fn relayout(this) -> PageDots { core::relayout(this._p); return this; }
+    fn measure(this, width: f64, height: f64) -> vocab::Size { return core::measure(this._p, width, height); }
+    fn begin_updates(this) -> PageDots { core::begin_updates(this._p); return this; }
+    fn end_updates(this) -> PageDots { core::end_updates(this._p); return this; }
+    fn on_focus(this, f: fn(*u8, *u8), ctx: *u8 = 0 as *u8) -> PageDots { core::set_on_focus(this._p, f, ctx); return this; }
+    fn on_blur(this, f: fn(*u8, *u8), ctx: *u8 = 0 as *u8) -> PageDots { core::set_on_blur(this._p, f, ctx); return this; }
+    fn on_attach(this, f: fn(*u8, *u8), ctx: *u8 = 0 as *u8) -> PageDots { core::set_on_attach(this._p, f, ctx); return this; }
+    fn on_detach(this, f: fn(*u8, *u8), ctx: *u8 = 0 as *u8) -> PageDots { core::set_on_detach(this._p, f, ctx); return this; }
     fn frame(this) -> core::Frame { return core::frame_of(this._p); }
 }
 
-// ---- lookup: resolve the key, then check the kind -----------------------
+// ---- lookup ------------------------------------------------------------
+// `from` narrows a node to this control, the DOM step: a node carries what
+// EVERY node has, and a checked cast adds what only a page_dots has. `None` on
+// a wrong kind — never a cursor whose every verb silently does nothing.
 
-fn find(root: *core::Node, key: str) -> option::Option[PageDots] {
-    return match core::find_in(root, key) {
-        option::Option[*core::Node]::Some(p) => {
-            let d: *core::Data = { (*p).data() };
-            if d == (0 as *core::Data) { return option::Option[PageDots]::None; }
-            if { (*d).kind } != props::K_PAGE_DOTS { return option::Option[PageDots]::None; }
-            option::Option[PageDots]::Some(PageDots::of(p))
-        }
+fn from(p: *core::Node) -> option::Option[PageDots] {
+    if p == (0 as *core::Node) { return option::Option[PageDots]::None; }
+    let d: *core::Data = { (*p).data() };
+    if d == (0 as *core::Data) { return option::Option[PageDots]::None; }
+    if { (*d).kind } != props::K_PAGE_DOTS { return option::Option[PageDots]::None; }
+    return option::Option[PageDots]::Some(PageDots::_of(p));
+}
+
+// Resolve a key, then narrow through the same checked door.
+
+// `within:` and not `in:` — `in` is a C+ keyword. Defaults to the
+// mounted tree, so an agent holding only a key can address it; pass a
+// subtree to scope the search (stages/3, the global find).
+fn find(key: str, within: *core::Node = mount::mounted_root()) -> option::Option[PageDots] {
+    if within == (0 as *core::Node) { return option::Option[PageDots]::None; }
+    return match core::find_in(within, key) {
+        option::Option[*core::Node]::Some(p) => from(p),
         option::Option[*core::Node]::None => option::Option[PageDots]::None,
     };
 }

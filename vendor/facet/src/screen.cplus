@@ -79,7 +79,7 @@ impl MenuItem {
         menu: str,
         title: str,
         key: str = "",
-        action: u32 = 2 as u32,                     // menu_action_none()
+        action: u32 = 0 as u32,                     // menu_action_none()
         on_click: fn(*u8, *u8) = 0 as fn(*u8, *u8),
         ctx: *u8 = 0 as *u8,
         is_enabled: fn(*u8) -> bool = 0 as fn(*u8) -> bool,

@@ -1,0 +1,501 @@
+// gestures — raw input on any node. HAND-WRITTEN.
+//
+// The 21 gesture rows Stage 1 ADOPTed had no home: MAUI's recognizer types
+// (TapGestureRecognizer, PointerGestureRecognizer, …) are neither controls nor
+// shared bases, so the generator never reached them. This is where they land.
+//
+// ---- why a modifier and not a control ---------------------------------------
+//
+// MAUI attaches behaviour by pushing recognizer objects into a collection;
+// Stage 1 dropped `GestureRecognizers` as MODEL because facet does not attach
+// behaviour that way. Flutter wraps in a `GestureDetector`. Both were
+// considered:
+//
+//   as constructor parameters on every control — 21 handlers on all 38
+//     constructors, for a capability most of them never use.
+//   as a wrapper control — a node and a native view in the tree that exist
+//     only to carry a callback.
+//   as a modifier — nothing in the tree, works on ANY node, and the
+//     constructors stay as they are.
+//
+// The third. `Data` carries one extra pointer, null until a node asks for
+// gestures, so a tree that uses none pays 8 bytes a node and no allocation.
+//
+// ---- a control's own action is NOT a gesture --------------------------------
+//
+// `button("Save", on_click: save)` stays, and it is a different thing: a
+// button's action fires from the keyboard when focused and from VoiceOver, not
+// only from a pointer. A gesture recogniser sees the pointer and nothing else,
+// so replacing it would silently break keyboard and assistive use.
+//
+// When the two nest, the rule is: A CONTROL CLAIMS THE GESTURES IT NATIVELY
+// HAS, AND THE MODIFIER GETS THE REST. A button inside a node with gestures
+// gives the button's action on the button, the node's click everywhere else,
+// and the node's right-click even over the button — because no button on any
+// platform claims that one.
+
+import "stdlib/text" as text;
+import "flex_layout/flex_layout" as flex;
+import "stdlib/option" as option;
+import "stdlib/box" as box;
+import "./facet" as core;
+
+// A gesture handler. `(sender, ctx) -> took_it`.
+//
+// Spelled as an alias because `-> fn(*u8, *u8) -> bool` is ambiguous: the
+// trailing `-> bool` binds to the OUTER function, so a getter returning a
+// handler silently gets the wrong type (E0302, "expected fn-pointer, found
+// fn-pointer", which is as confusing as it sounds).
+type Handler = fn(*u8, *u8) -> bool;
+
+// What a node does with input in its OWN area, where no child took it.
+enum HitTest {
+    // Respond only where a child did not. The default, and what a native
+    // hit-test does anyway.
+    DeferToChild,
+    // Claim the whole area, gaps and transparent padding included.
+    Opaque,
+}
+
+// One handler shape for the lot: `(sender, ctx) -> bool`, where the RETURN is
+// "I took this". `false` lets the event carry on to the next node up that
+// handles it — the responder chain every native toolkit already has: AppKit
+// falls through to `nextResponder`, GTK returns GDK_EVENT_PROPAGATE, Win32
+// hands on to DefWindowProc. NOT the DOM's model, which propagates by default
+// and needs stopPropagation to stop it.
+//
+// The walk upward is the BACKEND's, over its own native parent chain. facet's
+// tree has no parent pointers and needs none: the platform hit-tests and hands
+// us the node it landed on.
+//
+// A control's own action does NOT have this shape. `button(on_click:)` returns
+// nothing, because a button's activation is the button's and there is nothing
+// above it that should get a second look at it.
+//
+// A gesture that carries a value — a pan's translation, a pinch's scale —
+// reads it off the node through the live cursor, so the signature never varies.
+//
+// ONE ctx for the whole set, not one per handler. Every handler on a node
+// belongs to the same receiver; the generated controls carry a ctx per row
+// because their handlers were generated one row at a time, and that is not a
+// reason to repeat it here.
+struct Gestures {
+    // -- pointer, the everyday band
+    on_click: Handler,          // TapGestureRecognizer.Tapped
+    on_double_click: Handler,   // TapGestureRecognizer.NumberOfTapsRequired = 2
+    on_right_click: Handler,    // TapGestureRecognizer.Buttons = Secondary
+    on_long_press: Handler,
+    on_press: Handler,          // PointerGestureRecognizer.PointerPressed
+    on_release: Handler,        // PointerGestureRecognizer.PointerReleased
+    on_hover: Handler,          // PointerGestureRecognizer.PointerEntered
+    on_unhover: Handler,        // PointerGestureRecognizer.PointerExited
+    on_pointer_move: Handler,   // PointerGestureRecognizer.PointerMoved
+    // -- continuous
+    on_pan: Handler,            // PanGestureRecognizer.PanUpdated
+    on_pinch: Handler,          // PinchGestureRecognizer.PinchUpdated
+    on_swipe: Handler,          // SwipeGestureRecognizer.Swiped
+    // -- drag and drop
+    on_drag_start: Handler,     // DragGestureRecognizer.DragStarting
+    on_drag_over: Handler,      // DropGestureRecognizer.DragOver
+    on_drag_leave: Handler,     // DropGestureRecognizer.DragLeave
+    on_drop: Handler,           // DropGestureRecognizer.Drop
+    on_drop_completed: Handler, // DragGestureRecognizer.DropCompleted
+    // The raw key band (stages/3 "found late" #4): fires on the focused
+    // element; the event reads through key_code/key_chars/key_named below.
+    on_key: Handler,
+
+    opaque ctx: *u8,
+
+    // -- the parameters MAUI carries on the recognizers themselves
+    can_drag: bool,                  // DragGestureRecognizer.CanDrag
+    allow_drop: bool,                // DropGestureRecognizer.AllowDrop
+    touch_points: i64,               // PanGestureRecognizer.TouchPoints
+    long_press_seconds: f64,
+    swipe_threshold: f64,            // SwipeGestureRecognizer.Threshold
+    hit: HitTest,
+    // Pointer input on this region moves the WINDOW. Here rather than in its
+    // own slot because it is one more thing a drag can mean, and it should not
+    // cost a second per-node pointer. See window_chrome.cplus.
+    drags_window: bool,
+}
+
+fn no_gesture(sender: *u8, ctx: *u8) -> bool { return false; }
+
+impl Gestures {
+    fn new() -> Gestures {
+        return Gestures {
+            on_click: no_gesture, on_double_click: no_gesture,
+            on_right_click: no_gesture, on_long_press: no_gesture,
+            on_press: no_gesture, on_release: no_gesture,
+            on_hover: no_gesture, on_unhover: no_gesture,
+            on_pointer_move: no_gesture,
+            on_pan: no_gesture, on_pinch: no_gesture, on_swipe: no_gesture,
+            on_drag_start: no_gesture, on_drag_over: no_gesture,
+            on_drag_leave: no_gesture, on_drop: no_gesture,
+            on_drop_completed: no_gesture,
+            on_key: no_gesture,
+            ctx: 0 as *u8,
+            can_drag: false, allow_drop: false,
+            touch_points: 1 as i64,
+            long_press_seconds: 0.5f64,
+            swipe_threshold: 100.0f64,
+            hit: HitTest::DeferToChild,
+            drags_window: false,
+        };
+    }
+
+    // Is any handler set? A backend asks this before installing anything
+    // native, so a node that only set `hit` costs no recognizer.
+    fn is_empty(this) -> bool {
+        return this.on_click == no_gesture && this.on_double_click == no_gesture
+            && this.on_right_click == no_gesture && this.on_long_press == no_gesture
+            && this.on_press == no_gesture && this.on_release == no_gesture
+            && this.on_hover == no_gesture && this.on_unhover == no_gesture
+            && this.on_pointer_move == no_gesture
+            && this.on_pan == no_gesture && this.on_pinch == no_gesture
+            && this.on_swipe == no_gesture
+            && this.on_drag_start == no_gesture && this.on_drag_over == no_gesture
+            && this.on_drag_leave == no_gesture && this.on_drop == no_gesture
+            && this.on_drop_completed == no_gesture
+            && this.on_key == no_gesture;
+    }
+}
+
+fn release_gestures(p: *u8) {
+    if p == (0 as *u8) { return; }
+    let _b: box::Box[Gestures] = box::from_raw::[Gestures](p);
+    return;
+}
+
+// The set on this node, or null. Reading does not allocate.
+fn gestures_of(n: *core::Node) -> *Gestures {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return 0 as *Gestures; }
+    return { (*d).gestures } as *Gestures;
+}
+
+fn has_gestures(n: *core::Node) -> bool { return gestures_of(n) != (0 as *Gestures); }
+
+// Attach a set to a node, replacing any it already had.
+fn _attach(n: *core::Node, take g: Gestures) {
+    // A raw flex node carries no Data. Create it rather than return quietly:
+    // `.gesture()` on a container must work, and a modifier that does nothing
+    // is the exact failure this package is built against.
+    let d: *core::Data = core::ensure_data(n);
+    if d == (0 as *core::Data) { return; }
+    let old: *u8 = { (*d).gestures };
+    if old != (0 as *u8) { release_gestures(old); }
+    match box::new::[Gestures](g) {
+        option::Option[box::Box[Gestures]]::Some(b) => {
+            { (*d).gestures = b.into_raw() };
+            { (*d).gestures_release = release_gestures };
+        }
+        option::Option[box::Box[Gestures]]::None => {
+            { (*d).gestures = 0 as *u8 };
+        }
+    }
+    core::touch(n, core::C_GESTURES);
+    return;
+}
+
+// The live path. `.gesture(...)` takes `this` by value, so it belongs to the
+// description; after mount you hold a cursor and a `*Node`, and a non-Copy
+// value cannot be moved out of a pointer dereference (E0337). Build a set and
+// attach it.
+fn attach(n: *core::Node, take g: Gestures) { _attach(n, g); return; }
+
+// Drop the set. A node with no gestures costs nothing again.
+fn detach(n: *core::Node) {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return; }
+    let old: *u8 = { (*d).gestures };
+    if old == (0 as *u8) { return; }
+    release_gestures(old);
+    { (*d).gestures = 0 as *u8 };
+    core::touch(n, core::C_GESTURES);
+    return;
+}
+
+fn _build(ctx: *u8, on_click: Handler, on_double_click: Handler,
+          on_right_click: Handler, on_long_press: Handler,
+          on_press: Handler, on_release: Handler,
+          on_hover: Handler, on_unhover: Handler,
+          on_pointer_move: Handler, on_pan: Handler,
+          on_pinch: Handler, on_swipe: Handler,
+          on_drag_start: Handler, on_drag_over: Handler,
+          on_drag_leave: Handler, on_drop: Handler,
+          on_drop_completed: Handler, on_key: Handler,
+          can_drag: bool, allow_drop: bool,
+          touch_points: i64, long_press_seconds: f64, swipe_threshold: f64,
+          hit: HitTest) -> Gestures {
+    var g: Gestures = Gestures::new();
+    g.on_click = on_click; g.on_double_click = on_double_click;
+    g.on_right_click = on_right_click; g.on_long_press = on_long_press;
+    g.on_press = on_press; g.on_release = on_release;
+    g.on_hover = on_hover; g.on_unhover = on_unhover;
+    g.on_pointer_move = on_pointer_move;
+    g.on_pan = on_pan; g.on_pinch = on_pinch; g.on_swipe = on_swipe;
+    g.on_drag_start = on_drag_start; g.on_drag_over = on_drag_over;
+    g.on_drag_leave = on_drag_leave; g.on_drop = on_drop;
+    g.on_drop_completed = on_drop_completed;
+    g.on_key = on_key;
+    g.ctx = ctx;
+    g.can_drag = can_drag; g.allow_drop = allow_drop;
+    g.touch_points = touch_points;
+    g.long_press_seconds = long_press_seconds;
+    g.swipe_threshold = swipe_threshold;
+    g.hit = hit;
+    return g;
+}
+
+// ---- the modifier ------------------------------------------------------------
+// Chains like every other Node modifier, so it reads the way an application
+// already writes layout:
+//
+//     label("Open").gesture(on_click: open, ctx: #addr_of(this))
+//     column(b).gesture(on_click: open, on_right_click: menu, ctx: c)
+//
+// Importing this module is what makes `.gesture(...)` exist; without it the
+// call is E0324, not a silent no-op.
+impl flex::Node {
+    fn gesture(
+        take this,
+        ctx: *u8 = 0 as *u8,
+        on_click: Handler = no_gesture,
+        on_double_click: Handler = no_gesture,
+        on_right_click: Handler = no_gesture,
+        on_long_press: Handler = no_gesture,
+        on_press: Handler = no_gesture,
+        on_release: Handler = no_gesture,
+        on_hover: Handler = no_gesture,
+        on_unhover: Handler = no_gesture,
+        on_pointer_move: Handler = no_gesture,
+        on_pan: Handler = no_gesture,
+        on_pinch: Handler = no_gesture,
+        on_swipe: Handler = no_gesture,
+        on_drag_start: Handler = no_gesture,
+        on_drag_over: Handler = no_gesture,
+        on_drag_leave: Handler = no_gesture,
+        on_drop: Handler = no_gesture,
+        on_drop_completed: Handler = no_gesture,
+        on_key: Handler = no_gesture,
+        can_drag: bool = false,
+        allow_drop: bool = false,
+        touch_points: i64 = 1 as i64,
+        long_press_seconds: f64 = 0.5f64,
+        swipe_threshold: f64 = 100.0f64,
+        hit: HitTest = HitTest::DeferToChild,
+    ) -> flex::Node {
+        var n: flex::Node = this;
+        _attach(#addr_of(n), _build(ctx, on_click, on_double_click, on_right_click,
+                                    on_long_press, on_press, on_release, on_hover,
+                                    on_unhover, on_pointer_move, on_pan, on_pinch,
+                                    on_swipe, on_drag_start, on_drag_over,
+                                    on_drag_leave, on_drop, on_drop_completed,
+                                    on_key,
+                                    can_drag, allow_drop, touch_points,
+                                    long_press_seconds, swipe_threshold, hit));
+        return n;
+    }
+}
+
+// ---- reads -------------------------------------------------------------------
+// A backend asks these while mounting; an application asks them in a test.
+
+fn on_click_of(n: *core::Node) -> Handler {
+    let g: *Gestures = gestures_of(n);
+    if g == (0 as *Gestures) { return no_gesture; }
+    return { (*g).on_click };
+}
+
+fn ctx_of(n: *core::Node) -> *u8 {
+    let g: *Gestures = gestures_of(n);
+    if g == (0 as *Gestures) { return 0 as *u8; }
+    return { (*g).ctx };
+}
+
+fn hit_of(n: *core::Node) -> HitTest {
+    let g: *Gestures = gestures_of(n);
+    if g == (0 as *Gestures) { return HitTest::DeferToChild; }
+    return { (*g).hit };
+}
+
+fn is_opaque_to_input(n: *core::Node) -> bool {
+    return match hit_of(n) { HitTest::Opaque => true, HitTest::DeferToChild => false };
+}
+
+// Fire, and report whether the node TOOK it. `false` tells the backend to
+// offer the event to the next node up its native parent chain. The ONE place a
+// handler is called, so a missing one is handled here and not at every site.
+fn fire_click(n: *core::Node) -> bool {
+    let g: *Gestures = gestures_of(n);
+    if g == (0 as *Gestures) { return false; }
+    let f: Handler = { (*g).on_click };
+    if f == no_gesture { return false; }
+    return f(n as *u8, { (*g).ctx });
+}
+
+fn fire_right_click(n: *core::Node) -> bool {
+    let g: *Gestures = gestures_of(n);
+    if g == (0 as *Gestures) { return false; }
+    let f: Handler = { (*g).on_right_click };
+    if f == no_gesture { return false; }
+    return f(n as *u8, { (*g).ctx });
+}
+
+// The key band's reader and dispatch: the backend hands the focused node the
+// opaque platform event; the handler reads it through key_code/key_named and
+// declines with `false` to let it fall through.
+fn on_key_of(n: *core::Node) -> Handler {
+    let g: *Gestures = gestures_of(n);
+    if g == (0 as *Gestures) { return no_gesture; }
+    return { (*g).on_key };
+}
+
+fn fire_key(n: *core::Node, event: *u8) -> bool {
+    let g: *Gestures = gestures_of(n);
+    if g == (0 as *Gestures) { return false; }
+    let h: Handler = { (*g).on_key };
+    if h == no_gesture { return false; }
+    return h(event, { (*g).ctx });
+}
+
+fn fire_hover(n: *core::Node, entering: bool) -> bool {
+    let g: *Gestures = gestures_of(n);
+    if g == (0 as *Gestures) { return false; }
+    let f: Handler = if entering { { (*g).on_hover } } else { { (*g).on_unhover } };
+    if f == no_gesture { return false; }
+    return f(n as *u8, { (*g).ctx });
+}
+
+
+// ---- raw key input ----------------------------------------------------------
+// A key event delivered to whichever registered element currently holds focus.
+// The handler is `fn(event, ctx)` — `event` is an opaque platform event read
+// through the accessors below, so an app never touches a native type.
+//
+// Handling: a handler that wants the key STOPPED calls `consume_key()`, and the
+// event does not fall through to the responder chain (so Ctrl-C reaches a
+// terminal instead of beeping). Anything not consumed behaves exactly as before.
+static KEY_CODE_FN: fn(*u8) -> i64 = #zero::[fn(*u8) -> i64]();
+fn set_key_code_fn(f: fn(*u8) -> i64) { KEY_CODE_FN = f; return; }
+static KEY_CHARS_FN: fn(*u8) -> text::Text = #zero::[fn(*u8) -> text::Text]();
+fn set_key_chars_fn(f: fn(*u8) -> text::Text) { KEY_CHARS_FN = f; return; }
+static KEY_MODS_FN: fn(*u8) -> u64 = #zero::[fn(*u8) -> u64]();
+fn set_key_mods_fn(f: fn(*u8) -> u64) { KEY_MODS_FN = f; return; }
+
+// Read a key event. `code` is the platform key code; `chars` the text it would
+// produce (empty for a bare modifier or a function key); `modifiers` a bit set
+// tested with the mod_* helpers.
+fn key_code(event: *u8) -> i64 {
+    let f: fn(*u8) -> i64 = KEY_CODE_FN;
+    if f == (0 as fn(*u8) -> i64) { return -1 as i64; }
+    return f(event);
+}
+fn key_chars(event: *u8) -> text::Text {
+    let f: fn(*u8) -> text::Text = KEY_CHARS_FN;
+    if f == (0 as fn(*u8) -> text::Text) { return text::from_str(""); }
+    return f(event);
+}
+fn key_modifiers(event: *u8) -> u64 {
+    let f: fn(*u8) -> u64 = KEY_MODS_FN;
+    if f == (0 as fn(*u8) -> u64) { return 0 as u64; }
+    return f(event);
+}
+
+// Portable modifier bits (the backend maps its own flags onto these, so an app
+// never sees a platform constant).
+fn mod_shift() -> u64 { return 1 as u64; }
+fn mod_control() -> u64 { return 2 as u64; }
+fn mod_option() -> u64 { return 4 as u64; }
+fn mod_command() -> u64 { return 8 as u64; }
+fn has_modifier(mods: u64, which: u64) -> bool { return (mods & which) != (0 as u64); }
+
+// ---- named keys --------------------------------------------------------------
+// The modifiers above are portable; `key_code(event)` is NOT — it hands back the
+// platform's own value, so an app that reads modifiers portably still had to
+// compare the key against a number only one backend agrees with (`const
+// KEY_ESCAPE: i64 = 53` in a screen containing no other platform constant).
+//
+// `key_named(event)` closes that: the backend maps its own codes onto these, the
+// same way it already maps its modifier flags. Only the keys an app actually
+// BRANCHES on are named — anything else still comes through `key_code` raw, so
+// this is not a claim to model every keyboard.
+//
+// `key_chars` is not the alternative it looks like: Escape's characters are
+// U+001B, which is worse in source than 53, and a bare arrow key produces no
+// characters at all.
+fn key_none() -> i64 { return 0 as i64; }
+fn key_return() -> i64 { return 1 as i64; }
+fn key_tab() -> i64 { return 2 as i64; }
+fn key_space() -> i64 { return 3 as i64; }
+fn key_delete() -> i64 { return 4 as i64; }        // backspace
+fn key_forward_delete() -> i64 { return 5 as i64; }
+fn key_escape() -> i64 { return 6 as i64; }
+fn key_arrow_left() -> i64 { return 7 as i64; }
+fn key_arrow_right() -> i64 { return 8 as i64; }
+fn key_arrow_up() -> i64 { return 9 as i64; }
+fn key_arrow_down() -> i64 { return 10 as i64; }
+fn key_home() -> i64 { return 11 as i64; }
+fn key_end() -> i64 { return 12 as i64; }
+fn key_page_up() -> i64 { return 13 as i64; }
+fn key_page_down() -> i64 { return 14 as i64; }
+
+static KEY_NAMED_FN: fn(*u8) -> i64 = #zero::[fn(*u8) -> i64]();
+fn set_key_named_fn(f: fn(*u8) -> i64) { KEY_NAMED_FN = f; return; }
+
+// Which NAMED key is this event, or `key_none()` for a key with no name here
+// (every printable character, and anything the backend has not mapped). An
+// unnamed key is not an error — read `key_chars` for text, `key_code` for a
+// raw code.
+fn key_named(event: *u8) -> i64 {
+    let f: fn(*u8) -> i64 = KEY_NAMED_FN;
+    if f == (0 as fn(*u8) -> i64) { return key_none(); }
+    return f(event);
+}
+
+// Set while a key handler runs: the handler calls consume_key() to stop the
+// event, and the backend reads (and clears) the flag when the handler returns.
+static KEY_CONSUMED: bool = false;
+fn consume_key() { KEY_CONSUMED = true; return; }
+fn take_key_consumed() -> bool { let c: bool = KEY_CONSUMED; KEY_CONSUMED = false; return c; }
+
+
+// ---- key band tests ----------------------------------------------------------
+
+static KT_CODE: i64 = 0 as i64;
+fn kt_handler(event: *u8, ctx: *u8) -> bool {
+    KT_CODE = key_code(event);
+    consume_key();
+    return true;
+}
+fn kt_code_fake(event: *u8) -> i64 { return 42 as i64; }
+
+#[test]
+fn on_key_rides_the_gesture_band_and_consume_is_one_shot() {
+    KT_CODE = 0 as i64;
+    var n: flex::Node = flex::box().gesture(on_key: kt_handler);
+    assert on_key_of(#addr_of(n)) != no_gesture;
+    // No backend: the readers answer safely rather than trap.
+    assert key_code(0 as *u8) == (-1 as i64);
+    assert key_modifiers(0 as *u8) == (0 as u64);
+    assert key_named(0 as *u8) == key_none();
+    // With a reader installed, the handler sees the event through it.
+    set_key_code_fn(kt_code_fake);
+    assert fire_key(#addr_of(n), 0 as *u8);
+    assert KT_CODE == (42 as i64);
+    set_key_code_fn(0 as fn(*u8) -> i64);
+    // consume_key() is read-and-cleared, so one consumed event does not
+    // swallow the next.
+    assert take_key_consumed();
+    assert !take_key_consumed();
+    // Modifier bits are distinct and testable through has_modifier.
+    let both: u64 = mod_control() | mod_shift();
+    assert has_modifier(both, mod_control());
+    assert has_modifier(both, mod_shift());
+    assert !has_modifier(both, mod_command());
+    // A node with no key handler declines.
+    var plain: flex::Node = flex::box();
+    assert fire_key(#addr_of(plain), 0 as *u8) == false;
+    return;
+}

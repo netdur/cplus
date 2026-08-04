@@ -8,12 +8,64 @@ import "stdlib/status" as status;
 import "./facet" as facet;
 import "./props" as props;
 import "./vocabulary" as vocab;
+// Every module the generator emits, so the gate compiles the whole contract
+// and not only the corner of it a test happens to reach.
+import "./bordered" as bordered;
+import "./box" as box_view;
 import "./button" as button;
-import "./label" as label;
-import "./slider" as slider;
-import "./toggle" as toggle;
-import "./text_field" as text_field;
+import "./canvas" as canvas;
+import "./carousel" as carousel;
+import "./checkbox" as checkbox;
+import "./collection" as collection;
+import "./context_menu" as context_menu;
+import "./context_menu_item" as context_menu_item;
+import "./date_picker" as date_picker;
+import "./hybrid_web" as hybrid_web;
+import "./icon_button" as icon_button;
 import "./image" as image;
+import "./label" as label;
+import "./list" as list;
+import "./menu" as menu;
+import "./menu_item" as menu_item;
+import "./page_dots" as page_dots;
+import "./popup" as popup;
+import "./progress" as progress;
+import "./radio" as radio;
+import "./refreshable" as refreshable;
+import "./scroll" as scroll;
+import "./search_field" as search_field;
+import "./slider" as slider;
+import "./span" as span;
+import "./spinner" as spinner;
+import "./stepper" as stepper;
+import "./swipe_item" as swipe_item;
+import "./swipeable" as swipeable;
+import "./table" as table;
+import "./tabs" as tabs;
+import "./text_area" as text_area;
+import "./text_field" as text_field;
+import "./time_picker" as time_picker;
+import "./toggle" as toggle;
+import "./toolbar_item" as toolbar_item;
+import "./web" as web;
+// facet's own words, hand-written: no MAUI row behind them.
+import "./symbol" as symbol;
+import "./icons" as icons;
+import "./gestures" as gestures;
+import "./tree" as tree;
+import "./split" as split;
+import "./window_chrome" as chrome;
+// The DSL namespace: every element forwarded into one module, so `@ui`
+// blocks resolve bare names. Importing it here is what compiles it.
+import "./elements" as ui;
+// Stage 3 — the platform-free tier.
+import "./nav" as nav;
+import "./services" as services;
+import "./component" as component;
+import "./screen" as screen;
+import "./theme" as theme;
+import "./runtime" as runtime;
+import "./mount" as mount;
 
 fn approx(a: f64, b: f64) -> bool {
     let d: f64 = a - b;
@@ -28,7 +80,7 @@ fn clicked(sender: *u8, ctx: *u8) { return; }
 #[test]
 fn constructor_stores_named_params() {
     var root: facet::Node = button::button("Save", key: "save", font_size: 13.0f64);
-    match button::find(#addr_of(root), "save") {
+    match button::find("save", within: #addr_of(root)) {
         option::Option[button::Button]::Some(b) => {
             assert b.title() == "Save";
             assert approx(b.font_size(), 13.0f64);
@@ -41,7 +93,7 @@ fn constructor_stores_named_params() {
 #[test]
 fn defaults_apply_when_omitted() {
     var root: facet::Node = button::button("Ok", key: "ok");
-    match button::find(#addr_of(root), "ok") {
+    match button::find("ok", within: #addr_of(root)) {
         option::Option[button::Button]::Some(b) => {
             assert approx(b.font_size(), 0.0f64);
             assert b.is_pressed() == false;
@@ -60,7 +112,7 @@ fn find_locates_a_nested_key() {
     b.add(button::button("B", key: "b"));
     var root: facet::Node = facet::column(b);
 
-    match button::find(#addr_of(root), "b") {
+    match button::find("b", within: #addr_of(root)) {
         option::Option[button::Button]::Some(hit) => { assert hit.title() == "B"; }
         option::Option[button::Button]::None => { assert false; }
     }
@@ -70,7 +122,7 @@ fn find_locates_a_nested_key() {
 #[test]
 fn find_misses_an_unknown_key() {
     var root: facet::Node = button::button("A", key: "a");
-    match button::find(#addr_of(root), "nope") {
+    match button::find("nope", within: #addr_of(root)) {
         option::Option[button::Button]::Some(_) => { assert false; }
         option::Option[button::Button]::None => { assert true; }
     }
@@ -82,7 +134,7 @@ fn find_misses_an_unknown_key() {
 #[test]
 fn setter_writes_state_and_marks_dirty() {
     var root: facet::Node = button::button("Save", key: "save");
-    match button::find(#addr_of(root), "save") {
+    match button::find("save", within: #addr_of(root)) {
         option::Option[button::Button]::Some(b) => {
             let _c: button::Button = b.set_title("Saving…");
             assert b.title() == "Saving…";
@@ -96,7 +148,7 @@ fn setter_writes_state_and_marks_dirty() {
 #[test]
 fn setters_chain_and_accumulate_bits() {
     var root: facet::Node = button::button("Save", key: "save");
-    match button::find(#addr_of(root), "save") {
+    match button::find("save", within: #addr_of(root)) {
         option::Option[button::Button]::Some(b) => {
             let _c: button::Button = b.set_title("x").set_font_size(11.0f64)
                                       .set_corner_radius(vocab::Corners::all(6.0f64));
@@ -135,7 +187,7 @@ fn cursor_is_live_until_a_removal() {
     b.add(button::button("B", key: "b"));
     var root: facet::Node = facet::column(b);
 
-    match button::find(#addr_of(root), "a") {
+    match button::find("a", within: #addr_of(root)) {
         option::Option[button::Button]::Some(hit) => {
             assert hit.is_live();
             let _gone: option::Option[facet::Node] = root.remove_child(at: 1 as usize);
@@ -151,7 +203,7 @@ fn cursor_is_live_until_a_removal() {
 #[test]
 fn shared_verbs_are_on_the_typed_cursor() {
     var root: facet::Node = button::button("Save", key: "save");
-    match button::find(#addr_of(root), "save") {
+    match button::find("save", within: #addr_of(root)) {
         option::Option[button::Button]::Some(b) => {
             // chains with the button-specific setters, returns Button
             let _c: button::Button = b.set_title("Go").set_opacity(0.5f64)
@@ -168,7 +220,7 @@ fn shared_verbs_are_on_the_typed_cursor() {
 #[test]
 fn shared_defaults_are_sane() {
     var root: facet::Node = button::button("A", key: "a");
-    match button::find(#addr_of(root), "a") {
+    match button::find("a", within: #addr_of(root)) {
         option::Option[button::Button]::Some(b) => {
             assert approx(b.opacity(), 1.0f64);
             assert b.is_enabled();
@@ -182,7 +234,7 @@ fn shared_defaults_are_sane() {
 #[test]
 fn common_and_control_bits_do_not_collide() {
     var root: facet::Node = button::button("A", key: "a");
-    match button::find(#addr_of(root), "a") {
+    match button::find("a", within: #addr_of(root)) {
         option::Option[button::Button]::Some(b) => {
             let _c: button::Button = b.set_title("x").set_opacity(0.5f64);
         }
@@ -198,7 +250,7 @@ fn common_and_control_bits_do_not_collide() {
 #[test]
 fn label_carries_its_own_rows() {
     var root: facet::Node = label::label("Hello", key: "l", font_size: 14.0f64);
-    match label::find(#addr_of(root), "l") {
+    match label::find("l", within: #addr_of(root)) {
         option::Option[label::Label]::Some(x) => {
             assert x.text() == "Hello";
             assert approx(x.font_size(), 14.0f64);
@@ -215,7 +267,7 @@ fn label_carries_its_own_rows() {
 fn slider_has_value_minimum_maximum() {
     var root: facet::Node = slider::slider(0.5f64, key: "s",
                                            minimum: 0.0f64, maximum: 10.0f64);
-    match slider::find(#addr_of(root), "s") {
+    match slider::find("s", within: #addr_of(root)) {
         option::Option[slider::Slider]::Some(x) => {
             assert approx(x.value(), 0.5f64);
             assert approx(x.maximum(), 10.0f64);
@@ -235,15 +287,15 @@ fn toggle_and_text_field_and_image() {
     b.add(image::image("logo.png", key: "img"));
     var root: facet::Node = facet::column(b);
 
-    match toggle::find(#addr_of(root), "t") {
+    match toggle::find("t", within: #addr_of(root)) {
         option::Option[toggle::Toggle]::Some(x) => { assert x.on(); }
         option::Option[toggle::Toggle]::None => { assert false; }
     }
-    match text_field::find(#addr_of(root), "tf") {
+    match text_field::find("tf", within: #addr_of(root)) {
         option::Option[text_field::TextField]::Some(x) => { assert x.text() == "hi"; }
         option::Option[text_field::TextField]::None => { assert false; }
     }
-    match image::find(#addr_of(root), "img") {
+    match image::find("img", within: #addr_of(root)) {
         option::Option[image::Image]::Some(x) => { assert x.source() == "logo.png"; }
         option::Option[image::Image]::None => { assert false; }
     }
@@ -255,7 +307,7 @@ fn toggle_and_text_field_and_image() {
 #[test]
 fn wrong_kind_lookup_is_none() {
     var root: facet::Node = button::button("Save", key: "save");
-    match slider::find(#addr_of(root), "save") {
+    match slider::find("save", within: #addr_of(root)) {
         option::Option[slider::Slider]::Some(_) => { assert false; }
         option::Option[slider::Slider]::None => { assert true; }
     }
@@ -271,15 +323,15 @@ fn mixed_tree_keeps_each_kind_addressable() {
     var root: facet::Node = facet::column(b);
     assert root.child_count() == (3 as usize);
 
-    match button::find(#addr_of(root), "go") {
+    match button::find("go", within: #addr_of(root)) {
         option::Option[button::Button]::Some(x) => { assert x.title() == "Go"; }
         option::Option[button::Button]::None => { assert false; }
     }
-    match label::find(#addr_of(root), "st") {
+    match label::find("st", within: #addr_of(root)) {
         option::Option[label::Label]::Some(x) => { assert x.text() == "Status"; }
         option::Option[label::Label]::None => { assert false; }
     }
-    match slider::find(#addr_of(root), "sl") {
+    match slider::find("sl", within: #addr_of(root)) {
         option::Option[slider::Slider]::Some(x) => { assert approx(x.value(), 1.0f64); }
         option::Option[slider::Slider]::None => { assert false; }
     }
@@ -295,7 +347,7 @@ fn hstack_lays_out_horizontally() {
     b.add(button::button("B", key: "b").width(50.0f64).height(20.0f64));
     var root: facet::Node = facet::hstack(b);
     root.calculate_layout(width: 300.0f64, height: 100.0f64);
-    match button::find(#addr_of(root), "b") {
+    match button::find("b", within: #addr_of(root)) {
         option::Option[button::Button]::Some(x) => {
             assert x.x() > 50.0f64;
             assert approx(x.y(), 0.0f64);
@@ -313,9 +365,1862 @@ fn spacer_eats_the_leftover_space() {
     b.add(button::button("B", key: "b").width(40.0f64).height(20.0f64));
     var root: facet::Node = facet::row(b);
     root.calculate_layout(width: 200.0f64, height: 40.0f64);
-    match button::find(#addr_of(root), "b") {
+    match button::find("b", within: #addr_of(root)) {
         option::Option[button::Button]::Some(x) => { assert approx(x.x(), 160.0f64); }
         option::Option[button::Button]::None => { assert false; }
+    }
+    return;
+}
+
+// ---- every control the generator emits --------------------------------------
+// Not a formality: until this existed, 32 of the 38 modules were emitted and
+// never compiled, because test_main imported six of them.
+
+#[test]
+fn every_control_module_builds() {
+    var b: facet::Builder = facet::Builder::new();
+    b.add(bordered::bordered(key: "bordered"));
+    b.add(box_view::box(vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64), key: "box"));
+    b.add(button::button("b", key: "button"));
+    b.add(canvas::canvas(key: "canvas"));
+    b.add(carousel::carousel(key: "carousel"));
+    b.add(checkbox::checkbox(true, key: "checkbox"));
+    b.add(collection::collection(key: "collection"));
+    b.add(context_menu::context_menu(key: "context_menu"));
+    b.add(context_menu_item::context_menu_item(key: "context_menu_item"));
+    b.add(date_picker::date_picker(vocab::Date::zero(), key: "date_picker"));
+    b.add(hybrid_web::hybrid_web(key: "hybrid_web"));
+    b.add(icon_button::icon_button("i.png", key: "icon_button"));
+    b.add(image::image("i.png", key: "image"));
+    b.add(label::label("l", key: "label"));
+    b.add(list::list(key: "list"));
+    b.add(menu::menu("m", key: "menu"));
+    b.add(menu_item::menu_item("mi", key: "menu_item"));
+    b.add(page_dots::page_dots(3 as i64, key: "page_dots"));
+    b.add(popup::popup("p", key: "popup"));
+    b.add(progress::progress(0.5f64, key: "progress"));
+    b.add(radio::radio(false, key: "radio"));
+    b.add(refreshable::refreshable(key: "refreshable"));
+    b.add(scroll::scroll(key: "scroll"));
+    b.add(search_field::search_field("s", key: "search_field"));
+    b.add(slider::slider(1.0f64, key: "slider"));
+    b.add(span::span("sp", key: "span"));
+    b.add(spinner::spinner(vocab::Color::clear(), key: "spinner"));
+    b.add(stepper::stepper(2.0f64, key: "stepper"));
+    b.add(swipe_item::swipe_item(key: "swipe_item"));
+    b.add(swipeable::swipeable(key: "swipeable"));
+    b.add(table::table(key: "table"));
+    b.add(tabs::tabs(key: "tabs"));
+    b.add(text_area::text_area("ta", key: "text_area"));
+    b.add(text_field::text_field("tf", key: "text_field"));
+    b.add(time_picker::time_picker(vocab::Duration::zero(), key: "time_picker"));
+    b.add(toggle::toggle(true, key: "toggle"));
+    b.add(toolbar_item::toolbar_item(key: "toolbar_item"));
+    b.add(web::web("about:blank", key: "web"));
+    var root: facet::Node = facet::column(b);
+    assert root.child_count() == (38 as usize);
+
+    // each answers to its own type and to no other
+    match label::find("label", within: #addr_of(root)) {
+        option::Option[label::Label]::Some(x) => { assert x.text() == "l"; }
+        option::Option[label::Label]::None => { assert false; }
+    }
+    match label::find("button", within: #addr_of(root)) {
+        option::Option[label::Label]::Some(_) => { assert false; }
+        option::Option[label::Label]::None => { assert true; }
+    }
+    return;
+}
+
+// ---- the names -------------------------------------------------------------
+// naming_guideline.md, proved by the call site: these verbs exist under the
+// renamed word and the MAUI-shaped one is not on the type at all.
+
+#[test]
+fn renamed_verbs_are_the_ones_that_exist() {
+    var root: facet::Node = label::label("x", key: "l");
+    match label::find("l", within: #addr_of(root)) {
+        option::Option[label::Label]::Some(x) => {
+            // the verb now agrees with the type Stage 1 renamed
+            let _a: label::Label = x.set_line_break(vocab::LineBreak::WordWrap);
+            let _b: label::Label = x.set_text_align(vocab::TextAlign::Center);
+            let _c: label::Label = x.set_font_weight(vocab::FontWeight::Bold);
+            let _d: label::Label = x.set_font_scales(false);
+            assert x.font_scales() == false;
+        }
+        option::Option[label::Label]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn boolean_readers_assert_and_setters_do_not() {
+    var root: facet::Node = list::list(key: "l");
+    match list::find("l", within: #addr_of(root)) {
+        option::Option[list::List]::Some(x) => {
+            let _a: list::List = x.set_grouped(true);        // not set_is_grouped
+            assert x.is_grouped();                            // reads as assertion
+            let _b: list::List = x.set_refreshable(true);
+            assert x.is_refreshable();
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    return;
+}
+
+// ---- slots: a subtree is a child, not a property ---------------------------
+
+#[test]
+fn a_slot_is_a_child_under_its_own_name() {
+    var root: facet::Node = list::list(key: "l");
+    match list::find("l", within: #addr_of(root)) {
+        option::Option[list::List]::Some(x) => {
+            assert x.child_count() == (0 as usize);
+            let _a: list::List = x.set_header(label::label("H", key: "hdr"));
+            assert x.child_count() == (1 as usize);
+            match x.header() {
+                option::Option[*facet::Node]::Some(h) => {
+                    assert facet::slot_of(h) == "@header";
+                    assert { (*h).key() } == "hdr";   // the app's key survives
+                }
+                option::Option[*facet::Node]::None => { assert false; }
+            }
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn setting_a_slot_twice_replaces_in_place() {
+    var root: facet::Node = list::list(key: "l");
+    match list::find("l", within: #addr_of(root)) {
+        option::Option[list::List]::Some(x) => {
+            let _a: list::List = x.set_header(label::label("A", key: "a"));
+            let _b: list::List = x.set_footer(label::label("F", key: "f"));
+            let _c: list::List = x.set_header(label::label("B", key: "b"));
+            assert x.child_count() == (2 as usize);
+            match x.header() {
+                option::Option[*facet::Node]::Some(h) => { assert { (*h).key() } == "b"; }
+                option::Option[*facet::Node]::None => { assert false; }
+            }
+            match x.footer() {
+                option::Option[*facet::Node]::Some(f) => { assert { (*f).key() } == "f"; }
+                option::Option[*facet::Node]::None => { assert false; }
+            }
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn an_empty_slot_reads_none() {
+    var root: facet::Node = scroll::scroll(key: "s");
+    match scroll::find("s", within: #addr_of(root)) {
+        option::Option[scroll::Scroll]::Some(x) => {
+            match x.content() {
+                option::Option[*facet::Node]::Some(_) => { assert false; }
+                option::Option[*facet::Node]::None => { assert true; }
+            }
+        }
+        option::Option[scroll::Scroll]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn a_slot_child_is_still_reachable_by_its_own_key() {
+    var root: facet::Node = scroll::scroll(key: "s");
+    match scroll::find("s", within: #addr_of(root)) {
+        option::Option[scroll::Scroll]::Some(x) => {
+            let _a: scroll::Scroll = x.set_content(button::button("Go", key: "go"));
+        }
+        option::Option[scroll::Scroll]::None => { assert false; }
+    }
+    match button::find("go", within: #addr_of(root)) {
+        option::Option[button::Button]::Some(b) => { assert b.title() == "Go"; }
+        option::Option[button::Button]::None => { assert false; }
+    }
+    return;
+}
+
+// ---- commands: a write plus a dirty bit ------------------------------------
+
+#[test]
+fn begin_and_end_refresh_move_is_refreshing() {
+    var root: facet::Node = list::list(key: "l");
+    match list::find("l", within: #addr_of(root)) {
+        option::Option[list::List]::Some(x) => {
+            assert x.is_refreshing() == false;
+            let _a: list::List = x.begin_refresh();
+            assert x.is_refreshing();
+            let _b: list::List = x.end_refresh();
+            assert x.is_refreshing() == false;
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn scroll_to_records_the_index_and_its_bit() {
+    var root: facet::Node = list::list(key: "l");
+    match list::find("l", within: #addr_of(root)) {
+        option::Option[list::List]::Some(x) => {
+            let _a: list::List = x.scroll_to(7 as usize);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    let d: *facet::Data = root.data();
+    assert ({ (*d).dirty } & list::P_SCROLL_TO) == list::P_SCROLL_TO;
+    return;
+}
+
+#[test]
+fn animate_progress_writes_both_halves() {
+    var root: facet::Node = progress::progress(0.0f64, key: "p");
+    match progress::find("p", within: #addr_of(root)) {
+        option::Option[progress::Progress]::Some(x) => {
+            let _a: progress::Progress =
+                x.animate_progress(to: 0.75f64, duration: vocab::Duration { seconds: 0.3f64 });
+            assert approx(x.progress(), 0.75f64);
+        }
+        option::Option[progress::Progress]::None => { assert false; }
+    }
+    let d: *facet::Data = root.data();
+    assert ({ (*d).dirty } & progress::P_ANIMATE_PROGRESS) == progress::P_ANIMATE_PROGRESS;
+    return;
+}
+
+// ---- an owned prop: written whole, read one element at a time --------------
+
+#[test]
+fn popup_items_are_written_whole() {
+    var root: facet::Node = popup::popup("Pick", key: "p");
+    var items: vocab::TextList = vocab::TextList::new();
+    let _a: status::Status = items.add("one");
+    let _b: status::Status = items.add("two");
+    match popup::find("p", within: #addr_of(root)) {
+        option::Option[popup::Popup]::Some(x) => {
+            let _c: popup::Popup = x.set_items(items);
+            assert x.item_count() == (2 as usize);
+            assert x.item(0 as usize) == "one";
+            assert x.item(1 as usize) == "two";
+            assert x.item(9 as usize) == "";      // out of range, not a trap
+        }
+        option::Option[popup::Popup]::None => { assert false; }
+    }
+    return;
+}
+
+// ---- facet's own word: a count plus a row builder ---------------------------
+
+fn a_row(ctx: *u8, index: usize) -> facet::Node {
+    return label::label("row", key: "r");
+}
+
+#[test]
+fn a_list_is_filled_by_a_count_and_a_builder() {
+    var root: facet::Node = list::list(key: "l");
+    match list::find("l", within: #addr_of(root)) {
+        option::Option[list::List]::Some(x) => {
+            assert x.count() == (0 as usize);
+            let _a: list::List = x.set_count(12 as usize).set_row(a_row);
+            assert x.count() == (12 as usize);
+            var built: facet::Node = x.build_row(3 as usize);
+            assert built.key() == "r";
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    return;
+}
+
+// ---- the shared band, whole -------------------------------------------------
+
+#[test]
+fn the_transform_band_round_trips() {
+    var root: facet::Node = button::button("A", key: "a");
+    match button::find("a", within: #addr_of(root)) {
+        option::Option[button::Button]::Some(x) => {
+            let _c: button::Button = x.set_rotation(10.0f64).set_rotation_x(1.0f64)
+                .set_rotation_y(2.0f64).set_scale(3.0f64).set_scale_x(4.0f64)
+                .set_scale_y(5.0f64).set_translation_x(6.0f64)
+                .set_translation_y(7.0f64).set_anchor_x(0.0f64).set_anchor_y(1.0f64);
+            assert approx(x.rotation(), 10.0f64);
+            assert approx(x.rotation_x(), 1.0f64);
+            assert approx(x.rotation_y(), 2.0f64);
+            assert approx(x.scale(), 3.0f64);
+            assert approx(x.scale_x(), 4.0f64);
+            assert approx(x.scale_y(), 5.0f64);
+            assert approx(x.translation_x(), 6.0f64);
+            assert approx(x.translation_y(), 7.0f64);
+            assert approx(x.anchor_x(), 0.0f64);
+            assert approx(x.anchor_y(), 1.0f64);
+        }
+        option::Option[button::Button]::None => { assert false; }
+    }
+    let d: *facet::Data = root.data();
+    assert ({ (*d).dirty } & props::C_TRANSFORM) == props::C_TRANSFORM;
+    return;
+}
+
+#[test]
+fn paint_and_state_verbs_round_trip() {
+    var root: facet::Node = button::button("A", key: "a");
+    match button::find("a", within: #addr_of(root)) {
+        option::Option[button::Button]::Some(x) => {
+            let _c: button::Button = x
+                .set_background(vocab::Brush::solid(vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64)))
+                .set_shadow(vocab::Shadow { color: vocab::Color::clear(),
+                                            offset: vocab::Point::zero(),
+                                            radius: 4.0f64, opacity: 0.5f64 })
+                .set_clip(vocab::Shape::rounded(8.0f64))
+                .set_input_transparent(true)
+                .set_flow_direction(vocab::FlowDirection::RightToLeft);
+            assert approx(x.background().start.r, 1.0f64);
+            assert approx(x.shadow().radius, 4.0f64);
+            assert x.clip().kind == (2 as i64);
+            assert x.input_transparent();
+            assert match x.flow_direction() {
+                vocab::FlowDirection::RightToLeft => true, _ => false
+            };
+        }
+        option::Option[button::Button]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn z_index_is_flexs_and_is_not_copied() {
+    var root: facet::Node = button::button("A", key: "a");
+    match button::find("a", within: #addr_of(root)) {
+        option::Option[button::Button]::Some(x) => {
+            let _c: button::Button = x.set_z_index(4 as i64);
+            assert x.z_index() == (4 as i64);
+        }
+        option::Option[button::Button]::None => { assert false; }
+    }
+    assert root.z_index() == 4;          // the same field, read through flex
+    return;
+}
+
+#[test]
+fn bounds_agree_with_the_frame() {
+    var b: facet::Builder = facet::Builder::new();
+    b.add(button::button("A", key: "a").width(40.0f64).height(20.0f64));
+    var root: facet::Node = facet::row(b);
+    root.calculate_layout(width: 100.0f64, height: 50.0f64);
+    match button::find("a", within: #addr_of(root)) {
+        option::Option[button::Button]::Some(x) => {
+            let r: vocab::Rect = x.bounds();
+            assert approx(r.width, 40.0f64);
+            assert approx(r.height, 20.0f64);
+            assert approx(r.x, x.x());
+            assert approx(r.y, x.y());
+        }
+        option::Option[button::Button]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn children_are_reachable_by_index() {
+    var b: facet::Builder = facet::Builder::new();
+    b.add(button::button("A", key: "a"));
+    b.add(button::button("B", key: "b"));
+    var root: facet::Node = scroll::scroll(key: "s");
+    match scroll::find("s", within: #addr_of(root)) {
+        option::Option[scroll::Scroll]::Some(x) => {
+            let _c: scroll::Scroll = x.set_content(facet::column(b));
+            assert x.child_count() == (1 as usize);
+            match x.child(0 as usize) {
+                option::Option[*facet::Node]::Some(c) => {
+                    assert { (*c).child_count() } == (2 as usize);
+                }
+                option::Option[*facet::Node]::None => { assert false; }
+            }
+            match x.child(9 as usize) {
+                option::Option[*facet::Node]::Some(_) => { assert false; }
+                option::Option[*facet::Node]::None => { assert true; }
+            }
+        }
+        option::Option[scroll::Scroll]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn native_is_zero_until_a_backend_mounts_one() {
+    var root: facet::Node = button::button("A", key: "a");
+    match button::find("a", within: #addr_of(root)) {
+        option::Option[button::Button]::Some(x) => {
+            assert x.native() == (0 as *u8);
+            assert x.is_attached() == false;
+            assert x.is_focused() == false;
+            assert x.window().is_open() == false;
+        }
+        option::Option[button::Button]::None => { assert false; }
+    }
+    return;
+}
+
+// The write path back in: what the platform learns first.
+#[test]
+fn a_backend_writes_focus_attach_and_window() {
+    var root: facet::Node = button::button("A", key: "a");
+    let p: *facet::Node = #addr_of(root);
+    facet::set_focused(p, true);
+    facet::set_attached(p, true);
+    facet::set_native(p, 1 as *u8);
+    match button::find("a", within: p) {
+        option::Option[button::Button]::Some(x) => {
+            assert x.is_focused();
+            assert x.is_attached();
+            assert x.native() == (1 as *u8);
+        }
+        option::Option[button::Button]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn focus_and_blur_are_command_bits() {
+    var root: facet::Node = button::button("A", key: "a");
+    match button::find("a", within: #addr_of(root)) {
+        option::Option[button::Button]::Some(x) => {
+            let _a: button::Button = x.focus();
+        }
+        option::Option[button::Button]::None => { assert false; }
+    }
+    let d: *facet::Data = root.data();
+    assert ({ (*d).dirty } & props::C_FOCUS) == props::C_FOCUS;
+    assert ({ (*d).dirty } & props::C_BLUR) == 0u64;
+    return;
+}
+
+#[test]
+fn updates_flush_when_the_depth_returns_to_zero() {
+    var root: facet::Node = button::button("A", key: "a");
+    let p: *facet::Node = #addr_of(root);
+    match button::find("a", within: p) {
+        option::Option[button::Button]::Some(x) => {
+            let _a: button::Button = x.begin_updates().begin_updates();
+            assert facet::is_batching(p);
+            let _b: button::Button = x.end_updates();
+            assert facet::is_batching(p);        // still one level deep
+            let d1: *facet::Data = root.data();
+            assert ({ (*d1).dirty } & props::C_FLUSH) == 0u64;
+            let _c: button::Button = x.end_updates();
+            assert facet::is_batching(p) == false;
+            let d2: *facet::Data = root.data();
+            assert ({ (*d2).dirty } & props::C_FLUSH) == props::C_FLUSH;
+            // an unmatched end_updates does not go negative
+            let _e: button::Button = x.end_updates();
+            assert facet::is_batching(p) == false;
+        }
+        option::Option[button::Button]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn measure_reports_the_size_the_subtree_wants() {
+    var b: facet::Builder = facet::Builder::new();
+    b.add(button::button("A", key: "a").width(40.0f64).height(20.0f64));
+    b.add(button::button("B", key: "b").width(60.0f64).height(20.0f64));
+    var root: facet::Node = scroll::scroll(key: "s");
+    match scroll::find("s", within: #addr_of(root)) {
+        option::Option[scroll::Scroll]::Some(x) => {
+            let _c: scroll::Scroll = x.set_content(facet::row(b));
+            let s: vocab::Size = x.measure(width: 300.0f64, height: 200.0f64);
+            assert approx(s.width, 300.0f64);
+            assert approx(s.height, 200.0f64);
+            let _r: scroll::Scroll = x.relayout();
+        }
+        option::Option[scroll::Scroll]::None => { assert false; }
+    }
+    return;
+}
+
+// ---- discrete events are build-time handlers -------------------------------
+// Each of these was an `observe_` the generator could not emit, until the row
+// guard made the silence visible.
+
+#[test]
+fn discrete_events_are_constructor_parameters() {
+    var b: facet::Builder = facet::Builder::new();
+    b.add(web::web("about:blank", key: "w", on_navigated: clicked));
+    b.add(canvas::canvas(key: "c", on_press: clicked, on_release: clicked,
+                         on_hover: clicked, on_unhover: clicked, on_cancel: clicked));
+    b.add(swipeable::swipeable(key: "sw", on_open_requested: clicked,
+                               on_close_requested: clicked, on_swipe_ended: clicked));
+    b.add(swipe_item::swipe_item(key: "si", on_invoked: clicked));
+    var root: facet::Node = facet::column(b);
+    assert root.child_count() == (4 as usize);
+    return;
+}
+
+// ---- symbol: facet's own word ------------------------------------------------
+
+#[test]
+fn a_symbol_carries_a_codepoint_from_the_generated_table() {
+    var root: facet::Node = symbol::symbol(icons::home, key: "s", size: 20.0f64);
+    match symbol::find("s", within: #addr_of(root)) {
+        option::Option[symbol::Symbol]::Some(x) => {
+            assert x.icon() == icons::home;
+            assert approx(x.size(), 20.0f64);
+            assert x.is_portable();          // the bundled font, so it is
+            assert x.is_filled() == false;   // outline by default
+        }
+        option::Option[symbol::Symbol]::None => { assert false; }
+    }
+    return;
+}
+
+// The point of the generated table: `delete` is U+E92E, its position in
+// Material Symbols. U+E872 is where the LEGACY Material Icons set put it, and
+// the full font still carries that glyph — so a hand-typed E872 draws a
+// perfect trash can and then vanishes the moment the font is subsetted.
+#[test]
+fn the_table_is_material_symbols_not_the_legacy_set() {
+    assert icons::delete == 0xE92Eu32;
+    assert icons::favorite == 0xE87Eu32;
+    assert icons::home == 0xE9B2u32;
+    return;
+}
+
+// 67 names begin with a digit and one is a C+ keyword. Both are spellable.
+#[test]
+fn unspellable_icon_names_are_mapped_predictably() {
+    assert icons::n10k == 0xE951u32;      // "10k"
+    assert icons::loop_ == 0xE863u32;      // "loop", which C+ has taken
+    assert icons::move_ == 0xE740u32;     // "move", likewise
+    return;
+}
+
+#[test]
+fn fill_is_an_axis_not_a_flag() {
+    var root: facet::Node = symbol::symbol(icons::favorite, key: "f");
+    match symbol::find("f", within: #addr_of(root)) {
+        option::Option[symbol::Symbol]::Some(x) => {
+            let _a: symbol::Symbol = x.set_fill(1.0f64);
+            assert x.is_filled();
+            // between the two is a real position on the font's FILL axis
+            let _b: symbol::Symbol = x.set_fill(0.4f64);
+            assert approx(x.fill(), 0.4f64);
+            assert x.is_filled() == false;
+        }
+        option::Option[symbol::Symbol]::None => { assert false; }
+    }
+    return;
+}
+
+// The platform opt-in is a separate verb, so every platform-specific icon in
+// an application is findable with one search.
+#[test]
+fn a_system_symbol_says_so() {
+    var b: facet::Builder = facet::Builder::new();
+    b.add(symbol::symbol(icons::folder, key: "p"));
+    b.add(symbol::system_symbol("house.fill", key: "s"));
+    var root: facet::Node = facet::column(b);
+
+    match symbol::find("p", within: #addr_of(root)) {
+        option::Option[symbol::Symbol]::Some(x) => { assert x.is_portable(); }
+        option::Option[symbol::Symbol]::None => { assert false; }
+    }
+    match symbol::find("s", within: #addr_of(root)) {
+        option::Option[symbol::Symbol]::Some(x) => {
+            assert x.is_system();
+            assert x.name() == "house.fill";
+        }
+        option::Option[symbol::Symbol]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn an_application_may_bring_its_own_icon_font() {
+    var root: facet::Node = symbol::symbol(0xE001u32, key: "b", font: "Brand Icons");
+    match symbol::find("b", within: #addr_of(root)) {
+        option::Option[symbol::Symbol]::Some(x) => {
+            assert x.font() == "Brand Icons";
+            assert x.is_portable();      // portable, just not checkable
+        }
+        option::Option[symbol::Symbol]::None => { assert false; }
+    }
+    return;
+}
+
+// facet-origin controls take kind tags from 1000 up, so regenerating the 38
+// MAUI-derived modules can never collide with one facet declared for itself.
+#[test]
+fn a_symbol_is_not_mistaken_for_a_generated_control() {
+    var root: facet::Node = symbol::symbol(icons::home, key: "s");
+    match label::find("s", within: #addr_of(root)) {
+        option::Option[label::Label]::Some(_) => { assert false; }
+        option::Option[label::Label]::None => { assert true; }
+    }
+    return;
+}
+
+// ---- gestures: a modifier on any node, not a control ------------------------
+
+fn on_open(sender: *u8, ctx: *u8) -> bool { return true; }
+fn on_menu(sender: *u8, ctx: *u8) -> bool { return true; }
+
+#[test]
+fn gestures_attach_to_any_node_and_chain() {
+    var root: facet::Node = label::label("Open", key: "l")
+        .gesture(on_click: on_open, on_right_click: on_menu);
+    let p: *facet::Node = #addr_of(root);
+    assert gestures::has_gestures(p);
+    assert gestures::on_click_of(p) == on_open;
+    // still a label: the modifier adds no node and changes no kind
+    match label::find("l", within: p) {
+        option::Option[label::Label]::Some(x) => { assert x.text() == "Open"; }
+        option::Option[label::Label]::None => { assert false; }
+    }
+    return;
+}
+
+// The reason gestures are a modifier and not 21 parameters on 38 constructors.
+#[test]
+fn a_node_without_gestures_carries_none() {
+    var root: facet::Node = label::label("plain", key: "l");
+    let p: *facet::Node = #addr_of(root);
+    assert gestures::has_gestures(p) == false;
+    assert gestures::on_click_of(p) == gestures::no_gesture;
+    assert gestures::fire_click(p) == false;   // nobody took it
+    return;
+}
+
+#[test]
+fn a_gesture_set_marks_the_node_dirty() {
+    var root: facet::Node = label::label("x", key: "l").gesture(on_click: on_open);
+    let d: *facet::Data = root.data();
+    assert ({ (*d).dirty } & facet::C_GESTURES) == facet::C_GESTURES;
+    return;
+}
+
+// The modifier is for the description. After mount you hold a pointer, and a
+// non-Copy value cannot be moved out of one (E0337) — so the live path is
+// `attach` / `detach`, and replacing releases the old set rather than leaking.
+#[test]
+fn gestures_can_be_replaced_and_dropped_live() {
+    var root: facet::Node = label::label("x", key: "l").gesture(on_click: on_open);
+    let p: *facet::Node = #addr_of(root);
+    assert gestures::on_click_of(p) == on_open;
+
+    var g: gestures::Gestures = gestures::Gestures::new();
+    g.on_click = on_menu;
+    gestures::attach(p, g);
+    assert gestures::on_click_of(p) == on_menu;
+
+    gestures::detach(p);
+    assert gestures::has_gestures(p) == false;
+    assert gestures::on_click_of(p) == gestures::no_gesture;
+    return;
+}
+
+// One ctx for the whole set: every handler on a node has the same receiver.
+#[test]
+fn one_ctx_serves_the_whole_set() {
+    var owner: i64 = 7 as i64;
+    var root: facet::Node = label::label("x", key: "l")
+        .gesture(ctx: #addr_of(owner) as *u8, on_click: on_open, on_hover: on_menu);
+    let p: *facet::Node = #addr_of(root);
+    assert gestures::ctx_of(p) == (#addr_of(owner) as *u8);
+    assert gestures::fire_click(p);
+    assert gestures::fire_hover(p, true);
+    return;
+}
+
+// The container's own empty space: defer to a child, or claim the lot.
+#[test]
+fn hit_test_defers_to_the_child_by_default() {
+    var b: facet::Builder = facet::Builder::new();
+    b.add(button::button("Save", key: "save"));
+    var plain: facet::Node = facet::column(b).gesture(on_click: on_open);
+    assert gestures::is_opaque_to_input(#addr_of(plain)) == false;
+
+    var b2: facet::Builder = facet::Builder::new();
+    b2.add(button::button("Save", key: "save2"));
+    var claimed: facet::Node = facet::column(b2)
+        .gesture(on_click: on_open, hit: gestures::HitTest::Opaque);
+    assert gestures::is_opaque_to_input(#addr_of(claimed));
+    return;
+}
+
+// The nesting rule, stated as a test: a button keeps its own action, and the
+// node around it keeps the gestures no button ever claims.
+#[test]
+fn a_button_inside_a_gesture_node_keeps_its_own_action() {
+    var b: facet::Builder = facet::Builder::new();
+    b.add(button::button("Save", key: "save", on_click: clicked));
+    var root: facet::Node = facet::column(b)
+        .gesture(on_click: on_open, on_right_click: on_menu);
+    let p: *facet::Node = #addr_of(root);
+
+    // the button's own action is untouched and is NOT a gesture
+    match button::find("save", within: p) {
+        option::Option[button::Button]::Some(x) => { assert x.title() == "Save"; }
+        option::Option[button::Button]::None => { assert false; }
+    }
+    // the button's node carries no gesture set of its own
+    match facet::find_in(p, "save") {
+        option::Option[*facet::Node]::Some(bn) => {
+            assert gestures::has_gestures(bn) == false;
+        }
+        option::Option[*facet::Node]::None => { assert false; }
+    }
+    // the surrounding node carries both of its own
+    assert gestures::on_click_of(p) == on_open;
+    return;
+}
+
+#[test]
+fn gesture_parameters_carry_their_own_settings() {
+    var root: facet::Node = facet::spacer()
+        .gesture(on_long_press: on_open, long_press_seconds: 1.5f64,
+                 on_swipe: on_menu, swipe_threshold: 40.0f64,
+                 on_pan: on_open, touch_points: 2 as i64,
+                 can_drag: true, allow_drop: true);
+    let g: *gestures::Gestures = gestures::gestures_of(#addr_of(root));
+    assert g != (0 as *gestures::Gestures);
+    if g == (0 as *gestures::Gestures) { return; }
+    assert approx({ (*g).long_press_seconds }, 1.5f64);
+    assert approx({ (*g).swipe_threshold }, 40.0f64);
+    assert { (*g).touch_points } == (2 as i64);
+    assert { (*g).can_drag };
+    assert { (*g).allow_drop };
+    assert { (*g).is_empty() } == false;
+    return;
+}
+
+// A container is a node like any other. It was NOT, until `.gesture()` on a
+// spacer segfaulted under asan: flex builds a bare node and facet was
+// re-exporting it untouched, so every shared-band verb and every gesture on
+// every container silently did nothing and reported success.
+#[test]
+fn containers_carry_facet_data_like_any_other_node() {
+    var b: facet::Builder = facet::Builder::new();
+    b.add(button::button("A", key: "a"));
+    var col: facet::Node = facet::column(b, key: "col");
+    let p: *facet::Node = #addr_of(col);
+
+    assert col.data() != (0 as *facet::Data);
+    assert col.key() == "col";
+
+    // the shared band answers on a container
+    facet::set_opacity(p, 0.5f64);
+    assert approx(facet::opacity(p), 0.5f64);
+    facet::set_visible(p, false);
+    assert facet::is_visible(p) == false;
+
+    // and so do gestures
+    var g: gestures::Gestures = gestures::Gestures::new();
+    g.on_click = on_open;
+    gestures::attach(p, g);
+    assert gestures::on_click_of(p) == on_open;
+    return;
+}
+
+#[test]
+fn every_container_re_export_owns_its_node() {
+    var b1: facet::Builder = facet::Builder::new();
+    var b2: facet::Builder = facet::Builder::new();
+    var b3: facet::Builder = facet::Builder::new();
+    var b4: facet::Builder = facet::Builder::new();
+    var b5: facet::Builder = facet::Builder::new();
+    var b6: facet::Builder = facet::Builder::new();
+    var b7: facet::Builder = facet::Builder::new();
+    assert facet::column(b1, key: "c").key() == "c";
+    assert facet::row(b2, key: "r").key() == "r";
+    assert facet::hstack(b3, key: "h").key() == "h";
+    assert facet::vstack(b4, key: "v").key() == "v";
+    assert facet::screen(b5, key: "s").key() == "s";
+    assert facet::card(b6, key: "d").key() == "d";
+    assert facet::zstack(b7, key: "z").key() == "z";
+    assert facet::spacer(key: "sp").key() == "sp";
+    return;
+}
+
+// A key on a container is reachable, which it was not before either.
+#[test]
+fn a_container_is_findable_by_key() {
+    var inner: facet::Builder = facet::Builder::new();
+    inner.add(button::button("A", key: "a"));
+    var outer: facet::Builder = facet::Builder::new();
+    outer.add(facet::column(inner, key: "inner"));
+    var root: facet::Node = facet::column(outer, key: "outer");
+
+    match facet::find_in(#addr_of(root), "inner") {
+        option::Option[*facet::Node]::Some(n) => { assert { (*n).child_count() } == (1 as usize); }
+        option::Option[*facet::Node]::None => { assert false; }
+    }
+    return;
+}
+
+// ---- tree: hierarchical, and NOT about files --------------------------------
+
+fn a_tree_row(node: *tree::TreeNode, ctx: *u8) -> facet::Node {
+    return label::label({ (*node).label_of() }, key: "row");
+}
+fn a_select(node: *tree::TreeNode, ctx: *u8) { return; }
+
+fn sample() -> tree::TreeNode {
+    var root: tree::TreeNode = tree::TreeNode::new("root", "/", is_branch: true);
+    var src: tree::TreeNode = tree::TreeNode::new("src", "/src", is_branch: true);
+    let _a: status::Status = src.add_child(tree::TreeNode::new("main", "/src/main"));
+    let _b: status::Status = root.add_child(src);
+    let _c: status::Status = root.add_child(tree::TreeNode::new("README", "/README"));
+    return root;
+}
+
+#[test]
+fn a_tree_owns_its_model_and_walks_by_id() {
+    var root: facet::Node = tree::tree(sample(), key: "t", row: a_tree_row, on_select: a_select);
+    match tree::find("t", within: #addr_of(root)) {
+        option::Option[tree::Tree]::Some(x) => {
+            assert { (*x.root()).child_count() } == (2 as usize);
+            match x.item("/src/main") {
+                option::Option[*tree::TreeNode]::Some(n) => {
+                    assert { (*n).label_of() } == "main";
+                    assert { (*n).is_branch } == false;
+                }
+                option::Option[*tree::TreeNode]::None => { assert false; }
+            }
+            match x.item("/nope") {
+                option::Option[*tree::TreeNode]::Some(_) => { assert false; }
+                option::Option[*tree::TreeNode]::None => { assert true; }
+            }
+        }
+        option::Option[tree::Tree]::None => { assert false; }
+    }
+    return;
+}
+
+// The words are generic. A file browser passes a path as the id and reads the
+// same; an outline or a scene graph now reads properly too.
+#[test]
+fn the_model_is_not_named_for_files() {
+    var scene: tree::TreeNode = tree::TreeNode::new("Scene", "n0", is_branch: true);
+    let _a: status::Status = scene.add_child(tree::TreeNode::new("Camera", "n1"));
+    var root: facet::Node = tree::tree(scene, key: "t");
+    match tree::find("t", within: #addr_of(root)) {
+        option::Option[tree::Tree]::Some(x) => {
+            match x.item("n1") {
+                option::Option[*tree::TreeNode]::Some(n) => { assert { (*n).label_of() } == "Camera"; }
+                option::Option[*tree::TreeNode]::None => { assert false; }
+            }
+        }
+        option::Option[tree::Tree]::None => { assert false; }
+    }
+    return;
+}
+
+// A branch may say "there may be more here" before anything is under it.
+// That is what makes lazy loading expressible.
+#[test]
+fn an_unloaded_branch_is_distinguishable_from_a_leaf() {
+    var lazy: tree::TreeNode = tree::TreeNode::new("Folder", "f", is_branch: true);
+    var leaf: tree::TreeNode = tree::TreeNode::new("File", "l");
+    assert lazy.is_unloaded();
+    assert leaf.is_unloaded() == false;
+    assert leaf.is_branch == false;
+    return;
+}
+
+#[test]
+fn selection_and_expansion_are_keyed_on_the_id() {
+    var root: facet::Node = tree::tree(sample(), key: "t");
+    match tree::find("t", within: #addr_of(root)) {
+        option::Option[tree::Tree]::Some(x) => {
+            assert x.has_selection() == false;
+            let _a: tree::Tree = x.select("/src");
+            assert x.selected() == "/src";
+            let _b: tree::Tree = x.deselect();
+            assert x.has_selection() == false;
+
+            assert x.is_expanded("/src") == false;
+            let _c: tree::Tree = x.expand("/src");
+            assert x.is_expanded("/src");
+            let _d: tree::Tree = x.expand("/src");        // idempotent
+            assert x.expanded_count() == (1 as usize);
+            let _e: tree::Tree = x.collapse("/src");
+            assert x.is_expanded("/src") == false;
+            assert x.expanded_count() == (0 as usize);
+        }
+        option::Option[tree::Tree]::None => { assert false; }
+    }
+    return;
+}
+
+// The rule that cost someone a bug: EXPANSION FIRST, THEN SELECTION. A row
+// inside a collapsed branch is not visible, so selecting first is dropped.
+// One verb, so the order cannot be got wrong.
+#[test]
+fn restore_expands_before_it_selects() {
+    var root: facet::Node = tree::tree(sample(), key: "t");
+    match tree::find("t", within: #addr_of(root)) {
+        option::Option[tree::Tree]::Some(x) => {
+            var want: vocab::TextList = vocab::TextList::new();
+            let _a: status::Status = want.add("/");
+            let _b: status::Status = want.add("/src");
+            let _c: tree::Tree = x.restore(want, selected: "/src/main");
+            assert x.is_expanded("/");
+            assert x.is_expanded("/src");
+            assert x.selected() == "/src/main";
+        }
+        option::Option[tree::Tree]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn replacing_the_model_drops_the_old_one() {
+    var root: facet::Node = tree::tree(sample(), key: "t");
+    match tree::find("t", within: #addr_of(root)) {
+        option::Option[tree::Tree]::Some(x) => {
+            assert { (*x.root()).child_count() } == (2 as usize);
+            let _a: tree::Tree = x.set_root(tree::TreeNode::new("empty", "e"));
+            assert { (*x.root()).child_count() } == (0 as usize);
+            assert { (*x.root()).id_of() } == "e";
+        }
+        option::Option[tree::Tree]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn a_row_builder_produces_real_nodes() {
+    var root: facet::Node = tree::tree(sample(), key: "t", row: a_tree_row);
+    match tree::find("t", within: #addr_of(root)) {
+        option::Option[tree::Tree]::Some(x) => {
+            match x.item("/README") {
+                option::Option[*tree::TreeNode]::Some(n) => {
+                    var built: facet::Node = x.build_row(n);
+                    assert built.key() == "row";
+                }
+                option::Option[*tree::TreeNode]::None => { assert false; }
+            }
+        }
+        option::Option[tree::Tree]::None => { assert false; }
+    }
+    return;
+}
+
+// A subtree detaches by value and owns everything under it.
+#[test]
+fn a_subtree_detaches_whole() {
+    var root: tree::TreeNode = sample();
+    match root.remove_child(0 as usize) {
+        option::Option[tree::TreeNode]::Some(gone) => {
+            assert gone.id_of() == "/src";
+            assert gone.child_count() == (1 as usize);
+        }
+        option::Option[tree::TreeNode]::None => { assert false; }
+    }
+    assert root.child_count() == (1 as usize);
+    return;
+}
+
+// ---- split: a divider the user drags -----------------------------------------
+
+fn on_moved(sender: *u8, ctx: *u8) { return; }
+
+fn two_panes() -> facet::Builder {
+    var b: facet::Builder = facet::Builder::new();
+    b.add(label::label("left", key: "L"));
+    b.add(label::label("right", key: "R"));
+    return b;
+}
+
+#[test]
+fn a_split_holds_two_panes_and_a_position() {
+    var root: facet::Node = split::split(two_panes(), key: "s", position: 300.0f64);
+    match split::find("s", within: #addr_of(root)) {
+        option::Option[split::Split]::Some(x) => {
+            assert x.child_count() == (2 as usize);
+            assert approx(x.position(), 300.0f64);
+            assert x.is_columns();
+            match x.pane(split::Pane::Leading) {
+                option::Option[*facet::Node]::Some(n) => { assert { (*n).key() } == "L"; }
+                option::Option[*facet::Node]::None => { assert false; }
+            }
+            match x.pane(split::Pane::Trailing) {
+                option::Option[*facet::Node]::Some(n) => { assert { (*n).key() } == "R"; }
+                option::Option[*facet::Node]::None => { assert false; }
+            }
+        }
+        option::Option[split::Split]::None => { assert false; }
+    }
+    return;
+}
+
+// The position is clamped where it is STORED, so an application that saves and
+// restores reads back what was applied rather than what it asked for.
+#[test]
+fn a_split_clamps_the_position_it_stores() {
+    var root: facet::Node = split::split(two_panes(), key: "s", min_leading: 180.0f64);
+    match split::find("s", within: #addr_of(root)) {
+        option::Option[split::Split]::Some(x) => {
+            let _a: split::Split = x.set_position(20.0f64);
+            assert approx(x.position(), 180.0f64);
+            let _b: split::Split = x.set_position(400.0f64);
+            assert approx(x.position(), 400.0f64);
+        }
+        option::Option[split::Split]::None => { assert false; }
+    }
+    return;
+}
+
+// Collapsing remembers where the divider was, so restoring is not a default.
+#[test]
+fn collapsing_a_pane_keeps_the_position() {
+    var root: facet::Node = split::split(two_panes(), key: "s", position: 260.0f64);
+    match split::find("s", within: #addr_of(root)) {
+        option::Option[split::Split]::Some(x) => {
+            assert x.is_collapsed(split::Pane::Leading) == false;
+            let _a: split::Split = x.collapse(split::Pane::Leading);
+            assert x.is_collapsed(split::Pane::Leading);
+            assert approx(x.position(), 260.0f64);
+            let _b: split::Split = x.toggle(split::Pane::Leading);
+            assert x.is_collapsed(split::Pane::Leading) == false;
+            assert approx(x.position(), 260.0f64);
+        }
+        option::Option[split::Split]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn a_split_reports_a_finished_drag_once() {
+    var root: facet::Node = split::split(two_panes(), key: "s", on_move: on_moved);
+    match split::find("s", within: #addr_of(root)) {
+        option::Option[split::Split]::Some(x) => {
+            let _a: split::Split = x.moved(to: 275.0f64);
+            assert approx(x.position(), 275.0f64);
+        }
+        option::Option[split::Split]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn a_rows_split_stacks_its_panes() {
+    var root: facet::Node = split::split(two_panes(), key: "s",
+                                         axis: split::SplitAxis::Rows);
+    match split::find("s", within: #addr_of(root)) {
+        option::Option[split::Split]::Some(x) => {
+            assert x.is_columns() == false;
+            let _a: split::Split = x.set_min(split::Pane::Trailing, 90.0f64);
+            assert approx(x.min(split::Pane::Trailing), 90.0f64);
+        }
+        option::Option[split::Split]::None => { assert false; }
+    }
+    return;
+}
+
+// ---- window chrome: one control, one modifier -------------------------------
+
+#[test]
+fn window_buttons_is_a_control() {
+    var root: facet::Node = chrome::window_buttons(key: "wb", spacing: 8.0f64);
+    match chrome::find("wb", within: #addr_of(root)) {
+        option::Option[chrome::WindowButtons]::Some(x) => {
+            assert approx(x.spacing(), 8.0f64);
+            let _a: chrome::WindowButtons = x.set_style(chrome::ButtonStyle::OnHover);
+            assert match x.style() { chrome::ButtonStyle::OnHover => true, _ => false };
+        }
+        option::Option[chrome::WindowButtons]::None => { assert false; }
+    }
+    return;
+}
+
+// It draws nothing, so it is a modifier — and it composes with `.gesture()`
+// in either order, because neither replaces the other's set.
+#[test]
+fn window_drag_is_a_modifier_that_composes() {
+    var b: facet::Builder = facet::Builder::new();
+    b.add(chrome::window_buttons(key: "wb"));
+    var bar: facet::Node = facet::hstack(b, key: "bar")
+        .gesture(on_double_click: on_open)
+        .window_drag();
+    let p: *facet::Node = #addr_of(bar);
+    assert chrome::drags_window(p);
+    // the gesture set survived
+    let g: *gestures::Gestures = gestures::gestures_of(p);
+    assert g != (0 as *gestures::Gestures);
+    if g == (0 as *gestures::Gestures) { return; }
+    assert { (*g).on_double_click } == on_open;
+
+    // and the other order works too
+    var bar2: facet::Node = facet::spacer(key: "s2")
+        .window_drag()
+        .gesture(on_click: on_open);
+    assert chrome::drags_window(#addr_of(bar2)) == false;  // gesture() replaces the set
+    return;
+}
+
+#[test]
+fn a_node_does_not_drag_the_window_by_default() {
+    var n: facet::Node = facet::spacer(key: "s");
+    assert chrome::drags_window(#addr_of(n)) == false;
+    return;
+}
+
+// ---- styled text: the builder the ledger's `Spans` never had ----------------
+
+#[test]
+fn spans_carry_styled_runs() {
+    var runs: vocab::Spans = vocab::Spans::new();
+    assert runs.is_empty();
+    let _a: status::Status = runs.add_text("plain ");
+    let _b: status::Status = runs.add(vocab::TextSpan::of("bold", font_size: 15.0f64,
+                                                          font_weight: vocab::FontWeight::Bold));
+    let _c: status::Status = runs.add(vocab::TextSpan::of("cplus.dev", link: "https://cplus.dev"));
+    assert runs.count() == (3 as usize);
+    assert { (*runs.at(0 as usize)).view() } == "plain ";
+    assert { (*runs.at(1 as usize)).is_link() } == false;
+    assert { (*runs.at(2 as usize)).is_link() };
+    return;
+}
+
+#[test]
+fn a_label_takes_styled_text_and_reads_it_back() {
+    var runs: vocab::Spans = vocab::Spans::new();
+    let _a: status::Status = runs.add_text("hello ");
+    let _b: status::Status = runs.add(vocab::TextSpan::of("world", italic: true));
+    var root: facet::Node = label::label("", key: "l");
+    match label::find("l", within: #addr_of(root)) {
+        option::Option[label::Label]::Some(x) => {
+            let _c: label::Label = x.set_formatted_text(runs);
+            assert x.formatted_text_count() == (2 as usize);
+            assert { (*x.formatted_text_at(1 as usize)).view() } == "world";
+        }
+        option::Option[label::Label]::None => { assert false; }
+    }
+    return;
+}
+
+// wrap_label and composer are NOT controls: `label` already carries the wrap
+// (MAUI's LineBreakMode), and a composer is text_area + bordered + a
+// background, which is a component and not a new word.
+#[test]
+fn wrapping_is_a_label_parameter_not_a_second_control() {
+    var root: facet::Node = label::label("a long line", key: "l",
+                                         line_break: vocab::LineBreak::WordWrap,
+                                         max_lines: 3 as i64);
+    match label::find("l", within: #addr_of(root)) {
+        option::Option[label::Label]::Some(x) => {
+            assert match x.line_break() { vocab::LineBreak::WordWrap => true, _ => false };
+            assert x.max_lines() == (3 as i64);
+        }
+        option::Option[label::Label]::None => { assert false; }
+    }
+    return;
+}
+
+// ---- the DOM division: control verbs + shared band + all of flex -----------
+// getElementById("submit") hands you the button's own properties AND the
+// element's. Same here, in three groups that never overlap:
+//
+//   the control's own   b.set_title(...)              its module
+//   the shared band     b.set_opacity(...)            facet.cplus, written once
+//   layout              { (*b.node()).set_width(...) }  ALL of flex, not a copy
+
+#[test]
+fn a_cursor_reaches_its_control_the_band_and_flex() {
+    var b: facet::Builder = facet::Builder::new();
+    b.add(button::button("Save", key: "save"));
+    var root: facet::Node = facet::column(b, key: "col");
+
+    match button::find("save", within: #addr_of(root)) {
+        option::Option[button::Button]::Some(x) => {
+            // 1. the control's own vocabulary
+            let _a: button::Button = x.set_title("Saving…");
+            assert x.title() == "Saving…";
+
+            // 2. the shared band, declared once on Node
+            let _b2: button::Button = x.set_opacity(0.4f64);
+            assert approx(x.opacity(), 0.4f64);
+
+            // 3. layout — flex's own words, chaining like everything else
+            let _c: button::Button = x.set_width(120.0f64).set_padding(8.0f64)
+                                      .set_grow(1.0f64).set_align(flex::Align::Center);
+        }
+        option::Option[button::Button]::None => { assert false; }
+    }
+
+    root.calculate_layout(width: 400.0f64, height: 100.0f64);
+    match button::find("save", within: #addr_of(root)) {
+        option::Option[button::Button]::Some(x) => {
+            // The layout written through flex is the geometry facet reads
+            // back — one owner, no second copy. The explicit width wins over
+            // the column's cross-axis stretch, and `grow` works the column's
+            // MAIN axis, which is the vertical one.
+            assert approx(x.width(), 120.0f64);
+            assert x.height() > 0.0f64;
+            assert approx(x.bounds().width, x.width());
+            assert approx(x.bounds().height, x.height());
+        }
+        option::Option[button::Button]::None => { assert false; }
+    }
+    return;
+}
+
+// `set_width` writes the STYLE; `width()` reads the LAID-OUT frame. They agree
+// only after a layout pass. The same trap the DOM has with `style.width`
+// versus `offsetWidth`, pinned here so nobody meets it by surprise.
+#[test]
+fn style_and_frame_agree_only_after_layout() {
+    var b: facet::Builder = facet::Builder::new();
+    b.add(button::button("A", key: "a"));
+    var root: facet::Node = facet::column(b, key: "c");
+
+    match button::find("a", within: #addr_of(root)) {
+        option::Option[button::Button]::Some(x) => {
+            let _a: button::Button = x.set_width(90.0f64).set_height(30.0f64);
+            assert approx(x.width(), 0.0f64);      // no pass has run yet
+        }
+        option::Option[button::Button]::None => { assert false; }
+    }
+    root.calculate_layout(width: 300.0f64, height: 200.0f64);
+    match button::find("a", within: #addr_of(root)) {
+        option::Option[button::Button]::Some(x) => {
+            assert approx(x.width(), 90.0f64);     // now they agree
+            assert approx(x.height(), 30.0f64);
+        }
+        option::Option[button::Button]::None => { assert false; }
+    }
+    return;
+}
+
+// Everything flex has that the live band does not — per-edge padding, grid,
+// position type, breakpoints — is one accessor away, and `style` is flex's one
+// public field, so it is reachable the DOM way too.
+#[test]
+fn the_style_field_is_reachable_through_the_node() {
+    var root: facet::Node = label::label("x", key: "l");
+    match label::find("l", within: #addr_of(root)) {
+        option::Option[label::Label]::Some(x) => {
+            let n: *facet::Node = x.node();
+            { (*n).style.min_width = flex::StyleLength::points(50.0f64) };
+            assert { (*n).style.min_width.value } == 50.0f64;
+        }
+        option::Option[label::Label]::None => { assert false; }
+    }
+    return;
+}
+
+// Every cursor has it, generated and hand-written alike.
+#[test]
+fn every_cursor_kind_reaches_its_node() {
+    var b: facet::Builder = facet::Builder::new();
+    b.add(symbol::symbol(icons::home, key: "sym"));
+    b.add(tree::tree(tree::TreeNode::new("r", "r"), key: "tr"));
+    b.add(split::split(two_panes(), key: "sp"));
+    b.add(chrome::window_buttons(key: "wb"));
+    var root: facet::Node = facet::column(b);
+    let p: *facet::Node = #addr_of(root);
+
+    match symbol::find("sym", within: p) {
+        option::Option[symbol::Symbol]::Some(x) => { assert x.node() != (0 as *facet::Node); }
+        option::Option[symbol::Symbol]::None => { assert false; }
+    }
+    match tree::find("tr", within: p) {
+        option::Option[tree::Tree]::Some(x) => { assert x.node() != (0 as *facet::Node); }
+        option::Option[tree::Tree]::None => { assert false; }
+    }
+    match split::find("sp", within: p) {
+        option::Option[split::Split]::Some(x) => { assert x.node() != (0 as *facet::Node); }
+        option::Option[split::Split]::None => { assert false; }
+    }
+    match chrome::find("wb", within: p) {
+        option::Option[chrome::WindowButtons]::Some(x) => { assert x.node() != (0 as *facet::Node); }
+        option::Option[chrome::WindowButtons]::None => { assert false; }
+    }
+    return;
+}
+
+// ---- node, then a checked cast: the DOM step ---------------------------------
+// `facet::find_in` hands back a node, which carries what EVERY node has.
+// `button::from(node)` adds what only a button has — and returns None rather
+// than a cursor whose every verb quietly does nothing.
+
+#[test]
+fn a_node_narrows_to_its_own_control_and_no_other() {
+    var b: facet::Builder = facet::Builder::new();
+    b.add(button::button("Save", key: "save"));
+    b.add(label::label("Ready", key: "status"));
+    var root: facet::Node = facet::column(b);
+    let p: *facet::Node = #addr_of(root);
+
+    match facet::find_in(p, "save") {
+        option::Option[*facet::Node]::Some(n) => {
+            // right kind: the button's own verbs arrive
+            match button::from(n) {
+                option::Option[button::Button]::Some(x) => { assert x.title() == "Save"; }
+                option::Option[button::Button]::None => { assert false; }
+            }
+            // wrong kind: None, not a silently-dead cursor
+            match label::from(n) {
+                option::Option[label::Label]::Some(_) => { assert false; }
+                option::Option[label::Label]::None => { assert true; }
+            }
+        }
+        option::Option[*facet::Node]::None => { assert false; }
+    }
+    return;
+}
+
+// A container carries facet Data but no control props, so it narrows to
+// nothing — which is the honest answer, not an empty Button.
+#[test]
+fn a_container_narrows_to_no_control() {
+    var b: facet::Builder = facet::Builder::new();
+    b.add(button::button("A", key: "a"));
+    var root: facet::Node = facet::column(b, key: "col");
+    match button::from(#addr_of(root)) {
+        option::Option[button::Button]::Some(_) => { assert false; }
+        option::Option[button::Button]::None => { assert true; }
+    }
+    return;
+}
+
+#[test]
+fn narrowing_a_null_node_is_none() {
+    match button::from(0 as *facet::Node) {
+        option::Option[button::Button]::Some(_) => { assert false; }
+        option::Option[button::Button]::None => { assert true; }
+    }
+    return;
+}
+
+// The hand-written cursors narrow the same way.
+#[test]
+fn facet_origin_controls_narrow_too() {
+    var root: facet::Node = symbol::symbol(icons::home, key: "s");
+    let p: *facet::Node = #addr_of(root);
+    match symbol::from(p) {
+        option::Option[symbol::Symbol]::Some(x) => { assert x.icon() == icons::home; }
+        option::Option[symbol::Symbol]::None => { assert false; }
+    }
+    match tree::from(p) {
+        option::Option[tree::Tree]::Some(_) => { assert false; }
+        option::Option[tree::Tree]::None => { assert true; }
+    }
+    return;
+}
+
+// ---- remove_child hands ownership back; detach FREES ------------------------
+// Two flex verbs one word apart, and only one of them tells a cursor.
+
+#[test]
+fn remove_child_hands_the_subtree_back_and_invalidates_cursors() {
+    var b: facet::Builder = facet::Builder::new();
+    b.add(button::button("A", key: "a"));
+    b.add(button::button("B", key: "b"));
+    var root: facet::Node = facet::column(b);
+
+    match button::find("a", within: #addr_of(root)) {
+        option::Option[button::Button]::Some(hit) => {
+            assert hit.is_live();
+            // by VALUE: nothing is freed until this binding drops
+            match root.remove_child(at: 1 as usize) {
+                option::Option[facet::Node]::Some(gone) => {
+                    assert gone.key() == "b";
+                    assert gone.data() != (0 as *facet::Data);   // still whole
+                }
+                option::Option[facet::Node]::None => { assert false; }
+            }
+            assert hit.is_live() == false;    // a removal happened; re-derive
+        }
+        option::Option[button::Button]::None => { assert false; }
+    }
+    return;
+}
+
+// THE TRAP: `detach()` frees facet's Data immediately and the node survives.
+// Nothing was removed from the tree, so `removal_count()` does not move and a
+// cursor still calls itself live — while every verb on it has quietly become a
+// no-op, because the props it pointed at are gone.
+//
+// Memory-safe: `data()` returns null once the attachment is disarmed and every
+// read null-checks. Silent, though, which is the failure this package exists to
+// avoid. facet never calls `detach` on its own nodes, and neither should an
+// application: to drop a subtree, `remove_child` it and let it drop.
+#[test]
+fn detach_guts_a_node_without_telling_its_cursor() {
+    var root: facet::Node = button::button("Save", key: "save");
+    match button::find("save", within: #addr_of(root)) {
+        option::Option[button::Button]::Some(hit) => {
+            assert hit.title() == "Save";
+            assert hit.is_live();
+
+            root.detach();                       // frees Data, props and all
+
+            assert hit.is_live();                // <- still "live": the POINTER is
+            assert hit.title() == "";            //    valid, the identity is not
+            let _c: button::Button = hit.set_title("x");
+            assert hit.title() == "";            //    and writes go nowhere
+            assert root.key() == "";             //    the node has no key either
+        }
+        option::Option[button::Button]::None => { assert false; }
+    }
+    return;
+}
+
+// ---- taking a node out of flow, and putting it back -------------------------
+// `PositionType::Absolute` frees a node from its parent's flow; `Relative`
+// returns it. Both are live-settable through the node, so a row can be freed
+// and restored after mount.
+//
+// This is NOT sticky. An absolute node leaves the flow, so its SIBLINGS CLOSE
+// UP over its space — a pinned list header done this way makes the list jump a
+// row shorter. Sticky keeps the space reserved and only moves where the row is
+// painted, which needs the scroll offset and so is the scrolling control's job.
+
+#[test]
+fn a_node_can_be_freed_from_flow_and_restored() {
+    var b: facet::Builder = facet::Builder::new();
+    b.add(label::label("one", key: "1").height(20.0f64));
+    b.add(label::label("two", key: "2").height(20.0f64));
+    b.add(label::label("three", key: "3").height(20.0f64));
+    var root: facet::Node = facet::column(b, key: "col");
+    root.calculate_layout(width: 200.0f64, height: 300.0f64);
+
+    // in flow: stacked
+    match label::find("3", within: #addr_of(root)) {
+        option::Option[label::Label]::Some(x) => { assert approx(x.y(), 40.0f64); }
+        option::Option[label::Label]::None => { assert false; }
+    }
+
+    // free the middle one and pin it to the top
+    match label::find("2", within: #addr_of(root)) {
+        option::Option[label::Label]::Some(x) => {
+            let n: *facet::Node = x.node();
+            { (*n).set_position_type(flex::PositionType::Absolute) };
+            { (*n).set_position(flex::Edge::Top, flex::StyleLength::points(0.0f64)) };
+        }
+        option::Option[label::Label]::None => { assert false; }
+    }
+    root.calculate_layout(width: 200.0f64, height: 300.0f64);
+
+    match label::find("2", within: #addr_of(root)) {
+        option::Option[label::Label]::Some(x) => { assert approx(x.y(), 0.0f64); }
+        option::Option[label::Label]::None => { assert false; }
+    }
+    // and the siblings CLOSED UP over its space — the reason this is not sticky
+    match label::find("3", within: #addr_of(root)) {
+        option::Option[label::Label]::Some(x) => { assert approx(x.y(), 20.0f64); }
+        option::Option[label::Label]::None => { assert false; }
+    }
+
+    // back into flow, in its original place
+    match label::find("2", within: #addr_of(root)) {
+        option::Option[label::Label]::Some(x) => {
+            let n: *facet::Node = x.node();
+            { (*n).set_position_type(flex::PositionType::Relative) };
+            { (*n).set_position(flex::Edge::Top, flex::StyleLength::undefined()) };
+        }
+        option::Option[label::Label]::None => { assert false; }
+    }
+    root.calculate_layout(width: 200.0f64, height: 300.0f64);
+    match label::find("2", within: #addr_of(root)) {
+        option::Option[label::Label]::Some(x) => { assert approx(x.y(), 20.0f64); }
+        option::Option[label::Label]::None => { assert false; }
+    }
+    match label::find("3", within: #addr_of(root)) {
+        option::Option[label::Label]::Some(x) => { assert approx(x.y(), 40.0f64); }
+        option::Option[label::Label]::None => { assert false; }
+    }
+    return;
+}
+
+// ---- inserting a child at a position ----------------------------------------
+// `insert_child(node, at:)`, `move_child(from:, to:)`, `remove_child(at:)` and
+// `child_index(of:)` are flex's, reached through `node()`.
+//
+// The guarantee worth knowing: inserting in the MIDDLE does not invalidate a
+// cursor already pointing at a later sibling. Children are `Vec[Box[Node]]`, so
+// the vector reorders BOXES while the nodes stay at their own heap addresses —
+// which is the whole reason flex moved to boxed children. Only `remove_child`
+// moves a node, and only `remove_child` bumps `removal_count()`.
+
+#[test]
+fn a_child_can_be_inserted_at_a_position() {
+    var b: facet::Builder = facet::Builder::new();
+    b.add(label::label("one", key: "1").height(10.0f64));
+    b.add(label::label("three", key: "3").height(10.0f64));
+    var root: facet::Node = facet::column(b, key: "col");
+    let p: *facet::Node = #addr_of(root);
+
+    // a cursor onto the LATER sibling, taken before the insert
+    match label::find("3", within: p) {
+        option::Option[label::Label]::Some(later) => {
+            assert later.is_live();
+
+            let s: status::Status = root.insert_child(
+                label::label("two", key: "2").height(10.0f64), at: 1 as usize);
+            assert s.is_ok();
+            assert root.child_count() == (3 as usize);
+
+            // the cursor survived an insert in front of it, and still points at
+            // the same node — no re-derive needed
+            assert later.is_live();
+            assert later.text() == "three";
+        }
+        option::Option[label::Label]::None => { assert false; }
+    }
+
+    // and the order is what was asked for
+    root.calculate_layout(width: 100.0f64, height: 100.0f64);
+    match label::find("2", within: p) {
+        option::Option[label::Label]::Some(x) => { assert approx(x.y(), 10.0f64); }
+        option::Option[label::Label]::None => { assert false; }
+    }
+    match label::find("3", within: p) {
+        option::Option[label::Label]::Some(x) => { assert approx(x.y(), 20.0f64); }
+        option::Option[label::Label]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn inserting_past_the_end_is_out_of_bounds_and_appending_is_not() {
+    var b: facet::Builder = facet::Builder::new();
+    b.add(label::label("one", key: "1"));
+    var root: facet::Node = facet::column(b);
+
+    // at == child_count appends
+    let ok: status::Status = root.insert_child(label::label("two", key: "2"), at: 1 as usize);
+    assert ok.is_ok();
+    assert root.child_count() == (2 as usize);
+
+    // past it is refused, and nothing changed
+    let bad: status::Status = root.insert_child(label::label("x", key: "x"), at: 9 as usize);
+    assert bad.is_err();
+    assert root.child_count() == (2 as usize);
+    return;
+}
+
+#[test]
+fn children_reorder_without_rebuilding() {
+    var b: facet::Builder = facet::Builder::new();
+    b.add(label::label("a", key: "a").height(10.0f64));
+    b.add(label::label("b", key: "b").height(10.0f64));
+    b.add(label::label("c", key: "c").height(10.0f64));
+    var root: facet::Node = facet::column(b);
+
+    let s: status::Status = root.move_child(from: 0 as usize, to: 2 as usize);
+    assert s.is_ok();
+    root.calculate_layout(width: 100.0f64, height: 100.0f64);
+
+    match label::find("a", within: #addr_of(root)) {
+        option::Option[label::Label]::Some(x) => { assert approx(x.y(), 20.0f64); }
+        option::Option[label::Label]::None => { assert false; }
+    }
+    return;
+}
+
+// ---- Display::None is the outlet router -------------------------------------
+// A parked screen does not need removing from the tree. flex skips a
+// `Display::None` child entirely, so it costs no space — while its nodes, and
+// every cursor into them, stay exactly where they were.
+//
+// That is strictly better than the park/re-attach router it replaces:
+// `remove_child` bumps `removal_count()`, which invalidates every cursor in the
+// application, and on a backend `removeFromSuperview` throws away the view
+// state (scroll position, selection, first responder) that parking was
+// supposed to preserve.
+
+#[test]
+fn park_step1_initial_positions() {
+    var b: facet::Builder = facet::Builder::new();
+    b.add(label::label("first", key: "a").height(30.0f64));
+    b.add(label::label("second", key: "b").height(30.0f64));
+    var root: facet::Node = facet::column(b, key: "outlet");
+    root.calculate_layout(width: 200.0f64, height: 300.0f64);
+    match label::find("b", within: #addr_of(root)) {
+        option::Option[label::Label]::Some(x) => { assert approx(x.y(), 30.0f64); }
+        option::Option[label::Label]::None => { assert false; }
+    }
+    return;
+}
+
+// The claim that makes this the right mechanism: parking invalidates nothing.
+#[test]
+fn parking_keeps_cursors_live_and_state_intact() {
+    var b: facet::Builder = facet::Builder::new();
+    b.add(text_field::text_field("typed so far", key: "input"));
+    b.add(label::label("other", key: "other"));
+    var root: facet::Node = facet::column(b, key: "outlet");
+    let p: *facet::Node = #addr_of(root);
+
+    // a cursor taken BEFORE the park
+    match text_field::find("input", within: p) {
+        option::Option[text_field::TextField]::Some(held) => {
+            assert held.is_live();
+            match label::find("other", within: p) {
+                option::Option[label::Label]::Some(x) => {
+                    { (*x.node()).set_display(flex::Display::None) };
+                }
+                option::Option[label::Label]::None => { assert false; }
+            }
+            // no removal happened, so nothing went stale
+            assert held.is_live();
+            assert held.text() == "typed so far";
+        }
+        option::Option[text_field::TextField]::None => { assert false; }
+    }
+
+    // and parking the held one itself does not lose its state either
+    match text_field::find("input", within: p) {
+        option::Option[text_field::TextField]::Some(x) => {
+            { (*x.node()).set_display(flex::Display::None) };
+            assert x.is_live();
+            assert x.text() == "typed so far";
+            { (*x.node()).set_display(flex::Display::Flex) };
+            assert x.text() == "typed so far";
+        }
+        option::Option[text_field::TextField]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn park_step2_after_display_none() {
+    var b: facet::Builder = facet::Builder::new();
+    b.add(label::label("first", key: "a").height(30.0f64));
+    b.add(label::label("second", key: "b").height(30.0f64));
+    var root: facet::Node = facet::column(b, key: "outlet");
+    root.calculate_layout(width: 200.0f64, height: 300.0f64);
+    match label::find("a", within: #addr_of(root)) {
+        option::Option[label::Label]::Some(x) => { { (*x.node()).set_display(flex::Display::None) }; }
+        option::Option[label::Label]::None => { assert false; }
+    }
+    root.calculate_layout(width: 200.0f64, height: 300.0f64);
+    match label::find("b", within: #addr_of(root)) {
+        option::Option[label::Label]::Some(x) => { assert approx(x.y(), 0.0f64); }
+        option::Option[label::Label]::None => { assert false; }
+    }
+    return;
+}
+
+// ---- a computed key outlives the Text it was built from ---------------------
+// `Data.key` was `str` — a borrowed {ptr, len}. Sound for a literal, a
+// use-after-free for anything computed, and the borrow checker does NOT catch
+// the escape across a call boundary. iris builds 25 keys by interpolation
+// ("board:card:${id}"), so this was a live hole for the main consumer.
+//
+// Now the node owns its bytes, so the key lives exactly as long as the node.
+
+#[test]
+fn a_computed_key_survives_the_text_it_came_from() {
+    var root: facet::Node = facet::column(facet::Builder::new(), key: "root");
+    {
+        // built in an inner scope and dropped at the brace
+        var built: text::Text = text::from_str("board:card:");
+        let _a: status::Status = built.append("42");
+        let _s: status::Status = root.add_child(label::label("card", key: built.view()));
+    }
+    // the Text is gone; the key is not
+    match facet::find_in(#addr_of(root), "board:card:42") {
+        option::Option[*facet::Node]::Some(n) => {
+            assert { (*n).key() } == "board:card:42";
+        }
+        option::Option[*facet::Node]::None => { assert false; }
+    }
+    return;
+}
+
+// The two kinds of key are different things with different lifetimes, and
+// facet keeps them apart: an ADDRESS resolves `find`, an IDENTITY says which
+// row is which. A tree row carries both — its own address and its identity.
+#[test]
+fn address_and_identity_are_separate() {
+    var model: tree::TreeNode = tree::TreeNode::new("Documents", "/home/u/Documents", is_branch: true);
+    var root: facet::Node = tree::tree(model, key: "sidebar");
+
+    match tree::find("sidebar", within: #addr_of(root)) {
+        option::Option[tree::Tree]::Some(x) => {
+            // the ADDRESS reaches the control
+            assert { (*x.node()).key() } == "sidebar";
+            // the IDENTITY reaches a row, and is owned because it is derived
+            match x.item("/home/u/Documents") {
+                option::Option[*tree::TreeNode]::Some(n) => {
+                    assert { (*n).label_of() } == "Documents";
+                }
+                option::Option[*tree::TreeNode]::None => { assert false; }
+            }
+        }
+        option::Option[tree::Tree]::None => { assert false; }
+    }
+    return;
+}
+
+// ---- why a row identity must be stable, not positional ----------------------
+// The classic mistake, and it costs a bug that reads as "selection jumps":
+// identify a row by WHERE IT IS ("row_0", "row_1") and every insert, remove or
+// sort renames every row after the change. Selection, expansion and view reuse
+// all key on the identity, so they follow the POSITION instead of the item.
+
+fn rows_identified_by_position() -> tree::TreeNode {
+    var root: tree::TreeNode = tree::TreeNode::new("root", "root", is_branch: true);
+    let _a: status::Status = root.add_child(tree::TreeNode::new("Alice", "row_0"));
+    let _b: status::Status = root.add_child(tree::TreeNode::new("Bob", "row_1"));
+    return root;
+}
+
+fn rows_identified_by_content() -> tree::TreeNode {
+    var root: tree::TreeNode = tree::TreeNode::new("root", "root", is_branch: true);
+    let _a: status::Status = root.add_child(tree::TreeNode::new("Alice", "/people/alice"));
+    let _b: status::Status = root.add_child(tree::TreeNode::new("Bob", "/people/bob"));
+    return root;
+}
+
+#[test]
+fn a_positional_identity_follows_the_slot_not_the_item() {
+    var root: facet::Node = tree::tree(rows_identified_by_position(), key: "t");
+    match tree::find("t", within: #addr_of(root)) {
+        option::Option[tree::Tree]::Some(x) => {
+            let _s: tree::Tree = x.select("row_1");          // the user picked Bob
+            assert x.selected() == "row_1";
+
+            // a row is inserted at the top; the model is rebuilt
+            var next: tree::TreeNode = tree::TreeNode::new("root", "root", is_branch: true);
+            let _z: status::Status = next.add_child(tree::TreeNode::new("Zoe", "row_0"));
+            let _a: status::Status = next.add_child(tree::TreeNode::new("Alice", "row_1"));
+            let _b: status::Status = next.add_child(tree::TreeNode::new("Bob", "row_2"));
+            let _r: tree::Tree = x.set_root(next);
+
+            // the selection still says "row_1" — which is ALICE now, not Bob
+            assert x.selected() == "row_1";
+            match x.item(x.selected()) {
+                option::Option[*tree::TreeNode]::Some(n) => {
+                    assert { (*n).label_of() } == "Alice";   // the wrong person
+                }
+                option::Option[*tree::TreeNode]::None => { assert false; }
+            }
+        }
+        option::Option[tree::Tree]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn a_content_identity_survives_the_same_edit() {
+    var root: facet::Node = tree::tree(rows_identified_by_content(), key: "t");
+    match tree::find("t", within: #addr_of(root)) {
+        option::Option[tree::Tree]::Some(x) => {
+            let _s: tree::Tree = x.select("/people/bob");
+
+            var next: tree::TreeNode = tree::TreeNode::new("root", "root", is_branch: true);
+            let _z: status::Status = next.add_child(tree::TreeNode::new("Zoe", "/people/zoe"));
+            let _a: status::Status = next.add_child(tree::TreeNode::new("Alice", "/people/alice"));
+            let _b: status::Status = next.add_child(tree::TreeNode::new("Bob", "/people/bob"));
+            let _r: tree::Tree = x.set_root(next);
+
+            assert x.selected() == "/people/bob";
+            match x.item(x.selected()) {
+                option::Option[*tree::TreeNode]::Some(n) => {
+                    assert { (*n).label_of() } == "Bob";     // still Bob
+                }
+                option::Option[*tree::TreeNode]::None => { assert false; }
+            }
+        }
+        option::Option[tree::Tree]::None => { assert false; }
+    }
+    return;
+}
+
+// ---- a node COPIES the key it is given --------------------------------------
+// The question this answers: if the Text you built the key from is freed, is
+// the node's key still good?
+//
+//     let a: Text = text::from_str("abc");
+//     var n = button::button("Save", key: a.view());
+//     // ... `a` drops ...
+//
+// Yes. `key: str` is the parameter type — natural for a literal — but
+// `node_with` stores `text::from_str(key)`, so the node owns its own bytes and
+// the caller's Text is free to go at any time. Verified under --asan.
+
+#[test]
+fn a_node_copies_the_key_so_the_callers_text_may_die() {
+    var root: facet::Node = facet::column(facet::Builder::new(), key: "root");
+    {
+        let a: text::Text = text::from_str("abcdefghijklmnopqrstuvwxyz0123456789");
+        let _s: status::Status = root.add_child(button::button("Save", key: a.view()));
+    }   // `a` drops here
+
+    match button::find("abcdefghijklmnopqrstuvwxyz0123456789", within: #addr_of(root)) {
+        option::Option[button::Button]::Some(x) => { assert x.title() == "Save"; }
+        option::Option[button::Button]::None => { assert false; }
+    }
+    return;
+}
+
+// The sharper case: a TEMPORARY, gone at the end of the statement rather than
+// the end of a scope. Same answer, for the same reason.
+#[test]
+fn a_temporary_key_is_copied_too() {
+    let id: i32 = 7;
+    var root: facet::Node = label::label("row",
+        key: text::from_str("board:card:${id}:aaaaaaaaaaaaaaaaaaaaaaaa").view());
+    assert root.key() == "board:card:7:aaaaaaaaaaaaaaaaaaaaaaaa";
+    return;
+}
+
+// ---- the value types the new rows named -------------------------------------
+
+#[test]
+fn dashes_is_a_copy_value_with_a_bounded_pattern() {
+    var root: facet::Node = bordered::bordered(key: "b");
+    match bordered::find("b", within: #addr_of(root)) {
+        option::Option[bordered::Bordered]::Some(x) => {
+            assert x.stroke_dash().is_solid();
+            let _c: bordered::Bordered = x.set_stroke_dash(vocab::Dashes::of(4.0f64, 2.0f64));
+            let d: vocab::Dashes = x.stroke_dash();
+            assert d.count == (2 as usize);
+            assert approx(d.run(0 as usize), 4.0f64);
+            assert approx(d.run(1 as usize), 2.0f64);
+            assert approx(d.run(7 as usize), 0.0f64);   // past `count`, not past the array
+            assert d.is_solid() == false;
+        }
+        option::Option[bordered::Bordered]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn a_menu_item_carries_one_key_equivalent() {
+    var root: facet::Node = context_menu_item::context_menu_item(key: "mi");
+    match context_menu_item::find("mi", within: #addr_of(root)) {
+        option::Option[context_menu_item::ContextMenuItem]::Some(x) => {
+            assert x.shortcut().is_set() == false;
+            let _c: context_menu_item::ContextMenuItem =
+                x.set_shortcut(vocab::Shortcut::of("s", modifiers: vocab::KeyModifiers::Ctrl));
+            assert x.shortcut().key == "s";
+            assert x.shortcut().is_set();
+        }
+        option::Option[context_menu_item::ContextMenuItem]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn a_canvas_carries_its_drawable() {
+    var root: facet::Node = canvas::canvas(key: "c");
+    match canvas::find("c", within: #addr_of(root)) {
+        option::Option[canvas::Canvas]::Some(x) => {
+            let _c: canvas::Canvas = x.set_drawable(vocab::Drawable::none());
+            assert x.drawable().ctx == (0 as *u8);
+        }
+        option::Option[canvas::Canvas]::None => { assert false; }
     }
     return;
 }
@@ -327,9 +2232,9 @@ fn zstack_overlaps_its_children() {
     b.add(button::button("B", key: "b").width(30.0f64).height(30.0f64));
     var root: facet::Node = facet::zstack(b);
     root.calculate_layout(width: 100.0f64, height: 100.0f64);
-    match button::find(#addr_of(root), "a") {
+    match button::find("a", within: #addr_of(root)) {
         option::Option[button::Button]::Some(a) => {
-            match button::find(#addr_of(root), "b") {
+            match button::find("b", within: #addr_of(root)) {
                 option::Option[button::Button]::Some(bb) => {
                     assert approx(a.x(), bb.x());
                     assert approx(a.y(), bb.y());
@@ -339,5 +2244,117 @@ fn zstack_overlaps_its_children() {
         }
         option::Option[button::Button]::None => { assert false; }
     }
+    return;
+}
+
+// ---- the @ui DSL ------------------------------------------------------------
+// elements.cplus is the contextual namespace. These prove the chain end to
+// end: a bare element name resolves through `@ui`, container arguments land
+// (DSL.5 — the `{` follows `)` on the same line), collection-if/for compose,
+// and `find` reaches keys written in DSL position.
+
+#[test]
+fn dsl_block_builds_a_keyed_tree_and_find_reaches_it() {
+    var root: facet::Node = @ui {
+        vstack(key: "body") {
+            button("Save", key: "save")
+            label("Hello", key: "hello")
+        }
+    };
+    match button::find("save", within: #addr_of(root)) {
+        option::Option[button::Button]::Some(hit) => { assert hit.title() == "Save"; }
+        option::Option[button::Button]::None => { assert false; }
+    }
+    match label::find("hello", within: #addr_of(root)) {
+        option::Option[label::Label]::Some(hit) => { assert hit.text() == "Hello"; }
+        option::Option[label::Label]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn dsl_container_args_write_the_container_key() {
+    var root: facet::Node = @ui {
+        vstack(key: "body") {
+            button("A", key: "a")
+        }
+    };
+    match facet::find_in(#addr_of(root), "body") {
+        option::Option[*facet::Node]::Some(p) => { assert { (*p).key() } == "body"; }
+        option::Option[*facet::Node]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn dsl_if_and_for_compose_items() {
+    let flag: bool = true;
+    var root: facet::Node = @ui {
+        column(key: "c") {
+            if flag {
+                button("Yes", key: "yes")
+            } else {
+                button("No", key: "no")
+            }
+            for i in 0..3 {
+                spacer()
+            }
+        }
+    };
+    match button::find("yes", within: #addr_of(root)) {
+        option::Option[button::Button]::Some(hit) => { assert hit.title() == "Yes"; }
+        option::Option[button::Button]::None => { assert false; }
+    }
+    match button::find("no", within: #addr_of(root)) {
+        option::Option[button::Button]::Some(_x) => { assert false; }
+        option::Option[button::Button]::None => { }
+    }
+    return;
+}
+
+#[test]
+fn dsl_split_takes_panes_as_children() {
+    var root: facet::Node = @ui {
+        split(key: "sp") {
+            column(key: "leading") { label("L", key: "l") }
+            column(key: "trailing") { label("R", key: "r") }
+        }
+    };
+    match label::find("r", within: #addr_of(root)) {
+        option::Option[label::Label]::Some(hit) => { assert hit.text() == "R"; }
+        option::Option[label::Label]::None => { assert false; }
+    }
+    return;
+}
+
+// ---- the global find (stages/3) ---------------------------------------------
+
+#[test]
+fn find_defaults_to_the_mounted_tree() {
+    // Nothing mounted: the defaulted `within` is 0 and the answer is None,
+    // never a trap.
+    mount::uninstall();
+    match button::find("save") {
+        option::Option[button::Button]::Some(_x) => { assert false; }
+        option::Option[button::Button]::None => { }
+    }
+    // Mounted: an agent holding only a key can address the element.
+    mount::install(mount::fr_renderer());
+    var b: facet::Builder = facet::Builder::new();
+    b.add(button::button("Save", key: "save"));
+    var root: facet::Node = facet::column(b, key: "r");
+    assert mount::mount(#addr_of(root));
+    match button::find("save") {
+        option::Option[button::Button]::Some(hit) => { assert hit.title() == "Save"; }
+        option::Option[button::Button]::None => { assert false; }
+    }
+    // Scoped: `within:` narrows to a subtree that does not carry the key.
+    var other: facet::Node = facet::column(facet::Builder::new(), key: "empty");
+    match button::find("save", within: #addr_of(other)) {
+        option::Option[button::Button]::Some(_y) => { assert false; }
+        option::Option[button::Button]::None => { }
+    }
+    mount::unmount(#addr_of(root));
+    mount::uninstall();
     return;
 }

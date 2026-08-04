@@ -2,6 +2,11 @@
 // The types facet's contract names. Enums are seeded from MAUI's, renamed
 // per naming_guideline.md; members come from the PublicAPI manifests.
 
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "stdlib/option" as option;
+import "stdlib/status" as status;
+
 // Microsoft.Maui.ApplicationModel.AppTheme (authored: no manifest source)
 enum Appearance {
     Unspecified,
@@ -48,11 +53,18 @@ enum FlowDirection {
     RightToLeft,
 }
 
-// Microsoft.Maui.Controls.FontAttributes
-enum FontStyle {
+// Microsoft.Maui.Controls.FontAttributes (authored: no manifest source)
+enum FontWeight {
+    Default,
+    UltraLight,
+    Thin,
+    Light,
+    Regular,
+    Medium,
+    Semibold,
     Bold,
-    Italic,
-    None,
+    Heavy,
+    Black,
 }
 
 // Microsoft.Maui.Aspect
@@ -164,7 +176,7 @@ enum SelectionMode {
 }
 
 // Microsoft.Maui.Controls.SeparatorVisibility
-enum SeparatorVisibility {
+enum Separator {
     Default,
     None,
 }
@@ -200,18 +212,18 @@ enum TextDecoration {
     Underline,
 }
 
+// Microsoft.Maui.TextType
+enum TextFormat {
+    Html,
+    Text,
+}
+
 // Microsoft.Maui.TextTransform
 enum TextTransform {
     Default,
     Lowercase,
     None,
     Uppercase,
-}
-
-// Microsoft.Maui.TextType
-enum TextType {
-    Html,
-    Text,
 }
 
 // Microsoft.Maui.Controls.ToolbarItemOrder
@@ -223,10 +235,144 @@ enum ToolbarPlacement {
 
 // ---- value types the contract carries by name -------------------------------
 
-struct Color { r: f64, g: f64, b: f64, a: f64 }
+// A color: a semantic token (mapped to the platform's native color) or explicit
+// RGBA. token 0 = none/unset; token 255 = Rgba (use r/g/b/a, 0..1); token 254 =
+// an adaptive light/dark pair. Flat + Copy. A color is a NAME (token) or a
+// literal, resolved by the backend at paint time. Two tiers of names:
+//
+//   Tier 1 — the PLATFORM's semantic colors (text tiers, surfaces, fills,
+//   selection, separator, accent, the system palette). Pass-through: their
+//   job is "look native"; they are never themeable. The escape hatch when
+//   the theme roles are not what you mean.
+//
+//   Tier 2 — THEME roles (primary/secondary brand slots, ink, surface tiers,
+//   outline, status). The app retints these with `theme::set_theme`; unset
+//   roles fall back to the nearest Tier-1 color, so a themeless app is native
+//   in both appearances and a themed app looks the same on every backend.
+struct Color {
+    token: u32,
+    r: f64,
+    g: f64,
+    b: f64,
+    a: f64,
+    // The dark side of an `adaptive` pair (token 254); unused otherwise.
+    r2: f64,
+    g2: f64,
+    b2: f64,
+    a2: f64,
+}
+
 impl Color {
-    fn rgba(r: f64, g: f64, b: f64, a: f64 = 1.0f64) -> Color { return Color { r: r, g: g, b: b, a: a }; }
-    fn clear() -> Color { return Color::rgba(0.0f64, 0.0f64, 0.0f64, 0.0f64); }
+    // A bare token, all channels zero.
+    fn tok(t: u32) -> Color {
+        return Color {
+            token: t,
+            r: 0.0f64, g: 0.0f64, b: 0.0f64, a: 0.0f64,
+            r2: 0.0f64, g2: 0.0f64, b2: 0.0f64, a2: 0.0f64,
+        };
+    }
+
+    fn none() -> Color { return Color::tok(0 as u32); }
+    // The regen's spelling of the unset color (every generated default).
+    fn clear() -> Color { return Color::none(); }
+
+    // ---- Tier 1: platform semantic colors -----------------------------------
+    // Text tiers.
+    fn text() -> Color { return Color::tok(1 as u32); }
+    fn text_secondary() -> Color { return Color::tok(2 as u32); }
+    fn text_tertiary() -> Color { return Color::tok(9 as u32); }
+    fn placeholder() -> Color { return Color::tok(15 as u32); }
+    fn link() -> Color { return Color::tok(16 as u32); }
+    // The user's chosen system accent.
+    fn accent() -> Color { return Color::tok(3 as u32); }
+    // Area tiers.
+    fn window_background() -> Color { return Color::tok(11 as u32); }
+    fn under_page_background() -> Color { return Color::tok(12 as u32); }
+    fn control_background() -> Color { return Color::tok(13 as u32); }
+    // Neutral fills.
+    fn fill() -> Color { return Color::tok(14 as u32); }
+    fn fill_secondary() -> Color { return Color::tok(19 as u32); }
+    // Selection.
+    fn selected_content_background() -> Color { return Color::tok(17 as u32); }
+    fn selected_text_background() -> Color { return Color::tok(18 as u32); }
+    fn separator() -> Color { return Color::tok(10 as u32); }
+    // The system palette.
+    fn system_red() -> Color { return Color::tok(4 as u32); }
+    fn system_green() -> Color { return Color::tok(5 as u32); }
+    fn system_blue() -> Color { return Color::tok(6 as u32); }
+    fn system_orange() -> Color { return Color::tok(7 as u32); }
+    fn system_gray() -> Color { return Color::tok(8 as u32); }
+    fn system_yellow() -> Color { return Color::tok(20 as u32); }
+    fn system_purple() -> Color { return Color::tok(21 as u32); }
+    fn system_pink() -> Color { return Color::tok(22 as u32); }
+    fn system_teal() -> Color { return Color::tok(23 as u32); }
+    fn system_indigo() -> Color { return Color::tok(24 as u32); }
+
+    // ---- literals + pairs ---------------------------------------------------
+    fn rgba(r: f64, g: f64, b: f64, a: f64 = 1.0f64) -> Color {
+        return Color {
+            token: 255 as u32,
+            r: r, g: g, b: b, a: a,
+            r2: 0.0f64, g2: 0.0f64, b2: 0.0f64, a2: 0.0f64,
+        };
+    }
+
+    // A light/dark rgba pair in one Color, resolved by the CURRENT appearance
+    // at paint time (and re-resolved live on an appearance flip). Pass rgba
+    // colors for both sides.
+    fn adaptive(light: Color, dark: Color) -> Color {
+        return Color {
+            token: 254 as u32,
+            r: light.r, g: light.g, b: light.b, a: light.a,
+            r2: dark.r, g2: dark.g, b2: dark.b, a2: dark.a,
+        };
+    }
+
+    // ---- Tier 2: theme roles ------------------------------------------------
+    // The brand slot: buttons, selection marks, links, badges.
+    fn primary() -> Color { return Color::tok(100 as u32); }
+    fn on_primary() -> Color { return Color::tok(101 as u32); }
+    // The second brand slot.
+    fn secondary() -> Color { return Color::tok(102 as u32); }
+    fn on_secondary() -> Color { return Color::tok(103 as u32); }
+    // The mark base (text / glyph / hairline / translucent fill) at `a` —
+    // the same alpha reads identically over both appearances' surfaces.
+    fn ink(a: f64 = 1.0f64) -> Color {
+        var c: Color = Color::tok(104 as u32);
+        c.a = a;
+        return c;
+    }
+    // Surface tiers: the floor, raised chrome (panel / card), and recessed
+    // wells.
+    fn surface() -> Color { return Color::tok(105 as u32); }
+    fn raised() -> Color { return Color::tok(106 as u32); }
+    fn sunken() -> Color { return Color::tok(107 as u32); }
+    // Extended surface tiers — what IDE-grade chrome needs beyond the three
+    // base tiers, each independently retintable by set_theme:
+    fn content() -> Color { return Color::tok(112 as u32); }    // editor / document body
+    fn toolbar() -> Color { return Color::tok(113 as u32); }    // the chrome row above content
+    fn tabstrip() -> Color { return Color::tok(114 as u32); }   // a tab row / strip behind tabs
+    fn track() -> Color { return Color::tok(115 as u32); }      // a segmented / switcher track
+    fn chip() -> Color { return Color::tok(116 as u32); }       // a discrete raised control chip
+    fn recessed() -> Color { return Color::tok(117 as u32); }   // a translucent recessed well
+    // Separators and borders.
+    fn outline() -> Color { return Color::tok(108 as u32); }
+    // Status.
+    fn success() -> Color { return Color::tok(109 as u32); }
+    fn warning() -> Color { return Color::tok(110 as u32); }
+    fn danger() -> Color { return Color::tok(111 as u32); }
+
+    fn is_set(this) -> bool { return this.token != (0 as u32); }
+    // Resolution depends on the theme or the appearance (any named token or
+    // pair — everything except unset and a fixed rgba literal). What the
+    // backend's repaint registry keys on.
+    fn is_dynamic(this) -> bool {
+        return this.token != (0 as u32) && this.token != (255 as u32);
+    }
+    fn is_adaptive(this) -> bool { return this.token == (254 as u32); }
+    fn is_theme_role(this) -> bool {
+        return this.token >= (100 as u32) && this.token <= (117 as u32);
+    }
 }
 
 struct Corners { top_leading: f64, top_trailing: f64, bottom_leading: f64, bottom_trailing: f64 }
@@ -269,14 +415,113 @@ impl Shape {
     fn rounded(r: f64) -> Shape { return Shape { kind: 2 as i64, corners: Corners::all(r) }; }
 }
 
-// Styled runs over a text surface. Empty until a run is added.
-struct Spans { count: i64 }
-impl Spans { fn none() -> Spans { return Spans { count: 0 as i64 }; } }
+// ---- styled text ------------------------------------------------------------
+// One run of text with its own styling. MAUI's FormattedString is a list of
+// Spans; the list existed in the ledger and the builder that fills it did not,
+// so `set_formatted_text` was a verb nothing could feed.
+struct TextSpan {
+    text: text::Text,
+    font_size: f64,
+    font_family: text::Text,
+    font_weight: FontWeight,
+    is_italic: bool,
+    color: Color,
+    background_color: Color,
+    decoration: TextDecoration,
+    // A destination. Non-empty makes the run a link.
+    link: text::Text,
+}
+
+impl TextSpan {
+    fn of(text: str,
+          font_size: f64 = 0.0f64,
+          font_family: str = "",
+          font_weight: FontWeight = FontWeight::Default,
+          italic: bool = false,
+          color: Color = Color::clear(),
+          background_color: Color = Color::clear(),
+          decoration: TextDecoration = TextDecoration::None,
+          link: str = "") -> TextSpan {
+        return TextSpan {
+            text: text::from_str(text), font_size: font_size,
+            font_family: text::from_str(font_family), font_weight: font_weight,
+            is_italic: italic,
+            color: color, background_color: background_color,
+            decoration: decoration, link: text::from_str(link),
+        };
+    }
+    fn view(this) -> str { return this.text.view(); }
+    fn is_link(this) -> bool { return this.link.view() != ""; }
+}
+
+// Styled runs over a text surface. Owned: written by `take`, read one run at
+// a time, because `-> ref T` does not parse.
+struct Spans { _runs: vec::Vec[TextSpan] }
+impl Spans {
+    fn new() -> Spans { return Spans { _runs: vec::new::[TextSpan]() }; }
+    fn add(ref this, take run: TextSpan) -> status::Status { return this._runs.append(run); }
+    // The common case: plain text with no styling of its own.
+    fn add_text(ref this, s: str) -> status::Status { return this._runs.append(TextSpan::of(s)); }
+    fn count(this) -> usize { return this._runs.count(); }
+    fn at(this, index: usize) -> *TextSpan {
+        return match this._runs.at_ptr(index) {
+            option::Option[*TextSpan]::Some(p) => p,
+            option::Option[*TextSpan]::None => 0 as *TextSpan,
+        };
+    }
+    fn is_empty(this) -> bool { return this._runs.count() == (0 as usize); }
+}
 
 // A draw callback for a canvas: (ctx, width, height).
 struct Drawable { draw: fn(*u8, f64, f64), opaque ctx: *u8 }
 fn draw_none(ctx: *u8, w: f64, h: f64) { return; }
 impl Drawable { fn none() -> Drawable { return Drawable { draw: draw_none, ctx: 0 as *u8 }; } }
+
+// A stroke dash pattern: on/off run lengths. Fixed at eight, which is more
+// than any dash any platform draws, so the value stays Copy and a Border's
+// props stay free of an allocation.
+const DASH_SLOTS: usize = 8 as usize;
+struct Dashes { count: usize, runs: [f64; 8] }
+impl Dashes {
+    fn none() -> Dashes { return Dashes { count: 0 as usize, runs: [0.0f64; 8] }; }
+    fn of(on: f64, off: f64) -> Dashes {
+        var d: Dashes = Dashes::none();
+        d.runs[0 as usize] = on;
+        d.runs[1 as usize] = off;
+        d.count = 2 as usize;
+        return d;
+    }
+    fn run(this, at: usize) -> f64 {
+        if at >= this.count { return 0.0f64; }
+        return this.runs[at];
+    }
+    fn is_solid(this) -> bool { return this.count == (0 as usize); }
+}
+
+// A keyboard shortcut. MAUI models a list; a menu item shows one.
+struct Shortcut { key: str, modifiers: KeyModifiers }
+impl Shortcut {
+    fn none() -> Shortcut { return Shortcut { key: "", modifiers: KeyModifiers::None }; }
+    fn of(key: str, modifiers: KeyModifiers = KeyModifiers::None) -> Shortcut {
+        return Shortcut { key: key, modifiers: modifiers };
+    }
+    fn is_set(this) -> bool { return this.key != ""; }
+}
+
+// An owned list of strings — a popup's items. Not Copy: written by `take`,
+// read one element at a time, because `-> ref T` does not parse.
+struct TextList { _v: vec::Vec[text::Text] }
+impl TextList {
+    fn new() -> TextList { return TextList { _v: vec::new::[text::Text]() }; }
+    fn add(ref this, s: str) -> status::Status { return this._v.append(text::from_str(s)); }
+    fn count(this) -> usize { return this._v.count(); }
+    fn at(this, index: usize) -> str {
+        return match this._v.at_ptr(index) {
+            option::Option[*text::Text]::Some(t) => { (*t).view() },
+            option::Option[*text::Text]::None => "",
+        };
+    }
+}
 
 struct Date { year: i64, month: i64, day: i64 }
 impl Date { fn zero() -> Date { return Date { year: 0 as i64, month: 0 as i64, day: 0 as i64 }; } }

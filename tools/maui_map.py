@@ -61,9 +61,9 @@ TYMAP = {
     "Microsoft.Maui.Controls.FormattedString": "Spans",    # styled runs of text
     "Microsoft.Maui.Controls.Shapes.Geometry": "Shape",
     "Microsoft.Maui.Graphics.IShape": "Shape",
-    "Microsoft.Maui.Controls.DoubleCollection": "f64[]",
+    "Microsoft.Maui.Controls.DoubleCollection": "Dashes",   # a stroke dash pattern
     "float[]": "f64[]",
-    "System.Collections.Generic.IList<string>": "str[]",
+    "System.Collections.Generic.IList<string>": "TextList",  # an owned list of strings
     # A subtree in the description is a Node, whatever MAUI's static type.
     "object": "Node",
     "Microsoft.Maui.Controls.Element": "Node",
@@ -79,7 +79,7 @@ TYMAP = {
     "Microsoft.Maui.Controls.WebViewSource": "str",
     "Microsoft.Maui.Graphics.IDrawable": "Drawable",
     "Microsoft.Maui.Controls.SwipeItems": "SwipeItem[]",
-    "System.Collections.Generic.IList<Microsoft.Maui.Controls.KeyboardAccelerator!>": "KeyboardAccelerator[]",
+    "System.Collections.Generic.IList<Microsoft.Maui.Controls.KeyboardAccelerator!>": "Shortcut",
     "System.Collections.Generic.IList<Microsoft.Maui.Controls.MenuBarItem>": "MenuBarItem[]",
     "System.Collections.Generic.IList<Microsoft.Maui.Controls.ToolbarItem>": "ToolbarItem[]",
     "System.Collections.Generic.IEnumerable<Microsoft.Maui.Controls.ToolbarItem>": "ToolbarItem[]",
@@ -92,7 +92,7 @@ TYMAP = {
 # ---- MAUI enums -> facet enums. Vocabulary facet must DECLARE, not a drop. ---
 ENUMS = {
     "Microsoft.Maui.TextAlignment": "TextAlign",
-    "Microsoft.Maui.Controls.FontAttributes": "FontStyle",
+    "Microsoft.Maui.Controls.FontAttributes": "FontWeight",
     "Microsoft.Maui.TextTransform": "TextTransform",
     "Microsoft.Maui.TextDecorations": "TextDecoration",
     "Microsoft.Maui.LineBreakMode": "LineBreak",
@@ -102,14 +102,14 @@ ENUMS = {
     "Microsoft.Maui.FlowDirection": "FlowDirection",
     "Microsoft.Maui.ClearButtonVisibility": "ClearButton",
     "Microsoft.Maui.Keyboard": "Keyboard",
-    "Microsoft.Maui.TextType": "TextType",
+    "Microsoft.Maui.TextType": "TextFormat",
     "Microsoft.Maui.SafeAreaEdges": "SafeArea",
     "Microsoft.Maui.SwipeDirection": "SwipeDirection",
     "Microsoft.Maui.Controls.ButtonsMask": "Buttons",
     "Microsoft.Maui.Controls.Button.ButtonContentLayout": "ContentLayout",
     "Microsoft.Maui.Controls.SelectionMode": "SelectionMode",
     "Microsoft.Maui.Controls.ListViewSelectionMode": "SelectionMode",
-    "Microsoft.Maui.Controls.SeparatorVisibility": "SeparatorVisibility",
+    "Microsoft.Maui.Controls.SeparatorVisibility": "Separator",
     "Microsoft.Maui.Controls.EditorAutoSizeOption": "AutoSize",
     "Microsoft.Maui.Controls.ItemSizingStrategy": "ItemSizing",
     "Microsoft.Maui.Controls.ItemsUpdatingScrollMode": "ScrollAnchor",
@@ -206,6 +206,190 @@ METHOD_VOCABULARY = {
     ("ListView", "EndRefresh"): "end_refresh",
 }
 
+# ---- the naming pass over the default snake_case ----------------------------
+# naming_guideline.md: "Drop words the type or context already implies" and
+# "Name a type for what it is, not the class it wraps." The default rule
+# transcribes MAUI's member name, which carries MAUI's vocabulary through.
+#
+# Keyed by MEMBER, not by (Type, Member), because the rule is about the word:
+# wherever MAUI writes FontAutoScalingEnabled, facet writes font_scales. Nine
+# types declare that member and none of them means anything else. A rule that
+# would read differently on a second type belongs in OVERLAY instead; the
+# generator's lint fails the run if a rename leaves a name the guideline still
+# rejects, so neither table can drift silently.
+#
+# Applied to the writes and reads bands only. Events and methods carry their
+# own names (DISCRETE_EVENT_HINTS, METHOD_VOCABULARY).
+RENAME = {
+    # -- the trailing noun repeats what the facet TYPE already says. Stage 1
+    #    renamed the enums (LineBreakMode -> LineBreak); the verbs did not
+    #    follow, so each of these drifted from its own type.
+    "HorizontalScrollBarVisibility": "horizontal_scroll_bars",  # ScrollBars
+    "VerticalScrollBarVisibility":   "vertical_scroll_bars",    # ScrollBars
+    "ClearButtonVisibility":         "clear_button",            # ClearButton
+    "SeparatorVisibility":           "separator",               # Separator
+    "ItemsUpdatingScrollMode":       "scroll_anchor",           # ScrollAnchor
+    "ItemSizingStrategy":            "item_sizing",             # ItemSizing
+    "LineBreakMode":                 "line_break",              # LineBreak
+    "ReturnType":                    "return_key",              # ReturnKey
+    "TextType":                      "text_format",             # TextFormat
+    "FontAttributes":                "font_weight",             # FontWeight — a SCALE, not MAUI's Bold|Italic|None (stages/3 "found late" #1)
+    "IndicatorsShape":               "dot_shape",               # DotShape
+    "Aspect":                        "fit",                     # ImageFit
+    "Orientation":                   "axis",                    # ScrollAxis
+    "Intent":                        "style",                   # TableStyle
+    "Order":                         "placement",               # ToolbarPlacement
+    "SafeAreaEdges":                 "safe_area",               # SafeArea
+    "TextDecorations":               "text_decoration",         # TextDecoration
+    "StrokeDashArray":               "stroke_dash",             # Dashes
+
+    # -- omit needless words
+    "HorizontalTextAlignment": "text_align",           # horizontal is the default axis
+    "VerticalTextAlignment":   "vertical_align",
+    "RemainingItemsThreshold": "remaining_threshold",  # an items view's items
+    "RefreshControlColor":     "refresh_color",        # "control" is the wrapped class
+    "PeekAreaInsets":          "peek_insets",
+    "GroupName":               "group",
+    "StrokeThickness":         "stroke_width",         # pairs with border_width
+    "StrokeLineCap":           "stroke_cap",
+    "StrokeLineJoin":          "stroke_join",
+    # IndicatorView is facet's `page_dots`: an indicator IS a dot.
+    "IndicatorColor":          "dot_color",
+    "SelectedIndicatorColor":  "selected_dot_color",
+    "IndicatorSize":           "dot_size",
+    "MaximumVisible":          "max_dots",
+
+    # -- name for the role, not the class MAUI wraps. facet images take a path,
+    #    so "Source" names a .NET type that is not in the signature.
+    "ImageSource":      "image",
+    "IconImageSource":  "icon",
+    "ThumbImageSource": "thumb_image",
+
+    # -- booleans: `_enabled` is what the type already says, and a reader must
+    #    read as an assertion (naming_guideline.md). The setter drops any
+    #    is_/has_/can_ prefix, so `set_grouped(true)` / `is_grouped()`.
+    "FontAutoScalingEnabled":    "font_scales",
+    "IsSpellCheckEnabled":       "checks_spelling",
+    "IsTextPredictionEnabled":   "predicts_text",
+    "IsBounceEnabled":           "bounces",
+    "IsGroupingEnabled":         "is_grouped",      # one word with CollectionView's
+    "IsPullToRefreshEnabled":    "is_refreshable",  # one word with RefreshView's
+    "IsRefreshEnabled":          "is_refreshable",
+    "IsSwipeEnabled":            "is_swipeable",
+    "IsScrollAnimated":          "animates_scroll",
+    "AnimateCurrentItemChanges": "animates_item",
+    "AnimatePositionChanges":    "animates_position",
+    "CascadeInputTransparent":   "cascades_input",  # input-transparency reaches descendants
+    "HideSingle":                "hides_single",
+    "RefreshAllowed":            "can_refresh",     # a read reads as an assertion
+}
+
+# ---- MAUI exposes a mutable collection through a getter ---------------------
+# `Picker.Items` and `MenuFlyoutItem.KeyboardAccelerators` are declared as
+# reads because .NET hands back an IList you then mutate. facet has no such
+# shape: you write the whole value. So the band is corrected here, once, rather
+# than emitting a reader nothing can fill.
+BAND = {
+    ("Picker", "Items"): "writes",
+    ("MenuFlyoutItem", "KeyboardAccelerators"): "writes",
+}
+
+# ---- facet's own words, with no MAUI provenance -----------------------------
+# INTENT: "it grows by what its applications need, and adds words of its own."
+# Measured against iris in reports/facet-iris-gap-2026-08-01.md. Recorded here
+# so they are declared deliberately and appear in the ledger, rather than
+# turning up in a control module with nothing behind them.
+#
+# (owner, word, shape, why MAUI has none, disposition)
+FACET_ORIGIN = [
+    ("list, collection", "set_count / count()", "usize",
+     "MAUI binds ItemsSource; Stage 1 dropped that as MVVM, so the imperative "
+     "replacement — a row count plus a row builder — is facet's to invent",
+     "Stage 2 — emitted"),
+    ("list, collection", "set_row(_:ctx:)", "fn(*u8, usize) -> Node",
+     "the other half of set_count: MAUI would have used a DataTemplate",
+     "Stage 2 — emitted"),
+    ("symbol", "symbol(icon:) / system_symbol(name:)", "a glyph",
+     "MAUI has no glyph vocabulary at all — an icon is app content, not OS "
+     "chrome, so facet declares it and ships the font rather than abstracting "
+     "over three platforms' icon sets",
+     "SHIPPED 2026-08-03 — hand-written vendor/facet/src/symbol.cplus, with "
+     "the name -> codepoint table generated by tools/gen_icons.py from "
+     "assets/MaterialSymbolsOutlined.ttf (4,268 icons, Apache 2.0, 927 KB). "
+     "Three tiers: the bundled font (portable, checked at compile time), "
+     "`system_symbol` (the OS's set — deliberately platform-specific), and an "
+     "application's own font (portable, unchecked). Proved in "
+     "examples/symbol_spike"),
+    ("label", "wrap_label", "a label that wraps",
+     "MAUI folds wrapping into Label via LineBreakMode, and so does facet",
+     "NOT A CONTROL 2026-08-03 — `label(text, line_break: LineBreak::WordWrap)`. "
+     "The predecessor was a separate kind only because AppKit has a second "
+     "factory (`wrappingLabelWithString:` vs `labelWithString:`), and which "
+     "factory to call is the backend's sentence, not the contract's"),
+    ("(component)", "composer", "a multi-line input with chrome",
+     "a compound widget, not a MAUI control",
+     "NOT A CONTROL 2026-08-03 — `text_area` already carries the text, the "
+     "placeholder, on_submit and on_text_changed; `bordered` carries the "
+     "border and the shared band carries the background. An arrangement of "
+     "existing words is a COMPONENT (Stage 3's tier), not a new word"),
+    ("tree", "tree(root:) + TreeNode", "a hierarchical list",
+     "MAUI has no tree control at all",
+     "SHIPPED 2026-08-03 — hand-written vendor/facet/src/tree.cplus. GENERIC, "
+     "not the file browser it came from: `path` -> `id` (stable identity) and "
+     "`is_dir` -> `is_branch` (may be true before any child exists, which is "
+     "what makes lazy loading expressible). The tree OWNS its model as "
+     "Vec[Box[TreeNode]], flex's idiom — the predecessor malloc'd nodes and "
+     "leaked them for the life of the application. Recycled underneath on "
+     "every platform, but not `list`: count+index and parent->children are "
+     "different protocols"),
+    ("split", "split(b, axis:, position:) + Pane verbs", "a draggable divider",
+     "behaviour, not layout — flex cannot own it because the divider is a "
+     "control the USER drags, unlike spacer and zstack which are pure "
+     "arrangement and did go to flex_layout",
+     "SHIPPED 2026-08-03 — hand-written vendor/facet/src/split.cplus. "
+     "`SplitAxis::Columns|Rows` names the RESULT, because a boolean `vertical` "
+     "asks about the wrong object; panes are Leading/Trailing to match Insets "
+     "and survive RTL. The position is clamped WHERE IT IS STORED, so an "
+     "application that saves and restores reads back what was applied. "
+     "Collapsing remembers the position"),
+    ("any node", ".gesture(on_click:, on_hover:, …)", "raw input, as a modifier",
+     "MAUI attaches behaviour by pushing recognizer objects into a "
+     "GestureRecognizers collection, which Stage 1 dropped as MODEL. The 21 "
+     "rows on the recognizer types themselves were ADOPTed and then reached no "
+     "control, because those types are neither controls nor shared bases",
+     "SHIPPED 2026-08-03 — hand-written vendor/facet/src/gestures.cplus. A "
+     "MODIFIER on Node, not a control and not 21 parameters on 38 "
+     "constructors: `label(\"x\").gesture(on_click: f)`. Data carries one "
+     "pointer, null until a node asks. iris's `clickable` is this, and does "
+     "not need to exist"),
+    ("window_chrome", "window_buttons() and .window_drag()",
+     "the titlebar an application draws itself",
+     "platform chrome; MAUI's window is not a described tree, so there was "
+     "never a row to adopt",
+     "SHIPPED 2026-08-03 — hand-written vendor/facet/src/window_chrome.cplus. "
+     "TWO SHAPES, deliberately: `window_buttons()` draws something so it is a "
+     "control; `.window_drag()` draws nothing and only says what pointer "
+     "input on a region means, so it is a modifier and lives in the gesture "
+     "set beside the other things a drag can mean"),
+    ("vocab", "TextSpan + Spans", "a styled run and the list of them",
+     "`Spans` is adopted from FormattedString; the builder that fills it is "
+     "facet's",
+     "SHIPPED 2026-08-03 — `Spans` was a stub (`struct Spans { count: i64 }`), "
+     "so `set_formatted_text` was a verb nothing could feed. Now a real owned "
+     "list of `TextSpan` runs, each with its own size, family, style, colours, "
+     "decoration and an optional link. Owned, so it is written by `take` and "
+     "read a run at a time, the same shape as Picker's TextList"),
+    ("tree", "select(id:) / expand(id:) / restore(expanded:selected:)",
+     "selection and expansion, keyed on the id",
+     "`tree` is facet's, so its verbs are too",
+     "SHIPPED 2026-08-03 — the six path verbs iris recorded, now methods on "
+     "the Tree cursor and named for identity rather than for paths. `restore` "
+     "is one verb on purpose: EXPANSION BEFORE SELECTION, because a row in a "
+     "collapsed branch is not visible and the platform drops the selection. "
+     "That ordering was got wrong once and reads as 'selection randomly does "
+     "not stick'"),
+]
+
 # ---- per-row overrides, where a mechanical rule reads the row wrong ---------
 # (Type, Member) -> (status, facet_name, note)
 OVERLAY = {
@@ -239,6 +423,32 @@ OVERLAY = {
     # Safe-area insets change how a child is laid out — flex_layout's business.
     ("Border", "SafeAreaEdges"): ("DROP", "", LAYOUT),
 
+    # A mutable collection MAUI hands back through a getter; see BAND.
+    ("Picker", "Items"): ("ADOPT", "set_items / items()",
+                          "TextList — the strings a popup shows"),
+    ("MenuFlyoutItem", "KeyboardAccelerators"): (
+        "ADOPT", "set_shortcut / shortcut()",
+        "Shortcut — MAUI models a list; a menu item shows one key equivalent, "
+        "and every platform that has menus agrees"),
+
+    # ---- found by the iris audit (reports/facet-iris-gap-2026-08-01.md).
+    # These four reached a control as ADOPT and were then dropped in silence by
+    # the generator's SKIP_TYPES. Each is decided here, in the ledger.
+
+    # Same rule already applied to Picker/ListView/SelectableItemsView
+    # SelectedItem: a carousel's current item is its position.
+    ("CarouselView", "CurrentItem"): ("DROP", "", MODEL + " — the current item "
+                                      "is a position; set_position carries it"),
+    # The realized views a virtualizing panel happens to be holding.
+    ("CarouselView", "VisibleViews"): ("DROP", "", ENGINE + " — MAUI's realized-"
+                                       "view bookkeeping; facet reads children()"),
+    # Overriding the area a view is laid out in is layout, whoever asks for it.
+    ("ScrollView", "LayoutAreaOverride"): ("DROP", "", LAYOUT),
+    # MAUI carries the dash pattern twice: DoubleCollection for the app,
+    # float[] for the handler. facet writes one and the backend reads it.
+    ("Border", "StrokeDashPattern"): ("DROP", "", ENGINE + " — the handler-facing "
+                                      "mirror of StrokeDashArray"),
+
     # One corner verb, one type. MAUI types Button/RadioButton corners as int
     # and BoxView's as a 4-corner struct; facet carries Corners everywhere.
     ("Button", "CornerRadius"): ("ADOPT", "set_corner_radius / corner_radius()", "Corners"),
@@ -261,6 +471,14 @@ OVERLAY = {
     ("Entry", "IsPassword"): ("ADOPT", "set_is_secure / is_secure()", "bool"),
     ("Label", "MaxLines"): ("ADOPT", "set_max_lines / max_lines()", "i64"),
 
+    # A pointer interaction: start/end/cancel happen once, drag and hover-move
+    # keep happening. No suffix rule can split those, so they are split here.
+    ("GraphicsView", "StartInteraction"): ("ADOPT", "on_press", "ctx-trailing callback"),
+    ("GraphicsView", "EndInteraction"): ("ADOPT", "on_release", "ctx-trailing callback"),
+    ("GraphicsView", "CancelInteraction"): ("ADOPT", "on_cancel", "ctx-trailing callback"),
+    ("GraphicsView", "StartHoverInteraction"): ("ADOPT", "on_hover", "ctx-trailing callback"),
+    ("GraphicsView", "EndHoverInteraction"): ("ADOPT", "on_unhover", "ctx-trailing callback"),
+
     # Events whose default prefix reads wrong.
     ("Button", "Clicked"): ("ADOPT", "on_click", "ctx-trailing callback"),
     ("TapGestureRecognizer", "Tapped"): ("ADOPT", "on_click", "ctx-trailing callback"),
@@ -280,6 +498,10 @@ OVERLAY = {
     ("Window", "Deactivated"): ("ADOPT", "observe_window_inactive", "events::Subscription"),
 }
 
+# `on_` for something that happens once, `observe_` for something that keeps
+# happening. The distinction decides whether a row is a build-time handler or
+# an events::Subscription, so a word missing from this list is not a cosmetic
+# slip: it makes the row an `observe_` that Stage 2 cannot emit at all.
 DISCRETE_EVENT_HINTS = ("Clicked", "Pressed", "Released", "Completed", "Tapped",
                         "Focused", "Unfocused", "Changed", "Toggled", "Selected",
                         "Appearing", "Disappearing", "Started", "Reached",
@@ -288,7 +510,12 @@ DISCRETE_EVENT_HINTS = ("Clicked", "Pressed", "Released", "Completed", "Tapped",
                         "Opened", "Closed",
                         "Entered", "Exited", "Moved", "Starting", "Created",
                         "Destroying", "Activated", "Deactivated", "Resumed",
-                        "Stopped", "Backgrounding")
+                        "Stopped", "Backgrounding",
+                        # found by Stage 2's row guard: each of these was
+                        # becoming an observe_ and then vanishing in silence.
+                        "Invoked", "Requested", "Received", "Terminated",
+                        "Navigated", "Navigating", "Initialized", "Initializing",
+                        "Ended")
 
 
 def snake(name: str) -> str:
@@ -324,7 +551,7 @@ def default_row(ty, member, band, valuety):
         fty = TYMAP.get(valuety) or ENUMS.get(valuety)
         if not fty:
             return None                      # undecided — the script fails on it
-        base = snake(member)
+        base = RENAME.get(member) or snake(member)
         if band == "writes":
             return ("ADOPT", f"set_{base} / {base}()", fty)
         return ("ADOPT", f"{base}()", f"{fty} (read-only)")
@@ -341,9 +568,10 @@ def rows():
     spec = json.load(open(SPEC))
     out, undecided = [], []
     for ty, bands in spec.items():
-        for band in ("writes", "reads", "events", "methods"):
-            for member, vt in bands.get(band, {}).items():
+        for declared in ("writes", "reads", "events", "methods"):
+            for member, vt in bands.get(declared, {}).items():
                 valuety = vt if isinstance(vt, str) else ""
+                band = BAND.get((ty, member), declared)
                 r = OVERLAY.get((ty, member)) or default_row(ty, member, band, valuety)
                 if r is None:
                     undecided.append((ty, member, band, valuety))
@@ -351,6 +579,15 @@ def rows():
                 if ty == "Window" and r[0] == "ADOPT":
                     r = (r[0], r[1], f"{r[2]} — on {window_owner(member, band)}")
                 out.append((ty, member, band, valuety) + r)
+                # stages/3 "found late" #1: MAUI's FontAttributes folds weight
+                # and slant into one enum, so "semibold italic" is unsayable.
+                # facet splits the axes: the row above became a WEIGHT scale,
+                # and every type carrying it gains a separate is_italic row.
+                if member == "FontAttributes" and r[0] == "ADOPT":
+                    out.append((ty, "FontAttributes (italic axis)", band, "bool",
+                                "ADOPT", "is_italic",
+                                "bool — facet-origin: the slant axis MAUI folded into "
+                                "FontAttributes, split out so weight and slant compose"))
     return out, undecided
 
 
@@ -389,6 +626,16 @@ def main():
     ]
     for why, n in sorted(reasons.items(), key=lambda kv: -kv[1]):
         out.append(f"- **{n}** — {why}\n")
+
+    out.append("\n## facet's own words\n\n")
+    out.append("No MAUI provenance. INTENT: \"it grows by what its applications\n"
+               "need, and adds words of its own.\" Measured against iris in\n"
+               "`reports/facet-iris-gap-2026-08-01.md` and declared here so the\n"
+               "ledger names every word facet has, not only the borrowed ones.\n\n")
+    out.append("| owner | word | shape | why MAUI has none | disposition |\n")
+    out.append("|---|---|---|---|---|\n")
+    for owner, word, shape, why, when in FACET_ORIGIN:
+        out.append(f"| {owner} | `{word}` | {shape} | {why} | {when} |\n")
     out.append("\n")
     cur = None
     for ty, member, band, valuety, status, fname, note in rs:
