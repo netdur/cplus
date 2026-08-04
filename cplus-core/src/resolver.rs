@@ -3141,6 +3141,25 @@ fn rewrite_expr(
                 // Local enum: qualify the first segment if it names a local
                 // item (so the rewritten path matches the qualified enum).
                 if ctx.local_items.contains(first) {
+                    // A local TYPE ALIAS resolves through to its target first
+                    // (`type Color = vocab::Color; Color::adaptive(...)`).
+                    // Qualifying by the alias's own name left a path no
+                    // assoc-fn table ever keys on, so named arguments and
+                    // defaults silently fell through to sema's E1002.
+                    if let Some(t) = ctx.resolve_alias_target(&ctx.self_file_id, first) {
+                        if t.target_id == ctx.self_file_id {
+                            segments[0].name = ctx.qualify_local(&t.name);
+                        } else {
+                            let leaf = segments[1].name.clone();
+                            let leaf_span = segments[1].span;
+                            ctx.check_pub_item(&t.target_id, &t.name, segments[0].span)?;
+                            if !ctx.external_is_enum(&t.target_id, &t.name) {
+                                ctx.check_pub_method(&t.target_id, &t.name, &leaf, leaf_span)?;
+                            }
+                            segments[0].name = ctx.qualify_external(&t.target_id, &t.name);
+                        }
+                        return Ok(());
+                    }
                     segments[0].name = ctx.qualify_local(first);
                 }
             } else if segments.len() == 3 {

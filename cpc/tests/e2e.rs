@@ -21324,6 +21324,54 @@ fn builder_container_with_args_runs_and_stray_block_is_denied() {
     );
 }
 
+/// Named arguments and defaults resolve through a local TYPE ALIAS
+/// (`type Pair = lib::Pair; Pair::make(b: 7)`). The resolver used to
+/// qualify the alias by its own name, leaving a path no assoc-fn table
+/// keyed on — named args fell through to E1002 and defaults to a bogus
+/// arity error, while the direct `lib::Pair::make(b: 5)` spelling worked.
+#[test]
+fn named_args_resolve_through_a_type_alias() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"ta\"\n\n[[bin]]\nname = \"ta\"\npath = \"src/main.cplus\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/lib.cplus"),
+        "struct Pair { a: i32, b: i32 }\n\
+         impl Pair {\n\
+         \x20   fn make(a: i32 = 1, b: i32 = 2) -> Pair { return Pair { a: a, b: b }; }\n\
+         }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"./lib\" as lib;\n\
+         \n\
+         type Pair = lib::Pair;\n\
+         \n\
+         fn main() -> i32 {\n\
+         \x20   let direct: lib::Pair = lib::Pair::make(b: 5);\n\
+         \x20   let aliased: Pair = Pair::make(b: 7);\n\
+         \x20   return direct.b + aliased.b;\n\
+         }\n",
+    )
+    .unwrap();
+    let status = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc build");
+    assert!(status.success(), "cpc build failed: {status}");
+    let out = Command::new(dir.join("target/debug/ta"))
+        .output()
+        .expect("run binary");
+    assert_eq!(out.status.code(), Some(12), "5 + 7 through both spellings");
+}
+
 /// The non-Copy variant of the builder test package: `Item` has a `drop`
 /// impl, so it moves instead of copying — the shape where consuming
 /// fluent modifiers used to E0335. `boosted` is the fluent

@@ -25,6 +25,22 @@ earlier history lives in each version's archived plan.
   arity at E0501; `::[T]` on a non-generic name is E0821. This makes the
   type-erasing trampoline pattern expressible from generic code — the basis of
   facet's lifecycle registry and service runner.
+- **Named arguments resolve through type aliases.** `type Color =
+  vocab::Color; Color::adaptive(light: a, dark: b)` used to die as E1002
+  (and omitted defaults as a bogus arity error) while the fully qualified
+  spelling worked — the resolver qualified the alias by its own name, so
+  the named-argument matcher never found the target's signature. The
+  2-segment path arm now hops the alias to its target, with the same
+  cross-file visibility gates as the 3-segment arm.
+- **Builder-DSL containers take constructor arguments** (DSL.5):
+  `vstack(key: "body") { ... }` inside an `@` block is one element — the
+  desugar passes the filled Builder first (`ctx::vstack(__b, key: "body")`),
+  so every existing `fn column(take b: Builder, key: str = "")` finisher
+  already satisfies the contract, and keys/config land on the element that
+  has children. The `{` must follow `)` on the same line. A bare `{ ... }`
+  in entry position — including `name(args)` with its block on the next
+  line, which used to silently parse as two items — is now a parse error
+  naming the fix.
 - **Fn-pointer arguments infer generic fn-typed parameters**: a parameter
   `f: fn(take I) -> O` now unifies structurally with a fn-pointer argument,
   binding `I`/`O` (previously E0302 — a generic fn could not take a fn-typed
@@ -221,6 +237,18 @@ by its *shape*, not a method-name allowlist, through every form it can leak:
   and the agent asks again later. No mutation hooks to keep complete.
   Verified live in iris: exposed describe grew from the 4-node frozen shell
   to every launcher and recents control.
+
+### facet — the DSL namespace
+- **`elements.cplus`**: every element in one generated module, so the `@`
+  builder DSL resolves bare names again — the regen had moved constructors
+  into per-control modules and orphaned the DSL. `import "facet/elements"
+  as ui;` then `@ui { vstack(key: "body") { button("Save", key: "save") } }`.
+  Containers forward facet core's (Builder-first, so DSL.5 arguments
+  compose); the 38 generated controls forward from the same signature
+  authority the constructors are emitted from; the four facet-origin
+  controls (`symbol`, `tree`, `split`, `window_buttons`) forward from
+  guarded literals — `split(key: "sp") { pane pane }` takes its panes as
+  DSL children.
 
 ### facet — addressing
 - **`find(key).component()` / `component_at[C](key) -> Option[*C]`** — the
