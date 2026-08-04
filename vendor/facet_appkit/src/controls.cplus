@@ -16,8 +16,9 @@
 // why each is imported: `label::P_TEXT` is not the same bit as
 // `text_field::P_TEXT`, and the MAP is the authority for both.
 //
-// STATUS: 15 of 42 — label, button, text_field, image, scroll, box, checkbox,
-// radio, toggle, slider, progress, spinner, stepper, icon_button, symbol, plus
+// STATUS: 20 of 42 — label, button, text_field, image, scroll, box, checkbox,
+// radio, toggle, slider, progress, spinner, stepper, icon_button, symbol,
+// text_area, search_field, popup, bordered, split, plus
 // the container backing. Until a kind lands, `views::create` says
 // so on stderr rather than rendering a silent blank rectangle.
 
@@ -42,9 +43,15 @@ import "facet/spinner" as spinner;
 import "facet/stepper" as stepper;
 import "facet/icon_button" as icon_button;
 import "facet/symbol" as symbol;
+import "facet/text_area" as text_area;
+import "facet/search_field" as search_field;
+import "facet/popup" as popup;
+import "facet/bordered" as bordered;
+import "facet/split" as split;
 import "objc/runtime" as rt;
 import "appkit/appkit" as ak;
 import "appkit/appkit_ext" as akx;
+import "quartzcore/quartzcore" as quartz;
 import "./paint" as paint;
 
 // ---- reaching a node's props -------------------------------------------------
@@ -612,4 +619,200 @@ fn resolve_image(src: str) -> option::Option[ak::Image] {
         option::Option[ak::Image]::None => { }
     }
     return option::some(ak::Image::new_with_contents_of_file(src));
+}
+
+// ---- text_area ---------------------------------------------------------------
+// NSTextView inside an NSScrollView: the scroller is not optional on AppKit —
+// a bare NSTextView does not scroll, and a multi-line editor that cannot
+// scroll is not one. So the VIEW facet holds is the scroll view, and the text
+// view is reached through it.
+
+fn create_text_area(n: *core::Node) -> *u8 {
+    let s: ak::ScrollView = ak::ScrollView::from_raw(rt::alloc_init(#str_ptr("NSScrollView\0")));
+    let tv: ak::TextView = ak::TextView::from_raw(rt::alloc_init(#str_ptr("NSTextView\0")));
+    tv.set_rich_text(false);          // facet's text is plain; styling is props
+    s.set_document_view(tv.as_view());
+    s.set_has_vertical_scroller(true);
+    return rt::retain(s.as_view().raw());
+}
+
+// The NSTextView inside a text_area's scroll view.
+fn text_area_editor(v: *u8) -> option::Option[ak::TextView] {
+    match ak::ScrollView::from_raw(v).document_view() {
+        option::Option[ak::View]::Some(d) => { return option::some(ak::TextView::from_raw(d.raw())); }
+        option::Option[ak::View]::None => { return option::Option[ak::TextView]::None; }
+    }
+    return option::Option[ak::TextView]::None;
+}
+
+fn apply_text_area(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::TextAreaProps = props_of(n, props::K_TEXT_AREA) as *props::TextAreaProps;
+    if p == (0 as *props::TextAreaProps) { return; }
+    match text_area_editor(v) {
+        option::Option[ak::TextView]::Some(tv) => {
+            let iv: *props::InputViewProps = { #addr_of((*p).input_view) };
+            // Same guard as the text field, and it matters more here: an editor
+            // is where someone is actually typing.
+            if (dirty & text_area::P_TEXT) != (0 as u64) {
+                let want: str = { (*iv).text.view() };
+                if tv.as_text().string().view() != want { tv.as_text().set_string(want); }
+            }
+            if (dirty & text_area::P_IS_READ_ONLY) != (0 as u64) {
+                tv.set_editable({ (*iv).is_read_only } == false);
+            }
+            if (dirty & (text_area::P_FONT_SIZE | text_area::P_FONT_WEIGHT | text_area::P_FONT_FAMILY)) != (0 as u64) {
+                match paint::ns_font({ (*iv).font_size }, { (*iv).font_weight }, { (*iv).font_family.view() }) {
+                    option::Option[ak::Font]::Some(font) => { tv.as_text().set_font(font); }
+                    option::Option[ak::Font]::None => { }
+                }
+            }
+            if (dirty & text_area::P_TEXT_COLOR) != (0 as u64) {
+                let c: vocab::Color = { (*iv).text_color };
+                if c.is_set() { tv.as_text().set_text_color(paint::ns_color(c)); }
+            }
+        }
+        option::Option[ak::TextView]::None => { }
+    }
+    return;
+}
+
+// ---- search_field ------------------------------------------------------------
+// NSSearchField is an NSTextField subclass, so the field half is the same
+// work; what it adds is the magnifier and the clear button, which AppKit draws
+// itself.
+
+fn create_search_field(n: *core::Node) -> *u8 {
+    let f: ak::SearchField = ak::SearchField::from_raw(rt::alloc_init(#str_ptr("NSSearchField\0")));
+    return rt::retain(f.as_view().raw());
+}
+
+fn apply_search_field(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::SearchFieldProps = props_of(n, props::K_SEARCH_FIELD) as *props::SearchFieldProps;
+    if p == (0 as *props::SearchFieldProps) { return; }
+    let f: ak::TextField = ak::TextField::from_raw(v);
+    let iv: *props::InputViewProps = { #addr_of((*p).input_view) };
+    if (dirty & search_field::P_TEXT) != (0 as u64) {
+        let want: str = { (*iv).text.view() };
+        if f.as_control().string_value().view() != want { f.as_control().set_string_value(want); }
+    }
+    if (dirty & search_field::P_PLACEHOLDER) != (0 as u64) {
+        f.set_placeholder_string({ (*iv).placeholder.view() });
+    }
+    if (dirty & (search_field::P_FONT_SIZE | search_field::P_FONT_WEIGHT | search_field::P_FONT_FAMILY)) != (0 as u64) {
+        match paint::ns_font({ (*iv).font_size }, { (*iv).font_weight }, { (*iv).font_family.view() }) {
+            option::Option[ak::Font]::Some(font) => { f.as_control().set_font(font); }
+            option::Option[ak::Font]::None => { }
+        }
+    }
+    if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
+        f.as_control().set_enabled(core::is_enabled(n));
+    }
+    return;
+}
+
+// ---- popup -------------------------------------------------------------------
+// MAUI's Picker: a closed control that opens a list. NSPopUpButton is exactly
+// that, and it owns its own menu — so the items are REBUILT whenever the list
+// changes rather than diffed, because a popup's item list is short and a diff
+// would be more code than the rebuild it replaces.
+
+fn create_popup(n: *core::Node) -> *u8 {
+    let b: ak::PopUpButton = ak::PopUpButton::from_raw(rt::alloc_init(#str_ptr("NSPopUpButton\0")));
+    return rt::retain(b.as_view().raw());
+}
+
+fn apply_popup(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::PopupProps = props_of(n, props::K_POPUP) as *props::PopupProps;
+    if p == (0 as *props::PopupProps) { return; }
+    let b: ak::PopUpButton = ak::PopUpButton::from_raw(v);
+    if (dirty & popup::P_ITEMS) != (0 as u64) {
+        b.remove_all_items();
+        let items: *vocab::TextList = { #addr_of((*p).items) };
+        var i: usize = 0 as usize;
+        let count: usize = { (*items).count() };
+        while i < count {
+            b.add_item_with_title({ (*items).at(i) });
+            i = i +% (1 as usize);
+        }
+    }
+    // The selection goes on AFTER the items, or it indexes a list that is not
+    // there yet and AppKit quietly keeps the old one.
+    if (dirty & (popup::P_SELECTED_INDEX | popup::P_ITEMS)) != (0 as u64) {
+        let idx: i64 = { (*p).selected_index };
+        if idx >= (0 as i64) { b.select_item_at_index(idx); }
+    }
+    if (dirty & (popup::P_FONT_SIZE | popup::P_FONT_WEIGHT | popup::P_FONT_FAMILY)) != (0 as u64) {
+        match paint::ns_font({ (*p).font_size }, { (*p).font_weight }, { (*p).font_family.view() }) {
+            option::Option[ak::Font]::Some(font) => { b.as_control().set_font(font); }
+            option::Option[ak::Font]::None => { }
+        }
+    }
+    if (dirty & props::C_HANDLERS) != (0 as u64) || dirty == paint::all_bits() {
+        akx::set_control_action_ctx(b.as_control(), { (*p).on_selected_index_changed }, { (*p).on_selected_index_changed_ctx });
+    }
+    if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
+        b.as_control().set_enabled(core::is_enabled(n));
+    }
+    return;
+}
+
+// ---- bordered ----------------------------------------------------------------
+// MAUI's Border: a stroke around its content. A layer's border is the cheap
+// way and it composes with the corner radius the shared band already applies.
+// The dash/cap/join/miter family is CAShapeLayer territory and is recorded in
+// MANIFEST.md rather than half-done.
+
+fn create_bordered(n: *core::Node) -> *u8 {
+    let v: ak::View = akx::new_flipped_view(rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 });
+    v.set_wants_layer(true);
+    return rt::retain(v.raw());
+}
+
+fn apply_bordered(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::BorderedProps = props_of(n, props::K_BORDERED) as *props::BorderedProps;
+    if p == (0 as *props::BorderedProps) { return; }
+    let view: ak::View = ak::View::from_raw(v);
+    if (dirty & (bordered::P_STROKE | bordered::P_STROKE_WIDTH)) != (0 as u64) {
+        view.set_wants_layer(true);
+        let l: quartz::Layer = view.layer();
+        l.set_border_width({ (*p).stroke_width });
+        // A Brush is a gradient pair; a border takes one colour, so the start
+        // is the stroke. A gradient border needs a CAGradientLayer mask — see
+        // MANIFEST.md.
+        let brush: vocab::Brush = { (*p).stroke };
+        l.set_border_color(paint::ns_color(brush.start).c_g_color());
+    }
+    return;
+}
+
+// ---- split -------------------------------------------------------------------
+// Two panes and a draggable divider. NSSplitView arranges its own subviews, so
+// facet's children go in through `add_arranged_subview` — which is why the
+// split's host is itself but its insert order matters more than elsewhere.
+
+fn create_split(n: *core::Node) -> *u8 {
+    let s: ak::SplitView = ak::SplitView::from_raw(rt::alloc_init(#str_ptr("NSSplitView\0")));
+    s.set_divider_style(ak::SplitViewDividerStyle::Thin);
+    return rt::retain(s.as_view().raw());
+}
+
+fn apply_split(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *split::SplitProps = props_of(n, split::K_SPLIT) as *split::SplitProps;
+    if p == (0 as *split::SplitProps) { return; }
+    let s: ak::SplitView = ak::SplitView::from_raw(v);
+    if (dirty & split::P_AXIS) != (0 as u64) {
+        s.set_vertical(is_vertical_divider({ (*p).axis }));
+    }
+    return;
+}
+
+// facet names the ARRANGEMENT (Columns = side by side); AppKit names the
+// DIVIDER (`vertical` = a vertical divider, i.e. panes side by side). They
+// agree here, but the two readings are one negation apart, and getting it
+// backwards silently transposes every split in an app.
+fn is_vertical_divider(a: split::SplitAxis) -> bool {
+    return match a {
+        split::SplitAxis::Columns => true,
+        split::SplitAxis::Rows => false,
+    };
 }

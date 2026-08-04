@@ -8,7 +8,7 @@ happen on a Mac?" by reading it.
 A row here is a commitment, not a note. Nothing is left implicit: a verb that
 is neither implemented nor listed below is a gap, and the gap is a bug.
 
-Status: **Stage 4 item 1 complete**, item 2 at 15 kinds of 42. Items are in
+Status: **Stage 4 item 1 complete**, item 2 at 20 kinds of 42. Items are in
 progress; this file grows a row each time something is decided either way.
 
 ---
@@ -49,6 +49,16 @@ bottom_leading, bottom_trailing }`). Core Animation has one `cornerRadius`
 per layer, so the **largest** of the four is used. Per-corner radii would
 need a mask layer per view, which is real cost for a case no consumer has
 asked for yet.
+
+### The `bordered` stroke family
+
+`bordered(stroke_dash:)` `stroke_dash_offset:` `stroke_cap:` `stroke_join:`
+`stroke_miter_limit:` `stroke_shape:` are not honoured. A layer border is a
+solid rectangle of one width and one colour; dashes, caps, joins and an
+arbitrary stroke shape are CAShapeLayer territory — a second layer per
+bordered node, sized and re-pathed on every layout pass. `stroke` and
+`stroke_width` ARE honoured, and a gradient `Brush` uses its start colour
+(a gradient border needs the same mask layer).
 
 ### Deferred, mobile-only
 

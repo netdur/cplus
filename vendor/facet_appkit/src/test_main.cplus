@@ -28,6 +28,11 @@ import "facet/slider" as slider;
 import "facet/progress" as progress;
 import "facet/spinner" as spinner;
 import "facet/stepper" as stepper;
+import "facet/text_area" as text_area;
+import "facet/popup" as popup;
+import "facet/bordered" as bordered;
+import "facet/split" as split;
+import "stdlib/status" as status;
 import "objc/runtime" as rt;
 import "appkit/appkit" as ak;
 
@@ -565,5 +570,75 @@ fn install_is_idempotent_and_uninstall_restores_the_portable_posture() {
     // ...and falls back to light (the neutral default) with none.
     assert theme::is_dark() == false;
     assert mount::installed() == false;
+    return;
+}
+
+// ---- the text and picker batch -----------------------------------------------
+
+#[test]
+fn a_text_area_is_a_text_view_inside_a_scroll_view() {
+    // The scroller is not optional on AppKit: a bare NSTextView does not
+    // scroll, and a multi-line editor that cannot scroll is not one. So the
+    // view facet holds is the SCROLL view, and the editor is reached through it.
+    var n: core::Node = text_area::text_area(key: "body", text: "hello");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v != (0 as *u8);
+    match controls::text_area_editor(v) {
+        option::Option[ak::TextView]::Some(tv) => {
+            assert tv.as_text().string().view() == "hello";
+            assert tv.is_editable();
+        }
+        option::Option[ak::TextView]::None => { assert false; }
+    }
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn a_popup_rebuilds_its_items_then_selects() {
+    // The ordering trap: a selection written before the items indexes a list
+    // that is not there yet, and AppKit quietly keeps the old one.
+    var items: vocab::TextList = vocab::TextList::new();
+    let _a: status::Status = items.add("one");
+    let _b: status::Status = items.add("two");
+    let _c: status::Status = items.add("three");
+    var n: core::Node = popup::popup("pick", key: "pick", selected_index: 2 as i64);
+    let p: *core::Node = #addr_of(n);
+    match popup::find("pick", within: p) {
+        option::Option[popup::Popup]::Some(h) => { let _h: popup::Popup = h.set_items(items); }
+        option::Option[popup::Popup]::None => { assert false; }
+    }
+    let v: *u8 = views::create(0 as *u8, p);
+    let b: ak::PopUpButton = ak::PopUpButton::from_raw(v);
+    assert b.number_of_items() == (3 as i64);
+    assert b.index_of_selected_item() == (2 as i64);
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn a_split_maps_facets_arrangement_onto_appkits_divider() {
+    // facet names the ARRANGEMENT (Columns = side by side); AppKit names the
+    // DIVIDER (`vertical` = a vertical divider). One negation apart, and
+    // backwards would transpose every split in an app.
+    assert controls::is_vertical_divider(split::SplitAxis::Columns);
+    assert controls::is_vertical_divider(split::SplitAxis::Rows) == false;
+    var n: core::Node = split::split(core::Builder::new(), key: "s", axis: split::SplitAxis::Columns);
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    assert ak::SplitView::from_raw(v).is_vertical();
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn a_bordered_strokes_its_layer() {
+    var n: core::Node = bordered::bordered(key: "b", stroke_width: 2.0f64,
+        stroke: vocab::Brush::solid(vocab::Color::rgba(0.0f64, 1.0f64, 0.0f64, 1.0f64)));
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    let view: ak::View = ak::View::from_raw(v);
+    assert view.wants_layer();
+    assert view.layer().border_width() > 1.5f64;
+    views::view_release(v);
     return;
 }
