@@ -82,6 +82,15 @@ struct Data {
     // gestures pays 16 bytes a node and never allocates.
     opaque gestures: *u8,
     gestures_release: fn(*u8),
+    // What this node STANDS FOR, from the application's side: the row's record,
+    // the card's model, whatever a handler shared across many nodes needs to
+    // tell them apart. BORROWED — the application owns it and outlives the
+    // node — so facet never frees it and never dereferences it.
+    //
+    // `component::item_of(sender)` is the read, and it existed before this
+    // field did: the SenderReaders row was declared against a `.item(p)` verb
+    // that was never built, so it could only ever answer null (Stage 4 item 4).
+    opaque item: *u8,
 }
 
 // A gesture set changed. In the common band because gestures ride on Node,
@@ -146,7 +155,8 @@ fn ensure_data(n: *Node) -> *Data {
                              parked_display: flex::Display::Flex, dirty: 0u64,
                              is_focused: false, is_attached: false,
                              window: vocab::WindowRef::none(), batch: 0 as i64,
-                             gestures: 0 as *u8, gestures_release: no_release };
+                             gestures: 0 as *u8, gestures_release: no_release,
+                             item: 0 as *u8 };
     match box::new::[Data](fresh) {
         option::Option[box::Box[Data]]::Some(b) => { { (*n).attach(b.into_raw(), release_data) }; }
         option::Option[box::Box[Data]]::None => { }
@@ -164,7 +174,8 @@ fn node_with(key: str, kind: u32, props_ptr: *u8, release: fn(*u8)) -> Node {
                          parked_display: flex::Display::Flex, dirty: 0u64,
                          is_focused: false, is_attached: false,
                          window: vocab::WindowRef::none(), batch: 0 as i64,
-                         gestures: 0 as *u8, gestures_release: no_release };
+                         gestures: 0 as *u8, gestures_release: no_release,
+                         item: 0 as *u8 };
     match box::new::[Data](d) {
         option::Option[box::Box[Data]]::Some(b) => { n.attach(b.into_raw(), release_data); }
         option::Option[box::Box[Data]]::None => { }
@@ -248,6 +259,32 @@ fn view_of(n: *Node) -> *u8 {
 // backend when the platform's focus moves; attach/detach are fired by the
 // mount walk, post-walk (M4). Setters are live: a swap touches C_HANDLERS so
 // a mounted backend re-reads.
+
+// What this node stands for. Shared handlers are the whole point: one
+// `on_click` over two hundred rows, each answering `component::item_of(sender)`
+// with the record it was given.
+//
+// BORROWED, and the borrow is the application's to honour: facet stores the
+// pointer, never frees it and never reads through it. Pass something that
+// outlives the node — an element of a Vec the app owns, not a local.
+//
+// It rides C_HANDLERS rather than a bit of its own, and that is the honest
+// place for it: the shared band is full at bits 48..63, and an item IS the
+// payload half of a handler. A backend that re-reads its handlers on that bit
+// re-reads the item with them.
+fn set_item(n: *Node, p: *u8) {
+    let d: *Data = ensure_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).item = p };
+    touch(n, props::C_HANDLERS);
+    return;
+}
+
+fn item_of(n: *Node) -> *u8 {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return 0 as *u8; }
+    return { (*d).item };
+}
 
 fn set_on_focus(n: *Node, f: fn(*u8, *u8), ctx: *u8) {
     let d: *Data = ensure_data(n);

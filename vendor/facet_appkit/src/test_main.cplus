@@ -52,6 +52,10 @@ import "objc/bridge" as bridge;
 import "quartzcore/quartzcore" as quartz;
 import "stdlib/status" as status;
 import "objc/synthesis" as synth;
+import "facet/gestures" as gestures;
+import "facet/component" as component;
+import "appkit/appkit_ext" as akx;
+import "./input" as input;
 import "./drawing" as drawing;
 import "objc/runtime" as rt;
 import "appkit/appkit" as ak;
@@ -1347,5 +1351,265 @@ fn every_kind_now_has_an_answer() {
     assert views::has_body(1002 as u32);      // split
     assert views::has_body(1003 as u32);      // window_buttons
     assert views::has_body(core::K_NODE);     // the container backing
+    return;
+}
+
+// ---- input: the gesture band, the key band, the sender readers ---------------
+// Stage 4 item 4. What CAN be asserted here is asserted; what cannot — whether
+// a real click feels right — ends with "run it and try", per the standing rule.
+// A synthesized NSEvent is a real NSEvent, so the key reader is fully testable.
+
+static IN_CLICKS: i64 = 0 as i64;
+static IN_KEYS: i64 = 0 as i64;
+
+fn in_took(sender: *u8, ctx: *u8) -> bool { IN_CLICKS = IN_CLICKS + (1 as i64); return true; }
+fn in_declined(sender: *u8, ctx: *u8) -> bool { IN_CLICKS = IN_CLICKS + (1 as i64); return false; }
+fn in_key(event: *u8, ctx: *u8) -> bool { IN_KEYS = IN_KEYS + (1 as i64); return true; }
+
+// A bare function name is not a value in C+ (E0312): the handler is bound to a
+// typed const first, and these are the ones the tests below hand to `gesture`.
+fn h_took() -> gestures::Handler { let f: gestures::Handler = in_took; return f; }
+fn h_declined() -> gestures::Handler { let f: gestures::Handler = in_declined; return f; }
+fn h_key() -> gestures::Handler { let f: gestures::Handler = in_key; return f; }
+
+// A real NSEvent, built the way AppKit builds one. `keyCode` is what the
+// reader maps; the characters and flags ride along.
+fn fake_key_event(code: u16, chars: str, flags: u64) -> *u8 {
+    return { msg_key_event(
+        rt::get_class(#str_ptr("NSEvent\0")),
+        rt::sel(#str_ptr("keyEventWithType:location:modifierFlags:timestamp:windowNumber:context:characters:charactersIgnoringModifiers:isARepeat:keyCode:\0")),
+        10 as u64,                       // NSEventTypeKeyDown
+        rt::Point { x: 0.0f64, y: 0.0f64 },
+        flags, 0.0f64, 0 as i64, 0 as *u8,
+        bridge::nsstring(chars), bridge::nsstring(chars), 0 as i8, code) };
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_key_event(recv: *u8, sel: *u8, ty: u64, loc: rt::Point, flags: u64,
+                        ts: f64, win: i64, cx: *u8, chars: *u8, ignoring: *u8,
+                        repeat: i8, code: u16) -> *u8;
+// `keyCode` is `unsigned short` and the last two arguments land on the STACK
+// (x0..x7 are full by then). Apple's arm64 ABI packs stack arguments at their
+// natural alignment, so declaring it u64 reads the wrong slot — the modifier
+// flags come through fine because they ride a register, which is exactly why
+// this was invisible until the code was asserted.
+
+#[test]
+fn a_gesture_node_is_backed_even_without_a_key() {
+    // Input arrives on a VIEW. An unkeyed container with gestures would
+    // otherwise describe a handler nothing could ever deliver to.
+    var bare: core::Node = core::column(core::Builder::new());
+    assert views::wants_view(#addr_of(bare)) == false;
+    var touched: core::Node = core::column(core::Builder::new()).gesture(on_click: h_took());
+    assert views::wants_view(#addr_of(touched));
+    return;
+}
+
+#[test]
+fn arming_moves_the_class_and_keeps_the_original_as_super() {
+    // The decline chain needs `super`, and `super` needs the backing class to
+    // still be there — so the view's isa moves onto a SUBCLASS of what it was,
+    // never onto a replacement. An NSButton stays an NSButton.
+    var n: core::Node = button::button("Save", key: "b").gesture(on_click: h_took());
+    let p: *core::Node = #addr_of(n);
+    let original: *u8 = synth::object_class(controls::create_button(p));
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v != (0 as *u8);
+    let armed: *u8 = synth::object_class(v);
+    assert armed != original;
+    assert input::class_super(armed) == original;
+    // Idempotent: apply re-arms on every C_GESTURES write and the class must
+    // move exactly once, or the second swap would subclass our own subclass.
+    core::set_view(p, v, views::view_release);
+    core::touch(p, core::C_GESTURES);
+    views::apply(0 as *u8, p);
+    assert synth::object_class(v) == armed;
+    return;
+}
+
+#[test]
+fn a_second_node_of_the_same_kind_reuses_the_class() {
+    // One subclass per BACKING class: a thousand gesture rows over three
+    // control kinds make three classes, not a thousand.
+    var a: core::Node = core::column(core::Builder::new(), key: "a").gesture(on_click: h_took());
+    var b: core::Node = core::column(core::Builder::new(), key: "b").gesture(on_click: h_took());
+    let va: *u8 = views::create(0 as *u8, #addr_of(a));
+    let vb: *u8 = views::create(0 as *u8, #addr_of(b));
+    assert synth::object_class(va) == synth::object_class(vb);
+    views::view_release(va);
+    views::view_release(vb);
+    return;
+}
+
+#[test]
+fn a_node_without_gestures_keeps_its_class() {
+    // Arming is not free — it costs a class and an association — so a tree
+    // that asks for no input pays for none of it.
+    var n: core::Node = core::column(core::Builder::new(), key: "plain");
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    assert synth::object_class(v) == akx::flipped_view_class();
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn the_key_reader_reads_a_real_nsevent() {
+    backend::install();
+    // The platform code comes through raw...
+    let esc: *u8 = fake_key_event(53 as u16, "", 0 as u64);
+    assert gestures::key_code(esc) == (53 as i64);
+    // ...and the NAME is what an app branches on, so it never spells 53.
+    assert gestures::key_named(esc) == gestures::key_escape();
+    let ret: *u8 = fake_key_event(36 as u16, "\r", 0 as u64);
+    assert gestures::key_named(ret) == gestures::key_return();
+    // Keypad enter is Return too: an app that asks "was that enter" means both.
+    assert gestures::key_named(fake_key_event(76 as u16, "\r", 0 as u64))
+           == gestures::key_return();
+    let left: *u8 = fake_key_event(123 as u16, "", 0 as u64);
+    assert gestures::key_named(left) == gestures::key_arrow_left();
+    // A printable key has no name and is read through its characters.
+    let a: *u8 = fake_key_event(0 as u16, "a", 0 as u64);
+    assert gestures::key_named(a) == gestures::key_none();
+    assert gestures::key_chars(a).view() == "a";
+    return;
+}
+
+#[test]
+fn modifier_flags_are_translated_not_cast() {
+    backend::install();
+    // NSEventModifierFlag* live at bits 17..20; facet's are 0..3. An app must
+    // never see an AppKit constant, so this is a translation.
+    let shift: u64 = 131072 as u64;
+    let command: u64 = 1048576 as u64;
+    let e: *u8 = fake_key_event(0 as u16, "A", shift | command);
+    let m: u64 = gestures::key_modifiers(e);
+    assert gestures::has_modifier(m, gestures::mod_shift());
+    assert gestures::has_modifier(m, gestures::mod_command());
+    assert gestures::has_modifier(m, gestures::mod_control()) == false;
+    assert gestures::has_modifier(m, gestures::mod_option()) == false;
+    // And the raw flags are NOT what came back.
+    assert m != (shift | command);
+    return;
+}
+
+#[test]
+fn a_key_handler_is_what_makes_a_view_focusable() {
+    // `acceptsFirstResponder` is answered from the node, not hardcoded: a
+    // gesture set with no key handler must not start swallowing tab focus.
+    var clicky: core::Node = core::column(core::Builder::new(), key: "c").gesture(on_click: h_took());
+    let vc: *u8 = views::create(0 as *u8, #addr_of(clicky));
+    assert rt::msg_i8(vc, rt::sel(#str_ptr("acceptsFirstResponder\0"))) == (0 as i8);
+    var keyed: core::Node = core::column(core::Builder::new(), key: "k").gesture(on_key: h_key());
+    let vk: *u8 = views::create(0 as *u8, #addr_of(keyed));
+    assert rt::msg_i8(vk, rt::sel(#str_ptr("acceptsFirstResponder\0"))) == (1 as i8);
+    views::view_release(vc);
+    views::view_release(vk);
+    return;
+}
+
+#[test]
+fn the_sender_readers_walk_up_to_the_nearest_tagged_view() {
+    backend::install();
+    // A click on an untagged icon inside a tagged row answers the ROW — which
+    // is what makes one handler over two hundred rows work.
+    var row: core::Node = core::column(core::Builder::new(), key: "row:7");
+    let rv: *u8 = views::create(0 as *u8, #addr_of(row));
+    var icon: core::Node = core::column(core::Builder::new());
+    let iv: *u8 = views::create(0 as *u8, #addr_of(icon));
+    assert iv == (0 as *u8);                       // unkeyed, ungestured: no view
+    let inner: *u8 = rt::retain(akx::new_flipped_view(
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: 1.0f64, h: 1.0f64 }).raw());
+    ak::View::from_raw(rv).add_subview(ak::View::from_raw(inner));
+
+    assert component::key_of(rv).view() == "row:7";
+    assert component::key_of(inner).view() == "row:7";
+    // Nothing tagged anywhere up the chain is an empty answer, not a trap.
+    assert component::key_of(0 as *u8).view() == "";
+    rt::release(inner);
+    views::view_release(rv);
+    return;
+}
+
+#[test]
+fn an_item_reaches_the_sender_that_carries_it() {
+    backend::install();
+    // The gap this closed: SenderReaders declared `item_of` against a `.item(p)`
+    // verb facet never had, so it could only ever answer null.
+    var marker: i64 = 99 as i64;
+    var row: core::Node = core::column(core::Builder::new(), key: "row");
+    let p: *core::Node = #addr_of(row);
+    core::set_item(p, #addr_of(marker) as *u8);
+    assert core::item_of(p) == (#addr_of(marker) as *u8);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert component::item_of(v) == (#addr_of(marker) as *u8);
+    // ...and up the walk, from a child that carries none of its own.
+    let inner: *u8 = rt::retain(akx::new_flipped_view(
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: 1.0f64, h: 1.0f64 }).raw());
+    ak::View::from_raw(v).add_subview(ak::View::from_raw(inner));
+    assert component::item_of(inner) == (#addr_of(marker) as *u8);
+    rt::release(inner);
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn raise_puts_the_keyed_element_in_front_of_its_siblings() {
+    backend::install();
+    // The no-rebuild z-order change: facet is not reactive, so the element is
+    // addressed and moved rather than re-described.
+    let w: ak::Window = window::make_shell_window(
+        screen::Chrome::new(title: "t", width: 200.0f64, height: 200.0f64));
+    match w.content_view() {
+        option::Option[ak::View]::Some(content) => {
+            var a: core::Node = core::column(core::Builder::new(), key: "a");
+            var b: core::Node = core::column(core::Builder::new(), key: "b");
+            let va: *u8 = views::create(0 as *u8, #addr_of(a));
+            let vb: *u8 = views::create(0 as *u8, #addr_of(b));
+            content.add_subview(ak::View::from_raw(va));
+            content.add_subview(ak::View::from_raw(vb));
+            // b is last, so b is in front.
+            assert input::find_by_key(content.raw(), "a") == va;
+            assert content.subviews().count() == (2 as usize);
+            input::raise(vb, "a");
+            // a is last now — on AppKit, last in `subviews` IS the front.
+            match content.subviews().at_ptr(1 as usize) {
+                option::Option[*ak::View]::Some(last) => { assert { (*last).raw() } == va; }
+                option::Option[*ak::View]::None => { assert false; }
+            }
+            views::view_release(va);
+            views::view_release(vb);
+        }
+        option::Option[ak::View]::None => { assert false; }
+    }
+    w.close();
+    return;
+}
+
+fn registered_drag_types(v: *u8) -> u64 {
+    let a: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("registeredDraggedTypes\0"))) };
+    if a == (0 as *u8) { return 0 as u64; }
+    return { rt::msg_u64(a, rt::sel(#str_ptr("count\0"))) };
+}
+
+#[test]
+fn a_drop_zone_registers_only_when_it_asks_to() {
+    backend::install();
+    // `allow_drop` is the switch: a view that never asked is not a dragging
+    // destination, and AppKit will not offer it one.
+    // The gate is REGISTRATION, not the selector: both views share one class
+    // (one per backing kind), so a per-view gate could never be a method —
+    // adding one would decide the other view's behaviour too.
+    var plain: core::Node = core::column(core::Builder::new(), key: "p").gesture(on_click: h_took());
+    let vp: *u8 = views::create(0 as *u8, #addr_of(plain));
+    var zone: core::Node = core::column(core::Builder::new(), key: "z")
+        .gesture(on_drop: h_took(), allow_drop: true);
+    let vz: *u8 = views::create(0 as *u8, #addr_of(zone));
+    assert synth::object_class(vp) == synth::object_class(vz);
+    assert registered_drag_types(vp) == (0 as u64);
+    assert registered_drag_types(vz) > (0 as u64);
+    assert component::drag_targeted(vz) == false;
+    assert component::dropped_text(vz).view() == "";
+    views::view_release(vp);
+    views::view_release(vz);
     return;
 }

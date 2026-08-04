@@ -325,23 +325,48 @@ fn is_opaque_to_input(n: *core::Node) -> bool {
     return match hit_of(n) { HitTest::Opaque => true, HitTest::DeferToChild => false };
 }
 
+// What a gesture hands its handler as `sender`.
+//
+// The node's BACKING VIEW once it is mounted — because `component::key_of` and
+// the rest of the sender readers are given a native sender by every OTHER
+// handler in facet (a control's action passes the control), and a band that
+// passed something else would make `key_of(sender)` mean one thing under a
+// button and another under a gesture. One kind of sender, one reader.
+//
+// Headless — no backend, so no view — it is the node itself. Nothing can read
+// it either way there: with no backend installed the sender readers all answer
+// empty, which is the same answer they would give for an unmounted view.
+fn gesture_sender(n: *core::Node) -> *u8 {
+    let v: *u8 = core::view_of(n);
+    if v != (0 as *u8) { return v; }
+    return n as *u8;
+}
+
 // Fire, and report whether the node TOOK it. `false` tells the backend to
 // offer the event to the next node up its native parent chain. The ONE place a
 // handler is called, so a missing one is handled here and not at every site.
+//
+// `fire` is the general form: a backend reads the handler it wants off
+// `gestures_of(n)` and passes it here, so the whole 20-verb band dispatches
+// through one function rather than 20 near-identical ones. The named wrappers
+// below stay for the verbs portable code and tests reach for directly.
+fn fire(n: *core::Node, f: Handler) -> bool {
+    if f == no_gesture { return false; }
+    let g: *Gestures = gestures_of(n);
+    if g == (0 as *Gestures) { return false; }
+    return f(gesture_sender(n), { (*g).ctx });
+}
+
 fn fire_click(n: *core::Node) -> bool {
     let g: *Gestures = gestures_of(n);
     if g == (0 as *Gestures) { return false; }
-    let f: Handler = { (*g).on_click };
-    if f == no_gesture { return false; }
-    return f(n as *u8, { (*g).ctx });
+    return fire(n, { (*g).on_click });
 }
 
 fn fire_right_click(n: *core::Node) -> bool {
     let g: *Gestures = gestures_of(n);
     if g == (0 as *Gestures) { return false; }
-    let f: Handler = { (*g).on_right_click };
-    if f == no_gesture { return false; }
-    return f(n as *u8, { (*g).ctx });
+    return fire(n, { (*g).on_right_click });
 }
 
 // The key band's reader and dispatch: the backend hands the focused node the
@@ -365,8 +390,7 @@ fn fire_hover(n: *core::Node, entering: bool) -> bool {
     let g: *Gestures = gestures_of(n);
     if g == (0 as *Gestures) { return false; }
     let f: Handler = if entering { { (*g).on_hover } } else { { (*g).on_unhover } };
-    if f == no_gesture { return false; }
-    return f(n as *u8, { (*g).ctx });
+    return fire(n, f);
 }
 
 
@@ -534,5 +558,53 @@ fn on_key_rides_the_gesture_band_and_consume_is_one_shot() {
     // A node with no key handler declines.
     var plain: flex::Node = flex::box();
     assert fire_key(#addr_of(plain), 0 as *u8) == false;
+    return;
+}
+
+static IT_SEEN: *u8 = 0 as *u8;
+fn it_handler(sender: *u8, ctx: *u8) -> bool { IT_SEEN = sender; return true; }
+
+#[test]
+fn a_gesture_sender_is_the_same_kind_of_thing_a_controls_is() {
+    // Every other handler in facet is given a NATIVE sender (a control's action
+    // passes the control), and `component::key_of(sender)` is written against
+    // that. A band that passed something else would make one reader mean two
+    // things, so a mounted gesture passes the node's BACKING VIEW.
+    IT_SEEN = 0 as *u8;
+    var n: flex::Node = flex::box().gesture(on_click: it_handler);
+    let p: *core::Node = #addr_of(n);
+    // Unmounted — no backend, so no view — the node stands in. Nothing can
+    // read it either way: the sender readers all answer empty with no backend.
+    assert fire_click(p);
+    assert IT_SEEN == (p as *u8);
+    // Mounted, it is the view, and that is what a reader will be handed.
+    var fake_view: i64 = 7 as i64;
+    core::set_view(p, #addr_of(fake_view) as *u8, core::no_release);
+    IT_SEEN = 0 as *u8;
+    assert fire_click(p);
+    assert IT_SEEN == (#addr_of(fake_view) as *u8);
+    core::set_view(p, 0 as *u8, core::no_release);
+    return;
+}
+
+#[test]
+fn an_item_is_what_a_shared_handler_tells_its_nodes_apart_by() {
+    // The gap Stage 4 item 4 found: `component::item_of(sender)` was declared
+    // against a `.item(p)` verb that was never built, so it could only ever
+    // answer null however the backend implemented it.
+    var record: i64 = 42 as i64;
+    var n: flex::Node = flex::box();
+    let p: *core::Node = #addr_of(n);
+    assert core::item_of(p) == (0 as *u8);
+    let _d: *core::Data = core::ensure_data(p);
+    core::clear_dirty(p);
+    core::set_item(p, #addr_of(record) as *u8);
+    assert core::item_of(p) == (#addr_of(record) as *u8);
+    // It rides C_HANDLERS: an item IS the payload half of a handler, and the
+    // shared band has no free bit (48..63 are all spoken for).
+    assert (core::dirty_of(p) & props::C_HANDLERS) != (0 as u64);
+    // BORROWED: facet stores the pointer, never frees it, never reads through
+    // it. The value the app sees is the value the app put there.
+    assert { *(core::item_of(p) as *i64) } == (42 as i64);
     return;
 }

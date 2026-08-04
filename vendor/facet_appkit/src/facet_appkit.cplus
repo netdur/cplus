@@ -18,8 +18,8 @@
 // Not yet filled, and deliberately NOT half-filled — zero fields keep facet's
 // portable no-op, which is honest, where a struct with three of five slots
 // would look installed and behave randomly:
-//   gestures::install_key_reader             Stage 4 item 4 (input)
-//   component::install_sender_readers        Stage 4 item 4 (input)
+//   gestures::install_key_reader             input.cplus
+//   component::install_sender_readers        input.cplus
 //   runtime::install_agent                   Stage 4 item 6 (the agent surface)
 
 import "stdlib/option" as option;
@@ -28,9 +28,12 @@ import "facet/facet" as core;
 import "facet/props" as props;
 import "facet/mount" as mount;
 import "facet/services" as services;
+import "facet/gestures" as gestures;
+import "facet/component" as component;
 import "facet/theme" as theme;
 import "facet/application" as app;
 import "./views" as views;
+import "./input" as input;
 import "./scheduler" as scheduler;
 import "./geometry" as geometry;
 import "./window" as window;
@@ -60,6 +63,8 @@ fn install() {
     // becomes THE UI thread; every tree write asserts it).
     mount::install(renderer());
     services::install_scheduler(scheduler::scheduler());
+    gestures::install_key_reader(input::key_reader());
+    component::install_sender_readers(input::sender_readers());
     theme::set_is_dark_fn(window::is_dark);
     theme::set_theme_changed_fn(theme_changed);
     scheduler::install_sync_tick();
@@ -74,6 +79,8 @@ fn installed() -> bool { return INSTALLED; }
 fn uninstall() {
     mount::uninstall();
     services::uninstall_scheduler();
+    gestures::uninstall_key_reader();
+    component::uninstall_sender_readers();
     theme::set_is_dark_fn(0 as fn() -> bool);
     INSTALLED = false;
     return;

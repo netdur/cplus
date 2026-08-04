@@ -212,6 +212,41 @@ point Core Animation commits on. A hundred writes in one event cost one tick.
 layer, so setting one turns `wantsLayer` on for that view. A node that sets no
 background stays layer-free, so a tree that themes nothing pays for no layers.
 
+### The gesture band moves the view's class
+
+A gesture handler answers `bool`, and `false` means the event must carry on
+exactly as if facet had never looked at it. Nothing on AppKit continues an
+event except `[super mouseDown:]`, so the handlers have to BE the view's event
+methods — and gestures are a modifier on ANY node, whose backing view is
+whatever its kind needs.
+
+So the class is made at runtime, per backing class, and the view's isa is moved
+onto it. This is what KVO does, for the same reason. An NSButton with gestures
+is still an NSButton; it gains overrides that call super when the app declines.
+One subclass per backing class, cached on the class itself.
+
+Consequence for an application that drops beneath facet: `object_getClass` on
+a gesture-bearing view answers `FacetInput<n>`, not the class you expect.
+`isKindOfClass:` is unaffected, which is the check that matters.
+
+The per-view gate is never a method, and that is load-bearing: the class is
+SHARED by every view of its kind, so adding `performDragOperation:` for one
+drop zone would answer for every node of that kind. Drop selectors live on the
+class from the start and `registerForDraggedTypes:` — AppKit's own gate — is
+what a view opts in with.
+
+### `on_pinch` is `magnifyWithEvent:`, not the window zoom
+
+The gesture reports a trackpad magnify on the node. Window-level
+pinch-to-zoom is a different feature with a different rule (scale only, never
+reflow) and is not what this verb does.
+
+### Scroll is not a gesture
+
+facet routes the wheel through the `scroll` control, where the nested-axis rule
+lives (`FacetScrollView` locks an axis per gesture). A `scrollWheel:` override
+in the gesture band would fight it.
+
 ## Not yet reached
 
 These are unimplemented because their stage item has not landed, NOT because
@@ -220,13 +255,10 @@ AppKit cannot. They are listed so the difference is never ambiguous.
 | What | Stage 4 item |
 |---|---|
 | The 42 per-kind `create`/`apply` bodies | 2 |
-| `KeyReader` — key code / chars / modifiers / named | 4 |
-| The gesture band and the decline chain | 4 |
-| `SenderReaders` — raise / key_of / item_of / drop | 4 |
 | The app menu, toolbar tier, titlebar content | 5 |
 | Window sizing policy, density, modal stack | 5 |
 | The agent surface | 6 |
-| `web` / `hybrid_web` | deferred by the user, 2026-08-04 — needs a `vendor/webkit` bindgen package |
+| `web` / `hybrid_web` | waiting on `vendor/webkit`, which the user has in progress as of 2026-08-04 |
 | The collection group | 2 (the heavy end) |
 
 ### The collection group builds every row, not just the visible ones

@@ -1,0 +1,695 @@
+// facet_appkit input — the gesture band, the key band, and the sender readers.
+//
+// Stage 4 item 4. Three of facet's install slots are filled here, and one rule
+// shapes all of it: THE DECLINE CHAIN. A gesture handler answers `bool`, and
+// `false` means "not mine" — the event must then continue exactly as if facet
+// had never looked at it.
+//
+// ---- why a dynamic subclass and not NSGestureRecognizer ----------------------
+//
+// A recognizer cannot decline. By the time its action fires it has already
+// claimed the event, and there is no way to put it back. The only thing on
+// AppKit that continues an event is `[super mouseDown:]` — the responder chain
+// picking up where it left off — so the handlers have to BE the view's event
+// methods.
+//
+// But gestures are a MODIFIER on any node (see facet's gestures.cplus), and the
+// backing view of a node is whatever its kind needs: an NSButton, an
+// NSTextField, an NSScrollView. facet cannot hand out one gesture view class
+// without changing what a control IS.
+//
+// So the class is made at runtime, per backing class, and the view's isa is
+// moved onto it — the same technique KVO uses, for the same reason. NSButton
+// stays an NSButton; it gains overrides that call super when the app declines.
+// One subclass per backing class, cached, so a thousand gesture rows over three
+// control kinds make three classes.
+//
+// ---- what is NOT here --------------------------------------------------------
+//
+// `on_pinch` is wired to `magnifyWithEvent:` but the window-level pinch-to-zoom
+// path is its own thing (see facet's pinch memory: SCALE only, no reflow).
+// Scroll is not a gesture: facet routes it through the scroll control, and the
+// nested-axis rule lives in FacetScrollView.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "stdlib/status" as status;
+import "flex_layout/flex_layout" as flex;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/gestures" as gestures;
+import "facet/component" as component;
+import "objc/runtime" as rt;
+import "objc/synthesis" as synth;
+import "objc/bridge" as bridge;
+import "appkit/appkit" as ak;
+import "appkit/appkit_ext" as akx;
+
+// ---- the objc runtime pieces the synthesis module does not export ------------
+
+extern fn object_setClass(obj: *u8, cls: *u8) -> *u8;
+extern fn class_getSuperclass(cls: *u8) -> *u8;
+extern fn class_getName(cls: *u8) -> *u8;
+
+#[link_name = "class_addMethod"]
+extern fn add_method_i8_0(cls: *u8, sel: *u8, imp: fn(*u8, *u8) -> i8, types: *u8) -> i8;
+
+#[link_name = "class_addMethod"]
+extern fn add_method_id_point(cls: *u8, sel: *u8, imp: fn(*u8, *u8, rt::Point) -> *u8,
+                              types: *u8) -> i8;
+
+#[link_name = "class_addMethod"]
+extern fn add_method_u64_1id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8) -> u64,
+                             types: *u8) -> i8;
+
+#[link_name = "objc_msgSend"]
+extern fn msg_point_id(recv: *u8, sel: *u8, a: *u8) -> rt::Point;
+
+#[link_name = "objc_msgSendSuper"]
+extern fn msg_super_id_point(s: *SuperRef, sel: *u8, p: rt::Point) -> *u8;
+
+#[repr(C)]
+// Both fields are BORROWED: the receiver is the view (mount owns it) and the
+// class is the runtime's. Nothing here frees either.
+struct SuperRef { opaque receiver: *u8, opaque super_class: *u8 }
+
+// ---- associated keys ---------------------------------------------------------
+// appkit_ext took 28672..28682 and drawing.cplus took 28700. This block is
+// 28710 up.
+
+fn node_key() -> *u8 { return { 28710 as *u8 }; }
+fn armed_key() -> *u8 { return { 28711 as *u8 }; }
+fn long_press_key() -> *u8 { return { 28712 as *u8 }; }
+fn item_key() -> *u8 { return { 28713 as *u8 }; }
+fn tracking_key() -> *u8 { return { 28714 as *u8 }; }
+
+// The node a view carries gestures for, or null.
+fn node_of_view(v: *u8) -> *core::Node {
+    if v == (0 as *u8) { return 0 as *core::Node; }
+    return { synth::get_associated(v, node_key()) as *core::Node };
+}
+
+fn gestures_of_view(v: *u8) -> *gestures::Gestures {
+    let n: *core::Node = node_of_view(v);
+    if n == (0 as *core::Node) { return 0 as *gestures::Gestures; }
+    return gestures::gestures_of(n);
+}
+
+// Fire one handler off the view's node. False when there is nothing to fire or
+// the app declined — either way the caller falls through to super.
+fn fire_of(self_obj: *u8, h: gestures::Handler) -> bool {
+    let n: *core::Node = node_of_view(self_obj);
+    if n == (0 as *core::Node) { return false; }
+    return gestures::fire(n, h);
+}
+
+// ---- super dispatch ----------------------------------------------------------
+// `self`'s class is OUR subclass, so its superclass is the original backing
+// class and the ordinary responder behaviour lives there.
+
+// The class an armed view's overrides fall through to — its ORIGINAL backing
+// class. Public because the suite asserts the subclass relationship: that is
+// what makes the decline chain reachable at all.
+fn class_super(cls: *u8) -> *u8 { return class_getSuperclass(cls); }
+
+fn super_of(self_obj: *u8) -> *u8 {
+    return class_getSuperclass(synth::object_class(self_obj));
+}
+
+fn decline(self_obj: *u8, cmd: *u8, event: *u8) {
+    akx::call_super_void_id(self_obj, super_of(self_obj), cmd, event);
+    return;
+}
+
+// ---- the pointer band --------------------------------------------------------
+
+fn imp_mouse_down(self_obj: *u8, cmd: *u8, event: *u8) {
+    let g: *gestures::Gestures = gestures_of_view(self_obj);
+    if g == (0 as *gestures::Gestures) { decline(self_obj, cmd, event); return; }
+    // A long press is a press that OUTLASTS a timer, so it is armed here and
+    // disarmed on the way up. `after` returns a token; the token is the timer.
+    let lp: gestures::Handler = { (*g).on_long_press };
+    if lp != gestures::no_gesture {
+        let id: u64 = akx::after({ (*g).long_press_seconds }, long_press_fired, self_obj);
+        synth::set_associated(self_obj, long_press_key(), id as *u8);
+    }
+    var took: bool = fire_of(self_obj, { (*g).on_press });
+    if took { return; }
+    decline(self_obj, cmd, event);
+    return;
+}
+
+fn long_press_fired(ctx: *u8) {
+    synth::set_associated(ctx, long_press_key(), 0 as *u8);
+    let g: *gestures::Gestures = gestures_of_view(ctx);
+    if g == (0 as *gestures::Gestures) { return; }
+    let _took: bool = fire_of(ctx, { (*g).on_long_press });
+    return;
+}
+
+fn cancel_long_press(self_obj: *u8) {
+    let id: u64 = { synth::get_associated(self_obj, long_press_key()) as u64 };
+    if id != (0 as u64) {
+        akx::cancel_after(id);
+        synth::set_associated(self_obj, long_press_key(), 0 as *u8);
+    }
+    return;
+}
+
+fn imp_mouse_up(self_obj: *u8, cmd: *u8, event: *u8) {
+    cancel_long_press(self_obj);
+    let g: *gestures::Gestures = gestures_of_view(self_obj);
+    if g == (0 as *gestures::Gestures) { decline(self_obj, cmd, event); return; }
+    var took: bool = fire_of(self_obj, { (*g).on_release });
+    // A click is a completed press, so it is reported on the way UP — the same
+    // moment NSButton considers itself clicked, and the reason a drag off the
+    // control does not fire one.
+    let clicks: i64 = akx::wd_click_count(event);
+    if clicks >= (2 as i64) {
+        if fire_of(self_obj, { (*g).on_double_click }) { took = true; }
+    } else {
+        if fire_of(self_obj, { (*g).on_click }) { took = true; }
+    }
+    if took { return; }
+    decline(self_obj, cmd, event);
+    return;
+}
+
+fn imp_right_mouse_down(self_obj: *u8, cmd: *u8, event: *u8) {
+    let g: *gestures::Gestures = gestures_of_view(self_obj);
+    if g == (0 as *gestures::Gestures) { decline(self_obj, cmd, event); return; }
+    if fire_of(self_obj, { (*g).on_right_click }) { return; }
+    decline(self_obj, cmd, event);
+    return;
+}
+
+fn imp_mouse_dragged(self_obj: *u8, cmd: *u8, event: *u8) {
+    // A drag is not a press any more: whatever the long press was waiting for,
+    // this is not it.
+    cancel_long_press(self_obj);
+    let g: *gestures::Gestures = gestures_of_view(self_obj);
+    if g == (0 as *gestures::Gestures) { decline(self_obj, cmd, event); return; }
+    if fire_of(self_obj, { (*g).on_pan }) { return; }
+    decline(self_obj, cmd, event);
+    return;
+}
+
+fn imp_mouse_moved(self_obj: *u8, cmd: *u8, event: *u8) {
+    let g: *gestures::Gestures = gestures_of_view(self_obj);
+    if g == (0 as *gestures::Gestures) { decline(self_obj, cmd, event); return; }
+    if fire_of(self_obj, { (*g).on_pointer_move }) { return; }
+    decline(self_obj, cmd, event);
+    return;
+}
+
+fn imp_mouse_entered(self_obj: *u8, cmd: *u8, event: *u8) {
+    let g: *gestures::Gestures = gestures_of_view(self_obj);
+    if g == (0 as *gestures::Gestures) { decline(self_obj, cmd, event); return; }
+    if fire_of(self_obj, { (*g).on_hover }) { return; }
+    decline(self_obj, cmd, event);
+    return;
+}
+
+fn imp_mouse_exited(self_obj: *u8, cmd: *u8, event: *u8) {
+    let g: *gestures::Gestures = gestures_of_view(self_obj);
+    if g == (0 as *gestures::Gestures) { decline(self_obj, cmd, event); return; }
+    if fire_of(self_obj, { (*g).on_unhover }) { return; }
+    decline(self_obj, cmd, event);
+    return;
+}
+
+fn imp_magnify(self_obj: *u8, cmd: *u8, event: *u8) {
+    let g: *gestures::Gestures = gestures_of_view(self_obj);
+    if g == (0 as *gestures::Gestures) { decline(self_obj, cmd, event); return; }
+    if fire_of(self_obj, { (*g).on_pinch }) { return; }
+    decline(self_obj, cmd, event);
+    return;
+}
+
+fn imp_swipe(self_obj: *u8, cmd: *u8, event: *u8) {
+    let g: *gestures::Gestures = gestures_of_view(self_obj);
+    if g == (0 as *gestures::Gestures) { decline(self_obj, cmd, event); return; }
+    if fire_of(self_obj, { (*g).on_swipe }) { return; }
+    decline(self_obj, cmd, event);
+    return;
+}
+
+// ---- the key band ------------------------------------------------------------
+// `on_key` fires on the FOCUSED element, so the view has to be able to be one.
+// `acceptsFirstResponder` is answered from the node rather than hardcoded: a
+// gesture set with no key handler must not start swallowing tab focus.
+
+fn imp_key_down(self_obj: *u8, cmd: *u8, event: *u8) {
+    let n: *core::Node = node_of_view(self_obj);
+    if n != (0 as *core::Node) {
+        // fire_key hands the handler the EVENT, not the sender — the key band's
+        // documented shape, because a key handler reads the event through
+        // key_code / key_chars / key_named.
+        if gestures::fire_key(n, event) { return; }
+    }
+    decline(self_obj, cmd, event);
+    return;
+}
+
+fn imp_accepts_first_responder(self_obj: *u8, cmd: *u8) -> i8 {
+    let n: *core::Node = node_of_view(self_obj);
+    if n == (0 as *core::Node) { return 0 as i8; }
+    if gestures::on_key_of(n) != gestures::no_gesture { return 1 as i8; }
+    // Not ours to answer: a control that was already first-responder-capable
+    // stays so.
+    let s: SuperRef = SuperRef { receiver: self_obj, super_class: super_of(self_obj) };
+    return super_bool(#addr_of(s), cmd);
+}
+
+#[link_name = "objc_msgSendSuper"]
+extern fn super_bool(s: *SuperRef, sel: *u8) -> i8;
+
+// ---- hit testing -------------------------------------------------------------
+// `HitTest::Opaque` claims the node's whole area — gaps, transparent padding
+// and all — which a plain NSView does NOT do: an NSView with no drawn content
+// still hit-tests, but a subview on top wins, and that is exactly what
+// DeferToChild wants. So Opaque is the only case that overrides.
+
+fn imp_hit_test(self_obj: *u8, cmd: *u8, p: rt::Point) -> *u8 {
+    let s: SuperRef = SuperRef { receiver: self_obj, super_class: super_of(self_obj) };
+    let hit: *u8 = msg_super_id_point(#addr_of(s), cmd, p);
+    let n: *core::Node = node_of_view(self_obj);
+    if n == (0 as *core::Node) { return hit; }
+    if !gestures::is_opaque_to_input(n) { return hit; }
+    // Inside our bounds, we take it whatever the subviews said.
+    if hit != (0 as *u8) { return self_obj; }
+    let local: rt::Point = msg_point_id(self_obj, rt::sel(#str_ptr("convertPoint:fromView:\0")),
+                                        0 as *u8);
+    let b: rt::Rect = { rt::msg_rect(self_obj, rt::sel(#str_ptr("bounds\0"))) };
+    if local.x >= b.x && local.y >= b.y && local.x <= (b.x + b.w) && local.y <= (b.y + b.h) {
+        return self_obj;
+    }
+    return hit;
+}
+
+// ---- drag and drop -----------------------------------------------------------
+// The destination half rides appkit_ext's drop IMPs, because they already carry
+// the targeted flag, the dropped text and the autoscroll-at-the-edge behaviour
+// that a drop over a scrolling list needs. This module supplies the handlers
+// they call; `dropped_text` and `drag_targeted` read the same associated slots.
+
+fn drop_shim(sender: *u8, ctx: *u8) {
+    let _took: bool = fire_of(ctx, drop_handler_of(ctx));
+    return;
+}
+
+fn drop_handler_of(v: *u8) -> gestures::Handler {
+    let g: *gestures::Gestures = gestures_of_view(v);
+    if g == (0 as *gestures::Gestures) { return gestures::no_gesture; }
+    return { (*g).on_drop };
+}
+
+fn drag_over_shim(sender: *u8, ctx: *u8) {
+    let g: *gestures::Gestures = gestures_of_view(ctx);
+    if g == (0 as *gestures::Gestures) { return; }
+    // One AppKit callback, two facet verbs: appkit_ext reports enter and exit
+    // through the same hook, and the targeted flag is what tells them apart.
+    let entering: bool = akx::drag_targeted(ctx);
+    let h: gestures::Handler = if entering { { (*g).on_drag_over } }
+                               else { { (*g).on_drag_leave } };
+    let _took: bool = fire_of(ctx, h);
+    return;
+}
+
+// The class is SHARED by every view of the same backing kind, so nothing here
+// may add a method: two nodes of one kind would then decide each other's
+// behaviour. The drop selectors live on the class from the start
+// (`add_input_methods`) and the gate is `registerForDraggedTypes:` — which is
+// AppKit's own gate, so a view that never asked is never offered a drag.
+fn arm_drop(v: *u8, g: *gestures::Gestures) {
+    if !{ (*g).allow_drop } { return; }
+    // The handlers appkit_ext's IMPs call. ctx is the VIEW, so the shim can get
+    // back to the node without a second association.
+    let dh: fn(*u8, *u8) = drop_shim;
+    let oh: fn(*u8, *u8) = drag_over_shim;
+    synth::set_associated(v, akx::drop_handler_key(), dh as *u8);
+    synth::set_associated(v, akx::drop_ctx_key(), v);
+    synth::set_associated(v, akx::drag_target_key(), oh as *u8);
+    synth::set_associated(v, akx::drag_over_ctx_key(), v);
+    // Text only, which is what facet's drop verb carries.
+    { rt::msg_void_id(v, rt::sel(#str_ptr("registerForDraggedTypes:\0")),
+                      dragged_types()) };
+    return;
+}
+
+// NSPasteboardTypeString, in an NSArray. Built each time it is needed rather
+// than cached: arming happens once per gesture-bearing view, not per event.
+fn dragged_types() -> *u8 {
+    let arr: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")),
+                                rt::sel(#str_ptr("array\0"))) };
+    { rt::msg_void_id(arr, rt::sel(#str_ptr("addObject:\0")),
+                      bridge::nsstring("public.utf8-plain-text")) };
+    return arr;
+}
+
+// The source half. appkit_ext's drag view carries the payload text on an
+// associated key and begins the session from its own mouse tracking, so arming
+// a drag is setting that text plus the source-mask answer.
+fn arm_drag_source(v: *u8, g: *gestures::Gestures) {
+    if !{ (*g).can_drag } { return; }
+    // Same rule as arm_drop: the selector is on the class already, and the
+    // PAYLOAD is the gate — appkit_ext begins a session only for a view that
+    // carries drag text.
+    let key: text::Text = component::key_of(v);
+    { synth::set_associated(v, akx::drag_text_key(), bridge::nsstring(key.view())) };
+    return;
+}
+
+// ---- the item ----------------------------------------------------------------
+// `set_item(n, p)` is what a shared handler tells its nodes apart by, and the
+// association is how the sender walk finds it: `item_of(sender)` climbs
+// superviews to the nearest tagged one, exactly as `key_of` does, so a click on
+// an untagged icon inside a row answers the ROW's record.
+//
+// Bound on every node, not only gesture-bearing ones — a button in a row wants
+// its row's item as much as a gesture does.
+fn bind_item(v: *u8, n: *core::Node) {
+    if v == (0 as *u8) || n == (0 as *core::Node) { return; }
+    let p: *u8 = core::item_of(n);
+    if p == (0 as *u8) && { synth::get_associated(v, item_key()) } == (0 as *u8) { return; }
+    // ASSIGN, never retain: the application owns the item and outlives the
+    // node. facet stores the pointer and dereferences nothing.
+    synth::set_associated(v, item_key(), p);
+    return;
+}
+
+// ---- arming ------------------------------------------------------------------
+
+// The runtime class cache. A Class IS an object, so the subclass is associated
+// with the base class itself — no name table, no string compare, and it stays
+// correct if two base classes ever shared a name.
+fn subclass_key() -> *u8 { return { 28715 as *u8 }; }
+
+static INPUT_CLASSES: u32 = 0 as u32;
+
+// One digit as a literal. This module cannot import views.cplus (views imports
+// THIS one) and a number formatter is not worth a third module — the name only
+// has to be unique, and two digits is far more backing classes than facet has
+// kinds.
+fn one_digit(d: u32) -> str {
+    if d == (0 as u32) { return "0"; }
+    if d == (1 as u32) { return "1"; }
+    if d == (2 as u32) { return "2"; }
+    if d == (3 as u32) { return "3"; }
+    if d == (4 as u32) { return "4"; }
+    if d == (5 as u32) { return "5"; }
+    if d == (6 as u32) { return "6"; }
+    if d == (7 as u32) { return "7"; }
+    if d == (8 as u32) { return "8"; }
+    return "9";
+}
+
+// The subclass of `base` carrying facet's event overrides. One per base class:
+// a thousand gesture rows over three control kinds make three classes.
+fn input_class_for(base: *u8) -> *u8 {
+    let cached: *u8 = { synth::get_associated(base, subclass_key()) };
+    if cached != (0 as *u8) { return cached; }
+
+    // objc_allocateClassPair needs a unique NAME, and the base's own is not
+    // reachable as a `str` — so the classes are numbered.
+    var name: text::Text = text::from_str("FacetInput");
+    let _t: status::Status = name.append(one_digit((INPUT_CLASSES / (10 as u32)) % (10 as u32)));
+    let _u: status::Status = name.append(one_digit(INPUT_CLASSES % (10 as u32)));
+    INPUT_CLASSES = INPUT_CLASSES + (1 as u32);
+
+    var made: *u8 = base;
+    match name.c_str() {
+        option::Option[text::CString]::Some(cs) => {
+            let cls: *u8 = synth::allocate_class_pair(base, cs.as_ptr(), 0 as usize);
+            if cls != (0 as *u8) {
+                add_input_methods(cls);
+                synth::register_class_pair(cls);
+                made = cls;
+            }
+        }
+        option::Option[text::CString]::None => { }
+    }
+    if made != base { synth::set_associated(base, subclass_key(), made); }
+    return made;
+}
+
+fn add_input_methods(cls: *u8) {
+    synth::add_method_v_1id(cls, rt::sel(#str_ptr("mouseDown:\0")), imp_mouse_down, #str_ptr("v@:@\0"));
+    synth::add_method_v_1id(cls, rt::sel(#str_ptr("mouseUp:\0")), imp_mouse_up, #str_ptr("v@:@\0"));
+    synth::add_method_v_1id(cls, rt::sel(#str_ptr("rightMouseDown:\0")), imp_right_mouse_down, #str_ptr("v@:@\0"));
+    synth::add_method_v_1id(cls, rt::sel(#str_ptr("mouseDragged:\0")), imp_mouse_dragged, #str_ptr("v@:@\0"));
+    synth::add_method_v_1id(cls, rt::sel(#str_ptr("mouseMoved:\0")), imp_mouse_moved, #str_ptr("v@:@\0"));
+    synth::add_method_v_1id(cls, rt::sel(#str_ptr("mouseEntered:\0")), imp_mouse_entered, #str_ptr("v@:@\0"));
+    synth::add_method_v_1id(cls, rt::sel(#str_ptr("mouseExited:\0")), imp_mouse_exited, #str_ptr("v@:@\0"));
+    synth::add_method_v_1id(cls, rt::sel(#str_ptr("magnifyWithEvent:\0")), imp_magnify, #str_ptr("v@:@\0"));
+    synth::add_method_v_1id(cls, rt::sel(#str_ptr("swipeWithEvent:\0")), imp_swipe, #str_ptr("v@:@\0"));
+    synth::add_method_v_1id(cls, rt::sel(#str_ptr("keyDown:\0")), imp_key_down, #str_ptr("v@:@\0"));
+    add_method_i8_0(cls, rt::sel(#str_ptr("acceptsFirstResponder\0")),
+                    imp_accepts_first_responder, #str_ptr("c@:\0"));
+    add_method_id_point(cls, rt::sel(#str_ptr("hitTest:\0")), imp_hit_test,
+                        #str_ptr("@@:{CGPoint=dd}\0"));
+    // Drag and drop. On the class unconditionally — see arm_drop for why the
+    // per-view gate cannot be a method.
+    synth::add_method_u64_1id(cls, rt::sel(#str_ptr("draggingEntered:\0")),
+                              akx::drop_entered_imp, #str_ptr("Q@:@\0"));
+    synth::add_method_v_1id(cls, rt::sel(#str_ptr("draggingExited:\0")),
+                            akx::drop_exited_imp, #str_ptr("v@:@\0"));
+    add_method_u64_1id(cls, rt::sel(#str_ptr("draggingUpdated:\0")),
+                       akx::drop_updated_imp, #str_ptr("Q@:@\0"));
+    synth::add_method_i8_1id(cls, rt::sel(#str_ptr("prepareForDragOperation:\0")),
+                             akx::drop_prepare_imp, #str_ptr("c@:@\0"));
+    synth::add_method_i8_1id(cls, rt::sel(#str_ptr("performDragOperation:\0")),
+                             akx::drop_perform_imp, #str_ptr("c@:@\0"));
+    synth::add_method_u64_1id_i64(cls,
+        rt::sel(#str_ptr("draggingSession:sourceOperationMaskForDraggingContext:\0")),
+        akx::drag_source_mask_imp, #str_ptr("Q@:@q\0"));
+    return;
+}
+
+fn is_armed(v: *u8) -> bool {
+    return { synth::get_associated(v, armed_key()) } != (0 as *u8);
+}
+
+// Give `v` facet's event behaviour for `n`. Idempotent: apply calls it on every
+// C_GESTURES write, and the class swap must happen once.
+fn arm(v: *u8, n: *core::Node) {
+    if v == (0 as *u8) || n == (0 as *core::Node) { return; }
+    let g: *gestures::Gestures = gestures::gestures_of(n);
+    if g == (0 as *gestures::Gestures) { return; }
+    // The node pointer is re-associated every time, because a node that was
+    // detached and re-attached under the same view has a new address.
+    synth::set_associated(v, node_key(), n as *u8);
+    if is_armed(v) { arm_tracking(v, g); return; }
+    let _old: *u8 = object_setClass(v, input_class_for(synth::object_class(v)));
+    synth::set_associated(v, armed_key(), 1 as *u8);
+    arm_tracking(v, g);
+    arm_drop(v, g);
+    arm_drag_source(v, g);
+    return;
+}
+
+// Hover and pointer-move need a tracking area; nothing else does, and a
+// tracking area on every gesture view would cost a mouse-moved event per node
+// per frame across the whole window.
+//
+// NSTrackingMouseEnteredAndExited 1 | NSTrackingMouseMoved 2 |
+// NSTrackingActiveInKeyWindow 0x20 | NSTrackingInVisibleRect 0x200.
+fn arm_tracking(v: *u8, g: *gestures::Gestures) {
+    let wants_enter: bool = { (*g).on_hover } != gestures::no_gesture
+                         || { (*g).on_unhover } != gestures::no_gesture;
+    let wants_move: bool = { (*g).on_pointer_move } != gestures::no_gesture;
+    if !wants_enter && !wants_move { return; }
+    if { synth::get_associated(v, tracking_key()) } != (0 as *u8) { return; }
+    var opts: u64 = 32 as u64 + (512 as u64);
+    if wants_enter { opts = opts | (1 as u64); }
+    if wants_move { opts = opts | (2 as u64); }
+    let area: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSTrackingArea\0")),
+                                 rt::sel(#str_ptr("alloc\0"))) };
+    let inited: *u8 = { msg_id_rect_u64_id_id(
+        area, rt::sel(#str_ptr("initWithRect:options:owner:userInfo:\0")),
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 }, opts, v, 0 as *u8) };
+    if inited == (0 as *u8) { return; }
+    { rt::msg_void_id(v, rt::sel(#str_ptr("addTrackingArea:\0")), inited) };
+    synth::set_associated(v, tracking_key(), 1 as *u8);
+    rt::release(inited);
+    return;
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_id_rect_u64_id_id(recv: *u8, sel: *u8, a: rt::Rect, b: u64,
+                                c: *u8, d: *u8) -> *u8;
+
+// ---- the key reader ----------------------------------------------------------
+// facet's side of an NSEvent: the platform code raw, the characters, portable
+// modifier bits, and the named-key table.
+
+fn key_code(event: *u8) -> i64 {
+    if event == (0 as *u8) { return 0 as i64 - (1 as i64); }
+    // MASKED to 16 bits, and it matters: -[NSEvent keyCode] returns an
+    // `unsigned short`, so the ABI only promises the low half of the register
+    // and the rest is whatever was there. Unmasked, the same Escape key
+    // compares equal to 53 on one call and to garbage on the next.
+    let raw: u64 = { rt::msg_u64(event, rt::sel(#str_ptr("keyCode\0"))) };
+    return { raw & (65535 as u64) } as i64;
+}
+
+fn key_chars(event: *u8) -> text::Text {
+    if event == (0 as *u8) { return text::new(); }
+    let ns: *u8 = { rt::msg_id(event, rt::sel(#str_ptr("characters\0"))) };
+    if ns == (0 as *u8) { return text::new(); }
+    return bridge::to_text(ns);
+}
+
+// NSEventModifierFlag* are bit 17..20; facet's are bits 0..3, so this is a
+// translation and not a cast — an app never sees an AppKit constant.
+fn key_modifiers(event: *u8) -> u64 {
+    if event == (0 as *u8) { return 0 as u64; }
+    let f: u64 = { rt::msg_u64(event, rt::sel(#str_ptr("modifierFlags\0"))) };
+    var out: u64 = 0 as u64;
+    if (f & (131072 as u64)) != (0 as u64) { out = out | gestures::mod_shift(); }
+    if (f & (262144 as u64)) != (0 as u64) { out = out | gestures::mod_control(); }
+    if (f & (524288 as u64)) != (0 as u64) { out = out | gestures::mod_option(); }
+    if (f & (1048576 as u64)) != (0 as u64) { out = out | gestures::mod_command(); }
+    return out;
+}
+
+// The macOS virtual key codes, mapped onto facet's names. Only the keys facet
+// names — everything else is `key_none()` and reads through key_code/key_chars,
+// which is the contract that table declares.
+fn key_named(event: *u8) -> i64 {
+    let c: i64 = key_code(event);
+    if c == (36 as i64) { return gestures::key_return(); }
+    if c == (76 as i64) { return gestures::key_return(); }   // keypad enter
+    if c == (48 as i64) { return gestures::key_tab(); }
+    if c == (49 as i64) { return gestures::key_space(); }
+    if c == (51 as i64) { return gestures::key_delete(); }
+    if c == (117 as i64) { return gestures::key_forward_delete(); }
+    if c == (53 as i64) { return gestures::key_escape(); }
+    if c == (123 as i64) { return gestures::key_arrow_left(); }
+    if c == (124 as i64) { return gestures::key_arrow_right(); }
+    if c == (126 as i64) { return gestures::key_arrow_up(); }
+    if c == (125 as i64) { return gestures::key_arrow_down(); }
+    if c == (115 as i64) { return gestures::key_home(); }
+    if c == (119 as i64) { return gestures::key_end(); }
+    if c == (116 as i64) { return gestures::key_page_up(); }
+    if c == (121 as i64) { return gestures::key_page_down(); }
+    return gestures::key_none();
+}
+
+fn key_reader() -> gestures::KeyReader {
+    return gestures::KeyReader {
+        code: key_code,
+        chars: key_chars,
+        modifiers: key_modifiers,
+        named: key_named,
+    };
+}
+
+// ---- the sender readers ------------------------------------------------------
+// A handler is given the thing that fired: a control for a control's action,
+// the backing view for a gesture (facet's `gesture_sender`). Both are views, so
+// all four readers are one superview walk.
+
+// A recognizer sender normalises to its view; anything else IS the view.
+fn sender_view(sender: *u8) -> *u8 {
+    if sender == (0 as *u8) { return 0 as *u8; }
+    if synth::class_responds(synth::object_class(sender), rt::sel(#str_ptr("view\0"))) != (0 as i8) {
+        let v: *u8 = { rt::msg_id(sender, rt::sel(#str_ptr("view\0"))) };
+        if v != (0 as *u8) { return v; }
+    }
+    return sender;
+}
+
+// The key IS the accessibilityIdentifier (one token, three jobs), and the walk
+// goes UP: a click on an untagged icon inside a tagged row answers the row.
+fn key_of(sender: *u8) -> text::Text {
+    var v: *u8 = sender_view(sender);
+    while v != (0 as *u8) {
+        let ns: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("accessibilityIdentifier\0"))) };
+        if ns != (0 as *u8) {
+            let len: u64 = { rt::msg_u64_u64(ns, rt::sel(#str_ptr("lengthOfBytesUsingEncoding:\0")),
+                                             bridge::ns_utf8()) };
+            if len > (0 as u64) { return bridge::to_text(ns); }
+        }
+        v = { rt::msg_id(v, rt::sel(#str_ptr("superview\0"))) };
+    }
+    return text::new();
+}
+
+// The app pointer a node carries, found by the same walk, so `item` and `key`
+// always resolve off the same view.
+fn item_of(sender: *u8) -> *u8 {
+    var v: *u8 = sender_view(sender);
+    while v != (0 as *u8) {
+        let it: *u8 = { synth::get_associated(v, item_key()) };
+        if it != (0 as *u8) { return it; }
+        v = { rt::msg_id(v, rt::sel(#str_ptr("superview\0"))) };
+    }
+    return 0 as *u8;
+}
+
+// Bring the keyed element to the front of its siblings, in place — the
+// no-rebuild z-order change. facet is not reactive, so the element is addressed
+// rather than re-described.
+fn raise(sender: *u8, key: str) {
+    let sv: *u8 = sender_view(sender);
+    if sv == (0 as *u8) { return; }
+    let win: *u8 = { rt::msg_id(sv, rt::sel(#str_ptr("window\0"))) };
+    if win == (0 as *u8) { return; }
+    let content: *u8 = { rt::msg_id(win, rt::sel(#str_ptr("contentView\0"))) };
+    if content == (0 as *u8) { return; }
+    let target: *u8 = find_by_key(content, key);
+    if target == (0 as *u8) { return; }
+    let v: ak::View = ak::View::from_raw(target);
+    match v.superview() {
+        option::Option[ak::View]::Some(sup) => {
+            // Removing and re-adding puts it last in the subview order, which
+            // IS the front on AppKit.
+            v.remove_from_superview();
+            sup.add_subview(v);
+        }
+        option::Option[ak::View]::None => { }
+    }
+    return;
+}
+
+fn find_by_key(root: *u8, key: str) -> *u8 {
+    if root == (0 as *u8) { return 0 as *u8; }
+    let ns: *u8 = { rt::msg_id(root, rt::sel(#str_ptr("accessibilityIdentifier\0"))) };
+    if ns != (0 as *u8) {
+        if bridge::to_text(ns).view() == key { return root; }
+    }
+    let subs: *u8 = { rt::msg_id(root, rt::sel(#str_ptr("subviews\0"))) };
+    if subs == (0 as *u8) { return 0 as *u8; }
+    let count: u64 = { rt::msg_u64(subs, rt::sel(#str_ptr("count\0"))) };
+    var i: u64 = 0 as u64;
+    while i < count {
+        let child: *u8 = { rt::msg_id_u64(subs, rt::sel(#str_ptr("objectAtIndex:\0")), i) };
+        let hit: *u8 = find_by_key(child, key);
+        if hit != (0 as *u8) { return hit; }
+        i = i + (1 as u64);
+    }
+    return 0 as *u8;
+}
+
+fn dropped_text(sender: *u8) -> text::Text {
+    let v: *u8 = sender_view(sender);
+    if v == (0 as *u8) { return text::new(); }
+    return akx::drop_text_of(v);
+}
+
+fn drag_targeted(sender: *u8) -> bool {
+    let v: *u8 = sender_view(sender);
+    if v == (0 as *u8) { return false; }
+    return akx::drag_targeted(v);
+}
+
+fn sender_readers() -> component::SenderReaders {
+    return component::SenderReaders {
+        raise: raise,
+        key_of: key_of,
+        item_of: item_of,
+        dropped_text: dropped_text,
+        drag_targeted: drag_targeted,
+    };
+}

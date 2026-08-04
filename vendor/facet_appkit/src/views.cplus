@@ -19,11 +19,13 @@ import "stdlib/io" as io;
 import "flex_layout/flex_layout" as flex;
 import "facet/facet" as core;
 import "facet/props" as props;
+import "facet/gestures" as gestures;
 import "facet/vocabulary" as vocab;
 import "objc/runtime" as rt;
 import "appkit/appkit" as ak;
 import "appkit/appkit_ext" as akx;
 import "./paint" as paint;
+import "./input" as input;
 import "facet/symbol" as symbol;
 import "facet/split" as split;
 import "facet/tree" as tree;
@@ -57,6 +59,10 @@ fn wants_view(n: *core::Node) -> bool {
     // label reads its span children and renders one attributed string.
     if controls::span_kind(kind) { return false; }
     if kind != core::K_NODE { return true; }
+    // A bare container with GESTURES needs one too: input arrives on a view,
+    // so an unkeyed `column(b).on_click(...)` would otherwise describe a
+    // handler nothing could ever deliver to.
+    if gestures::has_gestures(n) { return true; }
     return { (*n).key() } != "";
 }
 
@@ -78,6 +84,10 @@ fn create(ctx: *u8, n: *core::Node) -> *u8 {
     // bit set. One code path with apply, so the two cannot drift.
     paint::apply_common(v, n, paint::all_bits());
     apply_for_kind(kind, v, n, paint::all_bits());
+    // The gesture band. AFTER the kind body, because arming moves the view's
+    // class and a body that reads `object_class` would see the subclass.
+    input::arm(v, n);
+    input::bind_item(v, n);
     // A `context_menu` child describes a menu for THIS view; it has no view of
     // its own, so this is the moment it can be hung.
     controls::attach_context_menu(v, n);
@@ -145,6 +155,12 @@ fn apply(ctx: *u8, n: *core::Node) {
     if d == (0 as u64) { return; }
     paint::apply_common(v, n, d);
     apply_for_kind(core::kind_of(n), v, n, d);
+    // `attach` / `detach` / a whole-set swap all raise C_GESTURES, and arming
+    // is idempotent — the class moves once, the node pointer is refreshed
+    // every time (a re-attached node has a new address).
+    if (d & core::C_GESTURES) != (0 as u64) { input::arm(v, n); }
+    // An item rides C_HANDLERS: it is the payload half of a handler.
+    if (d & props::C_HANDLERS) != (0 as u64) { input::bind_item(v, n); }
     return;
 }
 
