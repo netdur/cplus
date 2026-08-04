@@ -8,21 +8,53 @@ happen on a Mac?" by reading it.
 A row here is a commitment, not a note. Nothing is left implicit: a verb that
 is neither implemented nor listed below is a gap, and the gap is a bug.
 
-Status: **Stage 4 item 1 complete**, item 2 begun (five kinds of 42). Items are in
+Status: **Stage 4 item 1 complete**, item 2 at 15 kinds of 42. Items are in
 progress; this file grows a row each time something is decided either way.
 
 ---
 
 ## AppKit cannot
 
-Nothing is recorded here yet. The rows Stage 4 expects to land in this section
-are the mobile-only handful the tier ledger deferred — soft-input policy and
-the nav-bar back button — which have no desktop equivalent and will be recorded
-as "AppKit cannot (mobile concept)" when item 5 reaches them.
-
 The doctrine is the same one an UNSUPPORTED control verb follows: the contract
 still declares it, because the contract is readable as a whole and a backend's
 gaps are not the vocabulary's business.
+
+### The control tint colours
+
+| Verb | Why not |
+|---|---|
+| `toggle(on_color:)` `off_color:` `thumb_color:` | NSSwitch paints from the system accent colour and exposes no per-instance tint. |
+| `slider(minimum_track_color:)` `maximum_track_color:` `thumb_color:` | NSSlider's track and knob are drawn by the cell; there is no colour API. |
+| `progress(progress_color:)` | NSProgressIndicator's bar is the system accent colour. |
+| `checkbox(color:)` `spinner(color:)` | Same: the mark and the spinner are system-drawn. |
+
+A tinted layer under each was considered and rejected. It would stop tracking
+the system appearance (the whole point of these being platform controls), and
+it would drift the moment Apple changes the control's shape. An application
+that must have a specific colour draws it itself with `box` and `gesture`,
+which is a visible choice rather than a lie.
+
+### `radio(group:)` does not name the group
+
+AppKit groups NSButtons of type Radio **by superview**: radios sharing a
+superview deselect each other automatically, and there is no group name.
+facet's `group` is the portable model, so a group that does not match the
+tree's shape is not honoured here. Put the radios of one group in one
+container and the behaviour is what the contract says.
+
+### One corner radius per layer
+
+`corner_radius` carries four corners (`Corners { top_leading, top_trailing,
+bottom_leading, bottom_trailing }`). Core Animation has one `cornerRadius`
+per layer, so the **largest** of the four is used. Per-corner radii would
+need a mask layer per view, which is real cost for a case no consumer has
+asked for yet.
+
+### Deferred, mobile-only
+
+The mobile-only handful the tier ledger deferred — soft-input policy, the
+nav-bar back button — have no desktop equivalent and land here as "AppKit
+cannot (mobile concept)" when item 5 reaches them.
 
 ## Implemented, with a deviation worth knowing
 

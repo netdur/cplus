@@ -20,6 +20,14 @@ import "facet/label" as label;
 import "facet/button" as button;
 import "facet/text_field" as text_field;
 import "facet/scroll" as scroll;
+import "facet/box" as box_view;
+import "facet/checkbox" as checkbox;
+import "facet/radio" as radio;
+import "facet/toggle" as toggle;
+import "facet/slider" as slider;
+import "facet/progress" as progress;
+import "facet/spinner" as spinner;
+import "facet/stepper" as stepper;
 import "objc/runtime" as rt;
 import "appkit/appkit" as ak;
 
@@ -238,6 +246,108 @@ fn a_scroll_hosts_its_children_in_the_flipped_document_view() {
     views::insert(0 as *u8, v, child, 0 as usize);
     assert ak::View::from_raw(host).subviews().count() == (1 as usize);
     views::view_release(child);
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn the_on_off_controls_carry_their_state_both_ways() {
+    // checkbox / radio / toggle are three different AppKit things (a Switch
+    // button, a Radio button, a real NSSwitch) reading one facet field, so
+    // each is asserted through create AND through a live apply.
+    var c: core::Node = checkbox::checkbox(key: "c", on: true);
+    let cp: *core::Node = #addr_of(c);
+    let cv: *u8 = views::create(0 as *u8, cp);
+    assert ak::Button::from_raw(cv).state() == (1 as i64);
+    core::set_view(cp, cv, views::view_release);
+    core::clear_dirty(cp);
+    match checkbox::find("c", within: cp) {
+        option::Option[checkbox::Checkbox]::Some(h) => { let _h: checkbox::Checkbox = h.set_on(false); }
+        option::Option[checkbox::Checkbox]::None => { assert false; }
+    }
+    views::apply(0 as *u8, cp);
+    assert ak::Button::from_raw(cv).state() == (0 as i64);
+
+    var t: core::Node = toggle::toggle(key: "t", on: true);
+    let tv: *u8 = views::create(0 as *u8, #addr_of(t));
+    assert ak::Switch::from_raw(tv).state() == (1 as i64);
+    views::view_release(tv);
+
+    var r: core::Node = radio::radio(key: "r", on: true);
+    let rv: *u8 = views::create(0 as *u8, #addr_of(r));
+    assert ak::Button::from_raw(rv).state() == (1 as i64);
+    views::view_release(rv);
+    return;
+}
+
+#[test]
+fn a_sliders_range_is_written_before_its_value() {
+    // The trap this guards: writing the value first clamps it against the OLD
+    // range and the write is silently lost. A slider built at 0..100 with
+    // value 75 must actually read 75.
+    var s: core::Node = slider::slider(key: "s", minimum: 0.0f64, maximum: 100.0f64, value: 75.0f64);
+    let p: *core::Node = #addr_of(s);
+    let v: *u8 = views::create(0 as *u8, p);
+    let sl: ak::Slider = ak::Slider::from_raw(v);
+    assert sl.as_control().double_value() > 74.0f64;
+    assert sl.as_control().double_value() < 76.0f64;
+    // ...and the same on a live range change.
+    core::set_view(p, v, views::view_release);
+    core::clear_dirty(p);
+    match slider::find("s", within: p) {
+        option::Option[slider::Slider]::Some(h) => {
+            let h2: slider::Slider = h.set_maximum(1000.0f64);
+            let _h3: slider::Slider = h2.set_value(900.0f64);
+        }
+        option::Option[slider::Slider]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    assert sl.as_control().double_value() > 899.0f64;
+    return;
+}
+
+#[test]
+fn a_stepper_carries_its_range_increment_and_value() {
+    var s: core::Node = stepper::stepper(key: "st", minimum: 1.0f64, maximum: 9.0f64,
+                                         increment: 2.0f64, value: 5.0f64);
+    let v: *u8 = views::create(0 as *u8, #addr_of(s));
+    let st: ak::Stepper = ak::Stepper::from_raw(v);
+    assert st.as_control().double_value() > 4.0f64;
+    assert st.as_control().double_value() < 6.0f64;
+    assert st.increment() > 1.5f64;
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn progress_and_spinner_are_the_same_class_in_two_postures() {
+    // A determinate bar over facet's 0..1 range...
+    var pr: core::Node = progress::progress(0.5f64, key: "p");
+    let pv: *u8 = views::create(0 as *u8, #addr_of(pr));
+    let pi: ak::ProgressIndicator = ak::ProgressIndicator::from_raw(pv);
+    assert pi.double_value() > 0.4f64;
+    assert pi.double_value() < 0.6f64;
+    assert pi.is_indeterminate() == false;
+    views::view_release(pv);
+    // ...and the indeterminate spinner, which must be told to ANIMATE: a
+    // stopped one draws nothing, which reads as a broken view.
+    var sp: core::Node = spinner::spinner(vocab::Color::clear(), key: "s", running: true);
+    let sv: *u8 = views::create(0 as *u8, #addr_of(sp));
+    assert ak::ProgressIndicator::from_raw(sv).is_indeterminate();
+    views::view_release(sv);
+    return;
+}
+
+#[test]
+fn a_box_is_a_layer_of_colour_with_a_corner_radius() {
+    // No AppKit control corresponds — NSBox is a titled grouping frame, which
+    // is a different thing — so a box is a layer-backed view.
+    var b: core::Node = box_view::box(vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64, 1.0f64), key: "b",
+                                      corner_radius: vocab::Corners::all(6.0f64));
+    let v: *u8 = views::create(0 as *u8, #addr_of(b));
+    let view: ak::View = ak::View::from_raw(v);
+    assert view.wants_layer();
+    assert view.layer().corner_radius() > 5.0f64;
     views::view_release(v);
     return;
 }

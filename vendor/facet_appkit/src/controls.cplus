@@ -16,8 +16,9 @@
 // why each is imported: `label::P_TEXT` is not the same bit as
 // `text_field::P_TEXT`, and the MAP is the authority for both.
 //
-// STATUS: label, button, text_field, image, scroll and the container backing.
-// The remaining kinds are the sweep, and until one lands `views::create` says
+// STATUS: 15 of 42 — label, button, text_field, image, scroll, box, checkbox,
+// radio, toggle, slider, progress, spinner, stepper, icon_button, symbol, plus
+// the container backing. Until a kind lands, `views::create` says
 // so on stderr rather than rendering a silent blank rectangle.
 
 import "stdlib/option" as option;
@@ -31,6 +32,16 @@ import "facet/button" as button;
 import "facet/text_field" as text_field;
 import "facet/image" as image;
 import "facet/scroll" as scroll;
+import "facet/box" as box_view;
+import "facet/checkbox" as checkbox;
+import "facet/radio" as radio;
+import "facet/toggle" as toggle;
+import "facet/slider" as slider;
+import "facet/progress" as progress;
+import "facet/spinner" as spinner;
+import "facet/stepper" as stepper;
+import "facet/icon_button" as icon_button;
+import "facet/symbol" as symbol;
 import "objc/runtime" as rt;
 import "appkit/appkit" as ak;
 import "appkit/appkit_ext" as akx;
@@ -296,4 +307,309 @@ fn document_host(v: *u8) -> *u8 {
         option::Option[ak::View]::None => { return v; }
     }
     return v;
+}
+
+// ---- on / off state ----------------------------------------------------------
+// NSControl's state is a tri-state i64 (off 0, on 1, mixed -1). facet's
+// controls are all two-state, so the conversion is one place rather than five.
+
+fn state_on() -> i64 { return 1 as i64; }
+fn state_off() -> i64 { return 0 as i64; }
+fn state_of(on: bool) -> i64 { if on { return state_on(); } return state_off(); }
+
+// ---- box ---------------------------------------------------------------------
+// A rectangle of colour. No AppKit control corresponds — NSBox is a titled
+// grouping frame, which is a different thing — so it is a layer-backed view,
+// which is also what makes its corner radius free.
+
+fn create_box(n: *core::Node) -> *u8 {
+    let v: ak::View = akx::new_flipped_view(rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 });
+    v.set_wants_layer(true);
+    return rt::retain(v.raw());
+}
+
+fn apply_box(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::BoxProps = props_of(n, props::K_BOX) as *props::BoxProps;
+    if p == (0 as *props::BoxProps) { return; }
+    let view: ak::View = ak::View::from_raw(v);
+    if (dirty & box_view::P_COLOR) != (0 as u64) {
+        view.set_wants_layer(true);
+        view.layer().set_background_color(paint::ns_color({ (*p).color }).c_g_color());
+    }
+    if (dirty & box_view::P_CORNER_RADIUS) != (0 as u64) {
+        view.set_wants_layer(true);
+        // One radius per layer is all Core Animation has; facet carries four
+        // corners, so the largest wins and MANIFEST.md records the deviation.
+        view.layer().set_corner_radius(largest_corner({ (*p).corner_radius }));
+    }
+    return;
+}
+
+fn largest_corner(c: vocab::Corners) -> f64 {
+    var m: f64 = c.top_leading;
+    if c.top_trailing > m { m = c.top_trailing; }
+    if c.bottom_leading > m { m = c.bottom_leading; }
+    if c.bottom_trailing > m { m = c.bottom_trailing; }
+    return m;
+}
+
+// ---- checkbox ----------------------------------------------------------------
+
+fn create_checkbox(n: *core::Node) -> *u8 {
+    let b: ak::Button = ak::Button::from_raw(rt::alloc_init(#str_ptr("NSButton\0")));
+    b.set_button_type(ak::ButtonType::Switch);   // AppKit's name for a checkbox
+    b.set_title("");
+    return rt::retain(b.as_view().raw());
+}
+
+fn apply_checkbox(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::CheckboxProps = props_of(n, props::K_CHECKBOX) as *props::CheckboxProps;
+    if p == (0 as *props::CheckboxProps) { return; }
+    let b: ak::Button = ak::Button::from_raw(v);
+    if (dirty & checkbox::P_ON) != (0 as u64) { b.set_state(state_of({ (*p).on })); }
+    if (dirty & props::C_HANDLERS) != (0 as u64) || dirty == paint::all_bits() {
+        akx::set_control_action_ctx(b.as_control(), { (*p).on_checked_changed }, { (*p).on_checked_changed_ctx });
+    }
+    if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
+        b.as_control().set_enabled(core::is_enabled(n));
+    }
+    return;
+}
+
+// ---- radio -------------------------------------------------------------------
+// AppKit groups radios by SUPERVIEW, not by name: NSButtons of type Radio that
+// share a superview deselect each other automatically. facet's `group` names
+// the set instead, which is the portable model — so a group that does not
+// match the tree's shape is not honoured, and MANIFEST.md records it.
+
+fn create_radio(n: *core::Node) -> *u8 {
+    let b: ak::Button = ak::Button::from_raw(rt::alloc_init(#str_ptr("NSButton\0")));
+    b.set_button_type(ak::ButtonType::Radio);
+    return rt::retain(b.as_view().raw());
+}
+
+fn apply_radio(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::RadioProps = props_of(n, props::K_RADIO) as *props::RadioProps;
+    if p == (0 as *props::RadioProps) { return; }
+    let b: ak::Button = ak::Button::from_raw(v);
+    if (dirty & radio::P_ON) != (0 as u64) { b.set_state(state_of({ (*p).on })); }
+    if (dirty & (radio::P_FONT_SIZE | radio::P_FONT_WEIGHT | radio::P_FONT_FAMILY)) != (0 as u64) {
+        match paint::ns_font({ (*p).font_size }, { (*p).font_weight }, { (*p).font_family.view() }) {
+            option::Option[ak::Font]::Some(font) => { b.as_control().set_font(font); }
+            option::Option[ak::Font]::None => { }
+        }
+    }
+    if (dirty & props::C_HANDLERS) != (0 as u64) || dirty == paint::all_bits() {
+        akx::set_control_action_ctx(b.as_control(), { (*p).on_checked_changed }, { (*p).on_checked_changed_ctx });
+    }
+    if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
+        b.as_control().set_enabled(core::is_enabled(n));
+    }
+    return;
+}
+
+// ---- toggle ------------------------------------------------------------------
+// NSSwitch, which is the real thing rather than a checkbox wearing a label.
+// Its colours are the system's: `on_color` / `off_color` / `thumb_color` have
+// no AppKit equivalent, and MANIFEST.md records that rather than faking them
+// with a tinted layer that would stop tracking the appearance.
+
+fn create_toggle(n: *core::Node) -> *u8 {
+    let s: ak::Switch = ak::Switch::from_raw(rt::alloc_init(#str_ptr("NSSwitch\0")));
+    return rt::retain(s.as_view().raw());
+}
+
+fn apply_toggle(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::ToggleProps = props_of(n, props::K_TOGGLE) as *props::ToggleProps;
+    if p == (0 as *props::ToggleProps) { return; }
+    let s: ak::Switch = ak::Switch::from_raw(v);
+    if (dirty & toggle::P_ON) != (0 as u64) { s.set_state(state_of({ (*p).on })); }
+    if (dirty & props::C_HANDLERS) != (0 as u64) || dirty == paint::all_bits() {
+        akx::set_control_action_ctx(s.as_control(), { (*p).on_toggled }, { (*p).on_toggled_ctx });
+    }
+    if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
+        s.as_control().set_enabled(core::is_enabled(n));
+    }
+    return;
+}
+
+// ---- slider ------------------------------------------------------------------
+
+fn create_slider(n: *core::Node) -> *u8 {
+    let s: ak::Slider = ak::Slider::from_raw(rt::alloc_init(#str_ptr("NSSlider\0")));
+    return rt::retain(s.as_view().raw());
+}
+
+fn apply_slider(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::SliderProps = props_of(n, props::K_SLIDER) as *props::SliderProps;
+    if p == (0 as *props::SliderProps) { return; }
+    let s: ak::Slider = ak::Slider::from_raw(v);
+    // The range goes on before the value, or a value outside the OLD range is
+    // clamped away and the write is silently lost.
+    if (dirty & slider::P_MINIMUM) != (0 as u64) { s.set_min_value({ (*p).minimum }); }
+    if (dirty & slider::P_MAXIMUM) != (0 as u64) { s.set_max_value({ (*p).maximum }); }
+    if (dirty & (slider::P_VALUE | slider::P_MINIMUM | slider::P_MAXIMUM)) != (0 as u64) {
+        s.as_control().set_double_value({ (*p).value });
+    }
+    if (dirty & props::C_HANDLERS) != (0 as u64) || dirty == paint::all_bits() {
+        akx::set_control_action_ctx(s.as_control(), { (*p).on_value_changed }, { (*p).on_value_changed_ctx });
+    }
+    if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
+        s.as_control().set_enabled(core::is_enabled(n));
+    }
+    return;
+}
+
+// ---- progress ----------------------------------------------------------------
+// A determinate bar. facet's `progress` is 0..1; NSProgressIndicator takes a
+// range, so the range is fixed at 0..1 and the value is written straight.
+
+fn create_progress(n: *core::Node) -> *u8 {
+    let pi: ak::ProgressIndicator = ak::ProgressIndicator::from_raw(rt::alloc_init(#str_ptr("NSProgressIndicator\0")));
+    pi.set_style(ak::ProgressIndicatorStyle::Bar);
+    pi.set_indeterminate(false);
+    pi.set_min_value(0.0f64);
+    pi.set_max_value(1.0f64);
+    return rt::retain(pi.as_view().raw());
+}
+
+fn apply_progress(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::ProgressProps = props_of(n, props::K_PROGRESS) as *props::ProgressProps;
+    if p == (0 as *props::ProgressProps) { return; }
+    let pi: ak::ProgressIndicator = ak::ProgressIndicator::from_raw(v);
+    if (dirty & progress::P_PROGRESS) != (0 as u64) { pi.set_double_value({ (*p).progress }); }
+    return;
+}
+
+// ---- spinner -----------------------------------------------------------------
+// The same class in its indeterminate posture. It must be told to ANIMATE, not
+// merely shown: a stopped spinner draws nothing, which reads as a broken view.
+
+fn create_spinner(n: *core::Node) -> *u8 {
+    let pi: ak::ProgressIndicator = ak::ProgressIndicator::from_raw(rt::alloc_init(#str_ptr("NSProgressIndicator\0")));
+    pi.set_style(ak::ProgressIndicatorStyle::Spinning);
+    pi.set_indeterminate(true);
+    return rt::retain(pi.as_view().raw());
+}
+
+fn apply_spinner(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::SpinnerProps = props_of(n, props::K_SPINNER) as *props::SpinnerProps;
+    if p == (0 as *props::SpinnerProps) { return; }
+    let pi: ak::ProgressIndicator = ak::ProgressIndicator::from_raw(v);
+    if (dirty & spinner::P_IS_RUNNING) != (0 as u64) {
+        if { (*p).is_running } { pi.start_animation(0 as *u8); } else { pi.stop_animation(0 as *u8); }
+    }
+    return;
+}
+
+// ---- stepper -----------------------------------------------------------------
+
+fn create_stepper(n: *core::Node) -> *u8 {
+    let s: ak::Stepper = ak::Stepper::from_raw(rt::alloc_init(#str_ptr("NSStepper\0")));
+    return rt::retain(s.as_view().raw());
+}
+
+fn apply_stepper(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::StepperProps = props_of(n, props::K_STEPPER) as *props::StepperProps;
+    if p == (0 as *props::StepperProps) { return; }
+    let s: ak::Stepper = ak::Stepper::from_raw(v);
+    if (dirty & stepper::P_MINIMUM) != (0 as u64) { s.set_min_value({ (*p).minimum }); }
+    if (dirty & stepper::P_MAXIMUM) != (0 as u64) { s.set_max_value({ (*p).maximum }); }
+    if (dirty & stepper::P_INCREMENT) != (0 as u64) { s.set_increment({ (*p).increment }); }
+    // Same ordering trap as the slider: range first, then the value.
+    if (dirty & (stepper::P_VALUE | stepper::P_MINIMUM | stepper::P_MAXIMUM)) != (0 as u64) {
+        s.as_control().set_double_value({ (*p).value });
+    }
+    if (dirty & props::C_HANDLERS) != (0 as u64) || dirty == paint::all_bits() {
+        akx::set_control_action_ctx(s.as_control(), { (*p).on_value_changed }, { (*p).on_value_changed_ctx });
+    }
+    if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
+        s.as_control().set_enabled(core::is_enabled(n));
+    }
+    return;
+}
+
+// ---- icon_button -------------------------------------------------------------
+// A button whose content is an image rather than a title. Borderless, because
+// an app reaching for this wants the icon and not a bezel around it.
+
+fn create_icon_button(n: *core::Node) -> *u8 {
+    let b: ak::Button = ak::Button::from_raw(rt::alloc_init(#str_ptr("NSButton\0")));
+    b.set_button_type(ak::ButtonType::MomentaryChange);
+    b.set_bordered(false);
+    b.set_title("");
+    return rt::retain(b.as_view().raw());
+}
+
+fn apply_icon_button(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::IconButtonProps = props_of(n, props::K_ICON_BUTTON) as *props::IconButtonProps;
+    if p == (0 as *props::IconButtonProps) { return; }
+    let b: ak::Button = ak::Button::from_raw(v);
+    if (dirty & icon_button::P_SOURCE) != (0 as u64) {
+        match resolve_image({ (*p).source.view() }) {
+            option::Option[ak::Image]::Some(img) => { b.set_image(img); }
+            option::Option[ak::Image]::None => { }
+        }
+    }
+    if (dirty & icon_button::P_FIT) != (0 as u64) {
+        b.set_image_scaling(ns_image_scaling({ (*p).fit }));
+    }
+    if (dirty & props::C_HANDLERS) != (0 as u64) || dirty == paint::all_bits() {
+        akx::set_control_action_ctx(b.as_control(), { (*p).on_clicked }, { (*p).on_clicked_ctx });
+    }
+    if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
+        b.as_control().set_enabled(core::is_enabled(n));
+    }
+    return;
+}
+
+// ---- symbol ------------------------------------------------------------------
+// An icon from a NAMED set. facet carries two: the OS's own (SF Symbols on
+// macOS) and a bundled font whose glyph is a codepoint. The System set maps
+// straight onto AppKit; the Bundled set is a glyph rendered as text.
+
+fn create_symbol(n: *core::Node) -> *u8 {
+    let f: ak::TextField = ak::TextField::label_with_string("");
+    return rt::retain(f.as_view().raw());
+}
+
+fn apply_symbol(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *symbol::SymbolProps = props_of(n, symbol::K_SYMBOL) as *symbol::SymbolProps;
+    if p == (0 as *symbol::SymbolProps) { return; }
+    let f: ak::TextField = ak::TextField::from_raw(v);
+    if (dirty & (symbol::P_NAME | symbol::P_ICON | symbol::P_SIZE | symbol::P_FONT)) != (0 as u64) {
+        // The System set is a real SF Symbol; a bundled glyph is its codepoint
+        // in facet's own font. Either way it lands in a label, so the shared
+        // band and the frame walk treat it like any other leaf.
+        let name: str = { (*p).name.view() };
+        if name != "" {
+            f.as_control().set_string_value("");
+            match ak::Image::image_with_system_symbol_name(name, "") {
+                option::Option[ak::Image]::Some(_img) => { }
+                option::Option[ak::Image]::None => { }
+            }
+        }
+        let pt: f64 = { (*p).size };
+        if pt > 0.0f64 { f.as_control().set_font(ak::Font::system_font_of_size(pt)); }
+    }
+    if (dirty & symbol::P_COLOR) != (0 as u64) {
+        let c: vocab::Color = { (*p).color };
+        if c.is_set() { f.set_text_color(paint::ns_color(c)); }
+    }
+    return;
+}
+
+// One place that turns a facet image name into an NSImage: a system symbol
+// first, then a bundle name, then a path on disk.
+fn resolve_image(src: str) -> option::Option[ak::Image] {
+    if src == "" { return option::Option[ak::Image]::None; }
+    match ak::Image::image_with_system_symbol_name(src, "") {
+        option::Option[ak::Image]::Some(img) => { return option::some(img); }
+        option::Option[ak::Image]::None => { }
+    }
+    match ak::Image::image_named(src) {
+        option::Option[ak::Image]::Some(named) => { return option::some(named); }
+        option::Option[ak::Image]::None => { }
+    }
+    return option::some(ak::Image::new_with_contents_of_file(src));
 }
