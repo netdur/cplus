@@ -1,0 +1,319 @@
+// facet theme — the app's palette, and the appearance it resolves against.
+// HAND-WRITTEN. Stage 3 port from the pre-regen facet, bodies unchanged.
+// The Color token model itself lives in the generated vocabulary (a color is
+// a NAME resolved by the backend at paint time); this module holds the app's
+// role assignments and the resolution tables the backend reads.
+//
+// One strip vs the old facet: `set_theme` no longer calls the outlet
+// router's re-stage invalidation — that registry rides in with the router
+// port and the call comes back with it.
+
+import "stdlib/text" as text;
+import "./vocabulary" as vocab;
+
+type Color = vocab::Color;
+
+// ---- Theme ------------------------------------------------------------------
+// The app's palette: one plain record, installed once with `set_theme` (main,
+// or App::on_launch). Every field is a Color — unset (the platform default
+// chain), a fixed `rgba`, or an `adaptive` light/dark pair. Calling set_theme
+// again re-themes the LIVE app: the backend repaints token-colored chrome in
+// place, the same sweep an appearance flip runs. No context, no threading —
+// a role is spelled `Color::primary()` anywhere, and resolution happens at
+// paint time.
+struct Theme {
+    primary: Color,
+    on_primary: Color,
+    secondary: Color,
+    on_secondary: Color,
+    ink: Color,
+    surface: Color,
+    raised: Color,
+    sunken: Color,
+    outline: Color,
+    success: Color,
+    warning: Color,
+    danger: Color,
+    content: Color,
+    toolbar: Color,
+    tabstrip: Color,
+    track: Color,
+    chip: Color,
+    recessed: Color,
+}
+
+impl Theme {
+    fn new(
+        primary: Color = Color::none(),
+        on_primary: Color = Color::none(),
+        secondary: Color = Color::none(),
+        on_secondary: Color = Color::none(),
+        ink: Color = Color::none(),
+        surface: Color = Color::none(),
+        raised: Color = Color::none(),
+        sunken: Color = Color::none(),
+        outline: Color = Color::none(),
+        success: Color = Color::none(),
+        warning: Color = Color::none(),
+        danger: Color = Color::none(),
+        content: Color = Color::none(),
+        toolbar: Color = Color::none(),
+        tabstrip: Color = Color::none(),
+        track: Color = Color::none(),
+        chip: Color = Color::none(),
+        recessed: Color = Color::none(),
+    ) -> Theme {
+        return Theme {
+            primary: primary,
+            on_primary: on_primary,
+            secondary: secondary,
+            on_secondary: on_secondary,
+            ink: ink,
+            surface: surface,
+            raised: raised,
+            sunken: sunken,
+            outline: outline,
+            success: success,
+            warning: warning,
+            danger: danger,
+            content: content,
+            toolbar: toolbar,
+            tabstrip: tabstrip,
+            track: track,
+            chip: chip,
+            recessed: recessed,
+        };
+    }
+}
+
+static THEME: Theme = #zero::[Theme]();
+
+// Backend hook: repaint token-colored chrome after a theme change (the same
+// sweep the appearance observer runs). Installed by the backend; without one
+// set_theme still stores (new mounts resolve the new palette).
+static THEME_CHANGED_FN: fn() = #zero::[fn()]();
+fn set_theme_changed_fn(f: fn()) { THEME_CHANGED_FN = f; return; }
+
+fn set_theme(take t: Theme) {
+    THEME = t;
+    // (Router port pending: the old facet dropped parked outlet siblings here
+    // so a re-stage resolved the new palette. Comes back with the router.)
+    let f: fn() = THEME_CHANGED_FN;
+    if f != (0 as fn()) { f(); }
+    return;
+}
+
+fn theme() -> Theme { return THEME; }
+
+// The stored Color for a theme-role token — none when the app left the role
+// unset (resolve `theme_fallback` instead). Backend-facing.
+fn theme_slot(token: u32) -> Color {
+    if token == (100 as u32) { return THEME.primary; }
+    if token == (101 as u32) { return THEME.on_primary; }
+    if token == (102 as u32) { return THEME.secondary; }
+    if token == (103 as u32) { return THEME.on_secondary; }
+    if token == (104 as u32) { return THEME.ink; }
+    if token == (105 as u32) { return THEME.surface; }
+    if token == (106 as u32) { return THEME.raised; }
+    if token == (107 as u32) { return THEME.sunken; }
+    if token == (108 as u32) { return THEME.outline; }
+    if token == (109 as u32) { return THEME.success; }
+    if token == (110 as u32) { return THEME.warning; }
+    if token == (111 as u32) { return THEME.danger; }
+    if token == (112 as u32) { return THEME.content; }
+    if token == (113 as u32) { return THEME.toolbar; }
+    if token == (114 as u32) { return THEME.tabstrip; }
+    if token == (115 as u32) { return THEME.track; }
+    if token == (116 as u32) { return THEME.chip; }
+    if token == (117 as u32) { return THEME.recessed; }
+    return Color::none();
+}
+
+// The Tier-1 default an UNSET theme role resolves to. All fallbacks are
+// platform tokens or literals (never another role), so resolution is one
+// step deep. Backend-facing.
+fn theme_fallback(token: u32) -> Color {
+    if token == (100 as u32) { return Color::accent(); }
+    if token == (101 as u32) { return Color::rgba(1.0f64, 1.0f64, 1.0f64, 1.0f64); }
+    if token == (102 as u32) { return Color::accent(); }
+    if token == (103 as u32) { return Color::rgba(1.0f64, 1.0f64, 1.0f64, 1.0f64); }
+    if token == (104 as u32) { return Color::text(); }
+    if token == (105 as u32) { return Color::window_background(); }
+    if token == (106 as u32) { return Color::control_background(); }
+    if token == (107 as u32) { return Color::under_page_background(); }
+    if token == (108 as u32) { return Color::separator(); }
+    if token == (109 as u32) { return Color::system_green(); }
+    if token == (110 as u32) { return Color::system_orange(); }
+    if token == (111 as u32) { return Color::system_red(); }
+    if token == (112 as u32) { return Color::control_background(); }
+    if token == (113 as u32) { return Color::window_background(); }
+    if token == (114 as u32) { return Color::under_page_background(); }
+    if token == (115 as u32) { return Color::fill(); }
+    if token == (116 as u32) { return Color::fill_secondary(); }
+    if token == (117 as u32) { return Color::fill(); }
+    return Color::none();
+}
+
+// A widget's visual style. Rides on every `Node`; each backend's `apply_style`
+// reads it and applies only the set fields. Paint props (fg/bg/corner/border)
+
+// ---- is_dark: which system appearance is active ------------------------------
+// True when the platform is in its dark appearance. An app choosing custom
+// colors branches on this at build/re-theme time; prefer the adaptive Color
+// tokens where one fits (they track the appearance without any branching).
+// Backend-installed; false until a backend registers (light is the neutral
+// default for headless/portable runs).
+static IS_DARK_FN: fn() -> bool = #zero::[fn() -> bool]();
+
+fn set_is_dark_fn(f: fn() -> bool) { IS_DARK_FN = f; return; }
+
+fn is_dark() -> bool {
+    let f: fn() -> bool = IS_DARK_FN;
+    if f == (0 as fn() -> bool) { return false; }
+    return f();
+}
+
+// ---- appearance change: the re-theme signal ----------------------------------
+// The backend fires `notify_appearance_changed()` on every system light/dark
+// flip (macOS: viewDidChangeEffectiveAppearance). The app registers ONE handler
+// with `on_appearance_change`; what it does — re-theme keyed elements in place,
+// swap a root outlet's child — is app policy, never facet's. Colors flattened
+// at build time (layer backgrounds) do not track the appearance by themselves,
+// so a themed app re-applies them from this handler.
+static APPEARANCE_CB: fn(*u8) = #zero::[fn(*u8)]();
+static APPEARANCE_CB_CTX: *u8 = #zero::[*u8]();
+
+fn on_appearance_change(handler: fn(*u8), ctx: *u8 = 0 as *u8) {
+    APPEARANCE_CB = handler;
+    APPEARANCE_CB_CTX = ctx;
+    return;
+}
+
+// Backend entry: deliver the flip to the app's registered handler (no-op when
+// the app never registered).
+fn notify_appearance_changed() {
+    let f: fn(*u8) = APPEARANCE_CB;
+    if f == (0 as fn(*u8)) { return; }
+    f(APPEARANCE_CB_CTX);
+    return;
+}
+
+
+// ---- tests ------------------------------------------------------------------
+
+fn th_approx(a: f64, b: f64) -> bool {
+    let d: f64 = a - b;
+    return d < 0.001f64 && d > -0.001f64;
+}
+
+// ---- theme tests --------------------------------------------------------------
+
+static THT_CHANGES: i32 = 0;
+fn tht_changed() { THT_CHANGES = THT_CHANGES + 1; return; }
+
+#[test]
+fn color_tokens_two_tiers_and_predicates() {
+    // Tier 1 keeps its numeric identities (backend mapping stability).
+    assert Color::text().token == (1 as u32);
+    assert Color::text_secondary().token == (2 as u32);
+    assert Color::text_tertiary().token == (9 as u32);
+    assert Color::accent().token == (3 as u32);
+    assert Color::separator().token == (10 as u32);
+    assert Color::placeholder().token == (15 as u32);
+    assert Color::link().token == (16 as u32);
+    assert Color::selected_content_background().token == (17 as u32);
+    assert Color::fill_secondary().token == (19 as u32);
+    assert Color::system_indigo().token == (24 as u32);
+    // Tier 2 lives in the 100s.
+    assert Color::primary().token == (100 as u32);
+    assert Color::danger().token == (111 as u32);
+    assert Color::content().token == (112 as u32);
+    assert Color::recessed().token == (117 as u32);
+    assert Color::recessed().is_theme_role();
+    // Predicates: every named token is dynamic; literals and none are not.
+    assert Color::primary().is_theme_role();
+    assert Color::accent().is_theme_role() == false;
+    assert Color::surface().is_dynamic();
+    assert Color::window_background().is_dynamic();
+    assert Color::rgba(0.1f64, 0.2f64, 0.3f64, 1.0f64).is_dynamic() == false;
+    assert Color::none().is_dynamic() == false;
+    assert Color::none().is_set() == false;
+}
+
+#[test]
+fn color_adaptive_packs_both_sides_and_ink_carries_alpha() {
+    let c: Color = Color::adaptive(
+        light: Color::rgba(0.9f64, 0.8f64, 0.7f64, 1.0f64),
+        dark: Color::rgba(0.1f64, 0.2f64, 0.3f64, 0.5f64),
+    );
+    assert c.is_adaptive();
+    assert th_approx(c.r, 0.9f64);
+    assert th_approx(c.g, 0.8f64);
+    assert th_approx(c.b, 0.7f64);
+    assert th_approx(c.a, 1.0f64);
+    assert th_approx(c.r2, 0.1f64);
+    assert th_approx(c.g2, 0.2f64);
+    assert th_approx(c.b2, 0.3f64);
+    assert th_approx(c.a2, 0.5f64);
+
+    let i: Color = Color::ink(0.55f64);
+    assert i.token == (104 as u32);
+    assert th_approx(i.a, 0.55f64);
+    assert th_approx(Color::ink().a, 1.0f64);   // full-strength default
+}
+
+#[test]
+fn theme_defaults_chain_to_platform_tokens() {
+    set_theme(Theme::new());   // all roles unset
+    // Unset role: the slot reads none, the fallback names the Tier-1 color.
+    assert theme_slot(100 as u32).is_set() == false;
+    assert theme_fallback(100 as u32).token == Color::accent().token;
+    assert theme_fallback(104 as u32).token == Color::text().token;
+    assert theme_fallback(105 as u32).token == Color::window_background().token;
+    assert theme_fallback(106 as u32).token == Color::control_background().token;
+    assert theme_fallback(107 as u32).token == Color::under_page_background().token;
+    assert theme_fallback(108 as u32).token == Color::separator().token;
+    assert theme_fallback(109 as u32).token == Color::system_green().token;
+    assert theme_fallback(111 as u32).token == Color::system_red().token;
+    // on_primary falls back to a white literal.
+    assert theme_fallback(101 as u32).token == (255 as u32);
+    // The extended surface tiers chain to platform colors too.
+    assert theme_fallback(112 as u32).token == Color::control_background().token;
+    assert theme_fallback(113 as u32).token == Color::window_background().token;
+    assert theme_fallback(114 as u32).token == Color::under_page_background().token;
+    assert theme_fallback(115 as u32).token == Color::fill().token;
+    assert theme_fallback(116 as u32).token == Color::fill_secondary().token;
+    assert theme_fallback(117 as u32).token == Color::fill().token;
+    assert theme_slot(112 as u32).is_set() == false;
+    // Non-role tokens answer none from both.
+    assert theme_slot(1 as u32).is_set() == false;
+    assert theme_fallback(1 as u32).is_set() == false;
+}
+
+#[test]
+fn set_theme_stores_roles_and_fires_the_hook() {
+    THT_CHANGES = 0;
+    set_theme_changed_fn(tht_changed);
+    set_theme(Theme::new(
+        primary: Color::rgba(0.35f64, 0.42f64, 0.95f64, 1.0f64),
+        surface: Color::adaptive(
+            light: Color::rgba(0.92f64, 0.92f64, 0.94f64, 1.0f64),
+            dark: Color::rgba(0.09f64, 0.09f64, 0.11f64, 1.0f64),
+        ),
+    ));
+    assert THT_CHANGES == 1;
+    let p: Color = theme_slot(100 as u32);
+    assert p.token == (255 as u32);
+    assert th_approx(p.r, 0.35f64);
+    let s: Color = theme_slot(105 as u32);
+    assert s.is_adaptive();
+    assert th_approx(s.r2, 0.09f64);
+    // Roles not named stay unset (the chain still applies to them).
+    assert theme_slot(106 as u32).is_set() == false;
+    // The extended tiers store like the base ones.
+    set_theme(Theme::new(chip: Color::rgba(0.5f64, 0.5f64, 0.5f64, 1.0f64)));
+    assert theme_slot(116 as u32).token == (255 as u32);
+    // Reset for other tests: hook cleared, palette back to defaults.
+    set_theme_changed_fn(0 as fn());
+    set_theme(Theme::new());
+}

@@ -1,0 +1,611 @@
+// facet screen — Chrome, Screen, the app menu, and the type-erased ScreenBox.
+// HAND-WRITTEN. Stage 3 port from the pre-regen facet, bodies unchanged; the
+// only edits are module plumbing (imports, `core::` qualification) and docs
+// that taught the retired `Handle` API.
+
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "stdlib/option" as option;
+import "stdlib/box" as box;
+import "flex_layout/flex_layout" as flex;
+import "./facet" as core;
+import "./component" as component;
+
+type Node = flex::Node;
+
+// ---- app-menu action tokens -------------------------------------------------
+
+fn menu_action_quit() -> u32 { return 1 as u32; }
+fn menu_action_close_window() -> u32 { return 2 as u32; }
+fn menu_action_none() -> u32 { return 0 as u32; }
+
+// Standard first-responder edit commands. These are SEMANTIC (portable) tokens:
+// each backend routes them to whatever mechanism delivers the command to the
+// focused control — on AppKit the responder-chain selectors undo:/redo:/cut:/
+// copy:/paste:/selectAll: (target nil). An app puts these on its Edit menu so
+// the keyboard shortcuts work in every text field; a backend that has no
+// equivalent leaves them inert (like menu_action_none).
+fn menu_action_undo() -> u32 { return 3 as u32; }
+fn menu_action_redo() -> u32 { return 4 as u32; }
+fn menu_action_cut() -> u32 { return 5 as u32; }
+fn menu_action_copy() -> u32 { return 6 as u32; }
+fn menu_action_paste() -> u32 { return 7 as u32; }
+fn menu_action_select_all() -> u32 { return 8 as u32; }
+
+// The native find bar over the focused text view (Edit > Find …). On AppKit
+// these route performTextFinderAction: down the responder chain, with the
+// item's tag selecting the operation — the same shape as the edit tokens.
+// Backends without an equivalent leave them inert.
+fn menu_action_find() -> u32 { return 9 as u32; }
+fn menu_action_find_next() -> u32 { return 10 as u32; }
+fn menu_action_find_previous() -> u32 { return 11 as u32; }
+fn menu_action_find_replace() -> u32 { return 12 as u32; }
+
+struct MenuItem {
+    menu: text::Text,
+    title: text::Text,
+    key: text::Text,
+    action: u32,
+    // Answered when the MENU OPENS, from the same ctx the click receives, so an
+    // item reflects live state without anything being rebuilt — the platform
+    // behaviour: inapplicable items grey out instead of disappearing, and the
+    // menu keeps a stable shape. Null = always enabled / static title.
+    //
+    // `title_of` is the half a bool cannot express: `Close "editor_tabs.cplus"`
+    // rather than `Close`. Returning an empty Text keeps the built title.
+    is_enabled: fn(*u8) -> bool,
+    title_of: fn(*u8) -> text::Text,
+    // A rule between groups of items rather than an item — every other field is
+    // ignored except `menu`, which says which group it divides. Once screens
+    // append into shared menus, "where does my group begin" needs an answer.
+    is_separator: bool,
+    // App-command items: a non-null callback WINS over `action` — the backend
+    // wires a target/action trampoline that invokes it (sender = the native
+    // menu item, ctx = the bound receiver). null_fn() = token item.
+    on_click: fn(*u8, *u8),
+    opaque click_ctx: *u8,
+}
+
+// The null validation callbacks (an item with neither is always enabled and
+// keeps its built title), spelled as fns so call sites never write a cast.
+fn null_enabled_fn() -> fn(*u8) -> bool { return 0 as fn(*u8) -> bool; }
+fn null_title_fn() -> fn(*u8) -> text::Text { return 0 as fn(*u8) -> text::Text; }
+
+impl MenuItem {
+    // Build an item through this rather than a struct literal, so the item can
+    // gain fields — a checkmark, a submenu, an image — without breaking every
+    // call site (adding `is_enabled` / `title_of` broke every literal there was).
+    fn new(
+        menu: str,
+        title: str,
+        key: str = "",
+        action: u32 = 2 as u32,                     // menu_action_none()
+        on_click: fn(*u8, *u8) = 0 as fn(*u8, *u8),
+        ctx: *u8 = 0 as *u8,
+        is_enabled: fn(*u8) -> bool = 0 as fn(*u8) -> bool,
+        title_of: fn(*u8) -> text::Text = 0 as fn(*u8) -> text::Text,
+        is_separator: bool = false,
+    ) -> MenuItem {
+        return MenuItem {
+            menu: text::from_str(menu),
+            title: text::from_str(title),
+            key: text::from_str(key),
+            action: action,
+            is_enabled: is_enabled,
+            title_of: title_of,
+            is_separator: is_separator,
+            on_click: on_click,
+            click_ctx: ctx,
+        };
+    }
+
+    // A dividing rule inside `menu`, at the point it is added.
+    fn separator(menu: str) -> MenuItem {
+        return MenuItem::new(menu, "", is_separator: true);
+    }
+}
+
+struct AppMenu {
+    title: text::Text,
+    items: vec::Vec[MenuItem],
+}
+
+fn empty_app_menu() -> AppMenu {
+    return AppMenu {
+        title: text::new(),
+        items: vec::new::[MenuItem](),
+    };
+}
+
+fn app_menu(title: str) -> AppMenu {
+    return AppMenu {
+        title: text::from_str(title),
+        items: vec::new::[MenuItem](),
+    };
+}
+
+impl AppMenu {
+    fn add_item(ref this, menu: str, title: str, key: str, action: u32) {
+        this.items.append(MenuItem::new(menu, title, key: key, action: action));
+        return;
+    }
+
+    // An app-command item: the menu click runs YOUR code. Bound-method ready —
+    // `m.add_command("File", "Save", key: "s", on_click: this.on_save)` — the
+    // defaulted ctx takes the receiver.
+    // `is_enabled` / `title_of` are answered when the menu opens, from `ctx` —
+    // so "Save" greys itself out with no open tab, and an item can name its
+    // target (`Close "main.cplus"`), without the menu being rebuilt.
+    fn add_command(
+        ref this,
+        menu: str,
+        title: str,
+        key: str = "",
+        on_click: fn(*u8, *u8) = null_fn(),
+        ctx: *u8 = 0 as *u8,
+        is_enabled: fn(*u8) -> bool = 0 as fn(*u8) -> bool,
+        title_of: fn(*u8) -> text::Text = 0 as fn(*u8) -> text::Text,
+    ) {
+        this.items.append(MenuItem::new(menu, title, key: key, action: menu_action_none(),
+                                        on_click: on_click, ctx: ctx,
+                                        is_enabled: is_enabled, title_of: title_of));
+        return;
+    }
+
+    // Add a dividing rule to `menu` at this point.
+    fn add_separator(ref this, menu: str) {
+        this.items.append(MenuItem::separator(menu));
+        return;
+    }
+
+    // Drop every item holding key equivalent `k` (ignoring keyless items).
+    fn remove_key(ref this, k: str) {
+        if #str_len(k) == (0 as usize) { return; }
+        var i: usize = 0 as usize;
+        while i < this.items.count() {
+            var hit: bool = false;
+            match this.items.at_ptr(i) {
+                option::Option[*MenuItem]::Some(p) => { hit = { (*p).key.equals(k) }; }
+                option::Option[*MenuItem]::None => { }
+            }
+            if hit {
+                let _r: option::Option[MenuItem] = this.items.remove(at: i);
+            } else {
+                i = i +% (1 as usize);
+            }
+        }
+        return;
+    }
+
+    // Merge a screen's own items into this menu.
+    //
+    // ADDITIVE, not override: the base keeps its items and the screen's are
+    // appended to their groups. Override would force every screen to redeclare
+    // Edit's whole undo/cut/copy/paste/select-all/find family.
+    //
+    // On a key-equivalent collision the SCREEN wins — two items cannot share a
+    // key equivalent, and the mounted screen is the more specific context. Key
+    // uniqueness is therefore required only WITHIN one built menu: `New Project
+    // ⌘N` on the launcher and `New File ⌘N` in the workspace never coexist.
+    fn extend(ref this, take items: vec::Vec[MenuItem]) {
+        var src: vec::Vec[MenuItem] = items;
+        loop {
+            if src.count() == (0 as usize) { break; }
+            match src.remove(at: 0 as usize) {
+                option::Option[MenuItem]::Some(it) => {
+                    let k: text::Text = it.key.clone();
+                    this.remove_key(k.view());
+                    this.items.append(it);
+                }
+                option::Option[MenuItem]::None => { break; }
+            }
+        }
+        return;
+    }
+}
+
+// record — construct with `Chrome::new`, naming only what differs from the
+// defaults. On a backend without windows most fields are ignored and `title`
+// names the page. `hide_title` is honored together with `unified_toolbar`.
+struct Chrome {
+    title_text: text::Text,
+    width: f64,
+    height: f64,
+    min_width: f64,
+    min_height: f64,
+    clean_titlebar: bool,
+    close_button_only: bool,
+    custom_chrome: bool,
+    native_buttons: bool,
+    unified_toolbar: bool,
+    hide_title: bool,
+    zoomable: bool,
+    min_zoom: f64,
+    max_zoom: f64,
+}
+
+impl Chrome {
+    fn new(
+        title: str = "facet",
+        width: f64 = 480.0f64,
+        height: f64 = 360.0f64,
+        min_width: f64 = 0.0f64,
+        min_height: f64 = 0.0f64,
+        clean_titlebar: bool = false,
+        close_button_only: bool = false,
+        custom_chrome: bool = false,
+        native_buttons: bool = false,
+        unified_toolbar: bool = false,
+        hide_title: bool = false,
+        zoomable: bool = false,
+        min_zoom: f64 = 1.0f64,
+        max_zoom: f64 = 4.0f64,
+    ) -> Chrome {
+        return Chrome {
+            title_text: text::from_str(title),
+            width: width,
+            height: height,
+            min_width: min_width,
+            min_height: min_height,
+            clean_titlebar: clean_titlebar,
+            close_button_only: close_button_only,
+            custom_chrome: custom_chrome,
+            native_buttons: native_buttons,
+            unified_toolbar: unified_toolbar,
+            hide_title: hide_title,
+            zoomable: zoomable,
+            min_zoom: min_zoom,
+            max_zoom: max_zoom,
+        };
+    }
+
+    fn title(this) -> str { return this.title_text.view(); }
+}
+
+// The screen conformance: presentation metadata, read by the host each time it
+// shows the screen. A screen also conforms to Component and Lifecycle; the
+// hosts (`run_screen`, `App`) bound all three.
+interface Screen {
+    fn chrome(this) -> Chrome;
+    // The items this screen contributes to the app menu, merged additively by
+    // the runtime each time the screen is shown (see AppMenu::extend). A screen
+    // with nothing to add returns an empty Vec — C+ interfaces carry no default
+    // bodies, so the empty case is written out rather than inherited.
+    fn menu_items(this) -> vec::Vec[MenuItem];
+}
+
+// A type-erased, heap-owned screen — what a route factory returns, so an `App`
+// holds screens of DIFFERENT types in one registry. `screen_box` moves the
+// screen to the heap and pairs its address with value-turbofish trampolines
+// for the three conformances. The box owns the instance: dropping the
+// ScreenBox drops the screen (its own `drop` included) and frees the slot.
+// The instance address is stable for the box's life, so it serves as the mount
+// slot key — a handler self-locates its subtree through it, exactly as
+// under `run_component`.
+struct ScreenBox {
+    opaque _p: *u8,
+    _build: fn(*u8) -> Node,
+    _attach: fn(*u8),
+    _detach: fn(*u8),
+    _chrome: fn(*u8) -> Chrome,
+    _menu_items: fn(*u8) -> vec::Vec[MenuItem],
+    _drop: fn(*u8),
+}
+
+fn screen_box[S: component::Component + component::Lifecycle + Screen](take s: S) -> ScreenBox {
+    return match box::new::[S](s) {
+        option::Option[box::Box[S]]::Some(b) => ScreenBox {
+            _p: b.into_raw(),
+            _build: sb_build_tramp::[S],
+            _attach: sb_attach_tramp::[S],
+            _detach: sb_detach_tramp::[S],
+            _chrome: sb_chrome_tramp::[S],
+            _menu_items: sb_menu_items_tramp::[S],
+            _drop: sb_drop_tramp::[S],
+        },
+        // Allocation failed: `s` dropped inside box::new. The invalid box —
+        // every verb no-ops (the Handle::missing convention, not a trap).
+        option::Option[box::Box[S]]::None => ScreenBox::invalid(),
+    };
+}
+
+// Type-erasing trampolines (value-turbofish): plain fn(*u8)s that call S's
+// conformance methods on the boxed screen at `p`.
+fn sb_build_tramp[S: component::Component](p: *u8) -> Node {
+    let q: *S = p as *S;
+    return { (*q).build() };
+}
+
+fn sb_attach_tramp[S: component::Lifecycle](p: *u8) {
+    let q: *S = p as *S;
+    { (*q).on_attach() };
+    return;
+}
+
+fn sb_detach_tramp[S: component::Lifecycle](p: *u8) {
+    let q: *S = p as *S;
+    { (*q).on_detach() };
+    return;
+}
+
+fn sb_chrome_tramp[S: Screen](p: *u8) -> Chrome {
+    let q: *S = p as *S;
+    return { (*q).chrome() };
+}
+
+fn sb_menu_items_tramp[S: Screen](p: *u8) -> vec::Vec[MenuItem] {
+    let q: *S = p as *S;
+    return { (*q).menu_items() };
+}
+
+// Reclaim the heap slot: the box drops the screen (drop_in_place) and frees.
+fn sb_drop_tramp[S](p: *u8) {
+    let _b: box::Box[S] = box::from_raw::[S](p);
+    return;
+}
+
+impl ScreenBox {
+    // The no-screen box (failed allocation, or an unknown route): every verb
+    // no-ops, `valid` reads false.
+    fn invalid() -> ScreenBox {
+        return ScreenBox {
+            _p: 0 as *u8,
+            _build: 0 as fn(*u8) -> Node,
+            _attach: 0 as fn(*u8),
+            _detach: 0 as fn(*u8),
+            _chrome: 0 as fn(*u8) -> Chrome,
+            _menu_items: 0 as fn(*u8) -> vec::Vec[MenuItem],
+            _drop: 0 as fn(*u8),
+        };
+    }
+
+    fn valid(this) -> bool { return this._p != (0 as *u8); }
+
+    // The boxed instance's address — the mount slot key (cp) its handlers
+    // self-locate against.
+    fn instance(this) -> *u8 { return this._p; }
+
+    fn build(this) -> Node {
+        if !this.valid() { return core::column(core::Builder::new()); }
+        let f: fn(*u8) -> Node = this._build;
+        return f(this._p);
+    }
+
+    fn on_attach(this) {
+        if !this.valid() { return; }
+        let f: fn(*u8) = this._attach;
+        f(this._p);
+        return;
+    }
+
+    fn on_detach(this) {
+        if !this.valid() { return; }
+        let f: fn(*u8) = this._detach;
+        f(this._p);
+        return;
+    }
+
+    fn chrome(this) -> Chrome {
+        if !this.valid() { return Chrome::new(); }
+        let f: fn(*u8) -> Chrome = this._chrome;
+        return f(this._p);
+    }
+
+    // The boxed screen's menu contribution. Empty for an invalid box, so the
+    // host merges nothing rather than special-casing.
+    fn menu_items(this) -> vec::Vec[MenuItem] {
+        if !this.valid() { return vec::new::[MenuItem](); }
+        let f: fn(*u8) -> vec::Vec[MenuItem] = this._menu_items;
+        if f == (0 as fn(*u8) -> vec::Vec[MenuItem]) { return vec::new::[MenuItem](); }
+        return f(this._p);
+    }
+
+    fn drop(ref this) {
+        if this._p == (0 as *u8) { return; }
+        let f: fn(*u8) = this._drop;
+        f(this._p);
+        this._p = 0 as *u8;
+        return;
+    }
+}
+
+// ---- tests ------------------------------------------------------------------
+
+fn sc_approx(a: f64, b: f64) -> bool {
+    let d: f64 = a - b;
+    return d < 0.001f64 && d > -0.001f64;
+}
+
+fn sc_click(sender: *u8, ctx: *u8) { return; }
+
+#[test]
+fn menu_extend_is_additive_and_screen_wins_on_key() {
+    // The base app menu: what main declares for every screen.
+    var base: AppMenu = empty_app_menu();
+    base.add_item("Edit", "Undo", "z", menu_action_undo());
+    base.add_item("Edit", "Copy", "c", menu_action_copy());
+    base.add_command("File", "Close Window", "w", sc_click);
+
+    // A screen's contribution: one new item, one separator, and one item whose
+    // key collides with the base's Close Window.
+    var mine: vec::Vec[MenuItem] = vec::new::[MenuItem]();
+    mine.append(MenuItem::new("File", "New File", key: "n", on_click: sc_click));
+    mine.append(MenuItem::separator("File"));
+    mine.append(MenuItem::new("File", "Close Tab", key: "w", on_click: sc_click));
+
+    base.extend(mine);
+
+    // ADDITIVE: the base's Edit family survives untouched.
+    var undo: bool = false;
+    var copy: bool = false;
+    var new_file: bool = false;
+    var sep: bool = false;
+    var close_window: bool = false;
+    var close_tab: bool = false;
+    var i: usize = 0 as usize;
+    while i < base.items.count() {
+        match base.items.at_ptr(i) {
+            option::Option[*MenuItem]::Some(p) => {
+                if { (*p).title.equals("Undo") } { undo = true; }
+                if { (*p).title.equals("Copy") } { copy = true; }
+                if { (*p).title.equals("New File") } { new_file = true; }
+                if { (*p).title.equals("Close Window") } { close_window = true; }
+                if { (*p).title.equals("Close Tab") } { close_tab = true; }
+                if { (*p).is_separator } { sep = true; }
+            }
+            option::Option[*MenuItem]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    assert undo;
+    assert copy;
+    assert new_file;
+    assert sep;                 // the rule came through
+    assert close_tab;           // the screen's item is present
+    assert !close_window;       // and it EVICTED the base item sharing ⌘W
+    return;
+}
+
+#[test]
+fn screen_box_without_a_contribution_merges_nothing() {
+    // An invalid box (unknown route / failed allocation) must answer empty
+    // rather than trap, so the host can merge unconditionally.
+    let sb: ScreenBox = ScreenBox::invalid();
+    assert sb.menu_items().count() == (0 as usize);
+
+    var base: AppMenu = empty_app_menu();
+    base.add_item("Edit", "Undo", "z", menu_action_undo());
+    base.extend(sb.menu_items());
+    assert base.items.count() == (1 as usize);
+    return;
+}
+
+// ---- screen tests ------------------------------------------------------------
+// A minimal screen: counters in module statics record every erased call so the
+// tests can assert the trampolines reach the real methods and the box drops
+// the instance exactly once.
+
+static SBT_BUILDS: i32 = 0;
+static SBT_ATTACHES: i32 = 0;
+static SBT_DETACHES: i32 = 0;
+static SBT_DROPS: i32 = 0;
+
+fn sbt_reset() {
+    SBT_BUILDS = 0;
+    SBT_ATTACHES = 0;
+    SBT_DETACHES = 0;
+    SBT_DROPS = 0;
+    return;
+}
+
+struct SbtScreen {
+    n: i32,
+}
+
+impl SbtScreen {
+    fn drop(ref this) {
+        SBT_DROPS = SBT_DROPS + 1;
+        return;
+    }
+}
+
+impl SbtScreen: component::Component {
+    fn build(ref this) -> Node {
+        SBT_BUILDS = SBT_BUILDS + 1;
+        return core::column(core::Builder::new());
+    }
+}
+
+impl SbtScreen: component::Lifecycle {
+    fn on_attach(ref this) {
+        SBT_ATTACHES = SBT_ATTACHES + 1;
+        return;
+    }
+    fn on_detach(ref this) {
+        SBT_DETACHES = SBT_DETACHES + 1;
+        return;
+    }
+}
+
+impl SbtScreen: Screen {
+    fn chrome(this) -> Chrome {
+        return Chrome::new(title: "sbt", width: 300.0f64, height: 200.0f64, zoomable: true, max_zoom: 3.0f64);
+    }
+    fn menu_items(this) -> vec::Vec[MenuItem] { return vec::new::[MenuItem](); }
+}
+
+#[test]
+fn chrome_defaults_and_overrides() {
+    let d: Chrome = Chrome::new();
+    assert d.title() == "facet";
+    assert sc_approx(d.width, 480.0f64);
+    assert sc_approx(d.height, 360.0f64);
+    assert sc_approx(d.min_width, 0.0f64);
+    assert d.clean_titlebar == false;
+    assert d.close_button_only == false;
+    assert d.custom_chrome == false;
+    assert d.native_buttons == false;
+    assert d.unified_toolbar == false;
+    assert d.hide_title == false;
+    assert d.zoomable == false;
+    assert sc_approx(d.min_zoom, 1.0f64);
+    assert sc_approx(d.max_zoom, 4.0f64);
+
+    let c: Chrome = Chrome::new(title: "Iris", width: 800.0f64, min_width: 640.0f64, clean_titlebar: true);
+    assert c.title() == "Iris";
+    assert sc_approx(c.width, 800.0f64);
+    assert sc_approx(c.min_width, 640.0f64);
+    assert c.clean_titlebar;
+    assert c.zoomable == false;
+}
+
+#[test]
+fn screen_box_drives_the_erased_screen() {
+    sbt_reset();
+    {
+        var sb: ScreenBox = screen_box(SbtScreen { n: 7 });
+        assert sb.valid();
+        assert sb.instance() != (0 as *u8);
+
+        // chrome reaches the real conformance through the trampoline.
+        let c: Chrome = sb.chrome();
+        assert c.title() == "sbt";
+        assert sc_approx(c.width, 300.0f64);
+        assert c.zoomable;
+        assert sc_approx(c.max_zoom, 3.0f64);
+
+        // build / lifecycle reach the real methods.
+        var root: Node = sb.build();
+        root.calculate_layout(width: 100.0f64, height: 100.0f64);
+        sb.on_attach();
+        sb.on_detach();
+        assert SBT_BUILDS == 1;
+        assert SBT_ATTACHES == 1;
+        assert SBT_DETACHES == 1;
+        // The instance lives while the box lives.
+        assert SBT_DROPS == 0;
+    }
+    // Scope exit dropped the box -> the boxed screen dropped exactly once.
+    assert SBT_DROPS == 1;
+}
+
+#[test]
+fn screen_box_invalid_noops() {
+    sbt_reset();
+    {
+        var sb: ScreenBox = ScreenBox::invalid();
+        assert sb.valid() == false;
+        assert sb.instance() == (0 as *u8);
+        // Every verb no-ops instead of trapping; chrome yields the defaults.
+        var root: Node = sb.build();
+        root.calculate_layout(width: 100.0f64, height: 100.0f64);
+        sb.on_attach();
+        sb.on_detach();
+        let c: Chrome = sb.chrome();
+        assert c.title() == "facet";
+    }
+    assert SBT_BUILDS == 0;
+    assert SBT_ATTACHES == 0;
+    assert SBT_DETACHES == 0;
+    assert SBT_DROPS == 0;
+}

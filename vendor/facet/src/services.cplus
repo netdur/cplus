@@ -1,0 +1,510 @@
+// facet services — work off the UI thread, results back on it. HAND-WRITTEN.
+//
+// The platform-free half of the service pattern (Stage 3 port from the
+// pre-regen facet, unchanged except where noted): `run_on_main` is the hop
+// every result rides home on; `after` is the one time-driven verb, with
+// `Cancellable` owning the pending-callback lifetime; `spawn_ui` drives
+// async tasks on the UI thread; `on_worker` bridges CPU-blocking work;
+// `Service`/`load_service` is the one-screen-one-service pattern iris uses.
+// The backend installs the primitives (`set_run_on_main_fn`, `set_after_fn`,
+// ...); with none installed every verb is the portable no-op — work is
+// dropped, timers never fire and return already-cancelled handles.
+//
+// One reseam vs the old facet: `observe_size` takes a `*core::Node` (the
+// new tree's stable cursor), not the retired generic `Handle`.
+
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "stdlib/option" as option;
+import "stdlib/box" as box;
+import "stdlib/thread" as thread;
+import "stdlib/future" as future;
+import "stdlib/executor" as executor;
+import "stdlib/net" as net;
+import "stdlib/atomic" as atomic;
+import "flex_layout/flex_layout" as flex;
+import "./facet" as core;
+
+// Main-thread dispatcher: run `work(ctx)` on the UI thread, where touching
+// views (or state the UI reads) is safe. Non-blocking — the caller returns
+// immediately and the main run loop picks the work up on its next turn. The
+// workhorse of the service pattern: a background read finishes, boxes its
+// result as the ctx, and hops here to deliver it. The backend installs the
+// primitive; until then run_on_main silently DROPS the work (the portable
+// no-backend default, like `find`) — so a ctx that carries ownership must be
+// reclaimed by `work` itself, never by the scheduling side.
+static RUN_ON_MAIN_FN: fn(fn(*u8), *u8) = #zero::[fn(fn(*u8), *u8)]();
+fn set_run_on_main_fn(f: fn(fn(*u8), *u8)) { RUN_ON_MAIN_FN = f; return; }
+fn run_on_main(work: fn(*u8), ctx: *u8) {
+    let f: fn(fn(*u8), *u8) = RUN_ON_MAIN_FN;
+    if f != (0 as fn(fn(*u8), *u8)) { f(work, ctx); }
+    return;
+}
+
+// ---- after: do something LATER, and be able to call it off --------------------
+//
+// `run_on_main` above is the only way to hand work to the UI thread and it has
+// no delay — next turn of the queue, not later. The async surface beside it is
+// event-driven, not time-driven: `spawn_ui`, `load_service` and the kqueue
+// reactor all wait for a future or an fd, and `fswatch` waits for the
+// filesystem. Nothing waited for a clock, so four kinds of ordinary UI work —
+// a debounce, a countdown label, a watchdog, deferred layout — had to reach
+// past facet into raw platform messaging.
+//
+// Two things make that worth a verb rather than a snippet each app copies:
+//
+//   SILENCE. A wrong send inside a delayed callback is swallowed by the
+//   platform's timer loop — no crash, no log, the tick simply stops. That is a
+//   bad failure to hand to every app.
+//
+//   LIFETIME. A pending callback holds a raw `this`, so every site needs a
+//   `drop` that cancels it, and getting that wrong is a use-after-free inside a
+//   run-loop callback. `Cancellable` owns that: cancel() is idempotent, and the
+//   drop cancels, so the correct thing is what happens when you do nothing.
+//
+// One-shot on purpose. Three of the four sites that wanted this re-arm by hand
+// on each keystroke — that is a debounce, not a repeating timer — so a repeating
+// sibling waits for a caller that actually wants one.
+//
+//     var t: facet::Cancellable = facet::after(1.0f64, save_now, ctx);
+//     ...
+//     t.cancel();          // superseded by another keystroke
+//
+// The backend installs the primitive; with none, `after` never fires and
+// returns an already-cancelled handle — the same no-backend default as `find`.
+static AFTER_FN: fn(f64, fn(*u8), *u8) -> u64 = #zero::[fn(f64, fn(*u8), *u8) -> u64]();
+static CANCEL_AFTER_FN: fn(u64) = #zero::[fn(u64)]();
+fn set_after_fn(f: fn(f64, fn(*u8), *u8) -> u64) { AFTER_FN = f; return; }
+fn set_cancel_after_fn(f: fn(u64)) { CANCEL_AFTER_FN = f; return; }
+
+// A pending revocable registration — an `after` timer, an `observe_size`
+// observation. Cancel it explicitly, or let it drop — a dropped handle
+// cancels, because the common mistake is forgetting to.
+struct Cancellable {
+    _id: u64,          // 0 = nothing pending (never armed, already fired, or cancelled)
+    _cancel: fn(u64),  // the revoke slot `_id` came from; zero falls back to the timer slot
+}
+
+impl Cancellable {
+    // The inert handle: nothing pending, cancel is a no-op. For a struct field
+    // that a later call arms — the drop still cancels whatever was last armed.
+    fn none() -> Cancellable { return Cancellable { _id: 0 as u64, _cancel: #zero::[fn(u64)]() }; }
+
+    // Mint a live handle over a backend registration: `id` from the arming
+    // call, `cancel` the slot that revokes it. For runtime facades and
+    // backends — the fields are file-private, so this is their only door.
+    fn of(id: u64, cancel: fn(u64)) -> Cancellable { return Cancellable { _id: id, _cancel: cancel }; }
+
+    // Idempotent, and safe after the callback has already run.
+    fn cancel(ref this) {
+        if this._id == (0 as u64) { return; }
+        var f: fn(u64) = this._cancel;
+        if f == (0 as fn(u64)) { f = CANCEL_AFTER_FN; }
+        if f != (0 as fn(u64)) { f(this._id); }
+        this._id = 0 as u64;
+        return;
+    }
+
+    // Is there still a callback pending? False once cancelled; also false after
+    // it has fired.
+    fn pending(this) -> bool { return this._id != (0 as u64); }
+
+    fn drop(ref this) {
+        this.cancel();
+        return;
+    }
+}
+
+// Run `cb(ctx)` on the UI thread after `seconds`. Cancel through the returned
+// handle — including by letting it drop.
+fn after(seconds: f64, cb: fn(*u8), ctx: *u8 = 0 as *u8) -> Cancellable {
+    let f: fn(f64, fn(*u8), *u8) -> u64 = AFTER_FN;
+    if f == (0 as fn(f64, fn(*u8), *u8) -> u64) { return Cancellable { _id: 0 as u64, _cancel: #zero::[fn(u64)]() }; }
+    return Cancellable { _id: f(seconds, cb, ctx), _cancel: CANCEL_AFTER_FN };
+}
+// ---- element geometry -------------------------------------------------------
+// The laid-out size a node actually got — and a way to hear when it changes.
+// The read half is the node's `frame()`; the event half is `observe_size`,
+// whose callback fires on the UI thread after every resize of that element —
+// divider drag, window resize, relayout. (Reseam vs the old facet: the
+// subject is a `*core::Node`, the retired `Handle` is gone.)
+
+static OBSERVE_SIZE_FN: fn(*core::Node, fn(*u8), *u8) -> u64 = #zero::[fn(*core::Node, fn(*u8), *u8) -> u64]();
+static CANCEL_OBSERVE_SIZE_FN: fn(u64) = #zero::[fn(u64)]();
+fn set_observe_size_fn(f: fn(*core::Node, fn(*u8), *u8) -> u64) { OBSERVE_SIZE_FN = f; return; }
+fn set_cancel_observe_size_fn(f: fn(u64)) { CANCEL_OBSERVE_SIZE_FN = f; return; }
+
+// Run `cb(ctx)` on the UI thread whenever `n`'s element changes size. Cancel
+// through the returned handle — including by letting it drop — and cancel
+// BEFORE the observed element leaves the tree; an observation must not outlive
+// its subject. No backend, or a missing node: an already-cancelled handle,
+// the same posture as `after`.
+fn observe_size(n: *core::Node, cb: fn(*u8), ctx: *u8 = 0 as *u8) -> Cancellable {
+    let f: fn(*core::Node, fn(*u8), *u8) -> u64 = OBSERVE_SIZE_FN;
+    if f == (0 as fn(*core::Node, fn(*u8), *u8) -> u64) { return Cancellable { _id: 0 as u64, _cancel: #zero::[fn(u64)]() }; }
+    return Cancellable { _id: f(n, cb, ctx), _cancel: CANCEL_OBSERVE_SIZE_FN };
+}
+
+// ---- async tasks on the UI thread -------------------------------------------
+// `spawn_ui` hands an async task to the UI: calling the async fn already ran
+// its body to the first suspension (eagerly, on the caller's thread); the rest
+// resumes on the main thread as its awaits complete. Timers and async I/O wake
+// the task through the backend's reactor watch (see facet_appkit); awaiting
+// another async fn resumes through the executor's pending queue. After any
+// await the tree may have changed — the usual discipline applies (namespaced
+// keys miss harmlessly; `attached(this)` / `found()` to know).
+//
+//     fn on_click(ref this, sender: *u8) { spawn_ui(this.refresh()); }
+//     async fn refresh(ref this) {
+//         await time::sleep(milliseconds: 150 as u64);
+//         if !attached(this) { return; }
+//         find("list").add_child(...);
+//     }
+//
+// A spawned task runs to completion or not at all past a suspension the
+// backend cannot wake (no backend installed = the portable no-op posture).
+// There is no cancellation; a task in flight at teardown finds its keys gone.
+
+extern fn stdlib_reactor_drain_pending_v1() -> i32;
+extern fn stdlib_reactor_poll_one_event_nb_v1() -> i32;
+
+fn spawn_ui[T: Send](take f: future::Future[T]) {
+    executor::spawn_local::[T](f);
+    run_on_main(pump_async, 0 as *u8);
+}
+
+// Drive every parked async task as far as it can go WITHOUT blocking: resume
+// the pending queue, consume every already-fired reactor event, repeat until
+// neither makes progress. The backend calls this whenever the reactor's
+// kqueue reads ready (fd/timer fired) and after spawn_ui. Signature is
+// fn(*u8) so it rides run_on_main and the dispatch source directly.
+fn pump_async(ctx: *u8) {
+    loop {
+        let drained: i32 = { stdlib_reactor_drain_pending_v1() };
+        var fired: i32 = 0;
+        while { stdlib_reactor_poll_one_event_nb_v1() } == 1 {
+            fired = fired + 1;
+        }
+        if drained == 0 {
+            if fired == 0 { break; }
+        }
+    }
+    return;
+}
+
+// ---- awaitable worker (blocking work off the UI thread) ---------------------
+// The reactor wakes on fds and timers, not on computation — a CPU-blocking
+// read gains nothing from `await` alone. `on_worker` bridges: it runs
+// `f(input)` on a worker thread and suspends the CALLING task until the
+// result is back, via a pipe the reactor can wait on (the worker writes the
+// boxed result's address; the awaiting side reads it and reclaims). So an
+// async task can hold a straight line through blocking work:
+//
+//     async fn refresh(ref this) {
+//         let rows: vec::Vec[text::Text] = await on_worker(job, read_rows);
+//         if !attached(this) { return; }
+//         // fill by key
+//     }
+//
+// `input` moves to the worker (I: Send); the result moves back (O: Send).
+extern fn pipe(fds: *i32) -> i32;
+extern fn close(fd: i32) -> i32;
+extern fn write(fd: i32, buf: *u8, count: usize) -> isize;
+
+// The handoff crossing to the worker thread is a CONCRETE struct: the typed
+// input and fn ride as boxed raw pointers, reclaimed by the run_worker[I, O]
+// trampoline (value-turbofish) on the far side.
+struct WorkerHandoff {
+    input_raw: usize,
+    f_raw: usize,
+    write_fd: i32,
+}
+
+fn run_worker[I: Send, O: Send](take h: WorkerHandoff) -> i32 {
+    let input: I = box::from_raw::[I]((h.input_raw) as *u8).unwrap();
+    let f: fn(take I) -> O = box::from_raw::[fn(take I) -> O]((h.f_raw) as *u8).unwrap();
+    let out: O = f(input);
+    match box::new::[O](out) {
+        option::Option[box::Box[O]]::Some(b) => {
+            var slot: *u8 = b.into_raw();
+            let _w: isize = { write(h.write_fd, #addr_of(slot) as *u8, 8 as usize) };
+        }
+        option::Option[box::Box[O]]::None => { }
+    }
+    let _c: i32 = { close(h.write_fd) };
+    return 0;
+}
+
+// The sync half: open the pipe, move the work to a thread, return the read
+// end. Separate from the async fn so the coroutine body holds only concrete
+// types.
+fn worker_start[I: Send, O: Send](take input: I, f: fn(take I) -> O) -> i32 {
+    var fds: [i32; 2] = [0, 0];
+    let _p: i32 = { pipe(#addr_of(fds) as *i32) };
+    let input_raw: usize = match box::new::[I](input) {
+        option::Option[box::Box[I]]::Some(b) => { b.into_raw() } as usize,
+        option::Option[box::Box[I]]::None => 0 as usize,
+    };
+    let f_raw: usize = match box::new::[fn(take I) -> O](f) {
+        option::Option[box::Box[fn(take I) -> O]]::Some(b) => { b.into_raw() } as usize,
+        option::Option[box::Box[fn(take I) -> O]]::None => 0 as usize,
+    };
+    let h: WorkerHandoff = WorkerHandoff { input_raw: input_raw, f_raw: f_raw, write_fd: fds[1] };
+    let tramp: fn(take WorkerHandoff) -> i32 = run_worker::[I, O];
+    let _bg: thread::JoinHandle[i32] = thread::spawn_with::[WorkerHandoff, i32](h, tramp);
+    return fds[0];
+}
+
+async fn on_worker[I: Send, O: Send](take input: I, f: fn(take I) -> O) -> O {
+    let rfd: i32 = worker_start::[I, O](input, f);
+    var slot: *u8 = 0 as *u8;
+    let _n: isize = await net::read_fd_async(rfd, #addr_of(slot) as *u8, 8 as usize);
+    let _c: i32 = { close(rfd) };
+    return box::from_raw::[O](slot).unwrap();
+}
+
+// ---- services ---------------------------------------------------------------
+// A data owner whose slow read must never block the UI. The interface IS the
+// threading contract:
+//   produce — the slow read (db / fs / net). load_service runs it on a worker
+//             thread; it must not touch anything the UI reads.
+//   apply   — install what produce prepared. load_service runs it on the main
+//             thread, so the UI never observes a half-written service.
+// A service conforms once and gets the whole async pipeline from load_service;
+// no per-service job structs, boxing, or thread code.
+interface Service {
+    fn produce(ref this);
+    fn apply(ref this);
+}
+
+// Run `svc`'s produce OFF the main thread, then its apply and `on_ready(ctx)`
+// back ON it. Returns immediately. `svc` must outlive the flight (it is
+// reached through its address). Needs a backend for the main-thread hop
+// (run_on_main): without one the produced result is never applied.
+fn load_service[S: Service](ref svc: S, on_ready: fn(*u8) = service_ready_noop, ctx: *u8 = 0 as *u8) {
+    services_inflight_add(1 as u64);
+    let job: ServiceJob = ServiceJob {
+        svc_addr: { #addr_of(svc) as *u8 } as usize,
+        produce: service_produce_tramp::[S],
+        apply: service_apply_tramp::[S],
+        on_ready: on_ready,
+        ctx_addr: ctx as usize,
+    };
+    let _bg: thread::JoinHandle[i32] = thread::spawn_with::[ServiceJob, i32](job, run_service_job);
+    return;
+}
+
+// ---- in-flight services ------------------------------------------------------
+//
+// `load_service` states "svc must outlive the flight" and, until 2026-07-30,
+// handed the caller nothing to honour it with: the JoinHandle was discarded and
+// `JoinHandle::drop` DETACHES by design ("true fire-and-forget"). So a screen
+// that started a service and was then torn down freed memory a live worker was
+// still writing. Found by ASan on iris at quit — `Text.drop` on a worker thread
+// reading a `Welcome` already freed by `Box[Welcome].drop` in main.
+//
+// The count is what makes the contract keepable. `wait_for_services` blocks
+// until every worker has finished touching its service, and the runtime calls
+// it before dropping screens, so an app gets the guarantee without writing
+// anything. A caller tearing a component down early can call it directly.
+//
+// Counted rather than joined: the JoinHandle is consumed by `join` and there is
+// nowhere to keep one per flight without a registry that outlives the caller —
+// the count needs no ownership at all.
+//
+// It is decremented when PRODUCE returns, not after `apply`. Apply runs on the
+// main thread, which is the thread that owns the data, so it is not part of the
+// race being waited out — and waiting for it would deadlock, since the main
+// thread cannot deliver a `run_on_main` hop while it is blocked in the wait.
+// bugs/load-service-worker-outlives-its-service.md
+#[link_name = "sched_yield"]
+extern fn sched_yield_raw() -> i32;
+
+// Give a worker its turn rather than burning the core. The wait is a teardown
+// step, not a poll loop.
+fn sched_yield_once() { let _r: i32 = { sched_yield_raw() }; return; }
+
+static SERVICES_IN_FLIGHT: u64 = 0 as u64;
+
+fn services_inflight_add(d: u64) {
+    let p: *u64 = { #addr_of(SERVICES_IN_FLIGHT) };
+    let _prev: u64 = atomic::fetch_add_u64(p, d, atomic::Ordering::AcqRel);
+    return;
+}
+
+fn services_inflight_sub(d: u64) {
+    let p: *u64 = { #addr_of(SERVICES_IN_FLIGHT) };
+    let _prev: u64 = atomic::fetch_sub_u64(p, d, atomic::Ordering::AcqRel);
+    return;
+}
+
+// How many service workers may still be touching their service.
+fn services_in_flight() -> u64 {
+    let p: *u64 = { #addr_of(SERVICES_IN_FLIGHT) };
+    return atomic::load_u64(p, atomic::Ordering::Acquire);
+}
+
+// Block until no worker is touching a service. Call before dropping anything a
+// service was given — the runtime does this for screens at teardown.
+fn wait_for_services() {
+    while services_in_flight() != (0 as u64) { sched_yield_once(); }
+    return;
+}
+
+fn service_ready_noop(ctx: *u8) { return; }
+
+// Type-erasing trampolines (value-turbofish): plain fn(*u8)s that call S's
+// interface methods on the service at `p`.
+fn service_produce_tramp[S: Service](p: *u8) {
+    let q: *S = p as *S;
+    { (*q).produce() };
+    return;
+}
+
+fn service_apply_tramp[S: Service](p: *u8) {
+    let q: *S = p as *S;
+    { (*q).apply() };
+    return;
+}
+
+// Raw pointers are !Send, so the service and ctx addresses ride as integers —
+// sound under load_service's outlive-the-flight contract.
+struct ServiceJob {
+    svc_addr: usize,
+    produce: fn(*u8),
+    apply: fn(*u8),
+    on_ready: fn(*u8),
+    ctx_addr: usize,
+}
+
+fn run_service_job(take job: ServiceJob) -> i32 {
+    let produce: fn(*u8) = job.produce;
+    produce(job.svc_addr as *u8);   // the slow read, OFF the main thread
+    services_inflight_sub(1 as u64);   // done touching the service
+    match box::new::[ServiceJob](job) {
+        option::Option[box::Box[ServiceJob]]::Some(b) => {
+            run_on_main(finish_service_job, b.into_raw());
+        }
+        option::Option[box::Box[ServiceJob]]::None => { }
+    }
+    return 0;
+}
+
+fn finish_service_job(raw: *u8) {
+    let job: ServiceJob = box::from_raw::[ServiceJob](raw).unwrap();
+    let apply: fn(*u8) = job.apply;
+    apply(job.svc_addr as *u8);     // install ON the main thread
+    let cb: fn(*u8) = job.on_ready;
+    cb(job.ctx_addr as *u8);
+    return;
+}
+
+
+// ---- tests ------------------------------------------------------------------
+
+// ---- load_service lifetime ---------------------------------------------------
+
+struct SlowSvc {
+    label: text::Text,
+    done: i32,
+}
+
+impl SlowSvc: Service {
+    fn produce(ref this) {
+        // Long enough that the caller's frame is gone before this runs.
+        let _s: i32 = svc_spin(40000000 as i64);
+        this.label = text::from_str("produced");
+        this.done = this.done + 1;
+        return;
+    }
+    fn apply(ref this) { return; }
+}
+
+fn svc_spin(n: i64) -> i32 {
+    var i: i64 = 0 as i64;
+    var acc: i32 = 0;
+    while i < n { acc = acc + (1 as i32); i = i +% (1 as i64); }
+    return acc;
+}
+
+// `load_service` documents "svc must outlive the flight" and gives the caller
+// NOTHING to honour it with: the JoinHandle is discarded, and its drop DETACHES
+// (fire-and-forget, by design). So a screen that starts a service and is then
+// torn down frees memory a live worker thread is still writing.
+//
+// Found by ASan on iris at quit: `Text.drop` on a worker thread reading a
+// `Welcome` freed by `Box[Welcome].drop` in main.
+// bugs/load-service-worker-outlives-its-service.md
+// `wait_for_services` is what makes "svc must outlive the flight" TRUE rather
+// than merely documented — the subject cannot die while a worker is in it.
+fn arm_and_wait() {
+    var svc: SlowSvc = SlowSvc { label: text::from_str("start"), done: 0 };
+    load_service::[SlowSvc](svc);
+    assert services_in_flight() >= (1 as u64) || svc.done > (0 as i32);
+    wait_for_services();
+    return;   // safe: no worker is touching `svc` any more
+}
+
+#[test]
+fn waiting_for_services_keeps_the_subject_alive() {
+    arm_and_wait();
+    // Nothing a worker writes can land in the dead frame. Without the wait this
+    // was a stack-use-after-return in Text.drop — the same function ASan named
+    // on iris at quit.
+    let _w: i32 = svc_spin(200000000 as i64);
+    assert true;
+}
+
+// ...and the wait really waited: produce has run and its result is visible.
+#[test]
+fn wait_for_services_blocks_until_produce_finishes() {
+    var svc: SlowSvc = SlowSvc { label: text::from_str("start"), done: 0 };
+    load_service::[SlowSvc](svc);
+    wait_for_services();
+    assert services_in_flight() == (0 as u64);
+    assert svc.done == (1 as i32);
+    assert svc.label.view() == "produced";
+}
+
+// ---- observe_size / after slot discipline -----------------------------------
+
+fn geo_noop(ctx: *u8) { return; }
+
+static OBS_CANCELLED: u64 = 0 as u64;
+static TMR_CANCELLED: u64 = 0 as u64;
+fn obs_arm_fake(n: *core::Node, cb: fn(*u8), ctx: *u8) -> u64 { return 7 as u64; }
+fn obs_cancel_fake(id: u64) { OBS_CANCELLED = id; return; }
+fn tmr_arm_fake(s: f64, cb: fn(*u8), ctx: *u8) -> u64 { return 9 as u64; }
+fn tmr_cancel_fake(id: u64) { TMR_CANCELLED = id; return; }
+
+#[test]
+fn observe_size_cancels_through_its_own_slot_not_the_timer_slot() {
+    OBS_CANCELLED = 0 as u64;
+    TMR_CANCELLED = 0 as u64;
+    // No backend: an already-cancelled handle, the same posture as `after`.
+    OBSERVE_SIZE_FN = #zero::[fn(*core::Node, fn(*u8), *u8) -> u64]();
+    var none: Cancellable = observe_size(0 as *core::Node, geo_noop);
+    assert none.pending() == false;
+    // Both slot pairs registered: each Cancellable revokes through the slot
+    // family that armed it — an observation must never cancel a timer's id.
+    set_observe_size_fn(obs_arm_fake);
+    set_cancel_observe_size_fn(obs_cancel_fake);
+    set_after_fn(tmr_arm_fake);
+    set_cancel_after_fn(tmr_cancel_fake);
+    var o: Cancellable = observe_size(0 as *core::Node, geo_noop);
+    assert o.pending();
+    o.cancel();
+    assert OBS_CANCELLED == (7 as u64);
+    assert TMR_CANCELLED == (0 as u64);
+    assert o.pending() == false;
+    o.cancel();                                    // idempotent
+    assert OBS_CANCELLED == (7 as u64);
+    var t: Cancellable = after(1.0f64, geo_noop);
+    t.cancel();
+    assert TMR_CANCELLED == (9 as u64);
+    // Put the no-backend posture back for the tests that follow.
+    OBSERVE_SIZE_FN = #zero::[fn(*core::Node, fn(*u8), *u8) -> u64]();
+    CANCEL_OBSERVE_SIZE_FN = #zero::[fn(u64)]();
+    AFTER_FN = #zero::[fn(f64, fn(*u8), *u8) -> u64]();
+    CANCEL_AFTER_FN = #zero::[fn(u64)]();
+}

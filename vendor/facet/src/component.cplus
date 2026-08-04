@@ -1,0 +1,265 @@
+// facet component — the component contract and its event-context verbs.
+// HAND-WRITTEN. Stage 3 port from the pre-regen facet: bodies unchanged;
+// the lifecycle registry is keyed by KEY (str) instead of the retired
+// generic `Handle`, and the docs teach per-control `find`.
+
+import "stdlib/text" as text;
+import "stdlib/option" as option;
+import "flex_layout/flex_layout" as flex;
+import "./facet" as core;
+
+type Node = flex::Node;
+
+// ---- the component contract ---------------------------------------------
+// A component is a plain struct: its FIELDS are the state, its handlers are
+// methods in the INHERENT impl, and this interface is the checked conformance
+// block (`impl Foo: component::Component`) holding `build`. Interface-impl
+// blocks are closed (E0503/E0504 typo interlock), so `build` is verified
+// against this declaration both ways.
+//
+// `build` returns the PORTABLE DESCRIPTION — a facet `Node` tree, pure data,
+// no platform types — and is called ONCE. The backend mounts that description
+// into native views and RETAINS the tree; from then on the tree is live and
+// you edit it IN PLACE.
+//
+// facet is NOT reactive. There is no re-render and no diff: `build` is never
+// called again, so there is no fresh tree to reconcile against the old one. You
+// already hold the element's key, so there is no delta to rediscover. (Contrast
+// React/Flutter: mutate state, rebuild, diff the tree, patch. facet skips all of
+// that — it addresses the exact element and sets it.)
+//
+// Two ways to update, never a third:
+//   1. by key    — `button::find(root, key)` resolves the one keyed element
+//                  of that kind in the live tree and hands back its typed
+//                  cursor; the cursor's setters mutate in place.
+//   2. by method — call a method on the component; internally it updates its
+//                  own UI by key. Same mechanism, wrapped behind a named action.
+//
+// State lives in the struct's fields — the component is retained, so they persist
+// for the life of the tree. A handler writes a field, then pushes that value to
+// the element that shows it. Nothing is recomputed.
+//
+// The React trap to avoid: re-calling `build` when state changes, holding the
+// tree to "render it top-down each frame," or minting a fresh child inside a
+// parent's `build` on every call. `build` runs ONCE and returns already-owned
+// children; after that, you `find` and mutate.
+interface Component {
+    // `build` takes `ref this` so a component can bind its own handlers directly
+    // — `button(..., on_click: ...)` — where the bound method's receiver
+    // is the component itself. The receiver is a writable place at the real
+    // address, so a handler can also self-locate through `#addr_of(this)`.
+    // No module static, no stored `cp`. (build still runs ONCE and should only
+    // read state to produce the tree; the writable receiver is for binding.)
+    fn build(ref this) -> Node;
+}
+
+// ---- component lifecycle: attach / detach -----------------------------------
+// A component can be constructed OFF-CANVAS and held, then attached into the
+// live tree at the right moment and detached later — WITHOUT rebuilding it. Its
+// views and state survive being parked, so re-attaching restores it exactly
+// (scroll position, half-typed input, selection). This is the router / nav-stack
+// shape: one nav owns every screen and attaches one at a time; navigating back
+// shows the screen as you left it, for free, because the view object never died.
+//
+// attach / detach do NOTHING to your logic — they only NOTIFY the component that
+// it happened (`on_attach` / `on_detach`). What to do on detach (cancel an
+// in-flight request, let it run but drop the result, keep streaming) is the
+// app's policy, never facet's. This is the imperative, non-reactive mirror of
+// Web Components (connectedCallback / disconnectedCallback): no re-render,
+// no diff.
+interface Lifecycle {
+    fn on_attach(ref this);
+    fn on_detach(ref this);
+}
+
+// ---- raise: the by-key update verb (bring a keyed element to the front) ------
+// facet is not reactive: to switch which of several overlapping elements shows,
+// you don't rebuild — you address the one tagged `key` and bring it to the front
+// of its siblings, in place. `raise(sender, key)` is that verb; `sender` is the
+// event context (the control a handler was invoked from) the backend navigates
+// from to reach the live tree. Backend-installed, like every hook here.
+static RAISE_FN: fn(*u8, str) = #zero::[fn(*u8, str)]();
+
+fn set_raise_fn(f: fn(*u8, str)) { RAISE_FN = f; return; }
+
+fn raise(sender: *u8, key: str) {
+    let f: fn(*u8, str) = RAISE_FN;
+    if f == (0 as fn(*u8, str)) { return; }
+    f(sender, key);
+    return;
+}
+
+// ---- key_of: read a sender's key back (which item fired?) --------------------
+// The inverse of tagging: a per-item handler bound as an instance method spends
+// its ctx on `this`, so it recovers WHICH item fired from `sender`. `key_of`
+// returns the sender's key (its agent id) as an owned Text — empty if the sender
+// (and, in the AppKit backend, every ancestor view above it) is untagged. With
+// namespaced keys ("tabs:tab:<hash>"), the handler parses the id segment out and
+// looks the item up. Backend-installed, like `raise`; the backend also
+// normalizes gesture-recognizer senders to the view they are attached to.
+static KEY_OF_FN: fn(*u8) -> text::Text = #zero::[fn(*u8) -> text::Text]();
+
+fn set_key_of_fn(f: fn(*u8) -> text::Text) { KEY_OF_FN = f; return; }
+
+fn key_of(sender: *u8) -> text::Text {
+    let f: fn(*u8) -> text::Text = KEY_OF_FN;
+    if f == (0 as fn(*u8) -> text::Text) { return text::new(); }
+    return f(sender);
+}
+
+// The per-node app pointer set by `.item(p)`, recovered in a handler from the
+// sender — the backend walks up to the nearest node that carries one (exact
+// parallel to `key_of`). 0 when unset or no backend. The app owns the pointee.
+static ITEM_OF_FN: fn(*u8) -> *u8 = #zero::[fn(*u8) -> *u8]();
+
+fn set_item_of_fn(f: fn(*u8) -> *u8) { ITEM_OF_FN = f; return; }
+
+fn item_of(sender: *u8) -> *u8 {
+    let f: fn(*u8) -> *u8 = ITEM_OF_FN;
+    if f == (0 as fn(*u8) -> *u8) { return 0 as *u8; }
+    return f(sender);
+}
+
+// ---- dropped_text: read a drop's payload (what landed?) ----------------------
+// An `.on_drop` handler's sender is the drop-zone view; `dropped_text(sender)`
+// returns the text the drag carried as an owned Text (empty when nothing has
+// been dropped). Pair with `key_of(sender)` for WHERE it landed. Backend-
+// installed, like `key_of`.
+static DROPPED_TEXT_FN: fn(*u8) -> text::Text = #zero::[fn(*u8) -> text::Text]();
+
+fn set_dropped_text_fn(f: fn(*u8) -> text::Text) { DROPPED_TEXT_FN = f; return; }
+
+fn dropped_text(sender: *u8) -> text::Text {
+    let f: fn(*u8) -> text::Text = DROPPED_TEXT_FN;
+    if f == (0 as fn(*u8) -> text::Text) { return text::new(); }
+    return f(sender);
+}
+
+// ---- drag_targeted: is a drag over me right now? -----------------------------
+// An `.on_drag_target` handler's sender is the drop-zone view, and this is the
+// state that handler exists to paint. One handler, both edges, state read from
+// the sender. False with no backend, exactly as `dropped_text` returns empty.
+static DRAG_TARGETED_FN: fn(*u8) -> bool = #zero::[fn(*u8) -> bool]();
+
+fn set_drag_targeted_fn(f: fn(*u8) -> bool) { DRAG_TARGETED_FN = f; return; }
+
+fn drag_targeted(sender: *u8) -> bool {
+    let f: fn(*u8) -> bool = DRAG_TARGETED_FN;
+    if f == (0 as fn(*u8) -> bool) { return false; }
+    return f(sender);
+}
+
+// ---- component_at: the typed reader over the presentation registry -----------
+// The component instance presented under `key`, or None. The turbofish names
+// the type the app KNOWS it presented there (presentation is typed; the cast
+// recovers what it erased):
+//
+//     match component::component_at::[EditorTabs]("code:body") {
+//         option::Option[*EditorTabs]::Some(et) => { { (*et).open(path) }; }
+//         option::Option[*EditorTabs]::None => { }
+//     }
+//
+// Valid while the presentation lasts (every eviction path clears the registry
+// entry): resolve, call, don't store. (Reseam vs the old facet: the registry
+// is keyed by the outlet's KEY, not the retired `Handle`.)
+fn component_at[C](key: str) -> option::Option[*C] {
+    let f: fn(str) -> *u8 = COMPONENT_AT_FN;
+    if f == (0 as fn(str) -> *u8) { return option::Option[*C]::None; }
+    let p: *u8 = f(key);
+    if p == (0 as *u8) { return option::Option[*C]::None; }
+    return option::Option[*C]::Some(p as *C);
+}
+
+// The type-erasing detach trampoline: `lc_detach_tramp::[C]` (a value-turbofish
+// fn-pointer) fires C's on_detach on the component at `p`. A presenter
+// registers one per shown component; the structural verbs fire it right before
+// they remove or replace that component's tree — notify, don't wait.
+fn lc_detach_tramp[C: Lifecycle](p: *u8) {
+    let q: *C = p as *C;
+    { (*q).on_detach() };
+    return;
+}
+
+// Backend hook: remember (outlet key → detach fn + component address) for the
+// component an outlet is showing. Every structural removal path fires and
+// clears the entry; the component must outlive its presentation. Not
+// app-facing — the presenting verb is the only writer.
+static LC_REGISTER_FN: fn(str, fn(*u8), *u8) = #zero::[fn(str, fn(*u8), *u8)]();
+fn set_lc_register_fn(f: fn(str, fn(*u8), *u8)) { LC_REGISTER_FN = f; return; }
+
+// Backend hook: read the component address registered for an outlet key (the
+// reader half of the registry above). 0 when the outlet shows nothing
+// presented. Installed with the others.
+static COMPONENT_AT_FN: fn(str) -> *u8 = #zero::[fn(str) -> *u8]();
+fn set_component_at_fn(f: fn(str) -> *u8) { COMPONENT_AT_FN = f; return; }
+fn lc_register(key: str, detach: fn(*u8), ctx: *u8) {
+    let f: fn(str, fn(*u8), *u8) = LC_REGISTER_FN;
+    if f != (0 as fn(str, fn(*u8), *u8)) { f(key, detach, ctx); }
+    return;
+}
+
+// ---- tests ------------------------------------------------------------------
+
+struct CaTestComp { hits: i32 }
+impl CaTestComp: Lifecycle {
+    fn on_attach(ref this) { this.hits = this.hits + 1; return; }
+    fn on_detach(ref this) { this.hits = this.hits + 100; return; }
+}
+
+static CA_ADDR: *u8 = 0 as *u8;
+fn ca_reader(key: str) -> *u8 {
+    if key == "outlet" { return CA_ADDR; }
+    return 0 as *u8;
+}
+
+#[test]
+fn component_at_resolves_through_the_key_registry() {
+    // No hook: None, never a trap — the no-backend posture.
+    COMPONENT_AT_FN = #zero::[fn(str) -> *u8]();
+    match component_at::[CaTestComp]("outlet") {
+        option::Option[*CaTestComp]::Some(_p) => { assert false; }
+        option::Option[*CaTestComp]::None => { }
+    }
+    var c: CaTestComp = CaTestComp { hits: 0 };
+    CA_ADDR = #addr_of(c) as *u8;
+    set_component_at_fn(ca_reader);
+    match component_at::[CaTestComp]("outlet") {
+        option::Option[*CaTestComp]::Some(p) => { assert p == #addr_of(c); }
+        option::Option[*CaTestComp]::None => { assert false; }
+    }
+    // A key nothing presents resolves to None even with the hook installed.
+    match component_at::[CaTestComp]("elsewhere") {
+        option::Option[*CaTestComp]::Some(_q) => { assert false; }
+        option::Option[*CaTestComp]::None => { }
+    }
+    COMPONENT_AT_FN = #zero::[fn(str) -> *u8]();
+    CA_ADDR = 0 as *u8;
+    return;
+}
+
+#[test]
+fn lc_detach_tramp_fires_the_typed_on_detach() {
+    var c: CaTestComp = CaTestComp { hits: 0 };
+    let t: fn(*u8) = lc_detach_tramp::[CaTestComp];
+    t(#addr_of(c) as *u8);
+    assert c.hits == 100;
+    return;
+}
+
+#[test]
+fn sender_verbs_default_to_the_no_backend_posture() {
+    // Every sender verb answers the neutral value with no backend installed.
+    RAISE_FN = #zero::[fn(*u8, str)]();
+    KEY_OF_FN = #zero::[fn(*u8) -> text::Text]();
+    ITEM_OF_FN = #zero::[fn(*u8) -> *u8]();
+    DROPPED_TEXT_FN = #zero::[fn(*u8) -> text::Text]();
+    DRAG_TARGETED_FN = #zero::[fn(*u8) -> bool]();
+    raise(0 as *u8, "k");
+    let k: text::Text = key_of(0 as *u8);
+    assert k.view() == "";
+    assert item_of(0 as *u8) == (0 as *u8);
+    let d: text::Text = dropped_text(0 as *u8);
+    assert d.view() == "";
+    assert drag_targeted(0 as *u8) == false;
+    return;
+}
