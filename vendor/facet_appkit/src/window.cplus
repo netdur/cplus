@@ -20,6 +20,7 @@ import "facet/facet" as core;
 import "facet/mount" as mount;
 import "facet/props" as props;
 import "facet/screen" as screen;
+import "facet/window_chrome" as chrome;
 import "facet/application" as app;
 import "facet/theme" as theme;
 import "facet/vocabulary" as vocab;
@@ -295,6 +296,9 @@ fn open_window(root: *core::Node, take chrome: Chrome,
     // tree is mounted — and before the window is shown, or it appears empty
     // and then fills in.
     install_toolbar(win, root);
+    // The titlebar slots, read from the tree the same way. After the toolbar,
+    // because an accessory sits below the toolbar when both are present.
+    install_titlebar_accessories(win, root);
 
     win.center();
     win.make_key_and_order_front(0 as *u8);
@@ -604,3 +608,59 @@ fn collect_toolbar_items(n: *core::Node, ids: *u8, map: *u8) {
     }
     return;
 }
+
+// ---- titlebar accessories ----------------------------------------------------
+// TitleBar.LeadingContent / TrailingContent, on NSTitlebarAccessoryViewController.
+//
+// Read from the TREE, the same way the toolbar is: a slot is a node under a
+// reserved `@` key, so it is described where the screen is described rather
+// than threaded through Chrome — which is a value struct and cannot hold a
+// subtree.
+//
+// LIFTED OUT of the content. The slot's view is re-parented into the titlebar,
+// so it must not also be laid out with the rest of the tree; the walk that
+// finds it hides the node from layout by giving it `display: none`, which is
+// flex's own word for "not in this layout" and needs no backend concept.
+
+fn layout_attribute_leading() -> i64 { return 5 as i64; }   // NSLayoutAttributeLeading
+fn layout_attribute_trailing() -> i64 { return 6 as i64; }  // NSLayoutAttributeTrailing
+
+fn install_titlebar_accessories(win: ak::Window, root: *core::Node) {
+    attach_accessory(win, root, chrome::titlebar_leading_key(), layout_attribute_leading());
+    attach_accessory(win, root, chrome::titlebar_trailing_key(), layout_attribute_trailing());
+    return;
+}
+
+fn attach_accessory(win: ak::Window, root: *core::Node, key: str, attribute: i64) {
+    match core::find_in(root, key) {
+        option::Option[*core::Node]::Some(n) => {
+            let v: *u8 = core::view_of(n);
+            if v == (0 as *u8) { return; }
+            // Out of the content's layout: its view lives in the titlebar now,
+            // and a node laid out in two places is laid out wrong in one.
+            { (*n).set_display(flex::Display::None) };
+            let ctrl: *u8 = { rt::alloc_init(#str_ptr("NSTitlebarAccessoryViewController\0")) };
+            if ctrl == (0 as *u8) { return; }
+            // The accessory sizes itself to the view it was given, so the view
+            // is measured first — a zero-height accessory is invisible and
+            // looks exactly like one that was never attached.
+            let fit: rt::Size = { msg_size_of_view(v, rt::sel(#str_ptr("fittingSize\0"))) };
+            var h: f64 = fit.h;
+            if h < 1.0f64 { h = 22.0f64; }
+            { msg_void_rect_v(v, rt::sel(#str_ptr("setFrame:\0")),
+                              rt::Rect { x: 0.0f64, y: 0.0f64, w: fit.w, h: h }) };
+            { rt::msg_void_id(ctrl, rt::sel(#str_ptr("setView:\0")), v) };
+            { rt::msg_void_i64(ctrl, rt::sel(#str_ptr("setLayoutAttribute:\0")), attribute) };
+            { rt::msg_void_id(win.raw(),
+                              rt::sel(#str_ptr("addTitlebarAccessoryViewController:\0")), ctrl) };
+            rt::release(ctrl);
+        }
+        option::Option[*core::Node]::None => { }
+    }
+    return;
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_size_of_view(recv: *u8, sel: *u8) -> rt::Size;
+#[link_name = "objc_msgSend"]
+extern fn msg_void_rect_v(recv: *u8, sel: *u8, r: rt::Rect);

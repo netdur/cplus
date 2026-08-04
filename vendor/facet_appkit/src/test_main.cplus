@@ -2634,3 +2634,61 @@ fn click_key(key: str) {
     }
     return;
 }
+
+#[test]
+fn a_titlebar_slot_is_lifted_out_of_the_content() {
+    backend::install();
+    // GTK supports this best (GtkHeaderBar IS leading/trailing widget slots),
+    // AppKit has NSTitlebarAccessoryViewController, and Windows has neither —
+    // an app there draws its own bar, which is what Bar::Custom is for. So this
+    // is the GTK-shaped extra and Bar::Custom stays the portable answer.
+    var lead: core::Node = chrome::titlebar_leading(
+        label::label("search", key: "tb:search"));
+    var b: core::Builder = core::Builder::new();
+    b.add(lead);
+    b.add(label::label("body", key: "tb:body"));
+    var root: core::Node = core::column(b, key: "tbroot");
+    let p: *core::Node = #addr_of(root);
+
+    let w: ak::Window = window::make_shell_window(screen::Chrome::new(
+        title: "tb", width: 300.0f64, height: 200.0f64));
+    assert mount::mount(p);
+    window::install_titlebar_accessories(w, p);
+
+    // The accessory is on the WINDOW...
+    let list: *u8 = { rt::msg_id(w.raw(), rt::sel(#str_ptr("titlebarAccessoryViewControllers\0"))) };
+    assert list != (0 as *u8);
+    assert { rt::msg_u64(list, rt::sel(#str_ptr("count\0"))) } == (1 as u64);
+
+    // ...and OUT of the content's layout, because a node laid out in two places
+    // is laid out wrong in one.
+    match core::find_in(p, chrome::titlebar_leading_key()) {
+        option::Option[*core::Node]::Some(n) => {
+            assert { (*n).style.display } == flex::Display::None;
+        }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    mount::unmount(p);
+    w.close();
+    return;
+}
+
+#[test]
+fn a_window_with_no_titlebar_slots_gets_no_accessories() {
+    backend::install();
+    var b: core::Builder = core::Builder::new();
+    b.add(label::label("body", key: "nb:body"));
+    var root: core::Node = core::column(b, key: "nbroot");
+    let p: *core::Node = #addr_of(root);
+    let w: ak::Window = window::make_shell_window(screen::Chrome::new(
+        title: "nb", width: 300.0f64, height: 200.0f64));
+    assert mount::mount(p);
+    window::install_titlebar_accessories(w, p);
+    let list: *u8 = { rt::msg_id(w.raw(), rt::sel(#str_ptr("titlebarAccessoryViewControllers\0"))) };
+    if list != (0 as *u8) {
+        assert { rt::msg_u64(list, rt::sel(#str_ptr("count\0"))) } == (0 as u64);
+    }
+    mount::unmount(p);
+    w.close();
+    return;
+}

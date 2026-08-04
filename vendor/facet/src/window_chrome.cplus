@@ -207,3 +207,68 @@ fn drags_window(n: *core::Node) -> bool {
     if g == (0 as *gestures::Gestures) { return false; }
     return { (*g).drags_window };
 }
+
+
+// ---- titlebar accessories ----------------------------------------------------
+// TitleBar.LeadingContent / TrailingContent. A subtree that sits IN the
+// platform's own titlebar rather than in the content — a search field beside
+// the title, a segmented control on the right.
+//
+// Carried as a RESERVED KEY rather than a field on Chrome, and the reason is
+// that Chrome is a value struct: it is copied into every window that opens, and
+// a subtree is not a value. The tree already has a place for "a node that
+// belongs to its parent rather than to the layout" — a key beginning with `@`,
+// which an application's own key never does.
+//
+// Portability, stated because it decides the shape: GTK supports this BEST
+// (GtkHeaderBar is exactly leading and trailing widget slots), AppKit has
+// NSTitlebarAccessoryViewController, and Windows has neither — an app there
+// extends the client area and draws its own bar, which is what `Bar::Custom`
+// plus `window_buttons()` and `.window_drag()` are for. So this is the
+// GTK-shaped extra, and `Bar::Custom` remains the portable answer.
+
+fn titlebar_leading_key() -> str { return "@titlebar:leading"; }
+fn titlebar_trailing_key() -> str { return "@titlebar:trailing"; }
+
+// Mark a subtree as the titlebar's leading content. It is a child of the window
+// root like anything else; the backend lifts it out and hands it to the
+// platform, so it takes no space in the content.
+// WRAPPED rather than renamed: a key is set when a node is built and there is
+// no setter, deliberately — an address that could be reassigned is an address
+// `find` cannot be trusted with. So the slot is a keyed row AROUND the content,
+// which is one node and reads the same at the call site.
+fn titlebar_leading(take content: core::Node) -> core::Node {
+    var b: core::Builder = core::Builder::new();
+    b.add(content);
+    return core::row(b, key: titlebar_leading_key());
+}
+
+fn titlebar_trailing(take content: core::Node) -> core::Node {
+    var b: core::Builder = core::Builder::new();
+    b.add(content);
+    return core::row(b, key: titlebar_trailing_key());
+}
+
+// Is this node one of the titlebar slots? The backend asks while walking, and a
+// slot must NOT be laid out with the content — it is not there any more.
+fn is_titlebar_slot(n: *core::Node) -> bool {
+    let k: str = { (*n).key() };
+    return k == titlebar_leading_key() || k == titlebar_trailing_key();
+}
+
+#[test]
+fn a_titlebar_slot_is_a_reserved_key_not_a_chrome_field() {
+    // Chrome is a VALUE struct, copied into every window that opens, and a
+    // subtree is not a value. The tree already has a place for "a node that
+    // belongs to its parent rather than to the layout": an `@` key, which an
+    // application's own key never starts with.
+    var lead: core::Node = titlebar_leading(core::column(core::Builder::new()));
+    assert is_titlebar_slot(#addr_of(lead));
+    assert { lead.key() } == "@titlebar:leading";
+    assert { lead.child_count() } == (1 as usize);
+    var trail: core::Node = titlebar_trailing(core::column(core::Builder::new()));
+    assert is_titlebar_slot(#addr_of(trail));
+    var plain: core::Node = core::column(core::Builder::new(), key: "body");
+    assert is_titlebar_slot(#addr_of(plain)) == false;
+    return;
+}

@@ -249,6 +249,24 @@ an explicit width and height laid out 0x0 — present, correct and invisible.
 It survived because the tests asserted PROPS and the examples sized everything
 by hand; the guard now asserts a FRAME.
 
+### The titlebar slots are read from the tree
+
+`TitleBar.LeadingContent` / `TrailingContent` are subtrees under a reserved `@`
+key — `window_chrome::titlebar_leading` / `_trailing` — and the window lifts
+them into an `NSTitlebarAccessoryViewController`. Carried as a key rather than
+a field on `Chrome` because Chrome is a VALUE struct, copied into every window
+that opens, and a subtree is not a value.
+
+Lifted OUT of the content: the slot's node gets `display: none`, which is
+flex's own word for "not in this layout" and needs no backend concept. A node
+laid out in two places is laid out wrong in one.
+
+Portability, since it decides the shape: **GTK supports this best** —
+`GtkHeaderBar` is exactly leading and trailing widget slots — AppKit has the
+accessory controller, and Windows has neither: an app there extends the client
+area and draws its own bar. So this is the GTK-shaped extra, and `Bar::Custom`
+plus `window_buttons()` and `.window_drag()` remains the portable answer.
+
 ### `alert` is a facet tree in a sheet, and non-blocking
 
 It used to be an NSAlert and `runModal`, which was two problems at once. It
@@ -406,11 +424,8 @@ AppKit cannot. They are listed so the difference is never ambiguous.
 
 | What | Stage 4 item | Size |
 |---|---|---|
-| Row content REUSE (the bind step) — see below | 2, the heavy end | needs a contract answer |
-| `alert` as a facet screen, non-blocking | 5 | medium |
-| Titlebar leading/trailing carriers | 5 | small, both halves |
-| The agent surface — ported, not yet wired or tested | 6 | medium |
-| 13 tier rows with no facet verb to carry them | 5 | decisions, not tasks |
+| The agent surface — written, never compiled | 6 | medium |
+| 5 tier rows with no facet verb to carry them | 5 | decisions, not tasks |
 | Examples revived on the new API | 7 | medium |
 
 Everything else in items 1-5 has landed: all 42 kinds have bodies, the window
