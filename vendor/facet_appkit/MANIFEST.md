@@ -8,7 +8,7 @@ happen on a Mac?" by reading it.
 A row here is a commitment, not a note. Nothing is left implicit: a verb that
 is neither implemented nor listed below is a gap, and the gap is a bug.
 
-Status: **Stage 4 item 1 complete**, item 2 at 21 kinds of 42. Items are in
+Status: **Stage 4 item 1 complete**, item 2 at 24 kinds of 42. Items are in
 progress; this file grows a row each time something is decided either way.
 
 ---
@@ -49,6 +49,13 @@ bottom_leading, bottom_trailing }`). Core Animation has one `cornerRadius`
 per layer, so the **largest** of the four is used. Per-corner radii would
 need a mask layer per view, which is real cost for a case no consumer has
 asked for yet.
+
+### The tab strip's colours
+
+`tabs(bar_background:)` `bar_background_color:` `bar_text_color:`
+`selected_tab_color:` `unselected_tab_color:` are not honoured. NSTabView
+draws its own strip and offers no colour API — the same reason as the other
+system-drawn controls above.
 
 ### The `bordered` stroke family
 
@@ -131,30 +138,8 @@ AppKit cannot. They are listed so the difference is never ambiguous.
 | The app menu, toolbar tier, titlebar content | 5 |
 | Window sizing policy, density, modal stack | 5 |
 | The agent surface | 6 |
-| `web` / `hybrid_web` | needs a WebKit binding — see below |
-| `date_picker` / `time_picker` | needs a Date bridge — see below |
-| `tabs` | needs a decision — see below |
+| `web` / `hybrid_web` | deferred by the user, 2026-08-04 — needs a `vendor/webkit` bindgen package |
 | The collection group | 2 (the heavy end) |
-
-### Three that are blocked on a decision, not on effort
-
-**`web` / `hybrid_web`.** WKWebView exists and does everything the contract
-asks; there is no `vendor/webkit` binding in the tree. This is a bindgen
-run, not a design question — but it is a new package, so it is named here
-rather than improvised inside this one.
-
-**`date_picker` / `time_picker`.** NSDatePicker is the right control, but
-facet's `Date` is `{year, month, day}` and `Duration` is seconds, while
-NSDatePicker takes an NSDate. The bridge needs a calendar, and which
-calendar (and whose time zone) is a decision, not a detail.
-
-**`tabs`.** NSTabView owns its own content views and its own item model,
-which does not fit a tree whose children mount as subviews. The alternative
-— a plain container whose panes switch with `switch_to`, and a tab bar the
-application builds from buttons — already works today and needs no backend
-body, but it leaves `bar_background_color` and the other four bar props
-meaning nothing. Which of the two `tabs` IS wants settling before a body is
-written for it.
 
 ### The collection group
 

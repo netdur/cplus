@@ -16,9 +16,10 @@
 // why each is imported: `label::P_TEXT` is not the same bit as
 // `text_field::P_TEXT`, and the MAP is the authority for both.
 //
-// STATUS: 21 of 42 — label, button, text_field, image, scroll, box, checkbox,
+// STATUS: 24 of 42 — label, button, text_field, image, scroll, box, checkbox,
 // radio, toggle, slider, progress, spinner, stepper, icon_button, symbol,
-// text_area, search_field, popup, bordered, split, page_dots, plus
+// text_area, search_field, popup, bordered, split, page_dots, date_picker,
+// time_picker, tabs, plus
 // the container backing. Until a kind lands, `views::create` says
 // so on stderr rather than rendering a silent blank rectangle.
 
@@ -50,7 +51,11 @@ import "facet/popup" as popup;
 import "facet/bordered" as bordered;
 import "facet/split" as split;
 import "facet/page_dots" as page_dots;
+import "facet/date_picker" as date_picker;
+import "facet/time_picker" as time_picker;
+import "facet/tabs" as tabs;
 import "objc/runtime" as rt;
+import "objc/bridge" as bridge;
 import "appkit/appkit" as ak;
 import "appkit/appkit_ext" as akx;
 import "quartzcore/quartzcore" as quartz;
@@ -923,5 +928,170 @@ fn tint_dots(host: quartz::Layer, count: i64, position: i64,
         }
         i = i +% (1 as usize);
     }
+    return;
+}
+
+// ---- dates -------------------------------------------------------------------
+// facet's `Date` is {year, month, day} — a CIVIL date, not an instant.
+// NSDatePicker wants an NSDate, which is an instant. Bridging the two is a
+// question of which calendar and whose time zone, and the answer follows from
+// what facet's type actually means:
+//
+//   the proleptic Gregorian calendar, and the picker pinned to UTC.
+//
+// Pinning is the load-bearing half. A civil date has no time zone, so if the
+// picker rendered it in the machine's local zone, 2026-01-01 fed in west of
+// Greenwich would come back reading 2025-12-31 — the value would not survive
+// its own round trip. Pinned to UTC, what goes in is what is shown and what
+// comes back.
+//
+// The conversion is arithmetic rather than NSCalendar: days-from-civil is
+// exact, total, and has no notion of a locale to disagree with.
+
+fn seconds_per_day() -> f64 { return 86400.0f64; }
+
+// Days from 1970-01-01 to y-m-d in the proleptic Gregorian calendar. Exact for
+// every year the type can hold; the shift-the-year-to-March trick is what
+// makes the leap-day case fall out instead of being special-cased.
+fn days_from_civil(y_in: i64, m: i64, d: i64) -> i64 {
+    var y: i64 = y_in;
+    if m <= (2 as i64) { y = y -% (1 as i64); }
+    var era: i64 = y / (400 as i64);
+    if y < (0 as i64) { era = (y -% (399 as i64)) / (400 as i64); }
+    let yoe: i64 = y -% era * (400 as i64);                       // [0, 399]
+    var mp: i64 = m +% (9 as i64);
+    if m > (2 as i64) { mp = m -% (3 as i64); }
+    let doy: i64 = ((153 as i64) * mp +% (2 as i64)) / (5 as i64) +% d -% (1 as i64);
+    let doe: i64 = yoe * (365 as i64) +% yoe / (4 as i64) -% yoe / (100 as i64) +% doy;
+    return era * (146097 as i64) +% doe -% (719468 as i64);
+}
+
+// An NSDate at UTC midnight on that civil date. A zeroed Date (year 0) means
+// "unset", and answers a null NSDate so a caller can leave the picker alone.
+fn ns_date(d: vocab::Date) -> *u8 {
+    if d.year == (0 as i64) { return 0 as *u8; }
+    let secs: f64 = (days_from_civil(d.year, d.month, d.day) as f64) * seconds_per_day();
+    return { rt::msg_id_f64(rt::get_class(#str_ptr("NSDate\0")),
+                            rt::sel(#str_ptr("dateWithTimeIntervalSince1970:\0")), secs) };
+}
+
+// A duration into the same space: the epoch day, offset by the time of day.
+// facet's TimePicker carries a Duration because a time of day IS an offset
+// into a day, which is the one reading that does not need a calendar.
+fn ns_time(t: vocab::Duration) -> *u8 {
+    return { rt::msg_id_f64(rt::get_class(#str_ptr("NSDate\0")),
+                            rt::sel(#str_ptr("dateWithTimeIntervalSince1970:\0")), t.seconds) };
+}
+
+fn utc_time_zone() -> option::Option[ak::TimeZone] {
+    let tz: *u8 = { rt::msg_id_id(rt::get_class(#str_ptr("NSTimeZone\0")),
+                                  rt::sel(#str_ptr("timeZoneWithAbbreviation:\0")),
+                                  bridge::nsstring("UTC")) };
+    if tz == (0 as *u8) { return option::Option[ak::TimeZone]::None; }
+    return option::some(ak::TimeZone::from_raw(tz));
+}
+
+fn pin_picker_to_utc(dp: ak::DatePicker) {
+    match utc_time_zone() {
+        option::Option[ak::TimeZone]::Some(tz) => { dp.set_time_zone(tz); }
+        option::Option[ak::TimeZone]::None => { }
+    }
+    return;
+}
+
+// ---- date_picker -------------------------------------------------------------
+
+fn create_date_picker(n: *core::Node) -> *u8 {
+    let dp: ak::DatePicker = ak::DatePicker::from_raw(rt::alloc_init(#str_ptr("NSDatePicker\0")));
+    dp.set_date_picker_style(ak::DatePickerStyle::TextFieldAndStepper);
+    dp.set_date_picker_elements(ak::date_picker_element_flags_n_s_date_picker_element_flag_year_month_day);
+    pin_picker_to_utc(dp);
+    return rt::retain(dp.as_view().raw());
+}
+
+fn apply_date_picker(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::DatePickerProps = props_of(n, props::K_DATE_PICKER) as *props::DatePickerProps;
+    if p == (0 as *props::DatePickerProps) { return; }
+    let dp: ak::DatePicker = ak::DatePicker::from_raw(v);
+    // The bounds go on before the value, the same trap the slider has: a date
+    // outside the OLD range is clamped away and the write is lost.
+    if (dirty & date_picker::P_MINIMUM_DATE) != (0 as u64) {
+        let lo: *u8 = ns_date({ (*p).minimum_date });
+        if lo != (0 as *u8) { dp.set_min_date(ak::Date::from_raw(lo)); }
+    }
+    if (dirty & date_picker::P_MAXIMUM_DATE) != (0 as u64) {
+        let hi: *u8 = ns_date({ (*p).maximum_date });
+        if hi != (0 as *u8) { dp.set_max_date(ak::Date::from_raw(hi)); }
+    }
+    if (dirty & (date_picker::P_DATE | date_picker::P_MINIMUM_DATE | date_picker::P_MAXIMUM_DATE)) != (0 as u64) {
+        let d: *u8 = ns_date({ (*p).date });
+        if d != (0 as *u8) { dp.set_date_value(ak::Date::from_raw(d)); }
+    }
+    if (dirty & props::C_HANDLERS) != (0 as u64) || dirty == paint::all_bits() {
+        akx::set_control_action_ctx(dp.as_control(), { (*p).on_date_selected }, { (*p).on_date_selected_ctx });
+    }
+    if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
+        dp.as_control().set_enabled(core::is_enabled(n));
+    }
+    return;
+}
+
+// ---- time_picker -------------------------------------------------------------
+// The same class in its hour/minute posture.
+
+fn create_time_picker(n: *core::Node) -> *u8 {
+    let dp: ak::DatePicker = ak::DatePicker::from_raw(rt::alloc_init(#str_ptr("NSDatePicker\0")));
+    dp.set_date_picker_style(ak::DatePickerStyle::TextFieldAndStepper);
+    dp.set_date_picker_elements(ak::date_picker_element_flags_n_s_date_picker_element_flag_hour_minute);
+    pin_picker_to_utc(dp);
+    return rt::retain(dp.as_view().raw());
+}
+
+fn apply_time_picker(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::TimePickerProps = props_of(n, props::K_TIME_PICKER) as *props::TimePickerProps;
+    if p == (0 as *props::TimePickerProps) { return; }
+    let dp: ak::DatePicker = ak::DatePicker::from_raw(v);
+    if (dirty & time_picker::P_TIME) != (0 as u64) {
+        dp.set_date_value(ak::Date::from_raw(ns_time({ (*p).time })));
+    }
+    if (dirty & props::C_HANDLERS) != (0 as u64) || dirty == paint::all_bits() {
+        akx::set_control_action_ctx(dp.as_control(), { (*p).on_time_selected }, { (*p).on_time_selected_ctx });
+    }
+    if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
+        dp.as_control().set_enabled(core::is_enabled(n));
+    }
+    return;
+}
+
+// ---- tabs --------------------------------------------------------------------
+// NSTabView. Its children are not subviews but NSTabViewItems, each wrapping
+// one view — so `views::insert` wraps a pane as it arrives rather than adding
+// it as a subview, which is the same shape as the scroll's document host: the
+// one place a kind's native child model differs from "add a subview".
+//
+// The pane's LABEL is its key. A tab needs a title, facet's tree gives every
+// addressable node one, and inventing a second title prop for the same node
+// would be the drift this package is written against.
+
+fn create_tabs(n: *core::Node) -> *u8 {
+    let tv: ak::TabView = ak::TabView::from_raw(rt::alloc_init(#str_ptr("NSTabView\0")));
+    return rt::retain(tv.as_view().raw());
+}
+
+fn apply_tabs(v: *u8, n: *core::Node, dirty: u64) {
+    // The five bar props (bar_background, bar_background_color, bar_text_color,
+    // selected_tab_color, unselected_tab_color) have no NSTabView equivalent —
+    // the tab strip is system-drawn. Recorded in MANIFEST.md.
+    return;
+}
+
+// Wrap `pane` as a tab of `host`, labelled `label`. Called from views::insert
+// when the host is an NSTabView.
+fn tabs_add_pane(host: *u8, pane: *u8, label: str) {
+    let tv: ak::TabView = ak::TabView::from_raw(host);
+    let item: ak::TabViewItem = ak::TabViewItem::new(0 as *u8);
+    item.set_view(ak::View::from_raw(pane));
+    if label != "" { item.set_label(label); }
+    tv.add_tab_view_item(item);
     return;
 }

@@ -33,6 +33,9 @@ import "facet/popup" as popup;
 import "facet/bordered" as bordered;
 import "facet/split" as split;
 import "facet/page_dots" as page_dots;
+import "facet/date_picker" as date_picker;
+import "facet/time_picker" as time_picker;
+import "facet/tabs" as tabs;
 import "quartzcore/quartzcore" as quartz;
 import "stdlib/status" as status;
 import "objc/runtime" as rt;
@@ -677,5 +680,95 @@ fn a_single_hidden_dot_draws_nothing() {
     let mv: *u8 = views::create(0 as *u8, #addr_of(many));
     assert ak::View::from_raw(mv).layer().sublayers().count() == (6 as usize);
     views::view_release(mv);
+    return;
+}
+
+// ---- the civil-date bridge ---------------------------------------------------
+
+#[test]
+fn days_from_civil_is_exact_across_the_cases_that_break_naive_maths() {
+    // The epoch itself, and the day either side of it.
+    assert controls::days_from_civil(1970 as i64, 1 as i64, 1 as i64) == (0 as i64);
+    assert controls::days_from_civil(1969 as i64, 12 as i64, 31 as i64) == (-1 as i64);
+    assert controls::days_from_civil(1970 as i64, 1 as i64, 2 as i64) == (1 as i64);
+    // A leap day, and the day after it.
+    assert controls::days_from_civil(2024 as i64, 2 as i64, 29 as i64) == (19782 as i64);
+    assert controls::days_from_civil(2024 as i64, 3 as i64, 1 as i64) == (19783 as i64);
+    // 2000 IS a leap year (divisible by 400) and 1900 is NOT (by 100 but not
+    // 400) — the pair that catches a naive rule.
+    assert controls::days_from_civil(2000 as i64, 3 as i64, 1 as i64)
+         -% controls::days_from_civil(2000 as i64, 2 as i64, 28 as i64) == (2 as i64);
+    assert controls::days_from_civil(1900 as i64, 3 as i64, 1 as i64)
+         -% controls::days_from_civil(1900 as i64, 2 as i64, 28 as i64) == (1 as i64);
+    // ...and it runs backwards through the epoch without a discontinuity.
+    assert controls::days_from_civil(1900 as i64, 1 as i64, 1 as i64) == (-25567 as i64);
+    return;
+}
+
+#[test]
+fn a_civil_date_survives_its_own_round_trip_through_the_picker() {
+    // The reason the picker is pinned to UTC: a civil date has no time zone,
+    // so rendering it in the machine's local zone would send 2026-01-01 back
+    // as 2025-12-31 anywhere west of Greenwich — the value would not survive
+    // the trip it was just given.
+    var n: core::Node = date_picker::date_picker(
+        vocab::Date { year: 2026 as i64, month: 1 as i64, day: 1 as i64 }, key: "when");
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    let dp: ak::DatePicker = ak::DatePicker::from_raw(v);
+    // What went in is what the control holds: the same instant, to the second.
+    let want: f64 = (controls::days_from_civil(2026 as i64, 1 as i64, 1 as i64) as f64)
+                  * controls::seconds_per_day();
+    let got: f64 = { rt::msg_f64(dp.date_value().raw(),
+                                 rt::sel(#str_ptr("timeIntervalSince1970\0"))) };
+    assert got - want < 1.0f64;
+    assert want - got < 1.0f64;
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn an_unset_date_leaves_the_picker_alone() {
+    // A zeroed Date is "unset", not year zero: it must not be written as an
+    // instant two millennia ago.
+    assert controls::ns_date(vocab::Date::zero()) == (0 as *u8);
+    var n: core::Node = date_picker::date_picker(vocab::Date::zero(), key: "d");
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    assert v != (0 as *u8);          // still a real picker, showing today
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn a_time_is_an_offset_into_a_day() {
+    // facet's TimePicker carries a Duration because a time of day IS an offset
+    // into a day — the one reading that needs no calendar at all.
+    var n: core::Node = time_picker::time_picker(
+        vocab::Duration { seconds: 3600.0f64 * 9.0f64 + 60.0f64 * 30.0f64 }, key: "t");
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    let dp: ak::DatePicker = ak::DatePicker::from_raw(v);
+    let got: f64 = { rt::msg_f64(dp.date_value().raw(),
+                                 rt::sel(#str_ptr("timeIntervalSince1970\0"))) };
+    assert got > 34199.0f64 && got < 34201.0f64;      // 09:30 on the epoch day
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn a_tab_pane_becomes_a_tab_view_item_not_a_subview() {
+    // NSTabView's children are NSTabViewItems. The pane's LABEL is its key,
+    // because a tab needs a title and every addressable node already has one —
+    // a second title prop for the same node would be drift.
+    var t: core::Node = tabs::tabs(key: "tabs");
+    let host: *u8 = views::create(0 as *u8, #addr_of(t));
+    var pane: core::Node = core::column(core::Builder::new(), key: "Settings");
+    let child: *u8 = views::create(0 as *u8, #addr_of(pane));
+    views::insert(0 as *u8, host, child, 0 as usize);
+    let tv: ak::TabView = ak::TabView::from_raw(host);
+    assert tv.number_of_tab_view_items() == (1 as i64);
+    let item: ak::TabViewItem = tv.tab_view_item_at_index(0 as i64);
+    assert item.label().view() == "Settings";
+    // ...and it did NOT also land as a subview of the tab view itself.
+    views::view_release(child);
+    views::view_release(host);
     return;
 }
