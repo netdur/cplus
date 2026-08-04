@@ -1,12 +1,36 @@
 # Handoff — facet, next session
 
-Stage 3 is **done and externally reviewed** (grok/codex — findings fixed,
-reviews committed in `stages/`). Stage 4 is **planned with every decision
-resolved**: `stages/4.md` is the page, facet_appkit is the work, and the
-first task is the window shell. Nothing waits on a human.
+Stage 4 is **under way**. Item 1 (the window shell) is DONE: facet_appkit
+is a real backend, a keyed tree reaches the screen, and facet's own suite
+compiles it. Item 2 (the per-kind bodies) has five of 42 and the shape for
+the rest. Items 3–7 are open.
 
-Read `INTENT.md` first, then `stages/4.md`. `stages/3.md`'s banner records
-what shipped and the honest deltas.
+Read `INTENT.md` first, then `stages/4.md` — its "Inspection notes" section
+records every decision taken and every question still open, so none of it
+is re-derived. `vendor/facet_appkit/MANIFEST.md` is the "AppKit cannot"
+record INTENT requires; it also separates *cannot* from *not yet reached*.
+
+## Start here: Stage 4 item 2 — the remaining 37 kinds
+
+`vendor/facet_appkit/src/controls.cplus` holds the bodies, one pair per
+kind, and `views::create_for_kind` / `apply_for_kind` are the dispatch. The
+pattern is fixed and worth following exactly:
+
+- ONE body per kind. `create` calls the same `apply_<kind>` with an
+  all-ones dirty word; `apply` calls it with the real one. A separate
+  create-path is how a control ends up right on mount and wrong on its
+  first update.
+- Read props through `props_of(n, kind)`, which checks `Data.kind` and
+  answers 0 on a mismatch. Never trust the cast.
+- The per-control dirty bits live in the GENERATED control modules
+  (`label::P_TEXT` is not `text_field::P_TEXT`), so import each one.
+- Kind-independent work belongs in `paint.cplus`, not repeated per kind.
+- A kind with no body still gets a backing view AND a one-time stderr line.
+  Silence is the failure INTENT is written against.
+
+Then items 3–7 on `stages/4.md`. Item 3 (scheduler) is largely already in
+`scheduler.cplus` — run_on_main, after, observe_size and the
+CFRunLoopObserver tick are built; what remains is jobs/teardown proving.
 
 ---
 
@@ -20,8 +44,11 @@ Stage 2  the contract        DONE   38 generated + 4 hand-written controls, 362 
 Stage 3  platform-free body  DONE   2026-08-04, reviewed. Tier modules, mount seam
                                     (M1-M7), renames, composition, FontWeight,
                                     key band, DOM find, guards 5 + 5b.
-Stage 4  facet_appkit        NEXT   stages/4.md — the contract on a Mac. All three
-                                    of its decisions are resolved on the page.
+Stage 4  facet_appkit        UNDER WAY
+         item 1 window shell DONE   2026-08-04 — a keyed tree on screen
+         item 2 the 42 kinds 5/42   label, button, text_field, image, scroll
+         items 3-7                  scheduler proving, input, the 58 rows,
+                                    the agent surface, examples
 Stage 5  docs + provenance
 ```
 
@@ -32,12 +59,21 @@ python3 tools/maui_map.py                  # fails on an unbucketed row
 python3 tools/gen_contract.py              # SIX guards incl. 5b tier dispositions;
                                            # byte-idempotent; prints the tier tally
 python3 tools/gen_icons.py                 # the icon table, from the font
-cd vendor/facet && cpc test                # 433
-                   cpc test --asan         # 433
-                   cpc test --release      # 433
+cd vendor/facet && cpc test                # 474  (was 433: +C_LAYOUT, the
+                   cpc test --asan         # 474   structural verbs, the window
+                   cpc test --release      # 474   accessors, the macOS facade)
+cd vendor/facet_appkit && cpc test         # 369
+                          cpc test --asan  # 369
+                          cpc test --release # 369
+       leaks -atExit -- ./target/debug/facet_appkit_tests   # 0 leaks / 0 bytes
 cd vendor/flex_layout && cpc test          # 280
 cd vendor/stdlib      && cpc test          # 290
 ```
+
+**facet's suite now compiles facet_appkit** — `test_main.cplus` imports
+`./runtime`, which on macOS resolves to `runtime_macos.cplus`, which imports
+the backend. A backend that does not build turns facet red. That is how the
+pre-regen tree had it too.
 
 **Use `./target/release/cpc` ONLY, and rebuild it first** (`cargo build
 --release`). Homebrew's `cpc 0.0.26` predates the builder-DSL work and
