@@ -56,8 +56,7 @@ import "facet/gestures" as gestures;
 import "facet/component" as component;
 import "appkit/appkit_ext" as akx;
 import "./input" as input;
-import "./web" as webmod;
-import "facet/web" as web_ui;
+import "./web" as webmod;import "facet/web" as web_ui;
 import "facet/hybrid_web" as hybrid_ui;
 import "./drawing" as drawing;
 import "objc/runtime" as rt;
@@ -70,6 +69,9 @@ import "./geometry" as geometry;
 import "./scheduler" as scheduler;
 import "./window" as window;
 import "./facet_appkit" as backend;
+
+#[link_name = "objc_msgSend"]
+extern fn msg_size_of(recv: *u8, sel: *u8) -> rt::Size;
 
 type Node = flex::Node;
 
@@ -1724,5 +1726,178 @@ fn a_message_body_is_escaped_before_it_becomes_a_script() {
     assert webmod::json_string("a\nb").view() == "\"a\\nb\"";
     assert webmod::json_string("c:\\path").view() == "\"c:\\\\path\"";
     assert webmod::json_string("").view() == "\"\"";
+    return;
+}
+
+// ---- the window tier: item 5 -------------------------------------------------
+// The rows the ledger deferred because none can be answered without a native
+// window. Each is asserted against a REAL NSWindow, which is the only way to
+// tell "implemented" from "returns a plausible number".
+
+#[test]
+fn the_button_policy_reaches_the_titlebar() {
+    // `close_button_only` used to say exactly this in one word and could say
+    // nothing else. The ledger asks for the two rows apart, because a window
+    // may well want one and not the other.
+    let w: ak::Window = window::make_shell_window(screen::Chrome::new(
+        title: "policy", width: 300.0f64, height: 200.0f64,
+        maximizable: false, minimizable: true));
+    assert button_hidden(w, 2 as i64);         // NSWindowZoomButton
+    assert button_hidden(w, 1 as i64) == false; // NSWindowMiniaturizeButton
+    w.close();
+
+    let both: ak::Window = window::make_shell_window(screen::Chrome::new(
+        title: "both", width: 300.0f64, height: 200.0f64));
+    assert button_hidden(both, 1 as i64) == false;
+    assert button_hidden(both, 2 as i64) == false;
+    both.close();
+    return;
+}
+
+fn button_hidden(w: ak::Window, which: i64) -> bool {
+    let b: *u8 = { rt::msg_id_i64(w.raw(), rt::sel(#str_ptr("standardWindowButton:\0")), which) };
+    if b == (0 as *u8) { return true; }
+    return { rt::msg_i8(b, rt::sel(#str_ptr("isHidden\0"))) } != (0 as i8);
+}
+
+#[test]
+fn zero_is_unbounded_for_a_maximum_size() {
+    // The trap this exists for: an unset maximum must not become a maximum of
+    // NOTHING. The minimum pair already reads that way, so the maximum has to
+    // agree or the two fields mean different things by the same value.
+    let unset: ak::Window = window::make_shell_window(screen::Chrome::new(
+        title: "unset", width: 300.0f64, height: 200.0f64));
+    let m: rt::Size = { msg_size_of(unset.raw(), rt::sel(#str_ptr("contentMaxSize\0"))) };
+    assert m.w > 10000.0f64;
+    assert m.h > 10000.0f64;
+    unset.close();
+
+    // ...and each axis is answered on its own, so a window can cap one only.
+    let capped: ak::Window = window::make_shell_window(screen::Chrome::new(
+        title: "capped", width: 300.0f64, height: 200.0f64, max_width: 640.0f64));
+    let c: rt::Size = { msg_size_of(capped.raw(), rt::sel(#str_ptr("contentMaxSize\0"))) };
+    assert c.w == 640.0f64;
+    assert c.h > 10000.0f64;
+    capped.close();
+    return;
+}
+
+#[test]
+fn the_platform_reads_answer_safely_with_no_window() {
+    // Every one of these is a row that needs a native window, and every one
+    // has to answer something USABLE without one — a density of 0 would make
+    // size arithmetic collapse, which is worse than a wrong-but-sane 1.
+    assert window::density_of(0 as *core::Node) == 1.0f64;
+    assert window::is_active(0 as *core::Node) == false;
+    return;
+}
+
+#[test]
+fn the_appearance_override_is_explicit_and_undoable() {
+    backend::install();
+    // Application.UserAppTheme. Unspecified is not a third colour scheme — it
+    // is "give the system back", and without it an override could never be
+    // taken off.
+    window::set_app_appearance(vocab::Appearance::Dark);
+    assert window::app_appearance() == vocab::Appearance::Dark;
+    assert theme::is_dark();
+    window::set_app_appearance(vocab::Appearance::Light);
+    assert window::app_appearance() == vocab::Appearance::Light;
+    assert theme::is_dark() == false;
+    window::set_app_appearance(vocab::Appearance::Unspecified);
+    assert window::app_appearance() == vocab::Appearance::Unspecified;
+    return;
+}
+
+#[test]
+fn the_app_menu_is_grouped_in_first_seen_order() {
+    backend::install();
+    // facet's AppMenu is FLAT — each item names its menu — and AppKit wants a
+    // tree. The grouping happens here, and the order is first mention, which
+    // is the only order a flat list can have expressed.
+    var m: screen::AppMenu = screen::app_menu("probe");
+    m.add_item("probe", "Quit", "q", screen::menu_action_quit());
+    m.add_item("File", "New", "n", screen::menu_action_none());
+    m.add_item("Edit", "Copy", "c", screen::menu_action_copy());
+    m.add_item("File", "Close", "w", screen::menu_action_close_window());
+    window::install_app_menu(#addr_of(m));
+
+    let nsapp: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSApplication\0")),
+                                  rt::sel(#str_ptr("sharedApplication\0"))) };
+    let bar: *u8 = { rt::msg_id(nsapp, rt::sel(#str_ptr("mainMenu\0"))) };
+    assert bar != (0 as *u8);
+    assert { rt::msg_u64(bar, rt::sel(#str_ptr("numberOfItems\0"))) } == (3 as u64);
+    assert menu_title_at(bar, 0 as i64) == "probe";
+    assert menu_title_at(bar, 1 as i64) == "File";
+    assert menu_title_at(bar, 2 as i64) == "Edit";
+    // Two File items landed in ONE File menu, not two.
+    let file: *u8 = { rt::msg_id(item_at(bar, 1 as i64), rt::sel(#str_ptr("submenu\0"))) };
+    assert { rt::msg_u64(file, rt::sel(#str_ptr("numberOfItems\0"))) } == (2 as u64);
+    // A platform verb gets the platform's selector and NO target, so the
+    // responder chain decides — which is what greys Copy out with nothing
+    // focused, without facet knowing anything about focus.
+    let edit: *u8 = { rt::msg_id(item_at(bar, 2 as i64), rt::sel(#str_ptr("submenu\0"))) };
+    let copy: *u8 = { rt::msg_id_i64(edit, rt::sel(#str_ptr("itemAtIndex:\0")), 0 as i64) };
+    assert { rt::msg_id(copy, rt::sel(#str_ptr("target\0"))) } == (0 as *u8);
+    return;
+}
+
+fn item_at(menu: *u8, i: i64) -> *u8 {
+    return { rt::msg_id_i64(menu, rt::sel(#str_ptr("itemAtIndex:\0")), i) };
+}
+
+fn menu_title_at(menu: *u8, i: i64) -> text::Text {
+    let it: *u8 = item_at(menu, i);
+    if it == (0 as *u8) { return text::new(); }
+    return bridge::to_text({ rt::msg_id(it, rt::sel(#str_ptr("title\0"))) });
+}
+
+#[test]
+fn a_command_item_gets_a_trampoline_and_a_platform_one_does_not() {
+    backend::install();
+    var m: screen::AppMenu = screen::app_menu("probe");
+    m.add_command("File", "Save", key: "s", on_click: menu_saved);
+    window::install_app_menu(#addr_of(m));
+    let nsapp: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSApplication\0")),
+                                  rt::sel(#str_ptr("sharedApplication\0"))) };
+    let bar: *u8 = { rt::msg_id(nsapp, rt::sel(#str_ptr("mainMenu\0"))) };
+    let file: *u8 = { rt::msg_id(item_at(bar, 0 as i64), rt::sel(#str_ptr("submenu\0"))) };
+    let save: *u8 = item_at(file, 0 as i64);
+    // An app command WINS over a token action, so it carries a real target.
+    assert { rt::msg_id(save, rt::sel(#str_ptr("target\0"))) } != (0 as *u8);
+    return;
+}
+
+fn menu_saved(sender: *u8, ctx: *u8) { return; }
+
+#[test]
+fn the_toolbar_is_read_from_the_tree_wherever_the_items_sit() {
+    backend::install();
+    // A toolbar_item is not a view, so it is read from the NODES — and from
+    // anywhere in the tree, because a screen describes its toolbar where the
+    // content that owns it lives, which is rarely the top.
+    var inner: core::Builder = core::Builder::new();
+    inner.add(toolbar_item::toolbar_item("Save", key: "tb:save"));
+    inner.add(toolbar_item::toolbar_item("Share", key: "tb:share"));
+    var b: core::Builder = core::Builder::new();
+    b.add(core::column(inner, key: "nested"));
+    var root: core::Node = core::column(b, key: "root");
+
+    let ids: *u8 = { rt::alloc_init(#str_ptr("NSMutableArray\0")) };
+    let map: *u8 = { rt::alloc_init(#str_ptr("NSMutableDictionary\0")) };
+    window::collect_toolbar_items(#addr_of(root), ids, map);
+    assert { rt::msg_u64(ids, rt::sel(#str_ptr("count\0"))) } == (2 as u64);
+    assert { rt::msg_u64(map, rt::sel(#str_ptr("count\0"))) } == (2 as u64);
+    rt::release(ids);
+    rt::release(map);
+
+    // A tree with none asks for no toolbar at all, rather than an empty one.
+    var bare: core::Node = core::column(core::Builder::new(), key: "bare");
+    let none: *u8 = { rt::alloc_init(#str_ptr("NSMutableArray\0")) };
+    let nomap: *u8 = { rt::alloc_init(#str_ptr("NSMutableDictionary\0")) };
+    window::collect_toolbar_items(#addr_of(bare), none, nomap);
+    assert { rt::msg_u64(none, rt::sel(#str_ptr("count\0"))) } == (0 as u64);
+    rt::release(none);
+    rt::release(nomap);
     return;
 }

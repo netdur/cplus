@@ -99,11 +99,28 @@ gesture-only affordance must have a click path in the UI, never a new agent
 verb. On this backend that click path is the substitute above, not a
 simulated swipe.
 
-### Deferred, mobile-only
+### The toolbar's colours and height
 
-The mobile-only handful the tier ledger deferred — soft-input policy, the
-nav-bar back button — have no desktop equivalent and land here as "AppKit
-cannot (mobile concept)" when item 5 reaches them.
+| Verb | Why not |
+|---|---|
+| `Toolbar.BarBackground` `BarTextColor` | NSToolbar draws its own strip and offers no colour API — the same reason as the tab strip. |
+| `Toolbar.BarHeight` | NSToolbar sizes itself to its items and the window's style. |
+| `Toolbar.IconColor` | NSToolbarItem images are template-tinted by the system. |
+| `Toolbar.DynamicOverflowEnabled` | NSToolbar overflows into a chevron by itself; there is no switch to turn that off. |
+
+### Mobile concepts, on a desktop
+
+| Verb | Why not |
+|---|---|
+| `Toolbar.DrawerToggleVisible` | A drawer toggle has no desktop equivalent; a sidebar is a `split` pane. |
+| `Toolbar.BackButtonEnabled` `BackButtonTitle` `BackButtonVisible` | A nav-bar back button is a phone idiom. A desktop app navigates with its own controls and ⌘[. |
+| `ContentPage.HideSoftInputOnTapped` | There is no soft keyboard to hide. |
+| `Page.IsBusy` | macOS has no app-wide busy indicator. A spinner is a control the application places where the waiting is. |
+
+These are DECIDED, not deferred, and the tier ledger says so: guard 5b now
+carries three dispositions rather than two, and prints them apart. "The
+platform cannot" and "nobody has built it yet" are different facts and a
+tracker that conflates them is not a tracker.
 
 ## Implemented, with a deviation worth knowing
 
@@ -211,6 +228,50 @@ point Core Animation commits on. A hundred writes in one event cost one tick.
 `background_color` on a plain view has no AppKit equivalent without a backing
 layer, so setting one turns `wantsLayer` on for that view. A node that sets no
 background stays layer-free, so a tree that themes nothing pays for no layers.
+
+### The window tier: what a native window is asked
+
+Sixteen ledger rows landed together, and they share a shape — none of them can
+be answered without a real window, so none could exist before this stage.
+
+**`close_button_only` became `maximizable` + `minimizable`.** The old field
+said exactly `maximizable: false, minimizable: false` in one word and could
+say nothing else; the ledger asks for the two rows apart because a window may
+well want one and not the other. The buttons are HIDDEN rather than disabled:
+AppKit's own answer is to drop the style-mask bit, but the mask is what chose
+the bar's style, and re-deriving it in one expression would put two decisions
+in one place.
+
+**Zero is unbounded for a maximum size.** An unset `max_width` must not become
+a maximum of nothing. The minimum pair already reads that way, so the maximum
+has to agree or the two fields mean different things by the same value.
+
+**`is_window_active()` is `isKeyWindow`, not main.** A window can be main
+while a panel holds key, and "is the user typing into this" is the question an
+application means.
+
+**The appearance override is undoable.** `Appearance::Unspecified` is not a
+third colour scheme — it is "give the system back", and without it an override
+could never be taken off. Setting one takes the same repaint path a system
+light/dark flip already goes through, because colours resolved at paint time
+do not re-resolve themselves.
+
+**The app menu was built and never installed.** `App::build_menu()` produced
+an AppMenu and nothing read it. facet's AppMenu is FLAT — each item names its
+menu — and AppKit wants a tree, so the grouping happens in the backend, in
+FIRST-MENTION order, which is the only order a flat list can have expressed.
+
+A platform verb (Copy, Quit, Close) gets the platform's selector and **no
+target**, so the responder chain decides. That is what greys Copy out with
+nothing focused, without facet knowing anything about focus. An app command
+carries a real target and wins over a token action, because a row with both
+meant the callback.
+
+**The toolbar is read from the tree.** A `toolbar_item` answers `wants_view`
+false, so the items are collected from the NODES when the window opens — from
+anywhere in the tree, because a screen describes its toolbar where the content
+that owns it lives, which is rarely the top. A tree with no items asks for no
+NSToolbar at all rather than an empty one.
 
 ### `web` and `hybrid_web` are one WKWebView with two wirings
 

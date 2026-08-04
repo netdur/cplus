@@ -2689,17 +2689,17 @@ TIER_ROWS = {
     ("Window", "Created"):          ("implemented", "runtime.App.on_launch"),
     ("Window", "Destroying"):       ("implemented", "runtime.App.on_quit"),
     ("Window", "TitleBar"):         ("deferred", "TitleBar content tier — backend stage; Bar::Custom + window_buttons/window_drag are the shipped primitives"),
-    ("Window", "MaximumWidth"):     ("deferred", "window sizing beyond min — backend stage"),
-    ("Window", "MaximumHeight"):    ("deferred", "window sizing beyond min — backend stage"),
-    ("Window", "IsMaximizable"):    ("deferred", "window button policy — backend stage"),
-    ("Window", "IsMinimizable"):    ("deferred", "window button policy — backend stage"),
-    ("Window", "DisplayDensity"):   ("deferred", "needs a native window — backend stage"),
-    ("Window", "DisplayDensityChanged"): ("deferred", "needs a native window — backend stage"),
-    ("Window", "IsActivated"):      ("deferred", "read half of activation — backend stage (the observers exist)"),
-    ("Window", "SizeChanged"):      ("deferred", "observe_size on the window root once the facade mounts it"),
-    ("Window", "Backgrounding"):    ("deferred", "process lifecycle — backend stage"),
-    ("Window", "Resumed"):          ("deferred", "process lifecycle — backend stage"),
-    ("Window", "Stopped"):          ("deferred", "process lifecycle — backend stage"),
+    ("Window", "MaximumWidth"): ("implemented", "Chrome.max_width — setContentMaxSize:, zero is unbounded"),
+    ("Window", "MaximumHeight"): ("implemented", "Chrome.max_height — setContentMaxSize:, zero is unbounded"),
+    ("Window", "IsMaximizable"): ("implemented", "Chrome.maximizable — window.cplus hides the zoom button"),
+    ("Window", "IsMinimizable"): ("implemented", "Chrome.minimizable — window.cplus hides the miniaturize button"),
+    ("Window", "DisplayDensity"): ("implemented", "runtime::display_density() — backingScaleFactor"),
+    ("Window", "DisplayDensityChanged"): ("implemented", "runtime::observe_display_density() — NSWindowDidChangeBackingProperties"),
+    ("Window", "IsActivated"): ("implemented", "runtime::is_window_active() — the read half of the observer pair"),
+    ("Window", "SizeChanged"): ("implemented", "runtime::observe_window_size() — NSWindowDidResize"),
+    ("Window", "Backgrounding"): ("implemented", "runtime::observe_backgrounding() — NSApplicationDidHide"),
+    ("Window", "Resumed"): ("implemented", "runtime::observe_resumed() — NSApplicationDidUnhide"),
+    ("Window", "Stopped"): ("implemented", "runtime::observe_stopped() — NSApplicationWillTerminate"),
     ("Window", "ModalPushed"):      ("deferred", "modal stack — rides with nav::push's facade"),
     ("Window", "ModalPushing"):     ("deferred", "modal stack — rides with nav::push's facade"),
     ("Window", "ModalPopped"):      ("deferred", "modal stack — rides with nav::push's facade"),
@@ -2712,7 +2712,7 @@ TIER_ROWS = {
     ("Application", "RequestedThemeChanged"): ("implemented", "theme.on_appearance_change"),
     ("Application", "AccentColor"):     ("implemented", "theme role primary via set_theme"),
     ("Application", "MainPage"):        ("deferred", "superseded by the windows model; newest_window_root is the read"),
-    ("Application", "UserAppTheme"):    ("deferred", "explicit light/dark override — backend stage appearance write"),
+    ("Application", "UserAppTheme"): ("implemented", "runtime::set_app_appearance() — NSApp appearance override"),
     ("Application", "ModalPushed"):     ("deferred", "modal stack — rides with nav::push's facade"),
     ("Application", "ModalPushing"):    ("deferred", "modal stack — rides with nav::push's facade"),
     ("Application", "ModalPopped"):     ("deferred", "modal stack — rides with nav::push's facade"),
@@ -2729,30 +2729,30 @@ TIER_ROWS = {
     ("Page", "IconImageSource"):    ("deferred", "page chrome imagery — backend stage"),
     ("Page", "ContainerArea"):      ("deferred", "safe-area plumbing — backend stage"),
     ("Page", "IgnoresContainerArea"): ("deferred", "safe-area plumbing — backend stage"),
-    ("Page", "IsBusy"):             ("deferred", "page busy indicator — backend stage"),
-    ("Page", "ToolbarItems"):       ("deferred", "toolbar tier — backend stage"),
+    ("Page", "IsBusy"): ("cannot", "macOS has no app-wide busy indicator; a spinner is a control the app places"),
+    ("Page", "ToolbarItems"): ("implemented", "toolbar_item nodes, read from the tree by window::install_toolbar"),
     ("Page", "NavigatedTo"):        ("deferred", "nav observation — rides with the facade's nav loop"),
     ("Page", "NavigatedFrom"):      ("deferred", "nav observation — rides with the facade's nav loop"),
     ("Page", "NavigatingFrom"):     ("deferred", "nav observation — rides with the facade's nav loop"),
     # ---- ContentPage (3) ----
     ("ContentPage", "Content"):     ("implemented", "mount.set_content"),
     ("ContentPage", "SafeAreaEdges"): ("deferred", "safe-area plumbing — backend stage (vocab::SafeArea exists)"),
-    ("ContentPage", "HideSoftInputOnTapped"): ("deferred", "soft-keyboard policy — mobile backend stage"),
+    ("ContentPage", "HideSoftInputOnTapped"): ("cannot", "mobile concept — no soft keyboard on a desktop"),
     # ---- Toolbar (14) ----
-    ("Toolbar", "Title"):           ("deferred", "toolbar tier — backend stage (AppKit NSToolbar)"),
+    ("Toolbar", "Title"): ("implemented", "Chrome.title — the window title IS the toolbar title on AppKit"),
     ("Toolbar", "TitleIcon"):       ("deferred", "toolbar tier — backend stage"),
     ("Toolbar", "TitleView"):       ("deferred", "toolbar tier — backend stage"),
-    ("Toolbar", "ToolbarItems"):    ("deferred", "toolbar tier — backend stage"),
-    ("Toolbar", "IsVisible"):       ("deferred", "toolbar tier — backend stage"),
-    ("Toolbar", "IconColor"):       ("deferred", "toolbar tier — backend stage"),
-    ("Toolbar", "BarBackground"):   ("deferred", "toolbar tier — backend stage"),
-    ("Toolbar", "BarHeight"):       ("deferred", "toolbar tier — backend stage"),
-    ("Toolbar", "BarTextColor"):    ("deferred", "toolbar tier — backend stage"),
-    ("Toolbar", "BackButtonEnabled"): ("deferred", "nav-bar back button — mobile backend stage"),
-    ("Toolbar", "BackButtonTitle"): ("deferred", "nav-bar back button — mobile backend stage"),
-    ("Toolbar", "BackButtonVisible"): ("deferred", "nav-bar back button — mobile backend stage"),
-    ("Toolbar", "DrawerToggleVisible"): ("deferred", "drawer affordance — mobile backend stage"),
-    ("Toolbar", "DynamicOverflowEnabled"): ("deferred", "toolbar overflow — backend stage"),
+    ("Toolbar", "ToolbarItems"): ("implemented", "toolbar_item nodes, read from the tree by window::install_toolbar"),
+    ("Toolbar", "IsVisible"): ("implemented", "a tree with no toolbar_item asks for no NSToolbar at all"),
+    ("Toolbar", "IconColor"): ("cannot", "NSToolbarItem images are template-tinted by the system"),
+    ("Toolbar", "BarBackground"): ("cannot", "NSToolbar draws its own strip — no colour API, same as the tab strip"),
+    ("Toolbar", "BarHeight"): ("cannot", "NSToolbar sizes itself to its items and the window style"),
+    ("Toolbar", "BarTextColor"): ("cannot", "NSToolbar draws its own strip — no colour API"),
+    ("Toolbar", "BackButtonEnabled"): ("cannot", "mobile concept — a nav-bar back button has no desktop equivalent"),
+    ("Toolbar", "BackButtonTitle"): ("cannot", "mobile concept — a nav-bar back button has no desktop equivalent"),
+    ("Toolbar", "BackButtonVisible"): ("cannot", "mobile concept — a nav-bar back button has no desktop equivalent"),
+    ("Toolbar", "DrawerToggleVisible"): ("cannot", "mobile concept — a drawer toggle has no desktop equivalent"),
+    ("Toolbar", "DynamicOverflowEnabled"): ("cannot", "NSToolbar overflows into a chevron on its own; no switch"),
     # ---- TitleBar (8) ----
     ("TitleBar", "Title"):          ("deferred", "custom titlebar content — Bar::Custom + window_buttons are the primitives"),
     ("TitleBar", "Subtitle"):       ("deferred", "custom titlebar content — backend stage"),
@@ -2775,7 +2775,7 @@ def check(rows_by_control, by_type):
         reachable |= set(EXTRA_BASES.get(maui, []))
     rows_all, _und = maui_map.rows()
     tier_types = {"Window", "Application", "Page", "ContentPage", "TitleBar", "Toolbar"}
-    n_impl, n_defer = 0, 0
+    n_impl, n_defer, n_cannot = 0, 0, 0
     for ty, member, band, _vt, st, _fn, _note in rows_all:
         if st != "ADOPT":
             continue
@@ -2786,10 +2786,13 @@ def check(rows_by_control, by_type):
             if d is None:
                 problems.append(
                     f"guard 5b: {ty}.{member} [{band}] is a tier ADOPT row with "
-                    f"no disposition in TIER_ROWS — name the implementing verb "
-                    f"or record the deferral with its reason.")
+                    f"no disposition in TIER_ROWS — name the implementing "
+                    f"verb, record that the platform cannot, or record the "
+                    f"deferral with its reason.")
             elif d[0] == "implemented":
                 n_impl += 1
+            elif d[0] == "cannot":
+                n_cannot += 1
             else:
                 n_defer += 1
             continue
@@ -2800,8 +2803,9 @@ def check(rows_by_control, by_type):
             f"control module and no TIER_TYPES entry — an unclaimed row. Give "
             f"the type an owner or record the exception.")
     if not problems:
-        print(f"tier ledger: {n_impl} rows carried by shipped surface, "
-              f"{n_defer} explicitly deferred to the backend stage")
+        print(f"tier ledger: {n_impl} implemented, {n_cannot} decided "
+              f"(the platform cannot — recorded in the backend manifest), "
+              f"{n_defer} still deferred")
 
     # 1. every ADOPT row reaching a control is carried by something
     for maui, merged in sorted(rows_by_control.items()):

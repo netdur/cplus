@@ -52,7 +52,10 @@ interface Window {
     fn width(this) -> f64;
     fn height(this) -> f64;
     fn bar(this) -> screen::Bar;
-    fn wants_close_button_only(this) -> bool;
+    fn is_maximizable(this) -> bool;
+    fn is_minimizable(this) -> bool;
+    fn max_width(this) -> f64;
+    fn max_height(this) -> f64;
     fn min_width(this) -> f64;
     fn min_height(this) -> f64;
     fn wants_pinch_zoom(this) -> bool;

@@ -11,7 +11,7 @@
 // Stage 4 port of the pre-regen facade (`git show eb5b1b7:...`). Three seams
 // moved and nothing else:
 //
-//   1. Chrome's six booleans are one `bar: Bar` plus `close_button_only`, so a
+//   1. Chrome's six booleans are one `bar: Bar` plus the button policy, so a
 //      window is described once and the backend maps it.
 //   2. Ownership is process -> app -> window -> node. `App::run` makes its
 //      record current for the loop's life; windows open and close through the
@@ -55,7 +55,10 @@ interface Window {
     fn width(this) -> f64;
     fn height(this) -> f64;
     fn bar(this) -> screen::Bar;
-    fn wants_close_button_only(this) -> bool;
+    fn is_maximizable(this) -> bool;
+    fn is_minimizable(this) -> bool;
+    fn max_width(this) -> f64;
+    fn max_height(this) -> f64;
     fn min_width(this) -> f64;
     fn min_height(this) -> f64;
     fn wants_pinch_zoom(this) -> bool;
@@ -99,7 +102,10 @@ fn chrome_of_window[W: Window](ref w: W) -> Chrome {
         min_width: w.min_width(),
         min_height: w.min_height(),
         bar: w.bar(),
-        close_button_only: w.wants_close_button_only(),
+        maximizable: w.is_maximizable(),
+        minimizable: w.is_minimizable(),
+        max_width: w.max_width(),
+        max_height: w.max_height(),
         zoomable: w.wants_pinch_zoom(),
         min_zoom: w.min_zoom(),
         max_zoom: w.max_zoom(),
@@ -149,6 +155,8 @@ fn run_component[C: component::Component + component::Lifecycle](
     take menu: AppMenu = screen::empty_app_menu(),
 ) -> C {
     backend::install();
+    var owned_menu: AppMenu = menu;
+    host::install_app_menu(#addr_of(owned_menu));
     var owned: C = component_v;
     var root: Node = owned.build();
     let _w: *u8 = host::open_window(
@@ -175,6 +183,8 @@ fn run_screen[S: component::Component + component::Lifecycle + screen::Screen](
     take menu: AppMenu = screen::empty_app_menu(),
 ) -> S {
     backend::install();
+    var owned_menu: AppMenu = menu;
+    host::install_app_menu(#addr_of(owned_menu));
     var owned: S = screen_v;
     let c: Chrome = owned.chrome();
     var root: Node = owned.build();
@@ -264,6 +274,74 @@ fn observe_window_active(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancella
 fn observe_window_inactive(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
     let id: u64 = akx::observe_named("NSWindowDidResignKeyNotification", 0 as *u8, cb, ctx);
     return services::Cancellable::of(id, akx::cancel_observe);
+}
+
+// ---- the window tier's platform reads ----------------------------------------
+// Window.DisplayDensity, Window.IsActivated and the process lifecycle. Each is
+// a row the ledger deferred to this stage because none of them can be answered
+// without a native window: facet's description does not know the backing scale
+// or whether the app is frontmost, and inventing a value would be worse than
+// having none.
+
+// Window.DisplayDensity — points to pixels for the app's newest window. 1.0
+// with no window up, which is the value that makes size arithmetic keep
+// working rather than collapsing to zero.
+fn display_density() -> f64 {
+    return host::density_of(app::newest_window_root());
+}
+
+// Window.DisplayDensityChanged. Fires when the window moves between screens of
+// different scale, which is the whole of what "the density changed" means on a
+// desktop.
+fn observe_display_density(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
+    let id: u64 = akx::observe_named("NSWindowDidChangeBackingPropertiesNotification",
+                                     0 as *u8, cb, ctx);
+    return services::Cancellable::of(id, akx::cancel_observe);
+}
+
+// Window.IsActivated — the READ half of the pair whose observers already
+// shipped (`observe_window_active` / `_inactive`). A handler that only ever
+// learns about the change cannot answer "is it active NOW", which is what a
+// screen asks when it is built.
+fn is_window_active() -> bool {
+    return host::is_active(app::newest_window_root());
+}
+
+// Window.SizeChanged. The window's own resize, not a node's — `observe_size`
+// answers that one, and this is the row the ledger asked for.
+fn observe_window_size(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
+    let id: u64 = akx::observe_named("NSWindowDidResizeNotification", 0 as *u8, cb, ctx);
+    return services::Cancellable::of(id, akx::cancel_observe);
+}
+
+// Window.Backgrounding / Resumed / Stopped. On a desktop these are the app
+// being hidden, unhidden and terminated — the same three moments, under the
+// names the platform gives them.
+fn observe_backgrounding(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
+    let id: u64 = akx::observe_named("NSApplicationDidHideNotification", 0 as *u8, cb, ctx);
+    return services::Cancellable::of(id, akx::cancel_observe);
+}
+
+fn observe_resumed(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
+    let id: u64 = akx::observe_named("NSApplicationDidUnhideNotification", 0 as *u8, cb, ctx);
+    return services::Cancellable::of(id, akx::cancel_observe);
+}
+
+fn observe_stopped(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
+    let id: u64 = akx::observe_named("NSApplicationWillTerminateNotification", 0 as *u8, cb, ctx);
+    return services::Cancellable::of(id, akx::cancel_observe);
+}
+
+// Application.UserAppTheme — an EXPLICIT light/dark choice, overriding the
+// system's. `Appearance::Unspecified` gives the system back, which is the
+// only way to undo an override and therefore not optional.
+fn set_app_appearance(a: vocab::Appearance) {
+    host::set_app_appearance(a);
+    return;
+}
+
+fn app_appearance() -> vocab::Appearance {
+    return host::app_appearance();
 }
 
 // The frame of the app's newest window, in the platform's screen coordinates.
@@ -379,6 +457,12 @@ impl App {
         nav::set_close_fn(close_current);
         nav::set_push_fn(push_screen);
         nav::set_pop_fn(pop_screen);
+        // The menu is the APP's, not a window's, so it is installed once for
+        // the loop rather than per screen. `build_menu` already answers with
+        // the default (the app's name plus Quit) when nothing set one, so an
+        // application that never asked for a menu still gets a working one.
+        var bar: AppMenu = this.build_menu();
+        host::install_app_menu(#addr_of(bar));
         let launch: fn(*u8) = this.on_launch_fn;
         launch(this.hook_ctx);
 

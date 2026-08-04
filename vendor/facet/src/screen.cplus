@@ -220,7 +220,7 @@ impl AppMenu {
 //            and `.window_drag()`.
 //
 // Which buttons appear is a SEPARATE question from the bar's style, so
-// `close_button_only` stays its own field rather than folding in.
+// `maximizable` / `minimizable` stay their own fields rather than folding in.
 enum Bar { Native, Blended, Hidden, Custom }
 
 // The struct stays FLAT, deliberately: any capability-shaped grouping
@@ -234,7 +234,18 @@ struct Chrome {
     min_width: f64,
     min_height: f64,
     bar: Bar,
-    close_button_only: bool,
+    // Window.IsMaximizable / Window.IsMinimizable. These replaced a single
+    // `close_button_only`, which said exactly `maximizable: false,
+    // minimizable: false` in one word and could say nothing else — and the
+    // ledger asks for the two rows separately because a window may well want
+    // one and not the other.
+    maximizable: bool,
+    minimizable: bool,
+    // Window.MaximumWidth / MaximumHeight. Zero is UNBOUNDED, not zero-sized:
+    // a maximum nobody set must not become a maximum of nothing, and the
+    // minimum pair already reads that way.
+    max_width: f64,
+    max_height: f64,
     zoomable: bool,
     min_zoom: f64,
     max_zoom: f64,
@@ -248,7 +259,10 @@ impl Chrome {
         min_width: f64 = 0.0f64,
         min_height: f64 = 0.0f64,
         bar: Bar = Bar::Native,
-        close_button_only: bool = false,
+        maximizable: bool = true,
+        minimizable: bool = true,
+        max_width: f64 = 0.0f64,
+        max_height: f64 = 0.0f64,
         zoomable: bool = false,
         min_zoom: f64 = 1.0f64,
         max_zoom: f64 = 4.0f64,
@@ -260,7 +274,10 @@ impl Chrome {
             min_width: min_width,
             min_height: min_height,
             bar: bar,
-            close_button_only: close_button_only,
+            maximizable: maximizable,
+            minimizable: minimizable,
+            max_width: max_width,
+            max_height: max_height,
             zoomable: zoomable,
             min_zoom: min_zoom,
             max_zoom: max_zoom,
@@ -550,17 +567,21 @@ fn chrome_defaults_and_overrides() {
     assert sc_approx(d.height, 360.0f64);
     assert sc_approx(d.min_width, 0.0f64);
     match d.bar { Bar::Native => { } Bar::Blended => { assert false; } Bar::Hidden => { assert false; } Bar::Custom => { assert false; } }
-    assert d.close_button_only == false;
+    assert d.maximizable;
+    assert d.minimizable;
+    assert d.max_width == 0.0f64;
     assert d.zoomable == false;
     assert sc_approx(d.min_zoom, 1.0f64);
     assert sc_approx(d.max_zoom, 4.0f64);
 
-    let c: Chrome = Chrome::new(title: "Iris", width: 800.0f64, min_width: 640.0f64, bar: Bar::Blended, close_button_only: true);
+    let c: Chrome = Chrome::new(title: "Iris", width: 800.0f64, min_width: 640.0f64, bar: Bar::Blended, maximizable: false, minimizable: false, max_width: 1200.0f64);
     assert c.title() == "Iris";
     assert sc_approx(c.width, 800.0f64);
     assert sc_approx(c.min_width, 640.0f64);
     match c.bar { Bar::Blended => { } Bar::Native => { assert false; } Bar::Hidden => { assert false; } Bar::Custom => { assert false; } }
-    assert c.close_button_only;
+    assert c.maximizable == false;
+    assert c.minimizable == false;
+    assert c.max_width == 1200.0f64;
     assert c.zoomable == false;
 }
 

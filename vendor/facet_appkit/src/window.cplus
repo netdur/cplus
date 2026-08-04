@@ -18,14 +18,18 @@ import "stdlib/box" as box;
 import "flex_layout/flex_layout" as flex;
 import "facet/facet" as core;
 import "facet/mount" as mount;
+import "facet/props" as props;
 import "facet/screen" as screen;
 import "facet/application" as app;
 import "facet/theme" as theme;
+import "facet/vocabulary" as vocab;
+import "objc/bridge" as bridge;
 import "objc/runtime" as rt;
 import "objc/synthesis" as synth;
 import "appkit/appkit" as ak;
 import "appkit/appkit_ext" as akx;
 import "./views" as views;
+import "./controls" as controls;
 import "./scheduler" as scheduler;
 import "./geometry" as geometry;
 
@@ -110,14 +114,34 @@ fn make_shell_window(take chrome: Chrome) -> ak::Window {
             // own titlebar controls as a no-movement window drag.
         }
     }
-    // A separate question from the bar's style, so a separate field.
-    if c.close_button_only {
+    // A separate question from the bar's style, so separate fields.
+    //
+    // The button is HIDDEN rather than disabled. AppKit's own answer is to
+    // drop the mask bit, but the mask is what `make_shell_window` used to
+    // choose the bar's style, and re-deriving it here would put the two
+    // decisions in one expression. A hidden button is also what a person
+    // reads as "this window does not do that".
+    if !c.minimizable {
         hide_window_button(win, ak::WindowButton::NSWindowMiniaturizeButton);
+    }
+    if !c.maximizable {
         hide_window_button(win, ak::WindowButton::NSWindowZoomButton);
     }
     // The content-size floor, applied only when both dimensions are set.
     if c.min_width > 0.0f64 && c.min_height > 0.0f64 {
         win.set_content_min_size(rt::Size { w: c.min_width, h: c.min_height });
+    }
+    // ...and the ceiling. ZERO IS UNBOUNDED, so an unset maximum is not a
+    // maximum of nothing: AppKit's own unbounded value is CGFLOAT_MAX, and
+    // each axis is answered on its own so a window can cap one and not the
+    // other.
+    let unbounded: f64 = 1000000.0f64;
+    var cap_w: f64 = unbounded;
+    var cap_h: f64 = unbounded;
+    if c.max_width > 0.0f64 { cap_w = c.max_width; }
+    if c.max_height > 0.0f64 { cap_h = c.max_height; }
+    if cap_w != unbounded || cap_h != unbounded {
+        win.set_content_max_size(rt::Size { w: cap_w, h: cap_h });
     }
     return win;
 }
@@ -256,6 +280,11 @@ fn open_window(root: *core::Node, take chrome: Chrome,
     // the signal, which is the only hook AppKit offers.
     akx::add_appearance_observer(content, fire_appearance_change, 0 as *u8);
 
+    // The toolbar is read from the TREE, so it can only be built once the
+    // tree is mounted — and before the window is shown, or it appears empty
+    // and then fills in.
+    install_toolbar(win, root);
+
     win.center();
     win.make_key_and_order_front(0 as *u8);
     application.activate_ignoring_other_apps(true);
@@ -327,4 +356,240 @@ fn is_dark() -> bool {
     let application: ak::Application = ak::Application::shared_application();
     let name: text::Text = application.effective_appearance().name();
     return name.view().contains("Dark");
+}
+
+// ---- the window tier's platform reads ----------------------------------------
+// Stage 4 item 5. Each answers a ledger row that could not be answered without
+// a native window, and each falls back to the value that keeps arithmetic
+// working rather than to zero — a density of 0 would make every size
+// computation collapse, and that is worse than a wrong-but-sane 1.
+
+// Window.DisplayDensity. Points to pixels: 2.0 on a Retina display.
+fn density_of(root: *core::Node) -> f64 {
+    let w: *u8 = app::window_native(root);
+    if w == (0 as *u8) { return 1.0f64; }
+    let s: f64 = { rt::msg_f64(w, rt::sel(#str_ptr("backingScaleFactor\0"))) };
+    if s <= 0.0f64 { return 1.0f64; }
+    return s;
+}
+
+// Window.IsActivated. KEY, not main: a window can be main while a panel holds
+// key, and "is the user typing into this" is the question an application means.
+fn is_active(root: *core::Node) -> bool {
+    let w: *u8 = app::window_native(root);
+    if w == (0 as *u8) { return false; }
+    return { rt::msg_i8(w, rt::sel(#str_ptr("isKeyWindow\0"))) } != (0 as i8);
+}
+
+// Application.UserAppTheme. NSApp's appearance override; nil is "follow the
+// system", which is why Unspecified has to be expressible.
+fn set_app_appearance(a: vocab::Appearance) {
+    let nsapp: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSApplication\0")),
+                                  rt::sel(#str_ptr("sharedApplication\0"))) };
+    if nsapp == (0 as *u8) { return; }
+    var name: *u8 = 0 as *u8;
+    match a {
+        vocab::Appearance::Light => { name = bridge::nsstring("NSAppearanceNameAqua"); }
+        vocab::Appearance::Dark => { name = bridge::nsstring("NSAppearanceNameDarkAqua"); }
+        vocab::Appearance::Unspecified => { name = 0 as *u8; }
+    }
+    var appearance: *u8 = 0 as *u8;
+    if name != (0 as *u8) {
+        appearance = { rt::msg_id_id(rt::get_class(#str_ptr("NSAppearance\0")),
+                                     rt::sel(#str_ptr("appearanceNamed:\0")), name) };
+    }
+    { rt::msg_void_id(nsapp, rt::sel(#str_ptr("setAppearance:\0")), appearance) };
+    // The override changes what every theme role resolves to, and colours
+    // resolved at paint time do not re-resolve themselves — so this takes the
+    // same repaint an appearance flip already goes through.
+    theme::notify_appearance_changed();
+    return;
+}
+
+// What the override currently says — NOT the effective appearance, which is
+// `theme::is_dark()`. Unspecified means nothing was overridden, and a caller
+// that wants to know what the system then chose asks the theme.
+fn app_appearance() -> vocab::Appearance {
+    let nsapp: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSApplication\0")),
+                                  rt::sel(#str_ptr("sharedApplication\0"))) };
+    if nsapp == (0 as *u8) { return vocab::Appearance::Unspecified; }
+    let a: *u8 = { rt::msg_id(nsapp, rt::sel(#str_ptr("appearance\0"))) };
+    if a == (0 as *u8) { return vocab::Appearance::Unspecified; }
+    let n: *u8 = { rt::msg_id(a, rt::sel(#str_ptr("name\0"))) };
+    if n == (0 as *u8) { return vocab::Appearance::Unspecified; }
+    if bridge::to_text(n).view() == "NSAppearanceNameDarkAqua" { return vocab::Appearance::Dark; }
+    return vocab::Appearance::Light;
+}
+
+// ---- the app menu ------------------------------------------------------------
+// Stage 4 item 5. `App::build_menu()` produced an AppMenu and nothing ever
+// installed it, so an application's menu bar was a description with no reader.
+//
+// The shape AppKit wants is not the shape facet declares. facet's AppMenu is a
+// FLAT list of items, each naming the menu it belongs to; AppKit wants a tree
+// of NSMenuItems whose submenus are NSMenus. So the flat list is grouped here,
+// in FIRST-SEEN order — an application that writes File before Edit gets File
+// before Edit, which is the only ordering it can have expressed.
+
+fn menu_selector(action: u32) -> *u8 {
+    if action == screen::menu_action_quit() { return rt::sel(#str_ptr("terminate:\0")); }
+    if action == screen::menu_action_close_window() { return rt::sel(#str_ptr("performClose:\0")); }
+    if action == screen::menu_action_undo() { return rt::sel(#str_ptr("undo:\0")); }
+    if action == screen::menu_action_redo() { return rt::sel(#str_ptr("redo:\0")); }
+    if action == screen::menu_action_cut() { return rt::sel(#str_ptr("cut:\0")); }
+    if action == screen::menu_action_copy() { return rt::sel(#str_ptr("copy:\0")); }
+    if action == screen::menu_action_paste() { return rt::sel(#str_ptr("paste:\0")); }
+    if action == screen::menu_action_select_all() { return rt::sel(#str_ptr("selectAll:\0")); }
+    if action == screen::menu_action_find() { return rt::sel(#str_ptr("performFindPanelAction:\0")); }
+    return 0 as *u8;
+}
+
+fn new_menu(title: str) -> *u8 {
+    let alloced: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSMenu\0")), rt::sel(#str_ptr("alloc\0"))) };
+    return { rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithTitle:\0")), bridge::nsstring(title)) };
+}
+
+// One item, wired the way its own fields say. An app COMMAND wins over a token
+// action — the flat `action` is for the platform's own verbs, and a callback is
+// the application's, so a row that has both meant the callback.
+fn new_menu_item(it: *screen::MenuItem) -> *u8 {
+    if { (*it).is_separator } {
+        return { rt::msg_id(rt::get_class(#str_ptr("NSMenuItem\0")),
+                            rt::sel(#str_ptr("separatorItem\0"))) };
+    }
+    let alloced: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSMenuItem\0")), rt::sel(#str_ptr("alloc\0"))) };
+    let item: *u8 = { rt::msg_id_id_id_id(alloced,
+        rt::sel(#str_ptr("initWithTitle:action:keyEquivalent:\0")),
+        bridge::nsstring({ (*it).title.view() }), 0 as *u8,
+        bridge::nsstring({ (*it).key.view() })) };
+    if item == (0 as *u8) { return 0 as *u8; }
+    let on_click: fn(*u8, *u8) = { (*it).on_click };
+    if on_click != (0 as fn(*u8, *u8)) {
+        { rt::msg_void_id(item, rt::sel(#str_ptr("setTarget:\0")),
+                          akx::action_ctx_target(on_click, { (*it).click_ctx })) };
+        { rt::msg_void_id(item, rt::sel(#str_ptr("setAction:\0")), akx::action_ctx_sel()) };
+    } else {
+        let sel: *u8 = menu_selector({ (*it).action });
+        // No target: the responder chain finds whoever answers, which is what
+        // makes Cut work on the focused text field and grey out elsewhere
+        // without facet knowing anything about either.
+        if sel != (0 as *u8) { { rt::msg_void_id(item, rt::sel(#str_ptr("setAction:\0")), sel) }; }
+    }
+    return item;
+}
+
+// The submenu named `group`, made on first mention. `titles` keeps the order.
+fn submenu_for(menus: *u8, titles: *u8, group: str) -> *u8 {
+    let key: *u8 = bridge::nsstring(group);
+    let existing: *u8 = { rt::msg_id_id(menus, rt::sel(#str_ptr("objectForKey:\0")), key) };
+    if existing != (0 as *u8) { return existing; }
+    let made: *u8 = new_menu(group);
+    if made == (0 as *u8) { return 0 as *u8; }
+    { rt::msg_void_id_id(menus, rt::sel(#str_ptr("setObject:forKey:\0")), made, key) };
+    { rt::msg_void_id(titles, rt::sel(#str_ptr("addObject:\0")), key) };
+    return made;
+}
+
+fn install_app_menu(m: *screen::AppMenu) {
+    if m == (0 as *screen::AppMenu) { return; }
+    let bar: *u8 = new_menu("");
+    if bar == (0 as *u8) { return; }
+    let menus: *u8 = { rt::alloc_init(#str_ptr("NSMutableDictionary\0")) };
+    let titles: *u8 = { rt::alloc_init(#str_ptr("NSMutableArray\0")) };
+    if menus == (0 as *u8) || titles == (0 as *u8) { return; }
+
+    var i: usize = 0 as usize;
+    let count: usize = { (*m).items.count() };
+    while i < count {
+        match { (*m).items.at_ptr(i) } {
+            option::Option[*screen::MenuItem]::Some(it) => {
+                let group: str = { (*it).menu.view() };
+                let sub: *u8 = submenu_for(menus, titles, group);
+                let entry: *u8 = new_menu_item(it);
+                if sub != (0 as *u8) && entry != (0 as *u8) {
+                    { rt::msg_void_id(sub, rt::sel(#str_ptr("addItem:\0")), entry) };
+                }
+            }
+            option::Option[*screen::MenuItem]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+
+    // The bar's items are TITLE-ONLY carriers for their submenus — AppKit reads
+    // the submenu's own title for the bar, and the first one is always the
+    // application menu whatever it is called.
+    var k: u64 = 0 as u64;
+    let n: u64 = { rt::msg_u64(titles, rt::sel(#str_ptr("count\0"))) };
+    while k < n {
+        let key: *u8 = { rt::msg_id_u64(titles, rt::sel(#str_ptr("objectAtIndex:\0")), k) };
+        let sub: *u8 = { rt::msg_id_id(menus, rt::sel(#str_ptr("objectForKey:\0")), key) };
+        let holder: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSMenuItem\0")),
+                                       rt::sel(#str_ptr("alloc\0"))) };
+        let item: *u8 = { rt::msg_id_id_id_id(holder,
+            rt::sel(#str_ptr("initWithTitle:action:keyEquivalent:\0")),
+            key, 0 as *u8, bridge::nsstring("")) };
+        if item != (0 as *u8) && sub != (0 as *u8) {
+            { rt::msg_void_id(item, rt::sel(#str_ptr("setSubmenu:\0")), sub) };
+            { rt::msg_void_id(bar, rt::sel(#str_ptr("addItem:\0")), item) };
+        }
+        k = k + (1 as u64);
+    }
+
+    let nsapp: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSApplication\0")),
+                                  rt::sel(#str_ptr("sharedApplication\0"))) };
+    { rt::msg_void_id(nsapp, rt::sel(#str_ptr("setMainMenu:\0")), bar) };
+    rt::release(bar);
+    rt::release(menus);
+    rt::release(titles);
+    return;
+}
+
+// ---- the toolbar -------------------------------------------------------------
+// `toolbar_item` nodes answer `wants_view` false — an NSToolbarItem is not a
+// view — so they are read from the TREE when the window opens. controls.cplus
+// builds each one; this collects them and hands appkit_ext the two collections
+// NSToolbar's delegate protocol wants.
+
+fn install_toolbar(win: ak::Window, root: *core::Node) {
+    let ids: *u8 = { rt::alloc_init(#str_ptr("NSMutableArray\0")) };
+    let map: *u8 = { rt::alloc_init(#str_ptr("NSMutableDictionary\0")) };
+    if ids == (0 as *u8) || map == (0 as *u8) { return; }
+    collect_toolbar_items(root, ids, map);
+    if { rt::msg_u64(ids, rt::sel(#str_ptr("count\0"))) } == (0 as u64) {
+        rt::release(ids);
+        rt::release(map);
+        return;
+    }
+    let tb: ak::Toolbar = akx::make_toolbar(ids, map);
+    win.set_toolbar(tb);
+    rt::release(ids);
+    rt::release(map);
+    return;
+}
+
+// Anywhere in the tree, not only at the root: a screen composes its toolbar
+// where the content that owns it is described, which is rarely the top.
+fn collect_toolbar_items(n: *core::Node, ids: *u8, map: *u8) {
+    if n == (0 as *core::Node) { return; }
+    if core::kind_of(n) == props::K_TOOLBAR_ITEM {
+        let item: *u8 = controls::build_toolbar_item(n);
+        if item != (0 as *u8) {
+            let ident: *u8 = { rt::msg_id(item, rt::sel(#str_ptr("itemIdentifier\0"))) };
+            if ident != (0 as *u8) {
+                { rt::msg_void_id(ids, rt::sel(#str_ptr("addObject:\0")), ident) };
+                { rt::msg_void_id_id(map, rt::sel(#str_ptr("setObject:forKey:\0")), item, ident) };
+            }
+        }
+        return;
+    }
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => { collect_toolbar_items(c, ids, map); }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
 }
