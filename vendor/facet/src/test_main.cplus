@@ -388,7 +388,7 @@ fn every_control_module_builds() {
     b.add(checkbox::checkbox(true, key: "checkbox"));
     b.add(collection::collection(key: "collection"));
     b.add(context_menu::context_menu(key: "context_menu"));
-    b.add(context_menu_item::context_menu_item(key: "context_menu_item"));
+    b.add(context_menu_item::context_menu_item("Rename", key: "context_menu_item"));
     b.add(date_picker::date_picker(vocab::Date::zero(), key: "date_picker"));
     b.add(hybrid_web::hybrid_web(key: "hybrid_web"));
     b.add(icon_button::icon_button("i.png", key: "icon_button"));
@@ -416,7 +416,7 @@ fn every_control_module_builds() {
     b.add(text_field::text_field("tf", key: "text_field"));
     b.add(time_picker::time_picker(vocab::Duration::zero(), key: "time_picker"));
     b.add(toggle::toggle(true, key: "toggle"));
-    b.add(toolbar_item::toolbar_item(key: "toolbar_item"));
+    b.add(toolbar_item::toolbar_item("Share", key: "toolbar_item"));
     b.add(web::web("about:blank", key: "web"));
     var root: facet::Node = facet::column(b);
     assert root.child_count() == (38 as usize);
@@ -2197,9 +2197,67 @@ fn dashes_is_a_copy_value_with_a_bounded_pattern() {
     return;
 }
 
+// MAUI derives MenuFlyoutItem, SwipeItem and ToolbarItem from MenuItem, and
+// the ledger lists each type's OWN members — so all three arrived carrying no
+// text, no icon and no action. A context menu item with no title and no
+// action is not a menu item; the gap was found by trying to build an NSMenu
+// out of one and having nothing to put in it.
+//
+// MenuItem is the first base that is also a CONTROL, so the generator emits
+// its props struct once (menu_item addresses those fields directly; the three
+// derived controls reach them through an embedded block).
+#[test]
+fn the_menu_item_band_reaches_every_control_maui_derives_from_it() {
+    var mi: facet::Node = context_menu_item::context_menu_item("Rename", key: "cmi",
+                                                               icon: "pencil", destructive: false);
+    match context_menu_item::find("cmi", within: #addr_of(mi)) {
+        option::Option[context_menu_item::ContextMenuItem]::Some(x) => {
+            assert x.text() == "Rename";
+            assert x.icon() == "pencil";
+            assert x.is_destructive() == false;
+            let _d: context_menu_item::ContextMenuItem = x.set_destructive(true);
+            assert x.is_destructive();
+            // ...and the shortcut it declared on its OWN account still works,
+            // so the embedded block did not displace anything.
+            let _s: context_menu_item::ContextMenuItem =
+                x.set_shortcut(vocab::Shortcut::of("r", modifiers: vocab::KeyModifiers::Cmd));
+            assert x.shortcut().key == "r";
+        }
+        option::Option[context_menu_item::ContextMenuItem]::None => { assert false; }
+    }
+
+    var ti: facet::Node = toolbar_item::toolbar_item("Share", key: "ti");
+    match toolbar_item::find("ti", within: #addr_of(ti)) {
+        option::Option[toolbar_item::ToolbarItem]::Some(x) => {
+            assert x.text() == "Share";
+            let _p: toolbar_item::ToolbarItem = x.set_priority(3 as i64);
+            assert x.priority() == (3 as i64);   // its own row, still there
+        }
+        option::Option[toolbar_item::ToolbarItem]::None => { assert false; }
+    }
+
+    var si: facet::Node = swipe_item::swipe_item(key: "si", text: "Delete", destructive: true);
+    match swipe_item::find("si", within: #addr_of(si)) {
+        option::Option[swipe_item::SwipeItem]::Some(x) => {
+            assert x.text() == "Delete";
+            assert x.is_destructive();
+        }
+        option::Option[swipe_item::SwipeItem]::None => { assert false; }
+    }
+
+    // menu_item itself is the base, so it reaches the same fields DIRECTLY —
+    // one struct, two access paths, and both are exercised here.
+    var m: facet::Node = menu_item::menu_item("Open", key: "m");
+    match menu_item::find("m", within: #addr_of(m)) {
+        option::Option[menu_item::MenuItem]::Some(x) => { assert x.text() == "Open"; }
+        option::Option[menu_item::MenuItem]::None => { assert false; }
+    }
+    return;
+}
+
 #[test]
 fn a_menu_item_carries_one_key_equivalent() {
-    var root: facet::Node = context_menu_item::context_menu_item(key: "mi");
+    var root: facet::Node = context_menu_item::context_menu_item("Rename", key: "mi");
     match context_menu_item::find("mi", within: #addr_of(root)) {
         option::Option[context_menu_item::ContextMenuItem]::Some(x) => {
             assert x.shortcut().is_set() == false;

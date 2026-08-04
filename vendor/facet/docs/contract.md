@@ -5,7 +5,7 @@ absent here does not exist: calling it is a compile error, never a
 silent no-op. What a backend cannot implement is recorded in that
 backend's own manifest, not here.
 
-379 declared verbs over 38 controls, plus the
+391 declared verbs over 38 controls, plus the
 shared band every element carries.
 
 
@@ -140,6 +140,11 @@ shared band every element carries.
 | verb | type | provenance |
 |---|---|---|
 | `set_shortcut` / `shortcut()` | Shortcut | MenuFlyoutItem.KeyboardAccelerators |
+| `set_icon` / `icon()` | str | MenuItem.IconImageSource |
+| `set_destructive` / `is_destructive()` | bool | MenuItem.IsDestructive |
+| `is_enabled` | shared band | MenuItem.IsEnabled |
+| `set_text` / `text()` | str | MenuItem.Text |
+| `on_clicked` | callback + ctx | MenuItem.Clicked |
 
 ## date_picker — MAUI DatePicker
 
@@ -445,6 +450,11 @@ shared band every element carries.
 | `background_color` | shared band | SwipeItem.BackgroundColor |
 | `is_visible` | shared band | SwipeItem.IsVisible |
 | `on_invoked` | callback + ctx | SwipeItem.Invoked |
+| `set_icon` / `icon()` | str | MenuItem.IconImageSource |
+| `set_destructive` / `is_destructive()` | bool | MenuItem.IsDestructive |
+| `is_enabled` | shared band | MenuItem.IsEnabled |
+| `set_text` / `text()` | str | MenuItem.Text |
+| `on_clicked` | callback + ctx | MenuItem.Clicked |
 
 ## swipeable — MAUI SwipeView
 
@@ -572,6 +582,11 @@ shared band every element carries.
 |---|---|---|
 | `set_placement` / `placement()` | ToolbarPlacement | ToolbarItem.Order |
 | `set_priority` / `priority()` | i64 | ToolbarItem.Priority |
+| `set_icon` / `icon()` | str | MenuItem.IconImageSource |
+| `set_destructive` / `is_destructive()` | bool | MenuItem.IsDestructive |
+| `is_enabled` | shared band | MenuItem.IsEnabled |
+| `set_text` / `text()` | str | MenuItem.Text |
+| `on_clicked` | callback + ctx | MenuItem.Clicked |
 
 ## web — MAUI WebView
 

@@ -56,6 +56,18 @@ EXTRA_BASES = {
     "CollectionView": ["ItemsView", "StructuredItemsView", "SelectableItemsView",
                        "GroupableItemsView", "ReorderableItemsView"],
     "CarouselView": ["ItemsView", "StructuredItemsView"],
+    # All three derive from MenuItem in MAUI, and the ledger lists each type's
+    # OWN declared members — so without this they lost Text, IconImageSource,
+    # IsDestructive and Clicked. A context menu item with no title and no
+    # action is not a menu item, which is how the gap was found: Stage 4 went
+    # to implement `context_menu` and there was nothing to put in the NSMenu.
+    #
+    # MenuItem is the first base that is ALSO A CONTROL (`menu_item` has a
+    # module of its own; InputView and the ItemsView family do not). See
+    # `base_block` and `emit_props` for the two places that distinction has to
+    # be made, or the props struct is emitted twice.
+    "MenuFlyoutItem": ["MenuItem"], "SwipeItem": ["MenuItem"],
+    "ToolbarItem": ["MenuItem"],
 }
 
 # Module + cursor names. maui_spec's facet_widget values are prose in places.
@@ -820,8 +832,15 @@ const C_LAYOUT: u64 = 4611686018427387904u64;
 '''
 
 
-def base_block(src):
-    """The embedded-block field name for a base, or None for a control's own row."""
+def base_block(src, owner=None):
+    """The embedded-block field name for a base, or None for a control's own row.
+
+    `owner` is the MAUI type the row is being emitted FOR. A base that is also
+    a control (MenuItem) reaches its own fields directly — `this.text`, not
+    `this.menu_item.text` — so it is not a block from its own point of view,
+    only from a derived control's."""
+    if owner is not None and src == owner:
+        return None
     return snake(src) if src in ALL_BASES else None
 
 
@@ -925,7 +944,7 @@ def emit_props(rows_by_control, by_type):
                 inits.append(f"            {blk}: {bname}::new(),\n")
         own = [(k[0], k[1], k[2], member, band, src)
                for member, band, fn, note, src in merged
-               if base_block(src) is None
+               if base_block(src, maui) is None
                for k in [row_kind(band, fn, note)] if k is not None]
         f2, i2 = _fields_for(own)
         fields += f2
@@ -937,12 +956,20 @@ def emit_props(rows_by_control, by_type):
                 inits.append(f"            {f.replace('opaque ', '')}: {zero},\n")
 
         out.append(f"\n// ---- {mod} — MAUI {maui} " + "-" * max(0, 46 - len(mod) - len(maui)) + "\n\n")
-        out.append(f"struct {name} {{\n")
-        out.extend(fields if fields else ["    _unused: bool,\n"])
-        out.append("}\n\n")
-        out.append(f"impl {name} {{\n    fn new() -> {name} {{\n        return {name} {{\n")
-        out.extend(inits if inits else ["            _unused: false,\n"])
-        out.append("        };\n    }\n}\n\n")
+        # A control that is ALSO a base already has its struct from
+        # emit_base_props, with exactly these fields. Emitting a second one is
+        # E0301; the tag and the release still belong to the control.
+        if maui in ALL_BASES:
+            out.append(f"// {name} is declared above as a shared base: MAUI derives\n"
+                       f"// {', '.join(k for k, v in sorted(EXTRA_BASES.items()) if maui in v)} from {maui},\n"
+                       f"// so the struct is emitted once and embedded by each of them.\n\n")
+        else:
+            out.append(f"struct {name} {{\n")
+            out.extend(fields if fields else ["    _unused: bool,\n"])
+            out.append("}\n\n")
+            out.append(f"impl {name} {{\n    fn new() -> {name} {{\n        return {name} {{\n")
+            out.extend(inits if inits else ["            _unused: false,\n"])
+            out.append("        };\n    }\n}\n\n")
         out.append(f"const K_{mod.upper()}: u32 = {i + 1}u32;\n\n")
         out.append(f"fn release_{mod}_props(p: *u8) {{\n"
                    f"    if p == (0 as *u8) {{ return; }}\n"
@@ -1065,15 +1092,18 @@ DEFERRED_SHARED = {
 }
 
 
-def split_rows(merged):
-    """merged ledger rows -> (writes, reads, events, slots, owned, commands)."""
+def split_rows(merged, owner=None):
+    """merged ledger rows -> (writes, reads, events, slots, owned, commands).
+
+    `owner` is the control these rows are being emitted for; it is what lets a
+    base that is also a control address its own fields directly."""
     writes, reads, events, slots, owned, commands = [], [], [], [], [], []
     for member, band, fn, note, src in merged:
         k = row_kind(band, fn, note)
         if k is None:
             continue                          # `check` already failed the run
         kind, name, detail = k
-        blk = base_block(src)
+        blk = base_block(src, owner)
         path = (blk + "." + name) if blk else name
         if kind == "prop":
             (writes if band == "writes" else reads).append((name, detail, member, src, path))
@@ -1122,7 +1152,7 @@ def emit_control(maui, merged):
     props = cur + "Props"
     up = mod.upper()
 
-    writes, reads, events, slots, owned, commands = split_rows(merged)
+    writes, reads, events, slots, owned, commands = split_rows(merged, maui)
 
     # Where each field lives: on the control, or inside an embedded base block.
     # A command writes fields by name, so it resolves through this.
@@ -1457,7 +1487,7 @@ def emit_elements(rows_by_control):
     o.append("\n// ---- controls ----------------------------------------------------------\n\n")
     for maui, merged in rows_by_control.items():
         mod = MODULE[maui]
-        writes, reads, events, _slots, _owned, _commands = split_rows(merged)
+        writes, reads, events, _slots, _owned, _commands = split_rows(merged, maui)
         params = ctor_params(maui, writes, reads, events)
         o.append(f"fn {mod}(\n")
         for nm, pty, dflt in params:

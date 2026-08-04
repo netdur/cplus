@@ -195,6 +195,28 @@ impl ItemsViewProps {
     }
 }
 
+// ---- MenuItem — shared by every control MAUI derives from it ------
+
+struct MenuItemProps {
+    icon: text::Text,    // MenuItem.IconImageSource
+    is_destructive: bool,    // MenuItem.IsDestructive
+    text: text::Text,    // MenuItem.Text
+    on_clicked: fn(*u8, *u8),    // MenuItem.Clicked
+    opaque on_clicked_ctx: *u8,
+}
+
+impl MenuItemProps {
+    fn new() -> MenuItemProps {
+        return MenuItemProps {
+            icon: text::new(),
+            is_destructive: false,
+            text: text::new(),
+            on_clicked: no_handler,
+            on_clicked_ctx: 0 as *u8,
+        };
+    }
+}
+
 // ---- ReorderableItemsView — shared by every control MAUI derives from it 
 
 struct ReorderableItemsViewProps {
@@ -1026,6 +1048,7 @@ fn release_context_menu_props(p: *u8) {
 // ---- context_menu_item — MAUI MenuFlyoutItem ---------------
 
 struct ContextMenuItemProps {
+    menu_item: MenuItemProps,    // embedded, not restated
     shortcut_key: text::Text,    // MenuFlyoutItem.KeyboardAccelerators, key
     shortcut_modifiers: vocab::KeyModifiers,    // MenuFlyoutItem.KeyboardAccelerators, modifiers
 }
@@ -1033,6 +1056,7 @@ struct ContextMenuItemProps {
 impl ContextMenuItemProps {
     fn new() -> ContextMenuItemProps {
         return ContextMenuItemProps {
+            menu_item: MenuItemProps::new(),
             shortcut_key: text::new(),
             shortcut_modifiers: vocab::KeyModifiers::None,
         };
@@ -1049,25 +1073,9 @@ fn release_context_menu_item_props(p: *u8) {
 
 // ---- menu_item — MAUI MenuItem -----------------------------
 
-struct MenuItemProps {
-    icon: text::Text,    // MenuItem.IconImageSource
-    is_destructive: bool,    // MenuItem.IsDestructive
-    text: text::Text,    // MenuItem.Text
-    on_clicked: fn(*u8, *u8),    // MenuItem.Clicked
-    opaque on_clicked_ctx: *u8,
-}
-
-impl MenuItemProps {
-    fn new() -> MenuItemProps {
-        return MenuItemProps {
-            icon: text::new(),
-            is_destructive: false,
-            text: text::new(),
-            on_clicked: no_handler,
-            on_clicked_ctx: 0 as *u8,
-        };
-    }
-}
+// MenuItemProps is declared above as a shared base: MAUI derives
+// MenuFlyoutItem, SwipeItem, ToolbarItem from MenuItem,
+// so the struct is emitted once and embedded by each of them.
 
 const K_MENU_ITEM: u32 = 21u32;
 
@@ -1442,6 +1450,7 @@ fn release_stepper_props(p: *u8) {
 // ---- swipe_item — MAUI SwipeItem ---------------------------
 
 struct SwipeItemProps {
+    menu_item: MenuItemProps,    // embedded, not restated
     on_invoked: fn(*u8, *u8),    // SwipeItem.Invoked
     opaque on_invoked_ctx: *u8,
 }
@@ -1449,6 +1458,7 @@ struct SwipeItemProps {
 impl SwipeItemProps {
     fn new() -> SwipeItemProps {
         return SwipeItemProps {
+            menu_item: MenuItemProps::new(),
             on_invoked: no_handler,
             on_invoked_ctx: 0 as *u8,
         };
@@ -1648,6 +1658,7 @@ fn release_time_picker_props(p: *u8) {
 // ---- toolbar_item — MAUI ToolbarItem -----------------------
 
 struct ToolbarItemProps {
+    menu_item: MenuItemProps,    // embedded, not restated
     placement: vocab::ToolbarPlacement,    // ToolbarItem.Order
     priority: i64,    // ToolbarItem.Priority
 }
@@ -1655,6 +1666,7 @@ struct ToolbarItemProps {
 impl ToolbarItemProps {
     fn new() -> ToolbarItemProps {
         return ToolbarItemProps {
+            menu_item: MenuItemProps::new(),
             placement: vocab::ToolbarPlacement::Default,
             priority: 0 as i64,
         };

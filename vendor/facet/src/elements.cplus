@@ -1047,13 +1047,23 @@ fn swipeable(
 
 fn swipe_item(
     key: str = "",
+    icon: str = "",
+    destructive: bool = false,
+    text: str = "",
     on_invoked: fn(*u8, *u8) = props::no_handler,
     on_invoked_ctx: *u8 = 0 as *u8,
+    on_clicked: fn(*u8, *u8) = props::no_handler,
+    on_clicked_ctx: *u8 = 0 as *u8,
 ) -> core::Node {
     return m_swipe_item::swipe_item(
         key: key,
+        icon: icon,
+        destructive: destructive,
+        text: text,
         on_invoked: on_invoked,
         on_invoked_ctx: on_invoked_ctx,
+        on_clicked: on_clicked,
+        on_clicked_ctx: on_clicked_ctx,
     );
 }
 
@@ -1198,24 +1208,44 @@ fn context_menu(
 }
 
 fn context_menu_item(
+    text: str,
     key: str = "",
     shortcut: vocab::Shortcut = vocab::Shortcut::none(),
+    icon: str = "",
+    destructive: bool = false,
+    on_clicked: fn(*u8, *u8) = props::no_handler,
+    on_clicked_ctx: *u8 = 0 as *u8,
 ) -> core::Node {
     return m_context_menu_item::context_menu_item(
+        text,
         key: key,
         shortcut: shortcut,
+        icon: icon,
+        destructive: destructive,
+        on_clicked: on_clicked,
+        on_clicked_ctx: on_clicked_ctx,
     );
 }
 
 fn toolbar_item(
+    text: str,
     key: str = "",
     placement: vocab::ToolbarPlacement = vocab::ToolbarPlacement::Default,
     priority: i64 = 0 as i64,
+    icon: str = "",
+    destructive: bool = false,
+    on_clicked: fn(*u8, *u8) = props::no_handler,
+    on_clicked_ctx: *u8 = 0 as *u8,
 ) -> core::Node {
     return m_toolbar_item::toolbar_item(
+        text,
         key: key,
         placement: placement,
         priority: priority,
+        icon: icon,
+        destructive: destructive,
+        on_clicked: on_clicked,
+        on_clicked_ctx: on_clicked_ctx,
     );
 }
 
