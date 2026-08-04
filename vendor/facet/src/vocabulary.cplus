@@ -388,13 +388,26 @@ impl Insets {
 }
 
 struct Point { x: f64, y: f64 }
-impl Point { fn zero() -> Point { return Point { x: 0.0f64, y: 0.0f64 }; } }
+impl Point {
+    fn zero() -> Point { return Point { x: 0.0f64, y: 0.0f64 }; }
+    fn of(x: f64, y: f64) -> Point { return Point { x: x, y: y }; }
+}
 
 struct Size { width: f64, height: f64 }
-impl Size { fn zero() -> Size { return Size { width: 0.0f64, height: 0.0f64 }; } }
+impl Size {
+    fn zero() -> Size { return Size { width: 0.0f64, height: 0.0f64 }; }
+    fn of(width: f64, height: f64) -> Size { return Size { width: width, height: height }; }
+}
 
 struct Rect { x: f64, y: f64, width: f64, height: f64 }
-impl Rect { fn zero() -> Rect { return Rect { x: 0.0f64, y: 0.0f64, width: 0.0f64, height: 0.0f64 }; } }
+impl Rect {
+    fn zero() -> Rect { return Rect { x: 0.0f64, y: 0.0f64, width: 0.0f64, height: 0.0f64 }; }
+    fn of(x: f64, y: f64, width: f64, height: f64) -> Rect {
+        return Rect { x: x, y: y, width: width, height: height };
+    }
+    // The box a size occupies at the origin — a drawing's own bounds.
+    fn sized(width: f64, height: f64) -> Rect { return Rect::of(0.0f64, 0.0f64, width, height); }
+}
 
 // A fill: a flat colour, or a gradient the backend resolves.
 struct Brush { start: Color, end: Color, angle: f64, is_gradient: bool }
@@ -472,11 +485,6 @@ impl Spans {
     fn is_empty(this) -> bool { return this._runs.count() == (0 as usize); }
 }
 
-// A draw callback for a canvas: (ctx, width, height).
-struct Drawable { draw: fn(*u8, f64, f64), opaque ctx: *u8 }
-fn draw_none(ctx: *u8, w: f64, h: f64) { return; }
-impl Drawable { fn none() -> Drawable { return Drawable { draw: draw_none, ctx: 0 as *u8 }; } }
-
 // A stroke dash pattern: on/off run lengths. Fixed at eight, which is more
 // than any dash any platform draws, so the value stays Copy and a Border's
 // props stay free of an allocation.
@@ -534,4 +542,960 @@ struct WindowRef { opaque _w: *u8 }
 impl WindowRef {
     fn none() -> WindowRef { return WindowRef { _w: 0 as *u8 }; }
     fn is_open(this) -> bool { return this._w != (0 as *u8); }
+}
+
+// ---- drawing ----------------------------------------------------------------
+// A drawing, recorded. `canvas` is the one control whose content is not a
+// subtree but a sequence of drawing commands, and facet's first pass declared
+// no way to write one: `Drawable` handed the callback a size and NOTHING TO
+// DRAW WITH. MAUI's IDrawable.Draw takes an ICanvas, and the whole of that
+// surface lives in the Microsoft.Maui.Graphics assembly — a third manifest,
+// which the extraction never read. It read Controls and Core only, which is
+// the mechanical reason the entire vocabulary below was absent.
+//
+//   plans/facet/spec/maui_Graphics_PublicAPI.Shipped.txt   the manifest
+//   src/Graphics/src/Graphics/{ICanvas,PathF,...}.cs       the rows it elides
+//
+// RECORDED, not immediate, because facet is retained everywhere else. The
+// application describes a drawing, facet holds it, a backend realises it —
+// the same three parts as a Node, a props struct and a Renderer. Three things
+// follow, and they are the reason for the shape:
+//
+//   a redraw at a new size replays without asking the application again,
+//   a drawing is readable, so facet's own suite asserts one with no backend,
+//   a backend writes ONE replay loop instead of forty callbacks.
+//
+// What it costs: a canvas cannot ask the platform anything mid-drawing.
+// ICanvas.GetStringSize has no equivalent here, because measuring text needs a
+// live platform context and at record time there is none. Text is placed by
+// giving it a box and an alignment instead, which is what a laid-out drawing
+// wants anyway.
+
+// Microsoft.Maui.Graphics.WindingMode — which side of a self-crossing path
+// counts as inside.
+enum Winding {
+    NonZero,
+    EvenOdd,
+}
+
+// Microsoft.Maui.Graphics.BlendMode — how what is drawn composites onto what
+// is already there.
+enum Blend {
+    Normal,
+    Multiply,
+    Screen,
+    Overlay,
+    Darken,
+    Lighten,
+    ColorDodge,
+    ColorBurn,
+    SoftLight,
+    HardLight,
+    Difference,
+    Exclusion,
+    Hue,
+    Saturation,
+    Color,
+    Luminosity,
+    Clear,
+    Copy,
+    SourceIn,
+    SourceOut,
+    SourceAtop,
+    DestinationOver,
+    DestinationIn,
+    DestinationOut,
+    DestinationAtop,
+    Xor,
+    PlusDarker,
+    PlusLighter,
+}
+
+// Microsoft.Maui.Graphics.Text.VerticalAlignment. The horizontal half is
+// TextAlign, which facet already declares, so it is not restated here.
+enum VerticalAlign {
+    Top,
+    Center,
+    Bottom,
+}
+
+// Microsoft.Maui.Graphics.TextFlow (ClipBounds / OverflowBounds) — what text
+// does when it does not fit the box it was given.
+enum TextFlow {
+    Clip,
+    Overflow,
+}
+
+// Microsoft.Maui.Graphics.PathOperation, plus the three whole-shape appends
+// PathF exposes separately (AppendRectangle / AppendRoundedRectangle /
+// AppendEllipse) — kept as operations of their own so a backend hands them to
+// its native path builder instead of receiving them pre-flattened into arcs.
+// MAUI spells the cubic case `Cubic`; here it is `Curve`, after the verb.
+enum PathOp {
+    None,
+    Move,
+    Line,
+    Quad,
+    Curve,
+    Arc,
+    Rect,
+    RoundedRect,
+    Ellipse,
+    Close,
+}
+
+// Every command a Canvas records: one per ICanvas member. The state setters
+// are commands too, because a recording replays in order and the state at a
+// given point IS part of that order.
+enum DrawOp {
+    None,
+    // state
+    SetStroke,
+    SetFill,
+    SetFillBrush,
+    SetTextColor,
+    SetStrokeWidth,
+    SetMiterLimit,
+    SetStrokeCap,
+    SetStrokeJoin,
+    SetStrokeDash,
+    SetFont,
+    SetOpacity,
+    SetAntialiased,
+    SetBlend,
+    SetShadow,
+    // the state stack and the transform
+    Save,
+    Restore,
+    Reset,
+    Rotate,
+    Scale,
+    Translate,
+    ConcatTransform,
+    // clipping
+    ClipRect,
+    ClipPath,
+    SubtractFromClip,
+    // shapes
+    DrawLine,
+    DrawRect,
+    FillRect,
+    DrawRoundedRect,
+    FillRoundedRect,
+    DrawEllipse,
+    FillEllipse,
+    DrawArc,
+    FillArc,
+    DrawPath,
+    FillPath,
+    // content
+    DrawText,
+    DrawTextBlock,
+    DrawSpans,
+    DrawImage,
+}
+
+// An affine transform. MAUI passes System.Numerics.Matrix3x2; these are its
+// six numbers under the names every 2D backend uses for them.
+struct Transform { a: f64, b: f64, c: f64, d: f64, tx: f64, ty: f64 }
+impl Transform {
+    fn identity() -> Transform {
+        return Transform { a: 1.0f64, b: 0.0f64, c: 0.0f64, d: 1.0f64, tx: 0.0f64, ty: 0.0f64 };
+    }
+    fn of(a: f64, b: f64, c: f64, d: f64, tx: f64, ty: f64) -> Transform {
+        return Transform { a: a, b: b, c: c, d: d, tx: tx, ty: ty };
+    }
+}
+
+// One step of a path. `op` decides which fields are read, and the readers name
+// them per op so nothing outside this file has to know that an arc's angles
+// and a rounded rect's radius share a slot.
+struct PathSegment {
+    op: PathOp,
+    point: Point,
+    control1: Point,
+    control2: Point,
+    bounds: Rect,
+    is_clockwise: bool,
+    _a: f64,
+    _b: f64,
+}
+
+impl PathSegment {
+    fn none() -> PathSegment {
+        return PathSegment {
+            op: PathOp::None, point: Point::zero(),
+            control1: Point::zero(), control2: Point::zero(),
+            bounds: Rect::zero(), is_clockwise: true,
+            _a: 0.0f64, _b: 0.0f64,
+        };
+    }
+    // Arc — degrees, measured from the x axis.
+    fn start_angle(this) -> f64 { return this._a; }
+    fn end_angle(this) -> f64 { return this._b; }
+    // RoundedRect.
+    fn corner_radius(this) -> f64 { return this._a; }
+}
+
+// A path an application builds, then draws, fills or clips with.
+// Microsoft.Maui.Graphics.PathF — its DRAWING half. PathF also exposes point
+// editing, segment introspection, reversal and flattening; those are a path
+// editor's surface rather than a drawing's, and are not adopted.
+struct Path { _segs: vec::Vec[PathSegment] }
+
+impl Path {
+    fn new() -> Path { return Path { _segs: vec::new::[PathSegment]() }; }
+
+    // PathF.MoveTo
+    fn move_to(ref this, point: Point) -> status::Status {
+        var s: PathSegment = PathSegment::none();
+        s.op = PathOp::Move;
+        s.point = point;
+        return this._segs.append(s);
+    }
+
+    // PathF.LineTo
+    fn line_to(ref this, point: Point) -> status::Status {
+        var s: PathSegment = PathSegment::none();
+        s.op = PathOp::Line;
+        s.point = point;
+        return this._segs.append(s);
+    }
+
+    // PathF.QuadTo
+    fn quad_to(ref this, point: Point, control: Point) -> status::Status {
+        var s: PathSegment = PathSegment::none();
+        s.op = PathOp::Quad;
+        s.point = point;
+        s.control1 = control;
+        return this._segs.append(s);
+    }
+
+    // PathF.CurveTo — the cubic case, two control points.
+    fn curve_to(ref this, point: Point, control1: Point, control2: Point) -> status::Status {
+        var s: PathSegment = PathSegment::none();
+        s.op = PathOp::Curve;
+        s.point = point;
+        s.control1 = control1;
+        s.control2 = control2;
+        return this._segs.append(s);
+    }
+
+    // PathF.AddArc — MAUI takes the two corners of the arc's box; a Rect says
+    // the same thing in the type facet already has.
+    fn add_arc(ref this, rect: Rect, from: f64, to: f64,
+               clockwise: bool = true) -> status::Status {
+        var s: PathSegment = PathSegment::none();
+        s.op = PathOp::Arc;
+        s.bounds = rect;
+        s._a = from;
+        s._b = to;
+        s.is_clockwise = clockwise;
+        return this._segs.append(s);
+    }
+
+    // PathF.AppendRectangle
+    fn add_rect(ref this, rect: Rect) -> status::Status {
+        var s: PathSegment = PathSegment::none();
+        s.op = PathOp::Rect;
+        s.bounds = rect;
+        return this._segs.append(s);
+    }
+
+    // PathF.AppendRoundedRectangle. MAUI's per-corner overload is not adopted:
+    // `corner_radius` is one radius, matching Corners::all and what a layer
+    // can round to on every backend facet has.
+    fn add_rounded_rect(ref this, rect: Rect, corner_radius: f64) -> status::Status {
+        var s: PathSegment = PathSegment::none();
+        s.op = PathOp::RoundedRect;
+        s.bounds = rect;
+        s._a = corner_radius;
+        return this._segs.append(s);
+    }
+
+    // PathF.AppendEllipse
+    fn add_ellipse(ref this, rect: Rect) -> status::Status {
+        var s: PathSegment = PathSegment::none();
+        s.op = PathOp::Ellipse;
+        s.bounds = rect;
+        return this._segs.append(s);
+    }
+
+    // PathF.AppendCircle — the ellipse whose box is square about `center`.
+    fn add_circle(ref this, center: Point, radius: f64) -> status::Status {
+        return this.add_ellipse(Rect::of(center.x - radius, center.y - radius,
+                                         radius + radius, radius + radius));
+    }
+
+    // PathF.Close
+    fn close(ref this) -> status::Status {
+        var s: PathSegment = PathSegment::none();
+        s.op = PathOp::Close;
+        return this._segs.append(s);
+    }
+
+    fn count(this) -> usize { return this._segs.count(); }
+    fn is_empty(this) -> bool { return this._segs.count() == (0 as usize); }
+
+    // Out of range answers `PathOp::None` rather than trapping: a backend
+    // walking a path never needs a bounds check of its own.
+    fn at(this, index: usize) -> PathSegment {
+        return match this._segs.at(index) {
+            option::Option[PathSegment]::Some(s) => s,
+            option::Option[PathSegment]::None => PathSegment::none(),
+        };
+    }
+}
+
+// One recorded command. `op` decides which fields are read; the readers below
+// name them per op, so a backend spells `start_angle()` and never `_a`.
+//
+// `aux` indexes the canvas side table this op reads — `path(at:)`,
+// `spans(at:)`, `text(at:)`, `dashes(at:)` or `brush(at:)` — and is -1 when
+// the op reads none.
+struct DrawCommand {
+    op: DrawOp,
+    // The shape's box, the text's box, the clip, or the transform's six
+    // numbers. Never a line's two ends: those are scalars.
+    bounds: Rect,
+    // The colour a state command carries; a shadow's colour for SetShadow.
+    color: Color,
+    winding: Winding,
+    cap: LineCap,
+    join: LineJoin,
+    align: TextAlign,
+    vertical_align: VerticalAlign,
+    flow: TextFlow,
+    blend: Blend,
+    weight: FontWeight,
+    // DrawArc / FillArc, and PathOp::Arc.
+    is_clockwise: bool,
+    // DrawArc: whether the ends are joined.
+    is_closed: bool,
+    // SetFont.
+    is_italic: bool,
+    // SetAntialiased.
+    is_on: bool,
+    _a: f64,
+    _b: f64,
+    _c: f64,
+    _d: f64,
+    aux: i64,
+}
+
+impl DrawCommand {
+    fn none() -> DrawCommand {
+        return DrawCommand {
+            op: DrawOp::None,
+            bounds: Rect::zero(),
+            color: Color::clear(),
+            winding: Winding::NonZero,
+            cap: LineCap::Flat,
+            join: LineJoin::Miter,
+            align: TextAlign::Start,
+            vertical_align: VerticalAlign::Top,
+            flow: TextFlow::Clip,
+            blend: Blend::Normal,
+            weight: FontWeight::Default,
+            is_clockwise: true,
+            is_closed: false,
+            is_italic: false,
+            is_on: true,
+            _a: 0.0f64, _b: 0.0f64, _c: 0.0f64, _d: 0.0f64,
+            aux: 0 as i64 - (1 as i64),
+        };
+    }
+
+    // SetStrokeWidth / SetMiterLimit / SetOpacity / SetFont — the one number
+    // each of them sets.
+    fn stroke_width(this) -> f64 { return this._a; }
+    fn miter_limit(this) -> f64 { return this._a; }
+    fn opacity(this) -> f64 { return this._a; }
+    fn font_size(this) -> f64 { return this._a; }
+    // SetStrokeDash — the offset into the pattern; the pattern is `dashes(at:)`.
+    fn dash_offset(this) -> f64 { return this._a; }
+
+    // SetShadow — the colour is `color`, the offset is `bounds.x` / `bounds.y`.
+    fn shadow(this) -> Shadow {
+        return Shadow {
+            color: this.color,
+            offset: Point::of(this.bounds.x, this.bounds.y),
+            radius: this._a,
+            opacity: this._b,
+        };
+    }
+
+    // DrawLine.
+    fn from(this) -> Point { return Point::of(this._a, this._b); }
+    fn to(this) -> Point { return Point::of(this._c, this._d); }
+
+    // DrawRoundedRect / FillRoundedRect.
+    fn corner_radius(this) -> f64 { return this._a; }
+
+    // DrawArc / FillArc — degrees, measured from the x axis.
+    fn start_angle(this) -> f64 { return this._a; }
+    fn end_angle(this) -> f64 { return this._b; }
+
+    // Rotate — degrees, about `bounds.x` / `bounds.y`.
+    fn degrees(this) -> f64 { return this._a; }
+    fn pivot(this) -> Point { return Point::of(this.bounds.x, this.bounds.y); }
+
+    // Scale / Translate.
+    fn x(this) -> f64 { return this._a; }
+    fn y(this) -> f64 { return this._b; }
+
+    // DrawText — the point it sits at. DrawTextBlock uses `bounds` instead.
+    fn at(this) -> Point { return Point::of(this.bounds.x, this.bounds.y); }
+
+    // DrawTextBlock.
+    fn line_spacing(this) -> f64 { return this._a; }
+
+    // ConcatTransform — six numbers, so four ride in `bounds` and two in the
+    // scalars. Nothing outside this reader needs to know that.
+    fn transform(this) -> Transform {
+        return Transform::of(this.bounds.x, this.bounds.y,
+                             this.bounds.width, this.bounds.height,
+                             this._a, this._b);
+    }
+
+    fn has_aux(this) -> bool { return this.aux >= (0 as i64); }
+}
+
+// The surface a Drawable draws into: the commands, in order, plus the side
+// tables for the payloads a fixed-size command cannot carry inline.
+//
+// A backend reads it with `count()` / `at(index:)` and the five `..(at:)`
+// side-table readers. An application writes it with the verbs below, which
+// are ICanvas member for member.
+struct Canvas {
+    _cmds: vec::Vec[DrawCommand],
+    _paths: vec::Vec[Path],
+    _spans: vec::Vec[Spans],
+    _texts: vec::Vec[text::Text],
+    _dashes: vec::Vec[Dashes],
+    _brushes: vec::Vec[Brush],
+    _size: Size,
+    _scale: f64,
+}
+
+impl Canvas {
+    // The backend makes one of these per drawing pass and hands it over.
+    // `scale` is ICanvas.DisplayScale: the backing-store factor, so a drawing
+    // that wants a hairline can ask for one.
+    fn of(size: Size, scale: f64 = 1.0f64) -> Canvas {
+        return Canvas {
+            _cmds: vec::new::[DrawCommand](),
+            _paths: vec::new::[Path](),
+            _spans: vec::new::[Spans](),
+            _texts: vec::new::[text::Text](),
+            _dashes: vec::new::[Dashes](),
+            _brushes: vec::new::[Brush](),
+            _size: size,
+            _scale: scale,
+        };
+    }
+
+    // ---- what the drawing is drawn onto ------------------------------------
+
+    fn size(this) -> Size { return this._size; }
+    // ICanvas.DisplayScale
+    fn display_scale(this) -> f64 { return this._scale; }
+    fn set_display_scale(ref this, v: f64) { this._scale = v; return; }
+
+    // ---- what a backend reads ----------------------------------------------
+
+    fn count(this) -> usize { return this._cmds.count(); }
+    fn is_empty(this) -> bool { return this._cmds.count() == (0 as usize); }
+
+    fn at(this, index: usize) -> DrawCommand {
+        return match this._cmds.at(index) {
+            option::Option[DrawCommand]::Some(c) => c,
+            option::Option[DrawCommand]::None => DrawCommand::none(),
+        };
+    }
+
+    fn path(this, at: usize) -> *Path {
+        return match this._paths.at_ptr(at) {
+            option::Option[*Path]::Some(p) => p,
+            option::Option[*Path]::None => 0 as *Path,
+        };
+    }
+
+    fn spans(this, at: usize) -> *Spans {
+        return match this._spans.at_ptr(at) {
+            option::Option[*Spans]::Some(p) => p,
+            option::Option[*Spans]::None => 0 as *Spans,
+        };
+    }
+
+    fn text(this, at: usize) -> str {
+        return match this._texts.at_ptr(at) {
+            option::Option[*text::Text]::Some(t) => { (*t).view() },
+            option::Option[*text::Text]::None => "",
+        };
+    }
+
+    fn dashes(this, at: usize) -> Dashes {
+        return match this._dashes.at(at) {
+            option::Option[Dashes]::Some(d) => d,
+            option::Option[Dashes]::None => Dashes::none(),
+        };
+    }
+
+    fn brush(this, at: usize) -> Brush {
+        return match this._brushes.at(at) {
+            option::Option[Brush]::Some(b) => b,
+            option::Option[Brush]::None => Brush::none(),
+        };
+    }
+
+    // Drop the recording and keep the buffers. A backend redrawing the same
+    // canvas calls this rather than building a second one.
+    fn clear(ref this) {
+        this._cmds.remove_all();
+        this._paths.remove_all();
+        this._spans.remove_all();
+        this._texts.remove_all();
+        this._dashes.remove_all();
+        this._brushes.remove_all();
+        return;
+    }
+
+    // ---- the state ---------------------------------------------------------
+
+    // ICanvas.StrokeColor
+    fn set_stroke(ref this, v: Color) -> status::Status {
+        var c: DrawCommand = DrawCommand::none();
+        c.op = DrawOp::SetStroke;
+        c.color = v;
+        return this._cmds.append(c);
+    }
+
+    // ICanvas.FillColor
+    fn set_fill(ref this, v: Color) -> status::Status {
+        var c: DrawCommand = DrawCommand::none();
+        c.op = DrawOp::SetFill;
+        c.color = v;
+        return this._cmds.append(c);
+    }
+
+    // ICanvas.SetFillPaint — a gradient fill, and the box it is measured
+    // across. A solid Brush is a flat fill, the same as set_fill.
+    fn set_fill_brush(ref this, v: Brush, across: Rect) -> status::Status {
+        let i: usize = this._brushes.count();
+        var e: status::Status = this._brushes.append(v);
+        if e != status::Status::Ok { return e; }
+        var c: DrawCommand = DrawCommand::none();
+        c.op = DrawOp::SetFillBrush;
+        c.bounds = across;
+        c.color = v.start;
+        c.aux = i as i64;
+        return this._cmds.append(c);
+    }
+
+    // ICanvas.FontColor
+    fn set_text_color(ref this, v: Color) -> status::Status {
+        var c: DrawCommand = DrawCommand::none();
+        c.op = DrawOp::SetTextColor;
+        c.color = v;
+        return this._cmds.append(c);
+    }
+
+    // ICanvas.StrokeSize — named for the row facet already carries on
+    // `bordered`, so one word means one thing across the contract.
+    fn set_stroke_width(ref this, v: f64) -> status::Status {
+        var c: DrawCommand = DrawCommand::none();
+        c.op = DrawOp::SetStrokeWidth;
+        c._a = v;
+        return this._cmds.append(c);
+    }
+
+    // ICanvas.MiterLimit
+    fn set_miter_limit(ref this, v: f64) -> status::Status {
+        var c: DrawCommand = DrawCommand::none();
+        c.op = DrawOp::SetMiterLimit;
+        c._a = v;
+        return this._cmds.append(c);
+    }
+
+    // ICanvas.StrokeLineCap
+    fn set_stroke_cap(ref this, v: LineCap) -> status::Status {
+        var c: DrawCommand = DrawCommand::none();
+        c.op = DrawOp::SetStrokeCap;
+        c.cap = v;
+        return this._cmds.append(c);
+    }
+
+    // ICanvas.StrokeLineJoin
+    fn set_stroke_join(ref this, v: LineJoin) -> status::Status {
+        var c: DrawCommand = DrawCommand::none();
+        c.op = DrawOp::SetStrokeJoin;
+        c.join = v;
+        return this._cmds.append(c);
+    }
+
+    // ICanvas.StrokeDashPattern + StrokeDashOffset, one verb: the offset means
+    // nothing without the pattern, so setting one and not the other never
+    // reads correctly.
+    fn set_stroke_dash(ref this, v: Dashes, offset: f64 = 0.0f64) -> status::Status {
+        let i: usize = this._dashes.count();
+        var e: status::Status = this._dashes.append(v);
+        if e != status::Status::Ok { return e; }
+        var c: DrawCommand = DrawCommand::none();
+        c.op = DrawOp::SetStrokeDash;
+        c._a = offset;
+        c.aux = i as i64;
+        return this._cmds.append(c);
+    }
+
+    // ICanvas.Font + FontSize. MAUI passes an IFont; facet has no font object,
+    // so a font is the three things every backend needs to resolve one.
+    fn set_font(ref this, family: str = "", size: f64 = 0.0f64,
+                weight: FontWeight = FontWeight::Default,
+                italic: bool = false) -> status::Status {
+        let i: usize = this._texts.count();
+        var e: status::Status = this._texts.append(text::from_str(family));
+        if e != status::Status::Ok { return e; }
+        var c: DrawCommand = DrawCommand::none();
+        c.op = DrawOp::SetFont;
+        c._a = size;
+        c.weight = weight;
+        c.is_italic = italic;
+        c.aux = i as i64;
+        return this._cmds.append(c);
+    }
+
+    // ICanvas.Alpha — `opacity` is the word the shared band already uses.
+    fn set_opacity(ref this, v: f64) -> status::Status {
+        var c: DrawCommand = DrawCommand::none();
+        c.op = DrawOp::SetOpacity;
+        c._a = v;
+        return this._cmds.append(c);
+    }
+
+    // ICanvas.Antialias
+    fn set_antialiased(ref this, v: bool) -> status::Status {
+        var c: DrawCommand = DrawCommand::none();
+        c.op = DrawOp::SetAntialiased;
+        c.is_on = v;
+        return this._cmds.append(c);
+    }
+
+    // ICanvas.BlendMode
+    fn set_blend(ref this, v: Blend) -> status::Status {
+        var c: DrawCommand = DrawCommand::none();
+        c.op = DrawOp::SetBlend;
+        c.blend = v;
+        return this._cmds.append(c);
+    }
+
+    // ICanvas.SetShadow
+    fn set_shadow(ref this, v: Shadow) -> status::Status {
+        var c: DrawCommand = DrawCommand::none();
+        c.op = DrawOp::SetShadow;
+        c.color = v.color;
+        c.bounds = Rect::of(v.offset.x, v.offset.y, 0.0f64, 0.0f64);
+        c._a = v.radius;
+        c._b = v.opacity;
+        return this._cmds.append(c);
+    }
+
+    // ---- the state stack and the transform ---------------------------------
+
+    // ICanvas.SaveState
+    fn save(ref this) -> status::Status {
+        var c: DrawCommand = DrawCommand::none();
+        c.op = DrawOp::Save;
+        return this._cmds.append(c);
+    }
+
+    // ICanvas.RestoreState. MAUI answers false when the stack is empty; that
+    // is not knowable while recording, so this reports only whether the
+    // command was recorded — the backend is where an empty stack is seen.
+    fn restore(ref this) -> status::Status {
+        var c: DrawCommand = DrawCommand::none();
+        c.op = DrawOp::Restore;
+        return this._cmds.append(c);
+    }
+
+    // ICanvas.ResetState
+    fn reset(ref this) -> status::Status {
+        var c: DrawCommand = DrawCommand::none();
+        c.op = DrawOp::Reset;
+        return this._cmds.append(c);
+    }
+
+    // ICanvas.Rotate, both overloads: omitting `around` rotates about the
+    // canvas origin, which is what the one-argument MAUI overload does.
+    fn rotate(ref this, degrees: f64, around: Point = Point::zero()) -> status::Status {
+        var c: DrawCommand = DrawCommand::none();
+        c.op = DrawOp::Rotate;
+        c._a = degrees;
+        c.bounds = Rect::of(around.x, around.y, 0.0f64, 0.0f64);
+        return this._cmds.append(c);
+    }
+
+    // ICanvas.Scale
+    fn scale(ref this, x: f64, y: f64) -> status::Status {
+        var c: DrawCommand = DrawCommand::none();
+        c.op = DrawOp::Scale;
+        c._a = x;
+        c._b = y;
+        return this._cmds.append(c);
+    }
+
+    // ICanvas.Translate
+    fn translate(ref this, x: f64, y: f64) -> status::Status {
+        var c: DrawCommand = DrawCommand::none();
+        c.op = DrawOp::Translate;
+        c._a = x;
+        c._b = y;
+        return this._cmds.append(c);
+    }
+
+    // ICanvas.ConcatenateTransform
+    fn concat_transform(ref this, v: Transform) -> status::Status {
+        var c: DrawCommand = DrawCommand::none();
+        c.op = DrawOp::ConcatTransform;
+        c.bounds = Rect::of(v.a, v.b, v.c, v.d);
+        c._a = v.tx;
+        c._b = v.ty;
+        return this._cmds.append(c);
+    }
+
+    // ---- clipping ----------------------------------------------------------
+
+    // ICanvas.ClipRectangle
+    fn clip_rect(ref this, rect: Rect) -> status::Status {
+        var c: DrawCommand = DrawCommand::none();
+        c.op = DrawOp::ClipRect;
+        c.bounds = rect;
+        return this._cmds.append(c);
+    }
+
+    // ICanvas.ClipPath
+    fn clip_path(ref this, path: *Path,
+                 winding: Winding = Winding::NonZero) -> status::Status {
+        return this._record_path(DrawOp::ClipPath, path, winding);
+    }
+
+    // ICanvas.SubtractFromClip
+    fn subtract_from_clip(ref this, rect: Rect) -> status::Status {
+        var c: DrawCommand = DrawCommand::none();
+        c.op = DrawOp::SubtractFromClip;
+        c.bounds = rect;
+        return this._cmds.append(c);
+    }
+
+    // ---- shapes ------------------------------------------------------------
+
+    // ICanvas.DrawLine
+    fn draw_line(ref this, from: Point, to: Point) -> status::Status {
+        var c: DrawCommand = DrawCommand::none();
+        c.op = DrawOp::DrawLine;
+        c._a = from.x;
+        c._b = from.y;
+        c._c = to.x;
+        c._d = to.y;
+        return this._cmds.append(c);
+    }
+
+    // ICanvas.DrawRectangle
+    fn draw_rect(ref this, rect: Rect) -> status::Status {
+        return this._record_rect(DrawOp::DrawRect, rect, 0.0f64);
+    }
+
+    // ICanvas.FillRectangle
+    fn fill_rect(ref this, rect: Rect) -> status::Status {
+        return this._record_rect(DrawOp::FillRect, rect, 0.0f64);
+    }
+
+    // ICanvas.DrawRoundedRectangle
+    fn draw_rounded_rect(ref this, rect: Rect, corner_radius: f64) -> status::Status {
+        return this._record_rect(DrawOp::DrawRoundedRect, rect, corner_radius);
+    }
+
+    // ICanvas.FillRoundedRectangle
+    fn fill_rounded_rect(ref this, rect: Rect, corner_radius: f64) -> status::Status {
+        return this._record_rect(DrawOp::FillRoundedRect, rect, corner_radius);
+    }
+
+    // ICanvas.DrawEllipse
+    fn draw_ellipse(ref this, rect: Rect) -> status::Status {
+        return this._record_rect(DrawOp::DrawEllipse, rect, 0.0f64);
+    }
+
+    // ICanvas.FillEllipse
+    fn fill_ellipse(ref this, rect: Rect) -> status::Status {
+        return this._record_rect(DrawOp::FillEllipse, rect, 0.0f64);
+    }
+
+    // ICanvas.DrawArc
+    fn draw_arc(ref this, rect: Rect, from: f64, to: f64,
+                clockwise: bool = true, closed: bool = false) -> status::Status {
+        var c: DrawCommand = DrawCommand::none();
+        c.op = DrawOp::DrawArc;
+        c.bounds = rect;
+        c._a = from;
+        c._b = to;
+        c.is_clockwise = clockwise;
+        c.is_closed = closed;
+        return this._cmds.append(c);
+    }
+
+    // ICanvas.FillArc — a filled arc is closed by definition, so MAUI's
+    // signature has no `closed` and neither does this one.
+    fn fill_arc(ref this, rect: Rect, from: f64, to: f64,
+                clockwise: bool = true) -> status::Status {
+        var c: DrawCommand = DrawCommand::none();
+        c.op = DrawOp::FillArc;
+        c.bounds = rect;
+        c._a = from;
+        c._b = to;
+        c.is_clockwise = clockwise;
+        c.is_closed = true;
+        return this._cmds.append(c);
+    }
+
+    // ICanvas.DrawPath. The path is COPIED into the recording, so the caller
+    // keeps ownership of theirs and may go on building with it.
+    fn draw_path(ref this, path: *Path) -> status::Status {
+        return this._record_path(DrawOp::DrawPath, path, Winding::NonZero);
+    }
+
+    // ICanvas.FillPath
+    fn fill_path(ref this, path: *Path,
+                 winding: Winding = Winding::NonZero) -> status::Status {
+        return this._record_path(DrawOp::FillPath, path, winding);
+    }
+
+    // ---- content -----------------------------------------------------------
+
+    // ICanvas.DrawString(value, x, y, horizontalAlignment) — one line, at a
+    // point, aligned about it.
+    fn draw_text(ref this, value: str, at: Point,
+                 align: TextAlign = TextAlign::Start) -> status::Status {
+        let i: usize = this._texts.count();
+        var e: status::Status = this._texts.append(text::from_str(value));
+        if e != status::Status::Ok { return e; }
+        var c: DrawCommand = DrawCommand::none();
+        c.op = DrawOp::DrawText;
+        c.bounds = Rect::of(at.x, at.y, 0.0f64, 0.0f64);
+        c.align = align;
+        c.aux = i as i64;
+        return this._cmds.append(c);
+    }
+
+    // ICanvas.DrawString(value, x, y, width, height, ...) — wrapped in a box,
+    // aligned in both axes. MAUI's two DrawString overloads collapse into this
+    // pair: one for a point, one for a box, because they are different things.
+    fn draw_text_block(ref this, value: str, box: Rect,
+                       align: TextAlign = TextAlign::Start,
+                       vertical_align: VerticalAlign = VerticalAlign::Top,
+                       flow: TextFlow = TextFlow::Clip,
+                       line_spacing: f64 = 0.0f64) -> status::Status {
+        let i: usize = this._texts.count();
+        var e: status::Status = this._texts.append(text::from_str(value));
+        if e != status::Status::Ok { return e; }
+        var c: DrawCommand = DrawCommand::none();
+        c.op = DrawOp::DrawTextBlock;
+        c.bounds = box;
+        c.align = align;
+        c.vertical_align = vertical_align;
+        c.flow = flow;
+        c._a = line_spacing;
+        c.aux = i as i64;
+        return this._cmds.append(c);
+    }
+
+    // ICanvas.DrawText(IAttributedText, ...) — styled runs in a box. facet's
+    // attributed text is `Spans`, the same value a formatted label carries.
+    fn draw_spans(ref this, runs: *Spans, box: Rect) -> status::Status {
+        if runs == (0 as *Spans) { return status::Status::InvalidInput; }
+        let i: usize = this._spans.count();
+        var copy: Spans = Spans::new();
+        var k: usize = 0 as usize;
+        while k < { (*runs).count() } {
+            let r: *TextSpan = { (*runs).at(k) };
+            if r != (0 as *TextSpan) {
+                var e0: status::Status = copy.add(TextSpan {
+                    text: text::from_str({ (*r).view() }),
+                    font_size: { (*r).font_size },
+                    font_family: text::from_str({ (*r).font_family.view() }),
+                    font_weight: { (*r).font_weight },
+                    is_italic: { (*r).is_italic },
+                    color: { (*r).color },
+                    background_color: { (*r).background_color },
+                    decoration: { (*r).decoration },
+                    link: text::from_str({ (*r).link.view() }),
+                });
+                if e0 != status::Status::Ok { return e0; }
+            }
+            k = k + (1 as usize);
+        }
+        var e: status::Status = this._spans.append(copy);
+        if e != status::Status::Ok { return e; }
+        var c: DrawCommand = DrawCommand::none();
+        c.op = DrawOp::DrawSpans;
+        c.bounds = box;
+        c.aux = i as i64;
+        return this._cmds.append(c);
+    }
+
+    // ICanvas.DrawImage. MAUI passes a loaded IImage; facet names an image the
+    // one way it names one everywhere else — a source string the backend
+    // resolves, so `canvas` and `image` agree on what an image is.
+    fn draw_image(ref this, source: str, box: Rect) -> status::Status {
+        let i: usize = this._texts.count();
+        var e: status::Status = this._texts.append(text::from_str(source));
+        if e != status::Status::Ok { return e; }
+        var c: DrawCommand = DrawCommand::none();
+        c.op = DrawOp::DrawImage;
+        c.bounds = box;
+        c.aux = i as i64;
+        return this._cmds.append(c);
+    }
+
+    // ---- private -----------------------------------------------------------
+
+    fn _record_rect(ref this, op: DrawOp, rect: Rect, radius: f64) -> status::Status {
+        var c: DrawCommand = DrawCommand::none();
+        c.op = op;
+        c.bounds = rect;
+        c._a = radius;
+        return this._cmds.append(c);
+    }
+
+    fn _record_path(ref this, op: DrawOp, path: *Path, winding: Winding) -> status::Status {
+        if path == (0 as *Path) { return status::Status::InvalidInput; }
+        let i: usize = this._paths.count();
+        var copy: Path = Path::new();
+        var k: usize = 0 as usize;
+        let n: usize = { (*path).count() };
+        while k < n {
+            var e0: status::Status = copy._segs.append({ (*path).at(k) });
+            if e0 != status::Status::Ok { return e0; }
+            k = k + (1 as usize);
+        }
+        var e: status::Status = this._paths.append(copy);
+        if e != status::Status::Ok { return e; }
+        var c: DrawCommand = DrawCommand::none();
+        c.op = op;
+        c.winding = winding;
+        c.aux = i as i64;
+        return this._cmds.append(c);
+    }
+}
+
+// What an application writes to fill a `canvas`: a callback given the surface
+// to draw into and the rect that needs redrawing.
+// Microsoft.Maui.Graphics.IDrawable.Draw(ICanvas, RectF).
+struct Drawable { draw: fn(*u8, *Canvas, Rect), opaque ctx: *u8 }
+fn draw_none(ctx: *u8, into: *Canvas, dirty: Rect) { return; }
+impl Drawable {
+    fn none() -> Drawable { return Drawable { draw: draw_none, ctx: 0 as *u8 }; }
+    fn of(draw: fn(*u8, *Canvas, Rect), ctx: *u8 = 0 as *u8) -> Drawable {
+        return Drawable { draw: draw, ctx: ctx };
+    }
+    fn is_none(this) -> bool { return this.draw == draw_none; }
 }

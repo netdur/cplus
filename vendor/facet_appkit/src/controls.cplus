@@ -70,6 +70,7 @@ import "appkit/appkit" as ak;
 import "appkit/appkit_ext" as akx;
 import "quartzcore/quartzcore" as quartz;
 import "./paint" as paint;
+import "./drawing" as drawing;
 
 // ---- reaching a node's props -------------------------------------------------
 // The generated cursors' `_props()` is module-private, so a backend reads the
@@ -1639,37 +1640,35 @@ fn apply_window_buttons(v: *u8, n: *core::Node, dirty: u64) {
 }
 
 // ---- canvas ------------------------------------------------------------------
-// A backing view, and nothing more — because there is nothing more to do.
+// The one control that DRAWS rather than configures a system control, so the
+// one control with a view class of its own: `drawing::canvas_view_class`, an
+// NSView whose `drawRect:` runs the recording facet holds.
 //
-// facet declares no DRAWING VOCABULARY. `Drawable` is
-// `fn(*u8, f64, f64)`: the callback receives its ctx and a size, and nothing
-// to draw WITH. MAUI's IDrawable.Draw takes an ICanvas; facet's version
-// dropped that parameter, and the ledger has no path, no fill, no stroke, no
-// painter of any kind — so an application cannot express a drawing at all.
+// The whole body is three lines because the work is split where it belongs.
+// The application records into a `vocab::Canvas`; drawing.cplus replays that
+// recording into the CGContext AppKit hands `drawRect:`. Nothing about a
+// drawing passes through this file.
 //
-// That is a gap in the CONTRACT, not in this backend, and no backend can close
-// it: there is nothing to implement until facet declares what a drawing is.
-// Recorded in MANIFEST.md and on stages/4.md. The Drawable is invoked with the
-// node's laid-out size so an application that has reached through `native()`
-// for its own CALayer still gets told when to redraw — which is the only
-// useful thing the current signature supports.
+// No layer, deliberately. `drawRect:` on a non-layer-backed view draws
+// straight into the window's backing store, and a layer would be a second
+// buffer holding a copy of the same pixels. A canvas that also sets a
+// background_color gets a layer from `apply_common`, which is fine — AppKit
+// draws through it either way.
 
 fn create_canvas(n: *core::Node) -> *u8 {
-    let v: ak::View = akx::new_flipped_view(rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 });
-    v.set_wants_layer(true);
+    let v: ak::View = drawing::new_canvas_view();
+    drawing::bind_node(v.raw(), n);
     return rt::retain(v.raw());
 }
 
 fn apply_canvas(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::CanvasProps = props_of(n, props::K_CANVAS) as *props::CanvasProps;
     if p == (0 as *props::CanvasProps) { return; }
-    if (dirty & canvas::P_DRAWABLE) != (0 as u64) || dirty == paint::all_bits() {
-        let d: *vocab::Drawable = { #addr_of((*p).drawable) };
-        let f: fn(*u8, f64, f64) = { (*d).draw };
-        if f != vocab::draw_none {
-            let frame: flex::Frame = { (*n).frame() };
-            f({ (*d).ctx }, frame.width, frame.height);
-        }
+    // A new Drawable, an explicit `redraw()`, or a new size: the drawing is
+    // a function of the laid-out box, so a resize is a repaint.
+    let watched: u64 = canvas::P_DRAWABLE | canvas::P_REDRAW | props::C_LAYOUT;
+    if (dirty & watched) != (0 as u64) || dirty == paint::all_bits() {
+        drawing::invalidate(v);
     }
     return;
 }

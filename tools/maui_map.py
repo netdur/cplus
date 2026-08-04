@@ -199,6 +199,11 @@ METHOD_VOCABULARY = {
     ("VisualElement", "Measure"): "measure(width:height:)",
     ("VisualElement", "BatchBegin"): "begin_updates",
     ("VisualElement", "BatchCommit"): "end_updates",
+    # Stage 4 found this dropped as ENGINE by the methods-band inversion, and
+    # it is not engine: GraphicsView.Invalidate is how an application says its
+    # drawing changed. Without it a canvas could be described once and never
+    # redrawn.
+    ("GraphicsView", "Invalidate"): "redraw",
     ("ProgressBar", "ProgressTo"): "animate_progress(to:duration:)",
     ("ItemsView", "ScrollTo"): "scroll_to(index:)",
     ("ListView", "ScrollTo"): "scroll_to(index:)",

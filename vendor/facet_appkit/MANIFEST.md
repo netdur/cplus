@@ -107,21 +107,45 @@ cannot (mobile concept)" when item 5 reaches them.
 
 ## Implemented, with a deviation worth knowing
 
-### `canvas` has nothing to draw with — and that is facet's gap, not AppKit's
+### `canvas` replays a recording; it does not call back per verb
 
-facet declares NO drawing vocabulary. `Drawable` is `fn(*u8, f64, f64)`: the
-callback receives its ctx and a size, and **nothing to draw WITH**. MAUI's
-`IDrawable.Draw` takes an `ICanvas`; facet's version dropped that parameter,
-and the ledger has no path, no fill, no stroke, no painter of any kind.
+facet's drawing vocabulary is RECORDED: a `Drawable` is handed a
+`vocab::Canvas` and appends commands to it, and the backend replays the list.
+So this package registers no per-verb hooks — `drawing.cplus` has one loop
+over `Canvas::at(index:)`, executing into the CGContext AppKit hands
+`drawRect:`.
 
-So an application cannot express a drawing at all, and **no backend can close
-this** — there is nothing to implement until facet declares what a drawing
-is. `canvas` gets a layer-backed view and calls the Drawable with the node's
-laid-out size, which is the only useful thing the current signature supports:
-an application that has reached through `native()` for its own CALayer still
-gets told when to redraw.
+`canvas` is the one control with a **view class of its own**
+(`FacetCanvasView`, an NSView with `isFlipped` and `drawRect:`), and the one
+control with **no layer** — `drawRect:` paints straight into the window's
+backing store, and a layer would hold a second copy of the same pixels.
 
-Recorded on stages/4.md as the second CONTRACT gap this backend found.
+Two things about the replay are worth knowing:
+
+**No text measurement at record time.** `ICanvas.GetStringSize` is not adopted
+and could not be honoured if it were: measuring text needs a live platform
+context, and while a Drawable is recording there is none. Text is placed by
+giving it a box and an alignment. The one verb that still needs a width —
+`draw_text(at:)`, which aligns a line ABOUT a point — measures at REPLAY time,
+where a context does exist.
+
+**`draw_text(at:)` places the top-left, not the baseline.** MAUI's
+`DrawString(value, x, y, alignment)` treats `y` as the baseline. facet's box
+model is top-left everywhere else, and a point that means something different
+from every other point in the contract is worse than a small deviation from
+MAUI. The block form has a box, so it does not arise there.
+
+Everything else in ICanvas is honoured: the state setters, the state stack,
+the transform, the clip (including `subtract_from_clip`, which CG has no call
+for and which is done with an even-odd clip over the current clip bounds), the
+shapes, paths with both winding rules, gradients via `set_fill_brush`, images,
+and the three text verbs. `Blend` maps to `CGBlendMode` by ordinal, because
+MAUI's enum was modelled on CG and matches it value for value.
+
+The arc is the one place a convention had to be chosen rather than read off an
+API, and the reasoning is written out at `add_arc_path` in `drawing.cplus`.
+`examples/canvas_probe` draws every verb once so the choice can be checked by
+eye — an agent cannot see whether an arc swept the right way.
 
 ### A span is not a view either
 

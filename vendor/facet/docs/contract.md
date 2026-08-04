@@ -5,7 +5,7 @@ absent here does not exist: calling it is a compile error, never a
 silent no-op. What a backend cannot implement is recorded in that
 backend's own manifest, not here.
 
-391 declared verbs over 38 controls, plus the
+392 declared verbs over 38 controls, plus the
 shared band every element carries.
 
 
@@ -66,6 +66,7 @@ shared band every element carries.
 | `observe_move_hover_interaction` | callback + ctx | GraphicsView.MoveHoverInteraction |
 | `on_hover` | callback + ctx | GraphicsView.StartHoverInteraction |
 | `on_press` | callback + ctx | GraphicsView.StartInteraction |
+| `redraw()` | command | GraphicsView.Invalidate |
 
 ## carousel — MAUI CarouselView
 

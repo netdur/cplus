@@ -87,11 +87,44 @@ as a parallel `_ns` variant.
 ## Scope
 
 This guideline governs the imperative API surface of every package (stdlib, json,
-appkit, and the rest). The declarative, SwiftUI-style UI layer is `facet` and is
-out of scope here; adopting Swift's guidelines for imperative APIs is a separate
-concern from `facet`.
+appkit, and the rest), `facet` included. That last part is a correction: this
+section used to exempt `facet` as a declarative, SwiftUI-style layer. facet is
+not one. A control is a constructor plus a typed cursor, and every verb on that
+cursor is an imperative API in the sense this page means, so the guideline
+applies to it in full.
 
-## Current state (2026-06-24)
+## Current state (2026-08-03)
+
+- facet (pass done 2026-08-03): the contract's 362 verbs are generated against
+  this page rather than transcribed from MAUI. The rename table is
+  `tools/maui_map.py`'s `RENAME` (48 rows) and the MAP is the naming authority
+  — the generator only transcribes it. Three rules are enforced by a lint in
+  `tools/gen_contract.py` that fails the run: a boolean setter drops the
+  assertion prefix (`set_enabled(false)` / `is_enabled()`), a setter is at most
+  26 characters, and a trailing noun that names the type rather than the role
+  (`_mode` `_type` `_strategy` `_visibility` `_source` `_enabled`) is rejected.
+  Exceptions live in `ALLOWED` with a reason each; there are two.
+- facet's drawing vocabulary (added by hand 2026-08-04, from
+  `Microsoft.Maui.Graphics.ICanvas` and `PathF`): the lint does not reach it,
+  because the lint runs over the MAP and these rows were never in a manifest
+  the extraction read. Named against this page directly, and the four places
+  it bit are worth keeping:
+  - MAUI's two `DrawString` overloads are not overloads in C+, and collapsing
+    them with defaults would have been wrong — a point and a box are different
+    things. They are `draw_text(at:)` and `draw_text_block(box:)`, named for
+    the difference. `Rotate`'s two overloads DO collapse, into
+    `rotate(degrees:, around: Point = zero)`, because there the second form is
+    the first with a default.
+  - `StrokeDashPattern` + `StrokeDashOffset` became one
+    `set_stroke_dash(_, offset:)`: an offset without a pattern means nothing,
+    so two verbs let a caller write half a state.
+  - Trailing type-nouns went, as the lint would have required: `WindingMode` is
+    `Winding`, `BlendMode` is `Blend`, `set_blend(v:)`.
+  - Words facet already owns won over MAUI's: `StrokeSize` is
+    `set_stroke_width` and `Alpha` is `set_opacity`, because `bordered` and the
+    shared band already say it that way and one word should mean one thing.
+
+## Earlier state (2026-06-24)
 
 - stdlib: Swift-style naming and labeled parameters adopted. Consistency pass
   done (`Vec::set(value, at:)` matching `insert`; `swap_remove(at:)`;

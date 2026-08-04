@@ -51,6 +51,8 @@ import "facet/window_chrome" as chrome;
 import "objc/bridge" as bridge;
 import "quartzcore/quartzcore" as quartz;
 import "stdlib/status" as status;
+import "objc/synthesis" as synth;
+import "./drawing" as drawing;
 import "objc/runtime" as rt;
 import "appkit/appkit" as ak;
 
@@ -1047,19 +1049,189 @@ fn the_menu_bar_tier_builds_but_does_not_occupy_the_tree() {
     return;
 }
 
+// ---- canvas ------------------------------------------------------------------
+// The replay is checked AT THE PIXELS. A bitmap context is the same CGContext
+// `drawRect:` gets, so a test can hand `drawing::replay` one, run a recording
+// through it and read the bytes back — which is the only honest way to assert
+// that a drawing verb draws.
+
+#[link_name = "CGBitmapContextCreate"]
+extern fn bitmap_context_create(data: *u8, width: usize, height: usize,
+                                bits_per_component: usize, bytes_per_row: usize,
+                                space: *u8, info: u32) -> *u8;
+extern fn CGContextRelease(c: *u8);
+extern fn CGColorSpaceCreateDeviceRGB() -> *u8;
+extern fn CGColorSpaceRelease(cs: *u8);
+extern fn CGContextTranslateCTM(c: *u8, tx: f64, ty: f64);
+extern fn CGContextScaleCTM(c: *u8, sx: f64, sy: f64);
+
+// A 4x4 RGBA surface, set up the way AppKit sets one up for a flipped view:
+// y down, origin top-left. Returns a context at +1, or 0.
+//
+// kCGImageAlphaPremultipliedLast = 1, so the bytes are R,G,B,A per pixel, and
+// data row 0 is the TOP row — which is what makes the flip assertable below.
+fn test_surface(pixels: *u8) -> *u8 {
+    let space: *u8 = CGColorSpaceCreateDeviceRGB();
+    if space == (0 as *u8) { return 0 as *u8; }
+    let ctx: *u8 = bitmap_context_create(pixels, 4 as usize, 4 as usize,
+                                         8 as usize, 16 as usize, space, 1 as u32);
+    CGColorSpaceRelease(space);
+    if ctx == (0 as *u8) { return 0 as *u8; }
+    CGContextTranslateCTM(ctx, 0.0f64, 4.0f64);
+    CGContextScaleCTM(ctx, 1.0f64, -1.0f64);
+    return ctx;
+}
+
 #[test]
-fn a_canvas_is_a_view_with_nothing_to_draw_with() {
-    // facet declares NO drawing vocabulary: Drawable is fn(*u8, f64, f64) —
-    // ctx and a size, and nothing to draw WITH. MAUI's IDrawable.Draw takes an
-    // ICanvas; facet's dropped it, and the ledger has no path, fill or stroke.
-    // So this is a gap in the CONTRACT that no backend can close, and the
-    // backing view plus a size callback is the whole of what the signature
-    // supports.
+fn a_canvas_is_its_own_flipped_view_class() {
+    // The one control with a class of its own, because it is the one control
+    // that draws. Flipped like every other backing view, so the recording's
+    // coordinates need no adjustment anywhere.
     var c: core::Node = canvas::canvas(key: "c");
     let v: *u8 = views::create(0 as *u8, #addr_of(c));
     assert v != (0 as *u8);
-    assert ak::View::from_raw(v).wants_layer();
+    assert rt::msg_i8(v, rt::sel(#str_ptr("isFlipped\0"))) == (1 as i8);
+    assert synth::object_class(v) == drawing::canvas_view_class();
     views::view_release(v);
+    return;
+}
+
+#[test]
+fn a_recorded_fill_reaches_the_pixels_top_down() {
+    var px: [u8; 64] = [0u8; 64];
+    let ctx: *u8 = test_surface(#addr_of(px[0 as usize]));
+    assert ctx != (0 as *u8);
+
+    // The TOP half, in the canvas's own top-left coordinates.
+    var c: vocab::Canvas = vocab::Canvas::of(vocab::Size::of(4.0f64, 4.0f64));
+    let _a: status::Status = c.set_fill(vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64));
+    let _b: status::Status = c.fill_rect(vocab::Rect::of(0.0f64, 0.0f64, 4.0f64, 2.0f64));
+    drawing::replay(ctx, #addr_of(c));
+
+    // Row 0 is the top of the image, so a fill at y=0 lands there. This is the
+    // whole flip contract in one assertion.
+    assert px[0 as usize] == (255 as u8);        // row 0, red
+    assert px[1 as usize] == (0 as u8);
+    assert px[16 as usize] == (255 as u8);       // row 1, red
+    assert px[32 as usize] == (0 as u8);         // row 2, untouched
+    assert px[48 as usize] == (0 as u8);         // row 3, untouched
+    CGContextRelease(ctx);
+    return;
+}
+
+#[test]
+fn a_clip_stops_the_paint_and_restore_puts_it_back() {
+    var px: [u8; 64] = [0u8; 64];
+    let ctx: *u8 = test_surface(#addr_of(px[0 as usize]));
+    assert ctx != (0 as *u8);
+
+    var c: vocab::Canvas = vocab::Canvas::of(vocab::Size::of(4.0f64, 4.0f64));
+    let _a: status::Status = c.set_fill(vocab::Color::rgba(0.0f64, 1.0f64, 0.0f64));
+    let _b: status::Status = c.save();
+    let _d: status::Status = c.clip_rect(vocab::Rect::of(0.0f64, 0.0f64, 4.0f64, 1.0f64));
+    let _e: status::Status = c.fill_rect(vocab::Rect::of(0.0f64, 0.0f64, 4.0f64, 4.0f64));
+    let _f: status::Status = c.restore();
+    // Outside the clip now that it is restored — and a DIFFERENT colour, so a
+    // clip that silently did nothing cannot pass this.
+    let _g: status::Status = c.set_fill(vocab::Color::rgba(0.0f64, 0.0f64, 1.0f64));
+    let _h: status::Status = c.fill_rect(vocab::Rect::of(0.0f64, 3.0f64, 4.0f64, 1.0f64));
+    drawing::replay(ctx, #addr_of(c));
+
+    assert px[1 as usize] == (255 as u8);        // row 0 green, inside the clip
+    assert px[17 as usize] == (0 as u8);         // row 1 clipped out
+    assert px[50 as usize] == (255 as u8);       // row 3 blue, after the restore
+    CGContextRelease(ctx);
+    return;
+}
+
+#[test]
+fn a_gradient_brush_paints_a_different_colour_at_each_end() {
+    var px: [u8; 64] = [0u8; 64];
+    let ctx: *u8 = test_surface(#addr_of(px[0 as usize]));
+    assert ctx != (0 as *u8);
+
+    // 90 degrees: top to bottom in a y-down space.
+    var c: vocab::Canvas = vocab::Canvas::of(vocab::Size::of(4.0f64, 4.0f64));
+    let _a: status::Status = c.set_fill_brush(
+        vocab::Brush { start: vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64),
+                       end: vocab::Color::rgba(0.0f64, 0.0f64, 1.0f64),
+                       angle: 90.0f64, is_gradient: true },
+        across: vocab::Rect::sized(4.0f64, 4.0f64));
+    let _b: status::Status = c.fill_rect(vocab::Rect::sized(4.0f64, 4.0f64));
+    drawing::replay(ctx, #addr_of(c));
+
+    // Red at one end, blue at the other. Which end is which is the angle's
+    // business; that they DIFFER is the gradient's.
+    assert px[0 as usize] != px[48 as usize];
+    assert px[2 as usize] != px[50 as usize];
+    CGContextRelease(ctx);
+    return;
+}
+
+#[test]
+fn a_path_fill_reaches_the_pixels() {
+    var px: [u8; 64] = [0u8; 64];
+    let ctx: *u8 = test_surface(#addr_of(px[0 as usize]));
+    assert ctx != (0 as *u8);
+
+    var p: vocab::Path = vocab::Path::new();
+    let _a: status::Status = p.move_to(vocab::Point::of(0.0f64, 0.0f64));
+    let _b: status::Status = p.line_to(vocab::Point::of(4.0f64, 0.0f64));
+    let _d: status::Status = p.line_to(vocab::Point::of(4.0f64, 4.0f64));
+    let _e: status::Status = p.line_to(vocab::Point::of(0.0f64, 4.0f64));
+    let _f: status::Status = p.close();
+
+    var c: vocab::Canvas = vocab::Canvas::of(vocab::Size::of(4.0f64, 4.0f64));
+    let _g: status::Status = c.set_fill(vocab::Color::rgba(1.0f64, 1.0f64, 1.0f64));
+    let _h: status::Status = c.fill_path(#addr_of(p));
+    drawing::replay(ctx, #addr_of(c));
+
+    assert px[0 as usize] == (255 as u8);
+    assert px[63 as usize] == (255 as u8);       // the last pixel's alpha
+    CGContextRelease(ctx);
+    return;
+}
+
+#[test]
+fn text_reaches_the_pixels() {
+    var px: [u8; 64] = [0u8; 64];
+    let ctx: *u8 = test_surface(#addr_of(px[0 as usize]));
+    assert ctx != (0 as *u8);
+
+    var c: vocab::Canvas = vocab::Canvas::of(vocab::Size::of(4.0f64, 4.0f64));
+    let _a: status::Status = c.set_text_color(vocab::Color::rgba(1.0f64, 1.0f64, 1.0f64));
+    let _b: status::Status = c.set_font(size: 12.0f64);
+    let _d: status::Status = c.draw_text_block("MMMM", box: vocab::Rect::sized(4.0f64, 4.0f64));
+    drawing::replay(ctx, #addr_of(c));
+
+    // Some ink landed. Which glyphs, at which subpixel, is AppKit's business
+    // and not ours to assert — the standing rule is to test our bindings, not
+    // Apple's text engine.
+    var lit: bool = false;
+    var i: usize = 0 as usize;
+    while i < (64 as usize) {
+        if px[i] != (0 as u8) { lit = true; }
+        i = i +% (1 as usize);
+    }
+    assert lit;
+    CGContextRelease(ctx);
+    return;
+}
+
+#[test]
+fn a_drawing_that_records_nothing_draws_nothing() {
+    var px: [u8; 64] = [0u8; 64];
+    let ctx: *u8 = test_surface(#addr_of(px[0 as usize]));
+    assert ctx != (0 as *u8);
+    var c: vocab::Canvas = vocab::Canvas::of(vocab::Size::of(4.0f64, 4.0f64));
+    drawing::replay(ctx, #addr_of(c));
+    // And neither does a null one, which is the path a canvas with no Drawable
+    // takes every time it is asked to draw.
+    drawing::replay(ctx, 0 as *vocab::Canvas);
+    drawing::replay(0 as *u8, #addr_of(c));
+    assert px[0 as usize] == (0 as u8);
+    assert px[63 as usize] == (0 as u8);
+    CGContextRelease(ctx);
     return;
 }
 

@@ -2284,6 +2284,218 @@ fn a_canvas_carries_its_drawable() {
     return;
 }
 
+// ---- the drawing vocabulary --------------------------------------------------
+// A recorded drawing is readable, so every one of these runs with NO BACKEND.
+// That is the whole argument for recording rather than calling through: a
+// drawing is testable the way a tree is.
+
+fn draw_two_shapes(ctx: *u8, into: *vocab::Canvas, dirty: vocab::Rect) {
+    { (*into).set_fill(vocab::Color::system_red()) };
+    { (*into).fill_rect(vocab::Rect::of(1.0f64, 2.0f64, 3.0f64, 4.0f64)) };
+    { (*into).set_stroke_width(2.0f64) };
+    { (*into).draw_line(from: vocab::Point::of(0.0f64, 0.0f64),
+                        to: vocab::Point::of(10.0f64, 20.0f64)) };
+    return;
+}
+
+#[test]
+fn a_drawable_records_its_commands_in_order() {
+    var c: vocab::Canvas = vocab::Canvas::of(vocab::Size::of(100.0f64, 50.0f64));
+    let d: vocab::Drawable = vocab::Drawable::of(draw_two_shapes);
+    assert d.is_none() == false;
+    let f: fn(*u8, *vocab::Canvas, vocab::Rect) = d.draw;
+    f(d.ctx, #addr_of(c), vocab::Rect::sized(100.0f64, 50.0f64));
+
+    assert c.count() == (4 as usize);
+    assert c.at(0 as usize).op == vocab::DrawOp::SetFill;
+    assert c.at(1 as usize).op == vocab::DrawOp::FillRect;
+    assert c.at(2 as usize).op == vocab::DrawOp::SetStrokeWidth;
+    assert c.at(3 as usize).op == vocab::DrawOp::DrawLine;
+
+    // The geometry survives the round trip, in the fields the readers name.
+    assert c.at(1 as usize).bounds.x == 1.0f64;
+    assert c.at(1 as usize).bounds.height == 4.0f64;
+    assert c.at(2 as usize).stroke_width() == 2.0f64;
+    assert c.at(3 as usize).to().y == 20.0f64;
+    // Reading past the end answers a command that does nothing, so a backend
+    // walking the list needs no bounds check of its own.
+    assert c.at(99 as usize).op == vocab::DrawOp::None;
+    return;
+}
+
+#[test]
+fn a_canvas_knows_the_surface_it_was_given() {
+    var c: vocab::Canvas = vocab::Canvas::of(vocab::Size::of(320.0f64, 200.0f64),
+                                             scale: 2.0f64);
+    assert c.size().width == 320.0f64;
+    assert c.display_scale() == 2.0f64;
+    assert c.is_empty();
+    let _e: status::Status = c.save();
+    assert c.is_empty() == false;
+    c.clear();
+    // Cleared, not destroyed: the buffers stay and the surface it draws onto
+    // is unchanged, which is what a redraw wants.
+    assert c.is_empty();
+    assert c.size().width == 320.0f64;
+    return;
+}
+
+#[test]
+fn a_path_records_every_segment_kind() {
+    var p: vocab::Path = vocab::Path::new();
+    assert p.is_empty();
+    let _a: status::Status = p.move_to(vocab::Point::of(0.0f64, 0.0f64));
+    let _b: status::Status = p.line_to(vocab::Point::of(10.0f64, 0.0f64));
+    let _c: status::Status = p.quad_to(vocab::Point::of(20.0f64, 10.0f64),
+                                       control: vocab::Point::of(15.0f64, 0.0f64));
+    let _d: status::Status = p.curve_to(vocab::Point::of(30.0f64, 20.0f64),
+                                        control1: vocab::Point::of(22.0f64, 15.0f64),
+                                        control2: vocab::Point::of(26.0f64, 20.0f64));
+    let _e: status::Status = p.add_arc(vocab::Rect::of(0.0f64, 0.0f64, 40.0f64, 40.0f64),
+                                       from: 0.0f64, to: 90.0f64);
+    let _f: status::Status = p.add_rounded_rect(vocab::Rect::sized(10.0f64, 10.0f64),
+                                                corner_radius: 3.0f64);
+    let _g: status::Status = p.add_circle(center: vocab::Point::of(50.0f64, 50.0f64),
+                                          radius: 5.0f64);
+    let _h: status::Status = p.close();
+
+    assert p.count() == (8 as usize);
+    assert p.at(0 as usize).op == vocab::PathOp::Move;
+    assert p.at(2 as usize).control1.x == 15.0f64;
+    assert p.at(3 as usize).control2.y == 20.0f64;
+    assert p.at(4 as usize).end_angle() == 90.0f64;
+    assert p.at(4 as usize).is_clockwise;
+    assert p.at(5 as usize).corner_radius() == 3.0f64;
+    // A circle IS the ellipse whose box is square about the centre.
+    assert p.at(6 as usize).op == vocab::PathOp::Ellipse;
+    assert p.at(6 as usize).bounds.x == 45.0f64;
+    assert p.at(6 as usize).bounds.width == 10.0f64;
+    assert p.at(7 as usize).op == vocab::PathOp::Close;
+    return;
+}
+
+#[test]
+fn a_recorded_path_is_a_copy_the_caller_keeps_building_on() {
+    var c: vocab::Canvas = vocab::Canvas::of(vocab::Size::of(10.0f64, 10.0f64));
+    var p: vocab::Path = vocab::Path::new();
+    let _a: status::Status = p.move_to(vocab::Point::of(1.0f64, 1.0f64));
+    let _b: status::Status = c.fill_path(#addr_of(p), winding: vocab::Winding::EvenOdd);
+    // The caller goes on using its own path; the recording does not follow.
+    let _d: status::Status = p.line_to(vocab::Point::of(9.0f64, 9.0f64));
+    assert p.count() == (2 as usize);
+
+    let cmd: vocab::DrawCommand = c.at(0 as usize);
+    assert cmd.op == vocab::DrawOp::FillPath;
+    assert cmd.winding == vocab::Winding::EvenOdd;
+    assert cmd.has_aux();
+    let recorded: *vocab::Path = c.path(cmd.aux as usize);
+    assert recorded != (0 as *vocab::Path);
+    assert { (*recorded).count() } == (1 as usize);
+    return;
+}
+
+#[test]
+fn a_null_path_is_refused_rather_than_recorded() {
+    var c: vocab::Canvas = vocab::Canvas::of(vocab::Size::of(10.0f64, 10.0f64));
+    assert c.draw_path(0 as *vocab::Path) == status::Status::InvalidInput;
+    assert c.draw_spans(0 as *vocab::Spans, box: vocab::Rect::zero())
+           == status::Status::InvalidInput;
+    assert c.is_empty();
+    return;
+}
+
+#[test]
+fn the_side_tables_carry_what_a_command_cannot() {
+    var c: vocab::Canvas = vocab::Canvas::of(vocab::Size::of(10.0f64, 10.0f64));
+    let _a: status::Status = c.set_font(family: "Menlo", size: 13.0f64,
+                                        weight: vocab::FontWeight::Bold, italic: true);
+    let _b: status::Status = c.set_stroke_dash(vocab::Dashes::of(4.0f64, 2.0f64),
+                                                offset: 1.5f64);
+    let _d: status::Status = c.set_fill_brush(
+        vocab::Brush { start: vocab::Color::system_red(), end: vocab::Color::system_blue(),
+                       angle: 45.0f64, is_gradient: true },
+        across: vocab::Rect::sized(10.0f64, 10.0f64));
+    let _e: status::Status = c.draw_image("logo", box: vocab::Rect::sized(8.0f64, 8.0f64));
+
+    let font: vocab::DrawCommand = c.at(0 as usize);
+    assert c.text(font.aux as usize) == "Menlo";
+    assert font.font_size() == 13.0f64;
+    assert font.is_italic;
+    assert font.weight == vocab::FontWeight::Bold;
+
+    let dash: vocab::DrawCommand = c.at(1 as usize);
+    assert c.dashes(dash.aux as usize).run(0 as usize) == 4.0f64;
+    assert dash.dash_offset() == 1.5f64;
+
+    let brush: vocab::DrawCommand = c.at(2 as usize);
+    assert c.brush(brush.aux as usize).is_gradient;
+    assert c.brush(brush.aux as usize).angle == 45.0f64;
+
+    // The image and the font both index the text table, and each gets its own
+    // row — a shared table is not a shared slot.
+    assert c.text(c.at(3 as usize).aux as usize) == "logo";
+    return;
+}
+
+#[test]
+fn recorded_spans_are_copied_run_for_run() {
+    var runs: vocab::Spans = vocab::Spans::new();
+    let _a: status::Status = runs.add(vocab::TextSpan::of("bold ", font_weight: vocab::FontWeight::Bold));
+    let _b: status::Status = runs.add_text("plain");
+
+    var c: vocab::Canvas = vocab::Canvas::of(vocab::Size::of(50.0f64, 20.0f64));
+    let _d: status::Status = c.draw_spans(#addr_of(runs), box: vocab::Rect::sized(50.0f64, 20.0f64));
+
+    let cmd: vocab::DrawCommand = c.at(0 as usize);
+    assert cmd.op == vocab::DrawOp::DrawSpans;
+    let sp: *vocab::Spans = c.spans(cmd.aux as usize);
+    assert sp != (0 as *vocab::Spans);
+    assert { (*sp).count() } == (2 as usize);
+    let first: *vocab::TextSpan = { (*sp).at(0 as usize) };
+    assert { (*first).view() } == "bold ";
+    assert { (*first).font_weight } == vocab::FontWeight::Bold;
+    return;
+}
+
+#[test]
+fn the_state_stack_and_the_transform_record_their_numbers() {
+    var c: vocab::Canvas = vocab::Canvas::of(vocab::Size::of(10.0f64, 10.0f64));
+    let _a: status::Status = c.save();
+    let _b: status::Status = c.rotate(30.0f64, around: vocab::Point::of(5.0f64, 5.0f64));
+    let _d: status::Status = c.concat_transform(vocab::Transform::of(
+        2.0f64, 0.0f64, 0.0f64, 2.0f64, 7.0f64, 9.0f64));
+    let _e: status::Status = c.restore();
+
+    assert c.at(1 as usize).degrees() == 30.0f64;
+    assert c.at(1 as usize).pivot().y == 5.0f64;
+    // Six numbers in a fixed-size command, and the reader is the only thing
+    // that has to know where they went.
+    let t: vocab::Transform = c.at(2 as usize).transform();
+    assert t.a == 2.0f64;
+    assert t.d == 2.0f64;
+    assert t.tx == 7.0f64;
+    assert t.ty == 9.0f64;
+    assert c.at(3 as usize).op == vocab::DrawOp::Restore;
+    return;
+}
+
+#[test]
+fn a_canvas_carries_its_drawable_and_asks_to_be_redrawn() {
+    var root: facet::Node = canvas::canvas(key: "c", drawable: vocab::Drawable::of(draw_two_shapes));
+    match canvas::find("c", within: #addr_of(root)) {
+        option::Option[canvas::Canvas]::Some(x) => {
+            assert x.drawable().is_none() == false;
+            // GraphicsView.Invalidate. It writes nothing — the drawing is the
+            // Drawable's — and raises the bit the backend watches.
+            facet::clear_dirty(#addr_of(root));
+            let _c: canvas::Canvas = x.redraw();
+            assert (facet::dirty_of(#addr_of(root)) & canvas::P_REDRAW) != (0 as u64);
+        }
+        option::Option[canvas::Canvas]::None => { assert false; }
+    }
+    return;
+}
+
 #[test]
 fn zstack_overlaps_its_children() {
     var b: facet::Builder = facet::Builder::new();

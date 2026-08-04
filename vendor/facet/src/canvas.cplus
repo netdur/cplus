@@ -18,6 +18,7 @@ import "./mount" as mount;
 // top 16 bits of the word are the shared band's (props::C_*).
 
 const P_DRAWABLE: u64 = 1u64;
+const P_REDRAW: u64 = 2u64;
 
 // ---- build -------------------------------------------------------------
 // Typed by the parameter list: a verb another control owns is not a
@@ -101,6 +102,14 @@ impl Canvas {
         let p: *props::CanvasProps = this._props();
         if p == (0 as *props::CanvasProps) { return vocab::Drawable::none(); }
         return { (*p).drawable };
+    }
+
+    // GraphicsView.Invalidate
+    fn redraw(this) -> Canvas {
+        let p: *props::CanvasProps = this._props();
+        if p == (0 as *props::CanvasProps) { return this; }
+        core::touch(this._p, P_REDRAW);
+        return this;
     }
 
     // The flex node this cursor points at. The DOM division, and the
