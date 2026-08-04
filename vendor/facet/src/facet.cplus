@@ -6,6 +6,7 @@
 
 import "flex_layout/flex_layout" as flex;
 import "stdlib/text" as text;
+import "stdlib/str" as _;
 import "stdlib/option" as option;
 import "stdlib/status" as status;
 import "stdlib/box" as box;
@@ -17,14 +18,72 @@ type Node = flex::Node;
 type Frame = flex::Frame;
 // What facet hangs off each flex node.
 struct Data {
-    key: str,               // set once at build; literal or interned
+    // OWNED, not a `str` view. There are two kinds of key and they have
+    // different lifetimes:
+    //
+    //   an ADDRESS — what `find("save")` resolves. The web calls this an id.
+    //     Usually a literal, but not always: iris builds 25 of them by
+    //     interpolation ("board:card:${id}").
+    //   an IDENTITY — which row is which across insert, remove and reorder.
+    //     ALWAYS computed, because it is derived from the data. `TreeNode.id`
+    //     is one. When `list` and `collection` get theirs it is `id` too —
+    //     NEVER `key`.
+    //
+    // The two look swapped if you come from the web, where `id` addresses and
+    // `key` identifies a list row. The web is the outlier: SwiftUI has
+    // `Identifiable.id`, UIKit has `ItemIdentifier`, RecyclerView has
+    // `getItemId`. facet targets native, so identity is `id`.
+    //
+    // And `key` is not only facet's: a mounted node's key becomes the agent
+    // surface's address AND the platform's accessibilityIdentifier. One token,
+    // three jobs, one name.
+    //
+    // This is the address. It was `str`, which is a borrowed `{ptr, len}` —
+    // sound for a literal, a use-after-free for anything computed, and the
+    // borrow checker does not catch the escape across a call boundary
+    // (verified: a `str` stored from a Text that then drops compiles, runs and
+    // reads freed bytes). Interning was considered and rejected: it buys a
+    // pointer-compare `find` at the cost of a global table, hashing, thread
+    // safety and an eviction policy, none of which a correctness fix needs.
+    key: text::Text,
+    // Empty unless this node fills a parent's named slot. Owned for the same
+    // reason `key` is: `set_slot` takes an arbitrary `str`, and a `str` field
+    // outliving the bytes it views is a use-after-free the checker cannot see
+    // through the raw-pointer store that writes it.
+    slot: text::Text,
     kind: u32,              // which control — the tag the cast is checked against
     opaque props: *u8,      // owned *<Control>Props
     release: fn(*u8),       // frees `props` with the right type
     common: props::CommonProps,  // the band every node carries — inline
     opaque view: *u8,       // native view; 0 until a backend mounts it
+    // M1: who releases the native view. `props` frees through `release`,
+    // `gestures` through `gestures_release`; the view gets the same pair.
+    // The backend sets both when it mounts (Renderer.view_release rides in
+    // with the created view); node teardown then cannot leak the view.
+    view_release: fn(*u8),
     dirty: u64,             // props changed since the backend last synced
+    // What the platform learns first. facet declares the reads; a backend
+    // writes them through set_focused / set_attached / set_window.
+    is_focused: bool,
+    is_attached: bool,
+    window: vocab::WindowRef,
+    batch: i64,             // begin_updates depth; 0 means "flush on write"
+    // Raw input, owned, NULL until a node asks for it — see gestures.cplus.
+    // One pointer rather than 17 handlers inline, so a tree that uses no
+    // gestures pays 16 bytes a node and never allocates.
+    opaque gestures: *u8,
+    gestures_release: fn(*u8),
 }
+
+// A gesture set changed. In the common band because gestures ride on Node,
+// not on any one control.
+const C_GESTURES: u64 = 2305843009213693952u64;
+
+// Keys beginning with `@` are facet's own: a named slot is a child under one.
+// An application's key never starts with `@`, so the two spaces never meet.
+const SLOT_PREFIX: str = "@";
+
+fn no_release(p: *u8) { return; }
 
 // flex calls this on node drop, on detach, and when an attach replaces it.
 fn release_data(p: *u8) {
@@ -32,16 +91,57 @@ fn release_data(p: *u8) {
     let d: *Data = p as *Data;
     let f: fn(*u8) = { (*d).release };
     if f != (0 as fn(*u8)) { f({ (*d).props }); }
+    // M1: the native view, through the release the backend paired with it.
+    let vp: *u8 = { (*d).view };
+    if vp != (0 as *u8) {
+        let vr: fn(*u8) = { (*d).view_release };
+        if vr != (0 as fn(*u8)) { vr(vp); }
+    }
+    let gp: *u8 = { (*d).gestures };
+    if gp != (0 as *u8) {
+        let gr: fn(*u8) = { (*d).gestures_release };
+        if gr != (0 as fn(*u8)) { gr(gp); }
+    }
     let _b: box::Box[Data] = box::from_raw::[Data](p);
     return;
+}
+
+// A node with no control behind it: a container, a spacer, anything flex built.
+// facet still needs Data on it — the shared band and gestures live there — so
+// the kind says "no props" rather than the node having no Data at all.
+const K_NODE: u32 = 0u32;
+
+// Give `n` facet Data if it has none, and hand it back either way.
+//
+// Without this, every container was a silent no-op: `flex::column(b)` builds a
+// node with nothing attached, so `set_opacity`, `set_visible` and `.gesture()`
+// all found a null Data and returned. They reported success and did nothing.
+fn ensure_data(n: *Node) -> *Data {
+    if n == (0 as *Node) { return 0 as *Data; }
+    let d: *Data = { (*n).data() };
+    if d != (0 as *Data) { return d; }
+    let fresh: Data = Data { key: text::new(), slot: text::new(), kind: K_NODE, props: 0 as *u8,
+                             release: no_release, common: props::CommonProps::new(),
+                             view: 0 as *u8, view_release: no_release, dirty: 0u64,
+                             is_focused: false, is_attached: false,
+                             window: vocab::WindowRef::none(), batch: 0 as i64,
+                             gestures: 0 as *u8, gestures_release: no_release };
+    match box::new::[Data](fresh) {
+        option::Option[box::Box[Data]]::Some(b) => { { (*n).attach(b.into_raw(), release_data) }; }
+        option::Option[box::Box[Data]]::None => { }
+    }
+    return { (*n).data() };
 }
 
 // Build a node carrying `props` under `key`. The one place Data is created.
 fn node_with(key: str, kind: u32, props_ptr: *u8, release: fn(*u8)) -> Node {
     var n: Node = flex::Node::new();
-    let d: Data = Data { key: key, kind: kind, props: props_ptr,
+    let d: Data = Data { key: text::from_str(key), slot: text::new(), kind: kind, props: props_ptr,
                          release: release, common: props::CommonProps::new(),
-                         view: 0 as *u8, dirty: 0u64 };
+                         view: 0 as *u8, view_release: no_release, dirty: 0u64,
+                         is_focused: false, is_attached: false,
+                         window: vocab::WindowRef::none(), batch: 0 as i64,
+                         gestures: 0 as *u8, gestures_release: no_release };
     match box::new::[Data](d) {
         option::Option[box::Box[Data]]::Some(b) => { n.attach(b.into_raw(), release_data); }
         option::Option[box::Box[Data]]::None => { }
@@ -58,28 +158,102 @@ impl flex::Node {
         };
     }
 
+    // A view of the node's OWN bytes, so it lives exactly as long as the node.
     fn key(this) -> str {
         let d: *Data = this.data();
         if d == (0 as *Data) { return ""; }
-        return { (*d).key };
+        return { (*d).key.view() };
     }
 }
 
 // Mark a prop changed. The ONE seam from a setter to the backend: no
 // per-verb function pointer, no registrar.
+//
+// M5: a write outside a batch requests a sync through the hook the mount
+// module installs (the backend coalesces requests on its run loop); writes
+// inside begin_updates/end_updates stay silent until the closing C_FLUSH
+// touch lands at depth zero. M6: the tree is main-thread-owned — when a
+// renderer is installed the write asserts it is on the thread that
+// installed it, because a worker writing the tree is a data race that
+// otherwise surfaces as a distant, unattributable crash.
+static SYNC_REQUEST_FN: fn() = #zero::[fn()]();
+fn set_sync_request_fn(f: fn()) { SYNC_REQUEST_FN = f; return; }
+
+static MAIN_THREAD_ID: u64 = 0 as u64;
+fn set_main_thread_id(id: u64) { MAIN_THREAD_ID = id; return; }
+
+#[link_name = "pthread_self"]
+extern fn pthread_self_raw() -> u64;
+
+fn on_ui_thread() -> bool {
+    if MAIN_THREAD_ID == (0 as u64) { return true; }
+    return { pthread_self_raw() } == MAIN_THREAD_ID;
+}
+
 fn touch(n: *Node, bit: u64) {
     if n == (0 as *Node) { return; }
     let d: *Data = { (*n).data() };
     if d == (0 as *Data) { return; }
+    assert on_ui_thread();
     { (*d).dirty = { (*d).dirty } | bit };
+    if { (*d).batch } == (0 as i64) {
+        let f: fn() = SYNC_REQUEST_FN;
+        if f != (0 as fn()) { f(); }
+    }
+    return;
+}
+
+// Backend/mount door: pair the native view with its release. Symmetric with
+// `attach`'s (payload, release) — see M1 on the struct.
+fn set_view(n: *Node, v: *u8, release: fn(*u8)) {
+    let d: *Data = ensure_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).view = v };
+    { (*d).view_release = release };
+    return;
+}
+
+fn view_of(n: *Node) -> *u8 {
+    if n == (0 as *Node) { return 0 as *u8; }
+    let d: *Data = { (*n).data() };
+    if d == (0 as *Data) { return 0 as *u8; }
+    return { (*d).view };
+}
+
+// The control kind tag — what a backend's create/apply dispatch on.
+// K_NODE (0) is a bare container.
+fn kind_of(n: *Node) -> u32 {
+    if n == (0 as *Node) { return K_NODE; }
+    let d: *Data = { (*n).data() };
+    if d == (0 as *Data) { return K_NODE; }
+    return { (*d).kind };
+}
+
+// The dirty word, read and cleared by the sync walk.
+fn dirty_of(n: *Node) -> u64 {
+    if n == (0 as *Node) { return 0 as u64; }
+    let d: *Data = { (*n).data() };
+    if d == (0 as *Data) { return 0 as u64; }
+    return { (*d).dirty };
+}
+
+fn clear_dirty(n: *Node) {
+    if n == (0 as *Node) { return; }
+    let d: *Data = { (*n).data() };
+    if d == (0 as *Data) { return; }
+    { (*d).dirty = 0 as u64 };
     return;
 }
 
 // ---- the shared band --------------------------------------------------------
-// The 21 verbs every element carries live HERE, once, operating on Data.common.
+// The verbs every element carries live HERE, once, operating on Data.common.
 // Each control cursor gets a generated one-line forward, so a call site is
 // always typed (`b.set_opacity(...)` returns Button) and no generic element
 // type exists anywhere in the package.
+//
+// The ledger's shared band is 41 rows; 36 are below and the 5 that are not are
+// recorded in gen_contract.DEFERRED_SHARED with the reason. tools/gen_contract
+// fails the run on a row that is in neither list.
 
 fn set_opacity(n: *Node, v: f64) {
     let d: *Data = node_data(n);
@@ -137,12 +311,120 @@ fn background_color(n: *Node) -> vocab::Color {
     return { (*d).common.background_color };
 }
 
+fn set_background(n: *Node, v: vocab::Brush) {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).common.background = v };
+    touch(n, props::C_BACKGROUND);
+    return;
+}
+
+fn background(n: *Node) -> vocab::Brush {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return vocab::Brush::none(); }
+    return { (*d).common.background };
+}
+
+fn set_shadow(n: *Node, v: vocab::Shadow) {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).common.shadow = v };
+    touch(n, props::C_SHADOW);
+    return;
+}
+
+fn shadow(n: *Node) -> vocab::Shadow {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return vocab::Shadow::none(); }
+    return { (*d).common.shadow };
+}
+
+fn set_clip(n: *Node, v: vocab::Shape) {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).common.clip = v };
+    touch(n, props::C_CLIP);
+    return;
+}
+
+fn clip(n: *Node) -> vocab::Shape {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return vocab::Shape::none(); }
+    return { (*d).common.clip };
+}
+
+fn set_input_transparent(n: *Node, v: bool) {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).common.input_transparent = v };
+    touch(n, props::C_INPUT_TRANSPARENT);
+    return;
+}
+
+fn input_transparent(n: *Node) -> bool {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return false; }
+    return { (*d).common.input_transparent };
+}
+
+fn set_flow_direction(n: *Node, v: vocab::FlowDirection) {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).common.flow_direction = v };
+    touch(n, props::C_FLOW_DIRECTION);
+    return;
+}
+
+fn flow_direction(n: *Node) -> vocab::FlowDirection {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return vocab::FlowDirection::MatchParent; }
+    return { (*d).common.flow_direction };
+}
+
+// ---- the transform band -----------------------------------------------------
+// One dirty bit for the lot: a backend rebuilds the whole transform from these
+// nine numbers anyway, so nine bits would buy it nothing.
+
 fn set_rotation(n: *Node, v: f64) {
     let d: *Data = node_data(n);
     if d == (0 as *Data) { return; }
     { (*d).common.rotation = v };
     touch(n, props::C_TRANSFORM);
     return;
+}
+
+fn rotation(n: *Node) -> f64 {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return 0.0f64; }
+    return { (*d).common.rotation };
+}
+
+fn set_rotation_x(n: *Node, v: f64) {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).common.rotation_x = v };
+    touch(n, props::C_TRANSFORM);
+    return;
+}
+
+fn rotation_x(n: *Node) -> f64 {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return 0.0f64; }
+    return { (*d).common.rotation_x };
+}
+
+fn set_rotation_y(n: *Node, v: f64) {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).common.rotation_y = v };
+    touch(n, props::C_TRANSFORM);
+    return;
+}
+
+fn rotation_y(n: *Node) -> f64 {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return 0.0f64; }
+    return { (*d).common.rotation_y };
 }
 
 fn set_scale(n: *Node, v: f64) {
@@ -153,13 +435,395 @@ fn set_scale(n: *Node, v: f64) {
     return;
 }
 
-// Reads flex already owns: forward, store nothing.
+fn scale(n: *Node) -> f64 {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return 1.0f64; }
+    return { (*d).common.scale };
+}
+
+fn set_scale_x(n: *Node, v: f64) {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).common.scale_x = v };
+    touch(n, props::C_TRANSFORM);
+    return;
+}
+
+fn scale_x(n: *Node) -> f64 {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return 1.0f64; }
+    return { (*d).common.scale_x };
+}
+
+fn set_scale_y(n: *Node, v: f64) {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).common.scale_y = v };
+    touch(n, props::C_TRANSFORM);
+    return;
+}
+
+fn scale_y(n: *Node) -> f64 {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return 1.0f64; }
+    return { (*d).common.scale_y };
+}
+
+fn set_translation_x(n: *Node, v: f64) {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).common.translation_x = v };
+    touch(n, props::C_TRANSFORM);
+    return;
+}
+
+fn translation_x(n: *Node) -> f64 {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return 0.0f64; }
+    return { (*d).common.translation_x };
+}
+
+fn set_translation_y(n: *Node, v: f64) {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).common.translation_y = v };
+    touch(n, props::C_TRANSFORM);
+    return;
+}
+
+fn translation_y(n: *Node) -> f64 {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return 0.0f64; }
+    return { (*d).common.translation_y };
+}
+
+fn set_anchor_x(n: *Node, v: f64) {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).common.anchor_x = v };
+    touch(n, props::C_TRANSFORM);
+    return;
+}
+
+fn anchor_x(n: *Node) -> f64 {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return 0.5f64; }
+    return { (*d).common.anchor_x };
+}
+
+fn set_anchor_y(n: *Node, v: f64) {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).common.anchor_y = v };
+    touch(n, props::C_TRANSFORM);
+    return;
+}
+
+fn anchor_y(n: *Node) -> f64 {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return 0.5f64; }
+    return { (*d).common.anchor_y };
+}
+
+// z order is flex's style field. Forward to it rather than keep a second copy
+// that the layout engine would then have to be told about.
+fn set_z_index(n: *Node, v: i64) {
+    if n == (0 as *Node) { return; }
+    { (*n).set_z_index(v as i32) };
+    return;
+}
+
+fn z_index(n: *Node) -> i64 {
+    if n == (0 as *Node) { return 0 as i64; }
+    return { (*n).z_index() } as i64;
+}
+
+// ---- live layout ------------------------------------------------------------
+// flex's own fluent modifiers (`.width(120.0)`, `.padding(8.0)`) take `this`
+// BY VALUE, so they belong to the description and cannot be called through a
+// cursor's pointer. These are the same words as live setters.
+//
+// The names are flex's, deliberately: this is not a second layout vocabulary,
+// it is the same one reachable after mount. Anything not here — per-edge
+// padding, grid, position type, breakpoints — is reached with `node()`, which
+// every cursor has.
+//
+// ONE TRAP, and it is the same one the DOM has with `style.width` versus
+// `offsetWidth`: `set_width` writes the STYLE, `width()` reads the LAID-OUT
+// frame. They agree only after a layout pass.
+
+fn set_grow(n: *Node, v: f64) {
+    if n == (0 as *Node) { return; }
+    { (*n).set_flex_grow(v) };
+    return;
+}
+
+fn set_shrink(n: *Node, v: f64) {
+    if n == (0 as *Node) { return; }
+    { (*n).set_flex_shrink(v) };
+    return;
+}
+
+fn set_width(n: *Node, v: f64) {
+    if n == (0 as *Node) { return; }
+    { (*n).set_width(flex::StyleLength::points(v)) };
+    return;
+}
+
+fn set_height(n: *Node, v: f64) {
+    if n == (0 as *Node) { return; }
+    { (*n).set_height(flex::StyleLength::points(v)) };
+    return;
+}
+
+fn set_width_percent(n: *Node, v: f64) {
+    if n == (0 as *Node) { return; }
+    { (*n).set_width(flex::StyleLength::percent(v)) };
+    return;
+}
+
+fn set_height_percent(n: *Node, v: f64) {
+    if n == (0 as *Node) { return; }
+    { (*n).set_height(flex::StyleLength::percent(v)) };
+    return;
+}
+
+fn set_padding(n: *Node, v: f64) {
+    if n == (0 as *Node) { return; }
+    { (*n).set_padding(flex::Edge::All, flex::StyleLength::points(v)) };
+    return;
+}
+
+fn set_margin(n: *Node, v: f64) {
+    if n == (0 as *Node) { return; }
+    { (*n).set_margin(flex::Edge::All, flex::StyleLength::points(v)) };
+    return;
+}
+
+fn set_gap(n: *Node, v: f64) {
+    if n == (0 as *Node) { return; }
+    { (*n).set_gap(flex::Gutter::All, flex::StyleLength::points(v)) };
+    return;
+}
+
+fn set_justify(n: *Node, v: flex::Justify) {
+    if n == (0 as *Node) { return; }
+    { (*n).set_justify_content(v) };
+    return;
+}
+
+fn set_align(n: *Node, v: flex::Align) {
+    if n == (0 as *Node) { return; }
+    { (*n).set_align_items(v) };
+    return;
+}
+
+fn set_wrap(n: *Node, v: flex::Wrap) {
+    if n == (0 as *Node) { return; }
+    { (*n).set_flex_wrap(v) };
+    return;
+}
+
+// ---- reads flex already owns: forward, store nothing -------------------------
 fn frame_of(n: *Node) -> Frame { return { (*n).frame() }; }
 fn width_of(n: *Node) -> f64 { return { (*n).frame() }.width; }
 fn height_of(n: *Node) -> f64 { return { (*n).frame() }.height; }
 fn x_of(n: *Node) -> f64 { return { (*n).frame() }.left; }
 fn y_of(n: *Node) -> f64 { return { (*n).frame() }.top; }
 fn child_count_of(n: *Node) -> usize { return { (*n).child_count() }; }
+
+fn bounds_of(n: *Node) -> vocab::Rect {
+    let f: Frame = { (*n).frame() };
+    return vocab::Rect { x: f.left, y: f.top, width: f.width, height: f.height };
+}
+
+fn child_of(n: *Node, at: usize) -> option::Option[*Node] {
+    if n == (0 as *Node) { return option::Option[*Node]::None; }
+    return { (*n).child_ptr(at) };
+}
+
+// ---- what the platform learns first -----------------------------------------
+// facet declares the read; a backend writes it. These three setters are the
+// write path back into a node's state, and the only ones a backend needs.
+
+fn is_focused(n: *Node) -> bool {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return false; }
+    return { (*d).is_focused };
+}
+
+fn set_focused(n: *Node, v: bool) {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).is_focused = v };
+    return;
+}
+
+fn is_attached(n: *Node) -> bool {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return false; }
+    return { (*d).is_attached };
+}
+
+fn set_attached(n: *Node, v: bool) {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).is_attached = v };
+    return;
+}
+
+fn window_of(n: *Node) -> vocab::WindowRef {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return vocab::WindowRef::none(); }
+    return { (*d).window };
+}
+
+fn set_window(n: *Node, w: vocab::WindowRef) {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).window = w };
+    return;
+}
+
+// The escape hatch INTENT blesses: the platform's own view, or 0 while the
+// node is unmounted. The one verb in facet that names a backend.
+fn native(n: *Node) -> *u8 {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return 0 as *u8; }
+    return { (*d).view };
+}
+
+fn set_native(n: *Node, v: *u8) {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).view = v };
+    return;
+}
+
+// ---- commands ---------------------------------------------------------------
+// Same shape as a setter: write, set a bit, let the backend act on it. No
+// verb-indexed table, no registrar.
+
+fn focus(n: *Node) { touch(n, props::C_FOCUS); return; }
+fn blur(n: *Node) { touch(n, props::C_BLUR); return; }
+
+// Invalidate this subtree's cached layout. flex recomputes on the next pass.
+fn relayout(n: *Node) {
+    if n == (0 as *Node) { return; }
+    { (*n).mark_content_changed() };
+    return;
+}
+
+// Lay the subtree out under these constraints and report the size it wants.
+// This IS a layout pass, so the frames it leaves behind are the measurement's:
+// the next real pass overwrites them.
+fn measure(n: *Node, width: f64, height: f64) -> vocab::Size {
+    if n == (0 as *Node) { return vocab::Size::zero(); }
+    { (*n).calculate_layout(width: width, height: height) };
+    let f: Frame = { (*n).frame() };
+    return vocab::Size { width: f.width, height: f.height };
+}
+
+// Coalesce writes. The backend syncs when the depth returns to zero.
+fn begin_updates(n: *Node) {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).batch = { (*d).batch } +% (1 as i64) };
+    return;
+}
+
+fn end_updates(n: *Node) {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return; }
+    let depth: i64 = { (*d).batch };
+    if depth <= (0 as i64) { { (*d).batch = 0 as i64 }; return; }
+    { (*d).batch = depth -% (1 as i64) };
+    if { (*d).batch } == (0 as i64) { touch(n, props::C_FLUSH); }
+    return;
+}
+
+fn is_batching(n: *Node) -> bool {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return false; }
+    return { (*d).batch } > (0 as i64);
+}
+
+// ---- slots ------------------------------------------------------------------
+// A subtree is a CHILD, not a property. MAUI models a named subtree as a
+// bindable property because binding is how it fills one; facet describes a
+// tree, so a header IS a child — under a reserved `@` key, so the slot can be
+// replaced in place without disturbing its siblings.
+
+// A slot is recorded on the CHILD, in its own field, not by overwriting the
+// key: the application named that node and must keep being able to find it.
+fn slot_of(n: *Node) -> str {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return ""; }
+    return { (*d).slot.view() };
+}
+
+fn _mark_slot(n: *Node, name: str) {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).slot = text::from_str(name) };
+    return;
+}
+
+// Index of the child in `name`'s slot, or child_count() when the slot is empty.
+fn _slot_index(n: *Node, name: str) -> usize {
+    let count: usize = { (*n).child_count() };
+    var i: usize = 0 as usize;
+    while i < count {
+        match { (*n).child_ptr(i) } {
+            option::Option[*Node]::Some(c) => {
+                if slot_of(c) == name { return i; }
+            }
+            option::Option[*Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return count;
+}
+
+fn set_slot(n: *Node, name: str, take child: Node) {
+    if n == (0 as *Node) { return; }
+    let count: usize = { (*n).child_count() };
+    let at: usize = _slot_index(n, name);
+    // An allocation can fail. Only mark the slot when the child really landed
+    // at `at` — otherwise the node already there would answer to a name that
+    // is not its own.
+    var placed: bool = false;
+    if at < count {
+        let _old: option::Option[Node] = { (*n).remove_child(at) };
+        placed = { (*n).insert_child(child, at: at) }.is_ok();
+    } else {
+        placed = { (*n).add_child(child) }.is_ok();
+    }
+    if !placed { return; }
+    match { (*n).child_ptr(at) } {
+        option::Option[*Node]::Some(c) => { _mark_slot(c, name); }
+        option::Option[*Node]::None => { }
+    }
+    return;
+}
+
+fn slot(n: *Node, name: str) -> option::Option[*Node] {
+    if n == (0 as *Node) { return option::Option[*Node]::None; }
+    let at: usize = _slot_index(n, name);
+    if at >= { (*n).child_count() } { return option::Option[*Node]::None; }
+    return { (*n).child_ptr(at) };
+}
+
+// Detach the child in a slot and hand the subtree back.
+fn take_slot(n: *Node, name: str) -> option::Option[Node] {
+    if n == (0 as *Node) { return option::Option[Node]::None; }
+    let at: usize = _slot_index(n, name);
+    if at >= { (*n).child_count() } { return option::Option[Node]::None; }
+    return { (*n).remove_child(at) };
+}
+
+// Does this name belong to facet rather than to the application?
+fn is_slot_name(name: str) -> bool { return name.has_prefix(SLOT_PREFIX); }
 
 // A free-fn twin of Node::data, callable where a method on *Node is not.
 fn node_data(n: *Node) -> *Data {
@@ -196,12 +860,22 @@ fn find_in(n: *Node, key: str) -> option::Option[*Node] {
 
 type Builder = flex::Builder;
 
-fn column(take b: Builder) -> Node { return flex::column(b); }
-fn row(take b: Builder) -> Node { return flex::row(b); }
-fn hstack(take b: Builder) -> Node { return flex::hstack(b); }
-fn vstack(take b: Builder) -> Node { return flex::vstack(b); }
-fn screen(take b: Builder) -> Node { return flex::screen(b); }
-fn card(take b: Builder) -> Node { return flex::card(b); }
+// flex builds the node; facet attaches its Data. Both halves are required: a
+// container that carries no Data answers no shared-band verb and takes no
+// gesture, and does so in silence.
+fn _own(take n: Node, key: str) -> Node {
+    var m: Node = n;
+    let d: *Data = ensure_data(#addr_of(m));
+    if d != (0 as *Data) { { (*d).key = text::from_str(key) }; }
+    return m;
+}
 
-fn spacer() -> Node { return flex::spacer(); }
-fn zstack(take b: Builder) -> Node { return flex::zstack(b); }
+fn column(take b: Builder, key: str = "") -> Node { return _own(flex::column(b), key); }
+fn row(take b: Builder, key: str = "") -> Node { return _own(flex::row(b), key); }
+fn hstack(take b: Builder, key: str = "") -> Node { return _own(flex::hstack(b), key); }
+fn vstack(take b: Builder, key: str = "") -> Node { return _own(flex::vstack(b), key); }
+fn screen(take b: Builder, key: str = "") -> Node { return _own(flex::screen(b), key); }
+fn card(take b: Builder, key: str = "") -> Node { return _own(flex::card(b), key); }
+
+fn spacer(key: str = "") -> Node { return _own(flex::spacer(), key); }
+fn zstack(take b: Builder, key: str = "") -> Node { return _own(flex::zstack(b), key); }
