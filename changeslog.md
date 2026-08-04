@@ -64,6 +64,25 @@ by its *shape*, not a method-name allowlist, through every form it can leak:
   as `append` while a slice is live is E0381 (iterator invalidation). A
   read-only method alongside a live view stays legal — a shared read no longer
   spuriously conflicts with a shared borrow.
+- **E0516 judges the write path, not the target's shape.** A view stored
+  through a raw pointer is undeclared-flow at the raw seam, but the rule had
+  matched a bare `*p = v` target only, so `(*sink).key = k` — the same store
+  one field deeper — walked through and dangled at runtime. A raw-pointer
+  deref anywhere in the projection chain (`(*p).f`, `(*p)[i]`, `(*p).a.b`) is
+  now the same store, since the analysis knows nothing about what `p` points
+  at either way. A store to a field of a plain local is unaffected.
+  (`bugs/str-field-outliving-its-text-is-not-caught.md`)
+- **A `*u8` return no longer erases a view.** Storing a view in a struct,
+  boxing it, and returning `into_raw()`'s pointer used to compile and dangle:
+  no rule fired once the type stopped naming the view. The body flow is now
+  the summary — a raw-pointer-returning fn whose computed return flow carries
+  a view-capable parameter gets that flow promoted to a return borrow, so the
+  caller ties the pointer to the argument's owner and a dying owner is the
+  same E0514 the unerased shape always was. Copying constructors
+  (`text::from_str`) have an empty computed flow and tie nothing;
+  self-referential carriers root at no parameter and are never promoted;
+  `#[keeps(nothing)]` opts a declared boundary out. Closes the third and last
+  route in `bugs/str-field-outliving-its-text-is-not-caught.md`.
 
 ### facet — component lifecycle
 - `interface Lifecycle { fn on_attach(ref this); fn on_detach(ref this); }`.

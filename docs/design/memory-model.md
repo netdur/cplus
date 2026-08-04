@@ -52,8 +52,8 @@ annotations.
    letting the owner fall out of scope is an error, the same as moving the
    owner.
 
-Current enforcement state (2026-08-01, closing pass): readable bodies need
-no declarations, anywhere. The flow pass analyzes concrete AND generic
+Current enforcement state (2026-08-04, erased-return pass): readable bodies
+need no declarations, anywhere. The flow pass analyzes concrete AND generic
 impl methods (the store structure is type-agnostic; instantiations gate at
 call sites via substitution) plus free fns; unannotated bindings resolve
 through structural inference; cross-module calls resolve because the
@@ -63,6 +63,13 @@ owner to tie — intern or own), free fns whose ADDRESS is taken (indirect
 calls through fn pointers carry no computed flows), and, with E0516, any
 store the analysis cannot see through (the raw seam). `#[keeps(...)]`
 is required only there — the opaque boundary — as §5 always said.
+A raw-pointer RETURN is not such a boundary: the body is readable, so a
+computed flow that carries a view-capable parameter (or the receiver) into
+the returned pointer is a return borrow like any other — callers tie the
+result to the argument's owner even though the type no longer names the
+view (`Sink{key} → box::new → into_raw() -> *u8`). `#[keeps(nothing)]`
+opts out, and a fn whose computed flow is empty (a copying constructor)
+ties nothing, no declaration needed.
 
 ## 4. Out of contract
 
@@ -73,8 +80,11 @@ declarations of §5.
 - **Raw pointers.** Anything reached through `*T` is untracked (`opaque`
   field accountability covers who frees; nothing covers who outlives).
 - **Erased contexts.** A view that crosses an erased `*u8` boundary (callback
-  context slots, `#addr_of`) is invisible. APIs that store keys or labels for
-  later use must own (`Text`), intern, or document static-only input.
+  context slots, `#addr_of`, a rooted pointer stored onward or passed to
+  extern) is invisible. APIs that store keys or labels for later use must own
+  (`Text`), intern, or document static-only input. A `*u8` merely *returned*
+  from a readable body is not erased — computed return flows reach through it
+  (§3).
 - **`extern` functions.** No body exists to read. The default assumption is
   that an extern function keeps nothing; an extern that stores a pointer must
   be declared (§5). Views do not cross the C ABI as views (the ABI surface is

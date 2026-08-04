@@ -6622,6 +6622,48 @@ fn raw_view_store_requires_keeps_e0516() {
 }
 
 #[test]
+fn raw_view_store_through_a_field_requires_keeps_e0516() {
+    // bugs/str-field-outliving-its-text-is-not-caught.md: the same store one
+    // projection deeper. `(*sink).key = k` is exactly as invisible as
+    // `*sink = k`, and it compiled clean while the checker matched only a
+    // bare deref target — a use-after-free ASan caught and nothing else did.
+    let (ok, stderr) = try_compile_snippet(
+        "struct Sink { key: str }
+         fn keep(into: *Sink, k: str) {
+             { (*into).key = k };
+             return;
+         }
+         fn main() -> i32 { return 0; }
+",
+    );
+    assert!(!ok && stderr.contains("E0516"), "expected E0516, got ok={ok}: {stderr}");
+    let (ok, stderr) = try_compile_snippet(
+        "struct Sink { key: str }
+         #[keeps(nothing)]
+         fn keep(into: *Sink, k: str) {
+             { (*into).key = k };
+             return;
+         }
+         fn main() -> i32 { return 0; }
+",
+    );
+    assert!(ok, "declared projected raw store must compile; stderr: {stderr}");
+    // The gate is the raw deref, not the projection: a field of a local is
+    // an ordinary store the analysis reads straight through.
+    let (ok, stderr) = try_compile_snippet(
+        "struct Sink { key: str }
+         fn keep(k: str) {
+             var s: Sink = Sink { key: \"\" };
+             s.key = k;
+             return;
+         }
+         fn main() -> i32 { return 0; }
+",
+    );
+    assert!(ok, "a field store on a local is not a raw store; stderr: {stderr}");
+}
+
+#[test]
 fn free_fn_ref_param_flow_ties_e0514() {
     // Contract §5, free-fn half: an undeclared free fn forwarding its view
     // param into a keeps-method on a ref param ties the caller's dst arg.

@@ -1389,7 +1389,7 @@ impl Holder {
 
 ### E0516 · Storing a view through a raw pointer without a declared flow
 
-A `str` / `T[]` / view-carrying value is stored through a raw-pointer deref (`*slot = v`). No flow analysis can see where those bytes end up, so the function's effect on view lifetimes is unknowable — silence at the raw seam is not neutral, the same doctrine as the raw-pointer field rule (drop-or-`opaque`, E0510).
+A `str` / `T[]` / view-carrying value is stored through a raw-pointer deref — `*slot = v`, and equally any projection of the pointee (`(*sink).key = v`, `(*sink)[i] = v`). No flow analysis can see what the pointer points at, so a field of the pointee is exactly as opaque as the whole pointee, and the function's effect on view lifetimes is unknowable — silence at the raw seam is not neutral, the same doctrine as the raw-pointer field rule (drop-or-`opaque`, E0510).
 
 ```cplus
 fn stash(slot: *str, v: str) {
@@ -1398,7 +1398,7 @@ fn stash(slot: *str, v: str) {
 }
 ```
 
-**Fix.** Declare the function's flow: `#[keeps(this)]` if the view survives inside the receiver (callers then tie the receiver to the argument's owner), or `#[keeps(nothing)]` if the bytes are copied and no borrowed view escapes. Byte and pointer stores never trigger this — only a view value does.
+**Fix.** Declare the function's flow: `#[keeps(this)]` if the view survives inside the receiver (callers then tie the receiver to the argument's owner), or `#[keeps(nothing)]` if the bytes are copied and no borrowed view escapes. Better still, remove the seam: store an owned `Text` so the struct outlives its own bytes. Byte and pointer stores never trigger this — only a view value does, and a store to a field of a plain local is not a raw store at all.
 
 <sub>repro: checked · cplus-core/src/borrowck.rs (ViewRules::check_raw_store) · test cpc/tests/e2e.rs:raw_view_store_requires_keeps_e0516</sub>
 

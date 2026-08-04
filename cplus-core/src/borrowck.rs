@@ -300,17 +300,50 @@ struct TypeInfo {
 
 impl CopyOracle {
     /// True iff `name` appears in a STORED position of `ty`: the type
-    /// itself, a Generic argument, a slice/array element. Fn-pointer
-    /// signatures and raw pointers are NOT storage (a `fn(T, *u8)` field
-    /// holds no `T`; `*T` is out of contract §6.6).
-    fn type_mentions_param(ty: &Type, name: &str) -> bool {
+    /// itself, a Generic argument, a slice/array element, or the pointee of
+    /// an OWNING raw pointer. Fn-pointer signatures are not storage — a
+    /// `fn(T, *u8)` field holds no `T`.
+    ///
+    /// A raw pointer is storage or not depending on who owns the pointee,
+    /// and SPEC §6.6 already forces every author to say which: a
+    /// raw-pointer field is either released in the type's `Drop` (the type
+    /// owns what it points at) or marked `opaque` ("this pointer is not
+    /// owned here"), and E0510 rejects a field that answers neither. So the
+    /// answer is always on the declaration; the caller skips `opaque`
+    /// fields and everything else reaching here is owned storage.
+    ///
+    /// This used to return false for every raw pointer, citing §6.6 — which
+    /// is the section that draws the distinction rather than erasing it.
+    /// The cost was that `Box[T] { _p: *T }` and `Vec[T] { _ptr: *T }`, the
+    /// two types that hold a `T` on the heap, both read as storing nothing:
+    /// `Box[Sink]` and `Vec[str]` were classified as carrying no view at
+    /// all, so a view moved into either one lost its provenance and every
+    /// later rule skipped it.
+    /// (`bugs/str-field-outliving-its-text-is-not-caught.md`, round three.)
+    ///
+    /// Nesting is transitive through `stored`, not textual. `Signal[T] {
+    /// _subs: Vec[Listener[T]] }` MENTIONS `T`, but `Listener[T]` holds it
+    /// only in a `fn(T, *u8)` signature, so no `T` is stored anywhere and
+    /// `Signal[Change]` carries no view. Asking the inner type whether it
+    /// stores its own parameter is what keeps that true; a purely syntactic
+    /// mention would make every signal of a view-carrying event look like a
+    /// carrier. An unknown base answers "stored", the sound direction.
+    fn type_mentions_param(
+        ty: &Type,
+        name: &str,
+        stored: &HashMap<String, Vec<bool>>,
+    ) -> bool {
         match &ty.kind {
             TypeKind::Path(p) => p == name,
-            TypeKind::Generic { args, .. } => {
-                args.iter().any(|a| Self::type_mentions_param(a, name))
-            }
-            TypeKind::Slice(inner) => Self::type_mentions_param(inner, name),
-            TypeKind::Array { elem, .. } => Self::type_mentions_param(elem, name),
+            TypeKind::Generic { name: base, args } => args.iter().enumerate().any(|(i, a)| {
+                let inner_stores = stored
+                    .get(base)
+                    .map_or(true, |s| s.get(i).copied().unwrap_or(true));
+                inner_stores && Self::type_mentions_param(a, name, stored)
+            }),
+            TypeKind::Slice(inner) => Self::type_mentions_param(inner, name, stored),
+            TypeKind::Array { elem, .. } => Self::type_mentions_param(elem, name, stored),
+            TypeKind::RawPtr(inner) => Self::type_mentions_param(inner, name, stored),
             _ => false,
         }
     }
@@ -349,39 +382,81 @@ impl CopyOracle {
         // Generic-impl ties: record which generic params each generic
         // struct/enum actually STORES, so `S[str]` only counts as a
         // carrier when `S` can hold the argument.
+        //
+        // A fixpoint, because storing is transitive and mutually recursive:
+        // whether `Signal[T]` stores a `T` depends on whether the
+        // `Listener[T]` inside its `Vec` does. Seeded all-false and grown
+        // upward — "stored" only ever turns on — so this converges, and a
+        // type is never called a carrier before the evidence arrives.
         for item in &prog.items {
-            match &item.kind {
+            let (name, arity) = match &item.kind {
                 ItemKind::Struct(s) if !s.generic_params.is_empty() => {
-                    let stored = s
-                        .generic_params
-                        .iter()
-                        .map(|g| {
-                            s.fields
-                                .iter()
-                                .any(|f| Self::type_mentions_param(&f.ty, &g.name.name))
-                        })
-                        .collect();
-                    oracle
-                        .generic_param_stored
-                        .insert(s.name.name.clone(), stored);
+                    (&s.name.name, s.generic_params.len())
                 }
                 ItemKind::Enum(e) if !e.generic_params.is_empty() => {
-                    let stored = e
-                        .generic_params
-                        .iter()
-                        .map(|g| {
-                            e.variants.iter().any(|v| {
-                                v.payload
-                                    .iter()
-                                    .any(|t| Self::type_mentions_param(t, &g.name.name))
-                            })
-                        })
-                        .collect();
-                    oracle
-                        .generic_param_stored
-                        .insert(e.name.name.clone(), stored);
+                    (&e.name.name, e.generic_params.len())
                 }
-                _ => {}
+                _ => continue,
+            };
+            oracle
+                .generic_param_stored
+                .insert(name.clone(), vec![false; arity]);
+        }
+        loop {
+            let mut changed = false;
+            for item in &prog.items {
+                // (param name, does some field/payload store it) per param.
+                let found: Vec<(String, Vec<bool>)> = match &item.kind {
+                    ItemKind::Struct(s) if !s.generic_params.is_empty() => vec![(
+                        s.name.name.clone(),
+                        s.generic_params
+                            .iter()
+                            .map(|g| {
+                                // `opaque` is the author's declaration that
+                                // this pointer's target is owned elsewhere
+                                // (SPEC §6.6), so nothing is stored through it.
+                                s.fields.iter().any(|f| {
+                                    !f.is_opaque
+                                        && Self::type_mentions_param(
+                                            &f.ty,
+                                            &g.name.name,
+                                            &oracle.generic_param_stored,
+                                        )
+                                })
+                            })
+                            .collect(),
+                    )],
+                    ItemKind::Enum(e) if !e.generic_params.is_empty() => vec![(
+                        e.name.name.clone(),
+                        e.generic_params
+                            .iter()
+                            .map(|g| {
+                                e.variants.iter().any(|v| {
+                                    v.payload.iter().any(|t| {
+                                        Self::type_mentions_param(
+                                            t,
+                                            &g.name.name,
+                                            &oracle.generic_param_stored,
+                                        )
+                                    })
+                                })
+                            })
+                            .collect(),
+                    )],
+                    _ => continue,
+                };
+                for (name, fresh) in found {
+                    let cur = oracle.generic_param_stored.entry(name).or_default();
+                    for (i, f) in fresh.into_iter().enumerate() {
+                        if f && !cur[i] {
+                            cur[i] = true;
+                            changed = true;
+                        }
+                    }
+                }
+            }
+            if !changed {
+                break;
             }
         }
 
@@ -713,6 +788,19 @@ struct FnEntry {
     /// keeps-method call on it or a direct field store). Callers tie the
     /// dst argument's root to the src argument's owners.
     computed_ref_flows: Vec<(usize, usize)>,
+    /// Erased-boundary transport (2026-08-04): per-param bits that MAY
+    /// flow into the return value, computed by the same body taint walk
+    /// that feeds `computed_keeps`. `None` means the flow pass never
+    /// analyzes this fn (generic, extern, declaration) — call sites fall
+    /// back to the conservative `ret_view` transport. `Some(0)` means
+    /// analyzed and returning none of its params — the precision that
+    /// keeps copying constructors (`text::from_str`) from tying their
+    /// callers when their return taint is consulted.
+    computed_ret_flow: Option<u64>,
+    /// The receiver half of `computed_ret_flow`: does the receiver's
+    /// taint reach the return value (`Box[T].into_raw` returning
+    /// `this._p`)? Same `None`/`Some` analyzability contract.
+    computed_ret_from_receiver: Option<bool>,
     /// Declared (UNsubstituted) return type — feeds unannotated-let
     /// inference (`let h = mk();` resolves h's methods through mk's
     /// declared return).
@@ -775,6 +863,35 @@ fn param_is_effective_move(p: &crate::ast::Param, oracle: &CopyOracle) -> bool {
         && oracle.definitely_non_copy(&p.ty)
 }
 
+/// Does this type name any of the given generic params anywhere in its
+/// structure? Drives the `ret_view` widening for generic fns: pre-mono,
+/// `Option[Box[T]]` answers false to every view predicate, but an
+/// instantiation may be a carrier, so a call must stay able to transport
+/// its arguments' taint. Fn-pointer types are deliberately excluded — a
+/// signature mentioning `T` does not store one (the stored-ness fixpoint
+/// makes the same call).
+fn type_mentions_name(t: &Type, names: &[String]) -> bool {
+    if names.is_empty() {
+        return false;
+    }
+    match &t.kind {
+        TypeKind::Path(p) => names.iter().any(|n| n == p),
+        TypeKind::Generic { name, args } => {
+            names.iter().any(|n| n == name) || args.iter().any(|a| type_mentions_name(a, names))
+        }
+        TypeKind::Slice(inner) | TypeKind::RawPtr(inner) => type_mentions_name(inner, names),
+        TypeKind::Array { elem, .. } => type_mentions_name(elem, names),
+        _ => false,
+    }
+}
+
+/// The unqualified base of a type name: `box::Box` → `Box`. The method
+/// map is keyed by the impl target's name as written at the definition
+/// (`impl Box[T]` → `Box`), so lookups from qualified-use sites strip.
+fn base_type_name(name: &str) -> &str {
+    name.rsplit("::").next().unwrap_or(name)
+}
+
 impl SigTable {
     fn collect(prog: &Program, oracle: &CopyOracle) -> Self {
         let mut t = SigTable::default();
@@ -783,6 +900,16 @@ impl SigTable {
                 ItemKind::Function(f) => {
                     let (return_borrow, return_borrow_flavor) =
                         detect_fn_elision_with_flavor(f, oracle);
+                    // Mirrors the flow-pass skip predicate exactly: an entry
+                    // marked analyzable here MUST get its `computed_ret_flow`
+                    // filled by `compute_receiver_flows`, or precision lies.
+                    let flow_analyzed =
+                        f.generic_params.is_empty() && !f.is_extern && !f.is_declaration;
+                    let generic_names: Vec<String> = f
+                        .generic_params
+                        .iter()
+                        .map(|g| g.name.name.clone())
+                        .collect();
                     t.fns.insert(
                         f.name.name.clone(),
                         FnEntry {
@@ -803,8 +930,21 @@ impl SigTable {
                                 .collect(),
                             computed_keeps: Vec::new(),
                             computed_ref_flows: Vec::new(),
+                            computed_ret_flow: if flow_analyzed { Some(0) } else { None },
+                            computed_ret_from_receiver: if flow_analyzed {
+                                Some(false)
+                            } else {
+                                None
+                            },
+                            // A generic fn whose return type names its own
+                            // params (`box::new[T] -> Option[Box[T]]`) can
+                            // transport its arguments' taint even though the
+                            // unsubstituted type answers false to every view
+                            // predicate — the instantiation may be a carrier.
                             ret_view: f.return_type.as_ref().is_some_and(|t| {
-                                oracle.type_contains_view(t) || oracle.definitely_non_copy(t)
+                                oracle.type_contains_view(t)
+                                    || oracle.definitely_non_copy(t)
+                                    || type_mentions_name(t, &generic_names)
                             }),
                             param_tys: f.params.iter().map(|p| p.ty.clone()).collect(),
                             ret_ty: f.return_type.clone(),
@@ -854,6 +994,18 @@ impl SigTable {
                         let key = format!("{}.{}", b.target.name, m.name.name);
                         let (return_borrow, return_borrow_flavor) =
                             detect_method_elision_with_flavor(b, m, oracle);
+                        // Same predicate as the method flow loop (which
+                        // analyzes methods of generic IMPLS, skipping only
+                        // method-own generics and declarations).
+                        let flow_analyzed = m.generic_params.is_empty()
+                            && !m.is_declaration
+                            && m.receiver.is_some();
+                        let generic_names: Vec<String> = b
+                            .target_generic_params
+                            .iter()
+                            .chain(m.generic_params.iter())
+                            .map(|g| g.name.name.clone())
+                            .collect();
                         t.methods.insert(
                             key,
                             FnEntry {
@@ -878,8 +1030,16 @@ impl SigTable {
                                     .collect(),
                                 computed_keeps: Vec::new(),
                                 computed_ref_flows: Vec::new(),
+                                computed_ret_flow: if flow_analyzed { Some(0) } else { None },
+                                computed_ret_from_receiver: if flow_analyzed {
+                                    Some(false)
+                                } else {
+                                    None
+                                },
                                 ret_view: m.return_type.as_ref().is_some_and(|t| {
-                                    oracle.type_contains_view(t) || oracle.definitely_non_copy(t)
+                                    oracle.type_contains_view(t)
+                                        || oracle.definitely_non_copy(t)
+                                        || type_mentions_name(t, &generic_names)
                                 }),
                                 param_tys: m.params.iter().map(|p| p.ty.clone()).collect(),
                                 ret_ty: m.return_type.clone(),
@@ -978,6 +1138,12 @@ fn subst_type(ty: &Type, map: &HashMap<String, Type>) -> Type {
     }
 }
 
+/// The taint bit standing for the method receiver in `FlowCtx`. Params
+/// occupy bits 0..64 in principle but every read-out masks to the actual
+/// param count, so the top bit is free to carry "the receiver's bytes may
+/// be here" — what `Box[T].into_raw` returning `this._p` needs to export.
+const RECV_TAINT_BIT: u64 = 1u64 << 63;
+
 struct FlowCtx<'a> {
     sigs: &'a SigTable,
     /// binding name -> source-param bitmask (bit i = param i may be here).
@@ -986,11 +1152,68 @@ struct FlowCtx<'a> {
     types: HashMap<String, String>,
     /// accumulated: bits that reached the receiver.
     receiver_bits: u64,
+    /// accumulated: bits that reached a `return` (or the body's tail
+    /// expression — the caller of `walk_block` folds that in). Feeds
+    /// `computed_ret_flow` / `computed_ret_from_receiver`.
+    ret_bits: u64,
 }
 
 impl<'a> FlowCtx<'a> {
     fn is_receiver_root(root: &str) -> bool {
         root == "self" || root == "this"
+    }
+
+    /// Give match-payload bindings a declared type when the pattern spells
+    /// the enum's instantiation (`Option[Box[Sink]]::Some(b)` types `b` as
+    /// `Box`): zip the enum's generic params with the written type args,
+    /// substitute into the variant's payload types, record the base name.
+    /// Patterns without written args stay untyped — a conservative miss,
+    /// the same posture as unannotated bindings.
+    fn type_payload_bindings(&mut self, p: &Pattern) {
+        let PatternKind::Variant {
+            enum_name,
+            type_args,
+            variant_name,
+            payload,
+        } = &p.kind
+        else {
+            return;
+        };
+        if type_args.is_empty() || payload.is_empty() {
+            return;
+        }
+        let base = base_type_name(&enum_name.name);
+        let Some(generics) = self.sigs.enum_generics.get(base) else {
+            return;
+        };
+        let Some(ptys) = self
+            .sigs
+            .enum_payloads
+            .get(base)
+            .and_then(|v| v.get(&variant_name.name))
+        else {
+            return;
+        };
+        let map: HashMap<String, Type> = generics
+            .iter()
+            .cloned()
+            .zip(type_args.iter().cloned())
+            .collect();
+        for (i, pat) in payload.iter().enumerate() {
+            let PatternKind::Binding(b) = &pat.kind else {
+                continue;
+            };
+            let Some(t) = ptys.get(i) else { continue };
+            let resolved = subst_type(t, &map);
+            let name = match &resolved.kind {
+                TypeKind::Path(p) => Some(base_type_name(p).to_string()),
+                TypeKind::Generic { name, .. } => Some(base_type_name(name).to_string()),
+                _ => None,
+            };
+            if let Some(n) = name {
+                self.types.insert(b.name.clone(), n);
+            }
+        }
     }
 
     fn walk_block(&mut self, b: &Block) -> u64 {
@@ -1009,8 +1232,17 @@ impl<'a> FlowCtx<'a> {
                 let t = init.as_ref().map(|e| self.expr_taint(e)).unwrap_or(0);
                 self.taint.insert(name.name.clone(), t);
                 if let Some(decl) = ty {
-                    if let TypeKind::Path(p) = &decl.kind {
-                        self.types.insert(name.name.clone(), p.clone());
+                    match &decl.kind {
+                        TypeKind::Path(p) => {
+                            self.types.insert(name.name.clone(), p.clone());
+                        }
+                        // A generic instantiation resolves methods through
+                        // its base (`let b: box::Box[Sink]` → `Box.into_raw`).
+                        TypeKind::Generic { name: g, .. } => {
+                            self.types
+                                .insert(name.name.clone(), base_type_name(g).to_string());
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -1020,8 +1252,11 @@ impl<'a> FlowCtx<'a> {
                     self.taint.insert(f.name.clone(), t);
                 }
             }
-            StmtKind::Return(Some(e)) | StmtKind::Expr(e) | StmtKind::Defer(e)
-            | StmtKind::Assert(e) => {
+            StmtKind::Return(Some(e)) => {
+                let t = self.expr_taint(e);
+                self.ret_bits |= t;
+            }
+            StmtKind::Expr(e) | StmtKind::Defer(e) | StmtKind::Assert(e) => {
                 self.expr_taint(e);
             }
             StmtKind::Return(None) | StmtKind::Break | StmtKind::Continue => {}
@@ -1135,18 +1370,47 @@ impl<'a> FlowCtx<'a> {
                                     }
                                 }
                             }
-                            if entry.ret_view {
-                                return rtaint | arg_taints.iter().fold(0, |a, t| a | t);
-                            }
-                            return 0;
+                            // Transport: what of the receiver's and the
+                            // arguments' taint rides out in the result?
+                            // Analyzed callees answer precisely from their
+                            // own body flows (`into_raw` transports its
+                            // receiver; `from_str` transports nothing).
+                            // Unanalyzed callees (generic methods,
+                            // declarations) stay signature-conservative.
+                            return match (
+                                entry.computed_ret_flow,
+                                entry.computed_ret_from_receiver,
+                            ) {
+                                (Some(bits), Some(recv)) => {
+                                    let mut out = if recv { rtaint } else { 0 };
+                                    for (i, t) in arg_taints.iter().enumerate() {
+                                        if i < 64 && bits & (1u64 << i) != 0 {
+                                            out |= t;
+                                        }
+                                    }
+                                    out
+                                }
+                                _ if entry.ret_view => {
+                                    rtaint | arg_taints.iter().fold(0, |a, t| a | t)
+                                }
+                                _ => 0,
+                            };
                         }
                         0
                     }
                     ExprKind::Ident(name) => match self.sigs.fns.get(name) {
-                        Some(entry) if entry.ret_view => {
-                            arg_taints.iter().fold(0, |a, t| a | t)
-                        }
-                        _ => 0,
+                        Some(entry) => match entry.computed_ret_flow {
+                            Some(bits) => arg_taints
+                                .iter()
+                                .enumerate()
+                                .filter(|(i, _)| *i < 64 && bits & (1u64 << *i) != 0)
+                                .fold(0, |a, (_, t)| a | t),
+                            None if entry.ret_view => {
+                                arg_taints.iter().fold(0, |a, t| a | t)
+                            }
+                            None => 0,
+                        },
+                        None => 0,
                     },
                     _ => {
                         self.expr_taint(callee);
@@ -1180,6 +1444,11 @@ impl<'a> FlowCtx<'a> {
                     for name in pattern_binding_names(&a.pattern) {
                         self.taint.insert(name, st);
                     }
+                    // And, when the pattern spells the enum's type args
+                    // (`Option[Box[Sink]]::Some(b)`), a declared type — so
+                    // a method call on the payload resolves its entry and
+                    // the taint keeps riding (`b.into_raw()`).
+                    self.type_payload_bindings(&a.pattern);
                     out |= self.expr_taint(&a.body);
                 }
                 out
@@ -1452,8 +1721,15 @@ fn compute_receiver_flows(prog: &Program, sigs: &mut SigTable) {
                     taint: HashMap::new(),
                     types: HashMap::new(),
                     receiver_bits: 0,
+                    ret_bits: 0,
                 };
                 ctx.types.insert("self".to_string(), b.target.name.clone());
+                // Seed the receiver as its own taint source, so a body that
+                // returns receiver-rooted data (`return this._p;`) exports
+                // the receiver→return transport. Read-outs mask to the
+                // param range, so the extra bit never leaks into keeps.
+                ctx.taint.insert("this".to_string(), RECV_TAINT_BIT);
+                ctx.taint.insert("self".to_string(), RECV_TAINT_BIT);
                 for (i, p) in m.params.iter().enumerate() {
                     let Some(entry) = sigs.methods.get(&key) else {
                         continue;
@@ -1470,14 +1746,35 @@ fn compute_receiver_flows(prog: &Program, sigs: &mut SigTable) {
                         ctx.types.insert(p.name.name.clone(), tp.clone());
                     }
                 }
-                ctx.walk_block(&m.body);
+                let tail = ctx.walk_block(&m.body);
+                ctx.ret_bits |= tail;
                 let bits = ctx.receiver_bits;
                 let n_params = m.params.len();
                 let new_flags: Vec<bool> =
                     (0..n_params).map(|i| i < 64 && bits & (1u64 << i) != 0).collect();
+                let ret_param_bits = {
+                    let mask = if n_params >= 64 {
+                        !RECV_TAINT_BIT
+                    } else {
+                        (1u64 << n_params) - 1
+                    };
+                    ctx.ret_bits & mask
+                };
+                let ret_from_recv = ctx.ret_bits & RECV_TAINT_BIT != 0;
                 if let Some(entry) = sigs.methods.get_mut(&key) {
                     if entry.computed_keeps != new_flags && new_flags.iter().any(|b| *b) {
                         entry.computed_keeps = new_flags;
+                        changed = true;
+                    }
+                    // Union-only (monotone): a later round may add flows,
+                    // never retract them, so the fixpoint converges.
+                    let merged = entry.computed_ret_flow.unwrap_or(0) | ret_param_bits;
+                    let mrecv = entry.computed_ret_from_receiver.unwrap_or(false) || ret_from_recv;
+                    if entry.computed_ret_flow != Some(merged)
+                        || entry.computed_ret_from_receiver != Some(mrecv)
+                    {
+                        entry.computed_ret_flow = Some(merged);
+                        entry.computed_ret_from_receiver = Some(mrecv);
                         changed = true;
                     }
                 }
@@ -1496,6 +1793,7 @@ fn compute_receiver_flows(prog: &Program, sigs: &mut SigTable) {
                 taint: HashMap::new(),
                 types: HashMap::new(),
                 receiver_bits: 0,
+                ret_bits: 0,
             };
             for (i, p) in f.params.iter().enumerate() {
                 let Some(entry) = sigs.fns.get(&name) else {
@@ -1513,7 +1811,8 @@ fn compute_receiver_flows(prog: &Program, sigs: &mut SigTable) {
                     ctx.types.insert(p.name.name.clone(), tp.clone());
                 }
             }
-            ctx.walk_block(&f.body);
+            let tail = ctx.walk_block(&f.body);
+            ctx.ret_bits |= tail;
             let mut flows: Vec<(usize, usize)> = Vec::new();
             for (j, pj) in f.params.iter().enumerate() {
                 if !(pj.mutable && !pj.move_) {
@@ -1526,9 +1825,23 @@ fn compute_receiver_flows(prog: &Program, sigs: &mut SigTable) {
                     }
                 }
             }
+            let ret_param_bits = {
+                let n = f.params.len();
+                let mask = if n >= 64 {
+                    !RECV_TAINT_BIT
+                } else {
+                    (1u64 << n) - 1
+                };
+                ctx.ret_bits & mask
+            };
             if let Some(entry) = sigs.fns.get_mut(&name) {
                 if entry.computed_ref_flows != flows && !flows.is_empty() {
                     entry.computed_ref_flows = flows;
+                    changed = true;
+                }
+                let merged = entry.computed_ret_flow.unwrap_or(0) | ret_param_bits;
+                if entry.computed_ret_flow != Some(merged) {
+                    entry.computed_ret_flow = Some(merged);
                     changed = true;
                 }
             }
@@ -3659,7 +3972,24 @@ impl<'a> ViewRules<'a> {
         if ret_is_view {
             self.check_view_of_temp(e);
         }
+        // A root the return MOVES out does not die here — its storage
+        // transfers to the caller. `return out;` where `out: Vec[str]` is
+        // the returned value itself, not a view of something the frame
+        // frees. Only roots the returned value BORROWS from can dangle.
+        //
+        // Never when the return type is a view: `-> str` with `return s;`
+        // for an owning `s` is a COERCION, not a move. The owner stays
+        // behind and is dropped, and the view handed back is exactly the
+        // dangle this rule exists for.
+        let moved_out = if ret_is_view {
+            BTreeSet::new()
+        } else {
+            Self::moved_out_roots(e)
+        };
         for root in self.borrow_roots_of(e) {
+            if moved_out.contains(&root) {
+                continue;
+            }
             if !self.root_dies_at_return(&root) {
                 continue;
             }
@@ -3677,6 +4007,71 @@ impl<'a> ViewRules<'a> {
             self.err("E0513", msg, e.span);
             return;
         }
+    }
+
+    /// The bindings a return expression hands over WHOLE, so that the
+    /// callee's storage becomes the caller's rather than dying at the
+    /// return. A bare binding moves; so does one named directly as an
+    /// aggregate's field or element (`return Surface { reg: reg }` gives
+    /// `reg` away), and so does each arm of a control-flow expression that
+    /// yields one, mirroring `view_source_roots`.
+    ///
+    /// A projection is deliberately absent: `return out.field;` copies or
+    /// borrows a part and leaves `out` behind to be dropped, which is the
+    /// escape the rule is looking for. So is any computed leaf — `Sink {
+    /// key: t.view() }` borrows from `t` and hands nothing over, which is
+    /// why it still fires.
+    ///
+    /// A `Copy` leaf needs no special case: `root_dies_at_return` already
+    /// requires a non-Copy owner, so copying a `str` into the returned
+    /// aggregate never reached this question.
+    fn moved_out_roots(e: &Expr) -> BTreeSet<String> {
+        let mut roots = BTreeSet::new();
+        match &e.kind {
+            ExprKind::Ident(n) => {
+                roots.insert(n.clone());
+            }
+            ExprKind::StructLit { fields, .. }
+            | ExprKind::InferredStructLit { fields }
+            | ExprKind::GenericStructLit { fields, .. } => {
+                for f in fields {
+                    if let ExprKind::Ident(n) = &f.value.kind {
+                        roots.insert(n.clone());
+                    }
+                }
+            }
+            ExprKind::ArrayLit { elements }
+            | ExprKind::TupleLit { elements }
+            | ExprKind::GenericEnumCall { args: elements, .. } => {
+                for el in elements {
+                    if let ExprKind::Ident(n) = &el.kind {
+                        roots.insert(n.clone());
+                    }
+                }
+            }
+            ExprKind::Block(b) => {
+                if let Some(t) = &b.tail {
+                    roots.extend(Self::moved_out_roots(t));
+                }
+            }
+            ExprKind::If {
+                then, else_branch, ..
+            } => {
+                if let Some(t) = &then.tail {
+                    roots.extend(Self::moved_out_roots(t));
+                }
+                if let Some(eb) = else_branch {
+                    roots.extend(Self::moved_out_roots(eb));
+                }
+            }
+            ExprKind::Match { arms, .. } => {
+                for a in arms {
+                    roots.extend(Self::moved_out_roots(&a.body));
+                }
+            }
+            _ => {}
+        }
+        roots
     }
 
     /// Contract §3.1, the aggregate half: a view LEAF built inside a
@@ -3856,17 +4251,21 @@ impl<'a> ViewRules<'a> {
     ///
     /// Byte stores (`*p = b`) and pointer stores never fire; only a view or
     /// a carrier VALUE does.
+    ///
+    /// The store is judged by whether the WRITE PATH crosses the seam, not
+    /// by the target's outermost shape. `(*p).key = v` is the same opaque
+    /// store as `*p = v` — the analysis knows nothing about what `p` points
+    /// at, so a projection of the pointee is exactly as invisible as the
+    /// whole pointee. The first cut matched only a bare deref target, which
+    /// left the field form open; that is
+    /// `bugs/str-field-outliving-its-text-is-not-caught.md`, where a `str`
+    /// parameter stored into `(*sink).key` compiled clean and read freed
+    /// bytes at runtime.
     fn check_raw_store(&mut self, target: &Expr, value: &Expr) {
         if self.declares_flows {
             return;
         }
-        if !matches!(
-            &target.kind,
-            ExprKind::Unary {
-                op: UnaryOp::Deref,
-                ..
-            }
-        ) {
+        if !self.writes_through_raw_deref(target) {
             return;
         }
         let Some(ty) = self.place_ty(target) else {
@@ -3881,6 +4280,31 @@ impl<'a> ViewRules<'a> {
                 .to_string(),
             value.span,
         );
+    }
+
+    /// Does writing to this place go through a raw-pointer deref? Walks the
+    /// projection chain to the base: `*p`, `(*p).f`, `(*p)[i]`, `(*p).a.b`
+    /// all answer yes, and every place rooted in a plain binding answers no.
+    ///
+    /// The deref step must be TYPED as a raw pointer. That keeps the rule
+    /// where the contract puts it (§4: what `*T` reaches is untracked) and
+    /// matches what the rest of the pass can act on — a deref whose operand
+    /// has no known type gives `place_ty` nothing either, so the store
+    /// would skip on the type gate regardless.
+    fn writes_through_raw_deref(&self, target: &Expr) -> bool {
+        match &target.kind {
+            ExprKind::Unary {
+                op: UnaryOp::Deref,
+                operand,
+            } => matches!(
+                self.place_ty(operand).map(|t| t.kind),
+                Some(TypeKind::RawPtr(_))
+            ),
+            ExprKind::Field { receiver, .. } | ExprKind::Index { receiver, .. } => {
+                self.writes_through_raw_deref(receiver)
+            }
+            _ => false,
+        }
     }
 
     /// Contract §3.1, the temporary: `let s: str = mk().view();` binds a
@@ -5374,12 +5798,87 @@ fn any_return_rooted_in_expr(e: &Expr, param_names: &[&str]) -> bool {
     }
 }
 
+/// The erased-`*u8` seam (bugs/str-field-outliving-its-text-is-not-caught,
+/// round three): `Sink{key} → box::new → into_raw() -> *u8` moves a view
+/// out through a return type that no longer names it, so every type-gated
+/// rule skips and the caller never learns the tie. The body flow knows,
+/// though: when a fn returns a raw pointer and its computed return flow
+/// carries a parameter that is a view or could own viewed bytes, promote
+/// that flow to a `return_borrow` — the caller then ties the result to the
+/// argument's owner through the ordinary E-rule machinery, and the scope
+/// checks (E0514/E0372) fire with no new diagnostic.
+///
+/// Scope, deliberately narrow:
+/// - raw-pointer returns only — the erasure seam. Other Copy returns
+///   (`as u64` laundering) stay out of contract §4.
+/// - non-`take` params only, and only view-typed / view-carrying /
+///   definitely-non-Copy ones — the same filter as Rule E-VIEW-FN. A moved
+///   param's bytes belong to the callee (the box owns them); a scalar has
+///   no owner to tie.
+/// - `#[keeps(nothing)]` opts out, same as the detection ladder.
+/// - the ladder's own verdict wins: an existing `return_borrow` is never
+///   overwritten.
+///
+/// Self-referential carriers stay sound with no special case here: their
+/// views root at the receiver's own fields, not at any parameter, so no
+/// param bit ever reaches the return and nothing is promoted.
+fn promote_erased_return_flows(prog: &Program, oracle: &CopyOracle, sigs: &mut SigTable) {
+    for item in &prog.items {
+        let ItemKind::Function(f) = &item.kind else {
+            continue;
+        };
+        if crate::attrs::has_keeps(&f.attributes, "nothing") {
+            continue;
+        }
+        let Some(rt) = f.return_type.as_ref() else {
+            continue;
+        };
+        if !matches!(rt.kind, TypeKind::RawPtr(_)) {
+            continue;
+        }
+        let name = &f.name.name;
+        let bits = match sigs.fns.get(name) {
+            Some(e) if e.return_borrow.is_none() => match e.computed_ret_flow {
+                Some(b) if b != 0 => b,
+                _ => continue,
+            },
+            _ => continue,
+        };
+        let mut indices: Vec<u32> = Vec::new();
+        for (i, p) in f.params.iter().enumerate() {
+            if i >= 64 || bits & (1u64 << i) == 0 {
+                continue;
+            }
+            if p.move_ {
+                continue;
+            }
+            if !(oracle.type_contains_view(&p.ty) || oracle.definitely_non_copy(&p.ty)) {
+                continue;
+            }
+            indices.push(i as u32);
+        }
+        let rb = match indices.len() {
+            0 => continue,
+            1 => ReturnBorrowSource::Param(indices[0]),
+            _ => ReturnBorrowSource::MultiParam(indices),
+        };
+        if let Some(e) = sigs.fns.get_mut(name) {
+            e.return_borrow = Some(rb);
+            e.return_borrow_flavor = Some(BorrowFlavor::Shared);
+        }
+    }
+}
+
 fn analyze_with_diags(prog: &Program) -> (ProgramAnalysis, Vec<(Option<String>, RawDiag)>) {
     let oracle = CopyOracle::build(prog);
     let mut sigs = SigTable::collect(prog, &oracle);
     // Contract §5: patch computed receiver flows (transitive keeps) into
     // the method entries before any body is analyzed.
     compute_receiver_flows(prog, &mut sigs);
+    // Erased-boundary closing (2026-08-04): a raw-pointer return whose
+    // computed body flow carries a view-capable parameter is a return
+    // borrow, exactly as if the type had named the view.
+    promote_erased_return_flows(prog, &oracle, &mut sigs);
     let sigs = sigs;
     let mut analysis = ProgramAnalysis {
         functions: BTreeMap::new(),
@@ -8636,6 +9135,164 @@ fn caller() {
         );
     }
 
+    // --- Erased-`*u8` transport (2026-08-04): the round-three seam of
+    // bugs/str-field-outliving-its-text-is-not-caught. A view rides a
+    // carrier into a generic box, `into_raw` erases the carrier to `*u8`,
+    // and the enclosing fn's computed return flow must still export the
+    // tie so the caller's scope check fires. ---
+
+    // The shared cast of these tests: a viewable owner, a str carrier, a
+    // box-alike whose `into_raw` transports its receiver into a raw return.
+    const ERASED_PRELUDE: &str = "\
+struct Owner { x: i32 }
+impl Owner {
+  fn drop(ref this) { return; }
+  fn view(this) -> str { return \"\"; }
+}
+struct Sink { key: str }
+struct Bx[T] { _p: *T }
+impl Bx[T] {
+  fn into_raw(take this) -> *u8 { return this._p as *u8; }
+}
+fn bnew[T](take v: T) -> Bx[T] { return Bx[T] { _p: 0 as *T }; }
+";
+
+    #[test]
+    fn erased_raw_return_carries_view_param_fires_e0514() {
+        // node_with returns `*u8`, a type that names no view — the tie
+        // must come from the promoted body flow, not the signature.
+        let src = format!(
+            "{ERASED_PRELUDE}\
+fn node_with(key: str) -> *u8 {{
+  let d: Sink = Sink {{ key: key }};
+  let b: Bx[Sink] = bnew::[Sink](d);
+  return b.into_raw();
+}}
+fn caller() {{
+  var held: *u8 = 0 as *u8;
+  {{
+    let a: Owner = Owner {{ x: 1 }};
+    held = node_with(a.view());
+  }}
+  return;
+}}"
+        );
+        let codes = check_src(&src);
+        assert!(
+            codes.iter().any(|c| c == "E0514"),
+            "expected E0514: erased *u8 return still carries the view param; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn erased_raw_return_through_match_payload_fires_e0514() {
+        // The full repro shape: the carrier crosses an Option-alike and a
+        // match payload before the erasure — payload typing plus the
+        // conservative generic transport keep the taint riding.
+        let src = format!(
+            "{ERASED_PRELUDE}\
+enum Opt[T] {{ Some(T), None }}
+fn bnew2[T](take v: T) -> Opt[Bx[T]] {{ return Opt[Bx[T]]::None; }}
+fn node_with(key: str) -> *u8 {{
+  let d: Sink = Sink {{ key: key }};
+  return match bnew2::[Sink](d) {{
+    Opt[Bx[Sink]]::Some(b) => b.into_raw(),
+    Opt[Bx[Sink]]::None => 0 as *u8,
+  }};
+}}
+fn caller() {{
+  var held: *u8 = 0 as *u8;
+  {{
+    let a: Owner = Owner {{ x: 1 }};
+    held = node_with(a.view());
+  }}
+  return;
+}}"
+        );
+        let codes = check_src(&src);
+        assert!(
+            codes.iter().any(|c| c == "E0514"),
+            "expected E0514 through Option/match/into_raw erasure; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn keeps_nothing_suppresses_erased_return_promotion() {
+        // §5 declaration wins: the author signs for the erasure.
+        let src = format!(
+            "{ERASED_PRELUDE}\
+#[keeps(nothing)]
+fn node_with(key: str) -> *u8 {{
+  let d: Sink = Sink {{ key: key }};
+  let b: Bx[Sink] = bnew::[Sink](d);
+  return b.into_raw();
+}}
+fn caller() {{
+  var held: *u8 = 0 as *u8;
+  {{
+    let a: Owner = Owner {{ x: 1 }};
+    held = node_with(a.view());
+  }}
+  return;
+}}"
+        );
+        let codes = check_src(&src);
+        assert!(
+            !codes.iter().any(|c| c == "E0514"),
+            "keeps(nothing) must suppress the promoted tie; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn copying_callee_does_not_promote_erased_return() {
+        // Precision: `wrap` forwards its view param to a CONCRETE callee
+        // whose computed return flow is empty (it returns a fresh
+        // pointer). The precise flow beats the conservative transport, so
+        // wrap exports nothing — the `text::from_str` shape.
+        let src = "\
+struct Owner { x: i32 }
+impl Owner {
+  fn drop(ref this) { return; }
+  fn view(this) -> str { return \"\"; }
+}
+fn scrub(k: str) -> *u8 { return 0 as *u8; }
+fn wrap(k: str) -> *u8 { return scrub(k); }
+fn caller() {
+  var held: *u8 = 0 as *u8;
+  {
+    let a: Owner = Owner { x: 1 };
+    held = wrap(a.view());
+  }
+  return;
+}";
+        let codes = check_src(src);
+        assert!(
+            !codes.iter().any(|c| c == "E0514"),
+            "a copying callee must not tie its caller; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn scalar_param_reaching_raw_return_is_not_promoted() {
+        // The promotion mask: a usize has no owner to tie, even when its
+        // bits genuinely reach the raw return.
+        let src = "\
+fn make(n: usize) -> *u8 { return n as *u8; }
+fn caller() {
+  var held: *u8 = 0 as *u8;
+  {
+    let x: usize = 5 as usize;
+    held = make(x);
+  }
+  return;
+}";
+        let codes = check_src(src);
+        assert!(
+            !codes.iter().any(|c| c == "E0514"),
+            "scalar params must not promote; got {codes:?}"
+        );
+    }
+
     #[test]
     fn e0372_does_not_fire_on_copy_param() {
         // Rule E1 doesn't classify Copy-param functions, so no borrow
@@ -9653,6 +10310,34 @@ fn mk() -> LStr { return LStr { ptr: { 0 as *u8 }, len: { 0 as usize }, cap: { 0
     }
 
     #[test]
+    fn returning_a_view_carrying_owner_is_a_move_not_an_escape() {
+        // `Vec[str]` and `Box[T]` carry their element's views now, so the
+        // return rule sees them for the first time. Handing the container
+        // itself back is a MOVE — its storage becomes the caller's — and
+        // must not read as a view of something this frame frees.
+        let clean: &[(&str, &str)] = &[
+            (
+                "bare_move",
+                "fn split(s: str) -> Vec[str] { var out: Vec[str] = mk_vec(); return out; }",
+            ),
+            (
+                "moved_into_returned_aggregate",
+                "struct Surface { rows: Vec[str] }\n\
+                 fn open() -> Surface { var rows: Vec[str] = mk_vec(); return Surface { rows: rows }; }",
+            ),
+        ];
+        for (name, tail) in clean {
+            let codes = check_src(&format!(
+                "fn mk_vec() -> Vec[str] {{ return #zero::[Vec[str]](); }}\n{tail}"
+            ));
+            assert!(
+                !codes.iter().any(|c| c == "E0513"),
+                "[{name}] a move is not an escape, got {codes:?}"
+            );
+        }
+    }
+
+    #[test]
     fn returned_view_coerced_from_a_local_owner_denied_e0513() {
         // The coercion route has no accessor to key on: a lang-string local
         // returned where `str` is expected is the same dangle.
@@ -9790,6 +10475,76 @@ fn mk() -> LStr { return LStr { ptr: { 0 as *u8 }, len: { 0 as usize }, cap: { 0
             codes.iter().any(|c| c == "E0516"),
             "a carrier through a raw pointer is the same store, got {codes:?}"
         );
+    }
+
+    #[test]
+    fn raw_store_through_a_projection_is_the_same_seam_e0516() {
+        // bugs/str-field-outliving-its-text-is-not-caught.md: the first cut
+        // matched a bare `*p =` target only, so writing the same view one
+        // field deeper walked straight through. Every one of these is a
+        // store the analysis cannot see the far side of.
+        let cases: &[(&str, &str)] = &[
+            (
+                "field_of_pointee",
+                "struct Sink { key: str }\n\
+                 fn keep(into: *Sink, k: str) { { (*into).key = k }; return; }",
+            ),
+            (
+                "nested_field",
+                "struct Inner { key: str }\n\
+                 struct Outer { inner: Inner }\n\
+                 fn keep2(into: *Outer, k: str) { { (*into).inner.key = k }; return; }",
+            ),
+            (
+                "element_of_pointee",
+                "fn keep3(into: *[str; 4], k: str) { { (*into)[0] = k }; return; }",
+            ),
+            (
+                "carrier_field",
+                "struct Sink { key: str }\n\
+                 struct Holder { s: Sink }\n\
+                 fn keep4(into: *Holder, v: Sink) { { (*into).s = v }; return; }",
+            ),
+        ];
+        for (name, src) in cases {
+            let codes = check_src(src);
+            assert!(
+                codes.iter().any(|c| c == "E0516"),
+                "[{name}] a projected raw store must be denied, got {codes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn projected_raw_store_respects_the_same_gates() {
+        // The widened shape must not widen the RULE: the declaration still
+        // answers it, a non-view field is still not a view store, and a
+        // field of a plain local is not a raw store at all.
+        let clean: &[(&str, &str)] = &[
+            (
+                "declared_keeps_nothing",
+                "struct Sink { key: str }\n\
+                 #[keeps(nothing)]\n\
+                 fn keep(into: *Sink, k: str) { { (*into).key = k }; return; }",
+            ),
+            (
+                "non_view_field",
+                "struct Counter { n: i32 }\n\
+                 fn bump(into: *Counter, n: i32) { { (*into).n = n }; return; }",
+            ),
+            (
+                "field_of_a_local",
+                "struct Sink { key: str }\n\
+                 fn keep2(k: str) { var s: Sink = Sink { key: \"\" }; s.key = k; return; }",
+            ),
+        ];
+        for (name, src) in clean {
+            let codes = check_src(src);
+            assert!(
+                !codes.iter().any(|c| c == "E0516"),
+                "[{name}] must not be denied, got {codes:?}"
+            );
+        }
     }
 
     #[test]
