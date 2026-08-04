@@ -1,0 +1,230 @@
+// facet app_state — who owns what. HAND-WRITTEN.
+//
+// The ownership hierarchy, and the rule that guards it:
+//
+//   process   one exe. May CONTAIN several apps (a main app and a recovery
+//             mini-app in the same binary); exactly one RUNS at a time.
+//             Statics are legal ONLY here, and only for what every app and
+//             window genuinely shares: the backend, the platform hook slots,
+//             the UI thread, and the one RUNNING pointer below.
+//   app       owns its theme, its navigation state, its routes and menu,
+//             and its WINDOWS. Nothing app-scoped may be a module static —
+//             a second app in the exe must start clean.
+//   window    many per app, all visible at once (two editor windows side by
+//             side). A window owns its tree root.
+//   node      owns node-scoped state in its Data — including its
+//             presentation, which dies with it.
+//
+// `AppState` is the app-scoped record. `runtime::App` embeds one; running
+// the app points the process door at it, quitting clears the door. Facet
+// also works with NO app (bare mounts, run_component, the headless suite):
+// those run against the process-default state below — which is exactly the
+// "one implicit app" the old statics hard-coded, now visible and swappable.
+
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "stdlib/option" as option;
+import "flex_layout/flex_layout" as flex;
+import "./vocabulary" as vocab;
+
+type Color = vocab::Color;
+
+// ---- Theme (the struct lives here so the app record can embed it) ------------
+// The API — set_theme, theme(), the resolution tables — stays in theme.cplus,
+// which aliases this type. Declared low because AppState owns one per app and
+// theme.cplus must read the RUNNING app's; the import arrow only points down.
+struct Theme {
+    primary: Color,
+    on_primary: Color,
+    secondary: Color,
+    on_secondary: Color,
+    ink: Color,
+    surface: Color,
+    raised: Color,
+    sunken: Color,
+    outline: Color,
+    success: Color,
+    warning: Color,
+    danger: Color,
+    content: Color,
+    toolbar: Color,
+    tabstrip: Color,
+    track: Color,
+    chip: Color,
+    recessed: Color,
+}
+
+impl Theme {
+    fn new(
+        primary: Color = Color::none(),
+        on_primary: Color = Color::none(),
+        secondary: Color = Color::none(),
+        on_secondary: Color = Color::none(),
+        ink: Color = Color::none(),
+        surface: Color = Color::none(),
+        raised: Color = Color::none(),
+        sunken: Color = Color::none(),
+        outline: Color = Color::none(),
+        success: Color = Color::none(),
+        warning: Color = Color::none(),
+        danger: Color = Color::none(),
+        content: Color = Color::none(),
+        toolbar: Color = Color::none(),
+        tabstrip: Color = Color::none(),
+        track: Color = Color::none(),
+        chip: Color = Color::none(),
+        recessed: Color = Color::none(),
+    ) -> Theme {
+        return Theme {
+            primary: primary,
+            on_primary: on_primary,
+            secondary: secondary,
+            on_secondary: on_secondary,
+            ink: ink,
+            surface: surface,
+            raised: raised,
+            sunken: sunken,
+            outline: outline,
+            success: success,
+            warning: warning,
+            danger: danger,
+            content: content,
+            toolbar: toolbar,
+            tabstrip: tabstrip,
+            track: track,
+            chip: chip,
+            recessed: recessed,
+        };
+    }
+}
+
+// ---- navigation state (owned by the app) -------------------------------------
+// One pending intent at a time; the hooks are registered by the running
+// App's loop. See nav.cplus for the verbs and semantics.
+struct NavState {
+    intent: u32,
+    target: text::Text,
+    arg: text::Text,
+    close_fn: fn(),
+    push_fn: fn(str, str) -> bool,
+    pop_fn: fn() -> bool,
+}
+
+impl NavState {
+    fn new() -> NavState {
+        return NavState {
+            intent: 0 as u32,
+            target: text::new(),
+            arg: text::new(),
+            close_fn: 0 as fn(),
+            push_fn: 0 as fn(str, str) -> bool,
+            pop_fn: 0 as fn() -> bool,
+        };
+    }
+}
+
+// ---- a window (owned by the app, many at once) -------------------------------
+// The neutral half: the tree it shows. The native half (the platform window
+// handle) is the backend's, attached when it exists.
+struct WindowState {
+    opaque root: *flex::Node,
+    opaque native: *u8,
+}
+
+// ---- the app-scoped record ---------------------------------------------------
+struct AppState {
+    theme: Theme,
+    theme_changed_fn: fn(),
+    appearance_cb: fn(*u8),
+    opaque appearance_ctx: *u8,
+    nav: NavState,
+    windows: vec::Vec[WindowState],
+}
+
+impl AppState {
+    fn new() -> AppState {
+        return AppState {
+            theme: Theme::new(),
+            theme_changed_fn: 0 as fn(),
+            appearance_cb: 0 as fn(*u8),
+            appearance_ctx: 0 as *u8,
+            nav: NavState::new(),
+            windows: vec::new::[WindowState](),
+        };
+    }
+}
+
+// ---- the process door --------------------------------------------------------
+// The ONE legitimately-shared pointer: which app is running. 0 = none, and
+// every reader falls back to the process-default state so app-less facet
+// (tests, bare mounts) keeps working.
+static RUNNING: *AppState = #zero::[*AppState]();
+static DEFAULT: AppState = #zero::[AppState]();
+
+// The current app's state — the running app's, or the process default.
+// Free verbs (`theme()`, `nav::go`, `find`) resolve through this, which is
+// what lets them stay context-free at the call site.
+fn state() -> *AppState {
+    if RUNNING != (0 as *AppState) { return RUNNING; }
+    return #addr_of(DEFAULT);
+}
+
+// `App::run` points the door here; quitting calls release. Not app-facing.
+fn make_running(s: *AppState) { RUNNING = s; return; }
+fn release_running() { RUNNING = 0 as *AppState; return; }
+fn app_is_running() -> bool { return RUNNING != (0 as *AppState); }
+
+// Tests: a fresh default state, so one test's app state cannot leak into
+// the next. Only meaningful when nothing is running.
+fn reset_default_for_tests() {
+    DEFAULT = AppState::new();
+    return;
+}
+
+// ---- windows ----------------------------------------------------------------
+
+fn add_window(root: *flex::Node) {
+    let s: *AppState = state();
+    { (*s).windows.append(WindowState { root: root, native: 0 as *u8 }) };
+    return;
+}
+
+fn remove_window(root: *flex::Node) {
+    let s: *AppState = state();
+    var i: usize = 0 as usize;
+    let n: usize = { (*s).windows.count() };
+    while i < n {
+        let hit: bool = match { (*s).windows.at_ptr(i) } {
+            option::Option[*WindowState]::Some(w) => ({ (*w).root } == root),
+            option::Option[*WindowState]::None => false,
+        };
+        if hit {
+            let _r: option::Option[WindowState] = { (*s).windows.swap_remove(i) };
+            return;
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+fn window_count() -> usize {
+    let s: *AppState = state();
+    return { (*s).windows.count() };
+}
+
+fn window_root(at: usize) -> *flex::Node {
+    let s: *AppState = state();
+    return match { (*s).windows.at_ptr(at) } {
+        option::Option[*WindowState]::Some(w) => { (*w).root },
+        option::Option[*WindowState]::None => 0 as *flex::Node,
+    };
+}
+
+// The most recently opened window's root — the M7 interim answer, now
+// per-app: "the mounted tree" is the newest window of the RUNNING app.
+fn newest_window_root() -> *flex::Node {
+    let s: *AppState = state();
+    let n: usize = { (*s).windows.count() };
+    if n == (0 as usize) { return 0 as *flex::Node; }
+    return window_root(n -% (1 as usize));
+}

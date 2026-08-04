@@ -31,6 +31,7 @@ import "./vocabulary" as vocab;
 import "./component" as component;
 import "./screen" as screen;
 import "./services" as services;
+import "./app_state" as app_state;
 
 type Node = flex::Node;
 type Builder = flex::Builder;
@@ -160,6 +161,10 @@ struct AppRoute {
 fn app_hook_noop(ctx: *u8) { return; }
 
 struct App {
+    // The app-scoped record: theme, nav state, windows. Embedded BY VALUE —
+    // two Apps in one exe each own a clean one; `run` points the process
+    // door here for its lifetime.
+    state: app_state::AppState,
     name_text: text::Text,
     menu_fn: fn() -> AppMenu,
     on_launch_fn: fn(*u8),
@@ -172,6 +177,7 @@ struct App {
 impl App {
     fn new(name: str = "facet") -> App {
         return App {
+            state: app_state::AppState::new(),
             name_text: text::from_str(name),
             menu_fn: 0 as fn() -> AppMenu,
             on_launch_fn: app_hook_noop,
@@ -230,7 +236,12 @@ impl App {
     // No backend: nothing can be shown. Says so and returns the error instead
     // of degrading to an invisible app.
     fn run(ref this, initial: str, arg: str = "") -> status::Status {
+        // The contract every real facade follows: the app's record IS the
+        // process context while its loop runs, and stops being it after —
+        // a second app started later begins from its own clean state.
+        app_state::make_running(#addr_of(this.state));
         no_backend("App::run");
+        app_state::release_running();
         return status::Status::InvalidInput;
     }
 }

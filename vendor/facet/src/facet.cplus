@@ -61,6 +61,12 @@ struct Data {
     // The backend sets both when it mounts (Renderer.view_release rides in
     // with the created view); node teardown then cannot leak the view.
     view_release: fn(*u8),
+    // The presentation this node (an outlet) is showing: the component's
+    // address and its typed detach trampoline. NODE-scoped by design — the
+    // record dies with its owner, evicts naturally on teardown, and cannot
+    // collide across windows. 0 = nothing presented here.
+    opaque presented: *u8,
+    presented_detach: fn(*u8),
     dirty: u64,             // props changed since the backend last synced
     // What the platform learns first. facet declares the reads; a backend
     // writes them through set_focused / set_attached / set_window.
@@ -91,6 +97,12 @@ fn release_data(p: *u8) {
     let d: *Data = p as *Data;
     let f: fn(*u8) = { (*d).release };
     if f != (0 as fn(*u8)) { f({ (*d).props }); }
+    // The presented component (if any) learns its presentation ended.
+    let pa: *u8 = { (*d).presented };
+    if pa != (0 as *u8) {
+        let pd: fn(*u8) = { (*d).presented_detach };
+        if pd != (0 as fn(*u8)) { pd(pa); }
+    }
     // M1: the native view, through the release the backend paired with it.
     let vp: *u8 = { (*d).view };
     if vp != (0 as *u8) {
@@ -122,7 +134,8 @@ fn ensure_data(n: *Node) -> *Data {
     if d != (0 as *Data) { return d; }
     let fresh: Data = Data { key: text::new(), slot: text::new(), kind: K_NODE, props: 0 as *u8,
                              release: no_release, common: props::CommonProps::new(),
-                             view: 0 as *u8, view_release: no_release, dirty: 0u64,
+                             view: 0 as *u8, view_release: no_release,
+                             presented: 0 as *u8, presented_detach: no_release, dirty: 0u64,
                              is_focused: false, is_attached: false,
                              window: vocab::WindowRef::none(), batch: 0 as i64,
                              gestures: 0 as *u8, gestures_release: no_release };
@@ -138,7 +151,8 @@ fn node_with(key: str, kind: u32, props_ptr: *u8, release: fn(*u8)) -> Node {
     var n: Node = flex::Node::new();
     let d: Data = Data { key: text::from_str(key), slot: text::new(), kind: kind, props: props_ptr,
                          release: release, common: props::CommonProps::new(),
-                         view: 0 as *u8, view_release: no_release, dirty: 0u64,
+                         view: 0 as *u8, view_release: no_release,
+                         presented: 0 as *u8, presented_detach: no_release, dirty: 0u64,
                          is_focused: false, is_attached: false,
                          window: vocab::WindowRef::none(), batch: 0 as i64,
                          gestures: 0 as *u8, gestures_release: no_release };
@@ -304,6 +318,38 @@ fn kind_of(n: *Node) -> u32 {
     let d: *Data = { (*n).data() };
     if d == (0 as *Data) { return K_NODE; }
     return { (*d).kind };
+}
+
+// The presentation pair (see the Data field): the presenting verb writes it,
+// component_at reads it, teardown and eviction fire the trampoline.
+fn set_presented(n: *Node, addr: *u8, detach: fn(*u8)) {
+    let d: *Data = ensure_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).presented = addr };
+    { (*d).presented_detach = detach };
+    return;
+}
+
+fn presented_of(n: *Node) -> *u8 {
+    if n == (0 as *Node) { return 0 as *u8; }
+    let d: *Data = { (*n).data() };
+    if d == (0 as *Data) { return 0 as *u8; }
+    return { (*d).presented };
+}
+
+// Evict: notify through the trampoline, clear the record. True when
+// something was presented.
+fn evict_presented(n: *Node) -> bool {
+    if n == (0 as *Node) { return false; }
+    let d: *Data = { (*n).data() };
+    if d == (0 as *Data) { return false; }
+    let pa: *u8 = { (*d).presented };
+    if pa == (0 as *u8) { return false; }
+    let pd: fn(*u8) = { (*d).presented_detach };
+    if pd != (0 as fn(*u8)) { pd(pa); }
+    { (*d).presented = 0 as *u8 };
+    { (*d).presented_detach = no_release };
+    return true;
 }
 
 // The dirty word, read and cleared by the sync walk.

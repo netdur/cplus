@@ -10,8 +10,14 @@
 
 import "stdlib/text" as text;
 import "./vocabulary" as vocab;
+import "./app_state" as app_state;
 
 type Color = vocab::Color;
+
+// The struct lives in app_state (every APP owns a palette — a recovery
+// mini-app must not inherit the main app's). This module is the API over
+// the RUNNING app's record.
+type Theme = app_state::Theme;
 
 // ---- Theme ------------------------------------------------------------------
 // The app's palette: one plain record, installed once with `set_theme` (main,
@@ -21,93 +27,34 @@ type Color = vocab::Color;
 // place, the same sweep an appearance flip runs. No context, no threading —
 // a role is spelled `Color::primary()` anywhere, and resolution happens at
 // paint time.
-struct Theme {
-    primary: Color,
-    on_primary: Color,
-    secondary: Color,
-    on_secondary: Color,
-    ink: Color,
-    surface: Color,
-    raised: Color,
-    sunken: Color,
-    outline: Color,
-    success: Color,
-    warning: Color,
-    danger: Color,
-    content: Color,
-    toolbar: Color,
-    tabstrip: Color,
-    track: Color,
-    chip: Color,
-    recessed: Color,
-}
-
-impl Theme {
-    fn new(
-        primary: Color = Color::none(),
-        on_primary: Color = Color::none(),
-        secondary: Color = Color::none(),
-        on_secondary: Color = Color::none(),
-        ink: Color = Color::none(),
-        surface: Color = Color::none(),
-        raised: Color = Color::none(),
-        sunken: Color = Color::none(),
-        outline: Color = Color::none(),
-        success: Color = Color::none(),
-        warning: Color = Color::none(),
-        danger: Color = Color::none(),
-        content: Color = Color::none(),
-        toolbar: Color = Color::none(),
-        tabstrip: Color = Color::none(),
-        track: Color = Color::none(),
-        chip: Color = Color::none(),
-        recessed: Color = Color::none(),
-    ) -> Theme {
-        return Theme {
-            primary: primary,
-            on_primary: on_primary,
-            secondary: secondary,
-            on_secondary: on_secondary,
-            ink: ink,
-            surface: surface,
-            raised: raised,
-            sunken: sunken,
-            outline: outline,
-            success: success,
-            warning: warning,
-            danger: danger,
-            content: content,
-            toolbar: toolbar,
-            tabstrip: tabstrip,
-            track: track,
-            chip: chip,
-            recessed: recessed,
-        };
-    }
-}
-
-static THEME: Theme = #zero::[Theme]();
-
 // Backend hook: repaint token-colored chrome after a theme change (the same
 // sweep the appearance observer runs). Installed by the backend; without one
-// set_theme still stores (new mounts resolve the new palette).
-static THEME_CHANGED_FN: fn() = #zero::[fn()]();
-fn set_theme_changed_fn(f: fn()) { THEME_CHANGED_FN = f; return; }
+// set_theme still stores (new mounts resolve the new palette). App-scoped:
+// the hook repaints the RUNNING app's windows.
+fn set_theme_changed_fn(f: fn()) {
+    let s: *app_state::AppState = app_state::state();
+    { (*s).theme_changed_fn = f };
+    return;
+}
 
 fn set_theme(take t: Theme) {
-    THEME = t;
-    // (Router port pending: the old facet dropped parked outlet siblings here
-    // so a re-stage resolved the new palette. Comes back with the router.)
-    let f: fn() = THEME_CHANGED_FN;
+    let s: *app_state::AppState = app_state::state();
+    { (*s).theme = t };
+    let f: fn() = { (*s).theme_changed_fn };
     if f != (0 as fn()) { f(); }
     return;
 }
 
-fn theme() -> Theme { return THEME; }
+fn theme() -> Theme {
+    let s: *app_state::AppState = app_state::state();
+    return { (*s).theme };
+}
 
 // The stored Color for a theme-role token — none when the app left the role
 // unset (resolve `theme_fallback` instead). Backend-facing.
 fn theme_slot(token: u32) -> Color {
+    let sp: *app_state::AppState = app_state::state();
+    let THEME: Theme = { (*sp).theme };
     if token == (100 as u32) { return THEME.primary; }
     if token == (101 as u32) { return THEME.on_primary; }
     if token == (102 as u32) { return THEME.secondary; }
@@ -180,21 +127,20 @@ fn is_dark() -> bool {
 // swap a root outlet's child — is app policy, never facet's. Colors flattened
 // at build time (layer backgrounds) do not track the appearance by themselves,
 // so a themed app re-applies them from this handler.
-static APPEARANCE_CB: fn(*u8) = #zero::[fn(*u8)]();
-static APPEARANCE_CB_CTX: *u8 = #zero::[*u8]();
-
 fn on_appearance_change(handler: fn(*u8), ctx: *u8 = 0 as *u8) {
-    APPEARANCE_CB = handler;
-    APPEARANCE_CB_CTX = ctx;
+    let s: *app_state::AppState = app_state::state();
+    { (*s).appearance_cb = handler };
+    { (*s).appearance_ctx = ctx };
     return;
 }
 
-// Backend entry: deliver the flip to the app's registered handler (no-op when
-// the app never registered).
+// Backend entry: deliver the flip to the RUNNING app's registered handler
+// (no-op when it never registered).
 fn notify_appearance_changed() {
-    let f: fn(*u8) = APPEARANCE_CB;
+    let s: *app_state::AppState = app_state::state();
+    let f: fn(*u8) = { (*s).appearance_cb };
     if f == (0 as fn(*u8)) { return; }
-    f(APPEARANCE_CB_CTX);
+    f({ (*s).appearance_ctx });
     return;
 }
 
