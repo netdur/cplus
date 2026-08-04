@@ -1599,8 +1599,8 @@ def lint_names(verbs):
 # until an audit found them. Tier types are the ones with no control module;
 # each names the Stage 3 module that owns its rows.
 TIER_TYPES = {
-    "Window":      "app_state.cplus WindowState + runtime.cplus Window interface — an app owns many, all shown at once",
-    "Application": "runtime.cplus App embedding app_state.cplus AppState — one runs at a time, several may live in the exe",
+    "Window":      "application.cplus Window + runtime.cplus Window interface — an app owns many, all shown at once",
+    "Application": "runtime.cplus App embedding application.cplus Application — one runs at a time, several may live in the exe",
     "Page":        "screen.cplus — Screen/Chrome",
     "ContentPage": "screen.cplus — Screen",
     "TitleBar":    "screen.cplus — Chrome (bar: Bar)",

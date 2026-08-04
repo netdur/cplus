@@ -1,4 +1,9 @@
-// facet app_state — who owns what. HAND-WRITTEN.
+// facet application — who owns what. HAND-WRITTEN.
+//
+// The names are MAUI's, copied deliberately (Application.Current, Windows,
+// OpenWindow/CloseWindow — ledger rows Application 13 + Window 30): this is
+// a RECORD of ownership, not a reactive store. Nothing here re-renders;
+// state lives in component fields and the tree is edited in place.
 //
 // The ownership hierarchy, and the rule that guards it:
 //
@@ -101,7 +106,7 @@ impl Theme {
 // ---- navigation state (owned by the app) -------------------------------------
 // One pending intent at a time; the hooks are registered by the running
 // App's loop. See nav.cplus for the verbs and semantics.
-struct NavState {
+struct Navigation {
     intent: u32,
     target: text::Text,
     arg: text::Text,
@@ -110,9 +115,9 @@ struct NavState {
     pop_fn: fn() -> bool,
 }
 
-impl NavState {
-    fn new() -> NavState {
-        return NavState {
+impl Navigation {
+    fn new() -> Navigation {
+        return Navigation {
             intent: 0 as u32,
             target: text::new(),
             arg: text::new(),
@@ -126,30 +131,30 @@ impl NavState {
 // ---- a window (owned by the app, many at once) -------------------------------
 // The neutral half: the tree it shows. The native half (the platform window
 // handle) is the backend's, attached when it exists.
-struct WindowState {
+struct Window {
     opaque root: *flex::Node,
     opaque native: *u8,
 }
 
 // ---- the app-scoped record ---------------------------------------------------
-struct AppState {
+struct Application {
     theme: Theme,
     theme_changed_fn: fn(),
     appearance_cb: fn(*u8),
     opaque appearance_ctx: *u8,
-    nav: NavState,
-    windows: vec::Vec[WindowState],
+    nav: Navigation,
+    windows: vec::Vec[Window],
 }
 
-impl AppState {
-    fn new() -> AppState {
-        return AppState {
+impl Application {
+    fn new() -> Application {
+        return Application {
             theme: Theme::new(),
             theme_changed_fn: 0 as fn(),
             appearance_cb: 0 as fn(*u8),
             appearance_ctx: 0 as *u8,
-            nav: NavState::new(),
-            windows: vec::new::[WindowState](),
+            nav: Navigation::new(),
+            windows: vec::new::[Window](),
         };
     }
 }
@@ -158,48 +163,52 @@ impl AppState {
 // The ONE legitimately-shared pointer: which app is running. 0 = none, and
 // every reader falls back to the process-default state so app-less facet
 // (tests, bare mounts) keeps working.
-static RUNNING: *AppState = #zero::[*AppState]();
-static DEFAULT: AppState = #zero::[AppState]();
+static RUNNING: *Application = #zero::[*Application]();
+static DEFAULT: Application = #zero::[Application]();
 
 // The current app's state — the running app's, or the process default.
 // Free verbs (`theme()`, `nav::go`, `find`) resolve through this, which is
 // what lets them stay context-free at the call site.
-fn state() -> *AppState {
-    if RUNNING != (0 as *AppState) { return RUNNING; }
+// Application.Current, exactly: the running app, or the process default
+// (the app-less posture tests and bare mounts run in).
+fn current() -> *Application {
+    if RUNNING != (0 as *Application) { return RUNNING; }
     return #addr_of(DEFAULT);
 }
 
 // `App::run` points the door here; quitting calls release. Not app-facing.
-fn make_running(s: *AppState) { RUNNING = s; return; }
-fn release_running() { RUNNING = 0 as *AppState; return; }
-fn app_is_running() -> bool { return RUNNING != (0 as *AppState); }
+fn make_current(s: *Application) { RUNNING = s; return; }
+fn release_current() { RUNNING = 0 as *Application; return; }
+fn has_current() -> bool { return RUNNING != (0 as *Application); }
 
 // Tests: a fresh default state, so one test's app state cannot leak into
 // the next. Only meaningful when nothing is running.
 fn reset_default_for_tests() {
-    DEFAULT = AppState::new();
+    DEFAULT = Application::new();
     return;
 }
 
 // ---- windows ----------------------------------------------------------------
 
-fn add_window(root: *flex::Node) {
-    let s: *AppState = state();
-    { (*s).windows.append(WindowState { root: root, native: 0 as *u8 }) };
+// Application.OpenWindow.
+fn open_window(root: *flex::Node) {
+    let s: *Application = current();
+    { (*s).windows.append(Window { root: root, native: 0 as *u8 }) };
     return;
 }
 
-fn remove_window(root: *flex::Node) {
-    let s: *AppState = state();
+// Application.CloseWindow.
+fn close_window(root: *flex::Node) {
+    let s: *Application = current();
     var i: usize = 0 as usize;
     let n: usize = { (*s).windows.count() };
     while i < n {
         let hit: bool = match { (*s).windows.at_ptr(i) } {
-            option::Option[*WindowState]::Some(w) => ({ (*w).root } == root),
-            option::Option[*WindowState]::None => false,
+            option::Option[*Window]::Some(w) => ({ (*w).root } == root),
+            option::Option[*Window]::None => false,
         };
         if hit {
-            let _r: option::Option[WindowState] = { (*s).windows.swap_remove(i) };
+            let _r: option::Option[Window] = { (*s).windows.swap_remove(i) };
             return;
         }
         i = i +% (1 as usize);
@@ -208,22 +217,22 @@ fn remove_window(root: *flex::Node) {
 }
 
 fn window_count() -> usize {
-    let s: *AppState = state();
+    let s: *Application = current();
     return { (*s).windows.count() };
 }
 
 fn window_root(at: usize) -> *flex::Node {
-    let s: *AppState = state();
+    let s: *Application = current();
     return match { (*s).windows.at_ptr(at) } {
-        option::Option[*WindowState]::Some(w) => { (*w).root },
-        option::Option[*WindowState]::None => 0 as *flex::Node,
+        option::Option[*Window]::Some(w) => { (*w).root },
+        option::Option[*Window]::None => 0 as *flex::Node,
     };
 }
 
 // The most recently opened window's root — the M7 interim answer, now
 // per-app: "the mounted tree" is the newest window of the RUNNING app.
 fn newest_window_root() -> *flex::Node {
-    let s: *AppState = state();
+    let s: *Application = current();
     let n: usize = { (*s).windows.count() };
     if n == (0 as usize) { return 0 as *flex::Node; }
     return window_root(n -% (1 as usize));

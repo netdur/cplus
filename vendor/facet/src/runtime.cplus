@@ -31,7 +31,7 @@ import "./vocabulary" as vocab;
 import "./component" as component;
 import "./screen" as screen;
 import "./services" as services;
-import "./app_state" as app_state;
+import "./application" as app;
 
 type Node = flex::Node;
 type Builder = flex::Builder;
@@ -161,10 +161,10 @@ struct AppRoute {
 fn app_hook_noop(ctx: *u8) { return; }
 
 struct App {
-    // The app-scoped record: theme, nav state, windows. Embedded BY VALUE —
-    // two Apps in one exe each own a clean one; `run` points the process
-    // door here for its lifetime.
-    state: app_state::AppState,
+    // The Application record (MAUI's word): theme, navigation, windows.
+    // Embedded BY VALUE — two Apps in one exe each own a clean one; `run`
+    // makes it Application.Current for the loop's lifetime.
+    application: app::Application,
     name_text: text::Text,
     menu_fn: fn() -> AppMenu,
     on_launch_fn: fn(*u8),
@@ -177,7 +177,7 @@ struct App {
 impl App {
     fn new(name: str = "facet") -> App {
         return App {
-            state: app_state::AppState::new(),
+            application: app::Application::new(),
             name_text: text::from_str(name),
             menu_fn: 0 as fn() -> AppMenu,
             on_launch_fn: app_hook_noop,
@@ -239,9 +239,9 @@ impl App {
         // The contract every real facade follows: the app's record IS the
         // process context while its loop runs, and stops being it after —
         // a second app started later begins from its own clean state.
-        app_state::make_running(#addr_of(this.state));
+        app::make_current(#addr_of(this.application));
         no_backend("App::run");
-        app_state::release_running();
+        app::release_current();
         return status::Status::InvalidInput;
     }
 }

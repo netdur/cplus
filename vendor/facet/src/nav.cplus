@@ -17,7 +17,7 @@
 // but close nothing. Main-thread only, like every facet verb.
 
 import "stdlib/text" as text;
-import "./app_state" as app_state;
+import "./application" as app;
 
 // ---- intent codes -----------------------------------------------------------
 
@@ -32,7 +32,7 @@ fn intent_quit() -> u32 { return 2 as u32; }
 // route-argument channel (`nav::go("workspace", arg: path)` -> the workspace
 // factory or its on_attach reads `nav::arg()`).
 
-// Navigation state is APP-scoped (app_state::NavState): a second app in the
+// Navigation state is APP-scoped (app::Navigation): a second app in the
 // same exe starts with no pending intent, and the hooks below die with the
 // loop that registered them. This module is the verbs over the RUNNING
 // app's record.
@@ -43,23 +43,23 @@ fn intent_quit() -> u32 { return 2 as u32; }
 // Registered by App for the life of its loop; null otherwise.
 
 fn set_close_fn(f: fn()) {
-    let s: *app_state::AppState = app_state::state();
+    let s: *app::Application = app::current();
     { (*s).nav.close_fn = f };
     return;
 }
 fn set_push_fn(f: fn(str, str) -> bool) {
-    let s: *app_state::AppState = app_state::state();
+    let s: *app::Application = app::current();
     { (*s).nav.push_fn = f };
     return;
 }
 fn set_pop_fn(f: fn() -> bool) {
-    let s: *app_state::AppState = app_state::state();
+    let s: *app::Application = app::current();
     { (*s).nav.pop_fn = f };
     return;
 }
 
 fn clear_hooks() {
-    let s: *app_state::AppState = app_state::state();
+    let s: *app::Application = app::current();
     { (*s).nav.close_fn = 0 as fn() };
     { (*s).nav.push_fn = 0 as fn(str, str) -> bool };
     { (*s).nav.pop_fn = 0 as fn() -> bool };
@@ -67,7 +67,7 @@ fn clear_hooks() {
 }
 
 fn fire_close() {
-    let s: *app_state::AppState = app_state::state();
+    let s: *app::Application = app::current();
     let f: fn() = { (*s).nav.close_fn };
     if f != (0 as fn()) { f(); }
     return;
@@ -78,7 +78,7 @@ fn fire_close() {
 // Replace the current screen: record the route, close the current window. The
 // App loop reads the intent once the window unwinds and opens the target.
 fn go(route: str, arg: str = "") {
-    let s: *app_state::AppState = app_state::state();
+    let s: *app::Application = app::current();
     { (*s).nav.intent = intent_go() };
     { (*s).nav.target = text::from_str(route) };
     { (*s).nav.arg = text::from_str(arg) };
@@ -88,7 +88,7 @@ fn go(route: str, arg: str = "") {
 
 // End the app: close the current window with nothing pending after it.
 fn quit() {
-    let s: *app_state::AppState = app_state::state();
+    let s: *app::Application = app::current();
     { (*s).nav.intent = intent_quit() };
     fire_close();
     return;
@@ -98,7 +98,7 @@ fn quit() {
 // stack push on mobile). Immediate — nothing unwinds. False when no App is
 // running or the route is unknown.
 fn push(route: str, arg: str = "") -> bool {
-    let s: *app_state::AppState = app_state::state();
+    let s: *app::Application = app::current();
     let f: fn(str, str) -> bool = { (*s).nav.push_fn };
     if f == (0 as fn(str, str) -> bool) { return false; }
     return f(route, arg);
@@ -107,7 +107,7 @@ fn push(route: str, arg: str = "") -> bool {
 // Dismiss the most recently pushed screen. False when nothing is pushed (or
 // no App is running) — never a trap.
 fn pop() -> bool {
-    let s: *app_state::AppState = app_state::state();
+    let s: *app::Application = app::current();
     let f: fn() -> bool = { (*s).nav.pop_fn };
     if f == (0 as fn() -> bool) { return false; }
     return f();
@@ -118,7 +118,7 @@ fn pop() -> bool {
 // The argument the intent that showed the CURRENT screen carried. Empty when
 // none was given. Stable until the next navigation verb.
 fn arg() -> str {
-    let s: *app_state::AppState = app_state::state();
+    let s: *app::Application = app::current();
     return { (*s).nav.arg.view() };
 }
 
@@ -127,28 +127,28 @@ fn arg() -> str {
 // its own argument — and a FAILED push (unknown route) leaves the current
 // arg untouched. App-side plumbing, not an app-facing verb.
 fn set_arg(arg: str) {
-    let s: *app_state::AppState = app_state::state();
+    let s: *app::Application = app::current();
     { (*s).nav.arg = text::from_str(arg) };
     return;
 }
 
 // The pending intent code, without consuming it.
 fn pending() -> u32 {
-    let s: *app_state::AppState = app_state::state();
+    let s: *app::Application = app::current();
     return { (*s).nav.intent };
 }
 
 // The route `go` asked for. Valid while the intent is pending and until the
 // next verb overwrites it.
 fn target() -> str {
-    let s: *app_state::AppState = app_state::state();
+    let s: *app::Application = app::current();
     return { (*s).nav.target.view() };
 }
 
 // Consume the pending intent: returns it and rearms to none. TARGET / ARG stay
 // readable (the App resolves the route from TARGET right after taking).
 fn take() -> u32 {
-    let s: *app_state::AppState = app_state::state();
+    let s: *app::Application = app::current();
     let i: u32 = { (*s).nav.intent };
     { (*s).nav.intent = intent_none() };
     return i;
@@ -157,7 +157,7 @@ fn take() -> u32 {
 // Fresh state for a new App loop: no intent, empty route, the given initial
 // argument (so the FIRST screen's `arg()` works like every later one's).
 fn reset(arg: str = "") {
-    let s: *app_state::AppState = app_state::state();
+    let s: *app::Application = app::current();
     { (*s).nav.intent = intent_none() };
     { (*s).nav.target = text::new() };
     { (*s).nav.arg = text::from_str(arg) };

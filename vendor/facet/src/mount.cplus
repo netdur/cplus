@@ -31,7 +31,7 @@
 //       C_FLUSH lands at depth zero. Headless tests call `sync()` directly.
 //   M6  Thread discipline: `install` records the installing thread;
 //       `core::touch` asserts every write is on it (facet.cplus).
-//   M7  "The mounted tree": the RUNNING app's windows (app_state). One exe
+//   M7  "The mounted tree": the RUNNING app's windows (application.cplus). One exe
 //       may contain several apps (one runs at a time); an app has many
 //       windows shown at once; `mounted_root()` answers the newest window's
 //       root. Nothing here is a module static — mounting into app B after
@@ -44,7 +44,7 @@ import "flex_layout/flex_layout" as flex;
 import "./facet" as core;
 import "./props" as props;
 import "./component" as component;
-import "./app_state" as app_state;
+import "./application" as app;
 
 type Node = flex::Node;
 
@@ -116,15 +116,15 @@ fn request_sync() {
 }
 
 // ---- mounted windows (M7) ----------------------------------------------------
-// Owned by the RUNNING app (app_state), never by this module: a mount opens
+// Owned by the RUNNING app (application.cplus), never by this module: a mount opens
 // a window of the current app, an unmount closes it.
 
-fn mounted_count() -> usize { return app_state::window_count(); }
+fn mounted_count() -> usize { return app::window_count(); }
 
 // The newest window's root of the RUNNING app — what a bare `find(key)`
 // searches. 0 when the current app has no window up.
 fn mounted_root() -> *core::Node {
-    return app_state::newest_window_root();
+    return app::newest_window_root();
 }
 
 // The post-walk notification queue (M4): nodes whose on_attach/on_detach
@@ -171,7 +171,7 @@ fn mount(root: *core::Node) -> bool {
     if root == (0 as *core::Node) { return false; }
     var q: vec::Vec[*core::Node] = vec::new::[*core::Node]();
     let _slots: usize = mount_walk(root, 0 as *u8, 0 as usize, q);
-    app_state::add_window(root);
+    app::open_window(root);
     drain_attach_queue(q);
     return true;
 }
@@ -180,7 +180,7 @@ fn mount(root: *core::Node) -> bool {
 // node teardown (`release_data` fires `view_release`), not here — parking a
 // subtree must not destroy what re-attaching needs.
 fn unmount(root: *core::Node) {
-    app_state::remove_window(root);
+    app::close_window(root);
     var q: vec::Vec[*core::Node] = vec::new::[*core::Node]();
     detach_walk(root, q);
     drain_detach_queue(q);
@@ -252,9 +252,9 @@ fn detach_walk(n: *core::Node, ref q: vec::Vec[*core::Node]) {
 fn sync() {
     if !INSTALLED { return; }
     var i: usize = 0 as usize;
-    let n: usize = app_state::window_count();
+    let n: usize = app::window_count();
     while i < n {
-        let r: *core::Node = app_state::window_root(i);
+        let r: *core::Node = app::window_root(i);
         if r != (0 as *core::Node) { sync_walk(r); }
         i = i +% (1 as usize);
     }
@@ -299,7 +299,7 @@ static FR_INS_HOSTS: vec::Vec[u64] = #zero::[vec::Vec[u64]]();
 static FR_INS_SLOTS: vec::Vec[u64] = #zero::[vec::Vec[u64]]();
 
 fn fr_reset() {
-    app_state::reset_default_for_tests();
+    app::reset_default_for_tests();
     FR_NEXT = 100 as u64;
     FR_CREATES = 0;
     FR_APPLIES = 0;
@@ -349,7 +349,7 @@ fn fr_leaf(key: str) -> core::Node {
 
 #[test]
 fn mount_without_a_renderer_is_inert() {
-    app_state::reset_default_for_tests();
+    app::reset_default_for_tests();
     uninstall();
     var root: core::Node = core::column(core::Builder::new(), key: "r");
     assert mount(#addr_of(root)) == false;
@@ -630,9 +630,9 @@ fn nearest_host(n: *core::Node) -> *u8 {
     let own: *u8 = core::view_of(n);
     if own != (0 as *u8) { return own; }
     var i: usize = 0 as usize;
-    let count: usize = app_state::window_count();
+    let count: usize = app::window_count();
     while i < count {
-        let r: *core::Node = app_state::window_root(i);
+        let r: *core::Node = app::window_root(i);
         if r != (0 as *core::Node) {
             match host_search(r, 0 as *u8, n) {
                 option::Option[*u8]::Some(h) => { return h; }
@@ -759,12 +759,12 @@ impl ScComp: component::Lifecycle {
 
 #[test]
 fn set_content_fills_registers_and_rebuilds_on_repeat() {
-    app_state::reset_default_for_tests();
+    app::reset_default_for_tests();
     uninstall();                     // headless: the tree is the whole truth
     var outlet: core::Node = core::column(core::Builder::new(), key: "slot");
     // The outlet lives in a WINDOW of the (default) app — component_at
     // resolves through the app's windows, exactly like a real screen.
-    app_state::add_window(#addr_of(outlet));
+    app::open_window(#addr_of(outlet));
     core::set_attached(#addr_of(outlet), true);
     var c: ScComp = ScComp { n: 1, attaches: 0, detaches: 0 };
     assert set_content(#addr_of(outlet), c);
@@ -791,13 +791,13 @@ fn set_content_fills_registers_and_rebuilds_on_repeat() {
         option::Option[*ScComp]::None => { assert false; }
     }
     let _e: bool = core::evict_presented(#addr_of(outlet));
-    app_state::remove_window(#addr_of(outlet));
+    app::close_window(#addr_of(outlet));
     return;
 }
 
 #[test]
 fn switch_to_parks_under_display_none_and_restores() {
-    app_state::reset_default_for_tests();
+    app::reset_default_for_tests();
     uninstall();
     LC_DETACHES = 0;
     LC_ATTACHES = 0;

@@ -66,7 +66,7 @@ import "./screen" as screen;
 import "./theme" as theme;
 import "./runtime" as runtime;
 import "./mount" as mount;
-import "./app_state" as app_state;
+import "./application" as app;
 
 fn approx(a: f64, b: f64) -> bool {
     let d: f64 = a - b;
@@ -2334,7 +2334,7 @@ fn dsl_split_takes_panes_as_children() {
 fn find_defaults_to_the_mounted_tree() {
     // Nothing mounted: the defaulted `within` is 0 and the answer is None,
     // never a trap.
-    app_state::reset_default_for_tests();
+    app::reset_default_for_tests();
     mount::uninstall();
     match button::find("save") {
         option::Option[button::Button]::Some(_x) => { assert false; }

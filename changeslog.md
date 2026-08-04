@@ -239,18 +239,20 @@ by its *shape*, not a method-name allowlist, through every form it can leak:
   to every launcher and recents control.
 
 ### facet — the ownership hierarchy
-- **process → app → window → node**, MAUI's Application scaffold given its
-  facet home: `app_state.cplus` holds the app-scoped record (theme, nav
-  state, appearance handler, windows) that `runtime::App` embeds by value;
-  running an app points the one process door at its record and quitting
+- **process → app → window → node, in MAUI's own words**:
+  `application.cplus` holds `Application` (theme, `Navigation`, `Window`s)
+  — reached through `app::current()`, MAUI's `Application.Current` — with
+  `open_window`/`close_window` mirroring the MAUI verbs. `runtime::App`
+  embeds an `Application` by value; running makes it current, quitting
   releases it, so a second app in the same exe starts clean. Windows are
   plural and simultaneous — mount opens one, `sync` and the key-only `find`
-  walk the running app's windows. A node's presentation lives on its own
+  walk the current app's windows. A node's presentation lives on its own
   `Data` and dies with it; the mount-module registry and both lifecycle
   hooks are gone. Statics remain only for what every app shares: the
-  Renderer, the platform hook slots, the UI thread, the RUNNING door.
-  App-less facet (bare mounts, the headless suite) runs against a visible,
-  resettable process-default record.
+  Renderer, the platform hook slots, the UI thread, the one `current`
+  door. The earlier `AppState` name was dropped deliberately: paired with
+  `Component` it reads reactive, which facet is not — the record is
+  ownership, and nothing re-renders.
 
 ### facet — the words facet owns (no MAUI row behind them)
 - **`symbol`** (`symbol.cplus` + `icons.cplus`): an icon-font glyph as a

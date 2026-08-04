@@ -10,14 +10,14 @@
 
 import "stdlib/text" as text;
 import "./vocabulary" as vocab;
-import "./app_state" as app_state;
+import "./application" as app;
 
 type Color = vocab::Color;
 
-// The struct lives in app_state (every APP owns a palette — a recovery
+// The struct lives in application.cplus (every APP owns a palette — a recovery
 // mini-app must not inherit the main app's). This module is the API over
 // the RUNNING app's record.
-type Theme = app_state::Theme;
+type Theme = app::Theme;
 
 // ---- Theme ------------------------------------------------------------------
 // The app's palette: one plain record, installed once with `set_theme` (main,
@@ -32,13 +32,13 @@ type Theme = app_state::Theme;
 // set_theme still stores (new mounts resolve the new palette). App-scoped:
 // the hook repaints the RUNNING app's windows.
 fn set_theme_changed_fn(f: fn()) {
-    let s: *app_state::AppState = app_state::state();
+    let s: *app::Application = app::current();
     { (*s).theme_changed_fn = f };
     return;
 }
 
 fn set_theme(take t: Theme) {
-    let s: *app_state::AppState = app_state::state();
+    let s: *app::Application = app::current();
     { (*s).theme = t };
     let f: fn() = { (*s).theme_changed_fn };
     if f != (0 as fn()) { f(); }
@@ -46,14 +46,14 @@ fn set_theme(take t: Theme) {
 }
 
 fn theme() -> Theme {
-    let s: *app_state::AppState = app_state::state();
+    let s: *app::Application = app::current();
     return { (*s).theme };
 }
 
 // The stored Color for a theme-role token — none when the app left the role
 // unset (resolve `theme_fallback` instead). Backend-facing.
 fn theme_slot(token: u32) -> Color {
-    let sp: *app_state::AppState = app_state::state();
+    let sp: *app::Application = app::current();
     let THEME: Theme = { (*sp).theme };
     if token == (100 as u32) { return THEME.primary; }
     if token == (101 as u32) { return THEME.on_primary; }
@@ -128,7 +128,7 @@ fn is_dark() -> bool {
 // at build time (layer backgrounds) do not track the appearance by themselves,
 // so a themed app re-applies them from this handler.
 fn on_appearance_change(handler: fn(*u8), ctx: *u8 = 0 as *u8) {
-    let s: *app_state::AppState = app_state::state();
+    let s: *app::Application = app::current();
     { (*s).appearance_cb = handler };
     { (*s).appearance_ctx = ctx };
     return;
@@ -137,7 +137,7 @@ fn on_appearance_change(handler: fn(*u8), ctx: *u8 = 0 as *u8) {
 // Backend entry: deliver the flip to the RUNNING app's registered handler
 // (no-op when it never registered).
 fn notify_appearance_changed() {
-    let s: *app_state::AppState = app_state::state();
+    let s: *app::Application = app::current();
     let f: fn(*u8) = { (*s).appearance_cb };
     if f == (0 as fn(*u8)) { return; }
     f({ (*s).appearance_ctx });

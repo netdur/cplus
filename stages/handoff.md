@@ -83,14 +83,17 @@ wrong once already.
   it matches, no node anywhere has been removed, so the pointer is live
   without dereferencing it.
 - **Ownership hierarchy (2026-08-04, user-directed): process → app → window
-  → node.** One exe may contain several apps (one runs at a time); an app
-  owns theme/nav/windows in `app_state.cplus` (`runtime::App` embeds the
-  record, `run` points the ONE process door at it); a window owns its root;
-  a node owns its presentation in `Data`. Module statics are legal only for
-  what the whole process shares: the Renderer, platform hook slots, the UI
-  thread, the RUNNING door. This is MAUI's own Application/Windows scaffold
-  (the ledger's 13 Application + 30 Window rows) — anything app- or
-  window-scoped in a static is drift.
+  → node — in MAUI's OWN WORDS, deliberately.** `application.cplus` holds
+  `Application` (theme, `Navigation`, `Window`s), reached through
+  `app::current()` — MAUI's `Application.Current` — with `open_window`/
+  `close_window` mirroring `OpenWindow`/`CloseWindow`. `runtime::App`
+  embeds one by value; `run` makes it current for the loop's lifetime; a
+  second app in the exe starts clean. A window owns its root; a node owns
+  its presentation in `Data`. Module statics are legal only for what the
+  whole process shares (Renderer, platform hooks, UI thread, the one
+  `current` door). NAMING RULE this encodes: no `State` words — an LLM
+  reading `AppState` + `Component` will reason its way to React; the
+  ledger's Application/Window rows (13 + 30) are the vocabulary.
 - **The `@` builder DSL is the authoring surface, reconnected 2026-08-04.**
   The regen had orphaned it (controls left the `facet::` namespace, so
   `@facet { button(...) }` resolved nothing). The rendezvous is generated:

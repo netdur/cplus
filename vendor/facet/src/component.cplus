@@ -7,7 +7,7 @@ import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "flex_layout/flex_layout" as flex;
 import "./facet" as core;
-import "./app_state" as app_state;
+import "./application" as app;
 
 type Node = flex::Node;
 
@@ -166,9 +166,9 @@ fn drag_targeted(sender: *u8) -> bool {
 // lasts: resolve, call, don't store.
 fn component_at[C](key: str) -> option::Option[*C] {
     var i: usize = 0 as usize;
-    let count: usize = app_state::window_count();
+    let count: usize = app::window_count();
     while i < count {
-        let r: *core::Node = app_state::window_root(i);
+        let r: *core::Node = app::window_root(i);
         if r != (0 as *core::Node) {
             match core::find_in(r, key) {
                 option::Option[*core::Node]::Some(outlet) => {
@@ -203,7 +203,7 @@ impl CaTestComp: Lifecycle {
 
 #[test]
 fn component_at_resolves_through_the_running_apps_windows() {
-    app_state::reset_default_for_tests();
+    app::reset_default_for_tests();
     // Nothing mounted: None, never a trap.
     match component_at::[CaTestComp]("outlet") {
         option::Option[*CaTestComp]::Some(_p) => { assert false; }
@@ -214,7 +214,7 @@ fn component_at_resolves_through_the_running_apps_windows() {
     var root: core::Node = core::column(core::Builder::new(), key: "outlet");
     var c: CaTestComp = CaTestComp { hits: 0 };
     core::set_presented(#addr_of(root), #addr_of(c) as *u8, lc_detach_tramp::[CaTestComp]);
-    app_state::add_window(#addr_of(root));
+    app::open_window(#addr_of(root));
     match component_at::[CaTestComp]("outlet") {
         option::Option[*CaTestComp]::Some(p) => { assert p == #addr_of(c); }
         option::Option[*CaTestComp]::None => { assert false; }
@@ -228,7 +228,7 @@ fn component_at_resolves_through_the_running_apps_windows() {
     // node outlives this test's interest.
     let _e: bool = core::evict_presented(#addr_of(root));
     assert c.hits == 100;
-    app_state::reset_default_for_tests();
+    app::reset_default_for_tests();
     return;
 }
 
