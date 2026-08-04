@@ -194,6 +194,47 @@ fn mount(root: *core::Node) -> bool {
     return true;
 }
 
+// ---- the second mount path: a detached subtree --------------------------------
+//
+// `mount` opens a WINDOW. `add_child` / `insert_child` put a node into a tree
+// that is already mounted. Neither is what a RECYCLING list needs, and that is
+// the whole reason this pair exists.
+//
+// A recycled row is a subtree that is not in facet's tree at all: the platform
+// owns it, builds it when the row scrolls in, and destroys it when the row
+// scrolls out. It never has a facet parent, so it can never be reached by a
+// walk from a window root — and a backend that re-implemented the walk to
+// realise one itself would be duplicating M3, which is drift.
+//
+// So the seam says it out loud. `realise` runs exactly the same walk `mount`
+// does, minus the window and minus the insert (the caller has its own host and
+// will place the view itself); `unrealise` is the matching teardown.
+//
+// The caller OWNS the node: it must outlive the view, and dropping it is what
+// releases the view (through the same `view_release` pairing every other node
+// uses — M1 holds here too).
+fn realise(n: *core::Node) -> *u8 {
+    if !installed() { return 0 as *u8; }
+    if n == (0 as *core::Node) { return 0 as *u8; }
+    var q: vec::Vec[*core::Node] = vec::new::[*core::Node]();
+    // host 0: nothing to insert INTO. The walk still creates every view and
+    // inserts children into their own parents, so the subtree is whole — only
+    // its root is left for the caller to place.
+    let _slots: usize = mount_walk(n, 0 as *u8, 0 as usize, q);
+    drain_attach_queue(q);
+    return core::view_of(n);
+}
+
+// The matching teardown: on_detach fires, attach state clears. Views go the
+// same way they always do — with the node.
+fn unrealise(n: *core::Node) {
+    if n == (0 as *core::Node) { return; }
+    var q: vec::Vec[*core::Node] = vec::new::[*core::Node]();
+    detach_walk(n, q);
+    drain_detach_queue(q);
+    return;
+}
+
 // Unmount: out of the registry, attach state cleared. Views are torn down by
 // node teardown (`release_data` fires `view_release`), not here — parking a
 // subtree must not destroy what re-attaching needs.
@@ -1470,5 +1511,50 @@ fn set_content_under_a_renderer_removes_old_views_and_mounts_new() {
     assert FR_CREATES > creates_after_first;
     unmount(#addr_of(outlet));
     uninstall();
+    return;
+}
+
+#[test]
+fn a_realised_subtree_is_whole_but_has_no_window() {
+    // The second mount path. A recycled row is a subtree the PLATFORM owns:
+    // built when it scrolls in, destroyed when it scrolls out, never part of
+    // facet's tree — so no walk from a window root can ever reach it.
+    install(fr_renderer());
+    fr_reset();
+    let windows_before: usize = mounted_count();
+
+    var inner: core::Builder = core::Builder::new();
+    inner.add(core::node_with("a", props::K_LABEL, 0 as *u8, core::no_release));
+    inner.add(core::node_with("b", props::K_LABEL, 0 as *u8, core::no_release));
+    var row: core::Node = core::column(inner, key: "row");
+    let p: *core::Node = #addr_of(row);
+
+    let v: *u8 = realise(p);
+    // Whole: the root and both children were created...
+    assert v != (0 as *u8);
+    assert FR_CREATES == 3;
+    // ...and the children were inserted into their own parent. Only the ROOT
+    // is left unplaced, because the caller has its own host for it.
+    assert FR_INS_HOSTS.count() == (2 as usize);
+    assert core::is_attached(p);
+    // No window: this is not a mount.
+    assert mounted_count() == windows_before;
+
+    unrealise(p);
+    assert core::is_attached(p) == false;
+    assert mounted_count() == windows_before;
+    uninstall();
+    return;
+}
+
+#[test]
+fn realise_is_inert_with_no_backend() {
+    // Same rule as every other seam verb: no renderer, no realisation, and no
+    // trap — a headless test that builds a row gets a node and no view.
+    uninstall();
+    var n: core::Node = core::node_with("x", props::K_LABEL, 0 as *u8, core::no_release);
+    assert realise(#addr_of(n)) == (0 as *u8);
+    assert realise(0 as *core::Node) == (0 as *u8);
+    unrealise(0 as *core::Node);
     return;
 }

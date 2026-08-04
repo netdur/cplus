@@ -375,13 +375,18 @@ in the gesture band would fight it.
 These are unimplemented because their stage item has not landed, NOT because
 AppKit cannot. They are listed so the difference is never ambiguous.
 
-| What | Stage 4 item |
-|---|---|
-| The 42 per-kind `create`/`apply` bodies | 2 |
-| The app menu, toolbar tier, titlebar content | 5 |
-| Window sizing policy, density, modal stack | 5 |
-| The agent surface | 6 |
-| The collection group | 2 (the heavy end) |
+| What | Stage 4 item | Size |
+|---|---|---|
+| Row RECYCLING for `list` / `collection` / `table` / `tree` | 2, the heavy end | hard — a second mount path |
+| `alert` as a facet screen, non-blocking | 5 | medium |
+| Titlebar leading/trailing carriers | 5 | small, both halves |
+| The agent surface — ported, not yet wired or tested | 6 | medium |
+| 13 tier rows with no facet verb to carry them | 5 | decisions, not tasks |
+| Examples revived on the new API | 7 | medium |
+
+Everything else in items 1-5 has landed: all 42 kinds have bodies, the window
+tier answers, the app menu and toolbar install, `web` and `hybrid_web` run on
+`vendor/webkit`, and nothing takes the unimplemented-kind warning path.
 
 ### The collection group builds every row, not just the visible ones
 
@@ -402,6 +407,7 @@ inventing a second, parallel mount path before then.
 `tree` walks only through OPEN branches, which is what keeps a deep tree
 cheap under that rule: a closed branch is not descended at all.
 
-Until item 2 lands, a control kind with no body renders as an empty backing
-view **and says so on stderr**, once per kind. A silent wrong view is the
-failure this package exists to avoid.
+The warning path still exists and is still the rule — a control kind with no
+body renders as an empty backing view **and says so on stderr**, once per
+kind. Nothing takes it today, and `every_kind_now_has_an_answer` is what keeps
+that true.
