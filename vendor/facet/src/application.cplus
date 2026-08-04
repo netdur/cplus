@@ -138,6 +138,11 @@ struct Window {
 
 // ---- the app-scoped record ---------------------------------------------------
 struct Application {
+    // Back-pointer to whatever embeds this record (runtime::App). 0 when
+    // nothing does (the process default). Exists so the process has ONE
+    // door: everything app-scoped — record fields AND the embedding App's
+    // routes/menu — is reached through `current()`.
+    opaque host: *u8,
     theme: Theme,
     theme_changed_fn: fn(),
     appearance_cb: fn(*u8),
@@ -149,6 +154,7 @@ struct Application {
 impl Application {
     fn new() -> Application {
         return Application {
+            host: 0 as *u8,
             theme: Theme::new(),
             theme_changed_fn: 0 as fn(),
             appearance_cb: 0 as fn(*u8),

@@ -236,39 +236,50 @@ impl App {
     // No backend: nothing can be shown. Says so and returns the error instead
     // of degrading to an invisible app.
     fn run(ref this, initial: str, arg: str = "") -> status::Status {
-        // The contract every real facade follows: the app's record IS the
-        // process context while its loop runs, and stops being it after —
-        // a second app started later begins from its own clean state.
+        // The contract every real facade follows: the app's record IS
+        // Application.Current while its loop runs, and stops being it
+        // after — a second app started later begins from its own clean
+        // record. The host back-pointer makes this the ONE door: the
+        // app-context readers below derive the App from it.
+        this.application.host = #addr_of(this) as *u8;
         app::make_current(#addr_of(this.application));
         no_backend("App::run");
         app::release_current();
+        this.application.host = 0 as *u8;
         return status::Status::InvalidInput;
     }
 }
 
-// ---- app context (parity with the real facades) -----------------------------
+// ---- app context ------------------------------------------------------------
+// Everything derives from the ONE door: `app::current()` answers the running
+// Application record, whose `host` points back at the embedding App. No
+// second static.
 
-static RUNNING_APP: *u8 = #zero::[*u8]();
+fn running_app() -> *App {
+    if !app::has_current() { return 0 as *App; }
+    let a: *app::Application = app::current();
+    return { (*a).host } as *App;
+}
 
-fn app_running() -> bool { return RUNNING_APP != (0 as *u8); }
+fn app_running() -> bool { return running_app() != (0 as *App); }
 
 fn app_name() -> str {
-    if RUNNING_APP == (0 as *u8) { return ""; }
-    let ap: *App = RUNNING_APP as *App;
+    let ap: *App = running_app();
+    if ap == (0 as *App) { return ""; }
     return { (*ap).name() };
 }
 
 fn has_screen(route: str) -> bool {
-    if RUNNING_APP == (0 as *u8) { return false; }
-    let ap: *App = RUNNING_APP as *App;
+    let ap: *App = running_app();
+    if ap == (0 as *App) { return false; }
     let f: fn() -> screen::ScreenBox = { (*ap).route_factory(route) };
     return f != (0 as fn() -> screen::ScreenBox);
 }
 
 fn register_screen(route: str, factory: fn() -> screen::ScreenBox) -> bool {
-    if RUNNING_APP == (0 as *u8) { return false; }
+    let ap: *App = running_app();
+    if ap == (0 as *App) { return false; }
     if has_screen(route) { return false; }
-    let ap: *App = RUNNING_APP as *App;
     { (*ap).screen(route, factory) };
     return true;
 }
@@ -311,7 +322,7 @@ fn app_routes_register_and_resolve() {
 #[test]
 fn app_context_is_inert_without_a_running_app() {
     // The no-backend posture: nothing running, every reader answers neutrally.
-    RUNNING_APP = 0 as *u8;
+    app::release_current();
     assert app_running() == false;
     assert app_name() == "";
     assert has_screen("workspace") == false;

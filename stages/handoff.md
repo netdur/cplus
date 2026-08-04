@@ -107,6 +107,29 @@ wrong once already.
 
 ---
 
+## The backend-install contract (the AppKit stage's entry point)
+
+Four vtables and three single slots — the WHOLE seam a backend fills, each
+zero-field falling back to the portable no-op:
+
+```
+mount::install(Renderer { ctx, create, view_release, apply, insert, remove, schedule })
+services::install_scheduler(Scheduler { run_on_main, after, cancel_after,
+                                        observe_size, cancel_observe_size })
+gestures::install_key_reader(KeyReader { code, chars, modifiers, named })
+component::install_sender_readers(SenderReaders { raise, key_of, item_of,
+                                                  dropped_text, drag_targeted })
+theme::set_is_dark_fn            # the system appearance read
+theme::set_theme_changed_fn      # the retheme repaint sweep (app-scoped record)
+runtime::set_agent_attach_fn / set_agent_serve_fn   # the agent pair
+```
+
+`mount::install` also arms M5 (touch -> schedule) and M6 (the UI thread).
+The fake renderer + fake scheduler in the suite are the conformance tests: a
+backend that fills the same structs inherits the whole headless pipeline.
+There is no other registrar anywhere — a fifth hook family appearing outside
+these structs is drift.
+
 ## What Stage 3 owes
 
 The 23 tier symbols iris reaches for, none of which is widget vocabulary, so

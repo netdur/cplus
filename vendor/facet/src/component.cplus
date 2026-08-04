@@ -73,79 +73,69 @@ interface Lifecycle {
     fn on_detach(ref this);
 }
 
-// ---- raise: the by-key update verb (bring a keyed element to the front) ------
-// facet is not reactive: to switch which of several overlapping elements shows,
-// you don't rebuild — you address the one tagged `key` and bring it to the front
-// of its siblings, in place. `raise(sender, key)` is that verb; `sender` is the
-// event context (the control a handler was invoked from) the backend navigates
-// from to reach the live tree. Backend-installed, like every hook here.
-static RAISE_FN: fn(*u8, str) = #zero::[fn(*u8, str)]();
+// ---- the sender readers ------------------------------------------------------
+// The platform's event-context readers, one struct filled by the backend —
+// the Renderer/Scheduler shape. A handler holds only its opaque `sender`;
+// these recover what fired (key_of), what it carries (item_of), and what a
+// drag delivered (dropped_text / drag_targeted). `raise` is the one WRITE:
+// bring a keyed sibling to the front, in place. Zero fields keep the
+// portable defaults (empty / 0 / false / no-op).
+struct SenderReaders {
+    raise: fn(*u8, str),
+    key_of: fn(*u8) -> text::Text,
+    item_of: fn(*u8) -> *u8,
+    dropped_text: fn(*u8) -> text::Text,
+    drag_targeted: fn(*u8) -> bool,
+}
 
-fn set_raise_fn(f: fn(*u8, str)) { RAISE_FN = f; return; }
+fn sender_readers_none() -> SenderReaders {
+    return SenderReaders {
+        raise: 0 as fn(*u8, str),
+        key_of: 0 as fn(*u8) -> text::Text,
+        item_of: 0 as fn(*u8) -> *u8,
+        dropped_text: 0 as fn(*u8) -> text::Text,
+        drag_targeted: 0 as fn(*u8) -> bool,
+    };
+}
 
+static SENDER_READERS: SenderReaders = #zero::[SenderReaders]();
+
+fn install_sender_readers(take r: SenderReaders) { SENDER_READERS = r; return; }
+fn uninstall_sender_readers() { SENDER_READERS = sender_readers_none(); return; }
+
+// Bring the keyed element to the front of its siblings, in place — facet is
+// not reactive, so you address the element rather than rebuild.
 fn raise(sender: *u8, key: str) {
-    let f: fn(*u8, str) = RAISE_FN;
+    let f: fn(*u8, str) = SENDER_READERS.raise;
     if f == (0 as fn(*u8, str)) { return; }
     f(sender, key);
     return;
 }
 
-// ---- key_of: read a sender's key back (which item fired?) --------------------
-// The inverse of tagging: a per-item handler bound as an instance method spends
-// its ctx on `this`, so it recovers WHICH item fired from `sender`. `key_of`
-// returns the sender's key (its agent id) as an owned Text — empty if the sender
-// (and, in the AppKit backend, every ancestor view above it) is untagged. With
-// namespaced keys ("tabs:tab:<hash>"), the handler parses the id segment out and
-// looks the item up. Backend-installed, like `raise`; the backend also
-// normalizes gesture-recognizer senders to the view they are attached to.
-static KEY_OF_FN: fn(*u8) -> text::Text = #zero::[fn(*u8) -> text::Text]();
-
-fn set_key_of_fn(f: fn(*u8) -> text::Text) { KEY_OF_FN = f; return; }
-
+// The sender's key (its agent id) as an owned Text — empty when untagged.
 fn key_of(sender: *u8) -> text::Text {
-    let f: fn(*u8) -> text::Text = KEY_OF_FN;
+    let f: fn(*u8) -> text::Text = SENDER_READERS.key_of;
     if f == (0 as fn(*u8) -> text::Text) { return text::new(); }
     return f(sender);
 }
 
-// The per-node app pointer set by `.item(p)`, recovered in a handler from the
-// sender — the backend walks up to the nearest node that carries one (exact
-// parallel to `key_of`). 0 when unset or no backend. The app owns the pointee.
-static ITEM_OF_FN: fn(*u8) -> *u8 = #zero::[fn(*u8) -> *u8]();
-
-fn set_item_of_fn(f: fn(*u8) -> *u8) { ITEM_OF_FN = f; return; }
-
+// The per-node app pointer set by `.item(p)`, recovered from the sender.
 fn item_of(sender: *u8) -> *u8 {
-    let f: fn(*u8) -> *u8 = ITEM_OF_FN;
+    let f: fn(*u8) -> *u8 = SENDER_READERS.item_of;
     if f == (0 as fn(*u8) -> *u8) { return 0 as *u8; }
     return f(sender);
 }
 
-// ---- dropped_text: read a drop's payload (what landed?) ----------------------
-// An `.on_drop` handler's sender is the drop-zone view; `dropped_text(sender)`
-// returns the text the drag carried as an owned Text (empty when nothing has
-// been dropped). Pair with `key_of(sender)` for WHERE it landed. Backend-
-// installed, like `key_of`.
-static DROPPED_TEXT_FN: fn(*u8) -> text::Text = #zero::[fn(*u8) -> text::Text]();
-
-fn set_dropped_text_fn(f: fn(*u8) -> text::Text) { DROPPED_TEXT_FN = f; return; }
-
+// The text a drop delivered — empty when nothing has been dropped.
 fn dropped_text(sender: *u8) -> text::Text {
-    let f: fn(*u8) -> text::Text = DROPPED_TEXT_FN;
+    let f: fn(*u8) -> text::Text = SENDER_READERS.dropped_text;
     if f == (0 as fn(*u8) -> text::Text) { return text::new(); }
     return f(sender);
 }
 
-// ---- drag_targeted: is a drag over me right now? -----------------------------
-// An `.on_drag_target` handler's sender is the drop-zone view, and this is the
-// state that handler exists to paint. One handler, both edges, state read from
-// the sender. False with no backend, exactly as `dropped_text` returns empty.
-static DRAG_TARGETED_FN: fn(*u8) -> bool = #zero::[fn(*u8) -> bool]();
-
-fn set_drag_targeted_fn(f: fn(*u8) -> bool) { DRAG_TARGETED_FN = f; return; }
-
+// Is a drag over this drop zone right now?
 fn drag_targeted(sender: *u8) -> bool {
-    let f: fn(*u8) -> bool = DRAG_TARGETED_FN;
+    let f: fn(*u8) -> bool = SENDER_READERS.drag_targeted;
     if f == (0 as fn(*u8) -> bool) { return false; }
     return f(sender);
 }
@@ -244,11 +234,7 @@ fn lc_detach_tramp_fires_the_typed_on_detach() {
 #[test]
 fn sender_verbs_default_to_the_no_backend_posture() {
     // Every sender verb answers the neutral value with no backend installed.
-    RAISE_FN = #zero::[fn(*u8, str)]();
-    KEY_OF_FN = #zero::[fn(*u8) -> text::Text]();
-    ITEM_OF_FN = #zero::[fn(*u8) -> *u8]();
-    DROPPED_TEXT_FN = #zero::[fn(*u8) -> text::Text]();
-    DRAG_TARGETED_FN = #zero::[fn(*u8) -> bool]();
+    uninstall_sender_readers();
     raise(0 as *u8, "k");
     let k: text::Text = key_of(0 as *u8);
     assert k.view() == "";

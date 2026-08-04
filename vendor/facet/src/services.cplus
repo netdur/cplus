@@ -33,10 +33,36 @@ import "./facet" as core;
 // primitive; until then run_on_main silently DROPS the work (the portable
 // no-backend default, like `find`) — so a ctx that carries ownership must be
 // reclaimed by `work` itself, never by the scheduling side.
-static RUN_ON_MAIN_FN: fn(fn(*u8), *u8) = #zero::[fn(fn(*u8), *u8)]();
-fn set_run_on_main_fn(f: fn(fn(*u8), *u8)) { RUN_ON_MAIN_FN = f; return; }
+// ---- the Scheduler -----------------------------------------------------------
+// The platform's scheduling primitives, one struct filled by the backend at
+// startup — the same shape as mount's Renderer, for the same reason: one
+// install, impossible to half-fill, one thing to grep. Every field keeps the
+// portable no-backend default when zero.
+struct Scheduler {
+    run_on_main: fn(fn(*u8), *u8),
+    after: fn(f64, fn(*u8), *u8) -> u64,
+    cancel_after: fn(u64),
+    observe_size: fn(*core::Node, fn(*u8), *u8) -> u64,
+    cancel_observe_size: fn(u64),
+}
+
+fn scheduler_none() -> Scheduler {
+    return Scheduler {
+        run_on_main: 0 as fn(fn(*u8), *u8),
+        after: 0 as fn(f64, fn(*u8), *u8) -> u64,
+        cancel_after: 0 as fn(u64),
+        observe_size: 0 as fn(*core::Node, fn(*u8), *u8) -> u64,
+        cancel_observe_size: 0 as fn(u64),
+    };
+}
+
+static SCHEDULER: Scheduler = #zero::[Scheduler]();
+
+fn install_scheduler(take s: Scheduler) { SCHEDULER = s; return; }
+fn uninstall_scheduler() { SCHEDULER = scheduler_none(); return; }
+
 fn run_on_main(work: fn(*u8), ctx: *u8) {
-    let f: fn(fn(*u8), *u8) = RUN_ON_MAIN_FN;
+    let f: fn(fn(*u8), *u8) = SCHEDULER.run_on_main;
     if f != (0 as fn(fn(*u8), *u8)) { f(work, ctx); }
     return;
 }
@@ -72,10 +98,6 @@ fn run_on_main(work: fn(*u8), ctx: *u8) {
 //
 // The backend installs the primitive; with none, `after` never fires and
 // returns an already-cancelled handle — the same no-backend default as `find`.
-static AFTER_FN: fn(f64, fn(*u8), *u8) -> u64 = #zero::[fn(f64, fn(*u8), *u8) -> u64]();
-static CANCEL_AFTER_FN: fn(u64) = #zero::[fn(u64)]();
-fn set_after_fn(f: fn(f64, fn(*u8), *u8) -> u64) { AFTER_FN = f; return; }
-fn set_cancel_after_fn(f: fn(u64)) { CANCEL_AFTER_FN = f; return; }
 
 // A pending revocable registration — an `after` timer, an `observe_size`
 // observation. Cancel it explicitly, or let it drop — a dropped handle
@@ -99,7 +121,7 @@ impl Cancellable {
     fn cancel(ref this) {
         if this._id == (0 as u64) { return; }
         var f: fn(u64) = this._cancel;
-        if f == (0 as fn(u64)) { f = CANCEL_AFTER_FN; }
+        if f == (0 as fn(u64)) { f = SCHEDULER.cancel_after; }
         if f != (0 as fn(u64)) { f(this._id); }
         this._id = 0 as u64;
         return;
@@ -118,9 +140,9 @@ impl Cancellable {
 // Run `cb(ctx)` on the UI thread after `seconds`. Cancel through the returned
 // handle — including by letting it drop.
 fn after(seconds: f64, cb: fn(*u8), ctx: *u8 = 0 as *u8) -> Cancellable {
-    let f: fn(f64, fn(*u8), *u8) -> u64 = AFTER_FN;
+    let f: fn(f64, fn(*u8), *u8) -> u64 = SCHEDULER.after;
     if f == (0 as fn(f64, fn(*u8), *u8) -> u64) { return Cancellable { _id: 0 as u64, _cancel: #zero::[fn(u64)]() }; }
-    return Cancellable { _id: f(seconds, cb, ctx), _cancel: CANCEL_AFTER_FN };
+    return Cancellable { _id: f(seconds, cb, ctx), _cancel: SCHEDULER.cancel_after };
 }
 // ---- element geometry -------------------------------------------------------
 // The laid-out size a node actually got — and a way to hear when it changes.
@@ -129,10 +151,6 @@ fn after(seconds: f64, cb: fn(*u8), ctx: *u8 = 0 as *u8) -> Cancellable {
 // divider drag, window resize, relayout. (Reseam vs the old facet: the
 // subject is a `*core::Node`, the retired `Handle` is gone.)
 
-static OBSERVE_SIZE_FN: fn(*core::Node, fn(*u8), *u8) -> u64 = #zero::[fn(*core::Node, fn(*u8), *u8) -> u64]();
-static CANCEL_OBSERVE_SIZE_FN: fn(u64) = #zero::[fn(u64)]();
-fn set_observe_size_fn(f: fn(*core::Node, fn(*u8), *u8) -> u64) { OBSERVE_SIZE_FN = f; return; }
-fn set_cancel_observe_size_fn(f: fn(u64)) { CANCEL_OBSERVE_SIZE_FN = f; return; }
 
 // Run `cb(ctx)` on the UI thread whenever `n`'s element changes size. Cancel
 // through the returned handle — including by letting it drop — and cancel
@@ -140,9 +158,9 @@ fn set_cancel_observe_size_fn(f: fn(u64)) { CANCEL_OBSERVE_SIZE_FN = f; return; 
 // its subject. No backend, or a missing node: an already-cancelled handle,
 // the same posture as `after`.
 fn observe_size(n: *core::Node, cb: fn(*u8), ctx: *u8 = 0 as *u8) -> Cancellable {
-    let f: fn(*core::Node, fn(*u8), *u8) -> u64 = OBSERVE_SIZE_FN;
+    let f: fn(*core::Node, fn(*u8), *u8) -> u64 = SCHEDULER.observe_size;
     if f == (0 as fn(*core::Node, fn(*u8), *u8) -> u64) { return Cancellable { _id: 0 as u64, _cancel: #zero::[fn(u64)]() }; }
-    return Cancellable { _id: f(n, cb, ctx), _cancel: CANCEL_OBSERVE_SIZE_FN };
+    return Cancellable { _id: f(n, cb, ctx), _cancel: SCHEDULER.cancel_observe_size };
 }
 
 // ---- async tasks on the UI thread -------------------------------------------
@@ -483,15 +501,18 @@ fn observe_size_cancels_through_its_own_slot_not_the_timer_slot() {
     OBS_CANCELLED = 0 as u64;
     TMR_CANCELLED = 0 as u64;
     // No backend: an already-cancelled handle, the same posture as `after`.
-    OBSERVE_SIZE_FN = #zero::[fn(*core::Node, fn(*u8), *u8) -> u64]();
+    uninstall_scheduler();
     var none: Cancellable = observe_size(0 as *core::Node, geo_noop);
     assert none.pending() == false;
-    // Both slot pairs registered: each Cancellable revokes through the slot
+    // A full Scheduler installed: each Cancellable revokes through the slot
     // family that armed it — an observation must never cancel a timer's id.
-    set_observe_size_fn(obs_arm_fake);
-    set_cancel_observe_size_fn(obs_cancel_fake);
-    set_after_fn(tmr_arm_fake);
-    set_cancel_after_fn(tmr_cancel_fake);
+    install_scheduler(Scheduler {
+        run_on_main: 0 as fn(fn(*u8), *u8),
+        after: tmr_arm_fake,
+        cancel_after: tmr_cancel_fake,
+        observe_size: obs_arm_fake,
+        cancel_observe_size: obs_cancel_fake,
+    });
     var o: Cancellable = observe_size(0 as *core::Node, geo_noop);
     assert o.pending();
     o.cancel();
@@ -504,8 +525,5 @@ fn observe_size_cancels_through_its_own_slot_not_the_timer_slot() {
     t.cancel();
     assert TMR_CANCELLED == (9 as u64);
     // Put the no-backend posture back for the tests that follow.
-    OBSERVE_SIZE_FN = #zero::[fn(*core::Node, fn(*u8), *u8) -> u64]();
-    CANCEL_OBSERVE_SIZE_FN = #zero::[fn(u64)]();
-    AFTER_FN = #zero::[fn(f64, fn(*u8), *u8) -> u64]();
-    CANCEL_AFTER_FN = #zero::[fn(u64)]();
+    uninstall_scheduler();
 }

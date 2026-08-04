@@ -377,28 +377,44 @@ fn fire_hover(n: *core::Node, entering: bool) -> bool {
 // Handling: a handler that wants the key STOPPED calls `consume_key()`, and the
 // event does not fall through to the responder chain (so Ctrl-C reaches a
 // terminal instead of beeping). Anything not consumed behaves exactly as before.
-static KEY_CODE_FN: fn(*u8) -> i64 = #zero::[fn(*u8) -> i64]();
-fn set_key_code_fn(f: fn(*u8) -> i64) { KEY_CODE_FN = f; return; }
-static KEY_CHARS_FN: fn(*u8) -> text::Text = #zero::[fn(*u8) -> text::Text]();
-fn set_key_chars_fn(f: fn(*u8) -> text::Text) { KEY_CHARS_FN = f; return; }
-static KEY_MODS_FN: fn(*u8) -> u64 = #zero::[fn(*u8) -> u64]();
-fn set_key_mods_fn(f: fn(*u8) -> u64) { KEY_MODS_FN = f; return; }
+// The platform's key-event readers, one struct filled by the backend —
+// the Renderer/Scheduler shape. Zero fields keep the portable defaults.
+struct KeyReader {
+    code: fn(*u8) -> i64,
+    chars: fn(*u8) -> text::Text,
+    modifiers: fn(*u8) -> u64,
+    named: fn(*u8) -> i64,
+}
+
+fn key_reader_none() -> KeyReader {
+    return KeyReader {
+        code: 0 as fn(*u8) -> i64,
+        chars: 0 as fn(*u8) -> text::Text,
+        modifiers: 0 as fn(*u8) -> u64,
+        named: 0 as fn(*u8) -> i64,
+    };
+}
+
+static KEY_READER: KeyReader = #zero::[KeyReader]();
+
+fn install_key_reader(take r: KeyReader) { KEY_READER = r; return; }
+fn uninstall_key_reader() { KEY_READER = key_reader_none(); return; }
 
 // Read a key event. `code` is the platform key code; `chars` the text it would
 // produce (empty for a bare modifier or a function key); `modifiers` a bit set
 // tested with the mod_* helpers.
 fn key_code(event: *u8) -> i64 {
-    let f: fn(*u8) -> i64 = KEY_CODE_FN;
+    let f: fn(*u8) -> i64 = KEY_READER.code;
     if f == (0 as fn(*u8) -> i64) { return -1 as i64; }
     return f(event);
 }
 fn key_chars(event: *u8) -> text::Text {
-    let f: fn(*u8) -> text::Text = KEY_CHARS_FN;
+    let f: fn(*u8) -> text::Text = KEY_READER.chars;
     if f == (0 as fn(*u8) -> text::Text) { return text::from_str(""); }
     return f(event);
 }
 fn key_modifiers(event: *u8) -> u64 {
-    let f: fn(*u8) -> u64 = KEY_MODS_FN;
+    let f: fn(*u8) -> u64 = KEY_READER.modifiers;
     if f == (0 as fn(*u8) -> u64) { return 0 as u64; }
     return f(event);
 }
@@ -441,15 +457,13 @@ fn key_end() -> i64 { return 12 as i64; }
 fn key_page_up() -> i64 { return 13 as i64; }
 fn key_page_down() -> i64 { return 14 as i64; }
 
-static KEY_NAMED_FN: fn(*u8) -> i64 = #zero::[fn(*u8) -> i64]();
-fn set_key_named_fn(f: fn(*u8) -> i64) { KEY_NAMED_FN = f; return; }
 
 // Which NAMED key is this event, or `key_none()` for a key with no name here
 // (every printable character, and anything the backend has not mapped). An
 // unnamed key is not an error — read `key_chars` for text, `key_code` for a
 // raw code.
 fn key_named(event: *u8) -> i64 {
-    let f: fn(*u8) -> i64 = KEY_NAMED_FN;
+    let f: fn(*u8) -> i64 = KEY_READER.named;
     if f == (0 as fn(*u8) -> i64) { return key_none(); }
     return f(event);
 }
@@ -481,10 +495,12 @@ fn on_key_rides_the_gesture_band_and_consume_is_one_shot() {
     assert key_modifiers(0 as *u8) == (0 as u64);
     assert key_named(0 as *u8) == key_none();
     // With a reader installed, the handler sees the event through it.
-    set_key_code_fn(kt_code_fake);
+    var kr: KeyReader = key_reader_none();
+    kr.code = kt_code_fake;
+    install_key_reader(kr);
     assert fire_key(#addr_of(n), 0 as *u8);
     assert KT_CODE == (42 as i64);
-    set_key_code_fn(0 as fn(*u8) -> i64);
+    uninstall_key_reader();
     // consume_key() is read-and-cleared, so one consumed event does not
     // swallow the next.
     assert take_key_consumed();
