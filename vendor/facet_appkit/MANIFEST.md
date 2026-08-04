@@ -142,10 +142,22 @@ shapes, paths with both winding rules, gradients via `set_fill_brush`, images,
 and the three text verbs. `Blend` maps to `CGBlendMode` by ordinal, because
 MAUI's enum was modelled on CG and matches it value for value.
 
-The arc is the one place a convention had to be chosen rather than read off an
-API, and the reasoning is written out at `add_arc_path` in `drawing.cplus`.
-`examples/canvas_probe` draws every verb once so the choice can be checked by
-eye — an agent cannot see whether an arc swept the right way.
+**A shadow's offset is negated in y.** Core Graphics does not carry a shadow
+offset through the CTM, so the flip that makes everything else top-left does
+not reach it, and a positive `Shadow.offset.y` would throw the shadow UP.
+MAUI does the same thing in the same place (`SetShadow`, `#if MONOMAC`).
+`a_shadow_falls_DOWN_from_a_positive_y_offset` is the guard.
+
+**An arc's `clockwise` reads backwards, and is right.** 0 degrees is 3 o'clock
+and 90 is 12 o'clock, so `clockwise: true` from 0 to 90 takes the LONG way,
+down through 6 and 9. The angles are measured the ordinary way while the
+screen's y runs down, and MAUI resolves it identically — negated angles into
+`AddArc(..., !clockwise)`. Pinned by `an_arc_sweeps_the_way_clockwise_says`
+so nobody "corrects" it by eye. The transform that turns CG's circular arc
+into an elliptical one is written out at `add_arc_path`.
+
+`examples/canvas_probe` draws every verb once, including both sweeps side by
+side, because an agent cannot see whether an arc went the right way.
 
 ### A span is not a view either
 

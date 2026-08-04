@@ -775,8 +775,14 @@ fn replay_commands(ctx: *u8, c: *vocab::Canvas) {
         } else if cmd.op == vocab::DrawOp::SetShadow {
             let sh: vocab::Shadow = cmd.shadow();
             let nc: ak::Color = paint::ns_color(sh.color);
+            // The y offset is NEGATED, and this is not a guess: a shadow's
+            // offset is not carried through the CTM, so the flip that makes
+            // everything else top-left does not reach it and a positive y
+            // would throw the shadow UP. MAUI does the same thing in the same
+            // place — `SetShadow`, `#if MONOMAC: sizeF.Height *= -1`.
             CGContextSetShadowWithColor(ctx,
-                rt::Size { w: sh.offset.x, h: sh.offset.y }, sh.radius, nc.c_g_color());
+                rt::Size { w: sh.offset.x, h: 0.0f64 - sh.offset.y },
+                sh.radius, nc.c_g_color());
 
         // ---- the state stack and the transform
         } else if cmd.op == vocab::DrawOp::Save {

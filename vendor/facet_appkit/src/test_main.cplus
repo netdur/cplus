@@ -1070,16 +1070,25 @@ extern fn CGContextScaleCTM(c: *u8, sx: f64, sy: f64);
 //
 // kCGImageAlphaPremultipliedLast = 1, so the bytes are R,G,B,A per pixel, and
 // data row 0 is the TOP row — which is what makes the flip assertable below.
-fn test_surface(pixels: *u8) -> *u8 {
+fn surface_of_side(pixels: *u8, side: usize) -> *u8 {
     let space: *u8 = CGColorSpaceCreateDeviceRGB();
     if space == (0 as *u8) { return 0 as *u8; }
-    let ctx: *u8 = bitmap_context_create(pixels, 4 as usize, 4 as usize,
-                                         8 as usize, 16 as usize, space, 1 as u32);
+    let ctx: *u8 = bitmap_context_create(pixels, side, side, 8 as usize,
+                                         side * (4 as usize), space, 1 as u32);
     CGColorSpaceRelease(space);
     if ctx == (0 as *u8) { return 0 as *u8; }
-    CGContextTranslateCTM(ctx, 0.0f64, 4.0f64);
+    CGContextTranslateCTM(ctx, 0.0f64, side as f64);
     CGContextScaleCTM(ctx, 1.0f64, -1.0f64);
     return ctx;
+}
+
+fn test_surface(pixels: *u8) -> *u8 { return surface_of_side(pixels, 4 as usize); }
+
+// Alpha at (x, y) on a 16-wide surface. Alpha, not a colour channel, because
+// it answers "did anything land here" whatever the colour was.
+fn alpha_at(px: *u8, x: usize, y: usize) -> u8 {
+    let i: usize = (y * (16 as usize) + x) * (4 as usize) + (3 as usize);
+    return { *({ px as usize + i } as *u8) };
 }
 
 #[test]
@@ -1215,6 +1224,74 @@ fn text_reaches_the_pixels() {
     }
     assert lit;
     CGContextRelease(ctx);
+    return;
+}
+
+#[test]
+fn a_shadow_falls_DOWN_from_a_positive_y_offset() {
+    // The screenshot bug this test exists for: a shadow's offset is NOT
+    // carried through the CTM, so the flip that makes everything else
+    // top-left does not reach it, and a positive y threw the shadow UP.
+    // MAUI negates it in the same place (`#if MONOMAC`).
+    var px: [u8; 1024] = [0u8; 1024];
+    let ctx: *u8 = surface_of_side(#addr_of(px[0 as usize]), 16 as usize);
+    assert ctx != (0 as *u8);
+
+    var c: vocab::Canvas = vocab::Canvas::of(vocab::Size::of(16.0f64, 16.0f64));
+    let _a: status::Status = c.set_shadow(vocab::Shadow {
+        color: vocab::Color::rgba(0.0f64, 0.0f64, 0.0f64, 1.0f64),
+        offset: vocab::Point::of(0.0f64, 4.0f64),
+        radius: 1.0f64, opacity: 1.0f64 });
+    let _b: status::Status = c.set_fill(vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64));
+    let _d: status::Status = c.fill_rect(vocab::Rect::of(4.0f64, 4.0f64, 8.0f64, 4.0f64));
+    drawing::replay(ctx, #addr_of(c));
+
+    let below: u8 = alpha_at(#addr_of(px[0 as usize]), 8 as usize, 10 as usize);
+    let above: u8 = alpha_at(#addr_of(px[0 as usize]), 8 as usize, 1 as usize);
+    assert below > (0 as u8);
+    assert above == (0 as u8);
+    CGContextRelease(ctx);
+    return;
+}
+
+#[test]
+fn an_arc_sweeps_the_way_clockwise_says() {
+    // 0 degrees is 3 o'clock and 90 is 12 o'clock, so `clockwise: true` from
+    // 0 to 90 is the LONG way — down through 6 and 9 — and `false` is the
+    // quarter through the top right. That reads backwards until you notice
+    // the angles are measured the ordinary way while the screen's y runs
+    // down; MAUI resolves it identically (`AddArc(..., !clockwise)` over
+    // negated angles), and this pins it so nobody "fixes" it by eye.
+    var wide: [u8; 1024] = [0u8; 1024];
+    let a: *u8 = surface_of_side(#addr_of(wide[0 as usize]), 16 as usize);
+    assert a != (0 as *u8);
+    var cw: vocab::Canvas = vocab::Canvas::of(vocab::Size::of(16.0f64, 16.0f64));
+    let _a: status::Status = cw.set_fill(vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64));
+    let _b: status::Status = cw.fill_arc(vocab::Rect::sized(16.0f64, 16.0f64),
+                                          from: 0.0f64, to: 90.0f64, clockwise: true);
+    drawing::replay(a, #addr_of(cw));
+
+    var narrow: [u8; 1024] = [0u8; 1024];
+    let b: *u8 = surface_of_side(#addr_of(narrow[0 as usize]), 16 as usize);
+    assert b != (0 as *u8);
+    var ccw: vocab::Canvas = vocab::Canvas::of(vocab::Size::of(16.0f64, 16.0f64));
+    let _d: status::Status = ccw.set_fill(vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64));
+    let _e: status::Status = ccw.fill_arc(vocab::Rect::sized(16.0f64, 16.0f64),
+                                           from: 0.0f64, to: 90.0f64, clockwise: false);
+    drawing::replay(b, #addr_of(ccw));
+
+    // A closed arc is arc-plus-CHORD, so the two fills are complements about
+    // the chord from 3 o'clock to 12 o'clock: the long way is the 3/4 disc,
+    // the quarter is the thin segment outside that chord.
+    //
+    // Bottom left: in the 3/4 disc, not in the segment.
+    assert alpha_at(#addr_of(wide[0 as usize]), 5 as usize, 11 as usize) > (0 as u8);
+    assert alpha_at(#addr_of(narrow[0 as usize]), 5 as usize, 11 as usize) == (0 as u8);
+    // Beyond the chord at the top right: in the segment, not in the 3/4 disc.
+    assert alpha_at(#addr_of(narrow[0 as usize]), 12 as usize, 3 as usize) > (0 as u8);
+    assert alpha_at(#addr_of(wide[0 as usize]), 12 as usize, 3 as usize) == (0 as u8);
+    CGContextRelease(a);
+    CGContextRelease(b);
     return;
 }
 
