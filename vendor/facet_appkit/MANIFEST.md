@@ -8,7 +8,7 @@ happen on a Mac?" by reading it.
 A row here is a commitment, not a note. Nothing is left implicit: a verb that
 is neither implemented nor listed below is a gap, and the gap is a bug.
 
-Status: **Stage 4 items 1-4 COMPLETE, item 5 at 52/17/13.** Every one of the 42 kinds has an
+Status: **Stage 4 items 1-6 COMPLETE.** The tier ledger reads 57 implemented, 20 decided, 5 deferred; item 7 (examples) waits on the docs pass. Every one of the 42 kinds has an
 answer — a body, a recorded "AppKit cannot", or a named deferral — and
 `every_kind_now_has_an_answer` in the suite is the guard. Items 3-7 are in
 progress; this file grows a row each time something is decided either way.
@@ -424,7 +424,6 @@ AppKit cannot. They are listed so the difference is never ambiguous.
 
 | What | Stage 4 item | Size |
 |---|---|---|
-| The agent surface — written, never compiled | 6 | medium |
 | 5 tier rows with no facet verb to carry them | 5 | decisions, not tasks |
 | Examples revived on the new API | 7 | medium |
 

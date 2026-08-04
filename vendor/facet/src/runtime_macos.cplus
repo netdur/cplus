@@ -487,6 +487,14 @@ impl App {
         // application that never asked for a menu still gets a working one.
         var bar: AppMenu = this.build_menu();
         host::install_app_menu(#addr_of(bar));
+        // The agent surface, if the app asked for one. ONCE per process — the
+        // accept loop lives for the app's life — and before the first window,
+        // so an agent that connects immediately is not racing the launch hook.
+        //
+        // `agent_mcp(path)` recorded the path and nothing served it until now:
+        // the same shape as the app menu, which was built and never installed.
+        let sock: str = this.agent_path.view();
+        if sock != "" { agent_serve_once(sock); }
         let launch: fn(*u8) = this.on_launch_fn;
         launch(this.hook_ctx);
 
@@ -499,8 +507,13 @@ impl App {
             if !sb.valid() { outcome = status::Status::InvalidInput; break; }
             let c: Chrome = sb.chrome();
             var root: Node = sb.build();
-            let _w: *u8 = host::open_window(#addr_of(root), c);
+            let w: *u8 = host::open_window(#addr_of(root), c);
             CURRENT_ROOT = #addr_of(root);
+            // The agent reads the LIVE view tree, so the surface is re-opened
+            // on the new window each time a screen is shown. The serve worker
+            // holds the surface's ADDRESS, so re-opening in place retargets
+            // every later request rather than needing the worker restarted.
+            if w != (0 as *u8) { agent_attach_window(w); }
             sb.on_attach();
             host::run_loop();        // blocks until this screen's window closes
             close_all_pushed();      // replacing the root dismisses pushed screens
