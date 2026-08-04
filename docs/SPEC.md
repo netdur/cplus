@@ -760,7 +760,7 @@ builder_block = '@' type_path '{' builder_entry* '}' ;
 builder_entry = item_entry | let_stmt | if_entry | for_entry ;
 
 item_entry    = ( call_expr | container ) modifier* ;
-container     = IDENT '{' builder_entry* '}' ;          // bare, same-context child
+container     = IDENT [ '(' args ')' ] '{' builder_entry* '}' ;  // same-context child
 modifier      = '.' IDENT '=' expr                       // field-assign modifier
               | '.' IDENT '(' args? ')' ;                // method-call modifier
 if_entry      = 'if' expr '{' builder_entry* '}'
@@ -774,9 +774,17 @@ same-line `.m()` is ordinary postfix on the item expression. A modifier
 before any item is an error; the modifier name is a field/method of the
 item, never a contextual lookup.
 
-**Containers** are bare `name { ... }` — a child element of the *same*
+**Containers** are `name { ... }` — a child element of the *same*
 context (not a nested DSL). A nested *different* `@`-DSL block inside a
 builder block is rejected; write a same-context container without `@`.
+A container may carry constructor arguments — `name(args) { ... }` —
+recognized only when the `{` directly follows the matching `)` on the
+same line. The desugar passes the filled Builder as the FIRST argument
+and the written arguments after it (`ctx::name(b, args...)`), so the
+bare form is the zero-arg case of one finisher contract:
+`fn card(take b: Builder, title: str = "") -> Node`. A bare `{ ... }`
+block is not a builder entry; `name(args)` followed by a block on the
+NEXT line is a parse error rather than two silent items.
 
 Block contents are limited to item lines, modifier lines, `let`,
 `if`/`else`/`else if`, `for … in …`, and nested containers. `while`,

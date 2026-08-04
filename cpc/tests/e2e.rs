@@ -20922,6 +20922,12 @@ const DSL_GROUP_PACKAGE: &str = "struct Item {\n\
      // into one Item (weight 1).\n\
      fn nest(b: Builder) -> Item {\n\
      \x20   return Item { value: b.sum, weight: 1 };\n\
+     }\n\
+     \n\
+     // DSL.5: the same shape carrying constructor arguments — the Builder\n\
+     // stays first, the written args follow.\n\
+     fn nest2(b: Builder, scale: i32 = 1) -> Item {\n\
+     \x20   return Item { value: b.sum * scale, weight: 1 };\n\
      }\n";
 
 /// v0.0.22 DSL.2: `@ctx { ... }` lowers to the fixed builder protocol
@@ -21236,6 +21242,86 @@ fn builder_block_containers_and_flow_control_run() {
     // leaf(1)=1, if-true leaf(2)=2, for 3x leaf(10)=30, nest folds 4+5=9.
     // All weight 1. tree.value = 1 + 2 + 30 + 9 = 42.
     assert_eq!(out.status.code(), Some(42));
+}
+
+/// DSL.5: a container element carrying constructor arguments —
+/// `nest2(scale: 2) { ... }` desugars to `group::nest2(__b, scale: 2)`
+/// (Builder first), with contextual lookup applying to the argument
+/// expressions in the enclosing scope. And the shape that used to
+/// mis-parse silently — `name(args)` then a block on the NEXT line — is
+/// a parse error naming the same-line fix.
+#[test]
+fn builder_container_with_args_runs_and_stray_block_is_denied() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"ba\"\n\n[[bin]]\nname = \"ba\"\npath = \"src/main.cplus\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("src/group.cplus"), DSL_GROUP_PACKAGE).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"./group\" as group;\n\
+         \n\
+         fn main() -> i32 {\n\
+         \x20   let s = 2;\n\
+         \x20   let tree = @group {\n\
+         \x20       leaf(1)\n\
+         \x20       nest2(scale: s) {\n\
+         \x20           leaf(4)\n\
+         \x20           leaf(5)\n\
+         \x20       }\n\
+         \x20           .boost(1)\n\
+         \x20       nest2 {\n\
+         \x20           leaf(3)\n\
+         \x20       }\n\
+         \x20   };\n\
+         \x20   return tree.value;\n\
+         }\n",
+    )
+    .unwrap();
+    let status = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc build");
+    assert!(status.success(), "cpc build failed: {status}");
+    let out = Command::new(dir.join("target/debug/ba"))
+        .output()
+        .expect("run binary");
+    // leaf(1)=1. nest2(scale: 2) folds (4+5)*2=18, then .boost(1) makes its
+    // weight 2 -> 36. Defaulted nest2 folds 3*1=3. 1 + 36 + 3 = 40.
+    assert_eq!(out.status.code(), Some(40));
+
+    // The stray-block shape is a parse error, not two silent items.
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"./group\" as group;\n\
+         \n\
+         fn main() -> i32 {\n\
+         \x20   let tree = @group {\n\
+         \x20       nest2(scale: 2)\n\
+         \x20       {\n\
+         \x20           leaf(4)\n\
+         \x20       }\n\
+         \x20   };\n\
+         \x20   return tree.value;\n\
+         }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc build");
+    assert!(!out.status.success(), "stray block must fail to parse");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("same line"),
+        "error must name the same-line fix; got: {stderr}"
+    );
 }
 
 /// The non-Copy variant of the builder test package: `Item` has a `drop`

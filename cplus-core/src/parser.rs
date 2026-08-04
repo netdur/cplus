@@ -3322,6 +3322,8 @@ impl Parser {
                     span: lbrace.merge(end),
                 },
                 container: None,
+                container_args: Vec::new(),
+                container_arg_labels: Vec::new(),
             },
             span: at_span.merge(end),
         })
@@ -3405,7 +3407,13 @@ impl Parser {
                 // v0.0.22 DSL.4: a bare `name { ... }` in item position is a
                 // container element of the same context (not a struct
                 // literal): an identifier immediately followed by `{`.
-                TokenKind::Ident(_) if matches!(self.peek_kind_n(1), TokenKind::LBrace) => {
+                // DSL.5: `name(args) { ... }` — the same element carrying
+                // constructor arguments, recognized only when the `{`
+                // directly follows the matching `)` on the same line.
+                TokenKind::Ident(_)
+                    if matches!(self.peek_kind_n(1), TokenKind::LBrace)
+                        || self.at_container_with_args() =>
+                {
                     let container = self.parse_builder_container()?;
                     // Same-line postfix after the closing `}` chains onto
                     // the container item (`hstack { ... }.gap(8.0)`), the
@@ -3415,6 +3423,20 @@ impl Parser {
                     entries.push(BuilderEntry::Item {
                         expr,
                         modifiers: Vec::new(),
+                    });
+                }
+                // A bare `{ ... }` entry used to parse as an ordinary block
+                // expression — which is how `name(args)` followed by a
+                // block silently became TWO items and failed later as an
+                // unrelated type error. Denied at the parse, with the fix
+                // in the message.
+                TokenKind::LBrace => {
+                    return Err(ParseError {
+                        kind: ParseErrorKind::Unexpected {
+                            found: "`{`".into(),
+                            expected: "a builder item — to give an element children write `name(args) { ... }` with the `{` on the same line as `)`; a bare block is not a builder entry",
+                        },
+                        span: self.peek().span,
                     });
                 }
                 _ => {
@@ -3471,11 +3493,21 @@ impl Parser {
         Ok(BuilderEntry::For { var, iter, body })
     }
 
-    /// v0.0.22 DSL.4: a bare container element `name { ENTRIES }`. The
-    /// `context` is left empty here and filled with the enclosing block's
-    /// context during resolution; `container` carries the element name.
+    /// v0.0.22 DSL.4: a bare container element `name { ENTRIES }`, and
+    /// DSL.5: the same element with arguments, `name(args) { ENTRIES }`
+    /// (the `{` must follow `)` on the same line). The `context` is left
+    /// empty here and filled with the enclosing block's context during
+    /// resolution; `container` carries the element name.
     fn parse_builder_container(&mut self) -> Result<Expr, ParseError> {
         let name = self.expect_ident()?;
+        let (container_args, container_arg_labels) = if self.at(&TokenKind::LParen) {
+            self.bump();
+            let parsed = self.in_delimited(|p| p.parse_call_args())?;
+            self.expect(&TokenKind::RParen, "`)`")?;
+            parsed
+        } else {
+            (Vec::new(), Vec::new())
+        };
         let (lbrace, entries, end) = self.parse_builder_braced_entries()?;
         Ok(Expr {
             kind: ExprKind::BuilderBlock {
@@ -3485,9 +3517,42 @@ impl Parser {
                     span: lbrace.merge(end),
                 },
                 container: Some(name.clone()),
+                container_args,
+                container_arg_labels,
             },
             span: name.span.merge(end),
         })
+    }
+
+    /// DSL.5 lookahead: at an `IDENT (` in item position, is this a
+    /// container-with-args — `name(args) { ... }` with the `{` directly
+    /// after the matching `)` on the same line? Scans token kinds only
+    /// (paren depth), no parse state is touched. A next-line `{` is NOT a
+    /// container (that shape is the stray-block error below, so the two
+    /// readings can never silently diverge).
+    fn at_container_with_args(&self) -> bool {
+        if !matches!(self.peek_kind_n(1), TokenKind::LParen) {
+            return false;
+        }
+        let mut i = self.pos + 1;
+        let mut depth = 0usize;
+        while i < self.tokens.len() {
+            match &self.tokens[i].kind {
+                TokenKind::LParen => depth += 1,
+                TokenKind::RParen => {
+                    depth -= 1;
+                    if depth == 0 {
+                        let next = self.tokens.get(i + 1);
+                        return matches!(next.map(|t| &t.kind), Some(TokenKind::LBrace))
+                            && !next.is_some_and(|t| t.nl_before);
+                    }
+                }
+                TokenKind::Eof => return false,
+                _ => {}
+            }
+            i += 1;
+        }
+        false
     }
 
     /// One leading-dot modifier line: `.field = value` or `.method(args)`.
@@ -6627,6 +6692,7 @@ mod tests {
             context: inner,
             body: inner_body,
             container,
+            ..
         } = &expr.kind
         else {
             panic!("expected nested BuilderBlock, got {:?}", expr.kind);
@@ -6755,6 +6821,68 @@ mod tests {
         ));
         assert_eq!(modifiers.len(), 1);
         assert_eq!(modifiers[0].name.name, "spacing");
+    }
+
+    #[test]
+    fn builder_container_with_args_parses_as_one_element() {
+        // DSL.5: `card(title: t) { ... }` is ONE container element carrying
+        // constructor arguments, and a same-line postfix after `}` still
+        // chains onto it.
+        let (_, body) = builder_of(
+            "fn main() -> i32 {\n    let v = @view {\n        card(title: t, 2) {\n            text(1)\n        }.grow(1)\n    };\n    0\n}",
+        );
+        assert_eq!(body.entries.len(), 1, "one element, not a call plus a block");
+        let BuilderEntry::Item { expr, .. } = &body.entries[0] else {
+            panic!("expected item entry");
+        };
+        // The chain head is the container; walk down through the postfix call.
+        let ExprKind::Call { callee, .. } = &expr.kind else {
+            panic!("chained postfix expected, got {:?}", expr.kind);
+        };
+        let ExprKind::Field { receiver, .. } = &callee.kind else {
+            panic!("postfix method expected");
+        };
+        let ExprKind::BuilderBlock {
+            container: Some(name),
+            container_args,
+            container_arg_labels,
+            ..
+        } = &receiver.kind
+        else {
+            panic!("container head expected, got {:?}", receiver.kind);
+        };
+        assert_eq!(name.name, "card");
+        assert_eq!(container_args.len(), 2);
+        assert_eq!(container_arg_labels.len(), 2);
+        assert_eq!(container_arg_labels[0].as_ref().unwrap().name, "title");
+        assert!(container_arg_labels[1].is_none());
+    }
+
+    #[test]
+    fn builder_call_then_next_line_block_is_an_error_not_two_items() {
+        // The silent mis-parse this grammar closed: `name(args)` followed by
+        // a block on the NEXT line used to become two items. Now the stray
+        // block is a parse error that names the same-line fix.
+        let err = parse_src(
+            "fn main() -> i32 {\n    let v = @view {\n        card(2)\n        {\n            text(1)\n        }\n    };\n    0\n}",
+        )
+        .unwrap_err();
+        let ParseErrorKind::Unexpected { expected, .. } = &err.kind else {
+            panic!("expected Unexpected, got {:?}", err.kind);
+        };
+        assert!(expected.contains("same line"), "got: {expected}");
+    }
+
+    #[test]
+    fn builder_bare_block_entry_is_an_error() {
+        let err = parse_src(
+            "fn main() -> i32 {\n    let v = @view {\n        {\n            text(1)\n        }\n    };\n    0\n}",
+        )
+        .unwrap_err();
+        let ParseErrorKind::Unexpected { expected, .. } = &err.kind else {
+            panic!("expected Unexpected, got {:?}", err.kind);
+        };
+        assert!(expected.contains("not a builder entry"), "got: {expected}");
     }
 
     #[test]

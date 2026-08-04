@@ -1090,6 +1090,16 @@ pub enum ExprKind {
         /// `None` for a root `@`-block; `Some(name)` for a bare
         /// container element (DSL.4).
         container: Option<Ident>,
+        /// DSL.5 (2026-08-04): arguments written on a container element —
+        /// `card(title: t) { ... }`. Always empty for a root `@`-block.
+        /// The desugar keeps the Builder as the FIRST argument
+        /// (`ctx::card(__b, title: t)`), so the existing finisher
+        /// contract (`fn column(take b: Builder, key: str = "")`) is a
+        /// zero-arg special case of the same shape.
+        container_args: Vec<Expr>,
+        /// Labels parallel to `container_args`; same invariant as
+        /// `Call::arg_labels` (empty, or exactly `container_args.len()`).
+        container_arg_labels: Vec<Option<Ident>>,
     },
 }
 
@@ -1554,10 +1564,14 @@ pub fn walk_expr_kind<R: ExprRewriter + ?Sized>(e: &Expr, r: &mut R) -> ExprKind
             context,
             body,
             container,
+            container_args,
+            container_arg_labels,
         } => ExprKind::BuilderBlock {
             context: context.clone(),
             body: walk_builder_block(body, r),
             container: container.clone(),
+            container_args: container_args.iter().map(|a| walk_expr(a, r)).collect(),
+            container_arg_labels: container_arg_labels.clone(),
         },
     }
 }

@@ -1772,6 +1772,8 @@ pub fn desugar_builder_block(e: &mut Expr) {
         context,
         body,
         container,
+        container_args,
+        container_arg_labels,
     } = kind
     else {
         unreachable!("desugar_builder_block called on a non-builder expression");
@@ -1819,24 +1821,36 @@ pub fn desugar_builder_block(e: &mut Expr) {
         desugar_builder_entry(entry, &b_name, &mut stmts);
     }
 
-    // Finisher: root -> `__b.finish()`; container -> `ctx::name(__b)`.
+    // Finisher: root -> `__b.finish()`; container -> `ctx::name(__b)`,
+    // or `ctx::name(__b, args...)` when the element carried arguments
+    // (DSL.5) — the Builder stays first, so the zero-arg finisher
+    // signature is the same contract.
     let tail = match container {
         None => method_call(&b_name, "finish", Vec::new(), block_span),
         Some(name) => {
             let mut path = context;
             path.push(name);
+            let mut args = vec![Expr {
+                kind: ExprKind::Ident(b_name.clone()),
+                span: block_span,
+            }];
+            let arg_labels = if container_arg_labels.is_empty() {
+                Vec::new()
+            } else {
+                let mut labels = vec![None];
+                labels.extend(container_arg_labels);
+                labels
+            };
+            args.extend(container_args);
             Expr {
                 kind: ExprKind::Call {
                     callee: Box::new(Expr {
                         kind: ExprKind::Path { segments: path },
                         span: block_span,
                     }),
-                    args: vec![Expr {
-                        kind: ExprKind::Ident(b_name.clone()),
-                        span: block_span,
-                    }],
+                    args,
                     type_args: Vec::new(),
-                    arg_labels: Vec::new(),
+                    arg_labels,
                 },
                 span: block_span,
             }
@@ -2933,6 +2947,73 @@ fn main() -> i32 { return 0; }\n";
         };
         assert_eq!(segments.last().unwrap().name, "row");
         assert_eq!(args.len(), 1, "constructor takes the filled Builder");
+    }
+
+    #[test]
+    fn builder_container_with_args_desugars_builder_first() {
+        // DSL.5: `card(title: t, 2) { ... }` finishes as
+        // `card(__b, title: t, 2)` — the Builder stays the first argument
+        // and the user's labels shift right by one (position 0 unlabeled).
+        let src = "fn main() -> i32 {\n    let v = @view {\n        card(title: t, 2) {\n            text(1)\n        }\n    };\n    return 0;\n}\n";
+        let b = desugared_builder(src);
+        let StmtKind::Let {
+            init: Some(inner), ..
+        } = &b.stmts[1].kind
+        else {
+            panic!("expected container item let");
+        };
+        let ExprKind::Block(inner) = &inner.kind else {
+            panic!("container must desugar to a Block, got {:?}", inner.kind);
+        };
+        let tail = inner.tail.as_ref().expect("container finisher tail");
+        let ExprKind::Call {
+            callee,
+            args,
+            arg_labels,
+            ..
+        } = &tail.kind
+        else {
+            panic!("container tail must be a call, got {:?}", tail.kind);
+        };
+        let ExprKind::Path { segments } = &callee.kind else {
+            panic!("constructor must be a path, got {:?}", callee.kind);
+        };
+        assert_eq!(segments.last().unwrap().name, "card");
+        assert_eq!(args.len(), 3, "builder + the two user args");
+        assert!(
+            matches!(args[0].kind, ExprKind::Ident(ref n) if n.starts_with("__b")),
+            "the Builder is the first argument"
+        );
+        assert_eq!(arg_labels.len(), 3, "labels align with args");
+        assert!(arg_labels[0].is_none(), "the builder slot is positional");
+        assert_eq!(arg_labels[1].as_ref().unwrap().name, "title");
+        assert!(arg_labels[2].is_none());
+    }
+
+    #[test]
+    fn builder_container_with_positional_args_keeps_labels_empty() {
+        // All-positional user args preserve the Call invariant: an empty
+        // label vec, not a vec of Nones.
+        let src = "fn main() -> i32 {\n    let v = @view {\n        card(2) {\n            text(1)\n        }\n    };\n    return 0;\n}\n";
+        let b = desugared_builder(src);
+        let StmtKind::Let {
+            init: Some(inner), ..
+        } = &b.stmts[1].kind
+        else {
+            panic!("expected container item let");
+        };
+        let ExprKind::Block(inner) = &inner.kind else {
+            panic!("container must desugar to a Block");
+        };
+        let tail = inner.tail.as_ref().expect("container finisher tail");
+        let ExprKind::Call {
+            args, arg_labels, ..
+        } = &tail.kind
+        else {
+            panic!("container tail must be a call");
+        };
+        assert_eq!(args.len(), 2, "builder + one positional arg");
+        assert!(arg_labels.is_empty(), "no labels anywhere stays empty");
     }
 
     #[test]

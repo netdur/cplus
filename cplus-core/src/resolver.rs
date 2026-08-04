@@ -2802,6 +2802,12 @@ fn contextualize_entries(
                 // and resolves its children in `ctx`. Its own entries are
                 // contextualized then.
                 fill_container_context(expr, context);
+                // DSL.5: a container's arguments (`card(title: t) { ... }`)
+                // belong to the ENCLOSING scope — sibling `let`s are
+                // visible, the container's own entries are not — so they
+                // contextualize here, not on the re-entry that handles the
+                // container's children.
+                contextualize_container_args(expr, context, &locals, ctx);
                 if !matches!(expr.kind, ExprKind::BuilderBlock { .. }) {
                     // Chain args and ordinary items contextualize here;
                     // the walk stops at the container head (it owns its
@@ -2860,6 +2866,37 @@ fn fill_container_context(e: &mut Expr, context: &[Ident]) {
         ExprKind::Call { callee, .. } => fill_container_context(callee, context),
         ExprKind::Field { receiver, .. } => fill_container_context(receiver, context),
         ExprKind::Index { receiver, .. } => fill_container_context(receiver, context),
+        _ => {}
+    }
+}
+
+/// DSL.5: contextualize a container element's arguments, descending
+/// through a postfix chain to the container head the same way
+/// `fill_container_context` does. The arguments live in the enclosing
+/// entry's scope; the container's own entries are handled on re-entry.
+fn contextualize_container_args(
+    e: &mut Expr,
+    context: &[Ident],
+    locals: &HashSet<String>,
+    ctx: &RewriteCtx,
+) {
+    match &mut e.kind {
+        ExprKind::BuilderBlock {
+            container: Some(_),
+            container_args,
+            ..
+        } => {
+            for a in container_args {
+                contextualize_builder_idents(a, context, locals, ctx);
+            }
+        }
+        ExprKind::Call { callee, .. } => contextualize_container_args(callee, context, locals, ctx),
+        ExprKind::Field { receiver, .. } => {
+            contextualize_container_args(receiver, context, locals, ctx)
+        }
+        ExprKind::Index { receiver, .. } => {
+            contextualize_container_args(receiver, context, locals, ctx)
+        }
         _ => {}
     }
 }

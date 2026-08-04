@@ -851,6 +851,21 @@ mod tests {
     }
 
     #[test]
+    fn builder_block_container_with_args_idempotent() {
+        // DSL.5: a container carrying constructor arguments
+        // (`card(title: t) { ... }`) round-trips unchanged.
+        let src = "fn f() -> i32 {\n    let v = @view {\n        card(title: t, 2) {\n            text(1)\n        }.grow(1)\n        vstack(key: \"k\") {\n            text(2)\n        }\n    };\n    return 0;\n}\n";
+        let out = fmt(src);
+        assert!(out.contains("card(title: t, 2) {"), "got: {out}");
+        assert!(out.contains("vstack(key: \"k\") {"), "got: {out}");
+        assert_eq!(
+            fmt(&out),
+            out,
+            "format must be idempotent on containers with args"
+        );
+    }
+
+    #[test]
     fn collapses_runs_of_blank_lines() {
         let src = "fn f() -> i32 {\n\n\n\n    return 0;\n}\n";
         let out = fmt(src);
