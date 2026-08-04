@@ -240,6 +240,24 @@ fn unrealise(n: *core::Node) {
     return;
 }
 
+// Apply the dirty bits over a subtree that is NOT in a window.
+//
+// `sync` walks the running app's windows, which is every tree facet owns — and
+// a realised row is not one of them. So a write into a realised subtree (the
+// bind step of a recycling list, say) marks its nodes dirty and nothing ever
+// carries them across. This is the door for that: the same walk `sync` uses,
+// rooted where the caller says.
+//
+// The caller is the one that knows the subtree changed, and it is the same
+// caller that realised it — so no coalescing happens here. A backend that binds
+// a row applies it immediately, because the row is about to be shown.
+fn sync_from(n: *core::Node) {
+    if !installed() { return; }
+    if n == (0 as *core::Node) { return; }
+    sync_walk(n);
+    return;
+}
+
 // Unmount: out of the registry, attach state cleared. Views are torn down by
 // node teardown (`release_data` fires `view_release`), not here — parking a
 // subtree must not destroy what re-attaching needs.

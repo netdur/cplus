@@ -425,12 +425,27 @@ building the row and laying it out. Without it a scroll re-measures the whole
 list on every pass, felt as a periodic hitch. The cache is keyed to the width
 it was measured at, because a different width re-wraps every row.
 
-What is still slow: **a recycled cell is stripped and its subtree rebuilt.** The
-cell is reused; the work is not. Scrolling pays a full build per row — flex
-subtree, layout, and a view per node. Making that cheap needs the row builder to
-be able to UPDATE an existing subtree instead of describing a new one, which is
-a contract addition (a bind step), not a backend trick. Recorded here so the
-cost is known rather than discovered.
+**The bind step is what makes reuse real.** Without one, a recycled cell was
+stripped and its subtree REBUILT — the cell was reused and the work was not, so
+scrolling paid a full build per row. `set_row_bind` splits the two questions:
+`row` describes the SHAPE once per cell, `bind` writes one row's data into it.
+Scrolling then costs a handful of property writes.
+
+It is OPTIONAL and its absence is not an error — a list that names no bind
+rebuilds each row, which is what every backend did before the contract could
+say otherwise. Setting one is a promise that every row has the same shape,
+which recycling assumes anyway, said out loud.
+
+Two things about it are worth knowing. A row is bound on its FIRST use too, so
+the builder is responsible for shape only and a row can never show the data of
+whichever row happened to build its cell. And MEASURING binds as well — heights
+are asked for every row, so without a bind, measuring a thousand rows built a
+thousand subtrees; with one it builds one.
+
+A bind writes PROPS, which marks nodes dirty and touches nothing native, and a
+realised row is outside the window walk that carries dirty bits across. So the
+backend applies it immediately through `mount::sync_from` — the third verb this
+path needed, after `realise` and `unrealise`.
 
 The width a cell gets is the COLUMN's, not the table's frame, and that is a bug
 rather than a detail: modern NSTableView styles inset cells horizontally, so

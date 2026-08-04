@@ -8,6 +8,7 @@
 
 import "stdlib/option" as option;
 import "stdlib/text" as text;
+import "stdlib/vec" as vec;
 import "stdlib/io" as io;
 import "flex_layout/flex_layout" as flex;
 import "facet/facet" as core;
@@ -2358,6 +2359,158 @@ fn a_row_is_realised_into_its_cell_and_torn_down_when_the_cell_is_reused() {
     // arrives, and the cell still holds exactly one root.
     let again: *u8 = recycler::view_for_row(v, 1 as i64);
     assert ak::View::from_raw(again).subviews().count() == (1 as usize);
+    views::view_release(v);
+    return;
+}
+
+// ---- the bind step -----------------------------------------------------------
+// The reason recycling was not yet fast: the CELL was reused and the WORK was
+// not. With a bind, a cell's subtree is built once and every later row writes
+// into it.
+
+static RB_BUILDS: i64 = 0 as i64;
+static RB_BINDS: i64 = 0 as i64;
+
+fn rb_row(ctx: *u8, i: usize) -> core::Node {
+    RB_BUILDS = RB_BUILDS + (1 as i64);
+    var b: core::Builder = core::Builder::new();
+    b.add(label::label("", key: "title"));
+    return core::column(b, key: "");
+}
+
+fn rb_bind(ctx: *u8, i: usize, row: *core::Node) {
+    RB_BINDS = RB_BINDS + (1 as i64);
+    match label::find("title", within: row) {
+        option::Option[label::Label]::Some(l) => {
+            let _x: label::Label = l.set_text(digits_i64(i as i64).view());
+        }
+        option::Option[label::Label]::None => { }
+    }
+    return;
+}
+
+#[test]
+fn a_bound_row_is_written_into_rather_than_rebuilt() {
+    backend::install();
+    RB_BUILDS = 0 as i64;
+    RB_BINDS = 0 as i64;
+    var n: core::Node = list::list(key: "bl");
+    let p: *core::Node = #addr_of(n);
+    match list::find("bl", within: p) {
+        option::Option[list::List]::Some(x) => {
+            let a: list::List = x.set_row(rb_row);
+            let b: list::List = a.set_row_bind(rb_bind);
+            let _c: list::List = b.set_count(100 as usize);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v != (0 as *u8);
+
+    // First use of a cell: built once, and bound immediately — so the builder
+    // is responsible for SHAPE only and a row can never show the data of
+    // whichever row happened to build its cell.
+    // A cell of the suite's own, because a headless table never fills its
+    // reuse queue — asking it for a recycled cell always answers nil, so the
+    // branch that matters would never run under test.
+    let cell: *u8 = recycler::make_cell(v);
+    assert cell != (0 as *u8);
+    recycler::fill_into(v, cell, 0 as i64);
+    assert RB_BUILDS == (1 as i64);
+    assert RB_BINDS == (1 as i64);
+    assert cell_shows(cell, "0");
+
+    // Reused for another row: NOTHING is rebuilt. This is the whole point.
+    recycler::fill_into(v, cell, 7 as i64);
+    assert RB_BUILDS == (1 as i64);
+    assert RB_BINDS == (2 as i64);
+    assert cell_shows(cell, "7");
+
+    recycler::fill_into(v, cell, 42 as i64);
+    assert RB_BUILDS == (1 as i64);
+    assert cell_shows(cell, "42");
+    views::view_release(v);
+    return;
+}
+
+// What the cell's label currently reads. Walks down to the first NSTextField,
+// because the row's shape is the test's own and shallow.
+fn cell_shows(cell: *u8, want: str) -> bool {
+    let subs: vec::Vec[ak::View] = ak::View::from_raw(cell).subviews();
+    var i: usize = 0 as usize;
+    while i < subs.count() {
+        match subs.at_ptr(i) {
+            option::Option[*ak::View]::Some(sp) => {
+                if view_reads({ (*sp).raw() }, want) { return true; }
+            }
+            option::Option[*ak::View]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
+
+fn view_reads(v: *u8, want: str) -> bool {
+    if synth::class_responds(synth::object_class(v),
+                             rt::sel(#str_ptr("stringValue\0"))) != (0 as i8) {
+        if ak::TextField::from_raw(v).as_control().string_value().view() == want { return true; }
+    }
+    let subs: vec::Vec[ak::View] = ak::View::from_raw(v).subviews();
+    var i: usize = 0 as usize;
+    while i < subs.count() {
+        match subs.at_ptr(i) {
+            option::Option[*ak::View]::Some(sp) => { if view_reads({ (*sp).raw() }, want) { return true; } }
+            option::Option[*ak::View]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
+
+#[test]
+fn measuring_a_bound_list_builds_one_subtree_not_one_per_row() {
+    backend::install();
+    // The other half of the cost, and the one that bites on a RESIZE: heights
+    // are asked for every row, and answering meant building every row. With a
+    // bind, the shape is built once and each row's data written into it.
+    RB_BUILDS = 0 as i64;
+    RB_BINDS = 0 as i64;
+    var n: core::Node = list::list(key: "bm");
+    let p: *core::Node = #addr_of(n);
+    match list::find("bm", within: p) {
+        option::Option[list::List]::Some(x) => {
+            let a: list::List = x.set_row(rb_row);
+            let b: list::List = a.set_row_bind(rb_bind);
+            let _c: list::List = b.set_count(200 as usize);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    let v: *u8 = views::create(0 as *u8, p);
+    var i: i64 = 0 as i64;
+    while i < (20 as i64) {
+        let _h: f64 = recycler::height_of_row(v, i);
+        i = i + (1 as i64);
+    }
+    // Twenty rows measured, twenty binds — and the builds are what recycling
+    // is for. Without a bind this would be twenty subtrees.
+    assert RB_BINDS == (20 as i64);
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn a_list_without_a_bind_still_works_the_old_way() {
+    backend::install();
+    // The bind is OPTIONAL and its absence is not an error: a list that names
+    // no bind rebuilds each row, which is what every backend did before the
+    // contract could say otherwise.
+    RL_BUILDS = 0 as i64;
+    var n: core::Node = rl_list(10 as usize, 0 as i64);
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    let cell: *u8 = recycler::make_cell(v);
+    recycler::fill_into(v, cell, 0 as i64);
+    recycler::fill_into(v, cell, 1 as i64);
+    assert RL_BUILDS == (2 as i64);      // rebuilt, because nothing binds
     views::view_release(v);
     return;
 }

@@ -378,6 +378,46 @@ impl List {
         return this;
     }
 
+    // The RECYCLING half: `row` describes the SHAPE once and `bind`
+    // writes one row's data into it. A backend that recycles builds a
+    // row's subtree per CELL and then binds on every use, so scrolling
+    // costs a handful of property writes instead of a whole subtree.
+    //
+    // The row is addressed the way everything in facet is — `find` and
+    // a typed cursor, scoped to the row:
+    //
+    //     fn bind(ctx: *u8, i: usize, row: *core::Node) {
+    //         match label::find("title", within: row) {
+    //             option::Option[label::Label]::Some(l) => {
+    //                 let _x: label::Label = l.set_text(title_of(i));
+    //             }
+    //             option::Option[label::Label]::None => { }
+    //         }
+    //     }
+    //
+    // OPTIONAL, and its absence is not an error: without it a backend
+    // rebuilds each row, which is what every backend did before this
+    // existed. Setting it is a PROMISE that every row has the same
+    // shape — which recycling assumes anyway, said out loud.
+    fn set_row_bind(this, f: fn(*u8, usize, *core::Node), ctx: *u8 = 0 as *u8) -> List {
+        let p: *props::ListProps = this._props();
+        if p == (0 as *props::ListProps) { return this; }
+        { (*p).bind = f };
+        { (*p).row_ctx = ctx };
+        core::touch(this._p, P_ROW);
+        return this;
+    }
+
+    // Write row `at` into `row`. Inert when no bind was named.
+    fn bind_row(this, at: usize, row: *core::Node) {
+        let p: *props::ListProps = this._props();
+        if p == (0 as *props::ListProps) { return; }
+        let f: fn(*u8, usize, *core::Node) = { (*p).bind };
+        if f == props::no_bind { return; }
+        f({ (*p).row_ctx }, at, row);
+        return;
+    }
+
     // Build row `at`. Empty until set_row names a builder.
     fn build_row(this, at: usize) -> core::Node {
         let p: *props::ListProps = this._props();

@@ -1850,6 +1850,8 @@ ROW_SOURCE_FIELDS = [
     ("count", "i64", "0 as i64", "facet — how many rows the control shows"),
     ("row", "fn(*u8, usize) -> flex::Node", "no_row", "facet — builds row `i`"),
     ("opaque row_ctx", "*u8", "0 as *u8", None),
+    ("bind", "fn(*u8, usize, *flex::Node)", "no_bind",
+     "facet — writes row `i` INTO an existing row, for recycling"),
 ]
 
 
@@ -1919,6 +1921,9 @@ def emit_props(rows_by_control, by_type):
            "\nfn no_handler(sender: *u8, ctx: *u8) { return; }\n",
            "\n// The row builder a list carries until the application sets one.\n"
            "fn no_row(ctx: *u8, index: usize) -> flex::Node { return flex::Node::new(); }\n",
+           "// The absent bind. Compared against by name, NOT against null: the\n"
+           "// default has to BE a function, and a null check would never be false.\n"
+           "fn no_bind(ctx: *u8, index: usize, row: *flex::Node) { return; }\n",
            COMMON_SRC]
     out.append(emit_base_props(by_type))
 
@@ -2324,6 +2329,41 @@ def emit_control(maui, merged):
         o.append("        { (*p).row_ctx = ctx };\n")
         o.append("        core::touch(this._p, P_ROW);\n")
         o.append("        return this;\n    }\n")
+        o.append("\n    // The RECYCLING half: `row` describes the SHAPE once and `bind`\n")
+        o.append("    // writes one row's data into it. A backend that recycles builds a\n")
+        o.append("    // row's subtree per CELL and then binds on every use, so scrolling\n")
+        o.append("    // costs a handful of property writes instead of a whole subtree.\n")
+        o.append("    //\n")
+        o.append("    // The row is addressed the way everything in facet is — `find` and\n")
+        o.append("    // a typed cursor, scoped to the row:\n")
+        o.append("    //\n")
+        o.append("    //     fn bind(ctx: *u8, i: usize, row: *core::Node) {\n")
+        o.append("    //         match label::find(\"title\", within: row) {\n")
+        o.append("    //             option::Option[label::Label]::Some(l) => {\n")
+        o.append("    //                 let _x: label::Label = l.set_text(title_of(i));\n")
+        o.append("    //             }\n")
+        o.append("    //             option::Option[label::Label]::None => { }\n")
+        o.append("    //         }\n")
+        o.append("    //     }\n")
+        o.append("    //\n")
+        o.append("    // OPTIONAL, and its absence is not an error: without it a backend\n")
+        o.append("    // rebuilds each row, which is what every backend did before this\n")
+        o.append("    // existed. Setting it is a PROMISE that every row has the same\n")
+        o.append("    // shape — which recycling assumes anyway, said out loud.\n")
+        o.append(f"    fn set_row_bind(this, f: fn(*u8, usize, *core::Node), ctx: *u8 = 0 as *u8) -> {cur} {{\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return this; }}\n")
+        o.append("        { (*p).bind = f };\n")
+        o.append("        { (*p).row_ctx = ctx };\n")
+        o.append("        core::touch(this._p, P_ROW);\n")
+        o.append("        return this;\n    }\n")
+        o.append("\n    // Write row `at` into `row`. Inert when no bind was named.\n")
+        o.append("    fn bind_row(this, at: usize, row: *core::Node) {\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return; }}\n")
+        o.append("        let f: fn(*u8, usize, *core::Node) = { (*p).bind };\n")
+        o.append("        if f == props::no_bind { return; }\n")
+        o.append("        f({ (*p).row_ctx }, at, row);\n        return;\n    }\n")
         o.append("\n    // Build row `at`. Empty until set_row names a builder.\n")
         o.append("    fn build_row(this, at: usize) -> core::Node {\n")
         o.append(f"        let p: *props::{props} = this._props();\n")

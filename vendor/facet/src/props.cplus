@@ -13,6 +13,9 @@ fn no_handler(sender: *u8, ctx: *u8) { return; }
 
 // The row builder a list carries until the application sets one.
 fn no_row(ctx: *u8, index: usize) -> flex::Node { return flex::Node::new(); }
+// The absent bind. Compared against by name, NOT against null: the
+// default has to BE a function, and a null check would never be false.
+fn no_bind(ctx: *u8, index: usize, row: *flex::Node) { return; }
 
 // ---- the shared band --------------------------------------------------------
 // The write rows every element carries (MAUI VisualElement), minus the ones
@@ -510,6 +513,7 @@ struct CollectionProps {
     count: i64,    // facet — how many rows the control shows
     row: fn(*u8, usize) -> flex::Node,    // facet — builds row `i`
     opaque row_ctx: *u8,
+    bind: fn(*u8, usize, *flex::Node),    // facet — writes row `i` INTO an existing row, for recycling
 }
 
 impl CollectionProps {
@@ -523,6 +527,7 @@ impl CollectionProps {
             count: 0 as i64,
             row: no_row,
             row_ctx: 0 as *u8,
+            bind: no_bind,
         };
     }
 }
@@ -950,6 +955,7 @@ struct ListProps {
     count: i64,    // facet — how many rows the control shows
     row: fn(*u8, usize) -> flex::Node,    // facet — builds row `i`
     opaque row_ctx: *u8,
+    bind: fn(*u8, usize, *flex::Node),    // facet — writes row `i` INTO an existing row, for recycling
 }
 
 impl ListProps {
@@ -983,6 +989,7 @@ impl ListProps {
             count: 0 as i64,
             row: no_row,
             row_ctx: 0 as *u8,
+            bind: no_bind,
         };
     }
 }

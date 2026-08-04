@@ -89,6 +89,7 @@ fn agent_pin_key() -> *u8 { return { 28732 as *u8 }; }
 
 struct RowSource {
     row: fn(*u8, usize) -> core::Node,
+    bind: fn(*u8, usize, *core::Node),
     opaque row_ctx: *u8,
     count: i64,
     // `row_height` from the contract: 0 means measure, anything else means the
@@ -168,7 +169,11 @@ fn height_imp(self_obj: *u8, cmd: *u8, tv: *u8, row: i64) -> f64 {
     // Measuring means building the row and laying it out. No views: this is a
     // pure flex measurement, so nothing is realised and nothing has to be torn
     // down afterwards.
+    //
+    // With a bind, the SHAPE is built once and this row's data written into it
+    // — so measuring a thousand rows builds one subtree, not a thousand.
     var node: core::Node = build_row(s, row);
+    bind_into(s, row, #addr_of(node));
     node.calculate_layout(width: w);
     var h: f64 = { node.frame().height };
     if h < 1.0f64 { h = 1.0f64; }
@@ -200,29 +205,51 @@ fn view_for_row_imp(self_obj: *u8, cmd: *u8, tv: *u8, col: *u8, row: i64) -> *u8
     var cell: *u8 = { msg_id_id_i64(tv, rt::sel(#str_ptr("makeViewWithIdentifier:owner:\0")),
                                     bridge::nsstring("facet.row"), 0 as i64) };
     if cell == (0 as *u8) {
-        cell = rt::retain(akx::new_flipped_view(
-            rt::Rect { x: 0.0f64, y: 0.0f64, w: w, h: 1.0f64 }).raw());
+        cell = new_cell("facet.row", w);
         if cell == (0 as *u8) { return 0 as *u8; }
-        { rt::msg_void_id(cell, rt::sel(#str_ptr("setIdentifier:\0")),
-                          bridge::nsstring("facet.row")) };
-        rt::autorelease(cell);
-    } else {
-        // Taken from another row: its subtree goes first. Unrealising fires
-        // on_detach and dropping the node releases every view it owns, so the
-        // cell is empty by the time the new row is built into it.
-        release_cell_row(cell);
     }
+    fill_cell(s, cell, row, w);
+    return cell;
+}
+
+// A cell of our own, tagged so the table will offer it back.
+fn new_cell(identity: str, w: f64) -> *u8 {
+    let cell: *u8 = rt::retain(akx::new_flipped_view(
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: w, h: 1.0f64 }).raw());
+    if cell == (0 as *u8) { return 0 as *u8; }
+    { rt::msg_void_id(cell, rt::sel(#str_ptr("setIdentifier:\0")), bridge::nsstring(identity)) };
+    return rt::autorelease(cell);
+}
+
+// Put row `row` into `cell`, whether or not the cell already holds one.
+//
+// THE RECYCLING PATH is the first branch: with a bind, a cell's subtree is
+// built ONCE and every later row writes into it, so scrolling costs a handful
+// of property writes instead of a subtree, a layout and a view per node.
+// Without a bind the cell is emptied and rebuilt — what every backend did
+// before the contract could say otherwise.
+//
+// Factored out of the delegate because it is the half worth testing on its
+// own: a headless table never fills its reuse queue, so `makeViewWithIdentifier`
+// always answers nil and the reuse branch would never run under test.
+fn fill_cell(s: *RowSource, cell: *u8, row: i64, w: f64) {
+    let existing: *core::Node = { synth::get_associated(cell, cell_node_key()) as *core::Node };
+    if has_bind(s) && existing != (0 as *core::Node) {
+        bind_into(s, row, existing);
+        // A bind WRITES PROPS, which marks nodes dirty and touches nothing
+        // native. A realised row is outside the window walk, so nothing would
+        // ever carry those writes across — `sync_from` is that walk, rooted
+        // here. Applied immediately rather than coalesced: the row is about to
+        // be shown.
+        mount::sync_from(existing);
+        // The row's own size can change with its data, so it is re-laid out
+        // and re-placed — the cheap half of what a rebuild did.
+        place_row(cell, existing, w);
+        return;
+    }
+    if existing != (0 as *core::Node) { release_cell_row(cell); }
 
     var node: core::Node = build_row(s, row);
-    node.calculate_layout(width: w);
-    var h: f64 = { node.frame().height };
-    if h < 1.0f64 { h = 1.0f64; }
-    { msg_void_rect(cell, rt::sel(#str_ptr("setFrame:\0")),
-                    rt::Rect { x: 0.0f64, y: 0.0f64, w: w, h: h }) };
-
-    // The node must OUTLIVE this function: in facet a node owns its views, so
-    // letting it drop here would empty the cell the moment it was filled. It
-    // goes to the heap and the CELL owns it.
     match box::new::[core::Node](node) {
         option::Option[box::Box[core::Node]]::Some(b) => {
             let np: *core::Node = { b.into_raw() } as *core::Node;
@@ -230,13 +257,42 @@ fn view_for_row_imp(self_obj: *u8, cmd: *u8, tv: *u8, col: *u8, row: i64) -> *u8
             // nothing keys it, nothing gives it gestures — so it is not backed
             // and its children pass straight through into the cell, exactly as
             // a layout-only column does inside a scroll view.
-            let rv: *u8 = mount::realise(np, cell);
-            if rv != (0 as *u8) { geometry_place(rv, w, h); }
+            let _rv: *u8 = mount::realise(np, cell);
+            // Bound immediately, including on the first use: the builder is
+            // then responsible for SHAPE ONLY, and a row can never show the
+            // data of whichever row happened to build its cell.
+            bind_into(s, row, np);
+            mount::sync_from(np);
+            place_row(cell, np, w);
             synth::set_associated(cell, cell_node_key(), np as *u8);
         }
         option::Option[box::Box[core::Node]]::None => { }
     }
-    return cell;
+    return;
+}
+
+// Lay the row out at the cell's width and give both the cell and the row's
+// root view that size.
+fn place_row(cell: *u8, np: *core::Node, w: f64) {
+    { (*np).calculate_layout(width: w) };
+    var h: f64 = { (*np).frame().height };
+    if h < 1.0f64 { h = 1.0f64; }
+    { msg_void_rect(cell, rt::sel(#str_ptr("setFrame:\0")),
+                    rt::Rect { x: 0.0f64, y: 0.0f64, w: w, h: h }) };
+    let rv: *u8 = core::view_of(np);
+    if rv != (0 as *u8) { geometry_place(rv, w, h); }
+    return;
+}
+
+fn has_bind(s: *RowSource) -> bool {
+    return { (*s).bind } != props::no_bind;
+}
+
+fn bind_into(s: *RowSource, row: i64, into: *core::Node) {
+    let f: fn(*u8, usize, *core::Node) = { (*s).bind };
+    if f == props::no_bind { return; }
+    f({ (*s).row_ctx }, row as usize, into);
+    return;
 }
 
 // The realised root fills the cell. Its own children were placed by the frame
@@ -332,6 +388,7 @@ fn apply_recycling_list(v: *u8, n: *core::Node, dirty: u64) {
     if s == (0 as *RowSource) {
         match box::new::[RowSource](RowSource {
             row: { (*p).row },
+            bind: { (*p).bind },
             row_ctx: { (*p).row_ctx },
             count: { (*p).count },
             fixed_height: 0.0f64,
@@ -346,6 +403,7 @@ fn apply_recycling_list(v: *u8, n: *core::Node, dirty: u64) {
         }
     }
     { (*s).row = { (*p).row } };
+    { (*s).bind = { (*p).bind } };
     { (*s).row_ctx = { (*p).row_ctx } };
     { (*s).count = { (*p).count } };
     let rh: i64 = { (*p).row_height };
@@ -390,6 +448,24 @@ fn view_for_row(v: *u8, row: i64) -> *u8 {
     let tv: *u8 = table_of(v);
     if tv == (0 as *u8) { return 0 as *u8; }
     return view_for_row_imp(0 as *u8, 0 as *u8, tv, 0 as *u8, row);
+}
+
+// A cell the caller keeps, filled with `row`. The suite's way into the REUSE
+// branch: a headless table never fills its reuse queue, so asking it for a
+// recycled cell always answers nil and the branch that matters never runs.
+fn fill_into(v: *u8, cell: *u8, row: i64) {
+    let tv: *u8 = table_of(v);
+    if tv == (0 as *u8) { return; }
+    let s: *RowSource = source_of(tv);
+    if s == (0 as *RowSource) { return; }
+    fill_cell(s, cell, row, column_width(tv));
+    return;
+}
+
+fn make_cell(v: *u8) -> *u8 {
+    let tv: *u8 = table_of(v);
+    if tv == (0 as *u8) { return 0 as *u8; }
+    return new_cell("facet.row", column_width(tv));
 }
 
 // ==============================================================================
@@ -501,6 +577,7 @@ fn tree_height_imp(self_obj: *u8, cmd: *u8, ov: *u8, item: *u8) -> f64 {
     let n: *tree::TreeNode = unbox_item(item);
     if n == (0 as *tree::TreeNode) { return 1.0f64; }
     var row: core::Node = tree_row_node(n, p);
+    tree_bind_into(p, n, #addr_of(row));
     row.calculate_layout(width: column_width(ov));
     var h: f64 = { row.frame().height };
     if h < 1.0f64 { h = 1.0f64; }
@@ -525,6 +602,7 @@ fn tree_view_for_item_imp(self_obj: *u8, cmd: *u8, ov: *u8, col: *u8, item: *u8)
 
     var cell: *u8 = { msg_id_id_i64(ov, rt::sel(#str_ptr("makeViewWithIdentifier:owner:\0")),
                                     bridge::nsstring("facet.item"), 0 as i64) };
+    var fresh: bool = false;
     if cell == (0 as *u8) {
         cell = rt::retain(akx::new_flipped_view(
             rt::Rect { x: 0.0f64, y: 0.0f64, w: w, h: 1.0f64 }).raw());
@@ -532,9 +610,27 @@ fn tree_view_for_item_imp(self_obj: *u8, cmd: *u8, ov: *u8, col: *u8, item: *u8)
         { rt::msg_void_id(cell, rt::sel(#str_ptr("setIdentifier:\0")),
                           bridge::nsstring("facet.item")) };
         rt::autorelease(cell);
-    } else {
-        release_cell_row(cell);
+        fresh = true;
     }
+
+    // The same recycling path the list takes, with the ITEM in place of the
+    // index — see `view_for_row_imp`.
+    if tree_has_bind(p) && !fresh {
+        let existing: *core::Node = { synth::get_associated(cell, cell_node_key()) as *core::Node };
+        if existing != (0 as *core::Node) {
+            tree_bind_into(p, n, existing);
+            mount::sync_from(existing);
+            { (*existing).calculate_layout(width: w) };
+            var bh: f64 = { (*existing).frame().height };
+            if bh < 1.0f64 { bh = 1.0f64; }
+            { msg_void_rect(cell, rt::sel(#str_ptr("setFrame:\0")),
+                            rt::Rect { x: 0.0f64, y: 0.0f64, w: w, h: bh }) };
+            let rv: *u8 = core::view_of(existing);
+            if rv != (0 as *u8) { geometry_place(rv, w, bh); }
+            return cell;
+        }
+    }
+    if !fresh { release_cell_row(cell); }
 
     var node: core::Node = tree_row_node(n, p);
     node.calculate_layout(width: w);
@@ -546,12 +642,25 @@ fn tree_view_for_item_imp(self_obj: *u8, cmd: *u8, ov: *u8, col: *u8, item: *u8)
         option::Option[box::Box[core::Node]]::Some(b) => {
             let np: *core::Node = { b.into_raw() } as *core::Node;
             let rv: *u8 = mount::realise(np, cell);
+            tree_bind_into(p, n, np);
+            mount::sync_from(np);
             if rv != (0 as *u8) { geometry_place(rv, w, h); }
             synth::set_associated(cell, cell_node_key(), np as *u8);
         }
         option::Option[box::Box[core::Node]]::None => { }
     }
     return cell;
+}
+
+fn tree_has_bind(p: *tree::TreeProps) -> bool {
+    return { (*p).bind } != tree::no_bind;
+}
+
+fn tree_bind_into(p: *tree::TreeProps, n: *tree::TreeNode, into: *core::Node) {
+    let f: fn(*tree::TreeNode, *u8, *core::Node) = { (*p).bind };
+    if f == tree::no_bind { return; }
+    f(n, { (*p).ctx }, into);
+    return;
 }
 
 fn tree_agent_class() -> *u8 {

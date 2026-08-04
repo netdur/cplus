@@ -174,11 +174,19 @@ fn find_id(n: *TreeNode, id: str) -> option::Option[*TreeNode] {
 // ---- the control -------------------------------------------------------------
 
 fn no_row(node: *TreeNode, ctx: *u8) -> flex::Node { return flex::Node::new(); }
+// The absent bind. Compared against BY NAME, not against null: the default has
+// to be a real function, so a null check would never be false — the mistake
+// that made `row`'s own fallback dead code until 2026-08-04.
+fn no_bind(node: *TreeNode, ctx: *u8, row: *flex::Node) { return; }
 fn no_select(node: *TreeNode, ctx: *u8) { return; }
 
 struct TreeProps {
     root: TreeNode,
     row: fn(*TreeNode, *u8) -> flex::Node,
+    // The recycling half: `row` describes the SHAPE once per cell and `bind`
+    // writes one item's data into it. See list's `set_row_bind` — the same
+    // idea, with the item in place of the index.
+    bind: fn(*TreeNode, *u8, *flex::Node),
     on_select: fn(*TreeNode, *u8),
     opaque ctx: *u8,
     row_height: f64,             // 0 = let the backend measure
@@ -191,6 +199,7 @@ impl TreeProps {
         return TreeProps {
             root: TreeNode::new("", ""),
             row: no_row,
+            bind: no_bind,
             on_select: no_select,
             ctx: 0 as *u8,
             row_height: 0.0f64,
@@ -288,6 +297,19 @@ impl Tree {
         if p == (0 as *TreeProps) { return flex::Node::new(); }
         let f: fn(*TreeNode, *u8) -> flex::Node = { (*p).row };
         return f(node, { (*p).ctx });
+    }
+
+    // Write an item's data into an EXISTING row. Optional, and its absence is
+    // not an error: without it a backend rebuilds each row, which is what every
+    // backend did before this existed. Setting it is a promise that every row
+    // has the same shape — which recycling assumes anyway, said out loud.
+    fn set_row_bind(this, f: fn(*TreeNode, *u8, *flex::Node), ctx: *u8 = 0 as *u8) -> Tree {
+        let p: *TreeProps = this._props();
+        if p == (0 as *TreeProps) { return this; }
+        { (*p).bind = f };
+        { (*p).ctx = ctx };
+        core::touch(this._p, P_ROW);
+        return this;
     }
 
     fn set_row_height(this, v: f64) -> Tree {
