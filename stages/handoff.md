@@ -100,25 +100,6 @@ pre-regen tree had it too.
 --release`). Homebrew's `cpc 0.0.26` predates the builder-DSL work and
 fails to parse `@ui` blocks — it reports a red suite that is not red.
 
-## Start here: Stage 4, item 1 — the window shell
-
-Port the pre-regen macOS facade onto the new seam. The copy-paste rule
-applies: unchanged parts are copied, only the seams move.
-
-```
-git show eb5b1b7:vendor/facet/src/runtime_macos.cplus   # 748 lines, the reference
-git show eb5b1b7:vendor/facet/src/agent.cplus           # for work item 6
-```
-
-`runtime_macos.cplus` shadows `runtime.cplus` by filename (the resolver's
-platform override). Adapt: Chrome's six booleans are now `bar: Bar` +
-`close_button_only`; the App loop wires `app::make_current` /
-`open_window` / `close_window`; the backend install is the contract below,
-not loose `set_*_fn` calls. Exit criterion: an empty keyed column on
-screen. Then the six-kind create/apply skeleton (stages/4.md item 2).
-
----
-
 ## The backend-install contract (what facet_appkit fills)
 
 Five structs, two slots, nothing else. Zero fields keep the portable
@@ -148,9 +129,14 @@ theme::set_theme_changed_fn      # writes the running app's record
   (both counters — workers AND queued applies) before dropping job
   owners. `wait_for_jobs()` alone covers only the worker half.
 
-Reality: `vendor/facet_appkit` is an empty scaffold; `vendor/facet_gtk`
-still speaks the OLD per-kind renderer and will not type-check against
-this seam (out of scope for Stage 4). The seam is proven headless only.
+Filled today: `Renderer` (views.cplus), `Scheduler` (scheduler.cplus), and
+both theme slots. NOT filled, and deliberately not HALF-filled — zero fields
+keep facet's portable no-op, where three of five slots would look installed
+and behave randomly: `KeyReader`, `SenderReaders` (both item 4) and
+`AgentHooks` (item 6).
+
+`vendor/facet_gtk` still speaks the OLD per-kind renderer and will not
+type-check against this seam (out of scope for Stage 4).
 
 ## Stage 4 decisions — already resolved with the user
 
