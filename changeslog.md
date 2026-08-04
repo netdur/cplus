@@ -238,6 +238,69 @@ by its *shape*, not a method-name allowlist, through every form it can leak:
   Verified live in iris: exposed describe grew from the 4-node frozen shell
   to every launcher and recents control.
 
+### facet — the words facet owns (no MAUI row behind them)
+- **`symbol`** (`symbol.cplus` + `icons.cplus`): an icon-font glyph as a
+  control — `symbol(icons::GEAR, size:, fill:, color:)` — with 4,268
+  constants generated from the bundled font by `tools/gen_icons.py`, plus
+  the platform-set escape (`named:` resolves SF Symbols / freedesktop /
+  Segoe on the backend). **`.gesture(…)`** (`gestures.cplus`): a behaviour
+  that draws nothing is a modifier on `Node`, not a control — the 21
+  gesture rows (taps, drag, hover, swipe, drop) live here, and handlers
+  decline by returning `false` to pass the event up the native chain.
+  **`tree`**, **`split`**, **`window_buttons`** + **`.window_drag()`**
+  round out the set; facet-origin kind tags run from 1000 so regeneration
+  can never collide.
+
+### facet — the platform-free tier (Stage 3, first half)
+- **The 23 tier symbols are back**, as six hand-written modules ported from
+  the pre-regen facet: `nav` (route verbs, byte-for-byte), `services`
+  (`run_on_main`, `after`/`Cancellable`, `spawn_ui`, `run_on_worker`,
+  `Job`/`run_job`/`wait_for_jobs`), `component` (`Component`/`Lifecycle`,
+  sender verbs, `component_at`), `screen` (`Chrome`, `Screen`, app menus,
+  the type-erased `ScreenBox`), `theme` (roles, `set_theme`, resolution
+  tables, appearance hooks), and `runtime` (the neutral facade: `Window`,
+  `App` + routes, dialogs, agent hook slots — every entry refusing loudly
+  with no backend). Three reseams, everything else copy-paste:
+  `observe_size` takes `*Node`, the presentation registry keys on the outlet
+  KEY instead of the retired `Handle`, and the Color token model (two tiers
+  plus adaptive light/dark pairs) now lives in the generated vocabulary.
+- **Renamed on the way in**, per the Stage 3 spec: `Service.produce` is
+  `Job.run` (`run_job(job, then:)`, `wait_for_jobs` — two of iris's three
+  uses produce data, the third scaffolds a project, so `Service` was a lie
+  on one in three); `on_worker` is `run_on_worker`, pairing with
+  `run_on_main`. `Chrome`'s six booleans collapsed to one `bar: Bar` enum
+  (`Native | Blended | Hidden | Custom`) plus a separate
+  `close_button_only` — 64 combinations for what was one decision. The
+  spec's `Cancellable`-becomes-`events::Subscription` idea died on its own
+  stated caveat: `Subscription` carries a `*Bus` its drop dereferences,
+  which a timer handle must not want.
+- **The mount seam is built** (`mount.cplus`): `Renderer` — the small
+  vtable a backend fills (create/apply/insert/remove/schedule plus a
+  `view_release` paired with every created view) — a top-down mount walk
+  that inserts each view into the nearest ancestor host and lets
+  view-less containers pass children through, and a sync walk that
+  applies exactly the dirty nodes and clears their bits. `touch` now
+  requests a sync when unbatched (a batch stays silent until its closing
+  `C_FLUSH`), asserts tree writes are on the UI thread, and node teardown
+  releases the native view through the pair the renderer set. The seven
+  mount decisions (M1-M7) are answered in the module header; a
+  fake-renderer conformance suite proves the pipeline headlessly.
+- **And the rest of the page, closed in one pass**: the 12 deferred rows
+  emit (shared-band on_focus/on_blur/on_attach/on_detach as CommonProps
+  fn+ctx pairs — the mount walk fires attach/detach post-walk; the 7
+  continuous observers as ordinary event pairs, the events-package
+  premise having died with the Subscription caveat); `set_content` (the
+  verb formerly `present` — build, only-child, force-fill, typed detach
+  registry, fire on_attach) and `switch_to` (flex `Display::None`
+  parking — nothing removed, no cursor invalidated); `FontWeight` (a
+  hand-authored scale) + `is_italic` split from MAUI's one-enum
+  FontAttributes across ~10 controls and `TextSpan`; guard 5 (every
+  ADOPT row reaches a control, a tier owner, or a recorded exception —
+  its first run named 75 unclaimed rows, now owned); the raw-key band
+  (`.gesture(on_key:)` + `key_code`/`key_named`/`consume_key` and
+  friends); `find(key, within:)` defaulting to the mounted tree; and
+  `MenuItem`'s default action agreeing with its own comment.
+
 ### facet — the DSL namespace
 - **`elements.cplus`**: every element in one generated module, so the `@`
   builder DSL resolves bare names again — the regen had moved constructors
