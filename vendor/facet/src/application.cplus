@@ -20,7 +20,7 @@
 //   node      owns node-scoped state in its Data — including its
 //             presentation, which dies with it.
 //
-// `AppState` is the app-scoped record. `runtime::App` embeds one; running
+// `Application` is the app-scoped record. `runtime::App` embeds one; running
 // the app points the process door at it, quitting clears the door. Facet
 // also works with NO app (bare mounts, run_component, the headless suite):
 // those run against the process-default state below — which is exactly the
@@ -36,7 +36,7 @@ type Color = vocab::Color;
 
 // ---- Theme (the struct lives here so the app record can embed it) ------------
 // The API — set_theme, theme(), the resolution tables — stays in theme.cplus,
-// which aliases this type. Declared low because AppState owns one per app and
+// which aliases this type. Declared low because Application owns one per app and
 // theme.cplus must read the RUNNING app's; the import arrow only points down.
 struct Theme {
     primary: Color,

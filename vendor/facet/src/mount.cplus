@@ -295,6 +295,7 @@ static FR_RELEASES: i32 = 0;
 static FR_SCHEDULES: i32 = 0;
 static FR_INS_HOSTS: vec::Vec[u64] = #zero::[vec::Vec[u64]]();
 static FR_INS_SLOTS: vec::Vec[u64] = #zero::[vec::Vec[u64]]();
+static FR_REMOVES: i32 = 0;
 
 fn fr_reset() {
     app::reset_default_for_tests();
@@ -305,6 +306,7 @@ fn fr_reset() {
     FR_SCHEDULES = 0;
     FR_INS_HOSTS.truncate(0 as usize);
     FR_INS_SLOTS.truncate(0 as usize);
+    FR_REMOVES = 0;
     return;
 }
 
@@ -326,7 +328,7 @@ fn fr_insert(ctx: *u8, host: *u8, child: *u8, slot: usize) {
     return;
 }
 
-fn fr_remove(ctx: *u8, host: *u8, child: *u8) { return; }
+fn fr_remove(ctx: *u8, host: *u8, child: *u8) { FR_REMOVES = FR_REMOVES + 1; return; }
 fn fr_schedule(ctx: *u8) { FR_SCHEDULES = FR_SCHEDULES + 1; return; }
 
 fn fr_renderer() -> Renderer {
@@ -577,16 +579,53 @@ fn mount_fires_on_attach_after_the_whole_walk() {
 // no registry — `component_at` resolves keys through the running app's
 // windows (component.cplus).
 
+// Detach the top-level native views of `n`'s subtree from `host` through the
+// renderer — the seam Renderer.remove exists for. A node WITH a view is a
+// native subtree root here: its descendants detach with it, so the walk does
+// not descend past it (their view_release still fires on node drop).
+fn remove_native_views(n: *core::Node, host: *u8) {
+    if !installed() { return; }
+    if host == (0 as *u8) { return; }
+    let v: *u8 = core::view_of(n);
+    if v != (0 as *u8) {
+        let rm: fn(*u8, *u8, *u8) = RENDERER.remove;
+        if rm != (0 as fn(*u8, *u8, *u8)) { rm(RENDERER.ctx, host, v); }
+        return;
+    }
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => { remove_native_views(c, host); }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
 // Fill `outlet` with `c`'s tree. Rebuilds on repeat: the previous occupant is
-// notified through its detach trampoline and its subtree is removed. The
-// component must outlive the presentation (it is registered by address);
-// `component_at::[C](key)` resolves it while the presentation lasts.
+// notified through its detach trampoline, its native views are removed from
+// the host, and its subtree is dropped. The component must outlive the
+// presentation (it is registered by address); `component_at::[C](key)`
+// resolves it while the presentation lasts.
+//
+// CONTRACT: an outlet that accepts set_content should be KEYED. A keyed
+// outlet gets a backing view, so the host is the outlet's own view and the
+// native slot accounting is exact; an unbacked outlet shares an ancestor
+// host, where slot positions among foreign siblings are not tracked.
 fn set_content[C: component::Component + component::Lifecycle](outlet: *core::Node, ref c: C) -> bool {
     if outlet == (0 as *core::Node) { return false; }
-    // Out with the previous occupant — notify first, then remove. Removal is
-    // correct here (set_content REBUILDS); parking is switch_to's job.
+    // Out with the previous occupant — notify, detach its native views from
+    // the host, then remove. Removal is correct here (set_content REBUILDS);
+    // parking is switch_to's job.
     let _had: bool = core::evict_presented(outlet);
+    let host_for_removal: *u8 = nearest_host(outlet);
     while { (*outlet).child_count() } > (0 as usize) {
+        match core::child_of(outlet, 0 as usize) {
+            option::Option[*core::Node]::Some(oldc) => { remove_native_views(oldc, host_for_removal); }
+            option::Option[*core::Node]::None => { }
+        }
         let _old: option::Option[core::Node] = { (*outlet).remove_child(0 as usize) };
     }
     // Build, force fill, adopt.
@@ -705,24 +744,31 @@ fn switch_to(outlet: *core::Node, key: str) -> bool {
     while j < n {
         match core::child_of(outlet, j) {
             option::Option[*core::Node]::Some(c) => {
-                let show: bool = { (*c).key() } == key;
+                let show: bool = ({ (*c).key() } == key);
                 let shown: bool = match { (*c).display() } {
                     flex::Display::None => false,
                     flex::Display::Flex => true,
                     flex::Display::Grid => true,
                 };
                 if show && !shown {
-                    { (*c).set_display(flex::Display::Flex) };
-                    core::set_attached(c, true);
-                    var qa: vec::Vec[*core::Node] = vec::new::[*core::Node]();
-                    qa.append(c);
-                    drain_attach_queue(qa);
+                    // Restore the display mode the pane was parked with —
+                    // a Grid pane comes back as Grid.
+                    { (*c).set_display(core::parked_display_of(c)) };
+                    // The WHOLE subtree re-attaches (guarded by the outlet
+                    // itself being live) and every handler in it hears.
+                    if core::is_attached(outlet) {
+                        var qa: vec::Vec[*core::Node] = vec::new::[*core::Node]();
+                        attach_flags_walk(c, qa);
+                        drain_attach_queue(qa);
+                    }
                 }
                 if !show && shown {
+                    core::set_parked_display(c, { (*c).display() });
                     { (*c).set_display(flex::Display::None) };
-                    core::set_attached(c, false);
+                    // The WHOLE subtree parks: descendants read detached and
+                    // their handlers fire, exactly like an unmount.
                     var qd: vec::Vec[*core::Node] = vec::new::[*core::Node]();
-                    qd.append(c);
+                    detach_walk(c, qd);
                     drain_detach_queue(qd);
                 }
             }
@@ -836,5 +882,75 @@ fn switch_to_parks_under_display_none_and_restores() {
     }
     // A key no child carries: false, and nothing moves.
     assert switch_to(#addr_of(outlet), "nope") == false;
+    return;
+}
+
+#[test]
+fn switch_to_walks_the_whole_subtree_and_keeps_grid() {
+    app::reset_default_for_tests();
+    uninstall();
+    // Pane "a" is a GRID container with a nested leaf; pane "z" is a leaf.
+    var ab: core::Builder = core::Builder::new();
+    ab.add(fr_leaf("a:inner"));
+    var pane_a: core::Node = core::column(ab, key: "a");
+    pane_a.set_display(flex::Display::Grid);
+    var b: core::Builder = core::Builder::new();
+    b.add(pane_a);
+    b.add(fr_leaf("z"));
+    var outlet: core::Node = core::column(b, key: "panes");
+    core::set_attached(#addr_of(outlet), true);
+    match core::find_in(#addr_of(outlet), "a:inner") {
+        option::Option[*core::Node]::Some(ip) => {
+            core::set_attached(ip, true);
+            // Park "a": the DESCENDANT reads detached too.
+            assert switch_to(#addr_of(outlet), "z");
+            assert core::is_attached(ip) == false;
+            // Restore "a": the descendant re-attaches, and the pane comes
+            // back as GRID, not Flex.
+            assert switch_to(#addr_of(outlet), "a");
+            assert core::is_attached(ip);
+        }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    match core::find_in(#addr_of(outlet), "a") {
+        option::Option[*core::Node]::Some(ap) => {
+            let is_grid: bool = match { (*ap).display() } {
+                flex::Display::Grid => true,
+                flex::Display::Flex => false,
+                flex::Display::None => false,
+            };
+            assert is_grid;
+        }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn set_content_under_a_renderer_removes_old_views_and_mounts_new() {
+    fr_reset();
+    install(fr_renderer());
+    // A keyed (= backed) outlet mounted as a window root — the set_content
+    // contract's happy path: host IS the outlet's view.
+    var outlet: core::Node = core::column(core::Builder::new(), key: "slot");
+    assert mount(#addr_of(outlet));
+    let ov: *u8 = core::view_of(#addr_of(outlet));
+    assert ov != (0 as *u8);
+    var c: ScComp = ScComp { n: 1, attaches: 0, detaches: 0 };
+    assert set_content(#addr_of(outlet), c);
+    // First fill: nothing to remove; the built leaf mounted into the outlet.
+    assert FR_REMOVES == 0;
+    let creates_after_first: i32 = FR_CREATES;
+    assert creates_after_first > 1;          // outlet + the subtree's views
+    // Rebuild: the old subtree's top-level native views leave the host
+    // through Renderer.remove, then the replacement mounts.
+    var c2: ScComp = ScComp { n: 2, attaches: 0, detaches: 0 };
+    assert set_content(#addr_of(outlet), c2);
+    assert FR_REMOVES >= 1;
+    assert c.detaches == 1;
+    assert c2.attaches == 1;
+    assert FR_CREATES > creates_after_first;
+    unmount(#addr_of(outlet));
+    uninstall();
     return;
 }

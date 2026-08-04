@@ -301,11 +301,12 @@ by its *shape*, not a method-name allowlist, through every form it can leak:
   releases the native view through the pair the renderer set. The seven
   mount decisions (M1-M7) are answered in the module header; a
   fake-renderer conformance suite proves the pipeline headlessly.
-- **And the rest of the page, closed in one pass**: the 12 deferred rows
-  emit (shared-band on_focus/on_blur/on_attach/on_detach as CommonProps
-  fn+ctx pairs — the mount walk fires attach/detach post-walk; the 7
-  continuous observers as ordinary event pairs, the events-package
-  premise having died with the Subscription caveat); `set_content` (the
+- **And the rest of the page, closed in one pass**: eleven of the twelve
+  deferred rows emit as fn+ctx pairs (shared-band on_focus/on_blur/
+  on_attach/on_detach on CommonProps — the mount walk fires attach/detach
+  post-walk; the seven continuous observers as ordinary event pairs, the
+  events-package premise having died with the Subscription caveat), and
+  observe_size stays a backend registration returning `Cancellable`; `set_content` (the
   verb formerly `present` — build, only-child, force-fill, typed detach
   registry, fire on_attach) and `switch_to` (flex `Display::None`
   parking — nothing removed, no cursor invalidated); `FontWeight` (a

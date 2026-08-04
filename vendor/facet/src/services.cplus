@@ -127,8 +127,12 @@ impl Cancellable {
         return;
     }
 
-    // Is there still a callback pending? False once cancelled; also false after
-    // it has fired.
+    // Does this handle still hold a registration — i.e. is cancel() still
+    // meaningful? False after cancel (including drop). A fired ONE-SHOT
+    // cannot reach back into this handle to clear it, so a timer that has
+    // already run still reads true here: treat this as "not yet cancelled",
+    // never as "the callback has not run" (review finding, 2026-08-04 —
+    // observing the fire needs the callback itself to record it).
     fn pending(this) -> bool { return this._id != (0 as u64); }
 
     fn drop(ref this) {
@@ -331,11 +335,21 @@ fn run_job[J: Job](ref job_v: J, then: fn(*u8) = job_done_noop, ctx: *u8 = 0 as 
 // nowhere to keep one per flight without a registry that outlives the caller —
 // the count needs no ownership at all.
 //
-// It is decremented when PRODUCE returns, not after `apply`. Apply runs on the
-// main thread, which is the thread that owns the data, so it is not part of the
-// race being waited out — and waiting for it would deadlock, since the main
-// thread cannot deliver a `run_on_main` hop while it is blocked in the wait.
-// bugs/load-service-worker-outlives-its-service.md
+// It is decremented when RUN returns, not after `apply`. Apply runs on the
+// main thread, which is the thread that owns the data, so it is not part of
+// the WORKER race being waited out — and waiting for it here would deadlock,
+// since the main thread cannot deliver a `run_on_main` hop while it is
+// blocked in the wait. bugs/load-service-worker-outlives-its-service.md
+//
+// WHAT THE WAIT DOES NOT COVER (review finding, 2026-08-04): an apply that
+// is already QUEUED on the main loop. `wait_for_jobs` returning means "no
+// worker touches the job"; a queued `finish_job_flight` still holds the
+// job's address and will run when the loop next turns. The second counter
+// (`applies_pending`) makes that state observable: a teardown path must see
+// `jobs_settled()` — both counters zero — before dropping a job, and the
+// facade's teardown drains its loop to get there. Headless (no scheduler),
+// nothing is ever queued: the flight is dropped instead of leaked, and
+// `apply` simply never runs — the portable posture.
 #[link_name = "sched_yield"]
 extern fn sched_yield_raw() -> i32;
 
@@ -361,6 +375,35 @@ fn jobs_inflight_sub(d: u64) {
 fn jobs_in_flight() -> u64 {
     let p: *u64 = { #addr_of(JOBS_IN_FLIGHT) };
     return atomic::load_u64(p, atomic::Ordering::Acquire);
+}
+
+// Applies handed to the main loop and not yet finished. Separate from the
+// worker count on purpose: waiting on THIS from the main thread would
+// deadlock (the wait blocks the loop that must run the apply).
+static APPLIES_PENDING: u64 = 0 as u64;
+
+fn applies_pending_add(d: u64) {
+    let p: *u64 = { #addr_of(APPLIES_PENDING) };
+    let _prev: u64 = atomic::fetch_add_u64(p, d, atomic::Ordering::AcqRel);
+    return;
+}
+
+fn applies_pending_sub(d: u64) {
+    let p: *u64 = { #addr_of(APPLIES_PENDING) };
+    let _prev: u64 = atomic::fetch_sub_u64(p, d, atomic::Ordering::AcqRel);
+    return;
+}
+
+fn applies_pending() -> u64 {
+    let p: *u64 = { #addr_of(APPLIES_PENDING) };
+    return atomic::load_u64(p, atomic::Ordering::Acquire);
+}
+
+// The full teardown check: no worker in a job AND no apply queued. A facade
+// drains its loop between wait_for_jobs() and dropping job owners until
+// this reads true.
+fn jobs_settled() -> bool {
+    return jobs_in_flight() == (0 as u64) && applies_pending() == (0 as u64);
 }
 
 // Block until no worker is touching a service. Call before dropping anything a
@@ -399,12 +442,25 @@ struct JobFlight {
 fn run_job_flight(take job: JobFlight) -> i32 {
     let run: fn(*u8) = job.run;
     run(job.job_addr as *u8);       // the slow read, OFF the main thread
-    jobs_inflight_sub(1 as u64);   // done touching the service
+    // Queue the apply ONLY when a main-thread hop exists. Boxing first and
+    // letting a no-op run_on_main swallow the pointer leaked the flight
+    // headless — the review's confirming find. ORDER MATTERS: the apply is
+    // counted BEFORE the worker count drops, so `jobs_settled()` can never
+    // observe the gap between the two.
+    let hop: fn(fn(*u8), *u8) = SCHEDULER.run_on_main;
+    if hop == (0 as fn(fn(*u8), *u8)) {
+        jobs_inflight_sub(1 as u64);
+        return 0;
+    }
     match box::new::[JobFlight](job) {
         option::Option[box::Box[JobFlight]]::Some(b) => {
+            applies_pending_add(1 as u64);
+            jobs_inflight_sub(1 as u64);
             run_on_main(finish_job_flight, b.into_raw());
         }
-        option::Option[box::Box[JobFlight]]::None => { }
+        option::Option[box::Box[JobFlight]]::None => {
+            jobs_inflight_sub(1 as u64);
+        }
     }
     return 0;
 }
@@ -415,6 +471,7 @@ fn finish_job_flight(raw: *u8) {
     apply(job.job_addr as *u8);     // install ON the main thread
     let cb: fn(*u8) = job.then;
     cb(job.ctx_addr as *u8);
+    applies_pending_sub(1 as u64);
     return;
 }
 
@@ -526,4 +583,42 @@ fn observe_size_cancels_through_its_own_slot_not_the_timer_slot() {
     assert TMR_CANCELLED == (9 as u64);
     // Put the no-backend posture back for the tests that follow.
     uninstall_scheduler();
+}
+
+// ---- the apply half of the flight -------------------------------------------
+
+struct ApplyJob {
+    ran: i32,
+    applied: i32,
+}
+
+impl ApplyJob: Job {
+    fn run(ref this) { this.ran = this.ran + 1; return; }
+    fn apply(ref this) { this.applied = this.applied + 1; return; }
+}
+
+fn sj_inline_hop(work: fn(*u8), ctx: *u8) { work(ctx); return; }
+
+#[test]
+fn queued_apply_is_counted_and_settles() {
+    // With a hop installed, the apply is queued, counted, run, and settles.
+    var sch: Scheduler = scheduler_none();
+    sch.run_on_main = sj_inline_hop;
+    install_scheduler(sch);
+    var j: ApplyJob = ApplyJob { ran: 0, applied: 0 };
+    run_job::[ApplyJob](j);
+    wait_for_jobs();                       // worker done touching `j`...
+    while !jobs_settled() { job_spin(1000 as i64); }
+    assert j.ran == 1;
+    assert j.applied == 1;                 // ...and the apply landed too
+    uninstall_scheduler();
+    // Headless: no hop, so nothing queues, nothing leaks, apply never runs
+    // — and the process still settles.
+    var j2: ApplyJob = ApplyJob { ran: 0, applied: 0 };
+    run_job::[ApplyJob](j2);
+    wait_for_jobs();
+    assert jobs_settled();
+    assert j2.ran == 1;
+    assert j2.applied == 0;
+    return;
 }

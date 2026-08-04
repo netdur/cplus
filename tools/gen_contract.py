@@ -1625,6 +1625,103 @@ TIER_TYPES = {
 }
 
 
+
+# Guard 5b (review finding, 2026-08-04): type ownership alone let all 82 tier
+# rows ride a green guard while ~4 in 5 had no surface. Every tier ADOPT row
+# now carries an explicit disposition: ("implemented", where) names the verb
+# that answers it TODAY; ("deferred", why) is an honest debt the backend
+# stage pays. A tier row in neither is a failure — nothing silent.
+TIER_ROWS = {
+    # ---- Window (30) ----
+    ("Window", "Title"):            ("implemented", "screen.Chrome.title"),
+    ("Window", "Width"):            ("implemented", "screen.Chrome.width"),
+    ("Window", "Height"):           ("implemented", "screen.Chrome.height"),
+    ("Window", "MinimumWidth"):     ("implemented", "screen.Chrome.min_width"),
+    ("Window", "MinimumHeight"):    ("implemented", "screen.Chrome.min_height"),
+    ("Window", "X"):                ("implemented", "runtime.window_frame/set_window_frame"),
+    ("Window", "Y"):                ("implemented", "runtime.window_frame/set_window_frame"),
+    ("Window", "Page"):             ("implemented", "application.Window.root + mount"),
+    ("Window", "FlowDirection"):    ("implemented", "the root node's shared band"),
+    ("Window", "Activated"):        ("implemented", "runtime.observe_window_active"),
+    ("Window", "Deactivated"):      ("implemented", "runtime.observe_window_inactive"),
+    ("Window", "Created"):          ("implemented", "runtime.App.on_launch"),
+    ("Window", "Destroying"):       ("implemented", "runtime.App.on_quit"),
+    ("Window", "TitleBar"):         ("deferred", "TitleBar content tier — backend stage; Bar::Custom + window_buttons/window_drag are the shipped primitives"),
+    ("Window", "MaximumWidth"):     ("deferred", "window sizing beyond min — backend stage"),
+    ("Window", "MaximumHeight"):    ("deferred", "window sizing beyond min — backend stage"),
+    ("Window", "IsMaximizable"):    ("deferred", "window button policy — backend stage"),
+    ("Window", "IsMinimizable"):    ("deferred", "window button policy — backend stage"),
+    ("Window", "DisplayDensity"):   ("deferred", "needs a native window — backend stage"),
+    ("Window", "DisplayDensityChanged"): ("deferred", "needs a native window — backend stage"),
+    ("Window", "IsActivated"):      ("deferred", "read half of activation — backend stage (the observers exist)"),
+    ("Window", "SizeChanged"):      ("deferred", "observe_size on the window root once the facade mounts it"),
+    ("Window", "Backgrounding"):    ("deferred", "process lifecycle — backend stage"),
+    ("Window", "Resumed"):          ("deferred", "process lifecycle — backend stage"),
+    ("Window", "Stopped"):          ("deferred", "process lifecycle — backend stage"),
+    ("Window", "ModalPushed"):      ("deferred", "modal stack — rides with nav::push's facade"),
+    ("Window", "ModalPushing"):     ("deferred", "modal stack — rides with nav::push's facade"),
+    ("Window", "ModalPopped"):      ("deferred", "modal stack — rides with nav::push's facade"),
+    ("Window", "ModalPopping"):     ("deferred", "modal stack — rides with nav::push's facade"),
+    ("Window", "PopCanceled"):      ("deferred", "modal stack — rides with nav::push's facade"),
+    # ---- Application (13) ----
+    ("Application", "Windows"):         ("implemented", "application.window_count/window_root"),
+    ("Application", "PlatformAppTheme"): ("implemented", "theme.is_dark"),
+    ("Application", "RequestedTheme"):  ("implemented", "theme.is_dark"),
+    ("Application", "RequestedThemeChanged"): ("implemented", "theme.on_appearance_change"),
+    ("Application", "AccentColor"):     ("implemented", "theme role primary via set_theme"),
+    ("Application", "MainPage"):        ("deferred", "superseded by the windows model; newest_window_root is the read"),
+    ("Application", "UserAppTheme"):    ("deferred", "explicit light/dark override — backend stage appearance write"),
+    ("Application", "ModalPushed"):     ("deferred", "modal stack — rides with nav::push's facade"),
+    ("Application", "ModalPushing"):    ("deferred", "modal stack — rides with nav::push's facade"),
+    ("Application", "ModalPopped"):     ("deferred", "modal stack — rides with nav::push's facade"),
+    ("Application", "ModalPopping"):    ("deferred", "modal stack — rides with nav::push's facade"),
+    ("Application", "PageAppearing"):   ("deferred", "app-level page observation — the per-screen Lifecycle covers the use"),
+    ("Application", "PageDisappearing"): ("deferred", "app-level page observation — the per-screen Lifecycle covers the use"),
+    # ---- Page (14) ----
+    ("Page", "Title"):              ("implemented", "screen.Chrome.title"),
+    ("Page", "Appearing"):          ("implemented", "component.Lifecycle.on_attach"),
+    ("Page", "Disappearing"):       ("implemented", "component.Lifecycle.on_detach"),
+    ("Page", "MenuBarItems"):       ("implemented", "screen.Screen.menu_items"),
+    ("Page", "LayoutChanged"):      ("implemented", "services.observe_size on the page root"),
+    ("Page", "BackgroundImageSource"): ("deferred", "page chrome imagery — backend stage"),
+    ("Page", "IconImageSource"):    ("deferred", "page chrome imagery — backend stage"),
+    ("Page", "ContainerArea"):      ("deferred", "safe-area plumbing — backend stage"),
+    ("Page", "IgnoresContainerArea"): ("deferred", "safe-area plumbing — backend stage"),
+    ("Page", "IsBusy"):             ("deferred", "page busy indicator — backend stage"),
+    ("Page", "ToolbarItems"):       ("deferred", "toolbar tier — backend stage"),
+    ("Page", "NavigatedTo"):        ("deferred", "nav observation — rides with the facade's nav loop"),
+    ("Page", "NavigatedFrom"):      ("deferred", "nav observation — rides with the facade's nav loop"),
+    ("Page", "NavigatingFrom"):     ("deferred", "nav observation — rides with the facade's nav loop"),
+    # ---- ContentPage (3) ----
+    ("ContentPage", "Content"):     ("implemented", "mount.set_content"),
+    ("ContentPage", "SafeAreaEdges"): ("deferred", "safe-area plumbing — backend stage (vocab::SafeArea exists)"),
+    ("ContentPage", "HideSoftInputOnTapped"): ("deferred", "soft-keyboard policy — mobile backend stage"),
+    # ---- Toolbar (14) ----
+    ("Toolbar", "Title"):           ("deferred", "toolbar tier — backend stage (AppKit NSToolbar)"),
+    ("Toolbar", "TitleIcon"):       ("deferred", "toolbar tier — backend stage"),
+    ("Toolbar", "TitleView"):       ("deferred", "toolbar tier — backend stage"),
+    ("Toolbar", "ToolbarItems"):    ("deferred", "toolbar tier — backend stage"),
+    ("Toolbar", "IsVisible"):       ("deferred", "toolbar tier — backend stage"),
+    ("Toolbar", "IconColor"):       ("deferred", "toolbar tier — backend stage"),
+    ("Toolbar", "BarBackground"):   ("deferred", "toolbar tier — backend stage"),
+    ("Toolbar", "BarHeight"):       ("deferred", "toolbar tier — backend stage"),
+    ("Toolbar", "BarTextColor"):    ("deferred", "toolbar tier — backend stage"),
+    ("Toolbar", "BackButtonEnabled"): ("deferred", "nav-bar back button — mobile backend stage"),
+    ("Toolbar", "BackButtonTitle"): ("deferred", "nav-bar back button — mobile backend stage"),
+    ("Toolbar", "BackButtonVisible"): ("deferred", "nav-bar back button — mobile backend stage"),
+    ("Toolbar", "DrawerToggleVisible"): ("deferred", "drawer affordance — mobile backend stage"),
+    ("Toolbar", "DynamicOverflowEnabled"): ("deferred", "toolbar overflow — backend stage"),
+    # ---- TitleBar (8) ----
+    ("TitleBar", "Title"):          ("deferred", "custom titlebar content — Bar::Custom + window_buttons are the primitives"),
+    ("TitleBar", "Subtitle"):       ("deferred", "custom titlebar content — backend stage"),
+    ("TitleBar", "Icon"):           ("deferred", "custom titlebar content — backend stage"),
+    ("TitleBar", "Content"):        ("deferred", "custom titlebar content — backend stage"),
+    ("TitleBar", "LeadingContent"): ("deferred", "custom titlebar content — backend stage"),
+    ("TitleBar", "TrailingContent"): ("deferred", "custom titlebar content — backend stage"),
+    ("TitleBar", "ForegroundColor"): ("deferred", "custom titlebar content — backend stage"),
+    ("TitleBar", "PassthroughElements"): ("deferred", "titlebar hit-testing — backend stage"),
+}
+
 def check(rows_by_control, by_type):
     """Fail the run, by name, on anything the emitters would drop in silence."""
     problems = []
@@ -1635,8 +1732,24 @@ def check(rows_by_control, by_type):
     for maui in MODULE:
         reachable |= set(EXTRA_BASES.get(maui, []))
     rows_all, _und = maui_map.rows()
+    tier_types = {"Window", "Application", "Page", "ContentPage", "TitleBar", "Toolbar"}
+    n_impl, n_defer = 0, 0
     for ty, member, band, _vt, st, _fn, _note in rows_all:
         if st != "ADOPT":
+            continue
+        if ty in tier_types:
+            # Guard 5b: row-level dispositions — a tier row must name the
+            # verb that answers it or the debt that defers it.
+            d = TIER_ROWS.get((ty, member))
+            if d is None:
+                problems.append(
+                    f"guard 5b: {ty}.{member} [{band}] is a tier ADOPT row with "
+                    f"no disposition in TIER_ROWS — name the implementing verb "
+                    f"or record the deferral with its reason.")
+            elif d[0] == "implemented":
+                n_impl += 1
+            else:
+                n_defer += 1
             continue
         if ty in reachable or ty in TIER_TYPES:
             continue
@@ -1644,6 +1757,9 @@ def check(rows_by_control, by_type):
             f"guard 5: {ty}.{member} [{band}] is ADOPT and `{ty}` reaches no "
             f"control module and no TIER_TYPES entry — an unclaimed row. Give "
             f"the type an owner or record the exception.")
+    if not problems:
+        print(f"tier ledger: {n_impl} rows carried by shipped surface, "
+              f"{n_defer} explicitly deferred to the backend stage")
 
     # 1. every ADOPT row reaching a control is carried by something
     for maui, merged in sorted(rows_by_control.items()):

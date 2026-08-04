@@ -33,7 +33,8 @@ Gates, all green:
 
 ```
 python3 tools/maui_map.py                  # fails on an unbucketed row
-python3 tools/gen_contract.py              # fails on any of four guards; byte-idempotent
+python3 tools/gen_contract.py              # fails on any of SIX guards (incl. 5b tier
+                                           # dispositions); byte-idempotent
 python3 tools/gen_icons.py                 # the icon table, from the font
 cd vendor/facet      && cpc test           # 430 (DSL, tier, mount seam, composition, keys)
                         cpc test --asan
@@ -109,6 +110,15 @@ wrong once already.
 
 ## The backend-install contract (the AppKit stage's entry point)
 
+Reality check (from the external reviews): NO backend is on this seam yet —
+`facet_appkit` is an empty scaffold and `facet_gtk` still builds the OLD
+per-kind renderer and will not type-check against `mount::Renderer`. The
+seam is proven by the fake renderer/scheduler only. `agent.cplus` is
+DEFERRED to the AppKit stage (it imports agent_appkit's Surface); runtime's
+`install_agent` slot is waiting. Reviews also mandated: use
+`./target/release/cpc` ONLY — Homebrew 0.0.26 predates DSL.5 and fails to
+parse `@ui` blocks, reporting a red suite that isn't.
+
 Four vtables and three single slots — the WHOLE seam a backend fills, each
 zero-field falling back to the portable no-op:
 
@@ -140,7 +150,7 @@ MAUI was never going to supply them:
 `on_worker` `after` `Cancellable` `component_at` `raise` `key_of` `set_theme`
 `Theme` `is_dark` `observe_size`
 
-**The 23 tier symbols EXIST (2026-08-04) — the mount seam does not.** Ported into
+**The 23 tier symbols exist AND the mount seam is built (2026-08-04).** Ported into
 `nav.cplus` / `services.cplus` / `component.cplus` / `screen.cplus` /
 `theme.cplus` / `runtime.cplus` (the neutral facade base platform facades
 shadow). Three reseams vs the old monolith, everything else copy-paste:

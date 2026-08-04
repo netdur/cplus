@@ -67,6 +67,9 @@ struct Data {
     // collide across windows. 0 = nothing presented here.
     opaque presented: *u8,
     presented_detach: fn(*u8),
+    // What `display` was before switch_to parked this node — so a Grid pane
+    // is restored as Grid, not silently as Flex (review finding).
+    parked_display: flex::Display,
     dirty: u64,             // props changed since the backend last synced
     // What the platform learns first. facet declares the reads; a backend
     // writes them through set_focused / set_attached / set_window.
@@ -135,7 +138,8 @@ fn ensure_data(n: *Node) -> *Data {
     let fresh: Data = Data { key: text::new(), slot: text::new(), kind: K_NODE, props: 0 as *u8,
                              release: no_release, common: props::CommonProps::new(),
                              view: 0 as *u8, view_release: no_release,
-                             presented: 0 as *u8, presented_detach: no_release, dirty: 0u64,
+                             presented: 0 as *u8, presented_detach: no_release,
+                             parked_display: flex::Display::Flex, dirty: 0u64,
                              is_focused: false, is_attached: false,
                              window: vocab::WindowRef::none(), batch: 0 as i64,
                              gestures: 0 as *u8, gestures_release: no_release };
@@ -152,7 +156,8 @@ fn node_with(key: str, kind: u32, props_ptr: *u8, release: fn(*u8)) -> Node {
     let d: Data = Data { key: text::from_str(key), slot: text::new(), kind: kind, props: props_ptr,
                          release: release, common: props::CommonProps::new(),
                          view: 0 as *u8, view_release: no_release,
-                         presented: 0 as *u8, presented_detach: no_release, dirty: 0u64,
+                         presented: 0 as *u8, presented_detach: no_release,
+                         parked_display: flex::Display::Flex, dirty: 0u64,
                          is_focused: false, is_attached: false,
                          window: vocab::WindowRef::none(), batch: 0 as i64,
                          gestures: 0 as *u8, gestures_release: no_release };
@@ -350,6 +355,21 @@ fn evict_presented(n: *Node) -> bool {
     { (*d).presented = 0 as *u8 };
     { (*d).presented_detach = no_release };
     return true;
+}
+
+// switch_to's memory of a parked pane's display mode.
+fn set_parked_display(n: *Node, d: flex::Display) {
+    let dp: *Data = ensure_data(n);
+    if dp == (0 as *Data) { return; }
+    { (*dp).parked_display = d };
+    return;
+}
+
+fn parked_display_of(n: *Node) -> flex::Display {
+    if n == (0 as *Node) { return flex::Display::Flex; }
+    let dp: *Data = { (*n).data() };
+    if dp == (0 as *Data) { return flex::Display::Flex; }
+    return { (*dp).parked_display };
 }
 
 // The dirty word, read and cleared by the sync walk.

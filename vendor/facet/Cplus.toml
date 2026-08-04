@@ -3,7 +3,8 @@ name    = "facet"
 version = "0.0.1"
 edition = "2026"
 
-# facet — the UI vocabulary. Stage 2 slice: `button` only.
+# facet — the UI vocabulary: 38 generated + 4 hand-written controls, the
+# platform-free tier (Stage 3), and the mount seam a backend fills.
 
 [[bin]]
 name = "facet_tests"
