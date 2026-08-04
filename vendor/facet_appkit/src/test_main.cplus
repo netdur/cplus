@@ -994,9 +994,12 @@ fn a_list_hosts_its_rows_in_the_scrolls_document_view() {
 }
 
 #[test]
-fn a_tree_walks_only_through_open_branches() {
-    // The rule that makes a deep tree cheap under a build-everything model: a
-    // CLOSED branch is not descended at all, so its subtree costs nothing.
+fn a_tree_shows_only_open_branches_and_costs_nothing_for_closed_ones() {
+    // This used to assert that a tree MATERIALISED its open rows as children,
+    // which is what the backend did before the outline view. The rule it was
+    // protecting is unchanged and now AppKit's: a closed branch has no rows, so
+    // its subtree costs nothing however deep it is.
+    backend::install();
     var root: tree::TreeNode = tree::TreeNode::new("root", id: "root");
     var a: tree::TreeNode = tree::TreeNode::new("a", id: "a");
     let _deep: status::Status = a.add_child(tree::TreeNode::new("a1", id: "a1"));
@@ -1006,12 +1009,17 @@ fn a_tree_walks_only_through_open_branches() {
     var t: core::Node = tree::tree(root, key: "t");
     let tp: *core::Node = #addr_of(t);
     let v: *u8 = views::create(0 as *u8, tp);
-    // Nothing expanded: the root's two children show, "a1" does not.
-    assert t.child_count() == (2 as usize);
-
-    // Expand "a" and its child appears — the model did not change, only which
-    // rows exist, which is why expansion rebuilds like the model does.
+    assert v != (0 as *u8);
     core::set_view(tp, v, views::view_release);
+    // The rows are AppKit's now, not facet's children — that is the whole
+    // change, and this is where it shows.
+    assert t.child_count() == (0 as usize);
+    views::apply(0 as *u8, tp);
+    // Nothing expanded: the root's two children show, "a1" does not.
+    assert recycler::tree_row_count_of(v) == (2 as i64);
+
+    // Expand "a" and its child appears. facet's expanded set is the MODEL and
+    // the outline view's own state follows it.
     core::clear_dirty(tp);
     var open: vocab::TextList = vocab::TextList::new();
     let _o: status::Status = open.add("a");
@@ -1020,7 +1028,32 @@ fn a_tree_walks_only_through_open_branches() {
         option::Option[tree::Tree]::None => { assert false; }
     }
     views::apply(0 as *u8, tp);
-    assert t.child_count() == (3 as usize);
+    assert recycler::tree_row_count_of(v) == (3 as i64);
+    return;
+}
+
+#[test]
+fn a_tree_item_is_the_tree_node_itself() {
+    backend::install();
+    // NSOutlineView's data source is item-based and facet's tree is already a
+    // model of items, so the item IS the *TreeNode — nothing maps an index onto
+    // a node, and nothing can drift when the model changes shape.
+    var root: tree::TreeNode = tree::TreeNode::new("root", id: "root");
+    let _a: status::Status = root.add_child(tree::TreeNode::new("only", id: "only"));
+    var t: core::Node = tree::tree(root, key: "t2");
+    let tp: *core::Node = #addr_of(t);
+    let v: *u8 = views::create(0 as *u8, tp);
+    core::set_view(tp, v, views::view_release);
+    views::apply(0 as *u8, tp);
+    assert recycler::tree_row_count_of(v) == (1 as i64);
+    // A row's cell holds the realised subtree, the same second mount path a
+    // list row takes. With no row builder given, that subtree is the node's own
+    // label — which never rendered until 2026-08-04, because the "did the app
+    // give a builder" test compared against null and the default is a real
+    // function that answers an empty node.
+    let cell: *u8 = recycler::tree_view_for_row(v, 0 as i64);
+    assert cell != (0 as *u8);
+    assert ak::View::from_raw(cell).subviews().count() == (1 as usize);
     return;
 }
 
@@ -1601,6 +1634,35 @@ fn raise_puts_the_keyed_element_in_front_of_its_siblings() {
     }
     w.close();
     return;
+}
+
+fn digits_i64(n: i64) -> text::Text {
+    if n == (0 as i64) { return text::from_str("0"); }
+    if n < (0 as i64) { return text::from_str("negative"); }
+    var stack: [i64; 20] = #zero::[[i64; 20]]();
+    var v: i64 = n;
+    var i: usize = 0 as usize;
+    while v > (0 as i64) && i < (20 as usize) {
+        stack[i] = v % (10 as i64);
+        v = v / (10 as i64);
+        i = i +% (1 as usize);
+    }
+    var out: text::Text = text::new();
+    while i > (0 as usize) {
+        i = i -% (1 as usize);
+        let d: i64 = stack[i];
+        if d == (0 as i64) { let _z: status::Status = out.append("0"); }
+        else if d == (1 as i64) { let _z: status::Status = out.append("1"); }
+        else if d == (2 as i64) { let _z: status::Status = out.append("2"); }
+        else if d == (3 as i64) { let _z: status::Status = out.append("3"); }
+        else if d == (4 as i64) { let _z: status::Status = out.append("4"); }
+        else if d == (5 as i64) { let _z: status::Status = out.append("5"); }
+        else if d == (6 as i64) { let _z: status::Status = out.append("6"); }
+        else if d == (7 as i64) { let _z: status::Status = out.append("7"); }
+        else if d == (8 as i64) { let _z: status::Status = out.append("8"); }
+        else { let _z: status::Status = out.append("9"); }
+    }
+    return out;
 }
 
 fn registered_drag_types(v: *u8) -> u64 {

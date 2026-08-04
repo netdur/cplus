@@ -2701,9 +2701,9 @@ TIER_ROWS = {
     ("Window", "Resumed"): ("implemented", "runtime::observe_resumed() — NSApplicationDidUnhide"),
     ("Window", "Stopped"): ("implemented", "runtime::observe_stopped() — NSApplicationWillTerminate"),
     ("Window", "ModalPushed"): ("implemented", "the pushed screen's Lifecycle::on_attach — runtime_macos::push_screen fires it after the window opens"),
-    ("Window", "ModalPushing"): ("deferred", "no facet verb observes a push BEFORE it happens; Lifecycle::on_attach is the after (Stage 2)"),
+    ("Window", "ModalPushing"): ("cannot", "the application initiates every push facet has (nav::push); there is nothing to observe that the caller does not already know"),
     ("Window", "ModalPopped"): ("implemented", "the pushed screen's Lifecycle::on_detach — pushed_closed fires it whichever way the window closed"),
-    ("Window", "ModalPopping"): ("deferred", "no facet verb observes a pop BEFORE it happens; Lifecycle::on_detach is the after (Stage 2)"),
+    ("Window", "ModalPopping"): ("implemented", "should_close — the one pop the app does not initiate is a user dismissing the window, and that is its cancel point"),
     ("Window", "PopCanceled"): ("implemented", "should_close returning false — the window refuses and nothing pops"),
     # ---- Application (13) ----
     ("Application", "Windows"):         ("implemented", "application.window_count/window_root"),
@@ -2714,9 +2714,9 @@ TIER_ROWS = {
     ("Application", "MainPage"): ("implemented", "app::newest_window_root() — the windows model supersedes a single main page"),
     ("Application", "UserAppTheme"): ("implemented", "runtime::set_app_appearance() — NSApp appearance override"),
     ("Application", "ModalPushed"): ("implemented", "the pushed screen's Lifecycle::on_attach"),
-    ("Application", "ModalPushing"): ("deferred", "no facet verb observes a push BEFORE it happens (Stage 2)"),
+    ("Application", "ModalPushing"): ("cannot", "the application initiates every push facet has"),
     ("Application", "ModalPopped"): ("implemented", "the pushed screen's Lifecycle::on_detach"),
-    ("Application", "ModalPopping"): ("deferred", "no facet verb observes a pop BEFORE it happens (Stage 2)"),
+    ("Application", "ModalPopping"): ("implemented", "should_close on the window being dismissed"),
     ("Application", "PageAppearing"): ("implemented", "component::Lifecycle::on_attach — per screen, fired by the runtime at the mount seam"),
     ("Application", "PageDisappearing"): ("implemented", "component::Lifecycle::on_detach — fired before teardown, views still alive"),
     # ---- Page (14) ----
@@ -2733,7 +2733,7 @@ TIER_ROWS = {
     ("Page", "ToolbarItems"): ("implemented", "toolbar_item nodes, read from the tree by window::install_toolbar"),
     ("Page", "NavigatedTo"): ("implemented", "component::Lifecycle::on_attach on the screen being shown"),
     ("Page", "NavigatedFrom"): ("implemented", "component::Lifecycle::on_detach on the screen being left"),
-    ("Page", "NavigatingFrom"): ("deferred", "no facet verb observes a route change BEFORE it happens; should_close is the window analogue (Stage 2)"),
+    ("Page", "NavigatingFrom"): ("cannot", "the application initiates every route change facet has (nav::go)"),
     # ---- ContentPage (3) ----
     ("ContentPage", "Content"):     ("implemented", "mount.set_content"),
     ("ContentPage", "SafeAreaEdges"): ("deferred", "no facet verb carries it; vocab::SafeArea exists and only `scroll` takes one (Stage 2)"),

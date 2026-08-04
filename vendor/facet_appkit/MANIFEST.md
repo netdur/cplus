@@ -388,7 +388,7 @@ Everything else in items 1-5 has landed: all 42 kinds have bodies, the window
 tier answers, the app menu and toolbar install, `web` and `hybrid_web` run on
 `vendor/webkit`, and nothing takes the unimplemented-kind warning path.
 
-### `list` recycles; `collection` does not, and that is deliberate
+### `list` and `tree` recycle; `collection` does not, and that is deliberate
 
 `list` is an NSTableView with a data source. Rows are AppKit's: it asks for one
 when it needs it, so a list of three and a list of ten thousand cost the same
@@ -397,6 +397,17 @@ mount path, named in the seam rather than re-implemented here — into the cell
 that owns it. The CELL owns the node, because in facet a node owns its views:
 letting the node drop after building would empty the cell the moment it was
 filled.
+
+`tree` is an NSOutlineView, and it is a BETTER fit than the list: the data
+source is item-based and facet's tree is already a model of items, so the item
+IS the `*TreeNode`. Nothing maps an index onto a node and nothing can drift
+when the model changes shape. Indentation is AppKit's here — the materialising
+version made it a leading pad on the row because it had no other way, and
+drawing a second gutter inside an outline view's own indent would double it.
+
+facet's `expanded` set is the MODEL; the outline view's per-item state follows
+it on reload. The walk stops at a closed branch, because an outline view has no
+rows below one to expand.
 
 `collection` still materialises every item as an ordinary child. That is not
 an oversight: a collection is a grid whose items flex against each other, and

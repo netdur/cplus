@@ -199,7 +199,7 @@ fn create_for_kind(kind: u32, n: *core::Node) -> *u8 {
     if kind == props::K_COLLECTION { return controls::create_collection(n); }
     if kind == props::K_TABLE { return controls::create_table(n); }
     if kind == props::K_CAROUSEL { return controls::create_carousel(n); }
-    if kind == tree::K_TREE { return controls::create_tree(n); }
+    if kind == tree::K_TREE { return recycler::create_recycling_tree(n); }
     if kind == props::K_CANVAS { return controls::create_canvas(n); }
     if kind == props::K_WEB { return web::create_web(n); }
     if kind == props::K_HYBRID_WEB { return web::create_hybrid_web(n); }
@@ -256,7 +256,7 @@ fn apply_for_kind(kind: u32, v: *u8, n: *core::Node, dirty: u64) {
     if kind == props::K_COLLECTION { controls::apply_collection(v, n, dirty); return; }
     if kind == props::K_TABLE { controls::apply_table(v, n, dirty); return; }
     if kind == props::K_CAROUSEL { controls::apply_carousel(v, n, dirty); return; }
-    if kind == tree::K_TREE { controls::apply_tree(v, n, dirty); return; }
+    if kind == tree::K_TREE { recycler::apply_recycling_tree(v, n, dirty); return; }
     if kind == props::K_CANVAS { controls::apply_canvas(v, n, dirty); return; }
     if kind == props::K_WEB { web::apply_web(v, n, dirty); return; }
     if kind == props::K_HYBRID_WEB { web::apply_hybrid_web(v, n, dirty); return; }

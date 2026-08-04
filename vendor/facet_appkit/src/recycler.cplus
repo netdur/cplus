@@ -46,6 +46,8 @@ import "facet/facet" as core;
 import "facet/props" as props;
 import "facet/mount" as mount;
 import "facet/list" as list;
+import "facet/tree" as tree;
+import "./controls" as controls;
 import "objc/runtime" as rt;
 import "objc/synthesis" as synth;
 import "objc/bridge" as bridge;
@@ -388,4 +390,319 @@ fn view_for_row(v: *u8, row: i64) -> *u8 {
     let tv: *u8 = table_of(v);
     if tv == (0 as *u8) { return 0 as *u8; }
     return view_for_row_imp(0 as *u8, 0 as *u8, tv, 0 as *u8, row);
+}
+
+// ==============================================================================
+// tree — a recycling NSOutlineView
+// ==============================================================================
+//
+// The same machinery as `list`, and a BETTER fit: NSOutlineView's data source is
+// item-based, and facet's tree is already a model of items. The item pointer IS
+// the `*TreeNode`, so nothing has to map an index onto a node and nothing can
+// drift when the model changes shape.
+//
+//   numberOfChildrenOfItem:  TreeNode::child_count      (the root, for nil)
+//   child:ofItem:            TreeNode::child_ptr
+//   isItemExpandable:        child_count > 0
+//   viewForTableColumn:item: the app's row builder, or a label of the node
+//
+// The root is the CONTAINER, not a row — a tree shows its children — which is
+// what `nil means the root` already says in AppKit's protocol.
+//
+// INDENTATION IS APPKIT'S HERE. The materialising version made it a leading pad
+// on the row, because it had no other way; an outline view indents its own
+// cells and drawing a second gutter inside them would double it.
+//
+// Expansion is facet's state (`TreeProps.expanded`, a set of ids) and AppKit's
+// (per-item). They are synchronised in one direction on reload — facet's set is
+// the model — and the other way when the USER expands, so a click does not have
+// to round-trip through a rebuild.
+
+fn tree_source_key() -> *u8 { return { 28733 as *u8 }; }
+fn tree_agent_pin_key() -> *u8 { return { 28734 as *u8 }; }
+fn item_node_key() -> *u8 { return { 28735 as *u8 }; }
+
+struct TreeSource {
+    opaque node: *core::Node,      // the facet tree node, for props
+    opaque outline: *u8,
+}
+
+fn tree_source_of(ov: *u8) -> *TreeSource {
+    if ov == (0 as *u8) { return 0 as *TreeSource; }
+    return { synth::get_associated(ov, tree_source_key()) as *TreeSource };
+}
+
+fn tree_props_of(n: *core::Node) -> *tree::TreeProps {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return 0 as *tree::TreeProps; }
+    if { (*d).kind } != tree::K_TREE { return 0 as *tree::TreeProps; }
+    return { (*d).props } as *tree::TreeProps;
+}
+
+fn props_for(ov: *u8) -> *tree::TreeProps {
+    let s: *TreeSource = tree_source_of(ov);
+    if s == (0 as *TreeSource) { return 0 as *tree::TreeProps; }
+    return tree_props_of({ (*s).node });
+}
+
+// AppKit hands items back as `id`, and facet's items are `*TreeNode` — not
+// objects. So each one is carried by a box: an NSObject with the pointer on an
+// associated key. Made on demand and autoreleased; the outline view retains
+// what it keeps.
+fn box_item(node: *tree::TreeNode) -> *u8 {
+    if node == (0 as *tree::TreeNode) { return 0 as *u8; }
+    let obj: *u8 = { rt::alloc_init(#str_ptr("NSObject\0")) };
+    if obj == (0 as *u8) { return 0 as *u8; }
+    synth::set_associated(obj, item_node_key(), node as *u8);
+    return rt::autorelease(obj);
+}
+
+fn unbox_item(item: *u8) -> *tree::TreeNode {
+    if item == (0 as *u8) { return 0 as *tree::TreeNode; }
+    return { synth::get_associated(item, item_node_key()) as *tree::TreeNode };
+}
+
+// nil is the ROOT — AppKit's own convention, and it matches facet's: the root
+// is the container, not a row.
+fn item_or_root(ov: *u8, item: *u8) -> *tree::TreeNode {
+    if item != (0 as *u8) { return unbox_item(item); }
+    let p: *tree::TreeProps = props_for(ov);
+    if p == (0 as *tree::TreeProps) { return 0 as *tree::TreeNode; }
+    return { #addr_of((*p).root) };
+}
+
+fn tree_child_count_imp(self_obj: *u8, cmd: *u8, ov: *u8, item: *u8) -> i64 {
+    let n: *tree::TreeNode = item_or_root(ov, item);
+    if n == (0 as *tree::TreeNode) { return 0 as i64; }
+    return { (*n).child_count() } as i64;
+}
+
+fn tree_child_imp(self_obj: *u8, cmd: *u8, ov: *u8, index: i64, item: *u8) -> *u8 {
+    let n: *tree::TreeNode = item_or_root(ov, item);
+    if n == (0 as *tree::TreeNode) { return 0 as *u8; }
+    return match { (*n).child_ptr(index as usize) } {
+        option::Option[*tree::TreeNode]::Some(c) => box_item(c),
+        option::Option[*tree::TreeNode]::None => 0 as *u8,
+    };
+}
+
+fn tree_expandable_imp(self_obj: *u8, cmd: *u8, ov: *u8, item: *u8) -> i8 {
+    let n: *tree::TreeNode = unbox_item(item);
+    if n == (0 as *tree::TreeNode) { return 0 as i8; }
+    if { (*n).child_count() } > (0 as usize) { return 1 as i8; }
+    return 0 as i8;
+}
+
+fn tree_height_imp(self_obj: *u8, cmd: *u8, ov: *u8, item: *u8) -> f64 {
+    let p: *tree::TreeProps = props_for(ov);
+    if p == (0 as *tree::TreeProps) { return 1.0f64; }
+    let fh: f64 = { (*p).row_height };
+    if fh >= 1.0f64 { return fh; }
+    let n: *tree::TreeNode = unbox_item(item);
+    if n == (0 as *tree::TreeNode) { return 1.0f64; }
+    var row: core::Node = tree_row_node(n, p);
+    row.calculate_layout(width: column_width(ov));
+    var h: f64 = { row.frame().height };
+    if h < 1.0f64 { h = 1.0f64; }
+    return h;
+}
+
+// The application's row builder, or a plain label of the node's own text when
+// it gave none — a tree with no builder still shows its shape.
+fn tree_row_node(n: *tree::TreeNode, p: *tree::TreeProps) -> core::Node {
+    let f: fn(*tree::TreeNode, *u8) -> flex::Node = { (*p).row };
+    // Against `no_row`, not against null — see controls::build_tree_row.
+    if f != tree::no_row { return f(n, { (*p).ctx }); }
+    return controls::plain_tree_row(n);
+}
+
+fn tree_view_for_item_imp(self_obj: *u8, cmd: *u8, ov: *u8, col: *u8, item: *u8) -> *u8 {
+    let p: *tree::TreeProps = props_for(ov);
+    if p == (0 as *tree::TreeProps) { return 0 as *u8; }
+    let n: *tree::TreeNode = unbox_item(item);
+    if n == (0 as *tree::TreeNode) { return 0 as *u8; }
+    let w: f64 = column_width(ov);
+
+    var cell: *u8 = { msg_id_id_i64(ov, rt::sel(#str_ptr("makeViewWithIdentifier:owner:\0")),
+                                    bridge::nsstring("facet.item"), 0 as i64) };
+    if cell == (0 as *u8) {
+        cell = rt::retain(akx::new_flipped_view(
+            rt::Rect { x: 0.0f64, y: 0.0f64, w: w, h: 1.0f64 }).raw());
+        if cell == (0 as *u8) { return 0 as *u8; }
+        { rt::msg_void_id(cell, rt::sel(#str_ptr("setIdentifier:\0")),
+                          bridge::nsstring("facet.item")) };
+        rt::autorelease(cell);
+    } else {
+        release_cell_row(cell);
+    }
+
+    var node: core::Node = tree_row_node(n, p);
+    node.calculate_layout(width: w);
+    var h: f64 = { node.frame().height };
+    if h < 1.0f64 { h = 1.0f64; }
+    { msg_void_rect(cell, rt::sel(#str_ptr("setFrame:\0")),
+                    rt::Rect { x: 0.0f64, y: 0.0f64, w: w, h: h }) };
+    match box::new::[core::Node](node) {
+        option::Option[box::Box[core::Node]]::Some(b) => {
+            let np: *core::Node = { b.into_raw() } as *core::Node;
+            let rv: *u8 = mount::realise(np, cell);
+            if rv != (0 as *u8) { geometry_place(rv, w, h); }
+            synth::set_associated(cell, cell_node_key(), np as *u8);
+        }
+        option::Option[box::Box[core::Node]]::None => { }
+    }
+    return cell;
+}
+
+fn tree_agent_class() -> *u8 {
+    let existing: *u8 = rt::get_class(#str_ptr("FacetTreeSource\0"));
+    if existing != (0 as *u8) { return existing; }
+    let cls: *u8 = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")),
+                                              #str_ptr("FacetTreeSource\0"), 0 as usize);
+    add_method_i64_2id(cls, rt::sel(#str_ptr("outlineView:numberOfChildrenOfItem:\0")),
+                       tree_child_count_imp, #str_ptr("q@:@@\0"));
+    add_method_id_2id_i64_swapped(cls, rt::sel(#str_ptr("outlineView:child:ofItem:\0")),
+                                  tree_child_imp, #str_ptr("@@:@q@\0"));
+    synth::add_method_i8_2id(cls, rt::sel(#str_ptr("outlineView:isItemExpandable:\0")),
+                             tree_expandable_imp, #str_ptr("c@:@@\0"));
+    add_method_f64_2id(cls, rt::sel(#str_ptr("outlineView:heightOfRowByItem:\0")),
+                       tree_height_imp, #str_ptr("d@:@@\0"));
+    add_method_id_3id_x(cls, rt::sel(#str_ptr("outlineView:viewForTableColumn:item:\0")),
+                        tree_view_for_item_imp, #str_ptr("@@:@@@\0"));
+    synth::register_class_pair(cls);
+    return cls;
+}
+
+#[link_name = "class_addMethod"]
+extern fn add_method_i64_2id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8) -> i64,
+                             types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn add_method_id_2id_i64_swapped(cls: *u8, sel: *u8,
+                                        imp: fn(*u8, *u8, *u8, i64, *u8) -> *u8,
+                                        types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn add_method_f64_2id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8) -> f64,
+                             types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn add_method_id_3id_x(cls: *u8, sel: *u8,
+                              imp: fn(*u8, *u8, *u8, *u8, *u8) -> *u8, types: *u8) -> i8;
+
+fn create_recycling_tree(n: *core::Node) -> *u8 {
+    let scroll: ak::ScrollView = akx::new_scroll_view(
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 }, false);
+    let ov: *u8 = { rt::alloc_init(#str_ptr("NSOutlineView\0")) };
+    if ov == (0 as *u8) { return rt::retain(scroll.as_view().raw()); }
+
+    let col: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSTableColumn\0")),
+                                rt::sel(#str_ptr("alloc\0"))) };
+    let col2: *u8 = { rt::msg_id_id(col, rt::sel(#str_ptr("initWithIdentifier:\0")),
+                                    bridge::nsstring("facet.col")) };
+    if col2 != (0 as *u8) {
+        { rt::msg_void_id(ov, rt::sel(#str_ptr("addTableColumn:\0")), col2) };
+        // The outline column is the one that carries the disclosure triangles.
+        { rt::msg_void_id(ov, rt::sel(#str_ptr("setOutlineTableColumn:\0")), col2) };
+        rt::release(col2);
+    }
+    { rt::msg_void_id(ov, rt::sel(#str_ptr("setHeaderView:\0")), 0 as *u8) };
+    { rt::msg_void_i64(ov, rt::sel(#str_ptr("setColumnAutoresizingStyle:\0")), 1 as i64) };
+    { rt::msg_void_i64(ov, rt::sel(#str_ptr("setStyle:\0")), 0 as i64) };
+
+    let agent: *u8 = synth::alloc_init_class(tree_agent_class());
+    if agent != (0 as *u8) {
+        { rt::msg_void_id(ov, rt::sel(#str_ptr("setDataSource:\0")), agent) };
+        { rt::msg_void_id(ov, rt::sel(#str_ptr("setDelegate:\0")), agent) };
+        synth::retain_associated(ov, tree_agent_pin_key(), agent);
+        rt::release(agent);
+    }
+    scroll.set_document_view(ak::View::from_raw(ov));
+    rt::release(ov);
+    return rt::retain(scroll.as_view().raw());
+}
+
+fn apply_recycling_tree(v: *u8, n: *core::Node, dirty: u64) {
+    let ov: *u8 = table_of(v);
+    if ov == (0 as *u8) { return; }
+    var s: *TreeSource = tree_source_of(ov);
+    if s == (0 as *TreeSource) {
+        match box::new::[TreeSource](TreeSource { node: n, outline: ov }) {
+            option::Option[box::Box[TreeSource]]::Some(b) => {
+                s = { b.into_raw() } as *TreeSource;
+                synth::set_associated(ov, tree_source_key(), s as *u8);
+            }
+            option::Option[box::Box[TreeSource]]::None => { return; }
+        }
+    }
+    { (*s).node = n };
+    // The model, the builder and the expansion set all change WHICH rows exist,
+    // so any of them reloads. An outline view keeps its own expansion state, so
+    // the reload is followed by re-applying facet's — the model is facet's.
+    if (dirty & (tree::P_ROOT | tree::P_ROW | tree::P_EXPANDED)) != (0 as u64) {
+        { rt::msg_void(ov, rt::sel(#str_ptr("reloadData\0"))) };
+        sync_expansion(ov);
+    }
+    return;
+}
+
+// facet's expanded set is the model; AppKit's per-item state follows it.
+// Walked from the root, because expanding a node only matters once its parent
+// is expanded — an outline view has no rows for a closed branch to expand.
+fn sync_expansion(ov: *u8) {
+    let p: *tree::TreeProps = props_for(ov);
+    if p == (0 as *tree::TreeProps) { return; }
+    expand_walk(ov, p, { #addr_of((*p).root) }, true);
+    return;
+}
+
+fn expand_walk(ov: *u8, p: *tree::TreeProps, n: *tree::TreeNode, is_root: bool) {
+    if n == (0 as *tree::TreeNode) { return; }
+    if !is_root {
+        if controls::is_expanded(p, n) {
+            { rt::msg_void_id(ov, rt::sel(#str_ptr("expandItem:\0")), find_item(ov, n)) };
+        } else {
+            return;   // a closed branch has no rows to expand below it
+        }
+    }
+    var i: usize = 0 as usize;
+    let count: usize = { (*n).child_count() };
+    while i < count {
+        match { (*n).child_ptr(i) } {
+            option::Option[*tree::TreeNode]::Some(c) => { expand_walk(ov, p, c, false); }
+            option::Option[*tree::TreeNode]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// The outline view's OWN box for a node. Boxing afresh would hand it an item it
+// has never seen, so the row it belongs to is asked for instead — `rowForItem:`
+// answers -1 for anything not currently in the view, which is the case a closed
+// ancestor produces.
+fn find_item(ov: *u8, n: *tree::TreeNode) -> *u8 {
+    let count: i64 = { rt::msg_i64(ov, rt::sel(#str_ptr("numberOfRows\0"))) };
+    var i: i64 = 0 as i64;
+    while i < count {
+        let it: *u8 = { rt::msg_id_i64(ov, rt::sel(#str_ptr("itemAtRow:\0")), i) };
+        if unbox_item(it) == n { return it; }
+        i = i + (1 as i64);
+    }
+    return 0 as *u8;
+}
+
+// How many rows the outline view is showing — the suite's window into a tree
+// it cannot click.
+fn tree_row_count_of(v: *u8) -> i64 {
+    let ov: *u8 = table_of(v);
+    if ov == (0 as *u8) { return 0 as i64; }
+    return { rt::msg_i64(ov, rt::sel(#str_ptr("numberOfRows\0"))) };
+}
+
+// The cell for a row index, the way the outline view asks for one — the suite's
+// way in, since it cannot scroll.
+fn tree_view_for_row(v: *u8, row: i64) -> *u8 {
+    let ov: *u8 = table_of(v);
+    if ov == (0 as *u8) { return 0 as *u8; }
+    let item: *u8 = { rt::msg_id_i64(ov, rt::sel(#str_ptr("itemAtRow:\0")), row) };
+    if item == (0 as *u8) { return 0 as *u8; }
+    return tree_view_for_item_imp(0 as *u8, 0 as *u8, ov, 0 as *u8, item);
 }

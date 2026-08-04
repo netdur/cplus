@@ -1557,7 +1557,18 @@ fn is_expanded(p: *tree::TreeProps, node: *tree::TreeNode) -> bool {
 // it gave none — a tree with no builder still shows its shape.
 fn build_tree_row(node: *tree::TreeNode, p: *tree::TreeProps) -> core::Node {
     let f: fn(*tree::TreeNode, *u8) -> flex::Node = { (*p).row };
-    if f != (0 as fn(*tree::TreeNode, *u8) -> flex::Node) { return f(node, { (*p).ctx }); }
+    // Compared against `no_row`, NOT against null. The default is a real
+    // function that answers an empty node, so a null check is never false and
+    // the fallback below never ran — a tree with no row builder rendered a
+    // column of empty rows and the line that says otherwise was decoration.
+    if f != tree::no_row { return f(node, { (*p).ctx }); }
+    return plain_tree_row(node);
+}
+
+// A tree with no row builder still shows its shape: the node's own text, keyed
+// by its identity. Shared with the recycling outline view, which asks the same
+// question and must not answer it differently.
+fn plain_tree_row(node: *tree::TreeNode) -> core::Node {
     return label::label({ (*node).label.view() }, key: { (*node).id.view() });
 }
 
