@@ -39,6 +39,7 @@ import "flex_layout/flex_layout" as flex;
 import "stdlib/option" as option;
 import "stdlib/box" as box;
 import "./facet" as core;
+import "./props" as props;
 
 // A gesture handler. `(sender, ctx) -> took_it`.
 //
@@ -480,6 +481,34 @@ fn kt_handler(event: *u8, ctx: *u8) -> bool {
     return true;                     // handled: the ONE stop channel
 }
 fn kt_code_fake(event: *u8) -> i64 { return 42 as i64; }
+
+#[test]
+fn a_gesture_change_is_not_a_handler_change() {
+    // The two constants shared bit 61 until 2026-08-04, so a backend reading
+    // the dirty word could not tell "the gesture set was replaced" from "a
+    // focus/blur/attach/detach handler was swapped". They are distinct bits
+    // now, and each verb marks only its own.
+    assert core::C_GESTURES != props::C_HANDLERS;
+    assert (core::C_GESTURES & props::C_HANDLERS) == (0 as u64);
+    var n: flex::Node = flex::box();
+    let p: *core::Node = #addr_of(n);
+    let _d: *core::Data = core::ensure_data(p);
+    core::clear_dirty(p);
+    attach(p, Gestures::new());
+    assert (core::dirty_of(p) & core::C_GESTURES) != (0 as u64);
+    assert (core::dirty_of(p) & props::C_HANDLERS) == (0 as u64);
+    // ...and the mirror: a handler swap says HANDLERS, never GESTURES.
+    core::clear_dirty(p);
+    core::set_on_focus(p, props::no_handler, 0 as *u8);
+    assert (core::dirty_of(p) & props::C_HANDLERS) != (0 as u64);
+    assert (core::dirty_of(p) & core::C_GESTURES) == (0 as u64);
+    // Detaching the set is a gesture change too.
+    core::clear_dirty(p);
+    detach(p);
+    assert (core::dirty_of(p) & core::C_GESTURES) != (0 as u64);
+    assert (core::dirty_of(p) & props::C_HANDLERS) == (0 as u64);
+    return;
+}
 
 #[test]
 fn on_key_rides_the_gesture_band_and_consume_is_one_shot() {

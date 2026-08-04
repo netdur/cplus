@@ -803,6 +803,20 @@ const C_FLUSH: u64 = 1152921504606846976u64;
 // One bit for the four shared-band handler pairs — a live handler swap is
 // rare enough that the backend re-reads all four.
 const C_HANDLERS: u64 = 2305843009213693952u64;
+// GEOMETRY changed on this node: a live write to width / height / grow /
+// shrink / padding / margin / gap / justify / align / wrap, or an explicit
+// relayout(). Its own bit rather than C_FLUSH because it says something
+// different to the backend — re-run the LAYOUT pass, do not re-read props —
+// and because the size verbs previously set no bit at all, which left a
+// runtime size change with no route to the backend.
+//
+// The bit rides on the node that was written, but a layout pass is a
+// WHOLE-TREE affair: the backend treats any C_LAYOUT in the sync as "one
+// layout pass for this window", then walks frames. That is what keeps the
+// retained-relayout optimisation (9a54a0b) intact — flex's incremental
+// cache decides what actually moved, and the frame walk prunes itself on
+// Node::layout_changed().
+const C_LAYOUT: u64 = 4611686018427387904u64;
 '''
 
 

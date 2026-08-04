@@ -474,6 +474,83 @@ fn batched_writes_request_once_at_flush() {
     return;
 }
 
+// ---- geometry writes are on the dirty path too --------------------------------
+// The size verbs used to write flex's style and set NO bit, so a runtime
+// `set_width` reached the tree and never the screen. They mark C_LAYOUT now,
+// which requests a sync exactly like a prop write.
+
+#[test]
+fn a_size_write_requests_a_sync_and_marks_layout() {
+    fr_reset();
+    install(fr_renderer());
+    var b: core::Builder = core::Builder::new();
+    b.add(fr_leaf("side"));
+    var root: core::Node = core::column(b, key: "root");
+    assert mount(#addr_of(root));
+    match core::find_in(#addr_of(root), "side") {
+        option::Option[*core::Node]::Some(sp) => {
+            let before: i32 = FR_SCHEDULES;
+            core::set_width(sp, 300.0f64);
+            // M5: the write woke the backend...
+            assert FR_SCHEDULES == before + 1;
+            // ...and said GEOMETRY, not props.
+            assert (core::dirty_of(sp) & props::C_LAYOUT) != (0 as u64);
+            // The sync walk clears it like any other bit.
+            sync();
+            assert core::dirty_of(sp) == (0 as u64);
+            // Every sibling verb in the band does the same.
+            core::set_grow(sp, 1.0f64);
+            assert (core::dirty_of(sp) & props::C_LAYOUT) != (0 as u64);
+            core::clear_dirty(sp);
+            core::set_padding(sp, 8.0f64);
+            assert (core::dirty_of(sp) & props::C_LAYOUT) != (0 as u64);
+            core::clear_dirty(sp);
+            core::set_gap(sp, 4.0f64);
+            assert (core::dirty_of(sp) & props::C_LAYOUT) != (0 as u64);
+            core::clear_dirty(sp);
+            core::set_align(sp, flex::Align::Center);
+            assert (core::dirty_of(sp) & props::C_LAYOUT) != (0 as u64);
+            core::clear_dirty(sp);
+            core::set_z_index(sp, 3 as i64);
+            assert (core::dirty_of(sp) & props::C_LAYOUT) != (0 as u64);
+            core::clear_dirty(sp);
+            // relayout() asks for the pass its invalidation needs.
+            core::relayout(sp);
+            assert (core::dirty_of(sp) & props::C_LAYOUT) != (0 as u64);
+        }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    uninstall();
+    return;
+}
+
+#[test]
+fn geometry_writes_batch_and_stay_off_dataless_nodes() {
+    fr_reset();
+    install(fr_renderer());
+    var root: core::Node = core::column(core::Builder::new(), key: "root");
+    assert mount(#addr_of(root));
+    let rp: *core::Node = #addr_of(root);
+    // Batched: silent until the closing flush, like every other write.
+    let before: i32 = FR_SCHEDULES;
+    core::begin_updates(rp);
+    core::set_width(rp, 100.0f64);
+    core::set_height(rp, 50.0f64);
+    assert FR_SCHEDULES == before;
+    core::end_updates(rp);
+    assert FR_SCHEDULES == before + 1;
+    uninstall();
+    // Negative: a raw flex node carries no Data, so there is nothing to mark
+    // — the write still lands in flex's style and nothing traps.
+    var bare: flex::Node = flex::box();
+    core::set_width(#addr_of(bare), 42.0f64);
+    assert core::dirty_of(#addr_of(bare)) == (0 as u64);
+    // And a null cursor is inert, the standing convention.
+    core::set_width(0 as *core::Node, 10.0f64);
+    core::relayout(0 as *core::Node);
+    return;
+}
+
 #[test]
 fn mounted_root_is_the_most_recent_and_unmount_detaches() {
     fr_reset();
@@ -798,6 +875,427 @@ fn switch_to(outlet: *core::Node, key: str) -> bool {
     }
     core::touch(outlet, props::C_FLUSH);
     return true;
+}
+
+// ---- structural verbs (Stage 4) ----------------------------------------------
+// Editing a LIVE tree's shape. facet is not reactive, so filling a list is a
+// tree edit, not a rebuild — but flex's own `add_child` only puts a node in
+// the tree. Nothing then creates its native view: `mount` ran once at startup,
+// and `sync_walk` applies only to nodes that have a dirty word AND a view, so
+// a fresh child (neither) is walked straight past. It laid out, took up space,
+// and was invisible.
+//
+// These are the door. They do the flex edit AND the mount/unmount, so the
+// shape of a live tree only ever changes through the Renderer. The old facet
+// had five backend registrars for this (add/remove/insert/replace/set_child);
+// this is the same guarantee with none of the vtable — the seam already has
+// `insert` and `remove`.
+//
+// Each verb also touches C_LAYOUT: a shape change is a geometry change, and
+// the backend answers it with the same layout pass a size write asks for.
+//
+// The bare flex verbs still exist and are correct for DESCRIPTION time (inside
+// `build`, before anything is mounted). After mount, use these.
+
+// The number of top-level native views `n`'s subtree contributes to its
+// enclosing host. A backed node is exactly one (its descendants live INSIDE
+// its view); an unbacked one contributes whatever its children do — which is
+// how a pure-layout column inside a scroll view passes through.
+fn native_span(n: *core::Node) -> usize {
+    if n == (0 as *core::Node) { return 0 as usize; }
+    if core::view_of(n) != (0 as *u8) { return 1 as usize; }
+    var total: usize = 0 as usize;
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => { total = total +% native_span(c); }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return total;
+}
+
+// The running total of a slot scan, and whether the insertion point was
+// reached. A struct rather than a `ref` out-param so the recursion reads as
+// one value per node.
+struct SlotScan {
+    count: usize,
+    found: bool,
+}
+
+// Native views under `cur` that PRECEDE inserting at (`parent`, `at`), counted
+// in the host `cur` contributes to. Mirrors mount_walk's slot arithmetic: a
+// backed node that is not the parent is one slot and is not descended into
+// (its subtree hangs inside its own view, not in this host); an unbacked one
+// passes its children through.
+fn scan_slots_before(cur: *core::Node, parent: *core::Node, at: usize) -> SlotScan {
+    if cur == parent {
+        var c: usize = 0 as usize;
+        var i: usize = 0 as usize;
+        let count: usize = core::child_count_of(cur);
+        while i < at && i < count {
+            match core::child_of(cur, i) {
+                option::Option[*core::Node]::Some(ch) => { c = c +% native_span(ch); }
+                option::Option[*core::Node]::None => { }
+            }
+            i = i +% (1 as usize);
+        }
+        return SlotScan { count: c, found: true };
+    }
+    if core::view_of(cur) != (0 as *u8) {
+        // Backed and not the parent: the parent cannot be contributing to THIS
+        // host from inside it — it would contribute to this node's view.
+        return SlotScan { count: 1 as usize, found: false };
+    }
+    var c: usize = 0 as usize;
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(cur);
+    while i < count {
+        match core::child_of(cur, i) {
+            option::Option[*core::Node]::Some(ch) => {
+                let r: SlotScan = scan_slots_before(ch, parent, at);
+                c = c +% r.count;
+                if r.found { return SlotScan { count: c, found: true }; }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return SlotScan { count: c, found: false };
+}
+
+// The host NODE for `n` — itself when backed, else the nearest backed
+// ancestor. flex nodes carry no parent pointer, so the search goes DOWN from
+// the running app's windows, exactly like nearest_host.
+fn host_node_of(n: *core::Node) -> *core::Node {
+    if n == (0 as *core::Node) { return 0 as *core::Node; }
+    if core::view_of(n) != (0 as *u8) { return n; }
+    var i: usize = 0 as usize;
+    let count: usize = app::window_count();
+    while i < count {
+        let r: *core::Node = app::window_root(i);
+        if r != (0 as *core::Node) {
+            match host_node_search(r, 0 as *core::Node, n) {
+                option::Option[*core::Node]::Some(h) => { return h; }
+                option::Option[*core::Node]::None => { }
+            }
+        }
+        i = i +% (1 as usize);
+    }
+    return 0 as *core::Node;
+}
+
+fn host_node_search(cur: *core::Node, host: *core::Node, target: *core::Node) -> option::Option[*core::Node] {
+    var h: *core::Node = host;
+    if core::view_of(cur) != (0 as *u8) { h = cur; }
+    if cur == target { return option::Option[*core::Node]::Some(h); }
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(cur);
+    while i < count {
+        match core::child_of(cur, i) {
+            option::Option[*core::Node]::Some(c) => {
+                match host_node_search(c, h, target) {
+                    option::Option[*core::Node]::Some(hit) => { return option::Option[*core::Node]::Some(hit); }
+                    option::Option[*core::Node]::None => { }
+                }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return option::Option[*core::Node]::None;
+}
+
+// The native slot a child inserted at (`parent`, `at`) takes in its host.
+// A BACKED parent is its own host, so the answer is just what its earlier
+// children contribute — no search. An unbacked parent shares an ancestor's
+// host, so the count runs from that ancestor in document order.
+fn native_slot_for(parent: *core::Node, at: usize) -> usize {
+    if core::view_of(parent) != (0 as *u8) {
+        return scan_slots_before(parent, parent, at).count;
+    }
+    let h: *core::Node = host_node_of(parent);
+    if h == (0 as *core::Node) { return 0 as usize; }
+    var i: usize = 0 as usize;
+    var c: usize = 0 as usize;
+    let count: usize = core::child_count_of(h);
+    while i < count {
+        match core::child_of(h, i) {
+            option::Option[*core::Node]::Some(ch) => {
+                let r: SlotScan = scan_slots_before(ch, parent, at);
+                c = c +% r.count;
+                if r.found { return c; }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return c;
+}
+
+// Put `child` in `parent` at `at` (clamped to the end) and mount it if the
+// parent is live. False when the parent is null or the tree edit failed —
+// and then nothing was mounted either.
+fn insert_child(parent: *core::Node, take child: core::Node, at: usize) -> bool {
+    if parent == (0 as *core::Node) { return false; }
+    let n: usize = core::child_count_of(parent);
+    var index: usize = at;
+    if index > n { index = n; }
+    var placed: bool = false;
+    if index == n {
+        placed = { (*parent).add_child(child) }.is_ok();
+    } else {
+        placed = { (*parent).insert_child(child, at: index) }.is_ok();
+    }
+    if !placed { return false; }
+    // Live parent: create the views and put them in the host at the right
+    // native slot. Headless (or an unmounted parent) still sets attach flags
+    // and rides the M4 queue, exactly like set_content.
+    if core::is_attached(parent) {
+        match core::child_of(parent, index) {
+            option::Option[*core::Node]::Some(cp) => {
+                var q: vec::Vec[*core::Node] = vec::new::[*core::Node]();
+                if installed() {
+                    let host: *u8 = nearest_host(parent);
+                    let slot: usize = native_slot_for(parent, index);
+                    let _s: usize = mount_walk(cp, host, slot, q);
+                } else {
+                    attach_flags_walk(cp, q);
+                }
+                drain_attach_queue(q);
+            }
+            option::Option[*core::Node]::None => { }
+        }
+    }
+    core::touch(parent, props::C_LAYOUT);
+    return true;
+}
+
+// Append. The everyday verb — filling a list is this in a loop.
+fn add_child(parent: *core::Node, take child: core::Node) -> bool {
+    if parent == (0 as *core::Node) { return false; }
+    return insert_child(parent, child, core::child_count_of(parent));
+}
+
+// Take the child at `at` out of `parent`, native views and all. The subtree
+// is handed back so the caller can re-attach it elsewhere; DROPPING it is
+// what releases its views (through the release the renderer paired with them).
+// None when there is no such child, and then nothing changed.
+fn remove_child(parent: *core::Node, at: usize) -> option::Option[core::Node] {
+    if parent == (0 as *core::Node) { return option::Option[core::Node]::None; }
+    if at >= core::child_count_of(parent) { return option::Option[core::Node]::None; }
+    match core::child_of(parent, at) {
+        option::Option[*core::Node]::Some(cp) => {
+            // Notify first, while the subtree is still whole and its views
+            // are alive — the order unmount uses.
+            var q: vec::Vec[*core::Node] = vec::new::[*core::Node]();
+            detach_walk(cp, q);
+            drain_detach_queue(q);
+            remove_native_views(cp, nearest_host(parent));
+        }
+        option::Option[*core::Node]::None => { }
+    }
+    let gone: option::Option[core::Node] = { (*parent).remove_child(at) };
+    core::touch(parent, props::C_LAYOUT);
+    return gone;
+}
+
+// ---- structural verb tests ---------------------------------------------------
+
+// The last slot the fake renderer was asked to insert at.
+fn fr_last_slot() -> u64 {
+    let n: usize = FR_INS_SLOTS.count();
+    if n == (0 as usize) { return 9999 as u64; }
+    return match FR_INS_SLOTS.at(n -% (1 as usize)) {
+        option::Option[u64]::Some(s) => s,
+        option::Option[u64]::None => 9999 as u64,
+    };
+}
+
+fn fr_last_host() -> u64 {
+    let n: usize = FR_INS_HOSTS.count();
+    if n == (0 as usize) { return 0 as u64; }
+    return match FR_INS_HOSTS.at(n -% (1 as usize)) {
+        option::Option[u64]::Some(h) => h,
+        option::Option[u64]::None => 0 as u64,
+    };
+}
+
+#[test]
+fn add_child_mounts_into_the_live_tree() {
+    // The hole this closes: flex's own add_child put the node in the tree and
+    // nothing ever created its view — mount ran once at startup, and the sync
+    // walk skips a node with no dirty word and no view.
+    fr_reset();
+    install(fr_renderer());
+    var b: core::Builder = core::Builder::new();
+    b.add(fr_leaf("a"));
+    b.add(fr_leaf("c"));
+    var root: core::Node = core::column(b, key: "root");
+    assert mount(#addr_of(root));
+    let rv: u64 = core::view_of(#addr_of(root)) as u64;
+    let creates: i32 = FR_CREATES;
+    let inserts: usize = FR_INS_SLOTS.count();
+
+    // Append: created, inserted into the ROOT's view at the next free slot.
+    assert add_child(#addr_of(root), fr_leaf("d"));
+    assert FR_CREATES == creates + 1;
+    assert FR_INS_SLOTS.count() == inserts +% (1 as usize);
+    assert fr_last_slot() == (2 as u64);
+    assert fr_last_host() == rv;
+    assert root.child_count() == (3 as usize);
+    match core::find_in(#addr_of(root), "d") {
+        option::Option[*core::Node]::Some(dp) => {
+            assert core::is_attached(dp);
+            assert core::view_of(dp) != (0 as *u8);
+        }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    // A shape change is a geometry change: the layout bit is set on the parent.
+    assert (core::dirty_of(#addr_of(root)) & props::C_LAYOUT) != (0 as u64);
+
+    // Insert in the MIDDLE: the native slot is the one its earlier siblings
+    // leave free, not the end.
+    assert insert_child(#addr_of(root), fr_leaf("b"), 1 as usize);
+    assert fr_last_slot() == (1 as u64);
+    assert root.child_count() == (4 as usize);
+    match core::child_of(#addr_of(root), 1 as usize) {
+        option::Option[*core::Node]::Some(cp) => { assert { (*cp).key() } == "b"; }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    // Past the end clamps to append rather than failing.
+    assert insert_child(#addr_of(root), fr_leaf("z"), 99 as usize);
+    assert fr_last_slot() == (4 as u64);
+    unmount(#addr_of(root));
+    uninstall();
+    return;
+}
+
+#[test]
+fn insert_under_a_passthrough_container_counts_document_order() {
+    // The parent has NO view (unkeyed, kind 0), so its children hang from the
+    // nearest backed ancestor — and the slot must count what precedes them
+    // across the whole host, not just within the parent.
+    fr_reset();
+    install(fr_renderer());
+    var ib: core::Builder = core::Builder::new();
+    ib.add(fr_leaf("h"));
+    var b: core::Builder = core::Builder::new();
+    b.add(fr_leaf("a"));
+    b.add(core::column(ib));          // unkeyed: the fake declines it
+    b.add(fr_leaf("z"));
+    var root: core::Node = core::column(b, key: "root");
+    assert mount(#addr_of(root));
+    let rv: u64 = core::view_of(#addr_of(root)) as u64;
+    // Root's view holds [a, h, z] at 0,1,2 — the inner column passed through.
+    match core::child_of(#addr_of(root), 1 as usize) {
+        option::Option[*core::Node]::Some(inner) => {
+            assert core::view_of(inner) == (0 as *u8);
+            // Appending inside the passthrough lands AFTER h, i.e. slot 2 of
+            // the root's view — not slot 1 of a view the container hasn't got.
+            assert add_child(inner, fr_leaf("h2"));
+            assert fr_last_slot() == (2 as u64);
+            assert fr_last_host() == rv;
+            // And at the FRONT of the passthrough: after a, before h.
+            assert insert_child(inner, fr_leaf("h0"), 0 as usize);
+            assert fr_last_slot() == (1 as u64);
+            assert fr_last_host() == rv;
+        }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    unmount(#addr_of(root));
+    uninstall();
+    return;
+}
+
+#[test]
+fn remove_child_notifies_detaches_and_takes_the_views_out() {
+    fr_reset();
+    LC_DETACHES = 0;
+    LC_ATTACHES = 0;
+    LC_SIBLING = 0 as *core::Node;
+    install(fr_renderer());
+    var b: core::Builder = core::Builder::new();
+    b.add(fr_leaf("a"));
+    b.add(fr_leaf("z"));
+    var root: core::Node = core::column(b, key: "root");
+    assert mount(#addr_of(root));
+    match core::find_in(#addr_of(root), "a") {
+        option::Option[*core::Node]::Some(ap) => { core::set_on_detach(ap, lc_on_detach, 0 as *u8); }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    let releases: i32 = FR_RELEASES;
+    {
+        let gone: option::Option[core::Node] = remove_child(#addr_of(root), 0 as usize);
+        // Notified while whole, native views out through Renderer.remove.
+        assert LC_DETACHES == 1;
+        assert FR_REMOVES >= 1;
+        assert root.child_count() == (1 as usize);
+        assert (core::dirty_of(#addr_of(root)) & props::C_LAYOUT) != (0 as u64);
+        // The subtree came back to the caller, so it is NOT released yet —
+        // it could be re-attached somewhere else.
+        assert FR_RELEASES == releases;
+        let handed_back: bool = match gone {
+            option::Option[core::Node]::Some(_n) => true,
+            option::Option[core::Node]::None => false,
+        };
+        assert handed_back;
+    }
+    // Dropping it is what releases its view.
+    assert FR_RELEASES == releases + 1;
+    // The survivor is untouched and still findable.
+    match core::find_in(#addr_of(root), "z") {
+        option::Option[*core::Node]::Some(zp) => { assert core::is_attached(zp); }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    unmount(#addr_of(root));
+    uninstall();
+    return;
+}
+
+#[test]
+fn structural_verbs_negatives_and_the_headless_posture() {
+    fr_reset();
+    install(fr_renderer());
+    var root: core::Node = core::column(core::Builder::new(), key: "root");
+    assert mount(#addr_of(root));
+    // A null parent takes the child and reports failure — never a trap.
+    assert add_child(0 as *core::Node, fr_leaf("nowhere")) == false;
+    assert insert_child(0 as *core::Node, fr_leaf("nowhere"), 0 as usize) == false;
+    // Out of range removes nothing and says so.
+    let none: option::Option[core::Node] = remove_child(#addr_of(root), 7 as usize);
+    let absent: bool = match none {
+        option::Option[core::Node]::Some(_n) => false,
+        option::Option[core::Node]::None => true,
+    };
+    assert absent;
+    let missing: option::Option[core::Node] = remove_child(0 as *core::Node, 0 as usize);
+    let absent2: bool = match missing {
+        option::Option[core::Node]::Some(_n) => false,
+        option::Option[core::Node]::None => true,
+    };
+    assert absent2;
+    unmount(#addr_of(root));
+    uninstall();
+
+    // Headless: no renderer, so no views — but the attach flags and the M4
+    // queue still run, exactly like set_content's portable posture.
+    app::reset_default_for_tests();
+    var h: core::Node = core::column(core::Builder::new(), key: "host");
+    app::open_window(#addr_of(h));
+    core::set_attached(#addr_of(h), true);
+    assert add_child(#addr_of(h), fr_leaf("only"));
+    match core::find_in(#addr_of(h), "only") {
+        option::Option[*core::Node]::Some(op) => {
+            assert core::is_attached(op);
+            assert core::view_of(op) == (0 as *u8);
+        }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    app::close_window(#addr_of(h));
+    return;
 }
 
 // ---- composition tests -------------------------------------------------------

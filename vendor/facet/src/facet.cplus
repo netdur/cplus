@@ -85,8 +85,12 @@ struct Data {
 }
 
 // A gesture set changed. In the common band because gestures ride on Node,
-// not on any one control.
-const C_GESTURES: u64 = 2305843009213693952u64;
+// not on any one control. Bit 63 — the top of the word: bit 61 is the
+// generated band's C_HANDLERS, and sharing it meant a backend could not tell
+// "the gesture set was replaced" from "a focus/blur/attach/detach handler was
+// swapped". The generator owns props.cplus, so the hand-written constant is
+// the one that moves.
+const C_GESTURES: u64 = 9223372036854775808u64;
 
 // Keys beginning with `@` are facet's own: a named slot is a child under one.
 // An application's key never starts with `@`, so the two spaces never meet.
@@ -670,9 +674,15 @@ fn anchor_y(n: *Node) -> f64 {
 
 // z order is flex's style field. Forward to it rather than keep a second copy
 // that the layout engine would then have to be told about.
+//
+// C_LAYOUT, not a bit of its own: z is paint ORDER, and the walk that answers
+// it is the same walk that answers geometry — a backend orders native
+// siblings while it is placing them. It had the same hole as the size verbs
+// (write the value, tell nobody).
 fn set_z_index(n: *Node, v: i64) {
     if n == (0 as *Node) { return; }
     { (*n).set_z_index(v as i32) };
+    touch(n, props::C_LAYOUT);
     return;
 }
 
@@ -694,76 +704,102 @@ fn z_index(n: *Node) -> i64 {
 // ONE TRAP, and it is the same one the DOM has with `style.width` versus
 // `offsetWidth`: `set_width` writes the STYLE, `width()` reads the LAID-OUT
 // frame. They agree only after a layout pass.
+//
+// Every one of these touches props::C_LAYOUT. They did not, and that was the
+// hole: a prop setter marks its node dirty, the dirty mark wakes the backend
+// through M5, and the backend applies it — but a size write did neither, so
+// `sidebar.set_width(300.0)` in a click handler updated flex's style and
+// reached no screen. The bit says GEOMETRY, not props: the backend answers it
+// with one layout pass per window and a frame walk, never with a re-read of
+// this node's props.
+//
+// This is what the retained-relayout work (9a54a0b) is built on and it costs
+// nothing when nothing moved: flex's incremental cache skips unchanged
+// subtrees, and the frame walk prunes itself on `Node::layout_changed()`.
+// Waking on the write is the point — polling a layout pass every idle turn
+// would pay that cost forever instead of only when something actually moved.
 
 fn set_grow(n: *Node, v: f64) {
     if n == (0 as *Node) { return; }
     { (*n).set_flex_grow(v) };
+    touch(n, props::C_LAYOUT);
     return;
 }
 
 fn set_shrink(n: *Node, v: f64) {
     if n == (0 as *Node) { return; }
     { (*n).set_flex_shrink(v) };
+    touch(n, props::C_LAYOUT);
     return;
 }
 
 fn set_width(n: *Node, v: f64) {
     if n == (0 as *Node) { return; }
     { (*n).set_width(flex::StyleLength::points(v)) };
+    touch(n, props::C_LAYOUT);
     return;
 }
 
 fn set_height(n: *Node, v: f64) {
     if n == (0 as *Node) { return; }
     { (*n).set_height(flex::StyleLength::points(v)) };
+    touch(n, props::C_LAYOUT);
     return;
 }
 
 fn set_width_percent(n: *Node, v: f64) {
     if n == (0 as *Node) { return; }
     { (*n).set_width(flex::StyleLength::percent(v)) };
+    touch(n, props::C_LAYOUT);
     return;
 }
 
 fn set_height_percent(n: *Node, v: f64) {
     if n == (0 as *Node) { return; }
     { (*n).set_height(flex::StyleLength::percent(v)) };
+    touch(n, props::C_LAYOUT);
     return;
 }
 
 fn set_padding(n: *Node, v: f64) {
     if n == (0 as *Node) { return; }
     { (*n).set_padding(flex::Edge::All, flex::StyleLength::points(v)) };
+    touch(n, props::C_LAYOUT);
     return;
 }
 
 fn set_margin(n: *Node, v: f64) {
     if n == (0 as *Node) { return; }
     { (*n).set_margin(flex::Edge::All, flex::StyleLength::points(v)) };
+    touch(n, props::C_LAYOUT);
     return;
 }
 
 fn set_gap(n: *Node, v: f64) {
     if n == (0 as *Node) { return; }
     { (*n).set_gap(flex::Gutter::All, flex::StyleLength::points(v)) };
+    touch(n, props::C_LAYOUT);
     return;
 }
 
 fn set_justify(n: *Node, v: flex::Justify) {
     if n == (0 as *Node) { return; }
     { (*n).set_justify_content(v) };
+    touch(n, props::C_LAYOUT);
     return;
 }
 
 fn set_align(n: *Node, v: flex::Align) {
     if n == (0 as *Node) { return; }
     { (*n).set_align_items(v) };
+    touch(n, props::C_LAYOUT);
     return;
 }
 
 fn set_wrap(n: *Node, v: flex::Wrap) {
     if n == (0 as *Node) { return; }
     { (*n).set_flex_wrap(v) };
+    touch(n, props::C_LAYOUT);
     return;
 }
 
@@ -850,10 +886,13 @@ fn set_native(n: *Node, v: *u8) {
 fn focus(n: *Node) { touch(n, props::C_FOCUS); return; }
 fn blur(n: *Node) { touch(n, props::C_BLUR); return; }
 
-// Invalidate this subtree's cached layout. flex recomputes on the next pass.
+// Invalidate this subtree's cached layout. flex recomputes on the next pass,
+// and C_LAYOUT is what asks for that pass to happen — without it the
+// invalidation sat in the tree until some unrelated write woke the backend.
 fn relayout(n: *Node) {
     if n == (0 as *Node) { return; }
     { (*n).mark_content_changed() };
+    touch(n, props::C_LAYOUT);
     return;
 }
 
