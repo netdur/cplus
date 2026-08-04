@@ -447,6 +447,18 @@ realised row is outside the window walk that carries dirty bits across. So the
 backend applies it immediately through `mount::sync_from` — the third verb this
 path needed, after `realise` and `unrealise`.
 
+**A resize coalesces into one reload.** A live drag changes the width on every
+frame, and every width change invalidates every measurement, so reloading on
+each one re-measures the whole list dozens of times a second. A reload is
+scheduled instead and the next frame cancels the one before it: the list
+re-measures once, when the drag settles.
+
+Whether the viewport was at the bottom is read BEFORE anything moves, and
+re-pinned after. A narrower width re-wraps rows taller, so the content grows
+under the viewport and "at the bottom" has stopped being true by the time the
+reload has run — which is why the question cannot be asked afterwards. It is
+the chat behaviour, and the one that is invisible until it is missing.
+
 The width a cell gets is the COLUMN's, not the table's frame, and that is a bug
 rather than a detail: modern NSTableView styles inset cells horizontally, so
 measuring wrapped rows at frame width under-measures them and clips the last

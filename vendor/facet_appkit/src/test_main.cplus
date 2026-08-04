@@ -2514,3 +2514,40 @@ fn a_list_without_a_bind_still_works_the_old_way() {
     views::view_release(v);
     return;
 }
+
+#[test]
+fn a_resize_coalesces_into_one_reload_instead_of_one_per_frame() {
+    backend::install();
+    // Step 3. A live drag changes the width on every frame, and every change
+    // invalidates every measurement — reloading on each one re-measures the
+    // whole list dozens of times a second. So a reload is SCHEDULED and the
+    // next frame cancels the one before it.
+    RL_BUILDS = 0 as i64;
+    var n: core::Node = rl_list(200 as usize, 0 as i64);
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    let pending_before: usize = akx::after_pending_count();
+
+    // Three frames of a drag.
+    recycler::resize_to(v, 300.0f64);
+    recycler::resize_to(v, 280.0f64);
+    recycler::resize_to(v, 260.0f64);
+    // ONE reload is outstanding, not three: each frame cancelled the last.
+    assert akx::after_pending_count() == (pending_before + (1 as usize));
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn a_resize_that_does_not_change_the_width_schedules_nothing() {
+    backend::install();
+    // A height change moves the viewport, not the rows — nothing re-wraps, so
+    // nothing needs re-measuring.
+    var n: core::Node = rl_list(50 as usize, 0 as i64);
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    recycler::resize_to(v, 400.0f64);
+    let after_first: usize = akx::after_pending_count();
+    recycler::resize_to(v, 400.0f64);
+    assert akx::after_pending_count() == after_first;
+    views::view_release(v);
+    return;
+}

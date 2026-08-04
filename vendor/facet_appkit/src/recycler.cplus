@@ -101,6 +101,19 @@ struct RowSource {
     // The width those measurements were taken at. A different width re-wraps
     // every row, so the whole cache is worth nothing.
     heights_width: f64,
+    // ---- the resize pass ------------------------------------------------
+    // A live drag changes the width on every frame, and every change
+    // invalidates every measurement. Reloading on each one re-measures the
+    // whole list dozens of times a second, which is the resize hitch.
+    // So a reload is SCHEDULED and the token kept, and the next frame cancels
+    // the one before it: the list re-measures once, when the drag settles.
+    last_width: f64,
+    pending_reload: u64,
+    // Was the viewport at the bottom when this resize began? Read BEFORE the
+    // reload changes the geometry, and re-pinned after — the chat behaviour,
+    // and the one that is invisible until it is missing.
+    follow_tail: bool,
+    opaque table: *u8,
 }
 
 fn source_of(tv: *u8) -> *RowSource {
@@ -394,10 +407,17 @@ fn apply_recycling_list(v: *u8, n: *core::Node, dirty: u64) {
             fixed_height: 0.0f64,
             heights: vec::new::[f64](),
             heights_width: 0.0f64,
+            last_width: 0.0f64,
+            pending_reload: 0 as u64,
+            follow_tail: false,
+            table: tv,
         }) {
             option::Option[box::Box[RowSource]]::Some(b) => {
                 s = { b.into_raw() } as *RowSource;
                 synth::set_associated(tv, source_key(), s as *u8);
+                // The resize pass. Observed once, for the life of the table.
+                let _obs: u64 = akx::observe_frame(ak::View::from_raw(tv),
+                                                   on_table_resized, s as *u8);
             }
             option::Option[box::Box[RowSource]]::None => { return; }
         }
@@ -413,6 +433,65 @@ fn apply_recycling_list(v: *u8, n: *core::Node, dirty: u64) {
     { (*s).heights.remove_all() };
     { (*s).heights_width = 0.0f64 };
     { rt::msg_void(tv, rt::sel(#str_ptr("reloadData\0"))) };
+    return;
+}
+
+// ---- the resize pass ---------------------------------------------------------
+
+// Is the viewport within 60pt of the bottom? Read BEFORE a reload changes the
+// geometry. A list with no enclosing scroll view counts as at-bottom, because
+// there is nowhere else it could be.
+fn is_near_bottom(tv: *u8) -> bool {
+    let esv: *u8 = { rt::msg_id(tv, rt::sel(#str_ptr("enclosingScrollView\0"))) };
+    if esv == (0 as *u8) { return true; }
+    let clip: *u8 = { rt::msg_id(esv, rt::sel(#str_ptr("contentView\0"))) };
+    if clip == (0 as *u8) { return true; }
+    let b: rt::Rect = { rt::msg_rect(clip, rt::sel(#str_ptr("bounds\0"))) };
+    let doc_h: f64 = { rt::msg_rect(tv, rt::sel(#str_ptr("frame\0"))) }.h;
+    return (b.y + b.h) >= (doc_h - 60.0f64);
+}
+
+fn scroll_to_bottom(tv: *u8) {
+    let rows: i64 = { rt::msg_i64(tv, rt::sel(#str_ptr("numberOfRows\0"))) };
+    if rows <= (0 as i64) { return; }
+    { rt::msg_void_i64(tv, rt::sel(#str_ptr("scrollRowToVisible:\0")), rows - (1 as i64)) };
+    return;
+}
+
+// The table's frame changed. A width change is the only one that matters — a
+// height change moves the viewport, not the rows.
+fn on_table_resized(ctx: *u8) {
+    let s: *RowSource = { ctx as *RowSource };
+    if s == (0 as *RowSource) { return; }
+    let tv: *u8 = { (*s).table };
+    if tv == (0 as *u8) { return; }
+    let w: f64 = column_width(tv);
+    if w == { (*s).last_width } { return; }
+    { (*s).last_width = w };
+    // Whether we were at the bottom is read NOW, before anything moves. A
+    // narrower width re-wraps rows taller, so the content grows under the
+    // viewport and "at the bottom" stops being true by the time the reload
+    // has run.
+    { (*s).follow_tail = is_near_bottom(tv) };
+    // Coalesce: the frame changes on every frame of a drag, and each change
+    // would otherwise re-measure the whole list.
+    let pending: u64 = { (*s).pending_reload };
+    if pending != (0 as u64) { akx::cancel_after(pending); }
+    { (*s).pending_reload = akx::after(0.1f64, resize_settled, ctx) };
+    return;
+}
+
+fn resize_settled(ctx: *u8) {
+    let s: *RowSource = { ctx as *RowSource };
+    if s == (0 as *RowSource) { return; }
+    { (*s).pending_reload = 0 as u64 };
+    let tv: *u8 = { (*s).table };
+    if tv == (0 as *u8) { return; }
+    // The measurements belonged to the old width.
+    { (*s).heights.remove_all() };
+    { (*s).heights_width = 0.0f64 };
+    { rt::msg_void(tv, rt::sel(#str_ptr("reloadData\0"))) };
+    if { (*s).follow_tail } { scroll_to_bottom(tv); }
     return;
 }
 
@@ -814,4 +893,25 @@ fn tree_view_for_row(v: *u8, row: i64) -> *u8 {
     let item: *u8 = { rt::msg_id_i64(ov, rt::sel(#str_ptr("itemAtRow:\0")), row) };
     if item == (0 as *u8) { return 0 as *u8; }
     return tree_view_for_item_imp(0 as *u8, 0 as *u8, ov, 0 as *u8, item);
+}
+
+// Drive the resize pass at a given column width. The suite's way in: it has no
+// window to drag, and the pass is about what happens BETWEEN frames.
+fn resize_to(v: *u8, w: f64) {
+    let tv: *u8 = table_of(v);
+    if tv == (0 as *u8) { return; }
+    let s: *RowSource = source_of(tv);
+    if s == (0 as *RowSource) { return; }
+    let cols: *u8 = { rt::msg_id(tv, rt::sel(#str_ptr("tableColumns\0"))) };
+    if cols != (0 as *u8) {
+        let n: u64 = { rt::msg_u64(cols, rt::sel(#str_ptr("count\0"))) };
+        if n > (0 as u64) {
+            let c0: *u8 = { rt::msg_id_u64(cols, rt::sel(#str_ptr("objectAtIndex:\0")), 0 as u64) };
+            if c0 != (0 as *u8) {
+                { rt::msg_void_f64(c0, rt::sel(#str_ptr("setWidth:\0")), w) };
+            }
+        }
+    }
+    on_table_resized(s as *u8);
+    return;
 }
