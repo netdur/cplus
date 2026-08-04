@@ -16,14 +16,15 @@
 // why each is imported: `label::P_TEXT` is not the same bit as
 // `text_field::P_TEXT`, and the MAP is the authority for both.
 //
-// STATUS: 20 of 42 — label, button, text_field, image, scroll, box, checkbox,
+// STATUS: 21 of 42 — label, button, text_field, image, scroll, box, checkbox,
 // radio, toggle, slider, progress, spinner, stepper, icon_button, symbol,
-// text_area, search_field, popup, bordered, split, plus
+// text_area, search_field, popup, bordered, split, page_dots, plus
 // the container backing. Until a kind lands, `views::create` says
 // so on stderr rather than rendering a silent blank rectangle.
 
 import "stdlib/option" as option;
 import "stdlib/text" as text;
+import "stdlib/vec" as vec;
 import "flex_layout/flex_layout" as flex;
 import "facet/facet" as core;
 import "facet/props" as props;
@@ -48,6 +49,7 @@ import "facet/search_field" as search_field;
 import "facet/popup" as popup;
 import "facet/bordered" as bordered;
 import "facet/split" as split;
+import "facet/page_dots" as page_dots;
 import "objc/runtime" as rt;
 import "appkit/appkit" as ak;
 import "appkit/appkit_ext" as akx;
@@ -815,4 +817,111 @@ fn is_vertical_divider(a: split::SplitAxis) -> bool {
         split::SplitAxis::Columns => true,
         split::SplitAxis::Rows => false,
     };
+}
+
+// ---- page_dots ---------------------------------------------------------------
+// MAUI's IndicatorView: the row of dots under a pager. AppKit ships nothing of
+// the kind — NSPageController has no indicator — so this is drawn, and it is
+// drawn as SUBLAYERS rather than by overriding drawRect:.
+//
+// Sublayers, because a dot is a rounded rectangle and Core Animation already
+// draws those: no synthesized NSView subclass, no drawRect: bridge, and the
+// dots re-tint on a theme change through the same apply the rest of the band
+// uses. The layer row is rebuilt when the COUNT changes and re-tinted when the
+// position does — a count change is rare and a position change is every page
+// turn, so the two are deliberately not the same work.
+
+fn create_page_dots(n: *core::Node) -> *u8 {
+    let v: ak::View = akx::new_flipped_view(rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 });
+    v.set_wants_layer(true);
+    return rt::retain(v.raw());
+}
+
+// How many dots are actually drawn: the count, clamped by `max_dots`, and
+// nothing at all when a single dot is hidden by `hides_single`.
+fn visible_dot_count(p: *props::PageDotsProps) -> i64 {
+    var count: i64 = { (*p).count };
+    if count < (0 as i64) { count = 0 as i64; }
+    let cap: i64 = { (*p).max_dots };
+    if cap > (0 as i64) && count > cap { count = cap; }
+    if count == (1 as i64) && { (*p).hides_single } { return 0 as i64; }
+    return count;
+}
+
+fn apply_page_dots(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::PageDotsProps = props_of(n, props::K_PAGE_DOTS) as *props::PageDotsProps;
+    if p == (0 as *props::PageDotsProps) { return; }
+    let view: ak::View = ak::View::from_raw(v);
+    view.set_wants_layer(true);
+    let host: quartz::Layer = view.layer();
+    let want: i64 = visible_dot_count(p);
+    let size: f64 = dot_size_of(p);
+    let gap: f64 = size * 0.8f64;
+
+    if (dirty & (page_dots::P_COUNT | page_dots::P_MAX_DOTS | page_dots::P_HIDES_SINGLE
+                 | page_dots::P_DOT_SIZE | page_dots::P_DOT_SHAPE)) != (0 as u64) {
+        rebuild_dots(host, want, size, { (*p).dot_shape }, gap);
+    }
+    // Re-tinting is every page turn; rebuilding is not. Kept apart on purpose.
+    if (dirty & (page_dots::P_POSITION | page_dots::P_DOT_COLOR
+                 | page_dots::P_SELECTED_DOT_COLOR | page_dots::P_COUNT)) != (0 as u64) {
+        tint_dots(host, want, { (*p).position }, { (*p).dot_color }, { (*p).selected_dot_color });
+    }
+    return;
+}
+
+fn dot_size_of(p: *props::PageDotsProps) -> f64 {
+    let s: f64 = { (*p).dot_size };
+    if s > 0.0f64 { return s; }
+    return 7.0f64;                  // the platform's own indicator metric
+}
+
+fn rebuild_dots(host: quartz::Layer, count: i64, size: f64, shape: vocab::DotShape, gap: f64) {
+    // Drop what is there. A row of dots is single digits long, so a rebuild is
+    // cheaper than reconciling it.
+    host.set_sublayers(vec::new::[quartz::Layer]());
+    let radius: f64 = match shape {
+        vocab::DotShape::Circle => size / 2.0f64,
+        vocab::DotShape::Square => 0.0f64,
+    };
+    var i: i64 = 0 as i64;
+    while i < count {
+        let dot: quartz::Layer = quartz::Layer::new();
+        dot.set_frame(rt::Rect {
+            x: (i as f64) * (size + gap),
+            y: 0.0f64,
+            w: size,
+            h: size,
+        });
+        dot.set_corner_radius(radius);
+        host.add_sublayer(dot);
+        i = i +% (1 as i64);
+    }
+    return;
+}
+
+fn tint_dots(host: quartz::Layer, count: i64, position: i64,
+             dot: vocab::Color, selected: vocab::Color) {
+    let subs: vec::Vec[quartz::Layer] = host.sublayers();
+    var i: usize = 0 as usize;
+    let n: usize = subs.count();
+    while i < n {
+        match subs.at_ptr(i) {
+            option::Option[*quartz::Layer]::Some(l) => {
+                let is_current: bool = (i as i64) == position;
+                var c: vocab::Color = dot;
+                if is_current { c = selected; }
+                // An unset colour falls to the platform's own tiers rather
+                // than to black: a page indicator nobody themed should still
+                // read as one.
+                if c.is_set() == false {
+                    if is_current { c = vocab::Color::text(); } else { c = vocab::Color::text_tertiary(); }
+                }
+                { (*l).set_background_color(paint::ns_color(c).c_g_color()) };
+            }
+            option::Option[*quartz::Layer]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
 }

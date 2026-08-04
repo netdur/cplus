@@ -8,7 +8,7 @@ happen on a Mac?" by reading it.
 A row here is a commitment, not a note. Nothing is left implicit: a verb that
 is neither implemented nor listed below is a gap, and the gap is a bug.
 
-Status: **Stage 4 item 1 complete**, item 2 at 20 kinds of 42. Items are in
+Status: **Stage 4 item 1 complete**, item 2 at 21 kinds of 42. Items are in
 progress; this file grows a row each time something is decided either way.
 
 ---
@@ -59,6 +59,22 @@ arbitrary stroke shape are CAShapeLayer territory — a second layer per
 bordered node, sized and re-pathed on every layout pass. `stroke` and
 `stroke_width` ARE honoured, and a gradient `Brush` uses its start colour
 (a gradient border needs the same mask layer).
+
+### The touch-gesture controls
+
+| Control | Why not, and what to use instead |
+|---|---|
+| `refreshable` | Pull-to-refresh does not exist on macOS. There is no scroll-past-the-top gesture to hang it on, and inventing one would fight every other scroll view on the machine. A desktop app puts a Refresh command on a menu or a toolbar button (⌘R by convention). |
+| `swipeable` / `swipe_item` | Swipe-to-reveal-actions is a touch idiom. macOS reveals per-row actions through a **context menu** (right-click) or a hover affordance. |
+
+Both are recorded rather than approximated because a half-working gesture is
+worse than an absent one: it teaches an application a shape that will not
+survive on the platform its users are actually on.
+
+This is also where the standing rule bites — **an agent has no hands**. A
+gesture-only affordance must have a click path in the UI, never a new agent
+verb. On this backend that click path is the substitute above, not a
+simulated swipe.
 
 ### Deferred, mobile-only
 
@@ -115,6 +131,38 @@ AppKit cannot. They are listed so the difference is never ambiguous.
 | The app menu, toolbar tier, titlebar content | 5 |
 | Window sizing policy, density, modal stack | 5 |
 | The agent surface | 6 |
+| `web` / `hybrid_web` | needs a WebKit binding — see below |
+| `date_picker` / `time_picker` | needs a Date bridge — see below |
+| `tabs` | needs a decision — see below |
+| The collection group | 2 (the heavy end) |
+
+### Three that are blocked on a decision, not on effort
+
+**`web` / `hybrid_web`.** WKWebView exists and does everything the contract
+asks; there is no `vendor/webkit` binding in the tree. This is a bindgen
+run, not a design question — but it is a new package, so it is named here
+rather than improvised inside this one.
+
+**`date_picker` / `time_picker`.** NSDatePicker is the right control, but
+facet's `Date` is `{year, month, day}` and `Duration` is seconds, while
+NSDatePicker takes an NSDate. The bridge needs a calendar, and which
+calendar (and whose time zone) is a decision, not a detail.
+
+**`tabs`.** NSTabView owns its own content views and its own item model,
+which does not fit a tree whose children mount as subviews. The alternative
+— a plain container whose panes switch with `switch_to`, and a tab bar the
+application builds from buttons — already works today and needs no backend
+body, but it leaves `bar_background_color` and the other four bar props
+meaning nothing. Which of the two `tabs` IS wants settling before a body is
+written for it.
+
+### The collection group
+
+`list`, `collection`, `table`, `tree`, `carousel` are the heavy end of the
+sweep: each needs recycling, a row-identity model, and a data source. The
+pre-regen backend's recycling NSTableView (`git show
+eb5b1b7:vendor/facet_appkit/src/ui.cplus`) is the reference and is worth
+quarrying rather than re-deriving.
 
 Until item 2 lands, a control kind with no body renders as an empty backing
 view **and says so on stderr**, once per kind. A silent wrong view is the

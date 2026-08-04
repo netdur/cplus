@@ -32,6 +32,8 @@ import "facet/text_area" as text_area;
 import "facet/popup" as popup;
 import "facet/bordered" as bordered;
 import "facet/split" as split;
+import "facet/page_dots" as page_dots;
+import "quartzcore/quartzcore" as quartz;
 import "stdlib/status" as status;
 import "objc/runtime" as rt;
 import "appkit/appkit" as ak;
@@ -640,5 +642,40 @@ fn a_bordered_strokes_its_layer() {
     assert view.wants_layer();
     assert view.layer().border_width() > 1.5f64;
     views::view_release(v);
+    return;
+}
+
+#[test]
+fn page_dots_are_drawn_as_sublayers_and_re_tint_without_rebuilding() {
+    // AppKit ships nothing of the kind, so they are drawn — as sublayers
+    // rather than a drawRect: override, which means no synthesized NSView
+    // subclass and a free re-tint on a theme change.
+    var n: core::Node = page_dots::page_dots(key: "dots", count: 4 as i64, position: 1 as i64);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    let host: quartz::Layer = ak::View::from_raw(v).layer();
+    assert host.sublayers().count() == (4 as usize);
+    // A position change re-tints and does NOT rebuild the row — a page turn
+    // happens constantly, a count change almost never.
+    core::set_view(p, v, views::view_release);
+    core::clear_dirty(p);
+    core::touch(p, page_dots::P_POSITION);
+    views::apply(0 as *u8, p);
+    assert host.sublayers().count() == (4 as usize);
+    return;
+}
+
+#[test]
+fn a_single_hidden_dot_draws_nothing() {
+    // hides_single is the whole point of a one-page indicator: it is noise.
+    var n: core::Node = page_dots::page_dots(key: "d", count: 1 as i64, hides_single: true);
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    assert ak::View::from_raw(v).layer().sublayers().count() == (0 as usize);
+    views::view_release(v);
+    // ...and max_dots caps a long row rather than letting it run off the edge.
+    var many: core::Node = page_dots::page_dots(key: "m", count: 50 as i64, max_dots: 6 as i64);
+    let mv: *u8 = views::create(0 as *u8, #addr_of(many));
+    assert ak::View::from_raw(mv).layer().sublayers().count() == (6 as usize);
+    views::view_release(mv);
     return;
 }
