@@ -22,6 +22,7 @@ import "facet/props" as props;
 import "facet/gestures" as gestures;
 import "facet/vocabulary" as vocab;
 import "objc/runtime" as rt;
+import "objc/synthesis" as synth;
 import "appkit/appkit" as ak;
 import "appkit/appkit_ext" as akx;
 import "./paint" as paint;
@@ -89,10 +90,68 @@ fn create(ctx: *u8, n: *core::Node) -> *u8 {
     // class and a body that reads `object_class` would see the subclass.
     input::arm(v, n);
     input::bind_item(v, n);
+    // Intrinsic size: the node measures itself through its view from here on.
+    // `context` is flex's spare slot — facet's Data rides the ATTACHMENT, so
+    // nothing else wants it.
+    if has_intrinsic_size(kind) {
+        { (*n).set_context(v) };
+        { (*n).set_measure(measure_view) };
+    }
     // A `context_menu` child describes a menu for THIS view; it has no view of
     // its own, so this is the moment it can be hung.
     controls::attach_context_menu(v, n);
     return v;
+}
+
+// ---- intrinsic size ----------------------------------------------------------
+// The gap the gesture probe found, by showing nothing: flex sizes a LEAF from
+// its measure callback, and nothing had ever installed one. So every control
+// that was not given an explicit width and height measured 0x0 — a
+// `label("Save")` in a column was laid out as a zero-height strip and simply
+// did not appear. Everything about it was correct except its size.
+//
+// The measure is the platform's own answer (`fittingSize`), which is what
+// makes a button as wide as its title and a label as tall as its text without
+// facet knowing anything about type setting.
+//
+// It goes on the kinds whose size is genuinely INTRINSIC, named one by one
+// rather than "everything with a view". A scroll view, a web view or a canvas
+// has a fitting size too, and it means something else entirely — a surface is
+// sized by its container, and asking WKWebView how big it would like to be is
+// not a question with a useful answer.
+fn has_intrinsic_size(kind: u32) -> bool {
+    return kind == props::K_LABEL || kind == props::K_BUTTON
+        || kind == props::K_TEXT_FIELD || kind == props::K_SEARCH_FIELD
+        || kind == props::K_CHECKBOX || kind == props::K_RADIO
+        || kind == props::K_TOGGLE || kind == props::K_SLIDER
+        || kind == props::K_PROGRESS || kind == props::K_SPINNER
+        || kind == props::K_STEPPER || kind == props::K_POPUP
+        || kind == props::K_DATE_PICKER || kind == props::K_TIME_PICKER
+        || kind == props::K_IMAGE || kind == props::K_ICON_BUTTON
+        || kind == props::K_PAGE_DOTS
+        || kind == symbol::K_SYMBOL || kind == chrome::K_WINDOW_BUTTONS;
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_size(recv: *u8, sel: *u8) -> rt::Size;
+
+// The measure flex calls. `ctx` is the backing view, put there by `create`.
+//
+// A bounded width is handed to the view BEFORE the question, because a
+// wrapping label's height depends on it: `preferredMaxLayoutWidth` is how
+// AppKit is told "you have this much", and without it a two-line label
+// measures as one long line and is clipped.
+fn measure_view(ctx: *u8, avail_w: f64, wm: flex::MeasureMode,
+                avail_h: f64, hm: flex::MeasureMode) -> flex::Size {
+    if ctx == (0 as *u8) { return flex::Size { width: 0.0f64, height: 0.0f64 }; }
+    if avail_w == avail_w && avail_w > 0.0f64 {
+        if synth::class_responds(synth::object_class(ctx),
+                                 rt::sel(#str_ptr("setPreferredMaxLayoutWidth:\0"))) != (0 as i8) {
+            { rt::msg_void_f64(ctx, rt::sel(#str_ptr("setPreferredMaxLayoutWidth:\0")), avail_w) };
+        }
+    }
+    let s: rt::Size = msg_size(ctx, rt::sel(#str_ptr("fittingSize\0")));
+    return flex::Size { width: s.w, height: s.h };
 }
 
 // A plain backing view. FLIPPED, always: every view this backend creates is

@@ -73,6 +73,11 @@ import "./facet_appkit" as backend;
 #[link_name = "objc_msgSend"]
 extern fn msg_size_of(recv: *u8, sel: *u8) -> rt::Size;
 
+#[link_name = "objc_msgSend"]
+extern fn msg_mouse_event(recv: *u8, sel: *u8, ty: u64, loc: rt::Point, flags: u64,
+                          ts: f64, win: i64, cx: *u8, num: i64, clicks: i64,
+                          pressure: f32) -> *u8;
+
 type Node = flex::Node;
 
 fn main() -> i32 { return 0; }
@@ -1371,12 +1376,15 @@ static IN_KEYS: i64 = 0 as i64;
 fn in_took(sender: *u8, ctx: *u8) -> bool { IN_CLICKS = IN_CLICKS + (1 as i64); return true; }
 fn in_declined(sender: *u8, ctx: *u8) -> bool { IN_CLICKS = IN_CLICKS + (1 as i64); return false; }
 fn in_key(event: *u8, ctx: *u8) -> bool { IN_KEYS = IN_KEYS + (1 as i64); return true; }
+static IN_DOUBLES: i64 = 0 as i64;
+fn in_double(sender: *u8, ctx: *u8) -> bool { IN_DOUBLES = IN_DOUBLES + (1 as i64); return true; }
 
 // A bare function name is not a value in C+ (E0312): the handler is bound to a
 // typed const first, and these are the ones the tests below hand to `gesture`.
 fn h_took() -> gestures::Handler { let f: gestures::Handler = in_took; return f; }
 fn h_declined() -> gestures::Handler { let f: gestures::Handler = in_declined; return f; }
 fn h_key() -> gestures::Handler { let f: gestures::Handler = in_key; return f; }
+fn h_double() -> gestures::Handler { let f: gestures::Handler = in_double; return f; }
 
 // A real NSEvent, built the way AppKit builds one. `keyCode` is what the
 // reader maps; the characters and flags ride along.
@@ -1899,5 +1907,168 @@ fn the_toolbar_is_read_from_the_tree_wherever_the_items_sit() {
     assert { rt::msg_u64(none, rt::sel(#str_ptr("count\0"))) } == (0 as u64);
     rt::release(none);
     rt::release(nomap);
+    return;
+}
+
+// ---- input, actually DELIVERED -----------------------------------------------
+// The gap the probe found: every test above asserts that arming HAPPENED, and
+// none asserts that an event then reaches the handler. A synthesized NSEvent
+// sent straight to the view exercises the real IMP, the real association and
+// the real decline path, with no run loop in the way.
+
+fn mouse_event(kind: u64, clicks: i64) -> *u8 {
+    return { msg_mouse_event(
+        rt::get_class(#str_ptr("NSEvent\0")),
+        rt::sel(#str_ptr("mouseEventWithType:location:modifierFlags:timestamp:windowNumber:context:eventNumber:clickCount:pressure:\0")),
+        kind, rt::Point { x: 5.0f64, y: 5.0f64 }, 0 as u64, 0.0f64,
+        0 as i64, 0 as *u8, 0 as i64, clicks, 0.0f32) };
+}
+
+#[test]
+fn a_click_reaches_the_handler() {
+    backend::install();
+    IN_CLICKS = 0 as i64;
+    var n: core::Node = box_view::box(color: vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64),
+                                      key: "hit").gesture(on_click: h_took());
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v != (0 as *u8);
+    // NSEventTypeLeftMouseDown = 1, LeftMouseUp = 2. A click is reported on the
+    // way UP, which is the same moment NSButton considers itself clicked.
+    { rt::msg_void_id(v, rt::sel(#str_ptr("mouseDown:\0")), mouse_event(1 as u64, 1 as i64)) };
+    assert IN_CLICKS == (0 as i64);
+    { rt::msg_void_id(v, rt::sel(#str_ptr("mouseUp:\0")), mouse_event(2 as u64, 1 as i64)) };
+    assert IN_CLICKS == (1 as i64);
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn a_double_click_is_not_two_singles() {
+    backend::install();
+    IN_CLICKS = 0 as i64;
+    IN_DOUBLES = 0 as i64;
+    var n: core::Node = box_view::box(color: vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64),
+                                      key: "dbl")
+        .gesture(on_click: h_took(), on_double_click: h_double());
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    { rt::msg_void_id(v, rt::sel(#str_ptr("mouseUp:\0")), mouse_event(2 as u64, 2 as i64)) };
+    assert IN_DOUBLES == (1 as i64);
+    assert IN_CLICKS == (0 as i64);
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn a_right_click_reaches_the_handler() {
+    backend::install();
+    IN_CLICKS = 0 as i64;
+    var n: core::Node = box_view::box(color: vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64),
+                                      key: "rc").gesture(on_right_click: h_took());
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    // NSEventTypeRightMouseDown = 3.
+    { rt::msg_void_id(v, rt::sel(#str_ptr("rightMouseDown:\0")), mouse_event(3 as u64, 1 as i64)) };
+    assert IN_CLICKS == (1 as i64);
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn a_key_reaches_the_handler_through_the_band() {
+    backend::install();
+    IN_KEYS = 0 as i64;
+    var n: core::Node = core::column(core::Builder::new(), key: "k").gesture(on_key: h_key());
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    { rt::msg_void_id(v, rt::sel(#str_ptr("keyDown:\0")),
+                      fake_key_event(53 as u16, "", 0 as u64)) };
+    assert IN_KEYS == (1 as i64);
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn a_live_write_after_mount_reaches_the_native_control() {
+    backend::install();
+    // The end-to-end nothing had asserted: a handler writes through `find`,
+    // and the write has to REACH THE SCREEN. Both probes only ever proved the
+    // first frame — the canvas drew once at open, the gesture band fired its
+    // handlers — and a handler whose effect never lands looks exactly like a
+    // handler that never ran.
+    var b: core::Builder = core::Builder::new();
+    b.add(label::label("before", key: "out"));
+    var root: core::Node = core::column(b, key: "root");
+    let p: *core::Node = #addr_of(root);
+    assert mount::mount(p);
+
+    match label::find("out", within: p) {
+        option::Option[label::Label]::Some(l) => {
+            let _x: label::Label = l.set_text("after");
+        }
+        option::Option[label::Label]::None => { assert false; }
+    }
+    // The write raised a dirty bit; the backend coalesces into ONE sync per
+    // run-loop turn, so the tick is what carries it across.
+    scheduler::tick();
+
+    match core::find_in(p, "out") {
+        option::Option[*core::Node]::Some(n) => {
+            let v: *u8 = core::view_of(n);
+            assert v != (0 as *u8);
+            let shown: text::Text = ak::TextField::from_raw(v).as_control().string_value();
+            assert shown.view() == "after";
+        }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    mount::unmount(p);
+    return;
+}
+
+#[test]
+fn a_label_measures_itself_instead_of_collapsing() {
+    backend::install();
+    // THE BUG THE PROBE FOUND, by showing nothing. flex sizes a leaf from its
+    // measure callback and nothing had installed one, so every control without
+    // an explicit width and height laid out 0x0 — present, correct, invisible.
+    var b: core::Builder = core::Builder::new();
+    b.add(label::label("a label with real words in it", key: "l"));
+    b.add(button::button("Save", key: "btn"));
+    var root: core::Node = core::column(b, key: "root");
+    let p: *core::Node = #addr_of(root);
+    assert mount::mount(p);
+    { (*p).calculate_layout(width: 400.0f64, height: 300.0f64) };
+
+    match core::find_in(p, "l") {
+        option::Option[*core::Node]::Some(n) => {
+            let f: flex::Frame = { (*n).frame() };
+            assert f.height > 0.0f64;
+            assert f.width > 0.0f64;
+        }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    // A button sizes to its TITLE, which is the whole point of asking the
+    // platform rather than guessing.
+    match core::find_in(p, "btn") {
+        option::Option[*core::Node]::Some(n) => {
+            assert { (*n).frame().width } > 20.0f64;
+            assert { (*n).frame().height } > 0.0f64;
+        }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    mount::unmount(p);
+    return;
+}
+
+#[test]
+fn a_surface_is_sized_by_its_container_not_by_asking_it() {
+    // The other half of the rule: a scroll view, a web view or a canvas has a
+    // fitting size too and it means something else. Asking WKWebView how big
+    // it would like to be is not a question with a useful answer.
+    assert views::has_intrinsic_size(props::K_LABEL);
+    assert views::has_intrinsic_size(props::K_BUTTON);
+    assert views::has_intrinsic_size(props::K_SCROLL) == false;
+    assert views::has_intrinsic_size(props::K_WEB) == false;
+    assert views::has_intrinsic_size(props::K_CANVAS) == false;
+    assert views::has_intrinsic_size(props::K_LIST) == false;
+    assert views::has_intrinsic_size(core::K_NODE) == false;
     return;
 }
