@@ -8,7 +8,7 @@ happen on a Mac?" by reading it.
 A row here is a commitment, not a note. Nothing is left implicit: a verb that
 is neither implemented nor listed below is a gap, and the gap is a bug.
 
-Status: **Stage 4 item 1 complete** (the window shell). Items 2–7 are in
+Status: **Stage 4 item 1 complete**, item 2 begun (five kinds of 42). Items are in
 progress; this file grows a row each time something is decided either way.
 
 ---

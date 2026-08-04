@@ -16,9 +16,15 @@ import "facet/screen" as screen;
 import "facet/theme" as theme;
 import "facet/vocabulary" as vocab;
 import "facet/application" as app;
+import "facet/label" as label;
+import "facet/button" as button;
+import "facet/text_field" as text_field;
+import "facet/scroll" as scroll;
 import "objc/runtime" as rt;
 import "appkit/appkit" as ak;
 
+import "./paint" as paint;
+import "./controls" as controls;
 import "./views" as views;
 import "./geometry" as geometry;
 import "./scheduler" as scheduler;
@@ -116,16 +122,136 @@ fn theme_roles_resolve_through_the_apps_palette_then_the_fallback() {
     app::reset_default_for_tests();
     // An UNSET role falls through to its platform token, not to black.
     theme::set_theme(theme::Theme::new());
-    let unset: ak::Color = views::ns_color(vocab::Color::primary());
+    let unset: ak::Color = paint::ns_color(vocab::Color::primary());
     assert unset.raw() == ak::Color::control_accent_color().raw();
     // A role the app DID set resolves to the app's literal.
     theme::set_theme(theme::Theme::new(primary: vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64, 1.0f64)));
-    let set: ak::Color = views::ns_color(vocab::Color::primary());
+    let set: ak::Color = paint::ns_color(vocab::Color::primary());
     assert set.red_component() > 0.9f64;
     // A Tier-1 token maps straight onto the platform's adaptive colour.
-    assert views::ns_color(vocab::Color::text()).raw() == ak::Color::label_color().raw();
+    assert paint::ns_color(vocab::Color::text()).raw() == ak::Color::label_color().raw();
     theme::set_theme(theme::Theme::new());
     app::reset_default_for_tests();
+    return;
+}
+
+// ---- the per-kind bodies -----------------------------------------------------
+// `create` and `apply` share one body per kind, so these assert through
+// `create` (all bits) and then through `apply` (one bit) — the pairing that
+// stops a control being right on mount and wrong on its first update.
+
+#[test]
+fn a_label_carries_its_text_through_create_and_apply() {
+    var n: core::Node = label::label("Save", key: "title");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v != (0 as *u8);
+    let f: ak::TextField = ak::TextField::from_raw(v);
+    assert f.as_control().string_value().view() == "Save";
+    // A label is NOT editable — `labelWithString:` posture, not a text field.
+    assert f.is_editable() == false;
+    // The live path: the setter writes one field and sets one bit, and apply
+    // reads exactly that.
+    core::set_view(p, v, views::view_release);
+    core::clear_dirty(p);
+    match label::find("title", within: p) {
+        option::Option[label::Label]::Some(l) => { let _l: label::Label = l.set_text("Saved"); }
+        option::Option[label::Label]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    assert f.as_control().string_value().view() == "Saved";
+    return;
+}
+
+#[test]
+fn a_labels_transform_is_display_only() {
+    // Uppercase is applied on the way to the VIEW; `text()` still reads back
+    // what the application set, because a display transform is not a write.
+    var n: core::Node = label::label("save", key: "t", text_transform: vocab::TextTransform::Uppercase);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert ak::TextField::from_raw(v).as_control().string_value().view() == "SAVE";
+    match label::find("t", within: p) {
+        option::Option[label::Label]::Some(l) => { assert l.text() == "save"; }
+        option::Option[label::Label]::None => { assert false; }
+    }
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn a_button_carries_its_title_and_its_enabled_state() {
+    var n: core::Node = button::button("Save", key: "save");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v != (0 as *u8);
+    let b: ak::Button = ak::Button::from_raw(v);
+    assert b.title().view() == "Save";
+    assert b.as_control().is_enabled();
+    // `enabled` is the SHARED band, but NSControl's enabled is not the view's,
+    // so the kind body has to forward it.
+    core::set_view(p, v, views::view_release);
+    core::clear_dirty(p);
+    core::set_enabled(p, false);
+    views::apply(0 as *u8, p);
+    assert b.as_control().is_enabled() == false;
+    return;
+}
+
+#[test]
+fn a_text_field_is_editable_and_does_not_rewrite_what_it_already_says() {
+    var n: core::Node = text_field::text_field(key: "name", text: "ada", placeholder: "who?");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v != (0 as *u8);
+    let f: ak::TextField = ak::TextField::from_raw(v);
+    assert f.is_editable();
+    assert f.as_control().string_value().view() == "ada";
+    assert f.placeholder_string().view() == "who?";
+    // The guard that matters while someone is typing: an apply whose value is
+    // already on screen must not write it again, because writing moves the
+    // insertion point.
+    core::set_view(p, v, views::view_release);
+    core::clear_dirty(p);
+    core::touch(p, text_field::P_TEXT);
+    views::apply(0 as *u8, p);
+    assert f.as_control().string_value().view() == "ada";
+    return;
+}
+
+#[test]
+fn a_scroll_hosts_its_children_in_the_flipped_document_view() {
+    // The one kind whose host is not its own view: children belong in the
+    // document view, and that translation happens inside the backend where
+    // facet cannot see it.
+    var n: core::Node = scroll::scroll(key: "list");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v != (0 as *u8);
+    let host: *u8 = views::host_for(v);
+    assert host != v;
+    assert ak::View::from_raw(host).is_flipped();
+    // A child inserted through the Renderer lands in the document view, not
+    // as a sibling of the scrollers.
+    var kid: core::Node = empty_keyed_column();
+    let child: *u8 = views::create(0 as *u8, #addr_of(kid));
+    views::insert(0 as *u8, v, child, 0 as usize);
+    assert ak::View::from_raw(host).subviews().count() == (1 as usize);
+    views::view_release(child);
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn an_unimplemented_kind_still_gets_a_view_and_says_so() {
+    // Loudly, once per kind, on stderr — a control that renders as a silent
+    // blank rectangle is the failure INTENT is written against. It still gets
+    // a backing view so layout and the tree stay honest.
+    var n: core::Node = core::node_with("odd", props::K_SLIDER, 0 as *u8, core::no_release);
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    assert v != (0 as *u8);
+    assert ak::View::from_raw(v).is_flipped();
+    views::view_release(v);
     return;
 }
 

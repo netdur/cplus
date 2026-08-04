@@ -1,0 +1,299 @@
+// facet_appkit controls — the per-kind bodies.
+//
+// Stage 2's rule: facet never grows a verb table. A setter writes one field
+// and sets one bit; the per-kind work lives here, dispatching on `Data.kind`,
+// and facet never sees it. So this is where the 42 controls become AppKit.
+//
+// Each kind is a pair:
+//   create_<kind>  build the view and configure it WHOLE (create passes
+//                  all-ones as the dirty word, so one body serves both).
+//   apply_<kind>   re-read only what the bits name.
+// They are the same function. A kind whose create and apply disagree is how a
+// control ends up correct on mount and wrong on the first update, so there is
+// one body and `dirty` is the only difference.
+//
+// The dirty-bit constants belong to the generated control modules, which is
+// why each is imported: `label::P_TEXT` is not the same bit as
+// `text_field::P_TEXT`, and the MAP is the authority for both.
+//
+// STATUS: label, button, text_field, image, scroll and the container backing.
+// The remaining kinds are the sweep, and until one lands `views::create` says
+// so on stderr rather than rendering a silent blank rectangle.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "flex_layout/flex_layout" as flex;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/vocabulary" as vocab;
+import "facet/label" as label;
+import "facet/button" as button;
+import "facet/text_field" as text_field;
+import "facet/image" as image;
+import "facet/scroll" as scroll;
+import "objc/runtime" as rt;
+import "appkit/appkit" as ak;
+import "appkit/appkit_ext" as akx;
+import "./paint" as paint;
+
+// ---- reaching a node's props -------------------------------------------------
+// The generated cursors' `_props()` is module-private, so a backend reads the
+// pointer off Data itself — checking `kind` first, exactly as those cursors do.
+// A null answer means the node is not what the dispatch thought it was, and
+// every body treats that as "do nothing" rather than trusting the cast.
+
+fn props_of(n: *core::Node, kind: u32) -> *u8 {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return 0 as *u8; }
+    if { (*d).kind } != kind { return 0 as *u8; }
+    return { (*d).props };
+}
+
+// ---- label -------------------------------------------------------------------
+// NSTextField in its label posture: not editable, not bezeled, no background.
+// AppKit has no separate label class, and `labelWithString:` is the factory
+// that sets that posture in one call.
+
+fn create_label(n: *core::Node) -> *u8 {
+    let f: ak::TextField = ak::TextField::label_with_string("");
+    return rt::retain(f.as_view().raw());
+}
+
+fn apply_label(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::LabelProps = props_of(n, props::K_LABEL) as *props::LabelProps;
+    if p == (0 as *props::LabelProps) { return; }
+    let f: ak::TextField = ak::TextField::from_raw(v);
+    // The text and the transform that displays it are one write: a transform
+    // change with unchanged text still has to re-render the string.
+    if (dirty & (label::P_TEXT | label::P_TEXT_TRANSFORM)) != (0 as u64) {
+        f.as_control().set_string_value(paint::transformed({ (*p).text.view() }, { (*p).text_transform }).view());
+    }
+    if (dirty & label::P_TEXT_COLOR) != (0 as u64) {
+        let c: vocab::Color = { (*p).text_color };
+        if c.is_set() { f.set_text_color(paint::ns_color(c)); }
+    }
+    if (dirty & (label::P_FONT_SIZE | label::P_FONT_WEIGHT | label::P_FONT_FAMILY)) != (0 as u64) {
+        match paint::ns_font({ (*p).font_size }, { (*p).font_weight }, { (*p).font_family.view() }) {
+            option::Option[ak::Font]::Some(font) => { f.as_control().set_font(font); }
+            option::Option[ak::Font]::None => { }
+        }
+    }
+    if (dirty & label::P_TEXT_ALIGN) != (0 as u64) {
+        f.as_control().set_alignment(paint::ns_text_align({ (*p).text_align }));
+    }
+    if (dirty & (label::P_MAX_LINES | label::P_LINE_BREAK)) != (0 as u64) {
+        let lines: i64 = { (*p).max_lines };
+        // 0 = unbounded, which is NSTextField's own spelling too.
+        if lines > (0 as i64) { f.set_maximum_number_of_lines(lines); }
+        match f.as_control().cell() {
+            option::Option[ak::Cell]::Some(c) => {
+                c.set_uses_single_line_mode(lines == (1 as i64));
+                c.set_line_break_mode(paint::ns_line_break({ (*p).line_break }));
+            }
+            option::Option[ak::Cell]::None => { }
+        }
+    }
+    return;
+}
+
+// ---- button ------------------------------------------------------------------
+
+fn create_button(n: *core::Node) -> *u8 {
+    let b: ak::Button = ak::Button::from_raw(rt::alloc_init(#str_ptr("NSButton\0")));
+    b.set_button_type(ak::ButtonType::MomentaryPushIn);
+    b.set_bezel_style(ak::BezelStyle::Rounded);
+    return rt::retain(b.as_view().raw());
+}
+
+fn apply_button(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::ButtonProps = props_of(n, props::K_BUTTON) as *props::ButtonProps;
+    if p == (0 as *props::ButtonProps) { return; }
+    let b: ak::Button = ak::Button::from_raw(v);
+    if (dirty & (button::P_TITLE | button::P_TEXT_TRANSFORM)) != (0 as u64) {
+        b.set_title(paint::transformed({ (*p).title.view() }, { (*p).text_transform }).view());
+    }
+    if (dirty & (button::P_FONT_SIZE | button::P_FONT_WEIGHT | button::P_FONT_FAMILY)) != (0 as u64) {
+        match paint::ns_font({ (*p).font_size }, { (*p).font_weight }, { (*p).font_family.view() }) {
+            option::Option[ak::Font]::Some(font) => { b.as_control().set_font(font); }
+            option::Option[ak::Font]::None => { }
+        }
+    }
+    // A button's action fires from the keyboard when focused and from
+    // VoiceOver too — which is exactly why it is the control's own verb and
+    // not a gesture (gestures see the pointer and nothing else).
+    if (dirty & props::C_HANDLERS) != (0 as u64) || dirty == paint::all_bits() {
+        akx::set_control_action_ctx(b.as_control(), { (*p).on_click }, { (*p).on_click_ctx });
+    }
+    // The shared band owns enabled; a control reads it through its own setter
+    // because NSControl's enabled is not the view's.
+    if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
+        b.as_control().set_enabled(core::is_enabled(n));
+    }
+    return;
+}
+
+// ---- text_field --------------------------------------------------------------
+// The editable NSTextField. `is_secure` picks NSSecureTextField instead, which
+// is a different class — so it is read at CREATE and a live flip is not
+// honoured (an application that needs both builds two fields and shows one).
+
+fn create_text_field(n: *core::Node) -> *u8 {
+    let p: *props::TextFieldProps = props_of(n, props::K_TEXT_FIELD) as *props::TextFieldProps;
+    var secure: bool = false;
+    if p != (0 as *props::TextFieldProps) { secure = { (*p).is_secure }; }
+    var f: ak::TextField = ak::TextField::from_raw(rt::alloc_init(#str_ptr("NSTextField\0")));
+    if secure { f = ak::TextField::from_raw(rt::alloc_init(#str_ptr("NSSecureTextField\0"))); }
+    f.set_editable(true);
+    f.set_selectable(true);
+    f.set_bezeled(true);
+    return rt::retain(f.as_view().raw());
+}
+
+fn apply_text_field(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::TextFieldProps = props_of(n, props::K_TEXT_FIELD) as *props::TextFieldProps;
+    if p == (0 as *props::TextFieldProps) { return; }
+    let f: ak::TextField = ak::TextField::from_raw(v);
+    let iv: *props::InputViewProps = { #addr_of((*p).input_view) };
+    // Writing the string value moves the insertion point, so a field the user
+    // is typing in must not be re-written with what it already says.
+    if (dirty & text_field::P_TEXT) != (0 as u64) {
+        let want: str = { (*iv).text.view() };
+        if f.as_control().string_value().view() != want { f.as_control().set_string_value(want); }
+    }
+    if (dirty & text_field::P_PLACEHOLDER) != (0 as u64) {
+        f.set_placeholder_string({ (*iv).placeholder.view() });
+    }
+    if (dirty & text_field::P_TEXT_COLOR) != (0 as u64) {
+        let c: vocab::Color = { (*iv).text_color };
+        if c.is_set() { f.set_text_color(paint::ns_color(c)); }
+    }
+    if (dirty & text_field::P_IS_READ_ONLY) != (0 as u64) {
+        f.set_editable({ (*iv).is_read_only } == false);
+    }
+    if (dirty & (text_field::P_FONT_SIZE | text_field::P_FONT_WEIGHT | text_field::P_FONT_FAMILY)) != (0 as u64) {
+        match paint::ns_font({ (*iv).font_size }, { (*iv).font_weight }, { (*iv).font_family.view() }) {
+            option::Option[ak::Font]::Some(font) => { f.as_control().set_font(font); }
+            option::Option[ak::Font]::None => { }
+        }
+    }
+    if (dirty & text_field::P_TEXT_ALIGN) != (0 as u64) {
+        f.as_control().set_alignment(paint::ns_text_align({ (*p).text_align }));
+    }
+    if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
+        f.as_control().set_enabled(core::is_enabled(n));
+    }
+    return;
+}
+
+// ---- image -------------------------------------------------------------------
+
+fn create_image(n: *core::Node) -> *u8 {
+    let iv: ak::ImageView = ak::ImageView::from_raw(rt::alloc_init(#str_ptr("NSImageView\0")));
+    return rt::retain(iv.as_view().raw());
+}
+
+fn apply_image(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::ImageProps = props_of(n, props::K_IMAGE) as *props::ImageProps;
+    if p == (0 as *props::ImageProps) { return; }
+    let iv: ak::ImageView = ak::ImageView::from_raw(v);
+    if (dirty & image::P_SOURCE) != (0 as u64) {
+        let src: str = { (*p).source.view() };
+        if src == "" {
+            iv.set_image(ak::Image::from_raw(0 as *u8));
+        } else {
+            // A named system symbol first, then a file path: an application
+            // says `source: "gear"` far more often than it ships a bitmap, and
+            // a path that is not a file would silently show nothing.
+            match ak::Image::image_with_system_symbol_name(src, "") {
+                option::Option[ak::Image]::Some(img) => { iv.set_image(img); }
+                option::Option[ak::Image]::None => {
+                    // Then a bundle-named image, then a path on disk. A name
+                    // that resolves to none of the three leaves the view empty
+                    // rather than substituting something the app did not ask
+                    // for.
+                    match ak::Image::image_named(src) {
+                        option::Option[ak::Image]::Some(named) => { iv.set_image(named); }
+                        option::Option[ak::Image]::None => {
+                            iv.set_image(ak::Image::new_with_contents_of_file(src));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if (dirty & image::P_FIT) != (0 as u64) {
+        iv.set_image_scaling(ns_image_scaling({ (*p).fit }));
+    }
+    return;
+}
+
+// facet's ImageFit is MAUI's Aspect. AppKit's scaling enum is the nearest
+// thing; `Center` is the one that means "do not scale at all".
+fn ns_image_scaling(f: vocab::ImageFit) -> ak::ImageScaling {
+    return match f {
+        vocab::ImageFit::AspectFill => ak::ImageScaling::NSImageScaleProportionallyUpOrDown,
+        vocab::ImageFit::AspectFit => ak::ImageScaling::NSImageScaleProportionallyDown,
+        vocab::ImageFit::Center => ak::ImageScaling::NSImageScaleNone,
+        vocab::ImageFit::Fill => ak::ImageScaling::NSImageScaleAxesIndependently,
+    };
+}
+
+// ---- scroll ------------------------------------------------------------------
+// NSScrollView holds its content in a FLIPPED document view, so the tree below
+// it keeps the same top-left coordinate space as everywhere else. facet's
+// children are inserted into that document view, not into the scroll view —
+// `document_host` is what `views::insert` asks for.
+
+fn create_scroll(n: *core::Node) -> *u8 {
+    let s: ak::ScrollView = ak::ScrollView::from_raw(rt::alloc_init(#str_ptr("NSScrollView\0")));
+    let doc: ak::View = akx::new_flipped_view(rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 });
+    s.set_document_view(doc);
+    s.set_draws_background(false);
+    return rt::retain(s.as_view().raw());
+}
+
+fn apply_scroll(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::ScrollProps = props_of(n, props::K_SCROLL) as *props::ScrollProps;
+    if p == (0 as *props::ScrollProps) { return; }
+    let s: ak::ScrollView = ak::ScrollView::from_raw(v);
+    if (dirty & (scroll::P_AXIS | scroll::P_VERTICAL_SCROLL_BARS | scroll::P_HORIZONTAL_SCROLL_BARS)) != (0 as u64) {
+        let axis: vocab::ScrollAxis = { (*p).axis };
+        let scrolls_v: bool = match axis {
+            vocab::ScrollAxis::Both => true,
+            vocab::ScrollAxis::Vertical => true,
+            vocab::ScrollAxis::Horizontal => false,
+            vocab::ScrollAxis::Neither => false,
+        };
+        let scrolls_h: bool = match axis {
+            vocab::ScrollAxis::Both => true,
+            vocab::ScrollAxis::Horizontal => true,
+            vocab::ScrollAxis::Vertical => false,
+            vocab::ScrollAxis::Neither => false,
+        };
+        s.set_has_vertical_scroller(scrolls_v && shows_bars({ (*p).vertical_scroll_bars }));
+        s.set_has_horizontal_scroller(scrolls_h && shows_bars({ (*p).horizontal_scroll_bars }));
+    }
+    return;
+}
+
+// `Default` is the platform's own answer, which on macOS is the overlay
+// scroller that appears while scrolling — so the scroller exists either way,
+// and only `Never` takes it away.
+fn shows_bars(b: vocab::ScrollBars) -> bool {
+    return match b {
+        vocab::ScrollBars::Always => true,
+        vocab::ScrollBars::Default => true,
+        vocab::ScrollBars::Never => false,
+    };
+}
+
+// A scroll's children belong in its document view, not in the scroll view.
+// Every other kind hosts its own children directly, so this is the one place
+// the host and the view differ.
+fn document_host(v: *u8) -> *u8 {
+    match ak::ScrollView::from_raw(v).document_view() {
+        option::Option[ak::View]::Some(d) => { return d.raw(); }
+        option::Option[ak::View]::None => { return v; }
+    }
+    return v;
+}

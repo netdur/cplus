@@ -1,0 +1,279 @@
+// facet_appkit paint — colour, font, and the shared band.
+//
+// Everything here is kind-INDEPENDENT: what any view gets regardless of which
+// of the 42 controls it backs. The per-kind bodies (controls.cplus) lean on it
+// so a font or a colour is resolved one way in this package, not 42.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "flex_layout/flex_layout" as flex;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/vocabulary" as vocab;
+import "facet/theme" as theme;
+import "objc/runtime" as rt;
+import "appkit/appkit" as ak;
+import "quartzcore/quartzcore" as quartz;
+
+// ---- colour resolution -------------------------------------------------------
+// Ported from the pre-regen backend; the Color token model is unchanged, so
+// only the module qualification moved.
+//
+// Resolution order: a THEME role (Tier 2, tokens 100..117) first substitutes
+// its stored slot from the installed theme — or its platform fallback when the
+// app left the role unset. The result is then a Tier-1 platform token (mapped
+// to the platform's adaptive NSColor), an `adaptive` light/dark pair (the side
+// picked by the CURRENT effective appearance), or an explicit sRGB literal.
+// `ink(a)` carries its alpha on the role colour and applies it to whatever the
+// role resolved to.
+fn ns_color(c: vocab::Color) -> ak::Color {
+    var cc: vocab::Color = c;
+    // ink(a): remember the mark's alpha before the role substitutes away.
+    var mark_alpha: f64 = -1.0f64;
+    if { cc.token } == (104 as u32) && { c.a } < 1.0f64 { mark_alpha = { c.a }; }
+    if cc.is_theme_role() {
+        var slot: vocab::Color = theme::theme_slot({ cc.token });
+        if slot.is_set() == false { slot = theme::theme_fallback({ cc.token }); }
+        cc = slot;
+    }
+    var out: ak::Color = ak::Color::label_color();
+    let t: u32 = { cc.token };
+    if t == (254 as u32) {
+        // Adaptive pair: the side for the current appearance.
+        if theme::is_dark() {
+            out = ak::Color::color_with_red({ cc.r2 }, { cc.g2 }, { cc.b2 }, { cc.a2 });
+        } else {
+            out = ak::Color::color_with_red({ cc.r }, { cc.g }, { cc.b }, { cc.a });
+        }
+    }
+    else if t == (1 as u32) { out = ak::Color::label_color(); }
+    else if t == (2 as u32) { out = ak::Color::secondary_label_color(); }
+    else if t == (3 as u32) { out = ak::Color::control_accent_color(); }
+    else if t == (4 as u32) { out = ak::Color::system_red_color(); }
+    else if t == (5 as u32) { out = ak::Color::system_green_color(); }
+    else if t == (6 as u32) { out = ak::Color::system_blue_color(); }
+    else if t == (7 as u32) { out = ak::Color::system_orange_color(); }
+    else if t == (8 as u32) { out = ak::Color::system_gray_color(); }
+    else if t == (9 as u32) { out = ak::Color::tertiary_label_color(); }
+    else if t == (10 as u32) { out = ak::Color::separator_color(); }
+    else if t == (11 as u32) { out = ak::Color::window_background_color(); }
+    else if t == (12 as u32) { out = ak::Color::under_page_background_color(); }
+    else if t == (13 as u32) { out = ak::Color::control_background_color(); }
+    else if t == (14 as u32) { out = ak::Color::system_fill_color(); }
+    else if t == (15 as u32) { out = ak::Color::placeholder_text_color(); }
+    else if t == (16 as u32) { out = ak::Color::link_color(); }
+    else if t == (17 as u32) { out = ak::Color::selected_content_background_color(); }
+    else if t == (18 as u32) { out = ak::Color::selected_text_background_color(); }
+    else if t == (19 as u32) { out = ak::Color::secondary_system_fill_color(); }
+    else if t == (20 as u32) { out = ak::Color::system_yellow_color(); }
+    else if t == (21 as u32) { out = ak::Color::system_purple_color(); }
+    else if t == (22 as u32) { out = ak::Color::system_pink_color(); }
+    else if t == (23 as u32) { out = ak::Color::system_teal_color(); }
+    else if t == (24 as u32) { out = ak::Color::system_indigo_color(); }
+    else { out = ak::Color::color_with_red({ cc.r }, { cc.g }, { cc.b }, { cc.a }); }
+    if mark_alpha >= 0.0f64 { out = out.color_with_alpha_component(mark_alpha); }
+    return out;
+}
+
+// ---- fonts -------------------------------------------------------------------
+// facet names a WEIGHT, not a face. AppKit's NSFontWeight scale runs -0.8
+// (ultra light) to 0.8 (black), with 0.0 regular — so the mapping is a table,
+// and `Default` means "whatever the control already had", which is why it is
+// answered by the caller rather than substituted here.
+
+fn ns_weight(w: vocab::FontWeight) -> f64 {
+    return match w {
+        vocab::FontWeight::Default => 0.0f64,
+        vocab::FontWeight::UltraLight => -0.8f64,
+        vocab::FontWeight::Thin => -0.6f64,
+        vocab::FontWeight::Light => -0.4f64,
+        vocab::FontWeight::Regular => 0.0f64,
+        vocab::FontWeight::Medium => 0.23f64,
+        vocab::FontWeight::Semibold => 0.3f64,
+        vocab::FontWeight::Bold => 0.4f64,
+        vocab::FontWeight::Heavy => 0.56f64,
+        vocab::FontWeight::Black => 0.62f64,
+    };
+}
+
+fn is_default_weight(w: vocab::FontWeight) -> bool {
+    return match w {
+        vocab::FontWeight::Default => true,
+        vocab::FontWeight::UltraLight => false,
+        vocab::FontWeight::Thin => false,
+        vocab::FontWeight::Light => false,
+        vocab::FontWeight::Regular => false,
+        vocab::FontWeight::Medium => false,
+        vocab::FontWeight::Semibold => false,
+        vocab::FontWeight::Bold => false,
+        vocab::FontWeight::Heavy => false,
+        vocab::FontWeight::Black => false,
+    };
+}
+
+// The font a control should use, or None when the description asked for
+// nothing and the control's own default should stand. `family` empty means the
+// system face, which is what an application means by not naming one.
+fn ns_font(size: f64, weight: vocab::FontWeight, family: str) -> option::Option[ak::Font] {
+    let named_size: bool = size > 0.0f64;
+    let named_weight: bool = !is_default_weight(weight);
+    let named_family: bool = family != "";
+    if !named_size && !named_weight && !named_family { return option::Option[ak::Font]::None; }
+    var pt: f64 = size;
+    if !named_size { pt = ak::Font::system_font_size(); }
+    if named_family {
+        match ak::Font::font_with_name(family, pt) {
+            option::Option[ak::Font]::Some(f) => { return option::some(f); }
+            // A face the machine does not have falls back to the system font
+            // at the asked-for size rather than to nothing: the app named a
+            // size too, and losing it would be the more visible wrong.
+            option::Option[ak::Font]::None => { }
+        }
+    }
+    if named_weight {
+        return option::some(ak::Font::system_font_of_size_weight(pt, ns_weight(weight)));
+    }
+    return option::some(ak::Font::system_font_of_size(pt));
+}
+
+// ---- text alignment ----------------------------------------------------------
+// facet's Start/End are WRITING-ORDER edges (the flow direction decides which
+// side that is), which is exactly NSTextAlignment's natural/right pair.
+
+fn ns_text_align(a: vocab::TextAlign) -> ak::TextAlignment {
+    return match a {
+        vocab::TextAlign::Center => ak::TextAlignment::Center,
+        vocab::TextAlign::End => ak::TextAlignment::Right,
+        vocab::TextAlign::Justify => ak::TextAlignment::Justified,
+        vocab::TextAlign::Start => ak::TextAlignment::Natural,
+    };
+}
+
+// ---- line breaking -----------------------------------------------------------
+
+fn ns_line_break(b: vocab::LineBreak) -> ak::LineBreakMode {
+    return match b {
+        vocab::LineBreak::CharacterWrap => ak::LineBreakMode::NSLineBreakByCharWrapping,
+        vocab::LineBreak::HeadTruncation => ak::LineBreakMode::NSLineBreakByTruncatingHead,
+        vocab::LineBreak::MiddleTruncation => ak::LineBreakMode::NSLineBreakByTruncatingMiddle,
+        vocab::LineBreak::NoWrap => ak::LineBreakMode::NSLineBreakByClipping,
+        vocab::LineBreak::TailTruncation => ak::LineBreakMode::NSLineBreakByTruncatingTail,
+        vocab::LineBreak::WordWrap => ak::LineBreakMode::NSLineBreakByWordWrapping,
+    };
+}
+
+// ---- text transform ----------------------------------------------------------
+// A DISPLAY transform, so it is applied to the string on the way to the view
+// and never written back into the node — `text()` must still read what the
+// application set.
+
+fn transformed(s: str, t: vocab::TextTransform) -> text::Text {
+    return match t {
+        vocab::TextTransform::Uppercase => text::from_str(s).uppercased(),
+        vocab::TextTransform::Lowercase => text::from_str(s).lowercased(),
+        vocab::TextTransform::Default => text::from_str(s),
+        vocab::TextTransform::None => text::from_str(s),
+    };
+}
+
+// ---- the shared band ---------------------------------------------------------
+// One place, every kind, on the VIEW. `dirty` names what to re-read; `create`
+// passes all-ones so a fresh view is configured whole.
+
+fn all_bits() -> u64 { return 18446744073709551615u64; }
+
+fn apply_common(v: *u8, n: *core::Node, dirty: u64) {
+    let view: ak::View = ak::View::from_raw(v);
+    // is_visible → hidden. NOT display:none — that is flex's, and it takes the
+    // node out of layout; this hides a node that still occupies its space.
+    if (dirty & props::C_IS_VISIBLE) != (0 as u64) {
+        view.set_hidden(core::is_visible(n) == false);
+    }
+    if (dirty & props::C_OPACITY) != (0 as u64) {
+        view.set_alpha_value(core::opacity(n));
+    }
+    if (dirty & props::C_BACKGROUND_COLOR) != (0 as u64) {
+        apply_background(view, core::background_color(n));
+    }
+    if (dirty & props::C_TRANSFORM) != (0 as u64) {
+        apply_transform(view, n);
+    }
+    // Focus and blur are COMMANDS, not state: act on the bit, and the sync
+    // walk clears it.
+    if (dirty & props::C_FOCUS) != (0 as u64) {
+        match view.window() {
+            option::Option[ak::Window]::Some(w) => { let _ok: bool = w.make_first_responder(view.as_responder()); }
+            option::Option[ak::Window]::None => { }
+        }
+    }
+    if (dirty & props::C_BLUR) != (0 as u64) {
+        match view.window() {
+            // Resign to the WINDOW, which is what "nothing is focused" is on
+            // AppKit — there is no null first responder, and passing nil makes
+            // the window refuse the change rather than clear it.
+            option::Option[ak::Window]::Some(w) => { let _ok: bool = w.make_first_responder(w.as_responder()); }
+            option::Option[ak::Window]::None => { }
+        }
+    }
+    return;
+}
+
+// A background needs a layer. `clear()` is the unset colour — leave the view
+// layer-free rather than paint it transparent, so a tree that themes nothing
+// costs no layers.
+fn apply_background(view: ak::View, c: vocab::Color) {
+    if c.is_set() == false { return; }
+    view.set_wants_layer(true);
+    let l: quartz::Layer = view.layer();
+    l.set_background_color(ns_color(c).c_g_color());
+    return;
+}
+
+// CATransform3D is a bare by-value C struct in the binding, with the matrix
+// maths in QuartzCore's own exported functions. Declared here rather than
+// grown onto the generated quartzcore module, which the bindgen owns.
+extern fn CATransform3DTranslate(t: quartz::Transform3D, tx: f64, ty: f64, tz: f64) -> quartz::Transform3D;
+extern fn CATransform3DRotate(t: quartz::Transform3D, angle: f64, x: f64, y: f64, z: f64) -> quartz::Transform3D;
+extern fn CATransform3DScale(t: quartz::Transform3D, sx: f64, sy: f64, sz: f64) -> quartz::Transform3D;
+
+// CATransform3DIdentity is a global constant, so it is spelled rather than
+// linked: the identity matrix is the identity matrix.
+fn transform_identity() -> quartz::Transform3D {
+    return quartz::Transform3D {
+        m11: 1.0f64, m12: 0.0f64, m13: 0.0f64, m14: 0.0f64,
+        m21: 0.0f64, m22: 1.0f64, m23: 0.0f64, m24: 0.0f64,
+        m31: 0.0f64, m32: 0.0f64, m33: 1.0f64, m34: 0.0f64,
+        m41: 0.0f64, m42: 0.0f64, m43: 0.0f64, m44: 1.0f64,
+    };
+}
+
+// The nine transform numbers become one CATransform3D on the layer. facet
+// gives them one dirty bit for exactly this reason: the backend rebuilds the
+// whole transform anyway, so nine bits would buy it nothing.
+fn apply_transform(view: ak::View, n: *core::Node) {
+    let rot: f64 = core::rotation(n);
+    let rx: f64 = core::rotation_x(n);
+    let ry: f64 = core::rotation_y(n);
+    let sx: f64 = core::scale(n) * core::scale_x(n);
+    let sy: f64 = core::scale(n) * core::scale_y(n);
+    let tx: f64 = core::translation_x(n);
+    let ty: f64 = core::translation_y(n);
+    let is_identity: bool = rot == 0.0f64 && rx == 0.0f64 && ry == 0.0f64
+        && sx == 1.0f64 && sy == 1.0f64 && tx == 0.0f64 && ty == 0.0f64;
+    // An untransformed node stays layer-free: a tree that transforms nothing
+    // should pay for no layers.
+    if is_identity { return; }
+    view.set_wants_layer(true);
+    let l: quartz::Layer = view.layer();
+    l.set_anchor_point(rt::Point { x: core::anchor_x(n), y: core::anchor_y(n) });
+    var m: quartz::Transform3D = transform_identity();
+    m = { CATransform3DTranslate(m, tx, ty, 0.0f64) };
+    if rot != 0.0f64 { m = { CATransform3DRotate(m, radians(rot), 0.0f64, 0.0f64, 1.0f64) }; }
+    if rx != 0.0f64 { m = { CATransform3DRotate(m, radians(rx), 1.0f64, 0.0f64, 0.0f64) }; }
+    if ry != 0.0f64 { m = { CATransform3DRotate(m, radians(ry), 0.0f64, 1.0f64, 0.0f64) }; }
+    m = { CATransform3DScale(m, sx, sy, 1.0f64) };
+    l.set_transform(m);
+    return;
+}
+
+fn radians(degrees: f64) -> f64 { return degrees * 3.14159265358979323846f64 / 180.0f64; }
