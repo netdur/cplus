@@ -28,6 +28,22 @@ pattern is fixed and worth following exactly:
 - A kind with no body still gets a backing view AND a one-time stderr line.
   Silence is the failure INTENT is written against.
 
+`vendor/facet_appkit/MANIFEST.md` is the other half of the job: every
+"AppKit cannot" is written there, kept apart from "not yet reached". Three
+families are already recorded as cannot (refreshable, swipeable/swipe_item,
+and the control tint colours); three more are blocked on a DECISION rather
+than effort and are named on `stages/4.md` — web/hybrid_web (needs a WebKit
+binding package), date_picker/time_picker (needs a Date↔NSDate bridge, and
+which calendar is a decision), and tabs (NSTabView's item model does not fit
+a tree whose children mount as subviews).
+
+`context_menu` / `context_menu_item` / `toolbar_item` are now IMPLEMENTABLE
+and were not before — they carried no text and no action until the
+MenuItem-base fix landed. They are the natural next kinds. They are also
+non-view kinds: an NSMenu is not an NSView, so the shape is a zero-size
+placeholder view carrying the built NSMenu, with `views::insert` setting it
+on the HOST rather than adding a subview.
+
 Then items 3–7 on `stages/4.md`. Item 3 (scheduler) is largely already in
 `scheduler.cplus` — run_on_main, after, observe_size and the
 CFRunLoopObserver tick are built; what remains is jobs/teardown proving.
@@ -46,7 +62,11 @@ Stage 3  platform-free body  DONE   2026-08-04, reviewed. Tier modules, mount se
                                     key band, DOM find, guards 5 + 5b.
 Stage 4  facet_appkit        UNDER WAY
          item 1 window shell DONE   2026-08-04 — a keyed tree on screen
-         item 2 the 42 kinds 5/42   label, button, text_field, image, scroll
+         item 2 the 42 kinds 21/42  label, button, text_field, image, scroll, box,
+                                    checkbox, radio, toggle, slider, progress,
+                                    spinner, stepper, icon_button, symbol,
+                                    text_area, search_field, popup, bordered,
+                                    split, page_dots
          items 3-7                  scheduler proving, input, the 58 rows,
                                     the agent surface, examples
 Stage 5  docs + provenance
@@ -59,12 +79,13 @@ python3 tools/maui_map.py                  # fails on an unbucketed row
 python3 tools/gen_contract.py              # SIX guards incl. 5b tier dispositions;
                                            # byte-idempotent; prints the tier tally
 python3 tools/gen_icons.py                 # the icon table, from the font
-cd vendor/facet && cpc test                # 474  (was 433: +C_LAYOUT, the
-                   cpc test --asan         # 474   structural verbs, the window
-                   cpc test --release      # 474   accessors, the macOS facade)
-cd vendor/facet_appkit && cpc test         # 369
-                          cpc test --asan  # 369
-                          cpc test --release # 369
+cd vendor/facet && cpc test                # 475  (was 433: +C_LAYOUT, the
+                   cpc test --asan         # 475   structural verbs, the window
+                   cpc test --release      # 475   accessors, the macOS facade,
+                                           #       the MenuItem base fix)
+cd vendor/facet_appkit && cpc test         # 380
+                          cpc test --asan  # 380
+                          cpc test --release # 380
        leaks -atExit -- ./target/debug/facet_appkit_tests   # 0 leaks / 0 bytes
 cd vendor/flex_layout && cpc test          # 280
 cd vendor/stdlib      && cpc test          # 290
