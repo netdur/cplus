@@ -5,7 +5,7 @@ absent here does not exist: calling it is a compile error, never a
 silent no-op. What a backend cannot implement is recorded in that
 backend's own manifest, not here.
 
-392 declared verbs over 38 controls, plus the
+397 declared verbs over 38 controls, plus the
 shared band every element carries.
 
 
@@ -177,6 +177,7 @@ shared band every element carries.
 | `on_web_resource_requested` | callback + ctx | HybridWebView.WebResourceRequested |
 | `on_web_view_initialized` | callback + ctx | HybridWebView.WebViewInitialized |
 | `on_web_view_initializing` | callback + ctx | HybridWebView.WebViewInitializing |
+| `send_message(body:)` | command | HybridWebView.SendRawMessage |
 
 ## icon_button — MAUI ImageButton
 
@@ -600,6 +601,10 @@ shared band every element carries.
 | `on_navigated` | callback + ctx | WebView.Navigated |
 | `on_navigating` | callback + ctx | WebView.Navigating |
 | `on_process_terminated` | callback + ctx | WebView.ProcessTerminated |
+| `eval(script:)` | command | WebView.Eval |
+| `go_back()` | command | WebView.GoBack |
+| `go_forward()` | command | WebView.GoForward |
+| `reload()` | command | WebView.Reload |
 
 ## the shared band
 

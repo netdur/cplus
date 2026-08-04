@@ -56,6 +56,9 @@ import "facet/gestures" as gestures;
 import "facet/component" as component;
 import "appkit/appkit_ext" as akx;
 import "./input" as input;
+import "./web" as webmod;
+import "facet/web" as web_ui;
+import "facet/hybrid_web" as hybrid_ui;
 import "./drawing" as drawing;
 import "objc/runtime" as rt;
 import "appkit/appkit" as ak;
@@ -1339,13 +1342,14 @@ fn every_kind_now_has_an_answer() {
     // A kind added later without a body will fail here, which is the point.
     var k: u32 = 1 as u32;
     while k <= (38 as u32) {
-        // web and hybrid_web are DEFERRED (they need a WebKit binding), not
-        // decided — so they still take the warning path, and the difference
-        // between deferred and decided stays visible.
-        if k != props::K_WEB && k != props::K_HYBRID_WEB { assert views::has_body(k); }
+        assert views::has_body(k);
         k = k +% (1 as u32);
     }
-    assert views::has_body(props::K_WEB) == false;
+    // web and hybrid_web were the last two deferrals, and the deferral was
+    // the missing package rather than anything AppKit could not do. With
+    // vendor/webkit landed there is nothing left on the warning path.
+    assert views::has_body(props::K_WEB);
+    assert views::has_body(props::K_HYBRID_WEB);
     assert views::has_body(1000 as u32);      // symbol
     assert views::has_body(1001 as u32);      // tree
     assert views::has_body(1002 as u32);      // split
@@ -1611,5 +1615,114 @@ fn a_drop_zone_registers_only_when_it_asks_to() {
     assert component::dropped_text(vz).view() == "";
     views::view_release(vp);
     views::view_release(vz);
+    return;
+}
+
+// ---- web and hybrid_web ------------------------------------------------------
+// Stage 4 item 5's first two rows, unblocked by vendor/webkit. What is asserted
+// is that the contract REACHES WebKit; what a page then renders is WebKit's
+// business, not ours to test.
+
+#[test]
+fn a_web_view_is_a_wkwebview_with_a_navigation_delegate() {
+    var n: core::Node = web_ui::web(source: "", key: "w");
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    assert v != (0 as *u8);
+    assert synth::class_responds(synth::object_class(v),
+                                 rt::sel(#str_ptr("loadRequest:\0"))) != (0 as i8);
+    // The delegate is pinned to the view, so it lives exactly as long as the
+    // thing it speaks for — no static, no registry.
+    let d: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("navigationDelegate\0"))) };
+    assert d != (0 as *u8);
+    assert synth::object_class(d) == webmod::delegate_class();
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn a_source_is_read_three_ways_and_they_cannot_be_confused() {
+    // MAUI's Source is a WebViewSource — URL or HTML. facet reduced it to a
+    // `str`, so the STRING has to say which, and these are the three readings.
+    assert webmod::starts_with_angle("<h1>hi</h1>");
+    assert webmod::starts_with_angle("https://x") == false;
+    assert webmod::has_scheme("https://example.com");
+    assert webmod::has_scheme("file:///tmp/a.html");
+    assert webmod::has_scheme("/tmp/a.html") == false;
+    assert webmod::has_scheme("ab") == false;
+    // A file grants read access to its FOLDER, or its stylesheet is refused
+    // and the page looks broken rather than blocked.
+    assert webmod::parent_of("/tmp/site/index.html").view() == "/tmp/site";
+    assert webmod::parent_of("index.html").view() == ".";
+    assert webmod::parent_of("/index.html").view() == "/";
+    return;
+}
+
+#[test]
+fn the_navigation_band_reaches_the_web_view() {
+    var n: core::Node = web_ui::web(source: "https://example.com", key: "nav");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v != (0 as *u8);
+    core::set_view(p, v, views::view_release);
+    // The commands are one-shot bits, and each has to reach a real selector.
+    match web_ui::find("nav", within: p) {
+        option::Option[web_ui::Web]::Some(x) => {
+            core::clear_dirty(p);
+            let _a: web_ui::Web = x.reload();
+            assert (core::dirty_of(p) & web_ui::P_RELOAD) != (0 as u64);
+            views::apply(0 as *u8, p);
+            core::clear_dirty(p);
+            let _b: web_ui::Web = x.go_back();
+            assert (core::dirty_of(p) & web_ui::P_GO_BACK) != (0 as u64);
+            views::apply(0 as *u8, p);
+            core::clear_dirty(p);
+            let _c: web_ui::Web = x.eval("1 + 1");
+            assert (core::dirty_of(p) & web_ui::P_EVAL) != (0 as u64);
+            views::apply(0 as *u8, p);
+            // A read whose truth lives in the platform: nothing has loaded, so
+            // there is nowhere to go back TO, and the props say so.
+            assert x.can_go_back() == false;
+        }
+        option::Option[web_ui::Web]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn a_hybrid_view_carries_the_message_channel_both_ways() {
+    var n: core::Node = hybrid_ui::hybrid_web(key: "h");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v != (0 as *u8);
+    // The page's door back: one handler, named `facet`, on the content
+    // controller the view was built with.
+    let cfg: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("configuration\0"))) };
+    assert cfg != (0 as *u8);
+    let ucc: *u8 = { rt::msg_id(cfg, rt::sel(#str_ptr("userContentController\0"))) };
+    assert ucc != (0 as *u8);
+    // ...and facet's door out. `send_message` is a command, so it raises its
+    // bit and apply is what runs the script.
+    core::set_view(p, v, views::view_release);
+    match hybrid_ui::find("h", within: p) {
+        option::Option[hybrid_ui::HybridWeb]::Some(x) => {
+            core::clear_dirty(p);
+            let _a: hybrid_ui::HybridWeb = x.send_message("hello");
+            assert (core::dirty_of(p) & hybrid_ui::P_SEND_MESSAGE) != (0 as u64);
+            views::apply(0 as *u8, p);
+        }
+        option::Option[hybrid_ui::HybridWeb]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn a_message_body_is_escaped_before_it_becomes_a_script() {
+    // The body is spliced into JavaScript, so a quote or a newline in it would
+    // otherwise end the literal and run whatever followed.
+    assert webmod::json_string("plain").view() == "\"plain\"";
+    assert webmod::json_string("say \"hi\"").view() == "\"say \\\"hi\\\"\"";
+    assert webmod::json_string("a\nb").view() == "\"a\\nb\"";
+    assert webmod::json_string("c:\\path").view() == "\"c:\\\\path\"";
+    assert webmod::json_string("").view() == "\"\"";
     return;
 }

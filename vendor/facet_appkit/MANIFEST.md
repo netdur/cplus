@@ -8,7 +8,7 @@ happen on a Mac?" by reading it.
 A row here is a commitment, not a note. Nothing is left implicit: a verb that
 is neither implemented nor listed below is a gap, and the gap is a bug.
 
-Status: **Stage 4 items 1 and 2 COMPLETE.** Every one of the 42 kinds has an
+Status: **Stage 4 items 1-4 COMPLETE, item 5 begun.** Every one of the 42 kinds has an
 answer — a body, a recorded "AppKit cannot", or a named deferral — and
 `every_kind_now_has_an_answer` in the suite is the guard. Items 3-7 are in
 progress; this file grows a row each time something is decided either way.
@@ -212,6 +212,48 @@ point Core Animation commits on. A hundred writes in one event cost one tick.
 layer, so setting one turns `wantsLayer` on for that view. A node that sets no
 background stays layer-free, so a tree that themes nothing pays for no layers.
 
+### `web` and `hybrid_web` are one WKWebView with two wirings
+
+`vendor/webkit` landed 2026-08-04 and both kinds are implemented. They share a
+file and a delegate class, because WKNavigationDelegate and
+WKScriptMessageHandler are both "the page told us something" and splitting them
+would pin two objects to one view.
+
+**The two reads are WRITTEN BACK.** `can_go_back()` and `can_go_forward()` are
+contract reads whose truth lives in WKWebView's back-forward list, so the
+delegate writes them into the props on every navigation. The cursor then
+answers from the props like every other read, and an application never learns
+that one answer came from the platform and another from the description.
+
+**A `source` is read three ways**, because MAUI's `Source` is a WebViewSource
+(URL or HTML) and facet reduced it to a `str`, so the string has to say which:
+starts with `<` is markup, contains `://` is an absolute URL, anything else is
+a file path — loaded with read access to its FOLDER, or its stylesheet is
+refused and the page looks broken rather than blocked.
+
+**`on_navigating` is `didStartProvisionalNavigation:`, not a policy decision.**
+MAUI's `Navigating` is cancellable; facet's handler returns nothing, so it
+could not cancel even if this were wired to
+`decidePolicyForNavigationAction:`. Reporting the START of a navigation is the
+honest thing the signature supports.
+
+**The hybrid channel is named here**, because facet declares a raw message in
+each direction and nothing about how it is carried:
+
+| direction | how |
+|---|---|
+| page → facet | `window.webkit.messageHandlers.facet.postMessage(body)` |
+| facet → page | `window.facet.onmessage(body)`, if the page defined it |
+
+One word, `facet`, both ways. The outgoing body is escaped before it is
+spliced into script — a quote or a newline in a message would otherwise end
+the literal and run whatever followed.
+
+**`on_web_resource_requested` is not honoured.** It needs a
+`WKURLSchemeHandler` and a custom scheme, which is a second loading path
+alongside `loadFileURL:`; nothing has asked for it yet, and a resource hook
+that fires for some requests and not others would be worse than none.
+
 ### The gesture band moves the view's class
 
 A gesture handler answers `bool`, and `false` means the event must carry on
@@ -258,7 +300,6 @@ AppKit cannot. They are listed so the difference is never ambiguous.
 | The app menu, toolbar tier, titlebar content | 5 |
 | Window sizing policy, density, modal stack | 5 |
 | The agent surface | 6 |
-| `web` / `hybrid_web` | waiting on `vendor/webkit`, which the user has in progress as of 2026-08-04 |
 | The collection group | 2 (the heavy end) |
 
 ### The collection group builds every row, not just the visible ones

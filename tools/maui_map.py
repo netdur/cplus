@@ -199,6 +199,19 @@ METHOD_VOCABULARY = {
     ("VisualElement", "Measure"): "measure(width:height:)",
     ("VisualElement", "BatchBegin"): "begin_updates",
     ("VisualElement", "BatchCommit"): "end_updates",
+    # The same inversion dropped the whole of `web`'s navigation band, and a
+    # web view you cannot navigate, reload or script is not one. Stage 4 item 5
+    # (adopting vendor/webkit) is what surfaced it.
+    ("WebView", "GoBack"): "go_back",
+    ("WebView", "GoForward"): "go_forward",
+    ("WebView", "Reload"): "reload",
+    ("WebView", "Eval"): "eval(script:)",
+    # The other half of the hybrid bridge: `on_raw_message_received` was
+    # adopted and the verb that SENDS one was not, so the channel only ran one
+    # way. EvaluateJavaScriptAsync / InvokeJavaScriptAsync stay dropped — they
+    # return a Task, and facet has no async in the UI; a page returns a value
+    # by posting a message back, which is what the channel is for.
+    ("HybridWebView", "SendRawMessage"): "send_message(body:)",
     # Stage 4 found this dropped as ENGINE by the methods-band inversion, and
     # it is not engine: GraphicsView.Invalidate is how an application says its
     # drawing changed. Without it a canvas could be described once and never

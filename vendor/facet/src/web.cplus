@@ -19,6 +19,10 @@ import "./mount" as mount;
 
 const P_SOURCE: u64 = 1u64;
 const P_USER_AGENT: u64 = 2u64;
+const P_EVAL: u64 = 4u64;
+const P_GO_BACK: u64 = 8u64;
+const P_GO_FORWARD: u64 = 16u64;
+const P_RELOAD: u64 = 32u64;
 
 // ---- build -------------------------------------------------------------
 // Typed by the parameter list: a verb another control owns is not a
@@ -115,6 +119,39 @@ impl Web {
         let p: *props::WebProps = this._props();
         if p == (0 as *props::WebProps) { return false; }
         return { (*p).can_go_forward };
+    }
+
+    // WebView.Eval
+    fn eval(this, script: str) -> Web {
+        let p: *props::WebProps = this._props();
+        if p == (0 as *props::WebProps) { return this; }
+        { (*p).eval_script = text::from_str(script) };
+        core::touch(this._p, P_EVAL);
+        return this;
+    }
+
+    // WebView.GoBack
+    fn go_back(this) -> Web {
+        let p: *props::WebProps = this._props();
+        if p == (0 as *props::WebProps) { return this; }
+        core::touch(this._p, P_GO_BACK);
+        return this;
+    }
+
+    // WebView.GoForward
+    fn go_forward(this) -> Web {
+        let p: *props::WebProps = this._props();
+        if p == (0 as *props::WebProps) { return this; }
+        core::touch(this._p, P_GO_FORWARD);
+        return this;
+    }
+
+    // WebView.Reload
+    fn reload(this) -> Web {
+        let p: *props::WebProps = this._props();
+        if p == (0 as *props::WebProps) { return this; }
+        core::touch(this._p, P_RELOAD);
+        return this;
     }
 
     // The flex node this cursor points at. The DOM division, and the

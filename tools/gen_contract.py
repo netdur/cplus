@@ -355,6 +355,26 @@ COMMANDS = {
     "end_refresh": {
         "params": [], "extra": [], "writes": [("is_refreshing", "false")],
     },
+    # WebView.GoBack / GoForward / Reload — no parameters and no fields: the
+    # navigation state lives in the platform's back-forward list, so the
+    # command is the whole message.
+    "go_back": {"params": [], "extra": [], "writes": []},
+    "go_forward": {"params": [], "extra": [], "writes": []},
+    "reload": {"params": [], "extra": [], "writes": []},
+    # WebView.Eval — fire and forget, which is what MAUI's Eval is. A script
+    # that has an ANSWER posts it back through the hybrid message channel.
+    "eval": {
+        "params": [("script", "str")],
+        "extra":  [("eval_script", "str")],
+        "writes": [("eval_script", "text::from_str(script)")],
+    },
+    # HybridWebView.SendRawMessage — facet to the page. The page to facet is
+    # `on_raw_message_received`, which was already adopted.
+    "send_message": {
+        "params": [("body", "str")],
+        "extra":  [("outgoing_message", "str")],
+        "writes": [("outgoing_message", "text::from_str(body)")],
+    },
     # GraphicsView.Invalidate — writes nothing, and that IS the command: the
     # drawing is the Drawable's, so a redraw only has to raise the dirty bit
     # the backend already watches.
@@ -2267,7 +2287,11 @@ def emit_control(maui, merged):
     # ---- commands: a write plus a dirty bit, same as a setter
     for verb, member, src, blk in commands:
         spec = COMMANDS[verb]
-        args = "".join(f", {n}: {cplus_type(t) or t}" for n, t in spec["params"])
+        # `str` is the PARAMETER type and `text::Text` is the field it lands
+        # in — the same split every setter makes. No command took a string
+        # until `eval`, which is why this read `cplus_type` alone.
+        args = "".join(f", {n}: {'str' if t == 'str' else (cplus_type(t) or t)}"
+                       for n, t in spec["params"])
         o.append(f"\n    // {src}.{member}\n")
         o.append(f"    fn {verb}(this{args}) -> {cur} {{\n")
         o.append(f"        let p: *props::{props} = this._props();\n")

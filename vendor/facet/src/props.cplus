@@ -722,6 +722,7 @@ struct HybridWebProps {
     opaque on_web_view_initialized_ctx: *u8,
     on_web_view_initializing: fn(*u8, *u8),    // HybridWebView.WebViewInitializing
     opaque on_web_view_initializing_ctx: *u8,
+    outgoing_message: text::Text,    // HybridWebView.SendRawMessage, the argument of send_message()
 }
 
 impl HybridWebProps {
@@ -737,6 +738,7 @@ impl HybridWebProps {
             on_web_view_initialized_ctx: 0 as *u8,
             on_web_view_initializing: no_handler,
             on_web_view_initializing_ctx: 0 as *u8,
+            outgoing_message: text::new(),
         };
     }
 }
@@ -1694,6 +1696,7 @@ struct WebProps {
     opaque on_navigating_ctx: *u8,
     on_process_terminated: fn(*u8, *u8),    // WebView.ProcessTerminated
     opaque on_process_terminated_ctx: *u8,
+    eval_script: text::Text,    // WebView.Eval, the argument of eval()
 }
 
 impl WebProps {
@@ -1709,6 +1712,7 @@ impl WebProps {
             on_navigating_ctx: 0 as *u8,
             on_process_terminated: no_handler,
             on_process_terminated_ctx: 0 as *u8,
+            eval_script: text::new(),
         };
     }
 }

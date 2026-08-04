@@ -19,6 +19,7 @@ import "./mount" as mount;
 
 const P_DEFAULT_FILE: u64 = 1u64;
 const P_HYBRID_ROOT: u64 = 2u64;
+const P_SEND_MESSAGE: u64 = 4u64;
 
 // ---- build -------------------------------------------------------------
 // Typed by the parameter list: a verb another control owns is not a
@@ -107,6 +108,15 @@ impl HybridWeb {
         let p: *props::HybridWebProps = this._props();
         if p == (0 as *props::HybridWebProps) { return ""; }
         return { (*p).hybrid_root.view() };
+    }
+
+    // HybridWebView.SendRawMessage
+    fn send_message(this, body: str) -> HybridWeb {
+        let p: *props::HybridWebProps = this._props();
+        if p == (0 as *props::HybridWebProps) { return this; }
+        { (*p).outgoing_message = text::from_str(body) };
+        core::touch(this._p, P_SEND_MESSAGE);
+        return this;
     }
 
     // The flex node this cursor points at. The DOM division, and the
