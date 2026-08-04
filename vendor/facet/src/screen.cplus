@@ -207,18 +207,34 @@ impl AppMenu {
 // record — construct with `Chrome::new`, naming only what differs from the
 // defaults. On a backend without windows most fields are ignored and `title`
 // names the page. `hide_title` is honored together with `unified_toolbar`.
+// The shell around content — titlebar on macOS, headerbar on GTK, caption
+// on Win32, status/nav bars on mobile. One enum where the old facet had six
+// booleans (stages/3: 64 combinations for one decision, and iris set two of
+// them together because they were never independent):
+//
+//   Native   the platform's stock bar.
+//   Blended  the bar shares the content's surface — covers macOS's unified
+//            toolbar and clean-titlebar look without naming either.
+//   Hidden   no visible bar; the platform's buttons float if it has them.
+//   Custom   the application draws the bar itself, with `window_buttons()`
+//            and `.window_drag()`.
+//
+// Which buttons appear is a SEPARATE question from the bar's style, so
+// `close_button_only` stays its own field rather than folding in.
+enum Bar { Native, Blended, Hidden, Custom }
+
+// The struct stays FLAT, deliberately: any capability-shaped grouping
+// ("only a resizable host honours these") ages out within an OS release.
+// facet offers every field; a backend honours what it can and records the
+// rest in its own manifest.
 struct Chrome {
     title_text: text::Text,
     width: f64,
     height: f64,
     min_width: f64,
     min_height: f64,
-    clean_titlebar: bool,
+    bar: Bar,
     close_button_only: bool,
-    custom_chrome: bool,
-    native_buttons: bool,
-    unified_toolbar: bool,
-    hide_title: bool,
     zoomable: bool,
     min_zoom: f64,
     max_zoom: f64,
@@ -231,12 +247,8 @@ impl Chrome {
         height: f64 = 360.0f64,
         min_width: f64 = 0.0f64,
         min_height: f64 = 0.0f64,
-        clean_titlebar: bool = false,
+        bar: Bar = Bar::Native,
         close_button_only: bool = false,
-        custom_chrome: bool = false,
-        native_buttons: bool = false,
-        unified_toolbar: bool = false,
-        hide_title: bool = false,
         zoomable: bool = false,
         min_zoom: f64 = 1.0f64,
         max_zoom: f64 = 4.0f64,
@@ -247,12 +259,8 @@ impl Chrome {
             height: height,
             min_width: min_width,
             min_height: min_height,
-            clean_titlebar: clean_titlebar,
+            bar: bar,
             close_button_only: close_button_only,
-            custom_chrome: custom_chrome,
-            native_buttons: native_buttons,
-            unified_toolbar: unified_toolbar,
-            hide_title: hide_title,
             zoomable: zoomable,
             min_zoom: min_zoom,
             max_zoom: max_zoom,
@@ -541,21 +549,18 @@ fn chrome_defaults_and_overrides() {
     assert sc_approx(d.width, 480.0f64);
     assert sc_approx(d.height, 360.0f64);
     assert sc_approx(d.min_width, 0.0f64);
-    assert d.clean_titlebar == false;
+    match d.bar { Bar::Native => { } Bar::Blended => { assert false; } Bar::Hidden => { assert false; } Bar::Custom => { assert false; } }
     assert d.close_button_only == false;
-    assert d.custom_chrome == false;
-    assert d.native_buttons == false;
-    assert d.unified_toolbar == false;
-    assert d.hide_title == false;
     assert d.zoomable == false;
     assert sc_approx(d.min_zoom, 1.0f64);
     assert sc_approx(d.max_zoom, 4.0f64);
 
-    let c: Chrome = Chrome::new(title: "Iris", width: 800.0f64, min_width: 640.0f64, clean_titlebar: true);
+    let c: Chrome = Chrome::new(title: "Iris", width: 800.0f64, min_width: 640.0f64, bar: Bar::Blended, close_button_only: true);
     assert c.title() == "Iris";
     assert sc_approx(c.width, 800.0f64);
     assert sc_approx(c.min_width, 640.0f64);
-    assert c.clean_titlebar;
+    match c.bar { Bar::Blended => { } Bar::Native => { assert false; } Bar::Hidden => { assert false; } Bar::Custom => { assert false; } }
+    assert c.close_button_only;
     assert c.zoomable == false;
 }
 

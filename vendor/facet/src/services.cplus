@@ -5,7 +5,7 @@
 // every result rides home on; `after` is the one time-driven verb, with
 // `Cancellable` owning the pending-callback lifetime; `spawn_ui` drives
 // async tasks on the UI thread; `on_worker` bridges CPU-blocking work;
-// `Service`/`load_service` is the one-screen-one-service pattern iris uses.
+// `Job`/`run_job` is the one-screen-one-job pattern iris uses.
 // The backend installs the primitives (`set_run_on_main_fn`, `set_after_fn`,
 // ...); with none installed every verb is the portable no-op — work is
 // dropped, timers never fire and return already-cancelled handles.
@@ -45,7 +45,7 @@ fn run_on_main(work: fn(*u8), ctx: *u8) {
 //
 // `run_on_main` above is the only way to hand work to the UI thread and it has
 // no delay — next turn of the queue, not later. The async surface beside it is
-// event-driven, not time-driven: `spawn_ui`, `load_service` and the kqueue
+// event-driven, not time-driven: `spawn_ui`, `run_job` and the kqueue
 // reactor all wait for a future or an fd, and `fswatch` waits for the
 // filesystem. Nothing waited for a clock, so four kinds of ordinary UI work —
 // a debounce, a countdown label, a watchdog, deferred layout — had to reach
@@ -255,7 +255,7 @@ fn worker_start[I: Send, O: Send](take input: I, f: fn(take I) -> O) -> i32 {
     return fds[0];
 }
 
-async fn on_worker[I: Send, O: Send](take input: I, f: fn(take I) -> O) -> O {
+async fn run_on_worker[I: Send, O: Send](take input: I, f: fn(take I) -> O) -> O {
     let rfd: i32 = worker_start::[I, O](input, f);
     var slot: *u8 = 0 as *u8;
     let _n: isize = await net::read_fd_async(rfd, #addr_of(slot) as *u8, 8 as usize);
@@ -263,47 +263,48 @@ async fn on_worker[I: Send, O: Send](take input: I, f: fn(take I) -> O) -> O {
     return box::from_raw::[O](slot).unwrap();
 }
 
-// ---- services ---------------------------------------------------------------
-// A data owner whose slow read must never block the UI. The interface IS the
-// threading contract:
-//   produce — the slow read (db / fs / net). load_service runs it on a worker
-//             thread; it must not touch anything the UI reads.
-//   apply   — install what produce prepared. load_service runs it on the main
-//             thread, so the UI never observes a half-written service.
-// A service conforms once and gets the whole async pipeline from load_service;
-// no per-service job structs, boxing, or thread code.
-interface Service {
-    fn produce(ref this);
+// ---- jobs -------------------------------------------------------------------
+// A data owner whose slow work must never block the UI. Renamed on the way
+// in (stages/3: "nothing is loaded and nothing is a service"). The interface
+// IS the threading contract:
+//   run   — the slow work (db / fs / net / scaffolding). run_job runs it on
+//           a worker thread; it must not touch anything the UI reads.
+//   apply — install what run prepared. run_job runs it on the main thread,
+//           so the UI never observes a half-written result.
+// A type conforms once and gets the whole async pipeline from run_job; no
+// per-job structs, boxing, or thread code.
+interface Job {
+    fn run(ref this);
     fn apply(ref this);
 }
 
-// Run `svc`'s produce OFF the main thread, then its apply and `on_ready(ctx)`
-// back ON it. Returns immediately. `svc` must outlive the flight (it is
+// Run the job's `run` OFF the main thread, then its `apply` and `then(ctx)`
+// back ON it. Returns immediately. The job must outlive the flight (it is
 // reached through its address). Needs a backend for the main-thread hop
-// (run_on_main): without one the produced result is never applied.
-fn load_service[S: Service](ref svc: S, on_ready: fn(*u8) = service_ready_noop, ctx: *u8 = 0 as *u8) {
-    services_inflight_add(1 as u64);
-    let job: ServiceJob = ServiceJob {
-        svc_addr: { #addr_of(svc) as *u8 } as usize,
-        produce: service_produce_tramp::[S],
-        apply: service_apply_tramp::[S],
-        on_ready: on_ready,
+// (run_on_main): without one the prepared result is never applied.
+fn run_job[J: Job](ref job_v: J, then: fn(*u8) = job_done_noop, ctx: *u8 = 0 as *u8) {
+    jobs_inflight_add(1 as u64);
+    let job: JobFlight = JobFlight {
+        job_addr: { #addr_of(job_v) as *u8 } as usize,
+        run: job_run_tramp::[J],
+        apply: job_apply_tramp::[J],
+        then: then,
         ctx_addr: ctx as usize,
     };
-    let _bg: thread::JoinHandle[i32] = thread::spawn_with::[ServiceJob, i32](job, run_service_job);
+    let _bg: thread::JoinHandle[i32] = thread::spawn_with::[JobFlight, i32](job, run_job_flight);
     return;
 }
 
-// ---- in-flight services ------------------------------------------------------
+// ---- in-flight jobs ----------------------------------------------------------
 //
-// `load_service` states "svc must outlive the flight" and, until 2026-07-30,
+// `run_job` states "the job must outlive the flight" and, until 2026-07-30,
 // handed the caller nothing to honour it with: the JoinHandle was discarded and
 // `JoinHandle::drop` DETACHES by design ("true fire-and-forget"). So a screen
 // that started a service and was then torn down freed memory a live worker was
 // still writing. Found by ASan on iris at quit — `Text.drop` on a worker thread
 // reading a `Welcome` already freed by `Box[Welcome].drop` in main.
 //
-// The count is what makes the contract keepable. `wait_for_services` blocks
+// The count is what makes the contract keepable. `wait_for_jobs` blocks
 // until every worker has finished touching its service, and the runtime calls
 // it before dropping screens, so an app gets the guarantee without writing
 // anything. A caller tearing a component down early can call it directly.
@@ -324,77 +325,77 @@ extern fn sched_yield_raw() -> i32;
 // step, not a poll loop.
 fn sched_yield_once() { let _r: i32 = { sched_yield_raw() }; return; }
 
-static SERVICES_IN_FLIGHT: u64 = 0 as u64;
+static JOBS_IN_FLIGHT: u64 = 0 as u64;
 
-fn services_inflight_add(d: u64) {
-    let p: *u64 = { #addr_of(SERVICES_IN_FLIGHT) };
+fn jobs_inflight_add(d: u64) {
+    let p: *u64 = { #addr_of(JOBS_IN_FLIGHT) };
     let _prev: u64 = atomic::fetch_add_u64(p, d, atomic::Ordering::AcqRel);
     return;
 }
 
-fn services_inflight_sub(d: u64) {
-    let p: *u64 = { #addr_of(SERVICES_IN_FLIGHT) };
+fn jobs_inflight_sub(d: u64) {
+    let p: *u64 = { #addr_of(JOBS_IN_FLIGHT) };
     let _prev: u64 = atomic::fetch_sub_u64(p, d, atomic::Ordering::AcqRel);
     return;
 }
 
 // How many service workers may still be touching their service.
-fn services_in_flight() -> u64 {
-    let p: *u64 = { #addr_of(SERVICES_IN_FLIGHT) };
+fn jobs_in_flight() -> u64 {
+    let p: *u64 = { #addr_of(JOBS_IN_FLIGHT) };
     return atomic::load_u64(p, atomic::Ordering::Acquire);
 }
 
 // Block until no worker is touching a service. Call before dropping anything a
 // service was given — the runtime does this for screens at teardown.
-fn wait_for_services() {
-    while services_in_flight() != (0 as u64) { sched_yield_once(); }
+fn wait_for_jobs() {
+    while jobs_in_flight() != (0 as u64) { sched_yield_once(); }
     return;
 }
 
-fn service_ready_noop(ctx: *u8) { return; }
+fn job_done_noop(ctx: *u8) { return; }
 
 // Type-erasing trampolines (value-turbofish): plain fn(*u8)s that call S's
-// interface methods on the service at `p`.
-fn service_produce_tramp[S: Service](p: *u8) {
-    let q: *S = p as *S;
-    { (*q).produce() };
+// interface methods on the job at `p`.
+fn job_run_tramp[J: Job](p: *u8) {
+    let q: *J = p as *J;
+    { (*q).run() };
     return;
 }
 
-fn service_apply_tramp[S: Service](p: *u8) {
-    let q: *S = p as *S;
+fn job_apply_tramp[J: Job](p: *u8) {
+    let q: *J = p as *J;
     { (*q).apply() };
     return;
 }
 
-// Raw pointers are !Send, so the service and ctx addresses ride as integers —
-// sound under load_service's outlive-the-flight contract.
-struct ServiceJob {
-    svc_addr: usize,
-    produce: fn(*u8),
+// Raw pointers are !Send, so the job and ctx addresses ride as integers —
+// sound under run_job's outlive-the-flight contract.
+struct JobFlight {
+    job_addr: usize,
+    run: fn(*u8),
     apply: fn(*u8),
-    on_ready: fn(*u8),
+    then: fn(*u8),
     ctx_addr: usize,
 }
 
-fn run_service_job(take job: ServiceJob) -> i32 {
-    let produce: fn(*u8) = job.produce;
-    produce(job.svc_addr as *u8);   // the slow read, OFF the main thread
-    services_inflight_sub(1 as u64);   // done touching the service
-    match box::new::[ServiceJob](job) {
-        option::Option[box::Box[ServiceJob]]::Some(b) => {
-            run_on_main(finish_service_job, b.into_raw());
+fn run_job_flight(take job: JobFlight) -> i32 {
+    let run: fn(*u8) = job.run;
+    run(job.job_addr as *u8);       // the slow read, OFF the main thread
+    jobs_inflight_sub(1 as u64);   // done touching the service
+    match box::new::[JobFlight](job) {
+        option::Option[box::Box[JobFlight]]::Some(b) => {
+            run_on_main(finish_job_flight, b.into_raw());
         }
-        option::Option[box::Box[ServiceJob]]::None => { }
+        option::Option[box::Box[JobFlight]]::None => { }
     }
     return 0;
 }
 
-fn finish_service_job(raw: *u8) {
-    let job: ServiceJob = box::from_raw::[ServiceJob](raw).unwrap();
+fn finish_job_flight(raw: *u8) {
+    let job: JobFlight = box::from_raw::[JobFlight](raw).unwrap();
     let apply: fn(*u8) = job.apply;
-    apply(job.svc_addr as *u8);     // install ON the main thread
-    let cb: fn(*u8) = job.on_ready;
+    apply(job.job_addr as *u8);     // install ON the main thread
+    let cb: fn(*u8) = job.then;
     cb(job.ctx_addr as *u8);
     return;
 }
@@ -402,32 +403,32 @@ fn finish_service_job(raw: *u8) {
 
 // ---- tests ------------------------------------------------------------------
 
-// ---- load_service lifetime ---------------------------------------------------
+// ---- run_job lifetime ---------------------------------------------------
 
-struct SlowSvc {
+struct SlowJob {
     label: text::Text,
     done: i32,
 }
 
-impl SlowSvc: Service {
-    fn produce(ref this) {
+impl SlowJob: Job {
+    fn run(ref this) {
         // Long enough that the caller's frame is gone before this runs.
-        let _s: i32 = svc_spin(40000000 as i64);
-        this.label = text::from_str("produced");
+        let _s: i32 = job_spin(40000000 as i64);
+        this.label = text::from_str("ran");
         this.done = this.done + 1;
         return;
     }
     fn apply(ref this) { return; }
 }
 
-fn svc_spin(n: i64) -> i32 {
+fn job_spin(n: i64) -> i32 {
     var i: i64 = 0 as i64;
     var acc: i32 = 0;
     while i < n { acc = acc + (1 as i32); i = i +% (1 as i64); }
     return acc;
 }
 
-// `load_service` documents "svc must outlive the flight" and gives the caller
+// `run_job` documents "the job must outlive the flight" and gives the caller
 // NOTHING to honour it with: the JoinHandle is discarded, and its drop DETACHES
 // (fire-and-forget, by design). So a screen that starts a service and is then
 // torn down frees memory a live worker thread is still writing.
@@ -435,35 +436,35 @@ fn svc_spin(n: i64) -> i32 {
 // Found by ASan on iris at quit: `Text.drop` on a worker thread reading a
 // `Welcome` freed by `Box[Welcome].drop` in main.
 // bugs/load-service-worker-outlives-its-service.md
-// `wait_for_services` is what makes "svc must outlive the flight" TRUE rather
+// `wait_for_jobs` is what makes "the job must outlive the flight" TRUE rather
 // than merely documented — the subject cannot die while a worker is in it.
 fn arm_and_wait() {
-    var svc: SlowSvc = SlowSvc { label: text::from_str("start"), done: 0 };
-    load_service::[SlowSvc](svc);
-    assert services_in_flight() >= (1 as u64) || svc.done > (0 as i32);
-    wait_for_services();
-    return;   // safe: no worker is touching `svc` any more
+    var j: SlowJob = SlowJob { label: text::from_str("start"), done: 0 };
+    run_job::[SlowJob](j);
+    assert jobs_in_flight() >= (1 as u64) || j.done > (0 as i32);
+    wait_for_jobs();
+    return;   // safe: no worker is touching `j` any more
 }
 
 #[test]
-fn waiting_for_services_keeps_the_subject_alive() {
+fn waiting_for_jobs_keeps_the_subject_alive() {
     arm_and_wait();
     // Nothing a worker writes can land in the dead frame. Without the wait this
     // was a stack-use-after-return in Text.drop — the same function ASan named
     // on iris at quit.
-    let _w: i32 = svc_spin(200000000 as i64);
+    let _w: i32 = job_spin(200000000 as i64);
     assert true;
 }
 
-// ...and the wait really waited: produce has run and its result is visible.
+// ...and the wait really waited: run has finished and its result is visible.
 #[test]
-fn wait_for_services_blocks_until_produce_finishes() {
-    var svc: SlowSvc = SlowSvc { label: text::from_str("start"), done: 0 };
-    load_service::[SlowSvc](svc);
-    wait_for_services();
-    assert services_in_flight() == (0 as u64);
-    assert svc.done == (1 as i32);
-    assert svc.label.view() == "produced";
+fn wait_for_jobs_blocks_until_run_finishes() {
+    var j: SlowJob = SlowJob { label: text::from_str("start"), done: 0 };
+    run_job::[SlowJob](j);
+    wait_for_jobs();
+    assert jobs_in_flight() == (0 as u64);
+    assert j.done == (1 as i32);
+    assert j.label.view() == "ran";
 }
 
 // ---- observe_size / after slot discipline -----------------------------------

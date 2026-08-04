@@ -50,12 +50,8 @@ interface Window {
     fn title(this) -> str;
     fn width(this) -> f64;
     fn height(this) -> f64;
-    fn wants_clean_titlebar(this) -> bool;
+    fn bar(this) -> screen::Bar;
     fn wants_close_button_only(this) -> bool;
-    fn wants_unified_toolbar(this) -> bool;
-    fn wants_hidden_title(this) -> bool;
-    fn wants_custom_chrome(this) -> bool;
-    fn wants_native_buttons(this) -> bool;
     fn min_width(this) -> f64;
     fn min_height(this) -> f64;
     fn wants_pinch_zoom(this) -> bool;
