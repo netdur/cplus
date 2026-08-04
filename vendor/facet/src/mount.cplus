@@ -80,17 +80,16 @@ fn renderer_none() -> Renderer {
     };
 }
 
-// M2: the one renderer, and the flag that says a real one arrived.
+// M2: the one renderer. "Installed" is DERIVED — a backend without a
+// `create` hook is no backend, and a separate flag could disagree.
 static RENDERER: Renderer = #zero::[Renderer]();
-static INSTALLED: bool = false;
 
-fn installed() -> bool { return INSTALLED; }
+fn installed() -> bool { return RENDERER.create != (0 as fn(*u8, *core::Node) -> *u8); }
 
 // Install the process's backend. Also arms M5 (touch's sync request routes
 // to the renderer's scheduler) and M6 (this thread becomes THE UI thread).
 fn install(take r: Renderer) {
     RENDERER = r;
-    INSTALLED = true;
     core::set_main_thread_id(ui_thread_id());
     core::set_sync_request_fn(request_sync);
     return;
@@ -99,7 +98,6 @@ fn install(take r: Renderer) {
 // Tests and teardown: back to the portable no-backend posture.
 fn uninstall() {
     RENDERER = renderer_none();
-    INSTALLED = false;
     core::set_main_thread_id(0 as u64);
     core::set_sync_request_fn(0 as fn());
     return;
@@ -109,7 +107,7 @@ fn uninstall() {
 extern fn ui_thread_id() -> u64;
 
 fn request_sync() {
-    if !INSTALLED { return; }
+    if !installed() { return; }
     let f: fn(*u8) = RENDERER.schedule;
     if f != (0 as fn(*u8)) { f(RENDERER.ctx); }
     return;
@@ -167,7 +165,7 @@ fn drain_detach_queue(ref q: vec::Vec[*core::Node]) {
 // renderer — the portable posture. The root's own view (if any) is inserted
 // nowhere; the caller (a runtime facade) puts it into a window.
 fn mount(root: *core::Node) -> bool {
-    if !INSTALLED { return false; }
+    if !installed() { return false; }
     if root == (0 as *core::Node) { return false; }
     var q: vec::Vec[*core::Node] = vec::new::[*core::Node]();
     let _slots: usize = mount_walk(root, 0 as *u8, 0 as usize, q);
@@ -250,7 +248,7 @@ fn detach_walk(n: *core::Node, ref q: vec::Vec[*core::Node]) {
 // backend calls this from the scheduler `install` gave it; headless tests
 // call it directly.
 fn sync() {
-    if !INSTALLED { return; }
+    if !installed() { return; }
     var i: usize = 0 as usize;
     let n: usize = app::window_count();
     while i < n {
@@ -604,7 +602,7 @@ fn set_content[C: component::Component + component::Lifecycle](outlet: *core::No
         var q: vec::Vec[*core::Node] = vec::new::[*core::Node]();
         match core::child_of(outlet, 0 as usize) {
             option::Option[*core::Node]::Some(cp) => {
-                if INSTALLED {
+                if installed() {
                     let _s: usize = mount_walk(cp, host, 0 as usize, q);
                 } else {
                     attach_flags_walk(cp, q);

@@ -119,9 +119,9 @@ services::install_scheduler(Scheduler { run_on_main, after, cancel_after,
 gestures::install_key_reader(KeyReader { code, chars, modifiers, named })
 component::install_sender_readers(SenderReaders { raise, key_of, item_of,
                                                   dropped_text, drag_targeted })
-theme::set_is_dark_fn            # the system appearance read
-theme::set_theme_changed_fn      # the retheme repaint sweep (app-scoped record)
-runtime::set_agent_attach_fn / set_agent_serve_fn   # the agent pair
+runtime::install_agent(AgentHooks { attach_window, serve_once })
+theme::set_is_dark_fn            # the system appearance read — the ONE single slot
+theme::set_theme_changed_fn      # writes the app's record, not a static
 ```
 
 `mount::install` also arms M5 (touch -> schedule) and M6 (the UI thread).

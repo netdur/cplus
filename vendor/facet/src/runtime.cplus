@@ -284,22 +284,28 @@ fn register_screen(route: str, factory: fn() -> screen::ScreenBox) -> bool {
     return true;
 }
 
-// ---- agent hookup (parity: registered by facet/agent, fired by nothing) -----
+// ---- agent hookup ------------------------------------------------------------
+// Registered by facet/agent when an app opts into serving; the same install
+// shape as every other backend seam. Exists as its own struct so importing
+// facet/runtime never drags the agent packages in.
 
-static AGENT_ATTACH_FN: fn(*u8) = #zero::[fn(*u8)]();
-static AGENT_SERVE_FN: fn(str) = #zero::[fn(str)]();
+struct AgentHooks {
+    attach_window: fn(*u8),
+    serve_once: fn(str),
+}
 
-fn set_agent_attach_fn(f: fn(*u8)) { AGENT_ATTACH_FN = f; return; }
-fn set_agent_serve_fn(f: fn(str)) { AGENT_SERVE_FN = f; return; }
+static AGENT: AgentHooks = #zero::[AgentHooks]();
+
+fn install_agent(take h: AgentHooks) { AGENT = h; return; }
 
 fn agent_attach_window(win: *u8) {
-    let f: fn(*u8) = AGENT_ATTACH_FN;
+    let f: fn(*u8) = AGENT.attach_window;
     if f != (0 as fn(*u8)) { f(win); }
     return;
 }
 
 fn agent_serve_once(path: str) {
-    let f: fn(str) = AGENT_SERVE_FN;
+    let f: fn(str) = AGENT.serve_once;
     if f != (0 as fn(str)) { f(path); }
     return;
 }

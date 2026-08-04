@@ -374,9 +374,11 @@ fn fire_hover(n: *core::Node, entering: bool) -> bool {
 // The handler is `fn(event, ctx)` — `event` is an opaque platform event read
 // through the accessors below, so an app never touches a native type.
 //
-// Handling: a handler that wants the key STOPPED calls `consume_key()`, and the
-// event does not fall through to the responder chain (so Ctrl-C reaches a
-// terminal instead of beeping). Anything not consumed behaves exactly as before.
+// Handling: the handler's BOOL return is the one channel — `true` stops the
+// event (it reaches neither facet ancestors nor the native responder chain,
+// so Ctrl-C reaches a terminal instead of beeping); `false` declines and the
+// event behaves exactly as before. (The old facet had a separate
+// consume_key() flag; one verb was redundant and the flag lost.)
 // The platform's key-event readers, one struct filled by the backend —
 // the Renderer/Scheduler shape. Zero fields keep the portable defaults.
 struct KeyReader {
@@ -468,11 +470,6 @@ fn key_named(event: *u8) -> i64 {
     return f(event);
 }
 
-// Set while a key handler runs: the handler calls consume_key() to stop the
-// event, and the backend reads (and clears) the flag when the handler returns.
-static KEY_CONSUMED: bool = false;
-fn consume_key() { KEY_CONSUMED = true; return; }
-fn take_key_consumed() -> bool { let c: bool = KEY_CONSUMED; KEY_CONSUMED = false; return c; }
 
 
 // ---- key band tests ----------------------------------------------------------
@@ -480,8 +477,7 @@ fn take_key_consumed() -> bool { let c: bool = KEY_CONSUMED; KEY_CONSUMED = fals
 static KT_CODE: i64 = 0 as i64;
 fn kt_handler(event: *u8, ctx: *u8) -> bool {
     KT_CODE = key_code(event);
-    consume_key();
-    return true;
+    return true;                     // handled: the ONE stop channel
 }
 fn kt_code_fake(event: *u8) -> i64 { return 42 as i64; }
 
@@ -501,10 +497,6 @@ fn on_key_rides_the_gesture_band_and_consume_is_one_shot() {
     assert fire_key(#addr_of(n), 0 as *u8);
     assert KT_CODE == (42 as i64);
     uninstall_key_reader();
-    // consume_key() is read-and-cleared, so one consumed event does not
-    // swallow the next.
-    assert take_key_consumed();
-    assert !take_key_consumed();
     // Modifier bits are distinct and testable through has_modifier.
     let both: u64 = mod_control() | mod_shift();
     assert has_modifier(both, mod_control());
