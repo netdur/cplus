@@ -13,3 +13,25 @@ path = "src/test_main.cplus"
 [dependencies]
 stdlib      = "*"
 flex_layout = "*"
+
+# The per-platform backends the runtime facades import. `runtime.cplus` is the
+# neutral base; the resolver's platform override picks `runtime_macos.cplus`
+# beside it on a macOS target, and that file — the only place in facet that
+# names a platform — imports the backend below. Declared here so facet
+# resolves on its own rather than leaning on whatever the root package vendors.
+#
+# Consequence, stated out loud: `test_main.cplus` imports `./runtime`, so on
+# macOS facet's own suite compiles facet_appkit. A backend that does not build
+# turns facet red. That is how the pre-regen tree had it too.
+
+[macos.dependencies]
+facet_appkit = "*"
+# facet_appkit's own transitive deps, listed here because the resolver
+# validates every import in the build against ONE flat set taken from the
+# consuming manifest — it does not read a dependency's own. Mechanical, not
+# semantic: facet imports none of these, `runtime_macos.cplus` reaches them
+# only through facet_appkit. Same shape every consumer uses (see
+# examples/hello_facet/Cplus.toml).
+objc = "*"
+appkit = "*"
+quartzcore = "*"

@@ -1,0 +1,330 @@
+// facet_appkit window — Chrome becomes an NSWindow, and the tree becomes its
+// content.
+//
+// The ownership model facet declares is process -> app -> window -> node, and
+// this module keeps it: a window's platform handle lives on the app's own
+// `Window` record (`app::set_window_native`), never in a `CURRENT_WIN` static
+// like the pre-regen facade kept. An app has many windows open at once, so a
+// single process-wide "the current window" is both wrong and app-scoped state
+// in a process static.
+//
+// Each window owns its delegate. The delegate is heap-allocated per window and
+// pinned to the NSWindow as an associated object, so it lives exactly as long
+// as the window does and two windows never share lifecycle state.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "stdlib/box" as box;
+import "flex_layout/flex_layout" as flex;
+import "facet/facet" as core;
+import "facet/mount" as mount;
+import "facet/screen" as screen;
+import "facet/application" as app;
+import "facet/theme" as theme;
+import "objc/runtime" as rt;
+import "objc/synthesis" as synth;
+import "appkit/appkit" as ak;
+import "appkit/appkit_ext" as akx;
+import "./views" as views;
+import "./scheduler" as scheduler;
+import "./geometry" as geometry;
+
+type Node = flex::Node;
+type Chrome = screen::Chrome;
+type Bar = screen::Bar;
+
+// ---- the bar, in AppKit's terms ----------------------------------------------
+// facet's `Bar` is one enum where the old facade had six booleans. Its four
+// values map onto the two knobs AppKit actually has — whether content runs
+// under the titlebar, and which standard buttons show.
+//
+//   Native   the stock titlebar. Nothing special.
+//   Blended  content bleeds under a transparent, title-less titlebar — the
+//            unified-toolbar / clean-titlebar look, without naming either.
+//   Hidden   no visible bar; the standard buttons stay and FLOAT over the
+//            content (the platform's own behaviour, which is what "if it has
+//            them" in the contract means).
+//   Custom   the app draws the bar: full-size content, and all three standard
+//            buttons hidden so `window_buttons()` can supply its own.
+
+fn wants_full_size_content(bar: Bar) -> bool {
+    return match bar {
+        screen::Bar::Native => false,
+        screen::Bar::Blended => true,
+        screen::Bar::Hidden => true,
+        screen::Bar::Custom => true,
+    };
+}
+
+fn shell_style_mask(bar: Bar) -> u64 {
+    var style: u64 = ak::window_style_mask_titled
+        | ak::window_style_mask_closable
+        | ak::window_style_mask_miniaturizable
+        | ak::window_style_mask_resizable;
+    if wants_full_size_content(bar) { style = style | ak::window_style_mask_full_size_content_view; }
+    return style;
+}
+
+// Hide one traffic light if the style mask has it at all; None means the mask
+// does not include that button and there is nothing to hide.
+fn hide_window_button(win: ak::Window, b: ak::WindowButton) {
+    match win.standard_window_button(b) {
+        option::Option[ak::Button]::Some(btn) => { btn.as_view().set_hidden(true); }
+        option::Option[ak::Button]::None => { }
+    }
+    return;
+}
+
+// Create the NSWindow at +1. The caller sets the content view and orders it
+// front.
+fn make_shell_window(take chrome: Chrome) -> ak::Window {
+    let c: Chrome = chrome;
+    let win = ak::Window::new(
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: c.width, h: c.height },
+        shell_style_mask(c.bar),
+        ak::BackingStoreType::NSBackingStoreBuffered,
+        false,
+    );
+    let _r: *u8 = rt::retain(win.raw());
+    win.set_title(c.title());
+    match c.bar {
+        screen::Bar::Native => { }
+        screen::Bar::Blended => {
+            win.set_titlebar_appears_transparent(true);
+            win.set_title_visibility(ak::WindowTitleVisibility::NSWindowTitleHidden);
+        }
+        screen::Bar::Hidden => {
+            // The buttons stay: on macOS a bar-less window still floats its
+            // traffic lights, and hiding them would be Bar::Custom's job.
+            win.set_titlebar_appears_transparent(true);
+            win.set_title_visibility(ak::WindowTitleVisibility::NSWindowTitleHidden);
+        }
+        screen::Bar::Custom => {
+            win.set_titlebar_appears_transparent(true);
+            win.set_title_visibility(ak::WindowTitleVisibility::NSWindowTitleHidden);
+            hide_window_button(win, ak::WindowButton::NSWindowCloseButton);
+            hide_window_button(win, ak::WindowButton::NSWindowMiniaturizeButton);
+            hide_window_button(win, ak::WindowButton::NSWindowZoomButton);
+            // Dragging comes from an explicit `.window_drag()` surface, NOT
+            // movableByWindowBackground — that swallows a click on the app's
+            // own titlebar controls as a no-movement window drag.
+        }
+    }
+    // A separate question from the bar's style, so a separate field.
+    if c.close_button_only {
+        hide_window_button(win, ak::WindowButton::NSWindowMiniaturizeButton);
+        hide_window_button(win, ak::WindowButton::NSWindowZoomButton);
+    }
+    // The content-size floor, applied only when both dimensions are set.
+    if c.min_width > 0.0f64 && c.min_height > 0.0f64 {
+        win.set_content_min_size(rt::Size { w: c.min_width, h: c.min_height });
+    }
+    return win;
+}
+
+// ---- per-window lifecycle ----------------------------------------------------
+// One of these per open window, heap-allocated and pinned to the NSWindow.
+// `root` is what ties an AppKit callback back to a facet tree.
+
+struct WindowHost {
+    opaque root: *core::Node,
+    should_close: fn(*u8) -> bool,
+    will_close: fn(*u8),
+    opaque ctx: *u8,
+    delegate: ak::WindowDelegate,
+}
+
+fn host_key() -> *u8 { return 29010 as *u8; }
+
+fn default_should_close(ctx: *u8) -> bool { return true; }
+fn default_will_close(ctx: *u8) { return; }
+
+// How many facet windows are open. The run loop stops when the last one goes,
+// which is the desktop convention a single-window app expects.
+static OPEN_WINDOWS: i64 = 0 as i64;
+
+fn open_window_count() -> i64 { return OPEN_WINDOWS; }
+
+fn appkit_should_close(user: *u8, win_ptr: *u8) -> i8 {
+    if user == (0 as *u8) { return 1 as i8; }
+    let h: *WindowHost = user as *WindowHost;
+    let f: fn(*u8) -> bool = { (*h).should_close };
+    if f == (0 as fn(*u8) -> bool) { return 1 as i8; }
+    if f({ (*h).ctx }) { return 1 as i8; }
+    return 0 as i8;
+}
+
+fn appkit_will_close(user: *u8, notif: *u8) {
+    if user == (0 as *u8) { return; }
+    let h: *WindowHost = user as *WindowHost;
+    let f: fn(*u8) = { (*h).will_close };
+    if f != (0 as fn(*u8)) { f({ (*h).ctx }); }
+    // Out of the app's window list, and the tree detaches — the same path an
+    // explicit unmount takes, so on_detach handlers fire exactly once.
+    let root: *core::Node = { (*h).root };
+    if root != (0 as *core::Node) { mount::unmount(root); }
+    OPEN_WINDOWS = OPEN_WINDOWS -% (1 as i64);
+    if OPEN_WINDOWS <= (0 as i64) {
+        OPEN_WINDOWS = 0 as i64;
+        stop_loop();
+    }
+    return;
+}
+
+// windowDidResize: re-lay the retained tree at the new size and move the
+// existing views. No render, no mount, no view churn — this is the path the
+// retained-relayout work bought, and the whole reason the tree survives mount.
+fn appkit_did_resize(user: *u8, notif: *u8) {
+    if user == (0 as *u8) { return; }
+    let h: *WindowHost = user as *WindowHost;
+    let root: *core::Node = { (*h).root };
+    if root != (0 as *core::Node) { scheduler::layout_window(root); }
+    return;
+}
+
+fn install_window_host(win: ak::Window, root: *core::Node, ctx: *u8,
+                       should_close: fn(*u8) -> bool, will_close: fn(*u8)) {
+    var h: WindowHost = WindowHost {
+        root: root,
+        should_close: should_close,
+        will_close: will_close,
+        ctx: ctx,
+        delegate: ak::WindowDelegate_new(0 as *u8),
+    };
+    match box::new::[WindowHost](h) {
+        option::Option[box::Box[WindowHost]]::Some(b) => {
+            let hp: *u8 = b.into_raw();
+            let host: *WindowHost = hp as *WindowHost;
+            // The delegate's `user` is the host itself, so every callback
+            // reaches this window's own record and no other's.
+            { (*host).delegate = ak::WindowDelegate_new(hp) };
+            { (*host).delegate.set_window_should_close(appkit_should_close) };
+            { (*host).delegate.set_window_will_close(appkit_will_close) };
+            { (*host).delegate.set_window_did_resize(appkit_did_resize) };
+            let obj: *u8 = ak::create_WindowDelegate(#addr_of((*host).delegate));
+            win.set_delegate(obj);
+            // Pin both to the window: it outlives this frame and owns them.
+            { synth::set_associated(win.raw(), host_key(), obj) };
+        }
+        option::Option[box::Box[WindowHost]]::None => { }
+    }
+    return;
+}
+
+// ---- opening a window --------------------------------------------------------
+
+// Open a window showing `root`. Returns the NSWindow pointer; the tree is
+// mounted, the window is on screen, and nothing blocks.
+//
+// The root Node is NOT owned here — the caller (a facade, a screen loop) holds
+// it for the window's life, because facet's cursors point into it.
+fn open_window(root: *core::Node, take chrome: Chrome,
+               ctx: *u8 = 0 as *u8,
+               should_close: fn(*u8) -> bool = default_should_close,
+               will_close: fn(*u8) = default_will_close) -> *u8 {
+    if root == (0 as *core::Node) { return 0 as *u8; }
+    let c: Chrome = chrome;
+    let width: f64 = c.width;
+    let height: f64 = c.height;
+    let application: ak::Application = ak::Application::shared_application();
+    let _ok: bool = application.set_activation_policy(ak::ApplicationActivationPolicy::Regular);
+
+    let win: ak::Window = make_shell_window(c);
+
+    // The content view is FLIPPED: everything below it is top-left origin, the
+    // same as flex, so the frame walk carries no flip math at all.
+    let content: ak::View = akx::new_flipped_view(rt::Rect { x: 0.0f64, y: 0.0f64, w: width, h: height });
+    win.set_content_view(content);
+
+    // Mount: this is what opens the window on the APP's record too
+    // (mount::mount calls app::open_window), so the native handle can be
+    // recorded against it immediately after.
+    let mounted: bool = mount::mount(root);
+    app::set_window_native(root, win.raw());
+    OPEN_WINDOWS = OPEN_WINDOWS +% (1 as i64);
+    install_window_host(win, root, ctx, should_close, will_close);
+
+    // The root's own view was inserted nowhere by the walk — the facade puts
+    // it in the window, which is here.
+    if mounted {
+        let rv: *u8 = core::view_of(root);
+        if rv != (0 as *u8) { content.add_subview(ak::View::from_raw(rv)); }
+    }
+
+    // System light/dark flips reach the app through theme::on_appearance_change:
+    // an invisible sentinel subview's viewDidChangeEffectiveAppearance forwards
+    // the signal, which is the only hook AppKit offers.
+    akx::add_appearance_observer(content, fire_appearance_change, 0 as *u8);
+
+    win.center();
+    win.make_key_and_order_front(0 as *u8);
+    application.activate_ignoring_other_apps(true);
+    // windowDidResize does not fire on first display, so lay out once here or
+    // the content stays frozen at its mount-time size.
+    scheduler::layout_window(root);
+    return win.raw();
+}
+
+fn fire_appearance_change(ctx: *u8) {
+    theme::notify_appearance_changed();
+    return;
+}
+
+// Close a window by its native handle. The will_close path does the rest:
+// unmount, count down, and stop the loop when the last one goes.
+fn close_window(win: *u8) {
+    if win == (0 as *u8) { return; }
+    ak::Window::from_raw(win).close();
+    return;
+}
+
+// The window showing `root`, closed.
+fn close_window_of(root: *core::Node) {
+    close_window(app::window_native(root));
+    return;
+}
+
+// ---- the loop ----------------------------------------------------------------
+
+fn run_loop() {
+    ak::Application::shared_application().run();
+    return;
+}
+
+// `NSApplication.stop` only takes effect when the loop next finishes an event,
+// so a stop from inside a callout (a run_on_main step, an agent's click) needs
+// a nudge to wake it. Posting a no-op app-defined event is that nudge.
+fn stop_loop() {
+    let application: ak::Application = ak::Application::shared_application();
+    application.stop(0 as *u8);
+    nudge_loop(application);
+    return;
+}
+
+fn nudge_loop(application: ak::Application) {
+    let e: option::Option[ak::Event] = ak::Event::other_event_with_type(
+        ak::EventType::ApplicationDefined,
+        rt::Point { x: 0.0f64, y: 0.0f64 },
+        0 as u64,
+        0.0f64,
+        0 as i64,
+        ak::GraphicsContext::from_raw(0 as *u8),
+        0 as i16,
+        0 as i64,
+        0 as i64,
+    );
+    match e {
+        option::Option[ak::Event]::Some(ev) => { application.post_event(ev, true); }
+        option::Option[ak::Event]::None => { }
+    }
+    return;
+}
+
+// ---- is_dark -----------------------------------------------------------------
+// The ONE single slot theme keeps: which system appearance is active.
+
+fn is_dark() -> bool {
+    let application: ak::Application = ak::Application::shared_application();
+    let name: text::Text = application.effective_appearance().name();
+    return name.view().contains("Dark");
+}

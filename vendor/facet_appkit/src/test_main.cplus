@@ -1,0 +1,333 @@
+// facet_appkit test root. Importing is what compiles a module into the gate,
+// so every module is imported here whether or not this file names it again.
+//
+// The harness doubles as the leak check: `leaks --atExit -- ./target/debug/
+// facet_appkit_tests`. The standing rule for what belongs here is "test OUR
+// bindings, not Apple's behaviour" — these assert that facet's contract
+// reaches AppKit, not that AppKit works.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "flex_layout/flex_layout" as flex;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/mount" as mount;
+import "facet/screen" as screen;
+import "facet/theme" as theme;
+import "facet/vocabulary" as vocab;
+import "facet/application" as app;
+import "objc/runtime" as rt;
+import "appkit/appkit" as ak;
+
+import "./views" as views;
+import "./geometry" as geometry;
+import "./scheduler" as scheduler;
+import "./window" as window;
+import "./facet_appkit" as backend;
+
+type Node = flex::Node;
+
+fn main() -> i32 { return 0; }
+
+// A keyed column, the shape Stage 4 item 1 exists to put on screen.
+fn empty_keyed_column() -> core::Node {
+    return core::column(core::Builder::new(), key: "body");
+}
+
+// ---- the backing rule --------------------------------------------------------
+
+#[test]
+fn a_keyed_container_is_backed_and_an_unkeyed_one_is_not() {
+    // The same rule facet's fake renderer uses, so the headless conformance
+    // tests and this backend agree on the shape of the native tree.
+    var keyed: core::Node = core::column(core::Builder::new(), key: "body");
+    assert views::wants_view(#addr_of(keyed));
+    var bare: core::Node = core::column(core::Builder::new());
+    assert views::wants_view(#addr_of(bare)) == false;
+    // A control is always backed, key or no key.
+    var leaf: core::Node = core::node_with("", props::K_BUTTON, 0 as *u8, core::no_release);
+    assert views::wants_view(#addr_of(leaf));
+    return;
+}
+
+#[test]
+fn create_makes_a_flipped_view_and_tags_it_with_the_key() {
+    var n: core::Node = empty_keyed_column();
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    assert v != (0 as *u8);
+    // FLIPPED: top-left origin, so the frame walk needs no flip math.
+    assert ak::View::from_raw(v).is_flipped();
+    // The key IS the accessibilityIdentifier — one token, three jobs.
+    assert ak::Accessibility::from_raw(v).accessibility_identifier().view() == "body";
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn an_unbacked_node_creates_nothing() {
+    var bare: core::Node = core::column(core::Builder::new());
+    assert views::create(0 as *u8, #addr_of(bare)) == (0 as *u8);
+    assert views::create(0 as *u8, 0 as *core::Node) == (0 as *u8);
+    return;
+}
+
+// ---- the shared band ---------------------------------------------------------
+
+#[test]
+fn the_shared_band_reaches_the_view() {
+    var n: core::Node = empty_keyed_column();
+    let p: *core::Node = #addr_of(n);
+    core::set_visible(p, false);
+    core::set_opacity(p, 0.25f64);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v != (0 as *u8);
+    let view: ak::View = ak::View::from_raw(v);
+    // create reads the band WHOLE, so a view is configured before it is shown.
+    assert view.is_hidden();
+    assert view.alpha_value() < 0.3f64;
+    // ...and apply re-reads only what the dirty bits name.
+    core::set_view(p, v, views::view_release);
+    core::clear_dirty(p);
+    core::set_visible(p, true);
+    views::apply(0 as *u8, p);
+    assert view.is_hidden() == false;
+    assert view.alpha_value() < 0.3f64;      // untouched: its bit was not set
+    return;
+}
+
+#[test]
+fn apply_is_inert_without_a_view_or_a_dirty_word() {
+    var n: core::Node = empty_keyed_column();
+    let p: *core::Node = #addr_of(n);
+    // No view: nothing to apply onto, and no trap.
+    views::apply(0 as *u8, p);
+    views::apply(0 as *u8, 0 as *core::Node);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    core::clear_dirty(p);
+    views::apply(0 as *u8, p);               // clean node: nothing re-read
+    return;
+}
+
+// ---- colour resolution -------------------------------------------------------
+
+#[test]
+fn theme_roles_resolve_through_the_apps_palette_then_the_fallback() {
+    app::reset_default_for_tests();
+    // An UNSET role falls through to its platform token, not to black.
+    theme::set_theme(theme::Theme::new());
+    let unset: ak::Color = views::ns_color(vocab::Color::primary());
+    assert unset.raw() == ak::Color::control_accent_color().raw();
+    // A role the app DID set resolves to the app's literal.
+    theme::set_theme(theme::Theme::new(primary: vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64, 1.0f64)));
+    let set: ak::Color = views::ns_color(vocab::Color::primary());
+    assert set.red_component() > 0.9f64;
+    // A Tier-1 token maps straight onto the platform's adaptive colour.
+    assert views::ns_color(vocab::Color::text()).raw() == ak::Color::label_color().raw();
+    theme::set_theme(theme::Theme::new());
+    app::reset_default_for_tests();
+    return;
+}
+
+// ---- the layout pass ---------------------------------------------------------
+
+#[test]
+fn the_frame_walk_places_children_top_left_and_host_relative() {
+    backend::install();
+    var b: core::Builder = core::Builder::new();
+    b.add(core::column(core::Builder::new(), key: "first").height(40.0f64));
+    b.add(core::column(core::Builder::new(), key: "second").height(60.0f64));
+    var root: core::Node = core::column(b, key: "root");
+    let rp: *core::Node = #addr_of(root);
+    assert mount::mount(rp);
+    geometry::relayout_root(rp, 200.0f64, 100.0f64, 1.0f64);
+    // flex frames are ABSOLUTE; the native frame is host-relative, and the
+    // host here is the root itself, whose own origin is 0,0.
+    match core::find_in(rp, "second") {
+        option::Option[*core::Node]::Some(sp) => {
+            let v: *u8 = core::view_of(sp);
+            assert v != (0 as *u8);
+            let f: rt::Rect = ak::View::from_raw(v).frame();
+            // Second child of a column: y is the first child's height, and it
+            // is measured DOWN — no bottom-up flip anywhere.
+            assert f.y > 39.0f64 && f.y < 41.0f64;
+            assert f.h > 59.0f64 && f.h < 61.0f64;
+        }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    mount::unmount(rp);
+    backend::uninstall();
+    return;
+}
+
+#[test]
+fn a_pass_through_container_places_against_the_nearest_host() {
+    backend::install();
+    // An unkeyed column gets no view, so its child hangs from the ROOT's view
+    // and must be placed against the ROOT's frame, not its own.
+    var ib: core::Builder = core::Builder::new();
+    ib.add(core::column(core::Builder::new(), key: "deep").height(20.0f64));
+    var b: core::Builder = core::Builder::new();
+    b.add(core::column(core::Builder::new(), key: "spacer").height(30.0f64));
+    b.add(core::column(ib));
+    var root: core::Node = core::column(b, key: "root");
+    let rp: *core::Node = #addr_of(root);
+    assert mount::mount(rp);
+    geometry::relayout_root(rp, 100.0f64, 100.0f64, 1.0f64);
+    match core::find_in(rp, "deep") {
+        option::Option[*core::Node]::Some(dp) => {
+            let v: *u8 = core::view_of(dp);
+            assert v != (0 as *u8);
+            let f: rt::Rect = ak::View::from_raw(v).frame();
+            // 30 down from the ROOT's top — the pass-through container
+            // contributed no coordinate space of its own.
+            assert f.y > 29.0f64 && f.y < 31.0f64;
+        }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    mount::unmount(rp);
+    backend::uninstall();
+    return;
+}
+
+#[test]
+fn a_full_cache_hit_walks_nothing() {
+    // The optimisation's own guard: an unchanged pass reports layout_changed()
+    // false at the root and the walk returns immediately. If this ever stops
+    // holding, a live drag goes back to O(tree) per frame.
+    backend::install();
+    var b: core::Builder = core::Builder::new();
+    b.add(core::column(core::Builder::new(), key: "child").height(40.0f64));
+    var root: core::Node = core::column(b, key: "root");
+    let rp: *core::Node = #addr_of(root);
+    assert mount::mount(rp);
+    geometry::relayout_root(rp, 200.0f64, 100.0f64, 1.0f64);
+    assert { (*rp).layout_changed() };
+    // Same size, nothing touched: the engine skips the whole subtree.
+    { (*rp).calculate_layout(width: 200.0f64, height: 100.0f64) };
+    assert { (*rp).layout_changed() } == false;
+    // A geometry write invalidates it again — and that write is exactly what
+    // C_LAYOUT now tells the backend about.
+    match core::find_in(rp, "child") {
+        option::Option[*core::Node]::Some(cp) => { core::set_height(cp, 50.0f64); }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    { (*rp).calculate_layout(width: 200.0f64, height: 100.0f64) };
+    assert { (*rp).layout_changed() };
+    mount::unmount(rp);
+    backend::uninstall();
+    return;
+}
+
+// ---- the tick ----------------------------------------------------------------
+
+#[test]
+fn a_write_arms_the_tick_and_the_tick_coalesces() {
+    backend::install();
+    var root: core::Node = empty_keyed_column();
+    let rp: *core::Node = #addr_of(root);
+    assert mount::mount(rp);
+    // Drain whatever mounting armed.
+    scheduler::tick();
+    let before: u64 = scheduler::ticks();
+    // Many writes, ONE pending tick — that is the whole point of coalescing
+    // at before-waiting rather than syncing per write.
+    core::set_opacity(rp, 0.5f64);
+    core::set_visible(rp, true);
+    core::set_opacity(rp, 0.6f64);
+    assert scheduler::sync_pending();
+    scheduler::tick();
+    assert scheduler::ticks() == before +% (1 as u64);
+    assert scheduler::sync_pending() == false;
+    // ...and the tick applied them: the dirty word is clear.
+    assert core::dirty_of(rp) == (0 as u64);
+    // A tick with nothing pending does no work at all.
+    scheduler::tick();
+    assert scheduler::ticks() == before +% (1 as u64);
+    mount::unmount(rp);
+    backend::uninstall();
+    return;
+}
+
+// ---- the window shell --------------------------------------------------------
+
+#[test]
+fn chrome_bar_styles_map_onto_the_two_appkit_knobs() {
+    // Native is the only one that does NOT run content under the titlebar.
+    assert window::wants_full_size_content(screen::Bar::Native) == false;
+    assert window::wants_full_size_content(screen::Bar::Blended);
+    assert window::wants_full_size_content(screen::Bar::Hidden);
+    assert window::wants_full_size_content(screen::Bar::Custom);
+    // ...and that shows up in the style mask, which is otherwise identical.
+    let native: u64 = window::shell_style_mask(screen::Bar::Native);
+    let custom: u64 = window::shell_style_mask(screen::Bar::Custom);
+    assert (native & ak::window_style_mask_full_size_content_view) == (0 as u64);
+    assert (custom & ak::window_style_mask_full_size_content_view) != (0 as u64);
+    assert (native & ak::window_style_mask_titled) != (0 as u64);
+    assert (native & ak::window_style_mask_resizable) != (0 as u64);
+    return;
+}
+
+#[test]
+fn open_window_mounts_shows_and_records_its_handle() {
+    backend::install();
+    app::reset_default_for_tests();
+    var root: core::Node = empty_keyed_column();
+    let rp: *core::Node = #addr_of(root);
+    let win: *u8 = window::open_window(rp, screen::Chrome::new(title: "shell", width: 300.0f64, height: 200.0f64));
+    assert win != (0 as *u8);
+    // The window is on the APP's record, and its native handle with it — the
+    // per-window door that replaced the CURRENT_WIN static.
+    assert app::window_count() == (1 as usize);
+    assert app::window_native(rp) == win;
+    assert app::window_root_for_native(win) == rp;
+    // The tree is mounted and its view is in the window's content view.
+    assert core::is_attached(rp);
+    let rv: *u8 = core::view_of(rp);
+    assert rv != (0 as *u8);
+    match ak::View::from_raw(rv).superview() {
+        option::Option[ak::View]::Some(sv) => {
+            // The content view is flipped, which is what makes the whole walk
+            // top-left.
+            assert sv.is_flipped();
+        }
+        option::Option[ak::View]::None => { assert false; }
+    }
+    // ...and it was laid out at the window's size, not left at zero.
+    let f: rt::Rect = ak::View::from_raw(rv).frame();
+    assert f.w > 200.0f64;
+    window::close_window(win);
+    backend::uninstall();
+    app::reset_default_for_tests();
+    return;
+}
+
+#[test]
+fn open_window_refuses_a_null_root_and_close_is_inert() {
+    backend::install();
+    assert window::open_window(0 as *core::Node, screen::Chrome::new()) == (0 as *u8);
+    // Closing nothing is a no-op, not a trap — the alloc-failure path.
+    window::close_window(0 as *u8);
+    backend::uninstall();
+    return;
+}
+
+// ---- install -----------------------------------------------------------------
+
+#[test]
+fn install_is_idempotent_and_uninstall_restores_the_portable_posture() {
+    backend::uninstall();
+    assert mount::installed() == false;
+    backend::install();
+    assert backend::installed();
+    assert mount::installed();
+    backend::install();                      // twice: still one backend
+    assert mount::installed();
+    // is_dark answers through the platform while installed...
+    let _d: bool = theme::is_dark();
+    backend::uninstall();
+    // ...and falls back to light (the neutral default) with none.
+    assert theme::is_dark() == false;
+    assert mount::installed() == false;
+    return;
+}

@@ -1,1 +1,113 @@
-// facet_appkit — empty scaffold.
+// facet_appkit — facet's AppKit backend.
+//
+// INTENT.md is the judge: for each thing facet declares, this package either
+// implements it with what AppKit offers or states plainly that AppKit cannot.
+// It holds nothing else — no second vocabulary, no side door that looks
+// portable. A developer may still drop beneath facet and use AppKit directly;
+// that is a deliberate, visible choice made in the application, not something
+// this package offers as a shortcut.
+//
+// This file is the whole registration surface: `install()`, and nothing else a
+// backend could smuggle a hook through.
+//
+//   mount::install(Renderer)                 create / apply / insert / remove / schedule
+//   services::install_scheduler(Scheduler)   run_on_main / after / observe_size
+//   theme::set_is_dark_fn                    the system appearance read
+//   theme::set_theme_changed_fn              repaint the running app's chrome
+//
+// Not yet filled, and deliberately NOT half-filled — zero fields keep facet's
+// portable no-op, which is honest, where a struct with three of five slots
+// would look installed and behave randomly:
+//   gestures::install_key_reader             Stage 4 item 4 (input)
+//   component::install_sender_readers        Stage 4 item 4 (input)
+//   runtime::install_agent                   Stage 4 item 6 (the agent surface)
+
+import "stdlib/option" as option;
+import "flex_layout/flex_layout" as flex;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/mount" as mount;
+import "facet/services" as services;
+import "facet/theme" as theme;
+import "facet/application" as app;
+import "./views" as views;
+import "./scheduler" as scheduler;
+import "./geometry" as geometry;
+import "./window" as window;
+
+type Node = flex::Node;
+
+fn renderer() -> mount::Renderer {
+    return mount::Renderer {
+        ctx: 0 as *u8,
+        create: views::create,
+        view_release: views::view_release,
+        apply: views::apply,
+        insert: views::insert,
+        remove: views::remove,
+        schedule: scheduler::schedule,
+    };
+}
+
+// Install the backend. Idempotent: a facade doing belt-and-braces registration
+// must not double-arm the run loop observer.
+static INSTALLED: bool = false;
+
+fn install() {
+    if INSTALLED { return; }
+    INSTALLED = true;
+    // mount::install also arms M5 (touch -> schedule) and M6 (this thread
+    // becomes THE UI thread; every tree write asserts it).
+    mount::install(renderer());
+    services::install_scheduler(scheduler::scheduler());
+    theme::set_is_dark_fn(window::is_dark);
+    theme::set_theme_changed_fn(theme_changed);
+    scheduler::install_sync_tick();
+    return;
+}
+
+fn installed() -> bool { return INSTALLED; }
+
+// Tests and teardown: back to facet's portable no-backend posture. The run
+// loop observer stays armed — it is inert with nothing pending, and CFRunLoop
+// offers no clean way to take one back out mid-process.
+fn uninstall() {
+    mount::uninstall();
+    services::uninstall_scheduler();
+    theme::set_is_dark_fn(0 as fn() -> bool);
+    INSTALLED = false;
+    return;
+}
+
+// ---- theme changed -----------------------------------------------------------
+// A palette swap or an appearance flip: colours resolved at paint time do not
+// re-resolve themselves, so chrome that used a theme role has to be re-applied.
+//
+// The pre-regen backend kept a registry of every painted view and walked that.
+// None is needed now — the tree IS the registry. Marking the paint bits routes
+// the repaint through the ordinary sync, so there is one code path for "the
+// colour changed", whatever changed it.
+fn theme_changed() {
+    var i: usize = 0 as usize;
+    let n: usize = app::window_count();
+    while i < n {
+        let r: *core::Node = app::window_root(i);
+        if r != (0 as *core::Node) { repaint_walk(r); }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+fn repaint_walk(n: *core::Node) {
+    core::touch(n, props::C_BACKGROUND_COLOR | props::C_BACKGROUND);
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => { repaint_walk(c); }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}

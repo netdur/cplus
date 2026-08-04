@@ -1,0 +1,143 @@
+// facet_appkit geometry — the layout pass, and the frame walk that follows it.
+//
+// facet holds zero layout code and the Renderer has no geometry verb: the
+// backend owns this. flex computes the frames; this module puts them on the
+// NSViews.
+//
+// ---- the optimisation this preserves ----------------------------------------
+//
+// `9a54a0b perf(flex+facet_appkit): make retained relayout O(what-changed),
+// not O(tree)`. Live-drag instrumentation on iris measured, same build, A/B:
+//
+//     rebuild everything per frame     ~265 ms/frame   (~4 FPS)
+//     retained relayout                ~30 ms horizontal, ~2 ms vertical
+//
+// Three things earned that, and all three are here:
+//
+//   1. NOTHING IS REBUILT. The tree survives from mount; a resize re-runs the
+//      layout and sets frames on the views that already exist. No render, no
+//      mount, no view churn. (The old runtime's other verb — invalidate,
+//      which re-rendered and re-allocated every NSView — is what facet's
+//      non-reactive model removed outright: there is no rebuild path left to
+//      take by accident.)
+//   2. FLEX'S INCREMENTAL CACHE GETS HITS. It skips a subtree whose style,
+//      child count, grid signature and box all match the previous pass. Under
+//      the old rebuild path it never hit once, because every tree lived for
+//      exactly one calculate_layout call. Keeping the tree is what turns it on.
+//   3. THE WALK PRUNES ITSELF on the cache's verdict. A cache-skipped child
+//      still gets its OWN set_frame — its frame is host-relative, so it moves
+//      when its host moves even with an unchanged absolute frame — but its
+//      DESCENDANTS are skipped, because a skip guarantees every absolute frame
+//      under it is bit-identical. Descending anyway was thousands of no-op
+//      set_frame msgsends per frame on a large tree.
+//
+// ---- one simplification vs the pre-regen walk --------------------------------
+//
+// Every view this backend creates is FLIPPED (`akx::new_flipped_view`), so its
+// coordinate space is top-left origin — the same as flex's. The old walk
+// threaded a `parent_flipped` flag through every level and computed
+// `parent.height - (child.top - parent.top) - child.height` for the bottom-up
+// case; there is no flip math here at all. A native control placed in a
+// flipped host is positioned by its top-left too (the frame is read in the
+// SUPERVIEW's space), so nothing about widget kinds changes this.
+//
+// flex frames are ABSOLUTE in the root's coordinate space, so a child's
+// native frame is simply `child.frame - host.frame` in origin.
+
+import "stdlib/option" as option;
+import "flex_layout/flex_layout" as flex;
+import "facet/facet" as core;
+import "objc/runtime" as rt;
+import "appkit/appkit" as ak;
+
+type Node = flex::Node;
+
+// setFrame: straight down objc_msgSend, deliberately.
+//
+// `ak::View::from_raw` RETAINS and its drop releases, so wrapping every node
+// on every pass would be a retain/release pair per view per frame — on the
+// hot path, for a wrapper that lives two statements. The walk below is the
+// one place in this package that measures, so it speaks to the runtime
+// directly; every cold path uses the typed wrapper like normal code.
+fn set_view_frame(v: *u8, r: rt::Rect) {
+    { rt::msg_void_rect(v, rt::sel(#str_ptr("setFrame:\0")), r) };
+    return;
+}
+
+// Lay `root` out at the host's size, then push the frames onto the views.
+// `scale` is the backing scale factor (2.0 on Retina): snapping frames to the
+// device pixel grid keeps text crisp AND keeps the numbers bit-stable pass to
+// pass, which is what lets the layout cache report a hit at an unchanged size.
+fn relayout_root(root: *core::Node, width: f64, height: f64, scale: f64) {
+    if root == (0 as *core::Node) { return; }
+    { (*root).calculate_layout(width: width, height: height) };
+    if scale > 0.0f64 { { (*root).round_to_pixel(scale) }; }
+    reposition(root);
+    return;
+}
+
+// Walk an already-mounted tree and set every EXISTING view's frame from the
+// layout just computed. Nothing is created, added or removed — `mount` must
+// have run on this tree, so each backed node already owns its view.
+//
+// The root's OWN view is not touched: the window host sized it when it made
+// the content view, and it fills that view by construction.
+fn reposition(root: *core::Node) {
+    if root == (0 as *core::Node) { return; }
+    // The engine's verdict for the whole tree: false means every frame below
+    // is bit-identical to the previous pass (a vertical-only resize of a
+    // width-driven tree, say) — nothing to move, so nothing is walked.
+    if { (*root).layout_changed() } == false { return; }
+    reposition_children(root, { (*root).frame() });
+    return;
+}
+
+// `host_abs` is the absolute frame of the node whose VIEW the children of
+// `node` hang from. For a backed node that is its own frame; a pass-through
+// node hands its host straight down, which is how a pure-layout column inside
+// a scroll view places its children in the scroll's document view.
+fn reposition_children(node: *core::Node, host_abs: flex::Frame) {
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(node);
+    while i < count {
+        match core::child_of(node, i) {
+            option::Option[*core::Node]::Some(c) => {
+                let cf: flex::Frame = { (*c).frame() };
+                let v: *u8 = core::view_of(c);
+                if v != (0 as *u8) {
+                    // Host-relative, top-left: the host view is flipped.
+                    set_view_frame(v, rt::Rect {
+                        x: cf.left - host_abs.left,
+                        y: cf.top - host_abs.top,
+                        w: cf.width,
+                        h: cf.height,
+                    });
+                    // Its descendants' frames are relative to IT. A cache-skipped
+                    // child means every absolute frame under it is unchanged, so
+                    // the views already sit exactly there — the prune that took
+                    // the horizontal drag from ~105 ms to ~30 ms.
+                    if { (*c).layout_changed() } { reposition_children(c, cf); }
+                } else {
+                    // Unbacked: its children hang from the SAME host, placed
+                    // against that host's frame — mirroring mount_walk's
+                    // pass-through, where their views inserted into this host.
+                    if { (*c).layout_changed() } { reposition_children(c, host_abs); }
+                }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// The backing scale of the screen a view is on (2.0 Retina, 1.0 otherwise).
+// 1.0 when the view is not on a window yet — rounding to whole points is
+// always safe, it is only less crisp.
+fn backing_scale_of(view: *u8) -> f64 {
+    if view == (0 as *u8) { return 1.0f64; }
+    return match ak::View::from_raw(view).window() {
+        option::Option[ak::Window]::Some(w) => w.backing_scale_factor(),
+        option::Option[ak::Window]::None => 1.0f64,
+    };
+}

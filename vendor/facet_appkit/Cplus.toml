@@ -3,7 +3,31 @@ name    = "facet_appkit"
 version = "0.0.1"
 edition = "2026"
 
-# facet_appkit — facet's AppKit backend. Empty scaffold.
+# facet_appkit — facet's AppKit backend.
+#
+# It reads facet's contract and implements it with AppKit, or states plainly
+# that AppKit cannot (MANIFEST.md holds every "cannot"). Nothing else lives
+# here: no second vocabulary, no side door that looks portable. INTENT.md is
+# the judge.
+#
+# The whole seam is five structs and two slots, filled once by `install()`:
+#   mount::install(Renderer)                 create / apply / insert / remove / schedule
+#   services::install_scheduler(Scheduler)   run_on_main / after / observe_size
+#   gestures::install_key_reader(KeyReader)
+#   component::install_sender_readers(SenderReaders)
+#   runtime::install_agent(AgentHooks)
+#   theme::set_is_dark_fn / theme::set_theme_changed_fn
+# A hook family appearing outside those is drift by definition.
+
+# The test root doubles as the leak harness (`leaks --atExit`).
+[[bin]]
+name = "facet_appkit_tests"
+path = "src/test_main.cplus"
 
 [dependencies]
-stdlib = "*"
+stdlib      = "*"
+objc        = "*"
+quartzcore  = "*"
+appkit      = "*"
+flex_layout = "*"
+facet       = "*"

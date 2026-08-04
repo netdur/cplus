@@ -1,0 +1,129 @@
+// facet_appkit dialogs — the three modal verbs facet declares.
+//
+// `alert`, `choose_directory` and `choose_file` are blocking by nature: each
+// is a native modal, and the app's own loop is suspended while it is up. That
+// is the platform's model, not a facet choice, and it is why these are plain
+// blocking calls rather than anything asynchronous.
+//
+// Ported from the pre-regen backend; bodies unchanged except the module
+// qualification.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "flex_layout/flex_layout" as flex;
+import "facet/facet" as core;
+import "facet/vocabulary" as vocab;
+import "facet/application" as app;
+import "objc/runtime" as rt;
+import "objc/bridge" as bridge;
+import "appkit/appkit" as ak;
+
+// A blocking modal alert. Returns the 0-based index of the clicked button
+// (0 = `primary`, 1 = `secondary`) — AppKit numbers its responses from 1000,
+// which is a platform detail no application should see.
+fn alert(title: str, message: str, primary: str, secondary: str = "") -> i32 {
+    let a: ak::Alert = ak::Alert::from_raw(rt::alloc_init(#str_ptr("NSAlert\0")));
+    a.set_message_text(title);
+    a.set_informative_text(message);
+    let _b0: ak::Button = a.add_button_with_title(primary);
+    if secondary != "" { let _b1: ak::Button = a.add_button_with_title(secondary); }
+    let resp: i64 = a.run_modal();
+    return (resp -% (1000 as i64)) as i32;
+}
+
+// NSModalResponseOK.
+fn modal_ok() -> i64 { return 1 as i64; }
+
+fn panel_path(panel: ak::OpenPanel) -> option::Option[text::Text] {
+    match panel.as_save_panel().u_r_l() {
+        option::Option[ak::URL]::Some(u) => {
+            let ns: *u8 = { rt::msg_id(u.raw(), rt::sel(#str_ptr("path\0"))) };
+            if ns == (0 as *u8) { return option::Option[text::Text]::None; }
+            return option::some(bridge::to_text(ns));
+        }
+        option::Option[ak::URL]::None => { return option::Option[text::Text]::None; }
+    }
+    return option::Option[text::Text]::None;
+}
+
+// The chosen absolute path, or None when the user cancelled.
+fn choose_directory() -> option::Option[text::Text] {
+    let panel = ak::OpenPanel::open_panel();
+    panel.set_can_choose_directories(true);
+    panel.set_can_choose_files(false);
+    panel.set_allows_multiple_selection(false);
+    panel.as_save_panel().set_can_create_directories(true);
+    if panel.as_save_panel().run_modal() != modal_ok() { return option::Option[text::Text]::None; }
+    return panel_path(panel);
+}
+
+fn choose_file() -> option::Option[text::Text] {
+    let panel = ak::OpenPanel::open_panel();
+    panel.set_can_choose_files(true);
+    panel.set_can_choose_directories(false);
+    panel.set_allows_multiple_selection(false);
+    if panel.as_save_panel().run_modal() != modal_ok() { return option::Option[text::Text]::None; }
+    return panel_path(panel);
+}
+
+// ---- window verbs a custom titlebar drives -----------------------------------
+// `window_buttons()` renders the platform's own group, but an app drawing its
+// OWN controls under Bar::Custom wires them to these: each takes the handler's
+// opaque `sender` and drives the window enclosing it. Inert when the sender is
+// not in a window, which is the no-op convention everywhere else in facet.
+
+fn window_of_sender(sender: *u8) -> option::Option[ak::Window] {
+    if sender == (0 as *u8) { return option::Option[ak::Window]::None; }
+    return ak::View::from_raw(sender).window();
+}
+
+fn window_close(sender: *u8) {
+    match window_of_sender(sender) {
+        option::Option[ak::Window]::Some(w) => { w.close(); }
+        option::Option[ak::Window]::None => { }
+    }
+    return;
+}
+
+fn window_minimize(sender: *u8) {
+    match window_of_sender(sender) {
+        option::Option[ak::Window]::Some(w) => { w.miniaturize(0 as *u8); }
+        option::Option[ak::Window]::None => { }
+    }
+    return;
+}
+
+fn window_zoom(sender: *u8) {
+    match window_of_sender(sender) {
+        option::Option[ak::Window]::Some(w) => { w.zoom(0 as *u8); }
+        option::Option[ak::Window]::None => { }
+    }
+    return;
+}
+
+// ---- window frame ------------------------------------------------------------
+// In the platform's screen coordinates (bottom-left origin on macOS). Read it
+// to persist per-project window placement — something the platform's own
+// one-frame-per-name autosave cannot do — and hand the same rect back
+// unchanged. AppKit clamps a frame that would land off every screen, so a
+// frame saved on a monitor that is no longer attached cannot strand a window.
+
+// A zero rect when the root is not an open window — the neutral answer, never
+// a trap.
+fn window_frame_of(root: *core::Node) -> vocab::Rect {
+    let win: *u8 = app::window_native(root);
+    if win == (0 as *u8) { return vocab::Rect::zero(); }
+    let f: rt::Rect = ak::Window::from_raw(win).frame();
+    return vocab::Rect { x: f.x, y: f.y, width: f.w, height: f.h };
+}
+
+fn set_window_frame_of(root: *core::Node, frame: vocab::Rect) {
+    let win: *u8 = app::window_native(root);
+    if win == (0 as *u8) { return; }
+    ak::Window::from_raw(win).set_frame_display(
+        rt::Rect { x: frame.x, y: frame.y, w: frame.width, h: frame.height },
+        true,
+        false,
+    );
+    return;
+}
