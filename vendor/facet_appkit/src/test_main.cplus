@@ -56,7 +56,8 @@ import "facet/gestures" as gestures;
 import "facet/component" as component;
 import "appkit/appkit_ext" as akx;
 import "./input" as input;
-import "./web" as webmod;import "facet/web" as web_ui;
+import "./web" as webmod;
+import "./recycler" as recycler;import "facet/web" as web_ui;
 import "facet/hybrid_web" as hybrid_ui;
 import "./drawing" as drawing;
 import "objc/runtime" as rt;
@@ -941,12 +942,16 @@ fn t_row(ctx: *u8, i: usize) -> flex::Node {
 }
 
 #[test]
-fn a_list_materialises_its_rows_as_its_own_children() {
-    // The decision this asserts: a list's rows are ORDINARY CHILDREN, added
-    // with the same structural verb anything else uses. So there is no second
-    // lifetime model and no path a row can take that a child cannot — mount
-    // creates the views, insert puts them in the document view, the frame walk
-    // places them, teardown releases them.
+fn a_list_asks_for_no_rows_until_the_table_asks_for_them() {
+    // This test used to assert the opposite — that a list MATERIALISED its rows
+    // as ordinary children — and that was the honest description of what the
+    // backend did until the recycler landed. The rows are AppKit's now: the
+    // table asks for one when it needs it, so a list of three and a list of ten
+    // thousand cost the same at create.
+    //
+    // `collection` still materialises, and the difference is deliberate: a
+    // collection is a grid whose items flex against each other, which is not
+    // what an NSTableView row is.
     ROWS_BUILT = 0;
     var l: core::Node = list::list(key: "rows");
     let lp: *core::Node = #addr_of(l);
@@ -957,25 +962,21 @@ fn a_list_materialises_its_rows_as_its_own_children() {
         }
         option::Option[list::List]::None => { assert false; }
     }
-    // create materialises: the walk reads child_count AFTER create returns, so
-    // rows added there are mounted by the same walk with no second pass.
     let v: *u8 = views::create(0 as *u8, lp);
     assert v != (0 as *u8);
-    assert ROWS_BUILT == 3;
-    assert l.child_count() == (3 as usize);
-    // A count change rebuilds the sequence rather than patching it: the row
-    // builder and the count are one question, and a partial answer would leave
-    // rows from two models mixed.
+    assert ROWS_BUILT == 0;
+    assert l.child_count() == (0 as usize);
+    assert recycler::row_count_of(v) == (3 as i64);
+    // A count change is one question with the builder — either replaces the
+    // whole sequence — so it reloads rather than patching.
     core::set_view(lp, v, views::view_release);
     core::clear_dirty(lp);
-    ROWS_BUILT = 0;
     match list::find("rows", within: lp) {
         option::Option[list::List]::Some(h) => { let _h: list::List = h.set_count(5 as usize); }
         option::Option[list::List]::None => { assert false; }
     }
     views::apply(0 as *u8, lp);
-    assert ROWS_BUILT == 5;
-    assert l.child_count() == (5 as usize);
+    assert recycler::row_count_of(v) == (5 as i64);
     return;
 }
 
@@ -2195,5 +2196,106 @@ fn the_observer_actually_fires_and_carries_a_write_across() {
 fn the_sync_observer_is_installed_at_all() {
     backend::install();
     assert scheduler::observer_installed();
+    return;
+}
+
+// ---- the recycling list ------------------------------------------------------
+// `list` on an NSTableView. The suite cannot scroll, so it asks the delegate
+// what NSTableView asks it — which is the whole of the contract between them.
+
+static RL_BUILDS: i64 = 0 as i64;
+
+fn rl_row(ctx: *u8, i: usize) -> core::Node {
+    RL_BUILDS = RL_BUILDS + (1 as i64);
+    var b: core::Builder = core::Builder::new();
+    b.add(label::label("row", key: ""));
+    return core::column(b, key: "");
+}
+
+fn rl_list(count: usize, row_height: i64) -> core::Node {
+    var n: core::Node = list::list(key: "rl");
+    let p: *core::Node = #addr_of(n);
+    match list::find("rl", within: p) {
+        option::Option[list::List]::Some(x) => {
+            let _a: list::List = x.set_row(rl_row);
+            let _b: list::List = x.set_count(count);
+            if row_height > (0 as i64) { let _c: list::List = x.set_row_height(row_height); }
+        }
+        option::Option[list::List]::None => { }
+    }
+    return n;
+}
+
+#[test]
+fn a_list_does_not_build_a_row_until_it_is_asked_for() {
+    backend::install();
+    // The whole point: ten thousand rows must not cost ten thousand builds.
+    // Creating the list asks for NONE of them.
+    RL_BUILDS = 0 as i64;
+    var n: core::Node = rl_list(10000 as usize, 40 as i64);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v != (0 as *u8);
+    assert recycler::row_count_of(v) == (10000 as i64);
+    assert RL_BUILDS == (0 as i64);
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn a_uniform_row_height_skips_measurement_entirely() {
+    backend::install();
+    // `row_height` is the cheapest a list can be: no build, no layout, no
+    // cache — and no O(rows) pass when the width changes.
+    RL_BUILDS = 0 as i64;
+    var n: core::Node = rl_list(500 as usize, 44 as i64);
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    assert recycler::fixed_height_of(v) == (44.0f64);
+    assert recycler::height_of_row(v, 0 as i64) == (44.0f64);
+    assert recycler::height_of_row(v, 499 as i64) == (44.0f64);
+    assert RL_BUILDS == (0 as i64);
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn a_measured_height_is_cached_so_a_scroll_does_not_rebuild_the_list() {
+    backend::install();
+    // NSTableView asks heightOfRow: for EVERY row whenever it recomputes
+    // geometry, and answering means building the row. Without this cache a
+    // scroll re-measures the whole list on every pass, which is the periodic
+    // hitch the cache exists to stop.
+    RL_BUILDS = 0 as i64;
+    var n: core::Node = rl_list(50 as usize, 0 as i64);
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    let h0: f64 = recycler::height_of_row(v, 0 as i64);
+    assert h0 > 0.0f64;
+    let after_first: i64 = RL_BUILDS;
+    assert after_first == (1 as i64);
+    // Asked again: answered from the cache, nothing rebuilt.
+    assert recycler::height_of_row(v, 0 as i64) == h0;
+    assert RL_BUILDS == after_first;
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn a_row_is_realised_into_its_cell_and_torn_down_when_the_cell_is_reused() {
+    backend::install();
+    // The second mount path, end to end. A row's subtree is realised into the
+    // cell and OWNED by it — in facet a node owns its views, so the cell has to
+    // hold the node or it would empty the moment it was filled.
+    RL_BUILDS = 0 as i64;
+    var n: core::Node = rl_list(3 as usize, 0 as i64);
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    let cell: *u8 = recycler::view_for_row(v, 0 as i64);
+    assert cell != (0 as *u8);
+    // The row was built and its views are IN the cell.
+    assert ak::View::from_raw(cell).subviews().count() == (1 as usize);
+    // The same cell taken for another row: the old subtree goes, the new one
+    // arrives, and the cell still holds exactly one root.
+    let again: *u8 = recycler::view_for_row(v, 1 as i64);
+    assert ak::View::from_raw(again).subviews().count() == (1 as usize);
+    views::view_release(v);
     return;
 }

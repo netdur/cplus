@@ -1,0 +1,391 @@
+// facet_appkit recycler — `list` and `collection` on a recycling NSTableView.
+//
+// The scaling answer for long content. Only the rows in and near the viewport
+// exist; a cell view that leaves the viewport is reused for a row coming in, so
+// ten thousand rows cost about a screenful of views rather than ten thousand.
+//
+// ---- why this is a SECOND mount path -----------------------------------------
+//
+// Every other control's children are facet's: the mount walk creates them, the
+// frame walk places them, teardown releases them. A recycled row is none of
+// that. AppKit decides when it exists, so the row's subtree is realised through
+// `mount::realise` — the same walk, minus the window — and torn down through
+// `mount::unrealise` when its cell is taken for another row.
+//
+// The node is OWNED BY THE CELL, on an associated key, because in facet a node
+// owns its views: drop the node and the views go with it. The old backend could
+// let the node drop after applying, since its renderer retained the views
+// separately; here that would empty the cell the instant it was filled.
+//
+// ---- what makes it fast, and what does not -----------------------------------
+//
+// NSTableView asks `heightOfRow:` for EVERY row whenever it recomputes geometry
+// — not only the visible ones — and answering means building the row and laying
+// it out. Without a cache a scroll re-measures the whole list on every pass,
+// which is felt as a periodic hitch. So heights are cached by row, and the
+// cache is keyed to the width it was measured at.
+//
+// `row_height` skips measurement ENTIRELY. When an application knows its rows
+// are uniform that is the cheapest a list can be: no build, no layout, no
+// cache, and no O(rows) pass on a resize.
+//
+// What this does NOT yet do is reuse the row's CONTENTS. A recycled cell is
+// stripped and its subtree rebuilt from a fresh description, so scrolling pays
+// a full build per row — the cell is reused and the work is not. Fixing that
+// needs a contract answer (a bind step that writes a row's data into an
+// existing subtree instead of describing a new one), and it is the next thing
+// on this file rather than a note nobody wrote down.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "stdlib/box" as box;
+import "stdlib/status" as status;
+import "flex_layout/flex_layout" as flex;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/mount" as mount;
+import "facet/list" as list;
+import "objc/runtime" as rt;
+import "objc/synthesis" as synth;
+import "objc/bridge" as bridge;
+import "appkit/appkit" as ak;
+import "appkit/appkit_ext" as akx;
+
+// ---- the method shapes AppKit's two protocols need ---------------------------
+
+#[link_name = "class_addMethod"]
+extern fn add_method_i64_1id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8) -> i64,
+                             types: *u8) -> i8;
+
+#[link_name = "class_addMethod"]
+extern fn add_method_f64_1id_i64(cls: *u8, sel: *u8,
+                                 imp: fn(*u8, *u8, *u8, i64) -> f64, types: *u8) -> i8;
+
+#[link_name = "class_addMethod"]
+extern fn add_method_id_2id_i64(cls: *u8, sel: *u8,
+                                imp: fn(*u8, *u8, *u8, *u8, i64) -> *u8,
+                                types: *u8) -> i8;
+
+#[link_name = "objc_msgSend"]
+extern fn msg_id_id_i64(recv: *u8, sel: *u8, a: *u8, b: i64) -> *u8;
+
+#[link_name = "objc_msgSend"]
+extern fn msg_void_rect(recv: *u8, sel: *u8, r: rt::Rect);
+
+// ---- associated keys ---------------------------------------------------------
+// appkit_ext holds 28672..28682, drawing 28700, input 28710..28715,
+// web 28720..28721. This block is 28730 up.
+
+fn source_key() -> *u8 { return { 28730 as *u8 }; }
+fn cell_node_key() -> *u8 { return { 28731 as *u8 }; }
+fn agent_pin_key() -> *u8 { return { 28732 as *u8 }; }
+
+// ---- the row source ----------------------------------------------------------
+// One per list, heap-allocated and pinned to the table view, so it lives
+// exactly as long as the thing that reads it.
+
+struct RowSource {
+    row: fn(*u8, usize) -> core::Node,
+    opaque row_ctx: *u8,
+    count: i64,
+    // `row_height` from the contract: 0 means measure, anything else means the
+    // rows are uniform and nothing needs measuring at all.
+    fixed_height: f64,
+    // Measured heights by row; 0 = not measured yet. Grown with zeros so the
+    // index always means the row, however the table walks them.
+    heights: vec::Vec[f64],
+    // The width those measurements were taken at. A different width re-wraps
+    // every row, so the whole cache is worth nothing.
+    heights_width: f64,
+}
+
+fn source_of(tv: *u8) -> *RowSource {
+    if tv == (0 as *u8) { return 0 as *RowSource; }
+    return { synth::get_associated(tv, source_key()) as *RowSource };
+}
+
+// The width a CELL gets — the COLUMN's, not the table's frame.
+//
+// This one is a bug, not a detail. Modern NSTableView styles inset cells
+// horizontally, so the frame is WIDER than the column; measuring wrapped rows
+// at frame width under-measures their height and clips the last lines at
+// certain widths. It presents as "scrolling down does not show the rest of the
+// message", which is nothing like the mistake that caused it.
+fn column_width(tv: *u8) -> f64 {
+    let cols: *u8 = { rt::msg_id(tv, rt::sel(#str_ptr("tableColumns\0"))) };
+    if cols != (0 as *u8) {
+        let n: u64 = { rt::msg_u64(cols, rt::sel(#str_ptr("count\0"))) };
+        if n > (0 as u64) {
+            let c0: *u8 = { rt::msg_id_u64(cols, rt::sel(#str_ptr("objectAtIndex:\0")), 0 as u64) };
+            if c0 != (0 as *u8) {
+                let w: f64 = { rt::msg_f64(c0, rt::sel(#str_ptr("width\0"))) };
+                if w >= 1.0f64 { return w; }
+            }
+        }
+    }
+    let fw: f64 = { rt::msg_rect(tv, rt::sel(#str_ptr("frame\0"))) }.w;
+    if fw < 1.0f64 { return 1.0f64; }
+    return fw;
+}
+
+// ---- the data source and delegate --------------------------------------------
+
+fn num_rows_imp(self_obj: *u8, cmd: *u8, tv: *u8) -> i64 {
+    let s: *RowSource = source_of(tv);
+    if s == (0 as *RowSource) { return 0 as i64; }
+    return { (*s).count };
+}
+
+// Build row `i` as a detached facet node. The caller owns it.
+fn build_row(s: *RowSource, i: i64) -> core::Node {
+    let f: fn(*u8, usize) -> core::Node = { (*s).row };
+    return f({ (*s).row_ctx }, i as usize);
+}
+
+fn height_imp(self_obj: *u8, cmd: *u8, tv: *u8, row: i64) -> f64 {
+    let s: *RowSource = source_of(tv);
+    if s == (0 as *RowSource) { return 1.0f64; }
+    // Uniform rows: answer without building anything. The cheapest a list can
+    // be, and the whole reason `row_height` is in the contract.
+    let fh: f64 = { (*s).fixed_height };
+    if fh >= 1.0f64 { return fh; }
+
+    let w: f64 = column_width(tv);
+    let hp: *vec::Vec[f64] = { #addr_of((*s).heights) };
+    if w != { (*s).heights_width } {
+        { (*hp).remove_all() };
+        { (*s).heights_width = w };
+    } else if row >= (0 as i64) {
+        match { (*hp).at(row as usize) } {
+            option::Option[f64]::Some(cached) => { if cached > 0.0f64 { return cached; } }
+            option::Option[f64]::None => { }
+        }
+    }
+
+    // Measuring means building the row and laying it out. No views: this is a
+    // pure flex measurement, so nothing is realised and nothing has to be torn
+    // down afterwards.
+    var node: core::Node = build_row(s, row);
+    node.calculate_layout(width: w);
+    var h: f64 = { node.frame().height };
+    if h < 1.0f64 { h = 1.0f64; }
+    if row >= (0 as i64) {
+        let idx: usize = row as usize;
+        while { (*hp).count() } <= idx { append_zero(hp); }
+        set_height(hp, idx, h);
+    }
+    return h;
+}
+
+fn append_zero(hp: *vec::Vec[f64]) {
+    let _e: status::Status = { (*hp).append(0.0f64) };
+    return;
+}
+
+fn set_height(hp: *vec::Vec[f64], at: usize, v: f64) {
+    let _e: status::Status = { (*hp).set(v, at: at) };
+    return;
+}
+
+// The cell for a row. Recycled by identity, and the row's realised subtree is
+// torn down and rebuilt inside it.
+fn view_for_row_imp(self_obj: *u8, cmd: *u8, tv: *u8, col: *u8, row: i64) -> *u8 {
+    let s: *RowSource = source_of(tv);
+    if s == (0 as *RowSource) { return 0 as *u8; }
+    let w: f64 = column_width(tv);
+
+    var cell: *u8 = { msg_id_id_i64(tv, rt::sel(#str_ptr("makeViewWithIdentifier:owner:\0")),
+                                    bridge::nsstring("facet.row"), 0 as i64) };
+    if cell == (0 as *u8) {
+        cell = rt::retain(akx::new_flipped_view(
+            rt::Rect { x: 0.0f64, y: 0.0f64, w: w, h: 1.0f64 }).raw());
+        if cell == (0 as *u8) { return 0 as *u8; }
+        { rt::msg_void_id(cell, rt::sel(#str_ptr("setIdentifier:\0")),
+                          bridge::nsstring("facet.row")) };
+        rt::autorelease(cell);
+    } else {
+        // Taken from another row: its subtree goes first. Unrealising fires
+        // on_detach and dropping the node releases every view it owns, so the
+        // cell is empty by the time the new row is built into it.
+        release_cell_row(cell);
+    }
+
+    var node: core::Node = build_row(s, row);
+    node.calculate_layout(width: w);
+    var h: f64 = { node.frame().height };
+    if h < 1.0f64 { h = 1.0f64; }
+    { msg_void_rect(cell, rt::sel(#str_ptr("setFrame:\0")),
+                    rt::Rect { x: 0.0f64, y: 0.0f64, w: w, h: h }) };
+
+    // The node must OUTLIVE this function: in facet a node owns its views, so
+    // letting it drop here would empty the cell the moment it was filled. It
+    // goes to the heap and the CELL owns it.
+    match box::new::[core::Node](node) {
+        option::Option[box::Box[core::Node]]::Some(b) => {
+            let np: *core::Node = { b.into_raw() } as *core::Node;
+            // The CELL is the host. A row's root is usually a bare container —
+            // nothing keys it, nothing gives it gestures — so it is not backed
+            // and its children pass straight through into the cell, exactly as
+            // a layout-only column does inside a scroll view.
+            let rv: *u8 = mount::realise(np, cell);
+            if rv != (0 as *u8) { geometry_place(rv, w, h); }
+            synth::set_associated(cell, cell_node_key(), np as *u8);
+        }
+        option::Option[box::Box[core::Node]]::None => { }
+    }
+    return cell;
+}
+
+// The realised root fills the cell. Its own children were placed by the frame
+// walk relative to it, so only the root needs a frame here.
+fn geometry_place(v: *u8, w: f64, h: f64) {
+    { msg_void_rect(v, rt::sel(#str_ptr("setFrame:\0")),
+                    rt::Rect { x: 0.0f64, y: 0.0f64, w: w, h: h }) };
+    return;
+}
+
+// Tear down whatever row this cell is currently showing.
+fn release_cell_row(cell: *u8) {
+    let np: *core::Node = { synth::get_associated(cell, cell_node_key()) as *core::Node };
+    if np == (0 as *core::Node) { return; }
+    mount::unrealise(np);
+    synth::set_associated(cell, cell_node_key(), 0 as *u8);
+    // Dropping the box drops the node, which releases every view it owns.
+    let _gone: box::Box[core::Node] = box::from_raw::[core::Node](np as *u8);
+    return;
+}
+
+fn recycler_class() -> *u8 {
+    let existing: *u8 = rt::get_class(#str_ptr("FacetRowSource\0"));
+    if existing != (0 as *u8) { return existing; }
+    let cls: *u8 = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")),
+                                              #str_ptr("FacetRowSource\0"), 0 as usize);
+    add_method_i64_1id(cls, rt::sel(#str_ptr("numberOfRowsInTableView:\0")),
+                       num_rows_imp, #str_ptr("q@:@\0"));
+    add_method_f64_1id_i64(cls, rt::sel(#str_ptr("tableView:heightOfRow:\0")),
+                           height_imp, #str_ptr("d@:@q\0"));
+    add_method_id_2id_i64(cls, rt::sel(#str_ptr("tableView:viewForTableColumn:row:\0")),
+                          view_for_row_imp, #str_ptr("@@:@@q\0"));
+    synth::register_class_pair(cls);
+    return cls;
+}
+
+// ---- building the control ----------------------------------------------------
+
+fn create_recycling_list(n: *core::Node) -> *u8 {
+    let scroll: ak::ScrollView = akx::new_scroll_view(
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 }, false);
+    let tv: *u8 = { rt::alloc_init(#str_ptr("NSTableView\0")) };
+    if tv == (0 as *u8) { return rt::retain(scroll.as_view().raw()); }
+
+    // One column, full width. facet's rows are whole nodes; a column is
+    // AppKit's unit and not a concept the contract has.
+    let col: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSTableColumn\0")),
+                                rt::sel(#str_ptr("alloc\0"))) };
+    let col2: *u8 = { rt::msg_id_id(col, rt::sel(#str_ptr("initWithIdentifier:\0")),
+                                    bridge::nsstring("facet.col")) };
+    if col2 != (0 as *u8) {
+        { rt::msg_void_id(tv, rt::sel(#str_ptr("addTableColumn:\0")), col2) };
+        rt::release(col2);
+    }
+    // No header, no grid, no alternating rows: a facet row draws itself, and a
+    // list that added chrome of its own would be lying about what it holds.
+    { rt::msg_void_id(tv, rt::sel(#str_ptr("setHeaderView:\0")), 0 as *u8) };
+    { rt::msg_void_i64(tv, rt::sel(#str_ptr("setColumnAutoresizingStyle:\0")), 1 as i64) };
+    { rt::msg_void_i64(tv, rt::sel(#str_ptr("setStyle:\0")), 0 as i64) };   // NSTableViewStylePlain
+    { rt::msg_void_i64(tv, rt::sel(#str_ptr("setSelectionHighlightStyle:\0")),
+                       0 as i64 - (1 as i64)) };                            // None
+
+    // One object answers both protocols — they are the same question asked in
+    // three ways — pinned to the table so it lives exactly as long.
+    let agent: *u8 = synth::alloc_init_class(recycler_class());
+    if agent != (0 as *u8) {
+        { rt::msg_void_id(tv, rt::sel(#str_ptr("setDataSource:\0")), agent) };
+        { rt::msg_void_id(tv, rt::sel(#str_ptr("setDelegate:\0")), agent) };
+        synth::retain_associated(tv, agent_pin_key(), agent);
+        rt::release(agent);
+    }
+    scroll.set_document_view(ak::View::from_raw(tv));
+    rt::release(tv);
+    return rt::retain(scroll.as_view().raw());
+}
+
+// The NSTableView inside a list's scroll view.
+fn table_of(v: *u8) -> *u8 {
+    if v == (0 as *u8) { return 0 as *u8; }
+    return { rt::msg_id(v, rt::sel(#str_ptr("documentView\0"))) };
+}
+
+// Install or update the row source, then reload. The builder and the count are
+// ONE question: either changing replaces the whole sequence, and a partial
+// answer would leave rows from two models mixed.
+fn apply_recycling_list(v: *u8, n: *core::Node, dirty: u64) {
+    let tv: *u8 = table_of(v);
+    if tv == (0 as *u8) { return; }
+    let p: *props::ListProps = props_of_list(n);
+    if p == (0 as *props::ListProps) { return; }
+
+    var s: *RowSource = source_of(tv);
+    if s == (0 as *RowSource) {
+        match box::new::[RowSource](RowSource {
+            row: { (*p).row },
+            row_ctx: { (*p).row_ctx },
+            count: { (*p).count },
+            fixed_height: 0.0f64,
+            heights: vec::new::[f64](),
+            heights_width: 0.0f64,
+        }) {
+            option::Option[box::Box[RowSource]]::Some(b) => {
+                s = { b.into_raw() } as *RowSource;
+                synth::set_associated(tv, source_key(), s as *u8);
+            }
+            option::Option[box::Box[RowSource]]::None => { return; }
+        }
+    }
+    { (*s).row = { (*p).row } };
+    { (*s).row_ctx = { (*p).row_ctx } };
+    { (*s).count = { (*p).count } };
+    let rh: i64 = { (*p).row_height };
+    if rh > (0 as i64) { { (*s).fixed_height = rh as f64 }; }
+    else { { (*s).fixed_height = 0.0f64 }; }
+    // The measurements belong to the old sequence.
+    { (*s).heights.remove_all() };
+    { (*s).heights_width = 0.0f64 };
+    { rt::msg_void(tv, rt::sel(#str_ptr("reloadData\0"))) };
+    return;
+}
+
+fn props_of_list(n: *core::Node) -> *props::ListProps {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return 0 as *props::ListProps; }
+    if { (*d).kind } != props::K_LIST { return 0 as *props::ListProps; }
+    return { (*d).props } as *props::ListProps;
+}
+
+// How many rows the source is answering for — the suite's window into a table
+// it cannot scroll.
+fn row_count_of(v: *u8) -> i64 {
+    let s: *RowSource = source_of(table_of(v));
+    if s == (0 as *RowSource) { return 0 as i64; }
+    return { (*s).count };
+}
+
+fn fixed_height_of(v: *u8) -> f64 {
+    let s: *RowSource = source_of(table_of(v));
+    if s == (0 as *RowSource) { return 0.0f64; }
+    return { (*s).fixed_height };
+}
+
+// Ask the delegate directly, the way NSTableView does.
+fn height_of_row(v: *u8, row: i64) -> f64 {
+    let tv: *u8 = table_of(v);
+    if tv == (0 as *u8) { return 0.0f64; }
+    return height_imp(0 as *u8, 0 as *u8, tv, row);
+}
+
+fn view_for_row(v: *u8, row: i64) -> *u8 {
+    let tv: *u8 = table_of(v);
+    if tv == (0 as *u8) { return 0 as *u8; }
+    return view_for_row_imp(0 as *u8, 0 as *u8, tv, 0 as *u8, row);
+}

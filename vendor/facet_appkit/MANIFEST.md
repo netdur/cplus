@@ -377,7 +377,7 @@ AppKit cannot. They are listed so the difference is never ambiguous.
 
 | What | Stage 4 item | Size |
 |---|---|---|
-| Row RECYCLING for `list` / `collection` / `table` / `tree` | 2, the heavy end | hard — a second mount path |
+| Row content REUSE (the bind step) — see below | 2, the heavy end | needs a contract answer |
 | `alert` as a facet screen, non-blocking | 5 | medium |
 | Titlebar leading/trailing carriers | 5 | small, both halves |
 | The agent surface — ported, not yet wired or tested | 6 | medium |
@@ -387,6 +387,45 @@ AppKit cannot. They are listed so the difference is never ambiguous.
 Everything else in items 1-5 has landed: all 42 kinds have bodies, the window
 tier answers, the app menu and toolbar install, `web` and `hybrid_web` run on
 `vendor/webkit`, and nothing takes the unimplemented-kind warning path.
+
+### `list` recycles; `collection` does not, and that is deliberate
+
+`list` is an NSTableView with a data source. Rows are AppKit's: it asks for one
+when it needs it, so a list of three and a list of ten thousand cost the same
+at create. Each row's subtree is realised through `mount::realise` — the second
+mount path, named in the seam rather than re-implemented here — into the cell
+that owns it. The CELL owns the node, because in facet a node owns its views:
+letting the node drop after building would empty the cell the moment it was
+filled.
+
+`collection` still materialises every item as an ordinary child. That is not
+an oversight: a collection is a grid whose items flex against each other, and
+an NSTableView row is not that. It gets the recycling treatment when a
+consumer has a collection long enough to need it.
+
+**Two things make it fast, and one still does not.**
+
+`row_height` skips measurement ENTIRELY — no build, no layout, no cache. When
+an application knows its rows are uniform that is the cheapest a list can be.
+
+The height cache exists because NSTableView asks `heightOfRow:` for EVERY row
+whenever it recomputes geometry, not only the visible ones, and answering means
+building the row and laying it out. Without it a scroll re-measures the whole
+list on every pass, felt as a periodic hitch. The cache is keyed to the width
+it was measured at, because a different width re-wraps every row.
+
+What is still slow: **a recycled cell is stripped and its subtree rebuilt.** The
+cell is reused; the work is not. Scrolling pays a full build per row — flex
+subtree, layout, and a view per node. Making that cheap needs the row builder to
+be able to UPDATE an existing subtree instead of describing a new one, which is
+a contract addition (a bind step), not a backend trick. Recorded here so the
+cost is known rather than discovered.
+
+The width a cell gets is the COLUMN's, not the table's frame, and that is a bug
+rather than a detail: modern NSTableView styles inset cells horizontally, so
+measuring wrapped rows at frame width under-measures them and clips the last
+lines at certain widths. It presents as "scrolling down does not show the rest
+of the message", which is nothing like the mistake that causes it.
 
 ### The collection group builds every row, not just the visible ones
 

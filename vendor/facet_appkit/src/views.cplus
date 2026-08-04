@@ -28,6 +28,7 @@ import "appkit/appkit_ext" as akx;
 import "./paint" as paint;
 import "./input" as input;
 import "./web" as web;
+import "./recycler" as recycler;
 import "facet/symbol" as symbol;
 import "facet/split" as split;
 import "facet/tree" as tree;
@@ -194,7 +195,7 @@ fn create_for_kind(kind: u32, n: *core::Node) -> *u8 {
     // something already answered would train a reader to ignore the warnings
     // that mean something.
     if controls::decided_absent(kind) { return controls::create_passthrough(n); }
-    if kind == props::K_LIST { return controls::create_list(n); }
+    if kind == props::K_LIST { return recycler::create_recycling_list(n); }
     if kind == props::K_COLLECTION { return controls::create_collection(n); }
     if kind == props::K_TABLE { return controls::create_table(n); }
     if kind == props::K_CAROUSEL { return controls::create_carousel(n); }
@@ -251,7 +252,7 @@ fn apply_for_kind(kind: u32, v: *u8, n: *core::Node, dirty: u64) {
     if kind == props::K_DATE_PICKER { controls::apply_date_picker(v, n, dirty); return; }
     if kind == props::K_TIME_PICKER { controls::apply_time_picker(v, n, dirty); return; }
     if kind == props::K_TABS { controls::apply_tabs(v, n, dirty); return; }
-    if kind == props::K_LIST { controls::apply_list(v, n, dirty); return; }
+    if kind == props::K_LIST { recycler::apply_recycling_list(v, n, dirty); return; }
     if kind == props::K_COLLECTION { controls::apply_collection(v, n, dirty); return; }
     if kind == props::K_TABLE { controls::apply_table(v, n, dirty); return; }
     if kind == props::K_CAROUSEL { controls::apply_carousel(v, n, dirty); return; }
