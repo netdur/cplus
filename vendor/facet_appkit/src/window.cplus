@@ -127,6 +127,17 @@ fn make_shell_window(take chrome: Chrome) -> ak::Window {
     if !c.maximizable {
         hide_window_button(win, ak::WindowButton::NSWindowZoomButton);
     }
+    // TitleBar.Subtitle. Second line in the platform's own bar; AppKit gained
+    // it in macOS 11, so the selector is checked rather than assumed — an
+    // older system gets a window with no subtitle instead of no window.
+    let sub: str = c.subtitle();
+    if sub != "" {
+        if synth::class_responds(synth::object_class(win.raw()),
+                                 rt::sel(#str_ptr("setSubtitle:\0"))) != (0 as i8) {
+            { rt::msg_void_id(win.raw(), rt::sel(#str_ptr("setSubtitle:\0")),
+                              bridge::nsstring(sub)) };
+        }
+    }
     // The content-size floor, applied only when both dimensions are set.
     if c.min_width > 0.0f64 && c.min_height > 0.0f64 {
         win.set_content_min_size(rt::Size { w: c.min_width, h: c.min_height });

@@ -8,7 +8,7 @@ happen on a Mac?" by reading it.
 A row here is a commitment, not a note. Nothing is left implicit: a verb that
 is neither implemented nor listed below is a gap, and the gap is a bug.
 
-Status: **Stage 4 items 1-4 COMPLETE, item 5 begun.** Every one of the 42 kinds has an
+Status: **Stage 4 items 1-4 COMPLETE, item 5 at 52/17/13.** Every one of the 42 kinds has an
 answer — a body, a recorded "AppKit cannot", or a named deferral — and
 `every_kind_now_has_an_answer` in the suite is the guard. Items 3-7 are in
 progress; this file grows a row each time something is decided either way.
@@ -228,6 +228,26 @@ point Core Animation commits on. A hundred writes in one event cost one tick.
 `background_color` on a plain view has no AppKit equivalent without a backing
 layer, so setting one turns `wantsLayer` on for that view. A node that sets no
 background stays layer-free, so a tree that themes nothing pays for no layers.
+
+### Intrinsic size comes from the platform
+
+flex sizes a LEAF from a measure callback, and `views::create` installs one:
+the view's own `fittingSize`. That is what makes a button as wide as its title
+and a label as tall as its text without facet knowing anything about type
+setting. A bounded width is handed over first through
+`preferredMaxLayoutWidth`, or a wrapping label measures as one long line and
+gets clipped.
+
+It goes on the kinds whose size is genuinely intrinsic —
+`views::has_intrinsic_size` names them one by one. A scroll view, a web view
+and a canvas have a fitting size too and it means something else: a surface is
+sized by its container, and asking WKWebView how big it would like to be is
+not a question with a useful answer.
+
+Until 2026-08-04 nothing installed a measure at all, so every control without
+an explicit width and height laid out 0x0 — present, correct and invisible.
+It survived because the tests asserted PROPS and the examples sized everything
+by hand; the guard now asserts a FRAME.
 
 ### The window tier: what a native window is asked
 

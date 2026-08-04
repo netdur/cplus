@@ -229,6 +229,10 @@ enum Bar { Native, Blended, Hidden, Custom }
 // rest in its own manifest.
 struct Chrome {
     title_text: text::Text,
+    // TitleBar.Subtitle. A second line under the title in the platform's own
+    // bar — NOT a custom bar, which is what `Bar::Custom` is for. Empty means
+    // no subtitle, which is also what every window had before this existed.
+    subtitle_text: text::Text,
     width: f64,
     height: f64,
     min_width: f64,
@@ -254,6 +258,7 @@ struct Chrome {
 impl Chrome {
     fn new(
         title: str = "facet",
+        subtitle: str = "",
         width: f64 = 480.0f64,
         height: f64 = 360.0f64,
         min_width: f64 = 0.0f64,
@@ -269,6 +274,7 @@ impl Chrome {
     ) -> Chrome {
         return Chrome {
             title_text: text::from_str(title),
+            subtitle_text: text::from_str(subtitle),
             width: width,
             height: height,
             min_width: min_width,
@@ -285,6 +291,7 @@ impl Chrome {
     }
 
     fn title(this) -> str { return this.title_text.view(); }
+    fn subtitle(this) -> str { return this.subtitle_text.view(); }
 }
 
 // The screen conformance: presentation metadata, read by the host each time it
