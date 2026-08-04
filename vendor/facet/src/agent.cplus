@@ -1,0 +1,126 @@
+// facet agent — serve the running app's agent surface over MCP (opt-in).
+//
+// The App tier's `app.agent_mcp(path)` names the Unix socket; THIS module does
+// the serving. It is a separate module so the agent packages (agent_core,
+// agent_appkit, agent_mcp and their deps) are only in an app's build when the
+// app actually serves — importing "facet/runtime" alone never pulls them.
+//
+//     import "facet/agent" as agent;
+//
+//     fn main() -> i32 {
+//         agent::enable();
+//         var app: runtime::App = runtime::App::new("Iris");
+//         app.agent_mcp("/tmp/iris.sock");
+//         ...
+//         let _s: status::Status = app.run("welcome");
+//         return 0;
+//     }
+//
+// After each screen mounts, App::run walks the new window into AGENT_SURFACE;
+// the serve worker (one per process) holds the static's ADDRESS, so re-opening
+// the surface in place retargets every later request. Writes marshal to the
+// main thread inside agent_appkit. An agent should re-describe after the app
+// navigates; a request racing a navigation reads a stale tree and gets `Stale`
+// outcomes from the write paths, never a dangling view.
+//
+// ---- what an agent may not do -----------------------------------------------
+//
+// AN AGENT HAS NO HANDS. There is no drag verb, no pinch, no swipe, and there
+// will not be one: a gesture is a thing a person does with a pointer, and a
+// surface that pretends otherwise teaches an application to ship affordances
+// nobody can reach. An affordance that ONLY a gesture can reach is the bug —
+// the fix is a click path in the UI, not a verb here.
+//
+// ---- the statics ------------------------------------------------------------
+//
+// Two, and both are legitimately process-shared: there is one agent surface
+// and one serve worker per PROCESS, which is exactly what the statics rule
+// admits. The surface is re-opened in place rather than replaced, because the
+// worker holds its address.
+
+import "./runtime" as runtime;
+import "agent_appkit/agent_appkit" as agent_appkit;
+import "agent_core/events" as events;
+import "agent_core/auth" as auth;
+import "agent_mcp/agent_mcp" as mcp;
+import "stdlib/text" as text;
+import "stdlib/thread" as thread;
+
+static AGENT_SURFACE: agent_appkit::Surface = #zero::[agent_appkit::Surface]();
+static AGENT_SERVING: bool = false;
+
+// Register the serving hooks with the runtime. Call once, before `app.run`.
+//
+// ONE install struct, filled here — the same shape every other backend seam
+// uses. Stage 3 replaced the old `set_agent_attach_fn` / `set_agent_serve_fn`
+// pair with `runtime::install_agent`, and a hook family outside the install
+// structs is drift by definition.
+fn enable() {
+    runtime::install_agent(runtime::AgentHooks {
+        attach_window: attach_window,
+        serve_once: serve_once,
+    });
+    return;
+}
+
+// Back to the portable no-op: an app that stops serving has no surface, and
+// the runtime's hooks answer nothing rather than reaching a dead one.
+fn disable() {
+    runtime::install_agent(runtime::AgentHooks {
+        attach_window: 0 as fn(*u8),
+        serve_once: 0 as fn(str),
+    });
+    return;
+}
+
+// Walk `win`'s live view tree into the surface, replacing the previous
+// screen's (its retained views are released by the drop).
+fn attach_window(win: *u8) {
+    AGENT_SURFACE = agent_appkit::open(win);
+    return;
+}
+
+// The channel policy: the developer opted in by giving a socket path, so both
+// channels are admitted. The socket's filesystem permissions are the boundary.
+fn admit(req: auth::Request) -> auth::Decision {
+    return auth::Decision::Allow;
+}
+
+struct AgentServe {
+    path: text::Text,
+}
+
+fn serve_main(take job: AgentServe) -> i32 {
+    var sub: events::Subscriber = events::subscriber(events::everything(), 64 as usize);
+    let surf: *u8 = #addr_of(AGENT_SURFACE) as *u8;
+    return mcp::serve_uds(surf, agent_appkit::mcp_backend(), sub, admit, job.path.view());
+}
+
+// Start the serve worker exactly once per process. The accept loop lives for
+// the app's life; a stale socket file at `path` is unlinked on entry.
+fn serve_once(path: str) {
+    if AGENT_SERVING { return; }
+    AGENT_SERVING = true;
+    let _t: thread::JoinHandle[i32] = thread::spawn_with::[AgentServe, i32](
+        AgentServe { path: text::from_str(path) },
+        serve_main,
+    );
+    return;
+}
+
+// ---- tests ------------------------------------------------------------------
+
+#[test]
+fn enable_fills_the_install_struct_and_disable_empties_it() {
+    // The seam's own rule: zero fields keep the portable no-op, so a runtime
+    // with no agent enabled must reach nothing rather than reach a null.
+    disable();
+    runtime::agent_attach_window(0 as *u8);      // inert, not a trap
+    runtime::agent_serve_once("/tmp/never");
+    enable();
+    // `attach_window` with a null window is what the runtime does before any
+    // window exists; the surface opens empty rather than refusing.
+    runtime::agent_attach_window(0 as *u8);
+    disable();
+    return;
+}

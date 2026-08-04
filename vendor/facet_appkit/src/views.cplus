@@ -407,6 +407,11 @@ fn remove(ctx: *u8, host: *u8, child: *u8) {
 // M1: the release mount pairs with every view `create` returned. Node teardown
 // fires it, so a dropped tree cannot leak its views.
 fn view_release(v: *u8) {
+    // A web view is cut loose from its node BEFORE the release, because
+    // releasing it does not necessarily deallocate it: WebKit retains a page
+    // that is still loading, and a navigation callback arriving afterwards
+    // would read a node that is gone.
+    if web::is_web_view(v) { web::detach(v); }
     if v == (0 as *u8) { return; }
     { rt::release(v) };
     return;

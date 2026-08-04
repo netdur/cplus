@@ -443,3 +443,40 @@ fn append_range(out: *text::Text, src: *text::Text, from: usize, to: usize) {
     }
     return;
 }
+
+// ---- teardown ----------------------------------------------------------------
+// A web view outlives its node, and that is not a bug in facet's ownership — it
+// is WebKit's. While a load is in flight the WKWebView is retained by the page
+// proxy, so releasing it does not deallocate it, its associated objects stay
+// alive, and a navigation callback arrives LATER with a node pointer that is
+// gone. Closing a window mid-load is the everyday version; an ASAN run caught
+// it as a use-after-free inside `didStartProvisionalLoadForFrame`.
+//
+// So the node is cut loose EXPLICITLY rather than by the view's lifetime: the
+// delegate keeps working, finds no node, and does nothing. Every IMP above
+// already returns early on a null node, which is what makes this the whole fix.
+fn detach(v: *u8) {
+    if v == (0 as *u8) { return; }
+    if synth::class_responds(synth::object_class(v),
+                             rt::sel(#str_ptr("setNavigationDelegate:\0"))) == (0 as i8) {
+        return;
+    }
+    // Stop first: no more callbacks are generated for a load nobody wants.
+    { rt::msg_void(v, rt::sel(#str_ptr("stopLoading\0"))) };
+    let d: *u8 = { synth::get_associated(v, delegate_pin_key()) };
+    if d != (0 as *u8) {
+        // The node association is the dangling one. Cleared here, so a callback
+        // that is already queued finds nothing and returns.
+        synth::set_associated(d, node_key(), 0 as *u8);
+    }
+    { rt::msg_void_id(v, rt::sel(#str_ptr("setNavigationDelegate:\0")), 0 as *u8) };
+    return;
+}
+
+// Is this a web view at all? The teardown path asks before it acts, so no other
+// kind pays for the check beyond one `respondsToSelector:`.
+fn is_web_view(v: *u8) -> bool {
+    if v == (0 as *u8) { return false; }
+    return synth::class_responds(synth::object_class(v),
+                                 rt::sel(#str_ptr("setNavigationDelegate:\0"))) != (0 as i8);
+}

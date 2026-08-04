@@ -74,6 +74,9 @@ import "./facet_appkit" as backend;
 extern fn msg_size_of(recv: *u8, sel: *u8) -> rt::Size;
 
 #[link_name = "objc_msgSend"]
+extern fn msg_id_point(recv: *u8, sel: *u8, p: rt::Point) -> *u8;
+
+#[link_name = "objc_msgSend"]
 extern fn msg_mouse_event(recv: *u8, sel: *u8, ty: u64, loc: rt::Point, flags: u64,
                           ts: f64, win: i64, cx: *u8, num: i64, clicks: i64,
                           pressure: f32) -> *u8;
@@ -1695,6 +1698,12 @@ fn the_navigation_band_reaches_the_web_view() {
         }
         option::Option[web_ui::Web]::None => { assert false; }
     }
+    // The load is still in flight, and WebKit retains the page while it is —
+    // so releasing the view does NOT deallocate it, and a callback arriving
+    // afterwards would read a node that has gone. `detach` is what makes that
+    // callback inert, and this is the test that leaves one in flight.
+    views::view_release(v);
+    core::set_view(p, 0 as *u8, core::no_release);
     return;
 }
 
@@ -2070,5 +2079,121 @@ fn a_surface_is_sized_by_its_container_not_by_asking_it() {
     assert views::has_intrinsic_size(props::K_CANVAS) == false;
     assert views::has_intrinsic_size(props::K_LIST) == false;
     assert views::has_intrinsic_size(core::K_NODE) == false;
+    return;
+}
+
+#[test]
+fn an_armed_view_still_hit_tests_to_itself() {
+    backend::install();
+    // The probe reported nothing with every node correctly armed, which leaves
+    // one link: does AppKit still FIND the view? `hitTest:` is overridden for
+    // the Opaque rule, and an override that answers null makes a view
+    // click-through — armed, correct and unreachable.
+    //
+    // In a REAL WINDOW, because that is the only place hit-testing is defined:
+    // NSView.hitTest: measures the point against the view's frame in its
+    // SUPERVIEW's space, and a view with no superview has no such space. The
+    // first version of this test asked a detached view and learned nothing.
+    let w: ak::Window = window::make_shell_window(screen::Chrome::new(
+        title: "hit", width: 200.0f64, height: 200.0f64));
+    let host: ak::View = akx::new_flipped_view(
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: 200.0f64, h: 200.0f64 });
+    w.set_content_view(host);
+
+    var n: core::Node = box_view::box(color: vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64),
+                                      key: "hit").gesture(on_click: h_took());
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    assert v != (0 as *u8);
+    { rt::msg_void_rect(v, rt::sel(#str_ptr("setFrame:\0")),
+                        rt::Rect { x: 0.0f64, y: 0.0f64, w: 100.0f64, h: 50.0f64 }) };
+    host.add_subview(ak::View::from_raw(v));
+
+    // Asked of the VIEW, not of its host: hitTest: measures the point against
+    // the receiver's own frame, so the point belongs to the SUPERVIEW's space
+    // and only the receiver knows which space that is. Asking the host means
+    // asking in the WINDOW's space, one level up, which is how the first two
+    // versions of this test managed to fail on a view that was perfectly fine.
+    let inside: *u8 = { msg_id_point(v, rt::sel(#str_ptr("hitTest:\0")),
+                                     rt::Point { x: 50.0f64, y: 25.0f64 }) };
+    assert inside == v;
+    // ...and outside its frame it must NOT answer, or it would swallow clicks
+    // meant for its siblings.
+    let outside: *u8 = { msg_id_point(v, rt::sel(#str_ptr("hitTest:\0")),
+                                      rt::Point { x: 150.0f64, y: 150.0f64 }) };
+    assert outside != v;
+    views::view_release(v);
+    w.close();
+    return;
+}
+
+#[test]
+fn a_plain_subview_hit_tests_the_same_way_an_armed_one_should() {
+    // The control for the test above: same setup, NO gestures and no class
+    // swap. If this one ever fails, the override is innocent and the setup is
+    // what is wrong — which is exactly what it caught the first time.
+    let w: ak::Window = window::make_shell_window(screen::Chrome::new(
+        title: "plain", width: 200.0f64, height: 200.0f64));
+    let host: ak::View = akx::new_flipped_view(
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: 200.0f64, h: 200.0f64 });
+    w.set_content_view(host);
+    let plain: ak::View = akx::new_flipped_view(
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: 100.0f64, h: 50.0f64 });
+    host.add_subview(plain);
+    let inside: *u8 = { msg_id_point(plain.raw(), rt::sel(#str_ptr("hitTest:\0")),
+                                     rt::Point { x: 50.0f64, y: 25.0f64 }) };
+    assert inside == plain.raw();
+    w.close();
+    return;
+}
+
+extern fn CFRunLoopRunInMode(mode: *u8, seconds: f64, return_after_source: i8) -> i32;
+extern fn CFStringCreateWithCString(alloc: *u8, cstr: *u8, encoding: u32) -> *u8;
+
+#[test]
+fn the_observer_actually_fires_and_carries_a_write_across() {
+    backend::install();
+    // The link nothing had tested. `a_live_write_after_mount_reaches_the_native
+    // _control` calls tick() BY HAND, which proves the walk and skips the only
+    // part that can silently not happen: whether the CFRunLoopObserver runs at
+    // all. A write that never gets a tick looks exactly like a write that got
+    // one and did nothing.
+    var b: core::Builder = core::Builder::new();
+    b.add(label::label("before", key: "obs"));
+    var root: core::Node = core::column(b, key: "obsroot");
+    let p: *core::Node = #addr_of(root);
+    assert mount::mount(p);
+    scheduler::tick();                        // drain anything mount queued
+
+    let before: u64 = scheduler::ticks();
+    match label::find("obs", within: p) {
+        option::Option[label::Label]::Some(l) => { let _x: label::Label = l.set_text("after"); }
+        option::Option[label::Label]::None => { assert false; }
+    }
+    // The write must have ASKED for a sync...
+    assert scheduler::sync_pending();
+    // ...and running the loop must deliver one, with nothing called by hand.
+    let mode: *u8 = CFStringCreateWithCString(0 as *u8,
+                                              #str_ptr("kCFRunLoopDefaultMode\0"),
+                                              134217984 as u32);
+    let _r: i32 = CFRunLoopRunInMode(mode, 0.2f64, 0 as i8);
+    assert scheduler::ticks() > before;
+    assert scheduler::sync_pending() == false;
+
+    match core::find_in(p, "obs") {
+        option::Option[*core::Node]::Some(n) => {
+            let v: *u8 = core::view_of(n);
+            assert v != (0 as *u8);
+            assert ak::TextField::from_raw(v).as_control().string_value().view() == "after";
+        }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    mount::unmount(p);
+    return;
+}
+
+#[test]
+fn the_sync_observer_is_installed_at_all() {
+    backend::install();
+    assert scheduler::observer_installed();
     return;
 }

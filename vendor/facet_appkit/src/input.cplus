@@ -32,6 +32,8 @@
 // nested-axis rule lives in FacetScrollView.
 
 import "stdlib/option" as option;
+import "stdlib/io" as io;
+import "stdlib/env" as env;
 import "stdlib/text" as text;
 import "stdlib/status" as status;
 import "flex_layout/flex_layout" as flex;
@@ -50,6 +52,7 @@ import "appkit/appkit_ext" as akx;
 extern fn object_setClass(obj: *u8, cls: *u8) -> *u8;
 extern fn class_getSuperclass(cls: *u8) -> *u8;
 extern fn class_getName(cls: *u8) -> *u8;
+extern fn class_getMethodImplementation(cls: *u8, sel: *u8) -> *u8;
 
 #[link_name = "class_addMethod"]
 extern fn add_method_i8_0(cls: *u8, sel: *u8, imp: fn(*u8, *u8) -> i8, types: *u8) -> i8;
@@ -72,6 +75,60 @@ extern fn msg_super_id_point(s: *SuperRef, sel: *u8, p: rt::Point) -> *u8;
 // Both fields are BORROWED: the receiver is the view (mount owns it) and the
 // class is the runtime's. Nothing here frees either.
 struct SuperRef { opaque receiver: *u8, opaque super_class: *u8 }
+
+// ---- tracing -----------------------------------------------------------------
+// `FACET_TRACE=1` turns on a line per armed view and a line per event. It is
+// off by default and costs one bool read when it is, because the alternative —
+// asking a user to describe what a pointer did — is not a way to find a bug.
+//
+//     FACET_TRACE=1 ./target/debug/gesture_probe 2>&1 | tee /tmp/facet.log
+//
+// Written to STDERR and unbuffered, so a line is on screen the moment it
+// happens rather than at exit.
+
+static TRACE_READ: bool = false;
+static TRACE_ON: bool = false;
+
+fn tracing() -> bool {
+    if !TRACE_READ {
+        TRACE_READ = true;
+        TRACE_ON = env::has_var("FACET_TRACE");
+    }
+    return TRACE_ON;
+}
+
+fn trace(s: str) {
+    if !tracing() { return; }
+    io::eprintln(s);
+    return;
+}
+
+fn trace2(a: str, b: str) {
+    if !tracing() { return; }
+    var t: text::Text = text::from_str(a);
+    let _x: status::Status = t.append(b);
+    io::eprintln(t.view());
+    return;
+}
+
+fn trace_ptr(a: str, p: *u8) {
+    if !tracing() { return; }
+    var t: text::Text = text::from_str(a);
+    if p == (0 as *u8) { let _z: status::Status = t.append(" <null>"); }
+    else { let _z: status::Status = t.append(" <set>"); }
+    io::eprintln(t.view());
+    return;
+}
+
+// The class a view is currently of, by name — the one fact that says whether
+// arming happened at all.
+fn class_name_of(v: *u8) -> text::Text {
+    if v == (0 as *u8) { return text::from_str("<null view>"); }
+    // NSStringFromClass, so the C string does not have to be walked by hand.
+    let ns: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("className\0"))) };
+    if ns == (0 as *u8) { return text::from_str("<no name>"); }
+    return bridge::to_text(ns);
+}
 
 // ---- associated keys ---------------------------------------------------------
 // appkit_ext took 28672..28682 and drawing.cplus took 28700. This block is
@@ -99,8 +156,18 @@ fn gestures_of_view(v: *u8) -> *gestures::Gestures {
 // the app declined — either way the caller falls through to super.
 fn fire_of(self_obj: *u8, h: gestures::Handler) -> bool {
     let n: *core::Node = node_of_view(self_obj);
-    if n == (0 as *core::Node) { return false; }
-    return gestures::fire(n, h);
+    if n == (0 as *core::Node) {
+        trace("[input]   fire: NO NODE on this view — the association is missing");
+        return false;
+    }
+    if h == gestures::no_gesture {
+        trace("[input]   fire: no handler for this verb");
+        return false;
+    }
+    let took: bool = gestures::fire(n, h);
+    if took { trace("[input]   fire: handler TOOK it"); }
+    else { trace("[input]   fire: handler DECLINED"); }
+    return took;
 }
 
 // ---- super dispatch ----------------------------------------------------------
@@ -124,6 +191,7 @@ fn decline(self_obj: *u8, cmd: *u8, event: *u8) {
 // ---- the pointer band --------------------------------------------------------
 
 fn imp_mouse_down(self_obj: *u8, cmd: *u8, event: *u8) {
+    trace("[input] event mouseDown:");
     let g: *gestures::Gestures = gestures_of_view(self_obj);
     if g == (0 as *gestures::Gestures) { decline(self_obj, cmd, event); return; }
     // A long press is a press that OUTLASTS a timer, so it is armed here and
@@ -157,6 +225,7 @@ fn cancel_long_press(self_obj: *u8) {
 }
 
 fn imp_mouse_up(self_obj: *u8, cmd: *u8, event: *u8) {
+    trace("[input] event mouseUp:");
     cancel_long_press(self_obj);
     let g: *gestures::Gestures = gestures_of_view(self_obj);
     if g == (0 as *gestures::Gestures) { decline(self_obj, cmd, event); return; }
@@ -176,6 +245,7 @@ fn imp_mouse_up(self_obj: *u8, cmd: *u8, event: *u8) {
 }
 
 fn imp_right_mouse_down(self_obj: *u8, cmd: *u8, event: *u8) {
+    trace("[input] event rightMouseDown:");
     let g: *gestures::Gestures = gestures_of_view(self_obj);
     if g == (0 as *gestures::Gestures) { decline(self_obj, cmd, event); return; }
     if fire_of(self_obj, { (*g).on_right_click }) { return; }
@@ -184,6 +254,7 @@ fn imp_right_mouse_down(self_obj: *u8, cmd: *u8, event: *u8) {
 }
 
 fn imp_mouse_dragged(self_obj: *u8, cmd: *u8, event: *u8) {
+    trace("[input] event mouseDragged:");
     // A drag is not a press any more: whatever the long press was waiting for,
     // this is not it.
     cancel_long_press(self_obj);
@@ -195,6 +266,7 @@ fn imp_mouse_dragged(self_obj: *u8, cmd: *u8, event: *u8) {
 }
 
 fn imp_mouse_moved(self_obj: *u8, cmd: *u8, event: *u8) {
+    trace("[input] event mouseMoved:");
     let g: *gestures::Gestures = gestures_of_view(self_obj);
     if g == (0 as *gestures::Gestures) { decline(self_obj, cmd, event); return; }
     if fire_of(self_obj, { (*g).on_pointer_move }) { return; }
@@ -203,6 +275,7 @@ fn imp_mouse_moved(self_obj: *u8, cmd: *u8, event: *u8) {
 }
 
 fn imp_mouse_entered(self_obj: *u8, cmd: *u8, event: *u8) {
+    trace("[input] event mouseEntered:");
     let g: *gestures::Gestures = gestures_of_view(self_obj);
     if g == (0 as *gestures::Gestures) { decline(self_obj, cmd, event); return; }
     if fire_of(self_obj, { (*g).on_hover }) { return; }
@@ -211,6 +284,7 @@ fn imp_mouse_entered(self_obj: *u8, cmd: *u8, event: *u8) {
 }
 
 fn imp_mouse_exited(self_obj: *u8, cmd: *u8, event: *u8) {
+    trace("[input] event mouseExited:");
     let g: *gestures::Gestures = gestures_of_view(self_obj);
     if g == (0 as *gestures::Gestures) { decline(self_obj, cmd, event); return; }
     if fire_of(self_obj, { (*g).on_unhover }) { return; }
@@ -219,6 +293,7 @@ fn imp_mouse_exited(self_obj: *u8, cmd: *u8, event: *u8) {
 }
 
 fn imp_magnify(self_obj: *u8, cmd: *u8, event: *u8) {
+    trace("[input] event magnifyWithEvent:");
     let g: *gestures::Gestures = gestures_of_view(self_obj);
     if g == (0 as *gestures::Gestures) { decline(self_obj, cmd, event); return; }
     if fire_of(self_obj, { (*g).on_pinch }) { return; }
@@ -227,6 +302,7 @@ fn imp_magnify(self_obj: *u8, cmd: *u8, event: *u8) {
 }
 
 fn imp_swipe(self_obj: *u8, cmd: *u8, event: *u8) {
+    trace("[input] event swipeWithEvent:");
     let g: *gestures::Gestures = gestures_of_view(self_obj);
     if g == (0 as *gestures::Gestures) { decline(self_obj, cmd, event); return; }
     if fire_of(self_obj, { (*g).on_swipe }) { return; }
@@ -240,6 +316,7 @@ fn imp_swipe(self_obj: *u8, cmd: *u8, event: *u8) {
 // gesture set with no key handler must not start swallowing tab focus.
 
 fn imp_key_down(self_obj: *u8, cmd: *u8, event: *u8) {
+    trace("[input] event keyDown:");
     let n: *core::Node = node_of_view(self_obj);
     if n != (0 as *core::Node) {
         // fire_key hands the handler the EVENT, not the sender — the key band's
@@ -273,6 +350,18 @@ extern fn super_bool(s: *SuperRef, sel: *u8) -> i8;
 fn imp_hit_test(self_obj: *u8, cmd: *u8, p: rt::Point) -> *u8 {
     let s: SuperRef = SuperRef { receiver: self_obj, super_class: super_of(self_obj) };
     let hit: *u8 = msg_super_id_point(#addr_of(s), cmd, p);
+    if tracing() {
+        trace_ptr("[input] hitTest: super answered", hit);
+        if p.x > 40.0f64 && p.x < 60.0f64 { trace("[input] hitTest: point arrived INTACT"); }
+        else { trace("[input] hitTest: point is MANGLED"); }
+        // The same question asked without objc_msgSendSuper: take the IMP off
+        // the superclass and call it as an ordinary function.
+        let imp: *u8 = class_getMethodImplementation(super_of(self_obj), cmd);
+        if imp != (0 as *u8) {
+            let f: fn(*u8, *u8, rt::Point) -> *u8 = { imp as fn(*u8, *u8, rt::Point) -> *u8 };
+            trace_ptr("[input] hitTest: direct IMP answered", f(self_obj, cmd, p));
+        }
+    }
     let n: *core::Node = node_of_view(self_obj);
     if n == (0 as *core::Node) { return hit; }
     if !gestures::is_opaque_to_input(n) { return hit; }
@@ -473,15 +562,30 @@ fn is_armed(v: *u8) -> bool {
 // Give `v` facet's event behaviour for `n`. Idempotent: apply calls it on every
 // C_GESTURES write, and the class swap must happen once.
 fn arm(v: *u8, n: *core::Node) {
-    if v == (0 as *u8) || n == (0 as *core::Node) { return; }
+    if v == (0 as *u8) || n == (0 as *core::Node) {
+        trace("[input] arm: SKIPPED — null view or null node");
+        return;
+    }
     let g: *gestures::Gestures = gestures::gestures_of(n);
-    if g == (0 as *gestures::Gestures) { return; }
+    if g == (0 as *gestures::Gestures) {
+        trace2("[input] arm: SKIPPED — node has no Gestures, key=", { (*n).key() });
+        return;
+    }
+    trace2("[input] arm: key=", { (*n).key() });
     // The node pointer is re-associated every time, because a node that was
     // detached and re-attached under the same view has a new address.
     synth::set_associated(v, node_key(), n as *u8);
     if is_armed(v) { arm_tracking(v, g); return; }
+    let before: text::Text = class_name_of(v);
     let _old: *u8 = object_setClass(v, input_class_for(synth::object_class(v)));
     synth::set_associated(v, armed_key(), 1 as *u8);
+    if tracing() {
+        var t: text::Text = text::from_str("[input] arm: class ");
+        let _a: status::Status = t.append(before.view());
+        let _b: status::Status = t.append(" -> ");
+        let _c: status::Status = t.append(class_name_of(v).view());
+        io::eprintln(t.view());
+    }
     arm_tracking(v, g);
     arm_drop(v, g);
     arm_drag_source(v, g);
