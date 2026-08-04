@@ -316,12 +316,17 @@ fn from(p: *core::Node) -> option::Option[Bordered] {
 
 // Resolve a key, then narrow through the same checked door.
 
-// `within:` and not `in:` — `in` is a C+ keyword. Defaults to the
-// mounted tree, so an agent holding only a key can address it; pass a
-// subtree to scope the search (stages/3, the global find).
-fn find(key: str, within: *core::Node = mount::mounted_root()) -> option::Option[Bordered] {
-    if within == (0 as *core::Node) { return option::Option[Bordered]::None; }
-    return match core::find_in(within, key) {
+// `within:` and not `in:` — `in` is a C+ keyword. Bare `find` is the
+// DOM rule: the running app's windows in open order, first match wins;
+// pass `within:` to scope a subtree (or disambiguate across windows).
+fn find(key: str, within: *core::Node = 0 as *core::Node) -> option::Option[Bordered] {
+    if within != (0 as *core::Node) {
+        return match core::find_in(within, key) {
+            option::Option[*core::Node]::Some(p) => from(p),
+            option::Option[*core::Node]::None => option::Option[Bordered]::None,
+        };
+    }
+    return match mount::find_node(key) {
         option::Option[*core::Node]::Some(p) => from(p),
         option::Option[*core::Node]::None => option::Option[Bordered]::None,
     };

@@ -166,9 +166,14 @@ fn from(p: *core::Node) -> option::Option[WindowButtons] {
     return option::Option[WindowButtons]::Some(WindowButtons::_of(p));
 }
 
-fn find(key: str, within: *core::Node = mount::mounted_root()) -> option::Option[WindowButtons] {
-    if within == (0 as *core::Node) { return option::Option[WindowButtons]::None; }
-    return match core::find_in(within, key) {
+fn find(key: str, within: *core::Node = 0 as *core::Node) -> option::Option[WindowButtons] {
+    if within != (0 as *core::Node) {
+        return match core::find_in(within, key) {
+            option::Option[*core::Node]::Some(p) => from(p),
+            option::Option[*core::Node]::None => option::Option[WindowButtons]::None,
+        };
+    }
+    return match mount::find_node(key) {
         option::Option[*core::Node]::Some(p) => from(p),
         option::Option[*core::Node]::None => option::Option[WindowButtons]::None,
     };

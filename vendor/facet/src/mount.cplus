@@ -119,10 +119,30 @@ fn request_sync() {
 
 fn mounted_count() -> usize { return app::window_count(); }
 
-// The newest window's root of the RUNNING app — what a bare `find(key)`
-// searches. 0 when the current app has no window up.
+// The newest window's root of the RUNNING app. Facades use it for "the
+// active window"; bare `find` does NOT — see find_node below.
 fn mounted_root() -> *core::Node {
     return app::newest_window_root();
+}
+
+// The DOM rule (user decision, 2026-08-04): a bare `find(key)` resolves like
+// getElementById — the running app's windows in OPEN order, each tree in
+// document order, FIRST match wins. Two windows sharing a key is legal;
+// callers that mean the other one say `within:`.
+fn find_node(key: str) -> option::Option[*core::Node] {
+    var i: usize = 0 as usize;
+    let n: usize = app::window_count();
+    while i < n {
+        let r: *core::Node = app::window_root(i);
+        if r != (0 as *core::Node) {
+            match core::find_in(r, key) {
+                option::Option[*core::Node]::Some(p) => { return option::Option[*core::Node]::Some(p); }
+                option::Option[*core::Node]::None => { }
+            }
+        }
+        i = i +% (1 as usize);
+    }
+    return option::Option[*core::Node]::None;
 }
 
 // The post-walk notification queue (M4): nodes whose on_attach/on_detach

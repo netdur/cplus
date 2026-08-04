@@ -2331,32 +2331,55 @@ fn dsl_split_takes_panes_as_children() {
 // ---- the global find (stages/3) ---------------------------------------------
 
 #[test]
-fn find_defaults_to_the_mounted_tree() {
-    // Nothing mounted: the defaulted `within` is 0 and the answer is None,
-    // never a trap.
+fn find_is_dom_order_across_the_apps_windows() {
+    // The DOM rule: bare `find` searches the running app's windows in OPEN
+    // order, first match wins; `within:` scopes and disambiguates.
     app::reset_default_for_tests();
     mount::uninstall();
     match button::find("save") {
         option::Option[button::Button]::Some(_x) => { assert false; }
         option::Option[button::Button]::None => { }
     }
-    // Mounted: an agent holding only a key can address the element.
     mount::install(mount::fr_renderer());
-    var b: facet::Builder = facet::Builder::new();
-    b.add(button::button("Save", key: "save"));
-    var root: facet::Node = facet::column(b, key: "r");
-    assert mount::mount(#addr_of(root));
+    // Window ONE carries "save" and a duplicate "shared"; window TWO carries
+    // its own "shared" and "other".
+    var b1: facet::Builder = facet::Builder::new();
+    b1.add(button::button("Save", key: "save"));
+    b1.add(button::button("First", key: "shared"));
+    var w1: facet::Node = facet::column(b1, key: "w1");
+    assert mount::mount(#addr_of(w1));
+    var b2: facet::Builder = facet::Builder::new();
+    b2.add(button::button("Second", key: "shared"));
+    b2.add(button::button("Other", key: "other"));
+    var w2: facet::Node = facet::column(b2, key: "w2");
+    assert mount::mount(#addr_of(w2));
+    // Bare find reaches BOTH windows (not only the newest)...
     match button::find("save") {
         option::Option[button::Button]::Some(hit) => { assert hit.title() == "Save"; }
         option::Option[button::Button]::None => { assert false; }
     }
-    // Scoped: `within:` narrows to a subtree that does not carry the key.
-    var other: facet::Node = facet::column(facet::Builder::new(), key: "empty");
-    match button::find("save", within: #addr_of(other)) {
+    match button::find("other") {
+        option::Option[button::Button]::Some(hit) => { assert hit.title() == "Other"; }
+        option::Option[button::Button]::None => { assert false; }
+    }
+    // ...and a duplicated key answers the FIRST window's element.
+    match button::find("shared") {
+        option::Option[button::Button]::Some(hit) => { assert hit.title() == "First"; }
+        option::Option[button::Button]::None => { assert false; }
+    }
+    // `within:` disambiguates to the second window's element.
+    match button::find("shared", within: #addr_of(w2)) {
+        option::Option[button::Button]::Some(hit) => { assert hit.title() == "Second"; }
+        option::Option[button::Button]::None => { assert false; }
+    }
+    // ...and a subtree that lacks the key answers None.
+    var empty: facet::Node = facet::column(facet::Builder::new(), key: "empty");
+    match button::find("save", within: #addr_of(empty)) {
         option::Option[button::Button]::Some(_y) => { assert false; }
         option::Option[button::Button]::None => { }
     }
-    mount::unmount(#addr_of(root));
+    mount::unmount(#addr_of(w2));
+    mount::unmount(#addr_of(w1));
     mount::uninstall();
     return;
 }

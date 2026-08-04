@@ -447,9 +447,14 @@ fn from(p: *core::Node) -> option::Option[Tree] {
     return option::Option[Tree]::Some(Tree::_of(p));
 }
 
-fn find(key: str, within: *core::Node = mount::mounted_root()) -> option::Option[Tree] {
-    if within == (0 as *core::Node) { return option::Option[Tree]::None; }
-    return match core::find_in(within, key) {
+fn find(key: str, within: *core::Node = 0 as *core::Node) -> option::Option[Tree] {
+    if within != (0 as *core::Node) {
+        return match core::find_in(within, key) {
+            option::Option[*core::Node]::Some(p) => from(p),
+            option::Option[*core::Node]::None => option::Option[Tree]::None,
+        };
+    }
+    return match mount::find_node(key) {
         option::Option[*core::Node]::Some(p) => from(p),
         option::Option[*core::Node]::None => option::Option[Tree]::None,
     };
