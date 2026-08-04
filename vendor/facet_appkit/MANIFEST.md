@@ -8,7 +8,7 @@ happen on a Mac?" by reading it.
 A row here is a commitment, not a note. Nothing is left implicit: a verb that
 is neither implemented nor listed below is a gap, and the gap is a bug.
 
-Status: **Stage 4 item 1 complete**, item 2 at 24 kinds of 42. Items are in
+Status: **Stage 4 item 1 complete**, item 2 at 26 kinds of 42. Items are in
 progress; this file grows a row each time something is decided either way.
 
 ---
@@ -57,6 +57,13 @@ asked for yet.
 draws its own strip and offers no colour API — the same reason as the other
 system-drawn controls above.
 
+### `context_menu_item(destructive:)`
+
+NSMenuItem has no destructive style — macOS marks a destructive action by
+wording ("Delete…") and by confirming it, not by colouring the row. The flag
+is carried and ignored rather than approximated with a red attributed title,
+which would look like a system convention that does not exist.
+
 ### The `bordered` stroke family
 
 `bordered(stroke_dash:)` `stroke_dash_offset:` `stroke_cap:` `stroke_join:`
@@ -90,6 +97,18 @@ nav-bar back button — have no desktop equivalent and land here as "AppKit
 cannot (mobile concept)" when item 5 reaches them.
 
 ## Implemented, with a deviation worth knowing
+
+### The menu kinds are not views
+
+`context_menu` and `context_menu_item` answer `wants_view` FALSE: an NSMenu
+is not an NSView, and a context menu decorates the node it sits under rather
+than occupying a place of its own. The mount walk creates nothing for them
+and they take no place in the native tree — the menu is read from the NODES
+when the PARENT's view is built, and hung on that view with `setMenu:`.
+
+Consequence: a `context_menu` node has no frame, no `native()`, and no
+geometry. It is a description that resolves into its parent, which is the
+only reading that matches what a context menu IS.
 
 ### Every backing view is flipped
 

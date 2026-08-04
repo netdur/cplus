@@ -40,7 +40,13 @@ type Node = flex::Node;
 // The fake renderer in facet's suite uses exactly this rule, so the headless
 // conformance tests and this backend agree on the shape of the native tree.
 fn wants_view(n: *core::Node) -> bool {
-    if core::kind_of(n) != core::K_NODE { return true; }
+    let kind: u32 = core::kind_of(n);
+    // The menu kinds are not views at all: an NSMenu is not an NSView, and a
+    // context menu decorates the node it sits under rather than occupying a
+    // place of its own. They are read as NODES when their parent's view is
+    // built — see controls::attach_context_menu.
+    if controls::menu_kind(kind) { return false; }
+    if kind != core::K_NODE { return true; }
     return { (*n).key() } != "";
 }
 
@@ -62,6 +68,9 @@ fn create(ctx: *u8, n: *core::Node) -> *u8 {
     // bit set. One code path with apply, so the two cannot drift.
     paint::apply_common(v, n, paint::all_bits());
     apply_for_kind(kind, v, n, paint::all_bits());
+    // A `context_menu` child describes a menu for THIS view; it has no view of
+    // its own, so this is the moment it can be hung.
+    controls::attach_context_menu(v, n);
     return v;
 }
 

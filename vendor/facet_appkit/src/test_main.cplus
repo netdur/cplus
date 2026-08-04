@@ -36,6 +36,8 @@ import "facet/page_dots" as page_dots;
 import "facet/date_picker" as date_picker;
 import "facet/time_picker" as time_picker;
 import "facet/tabs" as tabs;
+import "facet/context_menu" as context_menu;
+import "facet/context_menu_item" as context_menu_item;
 import "quartzcore/quartzcore" as quartz;
 import "stdlib/status" as status;
 import "objc/runtime" as rt;
@@ -770,5 +772,78 @@ fn a_tab_pane_becomes_a_tab_view_item_not_a_subview() {
     // ...and it did NOT also land as a subview of the tab view itself.
     views::view_release(child);
     views::view_release(host);
+    return;
+}
+
+// ---- the menu tier: a kind that is not a view --------------------------------
+
+#[test]
+fn a_context_menu_is_not_a_view_and_hangs_on_its_parent() {
+    // An NSMenu is not an NSView. Both menu kinds answer wants_view false, so
+    // the mount walk creates nothing for them and they take no place in the
+    // native tree — the menu is read from the NODES when the PARENT's view is
+    // built, and hung on that view.
+    var probe: core::Node = context_menu::context_menu(key: "probe");
+    assert views::wants_view(#addr_of(probe)) == false;
+    var probe_item: core::Node = context_menu_item::context_menu_item("Rename", key: "pi");
+    assert views::wants_view(#addr_of(probe_item)) == false;
+
+    var menu_node: core::Node = context_menu::context_menu(key: "cm");
+    let mp: *core::Node = #addr_of(menu_node);
+    assert mount::add_child(mp, context_menu_item::context_menu_item("Rename", key: "ren",
+        shortcut: vocab::Shortcut::of("r", modifiers: vocab::KeyModifiers::Cmd)));
+    assert mount::add_child(mp, context_menu_item::context_menu_item(""));   // a separator
+    assert mount::add_child(mp, context_menu_item::context_menu_item("Delete", key: "del",
+        destructive: true));
+
+    let built: *u8 = controls::build_context_menu(mp);
+    assert built != (0 as *u8);
+    let m: ak::Menu = ak::Menu::from_raw(built);
+    assert m.number_of_items() == (3 as i64);
+    match m.item_at_index(0 as i64) {
+        option::Option[ak::MenuItem]::Some(mi) => {
+            assert mi.title().view() == "Rename";
+            // The key equivalent is the row context_menu_item declares on its
+            // own account, on top of the inherited MenuItem band — so this
+            // asserts both halves of the base fix at once.
+            assert mi.key_equivalent().view() == "r";
+            assert mi.key_equivalent_modifier_mask() == (1048576 as u64);   // Command
+        }
+        option::Option[ak::MenuItem]::None => { assert false; }
+    }
+    // A titleless item is a separator: MAUI has no separator type, and that is
+    // what every menu-building API means by one.
+    match m.item_at_index(1 as i64) {
+        option::Option[ak::MenuItem]::Some(sep) => { assert sep.is_separator_item(); }
+        option::Option[ak::MenuItem]::None => { assert false; }
+    }
+    match m.item_at_index(2 as i64) {
+        option::Option[ak::MenuItem]::Some(d) => { assert d.title().view() == "Delete"; }
+        option::Option[ak::MenuItem]::None => { assert false; }
+    }
+    // Nothing that is not a context_menu builds one.
+    var plain: core::Node = core::column(core::Builder::new(), key: "row");
+    assert controls::build_context_menu(#addr_of(plain)) == (0 as *u8);
+    return;
+}
+
+#[test]
+fn a_node_with_a_context_menu_child_gets_it_hung_on_its_view() {
+    // End to end: the menu node is a CHILD of the row, has no view of its own,
+    // and its menu ends up on the row's view — which is what makes a
+    // right-click on the row open it. This is the macOS answer to the
+    // swipe-to-reveal actions MANIFEST.md records as impossible, and unlike a
+    // swipe it has a keyboard path.
+    var menu_node: core::Node = context_menu::context_menu(key: "cm2");
+    assert mount::add_child(#addr_of(menu_node), context_menu_item::context_menu_item("Open", key: "o"));
+    var b: core::Builder = core::Builder::new();
+    b.add(menu_node);
+    var row: core::Node = core::column(b, key: "row2");
+    let v: *u8 = views::create(0 as *u8, #addr_of(row));
+    assert v != (0 as *u8);
+    let hung: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("menu\0"))) };
+    assert hung != (0 as *u8);
+    assert ak::Menu::from_raw(hung).number_of_items() == (1 as i64);
+    views::view_release(v);
     return;
 }

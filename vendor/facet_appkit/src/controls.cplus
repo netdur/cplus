@@ -16,10 +16,10 @@
 // why each is imported: `label::P_TEXT` is not the same bit as
 // `text_field::P_TEXT`, and the MAP is the authority for both.
 //
-// STATUS: 24 of 42 — label, button, text_field, image, scroll, box, checkbox,
+// STATUS: 26 of 42 — label, button, text_field, image, scroll, box, checkbox,
 // radio, toggle, slider, progress, spinner, stepper, icon_button, symbol,
 // text_area, search_field, popup, bordered, split, page_dots, date_picker,
-// time_picker, tabs, plus
+// time_picker, tabs, context_menu, context_menu_item, plus
 // the container backing. Until a kind lands, `views::create` says
 // so on stderr rather than rendering a silent blank rectangle.
 
@@ -1093,5 +1093,123 @@ fn tabs_add_pane(host: *u8, pane: *u8, label: str) {
     item.set_view(ak::View::from_raw(pane));
     if label != "" { item.set_label(label); }
     tv.add_tab_view_item(item);
+    return;
+}
+
+// ---- context_menu ------------------------------------------------------------
+// The first NON-VIEW kind, and the shape is worth stating because the rest of
+// the menu tier will follow it.
+//
+// An NSMenu is not an NSView. A `context_menu` node decorates the node it sits
+// under — right-clicking the PARENT is what opens it — so it has no place of
+// its own in the view tree and no frame. Its `context_menu_item` children are
+// likewise not views.
+//
+// So both answer `wants_view` with false and `create` never runs on them. The
+// menu is built instead from the NODES, at the moment the PARENT's view is
+// created, and hung on that view — which is exactly what AppKit's
+// `NSView.menu` is for. `views::create` calls `attach_context_menu` after it
+// has a view for a node, so the walk order works out: the child nodes are
+// already in the tree (build ran long before mount), even though no view
+// exists for them and none ever will.
+//
+// This is also the macOS answer to the swipe-to-reveal actions MANIFEST.md
+// records as impossible: a right-click menu IS the platform's per-row action
+// affordance, and it has a keyboard path, which a swipe never does.
+
+fn menu_kind(kind: u32) -> bool {
+    return kind == props::K_CONTEXT_MENU || kind == props::K_CONTEXT_MENU_ITEM;
+}
+
+// facet's portable modifier enum onto NSEventModifierFlags.
+fn ns_modifier_mask(m: vocab::KeyModifiers) -> u64 {
+    return match m {
+        vocab::KeyModifiers::Cmd => 1048576 as u64,       // NSEventModifierFlagCommand
+        vocab::KeyModifiers::Shift => 131072 as u64,      // ...Shift
+        vocab::KeyModifiers::Ctrl => 262144 as u64,       // ...Control
+        vocab::KeyModifiers::Alt => 524288 as u64,        // ...Option
+        // Windows has no macOS counterpart; Command is the nearest meaning and
+        // is what a cross-platform app means by "the platform's own modifier".
+        vocab::KeyModifiers::Windows => 1048576 as u64,
+        vocab::KeyModifiers::None => 0 as u64,
+    };
+}
+
+// Build the NSMenu a `context_menu` node describes. Returns 0 for a node that
+// is not one, so the caller can ask unconditionally.
+fn build_context_menu(n: *core::Node) -> *u8 {
+    if core::kind_of(n) != props::K_CONTEXT_MENU { return 0 as *u8; }
+    let menu: ak::Menu = ak::Menu::new("");
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => { add_menu_item(menu, c); }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return rt::retain(menu.raw());
+}
+
+fn add_menu_item(menu: ak::Menu, c: *core::Node) {
+    let p: *props::ContextMenuItemProps =
+        props_of(c, props::K_CONTEXT_MENU_ITEM) as *props::ContextMenuItemProps;
+    if p == (0 as *props::ContextMenuItemProps) { return; }
+    let mi: *props::MenuItemProps = { #addr_of((*p).menu_item) };
+    let title: str = { (*mi).text.view() };
+    // An item with no title is a separator: MAUI has no separator type, and a
+    // titleless item is what every menu-building API in the world means by one.
+    if title == "" {
+        menu.add_item(ak::MenuItem::separator_item());
+        return;
+    }
+    let item: ak::MenuItem = ak::MenuItem::new(title, 0 as *u8, "");
+    // The key equivalent, which is the whole reason context_menu_item declares
+    // a row of its own on top of the MenuItem band.
+    let key: str = { (*p).shortcut_key.view() };
+    if key != "" {
+        item.set_key_equivalent(key);
+        item.set_key_equivalent_modifier_mask(ns_modifier_mask({ (*p).shortcut_modifiers }));
+    }
+    let icon: str = { (*mi).icon.view() };
+    if icon != "" {
+        match resolve_image(icon) {
+            option::Option[ak::Image]::Some(img) => { item.set_image(img); }
+            option::Option[ak::Image]::None => { }
+        }
+    }
+    // The handler rides the same target trampoline every control action uses,
+    // so a menu click and a button click arrive by one path.
+    let h: fn(*u8, *u8) = { (*mi).on_clicked };
+    if h != props::no_handler {
+        item.set_target(akx::action_ctx_target(h, { (*mi).on_clicked_ctx }));
+        item.set_action(akx::action_ctx_sel());
+    }
+    // is_destructive has no NSMenuItem equivalent — recorded in MANIFEST.md.
+    item.set_enabled(core::is_enabled(c));
+    menu.add_item(item);
+    return;
+}
+
+// Hang the context menu a node's children describe on that node's view. Called
+// from `views::create` once the view exists.
+fn attach_context_menu(view: *u8, n: *core::Node) {
+    if view == (0 as *u8) { return; }
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                let menu: *u8 = build_context_menu(c);
+                if menu != (0 as *u8) {
+                    { rt::msg_void_id(view, rt::sel(#str_ptr("setMenu:\0")), menu) };
+                    return;                     // one context menu per node
+                }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
     return;
 }
