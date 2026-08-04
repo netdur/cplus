@@ -238,6 +238,20 @@ by its *shape*, not a method-name allowlist, through every form it can leak:
   Verified live in iris: exposed describe grew from the 4-node frozen shell
   to every launcher and recents control.
 
+### facet — the ownership hierarchy
+- **process → app → window → node**, MAUI's Application scaffold given its
+  facet home: `app_state.cplus` holds the app-scoped record (theme, nav
+  state, appearance handler, windows) that `runtime::App` embeds by value;
+  running an app points the one process door at its record and quitting
+  releases it, so a second app in the same exe starts clean. Windows are
+  plural and simultaneous — mount opens one, `sync` and the key-only `find`
+  walk the running app's windows. A node's presentation lives on its own
+  `Data` and dies with it; the mount-module registry and both lifecycle
+  hooks are gone. Statics remain only for what every app shares: the
+  Renderer, the platform hook slots, the UI thread, the RUNNING door.
+  App-less facet (bare mounts, the headless suite) runs against a visible,
+  resettable process-default record.
+
 ### facet — the words facet owns (no MAUI row behind them)
 - **`symbol`** (`symbol.cplus` + `icons.cplus`): an icon-font glyph as a
   control — `symbol(icons::GEAR, size:, fill:, color:)` — with 4,268

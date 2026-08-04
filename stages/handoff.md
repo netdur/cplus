@@ -82,6 +82,15 @@ wrong once already.
 - **Cursors carry `{_p, _seen}`.** `_seen` is `flex::removal_count()`; while
   it matches, no node anywhere has been removed, so the pointer is live
   without dereferencing it.
+- **Ownership hierarchy (2026-08-04, user-directed): process → app → window
+  → node.** One exe may contain several apps (one runs at a time); an app
+  owns theme/nav/windows in `app_state.cplus` (`runtime::App` embeds the
+  record, `run` points the ONE process door at it); a window owns its root;
+  a node owns its presentation in `Data`. Module statics are legal only for
+  what the whole process shares: the Renderer, platform hook slots, the UI
+  thread, the RUNNING door. This is MAUI's own Application/Windows scaffold
+  (the ledger's 13 Application + 30 Window rows) — anything app- or
+  window-scoped in a static is drift.
 - **The `@` builder DSL is the authoring surface, reconnected 2026-08-04.**
   The regen had orphaned it (controls left the `facet::` namespace, so
   `@facet { button(...) }` resolved nothing). The rendezvous is generated:
