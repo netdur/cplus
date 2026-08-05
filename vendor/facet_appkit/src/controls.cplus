@@ -66,6 +66,7 @@ import "facet/mount" as mount;
 import "facet/window_chrome" as chrome;
 import "facet/canvas" as canvas;
 import "facet/refreshable" as refreshable;
+import "facet/table" as table;
 import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "objc/synthesis" as synth;
@@ -2621,15 +2622,69 @@ fn materialise_collection(n: *core::Node) {
 }
 
 fn apply_collection(v: *u8, n: *core::Node, dirty: u64) {
-    if (dirty & (collection::P_COUNT | collection::P_ROW)) != (0 as u64) { materialise_collection(n); }
     let p: *props::CollectionProps = props_of(n, props::K_COLLECTION) as *props::CollectionProps;
     if p == (0 as *props::CollectionProps) { return; }
     let iv: *props::ItemsViewProps = { #addr_of((*p).items_view) };
+    if (dirty & (collection::P_COUNT | collection::P_ROW)) != (0 as u64) {
+        let before: f64 = kept_offset(v, { (*iv).scroll_anchor });
+        materialise_collection(n);
+        restore_anchor(v, n, { (*iv).scroll_anchor }, before);
+    }
     if (dirty & (collection::P_VERTICAL_SCROLL_BARS | collection::P_HORIZONTAL_SCROLL_BARS)) != (0 as u64) {
         apply_sequence_scrollers(v, { (*iv).vertical_scroll_bars }, { (*iv).horizontal_scroll_bars });
     }
     if (dirty & collection::P_SCROLL_TO) != (0 as u64) {
         scroll_child_into_view(v, n, { (*iv).scroll_to_index });
+    }
+    return;
+}
+
+// ---- what an update does to the scroll ---------------------------------------
+// `ItemsView.ItemsUpdatingScrollMode`. The ledger said this "needs an update
+// event facet has none of" — facet has exactly one, and it is the only moment
+// the question arises: a write to `count` or `row` re-materialises the
+// sequence, so the offset is read before and answered after.
+//
+//   KeepItemsInView    the default. Whatever was showing keeps showing, which
+//                      is what a scroll view does when nothing moves it.
+//   KeepScrollOffset   the same NUMBER rather than the same items — a shorter
+//                      sequence scrolls itself back into range.
+//   KeepLastItemInView follow the tail, which is the one an appending log or a
+//                      chat transcript wants.
+fn kept_offset(v: *u8, a: vocab::ScrollAnchor) -> f64 {
+    if v == (0 as *u8) { return 0.0f64; }
+    let keeps: bool = match a {
+        vocab::ScrollAnchor::KeepScrollOffset => true,
+        vocab::ScrollAnchor::KeepItemsInView => false,
+        vocab::ScrollAnchor::KeepLastItemInView => false,
+    };
+    if !keeps { return 0.0f64; }
+    let clip: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("contentView\0"))) };
+    if clip == (0 as *u8) { return 0.0f64; }
+    let b: rt::Rect = { rt::msg_rect(clip, rt::sel(#str_ptr("bounds\0"))) };
+    return b.y;
+}
+
+fn restore_anchor(v: *u8, n: *core::Node, a: vocab::ScrollAnchor, before: f64) {
+    match a {
+        vocab::ScrollAnchor::KeepItemsInView => { }
+        vocab::ScrollAnchor::KeepScrollOffset => {
+            scroll_document_to(v, rt::Point { x: 0.0f64, y: before }, false);
+        }
+        vocab::ScrollAnchor::KeepLastItemInView => {
+            let count: usize = core::child_count_of(n);
+            if count > (0 as usize) {
+                // The rows were built a statement ago and have no frames yet,
+                // so the tail has no position to scroll to. Lay the subtree out
+                // at the size it already occupies: the next full pass redoes
+                // the same arithmetic and agrees with it.
+                let box: flex::Frame = { (*n).frame() };
+                if box.width > 0.0f64 {
+                    { (*n).calculate_layout(width: box.width, height: box.height) };
+                }
+                scroll_child(v, n, (count -% (1 as usize)) as i64, false);
+            }
+        }
     }
     return;
 }
@@ -2699,7 +2754,67 @@ fn scroll_document_to(v: *u8, p: rt::Point, animated: bool) {
 
 fn create_table(n: *core::Node) -> *u8 { return create_sequence_host(false); }
 
-fn apply_table(v: *u8, n: *core::Node, dirty: u64) { return; }
+// MAUI's TableView is a STATIC form: its rows are its CHILDREN, so the three
+// verbs it declares are all about how those children are sized and spaced —
+// which is flex's vocabulary, reached through the node the same way a tree's
+// indentation is. The ledger read "a table's rows are its CHILDREN; flex
+// measures them" as a reason it could not be done, when it is the mechanism.
+fn apply_table(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::TableProps = props_of(n, props::K_TABLE) as *props::TableProps;
+    if p == (0 as *props::TableProps) { return; }
+    if (dirty & (table::P_ROW_HEIGHT | table::P_HAS_UNEVEN_ROWS)) != (0 as u64)
+        || dirty == paint::all_bits() {
+        apply_row_heights(n, { (*p).row_height }, { (*p).has_uneven_rows });
+    }
+    if (dirty & table::P_STYLE) != (0 as u64) || dirty == paint::all_bits() {
+        apply_table_style(n, { (*p).style });
+    }
+    return;
+}
+
+// `has_uneven_rows` is what DECIDES whether `row_height` applies: a table of
+// uneven rows measures each one, which for a flex child is exactly `auto`.
+fn apply_row_heights(n: *core::Node, height: i64, uneven: bool) {
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                // Only IMPOSE. A table of uneven rows measures each one, and a
+                // row the application gave a height of its own is exactly that
+                // measurement — overwriting it with `auto` would be this verb
+                // erasing a stronger statement than its own.
+                if !uneven && height > (0 as i64) {
+                    { (*c).set_height(flex::StyleLength::points(height as f64)) };
+                }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// `TableView.Intent` names how the form READS, and on macOS the difference
+// between the four is inset grouping: a Form or a Settings table is a grouped
+// list with breathing room around it, Data and Menu are flush.
+fn apply_table_style(n: *core::Node, style: vocab::TableStyle) {
+    let inset: f64 = match style {
+        vocab::TableStyle::Form => 12.0f64,
+        vocab::TableStyle::Settings => 12.0f64,
+        vocab::TableStyle::Data => 0.0f64,
+        vocab::TableStyle::Menu => 0.0f64,
+    };
+    { (*n).set_padding(flex::Edge::All, flex::StyleLength::points(inset)) };
+    let gap: f64 = match style {
+        vocab::TableStyle::Form => 8.0f64,
+        vocab::TableStyle::Settings => 8.0f64,
+        vocab::TableStyle::Data => 0.0f64,
+        vocab::TableStyle::Menu => 0.0f64,
+    };
+    { (*n).set_gap(flex::Gutter::Row, flex::StyleLength::points(gap)) };
+    return;
+}
 
 // ---- carousel ----------------------------------------------------------------
 // A sequence laid along the horizontal axis. The pages are its children, like
@@ -2711,6 +2826,10 @@ fn create_carousel(n: *core::Node) -> *u8 { return create_sequence_host(true); }
 fn apply_carousel(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::CarouselProps = props_of(n, props::K_CAROUSEL) as *props::CarouselProps;
     if p == (0 as *props::CarouselProps) { return; }
+    let anchor: vocab::ScrollAnchor = { (*p).items_view.scroll_anchor };
+    if (dirty & props::C_LAYOUT) != (0 as u64) {
+        restore_anchor(v, n, anchor, kept_offset(v, anchor));
+    }
     if (dirty & carousel::P_POSITION) != (0 as u64) {
         // Scroll the page at `position` to the leading edge. Its frame is
         // flex's, so this needs no measurement of its own. `animates_scroll`
@@ -2906,6 +3025,18 @@ fn create_window_buttons(n: *core::Node) -> *u8 {
 
 fn apply_window_buttons(v: *u8, n: *core::Node, dirty: u64) {
     adopt_window_buttons(v, n);
+    // `style` is not WHICH buttons — every platform ships the set it ships —
+    // it is WHEN they are drawn, and a tracking area answers that.
+    let p: *chrome::WindowButtonsProps =
+        props_of(n, chrome::K_WINDOW_BUTTONS) as *chrome::WindowButtonsProps;
+    if p == (0 as *chrome::WindowButtonsProps) { return; }
+    if (dirty & chrome::P_STYLE) != (0 as u64) || dirty == paint::all_bits() {
+        let on_hover: bool = match { (*p).style } {
+            chrome::ButtonStyle::OnHover => true,
+            chrome::ButtonStyle::Native => false,
+        };
+        compose::apply_hover_reveal(v, on_hover);
+    }
     return;
 }
 

@@ -49,6 +49,8 @@ import "facet/swipeable" as swipeable;
 import "facet/swipe_item" as swipe_item;
 import "facet/list" as list;
 import "facet/tree" as tree;
+import "facet/table" as table;
+import "facet/collection" as collection;
 import "facet/menu" as menu;
 import "facet/menu_item" as menu_item;
 import "facet/toolbar_item" as toolbar_item;
@@ -4857,3 +4859,216 @@ fn a_radio_that_asks_for_a_colour_gets_an_attributed_title() {
 
 #[link_name = "objc_msgSend"]
 extern fn msg_attrs_at(recv: *u8, sel: *u8, i: u64, r: *u8) -> *u8;
+
+// ---- the ItemsView band and the table ----------------------------------------
+
+#[test]
+fn a_table_sizes_its_rows_from_row_height() {
+    // A table's rows ARE its children, which the ledger read as a reason it
+    // could not be done — it is the mechanism. Row height is flex's, reached
+    // through the node exactly the way a tree's indentation is.
+    backend::install();
+    var t: core::Node = table::table(key: "tb", row_height: 30 as i64);
+    t.add_child(label::label("one"));
+    t.add_child(label::label("two"));
+    let p: *core::Node = #addr_of(t);
+    assert mount::mount(p);
+    t.calculate_layout(width: 200.0f64);
+    match core::child_of(p, 0 as usize) {
+        option::Option[*core::Node]::Some(c) => { assert { (*c).frame() }.height == 30.0f64; }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    match core::child_of(p, 1 as usize) {
+        option::Option[*core::Node]::Some(c) => { assert { (*c).frame() }.height == 30.0f64; }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    mount::unmount(p);
+    return;
+}
+
+#[test]
+fn a_table_of_uneven_rows_lets_each_measure_itself() {
+    // `has_uneven_rows` is what DECIDES whether row_height applies: an uneven
+    // table measures each row, which for a flex child is `auto`.
+    backend::install();
+    var t: core::Node = table::table(key: "tb2", row_height: 30 as i64, uneven_rows: true);
+    var tall: core::Node = label::label("tall");
+    tall.set_height(flex::StyleLength::points(80.0f64));
+    t.add_child(tall);
+    let p: *core::Node = #addr_of(t);
+    assert mount::mount(p);
+    t.calculate_layout(width: 200.0f64);
+    match core::child_of(p, 0 as usize) {
+        option::Option[*core::Node]::Some(c) => { assert { (*c).frame() }.height == 80.0f64; }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    mount::unmount(p);
+    return;
+}
+
+#[test]
+fn a_form_table_is_inset_and_a_data_table_is_flush() {
+    backend::install();
+    var form: core::Node = table::table(key: "tf", style: vocab::TableStyle::Form);
+    form.add_child(label::label("row"));
+    let fp: *core::Node = #addr_of(form);
+    assert mount::mount(fp);
+    form.calculate_layout(width: 200.0f64);
+    var inset_left: f64 = 0.0f64;
+    match core::child_of(fp, 0 as usize) {
+        option::Option[*core::Node]::Some(c) => { inset_left = { (*c).frame() }.left; }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    assert inset_left > 0.0f64;
+    mount::unmount(fp);
+
+    var data: core::Node = table::table(key: "td");
+    data.add_child(label::label("row"));
+    let dp: *core::Node = #addr_of(data);
+    assert mount::mount(dp);
+    data.calculate_layout(width: 200.0f64);
+    match core::child_of(dp, 0 as usize) {
+        option::Option[*core::Node]::Some(c) => { assert { (*c).frame() }.left == 0.0f64; }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    mount::unmount(dp);
+    return;
+}
+
+static ANCHOR_ROWS: i64 = 3 as i64;
+fn anchor_row(ctx: *u8, i: usize) -> flex::Node {
+    var b: core::Node = box_view::box(color: vocab::Color::rgba(0.3f64, 0.3f64, 0.3f64));
+    b.set_height(flex::StyleLength::points(50.0f64));
+    b.set_width(flex::StyleLength::points(100.0f64));
+    return b;
+}
+
+#[test]
+fn an_updating_collection_can_follow_its_tail() {
+    // `ItemsUpdatingScrollMode` "needs an update event facet has none of" —
+    // facet has exactly one, and it is the only moment the question arises: a
+    // write to `count` or `row` re-materialises the sequence.
+    backend::install();
+    var c: core::Node = collection::collection(key: "ca",
+        scroll_anchor: vocab::ScrollAnchor::KeepLastItemInView);
+    let p: *core::Node = #addr_of(c);
+    match collection::find("ca", within: p) {
+        option::Option[collection::Collection]::Some(h) => {
+            let a: collection::Collection = h.set_row(anchor_row, ctx: 0 as *u8);
+            let _b: collection::Collection = a.set_count(3 as usize);
+        }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
+    assert mount::mount(p);
+    geometry::relayout_root(p, 100.0f64, 50.0f64, 1.0f64);
+    let v: *u8 = core::view_of(p);
+    // Growing the sequence scrolls to the new last row rather than staying put.
+    core::clear_dirty(p);
+    match collection::find("ca", within: p) {
+        option::Option[collection::Collection]::Some(h) => { let _x: collection::Collection = h.set_count(6 as usize); }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    assert clip_origin_y(v) > 0.0f64;
+    mount::unmount(p);
+    return;
+}
+
+#[test]
+fn a_collection_that_keeps_its_items_in_view_does_not_move() {
+    // The default, and the ablation for the test above: the same update with
+    // the default anchor leaves the offset alone.
+    backend::install();
+    var c: core::Node = collection::collection(key: "cb");
+    let p: *core::Node = #addr_of(c);
+    match collection::find("cb", within: p) {
+        option::Option[collection::Collection]::Some(h) => {
+            let a: collection::Collection = h.set_row(anchor_row, ctx: 0 as *u8);
+            let _b: collection::Collection = a.set_count(3 as usize);
+        }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
+    assert mount::mount(p);
+    geometry::relayout_root(p, 100.0f64, 50.0f64, 1.0f64);
+    let v: *u8 = core::view_of(p);
+    core::clear_dirty(p);
+    match collection::find("cb", within: p) {
+        option::Option[collection::Collection]::Some(h) => { let _x: collection::Collection = h.set_count(6 as usize); }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    assert clip_origin_y(v) == 0.0f64;
+    mount::unmount(p);
+    return;
+}
+
+#[test]
+fn window_buttons_on_hover_start_invisible_and_appear() {
+    // `style` is not WHICH buttons — every platform ships the set it ships —
+    // it is WHEN they are drawn. The ledger answered the first question.
+    backend::install();
+    let w: ak::Window = window::make_shell_window(screen::Chrome::new(
+        title: "hover", width: 300.0f64, height: 200.0f64));
+    var b: core::Node = chrome::window_buttons(key: "wb", style: chrome::ButtonStyle::OnHover);
+    let p: *core::Node = #addr_of(b);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    match w.content_view() {
+        option::Option[ak::View]::Some(cv) => { cv.add_subview(ak::View::from_raw(v)); }
+        option::Option[ak::View]::None => { assert false; }
+    }
+    core::clear_dirty(p);
+    core::touch(p, chrome::P_STYLE);
+    views::apply(0 as *u8, p);
+    // The traffic lights were adopted into the group and are hidden by ALPHA,
+    // not by `hidden` — a hidden view leaves no hover target and the group
+    // could never come back.
+    let subs: vec::Vec[ak::View] = ak::View::from_raw(v).subviews();
+    assert subs.count() > (0 as usize);
+    match subs.at_ptr(0 as usize) {
+        option::Option[*ak::View]::Some(btn) => {
+            assert { (*btn).alpha_value() } == 0.0f64;
+            assert { (*btn).is_hidden() } == false;
+        }
+        option::Option[*ak::View]::None => { assert false; }
+    }
+    // Entering the group reveals it.
+    { rt::msg_void_id(v, rt::sel(#str_ptr("mouseEntered:\0")), 0 as *u8) };
+    match subs.at_ptr(0 as usize) {
+        option::Option[*ak::View]::Some(btn) => { assert { (*btn).alpha_value() } == 1.0f64; }
+        option::Option[*ak::View]::None => { assert false; }
+    }
+    { rt::msg_void_id(v, rt::sel(#str_ptr("mouseExited:\0")), 0 as *u8) };
+    match subs.at_ptr(0 as usize) {
+        option::Option[*ak::View]::Some(btn) => { assert { (*btn).alpha_value() } == 0.0f64; }
+        option::Option[*ak::View]::None => { assert false; }
+    }
+    w.close();
+    return;
+}
+
+#[test]
+fn native_window_buttons_are_always_drawn() {
+    backend::install();
+    let w: ak::Window = window::make_shell_window(screen::Chrome::new(
+        title: "native", width: 300.0f64, height: 200.0f64));
+    var b: core::Node = chrome::window_buttons(key: "wb2");
+    let p: *core::Node = #addr_of(b);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    match w.content_view() {
+        option::Option[ak::View]::Some(cv) => { cv.add_subview(ak::View::from_raw(v)); }
+        option::Option[ak::View]::None => { assert false; }
+    }
+    core::clear_dirty(p);
+    core::touch(p, chrome::P_STYLE);
+    views::apply(0 as *u8, p);
+    let subs: vec::Vec[ak::View] = ak::View::from_raw(v).subviews();
+    assert subs.count() > (0 as usize);
+    match subs.at_ptr(0 as usize) {
+        option::Option[*ak::View]::Some(btn) => { assert { (*btn).alpha_value() } == 1.0f64; }
+        option::Option[*ak::View]::None => { assert false; }
+    }
+    w.close();
+    return;
+}

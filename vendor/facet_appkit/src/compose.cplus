@@ -118,11 +118,22 @@ fn is_ours(cls: *u8) -> bool {
 fn flavour_cell() -> u32 { return 0 as u32; }
 fn flavour_editor() -> u32 { return 1 as u32; }
 fn flavour_title() -> u32 { return 2 as u32; }
+fn flavour_hover() -> u32 { return 3 as u32; }
+
+// The cache key is per FLAVOUR: three of them exist and two could otherwise
+// land on one base class, handing back a subclass that overrides the wrong
+// method.
+fn flavour_key(flavour: u32) -> *u8 {
+    if flavour == flavour_editor() { return { 28786 as *u8 }; }
+    if flavour == flavour_title() { return { 28787 as *u8 }; }
+    if flavour == flavour_hover() { return { 28788 as *u8 }; }
+    return subclass_key();
+}
 
 fn subclass_of(base: *u8, prefix: str, flavour: u32) -> *u8 {
     if base == (0 as *u8) { return base; }
     if is_ours(base) { return base; }
-    let cached: *u8 = { synth::get_associated(base, subclass_key()) };
+    let cached: *u8 = { synth::get_associated(base, flavour_key(flavour)) };
     if cached != (0 as *u8) { return cached; }
     var name: text::Text = text::from_str(prefix);
     let _a: status::Status = name.append(digit((SUBCLASSES / (10 as u32)) % (10 as u32)));
@@ -143,6 +154,12 @@ fn subclass_of(base: *u8, prefix: str, flavour: u32) -> *u8 {
                     let _m: i8 = add_method_rect_rect(cls,
                         rt::sel(#str_ptr("titleRectForBounds:\0")), drawing_rect_imp, rect_types);
                 }
+                if flavour == flavour_hover() {
+                    let _e: i8 = synth::add_method_v_1id(cls,
+                        rt::sel(#str_ptr("mouseEntered:\0")), hover_in_imp, #str_ptr("v@:@\0"));
+                    let _x: i8 = synth::add_method_v_1id(cls,
+                        rt::sel(#str_ptr("mouseExited:\0")), hover_out_imp, #str_ptr("v@:@\0"));
+                }
                 if flavour == flavour_editor() {
                     let _m: i8 = add_method_point_0(cls,
                         rt::sel(#str_ptr("textContainerOrigin\0")), container_origin_imp,
@@ -155,7 +172,7 @@ fn subclass_of(base: *u8, prefix: str, flavour: u32) -> *u8 {
         }
         option::Option[text::CString]::None => { }
     }
-    if made != base { synth::set_associated(base, subclass_key(), made); }
+    if made != base { synth::set_associated(base, flavour_key(flavour), made); }
     return made;
 }
 
@@ -947,4 +964,71 @@ fn picker_is_open(field: *u8) -> bool {
     let pop: *u8 = popover_of(field);
     if pop == (0 as *u8) { return false; }
     return { rt::msg_i8(pop, rt::sel(#str_ptr("isShown\0"))) } != (0 as i8);
+}
+
+// ---- window buttons that appear on hover --------------------------------------
+// `ButtonStyle::OnHover` — the traffic lights, but only while the pointer is
+// over the group. The ledger said "`window_buttons` has no style beyond the
+// traffic lights", which answered a different question: the STYLE here is not
+// which buttons, it is when they are drawn, and a tracking area answers that.
+//
+// The reveal is an alpha rather than `hidden`, because a hidden view leaves no
+// hover target and the group could never come back.
+
+fn hover_alpha_key() -> *u8 { return { 28789 as *u8 }; }
+
+fn set_group_alpha(host: *u8, a: f64) {
+    let subs: vec::Vec[ak::View] = ak::View::from_raw(host).subviews();
+    var i: usize = 0 as usize;
+    let count: usize = subs.count();
+    while i < count {
+        match subs.at_ptr(i) {
+            option::Option[*ak::View]::Some(v) => { { (*v).set_alpha_value(a) }; }
+            option::Option[*ak::View]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+fn hover_in_imp(self_obj: *u8, cmd: *u8, event: *u8) { set_group_alpha(self_obj, 1.0f64); return; }
+fn hover_out_imp(self_obj: *u8, cmd: *u8, event: *u8) {
+    if { synth::get_associated(self_obj, hover_alpha_key()) } == (0 as *u8) { return; }
+    set_group_alpha(self_obj, 0.0f64);
+    return;
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_init_tracking(obj: *u8, sel: *u8, rect: rt::Rect, options: u64,
+                            owner: *u8, info: *u8) -> *u8;
+
+fn apply_hover_reveal(host: *u8, on_hover: bool) {
+    if host == (0 as *u8) { return; }
+    if !on_hover {
+        // Back to always-visible, and the tracking area stops mattering.
+        synth::set_associated(host, hover_alpha_key(), 0 as *u8);
+        set_group_alpha(host, 1.0f64);
+        return;
+    }
+    let cls: *u8 = { synth::object_class(host) };
+    if !is_ours(cls) {
+        let sub: *u8 = subclass_of(cls, "FacetHover", flavour_hover());
+        if sub != cls { let _old: *u8 = { object_setClass(host, sub) }; }
+        // MouseEnteredAndExited (0x01) | ActiveAlways (0x80) | InVisibleRect (0x200)
+        // — InVisibleRect is what makes it follow the view as layout moves it,
+        // so there is no frame observer to keep in step.
+        let box: rt::Rect = { rt::msg_rect(host, rt::sel(#str_ptr("bounds\0"))) };
+        let ta_alloc: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSTrackingArea\0")),
+                                         rt::sel(#str_ptr("alloc\0"))) };
+        let ta: *u8 = { msg_init_tracking(ta_alloc,
+            rt::sel(#str_ptr("initWithRect:options:owner:userInfo:\0")),
+            box, 641 as u64, host, 0 as *u8) };
+        if ta != (0 as *u8) {
+            { rt::msg_void_id(host, rt::sel(#str_ptr("addTrackingArea:\0")), ta) };
+            rt::release(ta);
+        }
+    }
+    synth::set_associated(host, hover_alpha_key(), 1 as *u8);
+    set_group_alpha(host, 0.0f64);
+    return;
 }

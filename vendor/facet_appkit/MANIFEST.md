@@ -133,19 +133,13 @@ not say" are different facts, and a backend that files the second under the
 first is claiming a platform limit that does not exist.
 
 ```no-carrier
-carousel.scroll_anchor          ItemsUpdatingScrollMode needs an update event facet has none of
-collection.scroll_anchor        as carousel.scroll_anchor
-carousel.item_sizing            facet has no measure hook for a grid item
+carousel.item_sizing            a materialised sequence measures every child anyway; nothing to skip
 collection.item_sizing          as carousel.item_sizing
 collection.is_grouped           facet declares no group carrier on the item sequence
 list.is_grouped                 as collection.is_grouped
-table.style                     `TableStyle` has no carrier the backend can read
-table.has_uneven_rows           a table's rows are its CHILDREN; flex measures them
-table.row_height                as table.has_uneven_rows
 collection.selection_mode       a materialised collection is a scroll of children, not a table
 collection.on_selection_changed  as collection.selection_mode
 collection.bind                 collection does not recycle by design; nothing to bind INTO
-window_chrome.style             `window_buttons` has no style beyond the traffic lights
 ```
 
 ### What a scroll implies
@@ -267,6 +261,8 @@ showing, which is a visible bug in the name of a tidy bucket.
 
 ```modifier
 carousel.animates_scroll        decides whether `position` and `scroll_to` jump or slide
+carousel.scroll_anchor          decides what an UPDATE does to the offset; alone it does nothing
+collection.scroll_anchor        as carousel.scroll_anchor
 ```
 
 ### The control tint colours
