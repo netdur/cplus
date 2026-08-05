@@ -179,15 +179,66 @@ fn layout_window(root: *core::Node) {
     match ak::Window::from_raw(win).content_view() {
         option::Option[ak::View]::Some(content) => {
             let f: rt::Rect = content.frame();
-            geometry::relayout_root(root, f.w, f.h, ak::Window::from_raw(win).backing_scale_factor());
-            // The root's own view fills the content view: mount inserted it
+            // The safe area, which is the shared band's `safe_area` finally
+            // having somewhere to land. A window's content view knows its own
+            // insets — the titlebar when the content runs under it, the notch
+            // in full screen — and AppKit will not apply them for us because
+            // facet places every child by frame rather than by constraint.
+            //
+            // So the root is laid out INSIDE the insets and placed at their
+            // origin. `SafeArea::None` is the only answer that opts out, and
+            // it is the one that gets the whole content view.
+            let ins: ak::EdgeInsets = safe_insets(content, root);
+            let w: f64 = f.w - ins.left - ins.right;
+            let h: f64 = f.h - ins.top - ins.bottom;
+            geometry::relayout_root(root, w, h, ak::Window::from_raw(win).backing_scale_factor());
+            // The root's own view fills the safe box: mount inserted it
             // nowhere (the facade did), so the frame walk never sizes it.
             let rv: *u8 = core::view_of(root);
             if rv != (0 as *u8) {
-                geometry::set_view_frame(rv, rt::Rect { x: 0.0f64, y: 0.0f64, w: f.w, h: f.h });
+                geometry::set_view_frame(rv, rt::Rect { x: ins.left, y: ins.top, w: w, h: h });
+                return;
             }
+            // A pass-through root has no view of its own, so the facade put
+            // its topmost BACKED descendants in the window instead — and those
+            // are the views the inset has to move, or a DSL-authored screen
+            // ignores the safe area that a keyed one honours.
+            if ins.left != 0.0f64 || ins.top != 0.0f64 { offset_root_views(root, ins.left, ins.top); }
         }
         option::Option[ak::View]::None => { }
+    }
+    return;
+}
+
+// The insets this root wants kept clear, or zero when it opts out.
+fn safe_insets(content: ak::View, root: *core::Node) -> ak::EdgeInsets {
+    if !core::honours_safe_area(root) {
+        return ak::EdgeInsets { top: 0.0f64, left: 0.0f64, bottom: 0.0f64, right: 0.0f64 };
+    }
+    return { msg_insets(content.raw(), rt::sel(#str_ptr("safeAreaInsets\0"))) };
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_insets(recv: *u8, sel: *u8) -> ak::EdgeInsets;
+
+// Shift the topmost backed views of a pass-through root by the inset. Mirrors
+// `window::add_root_views`, which chose them.
+fn offset_root_views(n: *core::Node, dx: f64, dy: f64) {
+    if n == (0 as *core::Node) { return; }
+    let v: *u8 = core::view_of(n);
+    if v != (0 as *u8) {
+        let b: rt::Rect = { rt::msg_rect(v, rt::sel(#str_ptr("frame\0"))) };
+        geometry::set_view_frame(v, rt::Rect { x: b.x + dx, y: b.y + dy, w: b.w, h: b.h });
+        return;
+    }
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => { offset_root_views(c, dx, dy); }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
     }
     return;
 }

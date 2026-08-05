@@ -31,8 +31,19 @@ struct CommonProps {
     opacity: f64,
     background_color: vocab::Color,
     background: vocab::Brush,
+    // The third background thing. A Color fills, a Brush gradients, and an
+    // image is neither — MAUI carries it on Page (BackgroundImageSource) and
+    // facet carries it here, because a background belongs to whatever has one
+    // rather than to the page alone. A path, like every other facet image.
+    background_image: text::Text,
     shadow: vocab::Shadow,
     clip: vocab::Shape,
+    // Whether this node keeps its content clear of the window's own chrome.
+    // `scroll` has taken one of these since Stage 2 and nothing else could,
+    // which is what left MAUI's three Page rows (ContainerArea,
+    // IgnoresContainerArea, SafeAreaEdges) with no carrier. One node in a tree
+    // is the one that has to answer it, and any node may be that node.
+    safe_area: vocab::SafeArea,
     is_enabled: bool,
     is_visible: bool,
     input_transparent: bool,
@@ -56,8 +67,10 @@ impl CommonProps {
             opacity: 1.0f64,
             background_color: vocab::Color::clear(),
             background: vocab::Brush::none(),
+            background_image: text::new(),
             shadow: vocab::Shadow::none(),
             clip: vocab::Shape::none(),
+            safe_area: vocab::SafeArea::Default,
             is_enabled: true,
             is_visible: true,
             input_transparent: false,
@@ -106,6 +119,15 @@ const C_HANDLERS: u64 = 2305843009213693952u64;
 // cache decides what actually moved, and the frame walk prunes itself on
 // Node::layout_changed().
 const C_LAYOUT: u64 = 4611686018427387904u64;
+// The last bit of the shared band's sixteen. `safe_area` earns its own rather
+// than riding C_LAYOUT because the two say different things: C_LAYOUT means
+// "re-run the layout pass", and this means "the inset that pass starts from
+// changed". A write raises BOTH — the value is geometry, so the pass has to
+// run — but the backend can tell which question it is answering.
+//
+// `background_image` deliberately does NOT take a bit. It rides C_BACKGROUND
+// with the Brush, because they are one question: what is behind this node.
+const C_SAFE_AREA: u64 = 9223372036854775808u64;
 
 // ---- GroupableItemsView — shared by every control MAUI derives from it 
 
@@ -1301,7 +1323,6 @@ struct ScrollProps {
     cascades_input: bool,    // ScrollView.CascadeInputTransparent
     horizontal_scroll_bars: vocab::ScrollBars,    // ScrollView.HorizontalScrollBarVisibility
     axis: vocab::ScrollAxis,    // ScrollView.Orientation
-    safe_area: vocab::SafeArea,    // ScrollView.SafeAreaEdges
     vertical_scroll_bars: vocab::ScrollBars,    // ScrollView.VerticalScrollBarVisibility
     content_size: vocab::Size,    // ScrollView.ContentSize
     scroll_x: f64,    // ScrollView.ScrollX
@@ -1316,7 +1337,6 @@ impl ScrollProps {
             cascades_input: true,
             horizontal_scroll_bars: vocab::ScrollBars::Default,
             axis: vocab::ScrollAxis::Both,
-            safe_area: vocab::SafeArea::Default,
             vertical_scroll_bars: vocab::ScrollBars::Default,
             content_size: vocab::Size::zero(),
             scroll_x: 0.0f64,

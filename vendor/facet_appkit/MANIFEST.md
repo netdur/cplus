@@ -103,8 +103,15 @@ And a whole dimension was uncounted. Handlers ride the shared `C_HANDLERS` bit
 rather than a verb bit, so a verb-level count cannot see them — **52 of 76 never
 fired**, including `text_field.on_text_changed` and `list.on_item_selected`.
 
-The tier ledger reads 57 implemented, 20 decided, 5 deferred; item 7 (examples)
-waits on the docs pass.
+The tier ledger reads **61 implemented, 21 decided, 0 deferred** (guard 5b,
+`TIER_ROWS` in `tools/gen_contract.py` — that guard is the authority, not any
+prose about it). The five rows that used to be deferred all had one cause,
+facet had never declared a carrier, and four of them wanted only two: the
+shared band gained `safe_area` and `background_image`. The fifth,
+`Page.IconImageSource`, is a recorded cannot.
+
+Stage 4 item 7 is closed too — `examples/hello_appkit`, which found three bugs
+the whole suite was green through.
 
 ---
 
@@ -860,10 +867,18 @@ in the gesture band would fight it.
 These are unimplemented because their stage item has not landed, NOT because
 AppKit cannot. They are listed so the difference is never ambiguous.
 
-| What | Stage 4 item | Size |
-|---|---|---|
-| 5 tier rows with no facet verb to carry them | 5 | decisions, not tasks |
-| Examples revived on the new API | 7 | medium |
+**Empty, 2026-08-05.** Guard 5b reads **61 implemented / 21 decided / 0
+deferred**. Both rows that used to sit here are closed:
+
+- The five tier rows all had one cause — facet had never declared a carrier —
+  and four of them wanted only two. The shared band gained `safe_area` (which
+  `scroll` had taken since Stage 2 and nothing else could) and
+  `background_image` (the third background thing, after a Color and a Brush).
+  `Page.IconImageSource` became a recorded **cannot**: a macOS window icon is
+  the document-proxy icon of a file, so a verb taking a picture would describe
+  something the platform cannot show.
+- Examples: `examples/hello_appkit`, which found three bugs on its first run.
+  See "The DSL root reaches the window" below.
 
 Everything else in items 1-5 has landed: all 42 kinds have bodies, the window
 tier answers, the app menu and toolbar install, `web` and `hybrid_web` run on
@@ -994,3 +1009,55 @@ The warning path still exists and is still the rule — a control kind with no
 body renders as an empty backing view **and says so on stderr**, once per
 kind. Nothing takes it today, and `every_kind_now_has_an_answer` is what keeps
 that true.
+
+### The DSL root reaches the window
+
+`@ui { ... }` evaluates to a KEYLESS container holding the block's items —
+keyless because nothing named it, a container because a block may hold two.
+`views::wants_view` gives such a node no view on purpose: an unkeyed
+pure-layout container passes its children to the nearest host, which is how a
+column inside a scroll view costs nothing.
+
+The mount walk inserts every view except the ROOT's, because a root has no host
+above it — the facade puts that one in the window. With a pass-through root
+there was no such view, and the children were created, attached, and inserted
+NOWHERE. Every application authoring its screen the way the contract asks
+opened a window with nothing in it, and the suite was green throughout because
+`open_window`'s own test uses a KEYED column.
+
+`window::add_root_views` walks to the topmost BACKED node on each branch
+instead, which is the same rule the pass-through itself follows. The layout
+pass mirrors it: a pass-through root's backed descendants are the views the
+safe-area inset moves.
+
+### The safe area is on every node
+
+`vocab::SafeArea` was declared in Stage 2 and only `scroll` took one, which is
+what left MAUI's three Page rows (ContainerArea, IgnoresContainerArea,
+ContentPage.SafeAreaEdges) with no carrier. It is on the shared band now, so
+the node that has to answer the question can be the one that does.
+
+AppKit will not apply it for us: a content view knows its own `safeAreaInsets`
+— the titlebar when content runs under it, the notch in full screen — but facet
+places every child by FRAME rather than by constraint, so nothing consults
+them. The window's layout pass does: the root is laid out inside the insets and
+placed at their origin. `SafeArea::None` is the only answer that opts out.
+
+`scroll` keeps its own handling (`automaticallyAdjustsContentInsets`) because
+there AppKit does the insetting itself, and `facet::honours_safe_area` is the
+one reduction both read so the two cannot disagree.
+
+### A background image is the layer's contents
+
+The third thing that can be behind a node, after a Color and a Brush. It rides
+`C_BACKGROUND` rather than taking a bit of its own — "what is behind this node"
+is one question, and the backend re-reads the answer whole.
+
+It is the layer's `contents`, not a subview. A subview would be a child facet
+did not put in the tree: the frame walk would not know it and `insert` would
+count it as a slot, putting every index below the node off by one. Gravity is
+`resizeAspectFill`, which is what a background is nearly always asked for.
+
+An EMPTY image does not buy a layer. Asking for one to say "no picture" would
+cost a backing store per node, which is the trap `is_opaque` is careful to
+avoid on the other side.

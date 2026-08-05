@@ -498,6 +498,10 @@ impl SearchField {
     fn background_color(this) -> vocab::Color { return core::background_color(this._p); }
     fn set_background(this, v: vocab::Brush) -> SearchField { core::set_background(this._p, v); return this; }
     fn background(this) -> vocab::Brush { return core::background(this._p); }
+    fn set_background_image(this, v: str) -> SearchField { core::set_background_image(this._p, v); return this; }
+    fn background_image(this) -> str { return core::background_image(this._p); }
+    fn set_safe_area(this, v: vocab::SafeArea) -> SearchField { core::set_safe_area(this._p, v); return this; }
+    fn safe_area(this) -> vocab::SafeArea { return core::safe_area(this._p); }
     fn set_shadow(this, v: vocab::Shadow) -> SearchField { core::set_shadow(this._p, v); return this; }
     fn shadow(this) -> vocab::Shadow { return core::shadow(this._p); }
     fn set_clip(this, v: vocab::Shape) -> SearchField { core::set_clip(this._p, v); return this; }

@@ -5,7 +5,7 @@ absent here does not exist: calling it is a compile error, never a
 silent no-op. What a backend cannot implement is recorded in that
 backend's own manifest, not here.
 
-407 declared verbs over 38 controls, plus the
+406 declared verbs over 38 controls, plus the
 shared band every element carries.
 
 
@@ -366,7 +366,7 @@ shared band every element carries.
 | `set_content` / `content()` | Node (a named child) | ScrollView.Content |
 | `set_horizontal_scroll_bars` / `horizontal_scroll_bars()` | ScrollBars | ScrollView.HorizontalScrollBarVisibility |
 | `set_axis` / `axis()` | ScrollAxis | ScrollView.Orientation |
-| `set_safe_area` / `safe_area()` | SafeArea | ScrollView.SafeAreaEdges |
+| `safe_area` | shared band | ScrollView.SafeAreaEdges |
 | `set_vertical_scroll_bars` / `vertical_scroll_bars()` | ScrollBars | ScrollView.VerticalScrollBarVisibility |
 | `children` | shared band | ScrollView.Children |
 | `content_size()` | Size | ScrollView.ContentSize |
@@ -630,6 +630,10 @@ type exists.
 | `background_color()` | vocab::Color |
 | `set_background(v:)` | the cursor, so writes chain |
 | `background()` | vocab::Brush |
+| `set_background_image(v:)` | the cursor, so writes chain |
+| `background_image()` | str |
+| `set_safe_area(v:)` | the cursor, so writes chain |
+| `safe_area()` | vocab::SafeArea |
 | `set_shadow(v:)` | the cursor, so writes chain |
 | `shadow()` | vocab::Shadow |
 | `set_clip(v:)` | the cursor, so writes chain |

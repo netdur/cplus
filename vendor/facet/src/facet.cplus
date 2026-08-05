@@ -462,6 +462,64 @@ fn opacity(n: *Node) -> f64 {
     return { (*d).common.opacity };
 }
 
+// A background IMAGE, the third thing that can be behind a node after a Color
+// and a Brush. MAUI carries it on Page; facet carries it on every node,
+// because a background belongs to whatever has one.
+//
+// It rides C_BACKGROUND rather than taking a bit of its own: "what is behind
+// this node" is one question, and the backend re-reads the answer whole.
+fn set_background_image(n: *Node, v: str) {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).common.background_image = text::from_str(v) };
+    touch(n, props::C_BACKGROUND);
+    return;
+}
+
+fn background_image(n: *Node) -> str {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return ""; }
+    return { (*d).common.background_image.view() };
+}
+
+// Whether this node keeps its content clear of the window's own chrome.
+//
+// `scroll` has carried one of these since Stage 2 and nothing else could,
+// which is what left MAUI's three Page rows — ContainerArea,
+// IgnoresContainerArea and ContentPage.SafeAreaEdges — with no carrier and no
+// backend able to answer them. One node in a tree is the one that has to
+// answer it, and the shared band is the only place that does not have to
+// guess which.
+//
+// The write raises C_LAYOUT as well as its own bit: a safe-area inset is
+// geometry, so the layout pass has to run again for it to mean anything.
+fn set_safe_area(n: *Node, v: vocab::SafeArea) {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).common.safe_area = v };
+    touch(n, props::C_SAFE_AREA | props::C_LAYOUT);
+    return;
+}
+
+fn safe_area(n: *Node) -> vocab::SafeArea {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return vocab::SafeArea::Default; }
+    return { (*d).common.safe_area };
+}
+
+// Does this node's safe-area setting mean "keep clear"? `None` is the only
+// answer that does not — the same reduction `scroll` makes, in one place so
+// the two cannot disagree.
+fn honours_safe_area(n: *Node) -> bool {
+    return match safe_area(n) {
+        vocab::SafeArea::None => false,
+        vocab::SafeArea::Default => true,
+        vocab::SafeArea::Container => true,
+        vocab::SafeArea::Content => true,
+        vocab::SafeArea::All => true,
+    };
+}
+
 fn set_enabled(n: *Node, v: bool) {
     let d: *Data = node_data(n);
     if d == (0 as *Data) { return; }

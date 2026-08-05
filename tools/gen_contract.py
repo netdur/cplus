@@ -1813,8 +1813,19 @@ struct CommonProps {
     opacity: f64,
     background_color: vocab::Color,
     background: vocab::Brush,
+    // The third background thing. A Color fills, a Brush gradients, and an
+    // image is neither — MAUI carries it on Page (BackgroundImageSource) and
+    // facet carries it here, because a background belongs to whatever has one
+    // rather than to the page alone. A path, like every other facet image.
+    background_image: text::Text,
     shadow: vocab::Shadow,
     clip: vocab::Shape,
+    // Whether this node keeps its content clear of the window's own chrome.
+    // `scroll` has taken one of these since Stage 2 and nothing else could,
+    // which is what left MAUI's three Page rows (ContainerArea,
+    // IgnoresContainerArea, SafeAreaEdges) with no carrier. One node in a tree
+    // is the one that has to answer it, and any node may be that node.
+    safe_area: vocab::SafeArea,
     is_enabled: bool,
     is_visible: bool,
     input_transparent: bool,
@@ -1838,8 +1849,10 @@ impl CommonProps {
             opacity: 1.0f64,
             background_color: vocab::Color::clear(),
             background: vocab::Brush::none(),
+            background_image: text::new(),
             shadow: vocab::Shadow::none(),
             clip: vocab::Shape::none(),
+            safe_area: vocab::SafeArea::Default,
             is_enabled: true,
             is_visible: true,
             input_transparent: false,
@@ -1888,6 +1901,15 @@ const C_HANDLERS: u64 = 2305843009213693952u64;
 // cache decides what actually moved, and the frame walk prunes itself on
 // Node::layout_changed().
 const C_LAYOUT: u64 = 4611686018427387904u64;
+// The last bit of the shared band's sixteen. `safe_area` earns its own rather
+// than riding C_LAYOUT because the two say different things: C_LAYOUT means
+// "re-run the layout pass", and this means "the inset that pass starts from
+// changed". A write raises BOTH — the value is geometry, so the pass has to
+// run — but the backend can tell which question it is answering.
+//
+// `background_image` deliberately does NOT take a bit. It rides C_BACKGROUND
+// with the Brush, because they are one question: what is behind this node.
+const C_SAFE_AREA: u64 = 9223372036854775808u64;
 '''
 
 
@@ -2115,6 +2137,14 @@ SHARED_FORWARDS = [
     ("background_color", "", "return core::background_color(this._p)", "vocab::Color"),
     ("set_background", "v: vocab::Brush", "core::set_background(this._p, v)", None),
     ("background", "", "return core::background(this._p)", "vocab::Brush"),
+    # Page.BackgroundImageSource, carried here rather than on a page: a
+    # background belongs to whatever has one.
+    ("set_background_image", "v: str", "core::set_background_image(this._p, v)", None),
+    ("background_image", "", "return core::background_image(this._p)", "str"),
+    # Page.ContainerArea / IgnoresContainerArea / ContentPage.SafeAreaEdges.
+    # `scroll` took one of these in Stage 2 and nothing else could.
+    ("set_safe_area", "v: vocab::SafeArea", "core::set_safe_area(this._p, v)", None),
+    ("safe_area", "", "return core::safe_area(this._p)", "vocab::SafeArea"),
     ("set_shadow", "v: vocab::Shadow", "core::set_shadow(this._p, v)", None),
     ("shadow", "", "return core::shadow(this._p)", "vocab::Shadow"),
     ("set_clip", "v: vocab::Shape", "core::set_clip(this._p, v)", None),
@@ -3014,10 +3044,10 @@ TIER_ROWS = {
     ("Page", "Disappearing"):       ("implemented", "component.Lifecycle.on_detach"),
     ("Page", "MenuBarItems"):       ("implemented", "screen.Screen.menu_items"),
     ("Page", "LayoutChanged"):      ("implemented", "services.observe_size on the page root"),
-    ("Page", "BackgroundImageSource"): ("deferred", "no facet verb carries a page background image; the shared band has a Color and a Brush, not an image (Stage 2)"),
-    ("Page", "IconImageSource"): ("deferred", "no facet verb carries it, and a macOS window icon is the DOCUMENT PROXY icon of a file rather than an arbitrary image (Stage 2)"),
-    ("Page", "ContainerArea"): ("deferred", "no facet verb carries a page safe area; vocab::SafeArea exists and only `scroll` takes one (Stage 2)"),
-    ("Page", "IgnoresContainerArea"): ("deferred", "no facet verb carries it (Stage 2)"),
+    ("Page", "BackgroundImageSource"): ("implemented", "the shared band's `background_image` — a third background thing after the Color and the Brush, on every node rather than only a page; the backend makes it the layer's contents"),
+    ("Page", "IconImageSource"): ("cannot", "a macOS window icon is the DOCUMENT PROXY icon of a file — the window's representedURL, not an arbitrary image. A verb taking a picture would describe something the platform cannot show"),
+    ("Page", "ContainerArea"): ("implemented", "the shared band's `safe_area` — any node may be the one that keeps clear, and the window's layout pass insets its root by the content view's safeAreaInsets"),
+    ("Page", "IgnoresContainerArea"): ("implemented", "`safe_area: SafeArea::None` on the shared band — the one answer that opts out"),
     ("Page", "IsBusy"): ("cannot", "macOS has no app-wide busy indicator; a spinner is a control the app places"),
     ("Page", "ToolbarItems"): ("implemented", "toolbar_item nodes, read from the tree by window::install_toolbar"),
     ("Page", "NavigatedTo"): ("implemented", "component::Lifecycle::on_attach on the screen being shown"),
@@ -3025,7 +3055,7 @@ TIER_ROWS = {
     ("Page", "NavigatingFrom"): ("cannot", "the application initiates every route change facet has (nav::go)"),
     # ---- ContentPage (3) ----
     ("ContentPage", "Content"):     ("implemented", "mount.set_content"),
-    ("ContentPage", "SafeAreaEdges"): ("deferred", "no facet verb carries it; vocab::SafeArea exists and only `scroll` takes one (Stage 2)"),
+    ("ContentPage", "SafeAreaEdges"): ("implemented", "the shared band's `safe_area`, which is `vocab::SafeArea` — the same word `scroll` has taken since Stage 2, now on every node"),
     ("ContentPage", "HideSoftInputOnTapped"): ("cannot", "mobile concept — no soft keyboard on a desktop"),
     # ---- Toolbar (14) ----
     ("Toolbar", "Title"): ("implemented", "Chrome.title — the window title IS the toolbar title on AppKit"),

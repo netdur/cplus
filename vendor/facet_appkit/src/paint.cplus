@@ -387,6 +387,9 @@ fn apply_common(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & props::C_BACKGROUND_COLOR) != (0 as u64) {
         apply_background(view, core::background_color(n));
     }
+    if (dirty & props::C_BACKGROUND) != (0 as u64) {
+        apply_background_image(view, core::background_image(n));
+    }
     if (dirty & props::C_TRANSFORM) != (0 as u64) {
         apply_transform(view, n);
     }
@@ -419,6 +422,54 @@ fn apply_background(view: ak::View, c: vocab::Color) {
     let l: quartz::Layer = view.layer();
     l.set_background_color(ns_color(c).c_g_color());
     return;
+}
+
+// The background IMAGE, which is the layer's `contents` rather than a subview.
+//
+// A subview would be a child facet did not put in the tree: the frame walk
+// would not know about it, `insert` would count it as a slot, and every index
+// below the node would be off by one. The layer is underneath all of that by
+// construction — the same reason a background COLOUR is a layer property here.
+//
+// Empty clears it, so a node can stop having one. Resolution follows `image`'s
+// own order (system symbol, bundle name, then a path on disk) because an
+// application should not have to learn two rules for naming a picture.
+fn apply_background_image(view: ak::View, src: str) {
+    if src == "" {
+        // Nothing to clear unless a layer already exists — asking for one here
+        // would cost a backing store per node to say "no picture", which is the
+        // same trap `is_opaque` is careful not to fall into.
+        if view.wants_layer() {
+            { rt::msg_void_id(view.layer().raw(), rt::sel(#str_ptr("setContents:\0")), 0 as *u8) };
+        }
+        return;
+    }
+    let img: ak::Image = resolve_image(src);
+    if img.raw() == (0 as *u8) { return; }
+    view.set_wants_layer(true);
+    let l: quartz::Layer = view.layer();
+    { rt::msg_void_id(l.raw(), rt::sel(#str_ptr("setContents:\0")), img.raw()) };
+    // Fill the node without distorting the picture, which is what a background
+    // is nearly always asked to do. `resizeAspectFill` is Core Animation's own
+    // word for it.
+    { rt::msg_void_id(l.raw(), rt::sel(#str_ptr("setContentsGravity:\0")),
+                      bridge::nsstring("resizeAspectFill")) };
+    return;
+}
+
+// Same three-step resolution `image` uses. Answers a null Image when the name
+// is none of the three, so a caller can leave what is there alone rather than
+// substituting something the application did not ask for.
+fn resolve_image(src: str) -> ak::Image {
+    match ak::Image::image_with_system_symbol_name(src, "") {
+        option::Option[ak::Image]::Some(img) => { return img; }
+        option::Option[ak::Image]::None => { }
+    }
+    match ak::Image::image_named(src) {
+        option::Option[ak::Image]::Some(named) => { return named; }
+        option::Option[ak::Image]::None => { }
+    }
+    return ak::Image::new_with_contents_of_file(src);
 }
 
 // CATransform3D is a bare by-value C struct in the binding, with the matrix

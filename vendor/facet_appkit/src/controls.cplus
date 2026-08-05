@@ -468,24 +468,20 @@ fn apply_scroll(v: *u8, n: *core::Node, dirty: u64) {
     // window's own chrome. On AppKit that is exactly `automaticallyAdjusts
     // ContentInsets`, which insets for the title bar and any accessory — so
     // `Default`/`Container`/`All` let AppKit do it and `None` turns it off.
-    if (dirty & scroll::P_SAFE_AREA) != (0 as u64) || dirty == paint::all_bits() {
-        s.set_automatically_adjusts_content_insets(honours_safe_area({ (*p).safe_area }));
+    //
+    // It is read from the SHARED BAND now, not from a prop of scroll's own.
+    // `scroll` was the only kind that could carry one, which is what left
+    // MAUI's three Page rows with no answer; the verb moved up, and this is
+    // the one place where AppKit does the insetting itself rather than facet's
+    // layout pass doing it (scheduler::safe_insets).
+    if (dirty & props::C_SAFE_AREA) != (0 as u64) || dirty == paint::all_bits() {
+        s.set_automatically_adjusts_content_insets(core::honours_safe_area(n));
     }
     // `cascades_input` is read where it is answered — the hit test, in
     // input.cplus. Nothing to write here; the view has to be ARMED, because
     // that class is where `hitTest:` lives, and arming is idempotent.
     if (dirty & scroll::P_CASCADES_INPUT) != (0 as u64) { input::arm(v, n); }
     return;
-}
-
-fn honours_safe_area(a: vocab::SafeArea) -> bool {
-    return match a {
-        vocab::SafeArea::None => false,
-        vocab::SafeArea::Default => true,
-        vocab::SafeArea::Container => true,
-        vocab::SafeArea::Content => true,
-        vocab::SafeArea::All => true,
-    };
 }
 
 // `Default` is the platform's own answer, which on macOS is the overlay

@@ -6931,3 +6931,122 @@ fn a_reclassed_view_is_still_addressable_and_still_measures() {
     assert { (*p).context() } == sv;
     return;
 }
+
+// ---- the two shared-band carriers Stage 4 ended without ----------------------
+
+#[test]
+fn a_background_image_is_the_layers_contents_not_a_subview() {
+    // A subview would be a child facet did not put in the tree: the frame walk
+    // would not know it, and `insert` would count it as a slot — every index
+    // below the node off by one. So the picture is the LAYER's.
+    backend::install();
+    var n: core::Node = box_view::box(color: vocab::Color::rgba(0.0f64, 0.0f64, 0.0f64, 0.0f64), key: "bg");
+    let p: *core::Node = #addr_of(n);
+    core::set_background_image(p, "gear");
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v != (0 as *u8);
+    let view: ak::View = ak::View::from_raw(v);
+    assert view.wants_layer();
+    assert { rt::msg_id(view.layer().raw(), rt::sel(#str_ptr("contents\0"))) } != (0 as *u8);
+    // It did NOT become a child.
+    assert view.subviews().count() == (0 as usize);
+    // And the reader answers what was written.
+    assert core::background_image(p) == "gear";
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn a_background_image_can_be_taken_away_again() {
+    backend::install();
+    var n: core::Node = box_view::box(color: vocab::Color::rgba(0.0f64, 0.0f64, 0.0f64, 0.0f64), key: "bg2");
+    let p: *core::Node = #addr_of(n);
+    core::set_background_image(p, "gear");
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    core::clear_dirty(p);
+    core::set_background_image(p, "");
+    views::apply(0 as *u8, p);
+    assert { rt::msg_id(ak::View::from_raw(v).layer().raw(), rt::sel(#str_ptr("contents\0"))) } == (0 as *u8);
+    return;
+}
+
+#[test]
+fn an_empty_background_image_does_not_buy_a_layer() {
+    // The same care `is_opaque` takes: a node with no picture must not pay a
+    // backing store to say so.
+    backend::install();
+    var n: core::Node = image::image("gear", key: "noflayer");
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    assert ak::View::from_raw(v).wants_layer() == false;
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn safe_area_is_on_every_node_and_only_none_opts_out() {
+    // The carrier the three deferred Page rows wanted. `scroll` had one and
+    // nothing else could, which is why they had no answer.
+    var n: core::Node = core::column(core::Builder::new(), key: "page");
+    let p: *core::Node = #addr_of(n);
+    // Default keeps clear, which is what a page wants without being asked.
+    match core::safe_area(p) {
+        vocab::SafeArea::Default => { }
+        _other => { assert false; }
+    }
+    assert core::honours_safe_area(p);
+    core::set_safe_area(p, vocab::SafeArea::None);
+    assert core::honours_safe_area(p) == false;
+    core::set_safe_area(p, vocab::SafeArea::All);
+    assert core::honours_safe_area(p);
+    return;
+}
+
+#[test]
+fn a_safe_area_write_asks_for_a_layout_pass_as_well_as_its_own_bit() {
+    // The value is GEOMETRY: without C_LAYOUT the inset would sit in the props
+    // and never reach the screen, because nothing would re-run the pass.
+    var n: core::Node = core::column(core::Builder::new(), key: "page2");
+    let p: *core::Node = #addr_of(n);
+    core::clear_dirty(p);
+    core::set_safe_area(p, vocab::SafeArea::None);
+    let d: u64 = core::dirty_of(p);
+    assert (d & props::C_SAFE_AREA) != (0 as u64);
+    assert (d & props::C_LAYOUT) != (0 as u64);
+    return;
+}
+
+#[test]
+fn a_window_root_that_opts_out_of_the_safe_area_gets_the_whole_content_view() {
+    // The behavioural end of it. A test cannot make macOS report a non-zero
+    // safe area on demand, so what is asserted is the half that is facet's:
+    // opting out lays the root out at the content view's full size, and the
+    // default path agrees with it whenever the insets are zero (which is the
+    // ordinary windowed case).
+    backend::install();
+    app::reset_default_for_tests();
+    var root: core::Node = core::column(core::Builder::new(), key: "sa_root");
+    let rp: *core::Node = #addr_of(root);
+    core::set_safe_area(rp, vocab::SafeArea::None);
+    let win: *u8 = window::open_window(rp, screen::Chrome::new(
+        title: "sa", width: 300.0f64, height: 200.0f64));
+    assert win != (0 as *u8);
+    scheduler::layout_window(rp);
+    let rv: *u8 = core::view_of(rp);
+    assert rv != (0 as *u8);
+    let f: rt::Rect = ak::View::from_raw(rv).frame();
+    match ak::Window::from_raw(win).content_view() {
+        option::Option[ak::View]::Some(content) => {
+            let c: rt::Rect = content.frame();
+            assert f.x == 0.0f64;
+            assert f.y == 0.0f64;
+            assert f.w == c.w;
+            assert f.h == c.h;
+        }
+        option::Option[ak::View]::None => { assert false; }
+    }
+    window::close_window(win);
+    backend::uninstall();
+    app::reset_default_for_tests();
+    return;
+}
