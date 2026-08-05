@@ -14,8 +14,8 @@ Read that precisely. It does not say every verb works on a Mac — it says every
 verb has an ANSWER, and the answer is checkable:
 
 ```
-321 declared prop/command bits    247 live, 23 host-rendered, 3 derived,
-                                    3 modifier, 8 create-only, 37 decided,
+321 declared prop/command bits    256 live, 23 host-rendered, 3 derived,
+                                    3 modifier, 8 create-only, 28 decided,
                                     0 no carrier, 0 absent
  80 declared handlers              76 wired, 4 decided, 0 never fire
 ```
@@ -118,14 +118,8 @@ nothing real, so a stale row cannot sit here reading true; it fails on an
 unrecorded verb too, which is this file's oldest claim finally enforced.
 
 ```cannot-ledger
-toggle.on_color                 system-drawn: NSSwitch paints from the accent colour
-toggle.off_color                system-drawn
-toggle.thumb_color              system-drawn
-slider.maximum_track_color      system-drawn
-slider.thumb_color              system-drawn
-progress.progress_color         system-drawn: NSProgressIndicator uses the accent colour
-checkbox.color                  system-drawn: the mark is system-drawn
-spinner.color                   system-drawn: the spinner is system-drawn
+toggle.off_color                ACHROMATIC: a hue rotation has nothing to rotate
+toggle.thumb_color              as toggle.off_color — the thumb is white
 tabs.bar_background             NSTabView draws its own strip, no colour API
 tabs.bar_background_color       NSTabView draws its own strip
 tabs.bar_text_color             NSTabView draws its own strip
@@ -134,14 +128,11 @@ tabs.unselected_tab_color       NSTabView draws its own strip
 swipeable.reveal_threshold      a CONTINUOUS distance; a click has no partial state
 swipeable.observe_swipe_changing  as reveal_threshold — nothing changes between the two edges
 text_field.keyboard             soft-keyboard layout; a hardware keyboard has one
-text_field.predicts_text        QuickType; macOS predicts in the input method
 text_field.font_scales          Dynamic Type; macOS scales at the display
 text_field.return_key           the LABEL on a soft keyboard's return key
 text_area.keyboard              as text_field.keyboard
-text_area.predicts_text         as text_field.predicts_text
 text_area.font_scales           as text_field.font_scales
 search_field.keyboard           as text_field.keyboard
-search_field.predicts_text      as text_field.predicts_text
 search_field.font_scales        as text_field.font_scales
 search_field.return_key         as text_field.return_key
 label.font_scales               Dynamic Type; macOS scales at the display
@@ -304,16 +295,47 @@ collection.scroll_anchor        as carousel.scroll_anchor
 
 | Verb | Why not |
 |---|---|
-| `toggle(on_color:)` `off_color:` `thumb_color:` | NSSwitch paints from the system accent colour and exposes no per-instance tint. |
-| `slider(minimum_track_color:)` `maximum_track_color:` `thumb_color:` | NSSlider's track and knob are drawn by the cell; there is no colour API. |
-| `progress(progress_color:)` | NSProgressIndicator's bar is the system accent colour. |
-| `checkbox(color:)` `spinner(color:)` | Same: the mark and the spinner are system-drawn. |
+A tinted layer under each was considered and rejected, and it stays rejected:
+a rectangle behind a control stops tracking the system appearance — the whole
+point of these being platform controls — and drifts the moment Apple changes
+the control's shape.
 
-A tinted layer under each was considered and rejected. It would stop tracking
-the system appearance (the whole point of these being platform controls), and
-it would drift the moment Apple changes the control's shape. An application
-that must have a specific colour draws it itself with `box` and `gesture`,
-which is a visible choice rather than a lie.
+A CONTENT FILTER is a different thing, and the two objections do not reach it.
+It recolours what AppKit actually DREW: same shape, same appearance updates,
+same everything except the hue. What it has instead is a limit of its own, and
+that limit is what decides these one verb at a time:
+
+> a hue rotation moves colour and leaves GREY alone, because grey has no hue
+> to rotate.
+
+Which is exactly right for a control that draws one saturated part against an
+achromatic one — a progress bar's fill against its track, a switch's ON track
+against its white thumb, a checked box against its white mark. Those are done:
+
+| Verb | How |
+|---|---|
+| `progress(progress_color:)` | hue-rotated from the system accent to the asked-for hue; the grey track has no hue and stays |
+| `toggle(on_color:)` | the ON track is the switch's one saturated part |
+| `checkbox(color:)` | the checked box, likewise. The ART was not swapped — tinted SF Symbols were the alternative and they change what a checkbox LOOKS like, which is more than the verb asked for |
+| `spinner(color:)` | a spinner is UNIFORM, so mapping its drawing onto one colour is the whole of what tinting it means |
+
+The colour that comes out keeps the system's saturation and brightness at the
+requested HUE. **That is a tint, not a fill**, and an application that needs an
+exact RGB still draws it itself.
+
+`slider` is done a different way, and it is worth the distinction:
+`minimum_track_color` has a real setter (`trackFillColor`), and the other two
+go through `drawBarInside:flipped:` and `drawKnob:` — the CELL'S OWN drawing
+hooks, which is not a layer under the slider. Only a slider that NAMES a colour
+is drawn that way; one that names none keeps AppKit's drawing entirely, which
+is what keeps an ordinary slider ordinary.
+
+What is left, and each for the reason that makes the rest work:
+
+| Verb | Why not |
+|---|---|
+| `toggle(off_color:)` `thumb_color:` | ACHROMATIC. The off track is grey and the thumb is white, and a hue rotation has nothing to rotate. |
+| `tabs(bar_background:)` and the other four | A filter over an NSTabView recolours its CONTENT as well — the strip is not separately addressable. These need a tab strip of facet's own, which would stop `tabs` being an NSTabView; that is a design call rather than a gap, and it is not made here. |
 
 ### `radio(group:)` IS honoured, by name
 

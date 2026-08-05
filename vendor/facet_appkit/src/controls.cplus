@@ -720,6 +720,14 @@ fn apply_checkbox(v: *u8, n: *core::Node, dirty: u64) {
     if p == (0 as *props::CheckboxProps) { return; }
     let b: ak::Button = ak::Button::from_raw(v);
     if (dirty & checkbox::P_ON) != (0 as u64) { b.set_state(state_of({ (*p).on })); }
+    // The checked box is the one saturated part of a checkbox — the mark on it
+    // is white and the unchecked border is grey — so the same hue rotation the
+    // toggle and the progress bar use reaches exactly it. Swapping the ART for
+    // tinted symbols was the alternative and it changes what a checkbox LOOKS
+    // like, which is more than the verb asked for.
+    if (dirty & checkbox::P_COLOR) != (0 as u64) {
+        compose::hue_shift(v, { (*p).color });
+    }
     if (dirty & props::C_HANDLERS) != (0 as u64) || dirty == paint::all_bits() {
         // Through the trampoline, always — the write-back is not conditional on
         // the application having a handler. `checkbox.on()` has to be true
@@ -902,6 +910,13 @@ fn apply_toggle(v: *u8, n: *core::Node, dirty: u64) {
     if p == (0 as *props::ToggleProps) { return; }
     let s: ak::Switch = ak::Switch::from_raw(v);
     if (dirty & toggle::P_ON) != (0 as u64) { s.set_state(state_of({ (*p).on })); }
+    // The ON track is the switch's one saturated part, so a hue rotation reaches
+    // it and nothing else. The off track and the thumb are ACHROMATIC and stay
+    // in the ledger for the reason that makes this work at all: grey has no hue
+    // to rotate.
+    if (dirty & toggle::P_ON_COLOR) != (0 as u64) {
+        compose::hue_shift(v, { (*p).on_color });
+    }
     if (dirty & props::C_HANDLERS) != (0 as u64) || dirty == paint::all_bits() {
         let f: fn(*u8, *u8) = toggle_action;
         akx::set_control_action_ctx(s.as_control(), f, n as *u8);
@@ -955,6 +970,13 @@ fn apply_slider(v: *u8, n: *core::Node, dirty: u64) {
                               paint::ns_color(c).raw()) };
         }
     }
+    // The other two halves of the same control. `drawBarInside:flipped:` and
+    // `drawKnob:` are the CELL'S OWN drawing hooks — not a layer under the
+    // slider, which is what the manifest rejected and still rejects. Only a
+    // slider that names a colour is drawn this way.
+    if (dirty & (slider::P_MAXIMUM_TRACK_COLOR | slider::P_THUMB_COLOR)) != (0 as u64) {
+        compose::apply_slider_colors(v, { (*p).maximum_track_color }, { (*p).thumb_color });
+    }
     if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
         s.as_control().set_enabled(core::is_enabled(n));
     }
@@ -997,6 +1019,13 @@ fn apply_progress(v: *u8, n: *core::Node, dirty: u64) {
     if p == (0 as *props::ProgressProps) { return; }
     let pi: ak::ProgressIndicator = ak::ProgressIndicator::from_raw(v);
     if (dirty & progress::P_PROGRESS) != (0 as u64) { pi.set_double_value({ (*p).progress }); }
+    // A hue rotation over the bar's OWN drawing: the fill is saturated and moves
+    // to the asked-for hue, the track is grey and has no hue to rotate, so it
+    // stays. That is a tint rather than a fill — it keeps the system's
+    // saturation and brightness — and MANIFEST says so.
+    if (dirty & progress::P_PROGRESS_COLOR) != (0 as u64) {
+        compose::hue_shift(v, { (*p).progress_color });
+    }
     // `animate_progress` is a COMMAND — "slide to the current progress over
     // `animate_duration`" — not a flag. NSProgressIndicator has no animated
     // setter, so the animation is the ANIMATOR PROXY's, which is AppKit's own
@@ -1042,6 +1071,11 @@ fn apply_spinner(v: *u8, n: *core::Node, dirty: u64) {
     let pi: ak::ProgressIndicator = ak::ProgressIndicator::from_raw(v);
     if (dirty & spinner::P_IS_RUNNING) != (0 as u64) {
         if { (*p).is_running } { pi.start_animation(0 as *u8); } else { pi.stop_animation(0 as *u8); }
+    }
+    // A spinner is UNIFORM, so mapping its drawing onto one colour is exactly
+    // what tinting it means — the same filter the refresh strip's spinner uses.
+    if (dirty & spinner::P_COLOR) != (0 as u64) {
+        compose::tint_spinner(v, { (*p).color });
     }
     return;
 }

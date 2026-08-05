@@ -133,6 +133,7 @@ fn flavour_key(flavour: u32) -> *u8 {
     if flavour == flavour_knob() { return { 28790 as *u8 }; }
     if flavour == flavour_locked() { return { 28791 as *u8 }; }
     if flavour == flavour_select() { return { 28796 as *u8 }; }
+    if flavour == flavour_track() { return { 28799 as *u8 }; }
     return subclass_key();
 }
 
@@ -164,10 +165,15 @@ fn subclass_of(base: *u8, prefix: str, flavour: u32) -> *u8 {
                     let _m: i8 = synth::add_method_v_1id(cls,
                         rt::sel(#str_ptr("mouseDown:\0")), mouse_down_imp, #str_ptr("v@:@\0"));
                 }
-                if flavour == flavour_knob() {
+                if flavour == flavour_knob() || flavour == flavour_track() {
                     let _k: i8 = add_method_v_rect(cls,
                         rt::sel(#str_ptr("drawKnob:\0")), draw_knob_imp,
                         #str_ptr("v@:{CGRect={CGPoint=dd}{CGSize=dd}}\0"));
+                }
+                if flavour == flavour_track() {
+                    let _b: i8 = add_method_v_rect_i8(cls,
+                        rt::sel(#str_ptr("drawBarInside:flipped:\0")), draw_bar_imp,
+                        #str_ptr("v@:{CGRect={CGPoint=dd}{CGSize=dd}}c\0"));
                 }
                 if flavour == flavour_locked() {
                     let _s: i8 = synth::add_method_v_1id(cls,
@@ -1068,7 +1074,18 @@ extern fn msg_void_rect_rect_u64_f64_i8(recv: *u8, sel: *u8, a: rt::Rect, b: rt:
 
 fn draw_knob_imp(self_obj: *u8, cmd: *u8, knob: rt::Rect) {
     let img: *u8 = { synth::get_associated(self_obj, knob_image_key()) };
-    if img == (0 as *u8) { return; }
+    if img == (0 as *u8) {
+        // No image, but perhaps a colour: a knob is a filled circle, which is
+        // what NSSliderCell draws and all `thumb_color` asks to change.
+        let c: *u8 = { synth::get_associated(self_obj, knob_color_key()) };
+        if c == (0 as *u8) { return; }
+        let path: *u8 = { rt::msg_id_rect(rt::get_class(#str_ptr("NSBezierPath\0")),
+                                          rt::sel(#str_ptr("bezierPathWithOvalInRect:\0")), knob) };
+        if path == (0 as *u8) { return; }
+        { rt::msg_void(c, rt::sel(#str_ptr("setFill\0"))) };
+        { rt::msg_void(path, rt::sel(#str_ptr("fill\0"))) };
+        return;
+    }
     // `respectFlipped:` — a slider's control view is flipped, and an image
     // drawn without it comes out upside down, which is the kind of wrong that
     // only shows up on an asymmetric knob.
@@ -1101,7 +1118,7 @@ fn apply_thumb_image(v: *u8, src: str) {
     if img == (0 as *u8) { return; }
     let cls: *u8 = { synth::object_class(cell) };
     if !is_ours(cls) {
-        let sub: *u8 = subclass_of(cls, "FacetKnob", flavour_knob());
+        let sub: *u8 = subclass_of(cls, "FacetTrack", flavour_track());
         if sub != cls { let _old: *u8 = { object_setClass(cell, sub) }; }
     }
     synth::retain_associated(cell, knob_image_key(), img);
@@ -1260,4 +1277,150 @@ fn selection_color() -> ak::Color {
                               rt::sel(#str_ptr("selectedContentBackgroundColor\0"))) };
     if c == (0 as *u8) { return ak::Color::selected_control_color(); }
     return ak::Color::from_raw(c);
+}
+
+// ---- recolouring a system-drawn control ---------------------------------------
+// The manifest rejected "a tinted layer under each" and the reasoning holds: a
+// rectangle behind a control stops tracking the system appearance and drifts the
+// moment Apple changes the control's shape.
+//
+// A CONTENT FILTER is a different thing. It recolours what AppKit actually
+// drew — same shape, same appearance updates, same everything except the hue —
+// so neither objection applies to it. What DOES apply is a limit of its own,
+// and it is the reason each of these is decided one verb at a time:
+//
+//   a hue rotation moves colour and leaves GREY alone, because grey has no hue
+//   to rotate.
+//
+// Which is exactly right for the controls that draw one saturated part against
+// an achromatic one: a progress bar's fill against its track, a switch's ON
+// track against its white thumb. And it is exactly why the OFF track and the
+// thumb stay in the ledger — there is nothing there to rotate.
+//
+// The colour that comes out keeps the system's saturation and brightness at the
+// requested HUE. That is a tint, not a fill, and the manifest says so.
+
+fn accent_hue() -> f64 {
+    let c: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSColor\0")),
+                              rt::sel(#str_ptr("controlAccentColor\0"))) };
+    if c == (0 as *u8) { return 0.6f64; }        // macOS blue, near enough
+    return hue_of(c);
+}
+
+fn hue_of(c: *u8) -> f64 {
+    let space: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSColorSpace\0")),
+                                  rt::sel(#str_ptr("sRGBColorSpace\0"))) };
+    let rgb: *u8 = { rt::msg_id_id(c, rt::sel(#str_ptr("colorUsingColorSpace:\0")), space) };
+    if rgb == (0 as *u8) { return 0.0f64; }
+    return { rt::msg_f64(rgb, rt::sel(#str_ptr("hueComponent\0"))) };
+}
+
+fn two_pi() -> f64 { return 6.283185307179586f64; }
+
+// Rotate `view`'s drawing from the system accent's hue to `c`'s. An unset
+// colour removes the filter, so a control that stops asking goes back to the
+// system's own.
+fn hue_shift(view: *u8, c: vocab::Color) {
+    if view == (0 as *u8) { return; }
+    if c.is_set() == false {
+        { rt::msg_void_id(view, rt::sel(#str_ptr("setContentFilters:\0")),
+                          { rt::msg_id(rt::get_class(#str_ptr("NSArray\0")),
+                                       rt::sel(#str_ptr("array\0"))) }) };
+        return;
+    }
+    let want: f64 = hue_of(paint::ns_color(c).raw());
+    var angle: f64 = (want - accent_hue()) * two_pi();
+    let filter: *u8 = { rt::msg_id_id(rt::get_class(#str_ptr("CIFilter\0")),
+                                      rt::sel(#str_ptr("filterWithName:\0")),
+                                      bridge::nsstring("CIHueAdjust")) };
+    if filter == (0 as *u8) { return; }
+    let n: *u8 = { rt::msg_id_f64(rt::get_class(#str_ptr("NSNumber\0")),
+                                  rt::sel(#str_ptr("numberWithDouble:\0")), angle) };
+    { rt::msg_void_id_id(filter, rt::sel(#str_ptr("setValue:forKey:\0")),
+                         n, bridge::nsstring("inputAngle")) };
+    let arr: *u8 = { rt::msg_id_id(rt::get_class(#str_ptr("NSArray\0")),
+                                   rt::sel(#str_ptr("arrayWithObject:\0")), filter) };
+    ak::View::from_raw(view).set_wants_layer(true);
+    { rt::msg_void_id(view, rt::sel(#str_ptr("setContentFilters:\0")), arr) };
+    return;
+}
+
+// ---- the slider's track -------------------------------------------------------
+// `minimum_track_color` has a real setter and is live. The other two are drawn
+// by NSSliderCell — by the same cell whose `drawKnob:` already carries
+// `thumb_image`, so the hook is one this file already owns.
+//
+// Only a slider that NAMES a colour is drawn this way. One that names none
+// keeps AppKit's own drawing entirely, which is what keeps an ordinary slider
+// ordinary.
+
+fn knob_color_key() -> *u8 { return { 28797 as *u8 }; }
+fn track_color_key() -> *u8 { return { 28798 as *u8 }; }
+
+fn flavour_track() -> u32 { return 7 as u32; }
+
+#[link_name = "class_addMethod"]
+extern fn add_method_v_rect_i8(cls: *u8, sel: *u8, imp: fn(*u8, *u8, rt::Rect, i8),
+                               types: *u8) -> i8;
+
+// The EMPTY half of the track. `drawBarInside:flipped:` is handed the whole bar,
+// and the filled half is `minimum_track_color`'s — which AppKit still paints,
+// on top, from the real property.
+fn draw_bar_imp(self_obj: *u8, cmd: *u8, bar: rt::Rect, flipped: i8) {
+    let c: *u8 = { synth::get_associated(self_obj, track_color_key()) };
+    if c == (0 as *u8) {
+        super_bar(self_obj, cmd, bar, flipped);
+        return;
+    }
+    let r: f64 = bar.h / 2.0f64;
+    let path: *u8 = { msg_id_rect_f64_f64(rt::get_class(#str_ptr("NSBezierPath\0")),
+        rt::sel(#str_ptr("bezierPathWithRoundedRect:xRadius:yRadius:\0")), bar, r, r) };
+    if path == (0 as *u8) { return; }
+    { rt::msg_void(c, rt::sel(#str_ptr("setFill\0"))) };
+    { rt::msg_void(path, rt::sel(#str_ptr("fill\0"))) };
+    return;
+}
+
+fn super_bar(self_obj: *u8, cmd: *u8, bar: rt::Rect, flipped: i8) {
+    let base: *u8 = { class_getSuperclass(synth::object_class(self_obj)) };
+    if base == (0 as *u8) { return; }
+    let imp: *u8 = { super_imp_of(base, cmd) };
+    if imp == (0 as *u8) { return; }
+    let f: fn(*u8, *u8, rt::Rect, i8) = { imp as fn(*u8, *u8, rt::Rect, i8) };
+    f(self_obj, cmd, bar, flipped);
+    return;
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_id_rect_f64_f64(recv: *u8, sel: *u8, r: rt::Rect, x: f64, y: f64) -> *u8;
+
+fn apply_slider_colors(v: *u8, track: vocab::Color, knob: vocab::Color) {
+    let cell: *u8 = field_cell(v);
+    if cell == (0 as *u8) { return; }
+    if track.is_set() == false && knob.is_set() == false {
+        if is_ours({ synth::object_class(cell) }) {
+            synth::set_associated(cell, track_color_key(), 0 as *u8);
+            synth::set_associated(cell, knob_color_key(), 0 as *u8);
+        }
+        return;
+    }
+    adopt_track_cell(cell);
+    if track.is_set() {
+        synth::retain_associated(cell, track_color_key(), paint::ns_color(track).raw());
+    }
+    if knob.is_set() {
+        synth::retain_associated(cell, knob_color_key(), paint::ns_color(knob).raw());
+    }
+    { rt::msg_void_i8(v, rt::sel(#str_ptr("setNeedsDisplay:\0")), 1 as i8) };
+    return;
+}
+
+// The knob and the bar share one subclass: a slider that colours its track and
+// carries a thumb image is one cell, not two.
+fn adopt_track_cell(cell: *u8) {
+    let cls: *u8 = { synth::object_class(cell) };
+    if is_ours(cls) { return; }
+    let sub: *u8 = subclass_of(cls, "FacetTrack", flavour_track());
+    if sub != cls { let _old: *u8 = { object_setClass(cell, sub) }; }
+    return;
 }

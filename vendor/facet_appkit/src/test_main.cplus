@@ -5469,3 +5469,135 @@ fn measure_all_items_leaves_a_ragged_sequence_ragged() {
     mount::unmount(p);
     return;
 }
+
+// ---- the system-drawn colours, one verb at a time ----------------------------
+// "A tinted layer under each" was rejected and stays rejected: it stops
+// tracking the system appearance and drifts the moment Apple changes a
+// control's shape. A CONTENT FILTER is a different thing — it recolours what
+// AppKit actually drew — and its own limit is what decides each verb here:
+// a hue rotation moves colour and leaves GREY alone.
+
+#[test]
+fn a_progress_bar_takes_a_hue_and_a_plain_one_takes_none() {
+    backend::install();
+    var plain: core::Node = progress::progress(0.5f64, key: "pg0");
+    let pv: *u8 = views::create(0 as *u8, #addr_of(plain));
+    assert filter_count(pv) == (0 as u64);
+
+    var red: core::Node = progress::progress(0.5f64, key: "pg1",
+        progress_color: vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64));
+    let rv: *u8 = views::create(0 as *u8, #addr_of(red));
+    assert filter_count(rv) == (1 as u64);
+    assert ak::View::from_raw(rv).wants_layer();
+    views::view_release(pv);
+    views::view_release(rv);
+    return;
+}
+
+fn filter_count(v: *u8) -> u64 {
+    let f: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("contentFilters\0"))) };
+    if f == (0 as *u8) { return 0 as u64; }
+    return { rt::msg_u64(f, rt::sel(#str_ptr("count\0"))) };
+}
+
+#[test]
+fn a_toggle_tints_its_on_track_and_a_spinner_its_whole_drawing() {
+    backend::install();
+    var t: core::Node = toggle::toggle(true, key: "tg1",
+        on_color: vocab::Color::rgba(0.0f64, 1.0f64, 0.0f64));
+    let tv: *u8 = views::create(0 as *u8, #addr_of(t));
+    assert filter_count(tv) == (1 as u64);
+
+    var s: core::Node = spinner::spinner(key: "sp1",
+        color: vocab::Color::rgba(0.0f64, 1.0f64, 0.0f64));
+    let sv: *u8 = views::create(0 as *u8, #addr_of(s));
+    assert filter_count(sv) == (1 as u64);
+    views::view_release(tv);
+    views::view_release(sv);
+    return;
+}
+
+#[test]
+fn a_checkbox_tints_its_box() {
+    backend::install();
+    var c: core::Node = checkbox::checkbox(true, key: "cb1",
+        color: vocab::Color::rgba(1.0f64, 0.5f64, 0.0f64));
+    let v: *u8 = views::create(0 as *u8, #addr_of(c));
+    assert filter_count(v) == (1 as u64);
+    // Still a checkbox: the art was not swapped, only recoloured — so it has
+    // no image of its own and it still holds its state.
+    assert { rt::msg_i64(v, rt::sel(#str_ptr("state\0"))) } == (1 as i64);
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn a_colour_that_is_unset_removes_the_filter_again() {
+    // A control that stops asking goes back to the system's own drawing.
+    backend::install();
+    var t: core::Node = toggle::toggle(true, key: "tg2",
+        on_color: vocab::Color::rgba(0.0f64, 1.0f64, 0.0f64));
+    let p: *core::Node = #addr_of(t);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    assert filter_count(v) == (1 as u64);
+    match toggle::find("tg2", within: p) {
+        option::Option[toggle::Toggle]::Some(h) => {
+            let _x: toggle::Toggle = h.set_on_color(vocab::Color::clear());
+        }
+        option::Option[toggle::Toggle]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    assert filter_count(v) == (0 as u64);
+    return;
+}
+
+#[test]
+fn a_slider_draws_its_own_track_only_when_a_colour_is_named() {
+    // `drawBarInside:flipped:` and `drawKnob:` are the CELL'S own hooks, not a
+    // layer under the slider — and a slider that names no colour keeps AppKit's
+    // drawing entirely, which is what keeps an ordinary slider ordinary.
+    backend::install();
+    var plain: core::Node = slider::slider(0.5f64, key: "sl9");
+    let pv: *u8 = views::create(0 as *u8, #addr_of(plain));
+    let pc: *u8 = { rt::msg_id(pv, rt::sel(#str_ptr("cell\0"))) };
+    assert synth::object_class(pc) == rt::get_class(#str_ptr("NSSliderCell\0"));
+
+    var tinted: core::Node = slider::slider(0.5f64, key: "sl10",
+        maximum_track_color: vocab::Color::rgba(0.9f64, 0.9f64, 0.2f64),
+        thumb_color: vocab::Color::rgba(0.1f64, 0.1f64, 0.9f64));
+    let tv: *u8 = views::create(0 as *u8, #addr_of(tinted));
+    let tc: *u8 = { rt::msg_id(tv, rt::sel(#str_ptr("cell\0"))) };
+    assert synth::object_class(tc) != rt::get_class(#str_ptr("NSSliderCell\0"));
+    // Both hooks answer without faulting, which is the half a headless test can
+    // hold — what the pixels look like is "run it and try".
+    { rt::msg_void_rect(tc, rt::sel(#str_ptr("drawKnob:\0")),
+                        rt::Rect { x: 0.0f64, y: 0.0f64, w: 16.0f64, h: 16.0f64 }) };
+    { msg_void_rect_i8(tc, rt::sel(#str_ptr("drawBarInside:flipped:\0")),
+                       rt::Rect { x: 0.0f64, y: 0.0f64, w: 100.0f64, h: 4.0f64 }, 1 as i8) };
+    views::view_release(pv);
+    views::view_release(tv);
+    return;
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_void_rect_i8(recv: *u8, sel: *u8, r: rt::Rect, f: i8);
+
+#[test]
+fn text_prediction_is_the_field_editors_and_the_editors_own() {
+    // QuickType is a phone's; macOS predicts inline, in the field editor, and
+    // `automaticTextCompletionEnabled` is the switch for it.
+    backend::install();
+    var a: core::Node = text_area::text_area("", key: "pt1", predicts_text: false);
+    let av: *u8 = views::create(0 as *u8, #addr_of(a));
+    let tv: *u8 = { rt::msg_id(av, rt::sel(#str_ptr("documentView\0"))) };
+    assert { rt::msg_i8(tv, rt::sel(#str_ptr("isAutomaticTextCompletionEnabled\0"))) } == (0 as i8);
+
+    var b: core::Node = text_area::text_area("", key: "pt2", predicts_text: true);
+    let bv: *u8 = views::create(0 as *u8, #addr_of(b));
+    let btv: *u8 = { rt::msg_id(bv, rt::sel(#str_ptr("documentView\0"))) };
+    assert { rt::msg_i8(btv, rt::sel(#str_ptr("isAutomaticTextCompletionEnabled\0"))) } != (0 as i8);
+    views::view_release(av);
+    views::view_release(bv);
+    return;
+}

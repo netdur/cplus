@@ -602,6 +602,7 @@ struct Bits {
     font: u64,             // size | weight | family | italic, folded: one font
     is_read_only: u64,
     checks_spelling: u64,
+    predicts_text: u64,
     max_length: u64,
     placeholder: u64,
     placeholder_color: u64,
@@ -621,6 +622,7 @@ fn bits_of(kind: u32) -> Bits {
                 | text_area::P_FONT_FAMILY | text_area::P_IS_ITALIC,
             is_read_only: text_area::P_IS_READ_ONLY,
             checks_spelling: text_area::P_CHECKS_SPELLING,
+            predicts_text: text_area::P_PREDICTS_TEXT,
             max_length: text_area::P_MAX_LENGTH,
             placeholder: text_area::P_PLACEHOLDER,
             placeholder_color: text_area::P_PLACEHOLDER_COLOR,
@@ -639,6 +641,7 @@ fn bits_of(kind: u32) -> Bits {
                 | search_field::P_FONT_FAMILY | search_field::P_IS_ITALIC,
             is_read_only: search_field::P_IS_READ_ONLY,
             checks_spelling: search_field::P_CHECKS_SPELLING,
+            predicts_text: search_field::P_PREDICTS_TEXT,
             max_length: search_field::P_MAX_LENGTH,
             placeholder: search_field::P_PLACEHOLDER,
             placeholder_color: search_field::P_PLACEHOLDER_COLOR,
@@ -656,6 +659,7 @@ fn bits_of(kind: u32) -> Bits {
             | text_field::P_FONT_FAMILY | text_field::P_IS_ITALIC,
         is_read_only: text_field::P_IS_READ_ONLY,
         checks_spelling: text_field::P_CHECKS_SPELLING,
+        predicts_text: text_field::P_PREDICTS_TEXT,
         max_length: text_field::P_MAX_LENGTH,
         placeholder: text_field::P_PLACEHOLDER,
         placeholder_color: text_field::P_PLACEHOLDER_COLOR,
@@ -755,7 +759,7 @@ fn apply_field_band(f: ak::TextField, n: *core::Node, iv: *props::InputViewProps
     if (dirty & b.is_read_only) != (0 as u64) {
         f.set_editable({ (*iv).is_read_only } == false);
     }
-    if (dirty & b.checks_spelling) != (0 as u64) {
+    if (dirty & (b.checks_spelling | b.predicts_text)) != (0 as u64) {
         // NSTextField has no spell-check switch of its own — the FIELD EDITOR
         // does the checking, and it is shared by every field in the window. So
         // the flag is carried on the node and applied when this field takes
@@ -824,6 +828,14 @@ fn apply_editor_state(f: ak::TextField, n: *core::Node, iv: *props::InputViewPro
         option::Option[ak::Text]::Some(ed) => {
             { rt::msg_void_i8(ed.raw(), rt::sel(#str_ptr("setContinuousSpellCheckingEnabled:\0")),
                               { (*iv).checks_spelling } as i8) };
+            // `IsTextPredictionEnabled` is QuickType on a phone, and the ledger
+            // read it as a soft-keyboard verb. macOS predicts too — inline, in
+            // the field editor — and `automaticTextCompletionEnabled` is the
+            // switch for it. Same field editor, same place, same reason: it is
+            // SHARED by every field in the window, so it is set when this one
+            // begins editing rather than once.
+            { rt::msg_void_i8(ed.raw(), rt::sel(#str_ptr("setAutomaticTextCompletionEnabled:\0")),
+                              { (*iv).predicts_text } as i8) };
         }
         option::Option[ak::Text]::None => { }
     }
@@ -855,6 +867,12 @@ fn apply_editor_band(tv: ak::TextView, n: *core::Node, iv: *props::InputViewProp
     if (dirty & b.checks_spelling) != (0 as u64) {
         { rt::msg_void_i8(tv.raw(), rt::sel(#str_ptr("setContinuousSpellCheckingEnabled:\0")),
                           { (*iv).checks_spelling } as i8) };
+    }
+    // An editor owns its own text view, so unlike a field this needs no
+    // begin-editing hook — the switch goes straight on.
+    if (dirty & b.predicts_text) != (0 as u64) {
+        { rt::msg_void_i8(tv.raw(), rt::sel(#str_ptr("setAutomaticTextCompletionEnabled:\0")),
+                          { (*iv).predicts_text } as i8) };
     }
     if (dirty & (b.cursor_position | b.selection_length)) != (0 as u64) {
         set_range(tv.as_text(), iv);
