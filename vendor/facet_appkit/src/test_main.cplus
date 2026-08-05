@@ -7732,3 +7732,46 @@ fn a_tree_reports_expansion_back_into_the_model() {
     views::view_release(v);
     return;
 }
+
+#[test]
+fn a_disabled_container_dims_because_appkit_has_no_switch_for_it() {
+    // `is_enabled` is on the shared band, so every node declares it — and the
+    // twelve NSControl kinds answered it while box, label, image, canvas,
+    // scroll and list silently ignored it.
+    backend::install();
+    var n: core::Node = box_view::box(color: vocab::Color::rgba(0.0f64, 0.0f64, 1.0f64), key: "dis");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    let view: ak::View = ak::View::from_raw(v);
+    assert view.alpha_value() > 0.9f64;
+
+    core::clear_dirty(p);
+    core::set_enabled(p, false);
+    views::apply(0 as *u8, p);
+    assert view.alpha_value() < 0.5f64;
+
+    core::clear_dirty(p);
+    core::set_enabled(p, true);
+    views::apply(0 as *u8, p);
+    assert view.alpha_value() > 0.9f64;
+    return;
+}
+
+#[test]
+fn a_real_control_keeps_the_platforms_own_disabled_look() {
+    // A button answers `setEnabled:` itself, so facet must NOT dim it — the
+    // platform's own disabled appearance is the right one and dimming would
+    // stack on top of it.
+    backend::install();
+    var n: core::Node = button::button("Save", key: "b");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    core::clear_dirty(p);
+    core::set_enabled(p, false);
+    views::apply(0 as *u8, p);
+    assert ak::View::from_raw(v).alpha_value() > 0.9f64;
+    assert ak::Control::from_raw(v).is_enabled() == false;
+    return;
+}

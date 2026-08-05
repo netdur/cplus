@@ -264,7 +264,14 @@ fn alert_sheet(title: str, message: str, primary: str, secondary: str = "",
     }
 
     if parent != (0 as *u8) {
-        { rt::msg_void_id(parent, rt::sel(#str_ptr("beginSheet:completionHandler:\0")), w) };
+        // TWO arguments, and the second is explicitly nil. This was sent with
+        // the one-argument shim, so the completion-handler slot was whatever
+        // happened to be in the register — AppKit calling it would have
+        // jumped into nothing. Nil is a valid handler and means "tell me
+        // nothing", which is right here: the alert reports through its own
+        // buttons, not through the sheet's completion.
+        { rt::msg_void_id_id(parent, rt::sel(#str_ptr("beginSheet:completionHandler:\0")),
+                             w, 0 as *u8) };
     } else {
         // No parent window to attach to: show it as an ordinary window rather
         // than refusing. An alert with nowhere to hang is still an alert.

@@ -392,6 +392,25 @@ fn apply_common(v: *u8, n: *core::Node, dirty: u64) {
         apply_brush(view, core::background(n));
         apply_background_image(view, core::background_image(n));
     }
+    // `is_enabled` on a kind that is NOT an NSControl. The twelve control
+    // kinds answer `setEnabled:` in their own bodies; everything else — a box,
+    // a label, an image, a canvas, a scroll, a list — silently ignored a verb
+    // the shared band declares on every node.
+    //
+    // AppKit has no universal switch, so this is the honest approximation and
+    // it is the one a person reads as disabled: dimmed, and not taking input.
+    // Applied only to the kinds that have no `setEnabled:` of their own, so a
+    // real control keeps the platform's own appearance.
+    if (dirty & props::C_IS_ENABLED) != (0 as u64) {
+        if !responds_to_set_enabled(v) {
+            let on: bool = core::is_enabled(n);
+            if on {
+                view.set_alpha_value(core::opacity(n));
+            } else {
+                view.set_alpha_value(core::opacity(n) * 0.4f64);
+            }
+        }
+    }
     if (dirty & props::C_SHADOW) != (0 as u64) {
         apply_shadow(view, core::shadow(n));
     }
@@ -424,6 +443,14 @@ fn apply_common(v: *u8, n: *core::Node, dirty: u64) {
 // A background needs a layer. `clear()` is the unset colour — leave the view
 // layer-free rather than paint it transparent, so a tree that themes nothing
 // costs no layers.
+// Does this view answer `setEnabled:` itself? An NSControl does; a plain
+// backing view does not, and that is the line between "the platform greys it"
+// and "facet has to".
+fn responds_to_set_enabled(v: *u8) -> bool {
+    return synth::class_responds(synth::object_class(v),
+                                 rt::sel(#str_ptr("setEnabled:\0"))) != (0 as i8);
+}
+
 fn apply_background(view: ak::View, c: vocab::Color) {
     if c.is_set() == false {
         // Clearing it. A node that never had a background gets no layer for
