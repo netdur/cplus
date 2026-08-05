@@ -1921,6 +1921,24 @@ ROW_SOURCE_FIELDS = [
     ("opaque row_ctx", "*u8", "0 as *u8", None),
     ("bind", "fn(*u8, usize, *flex::Node)", "no_bind",
      "facet — writes row `i` INTO an existing row, for recycling"),
+    # `IsGrouped` had a carrier for the SWITCH and nothing for what it switches
+    # on: MAUI's grouped ItemsSource is a list of lists, which Stage 1 dropped
+    # as MODEL along with the flat one. The imperative replacement follows the
+    # same shape `count` + `row` already set — a group count plus two builders
+    # — and it deliberately does NOT change `row`: a group is a RUN of the
+    # same flat sequence, so `row(i)` keeps meaning row `i` of the whole.
+    ("group_count", "i64", "0 as i64", "facet — how many groups, when is_grouped"),
+    ("group_size", "fn(*u8, usize) -> usize", "no_group_size",
+     "facet — how many rows group `g` holds"),
+    ("group_header", "fn(*u8, usize) -> flex::Node", "no_group_header",
+     "facet — builds the header row for group `g`"),
+    ("opaque group_ctx", "*u8", "0 as *u8", None),
+    # `SelectionMode` had the same shape of hole: a switch with nothing to
+    # switch. MAUI carries SelectedItem/SelectedItems, both dropped as MODEL
+    # ("the selection is an index") — and then no index was declared. -1 is
+    # "nothing selected", which is what an empty selection is.
+    ("selected_index", "i64", "-1 as i64",
+     "facet — which row is selected, or -1 for none"),
 ]
 
 
@@ -1993,6 +2011,12 @@ def emit_props(rows_by_control, by_type):
            "// The absent bind. Compared against by name, NOT against null: the\n"
            "// default has to BE a function, and a null check would never be false.\n"
            "fn no_bind(ctx: *u8, index: usize, row: *flex::Node) { return; }\n",
+           "// The two halves of a group, absent until an application names them.\n"
+           "// A group with no size holds no rows, so an ungrouped sequence and a\n"
+           "// grouped one that was never described render the same.\n"
+           "fn no_group_size(ctx: *u8, group: usize) -> usize { return 0 as usize; }\n"
+           "fn no_group_header(ctx: *u8, group: usize) -> flex::Node "
+           "{ return flex::Node::new(); }\n",
            COMMON_SRC]
     out.append(emit_base_props(by_type))
 
@@ -2246,7 +2270,8 @@ def emit_control(maui, merged):
     bits = ([f.upper() for f, _t, _m, _s, _p in writes]
             + [f.upper() for f, _t, _m, _s, _p in owned]
             + [v.upper() for v, _m, _s, _b in commands]
-            + (["COUNT", "ROW"] if mod in ROW_SOURCE else []))
+            + (["COUNT", "ROW", "GROUP_COUNT", "GROUP", "SELECTED_INDEX"]
+               if mod in ROW_SOURCE else []))
     for i, b in enumerate(bits):
         o.append(f"const P_{b}: u64 = {1 << i}u64;\n")
     o.append("\n")
@@ -2433,6 +2458,66 @@ def emit_control(maui, merged):
         o.append("        let f: fn(*u8, usize, *core::Node) = { (*p).bind };\n")
         o.append("        if f == props::no_bind { return; }\n")
         o.append("        f({ (*p).row_ctx }, at, row);\n        return;\n    }\n")
+        o.append("\n    // ---- groups: a RUN of the same flat sequence ------------------\n")
+        o.append("    // `is_grouped` is the switch; these are what it switches on. MAUI\n")
+        o.append("    // binds a list of lists and Stage 1 dropped it as MODEL, so the\n")
+        o.append("    // imperative replacement follows `count` + `row`: how many groups,\n")
+        o.append("    // how big each one is, and what its header looks like.\n")
+        o.append("    //\n")
+        o.append("    // `row` is UNCHANGED and that is the point — a group is a run of\n")
+        o.append("    // the same flat sequence, so `row(i)` still means row `i` of the\n")
+        o.append("    // whole and an application that groups an existing list adds a\n")
+        o.append("    // description rather than rewriting one.\n")
+        o.append(f"    fn set_group_count(this, v: usize) -> {cur} {{\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return this; }}\n")
+        o.append("        { (*p).group_count = v as i64 };\n")
+        o.append("        core::touch(this._p, P_GROUP_COUNT);\n")
+        o.append("        return this;\n    }\n")
+        o.append("\n    fn group_count(this) -> usize {\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return 0 as usize; }}\n")
+        o.append("        return { (*p).group_count } as usize;\n    }\n")
+        o.append("\n    // Both halves in one call: a group with a header and no size holds\n")
+        o.append("    // no rows, and one with a size and no header is not visibly a group.\n")
+        o.append("    // Naming half of it is a description that cannot render.\n")
+        o.append(f"    fn set_group(this, size: fn(*u8, usize) -> usize,\n")
+        o.append(f"                 header: fn(*u8, usize) -> core::Node,\n")
+        o.append(f"                 ctx: *u8 = 0 as *u8) -> {cur} {{\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return this; }}\n")
+        o.append("        { (*p).group_size = size };\n")
+        o.append("        { (*p).group_header = header };\n")
+        o.append("        { (*p).group_ctx = ctx };\n")
+        o.append("        core::touch(this._p, P_GROUP);\n")
+        o.append("        return this;\n    }\n")
+        o.append("\n    // How many rows group `at` holds. 0 until set_group names a size.\n")
+        o.append("    fn group_size(this, at: usize) -> usize {\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return 0 as usize; }}\n")
+        o.append("        let f: fn(*u8, usize) -> usize = { (*p).group_size };\n")
+        o.append("        return f({ (*p).group_ctx }, at);\n    }\n")
+        o.append("\n    // The header row for group `at`. Empty until set_group names one.\n")
+        o.append("    fn build_group_header(this, at: usize) -> core::Node {\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return flex::Node::new(); }}\n")
+        o.append("        let f: fn(*u8, usize) -> core::Node = { (*p).group_header };\n")
+        o.append("        return f({ (*p).group_ctx }, at);\n    }\n")
+        o.append("\n    // ---- the selection -------------------------------------------\n")
+        o.append("    // `selection_mode` says whether a row CAN be picked; this says\n")
+        o.append("    // which one was. MAUI carries SelectedItem and Stage 1 dropped it\n")
+        o.append("    // as MODEL — \"the selection is an index\" — and then no index was\n")
+        o.append("    // declared, so the switch had nothing to switch. -1 is none.\n")
+        o.append(f"    fn set_selected_index(this, v: i64) -> {cur} {{\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return this; }}\n")
+        o.append("        { (*p).selected_index = v };\n")
+        o.append("        core::touch(this._p, P_SELECTED_INDEX);\n")
+        o.append("        return this;\n    }\n")
+        o.append("\n    fn selected_index(this) -> i64 {\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return -1 as i64; }}\n")
+        o.append("        return { (*p).selected_index };\n    }\n")
         o.append("\n    // Build row `at`. Empty until set_row names a builder.\n")
         o.append("    fn build_row(this, at: usize) -> core::Node {\n")
         o.append(f"        let p: *props::{props} = this._props();\n")
@@ -2655,7 +2740,12 @@ def emit_manifest(rows_by_control):
             o.append("| `set_count` / `count()` | usize | **facet's own** |\n")
             o.append("| `set_row(_:ctx:)` / `build_row(at:)` | fn(*u8, usize) -> Node "
                      "| **facet's own** |\n")
-            total += 2
+            o.append("| `set_group_count` / `group_count()` | usize | **facet's own** |\n")
+            o.append("| `set_group(size:header:ctx:)` / `group_size(at:)` / "
+                     "`build_group_header(at:)` | **facet's own** |\n")
+            o.append("| `set_selected_index` / `selected_index()` | i64, -1 = none "
+                     "| **facet's own** |\n")
+            total += 5
 
     o.append("\n## the shared band\n\n")
     o.append("Declared once on `Node` and forwarded onto every cursor, so a verb\n")
@@ -2950,7 +3040,7 @@ def check(rows_by_control, by_type):
                 for k in [row_kind(band, fn, note)]
                 if k and (k[0] == "owned" or k[0] == "command"
                           or (k[0] == "prop" and band == "writes")))
-        n += 2 if MODULE[maui] in ROW_SOURCE else 0
+        n += 5 if MODULE[maui] in ROW_SOURCE else 0
         if n > 48:
             problems.append(f"{MODULE[maui]}: {n} dirty bits, and props::C_* owns "
                             "bits 48 and up.")

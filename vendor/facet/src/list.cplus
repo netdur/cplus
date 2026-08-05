@@ -34,6 +34,9 @@ const P_END_REFRESH: u64 = 8192u64;
 const P_SCROLL_TO: u64 = 16384u64;
 const P_COUNT: u64 = 32768u64;
 const P_ROW: u64 = 65536u64;
+const P_GROUP_COUNT: u64 = 131072u64;
+const P_GROUP: u64 = 262144u64;
+const P_SELECTED_INDEX: u64 = 524288u64;
 
 // ---- build -------------------------------------------------------------
 // Typed by the parameter list: a verb another control owns is not a
@@ -416,6 +419,80 @@ impl List {
         if f == props::no_bind { return; }
         f({ (*p).row_ctx }, at, row);
         return;
+    }
+
+    // ---- groups: a RUN of the same flat sequence ------------------
+    // `is_grouped` is the switch; these are what it switches on. MAUI
+    // binds a list of lists and Stage 1 dropped it as MODEL, so the
+    // imperative replacement follows `count` + `row`: how many groups,
+    // how big each one is, and what its header looks like.
+    //
+    // `row` is UNCHANGED and that is the point — a group is a run of
+    // the same flat sequence, so `row(i)` still means row `i` of the
+    // whole and an application that groups an existing list adds a
+    // description rather than rewriting one.
+    fn set_group_count(this, v: usize) -> List {
+        let p: *props::ListProps = this._props();
+        if p == (0 as *props::ListProps) { return this; }
+        { (*p).group_count = v as i64 };
+        core::touch(this._p, P_GROUP_COUNT);
+        return this;
+    }
+
+    fn group_count(this) -> usize {
+        let p: *props::ListProps = this._props();
+        if p == (0 as *props::ListProps) { return 0 as usize; }
+        return { (*p).group_count } as usize;
+    }
+
+    // Both halves in one call: a group with a header and no size holds
+    // no rows, and one with a size and no header is not visibly a group.
+    // Naming half of it is a description that cannot render.
+    fn set_group(this, size: fn(*u8, usize) -> usize,
+                 header: fn(*u8, usize) -> core::Node,
+                 ctx: *u8 = 0 as *u8) -> List {
+        let p: *props::ListProps = this._props();
+        if p == (0 as *props::ListProps) { return this; }
+        { (*p).group_size = size };
+        { (*p).group_header = header };
+        { (*p).group_ctx = ctx };
+        core::touch(this._p, P_GROUP);
+        return this;
+    }
+
+    // How many rows group `at` holds. 0 until set_group names a size.
+    fn group_size(this, at: usize) -> usize {
+        let p: *props::ListProps = this._props();
+        if p == (0 as *props::ListProps) { return 0 as usize; }
+        let f: fn(*u8, usize) -> usize = { (*p).group_size };
+        return f({ (*p).group_ctx }, at);
+    }
+
+    // The header row for group `at`. Empty until set_group names one.
+    fn build_group_header(this, at: usize) -> core::Node {
+        let p: *props::ListProps = this._props();
+        if p == (0 as *props::ListProps) { return flex::Node::new(); }
+        let f: fn(*u8, usize) -> core::Node = { (*p).group_header };
+        return f({ (*p).group_ctx }, at);
+    }
+
+    // ---- the selection -------------------------------------------
+    // `selection_mode` says whether a row CAN be picked; this says
+    // which one was. MAUI carries SelectedItem and Stage 1 dropped it
+    // as MODEL — "the selection is an index" — and then no index was
+    // declared, so the switch had nothing to switch. -1 is none.
+    fn set_selected_index(this, v: i64) -> List {
+        let p: *props::ListProps = this._props();
+        if p == (0 as *props::ListProps) { return this; }
+        { (*p).selected_index = v };
+        core::touch(this._p, P_SELECTED_INDEX);
+        return this;
+    }
+
+    fn selected_index(this) -> i64 {
+        let p: *props::ListProps = this._props();
+        if p == (0 as *props::ListProps) { return -1 as i64; }
+        return { (*p).selected_index };
     }
 
     // Build row `at`. Empty until set_row names a builder.

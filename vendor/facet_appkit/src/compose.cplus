@@ -42,6 +42,7 @@ import "stdlib/vec" as vec;
 import "facet/facet" as core;
 import "facet/props" as props;
 import "facet/vocabulary" as vocab;
+import "flex_layout/flex_layout" as flex;
 import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "objc/synthesis" as synth;
@@ -131,6 +132,7 @@ fn flavour_key(flavour: u32) -> *u8 {
     if flavour == flavour_hover() { return { 28788 as *u8 }; }
     if flavour == flavour_knob() { return { 28790 as *u8 }; }
     if flavour == flavour_locked() { return { 28791 as *u8 }; }
+    if flavour == flavour_select() { return { 28796 as *u8 }; }
     return subclass_key();
 }
 
@@ -157,6 +159,10 @@ fn subclass_of(base: *u8, prefix: str, flavour: u32) -> *u8 {
                 if flavour == flavour_title() {
                     let _m: i8 = add_method_rect_rect(cls,
                         rt::sel(#str_ptr("titleRectForBounds:\0")), drawing_rect_imp, rect_types);
+                }
+                if flavour == flavour_select() {
+                    let _m: i8 = synth::add_method_v_1id(cls,
+                        rt::sel(#str_ptr("mouseDown:\0")), mouse_down_imp, #str_ptr("v@:@\0"));
                 }
                 if flavour == flavour_knob() {
                     let _k: i8 = add_method_v_rect(cls,
@@ -1142,4 +1148,116 @@ fn apply_scroll_lock(v: *u8, locked: bool) {
 
 fn scroll_is_locked(v: *u8) -> bool {
     return { synth::get_associated(v, scroll_locked_key()) } != (0 as *u8);
+}
+
+// ---- picking a row out of a materialised sequence -----------------------------
+// A `collection` is a scroll of ordinary children, not a table, so nothing in
+// it reports a selection. The ledger read that as "a materialised collection is
+// a scroll of children, not a table" and stopped; what it means is that the
+// SELECTION has to be found the same way `carousel.position` is — from the
+// geometry, which flex already knows.
+//
+// The click is taken on the DOCUMENT VIEW rather than on the rows. A plain row
+// (a box, a label, a stack) does not accept mouse events, so its click walks up
+// the responder chain and arrives here; a row containing a BUTTON keeps its own
+// click, which is the right answer and needs no rule of its own.
+
+fn select_hit_key() -> *u8 { return { 28794 as *u8 }; }
+fn select_node_key() -> *u8 { return { 28795 as *u8 }; }
+
+fn flavour_select() -> u32 { return 6 as u32; }
+
+fn mouse_down_imp(self_obj: *u8, cmd: *u8, event: *u8) {
+    let n: *core::Node = { synth::get_associated(self_obj, select_node_key()) as *core::Node };
+    let h: fn(*u8, i64) = { synth::get_associated(self_obj, select_hit_key()) as fn(*u8, i64) };
+    if n == (0 as *core::Node) || { h } == (0 as fn(*u8, i64)) { return; }
+    let win: rt::Point = { rt::msg_point(event, rt::sel(#str_ptr("locationInWindow\0"))) };
+    let local: rt::Point = { msg_point_point_id(self_obj,
+        rt::sel(#str_ptr("convertPoint:fromView:\0")), win, 0 as *u8) };
+    h(self_obj, child_at_point(n, local));
+    return;
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_point_point_id(recv: *u8, sel: *u8, p: rt::Point, v: *u8) -> rt::Point;
+
+// The child whose laid-out box contains the point, or -1. Both axes, because a
+// vertical stack's every child contains every x — the bug the carousel's own
+// index lookup was written with and had to be corrected for.
+fn child_at_point(n: *core::Node, p: rt::Point) -> i64 {
+    let host: flex::Frame = { (*n).frame() };
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                let f: flex::Frame = { (*c).frame() };
+                let x: f64 = f.left - host.left;
+                let y: f64 = f.top - host.top;
+                if p.x >= x && p.x <= (x + f.width) && p.y >= y && p.y <= (y + f.height) {
+                    return i as i64;
+                }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return -1 as i64;
+}
+
+fn install_row_selection(doc: *u8, n: *core::Node, h: fn(*u8, i64)) {
+    if doc == (0 as *u8) { return; }
+    let cls: *u8 = { synth::object_class(doc) };
+    if !is_ours(cls) {
+        let sub: *u8 = subclass_of(cls, "FacetSelect", flavour_select());
+        if sub != cls { let _old: *u8 = { object_setClass(doc, sub) }; }
+    }
+    // Re-associated every time: a node that was detached and re-attached under
+    // the same view has a new address.
+    synth::set_associated(doc, select_node_key(), n as *u8);
+    synth::set_associated(doc, select_hit_key(), { h as *u8 });
+    return;
+}
+
+fn uninstall_row_selection(doc: *u8) {
+    if doc == (0 as *u8) { return; }
+    synth::set_associated(doc, select_hit_key(), 0 as *u8);
+    return;
+}
+
+// The selected row's own background. `selectedContentBackgroundColor` is what
+// AppKit paints a selected table row with, so a selected collection row looks
+// like a selected row rather than like a coloured box.
+fn paint_selection(n: *core::Node, selected: i64) {
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                let v: *u8 = core::view_of(c);
+                if v != (0 as *u8) {
+                    let view: ak::View = ak::View::from_raw(v);
+                    if (i as i64) == selected {
+                        view.set_wants_layer(true);
+                        view.layer().set_background_color(
+                            selection_color().c_g_color());
+                    } else {
+                        if view.wants_layer() {
+                            view.layer().set_background_color(0 as *u8);
+                        }
+                    }
+                }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+fn selection_color() -> ak::Color {
+    let c: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSColor\0")),
+                              rt::sel(#str_ptr("selectedContentBackgroundColor\0"))) };
+    if c == (0 as *u8) { return ak::Color::selected_control_color(); }
+    return ak::Color::from_raw(c);
 }

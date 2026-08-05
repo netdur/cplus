@@ -2622,7 +2622,142 @@ fn create_collection(n: *core::Node) -> *u8 { return create_sequence_host(false)
 fn materialise_collection(n: *core::Node) {
     let p: *props::CollectionProps = props_of(n, props::K_COLLECTION) as *props::CollectionProps;
     if p == (0 as *props::CollectionProps) { return; }
+    // A grouped sequence is the SAME flat sequence, broken by headers — so the
+    // row builder is untouched and `row(i)` still means row `i` of the whole.
+    // That is what makes grouping an addition to a description rather than a
+    // rewrite of one.
+    if { (*p).groupable_items_view.is_grouped } && { (*p).group_count } > (0 as i64) {
+        fill_groups(n, { (*p).group_count }, { (*p).group_size }, { (*p).group_header },
+                    { (*p).row }, { (*p).row_ctx }, { (*p).group_ctx });
+        return;
+    }
     fill_rows(n, { (*p).count }, { (*p).row }, { (*p).row_ctx });
+    return;
+}
+
+// Header, then that group's run of rows, then the next header. The flat row
+// index runs THROUGH the groups: an application that groups a list it already
+// had does not renumber it.
+fn fill_groups(n: *core::Node, groups: i64,
+               size: fn(*u8, usize) -> usize,
+               header: fn(*u8, usize) -> flex::Node,
+               builder: fn(*u8, usize) -> flex::Node,
+               row_ctx: *u8, group_ctx: *u8) {
+    clear_rows(n);
+    if builder == (0 as fn(*u8, usize) -> flex::Node) { return; }
+    var flat: usize = 0 as usize;
+    var g: i64 = 0 as i64;
+    while g < groups {
+        add_row(n, header(group_ctx, g as usize));
+        let rows: usize = size(group_ctx, g as usize);
+        var k: usize = 0 as usize;
+        while k < rows {
+            add_row(n, builder(row_ctx, flat));
+            flat = flat +% (1 as usize);
+            k = k +% (1 as usize);
+        }
+        g = g +% (1 as i64);
+    }
+    return;
+}
+
+// A CHILD index back to the DATA index the application counts in: the headers
+// are not rows, so a grouped collection's fifth child may be its third row.
+// -1 for a header, which is not selectable.
+fn data_index_of(n: *core::Node, child: i64) -> i64 {
+    let p: *props::CollectionProps = props_of(n, props::K_COLLECTION) as *props::CollectionProps;
+    if p == (0 as *props::CollectionProps) { return child; }
+    if !{ (*p).groupable_items_view.is_grouped } || { (*p).group_count } <= (0 as i64) {
+        return child;
+    }
+    let size: fn(*u8, usize) -> usize = { (*p).group_size };
+    var at: i64 = 0 as i64;
+    var flat: i64 = 0 as i64;
+    var g: i64 = 0 as i64;
+    while g < { (*p).group_count } {
+        if at == child { return -1 as i64; }              // the header itself
+        at = at +% (1 as i64);
+        let rows: i64 = size({ (*p).group_ctx }, g as usize) as i64;
+        var k: i64 = 0 as i64;
+        while k < rows {
+            if at == child { return flat; }
+            at = at +% (1 as i64);
+            flat = flat +% (1 as i64);
+            k = k +% (1 as i64);
+        }
+        g = g +% (1 as i64);
+    }
+    return -1 as i64;
+}
+
+// The reverse, for painting: which CHILD shows data row `data`.
+fn child_index_of(n: *core::Node, data: i64) -> i64 {
+    if data < (0 as i64) { return -1 as i64; }
+    var i: i64 = 0 as i64;
+    let count: i64 = core::child_count_of(n) as i64;
+    while i < count {
+        if data_index_of(n, i) == data { return i; }
+        i = i +% (1 as i64);
+    }
+    return -1 as i64;
+}
+
+// `MeasureAllItems` is flex's own behaviour and needs nothing said.
+// `MeasureFirstItem` measures ONE row and gives every other row that size,
+// which is the same optimisation the recycler spells `uniform` — and the
+// observable half of it is that a ragged sequence comes out even.
+fn apply_item_sizing(n: *core::Node, mode: vocab::ItemSizing) {
+    let uniform: bool = match mode {
+        vocab::ItemSizing::MeasureFirstItem => true,
+        vocab::ItemSizing::MeasureAllItems => false,
+    };
+    if !uniform { return; }
+    let count: usize = core::child_count_of(n);
+    if count < (2 as usize) { return; }
+    let box: flex::Frame = { (*n).frame() };
+    if box.width > 0.0f64 { { (*n).calculate_layout(width: box.width, height: box.height) }; }
+    var h: f64 = 0.0f64;
+    match core::child_of(n, 0 as usize) {
+        option::Option[*core::Node]::Some(first) => { h = { (*first).frame() }.height; }
+        option::Option[*core::Node]::None => { }
+    }
+    if h <= 0.0f64 { return; }
+    var i: usize = 1 as usize;
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                { (*c).set_height(flex::StyleLength::points(h)) };
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+fn selects_rows(m: vocab::SelectionMode) -> bool {
+    return match m {
+        vocab::SelectionMode::None => false,
+        vocab::SelectionMode::Single => true,
+        vocab::SelectionMode::Multiple => true,
+    };
+}
+
+// A row was clicked. The write-back comes BEFORE the handler, the same rule
+// every other read follows — a handler asking `selected_index()` gets the row
+// that caused it.
+fn collection_row_picked(doc: *u8, child: i64) {
+    let n: *core::Node = { synth::get_associated(doc, compose::select_node_key()) as *core::Node };
+    if n == (0 as *core::Node) { return; }
+    let p: *props::CollectionProps = props_of(n, props::K_COLLECTION) as *props::CollectionProps;
+    if p == (0 as *props::CollectionProps) { return; }
+    let data: i64 = data_index_of(n, child);
+    if data < (0 as i64) { return; }
+    { (*p).selected_index = data };
+    compose::paint_selection(n, child);
+    let sel: *props::SelectableItemsViewProps = { #addr_of((*p).selectable_items_view) };
+    let h: fn(*u8, *u8) = { (*sel).on_selection_changed };
+    if h != props::no_handler { h(doc, { (*sel).on_selection_changed_ctx }); }
     return;
 }
 
@@ -2630,10 +2765,39 @@ fn apply_collection(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::CollectionProps = props_of(n, props::K_COLLECTION) as *props::CollectionProps;
     if p == (0 as *props::CollectionProps) { return; }
     let iv: *props::ItemsViewProps = { #addr_of((*p).items_view) };
-    if (dirty & (collection::P_COUNT | collection::P_ROW)) != (0 as u64) {
+    if (dirty & (collection::P_COUNT | collection::P_ROW | collection::P_GROUP_COUNT
+                 | collection::P_GROUP | collection::P_IS_GROUPED)) != (0 as u64) {
         let before: f64 = kept_offset(v, { (*iv).scroll_anchor });
         materialise_collection(n);
         restore_anchor(v, n, { (*iv).scroll_anchor }, before);
+    }
+    let sel: *props::SelectableItemsViewProps = { #addr_of((*p).selectable_items_view) };
+    // A collection is a scroll of ordinary children, so nothing in it reports a
+    // selection — it is found the same way `carousel.position` is, from the
+    // geometry flex already knows. The click is taken on the DOCUMENT VIEW: a
+    // plain row does not accept mouse events, so its click walks up to here,
+    // while a row containing a button keeps its own.
+    if (dirty & (collection::P_SELECTION_MODE | collection::P_COUNT | collection::P_ROW
+                 | props::C_HANDLERS)) != (0 as u64) || dirty == paint::all_bits() {
+        let doc: *u8 = document_host(v);
+        if selects_rows({ (*sel).selection_mode }) {
+            let f: fn(*u8, i64) = collection_row_picked;
+            compose::install_row_selection(doc, n, f);
+        } else {
+            compose::uninstall_row_selection(doc);
+        }
+    }
+    if (dirty & (collection::P_SELECTED_INDEX | collection::P_COUNT
+                 | collection::P_ROW)) != (0 as u64) {
+        compose::paint_selection(n, child_index_of(n, { (*p).selected_index }));
+    }
+    // `MeasureFirstItem` is a sizing STRATEGY, and its observable half is that
+    // every item comes out the size of the first. The rows have no frames yet —
+    // they were built a statement ago — so the subtree is laid out at the size
+    // it already occupies, exactly as the tail anchor does.
+    if (dirty & (collection::P_ITEM_SIZING | collection::P_COUNT
+                 | collection::P_ROW)) != (0 as u64) {
+        apply_item_sizing(n, { (*p).structured_items_view.item_sizing });
     }
     if (dirty & (collection::P_VERTICAL_SCROLL_BARS | collection::P_HORIZONTAL_SCROLL_BARS)) != (0 as u64) {
         apply_sequence_scrollers(v, { (*iv).vertical_scroll_bars }, { (*iv).horizontal_scroll_bars });
@@ -2867,6 +3031,9 @@ fn apply_carousel(v: *u8, n: *core::Node, dirty: u64) {
         ak::ScrollView::from_raw(v).set_content_insets(
             ak::EdgeInsets { top: { i.top }, left: { i.leading },
                              bottom: { i.bottom }, right: { i.trailing } });
+    }
+    if (dirty & carousel::P_ITEM_SIZING) != (0 as u64) || dirty == paint::all_bits() {
+        apply_item_sizing(n, { (*p).structured_items_view.item_sizing });
     }
     if (dirty & (carousel::P_VERTICAL_SCROLL_BARS | carousel::P_HORIZONTAL_SCROLL_BARS)) != (0 as u64) {
         apply_sequence_scrollers(v, { (*iv).vertical_scroll_bars }, { (*iv).horizontal_scroll_bars });

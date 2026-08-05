@@ -14,10 +14,10 @@ Read that precisely. It does not say every verb works on a Mac — it says every
 verb has an ANSWER, and the answer is checkable:
 
 ```
-315 declared prop/command bits    236 live, 23 host-rendered, 3 derived,
+321 declared prop/command bits    247 live, 23 host-rendered, 3 derived,
                                     3 modifier, 8 create-only, 37 decided,
-                                    5 no carrier, 0 absent
- 76 declared handlers              71 wired, 5 decided, 0 never fire
+                                    0 no carrier, 0 absent
+ 80 declared handlers              76 wired, 4 decided, 0 never fire
 ```
 
 `python3 tools/verb_coverage.py --check` is the gate and it fails on a verb that
@@ -36,7 +36,7 @@ The dispositions, and the difference between them is the point:
 | **modifier** | no write of its own: it changes what ANOTHER write does |
 | **create-only** | read when the object is built, never after — each because a live flip needs a different OBJECT |
 | **decided** | AppKit cannot; the reason is in the ledger below |
-| **no carrier** | facet's own MODEL has nowhere to put it — not a statement about AppKit |
+| **no carrier** | facet's own MODEL has nowhere to put it — not a statement about AppKit. **Empty.** |
 | **absent** | neither. This is the debt, and it is zero. |
 
 **The bar this file is now held to.** A control does not have to be one native
@@ -59,8 +59,25 @@ every one of them had been recorded against a reading of one class in isolation:
 - `radio.text_color` said a radio has no text. `RadioButton.Content` was
   adopted as the wrong TYPE, not left unadopted.
 
-What is left is short and each row says something true about the platform or
-about facet's model rather than about how hard it looked.
+**No carrier is empty.** The five rows that were there named a real hole, and
+it was in the CONTRACT rather than in the backend: `IsGrouped` and
+`SelectionMode` each carried the SWITCH and nothing for what it switches on,
+because Stage 1 dropped MAUI's grouped ItemsSource and its SelectedItem as
+MODEL and never declared the imperative replacement. facet now does, in the
+shape `count` + `row` already set:
+
+```
+set_group_count(usize)                       how many groups
+set_group(size:header:ctx:)                  how big each is, and its header
+set_selected_index(i64)  / selected_index()  which row, or -1
+```
+
+`row` is UNCHANGED and that is the point — a group is a run of the same flat
+sequence, so `row(i)` still means row `i` of the whole and grouping an existing
+list adds a description rather than rewriting one.
+
+What is left is short and each row says something true about the platform
+rather than about how hard it looked.
 
 **Where this started.** The stage page read "42/42 kinds have a body", which was
 true and was being read as much stronger than it is. The first verb-level count
@@ -156,12 +173,6 @@ not say" are different facts, and a backend that files the second under the
 first is claiming a platform limit that does not exist.
 
 ```no-carrier
-carousel.item_sizing            a materialised sequence measures every child anyway; nothing to skip
-collection.item_sizing          as carousel.item_sizing
-collection.is_grouped           facet declares no group carrier on the item sequence
-list.is_grouped                 as collection.is_grouped
-collection.selection_mode       a materialised collection is a scroll of children, not a table
-collection.on_selection_changed  as collection.selection_mode
 collection.bind                 collection does not recycle by design; nothing to bind INTO
 ```
 

@@ -16,6 +16,11 @@ fn no_row(ctx: *u8, index: usize) -> flex::Node { return flex::Node::new(); }
 // The absent bind. Compared against by name, NOT against null: the
 // default has to BE a function, and a null check would never be false.
 fn no_bind(ctx: *u8, index: usize, row: *flex::Node) { return; }
+// The two halves of a group, absent until an application names them.
+// A group with no size holds no rows, so an ungrouped sequence and a
+// grouped one that was never described render the same.
+fn no_group_size(ctx: *u8, group: usize) -> usize { return 0 as usize; }
+fn no_group_header(ctx: *u8, group: usize) -> flex::Node { return flex::Node::new(); }
 
 // ---- the shared band --------------------------------------------------------
 // The write rows every element carries (MAUI VisualElement), minus the ones
@@ -514,6 +519,11 @@ struct CollectionProps {
     row: fn(*u8, usize) -> flex::Node,    // facet — builds row `i`
     opaque row_ctx: *u8,
     bind: fn(*u8, usize, *flex::Node),    // facet — writes row `i` INTO an existing row, for recycling
+    group_count: i64,    // facet — how many groups, when is_grouped
+    group_size: fn(*u8, usize) -> usize,    // facet — how many rows group `g` holds
+    group_header: fn(*u8, usize) -> flex::Node,    // facet — builds the header row for group `g`
+    opaque group_ctx: *u8,
+    selected_index: i64,    // facet — which row is selected, or -1 for none
 }
 
 impl CollectionProps {
@@ -528,6 +538,11 @@ impl CollectionProps {
             row: no_row,
             row_ctx: 0 as *u8,
             bind: no_bind,
+            group_count: 0 as i64,
+            group_size: no_group_size,
+            group_header: no_group_header,
+            group_ctx: 0 as *u8,
+            selected_index: -1 as i64,
         };
     }
 }
@@ -956,6 +971,11 @@ struct ListProps {
     row: fn(*u8, usize) -> flex::Node,    // facet — builds row `i`
     opaque row_ctx: *u8,
     bind: fn(*u8, usize, *flex::Node),    // facet — writes row `i` INTO an existing row, for recycling
+    group_count: i64,    // facet — how many groups, when is_grouped
+    group_size: fn(*u8, usize) -> usize,    // facet — how many rows group `g` holds
+    group_header: fn(*u8, usize) -> flex::Node,    // facet — builds the header row for group `g`
+    opaque group_ctx: *u8,
+    selected_index: i64,    // facet — which row is selected, or -1 for none
 }
 
 impl ListProps {
@@ -990,6 +1010,11 @@ impl ListProps {
             row: no_row,
             row_ctx: 0 as *u8,
             bind: no_bind,
+            group_count: 0 as i64,
+            group_size: no_group_size,
+            group_header: no_group_header,
+            group_ctx: 0 as *u8,
+            selected_index: -1 as i64,
         };
     }
 }

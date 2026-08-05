@@ -123,6 +123,71 @@ struct RowSource {
     opaque node: *core::Node,
     // `has_uneven_rows == false`: measure ONE row and answer with it for all.
     uniform: bool,
+    // ---- grouping -------------------------------------------------------
+    // A grouped table is the SAME flat sequence with headers interleaved, so
+    // `row` is untouched and every table index is translated on the way in.
+    // `groups == 0` means ungrouped and the translation is the identity.
+    groups: i64,
+    group_size: fn(*u8, usize) -> usize,
+    group_header: fn(*u8, usize) -> core::Node,
+    opaque group_ctx: *u8,
+}
+
+// A TABLE row back to what it shows. Negative is a header: `-(g+1)`, because 0
+// is a valid data index and a header of group 0 has to be distinguishable from
+// it. Non-negative is the flat data index the application counts in.
+fn resolve_row(s: *RowSource, row: i64) -> i64 {
+    if { (*s).groups } <= (0 as i64) { return row; }
+    let size: fn(*u8, usize) -> usize = { (*s).group_size };
+    var at: i64 = 0 as i64;
+    var flat: i64 = 0 as i64;
+    var g: i64 = 0 as i64;
+    while g < { (*s).groups } {
+        if at == row { return -(g +% (1 as i64)); }
+        at = at +% (1 as i64);
+        let rows: i64 = size({ (*s).group_ctx }, g as usize) as i64;
+        var k: i64 = 0 as i64;
+        while k < rows {
+            if at == row { return flat; }
+            at = at +% (1 as i64);
+            flat = flat +% (1 as i64);
+            k = k +% (1 as i64);
+        }
+        g = g +% (1 as i64);
+    }
+    return -1 as i64;
+}
+
+// The reverse, for a selection written FROM the contract: which table row shows
+// data index `data`.
+fn table_row_of(s: *RowSource, data: i64) -> i64 {
+    if data < (0 as i64) { return -1 as i64; }
+    if { (*s).groups } <= (0 as i64) { return data; }
+    var row: i64 = 0 as i64;
+    let total: i64 = table_row_count(s);
+    while row < total {
+        if resolve_row(s, row) == data { return row; }
+        row = row +% (1 as i64);
+    }
+    return -1 as i64;
+}
+
+fn is_header_row(s: *RowSource, row: i64) -> bool {
+    return resolve_row(s, row) < (0 as i64);
+}
+
+// Headers plus rows. A grouped table's row count is not its item count, which
+// is the whole reason every index has to be translated.
+fn table_row_count(s: *RowSource) -> i64 {
+    if { (*s).groups } <= (0 as i64) { return { (*s).count }; }
+    let size: fn(*u8, usize) -> usize = { (*s).group_size };
+    var total: i64 = { (*s).groups };
+    var g: i64 = 0 as i64;
+    while g < { (*s).groups } {
+        total = total +% (size({ (*s).group_ctx }, g as usize) as i64);
+        g = g +% (1 as i64);
+    }
+    return total;
 }
 
 fn source_of(tv: *u8) -> *RowSource {
@@ -159,13 +224,29 @@ fn column_width(tv: *u8) -> f64 {
 fn num_rows_imp(self_obj: *u8, cmd: *u8, tv: *u8) -> i64 {
     let s: *RowSource = source_of(tv);
     if s == (0 as *RowSource) { return 0 as i64; }
-    return { (*s).count };
+    return table_row_count(s);
 }
 
-// Build row `i` as a detached facet node. The caller owns it.
+// AppKit's own group styling for a header row — which is why a header is a row
+// rather than a decoration: the table already knows how to draw one.
+fn is_group_row_imp(self_obj: *u8, cmd: *u8, tv: *u8, row: i64) -> i8 {
+    let s: *RowSource = source_of(tv);
+    if s == (0 as *RowSource) { return 0 as i8; }
+    return is_header_row(s, row) as i8;
+}
+
+// Build TABLE row `i` as a detached facet node. A header and a row come from
+// different builders, and the caller cannot tell them apart — which is the
+// point: every path through this file speaks in table rows and the translation
+// happens once, here.
 fn build_row(s: *RowSource, i: i64) -> core::Node {
+    let at: i64 = resolve_row(s, i);
+    if at < (0 as i64) {
+        let h: fn(*u8, usize) -> core::Node = { (*s).group_header };
+        return h({ (*s).group_ctx }, (-at -% (1 as i64)) as usize);
+    }
     let f: fn(*u8, usize) -> core::Node = { (*s).row };
-    return f({ (*s).row_ctx }, i as usize);
+    return f({ (*s).row_ctx }, at as usize);
 }
 
 fn height_imp(self_obj: *u8, cmd: *u8, tv: *u8, row: i64) -> f64 {
@@ -345,6 +426,8 @@ fn recycler_class() -> *u8 {
                                               #str_ptr("FacetRowSource\0"), 0 as usize);
     add_method_i64_1id(cls, rt::sel(#str_ptr("numberOfRowsInTableView:\0")),
                        num_rows_imp, #str_ptr("q@:@\0"));
+    add_method_i8_1id_i64(cls, rt::sel(#str_ptr("tableView:isGroupRow:\0")),
+                          is_group_row_imp, #str_ptr("c@:@q\0"));
     add_method_f64_1id_i64(cls, rt::sel(#str_ptr("tableView:heightOfRow:\0")),
                            height_imp, #str_ptr("d@:@q\0"));
     add_method_id_2id_i64(cls, rt::sel(#str_ptr("tableView:viewForTableColumn:row:\0")),
@@ -366,6 +449,8 @@ fn recycler_class() -> *u8 {
 
 #[link_name = "class_addMethod"]
 extern fn add_method_v_2id_i64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, i64), types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn add_method_i8_1id_i64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, i64) -> i8, types: *u8) -> i8;
 
 // ---- the list's own events ---------------------------------------------------
 
@@ -393,6 +478,15 @@ fn selection_changed_imp(self_obj: *u8, cmd: *u8, note: *u8) {
     if n == (0 as *core::Node) { return; }
     let p: *props::ListProps = props_of_list(n);
     if p == (0 as *props::ListProps) { return; }
+    // The write-back, BEFORE the handlers: a handler asking which row is
+    // selected gets the one that caused it. And the answer is the DATA index —
+    // a grouped table's fifth row may be its third item.
+    let s: *RowSource = source_of(tv);
+    if s != (0 as *RowSource) {
+        let picked: i64 = { rt::msg_i64(tv, rt::sel(#str_ptr("selectedRow\0"))) };
+        if picked < (0 as i64) { { (*p).selected_index = -1 as i64 }; }
+        else { { (*p).selected_index = resolve_row(s, picked) }; }
+    }
     fire_list(n, { (*p).on_item_selected }, { (*p).on_item_selected_ctx }, tv);
     fire_list(n, { (*p).on_item_tapped }, { (*p).on_item_tapped_ctx }, tv);
     return;
@@ -509,6 +603,10 @@ fn apply_recycling_list(v: *u8, n: *core::Node, dirty: u64) {
             table: tv,
             node: n,
             uniform: false,
+            groups: 0 as i64,
+            group_size: props::no_group_size,
+            group_header: props::no_group_header,
+            group_ctx: 0 as *u8,
         }) {
             option::Option[box::Box[RowSource]]::Some(b) => {
                 s = { b.into_raw() } as *RowSource;
@@ -548,6 +646,17 @@ fn apply_recycling_list(v: *u8, n: *core::Node, dirty: u64) {
     { (*s).bind = { (*p).bind } };
     { (*s).row_ctx = { (*p).row_ctx } };
     { (*s).count = { (*p).count } };
+    // `is_grouped` is the switch and the three group fields are what it
+    // switches on. Off, or with no groups described, `groups` stays 0 and every
+    // index translation is the identity.
+    if (dirty & (list::P_IS_GROUPED | list::P_GROUP_COUNT | list::P_GROUP)) != (0 as u64)
+        || dirty == paint::all_bits() {
+        if { (*p).is_grouped } { { (*s).groups = { (*p).group_count } }; }
+        else { { (*s).groups = 0 as i64 }; }
+        { (*s).group_size = { (*p).group_size } };
+        { (*s).group_header = { (*p).group_header } };
+        { (*s).group_ctx = { (*p).group_ctx } };
+    }
     let rh: i64 = { (*p).row_height };
     if rh > (0 as i64) { { (*s).fixed_height = rh as f64 }; }
     else { { (*s).fixed_height = 0.0f64 }; }
@@ -590,6 +699,14 @@ fn apply_recycling_list(v: *u8, n: *core::Node, dirty: u64) {
         sv.set_has_horizontal_scroller(controls::shows_bars({ (*p).horizontal_scroll_bars }));
     }
     { rt::msg_void(tv, rt::sel(#str_ptr("reloadData\0"))) };
+    // A selection written FROM the contract, translated the other way: the
+    // application counts items and the table counts rows, and a grouped table's
+    // third item is not its third row. After the reload, or it indexes a table
+    // that has not been told the sequence changed.
+    if (dirty & (list::P_SELECTED_INDEX | list::P_COUNT | list::P_ROW)) != (0 as u64)
+        && creating == false {
+        select_data_row(tv, s, { (*p).selected_index });
+    }
     // `scroll_to` is a COMMAND: act on the bit, and the sync walk clears it.
     if (dirty & list::P_SCROLL_TO) != (0 as u64) && creating == false {
         let want: i64 = { (*p).scroll_to_index };
@@ -599,6 +716,23 @@ fn apply_recycling_list(v: *u8, n: *core::Node, dirty: u64) {
     }
     return;
 }
+
+fn select_data_row(tv: *u8, s: *RowSource, data: i64) {
+    let row: i64 = table_row_of(s, data);
+    if row < (0 as i64) {
+        { rt::msg_void(tv, rt::sel(#str_ptr("deselectAll:\0"))) };
+        return;
+    }
+    let set: *u8 = { rt::msg_id_u64(rt::get_class(#str_ptr("NSIndexSet\0")),
+                                    rt::sel(#str_ptr("indexSetWithIndex:\0")), row as u64) };
+    if set == (0 as *u8) { return; }
+    { msg_void_id_i8(tv, rt::sel(#str_ptr("selectRowIndexes:byExtendingSelection:\0")),
+                         set, 0 as i8) };
+    return;
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_void_id_i8(recv: *u8, sel: *u8, a: *u8, b: i8);
 
 fn apply_selection_mode(tv: *u8, m: vocab::SelectionMode) {
     let multi: bool = match m {

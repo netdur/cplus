@@ -5182,3 +5182,290 @@ fn a_destructive_toolbar_item_carries_a_red_button() {
     rt::release(map);
     return;
 }
+
+// ---- grouping and selection, the two carriers facet did not have --------------
+// `IsGrouped` and `SelectionMode` each had a carrier for the SWITCH and nothing
+// for what it switches on: MAUI binds a list of lists and a SelectedItem, and
+// Stage 1 dropped both as MODEL without declaring the imperative replacement.
+
+fn g_row(ctx: *u8, i: usize) -> flex::Node {
+    var b: core::Node = box_view::box(color: vocab::Color::rgba(0.3f64, 0.3f64, 0.3f64));
+    b.set_height(flex::StyleLength::points(20.0f64));
+    return b;
+}
+fn g_header(ctx: *u8, g: usize) -> flex::Node {
+    var b: core::Node = box_view::box(color: vocab::Color::rgba(0.9f64, 0.9f64, 0.9f64));
+    b.set_height(flex::StyleLength::points(10.0f64));
+    return b;
+}
+fn g_size(ctx: *u8, g: usize) -> usize {
+    if g == (0 as usize) { return 2 as usize; }
+    return 3 as usize;
+}
+
+#[test]
+fn a_grouped_collection_interleaves_headers_with_the_same_flat_rows() {
+    // The row builder is UNTOUCHED and that is the point: a group is a run of
+    // the same flat sequence, so grouping an existing list adds a description
+    // rather than rewriting one.
+    backend::install();
+    var c: core::Node = collection::collection(key: "gc", grouped: true);
+    let p: *core::Node = #addr_of(c);
+    match collection::find("gc", within: p) {
+        option::Option[collection::Collection]::Some(h) => {
+            let a: collection::Collection = h.set_row(g_row, ctx: 0 as *u8);
+            let b: collection::Collection = a.set_count(5 as usize);
+            let d: collection::Collection = b.set_group_count(2 as usize);
+            let _e: collection::Collection = d.set_group(g_size, g_header, ctx: 0 as *u8);
+        }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
+    assert mount::mount(p);
+    // Two headers plus five rows.
+    assert core::child_count_of(p) == (7 as usize);
+    // And the mapping back: child 0 is a header, child 1 is data row 0,
+    // child 3 is a header again, child 4 is data row 2.
+    assert controls::data_index_of(p, 0 as i64) == (-1 as i64);
+    assert controls::data_index_of(p, 1 as i64) == (0 as i64);
+    assert controls::data_index_of(p, 2 as i64) == (1 as i64);
+    assert controls::data_index_of(p, 3 as i64) == (-1 as i64);
+    assert controls::data_index_of(p, 4 as i64) == (2 as i64);
+    assert controls::child_index_of(p, 2 as i64) == (4 as i64);
+    mount::unmount(p);
+    return;
+}
+
+#[test]
+fn an_ungrouped_collection_is_flat_and_maps_straight_through() {
+    backend::install();
+    var c: core::Node = collection::collection(key: "gc2");
+    let p: *core::Node = #addr_of(c);
+    match collection::find("gc2", within: p) {
+        option::Option[collection::Collection]::Some(h) => {
+            let a: collection::Collection = h.set_row(g_row, ctx: 0 as *u8);
+            let _b: collection::Collection = a.set_count(3 as usize);
+        }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
+    assert mount::mount(p);
+    assert core::child_count_of(p) == (3 as usize);
+    assert controls::data_index_of(p, 2 as i64) == (2 as i64);
+    mount::unmount(p);
+    return;
+}
+
+static PICKS: i64 = 0 as i64;
+fn on_row_picked(sender: *u8, ctx: *u8) { PICKS = PICKS + (1 as i64); return; }
+
+#[test]
+fn clicking_a_collection_row_selects_it_and_reports_the_data_index() {
+    // A collection is a scroll of ordinary children, so nothing in it reports a
+    // selection — it is found from the geometry, the same way the carousel's
+    // position is. The click is taken on the DOCUMENT VIEW because a plain row
+    // does not accept mouse events and its click walks up to there.
+    backend::install();
+    PICKS = 0 as i64;
+    let h: fn(*u8, *u8) = on_row_picked;
+    var c: core::Node = collection::collection(key: "sc", grouped: true,
+        selection_mode: vocab::SelectionMode::Single, on_selection_changed: h);
+    let p: *core::Node = #addr_of(c);
+    match collection::find("sc", within: p) {
+        option::Option[collection::Collection]::Some(x) => {
+            let a: collection::Collection = x.set_row(g_row, ctx: 0 as *u8);
+            let b: collection::Collection = a.set_count(5 as usize);
+            let d: collection::Collection = b.set_group_count(2 as usize);
+            let _e: collection::Collection = d.set_group(g_size, g_header, ctx: 0 as *u8);
+        }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
+    assert mount::mount(p);
+    // A REAL window: the click arrives in window coordinates and the document
+    // view is flipped, so the conversion is the thing under test as much as the
+    // hit is. Without one there is nothing to convert against.
+    let w: ak::Window = window::make_shell_window(screen::Chrome::new(
+        title: "pick", width: 100.0f64, height: 200.0f64));
+    let v: *u8 = core::view_of(p);
+    match w.content_view() {
+        option::Option[ak::View]::Some(cv) => { cv.add_subview(ak::View::from_raw(v)); }
+        option::Option[ak::View]::None => { assert false; }
+    }
+    { rt::msg_void_rect(v, rt::sel(#str_ptr("setFrame:\0")),
+                        rt::Rect { x: 0.0f64, y: 0.0f64, w: 100.0f64, h: 200.0f64 }) };
+    geometry::relayout_root(p, 100.0f64, 200.0f64, 1.0f64);
+    let doc: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("documentView\0"))) };
+    // Child 4 is data row 2: header(10) + 2 rows(20) + header(10) puts it at
+    // y = 60..80 in the FLIPPED document view, which is y = 200-65 = 135 up
+    // from the window's bottom-left origin.
+    { rt::msg_void_id(doc, rt::sel(#str_ptr("mouseDown:\0")), point_event(10.0f64, 135.0f64)) };
+    assert PICKS == (1 as i64);
+    match collection::find("sc", within: p) {
+        option::Option[collection::Collection]::Some(x) => { assert x.selected_index() == (2 as i64); }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
+    // A HEADER is not selectable: clicking one changes nothing.
+    { rt::msg_void_id(doc, rt::sel(#str_ptr("mouseDown:\0")), point_event(10.0f64, 145.0f64)) };
+    assert PICKS == (1 as i64);
+    w.close();
+    mount::unmount(p);
+    return;
+}
+
+#[test]
+fn a_collection_with_no_selection_mode_takes_no_clicks() {
+    backend::install();
+    PICKS = 0 as i64;
+    let h: fn(*u8, *u8) = on_row_picked;
+    var c: core::Node = collection::collection(key: "sc2", on_selection_changed: h);
+    let p: *core::Node = #addr_of(c);
+    match collection::find("sc2", within: p) {
+        option::Option[collection::Collection]::Some(x) => {
+            let a: collection::Collection = x.set_row(g_row, ctx: 0 as *u8);
+            let _b: collection::Collection = a.set_count(3 as usize);
+        }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
+    assert mount::mount(p);
+    geometry::relayout_root(p, 100.0f64, 200.0f64, 1.0f64);
+    let v: *u8 = core::view_of(p);
+    let doc: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("documentView\0"))) };
+    { rt::msg_void_id(doc, rt::sel(#str_ptr("mouseDown:\0")), point_event(10.0f64, 10.0f64)) };
+    assert PICKS == (0 as i64);
+    mount::unmount(p);
+    return;
+}
+
+fn ragged_row(ctx: *u8, i: usize) -> flex::Node {
+    var b: core::Node = box_view::box(color: vocab::Color::rgba(0.2f64, 0.2f64, 0.2f64));
+    if i == (0 as usize) { b.set_height(flex::StyleLength::points(40.0f64)); }
+    else { b.set_height(flex::StyleLength::points(90.0f64)); }
+    return b;
+}
+
+fn point_event(x: f64, y: f64) -> *u8 {
+    return { msg_mouse_event(
+        rt::get_class(#str_ptr("NSEvent\0")),
+        rt::sel(#str_ptr("mouseEventWithType:location:modifierFlags:timestamp:windowNumber:context:eventNumber:clickCount:pressure:\0")),
+        1 as u64, rt::Point { x: x, y: y }, 0 as u64, 0.0f64,
+        0 as i64, 0 as *u8, 0 as i64, 1 as i64, 0.0f32) };
+}
+
+#[test]
+fn a_grouped_list_counts_headers_as_rows_and_translates_back() {
+    // A grouped TABLE's row count is not its item count, which is the whole
+    // reason every index has to be translated.
+    backend::install();
+    var l: core::Node = list::list(key: "gl", grouped: true);
+    let p: *core::Node = #addr_of(l);
+    match list::find("gl", within: p) {
+        option::Option[list::List]::Some(x) => {
+            let a: list::List = x.set_row(g_row, ctx: 0 as *u8);
+            let b: list::List = a.set_count(5 as usize);
+            let d: list::List = b.set_group_count(2 as usize);
+            let _e: list::List = d.set_group(g_size, g_header, ctx: 0 as *u8);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    let tv: *u8 = recycler::table_of(v);
+    assert { rt::msg_i64(tv, rt::sel(#str_ptr("numberOfRows\0"))) } == (7 as i64);
+    // AppKit's own group styling, which is why a header is a ROW rather than a
+    // decoration: the table already knows how to draw one.
+    let d: *u8 = { rt::msg_id(tv, rt::sel(#str_ptr("delegate\0"))) };
+    assert msg_i8_id_i64(d, rt::sel(#str_ptr("tableView:isGroupRow:\0")), tv, 0 as i64) != (0 as i8);
+    assert msg_i8_id_i64(d, rt::sel(#str_ptr("tableView:isGroupRow:\0")), tv, 1 as i64) == (0 as i8);
+    assert msg_i8_id_i64(d, rt::sel(#str_ptr("tableView:isGroupRow:\0")), tv, 3 as i64) != (0 as i8);
+    return;
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_i8_id_i64(recv: *u8, sel: *u8, a: *u8, b: i64) -> i8;
+
+#[test]
+fn a_lists_selection_reads_back_the_data_index() {
+    // The write-back the list never had: `selection_mode` said a row could be
+    // picked and nothing said which one was.
+    backend::install();
+    var l: core::Node = list::list(key: "gl2", grouped: true,
+                                   selection_mode: vocab::SelectionMode::Single);
+    let p: *core::Node = #addr_of(l);
+    match list::find("gl2", within: p) {
+        option::Option[list::List]::Some(x) => {
+            let a: list::List = x.set_row(g_row, ctx: 0 as *u8);
+            let b: list::List = a.set_count(5 as usize);
+            let d: list::List = b.set_group_count(2 as usize);
+            let _e: list::List = d.set_group(g_size, g_header, ctx: 0 as *u8);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    let tv: *u8 = recycler::table_of(v);
+    // Table row 4 is data row 2 — header, two rows, header, THIS.
+    let set: *u8 = { rt::msg_id_u64(rt::get_class(#str_ptr("NSIndexSet\0")),
+                                    rt::sel(#str_ptr("indexSetWithIndex:\0")), 4 as u64) };
+    { msg_void_id_i8_t(tv, rt::sel(#str_ptr("selectRowIndexes:byExtendingSelection:\0")),
+                       set, 0 as i8) };
+    match list::find("gl2", within: p) {
+        option::Option[list::List]::Some(x) => { assert x.selected_index() == (2 as i64); }
+        option::Option[list::List]::None => { assert false; }
+    }
+    return;
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_void_id_i8_t(recv: *u8, sel: *u8, a: *u8, b: i8);
+
+#[test]
+fn measure_first_item_makes_a_ragged_sequence_even() {
+    // The observable half of a sizing STRATEGY: every item comes out the size
+    // of the first, which is the same optimisation the recycler spells uniform.
+    backend::install();
+    var c: core::Node = collection::collection(key: "is",
+        item_sizing: vocab::ItemSizing::MeasureFirstItem);
+    let p: *core::Node = #addr_of(c);
+    match collection::find("is", within: p) {
+        option::Option[collection::Collection]::Some(x) => {
+            let a: collection::Collection = x.set_row(ragged_row, ctx: 0 as *u8);
+            let _b: collection::Collection = a.set_count(2 as usize);
+        }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
+    assert mount::mount(p);
+    geometry::relayout_root(p, 100.0f64, 200.0f64, 1.0f64);
+    core::clear_dirty(p);
+    core::touch(p, collection::P_ITEM_SIZING);
+    views::apply(0 as *u8, p);
+    geometry::relayout_root(p, 100.0f64, 200.0f64, 1.0f64);
+    match core::child_of(p, 1 as usize) {
+        option::Option[*core::Node]::Some(x) => { assert { (*x).frame() }.height == 40.0f64; }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    mount::unmount(p);
+    return;
+}
+
+#[test]
+fn measure_all_items_leaves_a_ragged_sequence_ragged() {
+    backend::install();
+    var c: core::Node = collection::collection(key: "is2");
+    let p: *core::Node = #addr_of(c);
+    match collection::find("is2", within: p) {
+        option::Option[collection::Collection]::Some(x) => {
+            let a: collection::Collection = x.set_row(ragged_row, ctx: 0 as *u8);
+            let _b: collection::Collection = a.set_count(2 as usize);
+        }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
+    assert mount::mount(p);
+    geometry::relayout_root(p, 100.0f64, 200.0f64, 1.0f64);
+    core::clear_dirty(p);
+    core::touch(p, collection::P_ITEM_SIZING);
+    views::apply(0 as *u8, p);
+    match core::child_of(p, 1 as usize) {
+        option::Option[*core::Node]::Some(x) => { assert { (*x).frame() }.height == 90.0f64; }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    mount::unmount(p);
+    return;
+}
