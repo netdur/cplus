@@ -107,16 +107,30 @@ See the audit report for the ~30 findings. The two fixed on the spot:
 
 ---
 
-## What is left, in order
+## What is left
 
-1. **Fix the gates.** Both validate claims rather than implementations —
-   `verb_coverage` counts a bit named in a *mask* as live, guard 5b checks
-   that a string names a declaration and never that a consumer exists.
-   Until this is done the green board is not evidence.
-2. **Tier 1 gaps**, `symbol` first — a 949 KB bundled font and 4,268 icon
-   constants are inert on the only shipping backend.
-3. **Tier 2 gaps**, cheapest first: `min_width` is one operator.
-4. **Decide, don't build**, for `touch_points` / `swipe_threshold`.
+**Nothing from the audit.** Every finding is fixed, decided, or removed.
+Final state: **flex 280 / facet 513 / facet_appkit 657** passing,
+coverage gate green (0 absent, 0 gated-unread, 0 never-fire), guard 5b
+61/21/0, contract byte-idempotent and provenance clean, and
+`examples/hello_appkit` builds and drives correctly over the agent
+socket.
+
+Two things are deliberately still open, both in the TOOL rather than the
+backend, and both are written into its docstring:
+
+1. The read check asks whether SOME body reaching a control's struct
+   reads the field, not whether the body that GATES the bit does. A
+   reader that exists but is never called still counts. Closing it needs
+   a call graph.
+2. `NOT_CONTROLS` still exempts `gestures`, `theme`, `screen`,
+   `application`, `nav`, `services` and `component`, and the 17 shared
+   `C_*` bits with them. Everything in those modules was audited by hand
+   in this pass; nothing yet stops the next one drifting.
+
+Censusing those is the highest-value next tooling change, because it is
+where `Chrome.zoomable` hid and where the shared band's seven dead verbs
+hid.
 
 ### The pattern worth acting on
 

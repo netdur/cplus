@@ -96,54 +96,73 @@ it entirely via `align_items: Stretch`, which is why it survived.
 
 ---
 
-## 3. Confirmed gaps, not yet fixed
+## 3. Confirmed gaps — all closed
 
-Ranked by how likely an app author is to hit them.
+Every item found by the audit is now fixed, decided, or removed. The gate
+reports **0 absent, 0 gated-unread, 0 never-fire**, and it means it: it
+was corrected first, so the number is evidence rather than an assertion.
 
-### Tier 1 — silently does nothing, common reach
-
-| Gap | Evidence |
+| Was | Now |
 |---|---|
-| **`on_focus` / `on_blur` never fire** | `fire_focus_handler` / `fire_blur_handler` have **zero callers**. `is_focused()` always answers `false` — `set_focused` is called only by a facet test. Needs a responder subclass on the armed class, plus widening `arm`'s gate so a node carrying only a focus handler is armed at all. |
-| **Controls measure zero-width in a row** | Probed: `NSSlider`, `NSProgressIndicator`, editable `NSTextField`, `NSSearchField` all report `fitting.width == 0`. `row { label text_field }` — the commonest form layout — gives the field size 0. Works in a column only by accident of `Stretch`. |
+| `symbol(icons::home)` rendered nothing | bundled font registered per-process, codepoint into the label |
+| `background` (Brush) never applied | solid → layer colour, gradient → CAGradientLayer at index 0 |
+| `shadow` never applied | layer shadow, y-offset flipped for the flipped view |
+| `clip` never applied | CAShapeLayer mask |
+| `on_focus` / `on_blur` never fired; `is_focused()` always false | two routes (armed class + text delegate), edge-triggered |
+| `spawn_ui` tasks parked forever | dispatch read source on the reactor's kqueue |
+| `Screen::menu_items()` discarded | merged per screen in `App::run` and `run_screen` |
+| controls measured zero-width in a row | a zero fitting size is floored to the offered space |
+| `page_dots` / `window_buttons` measured 0×0 | measured by what they drew |
+| `is_enabled` ignored on non-control kinds | dimmed, but only where AppKit has no `setEnabled:` |
+| `background_color` could not be cleared | clears when a layer already exists |
+| `.window_drag()` was a no-op | `performWindowDragWithEvent:`, and it now counts as a gesture |
+| a label with `span` children lost its measure | non-view kinds are `Display::None`; flex counts in-flow children |
+| viewless kinds consumed gaps and justify slots | same fix |
+| `Split::expand()` never restored | `saved_position`, and the resize write-back stands down while collapsed |
+| tree expansion was write-only | `outlineViewItemDidExpand:` / `DidCollapse:`, guarded against self-application |
+| `on_drag_start` / `on_drop_completed` never fired | the session's own two callbacks |
+| `MenuItem.is_enabled` / `title_of` never read | `validateMenuItem:` on the item's target |
+| find-panel actions inert | `performTextFinderAction:` + the tag that selects the operation |
+| `min_width` alone did nothing | each axis answered on its own |
+| `z_index` never applied | siblings ordered in the frame walk |
+| `flow_direction` never applied | flex mirrors the layout; controls mirror their text |
+| agent saw only the primary window | pushed screens and presented windows attach |
+| `nav::go`/`quit` stalled with a pushed screen | pushed screens close first |
+| 5 dead `Window` methods | menu pair wired, three vestigial ones removed |
+| base `runtime.cplus` had drifted | ten verbs mirrored; `alert` no longer diverges |
+| `observe_size` inert on viewless nodes | observes the nearest backed ancestor |
+| menu bar accumulated across navigations | tree menus marked and replaced |
+| `present_window` leaked its tree | `presented_closed` |
+| `beginSheet:` sent one argument | both, with an explicit nil handler |
+| `touch_points` / `swipe_threshold` | **decided** — recorded in the manifest with the reason |
 
-### Tier 2 — real, narrower reach
+### The two decided, and why
 
-| Gap | Evidence |
-|---|---|
-| `is_enabled` ignored on non-control kinds | honoured on 12 NSControl kinds; silently ignored on box/label/image/canvas/scroll/list/web… |
-| `background_color` cannot be cleared | `apply_background` early-returns on unset, leaving the old layer colour. The image path handles this correctly, so it reads as an oversight |
-| `.window_drag()` is a no-op | `drags_window` → 0 backend readers. `Bar::Custom` + `window_buttons()` works; the drag half does not |
-| `page_dots` / `window_buttons` measure 0×0 | plain views with hand-placed sublayers, but present in `has_intrinsic_size`, so flex trusts the zero |
-| a label with `span` children loses its measure | flex uses the measure callback only when `child_count == 0` |
-| viewless kinds are still in flow | `set_display` never applied to `span`/`context_menu`/`swipe_item`; they consume gaps and `justify` slots |
-| `Split::expand()` never restores | no field stores the pre-collapse position; the resize write-back then zeroes it |
-| tree expansion is write-only | `outlineViewItemDidExpand:`/`DidCollapse:` absent; `Tree::restore()` replays a stale set |
-| `on_drag_start` / `on_drop_completed` never fire | zero references; a drag can begin but the app is never told |
-| `MenuItem.is_enabled` / `title_of` never read | no `validateMenuItem:` anywhere |
-| find-panel menu actions inert | `performFindPanelAction:` dispatches on the sender's tag; `setTag:` appears nowhere |
-| `min_width` alone does nothing | `&&` where the max pair correctly uses `||` |
-| `z_index` never applied | `core::z_index(` → 0 hits; the old backend had `z_paint_order` |
-| `flow_direction` never applied | 0 hits for the verb or `setUserInterfaceLayoutDirection` |
-| agent surface sees only the primary window | `agent_attach_window` fires at one site; pushed screens and **alert sheets** are invisible — defeating the stated reason the sheet was rewritten |
-| `nav::go`/`quit` stall with a pushed screen open | `close_current` closes only the primary; the loop stops only at `OPEN_WINDOWS <= 0` |
-| 5 `Window` interface methods have no caller | incl. `has_app_menu`/`app_menu` — a hand-written Window gets no menu bar |
-| base `runtime.cplus` has drifted | 10 macOS-only verbs missing from the neutral base; `alert` diverges in signature |
-| `observe_size` inert on viewless nodes | returns an already-cancelled handle — and `@ui { }` roots are viewless |
-| menu bar accumulates across navigations | `install_menu_bar` appends per window and never removes |
-| `present_window` leaks its tree | `into_raw()` with no matching `from_raw` |
+`touch_points` needs a finger count `magnifyWithEvent:` does not carry,
+and the API that does is answered by a trackpad and not a mouse — a verb
+whose meaning depends on the attached hardware is worse than one that
+says it cannot. `swipe_threshold` needs a distance, and
+`swipeWithEvent:` delivers a discrete ±1 already recognised and
+quantised. The continuous form of that question IS answered, in the
+swipeable strip's own drag, because facet tracks that one itself.
 
-### A correction to my own earlier correction
+They are recorded in the manifest rather than the `cannot-ledger` block,
+because that block is machine-checked against CONTROL verbs and these
+are on `gestures`, which the tool does not census. That is a remaining
+gap in the tool, not in the decision.
 
-I told you `Window.ModalPopping` / `PopCanceled` were implemented via
-`should_close`. That holds for the **primary** window only.
-`push_screen` hardcodes `should_close: default_should_close`
-(`runtime_macos.cplus:593`), which always returns true, and neither
-`Screen` nor `ScreenBox` carries a `should_close` slot. An app **cannot**
-refuse a pushed-screen dismissal — which is the only place
-`ModalPopping` means anything. Guard 5b is green on both rows.
+### Still open in the tool, stated plainly
 
----
+The gate now checks that a field is READ, not merely that its bit is
+named. Two limits remain, both written into its docstring:
+
+- It asks whether SOME body reaching the struct reads the field, not
+  whether the body that GATES the bit does. A reader that exists but is
+  never called still counts. Closing that needs a call graph.
+- `NOT_CONTROLS` still exempts `gestures`, `theme`, `screen`,
+  `application`, `nav`, `services` and `component` from the census, and
+  the 17 shared `C_*` bits with them. Everything in those modules was
+  audited by hand here; nothing yet stops the next one.
 
 ## 4. What was checked and is genuinely fine
 
