@@ -777,3 +777,174 @@ fn tint_spinner(spinner: *u8, c: vocab::Color) {
     { rt::msg_void_id(spinner, rt::sel(#str_ptr("setContentFilters:\0")), arr) };
     return;
 }
+
+// ---- the picker's popover ----------------------------------------------------
+// `DatePicker.IsOpen` and its two edges. The ledger said "a field-with-stepper
+// has no popover to open", which is true of that ONE control and was standing
+// in for the whole question: a graphical NSDatePicker exists, an NSPopover
+// exists, and putting the first inside the second is what every macOS app that
+// offers a calendar does.
+//
+// The field stays the field. The popover is a SECOND picker bound to the same
+// value, so the control an application laid out does not change shape when it
+// gains the ability to open — and a write to `date` still lands in one place.
+//
+// `is_open` is the click path, which is the point: an agent has no hands and
+// cannot reach a calendar by clicking a stepper, but it can write the verb.
+
+fn popover_key() -> *u8 { return { 28780 as *u8 }; }
+fn popover_field_key() -> *u8 { return { 28781 as *u8 }; }
+fn popover_node_key() -> *u8 { return { 28782 as *u8 }; }
+fn popover_opened_key() -> *u8 { return { 28783 as *u8 }; }
+fn popover_closed_key() -> *u8 { return { 28784 as *u8 }; }
+fn popover_owner_key() -> *u8 { return { 28785 as *u8 }; }
+
+// The NODE the popover belongs to, read back by the two edge handlers — which
+// receive the DELEGATE as their sender, so it is the one object both sides
+// already have.
+fn popover_owner_of(delegate: *u8) -> *u8 {
+    return { synth::get_associated(delegate, popover_owner_key()) };
+}
+
+// NSDatePickerStyleClockAndCalendar.
+fn graphical_style() -> u64 { return 1 as u64; }
+// NSPopoverBehaviorTransient — clicking away closes it, which is what makes
+// the close edge reachable without a dismiss verb.
+fn transient() -> i64 { return 1 as i64; }
+// NSRectEdgeMaxY.
+fn edge_below() -> u64 { return 3 as u64; }
+
+#[link_name = "objc_msgSend"]
+extern fn msg_void_rect_id_u64(recv: *u8, sel: *u8, r: rt::Rect, v: *u8, e: u64);
+
+fn popover_of(v: *u8) -> *u8 { return { synth::get_associated(v, popover_key()) }; }
+
+// The graphical picker changed: write it into the FIELD and let the field's own
+// action run. One value, one write-back path — the popover is a second face on
+// the same control, not a second source of truth.
+fn popover_changed(sender: *u8, ctx: *u8) {
+    let field: *u8 = { synth::get_associated(sender, popover_field_key()) };
+    if field == (0 as *u8) { return; }
+    { rt::msg_void_id(field, rt::sel(#str_ptr("setDateValue:\0")),
+                      { rt::msg_id(sender, rt::sel(#str_ptr("dateValue\0"))) }) };
+    let target: *u8 = { rt::msg_id(field, rt::sel(#str_ptr("target\0"))) };
+    let action: *u8 = { rt::msg_id(field, rt::sel(#str_ptr("action\0"))) };
+    if target != (0 as *u8) && action != (0 as *u8) { { rt::msg_void_id(target, action, field) }; }
+    return;
+}
+
+fn popover_shown_imp(self_obj: *u8, cmd: *u8, note: *u8) {
+    fire_popover(self_obj, popover_opened_key());
+    return;
+}
+
+fn popover_closed_imp(self_obj: *u8, cmd: *u8, note: *u8) {
+    // The user dismissed it, so the contract's own `is_open` has to stop
+    // claiming otherwise — the same write-back rule every other read follows.
+    let flag: *u8 = { synth::get_associated(self_obj, popover_node_key()) };
+    if flag != (0 as *u8) { { (*(flag as *bool)) = false }; }
+    fire_popover(self_obj, popover_closed_key());
+    return;
+}
+
+fn fire_popover(delegate: *u8, key: *u8) {
+    let h: fn(*u8, *u8) = { synth::get_associated(delegate, key) as fn(*u8, *u8) };
+    if { h } == (0 as fn(*u8, *u8)) { return; }
+    h(delegate, 0 as *u8);
+    return;
+}
+
+fn popover_delegate_class() -> *u8 {
+    let existing: *u8 = rt::get_class(#str_ptr("FacetPopoverDelegate\0"));
+    if existing != (0 as *u8) { return existing; }
+    let cls: *u8 = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")),
+                                              #str_ptr("FacetPopoverDelegate\0"), 0 as usize);
+    synth::add_method_v_1id(cls, rt::sel(#str_ptr("popoverDidShow:\0")),
+                            popover_shown_imp, #str_ptr("v@:@\0"));
+    synth::add_method_v_1id(cls, rt::sel(#str_ptr("popoverDidClose:\0")),
+                            popover_closed_imp, #str_ptr("v@:@\0"));
+    synth::register_class_pair(cls);
+    return cls;
+}
+
+// Built once, on the first `is_open`. A picker that never opens pays for no
+// second picker and no popover.
+fn picker_popover(field: *u8, elements: u64, min_date: *u8, max_date: *u8) -> *u8 {
+    let existing: *u8 = popover_of(field);
+    if existing != (0 as *u8) { return existing; }
+    let cal: *u8 = { rt::alloc_init(#str_ptr("NSDatePicker\0")) };
+    if cal == (0 as *u8) { return 0 as *u8; }
+    { rt::msg_void_u64(cal, rt::sel(#str_ptr("setDatePickerStyle:\0")), graphical_style()) };
+    { rt::msg_void_u64(cal, rt::sel(#str_ptr("setDatePickerElements:\0")), elements) };
+    { rt::msg_void_id(cal, rt::sel(#str_ptr("setTimeZone:\0")),
+                      { rt::msg_id(field, rt::sel(#str_ptr("timeZone\0"))) }) };
+    if min_date != (0 as *u8) { { rt::msg_void_id(cal, rt::sel(#str_ptr("setMinDate:\0")), min_date) }; }
+    if max_date != (0 as *u8) { { rt::msg_void_id(cal, rt::sel(#str_ptr("setMaxDate:\0")), max_date) }; }
+    { rt::msg_void_rect(cal, rt::sel(#str_ptr("setFrame:\0")),
+                        rt::Rect { x: 0.0f64, y: 0.0f64, w: 160.0f64, h: 150.0f64 }) };
+    { rt::msg_void(cal, rt::sel(#str_ptr("sizeToFit\0"))) };
+    synth::set_associated(cal, popover_field_key(), field);
+    akx::set_control_action_ctx(ak::Control::from_raw(cal), popover_changed, 0 as *u8);
+
+    let vc: *u8 = { rt::alloc_init(#str_ptr("NSViewController\0")) };
+    if vc == (0 as *u8) { return 0 as *u8; }
+    { rt::msg_void_id(vc, rt::sel(#str_ptr("setView:\0")), cal) };
+    let pop: *u8 = { rt::alloc_init(#str_ptr("NSPopover\0")) };
+    if pop == (0 as *u8) { return 0 as *u8; }
+    { rt::msg_void_id(pop, rt::sel(#str_ptr("setContentViewController:\0")), vc) };
+    { rt::msg_void_i64(pop, rt::sel(#str_ptr("setBehavior:\0")), transient()) };
+    let d: *u8 = synth::alloc_init_class(popover_delegate_class());
+    if d != (0 as *u8) {
+        { rt::msg_void_id(pop, rt::sel(#str_ptr("setDelegate:\0")), d) };
+        synth::retain_associated(field, popover_key(), pop);
+        synth::retain_associated(pop, popover_key(), d);
+        rt::release(d);
+    }
+    rt::release(vc);
+    return pop;
+}
+
+// The whole band. `open` is a COMMAND-shaped write — true opens, false closes —
+// and the two handlers ride the popover's own edges.
+fn apply_picker_popover(field: *u8, open: bool, elements: u64,
+                        min_date: *u8, max_date: *u8, flag: *bool, owner: *u8,
+                        on_opened: fn(*u8, *u8), on_closed: fn(*u8, *u8)) {
+    if field == (0 as *u8) { return; }
+    if !open {
+        let pop: *u8 = popover_of(field);
+        if pop != (0 as *u8) { { rt::msg_void(pop, rt::sel(#str_ptr("close\0"))) }; }
+        return;
+    }
+    // A popover anchors to a view that is ON a window, and AppKit RAISES when
+    // it is not. A picker whose `is_open` is written before it is mounted is an
+    // ordinary sequencing accident, not a reason to abort the process.
+    if { rt::msg_id(field, rt::sel(#str_ptr("window\0"))) } == (0 as *u8) { return; }
+    let pop: *u8 = picker_popover(field, elements, min_date, max_date);
+    if pop == (0 as *u8) { return; }
+    let d: *u8 = { rt::msg_id(pop, rt::sel(#str_ptr("delegate\0"))) };
+    if d != (0 as *u8) {
+        synth::set_associated(d, popover_node_key(), flag as *u8);
+        synth::set_associated(d, popover_owner_key(), owner);
+        synth::set_associated(d, popover_opened_key(), { on_opened as *u8 });
+        synth::set_associated(d, popover_closed_key(), { on_closed as *u8 });
+    }
+    // The calendar shows what the field shows, every time it opens.
+    let vc: *u8 = { rt::msg_id(pop, rt::sel(#str_ptr("contentViewController\0"))) };
+    if vc != (0 as *u8) {
+        let cal: *u8 = { rt::msg_id(vc, rt::sel(#str_ptr("view\0"))) };
+        if cal != (0 as *u8) {
+            { rt::msg_void_id(cal, rt::sel(#str_ptr("setDateValue:\0")),
+                              { rt::msg_id(field, rt::sel(#str_ptr("dateValue\0"))) }) };
+        }
+    }
+    { msg_void_rect_id_u64(pop, rt::sel(#str_ptr("showRelativeToRect:ofView:preferredEdge:\0")),
+                           { rt::msg_rect(field, rt::sel(#str_ptr("bounds\0"))) },
+                           field, edge_below()) };
+    return;
+}
+
+fn picker_is_open(field: *u8) -> bool {
+    let pop: *u8 = popover_of(field);
+    if pop == (0 as *u8) { return false; }
+    return { rt::msg_i8(pop, rt::sel(#str_ptr("isShown\0"))) } != (0 as i8);
+}

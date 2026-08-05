@@ -111,12 +111,6 @@ date_picker.font_scales         as label.font_scales
 time_picker.font_scales         as label.font_scales
 date_picker.character_spacing   NSDatePicker draws its own fields; no attributed value
 time_picker.character_spacing   as date_picker.character_spacing
-date_picker.is_open             a field-with-stepper has no popover to open
-time_picker.is_open             as date_picker.is_open
-date_picker.on_opened           as date_picker.is_open
-date_picker.on_closed           as date_picker.is_open
-time_picker.on_opened           as date_picker.is_open
-time_picker.on_closed           as date_picker.is_open
 carousel.is_swipeable           swipe between pages is a touch idiom
 carousel.wraps                  an infinite carousel needs the touch paging it wraps
 collection.can_reorder_items    drag-reorder needs NSCollectionView's own drag session

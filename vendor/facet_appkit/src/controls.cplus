@@ -1892,6 +1892,47 @@ fn pin_picker_to_utc(dp: ak::DatePicker) {
 
 // ---- date_picker -------------------------------------------------------------
 
+// The popover's two edges. They reach the node through the picker's own view,
+// which the delegate has because the popover is anchored to it — no second
+// association, and nothing to keep in step with the node's lifetime.
+// `sender` is the popover's DELEGATE, which is the one object both sides
+// already have — so the node rides it rather than a static, and two pickers
+// open at once stay told apart.
+fn picker_owner(sender: *u8) -> *core::Node {
+    return { compose::popover_owner_of(sender) as *core::Node };
+}
+
+fn date_opened(sender: *u8, ctx: *u8) { fire_picker(picker_owner(sender), props::K_DATE_PICKER, true); return; }
+fn date_closed(sender: *u8, ctx: *u8) { fire_picker(picker_owner(sender), props::K_DATE_PICKER, false); return; }
+fn time_opened(sender: *u8, ctx: *u8) { fire_picker(picker_owner(sender), props::K_TIME_PICKER, true); return; }
+fn time_closed(sender: *u8, ctx: *u8) { fire_picker(picker_owner(sender), props::K_TIME_PICKER, false); return; }
+
+fn fire_picker(n: *core::Node, kind: u32, opened: bool) {
+    if n == (0 as *core::Node) { return; }
+    if kind == props::K_DATE_PICKER {
+        let p: *props::DatePickerProps = props_of(n, kind) as *props::DatePickerProps;
+        if p == (0 as *props::DatePickerProps) { return; }
+        if opened {
+            let h: fn(*u8, *u8) = { (*p).on_opened };
+            if h != props::no_handler { h(core::view_of(n), { (*p).on_opened_ctx }); }
+        } else {
+            let h: fn(*u8, *u8) = { (*p).on_closed };
+            if h != props::no_handler { h(core::view_of(n), { (*p).on_closed_ctx }); }
+        }
+        return;
+    }
+    let p: *props::TimePickerProps = props_of(n, kind) as *props::TimePickerProps;
+    if p == (0 as *props::TimePickerProps) { return; }
+    if opened {
+        let h: fn(*u8, *u8) = { (*p).on_opened };
+        if h != props::no_handler { h(core::view_of(n), { (*p).on_opened_ctx }); }
+    } else {
+        let h: fn(*u8, *u8) = { (*p).on_closed };
+        if h != props::no_handler { h(core::view_of(n), { (*p).on_closed_ctx }); }
+    }
+    return;
+}
+
 fn create_date_picker(n: *core::Node) -> *u8 {
     let dp: ak::DatePicker = ak::DatePicker::from_raw(rt::alloc_init(#str_ptr("NSDatePicker\0")));
     dp.set_date_picker_style(ak::DatePickerStyle::TextFieldAndStepper);
@@ -1934,6 +1975,16 @@ fn apply_date_picker(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & date_picker::P_FORMAT) != (0 as u64) {
         let f: str = { (*p).format.view() };
         if f != "" { dp.set_date_picker_elements(date_elements(f)); }
+    }
+    // `is_open` — a calendar in a popover, bound to the same value. The field
+    // stays the field: the popover is a SECOND face on one control, so a write
+    // to `date` still lands in one place.
+    if (dirty & date_picker::P_IS_OPEN) != (0 as u64) && dirty != paint::all_bits() {
+        let o: fn(*u8, *u8) = date_opened;
+        let c: fn(*u8, *u8) = date_closed;
+        compose::apply_picker_popover(v, { (*p).is_open }, date_elements({ (*p).format.view() }),
+                                      ns_date({ (*p).minimum_date }), ns_date({ (*p).maximum_date }),
+                                      #addr_of((*p).is_open), n as *u8, o, c);
     }
     if (dirty & date_picker::P_TEXT_COLOR) != (0 as u64) {
         let c: vocab::Color = { (*p).text_color };
@@ -1994,6 +2045,12 @@ fn apply_time_picker(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & time_picker::P_FORMAT) != (0 as u64) {
         let f: str = { (*p).format.view() };
         if f != "" { dp.set_date_picker_elements(time_elements(f)); }
+    }
+    if (dirty & time_picker::P_IS_OPEN) != (0 as u64) && dirty != paint::all_bits() {
+        let o: fn(*u8, *u8) = time_opened;
+        let c: fn(*u8, *u8) = time_closed;
+        compose::apply_picker_popover(v, { (*p).is_open }, time_elements({ (*p).format.view() }),
+                                      0 as *u8, 0 as *u8, #addr_of((*p).is_open), n as *u8, o, c);
     }
     if (dirty & time_picker::P_TEXT_COLOR) != (0 as u64) {
         let c: vocab::Color = { (*p).text_color };

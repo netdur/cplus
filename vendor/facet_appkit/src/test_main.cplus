@@ -4624,3 +4624,169 @@ fn a_swipes_edges_are_the_menus_edges() {
     assert SWIPE_ENDS == (1 as i64);
     return;
 }
+
+// ---- the picker's popover ----------------------------------------------------
+// "A field-with-stepper has no popover to open" is true of that ONE control and
+// was standing in for the whole question: a graphical NSDatePicker exists, an
+// NSPopover exists, and putting the first inside the second is what every
+// macOS app that offers a calendar does.
+
+static PICKER_OPENS: i64 = 0 as i64;
+static PICKER_CLOSES: i64 = 0 as i64;
+fn pk_opened(sender: *u8, ctx: *u8) { PICKER_OPENS = PICKER_OPENS + (1 as i64); return; }
+fn pk_closed(sender: *u8, ctx: *u8) { PICKER_CLOSES = PICKER_CLOSES + (1 as i64); return; }
+
+#[test]
+fn a_date_picker_that_never_opens_builds_no_popover() {
+    backend::install();
+    var n: core::Node = date_picker::date_picker(vocab::Date { year: 2026 as i64, month: 1 as i64, day: 1 as i64 },
+                                                 key: "dpc");
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    assert compose::popover_of(v) == (0 as *u8);
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn opening_a_date_picker_shows_a_calendar_bound_to_the_same_value() {
+    backend::install();
+    PICKER_OPENS = 0 as i64;
+    PICKER_CLOSES = 0 as i64;
+    let o: fn(*u8, *u8) = pk_opened;
+    let c: fn(*u8, *u8) = pk_closed;
+    var n: core::Node = date_picker::date_picker(vocab::Date { year: 2026 as i64, month: 8 as i64, day: 5 as i64 },
+                                                 key: "dpo", on_opened: o, on_closed: c);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    // A real window, because a popover anchors to a view that is ON one — and
+    // AppKit raises rather than declining when it is not.
+    let w: ak::Window = window::make_shell_window(screen::Chrome::new(
+        title: "picker", width: 300.0f64, height: 200.0f64));
+    match w.content_view() {
+        option::Option[ak::View]::Some(cv) => { cv.add_subview(ak::View::from_raw(v)); }
+        option::Option[ak::View]::None => { assert false; }
+    }
+    // On screen: a popover does not show relative to a view in a window that
+    // has never been displayed, and `isShown` is how it says so.
+    w.make_key_and_order_front(0 as *u8);
+    { rt::msg_void_rect(v, rt::sel(#str_ptr("setFrame:\0")),
+                        rt::Rect { x: 0.0f64, y: 0.0f64, w: 140.0f64, h: 24.0f64 }) };
+    core::clear_dirty(p);
+    match date_picker::find("dpo", within: p) {
+        option::Option[date_picker::DatePicker]::Some(h) => { let _x: date_picker::DatePicker = h.set_open(true); }
+        option::Option[date_picker::DatePicker]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    let pop: *u8 = compose::popover_of(v);
+    assert pop != (0 as *u8);
+    assert compose::picker_is_open(v);
+    // The EDGES are asserted by messaging the delegate, not by waiting: AppKit
+    // delivers popoverDidShow: after its own animation, and a test that spun
+    // the run loop would be asserting Apple's timing rather than our wiring.
+    let d: *u8 = { rt::msg_id(pop, rt::sel(#str_ptr("delegate\0"))) };
+    assert d != (0 as *u8);
+    { rt::msg_void_id(d, rt::sel(#str_ptr("popoverDidShow:\0")), 0 as *u8) };
+    assert PICKER_OPENS == (1 as i64);
+    // The calendar shows what the field shows.
+    let vc: *u8 = { rt::msg_id(pop, rt::sel(#str_ptr("contentViewController\0"))) };
+    let cal: *u8 = { rt::msg_id(vc, rt::sel(#str_ptr("view\0"))) };
+    assert { rt::msg_i8_id(cal, rt::sel(#str_ptr("isKindOfClass:\0")),
+                           rt::get_class(#str_ptr("NSDatePicker\0"))) } != (0 as i8);
+    assert { rt::msg_u64(cal, rt::sel(#str_ptr("datePickerStyle\0"))) } == (1 as u64);
+    // And it is showing the SAME date, not its own default.
+    let a: f64 = { rt::msg_f64({ rt::msg_id(cal, rt::sel(#str_ptr("dateValue\0"))) },
+                               rt::sel(#str_ptr("timeIntervalSince1970\0"))) };
+    let b: f64 = { rt::msg_f64({ rt::msg_id(v, rt::sel(#str_ptr("dateValue\0"))) },
+                               rt::sel(#str_ptr("timeIntervalSince1970\0"))) };
+    assert a == b;
+
+    // Closing it fires the other edge and stops `is_open` claiming otherwise.
+    core::clear_dirty(p);
+    match date_picker::find("dpo", within: p) {
+        option::Option[date_picker::DatePicker]::Some(h) => { let _x: date_picker::DatePicker = h.set_open(false); }
+        option::Option[date_picker::DatePicker]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    // NOT `isShown == false` here: AppKit animates a popover closed and only
+    // clears the flag when the animation ends, so asserting it would be
+    // asserting Apple's timing. What is ours is that the close was ISSUED and
+    // that the edge writes the contract back.
+    { rt::msg_void_id(d, rt::sel(#str_ptr("popoverDidClose:\0")), 0 as *u8) };
+    assert PICKER_CLOSES == (1 as i64);
+    // And the close writes `is_open` back, so a user dismissal does not leave
+    // the contract claiming it is still open.
+    match date_picker::find("dpo", within: p) {
+        option::Option[date_picker::DatePicker]::Some(h) => { assert h.is_open() == false; }
+        option::Option[date_picker::DatePicker]::None => { assert false; }
+    }
+    w.close();
+    return;
+}
+
+#[test]
+fn the_calendar_writes_its_pick_through_the_field() {
+    // One value, one write-back path: the popover is a second FACE on the same
+    // control, not a second source of truth.
+    backend::install();
+    var n: core::Node = date_picker::date_picker(vocab::Date { year: 2026 as i64, month: 8 as i64, day: 5 as i64 },
+                                                 key: "dpw");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    let w: ak::Window = window::make_shell_window(screen::Chrome::new(
+        title: "picker2", width: 300.0f64, height: 200.0f64));
+    match w.content_view() {
+        option::Option[ak::View]::Some(cv) => { cv.add_subview(ak::View::from_raw(v)); }
+        option::Option[ak::View]::None => { assert false; }
+    }
+    core::clear_dirty(p);
+    match date_picker::find("dpw", within: p) {
+        option::Option[date_picker::DatePicker]::Some(h) => { let _x: date_picker::DatePicker = h.set_open(true); }
+        option::Option[date_picker::DatePicker]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    let pop: *u8 = compose::popover_of(v);
+    assert pop != (0 as *u8);
+    let vc: *u8 = { rt::msg_id(pop, rt::sel(#str_ptr("contentViewController\0"))) };
+    let cal: *u8 = { rt::msg_id(vc, rt::sel(#str_ptr("view\0"))) };
+    // The user picks a different day in the calendar.
+    let want: vocab::Date = vocab::Date { year: 2026 as i64, month: 12 as i64, day: 25 as i64 };
+    { rt::msg_void_id(cal, rt::sel(#str_ptr("setDateValue:\0")), controls::ns_date(want)) };
+    send_action(cal);
+    match date_picker::find("dpw", within: p) {
+        option::Option[date_picker::DatePicker]::Some(h) => {
+            let got: vocab::Date = h.date();
+            assert got.year == (2026 as i64);
+            assert got.month == (12 as i64);
+            assert got.day == (25 as i64);
+        }
+        option::Option[date_picker::DatePicker]::None => { assert false; }
+    }
+    w.close();
+    return;
+}
+
+#[test]
+fn a_time_picker_opens_a_clock() {
+    backend::install();
+    var n: core::Node = time_picker::time_picker(vocab::Duration { seconds: 3600.0f64 }, key: "tpo");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    let w: ak::Window = window::make_shell_window(screen::Chrome::new(
+        title: "picker3", width: 300.0f64, height: 200.0f64));
+    match w.content_view() {
+        option::Option[ak::View]::Some(cv) => { cv.add_subview(ak::View::from_raw(v)); }
+        option::Option[ak::View]::None => { assert false; }
+    }
+    core::clear_dirty(p);
+    match time_picker::find("tpo", within: p) {
+        option::Option[time_picker::TimePicker]::Some(h) => { let _x: time_picker::TimePicker = h.set_open(true); }
+        option::Option[time_picker::TimePicker]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    assert compose::popover_of(v) != (0 as *u8);
+    w.close();
+    return;
+}
