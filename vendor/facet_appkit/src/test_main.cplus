@@ -7619,3 +7619,51 @@ fn z_index_orders_siblings_back_to_front() {
     app::reset_default_for_tests();
     return;
 }
+
+static MV_ENABLED: bool = false;
+fn mv_enabled(ctx: *u8) -> bool { return MV_ENABLED; }
+fn mv_title(ctx: *u8) -> text::Text { return text::from_str("Close \"main.cplus\""); }
+fn mv_click(sender: *u8, ctx: *u8) { return; }
+
+#[test]
+fn a_menu_item_greys_itself_out_and_renames_itself() {
+    // Both verbs are documented with these exact examples and neither was ever
+    // read — there was no validateMenuItem: anywhere in the backend.
+    backend::install();
+    var it: screen::MenuItem = screen::MenuItem::new("File", "Close", key: "w",
+        on_click: mv_click, is_enabled: mv_enabled, title_of: mv_title);
+    let item: *u8 = window::new_menu_item(#addr_of(it));
+    assert item != (0 as *u8);
+    let target: *u8 = { rt::msg_id(item, rt::sel(#str_ptr("target\0"))) };
+    assert target != (0 as *u8);
+
+    MV_ENABLED = false;
+    let off: i8 = { rt::msg_i8_id(target, rt::sel(#str_ptr("validateMenuItem:\0")), item) };
+    assert off == (0 as i8);
+    MV_ENABLED = true;
+    let on: i8 = { rt::msg_i8_id(target, rt::sel(#str_ptr("validateMenuItem:\0")), item) };
+    assert on != (0 as i8);
+    // ...and the title the item now carries came from `title_of`.
+    let t: *u8 = { rt::msg_id(item, rt::sel(#str_ptr("title\0"))) };
+    assert { rt::msg_u64(t, rt::sel(#str_ptr("length\0"))) } > (5 as u64);
+    return;
+}
+
+#[test]
+fn the_find_family_carries_the_tag_that_selects_the_operation() {
+    // performTextFinderAction: dispatches on [sender tag]; three of the four
+    // had no selector at all and the fourth had no tag, so all four were dead.
+    backend::install();
+    var nxt: screen::MenuItem = screen::MenuItem::new("Edit", "Find Next", key: "g",
+                                                     action: screen::menu_action_find_next());
+    let a: *u8 = window::new_menu_item(#addr_of(nxt));
+    assert a != (0 as *u8);
+    assert { rt::msg_i64(a, rt::sel(#str_ptr("tag\0"))) } == (2 as i64);
+    assert { rt::msg_id(a, rt::sel(#str_ptr("action\0"))) } != (0 as *u8);
+
+    var rep: screen::MenuItem = screen::MenuItem::new("Edit", "Replace", key: "f",
+                                                      action: screen::menu_action_find_replace());
+    let b: *u8 = window::new_menu_item(#addr_of(rep));
+    assert { rt::msg_i64(b, rt::sel(#str_ptr("tag\0"))) } == (12 as i64);
+    return;
+}
