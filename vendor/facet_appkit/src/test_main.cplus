@@ -7399,3 +7399,18 @@ fn a_clip_shape_becomes_the_layers_mask() {
     assert { rt::msg_id(view.layer().raw(), rt::sel(#str_ptr("mask\0"))) } == (0 as *u8);
     return;
 }
+
+#[test]
+fn the_async_pump_is_installed_with_the_backend() {
+    // `spawn_ui`'s wake source. Without it a UI task runs to its first
+    // suspension and parks forever: services.cplus says "the backend calls
+    // pump_async whenever the reactor's kqueue reads ready", and no file in
+    // this package mentioned the reactor until this landed.
+    backend::install();
+    assert scheduler::async_pump_installed();
+    // Idempotent — a facade doing belt-and-braces registration must not add a
+    // second dispatch source on the same fd.
+    backend::install();
+    assert scheduler::async_pump_installed();
+    return;
+}

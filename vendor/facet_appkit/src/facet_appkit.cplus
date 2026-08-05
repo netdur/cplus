@@ -68,6 +68,9 @@ fn install() {
     theme::set_is_dark_fn(window::is_dark);
     theme::set_theme_changed_fn(theme_changed);
     scheduler::install_sync_tick();
+    // The reactor's wake source. Without it a `spawn_ui` task runs to its
+    // first suspension and is never polled again — see scheduler.cplus.
+    scheduler::install_async_pump();
     return;
 }
 

@@ -262,6 +262,51 @@ fn run_on_main(work: fn(*u8), ctx: *u8) {
     return;
 }
 
+// ---- the async pump — `spawn_ui`'s wake source -------------------------------
+//
+// Without this, a UI task runs to its FIRST suspension and is never polled
+// again: `spawn_ui` does one `run_on_main(pump_async)` hop, and a task that
+// then parks on a timer or an fd has nothing left to wake it. Every
+// `spawn_ui` that awaited anything real was parked for the life of the
+// process, and `run_on_worker` — which awaits `net::read_fd_async` — never
+// returned at all.
+//
+// services.cplus says plainly "The backend calls this whenever the reactor's
+// kqueue reads ready", and no file in this package mentioned the reactor. The
+// pre-regen backend had it (`git show eb5b1b7:.../facet_appkit.cplus:1611`)
+// and it was not ported.
+//
+// The mechanism: the stdlib reactor parks suspended coroutines and wakes them
+// off a kqueue, and a kqueue fd itself READS AS READY when it holds events. So
+// a dispatch read source on that fd, on the main queue, makes the AppKit run
+// loop the executor — a timer or fd firing inside the reactor runs
+// `pump_async` on the main thread, which resumes everything that can progress.
+extern fn dispatch_source_create(type_: *u8, handle: u64, mask: u64, queue: *u8) -> *u8;
+extern fn dispatch_source_set_event_handler_f(source: *u8, handler: fn(*u8));
+extern fn dispatch_resume(obj: *u8);
+extern fn stdlib_reactor_kqfd_v1() -> i32;
+
+static ASYNC_PUMP_SOURCE: *u8 = #zero::[*u8]();
+
+fn install_async_pump() {
+    if ASYNC_PUMP_SOURCE != (0 as *u8) { return; }
+    // `_dispatch_source_type_read` is a libdispatch global, not a function —
+    // the same dlsym shape `main_dispatch_queue` needs and for the same reason.
+    let rtld_default: *u8 = { ((0 as usize) -% (2 as usize)) as *u8 };
+    let read_type: *u8 = { dlsym(rtld_default, #str_ptr("_dispatch_source_type_read\0")) };
+    if read_type == (0 as *u8) { return; }
+    let kq: i32 = { stdlib_reactor_kqfd_v1() };
+    if kq < (0 as i32) { return; }
+    let src: *u8 = { dispatch_source_create(read_type, kq as u64, 0 as u64, main_dispatch_queue()) };
+    if src == (0 as *u8) { return; }
+    { dispatch_source_set_event_handler_f(src, services::pump_async) };
+    { dispatch_resume(src) };
+    ASYNC_PUMP_SOURCE = src;
+    return;
+}
+
+fn async_pump_installed() -> bool { return ASYNC_PUMP_SOURCE != (0 as *u8); }
+
 // ---- observe_size ------------------------------------------------------------
 // The event half of element geometry: fire on the UI thread after every resize
 // of this element — divider drag, window resize, relayout.
