@@ -485,6 +485,74 @@ fn document_host(v: *u8) -> *u8 {
 // NSControl's state is a tri-state i64 (off 0, on 1, mixed -1). facet's
 // controls are all two-state, so the conversion is one place rather than five.
 
+// ---- the reads that go stale -------------------------------------------------
+// A contract READ answers from the props, and the props are only ever written
+// by the application — so a control the USER changed answered with whatever
+// was last written to it. `radio.on` was written back (the group logic needed
+// it) and the text controls were (the delegate needed it) and `slider.value`
+// was; every other control that a user can change was not.
+//
+// It is the same shape as `web.can_go_back` and `carousel.position`: the truth
+// lives in the platform, so the platform's answer is written into the props
+// BEFORE the handler runs. Then a handler that asks `checkbox.on()` gets the
+// state that caused it rather than the state before it.
+//
+// One trampoline per shape, each ending in the application's own handler.
+
+// NSSwitch and NSButton are different classes with the same `state`, so this
+// asks the runtime rather than a wrapper — a toggle is not a button.
+fn sync_bool_state(sender: *u8, p: *bool) {
+    { (*p) = { rt::msg_i64(sender, rt::sel(#str_ptr("state\0"))) } == state_on() };
+    return;
+}
+
+fn checkbox_action(sender: *u8, ctx: *u8) {
+    let n: *core::Node = ctx as *core::Node;
+    let p: *props::CheckboxProps = props_of(n, props::K_CHECKBOX) as *props::CheckboxProps;
+    if p == (0 as *props::CheckboxProps) { return; }
+    sync_bool_state(sender, #addr_of((*p).on));
+    let h: fn(*u8, *u8) = { (*p).on_checked_changed };
+    if h != props::no_handler { h(sender, { (*p).on_checked_changed_ctx }); }
+    return;
+}
+
+fn toggle_action(sender: *u8, ctx: *u8) {
+    let n: *core::Node = ctx as *core::Node;
+    let p: *props::ToggleProps = props_of(n, props::K_TOGGLE) as *props::ToggleProps;
+    if p == (0 as *props::ToggleProps) { return; }
+    sync_bool_state(sender, #addr_of((*p).on));
+    let h: fn(*u8, *u8) = { (*p).on_toggled };
+    if h != props::no_handler { h(sender, { (*p).on_toggled_ctx }); }
+    return;
+}
+
+fn stepper_action(sender: *u8, ctx: *u8) {
+    let n: *core::Node = ctx as *core::Node;
+    let p: *props::StepperProps = props_of(n, props::K_STEPPER) as *props::StepperProps;
+    if p == (0 as *props::StepperProps) { return; }
+    { (*p).value = ak::Control::from_raw(sender).double_value() };
+    let h: fn(*u8, *u8) = { (*p).on_value_changed };
+    if h != props::no_handler { h(sender, { (*p).on_value_changed_ctx }); }
+    return;
+}
+
+// The prompt took row 0, so the native index is one ahead of the
+// application's — the same offset `apply_popup` adds on the way in, subtracted
+// on the way out. A popup showing its prompt reads back -1: nothing chosen.
+fn popup_action(sender: *u8, ctx: *u8) {
+    let n: *core::Node = ctx as *core::Node;
+    let p: *props::PopupProps = props_of(n, props::K_POPUP) as *props::PopupProps;
+    if p == (0 as *props::PopupProps) { return; }
+    let offset: i64 = compose::title_offset({ (*p).title.view() });
+    let raw: i64 = ak::PopUpButton::from_raw(sender).index_of_selected_item();
+    var idx: i64 = raw -% offset;
+    if raw < (0 as i64) { idx = -1 as i64; }
+    { (*p).selected_index = idx };
+    let h: fn(*u8, *u8) = { (*p).on_selected_index_changed };
+    if h != props::no_handler { h(sender, { (*p).on_selected_index_changed_ctx }); }
+    return;
+}
+
 fn state_on() -> i64 { return 1 as i64; }
 fn state_off() -> i64 { return 0 as i64; }
 fn state_of(on: bool) -> i64 { if on { return state_on(); } return state_off(); }
@@ -651,7 +719,11 @@ fn apply_checkbox(v: *u8, n: *core::Node, dirty: u64) {
     let b: ak::Button = ak::Button::from_raw(v);
     if (dirty & checkbox::P_ON) != (0 as u64) { b.set_state(state_of({ (*p).on })); }
     if (dirty & props::C_HANDLERS) != (0 as u64) || dirty == paint::all_bits() {
-        akx::set_control_action_ctx(b.as_control(), { (*p).on_checked_changed }, { (*p).on_checked_changed_ctx });
+        // Through the trampoline, always — the write-back is not conditional on
+        // the application having a handler. `checkbox.on()` has to be true
+        // whether or not anyone asked to be told.
+        let f: fn(*u8, *u8) = checkbox_action;
+        akx::set_control_action_ctx(b.as_control(), f, n as *u8);
     }
     if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
         b.as_control().set_enabled(core::is_enabled(n));
@@ -788,7 +860,8 @@ fn apply_toggle(v: *u8, n: *core::Node, dirty: u64) {
     let s: ak::Switch = ak::Switch::from_raw(v);
     if (dirty & toggle::P_ON) != (0 as u64) { s.set_state(state_of({ (*p).on })); }
     if (dirty & props::C_HANDLERS) != (0 as u64) || dirty == paint::all_bits() {
-        akx::set_control_action_ctx(s.as_control(), { (*p).on_toggled }, { (*p).on_toggled_ctx });
+        let f: fn(*u8, *u8) = toggle_action;
+        akx::set_control_action_ctx(s.as_control(), f, n as *u8);
     }
     if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
         s.as_control().set_enabled(core::is_enabled(n));
@@ -944,7 +1017,8 @@ fn apply_stepper(v: *u8, n: *core::Node, dirty: u64) {
         s.as_control().set_double_value({ (*p).value });
     }
     if (dirty & props::C_HANDLERS) != (0 as u64) || dirty == paint::all_bits() {
-        akx::set_control_action_ctx(s.as_control(), { (*p).on_value_changed }, { (*p).on_value_changed_ctx });
+        let f: fn(*u8, *u8) = stepper_action;
+        akx::set_control_action_ctx(s.as_control(), f, n as *u8);
     }
     if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
         s.as_control().set_enabled(core::is_enabled(n));
@@ -1270,7 +1344,8 @@ fn apply_popup(v: *u8, n: *core::Node, dirty: u64) {
         if { (*p).is_open } { b.as_control().perform_click(0 as *u8); }
     }
     if (dirty & props::C_HANDLERS) != (0 as u64) || dirty == paint::all_bits() {
-        akx::set_control_action_ctx(b.as_control(), { (*p).on_selected_index_changed }, { (*p).on_selected_index_changed_ctx });
+        let f: fn(*u8, *u8) = popup_action;
+        akx::set_control_action_ctx(b.as_control(), f, n as *u8);
     }
     if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
         b.as_control().set_enabled(core::is_enabled(n));
@@ -1723,6 +1798,64 @@ fn days_from_civil(y_in: i64, m: i64, d: i64) -> i64 {
     return era * (146097 as i64) +% doe -% (719468 as i64);
 }
 
+// The inverse, for the write-back: a picker's own date, back into facet's.
+// Howard Hinnant's civil_from_days, the pair of the one above — and the pair
+// matters, because a date read back through a different calendar than it was
+// written with drifts by a day at the year boundary.
+fn civil_from_days(z_in: i64) -> vocab::Date {
+    let z: i64 = z_in +% (719468 as i64);
+    var era: i64 = z / (146097 as i64);
+    if z < (0 as i64) { era = (z -% (146096 as i64)) / (146097 as i64); }
+    let doe: i64 = z -% era * (146097 as i64);
+    let yoe: i64 = (doe -% doe / (1460 as i64) +% doe / (36524 as i64)
+                    -% doe / (146096 as i64)) / (365 as i64);
+    let y: i64 = yoe +% era * (400 as i64);
+    let doy: i64 = doe -% ((365 as i64) * yoe +% yoe / (4 as i64) -% yoe / (100 as i64));
+    let mp: i64 = ((5 as i64) * doy +% (2 as i64)) / (153 as i64);
+    let d: i64 = doy -% ((153 as i64) * mp +% (2 as i64)) / (5 as i64) +% (1 as i64);
+    var m: i64 = mp -% (9 as i64);
+    if mp < (10 as i64) { m = mp +% (3 as i64); }
+    var year: i64 = y;
+    if m <= (2 as i64) { year = y +% (1 as i64); }
+    return vocab::Date { year: year, month: m, day: d };
+}
+
+fn floor_div_day(secs: f64) -> f64 {
+    var days: f64 = secs / seconds_per_day();
+    let t: f64 = days as i64 as f64;
+    if days < t { days = t - 1.0f64; } else { days = t; }
+    return days;
+}
+
+fn picker_seconds(sender: *u8) -> f64 {
+    let d: *u8 = { rt::msg_id(sender, rt::sel(#str_ptr("dateValue\0"))) };
+    if d == (0 as *u8) { return 0.0f64; }
+    return { rt::msg_f64(d, rt::sel(#str_ptr("timeIntervalSince1970\0"))) };
+}
+
+fn date_picker_action(sender: *u8, ctx: *u8) {
+    let n: *core::Node = ctx as *core::Node;
+    let p: *props::DatePickerProps = props_of(n, props::K_DATE_PICKER) as *props::DatePickerProps;
+    if p == (0 as *props::DatePickerProps) { return; }
+    { (*p).date = civil_from_days(floor_div_day(picker_seconds(sender)) as i64) };
+    let h: fn(*u8, *u8) = { (*p).on_date_selected };
+    if h != props::no_handler { h(sender, { (*p).on_date_selected_ctx }); }
+    return;
+}
+
+// A time of day is an OFFSET into a day, which is the reading that needs no
+// calendar — so the whole days come off and what is left is the time.
+fn time_picker_action(sender: *u8, ctx: *u8) {
+    let n: *core::Node = ctx as *core::Node;
+    let p: *props::TimePickerProps = props_of(n, props::K_TIME_PICKER) as *props::TimePickerProps;
+    if p == (0 as *props::TimePickerProps) { return; }
+    let secs: f64 = picker_seconds(sender);
+    { (*p).time = vocab::Duration { seconds: secs - floor_div_day(secs) * seconds_per_day() } };
+    let h: fn(*u8, *u8) = { (*p).on_time_selected };
+    if h != props::no_handler { h(sender, { (*p).on_time_selected_ctx }); }
+    return;
+}
+
 // An NSDate at UTC midnight on that civil date. A zeroed Date (year 0) means
 // "unset", and answers a null NSDate so a caller can leave the picker alone.
 fn ns_date(d: vocab::Date) -> *u8 {
@@ -1806,7 +1939,8 @@ fn apply_date_picker(v: *u8, n: *core::Node, dirty: u64) {
         if c.is_set() { dp.set_text_color(paint::ns_color(c)); }
     }
     if (dirty & props::C_HANDLERS) != (0 as u64) || dirty == paint::all_bits() {
-        akx::set_control_action_ctx(dp.as_control(), { (*p).on_date_selected }, { (*p).on_date_selected_ctx });
+        let f: fn(*u8, *u8) = date_picker_action;
+        akx::set_control_action_ctx(dp.as_control(), f, n as *u8);
     }
     if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
         dp.as_control().set_enabled(core::is_enabled(n));
@@ -1865,7 +1999,8 @@ fn apply_time_picker(v: *u8, n: *core::Node, dirty: u64) {
         if c.is_set() { dp.set_text_color(paint::ns_color(c)); }
     }
     if (dirty & props::C_HANDLERS) != (0 as u64) || dirty == paint::all_bits() {
-        akx::set_control_action_ctx(dp.as_control(), { (*p).on_time_selected }, { (*p).on_time_selected_ctx });
+        let f: fn(*u8, *u8) = time_picker_action;
+        akx::set_control_action_ctx(dp.as_control(), f, n as *u8);
     }
     if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
         dp.as_control().set_enabled(core::is_enabled(n));

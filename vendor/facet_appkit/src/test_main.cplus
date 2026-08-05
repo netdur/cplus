@@ -4238,3 +4238,168 @@ fn a_popup_asked_to_sit_at_the_top_moves_its_title() {
     views::view_release(tv);
     return;
 }
+
+// ---- the reads that went stale -----------------------------------------------
+// A contract READ answers from the props, and the props were only ever written
+// by the application — so a control the USER changed answered with the value
+// before the change. `radio.on`, the text controls and `slider.value` were
+// written back because something else needed it; the rest were not.
+
+#[test]
+fn a_checkbox_the_user_ticked_reads_back_ticked() {
+    backend::install();
+    var n: core::Node = checkbox::checkbox(false, key: "ck");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    match checkbox::find("ck", within: p) {
+        option::Option[checkbox::Checkbox]::Some(h) => { assert h.on() == false; }
+        option::Option[checkbox::Checkbox]::None => { assert false; }
+    }
+    // The user's tick: AppKit flips the state and THEN sends the action, so
+    // that is what the test does. `performClick:` would flip it a second time.
+    { rt::msg_void_i64(v, rt::sel(#str_ptr("setState:\0")), 1 as i64) };
+    send_action(v);
+    match checkbox::find("ck", within: p) {
+        option::Option[checkbox::Checkbox]::Some(h) => { assert h.on(); }
+        option::Option[checkbox::Checkbox]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn a_toggle_the_user_flipped_reads_back_flipped() {
+    backend::install();
+    var n: core::Node = toggle::toggle(false, key: "tg");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    { rt::msg_void_i64(v, rt::sel(#str_ptr("setState:\0")), 1 as i64) };
+    send_action(v);
+    match toggle::find("tg", within: p) {
+        option::Option[toggle::Toggle]::Some(h) => { assert h.on(); }
+        option::Option[toggle::Toggle]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn a_stepper_the_user_moved_reads_back_moved() {
+    backend::install();
+    var n: core::Node = stepper::stepper(0.0f64, key: "st", maximum: 10.0f64);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    { msg_void_f64_ctrl(v, rt::sel(#str_ptr("setDoubleValue:\0")), 3.0f64) };
+    send_action(v);
+    match stepper::find("st", within: p) {
+        option::Option[stepper::Stepper]::Some(h) => { assert h.value() == 3.0f64; }
+        option::Option[stepper::Stepper]::None => { assert false; }
+    }
+    return;
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_void_f64_ctrl(recv: *u8, sel: *u8, v: f64);
+
+// What AppKit does when a control is used: message the target with the action.
+fn send_action(v: *u8) {
+    let target: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("target\0"))) };
+    let action: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("action\0"))) };
+    if target == (0 as *u8) || action == (0 as *u8) { return; }
+    { rt::msg_void_id(target, action, v) };
+    return;
+}
+
+#[test]
+fn a_popup_the_user_picked_reads_back_the_applications_index() {
+    // And NOT the native one: the prompt occupies row 0, so the two differ by
+    // exactly the offset `apply_popup` adds on the way in.
+    backend::install();
+    var n: core::Node = popup::popup("Choose", key: "pk");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    set_popup_items(p);
+    core::clear_dirty(p);
+    core::touch(p, popup::P_ITEMS);
+    views::apply(0 as *u8, p);
+    let b: ak::PopUpButton = ak::PopUpButton::from_raw(v);
+    // Native row 2 is the application's item 1. The action is SENT rather
+    // than clicked: `performClick:` on a popup opens its menu and runs a modal
+    // event loop, which in a test is a hang.
+    b.select_item_at_index(2 as i64);
+    send_action(v);
+    match popup::find("pk", within: p) {
+        option::Option[popup::Popup]::Some(h) => { assert h.selected_index() == (1 as i64); }
+        option::Option[popup::Popup]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn a_date_picker_the_user_moved_reads_back_that_civil_date() {
+    // The write-back has to use the PAIR of the function that wrote it, or a
+    // date read through a different calendar drifts by a day at the boundary.
+    backend::install();
+    var n: core::Node = date_picker::date_picker(vocab::Date { year: 2020 as i64, month: 1 as i64, day: 1 as i64 },
+                                                 key: "dp");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    // 2026-08-05, as an NSDate at UTC midnight.
+    let want: vocab::Date = vocab::Date { year: 2026 as i64, month: 8 as i64, day: 5 as i64 };
+    { rt::msg_void_id(v, rt::sel(#str_ptr("setDateValue:\0")), controls::ns_date(want)) };
+    send_action(v);
+    match date_picker::find("dp", within: p) {
+        option::Option[date_picker::DatePicker]::Some(h) => {
+            let got: vocab::Date = h.date();
+            assert got.year == (2026 as i64);
+            assert got.month == (8 as i64);
+            assert got.day == (5 as i64);
+        }
+        option::Option[date_picker::DatePicker]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn a_time_picker_the_user_moved_reads_back_the_time_of_day() {
+    backend::install();
+    var n: core::Node = time_picker::time_picker(vocab::Duration { seconds: 0.0f64 }, key: "tp");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    // Nine-thirty in the morning, on a day 20000 days after the epoch: the
+    // DATE has to come off and leave only the time.
+    let secs: f64 = 20000.0f64 * 86400.0f64 + 9.5f64 * 3600.0f64;
+    { rt::msg_void_id(v, rt::sel(#str_ptr("setDateValue:\0")),
+                      { rt::msg_id_f64(rt::get_class(#str_ptr("NSDate\0")),
+                                       rt::sel(#str_ptr("dateWithTimeIntervalSince1970:\0")), secs) }) };
+    send_action(v);
+    match time_picker::find("tp", within: p) {
+        option::Option[time_picker::TimePicker]::Some(h) => {
+            assert h.time().seconds == (9.5f64 * 3600.0f64);
+        }
+        option::Option[time_picker::TimePicker]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn a_civil_date_survives_the_round_trip() {
+    // The pair, asserted directly: every boundary a calendar gets wrong.
+    assert_roundtrip(1970 as i64, 1 as i64, 1 as i64);
+    assert_roundtrip(2000 as i64, 2 as i64, 29 as i64);
+    assert_roundtrip(2026 as i64, 12 as i64, 31 as i64);
+    assert_roundtrip(2100 as i64, 3 as i64, 1 as i64);
+    return;
+}
+
+fn assert_roundtrip(y: i64, m: i64, d: i64) {
+    let back: vocab::Date = controls::civil_from_days(controls::days_from_civil(y, m, d));
+    assert back.year == y;
+    assert back.month == m;
+    assert back.day == d;
+    return;
+}
