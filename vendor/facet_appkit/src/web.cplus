@@ -29,6 +29,9 @@
 import "stdlib/option" as option;
 import "stdlib/text" as text;
 import "stdlib/status" as status;
+import "stdlib/fs" as fs;
+import "stdlib/result" as result;
+import "stdlib/vec" as vec;
 import "flex_layout/flex_layout" as flex;
 import "facet/facet" as core;
 import "facet/props" as props;
@@ -211,6 +214,9 @@ fn create_web(n: *core::Node) -> *u8 {
 // on its content controller, which is the page's door back.
 fn create_hybrid_web(n: *core::Node) -> *u8 {
     let config: *u8 = new_configuration();
+    // BEFORE the view: a WKWebView's scheme handlers cannot be added once it
+    // exists, which is why this is the one thing that has to happen here.
+    let scheme: *u8 = install_scheme(config, n);
     let v: *u8 = new_web_view(config);
     if v == (0 as *u8) { rt::release(config); return 0 as *u8; }
     let d: *u8 = new_delegate(v, n);
@@ -220,6 +226,13 @@ fn create_hybrid_web(n: *core::Node) -> *u8 {
         { rt::msg_void_id_id(controller,
                              rt::sel(#str_ptr("addScriptMessageHandler:name:\0")),
                              d, bridge::nsstring("facet")) };
+    }
+    // The handler is retained by the configuration the view keeps, but the
+    // ASSOCIATION back to the node is ours to hold: pin it on the view, which
+    // outlives every task.
+    if scheme != (0 as *u8) {
+        synth::retain_associated(v, scheme_node_key(), scheme);
+        rt::release(scheme);
     }
     rt::release(config);
     // `on_web_view_initializing` is BEFORE the view is usable and
@@ -377,10 +390,22 @@ fn apply_hybrid_web(v: *u8, n: *core::Node, dirty: u64) {
         let root: str = { (*p).hybrid_root.view() };
         let file: str = { (*p).default_file.view() };
         if root != "" && file != "" {
-            var full: text::Text = text::from_str(root);
-            let _a: status::Status = full.append("/");
-            let _b: status::Status = full.append(file);
-            load_file(v, full.view(), root);
+            // Over facet's OWN scheme, not file:// — which is what gives the
+            // page an origin and gives every resource request somewhere to
+            // arrive. See the scheme handler at the foot of this file.
+            var url: text::Text = text::from_str(facet_scheme());
+            let _a: status::Status = url.append("://root/");
+            let _b: status::Status = url.append(file);
+            let u: *u8 = { rt::msg_id_id(rt::get_class(#str_ptr("NSURL\0")),
+                                         rt::sel(#str_ptr("URLWithString:\0")),
+                                         bridge::nsstring(url.view())) };
+            if u != (0 as *u8) {
+                let req: *u8 = { rt::msg_id_id(rt::get_class(#str_ptr("NSURLRequest\0")),
+                                               rt::sel(#str_ptr("requestWithURL:\0")), u) };
+                if req != (0 as *u8) {
+                    { rt::msg_id_id(v, rt::sel(#str_ptr("loadRequest:\0")), req) };
+                }
+            }
         }
     }
     if (dirty & hybrid_web::P_SEND_MESSAGE) != (0 as u64) {
@@ -479,4 +504,172 @@ fn is_web_view(v: *u8) -> bool {
     if v == (0 as *u8) { return false; }
     return synth::class_responds(synth::object_class(v),
                                  rt::sel(#str_ptr("setNavigationDelegate:\0"))) != (0 as i8);
+}
+
+// ==============================================================================
+// The hybrid scheme — and why `on_web_resource_requested` needed one
+// ==============================================================================
+//
+// The ledger said "intercepting needs a WKURLSchemeHandler per scheme", which
+// is true and was standing in for the reason it could not be done: hybrid
+// content was loaded as `file://`, and WKWebView will not let a scheme handler
+// near a reserved scheme. So there was nothing to hand a request to.
+//
+// Hybrid content now loads over a scheme of facet's own, which is what MAUI's
+// own HybridWebView does on this platform for exactly this reason. Three
+// things follow from it and all three are the point:
+//
+//   - every resource the page asks for arrives HERE, so
+//     `on_web_resource_requested` fires for each one and means what it says.
+//   - the page has an ORIGIN, so `localStorage` and `fetch` work, which they
+//     do not from a file:// document.
+//   - the read is ours, so it is bounded: a request that climbs out of
+//     `hybrid_root` is refused rather than served.
+//
+// `web(source:)` is untouched — a plain web view loading a file or a URL is not
+// a hybrid app and has no root to serve from.
+
+fn facet_scheme() -> str { return "facet"; }
+fn scheme_node_key() -> *u8 { return { 28722 as *u8 }; }
+
+#[link_name = "objc_msgSend"]
+extern fn msg_id_id_u64_i64_id(recv: *u8, sel: *u8, a: *u8, b: *u8, c: i64, d: *u8) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn msg_id_bytes(recv: *u8, sel: *u8, p: *u8, n: usize) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn msg_void_id_scheme(recv: *u8, sel: *u8, a: *u8, b: *u8);
+
+// A path is served only if it stays under the root. `..` anywhere is refused
+// outright rather than normalised: a normaliser is a thing to get wrong, and a
+// hybrid app has no reason to name one.
+fn escapes_root(p: str) -> bool {
+    let n: usize = p.count();
+    if n < (2 as usize) { return false; }
+    var i: usize = 0 as usize;
+    while (i + (2 as usize)) <= n {
+        if byte_of(p, i) == (46 as u8) && byte_of(p, i + (1 as usize)) == (46 as u8) {
+            return true;
+        }
+        i = i + (1 as usize);
+    }
+    return false;
+}
+
+fn mime_for(path: str) -> str {
+    if path.has_suffix(".html") { return "text/html"; }
+    if path.has_suffix(".htm") { return "text/html"; }
+    if path.has_suffix(".js") { return "text/javascript"; }
+    if path.has_suffix(".mjs") { return "text/javascript"; }
+    if path.has_suffix(".css") { return "text/css"; }
+    if path.has_suffix(".json") { return "application/json"; }
+    if path.has_suffix(".svg") { return "image/svg+xml"; }
+    if path.has_suffix(".png") { return "image/png"; }
+    if path.has_suffix(".jpg") { return "image/jpeg"; }
+    if path.has_suffix(".jpeg") { return "image/jpeg"; }
+    if path.has_suffix(".gif") { return "image/gif"; }
+    if path.has_suffix(".woff2") { return "font/woff2"; }
+    return "application/octet-stream";
+}
+
+fn task_path(task: *u8) -> text::Text {
+    let req: *u8 = { rt::msg_id(task, rt::sel(#str_ptr("request\0"))) };
+    if req == (0 as *u8) { return text::new(); }
+    let url: *u8 = { rt::msg_id(req, rt::sel(#str_ptr("URL\0"))) };
+    if url == (0 as *u8) { return text::new(); }
+    return bridge::to_text({ rt::msg_id(url, rt::sel(#str_ptr("path\0"))) });
+}
+
+fn fail_task(task: *u8) {
+    let err: *u8 = { msg_id_id_u64_i64_id(rt::get_class(#str_ptr("NSError\0")),
+        rt::sel(#str_ptr("errorWithDomain:code:userInfo:\0")),
+        bridge::nsstring("FacetHybrid"), 0 as *u8, 404 as i64, 0 as *u8) };
+    if err == (0 as *u8) { return; }
+    { rt::msg_void_id(task, rt::sel(#str_ptr("didFailWithError:\0")), err) };
+    return;
+}
+
+fn start_task_imp(self_obj: *u8, cmd: *u8, wv: *u8, task: *u8) {
+    let n: *core::Node = { synth::get_associated(self_obj, scheme_node_key()) as *core::Node };
+    if n == (0 as *core::Node) { fail_task(task); return; }
+    let p: *props::HybridWebProps = props_of_hybrid(n);
+    if p == (0 as *props::HybridWebProps) { fail_task(task); return; }
+    // The handler runs FIRST and for every resource, which is the whole verb.
+    // It observes: a request is served whatever it does, because facet declares
+    // no way to answer one and inventing a return channel here would be a verb
+    // the contract does not have.
+    fire(n, { (*p).on_web_resource_requested }, { (*p).on_web_resource_requested_ctx }, task);
+
+    let rel: text::Text = task_path(task);
+    if escapes_root(rel.view()) { fail_task(task); return; }
+    var full: text::Text = text::from_str({ (*p).hybrid_root.view() });
+    let _a: status::Status = full.append(rel.view());
+    match fs::open_read(full.view()) {
+        result::Result[fs::File, result::IoError]::Ok(f) => {
+            var file: fs::File = f;
+            match file.read_to_end() {
+                result::Result[vec::Vec[u8], result::IoError]::Ok(bytes) => {
+                    respond(task, bytes, mime_for(rel.view()));
+                }
+                result::Result[vec::Vec[u8], result::IoError]::Err(_e) => { fail_task(task); }
+            }
+        }
+        result::Result[fs::File, result::IoError]::Err(_e) => { fail_task(task); }
+    }
+    return;
+}
+
+fn respond(task: *u8, bytes: vec::Vec[u8], mime: str) {
+    let req: *u8 = { rt::msg_id(task, rt::sel(#str_ptr("request\0"))) };
+    if req == (0 as *u8) { return; }
+    let url: *u8 = { rt::msg_id(req, rt::sel(#str_ptr("URL\0"))) };
+    if url == (0 as *u8) { return; }
+    let alloced: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSURLResponse\0")),
+                                    rt::sel(#str_ptr("alloc\0"))) };
+    let resp: *u8 = { msg_id_id_u64_i64_id(alloced,
+        rt::sel(#str_ptr("initWithURL:MIMEType:expectedContentLength:textEncodingName:\0")),
+        url, bridge::nsstring(mime), bytes.count() as i64,
+        bridge::nsstring("utf-8")) };
+    if resp == (0 as *u8) { return; }
+    // `as_byte_view` is the borrowed window onto the Vec's own storage, which
+    // is what NSData wants — and it is copied by `dataWithBytes:`, so the view
+    // does not have to outlive this statement.
+    let view: str = bytes.as_byte_view();
+    let data: *u8 = { msg_id_bytes(rt::get_class(#str_ptr("NSData\0")),
+        rt::sel(#str_ptr("dataWithBytes:length:\0")),
+        { #str_ptr(view) }, bytes.count()) };
+    { rt::msg_void_id(task, rt::sel(#str_ptr("didReceiveResponse:\0")), resp) };
+    if data != (0 as *u8) {
+        { rt::msg_void_id(task, rt::sel(#str_ptr("didReceiveData:\0")), data) };
+    }
+    { rt::msg_void(task, rt::sel(#str_ptr("didFinish\0"))) };
+    rt::release(resp);
+    return;
+}
+
+// Nothing to stop: every response is delivered inside `start`, so a task is
+// finished before this could be called for it.
+fn stop_task_imp(self_obj: *u8, cmd: *u8, wv: *u8, task: *u8) { return; }
+
+fn scheme_handler_class() -> *u8 {
+    let existing: *u8 = rt::get_class(#str_ptr("FacetSchemeHandler\0"));
+    if existing != (0 as *u8) { return existing; }
+    let cls: *u8 = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")),
+                                              #str_ptr("FacetSchemeHandler\0"), 0 as usize);
+    synth::add_method_v_2id(cls, rt::sel(#str_ptr("webView:startURLSchemeTask:\0")),
+                            start_task_imp, #str_ptr("v@:@@\0"));
+    synth::add_method_v_2id(cls, rt::sel(#str_ptr("webView:stopURLSchemeTask:\0")),
+                            stop_task_imp, #str_ptr("v@:@@\0"));
+    synth::register_class_pair(cls);
+    return cls;
+}
+
+// Registered on the CONFIGURATION, which is why it happens at creation: a
+// WKWebView's scheme handlers cannot be added once it exists.
+fn install_scheme(config: *u8, n: *core::Node) -> *u8 {
+    let h: *u8 = synth::alloc_init_class(scheme_handler_class());
+    if h == (0 as *u8) { return 0 as *u8; }
+    synth::set_associated(h, scheme_node_key(), n as *u8);
+    { msg_void_id_scheme(config, rt::sel(#str_ptr("setURLSchemeHandler:forURLScheme:\0")),
+                         h, bridge::nsstring(facet_scheme())) };
+    return h;
 }

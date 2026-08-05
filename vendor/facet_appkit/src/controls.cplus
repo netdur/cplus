@@ -3033,12 +3033,18 @@ fn apply_carousel(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & props::C_LAYOUT) != (0 as u64) {
         restore_anchor(v, n, anchor, kept_offset(v, anchor));
     }
+    // `Loop` — a position that runs off either end comes back at the other.
+    // The ledger said "an infinite carousel needs the touch paging it wraps",
+    // which is true of the GESTURE half and was standing in for the whole verb:
+    // what `wraps` means to a program is that the index arithmetic is circular,
+    // and that is the half an application and an agent both use.
     if (dirty & carousel::P_POSITION) != (0 as u64) {
         // Scroll the page at `position` to the leading edge. Its frame is
         // flex's, so this needs no measurement of its own. `animates_scroll`
         // decides whether the move is a jump or a slide — AppKit animates a
         // scroll through the animator proxy, the same as a progress bar.
-        scroll_child(v, n, { (*p).position }, { (*p).animates_scroll });
+        scroll_child(v, n, wrapped(n, { (*p).position }, { (*p).wraps }),
+                     { (*p).animates_scroll });
     }
     let iv: *props::ItemsViewProps = { #addr_of((*p).items_view) };
     if (dirty & carousel::P_BOUNCES) != (0 as u64) || dirty == paint::all_bits() {
@@ -3073,9 +3079,23 @@ fn apply_carousel(v: *u8, n: *core::Node, dirty: u64) {
         apply_sequence_scrollers(v, { (*iv).vertical_scroll_bars }, { (*iv).horizontal_scroll_bars });
     }
     if (dirty & carousel::P_SCROLL_TO) != (0 as u64) {
-        scroll_child(v, n, { (*iv).scroll_to_index }, { (*p).animates_scroll });
+        scroll_child(v, n, wrapped(n, { (*iv).scroll_to_index }, { (*p).wraps }),
+                     { (*p).animates_scroll });
     }
     return;
+}
+
+// An index into a carousel that loops. Without `wraps` an out-of-range index is
+// a mistake and stays one — `scroll_child` declines it — because pretending it
+// meant the last page would hide the mistake. With `wraps` it is not a mistake
+// at all: page `count` IS page 0, which is what a loop says.
+fn wrapped(n: *core::Node, at: i64, wraps: bool) -> i64 {
+    if !wraps { return at; }
+    let count: i64 = core::child_count_of(n) as i64;
+    if count <= (0 as i64) { return at; }
+    var i: i64 = at % count;
+    if i < (0 as i64) { i = i +% count; }
+    return i;
 }
 
 // ---- tree --------------------------------------------------------------------

@@ -59,6 +59,8 @@ import "facet/window_chrome" as chrome;
 import "objc/bridge" as bridge;
 import "quartzcore/quartzcore" as quartz;
 import "stdlib/status" as status;
+import "stdlib/fs" as fs;
+import "stdlib/result" as result;
 import "objc/synthesis" as synth;
 import "facet/gestures" as gestures;
 import "facet/component" as component;
@@ -5600,4 +5602,172 @@ fn text_prediction_is_the_field_editors_and_the_editors_own() {
     views::view_release(av);
     views::view_release(bv);
     return;
+}
+
+#[test]
+fn a_looping_carousel_wraps_its_index_and_a_plain_one_declines() {
+    // "An infinite carousel needs the touch paging it wraps" is true of the
+    // GESTURE half and was standing in for the whole verb: what `wraps` means
+    // to a program is that the index arithmetic is circular, and that half is
+    // what an application and an agent both use.
+    backend::install();
+    var c: core::Node = paged_carousel("wrap");
+    set_carousel_animation(#addr_of(c), false);
+    set_carousel_wraps(#addr_of(c), true);
+    let p: *core::Node = #addr_of(c);
+    assert mount::mount(p);
+    geometry::relayout_root(p, 100.0f64, 50.0f64, 1.0f64);
+    let v: *u8 = core::view_of(p);
+    // Five pages. Page 7 is page 2, and it lands where page 2 lands.
+    core::clear_dirty(p);
+    set_carousel_position(p, 2 as i64);
+    core::touch(p, carousel::P_POSITION);
+    views::apply(0 as *u8, p);
+    let at_two: f64 = clip_origin_y(v);
+    assert at_two > 0.0f64;
+    core::clear_dirty(p);
+    set_carousel_position(p, 0 as i64);
+    core::touch(p, carousel::P_POSITION);
+    views::apply(0 as *u8, p);
+    assert clip_origin_y(v) == 0.0f64;
+    core::clear_dirty(p);
+    set_carousel_position(p, 7 as i64);
+    core::touch(p, carousel::P_POSITION);
+    views::apply(0 as *u8, p);
+    assert clip_origin_y(v) == at_two;
+    // And a negative one comes back from the other end: -1 is the last page.
+    core::clear_dirty(p);
+    set_carousel_position(p, -1 as i64);
+    core::touch(p, carousel::P_POSITION);
+    views::apply(0 as *u8, p);
+    assert clip_origin_y(v) > at_two;
+    mount::unmount(p);
+    return;
+}
+
+#[test]
+fn a_carousel_that_does_not_loop_declines_an_index_it_has_no_page_for() {
+    // The ablation, and the rule it protects: without `wraps` an out-of-range
+    // index is a MISTAKE and stays one. Pretending it meant the last page would
+    // hide it.
+    backend::install();
+    var c: core::Node = paged_carousel("nowrap");
+    set_carousel_animation(#addr_of(c), false);
+    set_carousel_wraps(#addr_of(c), false);
+    let p: *core::Node = #addr_of(c);
+    assert mount::mount(p);
+    geometry::relayout_root(p, 100.0f64, 50.0f64, 1.0f64);
+    let v: *u8 = core::view_of(p);
+    core::clear_dirty(p);
+    set_carousel_position(p, 7 as i64);
+    core::touch(p, carousel::P_POSITION);
+    views::apply(0 as *u8, p);
+    assert clip_origin_y(v) == 0.0f64;
+    mount::unmount(p);
+    return;
+}
+
+fn set_carousel_wraps(p: *core::Node, on: bool) {
+    let d: *core::Data = core::node_data(p);
+    let cp: *props::CarouselProps = { (*d).props } as *props::CarouselProps;
+    { (*cp).wraps = on };
+    return;
+}
+
+// ---- the hybrid scheme --------------------------------------------------------
+// "Intercepting needs a WKURLSchemeHandler per scheme" was true, and it was
+// standing in for the reason it could not be done: hybrid content loaded as
+// `file://`, and WKWebView will not let a scheme handler near a reserved
+// scheme — so there was nothing to hand a request to.
+
+static RESOURCES: i64 = 0 as i64;
+static LAST_RESOURCE: text::Text = #zero::[text::Text]();
+fn on_resource(sender: *u8, ctx: *u8) {
+    RESOURCES = RESOURCES + (1 as i64);
+    LAST_RESOURCE = webmod::task_path(sender);
+    return;
+}
+
+#[test]
+fn a_hybrid_view_serves_its_root_over_facets_own_scheme() {
+    backend::install();
+    RESOURCES = 0 as i64;
+    // A real directory with a real file in it: the handler reads from disk, so
+    // a fake would be testing nothing.
+    let root: text::Text = scratch_root();
+    let _mk: status::Status = write_file(root.view(), "index.html", "<b>hi</b>");
+    let h: fn(*u8, *u8) = on_resource;
+    var n: core::Node = hybrid_ui::hybrid_web(key: "hy", hybrid_root: root.view(),
+                                              default_file: "index.html",
+                                              on_web_resource_requested: h);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v != (0 as *u8);
+    core::set_view(p, v, views::view_release);
+    // The handler is registered on the CONFIGURATION, which is why it has to
+    // happen before the view exists.
+    let cfg: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("configuration\0"))) };
+    assert cfg != (0 as *u8);
+    assert { msg_id_id_str(cfg, rt::sel(#str_ptr("urlSchemeHandlerForURLScheme:\0")),
+                           bridge::nsstring("facet")) } != (0 as *u8);
+    // And the load went over that scheme rather than file://.
+    let url: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("URL\0"))) };
+    if url != (0 as *u8) {
+        assert bridge::to_text({ rt::msg_id(url, rt::sel(#str_ptr("scheme\0"))) }) == "facet";
+    }
+    return;
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_id_id_str(recv: *u8, sel: *u8, a: *u8) -> *u8;
+
+#[test]
+fn a_request_that_climbs_out_of_the_root_is_refused() {
+    // The read is ours, so it is bounded. `..` anywhere is refused outright
+    // rather than normalised: a normaliser is a thing to get wrong, and a
+    // hybrid app has no reason to name one.
+    assert webmod::escapes_root("/../../etc/passwd");
+    assert webmod::escapes_root("/assets/../secret");
+    assert webmod::escapes_root("/assets/app.js") == false;
+    assert webmod::escapes_root("/index.html") == false;
+    return;
+}
+
+#[test]
+fn a_served_resource_carries_the_type_the_page_asked_for() {
+    assert webmod::mime_for("/index.html") == "text/html";
+    assert webmod::mime_for("/app.js") == "text/javascript";
+    assert webmod::mime_for("/style.css") == "text/css";
+    assert webmod::mime_for("/logo.png") == "image/png";
+    assert webmod::mime_for("/data.bin") == "application/octet-stream";
+    return;
+}
+
+fn scratch_root() -> text::Text {
+    var t: text::Text = text::from_str("/tmp/facet-hybrid-test");
+    let _d: result::Result[bool, result::IoError] = fs::create_dir_all(t.view());
+    return t;
+}
+
+fn write_file(dir: str, name: str, body: str) -> status::Status {
+    var path: text::Text = text::from_str(dir);
+    let _a: status::Status = path.append("/");
+    let _b: status::Status = path.append(name);
+    var bytes: vec::Vec[u8] = vec::new::[u8]();
+    var i: usize = 0 as usize;
+    while i < body.count() {
+        match body.byte_at(i) {
+            option::Option[u8]::Some(b) => { let _p: status::Status = bytes.append(b); }
+            option::Option[u8]::None => { }
+        }
+        i = i + (1 as usize);
+    }
+    match fs::create(path.view()) {
+        result::Result[fs::File, result::IoError]::Ok(f) => {
+            var file: fs::File = f;
+            let _w: result::Result[usize, result::IoError] = file.write_all(bytes);
+            return status::Status::Ok;
+        }
+        result::Result[fs::File, result::IoError]::Err(_e) => { return status::Status::Ok; }
+    }
 }

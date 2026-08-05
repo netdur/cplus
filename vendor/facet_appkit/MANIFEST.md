@@ -15,9 +15,9 @@ verb has an ANSWER, and the answer is checkable:
 
 ```
 321 declared prop/command bits    256 live, 23 host-rendered, 3 derived,
-                                    3 modifier, 8 create-only, 28 decided,
+                                    4 modifier, 8 create-only, 27 decided,
                                     0 no carrier, 0 absent
- 80 declared handlers              76 wired, 4 decided, 0 never fire
+ 80 declared handlers              77 wired, 3 decided, 0 never fire
 ```
 
 `python3 tools/verb_coverage.py --check` is the gate and it fails on a verb that
@@ -144,11 +144,9 @@ date_picker.font_scales         as label.font_scales
 time_picker.font_scales         as label.font_scales
 date_picker.character_spacing   NSDatePicker draws its own fields; no attributed value
 time_picker.character_spacing   as date_picker.character_spacing
-carousel.wraps                  an infinite carousel needs the touch paging it wraps
 collection.can_reorder_items    drag-reorder needs NSCollectionView's own drag session
 collection.on_reorder_completed  as collection.can_reorder_items
 collection.can_mix_groups       NSCollectionView sections do not interleave
-hybrid_web.on_web_resource_requested  WKWebView cannot see http(s) subresource loads at all
 ```
 
 ### The no-carrier ledger
@@ -287,6 +285,7 @@ showing, which is a visible bug in the name of a tidy bucket.
 
 ```modifier
 carousel.animates_scroll        decides whether `position` and `scroll_to` jump or slide
+carousel.wraps                  decides whether an out-of-range index is a page or a mistake
 carousel.scroll_anchor          decides what an UPDATE does to the offset; alone it does nothing
 collection.scroll_anchor        as carousel.scroll_anchor
 ```
