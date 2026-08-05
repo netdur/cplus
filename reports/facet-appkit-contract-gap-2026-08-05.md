@@ -218,10 +218,25 @@ canvas. Backend replays into `drawRect:`.
 | `ICanvas.GetStringSize` | needs a live platform context at record time; none exists while recording |
 | `draw_text(at:)` y meaning | top-left (facet), not baseline (MAUI) — deliberate contract consistency |
 
-### 3f. Stage 4 open item (docs / examples)
+### 3f. Stage 4 item 7 — CLOSED, and it paid for itself
 
-Item 7: revive `hello_facet` / `hello_appkit` as visual proof under the
-new API. Not a contract gap; still a consumer-facing hole.
+`examples/hello_appkit` is built: one screen, one file, @ui-authored,
+themed, keyed, static-free, with the agent surface wired so it can be
+driven without a person at the keyboard.
+
+Writing it found three bugs no suite was catching (fixed in `6cf5fca`),
+and the first is the reason this item was worth more than documentation:
+
+| Bug | Why every suite was green |
+|---|---|
+| **A DSL-authored screen reached the window EMPTY** | `@ui { }` is a keyless container; `wants_view` gives it no view by design; `open_window` inserted only the root's own view, so a pass-through root left its children inserted nowhere. The framework's own `open_window` test uses a **keyed** column, which is backed. |
+| A focused field lost its text across an `is_secure` flip | the write-back could fire from the old field leaving the hierarchy or the new empty one entering it, either overwriting the props |
+| A reclassed view lost its a11y id and intrinsic-size measure | the replacement was built by the kind builder, not by `views::create` |
+
+The first affects **every application that authors its screen the way
+the contract asks**. None of the three is visible in a screenshot, which
+is the argument for an example that carries an agent surface rather than
+only eyes.
 
 ---
 
@@ -292,22 +307,34 @@ before-navigation rows are decided, not owed:
    icon is the document-proxy icon of a file, so the honest move is to
    flip the row to `cannot` with that reason.
 
-### P2 — quality / scale
+### P2 — quality / scale — **all three resolved 2026-08-05**
 
-1. **collection** recycling (or document "use list for large N").
-2. Live flip for `text_field.is_secure` if apps need it (swap class on
-   apply, or recreate the view).
-3. Multi-column table only if a consumer needs spreadsheet semantics —
-   today's `table` matches MAUI TableView's thin contract, not NSTableView
-   columns.
+1. ~~**collection** recycling~~ — **documented, not built, and the old
+   reason was wrong.** It is not the grid: the recycler already models
+   grouped sequences. It is `CanReorderItems` — a collection's reorder is
+   a drag ending in `mount::remove_child` / `insert_child` on its own
+   children, and a recycling collection has no persistent child to move.
+   Recycling it is a redesign of `reorder`, not a change of host, so it
+   wants a consumer with a long collection AND reordering first. Size
+   limit written down: hundreds fine, ten thousand is `list` (`585f643`).
+2. ~~Live flip for `text_field.is_secure`~~ — **built** (`287ab8e`).
+   `views::reclass` builds the other class, puts it in the slot the old
+   one held, carries focus across, and re-applies through `create`.
+   Coverage moved 284→285 live, 8→7 create-only. Two follow-on bugs
+   found by the example and fixed in `6cf5fca` — see §3f.
+3. ~~Multi-column table~~ — **recorded as a contract decision, not debt.**
+   The contract declares four verbs for `table` and none is a column;
+   columns would have to be invented in Stage 1's map first (`585f643`).
 
-### P3 — hygiene
+### P3 — hygiene — **all three DONE 2026-08-05**
 
-1. Refresh MANIFEST prose so "cannot" sections match the empty
-   `cannot-ledger` and the live substitute implementations.
-2. Delete or fence dead `create_list` / `materialise_list` if the
-   recycler is the only path.
-3. Stage 4 item 7: examples under the new API.
+1. ~~Refresh MANIFEST prose~~ — the touch-gesture section said
+   `refreshable` / `swipeable` were unimplemented and got "a plain
+   backing view"; both are live. Rewritten (`6725d8c`).
+2. ~~Delete dead `create_list` / `materialise_list`~~ — they had zero
+   callers; deleted, `fill_rows` kept for collection (`6725d8c`).
+3. ~~Stage 4 item 7~~ — `examples/hello_appkit` built and driven; see
+   §3f for the three bugs it found (`6cf5fca`).
 
 ---
 
