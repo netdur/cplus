@@ -24,6 +24,7 @@ import "facet/text_field" as text_field;
 import "facet/scroll" as scroll;
 import "facet/image" as image;
 import "facet/box" as box_view;
+import "facet/symbol" as symbol;
 import "facet/elements" as ui;
 import "facet/checkbox" as checkbox;
 import "facet/radio" as radio;
@@ -7254,5 +7255,43 @@ fn a_live_text_write_re_measures_the_label() {
     window::close_window(win);
     backend::uninstall();
     app::reset_default_for_tests();
+    return;
+}
+
+// ---- the bundled symbol tier renders --------------------------------------
+//
+// `symbol` recommends the Bundled set and `facet/icons` declares 4,268
+// codepoints for it. The backend masked on P_ICON | P_FONT and read neither
+// field, so every one of them put an empty string in a label — and the
+// coverage tool scored two LIVE verbs off the mask, which is why it survived.
+
+#[test]
+fn a_bundled_symbol_puts_its_codepoint_in_the_label() {
+    backend::install();
+    // U+E9B2 is `home` in Material Symbols. The node asks for the Bundled set,
+    // which is the default.
+    var n: core::Node = symbol::symbol(0xE9B2u32, key: "home", size: 24.0f64);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v != (0 as *u8);
+    let got: text::Text = ak::TextField::from_raw(v).as_control().string_value();
+    // The glyph is one Private-Use-Area scalar, so the field is non-empty and
+    // is NOT the decimal codepoint rendered as text.
+    assert got.view() != "";
+    assert got.view() != "59826";
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn a_system_symbol_is_unaffected_by_the_bundled_path() {
+    // The two tiers must not interfere: a System symbol names an SF Symbol and
+    // must not be given a codepoint from the other set.
+    backend::install();
+    var n: core::Node = symbol::system_symbol("house", key: "sf", size: 24.0f64);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v != (0 as *u8);
+    views::view_release(v);
     return;
 }

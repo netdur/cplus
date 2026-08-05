@@ -18,10 +18,28 @@ command is a `P_*` bit in its module, and every declared handler is a `fn` field
   MODIFIER       no write of its own: it changes what another write does
   DECIDED        the manifest's cannot-ledger says AppKit cannot
   NO CARRIER     AppKit can; facet declares no thing to apply it to
+  GATED, UNREAD  a mask NAMES the bit and no body ever reads the field. Its
+                 own disposition because it is a different defect from "nobody
+                 wrote it": the code looks finished. `symbol.icon` sat here for
+                 the life of the module while `symbol(icons::home)` rendered
+                 nothing, and the old version of this tool called it LIVE.
   ABSENT         none of the above. This is the debt.
 
-`--check` makes it a GATE: it fails on an absent verb, a dead handler, or a
-ledger row naming a verb that does not exist. That enforces the manifest's own
+`--check` makes it a GATE: it fails on an absent verb, a GATED-BUT-UNREAD verb,
+a dead handler, or a ledger row naming a verb that does not exist.
+
+The unread check is the one that took longest to earn. Naming a bit in a dirty
+mask used to count as implementing it, so a body could gate on `P_ICON | P_FONT`
+and read neither field and score two live verbs. LIVE now requires BOTH halves:
+the bit gated AND the field read by a body that reaches the control's struct. A
+COMMAND has no field by construction (`web.reload`), so gating it is the whole
+implementation and it stays live — that distinction is `declares_field`.
+
+The limit of the read check, stated so nobody over-trusts it: it asks whether
+SOME body reaching the control's struct reads the field, not whether the body
+that GATES the bit does. A reader that exists but is never called still counts.
+Closing that needs a call graph; what is here catches the case that actually
+occurred — a mask naming a bit no code anywhere acts on. That enforces the manifest's own
 oldest claim — a verb neither implemented nor listed is a bug.
 
 Four things this has to get right, and simpler versions got each of them wrong:
@@ -216,13 +234,37 @@ def reads_field(read, field):
     return any(r.startswith(field + "_") for r in read)
 
 
+def declares_field(bodies, struct, field, seen=()):
+    """Does this control's props struct (or a base) declare `field`?
+
+    The difference between a COMMAND and ignored STATE. `web.reload` and
+    `list.begin_refresh` are commands: they carry no field, so gating the bit
+    and acting IS the whole implementation and there is nothing to read. A
+    verb that DOES declare a field and is never read is the defect this
+    distinction exists to isolate.
+    """
+    body = bodies.get(struct, "")
+    for line in body.splitlines():
+        m = re.match(r"\s*(?:opaque )?(\w+): ", line)
+        if m and m.group(1) == field:
+            return True
+        if m and m.group(1).startswith(field + "_"):
+            return True          # a decomposed carrier (shortcut -> shortcut_key)
+        b = re.match(r"\s*\w+: (\w+Props),", line)
+        if b and b.group(1) not in seen:
+            if declares_field(bodies, b.group(1), field, seen + (struct,)):
+                return True
+    return False
+
+
 def buckets(facet_dir, backend_dir, recorded=()):
     mods = facet_modules(facet_dir)
     fns = backend_functions(backend_dir)
+    bodies = struct_bodies(facet_dir)
     gated = set()
     for bits, _, _, _ in fns:
         gated |= bits
-    live, create_only, absent, ruled_out = [], [], [], []
+    live, create_only, absent, ruled_out, unread = [], [], [], [], []
     for mod, (struct, bits) in sorted(mods.items()):
         # The same inheritance rule the handler pass uses: a prop declared on a
         # BASE (`remaining_threshold` on `ItemsViewProps`) is read through the
@@ -232,7 +274,22 @@ def buckets(facet_dir, backend_dir, recorded=()):
         reach = {struct} | {t for _, ss, _, ks in fns if kind in ks for t in ss}
         for bit, field in bits.items():
             entry = f"{mod}.{field}"
-            if (mod, bit) in gated:
+            # LIVE needs BOTH halves: the bit gated, and the field actually
+            # READ by a body that reaches this control's struct.
+            #
+            # It used to need only the bit, and that is how `symbol.icon` and
+            # `symbol.font` scored live while `symbol(icons::home)` rendered
+            # nothing: `apply_symbol` gates on `P_ICON | P_FONT` and its body
+            # reads only `(*p).name`. Naming a bit in a MASK is a promise to
+            # act on it, and this tool exists to check promises against code.
+            #
+            # The failure mode was silent in the worst way — the verb counted
+            # toward the headline number, so the debt figure said zero while
+            # the feature did nothing.
+            reads = bool(struct) and any(
+                (s & reach) and reads_field(r, field) for _, s, r, _ in fns
+            )
+            if (mod, bit) in gated and reads:
                 live.append(entry)
             elif entry in recorded:
                 # An explicit record beats the heuristic below. Without this,
@@ -241,11 +298,22 @@ def buckets(facet_dir, backend_dir, recorded=()):
                 # ledger row saying NSToolbarItem cannot is overridden by a
                 # guess. A written-down decision is not a guess.
                 ruled_out.append(entry)
-            elif struct and any((s & reach) and reads_field(r, field) for _, s, r, _ in fns):
+            elif reads:
                 create_only.append(entry)
+            elif (mod, bit) in gated and not declares_field(bodies, struct, field):
+                # A COMMAND: no field to read, so gating the bit and acting is
+                # the whole implementation. `web.reload`, `list.begin_refresh`.
+                live.append(entry)
+            elif (mod, bit) in gated:
+                # The struct DECLARES the field, a mask names the bit, and no
+                # body ever reads it: the code promised to act on this verb and
+                # does not. Its own bucket because it is a different defect
+                # from "nobody wrote it" — this one looks finished, which is
+                # exactly why it survived a gate that only checked the mask.
+                unread.append(entry)
             else:
                 absent.append(entry)
-    return live, create_only, absent, ruled_out
+    return live, create_only, absent, ruled_out, unread
 
 
 def main():
@@ -260,10 +328,11 @@ def main():
     modifiers = ledger(manifest, "modifier")
     recorded = dict(decided)
     recorded.update(no_carrier)
-    live, create_only, absent, ruled_out = buckets(facet, backend, recorded)
+    live, create_only, absent, ruled_out, unread = buckets(facet, backend, recorded)
     blocked = [e for e in ruled_out if e in no_carrier]
     ruled_out = [e for e in ruled_out if e not in no_carrier]
-    total = len(live) + len(create_only) + len(absent) + len(ruled_out) + len(blocked)
+    total = (len(live) + len(create_only) + len(absent) + len(ruled_out)
+             + len(blocked) + len(unread))
     print(f"facet_appkit verb coverage — {total} declared prop/command bits")
     print(f"  {len(live):>4}  live         gated on the dirty bit; a later write lands")
     by_host = [e for e in create_only if e in hosted]
@@ -288,6 +357,7 @@ def main():
     print(f"  {len(create_only):>4}  create-only  by design, and the manifest says why")
     print(f"  {len(ruled_out):>4}  decided      the manifest's ledger says AppKit cannot")
     print(f"  {len(blocked):>4}  no carrier   AppKit can; facet declares no thing to apply it to")
+    print(f"  {len(unread):>4}  gated, unread  the mask names the bit and the body never reads the field")
     print(f"  {len(absent):>4}  absent       neither implemented nor decided — the debt")
     wired, dead, h_ruled = handler_buckets(facet, backend, decided, no_carrier)
     print(f"\nfacet_appkit handler coverage — {len(wired) + len(dead) + len(h_ruled)} declared handlers")
@@ -305,7 +375,11 @@ def main():
     # line that enforces it, and a ledger row naming nothing real fails too —
     # a stale row reads as a commitment and is not one.
     if "--check" in sys.argv:
-        if absent or dead or stale:
+        if unread:
+            print("\nGATED BUT UNREAD — the mask promises and the body does not read:")
+            for e in sorted(unread):
+                print(f"    {e}")
+        if absent or dead or stale or unread:
             print("\nFAIL: every declared verb must be implemented or recorded.")
             return 1
         print("\nOK: every declared verb and handler is implemented or recorded.")

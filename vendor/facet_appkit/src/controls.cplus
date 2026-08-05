@@ -25,6 +25,7 @@
 // so on stderr rather than rendering a silent blank rectangle.
 
 import "stdlib/option" as option;
+import "stdlib/io" as io;
 import "stdlib/text" as text;
 import "stdlib/vec" as vec;
 import "stdlib/status" as status;
@@ -1217,6 +1218,130 @@ fn create_symbol(n: *core::Node) -> *u8 {
     return rt::retain(f.as_view().raw());
 }
 
+// ---- the bundled glyph tier --------------------------------------------------
+// A codepoint rendered in a font registered FOR THIS PROCESS ONLY. Nothing is
+// installed on the machine: `CTFontManagerRegisterFontsForURL` with
+// `kCTFontManagerScopeProcess` is the whole mechanism, and it is undone when
+// the process exits.
+//
+// The font is found rather than assumed, in the order an application actually
+// ships one: its own bundle first (a packaged .app), then the vendored asset
+// (running from a source tree, which is every example today). A font that is
+// found nowhere leaves the label empty and says so ONCE — a symbol that fails
+// silently is indistinguishable from a symbol that is not there, and this verb
+// spent its whole life indistinguishable from working.
+
+#[link_name = "CTFontManagerRegisterFontsForURL"]
+extern fn ct_register_fonts_for_url(url: *u8, scope: u32, error: *u8) -> i8;
+
+fn ct_scope_process() -> u32 { return 1u32; }
+fn bundled_family() -> str { return "Material Symbols Outlined"; }
+
+static SYMBOL_FONT_TRIED: bool = false;
+static SYMBOL_FONT_OK: bool = false;
+
+fn register_bundled_font() -> bool {
+    if SYMBOL_FONT_TRIED { return SYMBOL_FONT_OK; }
+    SYMBOL_FONT_TRIED = true;
+    // Already present (installed system-wide, or registered by the host app)?
+    match ak::Font::font_with_name(bundled_family(), 12.0f64) {
+        option::Option[ak::Font]::Some(_f) => { SYMBOL_FONT_OK = true; return true; }
+        option::Option[ak::Font]::None => { }
+    }
+    if register_font_url(bundle_font_url()) { SYMBOL_FONT_OK = true; return true; }
+    if register_font_at("vendor/facet/assets/MaterialSymbolsOutlined.ttf") { SYMBOL_FONT_OK = true; return true; }
+    if register_font_at("../../vendor/facet/assets/MaterialSymbolsOutlined.ttf") { SYMBOL_FONT_OK = true; return true; }
+    io::println("facet_appkit: the bundled symbol font was not found; symbol(icon:) renders nothing");
+    return false;
+}
+
+// The app bundle's own copy, as an NSURL, when there is a bundle. Answers the
+// URL directly rather than a path string: NSBundle hands back an NSString and
+// NSURL wants one, so converting to `str` and back would be a round trip for
+// nothing.
+fn bundle_font_url() -> *u8 {
+    let b: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSBundle\0")),
+                              rt::sel(#str_ptr("mainBundle\0"))) };
+    if b == (0 as *u8) { return 0 as *u8; }
+    let p: *u8 = { rt::msg_id_id_id(b, rt::sel(#str_ptr("pathForResource:ofType:\0")),
+                                    bridge::nsstring("MaterialSymbolsOutlined"),
+                                    bridge::nsstring("ttf")) };
+    if p == (0 as *u8) { return 0 as *u8; }
+    return { rt::msg_id_id(rt::get_class(#str_ptr("NSURL\0")),
+                           rt::sel(#str_ptr("fileURLWithPath:\0")), p) };
+}
+
+fn register_font_at(path: str) -> bool {
+    if path == "" { return false; }
+    return register_font_url({ rt::msg_id_id(rt::get_class(#str_ptr("NSURL\0")),
+                                             rt::sel(#str_ptr("fileURLWithPath:\0")),
+                                             bridge::nsstring(path)) });
+}
+
+fn register_font_url(url: *u8) -> bool {
+    if url == (0 as *u8) { return false; }
+    if { ct_register_fonts_for_url(url, ct_scope_process(), 0 as *u8) } == (0 as i8) { return false; }
+    match ak::Font::font_with_name(bundled_family(), 12.0f64) {
+        option::Option[ak::Font]::Some(_f) => { return true; }
+        option::Option[ak::Font]::None => { return false; }
+    }
+}
+
+// A codepoint as an NSString. UTF-8 encoded by hand because the glyphs live in
+// the Private Use Area and there is no str literal for them.
+fn nsstring_of_codepoint(cp: u32) -> *u8 {
+    var buf: [u8; 8] = [0u8; 8];
+    var n: usize = 0 as usize;
+    if cp < 0x80u32 {
+        buf[0 as usize] = cp as u8;
+        n = 1 as usize;
+    } else if cp < 0x800u32 {
+        buf[0 as usize] = (0xC0u32 | (cp >> 6u32)) as u8;
+        buf[1 as usize] = (0x80u32 | (cp & 0x3Fu32)) as u8;
+        n = 2 as usize;
+    } else if cp < 0x10000u32 {
+        buf[0 as usize] = (0xE0u32 | (cp >> 12u32)) as u8;
+        buf[1 as usize] = (0x80u32 | ((cp >> 6u32) & 0x3Fu32)) as u8;
+        buf[2 as usize] = (0x80u32 | (cp & 0x3Fu32)) as u8;
+        n = 3 as usize;
+    } else {
+        buf[0 as usize] = (0xF0u32 | (cp >> 18u32)) as u8;
+        buf[1 as usize] = (0x80u32 | ((cp >> 12u32) & 0x3Fu32)) as u8;
+        buf[2 as usize] = (0x80u32 | ((cp >> 6u32) & 0x3Fu32)) as u8;
+        buf[3 as usize] = (0x80u32 | (cp & 0x3Fu32)) as u8;
+        n = 4 as usize;
+    }
+    buf[n] = 0u8;
+    return { rt::msg_id_id(rt::get_class(#str_ptr("NSString\0")),
+                           rt::sel(#str_ptr("stringWithUTF8String:\0")),
+                           #addr_of(buf) as *u8) };
+}
+
+// `font` names a family of the application's own when it is set; otherwise the
+// bundled one. That is what makes `font` a real verb rather than a synonym.
+fn apply_bundled_glyph(f: ak::TextField, p: *symbol::SymbolProps, pt: f64) {
+    let cp: u32 = { (*p).icon };
+    if cp == (0u32) { return; }
+    let named: str = { (*p).font.view() };
+    var family: str = bundled_family();
+    if named != "" {
+        family = named;
+    } else {
+        if !register_bundled_font() { return; }
+    }
+    var size: f64 = pt;
+    if (size > 0.0f64) == false { size = 24.0f64; }
+    match ak::Font::font_with_name(family, size) {
+        option::Option[ak::Font]::Some(fnt) => { f.as_control().set_font(fnt); }
+        // A family the machine does not have leaves the glyph unset rather
+        // than drawing a tofu box in the system font.
+        option::Option[ak::Font]::None => { return; }
+    }
+    { rt::msg_void_id(f.as_control().raw(), rt::sel(#str_ptr("setStringValue:\0")),
+                      nsstring_of_codepoint(cp)) };
+    return;
+}
+
 fn apply_symbol(v: *u8, n: *core::Node, dirty: u64) {
     let p: *symbol::SymbolProps = props_of(n, symbol::K_SYMBOL) as *symbol::SymbolProps;
     if p == (0 as *symbol::SymbolProps) { return; }
@@ -1228,6 +1353,16 @@ fn apply_symbol(v: *u8, n: *core::Node, dirty: u64) {
         // band and the frame walk treat it like any other leaf.
         let pt: f64 = { (*p).size };
         if pt > 0.0f64 { f.as_control().set_font(ak::Font::system_font_of_size(pt)); }
+        // The BUNDLED tier: a codepoint in facet's own font, which is the set
+        // `symbol` recommends and the one 4,268 constants in `facet/icons` are
+        // written for. It had no implementation at all — this body masked on
+        // P_ICON | P_FONT and then read neither field, so `symbol(icons::home)`
+        // put an empty string in a label and the coverage gate scored two live
+        // verbs off the mask.
+        match { (*p).set } {
+            symbol::IconSet::Bundled => { apply_bundled_glyph(f, p, pt); }
+            symbol::IconSet::System => { }
+        }
         let name: str = { (*p).name.view() };
         if name != "" {
             // SF Symbols spell the filled variant as a NAME — "house" and
