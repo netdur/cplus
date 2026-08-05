@@ -1,10 +1,10 @@
 # facet — 2026-08-05 worklog
 
-One day, on branch `facet-maui-regen`. Start `e38057d`, end `8630cd4`.
+One day, on branch `facet-maui-regen`. Start `e38057d`, end `7deef3f`.
 
-Three phases: execute an existing gap report, build the example it asked
-for, then audit the region the gates never looked at. Each phase found
-the work for the next one.
+Four phases: execute an existing gap report, build the example it asked
+for, audit the region the gates never looked at, then fix everything the
+audit found. Each phase produced the next one's work.
 
 Companion documents, both committed:
 
@@ -27,10 +27,24 @@ Companion documents, both committed:
 | `b7dc56f` | **`C_SAFE_AREA` and `C_GESTURES` were the same bit** |
 | `35408e9` | **a label never grew when its text changed** |
 | `8630cd4` | the blind-spot audit |
+| `e06b4db` | **the gate counted a masked bit as implemented, and symbol proved it** |
+| `248692e` | the shared band's background, shadow and clip |
+| `df890d8` | a screen's menu items were required, then discarded |
+| `725d642` | **spawn_ui tasks parked forever — the reactor had no wake source** |
+| `774ba9e` | a zero measurement is not a size, and a span is not a box |
+| `558df43` | on_focus, on_blur, and an is_focused that can answer true |
+| `07c10f2` | window_drag, z_index, and a measure for views that draw themselves |
+| `b460683` | a menu item can grey itself out, rename itself, and find |
+| `bf81ed8` | a collapsed pane comes back, a tree reports expansion, a drag has ends |
+| `8f6af16` | the runtime tier — agent, nav, menus, a leak, and two decisions |
+| `3651198` | is_enabled reaches every kind, and the sheet is sent both its arguments |
+| `7cff81b` | RTL mirrors, and the portable base is the full surface again |
+| `7deef3f` | the audit is closed |
 
-Gates at end: coverage green, contract provenance clean, contract
-byte-idempotent. facet **513 passed / 0 failed**; facet_appkit **636
-passed / 0 failed**. `examples/hello_appkit` builds and runs.
+Gates at end: coverage green (**0 absent, 0 gated-unread, 0 never-fire**),
+guard 5b **61/21/0**, contract provenance clean and byte-idempotent.
+flex **280**, facet **513**, facet_appkit **657**, all passing.
+`examples/hello_appkit` builds and drives correctly over the agent socket.
 
 ---
 
@@ -96,7 +110,8 @@ counts per-**control** bits and `zoomable` is on `Chrome`; guard 5b counts
 what else is facet-original *and* not on a control? — is what the
 five-way audit answered.
 
-See the audit report for the ~30 findings. The two fixed on the spot:
+See the audit report for the ~30 findings, all now closed. The two fixed
+on the spot, before the rest:
 
 - **`C_SAFE_AREA` == `C_GESTURES`**, both 2^63 — self-inflicted that
   morning by counting "the top sixteen bits" in `props.cplus` alone, when
