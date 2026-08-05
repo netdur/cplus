@@ -31,6 +31,7 @@ import "facet/progress" as progress;
 import "facet/spinner" as spinner;
 import "facet/stepper" as stepper;
 import "facet/text_area" as text_area;
+import "facet/search_field" as search_field;
 import "facet/popup" as popup;
 import "facet/bordered" as bordered;
 import "facet/split" as split;
@@ -2476,7 +2477,9 @@ fn measuring_a_bound_list_builds_one_subtree_not_one_per_row() {
     // bind, the shape is built once and each row's data written into it.
     RB_BUILDS = 0 as i64;
     RB_BINDS = 0 as i64;
-    var n: core::Node = list::list(key: "bm");
+    // `has_uneven_rows` is what says every row must be MEASURED; without it a
+    // list measures one and reuses the answer, which is the case below.
+    var n: core::Node = list::list(key: "bm", uneven_rows: true);
     let p: *core::Node = #addr_of(n);
     match list::find("bm", within: p) {
         option::Option[list::List]::Some(x) => {
@@ -2495,6 +2498,35 @@ fn measuring_a_bound_list_builds_one_subtree_not_one_per_row() {
     // Twenty rows measured, twenty binds — and the builds are what recycling
     // is for. Without a bind this would be twenty subtrees.
     assert RB_BINDS == (20 as i64);
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn a_list_of_even_rows_measures_one_of_them() {
+    // `has_uneven_rows: false` is the default and it is an OPTIMISATION, never
+    // a guess: the height still comes from measuring a row — this only says the
+    // answer may be reused. Twenty rows, one measurement.
+    backend::install();
+    RB_BUILDS = 0 as i64;
+    RB_BINDS = 0 as i64;
+    var n: core::Node = list::list(key: "even");
+    let p: *core::Node = #addr_of(n);
+    match list::find("even", within: p) {
+        option::Option[list::List]::Some(x) => {
+            let a: list::List = x.set_row(rb_row);
+            let b: list::List = a.set_row_bind(rb_bind);
+            let _c: list::List = b.set_count(200 as usize);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    let v: *u8 = views::create(0 as *u8, p);
+    var i: i64 = 0 as i64;
+    while i < (20 as i64) {
+        let _h: f64 = recycler::height_of_row(v, i);
+        i = i + (1 as i64);
+    }
+    assert RB_BINDS == (1 as i64);
     views::view_release(v);
     return;
 }
@@ -2690,5 +2722,702 @@ fn a_window_with_no_titlebar_slots_gets_no_accessories() {
     }
     mount::unmount(p);
     w.close();
+    return;
+}
+
+// ---- what the user types ------------------------------------------------------
+// The hole these close: nothing wired a text control back to facet, so
+// `on_text_changed` never fired and — worse, because it is silent —
+// `field.text()` kept answering whatever the application last SET. An app that
+// read a field after the user typed in it got the old string.
+//
+// These type through the REAL path. `keyDown:` on the field editor is what
+// AppKit itself calls, and it runs interpretKeyEvents -> insertText ->
+// didChangeText -> the notification. Posting the notification by hand would
+// prove the imp is reachable and nothing about whether AppKit ever reaches it.
+
+static TYPED: i64 = 0 as i64;
+static SUBMITS: i64 = 0 as i64;
+static TYPED_SAW: text::Text = #zero::[text::Text]();
+// The handler's ctx cannot be the node — the node does not exist until the
+// constructor that takes the handler has returned. A static is the test's own
+// way round that; an application uses `find(key)`.
+static TYPED_NODE: *core::Node = #zero::[*core::Node]();
+
+fn on_typed(sender: *u8, ctx: *u8) {
+    TYPED = TYPED + (1 as i64);
+    // Read through the CURSOR, which is the contract's own reader — the point
+    // of the fix is that this answers what is on screen.
+    match text_field::from(TYPED_NODE) {
+        option::Option[text_field::TextField]::Some(f) => { TYPED_SAW = text::from_str(f.text()); }
+        option::Option[text_field::TextField]::None => { }
+    }
+    return;
+}
+
+fn on_submitted(sender: *u8, ctx: *u8) { SUBMITS = SUBMITS + (1 as i64); return; }
+
+fn h_typed() -> fn(*u8, *u8) { let f: fn(*u8, *u8) = on_typed; return f; }
+fn h_submitted() -> fn(*u8, *u8) { let f: fn(*u8, *u8) = on_submitted; return f; }
+
+// A field editor exists only while the field is focused, so the field has to
+// be in a key window and first responder before there is anything to type in.
+fn focused_editor(w: ak::Window, v: *u8) -> option::Option[ak::Text] {
+    let f: ak::TextField = ak::TextField::from_raw(v);
+    w.make_key_and_order_front(0 as *u8);
+    assert w.make_first_responder(f.as_view().as_responder());
+    return f.as_control().current_editor();
+}
+
+#[test]
+fn typing_in_a_text_field_reaches_the_props_and_the_handler() {
+    backend::install();
+    TYPED = 0 as i64;
+    TYPED_SAW = text::from_str("");
+    var n: core::Node = text_field::text_field(key: "typed", text: "",
+                                              on_text_changed: h_typed());
+    let p: *core::Node = #addr_of(n);
+    TYPED_NODE = p;
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v != (0 as *u8);
+    let w: ak::Window = window::make_shell_window(screen::Chrome::new(
+        title: "typing", width: 300.0f64, height: 200.0f64));
+    let host: ak::View = akx::new_flipped_view(rt::Rect { x: 0.0f64, y: 0.0f64, w: 300.0f64, h: 200.0f64 });
+    host.add_subview(ak::View::from_raw(v));
+    w.set_content_view(host);
+    match focused_editor(w, v) {
+        option::Option[ak::Text]::Some(ed) => {
+            { rt::msg_void_id(ed.raw(), rt::sel(#str_ptr("keyDown:\0")),
+                              fake_key_event(0 as u16, "a", 0 as u64)) };
+        }
+        option::Option[ak::Text]::None => { assert false; }
+    }
+    // Both halves, and the second is the one that was silently wrong: the
+    // handler ran AND the contract's reader answers what was typed.
+    assert TYPED == (1 as i64);
+    assert TYPED_SAW.view() == "a";
+    match text_field::from(p) {
+        option::Option[text_field::TextField]::Some(f) => { assert f.text() == "a"; }
+        option::Option[text_field::TextField]::None => { assert false; }
+    }
+    w.close();
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn a_text_field_reports_the_caret_it_actually_has() {
+    // `cursor_position` and `selection_length` are declared two-way and were
+    // answering the description. After a keystroke the caret is past the
+    // character, and that is what the props have to say.
+    backend::install();
+    var n: core::Node = text_field::text_field(key: "caret", text: "");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    let w: ak::Window = window::make_shell_window(screen::Chrome::new(
+        title: "caret", width: 300.0f64, height: 200.0f64));
+    let host: ak::View = akx::new_flipped_view(rt::Rect { x: 0.0f64, y: 0.0f64, w: 300.0f64, h: 200.0f64 });
+    host.add_subview(ak::View::from_raw(v));
+    w.set_content_view(host);
+    match focused_editor(w, v) {
+        option::Option[ak::Text]::Some(ed) => {
+            { rt::msg_void_id(ed.raw(), rt::sel(#str_ptr("keyDown:\0")),
+                              fake_key_event(0 as u16, "a", 0 as u64)) };
+            { rt::msg_void_id(ed.raw(), rt::sel(#str_ptr("keyDown:\0")),
+                              fake_key_event(11 as u16, "b", 0 as u64)) };
+        }
+        option::Option[ak::Text]::None => { assert false; }
+    }
+    match text_field::from(p) {
+        option::Option[text_field::TextField]::Some(f) => {
+            assert f.text() == "ab";
+            assert f.cursor_position() == (2 as i64);
+            assert f.selection_length() == (0 as i64);
+        }
+        option::Option[text_field::TextField]::None => { assert false; }
+    }
+    w.close();
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn typing_in_a_text_area_reaches_the_props() {
+    // The editor half. Its notification is `textDidChange:` rather than
+    // `controlTextDidChange:`, and its view is the NSTextView INSIDE the
+    // scroll view the node is backed by — so this proves the delegate went on
+    // the right object.
+    backend::install();
+    var n: core::Node = text_area::text_area(key: "area", text: "");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v != (0 as *u8);
+    let tv: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("documentView\0"))) };
+    assert tv != (0 as *u8);
+    { rt::msg_void_id(tv, rt::sel(#str_ptr("insertText:\0")), bridge::nsstring("hi")) };
+    match text_area::from(p) {
+        option::Option[text_area::TextArea]::Some(a) => { assert a.text() == "hi"; }
+        option::Option[text_area::TextArea]::None => { assert false; }
+    }
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn a_search_field_reports_what_was_typed_into_it() {
+    backend::install();
+    var n: core::Node = search_field::search_field(key: "find", text: "");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    let w: ak::Window = window::make_shell_window(screen::Chrome::new(
+        title: "find", width: 300.0f64, height: 200.0f64));
+    let host: ak::View = akx::new_flipped_view(rt::Rect { x: 0.0f64, y: 0.0f64, w: 300.0f64, h: 200.0f64 });
+    host.add_subview(ak::View::from_raw(v));
+    w.set_content_view(host);
+    match focused_editor(w, v) {
+        option::Option[ak::Text]::Some(ed) => {
+            { rt::msg_void_id(ed.raw(), rt::sel(#str_ptr("keyDown:\0")),
+                              fake_key_event(1 as u16, "s", 0 as u64)) };
+        }
+        option::Option[ak::Text]::None => { assert false; }
+    }
+    match search_field::from(p) {
+        option::Option[search_field::SearchField]::Some(s) => { assert s.text() == "s"; }
+        option::Option[search_field::SearchField]::None => { assert false; }
+    }
+    w.close();
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn a_field_that_never_gained_a_handler_still_keeps_its_props_true() {
+    // The negative that matters: the write-back is not conditional on anyone
+    // listening. A field with no `on_text_changed` still has to answer `text()`
+    // with what is on screen, or the fix would only work for apps that happen
+    // to subscribe.
+    backend::install();
+    var n: core::Node = text_field::text_field(key: "quiet", text: "old");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    let w: ak::Window = window::make_shell_window(screen::Chrome::new(
+        title: "quiet", width: 300.0f64, height: 200.0f64));
+    let host: ak::View = akx::new_flipped_view(rt::Rect { x: 0.0f64, y: 0.0f64, w: 300.0f64, h: 200.0f64 });
+    host.add_subview(ak::View::from_raw(v));
+    w.set_content_view(host);
+    match focused_editor(w, v) {
+        option::Option[ak::Text]::Some(ed) => {
+            { rt::msg_void_id(ed.raw(), rt::sel(#str_ptr("keyDown:\0")),
+                              fake_key_event(2 as u16, "!", 0 as u64)) };
+        }
+        option::Option[ak::Text]::None => { assert false; }
+    }
+    match text_field::from(p) {
+        option::Option[text_field::TextField]::Some(f) => { assert f.text() != "old"; }
+        option::Option[text_field::TextField]::None => { assert false; }
+    }
+    w.close();
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn a_text_area_submits_when_editing_ends_and_a_field_does_not() {
+    // Enter inserts a newline in a multi-line editor, so `Editor.Completed` is
+    // end-of-editing there and the control's action everywhere else. Wiring
+    // both on a field would fire submit twice, which is why `did_end_imp`
+    // gates on the kind — this is that gate.
+    backend::install();
+    SUBMITS = 0 as i64;
+    var n: core::Node = text_area::text_area(key: "sub", text: "",
+                                            on_submit: h_submitted());
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    let tv: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("documentView\0"))) };
+    let w: ak::Window = window::make_shell_window(screen::Chrome::new(
+        title: "sub", width: 300.0f64, height: 200.0f64));
+    w.set_content_view(ak::View::from_raw(v));
+    w.make_key_and_order_front(0 as *u8);
+    assert w.make_first_responder(ak::View::from_raw(tv).as_responder());
+    // Resigning first responder is what ends an editor's editing session.
+    assert w.make_first_responder(w.as_responder());
+    assert SUBMITS == (1 as i64);
+    w.close();
+    views::view_release(v);
+    return;
+}
+
+// ---- the InputView band -------------------------------------------------------
+// One body in `text_input` serves all three text kinds, so these assert the
+// band once per verb and pick whichever kind exercises it most directly. What
+// they do NOT do is assert props: every one reads back off the native control,
+// because a props round-trip would pass with the band deleted.
+
+fn field_view(n: *core::Node) -> ak::TextField {
+    return ak::TextField::from_raw(views::create(0 as *u8, n));
+}
+
+#[test]
+fn character_spacing_becomes_a_kern_attribute() {
+    // `character_spacing` has no plain-string equivalent anywhere in AppKit —
+    // it is a kern attribute, so a field that asks for it must be written as an
+    // attributed string rather than a plain one.
+    backend::install();
+    var n: core::Node = text_field::text_field(key: "kern", text: "ada", character_spacing: 3.0f64);
+    let f: ak::TextField = field_view(#addr_of(n));
+    let a: ak::AttributedString = f.as_control().attributed_string_value();
+    match a.attribute_at_index("NSKern", 0 as u64, 0 as *u8,
+                               rt::Range { location: 0 as u64, length: 3 as u64 }) {
+        option::Option[*u8]::Some(v) => {
+            assert { rt::msg_f64(v, rt::sel(#str_ptr("doubleValue\0"))) } == 3.0f64;
+        }
+        option::Option[*u8]::None => { assert false; }
+    }
+    views::view_release(f.as_view().raw());
+    return;
+}
+
+#[test]
+fn a_field_with_no_kern_stays_on_the_plain_string_path() {
+    // The other half of the gate, and the one that protects editing: an
+    // attributed write disturbs the field editor, so a control that asked for
+    // none of the rich verbs must not take that path.
+    backend::install();
+    var n: core::Node = text_field::text_field(key: "plain", text: "ada");
+    let f: ak::TextField = field_view(#addr_of(n));
+    let a: ak::AttributedString = f.as_control().attributed_string_value();
+    match a.attribute_at_index("NSKern", 0 as u64, 0 as *u8,
+                               rt::Range { location: 0 as u64, length: 3 as u64 }) {
+        option::Option[*u8]::Some(_v) => { assert false; }
+        option::Option[*u8]::None => { }
+    }
+    views::view_release(f.as_view().raw());
+    return;
+}
+
+#[test]
+fn italic_is_a_trait_conversion_not_a_weight() {
+    backend::install();
+    var n: core::Node = text_field::text_field(key: "it", text: "x", italic: true, font_size: 13.0f64);
+    let f: ak::TextField = field_view(#addr_of(n));
+    match f.as_control().font() {
+        option::Option[ak::Font]::Some(font) => {
+            // NSItalicFontMask = 1.
+            assert ({ ak::FontManager::shared_font_manager().traits_of_font(font) } & (1 as u64)) != (0 as u64);
+        }
+        option::Option[ak::Font]::None => { assert false; }
+    }
+    views::view_release(f.as_view().raw());
+    return;
+}
+
+#[test]
+fn text_transform_changes_what_is_SHOWN_and_not_what_is_READ() {
+    // The rule the transform helper's comment states: a transform is a
+    // rendering choice, so `text()` still answers what the application set.
+    backend::install();
+    var n: core::Node = text_field::text_field(key: "up", text: "ada",
+                                              text_transform: vocab::TextTransform::Uppercase);
+    let p: *core::Node = #addr_of(n);
+    let f: ak::TextField = field_view(p);
+    assert f.as_control().string_value().view() == "ADA";
+    match text_field::from(p) {
+        option::Option[text_field::TextField]::Some(c) => { assert c.text() == "ada"; }
+        option::Option[text_field::TextField]::None => { assert false; }
+    }
+    views::view_release(f.as_view().raw());
+    return;
+}
+
+#[test]
+fn max_length_truncates_what_was_typed_not_what_was_set() {
+    // Enforced in the change hook, because neither a formatter nor a delegate
+    // method covers both kinds. The assertion that matters is that the props
+    // and the control agree afterwards — a truncation the app cannot see is
+    // the same silent-wrong-answer bug the write-back exists to close.
+    backend::install();
+    var n: core::Node = text_field::text_field(key: "cap", text: "", max_length: 2 as i64);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    let w: ak::Window = window::make_shell_window(screen::Chrome::new(
+        title: "cap", width: 300.0f64, height: 200.0f64));
+    let host: ak::View = akx::new_flipped_view(rt::Rect { x: 0.0f64, y: 0.0f64, w: 300.0f64, h: 200.0f64 });
+    host.add_subview(ak::View::from_raw(v));
+    w.set_content_view(host);
+    match focused_editor(w, v) {
+        option::Option[ak::Text]::Some(ed) => {
+            { rt::msg_void_id(ed.raw(), rt::sel(#str_ptr("keyDown:\0")), fake_key_event(0 as u16, "a", 0 as u64)) };
+            { rt::msg_void_id(ed.raw(), rt::sel(#str_ptr("keyDown:\0")), fake_key_event(11 as u16, "b", 0 as u64)) };
+            { rt::msg_void_id(ed.raw(), rt::sel(#str_ptr("keyDown:\0")), fake_key_event(8 as u16, "c", 0 as u64)) };
+        }
+        option::Option[ak::Text]::None => { assert false; }
+    }
+    assert ak::TextField::from_raw(v).as_control().string_value().view() == "ab";
+    match text_field::from(p) {
+        option::Option[text_field::TextField]::Some(c) => { assert c.text() == "ab"; }
+        option::Option[text_field::TextField]::None => { assert false; }
+    }
+    w.close();
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn a_placeholder_colour_makes_the_placeholder_attributed() {
+    // `placeholderString` is plain and always draws in the system's colour, so
+    // a coloured placeholder is the attributed one or it is nothing.
+    backend::install();
+    var n: core::Node = text_field::text_field("", key: "ph", placeholder: "who?",
+                                              placeholder_color: vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64));
+    let f: ak::TextField = field_view(#addr_of(n));
+    let a: *u8 = { rt::msg_id(f.raw(), rt::sel(#str_ptr("placeholderAttributedString\0"))) };
+    assert a != (0 as *u8);
+    assert { rt::msg_u64(a, rt::sel(#str_ptr("length\0"))) } == (4 as u64);
+    views::view_release(f.as_view().raw());
+    return;
+}
+
+#[test]
+fn the_editor_band_styles_existing_text_and_what_is_typed_next() {
+    // An editor's attributes have to go on BOTH the storage and the typing
+    // attributes: the storage alone loses the style on the next keypress, and
+    // typingAttributes alone leaves what is already there unstyled.
+    backend::install();
+    var n: core::Node = text_area::text_area(key: "st", text: "hello", character_spacing: 2.0f64);
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    let tv: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("documentView\0"))) };
+    let storage: *u8 = { rt::msg_id(tv, rt::sel(#str_ptr("textStorage\0"))) };
+    let a: ak::AttributedString = ak::AttributedString::from_raw(storage);
+    match a.attribute_at_index("NSKern", 0 as u64, 0 as *u8,
+                               rt::Range { location: 0 as u64, length: 5 as u64 }) {
+        option::Option[*u8]::Some(k) => { assert { rt::msg_f64(k, rt::sel(#str_ptr("doubleValue\0"))) } == 2.0f64; }
+        option::Option[*u8]::None => { assert false; }
+    }
+    let typing: *u8 = { rt::msg_id(tv, rt::sel(#str_ptr("typingAttributes\0"))) };
+    assert { rt::msg_id_id(typing, rt::sel(#str_ptr("objectForKey:\0")), bridge::nsstring("NSKern")) } != (0 as *u8);
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn an_editor_that_auto_sizes_is_vertically_resizable() {
+    backend::install();
+    var grows: core::Node = text_area::text_area(key: "g", text: "x",
+                                                 auto_size: vocab::AutoSize::TextChanges);
+    let gv: *u8 = views::create(0 as *u8, #addr_of(grows));
+    match controls::text_area_editor(gv) {
+        option::Option[ak::TextView]::Some(tv) => { assert tv.as_text().is_vertically_resizable(); }
+        option::Option[ak::TextView]::None => { assert false; }
+    }
+    var fixed: core::Node = text_area::text_area(key: "f", text: "x");
+    let fv: *u8 = views::create(0 as *u8, #addr_of(fixed));
+    match controls::text_area_editor(fv) {
+        option::Option[ak::TextView]::Some(tv) => { assert tv.as_text().is_vertically_resizable() == false; }
+        option::Option[ak::TextView]::None => { assert false; }
+    }
+    views::view_release(gv);
+    views::view_release(fv);
+    return;
+}
+
+#[test]
+fn a_search_field_honours_the_band_a_text_field_does() {
+    // NSSearchField is an NSTextField subclass and shares the band; the point
+    // of the shared body is that it did NOT have to be implemented twice.
+    backend::install();
+    var n: core::Node = search_field::search_field(key: "sb", text: "q", read_only: true,
+                                                   text_color: vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64));
+    let f: ak::TextField = field_view(#addr_of(n));
+    assert f.is_editable() == false;
+    assert f.as_control().string_value().view() == "q";
+    views::view_release(f.as_view().raw());
+    return;
+}
+
+#[test]
+fn a_write_to_cursor_position_moves_the_caret() {
+    backend::install();
+    var n: core::Node = text_area::text_area(key: "car", text: "hello",
+                                             cursor_position: 3 as i64, selection_length: 2 as i64);
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    match controls::text_area_editor(v) {
+        option::Option[ak::TextView]::Some(tv) => {
+            let r: rt::Range = tv.as_text().selected_range();
+            assert { r.location } == (3 as u64);
+            assert { r.length } == (2 as u64);
+        }
+        option::Option[ak::TextView]::None => { assert false; }
+    }
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn a_selection_past_the_end_is_clamped_not_a_crash() {
+    // The negative: `cursor_position` is an i64 the application controls and
+    // NSText raises on an out-of-range selection.
+    backend::install();
+    var n: core::Node = text_area::text_area(key: "clamp", text: "hi",
+                                             cursor_position: 99 as i64, selection_length: 99 as i64);
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    match controls::text_area_editor(v) {
+        option::Option[ak::TextView]::Some(tv) => {
+            let r: rt::Range = tv.as_text().selected_range();
+            assert { r.location } == (2 as u64);
+            assert { r.length } == (0 as u64);
+        }
+        option::Option[ak::TextView]::None => { assert false; }
+    }
+    views::view_release(v);
+    return;
+}
+
+// ---- the list's own events and appearance -------------------------------------
+
+static PICKED: i64 = 0 as i64;
+fn on_picked(sender: *u8, ctx: *u8) { PICKED = PICKED + (1 as i64); return; }
+fn h_picked() -> fn(*u8, *u8) { let f: fn(*u8, *u8) = on_picked; return f; }
+
+#[test]
+fn selecting_a_row_reaches_the_handler() {
+    // Through the REAL path: `selectRowIndexes:` is what a click ends in, and
+    // NSTableView posts the selection notification from it. Calling the imp by
+    // hand would prove it compiles and nothing about whether AppKit reaches it.
+    backend::install();
+    PICKED = 0 as i64;
+    var l: core::Node = list::list(key: "sel", on_item_selected: h_picked(),
+                                   selection_mode: vocab::SelectionMode::Single);
+    let lp: *core::Node = #addr_of(l);
+    match list::find("sel", within: lp) {
+        option::Option[list::List]::Some(h) => {
+            let h2: list::List = h.set_row(t_row, ctx: 0 as *u8);
+            let _h3: list::List = h2.set_count(3 as usize);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    let v: *u8 = views::create(0 as *u8, lp);
+    core::set_view(lp, v, views::view_release);
+    let tv: *u8 = recycler::table_of(v);
+    assert tv != (0 as *u8);
+    let idx: *u8 = { rt::msg_id_u64(rt::get_class(#str_ptr("NSIndexSet\0")),
+                                    rt::sel(#str_ptr("indexSetWithIndex:\0")), 1 as u64) };
+    { rt::msg_void_id_i8(tv, rt::sel(#str_ptr("selectRowIndexes:byExtendingSelection:\0")),
+                         idx, false as i8) };
+    assert PICKED == (1 as i64);
+    return;
+}
+
+#[test]
+fn a_list_that_selects_nothing_still_draws_no_highlight() {
+    // `selection_mode: None` is the generated default now that the enum zeros
+    // follow MAUI rather than the alphabet — so this also pins that default.
+    backend::install();
+    var l: core::Node = list::list(key: "nosel");
+    let lp: *core::Node = #addr_of(l);
+    let v: *u8 = views::create(0 as *u8, lp);
+    core::set_view(lp, v, views::view_release);
+    core::clear_dirty(lp);
+    core::touch(lp, list::P_SELECTION_MODE);
+    views::apply(0 as *u8, lp);
+    let tv: *u8 = recycler::table_of(v);
+    // NSTableViewSelectionHighlightStyleNone = -1.
+    assert { rt::msg_i64(tv, rt::sel(#str_ptr("selectionHighlightStyle\0"))) } == (0 as i64 - (1 as i64));
+    assert { rt::msg_i8(tv, rt::sel(#str_ptr("allowsMultipleSelection\0"))) } == (0 as i8);
+    return;
+}
+
+#[test]
+fn a_multi_select_list_says_so_to_the_table() {
+    backend::install();
+    var l: core::Node = list::list(key: "multi", selection_mode: vocab::SelectionMode::Multiple);
+    let lp: *core::Node = #addr_of(l);
+    let v: *u8 = views::create(0 as *u8, lp);
+    core::set_view(lp, v, views::view_release);
+    core::clear_dirty(lp);
+    core::touch(lp, list::P_SELECTION_MODE);
+    views::apply(0 as *u8, lp);
+    let tv: *u8 = recycler::table_of(v);
+    assert { rt::msg_i8(tv, rt::sel(#str_ptr("allowsMultipleSelection\0"))) } != (0 as i8);
+    assert { rt::msg_i64(tv, rt::sel(#str_ptr("selectionHighlightStyle\0"))) } == (1 as i64);
+    return;
+}
+
+#[test]
+fn a_separator_none_takes_the_grid_line_away() {
+    backend::install();
+    var l: core::Node = list::list(key: "nosep", separator: vocab::Separator::None);
+    let lp: *core::Node = #addr_of(l);
+    let v: *u8 = views::create(0 as *u8, lp);
+    core::set_view(lp, v, views::view_release);
+    core::clear_dirty(lp);
+    core::touch(lp, list::P_SEPARATOR);
+    views::apply(0 as *u8, lp);
+    let tv: *u8 = recycler::table_of(v);
+    assert { rt::msg_u64(tv, rt::sel(#str_ptr("gridStyleMask\0"))) } == (0 as u64);
+    return;
+}
+
+#[test]
+fn the_appearance_band_never_runs_on_the_create_pass() {
+    // The deviation this file records, asserted rather than described: on the
+    // create pass the appearance verbs are SKIPPED, because any of them makes
+    // NSTableView validate itself and validating asks the data source for rows.
+    // A list that built rows at create would not be a recycling list.
+    backend::install();
+    ROWS_BUILT = 0;
+    var l: core::Node = list::list(key: "cre", separator: vocab::Separator::None,
+                                   selection_mode: vocab::SelectionMode::Multiple);
+    let lp: *core::Node = #addr_of(l);
+    match list::find("cre", within: lp) {
+        option::Option[list::List]::Some(h) => {
+            let h2: list::List = h.set_row(t_row, ctx: 0 as *u8);
+            let _h3: list::List = h2.set_count(50 as usize);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    let v: *u8 = views::create(0 as *u8, lp);
+    assert ROWS_BUILT == 0;
+    let tv: *u8 = recycler::table_of(v);
+    // AppKit's own default survives the first frame, which is the cost.
+    assert { rt::msg_i8(tv, rt::sel(#str_ptr("allowsMultipleSelection\0"))) } == (0 as i8);
+    // And the next apply is what lands it.
+    core::set_view(lp, v, views::view_release);
+    core::clear_dirty(lp);
+    core::touch(lp, list::P_SELECTION_MODE);
+    views::apply(0 as *u8, lp);
+    assert { rt::msg_i8(tv, rt::sel(#str_ptr("allowsMultipleSelection\0"))) } != (0 as i8);
+    return;
+}
+
+static SCROLLS: i64 = 0 as i64;
+fn on_scrolled(sender: *u8, ctx: *u8) { SCROLLS = SCROLLS + (1 as i64); return; }
+fn h_scrolled() -> fn(*u8, *u8) { let f: fn(*u8, *u8) = on_scrolled; return f; }
+
+#[test]
+fn scrolling_reaches_the_handler_however_it_was_caused() {
+    // Through the clip view's BOUNDS, not `scrollWheel:` — which is the whole
+    // design: this scroll comes from `scrollToPoint:`, and a wheel override
+    // would not have seen it. Neither would it see a scroller drag, a
+    // page-down, or an accessibility client.
+    backend::install();
+    SCROLLS = 0 as i64;
+    var s: core::Node = scroll::scroll(key: "sc", observe_scrolled: h_scrolled());
+    let p: *core::Node = #addr_of(s);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v != (0 as *u8);
+    core::set_view(p, v, views::view_release);
+    let clip: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("contentView\0"))) };
+    assert clip != (0 as *u8);
+    { msg_void_point(clip, rt::sel(#str_ptr("scrollToPoint:\0")),
+                         rt::Point { x: 0.0f64, y: 40.0f64 }) };
+    assert SCROLLS > (0 as i64);
+    return;
+}
+
+#[test]
+fn a_released_scroll_view_leaves_no_observer_behind() {
+    // A notification centre holds observers UNRETAINED. One that outlives its
+    // registration is a dangling pointer the next scroll walks into, so the
+    // release path has to remove it — and this asserts the removal by scrolling
+    // a clip view whose node is gone.
+    backend::install();
+    SCROLLS = 0 as i64;
+    var s: core::Node = scroll::scroll(key: "sc2", observe_scrolled: h_scrolled());
+    let p: *core::Node = #addr_of(s);
+    let v: *u8 = views::create(0 as *u8, p);
+    let clip: *u8 = { rt::retain({ rt::msg_id(v, rt::sel(#str_ptr("contentView\0"))) }) };
+    views::view_release(v);
+    { msg_void_point(clip, rt::sel(#str_ptr("scrollToPoint:\0")),
+                         rt::Point { x: 0.0f64, y: 80.0f64 }) };
+    assert SCROLLS == (0 as i64);
+    rt::release(clip);
+    return;
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_void_point(recv: *u8, sel: *u8, p: rt::Point);
+
+// ---- the control's own pointer verbs ------------------------------------------
+
+static PRESSES: i64 = 0 as i64;
+static RELEASES: i64 = 0 as i64;
+static CANCELS: i64 = 0 as i64;
+fn on_press_v(sender: *u8, ctx: *u8) { PRESSES = PRESSES + (1 as i64); return; }
+fn on_release_v(sender: *u8, ctx: *u8) { RELEASES = RELEASES + (1 as i64); return; }
+fn on_cancel_v(sender: *u8, ctx: *u8) { CANCELS = CANCELS + (1 as i64); return; }
+fn h_press_v() -> fn(*u8, *u8) { let f: fn(*u8, *u8) = on_press_v; return f; }
+fn h_release_v() -> fn(*u8, *u8) { let f: fn(*u8, *u8) = on_release_v; return f; }
+fn h_cancel_v() -> fn(*u8, *u8) { let f: fn(*u8, *u8) = on_cancel_v; return f; }
+
+#[test]
+fn a_buttons_own_press_and_release_are_not_the_gesture_band() {
+    // `button(on_pressed:)` is the CONTROL's verb. An application that used it
+    // never wrote `.gesture(...)`, so it has no Gestures at all — which is the
+    // one path where `input::arm` runs with a null gesture set.
+    backend::install();
+    PRESSES = 0 as i64;
+    RELEASES = 0 as i64;
+    var n: core::Node = button::button("Save", key: "pb",
+                                       on_pressed: h_press_v(), on_released: h_release_v());
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    { rt::msg_void_id(v, rt::sel(#str_ptr("mouseDown:\0")), mouse_event(1 as u64, 1 as i64)) };
+    assert PRESSES == (1 as i64);
+    assert RELEASES == (0 as i64);
+    { rt::msg_void_id(v, rt::sel(#str_ptr("mouseUp:\0")), mouse_event(2 as u64, 1 as i64)) };
+    assert RELEASES == (1 as i64);
+    return;
+}
+
+#[test]
+fn a_button_with_no_pointer_verbs_is_not_armed_at_all() {
+    // The gate is the declared HANDLER, not the kind: arming moves the view's
+    // class, and a control that asked for nothing should not pay for that.
+    backend::install();
+    var n: core::Node = button::button("Plain", key: "plainb");
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    assert synth::object_class(v) == rt::get_class(#str_ptr("NSButton\0"));
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn a_canvas_press_and_release_reach_the_canvas_verbs() {
+    backend::install();
+    PRESSES = 0 as i64;
+    RELEASES = 0 as i64;
+    var c: core::Node = canvas::canvas(key: "cp", on_press: h_press_v(), on_release: h_release_v());
+    let p: *core::Node = #addr_of(c);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    { rt::msg_void_id(v, rt::sel(#str_ptr("mouseDown:\0")), mouse_event(1 as u64, 1 as i64)) };
+    { rt::msg_void_id(v, rt::sel(#str_ptr("mouseUp:\0")), mouse_event(2 as u64, 1 as i64)) };
+    assert PRESSES == (1 as i64);
+    assert RELEASES == (1 as i64);
+    return;
+}
+
+#[test]
+fn leaving_a_canvas_while_pressed_is_a_cancel_and_not_a_release() {
+    // `CancelInteraction` is the press that was ABANDONED. AppKit says so only
+    // by ending the tracking somewhere the release will never arrive, so the
+    // difference between a cancel and a plain unhover is whether the pointer
+    // was down — which is the flag this asserts.
+    backend::install();
+    CANCELS = 0 as i64;
+    RELEASES = 0 as i64;
+    var c: core::Node = canvas::canvas(key: "cc", on_cancel: h_cancel_v(), on_release: h_release_v());
+    let p: *core::Node = #addr_of(c);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    // Exit with no press: not a cancel.
+    { rt::msg_void_id(v, rt::sel(#str_ptr("mouseExited:\0")), mouse_event(2 as u64, 0 as i64)) };
+    assert CANCELS == (0 as i64);
+    // Press, then leave: a cancel, and NOT a release.
+    { rt::msg_void_id(v, rt::sel(#str_ptr("mouseDown:\0")), mouse_event(1 as u64, 1 as i64)) };
+    { rt::msg_void_id(v, rt::sel(#str_ptr("mouseExited:\0")), mouse_event(2 as u64, 0 as i64)) };
+    assert CANCELS == (1 as i64);
+    assert RELEASES == (0 as i64);
     return;
 }

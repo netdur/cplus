@@ -28,6 +28,7 @@ import "appkit/appkit_ext" as akx;
 import "./paint" as paint;
 import "./input" as input;
 import "./web" as web;
+import "./scrolling" as scrolling;
 import "./recycler" as recycler;
 import "facet/symbol" as symbol;
 import "facet/split" as split;
@@ -91,6 +92,9 @@ fn create(ctx: *u8, n: *core::Node) -> *u8 {
     // class and a body that reads `object_class` would see the subclass.
     input::arm(v, n);
     input::bind_item(v, n);
+    // `observe_scrolled`, for every kind that is an NSScrollView underneath.
+    // Installed here rather than in each body: four controls, one mechanism.
+    if scrolling::scrolls(kind) { scrolling::install(v, n); }
     // Intrinsic size: the node measures itself through its view from here on.
     // `context` is flex's spare slot — facet's Data rides the ATTACHMENT, so
     // nothing else wants it.
@@ -414,6 +418,10 @@ fn view_release(v: *u8) {
     // would read a node that is gone.
     if web::is_web_view(v) { web::detach(v); }
     if v == (0 as *u8) { return; }
+    // A notification centre holds its observers unretained, so the scroll
+    // observer has to be removed BEFORE its object goes — a stale registration
+    // is a dangling pointer the next scroll walks into.
+    scrolling::uninstall(v);
     { rt::release(v) };
     return;
 }

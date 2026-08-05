@@ -40,6 +40,7 @@ import "flex_layout/flex_layout" as flex;
 import "facet/facet" as core;
 import "facet/props" as props;
 import "facet/gestures" as gestures;
+import "./pointer" as pointer;
 import "facet/component" as component;
 import "objc/runtime" as rt;
 import "objc/synthesis" as synth;
@@ -139,6 +140,11 @@ fn armed_key() -> *u8 { return { 28711 as *u8 }; }
 fn long_press_key() -> *u8 { return { 28712 as *u8 }; }
 fn item_key() -> *u8 { return { 28713 as *u8 }; }
 fn tracking_key() -> *u8 { return { 28714 as *u8 }; }
+// Is the pointer down on this view right now? Only a canvas asks, and only to
+// tell an abandoned press from a plain unhover.
+fn pressed_key() -> *u8 { return { 28716 as *u8 }; }
+
+fn is_pressed(v: *u8) -> bool { return { synth::get_associated(v, pressed_key()) } != (0 as *u8); }
 
 // The node a view carries gestures for, or null.
 fn node_of_view(v: *u8) -> *core::Node {
@@ -192,6 +198,12 @@ fn decline(self_obj: *u8, cmd: *u8, event: *u8) {
 
 fn imp_mouse_down(self_obj: *u8, cmd: *u8, event: *u8) {
     trace("[input] event mouseDown:");
+    // The CONTROL's own press verb first — `button.on_pressed` is not a
+    // gesture and an application that used it never wrote `.gesture(...)`.
+    // It never takes the event: a button still has to click.
+    synth::set_associated(self_obj, pressed_key(), 1 as *u8);
+    let own_n: *core::Node = node_of_view(self_obj);
+    if own_n != (0 as *core::Node) { let _p: bool = pointer::press(own_n, self_obj); }
     let g: *gestures::Gestures = gestures_of_view(self_obj);
     if g == (0 as *gestures::Gestures) { decline(self_obj, cmd, event); return; }
     // A long press is a press that OUTLASTS a timer, so it is armed here and
@@ -227,6 +239,9 @@ fn cancel_long_press(self_obj: *u8) {
 fn imp_mouse_up(self_obj: *u8, cmd: *u8, event: *u8) {
     trace("[input] event mouseUp:");
     cancel_long_press(self_obj);
+    synth::set_associated(self_obj, pressed_key(), 0 as *u8);
+    let own_n: *core::Node = node_of_view(self_obj);
+    if own_n != (0 as *core::Node) { let _r: bool = pointer::release(own_n, self_obj); }
     let g: *gestures::Gestures = gestures_of_view(self_obj);
     if g == (0 as *gestures::Gestures) { decline(self_obj, cmd, event); return; }
     var took: bool = fire_of(self_obj, { (*g).on_release });
@@ -255,6 +270,8 @@ fn imp_right_mouse_down(self_obj: *u8, cmd: *u8, event: *u8) {
 
 fn imp_mouse_dragged(self_obj: *u8, cmd: *u8, event: *u8) {
     trace("[input] event mouseDragged:");
+    let own_n: *core::Node = node_of_view(self_obj);
+    if own_n != (0 as *core::Node) { let _o: bool = pointer::dragged(own_n, self_obj); }
     // A drag is not a press any more: whatever the long press was waiting for,
     // this is not it.
     cancel_long_press(self_obj);
@@ -267,6 +284,8 @@ fn imp_mouse_dragged(self_obj: *u8, cmd: *u8, event: *u8) {
 
 fn imp_mouse_moved(self_obj: *u8, cmd: *u8, event: *u8) {
     trace("[input] event mouseMoved:");
+    let own_n: *core::Node = node_of_view(self_obj);
+    if own_n != (0 as *core::Node) { let _o: bool = pointer::moved(own_n, self_obj); }
     let g: *gestures::Gestures = gestures_of_view(self_obj);
     if g == (0 as *gestures::Gestures) { decline(self_obj, cmd, event); return; }
     if fire_of(self_obj, { (*g).on_pointer_move }) { return; }
@@ -276,6 +295,8 @@ fn imp_mouse_moved(self_obj: *u8, cmd: *u8, event: *u8) {
 
 fn imp_mouse_entered(self_obj: *u8, cmd: *u8, event: *u8) {
     trace("[input] event mouseEntered:");
+    let own_n: *core::Node = node_of_view(self_obj);
+    if own_n != (0 as *core::Node) { let _o: bool = pointer::hover(own_n, self_obj); }
     let g: *gestures::Gestures = gestures_of_view(self_obj);
     if g == (0 as *gestures::Gestures) { decline(self_obj, cmd, event); return; }
     if fire_of(self_obj, { (*g).on_hover }) { return; }
@@ -285,6 +306,14 @@ fn imp_mouse_entered(self_obj: *u8, cmd: *u8, event: *u8) {
 
 fn imp_mouse_exited(self_obj: *u8, cmd: *u8, event: *u8) {
     trace("[input] event mouseExited:");
+    let own_n: *core::Node = node_of_view(self_obj);
+    if own_n != (0 as *core::Node) {
+        let _o: bool = pointer::unhover(own_n, self_obj);
+        // Leaving WHILE PRESSED is `CancelInteraction`: the press was
+        // abandoned rather than completed, and AppKit says so only by ending
+        // the tracking somewhere the release will never arrive.
+        if is_pressed(self_obj) { let _c: bool = pointer::cancelled(own_n, self_obj); }
+    }
     let g: *gestures::Gestures = gestures_of_view(self_obj);
     if g == (0 as *gestures::Gestures) { decline(self_obj, cmd, event); return; }
     if fire_of(self_obj, { (*g).on_unhover }) { return; }
@@ -567,7 +596,11 @@ fn arm(v: *u8, n: *core::Node) {
         return;
     }
     let g: *gestures::Gestures = gestures::gestures_of(n);
-    if g == (0 as *gestures::Gestures) {
+    // A control with pointer verbs of its OWN is armed too: `button.on_pressed`
+    // and the canvas interaction set are the control's verbs, not the gesture
+    // band's, and an application that used them never touched `.gesture(...)`.
+    let own: bool = pointer::wants_press_band(n);
+    if g == (0 as *gestures::Gestures) && own == false {
         trace2("[input] arm: SKIPPED — node has no Gestures, key=", { (*n).key() });
         return;
     }
@@ -575,7 +608,11 @@ fn arm(v: *u8, n: *core::Node) {
     // The node pointer is re-associated every time, because a node that was
     // detached and re-attached under the same view has a new address.
     synth::set_associated(v, node_key(), n as *u8);
-    if is_armed(v) { arm_tracking(v, g); return; }
+    if is_armed(v) {
+        if g != (0 as *gestures::Gestures) { arm_tracking(v, g); }
+        arm_own_tracking(v, n);
+        return;
+    }
     let before: text::Text = class_name_of(v);
     let _old: *u8 = object_setClass(v, input_class_for(synth::object_class(v)));
     synth::set_associated(v, armed_key(), 1 as *u8);
@@ -586,9 +623,26 @@ fn arm(v: *u8, n: *core::Node) {
         let _c: status::Status = t.append(class_name_of(v).view());
         io::eprintln(t.view());
     }
-    arm_tracking(v, g);
-    arm_drop(v, g);
-    arm_drag_source(v, g);
+    // A control armed for its OWN pointer verbs has no Gestures at all, so
+    // every gesture-band installer is asked whether there is one first. This is
+    // the one path where `arm` runs with a null `g`.
+    if g != (0 as *gestures::Gestures) {
+        arm_tracking(v, g);
+        arm_drop(v, g);
+        arm_drag_source(v, g);
+    }
+    arm_own_tracking(v, n);
+    return;
+}
+
+// A canvas that declares a hover verb wants the same tracking area the gesture
+// band's hover wants, and for the same price — so it is asked separately rather
+// than given one because it is a canvas.
+fn arm_own_tracking(v: *u8, n: *core::Node) {
+    if pointer::wants_tracking(n) == false { return; }
+    // Enter/exit AND move: the canvas set has all three, and asking for a
+    // subset would mean a second tracking area when the other verb appears.
+    add_tracking_area(v, (1 as u64) | (2 as u64));
     return;
 }
 
@@ -603,10 +657,19 @@ fn arm_tracking(v: *u8, g: *gestures::Gestures) {
                          || { (*g).on_unhover } != gestures::no_gesture;
     let wants_move: bool = { (*g).on_pointer_move } != gestures::no_gesture;
     if !wants_enter && !wants_move { return; }
-    if { synth::get_associated(v, tracking_key()) } != (0 as *u8) { return; }
     var opts: u64 = 32 as u64 + (512 as u64);
-    if wants_enter { opts = opts | (1 as u64); }
-    if wants_move { opts = opts | (2 as u64); }
+    var which: u64 = 0 as u64;
+    if wants_enter { which = which | (1 as u64); }
+    if wants_move { which = which | (2 as u64); }
+    add_tracking_area(v, which);
+    return;
+}
+
+// NSTrackingActiveInKeyWindow 0x20 | NSTrackingInVisibleRect 0x200, plus
+// whichever of entered/exited (1) and moved (2) the caller asked for.
+fn add_tracking_area(v: *u8, which: u64) {
+    if { synth::get_associated(v, tracking_key()) } != (0 as *u8) { return; }
+    let opts: u64 = (32 as u64) + (512 as u64) | which;
     let area: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSTrackingArea\0")),
                                  rt::sel(#str_ptr("alloc\0"))) };
     let inited: *u8 = { msg_id_rect_u64_id_id(

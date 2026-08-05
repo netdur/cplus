@@ -27,6 +27,7 @@
 import "stdlib/option" as option;
 import "stdlib/text" as text;
 import "stdlib/vec" as vec;
+import "stdlib/status" as status;
 import "flex_layout/flex_layout" as flex;
 import "facet/facet" as core;
 import "facet/props" as props;
@@ -70,6 +71,7 @@ import "appkit/appkit" as ak;
 import "appkit/appkit_ext" as akx;
 import "quartzcore/quartzcore" as quartz;
 import "./paint" as paint;
+import "./text_input" as text_input;
 import "./drawing" as drawing;
 
 // ---- reaching a node's props -------------------------------------------------
@@ -105,12 +107,45 @@ fn apply_label(v: *u8, n: *core::Node, dirty: u64) {
     // A label with SPAN children renders those instead: a formatted label's
     // text IS its runs, so its own `text` would be a second, contradictory
     // answer to the same question.
-    if (dirty & (label::P_TEXT | label::P_TEXT_TRANSFORM)) != (0 as u64) {
+    let rich: u64 = label::P_TEXT | label::P_TEXT_TRANSFORM | label::P_CHARACTER_SPACING
+        | label::P_LINE_HEIGHT | label::P_TEXT_DECORATION | label::P_IS_ITALIC
+        | label::P_FONT_SIZE | label::P_FONT_WEIGHT | label::P_FONT_FAMILY
+        | label::P_TEXT_COLOR | label::P_TEXT_ALIGN | label::P_TEXT_FORMAT
+        | label::P_FORMATTED_TEXT;
+    if (dirty & rich) != (0 as u64) {
         if has_spans(n) {
             let runs: *u8 = build_runs(n);
             if runs != (0 as *u8) {
                 { rt::msg_void_id(v, rt::sel(#str_ptr("setAttributedStringValue:\0")), runs) };
                 { rt::release(runs) };
+            }
+        } else if is_html(p) {
+            // `TextType.Html` means the string IS markup. NSAttributedString
+            // parses it, which is the whole feature — a backend that stripped
+            // the tags would be answering a different question.
+            let a: *u8 = html_string({ (*p).text.view() });
+            if a != (0 as *u8) {
+                { rt::msg_void_id(v, rt::sel(#str_ptr("setAttributedStringValue:\0")), a) };
+                { rt::release(a) };
+            }
+        } else if formatted_count(p) > (0 as usize) {
+            // `formatted_text` is the VALUE-carried run list, the second way a
+            // label can describe runs. Child spans win when both are present:
+            // a tree is more specific than a value on the node.
+            let runs: *u8 = build_value_runs(p);
+            if runs != (0 as *u8) {
+                { rt::msg_void_id(v, rt::sel(#str_ptr("setAttributedStringValue:\0")), runs) };
+                { rt::release(runs) };
+            }
+        } else if label_wants_rich(p) {
+            // kern, line height and decoration have no plain-string form, so a
+            // label that asks for one is written attributed. One that does not
+            // keeps the plain path — see paint::wants_rich.
+            let shown: text::Text = paint::transformed({ (*p).text.view() }, { (*p).text_transform });
+            let a: *u8 = paint::attributed(shown.view(), label_attributes(p));
+            if a != (0 as *u8) {
+                { rt::msg_void_id(v, rt::sel(#str_ptr("setAttributedStringValue:\0")), a) };
+                { rt::release(a) };
             }
         } else {
             f.as_control().set_string_value(paint::transformed({ (*p).text.view() }, { (*p).text_transform }).view());
@@ -120,8 +155,9 @@ fn apply_label(v: *u8, n: *core::Node, dirty: u64) {
         let c: vocab::Color = { (*p).text_color };
         if c.is_set() { f.set_text_color(paint::ns_color(c)); }
     }
-    if (dirty & (label::P_FONT_SIZE | label::P_FONT_WEIGHT | label::P_FONT_FAMILY)) != (0 as u64) {
-        match paint::ns_font({ (*p).font_size }, { (*p).font_weight }, { (*p).font_family.view() }) {
+    if (dirty & (label::P_FONT_SIZE | label::P_FONT_WEIGHT | label::P_FONT_FAMILY | label::P_IS_ITALIC)) != (0 as u64) {
+        match paint::ns_font_styled({ (*p).font_size }, { (*p).font_weight },
+                                    { (*p).font_family.view() }, { (*p).is_italic }) {
             option::Option[ak::Font]::Some(font) => { f.as_control().set_font(font); }
             option::Option[ak::Font]::None => { }
         }
@@ -157,14 +193,47 @@ fn apply_button(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::ButtonProps = props_of(n, props::K_BUTTON) as *props::ButtonProps;
     if p == (0 as *props::ButtonProps) { return; }
     let b: ak::Button = ak::Button::from_raw(v);
-    if (dirty & (button::P_TITLE | button::P_TEXT_TRANSFORM)) != (0 as u64) {
-        b.set_title(paint::transformed({ (*p).title.view() }, { (*p).text_transform }).view());
+    // The title band. `character_spacing` and `is_italic` have no plain-title
+    // form, so a button that asks for either — or for a text colour, which
+    // NSButton also has no plain setter for — is given an attributed title.
+    let title_bits: u64 = button::P_TITLE | button::P_TEXT_TRANSFORM
+        | button::P_CHARACTER_SPACING | button::P_TEXT_COLOR | button::P_IS_ITALIC
+        | button::P_FONT_SIZE | button::P_FONT_WEIGHT | button::P_FONT_FAMILY;
+    if (dirty & title_bits) != (0 as u64) {
+        let shown: text::Text = paint::transformed({ (*p).title.view() }, { (*p).text_transform });
+        if button_wants_rich(p) {
+            let a: *u8 = paint::attributed(shown.view(), button_attributes(p));
+            if a != (0 as *u8) {
+                { rt::msg_void_id(v, rt::sel(#str_ptr("setAttributedTitle:\0")), a) };
+                { rt::release(a) };
+            }
+        } else {
+            b.set_title(shown.view());
+        }
     }
-    if (dirty & (button::P_FONT_SIZE | button::P_FONT_WEIGHT | button::P_FONT_FAMILY)) != (0 as u64) {
-        match paint::ns_font({ (*p).font_size }, { (*p).font_weight }, { (*p).font_family.view() }) {
+    if (dirty & (button::P_FONT_SIZE | button::P_FONT_WEIGHT | button::P_FONT_FAMILY | button::P_IS_ITALIC)) != (0 as u64) {
+        match paint::ns_font_styled({ (*p).font_size }, { (*p).font_weight },
+                                    { (*p).font_family.view() }, { (*p).is_italic }) {
             option::Option[ak::Font]::Some(font) => { b.as_control().set_font(font); }
             option::Option[ak::Font]::None => { }
         }
+    }
+    if (dirty & button::P_IMAGE) != (0 as u64) {
+        apply_control_image(b, { (*p).image.view() });
+    }
+    if (dirty & (button::P_CONTENT_LAYOUT | button::P_IMAGE)) != (0 as u64) {
+        b.set_image_position(ns_image_position({ (*p).content_layout }));
+    }
+    if (dirty & button::P_LINE_BREAK) != (0 as u64) {
+        match b.as_control().cell() {
+            option::Option[ak::Cell]::Some(c) => { c.set_line_break_mode(paint::ns_line_break({ (*p).line_break })); }
+            option::Option[ak::Cell]::None => { }
+        }
+    }
+    if (dirty & (button::P_BORDER_COLOR | button::P_BORDER_WIDTH | button::P_CORNER_RADIUS)) != (0 as u64) {
+        apply_border(v, { (*p).border_color }, { (*p).border_width }, { (*p).corner_radius },
+                     (dirty & (button::P_BORDER_COLOR | button::P_BORDER_WIDTH)) != (0 as u64),
+                     (dirty & button::P_CORNER_RADIUS) != (0 as u64));
     }
     // A button's action fires from the keyboard when focused and from
     // VoiceOver too — which is exactly why it is the control's own verb and
@@ -176,6 +245,44 @@ fn apply_button(v: *u8, n: *core::Node, dirty: u64) {
     // because NSControl's enabled is not the view's.
     if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
         b.as_control().set_enabled(core::is_enabled(n));
+    }
+    return;
+}
+
+fn button_wants_rich(p: *props::ButtonProps) -> bool {
+    // A text colour joins the rich set here and nowhere else: NSButton draws
+    // its title from the cell and has no `setTitleColor:`.
+    if { (*p).text_color }.is_set() { return true; }
+    return paint::wants_rich({ (*p).character_spacing }, 0.0f64, vocab::TextDecoration::None);
+}
+
+fn button_attributes(p: *props::ButtonProps) -> *u8 {
+    return paint::rich_attributes(
+        paint::ns_font_styled({ (*p).font_size }, { (*p).font_weight },
+                              { (*p).font_family.view() }, { (*p).is_italic }),
+        { (*p).text_color }, { (*p).character_spacing }, 0.0f64,
+        option::Option[vocab::TextAlign]::None, vocab::TextDecoration::None);
+}
+
+// facet's ContentLayout names where the IMAGE goes; NSCellImagePosition is the
+// same idea with AppKit's spelling.
+fn ns_image_position(l: vocab::ContentLayout) -> ak::CellImagePosition {
+    return match l {
+        vocab::ContentLayout::ImageLeft => ak::CellImagePosition::NSImageLeft,
+        vocab::ContentLayout::ImageRight => ak::CellImagePosition::NSImageRight,
+        vocab::ContentLayout::ImageTop => ak::CellImagePosition::NSImageAbove,
+        vocab::ContentLayout::ImageBottom => ak::CellImagePosition::NSImageBelow,
+    };
+}
+
+// The same three-step resolution `image` uses — a system symbol, then a bundle
+// name, then a path — so a button's image and an image's source name the same
+// things.
+fn apply_control_image(b: ak::Button, src: str) {
+    if src == "" { b.set_image(ak::Image::from_raw(0 as *u8)); return; }
+    match resolve_image(src) {
+        option::Option[ak::Image]::Some(img) => { b.set_image(img); }
+        option::Option[ak::Image]::None => { b.set_image(ak::Image::from_raw(0 as *u8)); }
     }
     return;
 }
@@ -194,6 +301,9 @@ fn create_text_field(n: *core::Node) -> *u8 {
     f.set_editable(true);
     f.set_selectable(true);
     f.set_bezeled(true);
+    // What the user types has to reach the props, or `text()` answers with
+    // whatever was last SET and the edit is lost silently. See text_input.
+    text_input::install(f.as_view().raw(), f.as_view().raw(), n);
     return rt::retain(f.as_view().raw());
 }
 
@@ -202,31 +312,10 @@ fn apply_text_field(v: *u8, n: *core::Node, dirty: u64) {
     if p == (0 as *props::TextFieldProps) { return; }
     let f: ak::TextField = ak::TextField::from_raw(v);
     let iv: *props::InputViewProps = { #addr_of((*p).input_view) };
-    // Writing the string value moves the insertion point, so a field the user
-    // is typing in must not be re-written with what it already says.
-    if (dirty & text_field::P_TEXT) != (0 as u64) {
-        let want: str = { (*iv).text.view() };
-        if f.as_control().string_value().view() != want { f.as_control().set_string_value(want); }
-    }
-    if (dirty & text_field::P_PLACEHOLDER) != (0 as u64) {
-        f.set_placeholder_string({ (*iv).placeholder.view() });
-    }
-    if (dirty & text_field::P_TEXT_COLOR) != (0 as u64) {
-        let c: vocab::Color = { (*iv).text_color };
-        if c.is_set() { f.set_text_color(paint::ns_color(c)); }
-    }
-    if (dirty & text_field::P_IS_READ_ONLY) != (0 as u64) {
-        f.set_editable({ (*iv).is_read_only } == false);
-    }
-    if (dirty & (text_field::P_FONT_SIZE | text_field::P_FONT_WEIGHT | text_field::P_FONT_FAMILY)) != (0 as u64) {
-        match paint::ns_font({ (*iv).font_size }, { (*iv).font_weight }, { (*iv).font_family.view() }) {
-            option::Option[ak::Font]::Some(font) => { f.as_control().set_font(font); }
-            option::Option[ak::Font]::None => { }
-        }
-    }
-    if (dirty & text_field::P_TEXT_ALIGN) != (0 as u64) {
-        f.as_control().set_alignment(paint::ns_text_align({ (*p).text_align }));
-    }
+    // The whole InputView band is one body in text_input, shared with the
+    // editor and the search field, because all three embed the same props.
+    text_input::apply_field_band(f, n, iv, { (*p).text_align }, dirty,
+                                 text_input::bits_of(props::K_TEXT_FIELD));
     if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
         f.as_control().set_enabled(core::is_enabled(n));
     }
@@ -354,6 +443,117 @@ fn state_on() -> i64 { return 1 as i64; }
 fn state_off() -> i64 { return 0 as i64; }
 fn state_of(on: bool) -> i64 { if on { return state_on(); } return state_off(); }
 
+fn is_html(p: *props::LabelProps) -> bool {
+    return match { (*p).text_format } {
+        vocab::TextFormat::Html => true,
+        vocab::TextFormat::Text => false,
+    };
+}
+
+// An NSAttributedString parsed from HTML, at +1, or 0 when the markup is
+// unusable — in which case the caller leaves the label alone rather than
+// showing raw tags.
+fn html_string(markup: str) -> *u8 {
+    let data: *u8 = { rt::msg_id_u64(bridge::nsstring(markup),
+                                     rt::sel(#str_ptr("dataUsingEncoding:\0")), 4 as u64) };
+    if data == (0 as *u8) { return 0 as *u8; }
+    let opts: *u8 = { rt::alloc_init(#str_ptr("NSMutableDictionary\0")) };
+    if opts == (0 as *u8) { return 0 as *u8; }
+    { rt::msg_void_id_id(opts, rt::sel(#str_ptr("setObject:forKey:\0")),
+                         bridge::nsstring("NSHTML"), bridge::nsstring("DocumentType")) };
+    let alloced: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSAttributedString\0")),
+                                    rt::sel(#str_ptr("alloc\0"))) };
+    let a: *u8 = { msg_id_html(alloced, rt::sel(#str_ptr("initWithData:options:documentAttributes:error:\0")),
+                               data, opts, 0 as *u8, 0 as *u8) };
+    { rt::release(opts) };
+    return a;
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_id_html(recv: *u8, sel: *u8, a: *u8, b: *u8, c: *u8, d: *u8) -> *u8;
+
+fn formatted_count(p: *props::LabelProps) -> usize {
+    let f: *vocab::Spans = { #addr_of((*p).formatted_text) };
+    return { (*f).count() };
+}
+
+// The attributed string a label's `formatted_text` value describes, at +1.
+// Same shape as `build_runs` over child spans, and deliberately so: two ways
+// to say runs must not become two renderings of them.
+fn build_value_runs(p: *props::LabelProps) -> *u8 {
+    let ms: *u8 = { rt::alloc_init(#str_ptr("NSMutableAttributedString\0")) };
+    if ms == (0 as *u8) { return 0 as *u8; }
+    let spans: *vocab::Spans = { #addr_of((*p).formatted_text) };
+    var i: usize = 0 as usize;
+    let count: usize = { (*spans).count() };
+    while i < count {
+        let r: *vocab::TextSpan = { (*spans).at(i) };
+        if r != (0 as *vocab::TextSpan) { append_value_run(ms, r, p); }
+        i = i +% (1 as usize);
+    }
+    return ms;
+}
+
+fn append_value_run(ms: *u8, r: *vocab::TextSpan, p: *props::LabelProps) {
+    let attrs: *u8 = paint::rich_attributes(
+        paint::ns_font_styled({ (*r).font_size }, { (*r).font_weight },
+                              { (*r).font_family.view() }, { (*r).is_italic }),
+        { (*r).color }, { (*p).character_spacing }, { (*p).line_height },
+        option::Option[vocab::TextAlign]::None, { (*r).decoration });
+    if attrs != (0 as *u8) {
+        let bg: vocab::Color = { (*r).background_color };
+        if bg.is_set() { paint::dict_set(attrs, "NSBackgroundColor", paint::ns_color(bg).raw()); }
+        // A run with a destination is a LINK, which is what `link` means and
+        // the only attribute a plain run cannot carry.
+        let dest: str = { (*r).link.view() };
+        if dest != "" { paint::dict_set(attrs, "NSLink", bridge::nsstring(dest)); }
+    }
+    let run: *u8 = paint::attributed({ (*r).text.view() }, attrs);
+    if run != (0 as *u8) {
+        { rt::msg_void_id(ms, rt::sel(#str_ptr("appendAttributedString:\0")), run) };
+        { rt::release(run) };
+    }
+    return;
+}
+
+fn label_wants_rich(p: *props::LabelProps) -> bool {
+    return paint::wants_rich({ (*p).character_spacing }, { (*p).line_height },
+                             { (*p).text_decoration });
+}
+
+fn label_attributes(p: *props::LabelProps) -> *u8 {
+    return paint::rich_attributes(
+        paint::ns_font_styled({ (*p).font_size }, { (*p).font_weight },
+                              { (*p).font_family.view() }, { (*p).is_italic }),
+        { (*p).text_color }, { (*p).character_spacing }, { (*p).line_height },
+        option::some({ (*p).text_align }), { (*p).text_decoration });
+}
+
+// ---- the border band ---------------------------------------------------------
+// `border_color`, `border_width` and `corner_radius` are the same three verbs
+// on a button, an icon button, a radio and a bordered box, and a layer answers
+// all three. One body, because three copies is how three controls end up
+// disagreeing about what a zero width means.
+
+fn apply_border(v: *u8, color: vocab::Color, width: f64, radius: vocab::Corners,
+                do_border: bool, do_corner: bool) {
+    let view: ak::View = ak::View::from_raw(v);
+    if do_border {
+        // A zero width is no border, and it must CLEAR one — a control that
+        // had a border and then asked for none has to lose it.
+        view.set_wants_layer(true);
+        view.layer().set_border_width(width);
+        if width > 0.0f64 && color.is_set() {
+            view.layer().set_border_color(paint::ns_color(color).c_g_color());
+        }
+    }
+    if do_corner {
+        view.set_wants_layer(true);
+        view.layer().set_corner_radius(largest_corner(radius));
+    }
+    return;
+}
+
 // ---- box ---------------------------------------------------------------------
 // A rectangle of colour. No AppKit control corresponds — NSBox is a titled
 // grouping frame, which is a different thing — so it is a layer-backed view,
@@ -430,11 +630,18 @@ fn apply_radio(v: *u8, n: *core::Node, dirty: u64) {
     if p == (0 as *props::RadioProps) { return; }
     let b: ak::Button = ak::Button::from_raw(v);
     if (dirty & radio::P_ON) != (0 as u64) { b.set_state(state_of({ (*p).on })); }
-    if (dirty & (radio::P_FONT_SIZE | radio::P_FONT_WEIGHT | radio::P_FONT_FAMILY)) != (0 as u64) {
-        match paint::ns_font({ (*p).font_size }, { (*p).font_weight }, { (*p).font_family.view() }) {
+    if (dirty & (radio::P_FONT_SIZE | radio::P_FONT_WEIGHT | radio::P_FONT_FAMILY
+                 | radio::P_IS_ITALIC)) != (0 as u64) {
+        match paint::ns_font_styled({ (*p).font_size }, { (*p).font_weight },
+                                    { (*p).font_family.view() }, { (*p).is_italic }) {
             option::Option[ak::Font]::Some(font) => { b.as_control().set_font(font); }
             option::Option[ak::Font]::None => { }
         }
+    }
+    if (dirty & (radio::P_BORDER_COLOR | radio::P_BORDER_WIDTH | radio::P_CORNER_RADIUS)) != (0 as u64) {
+        apply_border(v, { (*p).border_color }, { (*p).border_width }, { (*p).corner_radius },
+                     (dirty & (radio::P_BORDER_COLOR | radio::P_BORDER_WIDTH)) != (0 as u64),
+                     (dirty & radio::P_CORNER_RADIUS) != (0 as u64));
     }
     if (dirty & props::C_HANDLERS) != (0 as u64) || dirty == paint::all_bits() {
         akx::set_control_action_ctx(b.as_control(), { (*p).on_checked_changed }, { (*p).on_checked_changed_ctx });
@@ -490,6 +697,12 @@ fn apply_slider(v: *u8, n: *core::Node, dirty: u64) {
     }
     if (dirty & props::C_HANDLERS) != (0 as u64) || dirty == paint::all_bits() {
         akx::set_control_action_ctx(s.as_control(), { (*p).on_value_changed }, { (*p).on_value_changed_ctx });
+        // `on_drag_started` / `on_drag_completed` are the EDGES of a drag, and
+        // NSSlider reports them the same way it reports the value: through the
+        // action, with `isTracking` saying which edge this is. A continuous
+        // slider fires the action throughout, so the two edges are the first
+        // action with tracking on and the first with it off.
+        text_input::install_slider(v, n);
     }
     if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
         s.as_control().set_enabled(core::is_enabled(n));
@@ -515,8 +728,33 @@ fn apply_progress(v: *u8, n: *core::Node, dirty: u64) {
     if p == (0 as *props::ProgressProps) { return; }
     let pi: ak::ProgressIndicator = ak::ProgressIndicator::from_raw(v);
     if (dirty & progress::P_PROGRESS) != (0 as u64) { pi.set_double_value({ (*p).progress }); }
+    // `animate_progress` is a COMMAND — "slide to the current progress over
+    // `animate_duration`" — not a flag. NSProgressIndicator has no animated
+    // setter, so the animation is the ANIMATOR PROXY's, which is AppKit's own
+    // way of saying the same thing and gets the timing curve for free.
+    if (dirty & progress::P_ANIMATE_PROGRESS) != (0 as u64) {
+        let secs: f64 = { (*p).animate_duration.seconds };
+        if secs <= 0.0f64 {
+            pi.set_double_value({ (*p).progress });
+        } else {
+            let cls: *u8 = rt::get_class(#str_ptr("NSAnimationContext\0"));
+            { rt::msg_void(cls, rt::sel(#str_ptr("beginGrouping\0"))) };
+            let ctx: *u8 = { rt::msg_id(cls, rt::sel(#str_ptr("currentContext\0"))) };
+            if ctx != (0 as *u8) {
+                { msg_void_f64(ctx, rt::sel(#str_ptr("setDuration:\0")), secs) };
+            }
+            let anim: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("animator\0"))) };
+            if anim != (0 as *u8) {
+                { msg_void_f64(anim, rt::sel(#str_ptr("setDoubleValue:\0")), { (*p).progress }) };
+            }
+            { rt::msg_void(cls, rt::sel(#str_ptr("endGrouping\0"))) };
+        }
+    }
     return;
 }
+
+#[link_name = "objc_msgSend"]
+extern fn msg_void_f64(recv: *u8, sel: *u8, a: f64);
 
 // ---- spinner -----------------------------------------------------------------
 // The same class in its indeterminate posture. It must be told to ANIMATE, not
@@ -591,6 +829,12 @@ fn apply_icon_button(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & icon_button::P_FIT) != (0 as u64) {
         b.set_image_scaling(ns_image_scaling({ (*p).fit }));
     }
+    if (dirty & (icon_button::P_BORDER_COLOR | icon_button::P_BORDER_WIDTH
+                 | icon_button::P_CORNER_RADIUS)) != (0 as u64) {
+        apply_border(v, { (*p).border_color }, { (*p).border_width }, { (*p).corner_radius },
+                     (dirty & (icon_button::P_BORDER_COLOR | icon_button::P_BORDER_WIDTH)) != (0 as u64),
+                     (dirty & icon_button::P_CORNER_RADIUS) != (0 as u64));
+    }
     if (dirty & props::C_HANDLERS) != (0 as u64) || dirty == paint::all_bits() {
         akx::set_control_action_ctx(b.as_control(), { (*p).on_clicked }, { (*p).on_clicked_ctx });
     }
@@ -614,20 +858,30 @@ fn apply_symbol(v: *u8, n: *core::Node, dirty: u64) {
     let p: *symbol::SymbolProps = props_of(n, symbol::K_SYMBOL) as *symbol::SymbolProps;
     if p == (0 as *symbol::SymbolProps) { return; }
     let f: ak::TextField = ak::TextField::from_raw(v);
-    if (dirty & (symbol::P_NAME | symbol::P_ICON | symbol::P_SIZE | symbol::P_FONT)) != (0 as u64) {
+    if (dirty & (symbol::P_NAME | symbol::P_ICON | symbol::P_SIZE | symbol::P_FONT
+                 | symbol::P_FILL)) != (0 as u64) {
         // The System set is a real SF Symbol; a bundled glyph is its codepoint
         // in facet's own font. Either way it lands in a label, so the shared
         // band and the frame walk treat it like any other leaf.
-        let name: str = { (*p).name.view() };
-        if name != "" {
-            f.as_control().set_string_value("");
-            match ak::Image::image_with_system_symbol_name(name, "") {
-                option::Option[ak::Image]::Some(_img) => { }
-                option::Option[ak::Image]::None => { }
-            }
-        }
         let pt: f64 = { (*p).size };
         if pt > 0.0f64 { f.as_control().set_font(ak::Font::system_font_of_size(pt)); }
+        let name: str = { (*p).name.view() };
+        if name != "" {
+            // SF Symbols spell the filled variant as a NAME — "house" and
+            // "house.fill" are two symbols, not one symbol with a property —
+            // so `fill` picks the name rather than setting an axis. Between the
+            // two it rounds: a partial fill is a variable-font axis the system
+            // set does not expose, and MANIFEST records that.
+            var want: text::Text = text::from_str(name);
+            if { (*p).fill } >= 0.5f64 { let _a: status::Status = want.append(".fill"); }
+            match symbol_image(want.view(), name) {
+                option::Option[ak::Image]::Some(img) => { set_symbol_image(f, img); }
+                // A name the machine does not have leaves the field empty
+                // rather than showing the name as text, which would read as a
+                // rendering bug rather than a missing glyph.
+                option::Option[ak::Image]::None => { f.as_control().set_string_value(""); }
+            }
+        }
     }
     if (dirty & symbol::P_COLOR) != (0 as u64) {
         let c: vocab::Color = { (*p).color };
@@ -651,6 +905,32 @@ fn resolve_image(src: str) -> option::Option[ak::Image] {
     return option::some(ak::Image::new_with_contents_of_file(src));
 }
 
+// The filled name if there is one, else the plain name — so `fill: 1.0` on a
+// symbol with no filled variant shows the outline rather than nothing.
+fn symbol_image(filled: str, plain: str) -> option::Option[ak::Image] {
+    match ak::Image::image_with_system_symbol_name(filled, "") {
+        option::Option[ak::Image]::Some(img) => { return option::some(img); }
+        option::Option[ak::Image]::None => { }
+    }
+    return ak::Image::image_with_system_symbol_name(plain, "");
+}
+
+// A symbol lands in a LABEL, so the image is an attachment in its attributed
+// string. That is what keeps the shared band and the frame walk treating it
+// like any other leaf — the alternative, an NSImageView, would need its own
+// case in every one of them.
+fn set_symbol_image(f: ak::TextField, img: ak::Image) {
+    let att: *u8 = { rt::alloc_init(#str_ptr("NSTextAttachment\0")) };
+    if att == (0 as *u8) { return; }
+    { rt::msg_void_id(att, rt::sel(#str_ptr("setImage:\0")), img.raw()) };
+    let s: *u8 = { rt::msg_id_id(rt::get_class(#str_ptr("NSAttributedString\0")),
+                                 rt::sel(#str_ptr("attributedStringWithAttachment:\0")), att) };
+    { rt::release(att) };
+    if s == (0 as *u8) { return; }
+    { rt::msg_void_id(f.raw(), rt::sel(#str_ptr("setAttributedStringValue:\0")), s) };
+    return;
+}
+
 // ---- text_area ---------------------------------------------------------------
 // NSTextView inside an NSScrollView: the scroller is not optional on AppKit —
 // a bare NSTextView does not scroll, and a multi-line editor that cannot
@@ -663,6 +943,10 @@ fn create_text_area(n: *core::Node) -> *u8 {
     tv.set_rich_text(false);          // facet's text is plain; styling is props
     s.set_document_view(tv.as_view());
     s.set_has_vertical_scroller(true);
+    // The notifications come from the TEXT VIEW, but the node is backed by the
+    // scroll view — so the delegate is pinned to the one that lives as long as
+    // the node and installed on the one that talks.
+    text_input::install(s.as_view().raw(), tv.as_view().raw(), n);
     return rt::retain(s.as_view().raw());
 }
 
@@ -681,24 +965,23 @@ fn apply_text_area(v: *u8, n: *core::Node, dirty: u64) {
     match text_area_editor(v) {
         option::Option[ak::TextView]::Some(tv) => {
             let iv: *props::InputViewProps = { #addr_of((*p).input_view) };
-            // Same guard as the text field, and it matters more here: an editor
-            // is where someone is actually typing.
-            if (dirty & text_area::P_TEXT) != (0 as u64) {
-                let want: str = { (*iv).text.view() };
-                if tv.as_text().string().view() != want { tv.as_text().set_string(want); }
-            }
-            if (dirty & text_area::P_IS_READ_ONLY) != (0 as u64) {
-                tv.set_editable({ (*iv).is_read_only } == false);
-            }
-            if (dirty & (text_area::P_FONT_SIZE | text_area::P_FONT_WEIGHT | text_area::P_FONT_FAMILY)) != (0 as u64) {
-                match paint::ns_font({ (*iv).font_size }, { (*iv).font_weight }, { (*iv).font_family.view() }) {
-                    option::Option[ak::Font]::Some(font) => { tv.as_text().set_font(font); }
-                    option::Option[ak::Font]::None => { }
+            text_input::apply_editor_band(tv, n, iv, { (*p).text_align }, dirty,
+                                          text_input::bits_of(props::K_TEXT_AREA));
+            // `auto_size` is the editor's own verb: an NSTextView that grows
+            // with its text is vertically resizable with no ceiling, and is
+            // asked to size to fit whenever the text changes. Disabled is the
+            // fixed box its scroll view gives it.
+            if (dirty & (text_area::P_AUTO_SIZE | text_area::P_TEXT)) != (0 as u64)
+                || dirty == paint::all_bits() {
+                let grows: bool = match { (*p).auto_size } {
+                    vocab::AutoSize::TextChanges => true,
+                    vocab::AutoSize::Disabled => false,
+                };
+                tv.as_text().set_vertically_resizable(grows);
+                if grows {
+                    tv.as_text().set_max_size(rt::Size { w: 1000000.0f64, h: 1000000.0f64 });
+                    tv.as_text().size_to_fit();
                 }
-            }
-            if (dirty & text_area::P_TEXT_COLOR) != (0 as u64) {
-                let c: vocab::Color = { (*iv).text_color };
-                if c.is_set() { tv.as_text().set_text_color(paint::ns_color(c)); }
             }
         }
         option::Option[ak::TextView]::None => { }
@@ -713,6 +996,7 @@ fn apply_text_area(v: *u8, n: *core::Node, dirty: u64) {
 
 fn create_search_field(n: *core::Node) -> *u8 {
     let f: ak::SearchField = ak::SearchField::from_raw(rt::alloc_init(#str_ptr("NSSearchField\0")));
+    text_input::install(f.as_view().raw(), f.as_view().raw(), n);
     return rt::retain(f.as_view().raw());
 }
 
@@ -721,19 +1005,8 @@ fn apply_search_field(v: *u8, n: *core::Node, dirty: u64) {
     if p == (0 as *props::SearchFieldProps) { return; }
     let f: ak::TextField = ak::TextField::from_raw(v);
     let iv: *props::InputViewProps = { #addr_of((*p).input_view) };
-    if (dirty & search_field::P_TEXT) != (0 as u64) {
-        let want: str = { (*iv).text.view() };
-        if f.as_control().string_value().view() != want { f.as_control().set_string_value(want); }
-    }
-    if (dirty & search_field::P_PLACEHOLDER) != (0 as u64) {
-        f.set_placeholder_string({ (*iv).placeholder.view() });
-    }
-    if (dirty & (search_field::P_FONT_SIZE | search_field::P_FONT_WEIGHT | search_field::P_FONT_FAMILY)) != (0 as u64) {
-        match paint::ns_font({ (*iv).font_size }, { (*iv).font_weight }, { (*iv).font_family.view() }) {
-            option::Option[ak::Font]::Some(font) => { f.as_control().set_font(font); }
-            option::Option[ak::Font]::None => { }
-        }
-    }
+    text_input::apply_field_band(f, n, iv, { (*p).text_align }, dirty,
+                                 text_input::bits_of(props::K_SEARCH_FIELD));
     if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
         f.as_control().set_enabled(core::is_enabled(n));
     }
@@ -755,6 +1028,14 @@ fn apply_popup(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::PopupProps = props_of(n, props::K_POPUP) as *props::PopupProps;
     if p == (0 as *props::PopupProps) { return; }
     let b: ak::PopUpButton = ak::PopUpButton::from_raw(v);
+    // The menu is rebuilt with the items, so the delegate that carries
+    // `on_opened` / `on_closed` is re-installed with it.
+    if (dirty & (popup::P_ITEMS | props::C_HANDLERS)) != (0 as u64) || dirty == paint::all_bits() {
+        match b.menu() {
+            option::Option[ak::Menu]::Some(m) => { text_input::install_popup(v, m.raw(), n); }
+            option::Option[ak::Menu]::None => { }
+        }
+    }
     if (dirty & popup::P_ITEMS) != (0 as u64) {
         b.remove_all_items();
         let items: *vocab::TextList = { #addr_of((*p).items) };
@@ -771,17 +1052,65 @@ fn apply_popup(v: *u8, n: *core::Node, dirty: u64) {
         let idx: i64 = { (*p).selected_index };
         if idx >= (0 as i64) { b.select_item_at_index(idx); }
     }
-    if (dirty & (popup::P_FONT_SIZE | popup::P_FONT_WEIGHT | popup::P_FONT_FAMILY)) != (0 as u64) {
-        match paint::ns_font({ (*p).font_size }, { (*p).font_weight }, { (*p).font_family.view() }) {
+    if (dirty & (popup::P_FONT_SIZE | popup::P_FONT_WEIGHT | popup::P_FONT_FAMILY
+                 | popup::P_IS_ITALIC)) != (0 as u64) {
+        match paint::ns_font_styled({ (*p).font_size }, { (*p).font_weight },
+                                    { (*p).font_family.view() }, { (*p).is_italic }) {
             option::Option[ak::Font]::Some(font) => { b.as_control().set_font(font); }
             option::Option[ak::Font]::None => { }
         }
+    }
+    // A popup draws its rows from its MENU, so a colour or a kern is an
+    // attributed title per item — there is no `setTextColor:` on the button.
+    if (dirty & (popup::P_TEXT_COLOR | popup::P_CHARACTER_SPACING | popup::P_ITEMS
+                 | popup::P_IS_ITALIC | popup::P_FONT_SIZE | popup::P_FONT_WEIGHT
+                 | popup::P_FONT_FAMILY)) != (0 as u64) {
+        style_popup_items(b, p);
+    }
+    if (dirty & popup::P_TEXT_ALIGN) != (0 as u64) {
+        b.as_control().set_alignment(paint::ns_text_align({ (*p).text_align }));
+    }
+    // `is_open` opens the menu. Closing it is the USER's — AppKit gives no
+    // dismiss message for a popup's menu — so a false is not a close, it is
+    // "do not open", and MANIFEST records the asymmetry.
+    if (dirty & popup::P_IS_OPEN) != (0 as u64) {
+        if { (*p).is_open } { b.as_control().perform_click(0 as *u8); }
     }
     if (dirty & props::C_HANDLERS) != (0 as u64) || dirty == paint::all_bits() {
         akx::set_control_action_ctx(b.as_control(), { (*p).on_selected_index_changed }, { (*p).on_selected_index_changed_ctx });
     }
     if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
         b.as_control().set_enabled(core::is_enabled(n));
+    }
+    return;
+}
+
+// Every item's title, attributed with the popup's own text band. Rebuilt with
+// the items rather than diffed, for the same reason the items are: a popup's
+// list is short and a diff would be more code than the rebuild it replaces.
+fn style_popup_items(b: ak::PopUpButton, p: *props::PopupProps) {
+    let c: vocab::Color = { (*p).text_color };
+    let kern: f64 = { (*p).character_spacing };
+    if c.is_set() == false && kern == 0.0f64 { return; }
+    var i: i64 = 0 as i64;
+    let count: i64 = b.number_of_items();
+    while i < count {
+        match b.item_at_index(i) {
+            option::Option[ak::MenuItem]::Some(item) => {
+                let attrs: *u8 = paint::rich_attributes(
+                    paint::ns_font_styled({ (*p).font_size }, { (*p).font_weight },
+                                          { (*p).font_family.view() }, { (*p).is_italic }),
+                    c, kern, 0.0f64, option::Option[vocab::TextAlign]::None,
+                    vocab::TextDecoration::None);
+                let a: *u8 = paint::attributed(item.title().view(), attrs);
+                if a != (0 as *u8) {
+                    { rt::msg_void_id(item.raw(), rt::sel(#str_ptr("setAttributedTitle:\0")), a) };
+                    { rt::release(a) };
+                }
+            }
+            option::Option[ak::MenuItem]::None => { }
+        }
+        i = i + (1 as i64);
     }
     return;
 }
@@ -833,7 +1162,41 @@ fn apply_split(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & split::P_AXIS) != (0 as u64) {
         s.set_vertical(is_vertical_divider({ (*p).axis }));
     }
+    // The delegate carries the minimums AND `on_move`: NSSplitView asks its
+    // delegate where a divider may go, and tells it after one moved. Installed
+    // on the first apply rather than at create, because a split with neither a
+    // minimum nor a handler should not pay for a delegate at all.
+    if (dirty & (split::P_MIN_LEADING | split::P_MIN_TRAILING | props::C_HANDLERS)) != (0 as u64)
+        || dirty == paint::all_bits() {
+        text_input::install_split(v, n);
+    }
+    // The divider position is written AFTER the minimums are known, and after
+    // the panes exist: setting it on an empty split is a no-op AppKit does not
+    // report. `position` is in points from the leading edge, which is exactly
+    // `setPosition:ofDividerAtIndex:`.
+    if (dirty & (split::P_POSITION | split::P_COLLAPSED)) != (0 as u64) {
+        let panes: u64 = { rt::msg_u64({ rt::msg_id(v, rt::sel(#str_ptr("subviews\0"))) },
+                                       rt::sel(#str_ptr("count\0"))) };
+        if panes >= (2 as u64) {
+            var want: f64 = { (*p).position };
+            // A collapsed pane is a position at the very edge — AppKit has no
+            // "collapse" verb, and a divider at 0 or at the far edge IS the
+            // collapse it draws.
+            if { (*p).collapsed_leading } { want = 0.0f64; }
+            else if { (*p).collapsed_trailing } { want = split_extent(s); }
+            if want > 0.0f64 || { (*p).collapsed_leading } {
+                s.set_position(want, 0 as i64);
+            }
+        }
+    }
     return;
+}
+
+// The length of the axis the divider slides along.
+fn split_extent(s: ak::SplitView) -> f64 {
+    let f: rt::Rect = s.as_view().frame();
+    if s.is_vertical() { return { f.w }; }
+    return { f.h };
 }
 
 // facet names the ARRANGEMENT (Columns = side by side); AppKit names the
@@ -1050,6 +1413,18 @@ fn apply_date_picker(v: *u8, n: *core::Node, dirty: u64) {
         let d: *u8 = ns_date({ (*p).date });
         if d != (0 as *u8) { dp.set_date_value(ak::Date::from_raw(d)); }
     }
+    if (dirty & (date_picker::P_FONT_SIZE | date_picker::P_FONT_WEIGHT
+                 | date_picker::P_FONT_FAMILY | date_picker::P_IS_ITALIC)) != (0 as u64) {
+        match paint::ns_font_styled({ (*p).font_size }, { (*p).font_weight },
+                                    { (*p).font_family.view() }, { (*p).is_italic }) {
+            option::Option[ak::Font]::Some(font) => { dp.as_control().set_font(font); }
+            option::Option[ak::Font]::None => { }
+        }
+    }
+    if (dirty & date_picker::P_TEXT_COLOR) != (0 as u64) {
+        let c: vocab::Color = { (*p).text_color };
+        if c.is_set() { dp.set_text_color(paint::ns_color(c)); }
+    }
     if (dirty & props::C_HANDLERS) != (0 as u64) || dirty == paint::all_bits() {
         akx::set_control_action_ctx(dp.as_control(), { (*p).on_date_selected }, { (*p).on_date_selected_ctx });
     }
@@ -1076,6 +1451,18 @@ fn apply_time_picker(v: *u8, n: *core::Node, dirty: u64) {
     let dp: ak::DatePicker = ak::DatePicker::from_raw(v);
     if (dirty & time_picker::P_TIME) != (0 as u64) {
         dp.set_date_value(ak::Date::from_raw(ns_time({ (*p).time })));
+    }
+    if (dirty & (time_picker::P_FONT_SIZE | time_picker::P_FONT_WEIGHT
+                 | time_picker::P_FONT_FAMILY | time_picker::P_IS_ITALIC)) != (0 as u64) {
+        match paint::ns_font_styled({ (*p).font_size }, { (*p).font_weight },
+                                    { (*p).font_family.view() }, { (*p).is_italic }) {
+            option::Option[ak::Font]::Some(font) => { dp.as_control().set_font(font); }
+            option::Option[ak::Font]::None => { }
+        }
+    }
+    if (dirty & time_picker::P_TEXT_COLOR) != (0 as u64) {
+        let c: vocab::Color = { (*p).text_color };
+        if c.is_set() { dp.set_text_color(paint::ns_color(c)); }
     }
     if (dirty & props::C_HANDLERS) != (0 as u64) || dirty == paint::all_bits() {
         akx::set_control_action_ctx(dp.as_control(), { (*p).on_time_selected }, { (*p).on_time_selected_ctx });
@@ -1286,28 +1673,18 @@ fn append_run(ms: *u8, c: *core::Node) {
     let shown: text::Text = paint::transformed({ (*p).text.view() }, { (*p).text_transform });
     // Attributes for THIS run only: a span that names nothing inherits the
     // label's own font and colour, which is what an unstyled run should do.
-    let attrs: *u8 = { rt::alloc_init(#str_ptr("NSMutableDictionary\0")) };
-    match paint::ns_font({ (*p).font_size }, { (*p).font_weight }, { (*p).font_family.view() }) {
-        option::Option[ak::Font]::Some(f) => {
-            { rt::msg_void_id_id(attrs, rt::sel(#str_ptr("setObject:forKey:\0")),
-                                 f.raw(), bridge::nsstring("NSFont")) };
-        }
-        option::Option[ak::Font]::None => { }
-    }
-    let col: vocab::Color = { (*p).text_color };
-    if col.is_set() {
-        { rt::msg_void_id_id(attrs, rt::sel(#str_ptr("setObject:forKey:\0")),
-                             paint::ns_color(col).raw(), bridge::nsstring("NSColor")) };
-    }
-    let run: *u8 = { rt::msg_id_id_id(
-        { rt::msg_id(rt::get_class(#str_ptr("NSAttributedString\0")), rt::sel(#str_ptr("alloc\0"))) },
-        rt::sel(#str_ptr("initWithString:attributes:\0")),
-        bridge::nsstring(shown.view()), attrs) };
+    // Every one of them comes from the shared builder, so a span's styling
+    // band is the same band a label, a button and an input field get.
+    let attrs: *u8 = paint::rich_attributes(
+        paint::ns_font_styled({ (*p).font_size }, { (*p).font_weight },
+                              { (*p).font_family.view() }, { (*p).is_italic }),
+        { (*p).text_color }, { (*p).character_spacing }, { (*p).line_height },
+        option::Option[vocab::TextAlign]::None, { (*p).text_decoration });
+    let run: *u8 = paint::attributed(shown.view(), attrs);
     if run != (0 as *u8) {
         { rt::msg_void_id(ms, rt::sel(#str_ptr("appendAttributedString:\0")), run) };
         { rt::release(run) };
     }
-    { rt::release(attrs) };
     return;
 }
 
@@ -1447,6 +1824,46 @@ fn materialise_collection(n: *core::Node) {
 
 fn apply_collection(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & (collection::P_COUNT | collection::P_ROW)) != (0 as u64) { materialise_collection(n); }
+    let p: *props::CollectionProps = props_of(n, props::K_COLLECTION) as *props::CollectionProps;
+    if p == (0 as *props::CollectionProps) { return; }
+    let iv: *props::ItemsViewProps = { #addr_of((*p).items_view) };
+    if (dirty & (collection::P_VERTICAL_SCROLL_BARS | collection::P_HORIZONTAL_SCROLL_BARS)) != (0 as u64) {
+        apply_sequence_scrollers(v, { (*iv).vertical_scroll_bars }, { (*iv).horizontal_scroll_bars });
+    }
+    if (dirty & collection::P_SCROLL_TO) != (0 as u64) {
+        scroll_child_into_view(v, n, { (*iv).scroll_to_index });
+    }
+    return;
+}
+
+// The scrollers on a materialising sequence. A `list` answers this on its
+// table; a collection and a carousel are a plain scroll of their children, so
+// the scroll view IS the node's view.
+fn apply_sequence_scrollers(v: *u8, vert: vocab::ScrollBars, horiz: vocab::ScrollBars) {
+    let sv: ak::ScrollView = ak::ScrollView::from_raw(v);
+    sv.set_has_vertical_scroller(shows_bars(vert));
+    sv.set_has_horizontal_scroller(shows_bars(horiz));
+    return;
+}
+
+// `scroll_to(index)` on a materialised sequence: the child's frame is flex's
+// already, so this needs no measurement of its own. Out of range is a no-op
+// rather than a clamp — scrolling to a row that does not exist is a mistake,
+// and pretending it meant the last one would hide it.
+fn scroll_child_into_view(v: *u8, n: *core::Node, index: i64) {
+    if index < (0 as i64) { return; }
+    match core::child_of(n, index as usize) {
+        option::Option[*core::Node]::Some(child) => {
+            let f: flex::Frame = { (*child).frame() };
+            match ak::ScrollView::from_raw(v).document_view() {
+                option::Option[ak::View]::Some(doc) => {
+                    doc.scroll_point(rt::Point { x: f.left, y: f.top });
+                }
+                option::Option[ak::View]::None => { }
+            }
+        }
+        option::Option[*core::Node]::None => { }
+    }
     return;
 }
 
@@ -1484,6 +1901,13 @@ fn apply_carousel(v: *u8, n: *core::Node, dirty: u64) {
             }
             option::Option[*core::Node]::None => { }
         }
+    }
+    let iv: *props::ItemsViewProps = { #addr_of((*p).items_view) };
+    if (dirty & (carousel::P_VERTICAL_SCROLL_BARS | carousel::P_HORIZONTAL_SCROLL_BARS)) != (0 as u64) {
+        apply_sequence_scrollers(v, { (*iv).vertical_scroll_bars }, { (*iv).horizontal_scroll_bars });
+    }
+    if (dirty & carousel::P_SCROLL_TO) != (0 as u64) {
+        scroll_child_into_view(v, n, { (*iv).scroll_to_index });
     }
     return;
 }

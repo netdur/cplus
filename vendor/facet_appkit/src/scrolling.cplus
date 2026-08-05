@@ -1,0 +1,163 @@
+// facet_appkit scrolling — `observe_scrolled`, for every kind that scrolls.
+//
+// Four controls declare it — `scroll`, `list`, `collection`, `carousel` — and
+// on AppKit all four are an NSScrollView, so this is one mechanism rather than
+// four. None of them had it.
+//
+// ---- why a notification and not a subclass -----------------------------------
+//
+// `input.cplus` answers the pointer band by moving a view's isa onto a runtime
+// subclass, because a gesture has to be able to DECLINE and a recognizer
+// cannot. Scrolling is the opposite case: there is nothing to decline, the
+// scroll has already happened, and `scrollWheel:` would miss every scroll that
+// did not come from a wheel — a scroller drag, a `scrollRowToVisible:`, a
+// keyboard page-down, an accessibility client.
+//
+// What is true for all of those is that the CLIP VIEW's bounds moved. AppKit
+// posts that as `NSViewBoundsDidChangeNotification` once
+// `postsBoundsChangedNotifications` is on, and it is the only place that sees
+// every scroll however it was caused.
+//
+// ---- lifetime ----------------------------------------------------------------
+//
+// The observer is an object pinned to the scroll view, so it dies with it, and
+// it removes itself from the notification centre on the way out — a centre
+// holds its observers UNRETAINED, so one that outlives its object is a dangling
+// pointer the next notification walks into.
+
+import "stdlib/option" as option;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/scroll" as scroll;
+import "facet/list" as list;
+import "facet/collection" as collection;
+import "facet/carousel" as carousel;
+import "objc/runtime" as rt;
+import "objc/synthesis" as synth;
+import "objc/bridge" as bridge;
+import "appkit/appkit" as ak;
+
+// appkit_ext 28672..28682, drawing 28700, input 28710..28715, web 28720..28721,
+// recycler 28730..28735, text_input 28740..28742.
+fn node_key() -> *u8 { return { 28750 as *u8 }; }
+fn observer_pin_key() -> *u8 { return { 28751 as *u8 }; }
+
+fn node_of(obj: *u8) -> *core::Node {
+    if obj == (0 as *u8) { return 0 as *core::Node; }
+    return { synth::get_associated(obj, node_key()) as *core::Node };
+}
+
+// The handler is read out of the props at fire time, per kind — the same rule
+// the text and list delegates follow, so a handler swapped after mount is
+// answered by the new one with nothing re-installed.
+fn scrolled_handler(n: *core::Node) -> fn(*u8, *u8) {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return props::no_handler; }
+    let raw: *u8 = { (*d).props };
+    if raw == (0 as *u8) { return props::no_handler; }
+    let kind: u32 = { (*d).kind };
+    if kind == props::K_SCROLL { return { (*(raw as *props::ScrollProps)).observe_scrolled }; }
+    if kind == props::K_LIST { return { (*(raw as *props::ListProps)).observe_scrolled }; }
+    // `collection` and `carousel` inherit it from MAUI's ItemsView, so the
+    // handler lives in the embedded band rather than on the control.
+    if kind == props::K_COLLECTION {
+        let iv: *props::ItemsViewProps = { #addr_of((*(raw as *props::CollectionProps)).items_view) };
+        return { (*iv).observe_scrolled };
+    }
+    if kind == props::K_CAROUSEL {
+        let iv: *props::ItemsViewProps = { #addr_of((*(raw as *props::CarouselProps)).items_view) };
+        return { (*iv).observe_scrolled };
+    }
+    return props::no_handler;
+}
+
+fn scrolled_ctx(n: *core::Node) -> *u8 {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return 0 as *u8; }
+    let raw: *u8 = { (*d).props };
+    if raw == (0 as *u8) { return 0 as *u8; }
+    let kind: u32 = { (*d).kind };
+    if kind == props::K_SCROLL { return { (*(raw as *props::ScrollProps)).observe_scrolled_ctx }; }
+    if kind == props::K_LIST { return { (*(raw as *props::ListProps)).observe_scrolled_ctx }; }
+    if kind == props::K_COLLECTION {
+        let iv: *props::ItemsViewProps = { #addr_of((*(raw as *props::CollectionProps)).items_view) };
+        return { (*iv).observe_scrolled_ctx };
+    }
+    if kind == props::K_CAROUSEL {
+        let iv: *props::ItemsViewProps = { #addr_of((*(raw as *props::CarouselProps)).items_view) };
+        return { (*iv).observe_scrolled_ctx };
+    }
+    return 0 as *u8;
+}
+
+fn scrolls(kind: u32) -> bool {
+    return kind == props::K_SCROLL || kind == props::K_LIST
+        || kind == props::K_COLLECTION || kind == props::K_CAROUSEL;
+}
+
+fn bounds_changed_imp(self_obj: *u8, cmd: *u8, note: *u8) {
+    let n: *core::Node = node_of(self_obj);
+    if n == (0 as *core::Node) { return; }
+    let h: fn(*u8, *u8) = scrolled_handler(n);
+    if h == props::no_handler { return; }
+    // The sender is the node's own view, not the clip view: every other
+    // handler in this package hands back the thing the application named, and
+    // `component::key_of` is written against that.
+    h(core::view_of(n), scrolled_ctx(n));
+    return;
+}
+
+fn observer_class() -> *u8 {
+    let existing: *u8 = rt::get_class(#str_ptr("FacetScrollObserver\0"));
+    if existing != (0 as *u8) { return existing; }
+    let cls: *u8 = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")),
+                                              #str_ptr("FacetScrollObserver\0"), 0 as usize);
+    synth::add_method_v_1id(cls, rt::sel(#str_ptr("facetBoundsChanged:\0")),
+                            bounds_changed_imp, #str_ptr("v@:@\0"));
+    synth::register_class_pair(cls);
+    return cls;
+}
+
+fn notification_center() -> *u8 {
+    return { rt::msg_id(rt::get_class(#str_ptr("NSNotificationCenter\0")),
+                        rt::sel(#str_ptr("defaultCenter\0"))) };
+}
+
+// Install once per scroll view, from `create`. Idempotent: a second call finds
+// the pin and leaves the first observer in place, so a re-apply cannot stack
+// two observers and fire twice.
+fn install(view: *u8, n: *core::Node) {
+    if view == (0 as *u8) || n == (0 as *core::Node) { return; }
+    if { synth::get_associated(view, observer_pin_key()) } != (0 as *u8) { return; }
+    let sv: ak::ScrollView = ak::ScrollView::from_raw(view);
+    let clip: *u8 = { rt::msg_id(view, rt::sel(#str_ptr("contentView\0"))) };
+    if clip == (0 as *u8) { return; }
+    // Off by default, because it costs a notification per scrolled pixel.
+    { rt::msg_void_i8(clip, rt::sel(#str_ptr("setPostsBoundsChangedNotifications:\0")),
+                      true as i8) };
+    let o: *u8 = synth::alloc_init_class(observer_class());
+    if o == (0 as *u8) { return; }
+    synth::set_associated(o, node_key(), n as *u8);
+    { msg_void_4id_decl(notification_center(),
+                       rt::sel(#str_ptr("addObserver:selector:name:object:\0")),
+                       o, rt::sel(#str_ptr("facetBoundsChanged:\0")),
+                       bridge::nsstring("NSViewBoundsDidChangeNotification"), clip) };
+    synth::retain_associated(view, observer_pin_key(), o);
+    rt::release(o);
+    return;
+}
+
+// Called from the node's view release. A notification centre holds observers
+// UNRETAINED, so an observer that outlives its registration is a dangling
+// pointer the next scroll walks into — this is not optional cleanup.
+fn uninstall(view: *u8) {
+    if view == (0 as *u8) { return; }
+    let o: *u8 = { synth::get_associated(view, observer_pin_key()) };
+    if o == (0 as *u8) { return; }
+    { rt::msg_void_id(notification_center(), rt::sel(#str_ptr("removeObserver:\0")), o) };
+    synth::set_associated(view, observer_pin_key(), 0 as *u8);
+    return;
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_void_4id_decl(recv: *u8, sel: *u8, a: *u8, b: *u8, c: *u8, d: *u8);
