@@ -1105,3 +1105,43 @@ runs, the picture scales as laid out, and the overflow clips at the window.
 The pre-regen version kept TWO registries for this (a gesture range and an
 applied factor, in different modules because the layering put them there). They
 are one fact about one view, so they are one struct now.
+
+### `touch_points` and `swipe_threshold` — decided, not built
+
+Both describe a MULTI-TOUCH measurement, and neither survives the trip to a
+trackpad.
+
+`touch_points` asks how many fingers a pan or pinch needs.
+`magnifyWithEvent:` reports a magnification and no finger count, and
+`NSEvent.touchesMatchingPhase:` — which does report touches — is answered by a
+trackpad and not by a mouse, so a node asking for two fingers would work on one
+machine and be inert on another with no way for the application to tell. A verb
+whose meaning depends on the hardware attached is worse than a verb that says
+it cannot.
+
+`swipe_threshold` asks how far a swipe must travel. `swipeWithEvent:` delivers
+a DISCRETE ±1 per axis — the gesture is already recognised and quantised by the
+time AppKit reports it — so there is no distance for a threshold to compare
+against. The continuous form of the same question IS answered, in the swipeable
+strip's own drag (`reveal_threshold`), because that one is a drag facet tracks
+itself.
+
+They are recorded here rather than in the `cannot-ledger` block for a mechanical
+reason worth knowing: that block is machine-checked against CONTROL verbs, and
+these two are on `gestures`, which `verb_coverage.py` does not census at all
+(`NOT_CONTROLS`). A row naming them would read as stale and fail the gate. That
+is a gap in the tool, not in the decision — see the blind-spot report.
+
+### What a window host is asked, and what it no longer is
+
+`Window` required `should_close`, `will_close` and `component_context` of every
+implementor and called none of them: `run` uses the `should_close_callback` /
+`will_close_callback` pair, which is what a backend can actually store on a
+window. Three methods every hand-written host had to write and none of them ran.
+Removed — a redundant requirement is a tax, and the callback pair is the one
+with a consumer.
+
+`has_app_menu` / `app_menu` were dead the OTHER way and are now wired.
+`install_app_menu` reached `run_component`, `run_screen` and `App::run` but not
+`run[W: Window]`, so a hand-written window answering `has_app_menu() == true`
+built its items for nothing and opened with no menu bar.

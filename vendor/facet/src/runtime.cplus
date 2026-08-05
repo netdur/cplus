@@ -63,13 +63,17 @@ interface Window {
     fn max_zoom(this) -> f64;
     fn has_app_menu(this) -> bool;
     fn app_menu(ref this) -> AppMenu;
-    fn should_close(this) -> bool;
-    fn will_close(this);
     fn should_close_callback(this) -> fn(*u8) -> bool;
     fn will_close_callback(this) -> fn(*u8);
     fn lifecycle_context(this) -> *u8;
-    fn component_context(this) -> *u8;
 }
+
+// `should_close`, `will_close` and `component_context` were required of every
+// implementor and called by nothing — `run` uses the `_callback` pair, which
+// is what a backend can actually store on a window. Three methods every
+// hand-written Window had to write and none of them ran. Removed rather than
+// wired: a redundant requirement is a tax, and the callback pair is the one
+// with a consumer.
 
 // Menu-token re-exports, so a facade import serves an app's menu block whole.
 fn app_menu(title: str) -> AppMenu { return screen::app_menu(title); }

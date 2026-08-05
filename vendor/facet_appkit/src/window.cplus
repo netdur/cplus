@@ -843,7 +843,36 @@ fn build_toolbar_items(found: vec::Vec[*core::Node], ids: *u8, map: *u8) {
 // `App::build_menu()` has one, and a second `setMainMenu:` would silently
 // replace it rather than add to it.
 
+// Tree-declared menus, replacing what a previous window contributed rather
+// than adding to it.
+//
+// This APPENDED and nothing ever removed, and it runs on every `open_window` —
+// so navigating between two screens that each carry a `menu` node left the
+// first screen's menus in the bar beside the second's, for the life of the
+// process. `App::run` rebuilds the app menu per screen for the same reason;
+// this is the tree half of the same rule.
+fn clear_tree_menus() {
+    let main_menu: *u8 = { rt::msg_id(ak::Application::shared_application().raw(),
+                                      rt::sel(#str_ptr("mainMenu\0"))) };
+    if main_menu == (0 as *u8) { return; }
+    let n: i64 = { rt::msg_i64(main_menu, rt::sel(#str_ptr("numberOfItems\0"))) };
+    var i: i64 = n - (1 as i64);
+    while i >= (0 as i64) {
+        let it: *u8 = { rt::msg_id_i64(main_menu, rt::sel(#str_ptr("itemAtIndex:\0")), i) };
+        if it != (0 as *u8) {
+            if { synth::get_associated(it, tree_menu_key()) } != (0 as *u8) {
+                { rt::msg_void_i64(main_menu, rt::sel(#str_ptr("removeItemAtIndex:\0")), i) };
+            }
+        }
+        i = i - (1 as i64);
+    }
+    return;
+}
+
+fn tree_menu_key() -> *u8 { return 29015 as *u8; }
+
 fn install_menu_bar(root: *core::Node) {
+    clear_tree_menus();
     let nsapp: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSApplication\0")),
                                   rt::sel(#str_ptr("sharedApplication\0"))) };
     var bar: *u8 = { rt::msg_id(nsapp, rt::sel(#str_ptr("mainMenu\0"))) };
@@ -944,6 +973,11 @@ fn add_bar_menu(bar: *u8, n: *core::Node) {
         title, 0 as *u8, bridge::nsstring("")) };
     if item != (0 as *u8) {
         { rt::msg_void_id(item, rt::sel(#str_ptr("setSubmenu:\0")), sub) };
+        // Marked as OURS, so the next window's install can take it out again.
+        // Without the mark there is no way to tell a tree-declared menu from
+        // the application's own, and the bar grew by one screen's worth per
+        // navigation for the life of the process.
+        synth::set_associated(item, tree_menu_key(), 1 as *u8);
         { rt::msg_void_id(bar, rt::sel(#str_ptr("addItem:\0")), item) };
         rt::release(item);
     }

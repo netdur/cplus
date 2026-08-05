@@ -66,13 +66,17 @@ interface Window {
     fn max_zoom(this) -> f64;
     fn has_app_menu(this) -> bool;
     fn app_menu(ref this) -> AppMenu;
-    fn should_close(this) -> bool;
-    fn will_close(this);
     fn should_close_callback(this) -> fn(*u8) -> bool;
     fn will_close_callback(this) -> fn(*u8);
     fn lifecycle_context(this) -> *u8;
-    fn component_context(this) -> *u8;
 }
+
+// `should_close`, `will_close` and `component_context` were required of every
+// implementor and called by nothing — `run` uses the `_callback` pair, which
+// is what a backend can actually store on a window. Three methods every
+// hand-written Window had to write and none of them ran. Removed rather than
+// wired: a redundant requirement is a tax, and the callback pair is the one
+// with a consumer.
 
 // Menu-token re-exports, so a facade import serves an app's menu block whole.
 fn app_menu(title: str) -> AppMenu { return screen::app_menu(title); }
@@ -116,6 +120,15 @@ fn run[W: Window](take window: W) {
     backend::install();
     var owned_window: W = window;
     var root: Node = owned_window.root();
+    // The menu this window declares. `has_app_menu` and `app_menu` were
+    // required of every implementor and NEVER CALLED — `install_app_menu`
+    // reached run_component, run_screen and App::run, and not this host — so a
+    // hand-written Window answering `has_app_menu() == true` built its items
+    // for nothing and opened with no menu bar.
+    if owned_window.has_app_menu() {
+        var m: AppMenu = owned_window.app_menu();
+        host::install_app_menu(#addr_of(m));
+    }
     let c: Chrome = chrome_of_window(owned_window);
     let _w: *u8 = host::open_window(
         #addr_of(root), c,
@@ -267,18 +280,26 @@ fn choose_file() -> option::Option[text::Text] { return dialogs::choose_file(); 
 
 // Open a non-modal window alongside the running app. Returns immediately.
 //
-// The tree is MOVED to the heap and forgotten deliberately: the window owns it
-// for as long as it is open, and it is freed when the window closes and the
-// tree drops. An app that wants to keep addressing it uses `nav::push` or
+// The tree is MOVED to the heap: the window owns it for as long as it is open
+// and it is freed when the window closes. That second half was the comment's
+// claim and not the code's — `into_raw()` had no matching `from_raw` anywhere,
+// so every presented window leaked its whole tree. `pushed_closed` does it for
+// a pushed screen; `presented_closed` is the same courtesy here.
+//
+// An app that wants to keep addressing the tree uses `nav::push` or
 // `set_content` instead, both of which keep an owner it can name.
 fn present_window(take root: Node, title: str, width: f64, height: f64) {
     backend::install();
     match box::new::[Node](root) {
         option::Option[box::Box[Node]]::Some(b) => {
             let p: *Node = b.into_raw() as *Node;
-            let _w: *u8 = host::open_window(
+            let w: *u8 = host::open_window(
                 p, screen::Chrome::new(title: title, width: width, height: height),
+                ctx: p as *u8, will_close: presented_closed,
             );
+            // Same reason as a pushed screen: the agent follows the window an
+            // application just put in front of the user.
+            if w != (0 as *u8) { agent_attach_window(w); }
         }
         option::Option[box::Box[Node]]::None => { }
     }
@@ -567,6 +588,12 @@ static CURRENT_ROOT: *core::Node = #zero::[*core::Node]();
 // nav::go / nav::quit: unwind the current primary window. Zeroed first so a
 // second verb in the same handler (go then quit) closes nothing twice.
 fn close_current() {
+    // Pushed screens FIRST. The run loop stops when the last window closes
+    // (`OPEN_WINDOWS <= 0`), and a pushed screen is in that count — so closing
+    // only the primary left the loop running, `App::run` never returned, and
+    // the `go`/`quit` intent was never read. `close_all_pushed` ran after the
+    // loop, which is exactly too late to help it exit.
+    close_all_pushed();
     let r: *core::Node = CURRENT_ROOT;
     CURRENT_ROOT = 0 as *core::Node;
     if r == (0 as *core::Node) { return; }
@@ -582,6 +609,14 @@ struct PushedScreen {
 }
 
 static PUSHED: vec::Vec[PushedScreen] = #zero::[vec::Vec[PushedScreen]]();
+
+// A presented window closed: give its tree back. Without this the box made in
+// `present_window` was never reclaimed.
+fn presented_closed(ctx: *u8) {
+    if ctx == (0 as *u8) { return; }
+    let _b: box::Box[Node] = box::from_raw::[Node](ctx);
+    return;
+}
 
 // nav::push: show `route` in a window alongside the primary.
 fn push_screen(route: str, arg: str) -> bool {
@@ -609,6 +644,12 @@ fn push_screen(route: str, arg: str) -> bool {
                                    should_close: default_should_close,
                                    will_close: pushed_closed);
     if w == (0 as *u8) { return false; }
+    // The agent reads the LIVE view tree of ONE window, and it was only ever
+    // pointed at the primary — so a pushed screen was invisible to an agent,
+    // and so was an `alert` sheet. The sheet case is the sharp one: dialogs
+    // argues it was rewritten off NSAlert/runModal precisely so "an agent
+    // cannot answer it" would stop being true, and the surface never followed.
+    agent_attach_window(w);
     let stack: *vec::Vec[PushedScreen] = #addr_of(PUSHED);
     { (*stack).append(PushedScreen { root: tp, sbp: sbp }) };
     { (*(sbp as *screen::ScreenBox)).on_attach() };
