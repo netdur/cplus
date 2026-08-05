@@ -75,6 +75,7 @@ import "./paint" as paint;
 import "./text_input" as text_input;
 import "./drawing" as drawing;
 import "./input" as input;
+import "./compose" as compose;
 
 // ---- reaching a node's props -------------------------------------------------
 // The generated cursors' `_props()` is module-private, so a backend reads the
@@ -166,6 +167,11 @@ fn apply_label(v: *u8, n: *core::Node, dirty: u64) {
     }
     if (dirty & label::P_TEXT_ALIGN) != (0 as u64) {
         f.as_control().set_alignment(paint::ns_text_align({ (*p).text_align }));
+    }
+    // The VERTICAL half. NSTextFieldCell has no property for it and centres in
+    // the rect it is given — so the rect is what changes; see compose.cplus.
+    if (dirty & label::P_VERTICAL_ALIGN) != (0 as u64) {
+        compose::apply_field_vertical_align(v, { (*p).vertical_align });
     }
     if (dirty & (label::P_MAX_LINES | label::P_LINE_BREAK)) != (0 as u64) {
         let lines: i64 = { (*p).max_lines };
@@ -318,6 +324,17 @@ fn apply_text_field(v: *u8, n: *core::Node, dirty: u64) {
     // editor and the search field, because all three embed the same props.
     text_input::apply_field_band(f, n, iv, { (*p).text_align }, dirty,
                                  text_input::bits_of(props::K_TEXT_FIELD));
+    if (dirty & text_field::P_VERTICAL_ALIGN) != (0 as u64) {
+        compose::apply_field_vertical_align(v, { (*p).vertical_align });
+    }
+    // NSTextField has no clear button and NSSearchField's belongs to its own
+    // cell, so this one is composed: a button over the trailing edge, and the
+    // cell gives back the width it covers.
+    if (dirty & text_field::P_CLEAR_BUTTON) != (0 as u64) {
+        compose::apply_clear_button(v, { (*p).clear_button });
+    }
+    // Whatever changed the text changed whether there is anything to clear.
+    if (dirty & text_field::P_TEXT) != (0 as u64) { compose::refresh_clear_button(v); }
     if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
         f.as_control().set_enabled(core::is_enabled(n));
     }
@@ -1099,6 +1116,25 @@ fn apply_text_area(v: *u8, n: *core::Node, dirty: u64) {
             let iv: *props::InputViewProps = { #addr_of((*p).input_view) };
             text_input::apply_editor_band(tv, n, iv, { (*p).text_align }, dirty,
                                           text_input::bits_of(props::K_TEXT_AREA));
+            // NSTextView has no cell, so the vertical answer is one level
+            // down: `textContainerOrigin`, which is where the laid-out text is
+            // drawn from.
+            if (dirty & text_area::P_VERTICAL_ALIGN) != (0 as u64) {
+                compose::apply_editor_vertical_align(tv.raw(), { (*p).vertical_align });
+            }
+            // And no placeholder API either — so a label under the text,
+            // hidden as soon as there is any.
+            if (dirty & (text_area::P_PLACEHOLDER | text_area::P_PLACEHOLDER_COLOR
+                         | text_area::P_FONT_SIZE | text_area::P_FONT_WEIGHT
+                         | text_area::P_FONT_FAMILY | text_area::P_IS_ITALIC)) != (0 as u64) {
+                compose::apply_editor_placeholder(tv.raw(), { (*iv).placeholder.view() },
+                    { (*iv).placeholder_color },
+                    paint::ns_font_styled({ (*iv).font_size }, { (*iv).font_weight },
+                                          { (*iv).font_family.view() }, { (*iv).is_italic }));
+            }
+            if (dirty & text_area::P_TEXT) != (0 as u64) {
+                compose::refresh_editor_placeholder(tv.raw());
+            }
             // `auto_size` is the editor's own verb: an NSTextView that grows
             // with its text is vertically resizable with no ceiling, and is
             // asked to size to fit whenever the text changes. Disabled is the
@@ -1139,6 +1175,15 @@ fn apply_search_field(v: *u8, n: *core::Node, dirty: u64) {
     let iv: *props::InputViewProps = { #addr_of((*p).input_view) };
     text_input::apply_field_band(f, n, iv, { (*p).text_align }, dirty,
                                  text_input::bits_of(props::K_SEARCH_FIELD));
+    if (dirty & search_field::P_VERTICAL_ALIGN) != (0 as u64) {
+        compose::apply_field_vertical_align(v, { (*p).vertical_align });
+    }
+    // The magnifier and the cancel button are TEMPLATE images on cells of the
+    // search field cell's own — which is what makes them tintable.
+    if (dirty & (search_field::P_SEARCH_ICON_COLOR
+                 | search_field::P_CANCEL_BUTTON_COLOR)) != (0 as u64) {
+        compose::tint_search_buttons(v, { (*p).cancel_button_color }, { (*p).search_icon_color });
+    }
     if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
         f.as_control().set_enabled(core::is_enabled(n));
     }
@@ -1168,7 +1213,8 @@ fn apply_popup(v: *u8, n: *core::Node, dirty: u64) {
             option::Option[ak::Menu]::None => { }
         }
     }
-    if (dirty & popup::P_ITEMS) != (0 as u64) {
+    // The prompt is rebuilt with the items because it IS one — see below.
+    if (dirty & (popup::P_ITEMS | popup::P_TITLE | popup::P_TITLE_COLOR)) != (0 as u64) {
         b.remove_all_items();
         let items: *vocab::TextList = { #addr_of((*p).items) };
         var i: usize = 0 as usize;
@@ -1177,12 +1223,24 @@ fn apply_popup(v: *u8, n: *core::Node, dirty: u64) {
             b.add_item_with_title({ (*items).at(i) });
             i = i +% (1 as usize);
         }
+        // `Picker.Title` is what shows when nothing is chosen. NSPopUpButton
+        // shows the SELECTED ITEM and has no prompt slot — so the prompt is an
+        // item: disabled, at the top, showing exactly while the selection is
+        // empty. Which is what a prompt is on every platform that has one.
+        compose::install_popup_title(b, { (*p).title.view() }, { (*p).title_color },
+                                     paint::ns_font_styled({ (*p).font_size }, { (*p).font_weight },
+                                                           { (*p).font_family.view() },
+                                                           { (*p).is_italic }),
+                                     { (*p).selected_index });
     }
     // The selection goes on AFTER the items, or it indexes a list that is not
-    // there yet and AppKit quietly keeps the old one.
-    if (dirty & (popup::P_SELECTED_INDEX | popup::P_ITEMS)) != (0 as u64) {
+    // there yet and AppKit quietly keeps the old one. The application's index
+    // counts ITEMS; a prompt sits before them and shifts every one by a row.
+    if (dirty & (popup::P_SELECTED_INDEX | popup::P_ITEMS | popup::P_TITLE)) != (0 as u64) {
         let idx: i64 = { (*p).selected_index };
-        if idx >= (0 as i64) { b.select_item_at_index(idx); }
+        if idx >= (0 as i64) {
+            b.select_item_at_index(idx + compose::title_offset({ (*p).title.view() }));
+        }
     }
     if (dirty & (popup::P_FONT_SIZE | popup::P_FONT_WEIGHT | popup::P_FONT_FAMILY
                  | popup::P_IS_ITALIC)) != (0 as u64) {
@@ -1201,6 +1259,9 @@ fn apply_popup(v: *u8, n: *core::Node, dirty: u64) {
     }
     if (dirty & popup::P_TEXT_ALIGN) != (0 as u64) {
         b.as_control().set_alignment(paint::ns_text_align({ (*p).text_align }));
+    }
+    if (dirty & popup::P_VERTICAL_ALIGN) != (0 as u64) {
+        compose::apply_field_vertical_align(v, { (*p).vertical_align });
     }
     // `is_open` opens the menu. Closing it is the USER's — AppKit gives no
     // dismiss message for a popup's menu — so a false is not a close, it is

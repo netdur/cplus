@@ -115,16 +115,7 @@ search_field.keyboard           as text_field.keyboard
 search_field.predicts_text      as text_field.predicts_text
 search_field.font_scales        as text_field.font_scales
 search_field.return_key         as text_field.return_key
-text_field.vertical_align       NSTextFieldCell has no vertical alignment; it centres
-text_area.vertical_align        NSTextView has none either; text starts at the top
-search_field.vertical_align     as text_field.vertical_align
-text_field.clear_button         NSTextField has no clear button; NSSearchField's is its own
-text_area.placeholder           NSTextView has no placeholder API
-text_area.placeholder_color     as text_area.placeholder
-search_field.cancel_button_color  the cancel button is a system template image
-search_field.search_icon_color    the magnifier is a system template image
 label.font_scales               Dynamic Type; macOS scales at the display
-label.vertical_align            NSTextFieldCell has no vertical alignment
 span.font_scales                as label.font_scales
 button.font_scales              as label.font_scales
 radio.font_scales               as label.font_scales
@@ -139,9 +130,6 @@ date_picker.on_opened           as date_picker.is_open
 date_picker.on_closed           as date_picker.is_open
 time_picker.on_opened           as date_picker.is_open
 time_picker.on_closed           as date_picker.is_open
-popup.title                     NSPopUpButton shows the selected item; no prompt slot
-popup.title_color               as popup.title
-popup.vertical_align            NSPopUpButtonCell has no vertical alignment
 list.is_refreshable             pull-to-refresh is a touch idiom; use a Refresh command
 list.is_refreshing              as list.is_refreshable
 list.can_refresh                as list.is_refreshable

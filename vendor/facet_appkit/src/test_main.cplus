@@ -71,6 +71,7 @@ import "appkit/appkit" as ak;
 import "./paint" as paint;
 import "./controls" as controls;
 import "./views" as views;
+import "./compose" as compose;
 import "./geometry" as geometry;
 import "./scheduler" as scheduler;
 import "./window" as window;
@@ -654,8 +655,11 @@ fn a_popup_rebuilds_its_items_then_selects() {
     }
     let v: *u8 = views::create(0 as *u8, p);
     let b: ak::PopUpButton = ak::PopUpButton::from_raw(v);
-    assert b.number_of_items() == (3 as i64);
-    assert b.index_of_selected_item() == (2 as i64);
+    // Four rows, not three: `popup("pick", ...)` names the PROMPT, and a
+    // prompt is an item — so the application's index 2 is native row 3.
+    assert b.number_of_items() == (4 as i64);
+    assert b.index_of_selected_item() == (3 as i64);
+    assert selected_title(b) == "three";
     views::view_release(v);
     return;
 }
@@ -3944,4 +3948,293 @@ fn set_carousel_position(p: *core::Node, at: i64) {
 fn clip_origin_y(v: *u8) -> f64 {
     let clip: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("contentView\0"))) };
     return { rt::msg_rect(clip, rt::sel(#str_ptr("bounds\0"))) }.y;
+}
+
+// ---- composed verbs: what two native things do that one cannot ---------------
+
+#[link_name = "objc_msgSend"]
+extern fn msg_rect_of_rect(recv: *u8, sel: *u8, r: rt::Rect) -> rt::Rect;
+#[link_name = "objc_msgSend"]
+extern fn msg_point_0(recv: *u8, sel: *u8) -> rt::Point;
+
+fn cell_rect(v: *u8, box: rt::Rect) -> rt::Rect {
+    let cell: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("cell\0"))) };
+    return { msg_rect_of_rect(cell, rt::sel(#str_ptr("drawingRectForBounds:\0")), box) };
+}
+
+fn tall() -> rt::Rect { return rt::Rect { x: 0.0f64, y: 0.0f64, w: 200.0f64, h: 120.0f64 }; }
+
+#[test]
+fn a_label_asked_to_sit_at_the_top_draws_there() {
+    // NSTextFieldCell centres its text in the rect it is handed, and has no
+    // property for the alternative. So the RECT is what changes — and a cell
+    // is an object whose class can be replaced.
+    backend::install();
+    var top: core::Node = label::label("Top", key: "vt", vertical_align: vocab::TextAlign::Start);
+    let tv: *u8 = views::create(0 as *u8, #addr_of(top));
+    var bottom: core::Node = label::label("Bottom", key: "vb", vertical_align: vocab::TextAlign::End);
+    let bv: *u8 = views::create(0 as *u8, #addr_of(bottom));
+    let tr: rt::Rect = cell_rect(tv, tall());
+    let br: rt::Rect = cell_rect(bv, tall());
+    // Each one is only as tall as its text needs.
+    assert tr.h < 60.0f64;
+    assert br.h < 60.0f64;
+    // And they are at opposite ends of the same box.
+    assert tr.y != br.y;
+    let flipped: bool = { rt::msg_i8(tv, rt::sel(#str_ptr("isFlipped\0"))) } != (0 as i8);
+    if flipped { assert tr.y < br.y; } else { assert tr.y > br.y; }
+    views::view_release(tv);
+    views::view_release(bv);
+    return;
+}
+
+#[test]
+fn a_label_that_did_not_ask_keeps_appkits_own_rect() {
+    // `Center` is the generated default for vertical_align and means NOT
+    // ASKED — a label that says nothing must not get a runtime subclass, and
+    // must draw in exactly the rect AppKit would have given it.
+    backend::install();
+    var plain: core::Node = label::label("Plain", key: "vp");
+    let v: *u8 = views::create(0 as *u8, #addr_of(plain));
+    let cell: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("cell\0"))) };
+    assert synth::object_class(cell) == rt::get_class(#str_ptr("NSTextFieldCell\0"));
+    let r: rt::Rect = cell_rect(v, tall());
+    assert r.h > 100.0f64;
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn an_editor_asked_to_sit_at_the_bottom_moves_its_container_origin() {
+    // NSTextView has no cell at all. Its documented hook is
+    // `textContainerOrigin` — the point the laid-out text is drawn from.
+    backend::install();
+    var a: core::Node = text_area::text_area("one line", key: "ea");
+    let av: *u8 = views::create(0 as *u8, #addr_of(a));
+    var b: core::Node = text_area::text_area("one line", key: "eb",
+                                             vertical_align: vocab::TextAlign::End);
+    let bv: *u8 = views::create(0 as *u8, #addr_of(b));
+    { rt::msg_void_rect(av, rt::sel(#str_ptr("setFrame:\0")), tall()) };
+    { rt::msg_void_rect(bv, rt::sel(#str_ptr("setFrame:\0")), tall()) };
+    let ae: *u8 = { rt::msg_id(av, rt::sel(#str_ptr("documentView\0"))) };
+    let be: *u8 = { rt::msg_id(bv, rt::sel(#str_ptr("documentView\0"))) };
+    { rt::msg_void_rect(ae, rt::sel(#str_ptr("setFrame:\0")), tall()) };
+    { rt::msg_void_rect(be, rt::sel(#str_ptr("setFrame:\0")), tall()) };
+    let ao: rt::Point = { msg_point_0(ae, rt::sel(#str_ptr("textContainerOrigin\0"))) };
+    let bo: rt::Point = { msg_point_0(be, rt::sel(#str_ptr("textContainerOrigin\0"))) };
+    // An NSTextView is always flipped: further down is a larger y.
+    assert bo.y > ao.y;
+    views::view_release(av);
+    views::view_release(bv);
+    return;
+}
+
+#[test]
+fn a_field_with_a_clear_button_has_one_and_hides_it_when_empty() {
+    backend::install();
+    var empty: core::Node = text_field::text_field("", key: "cb1",
+                                                   clear_button: vocab::ClearButton::WhileEditing);
+    let ev: *u8 = views::create(0 as *u8, #addr_of(empty));
+    let eb: *u8 = compose::clear_button_of(ev);
+    assert eb != (0 as *u8);
+    assert { rt::msg_i8(eb, rt::sel(#str_ptr("isHidden\0"))) } != (0 as i8);
+
+    var filled: core::Node = text_field::text_field("typed", key: "cb2",
+                                                     clear_button: vocab::ClearButton::WhileEditing);
+    let fv: *u8 = views::create(0 as *u8, #addr_of(filled));
+    let fb: *u8 = compose::clear_button_of(fv);
+    assert fb != (0 as *u8);
+    assert { rt::msg_i8(fb, rt::sel(#str_ptr("isHidden\0"))) } == (0 as i8);
+    // And pressing it empties the field.
+    { rt::msg_void_id(fb, rt::sel(#str_ptr("performClick:\0")), 0 as *u8) };
+    assert ak::Control::from_raw(fv).string_value().view() == "";
+    assert { rt::msg_i8(fb, rt::sel(#str_ptr("isHidden\0"))) } != (0 as i8);
+    views::view_release(ev);
+    views::view_release(fv);
+    return;
+}
+
+#[test]
+fn a_field_with_no_clear_button_grows_no_subview() {
+    backend::install();
+    var plain: core::Node = text_field::text_field("x", key: "cb3");
+    let v: *u8 = views::create(0 as *u8, #addr_of(plain));
+    assert compose::clear_button_of(v) == (0 as *u8);
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn the_clear_button_gives_its_width_back_to_the_text() {
+    // Both halves or it looks broken: the button, AND the width the cell stops
+    // drawing into, or the text runs underneath it.
+    backend::install();
+    var plain: core::Node = text_field::text_field("x", key: "cw1");
+    let pv: *u8 = views::create(0 as *u8, #addr_of(plain));
+    var cleared: core::Node = text_field::text_field("x", key: "cw2",
+                                                     clear_button: vocab::ClearButton::WhileEditing);
+    let cv: *u8 = views::create(0 as *u8, #addr_of(cleared));
+    let pr: rt::Rect = cell_rect(pv, tall());
+    let cr: rt::Rect = cell_rect(cv, tall());
+    assert cr.w < pr.w;
+    views::view_release(pv);
+    views::view_release(cv);
+    return;
+}
+
+#[test]
+fn an_editor_placeholder_shows_until_there_is_text() {
+    backend::install();
+    var e: core::Node = text_area::text_area("", key: "ph1", placeholder: "Say something");
+    let p: *core::Node = #addr_of(e);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    let tv: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("documentView\0"))) };
+    let label: *u8 = compose::placeholder_of(tv);
+    assert label != (0 as *u8);
+    assert ak::Control::from_raw(label).string_value().view() == "Say something";
+    assert { rt::msg_i8(label, rt::sel(#str_ptr("isHidden\0"))) } == (0 as i8);
+    // Typing hides it.
+    core::clear_dirty(p);
+    set_area_text(p, "typed");
+    core::touch(p, text_area::P_TEXT);
+    views::apply(0 as *u8, p);
+    assert { rt::msg_i8(label, rt::sel(#str_ptr("isHidden\0"))) } != (0 as i8);
+    return;
+}
+
+fn set_area_text(p: *core::Node, s: str) {
+    let d: *core::Data = core::node_data(p);
+    let tp: *props::TextAreaProps = { (*d).props } as *props::TextAreaProps;
+    let iv: *props::InputViewProps = { #addr_of((*tp).input_view) };
+    { (*iv).text = text::from_str(s) };
+    return;
+}
+
+#[test]
+fn an_editor_with_no_placeholder_grows_no_label() {
+    backend::install();
+    var e: core::Node = text_area::text_area("", key: "ph2");
+    let v: *u8 = views::create(0 as *u8, #addr_of(e));
+    let tv: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("documentView\0"))) };
+    assert compose::placeholder_of(tv) == (0 as *u8);
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn a_popup_prompt_is_a_disabled_first_item() {
+    // NSPopUpButton shows the SELECTED ITEM and has no prompt slot. So the
+    // prompt is an item — and every application index shifts by one, which is
+    // the half that would silently pick the wrong row if it were forgotten.
+    backend::install();
+    var n: core::Node = popup::popup("Choose one", key: "pt", selected_index: -1 as i64);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    set_popup_items(p);
+    core::clear_dirty(p);
+    core::touch(p, popup::P_ITEMS);
+    views::apply(0 as *u8, p);
+    let b: ak::PopUpButton = ak::PopUpButton::from_raw(v);
+    assert b.number_of_items() == (4 as i64);
+    match b.item_at_index(0 as i64) {
+        option::Option[ak::MenuItem]::Some(it) => {
+            assert it.title().view() == "Choose one";
+            assert it.is_enabled() == false;
+        }
+        option::Option[ak::MenuItem]::None => { assert false; }
+    }
+    // Nothing chosen: the prompt is what shows.
+    assert b.index_of_selected_item() == (0 as i64);
+    // And index 1 still means the application's item 1, not the prompt's.
+    set_popup_index(p, 1 as i64);
+    core::clear_dirty(p);
+    core::touch(p, popup::P_SELECTED_INDEX);
+    views::apply(0 as *u8, p);
+    assert selected_title(b) == "Beta";
+    return;
+}
+
+#[test]
+fn a_popup_with_no_prompt_indexes_its_items_directly() {
+    backend::install();
+    var n: core::Node = popup::popup("", key: "pt2");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    set_popup_items(p);
+    set_popup_index(p, 1 as i64);
+    core::clear_dirty(p);
+    core::touch(p, popup::P_ITEMS | popup::P_SELECTED_INDEX);
+    views::apply(0 as *u8, p);
+    let b: ak::PopUpButton = ak::PopUpButton::from_raw(v);
+    assert b.number_of_items() == (3 as i64);
+    assert selected_title(b) == "Beta";
+    return;
+}
+
+fn selected_title(b: ak::PopUpButton) -> text::Text {
+    return match b.item_at_index(b.index_of_selected_item()) {
+        option::Option[ak::MenuItem]::Some(it) => text::from_str(it.title().view()),
+        option::Option[ak::MenuItem]::None => text::new(),
+    };
+}
+
+fn set_popup_items(p: *core::Node) {
+    let d: *core::Data = core::node_data(p);
+    let pp: *props::PopupProps = { (*d).props } as *props::PopupProps;
+    let items: *vocab::TextList = { #addr_of((*pp).items) };
+    let _a: status::Status = { (*items).add("Alpha") };
+    let _b: status::Status = { (*items).add("Beta") };
+    let _c: status::Status = { (*items).add("Gamma") };
+    return;
+}
+
+fn set_popup_index(p: *core::Node, i: i64) {
+    let d: *core::Data = core::node_data(p);
+    let pp: *props::PopupProps = { (*d).props } as *props::PopupProps;
+    { (*pp).selected_index = i };
+    return;
+}
+
+#[test]
+fn a_search_field_tints_its_own_buttons() {
+    // A template image is a MASK, which is what makes it tintable rather than
+    // what stops it: drawing it through a colour is the documented way.
+    backend::install();
+    var n: core::Node = search_field::search_field("", key: "sf",
+        search_icon_color: vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64));
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    let cell: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("cell\0"))) };
+    let sb: *u8 = { rt::msg_id(cell, rt::sel(#str_ptr("searchButtonCell\0"))) };
+    let img: *u8 = { rt::msg_id(sb, rt::sel(#str_ptr("image\0"))) };
+    assert img != (0 as *u8);
+    // The tinted copy carries its own colour, so it is no longer a template —
+    // a template would be recoloured again by whatever draws it.
+    assert { rt::msg_i8(img, rt::sel(#str_ptr("isTemplate\0"))) } == (0 as i8);
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn a_popup_asked_to_sit_at_the_top_moves_its_title() {
+    // The one control in the family whose cell is not an NSTextFieldCell.
+    // NSPopUpButtonCell descends from NSButtonCell, and what it draws its
+    // title inside is `titleRectForBounds:` — which NSCell derives from the
+    // drawing rect. So the same hook answers, and this asserts it does rather
+    // than assuming the inheritance holds.
+    backend::install();
+    var plain: core::Node = popup::popup("", key: "pv1");
+    let pv: *u8 = views::create(0 as *u8, #addr_of(plain));
+    var top: core::Node = popup::popup("", key: "pv2", vertical_align: vocab::TextAlign::Start);
+    let tv: *u8 = views::create(0 as *u8, #addr_of(top));
+    let pc: *u8 = { rt::msg_id(pv, rt::sel(#str_ptr("cell\0"))) };
+    let tc: *u8 = { rt::msg_id(tv, rt::sel(#str_ptr("cell\0"))) };
+    let pr: rt::Rect = { msg_rect_of_rect(pc, rt::sel(#str_ptr("titleRectForBounds:\0")), tall()) };
+    let tr: rt::Rect = { msg_rect_of_rect(tc, rt::sel(#str_ptr("titleRectForBounds:\0")), tall()) };
+    assert tr.y != pr.y;
+    views::view_release(pv);
+    views::view_release(tv);
+    return;
 }
