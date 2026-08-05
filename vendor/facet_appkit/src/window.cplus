@@ -35,6 +35,7 @@ import "./views" as views;
 import "./controls" as controls;
 import "./scheduler" as scheduler;
 import "./geometry" as geometry;
+import "./zoom" as zoom;
 
 type Node = flex::Node;
 type Chrome = screen::Chrome;
@@ -264,6 +265,10 @@ fn open_window(root: *core::Node, take chrome: Chrome,
     let c: Chrome = chrome;
     let width: f64 = c.width;
     let height: f64 = c.height;
+    // Read BEFORE `make_shell_window` takes the Chrome by value.
+    let wants_zoom: bool = c.zoomable;
+    let zoom_lo: f64 = c.min_zoom;
+    let zoom_hi: f64 = c.max_zoom;
     let application: ak::Application = ak::Application::shared_application();
     let _ok: bool = application.set_activation_policy(ak::ApplicationActivationPolicy::Regular);
 
@@ -285,6 +290,15 @@ fn open_window(root: *core::Node, take chrome: Chrome,
     // The root's own view was inserted nowhere by the walk — the facade puts
     // it in the window, which is here.
     if mounted { add_root_views(content, root); }
+
+    // Pinch-to-zoom, if the Chrome asked for it. On the CONTENT view, because
+    // magnifying is a bounds change and the content view is the one view that
+    // holds the whole picture — a host lower down would scale a part of it.
+    //
+    // Chrome has carried these three since the runtime tier landed and nothing
+    // read them: a window saying `zoomable: true` simply did not zoom. See
+    // zoom.cplus for why neither gate noticed.
+    if wants_zoom { zoom::install(content.raw(), zoom_lo, zoom_hi); }
 
     // System light/dark flips reach the app through theme::on_appearance_change:
     // an invisible sentinel subview's viewDidChangeEffectiveAppearance forwards
@@ -360,6 +374,12 @@ fn fire_appearance_change(ctx: *u8) {
 // unmount, count down, and stop the loop when the last one goes.
 fn close_window(win: *u8) {
     if win == (0 as *u8) { return; }
+    // Drop any zoom entry for this window's content view first: the registry is
+    // keyed by ADDRESS, and a recycled one would inherit a stale range.
+    match ak::Window::from_raw(win).content_view() {
+        option::Option[ak::View]::Some(content) => { zoom::forget(content.raw()); }
+        option::Option[ak::View]::None => { }
+    }
     ak::Window::from_raw(win).close();
     return;
 }

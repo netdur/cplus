@@ -82,6 +82,7 @@ import "./compose" as compose;
 import "./text_input" as text_input;
 import "./scrolling" as scrolling;
 import "./geometry" as geometry;
+import "./zoom" as zoom;
 import "./scheduler" as scheduler;
 import "./window" as window;
 import "./facet_appkit" as backend;
@@ -7046,6 +7047,163 @@ fn a_window_root_that_opts_out_of_the_safe_area_gets_the_whole_content_view() {
         option::Option[ak::View]::None => { assert false; }
     }
     window::close_window(win);
+    backend::uninstall();
+    app::reset_default_for_tests();
+    return;
+}
+
+// ---- pinch zoom: Chrome.zoomable finally reaches something -------------------
+//
+// The three Chrome fields had been declared since the runtime tier and NOTHING
+// read them — a window asking to zoom got a window that did not. Neither gate
+// could see it: verb_coverage counts per-CONTROL prop bits and these are on
+// Chrome, guard 5b counts MAUI tier rows and `zoomable` is facet's own word.
+
+#[test]
+fn zoom_target_compounds_from_the_base_and_clamps() {
+    // The recognizer reports magnification CUMULATIVELY since the gesture
+    // began, so the target is base * (1 + m).
+    assert zoom::zoom_target(1.0f64, 0.0f64, 1.0f64, 4.0f64) == 1.0f64;
+    assert zoom::zoom_target(1.0f64, 1.0f64, 1.0f64, 4.0f64) == 2.0f64;
+    // A second pinch compounds from where the first left off rather than
+    // restarting at 1.
+    assert zoom::zoom_target(2.0f64, 0.5f64, 1.0f64, 4.0f64) == 3.0f64;
+    // Both ends clamp.
+    assert zoom::zoom_target(1.0f64, 10.0f64, 1.0f64, 4.0f64) == 4.0f64;
+    assert zoom::zoom_target(1.0f64, 0.0f64 - 0.9f64, 1.0f64, 4.0f64) == 1.0f64;
+    return;
+}
+
+#[test]
+fn a_nan_magnification_leaves_the_picture_alone() {
+    // A gesture stream that reports NaN must not amplify anything. The clamp is
+    // written as a failed `>` so NaN collapses to the floor instead of passing
+    // through as "in range".
+    let nan: f64 = 0.0f64 / 0.0f64;
+    assert zoom::zoom_target(2.0f64, nan, 1.0f64, 4.0f64) == 2.0f64;
+    assert zoom::pan_origin(7.0f64, nan, 2.0f64) == 7.0f64;
+    // A degenerate zoom cannot divide the delta.
+    assert zoom::pan_origin(7.0f64, 3.0f64, 0.0f64) == 7.0f64;
+    return;
+}
+
+#[test]
+fn a_degenerate_zoom_range_is_healed_not_inverted() {
+    // `max_zoom: 0` should give a window that does not zoom, never one that
+    // inverts.
+    assert zoom::heal_min(0.0f64) == 1.0f64;
+    assert zoom::heal_min(0.0f64 - 2.0f64) == 1.0f64;
+    assert zoom::heal_min(2.0f64) == 2.0f64;
+    assert zoom::heal_max(1.0f64, 0.0f64) == 1.0f64;   // locked at min
+    assert zoom::heal_max(2.0f64, 8.0f64) == 8.0f64;
+    return;
+}
+
+#[test]
+fn the_anchor_keeps_its_fraction_of_the_visible_span() {
+    // Zooming about a point means that point does not move. At the left edge
+    // the origin stays; at the centre it moves by half the difference.
+    assert zoom::zoom_origin(0.0f64, 0.0f64, 100.0f64, 50.0f64) == 0.0f64;
+    assert zoom::zoom_origin(50.0f64, 0.0f64, 100.0f64, 50.0f64) == 25.0f64;
+    // A degenerate span cannot have a fraction of it.
+    assert zoom::zoom_origin(50.0f64, 0.0f64, 0.0f64, 50.0f64) == 0.0f64;
+    return;
+}
+
+#[test]
+fn a_zoomable_window_installs_and_a_plain_one_does_not() {
+    backend::install();
+    app::reset_default_for_tests();
+    zoom::reset_for_tests();
+
+    var plain: core::Node = core::column(core::Builder::new(), key: "plain");
+    let pw: *u8 = window::open_window(#addr_of(plain), screen::Chrome::new(
+        title: "plain", width: 300.0f64, height: 200.0f64));
+    match ak::Window::from_raw(pw).content_view() {
+        option::Option[ak::View]::Some(cv) => { assert zoom::is_zoomable(cv.raw()) == false; }
+        option::Option[ak::View]::None => { assert false; }
+    }
+    window::close_window(pw);
+
+    var z: core::Node = core::column(core::Builder::new(), key: "zoomy");
+    let zw: *u8 = window::open_window(#addr_of(z), screen::Chrome::new(
+        title: "zoomy", width: 300.0f64, height: 200.0f64,
+        zoomable: true, max_zoom: 3.0f64));
+    match ak::Window::from_raw(zw).content_view() {
+        option::Option[ak::View]::Some(cv) => {
+            assert zoom::is_zoomable(cv.raw());
+            assert zoom::zoom_of(cv.raw()) == 1.0f64;
+            // Scaled content must be clipped, or it bleeds over the titlebar.
+            assert cv.clips_to_bounds();
+        }
+        option::Option[ak::View]::None => { assert false; }
+    }
+    window::close_window(zw);
+    backend::uninstall();
+    app::reset_default_for_tests();
+    return;
+}
+
+#[test]
+fn the_programmatic_path_scales_the_bounds_and_clamps_to_the_range() {
+    // An agent has no hands, so a pinch-only feature would be one no agent
+    // could reach. `set_zoom` drives exactly what the gesture drives.
+    backend::install();
+    app::reset_default_for_tests();
+    zoom::reset_for_tests();
+    var n: core::Node = core::column(core::Builder::new(), key: "zoomy2");
+    let win: *u8 = window::open_window(#addr_of(n), screen::Chrome::new(
+        title: "z2", width: 400.0f64, height: 300.0f64,
+        zoomable: true, min_zoom: 1.0f64, max_zoom: 3.0f64));
+    match ak::Window::from_raw(win).content_view() {
+        option::Option[ak::View]::Some(cv) => {
+            let host: *u8 = cv.raw();
+            let f: rt::Rect = cv.frame();
+            assert zoom::set_zoom(host, 2.0f64) == 2.0f64;
+            assert zoom::zoom_of(host) == 2.0f64;
+            // Magnifying is a BOUNDS change: the frame is untouched and the
+            // visible cut is half as wide. No layout pass ran.
+            let b: rt::Rect = cv.bounds();
+            assert cv.frame().w == f.w;
+            assert b.w > (f.w / 2.0f64) - 0.5f64;
+            assert b.w < (f.w / 2.0f64) + 0.5f64;
+            // Past the ceiling clamps rather than refusing.
+            assert zoom::set_zoom(host, 99.0f64) == 3.0f64;
+            // ...and back to natural size restores the full cut.
+            assert zoom::set_zoom(host, 1.0f64) == 1.0f64;
+            let back: rt::Rect = cv.bounds();
+            assert back.w > f.w - 0.5f64;
+            assert back.w < f.w + 0.5f64;
+        }
+        option::Option[ak::View]::None => { assert false; }
+    }
+    window::close_window(win);
+    backend::uninstall();
+    app::reset_default_for_tests();
+    return;
+}
+
+#[test]
+fn closing_a_window_forgets_its_zoom_entry() {
+    // The registry is keyed by ADDRESS; a recycled content view must not
+    // inherit a stale range.
+    backend::install();
+    app::reset_default_for_tests();
+    zoom::reset_for_tests();
+    var n: core::Node = core::column(core::Builder::new(), key: "zoomy3");
+    let win: *u8 = window::open_window(#addr_of(n), screen::Chrome::new(
+        title: "z3", width: 300.0f64, height: 200.0f64, zoomable: true));
+    var host: *u8 = 0 as *u8;
+    match ak::Window::from_raw(win).content_view() {
+        option::Option[ak::View]::Some(cv) => { host = cv.raw(); }
+        option::Option[ak::View]::None => { assert false; }
+    }
+    assert zoom::is_zoomable(host);
+    window::close_window(win);
+    assert zoom::is_zoomable(host) == false;
+    // And an uninstalled host answers natural size rather than trapping.
+    assert zoom::zoom_of(host) == 1.0f64;
+    assert zoom::set_zoom(host, 2.0f64) == 1.0f64;
     backend::uninstall();
     app::reset_default_for_tests();
     return;

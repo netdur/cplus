@@ -1061,3 +1061,47 @@ count it as a slot, putting every index below the node off by one. Gravity is
 An EMPTY image does not buy a layer. Asking for one to say "no picture" would
 cost a backing store per node, which is the trap `is_opaque` is careful to
 avoid on the other side.
+
+### Pinch zoom — a verb neither gate could see
+
+`Chrome` has carried `zoomable` / `min_zoom` / `max_zoom` since the runtime tier
+landed and `runtime_macos::chrome_of_window` filled all three from the Window
+interface. Nothing in the regenerated backend ever READ them. Pinch zoom worked
+before the regen (`git show eb5b1b7:vendor/facet_appkit/src/facet_appkit.cplus`)
+and was not ported with the rest, so a window saying `zoomable: true` got a
+window that did not zoom.
+
+**Both gates were blind to it, and that is the part worth keeping.**
+`verb_coverage.py` counts the 324 per-CONTROL prop bits; these are on Chrome.
+Guard 5b counts MAUI tier rows; `zoomable` is facet's OWN word, seeded from no
+MAUI row. A verb in neither census is one whose absence nothing can notice —
+this was found by a person pinching the example, which is the argument for the
+example existing.
+
+`zoom.cplus` is the port. The scaling is a BOUNDS change and nothing else: a
+view's bounds are its own coordinate space, so shrinking them magnifies
+everything drawn in them, vector-crisp, with no layout pass and no view touched
+but the host. That is what "no reflow" means here — facet's frame walk never
+runs, the picture scales as laid out, and the overflow clips at the window.
+
+- Installed on the CONTENT view, the one view holding the whole picture.
+- `clipsToBounds` is set, because macOS 14 defaults it to false and the
+  magnified content would otherwise bleed over the titlebar.
+- The gesture compounds from a base captured on `Began`, so two pinches in a
+  row multiply rather than the second undoing the first.
+- The anchor keeps its FRACTION of the visible span, which is what makes the
+  point under the fingers stay put.
+- A degenerate range is HEALED, not rejected: `max_zoom: 0` gives a window that
+  does not zoom, never one that inverts. A NaN magnification leaves the picture
+  alone — the clamps are written as failed `>` so NaN collapses to the floor.
+- Two-finger scroll PANS while zoomed (one process-wide event filter, a
+  pass-through at natural size), clamped to the content.
+- `zoom::set_zoom` is the programmatic path, and it exists for the standing
+  rule: an agent has no hands, so a pinch-only feature would be one no agent
+  could reach.
+- The registry is keyed by view ADDRESS, so `close_window` forgets its entry —
+  a recycled content view must not inherit a stale range.
+
+The pre-regen version kept TWO registries for this (a gesture range and an
+applied factor, in different modules because the layering put them there). They
+are one fact about one view, so they are one struct now.

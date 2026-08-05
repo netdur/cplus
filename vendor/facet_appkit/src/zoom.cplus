@@ -1,0 +1,322 @@
+// facet_appkit zoom — content magnification, NO reflow.
+//
+// `Chrome::new(zoomable: true)` lets the END USER pinch the trackpad to
+// magnify a window's content — read small text — the way Safari's pinch scales
+// a page: the picture scales up AS LAID OUT (no reflow, no rewrap; the overflow
+// clips at the window) and the point under the fingers stays put.
+//
+// The scaling is a BOUNDS change and nothing else. A view's bounds are its own
+// coordinate space, so shrinking them magnifies everything drawn in them — for
+// free, vector-crisp, with no layout pass and no view touched but the host.
+// That is the whole reason this is not a reflow: facet's frame walk never runs.
+//
+// ---- why this file exists ----------------------------------------------------
+//
+// `Chrome` has carried `zoomable` / `min_zoom` / `max_zoom` since the runtime
+// tier landed, `runtime_macos::chrome_of_window` filled all three, and NOTHING
+// in the regenerated backend ever read them. Pinch zoom worked before the regen
+// (`git show eb5b1b7:vendor/facet_appkit/src/facet_appkit.cplus`) and was not
+// ported with the rest. A window asking for it got a window that did not zoom.
+//
+// It slipped both gates, which is worth writing down: `verb_coverage.py` counts
+// the 324 per-CONTROL prop bits and `zoomable` is on Chrome; guard 5b counts
+// MAUI tier rows and `zoomable` is facet's OWN word, seeded from no MAUI row.
+// A verb that is in neither census is a verb nothing can notice the absence of.
+//
+// ---- one registry ------------------------------------------------------------
+//
+// The pre-regen version kept two — a PinchZoom for the gesture range and a
+// HostZoom for the applied factor, in different modules because the layering
+// put them there. They are one fact about one view, so they are one struct
+// here.
+
+import "stdlib/option" as option;
+import "stdlib/vec" as vec;
+import "objc/runtime" as rt;
+import "appkit/appkit" as ak;
+import "appkit/appkit_ext" as akx;
+
+// A zoomable host. `host` is BORROWED — the window owns its content view, and
+// an entry outlives nothing.
+struct HostZoom {
+    opaque host: *u8,
+    // The factor a gesture compounds FROM, captured when the pinch begins, so
+    // consecutive pinches multiply instead of each restarting from 1.
+    base: f64,
+    zoom: f64,
+    min: f64,
+    max: f64,
+}
+
+static ZOOMS: vec::Vec[HostZoom] = #zero::[vec::Vec[HostZoom]]();
+static PAN_FILTER: *u8 = 0 as *u8;
+
+fn entry_of(host: *u8) -> option::Option[*HostZoom] {
+    if host == (0 as *u8) { return option::Option[*HostZoom]::None; }
+    let zs: *vec::Vec[HostZoom] = #addr_of(ZOOMS);
+    let n: usize = { (*zs).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match { (*zs).at_ptr(i) } {
+            option::Option[*HostZoom]::Some(zp) => {
+                if { (*zp).host } == host { return option::Option[*HostZoom]::Some(zp); }
+            }
+            option::Option[*HostZoom]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return option::Option[*HostZoom]::None;
+}
+
+// ---- the arithmetic ----------------------------------------------------------
+// Pure, and separated out because it is the part worth testing without a
+// trackpad. Every NaN path below is deliberate: a gesture stream that reports
+// one must leave the picture alone rather than amplify it.
+
+// NSMagnificationGestureRecognizer reports a CUMULATIVE magnification since the
+// gesture began (0 = unchanged), so the target is base * (1 + m), clamped.
+fn zoom_target(base: f64, magnification: f64, min_zoom: f64, max_zoom: f64) -> f64 {
+    var target: f64 = base;
+    if magnification == magnification { target = base * (1.0f64 + magnification); }
+    // Written as a failed `>` rather than `<`, so NaN collapses to the floor
+    // instead of falling through as "in range".
+    if (target > min_zoom) == false { target = min_zoom; }
+    if target > max_zoom { target = max_zoom; }
+    return target;
+}
+
+// Where the scaled content's origin lands so the point under the fingers stays
+// where it was: the anchor keeps its FRACTION of the visible span across the
+// change.
+fn zoom_origin(anchor: f64, old_origin: f64, old_visible: f64, new_visible: f64) -> f64 {
+    if (old_visible > 0.0f64) == false { return 0.0f64; }
+    let fraction: f64 = (anchor - old_origin) / old_visible;
+    return anchor - (fraction * new_visible);
+}
+
+// One axis of a pan while zoomed. The bounds-space step is the wheel delta over
+// the zoom (window points -> scaled points); the caller fixes the sign.
+fn pan_origin(origin: f64, delta: f64, zoom: f64) -> f64 {
+    if (delta == delta) == false { return origin; }
+    if (zoom > 0.0f64) == false { return origin; }
+    return origin + (delta / zoom);
+}
+
+// A degenerate range is HEALED rather than rejected: min floors at 1, and a max
+// below min locks the zoom there. An application that says `max_zoom: 0` gets a
+// window that does not zoom, not a window that inverts.
+fn heal_min(v: f64) -> f64 {
+    if (v > 0.0f64) == false { return 1.0f64; }
+    return v;
+}
+
+fn heal_max(lo: f64, hi: f64) -> f64 {
+    if (hi >= lo) == false { return lo; }
+    return hi;
+}
+
+// ---- applying it -------------------------------------------------------------
+
+// Scale `host` to `target`, keeping the content point (ax, ay) fixed.
+//
+// The FRAME is the host's size on screen and does not change; the BOUNDS are
+// the cut of content that size is showing, so the new span is frame/target.
+fn apply(host: *u8, target: f64, ax: f64, ay: f64) {
+    match entry_of(host) {
+        option::Option[*HostZoom]::Some(zp) => {
+            let v: ak::View = ak::View::from_raw(host);
+            let f: rt::Rect = v.frame();
+            let b: rt::Rect = v.bounds();
+            let nw: f64 = f.w / target;
+            let nh: f64 = f.h / target;
+            v.set_bounds(rt::Rect {
+                x: zoom_origin(ax, b.x, b.w, nw),
+                y: zoom_origin(ay, b.y, b.h, nh),
+                w: nw,
+                h: nh,
+            });
+            { (*zp).zoom = target };
+        }
+        option::Option[*HostZoom]::None => { }
+    }
+    return;
+}
+
+// The visible cut's centre — the anchor when there is no gesture location
+// (a programmatic zoom, or a recognizer not yet attached to a view).
+fn centre_of(host: *u8) -> rt::Point {
+    let b: rt::Rect = ak::View::from_raw(host).bounds();
+    return rt::Point { x: b.x + (b.w / 2.0f64), y: b.y + (b.h / 2.0f64) };
+}
+
+// ---- the gesture -------------------------------------------------------------
+
+fn on_magnify(sender: *u8, ctx: *u8) {
+    match entry_of(ctx) {
+        option::Option[*HostZoom]::Some(zp) => {
+            let g: ak::MagnificationGestureRecognizer =
+                ak::MagnificationGestureRecognizer::from_raw(sender);
+            let gr: ak::GestureRecognizer = g.as_gesture_recognizer();
+            // On Began the CURRENT zoom becomes the base, which is what makes
+            // two pinches in a row compound rather than the second undoing the
+            // first.
+            match gr.state() {
+                ak::GestureRecognizerState::Began => { { (*zp).base = { (*zp).zoom } }; }
+                _other => { }
+            }
+            let target: f64 = zoom_target({ (*zp).base }, g.magnification(),
+                                          { (*zp).min }, { (*zp).max });
+            var anchor: rt::Point = centre_of(ctx);
+            // `locationInView:` resolves THROUGH the scaled bounds, so it is
+            // already the content point under the fingers.
+            match gr.view() {
+                option::Option[ak::View]::Some(v) => { anchor = gr.location_in_view(v); }
+                option::Option[ak::View]::None => { }
+            }
+            apply(ctx, target, anchor.x, anchor.y);
+        }
+        option::Option[*HostZoom]::None => { }
+    }
+    return;
+}
+
+// ---- pan while zoomed --------------------------------------------------------
+// Safari's other half: with the content magnified, a two-finger scroll PANS the
+// visible cut instead of scrolling the app. One process-wide scroll-wheel
+// filter routes each event — if its window's content view is a zoomed host the
+// deltas move that host's bounds origin and the event is CONSUMED, otherwise it
+// is delivered untouched so every inner scroll view behaves stock at 1x.
+//
+// While zoomed the window pans as ONE surface. Inner scrolls resume at natural
+// size; predictable beats clever.
+fn pan_filter(ctx: *u8, event: *u8) -> *u8 {
+    let e: ak::Event = ak::Event::from_raw(event);
+    match e.window() {
+        option::Option[ak::Window]::Some(w) => {
+            match w.content_view() {
+                option::Option[ak::View]::Some(content) => {
+                    let host: *u8 = content.raw();
+                    match entry_of(host) {
+                        option::Option[*HostZoom]::Some(zp) => {
+                            let z: f64 = { (*zp).zoom };
+                            if z <= 1.0f64 { return event; }
+                            let b: rt::Rect = content.bounds();
+                            let f: rt::Rect = content.frame();
+                            // Scrolling DOWN moves the cut down, so the y delta
+                            // is subtracted; x follows the wheel directly.
+                            var nx: f64 = pan_origin(b.x, 0.0f64 - e.scrolling_delta_x(), z);
+                            var ny: f64 = pan_origin(b.y, 0.0f64 - e.scrolling_delta_y(), z);
+                            // Clamp to the content: panning past the edge of a
+                            // magnified picture shows nothing and feels broken.
+                            let maxx: f64 = f.w - b.w;
+                            let maxy: f64 = f.h - b.h;
+                            if (nx > 0.0f64) == false { nx = 0.0f64; }
+                            if (ny > 0.0f64) == false { ny = 0.0f64; }
+                            if nx > maxx { nx = maxx; }
+                            if ny > maxy { ny = maxy; }
+                            content.set_bounds_origin(rt::Point { x: nx, y: ny });
+                            return 0 as *u8;
+                        }
+                        option::Option[*HostZoom]::None => { return event; }
+                    }
+                }
+                option::Option[ak::View]::None => { return event; }
+            }
+        }
+        option::Option[ak::Window]::None => { return event; }
+    }
+}
+
+// ---- the door ----------------------------------------------------------------
+
+// Install pinch-to-zoom on a host. Re-installing updates the RANGE without
+// adding a second recognizer, so a window that reopens does not accumulate them.
+fn install(host: *u8, min_zoom: f64 = 1.0f64, max_zoom: f64 = 4.0f64) {
+    if host == (0 as *u8) { return; }
+    let lo: f64 = heal_min(min_zoom);
+    let hi: f64 = heal_max(lo, max_zoom);
+    match entry_of(host) {
+        option::Option[*HostZoom]::Some(zp) => {
+            { (*zp).min = lo };
+            { (*zp).max = hi };
+            return;
+        }
+        option::Option[*HostZoom]::None => { }
+    }
+    let zs: *vec::Vec[HostZoom] = #addr_of(ZOOMS);
+    { (*zs).append(HostZoom { host: host, base: 1.0f64, zoom: 1.0f64, min: lo, max: hi }) };
+    // Scaled content overflows the host; clip it there. macOS 14 defaults
+    // `clipsToBounds` to false, so without this the magnified picture bleeds
+    // over the titlebar.
+    ak::View::from_raw(host).set_clips_to_bounds(true);
+    akx::add_magnify_gesture(ak::View::from_raw(host), on_magnify, host);
+    // The first zoomable host brings the pan filter with it. Never removed:
+    // with no zoomed host it is a pure pass-through, and hosts come and go for
+    // the life of the process.
+    if PAN_FILTER == (0 as *u8) {
+        PAN_FILTER = akx::add_local_event_filter(ak::event_mask_scroll_wheel, pan_filter, 0 as *u8);
+    }
+    return;
+}
+
+// The programmatic path — a menu item, a shortcut, a test, an AGENT. It drives
+// exactly what the gesture drives, anchored at the visible cut's centre.
+//
+// This is the standing rule in one function: an agent has no hands, so a
+// pinch-only feature would be a feature no agent could reach. Answers the
+// factor actually applied (1.0 where no zoom is installed).
+fn set_zoom(host: *u8, zoom: f64) -> f64 {
+    match entry_of(host) {
+        option::Option[*HostZoom]::Some(zp) => {
+            let target: f64 = zoom_target(zoom, 0.0f64, { (*zp).min }, { (*zp).max });
+            { (*zp).base = target };
+            let a: rt::Point = centre_of(host);
+            apply(host, target, a.x, a.y);
+            return target;
+        }
+        option::Option[*HostZoom]::None => { return 1.0f64; }
+    }
+}
+
+// The zoom currently applied to a host. 1.0 when none was ever installed, so a
+// caller never has to ask whether there is one first.
+fn zoom_of(host: *u8) -> f64 {
+    match entry_of(host) {
+        option::Option[*HostZoom]::Some(zp) => { return { (*zp).zoom }; }
+        option::Option[*HostZoom]::None => { return 1.0f64; }
+    }
+}
+
+fn is_zoomable(host: *u8) -> bool {
+    match entry_of(host) {
+        option::Option[*HostZoom]::Some(_zp) => { return true; }
+        option::Option[*HostZoom]::None => { return false; }
+    }
+}
+
+// A window is closing: drop its entry so the registry does not grow for the
+// life of the process and a recycled address cannot inherit a stale range.
+fn forget(host: *u8) {
+    if host == (0 as *u8) { return; }
+    let zs: *vec::Vec[HostZoom] = #addr_of(ZOOMS);
+    var i: usize = 0 as usize;
+    while i < { (*zs).count() } {
+        var hit: bool = false;
+        match { (*zs).at_ptr(i) } {
+            option::Option[*HostZoom]::Some(zp) => { hit = { (*zp).host } == host; }
+            option::Option[*HostZoom]::None => { }
+        }
+        if hit {
+            let _r: option::Option[HostZoom] = { (*zs).remove(i) };
+            return;
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+fn reset_for_tests() {
+    let zs: *vec::Vec[HostZoom] = #addr_of(ZOOMS);
+    { (*zs).remove_all() };
+    return;
+}
