@@ -7208,3 +7208,51 @@ fn closing_a_window_forgets_its_zoom_entry() {
     app::reset_default_for_tests();
     return;
 }
+
+// ---- a live content write re-measures ---------------------------------------
+//
+// The bug this guards: `set_text` raises only P_TEXT, which changes no STYLE,
+// so flex's incremental cache skipped the subtree and the frame walk
+// early-returned. The new string was set on the NSTextField and clipped to the
+// box the OLD string was measured at. A column hid it (align_items: Stretch);
+// a row showed it plainly, which is why the row is the shape asserted here.
+#[test]
+fn a_live_text_write_re_measures_the_label() {
+    backend::install();
+    app::reset_default_for_tests();
+    var root: core::Node = core::row(core::Builder::new(), key: "r");
+    var l: core::Node = label::label("x", key: "grow");
+    let _ok: bool = mount::insert_child(#addr_of(root), l, 0 as usize);
+    let rp: *core::Node = #addr_of(root);
+    let win: *u8 = window::open_window(rp, screen::Chrome::new(
+        title: "measure", width: 600.0f64, height: 200.0f64));
+    scheduler::layout_window(rp);
+
+    var before: f64 = 0.0f64;
+    match label::find("grow", within: rp) {
+        option::Option[label::Label]::Some(h) => {
+            before = { (*h.node()).frame() }.width;
+            let _l: label::Label = h.set_text("a very much longer string than x");
+        }
+        option::Option[label::Label]::None => { assert false; }
+    }
+    assert before > 0.0f64;
+    assert before < 40.0f64;
+
+    scheduler::tick();
+    scheduler::layout_window(rp);
+
+    match label::find("grow", within: rp) {
+        option::Option[label::Label]::Some(h) => {
+            let after: f64 = { (*h.node()).frame() }.width;
+            // The box grew to fit the new string. Before the fix this was still
+            // `before`, to the pixel.
+            assert after > before * 3.0f64;
+        }
+        option::Option[label::Label]::None => { assert false; }
+    }
+    window::close_window(win);
+    backend::uninstall();
+    app::reset_default_for_tests();
+    return;
+}

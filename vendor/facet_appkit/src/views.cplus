@@ -234,7 +234,26 @@ fn apply(ctx: *u8, n: *core::Node) {
     // the whole word onto the replacement, so there is nothing left to do here.
     if reclass_for(n, v, d) != v { return; }
     paint::apply_common(v, n, d);
-    apply_for_kind(core::kind_of(n), v, n, d);
+    let kind: u32 = core::kind_of(n);
+    apply_for_kind(kind, v, n, d);
+    // A node that measures ITSELF has just been written to, so the measurement
+    // is stale — and nothing else in the pipeline knows that.
+    //
+    // flex's incremental cache prunes a subtree whose STYLE is unchanged, and
+    // `set_text` changes no style: it changes what the view would answer if
+    // asked again. Without this, `calculate_layout` skips the node, the frame
+    // walk early-returns on `layout_changed() == false`, and the label keeps
+    // the box it was given for its OLD string — the new text is set on the
+    // control and clipped to the old width. In a column `align_items: Stretch`
+    // hides it; in a row it is plainly visible.
+    //
+    // `mark_content_changed` is exactly the door flex provides for this and had
+    // one caller in the whole repo (`core::relayout`, the explicit escape
+    // hatch). Marking on any apply of a measured kind is deliberately blunt:
+    // the alternative is a per-kind list of which props affect measurement,
+    // which is a second copy of the band that drifts the first time a control
+    // gains a verb.
+    if has_intrinsic_size(kind) { { (*n).mark_content_changed() }; }
     // `attach` / `detach` / a whole-set swap all raise C_GESTURES, and arming
     // is idempotent — the class moves once, the node pointer is refreshed
     // every time (a re-attached node has a new address).
