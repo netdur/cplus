@@ -266,6 +266,122 @@ fn submit_imp(sender: *u8, ctx: *u8) {
         fire({ (*iv).on_text_changed }, { (*iv).on_text_changed_ctx }, sender);
     }
     fire(submit_handler(n), submit_ctx(n), sender);
+    advance_on_return(n, sender);
+    return;
+}
+
+// ---- the return key ----------------------------------------------------------
+// `ReturnType` names the LABEL on a soft keyboard's return key, and the ledger
+// stopped there because macOS has no soft keyboard. The label is not the whole
+// of it: one of the six names a BEHAVIOUR, and it is the one an application
+// cannot get any other way.
+//
+//   Next    move to the next field. That is what "Next" means on a keyboard
+//           that has it, and `selectNextKeyView:` is the same move on a Mac.
+//   the     submit, which is what Return already does — the handler has fired
+//   rest    by the time this runs, and the label they differ by has nowhere
+//           to be drawn.
+//
+// So five of the six are still the label and stay recorded; the sixth acts.
+fn return_key_of(n: *core::Node) -> vocab::ReturnKey {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return vocab::ReturnKey::Default; }
+    let raw: *u8 = { (*d).props };
+    if raw == (0 as *u8) { return vocab::ReturnKey::Default; }
+    if { (*d).kind } == props::K_TEXT_FIELD {
+        return { (*(raw as *props::TextFieldProps)).return_key };
+    }
+    if { (*d).kind } == props::K_SEARCH_FIELD {
+        return { (*(raw as *props::SearchFieldProps)).return_key };
+    }
+    return vocab::ReturnKey::Default;
+}
+
+fn advance_on_return(n: *core::Node, sender: *u8) {
+    let wants: bool = match return_key_of(n) {
+        vocab::ReturnKey::Next => true,
+        vocab::ReturnKey::Default => false,
+        vocab::ReturnKey::Done => false,
+        vocab::ReturnKey::Go => false,
+        vocab::ReturnKey::Search => false,
+        vocab::ReturnKey::Send => false,
+    };
+    if !wants { return; }
+    let win: *u8 = { rt::msg_id(sender, rt::sel(#str_ptr("window\0"))) };
+    if win == (0 as *u8) { return; }
+    // The field's OWN next key view when it has one, which is the field the
+    // application put after it. `selectNextKeyView:` is the fallback and it
+    // walks the window's key loop instead — the same move, one level less
+    // specific, and the only one available when nothing was named.
+    let next: *u8 = { rt::msg_id(sender, rt::sel(#str_ptr("nextKeyView\0"))) };
+    if next != (0 as *u8) {
+        let _ok: i8 = { rt::msg_i8_id(win, rt::sel(#str_ptr("makeFirstResponder:\0")), next) };
+        return;
+    }
+    { rt::msg_void_id(win, rt::sel(#str_ptr("selectNextKeyView:\0")), sender) };
+    return;
+}
+
+// ---- the keyboard ------------------------------------------------------------
+// `Keyboard` picks the on-screen layout, and macOS has no on-screen keyboard —
+// which is true and is not all MAUI's Keyboard carries. A Keyboard is a layout
+// AND a set of FLAGS: `Keyboard.Chat` spell-checks and suggests, `Keyboard.Plain`
+// does neither, and the four typed ones (Email, Url, Telephone, Numeric) turn
+// correction off because correcting an address is worse than not.
+//
+// The layout has no home here. The flags have exactly one — the field editor,
+// which is where `checks_spelling` and `predicts_text` already go, and which is
+// SHARED by every field in the window, so all three are set together when this
+// field begins editing.
+struct KeyboardFlags { spelling: bool, suggestions: bool, correction: bool }
+
+fn keyboard_flags(k: vocab::Keyboard) -> KeyboardFlags {
+    return match k {
+        // Chat is prose: everything on.
+        vocab::Keyboard::Chat => KeyboardFlags { spelling: true, suggestions: true, correction: true },
+        vocab::Keyboard::Text => KeyboardFlags { spelling: true, suggestions: true, correction: true },
+        // Plain is deliberately bare — the one that says "leave my typing alone".
+        vocab::Keyboard::Plain => KeyboardFlags { spelling: false, suggestions: false, correction: false },
+        // A typed field: correcting an address or a number is worse than not.
+        vocab::Keyboard::Email => KeyboardFlags { spelling: false, suggestions: false, correction: false },
+        vocab::Keyboard::Url => KeyboardFlags { spelling: false, suggestions: false, correction: false },
+        vocab::Keyboard::Telephone => KeyboardFlags { spelling: false, suggestions: false, correction: false },
+        vocab::Keyboard::Numeric => KeyboardFlags { spelling: false, suggestions: false, correction: false },
+        // Default defers to the control's own `checks_spelling` / `predicts_text`.
+        vocab::Keyboard::Default => KeyboardFlags { spelling: true, suggestions: true, correction: true },
+    };
+}
+
+fn defers_to_control(k: vocab::Keyboard) -> bool {
+    return match k {
+        vocab::Keyboard::Default => true,
+        vocab::Keyboard::Chat => false,
+        vocab::Keyboard::Text => false,
+        vocab::Keyboard::Plain => false,
+        vocab::Keyboard::Email => false,
+        vocab::Keyboard::Url => false,
+        vocab::Keyboard::Telephone => false,
+        vocab::Keyboard::Numeric => false,
+    };
+}
+
+// The three switches, from the keyboard AND the two verbs that name them
+// directly. A named keyboard is the stronger statement — an application that
+// said `Keyboard.Plain` meant it — so it wins where it is not Default.
+fn apply_editor_flags(ed: *u8, iv: *props::InputViewProps) {
+    let k: vocab::Keyboard = { (*iv).keyboard };
+    var spelling: bool = { (*iv).checks_spelling };
+    var suggestions: bool = { (*iv).predicts_text };
+    var correction: bool = { (*iv).predicts_text };
+    if !defers_to_control(k) {
+        let f: KeyboardFlags = keyboard_flags(k);
+        spelling = f.spelling;
+        suggestions = f.suggestions;
+        correction = f.correction;
+    }
+    { rt::msg_void_i8(ed, rt::sel(#str_ptr("setContinuousSpellCheckingEnabled:\0")), spelling as i8) };
+    { rt::msg_void_i8(ed, rt::sel(#str_ptr("setAutomaticTextCompletionEnabled:\0")), suggestions as i8) };
+    { rt::msg_void_i8(ed, rt::sel(#str_ptr("setAutomaticSpellingCorrectionEnabled:\0")), correction as i8) };
     return;
 }
 
@@ -611,6 +727,7 @@ struct Bits {
     is_read_only: u64,
     checks_spelling: u64,
     predicts_text: u64,
+    keyboard: u64,
     max_length: u64,
     placeholder: u64,
     placeholder_color: u64,
@@ -626,11 +743,12 @@ fn bits_of(kind: u32) -> Bits {
         return Bits {
             character_spacing: text_area::P_CHARACTER_SPACING,
             cursor_position: text_area::P_CURSOR_POSITION,
-            font: text_area::P_FONT_SIZE | text_area::P_FONT_WEIGHT
+            font: text_area::P_FONT_SCALES | text_area::P_FONT_SIZE | text_area::P_FONT_WEIGHT
                 | text_area::P_FONT_FAMILY | text_area::P_IS_ITALIC,
             is_read_only: text_area::P_IS_READ_ONLY,
             checks_spelling: text_area::P_CHECKS_SPELLING,
             predicts_text: text_area::P_PREDICTS_TEXT,
+            keyboard: text_area::P_KEYBOARD,
             max_length: text_area::P_MAX_LENGTH,
             placeholder: text_area::P_PLACEHOLDER,
             placeholder_color: text_area::P_PLACEHOLDER_COLOR,
@@ -645,11 +763,12 @@ fn bits_of(kind: u32) -> Bits {
         return Bits {
             character_spacing: search_field::P_CHARACTER_SPACING,
             cursor_position: search_field::P_CURSOR_POSITION,
-            font: search_field::P_FONT_SIZE | search_field::P_FONT_WEIGHT
+            font: search_field::P_FONT_SCALES | search_field::P_FONT_SIZE | search_field::P_FONT_WEIGHT
                 | search_field::P_FONT_FAMILY | search_field::P_IS_ITALIC,
             is_read_only: search_field::P_IS_READ_ONLY,
             checks_spelling: search_field::P_CHECKS_SPELLING,
             predicts_text: search_field::P_PREDICTS_TEXT,
+            keyboard: search_field::P_KEYBOARD,
             max_length: search_field::P_MAX_LENGTH,
             placeholder: search_field::P_PLACEHOLDER,
             placeholder_color: search_field::P_PLACEHOLDER_COLOR,
@@ -663,11 +782,12 @@ fn bits_of(kind: u32) -> Bits {
     return Bits {
         character_spacing: text_field::P_CHARACTER_SPACING,
         cursor_position: text_field::P_CURSOR_POSITION,
-        font: text_field::P_FONT_SIZE | text_field::P_FONT_WEIGHT
+        font: text_field::P_FONT_SCALES | text_field::P_FONT_SIZE | text_field::P_FONT_WEIGHT
             | text_field::P_FONT_FAMILY | text_field::P_IS_ITALIC,
         is_read_only: text_field::P_IS_READ_ONLY,
         checks_spelling: text_field::P_CHECKS_SPELLING,
         predicts_text: text_field::P_PREDICTS_TEXT,
+        keyboard: text_field::P_KEYBOARD,
         max_length: text_field::P_MAX_LENGTH,
         placeholder: text_field::P_PLACEHOLDER,
         placeholder_color: text_field::P_PLACEHOLDER_COLOR,
@@ -693,8 +813,9 @@ fn asked_align(a: vocab::TextAlign) -> option::Option[vocab::TextAlign] {
 }
 
 fn band_font(iv: *props::InputViewProps) -> option::Option[ak::Font] {
-    return paint::ns_font_styled({ (*iv).font_size }, { (*iv).font_weight },
-                                 { (*iv).font_family.view() }, { (*iv).is_italic });
+    return paint::ns_font_scaled({ (*iv).font_size }, { (*iv).font_weight },
+                                 { (*iv).font_family.view() }, { (*iv).is_italic },
+                                 { (*iv).font_scales });
 }
 
 // What the control should be SHOWING: the description's text with the display
@@ -767,7 +888,7 @@ fn apply_field_band(f: ak::TextField, n: *core::Node, iv: *props::InputViewProps
     if (dirty & b.is_read_only) != (0 as u64) {
         f.set_editable({ (*iv).is_read_only } == false);
     }
-    if (dirty & (b.checks_spelling | b.predicts_text)) != (0 as u64) {
+    if (dirty & (b.checks_spelling | b.predicts_text | b.keyboard)) != (0 as u64) {
         // NSTextField has no spell-check switch of its own — the FIELD EDITOR
         // does the checking, and it is shared by every field in the window. So
         // the flag is carried on the node and applied when this field takes
@@ -833,18 +954,7 @@ fn set_range(ed: ak::Text, iv: *props::InputViewProps) {
 // is for.
 fn apply_editor_state(f: ak::TextField, n: *core::Node, iv: *props::InputViewProps) {
     match f.as_control().current_editor() {
-        option::Option[ak::Text]::Some(ed) => {
-            { rt::msg_void_i8(ed.raw(), rt::sel(#str_ptr("setContinuousSpellCheckingEnabled:\0")),
-                              { (*iv).checks_spelling } as i8) };
-            // `IsTextPredictionEnabled` is QuickType on a phone, and the ledger
-            // read it as a soft-keyboard verb. macOS predicts too — inline, in
-            // the field editor — and `automaticTextCompletionEnabled` is the
-            // switch for it. Same field editor, same place, same reason: it is
-            // SHARED by every field in the window, so it is set when this one
-            // begins editing rather than once.
-            { rt::msg_void_i8(ed.raw(), rt::sel(#str_ptr("setAutomaticTextCompletionEnabled:\0")),
-                              { (*iv).predicts_text } as i8) };
-        }
+        option::Option[ak::Text]::Some(ed) => { apply_editor_flags(ed.raw(), iv); }
         option::Option[ak::Text]::None => { }
     }
     return;
@@ -872,15 +982,10 @@ fn apply_editor_band(tv: ak::TextView, n: *core::Node, iv: *props::InputViewProp
     if (dirty & b.is_read_only) != (0 as u64) {
         tv.set_editable({ (*iv).is_read_only } == false);
     }
-    if (dirty & b.checks_spelling) != (0 as u64) {
-        { rt::msg_void_i8(tv.raw(), rt::sel(#str_ptr("setContinuousSpellCheckingEnabled:\0")),
-                          { (*iv).checks_spelling } as i8) };
-    }
     // An editor owns its own text view, so unlike a field this needs no
-    // begin-editing hook — the switch goes straight on.
-    if (dirty & b.predicts_text) != (0 as u64) {
-        { rt::msg_void_i8(tv.raw(), rt::sel(#str_ptr("setAutomaticTextCompletionEnabled:\0")),
-                          { (*iv).predicts_text } as i8) };
+    // begin-editing hook — the switches go straight on.
+    if (dirty & (b.checks_spelling | b.predicts_text | b.keyboard)) != (0 as u64) {
+        apply_editor_flags(tv.raw(), iv);
     }
     if (dirty & (b.cursor_position | b.selection_length)) != (0 as u64) {
         set_range(tv.as_text(), iv);

@@ -67,6 +67,7 @@ import "facet/window_chrome" as chrome;
 import "facet/canvas" as canvas;
 import "facet/refreshable" as refreshable;
 import "facet/table" as table;
+import "facet/swipeable" as swipeable;
 import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "objc/synthesis" as synth;
@@ -115,6 +116,7 @@ fn apply_label(v: *u8, n: *core::Node, dirty: u64) {
     let rich: u64 = label::P_TEXT | label::P_TEXT_TRANSFORM | label::P_CHARACTER_SPACING
         | label::P_LINE_HEIGHT | label::P_TEXT_DECORATION | label::P_IS_ITALIC
         | label::P_FONT_SIZE | label::P_FONT_WEIGHT | label::P_FONT_FAMILY
+        | label::P_FONT_SCALES | span::P_FONT_SCALES
         | label::P_TEXT_COLOR | label::P_TEXT_ALIGN | label::P_TEXT_FORMAT
         | label::P_FORMATTED_TEXT;
     if (dirty & rich) != (0 as u64) {
@@ -160,9 +162,11 @@ fn apply_label(v: *u8, n: *core::Node, dirty: u64) {
         let c: vocab::Color = { (*p).text_color };
         if c.is_set() { f.set_text_color(paint::ns_color(c)); }
     }
-    if (dirty & (label::P_FONT_SIZE | label::P_FONT_WEIGHT | label::P_FONT_FAMILY | label::P_IS_ITALIC)) != (0 as u64) {
-        match paint::ns_font_styled({ (*p).font_size }, { (*p).font_weight },
-                                    { (*p).font_family.view() }, { (*p).is_italic }) {
+    if (dirty & (label::P_FONT_SIZE | label::P_FONT_WEIGHT | label::P_FONT_FAMILY
+                 | label::P_IS_ITALIC | label::P_FONT_SCALES)) != (0 as u64) {
+        match paint::ns_font_scaled({ (*p).font_size }, { (*p).font_weight },
+                                    { (*p).font_family.view() }, { (*p).is_italic },
+                                    { (*p).font_scales }) {
             option::Option[ak::Font]::Some(font) => { f.as_control().set_font(font); }
             option::Option[ak::Font]::None => { }
         }
@@ -208,7 +212,8 @@ fn apply_button(v: *u8, n: *core::Node, dirty: u64) {
     // NSButton also has no plain setter for — is given an attributed title.
     let title_bits: u64 = button::P_TITLE | button::P_TEXT_TRANSFORM
         | button::P_CHARACTER_SPACING | button::P_TEXT_COLOR | button::P_IS_ITALIC
-        | button::P_FONT_SIZE | button::P_FONT_WEIGHT | button::P_FONT_FAMILY;
+        | button::P_FONT_SIZE | button::P_FONT_WEIGHT | button::P_FONT_FAMILY
+        | button::P_FONT_SCALES;
     if (dirty & title_bits) != (0 as u64) {
         let shown: text::Text = paint::transformed({ (*p).title.view() }, { (*p).text_transform });
         if button_wants_rich(p) {
@@ -221,9 +226,11 @@ fn apply_button(v: *u8, n: *core::Node, dirty: u64) {
             b.set_title(shown.view());
         }
     }
-    if (dirty & (button::P_FONT_SIZE | button::P_FONT_WEIGHT | button::P_FONT_FAMILY | button::P_IS_ITALIC)) != (0 as u64) {
-        match paint::ns_font_styled({ (*p).font_size }, { (*p).font_weight },
-                                    { (*p).font_family.view() }, { (*p).is_italic }) {
+    if (dirty & (button::P_FONT_SIZE | button::P_FONT_WEIGHT | button::P_FONT_FAMILY
+                 | button::P_IS_ITALIC | button::P_FONT_SCALES)) != (0 as u64) {
+        match paint::ns_font_scaled({ (*p).font_size }, { (*p).font_weight },
+                                    { (*p).font_family.view() }, { (*p).is_italic },
+                                    { (*p).font_scales }) {
             option::Option[ak::Font]::Some(font) => { b.as_control().set_font(font); }
             option::Option[ak::Font]::None => { }
         }
@@ -268,8 +275,9 @@ fn button_wants_rich(p: *props::ButtonProps) -> bool {
 
 fn button_attributes(p: *props::ButtonProps) -> *u8 {
     return paint::rich_attributes(
-        paint::ns_font_styled({ (*p).font_size }, { (*p).font_weight },
-                              { (*p).font_family.view() }, { (*p).is_italic }),
+        paint::ns_font_scaled({ (*p).font_size }, { (*p).font_weight },
+                              { (*p).font_family.view() }, { (*p).is_italic },
+                              { (*p).font_scales }),
         { (*p).text_color }, { (*p).character_spacing }, 0.0f64,
         option::Option[vocab::TextAlign]::None, vocab::TextDecoration::None);
 }
@@ -326,6 +334,13 @@ fn apply_text_field(v: *u8, n: *core::Node, dirty: u64) {
     // editor and the search field, because all three embed the same props.
     text_input::apply_field_band(f, n, iv, { (*p).text_align }, dirty,
                                  text_input::bits_of(props::K_TEXT_FIELD));
+    // `return_key` is read where Return is HANDLED — `text_input::submit_imp` —
+    // so nothing is written here. The bit still has to be gated: a field whose
+    // return key becomes `Next` after it was built needs the delegate that
+    // reads it, and installing is idempotent.
+    if (dirty & text_field::P_RETURN_KEY) != (0 as u64) {
+        text_input::install(v, v, n);
+    }
     if (dirty & text_field::P_VERTICAL_ALIGN) != (0 as u64) {
         compose::apply_field_vertical_align(v, { (*p).vertical_align });
     }
@@ -639,8 +654,9 @@ fn label_wants_rich(p: *props::LabelProps) -> bool {
 
 fn label_attributes(p: *props::LabelProps) -> *u8 {
     return paint::rich_attributes(
-        paint::ns_font_styled({ (*p).font_size }, { (*p).font_weight },
-                              { (*p).font_family.view() }, { (*p).is_italic }),
+        paint::ns_font_scaled({ (*p).font_size }, { (*p).font_weight },
+                              { (*p).font_family.view() }, { (*p).is_italic },
+                              { (*p).font_scales }),
         { (*p).text_color }, { (*p).character_spacing }, { (*p).line_height },
         option::some({ (*p).text_align }), { (*p).text_decoration });
 }
@@ -840,6 +856,7 @@ fn apply_radio(v: *u8, n: *core::Node, dirty: u64) {
     let title_bits: u64 = radio::P_TEXT | radio::P_TEXT_TRANSFORM
         | radio::P_TEXT_COLOR | radio::P_CHARACTER_SPACING
         | radio::P_FONT_SIZE | radio::P_FONT_WEIGHT | radio::P_FONT_FAMILY
+        | radio::P_FONT_SCALES
         | radio::P_IS_ITALIC;
     if (dirty & title_bits) != (0 as u64) {
         let shown: text::Text = paint::transformed({ (*p).text.view() }, { (*p).text_transform });
@@ -853,10 +870,11 @@ fn apply_radio(v: *u8, n: *core::Node, dirty: u64) {
             b.set_title(shown.view());
         }
     }
-    if (dirty & (radio::P_FONT_SIZE | radio::P_FONT_WEIGHT | radio::P_FONT_FAMILY
+    if (dirty & (radio::P_FONT_SCALES | radio::P_FONT_SIZE | radio::P_FONT_WEIGHT | radio::P_FONT_FAMILY
                  | radio::P_IS_ITALIC)) != (0 as u64) {
-        match paint::ns_font_styled({ (*p).font_size }, { (*p).font_weight },
-                                    { (*p).font_family.view() }, { (*p).is_italic }) {
+        match paint::ns_font_scaled({ (*p).font_size }, { (*p).font_weight },
+                                    { (*p).font_family.view() }, { (*p).is_italic },
+                                    { (*p).font_scales }) {
             option::Option[ak::Font]::Some(font) => { b.as_control().set_font(font); }
             option::Option[ak::Font]::None => { }
         }
@@ -894,13 +912,28 @@ fn radio_wants_rich(p: *props::RadioProps) -> bool {
 
 fn radio_attributes(p: *props::RadioProps) -> *u8 {
     return paint::rich_attributes(
-        paint::ns_font_styled({ (*p).font_size }, { (*p).font_weight },
-                              { (*p).font_family.view() }, { (*p).is_italic }),
+        paint::ns_font_scaled({ (*p).font_size }, { (*p).font_weight },
+                              { (*p).font_family.view() }, { (*p).is_italic },
+                              { (*p).font_scales }),
         { (*p).text_color }, { (*p).character_spacing }, 0.0f64,
         option::Option[vocab::TextAlign]::None, vocab::TextDecoration::None);
 }
 
+// A toggle that names an achromatic colour is DRAWN; one that does not stays an
+// NSSwitch with everything NSSwitch has. The choice is made from the props at
+// create time, so it is the application's rather than the backend's — and the
+// drawn one answers `state` / `setState:`, so every caller that already speaks
+// to a toggle keeps working either way.
+static TOGGLE_COLORS: compose::SwitchColors = #zero::[compose::SwitchColors]();
+
 fn create_toggle(n: *core::Node) -> *u8 {
+    let p: *props::ToggleProps = props_of(n, props::K_TOGGLE) as *props::ToggleProps;
+    if p != (0 as *props::ToggleProps) {
+        if compose::wants_drawn_switch({ (*p).off_color }, { (*p).thumb_color }) {
+            let drawn: *u8 = compose::new_drawn_switch();
+            if drawn != (0 as *u8) { return rt::retain(drawn); }
+        }
+    }
     let s: ak::Switch = ak::Switch::from_raw(rt::alloc_init(#str_ptr("NSSwitch\0")));
     return rt::retain(s.as_view().raw());
 }
@@ -909,11 +942,28 @@ fn apply_toggle(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::ToggleProps = props_of(n, props::K_TOGGLE) as *props::ToggleProps;
     if p == (0 as *props::ToggleProps) { return; }
     let s: ak::Switch = ak::Switch::from_raw(v);
+    // The DRAWN posture: a toggle that named an achromatic colour. Its state,
+    // its three colours and its action all go on in one call, because the
+    // drawn control has no cell to hold half of them.
+    if compose::wants_drawn_switch({ (*p).off_color }, { (*p).thumb_color }) {
+        let band: u64 = toggle::P_ON | toggle::P_ON_COLOR | toggle::P_OFF_COLOR
+            | toggle::P_THUMB_COLOR | props::C_HANDLERS;
+        if (dirty & band) != (0 as u64) || dirty == paint::all_bits() {
+            TOGGLE_COLORS = compose::SwitchColors {
+                on: { (*p).on_color }, off: { (*p).off_color }, thumb: { (*p).thumb_color },
+            };
+            let f: fn(*u8, *u8) = toggle_action;
+            compose::apply_drawn_switch(v, { (*p).on }, #addr_of(TOGGLE_COLORS), f, n as *u8);
+        }
+        if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
+            ak::View::from_raw(v).set_hidden(core::is_visible(n) == false);
+        }
+        return;
+    }
     if (dirty & toggle::P_ON) != (0 as u64) { s.set_state(state_of({ (*p).on })); }
     // The ON track is the switch's one saturated part, so a hue rotation reaches
-    // it and nothing else. The off track and the thumb are ACHROMATIC and stay
-    // in the ledger for the reason that makes this work at all: grey has no hue
-    // to rotate.
+    // it and nothing else. The off track and the thumb are ACHROMATIC — grey has
+    // no hue to rotate — which is why naming either draws the switch instead.
     if (dirty & toggle::P_ON_COLOR) != (0 as u64) {
         compose::hue_shift(v, { (*p).on_color });
     }
@@ -1281,12 +1331,14 @@ fn apply_text_area(v: *u8, n: *core::Node, dirty: u64) {
             // And no placeholder API either — so a label under the text,
             // hidden as soon as there is any.
             if (dirty & (text_area::P_PLACEHOLDER | text_area::P_PLACEHOLDER_COLOR
+                         | text_area::P_FONT_SCALES
                          | text_area::P_FONT_SIZE | text_area::P_FONT_WEIGHT
                          | text_area::P_FONT_FAMILY | text_area::P_IS_ITALIC)) != (0 as u64) {
                 compose::apply_editor_placeholder(tv.raw(), { (*iv).placeholder.view() },
                     { (*iv).placeholder_color },
-                    paint::ns_font_styled({ (*iv).font_size }, { (*iv).font_weight },
-                                          { (*iv).font_family.view() }, { (*iv).is_italic }));
+                    paint::ns_font_scaled({ (*iv).font_size }, { (*iv).font_weight },
+                                          { (*iv).font_family.view() }, { (*iv).is_italic },
+                                          { (*iv).font_scales }));
             }
             if (dirty & text_area::P_TEXT) != (0 as u64) {
                 compose::refresh_editor_placeholder(tv.raw());
@@ -1331,6 +1383,9 @@ fn apply_search_field(v: *u8, n: *core::Node, dirty: u64) {
     let iv: *props::InputViewProps = { #addr_of((*p).input_view) };
     text_input::apply_field_band(f, n, iv, { (*p).text_align }, dirty,
                                  text_input::bits_of(props::K_SEARCH_FIELD));
+    if (dirty & search_field::P_RETURN_KEY) != (0 as u64) {
+        text_input::install(v, v, n);
+    }
     if (dirty & search_field::P_VERTICAL_ALIGN) != (0 as u64) {
         compose::apply_field_vertical_align(v, { (*p).vertical_align });
     }
@@ -1384,9 +1439,10 @@ fn apply_popup(v: *u8, n: *core::Node, dirty: u64) {
         // item: disabled, at the top, showing exactly while the selection is
         // empty. Which is what a prompt is on every platform that has one.
         compose::install_popup_title(b, { (*p).title.view() }, { (*p).title_color },
-                                     paint::ns_font_styled({ (*p).font_size }, { (*p).font_weight },
+                                     paint::ns_font_scaled({ (*p).font_size }, { (*p).font_weight },
                                                            { (*p).font_family.view() },
-                                                           { (*p).is_italic }),
+                                                           { (*p).is_italic },
+                                                           { (*p).font_scales }),
                                      { (*p).selected_index });
     }
     // The selection goes on AFTER the items, or it indexes a list that is not
@@ -1398,10 +1454,11 @@ fn apply_popup(v: *u8, n: *core::Node, dirty: u64) {
             b.select_item_at_index(idx + compose::title_offset({ (*p).title.view() }));
         }
     }
-    if (dirty & (popup::P_FONT_SIZE | popup::P_FONT_WEIGHT | popup::P_FONT_FAMILY
+    if (dirty & (popup::P_FONT_SCALES | popup::P_FONT_SIZE | popup::P_FONT_WEIGHT | popup::P_FONT_FAMILY
                  | popup::P_IS_ITALIC)) != (0 as u64) {
-        match paint::ns_font_styled({ (*p).font_size }, { (*p).font_weight },
-                                    { (*p).font_family.view() }, { (*p).is_italic }) {
+        match paint::ns_font_scaled({ (*p).font_size }, { (*p).font_weight },
+                                    { (*p).font_family.view() }, { (*p).is_italic },
+                                    { (*p).font_scales }) {
             option::Option[ak::Font]::Some(font) => { b.as_control().set_font(font); }
             option::Option[ak::Font]::None => { }
         }
@@ -1409,7 +1466,8 @@ fn apply_popup(v: *u8, n: *core::Node, dirty: u64) {
     // A popup draws its rows from its MENU, so a colour or a kern is an
     // attributed title per item — there is no `setTextColor:` on the button.
     if (dirty & (popup::P_TEXT_COLOR | popup::P_CHARACTER_SPACING | popup::P_ITEMS
-                 | popup::P_IS_ITALIC | popup::P_FONT_SIZE | popup::P_FONT_WEIGHT
+                 | popup::P_IS_ITALIC | popup::P_FONT_SCALES
+                 | popup::P_FONT_SIZE | popup::P_FONT_WEIGHT
                  | popup::P_FONT_FAMILY)) != (0 as u64) {
         style_popup_items(b, p);
     }
@@ -1448,8 +1506,9 @@ fn style_popup_items(b: ak::PopUpButton, p: *props::PopupProps) {
         match b.item_at_index(i) {
             option::Option[ak::MenuItem]::Some(item) => {
                 let attrs: *u8 = paint::rich_attributes(
-                    paint::ns_font_styled({ (*p).font_size }, { (*p).font_weight },
-                                          { (*p).font_family.view() }, { (*p).is_italic }),
+                    paint::ns_font_scaled({ (*p).font_size }, { (*p).font_weight },
+                                          { (*p).font_family.view() }, { (*p).is_italic },
+                                          { (*p).font_scales }),
                     c, kern, 0.0f64, option::Option[vocab::TextAlign]::None,
                     vocab::TextDecoration::None);
                 let a: *u8 = paint::attributed(item.title().view(), attrs);
@@ -2040,10 +2099,11 @@ fn apply_date_picker(v: *u8, n: *core::Node, dirty: u64) {
         let d: *u8 = ns_date({ (*p).date });
         if d != (0 as *u8) { dp.set_date_value(ak::Date::from_raw(d)); }
     }
-    if (dirty & (date_picker::P_FONT_SIZE | date_picker::P_FONT_WEIGHT
+    if (dirty & (date_picker::P_FONT_SCALES | date_picker::P_FONT_SIZE | date_picker::P_FONT_WEIGHT
                  | date_picker::P_FONT_FAMILY | date_picker::P_IS_ITALIC)) != (0 as u64) {
-        match paint::ns_font_styled({ (*p).font_size }, { (*p).font_weight },
-                                    { (*p).font_family.view() }, { (*p).is_italic }) {
+        match paint::ns_font_scaled({ (*p).font_size }, { (*p).font_weight },
+                                    { (*p).font_family.view() }, { (*p).is_italic },
+                                    { (*p).font_scales }) {
             option::Option[ak::Font]::Some(font) => { dp.as_control().set_font(font); }
             option::Option[ak::Font]::None => { }
         }
@@ -2067,6 +2127,19 @@ fn apply_date_picker(v: *u8, n: *core::Node, dirty: u64) {
                                       ns_date({ (*p).minimum_date }), ns_date({ (*p).maximum_date }),
                                       #addr_of((*p).is_open), n as *u8, o, c);
     }
+    // `CharacterSpacing`. The picker's VALUE is an NSDate and has no attributed
+    // form — but the drawing goes through a cell, and a cell puts its content in
+    // `drawInteriorWithFrame:`. Only a picker that asks for a kern is drawn that
+    // way; one that does not keeps AppKit's own fields entirely.
+    if (dirty & (date_picker::P_CHARACTER_SPACING | date_picker::P_DATE
+                 | date_picker::P_FORMAT)) != (0 as u64) {
+        let shown: text::Text = shown_date(dp);
+        compose::apply_picker_kern(v, { (*p).character_spacing }, shown.view(),
+            paint::ns_font_scaled({ (*p).font_size }, { (*p).font_weight },
+                                  { (*p).font_family.view() }, { (*p).is_italic },
+                                  { (*p).font_scales }),
+            { (*p).text_color });
+    }
     if (dirty & date_picker::P_TEXT_COLOR) != (0 as u64) {
         let c: vocab::Color = { (*p).text_color };
         if c.is_set() { dp.set_text_color(paint::ns_color(c)); }
@@ -2084,6 +2157,17 @@ fn apply_date_picker(v: *u8, n: *core::Node, dirty: u64) {
 // NSDatePickerElementFlags: YearMonth 0xc0, YearMonthDay 0xe0.
 // A format naming a DAY gets all three; one naming only a month or a year gets
 // the pair, which is what a "MMMM yyyy" picker means.
+// What the picker is SHOWING, formatted the way the picker formats it — asked
+// of the cell rather than rebuilt, so a kerned picker and a plain one never
+// disagree about the text.
+fn shown_date(dp: ak::DatePicker) -> text::Text {
+    let cell: *u8 = { rt::msg_id(dp.as_view().raw(), rt::sel(#str_ptr("cell\0"))) };
+    if cell == (0 as *u8) { return text::new(); }
+    let s: *u8 = { rt::msg_id(cell, rt::sel(#str_ptr("stringValue\0"))) };
+    if s == (0 as *u8) { return text::new(); }
+    return bridge::to_text(s);
+}
+
 fn date_elements(f: str) -> u64 {
     let t: text::Text = text::from_str(f);
     if t.contains("d") || t.contains("D") { return 224 as u64; }
@@ -2115,10 +2199,11 @@ fn apply_time_picker(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & time_picker::P_TIME) != (0 as u64) {
         dp.set_date_value(ak::Date::from_raw(ns_time({ (*p).time })));
     }
-    if (dirty & (time_picker::P_FONT_SIZE | time_picker::P_FONT_WEIGHT
+    if (dirty & (time_picker::P_FONT_SCALES | time_picker::P_FONT_SIZE | time_picker::P_FONT_WEIGHT
                  | time_picker::P_FONT_FAMILY | time_picker::P_IS_ITALIC)) != (0 as u64) {
-        match paint::ns_font_styled({ (*p).font_size }, { (*p).font_weight },
-                                    { (*p).font_family.view() }, { (*p).is_italic }) {
+        match paint::ns_font_scaled({ (*p).font_size }, { (*p).font_weight },
+                                    { (*p).font_family.view() }, { (*p).is_italic },
+                                    { (*p).font_scales }) {
             option::Option[ak::Font]::Some(font) => { dp.as_control().set_font(font); }
             option::Option[ak::Font]::None => { }
         }
@@ -2132,6 +2217,15 @@ fn apply_time_picker(v: *u8, n: *core::Node, dirty: u64) {
         let c: fn(*u8, *u8) = time_closed;
         compose::apply_picker_popover(v, { (*p).is_open }, time_elements({ (*p).format.view() }),
                                       0 as *u8, 0 as *u8, #addr_of((*p).is_open), n as *u8, o, c);
+    }
+    if (dirty & (time_picker::P_CHARACTER_SPACING | time_picker::P_TIME
+                 | time_picker::P_FORMAT)) != (0 as u64) {
+        let shown: text::Text = shown_date(dp);
+        compose::apply_picker_kern(v, { (*p).character_spacing }, shown.view(),
+            paint::ns_font_scaled({ (*p).font_size }, { (*p).font_weight },
+                                  { (*p).font_family.view() }, { (*p).is_italic },
+                                  { (*p).font_scales }),
+            { (*p).text_color });
     }
     if (dirty & time_picker::P_TEXT_COLOR) != (0 as u64) {
         let c: vocab::Color = { (*p).text_color };
@@ -2571,8 +2665,9 @@ fn append_run(ms: *u8, c: *core::Node) {
     // Every one of them comes from the shared builder, so a span's styling
     // band is the same band a label, a button and an input field get.
     let attrs: *u8 = paint::rich_attributes(
-        paint::ns_font_styled({ (*p).font_size }, { (*p).font_weight },
-                              { (*p).font_family.view() }, { (*p).is_italic }),
+        paint::ns_font_scaled({ (*p).font_size }, { (*p).font_weight },
+                              { (*p).font_family.view() }, { (*p).is_italic },
+                              { (*p).font_scales }),
         { (*p).text_color }, { (*p).character_spacing }, { (*p).line_height },
         option::Option[vocab::TextAlign]::None, { (*p).text_decoration });
     let run: *u8 = paint::attributed(shown.view(), attrs);
@@ -2635,10 +2730,68 @@ fn create_swipeable(n: *core::Node) -> *u8 {
     return rt::retain(v.raw());
 }
 
+// The reveal's own state, which is the backend's rather than the description's:
+// a threshold to beat and the five handlers to report against.
+static SWIPE_HOOKS: compose::SwipeHooks = #zero::[compose::SwipeHooks]();
+
 fn apply_swipeable(v: *u8, n: *core::Node, dirty: u64) {
-    let band: u64 = props::C_HANDLERS | props::C_LAYOUT;
+    let band: u64 = props::C_HANDLERS | props::C_LAYOUT | swipeable::P_REVEAL_THRESHOLD;
     if (dirty & band) != (0 as u64) || dirty == paint::all_bits() {
         attach_swipe_menu(v, n);
+        build_swipe_reveal(v, n);
+    }
+    return;
+}
+
+// The DRAG path. The menu is the click path an agent has and is untouched; this
+// is the same description read a second way, so a user gets both and there is
+// no second place to add an action.
+fn build_swipe_reveal(v: *u8, n: *core::Node) {
+    let p: *props::SwipeableProps = props_of(n, props::K_SWIPEABLE) as *props::SwipeableProps;
+    if p == (0 as *props::SwipeableProps) { return; }
+    var count: usize = 0 as usize;
+    var i: usize = 0 as usize;
+    let children: usize = core::child_count_of(n);
+    while i < children {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                if core::kind_of(c) == props::K_SWIPE_ITEM { count = count +% (1 as usize); }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    if count == (0 as usize) { return; }
+    SWIPE_HOOKS = compose::SwipeHooks {
+        threshold: { (*p).reveal_threshold },
+        changing: { (*p).observe_swipe_changing }, changing_ctx: { (*p).observe_swipe_changing_ctx },
+        started: { (*p).on_swipe_started }, started_ctx: { (*p).on_swipe_started_ctx },
+        ended: { (*p).on_swipe_ended }, ended_ctx: { (*p).on_swipe_ended_ctx },
+        opened: { (*p).on_open_requested }, opened_ctx: { (*p).on_open_requested_ctx },
+        closed: { (*p).on_close_requested }, closed_ctx: { (*p).on_close_requested_ctx },
+    };
+    let strip: *u8 = compose::install_swipe_strip(v, count, #addr_of(SWIPE_HOOKS));
+    if strip == (0 as *u8) { return; }
+    compose::clear_swipe_strip(strip);
+    var at: usize = 0 as usize;
+    var k: usize = 0 as usize;
+    while k < children {
+        match core::child_of(n, k) {
+            option::Option[*core::Node]::Some(c) => {
+                if core::kind_of(c) == props::K_SWIPE_ITEM {
+                    let sp: *props::SwipeItemProps = props_of(c, props::K_SWIPE_ITEM) as *props::SwipeItemProps;
+                    if sp != (0 as *props::SwipeItemProps) {
+                        let mi: *props::MenuItemProps = { #addr_of((*sp).menu_item) };
+                        let f: fn(*u8, *u8) = swipe_item_clicked;
+                        compose::add_swipe_action(strip, at, { (*mi).text.view() },
+                                                  { (*mi).is_destructive }, f, c as *u8);
+                        at = at +% (1 as usize);
+                    }
+                }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        k = k +% (1 as usize);
     }
     return;
 }

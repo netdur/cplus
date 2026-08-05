@@ -142,8 +142,71 @@ fn ns_font(size: f64, weight: vocab::FontWeight, family: str) -> option::Option[
 // route to it: there is no `systemFontOfSize:weight:italic:`. A face with no
 // italic cut comes back unchanged, which is AppKit's own answer and better
 // than synthesising an oblique the family does not have.
+// ---- a font that follows the reader's preference -----------------------------
+// `FontAutoScalingEnabled` is Dynamic Type, and the ledger read that as an iOS
+// word. The MECHANISM is Apple-wide: a font asked for by TEXT STYLE tracks the
+// reader's preferred sizes, and a font asked for in points does not.
+// `+[NSFont preferredFontForTextStyle:]` is that call on macOS.
+//
+// It does NOT replace the size. `font_scales` defaults to TRUE — MAUI's own
+// default — so a version of this that swapped the application's 30pt for a
+// style's 13pt would have rewritten the typography of every app that ever named
+// a size. What Dynamic Type actually means is that the named size is a BASE and
+// the reader's preference is a multiplier, so that is what this computes:
+//
+//     preferred Body size / the system's default Body size
+//
+// Where the reader has expressed no preference the ratio is 1 and the font is
+// the one the application asked for — which is the correct answer rather than a
+// no-op wearing a verb's name: the mechanism is live and there is nothing to
+// follow.
+fn body_scale() -> f64 {
+    // `preferredFontForTextStyle:options:` — the ONE-argument spelling is UIKit's
+    // and NSFont does not answer it. Asked before it is sent, because a macOS
+    // without it is a macOS with no preference to follow, and 1.0 is the right
+    // answer there rather than a crash.
+    let cls: *u8 = rt::get_class(#str_ptr("NSFont\0"));
+    let sel: *u8 = rt::sel(#str_ptr("preferredFontForTextStyle:options:\0"));
+    if { rt::msg_i8_id(cls, rt::sel(#str_ptr("respondsToSelector:\0")), sel) } == (0 as i8) {
+        return 1.0f64;
+    }
+    let f: *u8 = { msg_id_id_font(cls, sel, bridge::nsstring("NSCTFontTextStyleBody"),
+                                  { rt::alloc_init(#str_ptr("NSDictionary\0")) }) };
+    if f == (0 as *u8) { return 1.0f64; }
+    let got: f64 = { rt::msg_f64(f, rt::sel(#str_ptr("pointSize\0"))) };
+    let base: f64 = ak::Font::system_font_size();
+    if base <= 0.0f64 || got <= 0.0f64 { return 1.0f64; }
+    return got / base;
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_id_id_font(recv: *u8, sel: *u8, a: *u8, b: *u8) -> *u8;
+
 fn ns_font_styled(size: f64, weight: vocab::FontWeight, family: str,
                   italic: bool) -> option::Option[ak::Font] {
+    return ns_font_styled_at(size, weight, family, italic);
+}
+
+// The same font at a size the reader's preference has scaled. A named FAMILY
+// still applies — the multiplier is on the SIZE, so a font the application chose
+// by name keeps its face — and the weight and the slant are unchanged.
+fn ns_font_scaled(size: f64, weight: vocab::FontWeight, family: str,
+                  italic: bool, scales: bool) -> option::Option[ak::Font] {
+    var want: f64 = size;
+    if scales {
+        let ratio: f64 = body_scale();
+        if ratio != 1.0f64 {
+            // A control that named no size scales the system's own.
+            var from: f64 = size;
+            if from <= 0.0f64 { from = ak::Font::system_font_size(); }
+            want = from * ratio;
+        }
+    }
+    return ns_font_styled_at(want, weight, family, italic);
+}
+
+fn ns_font_styled_at(size: f64, weight: vocab::FontWeight, family: str,
+                     italic: bool) -> option::Option[ak::Font] {
     let base: option::Option[ak::Font] = ns_font(size, weight, family);
     if italic == false { return base; }
     // Italic alone still names a font: the control's own size, italicised.
@@ -155,6 +218,7 @@ fn ns_font_styled(size: f64, weight: vocab::FontWeight, family: str,
     // NSItalicFontMask = 1 << 0.
     return option::some(ak::FontManager::shared_font_manager().convert_font_to_have_trait(f, 1 as u64));
 }
+
 
 // ---- attributed text ---------------------------------------------------------
 // Three of facet's text verbs have no plain-string equivalent anywhere in

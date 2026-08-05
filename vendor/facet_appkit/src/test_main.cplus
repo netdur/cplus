@@ -6272,3 +6272,338 @@ fn a_collection_with_no_bind_rebuilds_as_it_always_did() {
     mount::unmount(p);
     return;
 }
+
+#[test]
+fn a_picker_that_asks_for_a_kern_gets_it_and_stands_down_to_be_edited() {
+    // The cell's own content hook was tried first and MEASURED: NSDatePickerCell
+    // does not route through `drawInteriorWithFrame:inView:`, the same way
+    // NSPopUpButtonCell does not route through `drawingRectForBounds:`. So the
+    // kerned text is an overlay with the cell's own text made transparent under
+    // it — and the overlay stands down the moment the picker takes first
+    // responder, or it would be a field you cannot see while typing in it.
+    backend::install();
+    var plain: core::Node = date_picker::date_picker(
+        vocab::Date { year: 2026 as i64, month: 8 as i64, day: 5 as i64 }, key: "dk0");
+    let pv: *u8 = views::create(0 as *u8, #addr_of(plain));
+    assert compose::kern_overlay_of(pv) == (0 as *u8);
+
+    var kerned: core::Node = date_picker::date_picker(
+        vocab::Date { year: 2026 as i64, month: 8 as i64, day: 5 as i64 },
+        key: "dk1", character_spacing: 3.0f64);
+    let kv: *u8 = views::create(0 as *u8, #addr_of(kerned));
+    let label: *u8 = compose::kern_overlay_of(kv);
+    assert label != (0 as *u8);
+    assert compose::kern_overlay_showing(kv);
+    // It shows what the picker shows, kerned.
+    let a: *u8 = { rt::msg_id(label, rt::sel(#str_ptr("attributedStringValue\0"))) };
+    assert { rt::msg_u64(a, rt::sel(#str_ptr("length\0"))) } > (0 as u64);
+    let attrs: *u8 = { msg_attrs_at(a, rt::sel(#str_ptr("attributesAtIndex:effectiveRange:\0")),
+                                    0 as u64, 0 as *u8) };
+    assert { rt::msg_id_id(attrs, rt::sel(#str_ptr("objectForKey:\0")),
+                           bridge::nsstring("NSKern")) } != (0 as *u8);
+    // And the cell's own text is out of the way while the overlay is up.
+    let cell: *u8 = { rt::msg_id(kv, rt::sel(#str_ptr("cell\0"))) };
+    assert alpha_of({ rt::msg_id(cell, rt::sel(#str_ptr("textColor\0"))) }) == 0.0f64;
+    // Editing: the real text comes back and the overlay goes away.
+    { rt::msg_i8(kv, rt::sel(#str_ptr("becomeFirstResponder\0"))) };
+    assert compose::kern_overlay_showing(kv) == false;
+    assert alpha_of({ rt::msg_id(cell, rt::sel(#str_ptr("textColor\0"))) }) > 0.0f64;
+    { rt::msg_i8(kv, rt::sel(#str_ptr("resignFirstResponder\0"))) };
+    assert compose::kern_overlay_showing(kv);
+    views::view_release(pv);
+    views::view_release(kv);
+    return;
+}
+
+fn alpha_of(c: *u8) -> f64 {
+    if c == (0 as *u8) { return 1.0f64; }
+    let space: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSColorSpace\0")),
+                                  rt::sel(#str_ptr("sRGBColorSpace\0"))) };
+    let rgb: *u8 = { rt::msg_id_id(c, rt::sel(#str_ptr("colorUsingColorSpace:\0")), space) };
+    if rgb == (0 as *u8) { return 1.0f64; }
+    return { rt::msg_f64(rgb, rt::sel(#str_ptr("alphaComponent\0"))) };
+}
+
+
+
+#[test]
+fn a_toggle_that_names_an_achromatic_colour_is_drawn_and_still_a_switch() {
+    // `on_color` is a hue rotation over NSSwitch's own drawing. `off_color` and
+    // `thumb_color` cannot be — the off track is grey and the thumb is white,
+    // and a hue rotation has nothing to rotate, which is the same fact that
+    // makes the other four tints correct. So naming either DRAWS the switch,
+    // and naming neither keeps NSSwitch and everything NSSwitch has.
+    backend::install();
+    var plain: core::Node = toggle::toggle(true, key: "tw0");
+    let pv: *u8 = views::create(0 as *u8, #addr_of(plain));
+    // NSSwitch hands back a private subclass of its own, so the claim is the
+    // one that matters: a toggle that named nothing is not the drawn one.
+    assert synth::object_class(pv) != rt::get_class(#str_ptr("FacetSwitch\0"));
+    assert { rt::msg_i8_id(pv, rt::sel(#str_ptr("isKindOfClass:\0")),
+                           rt::get_class(#str_ptr("NSSwitch\0"))) } != (0 as i8);
+
+    var drawn: core::Node = toggle::toggle(true, key: "tw1",
+        off_color: vocab::Color::rgba(0.8f64, 0.8f64, 0.8f64),
+        thumb_color: vocab::Color::rgba(1.0f64, 0.9f64, 0.0f64));
+    let p: *core::Node = #addr_of(drawn);
+    let dv: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, dv, views::view_release);
+    assert synth::object_class(dv) == rt::get_class(#str_ptr("FacetSwitch\0"));
+    // Every caller that already speaks to a toggle keeps working: `state`
+    // answers, and it answers what the description said.
+    assert { rt::msg_i64(dv, rt::sel(#str_ptr("state\0"))) } == (1 as i64);
+    { rt::msg_void_i64(dv, rt::sel(#str_ptr("setState:\0")), 0 as i64) };
+    assert { rt::msg_i64(dv, rt::sel(#str_ptr("state\0"))) } == (0 as i64);
+    // A click toggles it and the write-back runs, the same as an NSSwitch's.
+    { rt::msg_void_id(dv, rt::sel(#str_ptr("mouseDown:\0")), mouse_event(1 as u64, 1 as i64)) };
+    assert { rt::msg_i64(dv, rt::sel(#str_ptr("state\0"))) } == (1 as i64);
+    match toggle::find("tw1", within: p) {
+        option::Option[toggle::Toggle]::Some(h) => {
+            assert h.on();
+        }
+        option::Option[toggle::Toggle]::None => { assert false; }
+    }
+    // It takes the keyboard, and a screen reader can see it.
+    assert { rt::msg_i8(dv, rt::sel(#str_ptr("acceptsFirstResponder\0"))) } != (0 as i8);
+    assert bridge::to_text({ rt::msg_id(dv, rt::sel(#str_ptr("accessibilityRole\0"))) }) == "AXCheckBox";
+    views::view_release(pv);
+    return;
+}
+
+#[test]
+fn a_drawn_switch_moves_its_thumb_with_its_state() {
+    // The animation is the only part of NSSwitch that cannot be re-derived from
+    // its state, so the thumb's POSITION is what this holds: a switch that
+    // teleports reads as a checkbox, and one that never moves reads as broken.
+    backend::install();
+    var drawn: core::Node = toggle::toggle(false, key: "tw2",
+        off_color: vocab::Color::rgba(0.8f64, 0.8f64, 0.8f64));
+    let p: *core::Node = #addr_of(drawn);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    let off_x: f64 = thumb_x(v);
+    { rt::msg_void_i64(v, rt::sel(#str_ptr("setState:\0")), 1 as i64) };
+    let on_x: f64 = thumb_x(v);
+    assert on_x > off_x;
+    return;
+}
+
+fn thumb_x(v: *u8) -> f64 {
+    let layers: vec::Vec[quartz::Layer] = ak::View::from_raw(v).layer().sublayers();
+    match layers.at_ptr(1 as usize) {
+        option::Option[*quartz::Layer]::Some(l) => {
+            let f: rt::Rect = { rt::msg_rect({ (*l).raw() }, rt::sel(#str_ptr("frame\0"))) };
+            return f.x;
+        }
+        option::Option[*quartz::Layer]::None => { return -1.0f64; }
+    }
+    return -1.0f64;
+}
+
+static SW_CHANGING: i64 = 0 as i64;
+fn sw_changing(sender: *u8, ctx: *u8) { SW_CHANGING = SW_CHANGING + (1 as i64); return; }
+
+fn revealing_swipeable(key: str, threshold: f64) -> core::Node {
+    let a: fn(*u8, *u8) = sw_clicked;
+    var s: core::Node = swipeable::swipeable(key: key, reveal_threshold: threshold,
+        observe_swipe_changing: sw_changing, on_swipe_started: sw_started,
+        on_swipe_ended: sw_ended, on_open_requested: sw_opened,
+        on_close_requested: sw_closed);
+    s.add_child(swipe_item::swipe_item(text: "Archive"));
+    s.add_child(swipe_item::swipe_item(text: "Delete", destructive: true, on_clicked: a));
+    return s;
+}
+
+#[test]
+fn a_swipe_reveals_a_strip_and_the_threshold_decides_whether_it_stays() {
+    // The menu is the click path an agent has and is untouched. A trackpad has
+    // the CONTINUOUS motion the other two verbs describe, so the content slides
+    // and the strip behind it comes into view.
+    backend::install();
+    SW_CHANGING = 0 as i64;
+    SWIPE_STARTS = 0 as i64;
+    SWIPE_ENDS = 0 as i64;
+    SWIPE_OPENS = 0 as i64;
+    SWIPE_CLOSES = 0 as i64;
+    var s: core::Node = revealing_swipeable("sr", 40.0f64);
+    let p: *core::Node = #addr_of(s);
+    assert mount::mount(p);
+    let v: *u8 = core::view_of(p);
+    { rt::msg_void_rect(v, rt::sel(#str_ptr("setFrame:\0")),
+                        rt::Rect { x: 0.0f64, y: 0.0f64, w: 300.0f64, h: 44.0f64 }) };
+    core::clear_dirty(p);
+    core::touch(p, props::C_LAYOUT);
+    views::apply(0 as *u8, p);
+    // Two actions, from the same children the menu was built from.
+    let strip: *u8 = compose::swipe_strip_of(v);
+    assert strip != (0 as *u8);
+    let actions: vec::Vec[ak::View] = ak::View::from_raw(strip).subviews();
+    assert actions.count() == (2 as usize);
+    // A short drag springs back: under the threshold is a swipe that did not
+    // happen, which is the whole of what `reveal_threshold` names.
+    { rt::msg_void_id(v, rt::sel(#str_ptr("mouseDown:\0")), point_event(200.0f64, 20.0f64)) };
+    { rt::msg_void_id(v, rt::sel(#str_ptr("mouseDragged:\0")), point_event(180.0f64, 20.0f64)) };
+    assert SW_CHANGING > (0 as i64);
+    assert SWIPE_STARTS == (1 as i64);
+    { rt::msg_void_id(v, rt::sel(#str_ptr("mouseUp:\0")), point_event(180.0f64, 20.0f64)) };
+    assert SWIPE_ENDS == (1 as i64);
+    assert SWIPE_CLOSES == (1 as i64);
+    assert compose::swipe_is_open(v) == false;
+    // A long one stays open.
+    { rt::msg_void_id(v, rt::sel(#str_ptr("mouseDown:\0")), point_event(200.0f64, 20.0f64)) };
+    { rt::msg_void_id(v, rt::sel(#str_ptr("mouseDragged:\0")), point_event(120.0f64, 20.0f64)) };
+    { rt::msg_void_id(v, rt::sel(#str_ptr("mouseUp:\0")), point_event(120.0f64, 20.0f64)) };
+    assert SWIPE_OPENS == (1 as i64);
+    assert compose::swipe_is_open(v);
+    mount::unmount(p);
+    return;
+}
+
+#[test]
+fn a_swipeable_still_offers_its_menu_after_gaining_a_strip() {
+    // The drag is the same description read a SECOND way — an agent still
+    // clicks, and there is no second place to add an action.
+    backend::install();
+    var s: core::Node = revealing_swipeable("sr2", 40.0f64);
+    let p: *core::Node = #addr_of(s);
+    assert mount::mount(p);
+    let v: *u8 = core::view_of(p);
+    let menu: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("menu\0"))) };
+    assert menu != (0 as *u8);
+    assert { rt::msg_i64(menu, rt::sel(#str_ptr("numberOfItems\0"))) } == (2 as i64);
+    mount::unmount(p);
+    return;
+}
+
+// ---- the soft-keyboard band, read for what it carries besides a layout --------
+
+// A field's editor is the first responder while it is focused, not the field —
+// so "is this field focused" is asked of the responder's ancestry.
+fn responder_is(w: ak::Window, v: *u8) -> bool {
+    match w.first_responder() {
+        option::Option[ak::Responder]::Some(r) => {
+            if r.raw() == v { return true; }
+            return { rt::msg_i8_id(r.raw(), rt::sel(#str_ptr("isDescendantOf:\0")), v) } != (0 as i8);
+        }
+        option::Option[ak::Responder]::None => { return false; }
+    }
+    return false;
+}
+
+#[test]
+fn a_keyboards_flags_reach_the_field_editor_even_though_its_layout_cannot() {
+    // `Keyboard` picks an on-screen layout, and macOS has no on-screen keyboard.
+    // That is true and is not all a Keyboard carries: it is a layout AND a set
+    // of flags, and the flags have exactly one home here — the field editor.
+    backend::install();
+    var plain: core::Node = text_area::text_area("", key: "kb1",
+                                                 keyboard: vocab::Keyboard::Plain);
+    let pv: *u8 = views::create(0 as *u8, #addr_of(plain));
+    let ptv: *u8 = { rt::msg_id(pv, rt::sel(#str_ptr("documentView\0"))) };
+    // Plain is deliberately bare — the one that says "leave my typing alone".
+    assert { rt::msg_i8(ptv, rt::sel(#str_ptr("isContinuousSpellCheckingEnabled\0"))) } == (0 as i8);
+    assert { rt::msg_i8(ptv, rt::sel(#str_ptr("isAutomaticSpellingCorrectionEnabled\0"))) } == (0 as i8);
+
+    var chat: core::Node = text_area::text_area("", key: "kb2",
+                                                keyboard: vocab::Keyboard::Chat);
+    let cv: *u8 = views::create(0 as *u8, #addr_of(chat));
+    let ctv: *u8 = { rt::msg_id(cv, rt::sel(#str_ptr("documentView\0"))) };
+    assert { rt::msg_i8(ctv, rt::sel(#str_ptr("isContinuousSpellCheckingEnabled\0"))) } != (0 as i8);
+
+    // A typed field turns correction off: correcting an address is worse than
+    // not correcting it.
+    var mail: core::Node = text_area::text_area("", key: "kb3",
+                                                keyboard: vocab::Keyboard::Email);
+    let mv: *u8 = views::create(0 as *u8, #addr_of(mail));
+    let mtv: *u8 = { rt::msg_id(mv, rt::sel(#str_ptr("documentView\0"))) };
+    assert { rt::msg_i8(mtv, rt::sel(#str_ptr("isAutomaticSpellingCorrectionEnabled\0"))) } == (0 as i8);
+    views::view_release(pv);
+    views::view_release(cv);
+    views::view_release(mv);
+    return;
+}
+
+#[test]
+fn a_font_that_scales_multiplies_its_size_rather_than_replacing_it() {
+    // `font_scales` defaults to TRUE — MAUI's own default — so a version of this
+    // that swapped the application's size for a text style's would have
+    // rewritten the typography of every app that ever named one. Dynamic Type
+    // means the named size is a BASE and the reader's preference is a
+    // multiplier, and where no preference is expressed the multiplier is 1.
+    backend::install();
+    var sized: core::Node = label::label("Hi", key: "fs1", font_size: 30.0f64);
+    let sv: *u8 = views::create(0 as *u8, #addr_of(sized));
+    match ak::Control::from_raw(sv).font() {
+        option::Option[ak::Font]::Some(f) => {
+            assert f.point_size() == 30.0f64 * paint::body_scale();
+        }
+        option::Option[ak::Font]::None => { assert false; }
+    }
+    // Turning it OFF pins the size whatever the reader prefers.
+    var pinned: core::Node = label::label("Hi", key: "fs2", font_size: 30.0f64,
+                                          font_scales: false);
+    let pv: *u8 = views::create(0 as *u8, #addr_of(pinned));
+    match ak::Control::from_raw(pv).font() {
+        option::Option[ak::Font]::Some(f) => { assert f.point_size() == 30.0f64; }
+        option::Option[ak::Font]::None => { assert false; }
+    }
+    // A named FAMILY keeps its face either way: the multiplier is on the SIZE.
+    var named: core::Node = label::label("Hi", key: "fs3", font_size: 30.0f64,
+                                         font_family: "Menlo");
+    let nv: *u8 = views::create(0 as *u8, #addr_of(named));
+    match ak::Control::from_raw(nv).font() {
+        option::Option[ak::Font]::Some(f) => {
+            assert f.point_size() == 30.0f64 * paint::body_scale();
+            assert f.font_name().view() != "";
+        }
+        option::Option[ak::Font]::None => { assert false; }
+    }
+    views::view_release(sv);
+    views::view_release(pv);
+    views::view_release(nv);
+    return;
+}
+
+#[test]
+fn a_return_key_that_says_next_moves_to_the_next_field() {
+    // Five of the six name a LABEL on a keyboard macOS does not have. The sixth
+    // names a BEHAVIOUR, and it is the one an application cannot get any other
+    // way — `selectNextKeyView:` is the same move on a Mac.
+    backend::install();
+    let w: ak::Window = window::make_shell_window(screen::Chrome::new(
+        title: "next", width: 300.0f64, height: 200.0f64));
+    var first: core::Node = text_field::text_field("", key: "rk1",
+                                                   return_key: vocab::ReturnKey::Next);
+    var second: core::Node = text_field::text_field("", key: "rk2");
+    let fp: *core::Node = #addr_of(first);
+    let sp: *core::Node = #addr_of(second);
+    let fv: *u8 = views::create(0 as *u8, fp);
+    let sv: *u8 = views::create(0 as *u8, sp);
+    core::set_view(fp, fv, views::view_release);
+    core::set_view(sp, sv, views::view_release);
+    match w.content_view() {
+        option::Option[ak::View]::Some(cv) => {
+            cv.add_subview(ak::View::from_raw(fv));
+            cv.add_subview(ak::View::from_raw(sv));
+        }
+        option::Option[ak::View]::None => { assert false; }
+    }
+    { rt::msg_void_rect(fv, rt::sel(#str_ptr("setFrame:\0")),
+                        rt::Rect { x: 0.0f64, y: 100.0f64, w: 200.0f64, h: 24.0f64 }) };
+    { rt::msg_void_rect(sv, rt::sel(#str_ptr("setFrame:\0")),
+                        rt::Rect { x: 0.0f64, y: 60.0f64, w: 200.0f64, h: 24.0f64 }) };
+    { rt::msg_void_id(fv, rt::sel(#str_ptr("setNextKeyView:\0")), sv) };
+    w.make_key_and_order_front(0 as *u8);
+    let _f: bool = w.make_first_responder(ak::View::from_raw(fv).as_responder());
+    // The setup has to have TAKEN, or the assertion below passes for the wrong
+    // reason — a window that never focused anything has moved nothing.
+    assert responder_is(w, fv);
+    // Return, as AppKit delivers it: the control's action.
+    send_action(fv);
+    // Focus moved to the field the application put after it, which is the whole
+    // of what Next means.
+    assert responder_is(w, fv) == false;
+    assert responder_is(w, sv);
+    w.close();
+    return;
+}

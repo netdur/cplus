@@ -48,6 +48,7 @@ import "objc/bridge" as bridge;
 import "objc/synthesis" as synth;
 import "appkit/appkit" as ak;
 import "appkit/appkit_ext" as akx;
+import "quartzcore/quartzcore" as quartz;
 import "./paint" as paint;
 
 // ---- associated keys ---------------------------------------------------------
@@ -141,6 +142,9 @@ fn flavour_key(flavour: u32) -> *u8 {
     if flavour == flavour_locked() { return { 29101 as *u8 }; }
     if flavour == flavour_select() { return { 29106 as *u8 }; }
     if flavour == flavour_track() { return { 29109 as *u8 }; }
+    if flavour == flavour_kern() { return { 29117 as *u8 }; }
+    if flavour == flavour_switch() { return { 29124 as *u8 }; }
+    if flavour == flavour_swipe() { return { 29130 as *u8 }; }
     return subclass_key();
 }
 
@@ -178,6 +182,22 @@ fn subclass_of(base: *u8, prefix: str, flavour: u32) -> *u8 {
                         rt::sel(#str_ptr("mouseDragged:\0")), drag_move_imp, #str_ptr("v@:@\0"));
                     let _u: i8 = synth::add_method_v_1id(cls,
                         rt::sel(#str_ptr("mouseUp:\0")), drag_drop_imp, #str_ptr("v@:@\0"));
+                }
+                if flavour == flavour_swipe() {
+                    let _d: i8 = synth::add_method_v_1id(cls,
+                        rt::sel(#str_ptr("mouseDown:\0")), swipe_down_imp, #str_ptr("v@:@\0"));
+                    let _m: i8 = synth::add_method_v_1id(cls,
+                        rt::sel(#str_ptr("mouseDragged:\0")), swipe_drag_imp, #str_ptr("v@:@\0"));
+                    let _u: i8 = synth::add_method_v_1id(cls,
+                        rt::sel(#str_ptr("mouseUp:\0")), swipe_up_imp, #str_ptr("v@:@\0"));
+                }
+                if flavour == flavour_kern() {
+                    let _b: i8 = add_method_i8_0v(cls,
+                        rt::sel(#str_ptr("becomeFirstResponder\0")), kern_become_imp,
+                        #str_ptr("c@:\0"));
+                    let _r: i8 = add_method_i8_0v(cls,
+                        rt::sel(#str_ptr("resignFirstResponder\0")), kern_resign_imp,
+                        #str_ptr("c@:\0"));
                 }
                 if flavour == flavour_knob() || flavour == flavour_track() {
                     let _k: i8 = add_method_v_rect(cls,
@@ -1531,4 +1551,536 @@ fn install_row_reorder(doc: *u8, on: bool, h: fn(*u8, i64, i64)) {
 
 fn row_reorder_armed(doc: *u8) -> bool {
     return { synth::get_associated(doc, drag_enabled_key()) } != (0 as *u8);
+}
+
+// ---- a picker's kerning --------------------------------------------------------
+// "NSDatePicker draws its own fields; no attributed value" is true of the
+// CONTROL — its value is an NSDate — and the drawing goes through a cell, so
+// the obvious move is the cell's own content hook. That was tried and MEASURED:
+// NSDatePickerCell does not route through `drawInteriorWithFrame:inView:`, the
+// same way NSPopUpButtonCell does not route through `drawingRectForBounds:`.
+// Overriding `drawWithFrame:` instead would mean drawing the bezel and the
+// stepper too, which is the whole control.
+//
+// So the kerned text is an OVERLAY, and the cell's own text is made
+// transparent under it. That would break EDITING — a field you cannot see
+// while typing in it — so the overlay stands down the moment the picker takes
+// first responder and comes back when it gives it up. A kerned picker is a
+// kerned picker at rest and an ordinary one under the cursor, which is the
+// only reading that does not cost the control something.
+
+fn kern_overlay_key() -> *u8 { return { 29114 as *u8 }; }
+fn kern_color_key() -> *u8 { return { 29115 as *u8 }; }
+
+fn flavour_kern() -> u32 { return 8 as u32; }
+
+fn kern_overlay_of(v: *u8) -> *u8 { return { synth::get_associated(v, kern_overlay_key()) }; }
+
+#[link_name = "class_addMethod"]
+extern fn add_method_i8_0v(cls: *u8, sel: *u8, imp: fn(*u8, *u8) -> i8, types: *u8) -> i8;
+
+fn super_bool(self_obj: *u8, cmd: *u8) -> i8 {
+    let base: *u8 = { class_getSuperclass(synth::object_class(self_obj)) };
+    if base == (0 as *u8) { return 0 as i8; }
+    let imp: *u8 = { super_imp_of(base, cmd) };
+    if imp == (0 as *u8) { return 0 as i8; }
+    let f: fn(*u8, *u8) -> i8 = { imp as fn(*u8, *u8) -> i8 };
+    return f(self_obj, cmd);
+}
+
+// Editing begins: the real text comes back and the overlay goes away.
+fn kern_become_imp(self_obj: *u8, cmd: *u8) -> i8 {
+    show_kern_overlay(self_obj, false);
+    return super_bool(self_obj, cmd);
+}
+
+fn kern_resign_imp(self_obj: *u8, cmd: *u8) -> i8 {
+    show_kern_overlay(self_obj, true);
+    return super_bool(self_obj, cmd);
+}
+
+fn show_kern_overlay(v: *u8, on: bool) {
+    let label: *u8 = kern_overlay_of(v);
+    if label == (0 as *u8) { return; }
+    { rt::msg_void_i8(label, rt::sel(#str_ptr("setHidden:\0")), (on == false) as i8) };
+    let cell: *u8 = field_cell(v);
+    if cell == (0 as *u8) { return; }
+    if on {
+        { rt::msg_void_id(cell, rt::sel(#str_ptr("setTextColor:\0")),
+                          ak::Color::clear_color().raw()) };
+    } else {
+        let kept: *u8 = { synth::get_associated(v, kern_color_key()) };
+        if kept != (0 as *u8) {
+            { rt::msg_void_id(cell, rt::sel(#str_ptr("setTextColor:\0")), kept) };
+        }
+    }
+    return;
+}
+
+fn apply_picker_kern(v: *u8, kern: f64, shown: str, font: option::Option[ak::Font],
+                     ink: vocab::Color) {
+    let existing: *u8 = kern_overlay_of(v);
+    if kern == 0.0f64 {
+        if existing != (0 as *u8) {
+            show_kern_overlay(v, false);
+            { rt::msg_void(existing, rt::sel(#str_ptr("removeFromSuperview\0"))) };
+            synth::set_associated(v, kern_overlay_key(), 0 as *u8);
+        }
+        return;
+    }
+    var label: *u8 = existing;
+    if label == (0 as *u8) {
+        // The colour the cell had before it was made transparent, so editing
+        // can have it back.
+        let cell: *u8 = field_cell(v);
+        if cell != (0 as *u8) {
+            let had: *u8 = { rt::msg_id(cell, rt::sel(#str_ptr("textColor\0"))) };
+            if had != (0 as *u8) { synth::retain_associated(v, kern_color_key(), had); }
+        }
+        let cls: *u8 = { synth::object_class(v) };
+        if !is_ours(cls) {
+            let sub: *u8 = subclass_of(cls, "FacetKern", flavour_kern());
+            if sub != cls { let _old: *u8 = { object_setClass(v, sub) }; }
+        }
+        let f: ak::TextField = ak::TextField::label_with_string("");
+        let lv: ak::View = f.as_view();
+        // Width and height track the picker: WidthSizable (2) | HeightSizable (16).
+        { rt::msg_void_u64(lv.raw(), rt::sel(#str_ptr("setAutoresizingMask:\0")), 18 as u64) };
+        ak::View::from_raw(v).add_subview(lv);
+        label = lv.raw();
+        synth::set_associated(v, kern_overlay_key(), label);
+    }
+    let a: *u8 = paint::attributed(shown,
+        paint::rich_attributes(font, ink, kern, 0.0f64,
+                               option::Option[vocab::TextAlign]::None,
+                               vocab::TextDecoration::None));
+    if a != (0 as *u8) {
+        { rt::msg_void_id(label, rt::sel(#str_ptr("setAttributedStringValue:\0")), a) };
+        rt::release(a);
+    }
+    // The picker's own text inset, near enough: the bezel is 2pt and the field
+    // starts just inside it.
+    let box: rt::Rect = { rt::msg_rect(v, rt::sel(#str_ptr("bounds\0"))) };
+    { rt::msg_void_rect(label, rt::sel(#str_ptr("setFrame:\0")),
+                        rt::Rect { x: box.x + 3.0f64, y: box.y + 1.0f64,
+                                   w: box.w - 6.0f64, h: box.h - 2.0f64 }) };
+    show_kern_overlay(v, true);
+    return;
+}
+
+// Is the kerned text the one on screen right now? False while the picker is
+// being edited, which is the whole point of the overlay standing down.
+fn kern_overlay_showing(v: *u8) -> bool {
+    let label: *u8 = kern_overlay_of(v);
+    if label == (0 as *u8) { return false; }
+    return { rt::msg_i8(label, rt::sel(#str_ptr("isHidden\0"))) } == (0 as i8);
+}
+
+// ---- a switch facet draws -------------------------------------------------------
+// `on_color` is a hue rotation over NSSwitch's own drawing and needs nothing
+// here. `off_color` and `thumb_color` cannot be: the off track is grey and the
+// thumb is white, and a hue rotation has nothing to rotate — which is the same
+// fact that makes the other four tints correct.
+//
+// So a toggle that names either is DRAWN, and only then: one that names neither
+// stays an NSSwitch with everything NSSwitch has. The drawn one is two layers
+// and it keeps what a switch is for —
+//
+//   click and space toggle it, because both are wired here rather than
+//   inherited; `state` / `setState:` answer, so every caller that speaks to a
+//   toggle already keeps working; and the accessibility role and value are set
+//   explicitly, because an unlabelled custom view is a switch a screen reader
+//   cannot see.
+//
+// The thumb SLIDES rather than jumping: a switch that teleports reads as a
+// checkbox, and the animation is the only part of NSSwitch that cannot be
+// re-derived from its state.
+
+fn switch_track_key() -> *u8 { return { 29118 as *u8 }; }
+fn switch_thumb_key() -> *u8 { return { 29119 as *u8 }; }
+fn switch_state_key() -> *u8 { return { 29120 as *u8 }; }
+fn switch_action_key() -> *u8 { return { 29121 as *u8 }; }
+fn switch_ctx_key() -> *u8 { return { 29122 as *u8 }; }
+fn switch_colors_key() -> *u8 { return { 29123 as *u8 }; }
+
+fn flavour_switch() -> u32 { return 9 as u32; }
+
+fn switch_w() -> f64 { return 38.0f64; }
+fn switch_h() -> f64 { return 22.0f64; }
+
+fn drawn_switch_state(v: *u8) -> i64 {
+    return { synth::get_associated(v, switch_state_key()) as i64 };
+}
+
+fn switch_set_state_imp(self_obj: *u8, cmd: *u8, on: i64) {
+    synth::set_associated(self_obj, switch_state_key(), { on as *u8 });
+    layout_switch(self_obj, true);
+    return;
+}
+
+fn switch_state_imp(self_obj: *u8, cmd: *u8) -> i64 { return drawn_switch_state(self_obj); }
+
+fn switch_toggle(self_obj: *u8) {
+    var on: i64 = 1 as i64;
+    if drawn_switch_state(self_obj) != (0 as i64) { on = 0 as i64; }
+    synth::set_associated(self_obj, switch_state_key(), { on as *u8 });
+    layout_switch(self_obj, true);
+    let h: fn(*u8, *u8) = { synth::get_associated(self_obj, switch_action_key()) as fn(*u8, *u8) };
+    if { h } == (0 as fn(*u8, *u8)) { return; }
+    h(self_obj, { synth::get_associated(self_obj, switch_ctx_key()) });
+    return;
+}
+
+fn switch_click_imp(self_obj: *u8, cmd: *u8, event: *u8) { switch_toggle(self_obj); return; }
+
+fn switch_key_imp(self_obj: *u8, cmd: *u8, event: *u8) {
+    // Space, the same key NSSwitch answers.
+    let s: *u8 = { rt::msg_id(event, rt::sel(#str_ptr("charactersIgnoringModifiers\0"))) };
+    if s == (0 as *u8) { return; }
+    if bridge::to_text(s) == " " { switch_toggle(self_obj); }
+    return;
+}
+
+fn switch_accepts_imp(self_obj: *u8, cmd: *u8) -> i8 { return 1 as i8; }
+
+// The track and the thumb, from the state and whatever colours were named. A
+// colour that was not named falls back to the system's, so a toggle that named
+// only its thumb still looks like a switch.
+fn layout_switch(v: *u8, animated: bool) {
+    let track: *u8 = { synth::get_associated(v, switch_track_key()) };
+    let thumb: *u8 = { synth::get_associated(v, switch_thumb_key()) };
+    if track == (0 as *u8) || thumb == (0 as *u8) { return; }
+    let on: bool = drawn_switch_state(v) != (0 as i64);
+    let box: rt::Rect = { rt::msg_rect(v, rt::sel(#str_ptr("bounds\0"))) };
+    var w: f64 = box.w;
+    var h: f64 = box.h;
+    if w <= 0.0f64 { w = switch_w(); }
+    if h <= 0.0f64 { h = switch_h(); }
+    let r: f64 = h / 2.0f64;
+    { msg_void_rect_layer(track, rt::sel(#str_ptr("setFrame:\0")),
+                          rt::Rect { x: 0.0f64, y: 0.0f64, w: w, h: h }) };
+    { rt::msg_void_f64(track, rt::sel(#str_ptr("setCornerRadius:\0")), r) };
+    let inset: f64 = 2.0f64;
+    let d: f64 = h - inset - inset;
+    var x: f64 = inset;
+    if on { x = w - d - inset; }
+    // The thumb SLIDES: a switch that teleports reads as a checkbox.
+    if !animated { { rt::msg_void_id(rt::get_class(#str_ptr("CATransaction\0")),
+                                     rt::sel(#str_ptr("begin\0")), 0 as *u8) }; }
+    { msg_void_rect_layer(thumb, rt::sel(#str_ptr("setFrame:\0")),
+                          rt::Rect { x: x, y: inset, w: d, h: d }) };
+    { rt::msg_void_f64(thumb, rt::sel(#str_ptr("setCornerRadius:\0")), d / 2.0f64) };
+    paint_switch(v, on);
+    { rt::msg_void_i8(v, rt::sel(#str_ptr("setNeedsDisplay:\0")), 1 as i8) };
+    return;
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_void_rect_layer(recv: *u8, sel: *u8, r: rt::Rect);
+
+// The three colours, each falling back to the system's where it was not named.
+struct SwitchColors { on: vocab::Color, off: vocab::Color, thumb: vocab::Color }
+
+fn paint_switch(v: *u8, on: bool) {
+    let raw: *u8 = { synth::get_associated(v, switch_colors_key()) };
+    if raw == (0 as *u8) { return; }
+    let c: *SwitchColors = raw as *SwitchColors;
+    let track: *u8 = { synth::get_associated(v, switch_track_key()) };
+    let thumb: *u8 = { synth::get_associated(v, switch_thumb_key()) };
+    var fill: vocab::Color = { (*c).off };
+    if on { fill = { (*c).on }; }
+    if fill.is_set() {
+        { rt::msg_void_id(track, rt::sel(#str_ptr("setBackgroundColor:\0")),
+                          paint::ns_color(fill).c_g_color()) };
+    } else {
+        var system: ak::Color = ak::Color::control_color();
+        if on { system = ak::Color::control_accent_color(); }
+        { rt::msg_void_id(track, rt::sel(#str_ptr("setBackgroundColor:\0")), system.c_g_color()) };
+    }
+    var knob: vocab::Color = { (*c).thumb };
+    if knob.is_set() {
+        { rt::msg_void_id(thumb, rt::sel(#str_ptr("setBackgroundColor:\0")),
+                          paint::ns_color(knob).c_g_color()) };
+    } else {
+        { rt::msg_void_id(thumb, rt::sel(#str_ptr("setBackgroundColor:\0")),
+                          ak::Color::white_color().c_g_color()) };
+    }
+    return;
+}
+
+fn drawn_switch_class() -> *u8 {
+    let existing: *u8 = rt::get_class(#str_ptr("FacetSwitch\0"));
+    if existing != (0 as *u8) { return existing; }
+    let cls: *u8 = synth::allocate_class_pair(rt::get_class(#str_ptr("NSView\0")),
+                                              #str_ptr("FacetSwitch\0"), 0 as usize);
+    synth::add_method_v_1id(cls, rt::sel(#str_ptr("mouseDown:\0")), switch_click_imp, #str_ptr("v@:@\0"));
+    synth::add_method_v_1id(cls, rt::sel(#str_ptr("keyDown:\0")), switch_key_imp, #str_ptr("v@:@\0"));
+    add_method_i8_0v(cls, rt::sel(#str_ptr("acceptsFirstResponder\0")), switch_accepts_imp,
+                     #str_ptr("c@:\0"));
+    add_method_i64_0v(cls, rt::sel(#str_ptr("state\0")), switch_state_imp, #str_ptr("q@:\0"));
+    add_method_v_i64(cls, rt::sel(#str_ptr("setState:\0")), switch_set_state_imp, #str_ptr("v@:q\0"));
+    synth::register_class_pair(cls);
+    return cls;
+}
+
+#[link_name = "class_addMethod"]
+extern fn add_method_i64_0v(cls: *u8, sel: *u8, imp: fn(*u8, *u8) -> i64, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn add_method_v_i64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, i64), types: *u8) -> i8;
+
+// A toggle that names an achromatic colour is drawn; one that does not keeps
+// NSSwitch and everything NSSwitch has. `wants_drawn` is asked of the PROPS, so
+// the decision is the application's rather than the backend's.
+fn wants_drawn_switch(off: vocab::Color, thumb: vocab::Color) -> bool {
+    return off.is_set() || thumb.is_set();
+}
+
+fn new_drawn_switch() -> *u8 {
+    let alloced: *u8 = { rt::msg_id(drawn_switch_class(), rt::sel(#str_ptr("alloc\0"))) };
+    let v: *u8 = { rt::msg_id_rect(alloced, rt::sel(#str_ptr("initWithFrame:\0")),
+                                   rt::Rect { x: 0.0f64, y: 0.0f64, w: switch_w(), h: switch_h() }) };
+    if v == (0 as *u8) { return 0 as *u8; }
+    let view: ak::View = ak::View::from_raw(v);
+    view.set_wants_layer(true);
+    let track: *u8 = { rt::msg_id(rt::get_class(#str_ptr("CALayer\0")), rt::sel(#str_ptr("layer\0"))) };
+    let thumb: *u8 = { rt::msg_id(rt::get_class(#str_ptr("CALayer\0")), rt::sel(#str_ptr("layer\0"))) };
+    if track == (0 as *u8) || thumb == (0 as *u8) { return v; }
+    view.layer().add_sublayer(quartz::Layer::from_raw(track));
+    view.layer().add_sublayer(quartz::Layer::from_raw(thumb));
+    synth::set_associated(v, switch_track_key(), track);
+    synth::set_associated(v, switch_thumb_key(), thumb);
+    // A screen reader has to be able to see it: an unlabelled custom view is a
+    // switch nobody but a sighted mouse user can use.
+    { rt::msg_void_id(v, rt::sel(#str_ptr("setAccessibilityRole:\0")),
+                      bridge::nsstring("AXCheckBox")) };
+    { rt::msg_void_i8(v, rt::sel(#str_ptr("setAccessibilityElement:\0")), 1 as i8) };
+    return v;
+}
+
+fn apply_drawn_switch(v: *u8, on: bool, colors: *SwitchColors,
+                      h: fn(*u8, *u8), ctx: *u8) {
+    synth::set_associated(v, switch_colors_key(), colors as *u8);
+    synth::set_associated(v, switch_action_key(), { h as *u8 });
+    synth::set_associated(v, switch_ctx_key(), ctx);
+    var state: i64 = 0 as i64;
+    if on { state = 1 as i64; }
+    synth::set_associated(v, switch_state_key(), { state as *u8 });
+    layout_switch(v, false);
+    return;
+}
+
+// ---- a swipe that actually reveals ----------------------------------------------
+// The swipe items are already a MENU, which is the click path an agent needs and
+// the reason the band was implementable at all. Two verbs stayed out of it and
+// both describe a CONTINUOUS motion, which a click does not have:
+//
+//   reveal_threshold        how far the content must travel to stay open
+//   observe_swipe_changing  where it is while it travels
+//
+// A trackpad has that motion. So the content slides with a horizontal drag, the
+// action strip behind it comes into view, and the two verbs mean what they say.
+// The menu is untouched: an agent still clicks, and a user gets both.
+//
+// The strip is built from the same `swipe_item` children the menu is, so a
+// button and a menu row are the same description read twice — there is no
+// second place to add an action.
+
+fn swipe_strip_key() -> *u8 { return { 29125 as *u8 }; }
+fn swipe_offset_key() -> *u8 { return { 29126 as *u8 }; }
+fn swipe_start_key() -> *u8 { return { 29127 as *u8 }; }
+fn swipe_hooks_key() -> *u8 { return { 29128 as *u8 }; }
+fn swipe_open_key() -> *u8 { return { 29129 as *u8 }; }
+
+fn flavour_swipe() -> u32 { return 10 as u32; }
+
+// What the swipeable's own module supplies: the threshold to beat, and the two
+// edges plus the running report.
+struct SwipeHooks {
+    threshold: f64,
+    changing: fn(*u8, *u8),
+    opaque changing_ctx: *u8,
+    started: fn(*u8, *u8),
+    opaque started_ctx: *u8,
+    ended: fn(*u8, *u8),
+    opaque ended_ctx: *u8,
+    opened: fn(*u8, *u8),
+    opaque opened_ctx: *u8,
+    closed: fn(*u8, *u8),
+    opaque closed_ctx: *u8,
+}
+
+fn swipe_strip_of(v: *u8) -> *u8 { return { synth::get_associated(v, swipe_strip_key()) }; }
+
+fn swipe_hooks_of(v: *u8) -> *SwipeHooks {
+    return { synth::get_associated(v, swipe_hooks_key()) as *SwipeHooks };
+}
+
+fn swipe_offset_of(v: *u8) -> f64 {
+    return { synth::get_associated(v, swipe_offset_key()) as i64 } as f64;
+}
+
+fn swipe_is_open(v: *u8) -> bool {
+    return { synth::get_associated(v, swipe_open_key()) } != (0 as *u8);
+}
+
+fn fire_swipe(h: fn(*u8, *u8), ctx: *u8, v: *u8) {
+    if { h } == (0 as fn(*u8, *u8)) { return; }
+    h(v, ctx);
+    return;
+}
+
+// The content is every subview except the strip, moved as one: a swipeable's
+// children are its content and the strip is the backend's.
+fn slide_content(v: *u8, dx: f64) {
+    let strip: *u8 = { synth::get_associated(v, swipe_strip_key()) };
+    let subs: vec::Vec[ak::View] = ak::View::from_raw(v).subviews();
+    var i: usize = 0 as usize;
+    while i < subs.count() {
+        match subs.at_ptr(i) {
+            option::Option[*ak::View]::Some(c) => {
+                let raw: *u8 = { (*c).raw() };
+                if raw != strip {
+                    let f: rt::Rect = { rt::msg_rect(raw, rt::sel(#str_ptr("frame\0"))) };
+                    { rt::msg_void_rect(raw, rt::sel(#str_ptr("setFrame:\0")),
+                                        rt::Rect { x: dx, y: f.y, w: f.w, h: f.h }) };
+                }
+            }
+            option::Option[*ak::View]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    synth::set_associated(v, swipe_offset_key(), { (dx as i64) as *u8 });
+    return;
+}
+
+fn swipe_down_imp(self_obj: *u8, cmd: *u8, event: *u8) {
+    let p: rt::Point = local_point(self_obj, event);
+    synth::set_associated(self_obj, swipe_start_key(), { (p.x as i64 + (1 as i64)) as *u8 });
+    return;
+}
+
+fn swipe_drag_imp(self_obj: *u8, cmd: *u8, event: *u8) {
+    let held: *u8 = { synth::get_associated(self_obj, swipe_start_key()) };
+    if held == (0 as *u8) { return; }
+    let h: *SwipeHooks = swipe_hooks_of(self_obj);
+    if h == (0 as *SwipeHooks) { return; }
+    let from: f64 = ({ held as i64 } - (1 as i64)) as f64;
+    let now: rt::Point = local_point(self_obj, event);
+    // A swipe REVEALS, so it travels one way: dragging right past the closed
+    // position is not a gesture this control has.
+    var dx: f64 = now.x - from;
+    if dx > 0.0f64 { dx = 0.0f64; }
+    if swipe_offset_of(self_obj) == 0.0f64 && dx != 0.0f64 {
+        fire_swipe({ (*h).started }, { (*h).started_ctx }, self_obj);
+    }
+    slide_content(self_obj, dx);
+    fire_swipe({ (*h).changing }, { (*h).changing_ctx }, self_obj);
+    return;
+}
+
+fn swipe_up_imp(self_obj: *u8, cmd: *u8, event: *u8) {
+    let held: *u8 = { synth::get_associated(self_obj, swipe_start_key()) };
+    synth::set_associated(self_obj, swipe_start_key(), 0 as *u8);
+    if held == (0 as *u8) { return; }
+    let h: *SwipeHooks = swipe_hooks_of(self_obj);
+    if h == (0 as *SwipeHooks) { return; }
+    let travelled: f64 = 0.0f64 - swipe_offset_of(self_obj);
+    if travelled == 0.0f64 { return; }
+    fire_swipe({ (*h).ended }, { (*h).ended_ctx }, self_obj);
+    // THE THRESHOLD. Past it the reveal stays; short of it the content springs
+    // back — which is the whole of what `reveal_threshold` names.
+    var bar: f64 = { (*h).threshold };
+    if bar <= 0.0f64 { bar = strip_width_of(self_obj) / 2.0f64; }
+    if travelled >= bar {
+        slide_content(self_obj, 0.0f64 - strip_width_of(self_obj));
+        synth::set_associated(self_obj, swipe_open_key(), 1 as *u8);
+        fire_swipe({ (*h).opened }, { (*h).opened_ctx }, self_obj);
+    } else {
+        slide_content(self_obj, 0.0f64);
+        synth::set_associated(self_obj, swipe_open_key(), 0 as *u8);
+        fire_swipe({ (*h).closed }, { (*h).closed_ctx }, self_obj);
+    }
+    return;
+}
+
+fn strip_width_of(v: *u8) -> f64 {
+    let strip: *u8 = { synth::get_associated(v, swipe_strip_key()) };
+    if strip == (0 as *u8) { return 0.0f64; }
+    let f: rt::Rect = { rt::msg_rect(strip, rt::sel(#str_ptr("frame\0"))) };
+    return f.w;
+}
+
+fn swipe_action_width() -> f64 { return 88.0f64; }
+
+// The strip the reveal uncovers, behind the content and pinned to the trailing
+// edge. Built from the same children the menu is built from.
+fn install_swipe_strip(v: *u8, count: usize, h: *SwipeHooks) -> *u8 {
+    var strip: *u8 = { synth::get_associated(v, swipe_strip_key()) };
+    if strip == (0 as *u8) {
+        let box: rt::Rect = { rt::msg_rect(v, rt::sel(#str_ptr("bounds\0"))) };
+        let s: ak::View = akx::new_flipped_view(
+            rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: box.h });
+        // MinXMargin (1) | HeightSizable (16): the trailing edge, full height.
+        { rt::msg_void_u64(s.raw(), rt::sel(#str_ptr("setAutoresizingMask:\0")), 17 as u64) };
+        // BEHIND the content, which is what makes sliding the content reveal it.
+        // `relativeTo` nil means below EVERYTHING, which is where a strip that
+        // is uncovered has to be.
+        ak::View::from_raw(v).add_subview_positioned(s, ak::WindowOrderingMode::NSWindowBelow,
+                                                     ak::View::from_raw(0 as *u8));
+        strip = s.raw();
+        synth::set_associated(v, swipe_strip_key(), strip);
+        let cls: *u8 = { synth::object_class(v) };
+        if !is_ours(cls) {
+            let sub: *u8 = subclass_of(cls, "FacetSwipe", flavour_swipe());
+            if sub != cls { let _old: *u8 = { object_setClass(v, sub) }; }
+        }
+    }
+    synth::set_associated(v, swipe_hooks_key(), h as *u8);
+    let box: rt::Rect = { rt::msg_rect(v, rt::sel(#str_ptr("bounds\0"))) };
+    let w: f64 = swipe_action_width() * (count as f64);
+    { rt::msg_void_rect(strip, rt::sel(#str_ptr("setFrame:\0")),
+                        rt::Rect { x: box.w - w, y: 0.0f64, w: w, h: box.h }) };
+    return strip;
+}
+
+// One button per swipe item, from the SAME description the menu row came from.
+fn add_swipe_action(strip: *u8, at: usize, title: str, destructive: bool,
+                    h: fn(*u8, *u8), ctx: *u8) {
+    let b: ak::Button = ak::Button::from_raw(rt::alloc_init(#str_ptr("NSButton\0")));
+    b.set_button_type(ak::ButtonType::MomentaryPushIn);
+    b.set_bezel_style(ak::BezelStyle::TexturedSquare);
+    b.set_title(title);
+    if destructive {
+        let a: *u8 = paint::attributed(title,
+            paint::rich_attributes(option::Option[ak::Font]::None,
+                                   vocab::Color::rgba(0.8f64, 0.1f64, 0.1f64), 0.0f64, 0.0f64,
+                                   option::Option[vocab::TextAlign]::None,
+                                   vocab::TextDecoration::None));
+        if a != (0 as *u8) {
+            { rt::msg_void_id(b.raw(), rt::sel(#str_ptr("setAttributedTitle:\0")), a) };
+            rt::release(a);
+        }
+    }
+    let bv: ak::View = b.as_view();
+    let box: rt::Rect = { rt::msg_rect(strip, rt::sel(#str_ptr("bounds\0"))) };
+    bv.set_frame(rt::Rect { x: swipe_action_width() * (at as f64), y: 0.0f64,
+                            w: swipe_action_width(), h: box.h });
+    akx::set_control_action_ctx(b.as_control(), h, ctx);
+    ak::View::from_raw(strip).add_subview(bv);
+    return;
+}
+
+fn clear_swipe_strip(strip: *u8) {
+    let subs: vec::Vec[ak::View] = ak::View::from_raw(strip).subviews();
+    var i: usize = 0 as usize;
+    while i < subs.count() {
+        match subs.at_ptr(i) {
+            option::Option[*ak::View]::Some(b) => {
+                { rt::msg_void({ (*b).raw() }, rt::sel(#str_ptr("removeFromSuperview\0"))) };
+            }
+            option::Option[*ak::View]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
 }

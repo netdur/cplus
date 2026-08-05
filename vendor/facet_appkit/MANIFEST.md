@@ -8,16 +8,16 @@ happen on a Mac?" by reading it.
 A row here is a commitment, not a note. Nothing is left implicit: a verb that
 is neither implemented nor listed below is a gap, and the gap is a bug.
 
-Status: **the contract is fully accounted for below the kind level.**
+Status: **every declared verb is implemented. The cannot-ledger is empty.**
 
 Read that precisely. It does not say every verb works on a Mac — it says every
 verb has an ANSWER, and the answer is checkable:
 
 ```
-324 declared prop/command bits    264 live, 23 host-rendered, 5 derived,
-                                    4 modifier, 8 create-only, 20 decided,
+324 declared prop/command bits    284 live, 23 host-rendered, 5 derived,
+                                    4 modifier, 8 create-only, 0 decided,
                                     0 no carrier, 0 absent
- 81 declared handlers              80 wired, 1 decided, 0 never fire
+ 81 declared handlers              81 wired, 0 decided, 0 never fire
 ```
 
 `python3 tools/verb_coverage.py --check` is the gate and it fails on a verb that
@@ -76,8 +76,18 @@ set_selected_index(i64)  / selected_index()  which row, or -1
 sequence, so `row(i)` still means row `i` of the whole and grouping an existing
 list adds a description rather than rewriting one.
 
-What is left is short and each row says something true about the platform
-rather than about how hard it looked.
+**Nothing is left.** The last twenty were the ones that had been recorded
+against a reading of ONE class, and each came apart the same way — by asking
+what the verb carries rather than what it is called:
+
+| Verb | The reading that was standing in for it |
+|---|---|
+| `font_scales` ×10 | Dynamic Type is an iOS word; the MECHANISM is Apple-wide. A named size is a BASE and the reader's preference a multiplier — `preferredFontForTextStyle:options:` supplies it, and where no preference is expressed the multiplier is 1. It does not REPLACE the size: `font_scales` defaults to true, so a version that did would have rewritten the typography of every app that ever named one. |
+| `keyboard` ×3 | A Keyboard is a layout AND a set of flags. The layout has no home on a Mac; the flags have exactly one — the field editor, where `checks_spelling` and `predicts_text` already go. |
+| `return_key` ×2 | Five of the six name a LABEL. The sixth names a BEHAVIOUR, and `Next` moving to the field the application put after it is the only thing "Next" can mean without a keyboard to draw it on. |
+| `character_spacing` ×2 | The picker's VALUE is an NSDate with no attributed form — and its cell does not route through `drawInteriorWithFrame:` either, which was MEASURED rather than assumed. So the kerned text is an overlay that stands down the moment the picker takes first responder, or it would be a field you cannot see while typing in it. |
+| `toggle.off_color` `thumb_color` | Achromatic: a hue rotation has nothing to rotate. So a toggle that names either is DRAWN — and only then. It answers `state`/`setState:`, takes the keyboard, and carries an accessibility role, because a switch that lost those would be a worse switch than a grey one. |
+| `swipeable.reveal_threshold` `observe_swipe_changing` | Both describe a CONTINUOUS motion, which a click does not have — and a trackpad does. The menu stays as the click path an agent needs; the drag is the same description read a second way, so there is no second place to add an action. |
 
 **Where this started.** The stage page read "42/42 kinds have a body", which was
 true and was being read as much stronger than it is. The first verb-level count
@@ -118,27 +128,6 @@ nothing real, so a stale row cannot sit here reading true; it fails on an
 unrecorded verb too, which is this file's oldest claim finally enforced.
 
 ```cannot-ledger
-toggle.off_color                ACHROMATIC: a hue rotation has nothing to rotate
-toggle.thumb_color              as toggle.off_color — the thumb is white
-swipeable.reveal_threshold      a CONTINUOUS distance; a click has no partial state
-swipeable.observe_swipe_changing  as reveal_threshold — nothing changes between the two edges
-text_field.keyboard             soft-keyboard layout; a hardware keyboard has one
-text_field.font_scales          Dynamic Type; macOS scales at the display
-text_field.return_key           the LABEL on a soft keyboard's return key
-text_area.keyboard              as text_field.keyboard
-text_area.font_scales           as text_field.font_scales
-search_field.keyboard           as text_field.keyboard
-search_field.font_scales        as text_field.font_scales
-search_field.return_key         as text_field.return_key
-label.font_scales               Dynamic Type; macOS scales at the display
-span.font_scales                as label.font_scales
-button.font_scales              as label.font_scales
-radio.font_scales               as label.font_scales
-popup.font_scales               as label.font_scales
-date_picker.font_scales         as label.font_scales
-time_picker.font_scales         as label.font_scales
-date_picker.character_spacing   NSDatePicker draws its own fields; no attributed value
-time_picker.character_spacing   as date_picker.character_spacing
 ```
 
 ### The no-carrier ledger
