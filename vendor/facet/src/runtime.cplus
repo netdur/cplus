@@ -120,8 +120,77 @@ fn run_screen[S: component::Component + component::Lifecycle + screen::Screen](
     return owned;
 }
 
-fn alert(title: str, message: str, primary: str, secondary: str = "") -> i32 {
+// ---- the window/app tier the macOS facade grew, mirrored here ---------------
+//
+// This file's own promise: "The base keeps the facade's full surface so app
+// code type-checks on every target." It had stopped being true — Stage 4 added
+// ten verbs to runtime_macos and none of them here, so an application using
+// `display_density` or `observe_stopped` compiled on a Mac and nowhere else.
+// That is the opposite of what a portable base is for.
+//
+// Each is the no-backend posture the rest of this file uses: say so once, and
+// answer something harmless.
+
+fn display_density() -> f64 {
+    no_backend("display_density");
+    return 1.0f64;
+}
+
+fn observe_display_density(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
+    no_backend("observe_display_density");
+    return services::Cancellable::none();
+}
+
+fn is_window_active() -> bool {
+    no_backend("is_window_active");
+    return false;
+}
+
+fn observe_window_size(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
+    no_backend("observe_window_size");
+    return services::Cancellable::none();
+}
+
+fn observe_backgrounding(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
+    no_backend("observe_backgrounding");
+    return services::Cancellable::none();
+}
+
+fn observe_resumed(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
+    no_backend("observe_resumed");
+    return services::Cancellable::none();
+}
+
+fn observe_stopped(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
+    no_backend("observe_stopped");
+    return services::Cancellable::none();
+}
+
+fn set_app_appearance(a: vocab::Appearance) {
+    no_backend("set_app_appearance");
+    return;
+}
+
+fn app_appearance() -> vocab::Appearance {
+    no_backend("app_appearance");
+    return vocab::Appearance::System;
+}
+
+// `alert` DIVERGED, which is worse than being missing: the base was blocking
+// and returned the chosen index, the macOS facade is non-blocking with an
+// `on_answer` callback. Either spelling failed to compile on the other target.
+//
+// The macOS shape is the one that is right — a modal loop is what the sheet
+// rewrite existed to get rid of, so an agent can answer a dialog — so the base
+// takes it, and the blocking form keeps its own name on both.
+fn alert(title: str, message: str, primary: str, secondary: str = "",
+         on_answer: fn(*u8, i32) = 0 as fn(*u8, i32), ctx: *u8 = 0 as *u8) {
     no_backend("alert");
+    return;
+}
+
+fn alert_blocking(title: str, message: str, primary: str, secondary: str = "") -> i32 {
+    no_backend("alert_blocking");
     return -1;
 }
 

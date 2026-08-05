@@ -411,6 +411,17 @@ fn apply_common(v: *u8, n: *core::Node, dirty: u64) {
             }
         }
     }
+    // `flow_direction` — RTL. Two halves, and the hard one was already built:
+    // flex resolves a direction per node (`_rdir`) and mirrors row layout,
+    // justification and edge resolution from it, and nothing ever handed it
+    // facet's verb. So the layout half is one call.
+    //
+    // The other half is the CONTROL's own text: AppKit mirrors alignment and
+    // the field editor's base writing direction from
+    // `userInterfaceLayoutDirection`, which a plain view does not answer.
+    if (dirty & props::C_FLOW_DIRECTION) != (0 as u64) {
+        apply_flow_direction(view, n);
+    }
     if (dirty & props::C_SHADOW) != (0 as u64) {
         apply_shadow(view, core::shadow(n));
     }
@@ -449,6 +460,35 @@ fn apply_common(v: *u8, n: *core::Node, dirty: u64) {
 fn responds_to_set_enabled(v: *u8) -> bool {
     return synth::class_responds(synth::object_class(v),
                                  rt::sel(#str_ptr("setEnabled:\0"))) != (0 as i8);
+}
+
+fn apply_flow_direction(view: ak::View, n: *core::Node) {
+    let fd: vocab::FlowDirection = core::flow_direction(n);
+    // The layout half. `MatchParent` is flex's `Inherit`, which is what makes
+    // one node's direction cascade without every child naming it.
+    { (*n).set_direction(match fd {
+        vocab::FlowDirection::LeftToRight => flex::Direction::LTR,
+        vocab::FlowDirection::RightToLeft => flex::Direction::RTL,
+        vocab::FlowDirection::MatchParent => flex::Direction::Inherit,
+    }) };
+    // The control half, for views that have one.
+    if synth::class_responds(synth::object_class(view.raw()),
+                             rt::sel(#str_ptr("setUserInterfaceLayoutDirection:\0"))) != (0 as i8) {
+        // NSUserInterfaceLayoutDirection: 0 LTR, 1 RTL. `MatchParent` leaves
+        // the control on the application's own, which is AppKit's default.
+        match fd {
+            vocab::FlowDirection::LeftToRight => {
+                { rt::msg_void_i64(view.raw(),
+                    rt::sel(#str_ptr("setUserInterfaceLayoutDirection:\0")), 0 as i64) };
+            }
+            vocab::FlowDirection::RightToLeft => {
+                { rt::msg_void_i64(view.raw(),
+                    rt::sel(#str_ptr("setUserInterfaceLayoutDirection:\0")), 1 as i64) };
+            }
+            vocab::FlowDirection::MatchParent => { }
+        }
+    }
+    return;
 }
 
 fn apply_background(view: ak::View, c: vocab::Color) {

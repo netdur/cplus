@@ -7775,3 +7775,41 @@ fn a_real_control_keeps_the_platforms_own_disabled_look() {
     assert ak::Control::from_raw(v).is_enabled() == false;
     return;
 }
+
+#[test]
+fn flow_direction_mirrors_the_layout() {
+    // RTL was fully built in flex — it resolves a direction per node and
+    // mirrors row layout, justification and edge resolution from it — and
+    // nothing ever handed it facet's verb. `core::flow_direction(` had zero
+    // readers in this package.
+    backend::install();
+    app::reset_default_for_tests();
+    var root: core::Node = core::row(core::Builder::new(), key: "rtl");
+    var a: core::Node = box_view::box(color: vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64), key: "a");
+    var b: core::Node = box_view::box(color: vocab::Color::rgba(0.0f64, 1.0f64, 0.0f64), key: "b");
+    core::set_width(#addr_of(a), 50.0f64);
+    core::set_width(#addr_of(b), 50.0f64);
+    let _x: bool = mount::insert_child(#addr_of(root), a, 0 as usize);
+    let _y: bool = mount::insert_child(#addr_of(root), b, 1 as usize);
+    let rp: *core::Node = #addr_of(root);
+    core::set_flow_direction(rp, vocab::FlowDirection::RightToLeft);
+    let win: *u8 = window::open_window(rp, screen::Chrome::new(
+        title: "rtl", width: 300.0f64, height: 100.0f64));
+    scheduler::layout_window(rp);
+    // First child sits on the RIGHT: the row is mirrored.
+    match core::find_in(rp, "a") {
+        option::Option[*core::Node]::Some(na) => {
+            match core::find_in(rp, "b") {
+                option::Option[*core::Node]::Some(nb) => {
+                    assert { (*na).frame() }.left > { (*nb).frame() }.left;
+                }
+                option::Option[*core::Node]::None => { assert false; }
+            }
+        }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    window::close_window(win);
+    backend::uninstall();
+    app::reset_default_for_tests();
+    return;
+}
