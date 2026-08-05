@@ -64,11 +64,19 @@ import "appkit/appkit_ext" as akx;
 import "./paint" as paint;
 
 // ---- associated keys ---------------------------------------------------------
-// appkit_ext holds 28672..28682, drawing.cplus 28700, input.cplus 28710..28715,
-// web.cplus 28720..28721, recycler.cplus 28730..28735.
+// facet_appkit owns 29000 and up, in one block per file:
+//
+//   drawing 29000   input 29010   web 29020   recycler 29030   dialogs 29040
+//   text_input 29050   scrolling 29060   bordered stroke 29070   compose 29080
+//
+// NOT 28xxx, which is where `cpc-bindgen` allocates the generated binding's own
+// delegate keys from — appkit.cplus is already at 28733 and grows with the SDK.
+// An associated key is per-object, so an overlap is silent until the day one
+// lands on the same object twice; `keys_are_distinct` is the gate, and the
+// range is what keeps the gate from having to be re-won on every regen.
 
-fn node_key() -> *u8 { return { 28740 as *u8 }; }
-fn delegate_pin_key() -> *u8 { return { 28741 as *u8 }; }
+fn node_key() -> *u8 { return { 29050 as *u8 }; }
+fn delegate_pin_key() -> *u8 { return { 29051 as *u8 }; }
 
 fn node_of(obj: *u8) -> *core::Node {
     if obj == (0 as *u8) { return 0 as *core::Node; }
@@ -306,7 +314,7 @@ fn takes_input(kind: u32) -> bool {
 // The pickers cannot: an NSDatePicker in either of facet's postures is a field
 // with a stepper, and there is no popover to open or close. Recorded.
 
-fn popup_node_key() -> *u8 { return { 28742 as *u8 }; }
+fn popup_node_key() -> *u8 { return { 29052 as *u8 }; }
 
 fn popup_node_of(obj: *u8) -> *core::Node {
     if obj == (0 as *u8) { return 0 as *core::Node; }
@@ -348,7 +356,7 @@ fn install_swipe(view: *u8, menu: *u8, n: *core::Node) {
     return;
 }
 
-fn swipe_pin_key() -> *u8 { return { 28746 as *u8 }; }
+fn swipe_pin_key() -> *u8 { return { 29056 as *u8 }; }
 
 fn popup_handlers(n: *core::Node, opened: bool) {
     let d: *core::Data = core::node_data(n);
@@ -421,8 +429,8 @@ fn install_popup(view: *u8, menu: *u8, n: *core::Node) {
 // facet's props, because it is a fact about this drag and not about the
 // description.
 
-fn slider_node_key() -> *u8 { return { 28744 as *u8 }; }
-fn slider_tracking_key() -> *u8 { return { 28745 as *u8 }; }
+fn slider_node_key() -> *u8 { return { 29054 as *u8 }; }
+fn slider_tracking_key() -> *u8 { return { 29055 as *u8 }; }
 
 fn slider_props_of(n: *core::Node) -> *props::SliderProps {
     let d: *core::Data = core::node_data(n);
@@ -480,7 +488,7 @@ fn install_slider(view: *u8, n: *core::Node) {
 // its delegate for the constraint on every drag rather than storing a bound.
 // `on_move` arrives on the same object, so one delegate carries all three.
 
-fn split_node_key() -> *u8 { return { 28743 as *u8 }; }
+fn split_node_key() -> *u8 { return { 29053 as *u8 }; }
 
 fn split_props_of(n: *core::Node) -> *split::SplitProps {
     let d: *core::Data = core::node_data(n);

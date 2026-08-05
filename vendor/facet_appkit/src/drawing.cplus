@@ -123,7 +123,7 @@ extern fn add_method_void_rect(cls: *u8, sel: *u8, imp: fn(*u8, *u8, rt::Rect),
 // it is the one control with a class of its own. Everything else about it is
 // an ordinary flipped NSView.
 
-fn canvas_node_key() -> *u8 { return { 28700 as *u8 }; }
+fn canvas_node_key() -> *u8 { return { 29000 as *u8 }; }
 
 fn canvas_is_flipped_imp(self_obj: *u8, cmd: *u8) -> i8 { return 1 as i8; }
 

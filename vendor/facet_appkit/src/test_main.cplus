@@ -78,6 +78,8 @@ import "./paint" as paint;
 import "./controls" as controls;
 import "./views" as views;
 import "./compose" as compose;
+import "./text_input" as text_input;
+import "./scrolling" as scrolling;
 import "./geometry" as geometry;
 import "./scheduler" as scheduler;
 import "./window" as window;
@@ -5920,4 +5922,51 @@ fn without_mix_groups_a_row_stays_in_the_group_it_started_in() {
     w.close();
     mount::unmount(p);
     return;
+}
+
+#[test]
+fn associated_keys_are_distinct_and_out_of_the_bindgens_range() {
+    // An associated key is per-OBJECT, so an overlap is silent until the day
+    // two of them land on the same object — which happened once already in this
+    // package (text_input and recycler both at 28730) and was caught by a
+    // failing test rather than by anything saying so.
+    //
+    // Two rules, and this holds both. Every key facet_appkit defines is
+    // distinct; and all of them are 29000 or above, because 28xxx is where
+    // `cpc-bindgen` allocates the generated binding's delegate keys from —
+    // appkit.cplus is already at 28733 and grows with the SDK.
+    var keys: vec::Vec[i64] = vec::new::[i64]();
+    let _a: status::Status = keys.append({ drawing::canvas_node_key() as i64 });
+    let _b: status::Status = keys.append({ input::node_key() as i64 });
+    let _c: status::Status = keys.append({ webmod::scheme_node_key() as i64 });
+    let _d: status::Status = keys.append({ recycler::source_key() as i64 });
+    let _e: status::Status = keys.append({ dialogs::alert_host_key() as i64 });
+    let _f: status::Status = keys.append({ text_input::node_key() as i64 });
+    let _g: status::Status = keys.append({ text_input::delegate_pin_key() as i64 });
+    let _h: status::Status = keys.append({ scrolling::node_key() as i64 });
+    let _i: status::Status = keys.append({ controls::stroke_layer_key() as i64 });
+    let _j: status::Status = keys.append({ compose::align_key() as i64 });
+    let _k: status::Status = keys.append({ compose::strip_key() as i64 });
+    let _l: status::Status = keys.append({ compose::popover_key() as i64 });
+    let _m: status::Status = keys.append({ compose::select_node_key() as i64 });
+    let _n: status::Status = keys.append({ compose::drag_from_key() as i64 });
+    var i: usize = 0 as usize;
+    while i < keys.count() {
+        let a: i64 = key_at(keys, i);
+        assert a >= (29000 as i64);
+        var j: usize = i + (1 as usize);
+        while j < keys.count() {
+            assert a != key_at(keys, j);
+            j = j + (1 as usize);
+        }
+        i = i + (1 as usize);
+    }
+    return;
+}
+
+fn key_at(v: vec::Vec[i64], i: usize) -> i64 {
+    return match v.at(i) {
+        option::Option[i64]::Some(x) => x,
+        option::Option[i64]::None => 0 as i64,
+    };
 }

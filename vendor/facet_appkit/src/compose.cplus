@@ -51,16 +51,23 @@ import "appkit/appkit_ext" as akx;
 import "./paint" as paint;
 
 // ---- associated keys ---------------------------------------------------------
-// appkit_ext 28672..28689, drawing 28700, input 28710..28716, web 28720..28721,
-// recycler 28730..28735, text_input 28740..28745, scrolling 28750..28753,
-// bordered stroke 28760..28761. This file: 28770..28779.
+// facet_appkit owns 29000 and up, in one block per file:
+//
+//   drawing 29000   input 29010   web 29020   recycler 29030   dialogs 29040
+//   text_input 29050   scrolling 29060   bordered stroke 29070   compose 29080
+//
+// NOT 28xxx, which is where `cpc-bindgen` allocates the generated binding's own
+// delegate keys from — appkit.cplus is already at 28733 and grows with the SDK.
+// An associated key is per-object, so an overlap is silent until the day one
+// lands on the same object twice; `keys_are_distinct` is the gate, and the
+// range is what keeps the gate from having to be re-won on every regen.
 
-fn align_key() -> *u8 { return { 28770 as *u8 }; }
-fn subclass_key() -> *u8 { return { 28771 as *u8 }; }
-fn marker_key() -> *u8 { return { 28772 as *u8 }; }
-fn trailing_key() -> *u8 { return { 28773 as *u8 }; }
-fn clear_button_key() -> *u8 { return { 28774 as *u8 }; }
-fn placeholder_key() -> *u8 { return { 28775 as *u8 }; }
+fn align_key() -> *u8 { return { 29080 as *u8 }; }
+fn subclass_key() -> *u8 { return { 29081 as *u8 }; }
+fn marker_key() -> *u8 { return { 29082 as *u8 }; }
+fn trailing_key() -> *u8 { return { 29083 as *u8 }; }
+fn clear_button_key() -> *u8 { return { 29084 as *u8 }; }
+fn placeholder_key() -> *u8 { return { 29085 as *u8 }; }
 
 // ---- the runtime subclass, once ----------------------------------------------
 // One subclass per BASE class, cached on the base itself: a Class is an object,
@@ -127,13 +134,13 @@ fn flavour_locked() -> u32 { return 5 as u32; }
 // land on one base class, handing back a subclass that overrides the wrong
 // method.
 fn flavour_key(flavour: u32) -> *u8 {
-    if flavour == flavour_editor() { return { 28786 as *u8 }; }
-    if flavour == flavour_title() { return { 28787 as *u8 }; }
-    if flavour == flavour_hover() { return { 28788 as *u8 }; }
-    if flavour == flavour_knob() { return { 28790 as *u8 }; }
-    if flavour == flavour_locked() { return { 28791 as *u8 }; }
-    if flavour == flavour_select() { return { 28796 as *u8 }; }
-    if flavour == flavour_track() { return { 28799 as *u8 }; }
+    if flavour == flavour_editor() { return { 29096 as *u8 }; }
+    if flavour == flavour_title() { return { 29097 as *u8 }; }
+    if flavour == flavour_hover() { return { 29098 as *u8 }; }
+    if flavour == flavour_knob() { return { 29100 as *u8 }; }
+    if flavour == flavour_locked() { return { 29101 as *u8 }; }
+    if flavour == flavour_select() { return { 29106 as *u8 }; }
+    if flavour == flavour_track() { return { 29109 as *u8 }; }
     return subclass_key();
 }
 
@@ -682,10 +689,10 @@ extern fn msg_void_rect_rect_u64_f64(recv: *u8, sel: *u8, a: rt::Rect, b: rt::Re
 // a thing pinned to the top of a scrolling area, which is exactly the shape
 // this needs and is why the list half costs nothing extra.
 
-fn strip_key() -> *u8 { return { 28776 as *u8 }; }
-fn spinner_key() -> *u8 { return { 28777 as *u8 }; }
-fn refresh_handler_key() -> *u8 { return { 28778 as *u8 }; }
-fn refresh_ctx_key() -> *u8 { return { 28779 as *u8 }; }
+fn strip_key() -> *u8 { return { 29086 as *u8 }; }
+fn spinner_key() -> *u8 { return { 29087 as *u8 }; }
+fn refresh_handler_key() -> *u8 { return { 29088 as *u8 }; }
+fn refresh_ctx_key() -> *u8 { return { 29089 as *u8 }; }
 
 fn strip_height() -> f64 { return 24.0f64; }
 
@@ -841,12 +848,12 @@ fn tint_spinner(spinner: *u8, c: vocab::Color) {
 // `is_open` is the click path, which is the point: an agent has no hands and
 // cannot reach a calendar by clicking a stepper, but it can write the verb.
 
-fn popover_key() -> *u8 { return { 28780 as *u8 }; }
-fn popover_field_key() -> *u8 { return { 28781 as *u8 }; }
-fn popover_node_key() -> *u8 { return { 28782 as *u8 }; }
-fn popover_opened_key() -> *u8 { return { 28783 as *u8 }; }
-fn popover_closed_key() -> *u8 { return { 28784 as *u8 }; }
-fn popover_owner_key() -> *u8 { return { 28785 as *u8 }; }
+fn popover_key() -> *u8 { return { 29090 as *u8 }; }
+fn popover_field_key() -> *u8 { return { 29091 as *u8 }; }
+fn popover_node_key() -> *u8 { return { 29092 as *u8 }; }
+fn popover_opened_key() -> *u8 { return { 29093 as *u8 }; }
+fn popover_closed_key() -> *u8 { return { 29094 as *u8 }; }
+fn popover_owner_key() -> *u8 { return { 29095 as *u8 }; }
 
 // The NODE the popover belongs to, read back by the two edge handlers — which
 // receive the DELEGATE as their sender, so it is the one object both sides
@@ -1007,7 +1014,7 @@ fn picker_is_open(field: *u8) -> bool {
 // The reveal is an alpha rather than `hidden`, because a hidden view leaves no
 // hover target and the group could never come back.
 
-fn hover_alpha_key() -> *u8 { return { 28789 as *u8 }; }
+fn hover_alpha_key() -> *u8 { return { 29099 as *u8 }; }
 
 fn set_group_alpha(host: *u8, a: f64) {
     let subs: vec::Vec[ak::View] = ak::View::from_raw(host).subviews();
@@ -1071,7 +1078,7 @@ fn apply_hover_reveal(host: *u8, on_hover: bool) {
 // an object whose class can be replaced. `drawKnob:` is handed the rect the
 // knob occupies, which is the whole of what an image needs.
 
-fn knob_image_key() -> *u8 { return { 28792 as *u8 }; }
+fn knob_image_key() -> *u8 { return { 29102 as *u8 }; }
 
 #[link_name = "class_addMethod"]
 extern fn add_method_v_rect(cls: *u8, sel: *u8, imp: fn(*u8, *u8, rt::Rect), types: *u8) -> i8;
@@ -1139,7 +1146,7 @@ fn apply_thumb_image(v: *u8, src: str) {
 // but about who is allowed to move the thing, and the answer for a mouse is the
 // same one: the wheel does nothing and `position` still works.
 
-fn scroll_locked_key() -> *u8 { return { 28793 as *u8 }; }
+fn scroll_locked_key() -> *u8 { return { 29103 as *u8 }; }
 
 // The class is installed once and the FLAG decides, because a class swap is not
 // something to undo: a carousel that locks and unlocks would otherwise keep the
@@ -1186,8 +1193,8 @@ fn scroll_is_locked(v: *u8) -> bool {
 // the responder chain and arrives here; a row containing a BUTTON keeps its own
 // click, which is the right answer and needs no rule of its own.
 
-fn select_hit_key() -> *u8 { return { 28794 as *u8 }; }
-fn select_node_key() -> *u8 { return { 28795 as *u8 }; }
+fn select_hit_key() -> *u8 { return { 29104 as *u8 }; }
+fn select_node_key() -> *u8 { return { 29105 as *u8 }; }
 
 fn flavour_select() -> u32 { return 6 as u32; }
 
@@ -1358,8 +1365,8 @@ fn hue_shift(view: *u8, c: vocab::Color) {
 // keeps AppKit's own drawing entirely, which is what keeps an ordinary slider
 // ordinary.
 
-fn knob_color_key() -> *u8 { return { 28797 as *u8 }; }
-fn track_color_key() -> *u8 { return { 28798 as *u8 }; }
+fn knob_color_key() -> *u8 { return { 29107 as *u8 }; }
+fn track_color_key() -> *u8 { return { 29108 as *u8 }; }
 
 fn flavour_track() -> u32 { return 7 as u32; }
 
@@ -1443,10 +1450,10 @@ fn adopt_track_cell(cell: *u8) {
 // leaves the view it started in, and a drag session would mean a promise the
 // contract does not make (that a row can be dropped somewhere else).
 
-fn drag_from_key() -> *u8 { return { 28800 as *u8 }; }
-fn drag_moved_key() -> *u8 { return { 28801 as *u8 }; }
-fn drag_drop_key() -> *u8 { return { 28802 as *u8 }; }
-fn drag_enabled_key() -> *u8 { return { 28803 as *u8 }; }
+fn drag_from_key() -> *u8 { return { 29110 as *u8 }; }
+fn drag_moved_key() -> *u8 { return { 29111 as *u8 }; }
+fn drag_drop_key() -> *u8 { return { 29112 as *u8 }; }
+fn drag_enabled_key() -> *u8 { return { 29113 as *u8 }; }
 
 // An index is stored one-based so that 0 can mean "no drag": the associated
 // slot is a pointer, and a null one is the only "unset" it has.

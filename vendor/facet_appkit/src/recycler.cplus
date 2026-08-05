@@ -79,12 +79,20 @@ extern fn msg_id_id_i64(recv: *u8, sel: *u8, a: *u8, b: i64) -> *u8;
 extern fn msg_void_rect(recv: *u8, sel: *u8, r: rt::Rect);
 
 // ---- associated keys ---------------------------------------------------------
-// appkit_ext holds 28672..28682, drawing 28700, input 28710..28715,
-// web 28720..28721. This block is 28730 up.
+// facet_appkit owns 29000 and up, in one block per file:
+//
+//   drawing 29000   input 29010   web 29020   recycler 29030   dialogs 29040
+//   text_input 29050   scrolling 29060   bordered stroke 29070   compose 29080
+//
+// NOT 28xxx, which is where `cpc-bindgen` allocates the generated binding's own
+// delegate keys from — appkit.cplus is already at 28733 and grows with the SDK.
+// An associated key is per-object, so an overlap is silent until the day one
+// lands on the same object twice; `keys_are_distinct` is the gate, and the
+// range is what keeps the gate from having to be re-won on every regen.
 
-fn source_key() -> *u8 { return { 28730 as *u8 }; }
-fn cell_node_key() -> *u8 { return { 28731 as *u8 }; }
-fn agent_pin_key() -> *u8 { return { 28732 as *u8 }; }
+fn source_key() -> *u8 { return { 29030 as *u8 }; }
+fn cell_node_key() -> *u8 { return { 29031 as *u8 }; }
+fn agent_pin_key() -> *u8 { return { 29032 as *u8 }; }
 
 // ---- the row source ----------------------------------------------------------
 // One per list, heap-allocated and pinned to the table view, so it lives
@@ -908,9 +916,9 @@ fn make_cell(v: *u8) -> *u8 {
 // the model — and the other way when the USER expands, so a click does not have
 // to round-trip through a rebuild.
 
-fn tree_source_key() -> *u8 { return { 28733 as *u8 }; }
-fn tree_agent_pin_key() -> *u8 { return { 28734 as *u8 }; }
-fn item_node_key() -> *u8 { return { 28735 as *u8 }; }
+fn tree_source_key() -> *u8 { return { 29033 as *u8 }; }
+fn tree_agent_pin_key() -> *u8 { return { 29034 as *u8 }; }
+fn item_node_key() -> *u8 { return { 29035 as *u8 }; }
 
 struct TreeSource {
     opaque node: *core::Node,      // the facet tree node, for props

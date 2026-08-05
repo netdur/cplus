@@ -39,10 +39,8 @@ import "appkit/appkit" as ak;
 import "appkit/appkit_ext" as akx;
 import "flex_layout/flex_layout" as flex;
 
-// appkit_ext 28672..28682, drawing 28700, input 28710..28715, web 28720..28721,
-// recycler 28730..28735, text_input 28740..28742.
-fn node_key() -> *u8 { return { 28750 as *u8 }; }
-fn observer_pin_key() -> *u8 { return { 28751 as *u8 }; }
+fn node_key() -> *u8 { return { 29060 as *u8 }; }
+fn observer_pin_key() -> *u8 { return { 29061 as *u8 }; }
 
 fn node_of(obj: *u8) -> *core::Node {
     if obj == (0 as *u8) { return 0 as *core::Node; }
@@ -199,7 +197,7 @@ fn fire_h(h: fn(*u8, *u8), ctx: *u8, sender: *u8) {
 // arriving. So the flag is cleared on a timer that each scroll pushes forward,
 // and the token is kept so a scroll in progress cancels the pending clear
 // rather than stacking one per frame.
-fn settle_key() -> *u8 { return { 28752 as *u8 }; }
+fn settle_key() -> *u8 { return { 29062 as *u8 }; }
 
 fn scroll_settled(ctx: *u8) {
     let n: *core::Node = ctx as *core::Node;
@@ -225,7 +223,7 @@ fn settle_scrolling(n: *core::Node, view: *u8) {
 // `RemainingItemsThreshold`: fire once when the tail comes within N items of
 // the end, and not again until the scroll leaves and comes back — a handler
 // that loads the next page must not be asked for it on every scrolled pixel.
-fn threshold_key() -> *u8 { return { 28753 as *u8 }; }
+fn threshold_key() -> *u8 { return { 29063 as *u8 }; }
 
 fn remaining_threshold(n: *core::Node, view: *u8) {
     let iv: *props::ItemsViewProps = items_view_of(n);

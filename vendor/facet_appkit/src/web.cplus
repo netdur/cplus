@@ -45,10 +45,19 @@ import "webkit/webkit" as wk;
 import "./paint" as paint;
 
 // ---- associated keys ---------------------------------------------------------
-// appkit_ext holds 28672..28682, drawing.cplus 28700, input.cplus 28710..28715.
+// facet_appkit owns 29000 and up, in one block per file:
+//
+//   drawing 29000   input 29010   web 29020   recycler 29030   dialogs 29040
+//   text_input 29050   scrolling 29060   bordered stroke 29070   compose 29080
+//
+// NOT 28xxx, which is where `cpc-bindgen` allocates the generated binding's own
+// delegate keys from — appkit.cplus is already at 28733 and grows with the SDK.
+// An associated key is per-object, so an overlap is silent until the day one
+// lands on the same object twice; `keys_are_distinct` is the gate, and the
+// range is what keeps the gate from having to be re-won on every regen.
 
-fn node_key() -> *u8 { return { 28720 as *u8 }; }
-fn delegate_pin_key() -> *u8 { return { 28721 as *u8 }; }
+fn node_key() -> *u8 { return { 29020 as *u8 }; }
+fn delegate_pin_key() -> *u8 { return { 29021 as *u8 }; }
 
 fn node_of(obj: *u8) -> *core::Node {
     if obj == (0 as *u8) { return 0 as *core::Node; }
@@ -530,7 +539,7 @@ fn is_web_view(v: *u8) -> bool {
 // a hybrid app and has no root to serve from.
 
 fn facet_scheme() -> str { return "facet"; }
-fn scheme_node_key() -> *u8 { return { 28722 as *u8 }; }
+fn scheme_node_key() -> *u8 { return { 29022 as *u8 }; }
 
 #[link_name = "objc_msgSend"]
 extern fn msg_id_id_u64_i64_id(recv: *u8, sel: *u8, a: *u8, b: *u8, c: i64, d: *u8) -> *u8;

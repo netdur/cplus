@@ -1539,7 +1539,7 @@ fn apply_plain_border(view: ak::View, p: *props::BorderedProps) {
 // sized with the view. Created on demand and torn down when the node stops
 // asking, so a plain border still costs one layer rather than two.
 
-fn stroke_layer_key() -> *u8 { return { 28760 as *u8 }; }
+fn stroke_layer_key() -> *u8 { return { 29070 as *u8 }; }
 
 fn remove_stroke_layer(view: ak::View) {
     let l: *u8 = { synth::get_associated(view.raw(), stroke_layer_key()) };
@@ -1574,7 +1574,7 @@ fn stroke_layer(view: ak::View) -> quartz::ShapeLayer {
 // walk sizes the view AFTER the body runs, so a path built at create would be
 // empty and a path built once would be wrong at the next size. The view is
 // observed and re-pathed, once per resize.
-fn observed_key() -> *u8 { return { 28761 as *u8 }; }
+fn observed_key() -> *u8 { return { 29071 as *u8 }; }
 
 fn stroke_resized(ctx: *u8) {
     let n: *core::Node = ctx as *core::Node;

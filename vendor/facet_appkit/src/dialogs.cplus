@@ -165,7 +165,7 @@ struct AlertHost {
     opaque answer_ctx: *u8,
 }
 
-fn alert_host_key() -> *u8 { return { 28740 as *u8 }; }
+fn alert_host_key() -> *u8 { return { 29040 as *u8 }; }
 
 fn host_of(sender: *u8) -> *AlertHost {
     // The sender is a button inside the sheet; the host is pinned to the WINDOW.

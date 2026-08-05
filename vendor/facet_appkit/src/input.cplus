@@ -132,17 +132,25 @@ fn class_name_of(v: *u8) -> text::Text {
 }
 
 // ---- associated keys ---------------------------------------------------------
-// appkit_ext took 28672..28682 and drawing.cplus took 28700. This block is
-// 28710 up.
+// facet_appkit owns 29000 and up, in one block per file:
+//
+//   drawing 29000   input 29010   web 29020   recycler 29030   dialogs 29040
+//   text_input 29050   scrolling 29060   bordered stroke 29070   compose 29080
+//
+// NOT 28xxx, which is where `cpc-bindgen` allocates the generated binding's own
+// delegate keys from — appkit.cplus is already at 28733 and grows with the SDK.
+// An associated key is per-object, so an overlap is silent until the day one
+// lands on the same object twice; `keys_are_distinct` is the gate, and the
+// range is what keeps the gate from having to be re-won on every regen.
 
-fn node_key() -> *u8 { return { 28710 as *u8 }; }
-fn armed_key() -> *u8 { return { 28711 as *u8 }; }
-fn long_press_key() -> *u8 { return { 28712 as *u8 }; }
-fn item_key() -> *u8 { return { 28713 as *u8 }; }
-fn tracking_key() -> *u8 { return { 28714 as *u8 }; }
+fn node_key() -> *u8 { return { 29010 as *u8 }; }
+fn armed_key() -> *u8 { return { 29011 as *u8 }; }
+fn long_press_key() -> *u8 { return { 29012 as *u8 }; }
+fn item_key() -> *u8 { return { 29013 as *u8 }; }
+fn tracking_key() -> *u8 { return { 29014 as *u8 }; }
 // Is the pointer down on this view right now? Only a canvas asks, and only to
 // tell an abandoned press from a plain unhover.
-fn pressed_key() -> *u8 { return { 28716 as *u8 }; }
+fn pressed_key() -> *u8 { return { 29016 as *u8 }; }
 
 fn is_pressed(v: *u8) -> bool { return { synth::get_associated(v, pressed_key()) } != (0 as *u8); }
 
@@ -530,7 +538,7 @@ fn bind_item(v: *u8, n: *core::Node) {
 // The runtime class cache. A Class IS an object, so the subclass is associated
 // with the base class itself — no name table, no string compare, and it stays
 // correct if two base classes ever shared a name.
-fn subclass_key() -> *u8 { return { 28715 as *u8 }; }
+fn subclass_key() -> *u8 { return { 29015 as *u8 }; }
 
 static INPUT_CLASSES: u32 = 0 as u32;
 
