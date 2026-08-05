@@ -89,8 +89,6 @@ tabs.bar_background_color       NSTabView draws its own strip
 tabs.bar_text_color             NSTabView draws its own strip
 tabs.selected_tab_color         NSTabView draws its own strip
 tabs.unselected_tab_color       NSTabView draws its own strip
-context_menu_item.is_destructive  NSMenuItem has no destructive style
-menu_item.is_destructive        NSMenuItem has no destructive style
 toolbar_item.is_destructive     NSToolbarItem has no destructive style
 refreshable.is_refreshable      pull-to-refresh is a touch idiom; use a Refresh command
 refreshable.is_refreshing       as is_refreshable
@@ -164,7 +162,6 @@ carousel.peek_insets            peeking neighbours is a touch-paging affordance
 collection.can_reorder_items    drag-reorder needs NSCollectionView's own drag session
 collection.on_reorder_completed  as collection.can_reorder_items
 collection.can_mix_groups       NSCollectionView sections do not interleave
-image.is_animation_playing      NSImageView plays an animated GIF on its own schedule
 scroll.cascades_input           AppKit chains scroll to the nearest scroller by default
 slider.thumb_image              NSSlider's knob is cell-drawn; there is no image slot
 menu.priority                   an app menu's order is its position in the menu bar
@@ -244,6 +241,8 @@ context_menu_item.icon          as context_menu_item.text
 toolbar_item.text               an item in the window's NSToolbar
 toolbar_item.icon               as toolbar_item.text
 context_menu_item.shortcut      the key equivalent on its NSMenuItem
+menu_item.is_destructive        a red title on its NSMenuItem
+context_menu_item.is_destructive  as menu_item.is_destructive
 ```
 
 ### The create-only ledger
@@ -313,12 +312,18 @@ asked for yet.
 draws its own strip and offers no colour API — the same reason as the other
 system-drawn controls above.
 
-### `context_menu_item(destructive:)`
+### `destructive:` is a red title
 
-NSMenuItem has no destructive style — macOS marks a destructive action by
-wording ("Delete…") and by confirming it, not by colouring the row. The flag
-is carried and ignored rather than approximated with a red attributed title,
-which would look like a system convention that does not exist.
+NSMenuItem has no destructive style, and this file used to conclude from that
+that the flag should be carried and ignored — a red attributed title "would
+look like a system convention that does not exist".
+
+That was the wrong conclusion. The API not having the property is not the
+platform being unable: a red title is what every macOS app that marks a
+destructive action does, and a contract verb the backend silently drops is
+worse than one it answers plainly. `menu_item` and `context_menu_item` both
+mark it now. `toolbar_item` does not — an NSToolbarItem's label is drawn by the
+toolbar and takes no attributed string — and that row stays in the ledger.
 
 ### The `bordered` stroke family IS honoured, on a path
 

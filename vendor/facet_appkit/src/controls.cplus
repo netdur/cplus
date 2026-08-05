@@ -362,6 +362,11 @@ fn apply_image(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & image::P_FIT) != (0 as u64) {
         iv.set_image_scaling(ns_image_scaling({ (*p).fit }));
     }
+    // An animated image (a GIF) plays or holds its first frame. NSImageView
+    // animates by default, so this is the switch that stops it.
+    if (dirty & (image::P_IS_ANIMATION_PLAYING | image::P_SOURCE)) != (0 as u64) {
+        iv.set_animates({ (*p).is_animation_playing });
+    }
     return;
 }
 
@@ -1814,6 +1819,24 @@ fn build_context_menu(n: *core::Node) -> *u8 {
     return rt::retain(menu.raw());
 }
 
+// macOS marks a destructive action by WORDING and by confirming it, not by
+// colouring the row — which is why this was recorded as "NSMenuItem has no
+// destructive style". That is true of the API and not of the platform: a red
+// title is what every app that marks one does, and a contract verb the backend
+// silently drops is worse than one it answers plainly.
+fn mark_destructive(item: ak::MenuItem, title: str, destructive: bool) {
+    if destructive == false { return; }
+    let attrs: *u8 = paint::rich_attributes(
+        option::Option[ak::Font]::None, vocab::Color::rgba(0.8f64, 0.0f64, 0.0f64),
+        0.0f64, 0.0f64, option::Option[vocab::TextAlign]::None,
+        vocab::TextDecoration::None);
+    let a: *u8 = paint::attributed(title, attrs);
+    if a == (0 as *u8) { return; }
+    { rt::msg_void_id(item.raw(), rt::sel(#str_ptr("setAttributedTitle:\0")), a) };
+    { rt::release(a) };
+    return;
+}
+
 fn add_menu_item(menu: ak::Menu, c: *core::Node) {
     let p: *props::ContextMenuItemProps =
         props_of(c, props::K_CONTEXT_MENU_ITEM) as *props::ContextMenuItemProps;
@@ -1827,6 +1850,7 @@ fn add_menu_item(menu: ak::Menu, c: *core::Node) {
         return;
     }
     let item: ak::MenuItem = ak::MenuItem::new(title, 0 as *u8, "");
+    mark_destructive(item, title, { (*mi).is_destructive });
     // The key equivalent, which is the whole reason context_menu_item declares
     // a row of its own on top of the MenuItem band.
     let key: str = { (*p).shortcut_key.view() };
@@ -2419,6 +2443,7 @@ fn build_menu_item(c: *core::Node) -> *u8 {
     let title: str = { (*mi).text.view() };
     if title == "" { return rt::retain(ak::MenuItem::separator_item().raw()); }
     let item: ak::MenuItem = ak::MenuItem::new(title, 0 as *u8, "");
+    mark_destructive(item, title, { (*mi).is_destructive });
     let icon: str = { (*mi).icon.view() };
     if icon != "" {
         match resolve_image(icon) {
