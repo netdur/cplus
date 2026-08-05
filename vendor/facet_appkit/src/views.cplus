@@ -34,6 +34,7 @@ import "facet/symbol" as symbol;
 import "facet/split" as split;
 import "facet/tree" as tree;
 import "facet/window_chrome" as chrome;
+import "facet/text_field" as text_field;
 import "./controls" as controls;
 
 type Node = flex::Node;
@@ -226,6 +227,11 @@ fn apply(ctx: *u8, n: *core::Node) {
     if v == (0 as *u8) { return; }
     let d: u64 = core::dirty_of(n);
     if d == (0 as u64) { return; }
+    // A prop that names a CLASS is answered BEFORE anything is written to the
+    // object it replaces — writing to a view that is about to be thrown away is
+    // work whose only effect is the next line undoing it. `reclass` re-applies
+    // the whole word onto the replacement, so there is nothing left to do here.
+    if reclass_for(n, v, d) != v { return; }
     paint::apply_common(v, n, d);
     apply_for_kind(core::kind_of(n), v, n, d);
     // `attach` / `detach` / a whole-set swap all raise C_GESTURES, and arming
@@ -421,6 +427,106 @@ fn insert(ctx: *u8, host: *u8, child: *u8, slot: usize) {
 fn remove(ctx: *u8, host: *u8, child: *u8) {
     if child == (0 as *u8) { return; }
     ak::View::from_raw(child).remove_from_superview();
+    return;
+}
+
+// Which kinds have a prop that names a CLASS, and whether this write is one.
+//
+// The list is short on purpose. A kind belongs here only when the platform
+// offers no property for the verb — not when a swap would merely be easier than
+// the write. Answers the node's view, which is a NEW pointer when it reclassed.
+fn reclass_for(n: *core::Node, v: *u8, dirty: u64) -> *u8 {
+    if core::kind_of(n) != props::K_TEXT_FIELD { return v; }
+    if (dirty & text_field::P_IS_SECURE) == (0 as u64) { return v; }
+    // NSSecureTextField IS an NSTextField, so the question is only ever about
+    // the secure one — asking `isKindOfClass:NSTextField` would answer true for
+    // both and reclass on every write.
+    let is_secure_now: bool = is_kind_of(v, #str_ptr("NSSecureTextField\0"));
+    if is_secure_now == controls::text_field_wants_secure(n) { return v; }
+    return reclass(n, controls::create_text_field(n));
+}
+
+// ---- a node's view, replaced by a different OBJECT ---------------------------
+//
+// Almost every prop is a message to the view that is already there. A few name
+// a CLASS instead — `text_field.is_secure` picks NSSecureTextField, and no
+// message turns an NSTextField into one — and those have no answer that writes
+// to the existing object. That is what put them in the create-only ledger.
+//
+// This is the door out of that ledger. The caller builds the other object; this
+// puts it where the first one stood and hands the node its new view.
+//
+// Every prop lands on the replacement by re-running the WHOLE dirty word, not
+// by copying state across. A copy is a second list of what a control carries,
+// kept in step with the band BY HAND, and the band is the thing that keeps
+// changing — the copy would be wrong one verb after it was written. Re-applying
+// is the create-calls-apply rule again, and it is the reason a reclassed verb
+// can honestly be called live.
+//
+// Answers the view the node now has, which is `fresh` whenever there was one.
+fn reclass(n: *core::Node, fresh: *u8) -> *u8 {
+    if n == (0 as *core::Node) { return 0 as *u8; }
+    let old: *u8 = core::view_of(n);
+    if fresh == (0 as *u8) { return old; }
+    if fresh == old { return old; }
+    let ov: ak::View = ak::View::from_raw(old);
+    let nv: ak::View = ak::View::from_raw(fresh);
+    if old != (0 as *u8) {
+        // Same box, so nothing moves before the next layout pass reaches it —
+        // a replacement that arrives at the origin flashes there first.
+        nv.set_frame(ov.frame());
+        // Focus is the one piece of state that is NOT in the props: it lives in
+        // the window, and the old object is about to leave. A field being TYPED
+        // IN when its class flips has to still be being typed in afterwards.
+        // `currentEditor` is non-nil exactly while the field owns the field
+        // editor, which is the same question asked in the place that knows.
+        var refocus: bool = false;
+        match ak::Control::from_raw(old).current_editor() {
+            option::Option[ak::Text]::Some(_e) => { refocus = true; }
+            option::Option[ak::Text]::None => { }
+        }
+        // `replaceSubview:with:` is exactly this operation: same slot, same
+        // ordering, one call. Rebuilding the sibling order by hand would be the
+        // insert path's job done twice and wrong once.
+        match ov.superview() {
+            option::Option[ak::View]::Some(sup) => { sup.replace_subview(ov, nv); }
+            option::Option[ak::View]::None => { }
+        }
+        core::set_view(n, fresh, view_release);
+        // The node held a retain from `create` and now holds a different one, so
+        // the old view goes the way every dropped view goes — through the SAME
+        // release the node would have fired at teardown, which is what takes the
+        // scroll observer off it as well. It is not `rt::release`: that would
+        // leave the registration behind and skip the web detach.
+        //
+        // After `replaceSubview:with:` the superview has already let go, so this
+        // is the last reference and the object deallocates here.
+        view_release(old);
+        reapply_all(n, fresh);
+        if refocus {
+            match nv.window() {
+                option::Option[ak::Window]::Some(w) => {
+                    let _ok: bool = w.make_first_responder(nv.as_responder());
+                }
+                option::Option[ak::Window]::None => { }
+            }
+        }
+        return fresh;
+    }
+    core::set_view(n, fresh, view_release);
+    reapply_all(n, fresh);
+    return fresh;
+}
+
+// The whole band, on a view that has none of it yet. Same three steps `apply`
+// takes, with the dirty word forced wide — a replacement is dirty in every bit
+// by definition, whatever the node's own word happens to say.
+fn reapply_all(n: *core::Node, v: *u8) {
+    let all: u64 = paint::all_bits();
+    paint::apply_common(v, n, all);
+    apply_for_kind(core::kind_of(n), v, n, all);
+    input::arm(v, n);
+    input::bind_item(v, n);
     return;
 }
 

@@ -2833,6 +2833,154 @@ fn typing_in_a_text_field_reaches_the_props_and_the_handler() {
     return;
 }
 
+// ---- is_secure names a CLASS, and the flip is live ---------------------------
+//
+// This was the last create-only verb with a real application behind it. The
+// tests below are the four things that have to hold for it to be called live:
+// the class actually changes, the props survive the change, the field stays
+// where it was in its parent, and no OTHER write pays for the machinery.
+
+fn is_secure_field(v: *u8) -> bool {
+    return views::is_kind_of(v, #str_ptr("NSSecureTextField\0"));
+}
+
+#[test]
+fn flipping_is_secure_swaps_the_class_and_carries_the_props_across() {
+    backend::install();
+    var n: core::Node = text_field::text_field(key: "pw", text: "hunter2",
+                                               placeholder: "password");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v != (0 as *u8);
+    core::set_view(p, v, views::view_release);
+    let host: ak::View = akx::new_flipped_view(rt::Rect { x: 0.0f64, y: 0.0f64, w: 300.0f64, h: 200.0f64 });
+    host.add_subview(ak::View::from_raw(v));
+    // It starts plain, because `is_secure` defaults false.
+    assert is_secure_field(v) == false;
+    core::clear_dirty(p);
+
+    match text_field::from(p) {
+        option::Option[text_field::TextField]::Some(f) => { let _f: text_field::TextField = f.set_secure(true); }
+        option::Option[text_field::TextField]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+
+    // The node holds a DIFFERENT object, and that object is the secure class.
+    let sv: *u8 = core::view_of(p);
+    assert sv != v;
+    assert is_secure_field(sv);
+    // Everything the old field carried is on the new one — this is the whole
+    // claim, and it holds because the swap re-applies the band rather than
+    // copying a hand-written list of props.
+    assert ak::TextField::from_raw(sv).as_control().string_value().view() == "hunter2";
+    assert ak::TextField::from_raw(sv).placeholder_string().view() == "password";
+    assert ak::TextField::from_raw(sv).is_editable();
+    assert ak::TextField::from_raw(sv).is_bezeled();
+    return;
+}
+
+#[test]
+fn the_reclassed_field_stands_in_the_slot_the_old_one_had() {
+    backend::install();
+    var before: core::Node = box_view::box(color: vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64), key: "before");
+    var n: core::Node = text_field::text_field(key: "pw2", text: "");
+    var after: core::Node = box_view::box(color: vocab::Color::rgba(0.0f64, 1.0f64, 0.0f64), key: "after");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    let host: ak::View = akx::new_flipped_view(rt::Rect { x: 0.0f64, y: 0.0f64, w: 300.0f64, h: 200.0f64 });
+    let b: *u8 = views::create(0 as *u8, #addr_of(before));
+    let a: *u8 = views::create(0 as *u8, #addr_of(after));
+    host.add_subview(ak::View::from_raw(b));
+    host.add_subview(ak::View::from_raw(v));
+    host.add_subview(ak::View::from_raw(a));
+    ak::View::from_raw(v).set_frame(rt::Rect { x: 7.0f64, y: 9.0f64, w: 120.0f64, h: 22.0f64 });
+    core::clear_dirty(p);
+
+    match text_field::from(p) {
+        option::Option[text_field::TextField]::Some(f) => { let _f: text_field::TextField = f.set_secure(true); }
+        option::Option[text_field::TextField]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    let sv: *u8 = core::view_of(p);
+
+    // Same slot: a reclass that appended would put the field last and reorder
+    // the UI, which is the bug `replaceSubview:with:` exists to not have.
+    let subs: vec::Vec[ak::View] = host.subviews();
+    assert subs.count() == (3 as usize);
+    match subs.at_ptr(1 as usize) {
+        option::Option[*ak::View]::Some(at) => { assert { (*at).raw() } == sv; }
+        option::Option[*ak::View]::None => { assert false; }
+    }
+    // Same box, so nothing flashes at the origin before the next layout pass.
+    let fr: rt::Rect = ak::View::from_raw(sv).frame();
+    assert fr.x > 6.9f64;
+    assert fr.x < 7.1f64;
+    assert fr.w > 119.9f64;
+    assert fr.w < 120.1f64;
+    return;
+}
+
+#[test]
+fn flipping_is_secure_back_returns_the_plain_class() {
+    backend::install();
+    var n: core::Node = text_field::text_field(key: "pw3", text: "abc", secure: true);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    let host: ak::View = akx::new_flipped_view(rt::Rect { x: 0.0f64, y: 0.0f64, w: 300.0f64, h: 200.0f64 });
+    host.add_subview(ak::View::from_raw(v));
+    // Created secure, because create reads the prop too.
+    assert is_secure_field(v);
+    core::clear_dirty(p);
+
+    match text_field::from(p) {
+        option::Option[text_field::TextField]::Some(f) => { let _f: text_field::TextField = f.set_secure(false); }
+        option::Option[text_field::TextField]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    let sv: *u8 = core::view_of(p);
+    assert sv != v;
+    assert is_secure_field(sv) == false;
+    assert ak::TextField::from_raw(sv).as_control().string_value().view() == "abc";
+    return;
+}
+
+#[test]
+fn a_write_that_is_not_is_secure_keeps_the_same_object() {
+    // The negative, and the one that would make the machinery expensive if it
+    // were wrong: a reclass on every apply would throw the field editor away
+    // mid-keystroke. Only a CHANGE of class may swap the object.
+    backend::install();
+    var n: core::Node = text_field::text_field(key: "pw4", text: "one");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    let host: ak::View = akx::new_flipped_view(rt::Rect { x: 0.0f64, y: 0.0f64, w: 300.0f64, h: 200.0f64 });
+    host.add_subview(ak::View::from_raw(v));
+    core::clear_dirty(p);
+
+    // An ordinary prop write.
+    match text_field::from(p) {
+        option::Option[text_field::TextField]::Some(f) => { let _f: text_field::TextField = f.set_text("two"); }
+        option::Option[text_field::TextField]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    assert core::view_of(p) == v;
+    assert ak::TextField::from_raw(v).as_control().string_value().view() == "two";
+
+    // And `is_secure` WRITTEN TO THE VALUE IT ALREADY HAS: the bit is dirty,
+    // the class is not wrong, so there is nothing to replace.
+    core::clear_dirty(p);
+    match text_field::from(p) {
+        option::Option[text_field::TextField]::Some(f) => { let _f: text_field::TextField = f.set_secure(false); }
+        option::Option[text_field::TextField]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    assert core::view_of(p) == v;
+    return;
+}
+
 #[test]
 fn a_text_field_reports_the_caret_it_actually_has() {
     // `cursor_position` and `selection_length` are declared two-way and were

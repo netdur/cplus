@@ -306,13 +306,26 @@ fn apply_control_image(b: ak::Button, src: str) {
 
 // ---- text_field --------------------------------------------------------------
 // The editable NSTextField. `is_secure` picks NSSecureTextField instead, which
-// is a different class — so it is read at CREATE and a live flip is not
-// honoured (an application that needs both builds two fields and shows one).
+// is a different CLASS and not a property of the first — there is no message
+// that turns one into the other.
+//
+// That used to make it create-only. It no longer is: a write builds the other
+// class and `views::reclass` puts it where the old field stood, carrying the
+// focus across and re-applying every prop. The ledger entry is gone with it.
+// What an application must still not assume is that the native object survives
+// the flip — anything holding the raw view across a change of `is_secure` is
+// holding a dead one.
+
+// The class question, asked where the props live. `views::reclass_for` compares
+// this against what the field currently IS.
+fn text_field_wants_secure(n: *core::Node) -> bool {
+    let p: *props::TextFieldProps = props_of(n, props::K_TEXT_FIELD) as *props::TextFieldProps;
+    if p == (0 as *props::TextFieldProps) { return false; }
+    return { (*p).is_secure };
+}
 
 fn create_text_field(n: *core::Node) -> *u8 {
-    let p: *props::TextFieldProps = props_of(n, props::K_TEXT_FIELD) as *props::TextFieldProps;
-    var secure: bool = false;
-    if p != (0 as *props::TextFieldProps) { secure = { (*p).is_secure }; }
+    let secure: bool = text_field_wants_secure(n);
     var f: ak::TextField = ak::TextField::from_raw(rt::alloc_init(#str_ptr("NSTextField\0")));
     if secure { f = ak::TextField::from_raw(rt::alloc_init(#str_ptr("NSSecureTextField\0"))); }
     f.set_editable(true);

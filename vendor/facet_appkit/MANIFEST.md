@@ -14,8 +14,8 @@ Read that precisely. It does not say every verb works on a Mac — it says every
 verb has an ANSWER, and the answer is checkable:
 
 ```
-324 declared prop/command bits    284 live, 23 host-rendered, 5 derived,
-                                    4 modifier, 8 create-only, 0 decided,
+324 declared prop/command bits    285 live, 23 host-rendered, 5 derived,
+                                    4 modifier, 7 create-only, 0 decided,
                                     0 no carrier, 0 absent
  81 declared handlers              81 wired, 0 decided, 0 never fire
 ```
@@ -242,13 +242,26 @@ BUILT and a later write does not reach the screen — which is exactly what the
 coverage tool means by create-only, and exactly the bucket the handoff said to
 start with, because it looks implemented from the outside.
 
-Each is here because the platform gives no other answer: a live flip would need
-a different OBJECT, not a different property. They are listed so the bucket is
-accountable — an unlisted create-only verb is debt, the same rule the cannot
-ledger follows, and the tool counts it as such.
+The ledger used to justify itself with one sentence — "a live flip would need a
+different OBJECT, not a different property" — and `text_field.is_secure` has
+been taken off it by doing exactly that. `views::reclass` builds the other
+object, drops it into the slot the old one held, carries the keyboard focus
+across, and re-applies the whole band onto it. So a different object is a COST,
+not a wall, and the seven rows below have to earn their place on a narrower
+claim.
+
+They do, and it is the same claim in each: the object that would have to be
+rebuilt is not the control's own view. A table's row height belongs to a data
+source that has already vended rows; an NSToolbarItem and an NSMenu belong to
+the window, which would have to be torn down and reopened; the traffic lights
+belong to the window's frame view. Replacing any of those means replacing
+something facet does not own, and taking a window down to change a toolbar
+item's placement is worse than the verb being create-only.
+
+They are listed so the bucket is accountable — an unlisted create-only verb is
+debt, the same rule the cannot ledger follows, and the tool counts it as such.
 
 ```create-only
-text_field.is_secure            NSSecureTextField is a different CLASS, not a property
 list.row_height                 the table's row height is read when its source is built
 tree.row_height                 as list.row_height
 window_chrome.spacing           the traffic lights are laid out once, by the window
