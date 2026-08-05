@@ -48,13 +48,22 @@ above, not "generated vs hand-written".
 
 ---
 
-## 2. Fixed during this sweep
+## 2. Fixed
 
 | Fix | Commit |
 |---|---|
+| Pinch zoom: `Chrome.zoomable` had no consumer | `49c15f6` |
 | `C_SAFE_AREA` and `C_GESTURES` were the SAME BIT (2^63) — self-inflicted that morning | `b7dc56f` |
 | A label never grew when its text changed | `35408e9` |
-| Pinch zoom: `Chrome.zoomable` had no consumer | `49c15f6` |
+| **The gate itself** — LIVE now needs the field READ, not the bit named; new `gated, unread` disposition; `--check` fails on it | `e06b4db` |
+| **`symbol` renders** — bundled font registered per-process, codepoint into the label | `e06b4db` |
+| **`background` (Brush), `shadow`, `clip`** — the shared band's paint trio, all three previously absent | `248692e` |
+| **`Screen::menu_items()` is merged** — was required of every screen and discarded | `df890d8` |
+| **The async pump** — `spawn_ui` tasks no longer park forever | `725d642` |
+
+Turning the gate on named exactly two verbs — `symbol.icon` and
+`symbol.font` — and both were real. It reports zero again now, this time
+meaning it.
 
 ### The bit collision, because it is the cautionary one
 
@@ -95,19 +104,13 @@ Ranked by how likely an app author is to hit them.
 
 | Gap | Evidence |
 |---|---|
-| **`symbol(icons::home)` renders nothing** | `apply_symbol` gates on `P_ICON\|P_FONT`, body reads only `(*p).name`, which is `""` for the Bundled tier. No font is ever registered (`CTFontManagerRegister` absent). A 949 KB font + **4,268** icon constants are dead on the only shipping backend. |
-| **`background` (Brush) never applied** | `core::background(` → **0** backend hits. `controls.cplus:2452` even claims "`apply_background` makes the same reduction" — but that fn takes a `Color` and is only called with `background_color`. |
-| **`shadow` never applied** | `core::shadow(` → 0 hits. `bordered` has no shadow prop of its own, so there is no working path at all. |
-| **`on_focus` / `on_blur` never fire** | `fire_focus_handler` / `fire_blur_handler` have **zero callers**. `is_focused()` always answers `false` — `set_focused` is called only by a facet test. |
-| **`spawn_ui` tasks park forever** | `pump_async` / reactor / kqueue / dispatch_source → **0** hits in the backend. The old backend had `install_async_pump` (`eb5b1b7:1611`). A task suspending on a timer or fd is never polled again. |
-| **`Screen::menu_items()` is discarded** | `AppMenu::extend` has zero non-test callers. The interface *forces* every screen to implement it. Guard 5b is green on it. |
+| **`on_focus` / `on_blur` never fire** | `fire_focus_handler` / `fire_blur_handler` have **zero callers**. `is_focused()` always answers `false` — `set_focused` is called only by a facet test. Needs a responder subclass on the armed class, plus widening `arm`'s gate so a node carrying only a focus handler is armed at all. |
 | **Controls measure zero-width in a row** | Probed: `NSSlider`, `NSProgressIndicator`, editable `NSTextField`, `NSSearchField` all report `fitting.width == 0`. `row { label text_field }` — the commonest form layout — gives the field size 0. Works in a column only by accident of `Stretch`. |
 
 ### Tier 2 — real, narrower reach
 
 | Gap | Evidence |
 |---|---|
-| `clip` never applied | `core::clip(` → 0 hits |
 | `is_enabled` ignored on non-control kinds | honoured on 12 NSControl kinds; silently ignored on box/label/image/canvas/scroll/list/web… |
 | `background_color` cannot be cleared | `apply_background` early-returns on unset, leaving the old layer colour. The image path handles this correctly, so it reads as an oversight |
 | `.window_drag()` is a no-op | `drags_window` → 0 backend readers. `Bar::Custom` + `window_buttons()` works; the drag half does not |
