@@ -6140,3 +6140,135 @@ fn match_child(p: *core::Node, i: usize) -> *core::Node {
     };
 }
 
+
+// ---- a collection that binds instead of rebuilding ----------------------------
+// "Collection does not recycle by design; nothing to bind INTO" is true about
+// RECYCLING and was standing in for the whole verb. A collection materialises
+// every row, so there is always something to bind into — what it does not do is
+// REUSE a row for a different index as it scrolls.
+
+static BUILT: i64 = 0 as i64;
+static BOUND: i64 = 0 as i64;
+static LABELS: i64 = 0 as i64;
+
+fn b_row(ctx: *u8, i: usize) -> flex::Node {
+    BUILT = BUILT + (1 as i64);
+    var col: core::Node = core::column(core::Builder::new(), key: "row");
+    col.set_height(flex::StyleLength::points(20.0f64));
+    col.add_child(label::label("old", key: "title"));
+    return col;
+}
+
+fn b_bind(ctx: *u8, i: usize, row: *core::Node) {
+    BOUND = BOUND + (1 as i64);
+    match label::find("title", within: row) {
+        option::Option[label::Label]::Some(l) => { let _x: label::Label = l.set_text("new"); }
+        option::Option[label::Label]::None => { }
+    }
+    return;
+}
+
+fn bind_collection(key: str) -> core::Node {
+    var c: core::Node = collection::collection(key: key);
+    let p: *core::Node = #addr_of(c);
+    match collection::find(key, within: p) {
+        option::Option[collection::Collection]::Some(x) => {
+            let a: collection::Collection = x.set_row(b_row, ctx: 0 as *u8);
+            let b: collection::Collection = a.set_row_bind(b_bind, ctx: 0 as *u8);
+            let _d: collection::Collection = b.set_count(3 as usize);
+        }
+        option::Option[collection::Collection]::None => { }
+    }
+    return c;
+}
+
+#[test]
+fn a_collection_with_a_bind_writes_into_the_rows_it_already_has() {
+    backend::install();
+    BUILT = 0 as i64;
+    BOUND = 0 as i64;
+    var c: core::Node = bind_collection("bc");
+    let p: *core::Node = #addr_of(c);
+    assert mount::mount(p);
+    // The first pass BUILDS, because there is nothing to bind into yet.
+    assert BUILT == (3 as i64);
+    assert core::child_count_of(p) == (3 as usize);
+    let first_built: i64 = BUILT;
+
+    // Same count, new data: the rows are written into, not rebuilt.
+    core::clear_dirty(p);
+    core::touch(p, collection::P_ROW);
+    views::apply(0 as *u8, p);
+    assert BUILT == first_built;
+    assert BOUND == (3 as i64);
+    assert core::child_count_of(p) == (3 as usize);
+    // And the write REACHED the row's label, which is the half a prop write
+    // alone would not do — a bind marks nodes dirty and touches nothing native.
+    assert bound_title(p, 0 as usize) == "new";
+    mount::unmount(p);
+    return;
+}
+
+fn bound_title(p: *core::Node, i: usize) -> text::Text {
+    match core::child_of(p, i) {
+        option::Option[*core::Node]::Some(row) => {
+            match label::find("title", within: row) {
+                option::Option[label::Label]::Some(l) => {
+                    let v: *u8 = core::view_of(l.node());
+                    if v == (0 as *u8) { return text::new(); }
+                    return text::from_str(ak::Control::from_raw(v).string_value().view());
+                }
+                option::Option[label::Label]::None => { return text::new(); }
+            }
+        }
+        option::Option[*core::Node]::None => { return text::new(); }
+    }
+    return text::new();
+}
+
+#[test]
+fn a_count_that_changed_rebuilds_because_a_bind_cannot_say_that() {
+    // A mismatch means the SHAPE changed, and a bind writes data rather than
+    // structure.
+    backend::install();
+    BUILT = 0 as i64;
+    BOUND = 0 as i64;
+    var c: core::Node = bind_collection("bc2");
+    let p: *core::Node = #addr_of(c);
+    assert mount::mount(p);
+    let after_first: i64 = BUILT;
+    core::clear_dirty(p);
+    match collection::find("bc2", within: p) {
+        option::Option[collection::Collection]::Some(x) => { let _y: collection::Collection = x.set_count(5 as usize); }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    assert BUILT > after_first;
+    assert BOUND == (0 as i64);
+    assert core::child_count_of(p) == (5 as usize);
+    mount::unmount(p);
+    return;
+}
+
+#[test]
+fn a_collection_with_no_bind_rebuilds_as_it_always_did() {
+    backend::install();
+    ROWS_BUILT = 0;
+    var c: core::Node = collection::collection(key: "bc3");
+    let p: *core::Node = #addr_of(c);
+    match collection::find("bc3", within: p) {
+        option::Option[collection::Collection]::Some(x) => {
+            let a: collection::Collection = x.set_row(t_row, ctx: 0 as *u8);
+            let _b: collection::Collection = a.set_count(3 as usize);
+        }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
+    assert mount::mount(p);
+    let after_first: i32 = ROWS_BUILT;
+    core::clear_dirty(p);
+    core::touch(p, collection::P_ROW);
+    views::apply(0 as *u8, p);
+    assert ROWS_BUILT > after_first;
+    mount::unmount(p);
+    return;
+}

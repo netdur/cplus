@@ -2858,6 +2858,18 @@ fn create_collection(n: *core::Node) -> *u8 { return create_sequence_host(false)
 fn materialise_collection(n: *core::Node) {
     let p: *props::CollectionProps = props_of(n, props::K_COLLECTION) as *props::CollectionProps;
     if p == (0 as *props::CollectionProps) { return; }
+    // A collection that named a BIND writes into the rows it already has, when
+    // it still has the right number of them.
+    //
+    // The ledger said "collection does not recycle by design; nothing to bind
+    // INTO", which is true about RECYCLING and was standing in for the whole
+    // verb. A collection materialises every row, so there is always something
+    // to bind into — the thing it does not do is REUSE a row for a different
+    // index as it scrolls. Binding is the other half: the count is the same,
+    // the data changed, and rebuilding every subtree to say so is the work the
+    // bind exists to avoid. It is the same promise the recycler's bind makes —
+    // that every row has the same shape — said by the same verb.
+    if rebind_rows(n, p) { return; }
     // A grouped sequence is the SAME flat sequence, broken by headers — so the
     // row builder is untouched and `row(i)` still means row `i` of the whole.
     // That is what makes grouping an addition to a description rather than a
@@ -2869,6 +2881,57 @@ fn materialise_collection(n: *core::Node) {
     }
     fill_rows(n, { (*p).count }, { (*p).row }, { (*p).row_ctx });
     return;
+}
+
+// Write the current data into the rows that are already there. False when it
+// cannot — no bind named, or the shape changed — and the caller rebuilds.
+//
+// A HEADER is skipped rather than bound: `group_header` builds it and a data
+// row is not what it holds. The mapping is `data_index_of`, the same one the
+// selection uses, so a grouped collection binds row `i` into whichever child
+// shows row `i`.
+fn rebind_rows(n: *core::Node, p: *props::CollectionProps) -> bool {
+    let f: fn(*u8, usize, *core::Node) = { (*p).bind };
+    if f == props::no_bind { return false; }
+    let children: usize = core::child_count_of(n);
+    if children == (0 as usize) { return false; }
+    if expected_children(n, p) != children { return false; }
+    var i: usize = 0 as usize;
+    while i < children {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                let data: i64 = data_index_of(n, i as i64);
+                if data >= (0 as i64) {
+                    f({ (*p).row_ctx }, data as usize, c);
+                    // A bind WRITES PROPS, which marks nodes dirty and touches
+                    // nothing native. `sync_from` is the walk that carries
+                    // those writes across, rooted at the row — the same call
+                    // the recycler makes for the same reason.
+                    mount::sync_from(c);
+                }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return true;
+}
+
+// How many children the current description asks for: rows, plus one per group
+// when it is grouped. A mismatch means the SHAPE changed and a bind cannot
+// express that — the sequence is rebuilt.
+fn expected_children(n: *core::Node, p: *props::CollectionProps) -> usize {
+    if !{ (*p).groupable_items_view.is_grouped } || { (*p).group_count } <= (0 as i64) {
+        return { (*p).count } as usize;
+    }
+    let size: fn(*u8, usize) -> usize = { (*p).group_size };
+    var total: usize = { (*p).group_count } as usize;
+    var g: i64 = 0 as i64;
+    while g < { (*p).group_count } {
+        total = total +% size({ (*p).group_ctx }, g as usize);
+        g = g +% (1 as i64);
+    }
+    return total;
 }
 
 // Header, then that group's run of rows, then the next header. The flat row

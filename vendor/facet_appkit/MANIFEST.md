@@ -17,7 +17,7 @@ verb has an ANSWER, and the answer is checkable:
 324 declared prop/command bits    264 live, 23 host-rendered, 5 derived,
                                     4 modifier, 8 create-only, 20 decided,
                                     0 no carrier, 0 absent
- 81 declared handlers              79 wired, 2 decided, 0 never fire
+ 81 declared handlers              80 wired, 1 decided, 0 never fire
 ```
 
 `python3 tools/verb_coverage.py --check` is the gate and it fails on a verb that
@@ -154,7 +154,6 @@ not say" are different facts, and a backend that files the second under the
 first is claiming a platform limit that does not exist.
 
 ```no-carrier
-collection.bind                 collection does not recycle by design; nothing to bind INTO
 ```
 
 ### What a scroll implies
