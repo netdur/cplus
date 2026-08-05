@@ -38,6 +38,7 @@
 import "stdlib/option" as option;
 import "stdlib/text" as text;
 import "stdlib/status" as status;
+import "stdlib/vec" as vec;
 import "facet/facet" as core;
 import "facet/props" as props;
 import "facet/vocabulary" as vocab;
@@ -614,3 +615,165 @@ fn tinted_image(img: *u8, c: vocab::Color) -> *u8 {
 extern fn msg_id_size(recv: *u8, sel: *u8, s: rt::Size) -> *u8;
 #[link_name = "objc_msgSend"]
 extern fn msg_void_rect_rect_u64_f64(recv: *u8, sel: *u8, a: rt::Rect, b: rt::Rect, op: u64, f: f64);
+
+// ---- the refresh affordance --------------------------------------------------
+// MAUI's RefreshView and ListView's pull-to-refresh band. The ledger said
+// "pull-to-refresh is a touch idiom", which is true about the GESTURE and was
+// being read as a claim about the feature. macOS has no pull-to-refresh — and
+// facet's own rule already says what to do about that:
+//
+//   an agent has no hands. If something can only be reached by a gesture,
+//   that is the bug; add a click path in the UI.
+//
+// So a refreshable shows a refresh CONTROL at the top of its content: a button
+// while idle, a spinner while refreshing. A user clicks it, an agent clicks it,
+// and `begin_refresh` drives it from code. Nothing about it is a gesture.
+//
+// On an NSScrollView the strip is a FLOATING SUBVIEW — AppKit's own answer for
+// a thing pinned to the top of a scrolling area, which is exactly the shape
+// this needs and is why the list half costs nothing extra.
+
+fn strip_key() -> *u8 { return { 28776 as *u8 }; }
+fn spinner_key() -> *u8 { return { 28777 as *u8 }; }
+fn refresh_handler_key() -> *u8 { return { 28778 as *u8 }; }
+fn refresh_ctx_key() -> *u8 { return { 28779 as *u8 }; }
+
+fn strip_height() -> f64 { return 24.0f64; }
+
+fn refresh_strip_of(host: *u8) -> *u8 { return { synth::get_associated(host, strip_key()) }; }
+fn refresh_spinner_of(host: *u8) -> *u8 { return { synth::get_associated(host, spinner_key()) }; }
+
+// The click, whatever produced it. The handler and its ctx ride the STRIP, so
+// one trampoline serves both kinds and neither has to grow a delegate.
+fn refresh_clicked(sender: *u8, ctx: *u8) {
+    let strip: *u8 = { rt::msg_id(sender, rt::sel(#str_ptr("superview\0"))) };
+    if strip == (0 as *u8) { return; }
+    let h: fn(*u8, *u8) = { synth::get_associated(strip, refresh_handler_key()) as fn(*u8, *u8) };
+    if { h } == (0 as fn(*u8, *u8)) { return; }
+    h(sender, { synth::get_associated(strip, refresh_ctx_key()) });
+    return;
+}
+
+// Idempotent. The strip is built once and then only its STATE changes, because
+// a scroll view's floating subview list is not something to churn per apply.
+fn install_refresh_strip(host: *u8) -> *u8 {
+    let existing: *u8 = refresh_strip_of(host);
+    if existing != (0 as *u8) { return existing; }
+    let box: rt::Rect = { rt::msg_rect(host, rt::sel(#str_ptr("bounds\0"))) };
+    let strip: ak::View = akx::new_flipped_view(
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: box.w, h: strip_height() });
+    // Width tracks the host; the TOP edge is fixed. In a flipped host that is
+    // min-Y fixed and max-Y flexible: WidthSizable (2) | MaxYMargin (32).
+    { rt::msg_void_u64(strip.raw(), rt::sel(#str_ptr("setAutoresizingMask:\0")), 34 as u64) };
+
+    let b: ak::Button = ak::Button::from_raw(rt::alloc_init(#str_ptr("NSButton\0")));
+    b.set_button_type(ak::ButtonType::MomentaryChange);
+    b.set_bordered(false);
+    b.set_title("");
+    match ak::Image::image_with_system_symbol_name("arrow.clockwise", "refresh") {
+        option::Option[ak::Image]::Some(img) => { b.set_image(img); }
+        option::Option[ak::Image]::None => { b.set_title("Refresh"); }
+    }
+    let bv: ak::View = b.as_view();
+    bv.set_frame(rt::Rect { x: 0.0f64, y: 0.0f64, w: box.w, h: strip_height() });
+    { rt::msg_void_u64(bv.raw(), rt::sel(#str_ptr("setAutoresizingMask:\0")), 2 as u64) };
+    akx::set_control_action_ctx(b.as_control(), refresh_clicked, 0 as *u8);
+    strip.add_subview(bv);
+
+    let pi: ak::ProgressIndicator = ak::ProgressIndicator::from_raw(
+        rt::alloc_init(#str_ptr("NSProgressIndicator\0")));
+    pi.set_style(ak::ProgressIndicatorStyle::Spinning);
+    pi.set_indeterminate(true);
+    let pv: ak::View = pi.as_view();
+    pv.set_frame(rt::Rect { x: (box.w - strip_height()) / 2.0f64, y: 0.0f64,
+                            w: strip_height(), h: strip_height() });
+    pv.set_hidden(true);
+    strip.add_subview(pv);
+
+    // A scroll view has AppKit's own slot for this; anything else takes an
+    // ordinary subview pinned by its mask.
+    if { rt::msg_i8_id(host, rt::sel(#str_ptr("isKindOfClass:\0")),
+                       rt::get_class(#str_ptr("NSScrollView\0"))) } != (0 as i8) {
+        // NSEventGestureAxisVertical = 2.
+        { rt::msg_void_id_i64(host, rt::sel(#str_ptr("addFloatingSubview:forAxis:\0")),
+                              strip.raw(), 2 as i64) };
+    } else {
+        ak::View::from_raw(host).add_subview(strip);
+    }
+    synth::set_associated(host, strip_key(), strip.raw());
+    synth::set_associated(host, spinner_key(), pv.raw());
+    return strip.raw();
+}
+
+fn remove_refresh_strip(host: *u8) {
+    let strip: *u8 = refresh_strip_of(host);
+    if strip == (0 as *u8) { return; }
+    { rt::msg_void(strip, rt::sel(#str_ptr("removeFromSuperview\0"))) };
+    synth::set_associated(host, strip_key(), 0 as *u8);
+    synth::set_associated(host, spinner_key(), 0 as *u8);
+    return;
+}
+
+// The whole band in one call, because the five props are one state: whether
+// there is an affordance, whether it is usable, and which of its two faces is
+// showing.
+fn apply_refresh(host: *u8, enabled: bool, refreshing: bool, allowed: bool,
+                 color: vocab::Color, h: fn(*u8, *u8), ctx: *u8) {
+    if host == (0 as *u8) { return; }
+    if !enabled {
+        remove_refresh_strip(host);
+        return;
+    }
+    let strip: *u8 = install_refresh_strip(host);
+    if strip == (0 as *u8) { return; }
+    synth::set_associated(strip, refresh_handler_key(), { h as *u8 });
+    synth::set_associated(strip, refresh_ctx_key(), ctx);
+    let spinner: *u8 = refresh_spinner_of(host);
+    let button: *u8 = refresh_button_of(strip);
+    if button != (0 as *u8) {
+        { rt::msg_void_i8(button, rt::sel(#str_ptr("setHidden:\0")), refreshing as i8) };
+        { rt::msg_void_i8(button, rt::sel(#str_ptr("setEnabled:\0")), allowed as i8) };
+    }
+    if spinner != (0 as *u8) {
+        { rt::msg_void_i8(spinner, rt::sel(#str_ptr("setHidden:\0")), (refreshing == false) as i8) };
+        if refreshing {
+            { rt::msg_void_id(spinner, rt::sel(#str_ptr("startAnimation:\0")), 0 as *u8) };
+        } else {
+            { rt::msg_void_id(spinner, rt::sel(#str_ptr("stopAnimation:\0")), 0 as *u8) };
+        }
+        tint_spinner(spinner, color);
+    }
+    return;
+}
+
+fn refresh_button_of(strip: *u8) -> *u8 {
+    let subs: vec::Vec[ak::View] = ak::View::from_raw(strip).subviews();
+    return match subs.at_ptr(0 as usize) {
+        option::Option[*ak::View]::Some(v) => { (*v).raw() },
+        option::Option[*ak::View]::None => 0 as *u8,
+    };
+}
+
+// NSProgressIndicator has no tint, and the ledger stops there for the
+// determinate BAR — a monochrome filter over a bar would flatten its fill and
+// its track into one colour, which is worse than not colouring it. An
+// indeterminate spinner is uniform, so mapping it onto one colour is exactly
+// what tinting it means.
+fn tint_spinner(spinner: *u8, c: vocab::Color) {
+    if c.is_set() == false { return; }
+    let filter: *u8 = { rt::msg_id_id(rt::get_class(#str_ptr("CIFilter\0")),
+                                      rt::sel(#str_ptr("filterWithName:\0")),
+                                      bridge::nsstring("CIColorMonochrome")) };
+    if filter == (0 as *u8) { return; }
+    let ci: *u8 = { rt::msg_id_id(rt::get_class(#str_ptr("CIColor\0")),
+                                  rt::sel(#str_ptr("colorWithCGColor:\0")),
+                                  paint::ns_color(c).c_g_color()) };
+    if ci == (0 as *u8) { return; }
+    { rt::msg_void_id_id(filter, rt::sel(#str_ptr("setValue:forKey:\0")),
+                         ci, bridge::nsstring("inputColor")) };
+    let arr: *u8 = { rt::msg_id_id(rt::get_class(#str_ptr("NSArray\0")),
+                                   rt::sel(#str_ptr("arrayWithObject:\0")), filter) };
+    ak::View::from_raw(spinner).set_wants_layer(true);
+    { rt::msg_void_id(spinner, rt::sel(#str_ptr("setContentFilters:\0")), arr) };
+    return;
+}

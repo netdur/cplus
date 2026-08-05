@@ -65,6 +65,7 @@ import "facet/tree" as tree;
 import "facet/mount" as mount;
 import "facet/window_chrome" as chrome;
 import "facet/canvas" as canvas;
+import "facet/refreshable" as refreshable;
 import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "objc/synthesis" as synth;
@@ -2261,8 +2262,50 @@ fn create_passthrough(n: *core::Node) -> *u8 {
 }
 
 fn decided_absent(kind: u32) -> bool {
-    return kind == props::K_REFRESHABLE || kind == props::K_SWIPEABLE
-        || kind == props::K_SWIPE_ITEM;
+    return kind == props::K_SWIPEABLE || kind == props::K_SWIPE_ITEM;
+}
+
+// ---- refreshable -------------------------------------------------------------
+// MAUI's RefreshView. The ledger said "pull-to-refresh is a touch idiom", which
+// is true about the GESTURE and was read as a claim about the feature. facet's
+// own rule already says what to do with a gesture-only affordance: an agent has
+// no hands, so add a click path. See compose::apply_refresh — a refresh button
+// at the top of the content, a spinner in its place while refreshing.
+
+fn create_refreshable(n: *core::Node) -> *u8 {
+    let v: ak::View = akx::new_flipped_view(rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 });
+    return rt::retain(v.raw());
+}
+
+// The click, before the application's handler: `is_refreshing` becomes true
+// the moment a refresh starts, so a handler asking for it gets the state that
+// caused it. Same rule as every other write-back.
+fn refreshable_clicked(sender: *u8, ctx: *u8) {
+    let n: *core::Node = ctx as *core::Node;
+    let p: *props::RefreshableProps = props_of(n, props::K_REFRESHABLE) as *props::RefreshableProps;
+    if p == (0 as *props::RefreshableProps) { return; }
+    { (*p).is_refreshing = true };
+    let v: *u8 = core::view_of(n);
+    if v != (0 as *u8) {
+        compose::apply_refresh(v, { (*p).is_refreshable }, true, false, { (*p).refresh_color },
+                               refreshable_clicked, n as *u8);
+    }
+    let h: fn(*u8, *u8) = { (*p).on_refreshing };
+    if h != props::no_handler { h(sender, { (*p).on_refreshing_ctx }); }
+    return;
+}
+
+fn apply_refreshable(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::RefreshableProps = props_of(n, props::K_REFRESHABLE) as *props::RefreshableProps;
+    if p == (0 as *props::RefreshableProps) { return; }
+    let band: u64 = refreshable::P_IS_REFRESHABLE | refreshable::P_IS_REFRESHING
+        | refreshable::P_REFRESH_COLOR | props::C_HANDLERS;
+    if (dirty & band) != (0 as u64) || dirty == paint::all_bits() {
+        let f: fn(*u8, *u8) = refreshable_clicked;
+        compose::apply_refresh(v, { (*p).is_refreshable }, { (*p).is_refreshing }, true,
+                               { (*p).refresh_color }, f, n as *u8);
+    }
+    return;
 }
 
 // ---- the collection group ----------------------------------------------------

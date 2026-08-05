@@ -50,6 +50,7 @@ import "facet/vocabulary" as vocab;
 import "facet/tree" as tree;
 import "./controls" as controls;
 import "./paint" as paint;
+import "./compose" as compose;
 import "objc/runtime" as rt;
 import "objc/synthesis" as synth;
 import "objc/bridge" as bridge;
@@ -464,6 +465,28 @@ fn table_of(v: *u8) -> *u8 {
 // Install or update the row source, then reload. The builder and the count are
 // ONE question: either changing replaces the whole sequence, and a partial
 // answer would leave rows from two models mixed.
+// A refresh has started, however it started: the state is written back BEFORE
+// the handler, so a handler asking `list.is_refreshing()` gets the state that
+// caused it rather than the state before it.
+fn start_list_refresh(v: *u8, n: *core::Node, p: *props::ListProps) {
+    { (*p).is_refreshing = true };
+    compose::apply_refresh(v, { (*p).is_refreshable }, true, { (*p).can_refresh },
+                           { (*p).refresh_color }, list_refresh_clicked, n as *u8);
+    let h: fn(*u8, *u8) = { (*p).on_refreshing };
+    if h != props::no_handler { h(v, { (*p).on_refreshing_ctx }); }
+    return;
+}
+
+fn list_refresh_clicked(sender: *u8, ctx: *u8) {
+    let n: *core::Node = ctx as *core::Node;
+    let p: *props::ListProps = props_of_list(n);
+    if p == (0 as *props::ListProps) { return; }
+    let v: *u8 = core::view_of(n);
+    if v == (0 as *u8) { return; }
+    start_list_refresh(v, n, p);
+    return;
+}
+
 fn apply_recycling_list(v: *u8, n: *core::Node, dirty: u64) {
     let tv: *u8 = table_of(v);
     if tv == (0 as *u8) { return; }
@@ -496,6 +519,30 @@ fn apply_recycling_list(v: *u8, n: *core::Node, dirty: u64) {
             }
             option::Option[box::Box[RowSource]]::None => { return; }
         }
+    }
+    // The refresh band. `list` carries the same seven verbs RefreshView does,
+    // and the same answer: a click path, not a gesture — on a scroll view the
+    // strip is AppKit's own floating subview, pinned to the top of the content.
+    let refresh_band: u64 = list::P_IS_REFRESHABLE | list::P_IS_REFRESHING
+        | list::P_CAN_REFRESH | list::P_REFRESH_COLOR | props::C_HANDLERS;
+    if (dirty & refresh_band) != (0 as u64) || dirty == paint::all_bits() {
+        let f: fn(*u8, *u8) = list_refresh_clicked;
+        compose::apply_refresh(v, { (*p).is_refreshable }, { (*p).is_refreshing },
+                               { (*p).can_refresh }, { (*p).refresh_color }, f, n as *u8);
+    }
+    // `begin_refresh` and `end_refresh` are COMMANDS — the code path an agent
+    // has, and the reason a gesture was never the only way in.
+    // NOT on the create pass. `create` calls apply with every bit set, which
+    // for a COMMAND means "do it" — so a list that merely exists would report
+    // a refresh nobody asked for. The same guard the scroll_to command needs.
+    let first_pass: bool = dirty == paint::all_bits();
+    if (dirty & list::P_BEGIN_REFRESH) != (0 as u64) && first_pass == false {
+        start_list_refresh(v, n, p);
+    }
+    if (dirty & list::P_END_REFRESH) != (0 as u64) && first_pass == false {
+        { (*p).is_refreshing = false };
+        compose::apply_refresh(v, { (*p).is_refreshable }, false, { (*p).can_refresh },
+                               { (*p).refresh_color }, list_refresh_clicked, n as *u8);
     }
     { (*s).row = { (*p).row } };
     { (*s).bind = { (*p).bind } };

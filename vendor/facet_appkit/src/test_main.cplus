@@ -45,6 +45,7 @@ import "facet/context_menu" as context_menu;
 import "facet/context_menu_item" as context_menu_item;
 import "facet/span" as span;
 import "facet/refreshable" as refreshable;
+import "facet/swipeable" as swipeable;
 import "facet/list" as list;
 import "facet/tree" as tree;
 import "facet/menu" as menu;
@@ -929,11 +930,10 @@ fn a_decided_absent_kind_still_shows_its_content_and_says_nothing() {
     // would have) and they must NOT take the unimplemented path, which warns.
     // A warning for something already answered trains a reader to ignore the
     // warnings that mean something.
-    assert controls::decided_absent(props::K_REFRESHABLE);
     assert controls::decided_absent(props::K_SWIPEABLE);
     assert controls::decided_absent(props::K_SWIPE_ITEM);
     assert controls::decided_absent(props::K_BUTTON) == false;
-    var r: core::Node = refreshable::refreshable(key: "r");
+    var r: core::Node = swipeable::swipeable(key: "r");
     let v: *u8 = views::create(0 as *u8, #addr_of(r));
     assert v != (0 as *u8);
     assert ak::View::from_raw(v).is_flipped();
@@ -4401,5 +4401,135 @@ fn assert_roundtrip(y: i64, m: i64, d: i64) {
     assert back.year == y;
     assert back.month == m;
     assert back.day == d;
+    return;
+}
+
+// ---- the refresh band --------------------------------------------------------
+// "Pull-to-refresh is a touch idiom" is true about the GESTURE and was being
+// read as a claim about the feature. facet's own rule says what to do with a
+// gesture-only affordance: an agent has no hands, so add a click path.
+
+static REFRESHES: i64 = 0 as i64;
+fn on_refreshing_h(sender: *u8, ctx: *u8) { REFRESHES = REFRESHES + (1 as i64); return; }
+fn h_refreshing() -> fn(*u8, *u8) { let f: fn(*u8, *u8) = on_refreshing_h; return f; }
+
+#[test]
+fn a_refreshable_that_is_not_refreshable_shows_no_affordance() {
+    backend::install();
+    var r: core::Node = refreshable::refreshable(key: "rf0");
+    let v: *u8 = views::create(0 as *u8, #addr_of(r));
+    assert compose::refresh_strip_of(v) == (0 as *u8);
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn a_refreshable_offers_a_click_path_and_reports_the_refresh() {
+    backend::install();
+    REFRESHES = 0 as i64;
+    var r: core::Node = refreshable::refreshable(key: "rf1", refreshable: true,
+                                                 on_refreshing: h_refreshing());
+    let p: *core::Node = #addr_of(r);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    let strip: *u8 = compose::refresh_strip_of(v);
+    assert strip != (0 as *u8);
+    // Idle: the button shows, the spinner does not.
+    let button: *u8 = compose::refresh_button_of(strip);
+    assert button != (0 as *u8);
+    assert { rt::msg_i8(button, rt::sel(#str_ptr("isHidden\0"))) } == (0 as i8);
+    assert { rt::msg_i8(compose::refresh_spinner_of(v), rt::sel(#str_ptr("isHidden\0"))) } != (0 as i8);
+    // A click is the whole point: it reports, and `is_refreshing` is already
+    // true by the time the handler runs.
+    send_action(button);
+    assert REFRESHES == (1 as i64);
+    match refreshable::find("rf1", within: p) {
+        option::Option[refreshable::Refreshable]::Some(h) => { assert h.is_refreshing(); }
+        option::Option[refreshable::Refreshable]::None => { assert false; }
+    }
+    // And the two faces have swapped.
+    assert { rt::msg_i8(button, rt::sel(#str_ptr("isHidden\0"))) } != (0 as i8);
+    assert { rt::msg_i8(compose::refresh_spinner_of(v), rt::sel(#str_ptr("isHidden\0"))) } == (0 as i8);
+    return;
+}
+
+#[test]
+fn a_lists_refresh_strip_floats_over_its_scroll() {
+    // NSScrollView's own slot for a thing pinned to the top of the content —
+    // which is exactly this shape, and is why the list half cost nothing extra.
+    backend::install();
+    var l: core::Node = list::list(key: "rl", refreshable: true, on_refreshing: h_refreshing());
+    let p: *core::Node = #addr_of(l);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    let strip: *u8 = compose::refresh_strip_of(v);
+    assert strip != (0 as *u8);
+    // Floating means it does NOT ride the document view, so it does not
+    // scroll away with the rows — that is the whole reason to use AppKit's own
+    // slot rather than adding a subview.
+    assert { rt::msg_i8_id(strip, rt::sel(#str_ptr("isDescendantOf:\0")), v) } != (0 as i8);
+    let doc: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("documentView\0"))) };
+    assert { rt::msg_i8_id(strip, rt::sel(#str_ptr("isDescendantOf:\0")), doc) } == (0 as i8);
+    return;
+}
+
+#[test]
+fn begin_refresh_is_the_command_an_agent_has() {
+    backend::install();
+    REFRESHES = 0 as i64;
+    var l: core::Node = list::list(key: "rl2", refreshable: true, on_refreshing: h_refreshing());
+    let p: *core::Node = #addr_of(l);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    core::clear_dirty(p);
+    match list::find("rl2", within: p) {
+        option::Option[list::List]::Some(h) => { let _x: list::List = h.begin_refresh(); }
+        option::Option[list::List]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    assert REFRESHES == (1 as i64);
+    assert compose::refresh_spinner_of(v) != (0 as *u8);
+    assert { rt::msg_i8(compose::refresh_spinner_of(v), rt::sel(#str_ptr("isHidden\0"))) } == (0 as i8);
+    // And end_refresh puts the button back.
+    core::clear_dirty(p);
+    match list::find("rl2", within: p) {
+        option::Option[list::List]::Some(h) => { let _x: list::List = h.end_refresh(); }
+        option::Option[list::List]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    assert { rt::msg_i8(compose::refresh_spinner_of(v), rt::sel(#str_ptr("isHidden\0"))) } != (0 as i8);
+    match list::find("rl2", within: p) {
+        option::Option[list::List]::Some(h) => { assert h.is_refreshing() == false; }
+        option::Option[list::List]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn a_refresh_that_is_not_allowed_shows_a_disabled_button() {
+    backend::install();
+    var l: core::Node = list::list(key: "rl3", refreshable: true, refresh: false, on_refreshing: h_refreshing());
+    let p: *core::Node = #addr_of(l);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    let button: *u8 = compose::refresh_button_of(compose::refresh_strip_of(v));
+    assert { rt::msg_i8(button, rt::sel(#str_ptr("isEnabled\0"))) } == (0 as i8);
+    return;
+}
+
+#[test]
+fn a_refresh_colour_tints_the_spinner() {
+    // An indeterminate spinner is uniform, so mapping it onto one colour IS
+    // what tinting it means. The determinate BAR stays in the ledger: a
+    // monochrome filter would flatten its fill and its track together.
+    backend::install();
+    var r: core::Node = refreshable::refreshable(key: "rf2", refreshable: true, refreshing: true,
+        refresh_color: vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64));
+    let v: *u8 = views::create(0 as *u8, #addr_of(r));
+    let spinner: *u8 = compose::refresh_spinner_of(v);
+    assert spinner != (0 as *u8);
+    let filters: *u8 = { rt::msg_id(spinner, rt::sel(#str_ptr("contentFilters\0"))) };
+    assert { rt::msg_u64(filters, rt::sel(#str_ptr("count\0"))) } == (1 as u64);
+    views::view_release(v);
     return;
 }

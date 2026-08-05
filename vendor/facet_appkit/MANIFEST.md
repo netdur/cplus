@@ -89,10 +89,6 @@ tabs.bar_text_color             NSTabView draws its own strip
 tabs.selected_tab_color         NSTabView draws its own strip
 tabs.unselected_tab_color       NSTabView draws its own strip
 toolbar_item.is_destructive     NSToolbarItem has no destructive style
-refreshable.is_refreshable      pull-to-refresh is a touch idiom; use a Refresh command
-refreshable.is_refreshing       as is_refreshable
-refreshable.refresh_color       as is_refreshable
-refreshable.on_refreshing       as is_refreshable
 swipeable.reveal_threshold      swipe-to-reveal is a touch idiom; use a context menu
 swipeable.on_open_requested     as reveal_threshold
 swipeable.on_close_requested    as reveal_threshold
@@ -130,13 +126,6 @@ date_picker.on_opened           as date_picker.is_open
 date_picker.on_closed           as date_picker.is_open
 time_picker.on_opened           as date_picker.is_open
 time_picker.on_closed           as date_picker.is_open
-list.is_refreshable             pull-to-refresh is a touch idiom; use a Refresh command
-list.is_refreshing              as list.is_refreshable
-list.can_refresh                as list.is_refreshable
-list.refresh_color              as list.is_refreshable
-list.begin_refresh              as list.is_refreshable
-list.end_refresh                as list.is_refreshable
-list.on_refreshing              as list.is_refreshable
 carousel.is_swipeable           swipe between pages is a touch idiom
 carousel.wraps                  an infinite carousel needs the touch paging it wraps
 collection.can_reorder_items    drag-reorder needs NSCollectionView's own drag session

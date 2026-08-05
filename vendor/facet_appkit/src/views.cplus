@@ -208,6 +208,7 @@ fn create_for_kind(kind: u32, n: *core::Node) -> *u8 {
     if kind == props::K_WEB { return web::create_web(n); }
     if kind == props::K_HYBRID_WEB { return web::create_hybrid_web(n); }
     if kind == chrome::K_WINDOW_BUTTONS { return controls::create_window_buttons(n); }
+    if kind == props::K_REFRESHABLE { return controls::create_refreshable(n); }
     unimplemented_kind(kind, n);
     return backing_view();
 }
@@ -267,6 +268,7 @@ fn apply_for_kind(kind: u32, v: *u8, n: *core::Node, dirty: u64) {
     if kind == props::K_WEB { web::apply_web(v, n, dirty); return; }
     if kind == props::K_HYBRID_WEB { web::apply_hybrid_web(v, n, dirty); return; }
     if kind == chrome::K_WINDOW_BUTTONS { controls::apply_window_buttons(v, n, dirty); return; }
+    if kind == props::K_REFRESHABLE { controls::apply_refreshable(v, n, dirty); return; }
     return;
 }
 
@@ -297,6 +299,7 @@ fn has_body(kind: u32) -> bool {
         || kind == props::K_TABLE || kind == props::K_CAROUSEL
         || kind == props::K_CANVAS
         || kind == symbol::K_SYMBOL || kind == tree::K_TREE
+        || kind == props::K_REFRESHABLE
         || kind == split::K_SPLIT || kind == chrome::K_WINDOW_BUTTONS;
 }
 
