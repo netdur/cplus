@@ -350,6 +350,19 @@ fn fire_detach_handler(n: *Node) {
     return;
 }
 
+// Does this node want to be told about focus changes? The backend asks before
+// it decides whether to arm a view: a node with only an `on_focus` and no
+// gestures still needs the class that reports one.
+fn wants_focus_events(n: *Node) -> bool {
+    let d: *Data = { (*n).data() };
+    if d == (0 as *Data) { return false; }
+    let f: fn(*u8, *u8) = { (*d).common.on_focus };
+    let b: fn(*u8, *u8) = { (*d).common.on_blur };
+    if f != (0 as fn(*u8, *u8)) && f != props::no_handler { return true; }
+    if b != (0 as fn(*u8, *u8)) && b != props::no_handler { return true; }
+    return false;
+}
+
 fn fire_focus_handler(n: *Node) {
     let d: *Data = { (*n).data() };
     if d == (0 as *Data) { return; }

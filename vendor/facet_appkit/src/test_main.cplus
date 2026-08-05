@@ -7505,3 +7505,58 @@ fn a_window_floors_one_axis_without_the_other() {
     app::reset_default_for_tests();
     return;
 }
+
+// ---- the shared band's focus and blur ---------------------------------------
+static FOCUS_HITS: i64 = 0 as i64;
+static BLUR_HITS: i64 = 0 as i64;
+fn on_focus_probe(sender: *u8, ctx: *u8) { FOCUS_HITS = FOCUS_HITS + (1 as i64); return; }
+fn on_blur_probe(sender: *u8, ctx: *u8) { BLUR_HITS = BLUR_HITS + (1 as i64); return; }
+
+#[test]
+fn focus_and_blur_fire_and_is_focused_answers() {
+    // All three were declared on every cursor and none existed:
+    // `fire_focus_handler` and `fire_blur_handler` had zero callers anywhere,
+    // and `set_focused` was called only by one of facet's own tests — so
+    // `is_focused()` was a reader that could only ever answer false.
+    backend::install();
+    app::reset_default_for_tests();
+    FOCUS_HITS = 0 as i64;
+    BLUR_HITS = 0 as i64;
+    var root: core::Node = core::column(core::Builder::new(), key: "r");
+    var f1: core::Node = text_field::text_field(key: "one", text: "");
+    var f2: core::Node = text_field::text_field(key: "two", text: "");
+    core::set_on_focus(#addr_of(f1), on_focus_probe, 0 as *u8);
+    core::set_on_blur(#addr_of(f1), on_blur_probe, 0 as *u8);
+    let _a: bool = mount::insert_child(#addr_of(root), f1, 0 as usize);
+    let _b: bool = mount::insert_child(#addr_of(root), f2, 1 as usize);
+    let rp: *core::Node = #addr_of(root);
+    let win: *u8 = window::open_window(rp, screen::Chrome::new(
+        title: "focus", width: 300.0f64, height: 200.0f64));
+    let w: ak::Window = ak::Window::from_raw(win);
+    w.make_key_and_order_front(0 as *u8);
+
+    match core::find_in(rp, "one") {
+        option::Option[*core::Node]::Some(one) => {
+            let v: *u8 = core::view_of(one);
+            assert v != (0 as *u8);
+            let _f: bool = w.make_first_responder(ak::View::from_raw(v).as_responder());
+            assert FOCUS_HITS == (1 as i64);
+            assert core::is_focused(one);
+            // Move focus away: blur fires and the flag comes back down.
+            match core::find_in(rp, "two") {
+                option::Option[*core::Node]::Some(two) => {
+                    let v2: *u8 = core::view_of(two);
+                    let _g: bool = w.make_first_responder(ak::View::from_raw(v2).as_responder());
+                }
+                option::Option[*core::Node]::None => { assert false; }
+            }
+            assert BLUR_HITS == (1 as i64);
+            assert core::is_focused(one) == false;
+        }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    window::close_window(win);
+    backend::uninstall();
+    app::reset_default_for_tests();
+    return;
+}

@@ -561,6 +561,73 @@ fn one_digit(d: u32) -> str {
 
 // The subclass of `base` carrying facet's event overrides. One per base class:
 // a thousand gesture rows over three control kinds make three classes.
+// Focus and blur. The superclass decides whether the change happens at all —
+// an NSTextField can refuse to give up first responder while its value is
+// invalid — so the handler fires only when the super call SUCCEEDS. Reporting
+// a focus that was refused would be worse than not reporting it.
+#[link_name = "objc_msgSendSuper"]
+extern fn msg_super_i8(s: *SuperRef, sel: *u8) -> i8;
+
+// Does this view still own the window's field editor?
+//
+// This is the question that separates the two kinds of `resignFirstResponder`
+// an NSTextField gets. Focusing one makes the window's shared FIELD EDITOR the
+// first responder, and installing it makes the field itself resign — a resign
+// that is part of GAINING focus, not losing it. A field that has moved on has
+// no editor.
+//
+// `currentEditor` is NSControl's, so it is asked only of objects that answer
+// it; a plain view resigning is always a real blur.
+fn still_editing(v: *u8) -> bool {
+    if synth::class_responds(synth::object_class(v),
+                             rt::sel(#str_ptr("currentEditor\0"))) == (0 as i8) {
+        return false;
+    }
+    return { rt::msg_id(v, rt::sel(#str_ptr("currentEditor\0"))) } != (0 as *u8);
+}
+
+// EDGE-triggered: fire only when the answer CHANGES.
+//
+// The state cannot be read from the window, which was the first thing tried:
+// at `resign` time the new first responder is not installed yet, so the window
+// still names the OUTGOING view and no blur is ever seen. The direction has to
+// come from which call arrived, with `still_editing` as the one correction —
+// and the edge trigger absorbs the rest of the shuffle, so one user-visible
+// focus change calls the application once.
+fn sync_focus(v: *u8, focused: bool) {
+    let n: *core::Node = node_of_view(v);
+    if n == (0 as *core::Node) { return; }
+    var now: bool = focused;
+    if !focused && still_editing(v) { now = true; }
+    if core::is_focused(n) == now { return; }
+    core::set_focused(n, now);
+    if now { core::fire_focus_handler(n); } else { core::fire_blur_handler(n); }
+    return;
+}
+
+fn imp_become_first_responder(self_obj: *u8, cmd: *u8) -> i8 {
+    var sup: SuperRef = SuperRef {
+        receiver: self_obj,
+        super_class: { class_getSuperclass(synth::object_class(self_obj)) },
+    };
+    // The superclass decides whether the change happens at all — a field can
+    // refuse to give up first responder while its value is invalid — so the
+    // state is only re-read when the super call succeeded.
+    let ok: i8 = { msg_super_i8(#addr_of(sup), cmd) };
+    if ok != (0 as i8) { sync_focus(self_obj, true); }
+    return ok;
+}
+
+fn imp_resign_first_responder(self_obj: *u8, cmd: *u8) -> i8 {
+    var sup: SuperRef = SuperRef {
+        receiver: self_obj,
+        super_class: { class_getSuperclass(synth::object_class(self_obj)) },
+    };
+    let ok: i8 = { msg_super_i8(#addr_of(sup), cmd) };
+    if ok != (0 as i8) { sync_focus(self_obj, false); }
+    return ok;
+}
+
 fn input_class_for(base: *u8) -> *u8 {
     let cached: *u8 = { synth::get_associated(base, subclass_key()) };
     if cached != (0 as *u8) { return cached; }
@@ -601,6 +668,16 @@ fn add_input_methods(cls: *u8) {
     synth::add_method_v_1id(cls, rt::sel(#str_ptr("keyDown:\0")), imp_key_down, #str_ptr("v@:@\0"));
     add_method_i8_0(cls, rt::sel(#str_ptr("acceptsFirstResponder\0")),
                     imp_accepts_first_responder, #str_ptr("c@:\0"));
+    // The shared band's `on_focus` / `on_blur`, and the write that makes
+    // `is_focused()` answer. All three were declared on every cursor and
+    // none of them existed: `core::fire_focus_handler` and
+    // `fire_blur_handler` had ZERO callers anywhere, and `core::set_focused`
+    // was called only by one of facet's own tests, so `is_focused()` was a
+    // reader that could only ever answer false.
+    add_method_i8_0(cls, rt::sel(#str_ptr("becomeFirstResponder\0")),
+                    imp_become_first_responder, #str_ptr("c@:\0"));
+    add_method_i8_0(cls, rt::sel(#str_ptr("resignFirstResponder\0")),
+                    imp_resign_first_responder, #str_ptr("c@:\0"));
     add_method_id_point(cls, rt::sel(#str_ptr("hitTest:\0")), imp_hit_test,
                         #str_ptr("@@:{CGPoint=dd}\0"));
     // Drag and drop. On the class unconditionally — see arm_drop for why the
@@ -641,7 +718,14 @@ fn arm(v: *u8, n: *core::Node) {
     // hit test is the only place AppKit lets that be said, and `imp_hit_test`
     // is on this class.
     let transparent: bool = core::input_transparent(n);
-    if g == (0 as *gestures::Gestures) && own == false && transparent == false {
+    // A node carrying ONLY a focus handler is armed too. `on_focus` is on the
+    // shared band, so a plain container can declare one without ever touching
+    // `.gesture(...)` — and before this it was never armed, so the class that
+    // implements become/resign was never installed and the handler could not
+    // fire however correctly it was wired.
+    let focus: bool = core::wants_focus_events(n);
+    if g == (0 as *gestures::Gestures) && own == false && transparent == false
+        && focus == false {
         trace2("[input] arm: SKIPPED — node has no Gestures, key=", { (*n).key() });
         return;
     }

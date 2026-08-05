@@ -236,9 +236,31 @@ fn did_change_imp(self_obj: *u8, cmd: *u8, notification: *u8) {
 // A field's field editor is created when editing begins and is SHARED with
 // every other field in the window, so anything set on it has to be set again
 // here — see `apply_editor_state`.
+// The shared band's on_focus / on_blur, for the controls that use a FIELD
+// EDITOR.
+//
+// `input.cplus` reports focus from `becomeFirstResponder` on the armed class,
+// which is right for a button, a container or a canvas. It is silent for a
+// text control, because focusing an NSTextField makes the window's shared
+// field editor the first responder — the FIELD is never first responder, so it
+// is never asked to resign and the class never hears about it.
+//
+// `controlTextDidBeginEditing:` / `DidEndEditing:` are where AppKit does say
+// so, and this file already listens to both. Edge-triggered against
+// `is_focused` for the same reason input.cplus is: one user-visible focus
+// change should call the application once, whichever route reported it.
+fn note_focus(n: *core::Node, focused: bool) {
+    if n == (0 as *core::Node) { return; }
+    if core::is_focused(n) == focused { return; }
+    core::set_focused(n, focused);
+    if focused { core::fire_focus_handler(n); } else { core::fire_blur_handler(n); }
+    return;
+}
+
 fn did_begin_imp(self_obj: *u8, cmd: *u8, notification: *u8) {
     let n: *core::Node = node_of(self_obj);
     if n == (0 as *core::Node) { return; }
+    note_focus(n, true);
     if is_editor(n) { return; }
     let iv: *props::InputViewProps = input_props_of(n);
     if iv == (0 as *props::InputViewProps) { return; }
@@ -254,6 +276,7 @@ fn did_begin_imp(self_obj: *u8, cmd: *u8, notification: *u8) {
 fn did_end_imp(self_obj: *u8, cmd: *u8, notification: *u8) {
     let n: *core::Node = node_of(self_obj);
     if n == (0 as *core::Node) { return; }
+    note_focus(n, false);
     let obj: *u8 = { rt::msg_id(notification, rt::sel(#str_ptr("object\0"))) };
     if obj == (0 as *u8) { return; }
     sync_from_native(n, obj);
