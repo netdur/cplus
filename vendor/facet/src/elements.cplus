@@ -752,6 +752,9 @@ fn tabs(
     bar_text_color: vocab::Color = vocab::Color::clear(),
     selected_tab_color: vocab::Color = vocab::Color::clear(),
     unselected_tab_color: vocab::Color = vocab::Color::clear(),
+    selected_index: i64 = 0 as i64,
+    on_tab_changed: fn(*u8, *u8) = props::no_handler,
+    on_tab_changed_ctx: *u8 = 0 as *u8,
 ) -> core::Node {
     return m_tabs::tabs(
         key: key,
@@ -760,6 +763,9 @@ fn tabs(
         bar_text_color: bar_text_color,
         selected_tab_color: selected_tab_color,
         unselected_tab_color: unselected_tab_color,
+        selected_index: selected_index,
+        on_tab_changed: on_tab_changed,
+        on_tab_changed_ctx: on_tab_changed_ctx,
     );
 }
 

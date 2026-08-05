@@ -22,6 +22,7 @@ const P_BAR_BACKGROUND_COLOR: u64 = 2u64;
 const P_BAR_TEXT_COLOR: u64 = 4u64;
 const P_SELECTED_TAB_COLOR: u64 = 8u64;
 const P_UNSELECTED_TAB_COLOR: u64 = 16u64;
+const P_SELECTED_INDEX: u64 = 32u64;
 
 // ---- build -------------------------------------------------------------
 // Typed by the parameter list: a verb another control owns is not a
@@ -34,6 +35,9 @@ fn tabs(
     bar_text_color: vocab::Color = vocab::Color::clear(),
     selected_tab_color: vocab::Color = vocab::Color::clear(),
     unselected_tab_color: vocab::Color = vocab::Color::clear(),
+    selected_index: i64 = 0 as i64,
+    on_tab_changed: fn(*u8, *u8) = props::no_handler,
+    on_tab_changed_ctx: *u8 = 0 as *u8,
 ) -> core::Node {
     var p: props::TabsProps = props::TabsProps::new();
     p.bar_background = bar_background;
@@ -41,6 +45,9 @@ fn tabs(
     p.bar_text_color = bar_text_color;
     p.selected_tab_color = selected_tab_color;
     p.unselected_tab_color = unselected_tab_color;
+    p.selected_index = selected_index;
+    p.on_tab_changed = on_tab_changed;
+    p.on_tab_changed_ctx = on_tab_changed_ctx;
     return match box::new::[props::TabsProps](p) {
         option::Option[box::Box[props::TabsProps]]::Some(b) =>
             core::node_with(key, props::K_TABS, b.into_raw(), props::release_tabs_props),
@@ -145,6 +152,27 @@ impl Tabs {
         let p: *props::TabsProps = this._props();
         if p == (0 as *props::TabsProps) { return vocab::Color::clear(); }
         return { (*p).unselected_tab_color };
+    }
+
+    // facet's own word. MAUI's TabbedPage describes a STRIP and says
+    // nothing about which tab is showing — `CurrentPage` lives on
+    // MultiPage<T>, outside the manifest slice. So the five colour
+    // verbs decorated a control nothing could drive.
+    //
+    // An agent has no hands, and a tab strip it cannot switch is a
+    // strip it cannot use. This is that switch.
+    fn set_selected_index(this, v: i64) -> Tabs {
+        let p: *props::TabsProps = this._props();
+        if p == (0 as *props::TabsProps) { return this; }
+        { (*p).selected_index = v };
+        core::touch(this._p, P_SELECTED_INDEX);
+        return this;
+    }
+
+    fn selected_index(this) -> i64 {
+        let p: *props::TabsProps = this._props();
+        if p == (0 as *props::TabsProps) { return 0 as i64; }
+        return { (*p).selected_index };
     }
 
     // The flex node this cursor points at. The DOM division, and the

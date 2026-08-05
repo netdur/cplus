@@ -2157,26 +2157,228 @@ fn apply_time_picker(v: *u8, n: *core::Node, dirty: u64) {
 // addressable node one, and inventing a second title prop for the same node
 // would be the drift this package is written against.
 
+// A tab strip of facet's OWN, and the reason is layout rather than colour.
+//
+// NSTabView's panes are NSTabViewItems it sizes itself, from its own content
+// rect. facet lays every node out with flex and pushes the frames onto the
+// views, so the two wrote the same frame and the walk — running last — won.
+// That is not a tie facet can win: NSTabView is NOT flipped, so the walk's
+// top-left arithmetic measured every pane's y from the wrong edge; and flex
+// laid a pane out against the TABS node's box, which NSTabView had already
+// spent part of on a strip flex knew nothing about. A pane could not be in the
+// right place under either reading.
+//
+// So the strip is facet's: a row of buttons in the node's own PADDING, which
+// is how flex is told the strip exists. `table` sets padding for its style and
+// a tree sets it for indentation — same mechanism, and the panes below it are
+// laid out by the ordinary walk into an ordinary flipped host.
+//
+// Two things follow that were not the goal and are worth as much:
+//
+//   - the five bar colours become ordinary drawing, because the strip is ours.
+//   - a pane is an ordinary subview, so `views::insert` loses its second
+//     special case and the menu tier's is the only one left.
+
+fn strip_height() -> f64 { return 28.0f64; }
+fn tab_strip_key() -> *u8 { return { 29072 as *u8 }; }
+fn tab_node_key() -> *u8 { return { 29073 as *u8 }; }
+fn tab_index_key() -> *u8 { return { 29074 as *u8 }; }
+
 fn create_tabs(n: *core::Node) -> *u8 {
-    let tv: ak::TabView = ak::TabView::from_raw(rt::alloc_init(#str_ptr("NSTabView\0")));
-    return rt::retain(tv.as_view().raw());
+    let host: ak::View = akx::new_flipped_view(rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 });
+    let strip: ak::View = akx::new_flipped_view(
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: strip_height() });
+    // Width tracks the host, top edge fixed: WidthSizable (2) | MaxYMargin (32).
+    { rt::msg_void_u64(strip.raw(), rt::sel(#str_ptr("setAutoresizingMask:\0")), 34 as u64) };
+    host.add_subview(strip);
+    synth::set_associated(host.raw(), tab_strip_key(), strip.raw());
+    return rt::retain(host.raw());
 }
 
-fn apply_tabs(v: *u8, n: *core::Node, dirty: u64) {
-    // The five bar props (bar_background, bar_background_color, bar_text_color,
-    // selected_tab_color, unselected_tab_color) have no NSTabView equivalent —
-    // the tab strip is system-drawn. Recorded in MANIFEST.md.
+fn tab_strip_of(v: *u8) -> *u8 { return { synth::get_associated(v, tab_strip_key()) }; }
+
+// A pane arrives. It is an ordinary subview now — the strip gains a button for
+// it, and the LABEL is still its key, because a tab needs a title and every
+// addressable node already has one.
+fn tabs_add_pane(host: *u8, pane: *u8, label: str) {
+    ak::View::from_raw(host).add_subview(ak::View::from_raw(pane));
+    let n: *core::Node = { synth::get_associated(host, tab_node_key()) as *core::Node };
+    if n != (0 as *core::Node) { rebuild_tabs(host, n); }
     return;
 }
 
-// Wrap `pane` as a tab of `host`, labelled `label`. Called from views::insert
-// when the host is an NSTabView.
-fn tabs_add_pane(host: *u8, pane: *u8, label: str) {
-    let tv: ak::TabView = ak::TabView::from_raw(host);
-    let item: ak::TabViewItem = ak::TabViewItem::new(0 as *u8);
-    item.set_view(ak::View::from_raw(pane));
-    if label != "" { item.set_label(label); }
-    tv.add_tab_view_item(item);
+// The user picked a tab. `selected_index` is written BEFORE the handler, the
+// same rule every other read follows.
+fn tab_clicked(sender: *u8, ctx: *u8) {
+    let n: *core::Node = ctx as *core::Node;
+    let p: *props::TabsProps = props_of(n, props::K_TABS) as *props::TabsProps;
+    if p == (0 as *props::TabsProps) { return; }
+    let at: i64 = { synth::get_associated(sender, tab_index_key()) as i64 } - (1 as i64);
+    if at < (0 as i64) { return; }
+    { (*p).selected_index = at };
+    let v: *u8 = core::view_of(n);
+    if v != (0 as *u8) {
+        show_selected_pane(n, at);
+        style_tabs(v, p, at);
+    }
+    let h: fn(*u8, *u8) = { (*p).on_tab_changed };
+    if h != props::no_handler { h(sender, { (*p).on_tab_changed_ctx }); }
+    return;
+}
+
+// One button per pane, rebuilt when the panes change. A tab strip is short and
+// a diff would be more code than the rebuild it replaces — the same call
+// `style_popup_items` makes about a popup's menu.
+fn rebuild_tabs(v: *u8, n: *core::Node) {
+    let strip: *u8 = tab_strip_of(v);
+    if strip == (0 as *u8) { return; }
+    let subs: vec::Vec[ak::View] = ak::View::from_raw(strip).subviews();
+    var i: usize = 0 as usize;
+    while i < subs.count() {
+        match subs.at_ptr(i) {
+            option::Option[*ak::View]::Some(b) => {
+                { rt::msg_void({ (*b).raw() }, rt::sel(#str_ptr("removeFromSuperview\0"))) };
+            }
+            option::Option[*ak::View]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    let count: usize = core::child_count_of(n);
+    if count == (0 as usize) { return; }
+    var x: f64 = 0.0f64;
+    let each: f64 = tab_width(v, count);
+    var k: usize = 0 as usize;
+    while k < count {
+        match core::child_of(n, k) {
+            option::Option[*core::Node]::Some(c) => {
+                let b: ak::Button = ak::Button::from_raw(rt::alloc_init(#str_ptr("NSButton\0")));
+                b.set_button_type(ak::ButtonType::MomentaryChange);
+                b.set_bordered(false);
+                b.set_title({ (*c).key() });
+                let bv: ak::View = b.as_view();
+                bv.set_frame(rt::Rect { x: x, y: 0.0f64, w: each, h: strip_height() });
+                // One-based, so 0 can mean "no index": the slot is a pointer.
+                synth::set_associated(bv.raw(), tab_index_key(), { (k +% (1 as usize)) as *u8 });
+                let f: fn(*u8, *u8) = tab_clicked;
+                akx::set_control_action_ctx(b.as_control(), f, n as *u8);
+                ak::View::from_raw(strip).add_subview(bv);
+                x = x + each;
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        k = k +% (1 as usize);
+    }
+    let p: *props::TabsProps = props_of(n, props::K_TABS) as *props::TabsProps;
+    if p != (0 as *props::TabsProps) {
+        show_selected_pane(n, { (*p).selected_index });
+        style_tabs(v, p, { (*p).selected_index });
+    }
+    return;
+}
+
+fn tab_width(v: *u8, count: usize) -> f64 {
+    let box: rt::Rect = { rt::msg_rect(v, rt::sel(#str_ptr("bounds\0"))) };
+    if box.w <= 0.0f64 || count == (0 as usize) { return 80.0f64; }
+    return box.w / (count as f64);
+}
+
+// Only the selected pane is IN the layout. `display: none` is flex's own word
+// for it, so the showing pane gets the whole box below the strip — hiding the
+// others with `hidden` would leave them stacked in the layout and give the
+// selected one a fraction of the space.
+fn show_selected_pane(n: *core::Node, at: i64) {
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                if (i as i64) == at { { (*c).set_display(flex::Display::Flex) }; }
+                else { { (*c).set_display(flex::Display::None) }; }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// The five bar colours, which are ordinary drawing now that the strip is ours.
+fn style_tabs(v: *u8, p: *props::TabsProps, at: i64) {
+    let strip: *u8 = tab_strip_of(v);
+    if strip == (0 as *u8) { return; }
+    let back: vocab::Color = bar_color(p);
+    if back.is_set() {
+        let sv: ak::View = ak::View::from_raw(strip);
+        sv.set_wants_layer(true);
+        sv.layer().set_background_color(paint::ns_color(back).c_g_color());
+    }
+    let subs: vec::Vec[ak::View] = ak::View::from_raw(strip).subviews();
+    var i: usize = 0 as usize;
+    while i < subs.count() {
+        match subs.at_ptr(i) {
+            option::Option[*ak::View]::Some(bv) => {
+                let raw: *u8 = { (*bv).raw() };
+                let idx: i64 = { synth::get_associated(raw, tab_index_key()) as i64 } - (1 as i64);
+                let fill: vocab::Color = tab_fill(p, idx == at);
+                if fill.is_set() {
+                    { (*bv).set_wants_layer(true) };
+                    { (*bv).layer().set_background_color(paint::ns_color(fill).c_g_color()) };
+                }
+                let ink: vocab::Color = { (*p).bar_text_color };
+                if ink.is_set() {
+                    let b: ak::Button = ak::Button::from_raw(raw);
+                    let a: *u8 = paint::attributed(b.title().view(),
+                        paint::rich_attributes(option::Option[ak::Font]::None, ink, 0.0f64, 0.0f64,
+                                               option::Option[vocab::TextAlign]::None,
+                                               vocab::TextDecoration::None));
+                    if a != (0 as *u8) {
+                        { rt::msg_void_id(raw, rt::sel(#str_ptr("setAttributedTitle:\0")), a) };
+                        rt::release(a);
+                    }
+                }
+            }
+            option::Option[*ak::View]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// `BarBackground` is a Brush and `BarBackgroundColor` a Color — MAUI carries
+// both and the Brush is the newer of the two, so it wins where it is set.
+fn bar_color(p: *props::TabsProps) -> vocab::Color {
+    let b: vocab::Brush = { (*p).bar_background };
+    // A brush is a gradient or a solid, and a strip's background takes its
+    // START either way: `apply_background` in paint.cplus makes the same
+    // reduction, because a layer's background is one colour.
+    if { b.start }.is_set() { return { b.start }; }
+    return { (*p).bar_background_color };
+}
+
+fn tab_fill(p: *props::TabsProps, selected: bool) -> vocab::Color {
+    if selected { return { (*p).selected_tab_color }; }
+    return { (*p).unselected_tab_color };
+}
+
+fn apply_tabs(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::TabsProps = props_of(n, props::K_TABS) as *props::TabsProps;
+    if p == (0 as *props::TabsProps) { return; }
+    // The node pointer is re-associated every time: a node detached and
+    // re-attached under the same view has a new address.
+    synth::set_associated(v, tab_node_key(), n as *u8);
+    // The strip lives in the node's PADDING, which is how flex is told it is
+    // there. Without this a pane is laid out over the strip, which is the shape
+    // of the bug NSTabView had from the other direction.
+    if dirty == paint::all_bits() {
+        { (*n).set_padding(flex::Edge::Top, flex::StyleLength::points(strip_height())) };
+    }
+    if (dirty & tabs::P_SELECTED_INDEX) != (0 as u64) {
+        show_selected_pane(n, { (*p).selected_index });
+    }
+    let colours: u64 = tabs::P_BAR_BACKGROUND | tabs::P_BAR_BACKGROUND_COLOR
+        | tabs::P_BAR_TEXT_COLOR | tabs::P_SELECTED_TAB_COLOR
+        | tabs::P_UNSELECTED_TAB_COLOR | tabs::P_SELECTED_INDEX;
+    if (dirty & colours) != (0 as u64) { style_tabs(v, p, { (*p).selected_index }); }
     return;
 }
 

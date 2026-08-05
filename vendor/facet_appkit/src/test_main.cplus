@@ -804,22 +804,38 @@ fn a_time_is_an_offset_into_a_day() {
 }
 
 #[test]
-fn a_tab_pane_becomes_a_tab_view_item_not_a_subview() {
-    // NSTabView's children are NSTabViewItems. The pane's LABEL is its key,
-    // because a tab needs a title and every addressable node already has one —
-    // a second title prop for the same node would be drift.
+fn a_tab_pane_is_an_ordinary_subview_and_gains_a_tab_for_it() {
+    // NSTabView's panes were NSTabViewItems it sized itself, and facet lays
+    // every node out with flex — so the two wrote the same frame and neither
+    // reading put a pane in the right place. The strip is facet's own now, so a
+    // pane is an ordinary subview and `views::insert` lost its second special
+    // case.
+    backend::install();
     var t: core::Node = tabs::tabs(key: "tabs");
-    let host: *u8 = views::create(0 as *u8, #addr_of(t));
     var pane: core::Node = core::column(core::Builder::new(), key: "Settings");
-    let child: *u8 = views::create(0 as *u8, #addr_of(pane));
+    t.add_child(pane);
+    let p: *core::Node = #addr_of(t);
+    // `create` binds the node onto the host, which is what lets the strip be
+    // rebuilt when a pane arrives.
+    let host: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, host, views::view_release);
+    let child: *u8 = views::create(0 as *u8, match_child(p, 0 as usize));
+    core::set_view(match_child(p, 0 as usize), child, views::view_release);
     views::insert(0 as *u8, host, child, 0 as usize);
-    let tv: ak::TabView = ak::TabView::from_raw(host);
-    assert tv.number_of_tab_view_items() == (1 as i64);
-    let item: ak::TabViewItem = tv.tab_view_item_at_index(0 as i64);
-    assert item.label().view() == "Settings";
-    // ...and it did NOT also land as a subview of the tab view itself.
-    views::view_release(child);
-    views::view_release(host);
+    // The pane is a subview of the host, not an item of anything.
+    assert { rt::msg_i8_id(child, rt::sel(#str_ptr("isDescendantOf:\0")), host) } != (0 as i8);
+    // And the strip gained a button whose title is the pane's KEY, because a
+    // tab needs a title and every addressable node already has one.
+    let strip: *u8 = controls::tab_strip_of(host);
+    assert strip != (0 as *u8);
+    let tabs_in: vec::Vec[ak::View] = ak::View::from_raw(strip).subviews();
+    assert tabs_in.count() == (1 as usize);
+    match tabs_in.at_ptr(0 as usize) {
+        option::Option[*ak::View]::Some(b) => {
+            assert ak::Button::from_raw({ (*b).raw() }).title().view() == "Settings";
+        }
+        option::Option[*ak::View]::None => { assert false; }
+    }
     return;
 }
 
@@ -5970,3 +5986,157 @@ fn key_at(v: vec::Vec[i64], i: usize) -> i64 {
         option::Option[i64]::None => 0 as i64,
     };
 }
+
+#[test]
+fn a_tab_strip_lives_in_the_nodes_padding_so_flex_knows_it_is_there() {
+    // The half that made NSTabView unworkable: flex laid a pane out against the
+    // TABS node's whole box, and the strip had already been spent out of it.
+    // Padding is how flex is TOLD — the same mechanism a table's style and a
+    // tree's indentation already use — so a pane starts below the strip and the
+    // ordinary walk places it.
+    backend::install();
+    var t: core::Node = tabs::tabs(key: "tabs2");
+    var pane: core::Node = core::column(core::Builder::new(), key: "Settings");
+    var row: core::Node = box_view::box(color: vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64), key: "r");
+    row.set_height(flex::StyleLength::points(20.0f64));
+    pane.add_child(row);
+    t.add_child(pane);
+    let p: *core::Node = #addr_of(t);
+    assert mount::mount(p);
+    let v: *u8 = core::view_of(p);
+    { rt::msg_void_rect(v, rt::sel(#str_ptr("setFrame:\0")),
+                        rt::Rect { x: 0.0f64, y: 0.0f64, w: 200.0f64, h: 200.0f64 }) };
+    geometry::relayout_root(p, 200.0f64, 200.0f64, 1.0f64);
+    // The pane begins BELOW the strip, in the node's own coordinates.
+    match core::child_of(p, 0 as usize) {
+        option::Option[*core::Node]::Some(c) => { assert { (*c).frame() }.top >= 28.0f64; }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    // And the host is FLIPPED, which NSTabView never was — the walk's top-left
+    // arithmetic measured every pane's y from the wrong edge on that one.
+    assert ak::View::from_raw(v).is_flipped();
+    mount::unmount(p);
+    return;
+}
+
+#[test]
+fn only_the_selected_tabs_pane_is_in_the_layout() {
+    // `hidden` would leave the others stacked in the layout and give the
+    // showing one a fraction of the space. `display: none` is flex's own word
+    // for out-of-layout, and it is what `switch_to` already uses.
+    backend::install();
+    var t: core::Node = tabs::tabs(key: "tabs3");
+    t.add_child(tab_pane("One"));
+    t.add_child(tab_pane("Two"));
+    let p: *core::Node = #addr_of(t);
+    assert mount::mount(p);
+    let v: *u8 = core::view_of(p);
+    { rt::msg_void_rect(v, rt::sel(#str_ptr("setFrame:\0")),
+                        rt::Rect { x: 0.0f64, y: 0.0f64, w: 200.0f64, h: 200.0f64 }) };
+    geometry::relayout_root(p, 200.0f64, 200.0f64, 1.0f64);
+    assert pane_height(p, 0 as usize) > 0.0f64;
+    assert pane_height(p, 1 as usize) == 0.0f64;
+    // Switching moves the whole box to the other pane.
+    core::clear_dirty(p);
+    match tabs::find("tabs3", within: p) {
+        option::Option[tabs::Tabs]::Some(h) => { let _x: tabs::Tabs = h.set_selected_index(1 as i64); }
+        option::Option[tabs::Tabs]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    geometry::relayout_root(p, 200.0f64, 200.0f64, 1.0f64);
+    assert pane_height(p, 0 as usize) == 0.0f64;
+    assert pane_height(p, 1 as usize) > 0.0f64;
+    mount::unmount(p);
+    return;
+}
+
+static TAB_CHANGES: i64 = 0 as i64;
+fn on_tab(sender: *u8, ctx: *u8) { TAB_CHANGES = TAB_CHANGES + (1 as i64); return; }
+
+#[test]
+fn clicking_a_tab_switches_it_and_reports_the_change() {
+    // An agent has no hands, and a tab strip it cannot switch is a strip it
+    // cannot use — `selected_index` is that switch, and MAUI declared no such
+    // verb because `CurrentPage` lives on a type outside the manifest slice.
+    backend::install();
+    TAB_CHANGES = 0 as i64;
+    let h: fn(*u8, *u8) = on_tab;
+    var t: core::Node = tabs::tabs(key: "tabs4", on_tab_changed: h);
+    t.add_child(tab_pane("One"));
+    t.add_child(tab_pane("Two"));
+    let p: *core::Node = #addr_of(t);
+    assert mount::mount(p);
+    let v: *u8 = core::view_of(p);
+    let strip: *u8 = controls::tab_strip_of(v);
+    let tabs_in: vec::Vec[ak::View] = ak::View::from_raw(strip).subviews();
+    assert tabs_in.count() == (2 as usize);
+    match tabs_in.at_ptr(1 as usize) {
+        option::Option[*ak::View]::Some(b) => { send_action({ (*b).raw() }); }
+        option::Option[*ak::View]::None => { assert false; }
+    }
+    assert TAB_CHANGES == (1 as i64);
+    match tabs::find("tabs4", within: p) {
+        option::Option[tabs::Tabs]::Some(x) => { assert x.selected_index() == (1 as i64); }
+        option::Option[tabs::Tabs]::None => { assert false; }
+    }
+    mount::unmount(p);
+    return;
+}
+
+#[test]
+fn the_five_bar_colours_reach_the_strip_facet_draws() {
+    // They were unreachable for one reason — NSTabView drew the strip — and it
+    // is not the reason they were recorded under. The strip is ours now.
+    backend::install();
+    var t: core::Node = tabs::tabs(key: "tabs5",
+        bar_background_color: vocab::Color::rgba(0.1f64, 0.1f64, 0.1f64),
+        bar_text_color: vocab::Color::rgba(1.0f64, 1.0f64, 1.0f64),
+        selected_tab_color: vocab::Color::rgba(0.0f64, 0.4f64, 0.9f64),
+        unselected_tab_color: vocab::Color::rgba(0.3f64, 0.3f64, 0.3f64));
+    t.add_child(tab_pane("One"));
+    t.add_child(tab_pane("Two"));
+    let p: *core::Node = #addr_of(t);
+    assert mount::mount(p);
+    let v: *u8 = core::view_of(p);
+    let strip: *u8 = controls::tab_strip_of(v);
+    assert ak::View::from_raw(strip).wants_layer();
+    assert { rt::msg_id(ak::View::from_raw(strip).layer().raw(),
+                        rt::sel(#str_ptr("backgroundColor\0"))) } != (0 as *u8);
+    let tabs_in: vec::Vec[ak::View] = ak::View::from_raw(strip).subviews();
+    // Both tabs are filled, and the selected one differently from the other.
+    match tabs_in.at_ptr(0 as usize) {
+        option::Option[*ak::View]::Some(b) => {
+            assert { (*b).wants_layer() };
+            // The text colour landed as an attributed title, because NSButton
+            // has no setTextColor:.
+            assert { rt::msg_id({ (*b).raw() }, rt::sel(#str_ptr("attributedTitle\0"))) } != (0 as *u8);
+        }
+        option::Option[*ak::View]::None => { assert false; }
+    }
+    mount::unmount(p);
+    return;
+}
+
+fn tab_pane(key: str) -> core::Node {
+    var pane: core::Node = core::column(core::Builder::new(), key: key);
+    var row: core::Node = box_view::box(color: vocab::Color::rgba(0.5f64, 0.5f64, 0.5f64));
+    row.set_height(flex::StyleLength::points(20.0f64));
+    pane.add_child(row);
+    return pane;
+}
+
+fn pane_height(p: *core::Node, i: usize) -> f64 {
+    match core::child_of(p, i) {
+        option::Option[*core::Node]::Some(c) => { return { (*c).frame() }.height; }
+        option::Option[*core::Node]::None => { return -1.0f64; }
+    }
+    return -1.0f64;
+}
+
+fn match_child(p: *core::Node, i: usize) -> *core::Node {
+    return match core::child_of(p, i) {
+        option::Option[*core::Node]::Some(c) => c,
+        option::Option[*core::Node]::None => 0 as *core::Node,
+    };
+}
+

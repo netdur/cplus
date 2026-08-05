@@ -1599,6 +1599,9 @@ struct TabsProps {
     bar_text_color: vocab::Color,    // TabbedPage.BarTextColor
     selected_tab_color: vocab::Color,    // TabbedPage.SelectedTabColor
     unselected_tab_color: vocab::Color,    // TabbedPage.UnselectedTabColor
+    selected_index: i64,    // facet — which tab is showing
+    on_tab_changed: fn(*u8, *u8),    // facet — the user picked another tab
+    opaque on_tab_changed_ctx: *u8,
 }
 
 impl TabsProps {
@@ -1609,6 +1612,9 @@ impl TabsProps {
             bar_text_color: vocab::Color::clear(),
             selected_tab_color: vocab::Color::clear(),
             unselected_tab_color: vocab::Color::clear(),
+            selected_index: 0 as i64,
+            on_tab_changed: no_handler,
+            on_tab_changed_ctx: 0 as *u8,
         };
     }
 }

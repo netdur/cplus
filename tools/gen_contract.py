@@ -1952,6 +1952,24 @@ ROW_SOURCE_FIELDS = [
 ]
 
 
+# facet's own words on `tabs`, and the reason they are needed is the reason
+# the five colour verbs were unreachable: MAUI's TabbedPage describes a STRIP
+# and says nothing about which tab is showing — `CurrentPage` lives on
+# MultiPage<T>, which is outside the manifest slice Stage 1 read. So facet had
+# five verbs decorating a control nothing could drive.
+#
+# An agent has no hands, and a tab strip it cannot switch is a strip it cannot
+# use. `selected_index` is that switch, and `on_tab_changed` is how an
+# application learns the user used it.
+TAB_SOURCE = ("tabs",)
+
+TAB_SOURCE_FIELDS = [
+    ("selected_index", "i64", "0 as i64", "facet — which tab is showing"),
+    ("on_tab_changed", "fn(*u8, *u8)", "no_handler", "facet — the user picked another tab"),
+    ("opaque on_tab_changed_ctx", "*u8", "0 as *u8", None),
+]
+
+
 def _fields_for(rows):
     """(field lines, init lines) for the prop/owned/event/command rows of one
     struct. Each row carries its own provenance, so the comment is per-field."""
@@ -2047,6 +2065,11 @@ def emit_props(rows_by_control, by_type):
         f2, i2 = _fields_for(own)
         fields += f2
         inits += i2
+        if mod in TAB_SOURCE:
+            for f, t, zero, why in TAB_SOURCE_FIELDS:
+                fields.append(f"    {f}: {t},"
+                              + (f"    // {why}\n" if why else "\n"))
+                inits.append(f"            {f.replace('opaque ', '')}: {zero},\n")
         if mod in ROW_SOURCE:
             for f, t, zero, why in ROW_SOURCE_FIELDS:
                 fields.append(f"    {f}: {t},"
@@ -2241,6 +2264,14 @@ def ctor_params(maui, writes, reads, events):
     for verb, _m, _s, _p in events:
         params.append((verb, "fn(*u8, *u8)", "props::no_handler"))
         params.append((verb + "_ctx", "*u8", "0 as *u8"))
+    # facet's own words on `tabs` are a WRITE and an EVENT like any other, so
+    # they are namable at construction like any other. The row-source fields are
+    # not: a count and a builder are set through the cursor because a list is
+    # filled after it is described, not while.
+    if MODULE.get(maui) in TAB_SOURCE:
+        params.append(("selected_index", "i64", "0 as i64"))
+        params.append(("on_tab_changed", "fn(*u8, *u8)", "props::no_handler"))
+        params.append(("on_tab_changed_ctx", "*u8", "0 as *u8"))
     return params
 
 
@@ -2281,7 +2312,8 @@ def emit_control(maui, merged):
             + [f.upper() for f, _t, _m, _s, _p in owned]
             + [v.upper() for v, _m, _s, _b in commands]
             + (["COUNT", "ROW", "GROUP_COUNT", "GROUP", "SELECTED_INDEX", "REORDER"]
-               if mod in ROW_SOURCE else []))
+               if mod in ROW_SOURCE else [])
+            + (["SELECTED_INDEX"] if mod in TAB_SOURCE else []))
     for i, b in enumerate(bits):
         o.append(f"const P_{b}: u64 = {1 << i}u64;\n")
     o.append("\n")
@@ -2307,6 +2339,10 @@ def emit_control(maui, merged):
     for verb, member, src, path in events:
         o.append(f"    p.{path} = {verb};\n")
         o.append(f"    p.{path}_ctx = {verb}_ctx;\n")
+    if mod in TAB_SOURCE:
+        o.append("    p.selected_index = selected_index;\n")
+        o.append("    p.on_tab_changed = on_tab_changed;\n")
+        o.append("    p.on_tab_changed_ctx = on_tab_changed_ctx;\n")
     o.append(f"    return match box::new::[props::{props}](p) {{\n")
     o.append(f"        option::Option[box::Box[props::{props}]]::Some(b) =>\n")
     o.append(f"            core::node_with(key, props::K_{up}, b.into_raw(), props::release_{mod}_props),\n")
@@ -2409,6 +2445,26 @@ def emit_control(maui, merged):
             o.append(f"        {{ (*p).{paths[f]} = {rhs} }};\n")
         o.append(f"        core::touch(this._p, P_{verb.upper()});\n")
         o.append("        return this;\n    }\n")
+
+    # ---- facet's own: which tab is showing
+    if mod in TAB_SOURCE:
+        o.append("\n    // facet's own word. MAUI's TabbedPage describes a STRIP and says\n")
+        o.append("    // nothing about which tab is showing — `CurrentPage` lives on\n")
+        o.append("    // MultiPage<T>, outside the manifest slice. So the five colour\n")
+        o.append("    // verbs decorated a control nothing could drive.\n")
+        o.append("    //\n")
+        o.append("    // An agent has no hands, and a tab strip it cannot switch is a\n")
+        o.append("    // strip it cannot use. This is that switch.\n")
+        o.append(f"    fn set_selected_index(this, v: i64) -> {cur} {{\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return this; }}\n")
+        o.append("        { (*p).selected_index = v };\n")
+        o.append("        core::touch(this._p, P_SELECTED_INDEX);\n")
+        o.append("        return this;\n    }\n")
+        o.append("\n    fn selected_index(this) -> i64 {\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return 0 as i64; }}\n")
+        o.append("        return { (*p).selected_index };\n    }\n")
 
     # ---- facet's own: a row count plus a row builder
     if mod in ROW_SOURCE:
@@ -2764,6 +2820,10 @@ def emit_manifest(rows_by_control):
                 o.append(f"| `{name}` | shared band | {src}.{member} |\n")
             elif kind == "skip":
                 skipped.append((mod, src, member, name, detail))
+        if mod in TAB_SOURCE:
+            o.append("| `set_selected_index` / `selected_index()` | i64 | **facet's own** |\n")
+            o.append("| `on_tab_changed` | callback + ctx | **facet's own** |\n")
+            total += 2
         if mod in ROW_SOURCE:
             o.append("| `set_count` / `count()` | usize | **facet's own** |\n")
             o.append("| `set_row(_:ctx:)` / `build_row(at:)` | fn(*u8, usize) -> Node "
@@ -3071,6 +3131,7 @@ def check(rows_by_control, by_type):
                 if k and (k[0] == "owned" or k[0] == "command"
                           or (k[0] == "prop" and band == "writes")))
         n += 6 if MODULE[maui] in ROW_SOURCE else 0
+        n += 1 if MODULE[maui] in TAB_SOURCE else 0
         if n > 48:
             problems.append(f"{MODULE[maui]}: {n} dirty bits, and props::C_* owns "
                             "bits 48 and up.")

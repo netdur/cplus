@@ -392,7 +392,10 @@ fn insert(ctx: *u8, host: *u8, child: *u8, slot: usize) {
     // last) kind whose native child model is not "add a subview". The pane's
     // label is its key, because a tab needs a title and every addressable node
     // already has one.
-    if is_kind_of(host, #str_ptr("NSTabView\0")) {
+    // A tabs host inserts a pane AND gains a tab for it. The pane is an
+    // ordinary subview — the strip is facet's own now, so this is a hook rather
+    // than a different child model.
+    if controls::tab_strip_of(host) != (0 as *u8) {
         controls::tabs_add_pane(host, child,
             ak::Accessibility::from_raw(child).accessibility_identifier().view());
         return;

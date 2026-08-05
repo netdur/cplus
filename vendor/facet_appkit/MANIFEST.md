@@ -14,10 +14,10 @@ Read that precisely. It does not say every verb works on a Mac — it says every
 verb has an ANSWER, and the answer is checkable:
 
 ```
-323 declared prop/command bits    258 live, 23 host-rendered, 5 derived,
-                                    4 modifier, 8 create-only, 25 decided,
+324 declared prop/command bits    264 live, 23 host-rendered, 5 derived,
+                                    4 modifier, 8 create-only, 20 decided,
                                     0 no carrier, 0 absent
- 80 declared handlers              78 wired, 2 decided, 0 never fire
+ 81 declared handlers              79 wired, 2 decided, 0 never fire
 ```
 
 `python3 tools/verb_coverage.py --check` is the gate and it fails on a verb that
@@ -120,11 +120,6 @@ unrecorded verb too, which is this file's oldest claim finally enforced.
 ```cannot-ledger
 toggle.off_color                ACHROMATIC: a hue rotation has nothing to rotate
 toggle.thumb_color              as toggle.off_color — the thumb is white
-tabs.bar_background             NSTabView draws its own strip, no colour API
-tabs.bar_background_color       NSTabView draws its own strip
-tabs.bar_text_color             NSTabView draws its own strip
-tabs.selected_tab_color         NSTabView draws its own strip
-tabs.unselected_tab_color       NSTabView draws its own strip
 swipeable.reveal_threshold      a CONTINUOUS distance; a click has no partial state
 swipeable.observe_swipe_changing  as reveal_threshold — nothing changes between the two edges
 text_field.keyboard             soft-keyboard layout; a hardware keyboard has one
@@ -333,7 +328,7 @@ What is left, and each for the reason that makes the rest work:
 | Verb | Why not |
 |---|---|
 | `toggle(off_color:)` `thumb_color:` | ACHROMATIC. The off track is grey and the thumb is white, and a hue rotation has nothing to rotate. |
-| `tabs(bar_background:)` and the other four | A filter over an NSTabView recolours its CONTENT as well — the strip is not separately addressable. These need a tab strip of facet's own, which would stop `tabs` being an NSTabView; that is a design call rather than a gap, and it is not made here. |
+
 
 ### `radio(group:)` IS honoured, by name
 
@@ -361,12 +356,43 @@ per layer, so the **largest** of the four is used. Per-corner radii would
 need a mask layer per view, which is real cost for a case no consumer has
 asked for yet.
 
-### The tab strip's colours
+### The tab strip is facet's own, and the reason is LAYOUT
 
-`tabs(bar_background:)` `bar_background_color:` `bar_text_color:`
-`selected_tab_color:` `unselected_tab_color:` are not honoured. NSTabView
-draws its own strip and offers no colour API — the same reason as the other
-system-drawn controls above.
+`tabs` was an NSTabView with a TabViewItem per pane, and the five bar colours
+were recorded against it: NSTabView draws its own strip and offers no colour
+API. That was true and it was not the problem.
+
+The problem was that NSTabView sizes its panes itself, from its own content
+rect, while facet lays every node out with flex and pushes the frames onto the
+views. Both wrote the same frame. The walk ran last and won — and it could not
+win usefully, because:
+
+- NSTabView is **not flipped**, and the walk's top-left arithmetic measured
+  every pane's y from the wrong edge.
+- flex laid a pane out against the TABS node's whole box, and NSTabView had
+  already spent part of that box on a strip flex knew nothing about.
+
+There is no reconciliation there: two layout systems each believe they own the
+pane. So the strip is facet's — a row of buttons living in the node's own
+PADDING, which is how flex is told the strip exists. `table` sets padding for
+its style and a tree sets it for indentation; same mechanism.
+
+Only the selected pane is IN the layout (`display: none` for the rest, which is
+flex's own word for it and what `switch_to` already uses) so the showing pane
+gets the whole box below the strip.
+
+Two things followed that were not the goal:
+
+- the five bar colours became ordinary drawing.
+- a pane is an ordinary subview, so `views::insert` lost its second special
+  case and the menu tier's is the only one left.
+
+`tabs.selected_index` and `on_tab_changed` are facet's own words, and they had
+to be: MAUI's TabbedPage describes a STRIP and says nothing about which tab is
+showing — `CurrentPage` lives on `MultiPage<T>`, outside the manifest slice
+Stage 1 read. So five verbs decorated a control nothing could drive, and an
+agent has no hands: a tab strip it cannot switch is a strip it cannot use.
+
 
 ### `destructive:` is a red title
 
