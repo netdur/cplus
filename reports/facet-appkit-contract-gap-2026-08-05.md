@@ -174,16 +174,29 @@ materialising path is the collection/table family, not the live list.
 ### 3d. Contract-side holes (not facet_appkit's to invent)
 
 Stage 4 closed the tier ledger at **57 implemented / 20 decided / 5
-deferred**. The five that remain share one cause: **facet never declared
-a carrier**.
+deferred**, and those counts still hold. The authority is guard 5b —
+`TIER_ROWS` in `tools/gen_contract.py` — not the prose in `stages/4.md`,
+which has drifted. Read off the guard, the five deferred rows are:
 
 | Deferred | Why backend cannot finish it |
 |---|---|
-| `TitleBar.LeadingContent` / `TrailingContent` / `Window.TitleBar` | AppKit has `NSTitlebarAccessoryViewController`; `Chrome` is a value struct and cannot hold a subtree |
-| `ModalPushing` / `ModalPopping` / `Page.NavigatingFrom` | lifecycle only has after-hooks (`on_attach` / `on_detach`); no before-hook |
+| `Page.ContainerArea` / `Page.IgnoresContainerArea` / `ContentPage.SafeAreaEdges` | `vocab::SafeArea` exists; only `scroll` takes one |
 | `Page.BackgroundImageSource` | shared band has Color/Brush, not image |
-| `Page.ContainerArea` / `IgnoresContainerArea` / `SafeAreaEdges` | `vocab::SafeArea` exists; only `scroll` takes one |
 | `Page.IconImageSource` | no carrier; macOS window icon is document-proxy, not arbitrary image |
+
+So the five rows reduce to **two carriers worth building** (a page safe
+area, a page background image) and one that is arguably decided rather
+than deferred (`IconImageSource` — the platform reason is already
+written next to it).
+
+**Two rows `stages/4.md` still lists as deferred are not.** They were
+closed after that note was last edited, and repeating them is the single
+biggest error the stage prose carries:
+
+| Listed as deferred | Actually |
+|---|---|
+| `TitleBar.LeadingContent` / `TrailingContent` / `Window.TitleBar` | **implemented** — `window_chrome::titlebar_leading` / `_trailing` are subtrees under a reserved `@` key, lifted into `NSTitlebarAccessoryViewController` (`window.cplus:804-833`, commit `ce765c5`, test at `test_main.cplus:2702`). `Chrome` stayed a value struct; the subtree rides a key instead. |
+| `ModalPushing` / `ModalPopping` / `Page.NavigatingFrom` | **not deferred debt.** `ModalPopping` and `PopCanceled` are implemented via `should_close`; `ModalPushing` and `NavigatingFrom` are recorded **cannot** — the application initiates every push and route change facet has, so there is nothing to observe that the caller does not already know. |
 
 Also from the contract manifest itself:
 
@@ -268,11 +281,16 @@ gate is green.
 
 ### P1 — contract carriers (unlocks Stage 4's last five)
 
-1. Title-bar leading/trailing **subtree slots** (or grow `Chrome` into a
-   tree-bearing type).
-2. Safe-area on more than `scroll` (page / shared band).
-3. Optional: before-navigation hooks if any consumer needs cancelable
-   transitions.
+Smaller than it looked. The title-bar slots are already built, and the
+before-navigation rows are decided, not owed:
+
+1. **Safe area on more than `scroll`** (page / shared band) — 3 of the 5
+   deferred rows, and the only one with a real consumer story.
+2. **Page background image** — 1 row; the shared band carries a Color and
+   a Brush, and an image is a third thing.
+3. `Page.IconImageSource` — decide it rather than build it. A macOS window
+   icon is the document-proxy icon of a file, so the honest move is to
+   flip the row to `cannot` with that reason.
 
 ### P2 — quality / scale
 
