@@ -7667,3 +7667,68 @@ fn the_find_family_carries_the_tag_that_selects_the_operation() {
     assert { rt::msg_i64(b, rt::sel(#str_ptr("tag\0"))) } == (12 as i64);
     return;
 }
+
+#[test]
+fn a_collapsed_split_pane_comes_back_where_it_was() {
+    // `SplitProps` promised "the position is remembered" in a comment and had
+    // no field to remember it in: collapse wrote 0, the divider's own resize
+    // notification wrote that 0 into `position`, and expand restored 0.
+    backend::install();
+    var n: core::Node = split::split(core::Builder::new(), key: "sp",
+                                     position: 180.0f64);
+    let p: *core::Node = #addr_of(n);
+    match split::from(p) {
+        option::Option[split::Split]::Some(s) => {
+            assert s.position() > 179.0f64;
+            let c: split::Split = s.collapse(split::Pane::Leading);
+            assert c.is_collapsed(split::Pane::Leading);
+            let e: split::Split = c.expand(split::Pane::Leading);
+            assert e.is_collapsed(split::Pane::Leading) == false;
+            // Back where the user left it, not at 0.
+            assert e.position() > 179.0f64;
+        }
+        option::Option[split::Split]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn the_drag_source_reports_both_ends_of_a_drag() {
+    // `can_drag` armed the source and `on_drop` fired at the destination, but
+    // the dragging node was never told its drag began or how it ended — both
+    // handlers were declared and referenced nowhere in the backend.
+    backend::install();
+    var n: core::Node = box_view::box(color: vocab::Color::rgba(0.0f64, 0.0f64, 1.0f64), key: "drg")
+        .gesture(can_drag: true);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v != (0 as *u8);
+    let cls: *u8 = synth::object_class(v);
+    assert synth::class_responds(cls, rt::sel(#str_ptr("draggingSession:willBeginAtPoint:\0"))) != (0 as i8);
+    assert synth::class_responds(cls, rt::sel(#str_ptr("draggingSession:endedAtPoint:operation:\0"))) != (0 as i8);
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn a_tree_reports_expansion_back_into_the_model() {
+    // Expansion was WRITE-ONLY: facet's `expanded` set drove the outline view
+    // and nothing drove it back, so a user clicking a disclosure triangle
+    // never reached the model and `Tree::restore()` replayed a stale set.
+    backend::install();
+    var troot: tree::TreeNode = tree::TreeNode::new("root", id: "root");
+    var n: core::Node = tree::tree(troot, key: "t");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v != (0 as *u8);
+    // Creating the tree registers FacetTreeSource, which is where the outline
+    // delegate's selectors live.
+    let cls: *u8 = rt::get_class(#str_ptr("FacetTreeSource\0"));
+    assert cls != (0 as *u8);
+    assert synth::class_responds(cls, rt::sel(#str_ptr("outlineViewItemDidExpand:\0"))) != (0 as i8);
+    assert synth::class_responds(cls, rt::sel(#str_ptr("outlineViewItemDidCollapse:\0"))) != (0 as i8);
+    // The half that already worked, asserted so the pair cannot drift apart.
+    assert synth::class_responds(cls, rt::sel(#str_ptr("outlineViewSelectionDidChange:\0"))) != (0 as i8);
+    views::view_release(v);
+    return;
+}

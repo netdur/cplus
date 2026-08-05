@@ -923,6 +923,11 @@ fn item_node_key() -> *u8 { return { 29035 as *u8 }; }
 struct TreeSource {
     opaque node: *core::Node,      // the facet tree node, for props
     opaque outline: *u8,
+    // True while `sync_expansion` is APPLYING the model to the outline view.
+    // AppKit answers each `expandItem:` with a DidExpand notification, and the
+    // write-back must not rewrite the model from its own application — for a
+    // collapse that would delete the entry that caused it.
+    syncing: bool,
 }
 
 fn tree_source_of(ov: *u8) -> *TreeSource {
@@ -1102,6 +1107,15 @@ fn tree_agent_class() -> *u8 {
                         tree_view_for_item_imp, #str_ptr("@@:@@@\0"));
     synth::add_method_v_1id(cls, rt::sel(#str_ptr("outlineViewSelectionDidChange:\0")),
                             tree_selection_changed_imp, #str_ptr("v@:@\0"));
+    // Expansion was WRITE-ONLY. facet's `expanded` set drove the outline view
+    // and nothing drove it back, so a user clicking a disclosure triangle
+    // never reached the model — and `Tree::restore()`, whose whole purpose is
+    // re-applying expansion after a rebuild, replayed a stale set. Selection
+    // already round-tripped, which made the asymmetry the loud part.
+    synth::add_method_v_1id(cls, rt::sel(#str_ptr("outlineViewItemDidExpand:\0")),
+                            tree_did_expand_imp, #str_ptr("v@:@\0"));
+    synth::add_method_v_1id(cls, rt::sel(#str_ptr("outlineViewItemDidCollapse:\0")),
+                            tree_did_collapse_imp, #str_ptr("v@:@\0"));
     synth::register_class_pair(cls);
     return cls;
 }
@@ -1123,6 +1137,56 @@ extern fn add_method_id_3id_x(cls: *u8, sel: *u8,
 // The selected row's IDENTITY, written back into the props before the handler
 // runs. `selected()` reads the props — the same rule the text controls follow —
 // so a handler that asks which row is selected gets the one that just was.
+// The two halves of the expansion write-back. Both read the notification's
+// `userInfo["NSObject"]`, which is the item that opened or closed.
+//
+// Guarded by `syncing`: `sync_expansion` calls `expandItem:` itself to apply
+// the model, and AppKit answers each of those with this notification. Without
+// the guard the model would be rewritten from its own application — harmless
+// for expand, but a collapse during a rebuild would delete the entry that
+// caused it.
+fn tree_notified_item(note: *u8) -> *u8 {
+    let info: *u8 = { rt::msg_id(note, rt::sel(#str_ptr("userInfo\0"))) };
+    if info == (0 as *u8) { return 0 as *u8; }
+    return { rt::msg_id_id(info, rt::sel(#str_ptr("objectForKey:\0")),
+                           bridge::nsstring("NSObject")) };
+}
+
+fn tree_expansion_changed(note: *u8, now_expanded: bool) {
+    let ov: *u8 = { rt::msg_id(note, rt::sel(#str_ptr("object\0"))) };
+    if ov == (0 as *u8) { return; }
+    let s: *TreeSource = tree_source_of(ov);
+    if s == (0 as *TreeSource) { return; }
+    if { (*s).syncing } { return; }
+    let item: *u8 = tree_notified_item(note);
+    if item == (0 as *u8) { return; }
+    let tn: *tree::TreeNode = unbox_item(item);
+    if tn == (0 as *tree::TreeNode) { return; }
+    let n: *core::Node = { (*s).node };
+    match tree::from(n) {
+        option::Option[tree::Tree]::Some(t) => {
+            let id: str = { (*tn).id.view() };
+            if now_expanded {
+                let _e: tree::Tree = t.expand(id);
+            } else {
+                let _c: tree::Tree = t.collapse(id);
+            }
+        }
+        option::Option[tree::Tree]::None => { }
+    }
+    return;
+}
+
+fn tree_did_expand_imp(self_obj: *u8, cmd: *u8, note: *u8) {
+    tree_expansion_changed(note, true);
+    return;
+}
+
+fn tree_did_collapse_imp(self_obj: *u8, cmd: *u8, note: *u8) {
+    tree_expansion_changed(note, false);
+    return;
+}
+
 fn tree_selection_changed_imp(self_obj: *u8, cmd: *u8, note: *u8) {
     let ov: *u8 = { rt::msg_id(note, rt::sel(#str_ptr("object\0"))) };
     if ov == (0 as *u8) { return; }
@@ -1217,7 +1281,7 @@ fn apply_recycling_tree(v: *u8, n: *core::Node, dirty: u64) {
     if ov == (0 as *u8) { return; }
     var s: *TreeSource = tree_source_of(ov);
     if s == (0 as *TreeSource) {
-        match box::new::[TreeSource](TreeSource { node: n, outline: ov }) {
+        match box::new::[TreeSource](TreeSource { node: n, outline: ov, syncing: false }) {
             option::Option[box::Box[TreeSource]]::Some(b) => {
                 s = { b.into_raw() } as *TreeSource;
                 synth::set_associated(ov, tree_source_key(), s as *u8);
@@ -1247,7 +1311,11 @@ fn apply_recycling_tree(v: *u8, n: *core::Node, dirty: u64) {
 fn sync_expansion(ov: *u8) {
     let p: *tree::TreeProps = props_for(ov);
     if p == (0 as *tree::TreeProps) { return; }
+    // Applying the model, so the write-back stands down for the duration.
+    let s: *TreeSource = tree_source_of(ov);
+    if s != (0 as *TreeSource) { { (*s).syncing = true }; }
     expand_walk(ov, p, { #addr_of((*p).root) }, true);
+    if s != (0 as *TreeSource) { { (*s).syncing = false }; }
     return;
 }
 

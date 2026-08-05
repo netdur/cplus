@@ -704,6 +704,11 @@ fn split_resized_imp(self_obj: *u8, cmd: *u8, note: *u8) {
     if n == (0 as *core::Node) { return; }
     let p: *split::SplitProps = split_props_of(n);
     if p == (0 as *split::SplitProps) { return; }
+    // A COLLAPSED pane's geometry is not a position the user chose. Writing it
+    // back overwrote `position` with the collapsed 0, and `expand` then had
+    // nothing to restore — the whole reason `saved_position` exists is that
+    // this notification fires during the collapse itself.
+    if { (*p).collapsed_leading } || { (*p).collapsed_trailing } { return; }
     let sv: *u8 = { rt::msg_id(note, rt::sel(#str_ptr("object\0"))) };
     if sv != (0 as *u8) {
         let s: ak::SplitView = ak::SplitView::from_raw(sv);

@@ -50,8 +50,14 @@ struct SplitProps {
     min_trailing: f64,
     // A pane collapsed to nothing. The position is remembered, so restoring
     // puts the divider back where the user left it.
+    //
+    // `saved_position` is what remembers it, and it is the field that sentence
+    // promised and did not have. Without it `collapse` wrote position 0, the
+    // divider's own resize notification wrote that 0 back into `position`, and
+    // `expand` then restored 0 — a pane that collapsed could not come back.
     collapsed_leading: bool,
     collapsed_trailing: bool,
+    saved_position: f64,
     on_move: fn(*u8, *u8),
     opaque ctx: *u8,
 }
@@ -67,6 +73,7 @@ impl SplitProps {
             min_trailing: 240.0f64,
             collapsed_leading: false,
             collapsed_trailing: false,
+            saved_position: 0.0f64,
             on_move: no_move,
             ctx: 0 as *u8,
         };
@@ -202,6 +209,22 @@ impl Split {
     fn _set_collapsed(this, pane: Pane, v: bool) -> Split {
         let p: *SplitProps = this._props();
         if p == (0 as *SplitProps) { return this; }
+        // Remember where the divider was BEFORE it goes to the edge, and put
+        // it back on the way out. Only on the transition — collapsing an
+        // already-collapsed pane must not overwrite the saved position with
+        // the collapsed one.
+        let was: bool = match pane {
+            Pane::Leading => { (*p).collapsed_leading }
+            Pane::Trailing => { (*p).collapsed_trailing }
+        };
+        if v && !was {
+            { (*p).saved_position = { (*p).position } };
+        }
+        if !v && was {
+            let back: f64 = { (*p).saved_position };
+            if back > 0.0f64 { { (*p).position = back }; }
+            core::touch(this._p, P_POSITION);
+        }
         match pane {
             Pane::Leading => { { (*p).collapsed_leading = v }; }
             Pane::Trailing => { { (*p).collapsed_trailing = v }; }

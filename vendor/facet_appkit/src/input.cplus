@@ -714,8 +714,42 @@ fn add_input_methods(cls: *u8) {
     synth::add_method_u64_1id_i64(cls,
         rt::sel(#str_ptr("draggingSession:sourceOperationMaskForDraggingContext:\0")),
         akx::drag_source_mask_imp, #str_ptr("Q@:@q\0"));
+    // The two ENDS of a drag, from the source's side. `can_drag` armed the
+    // source and `on_drop` fired at the destination, but the dragging node was
+    // never told its drag began or how it finished — both handlers were
+    // declared and referenced nowhere. The session's own two callbacks say it,
+    // and the delegate seam for them already existed (the mask IMP above is on
+    // the same protocol).
+    add_method_v_2id_point(cls,
+        rt::sel(#str_ptr("draggingSession:willBeginAtPoint:\0")),
+        imp_drag_session_began, #str_ptr("v@:@{CGPoint=dd}\0"));
+    add_method_v_2id_point_u64(cls,
+        rt::sel(#str_ptr("draggingSession:endedAtPoint:operation:\0")),
+        imp_drag_session_ended, #str_ptr("v@:@{CGPoint=dd}Q\0"));
     return;
 }
+
+fn imp_drag_session_began(self_obj: *u8, cmd: *u8, session: *u8, at: rt::Point) {
+    let g: *gestures::Gestures = gestures_of_view(self_obj);
+    if g == (0 as *gestures::Gestures) { return; }
+    let _took: bool = fire_of(self_obj, { (*g).on_drag_start });
+    return;
+}
+
+fn imp_drag_session_ended(self_obj: *u8, cmd: *u8, session: *u8, at: rt::Point, op: u64) {
+    let g: *gestures::Gestures = gestures_of_view(self_obj);
+    if g == (0 as *gestures::Gestures) { return; }
+    let _took: bool = fire_of(self_obj, { (*g).on_drop_completed });
+    return;
+}
+
+#[link_name = "class_addMethod"]
+extern fn add_method_v_2id_point(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, rt::Point),
+                                 types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn add_method_v_2id_point_u64(cls: *u8, sel: *u8,
+                                     imp: fn(*u8, *u8, *u8, rt::Point, u64),
+                                     types: *u8) -> i8;
 
 fn is_armed(v: *u8) -> bool {
     return { synth::get_associated(v, armed_key()) } != (0 as *u8);
