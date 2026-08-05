@@ -344,25 +344,60 @@ fn sync() {
 }
 
 fn sync_walk(n: *core::Node) {
+    let _absorbed: bool = sync_subtree(n);
+    return;
+}
+
+// Apply every dirty node, and route the ones that have no view of their own.
+//
+// A viewless node is not a node without an answer — it is a node whose answer
+// is DRAWN BY AN ANCESTOR. A `span` is a run inside its label's attributed
+// string; a `menu_item` is a row in its menu's NSMenu. Both are real, both are
+// settable, and the walk used to clear their bits and apply nothing, so
+// `span.set_text("x")` after mount reached the tree and never the screen —
+// silently, because a cleared bit looks exactly like a delivered one.
+//
+// The rule: a dirty node with a view applies itself; a dirty node WITHOUT one
+// makes its nearest backed ancestor re-apply. The ancestor re-applies WHOLE
+// (`core::touch_all`) because it cannot be told which of its own verbs the
+// child's change affects — a label reads its spans while rendering its text,
+// and there is no bit for "a run changed".
+//
+// Returns whether a viewless descendant changed and has not yet been absorbed
+// by a backed ancestor. The root absorbing nothing is correct: a viewless root
+// has no one to draw it, so there is nothing to re-apply.
+fn sync_subtree(n: *core::Node) -> bool {
+    let backed: bool = core::view_of(n) != (0 as *u8);
     let d: u64 = core::dirty_of(n);
+    var pending: bool = false;
     if d != (0 as u64) {
-        // A dirty node with no view has nothing to apply ONTO; the bits
-        // clear either way, or the walk revisits it forever.
-        if core::view_of(n) != (0 as *u8) {
-            let ap: fn(*u8, *core::Node) = RENDERER.apply;
-            if ap != (0 as fn(*u8, *core::Node)) { ap(RENDERER.ctx, n); }
-        }
+        if backed { apply_now(n); } else { pending = true; }
         core::clear_dirty(n);
     }
     var i: usize = 0 as usize;
     let count: usize = core::child_count_of(n);
     while i < count {
         match core::child_of(n, i) {
-            option::Option[*core::Node]::Some(c) => { sync_walk(c); }
+            // A BACKED child absorbs its own subtree's viewless changes, so
+            // this only ever carries what belongs to THIS host.
+            option::Option[*core::Node]::Some(c) => { if sync_subtree(c) { pending = true; } }
             option::Option[*core::Node]::None => { }
         }
         i = i +% (1 as usize);
     }
+    if backed && pending {
+        // Once per host per sync, however many of its runs changed.
+        core::touch_all(n);
+        apply_now(n);
+        core::clear_dirty(n);
+        return false;
+    }
+    return pending;
+}
+
+fn apply_now(n: *core::Node) {
+    let ap: fn(*u8, *core::Node) = RENDERER.apply;
+    if ap != (0 as fn(*u8, *core::Node)) { ap(RENDERER.ctx, n); }
     return;
 }
 

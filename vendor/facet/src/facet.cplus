@@ -237,6 +237,15 @@ fn touch(n: *Node, bit: u64) {
     return;
 }
 
+// Every bit at once: "re-read this node whole". The sync walk raises it on a
+// host whose viewless child changed, because there is no bit for "a run
+// changed" and the host is the only thing that can draw one. Not a setter's
+// tool — a setter names the verb it wrote.
+fn touch_all(n: *Node) {
+    touch(n, 18446744073709551615u64);
+    return;
+}
+
 // Backend/mount door: pair the native view with its release. Symmetric with
 // `attach`'s (payload, release) — see M1 on the struct.
 fn set_view(n: *Node, v: *u8, release: fn(*u8)) {
