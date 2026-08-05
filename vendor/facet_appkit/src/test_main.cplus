@@ -46,6 +46,7 @@ import "facet/context_menu_item" as context_menu_item;
 import "facet/span" as span;
 import "facet/refreshable" as refreshable;
 import "facet/swipeable" as swipeable;
+import "facet/swipe_item" as swipe_item;
 import "facet/list" as list;
 import "facet/tree" as tree;
 import "facet/menu" as menu;
@@ -923,20 +924,19 @@ fn a_labels_spans_become_one_attributed_string() {
 }
 
 #[test]
-fn a_decided_absent_kind_still_shows_its_content_and_says_nothing() {
-    // refreshable / swipeable / swipe_item have no macOS equivalent and
-    // MANIFEST.md records what to use instead. They are DECIDED, not missing —
-    // so they get a real backing view (their content renders exactly as it
-    // would have) and they must NOT take the unimplemented path, which warns.
-    // A warning for something already answered trains a reader to ignore the
-    // warnings that mean something.
-    assert controls::decided_absent(props::K_SWIPEABLE);
-    assert controls::decided_absent(props::K_SWIPE_ITEM);
+fn a_swipeable_shows_its_content_and_reveals_by_menu() {
+    // The kind that had no answer at all. "Swipe-to-reveal is a touch idiom;
+    // use a context menu" — and the second half of that sentence was the
+    // answer sitting unwritten next to the first.
+    assert controls::decided_absent(props::K_SWIPEABLE) == false;
     assert controls::decided_absent(props::K_BUTTON) == false;
     var r: core::Node = swipeable::swipeable(key: "r");
     let v: *u8 = views::create(0 as *u8, #addr_of(r));
     assert v != (0 as *u8);
     assert ak::View::from_raw(v).is_flipped();
+    // No swipe items, no menu: an empty menu on a view is a right-click that
+    // opens nothing, which reads as broken.
+    assert { rt::msg_id(v, rt::sel(#str_ptr("menu\0"))) } == (0 as *u8);
     views::view_release(v);
     return;
 }
@@ -4531,5 +4531,96 @@ fn a_refresh_colour_tints_the_spinner() {
     let filters: *u8 = { rt::msg_id(spinner, rt::sel(#str_ptr("contentFilters\0"))) };
     assert { rt::msg_u64(filters, rt::sel(#str_ptr("count\0"))) } == (1 as u64);
     views::view_release(v);
+    return;
+}
+
+// ---- swipe items, reachable ---------------------------------------------------
+
+static SWIPE_CLICKS: i64 = 0 as i64;
+static SWIPE_INVOKES: i64 = 0 as i64;
+static SWIPE_OPENS: i64 = 0 as i64;
+static SWIPE_STARTS: i64 = 0 as i64;
+static SWIPE_CLOSES: i64 = 0 as i64;
+static SWIPE_ENDS: i64 = 0 as i64;
+fn sw_clicked(sender: *u8, ctx: *u8) { SWIPE_CLICKS = SWIPE_CLICKS + (1 as i64); return; }
+fn sw_invoked(sender: *u8, ctx: *u8) { SWIPE_INVOKES = SWIPE_INVOKES + (1 as i64); return; }
+fn sw_opened(sender: *u8, ctx: *u8) { SWIPE_OPENS = SWIPE_OPENS + (1 as i64); return; }
+fn sw_started(sender: *u8, ctx: *u8) { SWIPE_STARTS = SWIPE_STARTS + (1 as i64); return; }
+fn sw_closed(sender: *u8, ctx: *u8) { SWIPE_CLOSES = SWIPE_CLOSES + (1 as i64); return; }
+fn sw_ended(sender: *u8, ctx: *u8) { SWIPE_ENDS = SWIPE_ENDS + (1 as i64); return; }
+
+fn swipe_tree(key: str) -> core::Node {
+    let a: fn(*u8, *u8) = sw_clicked;
+    let b: fn(*u8, *u8) = sw_invoked;
+    var s: core::Node = swipeable::swipeable(key: key,
+        on_open_requested: sw_opened, on_swipe_started: sw_started,
+        on_close_requested: sw_closed, on_swipe_ended: sw_ended);
+    s.add_child(swipe_item::swipe_item(text: "Archive", icon: "archivebox"));
+    s.add_child(swipe_item::swipe_item(text: "Delete", destructive: true,
+                                       on_clicked: a, on_invoked: b));
+    return s;
+}
+
+#[test]
+fn a_swipeables_items_become_the_menu_it_reveals() {
+    backend::install();
+    var s: core::Node = swipe_tree("sw");
+    let v: *u8 = views::create(0 as *u8, #addr_of(s));
+    let menu: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("menu\0"))) };
+    assert menu != (0 as *u8);
+    assert { rt::msg_i64(menu, rt::sel(#str_ptr("numberOfItems\0"))) } == (2 as i64);
+    assert menu_title_at(menu, 0 as i64) == "Archive";
+    assert menu_title_at(menu, 1 as i64) == "Delete";
+    // The icon reached the row.
+    let first: *u8 = { rt::msg_id_i64(menu, rt::sel(#str_ptr("itemAtIndex:\0")), 0 as i64) };
+    assert { rt::msg_id(first, rt::sel(#str_ptr("image\0"))) } != (0 as *u8);
+    // Destructive is a red title, which is what every app that marks one does.
+    let second: *u8 = { rt::msg_id_i64(menu, rt::sel(#str_ptr("itemAtIndex:\0")), 1 as i64) };
+    assert { rt::msg_id(second, rt::sel(#str_ptr("attributedTitle\0"))) } != (0 as *u8);
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn a_swipe_item_fires_both_of_its_names() {
+    // `SwipeItem.Invoked` is MAUI's second name for the same moment, so both
+    // run — an application that wired either gets it.
+    backend::install();
+    SWIPE_CLICKS = 0 as i64;
+    SWIPE_INVOKES = 0 as i64;
+    var s: core::Node = swipe_tree("sw2");
+    let v: *u8 = views::create(0 as *u8, #addr_of(s));
+    let menu: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("menu\0"))) };
+    let item: *u8 = { rt::msg_id_i64(menu, rt::sel(#str_ptr("itemAtIndex:\0")), 1 as i64) };
+    let target: *u8 = { rt::msg_id(item, rt::sel(#str_ptr("target\0"))) };
+    let action: *u8 = { rt::msg_id(item, rt::sel(#str_ptr("action\0"))) };
+    assert target != (0 as *u8);
+    { rt::msg_void_id(target, action, item) };
+    assert SWIPE_CLICKS == (1 as i64);
+    assert SWIPE_INVOKES == (1 as i64);
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn a_swipes_edges_are_the_menus_edges() {
+    backend::install();
+    SWIPE_OPENS = 0 as i64;
+    SWIPE_STARTS = 0 as i64;
+    SWIPE_CLOSES = 0 as i64;
+    SWIPE_ENDS = 0 as i64;
+    var s: core::Node = swipe_tree("sw3");
+    let p: *core::Node = #addr_of(s);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    let menu: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("menu\0"))) };
+    let d: *u8 = { rt::msg_id(menu, rt::sel(#str_ptr("delegate\0"))) };
+    assert d != (0 as *u8);
+    { rt::msg_void_id(d, rt::sel(#str_ptr("menuWillOpen:\0")), menu) };
+    assert SWIPE_OPENS == (1 as i64);
+    assert SWIPE_STARTS == (1 as i64);
+    { rt::msg_void_id(d, rt::sel(#str_ptr("menuDidClose:\0")), menu) };
+    assert SWIPE_CLOSES == (1 as i64);
+    assert SWIPE_ENDS == (1 as i64);
     return;
 }

@@ -313,9 +313,49 @@ fn popup_node_of(obj: *u8) -> *core::Node {
     return { synth::get_associated(obj, popup_node_key()) as *core::Node };
 }
 
+// The same delegate serves a SWIPEABLE's menu, because a swipe's edges on this
+// backend are the menu's edges — there is no partial state between closed and
+// open when the thing that opens it is a click. MAUI names each edge twice
+// (the gesture's and the programmatic one) and without a gesture they are the
+// same moment, so both fire.
+fn swipe_handlers(n: *core::Node, opened: bool) {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return; }
+    if { (*d).kind } != props::K_SWIPEABLE { return; }
+    let p: *props::SwipeableProps = { (*d).props } as *props::SwipeableProps;
+    if p == (0 as *props::SwipeableProps) { return; }
+    let v: *u8 = core::view_of(n);
+    if opened {
+        fire({ (*p).on_swipe_started }, { (*p).on_swipe_started_ctx }, v);
+        fire({ (*p).on_open_requested }, { (*p).on_open_requested_ctx }, v);
+    } else {
+        fire({ (*p).on_swipe_ended }, { (*p).on_swipe_ended_ctx }, v);
+        fire({ (*p).on_close_requested }, { (*p).on_close_requested_ctx }, v);
+    }
+    return;
+}
+
+// Pinned to the VIEW, not the menu: a swipeable rebuilds its menu whenever its
+// items change, and a delegate pinned to a menu would die with it.
+fn install_swipe(view: *u8, menu: *u8, n: *core::Node) {
+    if menu == (0 as *u8) { return; }
+    let d: *u8 = synth::alloc_init_class(popup_delegate_class());
+    if d == (0 as *u8) { return; }
+    synth::set_associated(d, popup_node_key(), n as *u8);
+    synth::retain_associated(view, swipe_pin_key(), d);
+    { rt::msg_void_id(menu, rt::sel(#str_ptr("setDelegate:\0")), d) };
+    rt::release(d);
+    return;
+}
+
+fn swipe_pin_key() -> *u8 { return { 28746 as *u8 }; }
+
 fn popup_handlers(n: *core::Node, opened: bool) {
     let d: *core::Data = core::node_data(n);
     if d == (0 as *core::Data) { return; }
+    // One delegate class, two kinds — asked of the NODE rather than assumed,
+    // so a swipeable's menu edges reach the swipe handlers and not nothing.
+    if { (*d).kind } == props::K_SWIPEABLE { swipe_handlers(n, opened); return; }
     if { (*d).kind } != props::K_POPUP { return; }
     let p: *props::PopupProps = { (*d).props } as *props::PopupProps;
     if p == (0 as *props::PopupProps) { return; }

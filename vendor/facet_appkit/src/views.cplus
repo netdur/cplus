@@ -62,6 +62,10 @@ fn wants_view(n: *core::Node) -> bool {
     // A span is a styled RUN inside a label, not a thing of its own — the
     // label reads its span children and renders one attributed string.
     if controls::span_kind(kind) { return false; }
+    // A `swipe_item` is a ROW in the menu its swipeable builds, the same way a
+    // `menu_item` is a row in an NSMenu — read as a node when its parent's
+    // view is built, never a rectangle of its own.
+    if controls::swipe_kind(kind) { return false; }
     if kind != core::K_NODE { return true; }
     // A bare container with GESTURES needs one too: input arrives on a view,
     // so an unkeyed `column(b).on_click(...)` would otherwise describe a
@@ -209,6 +213,7 @@ fn create_for_kind(kind: u32, n: *core::Node) -> *u8 {
     if kind == props::K_HYBRID_WEB { return web::create_hybrid_web(n); }
     if kind == chrome::K_WINDOW_BUTTONS { return controls::create_window_buttons(n); }
     if kind == props::K_REFRESHABLE { return controls::create_refreshable(n); }
+    if kind == props::K_SWIPEABLE { return controls::create_swipeable(n); }
     unimplemented_kind(kind, n);
     return backing_view();
 }
@@ -269,6 +274,7 @@ fn apply_for_kind(kind: u32, v: *u8, n: *core::Node, dirty: u64) {
     if kind == props::K_HYBRID_WEB { web::apply_hybrid_web(v, n, dirty); return; }
     if kind == chrome::K_WINDOW_BUTTONS { controls::apply_window_buttons(v, n, dirty); return; }
     if kind == props::K_REFRESHABLE { controls::apply_refreshable(v, n, dirty); return; }
+    if kind == props::K_SWIPEABLE { controls::apply_swipeable(v, n, dirty); return; }
     return;
 }
 
@@ -281,6 +287,7 @@ fn has_body(kind: u32) -> bool {
     if controls::menu_kind(kind) { return true; }
     if controls::menu_bar_kind(kind) { return true; }
     if controls::span_kind(kind) { return true; }
+    if controls::swipe_kind(kind) { return true; }
     // Decided absent: a silent pass-through, recorded in MANIFEST.md.
     if controls::decided_absent(kind) { return true; }
     return kind == props::K_WEB || kind == props::K_HYBRID_WEB
@@ -299,7 +306,7 @@ fn has_body(kind: u32) -> bool {
         || kind == props::K_TABLE || kind == props::K_CAROUSEL
         || kind == props::K_CANVAS
         || kind == symbol::K_SYMBOL || kind == tree::K_TREE
-        || kind == props::K_REFRESHABLE
+        || kind == props::K_REFRESHABLE || kind == props::K_SWIPEABLE
         || kind == split::K_SPLIT || kind == chrome::K_WINDOW_BUTTONS;
 }
 

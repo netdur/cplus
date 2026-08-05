@@ -2261,8 +2261,111 @@ fn create_passthrough(n: *core::Node) -> *u8 {
     return rt::retain(v.raw());
 }
 
+// `swipe_item` is still not a view — it is a ROW in the menu its swipeable
+// builds, the same way a `menu_item` is a row in an NSMenu. The kind that had
+// no answer at all is gone.
 fn decided_absent(kind: u32) -> bool {
-    return kind == props::K_SWIPEABLE || kind == props::K_SWIPE_ITEM;
+    return false;
+}
+
+fn swipe_kind(kind: u32) -> bool { return kind == props::K_SWIPE_ITEM; }
+
+// ---- swipeable ---------------------------------------------------------------
+// MAUI's SwipeView: content that reveals actions when swiped. The ledger said
+// "swipe-to-reveal is a touch idiom; use a context menu", and the second half
+// of that sentence was the answer sitting unwritten next to the first.
+//
+// So the actions ARE a menu, on the swipeable's own view. Every `swipe_item`
+// child becomes a row: its text, its icon, its destructive marking and its two
+// handlers, exactly as a `menu_item` does — because they are the same object
+// and a second set of rules would be two answers to one question.
+//
+// Four of the five swipe handlers map onto the menu's own edges, which are the
+// only edges that exist without a gesture:
+//
+//   menuWillOpen   on_swipe_started, on_open_requested
+//   menuDidClose   on_swipe_ended, on_close_requested
+//
+// `observe_swipe_changing` and `reveal_threshold` describe a CONTINUOUS motion
+// and stay in the ledger: there is no partial state between closed and open
+// when the thing that opens it is a click.
+
+fn create_swipeable(n: *core::Node) -> *u8 {
+    let v: ak::View = akx::new_flipped_view(rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 });
+    return rt::retain(v.raw());
+}
+
+fn apply_swipeable(v: *u8, n: *core::Node, dirty: u64) {
+    let band: u64 = props::C_HANDLERS | props::C_LAYOUT;
+    if (dirty & band) != (0 as u64) || dirty == paint::all_bits() {
+        attach_swipe_menu(v, n);
+    }
+    return;
+}
+
+// The menu a swipeable's `swipe_item` children describe, hung on its view. A
+// swipeable with no swipe items gets none — an empty menu on a view is a
+// right-click that opens nothing, which reads as broken.
+fn attach_swipe_menu(view: *u8, n: *core::Node) {
+    if view == (0 as *u8) { return; }
+    let menu: ak::Menu = ak::Menu::new("");
+    var found: bool = false;
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                if core::kind_of(c) == props::K_SWIPE_ITEM {
+                    add_swipe_item(menu, c);
+                    found = true;
+                }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    if !found { return; }
+    { rt::msg_void_id(view, rt::sel(#str_ptr("setMenu:\0")), menu.raw()) };
+    text_input::install_swipe(view, menu.raw(), n);
+    return;
+}
+
+// A swipe item IS a menu item. `on_invoked` is MAUI's second name for the same
+// moment — SwipeItem.Invoked fires alongside Clicked — so both run, in that
+// order, and an application that wired either gets it.
+fn add_swipe_item(menu: ak::Menu, c: *core::Node) {
+    let p: *props::SwipeItemProps = props_of(c, props::K_SWIPE_ITEM) as *props::SwipeItemProps;
+    if p == (0 as *props::SwipeItemProps) { return; }
+    let mi: *props::MenuItemProps = { #addr_of((*p).menu_item) };
+    let title: str = { (*mi).text.view() };
+    if title == "" { menu.add_item(ak::MenuItem::separator_item()); return; }
+    let item: ak::MenuItem = ak::MenuItem::new(title, 0 as *u8, "");
+    mark_destructive(item, title, { (*mi).is_destructive });
+    let icon: str = { (*mi).icon.view() };
+    if icon != "" {
+        match resolve_image(icon) {
+            option::Option[ak::Image]::Some(img) => { item.set_image(img); }
+            option::Option[ak::Image]::None => { }
+        }
+    }
+    let f: fn(*u8, *u8) = swipe_item_clicked;
+    item.set_target(akx::action_ctx_target(f, c as *u8));
+    item.set_action(akx::action_ctx_sel());
+    item.set_enabled(core::is_enabled(c));
+    menu.add_item(item);
+    return;
+}
+
+fn swipe_item_clicked(sender: *u8, ctx: *u8) {
+    let c: *core::Node = ctx as *core::Node;
+    let p: *props::SwipeItemProps = props_of(c, props::K_SWIPE_ITEM) as *props::SwipeItemProps;
+    if p == (0 as *props::SwipeItemProps) { return; }
+    let mi: *props::MenuItemProps = { #addr_of((*p).menu_item) };
+    let h: fn(*u8, *u8) = { (*mi).on_clicked };
+    if h != props::no_handler { h(sender, { (*mi).on_clicked_ctx }); }
+    let g: fn(*u8, *u8) = { (*p).on_invoked };
+    if g != props::no_handler { g(sender, { (*p).on_invoked_ctx }); }
+    return;
 }
 
 // ---- refreshable -------------------------------------------------------------

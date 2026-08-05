@@ -89,17 +89,8 @@ tabs.bar_text_color             NSTabView draws its own strip
 tabs.selected_tab_color         NSTabView draws its own strip
 tabs.unselected_tab_color       NSTabView draws its own strip
 toolbar_item.is_destructive     NSToolbarItem has no destructive style
-swipeable.reveal_threshold      swipe-to-reveal is a touch idiom; use a context menu
-swipeable.on_open_requested     as reveal_threshold
-swipeable.on_close_requested    as reveal_threshold
-swipeable.on_swipe_started      as reveal_threshold
-swipeable.on_swipe_ended        as reveal_threshold
-swipeable.observe_swipe_changing  as reveal_threshold
-swipe_item.text                 swipe items are unreachable on this backend
-swipe_item.icon                 as text
-swipe_item.is_destructive       as text
-swipe_item.on_clicked           as text
-swipe_item.on_invoked           as text
+swipeable.reveal_threshold      a CONTINUOUS distance; a click has no partial state
+swipeable.observe_swipe_changing  as reveal_threshold — nothing changes between the two edges
 text_field.keyboard             soft-keyboard layout; a hardware keyboard has one
 text_field.predicts_text        QuickType; macOS predicts in the input method
 text_field.font_scales          Dynamic Type; macOS scales at the display
@@ -249,6 +240,9 @@ toolbar_item.icon               as toolbar_item.text
 context_menu_item.shortcut      the key equivalent on its NSMenuItem
 menu_item.is_destructive        a red title on its NSMenuItem
 context_menu_item.is_destructive  as menu_item.is_destructive
+swipe_item.text                 a row in the menu its swipeable reveals
+swipe_item.icon                 as swipe_item.text
+swipe_item.is_destructive       as swipe_item.text
 ```
 
 ### The create-only ledger
