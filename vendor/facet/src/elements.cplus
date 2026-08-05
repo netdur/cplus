@@ -835,7 +835,7 @@ fn bordered(
     stroke_dash: vocab::Dashes = vocab::Dashes::none(),
     stroke_dash_offset: f64 = 0.0f64,
     stroke_cap: vocab::LineCap = vocab::LineCap::Flat,
-    stroke_join: vocab::LineJoin = vocab::LineJoin::Bevel,
+    stroke_join: vocab::LineJoin = vocab::LineJoin::Miter,
     stroke_miter_limit: f64 = 0.0f64,
     stroke_shape: vocab::Shape = vocab::Shape::none(),
     stroke_width: f64 = 0.0f64,

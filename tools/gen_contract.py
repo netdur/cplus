@@ -228,6 +228,7 @@ ENUM_ZERO = {
     "Keyboard": "Default",        # InputView.Keyboard
     "ReturnKey": "Default",       # InputView.ReturnType
     "ContentLayout": "ImageLeft",  # Button.ContentLayout
+    "LineJoin": "Miter",          # Border.StrokeLineJoin — CoreAnimation's too
 }
 
 

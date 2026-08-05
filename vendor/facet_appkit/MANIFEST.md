@@ -92,12 +92,6 @@ tabs.unselected_tab_color       NSTabView draws its own strip
 context_menu_item.is_destructive  NSMenuItem has no destructive style
 menu_item.is_destructive        NSMenuItem has no destructive style
 toolbar_item.is_destructive     NSToolbarItem has no destructive style
-bordered.stroke_dash            a layer border is solid; dashes are CAShapeLayer territory
-bordered.stroke_dash_offset     as stroke_dash
-bordered.stroke_cap             as stroke_dash
-bordered.stroke_join            as stroke_dash
-bordered.stroke_miter_limit     as stroke_dash
-bordered.stroke_shape           as stroke_dash
 refreshable.is_refreshable      pull-to-refresh is a touch idiom; use a Refresh command
 refreshable.is_refreshing       as is_refreshable
 refreshable.refresh_color       as is_refreshable
@@ -326,15 +320,34 @@ wording ("Delete…") and by confirming it, not by colouring the row. The flag
 is carried and ignored rather than approximated with a red attributed title,
 which would look like a system convention that does not exist.
 
-### The `bordered` stroke family
+### The `bordered` stroke family IS honoured, on a path
 
-`bordered(stroke_dash:)` `stroke_dash_offset:` `stroke_cap:` `stroke_join:`
-`stroke_miter_limit:` `stroke_shape:` are not honoured. A layer border is a
-solid rectangle of one width and one colour; dashes, caps, joins and an
-arbitrary stroke shape are CAShapeLayer territory — a second layer per
-bordered node, sized and re-pathed on every layout pass. `stroke` and
-`stroke_width` ARE honoured, and a gradient `Brush` uses its start colour
-(a gradient border needs the same mask layer).
+A layer border is a solid rectangle of one width and one colour: it has no
+dash, no cap, no join and no shape. This was recorded as not honoured, with
+the cost — a second layer per bordered node, sized and re-pathed on every
+layout pass — given as the reason. The cost is real and it is the price of the
+verb, so it is paid, but only by the nodes that ask.
+
+`wants_shape` is the gate. A node asking for a dash, a non-default cap or join,
+or a `stroke_shape` gets a CAShapeLayer; one asking for none keeps the cheap
+layer border and pays for no second layer. Asking and then not asking TAKES THE
+LAYER AWAY — without that the shape outlives the request and keeps drawing the
+old outline under the new plain border.
+
+Two things worth knowing:
+
+- **The path arrives with the SIZE, not at create.** The frame walk sizes a
+  view after its body runs, so a path built at create is empty and a path built
+  once is wrong at the next size. The view is observed and re-pathed per resize.
+- **The path is INSET by half the stroke width.** A stroked path is centred on
+  the line, so a path on the bounds paints half of itself outside the view and
+  is clipped to a half-width border.
+
+`stroke_shape`'s rounded case keeps the one deviation `corner_radius` makes:
+Core Graphics has one corner radius per rounded rect and facet carries four, so
+the largest wins. A gradient `Brush` still uses its start colour — a gradient
+stroke needs a CAGradientLayer masked by this shape, which no consumer has
+asked for.
 
 ### The touch-gesture controls
 

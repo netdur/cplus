@@ -3465,3 +3465,68 @@ fn a_radio_group_is_honoured_by_NAME_not_by_superview() {
     mount::unmount(p);
     return;
 }
+
+#[test]
+fn a_dashed_border_becomes_a_stroke_layer_and_a_plain_one_does_not() {
+    // A layer border is one solid rectangle of one width — no dash, no cap, no
+    // join, no shape. Everything past `stroke_width` needs a PATH, and this is
+    // the gate: a node that asks for a dash gets a CAShapeLayer, one that does
+    // not keeps the cheap border and pays for no second layer.
+    backend::install();
+    var plain: core::Node = bordered::bordered(key: "bp", stroke_width: 2.0f64,
+        stroke: vocab::Brush::solid(vocab::Color::rgba(0.0f64, 1.0f64, 0.0f64, 1.0f64)));
+    let pv: *u8 = views::create(0 as *u8, #addr_of(plain));
+    assert ak::View::from_raw(pv).layer().border_width() > 1.5f64;
+    assert controls::has_stroke_layer(ak::View::from_raw(pv)) == false;
+
+    var dashed: core::Node = bordered::bordered(key: "bd", stroke_width: 2.0f64,
+        stroke: vocab::Brush::solid(vocab::Color::rgba(0.0f64, 1.0f64, 0.0f64, 1.0f64)),
+        stroke_dash: vocab::Dashes::of(4.0f64, 2.0f64));
+    let dp: *core::Node = #addr_of(dashed);
+    let dv: *u8 = views::create(0 as *u8, dp);
+    // The resize observer reads the node's props through its view, so the node
+    // has to be paired with it first — which is what mount does.
+    core::set_view(dp, dv, views::view_release);
+    let view: ak::View = ak::View::from_raw(dv);
+    assert controls::has_stroke_layer(view);
+    // A stroked path is GEOMETRY, and the frame walk sizes a view after its
+    // body runs — so the path arrives with the size, not at create. Sizing the
+    // view is what a real layout pass does.
+    view.set_frame(rt::Rect { x: 0.0f64, y: 0.0f64, w: 80.0f64, h: 40.0f64 });
+    // The plain border is TAKEN AWAY, or the node draws two.
+    assert view.layer().border_width() == 0.0f64;
+    let sl: *u8 = controls::stroke_layer_of(view);
+    assert { rt::msg_id(sl, rt::sel(#str_ptr("lineDashPattern\0"))) } != (0 as *u8);
+    // The path arrives WITH the size, which is the whole reason the view is
+    // observed rather than pathed once at create.
+    assert { rt::msg_id(sl, rt::sel(#str_ptr("path\0"))) } != (0 as *u8);
+    views::view_release(pv);
+    return;
+}
+
+#[test]
+fn asking_for_a_shape_and_then_not_takes_the_stroke_layer_away() {
+    // The teardown half: a node that stops asking must stop paying. Without it
+    // the shape layer outlives the request and keeps drawing the old outline
+    // under the new plain border.
+    backend::install();
+    var n: core::Node = bordered::bordered(key: "bt", stroke_width: 2.0f64,
+        stroke: vocab::Brush::solid(vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64, 1.0f64)),
+        stroke_dash: vocab::Dashes::of(3.0f64, 3.0f64));
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    let view: ak::View = ak::View::from_raw(v);
+    assert controls::has_stroke_layer(view);
+    core::set_view(p, v, views::view_release);
+    core::clear_dirty(p);
+    match bordered::from(p) {
+        option::Option[bordered::Bordered]::Some(b) => {
+            let _x: bordered::Bordered = b.set_stroke_dash(vocab::Dashes::none());
+        }
+        option::Option[bordered::Bordered]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    assert controls::has_stroke_layer(view) == false;
+    assert view.layer().border_width() > 1.5f64;
+    return;
+}

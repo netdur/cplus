@@ -316,7 +316,7 @@ impl BorderedProps {
             stroke_dash: vocab::Dashes::none(),
             stroke_dash_offset: 0.0f64,
             stroke_cap: vocab::LineCap::Flat,
-            stroke_join: vocab::LineJoin::Bevel,
+            stroke_join: vocab::LineJoin::Miter,
             stroke_miter_limit: 0.0f64,
             stroke_shape: vocab::Shape::none(),
             stroke_width: 0.0f64,

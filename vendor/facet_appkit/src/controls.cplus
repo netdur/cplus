@@ -1205,18 +1205,196 @@ fn apply_bordered(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::BorderedProps = props_of(n, props::K_BORDERED) as *props::BorderedProps;
     if p == (0 as *props::BorderedProps) { return; }
     let view: ak::View = ak::View::from_raw(v);
-    if (dirty & (bordered::P_STROKE | bordered::P_STROKE_WIDTH)) != (0 as u64) {
+    let stroke: u64 = bordered::P_STROKE | bordered::P_STROKE_WIDTH
+        | bordered::P_STROKE_DASH | bordered::P_STROKE_DASH_OFFSET
+        | bordered::P_STROKE_CAP | bordered::P_STROKE_JOIN
+        | bordered::P_STROKE_MITER_LIMIT | bordered::P_STROKE_SHAPE;
+    if (dirty & stroke) != (0 as u64) || dirty == paint::all_bits() {
         view.set_wants_layer(true);
-        let l: quartz::Layer = view.layer();
-        l.set_border_width({ (*p).stroke_width });
-        // A Brush is a gradient pair; a border takes one colour, so the start
-        // is the stroke. A gradient border needs a CAGradientLayer mask — see
-        // MANIFEST.md.
-        let brush: vocab::Brush = { (*p).stroke };
-        l.set_border_color(paint::ns_color(brush.start).c_g_color());
+        // A LAYER BORDER is one solid rectangle of one width — it has no dash,
+        // no cap, no join and no shape. Everything past `stroke_width` needs a
+        // PATH, so a node that asks for any of them gets a CAShapeLayer and one
+        // that does not keeps the cheap border.
+        if wants_shape(p) {
+            observe_stroke_frame(view, n);
+            apply_stroke_shape(view, p);
+        } else { apply_plain_border(view, p); }
     }
     return;
 }
+
+fn wants_shape(p: *props::BorderedProps) -> bool {
+    if { (*p).stroke_dash.count } > (0 as usize) { return true; }
+    if { (*p).stroke_shape.kind } != (0 as i64) { return true; }
+    return is_shaped_cap({ (*p).stroke_cap }) || is_shaped_join({ (*p).stroke_join });
+}
+
+// `Flat` and `Miter` are Core Animation's own defaults, so asking for either is
+// not asking for a path — it is what a plain border already draws.
+fn is_shaped_cap(c: vocab::LineCap) -> bool {
+    return match c {
+        vocab::LineCap::Flat => false,
+        vocab::LineCap::Round => true,
+        vocab::LineCap::Square => true,
+    };
+}
+
+fn is_shaped_join(j: vocab::LineJoin) -> bool {
+    return match j {
+        vocab::LineJoin::Miter => false,
+        vocab::LineJoin::Bevel => true,
+        vocab::LineJoin::Round => true,
+    };
+}
+
+fn apply_plain_border(view: ak::View, p: *props::BorderedProps) {
+    remove_stroke_layer(view);
+    let l: quartz::Layer = view.layer();
+    l.set_border_width({ (*p).stroke_width });
+    // A Brush is a gradient pair; a border takes one colour, so the start is
+    // the stroke. A gradient border needs a CAGradientLayer mask — MANIFEST.
+    let brush: vocab::Brush = { (*p).stroke };
+    l.set_border_color(paint::ns_color(brush.start).c_g_color());
+    return;
+}
+
+// ---- the stroke layer --------------------------------------------------------
+// One CAShapeLayer per bordered node that needs one, kept as a SUBLAYER and
+// sized with the view. Created on demand and torn down when the node stops
+// asking, so a plain border still costs one layer rather than two.
+
+fn stroke_layer_key() -> *u8 { return { 28760 as *u8 }; }
+
+fn remove_stroke_layer(view: ak::View) {
+    let l: *u8 = { synth::get_associated(view.raw(), stroke_layer_key()) };
+    if l == (0 as *u8) { return; }
+    { rt::msg_void(l, rt::sel(#str_ptr("removeFromSuperlayer\0"))) };
+    synth::set_associated(view.raw(), stroke_layer_key(), 0 as *u8);
+    return;
+}
+
+// Readers the suite asks with, so a test asserts the LAYER rather than the
+// props that asked for it.
+fn has_stroke_layer(view: ak::View) -> bool {
+    return { synth::get_associated(view.raw(), stroke_layer_key()) } != (0 as *u8);
+}
+
+fn stroke_layer_of(view: ak::View) -> *u8 {
+    return { synth::get_associated(view.raw(), stroke_layer_key()) };
+}
+
+fn stroke_layer(view: ak::View) -> quartz::ShapeLayer {
+    let existing: *u8 = { synth::get_associated(view.raw(), stroke_layer_key()) };
+    if existing != (0 as *u8) { return quartz::ShapeLayer::from_raw(existing); }
+    let l: *u8 = { rt::alloc_init(#str_ptr("CAShapeLayer\0")) };
+    if l == (0 as *u8) { return quartz::ShapeLayer::from_raw(0 as *u8); }
+    { rt::msg_void_id(view.layer().raw(), rt::sel(#str_ptr("addSublayer:\0")), l) };
+    synth::retain_associated(view.raw(), stroke_layer_key(), l);
+    rt::release(l);
+    return quartz::ShapeLayer::from_raw(l);
+}
+
+// A stroked path is geometry, and geometry is not known at create: the frame
+// walk sizes the view AFTER the body runs, so a path built at create would be
+// empty and a path built once would be wrong at the next size. The view is
+// observed and re-pathed, once per resize.
+fn observed_key() -> *u8 { return { 28761 as *u8 }; }
+
+fn stroke_resized(ctx: *u8) {
+    let n: *core::Node = ctx as *core::Node;
+    if n == (0 as *core::Node) { return; }
+    let v: *u8 = core::view_of(n);
+    if v == (0 as *u8) { return; }
+    let p: *props::BorderedProps = props_of(n, props::K_BORDERED) as *props::BorderedProps;
+    if p == (0 as *props::BorderedProps) { return; }
+    if wants_shape(p) == false { return; }
+    apply_stroke_shape(ak::View::from_raw(v), p);
+    return;
+}
+
+fn observe_stroke_frame(view: ak::View, n: *core::Node) {
+    if { synth::get_associated(view.raw(), observed_key()) } != (0 as *u8) { return; }
+    let f: fn(*u8) = stroke_resized;
+    akx::observe_frame_change(view, f, n as *u8);
+    synth::set_associated(view.raw(), observed_key(), 1 as *u8);
+    return;
+}
+
+fn apply_stroke_shape(view: ak::View, p: *props::BorderedProps) {
+    // The plain border must go, or the node draws two.
+    view.layer().set_border_width(0.0f64);
+    let sl: quartz::ShapeLayer = stroke_layer(view);
+    if sl.raw() == (0 as *u8) { return; }
+    let b: rt::Rect = view.bounds();
+    { msg_void_rect(sl.raw(), rt::sel(#str_ptr("setFrame:\0")), b) };
+    let path: *u8 = stroke_path(b, { (*p).stroke_shape }, { (*p).stroke_width });
+    if path != (0 as *u8) {
+        sl.set_path(path);
+        { CGPathRelease(path) };
+    }
+    sl.set_fill_color(0 as *u8);
+    let brush: vocab::Brush = { (*p).stroke };
+    sl.set_stroke_color(paint::ns_color(brush.start).c_g_color());
+    sl.set_line_width({ (*p).stroke_width });
+    sl.set_line_cap(ca_line_cap({ (*p).stroke_cap }));
+    sl.set_line_join(ca_line_join({ (*p).stroke_join }));
+    sl.set_miter_limit({ (*p).stroke_miter_limit });
+    sl.set_line_dash_phase({ (*p).stroke_dash_offset });
+    let dashes: vocab::Dashes = { (*p).stroke_dash };
+    var runs: vec::Vec[f64] = vec::new::[f64]();
+    var i: usize = 0 as usize;
+    while i < { dashes.count } {
+        let _a: status::Status = runs.append({ dashes.runs[i] });
+        i = i +% (1 as usize);
+    }
+    sl.set_line_dash_pattern(runs);
+    return;
+}
+
+// The outline a `Shape` describes, INSET by half the stroke width — a stroked
+// path is centred on the line, so a path on the bounds paints half of itself
+// outside the view and is clipped to a half-width border.
+fn stroke_path(b: rt::Rect, shape: vocab::Shape, width: f64) -> *u8 {
+    let half: f64 = width / 2.0f64;
+    let r: rt::Rect = rt::Rect { x: { b.x } + half, y: { b.y } + half,
+                                 w: { b.w } - width, h: { b.h } - width };
+    if { r.w } <= 0.0f64 || { r.h } <= 0.0f64 { return 0 as *u8; }
+    let kind: i64 = { shape.kind };
+    if kind == (3 as i64) { return { CGPathCreateWithEllipseInRect(r, 0 as *u8) }; }
+    if kind == (2 as i64) {
+        // Core Graphics has ONE corner radius per rounded rect; facet carries
+        // four, so the largest wins — the same deviation `corner_radius` makes,
+        // recorded in the same place.
+        let rad: f64 = largest_corner({ shape.corners });
+        return { CGPathCreateWithRoundedRect(r, rad, rad, 0 as *u8) };
+    }
+    return { CGPathCreateWithRect(r, 0 as *u8) };
+}
+
+// kCALineCap* / kCALineJoin* are string constants and the VALUES are the words.
+fn ca_line_cap(c: vocab::LineCap) -> str {
+    return match c {
+        vocab::LineCap::Flat => "butt",
+        vocab::LineCap::Round => "round",
+        vocab::LineCap::Square => "square",
+    };
+}
+
+fn ca_line_join(j: vocab::LineJoin) -> str {
+    return match j {
+        vocab::LineJoin::Miter => "miter",
+        vocab::LineJoin::Bevel => "bevel",
+        vocab::LineJoin::Round => "round",
+    };
+}
+
+extern fn CGPathCreateWithRect(r: rt::Rect, transform: *u8) -> *u8;
+extern fn CGPathCreateWithEllipseInRect(r: rt::Rect, transform: *u8) -> *u8;
+extern fn CGPathCreateWithRoundedRect(r: rt::Rect, rx: f64, ry: f64, transform: *u8) -> *u8;
+extern fn CGPathRelease(p: *u8);
+
+#[link_name = "objc_msgSend"]
+extern fn msg_void_rect(recv: *u8, sel: *u8, r: rt::Rect);
 
 // ---- split -------------------------------------------------------------------
 // Two panes and a draggable divider. NSSplitView arranges its own subviews, so
