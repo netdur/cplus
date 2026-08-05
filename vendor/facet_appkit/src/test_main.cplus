@@ -24,6 +24,7 @@ import "facet/text_field" as text_field;
 import "facet/scroll" as scroll;
 import "facet/image" as image;
 import "facet/box" as box_view;
+import "facet/elements" as ui;
 import "facet/checkbox" as checkbox;
 import "facet/radio" as radio;
 import "facet/toggle" as toggle;
@@ -6753,5 +6754,180 @@ fn a_return_key_that_says_next_moves_to_the_next_field() {
     assert responder_is(w, fv) == false;
     assert responder_is(w, sv);
     w.close();
+    return;
+}
+
+// ---- a DSL-authored root reaches the window ---------------------------------
+//
+// `@ui { ... }` evaluates to a KEYLESS container holding the block's items —
+// keyless because nothing named it, a container because a block may hold two
+// items. `views::wants_view` gives such a node no view on purpose (a
+// pure-layout column costs nothing), so a screen authored the way the contract
+// asks hands `open_window` a root that is a pass-through.
+//
+// The walk inserts every view except the root's, and the root here has none —
+// so before `add_root_views` the children were created, attached, and inserted
+// NOWHERE. The window opened empty. These are the two shapes that must both
+// land: a backed root, and a pass-through root.
+
+#[test]
+fn a_dsl_authored_root_is_mounted_into_the_window() {
+    backend::install();
+    app::reset_default_for_tests();
+    var root: core::Node = @ui {
+        vstack(key: "body") {
+            label::label("hello", key: "headline")
+            button::button("go", key: "go")
+        }
+    };
+    let rp: *core::Node = #addr_of(root);
+    // The shape the DSL actually produces — keyless, one child, and by the
+    // pass-through rule it will never be backed.
+    assert { (*rp).key() } == "";
+    assert core::child_count_of(rp) == (1 as usize);
+
+    let win: *u8 = window::open_window(rp, screen::Chrome::new(
+        title: "dsl", width: 320.0f64, height: 240.0f64));
+    assert win != (0 as *u8);
+    assert core::view_of(rp) == (0 as *u8);      // still a pass-through
+
+    // The topmost BACKED node — the vstack — is what the window got.
+    match core::find_in(rp, "body") {
+        option::Option[*core::Node]::Some(b) => {
+            let bv: *u8 = core::view_of(b);
+            assert bv != (0 as *u8);
+            match ak::View::from_raw(bv).superview() {
+                option::Option[ak::View]::Some(sv) => { assert sv.is_flipped(); }
+                option::Option[ak::View]::None => { assert false; }
+            }
+        }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    // ...and the controls under it are on screen, which is the whole point.
+    match label::find("headline", within: rp) {
+        option::Option[label::Label]::Some(l) => { assert l.text() == "hello"; }
+        option::Option[label::Label]::None => { assert false; }
+    }
+    window::close_window(win);
+    backend::uninstall();
+    app::reset_default_for_tests();
+    return;
+}
+
+#[test]
+fn a_pass_through_root_with_two_items_lands_both() {
+    // A block MAY hold two items, which is why its value is a container at
+    // all. Both have to reach the window, in order.
+    backend::install();
+    app::reset_default_for_tests();
+    var root: core::Node = @ui {
+        label::label("one", key: "one")
+        label::label("two", key: "two")
+    };
+    let rp: *core::Node = #addr_of(root);
+    assert core::child_count_of(rp) == (2 as usize);
+    let win: *u8 = window::open_window(rp, screen::Chrome::new(
+        title: "two", width: 320.0f64, height: 240.0f64));
+    assert win != (0 as *u8);
+
+    match ak::Window::from_raw(win).content_view() {
+        option::Option[ak::View]::Some(content) => {
+            // Two labels, plus the appearance-observer sentinel the facade adds.
+            assert content.subviews().count() >= (2 as usize);
+        }
+        option::Option[ak::View]::None => { assert false; }
+    }
+    match label::find("one", within: rp) {
+        option::Option[label::Label]::Some(_l) => { }
+        option::Option[label::Label]::None => { assert false; }
+    }
+    match label::find("two", within: rp) {
+        option::Option[label::Label]::Some(_l) => { }
+        option::Option[label::Label]::None => { assert false; }
+    }
+    window::close_window(win);
+    backend::uninstall();
+    app::reset_default_for_tests();
+    return;
+}
+
+#[test]
+fn a_focused_field_keeps_its_text_across_a_class_flip() {
+    // The unit tests above flip a field that is not in a window and not being
+    // edited. A real app flips one that IS: `is_secure` is what a "show
+    // password" toggle writes, and the field it writes to is the one the user
+    // was just typing in. That is a different code path — there is a field
+    // editor, a first responder, and a delegate whose write-back can fire
+    // while the old object is coming down.
+    backend::install();
+    app::reset_default_for_tests();
+    var n: core::Node = text_field::text_field(key: "pw_live", text: "hunter2", secure: true);
+    let p: *core::Node = #addr_of(n);
+    let win: *u8 = window::open_window(p, screen::Chrome::new(
+        title: "live", width: 320.0f64, height: 200.0f64));
+    assert win != (0 as *u8);
+    let w: ak::Window = ak::Window::from_raw(win);
+    let v: *u8 = core::view_of(p);
+    assert v != (0 as *u8);
+    // Focus it, the way a user about to toggle "show password" would have.
+    w.make_key_and_order_front(0 as *u8);
+    let _fr: bool = w.make_first_responder(ak::View::from_raw(v).as_responder());
+    core::clear_dirty(p);
+
+    match text_field::from(p) {
+        option::Option[text_field::TextField]::Some(f) => { let _f: text_field::TextField = f.set_secure(false); }
+        option::Option[text_field::TextField]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+
+    let sv: *u8 = core::view_of(p);
+    assert sv != v;
+    assert views::is_kind_of(sv, #str_ptr("NSSecureTextField\0")) == false;
+    // The PROP must not have been clobbered by a write-back firing as the old
+    // field came down...
+    match text_field::from(p) {
+        option::Option[text_field::TextField]::Some(f) => { assert f.text() == "hunter2"; }
+        option::Option[text_field::TextField]::None => { assert false; }
+    }
+    // ...and the new field must be showing it.
+    assert ak::TextField::from_raw(sv).as_control().string_value().view() == "hunter2";
+    window::close_window(win);
+    backend::uninstall();
+    app::reset_default_for_tests();
+    return;
+}
+
+#[test]
+fn a_reclassed_view_is_still_addressable_and_still_measures() {
+    // The replacement must be a view `create` made, not one a kind builder
+    // made. Building it with `controls::create_text_field` alone produced a
+    // field that LOOKED right and had lost everything create adds around the
+    // kind body: the accessibility identifier that is the key (so the agent
+    // surface could no longer see it), and the intrinsic-size measure (so flex
+    // would lay it out at zero height). Both are asserted because both were
+    // missing, and neither shows up in a screenshot.
+    backend::install();
+    var n: core::Node = text_field::text_field(key: "addressable", text: "x");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    let host: ak::View = akx::new_flipped_view(rt::Rect { x: 0.0f64, y: 0.0f64, w: 300.0f64, h: 200.0f64 });
+    host.add_subview(ak::View::from_raw(v));
+    assert ak::Accessibility::from_raw(v).accessibility_identifier().view() == "addressable";
+    core::clear_dirty(p);
+
+    match text_field::from(p) {
+        option::Option[text_field::TextField]::Some(f) => { let _f: text_field::TextField = f.set_secure(true); }
+        option::Option[text_field::TextField]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+
+    let sv: *u8 = core::view_of(p);
+    assert sv != v;
+    // The key still addresses it — this is what the agent surface reads.
+    assert ak::Accessibility::from_raw(sv).accessibility_identifier().view() == "addressable";
+    // And flex still has a measure pointing at the NEW view, so the field does
+    // not collapse to nothing on the next layout pass.
+    assert { (*p).context() } == sv;
     return;
 }

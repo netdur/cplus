@@ -27,6 +27,7 @@ import "appkit/appkit" as ak;
 import "appkit/appkit_ext" as akx;
 import "./paint" as paint;
 import "./input" as input;
+import "./text_input" as text_input;
 import "./web" as web;
 import "./scrolling" as scrolling;
 import "./recycler" as recycler;
@@ -443,7 +444,13 @@ fn reclass_for(n: *core::Node, v: *u8, dirty: u64) -> *u8 {
     // both and reclass on every write.
     let is_secure_now: bool = is_kind_of(v, #str_ptr("NSSecureTextField\0"));
     if is_secure_now == controls::text_field_wants_secure(n) { return v; }
-    return reclass(n, controls::create_text_field(n));
+    // `create`, not `create_text_field`. The replacement needs everything a
+    // mounted view gets and not one step less — the accessibility identifier
+    // that IS the key (and the agent surface's id), the intrinsic-size measure
+    // without which flex lays the field out at zero height, the scroll
+    // observer, the context menu. Calling the kind's builder directly built a
+    // field that was correct to look at and unaddressable to everything else.
+    return reclass(n, create(0 as *u8, n));
 }
 
 // ---- a node's view, replaced by a different OBJECT ---------------------------
@@ -456,12 +463,13 @@ fn reclass_for(n: *core::Node, v: *u8, dirty: u64) -> *u8 {
 // This is the door out of that ledger. The caller builds the other object; this
 // puts it where the first one stood and hands the node its new view.
 //
-// Every prop lands on the replacement by re-running the WHOLE dirty word, not
-// by copying state across. A copy is a second list of what a control carries,
-// kept in step with the band BY HAND, and the band is the thing that keeps
-// changing — the copy would be wrong one verb after it was written. Re-applying
-// is the create-calls-apply rule again, and it is the reason a reclassed verb
-// can honestly be called live.
+// Every prop lands on the replacement because `create` configures a view
+// WHOLE, not by copying state across from the old object. A copy is a second
+// list of what a control carries, kept in step with the band BY HAND, and the
+// band is the thing that keeps changing — the copy would be wrong one verb
+// after it was written. The caller therefore hands in a view from `create`,
+// which is the same door mount uses, and this does nothing to it but move it
+// into place.
 //
 // Answers the view the node now has, which is `fresh` whenever there was one.
 fn reclass(n: *core::Node, fresh: *u8) -> *u8 {
@@ -485,6 +493,19 @@ fn reclass(n: *core::Node, fresh: *u8) -> *u8 {
             option::Option[ak::Text]::Some(_e) => { refocus = true; }
             option::Option[ak::Text]::None => { }
         }
+        // Cut the OLD view loose from the node. Pulling a focused field out of
+        // the hierarchy ends its editing session, and its write-back would then
+        // copy the dying object's value over the props. Same reason
+        // `view_release` detaches a web view before releasing it.
+        text_input::detach(old, old);
+        // The node points at the replacement BEFORE it is shown. `create` has
+        // already configured it whole and bound its delegate to this node, so
+        // an editing notification arriving the moment it enters the hierarchy
+        // finds a control that already knows its value. Getting this order
+        // backwards is what made the verb lose text: an empty, delegate-bound
+        // field went on screen, its write-back wrote "" into the props, and the
+        // apply that came next faithfully applied "".
+        core::set_view(n, fresh, view_release);
         // `replaceSubview:with:` is exactly this operation: same slot, same
         // ordering, one call. Rebuilding the sibling order by hand would be the
         // insert path's job done twice and wrong once.
@@ -492,7 +513,6 @@ fn reclass(n: *core::Node, fresh: *u8) -> *u8 {
             option::Option[ak::View]::Some(sup) => { sup.replace_subview(ov, nv); }
             option::Option[ak::View]::None => { }
         }
-        core::set_view(n, fresh, view_release);
         // The node held a retain from `create` and now holds a different one, so
         // the old view goes the way every dropped view goes — through the SAME
         // release the node would have fired at teardown, which is what takes the
@@ -502,7 +522,6 @@ fn reclass(n: *core::Node, fresh: *u8) -> *u8 {
         // After `replaceSubview:with:` the superview has already let go, so this
         // is the last reference and the object deallocates here.
         view_release(old);
-        reapply_all(n, fresh);
         if refocus {
             match nv.window() {
                 option::Option[ak::Window]::Some(w) => {
@@ -514,20 +533,7 @@ fn reclass(n: *core::Node, fresh: *u8) -> *u8 {
         return fresh;
     }
     core::set_view(n, fresh, view_release);
-    reapply_all(n, fresh);
     return fresh;
-}
-
-// The whole band, on a view that has none of it yet. Same three steps `apply`
-// takes, with the dirty word forced wide — a replacement is dirty in every bit
-// by definition, whatever the node's own word happens to say.
-fn reapply_all(n: *core::Node, v: *u8) {
-    let all: u64 = paint::all_bits();
-    paint::apply_common(v, n, all);
-    apply_for_kind(core::kind_of(n), v, n, all);
-    input::arm(v, n);
-    input::bind_item(v, n);
-    return;
 }
 
 // M1: the release mount pairs with every view `create` returned. Node teardown

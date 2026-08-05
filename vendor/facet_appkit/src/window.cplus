@@ -284,10 +284,7 @@ fn open_window(root: *core::Node, take chrome: Chrome,
 
     // The root's own view was inserted nowhere by the walk — the facade puts
     // it in the window, which is here.
-    if mounted {
-        let rv: *u8 = core::view_of(root);
-        if rv != (0 as *u8) { content.add_subview(ak::View::from_raw(rv)); }
-    }
+    if mounted { add_root_views(content, root); }
 
     // System light/dark flips reach the app through theme::on_appearance_change:
     // an invisible sentinel subview's viewDidChangeEffectiveAppearance forwards
@@ -312,6 +309,46 @@ fn open_window(root: *core::Node, take chrome: Chrome,
     // the content stays frozen at its mount-time size.
     scheduler::layout_window(root);
     return win.raw();
+}
+
+// Put the tree's TOPMOST BACKED nodes into the window's content view.
+//
+// Usually that is one view — the root's own — and this is the one line the
+// facade always owed the walk, because `mount` inserts every view except the
+// root's (it has no host above it to insert into).
+//
+// It is not always one view, and that is the bug this replaced. A bare,
+// keyless container gets NO view by design: `views::wants_view` passes a
+// pure-layout column through to the nearest host, which is how a column inside
+// a scroll view costs nothing. `mount` walks such a node with the host it was
+// given, and the host it was given at the ROOT is nothing at all — so a
+// pass-through root left its children created, attached, and inserted nowhere.
+//
+// That is not an exotic shape. `@ui { ... }` evaluates to exactly it: the block
+// is a keyless container holding the block's items, because a block is allowed
+// to have two. So every application that authors its screen with the DSL — the
+// way the contract asks — opened a window with nothing in it.
+//
+// The walk down stops at the first backed node on each branch, which is the
+// same rule the pass-through follows: that node's own children were already
+// inserted INTO it by the mount walk.
+fn add_root_views(content: ak::View, n: *core::Node) {
+    if n == (0 as *core::Node) { return; }
+    let v: *u8 = core::view_of(n);
+    if v != (0 as *u8) {
+        content.add_subview(ak::View::from_raw(v));
+        return;
+    }
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => { add_root_views(content, c); }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
 }
 
 fn fire_appearance_change(ctx: *u8) {

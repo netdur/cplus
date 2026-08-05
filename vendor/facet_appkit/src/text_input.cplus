@@ -83,6 +83,33 @@ fn node_of(obj: *u8) -> *core::Node {
     return { synth::get_associated(obj, node_key()) as *core::Node };
 }
 
+// Cut a view's delegate loose from its node, before the view comes down.
+//
+// The delegate reads the node at FIRE time rather than capturing anything,
+// which is what lets a swapped handler need no re-install — and it is also why
+// a notification arriving during teardown reaches a node that is still very
+// much alive and writes into it.
+//
+// That is not hypothetical. `views::reclass` replaces a field with one of the
+// other class, and pulling the old field out of the hierarchy ends its editing
+// session: AppKit sends `controlTextDidEndEditing`, the write-back runs, and it
+// wrote the DYING object's value over the props the replacement was about to be
+// configured from. A field flipped to "show password" while it was focused came
+// back empty.
+//
+// So the node association is cleared and the delegate unhooked. A late
+// notification then finds no node and does nothing, which is the same promise
+// `web::detach` makes in `view_release` for the same reason.
+fn detach(view: *u8, target: *u8) {
+    if view == (0 as *u8) { return; }
+    let d: *u8 = { synth::get_associated(view, delegate_pin_key()) };
+    if d != (0 as *u8) { synth::set_associated(d, node_key(), 0 as *u8); }
+    if target != (0 as *u8) {
+        { rt::msg_void_id(target, rt::sel(#str_ptr("setDelegate:\0")), 0 as *u8) };
+    }
+    return;
+}
+
 // ---- reaching the shared band ------------------------------------------------
 // The three controls embed `InputViewProps` at a different offset each, so the
 // pointer is taken through the owning struct rather than by casting the props
