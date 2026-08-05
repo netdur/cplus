@@ -2769,6 +2769,66 @@ fn apply_item_sizing(n: *core::Node, mode: vocab::ItemSizing) {
     return;
 }
 
+// A collection that reorders but does not select still needs the class the
+// selection installs, so it gets one with nothing behind it rather than a
+// second arming path.
+fn no_pick(doc: *u8, child: i64) { return; }
+fn no_move(doc: *u8, from: i64, to: i64) { return; }
+
+// A drop landed. The child nodes move — which is what the user sees — and the
+// two indices are written so the handler can persist it. facet cannot reorder
+// the application's DATA: the sequence is a count plus a builder, and the
+// order is the application's own. So the move is reported rather than assumed,
+// and the next write of `count` or `row` is the application's answer.
+fn collection_row_moved(doc: *u8, from: i64, to: i64) {
+    let n: *core::Node = { synth::get_associated(doc, compose::select_node_key()) as *core::Node };
+    if n == (0 as *core::Node) { return; }
+    let p: *props::CollectionProps = props_of(n, props::K_COLLECTION) as *props::CollectionProps;
+    if p == (0 as *props::CollectionProps) { return; }
+    if from < (0 as i64) || to < (0 as i64) || from == to { return; }
+    let a: i64 = data_index_of(n, from);
+    let b: i64 = data_index_of(n, to);
+    // A HEADER is not an item: it cannot be dragged and nothing can be dropped
+    // onto it, because a group's boundary is the group's, not a row's.
+    if a < (0 as i64) || b < (0 as i64) { return; }
+    // `CanMixGroups`: without it a row stays in the group it started in, which
+    // is what makes a grouped sequence stay grouped.
+    if !{ (*p).reorderable_items_view.can_mix_groups } {
+        if group_of(n, from) != group_of(n, to) { return; }
+    }
+    match mount::remove_child(n, from as usize) {
+        option::Option[core::Node]::Some(moved) => {
+            let _ok: bool = mount::insert_child(n, moved, to as usize);
+        }
+        option::Option[core::Node]::None => { return; }
+    }
+    { (*p).reorder_from = a };
+    { (*p).reorder_to = b };
+    let h: fn(*u8, *u8) = { (*p).reorderable_items_view.on_reorder_completed };
+    if h != props::no_handler { h(doc, { (*p).reorderable_items_view.on_reorder_completed_ctx }); }
+    return;
+}
+
+// Which group a CHILD sits in, or -1 when the sequence is not grouped — which
+// makes the mix-groups check pass for every row, as it should.
+fn group_of(n: *core::Node, child: i64) -> i64 {
+    let p: *props::CollectionProps = props_of(n, props::K_COLLECTION) as *props::CollectionProps;
+    if p == (0 as *props::CollectionProps) { return -1 as i64; }
+    if !{ (*p).groupable_items_view.is_grouped } || { (*p).group_count } <= (0 as i64) {
+        return -1 as i64;
+    }
+    let size: fn(*u8, usize) -> usize = { (*p).group_size };
+    var at: i64 = 0 as i64;
+    var g: i64 = 0 as i64;
+    while g < { (*p).group_count } {
+        let rows: i64 = size({ (*p).group_ctx }, g as usize) as i64;
+        if child >= at && child <= (at +% rows) { return g; }
+        at = at +% rows +% (1 as i64);
+        g = g +% (1 as i64);
+    }
+    return -1 as i64;
+}
+
 fn selects_rows(m: vocab::SelectionMode) -> bool {
     return match m {
         vocab::SelectionMode::None => false,
@@ -2819,6 +2879,23 @@ fn apply_collection(v: *u8, n: *core::Node, dirty: u64) {
             compose::install_row_selection(doc, n, f);
         } else {
             compose::uninstall_row_selection(doc);
+        }
+    }
+    // Reorder needs the same class the selection installs — a press that MOVES
+    // is a reorder and one that does not is a pick, and they cannot be told
+    // apart until the mouse comes up. So a collection that reorders but does
+    // not select is armed for the class anyway, with no pick handler on it.
+    let ro: *props::ReorderableItemsViewProps = { #addr_of((*p).reorderable_items_view) };
+    if (dirty & (collection::P_CAN_REORDER_ITEMS | collection::P_CAN_MIX_GROUPS
+                 | collection::P_COUNT | collection::P_ROW
+                 | props::C_HANDLERS)) != (0 as u64) || dirty == paint::all_bits() {
+        let doc: *u8 = document_host(v);
+        if { (*ro).can_reorder_items } {
+            let g: fn(*u8, i64, i64) = collection_row_moved;
+            compose::install_row_selection(doc, n, no_pick);
+            compose::install_row_reorder(doc, true, g);
+        } else {
+            compose::install_row_reorder(doc, false, no_move);
         }
     }
     if (dirty & (collection::P_SELECTED_INDEX | collection::P_COUNT

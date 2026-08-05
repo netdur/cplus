@@ -5771,3 +5771,153 @@ fn write_file(dir: str, name: str, body: str) -> status::Status {
         result::Result[fs::File, result::IoError]::Err(_e) => { return status::Status::Ok; }
     }
 }
+
+// ---- reorder -------------------------------------------------------------------
+// `CanReorderItems` is a DRAG, and macOS's answer to "reorder these" is a drag
+// too — so unlike pull-to-refresh there is no idiom mismatch to route around.
+// facet's rule still applies and is still satisfied: an agent reorders by
+// reordering the DATA and writing `count`; the drag is the user's path to the
+// same place.
+
+static MOVES: i64 = 0 as i64;
+fn on_moved(sender: *u8, ctx: *u8) { MOVES = MOVES + (1 as i64); return; }
+
+fn reorder_collection(key: str, mix: bool) -> core::Node {
+    let h: fn(*u8, *u8) = on_moved;
+    var c: core::Node = collection::collection(key: key, reorder_items: true,
+                                               mix_groups: mix, on_reorder_completed: h);
+    let p: *core::Node = #addr_of(c);
+    match collection::find(key, within: p) {
+        option::Option[collection::Collection]::Some(x) => {
+            let a: collection::Collection = x.set_row(g_row, ctx: 0 as *u8);
+            let _b: collection::Collection = a.set_count(4 as usize);
+        }
+        option::Option[collection::Collection]::None => { }
+    }
+    return c;
+}
+
+#[test]
+fn dragging_a_row_moves_it_and_reports_both_indices() {
+    backend::install();
+    MOVES = 0 as i64;
+    var c: core::Node = reorder_collection("ro", true);
+    let p: *core::Node = #addr_of(c);
+    assert mount::mount(p);
+    let w: ak::Window = window::make_shell_window(screen::Chrome::new(
+        title: "reorder", width: 100.0f64, height: 200.0f64));
+    let v: *u8 = core::view_of(p);
+    match w.content_view() {
+        option::Option[ak::View]::Some(cv) => { cv.add_subview(ak::View::from_raw(v)); }
+        option::Option[ak::View]::None => { assert false; }
+    }
+    { rt::msg_void_rect(v, rt::sel(#str_ptr("setFrame:\0")),
+                        rt::Rect { x: 0.0f64, y: 0.0f64, w: 100.0f64, h: 200.0f64 }) };
+    geometry::relayout_root(p, 100.0f64, 200.0f64, 1.0f64);
+    let doc: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("documentView\0"))) };
+    assert compose::row_reorder_armed(doc);
+    // Rows are 20 tall. Row 0 lives at doc y 0..20 — window y 180..200 — and
+    // row 2 at doc y 40..60, window y 140..160.
+    { rt::msg_void_id(doc, rt::sel(#str_ptr("mouseDown:\0")), point_event(10.0f64, 190.0f64)) };
+    { rt::msg_void_id(doc, rt::sel(#str_ptr("mouseDragged:\0")), point_event(10.0f64, 150.0f64)) };
+    { rt::msg_void_id(doc, rt::sel(#str_ptr("mouseUp:\0")), point_event(10.0f64, 150.0f64)) };
+    assert MOVES == (1 as i64);
+    match collection::find("ro", within: p) {
+        option::Option[collection::Collection]::Some(x) => {
+            assert x.reorder_from() == (0 as i64);
+            assert x.reorder_to() == (2 as i64);
+        }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
+    // Four rows still, in a new order.
+    assert core::child_count_of(p) == (4 as usize);
+    w.close();
+    mount::unmount(p);
+    return;
+}
+
+#[test]
+fn a_press_that_never_moved_is_a_pick_and_not_a_reorder() {
+    // Reordering on a press that did not move would shuffle a row every time
+    // one was selected.
+    backend::install();
+    MOVES = 0 as i64;
+    var c: core::Node = reorder_collection("ro2", true);
+    let p: *core::Node = #addr_of(c);
+    assert mount::mount(p);
+    let w: ak::Window = window::make_shell_window(screen::Chrome::new(
+        title: "reorder2", width: 100.0f64, height: 200.0f64));
+    let v: *u8 = core::view_of(p);
+    match w.content_view() {
+        option::Option[ak::View]::Some(cv) => { cv.add_subview(ak::View::from_raw(v)); }
+        option::Option[ak::View]::None => { assert false; }
+    }
+    { rt::msg_void_rect(v, rt::sel(#str_ptr("setFrame:\0")),
+                        rt::Rect { x: 0.0f64, y: 0.0f64, w: 100.0f64, h: 200.0f64 }) };
+    geometry::relayout_root(p, 100.0f64, 200.0f64, 1.0f64);
+    let doc: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("documentView\0"))) };
+    // Down on row 0 and up on row 2 with NO drag between. AppKit would send
+    // one, so this is the guard on its own: without it a press that merely
+    // ended somewhere else would shuffle the row it started on.
+    { rt::msg_void_id(doc, rt::sel(#str_ptr("mouseDown:\0")), point_event(10.0f64, 190.0f64)) };
+    { rt::msg_void_id(doc, rt::sel(#str_ptr("mouseUp:\0")), point_event(10.0f64, 150.0f64)) };
+    assert MOVES == (0 as i64);
+    assert core::child_count_of(p) == (4 as usize);
+    w.close();
+    mount::unmount(p);
+    return;
+}
+
+#[test]
+fn a_collection_that_does_not_reorder_is_not_armed_for_it() {
+    backend::install();
+    var c: core::Node = collection::collection(key: "ro3");
+    let p: *core::Node = #addr_of(c);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    let doc: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("documentView\0"))) };
+    assert compose::row_reorder_armed(doc) == false;
+    return;
+}
+
+#[test]
+fn without_mix_groups_a_row_stays_in_the_group_it_started_in() {
+    // Which is what makes a grouped sequence stay grouped.
+    backend::install();
+    MOVES = 0 as i64;
+    let h: fn(*u8, *u8) = on_moved;
+    var c: core::Node = collection::collection(key: "ro4", grouped: true,
+                                               reorder_items: true, mix_groups: false,
+                                               on_reorder_completed: h);
+    let p: *core::Node = #addr_of(c);
+    match collection::find("ro4", within: p) {
+        option::Option[collection::Collection]::Some(x) => {
+            let a: collection::Collection = x.set_row(g_row, ctx: 0 as *u8);
+            let b: collection::Collection = a.set_count(5 as usize);
+            let d: collection::Collection = b.set_group_count(2 as usize);
+            let _e: collection::Collection = d.set_group(g_size, g_header, ctx: 0 as *u8);
+        }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
+    assert mount::mount(p);
+    let w: ak::Window = window::make_shell_window(screen::Chrome::new(
+        title: "reorder3", width: 100.0f64, height: 200.0f64));
+    let v: *u8 = core::view_of(p);
+    match w.content_view() {
+        option::Option[ak::View]::Some(cv) => { cv.add_subview(ak::View::from_raw(v)); }
+        option::Option[ak::View]::None => { assert false; }
+    }
+    { rt::msg_void_rect(v, rt::sel(#str_ptr("setFrame:\0")),
+                        rt::Rect { x: 0.0f64, y: 0.0f64, w: 100.0f64, h: 200.0f64 }) };
+    geometry::relayout_root(p, 100.0f64, 200.0f64, 1.0f64);
+    let doc: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("documentView\0"))) };
+    // Child 1 is group 0's first row (doc y 10..30, window 170..190); child 4
+    // is group 1's first (doc y 60..80, window 120..140). Different groups.
+    { rt::msg_void_id(doc, rt::sel(#str_ptr("mouseDown:\0")), point_event(10.0f64, 180.0f64)) };
+    { rt::msg_void_id(doc, rt::sel(#str_ptr("mouseDragged:\0")), point_event(10.0f64, 130.0f64)) };
+    { rt::msg_void_id(doc, rt::sel(#str_ptr("mouseUp:\0")), point_event(10.0f64, 130.0f64)) };
+    assert MOVES == (0 as i64);
+    w.close();
+    mount::unmount(p);
+    return;
+}

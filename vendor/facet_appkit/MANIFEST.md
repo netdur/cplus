@@ -14,10 +14,10 @@ Read that precisely. It does not say every verb works on a Mac — it says every
 verb has an ANSWER, and the answer is checkable:
 
 ```
-321 declared prop/command bits    256 live, 23 host-rendered, 3 derived,
-                                    4 modifier, 8 create-only, 27 decided,
+323 declared prop/command bits    258 live, 23 host-rendered, 5 derived,
+                                    4 modifier, 8 create-only, 25 decided,
                                     0 no carrier, 0 absent
- 80 declared handlers              77 wired, 3 decided, 0 never fire
+ 80 declared handlers              78 wired, 2 decided, 0 never fire
 ```
 
 `python3 tools/verb_coverage.py --check` is the gate and it fails on a verb that
@@ -144,9 +144,6 @@ date_picker.font_scales         as label.font_scales
 time_picker.font_scales         as label.font_scales
 date_picker.character_spacing   NSDatePicker draws its own fields; no attributed value
 time_picker.character_spacing   as date_picker.character_spacing
-collection.can_reorder_items    drag-reorder needs NSCollectionView's own drag session
-collection.on_reorder_completed  as collection.can_reorder_items
-collection.can_mix_groups       NSCollectionView sections do not interleave
 ```
 
 ### The no-carrier ledger
@@ -212,6 +209,8 @@ derived prop that nobody wrote down counts as debt.
 carousel.is_scrolling           written BACK by the scroll observer
 carousel.remaining_threshold    read by the observer; configures a comparison
 collection.remaining_threshold  as carousel.remaining_threshold
+collection.reorder              written BACK: the two indices a completed drag moved between
+list.reorder                    as collection.reorder — declared on the same sequence tier
 ```
 
 ### The host-rendered ledger

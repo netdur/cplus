@@ -1939,6 +1939,16 @@ ROW_SOURCE_FIELDS = [
     # "nothing selected", which is what an empty selection is.
     ("selected_index", "i64", "-1 as i64",
      "facet — which row is selected, or -1 for none"),
+    # `ReorderCompleted` tells an application a drag finished and nothing else:
+    # MAUI's reorder mutates the bound ItemsSource, so the app reads the answer
+    # off its own data. facet's sequence is a count plus a builder — the
+    # application's order is ITS order and the backend cannot touch it — so the
+    # move has to be reported, or the handler is a notification with nothing in
+    # it. Both are -1 until a reorder happens.
+    ("reorder_from", "i64", "-1 as i64",
+     "facet — the row a completed reorder moved, or -1"),
+    ("reorder_to", "i64", "-1 as i64",
+     "facet — where it moved to, or -1"),
 ]
 
 
@@ -2270,7 +2280,7 @@ def emit_control(maui, merged):
     bits = ([f.upper() for f, _t, _m, _s, _p in writes]
             + [f.upper() for f, _t, _m, _s, _p in owned]
             + [v.upper() for v, _m, _s, _b in commands]
-            + (["COUNT", "ROW", "GROUP_COUNT", "GROUP", "SELECTED_INDEX"]
+            + (["COUNT", "ROW", "GROUP_COUNT", "GROUP", "SELECTED_INDEX", "REORDER"]
                if mod in ROW_SOURCE else []))
     for i, b in enumerate(bits):
         o.append(f"const P_{b}: u64 = {1 << i}u64;\n")
@@ -2518,6 +2528,24 @@ def emit_control(maui, merged):
         o.append(f"        let p: *props::{props} = this._props();\n")
         o.append(f"        if p == (0 as *props::{props}) {{ return -1 as i64; }}\n")
         o.append("        return { (*p).selected_index };\n    }\n")
+        o.append("\n    // ---- what a completed reorder moved --------------------------\n")
+        o.append("    // MAUI's ReorderCompleted mutates the bound ItemsSource and the\n")
+        o.append("    // application reads the answer off its own data. facet's sequence\n")
+        o.append("    // is a count plus a builder — the application's ORDER is its own\n")
+        o.append("    // and the backend cannot touch it — so the move is reported here,\n")
+        o.append("    // or the handler is a notification with nothing in it.\n")
+        o.append("    //\n")
+        o.append("    // READ-ONLY on purpose. Writing them would be describing a move\n")
+        o.append("    // that did not happen; to reorder from code, reorder the data and\n")
+        o.append("    // write `count` or `row`.\n")
+        o.append("    fn reorder_from(this) -> i64 {\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return -1 as i64; }}\n")
+        o.append("        return { (*p).reorder_from };\n    }\n")
+        o.append("\n    fn reorder_to(this) -> i64 {\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return -1 as i64; }}\n")
+        o.append("        return { (*p).reorder_to };\n    }\n")
         o.append("\n    // Build row `at`. Empty until set_row names a builder.\n")
         o.append("    fn build_row(this, at: usize) -> core::Node {\n")
         o.append(f"        let p: *props::{props} = this._props();\n")
@@ -2745,7 +2773,9 @@ def emit_manifest(rows_by_control):
                      "`build_group_header(at:)` | **facet's own** |\n")
             o.append("| `set_selected_index` / `selected_index()` | i64, -1 = none "
                      "| **facet's own** |\n")
-            total += 5
+            o.append("| `reorder_from()` / `reorder_to()` | i64, read-only "
+                     "| **facet's own** |\n")
+            total += 6
 
     o.append("\n## the shared band\n\n")
     o.append("Declared once on `Node` and forwarded onto every cursor, so a verb\n")
@@ -3040,7 +3070,7 @@ def check(rows_by_control, by_type):
                 for k in [row_kind(band, fn, note)]
                 if k and (k[0] == "owned" or k[0] == "command"
                           or (k[0] == "prop" and band == "writes")))
-        n += 5 if MODULE[maui] in ROW_SOURCE else 0
+        n += 6 if MODULE[maui] in ROW_SOURCE else 0
         if n > 48:
             problems.append(f"{MODULE[maui]}: {n} dirty bits, and props::C_* owns "
                             "bits 48 and up.")

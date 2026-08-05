@@ -162,8 +162,15 @@ fn subclass_of(base: *u8, prefix: str, flavour: u32) -> *u8 {
                         rt::sel(#str_ptr("titleRectForBounds:\0")), drawing_rect_imp, rect_types);
                 }
                 if flavour == flavour_select() {
+                    // One class for both: a press that MOVES is a reorder and a
+                    // press that does not is a pick, and they cannot be told
+                    // apart until the mouse comes up.
                     let _m: i8 = synth::add_method_v_1id(cls,
-                        rt::sel(#str_ptr("mouseDown:\0")), mouse_down_imp, #str_ptr("v@:@\0"));
+                        rt::sel(#str_ptr("mouseDown:\0")), drag_start_imp, #str_ptr("v@:@\0"));
+                    let _d: i8 = synth::add_method_v_1id(cls,
+                        rt::sel(#str_ptr("mouseDragged:\0")), drag_move_imp, #str_ptr("v@:@\0"));
+                    let _u: i8 = synth::add_method_v_1id(cls,
+                        rt::sel(#str_ptr("mouseUp:\0")), drag_drop_imp, #str_ptr("v@:@\0"));
                 }
                 if flavour == flavour_knob() || flavour == flavour_track() {
                     let _k: i8 = add_method_v_rect(cls,
@@ -1188,10 +1195,7 @@ fn mouse_down_imp(self_obj: *u8, cmd: *u8, event: *u8) {
     let n: *core::Node = { synth::get_associated(self_obj, select_node_key()) as *core::Node };
     let h: fn(*u8, i64) = { synth::get_associated(self_obj, select_hit_key()) as fn(*u8, i64) };
     if n == (0 as *core::Node) || { h } == (0 as fn(*u8, i64)) { return; }
-    let win: rt::Point = { rt::msg_point(event, rt::sel(#str_ptr("locationInWindow\0"))) };
-    let local: rt::Point = { msg_point_point_id(self_obj,
-        rt::sel(#str_ptr("convertPoint:fromView:\0")), win, 0 as *u8) };
-    h(self_obj, child_at_point(n, local));
+    h(self_obj, child_at_point(n, local_point(self_obj, event)));
     return;
 }
 
@@ -1423,4 +1427,101 @@ fn adopt_track_cell(cell: *u8) {
     let sub: *u8 = subclass_of(cls, "FacetTrack", flavour_track());
     if sub != cls { let _old: *u8 = { object_setClass(cell, sub) }; }
     return;
+}
+
+// ---- reordering a materialised sequence ---------------------------------------
+// `CanReorderItems` is a DRAG, and macOS's answer to "reorder these" is a drag
+// too — so unlike pull-to-refresh and swipe-to-reveal there is no idiom
+// mismatch to route around. What there is instead is facet's own rule: an
+// agent has no hands. It does not need them here, because an agent reorders by
+// reordering the DATA and writing `count` — the drag is the user's path to the
+// same place, and `on_reorder_completed` is how the application learns which
+// one happened.
+//
+// The drag is tracked on the document view rather than through NSPasteboard.
+// A pasteboard drag is for carrying something BETWEEN destinations; this never
+// leaves the view it started in, and a drag session would mean a promise the
+// contract does not make (that a row can be dropped somewhere else).
+
+fn drag_from_key() -> *u8 { return { 28800 as *u8 }; }
+fn drag_moved_key() -> *u8 { return { 28801 as *u8 }; }
+fn drag_drop_key() -> *u8 { return { 28802 as *u8 }; }
+fn drag_enabled_key() -> *u8 { return { 28803 as *u8 }; }
+
+// An index is stored one-based so that 0 can mean "no drag": the associated
+// slot is a pointer, and a null one is the only "unset" it has.
+fn stored(i: i64) -> *u8 { return { (i + (1 as i64)) as *u8 }; }
+fn restored(p: *u8) -> i64 { return { p as i64 } - (1 as i64); }
+
+fn drag_start_imp(self_obj: *u8, cmd: *u8, event: *u8) {
+    mouse_down_imp(self_obj, cmd, event);
+    if { synth::get_associated(self_obj, drag_enabled_key()) } == (0 as *u8) { return; }
+    let n: *core::Node = { synth::get_associated(self_obj, select_node_key()) as *core::Node };
+    if n == (0 as *core::Node) { return; }
+    let at: i64 = child_at_point(n, local_point(self_obj, event));
+    if at < (0 as i64) { return; }
+    synth::set_associated(self_obj, drag_from_key(), stored(at));
+    synth::set_associated(self_obj, drag_moved_key(), 0 as *u8);
+    return;
+}
+
+// The row follows the pointer. Its FRAME is the layout's, so this moves the
+// VIEW only — the next layout pass puts it back, which is exactly right: the
+// move is not real until the drop reorders the nodes.
+fn drag_move_imp(self_obj: *u8, cmd: *u8, event: *u8) {
+    let held: *u8 = { synth::get_associated(self_obj, drag_from_key()) };
+    if held == (0 as *u8) { return; }
+    let n: *core::Node = { synth::get_associated(self_obj, select_node_key()) as *core::Node };
+    if n == (0 as *core::Node) { return; }
+    synth::set_associated(self_obj, drag_moved_key(), 1 as *u8);
+    let from: i64 = restored(held);
+    match core::child_of(n, from as usize) {
+        option::Option[*core::Node]::Some(c) => {
+            let v: *u8 = core::view_of(c);
+            if v == (0 as *u8) { return; }
+            let p: rt::Point = local_point(self_obj, event);
+            let f: rt::Rect = { rt::msg_rect(v, rt::sel(#str_ptr("frame\0"))) };
+            { rt::msg_void_rect(v, rt::sel(#str_ptr("setFrame:\0")),
+                                rt::Rect { x: f.x, y: p.y - (f.h / 2.0f64), w: f.w, h: f.h }) };
+        }
+        option::Option[*core::Node]::None => { }
+    }
+    return;
+}
+
+fn drag_drop_imp(self_obj: *u8, cmd: *u8, event: *u8) {
+    let held: *u8 = { synth::get_associated(self_obj, drag_from_key()) };
+    synth::set_associated(self_obj, drag_from_key(), 0 as *u8);
+    if held == (0 as *u8) { return; }
+    // A press that never moved is a CLICK, and the click already ran on the way
+    // down. Reordering on it would move a row every time one was selected.
+    if { synth::get_associated(self_obj, drag_moved_key()) } == (0 as *u8) { return; }
+    let n: *core::Node = { synth::get_associated(self_obj, select_node_key()) as *core::Node };
+    let h: fn(*u8, i64, i64) = { synth::get_associated(self_obj, drag_drop_key()) as fn(*u8, i64, i64) };
+    if n == (0 as *core::Node) || { h } == (0 as fn(*u8, i64, i64)) { return; }
+    let from: i64 = restored(held);
+    let to: i64 = child_at_point(n, local_point(self_obj, event));
+    h(self_obj, from, to);
+    return;
+}
+
+fn local_point(view: *u8, event: *u8) -> rt::Point {
+    let win: rt::Point = { rt::msg_point(event, rt::sel(#str_ptr("locationInWindow\0"))) };
+    return { msg_point_point_id(view, rt::sel(#str_ptr("convertPoint:fromView:\0")),
+                                win, 0 as *u8) };
+}
+
+fn install_row_reorder(doc: *u8, on: bool, h: fn(*u8, i64, i64)) {
+    if doc == (0 as *u8) { return; }
+    if !on {
+        synth::set_associated(doc, drag_enabled_key(), 0 as *u8);
+        return;
+    }
+    synth::set_associated(doc, drag_enabled_key(), 1 as *u8);
+    synth::set_associated(doc, drag_drop_key(), { h as *u8 });
+    return;
+}
+
+fn row_reorder_armed(doc: *u8) -> bool {
+    return { synth::get_associated(doc, drag_enabled_key()) } != (0 as *u8);
 }

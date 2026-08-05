@@ -524,6 +524,8 @@ struct CollectionProps {
     group_header: fn(*u8, usize) -> flex::Node,    // facet — builds the header row for group `g`
     opaque group_ctx: *u8,
     selected_index: i64,    // facet — which row is selected, or -1 for none
+    reorder_from: i64,    // facet — the row a completed reorder moved, or -1
+    reorder_to: i64,    // facet — where it moved to, or -1
 }
 
 impl CollectionProps {
@@ -543,6 +545,8 @@ impl CollectionProps {
             group_header: no_group_header,
             group_ctx: 0 as *u8,
             selected_index: -1 as i64,
+            reorder_from: -1 as i64,
+            reorder_to: -1 as i64,
         };
     }
 }
@@ -976,6 +980,8 @@ struct ListProps {
     group_header: fn(*u8, usize) -> flex::Node,    // facet — builds the header row for group `g`
     opaque group_ctx: *u8,
     selected_index: i64,    // facet — which row is selected, or -1 for none
+    reorder_from: i64,    // facet — the row a completed reorder moved, or -1
+    reorder_to: i64,    // facet — where it moved to, or -1
 }
 
 impl ListProps {
@@ -1015,6 +1021,8 @@ impl ListProps {
             group_header: no_group_header,
             group_ctx: 0 as *u8,
             selected_index: -1 as i64,
+            reorder_from: -1 as i64,
+            reorder_to: -1 as i64,
         };
     }
 }

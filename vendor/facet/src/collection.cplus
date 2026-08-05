@@ -32,6 +32,7 @@ const P_ROW: u64 = 2048u64;
 const P_GROUP_COUNT: u64 = 4096u64;
 const P_GROUP: u64 = 8192u64;
 const P_SELECTED_INDEX: u64 = 16384u64;
+const P_REORDER: u64 = 32768u64;
 
 // ---- build -------------------------------------------------------------
 // Typed by the parameter list: a verb another control owns is not a
@@ -422,6 +423,28 @@ impl Collection {
         let p: *props::CollectionProps = this._props();
         if p == (0 as *props::CollectionProps) { return -1 as i64; }
         return { (*p).selected_index };
+    }
+
+    // ---- what a completed reorder moved --------------------------
+    // MAUI's ReorderCompleted mutates the bound ItemsSource and the
+    // application reads the answer off its own data. facet's sequence
+    // is a count plus a builder — the application's ORDER is its own
+    // and the backend cannot touch it — so the move is reported here,
+    // or the handler is a notification with nothing in it.
+    //
+    // READ-ONLY on purpose. Writing them would be describing a move
+    // that did not happen; to reorder from code, reorder the data and
+    // write `count` or `row`.
+    fn reorder_from(this) -> i64 {
+        let p: *props::CollectionProps = this._props();
+        if p == (0 as *props::CollectionProps) { return -1 as i64; }
+        return { (*p).reorder_from };
+    }
+
+    fn reorder_to(this) -> i64 {
+        let p: *props::CollectionProps = this._props();
+        if p == (0 as *props::CollectionProps) { return -1 as i64; }
+        return { (*p).reorder_to };
     }
 
     // Build row `at`. Empty until set_row names a builder.
