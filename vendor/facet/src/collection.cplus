@@ -36,12 +36,12 @@ const P_ROW: u64 = 2048u64;
 
 fn collection(
     key: str = "",
-    horizontal_scroll_bars: vocab::ScrollBars = vocab::ScrollBars::Always,
+    horizontal_scroll_bars: vocab::ScrollBars = vocab::ScrollBars::Default,
     scroll_anchor: vocab::ScrollAnchor = vocab::ScrollAnchor::KeepItemsInView,
     remaining_threshold: i64 = 0 as i64,
-    vertical_scroll_bars: vocab::ScrollBars = vocab::ScrollBars::Always,
+    vertical_scroll_bars: vocab::ScrollBars = vocab::ScrollBars::Default,
     item_sizing: vocab::ItemSizing = vocab::ItemSizing::MeasureAllItems,
-    selection_mode: vocab::SelectionMode = vocab::SelectionMode::Multiple,
+    selection_mode: vocab::SelectionMode = vocab::SelectionMode::None,
     grouped: bool = false,
     mix_groups: bool = false,
     reorder_items: bool = false,
@@ -186,7 +186,7 @@ impl Collection {
 
     fn horizontal_scroll_bars(this) -> vocab::ScrollBars {
         let p: *props::CollectionProps = this._props();
-        if p == (0 as *props::CollectionProps) { return vocab::ScrollBars::Always; }
+        if p == (0 as *props::CollectionProps) { return vocab::ScrollBars::Default; }
         return { (*p).items_view.horizontal_scroll_bars };
     }
 
@@ -204,7 +204,7 @@ impl Collection {
 
     fn vertical_scroll_bars(this) -> vocab::ScrollBars {
         let p: *props::CollectionProps = this._props();
-        if p == (0 as *props::CollectionProps) { return vocab::ScrollBars::Always; }
+        if p == (0 as *props::CollectionProps) { return vocab::ScrollBars::Default; }
         return { (*p).items_view.vertical_scroll_bars };
     }
 
@@ -216,7 +216,7 @@ impl Collection {
 
     fn selection_mode(this) -> vocab::SelectionMode {
         let p: *props::CollectionProps = this._props();
-        if p == (0 as *props::CollectionProps) { return vocab::SelectionMode::Multiple; }
+        if p == (0 as *props::CollectionProps) { return vocab::SelectionMode::None; }
         return { (*p).selectable_items_view.selection_mode };
     }
 

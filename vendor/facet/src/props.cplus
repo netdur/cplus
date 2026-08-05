@@ -185,10 +185,10 @@ struct ItemsViewProps {
 impl ItemsViewProps {
     fn new() -> ItemsViewProps {
         return ItemsViewProps {
-            horizontal_scroll_bars: vocab::ScrollBars::Always,
+            horizontal_scroll_bars: vocab::ScrollBars::Default,
             scroll_anchor: vocab::ScrollAnchor::KeepItemsInView,
             remaining_threshold: 0 as i64,
-            vertical_scroll_bars: vocab::ScrollBars::Always,
+            vertical_scroll_bars: vocab::ScrollBars::Default,
             on_remaining_items_threshold_reached: no_handler,
             on_remaining_items_threshold_reached_ctx: 0 as *u8,
             observe_scrolled: no_handler,
@@ -251,7 +251,7 @@ struct SelectableItemsViewProps {
 impl SelectableItemsViewProps {
     fn new() -> SelectableItemsViewProps {
         return SelectableItemsViewProps {
-            selection_mode: vocab::SelectionMode::Multiple,
+            selection_mode: vocab::SelectionMode::None,
             on_selection_changed: no_handler,
             on_selection_changed_ctx: 0 as *u8,
         };
@@ -397,7 +397,7 @@ impl ButtonProps {
             font_family: text::new(),
             font_size: 0.0f64,
             image: text::new(),
-            line_break: vocab::LineBreak::CharacterWrap,
+            line_break: vocab::LineBreak::TailTruncation,
             title: text::new(),
             text_color: vocab::Color::clear(),
             text_transform: vocab::TextTransform::Default,
@@ -769,7 +769,7 @@ struct ImageProps {
 impl ImageProps {
     fn new() -> ImageProps {
         return ImageProps {
-            fit: vocab::ImageFit::AspectFill,
+            fit: vocab::ImageFit::AspectFit,
             is_animation_playing: false,
             is_opaque: false,
             source: text::new(),
@@ -808,7 +808,7 @@ struct IconButtonProps {
 impl IconButtonProps {
     fn new() -> IconButtonProps {
         return IconButtonProps {
-            fit: vocab::ImageFit::AspectFill,
+            fit: vocab::ImageFit::AspectFit,
             border_color: vocab::Color::clear(),
             border_width: 0.0f64,
             corner_radius: vocab::Corners::none(),
@@ -903,14 +903,14 @@ impl LabelProps {
             font_size: 0.0f64,
             formatted_text: vocab::Spans::new(),
             text_align: vocab::TextAlign::Center,
-            line_break: vocab::LineBreak::CharacterWrap,
+            line_break: vocab::LineBreak::TailTruncation,
             line_height: 0.0f64,
             max_lines: 0 as i64,
             text: text::new(),
             text_color: vocab::Color::clear(),
             text_decoration: vocab::TextDecoration::None,
             text_transform: vocab::TextTransform::Default,
-            text_format: vocab::TextFormat::Html,
+            text_format: vocab::TextFormat::Text,
             vertical_align: vocab::TextAlign::Center,
         };
     }
@@ -962,17 +962,17 @@ impl ListProps {
     fn new() -> ListProps {
         return ListProps {
             has_uneven_rows: false,
-            horizontal_scroll_bars: vocab::ScrollBars::Always,
+            horizontal_scroll_bars: vocab::ScrollBars::Default,
             is_grouped: false,
             is_refreshable: false,
             is_refreshing: false,
             can_refresh: false,
             refresh_color: vocab::Color::clear(),
             row_height: 0 as i64,
-            selection_mode: vocab::SelectionMode::Multiple,
+            selection_mode: vocab::SelectionMode::None,
             separator_color: vocab::Color::clear(),
             separator: vocab::Separator::Default,
-            vertical_scroll_bars: vocab::ScrollBars::Always,
+            vertical_scroll_bars: vocab::ScrollBars::Default,
             on_item_appearing: no_handler,
             on_item_appearing_ctx: 0 as *u8,
             on_item_disappearing: no_handler,
@@ -1279,10 +1279,10 @@ impl ScrollProps {
     fn new() -> ScrollProps {
         return ScrollProps {
             cascades_input: false,
-            horizontal_scroll_bars: vocab::ScrollBars::Always,
+            horizontal_scroll_bars: vocab::ScrollBars::Default,
             axis: vocab::ScrollAxis::Both,
             safe_area: vocab::SafeArea::Default,
-            vertical_scroll_bars: vocab::ScrollBars::Always,
+            vertical_scroll_bars: vocab::ScrollBars::Default,
             content_size: vocab::Size::zero(),
             scroll_x: 0.0f64,
             scroll_y: 0.0f64,

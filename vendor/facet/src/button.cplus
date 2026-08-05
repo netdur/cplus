@@ -51,7 +51,7 @@ fn button(
     font_family: str = "",
     font_size: f64 = 0.0f64,
     image: str = "",
-    line_break: vocab::LineBreak = vocab::LineBreak::CharacterWrap,
+    line_break: vocab::LineBreak = vocab::LineBreak::TailTruncation,
     text_color: vocab::Color = vocab::Color::clear(),
     text_transform: vocab::TextTransform = vocab::TextTransform::Default,
     on_click: fn(*u8, *u8) = props::no_handler,
@@ -317,7 +317,7 @@ impl Button {
 
     fn line_break(this) -> vocab::LineBreak {
         let p: *props::ButtonProps = this._props();
-        if p == (0 as *props::ButtonProps) { return vocab::LineBreak::CharacterWrap; }
+        if p == (0 as *props::ButtonProps) { return vocab::LineBreak::TailTruncation; }
         return { (*p).line_break };
     }
 

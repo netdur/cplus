@@ -42,17 +42,17 @@ const P_ROW: u64 = 65536u64;
 fn list(
     key: str = "",
     uneven_rows: bool = false,
-    horizontal_scroll_bars: vocab::ScrollBars = vocab::ScrollBars::Always,
+    horizontal_scroll_bars: vocab::ScrollBars = vocab::ScrollBars::Default,
     grouped: bool = false,
     refreshable: bool = false,
     refreshing: bool = false,
     refresh: bool = false,
     refresh_color: vocab::Color = vocab::Color::clear(),
     row_height: i64 = 0 as i64,
-    selection_mode: vocab::SelectionMode = vocab::SelectionMode::Multiple,
+    selection_mode: vocab::SelectionMode = vocab::SelectionMode::None,
     separator_color: vocab::Color = vocab::Color::clear(),
     separator: vocab::Separator = vocab::Separator::Default,
-    vertical_scroll_bars: vocab::ScrollBars = vocab::ScrollBars::Always,
+    vertical_scroll_bars: vocab::ScrollBars = vocab::ScrollBars::Default,
     on_item_appearing: fn(*u8, *u8) = props::no_handler,
     on_item_appearing_ctx: *u8 = 0 as *u8,
     on_item_disappearing: fn(*u8, *u8) = props::no_handler,
@@ -238,7 +238,7 @@ impl List {
 
     fn horizontal_scroll_bars(this) -> vocab::ScrollBars {
         let p: *props::ListProps = this._props();
-        if p == (0 as *props::ListProps) { return vocab::ScrollBars::Always; }
+        if p == (0 as *props::ListProps) { return vocab::ScrollBars::Default; }
         return { (*p).horizontal_scroll_bars };
     }
 
@@ -280,7 +280,7 @@ impl List {
 
     fn selection_mode(this) -> vocab::SelectionMode {
         let p: *props::ListProps = this._props();
-        if p == (0 as *props::ListProps) { return vocab::SelectionMode::Multiple; }
+        if p == (0 as *props::ListProps) { return vocab::SelectionMode::None; }
         return { (*p).selection_mode };
     }
 
@@ -298,7 +298,7 @@ impl List {
 
     fn vertical_scroll_bars(this) -> vocab::ScrollBars {
         let p: *props::ListProps = this._props();
-        if p == (0 as *props::ListProps) { return vocab::ScrollBars::Always; }
+        if p == (0 as *props::ListProps) { return vocab::ScrollBars::Default; }
         return { (*p).vertical_scroll_bars };
     }
 

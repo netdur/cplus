@@ -198,13 +198,50 @@ def cplus_type(t):
     return None
 
 
+# An enum prop's default was the FIRST member, and the members read out of the
+# manifest are `sorted()` — so the default was whichever variant sorts first
+# alphabetically, which is a property of the spelling and not of the contract.
+#
+# Mostly harmless and occasionally not: `text_format` defaulted to `Html`, so
+# every label declared itself as markup; `selection_mode` defaulted to
+# `Multiple`, so every collection declared itself multi-select; `fit` defaulted
+# to `AspectFill`, so every image declared itself cropped. Stage 4 found the
+# first of those by implementing it — nothing had read the field before, so a
+# wrong default could not show.
+#
+# This is the table of MAUI's OWN documented defaults, for the enums where that
+# differs from the alphabetical accident. An enum absent from it takes its
+# first member, which for the hand-authored enums is the authored one.
+#
+# `TextAlign` is deliberately NOT here. One enum serves two properties with
+# different MAUI defaults — HorizontalTextAlignment is Start, VerticalText
+# Alignment is Center — so a per-TYPE zero cannot be right for both. The zero
+# stays `Center` (right for the vertical half) and the backend treats it as
+# "not asked for" on the horizontal half, which is what it means there.
+ENUM_ZERO = {
+    "TextFormat": "Text",         # Label.TextType
+    "ImageFit": "AspectFit",      # Image.Aspect
+    "SelectionMode": "None",      # CollectionView.SelectionMode
+    "ScrollBars": "Default",      # ScrollView.*ScrollBarVisibility
+    "LineBreak": "TailTruncation",  # Label.LineBreakMode
+    "Separator": "Default",       # ListView.SeparatorVisibility
+    "Keyboard": "Default",        # InputView.Keyboard
+    "ReturnKey": "Default",       # InputView.ReturnType
+    "ContentLayout": "ImageLeft",  # Button.ContentLayout
+}
+
+
 def zero_of(t):
     if t in TYPES:
         return TYPES[t][1]
     if t in OWNED_TYPES:
         return "vocab::" + t + "::new()"
     if t in ENUM_BY_FACET:
-        return "vocab::" + t + "::" + ENUM_BY_FACET[t][0][0]
+        members = ENUM_BY_FACET[t][0]
+        want = ENUM_ZERO.get(t)
+        if want is not None and want not in members:
+            raise SystemExit(f"ENUM_ZERO names {t}::{want}, which is not a member: {members}")
+        return "vocab::" + t + "::" + (want if want is not None else members[0])
     return None
 
 

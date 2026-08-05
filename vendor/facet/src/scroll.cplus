@@ -30,10 +30,10 @@ const P_VERTICAL_SCROLL_BARS: u64 = 16u64;
 fn scroll(
     key: str = "",
     cascades_input: bool = false,
-    horizontal_scroll_bars: vocab::ScrollBars = vocab::ScrollBars::Always,
+    horizontal_scroll_bars: vocab::ScrollBars = vocab::ScrollBars::Default,
     axis: vocab::ScrollAxis = vocab::ScrollAxis::Both,
     safe_area: vocab::SafeArea = vocab::SafeArea::Default,
-    vertical_scroll_bars: vocab::ScrollBars = vocab::ScrollBars::Always,
+    vertical_scroll_bars: vocab::ScrollBars = vocab::ScrollBars::Default,
     observe_scrolled: fn(*u8, *u8) = props::no_handler,
     observe_scrolled_ctx: *u8 = 0 as *u8,
 ) -> core::Node {
@@ -129,7 +129,7 @@ impl Scroll {
 
     fn horizontal_scroll_bars(this) -> vocab::ScrollBars {
         let p: *props::ScrollProps = this._props();
-        if p == (0 as *props::ScrollProps) { return vocab::ScrollBars::Always; }
+        if p == (0 as *props::ScrollProps) { return vocab::ScrollBars::Default; }
         return { (*p).horizontal_scroll_bars };
     }
 
@@ -147,7 +147,7 @@ impl Scroll {
 
     fn vertical_scroll_bars(this) -> vocab::ScrollBars {
         let p: *props::ScrollProps = this._props();
-        if p == (0 as *props::ScrollProps) { return vocab::ScrollBars::Always; }
+        if p == (0 as *props::ScrollProps) { return vocab::ScrollBars::Default; }
         return { (*p).vertical_scroll_bars };
     }
 

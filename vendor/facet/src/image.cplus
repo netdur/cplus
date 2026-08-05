@@ -29,7 +29,7 @@ const P_SOURCE: u64 = 8u64;
 fn image(
     source: str,
     key: str = "",
-    fit: vocab::ImageFit = vocab::ImageFit::AspectFill,
+    fit: vocab::ImageFit = vocab::ImageFit::AspectFit,
     animation_playing: bool = false,
     is_opaque: bool = false,
 ) -> core::Node {
@@ -107,7 +107,7 @@ impl Image {
 
     fn fit(this) -> vocab::ImageFit {
         let p: *props::ImageProps = this._props();
-        if p == (0 as *props::ImageProps) { return vocab::ImageFit::AspectFill; }
+        if p == (0 as *props::ImageProps) { return vocab::ImageFit::AspectFit; }
         return { (*p).fit };
     }
 

@@ -31,7 +31,7 @@ const P_SOURCE: u64 = 32u64;
 fn icon_button(
     source: str,
     key: str = "",
-    fit: vocab::ImageFit = vocab::ImageFit::AspectFill,
+    fit: vocab::ImageFit = vocab::ImageFit::AspectFit,
     border_color: vocab::Color = vocab::Color::clear(),
     border_width: f64 = 0.0f64,
     corner_radius: vocab::Corners = vocab::Corners::none(),
@@ -143,7 +143,7 @@ impl IconButton {
 
     fn fit(this) -> vocab::ImageFit {
         let p: *props::IconButtonProps = this._props();
-        if p == (0 as *props::IconButtonProps) { return vocab::ImageFit::AspectFill; }
+        if p == (0 as *props::IconButtonProps) { return vocab::ImageFit::AspectFit; }
         return { (*p).fit };
     }
 

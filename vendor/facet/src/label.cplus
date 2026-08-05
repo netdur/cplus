@@ -49,13 +49,13 @@ fn label(
     font_family: str = "",
     font_size: f64 = 0.0f64,
     text_align: vocab::TextAlign = vocab::TextAlign::Center,
-    line_break: vocab::LineBreak = vocab::LineBreak::CharacterWrap,
+    line_break: vocab::LineBreak = vocab::LineBreak::TailTruncation,
     line_height: f64 = 0.0f64,
     max_lines: i64 = 0 as i64,
     text_color: vocab::Color = vocab::Color::clear(),
     text_decoration: vocab::TextDecoration = vocab::TextDecoration::None,
     text_transform: vocab::TextTransform = vocab::TextTransform::Default,
-    text_format: vocab::TextFormat = vocab::TextFormat::Html,
+    text_format: vocab::TextFormat = vocab::TextFormat::Text,
     vertical_align: vocab::TextAlign = vocab::TextAlign::Center,
 ) -> core::Node {
     var p: props::LabelProps = props::LabelProps::new();
@@ -294,7 +294,7 @@ impl Label {
 
     fn line_break(this) -> vocab::LineBreak {
         let p: *props::LabelProps = this._props();
-        if p == (0 as *props::LabelProps) { return vocab::LineBreak::CharacterWrap; }
+        if p == (0 as *props::LabelProps) { return vocab::LineBreak::TailTruncation; }
         return { (*p).line_break };
     }
 
@@ -336,7 +336,7 @@ impl Label {
 
     fn text_format(this) -> vocab::TextFormat {
         let p: *props::LabelProps = this._props();
-        if p == (0 as *props::LabelProps) { return vocab::TextFormat::Html; }
+        if p == (0 as *props::LabelProps) { return vocab::TextFormat::Text; }
         return { (*p).text_format };
     }
 

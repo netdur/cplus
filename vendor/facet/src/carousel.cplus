@@ -44,10 +44,10 @@ fn carousel(
     wraps: bool = false,
     peek_insets: vocab::Insets = vocab::Insets::zero(),
     position: i64 = 0 as i64,
-    horizontal_scroll_bars: vocab::ScrollBars = vocab::ScrollBars::Always,
+    horizontal_scroll_bars: vocab::ScrollBars = vocab::ScrollBars::Default,
     scroll_anchor: vocab::ScrollAnchor = vocab::ScrollAnchor::KeepItemsInView,
     remaining_threshold: i64 = 0 as i64,
-    vertical_scroll_bars: vocab::ScrollBars = vocab::ScrollBars::Always,
+    vertical_scroll_bars: vocab::ScrollBars = vocab::ScrollBars::Default,
     item_sizing: vocab::ItemSizing = vocab::ItemSizing::MeasureAllItems,
     on_current_item_changed: fn(*u8, *u8) = props::no_handler,
     on_current_item_changed_ctx: *u8 = 0 as *u8,
@@ -262,7 +262,7 @@ impl Carousel {
 
     fn horizontal_scroll_bars(this) -> vocab::ScrollBars {
         let p: *props::CarouselProps = this._props();
-        if p == (0 as *props::CarouselProps) { return vocab::ScrollBars::Always; }
+        if p == (0 as *props::CarouselProps) { return vocab::ScrollBars::Default; }
         return { (*p).items_view.horizontal_scroll_bars };
     }
 
@@ -280,7 +280,7 @@ impl Carousel {
 
     fn vertical_scroll_bars(this) -> vocab::ScrollBars {
         let p: *props::CarouselProps = this._props();
-        if p == (0 as *props::CarouselProps) { return vocab::ScrollBars::Always; }
+        if p == (0 as *props::CarouselProps) { return vocab::ScrollBars::Default; }
         return { (*p).items_view.vertical_scroll_bars };
     }
 
