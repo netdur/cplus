@@ -622,6 +622,11 @@ impl Subscription {
 // starts at 1, so a zeroed `_next_id` marks "not yet initialized").
 static SHARED_BUS: Bus = #zero::[Bus]();
 
+// `keeps(nothing)` because the only thing stored through the pointer is a
+// FRESH EMPTY `Vec[BusListener]` — nothing borrowed exists yet to escape.
+// The checker asks because `BusListener` carries a `str` name (E0516); the
+// lifetime question that field really raises belongs to `on`, not here.
+#[keeps(nothing)]
 fn shared() -> *Bus {
     let b: *Bus = { #addr_of(SHARED_BUS) };
     if { (*b)._next_id } == 0u64 {

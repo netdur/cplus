@@ -819,6 +819,31 @@ fn apply_radio(v: *u8, n: *core::Node, dirty: u64) {
     if p == (0 as *props::RadioProps) { return; }
     let b: ak::Button = ak::Button::from_raw(v);
     if (dirty & radio::P_ON) != (0 as u64) { b.set_state(state_of({ (*p).on })); }
+    // `RadioButton.Content` — MAUI types it `object` and every platform
+    // handler renders it through ContentAsString, so facet types it as the
+    // LABEL it is. An NSButton of type Radio draws its title beside the dot,
+    // which is the composition: one control, two things drawn.
+    //
+    // Three verbs come with it and could not mean anything before: a text
+    // colour, a transform and a kern all style a string a radio did not have.
+    // NSButton has no `setTextColor:`, so any of them makes it attributed —
+    // the same rule `apply_button` follows.
+    let title_bits: u64 = radio::P_TEXT | radio::P_TEXT_TRANSFORM
+        | radio::P_TEXT_COLOR | radio::P_CHARACTER_SPACING
+        | radio::P_FONT_SIZE | radio::P_FONT_WEIGHT | radio::P_FONT_FAMILY
+        | radio::P_IS_ITALIC;
+    if (dirty & title_bits) != (0 as u64) {
+        let shown: text::Text = paint::transformed({ (*p).text.view() }, { (*p).text_transform });
+        if radio_wants_rich(p) {
+            let a: *u8 = paint::attributed(shown.view(), radio_attributes(p));
+            if a != (0 as *u8) {
+                { rt::msg_void_id(v, rt::sel(#str_ptr("setAttributedTitle:\0")), a) };
+                rt::release(a);
+            }
+        } else {
+            b.set_title(shown.view());
+        }
+    }
     if (dirty & (radio::P_FONT_SIZE | radio::P_FONT_WEIGHT | radio::P_FONT_FAMILY
                  | radio::P_IS_ITALIC)) != (0 as u64) {
         match paint::ns_font_styled({ (*p).font_size }, { (*p).font_weight },
@@ -849,6 +874,22 @@ fn apply_radio(v: *u8, n: *core::Node, dirty: u64) {
 // Its colours are the system's: `on_color` / `off_color` / `thumb_color` have
 // no AppKit equivalent, and MANIFEST.md records that rather than faking them
 // with a tinted layer that would stop tracking the appearance.
+
+// A colour or a kern has no plain-title form on NSButton, so a radio that
+// asks for either is drawn attributed. One that asks for neither keeps the
+// plain path — the same gate `button_wants_rich` applies.
+fn radio_wants_rich(p: *props::RadioProps) -> bool {
+    if { (*p).text_color }.is_set() { return true; }
+    return paint::wants_rich({ (*p).character_spacing }, 0.0f64, vocab::TextDecoration::None);
+}
+
+fn radio_attributes(p: *props::RadioProps) -> *u8 {
+    return paint::rich_attributes(
+        paint::ns_font_styled({ (*p).font_size }, { (*p).font_weight },
+                              { (*p).font_family.view() }, { (*p).is_italic }),
+        { (*p).text_color }, { (*p).character_spacing }, 0.0f64,
+        option::Option[vocab::TextAlign]::None, vocab::TextDecoration::None);
+}
 
 fn create_toggle(n: *core::Node) -> *u8 {
     let s: ak::Switch = ak::Switch::from_raw(rt::alloc_init(#str_ptr("NSSwitch\0")));

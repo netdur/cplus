@@ -416,6 +416,16 @@ OVERLAY = {
     ("ListView", "SelectedItem"): ("DROP", "", MODEL + " — the selection is an index"),
     ("SelectableItemsView", "SelectedItem"): ("DROP", "", MODEL + " — the selection is an index"),
     ("RadioButton", "Value"): ("DROP", "", MODEL + " — the binding-era group value; a radio's identity is its key"),
+    # `Content` is typed `object` and the mechanical rule read that as a
+    # subtree. It is not one: every MAUI handler renders it through
+    # `ContentAsString`, and the type ships that method for exactly this
+    # reason. A radio's content is its LABEL, so facet types it as one — which
+    # is also what makes `text_color`, `text_transform` and
+    # `character_spacing` mean something, since all three style a string a
+    # radio did not have.
+    ("RadioButton", "Content"): ("ADOPT", "set_text / text()",
+                                 "str — MAUI types it `object`; ContentAsString is how every "
+                                 "platform handler reads it"),
 
     # The escape hatch INTENT blesses: an app may drop beneath facet and use
     # the platform view directly. MAUI's Handler is that seam, so facet names

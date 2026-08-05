@@ -328,7 +328,7 @@ shared band every element carries.
 | `set_border_color` / `border_color()` | Color | RadioButton.BorderColor |
 | `set_border_width` / `border_width()` | f64 | RadioButton.BorderWidth |
 | `set_character_spacing` / `character_spacing()` | f64 | RadioButton.CharacterSpacing |
-| `set_content` / `content()` | Node (a named child) | RadioButton.Content |
+| `set_text` / `text()` | str | RadioButton.Content |
 | `set_corner_radius` / `corner_radius()` | Corners | RadioButton.CornerRadius |
 | `set_font_weight` / `font_weight()` | FontWeight | RadioButton.FontAttributes |
 | `set_italic` / `is_italic()` | bool | RadioButton.FontAttributes (italic axis) |

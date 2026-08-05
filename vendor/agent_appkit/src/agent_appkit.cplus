@@ -1057,6 +1057,13 @@ static REFRESH_METHOD_REGISTERED: bool = false;
 // Re-walk in place: drop the old registry + view retains, install a fresh
 // walk of the same window. TextVersions restart (they key on NodeIds, which
 // renumber with the walk); optimistic edits re-read after a refresh anyway.
+//
+// `keeps(nothing)` because a `Surface` is self-referential, not borrowing:
+// its `index` is keyed by views into its own `ids`, so the whole thing is
+// one allocation's worth of lifetime and nothing a caller owns escapes into
+// it. The checker sees a view-carrying value stored through `*Surface` and
+// asks (E0516); this is the answer.
+#[keeps(nothing)]
 fn refresh_in_place(p: *u8) {
     let s: *Surface = { p as *Surface };
     let win: *u8 = { (*s).view_of(1 as usize) };

@@ -1186,6 +1186,7 @@ struct RadioProps {
     border_color: vocab::Color,    // RadioButton.BorderColor
     border_width: f64,    // RadioButton.BorderWidth
     character_spacing: f64,    // RadioButton.CharacterSpacing
+    text: text::Text,    // RadioButton.Content
     corner_radius: vocab::Corners,    // RadioButton.CornerRadius
     font_weight: vocab::FontWeight,    // RadioButton.FontAttributes
     is_italic: bool,    // RadioButton.FontAttributes (italic axis)
@@ -1206,6 +1207,7 @@ impl RadioProps {
             border_color: vocab::Color::clear(),
             border_width: 0.0f64,
             character_spacing: 0.0f64,
+            text: text::new(),
             corner_radius: vocab::Corners::none(),
             font_weight: vocab::FontWeight::Default,
             is_italic: false,

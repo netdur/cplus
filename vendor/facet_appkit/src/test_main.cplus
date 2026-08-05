@@ -4790,3 +4790,70 @@ fn a_time_picker_opens_a_clock() {
     w.close();
     return;
 }
+
+// ---- a radio with text -------------------------------------------------------
+// The user's own worked example: if the MAUI contract says a radio needs text,
+// build it. `RadioButton.Content` was typed `object` and the mechanical rule
+// read that as a subtree — but every MAUI handler renders it through
+// `ContentAsString`, which is why the type ships that method.
+
+#[test]
+fn a_radio_draws_the_text_its_content_names() {
+    backend::install();
+    var r: core::Node = radio::radio(false, key: "rt", text: "Weekly");
+    let v: *u8 = views::create(0 as *u8, #addr_of(r));
+    assert ak::Button::from_raw(v).title().view() == "Weekly";
+    // Still a radio, not a checkbox: the dot and the text are one control.
+    assert { rt::msg_i64(v, rt::sel(#str_ptr("state\0"))) } == (0 as i64);
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn a_radios_text_transform_reaches_its_title() {
+    backend::install();
+    var r: core::Node = radio::radio(false, key: "rt2", text: "weekly",
+                                     text_transform: vocab::TextTransform::Uppercase);
+    let v: *u8 = views::create(0 as *u8, #addr_of(r));
+    assert ak::Button::from_raw(v).title().view() == "WEEKLY";
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn a_radio_that_asks_for_a_colour_gets_an_attributed_title() {
+    // NSButton has no `setTextColor:`, so a colour or a kern makes the title
+    // attributed — which is what makes text_color, text_transform and
+    // character_spacing mean anything on a radio at all.
+    backend::install();
+    // NSButton derives a non-nil attributedTitle from its plain title, so the
+    // test is what is IN it: a radio that asked for nothing carries no colour.
+    var plain: core::Node = radio::radio(false, key: "rt3", text: "Plain");
+    let pv: *u8 = views::create(0 as *u8, #addr_of(plain));
+    let pa: *u8 = { rt::msg_id(pv, rt::sel(#str_ptr("attributedTitle\0"))) };
+    let pattrs: *u8 = { msg_attrs_at(pa, rt::sel(#str_ptr("attributesAtIndex:effectiveRange:\0")),
+                                     0 as u64, 0 as *u8) };
+    assert { rt::msg_id_id(pattrs, rt::sel(#str_ptr("objectForKey:\0")),
+                           bridge::nsstring("NSKern")) } == (0 as *u8);
+
+    var red: core::Node = radio::radio(false, key: "rt4", text: "Red",
+                                       text_color: vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64),
+                                       character_spacing: 2.0f64);
+    let rv: *u8 = views::create(0 as *u8, #addr_of(red));
+    let a: *u8 = { rt::msg_id(rv, rt::sel(#str_ptr("attributedTitle\0"))) };
+    assert a != (0 as *u8);
+    // The colour and the kern both landed on run 0.
+    let attrs: *u8 = { msg_attrs_at(a, rt::sel(#str_ptr("attributesAtIndex:effectiveRange:\0")),
+                                    0 as u64, 0 as *u8) };
+    assert attrs != (0 as *u8);
+    assert { rt::msg_id_id(attrs, rt::sel(#str_ptr("objectForKey:\0")),
+                           bridge::nsstring("NSColor")) } != (0 as *u8);
+    assert { rt::msg_id_id(attrs, rt::sel(#str_ptr("objectForKey:\0")),
+                           bridge::nsstring("NSKern")) } != (0 as *u8);
+    views::view_release(pv);
+    views::view_release(rv);
+    return;
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_attrs_at(recv: *u8, sel: *u8, i: u64, r: *u8) -> *u8;

@@ -1,0 +1,7 @@
+{
+  "_comment": "cpc-bindgen naming overrides for WebKit. WKWebView mechanically becomes WebView after stripping the WK prefix, so the deprecated legacy WebView class is renamed to LegacyWebView to keep both APIs available.",
+  "types": {
+    "WebView": "LegacyWebView"
+  },
+  "methods": {}
+}

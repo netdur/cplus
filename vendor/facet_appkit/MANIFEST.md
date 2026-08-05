@@ -133,9 +133,6 @@ not say" are different facts, and a backend that files the second under the
 first is claiming a platform limit that does not exist.
 
 ```no-carrier
-radio.text_color                RadioButton.Content was not adopted; a radio has no text
-radio.text_transform            as radio.text_color
-radio.character_spacing         as radio.text_color
 carousel.scroll_anchor          ItemsUpdatingScrollMode needs an update event facet has none of
 collection.scroll_anchor        as carousel.scroll_anchor
 carousel.item_sizing            facet has no measure hook for a grid item
