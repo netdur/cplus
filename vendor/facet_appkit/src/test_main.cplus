@@ -32,6 +32,7 @@ import "facet/spinner" as spinner;
 import "facet/stepper" as stepper;
 import "facet/text_area" as text_area;
 import "facet/search_field" as search_field;
+import "facet/carousel" as carousel;
 import "facet/popup" as popup;
 import "facet/bordered" as bordered;
 import "facet/split" as split;
@@ -3560,5 +3561,100 @@ fn a_picker_format_names_which_components_show() {
     views::view_release(v2);
     views::view_release(v3);
     views::view_release(v4);
+    return;
+}
+
+// ---- what a scroll implies ----------------------------------------------------
+// `position`, `is_scrolling` and the threshold have no AppKit source: a scroll
+// view reports an offset and nothing else. These assert the DERIVATION, by
+// scrolling for real and reading back what facet concluded.
+
+static POSCHANGES: i64 = 0 as i64;
+static THRESHOLDS: i64 = 0 as i64;
+fn on_pos(sender: *u8, ctx: *u8) { POSCHANGES = POSCHANGES + (1 as i64); return; }
+fn on_thr(sender: *u8, ctx: *u8) { THRESHOLDS = THRESHOLDS + (1 as i64); return; }
+fn h_pos() -> fn(*u8, *u8) { let f: fn(*u8, *u8) = on_pos; return f; }
+fn h_thr() -> fn(*u8, *u8) { let f: fn(*u8, *u8) = on_thr; return f; }
+
+// A carousel's pages are its CHILDREN, like a table's rows — attached after
+// the node exists, because the constructor takes no builder.
+fn paged_carousel(key: str) -> core::Node {
+    var c: core::Node = carousel::carousel(key: key, on_position_changed: h_pos(),
+                                           remaining_threshold: 2 as i64,
+                                           on_remaining_items_threshold_reached: h_thr());
+    var i: i64 = 0 as i64;
+    while i < (5 as i64) {
+        var page: core::Node = box_view::box(color: vocab::Color::rgba(0.2f64, 0.2f64, 0.2f64));
+        page.set_width(flex::StyleLength::points(100.0f64));
+        page.set_height(flex::StyleLength::points(50.0f64));
+        c.add_child(page);
+        i = i + (1 as i64);
+    }
+    return c;
+}
+
+#[test]
+fn scrolling_a_carousel_derives_its_position_from_the_offset() {
+    // A carousel's `position` is an INDEX; a scroll view's truth is an OFFSET.
+    // Nothing in AppKit converts one to the other, so facet derives it off the
+    // frames flex already laid out — and this scrolls for real to check.
+    backend::install();
+    POSCHANGES = 0 as i64;
+    var c: core::Node = paged_carousel("car");
+    let p: *core::Node = #addr_of(c);
+    assert mount::mount(p);
+    let v: *u8 = core::view_of(p);
+    assert v != (0 as *u8);
+    c.calculate_layout(width: 100.0f64);
+    let clip: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("contentView\0"))) };
+    // Onto the third page.
+    { msg_void_point(clip, rt::sel(#str_ptr("scrollToPoint:\0")),
+                     rt::Point { x: 0.0f64, y: 100.0f64 }) };
+    match carousel::from(p) {
+        option::Option[carousel::Carousel]::Some(h) => {
+            assert h.position() == (2 as i64);
+            // The scroll is IN PROGRESS: it just arrived, and nothing has
+            // settled it yet.
+            assert h.is_scrolling();
+        }
+        option::Option[carousel::Carousel]::None => { assert false; }
+    }
+    assert POSCHANGES == (1 as i64);
+    mount::unmount(p);
+    return;
+}
+
+#[test]
+fn the_remaining_threshold_fires_once_on_the_way_in() {
+    // A handler that loads the next page must not be asked for it on every
+    // scrolled pixel — so the threshold ARMS on the way in and only re-arms
+    // after the scroll has left the tail.
+    backend::install();
+    THRESHOLDS = 0 as i64;
+    var c: core::Node = paged_carousel("thr");
+    let p: *core::Node = #addr_of(c);
+    assert mount::mount(p);
+    let v: *u8 = core::view_of(p);
+    c.calculate_layout(width: 100.0f64);
+    let clip: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("contentView\0"))) };
+    // Page 3 of 5: three remain, past a threshold of two.
+    { msg_void_point(clip, rt::sel(#str_ptr("scrollToPoint:\0")),
+                     rt::Point { x: 0.0f64, y: 100.0f64 }) };
+    assert THRESHOLDS == (0 as i64);
+    // Page 4: two remain, so it fires.
+    { msg_void_point(clip, rt::sel(#str_ptr("scrollToPoint:\0")),
+                     rt::Point { x: 0.0f64, y: 150.0f64 }) };
+    assert THRESHOLDS == (1 as i64);
+    // Still in the tail: it must NOT fire again.
+    { msg_void_point(clip, rt::sel(#str_ptr("scrollToPoint:\0")),
+                     rt::Point { x: 0.0f64, y: 200.0f64 }) };
+    assert THRESHOLDS == (1 as i64);
+    // Back out, then in again: that is a second arrival.
+    { msg_void_point(clip, rt::sel(#str_ptr("scrollToPoint:\0")),
+                     rt::Point { x: 0.0f64, y: 0.0f64 }) };
+    { msg_void_point(clip, rt::sel(#str_ptr("scrollToPoint:\0")),
+                     rt::Point { x: 0.0f64, y: 150.0f64 }) };
+    assert THRESHOLDS == (2 as i64);
+    mount::unmount(p);
     return;
 }

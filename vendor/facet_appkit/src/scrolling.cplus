@@ -36,6 +36,8 @@ import "objc/runtime" as rt;
 import "objc/synthesis" as synth;
 import "objc/bridge" as bridge;
 import "appkit/appkit" as ak;
+import "appkit/appkit_ext" as akx;
+import "flex_layout/flex_layout" as flex;
 
 // appkit_ext 28672..28682, drawing 28700, input 28710..28715, web 28720..28721,
 // recycler 28730..28735, text_input 28740..28742.
@@ -98,12 +100,151 @@ fn scrolls(kind: u32) -> bool {
 fn bounds_changed_imp(self_obj: *u8, cmd: *u8, note: *u8) {
     let n: *core::Node = node_of(self_obj);
     if n == (0 as *core::Node) { return; }
+    let view: *u8 = core::view_of(n);
+    // Everything below is DERIVED from a scroll rather than reported by
+    // AppKit, and this is the only place that sees one — which is why they
+    // live here and not in the control's apply body.
+    carousel_position(n, view);
+    remaining_threshold(n, view);
     let h: fn(*u8, *u8) = scrolled_handler(n);
     if h == props::no_handler { return; }
     // The sender is the node's own view, not the clip view: every other
     // handler in this package hands back the thing the application named, and
     // `component::key_of` is written against that.
-    h(core::view_of(n), scrolled_ctx(n));
+    h(view, scrolled_ctx(n));
+    return;
+}
+
+// ---- what a scroll implies ---------------------------------------------------
+
+fn items_view_of(n: *core::Node) -> *props::ItemsViewProps {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return 0 as *props::ItemsViewProps; }
+    let raw: *u8 = { (*d).props };
+    if raw == (0 as *u8) { return 0 as *props::ItemsViewProps; }
+    let kind: u32 = { (*d).kind };
+    if kind == props::K_COLLECTION {
+        return { #addr_of((*(raw as *props::CollectionProps)).items_view) };
+    }
+    if kind == props::K_CAROUSEL {
+        return { #addr_of((*(raw as *props::CarouselProps)).items_view) };
+    }
+    return 0 as *props::ItemsViewProps;
+}
+
+// Which child sits at the scroll's leading edge. A carousel's `position` is an
+// INDEX and a scroll view's truth is an offset, so the index is the child whose
+// frame contains the offset — read off flex, which already laid them out, so
+// this measures nothing of its own.
+fn index_at_offset(n: *core::Node, view: *u8) -> i64 {
+    let clip: *u8 = { rt::msg_id(view, rt::sel(#str_ptr("contentView\0"))) };
+    if clip == (0 as *u8) { return 0 as i64; }
+    let b: rt::Rect = ak::View::from_raw(clip).bounds();
+    let x: f64 = { b.x };
+    let y: f64 = { b.y };
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                let f: flex::Frame = { (*c).frame() };
+                // BOTH spans, not either: a carousel may page along x or along
+                // y, and a child whose horizontal span contains the offset is
+                // every child of a vertical stack. Requiring both makes one
+                // answer serve either orientation.
+                let in_x: bool = x >= { f.left } && x < { f.left } + { f.width };
+                let in_y: bool = y >= { f.top } && y < { f.top } + { f.height };
+                if in_x && in_y { return i as i64; }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return 0 as i64;
+}
+
+// `position`, `is_scrolling`, and the two handlers that ride them. All three
+// are contract READS or events with no AppKit source: a scroll view reports an
+// offset and nothing else, so facet's answer is derived here and written back
+// so the cursor reads it like any other prop.
+fn carousel_position(n: *core::Node, view: *u8) {
+    if core::kind_of(n) != props::K_CAROUSEL { return; }
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return; }
+    let p: *props::CarouselProps = { (*d).props } as *props::CarouselProps;
+    if p == (0 as *props::CarouselProps) { return; }
+    // A scroll is in progress by definition: this fires FROM one. It is
+    // cleared when the scroll settles, which is the `after` below.
+    { (*p).is_scrolling = true };
+    let want: i64 = index_at_offset(n, view);
+    if want != { (*p).position } {
+        { (*p).position = want };
+        fire_h({ (*p).on_position_changed }, { (*p).on_position_changed_ctx }, view);
+        // MAUI reports the ITEM and the POSITION separately, and on this
+        // backend a position change is always an item change — the items are
+        // the children and the position indexes them.
+        fire_h({ (*p).on_current_item_changed }, { (*p).on_current_item_changed_ctx }, view);
+    }
+    settle_scrolling(n, view);
+    return;
+}
+
+fn fire_h(h: fn(*u8, *u8), ctx: *u8, sender: *u8) {
+    if h == props::no_handler { return; }
+    h(sender, ctx);
+    return;
+}
+
+// `is_scrolling` has no "stopped" event on AppKit — a scroll simply stops
+// arriving. So the flag is cleared on a timer that each scroll pushes forward,
+// and the token is kept so a scroll in progress cancels the pending clear
+// rather than stacking one per frame.
+fn settle_key() -> *u8 { return { 28752 as *u8 }; }
+
+fn scroll_settled(ctx: *u8) {
+    let n: *core::Node = ctx as *core::Node;
+    if n == (0 as *core::Node) { return; }
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return; }
+    if { (*d).kind } != props::K_CAROUSEL { return; }
+    let p: *props::CarouselProps = { (*d).props } as *props::CarouselProps;
+    if p == (0 as *props::CarouselProps) { return; }
+    { (*p).is_scrolling = false };
+    return;
+}
+
+fn settle_scrolling(n: *core::Node, view: *u8) {
+    let pending: u64 = { synth::get_associated(view, settle_key()) as u64 };
+    if pending != (0 as u64) { akx::cancel_after(pending); }
+    let f: fn(*u8) = scroll_settled;
+    let id: u64 = akx::after(0.15f64, f, n as *u8);
+    synth::set_associated(view, settle_key(), id as *u8);
+    return;
+}
+
+// `RemainingItemsThreshold`: fire once when the tail comes within N items of
+// the end, and not again until the scroll leaves and comes back — a handler
+// that loads the next page must not be asked for it on every scrolled pixel.
+fn threshold_key() -> *u8 { return { 28753 as *u8 }; }
+
+fn remaining_threshold(n: *core::Node, view: *u8) {
+    let iv: *props::ItemsViewProps = items_view_of(n);
+    if iv == (0 as *props::ItemsViewProps) { return; }
+    let threshold: i64 = { (*iv).remaining_threshold };
+    if threshold <= (0 as i64) { return; }
+    let count: i64 = core::child_count_of(n) as i64;
+    if count <= (0 as i64) { return; }
+    let at: i64 = index_at_offset(n, view);
+    let armed: bool = { synth::get_associated(view, threshold_key()) } != (0 as *u8);
+    let inside: bool = (count - at) <= threshold;
+    if inside == armed { return; }
+    if inside {
+        synth::set_associated(view, threshold_key(), 1 as *u8);
+        fire_h({ (*iv).on_remaining_items_threshold_reached },
+               { (*iv).on_remaining_items_threshold_reached_ctx }, view);
+    } else {
+        synth::set_associated(view, threshold_key(), 0 as *u8);
+    }
     return;
 }
 

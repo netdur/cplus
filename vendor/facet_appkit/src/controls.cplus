@@ -416,7 +416,24 @@ fn apply_scroll(v: *u8, n: *core::Node, dirty: u64) {
         s.set_has_vertical_scroller(scrolls_v && shows_bars({ (*p).vertical_scroll_bars }));
         s.set_has_horizontal_scroller(scrolls_h && shows_bars({ (*p).horizontal_scroll_bars }));
     }
+    // `safe_area` says whether the scroll keeps its content clear of the
+    // window's own chrome. On AppKit that is exactly `automaticallyAdjusts
+    // ContentInsets`, which insets for the title bar and any accessory — so
+    // `Default`/`Container`/`All` let AppKit do it and `None` turns it off.
+    if (dirty & scroll::P_SAFE_AREA) != (0 as u64) || dirty == paint::all_bits() {
+        s.set_automatically_adjusts_content_insets(honours_safe_area({ (*p).safe_area }));
+    }
     return;
+}
+
+fn honours_safe_area(a: vocab::SafeArea) -> bool {
+    return match a {
+        vocab::SafeArea::None => false,
+        vocab::SafeArea::Default => true,
+        vocab::SafeArea::Container => true,
+        vocab::SafeArea::Content => true,
+        vocab::SafeArea::All => true,
+    };
 }
 
 // `Default` is the platform's own answer, which on macOS is the overlay
@@ -2193,7 +2210,9 @@ fn apply_carousel(v: *u8, n: *core::Node, dirty: u64) {
     if p == (0 as *props::CarouselProps) { return; }
     if (dirty & carousel::P_POSITION) != (0 as u64) {
         // Scroll the page at `position` to the leading edge. Its frame is
-        // flex's, so this needs no measurement of its own.
+        // flex's, so this needs no measurement of its own. `animates_scroll`
+        // decides whether the move is a jump or a slide — AppKit animates a
+        // scroll through the animator proxy, the same as a progress bar.
         match core::child_of(n, { (*p).position } as usize) {
             option::Option[*core::Node]::Some(page) => {
                 let f: flex::Frame = { (*page).frame() };
@@ -2208,6 +2227,25 @@ fn apply_carousel(v: *u8, n: *core::Node, dirty: u64) {
         }
     }
     let iv: *props::ItemsViewProps = { #addr_of((*p).items_view) };
+    if (dirty & carousel::P_BOUNCES) != (0 as u64) || dirty == paint::all_bits() {
+        // Rubber-band overscroll IS per scroll view on AppKit — `elasticity` —
+        // which is what `IsBounceEnabled` means. Automatic is the platform's
+        // own answer and None is the switch turned off.
+        let sv: ak::ScrollView = ak::ScrollView::from_raw(v);
+        var e: ak::ScrollElasticity = ak::ScrollElasticity::None;
+        if { (*p).bounces } { e = ak::ScrollElasticity::Automatic; }
+        sv.set_horizontal_scroll_elasticity(e);
+        sv.set_vertical_scroll_elasticity(e);
+    }
+    if (dirty & carousel::P_PEEK_INSETS) != (0 as u64) || dirty == paint::all_bits() {
+        // Peeking the neighbouring page is an INSET on the content: the page
+        // is narrower than the viewport by the peek, so its neighbours show at
+        // the edges. AppKit spells that `contentInsets`.
+        let i: vocab::Insets = { (*p).peek_insets };
+        ak::ScrollView::from_raw(v).set_content_insets(
+            ak::EdgeInsets { top: { i.top }, left: { i.leading },
+                             bottom: { i.bottom }, right: { i.trailing } });
+    }
     if (dirty & (carousel::P_VERTICAL_SCROLL_BARS | carousel::P_HORIZONTAL_SCROLL_BARS)) != (0 as u64) {
         apply_sequence_scrollers(v, { (*iv).vertical_scroll_bars }, { (*iv).horizontal_scroll_bars });
     }

@@ -214,7 +214,7 @@ def reads_field(read, field):
     return any(r.startswith(field + "_") for r in read)
 
 
-def buckets(facet_dir, backend_dir, decided=()):
+def buckets(facet_dir, backend_dir, recorded=()):
     mods = facet_modules(facet_dir)
     fns = backend_functions(backend_dir)
     gated = set()
@@ -222,14 +222,25 @@ def buckets(facet_dir, backend_dir, decided=()):
         gated |= bits
     live, create_only, absent, ruled_out = [], [], [], []
     for mod, (struct, bits) in sorted(mods.items()):
+        # The same inheritance rule the handler pass uses: a prop declared on a
+        # BASE (`remaining_threshold` on `ItemsViewProps`) is read through the
+        # base struct, and counts for this control only where some body bridges
+        # this control's KIND to that struct.
+        kind = "K_" + mod.upper()
+        reach = {struct} | {t for _, ss, _, ks in fns if kind in ks for t in ss}
         for bit, field in bits.items():
             entry = f"{mod}.{field}"
             if (mod, bit) in gated:
                 live.append(entry)
-            elif struct and any(struct in s and reads_field(r, field) for _, s, r, _ in fns):
-                create_only.append(entry)
-            elif entry in decided:
+            elif entry in recorded:
+                # An explicit record beats the heuristic below. Without this,
+                # `toolbar_item.is_destructive` reads as create-only because a
+                # SIBLING control's body reads the same base field, and the
+                # ledger row saying NSToolbarItem cannot is overridden by a
+                # guess. A written-down decision is not a guess.
                 ruled_out.append(entry)
+            elif struct and any((s & reach) and reads_field(r, field) for _, s, r, _ in fns):
+                create_only.append(entry)
             else:
                 absent.append(entry)
     return live, create_only, absent, ruled_out
@@ -243,9 +254,12 @@ def main():
     hosted = ledger(manifest, "host-rendered")
     no_carrier = ledger(manifest, "no-carrier")
     by_design = ledger(manifest, "create-only")
-    live, create_only, absent, ruled_out = buckets(facet, backend, decided)
-    blocked = [e for e in absent if e in no_carrier]
-    absent = [e for e in absent if e not in no_carrier]
+    derived = ledger(manifest, "derived")
+    recorded = dict(decided)
+    recorded.update(no_carrier)
+    live, create_only, absent, ruled_out = buckets(facet, backend, recorded)
+    blocked = [e for e in ruled_out if e in no_carrier]
+    ruled_out = [e for e in ruled_out if e not in no_carrier]
     total = len(live) + len(create_only) + len(absent) + len(ruled_out) + len(blocked)
     print(f"facet_appkit verb coverage — {total} declared prop/command bits")
     print(f"  {len(live):>4}  live         gated on the dirty bit; a later write lands")
@@ -254,10 +268,13 @@ def main():
     # A create-only verb nobody wrote down is DEBT, not a decision — the same
     # rule the cannot ledger follows, applied to the bucket the handoff said to
     # start with because it looks implemented from the outside.
+    by_derivation = [e for e in create_only if e in derived]
+    create_only = [e for e in create_only if e not in derived]
     undocumented = [e for e in create_only if e not in by_design]
     create_only = [e for e in create_only if e in by_design]
     absent = absent + undocumented
     print(f"  {len(by_host):>4}  host-rendered  no view of its own; its host re-applies")
+    print(f"  {len(by_derivation):>4}  derived      written BACK, or read by an observer")
     print(f"  {len(create_only):>4}  create-only  by design, and the manifest says why")
     print(f"  {len(ruled_out):>4}  decided      the manifest's ledger says AppKit cannot")
     print(f"  {len(blocked):>4}  no carrier   AppKit can; facet declares no thing to apply it to")
@@ -267,8 +284,8 @@ def main():
     print(f"  {len(wired):>4}  wired        the backend reads the field and calls it")
     print(f"  {len(h_ruled):>4}  decided      the manifest records why it does not fire")
     print(f"  {len(dead):>4}  never fire   neither wired nor decided — the debt")
-    stale = [n for n in list(decided) + list(hosted) + list(no_carrier) + list(by_design)
-             if n not in set(live + create_only + by_host + blocked + absent + ruled_out + wired + dead + h_ruled)]
+    stale = [n for n in list(decided) + list(hosted) + list(no_carrier) + list(by_design) + list(derived)
+             if n not in set(live + create_only + by_host + by_derivation + blocked + absent + ruled_out + wired + dead + h_ruled)]
     if stale:
         print(f"\nLEDGER NAMES {len(stale)} VERBS THAT DO NOT EXIST: {', '.join(sorted(stale))}")
     # `--check` makes this a GATE rather than a report. The manifest has always
@@ -281,7 +298,7 @@ def main():
             return 1
         print("\nOK: every declared verb and handler is implemented or recorded.")
     if "--list" in sys.argv:
-        for name, rows in (("CREATE-ONLY", create_only), ("HOST-RENDERED", by_host), ("NO CARRIER", blocked), ("ABSENT", absent),
+        for name, rows in (("CREATE-ONLY", create_only), ("HOST-RENDERED", by_host), ("DERIVED", by_derivation), ("NO CARRIER", blocked), ("ABSENT", absent),
                            ("NEVER FIRE", dead), ("DECIDED", ruled_out + h_ruled),
                            ("LIVE", live), ("WIRED", wired)):
             print(f"\n{name} ({len(rows)})")

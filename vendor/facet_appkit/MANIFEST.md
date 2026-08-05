@@ -152,11 +152,9 @@ list.refresh_color              as list.is_refreshable
 list.begin_refresh              as list.is_refreshable
 list.end_refresh                as list.is_refreshable
 list.on_refreshing              as list.is_refreshable
-carousel.bounces                rubber-band overscroll is the platform's, not per view
 carousel.is_swipeable           swipe between pages is a touch idiom
 carousel.wraps                  an infinite carousel needs the touch paging it wraps
 carousel.animates_scroll        NSScrollView animates or does not; no per-scroll switch
-carousel.peek_insets            peeking neighbours is a touch-paging affordance
 collection.can_reorder_items    drag-reorder needs NSCollectionView's own drag session
 collection.on_reorder_completed  as collection.can_reorder_items
 collection.can_mix_groups       NSCollectionView sections do not interleave
@@ -182,13 +180,8 @@ first is claiming a platform limit that does not exist.
 radio.text_color                RadioButton.Content was not adopted; a radio has no text
 radio.text_transform            as radio.text_color
 radio.character_spacing         as radio.text_color
-carousel.is_scrolling           a READ with no write-back door; facet has no setter for it
 carousel.scroll_anchor          ItemsUpdatingScrollMode needs an update event facet has none of
 collection.scroll_anchor        as carousel.scroll_anchor
-carousel.remaining_threshold    the threshold needs a scroll POSITION facet does not carry
-collection.remaining_threshold  as carousel.remaining_threshold
-carousel.on_remaining_items_threshold_reached  as carousel.remaining_threshold
-collection.on_remaining_items_threshold_reached  as carousel.remaining_threshold
 carousel.item_sizing            facet has no measure hook for a grid item
 collection.item_sizing          as carousel.item_sizing
 collection.is_grouped           facet declares no group carrier on the item sequence
@@ -199,12 +192,58 @@ table.row_height                as table.has_uneven_rows
 collection.selection_mode       a materialised collection is a scroll of children, not a table
 collection.on_selection_changed  as collection.selection_mode
 collection.bind                 collection does not recycle by design; nothing to bind INTO
-carousel.on_current_item_changed  needs a scroll POSITION -> index map facet does not carry
-carousel.on_position_changed    as carousel.on_current_item_changed
-scroll.safe_area                `vocab::SafeArea` has no window-inset source on this backend
 toolbar_item.placement          `Placement` names iOS bar positions; NSToolbar has one row
 toolbar_item.priority           NSToolbarItem's visibility priority has no facet range to map
 window_chrome.style             `window_buttons` has no style beyond the traffic lights
+```
+
+### What a scroll implies
+
+Four verbs and three handlers were recorded as needing a carrier facet does not
+have. That was wrong in the same way the rest of this pass was wrong: nothing
+was missing from the contract, the backend just had no place that saw a scroll.
+Once `scrolling.cplus` existed it did, and these are derived there.
+
+- **`position` / `on_position_changed` / `on_current_item_changed`.** A
+  carousel's position is an INDEX; a scroll view's truth is an OFFSET, and
+  AppKit converts neither to the other. The index is the child whose frame
+  contains the offset — read off flex, which already laid them out, so this
+  measures nothing of its own. A position change is always an item change here,
+  because the items ARE the children and the position indexes them.
+- **`is_scrolling`.** There is no "stopped scrolling" event: a scroll simply
+  stops arriving. The flag goes up on any scroll and is cleared by a timer each
+  scroll pushes forward, so a scroll in progress cancels the pending clear
+  rather than stacking one per frame.
+- **`remaining_threshold` / `on_remaining_items_threshold_reached`.** Fires once
+  on the way IN and re-arms only after the scroll leaves the tail. A handler
+  that loads the next page must not be asked for it on every scrolled pixel.
+- **`bounces`** is `scrollElasticity`, which IS per scroll view. **`peek_insets`**
+  is `contentInsets` — a page narrower than its viewport by the peek is what
+  shows its neighbours at the edges. **`scroll.safe_area`** is
+  `automaticallyAdjustsContentInsets`, which insets for the title bar and any
+  accessory, so every value but `None` lets AppKit do it.
+
+The one that stays: **`carousel.wraps`**. An infinite carousel needs the content
+duplicated at both ends and the offset teleported across the seam mid-scroll,
+which is a paging model rather than a property — recorded rather than half-built.
+
+### The derived ledger
+
+A fifth disposition, and the smallest. These props do not flow from the
+description to the screen at all, so no apply body gates them:
+
+- `carousel.is_scrolling` is a contract READ — the backend WRITES it, the
+  application reads it, and the direction is the opposite of every other verb.
+- `remaining_threshold` is consulted by the scroll observer rather than applied
+  to anything. It configures a comparison, not a view.
+
+Listed so the bucket is accountable, exactly as the create-only one is: a
+derived prop that nobody wrote down counts as debt.
+
+```derived
+carousel.is_scrolling           written BACK by the scroll observer
+carousel.remaining_threshold    read by the observer; configures a comparison
+collection.remaining_threshold  as carousel.remaining_threshold
 ```
 
 ### The host-rendered ledger
