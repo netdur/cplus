@@ -3421,3 +3421,47 @@ fn leaving_a_canvas_while_pressed_is_a_cancel_and_not_a_release() {
     assert RELEASES == (0 as i64);
     return;
 }
+
+#[test]
+fn a_radio_group_is_honoured_by_NAME_not_by_superview() {
+    // AppKit groups radios by SUPERVIEW and has no group name. facet names the
+    // group, and this backend used to record that as "AppKit cannot" — which
+    // was wrong: a portable model the backend declines to honour is the
+    // description being rendered wrong, not a platform limit.
+    //
+    // The two radios here are in DIFFERENT containers on purpose. Under
+    // AppKit's own rule they would not affect each other at all.
+    backend::install();
+    var left: core::Builder = core::Builder::new();
+    left.add(radio::radio(true, key: "a", group: "pick"));
+    var right: core::Builder = core::Builder::new();
+    right.add(radio::radio(false, key: "b", group: "pick"));
+    var outer: core::Builder = core::Builder::new();
+    outer.add(core::column(left, key: "L"));
+    outer.add(core::column(right, key: "R"));
+    var root: core::Node = core::column(outer, key: "grouproot");
+    let p: *core::Node = #addr_of(root);
+    assert mount::mount(p);
+
+    match radio::find("b", within: p) {
+        option::Option[radio::Radio]::Some(b) => {
+            let v: *u8 = core::view_of(b.node());
+            assert v != (0 as *u8);
+            // Turning B on through the CONTROL, which is what a click ends in.
+            ak::Button::from_raw(v).set_state(1 as i64);
+            ak::Control::from_raw(v).perform_click(0 as *u8);
+        }
+        option::Option[radio::Radio]::None => { assert false; }
+    }
+    // A is off, in the props AND on its control — one answer, not two.
+    match radio::find("a", within: p) {
+        option::Option[radio::Radio]::Some(a) => {
+            assert a.on() == false;
+            let av: *u8 = core::view_of(a.node());
+            assert ak::Button::from_raw(av).state() == (0 as i64);
+        }
+        option::Option[radio::Radio]::None => { assert false; }
+    }
+    mount::unmount(p);
+    return;
+}

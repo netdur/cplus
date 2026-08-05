@@ -32,6 +32,7 @@ import "flex_layout/flex_layout" as flex;
 import "facet/facet" as core;
 import "facet/props" as props;
 import "facet/vocabulary" as vocab;
+import "facet/application" as app;
 import "facet/label" as label;
 import "facet/button" as button;
 import "facet/text_field" as text_field;
@@ -625,6 +626,76 @@ fn create_radio(n: *core::Node) -> *u8 {
     return rt::retain(b.as_view().raw());
 }
 
+// ---- radio groups ------------------------------------------------------------
+// AppKit groups NSButtons of type Radio by SUPERVIEW: radios sharing a
+// superview deselect each other and there is no group name. facet names the
+// group instead, which is the portable model — and a portable model the
+// backend declines to honour is a backend rendering the description wrong, not
+// a platform limit. So the group is honoured HERE.
+//
+// The rule is the one AppKit's own grouping implements: turning a radio ON
+// turns off every other radio naming the same group. The search is over the
+// mounted roots rather than the node's siblings, because a facet group is a
+// NAME and its members need not share a parent — which is the whole reason
+// facet names it rather than inferring it from the tree.
+
+fn radio_props(n: *core::Node) -> *props::RadioProps {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return 0 as *props::RadioProps; }
+    if { (*d).kind } != props::K_RADIO { return 0 as *props::RadioProps; }
+    return { (*d).props } as *props::RadioProps;
+}
+
+// Turn off every radio in `group` except `keep`. Writes the prop AND the
+// control: the prop because `on()` reads it, the control because that is what
+// the user sees, and updating one without the other is two answers to one
+// question.
+fn clear_group(n: *core::Node, group: str, keep: *core::Node) {
+    if n == (0 as *core::Node) { return; }
+    let p: *props::RadioProps = radio_props(n);
+    if p != (0 as *props::RadioProps) && n != keep {
+        if { (*p).group.view() } == group && { (*p).on } {
+            { (*p).on = false };
+            let v: *u8 = core::view_of(n);
+            if v != (0 as *u8) { ak::Button::from_raw(v).set_state(state_off()); }
+        }
+    }
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => { clear_group(c, group, keep); }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// The action, wrapped: the group settles first, then the application's own
+// handler runs — so a handler that asks which radio is on gets the answer
+// after the group settled rather than during.
+fn radio_action(sender: *u8, ctx: *u8) {
+    let n: *core::Node = ctx as *core::Node;
+    if n == (0 as *core::Node) { return; }
+    let p: *props::RadioProps = radio_props(n);
+    if p == (0 as *props::RadioProps) { return; }
+    let on: bool = ak::Button::from_raw(sender).state() == state_on();
+    { (*p).on = on };
+    let group: str = { (*p).group.view() };
+    if on && group != "" {
+        var w: usize = 0 as usize;
+        let windows: usize = app::window_count();
+        while w < windows {
+            clear_group(app::window_root(w), group, n);
+            w = w +% (1 as usize);
+        }
+    }
+    let h: fn(*u8, *u8) = { (*p).on_checked_changed };
+    if h != props::no_handler { h(sender, { (*p).on_checked_changed_ctx }); }
+    return;
+}
+
 fn apply_radio(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::RadioProps = props_of(n, props::K_RADIO) as *props::RadioProps;
     if p == (0 as *props::RadioProps) { return; }
@@ -643,8 +714,11 @@ fn apply_radio(v: *u8, n: *core::Node, dirty: u64) {
                      (dirty & (radio::P_BORDER_COLOR | radio::P_BORDER_WIDTH)) != (0 as u64),
                      (dirty & radio::P_CORNER_RADIUS) != (0 as u64));
     }
-    if (dirty & props::C_HANDLERS) != (0 as u64) || dirty == paint::all_bits() {
-        akx::set_control_action_ctx(b.as_control(), { (*p).on_checked_changed }, { (*p).on_checked_changed_ctx });
+    if (dirty & (props::C_HANDLERS | radio::P_GROUP)) != (0 as u64) || dirty == paint::all_bits() {
+        // Through the group trampoline, not straight to the handler: the group
+        // has to settle before the application is told.
+        let f: fn(*u8, *u8) = radio_action;
+        akx::set_control_action_ctx(b.as_control(), f, n as *u8);
     }
     if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
         b.as_control().set_enabled(core::is_enabled(n));

@@ -84,7 +84,6 @@ slider.thumb_color              system-drawn
 progress.progress_color         system-drawn: NSProgressIndicator uses the accent colour
 checkbox.color                  system-drawn: the mark is system-drawn
 spinner.color                   system-drawn: the spinner is system-drawn
-radio.group                     AppKit groups radios by SUPERVIEW, not by name
 tabs.bar_background             NSTabView draws its own strip, no colour API
 tabs.bar_background_color       NSTabView draws its own strip
 tabs.bar_text_color             NSTabView draws its own strip
@@ -287,13 +286,23 @@ it would drift the moment Apple changes the control's shape. An application
 that must have a specific colour draws it itself with `box` and `gesture`,
 which is a visible choice rather than a lie.
 
-### `radio(group:)` does not name the group
+### `radio(group:)` IS honoured, by name
 
 AppKit groups NSButtons of type Radio **by superview**: radios sharing a
 superview deselect each other automatically, and there is no group name.
-facet's `group` is the portable model, so a group that does not match the
-tree's shape is not honoured here. Put the radios of one group in one
-container and the behaviour is what the contract says.
+
+This was recorded as "AppKit cannot" and that was wrong. facet's `group` is
+the portable model, and a portable model the backend declines to honour is the
+description being rendered wrong — not a platform limit. AppKit not having the
+API is a reason to implement the rule, not a reason to drop it.
+
+So the rule AppKit's own grouping implements is implemented here: turning a
+radio ON turns off every other radio naming the same group, in the props and on
+the control both. The search is over the mounted roots rather than the node's
+siblings, because a facet group is a NAME and its members need not share a
+parent — which is the whole reason facet names it instead of inferring it from
+the tree. `a_radio_group_is_honoured_by_NAME_not_by_superview` puts its two
+radios in different containers on purpose.
 
 ### One corner radius per layer
 
