@@ -2653,3 +2653,61 @@ fn find_is_dom_order_across_the_apps_windows() {
     mount::uninstall();
     return;
 }
+
+// ---- the shared bits are pairwise disjoint ----------------------------------
+//
+// This test exists because they were not. `C_SAFE_AREA` was added at 2^63 on
+// the reasoning that the shared band is "the top 16 bits" and fifteen of them
+// were spoken for in props.cplus — but the sixteenth is `C_GESTURES`, declared
+// in facet.cplus, so the count was taken over the wrong set and the two
+// constants were the same number.
+//
+// The existing guard in gestures.cplus asserted C_GESTURES was disjoint from
+// C_HANDLERS and nothing else, so the suite stayed green through it.
+//
+// The check is arithmetic rather than a loop: for values that are each a single
+// bit, the OR of them all equals the SUM of them all if and only if no two
+// share a bit. One line, and it covers every pair.
+#[test]
+fn shared_bits_are_pairwise_disjoint() {
+    let ored: u64 = props::C_OPACITY | props::C_BACKGROUND_COLOR | props::C_BACKGROUND
+        | props::C_SHADOW | props::C_CLIP | props::C_IS_ENABLED | props::C_IS_VISIBLE
+        | props::C_INPUT_TRANSPARENT | props::C_FLOW_DIRECTION | props::C_TRANSFORM
+        | props::C_FOCUS | props::C_BLUR | props::C_FLUSH | props::C_HANDLERS
+        | props::C_LAYOUT | props::C_SAFE_AREA | facet::C_GESTURES;
+    let summed: u64 = props::C_OPACITY +% props::C_BACKGROUND_COLOR +% props::C_BACKGROUND
+        +% props::C_SHADOW +% props::C_CLIP +% props::C_IS_ENABLED +% props::C_IS_VISIBLE
+        +% props::C_INPUT_TRANSPARENT +% props::C_FLOW_DIRECTION +% props::C_TRANSFORM
+        +% props::C_FOCUS +% props::C_BLUR +% props::C_FLUSH +% props::C_HANDLERS
+        +% props::C_LAYOUT +% props::C_SAFE_AREA +% facet::C_GESTURES;
+    assert ored == summed;
+    // Seventeen bits, so seventeen ones. A new shared bit must be added here.
+    assert count_bits(ored) == (17 as u64);
+    return;
+}
+
+fn count_bits(v: u64) -> u64 {
+    var n: u64 = 0 as u64;
+    var x: u64 = v;
+    while x != (0 as u64) {
+        n = n +% (x & (1 as u64));
+        x = x >> (1 as u64);
+    }
+    return n;
+}
+
+// The other half of the same mistake: a shared bit must not land in the
+// per-control space either. Per-control bits start at 2^0 and the highest the
+// contract declares is 2^22, so the low 23 bits belong to controls and nothing
+// shared may touch them.
+#[test]
+fn no_shared_bit_reaches_into_the_per_control_space() {
+    let shared: u64 = props::C_OPACITY | props::C_BACKGROUND_COLOR | props::C_BACKGROUND
+        | props::C_SHADOW | props::C_CLIP | props::C_IS_ENABLED | props::C_IS_VISIBLE
+        | props::C_INPUT_TRANSPARENT | props::C_FLOW_DIRECTION | props::C_TRANSFORM
+        | props::C_FOCUS | props::C_BLUR | props::C_FLUSH | props::C_HANDLERS
+        | props::C_LAYOUT | props::C_SAFE_AREA | facet::C_GESTURES;
+    let per_control_space: u64 = 8388607u64;   // bits 0..22
+    assert (shared & per_control_space) == (0 as u64);
+    return;
+}

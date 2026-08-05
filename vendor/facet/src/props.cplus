@@ -119,15 +119,30 @@ const C_HANDLERS: u64 = 2305843009213693952u64;
 // cache decides what actually moved, and the frame walk prunes itself on
 // Node::layout_changed().
 const C_LAYOUT: u64 = 4611686018427387904u64;
-// The last bit of the shared band's sixteen. `safe_area` earns its own rather
-// than riding C_LAYOUT because the two say different things: C_LAYOUT means
-// "re-run the layout pass", and this means "the inset that pass starts from
-// changed". A write raises BOTH — the value is geometry, so the pass has to
-// run — but the backend can tell which question it is answering.
+// `safe_area` earns its own bit rather than riding C_LAYOUT because the two say
+// different things: C_LAYOUT means "re-run the layout pass", and this means
+// "the inset that pass starts from changed". A write raises BOTH — the value is
+// geometry, so the pass has to run — but the backend can tell which question it
+// is answering.
+//
+// It sits at 2^47, BELOW the block above, and that is the correction to a bug
+// this constant caused on the day it was added. The comment on that block says
+// the shared band is "the top 16 bits", 2^48..2^63, and it is — but the
+// sixteenth is `core::C_GESTURES`, which is declared in facet.cplus rather than
+// here. Counting only this file said 2^63 was free; it was not, and the two
+// constants were the same number.
+//
+// Bits 2^23..2^47 are unused (the highest per-control bit is 2^22), so the band
+// grows DOWNWARD into real space instead of contending for a full row. The
+// "top 16" was a convention, not a limit, and there are 25 bits under it.
+//
+// `facet::shared_bits_are_pairwise_disjoint` is the test that would have caught
+// the collision and now guards the next one — it asserts over EVERY shared
+// constant including the ones declared elsewhere.
 //
 // `background_image` deliberately does NOT take a bit. It rides C_BACKGROUND
 // with the Brush, because they are one question: what is behind this node.
-const C_SAFE_AREA: u64 = 9223372036854775808u64;
+const C_SAFE_AREA: u64 = 140737488355328u64;
 
 // ---- GroupableItemsView — shared by every control MAUI derives from it 
 
