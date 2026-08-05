@@ -142,9 +142,17 @@ fn make_shell_window(take chrome: Chrome) -> ak::Window {
                               bridge::nsstring(sub)) };
         }
     }
-    // The content-size floor, applied only when both dimensions are set.
-    if c.min_width > 0.0f64 && c.min_height > 0.0f64 {
-        win.set_content_min_size(rt::Size { w: c.min_width, h: c.min_height });
+    // The content-size floor. Each axis is answered on its own, the same rule
+    // the ceiling twelve lines below already followed — this used to require
+    // BOTH (`&&`), so `Chrome::new(min_width: 640.0)` with the default
+    // `min_height: 0.0` set no floor at all and the window shrank to nothing
+    // horizontally. Zero means unconstrained on that axis, not "ignore me".
+    if c.min_width > 0.0f64 || c.min_height > 0.0f64 {
+        var floor_w: f64 = 0.0f64;
+        var floor_h: f64 = 0.0f64;
+        if c.min_width > 0.0f64 { floor_w = c.min_width; }
+        if c.min_height > 0.0f64 { floor_h = c.min_height; }
+        win.set_content_min_size(rt::Size { w: floor_w, h: floor_h });
     }
     // ...and the ceiling. ZERO IS UNBOUNDED, so an unset maximum is not a
     // maximum of nothing: AppKit's own unbounded value is CGFLOAT_MAX, and

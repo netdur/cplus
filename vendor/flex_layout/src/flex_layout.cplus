@@ -1750,9 +1750,30 @@ impl Node {
         let pad_w: f64 = pl + pr;
         let pad_h: f64 = pt + pb;
 
+        // IN-FLOW children only. A node whose children are all `Display::None`
+        // is a leaf for layout: nothing it holds occupies space, so its own
+        // content is the only thing that can size it.
+        //
+        // Counting every child instead is a real bug and not a subtle one — a
+        // facet `label` with `span` children measured 0x0, because the spans
+        // are out of flow (they are runs inside the label's attributed string)
+        // but still made the label look like a container. It laid out as a
+        // zero-height strip and simply did not appear.
         let n: usize = this._children.count();
+        // ...and how many of them are IN FLOW. Separate from `n`, which stays
+        // the child COUNT because the container path below indexes with it.
+        var in_flow_kids: usize = 0 as usize;
+        var ci: usize = 0 as usize;
+        while ci < n {
+            let cs: Style = this.child_style(ci);
+            match cs.display {
+                Display::None => { }
+                _other => { in_flow_kids = in_flow_kids +% (1 as usize); }
+            }
+            ci = ci +% (1 as usize);
+        }
 
-        if n == (0 as usize) {
+        if in_flow_kids == (0 as usize) {
             // Leaf: measure callback supplies content, else the box is just padding.
             if this._has_measure && (!have_w || !have_h) {
                 let mf: fn(*u8, f64, MeasureMode, f64, MeasureMode) -> Size = this._measure;

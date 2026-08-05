@@ -7414,3 +7414,94 @@ fn the_async_pump_is_installed_with_the_backend() {
     assert scheduler::async_pump_installed();
     return;
 }
+
+// ---- layout: what a zero measurement means, and who is in flow --------------
+
+#[test]
+fn a_control_with_no_intrinsic_width_takes_the_space_it_is_offered() {
+    // NSSlider, NSProgressIndicator, an editable NSTextField and NSSearchField
+    // all answer fittingSize.width == 0 — not "I am zero wide" but "I take what
+    // I am given". flex believed the zero, so in a ROW the field was a sliver.
+    backend::install();
+    app::reset_default_for_tests();
+    var root: core::Node = core::row(core::Builder::new(), key: "form");
+    var lbl: core::Node = label::label("Name", key: "lbl");
+    var fld: core::Node = text_field::text_field(key: "fld", text: "");
+    let _a: bool = mount::insert_child(#addr_of(root), lbl, 0 as usize);
+    let _b: bool = mount::insert_child(#addr_of(root), fld, 1 as usize);
+    let rp: *core::Node = #addr_of(root);
+    let win: *u8 = window::open_window(rp, screen::Chrome::new(
+        title: "form", width: 600.0f64, height: 120.0f64));
+    scheduler::layout_window(rp);
+    match text_field::find("fld", within: rp) {
+        option::Option[text_field::TextField]::Some(h) => {
+            let w: f64 = { (*h.node()).frame() }.width;
+            // Before the floor this was 0. Any real width is the fix; assert a
+            // generous floor so the test is about presence, not a magic number.
+            assert w > 20.0f64;
+        }
+        option::Option[text_field::TextField]::None => { assert false; }
+    }
+    window::close_window(win);
+    backend::uninstall();
+    app::reset_default_for_tests();
+    return;
+}
+
+#[test]
+fn a_span_is_out_of_flow_so_its_label_still_measures_itself() {
+    // flex calls a node's measure callback only when it has NO children, so
+    // span children turned a label into a container that measured 0x0 — the
+    // zero-height-strip failure, reintroduced by a styling verb.
+    backend::install();
+    app::reset_default_for_tests();
+    var root: core::Node = core::row(core::Builder::new(), key: "r");
+    var l: core::Node = label::label("hello", key: "rich");
+    var sp: core::Node = span::span("world", key: "s1");
+    let _s: bool = mount::insert_child(#addr_of(l), sp, 0 as usize);
+    let _a: bool = mount::insert_child(#addr_of(root), l, 0 as usize);
+    let rp: *core::Node = #addr_of(root);
+    let win: *u8 = window::open_window(rp, screen::Chrome::new(
+        title: "spans", width: 400.0f64, height: 120.0f64));
+    scheduler::layout_window(rp);
+    match core::find_in(rp, "s1") {
+        option::Option[*core::Node]::Some(s) => {
+            // The span is in the TREE — the label reads it to build the
+            // attributed string — but out of the LAYOUT.
+            match { (*s).display() } {
+                flex::Display::None => { }
+                _other => { assert false; }
+            }
+        }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    match label::find("rich", within: rp) {
+        option::Option[label::Label]::Some(h) => {
+            // ...so the label measured its own text rather than its children.
+            assert { (*h.node()).frame() }.width > 10.0f64;
+            assert { (*h.node()).frame() }.height > 5.0f64;
+        }
+        option::Option[label::Label]::None => { assert false; }
+    }
+    window::close_window(win);
+    backend::uninstall();
+    app::reset_default_for_tests();
+    return;
+}
+
+#[test]
+fn a_window_floors_one_axis_without_the_other() {
+    // `&&` here meant `min_width` alone set no floor at all, while the ceiling
+    // twelve lines below always answered each axis on its own.
+    backend::install();
+    app::reset_default_for_tests();
+    var n: core::Node = core::column(core::Builder::new(), key: "mw");
+    let win: *u8 = window::open_window(#addr_of(n), screen::Chrome::new(
+        title: "mw", width: 800.0f64, height: 400.0f64, min_width: 640.0f64));
+    let got: rt::Size = ak::Window::from_raw(win).content_min_size();
+    assert got.w > 639.0f64;
+    window::close_window(win);
+    backend::uninstall();
+    app::reset_default_for_tests();
+    return;
+}

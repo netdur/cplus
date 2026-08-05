@@ -80,7 +80,34 @@ fn wants_view(n: *core::Node) -> bool {
 
 fn create(ctx: *u8, n: *core::Node) -> *u8 {
     if n == (0 as *core::Node) { return 0 as *u8; }
-    if !wants_view(n) { return 0 as *u8; }
+    if !wants_view(n) {
+        // Two DIFFERENT reasons a node gets no view, and only one of them is
+        // still a box in the layout.
+        //
+        // A keyless pure-layout container passes its children through to the
+        // nearest host and stays in flow — it has no view of its own but it
+        // is still a row or a column, and its children are laid out by it.
+        //
+        // A NON-VIEW KIND is not a rectangle at all: a `span` is a run inside
+        // its label's attributed string, a `menu_item` is a row in an NSMenu,
+        // a `swipe_item` is a row in the menu its swipeable builds. They were
+        // ordinary flex children, so each contributed a zero-size box that
+        // still consumed a `gap` and still counted as an item under
+        // `justify: SpaceBetween` — `row(justify: SpaceBetween) { button
+        // button context_menu{...} }` distributed three slots for two buttons.
+        //
+        // Worse, a label with `span` children stopped measuring itself at all:
+        // flex uses a node's measure callback only when it has NO children, so
+        // the spans turned the label into a container that measured 0x0. That
+        // is the zero-height-strip failure, reintroduced by a verb that looks
+        // like styling.
+        //
+        // `Display::None` is flex's own word for "not in this layout", and it
+        // does not remove the node from the TREE — the label still reads its
+        // spans and the menu builders still walk their items.
+        if non_view_kind(core::kind_of(n)) { { (*n).set_display(flex::Display::None) }; }
+        return 0 as *u8;
+    }
     let kind: u32 = core::kind_of(n);
     let v: *u8 = create_for_kind(kind, n);
     if v == (0 as *u8) { return 0 as *u8; }
@@ -162,7 +189,38 @@ fn measure_view(ctx: *u8, avail_w: f64, wm: flex::MeasureMode,
         }
     }
     let s: rt::Size = msg_size(ctx, rt::sel(#str_ptr("fittingSize\0")));
-    return flex::Size { width: s.w, height: s.h };
+    // A ZERO answer is not a measurement, it is AppKit declining to give one.
+    //
+    // Measured on this machine: NSSlider, NSProgressIndicator, an editable
+    // NSTextField and NSSearchField all report a fitting WIDTH of 0 — they
+    // have no intrinsic width because they are meant to take what they are
+    // given. `preferredMaxLayoutWidth` does not rescue them, and NSSlider does
+    // not even answer the selector.
+    //
+    // flex trusts the number, so a zero means the control is laid out at zero
+    // and disappears. In a COLUMN nothing showed, because `align_items`
+    // defaults to Stretch and the cross axis was filled anyway; in a ROW —
+    // `row { label("Name") text_field(...) }`, the commonest form there is —
+    // the field was a sliver.
+    //
+    // So a zero is floored rather than believed. The floor is the available
+    // space when there is a bounded one (which IS what "I take what I am
+    // given" asks for), and a modest default when the parent is unbounded.
+    // Flooring cannot break a tree that already works: a control that answers
+    // a real size is untouched, and one that answered zero was invisible.
+    var w: f64 = s.w;
+    var h: f64 = s.h;
+    if (w > 0.0f64) == false { w = fallback_extent(avail_w, 100.0f64); }
+    if (h > 0.0f64) == false { h = fallback_extent(avail_h, 20.0f64); }
+    return flex::Size { width: w, height: h };
+}
+
+// The space to take when the control declines to name one: what the parent
+// offered, or a plain default when the parent offered nothing bounded (NaN or
+// non-positive is flex's way of saying unbounded).
+fn fallback_extent(avail: f64, dflt: f64) -> f64 {
+    if avail == avail && avail > 0.0f64 { return avail; }
+    return dflt;
 }
 
 // A plain backing view. FLIPPED, always: every view this backend creates is
@@ -403,6 +461,14 @@ fn u32_text(v: u32) -> text::Text {
 fn is_kind_of(obj: *u8, class_name: *u8) -> bool {
     if obj == (0 as *u8) { return false; }
     return { rt::msg_i8_id(obj, rt::sel(#str_ptr("isKindOfClass:\0")), rt::get_class(class_name)) } != (0 as i8);
+}
+
+// The kinds that are not rectangles: read as NODES when their parent's view is
+// built, never laid out. Exactly the four `wants_view` rejects for that reason
+// — a keyless container is NOT one of these, which is the whole distinction.
+fn non_view_kind(kind: u32) -> bool {
+    return controls::menu_kind(kind) || controls::menu_bar_kind(kind)
+        || controls::span_kind(kind) || controls::swipe_kind(kind);
 }
 
 fn host_for(host: *u8) -> *u8 {

@@ -425,7 +425,18 @@ fn apply_common(v: *u8, n: *core::Node, dirty: u64) {
 // layer-free rather than paint it transparent, so a tree that themes nothing
 // costs no layers.
 fn apply_background(view: ak::View, c: vocab::Color) {
-    if c.is_set() == false { return; }
+    if c.is_set() == false {
+        // Clearing it. A node that never had a background gets no layer for
+        // the privilege of saying so — but one that HAS a layer must be able
+        // to take the colour off again, or a live restyle that removes a
+        // colour looks like a stuck repaint. `apply_background_image` already
+        // handled this case correctly, which is what made the asymmetry read
+        // as an oversight rather than a decision.
+        if view.wants_layer() {
+            { rt::msg_void_id(view.layer().raw(), rt::sel(#str_ptr("setBackgroundColor:\0")), 0 as *u8) };
+        }
+        return;
+    }
     view.set_wants_layer(true);
     let l: quartz::Layer = view.layer();
     l.set_background_color(ns_color(c).c_g_color());
