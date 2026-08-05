@@ -3037,7 +3037,7 @@ TIER_ROWS = {
     ("Window", "ModalPushed"): ("implemented", "the pushed screen's Lifecycle::on_attach — runtime_macos::push_screen fires it after the window opens"),
     ("Window", "ModalPushing"): ("cannot", "the application initiates every push facet has (nav::push); there is nothing to observe that the caller does not already know"),
     ("Window", "ModalPopped"): ("implemented", "the pushed screen's Lifecycle::on_detach — pushed_closed fires it whichever way the window closed"),
-    ("Window", "ModalPopping"): ("implemented", "should_close — the one pop the app does not initiate is a user dismissing the window, and that is its cancel point"),
+    ("Window", "ModalPopping"): ("implemented", "should_close — a user dismissing the window is the one pop the app does not initiate, and that is its cancel point. SCOPE: the window tier (`run[W: Window]`, `will_close`/`should_close_callback`). A screen pushed with `nav::push` cannot refuse — `Screen` declares no should_close, and adding one would be a required method on every screen for a narrow verb"),
     ("Window", "PopCanceled"): ("implemented", "should_close returning false — the window refuses and nothing pops"),
     # ---- Application (13) ----
     ("Application", "Windows"):         ("implemented", "application.window_count/window_root"),

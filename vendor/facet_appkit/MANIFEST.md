@@ -1145,3 +1145,21 @@ with a consumer.
 `install_app_menu` reached `run_component`, `run_screen` and `App::run` but not
 `run[W: Window]`, so a hand-written window answering `has_app_menu() == true`
 built its items for nothing and opened with no menu bar.
+
+### A pushed screen cannot refuse its dismissal
+
+`Window.ModalPopping` / `PopCanceled` are recorded implemented, and the scope
+is worth stating because guard 5b's one-line reason cannot hold it.
+
+They are answered for the WINDOW tier — `run[W: Window]` carries
+`should_close_callback` / `will_close_callback`, and a window built that way
+can refuse to close. A screen pushed with `nav::push` cannot: `push_screen`
+passes `default_should_close`, and `Screen` declares no `should_close` for it
+to pass instead.
+
+Left that way deliberately. Adding one would make it a REQUIRED method on every
+screen an application writes — the same tax three `Window` methods were just
+removed for — in exchange for a verb whose only use is refusing a dismissal the
+application itself initiated. If a consumer ever needs it, the shape is a
+`ScreenBox` trampoline like the `chrome` and `menu_items` ones, not a new
+interface requirement.
