@@ -3190,6 +3190,29 @@ fn build_toolbar_item(c: *core::Node) -> *u8 {
                           akx::action_ctx_target(h, { (*mi).on_clicked_ctx })) };
         { rt::msg_void_id(item, rt::sel(#str_ptr("setAction:\0")), akx::action_ctx_sel()) };
     }
+    // `is_destructive`. "NSToolbarItem has no destructive style" is true of the
+    // item and not of the toolbar: an item may carry a VIEW of its own, which
+    // is how every app with a styled toolbar button has one. So a destructive
+    // item is a button with the same red title `mark_destructive` gives a menu
+    // row — one word, one colour, wherever the word appears.
+    if { (*mi).is_destructive } {
+        let b: ak::Button = ak::Button::from_raw(rt::alloc_init(#str_ptr("NSButton\0")));
+        b.set_button_type(ak::ButtonType::MomentaryPushIn);
+        b.set_bezel_style(ak::BezelStyle::TexturedRounded);
+        let a: *u8 = paint::attributed({ (*mi).text.view() },
+            paint::rich_attributes(option::Option[ak::Font]::None,
+                                   vocab::Color::rgba(0.8f64, 0.1f64, 0.1f64), 0.0f64, 0.0f64,
+                                   option::Option[vocab::TextAlign]::None,
+                                   vocab::TextDecoration::None));
+        if a != (0 as *u8) {
+            { rt::msg_void_id(b.raw(), rt::sel(#str_ptr("setAttributedTitle:\0")), a) };
+            rt::release(a);
+        }
+        if h != props::no_handler {
+            akx::set_control_action_ctx(b.as_control(), h, { (*mi).on_clicked_ctx });
+        }
+        { rt::msg_void_id(item, rt::sel(#str_ptr("setView:\0")), b.as_view().raw()) };
+    }
     // WHERE it sits and WHETHER it survives a narrow window are two different
     // questions, and NSToolbar answers them in two places — so they are not
     // both folded onto `visibilityPriority`:

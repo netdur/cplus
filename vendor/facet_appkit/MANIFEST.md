@@ -14,9 +14,10 @@ Read that precisely. It does not say every verb works on a Mac — it says every
 verb has an ANSWER, and the answer is checkable:
 
 ```
-314 declared prop/command bits    188 live, 18 host-rendered, 4 create-only,
-                                   84 decided, 20 no carrier, 0 absent
- 76 declared handlers              55 wired, 21 decided, 0 never fire
+315 declared prop/command bits    236 live, 23 host-rendered, 3 derived,
+                                    3 modifier, 8 create-only, 37 decided,
+                                    5 no carrier, 0 absent
+ 76 declared handlers              71 wired, 5 decided, 0 never fire
 ```
 
 `python3 tools/verb_coverage.py --check` is the gate and it fails on a verb that
@@ -25,16 +26,41 @@ not exist. That is this file's oldest claim — "a verb that is neither
 implemented nor listed below is a gap, and the gap is a bug" — finally enforced
 rather than asserted.
 
-The six dispositions, and the difference between them is the point:
+The dispositions, and the difference between them is the point:
 
 | | what it means |
 |---|---|
 | **live** | gated on the dirty bit; a later write lands |
 | **host-rendered** | the node has no view; its HOST re-applies (a `span` is a run in its label's string) |
-| **create-only** | read when the view is built, never after — four of them, each because a live flip needs a different OBJECT |
+| **derived** | written BACK by the backend, or read by an observer |
+| **modifier** | no write of its own: it changes what ANOTHER write does |
+| **create-only** | read when the object is built, never after — each because a live flip needs a different OBJECT |
 | **decided** | AppKit cannot; the reason is in the ledger below |
-| **no carrier** | AppKit CAN; facet declares the verb and gives the backend nothing to apply it to |
+| **no carrier** | facet's own MODEL has nowhere to put it — not a statement about AppKit |
 | **absent** | neither. This is the debt, and it is zero. |
+
+**The bar this file is now held to.** A control does not have to be one native
+widget. Where the contract declares a verb and no single AppKit class answers
+it, the answer is BUILT from two — a cell subclass, an overlaid button, a
+disabled first menu item — and only a verb the PLATFORM has no concept of stays
+unimplemented. Sixty-odd rows moved out of the ledger under that reading, and
+every one of them had been recorded against a reading of one class in isolation:
+
+- `vertical_align` said NSTextFieldCell has no property. It has a
+  `drawingRectForBounds:`, and a cell is an object whose class can be replaced.
+- `clear_button` said NSTextField has none. It can have one; the cell just has
+  to give back the width it covers.
+- pull-to-refresh said "a touch idiom". The gesture is; the feature is a
+  button, which is what facet's own no-hands rule already asks for.
+- swipe-to-reveal said "use a context menu" — and that second half was the
+  answer, sitting unwritten next to the first.
+- `is_open` on a picker said "no popover to open". A graphical NSDatePicker
+  exists and an NSPopover exists.
+- `radio.text_color` said a radio has no text. `RadioButton.Content` was
+  adopted as the wrong TYPE, not left unadopted.
+
+What is left is short and each row says something true about the platform or
+about facet's model rather than about how hard it looked.
 
 **Where this started.** The stage page read "42/42 kinds have a body", which was
 true and was being read as much stronger than it is. The first verb-level count
@@ -88,7 +114,6 @@ tabs.bar_background_color       NSTabView draws its own strip
 tabs.bar_text_color             NSTabView draws its own strip
 tabs.selected_tab_color         NSTabView draws its own strip
 tabs.unselected_tab_color       NSTabView draws its own strip
-toolbar_item.is_destructive     NSToolbarItem has no destructive style
 swipeable.reveal_threshold      a CONTINUOUS distance; a click has no partial state
 swipeable.observe_swipe_changing  as reveal_threshold — nothing changes between the two edges
 text_field.keyboard             soft-keyboard layout; a hardware keyboard has one
@@ -115,7 +140,7 @@ carousel.wraps                  an infinite carousel needs the touch paging it w
 collection.can_reorder_items    drag-reorder needs NSCollectionView's own drag session
 collection.on_reorder_completed  as collection.can_reorder_items
 collection.can_mix_groups       NSCollectionView sections do not interleave
-hybrid_web.on_web_resource_requested  intercepting needs a WKURLSchemeHandler per scheme
+hybrid_web.on_web_resource_requested  WKWebView cannot see http(s) subresource loads at all
 ```
 
 ### The no-carrier ledger
@@ -248,6 +273,7 @@ window_chrome.spacing           the traffic lights are laid out once, by the win
 toolbar_item.placement          an NSToolbarItem is built once, when the window opens
 toolbar_item.priority           as toolbar_item.placement — and the ORDER is the bar's
 menu.priority                   an NSMenu is built once, when the window opens
+toolbar_item.is_destructive     as toolbar_item.placement — the item is built once
 ```
 
 ### The modifier ledger

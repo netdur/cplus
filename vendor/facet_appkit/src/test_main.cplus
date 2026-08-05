@@ -5149,3 +5149,36 @@ fn maui_bools_that_default_true_are_not_generated_false() {
     assert { (*fp).input_view.checks_spelling };
     return;
 }
+
+#[test]
+fn a_destructive_toolbar_item_carries_a_red_button() {
+    // "NSToolbarItem has no destructive style" is true of the ITEM and not of
+    // the toolbar: an item may carry a view of its own, which is how every app
+    // with a styled toolbar button has one.
+    backend::install();
+    var b: core::Builder = core::Builder::new();
+    b.add(toolbar_item::toolbar_item("Keep", key: "tb:keep"));
+    b.add(toolbar_item::toolbar_item("Erase", key: "tb:erase", destructive: true));
+    var root: core::Node = core::column(b, key: "dtroot");
+    let ids: *u8 = { rt::alloc_init(#str_ptr("NSMutableArray\0")) };
+    let map: *u8 = { rt::alloc_init(#str_ptr("NSMutableDictionary\0")) };
+    window::collect_toolbar_items(#addr_of(root), ids, map);
+    let keep: *u8 = { rt::msg_id_id(map, rt::sel(#str_ptr("objectForKey:\0")),
+                                    bridge::nsstring("tb:keep")) };
+    let erase: *u8 = { rt::msg_id_id(map, rt::sel(#str_ptr("objectForKey:\0")),
+                                     bridge::nsstring("tb:erase")) };
+    // The ordinary one keeps the standard toolbar look — no view of its own.
+    assert { rt::msg_id(keep, rt::sel(#str_ptr("view\0"))) } == (0 as *u8);
+    let v: *u8 = { rt::msg_id(erase, rt::sel(#str_ptr("view\0"))) };
+    assert v != (0 as *u8);
+    let a: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("attributedTitle\0"))) };
+    assert a != (0 as *u8);
+    let attrs: *u8 = { msg_attrs_at(a, rt::sel(#str_ptr("attributesAtIndex:effectiveRange:\0")),
+                                    0 as u64, 0 as *u8) };
+    let c: *u8 = { rt::msg_id_id(attrs, rt::sel(#str_ptr("objectForKey:\0")),
+                                 bridge::nsstring("NSColor")) };
+    assert c != (0 as *u8);
+    rt::release(ids);
+    rt::release(map);
+    return;
+}
