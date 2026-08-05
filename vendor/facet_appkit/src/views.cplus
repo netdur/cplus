@@ -225,7 +225,9 @@ fn apply(ctx: *u8, n: *core::Node) {
     // `attach` / `detach` / a whole-set swap all raise C_GESTURES, and arming
     // is idempotent — the class moves once, the node pointer is refreshed
     // every time (a re-attached node has a new address).
-    if (d & core::C_GESTURES) != (0 as u64) { input::arm(v, n); }
+    // `input_transparent` is answered in the hit test, which lives on the same
+    // class — so a node that becomes transparent has to be armed for it.
+    if (d & (core::C_GESTURES | props::C_INPUT_TRANSPARENT)) != (0 as u64) { input::arm(v, n); }
     // An item rides C_HANDLERS: it is the payload half of a handler.
     if (d & props::C_HANDLERS) != (0 as u64) { input::bind_item(v, n); }
     return;

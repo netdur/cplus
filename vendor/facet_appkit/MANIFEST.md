@@ -78,7 +78,6 @@ unrecorded verb too, which is this file's oldest claim finally enforced.
 toggle.on_color                 system-drawn: NSSwitch paints from the accent colour
 toggle.off_color                system-drawn
 toggle.thumb_color              system-drawn
-slider.minimum_track_color      system-drawn: NSSlider's track is cell-drawn
 slider.maximum_track_color      system-drawn
 slider.thumb_color              system-drawn
 progress.progress_color         system-drawn: NSProgressIndicator uses the accent colour
@@ -132,8 +131,6 @@ radio.font_scales               as label.font_scales
 popup.font_scales               as label.font_scales
 date_picker.font_scales         as label.font_scales
 time_picker.font_scales         as label.font_scales
-icon_button.is_opaque           -[NSView isOpaque] is derived, not settable
-image.is_opaque                 as icon_button.is_opaque
 date_picker.character_spacing   NSDatePicker draws its own fields; no attributed value
 time_picker.character_spacing   as date_picker.character_spacing
 date_picker.is_open             a field-with-stepper has no popover to open
@@ -154,13 +151,10 @@ list.end_refresh                as list.is_refreshable
 list.on_refreshing              as list.is_refreshable
 carousel.is_swipeable           swipe between pages is a touch idiom
 carousel.wraps                  an infinite carousel needs the touch paging it wraps
-carousel.animates_scroll        NSScrollView animates or does not; no per-scroll switch
 collection.can_reorder_items    drag-reorder needs NSCollectionView's own drag session
 collection.on_reorder_completed  as collection.can_reorder_items
 collection.can_mix_groups       NSCollectionView sections do not interleave
-scroll.cascades_input           AppKit chains scroll to the nearest scroller by default
 slider.thumb_image              NSSlider's knob is cell-drawn; there is no image slot
-menu.priority                   an app menu's order is its position in the menu bar
 hybrid_web.on_web_resource_requested  intercepting needs a WKURLSchemeHandler per scheme
 ```
 
@@ -192,8 +186,6 @@ table.row_height                as table.has_uneven_rows
 collection.selection_mode       a materialised collection is a scroll of children, not a table
 collection.on_selection_changed  as collection.selection_mode
 collection.bind                 collection does not recycle by design; nothing to bind INTO
-toolbar_item.placement          `Placement` names iOS bar positions; NSToolbar has one row
-toolbar_item.priority           NSToolbarItem's visibility priority has no facet range to map
 window_chrome.style             `window_buttons` has no style beyond the traffic lights
 ```
 
@@ -299,6 +291,20 @@ text_field.is_secure            NSSecureTextField is a different CLASS, not a pr
 list.row_height                 the table's row height is read when its source is built
 tree.row_height                 as list.row_height
 window_chrome.spacing           the traffic lights are laid out once, by the window
+toolbar_item.placement          an NSToolbarItem is built once, when the window opens
+toolbar_item.priority           as toolbar_item.placement — and the ORDER is the bar's
+menu.priority                   an NSMenu is built once, when the window opens
+```
+
+### The modifier ledger
+
+A verb with no write of its own. It changes what ANOTHER write does, so gating
+it would mean acting on a change that has nothing to act on — writing
+`animates_scroll` would re-scroll the carousel to the page it is already
+showing, which is a visible bug in the name of a tidy bucket.
+
+```modifier
+carousel.animates_scroll        decides whether `position` and `scroll_to` jump or slide
 ```
 
 ### The control tint colours

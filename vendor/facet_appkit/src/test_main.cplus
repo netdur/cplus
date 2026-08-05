@@ -22,6 +22,7 @@ import "facet/label" as label;
 import "facet/button" as button;
 import "facet/text_field" as text_field;
 import "facet/scroll" as scroll;
+import "facet/image" as image;
 import "facet/box" as box_view;
 import "facet/checkbox" as checkbox;
 import "facet/radio" as radio;
@@ -3657,4 +3658,290 @@ fn the_remaining_threshold_fires_once_on_the_way_in() {
     assert THRESHOLDS == (2 as i64);
     mount::unmount(p);
     return;
+}
+
+// ---- the verbs the ledger had wrong ------------------------------------------
+// Each of these was recorded "AppKit cannot" or "no carrier", and each was
+// wrong: the API exists, or the statement is settable one level down, or the
+// thing the ledger said had no reader was simply never installed.
+
+#[test]
+fn a_slider_fills_its_track_with_the_minimum_track_colour() {
+    // `trackFillColor` — NSSlider has had it since 10.12, and the ledger said
+    // the whole track was cell-drawn with no colour slot. Half of that is true:
+    // the EMPTY half and the knob still are.
+    backend::install();
+    var s: core::Node = slider::slider(0.5f64, key: "sl",
+                                       minimum_track_color: vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64));
+    let v: *u8 = views::create(0 as *u8, #addr_of(s));
+    assert v != (0 as *u8);
+    let c: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("trackFillColor\0"))) };
+    assert c != (0 as *u8);
+    // Red, in whatever space AppKit hands it back.
+    let rgb: *u8 = { rt::msg_id_id(c, rt::sel(#str_ptr("colorUsingColorSpace:\0")),
+                                   { rt::msg_id(rt::get_class(#str_ptr("NSColorSpace\0")),
+                                                rt::sel(#str_ptr("sRGBColorSpace\0"))) }) };
+    assert rgb != (0 as *u8);
+    assert { rt::msg_f64(rgb, rt::sel(#str_ptr("redComponent\0"))) } > 0.9f64;
+    assert { rt::msg_f64(rgb, rt::sel(#str_ptr("greenComponent\0"))) } < 0.1f64;
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn a_slider_that_asks_for_no_track_colour_gets_the_systems() {
+    // The unset colour must not paint: `clear()` is "nothing was said", and a
+    // slider that said nothing has to look like every other slider.
+    backend::install();
+    var s: core::Node = slider::slider(0.5f64, key: "sl2");
+    let v: *u8 = views::create(0 as *u8, #addr_of(s));
+    let c: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("trackFillColor\0"))) };
+    assert c == (0 as *u8);
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn an_opaque_image_says_so_on_its_layer() {
+    // `-[NSView isOpaque]` has no setter, which is what the ledger read. The
+    // STATEMENT is settable one level down, and that is the level the
+    // compositor reads it at.
+    backend::install();
+    var i: core::Node = image::image("gear", key: "im", is_opaque: true);
+    let v: *u8 = views::create(0 as *u8, #addr_of(i));
+    assert v != (0 as *u8);
+    assert ak::View::from_raw(v).wants_layer();
+    assert { rt::msg_i8(ak::View::from_raw(v).layer().raw(), rt::sel(#str_ptr("isOpaque\0"))) } != (0 as i8);
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn a_transparent_image_is_not_given_a_layer_to_say_so() {
+    // A view that asks for `is_opaque: false` is describing what it does
+    // anyway. Giving it a layer to say so would cost a backing store per image.
+    backend::install();
+    var i: core::Node = image::image("gear", key: "im2");
+    let v: *u8 = views::create(0 as *u8, #addr_of(i));
+    assert ak::View::from_raw(v).wants_layer() == false;
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn an_input_transparent_node_hands_the_hit_back() {
+    // The shared band's `input_transparent`, which had no implementation at
+    // all — AppKit has no per-view switch, so the answer is the hit test, and
+    // that is why such a node is armed even with no gestures on it.
+    backend::install();
+    var n: core::Node = box_view::box(color: vocab::Color::rgba(0.0f64, 0.0f64, 1.0f64), key: "ghost");
+    core::set_input_transparent(#addr_of(n), true);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    { rt::msg_void_rect(v, rt::sel(#str_ptr("setFrame:\0")),
+                        rt::Rect { x: 0.0f64, y: 0.0f64, w: 100.0f64, h: 100.0f64 }) };
+    assert { rt::msg_id_point(v, rt::sel(#str_ptr("hitTest:\0")),
+                              rt::Point { x: 50.0f64, y: 50.0f64 }) } == (0 as *u8);
+    return;
+}
+
+#[test]
+fn an_ordinary_node_still_takes_its_own_hit() {
+    // The ablation: without the transparency the same node answers itself, so
+    // the test above is asserting the new path and not a broken hit test.
+    backend::install();
+    var n: core::Node = box_view::box(color: vocab::Color::rgba(0.0f64, 0.0f64, 1.0f64), key: "solid")
+        .gesture(on_click: h_took());
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    { rt::msg_void_rect(v, rt::sel(#str_ptr("setFrame:\0")),
+                        rt::Rect { x: 0.0f64, y: 0.0f64, w: 100.0f64, h: 100.0f64 }) };
+    assert { rt::msg_id_point(v, rt::sel(#str_ptr("hitTest:\0")),
+                              rt::Point { x: 50.0f64, y: 50.0f64 }) } == v;
+    return;
+}
+
+#[test]
+fn a_scroll_that_does_not_cascade_lets_its_children_be_hit() {
+    // `CascadeInputTransparent`. The hit test runs TOP-DOWN, so a container
+    // that answers nil is never asked about its subviews — which IS the
+    // cascade. Turning it off means answering nil only where SUPER said self.
+    backend::install();
+    var child: core::Node = box_view::box(color: vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64), key: "inner");
+    child.set_width(flex::StyleLength::points(50.0f64));
+    child.set_height(flex::StyleLength::points(50.0f64));
+    var s: core::Node = scroll::scroll(key: "nocascade", cascades_input: false);
+    s.add_child(child);
+    core::set_input_transparent(#addr_of(s), true);
+    let p: *core::Node = #addr_of(s);
+    assert mount::mount(p);
+    let v: *u8 = core::view_of(p);
+    s.calculate_layout(width: 100.0f64);
+    { rt::msg_void_rect(v, rt::sel(#str_ptr("setFrame:\0")),
+                        rt::Rect { x: 0.0f64, y: 0.0f64, w: 100.0f64, h: 100.0f64 }) };
+    // Somewhere over the child: the scroll declines, the child does not.
+    let hit: *u8 = { rt::msg_id_point(v, rt::sel(#str_ptr("hitTest:\0")),
+                                      rt::Point { x: 10.0f64, y: 10.0f64 }) };
+    assert hit != v;
+    mount::unmount(p);
+    return;
+}
+
+#[test]
+fn a_cascading_transparent_scroll_takes_its_whole_subtree_out() {
+    backend::install();
+    var child: core::Node = box_view::box(color: vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64), key: "inner2");
+    child.set_width(flex::StyleLength::points(50.0f64));
+    child.set_height(flex::StyleLength::points(50.0f64));
+    var s: core::Node = scroll::scroll(key: "cascade", cascades_input: true);
+    s.add_child(child);
+    core::set_input_transparent(#addr_of(s), true);
+    let p: *core::Node = #addr_of(s);
+    assert mount::mount(p);
+    let v: *u8 = core::view_of(p);
+    s.calculate_layout(width: 100.0f64);
+    { rt::msg_void_rect(v, rt::sel(#str_ptr("setFrame:\0")),
+                        rt::Rect { x: 0.0f64, y: 0.0f64, w: 100.0f64, h: 100.0f64 }) };
+    assert { rt::msg_id_point(v, rt::sel(#str_ptr("hitTest:\0")),
+                              rt::Point { x: 10.0f64, y: 10.0f64 }) } == (0 as *u8);
+    mount::unmount(p);
+    return;
+}
+
+#[test]
+fn toolbar_items_come_out_in_placement_then_priority_order() {
+    // The bar's ORDER is a property of the whole bar, which is why the walk
+    // collects before it builds. Primary first, Secondary last, MAUI's own
+    // Priority within each group.
+    backend::install();
+    var b: core::Builder = core::Builder::new();
+    b.add(toolbar_item::toolbar_item("Late", key: "tb:late",
+                                     placement: vocab::ToolbarPlacement::Secondary));
+    b.add(toolbar_item::toolbar_item("Second", key: "tb:second", priority: 2 as i64));
+    b.add(toolbar_item::toolbar_item("First", key: "tb:first", priority: 1 as i64));
+    b.add(toolbar_item::toolbar_item("Early", key: "tb:early",
+                                     placement: vocab::ToolbarPlacement::Primary));
+    var root: core::Node = core::column(b, key: "tbroot");
+    let ids: *u8 = { rt::alloc_init(#str_ptr("NSMutableArray\0")) };
+    let map: *u8 = { rt::alloc_init(#str_ptr("NSMutableDictionary\0")) };
+    window::collect_toolbar_items(#addr_of(root), ids, map);
+    assert { rt::msg_u64(ids, rt::sel(#str_ptr("count\0"))) } == (4 as u64);
+    assert ident_at(ids, 0 as u64) == "tb:early";
+    assert ident_at(ids, 1 as u64) == "tb:first";
+    assert ident_at(ids, 2 as u64) == "tb:second";
+    assert ident_at(ids, 3 as u64) == "tb:late";
+    // And the group decides how readily it collapses into the overflow.
+    let secondary: *u8 = { rt::msg_id_id(map, rt::sel(#str_ptr("objectForKey:\0")),
+                                         bridge::nsstring("tb:late")) };
+    assert { rt::msg_i64(secondary, rt::sel(#str_ptr("visibilityPriority\0"))) } == (-1000 as i64);
+    let primary: *u8 = { rt::msg_id_id(map, rt::sel(#str_ptr("objectForKey:\0")),
+                                       bridge::nsstring("tb:early")) };
+    assert { rt::msg_i64(primary, rt::sel(#str_ptr("visibilityPriority\0"))) } == (1000 as i64);
+    rt::release(ids);
+    rt::release(map);
+    return;
+}
+
+fn ident_at(arr: *u8, i: u64) -> text::Text {
+    return bridge::to_text({ rt::msg_id_u64(arr, rt::sel(#str_ptr("objectAtIndex:\0")), i) });
+}
+
+#[test]
+fn a_menu_described_in_the_tree_reaches_the_menu_bar() {
+    // `build_menu` has turned a `menu` node into an NSMenu since the tier
+    // landed, and nothing ever installed it — the same shape of gap
+    // `install_app_menu` was written to close for the value-carried AppMenu.
+    backend::install();
+    var b: core::Builder = core::Builder::new();
+    // Described Edit-first, but File asks to come earlier.
+    var edit: core::Node = menu::menu("Edit", priority: 2 as i64);
+    edit.add_child(menu_item::menu_item("Copy"));
+    var file: core::Node = menu::menu("File", priority: 1 as i64);
+    file.add_child(menu_item::menu_item("New"));
+    b.add(edit);
+    b.add(file);
+    var root: core::Node = core::column(b, key: "menuroot");
+
+    let bar: *u8 = { rt::alloc_init(#str_ptr("NSMenu\0")) };
+    assert window::add_tree_menus(bar, #addr_of(root)) == (2 as i64);
+    assert { rt::msg_i64(bar, rt::sel(#str_ptr("numberOfItems\0"))) } == (2 as i64);
+    assert menu_title_at(bar, 0 as i64) == "File";
+    assert menu_title_at(bar, 1 as i64) == "Edit";
+    // And the submenu carries the items its children described.
+    let first: *u8 = { rt::msg_id_i64(bar, rt::sel(#str_ptr("itemAtIndex:\0")), 0 as i64) };
+    let sub: *u8 = { rt::msg_id(first, rt::sel(#str_ptr("submenu\0"))) };
+    assert { rt::msg_i64(sub, rt::sel(#str_ptr("numberOfItems\0"))) } == (1 as i64);
+    rt::release(bar);
+    return;
+}
+
+#[test]
+fn a_tree_with_no_menu_nodes_leaves_the_bar_alone() {
+    backend::install();
+    var bare: core::Node = core::column(core::Builder::new(), key: "nomenus");
+    let bar: *u8 = { rt::alloc_init(#str_ptr("NSMenu\0")) };
+    assert window::add_tree_menus(bar, #addr_of(bare)) == (0 as i64);
+    assert { rt::msg_i64(bar, rt::sel(#str_ptr("numberOfItems\0"))) } == (0 as i64);
+    rt::release(bar);
+    return;
+}
+
+#[test]
+fn an_unanimated_carousel_position_lands_at_once() {
+    // The two halves of `animates_scroll`, and the only way to tell them apart
+    // without a run loop: a jump has already happened when the write returns.
+    backend::install();
+    var c: core::Node = paged_carousel("jump");
+    let p: *core::Node = #addr_of(c);
+    assert mount::mount(p);
+    geometry::relayout_root(p, 100.0f64, 50.0f64, 1.0f64);
+    let v: *u8 = core::view_of(p);
+    core::clear_dirty(p);
+    set_carousel_position(p, 2 as i64);
+    core::touch(p, carousel::P_POSITION);
+    views::apply(0 as *u8, p);
+    assert clip_origin_y(v) > 50.0f64;
+    mount::unmount(p);
+    return;
+}
+
+#[test]
+fn an_animated_carousel_position_is_still_on_its_way() {
+    // Same write, `animates_scroll: true`: the clip view is animating, so it
+    // has NOT arrived by the time apply returns. That difference is the verb.
+    backend::install();
+    var c: core::Node = carousel::carousel(key: "slide", animates_scroll: true);
+    var i: i64 = 0 as i64;
+    while i < (5 as i64) {
+        var page: core::Node = box_view::box(color: vocab::Color::rgba(0.2f64, 0.2f64, 0.2f64));
+        page.set_width(flex::StyleLength::points(100.0f64));
+        page.set_height(flex::StyleLength::points(50.0f64));
+        c.add_child(page);
+        i = i + (1 as i64);
+    }
+    let p: *core::Node = #addr_of(c);
+    assert mount::mount(p);
+    geometry::relayout_root(p, 100.0f64, 50.0f64, 1.0f64);
+    let v: *u8 = core::view_of(p);
+    core::clear_dirty(p);
+    set_carousel_position(p, 2 as i64);
+    core::touch(p, carousel::P_POSITION);
+    views::apply(0 as *u8, p);
+    assert clip_origin_y(v) == 0.0f64;
+    mount::unmount(p);
+    return;
+}
+
+fn set_carousel_position(p: *core::Node, at: i64) {
+    let d: *core::Data = core::node_data(p);
+    let cp: *props::CarouselProps = { (*d).props } as *props::CarouselProps;
+    { (*cp).position = at };
+    return;
+}
+
+fn clip_origin_y(v: *u8) -> f64 {
+    let clip: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("contentView\0"))) };
+    return { rt::msg_rect(clip, rt::sel(#str_ptr("bounds\0"))) }.y;
 }

@@ -393,6 +393,23 @@ fn imp_hit_test(self_obj: *u8, cmd: *u8, p: rt::Point) -> *u8 {
     }
     let n: *core::Node = node_of_view(self_obj);
     if n == (0 as *core::Node) { return hit; }
+    // `input_transparent` — the shared band's, and the one place it can be
+    // answered. AppKit has no per-view switch for "do not receive input", so
+    // the answer is the hit test itself, and the hit test runs TOP-DOWN: a
+    // container that answers nil is never asked about its subviews.
+    //
+    // That is what makes the cascade nearly free, and it is why `scroll`
+    // carries the only switch for it:
+    //
+    //   cascades   answer nil outright — the subtree is unreachable, which is
+    //              exactly CascadeInputTransparent's meaning.
+    //   not        answer nil only where SUPER answered `self`. A child that
+    //              claimed the point still gets it; the node itself does not.
+    if core::input_transparent(n) {
+        if cascades_input(n) { return 0 as *u8; }
+        if hit == self_obj { return 0 as *u8; }
+        return hit;
+    }
     if !gestures::is_opaque_to_input(n) { return hit; }
     // Inside our bounds, we take it whatever the subviews said.
     if hit != (0 as *u8) { return self_obj; }
@@ -403,6 +420,18 @@ fn imp_hit_test(self_obj: *u8, cmd: *u8, p: rt::Point) -> *u8 {
         return self_obj;
     }
     return hit;
+}
+
+// Does this node's input transparency reach its children? `scroll` is the one
+// kind that declares the switch; every other kind takes MAUI's own default,
+// which is that it does.
+fn cascades_input(n: *core::Node) -> bool {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return true; }
+    if { (*d).kind } != props::K_SCROLL { return true; }
+    let p: *props::ScrollProps = { (*d).props } as *props::ScrollProps;
+    if p == (0 as *props::ScrollProps) { return true; }
+    return { (*p).cascades_input };
 }
 
 // ---- drag and drop -----------------------------------------------------------
@@ -600,7 +629,11 @@ fn arm(v: *u8, n: *core::Node) {
     // and the canvas interaction set are the control's verbs, not the gesture
     // band's, and an application that used them never touched `.gesture(...)`.
     let own: bool = pointer::wants_press_band(n);
-    if g == (0 as *gestures::Gestures) && own == false {
+    // A node that takes NO input is armed too, for the opposite reason: the
+    // hit test is the only place AppKit lets that be said, and `imp_hit_test`
+    // is on this class.
+    let transparent: bool = core::input_transparent(n);
+    if g == (0 as *gestures::Gestures) && own == false && transparent == false {
         trace2("[input] arm: SKIPPED — node has no Gestures, key=", { (*n).key() });
         return;
     }

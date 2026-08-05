@@ -128,7 +128,65 @@ fn reposition_children(node: *core::Node, host_abs: flex::Frame) {
         }
         i = i +% (1 as usize);
     }
+    // A scroll view's DOCUMENT VIEW is the one view no layout pass had ever
+    // sized. It is not in the node tree — `create_scroll` makes it and
+    // `views::insert` puts the children inside it — so the walk above places
+    // every child correctly into a host that stays 0x0 forever. NSScrollView
+    // reads its content size off that view, so it concluded there was nothing
+    // to scroll: no scrollers, no wheel, and `scroll_to` clamped to the origin.
+    //
+    // The content size is the union of what was placed, floored at the
+    // viewport so a short document does not scroll at all.
+    size_scroll_content(node, host_abs);
     return;
+}
+
+fn size_scroll_content(node: *core::Node, host_abs: flex::Frame) {
+    let v: *u8 = core::view_of(node);
+    if v == (0 as *u8) { return; }
+    if !is_kind_of(v, #str_ptr("NSScrollView\0")) { return; }
+    let doc: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("documentView\0"))) };
+    if doc == (0 as *u8) { return; }
+    // A recycling list's document view is its NSTableView, which sizes itself
+    // from its row count — and a table told what size to be is a table fighting
+    // its own data source.
+    if is_kind_of(doc, #str_ptr("NSTableView\0")) { return; }
+    // A text area's is its NSTextView, sized by the text container.
+    if is_kind_of(doc, #str_ptr("NSTextView\0")) { return; }
+    var w: f64 = 0.0f64;
+    var h: f64 = 0.0f64;
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(node);
+    while i < count {
+        match core::child_of(node, i) {
+            option::Option[*core::Node]::Some(c) => {
+                let cf: flex::Frame = { (*c).frame() };
+                let right: f64 = (cf.left - host_abs.left) + cf.width;
+                let bottom: f64 = (cf.top - host_abs.top) + cf.height;
+                if right > w { w = right; }
+                if bottom > h { h = bottom; }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    let port: rt::Size = { msg_size(v, rt::sel(#str_ptr("contentSize\0"))) };
+    if w < port.w { w = port.w; }
+    if h < port.h { h = port.h; }
+    let was: rt::Rect = { rt::msg_rect(doc, rt::sel(#str_ptr("frame\0"))) };
+    if was.w == w && was.h == h { return; }
+    set_view_frame(doc, rt::Rect { x: 0.0f64, y: 0.0f64, w: w, h: h });
+    return;
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_size(recv: *u8, sel: *u8) -> rt::Size;
+
+// Local rather than views::, which imports this file's callers — the whole
+// question is three lines and a dependency edge is not worth saving them.
+fn is_kind_of(obj: *u8, class_name: *u8) -> bool {
+    if obj == (0 as *u8) { return false; }
+    return { rt::msg_i8_id(obj, rt::sel(#str_ptr("isKindOfClass:\0")), rt::get_class(class_name)) } != (0 as i8);
 }
 
 // The backing scale of the screen a view is on (2.0 Retina, 1.0 otherwise).

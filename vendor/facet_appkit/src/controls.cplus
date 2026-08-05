@@ -74,6 +74,7 @@ import "quartzcore/quartzcore" as quartz;
 import "./paint" as paint;
 import "./text_input" as text_input;
 import "./drawing" as drawing;
+import "./input" as input;
 
 // ---- reaching a node's props -------------------------------------------------
 // The generated cursors' `_props()` is module-private, so a backend reads the
@@ -367,6 +368,7 @@ fn apply_image(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & (image::P_IS_ANIMATION_PLAYING | image::P_SOURCE)) != (0 as u64) {
         iv.set_animates({ (*p).is_animation_playing });
     }
+    if (dirty & image::P_IS_OPAQUE) != (0 as u64) { apply_is_opaque(v, { (*p).is_opaque }); }
     return;
 }
 
@@ -423,6 +425,10 @@ fn apply_scroll(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & scroll::P_SAFE_AREA) != (0 as u64) || dirty == paint::all_bits() {
         s.set_automatically_adjusts_content_insets(honours_safe_area({ (*p).safe_area }));
     }
+    // `cascades_input` is read where it is answered — the hit test, in
+    // input.cplus. Nothing to write here; the view has to be ARMED, because
+    // that class is where `hitTest:` lives, and arming is idempotent.
+    if (dirty & scroll::P_CASCADES_INPUT) != (0 as u64) { input::arm(v, n); }
     return;
 }
 
@@ -800,9 +806,38 @@ fn apply_slider(v: *u8, n: *core::Node, dirty: u64) {
         // action with tracking on and the first with it off.
         text_input::install_slider(v, n);
     }
+    // The FILLED part of the track has had a setter since 10.12 —
+    // `trackFillColor` — and it is exactly MAUI's MinimumTrackColor. The other
+    // two stay in the ledger: the empty track and the knob are drawn by
+    // NSSliderCell with no colour slot of their own.
+    if (dirty & slider::P_MINIMUM_TRACK_COLOR) != (0 as u64) {
+        let c: vocab::Color = { (*p).minimum_track_color };
+        if c.is_set() {
+            { rt::msg_void_id(v, rt::sel(#str_ptr("setTrackFillColor:\0")),
+                              paint::ns_color(c).raw()) };
+        }
+    }
     if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
         s.as_control().set_enabled(core::is_enabled(n));
     }
+    return;
+}
+
+// ---- is_opaque ---------------------------------------------------------------
+// `-[NSView isOpaque]` is a derived getter with no setter, which is what the
+// ledger said. But the STATEMENT the property makes — nothing shows through
+// this — is settable one level down, on the backing layer, and that is the
+// level the compositor reads it at. `image` and `icon_button` are the two
+// kinds that declare it.
+//
+// Only an opaque node forces a layer. A view that asks for `is_opaque: false`
+// and has no layer already is describing what it does anyway, and giving it
+// one to say so would cost a backing store per image.
+fn apply_is_opaque(v: *u8, opaque_: bool) {
+    let view: ak::View = ak::View::from_raw(v);
+    if opaque_ { view.set_wants_layer(true); }
+    if view.wants_layer() == false { return; }
+    view.layer().set_opaque(opaque_);
     return;
 }
 
@@ -925,6 +960,7 @@ fn apply_icon_button(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & icon_button::P_FIT) != (0 as u64) {
         b.set_image_scaling(ns_image_scaling({ (*p).fit }));
     }
+    if (dirty & icon_button::P_IS_OPAQUE) != (0 as u64) { apply_is_opaque(v, { (*p).is_opaque }); }
     if (dirty & (icon_button::P_BORDER_COLOR | icon_button::P_BORDER_WIDTH
                  | icon_button::P_CORNER_RADIUS)) != (0 as u64) {
         apply_border(v, { (*p).border_color }, { (*p).border_width }, { (*p).corner_radius },
@@ -2173,19 +2209,46 @@ fn apply_sequence_scrollers(v: *u8, vert: vocab::ScrollBars, horiz: vocab::Scrol
 // rather than a clamp — scrolling to a row that does not exist is a mistake,
 // and pretending it meant the last one would hide it.
 fn scroll_child_into_view(v: *u8, n: *core::Node, index: i64) {
+    scroll_child(v, n, index, false);
+    return;
+}
+
+fn scroll_child(v: *u8, n: *core::Node, index: i64, animated: bool) {
     if index < (0 as i64) { return; }
     match core::child_of(n, index as usize) {
         option::Option[*core::Node]::Some(child) => {
             let f: flex::Frame = { (*child).frame() };
-            match ak::ScrollView::from_raw(v).document_view() {
-                option::Option[ak::View]::Some(doc) => {
-                    doc.scroll_point(rt::Point { x: f.left, y: f.top });
-                }
-                option::Option[ak::View]::None => { }
-            }
+            scroll_document_to(v, rt::Point { x: f.left, y: f.top }, animated);
         }
         option::Option[*core::Node]::None => { }
     }
+    return;
+}
+
+// A jump, or a slide. `IsScrollAnimated` IS a per-scroll switch on AppKit —
+// the ledger's claim that it was not read the animator proxy as a property of
+// the scroll view, when it is a property of the CALL: the clip view's
+// `boundsOrigin` animates like any other, and `reflectScrolledClipView:` is
+// what tells the scroll view its scrollers moved.
+fn scroll_document_to(v: *u8, p: rt::Point, animated: bool) {
+    let sv: ak::ScrollView = ak::ScrollView::from_raw(v);
+    if !animated {
+        match sv.document_view() {
+            option::Option[ak::View]::Some(doc) => { doc.scroll_point(p); }
+            option::Option[ak::View]::None => { }
+        }
+        return;
+    }
+    let clip: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("contentView\0"))) };
+    if clip == (0 as *u8) { return; }
+    let cls: *u8 = rt::get_class(#str_ptr("NSAnimationContext\0"));
+    { rt::msg_void(cls, rt::sel(#str_ptr("beginGrouping\0"))) };
+    let anim: *u8 = { rt::msg_id(clip, rt::sel(#str_ptr("animator\0"))) };
+    if anim != (0 as *u8) {
+        { rt::msg_void_point(anim, rt::sel(#str_ptr("setBoundsOrigin:\0")), p) };
+    }
+    { rt::msg_void_id(v, rt::sel(#str_ptr("reflectScrolledClipView:\0")), clip) };
+    { rt::msg_void(cls, rt::sel(#str_ptr("endGrouping\0"))) };
     return;
 }
 
@@ -2213,18 +2276,7 @@ fn apply_carousel(v: *u8, n: *core::Node, dirty: u64) {
         // flex's, so this needs no measurement of its own. `animates_scroll`
         // decides whether the move is a jump or a slide — AppKit animates a
         // scroll through the animator proxy, the same as a progress bar.
-        match core::child_of(n, { (*p).position } as usize) {
-            option::Option[*core::Node]::Some(page) => {
-                let f: flex::Frame = { (*page).frame() };
-                match ak::ScrollView::from_raw(v).document_view() {
-                    option::Option[ak::View]::Some(doc) => {
-                        doc.scroll_point(rt::Point { x: f.left, y: f.top });
-                    }
-                    option::Option[ak::View]::None => { }
-                }
-            }
-            option::Option[*core::Node]::None => { }
-        }
+        scroll_child(v, n, { (*p).position }, { (*p).animates_scroll });
     }
     let iv: *props::ItemsViewProps = { #addr_of((*p).items_view) };
     if (dirty & carousel::P_BOUNCES) != (0 as u64) || dirty == paint::all_bits() {
@@ -2250,7 +2302,7 @@ fn apply_carousel(v: *u8, n: *core::Node, dirty: u64) {
         apply_sequence_scrollers(v, { (*iv).vertical_scroll_bars }, { (*iv).horizontal_scroll_bars });
     }
     if (dirty & carousel::P_SCROLL_TO) != (0 as u64) {
-        scroll_child_into_view(v, n, { (*iv).scroll_to_index });
+        scroll_child(v, n, { (*iv).scroll_to_index }, { (*p).animates_scroll });
     }
     return;
 }
@@ -2556,5 +2608,52 @@ fn build_toolbar_item(c: *core::Node) -> *u8 {
                           akx::action_ctx_target(h, { (*mi).on_clicked_ctx })) };
         { rt::msg_void_id(item, rt::sel(#str_ptr("setAction:\0")), akx::action_ctx_sel()) };
     }
+    // WHERE it sits and WHETHER it survives a narrow window are two different
+    // questions, and NSToolbar answers them in two places — so they are not
+    // both folded onto `visibilityPriority`:
+    //
+    //   placement   which GROUP it is ordered into, and how readily it
+    //               collapses into the overflow menu. Secondary is the one
+    //               that gives way first, which is what "secondary" means on a
+    //               bar that has one row.
+    //   priority    the order WITHIN the group. MAUI's rule: lower first.
+    //
+    // The ordering half is `window::collect_toolbar_items`, which is the only
+    // place that can see all the items at once.
+    { rt::msg_void_i64(item, rt::sel(#str_ptr("setVisibilityPriority:\0")),
+                       visibility_priority({ (*p).placement })) };
     return item;
+}
+
+// NSToolbarItemVisibilityPriority{Low,Standard,High}.
+fn visibility_priority(pl: vocab::ToolbarPlacement) -> i64 {
+    return match pl {
+        vocab::ToolbarPlacement::Default => 0 as i64,
+        vocab::ToolbarPlacement::Primary => 1000 as i64,
+        vocab::ToolbarPlacement::Secondary => -1000 as i64,
+    };
+}
+
+// Primary, then Default, then Secondary. The rank an item is SORTED by; the
+// number above is the one AppKit reads when the bar runs out of room.
+fn placement_rank(pl: vocab::ToolbarPlacement) -> i64 {
+    return match pl {
+        vocab::ToolbarPlacement::Primary => 0 as i64,
+        vocab::ToolbarPlacement::Default => 1 as i64,
+        vocab::ToolbarPlacement::Secondary => 2 as i64,
+    };
+}
+
+// The sort key for one `toolbar_item` node: its placement group, then MAUI's
+// own Priority within it. Returns a rank a caller can compare directly.
+fn toolbar_order_of(c: *core::Node) -> i64 {
+    let p: *props::ToolbarItemProps = props_of(c, props::K_TOOLBAR_ITEM) as *props::ToolbarItemProps;
+    if p == (0 as *props::ToolbarItemProps) { return 1 as i64; }
+    return placement_rank({ (*p).placement });
+}
+
+fn toolbar_priority_of(c: *core::Node) -> i64 {
+    let p: *props::ToolbarItemProps = props_of(c, props::K_TOOLBAR_ITEM) as *props::ToolbarItemProps;
+    if p == (0 as *props::ToolbarItemProps) { return 0 as i64; }
+    return { (*p).priority };
 }

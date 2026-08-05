@@ -14,6 +14,8 @@ command is a `P_*` bit in its module, and every declared handler is a `fn` field
                  in its label's attributed string). Listed in the manifest.
   CREATE-ONLY    read when the view is built, never after — and listed in the
                  manifest with the reason, because an unlisted one is debt
+  DERIVED        written BACK by the backend, or read by an observer
+  MODIFIER       no write of its own: it changes what another write does
   DECIDED        the manifest's cannot-ledger says AppKit cannot
   NO CARRIER     AppKit can; facet declares no thing to apply it to
   ABSENT         none of the above. This is the debt.
@@ -255,6 +257,7 @@ def main():
     no_carrier = ledger(manifest, "no-carrier")
     by_design = ledger(manifest, "create-only")
     derived = ledger(manifest, "derived")
+    modifiers = ledger(manifest, "modifier")
     recorded = dict(decided)
     recorded.update(no_carrier)
     live, create_only, absent, ruled_out = buckets(facet, backend, recorded)
@@ -270,11 +273,18 @@ def main():
     # start with because it looks implemented from the outside.
     by_derivation = [e for e in create_only if e in derived]
     create_only = [e for e in create_only if e not in derived]
+    # A MODIFIER has no write of its own: it changes what another write does.
+    # `carousel.animates_scroll` decides whether `position` jumps or slides, so
+    # gating it would mean re-scrolling to the current page when the flag
+    # changed — a visible bug in the name of a tidy bucket.
+    by_modification = [e for e in create_only if e in modifiers]
+    create_only = [e for e in create_only if e not in modifiers]
     undocumented = [e for e in create_only if e not in by_design]
     create_only = [e for e in create_only if e in by_design]
     absent = absent + undocumented
     print(f"  {len(by_host):>4}  host-rendered  no view of its own; its host re-applies")
     print(f"  {len(by_derivation):>4}  derived      written BACK, or read by an observer")
+    print(f"  {len(by_modification):>4}  modifier     no write of its own; it changes another's")
     print(f"  {len(create_only):>4}  create-only  by design, and the manifest says why")
     print(f"  {len(ruled_out):>4}  decided      the manifest's ledger says AppKit cannot")
     print(f"  {len(blocked):>4}  no carrier   AppKit can; facet declares no thing to apply it to")
@@ -284,8 +294,10 @@ def main():
     print(f"  {len(wired):>4}  wired        the backend reads the field and calls it")
     print(f"  {len(h_ruled):>4}  decided      the manifest records why it does not fire")
     print(f"  {len(dead):>4}  never fire   neither wired nor decided — the debt")
-    stale = [n for n in list(decided) + list(hosted) + list(no_carrier) + list(by_design) + list(derived)
-             if n not in set(live + create_only + by_host + by_derivation + blocked + absent + ruled_out + wired + dead + h_ruled)]
+    stale = [n for n in list(decided) + list(hosted) + list(no_carrier) + list(by_design)
+             + list(derived) + list(modifiers)
+             if n not in set(live + create_only + by_host + by_derivation + by_modification
+                             + blocked + absent + ruled_out + wired + dead + h_ruled)]
     if stale:
         print(f"\nLEDGER NAMES {len(stale)} VERBS THAT DO NOT EXIST: {', '.join(sorted(stale))}")
     # `--check` makes this a GATE rather than a report. The manifest has always
@@ -298,7 +310,7 @@ def main():
             return 1
         print("\nOK: every declared verb and handler is implemented or recorded.")
     if "--list" in sys.argv:
-        for name, rows in (("CREATE-ONLY", create_only), ("HOST-RENDERED", by_host), ("DERIVED", by_derivation), ("NO CARRIER", blocked), ("ABSENT", absent),
+        for name, rows in (("CREATE-ONLY", create_only), ("HOST-RENDERED", by_host), ("DERIVED", by_derivation), ("MODIFIER", by_modification), ("NO CARRIER", blocked), ("ABSENT", absent),
                            ("NEVER FIRE", dead), ("DECIDED", ruled_out + h_ruled),
                            ("LIVE", live), ("WIRED", wired)):
             print(f"\n{name} ({len(rows)})")
