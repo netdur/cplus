@@ -426,26 +426,29 @@ asked for.
 
 ### The touch-gesture controls
 
-| Control | Why not, and what to use instead |
-|---|---|
-| `refreshable` | Pull-to-refresh does not exist on macOS. There is no scroll-past-the-top gesture to hang it on, and inventing one would fight every other scroll view on the machine. A desktop app puts a Refresh command on a menu or a toolbar button (⌘R by convention). |
-| `swipeable` / `swipe_item` | Swipe-to-reveal-actions is a touch idiom. macOS reveals per-row actions through a **context menu** (right-click) or a hover affordance. |
+Both of these are **live**, and their handlers fire. This section used to say
+they were not, and that reading came from the same mistake twice: "this GESTURE
+is a touch idiom" is a true sentence about a finger, and it was allowed to
+stand in for the whole feature. The gesture is what macOS lacks. The feature is
+a list of actions and a way to ask for them, and macOS has had one of those all
+along.
 
-Both are recorded rather than approximated because a half-working gesture is
-worse than an absent one: it teaches an application a shape that will not
-survive on the platform its users are actually on.
+| Control | What MAUI's gesture means | What this backend does instead |
+|---|---|---|
+| `refreshable` | pull past the top of a scroll to refresh | a refresh STRIP at the top of the content: a button, and a spinner in its place while `is_refreshing`. `is_refreshable` installs and removes it; `refresh_color` tints the spinner. The click writes `is_refreshing` back BEFORE calling `on_refreshing`, so a handler reading it gets the state that caused it. |
+| `swipeable` / `swipe_item` | swipe a row sideways to reveal actions | every `swipe_item` child becomes a ROW in a menu on the swipeable's own view (right-click / control-click), AND a trackpad drag strip sits behind the content, which sliding the content uncovers. Four of the five swipe handlers ride the menu's own edges: `menuWillOpen` fires `on_swipe_started` and `on_open_requested`, `menuDidClose` fires `on_swipe_ended` and `on_close_requested`. |
 
-They still get a BODY, and it matters that they do: a plain backing view, so
-their content renders exactly as it would have (a `swipeable` shows its
-content and simply reveals nothing), and SILENTLY — a decided kind must not
-take the unimplemented path, because that path warns, and a warning for
-something already answered would train a reader to ignore the warnings that
-mean something.
+What is NOT claimed is the gesture. There is no scroll-past-the-top on macOS to
+hang a pull on, and inventing one would fight every other scroll view on the
+machine. A desktop app still wants ⌘R on a menu for the same job — the strip is
+the in-place affordance, not a replacement for the command.
 
-This is also where the standing rule bites — **an agent has no hands**. A
+This is where the standing rule bites — **an agent has no hands**. A
 gesture-only affordance must have a click path in the UI, never a new agent
-verb. On this backend that click path is the substitute above, not a
-simulated swipe.
+verb. Both substitutes above ARE that click path. Neither simulates a swipe.
+
+Neither kind is in the cannot-ledger, and neither takes the unimplemented-kind
+warning path. `decided_absent` returns false for every kind on this backend.
 
 ### The toolbar's colours and height
 

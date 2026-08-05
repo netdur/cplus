@@ -58,7 +58,6 @@ import "facet/date_picker" as date_picker;
 import "facet/time_picker" as time_picker;
 import "facet/tabs" as tabs;
 import "facet/span" as span;
-import "facet/list" as list;
 import "facet/collection" as collection;
 import "facet/carousel" as carousel;
 import "facet/tree" as tree;
@@ -2979,33 +2978,27 @@ fn create_sequence_host(horizontal: bool) -> *u8 {
 }
 
 // ---- list --------------------------------------------------------------------
-
-// NOTE the absence of a materialise call. `views::create` calls
-// `apply_<kind>` with an all-ones dirty word straight after this, so the rows
-// are built exactly once, by the same code that rebuilds them later. Doing it
-// here as well built every row twice — the first set cleared by the second.
-// That is the create-calls-apply rule paying for itself.
-fn create_list(n: *core::Node) -> *u8 { return create_sequence_host(false); }
-
-fn materialise_list(n: *core::Node) {
-    let p: *props::ListProps = props_of(n, props::K_LIST) as *props::ListProps;
-    if p == (0 as *props::ListProps) { return; }
-    fill_rows(n, { (*p).count }, { (*p).row }, { (*p).row_ctx });
-    return;
-}
-
-fn apply_list(v: *u8, n: *core::Node, dirty: u64) {
-    // The row builder and the count are one question: either changes the whole
-    // sequence, and a partial answer would leave rows from two models mixed.
-    if (dirty & (list::P_COUNT | list::P_ROW)) != (0 as u64) { materialise_list(n); }
-    return;
-}
+// `list` has NO body here. `views::create` and `views::apply` route K_LIST to
+// `recycler::create_recycling_list` / `apply_recycling_list`, and an NSTableView
+// that asks for the rows it needs is the whole point of the kind: a list of ten
+// thousand costs what a list of three costs.
+//
+// A materialising `create_list` / `materialise_list` / `apply_list` trio used to
+// sit here and was reachable from nothing once the recycler landed. It is gone
+// rather than fenced, because a second implementation of a live kind is a thing
+// a reader has to rule out before trusting the first.
 
 // ---- collection --------------------------------------------------------------
 // MAUI's CollectionView. The same sequence, and on this backend the same
 // treatment — the layout differences MAUI expresses through ItemsLayout are
 // flex's job here, on the rows themselves.
 
+// NOTE the absence of a materialise call in `create_`. `views::create` calls
+// `apply_<kind>` with an all-ones dirty word straight after it, so the rows are
+// built exactly once, by the same code that rebuilds them later. Doing it in
+// create as well built every row twice — the first set cleared by the second.
+// That is the create-calls-apply rule paying for itself, and it holds for
+// `table` below too.
 fn create_collection(n: *core::Node) -> *u8 { return create_sequence_host(false); }
 
 fn materialise_collection(n: *core::Node) {
