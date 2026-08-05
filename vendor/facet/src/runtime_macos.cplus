@@ -183,9 +183,13 @@ fn run_screen[S: component::Component + component::Lifecycle + screen::Screen](
     take menu: AppMenu = screen::empty_app_menu(),
 ) -> S {
     backend::install();
-    var owned_menu: AppMenu = menu;
-    host::install_app_menu(#addr_of(owned_menu));
     var owned: S = screen_v;
+    // The screen's own contribution, merged before the bar is installed. Same
+    // rule App::run follows; a screen that declares menu items gets them
+    // whichever host runs it.
+    var owned_menu: AppMenu = menu;
+    owned_menu.extend(owned.menu_items());
+    host::install_app_menu(#addr_of(owned_menu));
     let c: Chrome = owned.chrome();
     var root: Node = owned.build();
     let _w: *u8 = host::open_window(#addr_of(root), c);
@@ -481,12 +485,18 @@ impl App {
         nav::set_close_fn(close_current);
         nav::set_push_fn(push_screen);
         nav::set_pop_fn(pop_screen);
-        // The menu is the APP's, not a window's, so it is installed once for
-        // the loop rather than per screen. `build_menu` already answers with
-        // the default (the app's name plus Quit) when nothing set one, so an
-        // application that never asked for a menu still gets a working one.
-        var bar: AppMenu = this.build_menu();
-        host::install_app_menu(#addr_of(bar));
+        // `build_menu` already answers with the default (the app's name plus
+        // Quit) when nothing set one, so an application that never asked for a
+        // menu still gets a working one.
+        //
+        // It is NOT installed here. The screen contributes to it — `Screen`
+        // requires a `menu_items()` and the contract says they are "merged
+        // additively by the runtime each time the screen is shown" — so the
+        // install has to happen after the screen exists, which is inside the
+        // loop below. It used to happen here, once, and every screen's
+        // contribution was discarded: `AppMenu::extend` had no caller outside
+        // its own tests, and guard 5b recorded the row as implemented because
+        // the string named a declaration.
         // The agent surface, if the app asked for one. ONCE per process — the
         // accept loop lives for the app's life — and before the first window,
         // so an agent that connects immediately is not racing the launch hook.
@@ -505,6 +515,12 @@ impl App {
             if f == (0 as fn() -> screen::ScreenBox) { outcome = status::Status::InvalidInput; break; }
             var sb: screen::ScreenBox = f();
             if !sb.valid() { outcome = status::Status::InvalidInput; break; }
+            // The app's menu plus THIS screen's contribution, rebuilt per
+            // screen so leaving one takes its items away again — an additive
+            // merge into a bar that is never rebuilt would accumulate.
+            var bar: AppMenu = this.build_menu();
+            bar.extend(sb.menu_items());
+            host::install_app_menu(#addr_of(bar));
             let c: Chrome = sb.chrome();
             var root: Node = sb.build();
             let w: *u8 = host::open_window(#addr_of(root), c);
