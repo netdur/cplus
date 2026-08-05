@@ -1678,6 +1678,15 @@ fn apply_date_picker(v: *u8, n: *core::Node, dirty: u64) {
             option::Option[ak::Font]::None => { }
         }
     }
+    // `format` is a component list, not a layout. NSDatePicker has no format
+    // STRING — it has an element mask — so the format is read for WHICH
+    // components it names and the mask follows. That is the half of a format
+    // string a date picker can honour; the ordering and the separators are the
+    // locale's, which is what a date picker is for.
+    if (dirty & date_picker::P_FORMAT) != (0 as u64) {
+        let f: str = { (*p).format.view() };
+        if f != "" { dp.set_date_picker_elements(date_elements(f)); }
+    }
     if (dirty & date_picker::P_TEXT_COLOR) != (0 as u64) {
         let c: vocab::Color = { (*p).text_color };
         if c.is_set() { dp.set_text_color(paint::ns_color(c)); }
@@ -1689,6 +1698,22 @@ fn apply_date_picker(v: *u8, n: *core::Node, dirty: u64) {
         dp.as_control().set_enabled(core::is_enabled(n));
     }
     return;
+}
+
+// NSDatePickerElementFlags: YearMonth 0xc0, YearMonthDay 0xe0.
+// A format naming a DAY gets all three; one naming only a month or a year gets
+// the pair, which is what a "MMMM yyyy" picker means.
+fn date_elements(f: str) -> u64 {
+    let t: text::Text = text::from_str(f);
+    if t.contains("d") || t.contains("D") { return 224 as u64; }
+    return 192 as u64;
+}
+
+// HourMinute 0xc, HourMinuteSecond 0xe.
+fn time_elements(f: str) -> u64 {
+    let t: text::Text = text::from_str(f);
+    if t.contains("s") || t.contains("S") { return 14 as u64; }
+    return 12 as u64;
 }
 
 // ---- time_picker -------------------------------------------------------------
@@ -1716,6 +1741,10 @@ fn apply_time_picker(v: *u8, n: *core::Node, dirty: u64) {
             option::Option[ak::Font]::Some(font) => { dp.as_control().set_font(font); }
             option::Option[ak::Font]::None => { }
         }
+    }
+    if (dirty & time_picker::P_FORMAT) != (0 as u64) {
+        let f: str = { (*p).format.view() };
+        if f != "" { dp.set_date_picker_elements(time_elements(f)); }
     }
     if (dirty & time_picker::P_TEXT_COLOR) != (0 as u64) {
         let c: vocab::Color = { (*p).text_color };

@@ -3530,3 +3530,35 @@ fn asking_for_a_shape_and_then_not_takes_the_stroke_layer_away() {
     assert view.layer().border_width() > 1.5f64;
     return;
 }
+
+#[test]
+fn a_picker_format_names_which_components_show() {
+    // NSDatePicker has no format STRING — it has an element mask. So a format
+    // is read for WHICH components it names, and the ordering and separators
+    // stay the locale's, which is what a date picker is for.
+    backend::install();
+    var ymd: core::Node = date_picker::date_picker(vocab::Date::zero(), key: "ymd", format: "yyyy-MM-dd");
+    let v1: *u8 = views::create(0 as *u8, #addr_of(ymd));
+    // NSDatePickerElementFlagYearMonthDay = 0xe0.
+    assert { rt::msg_u64(v1, rt::sel(#str_ptr("datePickerElements\0"))) } == (224 as u64);
+
+    var ym: core::Node = date_picker::date_picker(vocab::Date::zero(), key: "ym", format: "MMMM yyyy");
+    let v2: *u8 = views::create(0 as *u8, #addr_of(ym));
+    // YearMonth = 0xc0: no day named, so no day shown.
+    assert { rt::msg_u64(v2, rt::sel(#str_ptr("datePickerElements\0"))) } == (192 as u64);
+
+    var hms: core::Node = time_picker::time_picker(vocab::Duration { seconds: 0.0f64 }, key: "hms", format: "HH:mm:ss");
+    let v3: *u8 = views::create(0 as *u8, #addr_of(hms));
+    // HourMinuteSecond = 0xe.
+    assert { rt::msg_u64(v3, rt::sel(#str_ptr("datePickerElements\0"))) } == (14 as u64);
+
+    var hm: core::Node = time_picker::time_picker(vocab::Duration { seconds: 0.0f64 }, key: "hm", format: "HH:mm");
+    let v4: *u8 = views::create(0 as *u8, #addr_of(hm));
+    assert { rt::msg_u64(v4, rt::sel(#str_ptr("datePickerElements\0"))) } == (12 as u64);
+
+    views::view_release(v1);
+    views::view_release(v2);
+    views::view_release(v3);
+    views::view_release(v4);
+    return;
+}

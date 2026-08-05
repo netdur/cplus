@@ -136,8 +136,6 @@ icon_button.is_opaque           -[NSView isOpaque] is derived, not settable
 image.is_opaque                 as icon_button.is_opaque
 date_picker.character_spacing   NSDatePicker draws its own fields; no attributed value
 time_picker.character_spacing   as date_picker.character_spacing
-date_picker.format              NSDatePicker has an ELEMENT mask, not a format string
-time_picker.format              as date_picker.format
 date_picker.is_open             a field-with-stepper has no popover to open
 time_picker.is_open             as date_picker.is_open
 date_picker.on_opened           as date_picker.is_open
@@ -385,6 +383,23 @@ simulated swipe.
 | `Toolbar.BarHeight` | NSToolbar sizes itself to its items and the window's style. |
 | `Toolbar.IconColor` | NSToolbarItem images are template-tinted by the system. |
 | `Toolbar.DynamicOverflowEnabled` | NSToolbar overflows into a chevron by itself; there is no switch to turn that off. |
+
+### `format:` names components, not a layout
+
+NSDatePicker has no format STRING — it has an element mask — and that was
+recorded as the reason `format:` is not honoured. It is the reason it cannot be
+honoured WHOLE, which is a different claim.
+
+A format string says two things: which components appear, and how they are
+ordered and separated. A date picker can answer the first exactly, and the
+second is the LOCALE's — which is most of the point of using a date picker
+rather than a text field. So the format is read for the components it names and
+the element mask follows: a format naming a day shows year-month-day, one
+naming only a month or year shows the pair, a time format naming seconds shows
+hour-minute-second.
+
+What is dropped is the ordering and the separators, and dropping them is the
+correct behaviour rather than a gap.
 
 ### Mobile concepts, on a desktop
 
