@@ -1,9 +1,19 @@
 # Handoff — facet, next session
 
-Stage 4 is **under way**. Item 1 (the window shell) is DONE: facet_appkit
-is a real backend, a keyed tree reaches the screen, and facet's own suite
-compiles it. Item 2 (the per-kind bodies) has five of 42 and the shape for
-the rest. Items 3–7 are open.
+**STALE as of 2026-08-05 — Stage 4 is COMPLETE (all seven items).** What
+follows described the middle of it and is kept only for the shape of the
+argument. Read `stages/4.md` for the state, and
+`reports/facet-2026-08-05-worklog.md` for what closed it.
+
+Next is **Stage 5 (records)**, which is still the 2026-07-31 stub and wants
+revising before it is worked.
+
+---
+
+Stage 4 was **under way** when this was written. Item 1 (the window shell) is
+DONE: facet_appkit is a real backend, a keyed tree reaches the screen, and
+facet's own suite compiles it. Item 2 (the per-kind bodies) has five of 42 and
+the shape for the rest. Items 3–7 are open.
 
 Read `INTENT.md` first, then `stages/4.md` — its "Inspection notes" section
 records every decision taken and every question still open, so none of it
