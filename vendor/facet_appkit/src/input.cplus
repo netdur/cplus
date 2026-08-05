@@ -214,6 +214,25 @@ fn imp_mouse_down(self_obj: *u8, cmd: *u8, event: *u8) {
     if own_n != (0 as *core::Node) { let _p: bool = pointer::press(own_n, self_obj); }
     let g: *gestures::Gestures = gestures_of_view(self_obj);
     if g == (0 as *gestures::Gestures) { decline(self_obj, cmd, event); return; }
+    // `.window_drag()` — the surface an application marks so a CUSTOM titlebar
+    // can move the window. `Bar::Custom` hides the real traffic lights and
+    // `window_buttons()` supplies its own, and this is the third piece of that
+    // answer; without it a custom titlebar was a bar you could not drag the
+    // window by. `drags_window` had ZERO readers in this package, and a comment
+    // in window.cplus described the reader as though it existed.
+    //
+    // AppKit does the whole drag from one call: it takes over the event loop
+    // until the mouse comes up, which is why nothing below runs afterwards and
+    // why this cannot be combined with the pan gesture on the same node.
+    if { (*g).drags_window } {
+        match ak::View::from_raw(self_obj).window() {
+            option::Option[ak::Window]::Some(w) => {
+                w.perform_window_drag_with_event(ak::Event::from_raw(event));
+                return;
+            }
+            option::Option[ak::Window]::None => { }
+        }
+    }
     // A long press is a press that OUTLASTS a timer, so it is armed here and
     // disarmed on the way up. `after` returns a token; the token is the timer.
     let lp: gestures::Handler = { (*g).on_long_press };

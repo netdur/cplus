@@ -7560,3 +7560,62 @@ fn focus_and_blur_fire_and_is_focused_answers() {
     app::reset_default_for_tests();
     return;
 }
+
+#[test]
+fn a_window_drag_surface_is_armed() {
+    // `.window_drag()` had ZERO readers in this package, and window.cplus even
+    // carried a comment describing the reader as though it existed. It is the
+    // third piece of the custom-titlebar answer (Bar::Custom hides the traffic
+    // lights, window_buttons() supplies its own, this drags the window) — so a
+    // custom titlebar was a bar you could not move the window by.
+    backend::install();
+    var n: core::Node = core::row(core::Builder::new(), key: "titlebar").window_drag();
+    let p: *core::Node = #addr_of(n);
+    assert chrome::drags_window(p);
+    // A gesture set whose ONLY member is window-drag must not read as empty,
+    // or `arm` skips the node and the class that acts on it is never installed.
+    let g: *gestures::Gestures = gestures::gestures_of(p);
+    assert g != (0 as *gestures::Gestures);
+    assert { (*g).is_empty() } == false;
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v != (0 as *u8);
+    assert input::is_armed(v);
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn z_index_orders_siblings_back_to_front() {
+    // AppKit paints subviews in array order, so ordering IS the
+    // implementation. `z_index` reached flex's style — which flex itself calls
+    // layout-neutral — and nothing in this package ever read it back.
+    backend::install();
+    app::reset_default_for_tests();
+    var root: core::Node = core::column(core::Builder::new(), key: "z");
+    var lo: core::Node = box_view::box(color: vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64), key: "lo");
+    var hi: core::Node = box_view::box(color: vocab::Color::rgba(0.0f64, 1.0f64, 0.0f64), key: "hi");
+    // `hi` is added FIRST, so tree order alone would paint it behind.
+    core::set_z_index(#addr_of(hi), 5 as i64);
+    let _a: bool = mount::insert_child(#addr_of(root), hi, 0 as usize);
+    let _b: bool = mount::insert_child(#addr_of(root), lo, 1 as usize);
+    let rp: *core::Node = #addr_of(root);
+    let win: *u8 = window::open_window(rp, screen::Chrome::new(
+        title: "z", width: 200.0f64, height: 200.0f64));
+    scheduler::layout_window(rp);
+    // The higher z is LAST in the subview array, which is frontmost.
+    let host: *u8 = core::view_of(rp);
+    assert host != (0 as *u8);
+    let subs: vec::Vec[ak::View] = ak::View::from_raw(host).subviews();
+    assert subs.count() >= (2 as usize);
+    match subs.at_ptr(subs.count() -% (1 as usize)) {
+        option::Option[*ak::View]::Some(last) => {
+            let id: text::Text = ak::Accessibility::from_raw({ (*last).raw() }).accessibility_identifier();
+            assert id.view() == "hi";
+        }
+        option::Option[*ak::View]::None => { assert false; }
+    }
+    window::close_window(win);
+    backend::uninstall();
+    app::reset_default_for_tests();
+    return;
+}

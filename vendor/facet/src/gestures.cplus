@@ -158,7 +158,12 @@ impl Gestures {
             && this.on_drag_start == no_gesture && this.on_drag_over == no_gesture
             && this.on_drag_leave == no_gesture && this.on_drop == no_gesture
             && this.on_drop_completed == no_gesture
-            && this.on_key == no_gesture;
+            && this.on_key == no_gesture
+            // `.window_drag()` is a gesture set with no HANDLER — the platform
+            // drags the window, not the application. Leaving it out of this
+            // test meant a node whose only gesture was window-drag counted as
+            // empty, so `input::arm` skipped it and the surface did nothing.
+            && this.drags_window == false;
     }
 }
 

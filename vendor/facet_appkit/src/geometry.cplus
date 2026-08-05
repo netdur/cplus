@@ -96,7 +96,103 @@ fn reposition(root: *core::Node) {
 // `node` hang from. For a backed node that is its own frame; a pass-through
 // node hands its host straight down, which is how a pure-layout column inside
 // a scroll view places its children in the scroll's document view.
+// Siblings, in the order they should PAINT.
+//
+// `z_index` is on ~40 cursors and had no reader in this package: the value
+// reached flex's style, where flex itself calls it "layout-neutral" and does
+// not even include it in `style_eq`, and `views::insert` orders subviews by
+// tree SLOT. So the verb wrote a number nothing consulted.
+//
+// AppKit paints subviews back-to-front in array order, so ordering IS the
+// implementation. Applied after the frames are placed, where both the nodes
+// and their views are in hand — `insert` has only the view and could not ask
+// a node for its z.
+//
+// A stable pass: only siblings whose z differs move, so equal z keeps tree
+// order, which is what makes this a tie-break rather than a reshuffle. Skipped
+// entirely when every sibling is 0, which is the ordinary case and costs one
+// walk of the children.
+fn apply_z_order(node: *core::Node) {
+    let count: usize = core::child_count_of(node);
+    if count < (2 as usize) { return; }
+    var any: bool = false;
+    var i0: usize = 0 as usize;
+    while i0 < count {
+        match core::child_of(node, i0) {
+            option::Option[*core::Node]::Some(c) => {
+                if core::z_index(c) != (0 as i64) { any = true; }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i0 = i0 +% (1 as usize);
+    }
+    if !any { return; }
+    // Selection sort by z, moving each view to the front in ascending order:
+    // `addSubview:` on a view that is already a subview MOVES it to the end,
+    // which is the top of the paint order. Walking ascending therefore leaves
+    // the highest z last, i.e. frontmost.
+    var pass: i64 = min_z_of(node, count);
+    let top: i64 = max_z_of(node, count);
+    while pass <= top {
+        var j: usize = 0 as usize;
+        while j < count {
+            match core::child_of(node, j) {
+                option::Option[*core::Node]::Some(c) => {
+                    if core::z_index(c) == pass {
+                        let cv: *u8 = core::view_of(c);
+                        if cv != (0 as *u8) {
+                            match ak::View::from_raw(cv).superview() {
+                                option::Option[ak::View]::Some(sup) => {
+                                    sup.add_subview(ak::View::from_raw(cv));
+                                }
+                                option::Option[ak::View]::None => { }
+                            }
+                        }
+                    }
+                }
+                option::Option[*core::Node]::None => { }
+            }
+            j = j +% (1 as usize);
+        }
+        pass = pass + (1 as i64);
+    }
+    return;
+}
+
+fn min_z_of(node: *core::Node, count: usize) -> i64 {
+    var lo: i64 = 0 as i64;
+    var i: usize = 0 as usize;
+    while i < count {
+        match core::child_of(node, i) {
+            option::Option[*core::Node]::Some(c) => {
+                let z: i64 = core::z_index(c);
+                if z < lo { lo = z; }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return lo;
+}
+
+fn max_z_of(node: *core::Node, count: usize) -> i64 {
+    var hi: i64 = 0 as i64;
+    var i: usize = 0 as usize;
+    while i < count {
+        match core::child_of(node, i) {
+            option::Option[*core::Node]::Some(c) => {
+                let z: i64 = core::z_index(c);
+                if z > hi { hi = z; }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return hi;
+}
+
 fn reposition_children(node: *core::Node, host_abs: flex::Frame) {
+    apply_z_order(node);
     var i: usize = 0 as usize;
     let count: usize = core::child_count_of(node);
     while i < count {

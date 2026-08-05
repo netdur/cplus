@@ -133,7 +133,14 @@ fn create(ctx: *u8, n: *core::Node) -> *u8 {
     // nothing else wants it.
     if has_intrinsic_size(kind) {
         { (*n).set_context(v) };
-        { (*n).set_measure(measure_view) };
+        // Two measures, chosen by kind. Most controls answer `fittingSize`;
+        // the two that draw their own content have none and are measured by
+        // what they placed.
+        if draws_own_content(kind) {
+            { (*n).set_measure(measure_drawn) };
+        } else {
+            { (*n).set_measure(measure_view) };
+        }
     }
     // A `context_menu` child describes a menu for THIS view; it has no view of
     // its own, so this is the moment it can be hung.
@@ -157,6 +164,11 @@ fn create(ctx: *u8, n: *core::Node) -> *u8 {
 // has a fitting size too, and it means something else entirely — a surface is
 // sized by its container, and asking WKWebView how big it would like to be is
 // not a question with a useful answer.
+// The kinds whose size is what they DREW, not what AppKit would fit.
+fn draws_own_content(kind: u32) -> bool {
+    return kind == props::K_PAGE_DOTS || kind == chrome::K_WINDOW_BUTTONS;
+}
+
 fn has_intrinsic_size(kind: u32) -> bool {
     return kind == props::K_LABEL || kind == props::K_BUTTON
         || kind == props::K_TEXT_FIELD || kind == props::K_SEARCH_FIELD
@@ -214,6 +226,65 @@ fn measure_view(ctx: *u8, avail_w: f64, wm: flex::MeasureMode,
     if (h > 0.0f64) == false { h = fallback_extent(avail_h, 20.0f64); }
     return flex::Size { width: w, height: h };
 }
+
+// The measure for a view that DRAWS ITS OWN CONTENT — `page_dots` places
+// sublayers, `window_buttons` places three subviews — and is otherwise a plain
+// flipped view, so `fittingSize` answers 0x0 on both axes and the control
+// vanished everywhere rather than only in a row.
+//
+// It is chosen at CREATE time, per kind, rather than by asking a view at
+// measure time whether it looks hand-drawn. That heuristic was tried and is
+// wrong: an NSTextField has internal subviews of its own, so the union
+// answered a small number and shadowed the "take what you are offered" floor
+// that an editable field actually needs.
+fn measure_drawn(ctx: *u8, avail_w: f64, wm: flex::MeasureMode,
+                 avail_h: f64, hm: flex::MeasureMode) -> flex::Size {
+    if ctx == (0 as *u8) { return flex::Size { width: 0.0f64, height: 0.0f64 }; }
+    let c: rt::Size = drawn_content_size(ctx);
+    return flex::Size { width: c.w, height: c.h };
+}
+
+// The extent of what this view placed inside itself: the union of its
+// subviews' frames, else of its layer's sublayers. Zero when it placed
+// nothing, which is the ordinary case and costs one message.
+fn drawn_content_size(v: *u8) -> rt::Size {
+    var w: f64 = 0.0f64;
+    var h: f64 = 0.0f64;
+    let subs: vec::Vec[ak::View] = ak::View::from_raw(v).subviews();
+    var i: usize = 0 as usize;
+    while i < subs.count() {
+        match subs.at_ptr(i) {
+            option::Option[*ak::View]::Some(sv) => {
+                let f: rt::Rect = { (*sv).frame() };
+                if f.x + f.w > w { w = f.x + f.w; }
+                if f.y + f.h > h { h = f.y + f.h; }
+            }
+            option::Option[*ak::View]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    if w > 0.0f64 || h > 0.0f64 { return rt::Size { w: w, h: h }; }
+    // No subviews: the layer's own sublayers, which is how `page_dots` draws.
+    if ak::View::from_raw(v).wants_layer() == false { return rt::Size { w: 0.0f64, h: 0.0f64 }; }
+    let subl: *u8 = { rt::msg_id(ak::View::from_raw(v).layer().raw(),
+                                 rt::sel(#str_ptr("sublayers\0"))) };
+    if subl == (0 as *u8) { return rt::Size { w: 0.0f64, h: 0.0f64 }; }
+    let count: u64 = { rt::msg_u64(subl, rt::sel(#str_ptr("count\0"))) };
+    var j: u64 = 0 as u64;
+    while j < count {
+        let l: *u8 = { rt::msg_id_u64(subl, rt::sel(#str_ptr("objectAtIndex:\0")), j) };
+        if l != (0 as *u8) {
+            let f: rt::Rect = { msg_rect_only(l, rt::sel(#str_ptr("frame\0"))) };
+            if f.x + f.w > w { w = f.x + f.w; }
+            if f.y + f.h > h { h = f.y + f.h; }
+        }
+        j = j +% (1 as u64);
+    }
+    return rt::Size { w: w, h: h };
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_rect_only(recv: *u8, sel: *u8) -> rt::Rect;
 
 // The space to take when the control declines to name one: what the parent
 // offered, or a plain default when the parent offered nothing bounded (NaN or
