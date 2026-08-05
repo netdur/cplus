@@ -37,11 +37,11 @@ const P_SCROLL_TO: u64 = 4096u64;
 
 fn carousel(
     key: str = "",
-    bounces: bool = false,
-    animates_scroll: bool = false,
+    bounces: bool = true,
+    animates_scroll: bool = true,
     scrolling: bool = false,
-    swipeable: bool = false,
-    wraps: bool = false,
+    swipeable: bool = true,
+    wraps: bool = true,
     peek_insets: vocab::Insets = vocab::Insets::zero(),
     position: i64 = 0 as i64,
     horizontal_scroll_bars: vocab::ScrollBars = vocab::ScrollBars::Default,
@@ -220,13 +220,13 @@ impl Carousel {
 
     fn bounces(this) -> bool {
         let p: *props::CarouselProps = this._props();
-        if p == (0 as *props::CarouselProps) { return false; }
+        if p == (0 as *props::CarouselProps) { return true; }
         return { (*p).bounces };
     }
 
     fn animates_scroll(this) -> bool {
         let p: *props::CarouselProps = this._props();
-        if p == (0 as *props::CarouselProps) { return false; }
+        if p == (0 as *props::CarouselProps) { return true; }
         return { (*p).animates_scroll };
     }
 
@@ -238,13 +238,13 @@ impl Carousel {
 
     fn is_swipeable(this) -> bool {
         let p: *props::CarouselProps = this._props();
-        if p == (0 as *props::CarouselProps) { return false; }
+        if p == (0 as *props::CarouselProps) { return true; }
         return { (*p).is_swipeable };
     }
 
     fn wraps(this) -> bool {
         let p: *props::CarouselProps = this._props();
-        if p == (0 as *props::CarouselProps) { return false; }
+        if p == (0 as *props::CarouselProps) { return true; }
         return { (*p).wraps };
     }
 
@@ -292,13 +292,13 @@ impl Carousel {
 
     fn animates_item(this) -> bool {
         let p: *props::CarouselProps = this._props();
-        if p == (0 as *props::CarouselProps) { return false; }
+        if p == (0 as *props::CarouselProps) { return true; }
         return { (*p).animates_item };
     }
 
     fn animates_position(this) -> bool {
         let p: *props::CarouselProps = this._props();
-        if p == (0 as *props::CarouselProps) { return false; }
+        if p == (0 as *props::CarouselProps) { return true; }
         return { (*p).animates_position };
     }
 

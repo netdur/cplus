@@ -943,6 +943,11 @@ fn apply_slider(v: *u8, n: *core::Node, dirty: u64) {
     // `trackFillColor` — and it is exactly MAUI's MinimumTrackColor. The other
     // two stay in the ledger: the empty track and the knob are drawn by
     // NSSliderCell with no colour slot of their own.
+    // "NSSlider's knob is cell-drawn; there is no image slot" stops one step
+    // short: the cell that draws it has a METHOD for drawing it.
+    if (dirty & slider::P_THUMB_IMAGE) != (0 as u64) {
+        compose::apply_thumb_image(v, { (*p).thumb_image.view() });
+    }
     if (dirty & slider::P_MINIMUM_TRACK_COLOR) != (0 as u64) {
         let c: vocab::Color = { (*p).minimum_track_color };
         if c.is_set() {
@@ -2847,6 +2852,12 @@ fn apply_carousel(v: *u8, n: *core::Node, dirty: u64) {
         if { (*p).bounces } { e = ak::ScrollElasticity::Automatic; }
         sv.set_horizontal_scroll_elasticity(e);
         sv.set_vertical_scroll_elasticity(e);
+    }
+    // `IsSwipeEnabled` is not about the gesture but about WHO may move the
+    // page. macOS's answer is the same one: the wheel does nothing, and
+    // `position` still works.
+    if (dirty & carousel::P_IS_SWIPEABLE) != (0 as u64) || dirty == paint::all_bits() {
+        compose::apply_scroll_lock(v, { (*p).is_swipeable } == false);
     }
     if (dirty & carousel::P_PEEK_INSETS) != (0 as u64) || dirty == paint::all_bits() {
         // Peeking the neighbouring page is an INSET on the content: the page

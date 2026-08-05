@@ -46,7 +46,7 @@ fn list(
     grouped: bool = false,
     refreshable: bool = false,
     refreshing: bool = false,
-    refresh: bool = false,
+    refresh: bool = true,
     refresh_color: vocab::Color = vocab::Color::clear(),
     row_height: i64 = 0 as i64,
     selection_mode: vocab::SelectionMode = vocab::SelectionMode::None,
@@ -262,7 +262,7 @@ impl List {
 
     fn can_refresh(this) -> bool {
         let p: *props::ListProps = this._props();
-        if p == (0 as *props::ListProps) { return false; }
+        if p == (0 as *props::ListProps) { return true; }
         return { (*p).can_refresh };
     }
 

@@ -3899,7 +3899,10 @@ fn an_unanimated_carousel_position_lands_at_once() {
     // The two halves of `animates_scroll`, and the only way to tell them apart
     // without a run loop: a jump has already happened when the write returns.
     backend::install();
+    // `animates_scroll` defaults TRUE, which is MAUI's own default — so a
+    // carousel that wants a jump has to say so.
     var c: core::Node = paged_carousel("jump");
+    set_carousel_animation(#addr_of(c), false);
     let p: *core::Node = #addr_of(c);
     assert mount::mount(p);
     geometry::relayout_root(p, 100.0f64, 50.0f64, 1.0f64);
@@ -3937,6 +3940,13 @@ fn an_animated_carousel_position_is_still_on_its_way() {
     views::apply(0 as *u8, p);
     assert clip_origin_y(v) == 0.0f64;
     mount::unmount(p);
+    return;
+}
+
+fn set_carousel_animation(p: *core::Node, on: bool) {
+    let d: *core::Data = core::node_data(p);
+    let cp: *props::CarouselProps = { (*d).props } as *props::CarouselProps;
+    { (*cp).animates_scroll = on };
     return;
 }
 
@@ -5070,5 +5080,72 @@ fn native_window_buttons_are_always_drawn() {
         option::Option[*ak::View]::None => { assert false; }
     }
     w.close();
+    return;
+}
+
+#[test]
+fn a_slider_can_draw_its_own_knob() {
+    // "NSSlider's knob is cell-drawn; there is no image slot" stops one step
+    // short: the CELL that draws it has a method for drawing it, and a cell is
+    // an object whose class can be replaced.
+    backend::install();
+    var plain: core::Node = slider::slider(0.5f64, key: "sk0");
+    let pv: *u8 = views::create(0 as *u8, #addr_of(plain));
+    let pc: *u8 = { rt::msg_id(pv, rt::sel(#str_ptr("cell\0"))) };
+    assert synth::object_class(pc) == rt::get_class(#str_ptr("NSSliderCell\0"));
+
+    var custom: core::Node = slider::slider(0.5f64, key: "sk1", thumb_image: "circle.fill");
+    let cv: *u8 = views::create(0 as *u8, #addr_of(custom));
+    let cc: *u8 = { rt::msg_id(cv, rt::sel(#str_ptr("cell\0"))) };
+    assert synth::object_class(cc) != rt::get_class(#str_ptr("NSSliderCell\0"));
+    // The image reached the cell, and drawing the knob does not fault.
+    { rt::msg_void_rect(cc, rt::sel(#str_ptr("drawKnob:\0")),
+                        rt::Rect { x: 0.0f64, y: 0.0f64, w: 16.0f64, h: 16.0f64 }) };
+    views::view_release(pv);
+    views::view_release(cv);
+    return;
+}
+
+#[test]
+fn a_carousel_that_is_not_swipeable_ignores_the_wheel() {
+    // `IsSwipeEnabled` is not about the gesture but about WHO may move the
+    // page. macOS's answer is the same one, and `position` still works.
+    backend::install();
+    var open_c: core::Node = paged_carousel("swon");
+    let ov: *u8 = views::create(0 as *u8, #addr_of(open_c));
+    assert compose::scroll_is_locked(ov) == false;
+
+    var locked: core::Node = carousel::carousel(key: "swoff", swipeable: false);
+    let lv: *u8 = views::create(0 as *u8, #addr_of(locked));
+    assert compose::scroll_is_locked(lv);
+    // And unlocking it again really unlocks it — the class stays, the flag
+    // decides, because a class swap is not something to undo.
+    compose::apply_scroll_lock(lv, false);
+    assert compose::scroll_is_locked(lv) == false;
+    views::view_release(ov);
+    views::view_release(lv);
+    return;
+}
+
+#[test]
+fn maui_bools_that_default_true_are_not_generated_false() {
+    // The third instance of one bug: a default nobody chose, silently
+    // inverting a verb. A carousel that does not bounce, does not animate and
+    // cannot be scrolled by the user is not the control MAUI describes.
+    var c: core::Node = carousel::carousel(key: "dflt");
+    let p: *core::Node = #addr_of(c);
+    let d: *core::Data = core::node_data(p);
+    let cp: *props::CarouselProps = { (*d).props } as *props::CarouselProps;
+    assert { (*cp).bounces };
+    assert { (*cp).animates_scroll };
+    assert { (*cp).is_swipeable };
+    var s: core::Node = scroll::scroll(key: "dflt2");
+    let sd: *core::Data = core::node_data(#addr_of(s));
+    let sp: *props::ScrollProps = { (*sd).props } as *props::ScrollProps;
+    assert { (*sp).cascades_input };
+    var f: core::Node = text_field::text_field("", key: "dflt3");
+    let fd: *core::Data = core::node_data(#addr_of(f));
+    let fp: *props::TextFieldProps = { (*fd).props } as *props::TextFieldProps;
+    assert { (*fp).input_view.checks_spelling };
     return;
 }

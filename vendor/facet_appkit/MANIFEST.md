@@ -111,12 +111,10 @@ date_picker.font_scales         as label.font_scales
 time_picker.font_scales         as label.font_scales
 date_picker.character_spacing   NSDatePicker draws its own fields; no attributed value
 time_picker.character_spacing   as date_picker.character_spacing
-carousel.is_swipeable           swipe between pages is a touch idiom
 carousel.wraps                  an infinite carousel needs the touch paging it wraps
 collection.can_reorder_items    drag-reorder needs NSCollectionView's own drag session
 collection.on_reorder_completed  as collection.can_reorder_items
 collection.can_mix_groups       NSCollectionView sections do not interleave
-slider.thumb_image              NSSlider's knob is cell-drawn; there is no image slot
 hybrid_web.on_web_resource_requested  intercepting needs a WKURLSchemeHandler per scheme
 ```
 

@@ -39,7 +39,7 @@ fn span(
     character_spacing: f64 = 0.0f64,
     font_weight: vocab::FontWeight = vocab::FontWeight::Default,
     italic: bool = false,
-    font_scales: bool = false,
+    font_scales: bool = true,
     font_family: str = "",
     font_size: f64 = 0.0f64,
     line_height: f64 = 0.0f64,
@@ -209,7 +209,7 @@ impl Span {
 
     fn font_scales(this) -> bool {
         let p: *props::SpanProps = this._props();
-        if p == (0 as *props::SpanProps) { return false; }
+        if p == (0 as *props::SpanProps) { return true; }
         return { (*p).font_scales };
     }
 

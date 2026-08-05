@@ -57,12 +57,12 @@ fn text_field(
     cursor_position: i64 = 0 as i64,
     font_weight: vocab::FontWeight = vocab::FontWeight::Default,
     italic: bool = false,
-    font_scales: bool = false,
+    font_scales: bool = true,
     font_family: str = "",
     font_size: f64 = 0.0f64,
     read_only: bool = false,
-    checks_spelling: bool = false,
-    predicts_text: bool = false,
+    checks_spelling: bool = true,
+    predicts_text: bool = true,
     keyboard: vocab::Keyboard = vocab::Keyboard::Default,
     max_length: i64 = 0 as i64,
     placeholder: str = "",
@@ -397,7 +397,7 @@ impl TextField {
 
     fn font_scales(this) -> bool {
         let p: *props::TextFieldProps = this._props();
-        if p == (0 as *props::TextFieldProps) { return false; }
+        if p == (0 as *props::TextFieldProps) { return true; }
         return { (*p).input_view.font_scales };
     }
 
@@ -421,13 +421,13 @@ impl TextField {
 
     fn checks_spelling(this) -> bool {
         let p: *props::TextFieldProps = this._props();
-        if p == (0 as *props::TextFieldProps) { return false; }
+        if p == (0 as *props::TextFieldProps) { return true; }
         return { (*p).input_view.checks_spelling };
     }
 
     fn predicts_text(this) -> bool {
         let p: *props::TextFieldProps = this._props();
-        if p == (0 as *props::TextFieldProps) { return false; }
+        if p == (0 as *props::TextFieldProps) { return true; }
         return { (*p).input_view.predicts_text };
     }
 

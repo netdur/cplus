@@ -38,7 +38,7 @@ fn time_picker(
     character_spacing: f64 = 0.0f64,
     font_weight: vocab::FontWeight = vocab::FontWeight::Default,
     italic: bool = false,
-    font_scales: bool = false,
+    font_scales: bool = true,
     font_family: str = "",
     font_size: f64 = 0.0f64,
     format: str = "",
@@ -209,7 +209,7 @@ impl TimePicker {
 
     fn font_scales(this) -> bool {
         let p: *props::TimePickerProps = this._props();
-        if p == (0 as *props::TimePickerProps) { return false; }
+        if p == (0 as *props::TimePickerProps) { return true; }
         return { (*p).font_scales };
     }
 

@@ -40,7 +40,7 @@ fn date_picker(
     character_spacing: f64 = 0.0f64,
     font_weight: vocab::FontWeight = vocab::FontWeight::Default,
     italic: bool = false,
-    font_scales: bool = false,
+    font_scales: bool = true,
     font_family: str = "",
     font_size: f64 = 0.0f64,
     format: str = "",
@@ -239,7 +239,7 @@ impl DatePicker {
 
     fn font_scales(this) -> bool {
         let p: *props::DatePickerProps = this._props();
-        if p == (0 as *props::DatePickerProps) { return false; }
+        if p == (0 as *props::DatePickerProps) { return true; }
         return { (*p).font_scales };
     }
 

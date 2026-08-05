@@ -232,6 +232,37 @@ ENUM_ZERO = {
 }
 
 
+# MAUI bools that default to TRUE. The mechanical rule gives every bool
+# `false`, which is the same shape of bug the ENUM_ZERO table above fixes: a
+# default nobody chose, silently inverting a verb. A carousel that does not
+# bounce, does not animate and cannot be scrolled by the user is not the
+# control MAUI describes — and the backend reading those props cannot tell the
+# difference between "false" and "unset".
+#
+# Keyed by (declaring type, member) so the provenance stays checkable, plus a
+# few members that are true wherever they appear.
+BOOL_TRUE = {
+    ("CarouselView", "IsSwipeEnabled"),
+    ("CarouselView", "IsBounceEnabled"),
+    ("CarouselView", "IsScrollAnimated"),
+    ("CarouselView", "Loop"),
+    ("CarouselView", "AnimateCurrentItemChanges"),
+    ("CarouselView", "AnimatePositionChanges"),
+    ("ScrollView", "CascadeInputTransparent"),
+    ("InputView", "IsSpellCheckEnabled"),
+    ("InputView", "IsTextPredictionEnabled"),
+    ("ListView", "RefreshAllowed"),
+}
+BOOL_TRUE_MEMBERS = {"FontAutoScalingEnabled"}
+
+
+def default_of(t, src="", member=""):
+    """The zero for a field, which for a bool is not always `false`."""
+    if t == "bool" and ((src, member) in BOOL_TRUE or member in BOOL_TRUE_MEMBERS):
+        return "true"
+    return zero_of(t)
+
+
 def zero_of(t):
     if t in TYPES:
         return TYPES[t][1]
@@ -1908,7 +1939,7 @@ def _fields_for(rows):
                 inits.append(f"            {name}_{suffix}: {zero or zero_of(pty)},\n")
         elif kind in ("prop", "owned"):
             fields.append(f"    {name}: {cplus_type(detail)},    // {src}.{member}\n")
-            inits.append(f"            {name}: {zero_of(detail)},\n")
+            inits.append(f"            {name}: {default_of(detail, src, member)},\n")
         elif kind == "event":
             fields.append(f"    {name}: fn(*u8, *u8),    // {src}.{member}\n")
             fields.append(f"    opaque {name}_ctx: *u8,\n")
@@ -2172,7 +2203,7 @@ def ctor_params(maui, writes, reads, events):
     for field, ty, _m, _s, _p in ordered:
         pty = "str" if ty == "str" else cplus_type(ty)
         params.append((verb_stem(field, ty, taken), pty,
-                       '""' if ty == "str" else zero_of(ty)))
+                       '""' if ty == "str" else default_of(ty, _s, _m)))
     for verb, _m, _s, _p in events:
         params.append((verb, "fn(*u8, *u8)", "props::no_handler"))
         params.append((verb + "_ctx", "*u8", "0 as *u8"))
@@ -2285,7 +2316,7 @@ def emit_control(maui, merged):
         rty = "str" if ty == "str" else cplus_type(ty)
         body = (carrier_reads(ty, path) if ty in CARRIER_TYPES
                 else read_expr(ty, f"(*p).{path}"))
-        dflt = '""' if ty == "str" else zero_of(ty)
+        dflt = '""' if ty == "str" else default_of(ty, src, member)
         o.append(f"\n    fn {field}(this) -> {rty} {{\n")
         o.append(f"        let p: *props::{props} = this._props();\n")
         o.append(f"        if p == (0 as *props::{props}) {{ return {dflt}; }}\n")

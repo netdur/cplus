@@ -46,7 +46,7 @@ fn radio(
     corner_radius: vocab::Corners = vocab::Corners::none(),
     font_weight: vocab::FontWeight = vocab::FontWeight::Default,
     italic: bool = false,
-    font_scales: bool = false,
+    font_scales: bool = true,
     font_family: str = "",
     font_size: f64 = 0.0f64,
     group: str = "",
@@ -273,7 +273,7 @@ impl Radio {
 
     fn font_scales(this) -> bool {
         let p: *props::RadioProps = this._props();
-        if p == (0 as *props::RadioProps) { return false; }
+        if p == (0 as *props::RadioProps) { return true; }
         return { (*p).font_scales };
     }
 

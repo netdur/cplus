@@ -29,7 +29,7 @@ const P_VERTICAL_SCROLL_BARS: u64 = 16u64;
 
 fn scroll(
     key: str = "",
-    cascades_input: bool = false,
+    cascades_input: bool = true,
     horizontal_scroll_bars: vocab::ScrollBars = vocab::ScrollBars::Default,
     axis: vocab::ScrollAxis = vocab::ScrollAxis::Both,
     safe_area: vocab::SafeArea = vocab::SafeArea::Default,
@@ -123,7 +123,7 @@ impl Scroll {
 
     fn cascades_input(this) -> bool {
         let p: *props::ScrollProps = this._props();
-        if p == (0 as *props::ScrollProps) { return false; }
+        if p == (0 as *props::ScrollProps) { return true; }
         return { (*p).cascades_input };
     }
 

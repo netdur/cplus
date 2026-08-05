@@ -42,7 +42,7 @@ fn popup(
     character_spacing: f64 = 0.0f64,
     font_weight: vocab::FontWeight = vocab::FontWeight::Default,
     italic: bool = false,
-    font_scales: bool = false,
+    font_scales: bool = true,
     font_family: str = "",
     font_size: f64 = 0.0f64,
     text_align: vocab::TextAlign = vocab::TextAlign::Center,
@@ -246,7 +246,7 @@ impl Popup {
 
     fn font_scales(this) -> bool {
         let p: *props::PopupProps = this._props();
-        if p == (0 as *props::PopupProps) { return false; }
+        if p == (0 as *props::PopupProps) { return true; }
         return { (*p).font_scales };
     }
 
