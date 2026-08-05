@@ -8,19 +8,50 @@ happen on a Mac?" by reading it.
 A row here is a commitment, not a note. Nothing is left implicit: a verb that
 is neither implemented nor listed below is a gap, and the gap is a bug.
 
-Status: **Stage 4 items 1-6 COMPLETE at the KIND level.**
+Status: **the contract is fully accounted for below the kind level.**
 
-Read that precisely. Every one of the 42 kinds has a body, and
-`every_kind_now_has_an_answer` guards it — but a body can implement three of a
-control's twenty verbs and still be a body. `python3 tools/verb_coverage.py`
-answers at the VERB level, and today it says 99 live, 51 create-only (applied
-when the view is built and never after), 164 absent. Part of the 164 is
-recorded below as "AppKit cannot"; the rest is unrecorded debt. Nothing was
-measuring this, which is the finding — the number is just the size of it.
- The tier ledger reads 57 implemented, 20 decided, 5 deferred; item 7 (examples) waits on the docs pass. Every one of the 42 kinds has an
-answer — a body, a recorded "AppKit cannot", or a named deferral — and
-`every_kind_now_has_an_answer` in the suite is the guard. Items 3-7 are in
-progress; this file grows a row each time something is decided either way.
+Read that precisely. It does not say every verb works on a Mac — it says every
+verb has an ANSWER, and the answer is checkable:
+
+```
+314 declared prop/command bits    188 live, 18 host-rendered, 4 create-only,
+                                   84 decided, 20 no carrier, 0 absent
+ 76 declared handlers              55 wired, 21 decided, 0 never fire
+```
+
+`python3 tools/verb_coverage.py --check` is the gate and it fails on a verb that
+is neither implemented nor recorded, and on a ledger row naming a verb that does
+not exist. That is this file's oldest claim — "a verb that is neither
+implemented nor listed below is a gap, and the gap is a bug" — finally enforced
+rather than asserted.
+
+The six dispositions, and the difference between them is the point:
+
+| | what it means |
+|---|---|
+| **live** | gated on the dirty bit; a later write lands |
+| **host-rendered** | the node has no view; its HOST re-applies (a `span` is a run in its label's string) |
+| **create-only** | read when the view is built, never after — four of them, each because a live flip needs a different OBJECT |
+| **decided** | AppKit cannot; the reason is in the ledger below |
+| **no carrier** | AppKit CAN; facet declares the verb and gives the backend nothing to apply it to |
+| **absent** | neither. This is the debt, and it is zero. |
+
+**Where this started.** The stage page read "42/42 kinds have a body", which was
+true and was being read as much stronger than it is. The first verb-level count
+said 99 live / 51 create-only / 164 absent, and that count was itself wrong
+twice over: it matched module names literally, so `box::P_COLOR` was not found
+in a backend that imports `facet/box` as `box_view`; and it searched the whole
+concatenated backend for `(*p).<field>`, so `label`'s body reading `(*p).text`
+marked `span.text`, `menu.text` and three more create-only along with it. The
+correction moved ~34 verbs OUT of create-only and INTO absent — worse, not
+better: `button.text_color` did not work on the first frame either.
+
+And a whole dimension was uncounted. Handlers ride the shared `C_HANDLERS` bit
+rather than a verb bit, so a verb-level count cannot see them — **52 of 76 never
+fired**, including `text_field.on_text_changed` and `list.on_item_selected`.
+
+The tier ledger reads 57 implemented, 20 decided, 5 deferred; item 7 (examples)
+waits on the docs pass.
 
 ---
 
@@ -29,6 +60,217 @@ progress; this file grows a row each time something is decided either way.
 The doctrine is the same one an UNSUPPORTED control verb follows: the contract
 still declares it, because the contract is readable as a whole and a backend's
 gaps are not the vocabulary's business.
+
+### The ledger
+
+The prose below is the REASON. This block is the INDEX, and it exists because
+prose is not checkable: `tools/verb_coverage.py` reads it and separates
+"decided" from "nobody built it yet", so the debt number means something. A
+verb listed here is a commitment; a verb neither implemented nor listed is a
+bug, which is exactly what this file has always claimed and could not enforce.
+
+Every row is `module.verb` — the same names the coverage tool prints. Run
+`python3 tools/verb_coverage.py --check` and it fails on a row that names
+nothing real, so a stale row cannot sit here reading true; it fails on an
+unrecorded verb too, which is this file's oldest claim finally enforced.
+
+```cannot-ledger
+toggle.on_color                 system-drawn: NSSwitch paints from the accent colour
+toggle.off_color                system-drawn
+toggle.thumb_color              system-drawn
+slider.minimum_track_color      system-drawn: NSSlider's track is cell-drawn
+slider.maximum_track_color      system-drawn
+slider.thumb_color              system-drawn
+progress.progress_color         system-drawn: NSProgressIndicator uses the accent colour
+checkbox.color                  system-drawn: the mark is system-drawn
+spinner.color                   system-drawn: the spinner is system-drawn
+radio.group                     AppKit groups radios by SUPERVIEW, not by name
+tabs.bar_background             NSTabView draws its own strip, no colour API
+tabs.bar_background_color       NSTabView draws its own strip
+tabs.bar_text_color             NSTabView draws its own strip
+tabs.selected_tab_color         NSTabView draws its own strip
+tabs.unselected_tab_color       NSTabView draws its own strip
+context_menu_item.is_destructive  NSMenuItem has no destructive style
+menu_item.is_destructive        NSMenuItem has no destructive style
+toolbar_item.is_destructive     NSToolbarItem has no destructive style
+bordered.stroke_dash            a layer border is solid; dashes are CAShapeLayer territory
+bordered.stroke_dash_offset     as stroke_dash
+bordered.stroke_cap             as stroke_dash
+bordered.stroke_join            as stroke_dash
+bordered.stroke_miter_limit     as stroke_dash
+bordered.stroke_shape           as stroke_dash
+refreshable.is_refreshable      pull-to-refresh is a touch idiom; use a Refresh command
+refreshable.is_refreshing       as is_refreshable
+refreshable.refresh_color       as is_refreshable
+refreshable.on_refreshing       as is_refreshable
+swipeable.reveal_threshold      swipe-to-reveal is a touch idiom; use a context menu
+swipeable.on_open_requested     as reveal_threshold
+swipeable.on_close_requested    as reveal_threshold
+swipeable.on_swipe_started      as reveal_threshold
+swipeable.on_swipe_ended        as reveal_threshold
+swipeable.observe_swipe_changing  as reveal_threshold
+swipe_item.text                 swipe items are unreachable on this backend
+swipe_item.icon                 as text
+swipe_item.is_destructive       as text
+swipe_item.on_clicked           as text
+swipe_item.on_invoked           as text
+text_field.keyboard             soft-keyboard layout; a hardware keyboard has one
+text_field.predicts_text        QuickType; macOS predicts in the input method
+text_field.font_scales          Dynamic Type; macOS scales at the display
+text_field.return_key           the LABEL on a soft keyboard's return key
+text_area.keyboard              as text_field.keyboard
+text_area.predicts_text         as text_field.predicts_text
+text_area.font_scales           as text_field.font_scales
+search_field.keyboard           as text_field.keyboard
+search_field.predicts_text      as text_field.predicts_text
+search_field.font_scales        as text_field.font_scales
+search_field.return_key         as text_field.return_key
+text_field.vertical_align       NSTextFieldCell has no vertical alignment; it centres
+text_area.vertical_align        NSTextView has none either; text starts at the top
+search_field.vertical_align     as text_field.vertical_align
+text_field.clear_button         NSTextField has no clear button; NSSearchField's is its own
+text_area.placeholder           NSTextView has no placeholder API
+text_area.placeholder_color     as text_area.placeholder
+search_field.cancel_button_color  the cancel button is a system template image
+search_field.search_icon_color    the magnifier is a system template image
+label.font_scales               Dynamic Type; macOS scales at the display
+label.vertical_align            NSTextFieldCell has no vertical alignment
+span.font_scales                as label.font_scales
+button.font_scales              as label.font_scales
+radio.font_scales               as label.font_scales
+popup.font_scales               as label.font_scales
+date_picker.font_scales         as label.font_scales
+time_picker.font_scales         as label.font_scales
+icon_button.is_opaque           -[NSView isOpaque] is derived, not settable
+image.is_opaque                 as icon_button.is_opaque
+date_picker.character_spacing   NSDatePicker draws its own fields; no attributed value
+time_picker.character_spacing   as date_picker.character_spacing
+date_picker.format              NSDatePicker has an ELEMENT mask, not a format string
+time_picker.format              as date_picker.format
+date_picker.is_open             a field-with-stepper has no popover to open
+time_picker.is_open             as date_picker.is_open
+date_picker.on_opened           as date_picker.is_open
+date_picker.on_closed           as date_picker.is_open
+time_picker.on_opened           as date_picker.is_open
+time_picker.on_closed           as date_picker.is_open
+popup.title                     NSPopUpButton shows the selected item; no prompt slot
+popup.title_color               as popup.title
+popup.vertical_align            NSPopUpButtonCell has no vertical alignment
+list.is_refreshable             pull-to-refresh is a touch idiom; use a Refresh command
+list.is_refreshing              as list.is_refreshable
+list.can_refresh                as list.is_refreshable
+list.refresh_color              as list.is_refreshable
+list.begin_refresh              as list.is_refreshable
+list.end_refresh                as list.is_refreshable
+list.on_refreshing              as list.is_refreshable
+carousel.bounces                rubber-band overscroll is the platform's, not per view
+carousel.is_swipeable           swipe between pages is a touch idiom
+carousel.wraps                  an infinite carousel needs the touch paging it wraps
+carousel.animates_scroll        NSScrollView animates or does not; no per-scroll switch
+carousel.peek_insets            peeking neighbours is a touch-paging affordance
+collection.can_reorder_items    drag-reorder needs NSCollectionView's own drag session
+collection.on_reorder_completed  as collection.can_reorder_items
+collection.can_mix_groups       NSCollectionView sections do not interleave
+image.is_animation_playing      NSImageView plays an animated GIF on its own schedule
+scroll.cascades_input           AppKit chains scroll to the nearest scroller by default
+slider.thumb_image              NSSlider's knob is cell-drawn; there is no image slot
+menu.priority                   an app menu's order is its position in the menu bar
+hybrid_web.on_web_resource_requested  intercepting needs a WKURLSchemeHandler per scheme
+```
+
+### The no-carrier ledger
+
+A third disposition, and the one that is NOT this backend's to fix. AppKit can
+do these. facet declares the verb and gives the backend nothing to apply it to,
+so there is no code to write until the contract grows a carrier — the same
+shape as the five tier rows stage 4 ended on, and the same shape as `item_of`
+and the canvas vocabulary before they were closed.
+
+Recorded here rather than left absent because "AppKit cannot" and "facet did
+not say" are different facts, and a backend that files the second under the
+first is claiming a platform limit that does not exist.
+
+```no-carrier
+radio.text_color                RadioButton.Content was not adopted; a radio has no text
+radio.text_transform            as radio.text_color
+radio.character_spacing         as radio.text_color
+carousel.is_scrolling           a READ with no write-back door; facet has no setter for it
+carousel.scroll_anchor          ItemsUpdatingScrollMode needs an update event facet has none of
+collection.scroll_anchor        as carousel.scroll_anchor
+carousel.remaining_threshold    the threshold needs a scroll POSITION facet does not carry
+collection.remaining_threshold  as carousel.remaining_threshold
+carousel.on_remaining_items_threshold_reached  as carousel.remaining_threshold
+collection.on_remaining_items_threshold_reached  as carousel.remaining_threshold
+carousel.item_sizing            facet has no measure hook for a grid item
+collection.item_sizing          as carousel.item_sizing
+collection.is_grouped           facet declares no group carrier on the item sequence
+list.is_grouped                 as collection.is_grouped
+table.style                     `TableStyle` has no carrier the backend can read
+table.has_uneven_rows           a table's rows are its CHILDREN; flex measures them
+table.row_height                as table.has_uneven_rows
+collection.selection_mode       a materialised collection is a scroll of children, not a table
+collection.on_selection_changed  as collection.selection_mode
+collection.bind                 collection does not recycle by design; nothing to bind INTO
+carousel.on_current_item_changed  needs a scroll POSITION -> index map facet does not carry
+carousel.on_position_changed    as carousel.on_current_item_changed
+scroll.safe_area                `vocab::SafeArea` has no window-inset source on this backend
+toolbar_item.placement          `Placement` names iOS bar positions; NSToolbar has one row
+toolbar_item.priority           NSToolbarItem's visibility priority has no facet range to map
+window_chrome.style             `window_buttons` has no style beyond the traffic lights
+```
+
+### The host-rendered ledger
+
+A second block, and a different fact. These verbs are NOT gated on a dirty bit
+of their own, because their node has no view: a `span` is a run inside its
+label's attributed string, a `menu_item` is a row in its menu's NSMenu. The
+coverage tool calls that shape create-only, which is the honest reading of the
+code and was the honest reading of the behaviour too — until `mount::sync_from`
+learned to route a viewless node's change to the ancestor that draws it.
+
+They are live. What makes them live is the HOST re-applying, so they are listed
+apart from the verbs that are gated directly, and a reader can tell which
+mechanism answers a given verb.
+
+```host-rendered
+span.text                       a run in its label's attributed string
+span.text_color                 as span.text
+span.text_transform             as span.text
+span.font_size                  as span.text
+span.font_weight                as span.text
+span.font_family                as span.text
+span.is_italic                  as span.text
+span.character_spacing          as span.text
+span.line_height                as span.text
+span.text_decoration            as span.text
+menu.text                       the NSMenu its parent builds
+menu_item.text                  a row in its menu's NSMenu
+menu_item.icon                  as menu_item.text
+context_menu_item.text          a row in its view's NSMenu
+context_menu_item.icon          as context_menu_item.text
+toolbar_item.text               an item in the window's NSToolbar
+toolbar_item.icon               as toolbar_item.text
+context_menu_item.shortcut      the key equivalent on its NSMenuItem
+```
+
+### The create-only ledger
+
+The last disposition, and the smallest. These verbs are read when the view is
+BUILT and a later write does not reach the screen — which is exactly what the
+coverage tool means by create-only, and exactly the bucket the handoff said to
+start with, because it looks implemented from the outside.
+
+Each is here because the platform gives no other answer: a live flip would need
+a different OBJECT, not a different property. They are listed so the bucket is
+accountable — an unlisted create-only verb is debt, the same rule the cannot
+ledger follows, and the tool counts it as such.
+
+```create-only
+text_field.is_secure            NSSecureTextField is a different CLASS, not a property
+list.row_height                 the table's row height is read when its source is built
+tree.row_height                 as list.row_height
+window_chrome.spacing           the traffic lights are laid out once, by the window
+```
 
 ### The control tint colours
 
@@ -126,6 +368,22 @@ simulated swipe.
 | `ContentPage.HideSoftInputOnTapped` | There is no soft keyboard to hide. |
 | `Page.IsBusy` | macOS has no app-wide busy indicator. A spinner is a control the application places where the waiting is. |
 
+The `InputView` band carries four of the same shape, and they apply to all
+three of `text_field`, `text_area` and `search_field` because all three embed
+that band:
+
+| Verb | Why not |
+|---|---|
+| `keyboard:` | `vocab::Keyboard` picks a SOFT keyboard layout — numeric, email, url. A hardware keyboard has one layout and the application does not choose it. |
+| `predicts_text:` | QuickType's inline prediction bar. macOS predicts inside the input method, not per text field, and offers no per-control switch. |
+| `font_scales:` | Dynamic Type. macOS scales at the display, not per font, and has no per-control opt-in. |
+| `return_key:` | The LABEL on a soft keyboard's return key ("Go", "Search", "Done"). A hardware Return key has one label, engraved. |
+
+These four were counted as unrecorded debt until now, which is why they are
+written down here rather than quietly left absent — the doctrine is that a
+verb is either implemented or recorded, and "nobody looked at it yet" is
+neither.
+
 These are DECIDED, not deferred, and the tier ledger says so: guard 5b now
 carries three dispositions rather than two, and prints them apart. "The
 platform cannot" and "nobody has built it yet" are different facts and a
@@ -184,6 +442,47 @@ into an elliptical one is written out at `add_arc_path`.
 
 `examples/canvas_probe` draws every verb once, including both sweeps side by
 side, because an agent cannot see whether an arc went the right way.
+
+### A text control's truth lives in AppKit, and is written back
+
+`text_field`, `text_area` and `search_field` are the three kinds where the
+USER changes the value, not the application. Everything else in facet flows one
+way — the app writes a prop, the bit goes up, the backend paints it — and these
+three have to flow both.
+
+They did not. Nothing wired any of them back, with two consequences:
+
+- `on_text_changed` and `on_submit` never fired, on any of the three.
+- `field.text()` reads the props (`text_field.cplus`), and the props still said
+  whatever the application last SET. So an app that read a field after the user
+  typed in it got the old string, silently, with nothing logged and no error.
+
+The second is the one that mattered: an invisible wrong answer from the
+contract's own reader. `text_input.cplus` closes it. The native control is
+where editing happens, so every edit is written back into the props BEFORE the
+handler runs — a handler that asks `text()` gets what is on screen.
+
+Three deviations worth knowing:
+
+- **The write-back does not raise the dirty bit.** `core::touch` would schedule
+  a write of the string back into the control the user is typing in, and
+  writing `stringValue` moves the insertion point. The props are being made to
+  agree with the screen, not the other way round.
+- **`on_submit` is a different moment per kind.** A field and a search field
+  submit on Return, which is the control's own action. An editor submits on
+  losing focus, because Return inserts a newline there and MAUI's
+  `Editor.Completed` has no other moment to mean. Wiring both on a field would
+  fire submit twice.
+- **`cursor_position` / `selection_length` are answered by the field editor**,
+  which exists only while the control has focus. An unfocused field keeps what
+  the props last said rather than resetting to zero — there is no selection to
+  report, and reporting zero would be a claim rather than an absence.
+
+The tests type through the real path — `keyDown:` on the field editor, which is
+what AppKit itself calls, running interpretKeyEvents → insertText → didChangeText
+→ the notification. Posting the notification by hand would prove the imp is
+reachable and nothing about whether AppKit ever reaches it. All six fail if
+`text_input::install` is ablated.
 
 ### A span is not a view either
 
