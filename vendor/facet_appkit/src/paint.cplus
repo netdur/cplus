@@ -13,6 +13,7 @@ import "facet/vocabulary" as vocab;
 import "facet/theme" as theme;
 import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
+import "objc/synthesis" as synth;
 import "appkit/appkit" as ak;
 import "quartzcore/quartzcore" as quartz;
 
@@ -388,7 +389,14 @@ fn apply_common(v: *u8, n: *core::Node, dirty: u64) {
         apply_background(view, core::background_color(n));
     }
     if (dirty & props::C_BACKGROUND) != (0 as u64) {
+        apply_brush(view, core::background(n));
         apply_background_image(view, core::background_image(n));
+    }
+    if (dirty & props::C_SHADOW) != (0 as u64) {
+        apply_shadow(view, core::shadow(n));
+    }
+    if (dirty & props::C_CLIP) != (0 as u64) {
+        apply_clip(view, core::clip(n));
     }
     if (dirty & props::C_TRANSFORM) != (0 as u64) {
         apply_transform(view, n);
@@ -421,6 +429,177 @@ fn apply_background(view: ak::View, c: vocab::Color) {
     view.set_wants_layer(true);
     let l: quartz::Layer = view.layer();
     l.set_background_color(ns_color(c).c_g_color());
+    return;
+}
+
+// The shared band's `background` — a Brush, which is a solid or a linear
+// gradient. It had NO implementation: `core::background(` appeared nowhere in
+// this package, and a comment in the tabs body even claimed "apply_background
+// makes the same reduction" — but that function takes a Color and is only ever
+// called with `background_color`. The reduction it described was never written.
+//
+// A solid is the layer's background colour, the same as `background_color`.
+// A gradient needs a layer of its own: CALayer has no gradient, CAGradientLayer
+// is one, and it goes UNDER everything the view draws rather than replacing it.
+fn apply_brush(view: ak::View, b: vocab::Brush) {
+    if b.is_gradient == false {
+        // A solid brush that is not set says nothing; leaving it alone lets
+        // `background_color` own the layer, which is the older verb.
+        if b.start.is_set() == false { remove_gradient(view); return; }
+        remove_gradient(view);
+        view.set_wants_layer(true);
+        view.layer().set_background_color(ns_color(b.start).c_g_color());
+        return;
+    }
+    view.set_wants_layer(true);
+    let host: quartz::Layer = view.layer();
+    let g: quartz::GradientLayer = gradient_sublayer(host);
+    { rt::msg_void_id(g.raw(), rt::sel(#str_ptr("setColors:\0")),
+                      two_colour_array(b.start, b.end)) };
+    // The angle is degrees clockwise from "up" in facet's vocabulary, and
+    // CAGradientLayer wants unit points in a top-left space. `startPoint` and
+    // `endPoint` are the two ends of the axis through the centre.
+    let rad: f64 = b.angle * 0.017453292519943295f64;
+    let dx: f64 = sin_of(rad) / 2.0f64;
+    let dy: f64 = cos_of(rad) / 2.0f64;
+    set_layer_point(g.raw(), #str_ptr("setStartPoint:\0"), 0.5f64 - dx, 0.5f64 + dy);
+    set_layer_point(g.raw(), #str_ptr("setEndPoint:\0"), 0.5f64 + dx, 0.5f64 - dy);
+    { msg_void_rect(g.raw(), rt::sel(#str_ptr("setFrame:\0")), view.bounds()) };
+    return;
+}
+
+fn gradient_key() -> *u8 { return 29060 as *u8; }
+
+// One gradient sublayer per view, kept on an associated key so a re-apply
+// updates it rather than stacking a second one under the first.
+fn gradient_sublayer(host: quartz::Layer) -> quartz::GradientLayer {
+    let existing: *u8 = { synth::get_associated(host.raw(), gradient_key()) };
+    if existing != (0 as *u8) { return quartz::GradientLayer::from_raw(existing); }
+    let g: *u8 = { rt::alloc_init(#str_ptr("CAGradientLayer\0")) };
+    if g == (0 as *u8) { return quartz::GradientLayer::from_raw(0 as *u8); }
+    // BELOW index 0: a background is behind whatever the control draws.
+    { rt::msg_void_id_u64(host.raw(), rt::sel(#str_ptr("insertSublayer:atIndex:\0")), g, 0 as u64) };
+    synth::set_associated(host.raw(), gradient_key(), g);
+    rt::release(g);
+    return quartz::GradientLayer::from_raw(g);
+}
+
+fn remove_gradient(view: ak::View) {
+    if view.wants_layer() == false { return; }
+    let host: quartz::Layer = view.layer();
+    let existing: *u8 = { synth::get_associated(host.raw(), gradient_key()) };
+    if existing == (0 as *u8) { return; }
+    { rt::msg_void(existing, rt::sel(#str_ptr("removeFromSuperlayer\0"))) };
+    synth::set_associated(host.raw(), gradient_key(), 0 as *u8);
+    return;
+}
+
+fn two_colour_array(a: vocab::Color, b: vocab::Color) -> *u8 {
+    let arr: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")),
+                                rt::sel(#str_ptr("array\0"))) };
+    { rt::msg_void_id(arr, rt::sel(#str_ptr("addObject:\0")),
+                      ns_color(a).c_g_color()) };
+    { rt::msg_void_id(arr, rt::sel(#str_ptr("addObject:\0")),
+                      ns_color(b).c_g_color()) };
+    return arr;
+}
+
+// The shared band's `shadow`. Also had no implementation, and `bordered`
+// carries no shadow prop of its own, so MAUI's Border.Shadow had no path at
+// all — this is the only one.
+//
+// The offset's y is FLIPPED: facet's y grows downward (every backing view here
+// is flipped) and a CALayer's shadow offset does not.
+fn apply_shadow(view: ak::View, s: vocab::Shadow) {
+    if s.opacity <= 0.0f64 || s.color.is_set() == false {
+        if view.wants_layer() {
+            { rt::msg_void_f32(view.layer().raw(), rt::sel(#str_ptr("setShadowOpacity:\0")), 0.0f32) };
+        }
+        return;
+    }
+    view.set_wants_layer(true);
+    let l: quartz::Layer = view.layer();
+    { rt::msg_void_id(l.raw(), rt::sel(#str_ptr("setShadowColor:\0")),
+                      ns_color(s.color).c_g_color()) };
+    { rt::msg_void_f32(l.raw(), rt::sel(#str_ptr("setShadowOpacity:\0")), s.opacity as f32) };
+    { rt::msg_void_f64(l.raw(), rt::sel(#str_ptr("setShadowRadius:\0")), s.radius) };
+    set_layer_size(l.raw(), #str_ptr("setShadowOffset:\0"), s.offset.x, 0.0f64 - s.offset.y);
+    // A shadow is drawn OUTSIDE the layer, so a clipping ancestor would eat it.
+    // Nothing here clips by default; `clip` below is the verb that opts in, and
+    // an application asking for both gets the documented interaction.
+    return;
+}
+
+// The shared band's `clip`. A CAShapeLayer used as the layer's MASK, which is
+// how Core Animation clips to anything that is not a rectangle.
+fn apply_clip(view: ak::View, s: vocab::Shape) {
+    if s.kind == (0 as i64) {
+        if view.wants_layer() {
+            { rt::msg_void_id(view.layer().raw(), rt::sel(#str_ptr("setMask:\0")), 0 as *u8) };
+            view.set_clips_to_bounds(false);
+        }
+        return;
+    }
+    view.set_wants_layer(true);
+    let l: quartz::Layer = view.layer();
+    let b: rt::Rect = view.bounds();
+    // A clip is the shape ITSELF, not a stroke inset by half a line — so the
+    // path is built here rather than borrowed from `controls::stroke_path`,
+    // which insets. (controls imports paint, so it could not be borrowed
+    // anyway without a cycle.)
+    let path: *u8 = clip_path(b, s);
+    if path == (0 as *u8) { return; }
+    let mask: *u8 = { rt::alloc_init(#str_ptr("CAShapeLayer\0")) };
+    if mask == (0 as *u8) { return; }
+    { msg_void_rect(mask, rt::sel(#str_ptr("setFrame:\0")), b) };
+    { rt::msg_void_id(mask, rt::sel(#str_ptr("setPath:\0")), path) };
+    { rt::msg_void_id(l.raw(), rt::sel(#str_ptr("setMask:\0")), mask) };
+    rt::release(mask);
+    { CGPathRelease(path) };
+    return;
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_void_rect(recv: *u8, sel: *u8, r: rt::Rect);
+#[link_name = "objc_msgSend"]
+extern fn msg_void_point(recv: *u8, sel: *u8, p: rt::Point);
+#[link_name = "objc_msgSend"]
+extern fn msg_void_size(recv: *u8, sel: *u8, s: rt::Size);
+extern fn CGPathRelease(p: *u8);
+extern fn CGPathCreateWithRect(r: rt::Rect, t: *u8) -> *u8;
+extern fn CGPathCreateWithEllipseInRect(r: rt::Rect, t: *u8) -> *u8;
+extern fn CGPathCreateWithRoundedRect(r: rt::Rect, cw: f64, ch: f64, t: *u8) -> *u8;
+
+// `kind` 0 none, 1 rect, 2 rounded, 3 ellipse — vocabulary.cplus's own numbering.
+// Core Graphics has ONE corner radius per rounded rect and facet carries four,
+// so the largest wins: the same deviation `corner_radius` makes, in the same
+// direction, so a node that names both gets one answer rather than two.
+fn clip_path(b: rt::Rect, s: vocab::Shape) -> *u8 {
+    if { b.w } <= 0.0f64 || { b.h } <= 0.0f64 { return 0 as *u8; }
+    if { s.kind } == (3 as i64) { return { CGPathCreateWithEllipseInRect(b, 0 as *u8) }; }
+    if { s.kind } == (2 as i64) {
+        let c: vocab::Corners = { s.corners };
+        var r: f64 = { c.top_leading };
+        if { c.top_trailing } > r { r = { c.top_trailing }; }
+        if { c.bottom_leading } > r { r = { c.bottom_leading }; }
+        if { c.bottom_trailing } > r { r = { c.bottom_trailing }; }
+        return { CGPathCreateWithRoundedRect(b, r, r, 0 as *u8) };
+    }
+    return { CGPathCreateWithRect(b, 0 as *u8) };
+}
+extern fn sin(x: f64) -> f64;
+extern fn cos(x: f64) -> f64;
+
+fn sin_of(x: f64) -> f64 { return { sin(x) }; }
+fn cos_of(x: f64) -> f64 { return { cos(x) }; }
+
+fn set_layer_point(l: *u8, sel: *u8, x: f64, y: f64) {
+    { msg_void_point(l, rt::sel(sel), rt::Point { x: x, y: y }) };
+    return;
+}
+
+fn set_layer_size(l: *u8, sel: *u8, w: f64, h: f64) {
+    { msg_void_size(l, rt::sel(sel), rt::Size { w: w, h: h }) };
     return;
 }
 

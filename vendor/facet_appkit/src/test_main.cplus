@@ -7295,3 +7295,107 @@ fn a_system_symbol_is_unaffected_by_the_bundled_path() {
     views::view_release(v);
     return;
 }
+
+// ---- the shared band's paint trio -------------------------------------------
+//
+// `background` (Brush), `shadow` and `clip` are declared on EVERY node and had
+// no implementation at all: `core::background(`, `core::shadow(` and
+// `core::clip(` each appeared zero times in this package. They were invisible
+// to the coverage gate because it censuses per-CONTROL bits and these are the
+// shared band.
+
+#[test]
+fn a_solid_brush_paints_the_layer() {
+    backend::install();
+    var n: core::Node = core::column(core::Builder::new(), key: "brush");
+    let p: *core::Node = #addr_of(n);
+    core::set_background(p, vocab::Brush::solid(vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64, 1.0f64)));
+    let v: *u8 = views::create(0 as *u8, p);
+    let view: ak::View = ak::View::from_raw(v);
+    assert view.wants_layer();
+    assert { rt::msg_id(view.layer().raw(), rt::sel(#str_ptr("backgroundColor\0"))) } != (0 as *u8);
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn a_gradient_brush_gets_a_gradient_sublayer_and_only_one() {
+    // A gradient is a LAYER, not a colour — CALayer has no gradient. Re-applying
+    // must update the one that is there rather than stacking a second under it.
+    backend::install();
+    var n: core::Node = core::column(core::Builder::new(), key: "grad");
+    let p: *core::Node = #addr_of(n);
+    core::set_background(p, vocab::Brush {
+        start: vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64, 1.0f64),
+        end: vocab::Color::rgba(0.0f64, 0.0f64, 1.0f64, 1.0f64),
+        angle: 90.0f64, is_gradient: true,
+    });
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    let view: ak::View = ak::View::from_raw(v);
+    assert view.wants_layer();
+    let subs1: *u8 = { rt::msg_id(view.layer().raw(), rt::sel(#str_ptr("sublayers\0"))) };
+    assert subs1 != (0 as *u8);
+    let n1: u64 = { rt::msg_u64(subs1, rt::sel(#str_ptr("count\0"))) };
+    assert n1 == (1 as u64);
+    // Apply again: still one.
+    core::clear_dirty(p);
+    core::set_background(p, vocab::Brush {
+        start: vocab::Color::rgba(0.0f64, 1.0f64, 0.0f64, 1.0f64),
+        end: vocab::Color::rgba(0.0f64, 0.0f64, 1.0f64, 1.0f64),
+        angle: 45.0f64, is_gradient: true,
+    });
+    views::apply(0 as *u8, p);
+    let n2: u64 = { rt::msg_u64({ rt::msg_id(view.layer().raw(), rt::sel(#str_ptr("sublayers\0"))) },
+                                rt::sel(#str_ptr("count\0"))) };
+    assert n2 == (1 as u64);
+    return;
+}
+
+#[test]
+fn a_shadow_reaches_the_layer_and_can_be_taken_away() {
+    backend::install();
+    var n: core::Node = core::column(core::Builder::new(), key: "shad");
+    let p: *core::Node = #addr_of(n);
+    core::set_shadow(p, vocab::Shadow {
+        color: vocab::Color::rgba(0.0f64, 0.0f64, 0.0f64, 1.0f64),
+        offset: vocab::Point { x: 0.0f64, y: 2.0f64 },
+        radius: 4.0f64, opacity: 0.5f64,
+    });
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    let view: ak::View = ak::View::from_raw(v);
+    assert view.wants_layer();
+    let op: f32 = { rt::msg_f32(view.layer().raw(), rt::sel(#str_ptr("shadowOpacity\0"))) };
+    assert op > 0.4f32;
+    // Opacity 0 takes it off again.
+    core::clear_dirty(p);
+    core::set_shadow(p, vocab::Shadow::none());
+    views::apply(0 as *u8, p);
+    let off: f32 = { rt::msg_f32(view.layer().raw(), rt::sel(#str_ptr("shadowOpacity\0"))) };
+    assert off < 0.01f32;
+    return;
+}
+
+#[test]
+fn a_clip_shape_becomes_the_layers_mask() {
+    backend::install();
+    var n: core::Node = core::column(core::Builder::new(), key: "clip");
+    let p: *core::Node = #addr_of(n);
+    core::set_clip(p, vocab::Shape::rounded(8.0f64));
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    let view: ak::View = ak::View::from_raw(v);
+    ak::View::from_raw(v).set_frame(rt::Rect { x: 0.0f64, y: 0.0f64, w: 100.0f64, h: 50.0f64 });
+    core::clear_dirty(p);
+    core::set_clip(p, vocab::Shape::rounded(8.0f64));
+    views::apply(0 as *u8, p);
+    assert view.wants_layer();
+    assert { rt::msg_id(view.layer().raw(), rt::sel(#str_ptr("mask\0"))) } != (0 as *u8);
+    // Shape::none() takes the mask off.
+    core::clear_dirty(p);
+    core::set_clip(p, vocab::Shape::none());
+    views::apply(0 as *u8, p);
+    assert { rt::msg_id(view.layer().raw(), rt::sel(#str_ptr("mask\0"))) } == (0 as *u8);
+    return;
+}
