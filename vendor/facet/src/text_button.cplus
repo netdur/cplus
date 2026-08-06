@@ -61,6 +61,12 @@ const P_CHARACTER_SPACING: u64 = 128u64;
 const P_TEXT_TRANSFORM: u64 = 256u64;
 const P_LINE_BREAK: u64 = 512u64;
 const P_TEXT_DECORATION: u64 = 1024u64;
+const P_ON: u64 = 2048u64;
+const P_TOGGLES: u64 = 4096u64;
+const P_BORDERED: u64 = 8192u64;
+const P_BORDER_COLOR: u64 = 16384u64;
+const P_BORDER_WIDTH: u64 = 32768u64;
+const P_CORNER_RADIUS: u64 = 65536u64;
 
 struct TextButtonProps {
     title: text::Text,
@@ -76,6 +82,23 @@ struct TextButtonProps {
     // Underline is the point of the link posture, so it is a first-class
     // parameter here rather than something to reach for a label to get.
     text_decoration: vocab::TextDecoration,
+    // ---- toggling -----------------------------------------------------------
+    // `toggles` makes a click FLIP rather than fire-and-forget: AppKit's own
+    // PushOnPushOff type holds the state, so `is_on` is read off the control
+    // and nothing has to be kept in step by hand. The handler still runs, and
+    // reads `is_on()` to see where it landed.
+    toggles: bool,
+    on: bool,
+    // ---- the border ---------------------------------------------------------
+    // A text button HAS no border and can be GIVEN one, which is the point of
+    // the pair: `border_color` / `border_width` / `corner_radius` describe the
+    // border, and `bordered` says whether it is drawn. Describing it once and
+    // switching it on and off is what a chip or a filter button does — and a
+    // width of 0 would have meant redescribing it every time it came back.
+    bordered: bool,
+    border_color: vocab::Color,
+    border_width: f64,
+    corner_radius: vocab::Corners,
     on_click: fn(*u8, *u8),
     opaque on_click_ctx: *u8,
 }
@@ -94,6 +117,12 @@ impl TextButtonProps {
             text_transform: vocab::TextTransform::None,
             line_break: vocab::LineBreak::TailTruncation,
             text_decoration: vocab::TextDecoration::None,
+            toggles: false,
+            on: false,
+            bordered: false,
+            border_color: vocab::Color::clear(),
+            border_width: 1.0f64,
+            corner_radius: vocab::Corners::none(),
             on_click: props::no_handler,
             on_click_ctx: 0 as *u8,
         };
@@ -121,6 +150,12 @@ fn text_button(
     text_transform: vocab::TextTransform = vocab::TextTransform::None,
     line_break: vocab::LineBreak = vocab::LineBreak::TailTruncation,
     text_decoration: vocab::TextDecoration = vocab::TextDecoration::None,
+    toggles: bool = false,
+    on: bool = false,
+    bordered: bool = false,
+    border_color: vocab::Color = vocab::Color::clear(),
+    border_width: f64 = 1.0f64,
+    corner_radius: vocab::Corners = vocab::Corners::none(),
     on_click: fn(*u8, *u8) = props::no_handler,
     on_click_ctx: *u8 = 0 as *u8,
 ) -> core::Node {
@@ -136,6 +171,12 @@ fn text_button(
     p.text_transform = text_transform;
     p.line_break = line_break;
     p.text_decoration = text_decoration;
+    p.toggles = toggles;
+    p.on = on;
+    p.bordered = bordered;
+    p.border_color = border_color;
+    p.border_width = border_width;
+    p.corner_radius = corner_radius;
     p.on_click = on_click;
     p.on_click_ctx = on_click_ctx;
     return match box::new::[TextButtonProps](p) {
@@ -247,6 +288,100 @@ impl TextButton {
         let p: *TextButtonProps = this._props();
         if p == (0 as *TextButtonProps) { return vocab::TextTransform::None; }
         return { (*p).text_transform };
+    }
+
+    // ---- toggling -------------------------------------------------------------
+
+    // Read where the last click left it. Answers the CONTROL, not a copy: with
+    // `toggles` the platform holds the state, so this cannot drift from what
+    // the user sees.
+    fn is_on(this) -> bool {
+        let p: *TextButtonProps = this._props();
+        if p == (0 as *TextButtonProps) { return false; }
+        return { (*p).on };
+    }
+
+    fn set_on(this, v: bool) -> TextButton {
+        let p: *TextButtonProps = this._props();
+        if p == (0 as *TextButtonProps) { return this; }
+        { (*p).on = v };
+        core::touch(this._p, P_ON);
+        return this;
+    }
+
+    fn set_toggles(this, v: bool) -> TextButton {
+        let p: *TextButtonProps = this._props();
+        if p == (0 as *TextButtonProps) { return this; }
+        { (*p).toggles = v };
+        core::touch(this._p, P_TOGGLES);
+        return this;
+    }
+
+    fn toggles(this) -> bool {
+        let p: *TextButtonProps = this._props();
+        if p == (0 as *TextButtonProps) { return false; }
+        return { (*p).toggles };
+    }
+
+    // ---- the border -----------------------------------------------------------
+
+    // On or off, without redescribing it. The colour, width and radius stay
+    // where they were, so a chip can show its border on selection and hide it
+    // again with one call.
+    fn set_bordered(this, v: bool) -> TextButton {
+        let p: *TextButtonProps = this._props();
+        if p == (0 as *TextButtonProps) { return this; }
+        { (*p).bordered = v };
+        core::touch(this._p, P_BORDERED);
+        return this;
+    }
+
+    fn is_bordered(this) -> bool {
+        let p: *TextButtonProps = this._props();
+        if p == (0 as *TextButtonProps) { return false; }
+        return { (*p).bordered };
+    }
+
+    fn set_border_color(this, v: vocab::Color) -> TextButton {
+        let p: *TextButtonProps = this._props();
+        if p == (0 as *TextButtonProps) { return this; }
+        { (*p).border_color = v };
+        core::touch(this._p, P_BORDER_COLOR);
+        return this;
+    }
+
+    fn border_color(this) -> vocab::Color {
+        let p: *TextButtonProps = this._props();
+        if p == (0 as *TextButtonProps) { return vocab::Color::clear(); }
+        return { (*p).border_color };
+    }
+
+    fn set_border_width(this, v: f64) -> TextButton {
+        let p: *TextButtonProps = this._props();
+        if p == (0 as *TextButtonProps) { return this; }
+        { (*p).border_width = v };
+        core::touch(this._p, P_BORDER_WIDTH);
+        return this;
+    }
+
+    fn border_width(this) -> f64 {
+        let p: *TextButtonProps = this._props();
+        if p == (0 as *TextButtonProps) { return 0.0f64; }
+        return { (*p).border_width };
+    }
+
+    fn set_corner_radius(this, v: vocab::Corners) -> TextButton {
+        let p: *TextButtonProps = this._props();
+        if p == (0 as *TextButtonProps) { return this; }
+        { (*p).corner_radius = v };
+        core::touch(this._p, P_CORNER_RADIUS);
+        return this;
+    }
+
+    fn corner_radius(this) -> vocab::Corners {
+        let p: *TextButtonProps = this._props();
+        if p == (0 as *TextButtonProps) { return vocab::Corners::none(); }
+        return { (*p).corner_radius };
     }
 
     fn on_click(this, f: fn(*u8, *u8), ctx: *u8 = 0 as *u8) -> TextButton {

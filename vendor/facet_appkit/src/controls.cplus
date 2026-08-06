@@ -544,6 +544,21 @@ fn checkbox_action(sender: *u8, ctx: *u8) {
     return;
 }
 
+// A toggling text button syncs its state into the props BEFORE the handler
+// runs, for the same reason a checkbox does: `is_on()` reads the props, so the
+// props have to be true by the time anyone asks. AppKit owns the flip
+// (PushOnPushOff); this is what tells facet about it.
+fn text_button_action(sender: *u8, ctx: *u8) {
+    let n: *core::Node = ctx as *core::Node;
+    let p: *text_button::TextButtonProps =
+        props_of(n, text_button::K_TEXT_BUTTON) as *text_button::TextButtonProps;
+    if p == (0 as *text_button::TextButtonProps) { return; }
+    if { (*p).toggles } { sync_bool_state(sender, #addr_of((*p).on)); }
+    let h: fn(*u8, *u8) = { (*p).on_click };
+    if h != props::no_handler { h(sender, { (*p).on_click_ctx }); }
+    return;
+}
+
 fn toggle_action(sender: *u8, ctx: *u8) {
     let n: *core::Node = ctx as *core::Node;
     let p: *props::ToggleProps = props_of(n, props::K_TOGGLE) as *props::ToggleProps;
@@ -1182,6 +1197,8 @@ fn create_text_button(n: *core::Node) -> *u8 {
     let b: ak::Button = ak::Button::from_raw(rt::alloc_init(#str_ptr("NSButton\0")));
     // MomentaryChange, like icon_button: MomentaryPushIn draws a pushed-in
     // BEZEL on press, which is exactly what this control exists not to have.
+    // A toggling button asks for PushOnPushOff in `apply` instead, where the
+    // prop is readable.
     b.set_button_type(ak::ButtonType::MomentaryChange);
     b.set_bordered(false);
     return rt::retain(b.as_view().raw());
@@ -1244,8 +1261,32 @@ fn apply_text_button(v: *u8, n: *core::Node, dirty: u64) {
             option::Option[ak::Font]::None => { }
         }
     }
+    // A click FLIPS when the button toggles, and AppKit's own PushOnPushOff
+    // holds that state — so there is no second copy to keep in step, and the
+    // pressed look a bordered control would draw is absent because the button
+    // is borderless either way.
+    if (dirty & text_button::P_TOGGLES) != (0 as u64) || dirty == paint::all_bits() {
+        if { (*p).toggles } { b.set_button_type(ak::ButtonType::PushOnPushOff); }
+        else { b.set_button_type(ak::ButtonType::MomentaryChange); }
+        // set_button_type resets `bordered` on some AppKit versions; restate it.
+        b.set_bordered(false);
+    }
+    if (dirty & text_button::P_ON) != (0 as u64) || dirty == paint::all_bits() {
+        b.set_state(state_of({ (*p).on }));
+    }
+    // The border is DESCRIBED and SWITCHED separately: colour, width and radius
+    // stay where the application put them and `bordered` says whether they are
+    // drawn. A width of 0 would have meant redescribing the border every time
+    // it came back, which is the whole shape a chip or a filter button needs.
+    if (dirty & (text_button::P_BORDERED | text_button::P_BORDER_COLOR
+                 | text_button::P_BORDER_WIDTH | text_button::P_CORNER_RADIUS))
+       != (0 as u64) || dirty == paint::all_bits() {
+        let w: f64 = if { (*p).bordered } { { (*p).border_width } } else { 0.0f64 };
+        apply_border(v, { (*p).border_color }, w, { (*p).corner_radius }, true, true);
+    }
     if (dirty & props::C_HANDLERS) != (0 as u64) || dirty == paint::all_bits() {
-        akx::set_control_action_ctx(b.as_control(), { (*p).on_click }, { (*p).on_click_ctx });
+        let f: fn(*u8, *u8) = text_button_action;
+        akx::set_control_action_ctx(b.as_control(), f, n as *u8);
     }
     if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
         b.as_control().set_enabled(core::is_enabled(n));

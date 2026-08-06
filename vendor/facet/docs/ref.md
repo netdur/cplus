@@ -77,7 +77,38 @@ text_button("Cancel", key: "cancel", on_click: this.on_cancel,
 text_button("Learn more", key: "more", on_click: this.on_more,
             text_color: theme::accent(),
             text_decoration: vocab::TextDecoration::Underline)
+
+// a chip: toggles on click, and shows its border when selected
+text_button("Filter", key: "filter", on_click: this.on_filter,
+            toggles: true,
+            border_color: theme::accent(), border_width: 1.5f64,
+            corner_radius: vocab::Corners::all(6.0f64))
 ```
+
+`toggles: true` makes a click FLIP rather than fire-and-forget — AppKit's own
+PushOnPushOff holds the state, so `is_on()` cannot drift from what the user
+sees, and the handler still runs and reads where it landed:
+
+```cplus
+fn on_filter(ref this, sender: *u8) {
+    match text_button::find("filter") {
+        option::Option[text_button::TextButton]::Some(c) => {
+            let _b: text_button::TextButton = c.set_bordered(c.is_on());
+        }
+        _ => { }
+    }
+    return;
+}
+```
+
+The border is DESCRIBED and SWITCHED separately. `border_color`, `border_width`
+and `corner_radius` say what it looks like; `set_bordered(bool)` says whether it
+is drawn, and switching it off does not forget the description. A width of 0
+would have meant restating the border every time it came back.
+
+Everything in the shared band applies too — `set_background_color`,
+`set_background(Brush)` for a gradient, `set_clip`, `set_shadow` — so a filled
+or shadowed variant needs no new control.
 
 Separate controls rather than one with a style flag, for the reason Flutter
 separates TextButton from ElevatedButton: `border_color`, `border_width` and

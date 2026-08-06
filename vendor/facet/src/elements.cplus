@@ -81,6 +81,12 @@ fn text_button(
     text_transform: vocab::TextTransform = vocab::TextTransform::None,
     line_break: vocab::LineBreak = vocab::LineBreak::TailTruncation,
     text_decoration: vocab::TextDecoration = vocab::TextDecoration::None,
+    toggles: bool = false,
+    on: bool = false,
+    bordered: bool = false,
+    border_color: vocab::Color = vocab::Color::clear(),
+    border_width: f64 = 1.0f64,
+    corner_radius: vocab::Corners = vocab::Corners::none(),
     on_click: fn(*u8, *u8) = props::no_handler,
     on_click_ctx: *u8 = 0 as *u8,
 ) -> core::Node {
@@ -92,6 +98,10 @@ fn text_button(
                                       text_transform: text_transform,
                                       line_break: line_break,
                                       text_decoration: text_decoration,
+                                      toggles: toggles, on: on,
+                                      bordered: bordered, border_color: border_color,
+                                      border_width: border_width,
+                                      corner_radius: corner_radius,
                                       on_click: on_click, on_click_ctx: on_click_ctx);
 }
 
