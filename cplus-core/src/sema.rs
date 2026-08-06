@@ -12672,7 +12672,11 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // so both are plain safe calls (no raw-deref hazard). Closes the C `if (p == NULL)`
         // ergonomic gap without needing a `#null` intrinsic or special-case
         // sugar.
-        if matches!(recv_ty, Ty::RawPtr(_))
+        // A fn-pointer is a `ptr` too, and an unset handler is the commonest
+        // null there is. Without this, every guard repeats the whole type to
+        // say "unset" — `if f == (0 as fn(usize, *u8))` — which is the exact
+        // ergonomic gap `is_null` was added to close for `*T`.
+        if matches!(recv_ty, Ty::RawPtr(_) | Ty::FnPtr { .. })
             && args.is_empty()
             && (name.name == "is_null" || name.name == "is_not_null")
         {

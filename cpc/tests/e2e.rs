@@ -1936,6 +1936,51 @@ fn is_null_methods_runtime_g024() {
 }
 
 #[test]
+fn is_null_methods_work_on_fn_pointers_too() {
+    // A fn-pointer is a `ptr` at the LLVM level, and an unset handler is the
+    // commonest null there is. Without this, every guard repeats the whole
+    // type to say "unset" — `if f == (0 as fn(usize, *u8) -> bool)` — which is
+    // the ergonomic gap `is_null` closed for `*T` and left open here.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("fnptr_is_null.cplus");
+    std::fs::write(
+        &src,
+        "fn real(n: usize, ctx: *u8) -> bool { return true; }\n\
+         struct Row { on_open: fn(usize, *u8) -> bool }\n\
+         fn main() -> i32 {\n\
+             let unset: fn(usize, *u8) -> bool = 0 as fn(usize, *u8) -> bool;\n\
+             if !unset.is_null() { return 1; }\n\
+             if unset.is_not_null() { return 2; }\n\
+             let set: fn(usize, *u8) -> bool = real;\n\
+             if set.is_null() { return 3; }\n\
+             if !set.is_not_null() { return 4; }\n\
+             var r: Row = Row { on_open: real };\n\
+             if !r.on_open.is_not_null() { return 5; }\n\
+             if !r.on_open(0 as usize, 0 as *u8) { return 6; }\n\
+             let p: *u8 = 0 as *u8;\n\
+             if !p.is_null() { return 7; }\n\
+             return 0;\n\
+         }",
+    )
+    .unwrap();
+    let bin = dir.join("fnptr_is_null");
+    let status = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(status.success(), "is_null on a fn-pointer must compile");
+    let run = Command::new(&bin).output().expect("run");
+    assert!(
+        run.status.success(),
+        "fn-pointer is_null returned non-zero: {:?}",
+        run.status
+    );
+}
+
+#[test]
 fn addr_of_field_through_pointer_runtime_g025() {
     // v0.0.12 G-025: `#addr_of((*p).field)` is the pattern that blocked
     // the llama.cplus gallocr port — `ggml_hash_set_free(&galloc->hash_set)`

@@ -14876,12 +14876,13 @@ impl<'a> FnState<'a> {
             }
         }
         // v0.0.12 G-024: blessed `is_null()` / `is_not_null()` on raw
-        // pointers. Single `icmp eq/ne ptr %p, null` — no memory access,
-        // safe in any context. Sema rejected the call on any non-pointer
-        // receiver, so reaching here with a non-pointer is impossible.
+        // pointers, and on FN pointers — both are `ptr` at this level, so the
+        // comparison is the same instruction. Single `icmp eq/ne ptr %p,
+        // null` — no memory access, safe in any context. Sema rejected the
+        // call on any other receiver, so reaching here with one is impossible.
         if (name.name == "is_null" || name.name == "is_not_null") && args.is_empty() {
             let (pv, pt) = self.blessed_recv_value(receiver, &pre);
-            if matches!(pt, Ty::RawPtr(_)) {
+            if matches!(pt, Ty::RawPtr(_) | Ty::FnPtr { .. }) {
                 let r = self.next_tmp();
                 let cmp = if name.name == "is_null" { "eq" } else { "ne" };
                 self.emit(&format!("{r} = icmp {cmp} ptr {pv}, null"));

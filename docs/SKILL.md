@@ -524,8 +524,12 @@ There is **no `unsafe` block**. Every operation that can cause undefined behavio
 #[link_name = "objc_msgSend"] extern fn msg_void(r: *u8, s: *u8);
 #[link_name = "objc_msgSend"] extern fn msg_str(r: *u8, s: *u8) -> *u8;
 
-// FFI null
+// FFI null — and the way to TEST for one. `is_null()` / `is_not_null()` are
+// blessed on any raw pointer AND any fn-pointer; each is a single
+// `icmp ptr, null` with no memory access, so both are safe anywhere.
 let nil: *u8 = 0 as *u8;
+if p.is_null() { return; }              // instead of `p == (0 as *Data)`
+if this.on_click.is_not_null() { ... }  // instead of repeating the fn type
 
 // Variadic C fns: MUST declare `...`. AArch64-darwin passes named args in
 // registers but varargs on the stack — fixed-arity decl silently passes garbage.
