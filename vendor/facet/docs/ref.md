@@ -63,6 +63,27 @@ more than one, so it always holds them: to address the item, give it a key and
 
 `if` and `for` compose inside a block.
 
+### The three buttons
+
+`button(title:)` draws the platform's own bezel. `icon_button(icon:)` is an
+image and no bezel. `text_button(title:)` is text and no bezel — the flat
+posture, for a Cancel beside a Save or a link-shaped action.
+
+```cplus
+text_button("Cancel", key: "cancel", on_click: this.on_cancel,
+            text_color: theme::ink(0.6f64))
+```
+
+Separate controls rather than one with a style flag, for the reason Flutter
+separates TextButton from ElevatedButton: `border_color`, `border_width` and
+`corner_radius` mean nothing on a control whose point is having none of them,
+and a flag would leave them present, settable and silently ignored.
+
+A `label(...).gesture(on_click:)` renders the same pixels and is not the same
+thing: a text_button is a real button, so it activates from the keyboard when
+focused and from VoiceOver, and it reports `role=button` to an agent. The label
+is reachable by a pointer and nothing else.
+
 ## Cursors — reaching a built control
 
 Each control module offers the same two entry points:

@@ -2750,6 +2750,31 @@ CONTAINER_FORWARDS = ["column", "row", "hstack", "vstack", "screen", "card",
 FACET_ORIGIN_FORWARDS = """\
 // ---- facet-origin controls (hand-written modules; forwards mirrored here,
 // ---- drift breaks this file's build) -----------------------------------
+fn text_button(
+    title: str,
+    key: str = "",
+    text_color: vocab::Color = vocab::Color::clear(),
+    font_size: f64 = 0.0f64,
+    font_weight: vocab::FontWeight = vocab::FontWeight::Default,
+    font_family: str = "",
+    italic: bool = false,
+    font_scales: bool = true,
+    character_spacing: f64 = 0.0f64,
+    text_transform: vocab::TextTransform = vocab::TextTransform::None,
+    line_break: vocab::LineBreak = vocab::LineBreak::TailTruncation,
+    on_click: fn(*u8, *u8) = props::no_handler,
+    on_click_ctx: *u8 = 0 as *u8,
+) -> core::Node {
+    return m_text_button::text_button(title, key: key, text_color: text_color,
+                                      font_size: font_size, font_weight: font_weight,
+                                      font_family: font_family, italic: italic,
+                                      font_scales: font_scales,
+                                      character_spacing: character_spacing,
+                                      text_transform: text_transform,
+                                      line_break: line_break,
+                                      on_click: on_click, on_click_ctx: on_click_ctx);
+}
+
 fn symbol(
     icon: u32,
     key: str = "",
@@ -2816,6 +2841,7 @@ def emit_elements(rows_by_control):
          'import "./props" as props;\n',
          'import "./vocabulary" as vocab;\n',
          'import "./symbol" as m_symbol;\n',
+         'import "./text_button" as m_text_button;\n',
          'import "./split" as m_split;\n',
          'import "./tree" as m_tree;\n',
          'import "./window_chrome" as m_window_chrome;\n']

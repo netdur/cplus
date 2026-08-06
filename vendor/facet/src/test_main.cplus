@@ -50,6 +50,7 @@ import "./toolbar_item" as toolbar_item;
 import "./web" as web;
 // facet's own words, hand-written: no MAUI row behind them.
 import "./symbol" as symbol;
+import "./text_button" as text_button;
 import "./icons" as icons;
 import "./gestures" as gestures;
 import "./tree" as tree;
@@ -823,6 +824,48 @@ fn set_shown_restores_the_display_it_hid() {
     assert !facet::is_hidden(p);
     assert facet::is_visible(p);
     assert match facet::display_of(p) { flex::Display::Grid => true, _ => false };
+    return;
+}
+
+// A flat button — no bezel, no background, no border. The posture MAUI writes
+// by clearing three properties and facet could not write at all: clearing
+// `background_color` clears a CALayer facet adds, while the bezel is drawn by
+// NSButton's cell underneath it.
+#[test]
+fn a_text_button_is_a_button_without_the_box() {
+    var root: facet::Node = text_button::text_button("Cancel", key: "c",
+                                                     text_color: vocab::Color::rgba(0.2f64, 0.4f64, 1.0f64));
+    match text_button::find("c", within: #addr_of(root)) {
+        option::Option[text_button::TextButton]::Some(x) => {
+            assert x.title() == "Cancel";
+            assert approx(x.text_color().b, 1.0f64);
+            let _c: text_button::TextButton = x.set_title("Dismiss").set_font_size(13.0f64);
+            assert x.title() == "Dismiss";
+            assert approx(x.font_size(), 13.0f64);
+            // The shared band is there like any other control.
+            let _o: text_button::TextButton = x.set_opacity(0.5f64);
+            assert approx(x.opacity(), 0.5f64);
+        }
+        option::Option[text_button::TextButton]::None => { assert false; }
+    }
+    return;
+}
+
+// The kind check is what makes a cursor honest: a `button` is not a
+// `text_button`, however alike they look.
+#[test]
+fn a_text_button_cursor_refuses_a_plain_button() {
+    var root: facet::Node = button::button("Save", key: "s");
+    match text_button::find("s", within: #addr_of(root)) {
+        option::Option[text_button::TextButton]::Some(_x) => { assert false; }
+        option::Option[text_button::TextButton]::None => { assert true; }
+    }
+    // ...and the other way round.
+    var flat: facet::Node = text_button::text_button("Save", key: "t");
+    match button::find("t", within: #addr_of(flat)) {
+        option::Option[button::Button]::Some(_x) => { assert false; }
+        option::Option[button::Button]::None => { assert true; }
+    }
     return;
 }
 

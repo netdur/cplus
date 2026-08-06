@@ -53,6 +53,7 @@ import "facet/search_field" as search_field;
 import "facet/popup" as popup;
 import "facet/bordered" as bordered;
 import "facet/split" as split;
+import "facet/text_button" as text_button;
 import "facet/page_dots" as page_dots;
 import "facet/date_picker" as date_picker;
 import "facet/time_picker" as time_picker;
@@ -1164,6 +1165,84 @@ fn apply_stepper(v: *u8, n: *core::Node, dirty: u64) {
     }
     if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
         s.as_control().set_enabled(core::is_enabled(n));
+    }
+    return;
+}
+
+// ---- text_button -------------------------------------------------------------
+// A button that is only its text: no bezel, no background, no border. The
+// posture MAUI expresses by clearing three properties and facet could not
+// express at all, because clearing `background_color` clears a CALayer facet
+// adds while the bezel is drawn by NSButton's cell underneath it.
+//
+// `setBordered:false` is the whole mechanism, and `icon_button` has used it
+// since it was written — the same line, for the same reason.
+
+fn create_text_button(n: *core::Node) -> *u8 {
+    let b: ak::Button = ak::Button::from_raw(rt::alloc_init(#str_ptr("NSButton\0")));
+    // MomentaryChange, like icon_button: MomentaryPushIn draws a pushed-in
+    // BEZEL on press, which is exactly what this control exists not to have.
+    b.set_button_type(ak::ButtonType::MomentaryChange);
+    b.set_bordered(false);
+    return rt::retain(b.as_view().raw());
+}
+
+fn text_button_wants_rich(p: *text_button::TextButtonProps) -> bool {
+    if { (*p).text_color }.is_set() { return true; }
+    if { (*p).character_spacing } != 0.0f64 { return true; }
+    return { (*p).is_italic };
+}
+
+fn text_button_attributes(p: *text_button::TextButtonProps) -> *u8 {
+    return paint::rich_attributes(
+        paint::ns_font_scaled({ (*p).font_size }, { (*p).font_weight },
+                              { (*p).font_family.view() }, { (*p).is_italic },
+                              { (*p).font_scales }),
+        { (*p).text_color }, { (*p).character_spacing }, 0.0f64,
+        option::Option[vocab::TextAlign]::None, vocab::TextDecoration::None);
+}
+
+fn apply_text_button(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *text_button::TextButtonProps =
+        props_of(n, text_button::K_TEXT_BUTTON) as *text_button::TextButtonProps;
+    if p == (0 as *text_button::TextButtonProps) { return; }
+    let b: ak::Button = ak::Button::from_raw(v);
+    let title_bits: u64 = text_button::P_TITLE | text_button::P_TEXT_TRANSFORM
+        | text_button::P_CHARACTER_SPACING | text_button::P_TEXT_COLOR
+        | text_button::P_IS_ITALIC | text_button::P_FONT_SIZE
+        | text_button::P_FONT_WEIGHT | text_button::P_FONT_FAMILY
+        | text_button::P_FONT_SCALES;
+    if (dirty & title_bits) != (0 as u64) || dirty == paint::all_bits() {
+        let shown: text::Text = paint::transformed({ (*p).title.view() }, { (*p).text_transform });
+        // NSButton has no plain setter for a title COLOUR, so a text button
+        // that names one is given an attributed title — the same split
+        // `apply_button` makes, and the common case here since the whole point
+        // of a flat button is usually its tint.
+        if text_button_wants_rich(p) {
+            let a: *u8 = paint::attributed(shown.view(), text_button_attributes(p));
+            if a != (0 as *u8) {
+                { rt::msg_void_id(v, rt::sel(#str_ptr("setAttributedTitle:\0")), a) };
+                { rt::release(a) };
+            }
+        } else {
+            b.set_title(shown.view());
+        }
+    }
+    if (dirty & (text_button::P_FONT_SIZE | text_button::P_FONT_WEIGHT
+                 | text_button::P_FONT_FAMILY | text_button::P_IS_ITALIC
+                 | text_button::P_FONT_SCALES)) != (0 as u64) || dirty == paint::all_bits() {
+        match paint::ns_font_scaled({ (*p).font_size }, { (*p).font_weight },
+                                    { (*p).font_family.view() }, { (*p).is_italic },
+                                    { (*p).font_scales }) {
+            option::Option[ak::Font]::Some(font) => { b.as_control().set_font(font); }
+            option::Option[ak::Font]::None => { }
+        }
+    }
+    if (dirty & props::C_HANDLERS) != (0 as u64) || dirty == paint::all_bits() {
+        akx::set_control_action_ctx(b.as_control(), { (*p).on_click }, { (*p).on_click_ctx });
+    }
+    if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
+        b.as_control().set_enabled(core::is_enabled(n));
     }
     return;
 }

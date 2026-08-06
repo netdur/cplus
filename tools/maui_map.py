@@ -327,6 +327,21 @@ FACET_ORIGIN = [
     ("list, collection", "set_row(_:ctx:)", "fn(*u8, usize) -> Node",
      "the other half of set_count: MAUI would have used a DataTemplate",
      "Stage 2 — emitted"),
+    ("text_button", "text_button(title:)", "a button with no bezel",
+     "MAUI has ONE Button and expresses the flat posture by clearing three "
+     "properties (BackgroundColor, BorderColor, BorderWidth), so facet "
+     "inherited a button that always draws its bezel and no way to ask it not "
+     "to — clearing facet's `background_color` clears a CALayer facet adds, "
+     "while the bezel is drawn by NSButton's cell underneath it",
+     "SHIPPED 2026-08-07 — hand-written vendor/facet/src/text_button.cplus. A "
+     "control and not a flag on `button`, for the reason Flutter separates "
+     "TextButton from ElevatedButton: half the parameters would be dead. "
+     "`border_color`, `border_width` and `corner_radius` mean nothing on a "
+     "control whose point is having none of them, and a flag would leave them "
+     "present, settable and silently ignored. facet already made that call for "
+     "`icon_button`. It stays a REAL NSButton — keyboard activation, "
+     "VoiceOver, and role=button in the agent surface — which is what a "
+     "`label(...).gesture(on_click:)` throws away"),
     ("symbol", "symbol(icon:) / system_symbol(name:)", "a glyph",
      "MAUI has no glyph vocabulary at all — an icon is app content, not OS "
      "chrome, so facet declares it and ships the font rather than abstracting "

@@ -32,6 +32,7 @@ import "./web" as web;
 import "./scrolling" as scrolling;
 import "./recycler" as recycler;
 import "facet/symbol" as symbol;
+import "facet/text_button" as text_button;
 import "facet/split" as split;
 import "facet/tree" as tree;
 import "facet/window_chrome" as chrome;
@@ -179,7 +180,8 @@ fn has_intrinsic_size(kind: u32) -> bool {
         || kind == props::K_DATE_PICKER || kind == props::K_TIME_PICKER
         || kind == props::K_IMAGE || kind == props::K_ICON_BUTTON
         || kind == props::K_PAGE_DOTS
-        || kind == symbol::K_SYMBOL || kind == chrome::K_WINDOW_BUTTONS;
+        || kind == symbol::K_SYMBOL || kind == chrome::K_WINDOW_BUTTONS
+        || kind == text_button::K_TEXT_BUTTON;
 }
 
 #[link_name = "objc_msgSend"]
@@ -319,6 +321,7 @@ fn create_for_kind(kind: u32, n: *core::Node) -> *u8 {
     if kind == props::K_STEPPER { return controls::create_stepper(n); }
     if kind == props::K_ICON_BUTTON { return controls::create_icon_button(n); }
     if kind == symbol::K_SYMBOL { return controls::create_symbol(n); }
+    if kind == text_button::K_TEXT_BUTTON { return controls::create_text_button(n); }
     if kind == props::K_TEXT_AREA { return controls::create_text_area(n); }
     if kind == props::K_SEARCH_FIELD { return controls::create_search_field(n); }
     if kind == props::K_POPUP { return controls::create_popup(n); }
@@ -410,6 +413,7 @@ fn apply_for_kind(kind: u32, v: *u8, n: *core::Node, dirty: u64) {
     if kind == props::K_STEPPER { controls::apply_stepper(v, n, dirty); return; }
     if kind == props::K_ICON_BUTTON { controls::apply_icon_button(v, n, dirty); return; }
     if kind == symbol::K_SYMBOL { controls::apply_symbol(v, n, dirty); return; }
+    if kind == text_button::K_TEXT_BUTTON { controls::apply_text_button(v, n, dirty); return; }
     if kind == props::K_TEXT_AREA { controls::apply_text_area(v, n, dirty); return; }
     if kind == props::K_SEARCH_FIELD { controls::apply_search_field(v, n, dirty); return; }
     if kind == props::K_POPUP { controls::apply_popup(v, n, dirty); return; }
@@ -460,7 +464,8 @@ fn has_body(kind: u32) -> bool {
         || kind == props::K_LIST || kind == props::K_COLLECTION
         || kind == props::K_TABLE || kind == props::K_CAROUSEL
         || kind == props::K_CANVAS
-        || kind == symbol::K_SYMBOL || kind == tree::K_TREE
+        || kind == symbol::K_SYMBOL || kind == text_button::K_TEXT_BUTTON
+        || kind == tree::K_TREE
         || kind == props::K_REFRESHABLE || kind == props::K_SWIPEABLE
         || kind == split::K_SPLIT || kind == chrome::K_WINDOW_BUTTONS;
 }
