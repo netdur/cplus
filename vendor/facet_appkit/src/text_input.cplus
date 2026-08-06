@@ -721,7 +721,14 @@ fn split_resized_imp(self_obj: *u8, cmd: *u8, note: *u8) {
             let fr: rt::Rect = ak::View::from_raw(first).frame();
             var at: f64 = { fr.h };
             if s.is_vertical() { at = { fr.w }; }
-            { (*p).position = at };
+            // NOT while the split has no extent. This notification also fires
+            // for AppKit's own pre-layout clamp — a requested 650 against a
+            // zero-width split lands at ~0, and writing THAT back destroyed the
+            // request before any layout could honour it. A zero-extent split
+            // has no position a user chose, so there is nothing to record.
+            let sf: rt::Rect = s.as_view().frame();
+            let extent: f64 = if s.is_vertical() { { sf.w } } else { { sf.h } };
+            if extent > 0.0f64 { { (*p).position = at }; }
         }
     }
     fire({ (*p).on_move }, { (*p).ctx }, sv);

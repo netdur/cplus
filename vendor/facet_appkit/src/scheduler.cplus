@@ -29,7 +29,9 @@
 // incremental cache is what makes the "nothing actually moved" case cheap, and
 // a tick only ever happens because something asked for one.
 
+import "stdlib/vec" as vec;
 import "stdlib/option" as option;
+import "stdlib/status" as status;
 import "flex_layout/flex_layout" as flex;
 import "facet/facet" as core;
 import "facet/mount" as mount;
@@ -173,6 +175,100 @@ fn layout_all_windows() {
 
 // One window. The host is the window's content view — the flipped view the
 // shell installed — so the tree lays out at exactly the size it fills.
+// ---- deferred split positions -------------------------------------------------
+// A split's divider cannot be placed during apply. Apply runs BEFORE layout, so
+// the split's frame is still 0, and AppKit clamps a requested position against
+// a zero extent down to ~0. Worse than ignored: the clamp moves the divider,
+// which fires `splitViewDidResizeSubviews:`, which writes the landed position
+// back into the props — so the request is overwritten by its own clamp, and the
+// real layout finds nothing dirty and re-applies nothing.
+//
+// So the write waits for an extent. The old backend had the same queue and the
+// same reason (facet_appkit.old:1824, "the same two-phase problem as scroll, so
+// the same deferral fixes it"); regeneration dropped it along with the scroll
+// one, and nothing in this backend deferred anything afterwards.
+//
+// Drained at the END of `layout_window`, which is the first moment a frame is
+// real. Positions are re-asserted, not remembered: a later drag writes the
+// props through the delegate as it always did.
+struct SplitJob {
+    opaque split: *u8,
+    position: f64,
+}
+
+static SPLIT_JOBS: vec::Vec[SplitJob] = #zero::[vec::Vec[SplitJob]]();
+
+fn defer_split(split: *u8, position: f64) {
+    if split == (0 as *u8) { return; }
+    let jobs: *vec::Vec[SplitJob] = { #addr_of(SPLIT_JOBS) };
+    let _s: status::Status = { (*jobs).append(SplitJob { split: split, position: position }) };
+    return;
+}
+
+fn drain_split_jobs() {
+    let jobs: *vec::Vec[SplitJob] = { #addr_of(SPLIT_JOBS) };
+    while { (*jobs).count() } > (0 as usize) {
+        let last: usize = { (*jobs).count() } -% (1 as usize);
+        match { (*jobs).swap_remove(last) } {
+            option::Option[SplitJob]::Some(job) => {
+                let s: ak::SplitView = ak::SplitView::from_raw({ job.split });
+                // Only once the axis has an extent — a still-zero split would
+                // clamp exactly as it did during apply.
+                let f: rt::Rect = s.as_view().frame();
+                let extent: f64 = if s.is_vertical() { { f.w } } else { { f.h } };
+                // Both conditions the apply-time write could not meet: the
+                // panes exist and the axis has a length.
+                let panes: u64 = { rt::msg_u64({ rt::msg_id({ job.split }, rt::sel(#str_ptr("subviews\0"))) },
+                                               rt::sel(#str_ptr("count\0"))) };
+                if extent > 0.0f64 && panes >= (2 as u64) {
+                    s.set_position({ job.position }, 0 as i64);
+                }
+            }
+            option::Option[SplitJob]::None => { }
+        }
+    }
+    return;
+}
+
+// The same two-phase problem, one step more general: anything that must be
+// placed against a REAL frame. `apply` runs before layout, so a view sized 0x0
+// there cannot centre, measure or clamp anything against its host.
+//
+// The job carries its own function, so this queue needs to know nothing about
+// the control it serves — which is also what keeps `controls` importable from
+// here without a cycle.
+struct PlaceJob {
+    // The NODE only. Its view is `core::view_of(n)`, so carrying both would be
+    // two names for one thing — and a trailing `*u8` in a fn type reads as a
+    // handler's context slot, which this is not (W0824/W0825 both said so).
+    f: fn(*core::Node),
+    opaque n: *core::Node,
+}
+
+static PLACE_JOBS: vec::Vec[PlaceJob] = #zero::[vec::Vec[PlaceJob]]();
+
+fn defer_place(f: fn(*core::Node), n: *core::Node) {
+    if n == (0 as *core::Node) { return; }
+    let jobs: *vec::Vec[PlaceJob] = { #addr_of(PLACE_JOBS) };
+    let _s: status::Status = { (*jobs).append(PlaceJob { f: f, n: n }) };
+    return;
+}
+
+fn drain_place_jobs() {
+    let jobs: *vec::Vec[PlaceJob] = { #addr_of(PLACE_JOBS) };
+    while { (*jobs).count() } > (0 as usize) {
+        let last: usize = { (*jobs).count() } -% (1 as usize);
+        match { (*jobs).swap_remove(last) } {
+            option::Option[PlaceJob]::Some(job) => {
+                let f: fn(*core::Node) = { job.f };
+                if f != (0 as fn(*core::Node)) { f({ job.n }); }
+            }
+            option::Option[PlaceJob]::None => { }
+        }
+    }
+    return;
+}
+
 fn layout_window(root: *core::Node) {
     let win: *u8 = app::window_native(root);
     if win == (0 as *u8) { return; }
@@ -197,6 +293,8 @@ fn layout_window(root: *core::Node) {
             let rv: *u8 = core::view_of(root);
             if rv != (0 as *u8) {
                 geometry::set_view_frame(rv, rt::Rect { x: ins.left, y: ins.top, w: w, h: h });
+                drain_split_jobs();
+                drain_place_jobs();
                 return;
             }
             // A pass-through root has no view of its own, so the facade put
@@ -204,6 +302,8 @@ fn layout_window(root: *core::Node) {
             // are the views the inset has to move, or a DSL-authored screen
             // ignores the safe area that a keyed one honours.
             if ins.left != 0.0f64 || ins.top != 0.0f64 { offset_root_views(root, ins.left, ins.top); }
+            drain_split_jobs();
+            drain_place_jobs();
         }
         option::Option[ak::View]::None => { }
     }

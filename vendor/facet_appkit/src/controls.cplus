@@ -25,7 +25,6 @@
 // so on stderr rather than rendering a silent blank rectangle.
 
 import "stdlib/option" as option;
-import "stdlib/io" as io;
 import "stdlib/text" as text;
 import "stdlib/vec" as vec;
 import "stdlib/status" as status;
@@ -74,11 +73,13 @@ import "objc/synthesis" as synth;
 import "appkit/appkit" as ak;
 import "appkit/appkit_ext" as akx;
 import "quartzcore/quartzcore" as quartz;
+import "stdlib/io" as io;
 import "./paint" as paint;
 import "./text_input" as text_input;
 import "./drawing" as drawing;
 import "./input" as input;
 import "./compose" as compose;
+import "./scheduler" as scheduler;
 
 // ---- reaching a node's props -------------------------------------------------
 // The generated cursors' `_props()` is module-private, so a backend reads the
@@ -1905,18 +1906,25 @@ fn apply_split(v: *u8, n: *core::Node, dirty: u64) {
     // report. `position` is in points from the leading edge, which is exactly
     // `setPosition:ofDividerAtIndex:`.
     if (dirty & (split::P_POSITION | split::P_COLLAPSED)) != (0 as u64) {
-        let panes: u64 = { rt::msg_u64({ rt::msg_id(v, rt::sel(#str_ptr("subviews\0"))) },
-                                       rt::sel(#str_ptr("count\0"))) };
-        if panes >= (2 as u64) {
             var want: f64 = { (*p).position };
             // A collapsed pane is a position at the very edge — AppKit has no
             // "collapse" verb, and a divider at 0 or at the far edge IS the
             // collapse it draws.
             if { (*p).collapsed_leading } { want = 0.0f64; }
             else if { (*p).collapsed_trailing } { want = split_extent(s); }
-            if want > 0.0f64 || { (*p).collapsed_leading } {
-                s.set_position(want, 0 as i64);
-            }
+        if want > 0.0f64 || { (*p).collapsed_leading } {
+            // DEFERRED, and NOT gated on the pane count here. Apply runs
+            // before the panes are inserted and before layout, so at this
+            // moment the split has fewer than two subviews and a zero frame:
+            // the write was skipped outright, which is why a requested
+            // position never appeared and `set_position` at runtime looked
+            // like it did nothing either.
+            //
+            // The old backend deferred this for the same two-phase reason
+            // (facet_appkit.old:1824) and the queue did not survive
+            // regeneration. `scheduler::defer_split` re-asserts it after the
+            // layout pass, when both the panes and the extent are real.
+            scheduler::defer_split(v, want);
         }
     }
     return;
@@ -3853,6 +3861,7 @@ fn adopt_window_buttons(v: *u8, n: *core::Node) {
             adopt_one(view, w, ak::WindowButton::NSWindowMiniaturizeButton, x);
             x = x + gap;
             adopt_one(view, w, ak::WindowButton::NSWindowZoomButton, x);
+            view.set_autoresizes_subviews(false);
             { synth::set_associated(v, window_buttons_key(), 1 as *u8) };
         }
         option::Option[ak::Window]::None => { }
@@ -3875,12 +3884,68 @@ fn adopt_one(host: ak::View, w: ak::Window, which: ak::WindowButton, x: f64) {
     match w.standard_window_button(which) {
         option::Option[ak::Button]::Some(btn) => {
             let bv: ak::View = btn.as_view();
-            let f: rt::Rect = bv.frame();
             bv.set_hidden(false);
             host.add_subview(bv);
-            bv.set_frame(rt::Rect { x: x, y: 0.0f64, w: f.w, h: f.h });
+            // The buttons arrive carrying the autoresizing masks AppKit gave
+            // them for the TITLEBAR, and they are adopted while this host is
+            // still 0x0 — the first apply that has a window runs before layout
+            // has sized anything. The host then grows to its real size and
+            // those masks drag the buttons with it, which is why they landed
+            // somewhere other than their node.
+            //
+            // NSViewNotSizable (0) on each, and the host stops resizing its
+            // subviews at all: their frames are facet's to state, like every
+            // other view in the tree.
+            bv.set_autoresizing_mask(0 as u64);
         }
         option::Option[ak::Button]::None => { }
+    }
+    return;
+}
+
+// Place them in the HOST's space, every apply.
+//
+// Adoption is one-shot — re-parenting an adopted button is churn — but placing
+// is not: the host is 0x0 when adoption happens, and AppKit re-lays its own
+// titlebar out on resize and full-screen transitions. Under Bar::Blended it
+// still MANAGES that titlebar (the bar is transparent, not disowned), so
+// anything it does to the buttons afterwards was permanent when the frames
+// were written once.
+fn place_one(host: ak::View, w: ak::Window, which: ak::WindowButton, x: f64) {
+    match w.standard_window_button(which) {
+        option::Option[ak::Button]::Some(btn) => {
+            let bv: ak::View = btn.as_view();
+            let f: rt::Rect = bv.frame();
+            let hf: rt::Rect = host.frame();
+            // Centred on the host's midline rather than pinned to y=0: the host
+            // is flipped, so y=0 is its TOP, and a node taller than a button
+            // rode high. Centring also means the node's height no longer has to
+            // equal the button's for the group to look right.
+            var y: f64 = 0.0f64;
+            if { hf.h } > { f.h } { y = ({ hf.h } - { f.h }) / 2.0f64; }
+            bv.set_frame(rt::Rect { x: x, y: y, w: { f.w }, h: { f.h } });
+        }
+        option::Option[ak::Button]::None => { }
+    }
+    return;
+}
+
+fn place_window_buttons(n: *core::Node) {
+    let v: *u8 = core::view_of(n);
+    if v == (0 as *u8) { return; }
+    if { synth::get_associated(v, window_buttons_key()) } == (0 as *u8) { return; }
+    let view: ak::View = ak::View::from_raw(v);
+    match view.window() {
+        option::Option[ak::Window]::Some(w) => {
+            var x: f64 = 0.0f64;
+            let gap: f64 = window_button_gap(n);
+            place_one(view, w, ak::WindowButton::NSWindowCloseButton, x);
+            x = x + gap;
+            place_one(view, w, ak::WindowButton::NSWindowMiniaturizeButton, x);
+            x = x + gap;
+            place_one(view, w, ak::WindowButton::NSWindowZoomButton, x);
+        }
+        option::Option[ak::Window]::None => { }
     }
     return;
 }
@@ -3892,6 +3957,12 @@ fn create_window_buttons(n: *core::Node) -> *u8 {
 
 fn apply_window_buttons(v: *u8, n: *core::Node, dirty: u64) {
     adopt_window_buttons(v, n);
+    // DEFERRED: apply runs before layout, so the host is still 0x0 here and
+    // there is nothing to centre against. Placed again after the layout pass,
+    // and after every later one — AppKit re-lays its own titlebar out on
+    // resize and full-screen, and it still manages that titlebar under
+    // Bar::Blended.
+    scheduler::defer_place(place_window_buttons, n);
     // `style` is not WHICH buttons — every platform ships the set it ships —
     // it is WHEN they are drawn, and a tracking area answers that.
     let p: *chrome::WindowButtonsProps =

@@ -227,6 +227,19 @@ fn imp_mouse_down(self_obj: *u8, cmd: *u8, event: *u8) {
     if { (*g).drags_window } {
         match ak::View::from_raw(self_obj).window() {
             option::Option[ak::Window]::Some(w) => {
+                // DOUBLE-CLICK ZOOMS, and it has to be answered first: the drag
+                // call below takes over the event loop until mouse-up, so the
+                // second click of a double never arrives. On macOS this gesture
+                // is the only way to zoom a window whose titlebar is
+                // transparent and whose bar the app draws itself — which is
+                // every Bar::Blended screen.
+                //
+                // The old backend had this branch (appkit_ext.old:1631) and
+                // regeneration dropped it, leaving the drag unconditional.
+                if { rt::msg_i64(event, rt::sel(#str_ptr("clickCount\0"))) } >= (2 as i64) {
+                    { rt::msg_void_id(w.raw(), rt::sel(#str_ptr("performZoom:\0")), self_obj) };
+                    return;
+                }
                 w.perform_window_drag_with_event(ak::Event::from_raw(event));
                 return;
             }
