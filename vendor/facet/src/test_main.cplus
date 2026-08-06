@@ -829,6 +829,32 @@ fn set_shown_restores_the_display_it_hid() {
 // A node with NO facet Data — a raw flex node, or the wrapper the `@ui` DSL
 // hands back — used to swallow every band write in silence. `set_safe_area` on
 // an @ui-rooted tree did nothing and said nothing.
+// A widget built entirely OUTSIDE facet has a view and no node. `set_native`
+// writes a view onto an existing node and `native` reads one off; neither
+// makes a node FROM a view, which is what vendor/terminal needed and wrote as
+// `native(handle)` — argument and return type both backwards.
+static AN_RELEASED: i32 = 0;
+fn an_release(p: *u8) { AN_RELEASED = AN_RELEASED + 1; return; }
+
+#[test]
+fn a_raw_view_can_be_adopted_as_a_node() {
+    AN_RELEASED = 0;
+    {
+        var n: facet::Node = facet::adopt_native(42 as *u8, an_release, key: "term");
+        let p: *facet::Node = #addr_of(n);
+        assert facet::native(p) == (42 as *u8);
+        assert { (*p).key() } == "term";
+        // a LEAF: no children, and the band works on it like any other node
+        assert facet::child_count_of(p) == (0 as usize);
+        facet::set_background_color(p, vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64));
+        assert approx(facet::background_color(p).r, 1.0f64);
+        assert AN_RELEASED == 0;
+    }
+    // the node owned the retain, and gave it back on drop
+    assert AN_RELEASED == 1;
+    return;
+}
+
 #[test]
 fn a_band_write_creates_the_data_it_needs() {
     var n: flex::Node = flex::box();

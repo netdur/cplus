@@ -1096,6 +1096,33 @@ fn native(n: *Node) -> *u8 {
     return { (*d).view };
 }
 
+// ADOPT a platform view as a node — the other direction from `native`, which
+// reads the view a mounted node already has.
+//
+// A widget built entirely outside facet (vendor/terminal's NSTextView in its
+// scroller) has a view and no node, and needs to sit in a facet tree as a leaf.
+// Nothing could express that: `set_native` writes a view onto an EXISTING node
+// and `native` reads one off, so `native(handle)` — which is what terminal
+// wrote — had the argument and the return type backwards, and there was no
+// third verb to reach for.
+//
+// The node owns the retain. `release` is how it gives it back, and it fires on
+// drop, on detach, and when a later view replaces this one — the same contract
+// `set_view` states for a backend-created view, because this IS that pairing
+// with the view supplied from outside.
+//
+// A LEAF: it has no children and no props, so the mount walk inserts the view
+// and stops. Layout is flex's as usual — size it with the ordinary verbs.
+fn adopt_native(v: *u8, release: fn(*u8), key: str = "") -> Node {
+    var n: Node = flex::Node::new();
+    let d: *Data = ensure_data(#addr_of(n));
+    if d == (0 as *Data) { return n; }
+    { (*d).key = text::from_str(key) };
+    { (*d).view = v };
+    { (*d).view_release = release };
+    return n;
+}
+
 fn set_native(n: *Node, v: *u8) {
     let d: *Data = ensure_data(n);
     if d == (0 as *Data) { return; }

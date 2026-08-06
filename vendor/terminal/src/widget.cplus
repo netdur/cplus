@@ -42,8 +42,9 @@ fn start(
 impl Widget {
     // The node owns its own retain on the native view. Keep Widget itself alive
     // for as long as the terminal should remain interactive.
-    fn node(this) -> facet::Node {
-        return facet::native(this._backend.native_handle());
+    fn node(this, key: str = "") -> facet::Node {
+        return facet::adopt_native(this._backend.native_handle(),
+                                   backend::release_view, key: key);
     }
 
     fn send(this, bytes: str) {

@@ -2346,6 +2346,12 @@ impl Node {
     fn height_percent(take this, v: f64) -> Node { var n: Node = this; n.style.height = StyleLength::percent(v); return n; }
     fn padding(take this, v: f64) -> Node { var n: Node = this; n.set_padding(Edge::All, StyleLength::points(v)); return n; }
     fn margin(take this, v: f64) -> Node { var n: Node = this; n.set_margin(Edge::All, StyleLength::points(v)); return n; }
+    // Per-edge, in the CHAIN. `padding(v)` covers all four and is the common
+    // case; without these an asymmetric container could not be stated in the
+    // tree at all — it took an imperative tail after the block, so the tree was
+    // described in two places and the second one is easy to miss.
+    fn padding_edge(take this, e: Edge, v: f64) -> Node { var n: Node = this; n.set_padding(e, StyleLength::points(v)); return n; }
+    fn margin_edge(take this, e: Edge, v: f64) -> Node { var n: Node = this; n.set_margin(e, StyleLength::points(v)); return n; }
     fn gap(take this, v: f64) -> Node { var n: Node = this; n.set_gap(Gutter::All, StyleLength::points(v)); return n; }
     fn justify(take this, v: Justify) -> Node { var n: Node = this; n.style.justify_content = v; return n; }
     fn align(take this, v: Align) -> Node { var n: Node = this; n.style.align_items = v; return n; }
@@ -4622,6 +4628,31 @@ fn test_zstack_children_share_an_origin() {
     assert approx(a.top, c.top);
     assert approx(a.width, 30.0f64);
     assert approx(c.width, 60.0f64);
+}
+
+#[test]
+fn test_padding_edge_states_an_asymmetric_box_in_the_chain() {
+    // `padding(v)` is all four edges. Without a per-edge form in the chain an
+    // asymmetric container could not be described in the tree — it took an
+    // imperative tail after the block, so the tree lived in two places.
+    var b: Builder = Builder::new();
+    b.add(box().width(10.0f64).height(10.0f64));
+    var root: Node = column(b)
+        .padding_edge(Edge::Top, 40.0f64)
+        .padding_edge(Edge::Horizontal, 24.0f64)
+        .padding_edge(Edge::Bottom, 8.0f64);
+    root.style.width = StyleLength::points(100.0f64);
+    root.calculate_layout();
+    match root.child_ptr(0 as usize) {
+        option::Option[*Node]::Some(c) => {
+            let f: Frame = { (*c).frame() };
+            assert approx(f.left, 24.0f64);      // horizontal
+            assert approx(f.top, 40.0f64);       // top, not the all-edges value
+        }
+        option::Option[*Node]::None => { assert false; }
+    }
+    // height = top + child + bottom, so each edge landed on its own side
+    assert approx(root.frame().height, 58.0f64);
 }
 
 #[test]
