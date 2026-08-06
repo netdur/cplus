@@ -5201,6 +5201,10 @@ fn window_buttons_on_hover_start_invisible_and_appear() {
     core::clear_dirty(p);
     core::touch(p, chrome::P_STYLE);
     views::apply(0 as *u8, p);
+    // Adoption is DEFERRED now — `apply` runs before the view is in a window
+    // and before layout, so neither the re-parent nor the placement can happen
+    // there. The drain is what a real run gets from the layout pass.
+    scheduler::drain_place_jobs();
     // The traffic lights were adopted into the group and are hidden by ALPHA,
     // not by `hidden` — a hidden view leaves no hover target and the group
     // could never come back.
@@ -5244,6 +5248,10 @@ fn native_window_buttons_are_always_drawn() {
     core::clear_dirty(p);
     core::touch(p, chrome::P_STYLE);
     views::apply(0 as *u8, p);
+    // Adoption is DEFERRED now — `apply` runs before the view is in a window
+    // and before layout, so neither the re-parent nor the placement can happen
+    // there. The drain is what a real run gets from the layout pass.
+    scheduler::drain_place_jobs();
     let subs: vec::Vec[ak::View] = ak::View::from_raw(v).subviews();
     assert subs.count() > (0 as usize);
     match subs.at_ptr(0 as usize) {

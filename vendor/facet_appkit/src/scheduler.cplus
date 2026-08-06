@@ -194,26 +194,42 @@ fn layout_all_windows() {
 struct SplitJob {
     opaque split: *u8,
     position: f64,
+    // A job that cannot be satisfied yet is KEPT, not dropped. `apply` and
+    // `layout` are different passes: a job queued by the apply half of a tick
+    // is drained by the layout half of the SAME tick, but at launch that
+    // layout can still be against a zero-size content view — so the first
+    // drain finds no extent and there may be no later layout to ask again.
+    // Dropping it there is why a `position:` constructor argument, and any
+    // `set_position` from `on_attach`, never landed while a runtime write did.
+    //
+    // Bounded, so a split that is never laid out (hidden, zero-height) cannot
+    // hold a tick request open forever.
+    attempts: u32,
 }
+
+fn split_job_attempt_cap() -> u32 { return 8 as u32; }
 
 static SPLIT_JOBS: vec::Vec[SplitJob] = #zero::[vec::Vec[SplitJob]]();
 
 fn defer_split(split: *u8, position: f64) {
     if split == (0 as *u8) { return; }
     let jobs: *vec::Vec[SplitJob] = { #addr_of(SPLIT_JOBS) };
-    let _s: status::Status = { (*jobs).append(SplitJob { split: split, position: position }) };
+    let _s: status::Status = { (*jobs).append(SplitJob { split: split, position: position,
+                                                        attempts: 0 as u32 }) };
+    // A job queued OUTSIDE a tick (mount runs `apply` directly) would otherwise
+    // wait for a layout that may never be asked for.
+    schedule(0 as *u8);
     return;
 }
 
 fn drain_split_jobs() {
     let jobs: *vec::Vec[SplitJob] = { #addr_of(SPLIT_JOBS) };
+    var keep: vec::Vec[SplitJob] = vec::new::[SplitJob]();
     while { (*jobs).count() } > (0 as usize) {
         let last: usize = { (*jobs).count() } -% (1 as usize);
         match { (*jobs).swap_remove(last) } {
             option::Option[SplitJob]::Some(job) => {
                 let s: ak::SplitView = ak::SplitView::from_raw({ job.split });
-                // Only once the axis has an extent — a still-zero split would
-                // clamp exactly as it did during apply.
                 let f: rt::Rect = s.as_view().frame();
                 let extent: f64 = if s.is_vertical() { { f.w } } else { { f.h } };
                 // Both conditions the apply-time write could not meet: the
@@ -222,10 +238,30 @@ fn drain_split_jobs() {
                                                rt::sel(#str_ptr("count\0"))) };
                 if extent > 0.0f64 && panes >= (2 as u64) {
                     s.set_position({ job.position }, 0 as i64);
+                } else {
+                    // Not yet. Keep it and ask for another pass rather than
+                    // discarding a position the application actually stated.
+                    let n: u32 = { job.attempts } +% (1 as u32);
+                    if n < split_job_attempt_cap() {
+                        let _k: status::Status = keep.append(SplitJob {
+                            split: { job.split }, position: { job.position }, attempts: n });
+                    }
                 }
             }
             option::Option[SplitJob]::None => { }
         }
+    }
+    if keep.count() > (0 as usize) {
+        var i: usize = 0 as usize;
+        let n: usize = keep.count();
+        while i < n {
+            match keep.at(i) {
+                option::Option[SplitJob]::Some(j) => { let _a: status::Status = { (*jobs).append(j) }; }
+                option::Option[SplitJob]::None => { }
+            }
+            i = i +% (1 as usize);
+        }
+        schedule(0 as *u8);
     }
     return;
 }
@@ -251,6 +287,9 @@ fn defer_place(f: fn(*core::Node), n: *core::Node) {
     if n == (0 as *core::Node) { return; }
     let jobs: *vec::Vec[PlaceJob] = { #addr_of(PLACE_JOBS) };
     let _s: status::Status = { (*jobs).append(PlaceJob { f: f, n: n }) };
+    // Same reason as `defer_split`: `mount` runs `apply` directly, outside a
+    // tick, so a job queued there would wait for a layout nobody asked for.
+    schedule(0 as *u8);
     return;
 }
 

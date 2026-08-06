@@ -3846,12 +3846,13 @@ fn apply_tree(v: *u8, n: *core::Node, dirty: u64) {
 
 fn window_buttons_key() -> *u8 { return 29011 as *u8; }
 
-fn adopt_window_buttons(v: *u8, n: *core::Node) {
+fn adopt_window_buttons(v: *u8, n: *core::Node) -> bool {
     // Once only: re-parenting an already-adopted button would take it out of
     // its own superview and put it back, losing nothing but doing work on
     // every apply forever.
-    if { synth::get_associated(v, window_buttons_key()) } != (0 as *u8) { return; }
+    if { synth::get_associated(v, window_buttons_key()) } != (0 as *u8) { return false; }
     let view: ak::View = ak::View::from_raw(v);
+    var adopted: bool = false;
     match view.window() {
         option::Option[ak::Window]::Some(w) => {
             var x: f64 = 0.0f64;
@@ -3863,10 +3864,11 @@ fn adopt_window_buttons(v: *u8, n: *core::Node) {
             adopt_one(view, w, ak::WindowButton::NSWindowZoomButton, x);
             view.set_autoresizes_subviews(false);
             { synth::set_associated(v, window_buttons_key(), 1 as *u8) };
+            adopted = true;
         }
         option::Option[ak::Window]::None => { }
     }
-    return;
+    return adopted;
 }
 
 // 0 means the platform's own metric, which is what an application usually
@@ -3911,18 +3913,17 @@ fn adopt_one(host: ak::View, w: ak::Window, which: ak::WindowButton, x: f64) {
 // still MANAGES that titlebar (the bar is transparent, not disowned), so
 // anything it does to the buttons afterwards was permanent when the frames
 // were written once.
-fn place_one(host: ak::View, w: ak::Window, which: ak::WindowButton, x: f64) {
+fn place_one(host: ak::View, w: ak::Window, which: ak::WindowButton, x: f64,
+             host_h: f64) {
     match w.standard_window_button(which) {
         option::Option[ak::Button]::Some(btn) => {
             let bv: ak::View = btn.as_view();
             let f: rt::Rect = bv.frame();
-            let hf: rt::Rect = host.frame();
             // Centred on the host's midline rather than pinned to y=0: the host
             // is flipped, so y=0 is its TOP, and a node taller than a button
-            // rode high. Centring also means the node's height no longer has to
-            // equal the button's for the group to look right.
+            // rode high.
             var y: f64 = 0.0f64;
-            if { hf.h } > { f.h } { y = ({ hf.h } - { f.h }) / 2.0f64; }
+            if host_h > { f.h } { y = (host_h - { f.h }) / 2.0f64; }
             bv.set_frame(rt::Rect { x: x, y: y, w: { f.w }, h: { f.h } });
         }
         option::Option[ak::Button]::None => { }
@@ -3930,20 +3931,51 @@ fn place_one(host: ak::View, w: ak::Window, which: ak::WindowButton, x: f64) {
     return;
 }
 
-fn place_window_buttons(n: *core::Node) {
+// Adopt if it has not happened yet, then place. ONE deferred job, because
+// both halves need the view to be IN a window and `apply` runs before it is —
+// `view.window()` answered None there, so adoption never ran at all and the
+// placement that follows it had nothing to place.
+fn settle_window_buttons(n: *core::Node) {
     let v: *u8 = core::view_of(n);
     if v == (0 as *u8) { return; }
+    let just_adopted: bool = adopt_window_buttons(v, n);
     if { synth::get_associated(v, window_buttons_key()) } == (0 as *u8) { return; }
+    // The style says WHEN the buttons are drawn, and it can only be applied to
+    // buttons that exist — so it follows adoption rather than running at apply,
+    // where the group was still empty. Once, on the adopting pass: the reveal
+    // installs a tracking area, and a second one would double every enter.
+    if just_adopted {
+        let sp: *chrome::WindowButtonsProps =
+            props_of(n, chrome::K_WINDOW_BUTTONS) as *chrome::WindowButtonsProps;
+        if sp != (0 as *chrome::WindowButtonsProps) {
+            let on_hover: bool = match { (*sp).style } {
+                chrome::ButtonStyle::OnHover => true,
+                chrome::ButtonStyle::Native => false,
+            };
+            compose::apply_hover_reveal(v, on_hover);
+        }
+    }
     let view: ak::View = ak::View::from_raw(v);
+    // The height comes from FACET, not from the NSView.
+    //
+    // A zero `host.frame()` is not a measurement, it is the absence of one —
+    // the same reasoning views.cplus already writes down about `fittingSize`
+    // answering 0 — and centring against it silently pinned the lights to the
+    // top of the bar. facet has laid this node out and knows it is 74 tall
+    // whether or not the frame walk has written that onto the view yet, so ask
+    // the side that knows. The view's frame is the fallback, for a node whose
+    // layout has genuinely not run.
+    var host_h: f64 = core::height_of(n);
+    if host_h <= 0.0f64 { host_h = { view.frame().h }; }
     match view.window() {
         option::Option[ak::Window]::Some(w) => {
             var x: f64 = 0.0f64;
             let gap: f64 = window_button_gap(n);
-            place_one(view, w, ak::WindowButton::NSWindowCloseButton, x);
+            place_one(view, w, ak::WindowButton::NSWindowCloseButton, x, host_h);
             x = x + gap;
-            place_one(view, w, ak::WindowButton::NSWindowMiniaturizeButton, x);
+            place_one(view, w, ak::WindowButton::NSWindowMiniaturizeButton, x, host_h);
             x = x + gap;
-            place_one(view, w, ak::WindowButton::NSWindowZoomButton, x);
+            place_one(view, w, ak::WindowButton::NSWindowZoomButton, x, host_h);
         }
         option::Option[ak::Window]::None => { }
     }
@@ -3956,13 +3988,13 @@ fn create_window_buttons(n: *core::Node) -> *u8 {
 }
 
 fn apply_window_buttons(v: *u8, n: *core::Node, dirty: u64) {
-    adopt_window_buttons(v, n);
-    // DEFERRED: apply runs before layout, so the host is still 0x0 here and
-    // there is nothing to centre against. Placed again after the layout pass,
-    // and after every later one — AppKit re-lays its own titlebar out on
-    // resize and full-screen, and it still manages that titlebar under
-    // Bar::Blended.
-    scheduler::defer_place(place_window_buttons, n);
+    // DEFERRED, adoption included. `apply` runs before the view is in a window
+    // AND before layout, so neither half can be done here: `window()` is None,
+    // and a host that is still 0x0 has no midline to centre on. Re-run after
+    // every layout — adoption is one-shot inside, but AppKit re-lays its own
+    // titlebar out on resize and full-screen, and under Bar::Blended it still
+    // manages that titlebar.
+    scheduler::defer_place(settle_window_buttons, n);
     // `style` is not WHICH buttons — every platform ships the set it ships —
     // it is WHEN they are drawn, and a tracking area answers that.
     let p: *chrome::WindowButtonsProps =
