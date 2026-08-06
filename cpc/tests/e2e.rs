@@ -7699,6 +7699,167 @@ fn bound_method_reference_misuse_rejected() {
 }
 
 #[test]
+fn handler_without_a_ctx_slot_warns_w0824() {
+    // The AUTHORING side of the bound-reference rule. A handler parameter with
+    // no `*u8` after it can never receive `this.method`, and before W0824 the
+    // only way to find out was for a CALLER in another file to hit E0824 —
+    // where the fix is not available. The warning names the line to add.
+    //
+    // It has to stay quiet on the two shapes that are not wired handlers, or
+    // it becomes noise a reader learns to skip: a bare `fn(*u8)` release hook,
+    // and a handler whose ctx is already adjacent (undefaulted is a
+    // deliberate "the caller always supplies it" API).
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"hw\"\n\n[[bin]]\nname = \"hw\"\npath = \"src/main.cplus\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "fn no_slot(on_click: fn(str, *u8) = 0 as fn(str, *u8)) -> i32 { return 1; }\n\
+         fn defaulted(on_click: fn(str, *u8) = 0 as fn(str, *u8),\n\
+                      on_click_ctx: *u8 = 0 as *u8) -> i32 { return 2; }\n\
+         fn explicit_ctx(on_click: fn(str, *u8), on_click_ctx: *u8) -> i32 { return 3; }\n\
+         fn release_hook(f: fn(*u8)) -> i32 { return 4; }\n\
+         fn main() -> i32 { return 0; }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("check")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc check");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(out.status.success(), "a warning must not fail the build: {combined}");
+    assert!(
+        combined.contains("W0824") && combined.contains("`on_click` cannot receive a bound method"),
+        "expected W0824 on the slotless handler, got: {combined}"
+    );
+    // the fix is printed, not just named
+    assert!(
+        combined.contains("add `on_click_ctx: *u8 = 0 as *u8` immediately after it"),
+        "W0824 must print the line to add, got: {combined}"
+    );
+    // exactly one — `defaulted`, `explicit_ctx` and `release_hook` are quiet
+    assert_eq!(
+        combined.matches("W0824").count(),
+        1,
+        "W0824 must fire once, not on the correct or non-handler shapes: {combined}"
+    );
+}
+
+#[test]
+fn w0824_is_silent_for_a_dependencys_declarations() {
+    // W0824 asks its reader to change a declaration. A vendored package's
+    // declaration is not theirs to change, so warning about it while building
+    // an app is noise the reader can only learn to ignore — and a lint people
+    // ignore is worse than no lint. The dependency's own build still gets it.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/dep/src")).unwrap();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"app\"\n\n[[bin]]\nname = \"app\"\npath = \"src/main.cplus\"\n\
+         \n[dependencies]\ndep = \"*\"\n",
+    )
+    .unwrap();
+    // the dependency is its own package — its own Cplus.toml is the boundary
+    std::fs::write(
+        dir.join("vendor/dep/Cplus.toml"),
+        "[package]\nname = \"dep\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("vendor/dep/src/dep.cplus"),
+        "fn dep_row(on_click: fn(str, *u8) = 0 as fn(str, *u8)) -> i32 { return 1; }\n\
+         fn use_it() -> i32 { return dep_row(); }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"dep/dep\" as dep;\n\
+         fn app_row(on_click: fn(str, *u8) = 0 as fn(str, *u8)) -> i32 { return 2; }\n\
+         fn main() -> i32 { let _u: i32 = dep::use_it(); return app_row(); }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("check")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc check");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(out.status.success(), "must build: {combined}");
+    assert!(
+        combined.contains("`app_row`") || combined.contains("`on_click`"),
+        "the app's own declaration must still warn: {combined}"
+    );
+    assert!(
+        !combined.contains("dep.cplus"),
+        "a dependency's declaration must not warn: {combined}"
+    );
+    assert_eq!(
+        combined.matches("W0824").count(),
+        1,
+        "exactly the app's own one: {combined}"
+    );
+}
+
+#[test]
+fn e0824_prints_the_line_the_callee_is_missing() {
+    // The caller cannot fix this — the missing parameter is in the callee, in
+    // another file. So the diagnostic carries the callee-side line rather than
+    // only naming the rule.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"hx\"\n\n[[bin]]\nname = \"hx\"\npath = \"src/main.cplus\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "struct Row { n: i32 }\n\
+         impl Row { fn clicked(ref this, sender: str) { this.n = this.n + 1; return; } }\n\
+         fn no_slot(on_click: fn(str, *u8) = 0 as fn(str, *u8)) -> i32 { return 1; }\n\
+         fn main() -> i32 {\n\
+             var r: Row = Row { n: 0 };\n\
+             let _a: i32 = no_slot(on_click: r.clicked);\n\
+             return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("check")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc check");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!out.status.success(), "the call must still be rejected");
+    assert!(combined.contains("E0824"), "expected E0824, got: {combined}");
+    assert!(
+        combined.contains("`<handler>_ctx: *u8 = 0 as *u8`"),
+        "E0824 must print the callee-side line to add, got: {combined}"
+    );
+}
+
+#[test]
 fn a_bound_method_reference_in_a_generic_impl_body_is_rejected_not_an_ice() {
     // A bound reference is a PAIR — a bridge fn synthesized for one concrete
     // type, plus the receiver's address — recorded against the argument's

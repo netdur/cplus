@@ -73,7 +73,7 @@ All thirteen are **compiler-enforced**, not convention. The error code you hit w
 | # | Principle | What that means | If violated |
 |---|---|---|---|
 | 1 | No `null` | Use `Option[T]`. FFI null is `0 as *T`. | E0300 |
-| 2 | No closures / lambdas | Named `fn` only. Stateful callbacks via `(fn_ptr, user_data: *u8)`. | E0100 |
+| 2 | No closures / lambdas | Named `fn` only. Stateful callbacks are a `(fn_ptr, ctx: *u8)` PAIR — adjacent params, ctx defaulted, then a caller may pass `recv.method` (§3). | E0100 |
 | 3 | No `&T` / `&mut T` types | The caller relation is a parameter prefix (`ref`/`take`/bare), not a type. | E0100 |
 | 4 | No exceptions / `try` / `?` | Errors are tagged-union values; `match` or `guard let`. | E0001 |
 | 5 | No implicit conversions | Every width change needs `as`. | E0302 |
@@ -95,9 +95,11 @@ fn find(k: str) -> Option[i32] {
     return Option[i32]::None;
 }
 
-// 2 — named fn + user_data instead of closure
-fn on_tick(ud: *u8, n: i32) { /* ... */ }
-extern fn lib_subscribe(cb: fn(*u8, i32), ud: *u8);
+// 2 — named fn + ctx instead of closure. The ctx param sits RIGHT AFTER the
+//     handler and is defaulted, which is what lets a caller pass `this.method`.
+fn on_tick(n: i32, ctx: *u8) { /* ... */ }
+fn subscribe(cb: fn(i32, *u8) = 0 as fn(i32, *u8), cb_ctx: *u8 = 0 as *u8) { }
+subscribe(cb: this.tick);        // bound method — compiler fills cb_ctx
 
 // 4 — exhaustive match on a user enum
 enum Parse { Ok(i32), Bad, Overflow }
@@ -190,6 +192,29 @@ struct Public { value: i32, _internal: i32 }                     // `_` field = 
 > **No struct-literal field shorthand.** Write `Point { x: x, y: y }`, not `Point { x, y }`.
 > **Type-inferred struct literals**: where the type is known (annotated binding, `return`, argument), drop the name — `let p: Point = { x: 1, y: 2 };` and `return { x: 1, y: 2 };`.
 > **Receivers are `this` / `ref this` / `take this`** (the enclosing type is `This`). The name is always `this`; `ref`/`take` are the modifier. A `ref this` (mutating) method requires a `var` receiver — calling it on a `let` is E0328.
+
+### Callbacks: pass a method with `recv.method`
+
+There are no closures, so a stateful callback is a **pair** — the code and the object it runs on. C+ writes that pair as two parameters and wires it for you. **The two parameters must be adjacent, in this order, and the context defaulted:**
+
+```cplus
+// DECLARING a function that accepts a callback — the `*u8` slot is not optional
+fn row(on_click: fn(str, *u8) = 0 as fn(str, *u8),
+       on_click_ctx: *u8 = 0 as *u8) -> Node { ... }
+
+// CALLING it with a component's own method — no cast, no address, no ctx argument
+row(on_click: this.open_project)
+
+// or with a free fn, threading the context yourself
+fn opened(path: str, ctx: *u8) { ... }
+row(on_click: opened, on_click_ctx: #addr_of(this) as *u8)
+```
+
+`this.open_project` is a **bound method reference**: the compiler synthesizes a bridge fn for the handler slot and fills the `*u8` after it with `#addr_of(this)`. The method's shape must be the handler's parameters minus the trailing `*u8`, same return type — here `fn open_project(ref this, path: str)`.
+
+> **Omit the `_ctx` slot and callers can never pass a method** — only a free fn. That is the single most common mistake in this area: the author writes one parameter, a caller in another file writes `this.method`, and E0824 fires where it cannot be fixed. **W0824 warns at the declaration** and prints the line to add. Same rule for a struct field that stores a handler: store the `*u8` beside it.
+
+Codes: **W0824** (declaration has no ctx slot) · **E0824** (callee has no slot, or the call filled it) · **E0823** (method shape does not fit) · **E0822** (`take this`, generic, or `ref`/`take` params — none can be bound).
 
 ### Enums
 ```cplus

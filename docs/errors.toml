@@ -3159,6 +3159,30 @@ impl Counter {
 '''
 
 [[code]]
+id = "W0824"
+title = "Handler parameter cannot receive a bound method"
+category = "Warnings"
+severity = "warning"
+repro = "checked"
+lang = "cplus"
+verified = true
+emit_site = "cplus-core/src/sema.rs:check_handler_ctx_slots"
+test = "cpc/tests/e2e.rs:handler_without_a_ctx_slot_warns_w0824"
+cause = "A caller may pass `this.method` where a fn-pointer is expected, but only if the callee declares a `*u8` context parameter IMMEDIATELY after the handler — that is the slot the compiler fills with the receiver's address (E0824). Nothing in the declaration says so, so without this warning the author of a handler-taking function learns the rule from a CALLER hitting E0824 in another file, where it cannot be fixed. Only the wired-handler shape is flagged: a fn-pointer taking at least one real parameter plus a trailing `*u8`. A bare `fn(*u8)` is the release-hook shape and is left alone, as is a handler that already has an adjacent `*u8` (defaulted or not — an undefaulted one is a deliberate `the caller always supplies it` API)."
+fix = "Add `<handler>_ctx: *u8 = 0 as *u8` immediately after the handler parameter. Leave it out only if callers are meant to pass free functions and thread the context themselves."
+example = '''
+struct Row { n: i32 }
+impl Row { fn clicked(ref this, sender: str) { this.n = this.n + 1; return; } }
+
+// -> W0824: `on_click` cannot receive a bound method
+fn bad(on_click: fn(str, *u8) = 0 as fn(str, *u8)) -> i32 { return 1; }
+
+// the shape that accepts `bad(on_click: row.clicked)`
+fn good(on_click: fn(str, *u8) = 0 as fn(str, *u8),
+        on_click_ctx: *u8 = 0 as *u8) -> i32 { return 2; }
+'''
+
+[[code]]
 id = "E1002"
 title = "Named arguments not supported yet"
 category = "Compile-time builtins"

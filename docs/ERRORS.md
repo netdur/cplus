@@ -4,7 +4,7 @@
 
 Every C+ diagnostic carries a numbered code, a source span, and often a machine-applicable suggestion. `cpc --diagnostics=json` emits the same information in a machine-readable shape for editors and agents. Codes prefixed with **W** are non-fatal warnings; the build continues. The normative ranges and what each phase owns are fixed in [§20 of the language specification](/docs/spec).
 
-This is the complete index — **178 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **137** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
+This is the complete index — **179 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **138** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
 
 ## Lexical
 
@@ -2604,6 +2604,26 @@ impl Counter {
 **Fix.** Add `#[watch]` to the struct, or rename the method if it is not meant to be a write hook. Only the two accepted hook shapes are flagged, so an `on_value` with any other signature stays an ordinary method.
 
 <sub>repro: checked · cplus-core/src/sema.rs:check_unwatched_watch_hook · test cplus-core/src/sema.rs:hook_shaped_on_value_without_watch_warns_w0004</sub>
+
+### W0824 · Handler parameter cannot receive a bound method
+
+A caller may pass `this.method` where a fn-pointer is expected, but only if the callee declares a `*u8` context parameter IMMEDIATELY after the handler — that is the slot the compiler fills with the receiver's address (E0824). Nothing in the declaration says so, so without this warning the author of a handler-taking function learns the rule from a CALLER hitting E0824 in another file, where it cannot be fixed. Only the wired-handler shape is flagged: a fn-pointer taking at least one real parameter plus a trailing `*u8`. A bare `fn(*u8)` is the release-hook shape and is left alone, as is a handler that already has an adjacent `*u8` (defaulted or not — an undefaulted one is a deliberate `the caller always supplies it` API).
+
+```cplus
+struct Row { n: i32 }
+impl Row { fn clicked(ref this, sender: str) { this.n = this.n + 1; return; } }
+
+// -> W0824: `on_click` cannot receive a bound method
+fn bad(on_click: fn(str, *u8) = 0 as fn(str, *u8)) -> i32 { return 1; }
+
+// the shape that accepts `bad(on_click: row.clicked)`
+fn good(on_click: fn(str, *u8) = 0 as fn(str, *u8),
+        on_click_ctx: *u8 = 0 as *u8) -> i32 { return 2; }
+```
+
+**Fix.** Add `<handler>_ctx: *u8 = 0 as *u8` immediately after the handler parameter. Leave it out only if callers are meant to pass free functions and thread the context themselves.
+
+<sub>repro: checked · cplus-core/src/sema.rs:check_handler_ctx_slots · test cpc/tests/e2e.rs:handler_without_a_ctx_slot_warns_w0824</sub>
 
 ## Generics
 

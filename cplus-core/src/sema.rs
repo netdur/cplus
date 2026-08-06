@@ -2199,6 +2199,141 @@ impl SemaCx<'_> {
         ]
     }
 
+    /// Like `warn`, but attaches `= help:` / `= note:` lines. A lint that
+    /// flags a shape is only useful if it also prints the shape to write.
+    fn warn_note(&mut self, code: &'static str, msg: String, span: ByteSpan, notes: Vec<String>) {
+        let primary = self.primary_for(span);
+        self.sink.emit(Diagnostic {
+            severity: Severity::Warning,
+            code: DiagCode(code),
+            message: msg,
+            primary,
+            labels: Vec::new(),
+            notes,
+            suggestions: Vec::new(),
+        });
+    }
+
+    /// W0824 — the AUTHORING side of the bound-method-reference rule.
+    ///
+    /// A caller may pass `this.method` where a fn-pointer is expected, but
+    /// only if the callee declares a defaulted `*u8` parameter IMMEDIATELY
+    /// after the handler: that is the slot the compiler fills with the
+    /// receiver's address (E0824). Nothing in the declaration says so, so the
+    /// author of a handler-taking function learns the rule by a CALLER hitting
+    /// an error in a different file — the caller then cannot fix it, because
+    /// the missing parameter is here.
+    ///
+    /// This turns that into a warning at the declaration, with the line to
+    /// add. It fires only on the shape that was clearly meant as a handler:
+    /// a fn-pointer parameter whose own last parameter is `*u8` — the ctx
+    /// wire slot — which is the convention every handler in the tree follows.
+    /// A fn-pointer that takes no `*u8` was never a candidate (`fn(*u8)`
+    /// release hooks, comparison functions) and is left alone.
+    fn check_handler_ctx_slots(&mut self, params: &[crate::ast::Param]) {
+        for i in 0..params.len() {
+            if !Self::is_handler_shaped(&params[i].ty) {
+                continue;
+            }
+            // Only the package being BUILT. This lint asks its reader to
+            // change a declaration; a vendored dependency's declaration is not
+            // theirs to change, so warning about it during an app's build is
+            // noise the reader can only learn to ignore. The dependency's own
+            // build still gets it, where the author can act.
+            if !self.span_is_in_local_package(params[i].name.span) {
+                continue;
+            }
+            // A `take`/`ref` handler is not a wired handler; skip.
+            if params[i].move_ || params[i].mutable {
+                continue;
+            }
+            // An adjacent `*u8` — defaulted or not — means the author already
+            // knows the pairing. Undefaulted is a deliberate "the caller
+            // always supplies this" API (the backend wiring in appkit_ext and
+            // synthesis is all of this shape), and a bound reference into one
+            // gets a precise E0824 at the call site telling the caller's
+            // author what to ask for. Warning here would be 56 lines of noise
+            // in facet alone, which trains a reader to ignore the code.
+            //
+            // The gap this lint is for is the OTHER one: no ctx parameter at
+            // all, where nothing in the source hints the convention exists.
+            let next_is_ctx = params
+                .get(i + 1)
+                .is_some_and(|p| Self::is_raw_u8(&p.ty) && !p.move_);
+            if next_is_ctx {
+                continue;
+            }
+            let name = &params[i].name.name;
+            self.warn_note(
+                "W0824",
+                format!(
+                    "handler parameter `{}` cannot receive a bound method",
+                    name
+                ),
+                params[i].name.span,
+                vec![
+                    format!(
+                        "add `{}_ctx: *u8 = 0 as *u8` immediately after it",
+                        name
+                    ),
+                    "a caller writing `on_x: this.method` passes two things — the \
+                     method and its receiver — and the `*u8` after the handler is \
+                     where the receiver's address goes (E0824)"
+                        .to_string(),
+                    "without it, callers can only pass a free function and must \
+                     thread the context themselves"
+                        .to_string(),
+                ],
+            );
+        }
+    }
+
+    /// `fn(A, ..., *u8)` — a fn-pointer that takes something AND a trailing
+    /// `*u8`. The shape every wired handler in the tree has: at least one
+    /// real parameter (the sender, the value, the event) plus the ctx slot.
+    ///
+    /// The arity floor is what keeps this quiet. A bare `fn(*u8)` is the
+    /// release-hook shape — `Data.release`, `gestures_release`,
+    /// `view_release` — where the single pointer is the thing to free, not a
+    /// context, and warning on those would be noise that teaches the reader
+    /// to ignore the lint.
+    fn is_handler_shaped(t: &crate::ast::Type) -> bool {
+        match &t.kind {
+            crate::ast::TypeKind::FnPtr { params, .. } => {
+                params.len() >= 2 && params.last().is_some_and(Self::is_raw_u8)
+            }
+            _ => false,
+        }
+    }
+
+    fn is_raw_u8(t: &crate::ast::Type) -> bool {
+        match &t.kind {
+            crate::ast::TypeKind::RawPtr(inner) => {
+                matches!(&inner.kind, crate::ast::TypeKind::Path(p) if p == "u8")
+            }
+            _ => false,
+        }
+    }
+
+    /// Does `span` belong to the package being built, rather than to one of
+    /// its dependencies? Packages are `Cplus.toml` directories, so two files
+    /// are in the same package iff walking up from each reaches the same
+    /// manifest. Single-file mode has no manifest and no dependencies, so
+    /// everything is local there.
+    fn span_is_in_local_package(&self, span: ByteSpan) -> bool {
+        let file = match self.span_file_ctx(span) {
+            Some(fc) => fc.path.clone(),
+            None => match self.current_file.as_ref().and_then(|f| self.files.get(f)) {
+                Some(fc) => fc.path.clone(),
+                None => self.file.clone(),
+            },
+        };
+        match (package_root_of(&file), package_root_of(&self.file)) {
+            (Some(a), Some(b)) => a == b,
+            _ => true,
+        }
+    }
+
     /// Emit a non-fatal warning. Same span-routing as `err`, but
     /// `Severity::Warning` so the build continues (`has_error` ignores it).
     /// Used for lints that flag a likely mistake without rejecting code that
@@ -7048,6 +7183,12 @@ impl SemaCx<'_> {
         // un-C-representable parameter (a `Drop`/owning type, a `str`/slice fat
         // pointer, a tagged enum, a non-`#[repr(C)]` struct) compiled to an
         // unsound signature. Now every `export` (`is_pub`) function is checked.
+        // W0824: an `extern fn` binds a C API whose shape is not ours to
+        // change, and a `fn ...;` header is a copy of a definition checked
+        // where it lives — lint neither.
+        if !f.is_extern && !f.is_declaration {
+            self.check_handler_ctx_slots(&f.params);
+        }
         if f.is_pub {
             self.check_extern_export_signature(f);
             // Fall through to the normal body-checking path below.
@@ -14913,13 +15054,25 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 Some(p) if matches!(&p.ty, Ty::RawPtr(inner) if **inner == Ty::U8) && !p.move_
             );
             if !ctx_param_ok {
-                self.err(
+                // The fix is in the CALLEE, which the author of this call
+                // usually did not write. Print the line to add there rather
+                // than only naming the rule, so the loop closes in one step.
+                self.err_note(
                     "E0824",
                     format!(
                         "bound reference `{}::{}` needs the callee to declare a defaulted `*u8` context parameter right after the handler",
                         struct_name, name.name
                     ),
                     args[i].span,
+                    vec![
+                        "in the function being called, add `<handler>_ctx: *u8 = 0 as *u8` \
+                         immediately after the handler parameter"
+                            .to_string(),
+                        "that slot is where the receiver's address goes — a bound method is \
+                         two things, the method and the object it runs on"
+                            .to_string(),
+                        "or pass a free `fn` and thread the context yourself".to_string(),
+                    ],
                 );
                 continue;
             }
@@ -14951,13 +15104,22 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                         .get(&call_span)
                         .is_some_and(|sp| i + 1 >= args.len() && (i + 1 - args.len()) < sp.len());
                     if !splice_covers {
-                        self.err(
+                        // The callee HAS the ctx parameter, adjacent and in the
+                        // right place — it simply has no default, so the call
+                        // cannot omit it and there is no slot to fill.
+                        self.err_note(
                             "E0824",
                             format!(
                                 "bound reference `{}::{}` needs a defaulted `*u8` context parameter after the handler (so the call may omit it)",
                                 struct_name, name.name
                             ),
                             args[i].span,
+                            vec![
+                                "the callee's context parameter is in the right place but has \
+                                 no default — give it ` = 0 as *u8` so this call may leave it \
+                                 for the receiver's address"
+                                    .to_string(),
+                            ],
                         );
                         continue;
                     }
@@ -17632,6 +17794,20 @@ fn lexical_normalize(path: &std::path::Path) -> PathBuf {
 /// source; an in-tree symlink pointing out is the untrusted-filesystem threat
 /// (attacker already has write in the package), shared with imports and out of
 /// scope here.
+/// The `Cplus.toml` directory containing `file`, or `None` in single-file mode
+/// (no manifest anywhere above it). Two files are in the same package iff this
+/// answers the same directory for both.
+fn package_root_of(file: &std::path::Path) -> Option<PathBuf> {
+    let mut cur = file.parent();
+    while let Some(d) = cur {
+        if d.join("Cplus.toml").is_file() {
+            return Some(d.to_path_buf());
+        }
+        cur = d.parent();
+    }
+    None
+}
+
 fn include_path_escapes_package(base_dir: &std::path::Path, requested: &str) -> bool {
     let mut root: Option<PathBuf> = None;
     let mut cur: Option<&std::path::Path> = Some(base_dir);
