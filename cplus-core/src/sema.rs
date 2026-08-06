@@ -12120,9 +12120,39 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         }
         // Infer concrete types per param position, then unify.
         let mut had_err = false;
+        // Bound method references FIRST. The inference path's own first act is
+        // to `check_expr` every argument for its natural type, and `recv.method`
+        // read as an ordinary expression is a field access on a struct that has
+        // no such field — so E0320 was reported before anything could recognise
+        // the argument for what it is. The handler parameter is concrete
+        // (`fn(*u8)` mentions no `T`), so the unsubstituted signature is enough
+        // to spot it; a parameter that IS generic is not a fn-pointer and the
+        // shape test skips it.
+        self.try_bound_method_refs(args, &gsig.params, call_span);
         // First pass: check args without an expected type to get their
         // natural type, then unify against the generic param type.
-        let arg_tys: Vec<Ty> = args.iter().map(|a| self.check_expr(a, None)).collect();
+        let arg_tys: Vec<Ty> = args
+            .iter()
+            .enumerate()
+            .map(|(i, a)| {
+                if self.bound_ref_arg_spans.contains(&a.span) {
+                    // Already resolved as a bridge + ctx pair. Asking for its
+                    // "natural type" would re-report the field error the pass
+                    // just took ownership of — and answering `Error` would
+                    // strand inference, leaving the call with no instantiation
+                    // and codegen with no function to call. It unifies as its
+                    // own declared parameter type, which is concrete and so
+                    // constrains nothing: a handler slot never carried the
+                    // type variable anyway.
+                    gsig.params
+                        .get(i)
+                        .map(|p| p.ty.clone())
+                        .unwrap_or(Ty::Error)
+                } else {
+                    self.check_expr(a, None)
+                }
+            })
+            .collect();
         for (param, arg_ty) in gsig.params.iter().zip(arg_tys.iter()) {
             if matches!(arg_ty, Ty::Error) {
                 had_err = true;
@@ -12178,6 +12208,17 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // them moved — the caller kept using a value whose drop had already run
         // inside the callee (safe-code use-after-free) — and never ran E0328, so
         // a generic `ref` param mutated a frozen `let` (bug-01).
+        // Bound method references, same as the turbofish branch. This is the
+        // path a call without `::[T]` takes, which is how they are actually
+        // written — `run_job(job, then: this.done)`. Adding it only to the
+        // turbofish branch fixed the spelling nobody uses, and an e2e that
+        // wrote `::[W]` validated the fix instead of the feature.
+        let subst_params: Vec<ParamSig> = gsig
+            .params
+            .iter()
+            .map(|p| self.subst_param_sig(p, &subst))
+            .collect();
+        self.try_bound_method_refs(args, &subst_params, call_span);
         for (param, arg) in gsig.params.iter().zip(args.iter()) {
             let expected = self.subst_param_sig(param, &subst);
             self.gate_checked_arg(arg, &expected);

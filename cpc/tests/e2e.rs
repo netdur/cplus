@@ -7806,7 +7806,7 @@ fn a_bound_method_crosses_a_generic_fn_boundary() {
     // existed; a GENERIC call returned early into its own checker and never
     // reached it. So `run_job(job, then: this.done)` fell through to ordinary
     // argument checking and surfaced as "struct has no field `done`" — an
-    // error about the wrong thing, with a concrete hop as the only way past.
+    // error about the wrong thing, with a concrete hop as the only way past.\n    //\n    // BOTH spellings, deliberately. The first fix reached only the turbofish\n    // branch and the test wrote `::[W]`, so it validated the fix instead of the\n    // feature — the inferred form, which is how these are actually written,\n    // still failed.
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("generic_bound.cplus");
@@ -7823,8 +7823,11 @@ fn a_bound_method_crosses_a_generic_fn_boundary() {
          }\n\
          fn main() -> i32 {\n\
              var w: W = W { n: 0 };\n\
-             run_job::[W](w, then: w.done);\n\
+             run_job(w, then: w.done);\n\
              if w.n != 11 { return 1; }\n\
+             var x: W = W { n: 0 };\n\
+             run_job::[W](x, then: x.done);\n\
+             if x.n != 11 { return 2; }\n\
              return 0;\n\
          }",
     )
