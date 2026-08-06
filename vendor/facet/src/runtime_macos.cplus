@@ -758,7 +758,20 @@ struct AgentHooks {
 
 static AGENT: AgentHooks = #zero::[AgentHooks]();
 
-fn install_agent(take h: AgentHooks) { AGENT = h; return; }
+fn install_agent(take h: AgentHooks) {
+    AGENT = h;
+    // Mirrored into application, where a backend can reach it without
+    // importing runtime — `dialogs`' sheet is the caller that needs it, and it
+    // cannot import runtime (this file imports dialogs).
+    //
+    // This facade REPLACES runtime.cplus on macOS, statics and all, so a hook
+    // added there does not exist here. The portable file had this mirror and
+    // this one did not, which is why an alert sheet presented, called
+    // `app::agent_attach`, and found a null hook: the agent never learned about
+    // the window in front of the user.
+    app::set_agent_attach_fn(AGENT.attach_window);
+    return;
+}
 
 fn agent_attach_window(win: *u8) {
     let f: fn(*u8) = AGENT.attach_window;
