@@ -726,6 +726,37 @@ fn paint_and_state_verbs_round_trip() {
 // The item slot is a borrowed `*u8` and an unset one reads null, so an index
 // of 0 was indistinguishable from "nothing here". Every caller wrote `i + 1`
 // and subtracted it back — an off-by-one living in the application.
+// An owned collection was cursor-only, so building a popup WITH its items
+// meant `from(#addr_of(n))` — three lines and a raw address to say one thing,
+// plus an intermediate state (a popup holding nothing) that is never useful.
+#[test]
+fn a_popup_takes_its_items_at_construction() {
+    var items: vocab::TextList = vocab::TextList::new();
+    let _a: status::Status = items.add("One");
+    let _b: status::Status = items.add("Two");
+
+    var root: facet::Node = popup::popup("Choose", key: "p", items: items);
+    match popup::find("p", within: #addr_of(root)) {
+        option::Option[popup::Popup]::Some(x) => {
+            assert x.item_count() == (2 as usize);
+        }
+        option::Option[popup::Popup]::None => { assert false; }
+    }
+    return;
+}
+
+// ...and the default is empty, so every call site written before this behaves
+// exactly as it did.
+#[test]
+fn a_popup_without_items_is_still_empty() {
+    var root: facet::Node = popup::popup("Choose", key: "p");
+    match popup::find("p", within: #addr_of(root)) {
+        option::Option[popup::Popup]::Some(x) => { assert x.item_count() == (0 as usize); }
+        option::Option[popup::Popup]::None => { assert false; }
+    }
+    return;
+}
+
 #[test]
 fn an_index_in_the_item_slot_tells_row_zero_from_nothing() {
     var n: facet::Node = button::button("A", key: "a");

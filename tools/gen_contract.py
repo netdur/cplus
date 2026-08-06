@@ -2298,7 +2298,7 @@ def split_rows(merged, owner=None):
     return writes, reads, events, slots, owned, commands
 
 
-def ctor_params(maui, writes, reads, events):
+def ctor_params(maui, writes, reads, events, owned=()):
     """The constructor's ordered parameter list: (name, type, default|None).
 
     One authority for the signature — `emit_control` prints it and
@@ -2331,6 +2331,16 @@ def ctor_params(maui, writes, reads, events):
         params.append(("selected_index", "i64", "0 as i64"))
         params.append(("on_tab_changed", "fn(*u8, *u8)", "props::no_handler"))
         params.append(("on_tab_changed_ctx", "*u8", "0 as *u8"))
+    # Owned collections are namable at construction too. They were cursor-only,
+    # which forced `from(#addr_of(n))` on anyone who wanted a popup WITH its
+    # items — three lines and a raw address to say one thing, and an
+    # intermediate state (a popup holding nothing) that is never useful.
+    #
+    # `take`, because the node owns the list. Defaulted to empty, so every call
+    # site written before this compiles unchanged and `set_items` stays the
+    # door for filling one later.
+    for field, ty, _m, _s, _p in owned:
+        params.append(("take " + field, cplus_type(ty), default_of(ty, _s, _m)))
     return params
 
 
@@ -2383,7 +2393,7 @@ def emit_control(maui, merged):
     o.append("// parameter here, so passing it is a compile error.\n\n")
     o.append(f"fn {mod}(\n")
     taken = {f for f, _t, _m, _s, _p in writes + reads}
-    for nm, pty, dflt in ctor_params(maui, writes, reads, events):
+    for nm, pty, dflt in ctor_params(maui, writes, reads, events, owned):
         o.append(f"    {nm}: {pty},\n" if dflt is None else f"    {nm}: {pty} = {dflt},\n")
     o.append(") -> core::Node {\n")
     o.append(f"    var p: props::{props} = props::{props}::new();\n")
@@ -2398,6 +2408,8 @@ def emit_control(maui, merged):
     for verb, member, src, path in events:
         o.append(f"    p.{path} = {verb};\n")
         o.append(f"    p.{path}_ctx = {verb}_ctx;\n")
+    for field, ty, _m, _s, path in owned:
+        o.append(f"    p.{path} = {field};\n")
     if mod in TAB_SOURCE:
         o.append("    p.selected_index = selected_index;\n")
         o.append("    p.on_tab_changed = on_tab_changed;\n")
@@ -2821,8 +2833,8 @@ def emit_elements(rows_by_control):
     o.append("\n// ---- controls ----------------------------------------------------------\n\n")
     for maui, merged in rows_by_control.items():
         mod = MODULE[maui]
-        writes, reads, events, _slots, _owned, _commands = split_rows(merged, maui)
-        params = ctor_params(maui, writes, reads, events)
+        writes, reads, events, _slots, owned, _commands = split_rows(merged, maui)
+        params = ctor_params(maui, writes, reads, events, owned)
         o.append(f"fn {mod}(\n")
         for nm, pty, dflt in params:
             o.append(f"    {nm}: {pty},\n" if dflt is None
@@ -2831,8 +2843,11 @@ def emit_elements(rows_by_control):
         o.append(f"    return m_{mod}::{mod}(\n")
         fwd = []
         for i, (nm, _pty, dflt) in enumerate(params):
-            fwd.append(f"        {nm}" if (i == 0 and dflt is None)
-                       else f"        {nm}: {nm}")
+            # `take x` is a PARAMETER MODE, not part of the name: the
+            # declaration carries it, the forwarded argument does not.
+            arg = nm[5:] if nm.startswith("take ") else nm
+            fwd.append(f"        {arg}" if (i == 0 and dflt is None)
+                       else f"        {arg}: {arg}")
         o.append(",\n".join(fwd) + ",\n    );\n}\n\n")
     return "".join(o)
 

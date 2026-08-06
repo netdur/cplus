@@ -57,6 +57,7 @@ fn label(
     text_transform: vocab::TextTransform = vocab::TextTransform::Default,
     text_format: vocab::TextFormat = vocab::TextFormat::Text,
     vertical_align: vocab::TextAlign = vocab::TextAlign::Center,
+    take formatted_text: vocab::Spans = vocab::Spans::new(),
 ) -> core::Node {
     var p: props::LabelProps = props::LabelProps::new();
     p.character_spacing = character_spacing;
@@ -75,6 +76,7 @@ fn label(
     p.text_transform = text_transform;
     p.text_format = text_format;
     p.vertical_align = vertical_align;
+    p.formatted_text = formatted_text;
     return match box::new::[props::LabelProps](p) {
         option::Option[box::Box[props::LabelProps]]::Some(b) =>
             core::node_with(key, props::K_LABEL, b.into_raw(), props::release_label_props),

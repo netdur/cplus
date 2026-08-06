@@ -57,6 +57,7 @@ fn popup(
     on_opened_ctx: *u8 = 0 as *u8,
     on_selected_index_changed: fn(*u8, *u8) = props::no_handler,
     on_selected_index_changed_ctx: *u8 = 0 as *u8,
+    take items: vocab::TextList = vocab::TextList::new(),
 ) -> core::Node {
     var p: props::PopupProps = props::PopupProps::new();
     p.character_spacing = character_spacing;
@@ -78,6 +79,7 @@ fn popup(
     p.on_opened_ctx = on_opened_ctx;
     p.on_selected_index_changed = on_selected_index_changed;
     p.on_selected_index_changed_ctx = on_selected_index_changed_ctx;
+    p.items = items;
     return match box::new::[props::PopupProps](p) {
         option::Option[box::Box[props::PopupProps]]::Some(b) =>
             core::node_with(key, props::K_POPUP, b.into_raw(), props::release_popup_props),

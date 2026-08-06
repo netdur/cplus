@@ -138,6 +138,7 @@ fn label(
     text_transform: vocab::TextTransform = vocab::TextTransform::Default,
     text_format: vocab::TextFormat = vocab::TextFormat::Text,
     vertical_align: vocab::TextAlign = vocab::TextAlign::Center,
+    take formatted_text: vocab::Spans = vocab::Spans::new(),
 ) -> core::Node {
     return m_label::label(
         text,
@@ -157,6 +158,7 @@ fn label(
         text_transform: text_transform,
         text_format: text_format,
         vertical_align: vertical_align,
+        formatted_text: formatted_text,
     );
 }
 
@@ -413,6 +415,7 @@ fn popup(
     on_opened_ctx: *u8 = 0 as *u8,
     on_selected_index_changed: fn(*u8, *u8) = props::no_handler,
     on_selected_index_changed_ctx: *u8 = 0 as *u8,
+    take items: vocab::TextList = vocab::TextList::new(),
 ) -> core::Node {
     return m_popup::popup(
         title,
@@ -435,6 +438,7 @@ fn popup(
         on_opened_ctx: on_opened_ctx,
         on_selected_index_changed: on_selected_index_changed,
         on_selected_index_changed_ctx: on_selected_index_changed_ctx,
+        items: items,
     );
 }
 
