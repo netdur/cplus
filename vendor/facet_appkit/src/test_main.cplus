@@ -2619,7 +2619,7 @@ fn a_resize_that_does_not_change_the_width_schedules_nothing() {
 // ---- alert: a sheet an agent can answer --------------------------------------
 
 static AL_ANSWER: i32 = -1;
-fn al_answered(ctx: *u8, which: i32) { AL_ANSWER = which; return; }
+fn al_answered(which: i32, ctx: *u8) { AL_ANSWER = which; return; }
 
 #[test]
 fn an_alert_is_a_facet_tree_the_agent_can_address() {

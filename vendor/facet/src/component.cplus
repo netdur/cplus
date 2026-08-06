@@ -126,6 +126,15 @@ fn item_of(sender: *u8) -> *u8 {
     return f(sender);
 }
 
+// The index a row was given, read from the SENDER. The pair to
+// `core::set_item_index` — a handler shared by every row asks this one
+// question, and `None` means the node carries no index rather than row zero.
+fn item_index_of(sender: *u8) -> option::Option[usize] {
+    let raw: usize = item_of(sender) as usize;
+    if raw == (0 as usize) { return option::Option[usize]::None; }
+    return option::Option[usize]::Some(raw -% (1 as usize));
+}
+
 // The text a drop delivered — empty when nothing has been dropped.
 fn dropped_text(sender: *u8) -> text::Text {
     let f: fn(*u8) -> text::Text = SENDER_READERS.dropped_text;

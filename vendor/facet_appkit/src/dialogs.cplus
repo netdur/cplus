@@ -161,7 +161,7 @@ struct AlertHost {
     opaque root: *core::Node,
     opaque sheet: *u8,
     opaque parent: *u8,
-    answer: fn(*u8, i32),
+    answer: fn(i32, *u8),
     opaque answer_ctx: *u8,
 }
 
@@ -187,8 +187,8 @@ fn dismiss(h: *AlertHost, answer: i32) {
     if sheet != (0 as *u8) { { rt::msg_void(sheet, rt::sel(#str_ptr("close\0"))) }; }
     // The answer goes out BEFORE the tree is dropped, so a handler can still
     // read anything it wants out of the sheet.
-    let f: fn(*u8, i32) = { (*h).answer };
-    if f != (0 as fn(*u8, i32)) { f({ (*h).answer_ctx }, answer); }
+    let f: fn(i32, *u8) = { (*h).answer };
+    if f != (0 as fn(i32, *u8)) { f(answer, { (*h).answer_ctx }); }
     let root: *core::Node = { (*h).root };
     if root != (0 as *core::Node) {
         mount::unmount(root);
@@ -219,7 +219,7 @@ fn alert_tree(title: str, message: str, primary: str, secondary: str) -> core::N
 }
 
 fn alert_sheet(title: str, message: str, primary: str, secondary: str = "",
-               on_answer: fn(*u8, i32) = 0 as fn(*u8, i32), ctx: *u8 = 0 as *u8) {
+               on_answer: fn(i32, *u8) = 0 as fn(i32, *u8), ctx: *u8 = 0 as *u8) {
     let parent: *u8 = app::window_native(app::newest_window_root());
     var root: core::Node = alert_tree(title, message, primary, secondary);
 

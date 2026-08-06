@@ -295,6 +295,31 @@ fn item_of(n: *Node) -> *u8 {
     return { (*d).item };
 }
 
+// An INDEX in the item slot, for the commonest thing an app puts there: which
+// row this node is. The slot is a borrowed `*u8` and an unset one reads null,
+// so an index of 0 is indistinguishable from "nothing here" — every caller was
+// storing `i + 1` and subtracting it back, an off-by-one written out in the
+// application. The bias belongs here, once, behind a typed pair.
+//
+//     core::set_item_index(row, i);
+//     match core::item_index_of(sender_node) {
+//         option::Option[usize]::Some(i) => { ... }
+//         option::Option[usize]::None => { }        // nothing was stored
+//     }
+//
+// It is the same slot: a node carries an index or a record pointer, never
+// both, and mixing them is a cast the reader cannot check.
+fn set_item_index(n: *Node, at: usize) {
+    set_item(n, { (at +% (1 as usize)) as *u8 });
+    return;
+}
+
+fn item_index_of(n: *Node) -> option::Option[usize] {
+    let raw: usize = item_of(n) as usize;
+    if raw == (0 as usize) { return option::Option[usize]::None; }
+    return option::Option[usize]::Some(raw -% (1 as usize));
+}
+
 fn set_on_focus(n: *Node, f: fn(*u8, *u8), ctx: *u8) {
     let d: *Data = ensure_data(n);
     if d == (0 as *Data) { return; }

@@ -723,6 +723,35 @@ fn paint_and_state_verbs_round_trip() {
     return;
 }
 
+// The item slot is a borrowed `*u8` and an unset one reads null, so an index
+// of 0 was indistinguishable from "nothing here". Every caller wrote `i + 1`
+// and subtracted it back — an off-by-one living in the application.
+#[test]
+fn an_index_in_the_item_slot_tells_row_zero_from_nothing() {
+    var n: facet::Node = button::button("A", key: "a");
+    let p: *facet::Node = #addr_of(n);
+
+    assert match facet::item_index_of(p) {
+        option::Option[usize]::Some(_i) => false,
+        option::Option[usize]::None => true,
+    };
+
+    facet::set_item_index(p, 0 as usize);      // the row that used to vanish
+    assert match facet::item_index_of(p) {
+        option::Option[usize]::Some(i) => i == (0 as usize),
+        option::Option[usize]::None => false,
+    };
+
+    facet::set_item_index(p, 7 as usize);
+    assert match facet::item_index_of(p) {
+        option::Option[usize]::Some(i) => i == (7 as usize),
+        option::Option[usize]::None => false,
+    };
+    // ...and it is the same slot, so the raw reader still sees the bias.
+    assert (facet::item_of(p) as usize) == (8 as usize);
+    return;
+}
+
 #[test]
 fn set_display_asks_for_the_layout_pass_that_flexs_own_setter_does_not() {
     var n: facet::Node = button::button("A", key: "a");

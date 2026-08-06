@@ -261,7 +261,7 @@ fn drain_once() {
 // alert means to a person, while the rest of the app and the agent channel keep
 // running.
 fn alert(title: str, message: str, primary: str, secondary: str = "",
-         on_answer: fn(*u8, i32) = 0 as fn(*u8, i32), ctx: *u8 = 0 as *u8) {
+         on_answer: fn(i32, *u8) = 0 as fn(i32, *u8), ctx: *u8 = 0 as *u8) {
     dialogs::alert_sheet(title, message, primary, secondary, on_answer, ctx);
     return;
 }
