@@ -194,7 +194,13 @@ The backend seam.
 `sync()` applies every dirty node in every open window. `request_sync()` asks
 the backend to schedule one.
 
-`find_node(key)`, `mounted_root()`, `mounted_count()`.
+`find(key, within:)` resolves a key to the node itself, for the places with no
+control to narrow to — an outlet is a keyed column, and `set_content` wants the
+node, not a cursor. Same rule as a typed `find`: the running app's windows in
+open order, first match, `within:` to scope a subtree. `find_node(key)` is the
+resolver underneath, the one the 42 typed finds share.
+
+`mounted_root()`, `mounted_count()`.
 
 ## facet/gestures
 
@@ -206,6 +212,11 @@ plus `can_drag`, `allow_drop` and the drag family (`on_drag_start`,
 
 A handler answers whether it TOOK the event. Declining lets the platform have
 it, which is how a control keeps its own behaviour under a gesture.
+
+A handler may be a component's own method — `.gesture(on_click: this.on_open)`
+— because each one carries its own context slot, the same shape a generated
+control's `on_clicked:` has. `ctx:` is the set-wide context, used by every
+handler that did not bring one; that is what a free function wants.
 
 Standing rule: a gesture-only affordance must also have a click path. An agent
 has no hands, and a feature it cannot reach is a feature half the users of this

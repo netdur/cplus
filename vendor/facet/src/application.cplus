@@ -28,6 +28,7 @@
 
 import "stdlib/text" as text;
 import "stdlib/vec" as vec;
+import "stdlib/string_map" as smap;
 import "stdlib/option" as option;
 import "flex_layout/flex_layout" as flex;
 import "./vocabulary" as vocab;
@@ -109,7 +110,10 @@ impl Theme {
 struct Navigation {
     intent: u32,
     target: text::Text,
-    arg: text::Text,
+    // The route argument channel, as NAMED values. One storage: `arg:` is the
+    // unnamed one, kept under `nav::arg_key()`, so `arg()` and `param(k)` read
+    // the same map and cannot disagree.
+    params: smap::StringMap[text::Text],
     close_fn: fn(),
     push_fn: fn(str, str) -> bool,
     pop_fn: fn() -> bool,
@@ -120,7 +124,7 @@ impl Navigation {
         return Navigation {
             intent: 0 as u32,
             target: text::new(),
-            arg: text::new(),
+            params: smap::new::[text::Text](),
             close_fn: 0 as fn(),
             push_fn: 0 as fn(str, str) -> bool,
             pop_fn: 0 as fn() -> bool,

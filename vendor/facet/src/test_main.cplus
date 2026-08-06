@@ -692,6 +692,41 @@ fn paint_and_state_verbs_round_trip() {
     return;
 }
 
+// The band on a node you BUILT, with no cursor in sight. `column` hands back
+// a value, and a value used to need `set_background_color(#addr_of(n), bg)` —
+// the free-fn form — because the methods lived only on the 42 cursors.
+#[test]
+fn the_band_is_reachable_on_a_bare_node() {
+    var b: facet::Builder = facet::Builder::new();
+    b.add(button::button("A", key: "a"));
+    var n: facet::Node = facet::column(b, key: "body");
+
+    n.set_background_color(vocab::Color::rgba(0.0f64, 1.0f64, 0.0f64));
+    n.set_opacity(0.25f64);
+    n.set_visible(false);
+    n.set_clip(vocab::Shape::rounded(6.0f64));
+
+    assert approx(n.background_color().g, 1.0f64);
+    assert approx(n.opacity(), 0.25f64);
+    assert n.is_visible() == false;
+    assert n.clip().kind == (2 as i64);
+
+    // and the free fn still answers the same node — one state, two spellings
+    assert approx(facet::opacity(#addr_of(n)), 0.25f64);
+    return;
+}
+
+// A method write is a real write: it raises the same dirty bit the free fn
+// does, so it reaches a backend rather than sitting in the tree.
+#[test]
+fn a_band_method_marks_the_node_dirty() {
+    var n: facet::Node = button::button("A", key: "a");
+    n.set_background_color(vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64));
+    let d: *facet::Data = n.data();
+    assert ({ (*d).dirty } & props::C_BACKGROUND_COLOR) == props::C_BACKGROUND_COLOR;
+    return;
+}
+
 #[test]
 fn z_index_is_flexs_and_is_not_copied() {
     var root: facet::Node = button::button("A", key: "a");
@@ -1177,6 +1212,78 @@ fn sample() -> tree::TreeNode {
     let _b: status::Status = root.add_child(src);
     let _c: status::Status = root.add_child(tree::TreeNode::new("README", "/README"));
     return root;
+}
+
+// One context per handler, not one for the set. `set_row` and `set_row_bind`
+// both used to write the single `ctx` field, so the second call silently
+// retargeted the first handler — with a free fn that is a wrong pointer, with
+// a bound method a wrong receiver.
+static TR_ROW_CTX: *u8 = 0 as *u8;
+static TR_BIND_CTX: *u8 = 0 as *u8;
+
+fn tr_row(node: *tree::TreeNode, ctx: *u8) -> facet::Node {
+    TR_ROW_CTX = ctx;
+    return label::label("r", key: "row");
+}
+fn tr_bind(node: *tree::TreeNode, ctx: *u8, into: *facet::Node) {
+    TR_BIND_CTX = ctx;
+    return;
+}
+
+#[test]
+fn each_tree_handler_keeps_its_own_context() {
+    var a: i64 = 1 as i64;
+    var b: i64 = 2 as i64;
+    var root: facet::Node = tree::tree(sample(), key: "t");
+    match tree::find("t", within: #addr_of(root)) {
+        option::Option[tree::Tree]::Some(x) => {
+            let _r: tree::Tree = x.set_row(tr_row, ctx: #addr_of(a) as *u8);
+            let _b: tree::Tree = x.set_row_bind(tr_bind, ctx: #addr_of(b) as *u8);
+            TR_ROW_CTX = 0 as *u8;
+            let _n: facet::Node = x.build_row(x.root());
+            // the bind setter must not have retargeted the row builder
+            assert TR_ROW_CTX == (#addr_of(a) as *u8);
+        }
+        option::Option[tree::Tree]::None => { assert false; }
+    }
+    return;
+}
+
+// The set-wide `ctx:` still answers for a handler that brought none, so every
+// call site written before the per-handler slots behaves identically.
+#[test]
+fn the_tree_set_wide_ctx_still_reaches_the_row_builder() {
+    var owner: i64 = 7 as i64;
+    var root: facet::Node = tree::tree(sample(), key: "t",
+                                       row: tr_row, ctx: #addr_of(owner) as *u8);
+    match tree::find("t", within: #addr_of(root)) {
+        option::Option[tree::Tree]::Some(x) => {
+            TR_ROW_CTX = 0 as *u8;
+            let _n: facet::Node = x.build_row(x.root());
+            assert TR_ROW_CTX == (#addr_of(owner) as *u8);
+        }
+        option::Option[tree::Tree]::None => { assert false; }
+    }
+    return;
+}
+
+// ...and a handler's OWN context wins over the set-wide one.
+#[test]
+fn a_tree_handlers_own_ctx_wins_over_the_set_wide_one() {
+    var shared: i64 = 1 as i64;
+    var mine: i64 = 2 as i64;
+    var root: facet::Node = tree::tree(sample(), key: "t",
+                                       row: tr_row, row_ctx: #addr_of(mine) as *u8,
+                                       ctx: #addr_of(shared) as *u8);
+    match tree::find("t", within: #addr_of(root)) {
+        option::Option[tree::Tree]::Some(x) => {
+            TR_ROW_CTX = 0 as *u8;
+            let _n: facet::Node = x.build_row(x.root());
+            assert TR_ROW_CTX == (#addr_of(mine) as *u8);
+        }
+        option::Option[tree::Tree]::None => { assert false; }
+    }
+    return;
 }
 
 #[test]

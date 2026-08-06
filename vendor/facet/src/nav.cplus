@@ -17,7 +17,22 @@
 // but close nothing. Main-thread only, like every facet verb.
 
 import "stdlib/text" as text;
+import "stdlib/string_map" as map;
+import "stdlib/option" as option;
+import "stdlib/status" as status;
 import "./application" as app;
+
+// A route's arguments: named values the target screen reads by key. The
+// stdlib map, not a facet type — a bag of owned strings is not a UI concept,
+// and a second one would only differ in name.
+type Params = map::StringMap[text::Text];
+
+fn params_new() -> Params { return map::new::[text::Text](); }
+
+// Where `arg:` lives. The unnamed argument is a NAMED one under a reserved
+// key, so there is a single storage: `arg()` is `param(arg_key())`, and a
+// route cannot be handed an `arg` and a params entry that disagree.
+fn arg_key() -> str { return "@arg"; }
 
 // ---- intent codes -----------------------------------------------------------
 
@@ -77,11 +92,29 @@ fn fire_close() {
 
 // Replace the current screen: record the route, close the current window. The
 // App loop reads the intent once the window unwinds and opens the target.
-fn go(route: str, arg: str = "") {
+// `params:` carries NAMED arguments; `arg:` is the unnamed one and lands in
+// the same map under `arg_key()`. Passing both is legal and they do not
+// collide — the target reads `nav::arg()` for the one and `nav::param(k)` for
+// the others.
+//
+//     nav::go("workspace", arg: path)
+//
+//     var p: nav::Params = nav::params_new();
+//     let _s: status::Status = p.insert(text::from_str("path"), path.to_text());
+//     nav::go("workspace", params: p);
+fn go(route: str, arg: str = "", take params: Params = params_new()) {
+    var p: Params = params;
+    if arg != "" { let _s: status::Status = p.insert(text::from_str(arg_key()), arg.to_text()); }
     let s: *app::Application = app::current();
     { (*s).nav.intent = intent_go() };
+    // `.drop()` before each overwrite: assignment THROUGH A RAW POINTER does
+    // not drop what it overwrites (a direct `h.f = v` does — measured), so a
+    // bare assignment here leaks the previous route's strings once per
+    // navigation. Every write to nav state goes through `*app::current()`.
+    { (*s).nav.target.drop() };
     { (*s).nav.target = text::from_str(route) };
-    { (*s).nav.arg = text::from_str(arg) };
+    { (*s).nav.params.drop() };
+    { (*s).nav.params = p };
     fire_close();
     return;
 }
@@ -117,9 +150,22 @@ fn pop() -> bool {
 
 // The argument the intent that showed the CURRENT screen carried. Empty when
 // none was given. Stable until the next navigation verb.
-fn arg() -> str {
+fn arg() -> str { return param(arg_key()); }
+
+// One named argument, or "" when the route was not given it. The view is into
+// the app's own storage, so it is stable for as long as `arg()` is — until the
+// next navigation verb.
+fn param(key: str) -> str {
     let s: *app::Application = app::current();
-    return { (*s).nav.arg.view() };
+    return match { (*s).nav.params.get_ptr(key) } {
+        option::Option[*text::Text]::Some(v) => { (*v).view() },
+        option::Option[*text::Text]::None => "",
+    };
+}
+
+fn has_param(key: str) -> bool {
+    let s: *app::Application = app::current();
+    return { (*s).nav.params.contains_key(key) };
 }
 
 // The App hook's channel for a pushed screen's argument: the hook sets it
@@ -128,7 +174,8 @@ fn arg() -> str {
 // arg untouched. App-side plumbing, not an app-facing verb.
 fn set_arg(arg: str) {
     let s: *app::Application = app::current();
-    { (*s).nav.arg = text::from_str(arg) };
+    let _s: status::Status = { (*s).nav.params.insert(text::from_str(arg_key()),
+                                                      text::from_str(arg)) };
     return;
 }
 
@@ -159,8 +206,14 @@ fn take() -> u32 {
 fn reset(arg: str = "") {
     let s: *app::Application = app::current();
     { (*s).nav.intent = intent_none() };
+    { (*s).nav.target.drop() };
     { (*s).nav.target = text::new() };
-    { (*s).nav.arg = text::from_str(arg) };
+    // A FRESH map, not an insert: reset means the next screen inherits nothing
+    // the last one was given.
+    var p: Params = params_new();
+    if arg != "" { let _s: status::Status = p.insert(text::from_str(arg_key()), text::from_str(arg)); }
+    { (*s).nav.params.drop() };
+    { (*s).nav.params = p };
     return;
 }
 
@@ -192,6 +245,76 @@ fn nav_go_records_route_arg_and_fires_close() {
     assert pending() == intent_none();
     assert target() == "workspace";
     assert arg() == "/tmp/proj";
+    clear_hooks();
+}
+
+#[test]
+fn nav_go_carries_named_params() {
+    reset();
+    NAVT_CLOSES = 0;
+    set_close_fn(navt_close);
+    var p: Params = params_new();
+    let _a: status::Status = p.insert(text::from_str("path"), text::from_str("/tmp/proj"));
+    let _b: status::Status = p.insert(text::from_str("mode"), text::from_str("edit"));
+    go("workspace", params: p);
+    assert target() == "workspace";
+    assert param("path") == "/tmp/proj";
+    assert param("mode") == "edit";
+    assert has_param("path");
+    // absent reads "" rather than trapping, the way arg() always has
+    assert param("nope") == "";
+    assert !has_param("nope");
+    assert NAVT_CLOSES == 1;
+    clear_hooks();
+}
+
+#[test]
+fn nav_arg_is_a_param_under_a_reserved_key() {
+    // ONE storage: the unnamed argument is a named one, so the two readers
+    // cannot disagree about what the route was given.
+    reset();
+    set_close_fn(navt_close);
+    go("workspace", arg: "/tmp/proj");
+    assert arg() == "/tmp/proj";
+    assert param(arg_key()) == "/tmp/proj";
+    assert has_param(arg_key());
+    clear_hooks();
+}
+
+#[test]
+fn nav_go_takes_arg_and_params_together() {
+    reset();
+    set_close_fn(navt_close);
+    var p: Params = params_new();
+    let _a: status::Status = p.insert(text::from_str("path"), text::from_str("/tmp/proj"));
+    go("workspace", arg: "legacy", params: p);
+    assert arg() == "legacy";
+    assert param("path") == "/tmp/proj";
+    clear_hooks();
+}
+
+#[test]
+fn a_second_go_replaces_the_whole_param_set() {
+    // Not a merge: a route is given what THIS navigation passed, never a
+    // leftover from the screen before it.
+    reset();
+    set_close_fn(navt_close);
+    var first: Params = params_new();
+    let _a: status::Status = first.insert(text::from_str("path"), text::from_str("/one"));
+    go("a", params: first);
+    assert param("path") == "/one";
+
+    var second: Params = params_new();
+    let _b: status::Status = second.insert(text::from_str("mode"), text::from_str("edit"));
+    go("b", params: second);
+    assert param("mode") == "edit";
+    assert param("path") == "";
+    assert !has_param("path");
+
+    // and a bare go clears them
+    go("c");
+    assert param("mode") == "";
+    assert arg() == "";
     clear_hooks();
 }
 

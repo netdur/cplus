@@ -1047,6 +1047,95 @@ fn is_batching(n: *Node) -> bool {
     return { (*d).batch } > (0 as i64);
 }
 
+// ---- the band, as methods on a bare node -------------------------------------
+// The free fns above take `*Node` because that is the cursor every seam
+// passes. A node you just BUILT is a value, though, and `set_background_color(
+// #addr_of(n), bg)` is the wrong shape for the commonest thing an app does.
+// These forward one-for-one, so a value reads the same as a cursor:
+//
+//   var n: Node = column(b, key: "body");
+//   n.set_background_color(bg);
+//
+// Setters take `ref this` — a `var` node, the same binding a builder returns.
+// Ten band names are absent because flex::Node already declares them
+// (set_width/height/padding/margin/gap, set_z_index, width, height, z_index,
+// child_count): those are flex's own words and calling them on a node reaches
+// flex directly. That is sound while BUILDING; after mount, write geometry
+// through a cursor or follow it with `relayout()`, because flex's setters do
+// not raise C_LAYOUT and the change would never reach the screen.
+//
+// gen_contract.py::check() fails the run if this block and SHARED_FORWARDS
+// disagree, so the two cannot drift.
+impl flex::Node {
+    fn set_opacity(ref this, v: f64) { set_opacity(#addr_of(this), v); return; }
+    fn opacity(this) -> f64 { return opacity(#addr_of(this)); }
+    fn set_background_color(ref this, v: vocab::Color) { set_background_color(#addr_of(this), v); return; }
+    fn background_color(this) -> vocab::Color { return background_color(#addr_of(this)); }
+    fn set_background(ref this, v: vocab::Brush) { set_background(#addr_of(this), v); return; }
+    fn background(this) -> vocab::Brush { return background(#addr_of(this)); }
+    fn set_background_image(ref this, v: str) { set_background_image(#addr_of(this), v); return; }
+    fn background_image(this) -> str { return background_image(#addr_of(this)); }
+    fn set_safe_area(ref this, v: vocab::SafeArea) { set_safe_area(#addr_of(this), v); return; }
+    fn safe_area(this) -> vocab::SafeArea { return safe_area(#addr_of(this)); }
+    fn set_shadow(ref this, v: vocab::Shadow) { set_shadow(#addr_of(this), v); return; }
+    fn shadow(this) -> vocab::Shadow { return shadow(#addr_of(this)); }
+    fn set_clip(ref this, v: vocab::Shape) { set_clip(#addr_of(this), v); return; }
+    fn clip(this) -> vocab::Shape { return clip(#addr_of(this)); }
+    fn set_enabled(ref this, v: bool) { set_enabled(#addr_of(this), v); return; }
+    fn is_enabled(this) -> bool { return is_enabled(#addr_of(this)); }
+    fn set_visible(ref this, v: bool) { set_visible(#addr_of(this), v); return; }
+    fn is_visible(this) -> bool { return is_visible(#addr_of(this)); }
+    fn set_input_transparent(ref this, v: bool) { set_input_transparent(#addr_of(this), v); return; }
+    fn input_transparent(this) -> bool { return input_transparent(#addr_of(this)); }
+    fn set_flow_direction(ref this, v: vocab::FlowDirection) { set_flow_direction(#addr_of(this), v); return; }
+    fn flow_direction(this) -> vocab::FlowDirection { return flow_direction(#addr_of(this)); }
+    fn set_rotation(ref this, v: f64) { set_rotation(#addr_of(this), v); return; }
+    fn rotation(this) -> f64 { return rotation(#addr_of(this)); }
+    fn set_rotation_x(ref this, v: f64) { set_rotation_x(#addr_of(this), v); return; }
+    fn rotation_x(this) -> f64 { return rotation_x(#addr_of(this)); }
+    fn set_rotation_y(ref this, v: f64) { set_rotation_y(#addr_of(this), v); return; }
+    fn rotation_y(this) -> f64 { return rotation_y(#addr_of(this)); }
+    fn set_scale(ref this, v: f64) { set_scale(#addr_of(this), v); return; }
+    fn scale(this) -> f64 { return scale(#addr_of(this)); }
+    fn set_scale_x(ref this, v: f64) { set_scale_x(#addr_of(this), v); return; }
+    fn scale_x(this) -> f64 { return scale_x(#addr_of(this)); }
+    fn set_scale_y(ref this, v: f64) { set_scale_y(#addr_of(this), v); return; }
+    fn scale_y(this) -> f64 { return scale_y(#addr_of(this)); }
+    fn set_translation_x(ref this, v: f64) { set_translation_x(#addr_of(this), v); return; }
+    fn translation_x(this) -> f64 { return translation_x(#addr_of(this)); }
+    fn set_translation_y(ref this, v: f64) { set_translation_y(#addr_of(this), v); return; }
+    fn translation_y(this) -> f64 { return translation_y(#addr_of(this)); }
+    fn set_anchor_x(ref this, v: f64) { set_anchor_x(#addr_of(this), v); return; }
+    fn anchor_x(this) -> f64 { return anchor_x(#addr_of(this)); }
+    fn set_anchor_y(ref this, v: f64) { set_anchor_y(#addr_of(this), v); return; }
+    fn anchor_y(this) -> f64 { return anchor_y(#addr_of(this)); }
+    fn x(this) -> f64 { return x_of(#addr_of(this)); }
+    fn y(this) -> f64 { return y_of(#addr_of(this)); }
+    fn bounds(this) -> vocab::Rect { return bounds_of(#addr_of(this)); }
+    fn is_focused(this) -> bool { return is_focused(#addr_of(this)); }
+    fn is_attached(this) -> bool { return is_attached(#addr_of(this)); }
+    fn window(this) -> vocab::WindowRef { return window_of(#addr_of(this)); }
+    fn native(this) -> *u8 { return native(#addr_of(this)); }
+    fn child(this, at: usize) -> option::Option[*Node] { return child_of(#addr_of(this), at); }
+    fn set_grow(ref this, v: f64) { set_grow(#addr_of(this), v); return; }
+    fn set_shrink(ref this, v: f64) { set_shrink(#addr_of(this), v); return; }
+    fn set_width_percent(ref this, v: f64) { set_width_percent(#addr_of(this), v); return; }
+    fn set_height_percent(ref this, v: f64) { set_height_percent(#addr_of(this), v); return; }
+    fn set_justify(ref this, v: flex::Justify) { set_justify(#addr_of(this), v); return; }
+    fn set_align(ref this, v: flex::Align) { set_align(#addr_of(this), v); return; }
+    fn set_wrap(ref this, v: flex::Wrap) { set_wrap(#addr_of(this), v); return; }
+    fn focus(ref this) { focus(#addr_of(this)); return; }
+    fn blur(ref this) { blur(#addr_of(this)); return; }
+    fn relayout(ref this) { relayout(#addr_of(this)); return; }
+    fn measure(this, width: f64, height: f64) -> vocab::Size { return measure(#addr_of(this), width, height); }
+    fn begin_updates(ref this) { begin_updates(#addr_of(this)); return; }
+    fn end_updates(ref this) { end_updates(#addr_of(this)); return; }
+    fn on_focus(ref this, f: fn(*u8, *u8), ctx: *u8 = 0 as *u8) { set_on_focus(#addr_of(this), f, ctx); return; }
+    fn on_blur(ref this, f: fn(*u8, *u8), ctx: *u8 = 0 as *u8) { set_on_blur(#addr_of(this), f, ctx); return; }
+    fn on_attach(ref this, f: fn(*u8, *u8), ctx: *u8 = 0 as *u8) { set_on_attach(#addr_of(this), f, ctx); return; }
+    fn on_detach(ref this, f: fn(*u8, *u8), ctx: *u8 = 0 as *u8) { set_on_detach(#addr_of(this), f, ctx); return; }
+}
+
 // ---- slots ------------------------------------------------------------------
 // A subtree is a CHILD, not a property. MAUI models a named subtree as a
 // bindable property because binding is how it fills one; facet describes a

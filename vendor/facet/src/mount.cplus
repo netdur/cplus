@@ -145,6 +145,18 @@ fn find_node(key: str) -> option::Option[*core::Node] {
     return option::Option[*core::Node]::None;
 }
 
+// `find` is the word an app writes; `find_node` is the resolver the 42 typed
+// finds share. Same rule, same answer — this one hands back the node itself,
+// for the places where there is no control to narrow to (an outlet is a keyed
+// column, and `set_content` wants the node, not a cursor).
+//
+// `within:` matches the typed finds exactly, so the signature reads the same
+// whether you are asking for a Button or for a bare node.
+fn find(key: str, within: *core::Node = 0 as *core::Node) -> option::Option[*core::Node] {
+    if within != (0 as *core::Node) { return core::find_in(within, key); }
+    return find_node(key);
+}
+
 // The post-walk notification queue (M4): nodes whose on_attach/on_detach
 // handler must fire AFTER the walk completes, so no handler ever observes a
 // half-mounted tree. A LOCAL of each walk's caller, threaded by `ref` — the
@@ -1416,6 +1428,42 @@ impl ScComp: component::Component {
 impl ScComp: component::Lifecycle {
     fn on_attach(ref this) { this.attaches = this.attaches + 1; return; }
     fn on_detach(ref this) { this.detaches = this.detaches + 1; return; }
+}
+
+// `find` answers what `find_node` answers, and `within:` scopes it the same
+// way the typed finds do. The shape an app actually writes: resolve an outlet
+// by key, hand the node to set_content.
+#[test]
+fn find_is_find_node_and_takes_within() {
+    app::reset_default_for_tests();
+    uninstall();
+    var b: core::Builder = core::Builder::new();
+    b.add(core::column(core::Builder::new(), key: "slot"));
+    var root: core::Node = core::column(b, key: "root");
+    app::open_window(#addr_of(root));
+
+    let viaFind: option::Option[*core::Node] = find("slot");
+    let viaNode: option::Option[*core::Node] = find_node("slot");
+    assert match viaFind {
+        option::Option[*core::Node]::Some(a) => match viaNode {
+            option::Option[*core::Node]::Some(b2) => a == b2,
+            option::Option[*core::Node]::None => false,
+        },
+        option::Option[*core::Node]::None => false,
+    };
+
+    // within: scopes to a subtree — and answers None for a key outside it
+    assert match find("root", within: #addr_of(root)) {
+        option::Option[*core::Node]::Some(_p) => true,
+        option::Option[*core::Node]::None => false,
+    };
+    var lone: core::Node = core::column(core::Builder::new(), key: "lone");
+    assert match find("slot", within: #addr_of(lone)) {
+        option::Option[*core::Node]::Some(_p) => false,
+        option::Option[*core::Node]::None => true,
+    };
+    app::close_window(#addr_of(root));
+    return;
 }
 
 #[test]
