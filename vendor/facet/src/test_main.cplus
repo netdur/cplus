@@ -723,6 +723,79 @@ fn paint_and_state_verbs_round_trip() {
     return;
 }
 
+#[test]
+fn set_display_asks_for_the_layout_pass_that_flexs_own_setter_does_not() {
+    var n: facet::Node = button::button("A", key: "a");
+    let p: *facet::Node = #addr_of(n);
+    let _d: *facet::Data = facet::ensure_data(p);
+    facet::clear_dirty(p);
+    { (*p).set_display(flex::Display::None) };
+    assert (facet::dirty_of(p) & props::C_LAYOUT) == (0 as u64);
+    facet::clear_dirty(p);
+    facet::set_display(p, flex::Display::Flex);
+    assert (facet::dirty_of(p) & props::C_LAYOUT) != (0 as u64);
+    return;
+}
+
+#[test]
+fn hidden_is_the_or_of_invisible_and_display_none() {
+    var n: facet::Node = button::button("A", key: "a");
+    let p: *facet::Node = #addr_of(n);
+    assert !facet::is_hidden(p);
+    facet::set_visible(p, false);
+    assert facet::is_hidden(p);
+    facet::set_visible(p, true);
+    assert !facet::is_hidden(p);
+    facet::set_display(p, flex::Display::None);
+    assert facet::is_hidden(p);
+    return;
+}
+
+#[test]
+fn set_shown_restores_the_display_it_hid() {
+    var n: facet::Node = button::button("A", key: "a");
+    let p: *facet::Node = #addr_of(n);
+    facet::set_display(p, flex::Display::Grid);
+    facet::set_shown(p, false);
+    assert facet::is_hidden(p);
+    assert match facet::display_of(p) { flex::Display::None => true, _ => false };
+    facet::set_shown(p, true);
+    assert !facet::is_hidden(p);
+    assert facet::is_visible(p);
+    assert match facet::display_of(p) { flex::Display::Grid => true, _ => false };
+    return;
+}
+
+// A node with NO facet Data — a raw flex node, or the wrapper the `@ui` DSL
+// hands back — used to swallow every band write in silence. `set_safe_area` on
+// an @ui-rooted tree did nothing and said nothing.
+#[test]
+fn a_band_write_creates_the_data_it_needs() {
+    var n: flex::Node = flex::box();
+    let p: *facet::Node = #addr_of(n);
+    assert facet::node_data(p) == (0 as *facet::Data);   // nothing there yet
+
+    facet::set_background_color(p, vocab::Color::rgba(0.0f64, 0.0f64, 1.0f64));
+
+    assert facet::node_data(p) != (0 as *facet::Data);
+    assert approx(facet::background_color(p).b, 1.0f64);
+    // and the write reached the dirty word, so a backend hears about it
+    assert (facet::dirty_of(p) & props::C_BACKGROUND_COLOR) != (0 as u64);
+    return;
+}
+
+// A READ on a Data-less node still answers the default and allocates nothing —
+// a read has a right answer, so it should not create state to give it.
+#[test]
+fn a_band_read_on_a_bare_node_does_not_allocate_data() {
+    var n: flex::Node = flex::box();
+    let p: *facet::Node = #addr_of(n);
+    assert approx(facet::opacity(p), 1.0f64);
+    assert facet::is_visible(p);
+    assert facet::node_data(p) == (0 as *facet::Data);
+    return;
+}
+
 // The band on a node you BUILT, with no cursor in sight. `column` hands back
 // a value, and a value used to need `set_background_color(#addr_of(n), bg)` —
 // the free-fn form — because the methods lived only on the 42 cursors.

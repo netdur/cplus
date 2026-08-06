@@ -380,7 +380,7 @@ fn apply_common(v: *u8, n: *core::Node, dirty: u64) {
     // is_visible → hidden. NOT display:none — that is flex's, and it takes the
     // node out of layout; this hides a node that still occupies its space.
     if (dirty & props::C_IS_VISIBLE) != (0 as u64) {
-        view.set_hidden(core::is_visible(n) == false);
+        view.set_hidden(core::is_hidden(n));
     }
     if (dirty & props::C_OPACITY) != (0 as u64) {
         view.set_alpha_value(core::opacity(n));

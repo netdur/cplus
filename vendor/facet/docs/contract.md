@@ -642,6 +642,10 @@ type exists.
 | `is_enabled()` | bool |
 | `set_visible(v:)` | the cursor, so writes chain |
 | `is_visible()` | bool |
+| `set_display(v:)` | the cursor, so writes chain |
+| `display()` | flex::Display |
+| `set_shown(v:)` | the cursor, so writes chain |
+| `is_hidden()` | bool |
 | `set_input_transparent(v:)` | the cursor, so writes chain |
 | `input_transparent()` | bool |
 | `set_flow_direction(v:)` | the cursor, so writes chain |

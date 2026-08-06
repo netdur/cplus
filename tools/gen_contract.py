@@ -2169,6 +2169,14 @@ SHARED_FORWARDS = [
     ("is_enabled", "", "return core::is_enabled(this._p)", "bool"),
     ("set_visible", "v: bool", "core::set_visible(this._p, v)", None),
     ("is_visible", "", "return core::is_visible(this._p)", "bool"),
+    # `display` is the one layout property an app changes at RUNTIME, and it
+    # was the only one with no verb: an app reached past facet into flex, where
+    # a setter raises no dirty bit, and then had to remember `relayout()`.
+    # `set_shown` is the pair, because hiding a panel almost always means both.
+    ("set_display", "v: flex::Display", "core::set_display(this._p, v)", None),
+    ("display", "", "return core::display_of(this._p)", "flex::Display"),
+    ("set_shown", "v: bool", "core::set_shown(this._p, v)", None),
+    ("is_hidden", "", "return core::is_hidden(this._p)", "bool"),
     ("set_input_transparent", "v: bool", "core::set_input_transparent(this._p, v)", None),
     ("input_transparent", "", "return core::input_transparent(this._p)", "bool"),
     ("set_flow_direction", "v: vocab::FlowDirection", "core::set_flow_direction(this._p, v)", None),

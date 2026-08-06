@@ -124,6 +124,10 @@ impl Box {
     fn is_enabled(this) -> bool { return core::is_enabled(this._p); }
     fn set_visible(this, v: bool) -> Box { core::set_visible(this._p, v); return this; }
     fn is_visible(this) -> bool { return core::is_visible(this._p); }
+    fn set_display(this, v: flex::Display) -> Box { core::set_display(this._p, v); return this; }
+    fn display(this) -> flex::Display { return core::display_of(this._p); }
+    fn set_shown(this, v: bool) -> Box { core::set_shown(this._p, v); return this; }
+    fn is_hidden(this) -> bool { return core::is_hidden(this._p); }
     fn set_input_transparent(this, v: bool) -> Box { core::set_input_transparent(this._p, v); return this; }
     fn input_transparent(this) -> bool { return core::input_transparent(this._p); }
     fn set_flow_direction(this, v: vocab::FlowDirection) -> Box { core::set_flow_direction(this._p, v); return this; }

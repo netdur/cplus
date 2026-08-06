@@ -435,6 +435,59 @@ fn parked_display_of(n: *Node) -> flex::Display {
     return { (*dp).parked_display };
 }
 
+// Take the node out of layout, or put it back. `set_visible` is the other half
+// and they mean different things: visible hides the view and KEEPS its space
+// (NSView.setHidden — the only thing facet could do before this), display
+// removes the node from the layout pass entirely.
+//
+// It exists because `display` is the one layout property an application
+// changes at runtime, and it was the only one with no facet verb: an app had
+// to reach past facet into flex, where a setter raises no dirty bit, and then
+// remember `relayout()` by hand. Every other runtime layout write —
+// set_width, set_padding, set_grow — asks for the pass for you.
+fn set_display(n: *Node, v: flex::Display) {
+    if n == (0 as *Node) { return; }
+    { (*n).set_display(v) };
+    // The parked value follows a deliberate write, so `switch_to` re-attaching
+    // a screen restores what the app last asked for rather than Flex.
+    match v {
+        flex::Display::None => { }
+        _ => { set_parked_display(n, v); }
+    }
+    touch(n, props::C_LAYOUT);
+    return;
+}
+
+// Is this node off screen? The OR of the two verbs that mean it: `set_visible`
+// hides a node that KEEPS its space, `Display::None` removes it from layout.
+// One rule, in the model, so two backends cannot disagree and two writers of
+// the same platform flag cannot race each other.
+fn is_hidden(n: *Node) -> bool {
+    if n == (0 as *Node) { return false; }
+    if is_visible(n) == false { return true; }
+    return match { (*n).display() } {
+        flex::Display::None => true,
+        _ => false,
+    };
+}
+
+fn display_of(n: *Node) -> flex::Display {
+    if n == (0 as *Node) { return flex::Display::Flex; }
+    return { (*n).display() };
+}
+
+// Show or hide in ONE verb, because an application that wants a panel gone
+// almost always wants both halves: the view hidden and its space released.
+// Restores whatever display the node last carried, so hiding a grid and
+// showing it again does not silently turn it into a flex box.
+fn set_shown(n: *Node, on: bool) {
+    if n == (0 as *Node) { return; }
+    set_visible(n, on);
+    if on { set_display(n, parked_display_of(n)); }
+    else { set_display(n, flex::Display::None); }
+    return;
+}
+
 // The dirty word, read and cleared by the sync walk.
 fn dirty_of(n: *Node) -> u64 {
     if n == (0 as *Node) { return 0 as u64; }
@@ -461,8 +514,19 @@ fn clear_dirty(n: *Node) {
 // recorded in gen_contract.DEFERRED_SHARED with the reason. tools/gen_contract
 // fails the run on a row that is in neither list.
 
+// ---- the band writes through `ensure_data`, never past it --------------------
+// A node built by the `@ui` DSL, or a raw `flex::Node`, carries no facet Data
+// until something gives it one. Writers used to read `node_data` and return
+// quietly on null, so `set_safe_area` on an @ui-rooted tree did nothing, said
+// nothing, and cost two debugging rounds to find. `.gesture()` already refused
+// to fail that way — "a modifier that does nothing is the exact failure this
+// package is built against" — and the band now follows it.
+//
+// Readers still take `node_data`: a read has a right answer for a node with no
+// Data (the default), and answering it should not allocate.
+
 fn set_opacity(n: *Node, v: f64) {
-    let d: *Data = node_data(n);
+    let d: *Data = ensure_data(n);
     if d == (0 as *Data) { return; }
     { (*d).common.opacity = v };
     touch(n, props::C_OPACITY);
@@ -482,7 +546,7 @@ fn opacity(n: *Node) -> f64 {
 // It rides C_BACKGROUND rather than taking a bit of its own: "what is behind
 // this node" is one question, and the backend re-reads the answer whole.
 fn set_background_image(n: *Node, v: str) {
-    let d: *Data = node_data(n);
+    let d: *Data = ensure_data(n);
     if d == (0 as *Data) { return; }
     { (*d).common.background_image = text::from_str(v) };
     touch(n, props::C_BACKGROUND);
@@ -507,7 +571,7 @@ fn background_image(n: *Node) -> str {
 // The write raises C_LAYOUT as well as its own bit: a safe-area inset is
 // geometry, so the layout pass has to run again for it to mean anything.
 fn set_safe_area(n: *Node, v: vocab::SafeArea) {
-    let d: *Data = node_data(n);
+    let d: *Data = ensure_data(n);
     if d == (0 as *Data) { return; }
     { (*d).common.safe_area = v };
     touch(n, props::C_SAFE_AREA | props::C_LAYOUT);
@@ -534,7 +598,7 @@ fn honours_safe_area(n: *Node) -> bool {
 }
 
 fn set_enabled(n: *Node, v: bool) {
-    let d: *Data = node_data(n);
+    let d: *Data = ensure_data(n);
     if d == (0 as *Data) { return; }
     { (*d).common.is_enabled = v };
     touch(n, props::C_IS_ENABLED);
@@ -548,7 +612,7 @@ fn is_enabled(n: *Node) -> bool {
 }
 
 fn set_visible(n: *Node, v: bool) {
-    let d: *Data = node_data(n);
+    let d: *Data = ensure_data(n);
     if d == (0 as *Data) { return; }
     { (*d).common.is_visible = v };
     touch(n, props::C_IS_VISIBLE);
@@ -562,7 +626,7 @@ fn is_visible(n: *Node) -> bool {
 }
 
 fn set_background_color(n: *Node, v: vocab::Color) {
-    let d: *Data = node_data(n);
+    let d: *Data = ensure_data(n);
     if d == (0 as *Data) { return; }
     { (*d).common.background_color = v };
     touch(n, props::C_BACKGROUND_COLOR);
@@ -576,7 +640,7 @@ fn background_color(n: *Node) -> vocab::Color {
 }
 
 fn set_background(n: *Node, v: vocab::Brush) {
-    let d: *Data = node_data(n);
+    let d: *Data = ensure_data(n);
     if d == (0 as *Data) { return; }
     { (*d).common.background = v };
     touch(n, props::C_BACKGROUND);
@@ -590,7 +654,7 @@ fn background(n: *Node) -> vocab::Brush {
 }
 
 fn set_shadow(n: *Node, v: vocab::Shadow) {
-    let d: *Data = node_data(n);
+    let d: *Data = ensure_data(n);
     if d == (0 as *Data) { return; }
     { (*d).common.shadow = v };
     touch(n, props::C_SHADOW);
@@ -604,7 +668,7 @@ fn shadow(n: *Node) -> vocab::Shadow {
 }
 
 fn set_clip(n: *Node, v: vocab::Shape) {
-    let d: *Data = node_data(n);
+    let d: *Data = ensure_data(n);
     if d == (0 as *Data) { return; }
     { (*d).common.clip = v };
     touch(n, props::C_CLIP);
@@ -618,7 +682,7 @@ fn clip(n: *Node) -> vocab::Shape {
 }
 
 fn set_input_transparent(n: *Node, v: bool) {
-    let d: *Data = node_data(n);
+    let d: *Data = ensure_data(n);
     if d == (0 as *Data) { return; }
     { (*d).common.input_transparent = v };
     touch(n, props::C_INPUT_TRANSPARENT);
@@ -632,7 +696,7 @@ fn input_transparent(n: *Node) -> bool {
 }
 
 fn set_flow_direction(n: *Node, v: vocab::FlowDirection) {
-    let d: *Data = node_data(n);
+    let d: *Data = ensure_data(n);
     if d == (0 as *Data) { return; }
     { (*d).common.flow_direction = v };
     touch(n, props::C_FLOW_DIRECTION);
@@ -650,7 +714,7 @@ fn flow_direction(n: *Node) -> vocab::FlowDirection {
 // nine numbers anyway, so nine bits would buy it nothing.
 
 fn set_rotation(n: *Node, v: f64) {
-    let d: *Data = node_data(n);
+    let d: *Data = ensure_data(n);
     if d == (0 as *Data) { return; }
     { (*d).common.rotation = v };
     touch(n, props::C_TRANSFORM);
@@ -664,7 +728,7 @@ fn rotation(n: *Node) -> f64 {
 }
 
 fn set_rotation_x(n: *Node, v: f64) {
-    let d: *Data = node_data(n);
+    let d: *Data = ensure_data(n);
     if d == (0 as *Data) { return; }
     { (*d).common.rotation_x = v };
     touch(n, props::C_TRANSFORM);
@@ -678,7 +742,7 @@ fn rotation_x(n: *Node) -> f64 {
 }
 
 fn set_rotation_y(n: *Node, v: f64) {
-    let d: *Data = node_data(n);
+    let d: *Data = ensure_data(n);
     if d == (0 as *Data) { return; }
     { (*d).common.rotation_y = v };
     touch(n, props::C_TRANSFORM);
@@ -692,7 +756,7 @@ fn rotation_y(n: *Node) -> f64 {
 }
 
 fn set_scale(n: *Node, v: f64) {
-    let d: *Data = node_data(n);
+    let d: *Data = ensure_data(n);
     if d == (0 as *Data) { return; }
     { (*d).common.scale = v };
     touch(n, props::C_TRANSFORM);
@@ -706,7 +770,7 @@ fn scale(n: *Node) -> f64 {
 }
 
 fn set_scale_x(n: *Node, v: f64) {
-    let d: *Data = node_data(n);
+    let d: *Data = ensure_data(n);
     if d == (0 as *Data) { return; }
     { (*d).common.scale_x = v };
     touch(n, props::C_TRANSFORM);
@@ -720,7 +784,7 @@ fn scale_x(n: *Node) -> f64 {
 }
 
 fn set_scale_y(n: *Node, v: f64) {
-    let d: *Data = node_data(n);
+    let d: *Data = ensure_data(n);
     if d == (0 as *Data) { return; }
     { (*d).common.scale_y = v };
     touch(n, props::C_TRANSFORM);
@@ -734,7 +798,7 @@ fn scale_y(n: *Node) -> f64 {
 }
 
 fn set_translation_x(n: *Node, v: f64) {
-    let d: *Data = node_data(n);
+    let d: *Data = ensure_data(n);
     if d == (0 as *Data) { return; }
     { (*d).common.translation_x = v };
     touch(n, props::C_TRANSFORM);
@@ -748,7 +812,7 @@ fn translation_x(n: *Node) -> f64 {
 }
 
 fn set_translation_y(n: *Node, v: f64) {
-    let d: *Data = node_data(n);
+    let d: *Data = ensure_data(n);
     if d == (0 as *Data) { return; }
     { (*d).common.translation_y = v };
     touch(n, props::C_TRANSFORM);
@@ -762,7 +826,7 @@ fn translation_y(n: *Node) -> f64 {
 }
 
 fn set_anchor_x(n: *Node, v: f64) {
-    let d: *Data = node_data(n);
+    let d: *Data = ensure_data(n);
     if d == (0 as *Data) { return; }
     { (*d).common.anchor_x = v };
     touch(n, props::C_TRANSFORM);
@@ -776,7 +840,7 @@ fn anchor_x(n: *Node) -> f64 {
 }
 
 fn set_anchor_y(n: *Node, v: f64) {
-    let d: *Data = node_data(n);
+    let d: *Data = ensure_data(n);
     if d == (0 as *Data) { return; }
     { (*d).common.anchor_y = v };
     touch(n, props::C_TRANSFORM);
@@ -949,7 +1013,7 @@ fn is_focused(n: *Node) -> bool {
 }
 
 fn set_focused(n: *Node, v: bool) {
-    let d: *Data = node_data(n);
+    let d: *Data = ensure_data(n);
     if d == (0 as *Data) { return; }
     { (*d).is_focused = v };
     return;
@@ -962,7 +1026,7 @@ fn is_attached(n: *Node) -> bool {
 }
 
 fn set_attached(n: *Node, v: bool) {
-    let d: *Data = node_data(n);
+    let d: *Data = ensure_data(n);
     if d == (0 as *Data) { return; }
     { (*d).is_attached = v };
     return;
@@ -975,7 +1039,7 @@ fn window_of(n: *Node) -> vocab::WindowRef {
 }
 
 fn set_window(n: *Node, w: vocab::WindowRef) {
-    let d: *Data = node_data(n);
+    let d: *Data = ensure_data(n);
     if d == (0 as *Data) { return; }
     { (*d).window = w };
     return;
@@ -990,7 +1054,7 @@ fn native(n: *Node) -> *u8 {
 }
 
 fn set_native(n: *Node, v: *u8) {
-    let d: *Data = node_data(n);
+    let d: *Data = ensure_data(n);
     if d == (0 as *Data) { return; }
     { (*d).view = v };
     return;
@@ -1025,14 +1089,14 @@ fn measure(n: *Node, width: f64, height: f64) -> vocab::Size {
 
 // Coalesce writes. The backend syncs when the depth returns to zero.
 fn begin_updates(n: *Node) {
-    let d: *Data = node_data(n);
+    let d: *Data = ensure_data(n);
     if d == (0 as *Data) { return; }
     { (*d).batch = { (*d).batch } +% (1 as i64) };
     return;
 }
 
 fn end_updates(n: *Node) {
-    let d: *Data = node_data(n);
+    let d: *Data = ensure_data(n);
     if d == (0 as *Data) { return; }
     let depth: i64 = { (*d).batch };
     if depth <= (0 as i64) { { (*d).batch = 0 as i64 }; return; }
@@ -1084,6 +1148,8 @@ impl flex::Node {
     fn set_enabled(ref this, v: bool) { set_enabled(#addr_of(this), v); return; }
     fn is_enabled(this) -> bool { return is_enabled(#addr_of(this)); }
     fn set_visible(ref this, v: bool) { set_visible(#addr_of(this), v); return; }
+    fn set_shown(ref this, v: bool) { set_shown(#addr_of(this), v); return; }
+    fn is_hidden(this) -> bool { return is_hidden(#addr_of(this)); }
     fn is_visible(this) -> bool { return is_visible(#addr_of(this)); }
     fn set_input_transparent(ref this, v: bool) { set_input_transparent(#addr_of(this), v); return; }
     fn input_transparent(this) -> bool { return input_transparent(#addr_of(this)); }

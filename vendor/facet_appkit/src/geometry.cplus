@@ -200,6 +200,11 @@ fn reposition_children(node: *core::Node, host_abs: flex::Frame) {
             option::Option[*core::Node]::Some(c) => {
                 let cf: flex::Frame = { (*c).frame() };
                 let v: *u8 = core::view_of(c);
+                // `Display::None` takes the node out of LAYOUT — flex gives it
+                // a zero frame — but AppKit does not clip a view to its bounds,
+                // so its subviews went on drawing at the frames they last had.
+                // Collapsed space, visible content. The view carries it.
+                if v != (0 as *u8) { ak::View::from_raw(v).set_hidden(core::is_hidden(c)); }
                 if v != (0 as *u8) {
                     // Host-relative, top-left: the host view is flipped.
                     set_view_frame(v, rt::Rect {
