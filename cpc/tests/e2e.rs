@@ -7849,6 +7849,61 @@ fn a_bound_method_crosses_a_generic_fn_boundary() {
 }
 
 #[test]
+fn a_bound_method_binds_on_a_non_copy_receiver() {
+    // E0374: "partial-place conflict on `self`". `this` is borrowed as the
+    // `ref` argument while `this.on_created` was read as a sibling — but a
+    // method reference is not a read of its receiver, and the ctx the sugar
+    // builds is `#addr_of(this)`, the same pointer the `ref` argument already
+    // holds. The conflict was nominal.
+    //
+    // Only visible on a NON-COPY receiver: a Copy root carries no claim, so
+    // the same code compiled until a field with a `drop` impl was added — which
+    // made it look like it depended on the drop rather than on the receiver
+    // being borrowed at all. Every facet component holds a `Text`.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("noncopy_bound.cplus");
+    std::fs::write(
+        &src,
+        "struct S { opaque p: *u8 }\n\
+         impl S { fn drop(ref this) { return; } }\n\
+         interface Job { fn run(ref this); }\n\
+         struct W { n: i32, s: S }\n\
+         impl W {\n\
+             fn done(ref this) { this.n = this.n + 1; return; }\n\
+             fn go(ref this) { run_job(this, then: this.done); return; }\n\
+         }\n\
+         impl W: Job { fn run(ref this) { this.n = this.n + 10; return; } }\n\
+         fn run_job[J: Job](ref job: J, then: fn(*u8) = 0 as fn(*u8), ctx: *u8 = 0 as *u8) {\n\
+             job.run();\n\
+             if then != (0 as fn(*u8)) { then(ctx); }\n\
+             return;\n\
+         }\n\
+         fn main() -> i32 {\n\
+             var w: W = W { n: 0, s: S { p: 0 as *u8 } };\n\
+             w.go();\n\
+             if w.n != 11 { return 1; }\n\
+             return 0;\n\
+         }",
+    )
+    .unwrap();
+    let bin = dir.join("noncopy_bound");
+    let status = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(status.success(), "a non-Copy receiver must still bind its method");
+    let run = Command::new(&bin).output().expect("run");
+    assert!(
+        run.status.success(),
+        "the receiver must arrive: {:?}",
+        run.status
+    );
+}
+
+#[test]
 fn ctx_first_handler_warns_w0825() {
     // The mirror of W0824, and the shape that kept getting through: the
     // context slot beside the handler is correct, but the fn type takes its

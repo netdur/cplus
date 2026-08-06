@@ -3343,6 +3343,33 @@ impl<'p> Analyzer<'p> {
         }
     }
 
+    /// Is `e` a METHOD reference — `recv.method` where `method` names no field
+    /// of `recv`'s struct — rather than a field read?
+    ///
+    /// This is how a bound method reference is written, and it is not a read of
+    /// the receiver at all: the pair it becomes is a synthesized bridge fn plus
+    /// `#addr_of(recv)`. Treating it as a read made
+    /// `run_job(this, then: this.on_created)` a partial-place conflict with its
+    /// own `ref` argument (E0374) — the two "conflicting" places being the same
+    /// pointer by construction. Only visible when the receiver is non-Copy,
+    /// because a Copy root carries no claim, which is why it looked like it
+    /// depended on an unrelated `drop` impl.
+    ///
+    /// Conservative: an unresolvable receiver type answers `false`, so an
+    /// unknown shape is still treated as a read.
+    fn is_method_ref(&self, e: &Expr) -> bool {
+        let ExprKind::Field { receiver, name } = &e.kind else {
+            return false;
+        };
+        let Some(recv_ty) = self.place_type_name(receiver) else {
+            return false;
+        };
+        let Some(fields) = self.sigs.struct_fields.get(&recv_ty) else {
+            return false;
+        };
+        !fields.contains_key(&name.name)
+    }
+
     /// The lookup key a type contributes to `SigTable::methods`
     /// (`"{name}.{method}"`). A bare `Path` uses its own name; a **generic
     /// instantiation** (`Vec[i32]`, `Pair[A, B]`) uses its base `name` —
@@ -7238,6 +7265,10 @@ impl Analyzer<'_> {
     /// (mut + shared read) — the latter possibly via partial-place
     /// overlap, in which case E0374 fires instead.
     fn find_overlapping_shared_read(&self, primary: &ArgClaim, other: &Expr) -> Option<RawDiag> {
+        // A method reference is not a read of its receiver.
+        if self.is_method_ref(other) {
+            return None;
+        }
         // Walk other's expression tree, collecting all place
         // expressions that overlap primary.place.
         let mut found = None;
