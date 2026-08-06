@@ -3097,12 +3097,12 @@ fn add_row(n: *core::Node, take row: core::Node) {
     return;
 }
 
-fn fill_rows(n: *core::Node, count: i64, builder: fn(*u8, usize) -> flex::Node, ctx: *u8) {
+fn fill_rows(n: *core::Node, count: i64, builder: fn(usize, *u8) -> flex::Node, ctx: *u8) {
     clear_rows(n);
-    if builder == (0 as fn(*u8, usize) -> flex::Node) { return; }
+    if builder == (0 as fn(usize, *u8) -> flex::Node) { return; }
     var i: i64 = 0 as i64;
     while i < count {
-        add_row(n, builder(ctx, i as usize));
+        add_row(n, builder(i as usize, ctx));
         i = i +% (1 as i64);
     }
     return;
@@ -3167,8 +3167,10 @@ fn materialise_collection(n: *core::Node) {
     // That is what makes grouping an addition to a description rather than a
     // rewrite of one.
     if { (*p).groupable_items_view.is_grouped } && { (*p).group_count } > (0 as i64) {
-        fill_groups(n, { (*p).group_count }, { (*p).group_size }, { (*p).group_header },
-                    { (*p).row }, { (*p).row_ctx }, { (*p).group_ctx });
+        fill_groups(n, { (*p).group_count },
+                    { (*p).group_size }, { (*p).group_ctx },
+                    { (*p).group_header }, { (*p).group_ctx },
+                    { (*p).row }, { (*p).row_ctx });
         return;
     }
     fill_rows(n, { (*p).count }, { (*p).row }, { (*p).row_ctx });
@@ -3183,7 +3185,7 @@ fn materialise_collection(n: *core::Node) {
 // selection uses, so a grouped collection binds row `i` into whichever child
 // shows row `i`.
 fn rebind_rows(n: *core::Node, p: *props::CollectionProps) -> bool {
-    let f: fn(*u8, usize, *core::Node) = { (*p).bind };
+    let f: fn(usize, *core::Node, *u8) = { (*p).bind };
     if f == props::no_bind { return false; }
     let children: usize = core::child_count_of(n);
     if children == (0 as usize) { return false; }
@@ -3194,7 +3196,7 @@ fn rebind_rows(n: *core::Node, p: *props::CollectionProps) -> bool {
             option::Option[*core::Node]::Some(c) => {
                 let data: i64 = data_index_of(n, i as i64);
                 if data >= (0 as i64) {
-                    f({ (*p).row_ctx }, data as usize, c);
+                    f(data as usize, c, { (*p).row_ctx });
                     // A bind WRITES PROPS, which marks nodes dirty and touches
                     // nothing native. `sync_from` is the walk that carries
                     // those writes across, rooted at the row — the same call
@@ -3216,11 +3218,11 @@ fn expected_children(n: *core::Node, p: *props::CollectionProps) -> usize {
     if !{ (*p).groupable_items_view.is_grouped } || { (*p).group_count } <= (0 as i64) {
         return { (*p).count } as usize;
     }
-    let size: fn(*u8, usize) -> usize = { (*p).group_size };
+    let size: fn(usize, *u8) -> usize = { (*p).group_size };
     var total: usize = { (*p).group_count } as usize;
     var g: i64 = 0 as i64;
     while g < { (*p).group_count } {
-        total = total +% size({ (*p).group_ctx }, g as usize);
+        total = total +% size(g as usize, { (*p).group_ctx });
         g = g +% (1 as i64);
     }
     return total;
@@ -3230,20 +3232,19 @@ fn expected_children(n: *core::Node, p: *props::CollectionProps) -> usize {
 // index runs THROUGH the groups: an application that groups a list it already
 // had does not renumber it.
 fn fill_groups(n: *core::Node, groups: i64,
-               size: fn(*u8, usize) -> usize,
-               header: fn(*u8, usize) -> flex::Node,
-               builder: fn(*u8, usize) -> flex::Node,
-               row_ctx: *u8, group_ctx: *u8) {
+               size: fn(usize, *u8) -> usize, size_ctx: *u8,
+               header: fn(usize, *u8) -> flex::Node, header_ctx: *u8,
+               builder: fn(usize, *u8) -> flex::Node, builder_ctx: *u8) {
     clear_rows(n);
-    if builder == (0 as fn(*u8, usize) -> flex::Node) { return; }
+    if builder == (0 as fn(usize, *u8) -> flex::Node) { return; }
     var flat: usize = 0 as usize;
     var g: i64 = 0 as i64;
     while g < groups {
-        add_row(n, header(group_ctx, g as usize));
-        let rows: usize = size(group_ctx, g as usize);
+        add_row(n, header(g as usize, header_ctx));
+        let rows: usize = size(g as usize, size_ctx);
         var k: usize = 0 as usize;
         while k < rows {
-            add_row(n, builder(row_ctx, flat));
+            add_row(n, builder(flat, builder_ctx));
             flat = flat +% (1 as usize);
             k = k +% (1 as usize);
         }
@@ -3261,14 +3262,14 @@ fn data_index_of(n: *core::Node, child: i64) -> i64 {
     if !{ (*p).groupable_items_view.is_grouped } || { (*p).group_count } <= (0 as i64) {
         return child;
     }
-    let size: fn(*u8, usize) -> usize = { (*p).group_size };
+    let size: fn(usize, *u8) -> usize = { (*p).group_size };
     var at: i64 = 0 as i64;
     var flat: i64 = 0 as i64;
     var g: i64 = 0 as i64;
     while g < { (*p).group_count } {
         if at == child { return -1 as i64; }              // the header itself
         at = at +% (1 as i64);
-        let rows: i64 = size({ (*p).group_ctx }, g as usize) as i64;
+        let rows: i64 = size(g as usize, { (*p).group_ctx }) as i64;
         var k: i64 = 0 as i64;
         while k < rows {
             if at == child { return flat; }
@@ -3374,11 +3375,11 @@ fn group_of(n: *core::Node, child: i64) -> i64 {
     if !{ (*p).groupable_items_view.is_grouped } || { (*p).group_count } <= (0 as i64) {
         return -1 as i64;
     }
-    let size: fn(*u8, usize) -> usize = { (*p).group_size };
+    let size: fn(usize, *u8) -> usize = { (*p).group_size };
     var at: i64 = 0 as i64;
     var g: i64 = 0 as i64;
     while g < { (*p).group_count } {
-        let rows: i64 = size({ (*p).group_ctx }, g as usize) as i64;
+        let rows: i64 = size(g as usize, { (*p).group_ctx }) as i64;
         if child >= at && child <= (at +% rows) { return g; }
         at = at +% rows +% (1 as i64);
         g = g +% (1 as i64);

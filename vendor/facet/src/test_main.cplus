@@ -617,8 +617,39 @@ fn popup_items_are_written_whole() {
 
 // ---- facet's own word: a count plus a row builder ---------------------------
 
-fn a_row(ctx: *u8, index: usize) -> facet::Node {
+fn a_row(index: usize, ctx: *u8) -> facet::Node {
     return label::label("row", key: "r");
+}
+
+// The row builder took its context FIRST, which is the one handler shape a
+// bound method cannot fill — the compiler puts the receiver in the slot AFTER
+// the handler. So `set_row` meant the mirror image of what it means on `tree`,
+// and a component had to write a module-scope adapter that cast ctx back by
+// hand. Same word, same order, everywhere now.
+struct LbOwner { built: i64 }
+
+impl LbOwner {
+    fn build_row(ref this, at: usize) -> facet::Node {
+        this.built = this.built + 1;
+        return label::label("row", key: "r");
+    }
+}
+
+#[test]
+fn a_row_builder_can_be_a_bound_method() {
+    var owner: LbOwner = LbOwner { built: 0 as i64 };
+    var root: facet::Node = list::list(key: "l");
+    match list::find("l", within: #addr_of(root)) {
+        option::Option[list::List]::Some(x) => {
+            let _a: list::List = x.set_count(3 as usize).set_row(owner.build_row);
+            var built: facet::Node = x.build_row(1 as usize);
+            assert built.key() == "r";
+            // the receiver reached the method through the ctx slot
+            assert owner.built == (1 as i64);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    return;
 }
 
 #[test]

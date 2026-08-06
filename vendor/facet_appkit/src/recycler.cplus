@@ -99,8 +99,8 @@ fn agent_pin_key() -> *u8 { return { 29032 as *u8 }; }
 // exactly as long as the thing that reads it.
 
 struct RowSource {
-    row: fn(*u8, usize) -> core::Node,
-    bind: fn(*u8, usize, *core::Node),
+    row: fn(usize, *u8) -> core::Node,
+    bind: fn(usize, *core::Node, *u8),
     opaque row_ctx: *u8,
     count: i64,
     // `row_height` from the contract: 0 means measure, anything else means the
@@ -136,8 +136,8 @@ struct RowSource {
     // `row` is untouched and every table index is translated on the way in.
     // `groups == 0` means ungrouped and the translation is the identity.
     groups: i64,
-    group_size: fn(*u8, usize) -> usize,
-    group_header: fn(*u8, usize) -> core::Node,
+    group_size: fn(usize, *u8) -> usize,
+    group_header: fn(usize, *u8) -> core::Node,
     opaque group_ctx: *u8,
 }
 
@@ -146,14 +146,14 @@ struct RowSource {
 // it. Non-negative is the flat data index the application counts in.
 fn resolve_row(s: *RowSource, row: i64) -> i64 {
     if { (*s).groups } <= (0 as i64) { return row; }
-    let size: fn(*u8, usize) -> usize = { (*s).group_size };
+    let size: fn(usize, *u8) -> usize = { (*s).group_size };
     var at: i64 = 0 as i64;
     var flat: i64 = 0 as i64;
     var g: i64 = 0 as i64;
     while g < { (*s).groups } {
         if at == row { return -(g +% (1 as i64)); }
         at = at +% (1 as i64);
-        let rows: i64 = size({ (*s).group_ctx }, g as usize) as i64;
+        let rows: i64 = size(g as usize, { (*s).group_ctx }) as i64;
         var k: i64 = 0 as i64;
         while k < rows {
             if at == row { return flat; }
@@ -188,11 +188,11 @@ fn is_header_row(s: *RowSource, row: i64) -> bool {
 // is the whole reason every index has to be translated.
 fn table_row_count(s: *RowSource) -> i64 {
     if { (*s).groups } <= (0 as i64) { return { (*s).count }; }
-    let size: fn(*u8, usize) -> usize = { (*s).group_size };
+    let size: fn(usize, *u8) -> usize = { (*s).group_size };
     var total: i64 = { (*s).groups };
     var g: i64 = 0 as i64;
     while g < { (*s).groups } {
-        total = total +% (size({ (*s).group_ctx }, g as usize) as i64);
+        total = total +% (size(g as usize, { (*s).group_ctx }) as i64);
         g = g +% (1 as i64);
     }
     return total;
@@ -250,11 +250,11 @@ fn is_group_row_imp(self_obj: *u8, cmd: *u8, tv: *u8, row: i64) -> i8 {
 fn build_row(s: *RowSource, i: i64) -> core::Node {
     let at: i64 = resolve_row(s, i);
     if at < (0 as i64) {
-        let h: fn(*u8, usize) -> core::Node = { (*s).group_header };
-        return h({ (*s).group_ctx }, (-at -% (1 as i64)) as usize);
+        let h: fn(usize, *u8) -> core::Node = { (*s).group_header };
+        return h((-at -% (1 as i64)) as usize, { (*s).group_ctx });
     }
-    let f: fn(*u8, usize) -> core::Node = { (*s).row };
-    return f({ (*s).row_ctx }, at as usize);
+    let f: fn(usize, *u8) -> core::Node = { (*s).row };
+    return f(at as usize, { (*s).row_ctx });
 }
 
 fn height_imp(self_obj: *u8, cmd: *u8, tv: *u8, row: i64) -> f64 {
@@ -402,9 +402,9 @@ fn has_bind(s: *RowSource) -> bool {
 }
 
 fn bind_into(s: *RowSource, row: i64, into: *core::Node) {
-    let f: fn(*u8, usize, *core::Node) = { (*s).bind };
+    let f: fn(usize, *core::Node, *u8) = { (*s).bind };
     if f == props::no_bind { return; }
-    f({ (*s).row_ctx }, row as usize, into);
+    f(row as usize, into, { (*s).row_ctx });
     return;
 }
 

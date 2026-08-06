@@ -1954,9 +1954,9 @@ ROW_SOURCE = ("list", "collection")
 
 ROW_SOURCE_FIELDS = [
     ("count", "i64", "0 as i64", "facet — how many rows the control shows"),
-    ("row", "fn(*u8, usize) -> flex::Node", "no_row", "facet — builds row `i`"),
+    ("row", "fn(usize, *u8) -> flex::Node", "no_row", "facet — builds row `i`"),
     ("opaque row_ctx", "*u8", "0 as *u8", None),
-    ("bind", "fn(*u8, usize, *flex::Node)", "no_bind",
+    ("bind", "fn(usize, *flex::Node, *u8)", "no_bind",
      "facet — writes row `i` INTO an existing row, for recycling"),
     # `IsGrouped` had a carrier for the SWITCH and nothing for what it switches
     # on: MAUI's grouped ItemsSource is a list of lists, which Stage 1 dropped
@@ -1965,9 +1965,9 @@ ROW_SOURCE_FIELDS = [
     # — and it deliberately does NOT change `row`: a group is a RUN of the
     # same flat sequence, so `row(i)` keeps meaning row `i` of the whole.
     ("group_count", "i64", "0 as i64", "facet — how many groups, when is_grouped"),
-    ("group_size", "fn(*u8, usize) -> usize", "no_group_size",
+    ("group_size", "fn(usize, *u8) -> usize", "no_group_size",
      "facet — how many rows group `g` holds"),
-    ("group_header", "fn(*u8, usize) -> flex::Node", "no_group_header",
+    ("group_header", "fn(usize, *u8) -> flex::Node", "no_group_header",
      "facet — builds the header row for group `g`"),
     ("opaque group_ctx", "*u8", "0 as *u8", None),
     # `SelectionMode` had the same shape of hole: a switch with nothing to
@@ -2072,15 +2072,15 @@ def emit_props(rows_by_control, by_type):
            'import "./vocabulary" as vocab;\n',
            "\nfn no_handler(sender: *u8, ctx: *u8) { return; }\n",
            "\n// The row builder a list carries until the application sets one.\n"
-           "fn no_row(ctx: *u8, index: usize) -> flex::Node { return flex::Node::new(); }\n",
+           "fn no_row(index: usize, ctx: *u8) -> flex::Node { return flex::Node::new(); }\n",
            "// The absent bind. Compared against by name, NOT against null: the\n"
            "// default has to BE a function, and a null check would never be false.\n"
-           "fn no_bind(ctx: *u8, index: usize, row: *flex::Node) { return; }\n",
+           "fn no_bind(index: usize, row: *flex::Node, ctx: *u8) { return; }\n",
            "// The two halves of a group, absent until an application names them.\n"
            "// A group with no size holds no rows, so an ungrouped sequence and a\n"
            "// grouped one that was never described render the same.\n"
-           "fn no_group_size(ctx: *u8, group: usize) -> usize { return 0 as usize; }\n"
-           "fn no_group_header(ctx: *u8, group: usize) -> flex::Node "
+           "fn no_group_size(group: usize, ctx: *u8) -> usize { return 0 as usize; }\n"
+           "fn no_group_header(group: usize, ctx: *u8) -> flex::Node "
            "{ return flex::Node::new(); }\n",
            COMMON_SRC]
     out.append(emit_base_props(by_type))
@@ -2527,7 +2527,7 @@ def emit_control(maui, merged):
         o.append(f"        let p: *props::{props} = this._props();\n")
         o.append(f"        if p == (0 as *props::{props}) {{ return 0 as usize; }}\n")
         o.append("        return { (*p).count } as usize;\n    }\n")
-        o.append(f"\n    fn set_row(this, f: fn(*u8, usize) -> core::Node, ctx: *u8 = 0 as *u8) -> {cur} {{\n")
+        o.append(f"\n    fn set_row(this, f: fn(usize, *u8) -> core::Node, ctx: *u8 = 0 as *u8) -> {cur} {{\n")
         o.append(f"        let p: *props::{props} = this._props();\n")
         o.append(f"        if p == (0 as *props::{props}) {{ return this; }}\n")
         o.append("        { (*p).row = f };\n")
@@ -2555,7 +2555,7 @@ def emit_control(maui, merged):
         o.append("    // rebuilds each row, which is what every backend did before this\n")
         o.append("    // existed. Setting it is a PROMISE that every row has the same\n")
         o.append("    // shape — which recycling assumes anyway, said out loud.\n")
-        o.append(f"    fn set_row_bind(this, f: fn(*u8, usize, *core::Node), ctx: *u8 = 0 as *u8) -> {cur} {{\n")
+        o.append(f"    fn set_row_bind(this, f: fn(usize, *core::Node, *u8), ctx: *u8 = 0 as *u8) -> {cur} {{\n")
         o.append(f"        let p: *props::{props} = this._props();\n")
         o.append(f"        if p == (0 as *props::{props}) {{ return this; }}\n")
         o.append("        { (*p).bind = f };\n")
@@ -2566,9 +2566,9 @@ def emit_control(maui, merged):
         o.append("    fn bind_row(this, at: usize, row: *core::Node) {\n")
         o.append(f"        let p: *props::{props} = this._props();\n")
         o.append(f"        if p == (0 as *props::{props}) {{ return; }}\n")
-        o.append("        let f: fn(*u8, usize, *core::Node) = { (*p).bind };\n")
+        o.append("        let f: fn(usize, *core::Node, *u8) = { (*p).bind };\n")
         o.append("        if f == props::no_bind { return; }\n")
-        o.append("        f({ (*p).row_ctx }, at, row);\n        return;\n    }\n")
+        o.append("        f(at, row, { (*p).row_ctx });\n        return;\n    }\n")
         o.append("\n    // ---- groups: a RUN of the same flat sequence ------------------\n")
         o.append("    // `is_grouped` is the switch; these are what it switches on. MAUI\n")
         o.append("    // binds a list of lists and Stage 1 dropped it as MODEL, so the\n")
@@ -2592,8 +2592,8 @@ def emit_control(maui, merged):
         o.append("\n    // Both halves in one call: a group with a header and no size holds\n")
         o.append("    // no rows, and one with a size and no header is not visibly a group.\n")
         o.append("    // Naming half of it is a description that cannot render.\n")
-        o.append(f"    fn set_group(this, size: fn(*u8, usize) -> usize,\n")
-        o.append(f"                 header: fn(*u8, usize) -> core::Node,\n")
+        o.append(f"    fn set_group(this, size: fn(usize, *u8) -> usize,\n")
+        o.append(f"                 header: fn(usize, *u8) -> core::Node,\n")
         o.append(f"                 ctx: *u8 = 0 as *u8) -> {cur} {{\n")
         o.append(f"        let p: *props::{props} = this._props();\n")
         o.append(f"        if p == (0 as *props::{props}) {{ return this; }}\n")
@@ -2606,14 +2606,14 @@ def emit_control(maui, merged):
         o.append("    fn group_size(this, at: usize) -> usize {\n")
         o.append(f"        let p: *props::{props} = this._props();\n")
         o.append(f"        if p == (0 as *props::{props}) {{ return 0 as usize; }}\n")
-        o.append("        let f: fn(*u8, usize) -> usize = { (*p).group_size };\n")
-        o.append("        return f({ (*p).group_ctx }, at);\n    }\n")
+        o.append("        let f: fn(usize, *u8) -> usize = { (*p).group_size };\n")
+        o.append("        return f(at, { (*p).group_ctx });\n    }\n")
         o.append("\n    // The header row for group `at`. Empty until set_group names one.\n")
         o.append("    fn build_group_header(this, at: usize) -> core::Node {\n")
         o.append(f"        let p: *props::{props} = this._props();\n")
         o.append(f"        if p == (0 as *props::{props}) {{ return flex::Node::new(); }}\n")
-        o.append("        let f: fn(*u8, usize) -> core::Node = { (*p).group_header };\n")
-        o.append("        return f({ (*p).group_ctx }, at);\n    }\n")
+        o.append("        let f: fn(usize, *u8) -> core::Node = { (*p).group_header };\n")
+        o.append("        return f(at, { (*p).group_ctx });\n    }\n")
         o.append("\n    // ---- the selection -------------------------------------------\n")
         o.append("    // `selection_mode` says whether a row CAN be picked; this says\n")
         o.append("    // which one was. MAUI carries SelectedItem and Stage 1 dropped it\n")
@@ -2651,8 +2651,8 @@ def emit_control(maui, merged):
         o.append("    fn build_row(this, at: usize) -> core::Node {\n")
         o.append(f"        let p: *props::{props} = this._props();\n")
         o.append(f"        if p == (0 as *props::{props}) {{ return flex::Node::new(); }}\n")
-        o.append("        let f: fn(*u8, usize) -> core::Node = { (*p).row };\n")
-        o.append("        return f({ (*p).row_ctx }, at);\n    }\n")
+        o.append("        let f: fn(usize, *u8) -> core::Node = { (*p).row };\n")
+        o.append("        return f(at, { (*p).row_ctx });\n    }\n")
 
     o.append("\n    // The flex node this cursor points at. The DOM division, and the\n")
     o.append("    // reason facet declares no layout verb of its own:\n")
@@ -2874,7 +2874,7 @@ def emit_manifest(rows_by_control):
             total += 2
         if mod in ROW_SOURCE:
             o.append("| `set_count` / `count()` | usize | **facet's own** |\n")
-            o.append("| `set_row(_:ctx:)` / `build_row(at:)` | fn(*u8, usize) -> Node "
+            o.append("| `set_row(_:ctx:)` / `build_row(at:)` | fn(usize, *u8) -> Node "
                      "| **facet's own** |\n")
             o.append("| `set_group_count` / `group_count()` | usize | **facet's own** |\n")
             o.append("| `set_group(size:header:ctx:)` / `group_size(at:)` / "

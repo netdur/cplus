@@ -302,7 +302,7 @@ impl Collection {
         return { (*p).count } as usize;
     }
 
-    fn set_row(this, f: fn(*u8, usize) -> core::Node, ctx: *u8 = 0 as *u8) -> Collection {
+    fn set_row(this, f: fn(usize, *u8) -> core::Node, ctx: *u8 = 0 as *u8) -> Collection {
         let p: *props::CollectionProps = this._props();
         if p == (0 as *props::CollectionProps) { return this; }
         { (*p).row = f };
@@ -332,7 +332,7 @@ impl Collection {
     // rebuilds each row, which is what every backend did before this
     // existed. Setting it is a PROMISE that every row has the same
     // shape — which recycling assumes anyway, said out loud.
-    fn set_row_bind(this, f: fn(*u8, usize, *core::Node), ctx: *u8 = 0 as *u8) -> Collection {
+    fn set_row_bind(this, f: fn(usize, *core::Node, *u8), ctx: *u8 = 0 as *u8) -> Collection {
         let p: *props::CollectionProps = this._props();
         if p == (0 as *props::CollectionProps) { return this; }
         { (*p).bind = f };
@@ -345,9 +345,9 @@ impl Collection {
     fn bind_row(this, at: usize, row: *core::Node) {
         let p: *props::CollectionProps = this._props();
         if p == (0 as *props::CollectionProps) { return; }
-        let f: fn(*u8, usize, *core::Node) = { (*p).bind };
+        let f: fn(usize, *core::Node, *u8) = { (*p).bind };
         if f == props::no_bind { return; }
-        f({ (*p).row_ctx }, at, row);
+        f(at, row, { (*p).row_ctx });
         return;
     }
 
@@ -378,8 +378,8 @@ impl Collection {
     // Both halves in one call: a group with a header and no size holds
     // no rows, and one with a size and no header is not visibly a group.
     // Naming half of it is a description that cannot render.
-    fn set_group(this, size: fn(*u8, usize) -> usize,
-                 header: fn(*u8, usize) -> core::Node,
+    fn set_group(this, size: fn(usize, *u8) -> usize,
+                 header: fn(usize, *u8) -> core::Node,
                  ctx: *u8 = 0 as *u8) -> Collection {
         let p: *props::CollectionProps = this._props();
         if p == (0 as *props::CollectionProps) { return this; }
@@ -394,16 +394,16 @@ impl Collection {
     fn group_size(this, at: usize) -> usize {
         let p: *props::CollectionProps = this._props();
         if p == (0 as *props::CollectionProps) { return 0 as usize; }
-        let f: fn(*u8, usize) -> usize = { (*p).group_size };
-        return f({ (*p).group_ctx }, at);
+        let f: fn(usize, *u8) -> usize = { (*p).group_size };
+        return f(at, { (*p).group_ctx });
     }
 
     // The header row for group `at`. Empty until set_group names one.
     fn build_group_header(this, at: usize) -> core::Node {
         let p: *props::CollectionProps = this._props();
         if p == (0 as *props::CollectionProps) { return flex::Node::new(); }
-        let f: fn(*u8, usize) -> core::Node = { (*p).group_header };
-        return f({ (*p).group_ctx }, at);
+        let f: fn(usize, *u8) -> core::Node = { (*p).group_header };
+        return f(at, { (*p).group_ctx });
     }
 
     // ---- the selection -------------------------------------------
@@ -451,8 +451,8 @@ impl Collection {
     fn build_row(this, at: usize) -> core::Node {
         let p: *props::CollectionProps = this._props();
         if p == (0 as *props::CollectionProps) { return flex::Node::new(); }
-        let f: fn(*u8, usize) -> core::Node = { (*p).row };
-        return f({ (*p).row_ctx }, at);
+        let f: fn(usize, *u8) -> core::Node = { (*p).row };
+        return f(at, { (*p).row_ctx });
     }
 
     // The flex node this cursor points at. The DOM division, and the

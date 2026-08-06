@@ -12,15 +12,15 @@ import "./vocabulary" as vocab;
 fn no_handler(sender: *u8, ctx: *u8) { return; }
 
 // The row builder a list carries until the application sets one.
-fn no_row(ctx: *u8, index: usize) -> flex::Node { return flex::Node::new(); }
+fn no_row(index: usize, ctx: *u8) -> flex::Node { return flex::Node::new(); }
 // The absent bind. Compared against by name, NOT against null: the
 // default has to BE a function, and a null check would never be false.
-fn no_bind(ctx: *u8, index: usize, row: *flex::Node) { return; }
+fn no_bind(index: usize, row: *flex::Node, ctx: *u8) { return; }
 // The two halves of a group, absent until an application names them.
 // A group with no size holds no rows, so an ungrouped sequence and a
 // grouped one that was never described render the same.
-fn no_group_size(ctx: *u8, group: usize) -> usize { return 0 as usize; }
-fn no_group_header(ctx: *u8, group: usize) -> flex::Node { return flex::Node::new(); }
+fn no_group_size(group: usize, ctx: *u8) -> usize { return 0 as usize; }
+fn no_group_header(group: usize, ctx: *u8) -> flex::Node { return flex::Node::new(); }
 
 // ---- the shared band --------------------------------------------------------
 // The write rows every element carries (MAUI VisualElement), minus the ones
@@ -553,12 +553,12 @@ struct CollectionProps {
     groupable_items_view: GroupableItemsViewProps,    // embedded, not restated
     reorderable_items_view: ReorderableItemsViewProps,    // embedded, not restated
     count: i64,    // facet — how many rows the control shows
-    row: fn(*u8, usize) -> flex::Node,    // facet — builds row `i`
+    row: fn(usize, *u8) -> flex::Node,    // facet — builds row `i`
     opaque row_ctx: *u8,
-    bind: fn(*u8, usize, *flex::Node),    // facet — writes row `i` INTO an existing row, for recycling
+    bind: fn(usize, *flex::Node, *u8),    // facet — writes row `i` INTO an existing row, for recycling
     group_count: i64,    // facet — how many groups, when is_grouped
-    group_size: fn(*u8, usize) -> usize,    // facet — how many rows group `g` holds
-    group_header: fn(*u8, usize) -> flex::Node,    // facet — builds the header row for group `g`
+    group_size: fn(usize, *u8) -> usize,    // facet — how many rows group `g` holds
+    group_header: fn(usize, *u8) -> flex::Node,    // facet — builds the header row for group `g`
     opaque group_ctx: *u8,
     selected_index: i64,    // facet — which row is selected, or -1 for none
     reorder_from: i64,    // facet — the row a completed reorder moved, or -1
@@ -1009,12 +1009,12 @@ struct ListProps {
     opaque observe_scrolled_ctx: *u8,
     scroll_to_index: i64,    // ListView.ScrollTo, the argument of scroll_to()
     count: i64,    // facet — how many rows the control shows
-    row: fn(*u8, usize) -> flex::Node,    // facet — builds row `i`
+    row: fn(usize, *u8) -> flex::Node,    // facet — builds row `i`
     opaque row_ctx: *u8,
-    bind: fn(*u8, usize, *flex::Node),    // facet — writes row `i` INTO an existing row, for recycling
+    bind: fn(usize, *flex::Node, *u8),    // facet — writes row `i` INTO an existing row, for recycling
     group_count: i64,    // facet — how many groups, when is_grouped
-    group_size: fn(*u8, usize) -> usize,    // facet — how many rows group `g` holds
-    group_header: fn(*u8, usize) -> flex::Node,    // facet — builds the header row for group `g`
+    group_size: fn(usize, *u8) -> usize,    // facet — how many rows group `g` holds
+    group_header: fn(usize, *u8) -> flex::Node,    // facet — builds the header row for group `g`
     opaque group_ctx: *u8,
     selected_index: i64,    // facet — which row is selected, or -1 for none
     reorder_from: i64,    // facet — the row a completed reorder moved, or -1

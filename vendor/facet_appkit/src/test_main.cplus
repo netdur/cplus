@@ -970,7 +970,7 @@ fn a_swipeable_shows_its_content_and_reveals_by_menu() {
 
 static ROWS_BUILT: i32 = 0;
 
-fn t_row(ctx: *u8, i: usize) -> flex::Node {
+fn t_row(i: usize, ctx: *u8) -> flex::Node {
     ROWS_BUILT = ROWS_BUILT + 1;
     return label::label("row", key: "r");
 }
@@ -2301,7 +2301,7 @@ fn the_sync_observer_is_installed_at_all() {
 
 static RL_BUILDS: i64 = 0 as i64;
 
-fn rl_row(ctx: *u8, i: usize) -> core::Node {
+fn rl_row(i: usize, ctx: *u8) -> core::Node {
     RL_BUILDS = RL_BUILDS + (1 as i64);
     var b: core::Builder = core::Builder::new();
     b.add(label::label("row", key: ""));
@@ -2404,14 +2404,14 @@ fn a_row_is_realised_into_its_cell_and_torn_down_when_the_cell_is_reused() {
 static RB_BUILDS: i64 = 0 as i64;
 static RB_BINDS: i64 = 0 as i64;
 
-fn rb_row(ctx: *u8, i: usize) -> core::Node {
+fn rb_row(i: usize, ctx: *u8) -> core::Node {
     RB_BUILDS = RB_BUILDS + (1 as i64);
     var b: core::Builder = core::Builder::new();
     b.add(label::label("", key: "title"));
     return core::column(b, key: "");
 }
 
-fn rb_bind(ctx: *u8, i: usize, row: *core::Node) {
+fn rb_bind(i: usize, row: *core::Node, ctx: *u8) {
     RB_BINDS = RB_BINDS + (1 as i64);
     match label::find("title", within: row) {
         option::Option[label::Label]::Some(l) => {
@@ -5117,7 +5117,7 @@ fn a_form_table_is_inset_and_a_data_table_is_flush() {
 }
 
 static ANCHOR_ROWS: i64 = 3 as i64;
-fn anchor_row(ctx: *u8, i: usize) -> flex::Node {
+fn anchor_row(i: usize, ctx: *u8) -> flex::Node {
     var b: core::Node = box_view::box(color: vocab::Color::rgba(0.3f64, 0.3f64, 0.3f64));
     b.set_height(flex::StyleLength::points(50.0f64));
     b.set_width(flex::StyleLength::points(100.0f64));
@@ -5359,17 +5359,17 @@ fn a_destructive_toolbar_item_carries_a_red_button() {
 // for what it switches on: MAUI binds a list of lists and a SelectedItem, and
 // Stage 1 dropped both as MODEL without declaring the imperative replacement.
 
-fn g_row(ctx: *u8, i: usize) -> flex::Node {
+fn g_row(i: usize, ctx: *u8) -> flex::Node {
     var b: core::Node = box_view::box(color: vocab::Color::rgba(0.3f64, 0.3f64, 0.3f64));
     b.set_height(flex::StyleLength::points(20.0f64));
     return b;
 }
-fn g_header(ctx: *u8, g: usize) -> flex::Node {
+fn g_header(g: usize, ctx: *u8) -> flex::Node {
     var b: core::Node = box_view::box(color: vocab::Color::rgba(0.9f64, 0.9f64, 0.9f64));
     b.set_height(flex::StyleLength::points(10.0f64));
     return b;
 }
-fn g_size(ctx: *u8, g: usize) -> usize {
+fn g_size(g: usize, ctx: *u8) -> usize {
     if g == (0 as usize) { return 2 as usize; }
     return 3 as usize;
 }
@@ -5505,7 +5505,7 @@ fn a_collection_with_no_selection_mode_takes_no_clicks() {
     return;
 }
 
-fn ragged_row(ctx: *u8, i: usize) -> flex::Node {
+fn ragged_row(i: usize, ctx: *u8) -> flex::Node {
     var b: core::Node = box_view::box(color: vocab::Color::rgba(0.2f64, 0.2f64, 0.2f64));
     if i == (0 as usize) { b.set_height(flex::StyleLength::points(40.0f64)); }
     else { b.set_height(flex::StyleLength::points(90.0f64)); }
@@ -6302,7 +6302,7 @@ static BUILT: i64 = 0 as i64;
 static BOUND: i64 = 0 as i64;
 static LABELS: i64 = 0 as i64;
 
-fn b_row(ctx: *u8, i: usize) -> flex::Node {
+fn b_row(i: usize, ctx: *u8) -> flex::Node {
     BUILT = BUILT + (1 as i64);
     var col: core::Node = core::column(core::Builder::new(), key: "row");
     col.set_height(flex::StyleLength::points(20.0f64));
@@ -6310,7 +6310,7 @@ fn b_row(ctx: *u8, i: usize) -> flex::Node {
     return col;
 }
 
-fn b_bind(ctx: *u8, i: usize, row: *core::Node) {
+fn b_bind(i: usize, row: *core::Node, ctx: *u8) {
     BOUND = BOUND + (1 as i64);
     match label::find("title", within: row) {
         option::Option[label::Label]::Some(l) => { let _x: label::Label = l.set_text("new"); }
