@@ -618,7 +618,7 @@ impl Widget {
     // A fixed flex leaf. Size it with width/height/grow like any @ui widget.
     fn node(this) -> flex::Node {
         var n: flex::Node = flex::Node::new();
-        n.set_payload(rt::retain(this._scroll.raw()), release_view);
+        n.attach(rt::retain(this._scroll.raw()), release_view);
         return n;
     }
 
