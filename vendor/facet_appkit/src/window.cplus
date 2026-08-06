@@ -330,7 +330,88 @@ fn open_window(root: *core::Node, take chrome: Chrome,
     // windowDidResize does not fire on first display, so lay out once here or
     // the content stays frozen at its mount-time size.
     scheduler::layout_window(root);
+    // After layout, so a control that sizes itself has done it before it is
+    // asked whether it takes focus.
+    wire_key_loop(win.raw(), root);
     return win.raw();
+}
+
+// ---- the key-view loop -------------------------------------------------------
+// Tab order, stated rather than guessed.
+//
+// Containers are created FLIPPED (`views::new_flipped_view`), which is what
+// makes layout read top-down like every other platform. AppKit's automatic key
+// loop sorts geometrically and assumes the standard bottom-left origin, so in a
+// flipped container it walks the vertical axis backwards — Tab moved UP the
+// form. Nothing here built a loop, so that guess was the only thing deciding.
+//
+// The ordering information was already sitting in the tree: the mount walk
+// inserts subviews in DOCUMENT order, so a depth-first walk of the nodes is the
+// order the author wrote. Chain it and the guess never runs.
+//
+// A view is in the loop if it says it is (`acceptsFirstResponder`) — the same
+// question AppKit asks, so a control that refuses focus (an NSPopUpButton with
+// Full Keyboard Access off) stays out of the chain rather than trapping Tab on
+// something that cannot take it.
+fn collects_focus(v: *u8) -> bool {
+    if v == (0 as *u8) { return false; }
+    if { rt::msg_i8(v, rt::sel(#str_ptr("isHidden\0"))) } != (0 as i8) { return false; }
+    return { rt::msg_i8(v, rt::sel(#str_ptr("acceptsFirstResponder\0"))) } != (0 as i8);
+}
+
+fn gather_focusables(n: *core::Node, ref out: vec::Vec[*u8]) {
+    if n == (0 as *core::Node) { return; }
+    if core::is_hidden(n) { return; }        // a hidden subtree is not tabbable
+    let v: *u8 = core::view_of(n);
+    if v != (0 as *u8) && collects_focus(v) {
+        let _s: status::Status = out.append(v);
+    }
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => { gather_focusables(c, out); }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// Chain document order into `nextKeyView`, close the ring, and name the first
+// as the window's initial responder. Idempotent: re-running after a structural
+// change re-states the whole loop rather than patching it.
+fn wire_key_loop(win: *u8, root: *core::Node) {
+    if win == (0 as *u8) || root == (0 as *core::Node) { return; }
+    var focusables: vec::Vec[*u8] = vec::new::[*u8]();
+    gather_focusables(root, focusables);
+    let n: usize = focusables.count();
+    if n == (0 as usize) { return; }
+    var i: usize = 0 as usize;
+    while i < n {
+        // The LAST points back at the first: a key loop is a ring, and an open
+        // chain drops focus off the end of the form instead of cycling.
+        let next_at: usize = if i +% (1 as usize) == n { 0 as usize } else { i +% (1 as usize) };
+        match focusables.at(i) {
+            option::Option[*u8]::Some(cur) => {
+                match focusables.at(next_at) {
+                    option::Option[*u8]::Some(nx) => {
+                        { rt::msg_void_id(cur, rt::sel(#str_ptr("setNextKeyView:\0")), nx) };
+                    }
+                    option::Option[*u8]::None => { }
+                }
+            }
+            option::Option[*u8]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    match focusables.at(0 as usize) {
+        option::Option[*u8]::Some(first) => {
+            { rt::msg_void_id(win, rt::sel(#str_ptr("setInitialFirstResponder:\0")), first) };
+        }
+        option::Option[*u8]::None => { }
+    }
+    return;
 }
 
 // Put the tree's TOPMOST BACKED nodes into the window's content view.

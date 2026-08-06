@@ -7776,6 +7776,48 @@ fn a_real_control_keeps_the_platforms_own_disabled_look() {
     return;
 }
 
+fn native_of(root: *core::Node, key: str) -> *u8 {
+    return match core::find_in(root, key) {
+        option::Option[*core::Node]::Some(p) => core::native(p),
+        option::Option[*core::Node]::None => 0 as *u8,
+    };
+}
+
+#[test]
+fn tab_order_follows_the_document_not_the_geometry() {
+    // Containers are FLIPPED so layout reads top-down. AppKit's automatic key
+    // loop sorts geometrically and assumes a bottom-left origin, so in a
+    // flipped container it walked the form BACKWARDS — and nothing here built
+    // a loop, so that guess was the only thing deciding tab order.
+    backend::install();
+    app::reset_default_for_tests();
+    var b: core::Builder = core::Builder::new();
+    b.add(text_field::text_field("", key: "one"));
+    b.add(text_field::text_field("", key: "two"));
+    b.add(text_field::text_field("", key: "three"));
+    var root: core::Node = core::column(b, key: "form");
+    let rp: *core::Node = #addr_of(root);
+    let win: *u8 = window::open_window(rp, screen::Chrome::new(
+        title: "tab", width: 300.0f64, height: 200.0f64));
+    assert win != (0 as *u8);
+
+    let v1: *u8 = native_of(rp, "one");
+    let v2: *u8 = native_of(rp, "two");
+    let v3: *u8 = native_of(rp, "three");
+    assert v1 != (0 as *u8) && v2 != (0 as *u8) && v3 != (0 as *u8);
+
+    // Document order, not geometric order.
+    assert { rt::msg_id(v1, rt::sel(#str_ptr("nextKeyView\0"))) } == v2;
+    assert { rt::msg_id(v2, rt::sel(#str_ptr("nextKeyView\0"))) } == v3;
+    // A ring: the last returns to the first rather than dropping focus.
+    assert { rt::msg_id(v3, rt::sel(#str_ptr("nextKeyView\0"))) } == v1;
+    // ...and the window opens with the first field ready to type in.
+    assert { rt::msg_id(win, rt::sel(#str_ptr("initialFirstResponder\0"))) } == v1;
+
+    window::close_window(win);
+    return;
+}
+
 #[test]
 fn flow_direction_mirrors_the_layout() {
     // RTL was fully built in flex — it resolves a direction per node and
