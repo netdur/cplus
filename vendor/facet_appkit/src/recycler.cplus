@@ -1016,7 +1016,7 @@ fn tree_height_imp(self_obj: *u8, cmd: *u8, ov: *u8, item: *u8) -> f64 {
 fn tree_row_node(n: *tree::TreeNode, p: *tree::TreeProps) -> core::Node {
     let f: fn(*tree::TreeNode, *u8) -> flex::Node = { (*p).row };
     // Against `no_row`, not against null — see controls::build_tree_row.
-    if f != tree::no_row { return f(n, { (*p).ctx }); }
+    if f != tree::no_row { return f(n, { (*p).row_ctx }); }
     return controls::plain_tree_row(n);
 }
 
@@ -1086,7 +1086,7 @@ fn tree_has_bind(p: *tree::TreeProps) -> bool {
 fn tree_bind_into(p: *tree::TreeProps, n: *tree::TreeNode, into: *core::Node) {
     let f: fn(*tree::TreeNode, *u8, *core::Node) = { (*p).bind };
     if f == tree::no_bind { return; }
-    f(n, { (*p).ctx }, into);
+    f(n, { (*p).bind_ctx }, into);
     return;
 }
 
@@ -1213,7 +1213,7 @@ fn tree_selection_changed_imp(self_obj: *u8, cmd: *u8, note: *u8) {
     let item: *u8 = { rt::msg_id_i64(ov, rt::sel(#str_ptr("itemAtRow:\0")), row) };
     let tn: *tree::TreeNode = unbox_item(item);
     if tn == (0 as *tree::TreeNode) { return; }
-    h(tn, { (*p).ctx });
+    h(tn, { (*p).on_select_ctx });
     return;
 }
 

@@ -2268,7 +2268,8 @@ fn apply_date_picker(v: *u8, n: *core::Node, dirty: u64) {
         let c: fn(*u8, *u8) = date_closed;
         compose::apply_picker_popover(v, { (*p).is_open }, date_elements({ (*p).format.view() }),
                                       ns_date({ (*p).minimum_date }), ns_date({ (*p).maximum_date }),
-                                      #addr_of((*p).is_open), n as *u8, o, c);
+                                      #addr_of((*p).is_open), n as *u8,
+                                      on_opened: o, on_closed: c);
     }
     // `CharacterSpacing`. The picker's VALUE is an NSDate and has no attributed
     // form — but the drawing goes through a cell, and a cell puts its content in
@@ -2359,7 +2360,8 @@ fn apply_time_picker(v: *u8, n: *core::Node, dirty: u64) {
         let o: fn(*u8, *u8) = time_opened;
         let c: fn(*u8, *u8) = time_closed;
         compose::apply_picker_popover(v, { (*p).is_open }, time_elements({ (*p).format.view() }),
-                                      0 as *u8, 0 as *u8, #addr_of((*p).is_open), n as *u8, o, c);
+                                      0 as *u8, 0 as *u8, #addr_of((*p).is_open), n as *u8,
+                                      on_opened: o, on_closed: c);
     }
     if (dirty & (time_picker::P_CHARACTER_SPACING | time_picker::P_TIME
                  | time_picker::P_FORMAT)) != (0 as u64) {
@@ -3803,7 +3805,7 @@ fn build_tree_row(node: *tree::TreeNode, p: *tree::TreeProps) -> core::Node {
     // function that answers an empty node, so a null check is never false and
     // the fallback below never ran — a tree with no row builder rendered a
     // column of empty rows and the line that says otherwise was decoration.
-    if f != tree::no_row { return f(node, { (*p).ctx }); }
+    if f != tree::no_row { return f(node, { (*p).row_ctx }); }
     return plain_tree_row(node);
 }
 

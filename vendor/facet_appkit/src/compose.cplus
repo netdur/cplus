@@ -874,6 +874,17 @@ fn popover_node_key() -> *u8 { return { 29092 as *u8 }; }
 fn popover_opened_key() -> *u8 { return { 29093 as *u8 }; }
 fn popover_closed_key() -> *u8 { return { 29094 as *u8 }; }
 fn popover_owner_key() -> *u8 { return { 29095 as *u8 }; }
+fn popover_opened_ctx_key() -> *u8 { return { 29096 as *u8 }; }
+fn popover_closed_ctx_key() -> *u8 { return { 29097 as *u8 }; }
+
+// A handler's own context, or the owner node when it brought none. The owner
+// IS the natural context here — before this, `fire_popover` passed a literal
+// null and each handler recovered the node through `popover_owner_of(sender)`
+// by hand.
+fn _ctx_or(own: *u8, shared: *u8) -> *u8 {
+    if own != (0 as *u8) { return own; }
+    return shared;
+}
 
 // The NODE the popover belongs to, read back by the two edge handlers — which
 // receive the DELEGATE as their sender, so it is the one object both sides
@@ -910,7 +921,7 @@ fn popover_changed(sender: *u8, ctx: *u8) {
 }
 
 fn popover_shown_imp(self_obj: *u8, cmd: *u8, note: *u8) {
-    fire_popover(self_obj, popover_opened_key());
+    fire_popover(self_obj, popover_opened_key(), popover_opened_ctx_key());
     return;
 }
 
@@ -919,14 +930,14 @@ fn popover_closed_imp(self_obj: *u8, cmd: *u8, note: *u8) {
     // claiming otherwise — the same write-back rule every other read follows.
     let flag: *u8 = { synth::get_associated(self_obj, popover_node_key()) };
     if flag != (0 as *u8) { { (*(flag as *bool)) = false }; }
-    fire_popover(self_obj, popover_closed_key());
+    fire_popover(self_obj, popover_closed_key(), popover_closed_ctx_key());
     return;
 }
 
-fn fire_popover(delegate: *u8, key: *u8) {
+fn fire_popover(delegate: *u8, key: *u8, ctx_key: *u8) {
     let h: fn(*u8, *u8) = { synth::get_associated(delegate, key) as fn(*u8, *u8) };
     if { h } == (0 as fn(*u8, *u8)) { return; }
-    h(delegate, 0 as *u8);
+    h(delegate, { synth::get_associated(delegate, ctx_key) });
     return;
 }
 
@@ -984,7 +995,10 @@ fn picker_popover(field: *u8, elements: u64, min_date: *u8, max_date: *u8) -> *u
 // and the two handlers ride the popover's own edges.
 fn apply_picker_popover(field: *u8, open: bool, elements: u64,
                         min_date: *u8, max_date: *u8, flag: *bool, owner: *u8,
-                        on_opened: fn(*u8, *u8), on_closed: fn(*u8, *u8)) {
+                        on_opened: fn(*u8, *u8) = 0 as fn(*u8, *u8),
+                        on_opened_ctx: *u8 = 0 as *u8,
+                        on_closed: fn(*u8, *u8) = 0 as fn(*u8, *u8),
+                        on_closed_ctx: *u8 = 0 as *u8) {
     if field == (0 as *u8) { return; }
     if !open {
         let pop: *u8 = popover_of(field);
@@ -1003,6 +1017,8 @@ fn apply_picker_popover(field: *u8, open: bool, elements: u64,
         synth::set_associated(d, popover_owner_key(), owner);
         synth::set_associated(d, popover_opened_key(), { on_opened as *u8 });
         synth::set_associated(d, popover_closed_key(), { on_closed as *u8 });
+        synth::set_associated(d, popover_opened_ctx_key(), _ctx_or(on_opened_ctx, owner));
+        synth::set_associated(d, popover_closed_ctx_key(), _ctx_or(on_closed_ctx, owner));
     }
     // The calendar shows what the field shows, every time it opens.
     let vc: *u8 = { rt::msg_id(pop, rt::sel(#str_ptr("contentViewController\0"))) };

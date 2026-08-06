@@ -180,6 +180,13 @@ fn no_row(node: *TreeNode, ctx: *u8) -> flex::Node { return flex::Node::new(); }
 fn no_bind(node: *TreeNode, ctx: *u8, row: *flex::Node) { return; }
 fn no_select(node: *TreeNode, ctx: *u8) { return; }
 
+// A handler's own context, or the set-wide one when it has none. Resolved once
+// at the write, so every stored slot is final and the read never chooses.
+fn _ctx_or(own: *u8, shared: *u8) -> *u8 {
+    if own != (0 as *u8) { return own; }
+    return shared;
+}
+
 struct TreeProps {
     root: TreeNode,
     row: fn(*TreeNode, *u8) -> flex::Node,
@@ -188,7 +195,20 @@ struct TreeProps {
     // idea, with the item in place of the index.
     bind: fn(*TreeNode, *u8, *flex::Node),
     on_select: fn(*TreeNode, *u8),
+    // The set-wide context, what `tree(ctx: ...)` passes. Each handler below
+    // falls back to it, so every existing call site keeps working.
     opaque ctx: *u8,
+    // One context per handler. Two reasons, and the second is a bug fix:
+    //
+    //   a handler may be a BOUND METHOD — `row: this.build_row` — which needs
+    //     a defaulted `*u8` immediately after it (W0824/E0824);
+    //   `set_row(f, ctx:)` and `set_row_bind(g, ctx:)` both wrote the SINGLE
+    //     `ctx` field, so the second call silently retargeted the first
+    //     handler. With bound methods that is a wrong-receiver crash, not a
+    //     wrong pointer.
+    opaque row_ctx: *u8,
+    opaque bind_ctx: *u8,
+    opaque on_select_ctx: *u8,
     row_height: f64,             // 0 = let the backend measure
     selected: text::Text,        // "" = nothing selected
     expanded: vocab::TextList,
@@ -202,6 +222,9 @@ impl TreeProps {
             bind: no_bind,
             on_select: no_select,
             ctx: 0 as *u8,
+            row_ctx: 0 as *u8,
+            bind_ctx: 0 as *u8,
+            on_select_ctx: 0 as *u8,
             row_height: 0.0f64,
             selected: text::new(),
             expanded: vocab::TextList::new(),
@@ -221,7 +244,9 @@ fn tree(
     take root: TreeNode,
     key: str = "",
     row: fn(*TreeNode, *u8) -> flex::Node = no_row,
+    row_ctx: *u8 = 0 as *u8,
     on_select: fn(*TreeNode, *u8) = no_select,
+    on_select_ctx: *u8 = 0 as *u8,
     ctx: *u8 = 0 as *u8,
     row_height: f64 = 0.0f64,
 ) -> core::Node {
@@ -230,6 +255,9 @@ fn tree(
     p.row = row;
     p.on_select = on_select;
     p.ctx = ctx;
+    p.row_ctx = _ctx_or(row_ctx, ctx);
+    p.bind_ctx = ctx;
+    p.on_select_ctx = _ctx_or(on_select_ctx, ctx);
     p.row_height = row_height;
     return match box::new::[TreeProps](p) {
         option::Option[box::Box[TreeProps]]::Some(b) =>
@@ -287,7 +315,7 @@ impl Tree {
         let p: *TreeProps = this._props();
         if p == (0 as *TreeProps) { return this; }
         { (*p).row = f };
-        { (*p).ctx = ctx };
+        { (*p).row_ctx = _ctx_or(ctx, { (*p).ctx }) };
         core::touch(this._p, P_ROW);
         return this;
     }
@@ -296,7 +324,7 @@ impl Tree {
         let p: *TreeProps = this._props();
         if p == (0 as *TreeProps) { return flex::Node::new(); }
         let f: fn(*TreeNode, *u8) -> flex::Node = { (*p).row };
-        return f(node, { (*p).ctx });
+        return f(node, { (*p).row_ctx });
     }
 
     // Write an item's data into an EXISTING row. Optional, and its absence is
@@ -307,7 +335,7 @@ impl Tree {
         let p: *TreeProps = this._props();
         if p == (0 as *TreeProps) { return this; }
         { (*p).bind = f };
-        { (*p).ctx = ctx };
+        { (*p).bind_ctx = _ctx_or(ctx, { (*p).ctx }) };
         core::touch(this._p, P_ROW);
         return this;
     }

@@ -105,7 +105,38 @@ struct Gestures {
     // element; the event reads through key_code/key_chars/key_named below.
     on_key: Handler,
 
+    // The set-wide context, what `.gesture(ctx: ...)` passes. Every handler
+    // that did not get its own is given this one at build time, so the slots
+    // below are always final and `fire` never chooses.
     opaque ctx: *u8,
+
+    // One context per handler, so a handler may be a BOUND METHOD.
+    //
+    // `on_click: this.row_clicked` only compiles if the callee declares a
+    // defaulted `*u8` right AFTER the handler parameter (E0824): that is the
+    // slot the compiler fills with the receiver's address. With a single
+    // set-wide `ctx` there was no such slot, and a gesture handler had to be a
+    // free function that cast the context back by hand — the one place in
+    // facet where a component could not bind its own method the way every
+    // generated control already does.
+    opaque on_click_ctx: *u8,
+    opaque on_double_click_ctx: *u8,
+    opaque on_right_click_ctx: *u8,
+    opaque on_long_press_ctx: *u8,
+    opaque on_press_ctx: *u8,
+    opaque on_release_ctx: *u8,
+    opaque on_hover_ctx: *u8,
+    opaque on_unhover_ctx: *u8,
+    opaque on_pointer_move_ctx: *u8,
+    opaque on_pan_ctx: *u8,
+    opaque on_pinch_ctx: *u8,
+    opaque on_swipe_ctx: *u8,
+    opaque on_drag_start_ctx: *u8,
+    opaque on_drag_over_ctx: *u8,
+    opaque on_drag_leave_ctx: *u8,
+    opaque on_drop_ctx: *u8,
+    opaque on_drop_completed_ctx: *u8,
+    opaque on_key_ctx: *u8,
 
     // -- the parameters MAUI carries on the recognizers themselves
     can_drag: bool,                  // DragGestureRecognizer.CanDrag
@@ -136,6 +167,16 @@ impl Gestures {
             on_drop_completed: no_gesture,
             on_key: no_gesture,
             ctx: 0 as *u8,
+            on_click_ctx: 0 as *u8, on_double_click_ctx: 0 as *u8,
+            on_right_click_ctx: 0 as *u8, on_long_press_ctx: 0 as *u8,
+            on_press_ctx: 0 as *u8, on_release_ctx: 0 as *u8,
+            on_hover_ctx: 0 as *u8, on_unhover_ctx: 0 as *u8,
+            on_pointer_move_ctx: 0 as *u8,
+            on_pan_ctx: 0 as *u8, on_pinch_ctx: 0 as *u8, on_swipe_ctx: 0 as *u8,
+            on_drag_start_ctx: 0 as *u8, on_drag_over_ctx: 0 as *u8,
+            on_drag_leave_ctx: 0 as *u8, on_drop_ctx: 0 as *u8,
+            on_drop_completed_ctx: 0 as *u8,
+            on_key_ctx: 0 as *u8,
             can_drag: false, allow_drop: false,
             touch_points: 1 as i64,
             long_press_seconds: 0.5f64,
@@ -222,6 +263,14 @@ fn detach(n: *core::Node) {
     return;
 }
 
+// A handler's own context, or the set-wide one when it has none. Resolved
+// ONCE here so every stored slot is final: `fire` reads a context, it never
+// decides which context.
+fn _ctx_or(own: *u8, shared: *u8) -> *u8 {
+    if own != (0 as *u8) { return own; }
+    return shared;
+}
+
 fn _build(ctx: *u8, on_click: Handler, on_double_click: Handler,
           on_right_click: Handler, on_long_press: Handler,
           on_press: Handler, on_release: Handler,
@@ -231,6 +280,15 @@ fn _build(ctx: *u8, on_click: Handler, on_double_click: Handler,
           on_drag_start: Handler, on_drag_over: Handler,
           on_drag_leave: Handler, on_drop: Handler,
           on_drop_completed: Handler, on_key: Handler,
+          on_click_ctx: *u8, on_double_click_ctx: *u8,
+          on_right_click_ctx: *u8, on_long_press_ctx: *u8,
+          on_press_ctx: *u8, on_release_ctx: *u8,
+          on_hover_ctx: *u8, on_unhover_ctx: *u8,
+          on_pointer_move_ctx: *u8, on_pan_ctx: *u8,
+          on_pinch_ctx: *u8, on_swipe_ctx: *u8,
+          on_drag_start_ctx: *u8, on_drag_over_ctx: *u8,
+          on_drag_leave_ctx: *u8, on_drop_ctx: *u8,
+          on_drop_completed_ctx: *u8, on_key_ctx: *u8,
           can_drag: bool, allow_drop: bool,
           touch_points: i64, long_press_seconds: f64, swipe_threshold: f64,
           hit: HitTest) -> Gestures {
@@ -246,6 +304,24 @@ fn _build(ctx: *u8, on_click: Handler, on_double_click: Handler,
     g.on_drop_completed = on_drop_completed;
     g.on_key = on_key;
     g.ctx = ctx;
+    g.on_click_ctx = _ctx_or(on_click_ctx, ctx);
+    g.on_double_click_ctx = _ctx_or(on_double_click_ctx, ctx);
+    g.on_right_click_ctx = _ctx_or(on_right_click_ctx, ctx);
+    g.on_long_press_ctx = _ctx_or(on_long_press_ctx, ctx);
+    g.on_press_ctx = _ctx_or(on_press_ctx, ctx);
+    g.on_release_ctx = _ctx_or(on_release_ctx, ctx);
+    g.on_hover_ctx = _ctx_or(on_hover_ctx, ctx);
+    g.on_unhover_ctx = _ctx_or(on_unhover_ctx, ctx);
+    g.on_pointer_move_ctx = _ctx_or(on_pointer_move_ctx, ctx);
+    g.on_pan_ctx = _ctx_or(on_pan_ctx, ctx);
+    g.on_pinch_ctx = _ctx_or(on_pinch_ctx, ctx);
+    g.on_swipe_ctx = _ctx_or(on_swipe_ctx, ctx);
+    g.on_drag_start_ctx = _ctx_or(on_drag_start_ctx, ctx);
+    g.on_drag_over_ctx = _ctx_or(on_drag_over_ctx, ctx);
+    g.on_drag_leave_ctx = _ctx_or(on_drag_leave_ctx, ctx);
+    g.on_drop_ctx = _ctx_or(on_drop_ctx, ctx);
+    g.on_drop_completed_ctx = _ctx_or(on_drop_completed_ctx, ctx);
+    g.on_key_ctx = _ctx_or(on_key_ctx, ctx);
     g.can_drag = can_drag; g.allow_drop = allow_drop;
     g.touch_points = touch_points;
     g.long_press_seconds = long_press_seconds;
@@ -258,8 +334,14 @@ fn _build(ctx: *u8, on_click: Handler, on_double_click: Handler,
 // Chains like every other Node modifier, so it reads the way an application
 // already writes layout:
 //
-//     label("Open").gesture(on_click: open, ctx: #addr_of(this))
-//     column(b).gesture(on_click: open, on_right_click: menu, ctx: c)
+//     label("Open").gesture(on_click: this.open)          a bound method
+//     label("Open").gesture(on_click: open, ctx: c)        a free handler
+//     column(b).gesture(on_click: this.open, on_right_click: this.menu)
+//
+// A handler may be a component's own method — each one carries its own
+// context slot, so `this` reaches it the same way it does on a generated
+// control's `on_clicked:`. `ctx:` remains the set-wide context, used by every
+// handler that did not bring one, which is what a free function wants.
 //
 // Importing this module is what makes `.gesture(...)` exist; without it the
 // call is E0324, not a silent no-op.
@@ -268,23 +350,41 @@ impl flex::Node {
         take this,
         ctx: *u8 = 0 as *u8,
         on_click: Handler = no_gesture,
+        on_click_ctx: *u8 = 0 as *u8,
         on_double_click: Handler = no_gesture,
+        on_double_click_ctx: *u8 = 0 as *u8,
         on_right_click: Handler = no_gesture,
+        on_right_click_ctx: *u8 = 0 as *u8,
         on_long_press: Handler = no_gesture,
+        on_long_press_ctx: *u8 = 0 as *u8,
         on_press: Handler = no_gesture,
+        on_press_ctx: *u8 = 0 as *u8,
         on_release: Handler = no_gesture,
+        on_release_ctx: *u8 = 0 as *u8,
         on_hover: Handler = no_gesture,
+        on_hover_ctx: *u8 = 0 as *u8,
         on_unhover: Handler = no_gesture,
+        on_unhover_ctx: *u8 = 0 as *u8,
         on_pointer_move: Handler = no_gesture,
+        on_pointer_move_ctx: *u8 = 0 as *u8,
         on_pan: Handler = no_gesture,
+        on_pan_ctx: *u8 = 0 as *u8,
         on_pinch: Handler = no_gesture,
+        on_pinch_ctx: *u8 = 0 as *u8,
         on_swipe: Handler = no_gesture,
+        on_swipe_ctx: *u8 = 0 as *u8,
         on_drag_start: Handler = no_gesture,
+        on_drag_start_ctx: *u8 = 0 as *u8,
         on_drag_over: Handler = no_gesture,
+        on_drag_over_ctx: *u8 = 0 as *u8,
         on_drag_leave: Handler = no_gesture,
+        on_drag_leave_ctx: *u8 = 0 as *u8,
         on_drop: Handler = no_gesture,
+        on_drop_ctx: *u8 = 0 as *u8,
         on_drop_completed: Handler = no_gesture,
+        on_drop_completed_ctx: *u8 = 0 as *u8,
         on_key: Handler = no_gesture,
+        on_key_ctx: *u8 = 0 as *u8,
         can_drag: bool = false,
         allow_drop: bool = false,
         touch_points: i64 = 1 as i64,
@@ -299,6 +399,14 @@ impl flex::Node {
                                     on_swipe, on_drag_start, on_drag_over,
                                     on_drag_leave, on_drop, on_drop_completed,
                                     on_key,
+                                    on_click_ctx, on_double_click_ctx,
+                                    on_right_click_ctx, on_long_press_ctx,
+                                    on_press_ctx, on_release_ctx, on_hover_ctx,
+                                    on_unhover_ctx, on_pointer_move_ctx,
+                                    on_pan_ctx, on_pinch_ctx, on_swipe_ctx,
+                                    on_drag_start_ctx, on_drag_over_ctx,
+                                    on_drag_leave_ctx, on_drop_ctx,
+                                    on_drop_completed_ctx, on_key_ctx,
                                     can_drag, allow_drop, touch_points,
                                     long_press_seconds, swipe_threshold, hit));
         return n;
@@ -355,23 +463,27 @@ fn gesture_sender(n: *core::Node) -> *u8 {
 // `gestures_of(n)` and passes it here, so the whole 20-verb band dispatches
 // through one function rather than 20 near-identical ones. The named wrappers
 // below stay for the verbs portable code and tests reach for directly.
-fn fire(n: *core::Node, f: Handler) -> bool {
+//
+// The context is the handler's OWN, read from the slot beside it — a backend
+// that read `on_pan` reads `on_pan_ctx`. Passing the set-wide `ctx` here would
+// hand a bound method the wrong receiver whenever a set mixes them.
+fn fire(n: *core::Node, f: Handler, ctx: *u8) -> bool {
     if f == no_gesture { return false; }
     let g: *Gestures = gestures_of(n);
     if g == (0 as *Gestures) { return false; }
-    return f(gesture_sender(n), { (*g).ctx });
+    return f(gesture_sender(n), ctx);
 }
 
 fn fire_click(n: *core::Node) -> bool {
     let g: *Gestures = gestures_of(n);
     if g == (0 as *Gestures) { return false; }
-    return fire(n, { (*g).on_click });
+    return fire(n, { (*g).on_click }, { (*g).on_click_ctx });
 }
 
 fn fire_right_click(n: *core::Node) -> bool {
     let g: *Gestures = gestures_of(n);
     if g == (0 as *Gestures) { return false; }
-    return fire(n, { (*g).on_right_click });
+    return fire(n, { (*g).on_right_click }, { (*g).on_right_click_ctx });
 }
 
 // The key band's reader and dispatch: the backend hands the focused node the
@@ -388,14 +500,15 @@ fn fire_key(n: *core::Node, event: *u8) -> bool {
     if g == (0 as *Gestures) { return false; }
     let h: Handler = { (*g).on_key };
     if h == no_gesture { return false; }
-    return h(event, { (*g).ctx });
+    return h(event, { (*g).on_key_ctx });
 }
 
 fn fire_hover(n: *core::Node, entering: bool) -> bool {
     let g: *Gestures = gestures_of(n);
     if g == (0 as *Gestures) { return false; }
     let f: Handler = if entering { { (*g).on_hover } } else { { (*g).on_unhover } };
-    return fire(n, f);
+    let c: *u8 = if entering { { (*g).on_hover_ctx } } else { { (*g).on_unhover_ctx } };
+    return fire(n, f, c);
 }
 
 
@@ -611,5 +724,96 @@ fn an_item_is_what_a_shared_handler_tells_its_nodes_apart_by() {
     // BORROWED: facet stores the pointer, never frees it, never reads through
     // it. The value the app sees is the value the app put there.
     assert { *(core::item_of(p) as *i64) } == (42 as i64);
+    return;
+}
+
+// ---- a handler may be a BOUND METHOD -----------------------------------------
+
+struct BmRow {
+    hits: i64,
+    tag: i64,
+}
+
+impl BmRow {
+    fn row_clicked(ref this, sender: *u8) -> bool {
+        this.hits = this.hits + 1;
+        return true;
+    }
+    fn row_menu(ref this, sender: *u8) -> bool {
+        this.hits = this.hits + 100;
+        return true;
+    }
+}
+
+// A component binds its own method, the way it already can on every generated
+// control (`icon_button(on_clicked: this.on_remove)`). Before the per-handler
+// context slots this was E0824, and the only way through was a free function
+// at module scope that cast an explicitly-passed `*u8` back to the component.
+#[test]
+fn a_gesture_handler_can_be_a_bound_method() {
+    var row: BmRow = BmRow { hits: 0 as i64, tag: 7 as i64 };
+    var n: flex::Node = flex::box().gesture(on_click: row.row_clicked);
+    let p: *core::Node = #addr_of(n);
+    assert fire_click(p);
+    assert row.hits == (1 as i64);
+    // the receiver reached the method — it wrote through `ref this`
+    assert row.tag == (7 as i64);
+    return;
+}
+
+// Two handlers, two receivers, one set. This is what a single set-wide `ctx`
+// could not express: whichever receiver was passed as `ctx:` would answer for
+// both.
+#[test]
+fn each_bound_handler_keeps_its_own_receiver() {
+    var a: BmRow = BmRow { hits: 0 as i64, tag: 1 as i64 };
+    var b: BmRow = BmRow { hits: 0 as i64, tag: 2 as i64 };
+    var n: flex::Node = flex::box().gesture(on_click: a.row_clicked,
+                                            on_right_click: b.row_menu);
+    let p: *core::Node = #addr_of(n);
+    assert fire_click(p);
+    assert a.hits == (1 as i64);
+    assert b.hits == (0 as i64);
+    assert fire_right_click(p);
+    assert a.hits == (1 as i64);
+    assert b.hits == (100 as i64);
+    return;
+}
+
+// The set-wide `ctx:` still answers for every handler that did not bring one,
+// so every call site written before the slots existed behaves identically.
+static BM_CTX: *u8 = 0 as *u8;
+fn bm_free_handler(sender: *u8, ctx: *u8) -> bool {
+    BM_CTX = ctx;
+    return true;
+}
+
+#[test]
+fn the_set_wide_ctx_still_reaches_a_free_handler() {
+    var owner: i64 = 99 as i64;
+    var n: flex::Node = flex::box().gesture(ctx: #addr_of(owner) as *u8,
+                                            on_click: bm_free_handler);
+    BM_CTX = 0 as *u8;
+    assert fire_click(#addr_of(n));
+    assert BM_CTX == (#addr_of(owner) as *u8);
+    return;
+}
+
+// And the two mix: a bound method beside a free handler, each with its own
+// context, in one set.
+#[test]
+fn a_bound_handler_and_a_free_one_share_a_set() {
+    var owner: i64 = 5 as i64;
+    var row: BmRow = BmRow { hits: 0 as i64, tag: 3 as i64 };
+    var n: flex::Node = flex::box().gesture(ctx: #addr_of(owner) as *u8,
+                                            on_click: row.row_clicked,
+                                            on_right_click: bm_free_handler);
+    let p: *core::Node = #addr_of(n);
+    BM_CTX = 0 as *u8;
+    assert fire_click(p);
+    assert row.hits == (1 as i64);
+    assert BM_CTX == (0 as *u8);          // the bound one never touched it
+    assert fire_right_click(p);
+    assert BM_CTX == (#addr_of(owner) as *u8);
     return;
 }

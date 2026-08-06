@@ -98,11 +98,14 @@ fn tree(
     take root: m_tree::TreeNode,
     key: str = "",
     row: fn(*m_tree::TreeNode, *u8) -> flex::Node = m_tree::no_row,
+    row_ctx: *u8 = 0 as *u8,
     on_select: fn(*m_tree::TreeNode, *u8) = m_tree::no_select,
+    on_select_ctx: *u8 = 0 as *u8,
     ctx: *u8 = 0 as *u8,
     row_height: f64 = 0.0f64,
 ) -> core::Node {
-    return m_tree::tree(root, key: key, row: row, on_select: on_select,
+    return m_tree::tree(root, key: key, row: row, row_ctx: row_ctx,
+                        on_select: on_select, on_select_ctx: on_select_ctx,
                         ctx: ctx, row_height: row_height);
 }
 

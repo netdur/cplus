@@ -2755,11 +2755,14 @@ fn tree(
     take root: m_tree::TreeNode,
     key: str = "",
     row: fn(*m_tree::TreeNode, *u8) -> flex::Node = m_tree::no_row,
+    row_ctx: *u8 = 0 as *u8,
     on_select: fn(*m_tree::TreeNode, *u8) = m_tree::no_select,
+    on_select_ctx: *u8 = 0 as *u8,
     ctx: *u8 = 0 as *u8,
     row_height: f64 = 0.0f64,
 ) -> core::Node {
-    return m_tree::tree(root, key: key, row: row, on_select: on_select,
+    return m_tree::tree(root, key: key, row: row, row_ctx: row_ctx,
+                        on_select: on_select, on_select_ctx: on_select_ctx,
                         ctx: ctx, row_height: row_height);
 }
 
@@ -3098,6 +3101,38 @@ TIER_ROWS = {
     ("TitleBar", "PassthroughElements"): ("cannot", "hit-testing a custom bar is Bar::Custom + window_buttons + .window_drag(), which are the shipped primitives"),
 }
 
+def check_node_band():
+    """SHARED_FORWARDS vs the `impl flex::Node` band block in facet.cplus.
+
+    Reads both files and compares method names, so this checks the code that
+    ships rather than a list that claims to describe it.
+    """
+    problems = []
+    facet_src = open(os.path.join(SRC, "facet.cplus")).read()
+    flex_src = open(os.path.join(ROOT, "vendor", "flex_layout", "src",
+                                 "flex_layout.cplus")).read()
+
+    # what flex::Node already declares — a band verb of the same name cannot
+    # be forwarded, it would collide
+    flex_owns = set()
+    for m in re.finditer(r"^impl Node \{(.*?)^\}", flex_src, re.S | re.M):
+        flex_owns |= set(re.findall(r"\bfn ([a-z_0-9]+)\s*\(", m.group(1)))
+
+    # what facet's extensions on flex::Node declare today
+    have = set()
+    for m in re.finditer(r"^impl flex::Node \{(.*?)^\}", facet_src, re.S | re.M):
+        have |= set(re.findall(r"\bfn ([a-z_0-9]+)\s*\(", m.group(1)))
+
+    for name, _a, _b, _r in SHARED_FORWARDS:
+        if name in flex_owns or name in have:
+            continue
+        problems.append(
+            f"guard 6: shared verb `{name}` reaches the cursors but not a bare "
+            f"Node — add `fn {name}(...)` to the `impl flex::Node` band block "
+            f"in facet.cplus, or let flex::Node declare the name itself.")
+    return problems
+
+
 def check(rows_by_control, by_type):
     """Fail the run, by name, on anything the emitters would drop in silence."""
     problems = []
@@ -3217,6 +3252,15 @@ def check(rows_by_control, by_type):
                 verbs.setdefault(name, (mod, "command", False))
     for name, arg, _b, ret in SHARED_FORWARDS:
         verbs.setdefault(name, ("<shared>", "shared", name.startswith("set_")))
+
+    # Guard 6: the band reaches a bare Node too, not only the 42 cursors.
+    # facet.cplus carries a hand-written `impl flex::Node` block of one-line
+    # forwards; a verb added to SHARED_FORWARDS and not to that block would
+    # exist on every cursor and on nothing you just built. The exempt names
+    # are the ones flex::Node already declares, where the method would be a
+    # redeclaration rather than a forward.
+    problems += check_node_band()
+
     for name, mod, rule in lint_names(verbs):
         problems.append(f"naming: `{name}` ({mod}) — {rule}. Rename it in "
                         "maui_map.RENAME, or record the exception in ALLOWED.")

@@ -168,7 +168,7 @@ fn gestures_of_view(v: *u8) -> *gestures::Gestures {
 
 // Fire one handler off the view's node. False when there is nothing to fire or
 // the app declined — either way the caller falls through to super.
-fn fire_of(self_obj: *u8, h: gestures::Handler) -> bool {
+fn fire_of(self_obj: *u8, h: gestures::Handler, ctx: *u8) -> bool {
     let n: *core::Node = node_of_view(self_obj);
     if n == (0 as *core::Node) {
         trace("[input]   fire: NO NODE on this view — the association is missing");
@@ -178,7 +178,7 @@ fn fire_of(self_obj: *u8, h: gestures::Handler) -> bool {
         trace("[input]   fire: no handler for this verb");
         return false;
     }
-    let took: bool = gestures::fire(n, h);
+    let took: bool = gestures::fire(n, h, ctx);
     if took { trace("[input]   fire: handler TOOK it"); }
     else { trace("[input]   fire: handler DECLINED"); }
     return took;
@@ -240,7 +240,7 @@ fn imp_mouse_down(self_obj: *u8, cmd: *u8, event: *u8) {
         let id: u64 = akx::after({ (*g).long_press_seconds }, long_press_fired, self_obj);
         synth::set_associated(self_obj, long_press_key(), id as *u8);
     }
-    var took: bool = fire_of(self_obj, { (*g).on_press });
+    var took: bool = fire_of(self_obj, { (*g).on_press }, { (*g).on_press_ctx });
     if took { return; }
     decline(self_obj, cmd, event);
     return;
@@ -250,7 +250,7 @@ fn long_press_fired(ctx: *u8) {
     synth::set_associated(ctx, long_press_key(), 0 as *u8);
     let g: *gestures::Gestures = gestures_of_view(ctx);
     if g == (0 as *gestures::Gestures) { return; }
-    let _took: bool = fire_of(ctx, { (*g).on_long_press });
+    let _took: bool = fire_of(ctx, { (*g).on_long_press }, { (*g).on_long_press_ctx });
     return;
 }
 
@@ -271,15 +271,15 @@ fn imp_mouse_up(self_obj: *u8, cmd: *u8, event: *u8) {
     if own_n != (0 as *core::Node) { let _r: bool = pointer::release(own_n, self_obj); }
     let g: *gestures::Gestures = gestures_of_view(self_obj);
     if g == (0 as *gestures::Gestures) { decline(self_obj, cmd, event); return; }
-    var took: bool = fire_of(self_obj, { (*g).on_release });
+    var took: bool = fire_of(self_obj, { (*g).on_release }, { (*g).on_release_ctx });
     // A click is a completed press, so it is reported on the way UP — the same
     // moment NSButton considers itself clicked, and the reason a drag off the
     // control does not fire one.
     let clicks: i64 = akx::wd_click_count(event);
     if clicks >= (2 as i64) {
-        if fire_of(self_obj, { (*g).on_double_click }) { took = true; }
+        if fire_of(self_obj, { (*g).on_double_click }, { (*g).on_double_click_ctx }) { took = true; }
     } else {
-        if fire_of(self_obj, { (*g).on_click }) { took = true; }
+        if fire_of(self_obj, { (*g).on_click }, { (*g).on_click_ctx }) { took = true; }
     }
     if took { return; }
     decline(self_obj, cmd, event);
@@ -290,7 +290,7 @@ fn imp_right_mouse_down(self_obj: *u8, cmd: *u8, event: *u8) {
     trace("[input] event rightMouseDown:");
     let g: *gestures::Gestures = gestures_of_view(self_obj);
     if g == (0 as *gestures::Gestures) { decline(self_obj, cmd, event); return; }
-    if fire_of(self_obj, { (*g).on_right_click }) { return; }
+    if fire_of(self_obj, { (*g).on_right_click }, { (*g).on_right_click_ctx }) { return; }
     decline(self_obj, cmd, event);
     return;
 }
@@ -304,7 +304,7 @@ fn imp_mouse_dragged(self_obj: *u8, cmd: *u8, event: *u8) {
     cancel_long_press(self_obj);
     let g: *gestures::Gestures = gestures_of_view(self_obj);
     if g == (0 as *gestures::Gestures) { decline(self_obj, cmd, event); return; }
-    if fire_of(self_obj, { (*g).on_pan }) { return; }
+    if fire_of(self_obj, { (*g).on_pan }, { (*g).on_pan_ctx }) { return; }
     decline(self_obj, cmd, event);
     return;
 }
@@ -315,7 +315,7 @@ fn imp_mouse_moved(self_obj: *u8, cmd: *u8, event: *u8) {
     if own_n != (0 as *core::Node) { let _o: bool = pointer::moved(own_n, self_obj); }
     let g: *gestures::Gestures = gestures_of_view(self_obj);
     if g == (0 as *gestures::Gestures) { decline(self_obj, cmd, event); return; }
-    if fire_of(self_obj, { (*g).on_pointer_move }) { return; }
+    if fire_of(self_obj, { (*g).on_pointer_move }, { (*g).on_pointer_move_ctx }) { return; }
     decline(self_obj, cmd, event);
     return;
 }
@@ -326,7 +326,7 @@ fn imp_mouse_entered(self_obj: *u8, cmd: *u8, event: *u8) {
     if own_n != (0 as *core::Node) { let _o: bool = pointer::hover(own_n, self_obj); }
     let g: *gestures::Gestures = gestures_of_view(self_obj);
     if g == (0 as *gestures::Gestures) { decline(self_obj, cmd, event); return; }
-    if fire_of(self_obj, { (*g).on_hover }) { return; }
+    if fire_of(self_obj, { (*g).on_hover }, { (*g).on_hover_ctx }) { return; }
     decline(self_obj, cmd, event);
     return;
 }
@@ -343,7 +343,7 @@ fn imp_mouse_exited(self_obj: *u8, cmd: *u8, event: *u8) {
     }
     let g: *gestures::Gestures = gestures_of_view(self_obj);
     if g == (0 as *gestures::Gestures) { decline(self_obj, cmd, event); return; }
-    if fire_of(self_obj, { (*g).on_unhover }) { return; }
+    if fire_of(self_obj, { (*g).on_unhover }, { (*g).on_unhover_ctx }) { return; }
     decline(self_obj, cmd, event);
     return;
 }
@@ -352,7 +352,7 @@ fn imp_magnify(self_obj: *u8, cmd: *u8, event: *u8) {
     trace("[input] event magnifyWithEvent:");
     let g: *gestures::Gestures = gestures_of_view(self_obj);
     if g == (0 as *gestures::Gestures) { decline(self_obj, cmd, event); return; }
-    if fire_of(self_obj, { (*g).on_pinch }) { return; }
+    if fire_of(self_obj, { (*g).on_pinch }, { (*g).on_pinch_ctx }) { return; }
     decline(self_obj, cmd, event);
     return;
 }
@@ -361,7 +361,7 @@ fn imp_swipe(self_obj: *u8, cmd: *u8, event: *u8) {
     trace("[input] event swipeWithEvent:");
     let g: *gestures::Gestures = gestures_of_view(self_obj);
     if g == (0 as *gestures::Gestures) { decline(self_obj, cmd, event); return; }
-    if fire_of(self_obj, { (*g).on_swipe }) { return; }
+    if fire_of(self_obj, { (*g).on_swipe }, { (*g).on_swipe_ctx }) { return; }
     decline(self_obj, cmd, event);
     return;
 }
@@ -468,7 +468,7 @@ fn cascades_input(n: *core::Node) -> bool {
 // they call; `dropped_text` and `drag_targeted` read the same associated slots.
 
 fn drop_shim(sender: *u8, ctx: *u8) {
-    let _took: bool = fire_of(ctx, drop_handler_of(ctx));
+    let _took: bool = fire_of(ctx, drop_handler_of(ctx), drop_ctx_of(ctx));
     return;
 }
 
@@ -476,6 +476,12 @@ fn drop_handler_of(v: *u8) -> gestures::Handler {
     let g: *gestures::Gestures = gestures_of_view(v);
     if g == (0 as *gestures::Gestures) { return gestures::no_gesture; }
     return { (*g).on_drop };
+}
+
+fn drop_ctx_of(v: *u8) -> *u8 {
+    let g: *gestures::Gestures = gestures_of_view(v);
+    if g == (0 as *gestures::Gestures) { return 0 as *u8; }
+    return { (*g).on_drop_ctx };
 }
 
 fn drag_over_shim(sender: *u8, ctx: *u8) {
@@ -486,7 +492,9 @@ fn drag_over_shim(sender: *u8, ctx: *u8) {
     let entering: bool = akx::drag_targeted(ctx);
     let h: gestures::Handler = if entering { { (*g).on_drag_over } }
                                else { { (*g).on_drag_leave } };
-    let _took: bool = fire_of(ctx, h);
+    let c: *u8 = if entering { { (*g).on_drag_over_ctx } }
+                 else { { (*g).on_drag_leave_ctx } };
+    let _took: bool = fire_of(ctx, h, c);
     return;
 }
 
@@ -732,14 +740,14 @@ fn add_input_methods(cls: *u8) {
 fn imp_drag_session_began(self_obj: *u8, cmd: *u8, session: *u8, at: rt::Point) {
     let g: *gestures::Gestures = gestures_of_view(self_obj);
     if g == (0 as *gestures::Gestures) { return; }
-    let _took: bool = fire_of(self_obj, { (*g).on_drag_start });
+    let _took: bool = fire_of(self_obj, { (*g).on_drag_start }, { (*g).on_drag_start_ctx });
     return;
 }
 
 fn imp_drag_session_ended(self_obj: *u8, cmd: *u8, session: *u8, at: rt::Point, op: u64) {
     let g: *gestures::Gestures = gestures_of_view(self_obj);
     if g == (0 as *gestures::Gestures) { return; }
-    let _took: bool = fire_of(self_obj, { (*g).on_drop_completed });
+    let _took: bool = fire_of(self_obj, { (*g).on_drop_completed }, { (*g).on_drop_completed_ctx });
     return;
 }
 
