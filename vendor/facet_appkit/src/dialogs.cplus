@@ -187,6 +187,9 @@ fn dismiss(h: *AlertHost, answer: i32) {
     if sheet != (0 as *u8) { { rt::msg_void(sheet, rt::sel(#str_ptr("close\0"))) }; }
     // The answer goes out BEFORE the tree is dropped, so a handler can still
     // read anything it wants out of the sheet.
+    // Back to the window underneath, before the answer runs — a handler that
+    // navigates should find the surface already pointing at the real screen.
+    app::agent_attach(parent);
     let f: fn(i32, *u8) = { (*h).answer };
     if f != (0 as fn(i32, *u8)) { f(answer, { (*h).answer_ctx }); }
     let root: *core::Node = { (*h).root };
@@ -277,6 +280,12 @@ fn alert_sheet(title: str, message: str, primary: str, secondary: str = "",
         // than refusing. An alert with nowhere to hang is still an alert.
         { rt::msg_void_id(w, rt::sel(#str_ptr("makeKeyAndOrderFront:\0")), 0 as *u8) };
     }
+    // The agent follows the window in front of the user, and while a
+    // window-modal sheet is up that IS the sheet — its buttons are the only
+    // thing anyone, person or agent, can act on. The surface is walked when a
+    // window opens through the runtime; a sheet is built here, so it says so
+    // itself. `dismiss` hands the parent back.
+    app::agent_attach(w);
     return;
 }
 

@@ -691,6 +691,8 @@ type exists.
 | `set_height_percent(v:)` | the cursor, so writes chain |
 | `set_padding(v:)` | the cursor, so writes chain |
 | `set_margin(v:)` | the cursor, so writes chain |
+| `set_padding_edge(edge:)` | the cursor, so writes chain |
+| `set_margin_edge(edge:)` | the cursor, so writes chain |
 | `set_gap(v:)` | the cursor, so writes chain |
 | `set_justify(v:)` | the cursor, so writes chain |
 | `set_align(v:)` | the cursor, so writes chain |

@@ -269,6 +269,8 @@ impl IconButton {
     fn set_height_percent(this, v: f64) -> IconButton { core::set_height_percent(this._p, v); return this; }
     fn set_padding(this, v: f64) -> IconButton { core::set_padding(this._p, v); return this; }
     fn set_margin(this, v: f64) -> IconButton { core::set_margin(this._p, v); return this; }
+    fn set_padding_edge(this, edge: flex::Edge, v: f64) -> IconButton { core::set_padding_edge(this._p, edge, v); return this; }
+    fn set_margin_edge(this, edge: flex::Edge, v: f64) -> IconButton { core::set_margin_edge(this._p, edge, v); return this; }
     fn set_gap(this, v: f64) -> IconButton { core::set_gap(this._p, v); return this; }
     fn set_justify(this, v: flex::Justify) -> IconButton { core::set_justify(this._p, v); return this; }
     fn set_align(this, v: flex::Align) -> IconButton { core::set_align(this._p, v); return this; }

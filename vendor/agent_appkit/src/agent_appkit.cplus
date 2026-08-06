@@ -146,12 +146,57 @@ fn ensure_send_action_method() {
     return;
 }
 
-// Whether writing this view's value owes the app a notification.
+// Whether writing this view's value owes the app its ACTION. Text controls are
+// excluded on purpose and always were: an NSTextField's action is SUBMIT (the
+// Enter key), so firing it after a write would not report a change, it would
+// commit one. Their notification is a different message entirely — see
+// `notify_text_changed_on_main`.
 fn value_control_notifies(v: *u8) -> bool {
     if is_null(v) { return false; }
     if is_kind(v, #str_ptr("NSTextField\0")) { return false; }
     if is_kind(v, #str_ptr("NSTextView\0")) { return false; }
     return is_kind(v, #str_ptr("NSControl\0"));
+}
+
+// Tell the application a text control changed, the way AppKit tells it.
+//
+// A typed keystroke reaches the app through the field's DELEGATE —
+// `controlTextDidChange:` for an NSControl, `textDidChange:` for an NSTextView
+// — and that is what runs `sync_from_native`, so the props catch up with the
+// view. An agent write went straight to `setStringValue:` and stopped there:
+// the view showed the new text, `describe_ui` read the view and reported it,
+// and the application's own `text()` still answered the old value. Two truths
+// for one field, which is worse than the write failing.
+//
+// Excluded from the action path above, so this is the one that owes them
+// something. The notification carries the changed object exactly as AppKit's
+// does, because `did_change_imp` reads it back out of `object`.
+fn notify_text_changed_on_main(view: *u8) {
+    if is_null(view) { return; }
+    let is_text_view: bool = is_kind(view, #str_ptr("NSTextView\0"));
+    if !is_text_view && !is_kind(view, #str_ptr("NSTextField\0")) { return; }
+    let delegate: *u8 = { rt::msg_id(view, rt::sel(#str_ptr("delegate\0"))) };
+    if is_null(delegate) { return; }
+    let name: *u8 = if is_text_view {
+        bridge::nsstring("NSTextDidChangeNotification")
+    } else {
+        bridge::nsstring("NSControlTextDidChangeNotification")
+    };
+    let note: *u8 = { rt::msg_id_id_id(rt::get_class(#str_ptr("NSNotification\0")),
+                                       rt::sel(#str_ptr("notificationWithName:object:\0")),
+                                       name, view) };
+    if is_null(note) { return; }
+    let sel_name: *u8 = if is_text_view {
+        #str_ptr("textDidChange:\0")
+    } else {
+        #str_ptr("controlTextDidChange:\0")
+    };
+    let sel: *u8 = rt::sel(sel_name);
+    if { rt::msg_i8_id(delegate, rt::sel(#str_ptr("respondsToSelector:\0")), sel) } == (0 as i8) {
+        return;
+    }
+    perform_on_main(delegate, sel, note);
+    return;
 }
 
 fn notify_value_changed_on_main(view: *u8) {
@@ -930,6 +975,7 @@ impl Surface {
                 // without this, `set_text` was the one verb that drove a control
                 // behind the app's back.
                 notify_value_changed_on_main(v);
+                notify_text_changed_on_main(v);
                 this.versions.bump(node);
                 return surface::Outcome::Allowed;
             }

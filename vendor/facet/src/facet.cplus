@@ -981,6 +981,24 @@ fn set_margin(n: *Node, v: f64) {
     return;
 }
 
+// Per-EDGE padding and margin. `set_padding(v)` writes all four, which is the
+// common case and stays; asymmetric insets were three imperative
+// `{ (*n).set_padding(Edge::Top, StyleLength::points(v)) }` calls after the
+// @ui block, each of them a write past the dirty-bit seam.
+fn set_padding_edge(n: *Node, edge: flex::Edge, v: f64) {
+    if n == (0 as *Node) { return; }
+    { (*n).set_padding(edge, flex::StyleLength::points(v)) };
+    touch(n, props::C_LAYOUT);
+    return;
+}
+
+fn set_margin_edge(n: *Node, edge: flex::Edge, v: f64) {
+    if n == (0 as *Node) { return; }
+    { (*n).set_margin(edge, flex::StyleLength::points(v)) };
+    touch(n, props::C_LAYOUT);
+    return;
+}
+
 fn set_gap(n: *Node, v: f64) {
     if n == (0 as *Node) { return; }
     { (*n).set_gap(flex::Gutter::All, flex::StyleLength::points(v)) };
@@ -1174,6 +1192,8 @@ impl flex::Node {
     fn is_enabled(this) -> bool { return is_enabled(#addr_of(this)); }
     fn set_visible(ref this, v: bool) { set_visible(#addr_of(this), v); return; }
     fn set_shown(ref this, v: bool) { set_shown(#addr_of(this), v); return; }
+    fn set_padding_edge(ref this, edge: flex::Edge, v: f64) { set_padding_edge(#addr_of(this), edge, v); return; }
+    fn set_margin_edge(ref this, edge: flex::Edge, v: f64) { set_margin_edge(#addr_of(this), edge, v); return; }
     fn is_hidden(this) -> bool { return is_hidden(#addr_of(this)); }
     fn is_visible(this) -> bool { return is_visible(#addr_of(this)); }
     fn set_input_transparent(ref this, v: bool) { set_input_transparent(#addr_of(this), v); return; }

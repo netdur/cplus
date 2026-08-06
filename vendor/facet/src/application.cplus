@@ -104,6 +104,24 @@ impl Theme {
     }
 }
 
+// ---- the agent's window hook -------------------------------------------------
+// "A window went in front of the user" is app state, so the hook lives here
+// rather than in runtime: `dialogs` builds a sheet and must say so, and it
+// cannot import runtime without a cycle (runtime_macos imports dialogs).
+// `runtime::install_agent` fills this in; nothing else touches it, so
+// importing facet/application still never drags the agent packages in.
+static AGENT_ATTACH_FN: fn(*u8) = #zero::[fn(*u8)]();
+
+fn set_agent_attach_fn(f: fn(*u8)) { AGENT_ATTACH_FN = f; return; }
+
+// Point the agent surface at `win`. Inert when no agent is serving, which is
+// every app that never called `agent::enable()`.
+fn agent_attach(win: *u8) {
+    let f: fn(*u8) = AGENT_ATTACH_FN;
+    if f != (0 as fn(*u8)) { f(win); }
+    return;
+}
+
 // ---- navigation state (owned by the app) -------------------------------------
 // One pending intent at a time; the hooks are registered by the running
 // App's loop. See nav.cplus for the verbs and semantics.

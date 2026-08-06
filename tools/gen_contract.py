@@ -2230,6 +2230,12 @@ SHARED_FORWARDS = [
     ("set_height_percent", "v: f64", "core::set_height_percent(this._p, v)", None),
     ("set_padding", "v: f64", "core::set_padding(this._p, v)", None),
     ("set_margin", "v: f64", "core::set_margin(this._p, v)", None),
+    # Asymmetric insets were three imperative calls after the @ui block, each
+    # of them a write past the dirty-bit seam.
+    ("set_padding_edge", "edge: flex::Edge, v: f64",
+     "core::set_padding_edge(this._p, edge, v)", None),
+    ("set_margin_edge", "edge: flex::Edge, v: f64",
+     "core::set_margin_edge(this._p, edge, v)", None),
     ("set_gap", "v: f64", "core::set_gap(this._p, v)", None),
     ("set_justify", "v: flex::Justify", "core::set_justify(this._p, v)", None),
     ("set_align", "v: flex::Align", "core::set_align(this._p, v)", None),
