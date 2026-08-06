@@ -80,6 +80,7 @@ fn text_button(
     character_spacing: f64 = 0.0f64,
     text_transform: vocab::TextTransform = vocab::TextTransform::None,
     line_break: vocab::LineBreak = vocab::LineBreak::TailTruncation,
+    text_decoration: vocab::TextDecoration = vocab::TextDecoration::None,
     on_click: fn(*u8, *u8) = props::no_handler,
     on_click_ctx: *u8 = 0 as *u8,
 ) -> core::Node {
@@ -90,6 +91,7 @@ fn text_button(
                                       character_spacing: character_spacing,
                                       text_transform: text_transform,
                                       line_break: line_break,
+                                      text_decoration: text_decoration,
                                       on_click: on_click, on_click_ctx: on_click_ctx);
 }
 

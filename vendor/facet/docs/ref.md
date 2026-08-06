@@ -72,6 +72,11 @@ posture, for a Cancel beside a Save or a link-shaped action.
 ```cplus
 text_button("Cancel", key: "cancel", on_click: this.on_cancel,
             text_color: theme::ink(0.6f64))
+
+// the link posture
+text_button("Learn more", key: "more", on_click: this.on_more,
+            text_color: theme::accent(),
+            text_decoration: vocab::TextDecoration::Underline)
 ```
 
 Separate controls rather than one with a style flag, for the reason Flutter

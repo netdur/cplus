@@ -842,6 +842,13 @@ fn a_text_button_is_a_button_without_the_box() {
             let _c: text_button::TextButton = x.set_title("Dismiss").set_font_size(13.0f64);
             assert x.title() == "Dismiss";
             assert approx(x.font_size(), 13.0f64);
+            // The link posture: a colour and an underline, which is the whole
+            // reason this control exists rather than a label with a gesture.
+            let _u: text_button::TextButton =
+                x.set_text_decoration(vocab::TextDecoration::Underline);
+            assert match x.text_decoration() {
+                vocab::TextDecoration::Underline => true, _ => false
+            };
             // The shared band is there like any other control.
             let _o: text_button::TextButton = x.set_opacity(0.5f64);
             assert approx(x.opacity(), 0.5f64);

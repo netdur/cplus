@@ -60,6 +60,7 @@ const P_FONT_SCALES: u64 = 64u64;
 const P_CHARACTER_SPACING: u64 = 128u64;
 const P_TEXT_TRANSFORM: u64 = 256u64;
 const P_LINE_BREAK: u64 = 512u64;
+const P_TEXT_DECORATION: u64 = 1024u64;
 
 struct TextButtonProps {
     title: text::Text,
@@ -72,6 +73,9 @@ struct TextButtonProps {
     character_spacing: f64,
     text_transform: vocab::TextTransform,
     line_break: vocab::LineBreak,
+    // Underline is the point of the link posture, so it is a first-class
+    // parameter here rather than something to reach for a label to get.
+    text_decoration: vocab::TextDecoration,
     on_click: fn(*u8, *u8),
     opaque on_click_ctx: *u8,
 }
@@ -89,6 +93,7 @@ impl TextButtonProps {
             character_spacing: 0.0f64,
             text_transform: vocab::TextTransform::None,
             line_break: vocab::LineBreak::TailTruncation,
+            text_decoration: vocab::TextDecoration::None,
             on_click: props::no_handler,
             on_click_ctx: 0 as *u8,
         };
@@ -115,6 +120,7 @@ fn text_button(
     character_spacing: f64 = 0.0f64,
     text_transform: vocab::TextTransform = vocab::TextTransform::None,
     line_break: vocab::LineBreak = vocab::LineBreak::TailTruncation,
+    text_decoration: vocab::TextDecoration = vocab::TextDecoration::None,
     on_click: fn(*u8, *u8) = props::no_handler,
     on_click_ctx: *u8 = 0 as *u8,
 ) -> core::Node {
@@ -129,6 +135,7 @@ fn text_button(
     p.character_spacing = character_spacing;
     p.text_transform = text_transform;
     p.line_break = line_break;
+    p.text_decoration = text_decoration;
     p.on_click = on_click;
     p.on_click_ctx = on_click_ctx;
     return match box::new::[TextButtonProps](p) {
@@ -212,6 +219,20 @@ impl TextButton {
         let p: *TextButtonProps = this._props();
         if p == (0 as *TextButtonProps) { return vocab::FontWeight::Default; }
         return { (*p).font_weight };
+    }
+
+    fn set_text_decoration(this, v: vocab::TextDecoration) -> TextButton {
+        let p: *TextButtonProps = this._props();
+        if p == (0 as *TextButtonProps) { return this; }
+        { (*p).text_decoration = v };
+        core::touch(this._p, P_TEXT_DECORATION);
+        return this;
+    }
+
+    fn text_decoration(this) -> vocab::TextDecoration {
+        let p: *TextButtonProps = this._props();
+        if p == (0 as *TextButtonProps) { return vocab::TextDecoration::None; }
+        return { (*p).text_decoration };
     }
 
     fn set_text_transform(this, v: vocab::TextTransform) -> TextButton {
