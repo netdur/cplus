@@ -7801,6 +7801,59 @@ fn handler_without_a_ctx_slot_warns_w0824() {
 }
 
 #[test]
+fn ctx_first_handler_warns_w0825() {
+    // The mirror of W0824, and the shape that kept getting through: the
+    // context slot beside the handler is correct, but the fn type takes its
+    // `*u8` FIRST, so a bound method can never fill it. All three traps hit
+    // while building iris were this — list::set_row, list::set_row_bind and
+    // alert's answer — and W0824 saw none of them, because it looks for a
+    // TRAILING `*u8`.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"cf\"\n\n[[bin]]\nname = \"cf\"\npath = \"src/main.cplus\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "struct Node { n: i32 }\n\
+         fn set_row(f: fn(*u8, usize) -> i32, ctx: *u8 = 0 as *u8) -> i32 { return 1; }\n\
+         fn set_bind(f: fn(*u8, usize, *Node), ctx: *u8 = 0 as *u8) -> i32 { return 2; }\n\
+         fn alert(on_answer: fn(*u8, i32), ctx: *u8 = 0 as *u8) -> i32 { return 3; }\n\
+         fn good(f: fn(usize, *u8) -> i32, ctx: *u8 = 0 as *u8) -> i32 { return 4; }\n\
+         fn click(f: fn(*u8, *u8), ctx: *u8 = 0 as *u8) -> i32 { return 5; }\n\
+         fn release(f: fn(*u8)) -> i32 { return 6; }\n\
+         fn compare(f: fn(*u8, usize) -> i32) -> i32 { return 7; }\n\
+         fn main() -> i32 { return 0; }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("check")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc check");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(out.status.success(), "a warning must not fail the build: {combined}");
+    // the three real shapes, and ONLY those: `good` is ctx-last, `click` is the
+    // ordinary sender+ctx handler, `release` is a hook, `compare` has no slot.
+    assert_eq!(
+        combined.matches("W0825").count(),
+        3,
+        "expected exactly the three ctx-first handlers: {combined}"
+    );
+    assert!(
+        combined.contains("move the `*u8` to the END"),
+        "W0825 must say which way to move it: {combined}"
+    );
+}
+
+#[test]
 fn w0824_is_silent_for_a_dependencys_declarations() {
     // W0824 asks its reader to change a declaration. A vendored package's
     // declaration is not theirs to change, so warning about it while building

@@ -3183,6 +3183,29 @@ fn good(on_click: fn(str, *u8) = 0 as fn(str, *u8),
 '''
 
 [[code]]
+id = "W0825"
+title = "Handler takes its context FIRST, so it cannot receive a bound method"
+category = "Warnings"
+severity = "warning"
+repro = "checked"
+lang = "cplus"
+verified = true
+emit_site = "cplus-core/src/sema.rs:check_handler_ctx_slots"
+test = "cpc/tests/e2e.rs:ctx_first_handler_warns_w0825"
+cause = "The mirror of W0824. A defaulted `*u8` sits right after the handler, so a wired handler is plainly what was meant — but the fn-pointer takes its `*u8` FIRST. A bound reference fills the slot after the handler with the receiver's address and the bridge reads it from the fn's LAST parameter, so a ctx-first handler can never receive a method however correct the slot beside it looks. W0824 does not see this shape, because it looks for a TRAILING `*u8`. Quiet on `fn(*u8, *u8)` (the ordinary sender-plus-ctx handler), on a bare `fn(*u8)` (the release-hook shape), and on a ctx-first fn with no context slot beside it (not a wired handler at all)."
+fix = "Move the `*u8` to the end of the handler's parameter list: `fn(usize, *u8)` rather than `fn(*u8, usize)`. The context parameter beside it is already right; it is the fn type that is reversed."
+example = '''
+struct Row { n: i32 }
+impl Row { fn build(ref this, at: usize) -> i32 { return 1; } }
+
+// -> W0825: `f` takes its context first
+fn set_row(f: fn(*u8, usize) -> i32, ctx: *u8 = 0 as *u8) -> i32 { return 1; }
+
+// the shape that accepts `set_row(row.build)`
+fn good(f: fn(usize, *u8) -> i32, ctx: *u8 = 0 as *u8) -> i32 { return 2; }
+'''
+
+[[code]]
 id = "E1002"
 title = "Named arguments not supported yet"
 category = "Compile-time builtins"

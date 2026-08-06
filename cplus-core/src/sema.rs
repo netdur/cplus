@@ -2232,6 +2232,44 @@ impl SemaCx<'_> {
     /// release hooks, comparison functions) and is left alone.
     fn check_handler_ctx_slots(&mut self, params: &[crate::ast::Param]) {
         for i in 0..params.len() {
+            // W0825 — the MIRROR of W0824, and the one that kept getting
+            // through. The author declared a context slot right after the
+            // handler, so a wired handler is plainly what they meant, but the
+            // fn type takes its `*u8` FIRST. A bound reference fills the slot
+            // AFTER the handler with the receiver's address, and reads it out
+            // of the fn's LAST parameter — so a ctx-first handler can never
+            // receive a method, however correct the slot beside it looks.
+            //
+            // Every trap of this kind found so far was this shape:
+            // `list::set_row(fn(*u8, usize), ctx:)`, `alert(fn(*u8, i32), ctx:)`.
+            // W0824 saw none of them, because it looks for a TRAILING `*u8`.
+            if Self::is_ctx_first_handler(&params[i].ty)
+                && params
+                    .get(i + 1)
+                    .is_some_and(|p| Self::is_raw_u8(&p.ty) && !p.move_)
+                && self.span_is_in_local_package(params[i].name.span)
+            {
+                let name = params[i].name.name.clone();
+                self.warn_note(
+                    "W0825",
+                    format!(
+                        "handler parameter `{}` takes its context FIRST, so it cannot receive a bound method",
+                        name
+                    ),
+                    params[i].name.span,
+                    vec![
+                        format!(
+                            "move the `*u8` to the END of `{}`'s parameter list — the receiver's \
+                             address is read from the handler's LAST parameter",
+                            name
+                        ),
+                        "the context slot beside it is correct; it is the fn type that is \
+                         reversed"
+                            .to_string(),
+                    ],
+                );
+                continue;
+            }
             if !Self::is_handler_shaped(&params[i].ty) {
                 continue;
             }
@@ -2301,6 +2339,21 @@ impl SemaCx<'_> {
         match &t.kind {
             crate::ast::TypeKind::FnPtr { params, .. } => {
                 params.len() >= 2 && params.last().is_some_and(Self::is_raw_u8)
+            }
+            _ => false,
+        }
+    }
+
+    /// `fn(*u8, A, ...)` — a fn-pointer whose FIRST parameter is the raw
+    /// context and whose last is not. `fn(*u8, *u8)` is the ordinary
+    /// sender-plus-ctx handler and is fine; a bare `fn(*u8)` is the
+    /// release-hook shape and is not a handler at all.
+    fn is_ctx_first_handler(t: &crate::ast::Type) -> bool {
+        match &t.kind {
+            crate::ast::TypeKind::FnPtr { params, .. } => {
+                params.len() >= 2
+                    && Self::is_raw_u8(&params[0])
+                    && !params.last().is_some_and(Self::is_raw_u8)
             }
             _ => false,
         }

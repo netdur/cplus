@@ -214,7 +214,7 @@ row(on_click: opened, on_click_ctx: #addr_of(this) as *u8)
 
 > **Omit the `_ctx` slot and callers can never pass a method** — only a free fn. That is the single most common mistake in this area: the author writes one parameter, a caller in another file writes `this.method`, and E0824 fires where it cannot be fixed. **W0824 warns at the declaration** and prints the line to add. Same rule for a struct field that stores a handler: store the `*u8` beside it.
 
-Codes: **W0824** (declaration has no ctx slot) · **E0824** (callee has no slot, or the call filled it) · **E0823** (method shape does not fit) · **E0822** (`take this`, generic, or `ref`/`take` params — none can be bound).
+Codes: **W0824** (declaration has no ctx slot) · **W0825** (ctx is FIRST — a bound method reads it from the LAST parameter) · **E0824** (callee has no slot, or the call filled it) · **E0823** (method shape does not fit) · **E0822** (`take this`, generic, or `ref`/`take` params — none can be bound).
 
 ### Enums
 ```cplus

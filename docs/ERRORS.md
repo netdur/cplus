@@ -4,7 +4,7 @@
 
 Every C+ diagnostic carries a numbered code, a source span, and often a machine-applicable suggestion. `cpc --diagnostics=json` emits the same information in a machine-readable shape for editors and agents. Codes prefixed with **W** are non-fatal warnings; the build continues. The normative ranges and what each phase owns are fixed in [§20 of the language specification](/docs/spec).
 
-This is the complete index — **179 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **138** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
+This is the complete index — **180 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **139** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
 
 ## Lexical
 
@@ -2624,6 +2624,25 @@ fn good(on_click: fn(str, *u8) = 0 as fn(str, *u8),
 **Fix.** Add `<handler>_ctx: *u8 = 0 as *u8` immediately after the handler parameter. Leave it out only if callers are meant to pass free functions and thread the context themselves.
 
 <sub>repro: checked · cplus-core/src/sema.rs:check_handler_ctx_slots · test cpc/tests/e2e.rs:handler_without_a_ctx_slot_warns_w0824</sub>
+
+### W0825 · Handler takes its context FIRST, so it cannot receive a bound method
+
+The mirror of W0824. A defaulted `*u8` sits right after the handler, so a wired handler is plainly what was meant — but the fn-pointer takes its `*u8` FIRST. A bound reference fills the slot after the handler with the receiver's address and the bridge reads it from the fn's LAST parameter, so a ctx-first handler can never receive a method however correct the slot beside it looks. W0824 does not see this shape, because it looks for a TRAILING `*u8`. Quiet on `fn(*u8, *u8)` (the ordinary sender-plus-ctx handler), on a bare `fn(*u8)` (the release-hook shape), and on a ctx-first fn with no context slot beside it (not a wired handler at all).
+
+```cplus
+struct Row { n: i32 }
+impl Row { fn build(ref this, at: usize) -> i32 { return 1; } }
+
+// -> W0825: `f` takes its context first
+fn set_row(f: fn(*u8, usize) -> i32, ctx: *u8 = 0 as *u8) -> i32 { return 1; }
+
+// the shape that accepts `set_row(row.build)`
+fn good(f: fn(usize, *u8) -> i32, ctx: *u8 = 0 as *u8) -> i32 { return 2; }
+```
+
+**Fix.** Move the `*u8` to the end of the handler's parameter list: `fn(usize, *u8)` rather than `fn(*u8, usize)`. The context parameter beside it is already right; it is the fn type that is reversed.
+
+<sub>repro: checked · cplus-core/src/sema.rs:check_handler_ctx_slots · test cpc/tests/e2e.rs:ctx_first_handler_warns_w0825</sub>
 
 ## Generics
 
