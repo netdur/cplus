@@ -7801,6 +7801,51 @@ fn handler_without_a_ctx_slot_warns_w0824() {
 }
 
 #[test]
+fn a_bound_method_crosses_a_generic_fn_boundary() {
+    // The concrete call path has run the bound-reference pass since bound refs
+    // existed; a GENERIC call returned early into its own checker and never
+    // reached it. So `run_job(job, then: this.done)` fell through to ordinary
+    // argument checking and surfaced as "struct has no field `done`" — an
+    // error about the wrong thing, with a concrete hop as the only way past.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("generic_bound.cplus");
+    std::fs::write(
+        &src,
+        "interface Job { fn run(ref this); }\n\
+         struct W { n: i32 }\n\
+         impl W { fn done(ref this) { this.n = this.n + 1; return; } }\n\
+         impl W: Job { fn run(ref this) { this.n = this.n + 10; return; } }\n\
+         fn run_job[J: Job](ref job: J, then: fn(*u8) = 0 as fn(*u8), ctx: *u8 = 0 as *u8) {\n\
+             job.run();\n\
+             if then != (0 as fn(*u8)) { then(ctx); }\n\
+             return;\n\
+         }\n\
+         fn main() -> i32 {\n\
+             var w: W = W { n: 0 };\n\
+             run_job::[W](w, then: w.done);\n\
+             if w.n != 11 { return 1; }\n\
+             return 0;\n\
+         }",
+    )
+    .unwrap();
+    let bin = dir.join("generic_bound");
+    let status = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(status.success(), "a bound method must cross a generic boundary");
+    let run = Command::new(&bin).output().expect("run");
+    assert!(
+        run.status.success(),
+        "the receiver must arrive through the generic call: {:?}",
+        run.status
+    );
+}
+
+#[test]
 fn ctx_first_handler_warns_w0825() {
     // The mirror of W0824, and the shape that kept getting through: the
     // context slot beside the handler is correct, but the fn type takes its

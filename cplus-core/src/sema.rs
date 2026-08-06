@@ -12078,6 +12078,22 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             // `let`). The old inline copy also re-reported the mismatch with
             // the resolver-qualified callee name — a duplicate diagnostic
             // leaking an internal name.
+            // 2026-08-06: `f(recv.method)` on a GENERIC fn. The concrete path
+            // has run this since bound refs existed; this one returned early
+            // into here and never reached it, so `run_job(job, then: this.done)`
+            // fell through to ordinary checking and came out as "struct has no
+            // field `done`" — an error about the wrong thing entirely, with a
+            // concrete-hop workaround as the only way past it.
+            //
+            // Substituted params, because that is what the argument is checked
+            // against; a parameter still mentioning `T` is not a fn-pointer and
+            // is skipped by the shape test anyway.
+            let subst_params: Vec<ParamSig> = gsig
+                .params
+                .iter()
+                .map(|p| self.subst_param_sig(p, &subst))
+                .collect();
+            self.try_bound_method_refs(args, &subst_params, call_span);
             let mut had_err = false;
             for (param, arg) in gsig.params.iter().zip(args.iter()) {
                 let expected = self.subst_param_sig(param, &subst);
