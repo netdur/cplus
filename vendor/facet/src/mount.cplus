@@ -1213,6 +1213,92 @@ fn remove_child(parent: *core::Node, at: usize) -> option::Option[core::Node] {
     return gone;
 }
 
+// ---- delete, addressed the way create and update are -------------------------
+// `find` is keyed, the cursors are keyed, and `remove_child` was not: it wanted
+// the parent AND the child's index in it. That mismatch is what made a data
+// list expensive — an app that could address any row directly still had to
+// tear the whole list down to delete one, because indices shift and the parent
+// is not reachable from the child.
+//
+// `remove(key)` closes it. A node carries no parent pointer (a link to keep
+// correct on every add, remove and move), so the parent is found by walking
+// the mounted windows — the same walk `find_node` already does, one level up.
+
+// The node that has `target` as a direct child, searching `n`'s subtree.
+fn _parent_in(n: *core::Node, target: *core::Node) -> option::Option[*core::Node] {
+    if n == (0 as *core::Node) { return option::Option[*core::Node]::None; }
+    match { (*n).child_index(target) } {
+        option::Option[usize]::Some(_at) => { return option::Option[*core::Node]::Some(n); }
+        option::Option[usize]::None => { }
+    }
+    let count: usize = { (*n).child_count() };
+    var i: usize = 0 as usize;
+    while i < count {
+        match { (*n).child_ptr(i) } {
+            option::Option[*core::Node]::Some(c) => {
+                match _parent_in(c, target) {
+                    option::Option[*core::Node]::Some(hit) => { return option::Option[*core::Node]::Some(hit); }
+                    option::Option[*core::Node]::None => { }
+                }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return option::Option[*core::Node]::None;
+}
+
+// The mounted parent of `target`, or None when it is a window root (or not in
+// any open window). Same order as `find_node`: windows as they were opened.
+fn parent_of(target: *core::Node) -> option::Option[*core::Node] {
+    if target == (0 as *core::Node) { return option::Option[*core::Node]::None; }
+    var i: usize = 0 as usize;
+    let n: usize = app::window_count();
+    while i < n {
+        let r: *core::Node = app::window_root(i);
+        if r != (0 as *core::Node) {
+            match _parent_in(r, target) {
+                option::Option[*core::Node]::Some(p) => { return option::Option[*core::Node]::Some(p); }
+                option::Option[*core::Node]::None => { }
+            }
+        }
+        i = i +% (1 as usize);
+    }
+    return option::Option[*core::Node]::None;
+}
+
+// Take the node out of the tree and DROP it — views detached, handlers
+// notified, subtree freed. `remove_child` is the other half of the pair and
+// hands the subtree back instead, for a caller that means to re-attach it.
+//
+// False when the node is not in an open window, or is a window root: a root is
+// closed with `app::close_window`, not deleted out from under itself.
+fn remove_node(target: *core::Node) -> bool {
+    return match parent_of(target) {
+        option::Option[*core::Node]::Some(parent) => match { (*parent).child_index(target) } {
+            option::Option[usize]::Some(at) => match remove_child(parent, at) {
+                option::Option[core::Node]::Some(_gone) => true,
+                option::Option[core::Node]::None => false,
+            },
+            option::Option[usize]::None => false,
+        },
+        option::Option[*core::Node]::None => false,
+    };
+}
+
+// Delete by key — the D that `find`, the cursors and `add_child` already had
+// keyed. False when no mounted node carries the key.
+//
+//     mount::add_child(rows, this.row(rec));      // C
+//     m_label::find("recent:${path}:name")        // R / U
+//     mount::remove("recent:${path}");            // D
+fn remove(key: str) -> bool {
+    return match find_node(key) {
+        option::Option[*core::Node]::Some(p) => remove_node(p),
+        option::Option[*core::Node]::None => false,
+    };
+}
+
 // ---- structural verb tests ---------------------------------------------------
 
 // The last slot the fake renderer was asked to insert at.
@@ -1318,6 +1404,100 @@ fn insert_under_a_passthrough_container_counts_document_order() {
     }
     unmount(#addr_of(root));
     uninstall();
+    return;
+}
+
+#[test]
+fn remove_by_key_deletes_the_row_and_leaves_its_siblings() {
+    // The D of keyed CRUD: create, read and update were all addressed by key
+    // and delete wanted a parent plus an index. A list that can address any
+    // row directly should not have to rebuild itself to lose one.
+    fr_reset();
+    LC_DETACHES = 0;
+    app::reset_default_for_tests();
+    install(fr_renderer());
+    var rows: core::Builder = core::Builder::new();
+    rows.add(fr_leaf("recent:/a"));
+    rows.add(fr_leaf("recent:/b"));
+    rows.add(fr_leaf("recent:/c"));
+    var outer: core::Builder = core::Builder::new();
+    outer.add(core::column(rows, key: "recent:rows"));
+    var root: core::Node = core::column(outer, key: "root");
+    app::open_window(#addr_of(root));
+    assert mount(#addr_of(root));
+    match core::find_in(#addr_of(root), "recent:/b") {
+        option::Option[*core::Node]::Some(bp) => { core::set_on_detach(bp, lc_on_detach, 0 as *u8); }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    let releases: i32 = FR_RELEASES;
+
+    assert remove("recent:/b");
+
+    // Notified, native view out, and the subtree DROPPED (remove_child hands
+    // it back instead; this one deletes).
+    assert LC_DETACHES == 1;
+    assert FR_RELEASES == releases + 1;
+    // The siblings are untouched and still addressable by their own keys —
+    // no index shifted out from under anyone.
+    match find_node("recent:/a") {
+        option::Option[*core::Node]::Some(p) => { assert core::is_attached(p); }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    match find_node("recent:/c") {
+        option::Option[*core::Node]::Some(p) => { assert core::is_attached(p); }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    // ...and the deleted one is gone from the tree, not merely detached.
+    match find_node("recent:/b") {
+        option::Option[*core::Node]::Some(_p) => { assert false; }
+        option::Option[*core::Node]::None => { assert true; }
+    }
+    match core::find_in(#addr_of(root), "recent:rows") {
+        option::Option[*core::Node]::Some(o) => { assert core::child_count_of(o) == (2 as usize); }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    // An unknown key is false, never a trap.
+    assert !remove("recent:/nope");
+    // A window ROOT is not deletable — it is closed, not removed.
+    assert !remove("root");
+
+    app::close_window(#addr_of(root));
+    uninstall();
+    return;
+}
+
+#[test]
+fn parent_of_answers_the_mounted_parent_and_none_for_a_root() {
+    fr_reset();
+    app::reset_default_for_tests();
+    uninstall();
+    var inner: core::Builder = core::Builder::new();
+    inner.add(fr_leaf("leaf"));
+    var outer: core::Builder = core::Builder::new();
+    outer.add(core::column(inner, key: "mid"));
+    var root: core::Node = core::column(outer, key: "root");
+    app::open_window(#addr_of(root));
+
+    match core::find_in(#addr_of(root), "leaf") {
+        option::Option[*core::Node]::Some(leaf) => {
+            match parent_of(leaf) {
+                option::Option[*core::Node]::Some(p) => { assert { (*p).key() } == "mid"; }
+                option::Option[*core::Node]::None => { assert false; }
+            }
+        }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    // A root has no parent, and an unmounted node is in no window.
+    match parent_of(#addr_of(root)) {
+        option::Option[*core::Node]::Some(_p) => { assert false; }
+        option::Option[*core::Node]::None => { assert true; }
+    }
+    var lone: core::Node = core::column(core::Builder::new(), key: "lone");
+    match parent_of(#addr_of(lone)) {
+        option::Option[*core::Node]::Some(_p) => { assert false; }
+        option::Option[*core::Node]::None => { assert true; }
+    }
+    app::close_window(#addr_of(root));
     return;
 }
 
