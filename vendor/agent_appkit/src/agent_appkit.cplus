@@ -361,11 +361,35 @@ fn responds_to(obj: *u8, selector_name: *u8) -> bool {
     return rt::msg_i8_id(obj, rt::sel(#str_ptr("respondsToSelector:\0")), s) != (0 as i8);
 }
 
+// The view that actually holds a node's TEXT.
+//
+// A text area's node is backed by the SCROLL VIEW — a bare NSTextView does not
+// scroll, so the scroller is not optional and the text view is its
+// `documentView`. Every text verb has to go one level down for it, and until
+// this existed they did not: `setStringValue:` on an NSScrollView is a silent
+// no-op, so `set_text` on a text area wrote nothing, told nobody, and returned
+// Allowed. A write that reports success and does nothing is worse than one
+// that fails.
+//
+// The read goes through the same door, because a read and a write that
+// disagree about which view they mean is the same bug wearing a different hat.
+fn text_target(v: *u8) -> *u8 {
+    if is_null(v) { return v; }
+    if !is_kind(v, #str_ptr("NSScrollView\0")) { return v; }
+    let doc: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("documentView\0"))) };
+    if is_null(doc) { return v; }
+    if is_kind(doc, #str_ptr("NSTextView\0")) { return doc; }
+    return v;
+}
+
 // Map an AppKit view to the curated agent-core role vocabulary by native type.
 // Fallback only — preferred path is a declared affordance (set_affordance /
 // facet set_identity). NSTextField splits on editability; table/outline views
 // are Lists; everything else (plain views, stacks, scroll views) is Group.
 fn classify(view: *u8) -> identity::Role {
+    // Before the type checks: a text area presents as its scroller, and a
+    // scroller answers Group. The agent was told a writable field was scenery.
+    if text_target(view) != view { return identity::Role::Input; }
     if is_kind(view, #str_ptr("NSButton\0")) {
         return identity::Role::Button;
     }
@@ -418,6 +442,9 @@ fn node_text(view: *u8, role: identity::Role) -> text::Text {
         return text::from_str("");
     }
     if identity::role_eq(role, identity::Role::Text) || identity::role_eq(role, identity::Role::Input) {
+        // Same door as the write: a text area answers through its scroll view,
+        // and the text is one level down.
+        let view: *u8 = text_target(view);
         // NSTextView's content is `string`; NSTextField's is `stringValue`.
         // Prefer the selector the view actually answers (declared Input on a
         // non-text view yields "").
@@ -961,21 +988,23 @@ impl Surface {
                     option::Option[u32]::None => { }
                 }
                 let ns: *u8 = bridge::nsstring(value);
-                // NSTextView sets its content via `setString:`; NSControl via
-                // `setStringValue:` (which NSTextView silently ignores) — the
-                // write must branch exactly like the read in `node_text`.
-                let sel_name: *u8 = if is_kind(v, #str_ptr("NSTextView\0")) {
+                // A text area's node is backed by its SCROLL VIEW; the text
+                // lives one level down. Resolve first, then branch — NSTextView
+                // sets its content via `setString:`, NSControl via
+                // `setStringValue:` (which a scroll view silently ignores).
+                let tv: *u8 = text_target(v);
+                let sel_name: *u8 = if is_kind(tv, #str_ptr("NSTextView\0")) {
                     #str_ptr("setString:\0")
                 } else {
                     #str_ptr("setStringValue:\0")
                 };
-                perform_on_main(v, rt::sel(sel_name), ns);
+                perform_on_main(tv, rt::sel(sel_name), ns);
                 // ...and tell the app, for controls whose contract is "you are
                 // told when I change". `click` fires the handler it authorizes;
                 // without this, `set_text` was the one verb that drove a control
                 // behind the app's back.
-                notify_value_changed_on_main(v);
-                notify_text_changed_on_main(v);
+                notify_value_changed_on_main(tv);
+                notify_text_changed_on_main(tv);
                 this.versions.bump(node);
                 return surface::Outcome::Allowed;
             }
@@ -1296,12 +1325,23 @@ fn mcp_describe_exposed(p: *u8) -> vec::Vec[mcpb::UiNode] {
     while i < views.count() {
         match views.at_ptr(i) {
             option::Option[*identity::NodeView]::Some(n) => {
+                // `is_hidden` is READ, never assumed. Frames and class names
+                // are omitted here on purpose — the default view keeps the
+                // agent's context small — but omitting a field and asserting a
+                // false one are different things. This said `false` for every
+                // node, so the default projection reported a hidden step as on
+                // screen while `mode:full` reported it hidden, and an agent
+                // could not tell which step it was looking at.
+                let live: *u8 = match { (*s).reg.lookup({ (*n).id.view() }) } {
+                    option::Option[usize]::Some(idx) => { (*s).view_of(idx) },
+                    option::Option[usize]::None => null(),
+                };
                 out.append(mcpb::UiNode {
                     id: text::from_str({ (*n).id.view() }),
                     role: { (*n).role },
                     class_name: text::new(),
                     frame: mcpb::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 },
-                    is_hidden: false,
+                    is_hidden: if is_null(live) { false } else { live_hidden(live) },
                     text: text::from_str({ (*n).name.view() }),
                     description: text::from_str({ (*n).description.view() }),
                     actionable: { (*n).actionable },
