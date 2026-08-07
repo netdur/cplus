@@ -25,6 +25,7 @@ const P_AXIS: u64 = 2u64;
 const P_MIN_LEADING: u64 = 4u64;
 const P_MIN_TRAILING: u64 = 8u64;
 const P_COLLAPSED: u64 = 16u64;
+const P_DIVIDER: u64 = 32u64;
 
 // Which way the panes sit. Named for the RESULT, not for the divider: a
 // boolean `vertical` reads as a question about the wrong object every time.
@@ -58,6 +59,14 @@ struct SplitProps {
     collapsed_leading: bool,
     collapsed_trailing: bool,
     saved_position: f64,
+    // How the divider LOOKS. AppKit's own is a hairline in the platform's
+    // separator colour, which disappears between two panes that share a
+    // background — and a divider a user cannot find is one they cannot drag.
+    // Both are settable because the two are independent: a thicker divider is
+    // easier to grab, a stronger colour is easier to see, and an application
+    // wanting a seam rather than a bar needs the second without the first.
+    divider_color: vocab::Color,
+    divider_thickness: f64,
     on_move: fn(*u8, *u8),
     opaque ctx: *u8,
 }
@@ -71,6 +80,8 @@ impl SplitProps {
             position: 220.0f64,
             min_leading: 150.0f64,
             min_trailing: 240.0f64,
+            divider_color: vocab::Color::separator(),
+            divider_thickness: 1.0f64,
             collapsed_leading: false,
             collapsed_trailing: false,
             saved_position: 0.0f64,
@@ -93,6 +104,8 @@ fn split(
     position: f64 = 220.0f64,
     min_leading: f64 = 150.0f64,
     min_trailing: f64 = 240.0f64,
+    divider_color: vocab::Color = vocab::Color::separator(),
+    divider_thickness: f64 = 1.0f64,
     on_move: fn(*u8, *u8) = no_move,
     ctx: *u8 = 0 as *u8,
 ) -> core::Node {
@@ -101,6 +114,8 @@ fn split(
     p.position = position;
     p.min_leading = min_leading;
     p.min_trailing = min_trailing;
+    p.divider_color = divider_color;
+    p.divider_thickness = divider_thickness;
     p.on_move = on_move;
     p.ctx = ctx;
 
@@ -162,6 +177,37 @@ impl Split {
         let p: *SplitProps = this._props();
         if p == (0 as *SplitProps) { return 0.0f64; }
         return { (*p).position };
+    }
+
+    fn set_divider_color(this, v: vocab::Color) -> Split {
+        let p: *SplitProps = this._props();
+        if p == (0 as *SplitProps) { return this; }
+        { (*p).divider_color = v };
+        core::touch(this._p, P_DIVIDER);
+        return this;
+    }
+
+    fn divider_color(this) -> vocab::Color {
+        let p: *SplitProps = this._props();
+        if p == (0 as *SplitProps) { return vocab::Color::separator(); }
+        return { (*p).divider_color };
+    }
+
+    // Changing this moves the panes, so it raises the LAYOUT bit as well as its
+    // own: the divider is part of the geometry it sits in.
+    fn set_divider_thickness(this, v: f64) -> Split {
+        let p: *SplitProps = this._props();
+        if p == (0 as *SplitProps) { return this; }
+        { (*p).divider_thickness = v };
+        core::touch(this._p, P_DIVIDER);
+        core::relayout(this._p);
+        return this;
+    }
+
+    fn divider_thickness(this) -> f64 {
+        let p: *SplitProps = this._props();
+        if p == (0 as *SplitProps) { return 1.0f64; }
+        return { (*p).divider_thickness };
     }
 
     fn set_axis(this, v: SplitAxis) -> Split {
