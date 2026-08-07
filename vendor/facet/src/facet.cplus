@@ -964,6 +964,82 @@ fn set_shrink(n: *Node, v: f64) {
 // calculation, so its size is purely its share of what the parent offers.
 // `spacer` is built on it, and a split needs it for the same reason — a
 // container whose job is to divide space must not be sized by what it holds.
+// ---- what this node is, for anyone not looking at it ------------------------
+//
+// The agent surface has carried a name and a description per node since it
+// existed, and nothing ever filled them: `identity::NodeView` declares both and
+// the only writer was a key. VoiceOver reads the same two facts. So these are
+// one set of verbs serving two readers, and the absence cost both — an agent
+// guessing a control's purpose from its key, and a screen reader with nothing
+// to say about it at all.
+//
+// The heading level is what makes a window SKIMMABLE. Without it a screen
+// reader can only read start to finish.
+
+fn set_accessibility_label(n: *Node, v: str) {
+    let d: *Data = ensure_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).common.accessibility_label = text::from_str(v) };
+    touch(n, props::C_SEMANTICS);
+    return;
+}
+
+fn accessibility_label(n: *Node) -> str {
+    if n == (0 as *Node) { return ""; }
+    let d: *Data = { (*n).data() };
+    if d == (0 as *Data) { return ""; }
+    return { (*d).common.accessibility_label.view() };
+}
+
+fn set_accessibility_hint(n: *Node, v: str) {
+    let d: *Data = ensure_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).common.accessibility_hint = text::from_str(v) };
+    touch(n, props::C_SEMANTICS);
+    return;
+}
+
+fn accessibility_hint(n: *Node) -> str {
+    if n == (0 as *Node) { return ""; }
+    let d: *Data = { (*n).data() };
+    if d == (0 as *Data) { return ""; }
+    return { (*d).common.accessibility_hint.view() };
+}
+
+// 1 is the most important heading on the screen, as on the web. 0 means this
+// node is not a heading, which is what almost every node is.
+fn set_heading_level(n: *Node, v: i64) {
+    let d: *Data = ensure_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).common.heading_level = v };
+    touch(n, props::C_SEMANTICS);
+    return;
+}
+
+fn heading_level(n: *Node) -> i64 {
+    if n == (0 as *Node) { return 0 as i64; }
+    let d: *Data = { (*n).data() };
+    if d == (0 as *Data) { return 0 as i64; }
+    return { (*d).common.heading_level };
+}
+
+// The hover text. Any node can want one, which is why the ledger models it as
+// an attached property and why it belongs to the band rather than to a control.
+fn set_tooltip(n: *Node, v: str) {
+    let d: *Data = ensure_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).common.tooltip = text::from_str(v) };
+    touch(n, props::C_TOOLTIP);
+    return;
+}
+
+fn tooltip(n: *Node) -> str {
+    if n == (0 as *Node) { return ""; }
+    let d: *Data = { (*n).data() };
+    if d == (0 as *Data) { return ""; }
+    return { (*d).common.tooltip.view() };
+}
+
 // ---- what flex could always do and facet never said -------------------------
 //
 // facet's band forwarded 14 of flex_layout's 38 style setters. The other 24 were
@@ -1444,6 +1520,14 @@ impl flex::Node {
     fn set_grow(ref this, v: f64) { set_grow(#addr_of(this), v); return; }
     fn set_shrink(ref this, v: f64) { set_shrink(#addr_of(this), v); return; }
     fn set_basis(ref this, v: f64) { set_basis(#addr_of(this), v); return; }
+    fn set_accessibility_label(ref this, v: str) { set_accessibility_label(#addr_of(this), v); return; }
+    fn accessibility_label(this) -> str { return accessibility_label(#addr_of(this)); }
+    fn set_accessibility_hint(ref this, v: str) { set_accessibility_hint(#addr_of(this), v); return; }
+    fn accessibility_hint(this) -> str { return accessibility_hint(#addr_of(this)); }
+    fn set_heading_level(ref this, v: i64) { set_heading_level(#addr_of(this), v); return; }
+    fn heading_level(this) -> i64 { return heading_level(#addr_of(this)); }
+    fn set_tooltip(ref this, v: str) { set_tooltip(#addr_of(this), v); return; }
+    fn tooltip(this) -> str { return tooltip(#addr_of(this)); }
     fn set_absolute(ref this, on: bool) { set_absolute(#addr_of(this), on); return; }
     fn is_absolute(this) -> bool { return is_absolute(#addr_of(this)); }
     fn set_left(ref this, v: f64) { set_left(#addr_of(this), v); return; }

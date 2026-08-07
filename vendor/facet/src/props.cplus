@@ -44,6 +44,20 @@ struct CommonProps {
     // IgnoresContainerArea, SafeAreaEdges) with no carrier. One node in a tree
     // is the one that has to answer it, and any node may be that node.
     safe_area: vocab::SafeArea,
+    // WHAT THIS NODE IS, for anyone not looking at it. The agent surface has
+    // carried a name and a description per node since it existed and nothing
+    // ever filled them; VoiceOver reads the same two. So the accessible
+    // description is not an accessibility feature bolted on — it is the field
+    // the agent tree was already shaped around, finally given a writer.
+    //
+    // The heading level is what lets a screen reader SKIM: a window with no
+    // headings can only be read start to finish.
+    accessibility_label: text::Text,
+    accessibility_hint: text::Text,
+    heading_level: i64,
+    // The hover text. On the shared band because any node can want one, which
+    // is exactly why the ledger models it as an attached property.
+    tooltip: text::Text,
     is_enabled: bool,
     is_visible: bool,
     input_transparent: bool,
@@ -71,6 +85,10 @@ impl CommonProps {
             shadow: vocab::Shadow::none(),
             clip: vocab::Shape::none(),
             safe_area: vocab::SafeArea::Default,
+            accessibility_label: text::new(),
+            accessibility_hint: text::new(),
+            heading_level: 0 as i64,
+            tooltip: text::new(),
             is_enabled: true,
             is_visible: true,
             input_transparent: false,
@@ -143,6 +161,11 @@ const C_LAYOUT: u64 = 4611686018427387904u64;
 // `background_image` deliberately does NOT take a bit. It rides C_BACKGROUND
 // with the Brush, because they are one question: what is behind this node.
 const C_SAFE_AREA: u64 = 140737488355328u64;
+// The common band grows DOWNWARD from bit 47; per-control bits climb from 0.
+// One bit for the three semantic rows, the way C_HANDLERS carries four: a
+// screen-reader description changes rarely and the backend re-reads all three.
+const C_SEMANTICS: u64 = 70368744177664u64;
+const C_TOOLTIP: u64 = 35184372088832u64;
 
 // ---- GroupableItemsView — shared by every control the ledger derives from it 
 

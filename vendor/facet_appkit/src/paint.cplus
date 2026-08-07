@@ -404,8 +404,47 @@ fn transformed(s: str, t: vocab::TextTransform) -> text::Text {
 
 fn all_bits() -> u64 { return 18446744073709551615u64; }
 
+// THE ACCESSIBLE FACTS, which are the agent's facts too.
+//
+// `accessibilityLabel` is what VoiceOver announces and what the agent surface
+// reads as a node's name when no key is better; `accessibilityHelp` is the
+// hint. Both are NSAccessibility protocol methods every NSView answers, so
+// there is no subclass and no associated object — the view already has the
+// storage, it was simply never written.
+//
+// The heading level goes on as a ROLE rather than a number: AppKit has no
+// levels, but marking a node `NSAccessibilityHeadingRole` is what lets
+// VoiceOver's rotor list it, which is the thing a level is for.
+fn apply_semantics(v: *u8, n: *core::Node) {
+    let label: str = core::accessibility_label(n);
+    if label != "" {
+        { rt::msg_void_id(v, rt::sel(#str_ptr("setAccessibilityLabel:\0")),
+                          bridge::nsstring(label)) };
+    }
+    let hint: str = core::accessibility_hint(n);
+    if hint != "" {
+        { rt::msg_void_id(v, rt::sel(#str_ptr("setAccessibilityHelp:\0")),
+                          bridge::nsstring(hint)) };
+    }
+    if core::heading_level(n) > (0 as i64) {
+        { rt::msg_void_id(v, rt::sel(#str_ptr("setAccessibilityRole:\0")),
+                          bridge::nsstring("AXHeading")) };
+    }
+    return;
+}
+
 fn apply_common(v: *u8, n: *core::Node, dirty: u64) {
     let view: ak::View = ak::View::from_raw(v);
+    if (dirty & props::C_SEMANTICS) != (0 as u64) { apply_semantics(v, n); }
+    // The hover text. `toolTip` is on NSView itself, so any node can have one.
+    if (dirty & props::C_TOOLTIP) != (0 as u64) {
+        let t: str = core::tooltip(n);
+        if t == "" {
+            { rt::msg_void_id(v, rt::sel(#str_ptr("setToolTip:\0")), 0 as *u8) };
+        } else {
+            { rt::msg_void_id(v, rt::sel(#str_ptr("setToolTip:\0")), bridge::nsstring(t)) };
+        }
+    }
     // is_visible → hidden. NOT display:none — that is flex's, and it takes the
     // node out of layout; this hides a node that still occupies its space.
     if (dirty & props::C_IS_VISIBLE) != (0 as u64) {

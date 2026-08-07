@@ -1121,3 +1121,17 @@ fn attach_accessory(win: ak::Window, root: *core::Node, key: str, attribute: i64
 extern fn msg_size_of_view(recv: *u8, sel: *u8) -> rt::Size;
 #[link_name = "objc_msgSend"]
 extern fn msg_void_rect_v(recv: *u8, sel: *u8, r: rt::Rect);
+
+// Bring a window to the front and give it the keyboard.
+//
+// Installed into `application::set_activate_fn` by the runtime, because the
+// portable half knows no AppKit — the same seam `agent_attach` goes through.
+//
+// `makeKeyAndOrderFront:` is both halves of the verb: raise it, and make it the
+// one receiving keys. Ordering without the key half leaves a window visibly in
+// front and deaf.
+fn activate_window(win: *u8) {
+    if win == (0 as *u8) { return; }
+    { rt::msg_void_id(win, rt::sel(#str_ptr("makeKeyAndOrderFront:\0")), 0 as *u8) };
+    return;
+}

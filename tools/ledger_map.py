@@ -231,6 +231,41 @@ LAYOUT_METHODS = re.compile(
 # FACET SAYS IT ANOTHER WAY. These are not refusals — the capability exists, and
 # the reason names where, so the contract can answer "does facet do this".
 METHOD_DROPS = {
+    # The cookie store is asynchronous everywhere it exists — WKHTTPCookieStore
+    # answers through a completion handler — and facet has no async in the UI.
+    # Same rule that dropped EvaluateJavaScriptAsync, and the same escape: a
+    # page that knows something posts it back through the message channel.
+    ("WebView", "Cookies"):
+        "the platform cookie store answers asynchronously; facet has no async in the UI",
+    # `page_dots` DRAWS the row as sublayers rather than laying out child views,
+    # so there is nothing for an items layout to arrange.
+    ("IndicatorView", "IndicatorLayout"):
+        "the dots are drawn as sublayers, not arranged children",
+    ("Application", "ActivateWindow"):
+        "facet says it as application::activate_window",
+    ("Page", "DisplayActionSheet"):
+        "facet says it as runtime::choose — a sheet of keyed buttons an agent can pick from",
+    ("Page", "DisplayActionSheetAsync"):
+        "facet says it as runtime::choose — no async in the UI; the answer is a handler",
+    ("Page", "DisplayPromptAsync"):
+        "facet says it as runtime::prompt — no async in the UI; the answer is a handler",
+    ("SemanticProperties", "SetDescription"):
+        "facet says it as set_accessibility_label on the shared band",
+    ("SemanticProperties", "GetDescription"):
+        "facet says it as accessibility_label on the shared band",
+    ("SemanticProperties", "SetHint"):
+        "facet says it as set_accessibility_hint on the shared band",
+    ("SemanticProperties", "GetHint"):
+        "facet says it as accessibility_hint on the shared band",
+    ("SemanticProperties", "SetHeadingLevel"):
+        "facet says it as set_heading_level on the shared band",
+    ("SemanticProperties", "GetHeadingLevel"):
+        "facet says it as heading_level on the shared band",
+    ("ToolTipProperties", "SetText"):
+        "facet says it as set_tooltip on the shared band",
+    ("ToolTipProperties", "GetText"):
+        "facet says it as tooltip on the shared band",
+
     ("Application", "Quit"):        "facet says it as nav::quit()",
     ("Application", "OpenWindow"):  "facet says it as application::open_window",
     ("Application", "CloseWindow"): "facet says it as application::close_window",
@@ -304,41 +339,17 @@ METHOD_DROPS = {
 # flex_layout" — and one of them, a collection's item layout, is what a board
 # of cards needs.
 ABSENT = {
-    ("Page", "DisplayActionSheet"):
-        "no 'choose one of N' sheet; NSAlert with N buttons would carry it",
-    ("Page", "DisplayActionSheetAsync"):
-        "no 'choose one of N' sheet; NSAlert with N buttons would carry it",
-    ("Page", "DisplayPromptAsync"):
-        "no 'type a value' dialog; NSAlert with an accessory text field would carry it",
-    # NOT an overlay LAYER. flex has absolute positioning and always did, so an
+                # NOT an overlay LAYER. flex has absolute positioning and always did, so an
     # overlay is an ordinary node that says it is out of flow and where it sits
     # — `set_absolute` plus the four edges. A registry of overlays would have
     # been a second placement system beside the one the tree already runs.
-    ("Application", "ActivateWindow"):
-        "windows can be opened and closed but not brought to the front",
-
+    
     # ACCESSIBILITY. The agent surface already carries a name and a description
     # per node — `identity::NodeView` has both — but facet declares no verb an
     # application can use to SET them, so they are only ever what a key and a
     # control's own text happen to say. The same three rows serve VoiceOver.
-    ("SemanticProperties", "SetDescription"):
-        "no verb sets a node's accessible description; the agent surface has the field and nothing fills it",
-    ("SemanticProperties", "GetDescription"):
-        "no verb sets a node's accessible description; the agent surface has the field and nothing fills it",
-    ("SemanticProperties", "SetHint"):
-        "no verb sets a node's accessible hint",
-    ("SemanticProperties", "GetHint"):
-        "no verb sets a node's accessible hint",
-    ("SemanticProperties", "SetHeadingLevel"):
-        "no heading level, so a screen reader cannot skim a facet window by structure",
-    ("SemanticProperties", "GetHeadingLevel"):
-        "no heading level, so a screen reader cannot skim a facet window by structure",
-
-    ("ToolTipProperties", "SetText"):
-        "no tooltip verb; NSView.toolTip would carry it directly",
-    ("ToolTipProperties", "GetText"):
-        "no tooltip verb; NSView.toolTip would carry it directly",
-
+                        
+        
             
     # ---- found in the WRITES and READS bands by the same audit ----
     #
@@ -347,13 +358,7 @@ ABSENT = {
     # way NSCollectionViewFlowLayout does, and nothing in the flex tree reaches
     # inside it. Without this a board of cards, a gallery, or any grid of
     # anything has to be hand-built out of rows.
-    ("IndicatorView", "IndicatorLayout"):
-        "the dots row has no layout of its own",
 
-    ("Border", "StrokeDashPattern"):
-        "borders are solid; a dashed or dotted stroke needs a CAShapeLayer",
-    ("WebView", "Cookies"):
-        "no cookie access on a web view, so a session cannot be seeded or read",
 }
 
 METHOD_VOCABULARY = {

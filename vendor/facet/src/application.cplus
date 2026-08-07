@@ -114,6 +114,9 @@ static AGENT_ATTACH_FN: fn(*u8) = #zero::[fn(*u8)]();
 
 fn set_agent_attach_fn(f: fn(*u8)) { AGENT_ATTACH_FN = f; return; }
 
+static ACTIVATE_FN: fn(*u8) = #zero::[fn(*u8)]();
+fn set_activate_fn(f: fn(*u8)) { ACTIVATE_FN = f; return; }
+
 // Point the agent surface at `win`. Inert when no agent is serving, which is
 // every app that never called `agent::enable()`.
 fn agent_attach(win: *u8) {
@@ -241,6 +244,21 @@ fn close_window(root: *flex::Node) {
         }
         i = i +% (1 as usize);
     }
+    return;
+}
+
+// Bring a window to the front and give it the keyboard. Opening and closing
+// were the only two things facet could say about a window's life, so a
+// second window could be created and then never reached again — an app that
+// opened an inspector twice got a new one each time rather than the one
+// already on screen.
+// Through a fn-pointer seam for the same reason `agent_attach` uses one: this
+// half of facet is portable and knows no AppKit. The backend fills it in.
+fn activate_window(root: *flex::Node) {
+    let f: fn(*u8) = ACTIVATE_FN;
+    if f == (0 as fn(*u8)) { return; }
+    let w: *u8 = window_native(root);
+    if w != (0 as *u8) { f(w); }
     return;
 }
 

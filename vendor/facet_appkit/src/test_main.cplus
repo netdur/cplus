@@ -7888,3 +7888,36 @@ fn flow_direction_mirrors_the_layout() {
     app::reset_default_for_tests();
     return;
 }
+
+#[test]
+fn the_shared_band_writes_semantics_and_a_tooltip_onto_the_view() {
+    // Six ledger rows for description, hint and heading level had nothing
+    // behind them, and the agent surface has carried a name and a description
+    // per node since it existed with nothing to fill them. VoiceOver reads the
+    // same two facts, so this is one set of verbs serving both readers.
+    //
+    // Asserted by asking the VIEW, not the props: the failure being tested for
+    // is a verb that writes a field the platform never sees.
+    var n: core::Node = button::button("Save", key: "save");
+    let p: *core::Node = #addr_of(n);
+    core::set_accessibility_label(p, "Save the project");
+    core::set_accessibility_hint(p, "Writes every open file to disk");
+    core::set_heading_level(p, 1 as i64);
+    core::set_tooltip(p, "⌘S");
+
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v != (0 as *u8);
+
+    let label: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("accessibilityLabel\0"))) };
+    assert bridge::to_text(label).view() == "Save the project";
+    let help: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("accessibilityHelp\0"))) };
+    assert bridge::to_text(help).view() == "Writes every open file to disk";
+    // A heading is a ROLE on AppKit, which is what puts it in VoiceOver's rotor.
+    let role: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("accessibilityRole\0"))) };
+    assert bridge::to_text(role).view() == "AXHeading";
+    let tip: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("toolTip\0"))) };
+    assert bridge::to_text(tip).view() == "⌘S";
+
+    views::view_release(v);
+    return;
+}

@@ -266,6 +266,28 @@ fn alert(title: str, message: str, primary: str, secondary: str = "",
     return;
 }
 
+// A CHOICE AMONG N. `alert` says yes or no; this says which. The sheet is a
+// plain facet tree of buttons keyed `choose:opt:0..N`, so an agent picks one by
+// name — which is the whole reason it is built rather than an NSAlert with
+// buttons added, and the same reason `alert` is a sheet.
+fn choose(title: str, message: str, take options: vec::Vec[text::Text],
+          on_answer: fn(i32, *u8) = 0 as fn(i32, *u8), ctx: *u8 = 0 as *u8) {
+    dialogs::choose_sheet(title, message, options, on_answer, ctx);
+    return;
+}
+
+// A VALUE, typed. `on_typed` receives the text; `on_answer` receives 0 for the
+// primary button and 1 for the secondary, so a caller can tell "typed nothing"
+// from "cancelled". The field is a real facet text_field keyed `prompt:value`,
+// so `set_text` reaches it exactly like any other.
+fn prompt(title: str, message: str, placeholder: str = "", primary: str = "OK",
+          secondary: str = "Cancel", on_typed: fn(str, *u8) = dialogs::no_typed,
+          on_answer: fn(i32, *u8) = 0 as fn(i32, *u8), ctx: *u8 = 0 as *u8) {
+    dialogs::prompt_sheet(title, message, placeholder, primary, secondary,
+                          on_typed, on_answer, ctx);
+    return;
+}
+
 // The blocking NSAlert, kept for the one case a sheet cannot serve: a decision
 // that must be made before the process can go on, with no window to attach to.
 // An agent cannot reach it, which is why it is not the default.
@@ -770,6 +792,7 @@ fn install_agent(take h: AgentHooks) {
     // `app::agent_attach`, and found a null hook: the agent never learned about
     // the window in front of the user.
     app::set_agent_attach_fn(AGENT.attach_window);
+    app::set_activate_fn(host::activate_window);
     return;
 }
 

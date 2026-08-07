@@ -16,6 +16,9 @@ import "facet/vocabulary" as vocab;
 import "facet/application" as app;
 import "facet/label" as label;
 import "facet/button" as button;
+import "facet/text_field" as text_field;
+import "stdlib/vec" as vec;
+
 import "facet/mount" as mount;
 import "stdlib/box" as box;
 import "objc/synthesis" as synth;
@@ -162,6 +165,10 @@ struct AlertHost {
     opaque sheet: *u8,
     opaque parent: *u8,
     answer: fn(i32, *u8),
+    // The prompt's second answer: the text that was typed. A separate slot
+    // rather than a wider `answer`, so an alert and a choose keep the signature
+    // they have and only a prompt pays for the string.
+    typed: fn(str, *u8),
     opaque answer_ctx: *u8,
 }
 
@@ -176,6 +183,33 @@ fn host_of(sender: *u8) -> *AlertHost {
 
 fn alert_primary(sender: *u8, ctx: *u8) { dismiss(host_of(sender), 0 as i32); return; }
 fn alert_secondary(sender: *u8, ctx: *u8) { dismiss(host_of(sender), 1 as i32); return; }
+
+// A CHOICE AMONG N, which `alert` could not say. The index rides the ctx slot
+// rather than needing one named handler per button — `on_click` already carries
+// a ctx, and an index is exactly the kind of small fact it is for.
+fn choose_pick(sender: *u8, ctx: *u8) {
+    dismiss(host_of(sender), { #addr(ctx) } as i32);
+    return;
+}
+
+// The prompt's OK reads the field BEFORE dismissing, because `dismiss` unmounts
+// the tree — the text would be gone by the time an answer handler ran.
+fn prompt_ok(sender: *u8, ctx: *u8) {
+    let h: *AlertHost = host_of(sender);
+    if h == (0 as *AlertHost) { return; }
+    match text_field::find("prompt:value") {
+        option::Option[text_field::TextField]::Some(f) => {
+            let typed: str = f.text();
+            let g: fn(str, *u8) = { (*h).typed };
+            if g != (0 as fn(str, *u8)) { g(typed, { (*h).answer_ctx }); }
+        }
+        option::Option[text_field::TextField]::None => { }
+    }
+    dismiss(h, 0 as i32);
+    return;
+}
+
+fn prompt_cancel(sender: *u8, ctx: *u8) { dismiss(host_of(sender), 1 as i32); return; }
 
 fn dismiss(h: *AlertHost, answer: i32) {
     if h == (0 as *AlertHost) { return; }
@@ -221,10 +255,89 @@ fn alert_tree(title: str, message: str, primary: str, secondary: str) -> core::N
     return core::column(b, key: "alert").padding(20.0f64).gap(12.0f64);
 }
 
+fn choose_tree(title: str, message: str, take options: vec::Vec[text::Text]) -> core::Node {
+    var b: core::Builder = core::Builder::new();
+    b.add(label::label(title, key: "choose:title", font_size: 15.0f64,
+                       font_weight: vocab::FontWeight::Bold,
+                       text_align: vocab::TextAlign::Start));
+    if message != "" {
+        b.add(label::label(message, key: "choose:message", font_size: 13.0f64,
+                           text_align: vocab::TextAlign::Start));
+    }
+    // One button per option, stacked: a row of six buttons is unreadable and a
+    // sheet has the height. Keyed by INDEX so an agent can name the one it
+    // wants — `choose:opt:2` is addressable where "the third button" is not.
+    var col: core::Builder = core::Builder::new();
+    var i: usize = 0 as usize;
+    while i < options.count() {
+        match options.at_ptr(i) {
+            option::Option[*text::Text]::Some(t) => {
+                let k: text::Text = "choose:opt:${i}";
+                col.add(button::button({ (*t).view() }, key: { k.view() },
+                                       on_click: choose_pick, on_click_ctx: i as *u8));
+            }
+            option::Option[*text::Text]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    b.add(core::column(col, key: "choose:options").gap(6.0f64));
+    return core::column(b, key: "choose").padding(20.0f64).gap(12.0f64);
+}
+
+fn prompt_tree(title: str, message: str, placeholder: str, primary: str, secondary: str) -> core::Node {
+    var b: core::Builder = core::Builder::new();
+    b.add(label::label(title, key: "prompt:title", font_size: 15.0f64,
+                       font_weight: vocab::FontWeight::Bold,
+                       text_align: vocab::TextAlign::Start));
+    if message != "" {
+        b.add(label::label(message, key: "prompt:message", font_size: 13.0f64,
+                           text_align: vocab::TextAlign::Start));
+    }
+    // A real facet text_field, which is what makes the prompt agent-drivable:
+    // `set_text` reaches it by key like any other field.
+    b.add(text_field::text_field("", key: "prompt:value", placeholder: placeholder));
+    var row: core::Builder = core::Builder::new();
+    if secondary != "" {
+        row.add(button::button(secondary, key: "prompt:cancel", on_click: prompt_cancel));
+    }
+    row.add(button::button(primary, key: "prompt:ok", on_click: prompt_ok));
+    b.add(core::row(row, key: "prompt:buttons").gap(8.0f64).justify(flex::Justify::FlexEnd));
+    return core::column(b, key: "prompt").padding(20.0f64).gap(12.0f64);
+}
+
+fn no_typed(v: str, ctx: *u8) { return; }
+
+// `alert`, `choose` and `prompt` differ only in the TREE and its height, so the
+// sheet itself is one body. Three copies of the window plumbing was how the
+// second one would have started drifting from the first.
 fn alert_sheet(title: str, message: str, primary: str, secondary: str = "",
                on_answer: fn(i32, *u8) = 0 as fn(i32, *u8), ctx: *u8 = 0 as *u8) {
+    present_sheet(alert_tree(title, message, primary, secondary), 140.0f64,
+                  on_answer, no_typed, ctx);
+    return;
+}
+
+fn choose_sheet(title: str, message: str, take options: vec::Vec[text::Text],
+                on_answer: fn(i32, *u8) = 0 as fn(i32, *u8), ctx: *u8 = 0 as *u8) {
+    // Tall enough for the buttons it actually has.
+    let n: f64 = options.count() as f64;
+    present_sheet(choose_tree(title, message, options), 110.0f64 + (n * 34.0f64),
+                  on_answer, no_typed, ctx);
+    return;
+}
+
+fn prompt_sheet(title: str, message: str, placeholder: str, primary: str,
+                secondary: str = "", on_typed: fn(str, *u8) = no_typed,
+                on_answer: fn(i32, *u8) = 0 as fn(i32, *u8), ctx: *u8 = 0 as *u8) {
+    present_sheet(prompt_tree(title, message, placeholder, primary, secondary),
+                  175.0f64, on_answer, on_typed, ctx);
+    return;
+}
+
+fn present_sheet(take tree: core::Node, height: f64,
+                 on_answer: fn(i32, *u8), on_typed: fn(str, *u8), ctx: *u8) {
     let parent: *u8 = app::window_native(app::newest_window_root());
-    var root: core::Node = alert_tree(title, message, primary, secondary);
+    var root: core::Node = tree;
 
     // A titleless panel: a sheet draws no titlebar of its own, and one would
     // sit above the parent's.
@@ -232,13 +345,13 @@ fn alert_sheet(title: str, message: str, primary: str, secondary: str = "",
                                   rt::sel(#str_ptr("alloc\0"))) };
     let w: *u8 = { msg_id_rect_u64_u64_i8(sheet,
         rt::sel(#str_ptr("initWithContentRect:styleMask:backing:defer:\0")),
-        rt::Rect { x: 0.0f64, y: 0.0f64, w: 380.0f64, h: 140.0f64 },
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: 380.0f64, h: height },
         1 as u64,        // NSWindowStyleMaskTitled — a sheet needs one to size
         2 as u64,        // NSBackingStoreBuffered
         0 as i8) };
     if w == (0 as *u8) { return; }
     let content: ak::View = akx::new_flipped_view(
-        rt::Rect { x: 0.0f64, y: 0.0f64, w: 380.0f64, h: 140.0f64 });
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: 380.0f64, h: height });
     { rt::msg_void_id(w, rt::sel(#str_ptr("setContentView:\0")), content.raw()) };
 
     let rp: *core::Node = match box::new::[core::Node](root) {
@@ -252,12 +365,12 @@ fn alert_sheet(title: str, message: str, primary: str, secondary: str = "",
     app::set_window_native(rp, w);
     let rv: *u8 = core::view_of(rp);
     if rv != (0 as *u8) { content.add_subview(ak::View::from_raw(rv)); }
-    { (*rp).calculate_layout(width: 380.0f64, height: 140.0f64) };
+    { (*rp).calculate_layout(width: 380.0f64, height: height) };
     geometry::reposition(rp);
 
     match box::new::[AlertHost](AlertHost {
         root: rp, sheet: w, parent: parent,
-        answer: on_answer, answer_ctx: ctx,
+        answer: on_answer, typed: on_typed, answer_ctx: ctx,
     }) {
         option::Option[box::Box[AlertHost]]::Some(hb) => {
             let hp: *AlertHost = { hb.into_raw() } as *AlertHost;
