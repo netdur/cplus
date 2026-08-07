@@ -287,13 +287,37 @@ fn unmount(root: *core::Node) {
 // enclosing host, consuming their slots — which is exactly how a pure-layout
 // column sits inside a real scroll view.
 fn mount_walk(n: *core::Node, host: *u8, slot: usize, ref q: vec::Vec[*core::Node]) -> usize {
+    // AN ADOPTED VIEW WINS. `adopt_native` puts the application's own view on
+    // the node, and this walk used to call `create` regardless and hand the
+    // result to `set_view` — which replaced the adopted view AND fired the
+    // release paired with it. `views::create` dispatches on kind, and an
+    // adopted node is `K_NODE`, so what replaced a live terminal was an empty
+    // container. Both branches lost and both were measured:
+    //
+    //   keyed     `backing_view()` replaced the adopted view — right frame,
+    //             nothing drawn (`FlexFlippedView`, 0 subviews)
+    //   unkeyed   `wants_view` is false for a keyless K_NODE, so `create`
+    //             answered 0 and NO view was ever inserted — the node
+    //             measured 0 x 0
+    //
+    // `adopt_native`'s own comment promised "the mount walk inserts the view
+    // and stops", and the walk did not read `Data.view` at any point.
+    //
+    // Asking the FLAG rather than "is there a view already" is what makes this
+    // safe to re-mount: a node the walk mounted before also has a view, and
+    // that one must still be replaced.
     let create: fn(*u8, *core::Node) -> *u8 = RENDERER.create;
+    let adopted: bool = core::view_is_adopted(n);
     var v: *u8 = 0 as *u8;
-    if create != (0 as fn(*u8, *core::Node) -> *u8) { v = create(RENDERER.ctx, n); }
+    if adopted { v = core::view_of(n); }
+    else if create != (0 as fn(*u8, *core::Node) -> *u8) { v = create(RENDERER.ctx, n); }
     core::set_attached(n, true);
     q.append(n);
     if v != (0 as *u8) {
-        core::set_view(n, v, RENDERER.view_release);
+        // An adopted view keeps the release `adopt_native` paired with it. The
+        // application said who frees this view; the backend does not get to
+        // overwrite that answer on its way past.
+        if !adopted { core::set_view(n, v, RENDERER.view_release); }
         if host != (0 as *u8) {
             let ins: fn(*u8, *u8, *u8, usize) = RENDERER.insert;
             if ins != (0 as fn(*u8, *u8, *u8, usize)) { ins(RENDERER.ctx, host, v, slot); }

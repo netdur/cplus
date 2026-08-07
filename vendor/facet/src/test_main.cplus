@@ -971,6 +971,32 @@ fn a_raw_view_can_be_adopted_as_a_node() {
 }
 
 #[test]
+fn an_adopted_view_is_marked_so_the_mount_walk_leaves_it_alone() {
+    // The mount walk called `create` for every node and handed the result to
+    // `set_view`, which replaced the adopted view AND fired the release paired
+    // with it. `views::create` dispatches on kind and an adopted node is
+    // K_NODE, so a live terminal was replaced by an empty container: measured
+    // on screen as `FlexFlippedView` with 0 subviews, and the widget's own
+    // `focus()` answered false because its view had no window.
+    //
+    // The walk asks this FLAG, not "does the node have a view" — a node the
+    // walk mounted before also has one, and that one must still be replaced.
+    AN_RELEASED = 0;
+    {
+        var adopted: facet::Node = facet::adopt_native(42 as *u8, an_release, key: "term");
+        assert facet::view_is_adopted(#addr_of(adopted));
+
+        // An ordinary node is not adopted, however it got its view — this is
+        // the half that keeps a re-mount working.
+        var plain: facet::Node = facet::column(facet::Builder::new(), key: "plain");
+        assert facet::view_is_adopted(#addr_of(plain)) == false;
+        facet::set_view(#addr_of(plain), 99 as *u8, an_release);
+        assert facet::view_is_adopted(#addr_of(plain)) == false;
+    }
+    return;
+}
+
+#[test]
 fn a_band_write_creates_the_data_it_needs() {
     var n: flex::Node = flex::box();
     let p: *facet::Node = #addr_of(n);

@@ -61,6 +61,15 @@ struct Data {
     // The backend sets both when it mounts (Renderer.view_release rides in
     // with the created view); node teardown then cannot leak the view.
     view_release: fn(*u8),
+    // Did the APPLICATION supply this view, rather than the backend creating
+    // one? `adopt_native` is the only thing that sets it, and the mount walk
+    // reads it to leave such a view alone.
+    //
+    // Without the flag the walk cannot tell "the view a previous mount put
+    // here" from "the view the caller brought", and it has to overwrite the
+    // first — so it overwrote both, and every adopted native widget was
+    // replaced by an empty container the instant it was mounted.
+    view_adopted: bool,
     // The presentation this node (an outlet) is showing: the component's
     // address and its typed detach trampoline. NODE-scoped by design — the
     // record dies with its owner, evicts naturally on teardown, and cannot
@@ -151,6 +160,7 @@ fn ensure_data(n: *Node) -> *Data {
     let fresh: Data = Data { key: text::new(), slot: text::new(), kind: K_NODE, props: 0 as *u8,
                              release: no_release, common: props::CommonProps::new(),
                              view: 0 as *u8, view_release: no_release,
+                             view_adopted: false,
                              presented: 0 as *u8, presented_detach: no_release,
                              parked_display: flex::Display::Flex, dirty: 0u64,
                              is_focused: false, is_attached: false,
@@ -170,6 +180,7 @@ fn node_with(key: str, kind: u32, props_ptr: *u8, release: fn(*u8)) -> Node {
     let d: Data = Data { key: text::from_str(key), slot: text::new(), kind: kind, props: props_ptr,
                          release: release, common: props::CommonProps::new(),
                          view: 0 as *u8, view_release: no_release,
+                         view_adopted: false,
                          presented: 0 as *u8, presented_detach: no_release,
                          parked_display: flex::Display::Flex, dirty: 0u64,
                          is_focused: false, is_attached: false,
@@ -254,6 +265,15 @@ fn set_view(n: *Node, v: *u8, release: fn(*u8)) {
     { (*d).view = v };
     { (*d).view_release = release };
     return;
+}
+
+// Is this node's view one the APPLICATION brought? The mount walk asks before
+// it creates anything, because an adopted view must survive being mounted.
+fn view_is_adopted(n: *Node) -> bool {
+    if n == (0 as *Node) { return false; }
+    let d: *Data = { (*n).data() };
+    if d == (0 as *Data) { return false; }
+    return { (*d).view_adopted };
 }
 
 fn view_of(n: *Node) -> *u8 {
@@ -1132,6 +1152,7 @@ fn adopt_native(v: *u8, release: fn(*u8), key: str = "") -> Node {
     { (*d).key = text::from_str(key) };
     { (*d).view = v };
     { (*d).view_release = release };
+    { (*d).view_adopted = true };
     return n;
 }
 
