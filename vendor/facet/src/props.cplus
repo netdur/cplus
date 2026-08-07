@@ -423,6 +423,9 @@ struct ButtonProps {
     opaque on_pressed_ctx: *u8,
     on_released: fn(*u8, *u8),    // Button.Released
     opaque on_released_ctx: *u8,
+    toggles: bool,    // facet — a click FLIPS rather than fires; AppKit's PushOnPushOff holds it
+    on: bool,    // facet — where the last click left it
+    bordered: bool,    // facet — whether the described border is DRAWN. Separate from its width, so switching it off does not forget it
 }
 
 impl ButtonProps {
@@ -450,6 +453,9 @@ impl ButtonProps {
             on_pressed_ctx: 0 as *u8,
             on_released: no_handler,
             on_released_ctx: 0 as *u8,
+            toggles: false,
+            on: false,
+            bordered: true,
         };
     }
 }
@@ -859,6 +865,9 @@ struct IconButtonProps {
     opaque on_pressed_ctx: *u8,
     on_released: fn(*u8, *u8),    // ImageButton.Released
     opaque on_released_ctx: *u8,
+    toggles: bool,    // facet — a click FLIPS rather than fires; AppKit's PushOnPushOff holds it
+    on: bool,    // facet — where the last click left it
+    bordered: bool,    // facet — whether the described border is DRAWN. Separate from its width, so switching it off does not forget it
 }
 
 impl IconButtonProps {
@@ -878,6 +887,9 @@ impl IconButtonProps {
             on_pressed_ctx: 0 as *u8,
             on_released: no_handler,
             on_released_ctx: 0 as *u8,
+            toggles: false,
+            on: false,
+            bordered: true,
         };
     }
 }

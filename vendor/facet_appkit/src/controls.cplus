@@ -249,6 +249,23 @@ fn apply_button(v: *u8, n: *core::Node, dirty: u64) {
             option::Option[ak::Cell]::None => { }
         }
     }
+    // A click FLIPS when the button toggles, and AppKit's PushOnPushOff holds
+    // that state — no second copy to keep in step.
+    if (dirty & button::P_TOGGLES) != (0 as u64) || dirty == paint::all_bits() {
+        if { (*p).toggles } { b.set_button_type(ak::ButtonType::PushOnPushOff); }
+        else { b.set_button_type(ak::ButtonType::MomentaryPushIn); }
+        b.set_bezel_style(ak::BezelStyle::Rounded);
+        b.set_bordered({ (*p).bordered });
+    }
+    if (dirty & button::P_ON) != (0 as u64) || dirty == paint::all_bits() {
+        b.set_state(state_of({ (*p).on }));
+    }
+    // `bordered` is the platform BEZEL, which is what a button's border
+    // actually is — clearing `border_width` only clears the CALayer border
+    // facet draws on top, and left the bezel underneath.
+    if (dirty & button::P_BORDERED) != (0 as u64) || dirty == paint::all_bits() {
+        b.set_bordered({ (*p).bordered });
+    }
     if (dirty & (button::P_BORDER_COLOR | button::P_BORDER_WIDTH | button::P_CORNER_RADIUS)) != (0 as u64) {
         apply_border(v, { (*p).border_color }, { (*p).border_width }, { (*p).corner_radius },
                      (dirty & (button::P_BORDER_COLOR | button::P_BORDER_WIDTH)) != (0 as u64),
@@ -258,7 +275,8 @@ fn apply_button(v: *u8, n: *core::Node, dirty: u64) {
     // VoiceOver too — which is exactly why it is the control's own verb and
     // not a gesture (gestures see the pointer and nothing else).
     if (dirty & props::C_HANDLERS) != (0 as u64) || dirty == paint::all_bits() {
-        akx::set_control_action_ctx(b.as_control(), { (*p).on_click }, { (*p).on_click_ctx });
+        let f: fn(*u8, *u8) = button_action;
+        akx::set_control_action_ctx(b.as_control(), f, n as *u8);
     }
     // The shared band owns enabled; a control reads it through its own setter
     // because NSControl's enabled is not the view's.
@@ -548,6 +566,26 @@ fn checkbox_action(sender: *u8, ctx: *u8) {
 // runs, for the same reason a checkbox does: `is_on()` reads the props, so the
 // props have to be true by the time anyone asks. AppKit owns the flip
 // (PushOnPushOff); this is what tells facet about it.
+fn button_action(sender: *u8, ctx: *u8) {
+    let n: *core::Node = ctx as *core::Node;
+    let p: *props::ButtonProps = props_of(n, props::K_BUTTON) as *props::ButtonProps;
+    if p == (0 as *props::ButtonProps) { return; }
+    if { (*p).toggles } { sync_bool_state(sender, #addr_of((*p).on)); }
+    let h: fn(*u8, *u8) = { (*p).on_click };
+    if h != props::no_handler { h(sender, { (*p).on_click_ctx }); }
+    return;
+}
+
+fn icon_button_action(sender: *u8, ctx: *u8) {
+    let n: *core::Node = ctx as *core::Node;
+    let p: *props::IconButtonProps = props_of(n, props::K_ICON_BUTTON) as *props::IconButtonProps;
+    if p == (0 as *props::IconButtonProps) { return; }
+    if { (*p).toggles } { sync_bool_state(sender, #addr_of((*p).on)); }
+    let h: fn(*u8, *u8) = { (*p).on_clicked };
+    if h != props::no_handler { h(sender, { (*p).on_clicked_ctx }); }
+    return;
+}
+
 fn text_button_action(sender: *u8, ctx: *u8) {
     let n: *core::Node = ctx as *core::Node;
     let p: *text_button::TextButtonProps =
@@ -1320,14 +1358,26 @@ fn apply_icon_button(v: *u8, n: *core::Node, dirty: u64) {
         b.set_image_scaling(ns_image_scaling({ (*p).fit }));
     }
     if (dirty & icon_button::P_IS_OPAQUE) != (0 as u64) { apply_is_opaque(v, { (*p).is_opaque }); }
-    if (dirty & (icon_button::P_BORDER_COLOR | icon_button::P_BORDER_WIDTH
-                 | icon_button::P_CORNER_RADIUS)) != (0 as u64) {
-        apply_border(v, { (*p).border_color }, { (*p).border_width }, { (*p).corner_radius },
-                     (dirty & (icon_button::P_BORDER_COLOR | icon_button::P_BORDER_WIDTH)) != (0 as u64),
-                     (dirty & icon_button::P_CORNER_RADIUS) != (0 as u64));
+    // icon_button is created borderless on purpose, so `bordered` here is the
+    // CALayer border rather than a bezel: switching it on gives an icon its
+    // outline back without turning it into a bezelled push button.
+    if (dirty & icon_button::P_TOGGLES) != (0 as u64) || dirty == paint::all_bits() {
+        if { (*p).toggles } { b.set_button_type(ak::ButtonType::PushOnPushOff); }
+        else { b.set_button_type(ak::ButtonType::MomentaryChange); }
+        b.set_bordered(false);
+    }
+    if (dirty & icon_button::P_ON) != (0 as u64) || dirty == paint::all_bits() {
+        b.set_state(state_of({ (*p).on }));
+    }
+    if (dirty & (icon_button::P_BORDERED | icon_button::P_BORDER_COLOR
+                 | icon_button::P_BORDER_WIDTH | icon_button::P_CORNER_RADIUS))
+       != (0 as u64) || dirty == paint::all_bits() {
+        let w: f64 = if { (*p).bordered } { { (*p).border_width } } else { 0.0f64 };
+        apply_border(v, { (*p).border_color }, w, { (*p).corner_radius }, true, true);
     }
     if (dirty & props::C_HANDLERS) != (0 as u64) || dirty == paint::all_bits() {
-        akx::set_control_action_ctx(b.as_control(), { (*p).on_clicked }, { (*p).on_clicked_ctx });
+        let f: fn(*u8, *u8) = icon_button_action;
+        akx::set_control_action_ctx(b.as_control(), f, n as *u8);
     }
     if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
         b.as_control().set_enabled(core::is_enabled(n));

@@ -23,6 +23,9 @@ const P_BORDER_WIDTH: u64 = 4u64;
 const P_CORNER_RADIUS: u64 = 8u64;
 const P_IS_OPAQUE: u64 = 16u64;
 const P_SOURCE: u64 = 32u64;
+const P_TOGGLES: u64 = 64u64;
+const P_ON: u64 = 128u64;
+const P_BORDERED: u64 = 256u64;
 
 // ---- build -------------------------------------------------------------
 // Typed by the parameter list: a verb another control owns is not a
@@ -42,6 +45,9 @@ fn icon_button(
     on_pressed_ctx: *u8 = 0 as *u8,
     on_released: fn(*u8, *u8) = props::no_handler,
     on_released_ctx: *u8 = 0 as *u8,
+    toggles: bool = false,
+    on: bool = false,
+    bordered: bool = true,
 ) -> core::Node {
     var p: props::IconButtonProps = props::IconButtonProps::new();
     p.fit = fit;
@@ -56,6 +62,9 @@ fn icon_button(
     p.on_pressed_ctx = on_pressed_ctx;
     p.on_released = on_released;
     p.on_released_ctx = on_released_ctx;
+    p.toggles = toggles;
+    p.on = on;
+    p.bordered = bordered;
     return match box::new::[props::IconButtonProps](p) {
         option::Option[box::Box[props::IconButtonProps]]::Some(b) =>
             core::node_with(key, props::K_ICON_BUTTON, b.into_raw(), props::release_icon_button_props),
@@ -187,6 +196,59 @@ impl IconButton {
         let p: *props::IconButtonProps = this._props();
         if p == (0 as *props::IconButtonProps) { return false; }
         return { (*p).is_pressed };
+    }
+
+    // facet's own words. MAUI has no button that FLIPS — its toggle is a
+    // CheckBox or a Switch, which draw their own control and cannot be a
+    // plain word or an icon — and no way to switch a border off without
+    // losing its width. Both gaps fill together: a chip is a button that
+    // toggles and shows a border when it is on.
+    //
+    // `toggles` hands the state to AppKit's PushOnPushOff, so `is_on()`
+    // cannot drift from what the user sees.
+    fn set_toggles(this, v: bool) -> IconButton {
+        let p: *props::IconButtonProps = this._props();
+        if p == (0 as *props::IconButtonProps) { return this; }
+        { (*p).toggles = v };
+        core::touch(this._p, P_TOGGLES);
+        return this;
+    }
+
+    fn toggles(this) -> bool {
+        let p: *props::IconButtonProps = this._props();
+        if p == (0 as *props::IconButtonProps) { return false; }
+        return { (*p).toggles };
+    }
+
+    fn set_on(this, v: bool) -> IconButton {
+        let p: *props::IconButtonProps = this._props();
+        if p == (0 as *props::IconButtonProps) { return this; }
+        { (*p).on = v };
+        core::touch(this._p, P_ON);
+        return this;
+    }
+
+    fn is_on(this) -> bool {
+        let p: *props::IconButtonProps = this._props();
+        if p == (0 as *props::IconButtonProps) { return false; }
+        return { (*p).on };
+    }
+
+    // The border is DESCRIBED by border_color / border_width /
+    // corner_radius and SWITCHED by this. Off does not forget: a width of
+    // 0 would have meant restating the border every time it came back.
+    fn set_bordered(this, v: bool) -> IconButton {
+        let p: *props::IconButtonProps = this._props();
+        if p == (0 as *props::IconButtonProps) { return this; }
+        { (*p).bordered = v };
+        core::touch(this._p, P_BORDERED);
+        return this;
+    }
+
+    fn is_bordered(this) -> bool {
+        let p: *props::IconButtonProps = this._props();
+        if p == (0 as *props::IconButtonProps) { return false; }
+        return { (*p).bordered };
     }
 
     // The flex node this cursor points at. The DOM division, and the

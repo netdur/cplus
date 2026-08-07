@@ -858,6 +858,39 @@ fn a_text_button_is_a_button_without_the_box() {
     return;
 }
 
+// The same two verbs on the other two buttons. `bordered` means the platform
+// BEZEL on a `button` and the drawn outline on an `icon_button` — different
+// mechanisms, one word, because from the application's side it is the same
+// question: is this button wearing a border right now.
+#[test]
+fn every_button_toggles_and_switches_its_border() {
+    var b1: facet::Node = button::button("Bold", key: "b", toggles: true);
+    match button::find("b", within: #addr_of(b1)) {
+        option::Option[button::Button]::Some(x) => {
+            assert x.toggles();
+            assert !x.is_on();
+            assert x.is_bordered();                     // a button HAS a bezel
+            let _s: button::Button = x.set_on(true).set_bordered(false);
+            assert x.is_on();
+            assert !x.is_bordered();
+        }
+        option::Option[button::Button]::None => { assert false; }
+    }
+    var b2: facet::Node = icon_button::icon_button("star", key: "i", toggles: true,
+                                                   bordered: false);
+    match icon_button::find("i", within: #addr_of(b2)) {
+        option::Option[icon_button::IconButton]::Some(x) => {
+            assert x.toggles();
+            assert !x.is_bordered();
+            let _s: icon_button::IconButton = x.set_on(true).set_bordered(true);
+            assert x.is_on();
+            assert x.is_bordered();
+        }
+        option::Option[icon_button::IconButton]::None => { assert false; }
+    }
+    return;
+}
+
 // A chip: describe the border once, switch it on and off with the toggle.
 #[test]
 fn a_text_button_toggles_and_switches_its_border() {

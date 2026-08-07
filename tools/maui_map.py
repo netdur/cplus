@@ -327,6 +327,20 @@ FACET_ORIGIN = [
     ("list, collection", "set_row(_:ctx:)", "fn(*u8, usize) -> Node",
      "the other half of set_count: MAUI would have used a DataTemplate",
      "Stage 2 — emitted"),
+    ("button, icon_button, text_button", "toggles: / is_on() / set_bordered()",
+     "a button that flips, and a border that switches without being forgotten",
+     "MAUI has no button of any kind that FLIPS — its toggle is a CheckBox or a "
+     "Switch, which draw their own control and cannot be a plain word or an "
+     "icon — and no way to switch a border off without losing its width, since "
+     "BorderWidth is the only dial",
+     "SHIPPED 2026-08-07 — the two gaps fill together, because a chip is a "
+     "button that toggles and shows a border when it is on. `toggles` hands the "
+     "state to AppKit's PushOnPushOff so `is_on()` cannot drift from what the "
+     "user sees, and the click routes through a trampoline that syncs it into "
+     "the props before the handler runs (the shape checkbox_action already "
+     "used). `bordered` means the platform BEZEL on `button` and the drawn "
+     "outline on `icon_button` / `text_button` — different mechanisms, one "
+     "word, because from the application's side it is the same question"),
     ("text_button", "text_button(title:)", "a button with no bezel",
      "MAUI has ONE Button and expresses the flat posture by clearing three "
      "properties (BackgroundColor, BorderColor, BorderWidth), so facet "

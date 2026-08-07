@@ -1998,6 +1998,23 @@ ROW_SOURCE_FIELDS = [
 # An agent has no hands, and a tab strip it cannot switch is a strip it cannot
 # use. `selected_index` is that switch, and `on_tab_changed` is how an
 # application learns the user used it.
+# The three buttons. MAUI's Button carries BorderColor/BorderWidth and no way
+# to switch them off without forgetting them, and no button of any kind that
+# FLIPS — a MAUI toggle is a CheckBox or a Switch, which draw their own control
+# and cannot be a plain word or an icon. Both gaps are facet's to fill, and they
+# fill together: a chip is a button that toggles and shows a border when it is
+# on. Recorded in maui_map's FACET_ORIGIN.
+BUTTONS = ("button", "icon_button")
+
+BUTTON_FIELDS = [
+    ("toggles", "bool", "false",
+     "facet — a click FLIPS rather than fires; AppKit's PushOnPushOff holds it"),
+    ("on", "bool", "false", "facet — where the last click left it"),
+    ("bordered", "bool", "true",
+     "facet — whether the described border is DRAWN. Separate from its width, so "
+     "switching it off does not forget it"),
+]
+
 TAB_SOURCE = ("tabs",)
 
 TAB_SOURCE_FIELDS = [
@@ -2102,6 +2119,11 @@ def emit_props(rows_by_control, by_type):
         f2, i2 = _fields_for(own)
         fields += f2
         inits += i2
+        if mod in BUTTONS:
+            for f, t, zero, why in BUTTON_FIELDS:
+                fields.append(f"    {f}: {t},"
+                              + (f"    // {why}\n" if why else "\n"))
+                inits.append(f"            {f.replace('opaque ', '')}: {zero},\n")
         if mod in TAB_SOURCE:
             for f, t, zero, why in TAB_SOURCE_FIELDS:
                 fields.append(f"    {f}: {t},"
@@ -2327,6 +2349,10 @@ def ctor_params(maui, writes, reads, events, owned=()):
     # they are namable at construction like any other. The row-source fields are
     # not: a count and a builder are set through the cursor because a list is
     # filled after it is described, not while.
+    if MODULE.get(maui) in BUTTONS:
+        params.append(("toggles", "bool", "false"))
+        params.append(("on", "bool", "false"))
+        params.append(("bordered", "bool", "true"))
     if MODULE.get(maui) in TAB_SOURCE:
         params.append(("selected_index", "i64", "0 as i64"))
         params.append(("on_tab_changed", "fn(*u8, *u8)", "props::no_handler"))
@@ -2382,7 +2408,8 @@ def emit_control(maui, merged):
             + [v.upper() for v, _m, _s, _b in commands]
             + (["COUNT", "ROW", "GROUP_COUNT", "GROUP", "SELECTED_INDEX", "REORDER"]
                if mod in ROW_SOURCE else [])
-            + (["SELECTED_INDEX"] if mod in TAB_SOURCE else []))
+            + (["SELECTED_INDEX"] if mod in TAB_SOURCE else [])
+            + (["TOGGLES", "ON", "BORDERED"] if mod in BUTTONS else []))
     for i, b in enumerate(bits):
         o.append(f"const P_{b}: u64 = {1 << i}u64;\n")
     o.append("\n")
@@ -2410,6 +2437,10 @@ def emit_control(maui, merged):
         o.append(f"    p.{path}_ctx = {verb}_ctx;\n")
     for field, ty, _m, _s, path in owned:
         o.append(f"    p.{path} = {field};\n")
+    if mod in BUTTONS:
+        o.append("    p.toggles = toggles;\n")
+        o.append("    p.on = on;\n")
+        o.append("    p.bordered = bordered;\n")
     if mod in TAB_SOURCE:
         o.append("    p.selected_index = selected_index;\n")
         o.append("    p.on_tab_changed = on_tab_changed;\n")
@@ -2536,6 +2567,50 @@ def emit_control(maui, merged):
         o.append(f"        let p: *props::{props} = this._props();\n")
         o.append(f"        if p == (0 as *props::{props}) {{ return 0 as i64; }}\n")
         o.append("        return { (*p).selected_index };\n    }\n")
+
+    # ---- facet's own: toggling, and a border that switches without forgetting
+    if mod in BUTTONS:
+        o.append("\n    // facet's own words. MAUI has no button that FLIPS — its toggle is a\n")
+        o.append("    // CheckBox or a Switch, which draw their own control and cannot be a\n")
+        o.append("    // plain word or an icon — and no way to switch a border off without\n")
+        o.append("    // losing its width. Both gaps fill together: a chip is a button that\n")
+        o.append("    // toggles and shows a border when it is on.\n")
+        o.append("    //\n")
+        o.append("    // `toggles` hands the state to AppKit's PushOnPushOff, so `is_on()`\n")
+        o.append("    // cannot drift from what the user sees.\n")
+        o.append(f"    fn set_toggles(this, v: bool) -> {cur} {{\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return this; }}\n")
+        o.append("        { (*p).toggles = v };\n")
+        o.append("        core::touch(this._p, P_TOGGLES);\n")
+        o.append("        return this;\n    }\n")
+        o.append(f"\n    fn toggles(this) -> bool {{\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return false; }}\n")
+        o.append("        return { (*p).toggles };\n    }\n")
+        o.append(f"\n    fn set_on(this, v: bool) -> {cur} {{\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return this; }}\n")
+        o.append("        { (*p).on = v };\n")
+        o.append("        core::touch(this._p, P_ON);\n")
+        o.append("        return this;\n    }\n")
+        o.append(f"\n    fn is_on(this) -> bool {{\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return false; }}\n")
+        o.append("        return { (*p).on };\n    }\n")
+        o.append("\n    // The border is DESCRIBED by border_color / border_width /\n")
+        o.append("    // corner_radius and SWITCHED by this. Off does not forget: a width of\n")
+        o.append("    // 0 would have meant restating the border every time it came back.\n")
+        o.append(f"    fn set_bordered(this, v: bool) -> {cur} {{\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return this; }}\n")
+        o.append("        { (*p).bordered = v };\n")
+        o.append("        core::touch(this._p, P_BORDERED);\n")
+        o.append("        return this;\n    }\n")
+        o.append(f"\n    fn is_bordered(this) -> bool {{\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return false; }}\n")
+        o.append("        return { (*p).bordered };\n    }\n")
 
     # ---- facet's own: a row count plus a row builder
     if mod in ROW_SOURCE:

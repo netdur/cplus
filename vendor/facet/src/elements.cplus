@@ -223,6 +223,9 @@ fn button(
     on_pressed_ctx: *u8 = 0 as *u8,
     on_released: fn(*u8, *u8) = props::no_handler,
     on_released_ctx: *u8 = 0 as *u8,
+    toggles: bool = false,
+    on: bool = false,
+    bordered: bool = true,
 ) -> core::Node {
     return m_button::button(
         title,
@@ -247,6 +250,9 @@ fn button(
         on_pressed_ctx: on_pressed_ctx,
         on_released: on_released,
         on_released_ctx: on_released_ctx,
+        toggles: toggles,
+        on: on,
+        bordered: bordered,
     );
 }
 
@@ -940,6 +946,9 @@ fn icon_button(
     on_pressed_ctx: *u8 = 0 as *u8,
     on_released: fn(*u8, *u8) = props::no_handler,
     on_released_ctx: *u8 = 0 as *u8,
+    toggles: bool = false,
+    on: bool = false,
+    bordered: bool = true,
 ) -> core::Node {
     return m_icon_button::icon_button(
         source,
@@ -955,6 +964,9 @@ fn icon_button(
         on_pressed_ctx: on_pressed_ctx,
         on_released: on_released,
         on_released_ctx: on_released_ctx,
+        toggles: toggles,
+        on: on,
+        bordered: bordered,
     );
 }
 
