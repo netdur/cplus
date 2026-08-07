@@ -11096,17 +11096,33 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         arg_labels: &[Option<Ident>],
         call_span: ByteSpan,
     ) -> Ty {
-        // Named arguments (`f(name: value)`) parse into `arg_labels` but the
-        // matching pass that reorders them into positional order (and splices
-        // defaults) is not wired yet — see docs/design/named-params-and-defaults.md.
-        // Until then, reject a labeled call cleanly rather than binding by
-        // position (which would silently misbind a reordered call). Checking
-        // continues positionally so the rest of the call still type-checks.
+        // Named arguments are MATCHED IN LOWERING — `lower_named_call` reorders
+        // them and splices defaults for every callee whose parameter list it can
+        // identify: free functions, methods, and associated functions. A label
+        // that survives to here belongs to a call whose callee resolves to no
+        // single parameter list. Two shapes reach it:
+        //
+        //   a fn-pointer VALUE — `fn(i32, i32)` records parameter types and no
+        //     names, so there is nothing to match labels against.
+        //   an ambiguous method — candidates are keyed by method NAME, so two
+        //     types declaring `go` put the labels in different positions and
+        //     lowering cannot choose without the receiver's type. Identical
+        //     signatures are fine: every candidate yields the same order.
+        //
+        // The message used to say the feature was unimplemented and matching was
+        // "the next step". That stopped being true when matching landed, and it
+        // sent everyone who reached this line looking for a release that is
+        // never coming. The callee is the problem, not the feature.
+        //
+        // Checking continues positionally so the rest of the call still types.
         if arg_labels.iter().any(|l| l.is_some()) {
             self.err(
                 "E1002",
-                "named arguments are not supported yet (parsing has landed; \
-                 argument matching is the next step)"
+                "named arguments need one known parameter list and this callee \
+                 has none: a fn-pointer value records parameter types without \
+                 their names, and a method name that several types declare with \
+                 the labels in different positions is ambiguous here. Pass these \
+                 arguments positionally"
                     .to_string(),
                 call_span,
             );
