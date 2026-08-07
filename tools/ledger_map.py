@@ -175,6 +175,39 @@ DROP_PATTERNS = [
                 r"InternalChildren)$"), ENGINE),
 ]
 
+# ---- the methods band decides, it does not default -------------------------
+#
+# Writes and reads are OPT-OUT: an unmapped type returns None and this script
+# fails, so a row cannot leave the ledger without someone writing a reason. The
+# methods band was OPT-IN and had no such floor — anything outside
+# METHOD_VOCABULARY fell through to `DROP as ENGINE`, and 237 of 256 rows took
+# that reason without anybody reading them.
+#
+# It was not a harmless label. `ScrollView.ScrollToAsync` is the verb an
+# application needs to restore a scroll position, and it carried "the ledger
+# engine internals, not application vocabulary" until iris hit the gap twice.
+# Four more rows said the same thing about capabilities facet HAD BUILT
+# elsewhere, so the contract answered "no" for verbs that existed.
+#
+# So the plumbing is a RULE, written below and matchable, and everything else is
+# a judgement in METHOD_DROPS. A row in neither now fails the run, exactly as an
+# unmapped write does.
+ENGINE_METHODS = re.compile(
+    r"^("
+    # the ledger's own property/handler plumbing
+    r"On[A-Z]\w*|Map[A-Z]\w*|Should[A-Z]\w*|Update[A-Z]\w*|Send[A-Z]\w*|"
+    r"Raise[A-Z]\w*|Lower[A-Z]\w*|Propagate[A-Z]\w*|Notify[A-Z]\w*|"
+    r"Validate[A-Z]\w*|Unhook[A-Z]\w*|Refresh[A-Z]\w*Property|"
+    r"Platform[A-Z]\w*|Invalidate[A-Z]\w*|Dispose|CleanUp|"
+    r"\w*DefaultValueCreator|\w*Changed|SizeAllocated|"
+    # per-control internals: visual-state machines, default cell factories,
+    # and the engine's own is-pressed / is-dragging / scrolled-position writes
+    r"ChangeVisualState|CreateDefault\w*|SetupContent|GetDisplayTextFromGroup|"
+    r"GetScrollPositionForElement|SetScrolledPosition|Measure|SetIs[A-Z]\w*|"
+    # IList surface on a collection the application never holds
+    r"Contains|CopyTo|IndexOf|GetEnumerator"
+    r")$")
+
 # Methods that are the layout engine's, not the ledger's bookkeeping. Same verdict
 # (DROP), honest reason: flex_layout arranges and measures.
 LAYOUT_METHODS = re.compile(
@@ -191,6 +224,118 @@ LAYOUT_METHODS = re.compile(
 # binding-context hook is still a hook however many types declare it. What
 # DOES promote is a capability no adopted row already carries — relayout,
 # measure, batched updates, children, and the native handle below.
+# Method rows that are NOT plumbing, judged one at a time. The reason is the
+# point: "engine internals" was false for every row in the first group, and the
+# contract repeated it until an application proved otherwise.
+#
+# FACET SAYS IT ANOTHER WAY. These are not refusals — the capability exists, and
+# the reason names where, so the contract can answer "does facet do this".
+METHOD_DROPS = {
+    ("Application", "Quit"):        "facet says it as nav::quit()",
+    ("Application", "OpenWindow"):  "facet says it as application::open_window",
+    ("Application", "CloseWindow"): "facet says it as application::close_window",
+    ("Page", "DisplayAlert"):       "facet says it as runtime::alert",
+    ("Page", "DisplayAlertAsync"):  "facet says it as runtime::alert — no async in the UI",
+    ("Page", "ForceLayout"):        "facet says it as relayout, adopted from VisualElement.InvalidateMeasure",
+    ("RadioButton", "ContentAsString"):
+        "the OVERLAY adopts RadioButton.Content as set_text / text(); this is how the ledger reads it",
+    # THE ONE THAT COST TWO GAP REPORTS. The ledger's verb returns a Task, so it
+    # fell to the async rule — but the CAPABILITY is not async, and dropping the
+    # method dropped the only way to write a scroll position. The offset is a
+    # WRITE now (ScrollX/ScrollY promoted to the writes band), which is the same
+    # capability in facet's own shape.
+    ("ScrollView", "ScrollToAsync"):
+        "facet says it as set_scroll_x / set_scroll_y — the offset is a write, not a command",
+
+    # RETURNS A TASK, and facet has no async in the UI. A page that has an
+    # ANSWER posts it back through the hybrid message channel, which is adopted.
+    ("WebView", "EvaluateJavaScriptAsync"):
+        "returns a Task; a page answers through the hybrid message channel instead",
+    ("HybridWebView", "EvaluateJavaScriptAsync"):
+        "returns a Task; a page answers through the hybrid message channel instead",
+    ("HybridWebView", "InvokeJavaScriptAsync"):
+        "returns a Task; a page answers through the hybrid message channel instead",
+
+    # REFUSED ON PRINCIPLE, not missing. Opening a swipe from code is the drag
+    # verb wearing a different hat: it makes a reveal that only a gesture can
+    # reach viable again, and an agent has no hands. A UI that needs the swipe
+    # opened owes its users a button.
+    ("SwipeView", "Open"):
+        "the reveal is the user's gesture; a UI that needs it opened owes a button (see the no-hands rule in backend.cplus)",
+    ("SwipeView", "Close"):
+        "the reveal is the user's gesture; a UI that needs it closed owes a button (see the no-hands rule in backend.cplus)",
+
+    # A MENU IS BUILT, NOT MUTATED. facet hands back a vec of MenuItem from
+    # `menu_items`, so there is no live collection for an application to add to
+    # or remove from — the whole set is declared each time.
+    ("MenuBarItem", "Add"):      "facet declares menus as a vec of MenuItem; the collection is not live",
+    ("MenuBarItem", "Insert"):   "facet declares menus as a vec of MenuItem; the collection is not live",
+    ("MenuBarItem", "Remove"):   "facet declares menus as a vec of MenuItem; the collection is not live",
+    ("MenuBarItem", "RemoveAt"): "facet declares menus as a vec of MenuItem; the collection is not live",
+    ("MenuBarItem", "Clear"):    "facet declares menus as a vec of MenuItem; the collection is not live",
+    ("MenuFlyout", "Add"):       "facet declares menus as a vec of MenuItem; the collection is not live",
+    ("MenuFlyout", "Insert"):    "facet declares menus as a vec of MenuItem; the collection is not live",
+    ("MenuFlyout", "Remove"):    "facet declares menus as a vec of MenuItem; the collection is not live",
+    ("MenuFlyout", "RemoveAt"):  "facet declares menus as a vec of MenuItem; the collection is not live",
+    ("MenuFlyout", "Clear"):     "facet declares menus as a vec of MenuItem; the collection is not live",
+
+    # The last four, judged rather than pattern-matched because each reads like
+    # application vocabulary and is not.
+    ("Application", "CreateWindow"):
+        "the ledger's window FACTORY hook; facet says it as runtime::App.screen + open_window",
+    ("Application", "SetCurrentApplication"):
+        "sets the ledger's ambient singleton; facet has no ambient app to set",
+    ("Application", "SetAppIndexingProvider"):
+        "Android/iOS app-indexing registration — a platform service, not UI vocabulary",
+    ("Page", "GetParentWindow"):
+        "facet says it as the shared band's window() / vocab::WindowRef",
+}
+
+# NOT BUILT, and said so. These are application vocabulary facet has no answer
+# for — the audit that produced this table found them by asking which dropped
+# rows were not plumbing, which is the question nobody had asked.
+#
+# Kept OUT of METHOD_DROPS deliberately: a drop is a decision, and these are
+# debts. `tools/gen_contract.py` reports them, so the count is visible rather
+# than dissolved into 237 rows that all claimed to be engine internals.
+METHOD_ABSENT = {
+    ("Page", "DisplayActionSheet"):
+        "no 'choose one of N' sheet; NSAlert with N buttons would carry it",
+    ("Page", "DisplayActionSheetAsync"):
+        "no 'choose one of N' sheet; NSAlert with N buttons would carry it",
+    ("Page", "DisplayPromptAsync"):
+        "no 'type a value' dialog; NSAlert with an accessory text field would carry it",
+    ("Application", "ActivateWindow"):
+        "windows can be opened and closed but not brought to the front",
+
+    # ACCESSIBILITY. The agent surface already carries a name and a description
+    # per node — `identity::NodeView` has both — but facet declares no verb an
+    # application can use to SET them, so they are only ever what a key and a
+    # control's own text happen to say. The same three rows serve VoiceOver.
+    ("SemanticProperties", "SetDescription"):
+        "no verb sets a node's accessible description; the agent surface has the field and nothing fills it",
+    ("SemanticProperties", "GetDescription"):
+        "no verb sets a node's accessible description; the agent surface has the field and nothing fills it",
+    ("SemanticProperties", "SetHint"):
+        "no verb sets a node's accessible hint",
+    ("SemanticProperties", "GetHint"):
+        "no verb sets a node's accessible hint",
+    ("SemanticProperties", "SetHeadingLevel"):
+        "no heading level, so a screen reader cannot skim a facet window by structure",
+    ("SemanticProperties", "GetHeadingLevel"):
+        "no heading level, so a screen reader cannot skim a facet window by structure",
+
+    ("ToolTipProperties", "SetText"):
+        "no tooltip verb; NSView.toolTip would carry it directly",
+    ("ToolTipProperties", "GetText"):
+        "no tooltip verb; NSView.toolTip would carry it directly",
+
+    ("Window", "AddOverlay"):
+        "no overlay layer above a window's content — a toast or a coach mark has nowhere to live",
+    ("Window", "RemoveOverlay"):
+        "no overlay layer above a window's content — a toast or a coach mark has nowhere to live",
+}
+
 METHOD_VOCABULARY = {
     ("VisualElement", "Focus"): "focus",
     ("VisualElement", "Unfocus"): "blur",
@@ -613,7 +758,17 @@ def default_row(ty, member, band, valuety):
             return ("ADOPT", name, "method")
         if LAYOUT_METHODS.match(member):
             return ("DROP", "", LAYOUT)
-        return ("DROP", "", ENGINE)
+        judged = METHOD_DROPS.get((ty, member))
+        if judged:
+            return ("DROP", "", judged)
+        absent = METHOD_ABSENT.get((ty, member))
+        if absent:
+            return ("DROP", "", "NOT BUILT — " + absent)
+        if ENGINE_METHODS.match(member):
+            return ("DROP", "", ENGINE)
+        # No rule matched and nobody judged it. Fail, exactly as an unmapped
+        # write does — this is the floor the methods band never had.
+        return None
     if valuety in DROP_TYPES:
         return ("DROP", "", DROP_TYPES[valuety])
     if band in ("writes", "reads"):

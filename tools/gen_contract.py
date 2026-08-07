@@ -3323,6 +3323,17 @@ def check(rows_by_control, by_type):
         print(f"tier ledger: {n_impl} implemented, {n_cannot} decided "
               f"(the platform cannot — recorded in the backend manifest), "
               f"{n_defer} still deferred")
+        # The methods band's own debts, said out loud. They used to be
+        # indistinguishable from the 237 rows that dropped as "engine
+        # internals" by default, which is how the scroll offset stayed missing
+        # through two gap reports. A count that is printed is a count someone
+        # can argue with.
+        absent = ledger_map.METHOD_ABSENT
+        if absent:
+            print(f"methods NOT BUILT: {len(absent)} rows are application "
+                  f"vocabulary facet has no answer for")
+            for (ty, member), why in sorted(absent.items()):
+                print(f"    {ty}.{member} — {why}")
 
     # 1. every ADOPT row reaching a control is carried by something
     for row_type, merged in sorted(rows_by_control.items()):
