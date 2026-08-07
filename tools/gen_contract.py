@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """gen_contract.py — emit facet's declared contract from the Stage 1 ledger.
 
-Stage 2. Input is the curated MAP (tools/maui_map.py) over the extracted spec
-(tools/maui_spec.py). Output is whole generated files under vendor/facet/src —
+Stage 2. Input is the curated MAP (tools/ledger_map.py) over the extracted spec
+(tools/ledger_spec.py). Output is whole generated files under vendor/facet/src —
 the generator owns them entirely, so regeneration is file replacement and no
 hand edit can drift.
 
@@ -38,15 +38,15 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import maui_map  # noqa: E402 — the curated MAP is the authority
-import maui_spec  # noqa: E402 — the control list and its facet names
+import ledger_map  # noqa: E402 — the curated MAP is the authority
+import ledger_spec  # noqa: E402 — the control list and its facet names
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "vendor", "facet", "src")
 DOCS = os.path.join(ROOT, "vendor", "facet", "docs")
 
 # ---------------------------------------------------------------------------
-# Which shared bases merge into which control. MAUI expresses this with
+# Which shared bases merge into which control. The ledger expresses this with
 # inheritance; C+ has none, so the generator does the merge and every control
 # ends up carrying its own copy of what it inherits.
 COMMON_BASES = ["VisualElement", "View", "GestureElement"]
@@ -56,7 +56,7 @@ EXTRA_BASES = {
     "CollectionView": ["ItemsView", "StructuredItemsView", "SelectableItemsView",
                        "GroupableItemsView", "ReorderableItemsView"],
     "CarouselView": ["ItemsView", "StructuredItemsView"],
-    # All three derive from MenuItem in MAUI, and the ledger lists each type's
+    # All three derive from MenuItem in the ledger, and the ledger lists each type's
     # OWN declared members — so without this they lost Text, IconImageSource,
     # IsDestructive and Clicked. A context menu item with no title and no
     # action is not a menu item, which is how the gap was found: Stage 4 went
@@ -70,7 +70,7 @@ EXTRA_BASES = {
     "ToolbarItem": ["MenuItem"],
 }
 
-# Module + cursor names. maui_spec's facet_widget values are prose in places.
+# Module + cursor names. ledger_spec's facet_widget values are prose in places.
 MODULE = {
     "Label": "label", "Button": "button", "Entry": "text_field",
     "Editor": "text_area", "SearchBar": "search_field", "Picker": "popup",
@@ -209,12 +209,12 @@ def cplus_type(t):
 # first of those by implementing it — nothing had read the field before, so a
 # wrong default could not show.
 #
-# This is the table of MAUI's OWN documented defaults, for the enums where that
+# This is the table of the ledger's OWN documented defaults, for the enums where that
 # differs from the alphabetical accident. An enum absent from it takes its
 # first member, which for the hand-authored enums is the authored one.
 #
 # `TextAlign` is deliberately NOT here. One enum serves two properties with
-# different MAUI defaults — HorizontalTextAlignment is Start, VerticalText
+# different the ledger defaults — HorizontalTextAlignment is Start, VerticalText
 # Alignment is Center — so a per-TYPE zero cannot be right for both. The zero
 # stays `Center` (right for the vertical half) and the backend treats it as
 # "not asked for" on the horizontal half, which is what it means there.
@@ -232,11 +232,11 @@ ENUM_ZERO = {
 }
 
 
-# MAUI bools that default to TRUE. The mechanical rule gives every bool
+# The ledger bools that default to TRUE. The mechanical rule gives every bool
 # `false`, which is the same shape of bug the ENUM_ZERO table above fixes: a
 # default nobody chose, silently inverting a verb. A carousel that does not
 # bounce, does not animate and cannot be scrolled by the user is not the
-# control MAUI describes — and the backend reading those props cannot tell the
+# control the ledger describes — and the backend reading those props cannot tell the
 # difference between "false" and "unset".
 #
 # Keyed by (declaring type, member) so the provenance stays checkable, plus a
@@ -279,12 +279,12 @@ def zero_of(t):
 
 # ---------------------------------------------------------------------------
 # Enum members, read out of the two PublicAPI manifests. Four enums have no
-# machine-readable source (MAUI models them as classes or they live outside
+# machine-readable source (the ledger models them as classes or they live outside
 # both manifests); those are authored here and marked.
 HAND_ENUMS = {
     "Appearance": ["Unspecified", "Light", "Dark"],
     # A SCALE (NSFont ultraLight..black, CSS 100..900, the icon font's wght
-    # axis 100..700) — not MAUI's Bold|Italic|None, which is why the manifest
+    # axis 100..700) — not the ledger's Bold|Italic|None, which is why the manifest
     # harvest must not win (HAND_WINS). Default = keep the native weight.
     "FontWeight": ["Default", "UltraLight", "Thin", "Light", "Regular",
                    "Medium", "Semibold", "Bold", "Heavy", "Black"],
@@ -294,9 +294,9 @@ HAND_ENUMS = {
 }
 
 MANIFESTS = [
-    os.path.join(ROOT, "plans", "facet", "spec", "maui_PublicAPI.Shipped.txt"),
-    os.path.join(ROOT, "plans", "facet", "spec", "maui_PublicAPI.Unshipped.txt"),
-    os.path.join(ROOT, "plans", "facet", "spec", "maui_Core_PublicAPI.Shipped.txt"),
+    os.path.join(ROOT, "plans", "facet", "spec", "ledger_PublicAPI.Shipped.txt"),
+    os.path.join(ROOT, "plans", "facet", "spec", "ledger_PublicAPI.Unshipped.txt"),
+    os.path.join(ROOT, "plans", "facet", "spec", "ledger_Core_PublicAPI.Shipped.txt"),
 ]
 
 
@@ -307,16 +307,18 @@ def read_enums():
         if os.path.exists(p):
             blob += open(p).read()
     out = {}
-    # Enums whose facet shape deliberately DIVERGES from the MAUI members —
+    # Enums whose facet shape deliberately DIVERGES from the ledger members —
     # the hand list is the contract, the manifest is only provenance.
     hand_wins = {"FontWeight"}
-    for maui, facet in maui_map.ENUMS.items():
-        ms = re.findall(rf"^{re.escape(maui)}\.(\w+) = -?\d+ ->", blob, re.M)
+    for row_type, facet in ledger_map.ENUMS.items():
+        # The map is keyed by the BARE type name; the manifest spells whatever
+        # namespace declared it, so match the tail rather than the whole path.
+        ms = re.findall(rf"^(?:[\w.]+\.)?{re.escape(row_type)}\.(\w+) = -?\d+ ->", blob, re.M)
         if ms and facet not in out and facet not in hand_wins:
-            out[facet] = (sorted(set(ms)), maui)
+            out[facet] = (sorted(set(ms)), row_type)
     for facet, ms in HAND_ENUMS.items():
         if facet not in out:
-            src = [m for m, f in maui_map.ENUMS.items() if f == facet]
+            src = [m for m, f in ledger_map.ENUMS.items() if f == facet]
             out[facet] = (ms, (src[0] if src else "hand") + " (authored: no manifest source)")
     return out
 
@@ -336,7 +338,7 @@ def pascal(mod):
 # ---------------------------------------------------------------------------
 def control_rows():
     """control -> {writes, reads, events} of ADOPT rows, bases merged in."""
-    rows, undecided = maui_map.rows()
+    rows, undecided = ledger_map.rows()
     assert not undecided
     by_type = {}
     for ty, member, band, vt, st, fn, note in rows:
@@ -345,16 +347,16 @@ def control_rows():
         by_type.setdefault(ty, []).append((member, band, fn, note))
 
     out = {}
-    for maui in MODULE:
+    for row_type in MODULE:
         merged, seen = [], set()
-        for src in [maui] + EXTRA_BASES.get(maui, []):
+        for src in [row_type] + EXTRA_BASES.get(row_type, []):
             for member, band, fn, note in by_type.get(src, []):
                 verb = fn.split(" / ")[0].split("(")[0].strip()
                 if verb in seen:
                     continue
                 seen.add(verb)
                 merged.append((member, band, fn, note, src))
-        out[maui] = merged
+        out[row_type] = merged
     return out, by_type
 
 
@@ -371,7 +373,7 @@ PRIMARY = {
     "DatePicker": "date", "TimePicker": "time", "IndicatorView": "count",
 }
 
-# MAUI member names that collide with C+ keywords. Renamed once, here.
+# The ledger member names that collide with C+ keywords. Renamed once, here.
 RESERVED = {
     "loop": "wraps", "type": "kind", "match": "matches", "ref": "reference",
     "static": "is_static", "const": "constant", "return": "result",
@@ -430,7 +432,7 @@ COMMANDS = {
     "go_back": {"params": [], "extra": [], "writes": []},
     "go_forward": {"params": [], "extra": [], "writes": []},
     "reload": {"params": [], "extra": [], "writes": []},
-    # WebView.Eval — fire and forget, which is what MAUI's Eval is. A script
+    # WebView.Eval — fire and forget, which is what the ledger's Eval is. A script
     # that has an ANSWER posts it back through the hybrid message channel.
     "eval": {
         "params": [("script", "str")],
@@ -490,13 +492,13 @@ def row_kind(band, fn, note):
         return ("owned", field, ty)
     if ty in SHARED_TYPES:
         return ("shared", verb, "the shared band declares it once, on Node")
-    # MAUI redeclares IsEnabled on MenuItem, BackgroundColor on Span, IsVisible
+    # the ledger redeclares IsEnabled on MenuItem, BackgroundColor on Span, IsVisible
     # on SwipeItem, because those are Elements and not VisualElements. facet has
     # one Node, so the shared band already answers them and a second copy would
     # be a second way to say the same thing (E0326 besides).
     if field in SHARED_VERBS:
         return ("shared", field,
-                "MAUI declares it again off the VisualElement branch; facet has "
+                "the ledger declares it again off the VisualElement branch; facet has "
                 "one Node, so the shared band already carries it")
     if cplus_type(ty) is not None:
         return ("prop", field, ty)
@@ -711,7 +713,7 @@ impl Shape {
 }
 
 // ---- styled text ------------------------------------------------------------
-// One run of text with its own styling. MAUI's FormattedString is a list of
+// One run of text with its own styling. The ledger's FormattedString is a list of
 // Spans; the list existed in the ledger and the builder that fills it did not,
 // so `set_formatted_text` was a verb nothing could feed.
 struct TextSpan {
@@ -788,7 +790,7 @@ impl Dashes {
     fn is_solid(this) -> bool { return this.count == (0 as usize); }
 }
 
-// A keyboard shortcut. MAUI models a list; a menu item shows one.
+// A keyboard shortcut. The ledger models a list; a menu item shows one.
 struct Shortcut { key: str, modifiers: KeyModifiers }
 impl Shortcut {
     fn none() -> Shortcut { return Shortcut { key: "", modifiers: KeyModifiers::None }; }
@@ -830,12 +832,12 @@ impl WindowRef {
 // A drawing, recorded. `canvas` is the one control whose content is not a
 // subtree but a sequence of drawing commands, and facet's first pass declared
 // no way to write one: `Drawable` handed the callback a size and NOTHING TO
-// DRAW WITH. MAUI's IDrawable.Draw takes an ICanvas, and the whole of that
-// surface lives in the Microsoft.Maui.Graphics assembly — a third manifest,
+// DRAW WITH. The ledger's IDrawable.Draw takes an ICanvas, and the whole of that
+// surface lives in a separate drawing assembly — a third manifest,
 // which the extraction never read. It read Controls and Core only, which is
 // the mechanical reason the entire vocabulary below was absent.
 //
-//   plans/facet/spec/maui_Graphics_PublicAPI.Shipped.txt   the manifest
+//   plans/facet/spec/ledger_Graphics_PublicAPI.Shipped.txt   the manifest
 //   src/Graphics/src/Graphics/{ICanvas,PathF,...}.cs       the rows it elides
 //
 // RECORDED, not immediate, because facet is retained everywhere else. The
@@ -853,14 +855,14 @@ impl WindowRef {
 // giving it a box and an alignment instead, which is what a laid-out drawing
 // wants anyway.
 
-// Microsoft.Maui.Graphics.WindingMode — which side of a self-crossing path
+// WindingMode — which side of a self-crossing path
 // counts as inside.
 enum Winding {
     NonZero,
     EvenOdd,
 }
 
-// Microsoft.Maui.Graphics.BlendMode — how what is drawn composites onto what
+// BlendMode — how what is drawn composites onto what
 // is already there.
 enum Blend {
     Normal,
@@ -893,7 +895,7 @@ enum Blend {
     PlusLighter,
 }
 
-// Microsoft.Maui.Graphics.Text.VerticalAlignment. The horizontal half is
+// VerticalAlignment. The horizontal half is
 // TextAlign, which facet already declares, so it is not restated here.
 enum VerticalAlign {
     Top,
@@ -901,18 +903,18 @@ enum VerticalAlign {
     Bottom,
 }
 
-// Microsoft.Maui.Graphics.TextFlow (ClipBounds / OverflowBounds) — what text
+// TextFlow (ClipBounds / OverflowBounds) — what text
 // does when it does not fit the box it was given.
 enum TextFlow {
     Clip,
     Overflow,
 }
 
-// Microsoft.Maui.Graphics.PathOperation, plus the three whole-shape appends
+// PathOperation, plus the three whole-shape appends
 // PathF exposes separately (AppendRectangle / AppendRoundedRectangle /
 // AppendEllipse) — kept as operations of their own so a backend hands them to
 // its native path builder instead of receiving them pre-flattened into arcs.
-// MAUI spells the cubic case `Cubic`; here it is `Curve`, after the verb.
+// The ledger spells the cubic case `Cubic`; here it is `Curve`, after the verb.
 enum PathOp {
     None,
     Move,
@@ -977,7 +979,7 @@ enum DrawOp {
     DrawImage,
 }
 
-// An affine transform. MAUI passes System.Numerics.Matrix3x2; these are its
+// An affine transform. The ledger passes System.Numerics.Matrix3x2; these are its
 // six numbers under the names every 2D backend uses for them.
 struct Transform { a: f64, b: f64, c: f64, d: f64, tx: f64, ty: f64 }
 impl Transform {
@@ -1020,7 +1022,7 @@ impl PathSegment {
 }
 
 // A path an application builds, then draws, fills or clips with.
-// Microsoft.Maui.Graphics.PathF — its DRAWING half. PathF also exposes point
+// PathF — its DRAWING half. PathF also exposes point
 // editing, segment introspection, reversal and flattening; those are a path
 // editor's surface rather than a drawing's, and are not adopted.
 struct Path { _segs: vec::Vec[PathSegment] }
@@ -1063,7 +1065,7 @@ impl Path {
         return this._segs.append(s);
     }
 
-    // PathF.AddArc — MAUI takes the two corners of the arc's box; a Rect says
+    // PathF.AddArc — ledger row takes the two corners of the arc's box; a Rect says
     // the same thing in the type facet already has.
     fn add_arc(ref this, rect: Rect, from: f64, to: f64,
                clockwise: bool = true) -> status::Status {
@@ -1084,7 +1086,7 @@ impl Path {
         return this._segs.append(s);
     }
 
-    // PathF.AppendRoundedRectangle. MAUI's per-corner overload is not adopted:
+    // PathF.AppendRoundedRectangle. The ledger's per-corner overload is not adopted:
     // `corner_radius` is one radius, matching Corners::all and what a layer
     // can round to on every backend facet has.
     fn add_rounded_rect(ref this, rect: Rect, corner_radius: f64) -> status::Status {
@@ -1430,7 +1432,7 @@ impl Canvas {
         return this._cmds.append(c);
     }
 
-    // ICanvas.Font + FontSize. MAUI passes an IFont; facet has no font object,
+    // ICanvas.Font + FontSize. The ledger passes an IFont; facet has no font object,
     // so a font is the three things every backend needs to resolve one.
     fn set_font(ref this, family: str = "", size: f64 = 0.0f64,
                 weight: FontWeight = FontWeight::Default,
@@ -1491,7 +1493,7 @@ impl Canvas {
         return this._cmds.append(c);
     }
 
-    // ICanvas.RestoreState. MAUI answers false when the stack is empty; that
+    // ICanvas.RestoreState. The ledger answers false when the stack is empty; that
     // is not knowable while recording, so this reports only whether the
     // command was recorded — the backend is where an empty stack is seen.
     fn restore(ref this) -> status::Status {
@@ -1508,7 +1510,7 @@ impl Canvas {
     }
 
     // ICanvas.Rotate, both overloads: omitting `around` rotates about the
-    // canvas origin, which is what the one-argument MAUI overload does.
+    // canvas origin, which is what the one-argument the ledger overload does.
     fn rotate(ref this, degrees: f64, around: Point = Point::zero()) -> status::Status {
         var c: DrawCommand = DrawCommand::none();
         c.op = DrawOp::Rotate;
@@ -1625,7 +1627,7 @@ impl Canvas {
         return this._cmds.append(c);
     }
 
-    // ICanvas.FillArc — a filled arc is closed by definition, so MAUI's
+    // ICanvas.FillArc — a filled arc is closed by definition, so the ledger's
     // signature has no `closed` and neither does this one.
     fn fill_arc(ref this, rect: Rect, from: f64, to: f64,
                 clockwise: bool = true) -> status::Status {
@@ -1669,7 +1671,7 @@ impl Canvas {
     }
 
     // ICanvas.DrawString(value, x, y, width, height, ...) — wrapped in a box,
-    // aligned in both axes. MAUI's two DrawString overloads collapse into this
+    // aligned in both axes. The ledger's two DrawString overloads collapse into this
     // pair: one for a point, one for a box, because they are different things.
     fn draw_text_block(ref this, value: str, box: Rect,
                        align: TextAlign = TextAlign::Start,
@@ -1724,7 +1726,7 @@ impl Canvas {
         return this._cmds.append(c);
     }
 
-    // ICanvas.DrawImage. MAUI passes a loaded IImage; facet names an image the
+    // ICanvas.DrawImage. The ledger passes a loaded IImage; facet names an image the
     // one way it names one everywhere else — a source string the backend
     // resolves, so `canvas` and `image` agree on what an image is.
     fn draw_image(ref this, source: str, box: Rect) -> status::Status {
@@ -1771,7 +1773,7 @@ impl Canvas {
 
 // What an application writes to fill a `canvas`: a callback given the surface
 // to draw into and the rect that needs redrawing.
-// Microsoft.Maui.Graphics.IDrawable.Draw(ICanvas, RectF).
+// IDrawable.Draw(ICanvas, RectF).
 struct Drawable { draw: fn(*u8, *Canvas, Rect), opaque ctx: *u8 }
 fn draw_none(ctx: *u8, into: *Canvas, dirty: Rect) { return; }
 impl Drawable {
@@ -1786,7 +1788,7 @@ impl Drawable {
 
 def emit_vocabulary():
     out = ["// GENERATED by tools/gen_contract.py — DO NOT EDIT.\n",
-           "// The types facet's contract names. Enums are seeded from MAUI's, renamed\n",
+           "// The types facet's contract names. Enums are seeded from the ledger's, renamed\n",
            "// per naming_guideline.md; members come from the PublicAPI manifests.\n\n",
            'import "stdlib/text" as text;\n',
            'import "stdlib/vec" as vec;\n',
@@ -1805,7 +1807,7 @@ def emit_vocabulary():
 
 COMMON_SRC = '''
 // ---- the shared band --------------------------------------------------------
-// The write rows every element carries (MAUI VisualElement), minus the ones
+// The write rows every element carries (the ledger VisualElement), minus the ones
 // flex already owns and the ones only the platform knows. Inline in Data, not
 // boxed: every node has exactly one, so no allocation and no cast.
 
@@ -1814,7 +1816,7 @@ struct CommonProps {
     background_color: vocab::Color,
     background: vocab::Brush,
     // The third background thing. A Color fills, a Brush gradients, and an
-    // image is neither — MAUI carries it on Page (BackgroundImageSource) and
+    // image is neither — ledger row carries it on Page (BackgroundImageSource) and
     // facet carries it here, because a background belongs to whatever has one
     // rather than to the page alone. A path, like every other facet image.
     background_image: text::Text,
@@ -1822,7 +1824,7 @@ struct CommonProps {
     clip: vocab::Shape,
     // Whether this node keeps its content clear of the window's own chrome.
     // `scroll` has taken one of these since Stage 2 and nothing else could,
-    // which is what left MAUI's three Page rows (ContainerArea,
+    // which is what left the ledger's three Page rows (ContainerArea,
     // IgnoresContainerArea, SafeAreaEdges) with no carrier. One node in a tree
     // is the one that has to answer it, and any node may be that node.
     safe_area: vocab::SafeArea,
@@ -1931,7 +1933,7 @@ const C_SAFE_AREA: u64 = 140737488355328u64;
 def base_block(src, owner=None):
     """The embedded-block field name for a base, or None for a control's own row.
 
-    `owner` is the MAUI type the row is being emitted FOR. A base that is also
+    `owner` is the ledger type the row is being emitted FOR. A base that is also
     a control (MenuItem) reaches its own fields directly — `this.text`, not
     `this.menu_item.text` — so it is not a block from its own point of view,
     only from a derived control's."""
@@ -1944,10 +1946,10 @@ ALL_BASES = sorted({b for bs in EXTRA_BASES.values() for b in bs})
 
 
 # facet's own words that are props on a control that already exists. The rest
-# of maui_map.FACET_ORIGIN names controls Stage 3 declares; the ledger records
+# of ledger_map.FACET_ORIGIN names controls Stage 3 declares; the ledger records
 # every one of them either way.
 #
-# MAUI binds ItemsSource and realizes rows through a DataTemplate; Stage 1
+# The ledger binds ItemsSource and realizes rows through a DataTemplate; Stage 1
 # dropped both as MODEL. The imperative replacement is a row count plus a row
 # builder, and it is what makes a list fillable at all.
 ROW_SOURCE = ("list", "collection")
@@ -1959,7 +1961,7 @@ ROW_SOURCE_FIELDS = [
     ("bind", "fn(usize, *flex::Node, *u8)", "no_bind",
      "facet — writes row `i` INTO an existing row, for recycling"),
     # `IsGrouped` had a carrier for the SWITCH and nothing for what it switches
-    # on: MAUI's grouped ItemsSource is a list of lists, which Stage 1 dropped
+    # on: the ledger's grouped ItemsSource is a list of lists, which Stage 1 dropped
     # as MODEL along with the flat one. The imperative replacement follows the
     # same shape `count` + `row` already set — a group count plus two builders
     # — and it deliberately does NOT change `row`: a group is a RUN of the
@@ -1971,13 +1973,13 @@ ROW_SOURCE_FIELDS = [
      "facet — builds the header row for group `g`"),
     ("opaque group_ctx", "*u8", "0 as *u8", None),
     # `SelectionMode` had the same shape of hole: a switch with nothing to
-    # switch. MAUI carries SelectedItem/SelectedItems, both dropped as MODEL
+    # switch. The ledger carries SelectedItem/SelectedItems, both dropped as MODEL
     # ("the selection is an index") — and then no index was declared. -1 is
     # "nothing selected", which is what an empty selection is.
     ("selected_index", "i64", "-1 as i64",
      "facet — which row is selected, or -1 for none"),
     # `ReorderCompleted` tells an application a drag finished and nothing else:
-    # MAUI's reorder mutates the bound ItemsSource, so the app reads the answer
+    # the ledger's reorder mutates the bound ItemsSource, so the app reads the answer
     # off its own data. facet's sequence is a count plus a builder — the
     # application's order is ITS order and the backend cannot touch it — so the
     # move has to be reported, or the handler is a notification with nothing in
@@ -1990,7 +1992,7 @@ ROW_SOURCE_FIELDS = [
 
 
 # facet's own words on `tabs`, and the reason they are needed is the reason
-# the five colour verbs were unreachable: MAUI's TabbedPage describes a STRIP
+# the five colour verbs were unreachable: the ledger's TabbedPage describes a STRIP
 # and says nothing about which tab is showing — `CurrentPage` lives on
 # MultiPage<T>, which is outside the manifest slice Stage 1 read. So facet had
 # five verbs decorating a control nothing could drive.
@@ -1998,12 +2000,12 @@ ROW_SOURCE_FIELDS = [
 # An agent has no hands, and a tab strip it cannot switch is a strip it cannot
 # use. `selected_index` is that switch, and `on_tab_changed` is how an
 # application learns the user used it.
-# The three buttons. MAUI's Button carries BorderColor/BorderWidth and no way
+# The three buttons. The ledger's Button carries BorderColor/BorderWidth and no way
 # to switch them off without forgetting them, and no button of any kind that
-# FLIPS — a MAUI toggle is a CheckBox or a Switch, which draw their own control
+# FLIPS — a ledger toggle is a CheckBox or a Switch, which draw their own control
 # and cannot be a plain word or an icon. Both gaps are facet's to fill, and they
 # fill together: a chip is a button that toggles and shows a border when it is
-# on. Recorded in maui_map's FACET_ORIGIN.
+# on. Recorded in ledger_map's FACET_ORIGIN.
 BUTTONS = ("button", "icon_button")
 
 BUTTON_FIELDS = [
@@ -2055,7 +2057,7 @@ def _fields_for(rows):
 
 def emit_base_props(by_type):
     """One struct per shared base, declared once and embedded by each control
-    that MAUI would have had inherit it. C+ has no inheritance; composition is
+    that the ledger would have had inherit it. C+ has no inheritance; composition is
     the workaround, exactly as Data embeds CommonProps."""
     o = []
     for base in ALL_BASES:
@@ -2066,7 +2068,7 @@ def emit_base_props(by_type):
         fields, inits = _fields_for(rows)
         if not fields:
             continue
-        o.append(f"\n// ---- {base} — shared by every control MAUI derives from it "
+        o.append(f"\n// ---- {base} — shared by every control the ledger derives from it "
                  + "-" * max(0, 14 - len(base)) + "\n\n")
         o.append(f"struct {name} {{\n")
         o.extend(fields)
@@ -2102,11 +2104,11 @@ def emit_props(rows_by_control, by_type):
            COMMON_SRC]
     out.append(emit_base_props(by_type))
 
-    for i, (maui, merged) in enumerate(sorted(rows_by_control.items())):
-        mod = MODULE[maui]
+    for i, (row_type, merged) in enumerate(sorted(rows_by_control.items())):
+        mod = MODULE[row_type]
         name = pascal(mod) + "Props"
         fields, inits = [], []
-        for base in EXTRA_BASES.get(maui, []):
+        for base in EXTRA_BASES.get(row_type, []):
             blk = base_block(base)
             bname = pascal(snake(base)) + "Props"
             if any(base_block(s2) == blk for _m, _b, _f, _n, s2 in merged):
@@ -2114,7 +2116,7 @@ def emit_props(rows_by_control, by_type):
                 inits.append(f"            {blk}: {bname}::new(),\n")
         own = [(k[0], k[1], k[2], member, band, src)
                for member, band, fn, note, src in merged
-               if base_block(src, maui) is None
+               if base_block(src, row_type) is None
                for k in [row_kind(band, fn, note)] if k is not None]
         f2, i2 = _fields_for(own)
         fields += f2
@@ -2135,13 +2137,13 @@ def emit_props(rows_by_control, by_type):
                               + (f"    // {why}\n" if why else "\n"))
                 inits.append(f"            {f.replace('opaque ', '')}: {zero},\n")
 
-        out.append(f"\n// ---- {mod} — MAUI {maui} " + "-" * max(0, 46 - len(mod) - len(maui)) + "\n\n")
+        out.append(f"\n// ---- {mod} — the ledger {row_type} " + "-" * max(0, 46 - len(mod) - len(row_type)) + "\n\n")
         # A control that is ALSO a base already has its struct from
         # emit_base_props, with exactly these fields. Emitting a second one is
         # E0301; the tag and the release still belong to the control.
-        if maui in ALL_BASES:
-            out.append(f"// {name} is declared above as a shared base: MAUI derives\n"
-                       f"// {', '.join(k for k, v in sorted(EXTRA_BASES.items()) if maui in v)} from {maui},\n"
+        if row_type in ALL_BASES:
+            out.append(f"// {name} is declared above as a shared base: the ledger derives\n"
+                       f"// {', '.join(k for k, v in sorted(EXTRA_BASES.items()) if row_type in v)} from {row_type},\n"
                        f"// so the struct is emitted once and embedded by each of them.\n\n")
         else:
             out.append(f"struct {name} {{\n")
@@ -2159,7 +2161,7 @@ def emit_props(rows_by_control, by_type):
 
 
 # ---------------------------------------------------------------------------
-# The shared band: the 41 ADOPT rows on MAUI's VisualElement/View, which every
+# The shared band: the 41 ADOPT rows on the ledger's VisualElement/View, which every
 # element carries. They live ONCE on Node in the hand-written facet.cplus and
 # reach each cursor through the one-line forwards below, so no generic element
 # type exists anywhere in the package.
@@ -2320,7 +2322,7 @@ def split_rows(merged, owner=None):
     return writes, reads, events, slots, owned, commands
 
 
-def ctor_params(maui, writes, reads, events, owned=()):
+def ctor_params(row_type, writes, reads, events, owned=()):
     """The constructor's ordered parameter list: (name, type, default|None).
 
     One authority for the signature — `emit_control` prints it and
@@ -2329,7 +2331,7 @@ def ctor_params(maui, writes, reads, events, owned=()):
     taken = {f for f, _t, _m, _s, _p in writes + reads}
     params = []
     ordered = writes
-    primary = PRIMARY.get(maui)
+    primary = PRIMARY.get(row_type)
     if primary is not None and any(f == primary for f, _t, _m, _s, _p in writes):
         ordered = ([w for w in writes if w[0] == primary]
                    + [w for w in writes if w[0] != primary])
@@ -2349,11 +2351,11 @@ def ctor_params(maui, writes, reads, events, owned=()):
     # they are namable at construction like any other. The row-source fields are
     # not: a count and a builder are set through the cursor because a list is
     # filled after it is described, not while.
-    if MODULE.get(maui) in BUTTONS:
+    if MODULE.get(row_type) in BUTTONS:
         params.append(("toggles", "bool", "false"))
         params.append(("on", "bool", "false"))
         params.append(("bordered", "bool", "true"))
-    if MODULE.get(maui) in TAB_SOURCE:
+    if MODULE.get(row_type) in TAB_SOURCE:
         params.append(("selected_index", "i64", "0 as i64"))
         params.append(("on_tab_changed", "fn(*u8, *u8)", "props::no_handler"))
         params.append(("on_tab_changed_ctx", "*u8", "0 as *u8"))
@@ -2370,13 +2372,13 @@ def ctor_params(maui, writes, reads, events, owned=()):
     return params
 
 
-def emit_control(maui, merged):
-    mod = MODULE[maui]
+def emit_control(row_type, merged):
+    mod = MODULE[row_type]
     cur = pascal(mod)
     props = cur + "Props"
     up = mod.upper()
 
-    writes, reads, events, slots, owned, commands = split_rows(merged, maui)
+    writes, reads, events, slots, owned, commands = split_rows(merged, row_type)
 
     # Where each field lives: on the control, or inside an embedded base block.
     # A command writes fields by name, so it resolves through this.
@@ -2386,7 +2388,7 @@ def emit_control(maui, merged):
             paths[f] = (blk + "." + f) if blk else f
 
     o = [f"// GENERATED by tools/gen_contract.py — DO NOT EDIT.\n",
-         f"// {mod} — MAUI {maui}. {len(writes)} writes, {len(reads)} reads, "
+         f"// {mod} — the ledger {row_type}. {len(writes)} writes, {len(reads)} reads, "
          f"{len(events)} events.\n",
          "//\n",
          "// Importing this module is what makes these verbs exist; without it a call\n",
@@ -2420,7 +2422,7 @@ def emit_control(maui, merged):
     o.append("// parameter here, so passing it is a compile error.\n\n")
     o.append(f"fn {mod}(\n")
     taken = {f for f, _t, _m, _s, _p in writes + reads}
-    for nm, pty, dflt in ctor_params(maui, writes, reads, events, owned):
+    for nm, pty, dflt in ctor_params(row_type, writes, reads, events, owned):
         o.append(f"    {nm}: {pty},\n" if dflt is None else f"    {nm}: {pty} = {dflt},\n")
     o.append(") -> core::Node {\n")
     o.append(f"    var p: props::{props} = props::{props}::new();\n")
@@ -2550,7 +2552,7 @@ def emit_control(maui, merged):
 
     # ---- facet's own: which tab is showing
     if mod in TAB_SOURCE:
-        o.append("\n    // facet's own word. MAUI's TabbedPage describes a STRIP and says\n")
+        o.append("\n    // facet's own word. The ledger's TabbedPage describes a STRIP and says\n")
         o.append("    // nothing about which tab is showing — `CurrentPage` lives on\n")
         o.append("    // MultiPage<T>, outside the manifest slice. So the five colour\n")
         o.append("    // verbs decorated a control nothing could drive.\n")
@@ -2570,7 +2572,7 @@ def emit_control(maui, merged):
 
     # ---- facet's own: toggling, and a border that switches without forgetting
     if mod in BUTTONS:
-        o.append("\n    // facet's own words. MAUI has no button that FLIPS — its toggle is a\n")
+        o.append("\n    // facet's own words. The ledger has no button that FLIPS — its toggle is a\n")
         o.append("    // CheckBox or a Switch, which draw their own control and cannot be a\n")
         o.append("    // plain word or an icon — and no way to switch a border off without\n")
         o.append("    // losing its width. Both gaps fill together: a chip is a button that\n")
@@ -2614,7 +2616,7 @@ def emit_control(maui, merged):
 
     # ---- facet's own: a row count plus a row builder
     if mod in ROW_SOURCE:
-        o.append("\n    // facet's own word. MAUI binds ItemsSource and realizes rows from a\n")
+        o.append("\n    // facet's own word. The ledger binds ItemsSource and realizes rows from a\n")
         o.append("    // DataTemplate; Stage 1 dropped both as MODEL, so the imperative\n")
         o.append("    // replacement is a count plus a builder. Without it a list cannot\n")
         o.append("    // be filled at all.\n")
@@ -2671,7 +2673,7 @@ def emit_control(maui, merged):
         o.append("        if f == props::no_bind { return; }\n")
         o.append("        f(at, row, { (*p).row_ctx });\n        return;\n    }\n")
         o.append("\n    // ---- groups: a RUN of the same flat sequence ------------------\n")
-        o.append("    // `is_grouped` is the switch; these are what it switches on. MAUI\n")
+        o.append("    // `is_grouped` is the switch; these are what it switches on. The ledger\n")
         o.append("    // binds a list of lists and Stage 1 dropped it as MODEL, so the\n")
         o.append("    // imperative replacement follows `count` + `row`: how many groups,\n")
         o.append("    // how big each one is, and what its header looks like.\n")
@@ -2717,7 +2719,7 @@ def emit_control(maui, merged):
         o.append("        return f(at, { (*p).group_ctx });\n    }\n")
         o.append("\n    // ---- the selection -------------------------------------------\n")
         o.append("    // `selection_mode` says whether a row CAN be picked; this says\n")
-        o.append("    // which one was. MAUI carries SelectedItem and Stage 1 dropped it\n")
+        o.append("    // which one was. The ledger carries SelectedItem and Stage 1 dropped it\n")
         o.append("    // as MODEL — \"the selection is an index\" — and then no index was\n")
         o.append("    // declared, so the switch had nothing to switch. -1 is none.\n")
         o.append(f"    fn set_selected_index(this, v: i64) -> {cur} {{\n")
@@ -2731,7 +2733,7 @@ def emit_control(maui, merged):
         o.append(f"        if p == (0 as *props::{props}) {{ return -1 as i64; }}\n")
         o.append("        return { (*p).selected_index };\n    }\n")
         o.append("\n    // ---- what a completed reorder moved --------------------------\n")
-        o.append("    // MAUI's ReorderCompleted mutates the bound ItemsSource and the\n")
+        o.append("    // the ledger's ReorderCompleted mutates the bound ItemsSource and the\n")
         o.append("    // application reads the answer off its own data. facet's sequence\n")
         o.append("    // is a count plus a builder — the application's ORDER is its own\n")
         o.append("    // and the backend cannot touch it — so the move is reported here,\n")
@@ -2932,8 +2934,8 @@ def emit_elements(rows_by_control):
          'import "./split" as m_split;\n',
          'import "./tree" as m_tree;\n',
          'import "./window_chrome" as m_window_chrome;\n']
-    for maui in rows_by_control:
-        mod = MODULE[maui]
+    for row_type in rows_by_control:
+        mod = MODULE[row_type]
         o.append(f'import "./{mod}" as m_{mod};\n')
     o.append("\ntype Builder = flex::Builder;\n\n")
     o.append("// ---- containers (facet core owns these) --------------------------------\n")
@@ -2944,10 +2946,10 @@ def emit_elements(rows_by_control):
              "{ return core::spacer(key: key); }\n\n")
     o.append(FACET_ORIGIN_FORWARDS)
     o.append("\n// ---- controls ----------------------------------------------------------\n\n")
-    for maui, merged in rows_by_control.items():
-        mod = MODULE[maui]
-        writes, reads, events, _slots, owned, _commands = split_rows(merged, maui)
-        params = ctor_params(maui, writes, reads, events, owned)
+    for row_type, merged in rows_by_control.items():
+        mod = MODULE[row_type]
+        writes, reads, events, _slots, owned, _commands = split_rows(merged, row_type)
+        params = ctor_params(row_type, writes, reads, events, owned)
         o.append(f"fn {mod}(\n")
         for nm, pty, dflt in params:
             o.append(f"    {nm}: {pty},\n" if dflt is None
@@ -2967,14 +2969,14 @@ def emit_elements(rows_by_control):
 
 def emit_manifest(rows_by_control):
     o = ["# facet contract manifest — GENERATED by tools/gen_contract.py\n\n",
-         "Every declared word, its type, and the MAUI row it came from. A verb\n",
+         "Every declared word, its type, and the ledger row it came from. A verb\n",
          "absent here does not exist: calling it is a compile error, never a\n",
          "silent no-op. What a backend cannot implement is recorded in that\n",
          "backend's own manifest, not here.\n\n"]
     total, skipped = 0, []
-    for maui, merged in sorted(rows_by_control.items(), key=lambda kv: MODULE[kv[0]]):
-        mod = MODULE[maui]
-        o.append(f"\n## {mod} — MAUI {maui}\n\n")
+    for row_type, merged in sorted(rows_by_control.items(), key=lambda kv: MODULE[kv[0]]):
+        mod = MODULE[row_type]
+        o.append(f"\n## {mod} — the ledger {row_type}\n\n")
         o.append("| verb | type | provenance |\n|---|---|---|\n")
         taken = {row_kind(b, f, n)[1] for _m, b, f, n, _s in merged
                  if row_kind(b, f, n) and row_kind(b, f, n)[0] in ("prop", "owned")}
@@ -3091,7 +3093,7 @@ def lint_names(verbs):
     (name, control, rule) for every name the guideline rejects.
 
     A trailing noun is only needless when something precedes it: `source()` on
-    an image names the role, `image_source()` names the .NET type MAUI wraps.
+    an image names the role, `image_source()` names the .NET type the ledger wraps.
     Same for `enabled` — the assertion is the whole word, so `is_enabled` is
     right and `is_grouping_enabled` is not."""
     bad = []
@@ -3282,9 +3284,9 @@ def check(rows_by_control, by_type):
     # 5. every ADOPT row reaches SOMETHING: a control module (directly or
     # through EXTRA_BASES), a tier type, or a recorded exception.
     reachable = set(MODULE)
-    for maui in MODULE:
-        reachable |= set(EXTRA_BASES.get(maui, []))
-    rows_all, _und = maui_map.rows()
+    for row_type in MODULE:
+        reachable |= set(EXTRA_BASES.get(row_type, []))
+    rows_all, _und = ledger_map.rows()
     tier_types = {"Window", "Application", "Page", "ContentPage", "TitleBar", "Toolbar"}
     n_impl, n_defer, n_cannot = 0, 0, 0
     for ty, member, band, _vt, st, _fn, _note in rows_all:
@@ -3319,17 +3321,17 @@ def check(rows_by_control, by_type):
               f"{n_defer} still deferred")
 
     # 1. every ADOPT row reaching a control is carried by something
-    for maui, merged in sorted(rows_by_control.items()):
+    for row_type, merged in sorted(rows_by_control.items()):
         for member, band, fn, note, src in merged:
             if row_kind(band, fn, note) is None:
                 _v, _f, ty = _field_and_type(fn, note)
                 problems.append(
-                    f"{MODULE[maui]}: {src}.{member} [{band}] is ADOPT with facet "
+                    f"{MODULE[row_type]}: {src}.{member} [{band}] is ADOPT with facet "
                     f"type `{ty or '?'}` and nothing carries it. Emit it, or move "
-                    f"the row to DROP in maui_map.OVERLAY with a reason.")
+                    f"the row to DROP in ledger_map.OVERLAY with a reason.")
 
     # 2. every command writes a field the control actually has
-    for maui, merged in sorted(rows_by_control.items()):
+    for row_type, merged in sorted(rows_by_control.items()):
         have = set()
         for member, band, fn, note, src in merged:
             k = row_kind(band, fn, note)
@@ -3343,19 +3345,19 @@ def check(rows_by_control, by_type):
             for f, _rhs in COMMANDS[k[1]]["writes"]:
                 if f not in have:
                     problems.append(
-                        f"{MODULE[maui]}: command `{k[1]}` writes `{f}`, which "
-                        f"{MODULE[maui]} does not have.")
+                        f"{MODULE[row_type]}: command `{k[1]}` writes `{f}`, which "
+                        f"{MODULE[row_type]} does not have.")
 
     # 3. the dirty word has room: the shared band owns the top 16 bits
-    for maui, merged in sorted(rows_by_control.items()):
+    for row_type, merged in sorted(rows_by_control.items()):
         n = sum(1 for member, band, fn, note, src in merged
                 for k in [row_kind(band, fn, note)]
                 if k and (k[0] == "owned" or k[0] == "command"
                           or (k[0] == "prop" and band == "writes")))
-        n += 6 if MODULE[maui] in ROW_SOURCE else 0
-        n += 1 if MODULE[maui] in TAB_SOURCE else 0
+        n += 6 if MODULE[row_type] in ROW_SOURCE else 0
+        n += 1 if MODULE[row_type] in TAB_SOURCE else 0
         if n > 48:
-            problems.append(f"{MODULE[maui]}: {n} dirty bits, and props::C_* owns "
+            problems.append(f"{MODULE[row_type]}: {n} dirty bits, and props::C_* owns "
                             "bits 48 and up.")
 
     # 4. the shared band: forwarded, or deferred with a reason
@@ -3372,8 +3374,8 @@ def check(rows_by_control, by_type):
 
     # 5. the names, against naming_guideline.md
     verbs = {}
-    for maui, merged in sorted(rows_by_control.items()):
-        mod = MODULE[maui]
+    for row_type, merged in sorted(rows_by_control.items()):
+        mod = MODULE[row_type]
         taken = {k[1] for member, band, fn, note, src in merged
                  for k in [row_kind(band, fn, note)]
                  if k and k[0] in ("prop", "owned")}
@@ -3405,7 +3407,7 @@ def check(rows_by_control, by_type):
 
     for name, mod, rule in lint_names(verbs):
         problems.append(f"naming: `{name}` ({mod}) — {rule}. Rename it in "
-                        "maui_map.RENAME, or record the exception in ALLOWED.")
+                        "ledger_map.RENAME, or record the exception in ALLOWED.")
 
     if problems:
         print(f"gen_contract: {len(problems)} problems. Nothing was written.\n",
@@ -3427,9 +3429,9 @@ def main():
         f.write(emit_vocabulary())
     with open(os.path.join(SRC, "props.cplus"), "w") as f:
         f.write(emit_props(rows_by_control, by_type))
-    for maui, merged in rows_by_control.items():
-        with open(os.path.join(SRC, MODULE[maui] + ".cplus"), "w") as f:
-            f.write(emit_control(maui, merged))
+    for row_type, merged in rows_by_control.items():
+        with open(os.path.join(SRC, MODULE[row_type] + ".cplus"), "w") as f:
+            f.write(emit_control(row_type, merged))
     with open(os.path.join(SRC, "elements.cplus"), "w") as f:
         f.write(emit_elements(rows_by_control))
     with open(os.path.join(DOCS, "contract.md"), "w") as f:

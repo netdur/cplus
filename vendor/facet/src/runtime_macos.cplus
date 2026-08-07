@@ -420,7 +420,7 @@ struct AppRoute {
 fn app_hook_noop(ctx: *u8) { return; }
 
 struct App {
-    // The Application record (MAUI's word): theme, navigation, windows.
+    // The Application record (the ledger's word): theme, navigation, windows.
     // Embedded BY VALUE — two Apps in one exe each own a clean one; `run`
     // makes it Application.Current for the loop's lifetime.
     application: app::Application,

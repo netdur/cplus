@@ -1,6 +1,6 @@
 // split — a draggable divider between two panes. HAND-WRITTEN: facet's own.
 //
-// MAUI has none, and this is not layout, so it is not flex's either: flex
+// The ledger has none, and this is not layout, so it is not flex's either: flex
 // arranges what it is told, and a divider is a control the USER drags. That is
 // the line — `spacer` and `zstack` went to flex_layout because they are pure
 // arrangement; a split has a grab handle and a position an application saves

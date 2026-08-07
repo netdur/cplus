@@ -10,9 +10,9 @@ facet is a portable description of a user interface. It owns the vocabulary
 and the tree; it draws nothing. A backend reads the tree and produces native
 views: `facet_appkit` on macOS.
 
-The vocabulary is not invented. It is bootstrapped from MAUI's portable
+The vocabulary is not invented. It is bootstrapped from the ledger's portable
 surface, curated row by row, and generated. That is why `contract.md` names a
-MAUI row for almost every verb, and why a verb that is not there is not a
+ledger row for almost every verb, and why a verb that is not there is not a
 missing feature but a decision recorded elsewhere.
 
 ## The tree is flex_layout's tree
@@ -151,7 +151,7 @@ Grow a verb table in facet. Per-kind knowledge belongs in the backend.
 
 ## Reading the contract
 
-`contract.md` is generated. It lists every verb, its type, and the MAUI row it
+`contract.md` is generated. It lists every verb, its type, and the ledger row it
 came from, in one table per control plus the shared band.
 
 It is the answer to "does facet have X". A verb absent there does not exist,

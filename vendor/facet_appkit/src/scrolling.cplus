@@ -58,7 +58,7 @@ fn scrolled_handler(n: *core::Node) -> fn(*u8, *u8) {
     let kind: u32 = { (*d).kind };
     if kind == props::K_SCROLL { return { (*(raw as *props::ScrollProps)).observe_scrolled }; }
     if kind == props::K_LIST { return { (*(raw as *props::ListProps)).observe_scrolled }; }
-    // `collection` and `carousel` inherit it from MAUI's ItemsView, so the
+    // `collection` and `carousel` inherit it from the ledger's ItemsView, so the
     // handler lives in the embedded band rather than on the control.
     if kind == props::K_COLLECTION {
         let iv: *props::ItemsViewProps = { #addr_of((*(raw as *props::CollectionProps)).items_view) };
@@ -178,7 +178,7 @@ fn carousel_position(n: *core::Node, view: *u8) {
     if want != { (*p).position } {
         { (*p).position = want };
         fire_h({ (*p).on_position_changed }, { (*p).on_position_changed_ctx }, view);
-        // MAUI reports the ITEM and the POSITION separately, and on this
+        // The ledger reports the ITEM and the POSITION separately, and on this
         // backend a position change is always an item change — the items are
         // the children and the position indexes them.
         fire_h({ (*p).on_current_item_changed }, { (*p).on_current_item_changed_ctx }, view);

@@ -463,7 +463,7 @@ fn imp_hit_test(self_obj: *u8, cmd: *u8, p: rt::Point) -> *u8 {
 }
 
 // Does this node's input transparency reach its children? `scroll` is the one
-// kind that declares the switch; every other kind takes MAUI's own default,
+// kind that declares the switch; every other kind takes the ledger's own default,
 // which is that it does.
 fn cascades_input(n: *core::Node) -> bool {
     let d: *core::Data = core::node_data(n);

@@ -1,8 +1,8 @@
-// symbol — a glyph. HAND-WRITTEN: facet's own word, no MAUI row behind it.
+// symbol — a glyph. HAND-WRITTEN: facet's own word, no ledger row behind it.
 //
-// MAUI has no glyph vocabulary at all, so this is the first control facet
+// The ledger has no glyph vocabulary at all, so this is the first control facet
 // declares on its own account. It is recorded as a facet-origin row in
-// tools/maui_map.py's FACET_ORIGIN, not left to appear by accident.
+// tools/ledger_map.py's FACET_ORIGIN, not left to appear by accident.
 //
 // Why a control and not `image` with a different source: the styling that
 // applies is text-shaped, not box-shaped. A symbol takes a size and a colour;
@@ -52,7 +52,7 @@ import "./mount" as mount;
 import "./props" as props;
 import "./vocabulary" as vocab;
 
-// facet-origin controls take their kind tag from 1000 up. The 38 MAUI-derived
+// facet-origin controls take their kind tag from 1000 up. The 38 ledger-derived
 // modules take 1..38 from the generator, so a regeneration can never collide
 // with a control facet declared for itself.
 const K_SYMBOL: u32 = 1000u32;

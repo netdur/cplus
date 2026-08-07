@@ -1,14 +1,14 @@
 // text_button — a button that is only its text. HAND-WRITTEN: facet's own
-// word, no MAUI row behind it.
+// word, no ledger row behind it.
 //
-// MAUI has ONE Button and expresses the flat posture by clearing three
+// The ledger has ONE Button and expresses the flat posture by clearing three
 // properties — BackgroundColor, BorderColor, BorderWidth — which is why facet
 // inherited a `button` that always draws its bezel and no way to ask it not
 // to. Clearing facet's `background_color` does not help: that verb clears a
 // CALayer facet adds, and the bezel is drawn by NSButton's cell underneath it.
 //
 // So this is a control facet declares on its own account, recorded as a
-// facet-origin row in tools/maui_map.py's FACET_ORIGIN rather than left to
+// facet-origin row in tools/ledger_map.py's FACET_ORIGIN rather than left to
 // appear by accident.
 //
 // ---- why a control and not a flag on `button` --------------------------------
@@ -46,7 +46,7 @@ import "./props" as props;
 import "./vocabulary" as vocab;
 
 // facet-origin controls take their kind tag from 1000 up, so a regeneration of
-// the 38 MAUI-derived modules can never collide with one facet declared for
+// the 38 ledger-derived modules can never collide with one facet declared for
 // itself. Taken so far: 1000 symbol, 1001 tree, 1002 split, 1003 window_buttons.
 const K_TEXT_BUTTON: u32 = 1004u32;
 

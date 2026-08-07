@@ -206,7 +206,7 @@ is offered.
 `guide.md` explains the model: what a key is, why there is no re-render, how
 the dirty word reaches the backend, and what a backend has to fill.
 
-`contract.md` lists every declared verb with the MAUI row it came from. A verb
+`contract.md` lists every declared verb with the ledger row it came from. A verb
 absent there does not exist: calling it is a compile error, never a silent
 no-op.
 

@@ -149,7 +149,7 @@ fn ns_font(size: f64, weight: vocab::FontWeight, family: str) -> option::Option[
 // reader's preferred sizes, and a font asked for in points does not.
 // `+[NSFont preferredFontForTextStyle:]` is that call on macOS.
 //
-// It does NOT replace the size. `font_scales` defaults to TRUE — MAUI's own
+// It does NOT replace the size. `font_scales` defaults to TRUE — the ledger's own
 // default — so a version of this that swapped the application's 30pt for a
 // style's 13pt would have rewritten the typography of every app that ever named
 // a size. What Dynamic Type actually means is that the named size is a BASE and
@@ -583,7 +583,7 @@ fn two_colour_array(a: vocab::Color, b: vocab::Color) -> *u8 {
 }
 
 // The shared band's `shadow`. Also had no implementation, and `bordered`
-// carries no shadow prop of its own, so MAUI's Border.Shadow had no path at
+// carries no shadow prop of its own, so the ledger's Border.Shadow had no path at
 // all — this is the only one.
 //
 // The offset's y is FLIPPED: facet's y grows downward (every backing view here

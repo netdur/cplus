@@ -269,7 +269,7 @@ fn cg_line_join(j: vocab::LineJoin) -> i32 {
     };
 }
 
-// MAUI's BlendMode was modelled on CGBlendMode and matches it value for value,
+// The ledger's BlendMode was modelled on CGBlendMode and matches it value for value,
 // so this is an ordinal map and not a translation.
 fn cg_blend(b: vocab::Blend) -> i32 {
     return match b {
@@ -308,7 +308,7 @@ fn radians(degrees: f64) -> f64 {
     return degrees * 3.14159265358979323846f64 / 180.0f64;
 }
 
-// An arc inside a BOX, which is what MAUI's DrawArc takes and what CG has no
+// An arc inside a BOX, which is what the ledger's DrawArc takes and what CG has no
 // call for — CGPathAddArc draws a circle. The transform maps the unit circle
 // onto the box, so the arc is elliptical while the stroke width stays round.
 //
@@ -316,10 +316,10 @@ fn radians(degrees: f64) -> f64 {
 // cannot be read off an API:
 //
 //   facet's canvas space is y-DOWN, and this view is flipped, so the CTM is
-//   y-down too. MAUI measures its angles the ordinary way — 0 at 3 o'clock,
-//   increasing counterclockwise ON SCREEN. A point at MAUI angle t is therefore
+//   y-down too. The ledger measures its angles the ordinary way — 0 at 3 o'clock,
+//   increasing counterclockwise ON SCREEN. A point at the ledger angle t is therefore
 //   (cos t, -sin t) in a y-down space, so the CG angle is -t.
-//   Negating the angles also inverts the sweep: what MAUI calls clockwise is
+//   Negating the angles also inverts the sweep: what the ledger calls clockwise is
 //   the increasing direction in the negated space, and CGPathAddArc's own
 //   `clockwise` flag means DECREASING. Hence `!clockwise`.
 fn add_arc_path(p: *u8, box: rt::Rect, from: f64, to: f64, clockwise: bool) {
@@ -778,7 +778,7 @@ fn replay_commands(ctx: *u8, c: *vocab::Canvas) {
             // The y offset is NEGATED, and this is not a guess: a shadow's
             // offset is not carried through the CTM, so the flip that makes
             // everything else top-left does not reach it and a positive y
-            // would throw the shadow UP. MAUI does the same thing in the same
+            // would throw the shadow UP. The ledger does the same thing in the same
             // place — `SetShadow`, `#if MONOMAC: sizeF.Height *= -1`.
             CGContextSetShadowWithColor(ctx,
                 rt::Size { w: sh.offset.x, h: 0.0f64 - sh.offset.y },

@@ -99,7 +99,7 @@ fn props_of_hybrid(n: *core::Node) -> *props::HybridWebProps {
 
 // -[WKNavigationDelegate webView:didStartProvisionalNavigation:]
 //
-// MAUI's `Navigating` is cancellable; facet's handler returns nothing, so it
+// The ledger's `Navigating` is cancellable; facet's handler returns nothing, so it
 // could not cancel even if this were wired to
 // `decidePolicyForNavigationAction:` — which is why the START of a navigation
 // is the honest thing to report here.
@@ -245,7 +245,7 @@ fn create_hybrid_web(n: *core::Node) -> *u8 {
     }
     rt::release(config);
     // `on_web_view_initializing` is BEFORE the view is usable and
-    // `on_web_view_initialized` after — the only two moments MAUI names, and
+    // `on_web_view_initialized` after — the only two moments the ledger names, and
     // both of them are here because this is where a WKWebView comes into being.
     let p: *props::HybridWebProps = props_of_hybrid(n);
     if p != (0 as *props::HybridWebProps) {
@@ -256,7 +256,7 @@ fn create_hybrid_web(n: *core::Node) -> *u8 {
 }
 
 // ---- loading -----------------------------------------------------------------
-// MAUI's `Source` is a WebViewSource — a URL one or an HTML one. facet reduced
+// The ledger's `Source` is a WebViewSource — a URL one or an HTML one. facet reduced
 // it to a `str`, so the STRING has to say which, and these are the three
 // readings that cannot be confused with each other:
 //
@@ -524,7 +524,7 @@ fn is_web_view(v: *u8) -> bool {
 // content was loaded as `file://`, and WKWebView will not let a scheme handler
 // near a reserved scheme. So there was nothing to hand a request to.
 //
-// Hybrid content now loads over a scheme of facet's own, which is what MAUI's
+// Hybrid content now loads over a scheme of facet's own, which is what the ledger's
 // own HybridWebView does on this platform for exactly this reason. Three
 // things follow from it and all three are the point:
 //

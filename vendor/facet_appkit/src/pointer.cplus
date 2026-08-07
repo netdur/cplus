@@ -2,7 +2,7 @@
 //
 // Three kinds declare pointer verbs of their own: `button` and `icon_button`
 // (`on_pressed` / `on_released`) and `canvas`, which declares the whole
-// interaction set MAUI's GraphicsView has — press, release, hover, unhover,
+// interaction set the ledger's GraphicsView has — press, release, hover, unhover,
 // move, drag, cancel. None of them fired.
 //
 // ---- why this is not the gesture band -----------------------------------------
@@ -134,7 +134,7 @@ fn release(n: *core::Node, sender: *u8) -> bool {
     return false;
 }
 
-// The canvas-only half. A button has no hover or drag verb of its own — MAUI
+// The canvas-only half. A button has no hover or drag verb of its own — the ledger
 // does not give it one — so these answer for the canvas and false elsewhere.
 
 fn hover(n: *core::Node, sender: *u8) -> bool {

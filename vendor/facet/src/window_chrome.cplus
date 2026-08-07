@@ -1,6 +1,6 @@
 // window_chrome — the titlebar an application draws itself. HAND-WRITTEN.
 //
-// MAUI has no rows here: its window is not a described tree, so there was
+// The ledger has no rows here: its window is not a described tree, so there was
 // never anything to adopt. Two words, and they are different shapes:
 //
 //   window_buttons()      a CONTROL. It draws something — the close /

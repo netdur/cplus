@@ -2334,7 +2334,7 @@ fn box() -> Node { return Node::new(); }
 // between it and the nearest definite-main-size container must ALSO grow (or
 // carry a definite main size) — an ancestor with an `auto` main size is
 // content-sized, has no free space, and collapses the grow chain to zero. This
-// matches CSS/Yoga; it is not a bug. So `column { column { box().grow(1) } }`
+// matches CSS; it is not a bug. So `column { column { box().grow(1) } }`
 // under a fixed-height root fills only if the inner column also grows:
 // `column { column{...}.grow(1) }`. See test_grow_needs_growing_ancestors.
 impl Node {
@@ -4517,7 +4517,7 @@ fn test_child_index_finds_by_identity() {
 // grow(v) distributes only its DIRECT parent's free space. A grow item fills
 // only when every ancestor up to a definite-main-size container also grows (or
 // is definite). An `auto` intermediate is content-sized and collapses the chain
-// to zero — CSS/Yoga-correct, not a bug. These pin that contract (drove iris
+// to zero — CSS-correct, not a bug. These pin that contract (drove iris
 // gap #12: `fixed_view(scroll).grow(1)` went to zero under auto wrappers).
 
 #[test]

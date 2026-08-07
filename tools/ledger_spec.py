@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""maui_spec.py — extract facet's portable surface spec from MAUI's public API.
+"""ledger_spec.py — extract facet's portable surface spec from the ledger's public API.
 
-Strategy: don't hand-curate the portable API (lossy). MAUI is a native-control-
+Strategy: don't hand-curate the portable API (lossy). The ledger is a native-control-
 backed cross-platform framework (like facet, unlike Flutter which renders), and
 its portable surface is published as a machine-readable Roslyn public-API
 manifest — the `netstandard` (platform-agnostic) PublicAPI.Shipped.txt.
 
-v2 (maui-regen Phase 1): the first pass consumed ONE band (settable bindable
+v2 (row_type-regen Phase 1): the first pass consumed ONE band (settable bindable
 properties) and that scope is what made it useless — every gap iris later hit
 lived in the other bands. This version extracts SIX:
 
@@ -24,13 +24,13 @@ a shared section rather than duplicated per control — the Phase-2 generator
 does the per-control merge.
 
 Refresh the manifest (netstandard = the portable contract):
-  BASE=https://raw.githubusercontent.com/dotnet/maui/main/src/Controls/src/Core/PublicAPI/netstandard
-  curl -s $BASE/PublicAPI.Shipped.txt   -o plans/facet/spec/maui_PublicAPI.Shipped.txt
-  curl -s $BASE/PublicAPI.Unshipped.txt -o plans/facet/spec/maui_PublicAPI.Unshipped.txt
+  BASE=https://raw.githubusercontent.com/dotnet/row_type/main/src/Controls/src/Core/PublicAPI/netstandard
+  curl -s $BASE/PublicAPI.Shipped.txt   -o plans/facet/spec/ledger_PublicAPI.Shipped.txt
+  curl -s $BASE/PublicAPI.Unshipped.txt -o plans/facet/spec/ledger_PublicAPI.Unshipped.txt
 
 Usage:
-  python3 tools/maui_spec.py <manifest.txt> [<manifest2.txt> ...]
-Writes plans/facet/spec/maui-spec.json + plans/facet/maui-spec-report.md and
+  python3 tools/ledger_spec.py <manifest.txt> [<manifest2.txt> ...]
+Writes plans/facet/spec/ledger-spec.json + plans/facet/ledger-spec-report.md and
 prints the per-type band counts.
 """
 import json
@@ -41,7 +41,7 @@ from collections import OrderedDict, defaultdict
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# The controls facet cares about (MAUI type -> facet widget). A control is a
+# The controls facet cares about (the ledger type -> facet widget). A control is a
 # semantic mapping a human owns; the band extraction is automated.
 CONTROLS = OrderedDict([
     ("Label", "label"), ("Button", "button"), ("Entry", "text_field"),
@@ -118,7 +118,7 @@ ALL_TYPES = (list(CONTROLS) + list(SHARED_BASES) + list(RECOGNIZERS)
              + list(RUNTIME_TYPES) + list(VALUE_TYPES))
 
 # ---------------------------------------------------------------------------
-# Type-list closure. The ROWS are self-enforcing (maui_map.py exits non-zero on
+# Type-list closure. The ROWS are self-enforcing (ledger_map.py exits non-zero on
 # a row it cannot bucket). Until this stage the TYPE list was not: three
 # hand-written dicts at the top of a pipeline that is rigorous downstream, with
 # nothing asserting they were closed against the manifest. That is where the
@@ -132,7 +132,7 @@ ALL_TYPES = (list(CONTROLS) + list(SHARED_BASES) + list(RECOGNIZERS)
 #   DROP     one of the three reasons, by family
 #   (fail)   anything else names itself and stops the build
 ALIAS = {
-    "Frame": "Border — MAUI superseded Frame with Border, which is extracted",
+    "Frame": "Border — ledger row superseded Frame with Border, which is extracted",
     "AutomationProperties": "SemanticProperties — the older accessibility API",
     "FormattedString": "Span — the container of the spans facet carries",
     "Brush": "Color/Brush — 148 of its rows are static named colors",
@@ -158,19 +158,19 @@ ALIAS = {
     "KnownColor": "Color",
 }
 
-# Family rules, in order. The reason strings match maui_map.py's three.
-_MODEL = "MAUI's MVVM model"
+# Family rules, in order. The reason strings match ledger_map.py's three.
+_MODEL = "the ledger's MVVM model"
 _LAYOUT = "layout belongs to flex_layout"
-_ENGINE = "MAUI engine internals"
+_ENGINE = "the ledger engine internals"
 
 DROP_TYPE_RULES = [
     # navigation and the Shell model — facet has nav/Screen/ScreenBox
     (re.compile(r"^(I?Shell|SearchHandler|BaseShellItem|BackButtonBehavior|"
                 r"Rout(ing|e)|Flyout|NavigationPage|INavigation|Navigable)"),
-     f"{_MODEL} — MAUI's Shell/page navigation; facet has nav + Screen"),
-    # cells and table sections: MAUI's row model. facet rows are components.
+     f"{_MODEL} — the ledger's Shell/page navigation; facet has nav + Screen"),
+    # cells and table sections: the ledger's row model. facet rows are components.
     (re.compile(r"(\w*Cell|TableSection\w*)$"),
-     f"{_MODEL} — MAUI's cell model; facet rows are components"),
+     f"{_MODEL} — the ledger's cell model; facet rows are components"),
     # binding, templates, styles, triggers, behaviors, effects
     (re.compile(r"^(Binding\w*|MultiBinding|TemplateBinding|"
                 r"RelativeBindingSource|Bindable\w*|Command|DataTemplate\w*|"
@@ -223,10 +223,14 @@ def classify(ty):
     return None
 
 # Roslyn PublicAPI lines carry a nullability marker and modifier prefix, e.g.
-# "~static readonly Microsoft.Maui.Controls.Slider.MaximumProperty -> ...".
+# "~static readonly Slider.MaximumProperty -> ...".
 MODS = re.compile(r"^~?(?:(?:static|readonly|const|abstract|virtual|override|"
                   r"sealed|event|new)\s+)*")
-NS = r"Microsoft\.Maui\.Controls\."
+# Whatever namespace the manifest declares its controls under. Matched
+# generically rather than spelled: the framework the rows were read from is
+# not part of facet's vocabulary, and a name in the source is a name a
+# reader — a model especially — will take as a pattern to follow.
+NS = r"(?:[A-Za-z_][A-Za-z0-9_]*\.)+"
 GETTER = re.compile(rf"^{NS}(\w+)\.(\w+)\.get -> (.+?)[!?]*$")
 SETTER = re.compile(rf"^{NS}(\w+)\.(\w+)\.set -> void$")
 EVENT = re.compile(rf"^{NS}(\w+)\.(\w+) -> System\.EventHandler(?:<(.+?)[!?]*>)?[!?]*$")
@@ -277,9 +281,9 @@ def band_split(getters, setters, ty):
 def check_type_closure(getters, events, methods):
     """Every manifest type with surface must be EXTRACT / ALIAS / DROP.
 
-    The rows have been self-enforcing since Stage 1 (maui_map.py exits on a row
+    The rows have been self-enforcing since Stage 1 (ledger_map.py exits on a row
     it cannot bucket). This gives the TYPE list the same property, so a control
-    cannot go missing the next time MAUI adds one. Returns (aliases, drops) for
+    cannot go missing the next time the ledger adds one. Returns (aliases, drops) for
     the report; raises on anything unclassified.
     """
     surface = defaultdict(int)
@@ -315,7 +319,7 @@ def main():
 
     out = OrderedDict()
     md = [
-        "# MAUI portable-surface spec — GENERATED by tools/maui_spec.py\n\n",
+        "# the ledger portable-surface spec — GENERATED by tools/ledger_spec.py\n\n",
         "Six bands per type (writes / reads / events / methods), for the\n"
         "controls facet declares, the shared bases, the gesture recognizers,\n"
         "and the runtime's Window. This file is the permanent checklist:\n"
@@ -324,11 +328,11 @@ def main():
 
     def section(title, table, describe):
         md.append(f"\n## {title}\n\n")
-        for maui, facet_name in table.items():
-            w, r = band_split(getters, setters, maui)
-            ev = events.get(maui, {})
-            me = methods.get(maui, {})
-            out[maui] = {
+        for row_type, facet_name in table.items():
+            w, r = band_split(getters, setters, row_type)
+            ev = events.get(row_type, {})
+            me = methods.get(row_type, {})
+            out[row_type] = {
                 describe: facet_name,
                 "writes": w,
                 "reads": r,
@@ -336,7 +340,7 @@ def main():
                 "methods": {k: {"params": p, "returns": ret}
                             for k, (p, ret) in sorted(me.items())},
             }
-            md.append(f"### {maui} — {facet_name}\n\n")
+            md.append(f"### {row_type} — {facet_name}\n\n")
             md.append(f"- writes ({len(w)}): {', '.join(w) if w else '—'}\n")
             md.append(f"- reads ({len(r)}): {', '.join(r) if r else '—'}\n")
             ev_fmt = [f"{k}({v.rsplit('.', 1)[-1]})" if v else k for k, v in sorted(ev.items())]
@@ -353,7 +357,7 @@ def main():
     # The closure ledger: what is NOT extracted, and why. Absence is stated.
     md.append("\n## Not extracted — aliased to a type that is\n\n")
     md.append("Not a refusal: the same surface under another name.\n\n")
-    md.append("| MAUI type | covered by |\n|---|---|\n")
+    md.append("| the ledger type | covered by |\n|---|---|\n")
     for ty, what in sorted(aliases.items()):
         md.append(f"| {ty} | {what} |\n")
     md.append("\n## Not extracted — dropped by family\n\n")
@@ -366,23 +370,23 @@ def main():
 
     spec_dir = os.path.join(ROOT, "plans", "facet", "spec")
     os.makedirs(spec_dir, exist_ok=True)
-    with open(os.path.join(spec_dir, "maui-spec.json"), "w") as f:
+    with open(os.path.join(spec_dir, "ledger-spec.json"), "w") as f:
         json.dump(out, f, indent=1)
-    with open(os.path.join(ROOT, "plans", "facet", "maui-spec-report.md"), "w") as f:
+    with open(os.path.join(ROOT, "plans", "facet", "ledger-spec-report.md"), "w") as f:
         f.writelines(md)
 
     print(f"{'type':<26}{'writes':>7}{'reads':>7}{'events':>7}{'methods':>8}")
     print("-" * 55)
     totals = [0, 0, 0, 0]
-    for maui in ALL_TYPES:
-        w, r = band_split(getters, setters, maui)
-        ev, me = events.get(maui, {}), methods.get(maui, {})
+    for row_type in ALL_TYPES:
+        w, r = band_split(getters, setters, row_type)
+        ev, me = events.get(row_type, {}), methods.get(row_type, {})
         for i, n in enumerate((len(w), len(r), len(ev), len(me))):
             totals[i] += n
-        print(f"{maui:<26}{len(w):>7}{len(r):>7}{len(ev):>7}{len(me):>8}")
+        print(f"{row_type:<26}{len(w):>7}{len(r):>7}{len(ev):>7}{len(me):>8}")
     print("-" * 55)
     print(f"{'TOTAL':<26}{totals[0]:>7}{totals[1]:>7}{totals[2]:>7}{totals[3]:>8}")
-    print("\nwrote plans/facet/spec/maui-spec.json + plans/facet/maui-spec-report.md")
+    print("\nwrote plans/facet/spec/ledger-spec.json + plans/facet/ledger-spec-report.md")
 
 
 if __name__ == "__main__":

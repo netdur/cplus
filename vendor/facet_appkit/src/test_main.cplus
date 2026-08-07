@@ -878,7 +878,7 @@ fn a_context_menu_is_not_a_view_and_hangs_on_its_parent() {
         }
         option::Option[ak::MenuItem]::None => { assert false; }
     }
-    // A titleless item is a separator: MAUI has no separator type, and that is
+    // A titleless item is a separator: the ledger has no separator type, and that is
     // what every menu-building API means by one.
     match m.item_at_index(1 as i64) {
         option::Option[ak::MenuItem]::Some(sep) => { assert sep.is_separator_item(); }
@@ -1317,7 +1317,7 @@ fn a_shadow_falls_DOWN_from_a_positive_y_offset() {
     // The screenshot bug this test exists for: a shadow's offset is NOT
     // carried through the CTM, so the flip that makes everything else
     // top-left does not reach it, and a positive y threw the shadow UP.
-    // MAUI negates it in the same place (`#if MONOMAC`).
+    // The ledger negates it in the same place (`#if MONOMAC`).
     var px: [u8; 1024] = [0u8; 1024];
     let ctx: *u8 = surface_of_side(#addr_of(px[0 as usize]), 16 as usize);
     assert ctx != (0 as *u8);
@@ -1345,7 +1345,7 @@ fn an_arc_sweeps_the_way_clockwise_says() {
     // 0 to 90 is the LONG way — down through 6 and 9 — and `false` is the
     // quarter through the top right. That reads backwards until you notice
     // the angles are measured the ordinary way while the screen's y runs
-    // down; MAUI resolves it identically (`AddArc(..., !clockwise)` over
+    // down; the ledger resolves it identically (`AddArc(..., !clockwise)` over
     // negated angles), and this pins it so nobody "fixes" it by eye.
     var wide: [u8; 1024] = [0u8; 1024];
     let a: *u8 = surface_of_side(#addr_of(wide[0 as usize]), 16 as usize);
@@ -1751,7 +1751,7 @@ fn a_web_view_is_a_wkwebview_with_a_navigation_delegate() {
 
 #[test]
 fn a_source_is_read_three_ways_and_they_cannot_be_confused() {
-    // MAUI's Source is a WebViewSource — URL or HTML. facet reduced it to a
+    // The ledger's Source is a WebViewSource — URL or HTML. facet reduced it to a
     // `str`, so the STRING has to say which, and these are the three readings.
     assert webmod::starts_with_angle("<h1>hi</h1>");
     assert webmod::starts_with_angle("https://x") == false;
@@ -3389,7 +3389,7 @@ fn selecting_a_row_reaches_the_handler() {
 #[test]
 fn a_list_that_selects_nothing_still_draws_no_highlight() {
     // `selection_mode: None` is the generated default now that the enum zeros
-    // follow MAUI rather than the alphabet — so this also pins that default.
+    // follow the ledger rather than the alphabet — so this also pins that default.
     backend::install();
     var l: core::Node = list::list(key: "nosel");
     let lp: *core::Node = #addr_of(l);
@@ -3990,7 +3990,7 @@ fn a_cascading_transparent_scroll_takes_its_whole_subtree_out() {
 #[test]
 fn toolbar_items_come_out_in_placement_then_priority_order() {
     // The bar's ORDER is a property of the whole bar, which is why the walk
-    // collects before it builds. Primary first, Secondary last, MAUI's own
+    // collects before it builds. Primary first, Secondary last, the ledger's own
     // Priority within each group.
     backend::install();
     var b: core::Builder = core::Builder::new();
@@ -4070,7 +4070,7 @@ fn an_unanimated_carousel_position_lands_at_once() {
     // The two halves of `animates_scroll`, and the only way to tell them apart
     // without a run loop: a jump has already happened when the write returns.
     backend::install();
-    // `animates_scroll` defaults TRUE, which is MAUI's own default — so a
+    // `animates_scroll` defaults TRUE, which is the ledger's own default — so a
     // carousel that wants a jump has to say so.
     var c: core::Node = paged_carousel("jump");
     set_carousel_animation(#addr_of(c), false);
@@ -4766,7 +4766,7 @@ fn a_swipeables_items_become_the_menu_it_reveals() {
 
 #[test]
 fn a_swipe_item_fires_both_of_its_names() {
-    // `SwipeItem.Invoked` is MAUI's second name for the same moment, so both
+    // `SwipeItem.Invoked` is the ledger's second name for the same moment, so both
     // run — an application that wired either gets it.
     backend::install();
     SWIPE_CLICKS = 0 as i64;
@@ -4975,9 +4975,9 @@ fn a_time_picker_opens_a_clock() {
 }
 
 // ---- a radio with text -------------------------------------------------------
-// The user's own worked example: if the MAUI contract says a radio needs text,
+// The user's own worked example: if the ledger contract says a radio needs text,
 // build it. `RadioButton.Content` was typed `object` and the mechanical rule
-// read that as a subtree — but every MAUI handler renders it through
+// read that as a subtree — but every the ledger handler renders it through
 // `ContentAsString`, which is why the type ships that method.
 
 #[test]
@@ -5307,10 +5307,10 @@ fn a_carousel_that_is_not_swipeable_ignores_the_wheel() {
 }
 
 #[test]
-fn maui_bools_that_default_true_are_not_generated_false() {
+fn ledger_bools_that_default_true_are_not_generated_false() {
     // The third instance of one bug: a default nobody chose, silently
     // inverting a verb. A carousel that does not bounce, does not animate and
-    // cannot be scrolled by the user is not the control MAUI describes.
+    // cannot be scrolled by the user is not the control the ledger describes.
     var c: core::Node = carousel::carousel(key: "dflt");
     let p: *core::Node = #addr_of(c);
     let d: *core::Data = core::node_data(p);
@@ -5364,7 +5364,7 @@ fn a_destructive_toolbar_item_carries_a_red_button() {
 
 // ---- grouping and selection, the two carriers facet did not have --------------
 // `IsGrouped` and `SelectionMode` each had a carrier for the SWITCH and nothing
-// for what it switches on: MAUI binds a list of lists and a SelectedItem, and
+// for what it switches on: the ledger binds a list of lists and a SelectedItem, and
 // Stage 1 dropped both as MODEL without declaring the imperative replacement.
 
 fn g_row(i: usize, ctx: *u8) -> flex::Node {
@@ -6215,7 +6215,7 @@ fn on_tab(sender: *u8, ctx: *u8) { TAB_CHANGES = TAB_CHANGES + (1 as i64); retur
 #[test]
 fn clicking_a_tab_switches_it_and_reports_the_change() {
     // An agent has no hands, and a tab strip it cannot switch is a strip it
-    // cannot use — `selected_index` is that switch, and MAUI declared no such
+    // cannot use — `selected_index` is that switch, and the ledger declared no such
     // verb because `CurrentPage` lives on a type outside the manifest slice.
     backend::install();
     TAB_CHANGES = 0 as i64;
@@ -6684,7 +6684,7 @@ fn a_keyboards_flags_reach_the_field_editor_even_though_its_layout_cannot() {
 
 #[test]
 fn a_font_that_scales_multiplies_its_size_rather_than_replacing_it() {
-    // `font_scales` defaults to TRUE — MAUI's own default — so a version of this
+    // `font_scales` defaults to TRUE — the ledger's own default — so a version of this
     // that swapped the application's size for a text style's would have
     // rewritten the typography of every app that ever named one. Dynamic Type
     // means the named size is a BASE and the reader's preference is a
@@ -7066,7 +7066,7 @@ fn a_window_root_that_opts_out_of_the_safe_area_gets_the_whole_content_view() {
 // The three Chrome fields had been declared since the runtime tier and NOTHING
 // read them — a window asking to zoom got a window that did not. Neither gate
 // could see it: verb_coverage counts per-CONTROL prop bits and these are on
-// Chrome, guard 5b counts MAUI tier rows and `zoomable` is facet's own word.
+// Chrome, guard 5b counts the ledger tier rows and `zoomable` is facet's own word.
 
 #[test]
 fn zoom_target_compounds_from_the_base_and_clamps() {

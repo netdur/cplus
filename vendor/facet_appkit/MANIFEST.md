@@ -62,7 +62,7 @@ every one of them had been recorded against a reading of one class in isolation:
 **No carrier is empty.** The five rows that were there named a real hole, and
 it was in the CONTRACT rather than in the backend: `IsGrouped` and
 `SelectionMode` each carried the SWITCH and nothing for what it switches on,
-because Stage 1 dropped MAUI's grouped ItemsSource and its SelectedItem as
+because Stage 1 dropped the ledger's grouped ItemsSource and its SelectedItem as
 MODEL and never declared the imperative replacement. facet now does, in the
 shape `count` + `row` already set:
 
@@ -396,7 +396,7 @@ Two things followed that were not the goal:
   case and the menu tier's is the only one left.
 
 `tabs.selected_index` and `on_tab_changed` are facet's own words, and they had
-to be: MAUI's TabbedPage describes a STRIP and says nothing about which tab is
+to be: the ledger's TabbedPage describes a STRIP and says nothing about which tab is
 showing — `CurrentPage` lives on `MultiPage<T>`, outside the manifest slice
 Stage 1 read. So five verbs decorated a control nothing could drive, and an
 agent has no hands: a tab strip it cannot switch is a strip it cannot use.
@@ -453,7 +453,7 @@ stand in for the whole feature. The gesture is what macOS lacks. The feature is
 a list of actions and a way to ask for them, and macOS has had one of those all
 along.
 
-| Control | What MAUI's gesture means | What this backend does instead |
+| Control | What the ledger's gesture means | What this backend does instead |
 |---|---|---|
 | `refreshable` | pull past the top of a scroll to refresh | a refresh STRIP at the top of the content: a button, and a spinner in its place while `is_refreshing`. `is_refreshable` installs and removes it; `refresh_color` tints the spinner. The click writes `is_refreshing` back BEFORE calling `on_refreshing`, so a handler reading it gets the state that caused it. |
 | `swipeable` / `swipe_item` | swipe a row sideways to reveal actions | every `swipe_item` child becomes a ROW in a menu on the swipeable's own view (right-click / control-click), AND a trackpad drag strip sits behind the content, which sliding the content uncovers. Four of the five swipe handlers ride the menu's own edges: `menuWillOpen` fires `on_swipe_started` and `on_open_requested`, `menuDidClose` fires `on_swipe_ended` and `on_close_requested`. |
@@ -550,29 +550,29 @@ giving it a box and an alignment. The one verb that still needs a width —
 `draw_text(at:)`, which aligns a line ABOUT a point — measures at REPLAY time,
 where a context does exist.
 
-**`draw_text(at:)` places the top-left, not the baseline.** MAUI's
+**`draw_text(at:)` places the top-left, not the baseline.** the ledger's
 `DrawString(value, x, y, alignment)` treats `y` as the baseline. facet's box
 model is top-left everywhere else, and a point that means something different
 from every other point in the contract is worse than a small deviation from
-MAUI. The block form has a box, so it does not arise there.
+the ledger. The block form has a box, so it does not arise there.
 
 Everything else in ICanvas is honoured: the state setters, the state stack,
 the transform, the clip (including `subtract_from_clip`, which CG has no call
 for and which is done with an even-odd clip over the current clip bounds), the
 shapes, paths with both winding rules, gradients via `set_fill_brush`, images,
 and the three text verbs. `Blend` maps to `CGBlendMode` by ordinal, because
-MAUI's enum was modelled on CG and matches it value for value.
+the ledger's enum was modelled on CG and matches it value for value.
 
 **A shadow's offset is negated in y.** Core Graphics does not carry a shadow
 offset through the CTM, so the flip that makes everything else top-left does
 not reach it, and a positive `Shadow.offset.y` would throw the shadow UP.
-MAUI does the same thing in the same place (`SetShadow`, `#if MONOMAC`).
+The ledger does the same thing in the same place (`SetShadow`, `#if MONOMAC`).
 `a_shadow_falls_DOWN_from_a_positive_y_offset` is the guard.
 
 **An arc's `clockwise` reads backwards, and is right.** 0 degrees is 3 o'clock
 and 90 is 12 o'clock, so `clockwise: true` from 0 to 90 takes the LONG way,
 down through 6 and 9. The angles are measured the ordinary way while the
-screen's y runs down, and MAUI resolves it identically — negated angles into
+screen's y runs down, and the ledger resolves it identically — negated angles into
 `AddArc(..., !clockwise)`. Pinned by `an_arc_sweeps_the_way_clockwise_says`
 so nobody "corrects" it by eye. The transform that turns CG's circular arc
 into an elliptical one is written out at `add_arc_path`.
@@ -607,7 +607,7 @@ Three deviations worth knowing:
   agree with the screen, not the other way round.
 - **`on_submit` is a different moment per kind.** A field and a search field
   submit on Return, which is the control's own action. An editor submits on
-  losing focus, because Return inserts a newline there and MAUI's
+  losing focus, because Return inserts a newline there and the ledger's
   `Editor.Completed` has no other moment to mean. Wiring both on a field would
   fire submit twice.
 - **`cursor_position` / `selection_length` are answered by the field editor**,
@@ -798,14 +798,14 @@ delegate writes them into the props on every navigation. The cursor then
 answers from the props like every other read, and an application never learns
 that one answer came from the platform and another from the description.
 
-**A `source` is read three ways**, because MAUI's `Source` is a WebViewSource
+**A `source` is read three ways**, because the ledger's `Source` is a WebViewSource
 (URL or HTML) and facet reduced it to a `str`, so the string has to say which:
 starts with `<` is markup, contains `://` is an absolute URL, anything else is
 a file path — loaded with read access to its FOLDER, or its stylesheet is
 refused and the page looks broken rather than blocked.
 
 **`on_navigating` is `didStartProvisionalNavigation:`, not a policy decision.**
-MAUI's `Navigating` is cancellable; facet's handler returns nothing, so it
+the ledger's `Navigating` is cancellable; facet's handler returns nothing, so it
 could not cancel even if this were wired to
 `decidePolicyForNavigationAction:`. Reporting the START of a navigation is the
 honest thing the signature supports.
@@ -994,13 +994,13 @@ collection AND reordering before it is worth paying — the two verbs pull in
 opposite directions, and today no caller asks for either at scale.
 
 **`table` is not a spreadsheet, and that is the contract's shape, not a gap.**
-MAUI's `TableView` is the settings-style sectioned list, and the contract
+the ledger's `TableView` is the settings-style sectioned list, and the contract
 declares exactly four verbs for it: `style`, `content`, `row_height`,
 `has_uneven_rows`. There are no column verbs to implement — no column count, no
 per-column width, header, or sort. So the sequence host answers it whole. An
 NSTableView with real columns would be a bigger control than the contract asks
 for, and building one would mean inventing the vocabulary first, in Stage 1's
-map, against a MAUI type that never had it.
+map, against a ledger type that never had it.
 
 `tree` walks only through OPEN branches, which is what keeps a deep tree
 cheap under that rule: a closed branch is not descended at all.
@@ -1033,7 +1033,7 @@ safe-area inset moves.
 ### The safe area is on every node
 
 `vocab::SafeArea` was declared in Stage 2 and only `scroll` took one, which is
-what left MAUI's three Page rows (ContainerArea, IgnoresContainerArea,
+what left the ledger's three Page rows (ContainerArea, IgnoresContainerArea,
 ContentPage.SafeAreaEdges) with no carrier. It is on the shared band now, so
 the node that has to answer the question can be the one that does.
 
@@ -1073,8 +1073,8 @@ window that did not zoom.
 
 **Both gates were blind to it, and that is the part worth keeping.**
 `verb_coverage.py` counts the 324 per-CONTROL prop bits; these are on Chrome.
-Guard 5b counts MAUI tier rows; `zoomable` is facet's OWN word, seeded from no
-MAUI row. A verb in neither census is one whose absence nothing can notice —
+Guard 5b counts the ledger tier rows; `zoomable` is facet's OWN word, seeded from no
+ledger row. A verb in neither census is one whose absence nothing can notice —
 this was found by a person pinching the example, which is the argument for the
 example existing.
 

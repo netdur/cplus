@@ -20,7 +20,7 @@
 //
 // It slipped both gates, which is worth writing down: `verb_coverage.py` counts
 // the 324 per-CONTROL prop bits and `zoomable` is on Chrome; guard 5b counts
-// MAUI tier rows and `zoomable` is facet's OWN word, seeded from no MAUI row.
+// The ledger tier rows and `zoomable` is facet's OWN word, seeded from no ledger row.
 // A verb that is in neither census is a verb nothing can notice the absence of.
 //
 // ---- one registry ------------------------------------------------------------

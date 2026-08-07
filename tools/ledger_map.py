@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""maui_map.py — the curated MAP: MAUI surface -> facet contract names.
+"""ledger_map.py — the curated MAP: the ledger surface -> facet contract names.
 
 Stage 1 of the bootstrap. facet is an EMPTY package: it has no verbs, so no
 row can claim "facet already has this", and no row may be deleted because a
 platform cannot do it — that sentence belongs to facet_appkit, which answers
 the contract, not to facet, which writes it.
 
-So every row of the MAUI spec (plans/facet/spec/maui-spec.json, six bands)
+So every row of the ledger spec (plans/facet/spec/ledger-spec.json, six bands)
 lands in exactly ONE of two buckets:
 
   ADOPT   facet declares it, under a facet name (naming_guideline.md)
-  DROP    MAUI's model, not facet's — three reasons, never any other:
+  DROP    the ledger's model, not facet's — three reasons, never any other:
             MODEL   MVVM/binding/templates/identity. facet describes UI with
                     components, keys, and fn-ptr handlers.
             LAYOUT  layout is flex_layout's. facet Nodes carry flex modifiers.
-            ENGINE  MAUI's own internals (Map*/Send*/On*/measure/arrange/
+            ENGINE  the ledger's own internals (Map*/Send*/On*/measure/arrange/
                     batch). Never application vocabulary in any framework.
 
 There is no FUTURE bucket and no UNSUPPORTED bucket. A row the rules cannot
@@ -32,12 +32,12 @@ import sys
 from collections import OrderedDict
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SPEC = os.path.join(ROOT, "plans", "facet", "spec", "maui-spec.json")
+SPEC = os.path.join(ROOT, "plans", "facet", "spec", "ledger-spec.json")
 
 # ---- the three DROP reasons. This list does not grow. -----------------------
-MODEL = "MAUI's MVVM model — facet describes UI with components, keys, and fn-ptr handlers"
+MODEL = "the ledger's MVVM model — facet describes UI with components, keys, and fn-ptr handlers"
 LAYOUT = "layout belongs to flex_layout — facet Nodes carry flex modifiers"
-ENGINE = "MAUI engine internals, not application vocabulary"
+ENGINE = "the ledger engine internals, not application vocabulary"
 
 # ---- value types -> facet types. A scalar/struct the contract can carry. -----
 TYMAP = {
@@ -49,109 +49,109 @@ TYMAP = {
     "bool": "bool",
     "System.DateTime": "Date",
     "System.TimeSpan": "Duration",
-    "Microsoft.Maui.Graphics.Color": "Color",
-    "Microsoft.Maui.Graphics.Rect": "Rect",
-    "Microsoft.Maui.Graphics.Size": "Size",
-    "Microsoft.Maui.CornerRadius": "Corners",
-    "Microsoft.Maui.Thickness": "Insets",
-    "Microsoft.Maui.Graphics.Paint": "Brush",
-    "Microsoft.Maui.Controls.Brush": "Brush",
-    "Microsoft.Maui.Controls.Shadow": "Shadow",
-    "Microsoft.Maui.Controls.ImageSource": "str",          # facet images take a path
-    "Microsoft.Maui.Controls.FormattedString": "Spans",    # styled runs of text
-    "Microsoft.Maui.Controls.Shapes.Geometry": "Shape",
-    "Microsoft.Maui.Graphics.IShape": "Shape",
-    "Microsoft.Maui.Controls.DoubleCollection": "Dashes",   # a stroke dash pattern
+    "Color": "Color",
+    "Rect": "Rect",
+    "Size": "Size",
+    "CornerRadius": "Corners",
+    "Thickness": "Insets",
+    "Paint": "Brush",
+    "Brush": "Brush",
+    "Shadow": "Shadow",
+    "ImageSource": "str",          # facet images take a path
+    "FormattedString": "Spans",    # styled runs of text
+    "Shapes.Geometry": "Shape",
+    "IShape": "Shape",
+    "DoubleCollection": "Dashes",   # a stroke dash pattern
     "float[]": "f64[]",
     "System.Collections.Generic.IList<string>": "TextList",  # an owned list of strings
-    # A subtree in the description is a Node, whatever MAUI's static type.
+    # A subtree in the description is a Node, whatever the ledger's static type.
     "object": "Node",
-    "Microsoft.Maui.Controls.Element": "Node",
-    "Microsoft.Maui.Controls.View": "Node",
-    "Microsoft.Maui.Controls.Page": "Node",
-    "Microsoft.Maui.Controls.TableRoot": "Node",
-    "Microsoft.Maui.ITitleBar": "Node",
-    "Microsoft.Maui.Controls.Window": "Window",
+    "Element": "Node",
+    "View": "Node",
+    "Page": "Node",
+    "TableRoot": "Node",
+    "ITitleBar": "Node",
+    "Window": "Window",
     # Stage 1 closure additions
-    "Microsoft.Maui.Graphics.Point": "Point",
-    "Microsoft.Maui.IView": "Node",
-    "Microsoft.Maui.Controls.VisualElement": "Node",
-    "Microsoft.Maui.Controls.WebViewSource": "str",
-    "Microsoft.Maui.Graphics.IDrawable": "Drawable",
-    "Microsoft.Maui.Controls.SwipeItems": "SwipeItem[]",
-    "System.Collections.Generic.IList<Microsoft.Maui.Controls.KeyboardAccelerator!>": "Shortcut",
-    "System.Collections.Generic.IList<Microsoft.Maui.Controls.MenuBarItem>": "MenuBarItem[]",
-    "System.Collections.Generic.IList<Microsoft.Maui.Controls.ToolbarItem>": "ToolbarItem[]",
-    "System.Collections.Generic.IEnumerable<Microsoft.Maui.Controls.ToolbarItem>": "ToolbarItem[]",
-    "System.Collections.Generic.IList<Microsoft.Maui.IView!>": "Node[]",
-    "System.Collections.Generic.IReadOnlyList<Microsoft.Maui.Controls.Element>": "Node[]",
-    "System.Collections.ObjectModel.ObservableCollection<Microsoft.Maui.Controls.View>": "Node[]",
-    "System.Collections.Generic.IReadOnlyList<Microsoft.Maui.Controls.Window!>": "Window[]",
+    "Point": "Point",
+    "IView": "Node",
+    "VisualElement": "Node",
+    "WebViewSource": "str",
+    "IDrawable": "Drawable",
+    "SwipeItems": "SwipeItem[]",
+    "System.Collections.Generic.IList<KeyboardAccelerator!>": "Shortcut",
+    "System.Collections.Generic.IList<MenuBarItem>": "MenuBarItem[]",
+    "System.Collections.Generic.IList<ToolbarItem>": "ToolbarItem[]",
+    "System.Collections.Generic.IEnumerable<ToolbarItem>": "ToolbarItem[]",
+    "System.Collections.Generic.IList<IView!>": "Node[]",
+    "System.Collections.Generic.IReadOnlyList<Element>": "Node[]",
+    "System.Collections.ObjectModel.ObservableCollection<View>": "Node[]",
+    "System.Collections.Generic.IReadOnlyList<Window!>": "Window[]",
 }
 
-# ---- MAUI enums -> facet enums. Vocabulary facet must DECLARE, not a drop. ---
+# ---- the ledger enums -> facet enums. Vocabulary facet must DECLARE, not a drop. ---
 ENUMS = {
-    "Microsoft.Maui.TextAlignment": "TextAlign",
-    "Microsoft.Maui.Controls.FontAttributes": "FontWeight",
-    "Microsoft.Maui.TextTransform": "TextTransform",
-    "Microsoft.Maui.TextDecorations": "TextDecoration",
-    "Microsoft.Maui.LineBreakMode": "LineBreak",
-    "Microsoft.Maui.ReturnType": "ReturnKey",
-    "Microsoft.Maui.ScrollBarVisibility": "ScrollBars",
-    "Microsoft.Maui.Aspect": "ImageFit",
-    "Microsoft.Maui.FlowDirection": "FlowDirection",
-    "Microsoft.Maui.ClearButtonVisibility": "ClearButton",
-    "Microsoft.Maui.Keyboard": "Keyboard",
-    "Microsoft.Maui.TextType": "TextFormat",
-    "Microsoft.Maui.SafeAreaEdges": "SafeArea",
-    "Microsoft.Maui.SwipeDirection": "SwipeDirection",
-    "Microsoft.Maui.Controls.ButtonsMask": "Buttons",
-    "Microsoft.Maui.Controls.Button.ButtonContentLayout": "ContentLayout",
-    "Microsoft.Maui.Controls.SelectionMode": "SelectionMode",
-    "Microsoft.Maui.Controls.ListViewSelectionMode": "SelectionMode",
-    "Microsoft.Maui.Controls.SeparatorVisibility": "Separator",
-    "Microsoft.Maui.Controls.EditorAutoSizeOption": "AutoSize",
-    "Microsoft.Maui.Controls.ItemSizingStrategy": "ItemSizing",
-    "Microsoft.Maui.Controls.ItemsUpdatingScrollMode": "ScrollAnchor",
-    "Microsoft.Maui.Controls.TableIntent": "TableStyle",
-    "Microsoft.Maui.Controls.Shapes.PenLineCap": "LineCap",
-    "Microsoft.Maui.Controls.Shapes.PenLineJoin": "LineJoin",
-    "Microsoft.Maui.ScrollOrientation": "ScrollAxis",
-    "Microsoft.Maui.ApplicationModel.AppTheme": "Appearance",
-    "Microsoft.Maui.Controls.IndicatorShape": "DotShape",
-    "Microsoft.Maui.KeyboardAcceleratorModifiers": "KeyModifiers",
-    "Microsoft.Maui.Controls.ToolbarItemOrder": "ToolbarPlacement",
+    "TextAlignment": "TextAlign",
+    "FontAttributes": "FontWeight",
+    "TextTransform": "TextTransform",
+    "TextDecorations": "TextDecoration",
+    "LineBreakMode": "LineBreak",
+    "ReturnType": "ReturnKey",
+    "ScrollBarVisibility": "ScrollBars",
+    "Aspect": "ImageFit",
+    "FlowDirection": "FlowDirection",
+    "ClearButtonVisibility": "ClearButton",
+    "Keyboard": "Keyboard",
+    "TextType": "TextFormat",
+    "SafeAreaEdges": "SafeArea",
+    "SwipeDirection": "SwipeDirection",
+    "ButtonsMask": "Buttons",
+    "Button.ButtonContentLayout": "ContentLayout",
+    "SelectionMode": "SelectionMode",
+    "ListViewSelectionMode": "SelectionMode",
+    "SeparatorVisibility": "Separator",
+    "EditorAutoSizeOption": "AutoSize",
+    "ItemSizingStrategy": "ItemSizing",
+    "ItemsUpdatingScrollMode": "ScrollAnchor",
+    "TableIntent": "TableStyle",
+    "Shapes.PenLineCap": "LineCap",
+    "Shapes.PenLineJoin": "LineJoin",
+    "ScrollOrientation": "ScrollAxis",
+    "AppTheme": "Appearance",
+    "IndicatorShape": "DotShape",
+    "KeyboardAcceleratorModifiers": "KeyModifiers",
+    "ToolbarItemOrder": "ToolbarPlacement",
 }
 
-# ---- types that carry MAUI's model, wherever they appear ---------------------
+# ---- types that carry the ledger's model, wherever they appear ---------------------
 DROP_TYPES = {
     "System.Windows.Input.ICommand": MODEL,
-    "Microsoft.Maui.Controls.BindingBase": MODEL,
-    "Microsoft.Maui.Controls.DataTemplate": MODEL,
-    "Microsoft.Maui.Controls.ControlTemplate": MODEL,
-    "Microsoft.Maui.Controls.ResourceDictionary": MODEL,
-    "System.Collections.Generic.IList<Microsoft.Maui.Controls.Behavior>": MODEL,
-    "System.Collections.Generic.IList<Microsoft.Maui.Controls.TriggerBase>": MODEL,
+    "BindingBase": MODEL,
+    "DataTemplate": MODEL,
+    "ControlTemplate": MODEL,
+    "ResourceDictionary": MODEL,
+    "System.Collections.Generic.IList<Behavior>": MODEL,
+    "System.Collections.Generic.IList<TriggerBase>": MODEL,
     "System.Collections.IEnumerable": MODEL,
     "System.Collections.IList": MODEL,
     "System.Collections.Generic.IList<object>": MODEL,
-    "System.Collections.Generic.IList<Microsoft.Maui.Controls.IGestureRecognizer>": MODEL,
-    "Microsoft.Maui.Controls.LayoutOptions": LAYOUT,
-    "Microsoft.Maui.Controls.IItemsLayout": LAYOUT,
-    "Microsoft.Maui.IViewHandler": ENGINE,
-    "Microsoft.Maui.Controls.IVisual": ENGINE,
-    "Microsoft.Maui.Controls.Internals.IGestureController": ENGINE,
-    "Microsoft.Maui.Controls.Internals.AutoId": ENGINE,
-    "Microsoft.Maui.Controls.Internals.TableModel": ENGINE,
-    "Microsoft.Maui.Controls.ListViewCachingStrategy": ENGINE,
-    "System.Collections.Generic.IReadOnlyCollection<Microsoft.Maui.IWindowOverlay!>": ENGINE,
-    "Microsoft.Maui.IVisualDiagnosticsOverlay": ENGINE,
+    "System.Collections.Generic.IList<IGestureRecognizer>": MODEL,
+    "LayoutOptions": LAYOUT,
+    "IItemsLayout": LAYOUT,
+    "IViewHandler": ENGINE,
+    "IVisual": ENGINE,
+    "Internals.IGestureController": ENGINE,
+    "Internals.AutoId": ENGINE,
+    "Internals.TableModel": ENGINE,
+    "ListViewCachingStrategy": ENGINE,
+    "System.Collections.Generic.IReadOnlyCollection<IWindowOverlay!>": ENGINE,
+    "IVisualDiagnosticsOverlay": ENGINE,
     "System.Net.CookieContainer": ENGINE,
-    "Microsoft.Maui.Controls.IAppLinks": ENGINE,
-    "Microsoft.Maui.Controls.Internals.NavigationProxy": ENGINE,
-    "Microsoft.Maui.IElementHandler": ENGINE,
-    "Microsoft.Maui.Controls.Application": ENGINE,
-    "Microsoft.Maui.Controls.IBindableLayout": LAYOUT,
+    "IAppLinks": ENGINE,
+    "Internals.NavigationProxy": ENGINE,
+    "IElementHandler": ENGINE,
+    "Application": ENGINE,
+    "IBindableLayout": LAYOUT,
 }
 
 # ---- member-name rules, applied before the type rules -----------------------
@@ -175,17 +175,17 @@ DROP_PATTERNS = [
                 r"InternalChildren)$"), ENGINE),
 ]
 
-# Methods that are the layout engine's, not MAUI's bookkeeping. Same verdict
+# Methods that are the layout engine's, not the ledger's bookkeeping. Same verdict
 # (DROP), honest reason: flex_layout arranges and measures.
 LAYOUT_METHODS = re.compile(
     r"^(Arrange|ArrangeOverride|Layout|LayoutChildren|MeasureOverride|OnMeasure|"
     r"ComputeConstraintForView|CrossPlatformArrange|CrossPlatformMeasure|"
     r"InvalidateMeasureNonVirtual|InvalidateMeasureOverride)$")
 
-# ---- the methods band inverts: most rows are MAUI's own engine, so the
+# ---- the methods band inverts: most rows are the ledger's own engine, so the
 # APPLICATION verbs are whitelisted and everything else drops as ENGINE.
 #
-# MAUI repeats a member on every control that overrides it (OnMeasure x7,
+# The ledger repeats a member on every control that overrides it (OnMeasure x7,
 # UpdateFormsText x7, MapText x5); facet has ONE method on Node, so those
 # repetitions collapse rather than multiply. Collapsing is not promoting: a
 # binding-context hook is still a hook however many types declare it. What
@@ -227,10 +227,10 @@ METHOD_VOCABULARY = {
 # ---- the naming pass over the default snake_case ----------------------------
 # naming_guideline.md: "Drop words the type or context already implies" and
 # "Name a type for what it is, not the class it wraps." The default rule
-# transcribes MAUI's member name, which carries MAUI's vocabulary through.
+# transcribes the ledger's member name, which carries the ledger's vocabulary through.
 #
 # Keyed by MEMBER, not by (Type, Member), because the rule is about the word:
-# wherever MAUI writes FontAutoScalingEnabled, facet writes font_scales. Nine
+# wherever the ledger writes FontAutoScalingEnabled, facet writes font_scales. Nine
 # types declare that member and none of them means anything else. A rule that
 # would read differently on a second type belongs in OVERLAY instead; the
 # generator's lint fails the run if a rename leaves a name the guideline still
@@ -251,7 +251,7 @@ RENAME = {
     "LineBreakMode":                 "line_break",              # LineBreak
     "ReturnType":                    "return_key",              # ReturnKey
     "TextType":                      "text_format",             # TextFormat
-    "FontAttributes":                "font_weight",             # FontWeight — a SCALE, not MAUI's Bold|Italic|None (stages/3 "found late" #1)
+    "FontAttributes":                "font_weight",             # FontWeight — a SCALE, not the ledger's Bold|Italic|None (stages/3 "found late" #1)
     "IndicatorsShape":               "dot_shape",               # DotShape
     "Aspect":                        "fit",                     # ImageFit
     "Orientation":                   "axis",                    # ScrollAxis
@@ -277,7 +277,7 @@ RENAME = {
     "IndicatorSize":           "dot_size",
     "MaximumVisible":          "max_dots",
 
-    # -- name for the role, not the class MAUI wraps. facet images take a path,
+    # -- name for the role, not the class the ledger wraps. facet images take a path,
     #    so "Source" names a .NET type that is not in the signature.
     "ImageSource":      "image",
     "IconImageSource":  "icon",
@@ -302,7 +302,7 @@ RENAME = {
     "RefreshAllowed":            "can_refresh",     # a read reads as an assertion
 }
 
-# ---- MAUI exposes a mutable collection through a getter ---------------------
+# ---- the ledger exposes a mutable collection through a getter ---------------------
 # `Picker.Items` and `MenuFlyoutItem.KeyboardAccelerators` are declared as
 # reads because .NET hands back an IList you then mutate. facet has no such
 # shape: you write the whole value. So the band is corrected here, once, rather
@@ -312,24 +312,24 @@ BAND = {
     ("MenuFlyoutItem", "KeyboardAccelerators"): "writes",
 }
 
-# ---- facet's own words, with no MAUI provenance -----------------------------
+# ---- facet's own words, with no the ledger provenance -----------------------------
 # INTENT: "it grows by what its applications need, and adds words of its own."
 # Measured against iris in reports/facet-iris-gap-2026-08-01.md. Recorded here
 # so they are declared deliberately and appear in the ledger, rather than
 # turning up in a control module with nothing behind them.
 #
-# (owner, word, shape, why MAUI has none, disposition)
+# (owner, word, shape, why the ledger has none, disposition)
 FACET_ORIGIN = [
     ("list, collection", "set_count / count()", "usize",
-     "MAUI binds ItemsSource; Stage 1 dropped that as MVVM, so the imperative "
+     "the ledger binds ItemsSource; Stage 1 dropped that as MVVM, so the imperative "
      "replacement — a row count plus a row builder — is facet's to invent",
      "Stage 2 — emitted"),
     ("list, collection", "set_row(_:ctx:)", "fn(*u8, usize) -> Node",
-     "the other half of set_count: MAUI would have used a DataTemplate",
+     "the other half of set_count: the ledger would have used a DataTemplate",
      "Stage 2 — emitted"),
     ("button, icon_button, text_button", "toggles: / is_on() / set_bordered()",
      "a button that flips, and a border that switches without being forgotten",
-     "MAUI has no button of any kind that FLIPS — its toggle is a CheckBox or a "
+     "the ledger has no button of any kind that FLIPS — its toggle is a CheckBox or a "
      "Switch, which draw their own control and cannot be a plain word or an "
      "icon — and no way to switch a border off without losing its width, since "
      "BorderWidth is the only dial",
@@ -342,7 +342,7 @@ FACET_ORIGIN = [
      "outline on `icon_button` / `text_button` — different mechanisms, one "
      "word, because from the application's side it is the same question"),
     ("text_button", "text_button(title:)", "a button with no bezel",
-     "MAUI has ONE Button and expresses the flat posture by clearing three "
+     "the ledger has ONE Button and expresses the flat posture by clearing three "
      "properties (BackgroundColor, BorderColor, BorderWidth), so facet "
      "inherited a button that always draws its bezel and no way to ask it not "
      "to — clearing facet's `background_color` clears a CALayer facet adds, "
@@ -357,7 +357,7 @@ FACET_ORIGIN = [
      "VoiceOver, and role=button in the agent surface — which is what a "
      "`label(...).gesture(on_click:)` throws away"),
     ("symbol", "symbol(icon:) / system_symbol(name:)", "a glyph",
-     "MAUI has no glyph vocabulary at all — an icon is app content, not OS "
+     "the ledger has no glyph vocabulary at all — an icon is app content, not OS "
      "chrome, so facet declares it and ships the font rather than abstracting "
      "over three platforms' icon sets",
      "SHIPPED 2026-08-03 — hand-written vendor/facet/src/symbol.cplus, with "
@@ -368,19 +368,19 @@ FACET_ORIGIN = [
      "application's own font (portable, unchecked). Proved in "
      "examples/symbol_spike"),
     ("label", "wrap_label", "a label that wraps",
-     "MAUI folds wrapping into Label via LineBreakMode, and so does facet",
+     "the ledger folds wrapping into Label via LineBreakMode, and so does facet",
      "NOT A CONTROL 2026-08-03 — `label(text, line_break: LineBreak::WordWrap)`. "
      "The predecessor was a separate kind only because AppKit has a second "
      "factory (`wrappingLabelWithString:` vs `labelWithString:`), and which "
      "factory to call is the backend's sentence, not the contract's"),
     ("(component)", "composer", "a multi-line input with chrome",
-     "a compound widget, not a MAUI control",
+     "a compound widget, not a ledger control",
      "NOT A CONTROL 2026-08-03 — `text_area` already carries the text, the "
      "placeholder, on_submit and on_text_changed; `bordered` carries the "
      "border and the shared band carries the background. An arrangement of "
      "existing words is a COMPONENT (Stage 3's tier), not a new word"),
     ("tree", "tree(root:) + TreeNode", "a hierarchical list",
-     "MAUI has no tree control at all",
+     "the ledger has no tree control at all",
      "SHIPPED 2026-08-03 — hand-written vendor/facet/src/tree.cplus. GENERIC, "
      "not the file browser it came from: `path` -> `id` (stable identity) and "
      "`is_dir` -> `is_branch` (may be true before any child exists, which is "
@@ -400,7 +400,7 @@ FACET_ORIGIN = [
      "application that saves and restores reads back what was applied. "
      "Collapsing remembers the position"),
     ("any node", ".gesture(on_click:, on_hover:, …)", "raw input, as a modifier",
-     "MAUI attaches behaviour by pushing recognizer objects into a "
+     "the ledger attaches behaviour by pushing recognizer objects into a "
      "GestureRecognizers collection, which Stage 1 dropped as MODEL. The 21 "
      "rows on the recognizer types themselves were ADOPTed and then reached no "
      "control, because those types are neither controls nor shared bases",
@@ -411,7 +411,7 @@ FACET_ORIGIN = [
      "not need to exist"),
     ("window_chrome", "window_buttons() and .window_drag()",
      "the titlebar an application draws itself",
-     "platform chrome; MAUI's window is not a described tree, so there was "
+     "platform chrome; the ledger's window is not a described tree, so there was "
      "never a row to adopt",
      "SHIPPED 2026-08-03 — hand-written vendor/facet/src/window_chrome.cplus. "
      "TWO SHAPES, deliberately: `window_buttons()` draws something so it is a "
@@ -446,18 +446,18 @@ OVERLAY = {
     ("SelectableItemsView", "SelectedItem"): ("DROP", "", MODEL + " — the selection is an index"),
     ("RadioButton", "Value"): ("DROP", "", MODEL + " — the binding-era group value; a radio's identity is its key"),
     # `Content` is typed `object` and the mechanical rule read that as a
-    # subtree. It is not one: every MAUI handler renders it through
+    # subtree. It is not one: every the ledger handler renders it through
     # `ContentAsString`, and the type ships that method for exactly this
     # reason. A radio's content is its LABEL, so facet types it as one — which
     # is also what makes `text_color`, `text_transform` and
     # `character_spacing` mean something, since all three style a string a
     # radio did not have.
     ("RadioButton", "Content"): ("ADOPT", "set_text / text()",
-                                 "str — MAUI types it `object`; ContentAsString is how every "
+                                 "str — ledger row types it `object`; ContentAsString is how every "
                                  "platform handler reads it"),
 
     # The escape hatch INTENT blesses: an app may drop beneath facet and use
-    # the platform view directly. MAUI's Handler is that seam, so facet names
+    # the platform view directly. The ledger's Handler is that seam, so facet names
     # it. A read, not a write — the backend owns what it points at.
     ("VisualElement", "Handler"): ("ADOPT", "native()", "*u8 (read-only) — deliberately platform-specific; the one row that names a backend"),
 
@@ -471,7 +471,7 @@ OVERLAY = {
     # TableView.Root is the same idea one level down: the content subtree.
     ("TableView", "Root"): ("ADOPT", "set_content / content()", "Node"),
 
-    # MAUI splits a bound Header/Footer from the realized *Element it produces.
+    # the ledger splits a bound Header/Footer from the realized *Element it produces.
     # That split IS the binding model; facet writes a Node and reads it back
     # through one verb.
     ("ListView", "HeaderElement"): ("DROP", "", MODEL + " — the realized half of a bound Header; facet has one header verb"),
@@ -480,12 +480,12 @@ OVERLAY = {
     # Safe-area insets change how a child is laid out — flex_layout's business.
     ("Border", "SafeAreaEdges"): ("DROP", "", LAYOUT),
 
-    # A mutable collection MAUI hands back through a getter; see BAND.
+    # A mutable collection the ledger hands back through a getter; see BAND.
     ("Picker", "Items"): ("ADOPT", "set_items / items()",
                           "TextList — the strings a popup shows"),
     ("MenuFlyoutItem", "KeyboardAccelerators"): (
         "ADOPT", "set_shortcut / shortcut()",
-        "Shortcut — MAUI models a list; a menu item shows one key equivalent, "
+        "Shortcut — ledger row models a list; a menu item shows one key equivalent, "
         "and every platform that has menus agrees"),
 
     # ---- found by the iris audit (reports/facet-iris-gap-2026-08-01.md).
@@ -497,24 +497,24 @@ OVERLAY = {
     ("CarouselView", "CurrentItem"): ("DROP", "", MODEL + " — the current item "
                                       "is a position; set_position carries it"),
     # The realized views a virtualizing panel happens to be holding.
-    ("CarouselView", "VisibleViews"): ("DROP", "", ENGINE + " — MAUI's realized-"
+    ("CarouselView", "VisibleViews"): ("DROP", "", ENGINE + " — the ledger's realized-"
                                        "view bookkeeping; facet reads children()"),
     # Overriding the area a view is laid out in is layout, whoever asks for it.
     ("ScrollView", "LayoutAreaOverride"): ("DROP", "", LAYOUT),
-    # MAUI carries the dash pattern twice: DoubleCollection for the app,
+    # the ledger carries the dash pattern twice: DoubleCollection for the app,
     # float[] for the handler. facet writes one and the backend reads it.
     ("Border", "StrokeDashPattern"): ("DROP", "", ENGINE + " — the handler-facing "
                                       "mirror of StrokeDashArray"),
 
-    # One corner verb, one type. MAUI types Button/RadioButton corners as int
+    # One corner verb, one type. The ledger types Button/RadioButton corners as int
     # and BoxView's as a 4-corner struct; facet carries Corners everywhere.
     ("Button", "CornerRadius"): ("ADOPT", "set_corner_radius / corner_radius()", "Corners"),
     ("RadioButton", "CornerRadius"): ("ADOPT", "set_corner_radius / corner_radius()", "Corners"),
     ("ImageButton", "CornerRadius"): ("ADOPT", "set_corner_radius / corner_radius()", "Corners"),
 
-    # Two different thresholds. MAUI names both `Threshold`: the recognizer's
+    # Two different thresholds. The ledger names both `Threshold`: the recognizer's
     # is the distance that counts as a swipe, the view's is how far you drag
-    # to reveal the actions. Distances are f64 in facet, not MAUI's uint.
+    # to reveal the actions. Distances are f64 in facet, not the ledger's uint.
     ("SwipeGestureRecognizer", "Threshold"): ("ADOPT", "set_swipe_threshold / swipe_threshold()", "f64"),
     ("SwipeView", "Threshold"): ("ADOPT", "set_reveal_threshold / reveal_threshold()", "f64"),
 
@@ -621,13 +621,41 @@ def default_row(ty, member, band, valuety):
     return None
 
 
+# The upstream namespace is stripped where rows ENTER, so no map below has to
+# spell it and nothing downstream can echo it into generated source. The bare
+# type name is what the contract traces to; the assembly it came from is not
+# part of the vocabulary and naming it invites a reader — a model especially —
+# to import that framework's habits along with its words.
+def _bare(t):
+    """The type's own name, without whatever namespace declared it.
+
+    Stripped where rows ENTER, so no map below has to spell an upstream
+    assembly and nothing downstream can echo one into generated source. The
+    bare name is what the contract traces to; the framework it came from is not
+    part of the vocabulary, and naming it invites a reader — a model especially
+    — to import that framework's habits along with its words.
+    """
+    if not isinstance(t, str):
+        return t
+    # Every dotted qualifier, including the ones inside generic arguments —
+    # `IReadOnlyList<Foo.Bar!>` has two.
+    return re.sub(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*\.", "", t)
+
+
+# Both sides of the lookup use the bare name: the maps above were written with
+# whatever namespace the manifest declared, and rows now arrive stripped.
+TYMAP = {_bare(k): v for k, v in TYMAP.items()}
+ENUMS = {_bare(k): v for k, v in ENUMS.items()}
+DROP_TYPES = {_bare(k): v for k, v in DROP_TYPES.items()}
+
+
 def rows():
     spec = json.load(open(SPEC))
     out, undecided = [], []
     for ty, bands in spec.items():
         for declared in ("writes", "reads", "events", "methods"):
             for member, vt in bands.get(declared, {}).items():
-                valuety = vt if isinstance(vt, str) else ""
+                valuety = _bare(vt) if isinstance(vt, str) else ""
                 band = BAND.get((ty, member), declared)
                 r = OVERLAY.get((ty, member)) or default_row(ty, member, band, valuety)
                 if r is None:
@@ -636,14 +664,14 @@ def rows():
                 if ty == "Window" and r[0] == "ADOPT":
                     r = (r[0], r[1], f"{r[2]} — on {window_owner(member, band)}")
                 out.append((ty, member, band, valuety) + r)
-                # stages/3 "found late" #1: MAUI's FontAttributes folds weight
+                # stages/3 "found late" #1: the ledger's FontAttributes folds weight
                 # and slant into one enum, so "semibold italic" is unsayable.
                 # facet splits the axes: the row above became a WEIGHT scale,
                 # and every type carrying it gains a separate is_italic row.
                 if member == "FontAttributes" and r[0] == "ADOPT":
                     out.append((ty, "FontAttributes (italic axis)", band, "bool",
                                 "ADOPT", "is_italic",
-                                "bool — facet-origin: the slant axis MAUI folded into "
+                                "bool — facet-origin: the slant axis the ledger folded into "
                                 "FontAttributes, split out so weight and slant compose"))
     return out, undecided
 
@@ -670,10 +698,10 @@ def main():
         reasons[base] = reasons.get(base, 0) + 1
 
     out = [
-        "# MAUI -> facet MAP — bootstrap Stage 1\n\n",
-        "GENERATED by tools/maui_map.py; the curation lives THERE (overlay dict,\n",
+        "# the ledger -> facet MAP — bootstrap Stage 1\n\n",
+        "GENERATED by tools/ledger_map.py; the curation lives THERE (overlay dict,\n",
         "drop rules, type map, enum map). facet is an empty package, so every\n",
-        "row is ADOPT (facet declares it) or DROP (MAUI's model, not facet's).\n",
+        "row is ADOPT (facet declares it) or DROP (the ledger's model, not facet's).\n",
         "There is no FUTURE and no UNSUPPORTED: what a backend cannot do is\n",
         "facet_appkit's sentence to pass, against a contract facet has already\n",
         "written.\n\n",
@@ -685,11 +713,11 @@ def main():
         out.append(f"- **{n}** — {why}\n")
 
     out.append("\n## facet's own words\n\n")
-    out.append("No MAUI provenance. INTENT: \"it grows by what its applications\n"
+    out.append("No the ledger provenance. INTENT: \"it grows by what its applications\n"
                "need, and adds words of its own.\" Measured against iris in\n"
                "`reports/facet-iris-gap-2026-08-01.md` and declared here so the\n"
                "ledger names every word facet has, not only the borrowed ones.\n\n")
-    out.append("| owner | word | shape | why MAUI has none | disposition |\n")
+    out.append("| owner | word | shape | why the ledger has none | disposition |\n")
     out.append("|---|---|---|---|---|\n")
     for owner, word, shape, why, when in FACET_ORIGIN:
         out.append(f"| {owner} | `{word}` | {shape} | {why} | {when} |\n")
@@ -698,12 +726,12 @@ def main():
     for ty, member, band, valuety, status, fname, note in rs:
         if ty != cur:
             out.append(f"\n## {ty}\n\n")
-            out.append("| MAUI member | band | status | facet | note |\n")
+            out.append("| the ledger member | band | status | facet | note |\n")
             out.append("|---|---|---|---|---|\n")
             cur = ty
         out.append(f"| {member} | {band} | **{status}** | {fname or '—'} | {note} |\n")
 
-    path = os.path.join(ROOT, "plans", "facet", "maui-map-draft.md")
+    path = os.path.join(ROOT, "plans", "facet", "row_type-map-draft.md")
     with open(path, "w") as f:
         f.writelines(out)
     print(f"{len(rs)} rows — " + ", ".join(f"{k} {v}" for k, v in sorted(counts.items())))

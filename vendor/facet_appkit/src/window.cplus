@@ -318,7 +318,7 @@ fn open_window(root: *core::Node, take chrome: Chrome,
     // and then fills in.
     install_toolbar(win, root);
     // The menu bar, read from the tree the same way — `menu` + `menu_item` are
-    // MAUI's MenuBarItem and had a builder with no installer.
+    // The ledger's MenuBarItem and had a builder with no installer.
     install_menu_bar(root);
     // The titlebar slots, read from the tree the same way. After the toolbar,
     // because an accessory sits below the toolbar when both are present.
@@ -850,7 +850,7 @@ fn collect_toolbar_nodes(n: *core::Node, out: *vec::Vec[*core::Node]) {
     return;
 }
 
-// Placement group first, then MAUI's Priority within it, then the order they
+// Placement group first, then the ledger's Priority within it, then the order they
 // were described in. Insertion sort, and it is STABLE for that last clause —
 // a bar with no placement and no priority set comes out in tree order, which
 // is the only order such an application can have expressed.
@@ -911,7 +911,7 @@ fn build_toolbar_items(found: vec::Vec[*core::Node], ids: *u8, map: *u8) {
 }
 
 // ---- the menu bar, from the TREE ---------------------------------------------
-// `menu` + `menu_item` are MAUI's MenuBarItem. `controls::build_menu` has
+// `menu` + `menu_item` are the ledger's MenuBarItem. `controls::build_menu` has
 // turned one into an NSMenu since the tier landed, and nothing ever installed
 // it — the same shape of gap `install_app_menu` was written to close for the
 // value-carried AppMenu, in the other of the two places facet describes a menu.

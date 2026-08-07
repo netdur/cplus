@@ -1,6 +1,6 @@
 // facet application — who owns what. HAND-WRITTEN.
 //
-// The names are MAUI's, copied deliberately (Application.Current, Windows,
+// The names are the ledger's, copied deliberately (Application.Current, Windows,
 // OpenWindow/CloseWindow — ledger rows Application 13 + Window 30): this is
 // a RECORD of ownership, not a reactive store. Nothing here re-renders;
 // state lives in component fields and the tree is edited in place.

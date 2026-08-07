@@ -174,7 +174,7 @@ recorded in `MANIFEST.md` with its reasoning.
 | `corner_radius` | Core Animation has one radius per layer; the largest of the four wins |
 | `tabs` | a facet-drawn strip in the node's padding, not NSTabView |
 | `date_picker` `format:` | the components the string names; order and separators stay locale |
-| `table` | MAUI's TableView is a sectioned list, not a spreadsheet; four verbs, no columns |
+| `table` | the ledger's TableView is a sectioned list, not a spreadsheet; four verbs, no columns |
 | `keyboard` | the field editor's flags where they map; a soft-keyboard layout has no home |
 | `font_scales` | the reader's preferred size as a multiplier on the named size |
 

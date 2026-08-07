@@ -1,12 +1,12 @@
 // gestures — raw input on any node. HAND-WRITTEN.
 //
-// The 21 gesture rows Stage 1 ADOPTed had no home: MAUI's recognizer types
+// The 21 gesture rows Stage 1 ADOPTed had no home: the ledger's recognizer types
 // (TapGestureRecognizer, PointerGestureRecognizer, …) are neither controls nor
 // shared bases, so the generator never reached them. This is where they land.
 //
 // ---- why a modifier and not a control ---------------------------------------
 //
-// MAUI attaches behaviour by pushing recognizer objects into a collection;
+// The ledger attaches behaviour by pushing recognizer objects into a collection;
 // Stage 1 dropped `GestureRecognizers` as MODEL because facet does not attach
 // behaviour that way. Flutter wraps in a `GestureDetector`. Both were
 // considered:
@@ -138,7 +138,7 @@ struct Gestures {
     opaque on_drop_completed_ctx: *u8,
     opaque on_key_ctx: *u8,
 
-    // -- the parameters MAUI carries on the recognizers themselves
+    // -- the parameters the ledger carries on the recognizers themselves
     can_drag: bool,                  // DragGestureRecognizer.CanDrag
     allow_drop: bool,                // DropGestureRecognizer.AllowDrop
     touch_points: i64,               // PanGestureRecognizer.TouchPoints

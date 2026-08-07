@@ -439,7 +439,7 @@ fn apply_image(v: *u8, n: *core::Node, dirty: u64) {
     return;
 }
 
-// facet's ImageFit is MAUI's Aspect. AppKit's scaling enum is the nearest
+// facet's ImageFit is the ledger's Aspect. AppKit's scaling enum is the nearest
 // thing; `Center` is the one that means "do not scale at all".
 fn ns_image_scaling(f: vocab::ImageFit) -> ak::ImageScaling {
     return match f {
@@ -492,7 +492,7 @@ fn apply_scroll(v: *u8, n: *core::Node, dirty: u64) {
     //
     // It is read from the SHARED BAND now, not from a prop of scroll's own.
     // `scroll` was the only kind that could carry one, which is what left
-    // MAUI's three Page rows with no answer; the verb moved up, and this is
+    // The ledger's three Page rows with no answer; the verb moved up, and this is
     // the one place where AppKit does the insetting itself rather than facet's
     // layout pass doing it (scheduler::safe_insets).
     if (dirty & props::C_SAFE_AREA) != (0 as u64) || dirty == paint::all_bits() {
@@ -908,7 +908,7 @@ fn apply_radio(v: *u8, n: *core::Node, dirty: u64) {
     if p == (0 as *props::RadioProps) { return; }
     let b: ak::Button = ak::Button::from_raw(v);
     if (dirty & radio::P_ON) != (0 as u64) { b.set_state(state_of({ (*p).on })); }
-    // `RadioButton.Content` — MAUI types it `object` and every platform
+    // `RadioButton.Content` — ledger row types it `object` and every platform
     // handler renders it through ContentAsString, so facet types it as the
     // LABEL it is. An NSButton of type Radio draws its title beside the dot,
     // which is the composition: one control, two things drawn.
@@ -1069,7 +1069,7 @@ fn apply_slider(v: *u8, n: *core::Node, dirty: u64) {
         text_input::install_slider(v, n);
     }
     // The FILLED part of the track has had a setter since 10.12 —
-    // `trackFillColor` — and it is exactly MAUI's MinimumTrackColor. The other
+    // `trackFillColor` — and it is exactly the ledger's MinimumTrackColor. The other
     // two stay in the ledger: the empty track and the knob are drawn by
     // NSSliderCell with no colour slot of their own.
     // "NSSlider's knob is cell-drawn; there is no image slot" stops one step
@@ -1224,7 +1224,7 @@ fn apply_stepper(v: *u8, n: *core::Node, dirty: u64) {
 
 // ---- text_button -------------------------------------------------------------
 // A button that is only its text: no bezel, no background, no border. The
-// posture MAUI expresses by clearing three properties and facet could not
+// posture the ledger expresses by clearing three properties and facet could not
 // express at all, because clearing `background_color` clears a CALayer facet
 // adds while the bezel is drawn by NSButton's cell underneath it.
 //
@@ -1722,7 +1722,7 @@ fn apply_search_field(v: *u8, n: *core::Node, dirty: u64) {
 }
 
 // ---- popup -------------------------------------------------------------------
-// MAUI's Picker: a closed control that opens a list. NSPopUpButton is exactly
+// The ledger's Picker: a closed control that opens a list. NSPopUpButton is exactly
 // that, and it owns its own menu — so the items are REBUILT whenever the list
 // changes rather than diffed, because a popup's item list is short and a diff
 // would be more code than the rebuild it replaces.
@@ -1845,7 +1845,7 @@ fn style_popup_items(b: ak::PopUpButton, p: *props::PopupProps) {
 }
 
 // ---- bordered ----------------------------------------------------------------
-// MAUI's Border: a stroke around its content. A layer's border is the cheap
+// The ledger's Border: a stroke around its content. A layer's border is the cheap
 // way and it composes with the corner radius the shared band already applies.
 // The dash/cap/join/miter family is CAShapeLayer territory and is recorded in
 // MANIFEST.md rather than half-done.
@@ -2173,7 +2173,7 @@ fn is_vertical_divider(a: split::SplitAxis) -> bool {
 }
 
 // ---- page_dots ---------------------------------------------------------------
-// MAUI's IndicatorView: the row of dots under a pager. AppKit ships nothing of
+// The ledger's IndicatorView: the row of dots under a pager. AppKit ships nothing of
 // the kind — NSPageController has no indicator — so this is drawn, and it is
 // drawn as SUBLAYERS rather than by overriding drawRect:.
 //
@@ -2815,7 +2815,7 @@ fn style_tabs(v: *u8, p: *props::TabsProps, at: i64) {
     return;
 }
 
-// `BarBackground` is a Brush and `BarBackgroundColor` a Color — MAUI carries
+// `BarBackground` is a Brush and `BarBackgroundColor` a Color — ledger row carries
 // both and the Brush is the newer of the two, so it wins where it is set.
 fn bar_color(p: *props::TabsProps) -> vocab::Color {
     let b: vocab::Brush = { (*p).bar_background };
@@ -2933,7 +2933,7 @@ fn add_menu_item(menu: ak::Menu, c: *core::Node) {
     if p == (0 as *props::ContextMenuItemProps) { return; }
     let mi: *props::MenuItemProps = { #addr_of((*p).menu_item) };
     let title: str = { (*mi).text.view() };
-    // An item with no title is a separator: MAUI has no separator type, and a
+    // An item with no title is a separator: the ledger has no separator type, and a
     // titleless item is what every menu-building API in the world means by one.
     if title == "" {
         menu.add_item(ak::MenuItem::separator_item());
@@ -3083,7 +3083,7 @@ fn decided_absent(kind: u32) -> bool {
 fn swipe_kind(kind: u32) -> bool { return kind == props::K_SWIPE_ITEM; }
 
 // ---- swipeable ---------------------------------------------------------------
-// MAUI's SwipeView: content that reveals actions when swiped. The ledger said
+// The ledger's SwipeView: content that reveals actions when swiped. The ledger said
 // "swipe-to-reveal is a touch idiom; use a context menu", and the second half
 // of that sentence was the answer sitting unwritten next to the first.
 //
@@ -3200,7 +3200,7 @@ fn attach_swipe_menu(view: *u8, n: *core::Node) {
     return;
 }
 
-// A swipe item IS a menu item. `on_invoked` is MAUI's second name for the same
+// A swipe item IS a menu item. `on_invoked` is the ledger's second name for the same
 // moment — SwipeItem.Invoked fires alongside Clicked — so both run, in that
 // order, and an application that wired either gets it.
 fn add_swipe_item(menu: ak::Menu, c: *core::Node) {
@@ -3239,7 +3239,7 @@ fn swipe_item_clicked(sender: *u8, ctx: *u8) {
 }
 
 // ---- refreshable -------------------------------------------------------------
-// MAUI's RefreshView. The ledger said "pull-to-refresh is a touch idiom", which
+// The ledger's RefreshView. The ledger said "pull-to-refresh is a touch idiom", which
 // is true about the GESTURE and was read as a claim about the feature. facet's
 // own rule already says what to do with a gesture-only affordance: an agent has
 // no hands, so add a click path. See compose::apply_refresh — a refresh button
@@ -3367,8 +3367,8 @@ fn create_sequence_host(horizontal: bool) -> *u8 {
 // a reader has to rule out before trusting the first.
 
 // ---- collection --------------------------------------------------------------
-// MAUI's CollectionView. The same sequence, and on this backend the same
-// treatment — the layout differences MAUI expresses through ItemsLayout are
+// The ledger's CollectionView. The same sequence, and on this backend the same
+// treatment — the layout differences the ledger expresses through ItemsLayout are
 // flex's job here, on the rows themselves.
 
 // NOTE the absence of a materialise call in `create_`. `views::create` calls
@@ -3791,7 +3791,7 @@ fn scroll_child(v: *u8, n: *core::Node, index: i64, animated: bool) {
 }
 
 // A jump, or a slide. `IsScrollAnimated` IS a per-scroll switch on AppKit —
-// the ledger's claim that it was not read the animator proxy as a property of
+// The ledger's claim that it was not read the animator proxy as a property of
 // the scroll view, when it is a property of the CALL: the clip view's
 // `boundsOrigin` animates like any other, and `reflectScrolledClipView:` is
 // what tells the scroll view its scrollers moved.
@@ -3818,13 +3818,13 @@ fn scroll_document_to(v: *u8, p: rt::Point, animated: bool) {
 }
 
 // ---- table -------------------------------------------------------------------
-// MAUI's TableView is a STATIC form, not a data-bound sequence: its rows are
+// The ledger's TableView is a STATIC form, not a data-bound sequence: its rows are
 // written out, so they are already this node's children and nothing needs
 // materialising. It is a scroll of what it was given.
 
 fn create_table(n: *core::Node) -> *u8 { return create_sequence_host(false); }
 
-// MAUI's TableView is a STATIC form: its rows are its CHILDREN, so the three
+// The ledger's TableView is a STATIC form: its rows are its CHILDREN, so the three
 // verbs it declares are all about how those children are sized and spaced —
 // which is flex's vocabulary, reached through the node the same way a tree's
 // indentation is. The ledger read "a table's rows are its CHILDREN; flex
@@ -4277,7 +4277,7 @@ fn build_toolbar_item(c: *core::Node) -> *u8 {
     //               collapses into the overflow menu. Secondary is the one
     //               that gives way first, which is what "secondary" means on a
     //               bar that has one row.
-    //   priority    the order WITHIN the group. MAUI's rule: lower first.
+    //   priority    the order WITHIN the group. The ledger's rule: lower first.
     //
     // The ordering half is `window::collect_toolbar_items`, which is the only
     // place that can see all the items at once.
@@ -4305,7 +4305,7 @@ fn placement_rank(pl: vocab::ToolbarPlacement) -> i64 {
     };
 }
 
-// The sort key for one `toolbar_item` node: its placement group, then MAUI's
+// The sort key for one `toolbar_item` node: its placement group, then the ledger's
 // own Priority within it. Returns a rank a caller can compare directly.
 fn toolbar_order_of(c: *core::Node) -> i64 {
     let p: *props::ToolbarItemProps = props_of(c, props::K_TOOLBAR_ITEM) as *props::ToolbarItemProps;

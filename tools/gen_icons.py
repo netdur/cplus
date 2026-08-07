@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """gen_icons.py — the icon name -> codepoint table, generated from the font.
 
-NOT part of the MAUI bootstrap. This reads the font facet ships and emits one
+NOT part of the ledger bootstrap. This reads the font facet ships and emits one
 constant per icon, and it is re-run only when the font is updated.
 
 Why it is generated at all: a codepoint that is hand-typed can be wrong, render
@@ -44,7 +44,7 @@ def keywords():
     """Every C+ keyword, read out of the compiler's own lexer.
 
     Not a hand-kept list. The first version of this script borrowed
-    gen_contract's RESERVED table, which was written for MAUI member names and
+    gen_contract's RESERVED table, which was written for the ledger member names and
     so had never needed `move` — and `move` is an icon. The compiler is the only
     authority on what it will not let you spell.
     """

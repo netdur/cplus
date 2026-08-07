@@ -374,7 +374,7 @@ fn advance_on_return(n: *core::Node, sender: *u8) {
 
 // ---- the keyboard ------------------------------------------------------------
 // `Keyboard` picks the on-screen layout, and macOS has no on-screen keyboard —
-// which is true and is not all MAUI's Keyboard carries. A Keyboard is a layout
+// which is true and is not all the ledger's Keyboard carries. A Keyboard is a layout
 // AND a set of FLAGS: `Keyboard.Chat` spell-checks and suggests, `Keyboard.Plain`
 // does neither, and the four typed ones (Email, Url, Telephone, Numeric) turn
 // correction off because correcting an address is worse than not.
@@ -489,7 +489,7 @@ fn popup_node_of(obj: *u8) -> *core::Node {
 
 // The same delegate serves a SWIPEABLE's menu, because a swipe's edges on this
 // backend are the menu's edges — there is no partial state between closed and
-// open when the thing that opens it is a click. MAUI names each edge twice
+// open when the thing that opens it is a click. The ledger names each edge twice
 // (the gesture's and the programmatic one) and without a gesture they are the
 // same moment, so both fire.
 fn swipe_handlers(n: *core::Node, opened: bool) {

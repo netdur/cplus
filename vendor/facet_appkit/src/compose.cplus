@@ -2,7 +2,7 @@
 //
 // The rule this file exists for: facet's contract is not a list of things
 // AppKit happens to expose. A control does not have to be one native widget.
-// Where MAUI declares a verb and no single AppKit class answers it, the answer
+// Where the ledger declares a verb and no single AppKit class answers it, the answer
 // is built from two — a cell subclass, an overlaid button, a disabled first
 // item — and only a verb the PLATFORM has no concept of stays unimplemented.
 //
@@ -446,7 +446,7 @@ fn clear_pressed(sender: *u8, ctx: *u8) {
     return;
 }
 
-// Shown only while there is something to clear. `WhileEditing` is MAUI's word
+// Shown only while there is something to clear. `WhileEditing` is the ledger's word
 // and macOS has no "while editing" state a field can be asked for outside its
 // window, so the honest reading is "while it has content" — a field with text
 // and no focus still shows one, which is what every macOS search field does.
@@ -693,7 +693,7 @@ extern fn msg_id_size(recv: *u8, sel: *u8, s: rt::Size) -> *u8;
 extern fn msg_void_rect_rect_u64_f64(recv: *u8, sel: *u8, a: rt::Rect, b: rt::Rect, op: u64, f: f64);
 
 // ---- the refresh affordance --------------------------------------------------
-// MAUI's RefreshView and ListView's pull-to-refresh band. The ledger said
+// The ledger's RefreshView and ListView's pull-to-refresh band. The ledger said
 // "pull-to-refresh is a touch idiom", which is true about the GESTURE and was
 // being read as a claim about the feature. macOS has no pull-to-refresh — and
 // facet's own rule already says what to do about that:

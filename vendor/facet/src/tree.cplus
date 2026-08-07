@@ -1,7 +1,7 @@
 // tree — a hierarchical list. HAND-WRITTEN: facet's own word.
 //
-// MAUI has no tree control at all, so there is no row behind this. It is
-// recorded as a facet-origin row in tools/maui_map.py's FACET_ORIGIN.
+// The ledger has no tree control at all, so there is no row behind this. It is
+// recorded as a facet-origin row in tools/ledger_map.py's FACET_ORIGIN.
 //
 // ---- generic, not a file browser ---------------------------------------------
 //

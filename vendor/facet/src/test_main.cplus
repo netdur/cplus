@@ -48,7 +48,7 @@ import "./time_picker" as time_picker;
 import "./toggle" as toggle;
 import "./toolbar_item" as toolbar_item;
 import "./web" as web;
-// facet's own words, hand-written: no MAUI row behind them.
+// facet's own words, hand-written: no ledger row behind them.
 import "./symbol" as symbol;
 import "./text_button" as text_button;
 import "./icons" as icons;
@@ -436,7 +436,7 @@ fn every_control_module_builds() {
 
 // ---- the names -------------------------------------------------------------
 // naming_guideline.md, proved by the call site: these verbs exist under the
-// renamed word and the MAUI-shaped one is not on the type at all.
+// renamed word and the ledger-shaped one is not on the type at all.
 
 #[test]
 fn renamed_verbs_are_the_ones_that_exist() {
@@ -827,7 +827,7 @@ fn set_shown_restores_the_display_it_hid() {
     return;
 }
 
-// A flat button — no bezel, no background, no border. The posture MAUI writes
+// A flat button — no bezel, no background, no border. The posture the ledger writes
 // by clearing three properties and facet could not write at all: clearing
 // `background_color` clears a CALayer facet adds, while the bezel is drawn by
 // NSButton's cell underneath it.
@@ -1294,7 +1294,7 @@ fn an_application_may_bring_its_own_icon_font() {
 }
 
 // facet-origin controls take kind tags from 1000 up, so regenerating the 38
-// MAUI-derived modules can never collide with one facet declared for itself.
+// ledger-derived modules can never collide with one facet declared for itself.
 #[test]
 fn a_symbol_is_not_mistaken_for_a_generated_control() {
     var root: facet::Node = symbol::symbol(icons::home, key: "s");
@@ -1919,7 +1919,7 @@ fn a_label_takes_styled_text_and_reads_it_back() {
 }
 
 // wrap_label and composer are NOT controls: `label` already carries the wrap
-// (MAUI's LineBreakMode), and a composer is text_area + bordered + a
+// (the ledger's LineBreakMode), and a composer is text_area + bordered + a
 // background, which is a component and not a new word.
 #[test]
 fn wrapping_is_a_label_parameter_not_a_second_control() {
@@ -2609,8 +2609,8 @@ fn dashes_is_a_copy_value_with_a_bounded_pattern() {
     return;
 }
 
-// MAUI derives MenuFlyoutItem, SwipeItem and ToolbarItem from MenuItem, and
-// the ledger lists each type's OWN members — so all three arrived carrying no
+// The ledger derives MenuFlyoutItem, SwipeItem and ToolbarItem from MenuItem, and
+// The ledger lists each type's OWN members — so all three arrived carrying no
 // text, no icon and no action. A context menu item with no title and no
 // action is not a menu item; the gap was found by trying to build an NSMenu
 // out of one and having nothing to put in it.
@@ -2619,7 +2619,7 @@ fn dashes_is_a_copy_value_with_a_bounded_pattern() {
 // its props struct once (menu_item addresses those fields directly; the three
 // derived controls reach them through an embedded block).
 #[test]
-fn the_menu_item_band_reaches_every_control_maui_derives_from_it() {
+fn the_menu_item_band_reaches_every_control_the_ledger_derives_from_it() {
     var mi: facet::Node = context_menu_item::context_menu_item("Rename", key: "cmi",
                                                                icon: "pencil", destructive: false);
     match context_menu_item::find("cmi", within: #addr_of(mi)) {

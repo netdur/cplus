@@ -565,7 +565,7 @@ fn opacity(n: *Node) -> f64 {
 }
 
 // A background IMAGE, the third thing that can be behind a node after a Color
-// and a Brush. MAUI carries it on Page; facet carries it on every node,
+// and a Brush. The ledger carries it on Page; facet carries it on every node,
 // because a background belongs to whatever has one.
 //
 // It rides C_BACKGROUND rather than taking a bit of its own: "what is behind
@@ -587,7 +587,7 @@ fn background_image(n: *Node) -> str {
 // Whether this node keeps its content clear of the window's own chrome.
 //
 // `scroll` has carried one of these since Stage 2 and nothing else could,
-// which is what left MAUI's three Page rows — ContainerArea,
+// which is what left the ledger's three Page rows — ContainerArea,
 // IgnoresContainerArea and ContentPage.SafeAreaEdges — with no carrier and no
 // backend able to answer them. One node in a tree is the one that has to
 // answer it, and the shared band is the only place that does not have to
@@ -1275,7 +1275,7 @@ impl flex::Node {
 }
 
 // ---- slots ------------------------------------------------------------------
-// A subtree is a CHILD, not a property. MAUI models a named subtree as a
+// A subtree is a CHILD, not a property. The ledger models a named subtree as a
 // bindable property because binding is how it fills one; facet describes a
 // tree, so a header IS a child — under a reserved `@` key, so the slot can be
 // replaced in place without disturbing its siblings.
