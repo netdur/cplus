@@ -964,6 +964,159 @@ fn set_shrink(n: *Node, v: f64) {
 // calculation, so its size is purely its share of what the parent offers.
 // `spacer` is built on it, and a split needs it for the same reason — a
 // container whose job is to divide space must not be sized by what it holds.
+// ---- what flex could always do and facet never said -------------------------
+//
+// facet's band forwarded 14 of flex_layout's 38 style setters. The other 24 were
+// not decisions — nobody had counted. An application that needed a minimum
+// width, a card with a fixed aspect, an absolutely-placed overlay or a runtime
+// direction change found the tree simply had no word for it, and the layout
+// engine underneath had had one all along.
+//
+// None of these need a backend. flex computes the frames and the frame walk
+// applies them, so a verb here is live the moment it is written — which is also
+// why their absence was so cheap to keep.
+//
+// UNREACHABLE IS TOO STRONG, and the compiler said so: `Node` IS `flex::Node`,
+// so `n.set_min_width(flex::StyleLength::points(12.0f64))` always worked. Eight
+// of these names already exist on flex's Node taking a StyleLength, and a
+// same-named f64 forward in `impl Node` collides with it (no overloading) —
+// which is why those eight are FREE FUNCTIONS here and not cursor methods.
+//
+// So what was missing is facet's SHAPE, not the capability: points as a plain
+// f64, a dirty bit raised so the tree actually relayouts, and a name in the band
+// an author reads. `set_position_type` + `Edge` + `StyleLength` is the same
+// sentence with the grammar showing, and nobody was writing it.
+
+// ABSOLUTE PLACEMENT — the answer to "where does a toast live". A node taken out
+// of flow is positioned against its parent's box by the four edges below, so an
+// overlay is an ordinary node that says where it sits, not a new layer with a
+// registry of its own.
+fn set_absolute(n: *Node, on: bool) {
+    if n == (0 as *Node) { return; }
+    let t: flex::PositionType = if on { flex::PositionType::Absolute }
+                                else { flex::PositionType::Relative };
+    { (*n).set_position_type(t) };
+    touch(n, props::C_LAYOUT);
+    return;
+}
+
+fn is_absolute(n: *Node) -> bool {
+    if n == (0 as *Node) { return false; }
+    return match { (*n).position_type() } {
+        flex::PositionType::Absolute => true,
+        _ => false,
+    };
+}
+
+// The four edges, named rather than passed as an enum, because `set_left(n, 12)`
+// is what an author means and `set_position(n, Edge::Left, points(12))` is the
+// same sentence with the grammar showing.
+fn set_left(n: *Node, v: f64) {
+    if n == (0 as *Node) { return; }
+    { (*n).set_position(flex::Edge::Left, flex::StyleLength::points(v)) };
+    touch(n, props::C_LAYOUT);
+    return;
+}
+
+fn set_top(n: *Node, v: f64) {
+    if n == (0 as *Node) { return; }
+    { (*n).set_position(flex::Edge::Top, flex::StyleLength::points(v)) };
+    touch(n, props::C_LAYOUT);
+    return;
+}
+
+fn set_right(n: *Node, v: f64) {
+    if n == (0 as *Node) { return; }
+    { (*n).set_position(flex::Edge::Right, flex::StyleLength::points(v)) };
+    touch(n, props::C_LAYOUT);
+    return;
+}
+
+fn set_bottom(n: *Node, v: f64) {
+    if n == (0 as *Node) { return; }
+    { (*n).set_position(flex::Edge::Bottom, flex::StyleLength::points(v)) };
+    touch(n, props::C_LAYOUT);
+    return;
+}
+
+// CONSTRAINTS. A growing node with no floor collapses under pressure and one
+// with no ceiling eats the window; both are ordinary things to want and neither
+// could be said.
+fn set_min_width(n: *Node, v: f64) {
+    if n == (0 as *Node) { return; }
+    { (*n).set_min_width(flex::StyleLength::points(v)) };
+    touch(n, props::C_LAYOUT);
+    return;
+}
+
+fn set_min_height(n: *Node, v: f64) {
+    if n == (0 as *Node) { return; }
+    { (*n).set_min_height(flex::StyleLength::points(v)) };
+    touch(n, props::C_LAYOUT);
+    return;
+}
+
+fn set_max_width(n: *Node, v: f64) {
+    if n == (0 as *Node) { return; }
+    { (*n).set_max_width(flex::StyleLength::points(v)) };
+    touch(n, props::C_LAYOUT);
+    return;
+}
+
+fn set_max_height(n: *Node, v: f64) {
+    if n == (0 as *Node) { return; }
+    { (*n).set_max_height(flex::StyleLength::points(v)) };
+    touch(n, props::C_LAYOUT);
+    return;
+}
+
+// One child disagreeing with its siblings' alignment, without a wrapper row
+// built to hold the disagreement.
+fn set_align_self(n: *Node, v: flex::Align) {
+    if n == (0 as *Node) { return; }
+    { (*n).set_align_self(v) };
+    touch(n, props::C_LAYOUT);
+    return;
+}
+
+// How WRAPPED LINES sit against each other — which `set_columns` on a
+// collection made reachable and then had no way to control.
+fn set_align_content(n: *Node, v: flex::Align) {
+    if n == (0 as *Node) { return; }
+    { (*n).set_align_content(v) };
+    touch(n, props::C_LAYOUT);
+    return;
+}
+
+// A card that stays 16:9 whatever width it is given.
+fn set_aspect_ratio(n: *Node, v: f64) {
+    if n == (0 as *Node) { return; }
+    { (*n).set_aspect_ratio(v) };
+    touch(n, props::C_LAYOUT);
+    return;
+}
+
+// `row` and `column` are CONSTRUCTORS, so a container built one way stayed that
+// way for life. A responsive layout that stacks when narrow needs to say it.
+//
+// Named `set_flow` and not `set_direction`, because flex::Node already has a
+// `set_direction` and it means something else entirely — LTR versus RTL. Two
+// verbs one letter apart that change different things is worse than a new word.
+fn set_flow(n: *Node, v: flex::FlexDirection) {
+    if n == (0 as *Node) { return; }
+    { (*n).set_flex_direction(v) };
+    touch(n, props::C_LAYOUT);
+    return;
+}
+
+// Clip or spill. A pane whose content overflows had no way to say which.
+fn set_overflow(n: *Node, v: flex::Overflow) {
+    if n == (0 as *Node) { return; }
+    { (*n).set_overflow(v) };
+    touch(n, props::C_LAYOUT);
+    return;
+}
+
 fn set_basis(n: *Node, v: f64) {
     if n == (0 as *Node) { return; }
     { (*n).set_flex_basis(flex::StyleLength::points(v)) };
@@ -1291,6 +1444,12 @@ impl flex::Node {
     fn set_grow(ref this, v: f64) { set_grow(#addr_of(this), v); return; }
     fn set_shrink(ref this, v: f64) { set_shrink(#addr_of(this), v); return; }
     fn set_basis(ref this, v: f64) { set_basis(#addr_of(this), v); return; }
+    fn set_absolute(ref this, on: bool) { set_absolute(#addr_of(this), on); return; }
+    fn is_absolute(this) -> bool { return is_absolute(#addr_of(this)); }
+    fn set_left(ref this, v: f64) { set_left(#addr_of(this), v); return; }
+    fn set_top(ref this, v: f64) { set_top(#addr_of(this), v); return; }
+    fn set_right(ref this, v: f64) { set_right(#addr_of(this), v); return; }
+    fn set_bottom(ref this, v: f64) { set_bottom(#addr_of(this), v); return; }
     fn set_width_percent(ref this, v: f64) { set_width_percent(#addr_of(this), v); return; }
     fn set_height_percent(ref this, v: f64) { set_height_percent(#addr_of(this), v); return; }
     fn set_justify(ref this, v: flex::Justify) { set_justify(#addr_of(this), v); return; }

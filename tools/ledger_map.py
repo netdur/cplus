@@ -310,6 +310,10 @@ ABSENT = {
         "no 'choose one of N' sheet; NSAlert with N buttons would carry it",
     ("Page", "DisplayPromptAsync"):
         "no 'type a value' dialog; NSAlert with an accessory text field would carry it",
+    # NOT an overlay LAYER. flex has absolute positioning and always did, so an
+    # overlay is an ordinary node that says it is out of flow and where it sits
+    # — `set_absolute` plus the four edges. A registry of overlays would have
+    # been a second placement system beside the one the tree already runs.
     ("Application", "ActivateWindow"):
         "windows can be opened and closed but not brought to the front",
 
@@ -335,13 +339,7 @@ ABSENT = {
     ("ToolTipProperties", "GetText"):
         "no tooltip verb; NSView.toolTip would carry it directly",
 
-    ("Window", "AddOverlay"):
-        "no overlay layer above a window's content — a toast or a coach mark has nowhere to live",
-    ("Window", "RemoveOverlay"):
-        "no overlay layer above a window's content — a toast or a coach mark has nowhere to live",
-    ("Window", "Overlays"):
-        "the read half of the overlay layer facet does not have",
-
+            
     # ---- found in the WRITES and READS bands by the same audit ----
     #
     # A COLLECTION CAN ONLY BE A LIST. This dropped as "layout belongs to
@@ -624,6 +622,13 @@ FACET_ORIGIN = [
 # contract that answers "no" for a verb that exists is worse than one with a
 # gap in it.
 OVERLAY = {
+    ("Window", "AddOverlay"):
+        ("DROP", "", "facet says it as set_absolute + set_left/top/right/bottom — an overlay is a node out of flow, not a layer"),
+    ("Window", "RemoveOverlay"):
+        ("DROP", "", "facet says it as set_absolute + set_left/top/right/bottom — an overlay is a node out of flow, not a layer"),
+    ("Window", "Overlays"):
+        ("DROP", "", "facet says it as set_absolute + set_left/top/right/bottom — an overlay is a node out of flow, not a layer"),
+
     # A GRID, said facet's way. The ledger models this as an IItemsLayout object
     # (LinearItemsLayout or GridItemsLayout with a Span), which is a class where
     # facet needs a number: a collection's items are ordinary facet children

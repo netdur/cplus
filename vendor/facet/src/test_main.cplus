@@ -3149,3 +3149,51 @@ fn no_shared_bit_reaches_into_the_per_control_space() {
     assert (shared & per_control_space) == (0 as u64);
     return;
 }
+
+#[test]
+fn the_band_reaches_flexs_constraints_and_absolute_placement() {
+    // facet's band forwarded 14 of flex's 38 style setters. The rest were not
+    // decisions — nobody had counted — so a minimum width, a fixed aspect or an
+    // absolutely-placed overlay had no word in the tree facet hands an author.
+    //
+    // Asserted through LAYOUT, not by reading the style back: a verb that sets a
+    // field nothing honours is the failure being tested for.
+    var root: facet::Node = facet::column(facet::Builder::new(), key: "root");
+    let r: *facet::Node = #addr_of(root);
+
+    // A MINIMUM that beats the space offered. The child would take 0 on its own.
+    var child: facet::Node = facet::column(facet::Builder::new(), key: "kid");
+    facet::set_min_height(#addr_of(child), 80.0f64);
+    let _a: status::Status = root.add_child(child);
+
+    // An OVERLAY: out of flow, placed against the parent's box.
+    var toast: facet::Node = facet::column(facet::Builder::new(), key: "toast");
+    facet::set_absolute(#addr_of(toast), true);
+    facet::set_left(#addr_of(toast), 20.0f64);
+    facet::set_top(#addr_of(toast), 10.0f64);
+    facet::set_width(#addr_of(toast), 100.0f64);
+    facet::set_height(#addr_of(toast), 30.0f64);
+    let _b: status::Status = root.add_child(toast);
+
+    root.calculate_layout(400.0f64, 400.0f64, flex::Direction::LTR);
+
+    match facet::child_of(r, 0 as usize) {
+        option::Option[*facet::Node]::Some(c) => {
+            assert approx(facet::height_of(c), 80.0f64);
+        }
+        option::Option[*facet::Node]::None => { assert false; }
+    }
+    match facet::child_of(r, 1 as usize) {
+        option::Option[*facet::Node]::Some(t) => {
+            assert facet::is_absolute(t);
+            let f: flex::Frame = { (*t).frame() };
+            assert approx({ f.left }, 20.0f64);
+            assert approx({ f.top }, 10.0f64);
+            assert approx({ f.width }, 100.0f64);
+            // ...and being out of flow, it did not push the in-flow child down.
+            assert approx(facet::height_of(r), 400.0f64);
+        }
+        option::Option[*facet::Node]::None => { assert false; }
+    }
+    return;
+}
