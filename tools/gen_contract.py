@@ -3328,9 +3328,9 @@ def check(rows_by_control, by_type):
         # internals" by default, which is how the scroll offset stayed missing
         # through two gap reports. A count that is printed is a count someone
         # can argue with.
-        absent = ledger_map.METHOD_ABSENT
+        absent = ledger_map.ABSENT
         if absent:
-            print(f"methods NOT BUILT: {len(absent)} rows are application "
+            print(f"NOT BUILT: {len(absent)} rows are application "
                   f"vocabulary facet has no answer for")
             for (ty, member), why in sorted(absent.items()):
                 print(f"    {ty}.{member} — {why}")

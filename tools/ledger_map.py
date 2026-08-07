@@ -298,7 +298,12 @@ METHOD_DROPS = {
 # Kept OUT of METHOD_DROPS deliberately: a drop is a decision, and these are
 # debts. `tools/gen_contract.py` reports them, so the count is visible rather
 # than dissolved into 237 rows that all claimed to be engine internals.
-METHOD_ABSENT = {
+#
+# EVERY BAND, not only methods. The same audit run over the writes and reads
+# bands found four more wearing "engine internals" or "layout belongs to
+# flex_layout" — and one of them, a collection's item layout, is what a board
+# of cards needs.
+ABSENT = {
     ("Page", "DisplayActionSheet"):
         "no 'choose one of N' sheet; NSAlert with N buttons would carry it",
     ("Page", "DisplayActionSheetAsync"):
@@ -334,6 +339,27 @@ METHOD_ABSENT = {
         "no overlay layer above a window's content — a toast or a coach mark has nowhere to live",
     ("Window", "RemoveOverlay"):
         "no overlay layer above a window's content — a toast or a coach mark has nowhere to live",
+    ("Window", "Overlays"):
+        "the read half of the overlay layer facet does not have",
+
+    # ---- found in the WRITES and READS bands by the same audit ----
+    #
+    # A COLLECTION CAN ONLY BE A LIST. This dropped as "layout belongs to
+    # flex_layout", and it does not: a collection arranges its OWN items, the
+    # way NSCollectionViewFlowLayout does, and nothing in the flex tree reaches
+    # inside it. Without this a board of cards, a gallery, or any grid of
+    # anything has to be hand-built out of rows.
+    ("CollectionView", "ItemsLayout"):
+        "a collection is a vertical list only; no columns, no grid",
+    ("CarouselView", "ItemsLayout"):
+        "a carousel is a horizontal run only; no grid",
+    ("IndicatorView", "IndicatorLayout"):
+        "the dots row has no layout of its own",
+
+    ("Border", "StrokeDashPattern"):
+        "borders are solid; a dashed or dotted stroke needs a CAShapeLayer",
+    ("WebView", "Cookies"):
+        "no cookie access on a web view, so a session cannot be seeded or read",
 }
 
 METHOD_VOCABULARY = {
@@ -596,7 +622,20 @@ FACET_ORIGIN = [
 
 # ---- per-row overrides, where a mechanical rule reads the row wrong ---------
 # (Type, Member) -> (status, facet_name, note)
+# Rows whose DEFAULT reason was false: facet implements them, and the mechanical
+# rule said otherwise. Same defect as the five method rows that claimed to be
+# engine internals while `nav::quit` and `runtime::alert` sat in the tree — a
+# contract that answers "no" for a verb that exists is worse than one with a
+# gap in it.
 OVERLAY = {
+    ("VisualElement", "SafeAreaEdges"):
+        ("DROP", "", "facet says it as set_safe_area on the shared band — NOT flex's, "
+                     "the window's own insets"),
+    ("View", "GestureRecognizers"):
+        ("DROP", "", "facet says it as the .gesture() band — not a bound collection"),
+    ("VisualElement", "GestureRecognizers"):
+        ("DROP", "", "facet says it as the .gesture() band — not a bound collection"),
+
     # `object`-typed rows that ARE vocabulary: a subtree, or a selection index.
     ("Picker", "SelectedItem"): ("DROP", "", MODEL + " — the selection is an index; set_selected_index carries it"),
     ("ListView", "SelectedItem"): ("DROP", "", MODEL + " — the selection is an index"),
@@ -752,6 +791,12 @@ def default_row(ty, member, band, valuety):
     for pat, why in DROP_PATTERNS:
         if pat.search(member):
             return ("DROP", "", why)
+    # A recorded ABSENCE outranks every rule below it: the row is dropped, and
+    # the reason says plainly that nothing answers it. Checked for all four
+    # bands, because the mislabels were not confined to methods.
+    absent_any = ABSENT.get((ty, member))
+    if absent_any:
+        return ("DROP", "", "NOT BUILT — " + absent_any)
     if band == "methods":
         name = METHOD_VOCABULARY.get((ty, member))
         if name:
@@ -761,9 +806,6 @@ def default_row(ty, member, band, valuety):
         judged = METHOD_DROPS.get((ty, member))
         if judged:
             return ("DROP", "", judged)
-        absent = METHOD_ABSENT.get((ty, member))
-        if absent:
-            return ("DROP", "", "NOT BUILT — " + absent)
         if ENGINE_METHODS.match(member):
             return ("DROP", "", ENGINE)
         # No rule matched and nobody judged it. Fail, exactly as an unmapped
