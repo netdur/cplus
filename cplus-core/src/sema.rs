@@ -7638,7 +7638,31 @@ impl SemaCx<'_> {
                 } else {
                     self.check_expr(tail, Some(expected.clone()))
                 };
-                if !is_naked {
+                // A unit function ending in `if`, `match` or a bare block is
+                // ending in CONTROL FLOW, not in a value. `if`/`match` are
+                // expressions in the grammar, so the parser hands them back as
+                // a tail and the rule fired on shapes that return nothing:
+                //
+                //     fn on_moved(ref this) {
+                //         if this.dirty { this.save(); }
+                //     }
+                //
+                // demanded a trailing `;` or a `return;` that says nothing. The
+                // rule's purpose is "no implicit tail VALUES", and a unit tail
+                // in a unit function is not one — there is no value to lose and
+                // nothing a reader could mistake for a result.
+                //
+                // Deliberately narrow. Only the block-like forms, and only when
+                // BOTH the function and the tail are unit. A trailing call is
+                // still an error, because `foo()` and `foo();` would otherwise
+                // be two spellings of one statement, and a dropped `;` should
+                // not be one of them.
+                let block_like = matches!(
+                    tail.kind,
+                    ExprKind::If { .. } | ExprKind::Match { .. } | ExprKind::Block(_)
+                );
+                let unit_control_flow = expected == Ty::Unit && tail_ty == Ty::Unit && block_like;
+                if !is_naked && !unit_control_flow {
                     let msg = if expected == Ty::Unit && tail_ty == Ty::Unit {
                         "function body cannot end with an implicit tail expression; \
                          add `;` after the closing `}` (or `return;` if you prefer the explicit form)"
@@ -23907,15 +23931,43 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
         d.message
     }
 
+    // A unit function ending in CONTROL FLOW is not ending in a value. `if` and
+    // `match` are expressions in the grammar, so the parser hands them back as a
+    // tail and the rule used to fire on the ordinary shape of an event handler.
     #[test]
-    fn e0333_unit_tail_suggests_semicolon_g022() {
-        let msg = first_e0333_message(
+    fn unit_control_flow_tail_is_not_e0333() {
+        for src in [
             "fn f() { { var x: i32 = 1; x = x +% 1; } }\n\
+             fn main() -> i32 { f(); return 0; }",
+            "fn f(c: bool) { if c { } }\n\
+             fn main() -> i32 { f(true); return 0; }",
+            "fn f(c: bool) { if c { } else { } }\n\
+             fn main() -> i32 { f(true); return 0; }",
+            "enum E { A, B }\n\
+             fn f(e: E) { match e { E::A => { } E::B => { } } }\n\
+             fn main() -> i32 { f(E::A); return 0; }",
+        ] {
+            let codes = errors(src);
+            assert!(
+                !codes.contains(&"E0333"),
+                "a unit control-flow tail carries no value: {src}"
+            );
+        }
+    }
+
+    // ...but a dropped `;` is not a second spelling of a statement. Only the
+    // block-like forms are exempt, so this still reports, and still suggests the
+    // semicolon rather than a `return;` that would say nothing.
+    #[test]
+    fn unit_call_tail_still_e0333_suggesting_semicolon() {
+        let msg = first_e0333_message(
+            "fn g() { }\n\
+             fn f() { g() }\n\
              fn main() -> i32 { f(); return 0; }",
         );
         assert!(
             msg.contains("add `;`"),
-            "expected `;`-fix in unit-tail message, got: {msg}"
+            "expected `;`-fix for a bare call tail, got: {msg}"
         );
     }
 
