@@ -695,7 +695,33 @@ fn input_class_for(base: *u8) -> *u8 {
     return made;
 }
 
+// `performClick:` — THE AGENT'S DOOR, and the only one it has.
+//
+// The agent surface clicks by sending this selector to the backing view. That
+// lands on NSControls and, through `select_row_of`, on table rows; a plain
+// NSView carrying a gesture answers nothing, so the guard in agent_appkit
+// refuses with NotActionable rather than raising an unrecognized selector.
+//
+// Which made `.gesture(on_click:)` produce exactly the affordance facet's own
+// doctrine forbids: `agent.cplus` says an agent has no hands, so an affordance
+// only a gesture can reach is the bug and the fix is a click path in the UI.
+// `.gesture(on_click:)` is the ONLY verb that makes a container clickable, so
+// without this there was no way to satisfy that rule for a whole-row control —
+// a recents row, a card, a list item built from a box rather than a button.
+//
+// The handler is read from the node at fire time rather than captured, so a
+// swapped `on_click` is answered by the new one. `fire_click` answers false
+// when the node carries no click handler, which is the gesture view that only
+// drags: it responds to the selector and does nothing, the same as sending
+// `performClick:` to a control with no action.
+fn imp_perform_click(self_obj: *u8, cmd: *u8, sender: *u8) {
+    let n: *core::Node = node_of_view(self_obj);
+    if n == (0 as *core::Node) { return; }
+    let _fired: bool = gestures::fire_click(n);
+}
+
 fn add_input_methods(cls: *u8) {
+    synth::add_method_v_1id(cls, rt::sel(#str_ptr("performClick:\0")), imp_perform_click, #str_ptr("v@:@\0"));
     synth::add_method_v_1id(cls, rt::sel(#str_ptr("mouseDown:\0")), imp_mouse_down, #str_ptr("v@:@\0"));
     synth::add_method_v_1id(cls, rt::sel(#str_ptr("mouseUp:\0")), imp_mouse_up, #str_ptr("v@:@\0"));
     synth::add_method_v_1id(cls, rt::sel(#str_ptr("rightMouseDown:\0")), imp_right_mouse_down, #str_ptr("v@:@\0"));

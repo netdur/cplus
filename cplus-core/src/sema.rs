@@ -14988,6 +14988,20 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 method_seg.span,
             );
         }
+        // `this.method` into a fn-pointer parameter, at an ASSOCIATED call site
+        // exactly as at a free one. Every other call form resolves bound method
+        // references before typing the arguments and this one did not, so
+        // `Type::make(on_click: this.method)` fell through to ordinary field
+        // typing and reported E0320 "no field `method`" — an error about
+        // something the author never asked for, naming a field they never
+        // mentioned, with no hint that a binding was attempted.
+        //
+        // It went unnoticed because facet's element constructors are free
+        // functions: `ui::button(on_click: this.method)` always worked. It bites
+        // wherever a builder is `Type::new(...)`, and `screen::MenuItem::new` is
+        // one — so every menu handler had to be a top-level fn in a codebase
+        // whose rule is that handlers live on the component.
+        self.try_bound_method_refs(args, &sig.params, call_span);
         for (a, expected) in args.iter().zip(sig.params.iter()) {
             self.check_arg_with_move(a, expected);
         }
@@ -23929,6 +23943,55 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
             .find(|d| d.code.0 == "E0333")
             .expect("expected E0333");
         d.message
+    }
+
+    // A bound method reference resolves at an ASSOCIATED call site, not only at
+    // a free one. Every other call form ran the resolver and this one did not,
+    // so `Type::make(on_click: this.method)` fell through to field typing and
+    // reported E0320 "no field `method`" — an error naming something the author
+    // never wrote. Free-function builders hid it; `Type::new(...)` builders did
+    // not, and `screen::MenuItem::new` is one.
+    #[test]
+    fn bound_method_ref_binds_into_an_associated_fn() {
+        let src = "struct Item { tag: i32 }\n\
+                   impl Item {\n\
+                     fn make(on_click: fn(*u8, *u8) = 0 as fn(*u8, *u8),\n\
+                             ctx: *u8 = 0 as *u8) -> Item { return Item { tag: 1 }; }\n\
+                   }\n\
+                   struct Holder { n: i32 }\n\
+                   impl Holder {\n\
+                     fn hit(ref this, sender: *u8) { }\n\
+                     fn build(ref this) -> Item { return Item::make(this.hit); }\n\
+                   }\n\
+                   fn main() -> i32 { return 0; }";
+        // E0320 SPECIFICALLY: the harness runs sema without the pass that
+        // splices defaults and reorders labels, so it reports its own arity
+        // noise here. What it can still see is whether `this.hit` was typed as
+        // a FIELD, which is the regression.
+        let codes = errors(src);
+        assert!(
+            !codes.contains(&"E0320"),
+            "`this.method` was typed as a field at an associated call site: {codes:?}"
+        );
+    }
+
+    // The free form kept working throughout — pinned beside it so a future
+    // change cannot fix one and lose the other.
+    #[test]
+    fn bound_method_ref_binds_into_a_free_fn() {
+        let src = "fn take(on_click: fn(*u8, *u8) = 0 as fn(*u8, *u8),\n\
+                            ctx: *u8 = 0 as *u8) { }\n\
+                   struct Holder { n: i32 }\n\
+                   impl Holder {\n\
+                     fn hit(ref this, sender: *u8) { }\n\
+                     fn build(ref this) { take(this.hit); }\n\
+                   }\n\
+                   fn main() -> i32 { return 0; }";
+        let codes = errors(src);
+        assert!(
+            !codes.contains(&"E0320"),
+            "free-fn bound ref regressed: {codes:?}"
+        );
     }
 
     // A unit function ending in CONTROL FLOW is not ending in a value. `if` and

@@ -1527,6 +1527,31 @@ fn a_second_node_of_the_same_kind_reuses_the_class() {
 }
 
 #[test]
+fn a_gesture_view_answers_performclick_for_the_agent() {
+    // THE AGENT'S ONLY DOOR. `click` on the agent surface sends `performClick:`
+    // to the backing view; agent_appkit guards the send with `respondsToSelector:`
+    // and answers NotActionable when the view does not, because an unguarded
+    // send used to raise. A plain NSView carrying a gesture answered nothing, so
+    // every `.gesture(on_click:)` node was mouse-only — which is the unreachable
+    // affordance facet's own agent doctrine calls the bug.
+    //
+    // The old backend wired the handler twice for exactly this reason and left a
+    // test saying so. The regeneration dropped both; this is the test back.
+    IN_CLICKS = 0 as i64;
+    var n: core::Node = core::column(core::Builder::new(), key: "row").gesture(on_click: h_took());
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v != (0 as *u8);
+    assert synth::class_responds(synth::object_class(v),
+                                 rt::sel(#str_ptr("performClick:\0"))) != (0 as i8);
+    // ...and it FIRES the node's click handler, not merely answers the selector.
+    { rt::msg_void_id(v, rt::sel(#str_ptr("performClick:\0")), 0 as *u8) };
+    assert IN_CLICKS == (1 as i64);
+    views::view_release(v);
+    return;
+}
+
+#[test]
 fn a_node_without_gestures_keeps_its_class() {
     // Arming is not free — it costs a class and an association — so a tree
     // that asks for no input pays for none of it.
