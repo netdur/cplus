@@ -370,8 +370,8 @@ shared band every element carries.
 | `set_vertical_scroll_bars` / `vertical_scroll_bars()` | ScrollBars | ScrollView.VerticalScrollBarVisibility |
 | `children` | shared band | ScrollView.Children |
 | `content_size()` | Size | ScrollView.ContentSize |
-| `scroll_x()` | f64 | ScrollView.ScrollX |
-| `scroll_y()` | f64 | ScrollView.ScrollY |
+| `set_scroll_x` / `scroll_x()` | f64 | ScrollView.ScrollX |
+| `set_scroll_y` / `scroll_y()` | f64 | ScrollView.ScrollY |
 | `observe_scrolled` | callback + ctx | ScrollView.Scrolled |
 
 ## search_field — the ledger SearchBar

@@ -918,6 +918,8 @@ fn scroll(
     horizontal_scroll_bars: vocab::ScrollBars = vocab::ScrollBars::Default,
     axis: vocab::ScrollAxis = vocab::ScrollAxis::Both,
     vertical_scroll_bars: vocab::ScrollBars = vocab::ScrollBars::Default,
+    scroll_x: f64 = 0.0f64,
+    scroll_y: f64 = 0.0f64,
     observe_scrolled: fn(*u8, *u8) = props::no_handler,
     observe_scrolled_ctx: *u8 = 0 as *u8,
 ) -> core::Node {
@@ -927,6 +929,8 @@ fn scroll(
         horizontal_scroll_bars: horizontal_scroll_bars,
         axis: axis,
         vertical_scroll_bars: vertical_scroll_bars,
+        scroll_x: scroll_x,
+        scroll_y: scroll_y,
         observe_scrolled: observe_scrolled,
         observe_scrolled_ctx: observe_scrolled_ctx,
     );

@@ -104,12 +104,38 @@ fn bounds_changed_imp(self_obj: *u8, cmd: *u8, note: *u8) {
     // live here and not in the control's apply body.
     carousel_position(n, view);
     remaining_threshold(n, view);
+    record_offset(n, view);
     let h: fn(*u8, *u8) = scrolled_handler(n);
     if h == props::no_handler { return; }
     // The sender is the node's own view, not the clip view: every other
     // handler in this package hands back the thing the application named, and
     // `component::key_of` is written against that.
     h(view, scrolled_ctx(n));
+    return;
+}
+
+// Where the scroll IS, written back into the props.
+//
+// `scroll_x()` and `scroll_y()` read the props, so the props have to be true —
+// the same contract the text controls keep for `text()`. Nothing kept it: the
+// two fields existed and no code on either side of the boundary ever touched
+// them, so the reads answered 0 for the life of the program and the offset was
+// unreadable as well as unwritable.
+//
+// The clip view's bounds origin IS the offset. The document view is flipped, so
+// y grows downward and matches what `set_scroll_y` means.
+fn record_offset(n: *core::Node, view: *u8) {
+    if view == (0 as *u8) { return; }
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return; }
+    if { (*d).kind } != props::K_SCROLL { return; }
+    let p: *props::ScrollProps = { (*d).props } as *props::ScrollProps;
+    if p == (0 as *props::ScrollProps) { return; }
+    let clip: *u8 = { rt::msg_id(view, rt::sel(#str_ptr("contentView\0"))) };
+    if clip == (0 as *u8) { return; }
+    let b: rt::Rect = ak::View::from_raw(clip).bounds();
+    { (*p).scroll_x = { b.x } };
+    { (*p).scroll_y = { b.y } };
     return;
 }
 

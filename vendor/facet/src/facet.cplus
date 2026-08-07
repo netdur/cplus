@@ -939,6 +939,18 @@ fn set_shrink(n: *Node, v: f64) {
     return;
 }
 
+// The size a node starts from BEFORE grow and shrink divide the free space.
+// Zero is the useful value: it takes the node's own content out of the
+// calculation, so its size is purely its share of what the parent offers.
+// `spacer` is built on it, and a split needs it for the same reason — a
+// container whose job is to divide space must not be sized by what it holds.
+fn set_basis(n: *Node, v: f64) {
+    if n == (0 as *Node) { return; }
+    { (*n).set_flex_basis(flex::StyleLength::points(v)) };
+    touch(n, props::C_LAYOUT);
+    return;
+}
+
 fn set_width(n: *Node, v: f64) {
     if n == (0 as *Node) { return; }
     { (*n).set_width(flex::StyleLength::points(v)) };
@@ -1257,6 +1269,7 @@ impl flex::Node {
     fn child(this, at: usize) -> option::Option[*Node] { return child_of(#addr_of(this), at); }
     fn set_grow(ref this, v: f64) { set_grow(#addr_of(this), v); return; }
     fn set_shrink(ref this, v: f64) { set_shrink(#addr_of(this), v); return; }
+    fn set_basis(ref this, v: f64) { set_basis(#addr_of(this), v); return; }
     fn set_width_percent(ref this, v: f64) { set_width_percent(#addr_of(this), v); return; }
     fn set_height_percent(ref this, v: f64) { set_height_percent(#addr_of(this), v); return; }
     fn set_justify(ref this, v: flex::Justify) { set_justify(#addr_of(this), v); return; }

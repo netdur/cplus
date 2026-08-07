@@ -17,6 +17,35 @@ import "objc/synthesis" as synth;
 import "appkit/appkit" as ak;
 import "quartzcore/quartzcore" as quartz;
 
+// ---- who caused this callback ------------------------------------------------
+//
+// AppKit tells a delegate WHAT changed, never WHO changed it, and for a split
+// view those are different questions with the same notification. A person
+// dragging the divider and facet's own layout writing a position both arrive as
+// `splitViewDidResizeSubviews:`, and only the first is a decision to record.
+//
+// Reading the geometry cannot separate them. The value facet asserts comes back
+// a fraction short — half a point from the backing grid, a whole point when an
+// enclosing split did the resizing — so recording it moved the divider slightly
+// on every pass, and the next pass asserted the moved value. A nested divider
+// walked 200 -> 159.5 that way. A tolerance does not fix it, because the size
+// of the discrepancy depends on the cause; `constrainSplitPosition:` does not
+// either, because `setPosition:` is routed through it too.
+//
+// So the answer is to know when we are the cause. Everything inside a layout
+// pass is facet's own work, and a user event never lands in the middle of one.
+// A DEPTH rather than a flag: a settle can be reached both from the layout pass
+// and directly from `apply`, and a plain bool would have the inner one declare
+// the pass over while the outer was still working.
+static ASSERT_DEPTH: i32 = 0;
+
+fn begin_assert() { ASSERT_DEPTH = ASSERT_DEPTH +% 1; return; }
+fn end_assert() {
+    if ASSERT_DEPTH > 0 { ASSERT_DEPTH = ASSERT_DEPTH -% 1; }
+    return;
+}
+fn is_asserting() -> bool { return ASSERT_DEPTH > 0; }
+
 // ---- colour resolution -------------------------------------------------------
 // Ported from the pre-regen backend; the Color token model is unchanged, so
 // only the module qualification moved.

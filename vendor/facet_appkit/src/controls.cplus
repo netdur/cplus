@@ -502,6 +502,28 @@ fn apply_scroll(v: *u8, n: *core::Node, dirty: u64) {
     // input.cplus. Nothing to write here; the view has to be ARMED, because
     // that class is where `hitTest:` lives, and arming is idempotent.
     if (dirty & scroll::P_CASCADES_INPUT) != (0 as u64) { input::arm(v, n); }
+    // The offset the application asked for. NOT on a full apply: `all_bits` is
+    // what a re-attached node gets, and re-asserting a stale origin there would
+    // yank a scroll the user had since moved. A position is only written when
+    // the application writes one.
+    if (dirty & (scroll::P_SCROLL_X | scroll::P_SCROLL_Y)) != (0 as u64) {
+        scroll_to_offset(v, { (*p).scroll_x }, { (*p).scroll_y });
+    }
+    return;
+}
+
+// Put the scroll where it was asked to be.
+//
+// The clip view is what actually moves, and `reflectScrolledClipView:` is what
+// makes the scrollers agree with it — without that the content moves and the
+// bars keep pointing at the old place.
+fn scroll_to_offset(v: *u8, x: f64, y: f64) {
+    if v == (0 as *u8) { return; }
+    let clip: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("contentView\0"))) };
+    if clip == (0 as *u8) { return; }
+    { rt::msg_void_point(clip, rt::sel(#str_ptr("scrollToPoint:\0")),
+                         rt::Point { x: x, y: y }) };
+    { rt::msg_void_id(v, rt::sel(#str_ptr("reflectScrolledClipView:\0")), clip) };
     return;
 }
 
@@ -2107,8 +2129,30 @@ fn apply_split(v: *u8, n: *core::Node, dirty: u64) {
 // spoke last. Writing the position in as the leading pane's flex size makes the
 // walk REPRODUCE the divider instead of erasing it, which is what makes a user
 // drag survive the next layout.
+// Is this length already exactly these points?
+//
+// Every write below goes through `touch`, which asks for another sync, which
+// runs another layout, which settles again — so a settle that writes
+// unconditionally keeps the application awake forever. It measured 68,954
+// settles in four idle seconds. Writing only on a real change is what lets the
+// tree go quiet.
+fn is_points(l: flex::StyleLength, v: f64) -> bool {
+    let val: f64 = { l.value };
+    return match { l.unit } {
+        flex::Unit::Point => val == v,
+        _ => false,
+    };
+}
+
 fn settle_split(n: *core::Node) {
     if n == (0 as *core::Node) { return; }
+    paint::begin_assert();
+    settle_split_inner(n);
+    paint::end_assert();
+    return;
+}
+
+fn settle_split_inner(n: *core::Node) {
     let v: *u8 = core::view_of(n);
     if v == (0 as *u8) { return; }
     let p: *split::SplitProps = props_of(n, split::K_SPLIT) as *split::SplitProps;
@@ -2118,6 +2162,28 @@ fn settle_split(n: *core::Node) {
     let extent: f64 = if s.is_vertical() { { f.w } } else { { f.h } };
     if extent <= 0.0f64 { return; }
 
+    // THE SPLIT'S SIZE IS ITS PARENT'S BUSINESS, NEVER ITS PANES'.
+    //
+    // The leading pane is given a fixed main-axis size below, and a fixed size
+    // is content the container has to fit — so the split's own base size grew
+    // with the position, the bigger split reported a bigger extent, the extent
+    // moved the clamp, and the clamp moved the pane. A split asked to move its
+    // divider RESIZED ITSELF, measured on a probe at 456 -> 547 -> 580 and into
+    // six figures in an application.
+    //
+    // A zero basis takes the panes out of the split's own measurement, so its
+    // size is purely the share its parent hands it. Only when the split is
+    // space-distributed: one sized by an explicit width or height is already
+    // definite, and zeroing the basis there would collapse it to nothing.
+    //
+    // This is also the whole reason the bug looked like it belonged to the ROWS
+    // axis. In a column parent a Rows split divides along the parent's main
+    // axis, so the feedback closes; a Columns split divides across it, so it
+    // never did. Same defect, one geometry away from being invisible.
+    if { (*n).style.flex_grow } > 0.0f64 && !is_points({ (*n).style.flex_basis }, 0.0f64) {
+        core::set_basis(n, 0.0f64);
+    }
+
     var want: f64 = { (*p).position };
     if { (*p).collapsed_leading } { want = 0.0f64; }
     else if { (*p).collapsed_trailing } { want = extent; }
@@ -2125,19 +2191,48 @@ fn settle_split(n: *core::Node) {
     // for one — so clamp before it becomes a pane size.
     if want > extent { want = extent; }
     if want < 0.0f64 { want = 0.0f64; }
+    // The pane minimums, applied HERE rather than left to AppKit. The delegate
+    // enforces them on a drag, and it would clamp this write too — but then the
+    // landed value differs from the asked one for two different reasons, and
+    // the check below could not tell "the minimums bound it" from "the extent
+    // was not final yet". Clamping first makes any remaining disagreement mean
+    // exactly one thing.
+    if !{ (*p).collapsed_leading } && !{ (*p).collapsed_trailing } {
+        let ceiling: f64 = extent - { (*p).min_trailing };
+        if ceiling > 0.0f64 && want > ceiling { want = ceiling; }
+        let floor: f64 = { (*p).min_leading };
+        if floor < extent && want < floor { want = floor; }
+    }
 
     match core::child_of(n, 0 as usize) {
         option::Option[*core::Node]::Some(lead) => {
-            if s.is_vertical() { core::set_width(lead, want); }
-            else { core::set_height(lead, want); }
-            core::set_grow(lead, 0.0f64);
-            core::set_shrink(lead, 0.0f64);
+            if s.is_vertical() {
+                if !is_points({ (*lead).style.width }, want) { core::set_width(lead, want); }
+            } else {
+                if !is_points({ (*lead).style.height }, want) { core::set_height(lead, want); }
+            }
+            if { (*lead).style.flex_grow } != 0.0f64 { core::set_grow(lead, 0.0f64); }
+            // SHRINKABLE, and this is load-bearing. A fixed main-axis size the
+            // pane cannot give back becomes the split's min-content, and flex
+            // shrink defaults to 0, so a split asked for more than its parent
+            // offers grows PAST the parent instead of being squeezed back. The
+            // inflated frame is then what the next settle reads as `extent`, so
+            // the error compounds every pass — measured at 456 -> 547 -> 580 on
+            // a probe, and into six figures in an application.
+            //
+            // Nothing shrinks while the split has room, so the position still
+            // lands on the number; the pane only gives way when the alternative
+            // is overflowing. The reason this looked like an AXIS bug is that a
+            // wide window swallows every horizontal ask and a short one cannot.
+            if { (*lead).style.flex_shrink } != 1.0f64 { core::set_shrink(lead, 1.0f64); }
         }
         option::Option[*core::Node]::None => { return; }
     }
     // The trailing pane takes the rest, which is what a split means.
     match core::child_of(n, 1 as usize) {
-        option::Option[*core::Node]::Some(trail) => { core::set_grow(trail, 1.0f64); }
+        option::Option[*core::Node]::Some(trail) => {
+            if { (*trail).style.flex_grow } != 1.0f64 { core::set_grow(trail, 1.0f64); }
+        }
         option::Option[*core::Node]::None => { }
     }
 
@@ -2145,12 +2240,23 @@ fn settle_split(n: *core::Node) {
                                    rt::sel(#str_ptr("count\0"))) };
     if panes >= (2 as u64) {
         s.set_position(want, 0 as i64);
-        // The application's position has now REACHED the split. Until this
-        // moment every `splitViewDidResizeSubviews:` is AppKit dividing the
-        // space on its own — and recording that back into the props is what
-        // destroyed the request before it could ever be applied. After it,
-        // the notification means a user moved the divider.
-        synth::set_associated(v, text_input::split_settled_key(), 1 as *u8);
+        // The application's position has REACHED the split — but only if it
+        // LANDED. Settling is what allows the resize notification to write
+        // geometry back over the request, so declaring it on a pass where the
+        // split had not reached its final size recorded an early clamped value
+        // as though a user had chosen it: a probe asked 200 at attach and kept
+        // 195.5 forever. Ask the geometry instead of assuming.
+        let first: *u8 = { rt::msg_id_u64({ rt::msg_id(v, rt::sel(#str_ptr("subviews\0"))) },
+                                          rt::sel(#str_ptr("objectAtIndex:\0")), 0 as u64) };
+        if first != (0 as *u8) {
+            let lf: rt::Rect = ak::View::from_raw(first).frame();
+            let landed: f64 = if s.is_vertical() { { lf.w } } else { { lf.h } };
+            var off: f64 = landed - want;
+            if off < 0.0f64 { off = 0.0f64 - off; }
+            if off <= 0.5f64 {
+                synth::set_associated(v, text_input::split_settled_key(), 1 as *u8);
+            }
+        }
     }
     return;
 }

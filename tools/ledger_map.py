@@ -310,6 +310,18 @@ RENAME = {
 BAND = {
     ("Picker", "Items"): "writes",
     ("MenuFlyoutItem", "KeyboardAccelerators"): "writes",
+    # A scroll offset the application can WRITE, not only read.
+    #
+    # The ledger has these read-only and moves a scroll with ScrollToAsync,
+    # which returns a Task — and facet has no async in the UI, so the method
+    # dropped and took the write half with it. What was left is a position that
+    # reports where the view is and gives no way to put it back.
+    #
+    # An application needs the write for one reason above all: rebuilding the
+    # content of a scroll sends it back to the origin, and restoring the offset
+    # afterwards is the only way to keep a user's place.
+    ("ScrollView", "ScrollX"): "writes",
+    ("ScrollView", "ScrollY"): "writes",
 }
 
 # ---- facet's own words, with no the ledger provenance -----------------------------

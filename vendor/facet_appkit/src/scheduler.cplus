@@ -41,6 +41,7 @@ import "objc/runtime" as rt;
 import "appkit/appkit" as ak;
 import "appkit/appkit_ext" as akx;
 import "./geometry" as geometry;
+import "./paint" as paint;
 
 // ---- CoreFoundation run loop -------------------------------------------------
 
@@ -304,6 +305,10 @@ fn layout_window(root: *core::Node) {
             // So the root is laid out INSIDE the insets and placed at their
             // origin. `SafeArea::None` is the only answer that opts out, and
             // it is the one that gets the whole content view.
+            // Everything from here to the end of the pass is facet moving its
+            // own geometry, so a split's resize notification in this window is
+            // not a user dragging anything.
+            paint::begin_assert();
             let ins: ak::EdgeInsets = safe_insets(content, root);
             let w: f64 = f.w - ins.left - ins.right;
             let h: f64 = f.h - ins.top - ins.bottom;
@@ -315,6 +320,7 @@ fn layout_window(root: *core::Node) {
                 geometry::set_view_frame(rv, rt::Rect { x: ins.left, y: ins.top, w: w, h: h });
                 resettle_splits();
                 drain_place_jobs();
+                paint::end_assert();
                 return;
             }
             // A pass-through root has no view of its own, so the facade put
@@ -324,6 +330,7 @@ fn layout_window(root: *core::Node) {
             if ins.left != 0.0f64 || ins.top != 0.0f64 { offset_root_views(root, ins.left, ins.top); }
             resettle_splits();
             drain_place_jobs();
+            paint::end_assert();
         }
         option::Option[ak::View]::None => { }
     }
