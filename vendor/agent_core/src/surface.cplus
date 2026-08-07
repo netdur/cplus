@@ -201,6 +201,21 @@ fn test_action_blocked_when_unexposed() {
 }
 
 #[test]
+fn test_action_blocked_inside_an_excluded_subtree() {
+    // The assistant's own panel. Marking its ROOT is the whole declaration —
+    // a keyed control inside it is refused without being named, which is what
+    // "the panel is ignored during query" has to mean if it is to be worth
+    // anything. Read and act are one answer: `authorize_action` gates on
+    // `is_exposed`, and exclusion folds in there.
+    var r: identity::Registry = fixture();
+    let inner: usize = r.add_child(1 as usize, option::Option[str]::Some("assistant:send"),
+                                   identity::Role::Button);
+    assert outcome_eq(authorize_action(r, inner), Outcome::Allowed);
+    r.set_excluded(1 as usize, true);
+    assert outcome_eq(authorize_action(r, inner), Outcome::NotExposed);
+}
+
+#[test]
 fn test_action_blocked_by_observe_only_ceiling() {
     var r: identity::Registry = fixture();
     r.set_observe_only(1 as usize);

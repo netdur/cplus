@@ -225,6 +225,17 @@ struct Registry {
     enabled: vec::Vec[bool],
     actionable: vec::Vec[bool],
     exposed: vec::Vec[bool],
+    // Subtrees the application has declared none of the agent's business —
+    // the embedded assistant's OWN panel, above all. Marked on the root and
+    // inherited downward, because exposure is per-node and hiding only the
+    // panel would leave its keyed buttons in the tree, re-parented to whatever
+    // exposed ancestor sat above. The assistant would see its own Send button
+    // and be able to press it.
+    //
+    // On the SURFACE and not on a consumer, so both adapters answer the same
+    // thing. A subtree that is not the application's content is not content for
+    // an external agent either.
+    excluded: vec::Vec[bool],
     index: hash_map::HashMap[str, usize],
     sibling_counts: hash_map::HashMap[usize, usize],
 }
@@ -241,6 +252,7 @@ fn new() -> Registry {
         enabled: vec::new::[bool](),
         actionable: vec::new::[bool](),
         exposed: vec::new::[bool](),
+        excluded: vec::new::[bool](),
         index: hash_map::new::[str, usize](),
         sibling_counts: hash_map::new::[usize, usize](),
     };
@@ -411,6 +423,12 @@ impl Registry {
     // are exposed, auto-id'd nodes are not (the root is always exposed).
     fn is_exposed(this, node: usize) -> bool {
         assert this.is_valid(node);
+        // An excluded subtree is not exposed, whatever its own tag says. Folded
+        // in HERE rather than at the describe loop because `is_exposed` is also
+        // what the action path authorizes against — so one answer covers both
+        // what the agent can see and what it can touch, and no future caller
+        // can consult the tag alone and get a different story.
+        if this.in_excluded_subtree(node) { return false; }
         return match this.exposed.at_ptr(node) {
             option::Option[*bool]::Some(p) => { *p },
             option::Option[*bool]::None => false,
@@ -419,6 +437,32 @@ impl Registry {
 
     // Override exposure: opt an auto-id'd node in (e.g. list rows), or hide a
     // tagged one. Omission is still the strongest sensitivity control.
+    // Declare a subtree out of the agent's world, root included.
+    fn set_excluded(ref this, node: usize, on: bool) {
+        assert this.is_valid(node);
+        this.excluded.set(on, node);
+        return;
+    }
+
+    // Is this node inside an excluded subtree? Walks up, so marking the root is
+    // enough and every descendant follows without being enumerated.
+    fn in_excluded_subtree(this, node: usize) -> bool {
+        var cur: option::Option[usize] = option::Option[usize]::Some(node);
+        loop {
+            match cur {
+                option::Option[usize]::Some(i) => {
+                    let hit: bool = match this.excluded.at_ptr(i) {
+                        option::Option[*bool]::Some(p) => { *p },
+                        option::Option[*bool]::None => false,
+                    };
+                    if hit { return true; }
+                    cur = this.parent_of(i);
+                }
+                option::Option[usize]::None => { return false; }
+            }
+        }
+    }
+
     fn set_exposed(ref this, node: usize, on: bool) {
         assert this.is_valid(node);
         this.exposed.set(on, node);
@@ -490,6 +534,7 @@ impl Registry {
         this.enabled.append(true);
         this.actionable.append(true);
         this.exposed.append(exposed);
+        this.excluded.append(false);
         return node_id;
     }
 
@@ -928,4 +973,54 @@ fn describe_carries_name_and_description() {
     let m: usize = r.add_child(r.root(), option::Option[str]::Some("bare"), Role::Button);
     assert r.name_of(m) == "";
     assert r.description_of(m) == "";
+}
+
+#[test]
+fn an_excluded_subtree_hides_its_keyed_children_too() {
+    // The design doc said an assistant could stay out of its own tree by
+    // leaving its panel unkeyed. It cannot: exposure is PER NODE, and
+    // `describe` re-parents an exposed node to its nearest exposed ancestor —
+    // so the panel vanishes and every keyed control inside it stays, hanging
+    // off whatever was above. The assistant would read its own Send button and
+    // `is_agent_actionable` would let it press it.
+    var r: Registry = new();
+    let panel: usize = r.add_child(r.root(), option::Option[str]::Some("assistant:panel"), Role::Group);
+    let send: usize = r.add_child(panel, option::Option[str]::Some("assistant:send"), Role::Button);
+    let app_btn: usize = r.add_child(r.root(), option::Option[str]::Some("app:save"), Role::Button);
+
+    // Both keyed, so both are exposed to begin with.
+    assert r.is_exposed(send);
+
+    r.set_excluded(panel, true);
+
+    // The root of the excluded subtree AND its children go, without either
+    // being enumerated — marking the root is the whole declaration.
+    assert r.is_exposed(panel) == false;
+    assert r.is_exposed(send) == false;
+    // The ACTION path refuses too, which is the half that matters: hiding a
+    // control from `describe` while `click` still took it would be worse than
+    // not hiding it at all. `surface::authorize_action` gates on `is_exposed`,
+    // which is exactly why the exclusion was folded in there rather than into
+    // the describe loop — `is_agent_actionable` is only the ceiling and never
+    // consulted exposure on its own.
+    assert r.is_exposed(app_btn);
+
+    // And it is not in the described tree.
+    let views: vec::Vec[NodeView] = r.describe();
+    var saw_send: bool = false;
+    var saw_app: bool = false;
+    var i: usize = 0 as usize;
+    while i < views.count() {
+        match views.at_ptr(i) {
+            option::Option[*NodeView]::Some(v) => {
+                if { (*v).id.view() } == "assistant:send" { saw_send = true; }
+                if { (*v).id.view() } == "app:save" { saw_app = true; }
+            }
+            option::Option[*NodeView]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    assert saw_send == false;
+    assert saw_app;
+    return;
 }

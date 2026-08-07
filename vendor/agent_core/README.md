@@ -20,7 +20,9 @@ let gate: auth::AuthGate = auth::deny_all();      // closed until serve(policy)
 ```
 
 Backends (AppKit / Win32 / GTK) and the wire protocol live in other packages
-(`agent_appkit`, `agent_mcp`, …) that depend on this one.
+(`agent_appkit`, `agent_mcp`, …) that depend on this one. Embedded assistants
+use `agent_inapp`, which calls the same backend vtable without a transport and
+checks `Channel::InApp` on every operation.
 
 ## Docs
 

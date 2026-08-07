@@ -108,6 +108,13 @@ Plus two slots: `theme::set_is_dark_fn` and `theme::set_theme_changed_fn`.
 A zero field keeps the portable no-op, so a partially implemented backend is
 degraded rather than broken.
 
+An embedded assistant uses `facet/agent::in_app(policy)`. This opens a typed
+in-process session over the same attached surface; it does not connect to the
+application's MCP socket. The provider loop feeds `describe_ui()` to the model,
+maps model tool calls to session methods, returns each `Outcome`, and repeats
+until the model answers the user. Leave the assistant's own chat controls
+unkeyed if they should not appear in the curated tree.
+
 `Renderer.schedule` is asked to coalesce: a hundred writes in a loop should
 cost one sync, not a hundred. The backend decides how, on its own loop.
 

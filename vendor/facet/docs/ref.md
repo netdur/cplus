@@ -282,8 +282,14 @@ framework cannot reach.
 ## facet/agent
 
 `enable()` registers the serving hooks; `disable()` returns to the no-op. An
-application also declares `agent_core`, `agent_mcp` and the platform's agent
-package in its `Cplus.toml`, then names a socket with `App::agent_mcp`.
+application also declares `agent_core`, `agent_inapp`, `agent_mcp` and the
+platform's agent package in its `Cplus.toml`, then names a socket with
+`App::agent_mcp`.
 
 The surface answers `describe_ui` (the live tree, addressed by key) and drives
 controls through the same path a mouse takes.
+
+`in_app(policy)` opens the attached surface directly for an embedded assistant.
+It returns an `agent_inapp::Session`; no Unix socket or MCP transport is used.
+Each `describe_ui`, `click`, `set_text`, `scroll_to`, and `hit_test` call checks
+the policy with `auth::Channel::InApp` before touching the backend.

@@ -1,0 +1,11 @@
+[package]
+name    = "agent_inapp"
+version = "0.0.1"
+edition = "2026"
+
+# In-process consumer of an agent_core Backend. Unlike agent_mcp this package
+# has no transport and authorizes every call as Channel::InApp.
+
+[dependencies]
+stdlib     = "*"
+agent_core = "*"

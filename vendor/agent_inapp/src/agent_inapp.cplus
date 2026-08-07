@@ -1,0 +1,99 @@
+// agent_inapp — in-process access to a live agent surface.
+//
+// An embedded assistant does not connect back to its own application over MCP.
+// It already lives in the process that owns the UI. This package is the
+// transport-free consumer of `agent_core::backend::Backend`, driving the same
+// vtable `agent_mcp` drives.
+//
+// IT IS MCP MINUS THE TRANSPORT AND MINUS THE AUTHORIZATION. Nothing more, and
+// nothing less:
+//
+//   minus the transport   no socket, no JSON-RPC, no PID discovery, and no
+//                         parameter validation — the arguments are typed, so
+//                         the compiler does what `missing_param` does there.
+//   minus the auth        MCP checks a channel because a socket is a boundary
+//                         between trust domains: any process that can reach it
+//                         can drive the app. In-process there is no such
+//                         boundary. This code was compiled into the binary by
+//                         the same developer who wrote the handlers, and it
+//                         already has the whole address space — a policy check
+//                         in front of `click` asks permission from itself.
+//                         Whoever could fail it could call the handler direct.
+//   nothing else          same verbs, same defaults, same backend.
+//
+// So the caller is not what is untrusted here. The untrusted input is the
+// MODEL'S OUTPUT — tokens from a provider, shaped by whatever text the app fed
+// it, including content the user never wrote. That is not something admission
+// can check, and the thing that does constrain it is the surface itself: an
+// agent driving this vtable HAS NO HANDS. It can only do what a person could do
+// through the interface, through the same handlers and the same validation. If
+// an action should be out of reach, do not expose the control; the UI is the
+// capability boundary, and it is a structural one rather than a declared list.
+//
+// The model/provider loop stays above this package. It turns provider tool
+// calls into these typed operations and sends their typed outcomes back.
+// Keeping provider I/O out of this layer lets one UI surface work with a remote
+// API, a local model, or a deterministic test planner.
+
+import "stdlib/vec" as vec;
+import "stdlib/option" as option;
+import "agent_core/backend" as backend;
+import "agent_core/events" as events;
+import "agent_core/surface" as surface;
+
+// A session is a lightweight capability over a live backend surface. The raw
+// receiver is opaque because its lifetime belongs to the embedding UI package;
+// Facet supplies a process-lifetime surface, while direct backend users must
+// keep their concrete Surface alive for at least as long as this Session.
+struct Session {
+    opaque surf: *u8,
+    vt: backend::Backend,
+    // The event queue this session drains, so `poll_event` answers the same
+    // thing MCP's does. One per session: a subscriber is a ring, and sharing
+    // one between consumers would let each steal the other's events.
+    sub: events::Subscriber,
+}
+
+fn open(surf: *u8, vt: backend::Backend) -> Session {
+    return Session {
+        surf: surf,
+        vt: vt,
+        sub: events::subscriber(events::everything(), 64 as usize),
+    };
+}
+
+impl Session {
+    // The tree the agent reasons about. `full` is the OPT-IN diagnostic view —
+    // structural nodes, frames and classes — and it is the shape MCP has, kept
+    // deliberately: the small tree is what a model should see, so it is what
+    // you get without asking. `full` is the oracle a test asserts against, the
+    // one view that reports what the platform actually did rather than what
+    // the framework believes; it is not for a model's prompt.
+    fn describe_ui(this, full: bool = false) -> vec::Vec[backend::UiNode] {
+        if full { return (this.vt.describe)(this.surf); }
+        return (this.vt.describe_exposed)(this.surf);
+    }
+
+    fn click(this, id: str) -> surface::Outcome {
+        return (this.vt.click)(this.surf, id);
+    }
+
+    fn set_text(this, id: str, value: str, base_version: u64 = 0 as u64) -> surface::Outcome {
+        return (this.vt.set_text)(this.surf, id, value, base_version);
+    }
+
+    fn scroll_to(this, id: str) -> surface::Outcome {
+        return (this.vt.navigate)(this.surf, id);
+    }
+
+    fn hit_test(this, id: str) -> surface::HitTest {
+        return (this.vt.hit_test)(this.surf, id);
+    }
+
+    // The verb that drifted. MCP had it and this package did not, which is the
+    // same defect as the authorization it carried and nobody had decided
+    // either. `tools/adapter_parity.py` is what stops the next one.
+    fn poll_event(ref this) -> option::Option[events::Event] {
+        return this.sub.poll();
+    }
+}

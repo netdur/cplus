@@ -42,6 +42,7 @@ import "./runtime" as runtime;
 import "agent_appkit/agent_appkit" as agent_appkit;
 import "agent_core/events" as events;
 import "agent_core/auth" as auth;
+import "agent_inapp/agent_inapp" as inapp;
 import "agent_mcp/agent_mcp" as mcp;
 import "stdlib/text" as text;
 import "stdlib/thread" as thread;
@@ -71,6 +72,22 @@ fn disable() {
         serve_once: 0 as fn(str),
     });
     return;
+}
+
+// Open the already-attached Facet surface for an assistant embedded in this
+// process. No socket and no MCP loopback: agent_inapp checks Channel::InApp on
+// every operation and drives the same backend vtable as the external bridge.
+//
+// Call `enable()` before App::run so each mounted window is attached. The
+// returned session borrows process-lifetime AGENT_SURFACE; it remains valid as
+// navigation retargets that surface in place.
+// The embedded assistant's door onto this application's own surface. No policy
+// argument: in-process there is no trust boundary to check. See agent_inapp's
+// header — the caller is not what is untrusted, and the UI is the boundary that
+// matters.
+fn in_app() -> inapp::Session {
+    let surf: *u8 = #addr_of(AGENT_SURFACE) as *u8;
+    return inapp::open(surf, agent_appkit::mcp_backend());
 }
 
 // Walk `win`'s live view tree into the surface, replacing the previous

@@ -16,7 +16,8 @@ agent_core — root re-exports convenience constructors
 
 GUI packages (`agent_appkit`, `agent_win32`, `agent_gtk`) build a live
 `Surface`, fill a `Backend` vtable, and enforce `Outcome` before calling
-native APIs. `agent_mcp` serializes JSON-RPC over that vtable.
+native APIs. `agent_mcp` serializes JSON-RPC over that vtable for external
+agents; `agent_inapp` exposes typed calls over it for embedded assistants.
 
 ## Identity tree
 
@@ -107,6 +108,6 @@ Receiver is type-erased `*u8` (cast to the backend’s `Surface`). Used by
 ## Typical app wiring
 
 1. Build UI; register nodes with stable ids / roles.  
-2. `serve(policy)` for in-app and/or external.  
+2. Supply a policy to `agent_inapp::open` and/or the external server.
 3. Backend walks native tree → registry + events.  
 4. Assistant or MCP calls authorize → execute.  

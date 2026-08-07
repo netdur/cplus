@@ -1,0 +1,175 @@
+// facet_inapp_agent — spike for an assistant embedded in a Facet app.
+//
+// This deliberately uses a deterministic "planner" in on_attach. Replace that
+// short sequence with an LLM provider loop: send describe_ui() plus the user's
+// message, map returned tool calls to Session methods, send each Outcome back,
+// and repeat until the model returns text.
+//
+// There is no socket in this flow. facet/agent owns the live surface;
+// agent_inapp authorizes Channel::InApp and calls the same backend vtable used
+// by the external MCP adapter.
+
+import "facet/facet" as facet;
+import "facet/elements" as elements;
+import "facet/component" as component;
+import "facet/screen" as screen;
+import "facet/nav" as nav;
+import "facet/runtime" as runtime;
+import "facet/agent" as agent;
+import "facet/services" as services;
+import "agent_inapp/agent_inapp" as inapp;
+import "agent_core/auth" as auth;
+import "agent_core/backend" as backend;
+import "agent_core/surface" as surface;
+import "stdlib/result" as result;
+import "stdlib/option" as option;
+import "stdlib/status" as status;
+import "stdlib/vec" as vec;
+import "stdlib/io" as io;
+
+static SAVES: i32 = 0;
+static SAW_DRAFT: bool = false;
+static SAW_ADA: bool = false;
+static SET_ALLOWED: bool = false;
+static CLICK_ALLOWED: bool = false;
+static DENIED_STOPPED_CALL: bool = false;
+
+fn inapp_only(req: auth::Request) -> auth::Decision {
+    return match req.channel {
+        auth::Channel::InApp => auth::Decision::Allow,
+        auth::Channel::External => auth::Decision::Reject,
+    };
+}
+
+fn deny_all(req: auth::Request) -> auth::Decision {
+    return auth::Decision::Reject;
+}
+
+fn tree_has(nodes: vec::Vec[backend::UiNode], id: str, value: str) -> bool {
+    var i: usize = 0 as usize;
+    while i < nodes.count() {
+        match nodes.at_ptr(i) {
+            option::Option[*backend::UiNode]::Some(n) => {
+                if { (*n).id.view() } == id && { (*n).text.view() } == value {
+                    return true;
+                }
+            }
+            option::Option[*backend::UiNode]::None => {}
+        }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
+
+// Queued by on_attach so the application run loop is active before the agent
+// closes the window at the end of the spike.
+fn run_agent(ctx: *u8) {
+    // A denied in-app policy is checked before the backend is touched.
+    let denied: inapp::Session = agent::in_app(deny_all);
+    match denied.click("profile:save") {
+        result::Result[surface::Outcome, inapp::Error]::Ok(_o) => {}
+        result::Result[surface::Outcome, inapp::Error]::Err(_e) => {
+            DENIED_STOPPED_CALL = SAVES == (0 as i32);
+        }
+    }
+
+    let session: inapp::Session = agent::in_app(inapp_only);
+    match session.describe_ui() {
+        result::Result[vec::Vec[backend::UiNode], inapp::Error]::Ok(nodes) => {
+            SAW_DRAFT = tree_has(nodes, "profile:name", "draft");
+        }
+        result::Result[vec::Vec[backend::UiNode], inapp::Error]::Err(_e) => {}
+    }
+
+    match session.set_text("profile:name", "Ada") {
+        result::Result[surface::Outcome, inapp::Error]::Ok(o) => {
+            SET_ALLOWED = surface::outcome_eq(o, surface::Outcome::Allowed);
+        }
+        result::Result[surface::Outcome, inapp::Error]::Err(_e) => {}
+    }
+
+    // Re-describe after an action: the surface refreshes from the live UI.
+    match session.describe_ui() {
+        result::Result[vec::Vec[backend::UiNode], inapp::Error]::Ok(nodes) => {
+            SAW_ADA = tree_has(nodes, "profile:name", "Ada");
+        }
+        result::Result[vec::Vec[backend::UiNode], inapp::Error]::Err(_e) => {}
+    }
+
+    match session.click("profile:save") {
+        result::Result[surface::Outcome, inapp::Error]::Ok(o) => {
+            CLICK_ALLOWED = surface::outcome_eq(o, surface::Outcome::Allowed);
+        }
+        result::Result[surface::Outcome, inapp::Error]::Err(_e) => {}
+    }
+
+    nav::quit();
+    return;
+}
+
+struct Home {
+    n: i32,
+}
+
+impl Home {
+    fn save(ref this, sender: *u8) {
+        SAVES = SAVES +% (1 as i32);
+        return;
+    }
+}
+
+impl Home: component::Component {
+    fn build(ref this) -> facet::Node {
+        var form: facet::Builder = facet::Builder::new();
+        // Keys are the stable agent ids and opt these controls into the curated
+        // surface. The assistant chrome below has no key, so it is not exposed.
+        form.add(elements::text_field("draft", key: "profile:name"));
+        form.add(elements::button("Save", key: "profile:save", on_click: this.save));
+        form.add(elements::label("Assistant panel (not exposed to itself)"));
+        return facet::column(form).padding(20.0f64).gap(10.0f64);
+    }
+}
+
+impl Home: component::Lifecycle {
+    fn on_attach(ref this) {
+        services::run_on_main(run_agent, 0 as *u8);
+        return;
+    }
+
+    fn on_detach(ref this) { return; }
+}
+
+impl Home: screen::Screen {
+    fn chrome(this) -> screen::Chrome {
+        return screen::Chrome::new(title: "In-app agent spike", width: 420.0f64, height: 220.0f64);
+    }
+
+    fn menu_items(this) -> vec::Vec[screen::MenuItem] {
+        return vec::new::[screen::MenuItem]();
+    }
+}
+
+fn make_home() -> screen::ScreenBox {
+    return screen::screen_box(Home { n: 0 });
+}
+
+fn main() -> i32 {
+    agent::enable();
+    var app: runtime::App = runtime::App::new("facet in-app agent");
+    app.screen("home", make_home);
+    let run_status: status::Status = app.run("home");
+
+    let ok: bool = run_status.is_ok()
+        && DENIED_STOPPED_CALL
+        && SAW_DRAFT
+        && SET_ALLOWED
+        && SAW_ADA
+        && CLICK_ALLOWED
+        && SAVES == (1 as i32);
+    if ok {
+        io::println("facet_inapp_agent: PASS (describe -> set_text -> describe -> click)");
+        return 0;
+    }
+    io::println("facet_inapp_agent: FAIL saves=${SAVES} draft=${SAW_DRAFT} ada=${SAW_ADA}");
+    return 1;
+}

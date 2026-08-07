@@ -1,7 +1,7 @@
 // vendor/agent_core/src/backend.cplus
 //
-// The backend-neutral surface contract for the MCP bridge (and any other
-// framework-agnostic consumer of a live UI surface). agent_mcp drives a
+// The backend-neutral surface contract for agent consumers. agent_mcp and
+// agent_inapp drive a
 // concrete backend `Surface` (agent_appkit / agent_win32 / agent_gtk)
 // through this, so the bridge itself names no backend.
 //
@@ -29,8 +29,8 @@ struct Rect {
 }
 
 // One backend-agnostic describe_ui node. Identical fields to each backend's
-// own `UiNode`, but with the neutral `Rect` frame, so the MCP serializer can
-// read it without knowing which backend produced it.
+// own `UiNode`, but with the neutral `Rect` frame, so consumers can read it
+// without knowing which backend produced it.
 struct UiNode {
     id: text::Text,
     role: identity::Role,
@@ -47,7 +47,7 @@ struct UiNode {
 
 // The backend vtable. Every fn takes the type-erased surface pointer as its
 // first argument (the implementor casts `*u8` back to its `Surface`). The
-// four operations the MCP protocol needs:
+// operations every agent consumer needs:
 //   describe  -> the live snapshot (read path)
 //   click     -> authorized activation
 //   set_text  -> authorized, optimistic-concurrency text edit (mutating)
