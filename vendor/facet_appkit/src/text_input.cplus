@@ -699,6 +699,12 @@ fn max_coord_imp(self_obj: *u8, cmd: *u8, sv: *u8, proposed: f64, idx: i64) -> f
 // `splitViewDidResizeSubviews:`. The position the user landed on is written
 // back into the props BEFORE the handler runs, for the same reason a typed
 // character is: `position()` reads the props, so the props have to be true.
+// Has the application's own position reached this split yet? Until it has,
+// every resize notification is AppKit dividing the space by itself, and
+// recording that back over the request is what stopped a `position:` argument
+// from ever being honoured. `settle_split` sets it once it has written.
+fn split_settled_key() -> *u8 { return { 29062 as *u8 }; }
+
 fn split_resized_imp(self_obj: *u8, cmd: *u8, note: *u8) {
     let n: *core::Node = split_node_of(self_obj);
     if n == (0 as *core::Node) { return; }
@@ -721,6 +727,7 @@ fn split_resized_imp(self_obj: *u8, cmd: *u8, note: *u8) {
             let fr: rt::Rect = ak::View::from_raw(first).frame();
             var at: f64 = { fr.h };
             if s.is_vertical() { at = { fr.w }; }
+            let moved: bool = at != { (*p).position };
             // NOT while the split has no extent. This notification also fires
             // for AppKit's own pre-layout clamp — a requested 650 against a
             // zero-width split lands at ~0, and writing THAT back destroyed the
@@ -728,7 +735,25 @@ fn split_resized_imp(self_obj: *u8, cmd: *u8, note: *u8) {
             // has no position a user chose, so there is nothing to record.
             let sf: rt::Rect = s.as_view().frame();
             let extent: f64 = if s.is_vertical() { { sf.w } } else { { sf.h } };
-            if extent > 0.0f64 { { (*p).position = at }; }
+            // Only once the application's position has landed. Before that,
+            // this notification is AppKit's own even division and writing it
+            // back would overwrite the very request that is waiting to be
+            // applied.
+            let settled: bool =
+                { synth::get_associated(sv, split_settled_key()) } != (0 as *u8);
+            if extent > 0.0f64 && settled {
+                { (*p).position = at };
+                // A DRAG moves the pane hosts and nothing else: everything
+                // inside a pane keeps the frames facet's last walk gave it, so
+                // narrowing leaves the old content standing where it was — the
+                // seam. Ask for a pass so the contents follow the pane.
+                //
+                // Only when it actually MOVED. `settle_split` calls
+                // `set_position`, which fires this same notification, and an
+                // unconditional request would ask for a layout on every pass
+                // forever.
+                if moved { core::relayout(n); }
+            }
         }
     }
     fire({ (*p).on_move }, { (*p).ctx }, sv);

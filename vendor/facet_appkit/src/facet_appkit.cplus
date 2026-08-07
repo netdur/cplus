@@ -35,6 +35,7 @@ import "facet/application" as app;
 import "./views" as views;
 import "./input" as input;
 import "./scheduler" as scheduler;
+import "./controls" as controls;
 import "./geometry" as geometry;
 import "./window" as window;
 
@@ -64,6 +65,9 @@ fn install() {
     mount::install(renderer());
     services::install_scheduler(scheduler::scheduler());
     gestures::install_key_reader(input::key_reader());
+    // The scheduler settles every registered split after each layout walk; it
+    // learns HOW from here, so it needs to know nothing about splits.
+    scheduler::set_split_settle_fn(controls::settle_split);
     component::install_sender_readers(input::sender_readers());
     theme::set_is_dark_fn(window::is_dark);
     theme::set_theme_changed_fn(theme_changed);

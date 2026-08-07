@@ -175,93 +175,74 @@ fn layout_all_windows() {
 
 // One window. The host is the window's content view — the flipped view the
 // shell installed — so the tree lays out at exactly the size it fills.
-// ---- deferred split positions -------------------------------------------------
-// A split's divider cannot be placed during apply. Apply runs BEFORE layout, so
-// the split's frame is still 0, and AppKit clamps a requested position against
-// a zero extent down to ~0. Worse than ignored: the clamp moves the divider,
-// which fires `splitViewDidResizeSubviews:`, which writes the landed position
-// back into the props — so the request is overwritten by its own clamp, and the
-// real layout finds nothing dirty and re-applies nothing.
+// ---- the split registry -------------------------------------------------------
+// Splits are REGISTERED, not queued, and re-settled after every layout walk.
 //
-// So the write waits for an extent. The old backend had the same queue and the
-// same reason (facet_appkit.old:1824, "the same two-phase problem as scroll, so
-// the same deferral fixes it"); regeneration dropped it along with the scroll
-// one, and nothing in this backend deferred anything afterwards.
+// A queue was wrong twice over. A job captures the position it was queued with,
+// so a user drag — which updates the props — is overwritten on the next walk by
+// whatever the constructor asked for. And a job only runs on a walk it was
+// queued for, so a window resize, which runs the walk with no apply before it,
+// re-sizes the panes from flex and re-asserts nothing.
 //
-// Drained at the END of `layout_window`, which is the first moment a frame is
-// real. Positions are re-asserted, not remembered: a later drag writes the
-// props through the delegate as it always did.
-struct SplitJob {
-    opaque split: *u8,
-    position: f64,
-    // A job that cannot be satisfied yet is KEPT, not dropped. `apply` and
-    // `layout` are different passes: a job queued by the apply half of a tick
-    // is drained by the layout half of the SAME tick, but at launch that
-    // layout can still be against a zero-size content view — so the first
-    // drain finds no extent and there may be no later layout to ask again.
-    // Dropping it there is why a `position:` constructor argument, and any
-    // `set_position` from `on_attach`, never landed while a runtime write did.
-    //
-    // Bounded, so a split that is never laid out (hidden, zero-height) cannot
-    // hold a tick request open forever.
-    attempts: u32,
-}
+// A registry has neither problem: every walk ends by settling every split
+// against the props' CURRENT position, which is the one place the number lives.
+//
+// The settle itself is a fn-pointer, so this module needs to know nothing about
+// splits — the same shape the place jobs use, and what keeps `controls`
+// importable from here without a cycle.
+static SPLIT_NODES: vec::Vec[*core::Node] = #zero::[vec::Vec[*core::Node]]();
+static SPLIT_SETTLE_FN: fn(*core::Node) = #zero::[fn(*core::Node)]();
 
-fn split_job_attempt_cap() -> u32 { return 8 as u32; }
+fn set_split_settle_fn(f: fn(*core::Node)) { SPLIT_SETTLE_FN = f; return; }
 
-static SPLIT_JOBS: vec::Vec[SplitJob] = #zero::[vec::Vec[SplitJob]]();
-
-fn defer_split(split: *u8, position: f64) {
-    if split == (0 as *u8) { return; }
-    let jobs: *vec::Vec[SplitJob] = { #addr_of(SPLIT_JOBS) };
-    let _s: status::Status = { (*jobs).append(SplitJob { split: split, position: position,
-                                                        attempts: 0 as u32 }) };
-    // A job queued OUTSIDE a tick (mount runs `apply` directly) would otherwise
-    // wait for a layout that may never be asked for.
-    schedule(0 as *u8);
+fn register_split(n: *core::Node) {
+    if n == (0 as *core::Node) { return; }
+    let reg: *vec::Vec[*core::Node] = { #addr_of(SPLIT_NODES) };
+    var i: usize = 0 as usize;
+    let count: usize = { (*reg).count() };
+    while i < count {
+        match { (*reg).at(i) } {
+            option::Option[*core::Node]::Some(p) => { if p == n { return; } }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    let _s: status::Status = { (*reg).append(n) };
     return;
 }
 
-fn drain_split_jobs() {
-    let jobs: *vec::Vec[SplitJob] = { #addr_of(SPLIT_JOBS) };
-    var keep: vec::Vec[SplitJob] = vec::new::[SplitJob]();
-    while { (*jobs).count() } > (0 as usize) {
-        let last: usize = { (*jobs).count() } -% (1 as usize);
-        match { (*jobs).swap_remove(last) } {
-            option::Option[SplitJob]::Some(job) => {
-                let s: ak::SplitView = ak::SplitView::from_raw({ job.split });
-                let f: rt::Rect = s.as_view().frame();
-                let extent: f64 = if s.is_vertical() { { f.w } } else { { f.h } };
-                // Both conditions the apply-time write could not meet: the
-                // panes exist and the axis has a length.
-                let panes: u64 = { rt::msg_u64({ rt::msg_id({ job.split }, rt::sel(#str_ptr("subviews\0"))) },
-                                               rt::sel(#str_ptr("count\0"))) };
-                if extent > 0.0f64 && panes >= (2 as u64) {
-                    s.set_position({ job.position }, 0 as i64);
-                } else {
-                    // Not yet. Keep it and ask for another pass rather than
-                    // discarding a position the application actually stated.
-                    let n: u32 = { job.attempts } +% (1 as u32);
-                    if n < split_job_attempt_cap() {
-                        let _k: status::Status = keep.append(SplitJob {
-                            split: { job.split }, position: { job.position }, attempts: n });
-                    }
+// Drop a split that is no longer mounted, so a registry entry cannot outlive
+// the node it points at.
+fn forget_split(n: *core::Node) {
+    let reg: *vec::Vec[*core::Node] = { #addr_of(SPLIT_NODES) };
+    var i: usize = 0 as usize;
+    while i < { (*reg).count() } {
+        match { (*reg).at(i) } {
+            option::Option[*core::Node]::Some(p) => {
+                if p == n {
+                    let _g: option::Option[*core::Node] = { (*reg).swap_remove(i) };
+                    return;
                 }
             }
-            option::Option[SplitJob]::None => { }
+            option::Option[*core::Node]::None => { }
         }
+        i = i +% (1 as usize);
     }
-    if keep.count() > (0 as usize) {
-        var i: usize = 0 as usize;
-        let n: usize = keep.count();
-        while i < n {
-            match keep.at(i) {
-                option::Option[SplitJob]::Some(j) => { let _a: status::Status = { (*jobs).append(j) }; }
-                option::Option[SplitJob]::None => { }
-            }
-            i = i +% (1 as usize);
+    return;
+}
+
+fn resettle_splits() {
+    let f: fn(*core::Node) = SPLIT_SETTLE_FN;
+    if f == (0 as fn(*core::Node)) { return; }
+    let reg: *vec::Vec[*core::Node] = { #addr_of(SPLIT_NODES) };
+    var i: usize = 0 as usize;
+    let count: usize = { (*reg).count() };
+    while i < count {
+        match { (*reg).at(i) } {
+            option::Option[*core::Node]::Some(p) => { f(p); }
+            option::Option[*core::Node]::None => { }
         }
-        schedule(0 as *u8);
+        i = i +% (1 as usize);
     }
     return;
 }
@@ -332,7 +313,7 @@ fn layout_window(root: *core::Node) {
             let rv: *u8 = core::view_of(root);
             if rv != (0 as *u8) {
                 geometry::set_view_frame(rv, rt::Rect { x: ins.left, y: ins.top, w: w, h: h });
-                drain_split_jobs();
+                resettle_splits();
                 drain_place_jobs();
                 return;
             }
@@ -341,7 +322,7 @@ fn layout_window(root: *core::Node) {
             // are the views the inset has to move, or a DSL-authored screen
             // ignores the safe area that a keyed one honours.
             if ins.left != 0.0f64 || ins.top != 0.0f64 { offset_root_views(root, ins.left, ins.top); }
-            drain_split_jobs();
+            resettle_splits();
             drain_place_jobs();
         }
         option::Option[ak::View]::None => { }

@@ -2077,37 +2077,84 @@ fn apply_split(v: *u8, n: *core::Node, dirty: u64) {
         || dirty == paint::all_bits() {
         text_input::install_split(v, n);
     }
-    // The divider position is written AFTER the minimums are known, and after
-    // the panes exist: setting it on an empty split is a no-op AppKit does not
-    // report. `position` is in points from the leading edge, which is exactly
-    // `setPosition:ofDividerAtIndex:`.
-    if (dirty & (split::P_POSITION | split::P_COLLAPSED)) != (0 as u64) {
-            var want: f64 = { (*p).position };
-            // A collapsed pane is a position at the very edge — AppKit has no
-            // "collapse" verb, and a divider at 0 or at the far edge IS the
-            // collapse it draws.
-            if { (*p).collapsed_leading } { want = 0.0f64; }
-            else if { (*p).collapsed_trailing } { want = split_extent(s); }
-        if want > 0.0f64 || { (*p).collapsed_leading } {
-            // DEFERRED to after the layout pass, and it has to be exactly
-            // there. `apply` is too early — the panes are not inserted and the
-            // frame is 0 — and AppKit's own `splitViewDidResizeSubviews:` is
-            // too early as well: it fires DURING layout, and facet's frame walk
-            // then resizes the pane hosts itself and overwrites whatever
-            // NSSplitView decided. The divider position only survives if it is
-            // written LAST, which is what the drain at the end of
-            // `layout_window` is.
-            //
-            // (Tried and reverted: recording the request on the view and
-            // letting the notification settle it. The delegate fires, the
-            // position lands, and the frame walk immediately undoes it.)
-            scheduler::defer_split(v, want);
-        }
+    // The divider is REGISTERED, and settled after every layout walk against
+    // the props' current position — not queued once with a captured value.
+    // Both halves matter, and both were measured:
+    //
+    //   a captured position goes stale. A user drag updates the props; a job
+    //     queued at mount still holds the constructor's number and re-asserts
+    //     it over the drag on the next walk.
+    //   a one-shot queue misses walks it was not queued for. A window resize
+    //     runs the walk with no apply before it, so nothing re-asserts.
+    //
+    // `settle_split` is where the number actually lands, and it writes flex
+    // FIRST — the panes are ordinary facet children, so the frame walk sizes
+    // them from flex, and a divider flex knew nothing about was erased on
+    // every pass.
+    if (dirty & (split::P_POSITION | split::P_COLLAPSED)) != (0 as u64)
+       || dirty == paint::all_bits() {
+        scheduler::register_split(n);
+        settle_split(n);
     }
     return;
 }
 
-// The length of the axis the divider slides along.
+// Settle one split against its CURRENT props position.
+//
+// Flex FIRST, then AppKit. The panes are ordinary facet children, so the frame
+// walk sizes them from flex — which knew nothing about a divider, so the walk
+// and the split view were two authorities over one number and the walk always
+// spoke last. Writing the position in as the leading pane's flex size makes the
+// walk REPRODUCE the divider instead of erasing it, which is what makes a user
+// drag survive the next layout.
+fn settle_split(n: *core::Node) {
+    if n == (0 as *core::Node) { return; }
+    let v: *u8 = core::view_of(n);
+    if v == (0 as *u8) { return; }
+    let p: *split::SplitProps = props_of(n, split::K_SPLIT) as *split::SplitProps;
+    if p == (0 as *split::SplitProps) { return; }
+    let s: ak::SplitView = ak::SplitView::from_raw(v);
+    let f: rt::Rect = s.as_view().frame();
+    let extent: f64 = if s.is_vertical() { { f.w } } else { { f.h } };
+    if extent <= 0.0f64 { return; }
+
+    var want: f64 = { (*p).position };
+    if { (*p).collapsed_leading } { want = 0.0f64; }
+    else if { (*p).collapsed_trailing } { want = extent; }
+    // A position past the end IS a collapse — `1e6` is how an application asks
+    // for one — so clamp before it becomes a pane size.
+    if want > extent { want = extent; }
+    if want < 0.0f64 { want = 0.0f64; }
+
+    match core::child_of(n, 0 as usize) {
+        option::Option[*core::Node]::Some(lead) => {
+            if s.is_vertical() { core::set_width(lead, want); }
+            else { core::set_height(lead, want); }
+            core::set_grow(lead, 0.0f64);
+            core::set_shrink(lead, 0.0f64);
+        }
+        option::Option[*core::Node]::None => { return; }
+    }
+    // The trailing pane takes the rest, which is what a split means.
+    match core::child_of(n, 1 as usize) {
+        option::Option[*core::Node]::Some(trail) => { core::set_grow(trail, 1.0f64); }
+        option::Option[*core::Node]::None => { }
+    }
+
+    let panes: u64 = { rt::msg_u64({ rt::msg_id(v, rt::sel(#str_ptr("subviews\0"))) },
+                                   rt::sel(#str_ptr("count\0"))) };
+    if panes >= (2 as u64) {
+        s.set_position(want, 0 as i64);
+        // The application's position has now REACHED the split. Until this
+        // moment every `splitViewDidResizeSubviews:` is AppKit dividing the
+        // space on its own — and recording that back into the props is what
+        // destroyed the request before it could ever be applied. After it,
+        // the notification means a user moved the divider.
+        synth::set_associated(v, text_input::split_settled_key(), 1 as *u8);
+    }
+    return;
+}
+
 fn split_extent(s: ak::SplitView) -> f64 {
     let f: rt::Rect = s.as_view().frame();
     if s.is_vertical() { return { f.w }; }
