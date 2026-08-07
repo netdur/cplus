@@ -435,6 +435,14 @@ fn attach_line_number_ruler(scroll: ak::ScrollView, tv: ak::TextView, thickness:
 fn drop_handler_key() -> *u8 ;
 fn drop_ctx_key() -> *u8 ;
 fn drop_text_key() -> *u8 ;
+// WHERE in the view the drop landed, stashed at the same moment the text is.
+// `draggingLocation` is in WINDOW space and a handler wants the node's own, so
+// the conversion happens here while the view is still the one that was hit.
+// Half-points survive a `usize` badly, so the point rides as two f64 in a boxed
+// pair rather than being quantised into an associated integer.
+fn drop_point_x_key() -> *u8 ;
+fn drop_point_y_key() -> *u8 ;
+fn drop_point_set_key() -> *u8 ;
 fn drag_target_key() -> *u8 ;
 fn drag_targeted_key() -> *u8 ;
 fn drag_over_ctx_key() -> *u8 ;
@@ -511,6 +519,18 @@ fn drop_prepare_imp(self_obj: *u8, cmd: *u8, sender: *u8) -> i8 ;
 fn set_drop_text(drop_view: *u8, s: str) ;
 
 fn drop_perform_imp(self_obj: *u8, cmd: *u8, sender: *u8) -> i8 ;
+
+// Stored as HALF-POINT integers, which is the backing grid every frame in this
+// package already lands on — a drop is a pointer position, not a measurement,
+// and half a point is finer than anyone can aim.
+fn drop_set_point(v: *u8, p: rt::Point) ;
+
+fn drop_has_point(v: *u8) -> bool ;
+
+fn drop_point_of(v: *u8) -> rt::Point ;
+
+#[link_name = "objc_msgSend"]
+extern fn msg_point_point_id(recv: *u8, sel: *u8, p: rt::Point, from: *u8) -> rt::Point;
 
 fn drop_view_class() -> *u8 ;
 

@@ -7,6 +7,7 @@ import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "flex_layout/flex_layout" as flex;
 import "./facet" as core;
+import "./vocabulary" as vocab;
 import "./application" as app;
 
 type Node = flex::Node;
@@ -85,6 +86,8 @@ struct SenderReaders {
     key_of: fn(*u8) -> text::Text,
     item_of: fn(*u8) -> *u8,
     dropped_text: fn(*u8) -> text::Text,
+    // WHERE the drop landed, in the receiving node's own coordinate space.
+    drop_position: fn(*u8) -> option::Option[vocab::Point],
     drag_targeted: fn(*u8) -> bool,
 }
 
@@ -94,6 +97,7 @@ fn sender_readers_none() -> SenderReaders {
         key_of: 0 as fn(*u8) -> text::Text,
         item_of: 0 as fn(*u8) -> *u8,
         dropped_text: 0 as fn(*u8) -> text::Text,
+        drop_position: 0 as fn(*u8) -> option::Option[vocab::Point],
         drag_targeted: 0 as fn(*u8) -> bool,
     };
 }
@@ -139,6 +143,23 @@ fn item_index_of(sender: *u8) -> option::Option[usize] {
 fn dropped_text(sender: *u8) -> text::Text {
     let f: fn(*u8) -> text::Text = SENDER_READERS.dropped_text;
     if f == (0 as fn(*u8) -> text::Text) { return text::new(); }
+    return f(sender);
+}
+
+// WHERE in this node the drop landed, in its own coordinate space. `None` when
+// nothing has been dropped on it — which is also what a caller gets mid-teardown,
+// and is the right answer both times.
+//
+// The drop handler is told WHICH node was dropped on and WHAT was carried, and
+// that is not enough to place the thing: dropping a card on another card's top
+// half means before it, the bottom half after it. Without the position an
+// application can only append, so a card dropped into a lane lands at the end
+// of it however carefully it was aimed.
+fn drop_position(sender: *u8) -> option::Option[vocab::Point] {
+    let f: fn(*u8) -> option::Option[vocab::Point] = SENDER_READERS.drop_position;
+    if f == (0 as fn(*u8) -> option::Option[vocab::Point]) {
+        return option::Option[vocab::Point]::None;
+    }
     return f(sender);
 }
 

@@ -157,6 +157,73 @@ fn find(key: str, within: *core::Node = 0 as *core::Node) -> option::Option[*cor
     return find_node(key);
 }
 
+// The same lookup, answering NOTHING as a null pointer instead of an Option.
+//
+// Every band verb already opens with `if n == (0 as *Node) { return; }`, so a
+// key that resolves to nothing is a no-op either way — the `Option` was making
+// the caller re-state a check the callee performs. That cost three lines and a
+// `match` PER WRITE:
+//
+//     match mount::find("save") {
+//         option::Option[*core::Node]::Some(n) => { core::focus(n); }
+//         option::Option[*core::Node]::None => { }
+//     }
+//
+// against `core::focus(mount::node("save"))`. An application migrating a live
+// tree wrote nine helpers to get that line back — focus_key, show_key,
+// set_fill, set_label and the rest — which would have been nine second ways to
+// say verbs facet already has.
+//
+// `find` stays: a caller that must DISTINGUISH absent from present still wants
+// the Option, and the typed `Button::find` family answers one for the same
+// reason. This is for the writes, where absent and present differ by nothing.
+fn node(key: str, within: *core::Node = 0 as *core::Node) -> *core::Node {
+    return match find(key, within: within) {
+        option::Option[*core::Node]::Some(n) => n,
+        option::Option[*core::Node]::None => 0 as *core::Node,
+    };
+}
+
+// Swap one child for another IN PLACE, which `remove_child` + `insert_child`
+// can do only if the caller works out the index — and that index is the whole
+// point. Appending instead puts the replacement at the END: a card edited in a
+// board dropped to the bottom of its lane on every repaint, and the application
+// had to scan the parent comparing node pointers to avoid it.
+//
+// Answers the node that was there, so a caller can keep it alive or drop it.
+fn replace_child(parent: *core::Node, at: usize, take child: core::Node)
+    -> option::Option[core::Node] {
+    if parent == (0 as *core::Node) { return option::Option[core::Node]::None; }
+    if at >= core::child_count_of(parent) { return option::Option[core::Node]::None; }
+    let old: option::Option[core::Node] = remove_child(parent, at);
+    let _ok: bool = insert_child(parent, child, at);
+    return old;
+}
+
+// The keyed form, which is what an application actually holds: it knows the
+// child's key, not its index.
+fn replace(key: str, take child: core::Node) -> option::Option[core::Node] {
+    let old: *core::Node = node(key);
+    if old == (0 as *core::Node) { return option::Option[core::Node]::None; }
+    var parent: *core::Node = 0 as *core::Node;
+    match parent_of(old) {
+        option::Option[*core::Node]::Some(p) => { parent = p; }
+        option::Option[*core::Node]::None => { return option::Option[core::Node]::None; }
+    }
+    var i: usize = 0 as usize;
+    let n: usize = core::child_count_of(parent);
+    while i < n {
+        match core::child_of(parent, i) {
+            option::Option[*core::Node]::Some(c) => {
+                if c == old { return replace_child(parent, i, child); }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return option::Option[core::Node]::None;
+}
+
 // The post-walk notification queue (M4): nodes whose on_attach/on_detach
 // handler must fire AFTER the walk completes, so no handler ever observes a
 // half-mounted tree. A LOCAL of each walk's caller, threaded by `ref` — the

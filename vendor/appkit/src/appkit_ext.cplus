@@ -845,6 +845,14 @@ fn attach_line_number_ruler(scroll: ak::ScrollView, tv: ak::TextView, thickness:
 fn drop_handler_key() -> *u8 { return { 28690 as *u8 }; }
 fn drop_ctx_key() -> *u8 { return { 28691 as *u8 }; }
 fn drop_text_key() -> *u8 { return { 28692 as *u8 }; }
+// WHERE in the view the drop landed, stashed at the same moment the text is.
+// `draggingLocation` is in WINDOW space and a handler wants the node's own, so
+// the conversion happens here while the view is still the one that was hit.
+// Half-points survive a `usize` badly, so the point rides as two f64 in a boxed
+// pair rather than being quantised into an associated integer.
+fn drop_point_x_key() -> *u8 { return { 28693 as *u8 }; }
+fn drop_point_y_key() -> *u8 { return { 28694 as *u8 }; }
+fn drop_point_set_key() -> *u8 { return { 28695 as *u8 }; }
 fn drag_target_key() -> *u8 { return { 28702 as *u8 }; }
 fn drag_targeted_key() -> *u8 { return { 28703 as *u8 }; }
 fn drag_over_ctx_key() -> *u8 { return { 28704 as *u8 }; }
@@ -1010,6 +1018,12 @@ fn drop_perform_imp(self_obj: *u8, cmd: *u8, sender: *u8) -> i8 {
     let pb: *u8 = rt::msg_id(sender, rt::sel(#str_ptr("draggingPasteboard\0")));
     let ns: *u8 = rt::msg_id_id(pb, rt::sel(#str_ptr("stringForType:\0")), bridge::nsstring("public.utf8-plain-text"));
     synth::retain_associated(self_obj, drop_text_key(), ns);   // keep for drop_text_of (nil is fine)
+    // The drop's POSITION, converted out of window space into this view's.
+    // `nil` as the from-view is AppKit's way of saying "from the window".
+    let win_pt: rt::Point = rt::msg_point(sender, rt::sel(#str_ptr("draggingLocation\0")));
+    let local: rt::Point = { msg_point_point_id(self_obj,
+        rt::sel(#str_ptr("convertPoint:fromView:\0")), win_pt, 0 as *u8) };
+    drop_set_point(self_obj, local);
     let f: fn(*u8, *u8) = { synth::get_associated(self_obj, drop_handler_key()) as fn(*u8, *u8) };
     let ctx: *u8 = synth::get_associated(self_obj, drop_ctx_key());
     if { f as *u8 } != { 0 as *u8 } { f(self_obj, ctx); }
@@ -1018,6 +1032,30 @@ fn drop_perform_imp(self_obj: *u8, cmd: *u8, sender: *u8) -> i8 {
     drop_set_targeted(self_obj, false);
     return 1 as i8;   // YES — accepted
 }
+
+// Stored as HALF-POINT integers, which is the backing grid every frame in this
+// package already lands on — a drop is a pointer position, not a measurement,
+// and half a point is finer than anyone can aim.
+fn drop_set_point(v: *u8, p: rt::Point) {
+    synth::set_associated(v, drop_point_x_key(), { ((p.x * 2.0f64) as i64) as *u8 });
+    synth::set_associated(v, drop_point_y_key(), { ((p.y * 2.0f64) as i64) as *u8 });
+    synth::set_associated(v, drop_point_set_key(), 1 as *u8);
+}
+
+fn drop_has_point(v: *u8) -> bool {
+    if v == { 0 as *u8 } { return false; }
+    return { synth::get_associated(v, drop_point_set_key()) } != { 0 as *u8 };
+}
+
+fn drop_point_of(v: *u8) -> rt::Point {
+    if v == { 0 as *u8 } { return rt::Point { x: 0.0f64, y: 0.0f64 }; }
+    let xi: i64 = { #addr(synth::get_associated(v, drop_point_x_key())) } as i64;
+    let yi: i64 = { #addr(synth::get_associated(v, drop_point_y_key())) } as i64;
+    return rt::Point { x: (xi as f64) / 2.0f64, y: (yi as f64) / 2.0f64 };
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_point_point_id(recv: *u8, sel: *u8, p: rt::Point, from: *u8) -> rt::Point;
 
 fn drop_view_class() -> *u8 {
     let name: *u8 = #str_ptr("FacetDropView\0");

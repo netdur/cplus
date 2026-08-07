@@ -1,0 +1,820 @@
+C+ Language Surface — Survey Report
+0. Where the surface is defined
+Component	Path	Size
+Lexer	/Users/adel/Workspace/C+/cplus-core/src/lexer.rs	2,363
+Parser	/Users/adel/Workspace/C+/cplus-core/src/parser.rs	7,324
+AST	/Users/adel/Workspace/C+/cplus-core/src/ast.rs	2,003
+Desugar/lower	/Users/adel/Workspace/C+/cplus-core/src/lower.rs	3,081
+Sema (type rules, all blessed behavior)	/Users/adel/Workspace/C+/cplus-core/src/sema.rs	31,653
+Attributes	/Users/adel/Workspace/C+/cplus-core/src/attrs.rs	1,477
+Borrowck	/Users/adel/Workspace/C+/cplus-core/src/borrowck.rs	11,215
+Normative docs: /Users/adel/Workspace/C+/docs/SPEC.md (941 lines, v0.0.24, full EBNF), /Users/adel/Workspace/C+/docs/SKILL.md (956 lines, LLM-facing), /Users/adel/Workspace/C+/docs/MEMORY-MODEL.md, /Users/adel/Workspace/C+/docs/design/*.md (34 phase notes), /Users/adel/Workspace/C+/plans/*.md (~90 files).
+
+1. Grammar size (measured)
+Thing	Count	Evidence
+TokenKind variants	108	cplus-core/src/lexer.rs:96-264
+Keyword table entries (incl. _)	47	cplus-core/src/lexer.rs:1038-1091
+— of which reserved-and-rejected	9 (mut unsafe pub trait move borrow try union use mod)	parser hints at parser.rs:409,468,477,481,485,489,982,992,1714,4171,4177
+Contextual keywords (lex as idents)	3 (var, ref, take)	parser.rs:1685-1706, parser.rs:2404-2415
+ItemKind	9	ast.rs:97-142
+StmtKind	14	ast.rs:614-735
+ExprKind	35	ast.rs:811-1108
+TypeKind	8	ast.rs:516-599
+PatternKind	4	ast.rs:1212-1267
+BinOp / UnaryOp / AssignOp	21 / 5 / 11	ast.rs:1284, :1309, :1318
+Aux node enums	ForLoop 2, Receiver 3, BuilderEntry 4, BuilderModifierKind 2, AttrArg 4, AttrValue 3, AsmDir 3, AsmReg 2, InterpStrPart 2	ast.rs:736,358,1116,1161,71,86,1183,1190,1278
+Known attributes	16	attrs.rs:90,106,119,130,145,157,166,178,190,200,213,223,232,240,257,273
+Lang items	7	attrs.rs:282-290
+Builtin SIMD/mask type names	35	sema.rs:19160-19197 (SIMD_TYPES)
+Distinct diagnostic codes in compiler	173	grep -rhoE '"E0…"|"W0…"' cplus-core/src cpc/src | sort -u
+docs/errors.toml entries	206	
+Total ~95 distinct AST node kinds; 47 keywords. For reference, the parser's recursive-descent depth is capped at MAX_PARSE_DEPTH = 256 (parser.rs:60) — deep nesting is a clean diagnostic, not a stack overflow.
+
+2. Full construct inventory
+Keywords (lexer.rs:1038-1091)
+Active: fn let const static if else while for in return true false as extern struct enum match impl export import this This defer break continue loop restrict opaque guard assert interface type async await gen yield + _.
+Reserved-and-rejected (lex but the parser emits a targeted hint): mut unsafe pub trait move borrow try union use mod.
+Contextual: var ref take — lexed as Ident, recognized only in binding/param/receiver position (parser.rs:1685-1706); using them as ordinary binding names is rejected (parser.rs:2408-2415).
+
+Items (9) — ast.rs:97-142
+Function, Struct, Enum, Impl, Interface, TypeAlias, Const, Static, ModuleAsm (#asm("..."); at module scope, parser.rs:1231).
+Modifiers before fn: export, extern, async, gen.
+import "path" as ALIAS; is a separate pre-item form; all imports must precede all items (parser.rs:489-491).
+
+Statements (14) — ast.rs:614-735
+Let, LetDestructure, Return, While, For (two shapes: ForLoop::CStyle and ForLoop::Range), Expr, Defer, IfLet, Break, Continue, Assert, Loop, WhileLet, GuardLet.
+
+Expressions (35) — ast.rs:811-1108
+IntLit FloatLit BoolLit StrLit CStrLit InterpStr Ident Block Await Yield If Call FnRef Binary Unary Range Assign Cast Path StructLit InferredStructLit GenericStructLit GenericEnumCall Field ArrayLit ArrayFill Index TupleLit Match IncludeBytes IncludeStr EnvVar Intrinsic Asm BuilderBlock.
+
+Types (8) — ast.rs:516-599
+Path, Generic (T[A,B]), RawPtr (*T), Slice (T[]), Array ([T; N]), Tuple (arity ≥ 2), FnPtr (fn(A, take B) -> R), Borrowed (vestigial — the borrow keyword is rejected, Param::borrow_ is "always false since v0.0.24", ast.rs:495-499).
+
+Patterns (4) — ast.rs:1212-1267
+Wildcard, Binding, Lit, Variant. No nested variant patterns, no struct patterns, no guards, no or-patterns, no ranges.
+
+Attributes (16, all #[...]) — attrs.rs
+test(fn) · repr(C)(struct) · link_name="s"(fn) · runtime_abi(fn) · keeps(this|nothing)(fn/method) · no_alloc · bounded_recursion · no_block · realtime · max_stack(N) · inline[(always|never)] · naked · unroll(N)(loop stmt) · vectorize_width(N)(loop stmt) · lang("…")(struct/enum) · watch(struct). Unknown attribute = E0354 with did-you-mean (attrs.rs:723,873).
+
+Intrinsics #name(...) — dispatch at sema.rs:8579-8640, fallback ffi_builtin_ty at sema.rs:8429, is_ffi_builtin_name at sema.rs:20521-20539
+#selector #msg_send #compile_shader #addr_of #addr #include_bytes #include_str #env #size_of #align_of #zero #cpu_relax + FFI/byteswap tier #println #str_ptr #str_len #str_from_raw_parts #slice_ptr #slice_len #slice_from_raw_parts #bswap16 #bswap32 #bswap64 #htons #htonl #ntohs #ntohl + #asm (parser-routed to ExprKind::Asm, parser.rs:656) + the __cplus_* runtime/async/atomic family reachable only via # (sema.rs:11332-12050, atomic.rs:1-25: __cplus_atomic_<op>_<ty>_<ord>, 9 ops × 8 types × 5 orderings). Unknown intrinsic = E0905.
+
+3. Exceptions and special cases (the interesting part)
+3.1 "Explicit return required" — three carve-outs
+sema.rs:7609-7692:
+
+A tail whose every path diverges (all-return match/if) skips E0333 and skips type-checking against the declared return (sema.rs:7613-7625).
+#[naked] bodies skip both E0333 and the return-type check (sema.rs:7634-7638, :7665).
+A unit function whose tail is a unit-typed if/match/block skips E0333 — but a trailing call still errors, deliberately ("foo() and foo(); would otherwise be two spellings of one statement"), sema.rs:7641-7666.
+Separately, a value-returning body with no tail and no return is E0306, whose divergence predicate is a different function from lower's, specifically to know that a break-less loop never falls through (sema.rs:20544-20558).
+
+3.2 Blessed-interface / bound admission
+satisfies_bound at sema.rs:3698-3757:
+
+Copy → structural is_copy; Send/Sync → structural is_send/is_sync.
+Hash, Eq, ToText admit primitives only because a blessed dispatch arm exists; Ord and Clone are deliberately excluded — "admitting them here would create the mirror-image mismatch: a bound that type-checks and a body that cannot call the method" (sema.rs:3726-3733).
+Otherwise the bound is satisfied only by a (interface, struct) pair in interface_impls. Enums can never satisfy an interface bound — there's a debug_assert documenting that no (interface, enum) pair can exist (sema.rs:3739-3752), because validate_interface_impls resolves the target through struct_by_name and rejects anything else with E0325 (sema.rs:5068-5080).
+3.3 Three different blessed receiver sets that don't agree
+sema.rs:13329-13389:
+
+to_text: all ints + f16 f32 f64 + bool + str (:13329).
+hash: ints + str only — no bool, no floats ("Bool and floats aren't typical hashmap keys; add if motivated", :13352-13355).
+eq: hash set plus bool (:13373-13375). Text deliberately excluded from to_text (:13324-13328).
+3.4 Blessed method dispatch (a fixed cascade before nominal lookup)
+sema.rs:12695-12935, in order: SIMD/Mask methods → to_text() → to_bits() (floats only) → next() on Iterator[T] → hash() → eq(x) → is_null()/is_not_null() on *T and fn(...) (:12831) → write_zeroed() on *T (:12844) → count()/is_empty() on slice and array (:12867) → the impl str table (:12885).
+
+3.5 The blessed impl str block
+sema.rs:4299-4400. Exactly one program-wide (E0385, :4314); everything else is E0386: no impl str: Interface (:4303), no method generics (:4328), no gen/async (:4340), receiver must be plain this — ref this/take this rejected (:4354), no associated fns (:4366), cannot redeclare to_text/hash/eq/drop (:4379). A str method call in a build without stdlib/str is E0324 with a note naming the import (sema.rs:12907-12930), and len/length/size get a "spells it count()" note.
+
+3.6 Marker-impl exceptions
+impl X: Copy is rejected — Copy is structural only (E0510, sema.rs:5000-5010).
+impl T: Send {} / impl T: Sync {} must have an empty body (E0915, sema.rs:5017-5028); an empty impl of any other interface is E0916 (sema.rs:5043-5054). Conditional form impl Arc[T: Send + Sync]: Send {} records per-param bounds (sema.rs:5029-5041).
+Marker blocking: a bare *T stays Send/Sync, but a nominal type that transitively hides a raw pointer is !Send/!Sync (sema.rs:3316-3325, marker_blocked :3336-3390). The #[lang("rc")] and #[lang("mutex_guard")] types block structurally (sema.rs:3392-3400). Keying is on the resolved nominal identity, not the leaf name.
+3.7 Literal typing
+check_int_lit, sema.rs:10766-10790: unsuffixed integer takes the expected type only if that type is_int(), else falls to Ty::I32. Range check is against the resolved type, with a negated-literal carve-out so -128 is a valid i8 (sema.rs:24985). Character literals lex to Int with a u8 suffix — 'A' is 65u8 (SPEC.md:99-102). f32-suffixed floats are parsed at f32 precision then widened (SPEC.md:96-97). Float over/underflow to ±inf or 0 is a lex error FloatOutOfRange (lexer.rs:279-283).
+
+3.8 Coercions (there are five)
+Text → str, at any site with an expected Ty::Str — argument, binding, return, receiver (sema.rs:8237-8250). This is a blanket rule inside check_expr, not per-site.
+Text → str in ==/!= when LHS is Text and RHS is str (sema.rs:15838-15855).
+string literal → Text — only a literal, and each site decides whether it applies; ref/take parameters are excluded (sema.rs:16110-16126, is_str_lit_to_lang_string). This condition was previously copy-pasted at five sites and one of them (enum payload) rejected valid code — bug-12.
+integer literal → expected int type (§3.7); index expressions force Some(Ty::Usize) (sema.rs:9897).
+named fn → fn pointer, type-directed at the expected slot (sema.rs:17803-17870); the coerced value takes the expected slot's parameter markers.
+3.9 Operator special cases
+check_binary, sema.rs:15784-15960:
+
+p + n / p - n on a raw pointer is pointer arithmetic; * and / on pointers stay rejected (:15791-15796).
+% on floats is E0316 (:15815-15822).
+==/!= on struct types is a hard E0302 ("write your own equality function") — the only exception is Text == str (:15846-15868). impl Eq does not wire up ==.
+Ordered comparison on a generic type parameter is E0302 with an explicit "C+ has no operator overloading" message pointing at a.cmp(b) (:15877-15895) — added because monomorphization used to emit icmp slt %Point.
+Comparisons are non-chainable — a dedicated ParseErrorKind::NonChainableComparison (parser.rs:20,2896).
+Bitwise binds tighter than comparison (parser.rs:2896-2975; SPEC.md:267-269).
+3.10 for-loop special cases
+check_for, sema.rs:8068-8117: a literal range for x in a..b forces both endpoints and the loop variable to i32 unconditionally (:8079-8090). Any other iterable must unwrap to Iterator[T], else E0312 — so arrays and slices are not iterable with for..in (:8103-8117, documented as a trap at SKILL.md:174-178).
+
+3.11 match special cases
+sema.rs:9918-9955: match works on enums only; a non-enum scrutinee is E0341 unless every arm is a literal, in which case lower desugars the whole match into a temp binding + if/else chain before sema (lower.rs:683-830) — sema has an unreachable! for a literal pattern reaching it (sema.rs:10229-10231). Literal patterns in payload position are rejected (E0341, sema.rs:10352-10360, "reports/bug-25"), as are nested variant patterns (sema.rs:10344-10346). A match that binds no name does not consume the scrutinee; Some(_v) does bind (leading _ is privacy, not wildcard) — SKILL.md:415-428.
+
+3.12 Pattern-let restrictions
+lower.rs:7-17, 962-1067: E0347 irrefutable if let; E0348 guard-else must diverge; E0349/E0350 complement exhaustiveness/overlap (only when else |Pat| was written); E0351 guard success pattern must bind ≥ 1 value; E0352 multi-binding guard patterns are deferred, i.e. guard let Pair(a, b) = … is rejected. A guard var complement binding stays immutable (SPEC.md:533-537).
+
+3.13 drop is a magic method name
+sema.rs:4110-4128: must be exactly fn drop(ref this) — no params, no return (E0338); declaring it sets is_drop which forces non-Copy. An extension (impl in a file other than the type's) may not declare drop (E0389, sema.rs:4098-4108).
+
+3.14 Extensions
+plans/ext-extensions.md:40-52: any file may impl a foreign type. First declaration of a name wins program-wide (E0326 for a second, anywhere); cannot override; cannot read _ fields (E0403); cannot extend a generic type (E0387); visible only through direct imports (not transitive). Single-file mode / LSP / cpc graph pass None and the gate is inert — so the LSP sees a different method set than the compiler.
+
+3.15 Other one-offs
+Associated-fn paths must be exactly two segments (E0312, sema.rs:14600-14607).
+fn main is the one function that keeps an unmangled symbol (resolver.rs:8, :2104-2106).
+#println takes exactly one argument of type i32 or str (sema.rs:8433-8456) — not a formatted print despite SPEC's wording.
+.to_text() is banned in a #[no_alloc] body (E0901, sema.rs:12713-12722).
+Interpolation and .to_text() both require the #[lang("string")] struct to be imported, else E0613 (sema.rs:13307-13320, :12736-12750).
+Every ${…} segment must be a blessed-ToText primitive, Text itself, or a user impl X: ToText, else E0612 (sema.rs:13276-13297).
+#[no_alloc]/#[no_block] are enforced by hardcoded name lists: ALLOC_BLOCKLIST (sema.rs:19842), LEAF_WHITELIST (:19858), BLOCK_BLOCKLIST (:19988), BLOCK_SAFE_LEAF (:20067).
+const initializers must be literals; static additionally accepts array/struct literals (lower.rs:1541, :1608). Const uses are substituted at each site — no const global is emitted.
+Array length must be an int literal or a non-negative int const — no arithmetic (E0X36).
+import "…" as _; is a discard alias exempt from the duplicate-alias rule (SPEC.md:296-301).
+Unary &/&mut parse but are rejected by sema with E0312 "references are not yet supported (Phase 5/6)" (sema.rs:14601).
+gen fn / async fn silently rewrite the declared return type to Iterator[T] / Future[T] (sema.rs:4744-4748, :5908-5913) — the signature you read is not the signature you get.
+4. Sugar that exists despite "sugarless"
+Sugar	Evidence
+Named arguments f(b: 2) + default parameter values x: T = expr	ast.rs:500-505 (Param::default), ast.rs:856-864 (Call::arg_labels), lower.rs:74-76 (collect_call_params), design note docs/design/named-params-and-defaults.md. The note itself says it "deliberately relaxes 'one obvious way'": add(1,2), add(n1:1,n2:2), add(n2:2,n1:1) are three spellings of one call.
+Bound method references — row(on_click: this.open_project) synthesizes a bridge fn and auto-fills the adjacent *u8 ctx parameter	sema.rs:15100-15290 (E0822/E0823/E0824), authoring-side warnings W0824/W0825 at sema.rs:2217-2320. This is closure-shaped magic with a positional-convention contract.
+Named fn → fn-pointer coercion (type-directed)	sema.rs:17803-17870
+Value turbofish f::[T] as a fn-pointer value	ast.rs:878-881 (ExprKind::FnRef), changelog v0.0.27
+String interpolation "${x}" → allocating Text	lexer.rs:109-117, sema.rs:13268-13320, SPEC.md:620-631
+c"..." literals	lexer.rs:104-108
+Inferred struct literals let p: Point = { x:1, y:2 }; / return { x:1 };	ast.rs:924 (InferredStructLit), parser.rs:3671
+Tuples → synthesized struct with _0,_1; t.0 → t._0	ast.rs:594-598, sema.rs:16476-16479, SPEC.md:846-848
+if let / while let / guard let (+ if var/while var/guard var) → match	lower.rs:1-26; the var forms additionally synthesize fresh temps + rebind statements (lower.rs:2086 mutable_rebinds)
+guard … else |Pat| complement binding	SPEC.md:213-214, lower.rs:1067-1251
+Contextual builder blocks @ctx { … } — leading-dot modifiers, if/for entries, same-context containers, containers with args	ast.rs:1087-1108, parser.rs:3302-3608, lower.rs:1765-2038, SPEC.md:749-873. Includes contextual name resolution (locals → same-file top-level → ctx::name).
+Five implicit coercions	§3.8 above
+Blessed methods (count, is_empty, is_null, is_not_null, write_zeroed, to_text, to_bits, hash, eq, next)	sema.rs:12695-12935
+Structural auto-derivation of Copy, Send, Sync; auto field-drop glue in reverse declaration order interleaved with defer	sema.rs:3298-3400, SKILL.md:400-431
+defer	ast.rs:661, parser.rs:2489
+Array fill literal [e; N]	ast.rs:984
+Compound assignment (11 ops), wrapping ops +% -% *%, ranges .. ..=, C-style for	ast.rs:1318, :1290, :743, :737
+Doctests — ``` fences inside /// become #[test] fns by pre-parser source rewriting	cplus-core/src/doctest.rs:1-33
+SIMD — 35 builtin type names with blessed methods and associated constructors (f32x4::splat, .select, .fma, …)	sema.rs:19160-19197, :13401-13600, :14294-14700
+Genuinely absent: closures/capture, ?/try, exceptions, operator overloading, macros, overloading, null, implicit numeric conversions, format specifiers in interpolation, labelled break, struct-literal field shorthand.
+
+5. Parser quirks and ambiguities
+No TODO/FIXME/HACK/XXX/todo!()/unimplemented!() anywhere in cplus-core/src (0 hits, case-insensitive). The quirks are documented in prose instead.
+
+Two context bits, one reset point. ExprCtx { allow_struct_lit, line_sensitive } (parser.rs:69-93). in_delimited resets both (parser.rs:161-180). The comment records a real regression (bug-14): when only line_sensitive was reset, if check(Foo { x: 1 }) and if (Foo { x: 1 }).x == 1 both failed to parse — the latter being the flag's own documented escape hatch.
+Whitespace is significant in two places. Token::nl_before (lexer.rs:56-65) drives (a) builder-block modifier lines and (b) the statement-boundary rule.
+Statement-boundary rule with backtracking (parse_stmt_expr, parser.rs:2183-2218, "bug-13"): after a leading if/match/{, if the next token has nl_before (or is ;/}) the statement ends; otherwise the parser resets self.pos and re-parses from the top as one expression. Backtracking is asserted safe because "the parser carries no state besides position and these two context flags."
+Line-leading ./(/[ terminates a postfix chain inside builder blocks (parser.rs:3168-3185).
+Container-with-args is )-then-{ on the same line only (at_container_with_args, parser.rs:3524-3556); name(args) with the block on the next line is a parse error rather than two silent items (previously silent — changelog v0.0.27).
+Struct-literal suppression in if/while/for..in/match heads (parser.rs:139-146, :4186); the escape is parentheses.
+Overloaded delimiters: [ = generic params, generic args, array type, array literal, index, turbofish ::[; * = multiply, pointer type, deref; & = bitand (binary) vs parse-then-reject (unary); ../... lexed greedily (lexer.rs:257-260).
+_ is both the wildcard token and a legal import alias.
+Non-chainable comparison is a hard parse error with its own error kind (parser.rs:20-24, 35-40).
+Reserved-token rejection is a design feature: try is kept reserved specifically so it "never mis-parses as e.g. a try { ... } struct literal" (parser.rs:4174-4177).
+bugs/ directory — 4 files, mem/ and security/ are empty:
+
+bugs/assignment-through-a-raw-pointer-does-not-drop-the-old-value.md — OPEN: (*p).field = v leaks the old Drop value; h.field = v doesn't. Two spellings of one assignment disagree.
+bugs/str-field-outliving-its-text-is-not-caught.md — PARTLY OPEN: str view escape via erasure to *u8.
+bugs/terminal-key-observer-outlives-its-context.md, bugs/cpc-test-asan-does-not-instrument.md (closed).
+6. SPEC-vs-compiler drift found
+SPEC claim	Reality
+SPEC.md:706 lists #[deprecated("...")] and #[link(...)] as attributes	Neither exists in attrs.rs KNOWN_ATTRS → E0354. [link] is a Cplus.toml table.
+SPEC.md:694-707 attribute table	Omits #[link_name], #[runtime_abi], #[keeps], #[lang], #[watch] (5 of the 16 real ones)
+SPEC.md:649 lists #print(...)	Does not exist; only #println, and it takes exactly 1 arg of i32|str (sema.rs:8433-8456)
+SPEC.md:640-650 intrinsic table	Omits #zero, #cpu_relax, #selector, #compile_shader, #str_len, #bswap16/32/64, #htons/#htonl/#ntohs/#ntohl, and the whole __cplus_* atomic/runtime family
+SPEC.md:594-595: empty-marker-impl misuse is E0860/E0861	Compiler emits E0915/E0916 (sema.rs:5023,5047). E0860/E0861 are manifest/link driver codes (cpc/src/main.rs:1491,1544)
+SPEC.md:586 marker table lists Ord, Clone as bounds	Registered as interfaces (sema.rs:4838-4841) but not admitted for primitives as bounds (sema.rs:3726-3735), so fn max[T: Ord] cannot take i32
+SPEC.md:365 "arr.count() … compiler-provided"	True, but arrays are still not for..in-iterable (E0312) — the two facts sit oddly together
+plans/CODE_INSPECTION_REPORT.md:443-447	Independently flags: a fn returning an owner + a str view into it in one tuple compiles; cpc check FILE can't see imports; most diagnostics lack structured fix-its
+7. Short observations for the review
+The exception surface is concentrated in sema.rs, not the grammar. The grammar is genuinely small (~95 node kinds, 47 keywords, one page of EBNF). The special cases are semantic: ~10 blessed method arms, 3 non-identical blessed receiver sets, 5 coercions, 3 carve-outs on the return rule, and 2 marker-inference systems.
+Three blessed receiver sets that disagree (to_text ⊃ eq ⊃ hash) is the clearest "rule you must memorize per-method" hazard for an LLM writer.
+Ord/Clone bounds are unusable on primitives while Hash/Eq/ToText are — an asymmetry the code comment explicitly acknowledges and chose.
+The Text→str coercion is a blanket rule inside check_expr, whereas the mirror "lit"→Text coercion is opt-in per site. That asymmetry is the source of at least one recorded bug (bug-12).
+Named args + defaults + bound-method references are the largest single block of sugar and the one furthest from "sugarless"; the design note concedes the tradeoff explicitly.
+Extension visibility differs between the compiler and the LSP/graph (plans/ext-extensions.md:47-49) — a tool/compiler divergence in a project whose stated tooling story is "query the graph, not grep."
+I have a complete picture. Here is the report.
+
+C+ / cpc — Feedback Loop Survey
+Version surveyed: cpc 0.0.26 (workspace at /Users/adel/Workspace/C+, ~151k lines Rust across 6 crates). All live outputs below were produced with /Users/adel/Workspace/C+/target/release/cpc.
+
+1. Diagnostics
+Catalog size and single source of truth
+180 diagnostic codes: 174 severity = "error", 6 severity = "warning". Verified live: cpc explain --list prints 180 C+ diagnostics.
+Single source of truth: /Users/adel/Workspace/C+/docs/errors.toml (3326 lines). Header at docs/errors.toml:1-9 states it is "THE SINGLE SOURCE OF TRUTH".
+Warnings are W0001–W0004, W0824, W0825. Code families run E0001…E1900 (lexical → parser → types → match → borrow → modules → generics → FFI → compile-time builtins → realtime → attributes → const/static → targets/packages).
+Per-code metadata quality (unusually strong)
+Every one of the 180 entries carries: id, title, category, severity, repro, cause, fix, emit_site. Counts from docs/errors.toml:
+
+Field	Coverage
+example (runnable repro snippet)	180 / 180
+emit_site (file:line in the compiler)	180 / 180
+test (name of the test that pins it)	161 / 180
+verified = true	158 / 180
+repro = "checked" (reproduced by cpc check)	139; "scenario" 34; "source" 7
+No drift between catalog and compiler
+Cross-checking "E####" string literals in cplus-core/src + cpc/src against docs/errors.toml:
+
+Codes in the catalog not present in compiler source: zero.
+Codes in compiler source not in the catalog: only E0000 (a test fixture in cplus-core/src/diagnostics.rs:508) and E0511.
+Test-suite assertion coverage: 184 distinct E####/W#### codes are asserted somewhere in the Rust test suite (93 distinct in cpc/tests/e2e.rs alone), against a 180-code catalog.
+
+Diagnostic data model
+/Users/adel/Workspace/C+/cplus-core/src/diagnostics.rs:67-79:
+
+
+pub struct Diagnostic {
+    severity: Severity, code: DiagCode, message: String,
+    primary: SourceSpan, labels: Vec<Label>,
+    notes: Vec<String>, suggestions: Vec<Suggestion>,
+}
+Spans carry {line, col, byte} at both ends (diagnostics.rs:30-42). Suggestion carries description, span, replacement, and an Applicability enum with four levels (MachineApplicable, MaybeIncorrect, HasPlaceholders, Unspecified) — diagnostics.rs:50-65.
+
+What a rendered error actually looks like (live capture)
+Human mode (render_with at cplus-core/src/diagnostics.rs:145-185):
+
+
+t1.cplus:2:18: error[E0302]: type mismatch: expected `i32`, found `str`
+  |     let x: i32 = "hello";
+With a fix-it:
+
+
+t3.cplus:1:3: error[E0354]: unknown attribute `#[tset]`
+  | #[tset]
+  = help: did you mean `#[test]`? (replace with "test")
+With a secondary label (borrow/move conflicts):
+
+
+t5.cplus:7:21: error[E0335]: use of moved value `p`
+  |     let b = take_it(p);
+  t5.cplus:6:21: note: value moved here
+  |     let a = take_it(p);
+Gap: the human renderer is one quoted source line with a | gutter — no carets, no column underline, no ANSI color, no before/after fix preview. docs/design/diagnostics.md:185-201 specifies a full rustc-style target rendering (carets, --> arrow, + insertion preview) that is not implemented; docs/COMPILER.md:578 describes human mode as "colored, multi-line with carets and labels", which is doc drift — the actual render_snippet is cplus-core/src/diagnostics.rs:188-192 and emits format!("  | {line}").
+
+Machine-readable output — yes, --diagnostics=json
+Parsed at cpc/src/main.rs:356-360. Three modes: human (default) | short | json. JSON is NDJSON, one Diagnostic per line, on stderr (cpc/src/main.rs:275-298). Live:
+
+
+{"severity":"error","code":"E0335","message":"use of moved value `p`","primary":{"file":"t5.cplus","start":{"line":7,"col":21,"byte":189},"end":{"line":7,"col":22,"byte":190}},"labels":[{"span":{...},"message":"value moved here"}]}
+Empty labels/notes/suggestions are omitted (skip_serializing_if, diagnostics.rs:73-78). Format stability is a written commitment: docs/design/diagnostics.md:144-150 — "The JSON shape is stable from Phase 1… The CLI flag for JSON output is committed."
+
+Gaps in the JSON: no diagnostics_version field (flagged as an open question at docs/design/diagnostics.md:181), no end-of-stream summary object, no counts. A consumer must count lines itself.
+
+Fix-its: present but thin
+Only 9 Suggestion { … } construction sites in the entire compiler:
+
+cplus-core/src/diagnostics.rs ×3 (missing ; insertion at diagnostics.rs:354-367)
+cplus-core/src/resolver.rs ×3 (did-you-mean on module names, resolver.rs:899)
+cplus-core/src/attrs.rs ×1 (did-you-mean on attributes, attrs.rs:877)
+cplus-core/src/borrowck.rs ×1, cplus-core/src/manifest.rs ×1
+Applicability distribution across the whole compiler: 2 MachineApplicable, 6 MaybeIncorrect. Shared Levenshtein helper at cplus-core/src/diagnostics.rs:714-728. Only 4 notes: vec![…] sites in cplus-core.
+
+This is the weakest link in the diagnostics story: 180 codes, ~9 fix-its. Message prose is excellent (E0510's message is a full paragraph naming both remediations), but almost nothing is machine-applicable.
+
+cpc explain — yes, and it's the standout feature
+Dispatched at cpc/src/main.rs:309; implemented cpc/src/main.rs:5154-5297. The catalog is include_str!-embedded into the binary (cpc/src/main.rs:5161), so it works offline and version-matched. Code normalization accepts E0502, e502, and 502 (normalize_code, main.rs:5176-5183). Live:
+
+
+$ cpc explain E0502
+E0502 — Bound not satisfied
+  Generics and bounds · error
+
+Cause
+  A concrete type argument does not satisfy a declared bound on its type parameter …
+
+Fix
+  `T: Ord` requires `impl Point: Ord`; provide the impl, or …
+
+Example
+  fn max[T: Ord](a: T, b: T) -> T { return a; }
+  …
+
+Verified against the compiler at cplus-core/src/sema.rs:1838
+More: https://cplus-lang.dev/docs/error-codes.md (append .md to any … page for the markdown an agent can read)
+cpc explain --list / bare cpc explain prints all 180 with titles and categories. The not-found path (main.rs:5287-5295) tells the agent to run --list and gives the URL.
+
+Distribution bug found: /opt/homebrew/bin/cpc → /opt/homebrew/Cellar/cplus/0.0.26/bin/cpc reports cpc 0.0.26 but does not have explain (cpc explain E0502 → cpc: multiple input files not yet supported). The repo-built 0.0.26 does. The shipped binary and the repo binary share a version number but not a feature set — an agent following SKILL.md's "run cpc explain <CODE>" instruction on a brew install gets a nonsense error.
+
+2. CLI surface
+Hand-rolled argv parser (no clap) at cpc/src/main.rs:300-700. Full usage string: cpc/src/main.rs:40-132. Subcommand enum dispatch at main.rs:307-312 (pre-parser) and main.rs:608-646 (in-parser).
+
+Subcommands
+Command	Location	Notes
+cpc skill	main.rs:308, impl 5106	prints the embedded LLM reference; --write [PATH] [--force]
+cpc explain [CODE]	main.rs:309, impl 5238	--list
+cpc init [NAME]	main.rs:310, impl 5333	scaffolds Cplus.toml, src/main.cplus, .gitignore, SKILL.md
+cpc pm …	main.rs:311, impl 5304	package manager, delegates to cplus-pm
+cpc build	main.rs:608	project build via Cplus.toml
+cpc check [FILE]	main.rs:620	project mode (no codegen) or single-file (codegen + discard)
+cpc test [FILE] [--json]	main.rs:616	
+cpc fmt	main.rs:612	--check, --emit, --stdin (main.rs:664-676)
+cpc doc FILE	main.rs:628	Markdown → target/doc/<base>.md
+cpc headers	main.rs:624	generate lib/include/ from src/
+cpc lsp [--log PATH]	main.rs:632	delegates to cpc-lsp binary
+cpc graph	main.rs:636	whole code graph as JSON
+cpc query <kind> [args]	main.rs:640	10 kinds, --depth N
+cpc mcp	main.rs:644	resident MCP server
+cpc query kinds (main.rs:3724-3891): def, members, symbols, refs, callers, callees, call-hierarchy [--depth N], context, type-at FILE:L:C, value-refs FILE:L:C.
+
+Flags
+Build: --release, --debug, --fp-contract=off|on|fast, -g/--debug-info, --asan, --ubsan, --tsan, --msan, --target NAME (host, ios-arm64, ios-arm64-simulator, android-arm64, esp32-xtensa, esp32c3-riscv32), --min-os VERSION, --timings, -o OUT.
+
+Introspection: --emit-ir, --tokens, --ast, --emit-ll, --emit-ll-opt, --emit-asm, --emit-obj, --emit-header, --emit-ll-project.
+
+Other: --diagnostics=human|short|json, --realtime-report[=json], -V, -h.
+
+Env vars (cpc/src/main.rs, cplus-core/src): CPC_CLANG, CPC_CLANG_EXTRA, CPC_AR, CPC_NDK_CLANG, CPC_ESP_CLANG, CPC_NO_PRUNE, CPC_TEST_IR, CPC_VERBOSE.
+
+Formatter — yes
+cplus-core/src/fmt.rs (920 lines, 17 unit tests). cpc fmt rewrites in place; --check is the CI gate; --emit to stdout; --stdin. Idempotency is explicitly tested (fmt.rs:716, :721, :811, :826, :839, :854, :884 each_sample_round_trips; cpc/tests/e2e.rs:4414 fmt_idempotent_in_place). cpc/tests/e2e.rs:4298 fmt_check_all_samples_clean walks all of docs/examples/ under --check.
+
+Linter — no
+There is no lint pass, no #[allow]/#[deny], no lint levels. grep -rn 'mod lint|Lint' over cplus-core/src + cpc/src yields exactly one function (sema.rs:6212 lint_generic_fn_bodies) and one comment. The 6 warnings are hardcoded emissions from sema (self.warn appears 5 times in 31,653 lines of sema.rs). Diagnostic suppression is explicitly listed as out of scope at docs/design/diagnostics.md:174.
+
+LSP — yes
+cpc-lsp/src/main.rs (1157 lines, 15 tests + cpc-lsp/tests/e2e.rs). Capabilities at cpc-lsp/src/main.rs:60-85: push diagnostics on didOpen/didSave, definition_provider, references_provider, hover_provider, document_symbol_provider, document_formatting_provider, code_action_provider. Quick-fixes are wired: handle_code_action (cpc-lsp/src/main.rs:314-375) lifts Diagnostic.suggestions into CodeActionKind::QUICKFIX WorkspaceEdits — so the 9 compiler suggestions do reach the editor as one-click fixes. Caveat: docs/COMPILER.md:644 — "There's no incremental sema yet — every change triggers a full re-check."
+
+REPL — no. cpc run — no
+docs/SPEC.md:936 lists "cpc run — compile / type-check / run" in the tooling surface, but no such subcommand exists; cpc run is interpreted as a filename (cpc: read run: No such file or directory). Spec/implementation drift.
+
+Also: cpc-wasm/src/lib.rs exposes cplus_compile(source) -> String (:36), cplus_run(source) (:64), cplus_version() (:45) — a browser playground that returns diagnostics + IR client-side.
+
+3. Testing story
+cpc test
+Implemented cpc/src/main.rs:2898-3100+. Two modes: single-file (cpc test FILE) and project mode (reads Cplus.toml, walks imports, honors [dependencies] and [link]). It honors the full build-flag set — --release, --asan/--ubsan/--tsan/--msan, --fp-contract — a regression fix documented at cpc/src/main.rs:2916-2920 and bugs/cpc-test-asan-does-not-instrument.md.
+
+Mechanics: attrs::discover_tests (cplus-core/src/attrs.rs:913) finds #[test] fns; codegen synthesizes a driver (cplus-core/src/codegen.rs:1166 generate_test_binary, harness at :5975-6082) that zeroes a global @cpc_test_failed, calls each test, and exits with the failure count. Assertion form is the assert EXPR; statement (no #assert intrinsic). CPC_TEST_IR=path dumps the driver IR for debugging (main.rs:3067).
+
+Doctests — yes, automatic
+cplus-core/src/doctest.rs (383 lines, 23 tests). Triple-backtick fences inside /// blocks are extracted into synthesized #[test] fn __doctest_<item>_<idx> appended to the source before lexing (doctest.rs:33-78), then run through the normal pipeline. Display name is rewritten to DOC_TEST::<item>::<idx>. Design note: docs/design/phase5-doctests.md. Known limitation documented at doctest.rs:14-17: span attribution into the fence body is approximate — a failing doctest points at the synthesized tail of the file, not the doc comment.
+
+Live proof:
+
+
+$ cpc test t7.cplus
+test t_ok ... ok
+test t_bad ... FAILED
+test DOC_TEST::add::0 ... ok
+
+test result: 2 passed; 1 failed
+--json test output — yes
+cpc/src/main.rs:659-662 (flag), codegen.rs:6009 (format string). One object per test plus a summary line:
+
+
+{"name":"t_ok","result":"pass"}
+{"name":"t_bad","result":"fail"}
+{"name":"DOC_TEST::add::0","result":"pass"}
+{"passed":2,"failed":1}
+Project mode works the same — cd vendor/json && cpc test --json → {"passed":177,"failed":0} with fully-qualified names like stdlib::src::vec::as_byte_view_reflects_elements.
+
+Gap: the JSON per-test object carries only name and result — no duration, no failure message, no file:line for the failing assertion. An agent gets "which test failed" but not "why".
+
+Compile-fail / expected-error tests — yes, by convention not by framework
+There is no dedicated compile-fail harness (no trybuild, no insta, no expect_test, no golden files — confirmed by grepping all Cargo.toml). The pattern is: shell out to cpc, assert status != 0 and stderr.contains("E0335"). cpc/tests/e2e.rs contains 422 occurrences of E0xxx across 93 distinct codes. The convention is codified as policy in docs/SKILL.md:797-803 ("Test discipline… three test shapes: Positive / Negative-with-code / End-to-end") and docs/COMPILER.md:625-628.
+
+Test suite size
+Crate	#[test] fns
+cplus-core	1,948 (sema 842, codegen 314, parser 186, borrowck 158, attrs 83, lexer 61)
+cpc	686 (e2e.rs 653, cli_scaffold.rs 16, + platform_deps, wasm_differential)
+cpc-bindgen	143
+cplus-pm	34
+cpc-lsp	15
+cpc-wasm	10
+Rust total	2,836
+Plus 1,693 #[test] fns written in C+ across vendor/, examples/, docs/ (406 .cplus files), run via in-package cpc test. Combined: ~4,500 tests.
+
+Note docs/COMPILER.md:621-623 claims "1035" unit tests, "399" e2e, and "57 vendor tests" — all stale by roughly 2–30×.
+
+CI (.github/workflows/ci-{macos,linux,windows}.yml) runs cargo test --workspace — only on v* release tags plus manual dispatch, not on push/PR (rationale documented in ci-macos.yml:3-8: development is on macOS where the suite is run locally). So the C+-level cpc test suites in vendor/ are not run by CI at all.
+
+4. Docs pipeline
+docs/gen_errors.py (117 lines)
+Reads docs/errors.toml, writes two targets:
+
+docs/ERRORS.md (2,660 lines) — maintainer reference, maintainer=True so each entry gets a <sub> footer with repro:, emit_site, and test (gen_errors.py:71-75).
+/Users/adel/Workspace/cplus.dev/resources/content/docs/0.0.22/error-codes.md — the public site page, with Hugo-style frontmatter (gen_errors.py:20, 30-37), skipped gracefully if the path is absent.
+Both carry a "GENERATED FILE — do not edit by hand" header (gen_errors.py:91-96). Entries are grouped into 14 ordered categories (gen_errors.py:23-28) and each renders as ### E0502 · Title + cause + fenced example + optional note + **Fix.**. The intro line is computed: **{total} codes**… **{checked}** of the examples are reproduced directly by cpc check (gen_errors.py:39-44).
+
+The same errors.toml is include_str!'d into cpc for explain — so CLI, ERRORS.md, and the website provably cannot drift (docs/errors.toml:1-9, cpc/src/main.rs:5156-5161).
+
+Gap: repro = "checked" / verified = true are hand-maintained metadata. Nothing automatically compiles the 180 examples and asserts each yields its own code. grep -rl 'errors.toml' across the repo returns exactly two consumers: docs/gen_errors.py and cpc/src/main.rs. There is no verify_errors.sh analogous to tools/verify_contract.sh.
+
+Normative docs
+File	Lines	Status
+/Users/adel/Workspace/C+/docs/SPEC.md	941	Normative — 21 sections; §18 "Desugarings (normative)", §20 Diagnostics (code-range table), §21 Conformance
+/Users/adel/Workspace/C+/docs/MEMORY-MODEL.md	214	Normative — 10 sections; §9 maps codes to situations
+/Users/adel/Workspace/C+/docs/ERRORS.md	2,660	Generated from errors.toml
+/Users/adel/Workspace/C+/docs/SKILL.md	956	LLM-facing reference (see §6)
+/Users/adel/Workspace/C+/docs/COMPILER.md	658	Internals, 19 sections
+/Users/adel/Workspace/C+/docs/GPU.md	325	Position paper (informative)
+docs/SPEC.md:921-923 sets an explicit precedence rule: "the compiler is correct and this document is in error." docs/SPEC.md:926-929 names cpc/tests/e2e.rs as "the executable conformance record."
+
+Supporting: 31 design notes in /Users/adel/Workspace/C+/docs/design/ (incl. diagnostics.md, memory-model.md, phase5-doctests.md, phase4-fmt.md, phase4-lsp.md, error-handling.md), 88 items in /Users/adel/Workspace/C+/plans/, and a bugs/ directory of narrative postmortems referenced from source comments (e.g. cpc/src/main.rs:2920 → bugs/cpc-test-asan-does-not-instrument.md).
+
+5. Build speed instrumentation
+--timings — yes, but partial
+mod timings at /Users/adel/Workspace/C+/cpc/src/main.rs:4305-4371. Zero-cost when off (atomic bool guard, main.rs:4328-4331). Live on a project build:
+
+
+cpc timings:
+  resolve+sema+borrowck         0.00s     2%
+  codegen                       0.00s     1%
+  prune                         0.00s     0%
+  clang + link                  0.06s    97%
+  measured total                0.06s
+The rationale comment is worth quoting (main.rs:4308-4310): "the phase split had to be reverse-engineered by hand — three separate runs plus arithmetic — to learn that clang is 73% of a debug build and 99% of a release one. That should be one flag, not a research project."
+
+Gap: timings::phase is wired only into build_project (main.rs:1975, 1995, 1998, 2097) and the object/library path (:2192, 2246, 2249, 2298). The single-file path (compile_file, main.rs:4055) has no instrumentation — verified live: cpc --timings t7.cplus -o t7bin prints nothing. There is also no --timings=json.
+
+report_titled (main.rs:4349) resets between nested builds so a dependency prebuild doesn't pollute the consumer's table.
+
+Incremental compilation — no
+There is no per-file or per-function incremental compilation, no query system, no persisted fingerprint database. docs/COMPILER.md:644 confirms it for the LSP path too.
+
+Caching — dependency-level only
+[build] prebuild = true dependencies are compiled once into a static archive keyed by a fingerprint over the vendor dir + link triple + build mode (prebuild_fingerprint, cpc/src/main.rs:1752; stamp file <pkg>.fingerprint at main.rs:1653). Build mode is inside the fingerprint deliberately (main.rs:1748-1751) rather than splitting the cache. Half-built state is cleaned up on failure (main.rs:1688).
+
+Other compile-time work
+IR pruning (prune_ir, main.rs:4373-4384; cplus-core/src/prune.rs): drops unreferenced internal definitions before clang. Comment at main.rs:4375-4379: on the iris project 69% of emitted functions were referenced nowhere and clang codegen'd all of them at -O0. CPC_NO_PRUNE=1 disables it for bisecting miscompiles.
+No compile-time benchmark suite. plans/bench.md is a runtime benchmark (cpc --release vs clang -O2, 1.00×/0.99×/1.00×), not a build-speed one. docs/design/v0.0.8-bench-gap-investigation.md likewise.
+The only compile-speed claim anywhere is prose in docs/SKILL.md:815: "Builds are fast (a small project compiles in well under a second)."
+6. Built specifically for agent/LLM consumption
+This is the strongest dimension of the project. Ranked by load-bearing-ness:
+
+1. cpc mcp — a real MCP server. /Users/adel/Workspace/C+/cpc/src/mcp.rs (250 lines). Protocol 2024-11-05, JSON-RPC 2.0 over stdio, initialize / tools/list / tools/call / ping (mcp.rs:52-87). The graph is built once and kept resident in memory (mcp.rs:20-46) so each query is a memory lookup, not a re-parse. Nine tools (mcp.rs:177-250): find_definition, find_references, find_callers, find_callees, call_hierarchy, find_members, file_symbols, code_context, type_at.
+
+The tool descriptions are explicitly written at the model — mcp.rs:8-10: "The tool names and descriptions are written for the model… each says plainly 'use this instead of grep — it is resolved and typed, grep is neither.'" e.g. find_callers: "Resolved call edges — beats grepping name( which also matches the definition, comments, and unrelated names." code_context is described as "The one-shot edit pack for a function."
+
+2. cpc skill — version-matched LLM reference in the binary. docs/SKILL.md (956 lines) is include_str!'d at cpc/src/main.rs:5094. cpc skill --write [PATH] drops it into a project; cpc init writes it automatically (main.rs:5329). Its opening line: "Dense reference for an LLM about to write or edit C+ code." §15 Tooling (SKILL.md:792+) has a whole subsection titled "Why this saves you (the model) work — fewer tokens, less reasoning" arguing the graph replaces both the grep passes and the inference over their results. §13 is a 30-row "Common error codes" table with fix column. §14 lists "Recurring traps for generated code."
+
+3. cpc explain <CODE> — offline, embedded, no network. Covered in §1. cpc/src/main.rs:5156-5159: "An agent that hits a diagnostic runs cpc explain E0502 for its cause, fix, and an example instead of guessing."
+
+4. Honesty signals in the graph output. cpc query callers/callees returns an explicit unresolved count and refs returns a scope string. plans/plan.graph.md calls this "the honesty signal." SKILL.md:822 reasons from it: because C+ has no dynamic dispatch, unresolved counts only fn-pointer indirections, so a zero count means the answer is complete and no grep fallback is needed. type_at returns an error rather than guessing on inferred expressions (mcp.rs:238).
+
+5. Structured output across the board. --diagnostics=json (NDJSON), cpc test --json, cpc graph (whole graph JSON), all 10 cpc query kinds (JSON), --realtime-report=json (verified: {"clean":true,"functions_under_contract":0,"profile":null,"summary":{...},"violations":[]}).
+
+6. Docs are agent-fetchable. Both cpc explain and SKILL.md advertise: append .md to any cplus-lang.dev/docs URL to get raw markdown (main.rs:5170-5171, main.rs:5208-5211).
+
+7. tools/gen_contract.py (168 KB) — not compiler infrastructure. It generates the vendor/facet UI package's C+ source from a curated ledger (tools/ledger_map.py over tools/ledger_spec.py), emitting whole files it owns entirely so no hand edit can drift. Four pre-write guards (gen_contract.py:24-32). Provenance is enforced by tools/verify_contract.sh, which regenerates into a tempdir and cmps — and whose own header documents that the script had silently rotted and "the gate never ran at all." Sibling generators: gen_facet.py, gen_icons.py, verb_coverage.py, methods_audit.py, adapter_parity.py.
+
+8. Agent-surface packages (a different axis — making user apps agent-controllable, not the compiler): vendor/agent_core (identity tree, exposure ceilings, auth outcomes, backend vtable), vendor/agent_mcp (JSON-RPC MCP bridge over that vtable, AuthGate-gated, optional Unix socket), plus agent_appkit / agent_gtk / agent_win32 / agent_inapp backends. Design in plans/plan.agent.md + plans/plan.agent-core.md.
+
+Summary assessment
+Dimension	Grade	Evidence
+Error catalog completeness	Excellent	180 codes, 100% with example + emit_site, 89% with a named test, zero catalog↔compiler drift
+Error message prose	Excellent	Cause + fix written into every code; messages name both remediations
+Machine-readable diagnostics	Good	Stable NDJSON with byte-precise spans, labels, suggestions; no version field, no summary
+Fix-its / suggestions	Weak	9 sites, 2 machine-applicable, for 180 codes
+Human rendering polish	Weak	No carets, no color, no fix preview — and the two internal docs both describe a richer renderer that doesn't exist
+explain command	Excellent	Offline, embedded, code-normalizing, provably non-drifting — but missing from the shipped Homebrew 0.0.26
+CLI breadth	Excellent	14 subcommands; fmt + LSP + graph + MCP all present
+Linter	Absent	6 hardcoded warnings, no lint levels, no suppression
+Test volume	Excellent	2,836 Rust + ~1,693 C+ tests; 184 distinct codes asserted
+Test infrastructure	Adequate	Doctests are automatic; compile-fail is convention (stderr.contains) not framework; test JSON lacks failure detail
+CI	Weak	Full suite runs on release tags only, not push/PR; vendor cpc test suites never run in CI
+Docs pipeline	Excellent	Single-source generation to two targets, generated-file headers, precedence rule stated; but no automated example verification
+Build instrumentation	Partial	--timings on project builds only, none on single-file, no JSON, no incremental, dependency-level caching only
+Agent affordances	Excellent	MCP server + embedded skill + explain + honesty signals + universal JSON — the most deliberate part of the design
+Highest-leverage gaps for "LLMs write it, humans audit it":
+
+Fix-it density. 9 suggestions for 180 codes. The Applicability machinery, the LSP quick-fix wiring, and the JSON schema all already exist — they are starved of producers.
+Automated verification of the 180 catalog examples. repro = "checked" and verified = true are hand-asserted claims about the most agent-facing artifact in the project. A verify_errors.py mirroring tools/verify_contract.sh would close it.
+Homebrew/repo binary drift at the same version string — an agent following SKILL.md gets cpc: multiple input files not yet supported from cpc explain.
+Failure detail in cpc test --json — currently {"name":…,"result":"fail"} with no message or location.
+Doc drift: SPEC.md:936 advertises a nonexistent cpc run; COMPILER.md:578 and design/diagnostics.md:185-201 describe a caret/color renderer that isn't implemented; COMPILER.md:621-623 test counts are stale by 2–30×.
+The tooling/diagnostics sweep is in — headline: the agent-facing infrastructure (MCP graph server, embedded cpc explain/cpc skill, 180-code catalog with zero drift) is genuinely strong, while the weak spots are fix-it density (9 suggestions across 180 codes), no linter, CI only running on release tags, and a Homebrew binary that lacks explain at the same version number. One explorer left (language surface/grammar); the full review comes when it lands.
+
+All three sweeps are in — grammar/exception inventory, tooling/diagnostics audit, and a read of real C+ code across stdlib, facet, examples, FFI, and tests. Here is the review.
+
+C+ against its four goals
+Verdict: The infrastructure half of "LLM writes, human audits" is further along than any language I can compare it to — an embedded, drift-proof error catalog, cpc explain, cpc skill, a resolved code graph over MCP, NDJSON everywhere. The language half is behind the tooling: the everyday texture of real C+ code (3-level match pyramids, fully-qualified generic patterns, dead None arms, 1 as usize, 56-line import blocks) buries the audit signal in mechanical noise. And a handful of silent semantic divergences — the exact thing an auditor can't see — undercut the audit story more than any missing feature. The good news: most of the highest-leverage fixes are subtractions of noise, not additions of sugar, so they don't compromise the sugarless principle if you state that principle precisely.
+
+If you only did five things:
+
+Let match arms drop the redundant type spelling. The scrutinee's type is known; make Ok(v) / Err(e) / Some(p) legal in pattern position of a match/guard/if-let on a known enum (keep full Option[i32]::Some(v) for construction, where the type genuinely isn't recoverable). This attacks three problems at once: it deletes roughly a third of the characters in functions like fs.cplus's read_to_string, it makes guard let short enough to actually use (the corpus has 3,657 match vs 72 guard let — the flattening tool exists and is unused because one line of it is 90 characters), and it eliminates the #1 LLM failure mode your own SKILL.md documents (models writing bare Some(x)). When the most common model error is the more readable form, adopt that form in the position where it's unambiguous. Framed properly this is not sugar and not "several ways" — it's one way per position: bare variants in patterns, qualified in construction.
+
+Kill the silent debug/release semantic fork. + - * trap in debug and wrap in release (SKILL.md §3). That is the same source having two meanings depending on a build flag — the purest anti-audit property in the language, and unnecessary since +% exists precisely to say "I want wrapping." Trap always (Swift's choice), pay the small release cost or lean on the optimizer. In the same family: integer literals evaluating through i32 before as, and gen fn / async fn silently rewriting the declared return type (sema.rs:4744) — the signature a human reads is not the signature the compiler uses. For an audit-first language, "what you read is what executes" should be a locked principle, and these three violate it.
+
+Make iteration real. for v in arr is rejected; the corpus's single most-repeated shape is the while + at + match Option[*T] + + (1 as usize) block, which appears verbatim in the inbox example, twice in its service, and again in objc/bridge.cplus — complete with a provably-dead None arm the author must write and the auditor must read. Define for x in arr / slices / Vec as a normative §18 desugar to the index loop (borrow semantics stated, no iterator machinery needed). Also propagate expected types across binary operators — this.rendered + 1 where the left side is usize should type the literal; there are 1,705 occurrences of 1 as usize paying that tax today.
+
+Flood the fix-it channel. The Applicability machinery, LSP quick-fix wiring, and JSON schema all exist — and there are exactly 9 suggestion sites for 180 error codes, 2 machine-applicable. Every entry in SKILL.md §14's "recurring traps" list should be a structured fix-it: .unwrap()/.map() → emit the guard let skeleton; &x → delete it; impl X for Y → the colon form; len() → count() (already a note — promote it); missing ctx slot (W0824) already prints the line to add — make it machine-applicable. For an agent loop, a MachineApplicable suggestion converts a full re-reasoning cycle into a string replacement. This is the cheapest quality-per-token improvement available to you.
+
+Make the LLM-facing artifacts executable, and ship them consistently. errors.toml is the single most agent-facing artifact in the project, and its verified = true / repro = "checked" fields are hand-maintained claims — write the verify_errors.py that compiles all 180 examples and asserts each produces its own code (the analog of tools/verify_contract.sh). Then fix the distribution: the Homebrew 0.0.26 binary does not have cpc explain while reporting the same version as the repo build — an agent following SKILL.md's first instruction gets multiple input files not yet supported. Same-version-different-features is the worst possible failure for a language whose pitch is a trustworthy agent loop.
+
+What already delivers — don't touch
+Ownership as parameter prefixes. fn append(ref this, take value: T) -> Status tells an auditor everything from the signature, checked call-site-only so it stays modular. This is the language's genuinely novel part and it works.
+E0510 raw-pointer accountability (drop frees it or opaque marks it) — a real audit invariant no mainstream language has.
+The diagnostic catalog discipline: 180 codes, 100% with example + emit-site, 89% with a named pinning test, zero catalog↔compiler drift, embedded into the binary.
+Reserved-and-rejected keywords with targeted hints (mut, unsafe, pub, trait, try…) — you've pre-booked the Rust-trained model's mistakes and turned each into a teaching diagnostic.
+The honesty signals: cpc query returning unresolved counts so a zero means "answer complete, no grep fallback" — more tools should copy this.
+Named params + defaults. Yes, it's the largest block of sugar, and it's the right call — it's what replaced overloading, and the 24-parameter facet constructors show it carrying whole APIs. (It remains underused in stdlib; finish that pass.)
+Restate "sugarless" as the principle you actually enforce
+The survey found real sugar: named args (three spellings of one call, as the design note itself concedes), bound method references, five implicit coercions, ten blessed methods, builder blocks. So "sugarless" as an absolute is already false — and that's fine, because the de facto principle in the code is better: no hidden control flow, no redundant spellings, inference only where the answer is recoverable from the immediate context. Codify that in SPEC.md. It cleanly admits recommendation #1 and #3 above, and it cleanly convicts the things that should go:
+
+The Text→str / literal→Text asymmetry: one is a blanket rule in check_expr, the mirror is copy-pasted per-site — which already produced bug-12. Make both single-sourced.
+The bound-method-reference convention is the riskiest sugar you have: a two-parameter positional contract (fn(..., *u8) + adjacent defaulted ctx) policed by a five-code family (W0824/W0825, E0822/23/24), where forgetting the ctx slot breaks callers in other files at a site they can't fix. Consider promoting the pair to a first-class handler type — a builtin two-word {fn, ctx} value, still a plain C struct at the ABI, passable by value. That deletes the entire convention and its five diagnostics, and it is more sugarless than today: one thing instead of a two-parameter ritual. (It would also retire the "absent handler compared by name, not null" sentinel smell in facet's props.)
+The three blessed receiver sets that disagree (to_text ⊇ eq ⊇ hash, sema.rs:13329) and Ord/Clone bounds being unusable on primitives while Hash/Eq/ToText work — every asymmetry is a rule an LLM must memorize per-method and a hallucination site. Unify the sets; admit Ord/Clone with blessed dispatch or remove them from the marker table. Also: enums can never satisfy an interface bound (impl targets resolve only through struct_by_name, E0325) — either lift it or document it as loudly as the closure ban.
+if let: zero occurrences in ~490k lines of corpus. Under "function over syntax," a construct with no organic use is a removal candidate — match and guard let cover it. Smaller surface, smaller SKILL.md, one less choice per site.
+Decide the unsafe-marking question once
+SPEC says there is no unsafe block because "writing the operation is the marker." The codebase then invented an unenforced house style — wrapping raw ops in bare blocks, { *slot = value; } — which is applied in vec.cplus and skipped in text.cplus:862, arena.cplus:108, agent_gtk.cplus:553. An unenforced audit convention is worse than none: it teaches auditors to trust a marker that means nothing. Either enforce it (a lint: raw deref/store outside a marked context) or delete the style. Independently, build cpc audit: a per-module report of every raw deref, extern call, as *T cast, static mutation, and opaque field — the graph already holds all of it. "Every dangerous op is syntactically visible" becomes "every dangerous op is enumerable," which is what a human auditor actually needs at 490k lines. A linter with levels and recorded suppressions (#[allow(..., reason = "...")]) belongs in the same push; six hardcoded warnings is not an audit story.
+
+Close the specific soundness/consistency holes
+bugs/assignment-through-a-raw-pointer-does-not-drop-the-old-value.md — (*p).field = v leaks where h.field = v drops. Two spellings of one assignment with different semantics is exactly the class of bug this language exists to prevent. Fix before features (your own rule).
+The str-outlives-Text escape via *u8 erasure (partly open) — you closed the E0516 write-path family; this is the same shape.
+Generated appkit.cplus has Button::from_raw not retaining while ButtonCell::from_raw does — a generator inconsistency that turns into a use-after-free audit trap; fix in the bindgen classifier so it can't recur.
+ABI lowering is spread across drifting site lists (the effective_move and Win64-byval site counts have both grown since their invariants were recorded). Centralize into one ABI module; the strict-clang-parity testing you already do is the net that makes the refactor safe.
+Hygiene that matters more here than in a normal project
+Because docs are the LLM's context material, drift is a correctness bug, not a cosmetic one. Found this pass: SPEC advertises cpc run, #print, #[deprecated], #[link(...)] — none exist; SPEC's marker-impl codes (E0860/E0861) don't match the compiler's (E0915/E0916); the SPEC intrinsic and attribute tables omit about a third of what's real; COMPILER.md describes a caret/color renderer that isn't implemented and test counts stale by 2–30×. Add a CI doc-check that greps every code, command, attribute, and intrinsic named in SPEC/SKILL/COMPILER against the source of truth — the same move that made errors.toml drift-proof. While there: renumber the literal-X codes (E0X30, E0X36) before they spread further; run the workspace test suite on push, not only on release tags, and run the vendor cpc test suites in CI at all; and reconcile the LSP/graph seeing a different extension-method set than the compiler — "query the graph, not grep" only holds if the graph never disagrees with cpc build. Finally, examples/ (the code that shows the pleasant face of the language) is written against the old facet API and sits outside all test coverage — the showcase should be the best-tested code you have, not the least.
+
+Two smaller pleasantness items with outsized surface area: an import facade / re-export mechanism (56 consecutive import lines per facet module, with no way for a package to present one front door), and failure detail in cpc test --json (today an agent learns which test failed but not why, where, or with what values — add message and file:line, and consider a blessed assert message form so tests stop encoding "why" in function names).
+
+The one-sentence summary: the tooling already treats the LLM as the author; the next release should treat the human auditor as the reader — strip the mechanical noise (patterns, iteration, literals), make every semantic divergence loud or impossible, and turn the audit conventions into checked, enumerable facts.
+
+Want me to turn any slice of this into a concrete plan (the pattern-shorthand design, verify_errors.py, or the fix-it backlog would be my picks for first)?
+
+
+================================================================================
+TASK LIST — de-drift, error-surface sugar, and the modern-language push
+================================================================================
+
+Three principles behind every task below:
+
+P1 — Sugar is not candy. A construct earns its place when it deletes a class of
+     generated-code errors or a redundant spelling; it is rejected when it hides
+     control flow, allocation, or ownership. "Sugarless" was never the real rule —
+     this is.
+P2 — The drift rule. An LLM's trained prior (Rust for the language, React/Flutter
+     for facet) must either compile correctly or fail with a diagnostic that
+     carries the replacement. "Looks the same, behaves differently, says nothing"
+     is the only bucket that costs loops — drive it to zero.
+P3 — The guardrail ladder. Unrepresentable > compile error with fix > lint > doc.
+     Small models fall off the doc rung first (facet "not reactive" proves it);
+     promote every known trap at least one rung.
+
+-------------------------------------------------------------------------------
+0. DOCTRINE
+-------------------------------------------------------------------------------
+
+- [ ] Write the sugar admission test into SPEC.md. Replace the word "sugarless"
+  with the stated rule of P1, applied as a checklist to every future proposal.
+  Every syntax debate becomes a checkable test instead of a taste argument, and
+  error-surface sugar gets in without opening the candy door.
+
+- [ ] Run a false-friend census against the drift rule. Enumerate every place C+
+  is Rust-shaped-but-different and facet is React-shaped-but-different, and file
+  each into "adopt the prior" or "diverge loudly with a fix" — no third bucket.
+  The census is the master backlog for sections A and B; what stays silent stays
+  a loop generator.
+
+- [ ] Rank every SKILL §14 trap on the guardrail ladder and promote each one rung.
+  A trap that lives only in SKILL.md is invisible to a small model that never
+  loaded it; the ladder makes "who catches this, at what moment" explicit.
+
+-------------------------------------------------------------------------------
+A. DE-RUST THE LANGUAGE (adopt or loudly diverge)
+-------------------------------------------------------------------------------
+
+- [ ] Allow bare variant names in pattern position when the scrutinee's enum type
+  is known (match / guard let / while let), keeping full qualification for
+  construction. The #1 documented model error is writing the readable form —
+  adopting the prior deletes that error class and removes ~1/3 of the characters
+  from every error-plumbing function.
+
+- [ ] Complete the Rust-accent catalog: a dedicated diagnostic with replacement
+  text for each of the top ~30 Rust-isms (`?`, `.unwrap()`, `.map()`/`.and_then()`,
+  `let mut`, `&x`/`&mut x`, `impl X for Y`, `#[derive(...)]`, `vec![]`, `println!`,
+  `format!`, `<T>` generics, `'a` lifetimes, `self`, `String`, `.len()`, `panic!`,
+  match guards, or-patterns, `pub`). The reserved-keyword hints already prove the
+  pattern works; every uncovered Rust-ism is one wasted loop per occurrence, for
+  every model, forever.
+
+- [ ] Add `cpc fix`: apply all MachineApplicable suggestions and re-check, in a
+  bounded loop, callable standalone or as `cpc build --fix`. Big models can
+  re-derive a correction but small ones often can't — deterministic tool repair
+  takes the model out of mechanical fixes entirely.
+
+- [ ] Make arithmetic trap on overflow in release as well as debug (wrapping
+  stays `+% -% *%`). One source having two meanings under a build flag is the
+  purest anti-audit property in the language, and `+%` already exists to say
+  "wrap on purpose."
+
+- [ ] Propagate expected types through binary operators and stop unsuffixed
+  literals evaluating through i32. This deletes the 1,705-occurrence `1 as usize`
+  tax and a silent-wrap hazard no reviewer can see in source.
+
+- [ ] Define `for x in` over arrays, slices, and Vec as a normative index-loop
+  desugar (§18) with stated borrow semantics. The corpus's single most-repeated
+  shape is the manual while/at/match-Option loop with a provably-dead None arm —
+  and the Rust/Swift prior guess becomes correct instead of E0312.
+
+- [ ] Promote the callback pair to a first-class handler type: a builtin two-word
+  `{fn, ctx}` value, a plain C struct at the ABI. It deletes the five-diagnostic
+  positional convention (W0824/W0825/E0822-24) whose failure mode breaks callers
+  in files the author never sees, and it retires the compare-by-name sentinel.
+
+- [ ] Bless a one-line propagation form — `guard let Ok(v) = f() else |Err(e)|
+  { return Err(e); };` — as the canonical shape, and emit exactly that line as
+  the fix-it when a model writes `?`. `?` is the single strongest Rust prior;
+  this converts it from a restructuring problem into a one-edit correction while
+  keeping errors-as-values explicit.
+
+- [ ] Make `gen fn` / `async fn` declare the type they actually return instead of
+  silently rewriting it to Iterator[T] / Future[T]. "The signature you read is
+  the signature you get" is a core audit property and these are its only two
+  violations.
+
+- [ ] Unify the blessed receiver sets (to_text / eq / hash) and either admit
+  Ord/Clone bounds for primitives or remove them from the marker table. Three
+  almost-identical sets and a bound that type-checks nowhere are per-method
+  memorization — precisely the rules small models hallucinate through.
+
+- [ ] Let enums satisfy interface bounds, or make E0325 a loud teaching error at
+  the impl site. Every model's prior says a tagged union can implement an
+  interface; today the failure surfaces far from the cause.
+
+- [ ] Retire `if let` (zero organic uses in ~490k lines; match and guard let
+  cover it). Every removed choice shrinks the skill card and removes one more
+  fork where a small model can pick wrong.
+
+- [ ] Evaluate one-level nested variant patterns (`Ok(Some(v))`). Models write
+  them constantly, the desugar is unambiguous and inference-free, and the current
+  workaround is exactly the match pyramid the audit story suffers from.
+
+- [ ] Single-source the string coercions: Text→str is a blanket check_expr rule
+  while literal→Text is copy-pasted per site (bug-12 came from that asymmetry).
+  One predicate, one file, tested once.
+
+-------------------------------------------------------------------------------
+B. DE-REACT FACET (the vocabulary is the prior)
+-------------------------------------------------------------------------------
+
+- [ ] Rename `build()` — the rebuild-on-change verb of React AND Flutter — to a
+  once-connoting verb (`mount`, `assemble`), and audit the rest of the public
+  vocabulary (Component, props, key, state) for framework magnets. Names program
+  the prior harder than any doc paragraph: `fn build()` promises re-execution to
+  every model trained this decade, and that promise is exactly the drift you're
+  fighting.
+
+- [ ] Establish per-package SKILL files: `vendor/facet/SKILL.md` (the keyed-direct
+  mental model, the anti-reactive rules, the find/Handle idiom) surfaced by
+  `cpc skill --pkg facet` and served by `cpc mcp`. The mental model has to arrive
+  in-context with the import — docs that aren't in the loop don't exist for the
+  model writing the code.
+
+- [ ] Build reactive-idiom tripwires: a diagnostic when a Component field is
+  written in a handler with no find()/Handle mutation, repaint, or #[watch]
+  barrier on any path. Today the wrong (reactive) guess compiles and silently
+  does nothing — the worst possible outcome on the guardrail ladder; loud beats
+  documented.
+
+- [ ] Add a debug-mode drift assert to the facet runtime: log (or assert) when
+  watched state changes but no node was touched by frame end. It catches at
+  runtime, at the exact moment of drift, the cases the static tripwire can't
+  prove.
+
+- [ ] Port examples/ to the current facet API and put every example under CI
+  compile. Models and humans both learn idiom from examples, and today the most
+  pleasant-reading C+ in the repo targets an API that no longer exists, checked
+  by nothing.
+
+- [ ] Add facet UI tasks to the eval harness with reactive-idiom detectors in the
+  scoring. "Does the model still think it's React" becomes a per-release number
+  instead of a feeling.
+
+-------------------------------------------------------------------------------
+C. MEASURE THE LOOP (models come in sizes)
+-------------------------------------------------------------------------------
+
+- [ ] Build the agent eval harness: a fixed suite of task prompts (a CLI tool, a
+  stdlib data task, a facet screen, an FFI binding) run by several model sizes
+  against cpc, scoring loops-to-green, distinct E-codes hit, and tokens burned,
+  re-run per release. The whole thesis is "fewer loops"; until this number
+  exists, every de-drift decision is an anecdote and every regression is
+  invisible.
+
+- [ ] Rank fix-it and diagnostic work by E-code frequency from harness runs
+  (frequency × loop-cost). 180 codes can't all get machine fixes at once; spend
+  the effort where models actually bleed.
+
+- [ ] Produce a tiered skill card: a ~150-line SKILL-CORE (`cpc skill --compact`)
+  holding the ~20 rules that prevent ~80% of loops, alongside the full reference.
+  A small model cannot hold 956 lines and the language shouldn't assume the
+  author is frontier-sized.
+
+- [ ] Add an opt-in flag that folds the errors.toml cause/fix text inline into
+  each JSON diagnostic. It saves one tool round-trip per error, and small models
+  don't reliably think to call `cpc explain` on their own.
+
+- [ ] Flood the fix-it channel: every recurring trap in SKILL §14 becomes a
+  structured suggestion, machine-applicable wherever the rewrite is certain. The
+  Applicability enum, the LSP quick-fix path, and the JSON schema are all built
+  and sitting at 9 producers for 180 codes.
+
+- [ ] Write verify_errors.py: compile all 180 catalog examples in CI and assert
+  each emits exactly its own code. The most agent-facing artifact in the project
+  currently rests on hand-maintained `verified = true` fields.
+
+- [ ] Put failure detail into `cpc test --json` (message, file:line,
+  expected/actual) and add an assert-with-message form. An agent told only
+  "fail" spends a full loop re-deriving "why" — information the harness already
+  had and threw away.
+
+-------------------------------------------------------------------------------
+D. THE AUDITOR SIDE
+-------------------------------------------------------------------------------
+
+- [ ] Build `cpc audit`: a per-module, diffable enumeration of raw derefs, extern
+  calls, `as *T` casts, static writes, and opaque fields, generated from the code
+  graph. "Every dangerous op is syntactically visible" stops scaling at 490k
+  lines; auditors need the dangerous 2% enumerated, not findable.
+
+- [ ] Decide the `{ ... }` raw-op house convention once: enforce it as a checked
+  marker or delete it from the style. An unenforced audit marker is worse than
+  none — it trains reviewers to trust a signal that means nothing.
+
+- [ ] Build a real lint pass with levels and `#[allow(code, reason = "...")]`.
+  Audits need recorded, greppable suppressions with stated reasons; six hardcoded
+  warnings is not an audit story.
+
+- [ ] Implement the caret/color human renderer that COMPILER.md and
+  design/diagnostics.md already describe. The human auditor works through the
+  same diagnostics the model does, and today the docs promise a renderer that
+  doesn't exist.
+
+- [ ] Fix the open raw-pointer assignment drop leak: `(*p).field = v` leaks where
+  `h.field = v` drops. Two spellings of one assignment disagreeing on Drop is the
+  exact bug class the language exists to kill — bugs before features, your rule.
+
+- [ ] Close the str-behind-*u8 erasure escape (partly open in bugs/). It is the
+  same shape as the E0516 write-path family already closed; a view must not
+  outlive its owner through any cast route.
+
+- [ ] Make bindgen's retain/release classification one rule and regenerate
+  (Button::from_raw doesn't retain, ButtonCell::from_raw does). A one-line
+  generator inconsistency becomes a use-after-free that no C+ compile-time check
+  can ever see.
+
+- [ ] Centralize ABI lowering into one module. The scattered site-lists
+  (effective_move now 4 sites, Win64 byval now 6) keep drifting past their
+  recorded invariants, and "bounded by C ABI" means the ABI logic is the one
+  thing that must not be scattered.
+
+-------------------------------------------------------------------------------
+E. TRUST AND DISTRIBUTION
+-------------------------------------------------------------------------------
+
+- [ ] Add a doc-drift CI gate: grep every code, command, attribute, and intrinsic
+  named in SPEC/SKILL/COMPILER against the compiler source, fail on mismatch.
+  These documents are the model's context material — drift here is a correctness
+  bug, and this pass found ~10 instances (cpc run, #print, #[deprecated],
+  E0860 vs E0915, stale counts).
+
+- [ ] Add a release-parity smoke test: the shipped Homebrew binary must pass
+  `cpc explain E0502`, `cpc skill`, `cpc query` before the tag goes out. The brew
+  0.0.26 lacks `explain` while reporting the same version as the repo build — an
+  agent following SKILL.md's first instruction gets nonsense.
+
+- [ ] Run the workspace suite on push/PR and run the vendor `cpc test` suites in
+  CI at all. The language demands three test shapes per feature from its users
+  while its own pipeline runs only on release tags.
+
+- [ ] Renumber the literal-X codes (E0X20/E0X30/E0X31/E0X36) into real numbers.
+  Non-numeric codes break sorting and grepping in the one catalog everything
+  else keys off, and they read as an accident shipped.
+
+- [ ] Add package facades / re-exports so a package can present one front door.
+  A 56-line import header per module is the dominant visual texture of facet
+  code, and one explicit facade keeps the explicitness at a tenth of the lines.
+
+- [ ] Finish the named-params pass through stdlib. The feature that replaced
+  overloading is underused exactly in the code models copy idiom from.
+
+- [ ] Make the LSP/graph extension gate match the compiler (single-file mode
+  currently sees a different method set). "Query the graph, not grep" holds only
+  if the graph never disagrees with `cpc build`.
+
+
+  ### new
+
+  1. Structural derive through the empty impl — your own idiom, extended. You already have the perfect mechanism: impl Handle: Send {} where writing the empty impl is the assertion. Extend exactly that to impl Point: Eq {} / Ord / Hash / Clone / ToText — empty body means "compiler, generate the memberwise implementation." Today == on a struct is a hard error telling you to write your own equality function, and user types can't be HashMap keys without hand-rolled boilerplate that models get subtly wrong. This is the single biggest modernity gap: every current language derives these, and C+ can do it with zero macros and zero new syntax.
+
+2. distinct type aliases (newtypes). type UserId = distinct i64 — same representation, same ABI, but not interchangeable with i64 or with ChannelId. It's the cheapest safety feature in modern language design (Odin, Nim, Go's named types), costs nothing at the C boundary, and it's tailor-made for LLM-written code, where mixing up two ids of the same primitive type is a classic silent bug no borrow checker catches.
+
+3. Scoped structured concurrency. A thread::scope-shaped construct where spawned threads are guaranteed joined at scope exit — which means the borrow checker can prove they can't outlive the data they borrow, so threads can share a parent's locals without Arc. Your partition+join idiom is already 90% of the way there; making the scope a checked guarantee instead of a convention is the modern move (this is the direction Swift, Kotlin, and Rust all converged on), and it's the feature that would make C+'s ownership model visibly pay off across threads.
+
+4. Const expressions. Not comptime, not const fn — just folding pure arithmetic over literals and consts, so [u8; CAP * 2] works and big bitmasks don't need the wrap-through-i32 arithmetic dance. const restricted to bare literals is the one place C+ is less capable than C89, and every workaround it forces is a documented footgun.
+
+5. Function contracts: #[requires(...)] / #[ensures(...)]. Debug-checked, release-elided (or kept, your call), and printed in cpc doc and the graph. You already invented the category with #[no_alloc]/#[realtime] — compiler-checked behavioral claims in the signature. Pre/postconditions are the same idea generalized, and they're the most audit-native "modern" feature there is: the LLM states intent machine-checkably, the human reads it in the signature, the harness catches violations. Design-by-contract is having a genuine revival and C+ is unusually well positioned for it.
+
+6. FFI-completeness trio: #[repr(C)] union, packed structs/bitfields, and repr-typed enums. For a language whose identity is "bounded by C ABI," not being able to describe a C union or a bitfield struct means real headers can't be bound without lies. You already reserved the union keyword — this is finishing the boundary, not growing the language.
+
+7. Interface default method bodies. An interface method with a body that implementors can omit — monomorphized like everything else, no dyn involved. It cuts N-copies-of-the-same-method boilerplate (the thing your facet generator exists to paper over) and it's the one trait-system convenience that costs nothing semantically.
+
+8. Typed option-sets. A blessed flags form over an enum (Flags[Dirty] with |, contains) replacing the (dirty & label::P_FONT_SIZE) != (0 as u64) texture that dominates facet_appkit. Set membership spelled as set membership is both more modern and more auditable than mask arithmetic.
+
+9. Range-indexing on slices — xs[a..b] as a checked view. Safe ptr+len views are the modern systems primitive (it's Zig's whole pitch), you already have the slice type and str slicing methods; letting the index syntax produce sub-views generalizes what str.slice(from:to:) does ad hoc.
+
+10. Checked narrowing: as? returning Option. Plain as silently truncates, which sits oddly next to "no implicit conversions." An explicit fallible cast gives models and auditors a way to say "this narrowing can fail and here's the handling" without touching the infallible as for the cases where truncation is intended.
+
+And to be explicit about what I would not add, because "modern" often gets misread as "more Rust": capturing closures (your (fn, ctx) pair — ideally as the first-class handler type — is the honest C-ABI answer), dynamic dispatch / existentials (the no-dyn property is what makes the code graph complete and unresolved: 0 meaningful — that's worth more than trait objects), macros/comptime beyond const expressions, and exceptions in any costume. Those would make C+ more familiar, not more modern.

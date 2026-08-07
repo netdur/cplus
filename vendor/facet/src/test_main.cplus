@@ -3250,3 +3250,61 @@ fn a_percent_minimum_adapts_where_a_points_one_cannot() {
     }
     return;
 }
+
+#[test]
+fn a_key_resolves_to_a_node_a_band_verb_can_take_directly() {
+    app::reset_default_for_tests();
+    mount::uninstall();
+    mount::install(mount::fr_renderer());
+    // `find` answers an Option, and every band verb already no-ops on null — so
+    // the Option made each write re-state a check the callee performs. An
+    // application migrating a live tree wrote nine helpers to get one line back.
+    var b: facet::Builder = facet::Builder::new();
+    b.add(facet::column(facet::Builder::new(), key: "row"));
+    var root: facet::Node = facet::column(b, key: "root");
+    assert mount::mount(#addr_of(root));
+
+    // One line, no match, and the verb lands.
+    facet::set_opacity(mount::node("row"), 0.5f64);
+    assert approx(facet::opacity(mount::node("row")), 0.5f64);
+
+    // A key that resolves to nothing is a no-op rather than a crash, which is
+    // the whole reason the Option was not buying anything.
+    assert mount::node("nobody") == (0 as *facet::Node);
+    facet::set_opacity(mount::node("nobody"), 0.25f64);
+    mount::unmount(#addr_of(root));
+    return;
+}
+
+#[test]
+fn replace_child_swaps_in_place_rather_than_appending() {
+    app::reset_default_for_tests();
+    mount::uninstall();
+    mount::install(mount::fr_renderer());
+    // remove + insert can do this only if the caller works out the index, and
+    // getting it wrong APPENDS: a card edited in a board dropped to the bottom
+    // of its lane on every repaint.
+    var b: facet::Builder = facet::Builder::new();
+    b.add(facet::column(facet::Builder::new(), key: "a"));
+    b.add(facet::column(facet::Builder::new(), key: "b"));
+    b.add(facet::column(facet::Builder::new(), key: "c"));
+    var root: facet::Node = facet::column(b, key: "root");
+    assert mount::mount(#addr_of(root));
+
+    let _old: option::Option[facet::Node] =
+        mount::replace("b", facet::column(facet::Builder::new(), key: "b2"));
+
+    // Same count, and the replacement is in the MIDDLE — not at the end.
+    assert facet::child_count_of(#addr_of(root)) == (3 as usize);
+    match facet::child_of(#addr_of(root), 1 as usize) {
+        option::Option[*facet::Node]::Some(c) => { assert { (*c).key() } == "b2"; }
+        option::Option[*facet::Node]::None => { assert false; }
+    }
+    // ...and the neighbours did not move.
+    match facet::child_of(#addr_of(root), 2 as usize) {
+        option::Option[*facet::Node]::Some(c) => { assert { (*c).key() } == "c"; }
+        option::Option[*facet::Node]::None => { assert false; }
+    }
+    mount::unmount(#addr_of(root));
+    return;
+}

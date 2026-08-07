@@ -40,6 +40,7 @@ import "flex_layout/flex_layout" as flex;
 import "facet/facet" as core;
 import "facet/props" as props;
 import "facet/gestures" as gestures;
+import "facet/vocabulary" as vocab;
 import "./pointer" as pointer;
 import "facet/component" as component;
 import "objc/runtime" as rt;
@@ -720,6 +721,16 @@ fn imp_perform_click(self_obj: *u8, cmd: *u8, sender: *u8) {
     let _fired: bool = gestures::fire_click(n);
 }
 
+// Where the drop landed, in the receiving node's own space. The backend stashed
+// it during `performDragOperation:` — see `appkit_ext::drop_set_point`, which
+// converts out of window space while the view that was hit is still in hand.
+fn drop_position(sender: *u8) -> option::Option[vocab::Point] {
+    if sender == (0 as *u8) { return option::Option[vocab::Point]::None; }
+    if !akx::drop_has_point(sender) { return option::Option[vocab::Point]::None; }
+    let p: rt::Point = akx::drop_point_of(sender);
+    return option::Option[vocab::Point]::Some(vocab::Point { x: { p.x }, y: { p.y } });
+}
+
 fn add_input_methods(cls: *u8) {
     synth::add_method_v_1id(cls, rt::sel(#str_ptr("performClick:\0")), imp_perform_click, #str_ptr("v@:@\0"));
     synth::add_method_v_1id(cls, rt::sel(#str_ptr("mouseDown:\0")), imp_mouse_down, #str_ptr("v@:@\0"));
@@ -1082,6 +1093,7 @@ fn sender_readers() -> component::SenderReaders {
         key_of: key_of,
         item_of: item_of,
         dropped_text: dropped_text,
+        drop_position: drop_position,
         drag_targeted: drag_targeted,
     };
 }
