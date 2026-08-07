@@ -3197,3 +3197,56 @@ fn the_band_reaches_flexs_constraints_and_absolute_placement() {
     }
     return;
 }
+
+#[test]
+fn flow_direction_reaches_the_layout_engine_not_only_the_view() {
+    // The backend flipped AppKit's userInterfaceLayoutDirection and NOTHING
+    // told flex, so an app in an RTL locale drew right-to-left text inside a
+    // tree still laid out left-to-right: the first child stayed on the left.
+    var b: facet::Builder = facet::Builder::new();
+    b.add(facet::column(facet::Builder::new(), key: "first").width(100.0f64));
+    b.add(facet::column(facet::Builder::new(), key: "second").width(100.0f64));
+    var root: facet::Node = facet::row(b, key: "row");
+    let r: *facet::Node = #addr_of(root);
+
+    facet::set_flow_direction(r, vocab::FlowDirection::RightToLeft);
+    root.calculate_layout(400.0f64, 100.0f64, flex::Direction::Inherit);
+
+    // First child on the RIGHT is the whole point of RTL.
+    match facet::child_of(r, 0 as usize) {
+        option::Option[*facet::Node]::Some(c) => {
+            assert approx({ (*c).frame().left }, 300.0f64);
+        }
+        option::Option[*facet::Node]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn a_percent_minimum_adapts_where_a_points_one_cannot() {
+    // The responsive half. `set_min_width` takes points and points do not
+    // adapt; a pane that must never fall below a fifth of the window is saying
+    // something about the WINDOW, and there was no way to say it.
+    var b: facet::Builder = facet::Builder::new();
+    b.add(facet::column(facet::Builder::new(), key: "pane").shrink(1.0f64));
+    var root: facet::Node = facet::row(b, key: "row");
+    let r: *facet::Node = #addr_of(root);
+    match facet::child_of(r, 0 as usize) {
+        option::Option[*facet::Node]::Some(c) => { facet::set_min_width_percent(c, 20.0f64); }
+        option::Option[*facet::Node]::None => { assert false; }
+    }
+
+    root.calculate_layout(1000.0f64, 100.0f64, flex::Direction::LTR);
+    match facet::child_of(r, 0 as usize) {
+        option::Option[*facet::Node]::Some(c) => { assert approx(facet::width_of(c), 200.0f64); }
+        option::Option[*facet::Node]::None => { assert false; }
+    }
+    // ...and the same tree in a narrower window keeps the FRACTION, which is
+    // what a points minimum could never do.
+    root.calculate_layout(500.0f64, 100.0f64, flex::Direction::LTR);
+    match facet::child_of(r, 0 as usize) {
+        option::Option[*facet::Node]::Some(c) => { assert approx(facet::width_of(c), 100.0f64); }
+        option::Option[*facet::Node]::None => { assert false; }
+    }
+    return;
+}

@@ -744,8 +744,27 @@ fn set_flow_direction(n: *Node, v: vocab::FlowDirection) {
     let d: *Data = ensure_data(n);
     if d == (0 as *Data) { return; }
     { (*d).common.flow_direction = v };
+    // AND THE LAYOUT ENGINE, which is the half that was missing. The backend
+    // flipped the VIEW — AppKit's userInterfaceLayoutDirection — and nothing
+    // ever told flex, so an app in an RTL locale drew right-to-left text inside
+    // a tree still laid out left-to-right: the sidebar stayed on the left and
+    // every `Start` alignment pointed the wrong way.
+    //
+    // flex has had `Direction` since the beginning and facet simply never
+    // spoke it. `MatchParent` is `Inherit`, which is what a node that has not
+    // chosen means.
+    { (*n).set_direction(flex_direction_of(v)) };
+    touch(n, props::C_LAYOUT);
     touch(n, props::C_FLOW_DIRECTION);
     return;
+}
+
+fn flex_direction_of(v: vocab::FlowDirection) -> flex::Direction {
+    return match v {
+        vocab::FlowDirection::LeftToRight => flex::Direction::LTR,
+        vocab::FlowDirection::RightToLeft => flex::Direction::RTL,
+        vocab::FlowDirection::MatchParent => flex::Direction::Inherit,
+    };
 }
 
 fn flow_direction(n: *Node) -> vocab::FlowDirection {
@@ -964,6 +983,144 @@ fn set_shrink(n: *Node, v: f64) {
 // calculation, so its size is purely its share of what the parent offers.
 // `spacer` is built on it, and a split needs it for the same reason — a
 // container whose job is to divide space must not be sized by what it holds.
+// PERCENT, which is the half that makes a layout responsive. `set_min_width`
+// above takes points, and points do not adapt — a sidebar that must never fall
+// below a fifth of the window is saying something about the WINDOW, and there
+// was no way to say it. flex's StyleLength carried percent all along; facet
+// exposed it for width and height only.
+fn set_min_width_percent(n: *Node, v: f64) {
+    if n == (0 as *Node) { return; }
+    { (*n).set_min_width(flex::StyleLength::percent(v)) };
+    touch(n, props::C_LAYOUT);
+    return;
+}
+
+fn set_min_height_percent(n: *Node, v: f64) {
+    if n == (0 as *Node) { return; }
+    { (*n).set_min_height(flex::StyleLength::percent(v)) };
+    touch(n, props::C_LAYOUT);
+    return;
+}
+
+fn set_max_width_percent(n: *Node, v: f64) {
+    if n == (0 as *Node) { return; }
+    { (*n).set_max_width(flex::StyleLength::percent(v)) };
+    touch(n, props::C_LAYOUT);
+    return;
+}
+
+fn set_max_height_percent(n: *Node, v: f64) {
+    if n == (0 as *Node) { return; }
+    { (*n).set_max_height(flex::StyleLength::percent(v)) };
+    touch(n, props::C_LAYOUT);
+    return;
+}
+
+// An overlay placed as a FRACTION of its parent — centred cards, sheets that
+// take half the window, a toast a tenth from the bottom.
+fn set_left_percent(n: *Node, v: f64) {
+    if n == (0 as *Node) { return; }
+    { (*n).set_position(flex::Edge::Left, flex::StyleLength::percent(v)) };
+    touch(n, props::C_LAYOUT);
+    return;
+}
+
+fn set_top_percent(n: *Node, v: f64) {
+    if n == (0 as *Node) { return; }
+    { (*n).set_position(flex::Edge::Top, flex::StyleLength::percent(v)) };
+    touch(n, props::C_LAYOUT);
+    return;
+}
+
+fn set_right_percent(n: *Node, v: f64) {
+    if n == (0 as *Node) { return; }
+    { (*n).set_position(flex::Edge::Right, flex::StyleLength::percent(v)) };
+    touch(n, props::C_LAYOUT);
+    return;
+}
+
+fn set_bottom_percent(n: *Node, v: f64) {
+    if n == (0 as *Node) { return; }
+    { (*n).set_position(flex::Edge::Bottom, flex::StyleLength::percent(v)) };
+    touch(n, props::C_LAYOUT);
+    return;
+}
+
+// Does a width MEAN the content box or the whole box including padding and
+// border? CSS's `border-box` is what almost every author assumes, and a fixed
+// width that padding then widened is the classic surprise.
+fn set_box_sizing(n: *Node, v: flex::BoxSizing) {
+    if n == (0 as *Node) { return; }
+    { (*n).set_box_sizing(v) };
+    touch(n, props::C_LAYOUT);
+    return;
+}
+
+// ---- the grid engine flex already had ---------------------------------------
+//
+// Seven setters, none of them reachable. `collection.set_columns` was built out
+// of wrap plus a width share before anyone noticed a real grid was sitting
+// underneath — that still works and is right for a materialised sequence, but a
+// hand-built layout wanting a cell two columns wide had nothing.
+//
+// The span and start verbs belong to an ITEM, `dense` and the subgrid pair to
+// the CONTAINER. Named as flex names them, because a grid is one of the few
+// places where the web's vocabulary is the one everybody already knows.
+
+// Item: how many tracks this cell covers.
+fn set_grid_column_span(n: *Node, v: i32) {
+    if n == (0 as *Node) { return; }
+    { (*n).set_grid_column_span(v) };
+    touch(n, props::C_LAYOUT);
+    return;
+}
+
+fn set_grid_row_span(n: *Node, v: i32) {
+    if n == (0 as *Node) { return; }
+    { (*n).set_grid_row_span(v) };
+    touch(n, props::C_LAYOUT);
+    return;
+}
+
+// Item: which line it starts on, for a cell that must sit somewhere exact.
+fn set_grid_column_start(n: *Node, v: i32) {
+    if n == (0 as *Node) { return; }
+    { (*n).set_grid_column_start(v) };
+    touch(n, props::C_LAYOUT);
+    return;
+}
+
+fn set_grid_row_start(n: *Node, v: i32) {
+    if n == (0 as *Node) { return; }
+    { (*n).set_grid_row_start(v) };
+    touch(n, props::C_LAYOUT);
+    return;
+}
+
+// Container: backfill holes left by spans instead of leaving them.
+fn set_grid_dense(n: *Node, on: bool) {
+    if n == (0 as *Node) { return; }
+    { (*n).set_grid_dense(on) };
+    touch(n, props::C_LAYOUT);
+    return;
+}
+
+// Container: adopt the parent grid's tracks rather than starting new ones, so
+// a nested section stays aligned with the rows around it.
+fn set_grid_columns_subgrid(n: *Node, on: bool) {
+    if n == (0 as *Node) { return; }
+    { (*n).set_grid_columns_subgrid(on) };
+    touch(n, props::C_LAYOUT);
+    return;
+}
+
+fn set_grid_rows_subgrid(n: *Node, on: bool) {
+    if n == (0 as *Node) { return; }
+    { (*n).set_grid_rows_subgrid(on) };
+    touch(n, props::C_LAYOUT);
+    return;
+}
+
 // ---- what this node is, for anyone not looking at it ------------------------
 //
 // The agent surface has carried a name and a description per node since it
@@ -1528,6 +1685,14 @@ impl flex::Node {
     fn heading_level(this) -> i64 { return heading_level(#addr_of(this)); }
     fn set_tooltip(ref this, v: str) { set_tooltip(#addr_of(this), v); return; }
     fn tooltip(this) -> str { return tooltip(#addr_of(this)); }
+    fn set_min_width_percent(ref this, v: f64) { set_min_width_percent(#addr_of(this), v); return; }
+    fn set_min_height_percent(ref this, v: f64) { set_min_height_percent(#addr_of(this), v); return; }
+    fn set_max_width_percent(ref this, v: f64) { set_max_width_percent(#addr_of(this), v); return; }
+    fn set_max_height_percent(ref this, v: f64) { set_max_height_percent(#addr_of(this), v); return; }
+    fn set_left_percent(ref this, v: f64) { set_left_percent(#addr_of(this), v); return; }
+    fn set_top_percent(ref this, v: f64) { set_top_percent(#addr_of(this), v); return; }
+    fn set_right_percent(ref this, v: f64) { set_right_percent(#addr_of(this), v); return; }
+    fn set_bottom_percent(ref this, v: f64) { set_bottom_percent(#addr_of(this), v); return; }
     fn set_absolute(ref this, on: bool) { set_absolute(#addr_of(this), on); return; }
     fn is_absolute(this) -> bool { return is_absolute(#addr_of(this)); }
     fn set_left(ref this, v: f64) { set_left(#addr_of(this), v); return; }
