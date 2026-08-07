@@ -5,7 +5,7 @@ absent here does not exist: calling it is a compile error, never a
 silent no-op. What a backend cannot implement is recorded in that
 backend's own manifest, not here.
 
-406 declared verbs over 38 controls, plus the
+408 declared verbs over 38 controls, plus the
 shared band every element carries.
 
 
@@ -95,6 +95,7 @@ shared band every element carries.
 | `set_footer` / `footer()` | Node (a named child) | StructuredItemsView.Footer |
 | `set_header` / `header()` | Node (a named child) | StructuredItemsView.Header |
 | `set_item_sizing` / `item_sizing()` | ItemSizing | StructuredItemsView.ItemSizingStrategy |
+| `set_columns` / `columns()` | usize | StructuredItemsView.ItemsLayout |
 
 ## checkbox — the ledger CheckBox
 
@@ -120,6 +121,7 @@ shared band every element carries.
 | `set_footer` / `footer()` | Node (a named child) | StructuredItemsView.Footer |
 | `set_header` / `header()` | Node (a named child) | StructuredItemsView.Header |
 | `set_item_sizing` / `item_sizing()` | ItemSizing | StructuredItemsView.ItemSizingStrategy |
+| `set_columns` / `columns()` | usize | StructuredItemsView.ItemsLayout |
 | `set_selection_mode` / `selection_mode()` | SelectionMode | SelectableItemsView.SelectionMode |
 | `on_selection_changed` | callback + ctx | SelectableItemsView.SelectionChanged |
 | `set_grouped` / `is_grouped()` | bool | GroupableItemsView.IsGrouped |

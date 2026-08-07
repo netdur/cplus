@@ -349,10 +349,6 @@ ABSENT = {
     # way NSCollectionViewFlowLayout does, and nothing in the flex tree reaches
     # inside it. Without this a board of cards, a gallery, or any grid of
     # anything has to be hand-built out of rows.
-    ("CollectionView", "ItemsLayout"):
-        "a collection is a vertical list only; no columns, no grid",
-    ("CarouselView", "ItemsLayout"):
-        "a carousel is a horizontal run only; no grid",
     ("IndicatorView", "IndicatorLayout"):
         "the dots row has no layout of its own",
 
@@ -628,6 +624,24 @@ FACET_ORIGIN = [
 # contract that answers "no" for a verb that exists is worse than one with a
 # gap in it.
 OVERLAY = {
+    # A GRID, said facet's way. The ledger models this as an IItemsLayout object
+    # (LinearItemsLayout or GridItemsLayout with a Span), which is a class where
+    # facet needs a number: a collection's items are ordinary facet children
+    # inside its scroll, so N columns is flex wrap plus a width, and the only
+    # thing the application has to say is N.
+    #
+    # 1 is a list, which is why the default is 1 and not 0 — "one column" is a
+    # true description of a list, and it means no application has to know that
+    # zero would have meant something.
+    ("StructuredItemsView", "ItemsLayout"):
+        ("ADOPT", "set_columns / columns()",
+         "usize — facet's word for the ledger's IItemsLayout: 0 or 1 is a list, N is a grid of N columns"),
+    # A carousel is ONE horizontal run. The ledger's layout object also carries
+    # orientation and snap points, which facet fixes — so the only thing left
+    # for it to say here is a multi-row carousel, and nothing has asked for one.
+    # `collection` is where a grid lives.
+    ("CarouselView", "ItemsLayout"):
+        ("DROP", "", "a carousel is a single horizontal run; a grid is what `collection` is for"),
     ("VisualElement", "SafeAreaEdges"):
         ("DROP", "", "facet says it as set_safe_area on the shared band — NOT flex's, "
                      "the window's own insets"),

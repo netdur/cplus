@@ -3837,6 +3837,56 @@ fn collection_row_picked(doc: *u8, child: i64) {
     return;
 }
 
+// Arrange a materialised sequence into COLUMNS.
+//
+// A collection's rows are ordinary facet children inside its scroll, so a grid
+// is not a second layout engine — it is flex wrap plus a width. Each item takes
+// an equal fraction of the line and the container wraps when the line is full,
+// which is what `NSCollectionViewFlowLayout` does and what the ledger models as
+// a `GridItemsLayout` with a Span.
+//
+// Zero is "not asked for", the same reading the contract gives every numeric
+// zero, and it means one column — a list, which is what a collection was before
+// this verb existed. So an application that never mentions columns sees no
+// change at all.
+fn arrange_columns(n: *core::Node, columns: usize) {
+    if n == (0 as *core::Node) { return; }
+    let count: usize = core::child_count_of(n);
+    if count == (0 as usize) { return; }
+    if columns <= (1 as usize) {
+        // Back to a single column: undo the wrap and let each row take the
+        // width again. Written back rather than left alone, because a
+        // collection can be regridded at runtime and the old fractions would
+        // otherwise stay on the children.
+        core::set_wrap(n, flex::Wrap::NoWrap);
+        var i: usize = 0 as usize;
+        while i < count {
+            match core::child_of(n, i) {
+                option::Option[*core::Node]::Some(c) => { core::set_width_percent(c, 100.0f64); }
+                option::Option[*core::Node]::None => { }
+            }
+            i = i +% (1 as usize);
+        }
+        return;
+    }
+    core::set_wrap(n, flex::Wrap::Wrap);
+    let share: f64 = 100.0f64 / (columns as f64);
+    var i: usize = 0 as usize;
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                core::set_width_percent(c, share);
+                // A grid cell is its share of the line and no more. Without
+                // this a row that grows would eat the line and the wrap would
+                // never happen.
+                core::set_grow(c, 0.0f64);
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+}
+
 fn apply_collection(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::CollectionProps = props_of(n, props::K_COLLECTION) as *props::CollectionProps;
     if p == (0 as *props::CollectionProps) { return; }
@@ -3845,7 +3895,14 @@ fn apply_collection(v: *u8, n: *core::Node, dirty: u64) {
                  | collection::P_GROUP | collection::P_IS_GROUPED)) != (0 as u64) {
         let before: f64 = kept_offset(v, { (*iv).scroll_anchor });
         materialise_collection(n);
+        // The rows are new objects, so the arrangement has to be re-applied to
+        // them — a grid that survived only until the next rebuild would be
+        // worse than none.
+        arrange_columns(n, { (*p).structured_items_view.columns });
         restore_anchor(v, n, { (*iv).scroll_anchor }, before);
+    }
+    if (dirty & collection::P_COLUMNS) != (0 as u64) {
+        arrange_columns(n, { (*p).structured_items_view.columns });
     }
     let sel: *props::SelectableItemsViewProps = { #addr_of((*p).selectable_items_view) };
     // A collection is a scroll of ordinary children, so nothing in it reports a
@@ -4091,6 +4148,14 @@ fn apply_carousel(v: *u8, n: *core::Node, dirty: u64) {
     let anchor: vocab::ScrollAnchor = { (*p).items_view.scroll_anchor };
     if (dirty & props::C_LAYOUT) != (0 as u64) {
         restore_anchor(v, n, anchor, kept_offset(v, anchor));
+    }
+    // `columns` arrives from the StructuredItemsView base, which a carousel
+    // shares with a collection — so the verb exists here whether or not a
+    // carousel is the natural place for it, and a declared verb that nothing
+    // reads is the debt `verb_coverage` exists to catch. Same arrangement: N
+    // items across a line, then wrap.
+    if (dirty & carousel::P_COLUMNS) != (0 as u64) {
+        arrange_columns(n, { (*p).structured_items_view.columns });
     }
     // `Loop` — a position that runs off either end comes back at the other.
     // The ledger said "an infinite carousel needs the touch paging it wraps",

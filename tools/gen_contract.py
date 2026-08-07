@@ -95,6 +95,9 @@ TYPES = {
     "str":   ("text::Text", "text::new()", "str"),
     "f64":   ("f64", "0.0f64", None),
     "i64":   ("i64", "0 as i64", None),
+    # A count. Zero is "not asked for", the same reading `TextAlign`'s zero
+    # gets below — for `columns` that means one column, which is a list.
+    "usize": ("usize", "0 as usize", None),
     "bool":  ("bool", "false", None),
     "Color": ("vocab::Color", "vocab::Color::clear()", None),
     "Corners": ("vocab::Corners", "vocab::Corners::none()", None),

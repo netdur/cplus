@@ -304,12 +304,14 @@ impl SelectableItemsViewProps {
 
 struct StructuredItemsViewProps {
     item_sizing: vocab::ItemSizing,    // StructuredItemsView.ItemSizingStrategy
+    columns: usize,    // StructuredItemsView.ItemsLayout
 }
 
 impl StructuredItemsViewProps {
     fn new() -> StructuredItemsViewProps {
         return StructuredItemsViewProps {
             item_sizing: vocab::ItemSizing::MeasureAllItems,
+            columns: 0 as usize,
         };
     }
 }
