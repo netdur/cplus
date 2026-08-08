@@ -12,6 +12,11 @@ earlier history lives in each version's archived plan.
 > instantiation is now a first-class fn-pointer value.
 
 ### Standard library
+- **`stdlib/slice`** — checked sub-views over `T[]`: `sub` returns
+  `Option[T[]]` (None on an invalid range), plus clamped
+  `prefix`/`suffix`/`drop_first`/`drop_last`. The free-fn spelling ships
+  the semantics; the `xs.sub(from:to:)` method form waits on generic
+  slice impls.
 - **`stdlib/flags`** — a `Flags` option-set over u64 bits, replacing the
   `(dirty & MASK) != (0 as u64)` texture with membership verbs:
   `contains` / `intersects` / `with` / `without` / `toggled` plus set

@@ -1,0 +1,117 @@
+// stdlib/slice.cplus — checked sub-views over `T[]`.
+//
+// A slice is already the safe ptr+len view; these functions generalize what
+// `str.slice(from:to:)` does for text to every element type: carve a
+// sub-view of the SAME buffer, bounds-checked, no allocation. The method
+// spelling (`xs.sub(from:to:)`) waits on generic slice impls; the free-fn
+// form ships the semantics now.
+
+import "./option" as option;
+import "./vec" as vec;
+
+// The sub-view [from, to) of `s`, or None when the range is invalid
+// (from > to, or to past the end). Mirrors `str.slice`'s contract.
+fn sub[T](s: T[], from: usize, to: usize) -> option::Option[T[]] {
+    let n: usize = #slice_len(s);
+    if from > to {
+        return option::Option[T[]]::None;
+    }
+    if to > n {
+        return option::Option[T[]]::None;
+    }
+    let p: *T = { #slice_ptr(s) + from };
+    let out: T[] = { #slice_from_raw_parts(p, to - from) };
+    return option::Option[T[]]::Some(out);
+}
+
+// The first `count` elements (the whole view when count >= len).
+fn prefix[T](s: T[], count: usize) -> T[] {
+    let n: usize = #slice_len(s);
+    let kept: usize = if count < n { count } else { n };
+    let p: *T = { #slice_ptr(s) };
+    return { #slice_from_raw_parts(p, kept) };
+}
+
+// The last `count` elements (the whole view when count >= len).
+fn suffix[T](s: T[], count: usize) -> T[] {
+    let n: usize = #slice_len(s);
+    let kept: usize = if count < n { count } else { n };
+    let p: *T = { #slice_ptr(s) + (n - kept) };
+    return { #slice_from_raw_parts(p, kept) };
+}
+
+// Everything after the first `count` elements.
+fn drop_first[T](s: T[], count: usize) -> T[] {
+    let n: usize = #slice_len(s);
+    let skip: usize = if count < n { count } else { n };
+    let p: *T = { #slice_ptr(s) + skip };
+    return { #slice_from_raw_parts(p, n - skip) };
+}
+
+// Everything before the last `count` elements.
+fn drop_last[T](s: T[], count: usize) -> T[] {
+    let n: usize = #slice_len(s);
+    let keep: usize = if count < n { n - count } else { 0 as usize };
+    let p: *T = { #slice_ptr(s) };
+    return { #slice_from_raw_parts(p, keep) };
+}
+
+// ---- tests ----
+
+fn probe_vec() -> vec::Vec[i32] {
+    var v: vec::Vec[i32] = vec::new::[i32]();
+    v.append(10);
+    v.append(20);
+    v.append(30);
+    v.append(40);
+    v.append(50);
+    return v;
+}
+
+fn elem_at(s: i32[], i: usize) -> i32 {
+    let p: *i32 = { #slice_ptr(s) + i };
+    return { *p };
+}
+
+#[test]
+fn slice_sub_carves_a_checked_view() {
+    let v = probe_vec();
+    let s: i32[] = v.as_slice();
+    match sub::[i32](s, 1 as usize, 4 as usize) {
+        option::Option[i32[]]::Some(w) => {
+            assert #slice_len(w) == (3 as usize);
+            assert elem_at(w, 0 as usize) == 20;
+            assert elem_at(w, 2 as usize) == 40;
+        }
+        option::Option[i32[]]::None => { assert false; }
+    }
+}
+
+#[test]
+fn slice_sub_rejects_bad_ranges() {
+    let v = probe_vec();
+    let s: i32[] = v.as_slice();
+    var bad = 0;
+    if let option::Option[i32[]]::None = sub::[i32](s, 2 as usize, 1 as usize) { bad = bad + 1; }
+    if let option::Option[i32[]]::None = sub::[i32](s, 0 as usize, 6 as usize) { bad = bad + 1; }
+    assert bad == 2;
+}
+
+#[test]
+fn slice_prefix_suffix_drop() {
+    let v = probe_vec();
+    let s: i32[] = v.as_slice();
+    let p = prefix::[i32](s, 2 as usize);
+    assert #slice_len(p) == (2 as usize);
+    assert elem_at(p, 1 as usize) == 20;
+    let q = suffix::[i32](s, 3 as usize);
+    assert #slice_len(q) == (3 as usize);
+    assert elem_at(q, 0 as usize) == 30;
+    let d = drop_first::[i32](s, 1 as usize);
+    assert elem_at(d, 0 as usize) == 20;
+    let e = drop_last::[i32](s, 1 as usize);
+    assert #slice_len(e) == (4 as usize);
+    assert elem_at(e, 3 as usize) == 40;
+    let whole = prefix::[i32](s, 99 as usize);
+    assert #slice_len(whole) == (5 as usize);
+}

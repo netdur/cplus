@@ -30,6 +30,7 @@ Source of truth for edge cases: the header comment and impl in
 | [`netsys`](#netsys) | platform errno / constants (for `net`) |
 | [`env`](#env) | `var`, `argc`, `arg` |
 | [`flags`](#flags) | `Flags` option-set over u64 bits |
+| [`slice`](#slice) | checked sub-views over `T[]` |
 | [`hash_map`](#hash_map) | `HashMap[K, V]` |
 | [`hash_set`](#hash_set) | `HashSet[T]` |
 | [`string_map`](#string_map) | `StringMap[V]` |
@@ -359,6 +360,21 @@ flags::from_bits(raw);         // rehydrate
 ```
 
 `Flags` is one machine word, Copy; every mutator returns the new set.
+
+## slice
+
+Checked sub-views over `T[]` — the generalization of `str.slice(from:to:)`
+to every element type. Views of the SAME buffer, no allocation.
+
+```cplus
+import "stdlib/slice" as slice;
+
+slice::sub::[i32](s, 1, 4);      // Option[i32[]] — None on a bad range
+slice::prefix::[i32](s, 2);      // first 2 (clamped)
+slice::suffix::[i32](s, 3);      // last 3 (clamped)
+slice::drop_first::[i32](s, 1);
+slice::drop_last::[i32](s, 1);
+```
 
 ## hash_map
 
