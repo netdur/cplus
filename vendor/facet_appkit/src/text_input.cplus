@@ -397,8 +397,10 @@ fn keyboard_flags(k: vocab::Keyboard) -> KeyboardFlags {
         vocab::Keyboard::Url => KeyboardFlags { spelling: false, suggestions: false, correction: false },
         vocab::Keyboard::Telephone => KeyboardFlags { spelling: false, suggestions: false, correction: false },
         vocab::Keyboard::Numeric => KeyboardFlags { spelling: false, suggestions: false, correction: false },
-        // Default defers to the control's own `checks_spelling` / `predicts_text`.
-        vocab::Keyboard::Default => KeyboardFlags { spelling: true, suggestions: true, correction: true },
+        // Default defers to the control's own `checks_spelling` / `predicts_text`,
+        // so this arm is never read — and it said `correction: true`, which is
+        // the one value it must not say. See `apply_editor_flags`.
+        vocab::Keyboard::Default => KeyboardFlags { spelling: true, suggestions: true, correction: false },
     };
 }
 
@@ -415,14 +417,39 @@ fn defers_to_control(k: vocab::Keyboard) -> bool {
     };
 }
 
-// The three switches, from the keyboard AND the two verbs that name them
+// The four switches, from the keyboard AND the two verbs that name them
 // directly. A named keyboard is the stronger statement — an application that
 // said `Keyboard.Plain` meant it — so it wins where it is not Default.
+//
+// CORRECTION is not one of those two verbs, and deriving it from `predicts_text`
+// was wrong twice over. "Offer me a completion" and "rewrite what I typed" are
+// not the same permission, and `predicts_text` defaults to TRUE on every control
+// facet builds (`text_field`, `text_area`, `search_field`), so every field in
+// every facet application — a project name, a bundle identifier, a filesystem
+// path — was handed to NSSpellChecker with automatic spelling correction on:
+//
+//   - wrong on the field's own terms. A name typed as `hellojxq` comes back
+//     `Hellojxq`, and a path is not prose.
+//   - not free. A correction candidate shows NSCorrectionPanel, and that panel
+//     runs `-[NSCorrectionPanel _interceptEvents]`: a NESTED modal event loop on
+//     the main thread, inside the application's own `[NSApp run]`, pumping
+//     `nextEventMatchingMask:` in NSEventTrackingRunLoopMode until the bubble is
+//     resolved. An application whose main thread is parked in someone else's
+//     event loop has stopped being the one deciding what its own keystrokes do.
+//
+// So correction is opt-in through the keyboard that names prose (Chat / Text)
+// and off everywhere else, Default included.
+//
+// `automaticTextReplacement` is set here rather than left unstated for the same
+// reason: it is the same permission (AppKit rewriting the characters that were
+// typed) reached through the same panel, and unstated it arrives ON from the
+// user's own system text preferences — so a control that says "leave my typing
+// alone" has to say it about both switches or it has not said it.
 fn apply_editor_flags(ed: *u8, iv: *props::InputViewProps) {
     let k: vocab::Keyboard = { (*iv).keyboard };
     var spelling: bool = { (*iv).checks_spelling };
     var suggestions: bool = { (*iv).predicts_text };
-    var correction: bool = { (*iv).predicts_text };
+    var correction: bool = false;
     if !defers_to_control(k) {
         let f: KeyboardFlags = keyboard_flags(k);
         spelling = f.spelling;
@@ -432,6 +459,7 @@ fn apply_editor_flags(ed: *u8, iv: *props::InputViewProps) {
     { rt::msg_void_i8(ed, rt::sel(#str_ptr("setContinuousSpellCheckingEnabled:\0")), spelling as i8) };
     { rt::msg_void_i8(ed, rt::sel(#str_ptr("setAutomaticTextCompletionEnabled:\0")), suggestions as i8) };
     { rt::msg_void_i8(ed, rt::sel(#str_ptr("setAutomaticSpellingCorrectionEnabled:\0")), correction as i8) };
+    { rt::msg_void_i8(ed, rt::sel(#str_ptr("setAutomaticTextReplacementEnabled:\0")), correction as i8) };
     return;
 }
 

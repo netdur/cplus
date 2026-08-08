@@ -6937,6 +6937,42 @@ fn a_keyboards_flags_reach_the_field_editor_even_though_its_layout_cannot() {
 }
 
 #[test]
+fn a_control_that_predicts_text_does_not_also_get_to_rewrite_it() {
+    // `predicts_text` is inline completion, and it defaults to TRUE on every
+    // control facet builds. Automatic spelling CORRECTION was derived from it,
+    // which made that default say something it was never asked to say: rewrite
+    // what the user typed. A project name, a bundle identifier and a filesystem
+    // path all went to NSSpellChecker as prose — `hellojxq` comes back
+    // `Hellojxq`.
+    //
+    // And the cost is not cosmetic. A correction candidate shows
+    // NSCorrectionPanel, which runs `_interceptEvents`: a nested modal event
+    // loop on the main thread, inside the application's own `[NSApp run]`.
+    backend::install();
+    var a: core::Node = text_area::text_area("", key: "corr1", predicts_text: true);
+    let av: *u8 = views::create(0 as *u8, #addr_of(a));
+    let tv: *u8 = { rt::msg_id(av, rt::sel(#str_ptr("documentView\0"))) };
+    // The completion it did ask for is on ...
+    assert { rt::msg_i8(tv, rt::sel(#str_ptr("isAutomaticTextCompletionEnabled\0"))) } != (0 as i8);
+    // ... and neither switch that rewrites the characters typed is.
+    assert { rt::msg_i8(tv, rt::sel(#str_ptr("isAutomaticSpellingCorrectionEnabled\0"))) } == (0 as i8);
+    assert { rt::msg_i8(tv, rt::sel(#str_ptr("isAutomaticTextReplacementEnabled\0"))) } == (0 as i8);
+
+    // Prose is where correction belongs, and naming the keyboard is how an
+    // application asks for it. Text replacement travels with it: one permission,
+    // stated once, rather than one stated and one inherited from the system.
+    var chat: core::Node = text_area::text_area("", key: "corr2",
+                                                keyboard: vocab::Keyboard::Chat);
+    let cv: *u8 = views::create(0 as *u8, #addr_of(chat));
+    let ctv: *u8 = { rt::msg_id(cv, rt::sel(#str_ptr("documentView\0"))) };
+    assert { rt::msg_i8(ctv, rt::sel(#str_ptr("isAutomaticSpellingCorrectionEnabled\0"))) } != (0 as i8);
+    assert { rt::msg_i8(ctv, rt::sel(#str_ptr("isAutomaticTextReplacementEnabled\0"))) } != (0 as i8);
+    views::view_release(av);
+    views::view_release(cv);
+    return;
+}
+
+#[test]
 fn a_font_that_scales_multiplies_its_size_rather_than_replacing_it() {
     // `font_scales` defaults to TRUE — the ledger's own default — so a version of this
     // that swapped the application's size for a text style's would have
