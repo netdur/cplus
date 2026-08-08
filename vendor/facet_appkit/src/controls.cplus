@@ -1761,20 +1761,29 @@ fn apply_text_area(v: *u8, n: *core::Node, dirty: u64) {
                 compose::refresh_editor_placeholder(tv.raw());
             }
             // `auto_size` is the editor's own verb: an NSTextView that grows
-            // with its text is vertically resizable with no ceiling, and is
-            // asked to size to fit whenever the text changes. Disabled is the
-            // fixed box its scroll view gives it.
+            // with its text is asked to size to fit whenever the text changes.
+            // Disabled is the fixed box its scroll view gives it.
+            //
+            // "Vertically resizable" is NOT that distinction, and tying it to
+            // `auto_size` was what left a Disabled editor unable to hold more
+            // text than fits: an NSTextView that may not exceed its frame does
+            // not lay text out past it, so there was nothing for the scroll
+            // view to scroll to. A scrollable editor is resizable BY
+            // DEFINITION — the document view growing past the clip view is what
+            // scrolling is — and the box the ledger promises to keep fixed is
+            // the SCROLL VIEW's frame, which flex owns and neither of these
+            // touch. `geometry::size_text_document` sets the matching floor
+            // (`minSize` = the viewport), so the editor can grow and cannot
+            // collapse below its box.
             if (dirty & (text_area::P_AUTO_SIZE | text_area::P_TEXT)) != (0 as u64)
                 || dirty == paint::all_bits() {
                 let grows: bool = match { (*p).auto_size } {
                     vocab::AutoSize::TextChanges => true,
                     vocab::AutoSize::Disabled => false,
                 };
-                tv.as_text().set_vertically_resizable(grows);
-                if grows {
-                    tv.as_text().set_max_size(rt::Size { w: 1000000.0f64, h: 1000000.0f64 });
-                    tv.as_text().size_to_fit();
-                }
+                tv.as_text().set_vertically_resizable(true);
+                tv.as_text().set_max_size(rt::Size { w: 1000000.0f64, h: 1000000.0f64 });
+                if grows { tv.as_text().size_to_fit(); }
             }
         }
         option::Option[ak::TextView]::None => { }

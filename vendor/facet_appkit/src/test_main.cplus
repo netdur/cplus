@@ -3304,19 +3304,40 @@ fn the_editor_band_styles_existing_text_and_what_is_typed_next() {
 }
 
 #[test]
-fn an_editor_that_auto_sizes_is_vertically_resizable() {
+fn a_text_areas_editor_can_always_grow_past_its_box() {
+    // BOTH kinds are vertically resizable, and that is not what `auto_size`
+    // says. A text area is a scroll view over a document view, so an editor
+    // that may not exceed its own frame is one that cannot scroll: tying
+    // `verticallyResizable` to `auto_size` left every fixed-size box — the new
+    // project description among them — unable to hold more text than fitted in
+    // it, with the overflow neither visible nor reachable.
+    //
+    // What `auto_size` says is whether the editor FITS ITSELF to its text. That
+    // is `sizeToFit`, and it is what makes a composer grow as it is typed into.
+    // The box stays the scroll view's frame either way, and flex owns that.
     backend::install();
-    var grows: core::Node = text_area::text_area(key: "g", text: "x",
+    var grows: core::Node = text_area::text_area(key: "g", text: "one\ntwo\nthree",
                                                  auto_size: vocab::AutoSize::TextChanges);
     let gv: *u8 = views::create(0 as *u8, #addr_of(grows));
     match controls::text_area_editor(gv) {
-        option::Option[ak::TextView]::Some(tv) => { assert tv.as_text().is_vertically_resizable(); }
+        option::Option[ak::TextView]::Some(tv) => {
+            assert tv.as_text().is_vertically_resizable();
+            assert tv.as_text().max_size().h > 1000.0f64;
+        }
         option::Option[ak::TextView]::None => { assert false; }
     }
-    var fixed: core::Node = text_area::text_area(key: "f", text: "x");
+    var fixed: core::Node = text_area::text_area(key: "f", text: "one\ntwo\nthree");
     let fv: *u8 = views::create(0 as *u8, #addr_of(fixed));
     match controls::text_area_editor(fv) {
-        option::Option[ak::TextView]::Some(tv) => { assert tv.as_text().is_vertically_resizable() == false; }
+        option::Option[ak::TextView]::Some(tv) => {
+            // The one that changed: a fixed-size area is resizable too, and has
+            // the same ceiling, so its text can run past the box and be
+            // scrolled to. Its HEIGHT is the layout pass's answer
+            // (`geometry::size_text_document`) rather than its text's, which is
+            // the whole of the difference `auto_size` names.
+            assert tv.as_text().is_vertically_resizable();
+            assert tv.as_text().max_size().h > 1000.0f64;
+        }
         option::Option[ak::TextView]::None => { assert false; }
     }
     views::view_release(gv);
@@ -3604,6 +3625,57 @@ fn a_text_area_inside_a_scroll_still_receives_its_band() {
             let col: *u8 = { rt::msg_id(doc, rt::sel(#str_ptr("textColor\0"))) };
             assert col != (0 as *u8);
             assert { rt::msg_f64(col, rt::sel(#str_ptr("redComponent\0"))) } > 0.9f64;
+        }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    mount::unmount(rp);
+    backend::uninstall();
+    return;
+}
+
+// The box a text area DRAWS and the box it can be CLICKED IN were not the same
+// box. An NSTextView is sized to its text, and `size_scroll_content` skipped
+// text areas outright — so a one-line description inside a 120-point area was a
+// 14-point document view with the clip view showing through underneath. The
+// clip view carries the I-beam document cursor across the whole viewport, so it
+// still looked like a text area: the pointer changed, the click landed on
+// nothing, focus never moved, and every keystroke after it went to the window
+// and beeped. That is the whole of "the description box cannot be typed into".
+#[test]
+fn a_text_areas_editor_fills_its_box_so_a_click_low_in_it_still_lands() {
+    backend::install();
+    var area: core::Node = text_area::text_area(text: "one line", key: "ta:box")
+        .height(120.0f64);
+    var root: core::Builder = core::Builder::new();
+    root.add(area);
+    var tree: core::Node = core::column(root, key: "box:root");
+    let rp: *core::Node = #addr_of(tree);
+    assert mount::mount(rp);
+    geometry::relayout_root(rp, 300.0f64, 200.0f64, 1.0f64);
+
+    match core::find_in(rp, "ta:box") {
+        option::Option[*core::Node]::Some(a) => {
+            let av: *u8 = core::view_of(a);
+            assert av != (0 as *u8);
+            let doc: *u8 = { rt::msg_id(av, rt::sel(#str_ptr("documentView\0"))) };
+            assert doc != (0 as *u8);
+            let port: rt::Size = { msg_size_of(av, rt::sel(#str_ptr("contentSize\0"))) };
+            assert port.h > 0.0f64;
+            let f: rt::Rect = { rt::msg_rect(doc, rt::sel(#str_ptr("frame\0"))) };
+            // As wide as the viewport, because the area wraps rather than
+            // scrolling sideways, and never shorter than it.
+            assert f.w == port.w;
+            assert f.h >= port.h;
+            // The claim that matters, asked the way AppKit asks it: a point near
+            // the BOTTOM of the box reaches the editor. `hitTest:` takes the
+            // point in the receiver's superview space, so it is asked of the
+            // clip view, whose space is the scroll view's.
+            let clip: *u8 = { rt::msg_id(av, rt::sel(#str_ptr("contentView\0"))) };
+            assert clip != (0 as *u8);
+            let deep: *u8 = { msg_id_point(clip, rt::sel(#str_ptr("hitTest:\0")),
+                                           rt::Point { x: port.w / 2.0f64,
+                                                       y: port.h - 4.0f64 }) };
+            assert deep == doc;
         }
         option::Option[*core::Node]::None => { assert false; }
     }

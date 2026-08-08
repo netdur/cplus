@@ -252,8 +252,17 @@ fn size_scroll_content(node: *core::Node, host_abs: flex::Frame) {
     // from its row count — and a table told what size to be is a table fighting
     // its own data source.
     if is_kind_of(doc, #str_ptr("NSTableView\0")) { return; }
-    // A text area's is its NSTextView, sized by the text container.
-    if is_kind_of(doc, #str_ptr("NSTextView\0")) { return; }
+    // A text area's is its NSTextView, sized by the text container — which
+    // answers how tall the TEXT is and knows nothing about how tall the BOX is.
+    // Left at that, a one-line description inside a 297-point box was a
+    // 14-point document view with 283 points of nothing under it. The box still
+    // LOOKED like a text area (a text view's clip view carries the I-beam
+    // document cursor across the whole viewport), but a click below the first
+    // line landed on the clip view, focus never moved, and every keystroke
+    // after it went to the window and beeped.
+    //
+    // So a text area gets the same floor as every other scroll: the viewport.
+    if is_kind_of(doc, #str_ptr("NSTextView\0")) { size_text_document(v, doc); return; }
     var w: f64 = 0.0f64;
     var h: f64 = 0.0f64;
     var i: usize = 0 as usize;
@@ -280,8 +289,52 @@ fn size_scroll_content(node: *core::Node, host_abs: flex::Frame) {
     return;
 }
 
+// The text area's document view: as wide as the viewport, and as tall as the
+// TALLER of its text and the viewport.
+//
+// Width is the viewport's rather than the text's because a facet text area
+// wraps — `create_text_area` asks for a vertical scroller and no horizontal
+// one, so a document wider than the clip view would be unreachable sideways.
+//
+// Height takes the text's own laid-out extent when that is the larger, which is
+// what keeps a long description scrollable: the same `usedRectForTextContainer:`
+// the editor's vertical alignment already reads, so the two agree about what
+// "the height of the text" means.
+//
+// `minSize` is set alongside the frame because the frame is a layout-pass
+// answer and typing happens between passes: a vertically resizable text view
+// will not shrink below its minimum, so AppKit holds the floor when the last
+// line is deleted rather than collapsing back to one line until the next
+// layout.
+fn size_text_document(scroll: *u8, doc: *u8) {
+    let port: rt::Size = { msg_size(scroll, rt::sel(#str_ptr("contentSize\0"))) };
+    if port.w <= 0.0f64 || port.h <= 0.0f64 { return; }
+    { msg_void_size(doc, rt::sel(#str_ptr("setMinSize:\0")),
+                    rt::Size { w: 0.0f64, h: port.h }) };
+    var h: f64 = text_height_of(doc);
+    if h < port.h { h = port.h; }
+    let was: rt::Rect = { rt::msg_rect(doc, rt::sel(#str_ptr("frame\0"))) };
+    if was.w == port.w && was.h == h { return; }
+    set_view_frame(doc, rt::Rect { x: 0.0f64, y: 0.0f64, w: port.w, h: h });
+    return;
+}
+
+// How tall the laid-out text is. Zero when the view has no layout manager yet,
+// which floors to the viewport — the right answer for an empty editor.
+fn text_height_of(doc: *u8) -> f64 {
+    let lm: *u8 = { rt::msg_id(doc, rt::sel(#str_ptr("layoutManager\0"))) };
+    let tc: *u8 = { rt::msg_id(doc, rt::sel(#str_ptr("textContainer\0"))) };
+    if lm == (0 as *u8) || tc == (0 as *u8) { return 0.0f64; }
+    let used: rt::Rect = { msg_rect_id(lm, rt::sel(#str_ptr("usedRectForTextContainer:\0")), tc) };
+    return used.y + used.h;
+}
+
 #[link_name = "objc_msgSend"]
 extern fn msg_size(recv: *u8, sel: *u8) -> rt::Size;
+#[link_name = "objc_msgSend"]
+extern fn msg_void_size(recv: *u8, sel: *u8, s: rt::Size);
+#[link_name = "objc_msgSend"]
+extern fn msg_rect_id(recv: *u8, sel: *u8, arg: *u8) -> rt::Rect;
 
 // Local rather than views::, which imports this file's callers — the whole
 // question is three lines and a dependency edge is not worth saving them.
