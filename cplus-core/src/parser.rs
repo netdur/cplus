@@ -519,7 +519,16 @@ impl Parser {
         let mut args: Vec<AttrArg> = Vec::new();
         if self.eat(&TokenKind::LParen) {
             while !self.at(&TokenKind::RParen) {
-                args.push(self.parse_attr_arg()?);
+                // v0.0.27 contracts: `#[requires(EXPR)]` takes full
+                // expressions (`n > 0`, `this.count() < cap`). Every other
+                // attribute keeps the flat ident/str/int grammar.
+                if path.name == "requires" {
+                    args.push(AttrArg::Expr(Box::new(
+                        self.in_delimited(|p| p.parse_expr())?,
+                    )));
+                } else {
+                    args.push(self.parse_attr_arg()?);
+                }
                 if !self.eat(&TokenKind::Comma) {
                     break;
                 }

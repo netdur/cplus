@@ -3110,6 +3110,26 @@ fn main() -> i32 { return 0; }
 '''
 
 [[code]]
+id = "E0924"
+title = "Impure `#[requires]` expression"
+category = "Names, types, and items"
+severity = "error"
+repro = "checked"
+lang = "cplus"
+verified = true
+emit_site = "cplus-core/src/sema.rs:check_requires_attrs"
+test = "cplus-core/src/sema.rs:requires_impure_rejected_e0924"
+cause = "A `#[requires(...)]` precondition used a construct with effects or evaluation-order weight — a call, an assignment, a block. A contract that can change state changes the program it guards, so the expression grammar is restricted to operators, literals, parameter and `const` reads, field reads, and casts."
+fix = "Restate the condition with pure reads, or hoist the computed value into a parameter the contract can read."
+example = '''
+fn probe(x: i32) -> bool { return x > 0; }
+#[requires(probe(n))]
+fn f(n: i32) -> i32 { return n; }
+fn main() -> i32 { return 0; }
+// -> [E0924] a `#[requires]` expression must be pure
+'''
+
+[[code]]
 id = "E1000"
 title = "Missing stdlib type for `gen fn` / `Iterator::next`"
 category = "Compile-time builtins"

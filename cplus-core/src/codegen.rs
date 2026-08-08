@@ -6718,6 +6718,21 @@ fn gen_function(
         }
     }
 
+    // v0.0.27 contracts: `#[requires(EXPR)]` preconditions run at entry,
+    // through the SAME emission `assert` statements use (trap on false;
+    // test builds flip the per-test failure flag instead).
+    if !is_naked {
+        for a in &f.attributes {
+            if a.path.name != "requires" {
+                continue;
+            }
+            for arg in &a.args {
+                if let crate::ast::AttrArg::Expr(e) = arg {
+                    state.gen_assert(e);
+                }
+            }
+        }
+    }
     // Emit body
     if is_naked {
         state.gen_naked_body(&f.body);
@@ -8269,6 +8284,17 @@ fn gen_method(
         }
     }
 
+    // v0.0.27 contracts: method preconditions, same emission as the fn path.
+    for a in &m.attributes {
+        if a.path.name != "requires" {
+            continue;
+        }
+        for arg in &a.args {
+            if let crate::ast::AttrArg::Expr(e) = arg {
+                state.gen_assert(e);
+            }
+        }
+    }
     state.gen_body_block(&m.body);
 
     if !state.terminated {
@@ -8483,6 +8509,17 @@ fn gen_str_method(
         }
     }
 
+    // v0.0.27 contracts: method preconditions, same emission as the fn path.
+    for a in &m.attributes {
+        if a.path.name != "requires" {
+            continue;
+        }
+        for arg in &a.args {
+            if let crate::ast::AttrArg::Expr(e) = arg {
+                state.gen_assert(e);
+            }
+        }
+    }
     state.gen_body_block(&m.body);
 
     if !state.terminated {
@@ -18443,6 +18480,28 @@ fn main() -> i32 {\n\
         assert!(
             ir.contains("to_text"),
             "the interp part should route through P::to_text:\n{ir}"
+        );
+    }
+
+    /// v0.0.27 contracts: a `#[requires]` precondition emits through the
+    /// assert path at function ENTRY — the trap compare precedes the body.
+    #[test]
+    fn requires_emits_entry_assert() {
+        let ir = gen_src(
+            "#[requires(n > 0)]
+             fn f(n: i32) -> i32 { return n * 3; }
+             fn main() -> i32 { return f(1) - 3; }",
+        );
+        let f_def = ir
+            .split("define ")
+            .find(|s| s.contains("@f("))
+            .expect("f defined");
+        let trap_pos = f_def.find("llvm.trap").expect("entry assert trap");
+        let mul_pos = f_def.find("mul").expect("body multiply");
+        assert!(
+            trap_pos < mul_pos,
+            "precondition must precede the body:
+{f_def}"
         );
     }
 

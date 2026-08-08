@@ -2523,6 +2523,15 @@ fn rewrite_fn(f: &Function, ctx: &RewriteCtx) -> Result<Function, ResolveError> 
     for p in &f.params {
         scope.insert(p.name.name.clone());
     }
+    // v0.0.27 contracts: `#[requires(EXPR)]` sees the same scope the body
+    // does — parameters stay bare, module consts qualify.
+    for a in &mut f.attributes {
+        for arg in &mut a.args {
+            if let AttrArg::Expr(e) = arg {
+                rewrite_expr(&mut **e, ctx, &mut scope)?;
+            }
+        }
+    }
     rewrite_block(&mut f.body, ctx, &mut scope)?;
     Ok(f)
 }
@@ -2549,6 +2558,14 @@ fn rewrite_method(m: &Method, ctx: &RewriteCtx) -> Result<Method, ResolveError> 
     }
     for p in &m.params {
         scope.insert(p.name.name.clone());
+    }
+    // v0.0.27 contracts: method preconditions share the body's scope.
+    for a in &mut m.attributes {
+        for arg in &mut a.args {
+            if let AttrArg::Expr(e) = arg {
+                rewrite_expr(&mut **e, ctx, &mut scope)?;
+            }
+        }
     }
     rewrite_block(&mut m.body, ctx, &mut scope)?;
     Ok(m)

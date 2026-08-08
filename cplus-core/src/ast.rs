@@ -80,6 +80,11 @@ pub enum AttrArg {
     /// `name = VALUE` form: `#[link(name = "z", kind = "static")]`. Not used
     /// by any Phase 5 attribute; parser admits the shape for forward-compat.
     KeyValue(Ident, AttrValue),
+    /// v0.0.27 contracts: a full expression argument — `#[requires(n > 0)]`.
+    /// Only the contract attributes parse this shape; sema type-checks the
+    /// expression in the function's parameter scope and enforces purity
+    /// (E0924), codegen emits it through the `assert` path at entry.
+    Expr(Box<Expr>),
 }
 
 #[derive(Debug, Clone, PartialEq)]

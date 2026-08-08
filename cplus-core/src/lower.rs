@@ -1377,10 +1377,14 @@ impl Lower {
         }
         for item in &mut prog.items {
             match &mut item.kind {
-                ItemKind::Function(f) => subst_block(&mut f.body, consts),
+                ItemKind::Function(f) => {
+                    subst_block(&mut f.body, consts);
+                    subst_attr_exprs(&mut f.attributes, consts);
+                }
                 ItemKind::Impl(b) => {
                     for m in &mut b.methods {
                         subst_block(&mut m.body, consts);
+                        subst_attr_exprs(&mut m.attributes, consts);
                     }
                 }
                 ItemKind::Struct(_)
@@ -1882,6 +1886,21 @@ impl ExprRewriter for ConstSubst<'_> {
 fn subst_block(b: &mut Block, consts: &std::collections::HashMap<String, (Expr, Type)>) {
     let resolved = walk_block(b, &mut ConstSubst { consts });
     *b = resolved;
+}
+
+/// v0.0.27 contracts: `#[requires(n < CAP)]` references consts too — the
+/// same substitution the body gets.
+fn subst_attr_exprs(
+    attrs: &mut [Attribute],
+    consts: &std::collections::HashMap<String, (Expr, Type)>,
+) {
+    for a in attrs {
+        for arg in &mut a.args {
+            if let AttrArg::Expr(e) = arg {
+                **e = walk_expr(e, &mut ConstSubst { consts });
+            }
+        }
+    }
 }
 
 /// GAP 3 (v0.0.19): overwrite the span of `e` and every sub-expression it

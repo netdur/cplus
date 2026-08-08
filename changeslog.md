@@ -34,6 +34,14 @@ earlier history lives in each version's archived plan.
   are not derivable — **E0920** names the field and the manual fix.
   Deriving needs a struct target (E0916 otherwise); `Copy` remains
   structural and is never written.
+- **Function contracts v0 — `#[requires(EXPR)]`**: machine-checked
+  preconditions in the signature, on fns and methods (repeatable; full
+  expressions over parameters, `this` fields, and consts — the attribute
+  grammar takes real expressions now). Sema requires `bool` and PURITY
+  (**E0924** — no calls or assignments in a contract); codegen emits
+  each through the `assert` path at entry, so a violation traps (and
+  test builds report instead of aborting). v0 checks in every build
+  profile; `#[ensures]` and doc/graph surfacing are follow-ups.
 - **FFI enums — explicit discriminants + `#[repr]`**: a payload-free
   enum takes C-style values (`NotFound = 404`, auto `prev + 1`
   otherwise; any constant expression folds) and an integer

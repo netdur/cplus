@@ -5778,6 +5778,9 @@ impl SemaCx<'_> {
             );
         }
         self.check_return_region_declared(&m.params, &m.return_type);
+        // v0.0.27 contracts: method preconditions check in the
+        // receiver + parameter scope, before the body.
+        self.check_requires_attrs(&m.attributes);
         self.check_function_body(
             &m.body,
             self.current_return.clone(),
@@ -5866,6 +5869,9 @@ impl SemaCx<'_> {
             );
         }
         self.check_return_region_declared(&m.params, &m.return_type);
+        // v0.0.27 contracts: method preconditions check in the
+        // receiver + parameter scope, before the body.
+        self.check_requires_attrs(&m.attributes);
         self.check_function_body(
             &m.body,
             self.current_return.clone(),
@@ -6034,6 +6040,9 @@ impl SemaCx<'_> {
             );
         }
         self.check_return_region_declared(&m.params, &m.return_type);
+        // v0.0.27 contracts: method preconditions check in the
+        // receiver + parameter scope, before the body.
+        self.check_requires_attrs(&m.attributes);
         self.check_function_body(
             &m.body,
             self.current_return.clone(),
@@ -7637,6 +7646,11 @@ impl SemaCx<'_> {
             );
         }
         self.check_return_region_declared(&f.params, &f.return_type);
+        // v0.0.27 contracts: `#[requires(EXPR)]` type-checks in the
+        // parameter scope, before the body (its reads must not perturb
+        // definite-assignment/move state — the purity rule guarantees the
+        // expression has no effects to record).
+        self.check_requires_attrs(&f.attributes);
         self.check_function_body(
             &f.body,
             body_return,
@@ -11136,6 +11150,33 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // Produces Option[T] — requires stdlib/option in the build (the
         // instantiate helper reports the missing lang item).
         self.instantiate_option(&to, span)
+    }
+
+    /// v0.0.27 contracts: validate every `#[requires(EXPR)]` on the item
+    /// whose parameter scope is currently pushed. Each expression must be
+    /// PURE — operators, literals, parameter/const reads, field reads —
+    /// and type as `bool`. Calls, assignments, and anything effectful are
+    /// E0924: a contract that mutates state changes the program it guards.
+    fn check_requires_attrs(&mut self, attributes: &[Attribute]) {
+        for a in attributes {
+            if a.path.name != "requires" {
+                continue;
+            }
+            for arg in &a.args {
+                let crate::ast::AttrArg::Expr(e) = arg else {
+                    continue;
+                };
+                if let Some(span) = first_impure_in_contract(e) {
+                    self.err(
+                        "E0924",
+                        "a `#[requires]` expression must be pure: operators, literals, parameter and `const` reads, and field reads only — no calls or assignments".to_string(),
+                        span,
+                    );
+                    continue;
+                }
+                let _ = self.check_expr(e, Some(Ty::Bool));
+            }
+        }
     }
 
     fn check_block_as_expr(&mut self, b: &Block) -> Ty {
@@ -20060,6 +20101,34 @@ fn int_lit_max_magnitude(t: &Ty, negated: bool) -> Option<u64> {
         Ty::I32 => Some(if negated { 1 << 31 } else { i32::MAX as u64 }),
         Ty::I64 | Ty::Isize => Some(if negated { 1 << 63 } else { i64::MAX as u64 }),
         _ => None,
+    }
+}
+
+/// v0.0.27 contracts: the span of the first NON-pure construct in a
+/// contract expression, or `None` when the expression is pure. Pure =
+/// literals, identifiers, field reads, unary/binary operators, casts,
+/// and parenthesized/grouping shapes. Everything else — calls, method
+/// calls, assignments, blocks, struct literals, awaits — is effectful or
+/// evaluation-order-bearing and has no place in a precondition.
+fn first_impure_in_contract(e: &Expr) -> Option<ByteSpan> {
+    match &e.kind {
+        ExprKind::IntLit(..)
+        | ExprKind::FloatLit(..)
+        | ExprKind::BoolLit(_)
+        | ExprKind::StrLit(_)
+        | ExprKind::Ident(_) => None,
+        ExprKind::Field { receiver, .. } => first_impure_in_contract(receiver),
+        ExprKind::Unary { operand, .. } => first_impure_in_contract(operand),
+        ExprKind::Binary { lhs, rhs, .. } => {
+            first_impure_in_contract(lhs).or_else(|| first_impure_in_contract(rhs))
+        }
+        ExprKind::Cast { expr, .. } | ExprKind::CastChecked { expr, .. } => {
+            first_impure_in_contract(expr)
+        }
+        ExprKind::Index { receiver, index } => {
+            first_impure_in_contract(receiver).or_else(|| first_impure_in_contract(index))
+        }
+        _ => Some(e.span),
     }
 }
 
@@ -30470,6 +30539,58 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
             .filter(|d| matches!(d.severity, Severity::Error))
             .map(|d| d.code.0.to_string())
             .collect()
+    }
+
+    // ---- contracts: #[requires] ----
+
+    #[test]
+    fn requires_contracts_typecheck_clean() {
+        let diags = check_src(
+            "const CAP: i32 = 100;
+             #[requires(n > 0)]
+             #[requires(n < CAP)]
+             fn bounded(n: i32) -> i32 { return n * 2; }
+             struct C { n: i32, cap: i32 }
+             impl C {
+                 #[requires(amount > 0)]
+                 #[requires(this.n + amount <= this.cap)]
+                 fn add(ref this, amount: i32) { this.n = this.n + amount; }
+             }
+             fn main() -> i32 { return bounded(21) - 42; }",
+        );
+        // Single-file mode: the const is unresolved here (no lower), so
+        // only assert nothing UNEXPECTED fires — run the lowered variant
+        // for the real check.
+        let lowered = check_src_lowered(
+            "const CAP: i32 = 100;
+             #[requires(n > 0)]
+             #[requires(n < CAP)]
+             fn bounded(n: i32) -> i32 { return n * 2; }
+             fn main() -> i32 { return bounded(21) - 42; }",
+        );
+        assert!(lowered.is_empty(), "got {:#?}", lowered);
+        let _ = diags;
+    }
+
+    #[test]
+    fn requires_impure_rejected_e0924() {
+        let codes = errors(
+            "fn probe(x: i32) -> bool { return x > 0; }
+             #[requires(probe(n))]
+             fn f(n: i32) -> i32 { return n; }
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.contains(&"E0924"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn requires_nonbool_rejected_e0302() {
+        let codes = errors(
+            "#[requires(n + 1)]
+             fn f(n: i32) -> i32 { return n; }
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.contains(&"E0302"), "got {:?}", codes);
     }
 
     // ---- FFI enums: #[repr] + explicit discriminants ----

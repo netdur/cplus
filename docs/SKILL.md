@@ -745,6 +745,9 @@ Only compiler-known attributes are accepted; an unknown attribute is rejected (E
 
 ```cplus
 #[test]                                          // register a test fn
+#[requires(n > 0)] fn f(n: i32) ...              // precondition, checked at entry (traps on
+                                                 // violation; test builds report). Pure exprs
+                                                 // over params/consts/fields; E0924 otherwise
 #[repr(C)] struct Foo { ... }                    // stable C layout
 #[link_name = "real_sym"] extern fn alias(...);  // symbol aliasing
 #[unroll(4)] while ... { ... }                   // loop hint

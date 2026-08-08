@@ -4,7 +4,7 @@
 
 Every C+ diagnostic carries a numbered code, a source span, and often a machine-applicable suggestion. `cpc --diagnostics=json` emits the same information in a machine-readable shape for editors and agents. Codes prefixed with **W** are non-fatal warnings; the build continues. The normative ranges and what each phase owns are fixed in [§20 of the language specification](/docs/spec).
 
-This is the complete index — **184 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **143** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
+This is the complete index — **185 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **144** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
 
 ## Lexical
 
@@ -750,6 +750,22 @@ fn main() -> i32 { return 0; }
 **Fix.** Explicit discriminants and integer reprs describe C enums: keep the enum payload-free, keep every value inside the `#[repr]` type's range, and give each variant a unique value.
 
 <sub>repro: checked · cplus-core/src/sema.rs:collect_type_names · test cplus-core/src/sema.rs:enum_discriminant_shapes_rejected_e0923</sub>
+
+### E0924 · Impure `#[requires]` expression
+
+A `#[requires(...)]` precondition used a construct with effects or evaluation-order weight — a call, an assignment, a block. A contract that can change state changes the program it guards, so the expression grammar is restricted to operators, literals, parameter and `const` reads, field reads, and casts.
+
+```cplus
+fn probe(x: i32) -> bool { return x > 0; }
+#[requires(probe(n))]
+fn f(n: i32) -> i32 { return n; }
+fn main() -> i32 { return 0; }
+// -> [E0924] a `#[requires]` expression must be pure
+```
+
+**Fix.** Restate the condition with pure reads, or hoist the computed value into a parameter the contract can read.
+
+<sub>repro: checked · cplus-core/src/sema.rs:check_requires_attrs · test cplus-core/src/sema.rs:requires_impure_rejected_e0924</sub>
 
 ## Control flow and matching
 

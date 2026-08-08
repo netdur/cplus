@@ -61,6 +61,10 @@ enum ArgsSpec {
     /// arg. Range validation is per-attribute and lives in sema (so
     /// the diagnostic carries the loop-statement context).
     ExactlyOneInt,
+    /// v0.0.27 contracts: one or more full-expression args
+    /// (`#[requires(n > 0)]`). The parser produced `AttrArg::Expr`s;
+    /// sema owns type-checking and the purity rule (E0924).
+    ExprArgs,
 }
 
 struct AttrSpec {
@@ -114,6 +118,16 @@ const KNOWN_ATTRS: &[AttrSpec] = &[
         ]),
         targets: TARGET_STRUCT | TARGET_ENUM,
         allow_duplicate: false,
+    },
+    // v0.0.27 contracts: `#[requires(EXPR, ...)]` — machine-checked
+    // preconditions in the signature. Sema type-checks each expression
+    // (bool, parameter scope, pure — E0924); codegen emits them through
+    // the `assert` path at function entry.
+    AttrSpec {
+        name: "requires",
+        args: ArgsSpec::ExprArgs,
+        targets: TARGET_FN | TARGET_METHOD,
+        allow_duplicate: true,
     },
     // Phase 11 / ObjC interop: `#[link_name = "..."]` aliases an
     // `extern fn`'s linker symbol. Lets the user declare the same
@@ -635,6 +649,15 @@ impl Ctx {
                 let ok = matches!(attr.args.as_slice(), [AttrArg::Int(_, _)]);
                 if !ok {
                     self.emit_expected_int_arg(attr, spec);
+                }
+            }
+            ArgsSpec::ExprArgs => {
+                // The parser produced Expr args for this attribute name; at
+                // least one is required. Type/purity rules live in sema.
+                let ok = !attr.args.is_empty()
+                    && attr.args.iter().all(|a| matches!(a, AttrArg::Expr(_)));
+                if !ok {
+                    self.emit_wrong_args(attr, spec);
                 }
             }
         }
