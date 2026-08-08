@@ -3518,6 +3518,53 @@ fn scrolling_reaches_the_handler_however_it_was_caused() {
     return;
 }
 
+// iris gap "a scroll that cannot scroll an axis still eats that axis":
+// hiding a scroller does not decline the gesture. An
+// automatic-elasticity NSScrollView claims the wheel on an axis it cannot
+// scroll — rubber-banding against nothing instead of passing it to an
+// enclosing scroll view — so iris's board (vertical lanes inside a horizontal
+// strip) would not scroll sideways with the pointer over a lane.
+#[test]
+fn a_scroll_declines_the_axis_it_does_not_scroll() {
+    backend::install();
+    var v_only: core::Node = scroll::scroll(key: "el:v", axis: vocab::ScrollAxis::Vertical);
+    let pv: *core::Node = #addr_of(v_only);
+    let vv: *u8 = views::create(0 as *u8, pv);
+    assert vv != (0 as *u8);
+    let sv: ak::ScrollView = ak::ScrollView::from_raw(vv);
+    // The axis it scrolls stays elastic; the one it cannot is refused.
+    assert elasticity_is_none(sv.horizontal_scroll_elasticity());
+    assert elasticity_is_none(sv.vertical_scroll_elasticity()) == false;
+    views::view_release(vv);
+
+    var h_only: core::Node = scroll::scroll(key: "el:h", axis: vocab::ScrollAxis::Horizontal);
+    let ph: *core::Node = #addr_of(h_only);
+    let hv: *u8 = views::create(0 as *u8, ph);
+    let sh: ak::ScrollView = ak::ScrollView::from_raw(hv);
+    assert elasticity_is_none(sh.vertical_scroll_elasticity());
+    assert elasticity_is_none(sh.horizontal_scroll_elasticity()) == false;
+    views::view_release(hv);
+
+    // `Both` claims both, which is correct: there is no ancestor to defer to
+    // on an axis this view really does scroll.
+    var both: core::Node = scroll::scroll(key: "el:b", axis: vocab::ScrollAxis::Both);
+    let pb: *core::Node = #addr_of(both);
+    let bv: *u8 = views::create(0 as *u8, pb);
+    let sb: ak::ScrollView = ak::ScrollView::from_raw(bv);
+    assert elasticity_is_none(sb.horizontal_scroll_elasticity()) == false;
+    assert elasticity_is_none(sb.vertical_scroll_elasticity()) == false;
+    views::view_release(bv);
+    return;
+}
+
+fn elasticity_is_none(e: ak::ScrollElasticity) -> bool {
+    return match e {
+        ak::ScrollElasticity::None => true,
+        ak::ScrollElasticity::Automatic => false,
+        ak::ScrollElasticity::Allowed => false,
+    };
+}
+
 #[test]
 fn a_released_scroll_view_leaves_no_observer_behind() {
     // A notification centre holds observers UNRETAINED. One that outlives its

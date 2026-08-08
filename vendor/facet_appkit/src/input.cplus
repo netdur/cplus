@@ -29,7 +29,12 @@
 // `on_pinch` is wired to `magnifyWithEvent:` but the window-level pinch-to-zoom
 // path is its own thing (see facet's pinch memory: SCALE only, no reflow).
 // Scroll is not a gesture: facet routes it through the scroll control, and the
-// nested-axis rule lives in FacetScrollView.
+// nested-axis rule is `apply_scroll`'s elasticity pair in controls.cplus — a
+// scroll declines the axis it cannot scroll, so the gesture reaches an
+// enclosing scroll view that can. (This line used to name a `FacetScrollView`
+// that no longer exists anywhere in the package: the rule was lost in a backend
+// regeneration and the comment outlived it by pointing at the hole, which is
+// how nested lanes came to swallow the board's horizontal scroll for so long.)
 
 import "stdlib/option" as option;
 import "stdlib/io" as io;

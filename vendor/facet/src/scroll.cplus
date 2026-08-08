@@ -178,7 +178,28 @@ impl Scroll {
     // ScrollView.Content — a named child, not a property. `@` keys are
     // facet's; an application's key never starts with one.
     fn set_content(this, take n: core::Node) -> Scroll {
-        core::set_slot(this._p, "@content", n);
+        var c: core::Node = n;
+        let scrolls_h: bool = match this.axis() {
+            vocab::ScrollAxis::Horizontal => true,
+            vocab::ScrollAxis::Both => true,
+            vocab::ScrollAxis::Vertical => false,
+            vocab::ScrollAxis::Neither => false,
+        };
+        let untouched: bool = match { c.style.align_self } {
+            flex::Align::Auto => true,
+            flex::Align::FlexStart => false,
+            flex::Align::Center => false,
+            flex::Align::FlexEnd => false,
+            flex::Align::Stretch => false,
+            flex::Align::Baseline => false,
+            flex::Align::SpaceBetween => false,
+            flex::Align::SpaceAround => false,
+            flex::Align::SpaceEvenly => false,
+            flex::Align::Start => false,
+            flex::Align::End => false,
+        };
+        if scrolls_h && untouched { c.set_align_self(flex::Align::FlexStart); }
+        core::set_slot(this._p, "@content", c);
         return this;
     }
 

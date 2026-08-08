@@ -457,11 +457,56 @@ fn ns_image_scaling(f: vocab::ImageFit) -> ak::ImageScaling {
 // `document_host` is what `views::insert` asks for.
 
 fn create_scroll(n: *core::Node) -> *u8 {
-    let s: ak::ScrollView = ak::ScrollView::from_raw(rt::alloc_init(#str_ptr("NSScrollView\0")));
+    // A FacetScrollView, not a plain NSScrollView — appkit_ext has carried the
+    // class all along; this package simply stopped constructing it, and the
+    // nested-scroll rule went with it.
+    //
+    // WHY A SUBCLASS AND NOT ELASTICITY. NSScrollView consumes `scrollWheel:`
+    // whenever it can scroll on EITHER axis. Elasticity governs the
+    // rubber-band at the limits, not whether the event is passed on — so a
+    // lane with twenty cards (real vertical range) swallows every sideways
+    // swipe however its horizontal elasticity is set, and the strip holding
+    // the lanes never moves. Two shipped fixes learned that the hard way
+    // before the class was written; this one re-learned it a third time.
+    //
+    // The override also forwards an axis it OWNS but has no range left on,
+    // which elasticity cannot express at all.
+    // ONLY A SINGLE-AXIS SCROLL TAKES THE SUBCLASS. The forwarder owns exactly
+    // one axis — it is a bool — so a `Both` scroll given it would hand its
+    // VERTICAL swipes away, and `Both` is the default every ordinary scroll in
+    // every app is built with. A scroll that owns both axes has nothing to
+    // decline except a limit, which is the platform's own rubber-band, so it
+    // stays a plain NSScrollView.
+    let axis: vocab::ScrollAxis = axis_of_node(n);
+    let one_axis: bool = match axis {
+        vocab::ScrollAxis::Horizontal => true,
+        vocab::ScrollAxis::Vertical => true,
+        vocab::ScrollAxis::Both => false,
+        vocab::ScrollAxis::Neither => false,
+    };
+    let owns_h: bool = match axis {
+        vocab::ScrollAxis::Horizontal => true,
+        vocab::ScrollAxis::Vertical => false,
+        vocab::ScrollAxis::Both => false,
+        vocab::ScrollAxis::Neither => false,
+    };
+    let s: ak::ScrollView = if one_axis {
+        akx::new_scroll_view(rt::Rect { x: 0.0f64, y: 0.0f64, w: 10.0f64, h: 10.0f64 }, owns_h)
+    } else {
+        ak::ScrollView::from_raw(rt::alloc_init(#str_ptr("NSScrollView\0")))
+    };
     let doc: ak::View = akx::new_flipped_view(rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 });
     s.set_document_view(doc);
     s.set_draws_background(false);
     return rt::retain(s.as_view().raw());
+}
+
+// The declared axis, read straight off the props — `create_scroll` runs before
+// `apply_scroll`, so it cannot wait for the prop pass to hand it over.
+fn axis_of_node(n: *core::Node) -> vocab::ScrollAxis {
+    let p: *props::ScrollProps = props_of(n, props::K_SCROLL) as *props::ScrollProps;
+    if p == (0 as *props::ScrollProps) { return vocab::ScrollAxis::Both; }
+    return { (*p).axis };
 }
 
 fn apply_scroll(v: *u8, n: *core::Node, dirty: u64) {
@@ -484,6 +529,36 @@ fn apply_scroll(v: *u8, n: *core::Node, dirty: u64) {
         };
         s.set_has_vertical_scroller(scrolls_v && shows_bars({ (*p).vertical_scroll_bars }));
         s.set_has_horizontal_scroller(scrolls_h && shows_bars({ (*p).horizontal_scroll_bars }));
+        // AND THE AXIS DECLINES THE EVENTS IT DOES NOT SCROLL. Hiding a
+        // scroller is not the same as refusing the gesture: an NSScrollView's
+        // default elasticity is `Automatic`, and an automatic-elasticity scroll
+        // view CLAIMS the wheel on that axis — rubber-banding against nothing
+        // rather than passing it to an enclosing scroll view. So a vertical
+        // lane swallowed every horizontal scroll, and iris's board (lanes that
+        // scroll vertically inside a strip that scrolls horizontally) would not
+        // move sideways with the pointer over any lane — which is most of it.
+        //
+        // `ScrollBars::Never` was no escape either: it rides the same
+        // `shows_bars` flag, so it hid the bar and kept the claim.
+        //
+        // `None` on the axis that does not scroll is AppKit's own answer for
+        // nested scroll views. `Both` leaves them automatic.
+        // iris gap: "a scroll that cannot scroll an axis still eats that axis".
+        s.set_vertical_scroll_elasticity(if scrolls_v { ak::ScrollElasticity::Automatic }
+                                         else { ak::ScrollElasticity::None });
+        s.set_horizontal_scroll_elasticity(if scrolls_h { ak::ScrollElasticity::Automatic }
+                                           else { ak::ScrollElasticity::None });
+        // ELASTICITY IS HALF THE ANSWER; the other half is that the axis must
+        // have NOTHING TO SCROLL. `geometry::size_scroll_content` pins the
+        // undeclared axis to the viewport exactly for that reason — a lane
+        // scrollable by three stray pixels of rounding is a lane entitled to
+        // keep every sideways swipe. Together they are AppKit's own nested
+        // answer, and it forwards natively.
+        //
+        // NOT a `scrollWheel:` override, which is where this went first:
+        // overriding it opts the view out of responsive scrolling, and a
+        // re-dispatched flick then brakes early — smooth on a slow swipe,
+        // visibly short on a fast one. The native path keeps the fast path.
     }
     // `safe_area` says whether the scroll keeps its content clear of the
     // window's own chrome. On AppKit that is exactly `automaticallyAdjusts

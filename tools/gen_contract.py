@@ -2554,7 +2554,48 @@ def emit_control(row_type, merged):
         o.append(f"\n    // {src}.{member} — a named child, not a property. `@` keys are\n")
         o.append("    // facet's; an application's key never starts with one.\n")
         o.append(f"    fn set_{field}(this, take n: core::Node) -> {cur} {{\n")
-        o.append(f"        core::set_slot(this._p, \"@{field}\", n);\n")
+        # THE SCROLL'S CONTENT IS NOT STRETCHED ALONG THE AXIS THAT SCROLLS.
+        # A scroll node is flex-direction Column like every other, so its
+        # content child is a column item and the default `align_items: Stretch`
+        # sizes it across the cross axis — to exactly the scroll's own width.
+        # For a scroll that scrolls HORIZONTALLY that is the whole bug: the
+        # content can never exceed the viewport, `size_scroll_content` unions
+        # children that already fit, and NSScrollView is told there is nothing
+        # to scroll — no scroller, no wheel, `scroll_to` clamped to the origin.
+        # iris's board laid seven lanes out to 2130pt inside 997pt and three
+        # were unreachable by pointer, while an agent could still press every
+        # one (`performClick:` does not care what is on screen).
+        #
+        # The axis is a constructor argument and nothing below this node knows
+        # it, so the cursor is the only place the opt-out can be defaulted.
+        # ONLY over `Align::Auto` — the untouched value — so an application
+        # that set an alignment keeps it: this fills a silence, it does not
+        # take the verb away.
+        if mod == "scroll" and field == "content":
+            o.append("        var c: core::Node = n;\n")
+            o.append("        let scrolls_h: bool = match this.axis() {\n")
+            o.append("            vocab::ScrollAxis::Horizontal => true,\n")
+            o.append("            vocab::ScrollAxis::Both => true,\n")
+            o.append("            vocab::ScrollAxis::Vertical => false,\n")
+            o.append("            vocab::ScrollAxis::Neither => false,\n")
+            o.append("        };\n")
+            o.append("        let untouched: bool = match { c.style.align_self } {\n")
+            o.append("            flex::Align::Auto => true,\n")
+            o.append("            flex::Align::FlexStart => false,\n")
+            o.append("            flex::Align::Center => false,\n")
+            o.append("            flex::Align::FlexEnd => false,\n")
+            o.append("            flex::Align::Stretch => false,\n")
+            o.append("            flex::Align::Baseline => false,\n")
+            o.append("            flex::Align::SpaceBetween => false,\n")
+            o.append("            flex::Align::SpaceAround => false,\n")
+            o.append("            flex::Align::SpaceEvenly => false,\n")
+            o.append("            flex::Align::Start => false,\n")
+            o.append("            flex::Align::End => false,\n")
+            o.append("        };\n")
+            o.append("        if scrolls_h && untouched { c.set_align_self(flex::Align::FlexStart); }\n")
+            o.append(f"        core::set_slot(this._p, \"@{field}\", c);\n")
+        else:
+            o.append(f"        core::set_slot(this._p, \"@{field}\", n);\n")
         o.append("        return this;\n    }\n")
         o.append(f"\n    fn {field}(this) -> option::Option[*core::Node] {{\n")
         o.append(f"        return core::slot(this._p, \"@{field}\");\n    }}\n")

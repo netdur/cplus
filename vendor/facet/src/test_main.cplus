@@ -579,6 +579,89 @@ fn scroll_to_records_the_index_and_its_bit() {
     return;
 }
 
+// iris gap "a scroll stretches its content to the viewport": a
+// horizontally-scrolling scroll must not stretch its
+// content to the viewport, or the content can never exceed it and there is
+// nothing to scroll. The opt-out belongs here because the AXIS is only known
+// here — iris carried it as a one-line workaround in every horizontal scroll.
+#[test]
+fn horizontal_scroll_content_is_not_stretched_to_the_viewport() {
+    var root: facet::Node = scroll::scroll(key: "h", axis: vocab::ScrollAxis::Horizontal);
+    var content: facet::Node = box_view::box(color: vocab::Color::clear());
+    match scroll::from(#addr_of(root)) {
+        option::Option[scroll::Scroll]::Some(x) => {
+            let _c: scroll::Scroll = x.set_content(content);
+        }
+        option::Option[scroll::Scroll]::None => { assert false; }
+    }
+    match facet::slot(#addr_of(root), "@content") {
+        option::Option[*facet::Node]::Some(c) => {
+            assert matches_flex_start({ (*c).style.align_self });
+        }
+        option::Option[*facet::Node]::None => { assert false; }
+    }
+    return;
+}
+
+// The mirror: a VERTICAL scroll wants the cross-axis stretch (content fills
+// the width), so nothing is defaulted for it.
+#[test]
+fn vertical_scroll_content_keeps_its_cross_axis_stretch() {
+    var root: facet::Node = scroll::scroll(key: "v", axis: vocab::ScrollAxis::Vertical);
+    var content: facet::Node = box_view::box(color: vocab::Color::clear());
+    match scroll::from(#addr_of(root)) {
+        option::Option[scroll::Scroll]::Some(x) => {
+            let _c: scroll::Scroll = x.set_content(content);
+        }
+        option::Option[scroll::Scroll]::None => { assert false; }
+    }
+    match facet::slot(#addr_of(root), "@content") {
+        option::Option[*facet::Node]::Some(c) => {
+            assert matches_flex_start({ (*c).style.align_self }) == false;
+        }
+        option::Option[*facet::Node]::None => { assert false; }
+    }
+    return;
+}
+
+// An application that HAS spoken keeps its answer: the default fills a
+// silence, it does not take the verb away.
+#[test]
+fn an_explicit_align_self_survives_set_content() {
+    var root: facet::Node = scroll::scroll(key: "h2", axis: vocab::ScrollAxis::Horizontal);
+    var content: facet::Node = box_view::box(color: vocab::Color::clear());
+    content.set_align_self(flex::Align::Center);
+    match scroll::from(#addr_of(root)) {
+        option::Option[scroll::Scroll]::Some(x) => {
+            let _c: scroll::Scroll = x.set_content(content);
+        }
+        option::Option[scroll::Scroll]::None => { assert false; }
+    }
+    match facet::slot(#addr_of(root), "@content") {
+        option::Option[*facet::Node]::Some(c) => {
+            assert matches_flex_start({ (*c).style.align_self }) == false;
+        }
+        option::Option[*facet::Node]::None => { assert false; }
+    }
+    return;
+}
+
+fn matches_flex_start(a: flex::Align) -> bool {
+    return match a {
+        flex::Align::FlexStart => true,
+        flex::Align::Auto => false,
+        flex::Align::Center => false,
+        flex::Align::FlexEnd => false,
+        flex::Align::Stretch => false,
+        flex::Align::Baseline => false,
+        flex::Align::SpaceBetween => false,
+        flex::Align::SpaceAround => false,
+        flex::Align::SpaceEvenly => false,
+        flex::Align::Start => false,
+        flex::Align::End => false,
+    };
+}
+
 #[test]
 fn animate_progress_writes_both_halves() {
     var root: facet::Node = progress::progress(0.0f64, key: "p");
