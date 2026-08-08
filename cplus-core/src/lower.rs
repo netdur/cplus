@@ -27,7 +27,7 @@
 
 use crate::ast::*;
 use crate::diagnostics::{DiagCode, Diagnostic, LineMap, Severity};
-use crate::lexer::Span;
+use crate::lexer::{NumSuffix, Span};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -65,6 +65,11 @@ pub fn lower_multi(
     files: BTreeMap<String, (PathBuf, String)>,
 ) -> Vec<Diagnostic> {
     let mut cx = Lower::new(entry_file.to_path_buf(), entry_src, files);
+    // Derive through the empty impl: expand `impl T: Eq {}` (and Ord /
+    // Hash / Clone / ToText) into memberwise implementations FIRST, so the
+    // synthesized methods take part in every later lowering step and reach
+    // sema exactly like user-written code.
+    cx.expand_derives(prog);
     // v0.0.9 Phase 4: collect consts and validate initializers (both
     // const and static initializers must be literals). Done before the
     // per-item walk so the substitution pass sees a populated table.
@@ -2201,6 +2206,724 @@ pub(crate) fn expr_diverges(e: &Expr) -> bool {
     }
 }
 
+// ===== derive through the empty impl =====
+//
+// `impl Point: Eq {}` — an EMPTY impl block against one of the five
+// derivable blessed interfaces (`Eq`, `Ord`, `Hash`, `Clone`, `ToText`)
+// asks the compiler to generate the memberwise implementation. This pass
+// synthesizes the method AST directly into the impl block before any other
+// lowering, so generated code flows through named-arg lowering, sema,
+// borrowck, monomorphize and codegen exactly like a hand-written impl —
+// no sema or codegen surface knows derive exists.
+//
+// The empty body IS the request, extending the language's existing idiom
+// (`impl Handle: Send {}` asserts a marker the same way). Empty impls
+// against `Send`/`Sync` remain marker assertions (sema slice 7GEN.6);
+// empty impls against user interfaces remain E0916.
+//
+// Per-interface field support (E0920 on anything outside it):
+//   Eq     — primitives/str/ptrs via `==`, payload-free enums via `==`,
+//            nominal types (structs / generic insts / type params) via `.eq()`
+//   Ord    — numerics via `<`/`>`, bool + payload-free enums via `as i64`,
+//            nominal via `.cmp()` fold, `str` via its blessed `compare`
+//   Hash   — FNV-1a 64 fold: ints/str via blessed `.hash()`, floats via
+//            `.to_bits()`, bool/enums via `as u64`, nominal via `.hash()`
+//   Clone  — copyables verbatim, nominal via `.clone()`
+//   ToText — one interpolated literal `"Name { f: ${...}, ... }"`; nominal
+//            fields spelled `${this.f.to_text()}` (a bare struct part is
+//            the open codegen gap found 2026-08-08), payload-free enums as
+//            their `as i64` discriminant
+//
+// Every synthesized node carries the impl header's interface-name span, so
+// any downstream diagnostic in generated code (a missing `T: Eq` bound, a
+// field type without the needed method) points at the `impl X: Eq {}` line
+// the user wrote.
+
+/// The five interfaces the empty impl derives. `Send`/`Sync` are NOT here —
+/// an empty impl against them is a marker assertion, not a derive.
+const DERIVABLE: [&str; 5] = ["Eq", "Ord", "Hash", "Clone", "ToText"];
+
+/// FNV-1a 64-bit offset basis / prime — the fold constants for derived `hash`.
+const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+const FNV_PRIME: u64 = 0x100000001b3;
+
+/// What derive generation can do with one field, classified from the AST
+/// type alone (plus the merged program's enum table). `Nominal` covers
+/// structs, generic instantiations and type params uniformly: generation
+/// emits a method call and sema enforces the method's existence (or the
+/// `T: Eq`-style bound) at the impl header's span.
+#[derive(Clone, Copy, PartialEq)]
+enum DeriveFieldKind {
+    Int,
+    Float,
+    Bool,
+    Str,
+    PlainEnum,
+    PayloadEnum,
+    Ptr,
+    Nominal,
+    Unsupported(&'static str),
+}
+
+fn classify_derive_field(
+    ty: &Type,
+    enums_payload_free: &std::collections::HashMap<String, bool>,
+) -> DeriveFieldKind {
+    match &ty.kind {
+        TypeKind::Path(p) => match p.as_str() {
+            "i8" | "i16" | "i32" | "i64" | "isize" | "u8" | "u16" | "u32" | "u64" | "usize" => {
+                DeriveFieldKind::Int
+            }
+            "f16" | "f32" | "f64" => DeriveFieldKind::Float,
+            "bool" => DeriveFieldKind::Bool,
+            "str" => DeriveFieldKind::Str,
+            _ => match enums_payload_free.get(p) {
+                Some(true) => DeriveFieldKind::PlainEnum,
+                Some(false) => DeriveFieldKind::PayloadEnum,
+                // Structs, type params, and anything sema will reject on its
+                // own (an unknown name) all take the method-call route.
+                None => DeriveFieldKind::Nominal,
+            },
+        },
+        // A generic instantiation is nominal (Vec[T], Pair[A, B]) unless the
+        // template is an enum (Option[i32], Result[T, E]) — those get the
+        // targeted payload-enum diagnostic instead of a puzzling
+        // no-method-on-enum error.
+        TypeKind::Generic { name, .. } => match enums_payload_free.get(name) {
+            Some(true) => DeriveFieldKind::PlainEnum,
+            Some(false) => DeriveFieldKind::PayloadEnum,
+            None => DeriveFieldKind::Nominal,
+        },
+        TypeKind::RawPtr(_) | TypeKind::FnPtr { .. } => DeriveFieldKind::Ptr,
+        TypeKind::Array { .. } => DeriveFieldKind::Unsupported("array fields"),
+        TypeKind::Slice(_) => DeriveFieldKind::Unsupported("slice fields"),
+        TypeKind::Tuple(_) => DeriveFieldKind::Unsupported("tuple fields"),
+        TypeKind::Borrowed { .. } => DeriveFieldKind::Unsupported("borrow fields"),
+    }
+}
+
+// -- tiny AST builders, all stamped with the impl header's span --
+
+fn d_ident(name: &str, span: Span) -> Ident {
+    Ident {
+        name: name.to_string(),
+        span,
+    }
+}
+
+fn d_expr(kind: ExprKind, span: Span) -> Expr {
+    Expr { kind, span }
+}
+
+fn d_path_ty(name: &str, span: Span) -> Type {
+    Type {
+        kind: TypeKind::Path(name.to_string()),
+        span,
+    }
+}
+
+/// `this.f` / `other.f`
+fn d_field(base: &str, field: &str, span: Span) -> Expr {
+    d_expr(
+        ExprKind::Field {
+            receiver: Box::new(d_expr(ExprKind::Ident(base.to_string()), span)),
+            name: d_ident(field, span),
+        },
+        span,
+    )
+}
+
+/// `recv.method(args)`
+fn d_mcall(recv: Expr, method: &str, args: Vec<Expr>, span: Span) -> Expr {
+    let arg_labels = vec![None; args.len()];
+    d_expr(
+        ExprKind::Call {
+            callee: Box::new(d_expr(
+                ExprKind::Field {
+                    receiver: Box::new(recv),
+                    name: d_ident(method, span),
+                },
+                span,
+            )),
+            args,
+            arg_labels,
+            type_args: Vec::new(),
+        },
+        span,
+    )
+}
+
+fn d_binary(op: BinOp, lhs: Expr, rhs: Expr, span: Span) -> Expr {
+    d_expr(
+        ExprKind::Binary {
+            op,
+            lhs: Box::new(lhs),
+            rhs: Box::new(rhs),
+        },
+        span,
+    )
+}
+
+fn d_cast(e: Expr, ty_name: &str, span: Span) -> Expr {
+    d_expr(
+        ExprKind::Cast {
+            expr: Box::new(e),
+            ty: d_path_ty(ty_name, span),
+        },
+        span,
+    )
+}
+
+fn d_int(v: u64, suffix: NumSuffix, span: Span) -> Expr {
+    d_expr(ExprKind::IntLit(v, suffix), span)
+}
+
+/// `if COND { return RET; }` as a statement.
+fn d_if_return(cond: Expr, ret: Expr, span: Span) -> Stmt {
+    Stmt {
+        kind: StmtKind::Expr(d_expr(
+            ExprKind::If {
+                cond: Box::new(cond),
+                then: Block {
+                    stmts: vec![Stmt {
+                        kind: StmtKind::Return(Some(ret)),
+                        span,
+                    }],
+                    tail: None,
+                    span,
+                },
+                else_branch: None,
+            },
+            span,
+        )),
+        span,
+    }
+}
+
+fn d_return(e: Expr, span: Span) -> Stmt {
+    Stmt {
+        kind: StmtKind::Return(Some(e)),
+        span,
+    }
+}
+
+fn d_method(
+    name: &str,
+    params: Vec<Param>,
+    return_type: Type,
+    stmts: Vec<Stmt>,
+    span: Span,
+) -> Method {
+    Method {
+        name: d_ident(name, span),
+        generic_params: Vec::new(),
+        receiver: Some(Receiver::Read),
+        params,
+        return_type: Some(return_type),
+        body: Block {
+            stmts,
+            tail: None,
+            span,
+        },
+        is_declaration: false,
+        span,
+        is_pub: false,
+        attributes: Vec::new(),
+        is_async: false,
+        is_gen: false,
+    }
+}
+
+/// The impl target spelled as a type: `Point`, or `Pair[T]` for a generic
+/// target (the impl's own params become the type arguments).
+fn d_self_type(target: &str, generic_params: &[GenericParam], span: Span) -> Type {
+    if generic_params.is_empty() {
+        d_path_ty(target, span)
+    } else {
+        Type {
+            kind: TypeKind::Generic {
+                name: target.to_string(),
+                args: generic_params
+                    .iter()
+                    .map(|gp| d_path_ty(&gp.name.name, span))
+                    .collect(),
+            },
+            span,
+        }
+    }
+}
+
+fn d_other_param(self_ty: Type, span: Span) -> Param {
+    Param {
+        name: d_ident("other", span),
+        ty: self_ty,
+        mutable: false,
+        move_: false,
+        restrict: false,
+        borrow_: false,
+        default: None,
+        span,
+    }
+}
+
+impl Lower {
+    /// Expand every empty derivable-interface impl in the merged program.
+    /// Runs before all other lowering steps so the generated methods are
+    /// first-class citizens of every later pass.
+    fn expand_derives(&mut self, prog: &mut Program) {
+        // Pass 1 (read-only): the type tables generation consults.
+        let mut struct_fields: std::collections::HashMap<String, Vec<(String, Type)>> =
+            std::collections::HashMap::new();
+        let mut enums_payload_free: std::collections::HashMap<String, bool> =
+            std::collections::HashMap::new();
+        let mut designated_string: Option<String> = None;
+        for item in &prog.items {
+            match &item.kind {
+                ItemKind::Struct(s) => {
+                    struct_fields.insert(
+                        s.name.name.clone(),
+                        s.fields
+                            .iter()
+                            .map(|f| (f.name.name.clone(), f.ty.clone()))
+                            .collect(),
+                    );
+                    let is_lang_string = s.attributes.iter().any(|a| {
+                        a.path.name == "lang"
+                            && a.args
+                                .iter()
+                                .any(|arg| matches!(arg, AttrArg::Str(v, _) if v == "string"))
+                    });
+                    if is_lang_string {
+                        designated_string = Some(s.name.name.clone());
+                    }
+                }
+                ItemKind::Enum(e) => {
+                    let payload_free = e.variants.iter().all(|v| v.payload.is_empty());
+                    enums_payload_free.insert(e.name.name.clone(), payload_free);
+                }
+                _ => {}
+            }
+        }
+        // Pass 2: rewrite matching impl blocks in place.
+        for item in &mut prog.items {
+            let origin = item.origin_file.clone();
+            let ItemKind::Impl(b) = &mut item.kind else {
+                continue;
+            };
+            if !b.methods.is_empty() {
+                continue;
+            }
+            let Some(iface) = b.interface_name.clone() else {
+                continue;
+            };
+            if !DERIVABLE.contains(&iface.name.as_str()) {
+                continue;
+            }
+            // Unknown target or an enum target: leave the impl empty — sema's
+            // existing E0325/E0916 diagnostics own those shapes.
+            let Some(fields) = struct_fields.get(&b.target.name).cloned() else {
+                continue;
+            };
+            self.set_current_file(origin.as_deref());
+            let span = iface.span;
+            let target = b.target.name.clone();
+            let kinds: Vec<(String, DeriveFieldKind)> = fields
+                .iter()
+                .map(|(n, t)| (n.clone(), classify_derive_field(t, &enums_payload_free)))
+                .collect();
+            let mut bad = |this: &mut Self, fname: &str, why: &str| {
+                this.err(
+                    "E0920",
+                    format!(
+                        "cannot derive `{}` for `{}`: field `{}` — {}",
+                        iface.name,
+                        target.rsplit('.').next().unwrap_or(&target),
+                        fname,
+                        why
+                    ),
+                    span,
+                );
+            };
+            let method = match iface.name.as_str() {
+                "Eq" => {
+                    let mut stmts = Vec::new();
+                    for (fname, kind) in &kinds {
+                        let cond = match kind {
+                            DeriveFieldKind::Int
+                            | DeriveFieldKind::Float
+                            | DeriveFieldKind::Bool
+                            | DeriveFieldKind::Str
+                            | DeriveFieldKind::PlainEnum
+                            | DeriveFieldKind::Ptr => Some(d_binary(
+                                BinOp::Ne,
+                                d_field("self", fname, span),
+                                d_field("other", fname, span),
+                                span,
+                            )),
+                            DeriveFieldKind::Nominal => Some(d_expr(
+                                ExprKind::Unary {
+                                    op: UnaryOp::Not,
+                                    operand: Box::new(d_mcall(
+                                        d_field("self", fname, span),
+                                        "eq",
+                                        vec![d_field("other", fname, span)],
+                                        span,
+                                    )),
+                                },
+                                span,
+                            )),
+                            DeriveFieldKind::PayloadEnum => {
+                                bad(self, fname, "its enum type has payload variants; write `eq` manually");
+                                None
+                            }
+                            DeriveFieldKind::Unsupported(what) => {
+                                bad(self, fname, &format!("{what} are not derivable"));
+                                None
+                            }
+                        };
+                        if let Some(cond) = cond {
+                            stmts.push(d_if_return(
+                                cond,
+                                d_expr(ExprKind::BoolLit(false), span),
+                                span,
+                            ));
+                        }
+                    }
+                    stmts.push(d_return(d_expr(ExprKind::BoolLit(true), span), span));
+                    d_method(
+                        "eq",
+                        vec![d_other_param(
+                            d_self_type(&target, &b.target_generic_params, span),
+                            span,
+                        )],
+                        d_path_ty("bool", span),
+                        stmts,
+                        span,
+                    )
+                }
+                "Ord" => {
+                    let mut stmts = Vec::new();
+                    for (i, (fname, kind)) in kinds.iter().enumerate() {
+                        match kind {
+                            DeriveFieldKind::Int | DeriveFieldKind::Float => {
+                                let minus_one = d_expr(
+                                    ExprKind::Unary {
+                                        op: UnaryOp::Neg,
+                                        operand: Box::new(d_int(1, NumSuffix::None, span)),
+                                    },
+                                    span,
+                                );
+                                stmts.push(d_if_return(
+                                    d_binary(
+                                        BinOp::Lt,
+                                        d_field("self", fname, span),
+                                        d_field("other", fname, span),
+                                        span,
+                                    ),
+                                    minus_one,
+                                    span,
+                                ));
+                                stmts.push(d_if_return(
+                                    d_binary(
+                                        BinOp::Gt,
+                                        d_field("self", fname, span),
+                                        d_field("other", fname, span),
+                                        span,
+                                    ),
+                                    d_int(1, NumSuffix::None, span),
+                                    span,
+                                ));
+                            }
+                            DeriveFieldKind::Bool | DeriveFieldKind::PlainEnum => {
+                                let lhs = d_cast(d_field("self", fname, span), "i64", span);
+                                let rhs = d_cast(d_field("other", fname, span), "i64", span);
+                                let minus_one = d_expr(
+                                    ExprKind::Unary {
+                                        op: UnaryOp::Neg,
+                                        operand: Box::new(d_int(1, NumSuffix::None, span)),
+                                    },
+                                    span,
+                                );
+                                stmts.push(d_if_return(
+                                    d_binary(BinOp::Lt, lhs.clone(), rhs.clone(), span),
+                                    minus_one,
+                                    span,
+                                ));
+                                stmts.push(d_if_return(
+                                    d_binary(BinOp::Gt, lhs, rhs, span),
+                                    d_int(1, NumSuffix::None, span),
+                                    span,
+                                ));
+                            }
+                            // `str` folds through its blessed lexicographic
+                            // `compare` (stdlib str.cplus); nominal types
+                            // through their own `cmp`. Same three-way fold.
+                            DeriveFieldKind::Nominal | DeriveFieldKind::Str => {
+                                let method = if *kind == DeriveFieldKind::Str {
+                                    "compare"
+                                } else {
+                                    "cmp"
+                                };
+                                let cname = format!("c{i}");
+                                stmts.push(Stmt {
+                                    kind: StmtKind::Let {
+                                        mutable: false,
+                                        name: d_ident(&cname, span),
+                                        ty: None,
+                                        init: Some(d_mcall(
+                                            d_field("self", fname, span),
+                                            method,
+                                            vec![d_field("other", fname, span)],
+                                            span,
+                                        )),
+                                    },
+                                    span,
+                                });
+                                stmts.push(d_if_return(
+                                    d_binary(
+                                        BinOp::Ne,
+                                        d_expr(ExprKind::Ident(cname.clone()), span),
+                                        d_int(0, NumSuffix::None, span),
+                                        span,
+                                    ),
+                                    d_expr(ExprKind::Ident(cname), span),
+                                    span,
+                                ));
+                            }
+                            DeriveFieldKind::Ptr => {
+                                bad(self, fname, "pointer fields have no ordering; write `cmp` manually");
+                            }
+                            DeriveFieldKind::PayloadEnum => {
+                                bad(self, fname, "its enum type has payload variants; write `cmp` manually");
+                            }
+                            DeriveFieldKind::Unsupported(what) => {
+                                bad(self, fname, &format!("{what} are not derivable"));
+                            }
+                        }
+                    }
+                    stmts.push(d_return(d_int(0, NumSuffix::None, span), span));
+                    d_method(
+                        "cmp",
+                        vec![d_other_param(
+                            d_self_type(&target, &b.target_generic_params, span),
+                            span,
+                        )],
+                        d_path_ty("i32", span),
+                        stmts,
+                        span,
+                    )
+                }
+                "Hash" => {
+                    let mut stmts = vec![Stmt {
+                        kind: StmtKind::Let {
+                            mutable: true,
+                            name: d_ident("h", span),
+                            ty: Some(d_path_ty("u64", span)),
+                            init: Some(d_int(FNV_OFFSET, NumSuffix::U64, span)),
+                        },
+                        span,
+                    }];
+                    for (fname, kind) in &kinds {
+                        let fh = match kind {
+                            DeriveFieldKind::Int | DeriveFieldKind::Str => {
+                                Some(d_mcall(d_field("self", fname, span), "hash", vec![], span))
+                            }
+                            DeriveFieldKind::Float => Some(d_cast(
+                                d_mcall(d_field("self", fname, span), "to_bits", vec![], span),
+                                "u64",
+                                span,
+                            )),
+                            DeriveFieldKind::Bool | DeriveFieldKind::PlainEnum => {
+                                Some(d_cast(d_field("self", fname, span), "u64", span))
+                            }
+                            DeriveFieldKind::Nominal => {
+                                Some(d_mcall(d_field("self", fname, span), "hash", vec![], span))
+                            }
+                            DeriveFieldKind::Ptr => {
+                                bad(self, fname, "pointer fields have no blessed `hash`; write `hash` manually");
+                                None
+                            }
+                            DeriveFieldKind::PayloadEnum => {
+                                bad(self, fname, "its enum type has payload variants; write `hash` manually");
+                                None
+                            }
+                            DeriveFieldKind::Unsupported(what) => {
+                                bad(self, fname, &format!("{what} are not derivable"));
+                                None
+                            }
+                        };
+                        if let Some(fh) = fh {
+                            let h = d_expr(ExprKind::Ident("h".to_string()), span);
+                            let folded = d_binary(
+                                BinOp::Mul,
+                                d_binary(BinOp::BitXor, h.clone(), fh, span),
+                                d_int(FNV_PRIME, NumSuffix::U64, span),
+                                span,
+                            );
+                            stmts.push(Stmt {
+                                kind: StmtKind::Expr(d_expr(
+                                    ExprKind::Assign {
+                                        op: AssignOp::Assign,
+                                        target: Box::new(h),
+                                        value: Box::new(folded),
+                                    },
+                                    span,
+                                )),
+                                span,
+                            });
+                        }
+                    }
+                    stmts.push(d_return(d_expr(ExprKind::Ident("h".to_string()), span), span));
+                    d_method("hash", Vec::new(), d_path_ty("u64", span), stmts, span)
+                }
+                "Clone" => {
+                    let mut ok = true;
+                    let mut lit_fields = Vec::new();
+                    for (fname, kind) in &kinds {
+                        let value = match kind {
+                            DeriveFieldKind::Int
+                            | DeriveFieldKind::Float
+                            | DeriveFieldKind::Bool
+                            | DeriveFieldKind::Str
+                            | DeriveFieldKind::PlainEnum
+                            | DeriveFieldKind::Ptr => d_field("self", fname, span),
+                            DeriveFieldKind::Nominal => {
+                                d_mcall(d_field("self", fname, span), "clone", vec![], span)
+                            }
+                            DeriveFieldKind::PayloadEnum => {
+                                bad(self, fname, "its enum type has payload variants; write `clone` manually");
+                                ok = false;
+                                continue;
+                            }
+                            DeriveFieldKind::Unsupported(what) => {
+                                bad(self, fname, &format!("{what} are not derivable"));
+                                ok = false;
+                                continue;
+                            }
+                        };
+                        lit_fields.push(StructLitField {
+                            name: d_ident(fname, span),
+                            value,
+                            span,
+                        });
+                    }
+                    // A failed field means the struct literal can't be built;
+                    // emit a self-recursive body so the (already failing)
+                    // build doesn't cascade a missing-field error on top.
+                    let ret = if ok {
+                        if b.target_generic_params.is_empty() {
+                            d_expr(
+                                ExprKind::StructLit {
+                                    name: d_ident(&target, span),
+                                    fields: lit_fields,
+                                },
+                                span,
+                            )
+                        } else {
+                            d_expr(
+                                ExprKind::GenericStructLit {
+                                    name: d_ident(&target, span),
+                                    type_args: b
+                                        .target_generic_params
+                                        .iter()
+                                        .map(|gp| d_path_ty(&gp.name.name, span))
+                                        .collect(),
+                                    fields: lit_fields,
+                                },
+                                span,
+                            )
+                        }
+                    } else {
+                        d_mcall(
+                            d_expr(ExprKind::Ident("self".to_string()), span),
+                            "clone",
+                            vec![],
+                            span,
+                        )
+                    };
+                    d_method(
+                        "clone",
+                        Vec::new(),
+                        d_self_type(&target, &b.target_generic_params, span),
+                        vec![d_return(ret, span)],
+                        span,
+                    )
+                }
+                "ToText" => {
+                    let Some(text_name) = designated_string.clone() else {
+                        self.err(
+                            "E0920",
+                            format!(
+                                "cannot derive `ToText` for `{}`: the build has no `#[lang(\"string\")]` type — import the stdlib `text` module",
+                                target.rsplit('.').next().unwrap_or(&target)
+                            ),
+                            span,
+                        );
+                        self.set_current_file(None);
+                        continue;
+                    };
+                    let leaf = target.rsplit('.').next().unwrap_or(&target).to_string();
+                    let mut parts = Vec::new();
+                    let mut first = true;
+                    for (fname, kind) in &kinds {
+                        let part = match kind {
+                            DeriveFieldKind::Int
+                            | DeriveFieldKind::Float
+                            | DeriveFieldKind::Bool
+                            | DeriveFieldKind::Str => Some(d_field("self", fname, span)),
+                            DeriveFieldKind::PlainEnum => {
+                                Some(d_cast(d_field("self", fname, span), "i64", span))
+                            }
+                            DeriveFieldKind::Nominal => Some(d_mcall(
+                                d_field("self", fname, span),
+                                "to_text",
+                                vec![],
+                                span,
+                            )),
+                            DeriveFieldKind::Ptr => {
+                                bad(self, fname, "pointer fields have no text form; write `to_text` manually");
+                                None
+                            }
+                            DeriveFieldKind::PayloadEnum => {
+                                bad(self, fname, "its enum type has payload variants; write `to_text` manually");
+                                None
+                            }
+                            DeriveFieldKind::Unsupported(what) => {
+                                bad(self, fname, &format!("{what} are not derivable"));
+                                None
+                            }
+                        };
+                        let Some(part) = part else { continue };
+                        let lead = if first {
+                            format!("{leaf} {{ {fname}: ")
+                        } else {
+                            format!(", {fname}: ")
+                        };
+                        first = false;
+                        parts.push(InterpStrPart::Lit(lead));
+                        parts.push(InterpStrPart::Expr(Box::new(part)));
+                    }
+                    parts.push(InterpStrPart::Lit(if first {
+                        format!("{leaf} {{}}")
+                    } else {
+                        " }".to_string()
+                    }));
+                    d_method(
+                        "to_text",
+                        Vec::new(),
+                        d_path_ty(&text_name, span),
+                        vec![d_return(d_expr(ExprKind::InterpStr { parts }, span), span)],
+                        span,
+                    )
+                }
+                _ => unreachable!("DERIVABLE covers the match"),
+            };
+            b.methods.push(method);
+            self.set_current_file(None);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3077,5 +3800,230 @@ fn main() -> i32 { return 0; }\n";
         }
         assert_eq!(names.len(), 2);
         assert_ne!(names[0], names[1], "builder temps must not collide");
+    }
+
+    // ---- derive through the empty impl ----
+
+    /// The impl block for `target: iface` in the lowered program.
+    fn find_impl<'a>(prog: &'a Program, target: &str, iface: &str) -> &'a ImplBlock {
+        prog.items
+            .iter()
+            .find_map(|it| match &it.kind {
+                ItemKind::Impl(b)
+                    if b.target.name == target
+                        && b.interface_name.as_ref().map(|i| i.name.as_str()) == Some(iface) =>
+                {
+                    Some(b)
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no impl {target}: {iface} in program"))
+    }
+
+    #[test]
+    fn derive_eq_expands_memberwise_method() {
+        let (prog, diags) = run(
+            "struct P { x: i32, y: bool }\n\
+             impl P: Eq {}\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(diags.is_empty(), "got {diags:#?}");
+        let b = find_impl(&prog, "P", "Eq");
+        assert_eq!(b.methods.len(), 1);
+        let m = &b.methods[0];
+        assert_eq!(m.name.name, "eq");
+        assert_eq!(m.receiver, Some(Receiver::Read));
+        assert_eq!(m.params.len(), 1);
+        assert_eq!(m.params[0].name.name, "other");
+        assert!(matches!(&m.params[0].ty.kind, TypeKind::Path(p) if p == "P"));
+        assert!(matches!(&m.return_type.as_ref().unwrap().kind, TypeKind::Path(p) if p == "bool"));
+        // Two fields -> two early-return checks + the final `return true`.
+        assert_eq!(m.body.stmts.len(), 3);
+    }
+
+    #[test]
+    fn derive_all_five_expand() {
+        let (prog, diags) = run(
+            "#[lang(\"string\")] struct Text { p: *u8, n: usize }\n\
+             struct P { x: i32 }\n\
+             impl P: Eq {}\n\
+             impl P: Ord {}\n\
+             impl P: Hash {}\n\
+             impl P: Clone {}\n\
+             impl P: ToText {}\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(diags.is_empty(), "got {diags:#?}");
+        for (iface, method) in [
+            ("Eq", "eq"),
+            ("Ord", "cmp"),
+            ("Hash", "hash"),
+            ("Clone", "clone"),
+            ("ToText", "to_text"),
+        ] {
+            let b = find_impl(&prog, "P", iface);
+            assert_eq!(b.methods.len(), 1, "impl P: {iface}");
+            assert_eq!(b.methods[0].name.name, method);
+        }
+    }
+
+    #[test]
+    fn derive_hash_folds_fnv1a() {
+        let (prog, diags) = run(
+            "struct P { x: i32 }\n\
+             impl P: Hash {}\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(diags.is_empty(), "got {diags:#?}");
+        let m = &find_impl(&prog, "P", "Hash").methods[0];
+        // var h: u64 = FNV_OFFSET; fold x; return h
+        let StmtKind::Let { mutable, init, .. } = &m.body.stmts[0].kind else {
+            panic!("expected let h");
+        };
+        assert!(*mutable);
+        assert!(matches!(
+            &init.as_ref().unwrap().kind,
+            ExprKind::IntLit(v, NumSuffix::U64) if *v == FNV_OFFSET
+        ));
+        assert_eq!(m.body.stmts.len(), 3);
+    }
+
+    #[test]
+    fn derive_generic_target_carries_params() {
+        let (prog, diags) = run(
+            "struct Pair[T] { a: T, b: i32 }\n\
+             impl Pair[T: Eq]: Eq {}\n\
+             impl Pair[T: Clone]: Clone {}\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(diags.is_empty(), "got {diags:#?}");
+        let eq = &find_impl(&prog, "Pair", "Eq").methods[0];
+        // `other` is typed at the impl's own params: Pair[T].
+        let TypeKind::Generic { name, args } = &eq.params[0].ty.kind else {
+            panic!("expected Pair[T] param type");
+        };
+        assert_eq!(name, "Pair");
+        assert!(matches!(&args[0].kind, TypeKind::Path(p) if p == "T"));
+        // Clone rebuilds through the generic struct literal.
+        let clone = &find_impl(&prog, "Pair", "Clone").methods[0];
+        let StmtKind::Return(Some(ret)) = &clone.body.stmts[0].kind else {
+            panic!("expected return");
+        };
+        assert!(matches!(&ret.kind, ExprKind::GenericStructLit { name, .. } if name.name == "Pair"));
+    }
+
+    #[test]
+    fn derive_ord_str_field_uses_blessed_compare() {
+        let (prog, diags) = run(
+            "struct K { id: i64, name: str }\n\
+             impl K: Ord {}\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(diags.is_empty(), "got {diags:#?}");
+        let m = &find_impl(&prog, "K", "Ord").methods[0];
+        let has_compare_call = m.body.stmts.iter().any(|s| {
+            let StmtKind::Let { init: Some(e), .. } = &s.kind else {
+                return false;
+            };
+            let ExprKind::Call { callee, .. } = &e.kind else {
+                return false;
+            };
+            matches!(&callee.kind, ExprKind::Field { name, .. } if name.name == "compare")
+        });
+        assert!(has_compare_call, "str field should fold through `compare`");
+    }
+
+    #[test]
+    fn derive_payload_enum_field_rejected_e0920() {
+        let (_prog, diags) = run(
+            "enum E { A, B(i32) }\n\
+             struct P { e: E }\n\
+             impl P: Eq {}\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(
+            diags.iter().any(|d| d.code.0 == "E0920"),
+            "got {diags:#?}"
+        );
+    }
+
+    #[test]
+    fn derive_plain_enum_field_is_supported() {
+        let (prog, diags) = run(
+            "enum E { A, B }\n\
+             struct P { e: E }\n\
+             impl P: Eq {}\n\
+             impl P: Ord {}\n\
+             impl P: Hash {}\n\
+             impl P: Clone {}\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(diags.is_empty(), "got {diags:#?}");
+        assert_eq!(find_impl(&prog, "P", "Eq").methods.len(), 1);
+    }
+
+    #[test]
+    fn derive_totext_without_lang_string_rejected_e0920() {
+        let (_prog, diags) = run(
+            "struct P { x: i32 }\n\
+             impl P: ToText {}\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(
+            diags.iter().any(|d| d.code.0 == "E0920"),
+            "got {diags:#?}"
+        );
+    }
+
+    #[test]
+    fn derive_leaves_markers_user_interfaces_and_enum_targets_alone() {
+        let (prog, diags) = run(
+            "interface Greet { fn hi(this) -> i32; }\n\
+             enum E { A, B }\n\
+             struct S { opaque p: *u8 }\n\
+             impl S { fn drop(ref this) { return; } }\n\
+             impl S: Send {}\n\
+             impl S: Greet {}\n\
+             impl E: Eq {}\n\
+             fn main() -> i32 { return 0; }",
+        );
+        // No E0920 from lower — sema owns these shapes (E0915/E0916/E0325).
+        assert!(
+            diags.iter().all(|d| d.code.0 != "E0920"),
+            "got {diags:#?}"
+        );
+        assert!(find_impl(&prog, "S", "Send").methods.is_empty());
+        assert!(find_impl(&prog, "S", "Greet").methods.is_empty());
+        assert!(find_impl(&prog, "E", "Eq").methods.is_empty());
+    }
+
+    #[test]
+    fn derive_totext_interpolates_fields() {
+        let (prog, diags) = run(
+            "#[lang(\"string\")] struct Text { p: *u8, n: usize }\n\
+             struct P { x: i32, inner: Q }\n\
+             struct Q { v: i32 }\n\
+             impl Q: ToText {}\n\
+             impl P: ToText {}\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(diags.is_empty(), "got {diags:#?}");
+        let m = &find_impl(&prog, "P", "ToText").methods[0];
+        let StmtKind::Return(Some(ret)) = &m.body.stmts[0].kind else {
+            panic!("expected return");
+        };
+        let ExprKind::InterpStr { parts } = &ret.kind else {
+            panic!("expected interpolated string");
+        };
+        assert!(matches!(&parts[0], InterpStrPart::Lit(l) if l == "P { x: "));
+        // The nominal field is spelled `${this.inner.to_text()}`.
+        let has_to_text_call = parts.iter().any(|p| {
+            let InterpStrPart::Expr(e) = p else { return false };
+            let ExprKind::Call { callee, .. } = &e.kind else {
+                return false;
+            };
+            matches!(&callee.kind, ExprKind::Field { name, .. } if name.name == "to_text")
+        });
+        assert!(has_to_text_call, "nested field should call to_text");
     }
 }

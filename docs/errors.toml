@@ -2959,22 +2959,23 @@ fn main() -> i32 { return 0; }
 
 [[code]]
 id = "E0916"
-title = "Empty `impl` of an interface that is not `Send` / `Sync`"
+title = "Empty `impl` of an interface that is neither derivable nor a marker"
 category = "Ownership and borrowing"
 severity = "error"
 repro = "checked"
 lang = "cplus"
 verified = true
-emit_site = "cplus-core/src/sema.rs:2993"
+emit_site = "cplus-core/src/sema.rs:validate_interface_impls"
 test = "cplus-core/src/sema.rs:empty_impl_on_regular_interface_rejected_e0916"
-cause = "An empty `impl Type: Interface {}` was written for an interface other than `Send` / `Sync`. An empty impl is meaningful only as a `Send` / `Sync` marker assertion; every other interface's methods must be provided."
-fix = "Implement the interface's methods, or remove the impl."
+cause = "An empty `impl Type: Interface {}` was written for an interface the compiler cannot fill in. An empty impl derives the memberwise implementation for the five blessed interfaces (`Eq`, `Ord`, `Hash`, `Clone`, `ToText`) on a struct target, or asserts the `Send` / `Sync` markers; a user interface's methods must be provided, and deriving needs a struct (not an enum) target."
+fix = "Implement the interface's methods, or — if you meant to derive — make the target a struct and the interface one of `Eq` / `Ord` / `Hash` / `Clone` / `ToText`."
 example = '''
 interface Greet { fn hi(this) -> i32; }
 struct S { x: i32 }
 impl S: Greet {}
 fn main() -> i32 { return 0; }
-// -> [E0916] empty `impl` applies only to the `Send` / `Sync` markers
+// -> [E0916] empty `impl` derives `Eq` / `Ord` / `Hash` / `Clone` / `ToText`
+//            or asserts the `Send` / `Sync` markers; `Greet` requires a body
 '''
 
 [[code]]
@@ -3031,6 +3032,26 @@ example = '''
 extern fn __cplus_reactor_get_state() -> *u8;
 fn main() -> i32 { return 0; }
 // -> [E0919] `__cplus_reactor_get_state` starts with `__cplus_`, the compiler's reserved runtime-ABI prefix
+'''
+
+[[code]]
+id = "E0920"
+title = "Field not derivable for this interface"
+category = "Names, types, and items"
+severity = "error"
+repro = "checked"
+lang = "cplus"
+verified = true
+emit_site = "cplus-core/src/lower.rs:expand_derives"
+test = "cplus-core/src/lower.rs:derive_payload_enum_field_rejected_e0920"
+cause = "An empty `impl Type: Interface {}` asked the compiler to derive a memberwise implementation, but one of the struct's fields has a shape the derived method cannot handle: an enum with payload variants (no generated `match` in v1), an array / slice / tuple field, a pointer field where the interface needs `hash` or `cmp` or a text form, or — for `ToText` — a build with no `#[lang(\"string\")]` type."
+fix = "Write the named method by hand for this type, or change the field to a derivable shape. For payload enums the usual fix is a hand-written method that `match`es on the variants."
+example = '''
+enum E { A, B(i32) }
+struct P { e: E }
+impl P: Eq {}
+fn main() -> i32 { return 0; }
+// -> [E0920] cannot derive `Eq` for `P`: field `e` — its enum type has payload variants; write `eq` manually
 '''
 
 [[code]]

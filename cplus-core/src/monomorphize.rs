@@ -1813,6 +1813,49 @@ impl ExprRewriter for MonoRewriter<'_> {
 
     fn visit_expr(&mut self, expr: &Expr) -> Option<Expr> {
         let kind = match &expr.kind {
+            // 2026-08-08: a struct-typed `${...}` part whose type implements
+            // `ToText` becomes an explicit `part.to_text()` call (sema recorded
+            // the part's span). Codegen's interp lowering then sees an owned
+            // `Text` part — its ICE arm never fires. Same convert-in-mono
+            // discipline as InferredStructLit.
+            ExprKind::InterpStr { parts } => {
+                use crate::ast::InterpStrPart;
+                ExprKind::InterpStr {
+                    parts: parts
+                        .iter()
+                        .map(|p| match p {
+                            InterpStrPart::Lit(s) => InterpStrPart::Lit(s.clone()),
+                            InterpStrPart::Expr(inner) => {
+                                let walked = walk_expr(inner, self);
+                                let wrapped = if self.mono.interp_totext_parts.contains(&inner.span)
+                                {
+                                    Expr {
+                                        kind: ExprKind::Call {
+                                            callee: Box::new(Expr {
+                                                kind: ExprKind::Field {
+                                                    receiver: Box::new(walked),
+                                                    name: Ident {
+                                                        name: "to_text".to_string(),
+                                                        span: inner.span,
+                                                    },
+                                                },
+                                                span: inner.span,
+                                            }),
+                                            args: Vec::new(),
+                                            arg_labels: Vec::new(),
+                                            type_args: Vec::new(),
+                                        },
+                                        span: inner.span,
+                                    }
+                                } else {
+                                    walked
+                                };
+                                InterpStrPart::Expr(Box::new(wrapped))
+                            }
+                        })
+                        .collect(),
+                }
+            }
             // Value-turbofish `f::[T]` (a fn-pointer VALUE): lower to the address
             // of the concrete instantiation — the SAME symbol the turbofish CALL
             // path mangles (mangle_call_from_ast), resolved through the active

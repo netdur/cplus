@@ -193,6 +193,24 @@ struct Public { value: i32, _internal: i32 }                     // `_` field = 
 > **Type-inferred struct literals**: where the type is known (annotated binding, `return`, argument), drop the name — `let p: Point = { x: 1, y: 2 };` and `return { x: 1, y: 2 };`.
 > **Receivers are `this` / `ref this` / `take this`** (the enclosing type is `This`). The name is always `this`; `ref`/`take` are the modifier. A `ref this` (mutating) method requires a `var` receiver — calling it on a `let` is E0328.
 
+### Deriving `Eq` / `Ord` / `Hash` / `Clone` / `ToText`
+
+An **empty** `impl Type: Interface {}` against one of the five blessed interfaces asks the compiler to generate the memberwise implementation — the same idiom as a `Send` marker impl, extended to code generation. No attribute, no macro:
+
+```cplus
+struct Key { id: i64, name: str }
+impl Key: Eq {}                                  // fn eq(this, other: Key) -> bool
+impl Key: Ord {}                                 // fn cmp(this, other: Key) -> i32
+impl Key: Hash {}                                // fn hash(this) -> u64  (FNV-1a fold)
+impl Key: Clone {}                               // fn clone(this) -> Key
+impl Key: ToText {}                              // fn to_text(this) -> Text ("Key { id: 1, name: a }")
+
+var m = hash_map::new::[Key, i32]();             // derived Hash + Eq satisfy K's bounds
+m.insert(Key { id: 1, name: "a" }, 100);
+```
+
+Field-by-field: primitives compare/hash directly, `str` orders through its `compare`, nested structs recurse through their own (derived or hand-written) method, and a generic target works with the bounds you declare (`impl Pair[T: Eq]: Eq {}`). Payload-carrying enum fields and array/slice/tuple fields are not derivable (**E0920**) — write that method by hand. `ToText` needs `stdlib/text` in the build. Deriving targets structs only; an empty impl of a user interface stays an error (E0916), and `Copy` stays structural (never written, never derived).
+
 ### Callbacks: pass a method with `recv.method`
 
 There are no closures, so a stateful callback is a **pair** — the code and the object it runs on. C+ writes that pair as two parameters and wires it for you. **The two parameters must be adjacent, in this order, and the context defaulted:**
@@ -682,7 +700,7 @@ impl Handle: Send {}                           // marker impl = the manual Send 
 impl Arc[T: Send + Sync]: Send {}              // Arc[X] is Send iff X is Send + Sync
 ```
 
-A marker impl applies only to `Send`/`Sync` (E0861 elsewhere); the body is empty. `Arc`/`Mutex`/`Channel` already carry the right conditional impls, so they work across threads when their payload does.
+A marker impl's body is empty — and an empty impl of `Eq`/`Ord`/`Hash`/`Clone`/`ToText` derives the memberwise implementation instead (§3); any other interface requires a body. `Arc`/`Mutex`/`Channel` already carry the right conditional impls, so they work across threads when their payload does.
 
 ---
 

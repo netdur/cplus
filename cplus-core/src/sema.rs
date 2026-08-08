@@ -718,6 +718,13 @@ pub struct MonoInfo {
     /// `ExprKind::StructLit` with this name (the same convert-in-mono /
     /// panic-in-codegen discipline as `GenericStructLit`).
     pub inferred_struct_lits: HashMap<ByteSpan, String>,
+    /// 2026-08-08: spans of interpolation `${...}` parts whose type is a
+    /// user struct implementing `ToText` (not the designated string
+    /// itself). Monomorphize rewrites each into an explicit
+    /// `part.to_text()` call — codegen's interp lowering only knows
+    /// primitives, `str`, and `Text`, and previously hit its
+    /// unreachable-arm ICE on a bare struct part.
+    pub interp_totext_parts: std::collections::HashSet<ByteSpan>,
     /// v0.0.8 Phase 4: per-call-site `env!("NAME")` lookup. Resolved at
     /// sema time (read from the compiler's process environment via
     /// `std::env::var`). Value is the env var's value as a UTF-8 string.
@@ -1066,6 +1073,7 @@ fn check_with_files_inner(
         generic_impl_methods: HashMap::new(),
         compile_time_blobs_table: HashMap::new(),
         inferred_struct_lit_table: HashMap::new(),
+        interp_totext_part_table: std::collections::HashSet::new(),
         env_vars_table: HashMap::new(),
         statics_table: HashMap::new(),
         selectors_table: std::collections::BTreeSet::new(),
@@ -1379,6 +1387,7 @@ fn check_with_files_inner(
         type_aliases,
         compile_time_blobs: std::mem::take(&mut cx.compile_time_blobs_table),
         inferred_struct_lits: std::mem::take(&mut cx.inferred_struct_lit_table),
+        interp_totext_parts: std::mem::take(&mut cx.interp_totext_part_table),
         env_vars: std::mem::take(&mut cx.env_vars_table),
         statics: cx
             .statics_table
@@ -1715,6 +1724,9 @@ struct SemaCx<'a> {
     /// monomorphize reads the snapshot from [`MonoInfo::inferred_struct_lits`]
     /// to rewrite each node into a plain `StructLit` with that name.
     inferred_struct_lit_table: HashMap<ByteSpan, String>,
+    /// Spans of struct-typed `${...}` parts that need the mono-time
+    /// `.to_text()` rewrite — see [`MonoInfo::interp_totext_parts`].
+    interp_totext_part_table: std::collections::HashSet<ByteSpan>,
     /// v0.0.8 Phase 4: resolved `env!("NAME")` lookups, keyed by the
     /// macro call's source span. Sema populates; codegen reads from
     /// `MonoInfo::env_vars` (built by `mem::take` at hand-off).
@@ -5040,14 +5052,29 @@ impl SemaCx<'_> {
                     .insert((iface_name.name.clone(), b.target.name.clone()), bounds);
                 continue;
             }
-            // Empty interface impls are meaningful only for marker assertions.
+            // Empty interface impls are meaningful only for marker assertions
+            // and the five derivable blessed interfaces (`Eq` / `Ord` / `Hash`
+            // / `Clone` / `ToText`, expanded by `lower::expand_derives` before
+            // this pass — an empty one surviving to here means the target
+            // wasn't a struct the derive pass could see, e.g. an enum).
             if b.methods.is_empty() {
+                let derivable = matches!(
+                    iface_name.name.as_str(),
+                    "Eq" | "Ord" | "Hash" | "Clone" | "ToText"
+                );
                 diags.push(Diag {
                     code: "E0916",
-                    msg: format!(
-                        "empty `impl` applies only to the `Send` / `Sync` markers, not `{}`",
-                        iface_name.name
-                    ),
+                    msg: if derivable {
+                        format!(
+                            "cannot derive `{}` for `{}` — deriving needs a struct target",
+                            iface_name.name, b.target.name
+                        )
+                    } else {
+                        format!(
+                            "empty `impl` derives `Eq` / `Ord` / `Hash` / `Clone` / `ToText` or asserts the `Send` / `Sync` markers; `{}` requires a body",
+                            iface_name.name
+                        )
+                    },
                     span: iface_name.span,
                     origin_file: item.origin_file.clone(),
                 });
@@ -13273,16 +13300,27 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 if matches!(ty, Ty::Error) {
                     continue;
                 }
-                let ok = Self::is_blessed_to_text_receiver(&ty)
+                let mut ok = Self::is_blessed_to_text_receiver(&ty)
                     // TEXT.R2: an owned `Text` embeds directly (its bytes are
                     // copied into the result).
                     || matches!(&ty, Ty::Struct(id)
-                        if self.designated_string_struct == Some(*id))
-                    || matches!(&ty, Ty::Struct(id)
-                    if self.interface_impls.contains(&(
-                        "ToText".to_string(),
-                        self.structs[id.0 as usize].name.clone(),
-                    )));
+                        if self.designated_string_struct == Some(*id));
+                if !ok {
+                    if let Ty::Struct(id) = &ty {
+                        if self.interface_impls.contains(&(
+                            "ToText".to_string(),
+                            self.structs[id.0 as usize].name.clone(),
+                        )) {
+                            // A user struct with `impl X: ToText` is admitted by
+                            // rewriting the part to an explicit `.to_text()`
+                            // call at monomorphize time — codegen's interp
+                            // lowering only handles primitives / `str` / `Text`
+                            // and used to ICE on a bare struct part.
+                            self.interp_totext_part_table.insert(e.span);
+                            ok = true;
+                        }
+                    }
+                }
                 if !ok {
                     self.err(
                         "E0612",
@@ -15864,6 +15902,28 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     );
                     let _ = self.check_expr(rhs, None);
                     return Ty::Bool;
+                }
+                // `==` on an enum with payload variants compares nothing
+                // meaningful — the value is a tag + payload aggregate, and
+                // letting it through produced invalid LLVM (`icmp` on an
+                // aggregate). Payload-FREE enums stay comparable (they lower
+                // to a bare discriminant). Found while building derive
+                // (2026-08-08): the shape previously escaped sema entirely.
+                if let Ty::Enum(id) = &lt {
+                    if self.enums[id.0 as usize].is_tagged {
+                        let op_txt = if op == BinOp::Eq { "==" } else { "!=" };
+                        self.err(
+                            "E0302",
+                            format!(
+                                "`{}` on enum `{}` with payload variants is not supported; `match` on the variants instead",
+                                op_txt,
+                                self.ty_display_named(&lt)
+                            ),
+                            lhs.span,
+                        );
+                        let _ = self.check_expr(rhs, None);
+                        return Ty::Bool;
+                    }
                 }
                 let _ = self.check_expr(rhs, Some(lt));
                 Ty::Bool
@@ -30125,6 +30185,89 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
             .filter(|d| matches!(d.severity, Severity::Error))
             .map(|d| d.code.0.to_string())
             .collect()
+    }
+
+    // ---- derive through the empty impl (lower expands, sema validates) ----
+
+    #[test]
+    fn derived_impls_typecheck_clean_and_satisfy_interfaces() {
+        let diags = check_src_lowered(
+            "enum Tag { A, B }\n\
+             struct Inner { v: i64 }\n\
+             impl Inner: Eq {}\n\
+             impl Inner: Ord {}\n\
+             impl Inner: Hash {}\n\
+             impl Inner: Clone {}\n\
+             struct P { x: i32, y: f64, on: bool, name: str, tag: Tag, inner: Inner }\n\
+             impl P: Eq {}\n\
+             impl P: Hash {}\n\
+             impl P: Clone {}\n\
+             fn main() -> i32 {\n\
+                 let a = P { x: 1, y: 2.0, on: true, name: \"n\", tag: Tag::A, inner: Inner { v: 3 } };\n\
+                 let b = a.clone();\n\
+                 if !a.eq(b) { return 1; }\n\
+                 if a.hash() != b.hash() { return 2; }\n\
+                 let i = Inner { v: 4 };\n\
+                 let j = Inner { v: 5 };\n\
+                 return i.cmp(j) + 1;\n\
+             }",
+        );
+        assert!(diags.is_empty(), "got {:#?}", diags);
+    }
+
+    #[test]
+    fn derived_key_satisfies_hash_eq_bounds() {
+        // The headline: a derived struct passes `K: Hash + Eq` bounds.
+        let diags = check_src_lowered(
+            "struct Key { id: i64 }\n\
+             impl Key: Eq {}\n\
+             impl Key: Hash {}\n\
+             fn probe[K: Hash + Eq](k: K) -> u64 { return k.hash(); }\n\
+             fn main() -> i32 {\n\
+                 let k = Key { id: 7 };\n\
+                 if probe::[Key](k) == (0 as u64) { return 1; }\n\
+                 return 0;\n\
+             }",
+        );
+        assert!(diags.is_empty(), "got {:#?}", diags);
+    }
+
+    #[test]
+    fn derive_on_enum_target_rejected_e0916() {
+        let codes = lowered_errors(
+            "enum Color { Red, Green }\n\
+             impl Color: Clone {}\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.contains(&"E0916".to_string()), "got {:?}", codes);
+    }
+
+    #[test]
+    fn payload_enum_equality_rejected_e0302() {
+        let codes = lowered_errors(
+            "enum E { A, B(i32) }\n\
+             fn main() -> i32 {\n\
+                 let x = E::A;\n\
+                 let y = E::B(1);\n\
+                 if x == y { return 1; }\n\
+                 return 0;\n\
+             }",
+        );
+        assert!(codes.contains(&"E0302".to_string()), "got {:?}", codes);
+    }
+
+    #[test]
+    fn plain_enum_equality_still_clean() {
+        let diags = check_src_lowered(
+            "enum E { A, B }\n\
+             fn main() -> i32 {\n\
+                 let x = E::A;\n\
+                 let y = E::B;\n\
+                 if x == y { return 1; }\n\
+                 return 0;\n\
+             }",
+        );
+        assert!(diags.is_empty(), "got {:#?}", diags);
     }
 
     #[test]

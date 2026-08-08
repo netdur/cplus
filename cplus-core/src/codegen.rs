@@ -18161,6 +18161,35 @@ mod tests {
         generate_with_mono(&post, BuildMode::Debug, true, None, &[], false, &mono)
     }
 
+    /// 2026-08-08: a struct-typed `${...}` part with a user `impl X: ToText`
+    /// passed sema but hit this file's unreachable-arm ICE ("sema validated
+    /// interp expr type") — the interp lowering only knows primitives, `str`,
+    /// and the designated string. Monomorphize now rewrites the part into an
+    /// explicit `part.to_text()` call (recorded by sema in
+    /// `MonoInfo::interp_totext_parts`), so codegen sees an owned-string part.
+    /// The regression is that this pipeline completes at all.
+    #[test]
+    fn struct_totext_interp_part_lowers_via_method_call() {
+        let src = "\
+extern fn malloc(n: usize) -> *u8;\n\
+extern fn free(p: *u8);\n\
+#[lang(\"string\")]\n\
+struct MyText { ptr: *u8, len: usize, cap: usize }\n\
+impl MyText { fn drop(ref this) { { free(this.ptr); } return; } }\n\
+struct P { x: i32 }\n\
+impl P: ToText { fn to_text(this) -> MyText { return \"p!\"; } }\n\
+fn main() -> i32 {\n\
+    let p = P { x: 1 };\n\
+    let t: MyText = \"v: ${p}\";\n\
+    return 0;\n\
+}\n";
+        let ir = gen_src_mono(src);
+        assert!(
+            ir.contains("to_text"),
+            "the interp part should route through P::to_text:\n{ir}"
+        );
+    }
+
     /// issue-13(b): the two passes must reach the same drop conclusion for the
     /// same type. The RULE is shared now (`sema::carries_drop`), so what this
     /// pins is the inputs — sema's `is_drop` / `is_tagged` against codegen's,

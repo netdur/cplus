@@ -12,6 +12,28 @@ earlier history lives in each version's archived plan.
 > instantiation is now a first-class fn-pointer value.
 
 ### Language
+- **Derive through the empty impl**: `impl Point: Eq {}` — an empty impl
+  block against `Eq` / `Ord` / `Hash` / `Clone` / `ToText` generates the
+  memberwise implementation, extending the marker-impl idiom (`impl H:
+  Send {}`) to code generation. Derived methods are synthesized as
+  ordinary AST before sema, so they type-check, borrow-check and satisfy
+  interface bounds exactly like hand-written ones — a struct with derived
+  `Hash` + `Eq` is a valid `HashMap` key. Field rules: primitives and
+  `str` direct (str orders via its blessed `compare`), nested structs
+  recurse through their own methods, payload-free enums compare/hash by
+  discriminant, generic targets carry their declared bounds
+  (`impl Pair[T: Eq]: Eq {}`). Payload enums, arrays, slices and tuples
+  are not derivable — **E0920** names the field and the manual fix.
+  Deriving needs a struct target (E0916 otherwise); `Copy` remains
+  structural and is never written.
+- **`==` / `!=` on payload-carrying enums is now E0302** ("match on the
+  variants instead"). The shape previously escaped sema and died as
+  invalid LLVM IR; payload-free enums still compare by discriminant.
+- **`${p}` interpolation of a struct with `impl P: ToText` no longer ICEs.**
+  Sema admitted the part but codegen's interp lowering only knew
+  primitives / `str` / `Text` and hit its unreachable arm. Monomorphize
+  now rewrites such a part into an explicit `p.to_text()` call, so
+  `"${point}"` works — including derived `ToText` and nested structs.
 - **`guard var` / `if var` / `while var`**: the pattern-binding statements
   take `var` in place of `let`, making the bound value(s) mutable — `guard
   var` in the enclosing scope, `if var` / `while var` inside the body

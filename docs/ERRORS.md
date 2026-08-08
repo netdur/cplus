@@ -4,7 +4,7 @@
 
 Every C+ diagnostic carries a numbered code, a source span, and often a machine-applicable suggestion. `cpc --diagnostics=json` emits the same information in a machine-readable shape for editors and agents. Codes prefixed with **W** are non-fatal warnings; the build continues. The normative ranges and what each phase owns are fixed in [§20 of the language specification](/docs/spec).
 
-This is the complete index — **180 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **139** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
+This is the complete index — **181 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **140** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
 
 ## Lexical
 
@@ -705,6 +705,22 @@ fn main() -> i32 { return 0; }
 **Fix.** If the declaration really does name a compiler-generated symbol (the stdlib reactor bindings do), mark it `#[runtime_abi]` — the same doctrine as `opaque` and `#[lang]`: a small trusted surface, written down. Otherwise pick a name outside the prefix.
 
 <sub>repro: checked · cplus-core/src/sema.rs:reject_unmarked_runtime_abi_name · test cplus-core/src/sema.rs:unmarked_runtime_abi_prefix_rejected_e0919</sub>
+
+### E0920 · Field not derivable for this interface
+
+An empty `impl Type: Interface {}` asked the compiler to derive a memberwise implementation, but one of the struct's fields has a shape the derived method cannot handle: an enum with payload variants (no generated `match` in v1), an array / slice / tuple field, a pointer field where the interface needs `hash` or `cmp` or a text form, or — for `ToText` — a build with no `#[lang("string")]` type.
+
+```cplus
+enum E { A, B(i32) }
+struct P { e: E }
+impl P: Eq {}
+fn main() -> i32 { return 0; }
+// -> [E0920] cannot derive `Eq` for `P`: field `e` — its enum type has payload variants; write `eq` manually
+```
+
+**Fix.** Write the named method by hand for this type, or change the field to a derivable shape. For payload enums the usual fix is a hand-written method that `match`es on the variants.
+
+<sub>repro: checked · cplus-core/src/lower.rs:expand_derives · test cplus-core/src/lower.rs:derive_payload_enum_field_rejected_e0920</sub>
 
 ## Control flow and matching
 
@@ -1446,21 +1462,22 @@ fn main() -> i32 { return 0; }
 
 <sub>repro: checked · cplus-core/src/sema.rs:2963 · test cplus-core/src/sema.rs:nonempty_send_marker_impl_rejected_e0915</sub>
 
-### E0916 · Empty `impl` of an interface that is not `Send` / `Sync`
+### E0916 · Empty `impl` of an interface that is neither derivable nor a marker
 
-An empty `impl Type: Interface {}` was written for an interface other than `Send` / `Sync`. An empty impl is meaningful only as a `Send` / `Sync` marker assertion; every other interface's methods must be provided.
+An empty `impl Type: Interface {}` was written for an interface the compiler cannot fill in. An empty impl derives the memberwise implementation for the five blessed interfaces (`Eq`, `Ord`, `Hash`, `Clone`, `ToText`) on a struct target, or asserts the `Send` / `Sync` markers; a user interface's methods must be provided, and deriving needs a struct (not an enum) target.
 
 ```cplus
 interface Greet { fn hi(this) -> i32; }
 struct S { x: i32 }
 impl S: Greet {}
 fn main() -> i32 { return 0; }
-// -> [E0916] empty `impl` applies only to the `Send` / `Sync` markers
+// -> [E0916] empty `impl` derives `Eq` / `Ord` / `Hash` / `Clone` / `ToText`
+//            or asserts the `Send` / `Sync` markers; `Greet` requires a body
 ```
 
-**Fix.** Implement the interface's methods, or remove the impl.
+**Fix.** Implement the interface's methods, or — if you meant to derive — make the target a struct and the interface one of `Eq` / `Ord` / `Hash` / `Clone` / `ToText`.
 
-<sub>repro: checked · cplus-core/src/sema.rs:2993 · test cplus-core/src/sema.rs:empty_impl_on_regular_interface_rejected_e0916</sub>
+<sub>repro: checked · cplus-core/src/sema.rs:validate_interface_impls · test cplus-core/src/sema.rs:empty_impl_on_regular_interface_rejected_e0916</sub>
 
 ## Modules, paths, and visibility
 
