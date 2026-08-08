@@ -240,10 +240,41 @@ fn subclass_of(base: *u8, prefix: str, flavour: u32) -> *u8 {
 // and taking the IMP off the superclass and calling it as an ordinary function
 // is the same call with neither spelling in it. `input::imp_hit_test` uses the
 // technique too, on the other side of the same problem.
+// THE IMPLEMENTATION BELOW OURS, and "below" cannot be read as "one class up".
+//
+// `class_getSuperclass(object_class(self))` is only the right place to look
+// when our subclass is the LAST one applied. It is not: `views::create` runs
+// the kind's body first and `input::arm` second, and arming moves the view's
+// isa again — onto a subclass of ours. So for a text view that is both
+// vertically aligned (this file) and armed (input.cplus), the chain is
+//
+//     FacetInput00  ->  FacetEditor00  ->  NSTextView
+//     (object's class)  (carries OUR imp)
+//
+// and one hop up lands on the class holding our own override. It calls itself
+// until the stack guard is hit: a segfault while TYPING in a text area, from
+// `-[NSLayoutManager _recalculateUsageForTextContainerAtIndex:]` asking for
+// `textContainerOrigin`.
+//
+// So walk up until the implementation is not the one we installed. That is
+// correct however many subclasses are layered on, in any order, and it needs
+// no bookkeeping about who subclassed first.
+fn super_imp_below(self_obj: *u8, cmd: *u8, mine: *u8) -> *u8 {
+    var cls: *u8 = { class_getSuperclass(synth::object_class(self_obj)) };
+    while cls != (0 as *u8) {
+        let imp: *u8 = { super_imp_of(cls, cmd) };
+        if imp == (0 as *u8) { return 0 as *u8; }
+        if imp != mine { return imp; }
+        cls = { class_getSuperclass(cls) };
+    }
+    return 0 as *u8;
+}
+
 fn super_drawing_rect(self_obj: *u8, cmd: *u8, bounds: rt::Rect) -> rt::Rect {
-    let base: *u8 = { class_getSuperclass(synth::object_class(self_obj)) };
-    if base == (0 as *u8) { return bounds; }
-    let imp: *u8 = { super_imp_of(base, cmd) };
+    // A fn is taken as a value through a typed binding (E0312).
+    let f_mine: fn(*u8, *u8, rt::Rect) -> rt::Rect = drawing_rect_imp;
+    let mine: *u8 = { f_mine as *u8 };
+    let imp: *u8 = super_imp_below(self_obj, cmd, mine);
     if imp == (0 as *u8) { return bounds; }
     let f: fn(*u8, *u8, rt::Rect) -> rt::Rect = { imp as fn(*u8, *u8, rt::Rect) -> rt::Rect };
     return f(self_obj, cmd, bounds);
@@ -251,9 +282,9 @@ fn super_drawing_rect(self_obj: *u8, cmd: *u8, bounds: rt::Rect) -> rt::Rect {
 
 fn super_point(self_obj: *u8, cmd: *u8) -> rt::Point {
     let none: rt::Point = rt::Point { x: 0.0f64, y: 0.0f64 };
-    let base: *u8 = { class_getSuperclass(synth::object_class(self_obj)) };
-    if base == (0 as *u8) { return none; }
-    let imp: *u8 = { super_imp_of(base, cmd) };
+    let f_mine: fn(*u8, *u8) -> rt::Point = container_origin_imp;
+    let mine: *u8 = { f_mine as *u8 };
+    let imp: *u8 = super_imp_below(self_obj, cmd, mine);
     if imp == (0 as *u8) { return none; }
     let f: fn(*u8, *u8) -> rt::Point = { imp as fn(*u8, *u8) -> rt::Point };
     return f(self_obj, cmd);

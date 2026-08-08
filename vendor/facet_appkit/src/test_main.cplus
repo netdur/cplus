@@ -3524,6 +3524,116 @@ fn scrolling_reaches_the_handler_however_it_was_caused() {
 // scroll — rubber-banding against nothing instead of passing it to an
 // enclosing scroll view — so iris's board (vertical lanes inside a horizontal
 // strip) would not scroll sideways with the pointer over a lane.
+// A view can be subclassed TWICE — once by its kind's body (compose, for
+// vertical alignment) and once by arming (input) — and the second swap makes
+// the first one's "call super" wrong if it is written as one hop up from the
+// object's class: that hop lands on the class carrying our OWN override.
+//
+// `textContainerOrigin` is asked during layout, so the recursion was a stack
+// overflow while typing, and an aligned text area inside a scroll never even
+// appeared — it blew its stack being measured. The assertion here is that the
+// call RETURNS: if the walk regresses, this test dies with the suite.
+// The user's report: a text area's text came out BLACK where the app asked
+// for white, and keys beeped instead of typing. Black text and no focus are
+// the same symptom read twice — both are what you get when the editor band
+// never reaches the NSTextView inside the scroll view. This asks the platform
+// what it actually got.
+#[test]
+fn a_text_area_receives_its_text_colour() {
+    backend::install();
+    var n: core::Node = text_area::text_area(text: "hello", key: "ta:colour",
+                                             text_color: vocab::Color::rgba(1.0f64, 1.0f64, 1.0f64, 1.0f64))
+        .height(60.0f64);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v != (0 as *u8);
+    let doc: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("documentView\0"))) };
+    assert doc != (0 as *u8);
+    // NSTextView.textColor — white is what was asked for.
+    let c: *u8 = { rt::msg_id(doc, rt::sel(#str_ptr("textColor\0"))) };
+    assert c != (0 as *u8);
+    let r: f64 = { rt::msg_f64(c, rt::sel(#str_ptr("redComponent\0"))) };
+    let g: f64 = { rt::msg_f64(c, rt::sel(#str_ptr("greenComponent\0"))) };
+    let b: f64 = { rt::msg_f64(c, rt::sel(#str_ptr("blueComponent\0"))) };
+    assert r > 0.9f64;
+    assert g > 0.9f64;
+    assert b > 0.9f64;
+    // And it must be editable, or every key is a beep.
+    assert { rt::msg_i8(doc, rt::sel(#str_ptr("isEditable\0"))) } != (0 as i8);
+    views::view_release(v);
+    return;
+}
+
+// The same question with the nesting iris actually has: the text area is the
+// content of a vertical scroll (the card sheet's prose column, new project's
+// form). A text area is itself an NSScrollView, so this is a scroll inside a
+// scroll — the only structural difference between the areas that work and the
+// ones that do not. Mounted, because a subtree's views exist only once the
+// tree is mounted.
+#[test]
+fn a_text_area_inside_a_scroll_still_receives_its_band() {
+    backend::install();
+    var area: core::Node = text_area::text_area(text: "hello", key: "ta:nested",
+                                                text_color: vocab::Color::rgba(1.0f64, 1.0f64, 1.0f64, 1.0f64))
+        .height(60.0f64);
+    var inner: core::Builder = core::Builder::new();
+    inner.add(area);
+    var content: core::Node = core::column(inner, key: "nested:content");
+
+    var sc: core::Node = scroll::scroll(key: "nested:scroll", axis: vocab::ScrollAxis::Vertical);
+    match scroll::from(#addr_of(sc)) {
+        option::Option[scroll::Scroll]::Some(s) => { let _c: scroll::Scroll = s.set_content(content); }
+        option::Option[scroll::Scroll]::None => { assert false; }
+    }
+    var root: core::Builder = core::Builder::new();
+    root.add(sc.height(120.0f64));
+    var tree: core::Node = core::column(root, key: "nested:root");
+    let rp: *core::Node = #addr_of(tree);
+    assert mount::mount(rp);
+    geometry::relayout_root(rp, 300.0f64, 200.0f64, 1.0f64);
+
+    match core::find_in(rp, "ta:nested") {
+        option::Option[*core::Node]::Some(a) => {
+            let av: *u8 = core::view_of(a);
+            assert av != (0 as *u8);
+            let doc: *u8 = { rt::msg_id(av, rt::sel(#str_ptr("documentView\0"))) };
+            assert doc != (0 as *u8);
+            // Editable, or every key press is a beep.
+            assert { rt::msg_i8(doc, rt::sel(#str_ptr("isEditable\0"))) } != (0 as i8);
+            // And the colour the application asked for, not the platform default.
+            let col: *u8 = { rt::msg_id(doc, rt::sel(#str_ptr("textColor\0"))) };
+            assert col != (0 as *u8);
+            assert { rt::msg_f64(col, rt::sel(#str_ptr("redComponent\0"))) } > 0.9f64;
+        }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    mount::unmount(rp);
+    backend::uninstall();
+    return;
+}
+
+#[test]
+fn an_aligned_and_armed_text_view_can_call_super() {
+    backend::install();
+    var n: core::Node = text_area::text_area(text: "hello",
+                                             key: "ta:both",
+                                             vertical_align: vocab::TextAlign::Start)
+        .height(60.0f64)
+        .gesture(on_click: h_took());
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v != (0 as *u8);
+    // The text view is inside the text area's own scroll view.
+    let doc: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("documentView\0"))) };
+    assert doc != (0 as *u8);
+    // Both subclasses are on it: the kind body ran, then arming swapped again.
+    // Asking for the origin must reach NSTextView's implementation rather than
+    // re-entering ours.
+    let _o: rt::Point = { msg_point_0(doc, rt::sel(#str_ptr("textContainerOrigin\0"))) };
+    views::view_release(v);
+    return;
+}
+
 #[test]
 fn a_scroll_declines_the_axis_it_does_not_scroll() {
     backend::install();
