@@ -4,7 +4,7 @@
 
 Every C+ diagnostic carries a numbered code, a source span, and often a machine-applicable suggestion. `cpc --diagnostics=json` emits the same information in a machine-readable shape for editors and agents. Codes prefixed with **W** are non-fatal warnings; the build continues. The normative ranges and what each phase owns are fixed in [§20 of the language specification](/docs/spec).
 
-This is the complete index — **183 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **142** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
+This is the complete index — **184 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **143** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
 
 ## Lexical
 
@@ -735,6 +735,21 @@ fn main() -> i32 { return 0; }
 **Fix.** Use an integer base, or a wrapper struct for non-integer types.
 
 <sub>repro: checked · cplus-core/src/sema.rs:finalize_distincts · test cplus-core/src/sema.rs:distinct_requires_integer_base_e0922</sub>
+
+### E0923 · Invalid enum discriminant or representation
+
+A payload-free-enum feature was used on the wrong shape: an explicit discriminant (`Variant = N`) or an integer `#[repr(...)]` on an enum with payload variants, a discriminant outside the pinned representation's range, or two variants with the same value.
+
+```cplus
+#[repr(u8)]
+enum Mode { Off = 0, On = 300 }
+fn main() -> i32 { return 0; }
+// -> [E0923] discriminant 300 of `On` does not fit the enum's representation
+```
+
+**Fix.** Explicit discriminants and integer reprs describe C enums: keep the enum payload-free, keep every value inside the `#[repr]` type's range, and give each variant a unique value.
+
+<sub>repro: checked · cplus-core/src/sema.rs:collect_type_names · test cplus-core/src/sema.rs:enum_discriminant_shapes_rejected_e0923</sub>
 
 ## Control flow and matching
 

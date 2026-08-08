@@ -302,6 +302,8 @@ pub fn monomorphize(
                     .collect(),
                 span: Span::new(0, 0),
                 attributes: Vec::new(),
+                value: None,
+                value_expr: None,
             })
             .collect();
         let decl = EnumDecl {

@@ -302,6 +302,14 @@ enum TyNode {
 pub struct EnumDef {
     pub name: String,
     pub variants: Vec<EnumVariantDef>,
+    /// v0.0.27 FFI enums: per-variant discriminant VALUES in declaration
+    /// order (C rules — explicit `= N` sets, otherwise previous + 1).
+    /// Meaningful for plain enums only; a tagged enum's values are its
+    /// variant indexes, and its layout is untouched by `#[repr]`.
+    pub values: Vec<i64>,
+    /// v0.0.27 FFI enums: the pinned representation, `(bits, signed)`.
+    /// `(32, true)` — the historical `i32` — when no `#[repr]` is given.
+    pub repr: (u8, bool),
     /// Cached `Copy` flag: true iff every variant's payload type is `Copy`.
     /// Plain enums (no payloads) are always Copy. Computed in
     /// `compute_enum_copy_flags` (mirrors the struct case).
@@ -1830,6 +1838,13 @@ pub trait TypeShape {
     fn enum_is_tagged(&self, id: EnumId) -> bool;
     /// Per-variant payload type lists, in declaration order.
     fn enum_variant_payloads(&self, id: EnumId) -> Vec<Vec<Ty>>;
+    /// v0.0.27 FFI enums: the `#[repr]` width of a PLAIN enum's bare
+    /// integer, in bits. 32 (the historical default) unless pinned.
+    /// Meaningless for tagged enums (their tag stays i32).
+    fn enum_repr_bits(&self, id: EnumId) -> u8 {
+        let _ = id;
+        32
+    }
 }
 
 /// v0.0.14 auto field-drop: does a value of `ty` need teardown?
@@ -1992,8 +2007,10 @@ fn layout_of_inner(
         }
         Ty::Enum(id) => {
             if !tables.enum_is_tagged(*id) {
-                // Plain enum: a bare i32 tag.
-                return Some((4, 4));
+                // Plain enum: a bare integer of its `#[repr]` width
+                // (i32 when unpinned — the historical default).
+                let bytes = (tables.enum_repr_bits(*id) / 8).max(1) as u64;
+                return Some((bytes, bytes));
             }
             if visiting.contains(&(false, id.0)) {
                 return Some((0, 1));
@@ -2021,6 +2038,9 @@ fn layout_of_inner(
 impl TypeShape for SemaCx<'_> {
     fn struct_has_drop(&self, id: StructId) -> bool {
         self.structs[id.0 as usize].is_drop
+    }
+    fn enum_repr_bits(&self, id: EnumId) -> u8 {
+        self.enums[id.0 as usize].repr.0
     }
     fn struct_field_tys(&self, id: StructId) -> Vec<Ty> {
         self.structs[id.0 as usize]
@@ -2641,9 +2661,78 @@ impl SemaCx<'_> {
                     }
                     let id = EnumId(self.enums.len() as u32);
                     let is_tagged = e.variants.iter().any(|v| !v.payload.is_empty());
+                    // v0.0.27 FFI enums: repr + discriminant values (the
+                    // shared plan in `crate::ast` — codegen calls the same
+                    // fn, so the two cannot drift). Explicit values and
+                    // integer reprs apply to PLAIN enums only.
+                    let repr_attr = crate::ast::enum_repr_of(&e.attributes);
+                    if is_tagged {
+                        if repr_attr.is_some() {
+                            self.err(
+                                "E0923",
+                                format!(
+                                    "`#[repr(...)]` applies to payload-free enums; `{}` has payload variants",
+                                    e.name.name
+                                ),
+                                e.name.span,
+                            );
+                        }
+                        if let Some(v) = e.variants.iter().find(|v| v.value.is_some()) {
+                            self.err(
+                                "E0923",
+                                "explicit discriminants apply to payload-free enums".to_string(),
+                                v.span,
+                            );
+                        }
+                    }
+                    let repr = repr_attr
+                        .map(|r| (r.bits, r.signed))
+                        .unwrap_or((32, true));
+                    let values = crate::ast::enum_value_plan(e);
+                    if !is_tagged {
+                        let (bits, signed) = repr;
+                        let (min, max): (i64, i64) = if signed {
+                            if bits == 64 {
+                                (i64::MIN, i64::MAX)
+                            } else {
+                                (-(1i64 << (bits - 1)), (1i64 << (bits - 1)) - 1)
+                            }
+                        } else if bits == 64 {
+                            // u64 reprs hold the value in the i64 bit pattern.
+                            (i64::MIN, i64::MAX)
+                        } else {
+                            (0, (1i64 << bits) - 1)
+                        };
+                        let mut seen_vals: std::collections::HashMap<i64, String> =
+                            std::collections::HashMap::new();
+                        for (v, val) in e.variants.iter().zip(values.iter()) {
+                            if *val < min || *val > max {
+                                self.err(
+                                    "E0923",
+                                    format!(
+                                        "discriminant {} of `{}` does not fit the enum's representation",
+                                        val, v.name.name
+                                    ),
+                                    v.span,
+                                );
+                            }
+                            if let Some(prev) = seen_vals.insert(*val, v.name.name.clone()) {
+                                self.err(
+                                    "E0923",
+                                    format!(
+                                        "duplicate discriminant {}: `{}` and `{}`",
+                                        val, prev, v.name.name
+                                    ),
+                                    v.span,
+                                );
+                            }
+                        }
+                    }
                     self.enums.push(EnumDef {
                         name: e.name.name.clone(),
                         variants,
+                        values,
+                        repr,
                         is_copy: false, // computed later
                         is_tagged,
                         generic_base: None,
@@ -17731,9 +17820,13 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         let is_tagged = variants.iter().any(|v| !v.payload.is_empty());
         let mangled = mangle_generic_struct_name(name, &arg_tys, &self.structs, &self.enums);
         let id = EnumId(self.enums.len() as u32);
+        // Generic enums are tagged in practice; values stay the indexes.
+        let values: Vec<i64> = (0..variants.len() as i64).collect();
         self.enums.push(EnumDef {
             name: mangled.clone(),
             variants,
+            values,
+            repr: (32, true),
             is_copy: false,
             is_tagged,
             generic_base: Some(name.to_string()),
@@ -30377,6 +30470,47 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
             .filter(|d| matches!(d.severity, Severity::Error))
             .map(|d| d.code.0.to_string())
             .collect()
+    }
+
+    // ---- FFI enums: #[repr] + explicit discriminants ----
+
+    #[test]
+    fn enum_discriminants_fold_and_validate() {
+        let diags = check_src_lowered(
+            "const BASE: i32 = 4;\n\
+             #[repr(u8)]\n\
+             enum Mode { Off = 0, Slow = 10, Fast = 200 }\n\
+             enum Derived { X = BASE * 2, Y }\n\
+             fn main() -> i32 {\n\
+                 if (Mode::Fast as u8) != (200 as u8) { return 1; }\n\
+                 if (Derived::Y as i32) != 9 { return 2; }\n\
+                 return match Mode::Slow {\n\
+                     Mode::Off => 3,\n\
+                     Mode::Slow => 0,\n\
+                     Mode::Fast => 4,\n\
+                 };\n\
+             }",
+        );
+        assert!(diags.is_empty(), "got {:#?}", diags);
+    }
+
+    #[test]
+    fn enum_discriminant_shapes_rejected_e0923() {
+        let codes = lowered_errors(
+            "#[repr(u8)]\n\
+             enum E1 { A = 300 }\n\
+             enum E2 { A = 1, B = 1 }\n\
+             enum E3 { X(i32), Y = 2 }\n\
+             #[repr(u8)]\n\
+             enum E4 { P(i32), Q }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert_eq!(
+            codes.iter().filter(|c| **c == "E0923").count(),
+            4,
+            "range, duplicate, payload-with-value, payload-with-repr; got {:?}",
+            codes
+        );
     }
 
     // ---- checked narrowing: `as?` ----

@@ -26,6 +26,15 @@ earlier history lives in each version's archived plan.
   are not derivable — **E0920** names the field and the manual fix.
   Deriving needs a struct target (E0916 otherwise); `Copy` remains
   structural and is never written.
+- **FFI enums — explicit discriminants + `#[repr]`**: a payload-free
+  enum takes C-style values (`NotFound = 404`, auto `prev + 1`
+  otherwise; any constant expression folds) and an integer
+  representation (`#[repr(u8)]` … `#[repr(i64)]`, `C` = i32), which is
+  what it lowers to and crosses the C ABI as. Casts read the declared
+  value; match switches on it. Wrong shapes — payload enums with values
+  or an integer repr, out-of-range or duplicate values — are **E0923**.
+  (The remaining FFI-completeness items — `#[repr(C)] union` and
+  packed structs/bitfields — are tracked separately.)
 - **Checked narrowing `as?`**: `n as? u8` evaluates to `Option[u8]` —
   `Some(converted)` when the value is representable, `None` otherwise.
   Integer source and target only (E0315 names the offending side); the

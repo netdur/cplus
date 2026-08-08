@@ -244,6 +244,12 @@ enum Color { Red, Green, Blue }                  // plain, lowers to i32, Copy
 enum Shape { Circle(f64), Rect(f64, f64) }       // tagged
 enum Maybe[T] { Some(T), None }                  // generic
 
+// FFI enums (payload-free only): explicit discriminants (any constant
+// expression) + #[repr(u8|u16|u32|u64|i8|..|i64|C)] pinning the C width.
+#[repr(u8)]
+enum Mode { Off = 0, Slow = 10, Fast = 200 }     // crosses the C ABI as uint8_t
+enum Status { Ok, NotFound = 404, Gone }         // Gone = 405 (C rules: prev + 1)
+
 let s = Shape::Circle(3.14);
 let m: Maybe[i32] = Maybe[i32]::Some(7);         // ALWAYS spell type args at source
 ```

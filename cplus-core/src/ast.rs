@@ -227,6 +227,64 @@ pub struct EnumVariant {
     pub span: Span,
     /// Slice 5ATTR.1: attributes attached to this variant.
     pub attributes: Vec<Attribute>,
+    /// v0.0.27 FFI enums: explicit discriminant — `Variant = 4`. The parser
+    /// stores the written expression in `value_expr`; lower const-evaluates
+    /// it into `value` (E0921 on a non-constant); sema and codegen read only
+    /// `value`. Both `None` for auto-assigned (previous + 1, C rules) and
+    /// for payload-carrying variants (which reject the `=` form, E0923).
+    pub value: Option<i64>,
+    pub value_expr: Option<Box<Expr>>,
+}
+
+/// v0.0.27 FFI enums: the representation a `#[repr(...)]` attribute pins a
+/// PLAIN enum to. `None` = the historical default (`i32`). `#[repr(C)]` on
+/// an enum also means `i32` (the C default on every target cpc supports).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EnumRepr {
+    pub bits: u8,
+    pub signed: bool,
+}
+
+pub fn enum_repr_of(attributes: &[Attribute]) -> Option<EnumRepr> {
+    for a in attributes {
+        if a.path.name != "repr" {
+            continue;
+        }
+        for arg in &a.args {
+            let AttrArg::Ident(id) = arg else { continue };
+            let r = match id.name.as_str() {
+                "i8" => Some(EnumRepr { bits: 8, signed: true }),
+                "i16" => Some(EnumRepr { bits: 16, signed: true }),
+                "i32" | "C" => Some(EnumRepr { bits: 32, signed: true }),
+                "i64" => Some(EnumRepr { bits: 64, signed: true }),
+                "u8" => Some(EnumRepr { bits: 8, signed: false }),
+                "u16" => Some(EnumRepr { bits: 16, signed: false }),
+                "u32" => Some(EnumRepr { bits: 32, signed: false }),
+                "u64" => Some(EnumRepr { bits: 64, signed: false }),
+                _ => None,
+            };
+            if r.is_some() {
+                return r;
+            }
+        }
+    }
+    None
+}
+
+/// v0.0.27 FFI enums: the discriminant value of every variant, C rules —
+/// an explicit `= N` sets the counter, an unadorned variant takes
+/// previous + 1, the first defaults to 0. THE shared rule: sema's
+/// validation and codegen's emission both call this, so they cannot
+/// drift on what a variant's runtime value is.
+pub fn enum_value_plan(decl: &EnumDecl) -> Vec<i64> {
+    let mut out = Vec::with_capacity(decl.variants.len());
+    let mut next: i64 = 0;
+    for v in &decl.variants {
+        let val = v.value.unwrap_or(next);
+        out.push(val);
+        next = val.wrapping_add(1);
+    }
+    out
 }
 
 #[derive(Debug, Clone, PartialEq)]

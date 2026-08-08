@@ -83,6 +83,10 @@ pub fn lower_multi(
         cx.lower_item(it);
     }
     cx.set_current_file(None);
+    // v0.0.27 FFI enums: fold explicit discriminant expressions
+    // (`Variant = 1 << 3`) to plain i64s via the const evaluator, with
+    // the same const environment initializers use.
+    cx.fold_enum_discriminants(prog, &const_values);
     // v0.0.9 Phase 4: substitute every `Ident(qualified_const_name)`
     // use site with the const's initializer. Done after per-item
     // lowering so any pattern-let desugar already turned `if let` /
@@ -1560,6 +1564,56 @@ impl Lower {
             }
             // The evaluator already diagnosed (E0921).
             Err(()) => 0,
+        }
+    }
+
+    /// v0.0.27 FFI enums: evaluate every `Variant = EXPR` discriminant at
+    /// i64 (sema range-checks against the enum's `#[repr]` later), writing
+    /// the folded value back into the variant and clearing the expression.
+    fn fold_enum_discriminants(
+        &mut self,
+        prog: &mut Program,
+        consts: &std::collections::HashMap<String, (Expr, Type)>,
+    ) {
+        let mut raw: std::collections::HashMap<String, (Expr, Type, Option<String>)> =
+            std::collections::HashMap::new();
+        for (name, (value, ty)) in consts {
+            raw.insert(name.clone(), (value.clone(), ty.clone(), None));
+        }
+        for item in &mut prog.items {
+            let origin = item.origin_file.clone();
+            let ItemKind::Enum(e) = &mut item.kind else {
+                continue;
+            };
+            self.set_current_file(origin.as_deref());
+            for v in &mut e.variants {
+                let Some(expr) = v.value_expr.take() else {
+                    continue;
+                };
+                let mut resolved: std::collections::HashMap<String, Option<CVal>> =
+                    std::collections::HashMap::new();
+                let mut visiting: Vec<String> = Vec::new();
+                let mut cx = ConstCx {
+                    raw: &raw,
+                    resolved: &mut resolved,
+                    visiting: &mut visiting,
+                };
+                // Natural typing: `= 200` and `= BASE * 2` both just need
+                // an integer value; the enum's `#[repr]` range check runs
+                // in sema against the folded i64.
+                match self.const_eval(&expr, None, &mut cx, false) {
+                    Ok(CVal::Int { v: val, .. }) => v.value = Some(val as i64),
+                    Ok(_) => self.err(
+                        "E0921",
+                        "enum discriminant must be an integer constant".to_string(),
+                        expr.span,
+                    ),
+                    Err(()) => {}
+                }
+                // A failed eval already diagnosed (E0921); the variant
+                // falls back to auto-assignment so sema doesn't cascade.
+            }
+            self.set_current_file(None);
         }
     }
 

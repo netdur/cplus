@@ -3091,6 +3091,25 @@ fn main() -> i32 { return 0; }
 '''
 
 [[code]]
+id = "E0923"
+title = "Invalid enum discriminant or representation"
+category = "Names, types, and items"
+severity = "error"
+repro = "checked"
+lang = "cplus"
+verified = true
+emit_site = "cplus-core/src/sema.rs:collect_type_names"
+test = "cplus-core/src/sema.rs:enum_discriminant_shapes_rejected_e0923"
+cause = "A payload-free-enum feature was used on the wrong shape: an explicit discriminant (`Variant = N`) or an integer `#[repr(...)]` on an enum with payload variants, a discriminant outside the pinned representation's range, or two variants with the same value."
+fix = "Explicit discriminants and integer reprs describe C enums: keep the enum payload-free, keep every value inside the `#[repr]` type's range, and give each variant a unique value."
+example = '''
+#[repr(u8)]
+enum Mode { Off = 0, On = 300 }
+fn main() -> i32 { return 0; }
+// -> [E0923] discriminant 300 of `On` does not fit the enum's representation
+'''
+
+[[code]]
 id = "E1000"
 title = "Missing stdlib type for `gen fn` / `Iterator::next`"
 category = "Compile-time builtins"

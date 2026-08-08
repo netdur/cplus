@@ -102,10 +102,17 @@ const KNOWN_ATTRS: &[AttrSpec] = &[
     // C for primitive-typed fields on x86_64; the attribute is the
     // *promise* that this remains stable across future codegen
     // changes. Only `C` is accepted as the argument.
+    // v0.0.27 FFI enums: `#[repr(u8)]` (and the other integer names)
+    // pins a PLAIN enum's representation for the C boundary; `C` stays
+    // the struct-layout promise and doubles as the i32 default on enums.
+    // Sema owns the per-shape rules (integer reprs reject payload enums,
+    // E0923); this table only gates the argument vocabulary.
     AttrSpec {
         name: "repr",
-        args: ArgsSpec::OneIdentFrom(&["C"]),
-        targets: TARGET_STRUCT,
+        args: ArgsSpec::OneIdentFrom(&[
+            "C", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64",
+        ]),
+        targets: TARGET_STRUCT | TARGET_ENUM,
         allow_duplicate: false,
     },
     // Phase 11 / ObjC interop: `#[link_name = "..."]` aliases an
@@ -1063,9 +1070,18 @@ mod tests {
     }
 
     #[test]
-    fn repr_on_enum_e0356() {
-        let diags = check_src("#[repr(C)] enum E { A, B }");
-        assert_eq!(codes(&diags), vec!["E0356"]);
+    fn repr_on_enum_accepted_v0027() {
+        // v0.0.27 FFI enums: `#[repr(C)]` / `#[repr(u8)]` pin a plain
+        // enum's representation (was E0356 before).
+        let diags = check_src("#[repr(C)] enum E { A, B }
+#[repr(u8)] enum F { X, Y }");
+        assert!(codes(&diags).is_empty(), "got {:?}", codes(&diags));
+    }
+
+    #[test]
+    fn repr_bad_arg_on_enum_rejected() {
+        let diags = check_src("#[repr(packed)] enum E { A, B }");
+        assert!(!codes(&diags).is_empty(), "bad repr arg must reject");
     }
 
     #[test]

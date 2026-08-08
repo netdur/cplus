@@ -284,7 +284,16 @@ impl ModuleMetadata {
             // shares the i32 leaf: user code mixing it with a raw i32 reads
             // through the same TBAA cell. A TAGGED enum is an aggregate and
             // falls through to the no-tag arm below with the others.
-            Ty::Enum(id) if !types.enum_defs[id.0 as usize].is_tagged => "i32".into(),
+            Ty::Enum(id) if !types.enum_defs[id.0 as usize].is_tagged => {
+                // v0.0.27: the TBAA leaf follows the pinned representation,
+                // sharing the cell with the same-width raw integer.
+                match types.enum_defs[id.0 as usize].repr.0 {
+                    8 => "i8".into(),
+                    16 => "i16".into(),
+                    64 => "i64".into(),
+                    _ => "i32".into(),
+                }
+            }
             // Aggregates: NO TAG. A sibling leaf would claim the aggregate does
             // not alias its own members, which is false and miscompiles at -O3.
             // See the doc comment above.
@@ -2083,6 +2092,9 @@ impl crate::sema::TypeShape for TypeTable {
     fn struct_has_drop(&self, id: StructId) -> bool {
         self.struct_defs[id.0 as usize].is_drop
     }
+    fn enum_repr_bits(&self, id: EnumId) -> u8 {
+        self.enum_defs[id.0 as usize].repr.0
+    }
     fn struct_field_tys(&self, id: StructId) -> Vec<Ty> {
         self.struct_defs[id.0 as usize]
             .fields
@@ -2100,8 +2112,15 @@ impl crate::sema::TypeShape for TypeTable {
 
 #[derive(Debug, Clone)]
 struct EnumInfo {
-    /// Variant name → declaration-order index (the runtime tag value).
+    /// Variant name → declaration-order index (the runtime tag value for
+    /// TAGGED enums; a plain enum's runtime value is `values[index]`).
     variants: HashMap<String, u32>,
+    /// v0.0.27 FFI enums: per-index discriminant VALUES (C rules, shared
+    /// plan `ast::enum_value_plan`). Sequential 0.. for tagged enums.
+    values: Vec<i64>,
+    /// v0.0.27 FFI enums: `(bits, signed)` of a plain enum's bare integer.
+    /// `(32, true)` unless `#[repr(...)]` pinned it. Tagged enums keep i32.
+    repr: (u8, bool),
     /// Variants in declaration order, with payload type lists. Plain enums
     /// have all-empty payloads; tagged enums have at least one non-empty.
     variant_payloads: Vec<Vec<Ty>>,
@@ -2345,6 +2364,10 @@ fn collect_types(
                 }
                 let id = EnumId(t.enum_defs.len() as u32);
                 let mut variants = HashMap::new();
+                let values = crate::ast::enum_value_plan(e);
+                let repr = crate::ast::enum_repr_of(&e.attributes)
+                    .map(|r| (r.bits, r.signed))
+                    .unwrap_or((32, true));
                 let mut empty_payloads: Vec<Vec<Ty>> = Vec::new();
                 for (idx, v) in e.variants.iter().enumerate() {
                     variants.entry(v.name.name.clone()).or_insert(idx as u32);
@@ -2359,6 +2382,8 @@ fn collect_types(
                 });
                 t.enum_defs.push(EnumInfo {
                     variants,
+                    values,
+                    repr: if is_tagged { (32, true) } else { repr },
                     variant_payloads: empty_payloads,
                     is_tagged,
                     payload_slots: 0, // computed in pass 2 below
@@ -4475,13 +4500,14 @@ fn llvm_ty(ty: &Ty, types: &TypeTable) -> String {
         Ty::Struct(id) => format!("%{}", types.struct_defs[id.0 as usize].name),
         Ty::Enum(id) => {
             let info = &types.enum_defs[id.0 as usize];
-            // Plain enums (no variant has a payload) stay bare `i32` —
-            // Phase-2A fast path. Tagged enums use a named struct type
-            // emitted in the preamble: `%E = type { i32, [N x i64] }`.
+            // Plain enums (no variant has a payload) stay a bare integer
+            // of their `#[repr]` width (i32 unless pinned — Phase-2A fast
+            // path). Tagged enums use a named struct type emitted in the
+            // preamble: `%E = type { i32, [N x i64] }`.
             if info.is_tagged {
                 format!("%{}", enum_struct_name(*id, types))
             } else {
-                "i32".to_string()
+                format!("i{}", info.repr.0)
             }
         }
         Ty::Array(elem, n) => format!("[{n} x {}]", llvm_ty(elem, types)),
@@ -12714,9 +12740,11 @@ impl<'a> FnState<'a> {
             .get(variant_name)
             .copied()
             .expect("sema validated variant name");
-        // Plain enum (no payloads anywhere): bare i32 tag — Phase 2A path.
+        // Plain enum (no payloads anywhere): its bare integer VALUE
+        // (v0.0.27 — explicit discriminants; the index before that).
         if !info.is_tagged {
-            return (idx.to_string(), Ty::Enum(id));
+            let value = info.values[idx as usize];
+            return (value.to_string(), Ty::Enum(id));
         }
         // Tagged enum, payload-less variant (e.g. `Maybe::None`): construct
         // the full tagged-enum value with the tag set and the payload area
@@ -12848,7 +12876,22 @@ impl<'a> FnState<'a> {
         // can drop the default arm when sema's exhaustiveness check
         // already covered every variant.
         let n_variants = info.variants.len() as i64;
-        let range_md = self.md.register_range(0, n_variants, "i32");
+        // v0.0.27: a plain enum's tag is its repr-typed VALUE; the range
+        // metadata covers [min, max+1) over the declared discriminants
+        // (which is [0, N) for the default sequential plan).
+        let (tag_llvm, range_md) = if info.is_tagged {
+            ("i32", self.md.register_range(0, n_variants, "i32"))
+        } else {
+            let ty: &'static str = match info.repr.0 {
+                8 => "i8",
+                16 => "i16",
+                64 => "i64",
+                _ => "i32",
+            };
+            let lo = info.values.iter().copied().min().unwrap_or(0);
+            let hi = info.values.iter().copied().max().unwrap_or(0).wrapping_add(1);
+            (ty, self.md.register_range(lo, hi, ty))
+        };
         let tag_val = {
             if info.is_tagged {
                 let tag_ptr = self.next_tmp();
@@ -12861,10 +12904,10 @@ impl<'a> FnState<'a> {
                 ));
                 v
             } else {
-                // Plain enum: scrutinee is already an i32 tag value.
+                // Plain enum: scrutinee is already its bare tag value.
                 let v = self.next_tmp();
                 self.emit(&format!(
-                    "{v} = load i32, ptr {scr_ptr}, !range !{range_md}"
+                    "{v} = load {tag_llvm}, ptr {scr_ptr}, !range !{range_md}"
                 ));
                 v
             }
@@ -12908,16 +12951,23 @@ impl<'a> FnState<'a> {
         let mut cases = String::new();
         for (i, arm) in arms.iter().enumerate() {
             if let PatternKind::Variant { variant_name, .. } = &arm.pattern.kind {
-                let tag = info
+                let idx = info
                     .variants
                     .get(&variant_name.name)
                     .copied()
                     .expect("sema validated variant");
-                cases.push_str(&format!("    i32 {tag}, label %{}\n", arm_labels[i]));
+                // Tagged enums switch on the variant INDEX; plain enums on
+                // the declared VALUE (v0.0.27).
+                let tag = if info.is_tagged {
+                    idx as i64
+                } else {
+                    info.values[idx as usize]
+                };
+                cases.push_str(&format!("    {tag_llvm} {tag}, label %{}\n", arm_labels[i]));
             }
         }
         self.emit_terminator(&format!(
-            "switch i32 {tag_val}, label %{switch_default} [\n{cases}  ]"
+            "switch {tag_llvm} {tag_val}, label %{switch_default} [\n{cases}  ]"
         ));
 
         // Emit each arm body.
@@ -13267,8 +13317,20 @@ impl<'a> FnState<'a> {
         // Enums lower to i32 at LLVM level. For cast instruction selection,
         // treat enum operands as their underlying i32 form. Sema disallows
         // int → enum, so we only need to handle the source side.
-        let from = if from_actual.is_enum() {
-            Ty::I32
+        let from = if let Ty::Enum(id) = &from_actual {
+            // v0.0.27: a plain enum's scalar form follows its `#[repr]` —
+            // the widening/narrowing instruction and its sign-vs-zero
+            // extension must match the pinned representation.
+            match self.types.enum_defs[id.0 as usize].repr {
+                (8, true) => Ty::I8,
+                (8, false) => Ty::U8,
+                (16, true) => Ty::I16,
+                (16, false) => Ty::U16,
+                (32, false) => Ty::U32,
+                (64, true) => Ty::I64,
+                (64, false) => Ty::U64,
+                _ => Ty::I32,
+            }
         } else {
             from_actual
         };
@@ -18381,6 +18443,49 @@ fn main() -> i32 {\n\
         assert!(
             ir.contains("to_text"),
             "the interp part should route through P::to_text:\n{ir}"
+        );
+    }
+
+    /// v0.0.27 FFI enums: a `#[repr(u8)]` enum is a bare `i8` at the LLVM
+    /// level (the C ABI shape of a `uint8_t`-typed C enum), its variants
+    /// materialize as their DECLARED values, and a match switches on those
+    /// values. Full pipeline including lower (which folds `= EXPR`
+    /// discriminants).
+    #[test]
+    fn repr_enum_lowers_at_declared_width_and_values() {
+        let src = "#[repr(u8)]\n\
+             enum Mode { Off = 0, Slow = 10, Fast = 200 }\n\
+             export fn classify(m: Mode) -> i32 {\n\
+                 return match m {\n\
+                     Mode::Off => 0,\n\
+                     Mode::Slow => 1,\n\
+                     Mode::Fast => 2,\n\
+                 };\n\
+             }\n\
+             fn main() -> i32 { return classify(Mode::Fast) - 2; }\n";
+        let toks = tokenize(src).expect("lex");
+        let mut prog = parse(toks).expect("parse");
+        let file_path = PathBuf::from("test.cplus");
+        let lower_diags = crate::lower::lower(&mut prog, &file_path, src);
+        assert!(lower_diags.is_empty(), "lower: {lower_diags:#?}");
+        let mut files: std::collections::BTreeMap<String, (PathBuf, String)> =
+            std::collections::BTreeMap::new();
+        files.insert(
+            "test.cplus".to_string(),
+            (file_path.clone(), src.to_string()),
+        );
+        let (diags, mono) = sema::check_multi_with_mono(&prog, file_path, src, files);
+        assert!(diags.is_empty(), "sema: {diags:#?}");
+        let name_of = |ty: &sema::Ty| -> String { ty.name().to_string() };
+        let post = crate::monomorphize::monomorphize(prog, &mono, &name_of);
+        let ir = generate_with_mono(&post, BuildMode::Debug, true, None, &[], false, &mono);
+        assert!(
+            ir.contains("@classify(i8"),
+            "repr(u8) enum param must cross the ABI as i8:\n{ir}"
+        );
+        assert!(
+            ir.contains("i8 -56, label") || ir.contains("i8 200, label"),
+            "switch case must use the declared value (200 as an i8 pattern):\n{ir}"
         );
     }
 

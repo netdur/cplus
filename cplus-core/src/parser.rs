@@ -1363,16 +1363,34 @@ impl Parser {
             } else {
                 Vec::new()
             };
+            // v0.0.27 FFI enums: explicit discriminant `Variant = EXPR`.
+            // Any constant expression is admitted (folded by lower); a
+            // payload variant with `=` is rejected here — the two shapes
+            // are grammatically exclusive in C too.
+            let value_expr = if self.at(&TokenKind::Eq) {
+                if !payload.is_empty() {
+                    return Err(self.err_at_peek(
+                        "`,` or `}` — a payload-carrying variant cannot take `= value`",
+                    ));
+                }
+                self.bump();
+                Some(Box::new(self.parse_expr()?))
+            } else {
+                None
+            };
             let v_span = variant_name.span;
-            let span = match payload.last() {
-                Some(t) => v_span.merge(t.span),
-                None => v_span,
+            let span = match (&value_expr, payload.last()) {
+                (Some(e), _) => v_span.merge(e.span),
+                (None, Some(t)) => v_span.merge(t.span),
+                (None, None) => v_span,
             };
             variants.push(EnumVariant {
                 name: variant_name,
                 payload,
                 span,
                 attributes: variant_attrs,
+                value: None,
+                value_expr,
             });
             if !self.eat(&TokenKind::Comma) {
                 break;
