@@ -2095,6 +2095,9 @@ impl crate::sema::TypeShape for TypeTable {
     fn enum_repr_bits(&self, id: EnumId) -> u8 {
         self.enum_defs[id.0 as usize].repr.0
     }
+    fn struct_is_union(&self, id: StructId) -> bool {
+        self.struct_defs[id.0 as usize].is_union
+    }
     fn struct_field_tys(&self, id: StructId) -> Vec<Ty> {
         self.struct_defs[id.0 as usize]
             .fields
@@ -2170,6 +2173,9 @@ struct WatchBarrier {
 #[derive(Debug, Clone)]
 struct StructInfo {
     name: String,
+    /// v0.0.27: a `union` — every field lives at offset 0 and the type is a
+    /// size/alignment blob rather than a member list.
+    is_union: bool,
     /// Fields in declaration order. The pair is (field name, field type).
     fields: Vec<(String, Ty)>,
     /// Methods declared in `impl` blocks for this struct.
@@ -2422,6 +2428,7 @@ fn collect_types(
                 let is_watched = s.attributes.iter().any(|a| a.path.name == "watch");
                 t.struct_defs.push(StructInfo {
                     name: s.name.name.clone(),
+                    is_union: s.is_union,
                     fields: Vec::new(),
                     methods: HashMap::new(),
                     is_drop: false,
@@ -4188,6 +4195,39 @@ fn write_struct_decls(out: &mut String, types: &TypeTable, _p: &Program) {
     // Struct named-type declarations (Phase 2B).
     for (i, s) in types.struct_defs.iter().enumerate() {
         let owner = StructId(i as u32);
+        if s.is_union {
+            // LLVM has no union type. clang lowers one as its most-aligned
+            // member followed by enough padding to reach the union's size —
+            // which is what makes `sizeof` right AND keeps an array of unions
+            // stepping correctly. Same shape here.
+            let mut best: Option<(u64, u64, String)> = None; // (align, size, ty)
+            for (_, t) in &s.fields {
+                let (sz, al) = static_layout(t, types).unwrap_or((0, 1));
+                let cand = (al, sz, llvm_field_ty(t, types, owner));
+                best = match best {
+                    Some((ba, bs, bt)) if (ba, bs) >= (cand.0, cand.1) => Some((ba, bs, bt)),
+                    _ => Some(cand),
+                };
+            }
+            let total = static_layout(&Ty::Struct(owner), types)
+                .map(|(sz, _)| sz)
+                .unwrap_or(0);
+            match best {
+                Some((_, primary_sz, primary_ty)) => {
+                    let pad = total.saturating_sub(primary_sz);
+                    if pad > 0 {
+                        writeln!(out, "%{} = type {{ {}, [{} x i8] }}", s.name, primary_ty, pad)
+                            .unwrap();
+                    } else {
+                        writeln!(out, "%{} = type {{ {} }}", s.name, primary_ty).unwrap();
+                    }
+                }
+                None => {
+                    writeln!(out, "%{} = type {{ [{} x i8] }}", s.name, total.max(1)).unwrap();
+                }
+            }
+            continue;
+        }
         let inner: Vec<String> = s
             .fields
             .iter()
@@ -12024,10 +12064,20 @@ impl<'a> FnState<'a> {
         let llvm_struct = self.lty(&struct_ty);
         let idx = info.field_index(&name.name);
         let field_ty = info.field_type(&name.name);
-        let ptr = self.next_tmp();
-        self.emit(&format!(
-            "{ptr} = getelementptr inbounds {llvm_struct}, ptr {slot}, i32 0, i32 {idx}"
-        ));
+        // A UNION's members all start at offset 0, and an opaque pointer needs
+        // no cast to change what it is read as — so the field pointer is the
+        // union's own pointer, and the LOAD's type is what picks the member.
+        // That is the whole of "reading a different member reinterprets the
+        // bytes", expressed in one branch.
+        let ptr = if info.is_union {
+            slot.clone()
+        } else {
+            let p = self.next_tmp();
+            self.emit(&format!(
+                "{p} = getelementptr inbounds {llvm_struct}, ptr {slot}, i32 0, i32 {idx}"
+            ));
+            p
+        };
         let v = self.next_tmp();
         // v0.0.7 Slice 1.2: TBAA-tagged struct field load. Primitive
         // fields get the per-type leaf; aggregate fields fall through
@@ -12098,10 +12148,16 @@ impl<'a> FnState<'a> {
                 let llvm_struct = self.lty(&recv_ty);
                 let idx = info.field_index(&name.name);
                 let field_ty = info.field_type(&name.name);
-                let ptr = self.next_tmp();
-                self.emit(&format!(
-                    "{ptr} = getelementptr inbounds {llvm_struct}, ptr {recv_slot}, i32 0, i32 {idx}"
-                ));
+                // Union: offset 0, see `gen_field`.
+                let ptr = if info.is_union {
+                    recv_slot.clone()
+                } else {
+                    let p = self.next_tmp();
+                    self.emit(&format!(
+                        "{p} = getelementptr inbounds {llvm_struct}, ptr {recv_slot}, i32 0, i32 {idx}"
+                    ));
+                    p
+                };
                 (ptr, field_ty)
             }
             ExprKind::Index { receiver, index } => {
@@ -18526,6 +18582,29 @@ fn main() -> i32 {\n\
             trap_pos < mul_pos,
             "precondition must precede the body:
 {f_def}"
+        );
+    }
+
+    /// v0.0.27 FFI unions: the LLVM type is the most-aligned member plus
+    /// padding to the union's size (clang's own lowering), and a field
+    /// access is the union's OWN pointer — every member is at offset 0, and
+    /// an opaque pointer needs no cast, so the load's type is what picks the
+    /// member. That is "reading another member reinterprets the bytes",
+    /// expressed as the absence of a GEP.
+    #[test]
+    fn union_lowers_to_a_blob_and_reads_at_offset_zero() {
+        let ir = gen_src(
+            "#[repr(C)] union FB { f: f32, bits: u32 }\n             fn main() -> i32 {\n                 var u: FB = FB { f: 1.0f32 };\n                 return u.bits as i32;\n             }",
+        );
+        // Size 4, align 4: one i32/float member, no padding.
+        assert!(
+            ir.contains("%FB = type { float }") || ir.contains("%FB = type { i32 }"),
+            "union type should be its largest member:\n{ir}"
+        );
+        // The read of `bits` must NOT walk a field index — there is no field 1.
+        assert!(
+            !ir.contains("getelementptr inbounds %FB, ptr") || !ir.contains("i32 0, i32 1"),
+            "a union field access must not GEP to a member index:\n{ir}"
         );
     }
 

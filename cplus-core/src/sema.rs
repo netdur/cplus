@@ -352,6 +352,9 @@ pub struct EnumVariantDef {
 #[derive(Debug, Clone)]
 pub struct StructDef {
     pub name: String,
+    /// v0.0.27: declared `union` — fields overlap at offset 0 and the size is
+    /// the largest member's. See `ast::StructDecl::is_union`.
+    pub is_union: bool,
     /// Field name → (declaration order index, field type, is_pub). Order
     /// matters for codegen to compute correct GEP indices. `is_pub` is
     /// honored by sema's cross-file field-access check (E0403/Field,
@@ -1154,6 +1157,9 @@ fn check_with_files_inner(
     // at creation (fixes the spurious-E0335 late-Copy FP). Before this point
     // the fixpoint owns classification.
     cx.copy_flags_settled = true;
+    // v0.0.27: the union rules. AFTER the Copy fixpoint, because the central
+    // one is about Copy-ness.
+    cx.check_unions(program);
     // OBS.1: runs here, not before the fixpoint — the snapshot hook form is
     // gated on the watched struct being `Copy`, which is not known until the
     // Copy/Drop fixpoint above has settled.
@@ -1845,6 +1851,13 @@ pub trait TypeShape {
         let _ = id;
         32
     }
+    /// v0.0.27: is this a `union`? Its fields overlap at offset 0 and its
+    /// size is the largest member's, rounded to the largest alignment —
+    /// C's rule, which is the whole point of having it.
+    fn struct_is_union(&self, id: StructId) -> bool {
+        let _ = id;
+        false
+    }
 }
 
 /// v0.0.14 auto field-drop: does a value of `ty` need teardown?
@@ -1989,21 +2002,32 @@ fn layout_of_inner(
                 return Some((0, 1));
             }
             visiting.push((true, id.0));
+            // A UNION overlaps: every field starts at 0, so the size is the
+            // largest member and the alignment is the strictest — then the
+            // size rounds up to that alignment, exactly as C does, so an
+            // array of unions steps correctly.
+            let is_union = tables.struct_is_union(*id);
             let mut off: u64 = 0;
+            let mut max_sz: u64 = 0;
             let mut max_al: u64 = 1;
             let mut ok = true;
             for fty in tables.struct_field_tys(*id) {
                 match layout_of_inner(&fty, tables, visiting) {
                     Some((sz, al)) => {
                         max_al = max_al.max(al);
-                        off = align_up(off, al);
-                        off = off.saturating_add(sz);
+                        if is_union {
+                            max_sz = max_sz.max(sz);
+                        } else {
+                            off = align_up(off, al);
+                            off = off.saturating_add(sz);
+                        }
                     }
                     None => ok = false,
                 }
             }
             visiting.pop();
-            ok.then(|| (align_up(off, max_al), max_al.max(1)))
+            let total = if is_union { max_sz } else { off };
+            ok.then(|| (align_up(total, max_al), max_al.max(1)))
         }
         Ty::Enum(id) => {
             if !tables.enum_is_tagged(*id) {
@@ -2038,6 +2062,9 @@ fn layout_of_inner(
 impl TypeShape for SemaCx<'_> {
     fn struct_has_drop(&self, id: StructId) -> bool {
         self.structs[id.0 as usize].is_drop
+    }
+    fn struct_is_union(&self, id: StructId) -> bool {
+        self.structs[id.0 as usize].is_union
     }
     fn enum_repr_bits(&self, id: EnumId) -> u8 {
         self.enums[id.0 as usize].repr.0
@@ -2799,6 +2826,7 @@ impl SemaCx<'_> {
                     }
                     self.structs.push(StructDef {
                         name: s.name.name.clone(),
+                        is_union: s.is_union,
                         fields: Vec::new(),
                         methods: HashMap::new(),
                         is_copy: false,
@@ -2905,6 +2933,85 @@ impl SemaCx<'_> {
 
     /// Second pass: resolve struct field types and populate `StructDef.fields`.
     /// Detects duplicate field names (E0319).
+    /// v0.0.27: what a `union` may be. A union has no tag, so nothing can
+    /// know which member is live — and every rule here follows from that one
+    /// fact rather than from a taste for restriction.
+    ///
+    /// - **Every field must be `Copy`** (E0925). A non-Copy member would need
+    ///   its destructor run at scope exit, and running the WRONG member's
+    ///   destructor over another member's bytes is the double-free this
+    ///   language exists to prevent. C has the same hole and answers it with
+    ///   programmer discipline; C+ answers it by not admitting the shape.
+    /// - **No generic parameters** (E0925). `union U[T]` cannot be checked
+    ///   for the rule above until T is known, and a union is a C-boundary
+    ///   description — the headers it exists to bind are never generic.
+    /// - **At least one field** (E0925). A zero-size union has no meaning and
+    ///   `layout_of` would answer 0, which no C header ever asks for.
+    fn check_unions(&mut self, p: &Program) {
+        for item in &p.items {
+            self.current_file = item.origin_file.clone();
+            let ItemKind::Struct(s) = &item.kind else {
+                continue;
+            };
+            if !s.is_union {
+                continue;
+            }
+            if !s.generic_params.is_empty() {
+                self.err(
+                    "E0925",
+                    format!(
+                        "`union {}` cannot be generic: a union describes a C-ABI layout, and its `Copy` rule cannot be checked until every member type is known",
+                        s.name.name
+                    ),
+                    s.name.span,
+                );
+                continue;
+            }
+            if s.fields.is_empty() {
+                self.err(
+                    "E0925",
+                    format!("`union {}` has no fields; a union must declare at least one member", s.name.name),
+                    s.name.span,
+                );
+                continue;
+            }
+            let Some(&id) = self.struct_by_name.get(&s.name.name) else {
+                continue;
+            };
+            // A union member's type must be Copy: with no tag there is no way
+            // to run the right destructor, so admitting one would be admitting
+            // a double free.
+            let field_tys: Vec<(String, Ty)> = self.structs[id.0 as usize]
+                .fields
+                .iter()
+                .map(|(n, t, _)| (n.clone(), t.clone()))
+                .collect();
+            for (fname, fty) in field_tys {
+                if matches!(fty, Ty::Error) {
+                    continue;
+                }
+                if !self.is_copy(&fty) {
+                    let span = s
+                        .fields
+                        .iter()
+                        .find(|f| f.name.name == fname)
+                        .map(|f| f.span)
+                        .unwrap_or(s.name.span);
+                    self.err(
+                        "E0925",
+                        format!(
+                            "union field `{}` has non-`Copy` type `{}`: a union carries no tag, so the compiler cannot know which member is live and cannot run its destructor — only `Copy` members are admitted",
+                            fname,
+                            self.ty_display_named(&fty)
+                        ),
+                        span,
+                    );
+                }
+            }
+        }
+        self.current_file = None;
+    }
+
     fn collect_struct_fields(&mut self, p: &Program) {
         for item in &p.items {
             self.current_file = item.origin_file.clone();
@@ -10140,6 +10247,9 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         let id = StructId(self.structs.len() as u32);
         self.structs.push(StructDef {
             name: mangled.clone(),
+            // Tuples and generic instantiations are structs; a union is
+            // neither generic nor synthesized.
+            is_union: false,
             fields,
             methods: HashMap::new(),
             is_copy: false,
@@ -10965,6 +11075,24 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     let _ = self.check_expr(&lit_field.value, None);
                 }
             }
+        }
+        // A UNION literal names exactly ONE member — the one being made live.
+        // "Every field must be provided" is a struct rule and would be
+        // nonsense here: the members share their storage, so naming two would
+        // be two initializers for the same bytes and naming none would leave
+        // the union in no member at all.
+        if self.structs[id.0 as usize].is_union {
+            if provided.len() != 1 {
+                self.err(
+                    "E0925",
+                    format!(
+                        "a `union` literal names exactly one member; `{struct_name}` was given {} — the members share one storage, so exactly one can be made live",
+                        provided.len()
+                    ),
+                    span,
+                );
+            }
+            return Ty::Struct(id);
         }
         // Detect missing fields.
         for (declared_name, _, _) in &declared {
@@ -17113,6 +17241,9 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         let id = StructId(self.structs.len() as u32);
         self.structs.push(StructDef {
             name: mangled.clone(),
+            // Tuples and generic instantiations are structs; a union is
+            // neither generic nor synthesized.
+            is_union: false,
             fields,
             methods: HashMap::new(),
             is_copy: false, // recomputed by compute_struct_copy_flags? not for late-synthesized
@@ -30615,6 +30746,49 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
              fn main() -> i32 { return 0; }",
         );
         assert!(codes.contains(&"E0302"), "got {:?}", codes);
+    }
+
+    // ---- FFI unions ----
+
+    #[test]
+    fn union_layout_is_the_largest_member() {
+        // Verified against clang on the same declarations: 4/4, 8/8, 2/2, and
+        // an array of three 8-byte unions is 24 (the stride test — a union
+        // whose size did not round up to its alignment would break it).
+        let diags = check_src(
+            "#[repr(C)] union FloatBits { f: f32, bits: u32 }\n             #[repr(C)] union Big { a: u8, b: u64, c: [u8; 4] }\n             struct Arr { arr: [Big; 3] }\n             fn main() -> i32 {\n                 if #size_of::[FloatBits]() != (4 as usize) { return 1; }\n                 if #size_of::[Big]() != (8 as usize) { return 2; }\n                 if #align_of::[Big]() != (8 as usize) { return 3; }\n                 if #size_of::[Arr]() != (24 as usize) { return 4; }\n                 return 0;\n             }",
+        );
+        assert!(diags.is_empty(), "got {:#?}", diags);
+    }
+
+    #[test]
+    fn union_members_must_be_copy_e0925() {
+        // No tag means no way to know which member is live, so no destructor
+        // can be run correctly — the shape is refused rather than trusted.
+        let codes = errors(
+            "#[lang(\"string\")] struct Text { p: *u8, n: usize, c: usize }\n             impl Text { fn drop(ref this) { return; } }\n             union U { a: i32, t: Text }\n             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.contains(&"E0925"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn union_shape_rules_e0925() {
+        let generic = errors(
+            "union G[T] { a: T, b: i32 }\nfn main() -> i32 { return 0; }",
+        );
+        assert!(generic.contains(&"E0925"), "generic union: {:?}", generic);
+        let empty = errors("union E { }\nfn main() -> i32 { return 0; }");
+        assert!(empty.contains(&"E0925"), "empty union: {:?}", empty);
+        // A literal names exactly one member — the one made live.
+        let two = errors(
+            "union T2 { a: i32, b: u32 }\n             fn main() -> i32 { let x = T2 { a: 1, b: 2 }; return 0; }",
+        );
+        assert!(two.contains(&"E0925"), "two-member literal: {:?}", two);
+        // And one member is clean.
+        let one = check_src(
+            "union T3 { a: i32, b: u32 }\n             fn main() -> i32 { let x = T3 { a: 1 }; return x.b as i32; }",
+        );
+        assert!(one.is_empty(), "one-member literal: {:#?}", one);
     }
 
     // ---- FFI enums: #[repr] + explicit discriminants ----

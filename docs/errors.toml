@@ -3130,6 +3130,24 @@ fn main() -> i32 { return 0; }
 '''
 
 [[code]]
+id = "E0925"
+title = "Invalid `union`"
+category = "Names, types, and items"
+severity = "error"
+repro = "checked"
+lang = "cplus"
+verified = true
+emit_site = "cplus-core/src/sema.rs:check_unions"
+test = "cplus-core/src/sema.rs:union_shape_rules_e0925"
+cause = "A `union` broke one of the rules that follow from it having no tag: a member type is not `Copy` (nothing can know which member is live, so no destructor can be run correctly), the union is generic (its `Copy` rule cannot be checked until the members are known, and C headers are not generic), it declares no members, or a union literal named other than exactly one member."
+fix = "Keep every member `Copy`, keep the union non-generic and non-empty, and name exactly one member when constructing it — the one being made live."
+example = '''
+union U { a: i32, b: u32 }
+fn main() -> i32 { let x = U { a: 1, b: 2 }; return 0; }
+// -> [E0925] a `union` literal names exactly one member
+'''
+
+[[code]]
 id = "E1000"
 title = "Missing stdlib type for `gen fn` / `Iterator::next`"
 category = "Compile-time builtins"

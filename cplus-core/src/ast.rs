@@ -296,6 +296,18 @@ pub fn enum_value_plan(decl: &EnumDecl) -> Vec<i64> {
 pub struct StructDecl {
     pub name: Ident,
     pub fields: Vec<StructField>,
+    /// v0.0.27: declared with `union` rather than `struct` — every field
+    /// starts at offset 0 and the whole thing is as big as its largest
+    /// member. Same declaration shape, same field access, different LAYOUT,
+    /// which is why it rides `StructDecl` instead of an item kind of its
+    /// own: everything except `layout_of` and the LLVM type treats a union
+    /// exactly like a struct.
+    ///
+    /// There is no tag. Reading a field other than the one last written
+    /// reinterprets the bytes — which is the point at the C boundary and is
+    /// why the fields must be `Copy` (E0925): with no way to know which
+    /// member is live, no destructor can be run correctly.
+    pub is_union: bool,
     /// Slice 4B (v0.0.24 #10): `true` when the struct is marked `export`,
     /// placing the type-name on the C-ABI / header surface. General module
     /// visibility is name-based instead — a leading `_` is module-private,

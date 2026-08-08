@@ -47,6 +47,17 @@ earlier history lives in each version's archived plan.
   each through the `assert` path at entry, so a violation traps (and
   test builds report instead of aborting). v0 checks in every build
   profile; `#[ensures]` and doc/graph surfacing are follow-ups.
+- **`#[repr(C)] union`**: one storage, several typed views — the shape real
+  C headers contain and bindgen could not describe without lying. Same
+  declaration form as a struct (it rides `StructDecl` with `is_union`), C's
+  layout rule (size = largest member, alignment = strictest, size rounded up
+  so an array of unions strides correctly — verified field-for-field against
+  clang), and field access at offset 0 with the load's type picking the
+  member. Members must be `Copy`, the union non-generic and non-empty, and a
+  literal names exactly one member — all **E0925**, and all consequences of a
+  union having no tag: nothing can know which member is live, so no
+  destructor could be run correctly. For an either/or VALUE in ordinary code
+  the answer is still an enum with payloads, which has that tag.
 - **FFI enums — explicit discriminants + `#[repr]`**: a payload-free
   enum takes C-style values (`NotFound = 404`, auto `prev + 1`
   otherwise; any constant expression folds) and an integer

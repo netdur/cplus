@@ -483,9 +483,7 @@ impl Parser {
             TokenKind::Mod => Err(self.err_at_peek(
                 "an item; C+ has no `mod` and no module tree — packages are string-path imports (`import \"path\" as alias;`)",
             )),
-            TokenKind::Union => Err(self.err_at_peek(
-                "an item; C+ has no `union` — use `enum` for a tagged (safe) union, or `struct` for a plain aggregate",
-            )),
+            TokenKind::Union => self.parse_struct_decl(is_pub, attributes),
             // `import` after the file's leading import block is a hard
             // error — call it out by name so the diagnostic explains the
             // restriction.
@@ -1295,7 +1293,14 @@ impl Parser {
         is_pub: bool,
         attributes: Vec<Attribute>,
     ) -> Result<Item, ParseError> {
-        let start = self.expect(&TokenKind::Struct, "`struct`")?.span;
+        // `union` and `struct` share every part of the declaration except
+        // where the fields sit, so they share the parser too.
+        let is_union: bool = matches!(self.peek_kind(), TokenKind::Union);
+        let start = if is_union {
+            self.expect(&TokenKind::Union, "`union`")?.span
+        } else {
+            self.expect(&TokenKind::Struct, "`struct`")?.span
+        };
         let name = self.expect_ident()?;
         // Slice 7GEN.2: optional generic-parameter list.
         let generic_params = self.parse_generic_params()?;
@@ -1334,6 +1339,7 @@ impl Parser {
             kind: ItemKind::Struct(StructDecl {
                 name,
                 fields,
+                is_union,
                 is_pub,
                 attributes,
                 generic_params,
@@ -4865,14 +4871,22 @@ mod tests {
     }
 
     #[test]
-    fn dead_keyword_union_hints_enum_or_struct() {
-        let e = parse_src("union U { a: i32 }").unwrap_err();
-        let (expected, found) = unexpected(&e);
-        assert!(
-            expected.contains("enum") && expected.contains("struct"),
-            "got: {expected}"
-        );
-        assert!(found.contains("union"), "found: {found}");
+    fn union_parses_as_a_struct_with_overlapping_fields() {
+        // v0.0.27: `union` was a reserved word that only produced a hint. It
+        // declares an FFI union now — same declaration shape as a struct,
+        // different layout, so it rides `StructDecl` with `is_union` set.
+        let p = parse_src("union U { a: i32, b: f32 }").expect("union parses");
+        let ItemKind::Struct(s) = &p.items[0].kind else {
+            panic!("expected a struct-shaped item");
+        };
+        assert!(s.is_union, "union must set is_union");
+        assert_eq!(s.fields.len(), 2);
+        // And a plain struct still does not.
+        let q = parse_src("struct S { a: i32 }").expect("struct parses");
+        let ItemKind::Struct(s2) = &q.items[0].kind else {
+            panic!("expected struct");
+        };
+        assert!(!s2.is_union);
     }
 
     #[test]

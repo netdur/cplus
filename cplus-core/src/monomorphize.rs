@@ -347,6 +347,9 @@ pub fn monomorphize(
                 span: Span::new(0, 0),
             },
             fields,
+            // A union is never generic (sema rejects `union U[T]`), so an
+            // instantiation is never one.
+            is_union: false,
             is_pub: true,
             // OBS.1: carry the template's attributes onto the instantiation.
             // Codegen re-derives type-level flags (`#[lang]`, `#[watch]`)

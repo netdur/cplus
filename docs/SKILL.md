@@ -567,6 +567,15 @@ There is **no `unsafe` block**. Every operation that can cause undefined behavio
 ```cplus
 #[repr(C)] struct NSRect { origin: NSPoint, size: NSSize }   // stable C layout
 
+// C UNION — one storage, several typed views. For binding real headers; for
+// an either/or VALUE in ordinary code use an enum with payloads (it has a tag).
+#[repr(C)] union FloatBits { f: f32, bits: u32 }
+var u: FloatBits = FloatBits { f: 1.0f32 };   // a literal names exactly ONE member
+u.bits;                                        // reading another reinterprets the bytes
+// size = largest member, align = strictest, verified against clang. Members
+// must be Copy (no tag -> no destructor can be run correctly), not generic,
+// at least one. E0925 otherwise.
+
 #[link_name = "objc_msgSend"] extern fn msg_void(r: *u8, s: *u8);
 #[link_name = "objc_msgSend"] extern fn msg_str(r: *u8, s: *u8) -> *u8;
 

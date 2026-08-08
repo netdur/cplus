@@ -4,7 +4,7 @@
 
 Every C+ diagnostic carries a numbered code, a source span, and often a machine-applicable suggestion. `cpc --diagnostics=json` emits the same information in a machine-readable shape for editors and agents. Codes prefixed with **W** are non-fatal warnings; the build continues. The normative ranges and what each phase owns are fixed in [§20 of the language specification](/docs/spec).
 
-This is the complete index — **185 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **144** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
+This is the complete index — **186 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **145** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
 
 ## Lexical
 
@@ -766,6 +766,20 @@ fn main() -> i32 { return 0; }
 **Fix.** Restate the condition with pure reads, or hoist the computed value into a parameter the contract can read.
 
 <sub>repro: checked · cplus-core/src/sema.rs:check_requires_attrs · test cplus-core/src/sema.rs:requires_impure_rejected_e0924</sub>
+
+### E0925 · Invalid `union`
+
+A `union` broke one of the rules that follow from it having no tag: a member type is not `Copy` (nothing can know which member is live, so no destructor can be run correctly), the union is generic (its `Copy` rule cannot be checked until the members are known, and C headers are not generic), it declares no members, or a union literal named other than exactly one member.
+
+```cplus
+union U { a: i32, b: u32 }
+fn main() -> i32 { let x = U { a: 1, b: 2 }; return 0; }
+// -> [E0925] a `union` literal names exactly one member
+```
+
+**Fix.** Keep every member `Copy`, keep the union non-generic and non-empty, and name exactly one member when constructing it — the one being made live.
+
+<sub>repro: checked · cplus-core/src/sema.rs:check_unions · test cplus-core/src/sema.rs:union_shape_rules_e0925</sub>
 
 ## Control flow and matching
 
