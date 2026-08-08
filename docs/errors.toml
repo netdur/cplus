@@ -3073,6 +3073,24 @@ fn main() -> i32 { return 0; }
 '''
 
 [[code]]
+id = "E0922"
+title = "`distinct` requires a plain integer base type"
+category = "Names, types, and items"
+severity = "error"
+repro = "checked"
+lang = "cplus"
+verified = true
+emit_site = "cplus-core/src/sema.rs:finalize_distincts"
+test = "cplus-core/src/sema.rs:distinct_requires_integer_base_e0922"
+cause = "A `type X = distinct BASE;` declaration named a base that is not a plain integer type (i8–i64, u8–u64, isize, usize). Distinct aliases exist to give integers nominal identity at zero ABI cost; floats, pointers, strings, and aggregates are not supported bases."
+fix = "Use an integer base, or a wrapper struct for non-integer types."
+example = '''
+type Speed = distinct f64;
+fn main() -> i32 { return 0; }
+// -> [E0922] `distinct` requires a plain integer base type; `Speed` is `f64`
+'''
+
+[[code]]
 id = "E1000"
 title = "Missing stdlib type for `gen fn` / `Iterator::next`"
 category = "Compile-time builtins"

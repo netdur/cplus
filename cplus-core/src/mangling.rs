@@ -171,6 +171,11 @@ fn write_ty(ty: &Ty, nominal: &dyn Fn(&Ty) -> String, out: &mut dyn Sink) {
             out.put(&format!("x{lanes}"));
         }
         Ty::Param(name) => out.put(&format!("Param_{name}")),
+        // v0.0.27 distinct alias: mangles by its own (unique, resolver-
+        // qualified) name, NOT the base — `Vec[UserId]` and `Vec[i64]` must
+        // not collide on one mangled symbol while sema still tells them
+        // apart. Layout is identical either way.
+        Ty::Distinct { name, .. } => out.put(name),
         Ty::Struct(_) | Ty::Enum(_) => out.put(&nominal(ty)),
     }
 }

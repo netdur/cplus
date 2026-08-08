@@ -781,6 +781,9 @@ fn emit_spawn_with_tramp(
 /// sret-aware trampolines and join paths — those land in 5C as well.
 fn is_thread_spawn_eligible(ty: &Ty) -> bool {
     match ty {
+        // v0.0.27 distinct alias — representation IS the base (normally
+        // normalized away before codegen; delegation keeps this total).
+        Ty::Distinct { base, .. } => is_thread_spawn_eligible(base),
         Ty::I8
         | Ty::I16
         | Ty::I32
@@ -907,6 +910,15 @@ fn nominal_prefix(s: &str, types: &TypeTable) -> Option<(Ty, usize)> {
             }
         }
     }
+    // v0.0.27: a distinct-alias name in a mangled position decodes to its
+    // integer base — the representation codegen works in.
+    for (name, base) in &types.distinct_by_name {
+        if let Some(r) = s.strip_prefix(name.as_str()) {
+            if boundary(r) && best.as_ref().map_or(true, |(l, _)| name.len() > *l) {
+                best = Some((name.len(), base.clone()));
+            }
+        }
+    }
     for (name, id) in &types.enum_by_name {
         if let Some(r) = s.strip_prefix(name.as_str()) {
             if boundary(r) && best.as_ref().map_or(true, |(l, _)| name.len() > *l) {
@@ -1019,6 +1031,7 @@ pub fn generate(program: &Program, mode: BuildMode) -> String {
         &Default::default(),
         &Default::default(),
         &Default::default(),
+        &Default::default(),
     )
 }
 
@@ -1049,6 +1062,7 @@ pub fn generate_with_mono(
         &mono.selectors,
         &mono.shader_blobs,
         &mono.text_to_str_coercions,
+        &mono.distinct_aliases,
     )
 }
 
@@ -1070,6 +1084,7 @@ pub fn generate_lib(program: &Program, mode: BuildMode) -> String {
         None,
         &[],
         true,
+        &Default::default(),
         &Default::default(),
         &Default::default(),
         &Default::default(),
@@ -1103,6 +1118,7 @@ pub fn generate_with_debug(
         &Default::default(),
         &Default::default(),
         &Default::default(),
+        &Default::default(),
     )
 }
 
@@ -1125,6 +1141,7 @@ pub fn generate_with_options(
         source_file,
         sanitizers,
         false,
+        &Default::default(),
         &Default::default(),
         &Default::default(),
         &Default::default(),
@@ -1186,6 +1203,7 @@ pub fn generate_test_binary(
         &mono.selectors,
         &mono.shader_blobs,
         &mono.text_to_str_coercions,
+        &mono.distinct_aliases,
     )
 }
 
@@ -1208,8 +1226,9 @@ fn generate_inner(
     selectors_set: &std::collections::BTreeSet<String>,
     shader_blobs_map: &HashMap<crate::lexer::Span, Vec<u8>>,
     text_to_str_coercions: &HashSet<crate::lexer::Span>,
+    distinct_aliases: &std::collections::BTreeMap<String, crate::ast::Type>,
 ) -> String {
-    let types = collect_types(program);
+    let types = collect_types(program, distinct_aliases);
     let sigs = collect_sigs(program, &types);
     let test_mode = test_cfg.is_some();
     let mut out = String::new();
@@ -2045,6 +2064,12 @@ struct TypeTable {
     enum_defs: Vec<EnumInfo>,
     struct_by_name: HashMap<String, StructId>,
     struct_defs: Vec<StructInfo>,
+    /// v0.0.27 distinct aliases: alias name → integer base `Ty`. Fed from
+    /// `MonoInfo::distinct_aliases` (not the AST — alias items are stripped
+    /// by mono). Consulted by the mangled-name parser (`nominal_prefix`):
+    /// a brand baked into an instantiation name (`Vec__app.ids.UserId`,
+    /// `Iterator__app.ids.UserId`) decodes to its base type.
+    distinct_by_name: HashMap<String, Ty>,
     /// STRM (v0.0.27): methods of the blessed `impl str { ... }` block,
     /// name-keyed. Re-derived from the post-mono AST like everything else
     /// in this table (id-universe rule); empty when the build has no
@@ -2278,8 +2303,30 @@ fn nominal_name(ty: &Ty, types: &TypeTable) -> String {
     }
 }
 
-fn collect_types(p: &Program) -> TypeTable {
+fn collect_types(
+    p: &Program,
+    distinct_aliases: &std::collections::BTreeMap<String, crate::ast::Type>,
+) -> TypeTable {
     let mut t = TypeTable::default();
+    // v0.0.27: distinct aliases decode to their (always-integer) base.
+    for (name, base) in distinct_aliases {
+        if let crate::ast::TypeKind::Path(b) = &base.kind {
+            let ty = match b.as_str() {
+                "i8" => Ty::I8,
+                "i16" => Ty::I16,
+                "i32" => Ty::I32,
+                "i64" => Ty::I64,
+                "isize" => Ty::Isize,
+                "u8" => Ty::U8,
+                "u16" => Ty::U16,
+                "u32" => Ty::U32,
+                "u64" => Ty::U64,
+                "usize" => Ty::Usize,
+                _ => continue,
+            };
+            t.distinct_by_name.insert(name.clone(), ty);
+        }
+    }
     // First pass: register names so struct field type resolution can refer
     // to other types declared anywhere in the program (forward refs).
     for item in &p.items {
@@ -2611,6 +2658,8 @@ fn compute_copy_flags(t: &mut TypeTable) {
 /// codegen can answer the question without re-importing sema's state.
 fn is_copy_ty(ty: &Ty, t: &TypeTable) -> bool {
     match ty {
+        // v0.0.27 distinct alias — Copy iff its (integer) base is.
+        Ty::Distinct { base, .. } => is_copy_ty(base, t),
         Ty::Unit
         | Ty::Bool
         | Ty::I8
@@ -4411,6 +4460,8 @@ fn abi_ext_attr(ty: &Ty) -> &'static str {
 
 fn llvm_ty(ty: &Ty, types: &TypeTable) -> String {
     match ty {
+        // v0.0.27 distinct alias — lowers exactly as its base.
+        Ty::Distinct { base, .. } => llvm_ty(base, types),
         Ty::I8 | Ty::U8 => "i8".to_string(),
         Ty::I16 | Ty::U16 => "i16".to_string(),
         Ty::I32 | Ty::U32 => "i32".to_string(),
@@ -18190,6 +18241,27 @@ fn main() -> i32 {\n\
         );
     }
 
+    /// v0.0.27 distinct newtypes: a branded generic instantiation mangles by
+    /// the ALIAS name (BoxG[UserId] ≠ BoxG[i64] as symbols), while every
+    /// value position lowers to the integer base. The full pipeline must
+    /// complete — the brand baked into instantiation names decodes through
+    /// `TypeTable::distinct_by_name` (fed from `MonoInfo::distinct_aliases`).
+    #[test]
+    fn distinct_generic_mangles_by_brand_and_lowers_to_base() {
+        let src = "type UserId = distinct i64;\n\
+             struct BoxG[T] { v: T }\n\
+             fn main() -> i32 {\n\
+                 let b = BoxG[UserId] { v: 4 as UserId };\n\
+                 let u: UserId = b.v;\n\
+                 return (u as i64 - 4) as i32;\n\
+             }\n";
+        let ir = gen_src_mono(src);
+        assert!(
+            ir.contains("BoxG__UserId"),
+            "instantiation must mangle by the brand:\n{ir}"
+        );
+    }
+
     /// issue-13(b): the two passes must reach the same drop conclusion for the
     /// same type. The RULE is shared now (`sema::carries_drop`), so what this
     /// pins is the inputs — sema's `is_drop` / `is_tagged` against codegen's,
@@ -18278,7 +18350,7 @@ fn main() -> i32 {\n\
             }
         };
         let post = crate::monomorphize::monomorphize(prog, &mono, &name_of);
-        let tables = collect_types(&post);
+        let tables = collect_types(&post, &Default::default());
 
         // Every type codegen knows about, answered by codegen's tables.
         let mut checked = 0;
@@ -18407,7 +18479,7 @@ fn main() -> i32 {\n\
             }
         };
         let post = crate::monomorphize::monomorphize(prog, &mono, &name_of);
-        let tables = collect_types(&post);
+        let tables = collect_types(&post, &Default::default());
 
         let mut checked = 0;
         for (name, id) in &tables.struct_by_name {
@@ -19981,6 +20053,7 @@ fn main() -> i32 {\n\
             &Default::default(),
             &Default::default(),
             &Default::default(),
+            &Default::default(),
         )
     }
 
@@ -20908,7 +20981,7 @@ fn main() -> i32 {\n\
         let prog = parse(toks).unwrap();
         let diags = sema::check(&prog, PathBuf::from("test.cplus"), src);
         assert!(diags.is_empty());
-        let types = collect_types(&prog);
+        let types = collect_types(&prog, &Default::default());
         let id = types.struct_by_name["S"];
         assert_eq!(static_layout(&Ty::Struct(id), &types), Some((12, 4)));
     }
@@ -20947,7 +21020,7 @@ fn main() -> i32 {\n\
         let prog = parse(toks).unwrap();
         let diags = sema::check(&prog, PathBuf::from("t.cplus"), src);
         assert!(diags.is_empty());
-        let types = collect_types(&prog);
+        let types = collect_types(&prog, &Default::default());
         let plain = Ty::Enum(types.enum_by_name["Plain"]);
         let tagged = Ty::Enum(types.enum_by_name["Tagged"]);
         assert!(is_scalar_ty(&plain, &types));
@@ -23028,7 +23101,7 @@ fn main() -> i32 {\n\
         let prog = parse(toks).unwrap();
         let diags = sema::check(&prog, PathBuf::from("t.cplus"), src);
         assert!(diags.is_empty());
-        let types = collect_types(&prog);
+        let types = collect_types(&prog, &Default::default());
         let id = types.struct_by_name["Point"];
         let abi = classify_c_abi(&Ty::Struct(id), &types);
         match abi {
@@ -23053,7 +23126,7 @@ fn main() -> i32 {\n\
         let prog = parse(toks).unwrap();
         let diags = sema::check(&prog, PathBuf::from("t.cplus"), src);
         assert!(diags.is_empty());
-        let types = collect_types(&prog);
+        let types = collect_types(&prog, &Default::default());
         let id = types.struct_by_name["Pair"];
         // A 16-byte two-eightbyte aggregate coerces to the target's
         // register-pair type: `[2 x i64]` on aarch64-darwin, `{ i64, i64 }`
@@ -23130,7 +23203,7 @@ fn main() -> i32 {\n\
             let prog = parse(toks).unwrap();
             let diags = sema::check(&prog, PathBuf::from("t.cplus"), src);
             assert!(diags.is_empty(), "sema must be clean: {diags:?}");
-            let types = collect_types(&prog);
+            let types = collect_types(&prog, &Default::default());
             let id = types.struct_by_name[name];
             (Ty::Struct(id), types)
         }
@@ -23389,7 +23462,7 @@ fn main() -> i32 {\n\
         let prog = parse(toks).unwrap();
         let diags = sema::check(&prog, PathBuf::from("t.cplus"), src);
         assert!(diags.is_empty());
-        let types = collect_types(&prog);
+        let types = collect_types(&prog, &Default::default());
         let id = types.struct_by_name["Triple"];
         assert_eq!(classify_c_abi(&Ty::Struct(id), &types), CAbiClass::Indirect);
     }

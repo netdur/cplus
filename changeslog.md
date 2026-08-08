@@ -26,6 +26,17 @@ earlier history lives in each version's archived plan.
   are not derivable — **E0920** names the field and the manual fix.
   Deriving needs a struct target (E0916 otherwise); `Copy` remains
   structural and is never written.
+- **Distinct newtypes**: `type UserId = distinct i64;` — a nominal
+  integer alias. Same representation and ABI as the base; not
+  interchangeable with it or with other brands (E0302 with a
+  cast-pointing message). Conversion is explicit `as` in either
+  direction. Same-brand `==`/`!=` and blessed `hash`/`eq` work, so a
+  distinct type satisfies `Hash + Eq + Copy` bounds and keys a HashMap.
+  Brands survive generics — `Vec[UserId]` is its own instantiation
+  (mangled by the alias name) whose API takes and returns the brand —
+  and erase to the base integer at the end of monomorphization, so
+  codegen and the C ABI see plain integers. Base must be a plain integer
+  type (**E0922**).
 - **Const expressions**: a `const` (or scalar `static`) initializer may be
   any pure expression over literals and other consts — `const MASK: u64 =
   (1u64 << 40) - 1u64;`, `const CAP2: usize = CAP * 2;` — folded in lower

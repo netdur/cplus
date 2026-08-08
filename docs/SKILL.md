@@ -288,6 +288,23 @@ let buf: [u8; CAP] = [0u8; CAP];                  // const in the type AND fill 
 let big: [u8; CAP * 2] = [0u8; CAP * 2];          // length arithmetic folds at compile time
 ```
 
+### Distinct newtypes — `type X = distinct i64`
+
+A nominal integer alias: same representation and ABI as the base, but a separate type. Mixing two ids of the same underlying integer is the classic silent bug no borrow checker catches — a distinct type makes it a compile error:
+
+```cplus
+type UserId = distinct i64;
+type ChannelId = distinct i64;
+
+let u = 7 as UserId;                     // construct by casting (any integer casts in)
+let n: i64 = u as i64;                   // leave by casting out
+take_user(channel);                      // E0302 — brands don't mix
+let v: UserId = 5;                       // E0302 — base doesn't flow in silently
+u == u2; u.eq(u2); u.hash();             // same-brand comparison + blessed Hash/Eq work
+```
+
+Arithmetic and ordering are rejected on brands (cast to the base). A distinct type satisfies `Hash`/`Eq`/`Copy` bounds, so it works as a `HashMap` key, and generic instantiations keep the brand: `Vec[UserId]` is its own type — `append` takes `UserId`, `at` returns `Option[UserId]`, and passing it where `Vec[i64]` is expected is E0302. The base must be a plain integer type (E0922 otherwise).
+
 ### Generics + bounds + turbofish
 ```cplus
 fn identity[T](x: T) -> T { return x; }

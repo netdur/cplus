@@ -381,9 +381,19 @@ pub fn monomorphize(
             .collect();
         out_items.extend(bridges);
     }
-    Program {
+    let out = Program {
         items: out_items,
         imports: program.imports,
+    };
+    // v0.0.27: SECOND alias pass — erase distinct-alias names to their
+    // integer base. Runs after every Generic→Path(mangled) rewrite, so a
+    // brand in a generic argument has already been baked into the mangled
+    // instantiation name; what remains are bare mentions (locals, params,
+    // fields, cast targets), which codegen wants as the base.
+    if mono.distinct_aliases.is_empty() {
+        out
+    } else {
+        rewrite_aliases_in_program(out, &mono.distinct_aliases)
     }
 }
 
@@ -575,6 +585,9 @@ fn ty_to_source_name_for_simd(ty: &Ty) -> String {
 /// here (substitution has already happened).
 fn ty_to_type_ast(ty: &Ty, type_name_of: &dyn Fn(&Ty) -> String) -> Type {
     let kind = match ty {
+        // v0.0.27 distinct alias — post-mono AST spells the base type
+        // (the alias name no longer exists after the alias rewrite).
+        Ty::Distinct { base, .. } => return ty_to_type_ast(base, type_name_of),
         Ty::I8 => TypeKind::Path("i8".into()),
         Ty::I16 => TypeKind::Path("i16".into()),
         Ty::I32 => TypeKind::Path("i32".into()),

@@ -1118,6 +1118,21 @@ impl Parser {
         let start = self.expect(&TokenKind::TypeKw, "`type`")?.span;
         let name = self.expect_ident()?;
         self.expect(&TokenKind::Eq, "`=`")?;
+        // v0.0.27: contextual `distinct` keyword — `type UserId = distinct
+        // i64;` declares a nominal (non-interchangeable) alias. Contextual:
+        // `distinct` stays a valid identifier everywhere else, and a type
+        // named `distinct` followed by `;` still parses as transparent.
+        let is_distinct = match self.peek_kind() {
+            TokenKind::Ident(n) if n == "distinct" => {
+                if matches!(self.peek_kind_n(1), TokenKind::Semi) {
+                    false
+                } else {
+                    self.bump();
+                    true
+                }
+            }
+            _ => false,
+        };
         let target = self.parse_type()?;
         let end = self.expect(&TokenKind::Semi, "`;`")?.span;
         Ok(Item {
@@ -1125,6 +1140,7 @@ impl Parser {
                 name,
                 target,
                 is_pub,
+                is_distinct,
             }),
             span: start.merge(end),
             origin_file: None,

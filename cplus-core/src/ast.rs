@@ -190,6 +190,12 @@ pub struct TypeAlias {
     pub name: Ident,
     pub target: Type,
     pub is_pub: bool,
+    /// v0.0.27: `type UserId = distinct i64;` — a NOMINAL alias. Same
+    /// representation and ABI as the target, but a distinct type to sema:
+    /// not interchangeable with the base or with other distinct aliases;
+    /// conversion is an explicit `as` in either direction. `false` for the
+    /// transparent `type Foo = Bar;` form.
+    pub is_distinct: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]

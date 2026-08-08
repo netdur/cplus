@@ -92,6 +92,16 @@ pub enum Ty {
     /// fat pointer `{ptr: *u8, len: usize}`. Copy semantics (a view,
     /// not an owner). String literals (`"hello"`) have this type.
     Str,
+    /// v0.0.27: a nominal integer alias — `type UserId = distinct i64;`.
+    /// Same representation, layout, and ABI as `base` (always a plain
+    /// integer type), but NOT interchangeable with it or with any other
+    /// distinct alias: conversion is an explicit `as` either way. Equality
+    /// is nominal (the resolved alias name). The brand survives
+    /// monomorphization — `Vec[UserId]` is its own instantiation, mangled
+    /// by the alias name — and the name is erased only by mono's SECOND
+    /// alias-rewrite pass (after generic mangling), so codegen sees plain
+    /// integers; its `Ty::Distinct` arms delegate to `base` as a backstop.
+    Distinct { name: String, base: Box<Ty> },
     /// Phase 8 slice 8.STR.3: owned heap-backed string. Lowered to
     /// `{ptr: *u8, len: usize, cap: usize}` — 24 bytes on 64-bit.
     /// Non-Copy, has Drop (frees the buffer via libc `free`). The internal
@@ -175,6 +185,9 @@ impl Ty {
     /// needed in a diagnostic message.
     pub fn name(&self) -> &'static str {
         match self {
+            // The alias's real name is a String — `ty_display` renders it;
+            // this &'static-str surface can only categorize.
+            Ty::Distinct { .. } => "distinct type",
             Ty::I8 => "i8",
             Ty::I16 => "i16",
             Ty::I32 => "i32",
@@ -239,6 +252,8 @@ impl Ty {
     /// the type table (a tagged enum is Copy iff every payload is Copy).
     pub fn is_atomic_copy(&self) -> bool {
         match self {
+            // v0.0.27 distinct alias: integer representation, always Copy.
+            Ty::Distinct { .. } => true,
             Ty::I8
             | Ty::I16
             | Ty::I32
@@ -687,6 +702,13 @@ pub struct MonoInfo {
     /// the alias target before doing anything else — codegen never
     /// sees alias names. Cycle detection happened at sema.
     pub type_aliases: std::collections::BTreeMap<String, crate::ast::Type>,
+    /// v0.0.27 distinct aliases: name → BASE type (already resolved to the
+    /// underlying integer's spelling). Erased by monomorphize in a SECOND
+    /// alias pass, AFTER generic-argument mangling — a distinct alias in a
+    /// generic argument position must mangle by its own name (`Vec[UserId]`
+    /// is a separate instantiation from `Vec[i64]`), so it cannot ride the
+    /// first (pre-mangling) alias rewrite.
+    pub distinct_aliases: std::collections::BTreeMap<String, crate::ast::Type>,
     /// v0.0.4 Phase 1C: per-call-site marker for the `Type[args]::name(...)`
     /// shape where `name` is a same-module free generic fn (not an impl
     /// method). Sema dispatched the call to the free fn; monomorphize
@@ -1026,6 +1048,8 @@ fn check_with_files_inner(
         ext_conflicts: std::collections::HashSet::new(),
         ext_visible,
         type_aliases: HashMap::new(),
+        distinct_targets: Vec::new(),
+        distinct_defs: HashMap::new(),
         resolving_aliases: std::collections::HashSet::new(),
         fnptr_field_names: None,
         bound_method_refs: HashMap::new(),
@@ -1095,6 +1119,7 @@ fn check_with_files_inner(
     // only matters in `check_method_call` (and friends), which run during
     // body-checking — long after all five collection passes have finished.
     cx.collect_type_names(program);
+    cx.finalize_distincts();
     cx.register_blessed_interfaces();
     cx.collect_interfaces(program);
     cx.collect_struct_fields(program);
@@ -1288,10 +1313,29 @@ fn check_with_files_inner(
                 }),
         )
         .collect();
+    // v0.0.27: distinct aliases split out — they must NOT ride mono's first
+    // (pre-mangling) alias rewrite, or a `Vec[UserId]` use site would mangle
+    // as `Vec[i64]` while sema recorded the instantiation under the brand.
+    // The exported target is the RESOLVED base (a bare int Path), not the
+    // written target, so a distinct-of-transparent-alias erases in one hop.
     let type_aliases: std::collections::BTreeMap<String, Type> = cx
         .type_aliases
         .iter()
+        .filter(|(k, _)| !cx.distinct_defs.contains_key(*k))
         .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    let distinct_aliases: std::collections::BTreeMap<String, Type> = cx
+        .distinct_defs
+        .iter()
+        .map(|(k, base)| {
+            (
+                k.clone(),
+                Type {
+                    kind: crate::ast::TypeKind::Path(base.name().to_string()),
+                    span: crate::lexer::Span::new(0, 0),
+                },
+            )
+        })
         .collect();
     // Template-context entries must not cross into monomorphize as if they
     // were real monomorphs. While type-checking a generic body sema records
@@ -1385,6 +1429,7 @@ fn check_with_files_inner(
         enum_instantiations,
         method_instantiations,
         type_aliases,
+        distinct_aliases,
         compile_time_blobs: std::mem::take(&mut cx.compile_time_blobs_table),
         inferred_struct_lits: std::mem::take(&mut cx.inferred_struct_lit_table),
         interp_totext_parts: std::mem::take(&mut cx.interp_totext_part_table),
@@ -1468,6 +1513,12 @@ struct SemaCx<'a> {
     /// via `resolve_type` — transparent (Foo and Bar are identical at
     /// the Ty level). Detect cycles at resolution time, not collection.
     type_aliases: HashMap<String, Type>,
+    /// v0.0.27 distinct aliases awaiting base validation: (name, target
+    /// AST, decl span). Consumed by `finalize_distincts`.
+    distinct_targets: Vec<(String, Type, ByteSpan)>,
+    /// v0.0.27 validated distinct aliases: name → integer base `Ty`.
+    /// Consulted by `resolve_type` BEFORE the transparent-alias table.
+    distinct_defs: HashMap<String, Ty>,
     /// Cycle-detection set for `resolve_type` recursion through aliases.
     /// `type A = B; type B = A;` fires E0510 when the second resolve
     /// re-enters the same name.
@@ -1902,6 +1953,8 @@ fn layout_of_inner(
     }
     let ptr = (crate::target::active_target().pointer_width / 8) as u64;
     match ty {
+        // v0.0.27 distinct alias: layout IS the base's layout.
+        Ty::Distinct { base, .. } => layout_of_inner(base, tables, visiting),
         Ty::I8 | Ty::U8 | Ty::Bool => Some((1, 1)),
         Ty::I16 | Ty::U16 | Ty::F16 => Some((2, 2)),
         Ty::I32 | Ty::U32 | Ty::F32 => Some((4, 4)),
@@ -2689,6 +2742,16 @@ impl SemaCx<'_> {
                         );
                         continue;
                     }
+                    // v0.0.27 distinct alias: registered in BOTH tables. The
+                    // distinct table wins at `resolve_type` time (nominal
+                    // typing); the transparent table's entry is what the
+                    // monomorphize alias rewrite consumes to erase the name
+                    // from post-sema ASTs. `finalize_distincts` validates the
+                    // base and fills `distinct_defs` once all names exist.
+                    if a.is_distinct {
+                        self.distinct_targets
+                            .push((a.name.name.clone(), a.target.clone(), a.name.span));
+                    }
                     self.type_aliases
                         .insert(a.name.name.clone(), a.target.clone());
                 }
@@ -2703,6 +2766,46 @@ impl SemaCx<'_> {
             }
         }
         self.current_file = None;
+    }
+
+    /// v0.0.27: validate every `type X = distinct BASE;` declaration.
+    /// BASE must resolve (through transparent aliases) to a plain integer
+    /// type — the whole point is a cheap nominal integer, ABI-identical to
+    /// the base. Anything else is E0922 and the name behaves as a
+    /// transparent alias for error recovery. Runs after `collect_type_names`
+    /// so forward references resolve; before everything else so field
+    /// types and signatures see the nominal type.
+    fn finalize_distincts(&mut self) {
+        let targets = std::mem::take(&mut self.distinct_targets);
+        for (name, target, span) in targets {
+            let base = self.resolve_type(&target);
+            match base {
+                Ty::I8
+                | Ty::I16
+                | Ty::I32
+                | Ty::I64
+                | Ty::Isize
+                | Ty::U8
+                | Ty::U16
+                | Ty::U32
+                | Ty::U64
+                | Ty::Usize => {
+                    self.distinct_defs.insert(name, base);
+                }
+                Ty::Error => {}
+                other => {
+                    self.err(
+                        "E0922",
+                        format!(
+                            "`distinct` requires a plain integer base type; `{}` is `{}`",
+                            name,
+                            ty_display(&other)
+                        ),
+                        span,
+                    );
+                }
+            }
+        }
     }
 
     fn type_name_taken(&self, name: &str) -> bool {
@@ -7515,6 +7618,8 @@ impl SemaCx<'_> {
     /// `is_return = false` rejects it (no such thing as a `void` param).
     fn c_exportable_diagnosis(&self, ty: &Ty, is_return: bool) -> Option<String> {
         match ty {
+            // v0.0.27 distinct alias: crosses the C ABI as its integer base.
+            Ty::Distinct { base, .. } => self.c_exportable_diagnosis(base, is_return),
             // Primitives, raw pointers, function pointers — all single-
             // register classes that match the C ABI on every target.
             Ty::I8 | Ty::I16 | Ty::I32 | Ty::I64
@@ -8277,15 +8382,22 @@ impl SemaCx<'_> {
         }
         if let Some(exp) = expected {
             if exp != Ty::Error && actual != Ty::Error && exp != actual {
-                self.err(
-                    "E0302",
-                    format!(
-                        "type mismatch: expected `{}`, found `{}`",
-                        exp.name(),
-                        actual.name()
-                    ),
-                    e.span,
+                // A distinct alias renders by its own name (v0.0.27) —
+                // "expected `distinct type`, found `distinct type`" names
+                // neither side. Other types keep the historical `name()`.
+                let side = |t: &Ty| match t {
+                    Ty::Distinct { .. } => ty_display(t),
+                    _ => t.name().to_string(),
+                };
+                let mut msg = format!(
+                    "type mismatch: expected `{}`, found `{}`",
+                    side(&exp),
+                    side(&actual)
                 );
+                if matches!(exp, Ty::Distinct { .. }) || matches!(actual, Ty::Distinct { .. }) {
+                    msg.push_str(" — distinct types convert only via an explicit `as` cast");
+                }
+                self.err("E0302", msg, e.span);
             }
         }
         actual
@@ -13365,6 +13477,11 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
     /// structs aren't here either — they go through normal method-lookup with
     /// an `impl Foo: ToText` provided by the user.
     fn is_blessed_to_text_receiver(ty: &Ty) -> bool {
+        // v0.0.27: a distinct integer alias inherits its base's blessed
+        // method (the receiver lowers to the base after mono).
+        if let Ty::Distinct { base, .. } = ty {
+            return Self::is_blessed_to_text_receiver(base);
+        }
         matches!(
             ty,
             Ty::I8
@@ -13391,6 +13508,11 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
     /// receivers. Integer types + str. (Bool and floats aren't typical
     /// hashmap keys; add if motivated.)
     fn is_blessed_hash_receiver(ty: &Ty) -> bool {
+        // v0.0.27: a distinct integer alias inherits its base's blessed
+        // method (the receiver lowers to the base after mono).
+        if let Ty::Distinct { base, .. } = ty {
+            return Self::is_blessed_hash_receiver(base);
+        }
         matches!(
             ty,
             Ty::I8
@@ -13411,6 +13533,11 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
     /// receivers. Same set as Hash plus Bool — anywhere `==` works
     /// today.
     fn is_blessed_eq_receiver(ty: &Ty) -> bool {
+        // v0.0.27: a distinct integer alias inherits its base's blessed
+        // method (the receiver lowers to the base after mono).
+        if let Ty::Distinct { base, .. } = ty {
+            return Self::is_blessed_eq_receiver(base);
+        }
         matches!(
             ty,
             Ty::I8
@@ -16611,6 +16738,16 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 if let Some(&id) = self.struct_by_name.get(name) {
                     return Ty::Struct(id);
                 }
+                // v0.0.27: a distinct alias resolves to its own nominal
+                // type, not the base (checked before the transparent table
+                // — every distinct alias also has a transparent entry that
+                // only the monomorphize rewrite consumes).
+                if let Some(base) = self.distinct_defs.get(name) {
+                    return Ty::Distinct {
+                        name: name.clone(),
+                        base: Box::new(base.clone()),
+                    };
+                }
                 // Phase 11 polish: transparent type alias. Recurse into
                 // the target. Cycle detection via the resolving set —
                 // E0510 if the same alias name appears mid-resolution.
@@ -19316,6 +19453,9 @@ fn simd_narrow_elem(ty: &Ty) -> Option<Ty> {
 
 fn ty_display(ty: &Ty) -> String {
     match ty {
+        // v0.0.27 distinct alias: display the LEAF of the qualified alias
+        // name — the spelling the user wrote.
+        Ty::Distinct { name, .. } => name.rsplit('.').next().unwrap_or(name).to_string(),
         Ty::Param(name) => name.clone(),
         Ty::Array(elem, n) => format!("[{}; {}]", ty_display(elem), n),
         Ty::RawPtr(inner) => format!("*{}", ty_display(inner)),
@@ -19496,6 +19636,9 @@ fn ty_to_source_name_with_tables(ty: &Ty, structs: &[StructDef], enums: &[EnumDe
 /// primitive + struct/enum cases that field substitution needs.
 fn ty_to_source_name(ty: &Ty) -> String {
     match ty {
+        // v0.0.27 distinct alias: source-name positions after substitution
+        // want the base spelling (the alias may not be in scope there).
+        Ty::Distinct { base, .. } => ty_to_source_name(base),
         Ty::I8 => "i8".into(),
         Ty::I16 => "i16".into(),
         Ty::I32 => "i32".into(),
@@ -19795,6 +19938,16 @@ fn int_lit_max_magnitude(t: &Ty, negated: bool) -> Option<u64> {
 fn cast_allowed(from: &Ty, to: &Ty) -> bool {
     if from == to {
         return true;
+    }
+    // v0.0.27 distinct alias: conversion is explicit `as`, to or from any
+    // integer type (`7 as UserId`, `uid as i64`). Two different distinct
+    // aliases never cast directly — is_int() is false for a brand, so both
+    // arms reject it; go through the base.
+    if let Ty::Distinct { .. } = from {
+        return to.is_int();
+    }
+    if let Ty::Distinct { .. } = to {
+        return from.is_int();
     }
     // numeric → numeric (any pair)
     if from.is_numeric() && to.is_numeric() {
@@ -30187,6 +30340,107 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
             .filter(|d| matches!(d.severity, Severity::Error))
             .map(|d| d.code.0.to_string())
             .collect()
+    }
+
+    // ---- distinct newtypes ----
+
+    #[test]
+    fn distinct_alias_nominal_typing_rejects_mixing() {
+        let codes = errors(
+            "type UserId = distinct i64;\n\
+             type ChannelId = distinct i64;\n\
+             fn take_user(u: UserId) -> i64 { return u as i64; }\n\
+             fn main() -> i32 {\n\
+                 let c = 2 as ChannelId;\n\
+                 let x = take_user(c);\n\
+                 let y: i64 = 3 as UserId;\n\
+                 let z: UserId = 5;\n\
+                 return (x + y) as i32;\n\
+             }",
+        );
+        assert_eq!(
+            codes.iter().filter(|c| **c == "E0302").count(),
+            3,
+            "brand mixing, brand->base, base->brand must all reject; got {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn distinct_casts_equality_and_blessed_bounds_clean() {
+        let diags = check_src(
+            "type UserId = distinct i64;\n\
+             fn probe[K: Hash + Eq](k: K) -> u64 { return k.hash(); }\n\
+             fn main() -> i32 {\n\
+                 let a = 7 as UserId;\n\
+                 let b = (7 as i64) as UserId;\n\
+                 if a != b { return 1; }\n\
+                 if !a.eq(b) { return 2; }\n\
+                 if probe::[UserId](a) == (0 as u64) { return 3; }\n\
+                 return (a as i64 - 7) as i32;\n\
+             }",
+        );
+        assert!(diags.is_empty(), "got {:#?}", diags);
+    }
+
+    #[test]
+    fn distinct_arithmetic_rejected() {
+        let codes = errors(
+            "type UserId = distinct i64;\n\
+             fn main() -> i32 {\n\
+                 let a = 1 as UserId;\n\
+                 let b = a + (2 as UserId);\n\
+                 return 0;\n\
+             }",
+        );
+        assert!(codes.contains(&"E0302"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn distinct_requires_integer_base_e0922() {
+        let codes = errors(
+            "type S = distinct str;\n\
+             type P = distinct *u8;\n\
+             type F = distinct f64;\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert_eq!(
+            codes.iter().filter(|c| **c == "E0922").count(),
+            3,
+            "str, pointer, and float bases must all reject; got {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn distinct_generic_instantiation_is_branded() {
+        // `BoxG[UserId]` and `BoxG[i64]` are different instantiations: a
+        // branded box does not flow where the base box is expected.
+        let codes = errors(
+            "type UserId = distinct i64;\n\
+             struct BoxG[T] { v: T }\n\
+             fn want_base(b: BoxG[i64]) -> i64 { return b.v; }\n\
+             fn main() -> i32 {\n\
+                 let branded = BoxG[UserId] { v: 4 as UserId };\n\
+                 let x = want_base(branded);\n\
+                 return x as i32;\n\
+             }",
+        );
+        assert!(codes.contains(&"E0302"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn distinct_branded_generic_field_keeps_brand() {
+        let diags = check_src(
+            "type UserId = distinct i64;\n\
+             struct BoxG[T] { v: T }\n\
+             fn main() -> i32 {\n\
+                 let b = BoxG[UserId] { v: 4 as UserId };\n\
+                 let u: UserId = b.v;\n\
+                 return (u as i64 - 4) as i32;\n\
+             }",
+        );
+        assert!(diags.is_empty(), "got {:#?}", diags);
     }
 
     // ---- derive through the empty impl (lower expands, sema validates) ----
