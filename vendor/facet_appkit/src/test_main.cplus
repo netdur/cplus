@@ -7743,6 +7743,51 @@ fn the_drag_source_reports_both_ends_of_a_drag() {
     return;
 }
 
+// A drag event at a given point — NSEventTypeLeftMouseDragged = 6.
+fn drag_event_at(x: f64, y: f64) -> *u8 {
+    return { msg_mouse_event(
+        rt::get_class(#str_ptr("NSEvent\0")),
+        rt::sel(#str_ptr("mouseEventWithType:location:modifierFlags:timestamp:windowNumber:context:eventNumber:clickCount:pressure:\0")),
+        6 as u64, rt::Point { x: x, y: y }, 0 as u64, 0.0f64,
+        0 as i64, 0 as *u8, 0 as i64, 1 as i64, 0.0f32) };
+}
+
+#[test]
+fn a_can_drag_press_arms_the_threshold_and_a_click_survives() {
+    // The 2026-08-08 iris-board bug: `.gesture(can_drag:)` put the payload on
+    // the view and the session DELEGATE methods on the class, but the armed
+    // class's own mouseDown:/mouseDragged: never recorded the press origin or
+    // began a session — the origin/threshold/begin sequence lived only on the
+    // legacy FacetDragView. A board card could not drag at all.
+    //
+    // This pins the press-becomes-drag state machine on the ARMED class:
+    // press arms the threshold, a sub-threshold wiggle keeps it armed (it may
+    // still be a click), and a release without travel IS a click — with the
+    // origin cleared and the click handler fired. The past-threshold half
+    // (`drag_begin_session`) needs a window and a pasteboard, which is the
+    // trackpad's half of the test.
+    backend::install();
+    IN_CLICKS = 0 as i64;
+    var n: core::Node = box_view::box(color: vocab::Color::rgba(0.2f64, 0.4f64, 0.9f64), key: "dragclick")
+        .gesture(on_click: h_took(), can_drag: true);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v != (0 as *u8);
+    assert akx::drag_is_armed(v) == false;
+    { rt::msg_void_id(v, rt::sel(#str_ptr("mouseDown:\0")), mouse_event(1 as u64, 1 as i64)) };
+    // The press recorded its origin — the half that was missing.
+    assert akx::drag_is_armed(v);
+    // 1pt of travel is under the 3pt threshold: still armed, still maybe a click.
+    { rt::msg_void_id(v, rt::sel(#str_ptr("mouseDragged:\0")), drag_event_at(6.0f64, 5.0f64)) };
+    assert akx::drag_is_armed(v);
+    // Released without travelling: a CLICK — origin gone, handler fired.
+    { rt::msg_void_id(v, rt::sel(#str_ptr("mouseUp:\0")), mouse_event(2 as u64, 1 as i64)) };
+    assert akx::drag_is_armed(v) == false;
+    assert IN_CLICKS == (1 as i64);
+    views::view_release(v);
+    return;
+}
+
 #[test]
 fn a_tree_reports_expansion_back_into_the_model() {
     // Expansion was WRITE-ONLY: facet's `expanded` set drove the outline view

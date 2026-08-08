@@ -213,6 +213,18 @@ fn imp_mouse_down(self_obj: *u8, cmd: *u8, event: *u8) {
     synth::set_associated(self_obj, pressed_key(), 1 as *u8);
     let own_n: *core::Node = node_of_view(self_obj);
     if own_n != (0 as *core::Node) { let _p: bool = pointer::press(own_n, self_obj); }
+    // A `can_drag` source records WHERE the press landed and nothing more —
+    // the session begins from mouseDragged: past the 3pt threshold, which is
+    // what lets one node be clickable AND draggable (appkit_ext 9a4c5c5).
+    // `arm_drag_source` put the payload on the view; the recorder self-gates
+    // on it, so every other view skips this in one associated-object read.
+    //
+    // This call was the MISSING HALF of `.gesture(can_drag:)`: the armed
+    // class installed the session DELEGATE methods and the payload, but the
+    // origin/threshold/begin sequence lived only on the legacy FacetDragView
+    // class — so a gesture-band drag source never began a session at all
+    // (iris board cards, 2026-08-08).
+    akx::drag_mousedown_imp(self_obj, cmd, event);
     let g: *gestures::Gestures = gestures_of_view(self_obj);
     if g == (0 as *gestures::Gestures) { decline(self_obj, cmd, event); return; }
     // `.window_drag()` — the surface an application marks so a CUSTOM titlebar
@@ -280,6 +292,11 @@ fn cancel_long_press(self_obj: *u8) {
 fn imp_mouse_up(self_obj: *u8, cmd: *u8, event: *u8) {
     trace("[input] event mouseUp:");
     cancel_long_press(self_obj);
+    // A `can_drag` press that never passed the threshold was a CLICK; drop
+    // the recorded origin and let the ordinary click path below answer it.
+    // (The legacy FacetDragView forwards to the next responder here; the
+    // armed class IS the click target, so it just continues.)
+    akx::drag_clear_origin(self_obj);
     synth::set_associated(self_obj, pressed_key(), 0 as *u8);
     let own_n: *core::Node = node_of_view(self_obj);
     if own_n != (0 as *core::Node) { let _r: bool = pointer::release(own_n, self_obj); }
@@ -316,6 +333,19 @@ fn imp_mouse_dragged(self_obj: *u8, cmd: *u8, event: *u8) {
     // A drag is not a press any more: whatever the long press was waiting for,
     // this is not it.
     cancel_long_press(self_obj);
+    // The press-became-a-drag decision, for a `can_drag` source. Under the
+    // threshold the origin stays armed and the event falls through to the pan
+    // band as before; past it, appkit_ext begins the dragging session (the
+    // ghost is a snapshot of THIS view) and the origin is consumed — one
+    // session per press, and nothing below should also treat the event as a
+    // pan.
+    if akx::drag_is_armed(self_obj) {
+        akx::drag_mousedragged_imp(self_obj, cmd, event);
+        if !akx::drag_is_armed(self_obj) {
+            trace("[input]   drag: session began — event taken");
+            return;
+        }
+    }
     let g: *gestures::Gestures = gestures_of_view(self_obj);
     if g == (0 as *gestures::Gestures) { decline(self_obj, cmd, event); return; }
     if fire_of(self_obj, { (*g).on_pan }, { (*g).on_pan_ctx }) { return; }
@@ -551,8 +581,17 @@ fn arm_drag_source(v: *u8, g: *gestures::Gestures) {
     // Same rule as arm_drop: the selector is on the class already, and the
     // PAYLOAD is the gate — appkit_ext begins a session only for a view that
     // carries drag text.
+    //
+    // RETAINED, not assigned. `bridge::nsstring` answers an AUTORELEASED
+    // NSString; a plain `set_associated` (OBJC_ASSOCIATION_ASSIGN) left the
+    // association dangling one pool-drain later, and the next
+    // `drag_begin_session` handed the dead pointer to `setString:forType:` —
+    // a pointer-authentication trap inside AppKit (iris board, 2026-08-08:
+    // the FIRST drag read not-yet-reused memory and "worked"; the second, on
+    // a heap churned by the drop's rebuild, crashed). `new_drag_view` — the
+    // legacy path — pins the same payload the same way.
     let key: text::Text = component::key_of(v);
-    { synth::set_associated(v, akx::drag_text_key(), bridge::nsstring(key.view())) };
+    { synth::retain_associated(v, akx::drag_text_key(), bridge::nsstring(key.view())) };
     return;
 }
 
@@ -845,7 +884,17 @@ fn arm(v: *u8, n: *core::Node) {
     // detached and re-attached under the same view has a new address.
     synth::set_associated(v, node_key(), n as *u8);
     if is_armed(v) {
-        if g != (0 as *gestures::Gestures) { arm_tracking(v, g); }
+        if g != (0 as *gestures::Gestures) {
+            arm_tracking(v, g);
+            // The drag payload and drop registration follow the NODE, and a
+            // re-armed view may be carrying a different one now (re-attach,
+            // gesture-set swap). Both installers are idempotent — the payload
+            // association replaces, registerForDraggedTypes: repeats — so
+            // refreshing them here is what keeps a reused view dragging AS
+            // its current node rather than its first one.
+            arm_drop(v, g);
+            arm_drag_source(v, g);
+        }
         arm_own_tracking(v, n);
         return;
     }
