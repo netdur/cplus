@@ -5481,18 +5481,36 @@ impl SemaCx<'_> {
     /// body once. Generic free fns were given this exact treatment earlier,
     /// after the same class of crash; this is the impl-method half.
     ///
-    /// **The diagnostics this check produces are discarded.** What the ICEs
-    /// needed was the RECORDS, not the reports, and reporting is a separate
-    /// decision with real work behind it: turning it on emits ~250
-    /// diagnostics against the stdlib's own container primitives — the
-    /// `let v: T = { *p }` move-out-of-raw-pointer that IS what `Box`,
-    /// `Vec`, `Rc`, `Arc` and `channel` do (E0337), a `T: Hash` bound method
-    /// that does not resolve because the bound lives on the struct
-    /// template's parameters rather than the impl block's (E0324), and
-    /// field moves out of Drop containers (E0509). Every one of those is
-    /// either a rule that has to learn about containers or code that has to
-    /// change, and neither belongs inside an ICE fix. Recorded in
-    /// `reports/issue-18-generic-impl-body-checking.md`.
+    /// **The diagnostics this check produces are discarded**, and the reason
+    /// is soundness rather than volume — which is not what this comment used
+    /// to say. Re-measured 2026-08-08 with `CPC_GENERIC_IMPL_DIAGNOSTICS=1`:
+    ///
+    /// - The old justification was ~250 diagnostics against the stdlib's own
+    ///   containers. That figure had expired. The E0324 half is fixed BELOW
+    ///   (the template's bounds are merged into the impl's by position), the
+    ///   containers now read elements through `at_ptr` or a `T: Copy` impl
+    ///   rather than moving out of a raw deref, and the count today is
+    ///   **zero** across stdlib, facet, facet_appkit, terminal, events,
+    ///   flex_layout and agent_core.
+    /// - What reporting would cost instead is FALSE POSITIVES. A template
+    ///   body is checked against its own parameters, so a `T` of unknown
+    ///   Copy-ness is treated conservatively as non-Copy: `fn put(ref this,
+    ///   v: T) { this.a = v; }` reports E0337 even though it is correct for
+    ///   every Copy instantiation, and `Pair[i32]` is exactly that. Six
+    ///   compiler tests over ordinary generic code fail this way, on E0337
+    ///   and on E0302 against `type-param`.
+    /// - And nothing is LOST by dropping them. The same body is re-checked
+    ///   per instantiation, where `T` is concrete: `Pair[Text]::put` — the
+    ///   case that really is unsound — reports the same E0337 against the
+    ///   template's own line. Verified by hand.
+    ///
+    /// So this is not a muted alarm: it is a check deferred to the point
+    /// where it can answer correctly. The template-level report would be an
+    /// EARLIER error, never a missing one, and it cannot be had until the
+    /// substitution-dependent rules can say "unknown for this `T`" rather
+    /// than assuming the conservative answer. That is the real work behind
+    /// turning this on, and it is worth doing for the earlier span alone —
+    /// but it is a rules change, not a `truncate` that wants deleting.
     fn check_generic_impl_methods(&mut self, b: &crate::ast::ImplBlock) {
         // The name-resolution pass KEEPS its diagnostics: they are what
         // users see today, and they are the guard that stops an undefined
@@ -5558,10 +5576,16 @@ impl SemaCx<'_> {
             _ => {}
         }
         self.pop_type_params();
-        // Record-only: drop everything the typed pass reported. The
-        // name-resolution diagnostics are below the mark and survive. See the
-        // note above for what turning this off would cost.
-        self.sink.truncate(mark);
+        // Record-only: drop what the typed pass reported. The
+        // name-resolution diagnostics are below the mark and survive.
+        //
+        // `CPC_GENERIC_IMPL_DIAGNOSTICS=1` keeps them. That switch is how the
+        // decision above is re-measured instead of remembered — it is what
+        // showed the ~250 figure had expired, and it is how the next person
+        // checks whether the false positives are still there.
+        if std::env::var_os("CPC_GENERIC_IMPL_DIAGNOSTICS").is_none() {
+            self.sink.truncate(mark);
+        }
     }
 
     /// A bound method reference (`recv.handler` passed where an `fn` is
