@@ -12222,6 +12222,30 @@ impl<'a> FnState<'a> {
         }
     }
 
+    /// bugs/assignment-through-a-raw-pointer-does-not-drop-the-old-value:
+    /// a FIELD projection whose chain roots in a raw-pointer deref —
+    /// `(*p).field`, `(*(*q).inner).field`, `(*p).arr[i]` — names a place
+    /// inside a CONSTRUCTED aggregate: the pointer's referent is a whole
+    /// value, so overwriting one of its Drop fields must tear the old one
+    /// down exactly as the direct spelling does. This is distinct from the
+    /// two initialization idioms that stay exempt from the pre-drop:
+    /// whole-value `*p = v` (Box::new / arena writing into fresh malloc)
+    /// and raw-pointer indexing `p[i] = v` (a Vec's buffer) — an INDEX hop
+    /// stays in the aggregate only when the receiver is an array.
+    fn deref_rooted_projection(&self, e: &Expr) -> bool {
+        match &e.kind {
+            ExprKind::Unary {
+                op: UnaryOp::Deref, ..
+            } => true,
+            ExprKind::Field { receiver, .. } => self.deref_rooted_projection(receiver),
+            ExprKind::Index { receiver, .. } => {
+                matches!(self.place_ty(receiver), Some(Ty::Array(_, _)))
+                    && self.deref_rooted_projection(receiver)
+            }
+            _ => false,
+        }
+    }
+
     /// B-10: fast-math flag prefix for floating-point arithmetic.
     /// Returns `"contract "` when fp-contraction is on (the default,
     /// matching clang's `-ffp-contract=on`) and `""` under
@@ -16264,7 +16288,7 @@ impl<'a> FnState<'a> {
                 // memory (Box::new / arena / a Vec's buffer) and are the
                 // caller's responsibility.
                 ExprKind::Field { .. } | ExprKind::Index { .. } => {
-                    if self.place_is_safe_owned(target) {
+                    if self.place_is_safe_owned(target) || self.deref_rooted_projection(target) {
                         self.gen_drop_in_place(&target_ty, &slot);
                         self.gen_store(&target_ty, &to_store, &slot);
                         stored = true;
@@ -20066,6 +20090,65 @@ fn main() -> i32 {\n\
         assert!(
             drops >= 2,
             "field overwrite must pre-drop the old value (>=2 R.drop), got {drops}:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn deref_field_overwrite_drops_old_value() {
+        // bugs/assignment-through-a-raw-pointer-does-not-drop-the-old-value:
+        // `(*p).f = new` names a field of a CONSTRUCTED aggregate, so it must
+        // pre-drop exactly like the direct spelling `h.f = new` — the two are
+        // the same place reached two ways. Pre-fix the deref-rooted place fell
+        // through `place_is_safe_owned` and stored straight over the old
+        // value: every facet handle-write (`{ (*p).title = v }`) leaked one
+        // owned value per call.
+        let ir = gen_src(
+            "struct R { id: i32 }
+             impl R { fn drop(ref this) { return; } }
+             struct Holder { r: R }
+             fn mk() -> R { return R { id: 0 }; }
+             fn f() {
+                 var h: Holder = Holder { r: mk() };
+                 let p: *Holder = #addr_of(h);
+                 { (*p).r = mk() };
+                 return;
+             }
+             fn main() -> i32 { f(); return 0; }",
+        );
+        let drops = ir.matches("call void @R.drop").count();
+        assert!(
+            drops >= 2,
+            "deref-field overwrite must pre-drop the old value (>=2 R.drop), got {drops}:
+{ir}"
+        );
+    }
+
+    #[test]
+    fn whole_value_deref_store_does_not_predrop() {
+        // The OTHER half of the same rule: `*p = v` writes a WHOLE value and
+        // is the initialization idiom (`Box::new`, arenas) — the pointee may
+        // be fresh malloc, so a pre-drop would free garbage. It stays exempt.
+        let ir = gen_src(
+            "extern fn malloc(n: usize) -> *u8;
+             extern fn free(p: *u8);
+             struct R { p: *u8 }
+             impl R { fn drop(ref this) { { free(this.p) }; return; } }
+             fn f() {
+                 let raw: *u8 = { malloc(8 as usize) };
+                 let tp: *R = { raw as *R };
+                 { *tp = R { p: 0 as *u8 } };
+                 return;
+             }
+             fn main() -> i32 { f(); return 0; }",
+        );
+        let fdef = ir
+            .split("define ")
+            .find(|part| part.contains("@f(") || part.contains("@f_"))
+            .expect("f defined");
+        assert!(
+            !fdef.contains("call void @R.drop"),
+            "a whole-value store through a deref must NOT pre-drop (fresh-malloc init):
+{fdef}"
         );
     }
 

@@ -107,13 +107,12 @@ fn go(route: str, arg: str = "", take params: Params = params_new()) {
     if arg != "" { let _s: status::Status = p.insert(text::from_str(arg_key()), arg.to_text()); }
     let s: *app::Application = app::current();
     { (*s).nav.intent = intent_go() };
-    // `.drop()` before each overwrite: assignment THROUGH A RAW POINTER does
-    // not drop what it overwrites (a direct `h.f = v` does — measured), so a
-    // bare assignment here leaks the previous route's strings once per
-    // navigation. Every write to nav state goes through `*app::current()`.
-    { (*s).nav.target.drop() };
+    // No explicit `.drop()` before these overwrites: a field assignment
+    // through a raw pointer pre-drops the old value like the direct
+    // spelling does (fixed 2026-08-08 — bugs/assignment-through-a-raw-
+    // pointer-does-not-drop-the-old-value.md; the workaround this replaces
+    // WOULD now be a double free).
     { (*s).nav.target = text::from_str(route) };
-    { (*s).nav.params.drop() };
     { (*s).nav.params = p };
     fire_close();
     return;
@@ -206,13 +205,13 @@ fn take() -> u32 {
 fn reset(arg: str = "") {
     let s: *app::Application = app::current();
     { (*s).nav.intent = intent_none() };
-    { (*s).nav.target.drop() };
+    // The overwrite pre-drops the old value now (2026-08-08 fix); an
+    // explicit `.drop()` here would be a double free.
     { (*s).nav.target = text::new() };
     // A FRESH map, not an insert: reset means the next screen inherits nothing
     // the last one was given.
     var p: Params = params_new();
     if arg != "" { let _s: status::Status = p.insert(text::from_str(arg_key()), text::from_str(arg)); }
-    { (*s).nav.params.drop() };
     { (*s).nav.params = p };
     return;
 }
