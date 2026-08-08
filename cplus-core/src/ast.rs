@@ -913,6 +913,15 @@ pub enum ExprKind {
         expr: Box<Expr>,
         ty: Type,
     },
+    /// v0.0.27: checked narrowing — `x as? u8` evaluates to `Option[u8]`:
+    /// `Some(converted)` when the value is representable in the target
+    /// integer type, `None` otherwise. Integer source + integer target
+    /// only; the infallible `as` keeps its truncating semantics for the
+    /// cases where truncation is intended.
+    CastChecked {
+        expr: Box<Expr>,
+        ty: Type,
+    },
     /// A path like `Color::Red`. Phase 2A allows exactly two segments
     /// (enum name + variant); future phases extend to N for modules.
     Path {
@@ -1474,6 +1483,10 @@ pub fn walk_expr_kind<R: ExprRewriter + ?Sized>(e: &Expr, r: &mut R) -> ExprKind
             op: *op,
             target: Box::new(walk_expr(target, r)),
             value: Box::new(walk_expr(value, r)),
+        },
+        ExprKind::CastChecked { expr, ty } => ExprKind::CastChecked {
+            expr: Box::new(walk_expr(expr, r)),
+            ty: walk_type(ty, r),
         },
         ExprKind::Cast { expr, ty } => ExprKind::Cast {
             expr: Box::new(walk_expr(expr, r)),

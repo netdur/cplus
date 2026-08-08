@@ -8506,6 +8506,7 @@ impl SemaCx<'_> {
                 Ty::Error
             }
             ExprKind::Cast { expr, ty } => self.check_cast(expr, ty, e.span),
+            ExprKind::CastChecked { expr, ty } => self.check_cast_checked(expr, ty, e.span),
             ExprKind::Path { segments } => self.check_path(segments, e.span),
             ExprKind::StructLit { name, fields } => self.check_struct_lit(name, fields, e.span),
             ExprKind::InferredStructLit { fields } => {
@@ -11013,6 +11014,39 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // Raw-pointer -> raw-pointer reinterpretation is mechanically free;
         // every raw pointer lowers to LLVM `ptr`.
         to
+    }
+
+    /// v0.0.27: `x as? T` — checked integer narrowing. The value converts
+    /// when representable and the expression evaluates to `Option[T]`:
+    /// `Some(converted)` / `None`. Integer source and target only — the
+    /// infallible `as` keeps truncation for the cases where it is meant.
+    fn check_cast_checked(&mut self, expr: &Expr, target: &Type, span: ByteSpan) -> Ty {
+        let from = self.check_expr(expr, None);
+        let to = self.resolve_type(target);
+        if from == Ty::Error || to == Ty::Error {
+            return Ty::Error;
+        }
+        if !from.is_int() || !to.is_int() {
+            let hint = if matches!(from, Ty::Distinct { .. }) {
+                "; cast a distinct value to its base first (`(x as i64) as? u8`)"
+            } else {
+                ""
+            };
+            self.err(
+                "E0315",
+                format!(
+                    "`as?` is checked integer narrowing; `{}` as? `{}` is not supported — both sides must be plain integer types{}",
+                    ty_display(&from),
+                    ty_display(&to),
+                    hint
+                ),
+                span,
+            );
+            return Ty::Error;
+        }
+        // Produces Option[T] — requires stdlib/option in the build (the
+        // instantiate helper reports the missing lang item).
+        self.instantiate_option(&to, span)
     }
 
     fn check_block_as_expr(&mut self, b: &Block) -> Ty {
@@ -19042,6 +19076,7 @@ fn walk_body_sites_in_expr(expr: &Expr, out: &mut Vec<BodySite>) {
                 walk_type_sites(t, out);
             }
         }
+        ExprKind::CastChecked { expr: inner, ty } |
         ExprKind::Cast { expr: inner, ty } => {
             walk_body_sites_in_expr(inner, out);
             walk_type_sites(ty, out);
@@ -20620,7 +20655,9 @@ fn collect_effects_expr(e: &Expr, out: &mut BodyEffects) {
             collect_effects_expr(target, out);
             collect_effects_expr(value, out);
         }
-        ExprKind::Cast { expr, .. } => collect_effects_expr(expr, out),
+        ExprKind::Cast { expr, .. } | ExprKind::CastChecked { expr, .. } => {
+            collect_effects_expr(expr, out)
+        }
         ExprKind::If {
             cond,
             then,
@@ -30340,6 +30377,50 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
             .filter(|d| matches!(d.severity, Severity::Error))
             .map(|d| d.code.0.to_string())
             .collect()
+    }
+
+    // ---- checked narrowing: `as?` ----
+
+    #[test]
+    fn cast_checked_produces_option_of_target() {
+        // Single-file mode has no stdlib; declare the lang-option enum
+        // locally the way other option-consuming tests do.
+        let diags = check_src(
+            "#[lang(\"option\")]\n\
+             enum Option[T] { Some(T), None }\n\
+             fn main() -> i32 {\n\
+                 let n: i64 = 300;\n\
+                 let r = n as? u8;\n\
+                 return match r {\n\
+                     Option[u8]::Some(v) => v as i32,\n\
+                     Option[u8]::None => 0 - 1,\n\
+                 };\n\
+             }",
+        );
+        assert!(diags.is_empty(), "got {:#?}", diags);
+    }
+
+    #[test]
+    fn cast_checked_rejects_non_integer_shapes_e0315() {
+        let codes = errors(
+            "#[lang(\"option\")]\n\
+             enum Option[T] { Some(T), None }\n\
+             type UserId = distinct i64;\n\
+             fn main() -> i32 {\n\
+                 let f = 1.5;\n\
+                 let a = f as? u8;\n\
+                 let u = 3 as UserId;\n\
+                 let b = u as? u8;\n\
+                 let c = 7 as? bool;\n\
+                 return 0;\n\
+             }",
+        );
+        assert_eq!(
+            codes.iter().filter(|c| **c == "E0315").count(),
+            3,
+            "float source, distinct source, bool target must reject; got {:?}",
+            codes
+        );
     }
 
     // ---- distinct newtypes ----

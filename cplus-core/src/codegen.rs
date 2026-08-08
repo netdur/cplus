@@ -5302,7 +5302,9 @@ fn collect_address_taken_fns(program: &Program, sigs: &HashMap<String, FnSig>) -
                 visit_expr(target, sigs, taken);
                 visit_expr(value, sigs, taken);
             }
-            ExprKind::Cast { expr: inner, .. } => visit_expr(inner, sigs, taken),
+            ExprKind::Cast { expr: inner, .. } | ExprKind::CastChecked { expr: inner, .. } => {
+                visit_expr(inner, sigs, taken)
+            }
             ExprKind::Range { start, end, .. } => {
                 if let Some(s) = start {
                     visit_expr(s, sigs, taken);
@@ -10937,6 +10939,7 @@ impl<'a> FnState<'a> {
             }
 
             ExprKind::Cast { expr, ty } => Some(self.gen_cast(expr, ty)),
+            ExprKind::CastChecked { expr, ty } => Some(self.gen_cast_checked(expr, ty)),
             ExprKind::Path { segments } => Some(self.gen_path(segments)),
             ExprKind::StructLit { name, fields } => Some(self.gen_struct_lit(name, fields)),
             // Slice 7GEN.5c: GenericStructLit must not reach codegen —
@@ -13096,6 +13099,146 @@ impl<'a> FnState<'a> {
             }
             None => None,
         }
+    }
+
+    /// v0.0.27: `x as? T` — checked integer narrowing to `Option[T]`.
+    /// The check runs at 64-bit width: extend the value with ITS OWN
+    /// signedness, then compare against the target's bounds. Branch-free:
+    /// tag and payload are both `select`ed on the fits bit (a `None` with a
+    /// zero payload is indistinguishable from any other `None` — nothing
+    /// reads a payload behind a `None` tag).
+    fn gen_cast_checked(&mut self, expr: &Expr, target: &Type) -> (String, Ty) {
+        let (v, from) = self.gen_expr(expr).expect("as? operand has value");
+        let to = ty_from(target, self.types);
+        let from_bits = ty_bit_width(&from);
+        let to_bits = ty_bit_width(&to);
+        let from_signed = from.is_signed_int();
+        let to_signed = to.is_signed_int();
+        // Extend the operand to i64 with the SOURCE's signedness.
+        let from_t = self.lty(&from);
+        let v64 = if from_bits < 64 {
+            let r = self.next_tmp();
+            let ext = if from_signed { "sext" } else { "zext" };
+            self.emit(&format!("{r} = {ext} {from_t} {v} to i64"));
+            r
+        } else {
+            v.clone()
+        };
+        // The fits bit.
+        let true_bit = || "1".to_string();
+        let fits = match (from_signed, to_signed) {
+            (false, false) => {
+                if to_bits >= from_bits {
+                    true_bit()
+                } else {
+                    let max = (1u64 << to_bits) - 1;
+                    let r = self.next_tmp();
+                    self.emit(&format!("{r} = icmp ule i64 {v64}, {max}"));
+                    r
+                }
+            }
+            (false, true) => {
+                // Unsigned source against a signed target's max (its min is
+                // covered: unsigned values are never negative).
+                let max = (1u64 << (to_bits - 1)) - 1;
+                if from_bits < to_bits {
+                    true_bit()
+                } else {
+                    let r = self.next_tmp();
+                    self.emit(&format!("{r} = icmp ule i64 {v64}, {max}"));
+                    r
+                }
+            }
+            (true, false) => {
+                // Signed source: non-negative, and under the target's max
+                // (the unsigned compare is valid once sge 0 holds; order the
+                // ands so it only matters then).
+                let nonneg = self.next_tmp();
+                self.emit(&format!("{nonneg} = icmp sge i64 {v64}, 0"));
+                if to_bits >= from_bits || to_bits == 64 {
+                    nonneg
+                } else {
+                    let max = (1u64 << to_bits) - 1;
+                    let under = self.next_tmp();
+                    self.emit(&format!("{under} = icmp ule i64 {v64}, {max}"));
+                    let r = self.next_tmp();
+                    self.emit(&format!("{r} = and i1 {nonneg}, {under}"));
+                    r
+                }
+            }
+            (true, true) => {
+                if to_bits >= from_bits {
+                    true_bit()
+                } else {
+                    let max = (1i64 << (to_bits - 1)) - 1;
+                    let min = -(1i64 << (to_bits - 1));
+                    let ge = self.next_tmp();
+                    self.emit(&format!("{ge} = icmp sge i64 {v64}, {min}"));
+                    let le = self.next_tmp();
+                    self.emit(&format!("{le} = icmp sle i64 {v64}, {max}"));
+                    let r = self.next_tmp();
+                    self.emit(&format!("{r} = and i1 {ge}, {le}"));
+                    r
+                }
+            }
+        };
+        // The converted payload at the target width, zeroed when it misses.
+        let to_t = self.lty(&to);
+        let narrowed = if to_bits < 64 {
+            let r = self.next_tmp();
+            self.emit(&format!("{r} = trunc i64 {v64} to {to_t}"));
+            r
+        } else {
+            v64.clone()
+        };
+        let payload = if fits == "1" {
+            narrowed
+        } else {
+            let r = self.next_tmp();
+            self.emit(&format!(
+                "{r} = select i1 {fits}, {to_t} {narrowed}, {to_t} 0"
+            ));
+            r
+        };
+        // Build the Option[T] aggregate in a slot: zero it, select the tag,
+        // store the payload.
+        let option_ty = self.lookup_option_ty(&to);
+        let option_llvm = self.lty(&option_ty);
+        let option_align = match static_layout(&option_ty, self.types) {
+            Some((_, a)) => a,
+            None => 8,
+        };
+        let some_tag = self.option_variant_tag(&option_ty, "Some");
+        let none_tag = self.option_variant_tag(&option_ty, "None");
+        let slot = self.next_tmp();
+        self.emit(&format!(
+            "{slot} = alloca {option_llvm}, align {option_align}"
+        ));
+        self.emit(&format!(
+            "call void @llvm.memset.p0.i64(ptr {slot}, i8 0, i64 ptrtoint (ptr getelementptr ({option_llvm}, ptr null, i64 1) to i64), i1 false)"
+        ));
+        let tag = if fits == "1" {
+            some_tag.to_string()
+        } else {
+            let r = self.next_tmp();
+            self.emit(&format!(
+                "{r} = select i1 {fits}, i32 {some_tag}, i32 {none_tag}"
+            ));
+            r
+        };
+        self.emit(&format!(
+            "store i32 {tag}, ptr {slot}, align {option_align}"
+        ));
+        let pay_ptr = self.next_tmp();
+        self.emit(&format!(
+            "{pay_ptr} = getelementptr inbounds {option_llvm}, ptr {slot}, i32 0, i32 1, i32 0"
+        ));
+        self.emit(&format!("store {to_t} {payload}, ptr {pay_ptr}"));
+        let loaded = self.next_tmp();
+        self.emit(&format!(
+            "{loaded} = load {option_llvm}, ptr {slot}, align {option_align}"
+        ));
+        (loaded, option_ty)
     }
 
     fn gen_cast(&mut self, expr: &Expr, target: &Type) -> (String, Ty) {
@@ -18239,6 +18382,28 @@ fn main() -> i32 {\n\
             ir.contains("to_text"),
             "the interp part should route through P::to_text:\n{ir}"
         );
+    }
+
+    /// v0.0.27 `as?` checked narrowing: the IR shape is branch-free —
+    /// a 64-bit-extended bounds check, then `select`ed tag and payload into
+    /// an Option slot. This pins the fits logic per signedness pair.
+    #[test]
+    fn cast_checked_emits_bounds_check_and_option_select() {
+        let src = "#[lang(\"option\")]\n\
+             enum Option[T] { Some(T), None }\n\
+             fn main() -> i32 {\n\
+                 let n: i64 = 300;\n\
+                 return match n as? u8 {\n\
+                     Option[u8]::Some(v) => v as i32,\n\
+                     Option[u8]::None => 0 - 1,\n\
+                 };\n\
+             }\n";
+        let ir = gen_src_mono(src);
+        assert!(
+            ir.contains("icmp ule i64") && ir.contains("icmp sge i64"),
+            "signed->unsigned narrowing needs both bounds:\n{ir}"
+        );
+        assert!(ir.contains("select i1"), "tag/payload select:\n{ir}");
     }
 
     /// v0.0.27 distinct newtypes: a branded generic instantiation mangles by

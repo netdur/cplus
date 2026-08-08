@@ -282,13 +282,13 @@ fn main() -> i32 { let x: i8 = 300; return x as i32; }
 
 ### E0315 · Invalid cast
 
-An `as` cast is between a pair of types that the language forbids.
+An `as` cast is between a pair of types that the language forbids — or (v0.0.27) an `as?` checked narrowing was written with a non-integer side (`as?` supports plain integer source and target only).
 
 ```cplus
 fn main() -> i32 { let _b: bool = 1 as bool; return 0; }
 ```
 
-**Fix.** Some pairs are forbidden (for example `int` to `bool`, `*T` to `i32`); restructure the conversion.
+**Fix.** Some pairs are forbidden (for example `int` to `bool`, `*T` to `i32`); restructure the conversion. For `as?`, cast to a plain integer first — a distinct value via its base (`(x as i64) as? u8`).
 
 <sub>repro: checked · cplus-core/src/sema.rs:7654 · test cplus-core/src/sema.rs:cast_int_to_bool_rejected_e0315</sub>
 

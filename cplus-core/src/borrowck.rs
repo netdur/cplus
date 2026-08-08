@@ -6495,7 +6495,9 @@ impl Analyzer<'_> {
                     }
                 }
             }
-            ExprKind::Cast { expr, .. } => self.apply_expr(expr, state),
+            ExprKind::Cast { expr, .. } | ExprKind::CastChecked { expr, .. } => {
+                self.apply_expr(expr, state)
+            }
             ExprKind::StructLit { fields, .. }
             | ExprKind::InferredStructLit { fields }
             | ExprKind::GenericStructLit { fields, .. } => {
@@ -7629,7 +7631,9 @@ fn expr_reads_ident(e: &Expr, name: &str) -> bool {
         ExprKind::Assign { target, value, .. } => {
             expr_reads_ident(target, name) || expr_reads_ident(value, name)
         }
-        ExprKind::Cast { expr, .. } => expr_reads_ident(expr, name),
+        ExprKind::Cast { expr, .. } | ExprKind::CastChecked { expr, .. } => {
+            expr_reads_ident(expr, name)
+        }
         ExprKind::StructLit { fields, .. }
         | ExprKind::InferredStructLit { fields }
         | ExprKind::GenericStructLit { fields, .. } => {

@@ -3137,6 +3137,7 @@ fn rewrite_expr(
             rewrite_expr(target, ctx, scope)?;
             rewrite_expr(value, ctx, scope)?;
         }
+        ExprKind::CastChecked { expr, ty } |
         ExprKind::Cast { expr, ty } => {
             rewrite_expr(expr, ctx, scope)?;
             rewrite_type(ty, ctx)?;

@@ -26,6 +26,12 @@ earlier history lives in each version's archived plan.
   are not derivable — **E0920** names the field and the manual fix.
   Deriving needs a struct target (E0916 otherwise); `Copy` remains
   structural and is never written.
+- **Checked narrowing `as?`**: `n as? u8` evaluates to `Option[u8]` —
+  `Some(converted)` when the value is representable, `None` otherwise.
+  Integer source and target only (E0315 names the offending side); the
+  infallible `as` keeps its truncating semantics for the cases where
+  truncation is intended. Branch-free codegen: a 64-bit bounds check
+  selecting the Option tag and payload.
 - **Distinct newtypes**: `type UserId = distinct i64;` — a nominal
   integer alias. Same representation and ABI as the base; not
   interchangeable with it or with other brands (E0302 with a

@@ -238,6 +238,11 @@ pub enum TokenKind {
     PipePipe,
     Caret,
     Tilde,
+    /// v0.0.27: `?` — currently only meaningful immediately after `as`
+    /// (`x as? u8`, the checked-narrowing cast). A bare `?` anywhere else
+    /// is a parse error, preserving locked principle 4 (no `?` error
+    /// propagation operator).
+    Question,
     Shl,
     Shr,
     PlusEq,
@@ -1316,6 +1321,7 @@ impl<'a> Lexer<'a> {
             b',' => TokenKind::Comma,
             b';' => TokenKind::Semi,
             b'~' => TokenKind::Tilde,
+            b'?' => TokenKind::Question,
             b':' => {
                 if self.peek(0) == Some(b':') {
                     self.pos += 1;

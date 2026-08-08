@@ -3073,12 +3073,24 @@ impl Parser {
         let mut e = self.parse_unary()?;
         while matches!(self.peek_kind(), TokenKind::As) {
             self.bump();
+            // v0.0.27: `as?` — checked narrowing, producing Option[T].
+            let checked = matches!(self.peek_kind(), TokenKind::Question);
+            if checked {
+                self.bump();
+            }
             let ty = self.parse_type()?;
             let span = e.span.merge(ty.span);
             e = Expr {
-                kind: ExprKind::Cast {
-                    expr: Box::new(e),
-                    ty,
+                kind: if checked {
+                    ExprKind::CastChecked {
+                        expr: Box::new(e),
+                        ty,
+                    }
+                } else {
+                    ExprKind::Cast {
+                        expr: Box::new(e),
+                        ty,
+                    }
                 },
                 span,
             };
@@ -4249,12 +4261,23 @@ impl Parser {
             let mut cast = false;
             while matches!(self.peek_kind(), TokenKind::As) {
                 self.bump();
+                let checked = matches!(self.peek_kind(), TokenKind::Question);
+                if checked {
+                    self.bump();
+                }
                 let ty = self.parse_type()?;
                 let span = expr.span.merge(ty.span);
                 expr = Expr {
-                    kind: ExprKind::Cast {
-                        expr: Box::new(expr),
-                        ty,
+                    kind: if checked {
+                        ExprKind::CastChecked {
+                            expr: Box::new(expr),
+                            ty,
+                        }
+                    } else {
+                        ExprKind::Cast {
+                            expr: Box::new(expr),
+                            ty,
+                        }
                     },
                     span,
                 };
@@ -4519,6 +4542,7 @@ fn peek_assign_op(kind: &TokenKind) -> Option<AssignOp> {
 fn tok_name(k: &TokenKind) -> &'static str {
     match k {
         TokenKind::At => "`@`",
+        TokenKind::Question => "`?`",
         TokenKind::Int(_, _) => "integer literal",
         TokenKind::Float(_, _) => "float literal",
         TokenKind::Str(_) => "string literal",

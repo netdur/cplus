@@ -775,7 +775,9 @@ impl Lower {
                 self.lower_expr(target);
                 self.lower_expr(value);
             }
-            ExprKind::Cast { expr, .. } => self.lower_expr(expr),
+            ExprKind::Cast { expr, .. } | ExprKind::CastChecked { expr, .. } => {
+                self.lower_expr(expr)
+            }
             ExprKind::Path { .. } => {}
             ExprKind::StructLit { fields, .. }
             | ExprKind::InferredStructLit { fields }

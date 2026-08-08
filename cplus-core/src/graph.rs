@@ -1594,6 +1594,7 @@ impl<'a> Resolver<'a> {
                 self.walk_expr(target);
                 self.walk_expr(value);
             }
+            ExprKind::CastChecked { expr, ty } |
             ExprKind::Cast { expr, ty } => {
                 self.record_type(ty);
                 self.walk_expr(expr);

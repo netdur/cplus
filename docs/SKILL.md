@@ -161,6 +161,7 @@ static SCENE: [Sphere; 2] = [ Sphere { x: 0.0f32 }, Sphere { x: 1.0f32 } ];
 - Bitwise `& | ^ ~ << >>`. Shift-right on signed = arithmetic; on unsigned = logical.
 - Compare `< <= > >= == !=` produce `bool`, no coercion.
 - Cast `as` is the only width-change tool. Pointer ↔ int goes through `usize`.
+- Checked narrowing `as?` produces `Option[T]`: `n as? u8` is `Some(converted)` when the value fits, `None` otherwise (integer → integer only; needs `stdlib/option`). Plain `as` keeps its truncating semantics for when truncation is intended.
 
 ### Control flow
 ```cplus
