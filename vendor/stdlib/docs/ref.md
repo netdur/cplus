@@ -29,6 +29,7 @@ Source of truth for edge cases: the header comment and impl in
 | [`net`](#net) | `TcpStream`, `TcpListener` |
 | [`netsys`](#netsys) | platform errno / constants (for `net`) |
 | [`env`](#env) | `var`, `argc`, `arg` |
+| [`flags`](#flags) | `Flags` option-set over u64 bits |
 | [`hash_map`](#hash_map) | `HashMap[K, V]` |
 | [`hash_set`](#hash_set) | `HashSet[T]` |
 | [`string_map`](#string_map) | `StringMap[V]` |
@@ -336,6 +337,28 @@ fn arg(index: usize) -> option::Option[text::Text]
 Owned `Text` for values; `None` if unset / out of range.
 
 ---
+
+## flags
+
+A typed option-set over `u64` bits — set membership spelled as set membership
+instead of mask arithmetic. Bit values come from `const` masks (constant
+expressions fold: `const BOLD: u64 = 1u64 << 0;`) or a payload-free enum with
+explicit discriminants, cast at the call site.
+
+```cplus
+import "stdlib/flags" as flags;
+
+var style = flags::none().with(BOLD).with(UNDER);
+style.contains(BOLD);          // true — holds EVERY bit of the argument
+style.intersects(BOLD | IT);   // true — holds ANY bit
+style = style.without(UNDER);
+style = style.toggled(IT);
+a.union_with(b); a.intersect_with(b); a.minus(b); a.eq(b);
+style.bits();                  // the raw u64, for storage or C
+flags::from_bits(raw);         // rehydrate
+```
+
+`Flags` is one machine word, Copy; every mutator returns the new set.
 
 ## hash_map
 

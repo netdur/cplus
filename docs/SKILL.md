@@ -643,6 +643,7 @@ fn raw_add(a: i64, b: i64) -> i64 { #asm("add x0, x0, x1\nret"); }
 | `result` / `option` | Generic `Result[T, E]` / `Option[T]` (variants + constructors only — no combinators) |
 | `vec` | `Vec[T]` growable vector (Drop on scope exit) |
 | `hash_map` | `HashMap[K, V]` (K: Hash + Eq; primitives + str). `new` / `insert` / `get` / `contains_key` |
+| `flags` | `Flags` option-set over u64 bits: `none`/`of`/`from_bits`, `contains`/`intersects`/`with`/`without`/`toggled`, set algebra. Bit values from `const` masks or repr-enum discriminants (`Mode::Fast as u64`) |
 | `Text` | builtin type (no module needed) |
 | `fs` | File I/O |
 | `net` | TCP (IPv4, numeric IPs only) |

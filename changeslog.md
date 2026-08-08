@@ -11,6 +11,14 @@ earlier history lives in each version's archived plan.
 > platform run loop. The enabling language change: a generic function
 > instantiation is now a first-class fn-pointer value.
 
+### Standard library
+- **`stdlib/flags`** — a `Flags` option-set over u64 bits, replacing the
+  `(dirty & MASK) != (0 as u64)` texture with membership verbs:
+  `contains` / `intersects` / `with` / `without` / `toggled` plus set
+  algebra (`union_with` / `intersect_with` / `minus`). Bit values come
+  from `const` masks (constant expressions fold) or repr-enum
+  discriminants cast at the call site.
+
 ### Language
 - **Derive through the empty impl**: `impl Point: Eq {}` — an empty impl
   block against `Eq` / `Ord` / `Hash` / `Clone` / `ToText` generates the

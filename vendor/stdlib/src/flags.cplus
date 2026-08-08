@@ -1,0 +1,131 @@
+// stdlib/flags.cplus — a typed option-set over u64 bits.
+//
+// Replaces the raw mask texture `(dirty & P_FONT_SIZE) != (0 as u64)` with
+// set-membership verbs: `dirty.contains(P_FONT_SIZE)`. Bit values come from
+// wherever the domain defines them — `const` masks (which fold as constant
+// expressions, `1u64 << 5`) or a payload-free enum with explicit
+// discriminants, cast at the call site (`Mode::Fast as u64`).
+//
+// A `Flags` is one machine word: Copy, zero-cost, C-ABI clean via `bits()`.
+// Every operation is a pure value: mutators return the new set (assign it),
+// matching the language's no-hidden-mutation posture.
+
+struct Flags {
+    _bits: u64,
+}
+
+// The empty set.
+fn none() -> Flags {
+    return Flags { _bits: 0 as u64 };
+}
+
+// A set holding exactly the given bit(s).
+fn of(bits: u64) -> Flags {
+    return Flags { _bits: bits };
+}
+
+// Rehydrate from a raw word (an FFI field, a stored mask).
+fn from_bits(bits: u64) -> Flags {
+    return Flags { _bits: bits };
+}
+
+impl Flags {
+    // The raw word, for storage or the C boundary.
+    fn bits(this) -> u64 {
+        return this._bits;
+    }
+
+    fn is_empty(this) -> bool {
+        return this._bits == (0 as u64);
+    }
+
+    // Set membership: does this set hold EVERY bit of `bits`?
+    fn contains(this, bits: u64) -> bool {
+        return (this._bits & bits) == bits;
+    }
+
+    // Does this set hold ANY bit of `bits`?
+    fn intersects(this, bits: u64) -> bool {
+        return (this._bits & bits) != (0 as u64);
+    }
+
+    // The set plus the given bit(s).
+    fn with(this, bits: u64) -> Flags {
+        return Flags { _bits: this._bits | bits };
+    }
+
+    // The set minus the given bit(s).
+    fn without(this, bits: u64) -> Flags {
+        return Flags { _bits: this._bits & ~bits };
+    }
+
+    // The bit(s) flipped.
+    fn toggled(this, bits: u64) -> Flags {
+        return Flags { _bits: this._bits ^ bits };
+    }
+
+    // Set union / intersection / difference with another set.
+    fn union_with(this, other: Flags) -> Flags {
+        return Flags { _bits: this._bits | other._bits };
+    }
+
+    fn intersect_with(this, other: Flags) -> Flags {
+        return Flags { _bits: this._bits & other._bits };
+    }
+
+    fn minus(this, other: Flags) -> Flags {
+        return Flags { _bits: this._bits & ~other._bits };
+    }
+
+    fn eq(this, other: Flags) -> bool {
+        return this._bits == other._bits;
+    }
+}
+
+// ---- tests ----
+
+const T_BOLD: u64 = 1u64 << 0;
+const T_ITALIC: u64 = 1u64 << 1;
+const T_UNDER: u64 = 1u64 << 2;
+
+#[test]
+fn flags_membership() {
+    let f = none().with(T_BOLD).with(T_UNDER);
+    assert f.contains(T_BOLD);
+    assert f.contains(T_UNDER);
+    assert f.contains(T_ITALIC) == false;
+    assert f.contains(T_BOLD | T_UNDER);
+    assert f.contains(T_BOLD | T_ITALIC) == false;
+    assert f.intersects(T_BOLD | T_ITALIC);
+    assert f.is_empty() == false;
+    assert none().is_empty();
+}
+
+#[test]
+fn flags_without_and_toggle() {
+    var f = of(T_BOLD | T_ITALIC);
+    f = f.without(T_ITALIC);
+    assert f.contains(T_BOLD);
+    assert f.contains(T_ITALIC) == false;
+    f = f.toggled(T_UNDER);
+    assert f.contains(T_UNDER);
+    f = f.toggled(T_UNDER);
+    assert f.contains(T_UNDER) == false;
+}
+
+#[test]
+fn flags_set_algebra() {
+    let a = of(T_BOLD | T_ITALIC);
+    let b = of(T_ITALIC | T_UNDER);
+    assert a.union_with(b).bits() == (T_BOLD | T_ITALIC | T_UNDER);
+    assert a.intersect_with(b).bits() == T_ITALIC;
+    assert a.minus(b).bits() == T_BOLD;
+    assert a.eq(of(T_BOLD | T_ITALIC));
+    assert a.eq(b) == false;
+}
+
+#[test]
+fn flags_roundtrip_raw_bits() {
+    let f = from_bits(0xA5u64);
+    assert f.bits() == 0xA5u64;
+}

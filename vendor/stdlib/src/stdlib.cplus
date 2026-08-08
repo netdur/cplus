@@ -33,6 +33,7 @@ import "./mutex" as mutex;
 import "./future" as future;
 import "./reactor" as reactor;
 import "./executor" as executor;
+import "./flags" as flags;
 import "./time" as time;
 import "./date" as date;
 import "./process" as process;
