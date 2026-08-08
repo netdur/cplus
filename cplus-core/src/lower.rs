@@ -1273,33 +1273,81 @@ impl Lower {
     /// so the const's declared type flows through every use unchanged.
     fn collect_consts_and_validate_inits(
         &mut self,
-        prog: &Program,
+        prog: &mut Program,
     ) -> std::collections::HashMap<String, (Expr, Type)> {
-        let mut consts: std::collections::HashMap<String, (Expr, Type)> =
+        // Phase 1: gather every const declaration (name → initializer, type,
+        // origin file) so const expressions can reference consts declared in
+        // any order or file.
+        let mut raw: std::collections::HashMap<String, (Expr, Type, Option<String>)> =
             std::collections::HashMap::new();
         for item in &prog.items {
+            if let ItemKind::Const(c) = &item.kind {
+                raw.insert(
+                    c.name.name.clone(),
+                    (c.value.clone(), c.ty.clone(), item.origin_file.clone()),
+                );
+            }
+        }
+        // Phase 2: resolve each const once (memoized, cycle-checked). A
+        // successfully evaluated EXPRESSION initializer is folded to a typed
+        // literal; plain-literal initializers keep their original shape (and
+        // their historical diagnostics).
+        let mut resolved: std::collections::HashMap<String, Option<CVal>> =
+            std::collections::HashMap::new();
+        let mut visiting: Vec<String> = Vec::new();
+        let names: Vec<String> = raw.keys().cloned().collect();
+        for name in &names {
+            let mut cx = ConstCx {
+                raw: &raw,
+                resolved: &mut resolved,
+                visiting: &mut visiting,
+            };
+            let _ = self.resolve_const_scalar(name, &mut cx);
+        }
+        // Phase 3: write folded initializers back into the declaration nodes
+        // (so sema / codegen / substitution all see literals), validate
+        // statics, and build the substitution table.
+        let mut consts: std::collections::HashMap<String, (Expr, Type)> =
+            std::collections::HashMap::new();
+        for item in &mut prog.items {
             // GAP 3: an E0911 on a bad initializer must point at the file the
             // const/static was declared in, not always the entry file.
             self.set_current_file(item.origin_file.as_deref());
-            match &item.kind {
+            match &mut item.kind {
                 ItemKind::Const(c) => {
                     if !is_const_initializer(&c.value) {
-                        self.err(
-                            "E0911",
-                            "const initializer must be a literal (integer, float, bool, string, unary-negated numeric literal, or `#zero::[T]()`)".to_string(),
-                            c.value.span,
-                        );
-                        continue;
+                        // An expression initializer: replace with its folded
+                        // literal. A miss here means resolution failed and
+                        // already diagnosed (E0911/E0921) — skip the entry so
+                        // downstream passes don't chew on a non-literal.
+                        match resolved.get(&c.name.name) {
+                            Some(Some(v)) => c.value = cval_to_expr(*v, c.value.span),
+                            _ => continue,
+                        }
                     }
                     consts.insert(c.name.name.clone(), (c.value.clone(), c.ty.clone()));
                 }
                 ItemKind::Static(s) => {
                     if !is_static_initializer(&s.value) {
-                        self.err(
-                            "E0911",
-                            "static initializer must be a literal (integer, float, bool, string, unary-negated numeric literal), `#zero::[T]()`, an array literal/fill, or a (non-generic) struct literal of such".to_string(),
-                            s.value.span,
-                        );
+                        // A scalar-typed static takes the same constant
+                        // expressions a const does (`static M: u64 =
+                        // (1u64 << 40) - 1;`), folded in place.
+                        if let Some(exp) = cscalar_of_type(&s.ty) {
+                            let mut cx = ConstCx {
+                                raw: &raw,
+                                resolved: &mut resolved,
+                                visiting: &mut visiting,
+                            };
+                            if let Ok(v) = self.const_eval(&s.value, Some(exp), &mut cx, false) {
+                                s.value = cval_to_expr(v, s.value.span);
+                            }
+                        } else {
+                            self.err(
+                                "E0911",
+                                "static initializer must be a literal (integer, float, bool, string, unary-negated numeric literal), `#zero::[T]()`, an array literal/fill, a (non-generic) struct literal of such, or a scalar constant expression".to_string(),
+                                s.value.span,
+                            );
+                        }
                     }
                 }
                 _ => {}
@@ -1459,6 +1507,60 @@ impl Lower {
         }
     }
 
+    /// v0.0.27 const expressions: evaluate an inline array-length /
+    /// fill-count expression (`[T; CAP * 2]`, `[v; 1 << SHIFT]`) at `usize`
+    /// against the (already folded) const table, and range-check the result
+    /// into the `u32` every later pass expects. Errors ride the evaluator's
+    /// E0921 codes; the u32 ceiling keeps E0912's historical message.
+    fn resolve_len_expr(
+        &mut self,
+        e: &Expr,
+        consts: &std::collections::HashMap<String, (Expr, Type)>,
+    ) -> u32 {
+        // The evaluator resolves `Ident`s through a ConstCx. Seed one whose
+        // memo table is pre-filled from the folded const table — every entry
+        // there is a literal, so the quiet probe cannot fail loudly.
+        let mut raw: std::collections::HashMap<String, (Expr, Type, Option<String>)> =
+            std::collections::HashMap::new();
+        for (name, (value, ty)) in consts {
+            raw.insert(name.clone(), (value.clone(), ty.clone(), None));
+        }
+        let mut resolved: std::collections::HashMap<String, Option<CVal>> =
+            std::collections::HashMap::new();
+        let mut visiting: Vec<String> = Vec::new();
+        let mut cx = ConstCx {
+            raw: &raw,
+            resolved: &mut resolved,
+            visiting: &mut visiting,
+        };
+        let usize_ty = CScalar::Int(CInt {
+            bits: 64,
+            signed: false,
+            size: true,
+        });
+        match self.const_eval(e, Some(usize_ty), &mut cx, false) {
+            Ok(CVal::Int { v, .. }) if (0..=u32::MAX as i128).contains(&v) => v as u32,
+            Ok(CVal::Int { .. }) => {
+                self.err(
+                    "E0912",
+                    "array length expression exceeds the u32 maximum".to_string(),
+                    e.span,
+                );
+                0
+            }
+            Ok(_) => {
+                self.err(
+                    "E0912",
+                    "array length expression must evaluate to an unsigned integer".to_string(),
+                    e.span,
+                );
+                0
+            }
+            // The evaluator already diagnosed (E0921).
+            Err(()) => 0,
+        }
+    }
+
     fn resolve_lens_in_type(
         &mut self,
         t: &mut Type,
@@ -1470,9 +1572,15 @@ impl Lower {
                 elem,
                 len,
                 len_name,
+                len_expr,
             } => {
                 if let Some(name) = len_name.take() {
                     *len = self.resolve_one_len(&name, span, consts);
+                }
+                // v0.0.27 const expressions: an inline `[T; CAP * 2]` length
+                // evaluates at `usize` against the const environment.
+                if let Some(e) = len_expr.take() {
+                    *len = self.resolve_len_expr(&e, consts);
                 }
                 self.resolve_lens_in_type(elem, consts);
             }
@@ -1644,19 +1752,29 @@ impl ExprRewriter for LenResolver<'_> {
 
     fn visit_expr(&mut self, e: &Expr) -> Option<Expr> {
         let ExprKind::ArrayFill {
-            fill, count_name, ..
+            fill,
+            count_name,
+            count_expr,
+            ..
         } = &e.kind
         else {
             return None;
         };
         // No lens on this fill: let the generic walk handle its children.
-        let name = count_name.clone()?;
-        let count = self.lower.resolve_one_len(&name, e.span, self.consts);
+        let count = if let Some(name) = count_name {
+            self.lower.resolve_one_len(name, e.span, self.consts)
+        } else if let Some(ce) = count_expr {
+            // v0.0.27 const expressions: inline `[v; CAP * 2]` count.
+            self.lower.resolve_len_expr(ce, self.consts)
+        } else {
+            return None;
+        };
         Some(Expr {
             kind: ExprKind::ArrayFill {
                 fill: Box::new(walk_expr(fill, self)),
                 count,
                 count_name: None,
+                count_expr: None,
             },
             span: e.span,
         })
@@ -2203,6 +2321,689 @@ pub(crate) fn expr_diverges(e: &Expr) -> bool {
             !arms.is_empty() && arms.iter().all(|a| expr_diverges(&a.body))
         }
         _ => false,
+    }
+}
+
+// ===== const expressions =====
+//
+// `const MASK: u64 = (1u64 << 40) - 1;` — a const (or scalar static)
+// initializer may be a pure compile-time expression over literals and
+// previously-declared consts, folded here in lower before sema runs. The
+// evaluation is TYPED: arithmetic happens at the declared type's width,
+// and overflow is a hard error (E0921) rather than a silent wrap — the
+// explicit wrap spellings `+%` / `-%` / `*%` wrap, exactly as at runtime.
+// This kills the wrap-through-i32 mask-building dance: a big mask is
+// written as the arithmetic that defines it.
+//
+// Grammar of a const expression: literals, names of other consts,
+// `+ - * / %`, `+% -% *%`, `<< >>`, `& | ^ ~`, unary `-` / `!`,
+// comparisons and `&& ||` (producing bool), and `as` casts between
+// scalar types. References between consts are order-independent
+// (memoized resolution); a reference cycle is E0921.
+//
+// A plain-literal initializer keeps the exact v0.0.9 path (including its
+// diagnostics); only non-literal initializers enter the evaluator. On
+// success the folded literal is written back into the declaration node,
+// so sema, codegen, and the const-substitution pass still see literals
+// everywhere — no pass after this one knows const expressions exist.
+
+/// An integer scalar's shape: width + signedness. `isize`/`usize` fold at
+/// 64 bits (the compiler's only pointer width today — same assumption
+/// `layout_of` makes).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct CInt {
+    bits: u8,
+    signed: bool,
+    /// True for `isize` / `usize` — same 64-bit fold width, but a DISTINCT
+    /// type from `i64` / `u64` (sema keeps them apart, so const evaluation
+    /// must too, and fold results must re-emit the right suffix).
+    size: bool,
+}
+
+/// The scalar type a const expression evaluates at.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum CScalar {
+    Int(CInt),
+    Float(u8),
+    Bool,
+}
+
+/// A compile-time value. Ints carry their type so range checks and mixed-
+/// type errors are exact; the payload is i128, wide enough for every
+/// supported width's full range.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum CVal {
+    Int { v: i128, ty: CInt },
+    Float { v: f64, bits: u8 },
+    Bool(bool),
+}
+
+fn cscalar_of_name(name: &str) -> Option<CScalar> {
+    let int = |bits, signed| Some(CScalar::Int(CInt { bits, signed, size: false }));
+    let size = |signed| Some(CScalar::Int(CInt { bits: 64, signed, size: true }));
+    match name {
+        "i8" => int(8, true),
+        "i16" => int(16, true),
+        "i32" => int(32, true),
+        "i64" => int(64, true),
+        "isize" => size(true),
+        "u8" => int(8, false),
+        "u16" => int(16, false),
+        "u32" => int(32, false),
+        "u64" => int(64, false),
+        "usize" => size(false),
+        "f16" => Some(CScalar::Float(16)),
+        "f32" => Some(CScalar::Float(32)),
+        "f64" => Some(CScalar::Float(64)),
+        "bool" => Some(CScalar::Bool),
+        _ => None,
+    }
+}
+
+fn cscalar_of_type(t: &Type) -> Option<CScalar> {
+    match &t.kind {
+        TypeKind::Path(p) => cscalar_of_name(p),
+        _ => None,
+    }
+}
+
+/// Display name for diagnostics. Width-64 renders as the fixed-width name
+/// (`i64`/`u64`) — good enough even when the source wrote `isize`/`usize`.
+fn cscalar_name(s: CScalar) -> &'static str {
+    match s {
+        CScalar::Int(CInt { signed: true, size: true, .. }) => "isize",
+        CScalar::Int(CInt { signed: false, size: true, .. }) => "usize",
+        CScalar::Int(CInt { bits: 8, signed: true, .. }) => "i8",
+        CScalar::Int(CInt { bits: 16, signed: true, .. }) => "i16",
+        CScalar::Int(CInt { bits: 32, signed: true, .. }) => "i32",
+        CScalar::Int(CInt { bits: 64, signed: true, .. }) => "i64",
+        CScalar::Int(CInt { bits: 8, signed: false, .. }) => "u8",
+        CScalar::Int(CInt { bits: 16, signed: false, .. }) => "u16",
+        CScalar::Int(CInt { bits: 32, signed: false, .. }) => "u32",
+        CScalar::Int(CInt { bits: 64, signed: false, .. }) => "u64",
+        CScalar::Int(_) => "int",
+        CScalar::Float(16) => "f16",
+        CScalar::Float(32) => "f32",
+        CScalar::Float(_) => "f64",
+        CScalar::Bool => "bool",
+    }
+}
+
+fn cint_min(t: CInt) -> i128 {
+    if t.signed {
+        -(1i128 << (t.bits - 1))
+    } else {
+        0
+    }
+}
+
+fn cint_max(t: CInt) -> i128 {
+    if t.signed {
+        (1i128 << (t.bits - 1)) - 1
+    } else {
+        (1i128 << t.bits) - 1
+    }
+}
+
+fn cint_in_range(v: i128, t: CInt) -> bool {
+    v >= cint_min(t) && v <= cint_max(t)
+}
+
+/// Two's-complement wrap of `v` into `t` — the semantic of `+%`-family ops
+/// and of `as` narrowing, matching runtime behavior bit for bit.
+fn cint_wrap(v: i128, t: CInt) -> i128 {
+    let mask = if t.bits == 128 { -1i128 } else { (1i128 << t.bits) - 1 };
+    let low = v & mask;
+    if t.signed && (low >> (t.bits - 1)) & 1 == 1 {
+        low - (1i128 << t.bits)
+    } else {
+        low
+    }
+}
+
+fn cint_of_suffix(s: NumSuffix) -> Option<CInt> {
+    let int = |bits, signed| Some(CInt { bits, signed, size: false });
+    let size = |signed| Some(CInt { bits: 64, signed, size: true });
+    match s {
+        NumSuffix::I8 => int(8, true),
+        NumSuffix::I16 => int(16, true),
+        NumSuffix::I32 => int(32, true),
+        NumSuffix::I64 => int(64, true),
+        NumSuffix::Isize => size(true),
+        NumSuffix::U8 => int(8, false),
+        NumSuffix::U16 => int(16, false),
+        NumSuffix::U32 => int(32, false),
+        NumSuffix::U64 => int(64, false),
+        NumSuffix::Usize => size(false),
+        _ => None,
+    }
+}
+
+/// The literal suffix that pins an emitted fold result to its type.
+/// 64-bit renders as `i64`/`u64` even for `isize`/`usize` declarations —
+/// the substitution pass wraps every use in a cast to the declared type,
+/// which re-types the literal at the use site.
+fn suffix_of_cint(t: CInt) -> NumSuffix {
+    if t.size {
+        return if t.signed { NumSuffix::Isize } else { NumSuffix::Usize };
+    }
+    match (t.bits, t.signed) {
+        (8, true) => NumSuffix::I8,
+        (16, true) => NumSuffix::I16,
+        (32, true) => NumSuffix::I32,
+        (8, false) => NumSuffix::U8,
+        (16, false) => NumSuffix::U16,
+        (32, false) => NumSuffix::U32,
+        (_, true) => NumSuffix::I64,
+        (_, false) => NumSuffix::U64,
+    }
+}
+
+fn suffix_of_float_bits(bits: u8) -> NumSuffix {
+    match bits {
+        16 => NumSuffix::F16,
+        32 => NumSuffix::F32,
+        _ => NumSuffix::F64,
+    }
+}
+
+/// Render a folded value back to a literal expression every later pass
+/// accepts. A signed minimum (e.g. `i64::MIN`) has no positive-magnitude
+/// spelling, so it renders as its bit pattern cast to the signed type —
+/// the same value the runtime `as` produces.
+fn cval_to_expr(v: CVal, span: Span) -> Expr {
+    let e = |kind| Expr { kind, span };
+    match v {
+        CVal::Int { v, ty } => {
+            if v >= 0 {
+                e(ExprKind::IntLit(v as u64, suffix_of_cint(ty)))
+            } else if v == cint_min(ty) {
+                let pattern = (v as u128 as u64) & if ty.bits == 64 { u64::MAX } else { (1u64 << ty.bits) - 1 };
+                let unsigned = CInt { bits: ty.bits, signed: false, size: false };
+                e(ExprKind::Cast {
+                    expr: Box::new(e(ExprKind::IntLit(pattern, suffix_of_cint(unsigned)))),
+                    ty: Type {
+                        kind: TypeKind::Path(cscalar_name(CScalar::Int(ty)).to_string()),
+                        span,
+                    },
+                })
+            } else {
+                e(ExprKind::Unary {
+                    op: UnaryOp::Neg,
+                    operand: Box::new(e(ExprKind::IntLit((-v) as u64, suffix_of_cint(ty)))),
+                })
+            }
+        }
+        CVal::Float { v, bits } => {
+            if v.is_sign_negative() {
+                e(ExprKind::Unary {
+                    op: UnaryOp::Neg,
+                    operand: Box::new(e(ExprKind::FloatLit(-v, suffix_of_float_bits(bits)))),
+                })
+            } else {
+                e(ExprKind::FloatLit(v, suffix_of_float_bits(bits)))
+            }
+        }
+        CVal::Bool(b) => e(ExprKind::BoolLit(b)),
+    }
+}
+
+/// The const-resolution state threaded through evaluation: raw declarations,
+/// memoized results (`None` = declared but not usable as a scalar value),
+/// and the in-progress stack for cycle detection.
+struct ConstCx<'a> {
+    raw: &'a std::collections::HashMap<String, (Expr, Type, Option<String>)>,
+    resolved: &'a mut std::collections::HashMap<String, Option<CVal>>,
+    visiting: &'a mut Vec<String>,
+}
+
+impl Lower {
+    /// Evaluate a const expression. `expected` is the declared type's scalar
+    /// shape (propagated so unsuffixed literals type correctly); `quiet`
+    /// suppresses diagnostics (used when probing a plain-literal initializer
+    /// for the cross-const environment — its own path already diagnoses).
+    /// `Err(())` always means: diagnostics were emitted unless quiet.
+    fn const_eval(
+        &mut self,
+        e: &Expr,
+        expected: Option<CScalar>,
+        cx: &mut ConstCx,
+        quiet: bool,
+    ) -> Result<CVal, ()> {
+        macro_rules! bail {
+            ($span:expr, $($msg:tt)*) => {{
+                if !quiet {
+                    self.err("E0921", format!($($msg)*), $span);
+                }
+                return Err(());
+            }};
+        }
+        match &e.kind {
+            ExprKind::IntLit(v, suffix) => {
+                let ty = match cint_of_suffix(*suffix) {
+                    Some(t) => {
+                        if let Some(CScalar::Int(exp)) = expected {
+                            if exp != t {
+                                bail!(
+                                    e.span,
+                                    "type mismatch in constant expression: expected `{}`, literal is `{}` — change the suffix or add an `as` cast",
+                                    cscalar_name(CScalar::Int(exp)),
+                                    cscalar_name(CScalar::Int(t))
+                                );
+                            }
+                        }
+                        t
+                    }
+                    None => match expected {
+                        Some(CScalar::Int(t)) => t,
+                        Some(CScalar::Float(bits)) => {
+                            // An int literal does not float implicitly —
+                            // same rule as the runtime language.
+                            let _ = bits;
+                            bail!(
+                                e.span,
+                                "type mismatch in constant expression: expected a float literal (write `{v}.0`)"
+                            );
+                        }
+                        Some(CScalar::Bool) => {
+                            bail!(e.span, "type mismatch in constant expression: expected `bool`, found an integer literal")
+                        }
+                        None => CInt { bits: 32, signed: true, size: false },
+                    },
+                };
+                let val = *v as i128;
+                if !cint_in_range(val, ty) {
+                    bail!(
+                        e.span,
+                        "literal `{v}` is out of range for `{}`",
+                        cscalar_name(CScalar::Int(ty))
+                    );
+                }
+                Ok(CVal::Int { v: val, ty })
+            }
+            ExprKind::FloatLit(v, suffix) => {
+                let bits = match suffix {
+                    NumSuffix::F16 => 16,
+                    NumSuffix::F32 => 32,
+                    NumSuffix::F64 => 64,
+                    NumSuffix::None => match expected {
+                        Some(CScalar::Float(b)) => b,
+                        Some(other) => bail!(
+                            e.span,
+                            "type mismatch in constant expression: expected `{}`, found a float literal",
+                            cscalar_name(other)
+                        ),
+                        None => 64,
+                    },
+                    _ => bail!(e.span, "integer suffix on a float literal"),
+                };
+                if let Some(CScalar::Float(exp)) = expected {
+                    if exp != bits {
+                        bail!(
+                            e.span,
+                            "type mismatch in constant expression: expected `{}`, literal is `{}`",
+                            cscalar_name(CScalar::Float(exp)),
+                            cscalar_name(CScalar::Float(bits))
+                        );
+                    }
+                }
+                Ok(CVal::Float { v: *v, bits })
+            }
+            ExprKind::BoolLit(b) => {
+                if let Some(exp) = expected {
+                    if exp != CScalar::Bool {
+                        bail!(
+                            e.span,
+                            "type mismatch in constant expression: expected `{}`, found `bool`",
+                            cscalar_name(exp)
+                        );
+                    }
+                }
+                Ok(CVal::Bool(*b))
+            }
+            ExprKind::Ident(name) => {
+                let Some(val) = self.resolve_const_scalar(name, cx) else {
+                    if cx.raw.contains_key(name) {
+                        bail!(
+                            e.span,
+                            "`{name}` is not a numeric or bool `const`, so it cannot appear in a constant expression"
+                        );
+                    }
+                    bail!(
+                        e.span,
+                        "`{name}` is not a known `const`; constant expressions may only reference module-scope `const` names"
+                    );
+                };
+                let actual = match val {
+                    CVal::Int { ty, .. } => CScalar::Int(ty),
+                    CVal::Float { bits, .. } => CScalar::Float(bits),
+                    CVal::Bool(_) => CScalar::Bool,
+                };
+                if let Some(exp) = expected {
+                    if exp != actual {
+                        bail!(
+                            e.span,
+                            "type mismatch in constant expression: expected `{}`, `{}` is `{}` — add an `as` cast",
+                            cscalar_name(exp),
+                            name,
+                            cscalar_name(actual)
+                        );
+                    }
+                }
+                Ok(val)
+            }
+            ExprKind::Unary { op, operand } => match op {
+                UnaryOp::Neg => match self.const_eval(operand, expected, cx, quiet)? {
+                    CVal::Int { v, ty } => {
+                        if !ty.signed {
+                            bail!(e.span, "unary `-` on unsigned constant of type `{}`", cscalar_name(CScalar::Int(ty)));
+                        }
+                        if !cint_in_range(-v, ty) {
+                            bail!(e.span, "negation overflows `{}`", cscalar_name(CScalar::Int(ty)));
+                        }
+                        Ok(CVal::Int { v: -v, ty })
+                    }
+                    CVal::Float { v, bits } => Ok(CVal::Float { v: -v, bits }),
+                    CVal::Bool(_) => bail!(e.span, "unary `-` on a bool constant"),
+                },
+                UnaryOp::Not => match self.const_eval(operand, Some(CScalar::Bool), cx, quiet)? {
+                    CVal::Bool(b) => Ok(CVal::Bool(!b)),
+                    _ => bail!(e.span, "`!` requires a bool constant"),
+                },
+                UnaryOp::BitNot => match self.const_eval(operand, expected, cx, quiet)? {
+                    CVal::Int { v, ty } => Ok(CVal::Int {
+                        v: cint_wrap(!v, ty),
+                        ty,
+                    }),
+                    _ => bail!(e.span, "`~` requires an integer constant"),
+                },
+                UnaryOp::Ref { .. } | UnaryOp::Deref => {
+                    bail!(e.span, "not a constant expression")
+                }
+            },
+            ExprKind::Binary { op, lhs, rhs } => {
+                use BinOp::*;
+                match op {
+                    And | Or => {
+                        let l = self.const_eval(lhs, Some(CScalar::Bool), cx, quiet)?;
+                        let r = self.const_eval(rhs, Some(CScalar::Bool), cx, quiet)?;
+                        match (l, r) {
+                            (CVal::Bool(a), CVal::Bool(b)) => Ok(CVal::Bool(if *op == And {
+                                a && b
+                            } else {
+                                a || b
+                            })),
+                            _ => bail!(e.span, "`&&` / `||` require bool constants"),
+                        }
+                    }
+                    Eq | Ne | Lt | Le | Gt | Ge => {
+                        if let Some(exp) = expected {
+                            if exp != CScalar::Bool {
+                                bail!(
+                                    e.span,
+                                    "type mismatch in constant expression: comparison produces `bool`, expected `{}`",
+                                    cscalar_name(exp)
+                                );
+                            }
+                        }
+                        let l = self.const_eval(lhs, None, cx, quiet)?;
+                        let lscalar = match l {
+                            CVal::Int { ty, .. } => CScalar::Int(ty),
+                            CVal::Float { bits, .. } => CScalar::Float(bits),
+                            CVal::Bool(_) => CScalar::Bool,
+                        };
+                        let r = self.const_eval(rhs, Some(lscalar), cx, quiet)?;
+                        let cmp = match (l, r) {
+                            (CVal::Int { v: a, .. }, CVal::Int { v: b, .. }) => a.partial_cmp(&b),
+                            (CVal::Float { v: a, .. }, CVal::Float { v: b, .. }) => {
+                                a.partial_cmp(&b)
+                            }
+                            (CVal::Bool(a), CVal::Bool(b)) if matches!(op, Eq | Ne) => {
+                                a.partial_cmp(&b)
+                            }
+                            _ => bail!(e.span, "invalid comparison in constant expression"),
+                        };
+                        let Some(ord) = cmp else {
+                            bail!(e.span, "NaN comparison in constant expression");
+                        };
+                        let b = match op {
+                            Eq => ord.is_eq(),
+                            Ne => !ord.is_eq(),
+                            Lt => ord.is_lt(),
+                            Le => ord.is_le(),
+                            Gt => ord.is_gt(),
+                            Ge => ord.is_ge(),
+                            _ => unreachable!(),
+                        };
+                        Ok(CVal::Bool(b))
+                    }
+                    Shl | Shr => {
+                        let l = self.const_eval(lhs, expected, cx, quiet)?;
+                        let CVal::Int { v, ty } = l else {
+                            bail!(e.span, "shift requires an integer constant");
+                        };
+                        let CVal::Int { v: amt, .. } = self.const_eval(rhs, None, cx, quiet)? else {
+                            bail!(e.span, "shift amount must be an integer constant");
+                        };
+                        if amt < 0 || amt >= ty.bits as i128 {
+                            bail!(
+                                e.span,
+                                "shift amount {amt} is out of range for `{}`",
+                                cscalar_name(CScalar::Int(ty))
+                            );
+                        }
+                        let raw = if *op == Shl {
+                            cint_wrap(v << amt, ty)
+                        } else if ty.signed {
+                            v >> amt
+                        } else {
+                            // Logical shift on the unsigned bit pattern.
+                            (v as u128 & ((1u128 << ty.bits) - 1)) as i128 >> amt
+                        };
+                        if *op == Shl && raw != v << amt {
+                            bail!(
+                                e.span,
+                                "`<<` overflows `{}` in constant expression",
+                                cscalar_name(CScalar::Int(ty))
+                            );
+                        }
+                        Ok(CVal::Int { v: raw, ty })
+                    }
+                    Add | Sub | Mul | Div | Mod | AddWrap | SubWrap | MulWrap | BitAnd | BitOr
+                    | BitXor => {
+                        let l = self.const_eval(lhs, expected, cx, quiet)?;
+                        match l {
+                            CVal::Int { v: a, ty } => {
+                                let CVal::Int { v: b, .. } =
+                                    self.const_eval(rhs, Some(CScalar::Int(ty)), cx, quiet)?
+                                else {
+                                    bail!(e.span, "mixed types in constant expression");
+                                };
+                                let wrap = |x| cint_wrap(x, ty);
+                                let v = match op {
+                                    Add => a + b,
+                                    Sub => a - b,
+                                    Mul => a * b,
+                                    AddWrap => wrap(a + b),
+                                    SubWrap => wrap(a - b),
+                                    MulWrap => wrap(a * b),
+                                    Div => {
+                                        if b == 0 {
+                                            bail!(e.span, "division by zero in constant expression");
+                                        }
+                                        a / b
+                                    }
+                                    Mod => {
+                                        if b == 0 {
+                                            bail!(e.span, "modulo by zero in constant expression");
+                                        }
+                                        a % b
+                                    }
+                                    BitAnd => a & b,
+                                    BitOr => a | b,
+                                    BitXor => a ^ b,
+                                    _ => unreachable!(),
+                                };
+                                if !cint_in_range(v, ty) {
+                                    bail!(
+                                        e.span,
+                                        "constant arithmetic overflows `{}`; use `{}` to wrap",
+                                        cscalar_name(CScalar::Int(ty)),
+                                        match op {
+                                            Add => "+%",
+                                            Sub => "-%",
+                                            Mul => "*%",
+                                            _ => "+%",
+                                        }
+                                    );
+                                }
+                                Ok(CVal::Int { v, ty })
+                            }
+                            CVal::Float { v: a, bits } => {
+                                let CVal::Float { v: b, .. } =
+                                    self.const_eval(rhs, Some(CScalar::Float(bits)), cx, quiet)?
+                                else {
+                                    bail!(e.span, "mixed types in constant expression");
+                                };
+                                let v = match op {
+                                    Add => a + b,
+                                    Sub => a - b,
+                                    Mul => a * b,
+                                    Div => a / b,
+                                    _ => bail!(
+                                        e.span,
+                                        "operator not supported on float constants"
+                                    ),
+                                };
+                                Ok(CVal::Float { v, bits })
+                            }
+                            CVal::Bool(_) => bail!(e.span, "arithmetic on a bool constant"),
+                        }
+                    }
+                }
+            }
+            ExprKind::Cast { expr, ty } => {
+                let Some(target) = cscalar_of_type(ty) else {
+                    bail!(
+                        e.span,
+                        "`as` in a constant expression must target a scalar type"
+                    );
+                };
+                if let Some(exp) = expected {
+                    if exp != target {
+                        bail!(
+                            e.span,
+                            "type mismatch in constant expression: expected `{}`, cast produces `{}`",
+                            cscalar_name(exp),
+                            cscalar_name(target)
+                        );
+                    }
+                }
+                let inner = self.const_eval(expr, None, cx, quiet)?;
+                match (inner, target) {
+                    // Int→int truncates/extends by bit pattern — the runtime
+                    // `as` semantic, wrap included.
+                    (CVal::Int { v, .. }, CScalar::Int(t)) => Ok(CVal::Int {
+                        v: cint_wrap(v, t),
+                        ty: t,
+                    }),
+                    (CVal::Int { v, .. }, CScalar::Float(bits)) => Ok(CVal::Float {
+                        v: v as f64,
+                        bits,
+                    }),
+                    (CVal::Float { v, .. }, CScalar::Int(t)) => {
+                        let t0 = v.trunc();
+                        if !t0.is_finite()
+                            || t0 < cint_min(t) as f64
+                            || t0 > cint_max(t) as f64
+                        {
+                            bail!(
+                                e.span,
+                                "float value does not fit `{}` in constant cast",
+                                cscalar_name(CScalar::Int(t))
+                            );
+                        }
+                        Ok(CVal::Int { v: t0 as i128, ty: t })
+                    }
+                    (CVal::Float { v, .. }, CScalar::Float(bits)) => {
+                        let v = if bits == 32 { v as f32 as f64 } else { v };
+                        Ok(CVal::Float { v, bits })
+                    }
+                    (CVal::Bool(b), CScalar::Int(t)) => Ok(CVal::Int {
+                        v: if b { 1 } else { 0 },
+                        ty: t,
+                    }),
+                    (CVal::Bool(b), CScalar::Bool) => Ok(CVal::Bool(b)),
+                    (_, CScalar::Bool) => {
+                        bail!(e.span, "cannot cast to `bool` in a constant expression")
+                    }
+                    (CVal::Bool(_), CScalar::Float(_)) => {
+                        bail!(e.span, "cannot cast `bool` to a float in a constant expression")
+                    }
+                }
+            }
+            _ => bail!(
+                e.span,
+                "not a constant expression: const initializers allow literals, `const` names, arithmetic / bitwise / comparison operators, and `as` casts"
+            ),
+        }
+    }
+
+    /// The scalar value of the named const, resolving through its (possibly
+    /// not-yet-visited) initializer. Memoized; `None` means the const exists
+    /// but has no scalar value (a `str` const, a `#zero`, or an initializer
+    /// that already failed) — or the name is unknown entirely.
+    fn resolve_const_scalar(&mut self, name: &str, cx: &mut ConstCx) -> Option<CVal> {
+        if let Some(done) = cx.resolved.get(name) {
+            return *done;
+        }
+        let (value, ty, origin) = cx.raw.get(name)?.clone();
+        if cx.visiting.iter().any(|n| n == name) {
+            let chain: Vec<&str> = cx.visiting.iter().map(String::as_str).collect();
+            self.err(
+                "E0921",
+                format!(
+                    "const reference cycle: {} -> `{name}`",
+                    chain
+                        .iter()
+                        .map(|n| format!("`{n}`"))
+                        .collect::<Vec<_>>()
+                        .join(" -> ")
+                ),
+                value.span,
+            );
+            cx.resolved.insert(name.to_string(), None);
+            return None;
+        }
+        let expected = cscalar_of_type(&ty);
+        let prev_file = self.current_file.clone();
+        self.set_current_file(origin.as_deref());
+        cx.visiting.push(name.to_string());
+        // A plain-literal initializer keeps the historical path: it is
+        // probed QUIETLY for the cross-const environment (its own type
+        // mismatches stay sema's E0302, exactly as before). Anything else
+        // is a const expression: evaluated loudly at the declared type.
+        let result = if is_const_initializer(&value) {
+            match expected {
+                Some(exp) => self.const_eval(&value, Some(exp), cx, true).ok(),
+                None => None,
+            }
+        } else if let Some(exp) = expected {
+            self.const_eval(&value, Some(exp), cx, false).ok()
+        } else {
+            // Non-scalar declared type with a non-literal initializer:
+            // the historical E0911.
+            self.err(
+                "E0911",
+                "const initializer must be a literal (integer, float, bool, string, unary-negated numeric literal, or `#zero::[T]()`) or a scalar constant expression".to_string(),
+                value.span,
+            );
+            None
+        };
+        cx.visiting.pop();
+        self.set_current_file(prev_file.as_deref());
+        cx.resolved.insert(name.to_string(), result);
+        result
     }
 }
 
@@ -3006,7 +3807,8 @@ fn main() -> i32 { return 0; }\n";
     #[test]
     fn multi_file_static_init_error_points_at_origin_file_gap3() {
         let entry_src = "fn main() -> i32 { return 0; }\n";
-        let lib_src = "// lib header\nstatic BAD: i32 = 1 + 2;\n";
+        // A call is not a constant expression (arithmetic now folds).
+        let lib_src = "// lib header\nstatic BAD: i32 = frob();\n";
         let (mut prog, files, entry_path) = merge_two_files(
             "main",
             "/proj/main.cplus",
@@ -3018,8 +3820,8 @@ fn main() -> i32 { return 0; }\n";
         let diags = lower_multi(&mut prog, &entry_path, entry_src, files);
         let d = diags
             .iter()
-            .find(|d| d.code.0 == "E0911")
-            .expect("expected E0911 on the bad static initializer");
+            .find(|d| d.code.0 == "E0921")
+            .expect("expected E0921 on the bad static initializer");
         assert!(
             d.primary.file.ends_with("lib.cplus"),
             "diagnostic should point at lib.cplus, got {:?}",
@@ -3059,11 +3861,12 @@ fn main() -> i32 { return 0; }\n";
     #[test]
     fn single_file_static_init_error_unchanged_gap3() {
         // The single-file `lower` entry still renders against the one file.
-        let (_, diags) = run("static BAD: i32 = 1 + 2;\nfn main() -> i32 { return 0; }");
+        // (A call initializer — arithmetic in a scalar static folds now.)
+        let (_, diags) = run("static BAD: i32 = frob();\nfn main() -> i32 { return 0; }");
         let d = diags
             .iter()
-            .find(|d| d.code.0 == "E0911")
-            .expect("expected E0911");
+            .find(|d| d.code.0 == "E0921")
+            .expect("expected E0921");
         assert!(
             d.primary.file.ends_with("test.cplus"),
             "got {:?}",
@@ -3800,6 +4603,102 @@ fn main() -> i32 { return 0; }\n";
         }
         assert_eq!(names.len(), 2);
         assert_ne!(names[0], names[1], "builder temps must not collide");
+    }
+
+    // ---- const expressions ----
+
+    #[test]
+    fn array_length_expression_folds_in_type_and_fill() {
+        let (prog, diags) = run(
+            "const CAP: usize = 1024;\n\
+             fn main() -> i32 { let a: [u8; CAP * 2] = [7u8; CAP * 2]; return a[0] as i32; }",
+        );
+        assert!(diags.is_empty(), "got {diags:#?}");
+        let ItemKind::Function(f) = &prog.items[1].kind else {
+            panic!("expected fn");
+        };
+        let StmtKind::Let { ty, init, .. } = &f.body.stmts[0].kind else {
+            panic!("expected let");
+        };
+        let TypeKind::Array { len, len_expr, .. } = &ty.as_ref().unwrap().kind else {
+            panic!("expected array type");
+        };
+        assert_eq!(*len, 2048);
+        assert!(len_expr.is_none(), "len_expr must be folded away");
+        let ExprKind::ArrayFill {
+            count, count_expr, ..
+        } = &init.as_ref().unwrap().kind
+        else {
+            panic!("expected fill");
+        };
+        assert_eq!(*count, 2048);
+        assert!(count_expr.is_none(), "count_expr must be folded away");
+    }
+
+    #[test]
+    fn array_length_expression_unknown_name_e0921() {
+        let (_prog, diags) = run(
+            "fn main() -> i32 { let a: [u8; NOPE * 2] = [0u8; 4]; return 0; }",
+        );
+        assert!(
+            diags.iter().any(|d| d.code.0 == "E0921"),
+            "got {diags:#?}"
+        );
+    }
+
+    #[test]
+    fn const_expression_initializer_folds_to_suffixed_literal() {
+        let (prog, diags) = run(
+            "const MASK: u64 = (1u64 << 40) - 1u64;\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(diags.is_empty(), "got {diags:#?}");
+        let ItemKind::Const(c) = &prog.items[0].kind else {
+            panic!("expected const");
+        };
+        assert!(
+            matches!(&c.value.kind, ExprKind::IntLit(v, NumSuffix::U64) if *v == (1u64 << 40) - 1),
+            "expected folded u64 literal, got {:?}",
+            c.value.kind
+        );
+    }
+
+    #[test]
+    fn multi_file_array_length_lens_qualifies_2026_08_08() {
+        // The resolver qualifies const DECLARATIONS but never rewrote the
+        // `[T; CONST]` lens, so every multi-file binary build missed the
+        // table (E0912 "not a known const"). The lens now rides
+        // resolve_item_name like other references.
+        let entry_src = "fn main() -> i32 { return 0; }\n";
+        let lib_src = "const CAP: usize = 8;\n\
+                       struct Buf { data: [i32; CAP], extra: [i32; CAP * 2] }\n";
+        let (mut prog, files, entry_path) = merge_two_files(
+            "main",
+            "/proj/main.cplus",
+            entry_src,
+            "lib",
+            "/proj/lib.cplus",
+            lib_src,
+        );
+        let diags = lower_multi(&mut prog, &entry_path, entry_src, files);
+        assert!(diags.is_empty(), "got {diags:#?}");
+        let lens: Vec<u32> = prog
+            .items
+            .iter()
+            .find_map(|it| match &it.kind {
+                ItemKind::Struct(s) if s.name.name.ends_with("Buf") => Some(
+                    s.fields
+                        .iter()
+                        .map(|f| match &f.ty.kind {
+                            TypeKind::Array { len, .. } => *len,
+                            _ => panic!("expected array field"),
+                        })
+                        .collect(),
+                ),
+                _ => None,
+            })
+            .expect("Buf struct");
+        assert_eq!(lens, vec![8, 16]);
     }
 
     // ---- derive through the empty impl ----

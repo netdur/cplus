@@ -139,6 +139,9 @@ var z: i32 = 0; z = 7;               // mutable local: rebind + field writes + m
 let w: i32; w = 12;                  // late init; first write counts
 
 const PI: f32 = 3.14159f32;          // module-scope immutable VALUE (inlined; no address)
+const MASK: u64 = (1u64 << 40) - 1u64;   // const EXPRESSIONS fold at compile time, typed at
+const CAP2: usize = CAP * 2;             // the declared width; overflow is E0921 (use +% to wrap);
+                                         // consts may reference consts (any order; cycles rejected)
 static COUNTER: i32 = 0;             // module-scope mutable, addressable global (C/FFI boundary)
 COUNTER = COUNTER +% 1;              // access is bare — the `static` keyword is the marker
 // `static` also takes array literals/fills AND non-generic struct literals:
@@ -278,10 +281,11 @@ let zeros: [u8; 64]    = [0u8; 64];               // memset fast path
 let ones:  [i32; 4]    = [1; 4];                  // (1,1,1,1)
 let big:   [u8; 16384] = [0u8; 16384];            // single llvm.memset
 
-// N is a u32 literal OR a non-negative integer `const` name (folded before
-// type-check; unknown/non-int -> E0X36). No length arithmetic (`[T; N*2]`).
+// N is a u32 literal, a `const` name, or any constant expression evaluated
+// at `usize` (folded before type-check; unknown name/non-int -> E0912/E0921).
 const CAP: usize = 1024;
 let buf: [u8; CAP] = [0u8; CAP];                  // const in the type AND fill count
+let big: [u8; CAP * 2] = [0u8; CAP * 2];          // length arithmetic folds at compile time
 ```
 
 ### Generics + bounds + turbofish

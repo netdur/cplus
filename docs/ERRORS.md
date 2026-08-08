@@ -4,7 +4,7 @@
 
 Every C+ diagnostic carries a numbered code, a source span, and often a machine-applicable suggestion. `cpc --diagnostics=json` emits the same information in a machine-readable shape for editors and agents. Codes prefixed with **W** are non-fatal warnings; the build continues. The normative ranges and what each phase owns are fixed in [§20 of the language specification](/docs/spec).
 
-This is the complete index — **181 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **140** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
+This is the complete index — **182 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **141** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
 
 ## Lexical
 
@@ -2238,17 +2238,17 @@ fn main() -> i32 { return 0; }
 
 ## const / static / char
 
-### E0911 · `const`/`static` initializer is not a literal
+### E0911 · `const`/`static` initializer shape not accepted
 
-A `const` or `static` initializer used a non-literal shape (arithmetic, an identifier, a call, or a generic struct literal); `const` is literal-only and `static` allows only literals, `#zero::[T]()`, array literals/fills, or non-generic struct literals of such.
+A `const` or `static` initializer used a shape outside the accepted set. A scalar-typed const or static takes a literal or any constant expression (folded by lower, see E0921); a non-scalar `const` is literal-only; a non-scalar `static` allows `#zero::[T]()`, array literals/fills, and non-generic struct literals of such.
 
 ```cplus
-const FOO: i32 = 1 + 2;
+const C: [i32; 4] = [1, 2, 3, 4];
 ```
 
-**Fix.** Use a literal initializer (or an accepted `static` shape such as `#zero::[T]()` or an array/struct literal of literals).
+**Fix.** Use a literal or constant expression (or, for a non-scalar `static`, one of the aggregate shapes).
 
-<sub>repro: checked · cplus-core/src/lower.rs:729 · test cplus-core/src/sema.rs:const_with_non_literal_initializer_e0911</sub>
+<sub>repro: checked · cplus-core/src/lower.rs:resolve_const_scalar · test cplus-core/src/sema.rs:array_literal_in_const_still_rejected_e0911_g043</sub>
 
 ### E0912 · Unknown `const` array length
 
@@ -2277,6 +2277,20 @@ fn main() -> i32 {
 **Fix.** Move the asset inside the package and reference it with a package-relative path. A `..` that stays within the package (e.g. `../adapter/asset.bin` from `src/`) is allowed; only paths that leave the package are rejected.
 
 <sub>repro: checked · cplus-core/src/sema.rs:include_path_escapes_package · test cplus-core/src/sema.rs:include_bytes_escaping_package_is_rejected_e0918</sub>
+
+### E0921 · Invalid constant expression
+
+A `const`/`static` initializer or an array-length expression failed compile-time evaluation: arithmetic overflowed the declared type's width, a shift amount was out of range, a division by zero occurred, two consts reference each other in a cycle, operand types mixed without a cast, or the expression used a non-constant construct (a call, a field, a runtime name).
+
+```cplus
+const A: u8 = 255u8 + 1u8;
+fn main() -> i32 { return 0; }
+// -> [E0921] constant arithmetic overflows `u8`; use `+%` to wrap
+```
+
+**Fix.** Constant evaluation is typed: match operand types with suffixes or `as` casts, and keep results inside the declared type. Overflow is an error by design — the wrapping spellings `+%` / `-%` / `*%` wrap, exactly as at runtime.
+
+<sub>repro: checked · cplus-core/src/lower.rs:const_eval · test cplus-core/src/sema.rs:const_overflow_rejected_e0921</sub>
 
 ## Targets and packages
 

@@ -19386,6 +19386,7 @@ fn substitute_param_in_type_ast_with_tables(
             )),
             len: *len,
             len_name: None,
+            len_expr: None,
         },
         TypeKind::Borrowed { region, inner } => TypeKind::Borrowed {
             region: region.clone(),
@@ -19461,6 +19462,7 @@ fn ty_to_type_ast_kind_with_tables(
             elem: Box::new(node(elem)),
             len: *n,
             len_name: None,
+            len_expr: None,
         },
         Ty::FnPtr {
             params,
@@ -30309,21 +30311,64 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
     }
 
     #[test]
-    fn const_with_non_literal_initializer_e0911() {
-        // Arithmetic in the initializer is rejected by lower with E0911.
-        let codes = lowered_errors("const FOO: i32 = 1 + 2;");
-        assert!(codes.iter().any(|c| c == "E0911"), "got {:?}", codes);
+    fn const_arithmetic_initializer_folds_clean() {
+        // Const expressions: arithmetic over literals folds in lower at the
+        // declared type's width (was E0911 before v0.0.27).
+        let diags = check_src_lowered(
+            "const FOO: i32 = 1 + 2; \
+             fn main() -> i32 { return FOO - 3; }",
+        );
+        assert!(diags.is_empty(), "got {:#?}", diags);
     }
 
     #[test]
-    fn const_with_ident_initializer_e0911() {
-        // Referring to another binding/const from an initializer is
-        // out of scope for v0.0.9.
-        let codes = lowered_errors(
-            "const A: i32 = 5; \
-             const B: i32 = A;",
+    fn const_referencing_const_folds_clean() {
+        // Cross-const references resolve order-independently (was E0911).
+        let diags = check_src_lowered(
+            "const B: u64 = A * 2u64; \
+             const A: u64 = 21u64; \
+             fn main() -> i32 { \
+                 if B == 42u64 { return 0; } \
+                 return 1; \
+             }",
         );
-        assert!(codes.iter().any(|c| c == "E0911"), "got {:?}", codes);
+        assert!(diags.is_empty(), "got {:#?}", diags);
+    }
+
+    #[test]
+    fn const_overflow_rejected_e0921() {
+        // Typed folding: overflow at the declared width is a hard error,
+        // not a wrap — the explicit `+%` spelling wraps.
+        let codes = lowered_errors("const A: u8 = 255u8 + 1u8;");
+        assert!(codes.iter().any(|c| c == "E0921"), "got {:?}", codes);
+        let diags = check_src_lowered(
+            "const A: u8 = 255u8 +% 1u8; \
+             fn main() -> i32 { return A as i32; }",
+        );
+        assert!(diags.is_empty(), "got {:#?}", diags);
+    }
+
+    #[test]
+    fn const_cycle_rejected_e0921() {
+        let codes = lowered_errors(
+            "const A: i32 = B + 1; \
+             const B: i32 = A + 1;",
+        );
+        assert!(codes.iter().any(|c| c == "E0921"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn const_shift_mask_folds_to_u64_clean() {
+        // The motivating case: a 40-bit mask built as the arithmetic that
+        // defines it — no wrap-through-i32 dance.
+        let diags = check_src_lowered(
+            "const MASK40: u64 = (1u64 << 40) - 1u64; \
+             fn main() -> i32 { \
+                 if MASK40 == 1099511627775u64 { return 0; } \
+                 return 1; \
+             }",
+        );
+        assert!(diags.is_empty(), "got {:#?}", diags);
     }
 
     // v0.0.12 G-033: array literals + fill literals still rejected in
@@ -30506,16 +30551,15 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
         );
     }
 
-    // The narrowing-cast allowance is for *literal* operands only: a cast
-    // of an arithmetic expression or identifier is still E0911.
+    // Const expressions (v0.0.27): a scalar static may be any constant
+    // expression — the cast-of-arithmetic that v0.0.19 rejected now folds.
     #[test]
-    fn static_cast_of_arithmetic_still_rejected_e0911_v0019() {
-        let codes = lowered_errors("static X: i8 = (1 + 2) as i8;");
-        assert!(
-            codes.iter().any(|c| c == "E0911"),
-            "expected E0911, got {:?}",
-            codes
+    fn static_cast_of_arithmetic_folds_v0027() {
+        let diags = check_src_lowered(
+            "static X: i8 = (1 + 2) as i8; \
+             fn main() -> i32 { return (X as i32) - 3; }",
         );
+        assert!(diags.is_empty(), "got {:#?}", diags);
     }
 
     #[test]

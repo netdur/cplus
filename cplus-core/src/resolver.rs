@@ -2559,7 +2559,29 @@ fn rewrite_type(ty: &mut Type, ctx: &RewriteCtx) -> Result<(), ResolveError> {
         TypeKind::Path(s) => {
             *s = rewrite_type_name(s, ty.span, ctx)?;
         }
-        TypeKind::Array { elem, .. } => rewrite_type(elem, ctx)?,
+        // 2026-08-08: the `len_name` lens (`[T; CONST]`) must be qualified
+        // like every other item reference — const DECLARATIONS are qualified
+        // by `qualify_local`, so an unrewritten bare lens missed the table in
+        // every multi-file binary build (E0912 "not a known const").
+        TypeKind::Array {
+            elem,
+            len_name,
+            len_expr,
+            ..
+        } => {
+            rewrite_type(elem, ctx)?;
+            if let Some(n) = len_name {
+                if let Some(q) = ctx.resolve_item_name(n, ty.span)? {
+                    *n = q;
+                }
+            }
+            // v0.0.27: an inline length expression references consts by
+            // name — qualify them like any other expression.
+            if let Some(e) = len_expr {
+                let mut scope: HashSet<String> = HashSet::new();
+                rewrite_expr(e, ctx, &mut scope)?;
+            }
+        }
         // Slice 6BC.5: region annotations are transparent for resolver
         // qualification — recurse into the inner type so a `prefix::T`
         // inside is qualified. (The surface `borrow REGION T` syntax was
@@ -3240,7 +3262,25 @@ fn rewrite_expr(
             }
         }
         ExprKind::Field { receiver, .. } => rewrite_expr(receiver, ctx, scope)?,
-        ExprKind::ArrayFill { fill, .. } => rewrite_expr(fill, ctx, scope)?,
+        // 2026-08-08: same lens rule as `TypeKind::Array` — a `[v; CONST]`
+        // fill count references a qualified const declaration, and a
+        // v0.0.27 count EXPRESSION references consts by name.
+        ExprKind::ArrayFill {
+            fill,
+            count_name,
+            count_expr,
+            ..
+        } => {
+            rewrite_expr(fill, ctx, scope)?;
+            if let Some(n) = count_name {
+                if let Some(q) = ctx.resolve_item_name(n, e.span)? {
+                    *n = q;
+                }
+            }
+            if let Some(ce) = count_expr {
+                rewrite_expr(ce, ctx, scope)?;
+            }
+        }
         ExprKind::ArrayLit { elements } | ExprKind::TupleLit { elements } => {
             for el in elements {
                 rewrite_expr(el, ctx, scope)?;

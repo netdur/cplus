@@ -2873,18 +2873,18 @@ fn main() -> i32 { return rec::[i32](); }
 
 [[code]]
 id = "E0911"
-title = "`const`/`static` initializer is not a literal"
+title = "`const`/`static` initializer shape not accepted"
 category = "const / static / char"
 severity = "error"
 repro = "checked"
 lang = "cplus"
 verified = true
-emit_site = "cplus-core/src/lower.rs:729"
-test = "cplus-core/src/sema.rs:const_with_non_literal_initializer_e0911"
-cause = "A `const` or `static` initializer used a non-literal shape (arithmetic, an identifier, a call, or a generic struct literal); `const` is literal-only and `static` allows only literals, `#zero::[T]()`, array literals/fills, or non-generic struct literals of such."
-fix = "Use a literal initializer (or an accepted `static` shape such as `#zero::[T]()` or an array/struct literal of literals)."
+emit_site = "cplus-core/src/lower.rs:resolve_const_scalar"
+test = "cplus-core/src/sema.rs:array_literal_in_const_still_rejected_e0911_g043"
+cause = "A `const` or `static` initializer used a shape outside the accepted set. A scalar-typed const or static takes a literal or any constant expression (folded by lower, see E0921); a non-scalar `const` is literal-only; a non-scalar `static` allows `#zero::[T]()`, array literals/fills, and non-generic struct literals of such."
+fix = "Use a literal or constant expression (or, for a non-scalar `static`, one of the aggregate shapes)."
 example = '''
-const FOO: i32 = 1 + 2;
+const C: [i32; 4] = [1, 2, 3, 4];
 '''
 
 [[code]]
@@ -3032,6 +3032,24 @@ example = '''
 extern fn __cplus_reactor_get_state() -> *u8;
 fn main() -> i32 { return 0; }
 // -> [E0919] `__cplus_reactor_get_state` starts with `__cplus_`, the compiler's reserved runtime-ABI prefix
+'''
+
+[[code]]
+id = "E0921"
+title = "Invalid constant expression"
+category = "const / static / char"
+severity = "error"
+repro = "checked"
+lang = "cplus"
+verified = true
+emit_site = "cplus-core/src/lower.rs:const_eval"
+test = "cplus-core/src/sema.rs:const_overflow_rejected_e0921"
+cause = "A `const`/`static` initializer or an array-length expression failed compile-time evaluation: arithmetic overflowed the declared type's width, a shift amount was out of range, a division by zero occurred, two consts reference each other in a cycle, operand types mixed without a cast, or the expression used a non-constant construct (a call, a field, a runtime name)."
+fix = "Constant evaluation is typed: match operand types with suffixes or `as` casts, and keep results inside the declared type. Overflow is an error by design — the wrapping spellings `+%` / `-%` / `*%` wrap, exactly as at runtime."
+example = '''
+const A: u8 = 255u8 + 1u8;
+fn main() -> i32 { return 0; }
+// -> [E0921] constant arithmetic overflows `u8`; use `+%` to wrap
 '''
 
 [[code]]

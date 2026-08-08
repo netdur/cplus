@@ -1125,10 +1125,12 @@ fn subst_type(ty: &Type, map: &HashMap<String, Type>) -> Type {
             elem,
             len,
             len_name,
+            len_expr,
         } => TypeKind::Array {
             elem: Box::new(subst_type(elem, map)),
             len: *len,
             len_name: len_name.clone(),
+            len_expr: len_expr.clone(),
         },
         other => other.clone(),
     };

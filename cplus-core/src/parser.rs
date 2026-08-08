@@ -1961,22 +1961,29 @@ impl Parser {
                 let elem = Box::new(self.parse_type()?);
                 self.expect(&TokenKind::Semi, "`;` in array type")?;
                 let len_tok = self.peek().clone();
-                let (len, len_name) = match &len_tok.kind {
-                    TokenKind::Int(v, _) => {
+                // A single-token length keeps the historical fast paths (an
+                // int literal, or a bare `const` name for the v0.0.13 lens).
+                // Anything else — `CAP * 2`, `(1 << SHIFT)` — parses as a
+                // full expression, evaluated at `usize` and folded to a
+                // literal by lower's `resolve_const_array_lengths` (v0.0.27
+                // const expressions).
+                let (len, len_name, len_expr) = match (&len_tok.kind, self.peek_kind_n(1)) {
+                    (TokenKind::Int(v, _), TokenKind::RBracket) => {
                         if *v > u32::MAX as u64 {
                             return Err(self.err_at_peek("array length fitting in u32"));
                         }
                         self.bump();
-                        (*v as u32, None)
+                        (*v as u32, None, None)
                     }
-                    // v0.0.13: a non-negative integer `const` name. Folded to a
-                    // literal `u32` by lower's `resolve_const_array_lengths`.
-                    TokenKind::Ident(name) => {
+                    (TokenKind::Ident(name), TokenKind::RBracket) => {
                         let n = name.clone();
                         self.bump();
-                        (0, Some(n))
+                        (0, Some(n), None)
                     }
-                    _ => return Err(self.err_at_peek("integer or `const`-name array length")),
+                    _ => {
+                        let e = self.in_delimited(|p| p.parse_expr())?;
+                        (0, None, Some(Box::new(e)))
+                    }
                 };
                 let end = self.expect(&TokenKind::RBracket, "`]`")?.span;
                 Ok(Type {
@@ -1984,6 +1991,7 @@ impl Parser {
                         elem,
                         len,
                         len_name,
+                        len_expr,
                     },
                     span: start.merge(end),
                 })
@@ -4098,33 +4106,37 @@ impl Parser {
                 if self.eat(&TokenKind::Semi) {
                     // Fill-array form: `[EXPR; N]`.
                     let count_tok = self.peek().clone();
-                    let (count, count_name) = match &count_tok.kind {
-                        TokenKind::Int(v, _) => {
-                            if *v > u32::MAX as u64 {
-                                return Err(self.err_at_peek("fill-array count fitting in u32"));
+                    // Same three-way split as the array TYPE length: literal,
+                    // bare `const` name, or (v0.0.27) a full constant
+                    // expression folded by lower.
+                    let (count, count_name, count_expr) =
+                        match (&count_tok.kind, self.peek_kind_n(1)) {
+                            (TokenKind::Int(v, _), TokenKind::RBracket) => {
+                                if *v > u32::MAX as u64 {
+                                    return Err(
+                                        self.err_at_peek("fill-array count fitting in u32")
+                                    );
+                                }
+                                self.bump();
+                                (*v as u32, None, None)
                             }
-                            self.bump();
-                            (*v as u32, None)
-                        }
-                        // v0.0.13: a non-negative integer `const` name. Folded to
-                        // a literal `u32` by lower's `resolve_const_array_lengths`.
-                        TokenKind::Ident(name) => {
-                            let n = name.clone();
-                            self.bump();
-                            (0, Some(n))
-                        }
-                        _ => {
-                            return Err(
-                                self.err_at_peek("integer or `const`-name fill-array count after `;`")
-                            )
-                        }
-                    };
+                            (TokenKind::Ident(name), TokenKind::RBracket) => {
+                                let n = name.clone();
+                                self.bump();
+                                (0, Some(n), None)
+                            }
+                            _ => {
+                                let e = self.in_delimited(|p| p.parse_expr())?;
+                                (0, None, Some(Box::new(e)))
+                            }
+                        };
                     let end = self.expect(&TokenKind::RBracket, "`]`")?.span;
                     return Ok(Expr {
                         kind: ExprKind::ArrayFill {
                             fill: Box::new(first),
                             count,
                             count_name,
+                            count_expr,
                         },
                         span: start.merge(end),
                     });

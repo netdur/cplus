@@ -617,6 +617,7 @@ fn ty_to_type_ast(ty: &Ty, type_name_of: &dyn Fn(&Ty) -> String) -> Type {
             elem: Box::new(ty_to_type_ast(elem, type_name_of)),
             len: *n,
             len_name: None,
+            len_expr: None,
         },
         // v0.0.6 Slice 1B: SIMD vector source name is `<elem>x<lanes>`,
         // e.g. `f32x4`. Mirrors the resolver's accepted form.
@@ -804,6 +805,7 @@ fn rewrite_self_in_type(ty: &Type, mangled_name: &str) -> Type {
             elem: Box::new(rewrite_self_in_type(elem, mangled_name)),
             len: *len,
             len_name: None,
+            len_expr: None,
         },
         TypeKind::Borrowed { region, inner } => TypeKind::Borrowed {
             region: region.clone(),
@@ -1547,6 +1549,7 @@ fn subst_type_ast(
             elem: Box::new(subst_type_ast(elem, subst, type_name_of, struct_lookup)),
             len: *len,
             len_name: None,
+            len_expr: None,
         },
         TypeKind::Borrowed { region, inner } => TypeKind::Borrowed {
             region: region.clone(),

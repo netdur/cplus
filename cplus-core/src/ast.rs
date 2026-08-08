@@ -524,6 +524,11 @@ pub enum TypeKind {
         elem: Box<Type>,
         len: u32,
         len_name: Option<String>,
+        /// v0.0.27 const expressions: `[T; CAP * 2]` — an inline constant
+        /// expression length. Parsed here, evaluated (at `usize`) and folded
+        /// into `len` by lower's `resolve_const_array_lengths`; every pass
+        /// after lower sees `None`.
+        len_expr: Option<Box<Expr>>,
     },
     /// Slice 6BC.5: region-annotated borrow type, historically written
     /// `borrow REGION T`. No source path constructs this anymore: the
@@ -985,6 +990,9 @@ pub enum ExprKind {
         fill: Box<Expr>,
         count: u32,
         count_name: Option<String>,
+        /// v0.0.27 const expressions: `[v; CAP * 2]` — inline constant
+        /// expression count, folded by lower exactly like `len_expr`.
+        count_expr: Option<Box<Expr>>,
     },
     /// Indexing: `expr[index]`. Phase 2D.
     Index {
@@ -1505,10 +1513,12 @@ pub fn walk_expr_kind<R: ExprRewriter + ?Sized>(e: &Expr, r: &mut R) -> ExprKind
             fill,
             count,
             count_name,
+            count_expr,
         } => ExprKind::ArrayFill {
             fill: Box::new(walk_expr(fill, r)),
             count: *count,
             count_name: count_name.clone(),
+            count_expr: count_expr.as_ref().map(|e| Box::new(walk_expr(e, r))),
         },
         ExprKind::Index { receiver, index } => ExprKind::Index {
             receiver: Box::new(walk_expr(receiver, r)),
@@ -1759,10 +1769,12 @@ pub fn walk_type<R: ExprRewriter + ?Sized>(t: &Type, r: &mut R) -> Type {
             elem,
             len,
             len_name,
+            len_expr,
         } => TypeKind::Array {
             elem: Box::new(walk_type(elem, r)),
             len: *len,
             len_name: len_name.clone(),
+            len_expr: len_expr.as_ref().map(|e| Box::new(walk_expr(e, r))),
         },
         TypeKind::Borrowed { region, inner } => TypeKind::Borrowed {
             region: region.clone(),

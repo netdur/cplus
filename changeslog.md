@@ -26,6 +26,21 @@ earlier history lives in each version's archived plan.
   are not derivable — **E0920** names the field and the manual fix.
   Deriving needs a struct target (E0916 otherwise); `Copy` remains
   structural and is never written.
+- **Const expressions**: a `const` (or scalar `static`) initializer may be
+  any pure expression over literals and other consts — `const MASK: u64 =
+  (1u64 << 40) - 1u64;`, `const CAP2: usize = CAP * 2;` — folded in lower
+  before sema. Evaluation is TYPED at the declared width: overflow, bad
+  shifts, division by zero, mixed types without a cast, and reference
+  cycles are hard errors (**E0921**); the wrap spellings `+% -% *%` wrap
+  exactly as at runtime. Cross-const references resolve in any order.
+  Array lengths and fill counts take the same expressions inline —
+  `[u8; CAP * 2]`, `[0u8; 1 << SHIFT]` — evaluated at `usize`. This
+  retires the wrap-through-i32 mask-building dance.
+- **Fixed: `[T; CONST]` in multi-file builds.** The resolver qualified
+  const declarations but never rewrote the array-length lens, so a
+  cross-module (or even same-module, in a binary target) `[T; CONST]`
+  failed with E0912 "not a known const". The lens (and `[v; CONST]` fill
+  counts) now resolve like every other item reference.
 - **`==` / `!=` on payload-carrying enums is now E0302** ("match on the
   variants instead"). The shape previously escaped sema and died as
   invalid LLVM IR; payload-free enums still compare by discriminant.
