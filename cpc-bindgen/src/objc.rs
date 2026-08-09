@@ -22,6 +22,12 @@
 use std::collections::{HashMap, HashSet};
 
 pub struct ObjcEmitter {
+    /// The block argument or return type that made the last
+    /// `parse_block_args` / `parse_block_ret` give up, so the SKIPPED comment
+    /// can name it instead of saying "unparseable". A `Cell` because the
+    /// mapping walk is `&self` — it reads tables and decides, it does not
+    /// build anything.
+    unbindable_block_ty: std::cell::Cell<Option<String>>,
     header_path: String,
     // Header basenames whose decls this emitter owns. Single-header mode: just
     // the target header. `--merge` mode: every framework-home header, so the
@@ -382,6 +388,7 @@ enum Arg {
 impl ObjcEmitter {
     pub fn new(header_path: &str, prefix: &str, overrides: serde_json::Value) -> Self {
         ObjcEmitter {
+            unbindable_block_ty: std::cell::Cell::new(None),
             header_path: header_path.to_string(),
             home_set: std::iter::once(base(header_path)).collect(),
             merge: false,
@@ -2686,10 +2693,16 @@ impl ObjcEmitter {
         }
         // `block_qt` is the underlying `RET (^)(...)` type — resolved through a
         // typedef alias by the caller for completion-handler params.
+        self.unbindable_block_ty.set(None);
         let block_args = match self.parse_block_args(block_qt) {
             Some(a) => a,
             None => {
-                self.body.push_str(&format!("    // SKIPPED `{sel}`: unparseable block signature\n"));
+                let why = match self.unbindable_block_ty.take() {
+                    Some(t) => format!("block argument type `{t}` has no C+ wire type"),
+                    None => "unparseable block signature".to_string(),
+                };
+                self.body
+                    .push_str(&format!("    // SKIPPED `{sel}`: {why}\n"));
                 return;
             }
         };
@@ -2697,7 +2710,17 @@ impl ObjcEmitter {
         // The block's own return, which the handler must produce and the
         // trampoline must pass back. Void for a completion handler; anything
         // else and dropping it made the API unusable rather than merely lossy.
+        self.unbindable_block_ty.set(None);
         let block_ret = self.parse_block_ret(block_qt);
+        if let Some(t) = self.unbindable_block_ty.take() {
+            // The block returns something this generator cannot name. Dropping
+            // the return silently is what made value-returning blocks unusable
+            // in the first place; describing it wrongly would be worse.
+            self.body.push_str(&format!(
+                "    // SKIPPED `{sel}`: block return type `{t}` has no C+ wire type\n"
+            ));
+            return;
+        }
         let ret_arrow = match &block_ret {
             Some(r) => format!(" -> {r}"),
             None => String::new(),
@@ -2900,7 +2923,20 @@ impl ObjcEmitter {
         if out.len() == 1 && out[0] == "void" {
             out.clear();
         }
-        Some(out.iter().map(|a| self.map_block_arg(a)).collect())
+        // One unmappable argument makes the whole block unbindable: a
+        // trampoline with a wrong parameter type is worse than an absent one,
+        // because it compiles.
+        let mut mapped: Vec<String> = Vec::with_capacity(out.len());
+        for a in &out {
+            match self.map_block_arg(a) {
+                Some(t) => mapped.push(t),
+                None => {
+                    self.unbindable_block_ty.set(Some(a.clone()));
+                    return None;
+                }
+            }
+        }
+        Some(mapped)
     }
 
     /// The block's RETURN type, in C+ spelling — `None` for `void`.
@@ -2921,33 +2957,62 @@ impl ObjcEmitter {
         if b.is_empty() || b == "void" {
             return None;
         }
-        Some(self.map_block_arg(b))
+        let mapped = self.map_block_arg(b);
+        if mapped.is_none() {
+            self.unbindable_block_ty.set(Some(b.to_string()));
+        }
+        mapped
     }
 
-    /// C+ wire type for one block-callback argument (what ObjC passes in).
-    fn map_block_arg(&self, qt: &str) -> String {
+    /// C+ wire type for one block-callback argument or return — `None` when
+    /// this generator cannot say what the type IS, in which case the whole
+    /// block binding is skipped rather than described wrongly.
+    ///
+    /// This used to end in `_ => "i64"`: everything unrecognized was declared
+    /// an 8-byte integer. For an object that was merely imprecise (fixed in
+    /// the commit that gave blocks a return type), but for the rest it was an
+    /// ABI claim that is simply false — a `float` or `double` argument
+    /// arrives in a vector register and a handler declared `fn(i64)` reads a
+    /// general one, an `int` occupies half a register with the top half
+    /// undefined, and a `CGRect` is four doubles rather than one integer at
+    /// all. The same header shapes were already mapped correctly TWICE in
+    /// this file (`map_arg` for method parameters, `delegate_numeric` /
+    /// `delegate_struct` for synthesized delegate callbacks); the block path
+    /// was the one place that guessed. It now asks the same two tables, and
+    /// `None` — "skip this binding" — is the answer for whatever they do not
+    /// cover, which is `delegate_numeric`'s own documented posture.
+    fn map_block_arg(&self, qt: &str) -> Option<String> {
         let (b, _) = strip_nullability(qt);
         let b = b.trim();
-        if b == "NSRange" {
-            return "rt::Range".to_string();
-        }
-        if b.ends_with('*') {
-            return "*u8".to_string();
-        }
         // An object that is not spelled with a star is still an object. `id`,
-        // `instancetype` and a protocol-qualified `id<P>` all fell through to the
-        // 8-byte scalar catch-all below, which is ABI-identical on arm64 and so
-        // never misbehaved — but it spells a pointer `i64`, and a handler that
-        // must RETURN one then has to cast to say what it plainly means.
-        if b == "id" || b == "instancetype" || b == "Class" || b.starts_with("id<") {
-            return "*u8".to_string();
+        // `instancetype`, a protocol-qualified `id<P>`, `Class` and `SEL` are
+        // all handles; so is anything ending in a star.
+        if b.ends_with('*')
+            || b == "id"
+            || b == "instancetype"
+            || b == "Class"
+            || b == "SEL"
+            || b.starts_with("id<")
+        {
+            return Some("*u8".to_string());
         }
-        match b {
-            "NSUInteger" | "unsigned long" => "u64".to_string(),
-            "BOOL" => "i8".to_string(),
-            // NSInteger, NS_ENUM/NS_OPTIONS, and other 8-byte scalars.
-            _ => "i64".to_string(),
+        // The geometry structs the runtime mirrors field-for-field. These pass
+        // in registers on arm64 exactly as the msgSend side does.
+        if let Some((cty, _, _, _)) = delegate_struct(b) {
+            return Some(cty.to_string());
         }
+        // An NS_ENUM rides its underlying integer over the wire. `underlying`
+        // is recorded from the declaration's `fixedUnderlyingType`, so an
+        // NS_ENUM(uint8_t) is a `u8` here and not the `i64` every enum used to
+        // become; NS_OPTIONS is unsigned by construction.
+        if let Some(objc_enum) = self.enum_of(b) {
+            let info = self.enums.get(&objc_enum)?;
+            if !info.underlying.is_empty() {
+                return Some(info.underlying.clone());
+            }
+            return Some(if info.is_options { "u64" } else { "i64" }.to_string());
+        }
+        delegate_numeric(b).map(|(cty, _, _, _)| cty.to_string())
     }
 
     /// The `rt::msg_*` call expression for a (receiver, selector, return, args)
@@ -5556,10 +5621,82 @@ mod tests {
             ]
         });
         let out = ObjcEmitter::new("test.h", "MTL", serde_json::json!({})).run(&tu);
-        assert!(out.contains("cb: fn(*u8, i64, *u8), ctx: *u8"), "block wrapper sig:\n{out}");
+        // `(id, NSError *)` -> `(*u8, *u8)`, behind the leading ctx. The `id`
+        // half read `i64` until blocks learned that an object not spelled
+        // with a star is still an object; the assertion is written against
+        // the mapping, not against the register width the two happen to
+        // share on arm64.
+        assert!(out.contains("cb: fn(*u8, *u8, *u8), ctx: *u8"), "block wrapper sig:\n{out}");
         assert!(out.contains("_block {"), "block struct emitted:\n{out}");
         assert!(out.contains("rt::stack_block_isa()"), "stack block:\n{out}");
         assert!(!out.contains("unmapped type `MTLHandler`"), "not skipped as unmapped:\n{out}");
+    }
+
+    /// A block argument or return is bound at its REAL type, or the binding
+    /// is skipped. The mapper used to end in `_ => "i64"`, which is an ABI
+    /// claim rather than a translation: `double` and `float` arrive in vector
+    /// registers, `int` fills half a general one, and `CGRect` is four
+    /// doubles. Each of those compiled into a trampoline that read the wrong
+    /// register and returned whatever was in it.
+    #[test]
+    fn block_args_bind_at_their_real_width() {
+        let block = |sig: &str| {
+            serde_json::json!({
+                "inner": [
+                    { "kind": "ObjCProtocolDecl", "name": "T", "loc": { "file": "test.h" }, "inner": [
+                        { "kind": "ObjCMethodDecl", "name": "run:", "instance": true, "loc": { "file": "test.h" },
+                          "returnType": { "qualType": "void" },
+                          "inner": [
+                            { "kind": "ParmVarDecl", "name": "handler", "type": { "qualType": sig } } ] } ] },
+                ]
+            })
+        };
+        let emit = |sig: &str| ObjcEmitter::new("test.h", "T", serde_json::json!({})).run(&block(sig));
+
+        let d = emit("void (^)(double)");
+        assert!(d.contains("cb: fn(*u8, f64)"), "double is f64:\n{d}");
+        let f = emit("void (^)(float)");
+        assert!(f.contains("cb: fn(*u8, f32)"), "float is f32:\n{f}");
+        let i = emit("void (^)(int)");
+        assert!(i.contains("cb: fn(*u8, i32)"), "int is i32:\n{i}");
+        let u = emit("void (^)(uint8_t)");
+        assert!(u.contains("cb: fn(*u8, u8)"), "uint8_t is u8:\n{u}");
+        let b = emit("void (^)(BOOL)");
+        assert!(b.contains("cb: fn(*u8, i8)"), "BOOL is i8:\n{b}");
+        // CGFloat is a double on 64-bit Apple, and a return is mapped by the
+        // same table as an argument.
+        let r = emit("CGFloat (^)(NSInteger)");
+        assert!(r.contains("cb: fn(*u8, i64) -> f64"), "CGFloat return:\n{r}");
+        // A geometry struct passes as the runtime's mirror of it, the same
+        // shape the msgSend side uses.
+        let g = emit("void (^)(CGRect)");
+        assert!(g.contains("cb: fn(*u8, rt::Rect)"), "CGRect is rt::Rect:\n{g}");
+        // SEL and Class are handles, like `id`.
+        let s = emit("void (^)(SEL, Class)");
+        assert!(s.contains("cb: fn(*u8, *u8, *u8)"), "SEL/Class are handles:\n{s}");
+    }
+
+    /// What the mapper cannot name, it refuses — and says which type stopped
+    /// it. A wrong trampoline is worse than an absent one because it
+    /// compiles.
+    #[test]
+    fn unmappable_block_type_skips_with_its_name() {
+        let tu = serde_json::json!({
+            "inner": [
+                { "kind": "ObjCProtocolDecl", "name": "T", "loc": { "file": "test.h" }, "inner": [
+                    { "kind": "ObjCMethodDecl", "name": "run:", "instance": true, "loc": { "file": "test.h" },
+                      "returnType": { "qualType": "void" },
+                      "inner": [
+                        { "kind": "ParmVarDecl", "name": "handler",
+                          "type": { "qualType": "void (^)(struct MTLWeirdThing)" } } ] } ] },
+            ]
+        });
+        let out = ObjcEmitter::new("test.h", "MTL", serde_json::json!({})).run(&tu);
+        assert!(
+            out.contains("SKIPPED") && out.contains("MTLWeirdThing"),
+            "skip names the offending type:\n{out}"
+        );
+        assert!(!out.contains("_block {"), "no block struct emitted:\n{out}");
     }
 
     #[test]
