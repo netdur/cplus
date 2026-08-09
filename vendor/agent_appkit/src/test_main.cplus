@@ -874,3 +874,54 @@ fn set_text_on_a_field_does_not_fire_its_enter_action() {
     assert txt.view() == "typed";      // the write landed
     assert FIELD_ACTIONS == (0 as i32); // and submitted nothing
 }
+
+// ---- a search field is THREE controls, not one -------------------------------
+
+static SEARCH_FIRED: i64 = 0;
+fn on_search_action(sender: *u8) { SEARCH_FIRED = SEARCH_FIRED + (1 as i64); return; }
+
+#[test]
+fn a_search_field_exposes_its_text_its_search_and_its_clear() {
+    // NSSearchField is three affordances in one control: type into it, click the
+    // magnifier to run the search, click the cancel glyph to clear it. Two of the
+    // three are NSButtonCells on the field's NSSearchFieldCell, and `walk`
+    // descends `subviews` — which a cell is not. The agent could type a query
+    // and then had no way to run it or take it back.
+    SEARCH_FIRED = 0;
+    let win = fixture_window(300.0f64, 200.0f64);
+    let content = content_of(win);
+    let sf: *u8 = rt::alloc_init(#str_ptr("NSSearchField\0"));
+    rt::msg_void_rect(sf, rt::sel(#str_ptr("setFrame:\0")),
+                      rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 24.0 });
+    content.add_subview(ak::View::from_raw(sf));
+    agent::set_agent_id(sf, "search");
+    ak::Control::from_raw(sf).set_on_action(on_search_action);
+
+    var s: agent::Surface = agent::open(win.raw());
+    let nodes: vec::Vec[agent::AppKitNode] = s.describe();
+    // window + content group + the field + its two parts. It was 3.
+    assert nodes.count() == (5 as usize);
+
+    // 1 — type into it.
+    assert surface::outcome_eq(s.set_text("search", "needle", s.text_version("search")),
+                               surface::Outcome::Allowed);
+    let typed: text::Text = bridge::to_text(rt::msg_id(sf, rt::sel(#str_ptr("stringValue\0"))));
+    assert typed.view() == "needle";
+
+    // 2 — run the search. The magnifier fires the field's own action, which is
+    // what Return reaches, so `on_submit` runs exactly as it does for a person.
+    assert surface::outcome_eq(s.click("search:search"), surface::Outcome::Allowed);
+    assert SEARCH_FIRED == (1 as i64);
+
+    // 3 — clear it. The text goes, and the now-empty search runs, which is what
+    // makes the glyph a clear rather than a select-all-and-delete.
+    assert surface::outcome_eq(s.click("search:clear"), surface::Outcome::Allowed);
+    let after: text::Text = bridge::to_text(rt::msg_id(sf, rt::sel(#str_ptr("stringValue\0"))));
+    assert after.is_empty();
+    assert SEARCH_FIRED == (2 as i64);
+
+    // An id that names no part is still NotFound — the suffixes are addresses,
+    // not a pattern the surface will invent an answer for.
+    assert surface::outcome_eq(s.click("search:zoom"), surface::Outcome::NotFound);
+    return;
+}

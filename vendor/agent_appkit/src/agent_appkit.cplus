@@ -568,8 +568,30 @@ fn subview_at(view: *u8, i: usize) -> *u8 {
 // bug this once cited was fixed 2026-07-08. `ViewRef` stays because `opaque`
 // states something a bare `*u8` element cannot: these pointers carry a refcount
 // this module owns.
+// ---- controls that are more than one affordance ------------------------------
+//
+// `walk` descends `subviews`, and some AppKit controls hold sub-controls that
+// are CELLS rather than views. NSSearchField is the sharp case: typing into it
+// is one third of what it does, and the magnifier and the cancel glyph — the
+// other two — are NSButtonCells on its NSSearchFieldCell. A subview walk sees
+// the field and nothing in it, so an agent could type a query and then had no
+// way to run it or clear it.
+//
+// They are exposed as synthetic children of the field. A `ViewRef` therefore
+// names a view AND WHICH PART of it: `PART_SELF` is the view itself, any other
+// part is a sub-control driven THROUGH its owner. Nothing about the alignment
+// changes — a synthetic child is one `add_child` and one `views.append`, like
+// every other node.
+//
+// The same shape fits a stepper's two arrows or a date picker's segments: a new
+// part id and a case in `click_part`.
+const PART_SELF: u32 = 0u32;
+const PART_SEARCH: u32 = 1u32;
+const PART_CLEAR: u32 = 2u32;
+
 struct ViewRef {
     opaque p: *u8,
+    part: u32,
 }
 
 // The live surface of one window: the identity tree, the NodeId->NSView map
@@ -613,6 +635,57 @@ fn view_a11y_string(view: *u8, prop: str) -> text::Text {
 // Recursively register a view subtree: classify the view, add it to the
 // identity tree (a pinned agent-id becomes the developer id, which also exposes
 // the node), reflect its live enabled state, map NodeId->view, then recurse into
+// Drive a sub-control the walk exposed as a part of its owner.
+//
+// Both go through the OWNER, not the cell. A cell's click is
+// `performClickWithFrame:inView:`, which needs the frame the field lays it out
+// in, and neither cell carries the application's handler anyway — the field
+// does. So each part does what the glyph does, by the shortest honest route:
+//
+//   SEARCH  the field's own action, which is exactly what Return reaches, so
+//           `on_submit` fires the same way it does for a person.
+//   CLEAR   empty the text and tell the app, which is what the cancel glyph
+//           does. Through the same two notifications `set_text` uses, so the
+//           props, the view and the app stay in step — emptying the field
+//           behind them is the desync that made `set_text` a bug once already.
+fn click_part(v: *u8, part: u32) -> surface::Outcome {
+    if part == PART_SEARCH {
+        ensure_send_action_method();
+        perform_on_main(v, rt::sel(#str_ptr("cplusAgentSendAction:\0")), null());
+        return surface::Outcome::Allowed;
+    }
+    if part == PART_CLEAR {
+        perform_on_main(v, rt::sel(#str_ptr("setStringValue:\0")), bridge::nsstring(""));
+        notify_text_changed_on_main(v);
+        // The cancel glyph also RUNS the (now empty) search — that is what
+        // makes it a clear rather than a select-all-and-delete.
+        ensure_send_action_method();
+        perform_on_main(v, rt::sel(#str_ptr("cplusAgentSendAction:\0")), null());
+        return surface::Outcome::Allowed;
+    }
+    return surface::Outcome::NotActionable;
+}
+
+// One sub-control of `owner`, exposed as its own addressable node. The id is
+// the owner's with a suffix, so `search` gains `search:search` and
+// `search:clear` — predictable beats opaque, the same rule the tree rows follow.
+//
+// It is a Button because that is what it is to an agent: a thing you click. The
+// `views` entry points at the OWNER, tagged with the part, because that is what
+// the click has to be sent through.
+fn add_part(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
+            owner: *u8, parent: usize, base: str, part: u32,
+            suffix: str, name: str) {
+    let id: text::Text = text::from_str(base).appending(suffix);
+    let child: usize = reg.add_child(parent, option::Option[str]::Some({ id.view() }),
+                                     identity::Role::Button);
+    reg.set_enabled(child, live_enabled(owner));
+    reg.set_name(child, name);
+    let _r: *u8 = rt::retain(owner);
+    views.append(ViewRef { p: owner, part: part });
+    return;
+}
+
 // its subviews in order (DFS pre-order). `views` stays index-aligned with the
 // registry: every `add_child` is paired with exactly one `views.push`. Recursion
 // depth is the view-tree depth (shallow in practice).
@@ -651,7 +724,22 @@ fn walk(ref reg: identity::Registry, ref views: vec::Vec[ViewRef], view: *u8, pa
         option::Option[u32]::None => { }
     }
     let _r: *u8 = rt::retain(view);
-    views.append(ViewRef { p: view });
+    views.append(ViewRef { p: view, part: PART_SELF });
+
+    // The parts a subview walk cannot reach. Only for a field the developer
+    // tagged: exposure is opt-in, and a sub-control of an unexposed control has
+    // no address worth handing out either.
+    if is_kind(view, #str_ptr("NSSearchField\0")) {
+        match get_agent_id(view) {
+            option::Option[text::Text]::Some(base) => {
+                add_part(reg, views, view, reg_node, { base.view() }, PART_SEARCH,
+                         ":search", "Search");
+                add_part(reg, views, view, reg_node, { base.view() }, PART_CLEAR,
+                         ":clear", "Clear");
+            }
+            option::Option[text::Text]::None => { }
+        }
+    }
 
     let n: usize = subview_count(view);
     var i: usize = 0 as usize;
@@ -668,7 +756,7 @@ fn open(window: *u8) -> Surface {
     var reg: identity::Registry = identity::new();
     var views: vec::Vec[ViewRef] = vec::new::[ViewRef]();
     // NodeId 0 is the synthetic app root — no backing view.
-    views.append(ViewRef { p: null() });
+    views.append(ViewRef { p: null(), part: PART_SELF });
 
     if is_null(window) {
         return Surface { reg: reg, versions: surface::new_text_versions(), views: views };
@@ -684,7 +772,7 @@ fn open(window: *u8) -> Surface {
         }
     };
     let _rw: *u8 = rt::retain(window);
-    views.append(ViewRef { p: window });
+    views.append(ViewRef { p: window, part: PART_SELF });
 
     let content: *u8 = rt::msg_id(window, rt::sel(#str_ptr("contentView\0")));
     if !is_null(content) {
@@ -744,6 +832,15 @@ impl Surface {
         return match this.views.at_ptr(node) {
             option::Option[*ViewRef]::Some(r) => { (*r).p },
             option::Option[*ViewRef]::None => null(),
+        };
+    }
+
+    // Which part of that view the node means. `PART_SELF` for every node the
+    // walk found as a view of its own.
+    fn part_of(this, node: usize) -> u32 {
+        return match this.views.at_ptr(node) {
+            option::Option[*ViewRef]::Some(r) => { (*r).part },
+            option::Option[*ViewRef]::None => PART_SELF,
         };
     }
 
@@ -862,6 +959,14 @@ impl Surface {
                 let v: *u8 = this.view_of(node);
                 if is_detached(v) {
                     return surface::Outcome::Stale;
+                }
+                // A PART is driven through its owner, and must be answered
+                // before the drive check below: a search field's parts share
+                // its view, and the field declares drive_text, so the check
+                // would refuse a click on a button that is genuinely a button.
+                let part: u32 = this.part_of(node);
+                if part != PART_SELF {
+                    return click_part(v, part);
                 }
                 // Declared drive must be click when present (inputs are
                 // drive_text — refuse click rather than no-op on the field).
