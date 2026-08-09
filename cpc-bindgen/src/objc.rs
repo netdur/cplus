@@ -2694,10 +2694,18 @@ impl ObjcEmitter {
             }
         };
         let block_sig = block_args.join(", ");
+        // The block's own return, which the handler must produce and the
+        // trampoline must pass back. Void for a completion handler; anything
+        // else and dropping it made the API unusable rather than merely lossy.
+        let block_ret = self.parse_block_ret(block_qt);
+        let ret_arrow = match &block_ret {
+            Some(r) => format!(" -> {r}"),
+            None => String::new(),
+        };
         let fn_ty = if block_sig.is_empty() {
-            "fn(*u8)".to_string()
+            format!("fn(*u8){ret_arrow}")
         } else {
-            format!("fn(*u8, {block_sig})")
+            format!("fn(*u8, {block_sig}){ret_arrow}")
         };
 
         // Same planned name + positional-arg split as the general path, so block
@@ -2768,8 +2776,12 @@ impl ObjcEmitter {
         self.block_helpers.push_str(&format!(
             "#[repr(C)]\nstruct {struct_name} {{\n    opaque isa: *u8,\n    flags: i32,\n    reserved: i32,\n    invoke: {fn_ty},\n    opaque descriptor: *u8,\n    user_fn: {fn_ty},\n    opaque ctx: *u8,\n}}\n\n"
         ));
+        let invoke_body = match &block_ret {
+            Some(_) => format!("    return f(ctx{call_tail});\n"),
+            None => format!("    f(ctx{call_tail});\n    return;\n"),
+        };
         self.block_helpers.push_str(&format!(
-            "fn {invoke_name}({invoke_params}) {{\n    let bl: *{struct_name} = {{ block as *{struct_name} }};\n    let f: {fn_ty} = {{ (*bl).user_fn }};\n    let ctx: *u8 = {{ (*bl).ctx }};\n    f(ctx{call_tail});\n    return;\n}}\n\n"
+            "fn {invoke_name}({invoke_params}){ret_arrow} {{\n    let bl: *{struct_name} = {{ block as *{struct_name} }};\n    let f: {fn_ty} = {{ (*bl).user_fn }};\n    let ctx: *u8 = {{ (*bl).ctx }};\n{invoke_body}}}\n\n"
         ));
 
         // Wrapper method.
@@ -2891,6 +2903,27 @@ impl ObjcEmitter {
         Some(out.iter().map(|a| self.map_block_arg(a)).collect())
     }
 
+    /// The block's RETURN type, in C+ spelling — `None` for `void`.
+    ///
+    /// `qt` is `RET (^)(ARGS)`, and everything before the `(^` is the return.
+    /// `parse_block_args` deliberately looks only to the right of it, and for a
+    /// long time nothing looked to the left at all: every emitted `invoke`
+    /// returned void. That is fine for a completion handler and WRONG for every
+    /// block that answers something — `NSColor colorWithName:dynamicProvider:`
+    /// wants an `NSColor *` back, and the generated binding handed it whatever
+    /// was in the return register. Such an API could not be used from C+ at all;
+    /// `appkit_ext::dynamic_color` exists because of this.
+    fn parse_block_ret(&self, qt: &str) -> Option<String> {
+        let open1 = qt.find('(')?;
+        let ret = qt[..open1].trim();
+        let (b, _) = strip_nullability(ret);
+        let b = b.trim();
+        if b.is_empty() || b == "void" {
+            return None;
+        }
+        Some(self.map_block_arg(b))
+    }
+
     /// C+ wire type for one block-callback argument (what ObjC passes in).
     fn map_block_arg(&self, qt: &str) -> String {
         let (b, _) = strip_nullability(qt);
@@ -2899,6 +2932,14 @@ impl ObjcEmitter {
             return "rt::Range".to_string();
         }
         if b.ends_with('*') {
+            return "*u8".to_string();
+        }
+        // An object that is not spelled with a star is still an object. `id`,
+        // `instancetype` and a protocol-qualified `id<P>` all fell through to the
+        // 8-byte scalar catch-all below, which is ABI-identical on arm64 and so
+        // never misbehaved — but it spells a pointer `i64`, and a handler that
+        // must RETURN one then has to cast to say what it plainly means.
+        if b == "id" || b == "instancetype" || b == "Class" || b.starts_with("id<") {
             return "*u8".to_string();
         }
         match b {
