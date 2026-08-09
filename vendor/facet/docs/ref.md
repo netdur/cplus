@@ -225,6 +225,34 @@ posture, not a failure.
 A `Cancellable` cancels on drop, so holding it is how you keep an observer
 alive.
 
+## facet/resource
+
+REST verbs over a shared store, with a change channel. A resource is an app
+struct over any backing (sqlite, files, an API): implement `state` / `run` /
+`apply`, keep the instance as a module static, and the verbs are the only
+doors to the backing — there is no synchronous one.
+
+| | |
+|---|---|
+| `get(r, then:)` | refresh the collection; broadcasts `Loaded` |
+| `get(r, id:, then:)` | refresh one row; broadcasts `Loaded` with the id |
+| `get(r, q:, then:)` | query — result in the resource's own hits slot, `then` only, **no broadcast** |
+| `post(r, then:)` | create from the resource's draft; broadcasts `Created(new_id)` |
+| `put(r, id:, then:)` | update from the draft; broadcasts `Updated(id)` |
+| `delete(r, id:, then:)` | broadcasts `Deleted(id)` |
+| `watch(r, f, ctx:) -> SignalSubscription[Change]` | the channel; handler `fn(Change, *u8)`, bound methods bind |
+
+`run` executes OFF the main thread — backing calls and staging fields only.
+`apply` executes ON it — install staged into live. `prepare` (optional; the
+default does nothing) runs on the main thread right before each flight:
+snapshot there anything `run` must not read from a worker, such as a path
+held by main-only statics. One flight per resource;
+verbs called while one is up queue in call order, so a later query never
+overtakes an earlier write. A write whose `run` left `ok` false broadcasts
+nothing — failure is the caller's, through `then`. Reads of the installed
+rows are plain synchronous methods on the resource module. With no backend a
+verb is the portable no-op.
+
 ## facet/theme
 
 Two tiers. Tier 1 is a platform token (`Color::text()`, `Color::accent()`,

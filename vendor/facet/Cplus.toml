@@ -13,6 +13,7 @@ path = "src/test_main.cplus"
 [dependencies]
 stdlib      = "*"
 flex_layout = "*"
+events      = "*"
 
 # The per-platform backends the runtime facades import. `runtime.cplus` is the
 # neutral base; the resolver's platform override picks `runtime_macos.cplus`

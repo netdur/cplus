@@ -62,6 +62,7 @@ import "./elements" as ui;
 // Stage 3 — the platform-free tier.
 import "./nav" as nav;
 import "./services" as services;
+import "./resource" as resource;
 import "./component" as component;
 import "./screen" as screen;
 import "./theme" as theme;

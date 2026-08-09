@@ -139,6 +139,38 @@ Handlers are read from the props AT FIRE TIME rather than captured, so an
 application that swaps a handler after mount is answered by the new one with
 nothing re-installed.
 
+## Data — resources
+
+A screen's data lives in a resource: an app struct over any backing
+(sqlite, files, a network API) whose only doors are REST verbs —
+`get` / `post` / `put` / `delete` from `facet/resource`. Each verb runs the
+backing work off the main thread and installs the result back on it, then
+broadcasts one typed `Change {verb, id}` to every watcher. Nobody calls the
+backing directly, so nothing can block the UI; nobody hand-wires "I changed
+this, tell that screen", because the write itself is the notification.
+
+The component discipline, whole:
+
+- `on_attach`: `watch(...)` the resources you show, then `get(...)` them.
+- `build`: render immediately from whatever the store holds (usually empty).
+- Mutating handlers: fill the draft, call `post`/`put`/`delete` — no UI
+  code at the call site.
+- ALL screen updating lives in the watch handler: reconcile the one change,
+  by key, reading the store's synchronous accessors.
+- Subscriptions are owning handles; dropping the component cancels them.
+
+A move is a `put` with a new owner — there is no "moved" verb. The watch
+handler diffs the store against what it has mounted (`mount::find` scoped
+`within:` a lane answers "where is this card showing now"). A query
+(`get(r, q: ...)`) is caller-scoped: it lands in the resource's hits slot
+and only its `then` hears about it, because a `?q=` response is not the
+collection.
+
+The one-shot cousin: a `services::Job` (`run`/`apply` + `run_job`) is still
+the right shape for a load that is not a store — a file-tree walk, a
+scaffold step. Resources ride the same flight and the same teardown
+guarantees (`jobs_settled`).
+
 ## Errors
 
 facet does not panic. A mutator answers `Status`, a read answers `Option`, and

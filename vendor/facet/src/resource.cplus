@@ -1,0 +1,689 @@
+// facet resources — REST verbs over a shared store, with a change channel.
+// HAND-WRITTEN (like services.cplus; not generated). Design: plans/plan.resources.md.
+//
+// A resource is an app-defined store over any backing (sqlite, files, JSON,
+// a network API) whose only doors are the REST verbs below. Each verb runs
+// the backing work OFF the main thread and installs the result back ON it,
+// riding the same counted flight the Job tier uses; every write then
+// broadcasts a typed Change to every watcher. Components read the installed
+// rows with plain synchronous accessors — memory reads need no ceremony.
+//
+// The verbs, and their HTTP shapes:
+//
+//     get(r)                          GET    /cards      refresh the collection
+//     get(r, id: 12)                  GET    /cards/12   refresh one row
+//     get(r, q: "auth", then: cb)     GET    /cards?q=   query — caller-scoped
+//     post(r)                         POST   /cards      create from r's draft
+//     put(r, id: 12)                  PUT    /cards/12   update from r's draft
+//     delete(r, id: 12)               DELETE /cards/12
+//     watch(r, this.on_changed)       the notification channel
+//
+// The component discipline (the whole of it):
+//   on_attach   watch(...) the resources you show, then get(...) them
+//   build       render immediately from whatever the store holds
+//   handlers    fill the draft, call post/put/delete — no UI code there
+//   watch       ALL screen updating lives in the watch handler: reconcile
+//               the one change, by key, reading the store
+//   on_detach   subscriptions are owning handles; dropping cancels
+//
+// Threading contract (framework-owned, not documented-and-hoped):
+//   run    OFF main — hit the backing; write STAGING fields only
+//   apply  ON main  — install what run staged into the live fields
+// At most one flight per resource: a verb called while one is up queues in
+// call order and drains after each apply, so exactly one worker ever touches
+// the staging fields and a later query can never overtake an earlier one.
+// Under a real backend every State access is main-thread (verb calls and
+// landings both). Flights ride the jobs counters, so `jobs_settled()` and
+// the runtime's teardown guarantee cover them unchanged.
+//
+// A resource should live as a module static (`static CARDS: Cards = ...`):
+// outlive-the-flight is then satisfied by construction, and every component
+// reaches the same store. Component-owned instances remain legal under the
+// Job lifetime contract (wait_for_jobs before dropping).
+//
+// With no backend installed every verb is the portable no-op — nothing runs,
+// nothing queues, nothing leaks — the same posture as `find` and `after`.
+
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "stdlib/option" as option;
+import "stdlib/status" as status;
+import "stdlib/box" as box;
+import "stdlib/thread" as thread;
+import "stdlib/atomic" as atomic;
+import "events/events" as events;
+import "./services" as services;
+
+// What a change says — the four REST outcomes. A query broadcasts nothing.
+enum Verb { Loaded, Created, Updated, Deleted }
+
+// What watchers receive: after the verb landed, on the main thread.
+struct Change { verb: Verb, id: i64 }
+
+// The envelope a verb call becomes. `kind` + `id` + `q` say what was asked —
+// Loaded with a non-empty q is a query, Loaded with an id is one row.
+// `ok` and `new_id` are outcome slots `run` fills for the app's own use
+// (`new_id` also becomes the Created change's id).
+struct Request {
+    kind: Verb,
+    id: i64,
+    q: text::Text,
+    ok: bool,
+    new_id: i64,
+    _then: fn(*u8),
+    _then_ctx: usize,
+}
+
+// Embedded in every resource struct, reached through `state()`: the typed
+// change signal, the one-flight queue, the busy flag. Zeroed statics are
+// made live on first touch, the SHARED_BUS idiom.
+struct State {
+    changes: events::Signal[Change],
+    _queue: vec::Vec[Request],
+    _busy: bool,
+    _live: u64,
+}
+
+impl State {
+    fn new() -> State {
+        return State {
+            changes: events::Signal[Change]::new(),
+            _queue: vec::new::[Request](),
+            _busy: false,
+            _live: 1 as u64,
+        };
+    }
+}
+
+fn _ensure(st: *State) {
+    if { (*st)._live } == (0 as u64) {
+        { (*st).changes = events::Signal[Change]::new(); }
+        { (*st)._queue = vec::new::[Request](); }
+        { (*st)._busy = false; }
+        { (*st)._live = 1 as u64; }
+    }
+    return;
+}
+
+// What a type implements to be a resource. The interface IS the threading
+// contract, the same way Job's is:
+//   state  one line — the address of the embedded State field.
+//   run    OFF main. Dispatch on req.kind (Loaded + q = query, Loaded + id
+//          = one row), hit the backing, write STAGING fields only, fill
+//          ok / new_id.
+//   apply  ON main. Install what run staged into the live fields.
+interface Resource {
+    fn state(ref this) -> *State;
+    // The main-thread moment right before each flight: snapshot anything
+    // `run` must not read from a worker — a path that comes from main-only
+    // statics, the current selection. Runs once per request, at launch (a
+    // queued request is prepared when its turn comes, not when it queued).
+    // Most resources need nothing: the default is nothing.
+    fn prepare(ref this) { return; }
+    fn run(ref this, req: *Request);
+    fn apply(ref this, req: *Request);
+}
+
+// ---- the verbs ---------------------------------------------------------------
+
+// GET — refresh. No arguments: the collection. `id:` one row. `q:` a query,
+// which is caller-scoped: its result lands in the resource's own hits slot
+// and ONLY `then` hears about it — a ?q= response is not the collection, so
+// nothing is broadcast. `then` (optional on every verb) runs on the main
+// thread after apply; a bound method binds directly: `then: this.on_hits`.
+fn get[R: Resource](ref r: R, id: i64 = 0 as i64, q: str = "",
+                    then: fn(*u8) = 0 as fn(*u8), then_ctx: *u8 = 0 as *u8) {
+    let req: Request = Request {
+        kind: Verb::Loaded, id: id, q: q.to_text(), ok: false, new_id: 0 as i64,
+        _then: then, _then_ctx: { then_ctx as usize },
+    };
+    _submit::[R]({ #addr_of(r) }, req);
+    return;
+}
+
+// POST — create from the resource's draft fields. Broadcasts
+// Created(new_id) after it lands.
+fn post[R: Resource](ref r: R,
+                     then: fn(*u8) = 0 as fn(*u8), then_ctx: *u8 = 0 as *u8) {
+    let req: Request = Request {
+        kind: Verb::Created, id: 0 as i64, q: "".to_text(), ok: false, new_id: 0 as i64,
+        _then: then, _then_ctx: { then_ctx as usize },
+    };
+    _submit::[R]({ #addr_of(r) }, req);
+    return;
+}
+
+// PUT — update row `id` from the resource's draft fields. Broadcasts
+// Updated(id).
+fn put[R: Resource](ref r: R, id: i64,
+                    then: fn(*u8) = 0 as fn(*u8), then_ctx: *u8 = 0 as *u8) {
+    let req: Request = Request {
+        kind: Verb::Updated, id: id, q: "".to_text(), ok: false, new_id: 0 as i64,
+        _then: then, _then_ctx: { then_ctx as usize },
+    };
+    _submit::[R]({ #addr_of(r) }, req);
+    return;
+}
+
+// DELETE row `id`. Broadcasts Deleted(id).
+fn delete[R: Resource](ref r: R, id: i64,
+                       then: fn(*u8) = 0 as fn(*u8), then_ctx: *u8 = 0 as *u8) {
+    let req: Request = Request {
+        kind: Verb::Deleted, id: id, q: "".to_text(), ok: false, new_id: 0 as i64,
+        _then: then, _then_ctx: { then_ctx as usize },
+    };
+    _submit::[R]({ #addr_of(r) }, req);
+    return;
+}
+
+// The notification channel. Every write to the resource — from ANY
+// component — lands here as one typed Change, on the main thread, after the
+// store already holds the new truth. Handler shape for a bound method:
+//
+//     this.sub_cards = resource::watch(CARDS, this.on_cards_changed);
+//     fn on_cards_changed(ref this, c: resource::Change) { ... }
+//
+// The returned handle owns the registration — a component that stores it in
+// a field unsubscribes by dropping.
+fn watch[R: Resource](ref r: R, f: fn(Change, *u8), ctx: *u8 = 0 as *u8)
+        -> events::SignalSubscription[Change] {
+    let rp: *R = { #addr_of(r) };
+    let st: *State = { (*rp).state() };
+    _ensure(st);
+    return { (*st).changes.on(f, ctx: ctx) };
+}
+
+// ---- the flight --------------------------------------------------------------
+// One request in the air: the resource's address, the two R-typed
+// trampolines, and the request the worker fills. Addresses ride as usize
+// (raw pointers are !Send) — sound under the static-residence /
+// outlive-the-flight contract, same as JobFlight.
+
+struct Flight {
+    res_addr: usize,
+    run: fn(*u8, *Request),
+    finish: fn(*u8, *Request),
+    req: Request,
+}
+
+fn _submit[R: Resource](rp: *R, take req: Request) {
+    // No backend: the portable no-op, decided BEFORE anything spawns.
+    if !services::has_main_hop() { return; }
+    let st: *State = { (*rp).state() };
+    _ensure(st);
+    if { (*st)._busy } {
+        let _a: status::Status = { (*st)._queue.append(req) };
+        return;
+    }
+    { (*st)._busy = true; }
+    _launch::[R](rp, req);
+    return;
+}
+
+fn _launch[R: Resource](rp: *R, take req: Request) {
+    { (*rp).prepare() };
+    services::jobs_inflight_add(1 as u64);
+    let f: Flight = Flight {
+        res_addr: { rp as *u8 } as usize,
+        run: _run_tramp::[R],
+        finish: _finish_tramp::[R],
+        req: req,
+    };
+    let _bg: thread::JoinHandle[i32] = thread::spawn_with::[Flight, i32](f, _fly);
+    return;
+}
+
+// The worker half. ORDER MATTERS at the handoff: the landing is counted
+// before the worker count drops, so `jobs_settled()` never observes the gap
+// — the same discipline as run_job_flight.
+fn _fly(take f: Flight) -> i32 {
+    let run: fn(*u8, *Request) = f.run;
+    run((f.res_addr) as *u8, { #addr_of(f.req) });
+    if !services::has_main_hop() {
+        // Backend torn down mid-flight: drop the flight rather than leak it.
+        // apply never runs and the queue stays parked — teardown territory.
+        services::jobs_inflight_sub(1 as u64);
+        return 0;
+    }
+    match box::new::[Flight](f) {
+        option::Option[box::Box[Flight]]::Some(b) => {
+            services::applies_pending_add(1 as u64);
+            services::jobs_inflight_sub(1 as u64);
+            services::run_on_main(_land, b.into_raw());
+        }
+        option::Option[box::Box[Flight]]::None => {
+            services::jobs_inflight_sub(1 as u64);
+        }
+    }
+    return 0;
+}
+
+// The main-thread half: apply, broadcast, caller callback, next in line.
+fn _land(raw: *u8) {
+    var f: Flight = box::from_raw::[Flight](raw).unwrap();
+    let fin: fn(*u8, *Request) = f.finish;
+    fin((f.res_addr) as *u8, { #addr_of(f.req) });
+    services::applies_pending_sub(1 as u64);
+    return;
+}
+
+fn _run_tramp[R: Resource](p: *u8, req: *Request) {
+    let rp: *R = p as *R;
+    { (*rp).run(req) };
+    return;
+}
+
+fn _finish_tramp[R: Resource](p: *u8, req: *Request) {
+    let rp: *R = p as *R;
+    { (*rp).apply(req) };
+    let st: *State = { (*rp).state() };
+    // A query is caller-scoped: no broadcast. Everything else is one Change
+    // for every watcher, with Created carrying the id run minted.
+    let kind: Verb = { (*req).kind };
+    let qlen: usize = { (*req).q.count() };
+    let is_query: bool = match kind {
+        Verb::Loaded => qlen > (0 as usize),
+        Verb::Created => false,
+        Verb::Updated => false,
+        Verb::Deleted => false,
+    };
+    // A verb whose run left ok=false broadcasts nothing: the store did not
+    // change, and watchers must not hear a delete that never happened.
+    // Failure is the CALLER's to handle — through `then` and whatever error
+    // slot the resource keeps.
+    if !is_query && { (*req).ok } {
+        let ch: Change = Change {
+            verb: kind,
+            id: match kind {
+                Verb::Created => { (*req).new_id },
+                Verb::Loaded => { (*req).id },
+                Verb::Updated => { (*req).id },
+                Verb::Deleted => { (*req).id },
+            },
+        };
+        { (*st).changes.emit(ch) };
+    }
+    let cb: fn(*u8) = { (*req)._then };
+    if cb != (0 as fn(*u8)) { cb(((*req)._then_ctx) as *u8); }
+    _drain::[R](rp);
+    return;
+}
+
+// After a landing: start the next queued request, or go idle.
+fn _drain[R: Resource](rp: *R) {
+    let st: *State = { (*rp).state() };
+    if { (*st)._queue.count() } == (0 as usize) {
+        { (*st)._busy = false; }
+        return;
+    }
+    match { (*st)._queue.remove(0 as usize) } {
+        option::Option[Request]::Some(next) => { _launch::[R](rp, next); }
+        option::Option[Request]::None => { { (*st)._busy = false; } }
+    }
+    return;
+}
+
+// ---- tests ------------------------------------------------------------------
+// The backing is an in-memory Vec[i64] where the id IS the value: Created
+// appends the draft, Updated(id) rewrites value id to the draft, Deleted(id)
+// removes it, a query's q is a decimal minimum and hits are values >= it.
+// Real threads, inline main-hop — the services test posture.
+
+struct TestRes {
+    st: State,
+    db: vec::Vec[i64],       // the "backing" — run's side of the fence
+    staged: vec::Vec[i64],   // staging — run writes, apply reads
+    staged_hits: vec::Vec[i64],
+    rows: vec::Vec[i64],     // live — what components would read
+    hits: vec::Vec[i64],
+    draft: i64,
+    log: vec::Vec[i64],      // apply order, as verb codes
+}
+
+fn verb_code(v: Verb) -> i64 {
+    return match v {
+        Verb::Loaded => 1 as i64,
+        Verb::Created => 2 as i64,
+        Verb::Updated => 3 as i64,
+        Verb::Deleted => 4 as i64,
+    };
+}
+
+fn copy_ids(src: *vec::Vec[i64]) -> vec::Vec[i64] {
+    var out: vec::Vec[i64] = vec::new::[i64]();
+    var i: usize = 0 as usize;
+    while i < { (*src).count() } {
+        match { (*src).at(i) } {
+            option::Option[i64]::Some(v) => { let _a: status::Status = out.append(v); }
+            option::Option[i64]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return out;
+}
+
+// Worker gate for the queue test: run blocks while HOLD is raised, so the
+// main thread can observe the queue with a flight provably up.
+static HOLD: u64 = 0 as u64;
+
+fn hold_raise() {
+    let p: *u64 = { #addr_of(HOLD) };
+    let _x: u64 = atomic::fetch_add_u64(p, 1 as u64, atomic::Ordering::AcqRel);
+    return;
+}
+
+fn hold_lower() {
+    let p: *u64 = { #addr_of(HOLD) };
+    let _x: u64 = atomic::fetch_sub_u64(p, 1 as u64, atomic::Ordering::AcqRel);
+    return;
+}
+
+fn hold_read() -> u64 {
+    let p: *u64 = { #addr_of(HOLD) };
+    return atomic::load_u64(p, atomic::Ordering::Acquire);
+}
+
+impl TestRes: Resource {
+    fn state(ref this) -> *State { return { #addr_of(this.st) }; }
+
+    fn run(ref this, req: *Request) {
+        while hold_read() != (0 as u64) { services::sched_yield_once(); }
+        let kind: Verb = { (*req).kind };
+        match kind {
+            Verb::Loaded => {
+                let qlen: usize = { (*req).q.count() };
+                if qlen > (0 as usize) {
+                    let qs: str = { (*req).q };
+                    let min: i64 = match qs.to_i64() {
+                        option::Option[i64]::Some(v) => v,
+                        option::Option[i64]::None => 0 as i64,
+                    };
+                    var found: vec::Vec[i64] = vec::new::[i64]();
+                    var i: usize = 0 as usize;
+                    while i < this.db.count() {
+                        match this.db.at(i) {
+                            option::Option[i64]::Some(v) => {
+                                if v >= min { let _a: status::Status = found.append(v); }
+                            }
+                            option::Option[i64]::None => { }
+                        }
+                        i = i +% (1 as usize);
+                    }
+                    this.staged_hits = found;
+                } else {
+                    this.staged = copy_ids({ #addr_of(this.db) });
+                }
+                { (*req).ok = true; }
+            }
+            Verb::Created => {
+                let _a: status::Status = this.db.append(this.draft);
+                { (*req).new_id = this.draft; }
+                { (*req).ok = true; }
+                this.staged = copy_ids({ #addr_of(this.db) });
+            }
+            Verb::Updated => {
+                let id: i64 = { (*req).id };
+                var i: usize = 0 as usize;
+                while i < this.db.count() {
+                    var hit: bool = false;
+                    match this.db.at(i) {
+                        option::Option[i64]::Some(v) => { hit = v == id; }
+                        option::Option[i64]::None => { }
+                    }
+                    if hit {
+                        let _r: option::Option[i64] = this.db.remove(i);
+                        let _a: status::Status = this.db.insert(this.draft, at: i);
+                        { (*req).ok = true; }
+                    }
+                    i = i +% (1 as usize);
+                }
+                this.staged = copy_ids({ #addr_of(this.db) });
+            }
+            Verb::Deleted => {
+                let id: i64 = { (*req).id };
+                var i: usize = 0 as usize;
+                while i < this.db.count() {
+                    var hit: bool = false;
+                    match this.db.at(i) {
+                        option::Option[i64]::Some(v) => { hit = v == id; }
+                        option::Option[i64]::None => { }
+                    }
+                    if hit {
+                        let _r: option::Option[i64] = this.db.remove(i);
+                        { (*req).ok = true; }
+                    } else {
+                        i = i +% (1 as usize);
+                    }
+                }
+                this.staged = copy_ids({ #addr_of(this.db) });
+            }
+        }
+        return;
+    }
+
+    fn apply(ref this, req: *Request) {
+        let kind: Verb = { (*req).kind };
+        let qlen: usize = { (*req).q.count() };
+        let is_query: bool = match kind {
+            Verb::Loaded => qlen > (0 as usize),
+            Verb::Created => false,
+            Verb::Updated => false,
+            Verb::Deleted => false,
+        };
+        if is_query {
+            this.hits = copy_ids({ #addr_of(this.staged_hits) });
+        } else {
+            this.rows = copy_ids({ #addr_of(this.staged) });
+        }
+        let _a: status::Status = this.log.append(verb_code(kind));
+        return;
+    }
+}
+
+static TESTR: TestRes = #zero::[TestRes]();
+
+fn test_reset(seed_a: i64 = 0 as i64, seed_b: i64 = 0 as i64, seed_c: i64 = 0 as i64) {
+    TESTR.st = State::new();
+    TESTR.db = vec::new::[i64]();
+    TESTR.staged = vec::new::[i64]();
+    TESTR.staged_hits = vec::new::[i64]();
+    TESTR.rows = vec::new::[i64]();
+    TESTR.hits = vec::new::[i64]();
+    TESTR.draft = 0 as i64;
+    TESTR.log = vec::new::[i64]();
+    if seed_a != (0 as i64) { let _a: status::Status = TESTR.db.append(seed_a); }
+    if seed_b != (0 as i64) { let _b: status::Status = TESTR.db.append(seed_b); }
+    if seed_c != (0 as i64) { let _c: status::Status = TESTR.db.append(seed_c); }
+    return;
+}
+
+fn res_inline_hop(work: fn(*u8), ctx: *u8) { work(ctx); return; }
+
+fn install_inline_hop() {
+    var sch: services::Scheduler = services::scheduler_none();
+    sch.run_on_main = res_inline_hop;
+    services::install_scheduler(sch);
+    return;
+}
+
+fn settle() {
+    while !services::jobs_settled() { services::sched_yield_once(); }
+    return;
+}
+
+// The watcher's recorder — what the change channel delivered, in order.
+static SEEN_COUNT: i64 = 0 as i64;
+static SEEN_VERB: i64 = 0 as i64;
+static SEEN_ID: i64 = 0 as i64;
+static THEN_FIRED: i64 = 0 as i64;
+
+fn record_change(c: Change, ctx: *u8) {
+    SEEN_COUNT = SEEN_COUNT +% (1 as i64);
+    SEEN_VERB = verb_code(c.verb);
+    SEEN_ID = c.id;
+    return;
+}
+
+fn record_then(ctx: *u8) { THEN_FIRED = THEN_FIRED +% (1 as i64); return; }
+
+fn recorder_reset() {
+    SEEN_COUNT = 0 as i64;
+    SEEN_VERB = 0 as i64;
+    SEEN_ID = 0 as i64;
+    THEN_FIRED = 0 as i64;
+    return;
+}
+
+fn ids_are(v: *vec::Vec[i64], a: i64, b: i64, c: i64, n: usize) -> bool {
+    if { (*v).count() } != n { return false; }
+    var want: [i64; 3] = [a, b, c];
+    var i: usize = 0 as usize;
+    while i < n {
+        var got: i64 = 0 as i64;
+        match { (*v).at(i) } {
+            option::Option[i64]::Some(x) => { got = x; }
+            option::Option[i64]::None => { }
+        }
+        if got != want[i] { return false; }
+        i = i +% (1 as usize);
+    }
+    return true;
+}
+
+#[test]
+fn headless_verbs_are_the_portable_noop() {
+    services::uninstall_scheduler();
+    test_reset(seed_a: 5 as i64);
+    recorder_reset();
+    get(TESTR);
+    put(TESTR, id: 5 as i64);
+    assert services::jobs_settled();
+    assert TESTR.rows.count() == (0 as usize);
+    assert TESTR.st._busy == false;
+    assert TESTR.st._queue.count() == (0 as usize);
+    assert TESTR.log.count() == (0 as usize);
+}
+
+#[test]
+fn a_get_lands_the_rows_and_broadcasts_loaded() {
+    install_inline_hop();
+    test_reset(seed_a: 1 as i64, seed_b: 2 as i64, seed_c: 3 as i64);
+    recorder_reset();
+    let on_change: fn(Change, *u8) = record_change;
+    var sub: events::SignalSubscription[Change] = watch(TESTR, on_change);
+    let on_then: fn(*u8) = record_then;
+    get(TESTR, then: on_then);
+    settle();
+    assert ids_are({ #addr_of(TESTR.rows) }, 1 as i64, 2 as i64, 3 as i64, 3 as usize);
+    assert SEEN_COUNT == (1 as i64);
+    assert SEEN_VERB == verb_code(Verb::Loaded);
+    assert THEN_FIRED == (1 as i64);
+    assert TESTR.st._busy == false;
+    let _c: bool = sub.cancel();
+    services::uninstall_scheduler();
+}
+
+#[test]
+fn writes_broadcast_their_verb_and_id_and_the_store_tracks() {
+    install_inline_hop();
+    test_reset();
+    recorder_reset();
+    let on_change: fn(Change, *u8) = record_change;
+    var sub: events::SignalSubscription[Change] = watch(TESTR, on_change);
+
+    TESTR.draft = 7 as i64;
+    post(TESTR);
+    settle();
+    assert SEEN_COUNT == (1 as i64);
+    assert SEEN_VERB == verb_code(Verb::Created);
+    assert SEEN_ID == (7 as i64);
+    assert ids_are({ #addr_of(TESTR.rows) }, 7 as i64, 0 as i64, 0 as i64, 1 as usize);
+
+    TESTR.draft = 9 as i64;
+    put(TESTR, id: 7 as i64);
+    settle();
+    assert SEEN_VERB == verb_code(Verb::Updated);
+    assert SEEN_ID == (7 as i64);
+    assert ids_are({ #addr_of(TESTR.rows) }, 9 as i64, 0 as i64, 0 as i64, 1 as usize);
+
+    delete(TESTR, id: 9 as i64);
+    settle();
+    assert SEEN_COUNT == (3 as i64);
+    assert SEEN_VERB == verb_code(Verb::Deleted);
+    assert SEEN_ID == (9 as i64);
+    assert TESTR.rows.count() == (0 as usize);
+
+    let _c: bool = sub.cancel();
+    services::uninstall_scheduler();
+}
+
+#[test]
+fn a_query_calls_back_and_does_not_broadcast() {
+    install_inline_hop();
+    test_reset(seed_a: 1 as i64, seed_b: 2 as i64, seed_c: 3 as i64);
+    recorder_reset();
+    let on_change: fn(Change, *u8) = record_change;
+    var sub: events::SignalSubscription[Change] = watch(TESTR, on_change);
+    let on_then: fn(*u8) = record_then;
+    get(TESTR, q: "2", then: on_then);
+    settle();
+    assert ids_are({ #addr_of(TESTR.hits) }, 2 as i64, 3 as i64, 0 as i64, 2 as usize);
+    assert THEN_FIRED == (1 as i64);
+    assert SEEN_COUNT == (0 as i64);              // the channel stayed silent
+    assert TESTR.rows.count() == (0 as usize);    // and the collection was not replaced
+    let _c: bool = sub.cancel();
+    services::uninstall_scheduler();
+}
+
+#[test]
+fn verbs_queue_in_call_order_while_a_flight_is_up() {
+    install_inline_hop();
+    test_reset(seed_a: 1 as i64);
+    recorder_reset();
+    hold_raise();                                  // pin the first flight in run
+    get(TESTR);
+    TESTR.draft = 5 as i64;
+    post(TESTR);                                   // busy -> queued
+    let on_then: fn(*u8) = record_then;
+    get(TESTR, q: "1", then: on_then);             // queued behind it
+    assert TESTR.st._busy;
+    assert TESTR.st._queue.count() == (2 as usize);
+    hold_lower();
+    settle();
+    // Landed in call order: the collection, the create, the query.
+    assert ids_are({ #addr_of(TESTR.log) }, 1 as i64, 2 as i64, 1 as i64, 3 as usize);
+    // The query ran after the create, so it saw the new row.
+    assert ids_are({ #addr_of(TESTR.hits) }, 1 as i64, 5 as i64, 0 as i64, 2 as usize);
+    assert TESTR.st._busy == false;
+    assert TESTR.st._queue.count() == (0 as usize);
+    services::uninstall_scheduler();
+}
+
+#[test]
+fn a_failed_write_broadcasts_nothing() {
+    install_inline_hop();
+    test_reset(seed_a: 1 as i64);
+    recorder_reset();
+    let on_change: fn(Change, *u8) = record_change;
+    var sub: events::SignalSubscription[Change] = watch(TESTR, on_change);
+    let on_then: fn(*u8) = record_then;
+    delete(TESTR, id: 99 as i64, then: on_then);   // no such row: run leaves ok=false
+    settle();
+    assert SEEN_COUNT == (0 as i64);               // the channel stayed silent
+    assert THEN_FIRED == (1 as i64);               // but the caller still heard back
+    assert ids_are({ #addr_of(TESTR.rows) }, 1 as i64, 0 as i64, 0 as i64, 1 as usize);
+    let _c: bool = sub.cancel();
+    services::uninstall_scheduler();
+}
+
+#[test]
+fn a_watch_handle_owns_its_registration() {
+    services::uninstall_scheduler();               // watch is pure memory — no backend needed
+    test_reset();
+    let on_change: fn(Change, *u8) = record_change;
+    var sub: events::SignalSubscription[Change] = watch(TESTR, on_change);
+    assert sub.active();
+    assert TESTR.st.changes.count() == (1 as usize);
+    let _c: bool = sub.cancel();
+    assert TESTR.st.changes.count() == (0 as usize);
+}

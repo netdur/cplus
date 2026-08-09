@@ -67,6 +67,14 @@ fn run_on_main(work: fn(*u8), ctx: *u8) {
     return;
 }
 
+// Is a main-thread hop installed? The resource tier gates its verbs on this
+// BEFORE spawning anything: with no backend a verb is the portable no-op —
+// nothing runs, nothing queues, nothing leaks — rather than a flight whose
+// apply can never land.
+fn has_main_hop() -> bool {
+    return SCHEDULER.run_on_main != (0 as fn(fn(*u8), *u8));
+}
+
 // ---- after: do something LATER, and be able to call it off --------------------
 //
 // `run_on_main` above is the only way to hand work to the UI thread and it has
