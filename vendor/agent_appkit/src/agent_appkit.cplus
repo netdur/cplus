@@ -1408,7 +1408,17 @@ fn view_clickable(v: *u8, part: u32) -> bool {
     // exactly as in `click`: a search field's parts share its view and the
     // field declares drive_text, so checking the drive first would refuse a
     // button that is genuinely a button.
-    if part != PART_SELF { return true; }
+    //
+    // Which parts, exactly: `click_part` answers `Allowed` for these two and
+    // `NotActionable` for anything else, so this names them rather than
+    // saying "not SELF". The set is complete today — it is the whole of the
+    // PART_ constants — and that is the reason to spell it: a fourth part
+    // wired into `part_of` without a `click_part` arm would otherwise
+    // advertise a press that does not exist, which is the exact bug this
+    // field was added to remove. Failing the other way costs a missed
+    // capability until someone teaches both, and a missed capability is a
+    // thing an agent can discover by trying.
+    if part != PART_SELF { return part == PART_SEARCH || part == PART_CLEAR; }
     match get_declared_drive(v) {
         option::Option[u32]::Some(d) => {
             if d != identity::drive_click() { return false; }
