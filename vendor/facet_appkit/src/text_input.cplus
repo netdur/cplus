@@ -285,6 +285,54 @@ fn did_end_imp(self_obj: *u8, cmd: *u8, notification: *u8) {
     return;
 }
 
+// ---- escape ------------------------------------------------------------------
+// Esc is not an editing command, and no default treats it as one worth having:
+// a text view answers it with the COMPLETION POPUP, a field editor with the
+// same via its control, and the application never hears the one key that
+// means "get me out of here". Both delegate shapes intercept `cancelOperation:`
+// and hand the RAW EVENT to the control's superview chain — exactly where a
+// declined keyDown would have gone — so the nearest ancestor with an `on_key`
+// gesture answers, and Escape means the same thing inside a field as outside.
+//
+// NSSearchField keeps its own Escape (clear-the-query is what that field's
+// Escape has always meant); everything else falls through to the default.
+
+fn escape_to_chain(host: *u8) -> i8 {
+    if host == (0 as *u8) { return 0 as i8; }
+    let nsapp: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSApplication\0")),
+                                  rt::sel(#str_ptr("sharedApplication\0"))) };
+    if nsapp == (0 as *u8) { return 0 as i8; }
+    let ev: *u8 = { rt::msg_id(nsapp, rt::sel(#str_ptr("currentEvent\0"))) };
+    if ev == (0 as *u8) { return 0 as i8; }
+    let sv: *u8 = { rt::msg_id(host, rt::sel(#str_ptr("superview\0"))) };
+    if sv == (0 as *u8) { return 0 as i8; }
+    { rt::msg_void_id(sv, rt::sel(#str_ptr("keyDown:\0")), ev) };
+    return 1 as i8;
+}
+
+// control:textView:doCommandBySelector: — a FIELD's editor asks the field,
+// the field asks this delegate.
+fn field_do_command_imp(self_obj: *u8, cmd: *u8, control: *u8, tv: *u8, which: *u8) -> i8 {
+    if which != rt::sel(#str_ptr("cancelOperation:\0")) { return 0 as i8; }
+    if control != (0 as *u8) {
+        let is_search: i8 = { rt::msg_i8_id(control, rt::sel(#str_ptr("isKindOfClass:\0")),
+                                            rt::get_class(#str_ptr("NSSearchField\0"))) };
+        if is_search != (0 as i8) { return 0 as i8; }
+    }
+    return escape_to_chain(control);
+}
+
+// textView:doCommandBySelector: — a bare text view (text_area) asks directly.
+fn view_do_command_imp(self_obj: *u8, cmd: *u8, tv: *u8, which: *u8) -> i8 {
+    if which != rt::sel(#str_ptr("cancelOperation:\0")) { return 0 as i8; }
+    return escape_to_chain(tv);
+}
+
+#[link_name = "class_addMethod"]
+extern fn add_method_i8_2id_sel(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8) -> i8, types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn add_method_i8_3id_sel(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, *u8) -> i8, types: *u8) -> i8;
+
 fn delegate_class() -> *u8 {
     let existing: *u8 = rt::get_class(#str_ptr("FacetTextDelegate\0"));
     if existing != (0 as *u8) { return existing; }
@@ -300,6 +348,10 @@ fn delegate_class() -> *u8 {
                             did_end_imp, #str_ptr("v@:@\0"));
     synth::add_method_v_1id(cls, rt::sel(#str_ptr("textDidEndEditing:\0")),
                             did_end_imp, #str_ptr("v@:@\0"));
+    let _e1: i8 = add_method_i8_3id_sel(cls, rt::sel(#str_ptr("control:textView:doCommandBySelector:\0")),
+                                        field_do_command_imp, #str_ptr("c@:@@:\0"));
+    let _e2: i8 = add_method_i8_2id_sel(cls, rt::sel(#str_ptr("textView:doCommandBySelector:\0")),
+                                        view_do_command_imp, #str_ptr("c@:@:\0"));
     synth::register_class_pair(cls);
     return cls;
 }
