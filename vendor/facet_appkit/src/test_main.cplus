@@ -1358,6 +1358,88 @@ fn a_tree_item_is_the_tree_node_itself() {
     return;
 }
 
+// A row builder that states no height, so the row's size can only come from
+// the label measuring itself — which it can only do once it has a native view.
+fn intrinsic_tree_row(n: *tree::TreeNode, ctx: *u8) -> core::Node {
+    return label::label({ (*n).label.view() });
+}
+
+// A tree renders rows you can SEE.
+//
+// Both places that size a row used to lay it out before it was realised. A
+// label's intrinsic height arrives with the measure callback the backend
+// installs while creating its native view, so an unrealised label measured
+// zero, clamped to one point, and every row in the tree was one pixel tall:
+// present, selectable, expandable, invisible. It bit the height query and the
+// cell separately, so fixing one left the other — a correctly sized row
+// containing one pixel of text.
+#[test]
+fn a_default_tree_row_is_taller_than_one_point() {
+    backend::install();
+    var root: tree::TreeNode = tree::TreeNode::new("root", id: "root");
+    let _a: status::Status = root.add_child(tree::TreeNode::new("alpha", id: "alpha"));
+    var t: core::Node = tree::tree(root, key: "th1");
+    let tp: *core::Node = #addr_of(t);
+    let v: *u8 = views::create(0 as *u8, tp);
+    core::set_view(tp, v, views::view_release);
+    views::apply(0 as *u8, tp);
+    assert recycler::tree_row_count_of(v) == (1 as i64);
+
+    let cell: *u8 = recycler::tree_view_for_row(v, 0 as i64);
+    assert cell != (0 as *u8);
+    let h: f64 = { ak::View::from_raw(cell).frame().h };
+    assert h > 1.0f64;
+    // The default row states its height, so both the height query and the cell
+    // agree on one number rather than each guessing.
+    assert h == controls::DEFAULT_TREE_ROW_H;
+
+    // And the label inside it fills the row rather than sitting one pixel tall
+    // in the middle of it.
+    let subs: vec::Vec[ak::View] = ak::View::from_raw(cell).subviews();
+    assert subs.count() == (1 as usize);
+    match subs.at_ptr(0 as usize) {
+        option::Option[*ak::View]::Some(sv) => { assert { (*sv).frame().h } > 1.0f64; }
+        option::Option[*ak::View]::None => { assert false; }
+    }
+    return;
+}
+
+// The same rule for a row the APPLICATION built. Its height is intrinsic and
+// nothing states it, so it is only knowable after realising — which is now the
+// order the cell path uses.
+#[test]
+fn a_row_built_by_the_app_is_measured_after_it_is_realised() {
+    backend::install();
+    var root: tree::TreeNode = tree::TreeNode::new("root", id: "root");
+    let _a: status::Status = root.add_child(tree::TreeNode::new("beta", id: "beta"));
+    var t: core::Node = tree::tree(root, key: "th2", row: intrinsic_tree_row);
+    let tp: *core::Node = #addr_of(t);
+    let v: *u8 = views::create(0 as *u8, tp);
+    core::set_view(tp, v, views::view_release);
+    views::apply(0 as *u8, tp);
+
+    let cell: *u8 = recycler::tree_view_for_row(v, 0 as i64);
+    assert cell != (0 as *u8);
+    assert { ak::View::from_raw(cell).frame().h } > 1.0f64;
+    return;
+}
+
+// A stated `row_height` still wins outright — it is asked before the model is
+// consulted at all, which is what makes it the cheap answer.
+#[test]
+fn a_stated_row_height_is_used_as_given() {
+    backend::install();
+    var root: tree::TreeNode = tree::TreeNode::new("root", id: "root");
+    let _a: status::Status = root.add_child(tree::TreeNode::new("gamma", id: "gamma"));
+    var t: core::Node = tree::tree(root, key: "th3", row_height: 31.0f64);
+    let tp: *core::Node = #addr_of(t);
+    let v: *u8 = views::create(0 as *u8, tp);
+    core::set_view(tp, v, views::view_release);
+    views::apply(0 as *u8, tp);
+    assert recycler::tree_row_height_of(v, 0 as i64) == 31.0f64;
+    return;
+}
+
 // ---- the last kinds ----------------------------------------------------------
 
 #[test]

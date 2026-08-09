@@ -4407,8 +4407,18 @@ fn build_tree_row(node: *tree::TreeNode, p: *tree::TreeProps) -> core::Node {
 // A tree with no row builder still shows its shape: the node's own text, keyed
 // by its identity. Shared with the recycling outline view, which asks the same
 // question and must not answer it differently.
+// One line of text, plus room to breathe.
+//
+// STATED, not left to the label's intrinsic size. An outline view asks for a
+// row's height before that row has been realised, and a label's intrinsic
+// height comes from the measure callback the backend installs when it creates
+// the native view — so an unrealised label measures at zero, clamps to one
+// point, and the whole tree renders as invisible one-pixel rows.
+const DEFAULT_TREE_ROW_H: f64 = 20.0f64;
+
 fn plain_tree_row(node: *tree::TreeNode) -> core::Node {
-    return label::label({ (*node).label.view() }, key: { (*node).id.view() });
+    return label::label({ (*node).label.view() }, key: { (*node).id.view() })
+        .height(DEFAULT_TREE_ROW_H);
 }
 
 fn apply_tree(v: *u8, n: *core::Node, dirty: u64) {
