@@ -3195,15 +3195,26 @@ fn shared_bits_are_pairwise_disjoint() {
         | props::C_SHADOW | props::C_CLIP | props::C_IS_ENABLED | props::C_IS_VISIBLE
         | props::C_INPUT_TRANSPARENT | props::C_FLOW_DIRECTION | props::C_TRANSFORM
         | props::C_FOCUS | props::C_BLUR | props::C_FLUSH | props::C_HANDLERS
-        | props::C_LAYOUT | props::C_SAFE_AREA | facet::C_GESTURES;
+        | props::C_LAYOUT | props::C_SAFE_AREA | facet::C_GESTURES
+        | props::C_SEMANTICS | props::C_TOOLTIP | props::C_CORNER_RADIUS;
     let summed: u64 = props::C_OPACITY +% props::C_BACKGROUND_COLOR +% props::C_BACKGROUND
         +% props::C_SHADOW +% props::C_CLIP +% props::C_IS_ENABLED +% props::C_IS_VISIBLE
         +% props::C_INPUT_TRANSPARENT +% props::C_FLOW_DIRECTION +% props::C_TRANSFORM
         +% props::C_FOCUS +% props::C_BLUR +% props::C_FLUSH +% props::C_HANDLERS
-        +% props::C_LAYOUT +% props::C_SAFE_AREA +% facet::C_GESTURES;
+        +% props::C_LAYOUT +% props::C_SAFE_AREA +% facet::C_GESTURES
+        +% props::C_SEMANTICS +% props::C_TOOLTIP +% props::C_CORNER_RADIUS;
     assert ored == summed;
-    // Seventeen bits, so seventeen ones. A new shared bit must be added here.
-    assert count_bits(ored) == (17 as u64);
+    // Twenty bits, so twenty ones. A new shared bit must be added here — and
+    // C_SEMANTICS and C_TOOLTIP show what happens when it is not: both were
+    // declared, neither was listed, and the guard that exists to catch a
+    // collision was silently not watching two of the bits it guards.
+    assert count_bits(ored) == (20 as u64);
+
+    // The two masks are built from these bits and must stay consistent with
+    // them: every command is a real bit, and state is exactly the rest.
+    assert (props::C_COMMANDS & props::C_ALL_STATE) == (0 as u64);
+    assert (props::C_COMMANDS | props::C_ALL_STATE) == 18446744073709551615u64;
+    assert props::C_COMMANDS == (props::C_FOCUS | props::C_BLUR | props::C_FLUSH);
     return;
 }
 

@@ -77,6 +77,62 @@ fn wants_view(n: *core::Node) -> bool {
     return { (*n).key() } != "";
 }
 
+// ---- configuring a view happens IN THAT VIEW'S APPEARANCE --------------------
+//
+// Any prop that flattens a colour into a CGColor — a layer fill, a border, a
+// gradient stop — resolves against `NSAppearance.currentAppearance`. Outside a
+// draw cycle that is not the view's appearance, and it does not even follow the
+// application's: measured, after `NSApp.effectiveAppearance` became Aqua,
+// `currentAppearance` still read DarkAqua. It holds whatever was current when
+// the process started. So the repaint an appearance flip schedules re-applied
+// every fill against the OLD side, and no chrome moved — which is exactly what
+// the flip looked like from outside: labels tracking (a real NSColor, resolved
+// per view by AppKit) over fills that did not.
+//
+// Inside a draw cycle AppKit has already made the right appearance current,
+// which is why the cell-drawing paths never had this problem.
+//
+// The view's own `effectiveAppearance` is both the fix and the honest answer:
+// the view is the thing being filled, so a view under an appearance override
+// gets ITS appearance rather than the application's.
+//
+// State rides statics because the appearance is entered through a block. Saved
+// and restored around the call: a kind body can reclass a view and configure
+// the replacement from inside this one.
+static CFG_V: *u8 = #zero::[*u8]();
+static CFG_N: *core::Node = #zero::[*core::Node]();
+static CFG_D: u64 = 0 as u64;
+
+fn configure_body(ctx: *u8) {
+    paint::apply_common(CFG_V, CFG_N, CFG_D);
+    apply_for_kind(core::kind_of(CFG_N), CFG_V, CFG_N, CFG_D);
+    return;
+}
+
+// The one door for "write these props onto this view". `create` uses it with
+// every bit set, `apply` with the dirty word, so the two cannot drift.
+fn configure(v: *u8, n: *core::Node, d: u64) {
+    let saved_v: *u8 = CFG_V;
+    let saved_n: *core::Node = CFG_N;
+    let saved_d: u64 = CFG_D;
+    CFG_V = v;
+    CFG_N = n;
+    CFG_D = d;
+    let cb: fn(*u8) = configure_body;
+    // `effectiveAppearance` reaches NSView through NSAppearanceCustomization, so
+    // the generated binding does not carry it on View.
+    let ap: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("effectiveAppearance\0"))) };
+    if ap == (0 as *u8) {
+        configure_body(0 as *u8);
+    } else {
+        ak::Appearance::from_raw(ap).perform_as_current_drawing_appearance(cb, 0 as *u8);
+    }
+    CFG_V = saved_v;
+    CFG_N = saved_n;
+    CFG_D = saved_d;
+    return;
+}
+
 // ---- create ------------------------------------------------------------------
 
 fn create(ctx: *u8, n: *core::Node) -> *u8 {
@@ -120,8 +176,7 @@ fn create(ctx: *u8, n: *core::Node) -> *u8 {
     }
     // Configure it WHOLE: the shared band, then the kind's own body with every
     // bit set. One code path with apply, so the two cannot drift.
-    paint::apply_common(v, n, paint::all_bits());
-    apply_for_kind(kind, v, n, paint::all_bits());
+    configure(v, n, paint::all_bits());
     // The gesture band. AFTER the kind body, because arming moves the view's
     // class and a body that reads `object_class` would see the subclass.
     input::arm(v, n);
@@ -365,9 +420,8 @@ fn apply(ctx: *u8, n: *core::Node) {
     // work whose only effect is the next line undoing it. `reclass` re-applies
     // the whole word onto the replacement, so there is nothing left to do here.
     if reclass_for(n, v, d) != v { return; }
-    paint::apply_common(v, n, d);
+    configure(v, n, d);
     let kind: u32 = core::kind_of(n);
-    apply_for_kind(kind, v, n, d);
     // A node that measures ITSELF has just been written to, so the measurement
     // is stale — and nothing else in the pipeline knows that.
     //

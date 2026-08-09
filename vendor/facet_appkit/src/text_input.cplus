@@ -1037,6 +1037,22 @@ fn apply_field_band(f: ak::TextField, n: *core::Node, iv: *props::InputViewProps
 fn apply_placeholder(f: ak::TextField, iv: *props::InputViewProps, align: vocab::TextAlign) {
     let s: str = { (*iv).placeholder.view() };
     let c: vocab::Color = { (*iv).placeholder_color };
+    // No placeholder is NIL, not an empty string. They are not the same thing to
+    // AppKit: an empty `placeholderString` is still A PLACEHOLDER, and a search
+    // field lays out for one — measured, `searchButtonRectForBounds:` answers
+    // y=13 with `@""` set and y=8 with nil, so the magnifier sat 4pt off while
+    // the field was empty and dropped into place on the first keystroke (the
+    // string became non-empty and the cell stopped reserving room).
+    //
+    // Every field defaults `placeholder` to "", so this reached ALL of them; it
+    // is only visible on the one control that draws something else beside its
+    // text. Same rule as `setToolTip:` and the background verbs: empty means
+    // unset, and unset is cleared rather than written.
+    if s == "" {
+        { rt::msg_void_id(f.raw(), rt::sel(#str_ptr("setPlaceholderAttributedString:\0")), 0 as *u8) };
+        { rt::msg_void_id(f.raw(), rt::sel(#str_ptr("setPlaceholderString:\0")), 0 as *u8) };
+        return;
+    }
     if c.is_set() == false {
         f.set_placeholder_string(s);
         return;

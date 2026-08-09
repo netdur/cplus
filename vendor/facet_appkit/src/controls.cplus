@@ -828,21 +828,42 @@ fn label_attributes(p: *props::LabelProps) -> *u8 {
 // all three. One body, because three copies is how three controls end up
 // disagreeing about what a zero width means.
 
+// A zero width is no border, and it must CLEAR one — a control that had a
+// border and then asked for none has to lose it.
+//
+// But clearing is not the same as ASKING FOR A LAYER. Layer-backing an AppKit
+// control costs it the material its bezel is drawn with: a push button rendered
+// into a layer comes out FLAT. `create` runs this with every bit set and a
+// default `border_width` of zero, so every plain button and radio was made
+// layer-backed on mount to be told it had no border — and every default button
+// in every facet app lost its native bezel for it.
+//
+// The rest of this package already knows the rule. `apply_background` and
+// `apply_background_image` both say it out loud: nothing to clear unless a
+// layer already exists. This is the same rule, and it was the one place missing
+// it.
 fn apply_border(v: *u8, color: vocab::Color, width: f64, radius: vocab::Corners,
                 do_border: bool, do_corner: bool) {
     let view: ak::View = ak::View::from_raw(v);
     if do_border {
-        // A zero width is no border, and it must CLEAR one — a control that
-        // had a border and then asked for none has to lose it.
-        view.set_wants_layer(true);
-        view.layer().set_border_width(width);
-        if width > 0.0f64 && color.is_set() {
-            view.layer().set_border_color(paint::ns_color(color).c_g_color());
+        if width > 0.0f64 {
+            view.set_wants_layer(true);
+            view.layer().set_border_width(width);
+            if color.is_set() {
+                view.layer().set_border_color(paint::ns_color(color).c_g_color());
+            }
+        } else if view.wants_layer() {
+            view.layer().set_border_width(0.0f64);
         }
     }
     if do_corner {
-        view.set_wants_layer(true);
-        view.layer().set_corner_radius(largest_corner(radius));
+        let corner: f64 = largest_corner(radius);
+        if corner > 0.0f64 {
+            view.set_wants_layer(true);
+            view.layer().set_corner_radius(corner);
+        } else if view.wants_layer() {
+            view.layer().set_corner_radius(0.0f64);
+        }
     }
     return;
 }

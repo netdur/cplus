@@ -248,12 +248,22 @@ fn touch(n: *Node, bit: u64) {
     return;
 }
 
-// Every bit at once: "re-read this node whole". The sync walk raises it on a
+// Every FACT at once: "re-read this node whole". The sync walk raises it on a
 // host whose viewless child changed, because there is no bit for "a run
 // changed" and the host is the only thing that can draw one. Not a setter's
 // tool — a setter names the verb it wrote.
+//
+// Every fact, and no VERB. `C_FOCUS` / `C_BLUR` / `C_FLUSH` are commands the
+// backend performs and clears, and this used to raise them too: a label whose
+// span changed took first responder and handed it straight back to the window,
+// because `apply_common` honours focus and blur in that order. The caret
+// disappeared from whatever the user was typing into, on the keystroke that
+// updated the count — a write to one node stealing focus from another.
+//
+// Re-reading state and re-issuing verbs are different operations and only the
+// first one is what "whole" ever meant.
 fn touch_all(n: *Node) {
-    touch(n, 18446744073709551615u64);
+    touch(n, props::C_ALL_STATE);
     return;
 }
 
@@ -668,6 +678,24 @@ fn is_visible(n: *Node) -> bool {
     let d: *Data = node_data(n);
     if d == (0 as *Data) { return true; }
     return { (*d).common.is_visible };
+}
+
+// Rounded corners on ANY node, not just the four controls that carried their
+// own. A `card` is a container, and a container could not be rounded — so the
+// one shape every card design asks for was the shape the vocabulary could not
+// say, and an app had to fake it with a box behind a stack.
+fn set_corner_radius(n: *Node, v: vocab::Corners) {
+    let d: *Data = ensure_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).common.corner_radius = v };
+    touch(n, props::C_CORNER_RADIUS);
+    return;
+}
+
+fn corner_radius(n: *Node) -> vocab::Corners {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return vocab::Corners::none(); }
+    return { (*d).common.corner_radius };
 }
 
 fn set_background_color(n: *Node, v: vocab::Color) {
@@ -1624,6 +1652,14 @@ impl flex::Node {
     fn opacity(this) -> f64 { return opacity(#addr_of(this)); }
     fn set_background_color(ref this, v: vocab::Color) { set_background_color(#addr_of(this), v); return; }
     fn background_color(this) -> vocab::Color { return background_color(#addr_of(this)); }
+    fn set_corner_radius(ref this, v: vocab::Corners) { set_corner_radius(#addr_of(this), v); return; }
+    fn corner_radius(this) -> vocab::Corners { return corner_radius(#addr_of(this)); }
+    // Chainable, like the layout verbs: `ui::column(b).rounded(8.0)`.
+    fn rounded(take this, v: f64) -> flex::Node {
+        var n: flex::Node = this;
+        set_corner_radius(#addr_of(n), vocab::Corners::all(v));
+        return n;
+    }
     fn set_background(ref this, v: vocab::Brush) { set_background(#addr_of(this), v); return; }
     fn background(this) -> vocab::Brush { return background(#addr_of(this)); }
     fn set_background_image(ref this, v: str) { set_background_image(#addr_of(this), v); return; }
@@ -1847,3 +1883,39 @@ fn card(take b: Builder, key: str = "") -> Node { return _own(flex::card(b), key
 
 fn spacer(key: str = "") -> Node { return _own(flex::spacer(), key); }
 fn zstack(take b: Builder, key: str = "") -> Node { return _own(flex::zstack(b), key); }
+
+#[test]
+fn touch_all_re_reads_every_fact_and_issues_no_verb() {
+    // `touch_all` means "re-read this node whole", and the sync walk raises it
+    // on a backed host whenever a VIEWLESS child (a span, a menu_item) changed.
+    // Commands must not ride along: C_FOCUS and C_BLUR are performed in that
+    // order by the backend, so a blanket touch focused the host and immediately
+    // handed first responder back to the window — the caret vanished from
+    // whatever the user was typing into, one keystroke after a span updated.
+    var n: Node = node_with("", props::K_LABEL, 0 as *u8, no_release);
+    let p: *Node = #addr_of(n);
+    clear_dirty(p);
+    touch_all(p);
+    let d: u64 = dirty_of(p);
+
+    // No verb.
+    assert (d & props::C_FOCUS) == (0 as u64);
+    assert (d & props::C_BLUR) == (0 as u64);
+    assert (d & props::C_FLUSH) == (0 as u64);
+    assert (d & props::C_COMMANDS) == (0 as u64);
+
+    // Every fact — the point of the verb is still to re-read everything else.
+    assert (d & props::C_BACKGROUND_COLOR) != (0 as u64);
+    assert (d & props::C_IS_VISIBLE) != (0 as u64);
+    assert (d & props::C_LAYOUT) != (0 as u64);
+    assert (d & props::C_SEMANTICS) != (0 as u64);
+    assert (d & props::C_TOOLTIP) != (0 as u64);
+    assert (d & props::C_HANDLERS) != (0 as u64);
+    // ...including the per-control bits, which start at 0.
+    assert (d & (1 as u64)) != (0 as u64);
+
+    // The two masks partition the word: no bit is both, none is neither.
+    assert (props::C_COMMANDS & props::C_ALL_STATE) == (0 as u64);
+    assert (props::C_COMMANDS | props::C_ALL_STATE) == 18446744073709551615u64;
+    return;
+}

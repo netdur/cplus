@@ -203,6 +203,273 @@ fn theme_roles_resolve_through_the_apps_palette_then_the_fallback() {
     return;
 }
 
+// ---- appearance-dependent colour ---------------------------------------------
+// These read a colour's red channel AS IT RESOLVES under a named appearance,
+// which is the only way to see the difference between "decided at draw time"
+// and "decided once and frozen" — the two are indistinguishable from the
+// object itself.
+
+fn red_under(appearance: str, c: ak::Color) -> f64 {
+    let prev: ak::Appearance = ak::Appearance::current_appearance();
+    match ak::Appearance::appearance_named(appearance) {
+        option::Option[ak::Appearance]::Some(a) => { ak::Appearance::set_current_appearance(a); }
+        option::Option[ak::Appearance]::None => { }
+    }
+    var out: f64 = -1.0f64;
+    match c.color_using_color_space(ak::ColorSpace::s_r_g_b_color_space()) {
+        option::Option[ak::Color]::Some(s) => { out = s.red_component(); }
+        option::Option[ak::Color]::None => { }
+    }
+    ak::Appearance::set_current_appearance(prev);
+    return out;
+}
+
+#[test]
+fn an_adaptive_pair_resolves_per_appearance_not_once() {
+    app::reset_default_for_tests();
+    theme::set_theme(theme::Theme::new());
+    let c: ak::Color = paint::ns_color(vocab::Color::adaptive(
+        light: vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64, 1.0f64),
+        dark:  vocab::Color::rgba(0.0f64, 0.0f64, 1.0f64, 1.0f64),
+    ));
+    // ONE colour object, two answers. Resolved at apply time it could only ever
+    // have had one.
+    assert red_under("NSAppearanceNameAqua", c) > 0.9f64;
+    assert red_under("NSAppearanceNameDarkAqua", c) < 0.1f64;
+    app::reset_default_for_tests();
+    return;
+}
+
+#[test]
+fn derived_ink_reads_against_what_the_role_became() {
+    app::reset_default_for_tests();
+    // Cream primary: the white constant this used to be would be unreadable.
+    theme::set_theme(theme::Theme::new(
+        primary: vocab::Color::rgba(0.98f64, 0.95f64, 0.87f64, 1.0f64)));
+    let pale: ak::Color = paint::ns_color(vocab::Color::on_primary());
+    assert red_under("NSAppearanceNameAqua", pale) < 0.1f64;      // black ink
+
+    // A dark primary flips the same role the other way.
+    theme::set_theme(theme::Theme::new(
+        primary: vocab::Color::rgba(0.20f64, 0.25f64, 0.33f64, 1.0f64)));
+    let dark: ak::Color = paint::ns_color(vocab::Color::on_primary());
+    assert red_under("NSAppearanceNameAqua", dark) > 0.9f64;      // white ink
+
+    // Unset, the role keeps the platform's own constant — a themeless app is
+    // untouched by any of this.
+    theme::set_theme(theme::Theme::new());
+    assert red_under("NSAppearanceNameAqua", paint::ns_color(vocab::Color::on_primary())) > 0.9f64;
+    app::reset_default_for_tests();
+    return;
+}
+
+#[test]
+fn derived_ink_follows_the_appearance_when_its_role_does() {
+    app::reset_default_for_tests();
+    // `surface` themed as an adaptive pair, `ink` left unset. The ink is derived
+    // from a role that is itself appearance-dependent — the full chain, in one
+    // colour object.
+    theme::set_theme(theme::Theme::new(surface: vocab::Color::adaptive(
+        light: vocab::Color::rgba(0.96f64, 0.96f64, 0.97f64, 1.0f64),
+        dark:  vocab::Color::rgba(0.09f64, 0.09f64, 0.11f64, 1.0f64),
+    )));
+    let ink: ak::Color = paint::ns_color(vocab::Color::ink());
+    assert red_under("NSAppearanceNameAqua", ink) < 0.1f64;       // black on the pale side
+    assert red_under("NSAppearanceNameDarkAqua", ink) > 0.9f64;   // white on the dark side
+    theme::set_theme(theme::Theme::new());
+    app::reset_default_for_tests();
+    return;
+}
+
+#[test]
+fn a_dynamic_colour_is_wrapped_once_and_a_static_one_never() {
+    app::reset_default_for_tests();
+    theme::set_theme(theme::Theme::new());
+    let a: ak::Color = paint::ns_color(vocab::Color::adaptive(
+        light: vocab::Color::rgba(0.1f64, 0.2f64, 0.3f64, 1.0f64),
+        dark:  vocab::Color::rgba(0.4f64, 0.5f64, 0.6f64, 1.0f64)));
+    let b: ak::Color = paint::ns_color(vocab::Color::adaptive(
+        light: vocab::Color::rgba(0.1f64, 0.2f64, 0.3f64, 1.0f64),
+        dark:  vocab::Color::rgba(0.4f64, 0.5f64, 0.6f64, 1.0f64)));
+    assert a.raw() == b.raw();          // same pair, one wrapper
+    let c: ak::Color = paint::ns_color(vocab::Color::adaptive(
+        light: vocab::Color::rgba(0.9f64, 0.2f64, 0.3f64, 1.0f64),
+        dark:  vocab::Color::rgba(0.4f64, 0.5f64, 0.6f64, 1.0f64)));
+    assert c.raw() != a.raw();          // a different pair is a different colour
+    // A platform token is already dynamic in AppKit's hands; wrapping it would
+    // resolve to the same thing and cost its identity.
+    assert paint::ns_color(vocab::Color::text()).raw() == ak::Color::label_color().raw();
+    app::reset_default_for_tests();
+    return;
+}
+
+#[test]
+fn a_plain_button_keeps_its_bezel_instead_of_being_layer_backed() {
+    app::reset_default_for_tests();
+    // Layer-backing an AppKit control costs it the material its bezel is drawn
+    // with — a push button rendered into a layer comes out flat. `create`
+    // configures with every bit set, so a border pass that asked for a layer
+    // before checking whether there was a border to draw made EVERY default
+    // button layer-backed on mount.
+    var plain: core::Node = button::button("Save", key: "btn:plain");
+    let pp: *core::Node = #addr_of(plain);
+    let pv: *u8 = views::create(0 as *u8, pp);
+    assert pv != (0 as *u8);
+    assert ak::View::from_raw(pv).wants_layer() == false;
+
+    // A button that ASKS for a border still gets one.
+    var edged: core::Node = button::button("Edged", key: "btn:edged",
+                                           border_width: 2.0f64,
+                                           border_color: vocab::Color::accent());
+    let ep: *core::Node = #addr_of(edged);
+    let ev: *u8 = views::create(0 as *u8, ep);
+    assert ev != (0 as *u8);
+    assert ak::View::from_raw(ev).wants_layer();
+    assert ak::View::from_raw(ev).layer().border_width() > 1.9f64;
+
+    // And a corner radius alone is reason enough for a layer.
+    var round: core::Node = button::button("Round", key: "btn:round",
+                                           corner_radius: vocab::Corners::all(6.0f64));
+    let rp: *core::Node = #addr_of(round);
+    let rv: *u8 = views::create(0 as *u8, rp);
+    assert rv != (0 as *u8);
+    assert ak::View::from_raw(rv).wants_layer();
+
+    views::view_release(pv);
+    views::view_release(ev);
+    views::view_release(rv);
+    app::reset_default_for_tests();
+    return;
+}
+
+#[test]
+fn a_bezeled_buttons_background_tints_the_bezel_not_a_layer_behind_it() {
+    app::reset_default_for_tests();
+    // A CALayer background sits UNDER the bezel and covers its material: the
+    // button stops reacting to hover and press and becomes a flat block of
+    // colour. `bezelColor` tints the real bezel and keeps all of it.
+    var tinted: core::Node = button::button("Move to Trash", key: "btn:primary");
+    tinted.set_background_color(vocab::Color::accent());
+    let tp: *core::Node = #addr_of(tinted);
+    let tv: *u8 = views::create(0 as *u8, tp);
+    assert tv != (0 as *u8);
+    assert { rt::msg_id(tv, rt::sel(#str_ptr("bezelColor\0"))) } != (0 as *u8);
+    assert ak::View::from_raw(tv).wants_layer() == false;
+
+    // A control with no bezel keeps the layer answer — that is what a `box` is.
+    var plain: core::Node = box_view::box(vocab::Color::accent(), key: "bx");
+    let pp: *core::Node = #addr_of(plain);
+    let pv: *u8 = views::create(0 as *u8, pp);
+    assert pv != (0 as *u8);
+    assert ak::View::from_raw(pv).wants_layer();
+
+    views::view_release(tv);
+    views::view_release(pv);
+    app::reset_default_for_tests();
+    return;
+}
+
+#[link_name = "CGColorGetComponents"]
+extern fn cg_components(c: *u8) -> *f64;
+#[link_name = "CGColorGetNumberOfComponents"]
+extern fn cg_component_count(c: *u8) -> usize;
+
+// The mean of a view's layer fill. -1.0 when it has none.
+fn layer_fill_mean(v: *u8) -> f64 {
+    match ak::View::from_raw(v).layer().background_color() {
+        option::Option[*u8]::Some(cg) => {
+            if cg_component_count(cg) < (3 as usize) { return -1.0f64; }
+            let p: *f64 = cg_components(cg);
+            let g: *f64 = { ({ p as usize } +% (8 as usize)) as *f64 };
+            let b: *f64 = { ({ p as usize } +% (16 as usize)) as *f64 };
+            return ({ *p } + { *g } + { *b }) / 3.0f64;
+        }
+        option::Option[*u8]::None => { return -1.0f64; }
+    }
+}
+
+fn force_view_appearance(v: *u8, name: str) {
+    match ak::Appearance::appearance_named(name) {
+        option::Option[ak::Appearance]::Some(a) => {
+            { rt::msg_void_id(v, rt::sel(#str_ptr("setAppearance:\0")), a.raw()) };
+        }
+        option::Option[ak::Appearance]::None => { }
+    }
+    return;
+}
+
+#[test]
+fn a_fill_flattens_in_the_views_own_appearance_not_the_applications() {
+    app::reset_default_for_tests();
+    theme::set_theme(theme::Theme::new());
+
+    // A layer fill is a CGColor, which has no appearance — it is resolved once,
+    // against `NSAppearance.currentAppearance`. Outside a draw cycle that is
+    // neither the view's appearance nor the application's: it holds whatever was
+    // current when the process started and never follows a flip. Applying inside
+    // the VIEW's appearance is what makes a repaint actually repaint, and it is
+    // also the only answer that survives a view under an appearance override.
+    var n: core::Node = label::label("x", key: "fillcheck");
+    n.set_background_color(vocab::Color::window_background());
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v != (0 as *u8);
+
+    force_view_appearance(v, "NSAppearanceNameAqua");
+    views::configure(v, p, paint::all_bits());
+    let light: f64 = layer_fill_mean(v);
+
+    force_view_appearance(v, "NSAppearanceNameDarkAqua");
+    views::configure(v, p, paint::all_bits());
+    let dark: f64 = layer_fill_mean(v);
+
+    // windowBackground is pale in one and near-black in the other. Whichever way
+    // round the machine's own appearance sits, these must NOT be the same fill.
+    assert light >= 0.0f64;
+    assert dark >= 0.0f64;
+    assert light > 0.5f64;
+    assert dark < 0.5f64;
+
+    views::view_release(v);
+    app::reset_default_for_tests();
+    return;
+}
+
+#[test]
+fn measuring_a_derived_ink_leaves_the_global_appearance_alone() {
+    app::reset_default_for_tests();
+    theme::set_theme(theme::Theme::new(
+        primary: vocab::Color::rgba(0.98f64, 0.95f64, 0.87f64, 1.0f64)));
+
+    // `NSAppearance.setCurrentAppearance:` IGNORES nil. So resolution code that
+    // saves the current appearance, sets its own and puts the old one back pins
+    // its appearance for the whole process the first time it runs with nothing
+    // current — and every CGColor flattened afterwards resolves against that one
+    // side. Live, that showed as themed fills stuck on one side while the labels
+    // on top of them kept tracking the flip, because a label's colour is a real
+    // NSColor and a fill is not.
+    //
+    // The other tests here cannot see it: they each set an appearance before
+    // reading, which is exactly what hides a pinned one.
+    match ak::Appearance::appearance_named("NSAppearanceNameAqua") {
+        option::Option[ak::Appearance]::Some(a) => { ak::Appearance::set_current_appearance(a); }
+        option::Option[ak::Appearance]::None => { }
+    }
+    let before: text::Text = ak::Appearance::current_appearance().name();
+
+    // Forcing a CGColor runs the provider, which MEASURES the role beneath the
+    // ink — the operation that used to leak.
+    let ink: ak::Color = paint::ns_color(vocab::Color::on_primary());
+    let _cg: *u8 = ink.c_g_color();
+
+    let after: text::Text = ak::Appearance::current_appearance().name();
+    assert before.view() == after.view();
+
+    theme::set_theme(theme::Theme::new());
+    app::reset_default_for_tests();
+    return;
+}
+
 // ---- the per-kind bodies -----------------------------------------------------
 // `create` and `apply` share one body per kind, so these assert through
 // `create` (all bits) and then through `apply` (one bit) — the pairing that
@@ -3263,6 +3530,75 @@ fn max_length_truncates_what_was_typed_not_what_was_set() {
     }
     w.close();
     views::view_release(v);
+    return;
+}
+
+#[test]
+fn any_node_can_be_rounded_not_just_the_four_controls_that_carried_it() {
+    app::reset_default_for_tests();
+    // A card is a CONTAINER, and a container could not be rounded: corner_radius
+    // rode per-control props (box, button, icon_button, bordered) and nothing
+    // else could ask for it. Now it is on the shared band.
+    var n: core::Node = core::column(core::Builder::new(), key: "card");
+    n.set_corner_radius(vocab::Corners::all(8.0f64));
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v != (0 as *u8);
+    let view: ak::View = ak::View::from_raw(v);
+    assert view.wants_layer();
+    assert view.layer().corner_radius() > 7.9f64;
+    // Rounded and NOT clipped is a rectangle with rounded paint on it, which is
+    // not what anyone means by rounded.
+    assert view.layer().masks_to_bounds();
+
+    // Zero clears both — and asks for no layer when there is none to clear.
+    var flat: core::Node = core::column(core::Builder::new(), key: "flat");
+    let fp: *core::Node = #addr_of(flat);
+    let fv: *u8 = views::create(0 as *u8, fp);
+    assert fv != (0 as *u8);
+    assert ak::View::from_raw(fv).wants_layer() == false;
+
+    views::view_release(v);
+    views::view_release(fv);
+    app::reset_default_for_tests();
+    return;
+}
+
+#[test]
+fn an_empty_placeholder_is_nil_not_an_empty_string() {
+    app::reset_default_for_tests();
+    // They are not the same thing to AppKit. An empty `placeholderString` is
+    // still A PLACEHOLDER, and a search field reserves room for one: measured,
+    // `searchButtonRectForBounds:` answers y=13 with `@""` and y=8 with nil, so
+    // the magnifier sat off-centre while the field was empty and dropped into
+    // place on the first keystroke. Every field defaults `placeholder` to "",
+    // so this reached all of them — it is only VISIBLE on the one control that
+    // draws something else beside its text.
+    var n: core::Node = search_field::search_field("", key: "sf");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v != (0 as *u8);
+    assert { rt::msg_id(v, rt::sel(#str_ptr("placeholderString\0"))) } == (0 as *u8);
+    assert { rt::msg_id(v, rt::sel(#str_ptr("placeholderAttributedString\0"))) } == (0 as *u8);
+
+    // The magnifier does not move when the text arrives.
+    let cell: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("cell\0"))) };
+    let b: rt::Rect = rt::Rect { x: 0.0f64, y: 0.0f64, w: 240.0f64, h: 24.0f64 };
+    let empty: rt::Rect = { rt::msg_rect_rect(cell, rt::sel(#str_ptr("searchButtonRectForBounds:\0")), b) };
+    { rt::msg_void_id(v, rt::sel(#str_ptr("setStringValue:\0")), bridge::nsstring("abc")) };
+    let typed: rt::Rect = { rt::msg_rect_rect(cell, rt::sel(#str_ptr("searchButtonRectForBounds:\0")), b) };
+    assert empty.y == typed.y;
+    assert empty.x == typed.x;
+
+    // A real placeholder is still set, and still moves nothing.
+    var w: core::Node = search_field::search_field("", key: "sf2", placeholder: "Search");
+    let wp: *core::Node = #addr_of(w);
+    let wv: *u8 = views::create(0 as *u8, wp);
+    assert { rt::msg_id(wv, rt::sel(#str_ptr("placeholderString\0"))) } != (0 as *u8);
+
+    views::view_release(v);
+    views::view_release(wv);
+    app::reset_default_for_tests();
     return;
 }
 
@@ -6885,6 +7221,62 @@ fn a_swipeable_still_offers_its_menu_after_gaining_a_strip() {
     assert menu != (0 as *u8);
     assert { rt::msg_i64(menu, rt::sel(#str_ptr("numberOfItems\0"))) } == (2 as i64);
     mount::unmount(p);
+    return;
+}
+
+#[test]
+fn writing_a_viewless_span_does_not_steal_focus_from_the_field() {
+    backend::install();
+    app::reset_default_for_tests();
+
+    // A field to type in, and a label carrying a keyed SPAN. A span has no view
+    // of its own (`wants_view` says so), so writing to it cannot apply itself:
+    // `sync_subtree` makes the nearest BACKED ancestor — the label — re-apply
+    // whole instead. That blanket touch used to carry C_FOCUS and C_BLUR, and
+    // `apply_common` honours them in that order, so the label took first
+    // responder and handed it straight back to the window. Live, the caret
+    // vanished from the field on the keystroke that updated the label.
+    var b: core::Builder = core::Builder::new();
+    b.add(text_field::text_field("", key: "typing"));
+    b.add(label::label("count", key: "count"));
+    var root: core::Node = core::column(b, key: "root");
+    let rp: *core::Node = #addr_of(root);
+    let win: *u8 = window::open_window(rp, screen::Chrome::new(title: "focus",
+                                                               width: 320.0f64, height: 200.0f64));
+    assert win != (0 as *u8);
+    let w: ak::Window = ak::Window::from_raw(win);
+
+    let fp: *core::Node = match mount::find("typing") {
+        option::Option[*core::Node]::Some(x) => x,
+        option::Option[*core::Node]::None => 0 as *core::Node,
+    };
+    assert fp != (0 as *core::Node);
+    let fv: *u8 = core::view_of(fp);
+    assert fv != (0 as *u8);
+
+    // Put the caret in the field, the way a click would.
+    w.make_key_and_order_front(0 as *u8);
+    assert w.make_first_responder(ak::View::from_raw(fv).as_responder());
+    assert responder_is(w, fv);
+
+    // Now update the span, exactly as a status line would while you type.
+    let lp: *core::Node = match mount::find("count") {
+        option::Option[*core::Node]::Some(x) => x,
+        option::Option[*core::Node]::None => 0 as *core::Node,
+    };
+    assert lp != (0 as *core::Node);
+    assert mount::add_child(lp, span::span("", key: "run"));
+    match span::find("run") {
+        option::Option[span::Span]::Some(sp) => { let _s: span::Span = sp.set_text("11 rows"); }
+        option::Option[span::Span]::None => { assert false; }
+    }
+    mount::sync();
+
+    // The caret is still where the user put it.
+    assert responder_is(w, fv);
+
+    mount::unmount(rp);
+    app::reset_default_for_tests();
     return;
 }
 

@@ -76,15 +76,37 @@ fn theme_slot(token: u32) -> Color {
     return Color::none();
 }
 
-// The Tier-1 default an UNSET theme role resolves to. All fallbacks are
-// platform tokens or literals (never another role), so resolution is one
-// step deep. Backend-facing.
+// The default an UNSET theme role resolves to. Almost all of them are platform
+// tokens or literals, so resolution is one step deep and a themeless app is
+// native in both appearances.
+//
+// The exception is ink-over-a-role. `on_primary` used to be an opaque white
+// literal for every primary, which is what AppKit puts on the system accent and
+// is right only while the role underneath is the system accent. Once an app
+// themes `primary`, a constant is a guess: measured against realistic brand
+// colours, white fails WCAG AA on amber, lime, teal, cream and a pale sky —
+// derived ink clears AAA on all five. So these three ask `Color::on(role)` once
+// the role beneath them is set, and keep the platform's constant until then.
+// That costs a second step, and contrast is the one thing that cannot be
+// answered in one. Backend-facing.
 fn theme_fallback(token: u32) -> Color {
     if token == (100 as u32) { return Color::accent(); }
-    if token == (101 as u32) { return Color::rgba(1.0f64, 1.0f64, 1.0f64, 1.0f64); }
-    if token == (102 as u32) { return Color::accent(); }
-    if token == (103 as u32) { return Color::rgba(1.0f64, 1.0f64, 1.0f64, 1.0f64); }
-    if token == (104 as u32) { return Color::text(); }
+    if token == (101 as u32) {
+        if theme_slot(100 as u32).is_set() { return Color::on(Color::primary()); }
+        return Color::rgba(1.0f64, 1.0f64, 1.0f64, 1.0f64);
+    }
+    // NOT `accent` — that is `primary`'s fallback, and sharing it left a
+    // themeless app unable to tell the two roles apart. systemFill is the
+    // neutral secondary fill, adaptive, and visibly not the accent.
+    if token == (102 as u32) { return Color::fill(); }
+    if token == (103 as u32) {
+        if theme_slot(102 as u32).is_set() { return Color::on(Color::secondary()); }
+        return Color::text();
+    }
+    if token == (104 as u32) {
+        if theme_slot(105 as u32).is_set() { return Color::on(Color::surface()); }
+        return Color::text();
+    }
     if token == (105 as u32) { return Color::window_background(); }
     if token == (106 as u32) { return Color::control_background(); }
     if token == (107 as u32) { return Color::under_page_background(); }
@@ -134,10 +156,25 @@ fn on_appearance_change(handler: fn(*u8), ctx: *u8 = 0 as *u8) {
     return;
 }
 
-// Backend entry: deliver the flip to the RUNNING app's registered handler
-// (no-op when it never registered).
+// Backend entry: a system light/dark flip arrived.
+//
+// Two things happen, in order, and they are independent. First the BACKEND's
+// own repaint — the same sweep `set_theme` runs. A flip and a re-theme change
+// exactly the same thing (what a token resolves to), so they need the same
+// response, and the hook has always been documented as "the same sweep the
+// appearance observer runs". It was not wired to it: colours flattened into
+// layers (CGColor has no appearance) stayed at their old side until something
+// else happened to repaint them.
+//
+// It is deliberately NOT routed through `appearance_cb`. That slot belongs to
+// the app, holds one handler, and an app registering its own would otherwise
+// silently replace the backend's repaint.
+//
+// Then the app's handler, if it registered one.
 fn notify_appearance_changed() {
     let s: *app::Application = app::current();
+    let repaint: fn() = { (*s).theme_changed_fn };
+    if repaint != (0 as fn()) { repaint(); }
     let f: fn(*u8) = { (*s).appearance_cb };
     if f == (0 as fn(*u8)) { return; }
     f({ (*s).appearance_ctx });
@@ -156,6 +193,96 @@ fn th_approx(a: f64, b: f64) -> bool {
 
 static THT_CHANGES: i32 = 0;
 fn tht_changed() { THT_CHANGES = THT_CHANGES + 1; return; }
+
+static THT_ORDER: i32 = 0;
+static THT_REPAINT_AT: i32 = 0;
+static THT_APPCB_AT: i32 = 0;
+fn tht_repaint() { THT_ORDER = THT_ORDER + 1; THT_REPAINT_AT = THT_ORDER; return; }
+fn tht_appcb(ctx: *u8) { THT_ORDER = THT_ORDER + 1; THT_APPCB_AT = THT_ORDER; return; }
+
+#[test]
+fn on_role_is_a_question_for_the_backend_not_a_colour() {
+    // The token carries which role to read against; nothing else.
+    assert Color::on(Color::primary()).token == (200 as u32);
+    assert Color::on(Color::surface()).token == (205 as u32);
+    assert Color::on(Color::recessed()).token == (217 as u32);
+    assert Color::on(Color::primary()).is_derived_ink();
+    assert Color::on(Color::primary()).is_dynamic();
+    assert Color::on(Color::primary()).derived_ink_base().token == Color::primary().token;
+    assert Color::on(Color::surface()).derived_ink_base().token == Color::surface().token;
+    // Only a THEME role has an ink-over: a platform token and a literal are not
+    // retintable, so nothing about them needs measuring.
+    assert Color::on(Color::accent()).is_set() == false;
+    assert Color::on(Color::rgba(0.1f64, 0.2f64, 0.3f64, 1.0f64)).is_set() == false;
+    // A role is not itself a derived ink.
+    assert Color::primary().is_derived_ink() == false;
+    assert Color::text().is_derived_ink() == false;
+    assert Color::primary().derived_ink_base().is_set() == false;
+}
+
+#[test]
+fn ink_roles_derive_only_once_the_role_beneath_them_is_set() {
+    set_theme(Theme::new());
+    // Nothing themed: the platform's own constants, so a themeless app is native
+    // and this change costs it nothing.
+    assert theme_fallback(101 as u32).token == (255 as u32);       // white on accent
+    assert theme_fallback(103 as u32).token == Color::text().token;
+    assert theme_fallback(104 as u32).token == Color::text().token;
+    assert theme_fallback(101 as u32).is_derived_ink() == false;
+
+    // Themed: the ink becomes a question measured against what the role became.
+    set_theme(Theme::new(
+        primary: Color::rgba(0.98f64, 0.95f64, 0.87f64, 1.0f64),    // cream — white ink fails here
+        secondary: Color::rgba(0.08f64, 0.72f64, 0.65f64, 1.0f64),  // teal
+        surface: Color::rgba(0.09f64, 0.09f64, 0.11f64, 1.0f64),
+    ));
+    assert theme_fallback(101 as u32).is_derived_ink();
+    assert theme_fallback(101 as u32).derived_ink_base().token == Color::primary().token;
+    assert theme_fallback(103 as u32).derived_ink_base().token == Color::secondary().token;
+    assert theme_fallback(104 as u32).derived_ink_base().token == Color::surface().token;
+
+    // Each ink follows ITS OWN role, not any set role.
+    set_theme(Theme::new(surface: Color::rgba(0.09f64, 0.09f64, 0.11f64, 1.0f64)));
+    assert theme_fallback(104 as u32).is_derived_ink();
+    assert theme_fallback(101 as u32).is_derived_ink() == false;   // primary still unset
+
+    // A fallback is only a fallback: an app that sets `ink` outright still wins.
+    set_theme(Theme::new(
+        surface: Color::rgba(0.09f64, 0.09f64, 0.11f64, 1.0f64),
+        ink: Color::rgba(1.0f64, 0.0f64, 0.0f64, 1.0f64),
+    ));
+    assert theme_slot(104 as u32).is_set();
+    assert th_approx(theme_slot(104 as u32).r, 1.0f64);
+    set_theme(Theme::new());
+}
+
+#[test]
+fn secondary_no_longer_shares_primarys_fallback() {
+    set_theme(Theme::new());
+    // Both answered `accent`, so a themeless app could not tell them apart.
+    assert theme_fallback(100 as u32).token != theme_fallback(102 as u32).token;
+    assert theme_fallback(102 as u32).token == Color::fill().token;
+}
+
+#[test]
+fn appearance_flip_repaints_the_backend_before_the_app_handler() {
+    THT_ORDER = 0; THT_REPAINT_AT = 0; THT_APPCB_AT = 0;
+    set_theme_changed_fn(tht_repaint);
+    on_appearance_change(tht_appcb, 0 as *u8);
+    notify_appearance_changed();
+    assert THT_REPAINT_AT == 1;      // backend chrome first
+    assert THT_APPCB_AT == 2;        // then app policy
+
+    // The repaint does NOT ride on the app's slot: an app that never registers
+    // a handler still gets its flattened chrome repainted.
+    THT_ORDER = 0; THT_REPAINT_AT = 0; THT_APPCB_AT = 0;
+    on_appearance_change(0 as fn(*u8), 0 as *u8);
+    notify_appearance_changed();
+    assert THT_REPAINT_AT == 1;
+    assert THT_APPCB_AT == 0;
+
+    set_theme_changed_fn(0 as fn());
+}
 
 #[test]
 fn color_tokens_two_tiers_and_predicates() {

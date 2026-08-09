@@ -536,6 +536,10 @@ VALUE_TYPES_SRC = '''
 //   outline, status). The app retints these with `theme::set_theme`; unset
 //   roles fall back to the nearest Tier-1 color, so a themeless app is native
 //   in both appearances and a themed app looks the same on every backend.
+//
+// Plus one derived form: `on(role)` (tokens 200..217), the readable ink over a
+// role — resolved by measuring, because only the backend knows what a role's
+// platform fallback actually looks like in the appearance being drawn.
 struct Color {
     token: u32,
     r: f64,
@@ -649,16 +653,39 @@ impl Color {
     fn warning() -> Color { return Color::tok(110 as u32); }
     fn danger() -> Color { return Color::tok(111 as u32); }
 
+    // ---- Derived: ink that reads against another role -------------------------
+    // `on(role)` is not a colour, it is a QUESTION — "the readable ink over
+    // whatever that role resolved to" — and only the backend can answer it: a
+    // role's fallback is usually a platform token (`accent`, `window_background`)
+    // whose components nothing portable can know, and whose value differs per
+    // appearance. So it travels as a token (200..217, the role's own + 100) and
+    // is measured at paint time.
+    //
+    // This is the ONE place a role's default chains to another role. The rest of
+    // the fallback table is deliberately one step deep; contrast cannot be.
+    fn on(role: Color) -> Color {
+        if role.is_theme_role() == false { return Color::none(); }
+        return Color::tok(role.token +% (100 as u32));
+    }
+
     fn is_set(this) -> bool { return this.token != (0 as u32); }
-    // Resolution depends on the theme or the appearance (any named token or
-    // pair — everything except unset and a fixed rgba literal). What the
-    // backend's repaint registry keys on.
+    // Resolution depends on the theme or the appearance (any named token, pair,
+    // or derived ink — everything except unset and a fixed rgba literal). What
+    // the backend's repaint registry keys on.
     fn is_dynamic(this) -> bool {
         return this.token != (0 as u32) && this.token != (255 as u32);
     }
     fn is_adaptive(this) -> bool { return this.token == (254 as u32); }
     fn is_theme_role(this) -> bool {
         return this.token >= (100 as u32) && this.token <= (117 as u32);
+    }
+    fn is_derived_ink(this) -> bool {
+        return this.token >= (200 as u32) && this.token <= (217 as u32);
+    }
+    // The role a derived ink reads against.
+    fn derived_ink_base(this) -> Color {
+        if this.is_derived_ink() == false { return Color::none(); }
+        return Color::tok(this.token -% (100 as u32));
     }
 }
 
@@ -1816,6 +1843,11 @@ COMMON_SRC = '''
 
 struct CommonProps {
     opacity: f64,
+    // Rounded corners, on ANY node. It rode per-control props (box, button,
+    // icon_button, bordered) and so a `card` — a container, which is what a card
+    // actually is — could not have them: the one shape every card design asks
+    // for was the one the vocabulary could not say.
+    corner_radius: vocab::Corners,
     background_color: vocab::Color,
     background: vocab::Brush,
     // The third background thing. A Color fills, a Brush gradients, and an
@@ -1866,6 +1898,7 @@ impl CommonProps {
     fn new() -> CommonProps {
         return CommonProps {
             opacity: 1.0f64,
+            corner_radius: vocab::Corners::none(),
             background_color: vocab::Color::clear(),
             background: vocab::Brush::none(),
             background_image: text::new(),
@@ -1953,6 +1986,27 @@ const C_SAFE_AREA: u64 = 140737488355328u64;
 // screen-reader description changes rarely and the backend re-reads all three.
 const C_SEMANTICS: u64 = 70368744177664u64;
 const C_TOOLTIP: u64 = 35184372088832u64;
+// The band keeps growing downward from bit 47; this is 2^44.
+const C_CORNER_RADIUS: u64 = 17592186044416u64;
+
+// ---- state versus commands ---------------------------------------------------
+// C_FOCUS, C_BLUR and C_FLUSH are VERBS: the backend performs them and clears
+// the bit. Every other bit is a fact the backend re-reads.
+//
+// The distinction matters because two places raise a blanket "this node,
+// whole": `core::touch_all` (the sync walk, when a VIEWLESS child changed and
+// its nearest backed ancestor has to re-render for it) and `paint::all_bits`
+// (create, and the reclass path). Re-reading every fact is exactly right there.
+// Re-issuing every verb is not, and it is not a small mistake: the word carries
+// FOCUS and BLUR, `apply_common` honours both in that order, so the ancestor
+// took first responder and immediately handed it back to the window.
+//
+// Live, that is a caret that vanishes mid-word. Writing to a `span` — viewless
+// by construction — makes its label re-apply whole, and typing anywhere in the
+// window loses focus on the next keystroke that updates one.
+const C_COMMANDS: u64 = 2017612633061982208u64;         // C_FOCUS | C_BLUR | C_FLUSH
+// Every bit a blanket touch may raise: all of them except the verbs.
+const C_ALL_STATE: u64 = 16429131440647569407u64;
 '''
 
 

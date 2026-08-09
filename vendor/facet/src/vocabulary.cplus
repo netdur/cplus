@@ -249,6 +249,10 @@ enum ToolbarPlacement {
 //   outline, status). The app retints these with `theme::set_theme`; unset
 //   roles fall back to the nearest Tier-1 color, so a themeless app is native
 //   in both appearances and a themed app looks the same on every backend.
+//
+// Plus one derived form: `on(role)` (tokens 200..217), the readable ink over a
+// role — resolved by measuring, because only the backend knows what a role's
+// platform fallback actually looks like in the appearance being drawn.
 struct Color {
     token: u32,
     r: f64,
@@ -362,16 +366,39 @@ impl Color {
     fn warning() -> Color { return Color::tok(110 as u32); }
     fn danger() -> Color { return Color::tok(111 as u32); }
 
+    // ---- Derived: ink that reads against another role -------------------------
+    // `on(role)` is not a colour, it is a QUESTION — "the readable ink over
+    // whatever that role resolved to" — and only the backend can answer it: a
+    // role's fallback is usually a platform token (`accent`, `window_background`)
+    // whose components nothing portable can know, and whose value differs per
+    // appearance. So it travels as a token (200..217, the role's own + 100) and
+    // is measured at paint time.
+    //
+    // This is the ONE place a role's default chains to another role. The rest of
+    // the fallback table is deliberately one step deep; contrast cannot be.
+    fn on(role: Color) -> Color {
+        if role.is_theme_role() == false { return Color::none(); }
+        return Color::tok(role.token +% (100 as u32));
+    }
+
     fn is_set(this) -> bool { return this.token != (0 as u32); }
-    // Resolution depends on the theme or the appearance (any named token or
-    // pair — everything except unset and a fixed rgba literal). What the
-    // backend's repaint registry keys on.
+    // Resolution depends on the theme or the appearance (any named token, pair,
+    // or derived ink — everything except unset and a fixed rgba literal). What
+    // the backend's repaint registry keys on.
     fn is_dynamic(this) -> bool {
         return this.token != (0 as u32) && this.token != (255 as u32);
     }
     fn is_adaptive(this) -> bool { return this.token == (254 as u32); }
     fn is_theme_role(this) -> bool {
         return this.token >= (100 as u32) && this.token <= (117 as u32);
+    }
+    fn is_derived_ink(this) -> bool {
+        return this.token >= (200 as u32) && this.token <= (217 as u32);
+    }
+    // The role a derived ink reads against.
+    fn derived_ink_base(this) -> Color {
+        if this.is_derived_ink() == false { return Color::none(); }
+        return Color::tok(this.token -% (100 as u32));
     }
 }
 

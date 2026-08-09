@@ -29,6 +29,11 @@ fn no_group_header(group: usize, ctx: *u8) -> flex::Node { return flex::Node::ne
 
 struct CommonProps {
     opacity: f64,
+    // Rounded corners, on ANY node. It rode per-control props (box, button,
+    // icon_button, bordered) and so a `card` — a container, which is what a card
+    // actually is — could not have them: the one shape every card design asks
+    // for was the one the vocabulary could not say.
+    corner_radius: vocab::Corners,
     background_color: vocab::Color,
     background: vocab::Brush,
     // The third background thing. A Color fills, a Brush gradients, and an
@@ -79,6 +84,7 @@ impl CommonProps {
     fn new() -> CommonProps {
         return CommonProps {
             opacity: 1.0f64,
+            corner_radius: vocab::Corners::none(),
             background_color: vocab::Color::clear(),
             background: vocab::Brush::none(),
             background_image: text::new(),
@@ -166,6 +172,27 @@ const C_SAFE_AREA: u64 = 140737488355328u64;
 // screen-reader description changes rarely and the backend re-reads all three.
 const C_SEMANTICS: u64 = 70368744177664u64;
 const C_TOOLTIP: u64 = 35184372088832u64;
+// The band keeps growing downward from bit 47; this is 2^44.
+const C_CORNER_RADIUS: u64 = 17592186044416u64;
+
+// ---- state versus commands ---------------------------------------------------
+// C_FOCUS, C_BLUR and C_FLUSH are VERBS: the backend performs them and clears
+// the bit. Every other bit is a fact the backend re-reads.
+//
+// The distinction matters because two places raise a blanket "this node,
+// whole": `core::touch_all` (the sync walk, when a VIEWLESS child changed and
+// its nearest backed ancestor has to re-render for it) and `paint::all_bits`
+// (create, and the reclass path). Re-reading every fact is exactly right there.
+// Re-issuing every verb is not, and it is not a small mistake: the word carries
+// FOCUS and BLUR, `apply_common` honours both in that order, so the ancestor
+// took first responder and immediately handed it back to the window.
+//
+// Live, that is a caret that vanishes mid-word. Writing to a `span` — viewless
+// by construction — makes its label re-apply whole, and typing anywhere in the
+// window loses focus on the next keystroke that updates one.
+const C_COMMANDS: u64 = 2017612633061982208u64;         // C_FOCUS | C_BLUR | C_FLUSH
+// Every bit a blanket touch may raise: all of them except the verbs.
+const C_ALL_STATE: u64 = 16429131440647569407u64;
 
 // ---- GroupableItemsView — shared by every control the ledger derives from it 
 

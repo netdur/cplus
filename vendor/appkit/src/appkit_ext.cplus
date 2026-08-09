@@ -636,6 +636,90 @@ fn observe_notification(name: str, object: *u8, handler: fn(*u8), ctx: *u8, pin_
 }
 
 // ==========================================================================
+// Dynamic colour — a colour that resolves itself per-appearance
+// ==========================================================================
+//
+// `NSColor colorWithName:dynamicProvider:` hands the block the appearance being
+// resolved for and takes whatever it returns, so the value is decided at DRAW
+// time, in the appearance of the view doing the drawing. That is the only way
+// to answer light/dark without freezing a side at apply time.
+//
+// It is written here because the GENERATED binding for it cannot work: bindgen
+// drops the return type from every block `invoke` (0 of 132 carry one), and
+// this block must return an NSColor.
+//
+// The descriptor is process-wide rather than a stack local. Block_copy heap-
+// copies the block but SHARES the descriptor pointer, and NSColor keeps the
+// provider for the colour's whole life — a stack descriptor outlives its frame.
+// With flags=0 there are no copy/dispose helpers, so nothing dereferences it
+// after the copy and the stack shape survives by luck (measured: clean under
+// ASan with detect_stack_use_after_return). This does not rely on that.
+
+#[repr(C)]
+struct DynColorBlock {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8) -> *u8,
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8) -> *u8,
+    opaque ctx: *u8,
+}
+
+#[link_name = "malloc"]
+extern fn ext_malloc(n: usize) -> *u8;
+
+static DYN_COLOR_DESC: *u8 = #zero::[*u8]();
+
+fn dyn_color_desc() -> *u8 {
+    if DYN_COLOR_DESC != (0 as *u8) { return DYN_COLOR_DESC; }
+    let p: *u8 = ext_malloc(16 as usize);
+    let d: *rt::BlockDescriptor = { p as *rt::BlockDescriptor };
+    { (*d).reserved = 0 as u64 };
+    { (*d).size = 48 as u64 };              // sizeof(DynColorBlock)
+    DYN_COLOR_DESC = p;
+    return p;
+}
+
+fn dyn_color_invoke(block: *u8, appearance: *u8) -> *u8 {
+    let b: *DynColorBlock = { block as *DynColorBlock };
+    let f: fn(*u8, *u8) -> *u8 = { (*b).user_fn };
+    return f({ (*b).ctx }, appearance);
+}
+
+// A colour whose value `provider(ctx, appearance)` decides on every resolution.
+// `name` is an identity for debugging only — AppKit does not interpret it, but
+// two colours sharing a name are not required to be equal, so keep it distinct
+// per provider. Returns a RETAINED NSColor (0 on failure).
+fn dynamic_color(name: str, provider: fn(*u8, *u8) -> *u8, provider_ctx: *u8 = 0 as *u8) -> *u8 {
+    var blk: DynColorBlock = DynColorBlock {
+        isa: rt::stack_block_isa(),
+        flags: 0 as i32,
+        reserved: 0 as i32,
+        invoke: dyn_color_invoke,
+        descriptor: dyn_color_desc(),
+        user_fn: provider,
+        ctx: provider_ctx,
+    };
+    let obj: *u8 = { rt::msg_id_id_id(rt::get_class(#str_ptr("NSColor\0")),
+                                      rt::sel(#str_ptr("colorWithName:dynamicProvider:\0")),
+                                      bridge::nsstring(name),
+                                      { #addr_of(blk) as *u8 }) };
+    if obj == { 0 as *u8 } { return 0 as *u8; }
+    return rt::retain(obj);
+}
+
+// Is THIS appearance dark? Asked of a specific NSAppearance — the one handed to
+// a provider — never of NSApp, which is the whole point: a view under an
+// appearance override must resolve for its own, not the application's.
+fn appearance_is_dark(a: *u8) -> bool {
+    if a == { 0 as *u8 } { return false; }
+    let n: *u8 = { rt::msg_id(a, rt::sel(#str_ptr("name\0"))) };
+    if n == { 0 as *u8 } { return false; }
+    return bridge::to_text(n).view().contains("Dark");
+}
+
+// ==========================================================================
 // Appearance-change observer — viewDidChangeEffectiveAppearance -> C+ handler
 // ==========================================================================
 //

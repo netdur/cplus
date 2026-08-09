@@ -354,6 +354,57 @@ fn frame_obs_class() -> *u8 ;
 fn observe_notification(name: str, object: *u8, handler: fn(*u8), ctx: *u8, pin_on: *u8, pin_key: *u8) ;
 
 // ==========================================================================
+// Dynamic colour — a colour that resolves itself per-appearance
+// ==========================================================================
+//
+// `NSColor colorWithName:dynamicProvider:` hands the block the appearance being
+// resolved for and takes whatever it returns, so the value is decided at DRAW
+// time, in the appearance of the view doing the drawing. That is the only way
+// to answer light/dark without freezing a side at apply time.
+//
+// It is written here because the GENERATED binding for it cannot work: bindgen
+// drops the return type from every block `invoke` (0 of 132 carry one), and
+// this block must return an NSColor.
+//
+// The descriptor is process-wide rather than a stack local. Block_copy heap-
+// copies the block but SHARES the descriptor pointer, and NSColor keeps the
+// provider for the colour's whole life — a stack descriptor outlives its frame.
+// With flags=0 there are no copy/dispose helpers, so nothing dereferences it
+// after the copy and the stack shape survives by luck (measured: clean under
+// ASan with detect_stack_use_after_return). This does not rely on that.
+
+#[repr(C)]
+struct DynColorBlock {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8) -> *u8,
+    opaque descriptor: *u8,
+    user_fn: fn(*u8, *u8) -> *u8,
+    opaque ctx: *u8,
+}
+
+#[link_name = "malloc"]
+extern fn ext_malloc(n: usize) -> *u8;
+
+static DYN_COLOR_DESC: *u8 = #zero::[*u8]();
+
+fn dyn_color_desc() -> *u8 ;
+
+fn dyn_color_invoke(block: *u8, appearance: *u8) -> *u8 ;
+
+// A colour whose value `provider(ctx, appearance)` decides on every resolution.
+// `name` is an identity for debugging only — AppKit does not interpret it, but
+// two colours sharing a name are not required to be equal, so keep it distinct
+// per provider. Returns a RETAINED NSColor (0 on failure).
+fn dynamic_color(name: str, provider: fn(*u8, *u8) -> *u8, provider_ctx: *u8 = 0 as *u8) -> *u8 ;
+
+// Is THIS appearance dark? Asked of a specific NSAppearance — the one handed to
+// a provider — never of NSApp, which is the whole point: a view under an
+// appearance override must resolve for its own, not the application's.
+fn appearance_is_dark(a: *u8) -> bool ;
+
+// ==========================================================================
 // Appearance-change observer — viewDidChangeEffectiveAppearance -> C+ handler
 // ==========================================================================
 //
