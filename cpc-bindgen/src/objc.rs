@@ -3012,7 +3012,52 @@ impl ObjcEmitter {
             }
             return Some(if info.is_options { "u64" } else { "i64" }.to_string());
         }
-        delegate_numeric(b).map(|(cty, _, _, _)| cty.to_string())
+        if let Some(t) = delegate_numeric(b) {
+            return Some(t.0.to_string());
+        }
+        // A NAMED type: follow it. `NSModalResponse` is a typedef of
+        // `NSInteger` and five AppKit sheet callbacks take one — refusing it
+        // for want of a literal spelling would lose those methods to protect
+        // them from a width that was never in doubt. `typedef_canon` is the
+        // same walk the delegate path uses, and it bottoms out at a scalar or
+        // at a pointer.
+        if let Some(c) = self.typedef_canon(b) {
+            return Some(tdcanon_kind(c).0.to_string());
+        }
+        // A BLOCK argument to a block (`void (^)(void)`, or a typedef of one
+        // like `NSItemProviderCompletionHandler`). A block is a pointer: hand
+        // it over as an opaque handle, which is what it is, rather than
+        // dropping the enclosing method. Nothing can call it from C+ without
+        // the same trampoline machinery going the other way — but a handle
+        // that can be stored and passed back to ObjC is a binding, and `i64`
+        // was not.
+        if self.resolve_typedef_spelling(b).contains('^') {
+            return Some("*u8".to_string());
+        }
+        // A nullability annotation is only legal on a POINTER, so a type that
+        // carries one is an object however unfamiliar its name — which is how
+        // ObjC lightweight generics (`ItemIdentifierType _Nonnull`) arrive.
+        // Read from the ORIGINAL spelling, before `strip_nullability` took it
+        // off.
+        if qt.contains("_Nonnull") || qt.contains("_Nullable") || qt.contains("_Null_unspecified")
+        {
+            return Some("*u8".to_string());
+        }
+        None
+    }
+
+    /// Follow a typedef chain and return the final spelling (or the input, if
+    /// it names no typedef). Used to see the block-ness of a name like
+    /// `NSItemProviderCompletionHandler`.
+    fn resolve_typedef_spelling(&self, ty: &str) -> String {
+        let mut cur = ty.trim().to_string();
+        for _ in 0..8 {
+            match self.typedefs.get(cur.trim()) {
+                Some(u) => cur = u.trim().to_string(),
+                None => break,
+            }
+        }
+        cur
     }
 
     /// The `rt::msg_*` call expression for a (receiver, selector, return, args)
