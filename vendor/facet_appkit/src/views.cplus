@@ -74,7 +74,62 @@ fn wants_view(n: *core::Node) -> bool {
     // so an unkeyed `column(b).on_click(...)` would otherwise describe a
     // handler nothing could ever deliver to.
     if gestures::has_gestures(n) { return true; }
+    // And a bare container that asks for PIXELS. Same claim, other tier:
+    // drawing arrives on a view exactly as input does.
+    if wants_painting(n) { return true; }
     return { (*n).key() } != "";
+}
+
+// Is this node asking for something only a view can express?
+//
+// A background colour, a gradient, an image, rounded corners, a clip, a
+// shadow, a partial opacity and a transform are all claims on pixels, and
+// pixels need a view — the same claim `has_gestures` makes about wanting
+// events. Without this the write was ACCEPTED, the node was real, it was laid
+// out, it took part in flex and contributed its size, and the styling was
+// discarded in silence.
+//
+// What it cost: every filled pill on a card sheet — a borderless button
+// wrapped in a fill and a radius, carrying neither a key nor a handler —
+// rendered as bare words floating where a button should be. Nothing warned,
+// and the workaround was to key containers no agent will ever address (which
+// pollutes the ACI namespace) or to fake a control with a clear-stroked
+// `bordered`, because a CONTROL always gets a view.
+//
+// The test is deliberately the WHOLE painted band rather than the three props
+// someone needed on the day: an incomplete rule here fails the same silent
+// way, one prop later.
+fn wants_painting(n: *core::Node) -> bool {
+    if core::background_color(n).is_set() { return true; }
+    let b: vocab::Brush = core::background(n);
+    if b.start.is_set() { return true; }
+    if b.end.is_set() { return true; }
+    if core::background_image(n) != "" { return true; }
+    let r: vocab::Corners = core::corner_radius(n);
+    if r.top_leading != 0.0f64 { return true; }
+    if r.top_trailing != 0.0f64 { return true; }
+    if r.bottom_leading != 0.0f64 { return true; }
+    if r.bottom_trailing != 0.0f64 { return true; }
+    if core::clip(n).kind != (0 as i64) { return true; }
+    // A shadow needs BOTH a colour and an opacity to draw anything, which is
+    // what `Shadow::none()` is — asking for either alone is not a request for
+    // a rectangle.
+    let sh: vocab::Shadow = core::shadow(n);
+    if sh.color.is_set() && sh.opacity != 0.0f64 { return true; }
+    if core::opacity(n) != 1.0f64 { return true; }
+    // `is_visible` is the hide that KEEPS the node's space (flex's display:none
+    // is the other one). With no view of its own there is nothing to hide, and
+    // every child would go on drawing.
+    if !core::is_visible(n) { return true; }
+    // The transforms are a layer property; a container without a layer rotates
+    // and scales nothing at all.
+    if core::rotation(n) != 0.0f64 { return true; }
+    if core::scale(n) != 1.0f64 { return true; }
+    if core::scale_x(n) != 1.0f64 { return true; }
+    if core::scale_y(n) != 1.0f64 { return true; }
+    if core::translation_x(n) != 0.0f64 { return true; }
+    if core::translation_y(n) != 0.0f64 { return true; }
+    return false;
 }
 
 // ---- configuring a view happens IN THAT VIEW'S APPEARANCE --------------------

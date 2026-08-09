@@ -925,3 +925,153 @@ fn a_search_field_exposes_its_text_its_search_and_its_clear() {
     assert surface::outcome_eq(s.click("search:zoom"), surface::Outcome::NotFound);
     return;
 }
+
+#[test]
+fn describe_reports_the_click_capability_beside_the_permission() {
+    // `actionable` is a PERMISSION (exposed + enabled + not observe-only) and a
+    // tagged non-control defaults to it — see the NotActionable test above,
+    // which asserts exactly that pairing from the other side. `click` asks a
+    // CAPABILITY: does the view answer `performClick:`. A keyed layout
+    // container is permitted and cannot, so every one of them advertised a
+    // press that did not exist, and an agent — for which the flag is the whole
+    // of what it knows — had to spend a click on each to find out.
+    let win = fixture_window(300.0f64, 200.0f64);
+    let content = content_of(win);
+
+    let group = ak::View::new(rt::Rect { x: 5.0, y: 5.0, w: 100.0, h: 40.0 });
+    content.add_subview(ak::View::from_raw(group.raw()));
+    agent::set_agent_id(group.raw(), "lane");
+
+    let b = add_button(content, "Add");
+    agent::set_agent_id(b.as_view().raw(), "add");
+
+    var s: agent::Surface = agent::open(win.raw());
+    let nodes: vec::Vec[agent::AppKitNode] = s.describe();
+    assert nodes.count() == (4 as usize);
+
+    // The keyed container: permitted, not clickable — and `click` agrees.
+    match nodes.at_ptr(2 as usize) {
+        option::Option[*agent::AppKitNode]::Some(n) => {
+            assert { (*n).id.view() } == "lane";
+            assert { (*n).actionable };
+            assert !{ (*n).clickable };
+        }
+        option::Option[*agent::AppKitNode]::None => { assert false; }
+    };
+    assert surface::outcome_eq(s.click("lane"), surface::Outcome::NotActionable);
+
+    // The button: both, and `click` agrees there too. The flag has to predict
+    // the verb or it is worse than no flag at all.
+    match nodes.at_ptr(3 as usize) {
+        option::Option[*agent::AppKitNode]::Some(n) => {
+            assert { (*n).id.view() } == "add";
+            assert { (*n).actionable };
+            assert { (*n).clickable };
+        }
+        option::Option[*agent::AppKitNode]::None => { assert false; }
+    };
+    assert surface::outcome_eq(s.click("add"), surface::Outcome::Allowed);
+    return;
+}
+
+#[test]
+fn describe_reports_a_text_drive_as_not_clickable() {
+    // The other half of the capability: a declared drive_text input is exposed,
+    // enabled and actionable — `set_text` is exactly what it is for — but
+    // `click` refuses it rather than no-op, so `clickable` must say so. This is
+    // the pairing that rules out folding the capability into `actionable`.
+    let win = fixture_window(300.0f64, 200.0f64);
+    let content = content_of(win);
+    let f = ak::TextField::new_with_frame(rt::Rect { x: 10.0, y: 10.0, w: 120.0, h: 22.0 });
+    content.add_subview(f.as_view());
+    agent::set_agent_id(f.as_view().raw(), "title");
+    agent::set_affordance(f.as_view().raw(), identity::Role::Input);
+
+    var s: agent::Surface = agent::open(win.raw());
+    let nodes: vec::Vec[agent::AppKitNode] = s.describe();
+    match nodes.at_ptr(2 as usize) {
+        option::Option[*agent::AppKitNode]::Some(n) => {
+            assert { (*n).id.view() } == "title";
+            assert { (*n).actionable };
+            assert !{ (*n).clickable };
+        }
+        option::Option[*agent::AppKitNode]::None => { assert false; }
+    };
+    assert surface::outcome_eq(s.click("title"), surface::Outcome::NotActionable);
+    return;
+}
+
+#[test]
+fn describe_carries_the_accessibility_label_as_the_node_name() {
+    // The walk already read the label into the registry's name — the curated
+    // view has always reported it — but the full view dropped it, so a group
+    // whose title lives in a grandchild, and every icon-only control, arrived
+    // as `text: ""` and said nothing about itself. The label is written on
+    // purpose; the agent simply could not see it.
+    let win = fixture_window(300.0f64, 200.0f64);
+    let content = content_of(win);
+
+    // A container with NO text of its own, named only by its label.
+    let card = ak::View::new(rt::Rect { x: 5.0, y: 5.0, w: 100.0, h: 40.0 });
+    content.add_subview(ak::View::from_raw(card.raw()));
+    agent::set_agent_id(card.raw(), "card:3");
+    ak::Accessibility::from_raw(card.raw()).set_accessibility_label("the trail feed");
+
+    // A control whose label OVERRIDES its own title — the override channel.
+    let b = add_button(content, "+");
+    agent::set_agent_id(b.as_view().raw(), "col:add");
+    ak::Accessibility::from_raw(b.as_view().raw()).set_accessibility_label("Add a card");
+
+    var s: agent::Surface = agent::open(win.raw());
+    let nodes: vec::Vec[agent::AppKitNode] = s.describe();
+
+    match nodes.at_ptr(2 as usize) {
+        option::Option[*agent::AppKitNode]::Some(n) => {
+            assert { (*n).id.view() } == "card:3";
+            assert { (*n).text.view() } == "";
+            assert { (*n).name.view() } == "the trail feed";
+        }
+        option::Option[*agent::AppKitNode]::None => { assert false; }
+    };
+    match nodes.at_ptr(3 as usize) {
+        option::Option[*agent::AppKitNode]::Some(n) => {
+            assert { (*n).id.view() } == "col:add";
+            assert { (*n).text.view() } == "+";
+            assert { (*n).name.view() } == "Add a card";
+        }
+        option::Option[*agent::AppKitNode]::None => { assert false; }
+    };
+    return;
+}
+
+#[test]
+fn a_node_with_no_label_names_itself_by_its_own_title() {
+    // No accessibility label anywhere: `name` falls back to the widget's own
+    // title (which is what the registry already does), and a node with neither
+    // reports "" rather than inventing one.
+    let win = fixture_window(300.0f64, 200.0f64);
+    let content = content_of(win);
+    let b = add_button(content, "Save");
+    agent::set_agent_id(b.as_view().raw(), "save");
+    let group = ak::View::new(rt::Rect { x: 5.0, y: 60.0, w: 100.0, h: 40.0 });
+    content.add_subview(ak::View::from_raw(group.raw()));
+    agent::set_agent_id(group.raw(), "strip");
+
+    var s: agent::Surface = agent::open(win.raw());
+    let nodes: vec::Vec[agent::AppKitNode] = s.describe();
+    match nodes.at_ptr(2 as usize) {
+        option::Option[*agent::AppKitNode]::Some(n) => {
+            assert { (*n).id.view() } == "save";
+            assert { (*n).name.view() } == "Save";
+        }
+        option::Option[*agent::AppKitNode]::None => { assert false; }
+    };
+    match nodes.at_ptr(3 as usize) {
+        option::Option[*agent::AppKitNode]::Some(n) => {
+            assert { (*n).id.view() } == "strip";
+            assert { (*n).name.view() } == "";
+        }
+        option::Option[*agent::AppKitNode]::None => { assert false; }
+    };
+    return;
+}

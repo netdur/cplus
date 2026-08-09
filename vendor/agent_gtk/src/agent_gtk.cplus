@@ -536,8 +536,17 @@ fn mcp_describe(p: *u8) -> vec::Vec[mcpb::UiNode] {
                     },
                     is_hidden: { (*n).is_hidden },
                     text: ctext((*n).text.view()),
+                    // This backend has not split the permission from the
+                    // capability (see backend::UiNode.clickable) and does not
+                    // carry the accessibility label into its own node. Both
+                    // report exactly what this backend reported before the
+                    // fields existed, rather than a probe written against a
+                    // toolkit that was never run — an untested capability
+                    // claim is the bug the field was added to remove.
+                    name: text::new(),
                     description: text::new(),
                     actionable: { (*n).actionable },
+                    clickable: { (*n).actionable },
                     parent: { (*n).parent },
                 });
             }
@@ -585,8 +594,11 @@ fn mcp_describe_exposed(p: *u8) -> vec::Vec[mcpb::UiNode] {
                     frame: mcpb::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 },
                     is_hidden: false,
                     text: text::from_str({ (*n).name.view() }),
+                    name: text::from_str({ (*n).name.view() }),
                     description: text::from_str({ (*n).description.view() }),
                     actionable: { (*n).actionable },
+                    // See the note in the full describe above.
+                    clickable: { (*n).actionable },
                     parent: { (*n).parent },
                 });
             }

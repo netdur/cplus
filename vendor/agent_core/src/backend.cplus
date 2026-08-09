@@ -38,10 +38,27 @@ struct UiNode {
     frame: Rect,
     is_hidden: bool,
     text: text::Text,
+    // The agent-facing NAME: the accessibility label the developer set
+    // (facet `.accessibility_label`), else the widget's own title. It is the
+    // only thing an icon-only control says about itself — a glyph is not a
+    // name — and a node with no text child (a drop target, a card that carries
+    // its title in a grandchild) says nothing without it. "" when neither
+    // channel has anything.
+    name: text::Text,
     // Agent-facing intent ("opens the New Project wizard"), dev-authored.
     // Carried by the curated exposed view; "" elsewhere.
     description: text::Text,
+    // PERMISSION: may the agent act on this node (exposed + enabled + not
+    // observe-only)?
     actionable: bool,
+    // CAPABILITY: would a `click` on this node be DELIVERED? The two are
+    // independent and neither implies the other. A keyed layout container is
+    // permitted and cannot be clicked; a disabled button could be clicked and
+    // is not permitted. Reporting only the permission made every keyed group
+    // advertise a press that does not exist, and an agent — which has no eyes,
+    // and for which this flag is the whole of what it knows — had to spend a
+    // click on each to find out. See `actionable` above for the other half.
+    clickable: bool,
     parent: option::Option[usize],
 }
 

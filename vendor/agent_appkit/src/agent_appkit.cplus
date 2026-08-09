@@ -319,9 +319,11 @@ fn get_declared_drive(view: *u8) -> option::Option[u32] {
 // One node of the describe_ui snapshot. `id` is the resolved agent-id; `role` is
 // the curated role; `class_name` is the AppKit class (e.g. "NSButton"); `frame`
 // is the view's frame in its superview's coordinates; `text` is the live label /
-// content; `actionable` is whether the agent may act on it (exposed + enabled +
-// not observe-only). `parent` indexes into the returned `Vec[AppKitNode]` (None for
-// the window root), so the flat list reconstructs the tree.
+// content; `name` is the accessibility label the walk read (else the widget's
+// own title); `actionable` is whether the agent may ACT on it (exposed + enabled
+// + not observe-only); `clickable` is whether a click would be DELIVERED.
+// `parent` indexes into the returned `Vec[AppKitNode]` (None for the window
+// root), so the flat list reconstructs the tree.
 struct AppKitNode {
     id: text::Text,
     role: identity::Role,
@@ -329,7 +331,9 @@ struct AppKitNode {
     frame: rt::Rect,
     is_hidden: bool,
     text: text::Text,
+    name: text::Text,
     actionable: bool,
+    clickable: bool,
     parent: option::Option[usize],
 }
 
@@ -871,7 +875,15 @@ impl Surface {
                 frame: rt::msg_rect(view, rt::sel(#str_ptr("frame\0"))),
                 is_hidden: live_hidden(view),
                 text: node_text(view, role),
+                // The walk already read the accessibility label into the
+                // registry's name (falling back to the widget's own title), so
+                // the full view reports the same name the curated one does —
+                // it was simply never carried across. A card whose title lives
+                // in a grandchild, and every icon button, say nothing without
+                // it.
+                name: text::from_str(this.reg.name_of(node)),
                 actionable: this.reg.is_exposed(node) && this.reg.is_agent_actionable(node),
+                clickable: view_clickable(view, this.part_of(node)),
                 parent: parent,
             });
             node = node +% (1 as usize);
@@ -1177,8 +1189,10 @@ fn mcp_describe(p: *u8) -> vec::Vec[mcpb::UiNode] {
                     },
                     is_hidden: { (*n).is_hidden },
                     text: ctext((*n).text.view()),
+                    name: ctext((*n).name.view()),
                     description: text::new(),
                     actionable: { (*n).actionable },
+                    clickable: { (*n).clickable },
                     parent: { (*n).parent },
                 });
             }
@@ -1315,6 +1329,16 @@ fn enclosing_table(v: *u8) -> *u8 {
         if rt::msg_i8_id(cur, rt::sel(#str_ptr("isKindOfClass:\0")), table_cls) != (0 as i8) {
             return cur;
         }
+        // `superview` is NSView's, and the tree also carries the NSWindow root
+        // — the same node `layout_diagnostics` guards its two selectors for.
+        // Sending it raised an unrecognized-selector NSException and killed the
+        // process. It was reachable from `click` all along (a window root
+        // answers no `performClick:`, so it fell straight through to the row
+        // path); asking the question from `describe` is only what made it
+        // certain to happen.
+        if !responds_to(cur, #str_ptr("superview\0")) {
+            return null();
+        }
         cur = rt::msg_id(cur, rt::sel(#str_ptr("superview\0")));
     }
     return null();
@@ -1356,6 +1380,43 @@ fn select_row_of(v: *u8) -> bool {
     ensure_select_method();
     perform_on_main(table, rt::sel(#str_ptr("cplusAgentSelectRow:\0")), idxset);
     return true;
+}
+
+// The READ-ONLY half of `select_row_of`: would a click on `v` reach a row?
+// Both of that function's branches require a row — the disclosure toggle asks
+// `rowForView:` before it asks whether the item is expandable — so the row
+// index alone is the whole condition, and asking for it selects nothing.
+fn can_select_row_of(v: *u8) -> bool {
+    let table: *u8 = enclosing_table(v);
+    if is_null(table) { return false; }
+    return rt::msg_i64_id(table, rt::sel(#str_ptr("rowForView:\0")), v) >= (0 as i64);
+}
+
+// Would a `click` on this node be DELIVERED? The capability half of the
+// permission/capability pair `describe` reports (see backend::UiNode.clickable).
+//
+// It mirrors `Surface::click`'s own body, branch for branch, and that is the
+// point: a flag that predicts a different answer than the verb gives is worse
+// than no flag, so the two are written to be read side by side. What it does
+// NOT do is any of the things `click` does that are not questions — it never
+// sends `performClick:`, never selects a row, and never toggles a disclosure
+// triangle. `is_detached` is deliberately not folded in either: staleness is a
+// property of the moment, and `describe` has just refreshed the tree.
+fn view_clickable(v: *u8, part: u32) -> bool {
+    if is_null(v) { return false; }
+    // A PART is driven through its owner and answered before the drive check,
+    // exactly as in `click`: a search field's parts share its view and the
+    // field declares drive_text, so checking the drive first would refuse a
+    // button that is genuinely a button.
+    if part != PART_SELF { return true; }
+    match get_declared_drive(v) {
+        option::Option[u32]::Some(d) => {
+            if d != identity::drive_click() { return false; }
+        }
+        option::Option[u32]::None => { }
+    }
+    if responds_to(v, #str_ptr("performClick:\0")) { return true; }
+    return can_select_row_of(v);
 }
 
 // ---- pointer reachability ---------------------------------------------------
@@ -1437,10 +1498,17 @@ fn mcp_describe_exposed(p: *u8) -> vec::Vec[mcpb::UiNode] {
                 // node, so the default projection reported a hidden step as on
                 // screen while `mode:full` reported it hidden, and an agent
                 // could not tell which step it was looking at.
-                let live: *u8 = match { (*s).reg.lookup({ (*n).id.view() }) } {
-                    option::Option[usize]::Some(idx) => { (*s).view_of(idx) },
-                    option::Option[usize]::None => null(),
-                };
+                // The view AND which part of it this node means — `clickable`
+                // needs both, for the same reason `click` does.
+                var live: *u8 = null();
+                var part: u32 = PART_SELF;
+                match { (*s).reg.lookup({ (*n).id.view() }) } {
+                    option::Option[usize]::Some(idx) => {
+                        live = { (*s).view_of(idx) };
+                        part = { (*s).part_of(idx) };
+                    }
+                    option::Option[usize]::None => { }
+                }
                 out.append(mcpb::UiNode {
                     id: text::from_str({ (*n).id.view() }),
                     role: { (*n).role },
@@ -1448,8 +1516,10 @@ fn mcp_describe_exposed(p: *u8) -> vec::Vec[mcpb::UiNode] {
                     frame: mcpb::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 },
                     is_hidden: if is_null(live) { false } else { live_hidden(live) },
                     text: text::from_str({ (*n).name.view() }),
+                    name: text::from_str({ (*n).name.view() }),
                     description: text::from_str({ (*n).description.view() }),
                     actionable: { (*n).actionable },
+                    clickable: view_clickable(live, part),
                     parent: { (*n).parent },
                 });
             }

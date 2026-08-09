@@ -317,6 +317,7 @@ fn alert_sheet(title: str, message: str, primary: str, secondary: str = "",
     return;
 }
 
+
 fn choose_sheet(title: str, message: str, take options: vec::Vec[text::Text],
                 on_answer: fn(i32, *u8) = 0 as fn(i32, *u8), ctx: *u8 = 0 as *u8) {
     // Tall enough for the buttons it actually has.
@@ -367,6 +368,18 @@ fn present_sheet(take tree: core::Node, height: f64,
     if rv != (0 as *u8) { content.add_subview(ak::View::from_raw(rv)); }
     { (*rp).calculate_layout(width: 380.0f64, height: height) };
     geometry::reposition(rp);
+    // THE ROOT'S OWN VIEW. `reposition` deliberately does not touch it — the
+    // window facade sizes it when it makes the content view — and a sheet has no
+    // such facade, so it stayed 0x0 with every control laid out inside a rect of
+    // no size. They still DREW, because a view does not clip by default; nothing
+    // could be CLICKED, because `hitTest:` answers nil for a point outside the
+    // receiver's bounds and never descends to a child. Every button in every
+    // sheet this presents — alert, choose, prompt — was dead to the mouse, and
+    // only an agent's `performClick:` (which skips hit testing) could answer one.
+    if rv != (0 as *u8) {
+        { rt::msg_void_rect(rv, rt::sel(#str_ptr("setFrame:\0")),
+                            rt::Rect { x: 0.0f64, y: 0.0f64, w: 380.0f64, h: height }) };
+    }
 
     match box::new::[AlertHost](AlertHost {
         root: rp, sheet: w, parent: parent,

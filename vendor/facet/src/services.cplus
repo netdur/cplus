@@ -585,6 +585,57 @@ fn observe_size_cancels_through_its_own_slot_not_the_timer_slot() {
     uninstall_scheduler();
 }
 
+// ---- a scheduler callback IS a bound method ---------------------------------
+
+struct Ticker { ticks: i32 }
+impl Ticker {
+    fn tick(ref this) { this.ticks = this.ticks + 1; return; }
+}
+
+// Fakes that FIRE the callback with the ctx they were handed, so the test
+// observes the receiver arriving rather than merely compiling.
+fn tmr_fire_now(s: f64, cb: fn(*u8), ctx: *u8) -> u64 { cb(ctx); return 11 as u64; }
+fn obs_fire_now(n: *core::Node, cb: fn(*u8), ctx: *u8) -> u64 { cb(ctx); return 12 as u64; }
+
+#[test]
+fn a_scheduler_callback_can_be_a_bound_method() {
+    // This tier's handler is `fn(*u8)`, and a single parameter is both the
+    // first and the LAST — which is where a bound reference reads the
+    // receiver from. The `ctx:` slot beside it is adjacent and `*u8`, so the
+    // pairing the binding looks for is already there, and `after(t, this.m)`
+    // needs no trampoline.
+    //
+    // Worth pinning: the shape reads like it has "nowhere for the receiver to
+    // go", and a screen that believes that writes a top-level fn whose whole
+    // body is an unchecked `*u8` cast — for every debounce it has.
+    var sch: Scheduler = scheduler_none();
+    sch.after = tmr_fire_now;
+    sch.observe_size = obs_fire_now;
+    install_scheduler(sch);
+
+    var t: Ticker = Ticker { ticks: 0 };
+    var a: Cancellable = after(0.0f64, t.tick);
+    assert t.ticks == 1;
+    var o: Cancellable = observe_size(0 as *core::Node, t.tick);
+    assert t.ticks == 2;
+
+    // A free function with an explicit ctx still works — the binding is an
+    // addition, not a replacement.
+    var u: Ticker = Ticker { ticks: 0 };
+    var b: Cancellable = after(0.0f64, tick_free, #addr_of(u) as *u8);
+    assert u.ticks == 1;
+
+    uninstall_scheduler();
+    return;
+}
+
+fn tick_free(ctx: *u8) {
+    if ctx == (0 as *u8) { return; }
+    let t: *Ticker = ctx as *Ticker;
+    { (*t).tick() };
+    return;
+}
+
 // ---- the apply half of the flight -------------------------------------------
 
 struct ApplyJob {

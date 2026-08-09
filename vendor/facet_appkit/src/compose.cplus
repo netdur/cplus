@@ -546,6 +546,82 @@ fn placeholder_of(tv: *u8) -> *u8 {
     return { synth::get_associated(tv, placeholder_key()) };
 }
 
+// ---- and it really takes no input -------------------------------------------
+// The paragraph above says the placeholder takes no input, and until this it
+// was only true of the RESPONDER chain. The overlay is a real NSTextField, and
+// an NSTextField answers `hitTest:` with itself — so the click landed on the
+// label and the editor never became first responder. The rect that most
+// invites a click was the one rect that could not take one: a reader clicks AT
+// the placeholder to start typing, because that is where the text will go.
+//
+// AppKit has no per-view "ignore the pointer" switch — the hit test is the
+// only place it can be said, which is exactly what facet already does for
+// `input_transparent` nodes (input.cplus `imp_hit_test`). The overlay carries
+// no facet node, so it gets the smallest version of the same thing: a cached
+// subclass whose `hitTest:` answers nil, and the point falls through to the
+// text view underneath.
+
+#[link_name = "class_addMethod"]
+extern fn add_method_id_point(cls: *u8, sel: *u8, imp: fn(*u8, *u8, rt::Point) -> *u8,
+                              types: *u8) -> i8;
+
+#[link_name = "object_setClass"]
+extern fn ph_set_class(obj: *u8, cls: *u8) -> *u8;
+
+fn ph_subclass_key() -> *u8 { return { 29097 as *u8 }; }
+
+static PH_CLASSES: u32 = 0 as u32;
+
+fn ph_digit(d: u32) -> str {
+    if d == (1 as u32) { return "1"; }
+    if d == (2 as u32) { return "2"; }
+    if d == (3 as u32) { return "3"; }
+    if d == (4 as u32) { return "4"; }
+    if d == (5 as u32) { return "5"; }
+    if d == (6 as u32) { return "6"; }
+    if d == (7 as u32) { return "7"; }
+    if d == (8 as u32) { return "8"; }
+    if d == (9 as u32) { return "9"; }
+    return "0";
+}
+
+// Nil, unconditionally. There is nothing under a placeholder that wants the
+// point more than the editor does.
+fn imp_ph_hit_test(self_obj: *u8, cmd: *u8, p: rt::Point) -> *u8 {
+    return 0 as *u8;
+}
+
+// Cached per BASE class, the same shape `input::input_class_for` uses: the
+// swap happens once per class, not once per placeholder. Answers the base
+// unchanged if the pair cannot be made, so a failure costs the old behaviour
+// rather than a wrong superclass.
+fn ph_class_for(base: *u8) -> *u8 {
+    if base == (0 as *u8) { return base; }
+    let cached: *u8 = { synth::get_associated(base, ph_subclass_key()) };
+    if cached != (0 as *u8) { return cached; }
+
+    var name: text::Text = text::from_str("FacetPlaceholder");
+    let _t: status::Status = name.append(ph_digit((PH_CLASSES / (10 as u32)) % (10 as u32)));
+    let _u: status::Status = name.append(ph_digit(PH_CLASSES % (10 as u32)));
+    PH_CLASSES = PH_CLASSES + (1 as u32);
+
+    var made: *u8 = base;
+    match name.c_str() {
+        option::Option[text::CString]::Some(cs) => {
+            let cls: *u8 = synth::allocate_class_pair(base, cs.as_ptr(), 0 as usize);
+            if cls != (0 as *u8) {
+                let _a: i8 = add_method_id_point(cls, rt::sel(#str_ptr("hitTest:\0")),
+                                                 imp_ph_hit_test, #str_ptr("@@:{CGPoint=dd}\0"));
+                synth::register_class_pair(cls);
+                made = cls;
+            }
+        }
+        option::Option[text::CString]::None => { }
+    }
+    if made != base { synth::set_associated(base, ph_subclass_key(), made); }
+    return made;
+}
+
 fn refresh_editor_placeholder(tv: *u8) {
     let label: *u8 = placeholder_of(tv);
     if label == (0 as *u8) { return; }
@@ -570,6 +646,10 @@ fn apply_editor_placeholder(tv: *u8, s: str, c: vocab::Color, font: option::Opti
         let lv: ak::View = f.as_view();
         ak::View::from_raw(tv).add_subview(lv);
         label = lv.raw();
+        // Before it is ever on screen: the words invite a click, and the
+        // editor underneath is what must receive it.
+        let pcls: *u8 = ph_class_for(synth::object_class(label));
+        if pcls != (0 as *u8) { let _old: *u8 = ph_set_class(label, pcls); }
         synth::set_associated(tv, placeholder_key(), label);
     }
     let f: ak::TextField = ak::TextField::from_raw(label);

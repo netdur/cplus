@@ -142,12 +142,29 @@ fn node_to_json(p: *backend::UiNode, with_geometry: bool) -> json::Value {
     }
     m.append(member("hidden", jbool({ (*p).is_hidden })));
     m.append(member("text", jstr({ (*p).text })));
+    // The accessibility label, under the same "absent when there is nothing to
+    // say" rule as `description`: omitted when empty, and omitted when it only
+    // repeats `text` — which is the whole of the lean view, where the name IS
+    // the text. What is left is the case the field exists for: a node whose
+    // name and content differ, or which has no content at all (an icon button,
+    // a drop target, a card titled by a grandchild).
+    let np: *text::Text = { #addr_of((*p).name) };
+    let tp: *text::Text = { #addr_of((*p).text) };
+    if { (*np).view() } != "" {
+        if { (*np).view() } != { (*tp).view() } {
+            m.append(member("name", jstr({ (*p).name })));
+        }
+    }
     // Dev-authored intent — only on the wire when present (keeps full lean).
     let dp: *text::Text = { #addr_of((*p).description) };
     if { (*dp).view() } != "" {
         m.append(member("description", jstr({ (*p).description })));
     }
+    // The permission/capability pair. Both always on the wire: an agent reading
+    // one without the other is how sixteen keyed containers came to advertise a
+    // press that does not exist.
     m.append(member("actionable", jbool({ (*p).actionable })));
+    m.append(member("clickable", jbool({ (*p).clickable })));
     m.append(member("parent", parent_val));
     return json::Value::Object(m);
 }
@@ -565,8 +582,10 @@ fn fake_node(id: str) -> backend::UiNode {
         frame: backend::Rect { x: 11.0f64, y: 22.0f64, w: 33.0f64, h: 44.0f64 },
         is_hidden: false,
         text: text::new(),
+        name: text::from_str("Do the thing"),
         description: text::from_str("does the thing"),
         actionable: true,
+        clickable: true,
         parent: option::Option[usize]::None,
     };
 }

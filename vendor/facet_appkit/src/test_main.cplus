@@ -1758,6 +1758,48 @@ fn a_gesture_node_is_backed_even_without_a_key() {
 }
 
 #[test]
+fn a_painted_node_is_backed_even_without_a_key_or_a_gesture() {
+    // Drawing arrives on a view exactly as input does. A container styled with
+    // a fill, a radius and a clip, carrying neither a key nor a handler, was
+    // laid out and contributed its size — and the styling went nowhere. Every
+    // filled pill on a card sheet read as bare words floating where a button
+    // should be, and nothing warned.
+    var bare: core::Node = core::column(core::Builder::new());
+    assert views::wants_view(#addr_of(bare)) == false;
+
+    var filled: core::Node = core::column(core::Builder::new());
+    core::set_background_color(#addr_of(filled), vocab::Color::system_blue());
+    assert views::wants_view(#addr_of(filled));
+
+    var rounded: core::Node = core::column(core::Builder::new());
+    core::set_corner_radius(#addr_of(rounded), vocab::Corners::all(6.0f64));
+    assert views::wants_view(#addr_of(rounded));
+
+    var clipped: core::Node = core::column(core::Builder::new());
+    core::set_clip(#addr_of(clipped), vocab::Shape::rounded(6.0f64));
+    assert views::wants_view(#addr_of(clipped));
+
+    var faded: core::Node = core::column(core::Builder::new());
+    core::set_opacity(#addr_of(faded), 0.5f64);
+    assert views::wants_view(#addr_of(faded));
+
+    var hidden: core::Node = core::column(core::Builder::new());
+    core::set_visible(#addr_of(hidden), false);
+    assert views::wants_view(#addr_of(hidden));
+
+    var turned: core::Node = core::column(core::Builder::new());
+    core::set_rotation(#addr_of(turned), 90.0f64);
+    assert views::wants_view(#addr_of(turned));
+
+    // And a node that asks for NONE of it still costs nothing — the whole
+    // point of the passthrough rule.
+    var plain: core::Node = core::column(core::Builder::new());
+    assert views::wants_painting(#addr_of(plain)) == false;
+    assert views::wants_view(#addr_of(plain)) == false;
+    return;
+}
+
+#[test]
 fn arming_moves_the_class_and_keeps_the_original_as_super() {
     // The decline chain needs `super`, and `super` needs the backing class to
     // still be there — so the view's isa moves onto a SUBCLASS of what it was,
@@ -2922,7 +2964,7 @@ fn an_alert_is_a_facet_tree_the_agent_can_address() {
     AL_ANSWER = -1;
     let before: usize = app::window_count();
     dialogs::alert_sheet("Discard?", "Three edits will be lost.", "Discard", "Keep",
-                         al_answered, 0 as *u8);
+                         on_answer: al_answered, ctx: 0 as *u8);
     // It is a real window of the app, so `find` reaches into it — which is the
     // same door the agent surface uses.
     assert app::window_count() == (before + (1 as usize));
@@ -2958,7 +3000,7 @@ fn an_alert_is_a_facet_tree_the_agent_can_address() {
 fn an_alert_with_one_button_has_no_second_one() {
     backend::install();
     let before: usize = app::window_count();
-    dialogs::alert_sheet("Saved", "", "OK", "", al_answered, 0 as *u8);
+    dialogs::alert_sheet("Saved", "", "OK", "", on_answer: al_answered, ctx: 0 as *u8);
     match button::find("alert:secondary") {
         option::Option[button::Button]::Some(_b) => { assert false; }
         option::Option[button::Button]::None => { }
@@ -4883,6 +4925,36 @@ fn set_area_text(p: *core::Node, s: str) {
     { (*iv).text = text::from_str(s) };
     return;
 }
+
+#[test]
+fn the_editor_placeholder_hands_the_click_to_the_editor() {
+    // A reader clicks AT the words, because that is where the text will go.
+    // The overlay is a real NSTextField, and an NSTextField answers `hitTest:`
+    // with itself — so the click landed on the label, the editor never became
+    // first responder, and the rect that most invites a click was the one rect
+    // that could not take one.
+    backend::install();
+    var e: core::Node = text_area::text_area("", key: "ph3", placeholder: "Say something");
+    let p: *core::Node = #addr_of(e);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    let tv: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("documentView\0"))) };
+    let label: *u8 = compose::placeholder_of(tv);
+    assert label != (0 as *u8);
+
+    // Ask the LABEL itself, at a point inside its own bounds. Whatever else
+    // is true of the view hierarchy, the overlay must never claim the point.
+    let lb: rt::Rect = { rt::msg_rect(label, rt::sel(#str_ptr("bounds\0"))) };
+    assert lb.w > 0.0f64;
+    assert lb.h > 0.0f64;
+    let mid: rt::Point = rt::Point { x: lb.x + (lb.w / 2.0f64), y: lb.y + (lb.h / 2.0f64) };
+    let hit: *u8 = { msg_id_point(label, rt::sel(#str_ptr("hitTest:\0")), mid) };
+    assert hit == (0 as *u8);
+    return;
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_id_point(recv: *u8, sel: *u8, p: rt::Point) -> *u8;
 
 #[test]
 fn an_editor_with_no_placeholder_grows_no_label() {
