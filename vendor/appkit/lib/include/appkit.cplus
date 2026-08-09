@@ -3542,26 +3542,26 @@ struct ItemProvider_register_data_representation_for_type_identifier_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
-    invoke: fn(*u8, i64),
+    invoke: fn(*u8, *u8) -> *u8,
     opaque descriptor: *u8,
-    user_fn: fn(*u8, i64),
+    user_fn: fn(*u8, *u8) -> *u8,
     opaque ctx: *u8,
 }
 
-fn ItemProvider_register_data_representation_for_type_identifier_invoke(block: *u8, a0: i64) ;
+fn ItemProvider_register_data_representation_for_type_identifier_invoke(block: *u8, a0: *u8) -> *u8 ;
 
 #[repr(C)]
 struct ItemProvider_register_file_representation_for_type_identifier_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
-    invoke: fn(*u8, i64),
+    invoke: fn(*u8, *u8) -> *u8,
     opaque descriptor: *u8,
-    user_fn: fn(*u8, i64),
+    user_fn: fn(*u8, *u8) -> *u8,
     opaque ctx: *u8,
 }
 
-fn ItemProvider_register_file_representation_for_type_identifier_invoke(block: *u8, a0: i64) ;
+fn ItemProvider_register_file_representation_for_type_identifier_invoke(block: *u8, a0: *u8) -> *u8 ;
 
 #[repr(C)]
 struct ItemProvider_load_data_representation_for_type_identifier_block {
@@ -3607,91 +3607,91 @@ struct ItemProvider_register_object_of_class_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
-    invoke: fn(*u8, i64),
+    invoke: fn(*u8, *u8) -> *u8,
     opaque descriptor: *u8,
-    user_fn: fn(*u8, i64),
+    user_fn: fn(*u8, *u8) -> *u8,
     opaque ctx: *u8,
 }
 
-fn ItemProvider_register_object_of_class_invoke(block: *u8, a0: i64) ;
+fn ItemProvider_register_object_of_class_invoke(block: *u8, a0: *u8) -> *u8 ;
 
 #[repr(C)]
 struct ItemProvider_load_object_of_class_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
-    invoke: fn(*u8, i64, *u8),
+    invoke: fn(*u8, *u8, *u8),
     opaque descriptor: *u8,
-    user_fn: fn(*u8, i64, *u8),
+    user_fn: fn(*u8, *u8, *u8),
     opaque ctx: *u8,
 }
 
-fn ItemProvider_load_object_of_class_invoke(block: *u8, a0: i64, a1: *u8) ;
+fn ItemProvider_load_object_of_class_invoke(block: *u8, a0: *u8, a1: *u8) ;
 
 #[repr(C)]
 struct ItemProvider_register_item_for_type_identifier_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
-    invoke: fn(*u8, i64, i64, *u8),
+    invoke: fn(*u8, *u8, *u8, *u8),
     opaque descriptor: *u8,
-    user_fn: fn(*u8, i64, i64, *u8),
+    user_fn: fn(*u8, *u8, *u8, *u8),
     opaque ctx: *u8,
 }
 
-fn ItemProvider_register_item_for_type_identifier_invoke(block: *u8, a0: i64, a1: i64, a2: *u8) ;
+fn ItemProvider_register_item_for_type_identifier_invoke(block: *u8, a0: *u8, a1: *u8, a2: *u8) ;
 
 #[repr(C)]
 struct ItemProvider_load_item_for_type_identifier_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
-    invoke: fn(*u8, i64, *u8),
+    invoke: fn(*u8, *u8, *u8),
     opaque descriptor: *u8,
-    user_fn: fn(*u8, i64, *u8),
+    user_fn: fn(*u8, *u8, *u8),
     opaque ctx: *u8,
 }
 
-fn ItemProvider_load_item_for_type_identifier_invoke(block: *u8, a0: i64, a1: *u8) ;
+fn ItemProvider_load_item_for_type_identifier_invoke(block: *u8, a0: *u8, a1: *u8) ;
 
 #[repr(C)]
 struct ItemProvider_load_preview_image_with_options_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
-    invoke: fn(*u8, i64, *u8),
+    invoke: fn(*u8, *u8, *u8),
     opaque descriptor: *u8,
-    user_fn: fn(*u8, i64, *u8),
+    user_fn: fn(*u8, *u8, *u8),
     opaque ctx: *u8,
 }
 
-fn ItemProvider_load_preview_image_with_options_invoke(block: *u8, a0: i64, a1: *u8) ;
+fn ItemProvider_load_preview_image_with_options_invoke(block: *u8, a0: *u8, a1: *u8) ;
 
 #[repr(C)]
 struct ItemProvider_set_preview_image_handler_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
-    invoke: fn(*u8, i64, i64, *u8),
+    invoke: fn(*u8, *u8, *u8, *u8),
     opaque descriptor: *u8,
-    user_fn: fn(*u8, i64, i64, *u8),
+    user_fn: fn(*u8, *u8, *u8, *u8),
     opaque ctx: *u8,
 }
 
-fn ItemProvider_set_preview_image_handler_invoke(block: *u8, a0: i64, a1: i64, a2: *u8) ;
+fn ItemProvider_set_preview_image_handler_invoke(block: *u8, a0: *u8, a1: *u8, a2: *u8) ;
 
 #[repr(C)]
 struct ItemProvider_register_cloud_kit_share_with_preparation_handler_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
-    invoke: fn(*u8, i64),
+    invoke: fn(*u8, *u8),
     opaque descriptor: *u8,
-    user_fn: fn(*u8, i64),
+    user_fn: fn(*u8, *u8),
     opaque ctx: *u8,
 }
 
-fn ItemProvider_register_cloud_kit_share_with_preparation_handler_invoke(block: *u8, a0: i64) ;
+fn ItemProvider_register_cloud_kit_share_with_preparation_handler_invoke(block: *u8, a0: *u8) ;
 
 #[repr(C)]
 struct AttributedString_enumerate_attributes_in_range_block {
@@ -3711,13 +3711,13 @@ struct AttributedString_enumerate_attribute_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
-    invoke: fn(*u8, i64, rt::Range, *u8),
+    invoke: fn(*u8, *u8, rt::Range, *u8),
     opaque descriptor: *u8,
-    user_fn: fn(*u8, i64, rt::Range, *u8),
+    user_fn: fn(*u8, *u8, rt::Range, *u8),
     opaque ctx: *u8,
 }
 
-fn AttributedString_enumerate_attribute_invoke(block: *u8, a0: i64, a1: rt::Range, a2: *u8) ;
+fn AttributedString_enumerate_attribute_invoke(block: *u8, a0: *u8, a1: rt::Range, a2: *u8) ;
 
 #[repr(C)]
 struct Set_enumerate_index_paths_with_options_block {
@@ -3776,26 +3776,26 @@ struct Color_color_with_name_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
-    invoke: fn(*u8, *u8),
+    invoke: fn(*u8, *u8) -> *u8,
     opaque descriptor: *u8,
-    user_fn: fn(*u8, *u8),
+    user_fn: fn(*u8, *u8) -> *u8,
     opaque ctx: *u8,
 }
 
-fn Color_color_with_name_invoke(block: *u8, a0: *u8) ;
+fn Color_color_with_name_invoke(block: *u8, a0: *u8) -> *u8 ;
 
 #[repr(C)]
 struct View_show_definition_for_attributed_string_range_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
-    invoke: fn(*u8, rt::Range),
+    invoke: fn(*u8, rt::Range) -> rt::Point,
     opaque descriptor: *u8,
-    user_fn: fn(*u8, rt::Range),
+    user_fn: fn(*u8, rt::Range) -> rt::Point,
     opaque ctx: *u8,
 }
 
-fn View_show_definition_for_attributed_string_range_invoke(block: *u8, a0: rt::Range) ;
+fn View_show_definition_for_attributed_string_range_invoke(block: *u8, a0: rt::Range) -> rt::Point ;
 
 #[repr(C)]
 struct Window_begin_sheet_block {
@@ -3880,39 +3880,39 @@ struct AccessibilityCustomAction_init_with_name_handler_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
-    invoke: fn(*u8),
+    invoke: fn(*u8) -> i8,
     opaque descriptor: *u8,
-    user_fn: fn(*u8),
+    user_fn: fn(*u8) -> i8,
     opaque ctx: *u8,
 }
 
-fn AccessibilityCustomAction_init_with_name_handler_invoke(block: *u8) ;
+fn AccessibilityCustomAction_init_with_name_handler_invoke(block: *u8) -> i8 ;
 
 #[repr(C)]
 struct AccessibilityCustomAction_set_handler_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
-    invoke: fn(*u8),
+    invoke: fn(*u8) -> i8,
     opaque descriptor: *u8,
-    user_fn: fn(*u8),
+    user_fn: fn(*u8) -> i8,
     opaque ctx: *u8,
 }
 
-fn AccessibilityCustomAction_set_handler_invoke(block: *u8) ;
+fn AccessibilityCustomAction_set_handler_invoke(block: *u8) -> i8 ;
 
 #[repr(C)]
 struct Image_image_with_size_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
-    invoke: fn(*u8, i64),
+    invoke: fn(*u8, rt::Rect) -> i8,
     opaque descriptor: *u8,
-    user_fn: fn(*u8, i64),
+    user_fn: fn(*u8, rt::Rect) -> i8,
     opaque ctx: *u8,
 }
 
-fn Image_image_with_size_invoke(block: *u8, a0: i64) ;
+fn Image_image_with_size_invoke(block: *u8, a0: rt::Rect) -> i8 ;
 
 #[repr(C)]
 struct Workspace_open_u_r_l_configuration_block {
@@ -4049,13 +4049,13 @@ struct Event_track_swipe_event_with_options_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
-    invoke: fn(*u8, i64, i64, i8, *u8),
+    invoke: fn(*u8, f64, u64, i8, *u8),
     opaque descriptor: *u8,
-    user_fn: fn(*u8, i64, i64, i8, *u8),
+    user_fn: fn(*u8, f64, u64, i8, *u8),
     opaque ctx: *u8,
 }
 
-fn Event_track_swipe_event_with_options_invoke(block: *u8, a0: i64, a1: i64, a2: i8, a3: *u8) ;
+fn Event_track_swipe_event_with_options_invoke(block: *u8, a0: f64, a1: u64, a2: i8, a3: *u8) ;
 
 #[repr(C)]
 struct Event_add_global_monitor_for_events_matching_mask_block {
@@ -4075,13 +4075,13 @@ struct Event_add_local_monitor_for_events_matching_mask_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
-    invoke: fn(*u8, *u8),
+    invoke: fn(*u8, *u8) -> *u8,
     opaque descriptor: *u8,
-    user_fn: fn(*u8, *u8),
+    user_fn: fn(*u8, *u8) -> *u8,
     opaque ctx: *u8,
 }
 
-fn Event_add_local_monitor_for_events_matching_mask_invoke(block: *u8, a0: *u8) ;
+fn Event_add_local_monitor_for_events_matching_mask_invoke(block: *u8, a0: *u8) -> *u8 ;
 
 #[repr(C)]
 struct Pasteboard_detect_patterns_for_patterns_block {
@@ -4205,13 +4205,13 @@ struct DraggingItem_set_image_components_provider_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
-    invoke: fn(*u8),
+    invoke: fn(*u8) -> *u8,
     opaque descriptor: *u8,
-    user_fn: fn(*u8),
+    user_fn: fn(*u8) -> *u8,
     opaque ctx: *u8,
 }
 
-fn DraggingItem_set_image_components_provider_invoke(block: *u8) ;
+fn DraggingItem_set_image_components_provider_invoke(block: *u8) -> *u8 ;
 
 #[repr(C)]
 struct DraggingSession_enumerate_dragging_items_with_options_block {
@@ -4283,13 +4283,13 @@ struct Document_perform_activity_with_synchronous_waiting_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
-    invoke: fn(*u8, i64),
+    invoke: fn(*u8, *u8),
     opaque descriptor: *u8,
-    user_fn: fn(*u8, i64),
+    user_fn: fn(*u8, *u8),
     opaque ctx: *u8,
 }
 
-fn Document_perform_activity_with_synchronous_waiting_invoke(block: *u8, a0: i64) ;
+fn Document_perform_activity_with_synchronous_waiting_invoke(block: *u8, a0: *u8) ;
 
 #[repr(C)]
 struct Document_continue_activity_using_block_block {
@@ -4335,13 +4335,13 @@ struct Document_perform_asynchronous_file_access_using_block_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
-    invoke: fn(*u8, i64),
+    invoke: fn(*u8, *u8),
     opaque descriptor: *u8,
-    user_fn: fn(*u8, i64),
+    user_fn: fn(*u8, *u8),
     opaque ctx: *u8,
 }
 
-fn Document_perform_asynchronous_file_access_using_block_invoke(block: *u8, a0: i64) ;
+fn Document_perform_asynchronous_file_access_using_block_invoke(block: *u8, a0: *u8) ;
 
 #[repr(C)]
 struct Document_save_to_u_r_l_block {
@@ -4478,26 +4478,26 @@ struct Document_relinquish_presented_item_to_reader_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
-    invoke: fn(*u8, i64),
+    invoke: fn(*u8, *u8),
     opaque descriptor: *u8,
-    user_fn: fn(*u8, i64),
+    user_fn: fn(*u8, *u8),
     opaque ctx: *u8,
 }
 
-fn Document_relinquish_presented_item_to_reader_invoke(block: *u8, a0: i64) ;
+fn Document_relinquish_presented_item_to_reader_invoke(block: *u8, a0: *u8) ;
 
 #[repr(C)]
 struct Document_relinquish_presented_item_to_writer_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
-    invoke: fn(*u8, i64),
+    invoke: fn(*u8, *u8),
     opaque descriptor: *u8,
-    user_fn: fn(*u8, i64),
+    user_fn: fn(*u8, *u8),
     opaque ctx: *u8,
 }
 
-fn Document_relinquish_presented_item_to_writer_invoke(block: *u8, a0: i64) ;
+fn Document_relinquish_presented_item_to_writer_invoke(block: *u8, a0: *u8) ;
 
 #[repr(C)]
 struct Document_save_presented_item_changes_with_completion_handler_block {
@@ -4621,39 +4621,39 @@ struct CandidateListTouchBarItem_set_attributed_string_for_candidate_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
-    invoke: fn(*u8, i64, i64),
+    invoke: fn(*u8, *u8, i64) -> *u8,
     opaque descriptor: *u8,
-    user_fn: fn(*u8, i64, i64),
+    user_fn: fn(*u8, *u8, i64) -> *u8,
     opaque ctx: *u8,
 }
 
-fn CandidateListTouchBarItem_set_attributed_string_for_candidate_invoke(block: *u8, a0: i64, a1: i64) ;
+fn CandidateListTouchBarItem_set_attributed_string_for_candidate_invoke(block: *u8, a0: *u8, a1: i64) -> *u8 ;
 
 #[repr(C)]
 struct Storyboard_instantiate_initial_controller_with_creator_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
-    invoke: fn(*u8, *u8),
+    invoke: fn(*u8, *u8) -> *u8,
     opaque descriptor: *u8,
-    user_fn: fn(*u8, *u8),
+    user_fn: fn(*u8, *u8) -> *u8,
     opaque ctx: *u8,
 }
 
-fn Storyboard_instantiate_initial_controller_with_creator_invoke(block: *u8, a0: *u8) ;
+fn Storyboard_instantiate_initial_controller_with_creator_invoke(block: *u8, a0: *u8) -> *u8 ;
 
 #[repr(C)]
 struct Storyboard_instantiate_controller_with_identifier_creator_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
-    invoke: fn(*u8, *u8),
+    invoke: fn(*u8, *u8) -> *u8,
     opaque descriptor: *u8,
-    user_fn: fn(*u8, *u8),
+    user_fn: fn(*u8, *u8) -> *u8,
     opaque ctx: *u8,
 }
 
-fn Storyboard_instantiate_controller_with_identifier_creator_invoke(block: *u8, a0: *u8) ;
+fn Storyboard_instantiate_controller_with_identifier_creator_invoke(block: *u8, a0: *u8) -> *u8 ;
 
 #[repr(C)]
 struct StoryboardSegue_segue_with_identifier_block {
@@ -4673,39 +4673,39 @@ struct CollectionLayoutSection_set_visible_items_invalidation_handler_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
-    invoke: fn(*u8, *u8, i64, i64),
+    invoke: fn(*u8, *u8, rt::Point, *u8),
     opaque descriptor: *u8,
-    user_fn: fn(*u8, *u8, i64, i64),
+    user_fn: fn(*u8, *u8, rt::Point, *u8),
     opaque ctx: *u8,
 }
 
-fn CollectionLayoutSection_set_visible_items_invalidation_handler_invoke(block: *u8, a0: *u8, a1: i64, a2: i64) ;
+fn CollectionLayoutSection_set_visible_items_invalidation_handler_invoke(block: *u8, a0: *u8, a1: rt::Point, a2: *u8) ;
 
 #[repr(C)]
 struct CollectionLayoutGroup_custom_group_with_layout_size_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
-    invoke: fn(*u8, i64),
+    invoke: fn(*u8, *u8) -> *u8,
     opaque descriptor: *u8,
-    user_fn: fn(*u8, i64),
+    user_fn: fn(*u8, *u8) -> *u8,
     opaque ctx: *u8,
 }
 
-fn CollectionLayoutGroup_custom_group_with_layout_size_invoke(block: *u8, a0: i64) ;
+fn CollectionLayoutGroup_custom_group_with_layout_size_invoke(block: *u8, a0: *u8) -> *u8 ;
 
 #[repr(C)]
 struct CollectionViewCompositionalLayout_init_with_section_provider_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
-    invoke: fn(*u8, i64, i64),
+    invoke: fn(*u8, i64, *u8) -> *u8,
     opaque descriptor: *u8,
-    user_fn: fn(*u8, i64, i64),
+    user_fn: fn(*u8, i64, *u8) -> *u8,
     opaque ctx: *u8,
 }
 
-fn CollectionViewCompositionalLayout_init_with_section_provider_invoke(block: *u8, a0: i64, a1: i64) ;
+fn CollectionViewCompositionalLayout_init_with_section_provider_invoke(block: *u8, a0: i64, a1: *u8) -> *u8 ;
 
 #[repr(C)]
 struct ColorSampler_show_sampler_with_selection_handler_block {
@@ -4725,39 +4725,39 @@ struct CollectionViewDiffableDataSource_init_with_collection_view_item_provider_
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
-    invoke: fn(*u8, *u8, *u8, i64),
+    invoke: fn(*u8, *u8, *u8, *u8) -> *u8,
     opaque descriptor: *u8,
-    user_fn: fn(*u8, *u8, *u8, i64),
+    user_fn: fn(*u8, *u8, *u8, *u8) -> *u8,
     opaque ctx: *u8,
 }
 
-fn CollectionViewDiffableDataSource_init_with_collection_view_item_provider_invoke(block: *u8, a0: *u8, a1: *u8, a2: i64) ;
+fn CollectionViewDiffableDataSource_init_with_collection_view_item_provider_invoke(block: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 ;
 
 #[repr(C)]
 struct CollectionViewDiffableDataSource_set_supplementary_view_provider_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
-    invoke: fn(*u8, *u8, *u8, *u8),
+    invoke: fn(*u8, *u8, *u8, *u8) -> *u8,
     opaque descriptor: *u8,
-    user_fn: fn(*u8, *u8, *u8, *u8),
+    user_fn: fn(*u8, *u8, *u8, *u8) -> *u8,
     opaque ctx: *u8,
 }
 
-fn CollectionViewDiffableDataSource_set_supplementary_view_provider_invoke(block: *u8, a0: *u8, a1: *u8, a2: *u8) ;
+fn CollectionViewDiffableDataSource_set_supplementary_view_provider_invoke(block: *u8, a0: *u8, a1: *u8, a2: *u8) -> *u8 ;
 
 #[repr(C)]
 struct FontAssetRequest_download_font_assets_with_completion_handler_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
-    invoke: fn(*u8, *u8),
+    invoke: fn(*u8, *u8) -> i8,
     opaque descriptor: *u8,
-    user_fn: fn(*u8, *u8),
+    user_fn: fn(*u8, *u8) -> i8,
     opaque ctx: *u8,
 }
 
-fn FontAssetRequest_download_font_assets_with_completion_handler_invoke(block: *u8, a0: *u8) ;
+fn FontAssetRequest_download_font_assets_with_completion_handler_invoke(block: *u8, a0: *u8) -> i8 ;
 
 #[repr(C)]
 struct TableView_enumerate_available_row_views_using_block_block {
@@ -4777,13 +4777,13 @@ struct CustomImageRep_init_with_size_flipped_drawing_handler_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
-    invoke: fn(*u8, i64),
+    invoke: fn(*u8, rt::Rect) -> i8,
     opaque descriptor: *u8,
-    user_fn: fn(*u8, i64),
+    user_fn: fn(*u8, rt::Rect) -> i8,
     opaque ctx: *u8,
 }
 
-fn CustomImageRep_init_with_size_flipped_drawing_handler_invoke(block: *u8, a0: i64) ;
+fn CustomImageRep_init_with_size_flipped_drawing_handler_invoke(block: *u8, a0: rt::Rect) -> i8 ;
 
 #[repr(C)]
 struct DocumentController_begin_open_panel_with_completion_handler_block {
@@ -4959,39 +4959,39 @@ struct TextLayoutManager_enumerate_text_layout_fragments_from_location_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
-    invoke: fn(*u8, *u8),
+    invoke: fn(*u8, *u8) -> i8,
     opaque descriptor: *u8,
-    user_fn: fn(*u8, *u8),
+    user_fn: fn(*u8, *u8) -> i8,
     opaque ctx: *u8,
 }
 
-fn TextLayoutManager_enumerate_text_layout_fragments_from_location_invoke(block: *u8, a0: *u8) ;
+fn TextLayoutManager_enumerate_text_layout_fragments_from_location_invoke(block: *u8, a0: *u8) -> i8 ;
 
 #[repr(C)]
 struct TextLayoutManager_enumerate_rendering_attributes_from_location_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
-    invoke: fn(*u8, *u8, *u8, *u8),
+    invoke: fn(*u8, *u8, *u8, *u8) -> i8,
     opaque descriptor: *u8,
-    user_fn: fn(*u8, *u8, *u8, *u8),
+    user_fn: fn(*u8, *u8, *u8, *u8) -> i8,
     opaque ctx: *u8,
 }
 
-fn TextLayoutManager_enumerate_rendering_attributes_from_location_invoke(block: *u8, a0: *u8, a1: *u8, a2: *u8) ;
+fn TextLayoutManager_enumerate_rendering_attributes_from_location_invoke(block: *u8, a0: *u8, a1: *u8, a2: *u8) -> i8 ;
 
 #[repr(C)]
 struct TextLayoutManager_enumerate_text_segments_in_range_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
-    invoke: fn(*u8, *u8, i64, i64, *u8),
+    invoke: fn(*u8, *u8, rt::Rect, f64, *u8) -> i8,
     opaque descriptor: *u8,
-    user_fn: fn(*u8, *u8, i64, i64, *u8),
+    user_fn: fn(*u8, *u8, rt::Rect, f64, *u8) -> i8,
     opaque ctx: *u8,
 }
 
-fn TextLayoutManager_enumerate_text_segments_in_range_invoke(block: *u8, a0: *u8, a1: i64, a2: i64, a3: *u8) ;
+fn TextLayoutManager_enumerate_text_segments_in_range_invoke(block: *u8, a0: *u8, a1: rt::Rect, a2: f64, a3: *u8) -> i8 ;
 
 #[repr(C)]
 struct TextLayoutManager_set_rendering_attributes_validator_block {
@@ -5011,26 +5011,26 @@ struct LayoutManager_enumerate_line_fragments_for_glyph_range_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
-    invoke: fn(*u8, i64, i64, *u8, rt::Range, *u8),
+    invoke: fn(*u8, rt::Rect, rt::Rect, *u8, rt::Range, *u8),
     opaque descriptor: *u8,
-    user_fn: fn(*u8, i64, i64, *u8, rt::Range, *u8),
+    user_fn: fn(*u8, rt::Rect, rt::Rect, *u8, rt::Range, *u8),
     opaque ctx: *u8,
 }
 
-fn LayoutManager_enumerate_line_fragments_for_glyph_range_invoke(block: *u8, a0: i64, a1: i64, a2: *u8, a3: rt::Range, a4: *u8) ;
+fn LayoutManager_enumerate_line_fragments_for_glyph_range_invoke(block: *u8, a0: rt::Rect, a1: rt::Rect, a2: *u8, a3: rt::Range, a4: *u8) ;
 
 #[repr(C)]
 struct LayoutManager_enumerate_enclosing_rects_for_glyph_range_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
-    invoke: fn(*u8, i64, *u8),
+    invoke: fn(*u8, rt::Rect, *u8),
     opaque descriptor: *u8,
-    user_fn: fn(*u8, i64, *u8),
+    user_fn: fn(*u8, rt::Rect, *u8),
     opaque ctx: *u8,
 }
 
-fn LayoutManager_enumerate_enclosing_rects_for_glyph_range_invoke(block: *u8, a0: i64, a1: *u8) ;
+fn LayoutManager_enumerate_enclosing_rects_for_glyph_range_invoke(block: *u8, a0: rt::Rect, a1: *u8) ;
 
 #[repr(C)]
 struct TableViewRowAction_row_action_with_style_block {
@@ -5050,13 +5050,13 @@ struct TableViewDiffableDataSource_init_with_table_view_cell_provider_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
-    invoke: fn(*u8, *u8, *u8, i64, i64),
+    invoke: fn(*u8, *u8, *u8, i64, *u8) -> *u8,
     opaque descriptor: *u8,
-    user_fn: fn(*u8, *u8, *u8, i64, i64),
+    user_fn: fn(*u8, *u8, *u8, i64, *u8) -> *u8,
     opaque ctx: *u8,
 }
 
-fn TableViewDiffableDataSource_init_with_table_view_cell_provider_invoke(block: *u8, a0: *u8, a1: *u8, a2: i64, a3: i64) ;
+fn TableViewDiffableDataSource_init_with_table_view_cell_provider_invoke(block: *u8, a0: *u8, a1: *u8, a2: i64, a3: *u8) -> *u8 ;
 
 #[repr(C)]
 struct TableViewDiffableDataSource_apply_snapshot_animating_differences_block {
@@ -5076,39 +5076,39 @@ struct TableViewDiffableDataSource_set_row_view_provider_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
-    invoke: fn(*u8, *u8, i64, i64),
+    invoke: fn(*u8, *u8, i64, *u8) -> *u8,
     opaque descriptor: *u8,
-    user_fn: fn(*u8, *u8, i64, i64),
+    user_fn: fn(*u8, *u8, i64, *u8) -> *u8,
     opaque ctx: *u8,
 }
 
-fn TableViewDiffableDataSource_set_row_view_provider_invoke(block: *u8, a0: *u8, a1: i64, a2: i64) ;
+fn TableViewDiffableDataSource_set_row_view_provider_invoke(block: *u8, a0: *u8, a1: i64, a2: *u8) -> *u8 ;
 
 #[repr(C)]
 struct TableViewDiffableDataSource_set_section_header_view_provider_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
-    invoke: fn(*u8, *u8, i64, i64),
+    invoke: fn(*u8, *u8, i64, *u8) -> *u8,
     opaque descriptor: *u8,
-    user_fn: fn(*u8, *u8, i64, i64),
+    user_fn: fn(*u8, *u8, i64, *u8) -> *u8,
     opaque ctx: *u8,
 }
 
-fn TableViewDiffableDataSource_set_section_header_view_provider_invoke(block: *u8, a0: *u8, a1: i64, a2: i64) ;
+fn TableViewDiffableDataSource_set_section_header_view_provider_invoke(block: *u8, a0: *u8, a1: i64, a2: *u8) -> *u8 ;
 
 #[repr(C)]
 struct StepperTouchBarItem_stepper_touch_bar_item_with_identifier_drawing_handler_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
-    invoke: fn(*u8, i64, i64),
+    invoke: fn(*u8, rt::Rect, f64),
     opaque descriptor: *u8,
-    user_fn: fn(*u8, i64, i64),
+    user_fn: fn(*u8, rt::Rect, f64),
     opaque ctx: *u8,
 }
 
-fn StepperTouchBarItem_stepper_touch_bar_item_with_identifier_drawing_handler_invoke(block: *u8, a0: i64, a1: i64) ;
+fn StepperTouchBarItem_stepper_touch_bar_item_with_identifier_drawing_handler_invoke(block: *u8, a0: rt::Rect, a1: f64) ;
 
 #[repr(C)]
 struct TextContentManager_synchronize_text_layout_managers_block {
@@ -5141,13 +5141,13 @@ struct WritingToolsCoordinatorAnimationParameters_set_progress_handler_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
-    invoke: fn(*u8, i64),
+    invoke: fn(*u8, f32),
     opaque descriptor: *u8,
-    user_fn: fn(*u8, i64),
+    user_fn: fn(*u8, f32),
     opaque ctx: *u8,
 }
 
-fn WritingToolsCoordinatorAnimationParameters_set_progress_handler_invoke(block: *u8, a0: i64) ;
+fn WritingToolsCoordinatorAnimationParameters_set_progress_handler_invoke(block: *u8, a0: f32) ;
 
 #[repr(C)]
 struct WritingToolsCoordinatorAnimationParameters_set_completion_handler_block {
@@ -5232,13 +5232,13 @@ struct TextElementProvider_enumerate_text_elements_from_location_block {
     opaque isa: *u8,
     flags: i32,
     reserved: i32,
-    invoke: fn(*u8, *u8),
+    invoke: fn(*u8, *u8) -> i8,
     opaque descriptor: *u8,
-    user_fn: fn(*u8, *u8),
+    user_fn: fn(*u8, *u8) -> i8,
     opaque ctx: *u8,
 }
 
-fn TextElementProvider_enumerate_text_elements_from_location_invoke(block: *u8, a0: *u8) ;
+fn TextElementProvider_enumerate_text_elements_from_location_invoke(block: *u8, a0: *u8) -> i8 ;
 
 #[repr(C)]
 struct TextElementProvider_synchronize_to_backing_store_block {
@@ -5265,9 +5265,9 @@ impl ItemProvider {
 
     fn new() -> ItemProvider ;
 
-    fn register_data_representation_for_type_identifier(this, type_identifier: str, visibility: ItemProviderRepresentationVisibility, cb: fn(*u8, i64), ctx: *u8) ;
+    fn register_data_representation_for_type_identifier(this, type_identifier: str, visibility: ItemProviderRepresentationVisibility, cb: fn(*u8, *u8) -> *u8, ctx: *u8) ;
 
-    fn register_file_representation_for_type_identifier(this, type_identifier: str, file_options: u64, visibility: ItemProviderRepresentationVisibility, cb: fn(*u8, i64), ctx: *u8) ;
+    fn register_file_representation_for_type_identifier(this, type_identifier: str, file_options: u64, visibility: ItemProviderRepresentationVisibility, cb: fn(*u8, *u8) -> *u8, ctx: *u8) ;
 
     fn registered_type_identifiers_with_file_options(this, file_options: u64) -> vec::Vec[text::Text] ;
 
@@ -5285,19 +5285,19 @@ impl ItemProvider {
 
     fn register_object(this, object: ItemProviderWriting, visibility: ItemProviderRepresentationVisibility) ;
 
-    fn register_object_of_class(this, a_class: *u8, visibility: ItemProviderRepresentationVisibility, cb: fn(*u8, i64), ctx: *u8) ;
+    fn register_object_of_class(this, a_class: *u8, visibility: ItemProviderRepresentationVisibility, cb: fn(*u8, *u8) -> *u8, ctx: *u8) ;
 
     fn can_load_object_of_class(this, a_class: *u8) -> bool ;
 
-    fn load_object_of_class(this, a_class: *u8, cb: fn(*u8, i64, *u8), ctx: *u8) -> Progress ;
+    fn load_object_of_class(this, a_class: *u8, cb: fn(*u8, *u8, *u8), ctx: *u8) -> Progress ;
 
     fn new_with_item_type_identifier(item: *u8, type_identifier: str) -> ItemProvider ;
 
     fn new_with_contents_of_u_r_l(file_u_r_l: URL) -> ItemProvider ;
 
-    fn register_item_for_type_identifier(this, type_identifier: str, cb: fn(*u8, i64, i64, *u8), ctx: *u8) ;
+    fn register_item_for_type_identifier(this, type_identifier: str, cb: fn(*u8, *u8, *u8, *u8), ctx: *u8) ;
 
-    fn load_item_for_type_identifier(this, type_identifier: str, options: Dictionary, cb: fn(*u8, i64, *u8), ctx: *u8) ;
+    fn load_item_for_type_identifier(this, type_identifier: str, options: Dictionary, cb: fn(*u8, *u8, *u8), ctx: *u8) ;
 
     fn registered_type_identifiers(this) -> vec::Vec[text::Text] ;
 
@@ -5305,12 +5305,12 @@ impl ItemProvider {
 
     fn set_suggested_name(this, suggested_name: str) ;
 
-    fn load_preview_image_with_options(this, options: Dictionary, cb: fn(*u8, i64, *u8), ctx: *u8) ;
+    fn load_preview_image_with_options(this, options: Dictionary, cb: fn(*u8, *u8, *u8), ctx: *u8) ;
 
     // SKIPPED `previewImageHandler`: return `NSItemProviderLoadHandler _Nullable` — unmapped type `NSItemProviderLoadHandler`
-    fn set_preview_image_handler(this, cb: fn(*u8, i64, i64, *u8), ctx: *u8) ;
+    fn set_preview_image_handler(this, cb: fn(*u8, *u8, *u8, *u8), ctx: *u8) ;
 
-    fn register_cloud_kit_share_with_preparation_handler(this, cb: fn(*u8, i64), ctx: *u8) ;
+    fn register_cloud_kit_share_with_preparation_handler(this, cb: fn(*u8, *u8), ctx: *u8) ;
 
     fn register_cloud_kit_share(this, share: CKShare, container: CKContainer) ;
 
@@ -5367,7 +5367,7 @@ impl AttributedString {
 
     fn enumerate_attributes_in_range(this, enumeration_range: rt::Range, options: u64, cb: fn(*u8, *u8, rt::Range, *u8), ctx: *u8) ;
 
-    fn enumerate_attribute(this, attr_name: str, in_range: rt::Range, options: u64, cb: fn(*u8, i64, rt::Range, *u8), ctx: *u8) ;
+    fn enumerate_attribute(this, attr_name: str, in_range: rt::Range, options: u64, cb: fn(*u8, *u8, rt::Range, *u8), ctx: *u8) ;
 
     fn length(this) -> u64 ;
 
@@ -6121,7 +6121,7 @@ impl Color {
 
     fn color_named(name: str) -> option::Option[Color] ;
 
-    fn color_with_name(color_name: str, cb: fn(*u8, *u8), ctx: *u8) -> Color ;
+    fn color_with_name(color_name: str, cb: fn(*u8, *u8) -> *u8, ctx: *u8) -> Color ;
 
     fn color_with_device_white(white: f64, alpha: f64) -> Color ;
 
@@ -6874,7 +6874,7 @@ impl View {
 
     fn show_definition_for_attributed_string(this, attr_string: AttributedString, at_point: rt::Point) ;
 
-    fn show_definition_for_attributed_string_range(this, attr_string: AttributedString, target_range: rt::Range, options: string_map::StringMap[AnyObject], cb: fn(*u8, rt::Range), ctx: *u8) ;
+    fn show_definition_for_attributed_string_range(this, attr_string: AttributedString, target_range: rt::Range, options: string_map::StringMap[AnyObject], cb: fn(*u8, rt::Range) -> rt::Point, ctx: *u8) ;
 
     fn is_drawing_find_indicator(this) -> bool ;
 
@@ -8006,7 +8006,7 @@ impl AccessibilityCustomAction {
 
     fn from_raw(ptr: *u8) -> AccessibilityCustomAction ;
 
-    fn init_with_name_handler(this, name: str, cb: fn(*u8), ctx: *u8) -> *u8 ;
+    fn init_with_name_handler(this, name: str, cb: fn(*u8) -> i8, ctx: *u8) -> *u8 ;
 
     fn new_with_name_target_selector(name: str, target: *u8, selector: *u8) -> AccessibilityCustomAction ;
 
@@ -8015,7 +8015,7 @@ impl AccessibilityCustomAction {
     fn set_name(this, name: str) ;
 
     // SKIPPED `handler`: return `BOOL (^ _Nullable)(void)` — block
-    fn set_handler(this, cb: fn(*u8), ctx: *u8) ;
+    fn set_handler(this, cb: fn(*u8) -> i8, ctx: *u8) ;
 
     fn target(this) -> option::Option[*u8] ;
 
@@ -8174,7 +8174,7 @@ impl Image {
 
     fn new_with_data_ignoring_orientation(data: Data) -> Image ;
 
-    fn image_with_size(size: rt::Size, flipped: bool, cb: fn(*u8, i64), ctx: *u8) -> *u8 ;
+    fn image_with_size(size: rt::Size, flipped: bool, cb: fn(*u8, rt::Rect) -> i8, ctx: *u8) -> *u8 ;
 
     fn set_name(this, string: str) -> bool ;
 
@@ -8837,7 +8837,7 @@ impl Event {
 
     fn coalesced_touches_for_touch(this, touch: Touch) -> vec::Vec[Touch] ;
 
-    fn track_swipe_event_with_options(this, options: u64, dampen_amount_threshold_min: f64, max: f64, cb: fn(*u8, i64, i64, i8, *u8), ctx: *u8) ;
+    fn track_swipe_event_with_options(this, options: u64, dampen_amount_threshold_min: f64, max: f64, cb: fn(*u8, f64, u64, i8, *u8), ctx: *u8) ;
 
     fn start_periodic_events_after_delay(delay: f64, with_period: f64) ;
 
@@ -8853,7 +8853,7 @@ impl Event {
 
     fn add_global_monitor_for_events_matching_mask(mask: u64, cb: fn(*u8, *u8), ctx: *u8) -> option::Option[*u8] ;
 
-    fn add_local_monitor_for_events_matching_mask(mask: u64, cb: fn(*u8, *u8), ctx: *u8) -> option::Option[*u8] ;
+    fn add_local_monitor_for_events_matching_mask(mask: u64, cb: fn(*u8, *u8) -> *u8, ctx: *u8) -> option::Option[*u8] ;
 
     fn remove_monitor(event_monitor: *u8) ;
 
@@ -9698,7 +9698,7 @@ impl DraggingItem {
     fn set_dragging_frame(this, dragging_frame: rt::Rect) ;
 
     // SKIPPED `imageComponentsProvider`: return `NSArray<NSDraggingImageComponent *> * _Nonnull (^ _Nullable)(void)` — generic collection
-    fn set_image_components_provider(this, cb: fn(*u8), ctx: *u8) ;
+    fn set_image_components_provider(this, cb: fn(*u8) -> *u8, ctx: *u8) ;
 
     fn image_components(this) -> vec::Vec[DraggingImageComponent] ;
 
@@ -12750,7 +12750,7 @@ impl Document {
 
     fn init_for_u_r_l(this, url_or_nil: URL, with_contents_of_u_r_l: URL, of_type: str, error: *u8) -> *u8 ;
 
-    fn perform_activity_with_synchronous_waiting(this, wait_synchronously: bool, cb: fn(*u8, i64), ctx: *u8) ;
+    fn perform_activity_with_synchronous_waiting(this, wait_synchronously: bool, cb: fn(*u8, *u8), ctx: *u8) ;
 
     fn continue_activity_using_block(this, cb: fn(*u8), ctx: *u8) ;
 
@@ -12758,7 +12758,7 @@ impl Document {
 
     fn perform_synchronous_file_access_using_block(this, cb: fn(*u8), ctx: *u8) ;
 
-    fn perform_asynchronous_file_access_using_block(this, cb: fn(*u8, i64), ctx: *u8) ;
+    fn perform_asynchronous_file_access_using_block(this, cb: fn(*u8, *u8), ctx: *u8) ;
 
     fn revert_document_to_saved(this, sender: *u8) ;
 
@@ -12910,9 +12910,9 @@ impl Document {
 
     fn validate_user_interface_item(this, item: ValidatedUserInterfaceItem) -> bool ;
 
-    fn relinquish_presented_item_to_reader(this, cb: fn(*u8, i64), ctx: *u8) ;
+    fn relinquish_presented_item_to_reader(this, cb: fn(*u8, *u8), ctx: *u8) ;
 
-    fn relinquish_presented_item_to_writer(this, cb: fn(*u8, i64), ctx: *u8) ;
+    fn relinquish_presented_item_to_writer(this, cb: fn(*u8, *u8), ctx: *u8) ;
 
     fn save_presented_item_changes_with_completion_handler(this, cb: fn(*u8, *u8), ctx: *u8) ;
 
@@ -14858,7 +14858,7 @@ impl CandidateListTouchBarItem {
     fn set_allows_text_input_context_candidates(this, allows_text_input_context_candidates: bool) ;
 
     // SKIPPED `attributedStringForCandidate`: return `API_UNAVAILABLE NSAttributedString * _Nonnull (^)(CandidateType _Nonnull, NSInteger)` — block
-    fn set_attributed_string_for_candidate(this, cb: fn(*u8, i64, i64), ctx: *u8) ;
+    fn set_attributed_string_for_candidate(this, cb: fn(*u8, *u8, i64) -> *u8, ctx: *u8) ;
 
     fn candidates(this) -> vec::Vec[AnyObject] ;
 
@@ -15131,11 +15131,11 @@ impl Storyboard {
 
     fn instantiate_initial_controller(this) -> option::Option[*u8] ;
 
-    fn instantiate_initial_controller_with_creator(this, cb: fn(*u8, *u8), ctx: *u8) -> option::Option[*u8] ;
+    fn instantiate_initial_controller_with_creator(this, cb: fn(*u8, *u8) -> *u8, ctx: *u8) -> option::Option[*u8] ;
 
     fn instantiate_controller_with_identifier(this, identifier: str) -> *u8 ;
 
-    fn instantiate_controller_with_identifier_creator(this, identifier: str, cb: fn(*u8, *u8), ctx: *u8) -> *u8 ;
+    fn instantiate_controller_with_identifier_creator(this, identifier: str, cb: fn(*u8, *u8) -> *u8, ctx: *u8) -> *u8 ;
 
     fn main_storyboard() -> Storyboard ;
 
@@ -15873,7 +15873,7 @@ impl CollectionLayoutSection {
     fn set_supplementaries_follow_content_insets(this, supplementaries_follow_content_insets: bool) ;
 
     // SKIPPED `visibleItemsInvalidationHandler`: return `NSCollectionLayoutSectionVisibleItemsInvalidationHandler _Nullable` — unmapped type `NSCollectionLayoutSectionVisibleItemsInvalidationHandler`
-    fn set_visible_items_invalidation_handler(this, cb: fn(*u8, *u8, i64, i64), ctx: *u8) ;
+    fn set_visible_items_invalidation_handler(this, cb: fn(*u8, *u8, rt::Point, *u8), ctx: *u8) ;
 
     fn decoration_items(this) -> vec::Vec[CollectionLayoutDecorationItem] ;
 
@@ -15903,7 +15903,7 @@ impl CollectionLayoutGroup {
 
     fn vertical_group_with_layout_size(layout_size: CollectionLayoutSize, subitems: vec::Vec[CollectionLayoutItem]) -> CollectionLayoutGroup ;
 
-    fn custom_group_with_layout_size(layout_size: CollectionLayoutSize, cb: fn(*u8, i64), ctx: *u8) -> *u8 ;
+    fn custom_group_with_layout_size(layout_size: CollectionLayoutSize, cb: fn(*u8, *u8) -> *u8, ctx: *u8) -> *u8 ;
 
     // SKIPPED `init`: `NS_UNAVAILABLE` init, not a constructor
     fn new() -> CollectionLayoutGroup ;
@@ -16232,7 +16232,7 @@ impl CollectionViewCompositionalLayout {
 
     fn new_with_section_configuration(section: CollectionLayoutSection, configuration: CollectionViewCompositionalLayoutConfiguration) -> CollectionViewCompositionalLayout ;
 
-    fn init_with_section_provider(this, cb: fn(*u8, i64, i64), ctx: *u8) -> *u8 ;
+    fn init_with_section_provider(this, cb: fn(*u8, i64, *u8) -> *u8, ctx: *u8) -> *u8 ;
 
     // SKIPPED `initWithSectionProvider:configuration:`: params after the block not modelled
     // SKIPPED `init`: `NS_UNAVAILABLE` init, not a constructor
@@ -16401,7 +16401,7 @@ impl CollectionViewDiffableDataSource {
 
     fn from_raw(ptr: *u8) -> CollectionViewDiffableDataSource ;
 
-    fn init_with_collection_view_item_provider(this, collection_view: CollectionView, cb: fn(*u8, *u8, *u8, i64), ctx: *u8) -> *u8 ;
+    fn init_with_collection_view_item_provider(this, collection_view: CollectionView, cb: fn(*u8, *u8, *u8, *u8) -> *u8, ctx: *u8) -> *u8 ;
 
     // SKIPPED `init`: `NS_UNAVAILABLE` init, not a constructor
     fn new() -> CollectionViewDiffableDataSource ;
@@ -16415,7 +16415,7 @@ impl CollectionViewDiffableDataSource {
     fn index_path_for_item_identifier(this, identifier: *u8) -> option::Option[IndexPath] ;
 
     // SKIPPED `supplementaryViewProvider`: return `NSCollectionViewDiffableDataSourceSupplementaryViewProvider _Nullable` — unmapped type `NSCollectionViewDiffableDataSourceSupplementaryViewProvider`
-    fn set_supplementary_view_provider(this, cb: fn(*u8, *u8, *u8, *u8), ctx: *u8) ;
+    fn set_supplementary_view_provider(this, cb: fn(*u8, *u8, *u8, *u8) -> *u8, ctx: *u8) ;
 
     fn drop(ref this) ;
 }
@@ -16488,7 +16488,7 @@ impl FontAssetRequest {
     // SKIPPED `init`: `NS_UNAVAILABLE` init, not a constructor
     fn new(font_descriptors: vec::Vec[FontDescriptor], options: u64) -> FontAssetRequest ;
 
-    fn download_font_assets_with_completion_handler(this, cb: fn(*u8, *u8), ctx: *u8) ;
+    fn download_font_assets_with_completion_handler(this, cb: fn(*u8, *u8) -> i8, ctx: *u8) ;
 
     fn downloaded_font_descriptors(this) -> vec::Vec[FontDescriptor] ;
 
@@ -18542,7 +18542,7 @@ impl CustomImageRep {
     // Upcast to `NSImageRep` (superclass). Safe typed reinterpret.
     fn as_image_rep(this) -> ImageRep ;
 
-    fn init_with_size_flipped_drawing_handler(this, size: rt::Size, drawing_handler_should_be_called_with_flipped_context: bool, cb: fn(*u8, i64), ctx: *u8) -> *u8 ;
+    fn init_with_size_flipped_drawing_handler(this, size: rt::Size, drawing_handler_should_be_called_with_flipped_context: bool, cb: fn(*u8, rt::Rect) -> i8, ctx: *u8) -> *u8 ;
 
     fn new_with_draw_selector_delegate(selector: *u8, delegate: *u8) -> CustomImageRep ;
 
@@ -22223,9 +22223,9 @@ impl TextLayoutManager {
 
     fn text_layout_fragment_for_location(this, location: TextLocation) -> option::Option[TextLayoutFragment] ;
 
-    fn enumerate_text_layout_fragments_from_location(this, location: TextLocation, options: u64, cb: fn(*u8, *u8), ctx: *u8) -> option::Option[TextLocation] ;
+    fn enumerate_text_layout_fragments_from_location(this, location: TextLocation, options: u64, cb: fn(*u8, *u8) -> i8, ctx: *u8) -> option::Option[TextLocation] ;
 
-    fn enumerate_rendering_attributes_from_location(this, location: TextLocation, reverse: bool, cb: fn(*u8, *u8, *u8, *u8), ctx: *u8) ;
+    fn enumerate_rendering_attributes_from_location(this, location: TextLocation, reverse: bool, cb: fn(*u8, *u8, *u8, *u8) -> i8, ctx: *u8) ;
 
     fn set_rendering_attributes(this, rendering_attributes: string_map::StringMap[AnyObject], for_text_range: TextRange) ;
 
@@ -22237,7 +22237,7 @@ impl TextLayoutManager {
 
     fn rendering_attributes_for_link(this, link: *u8, at_location: TextLocation) -> string_map::StringMap[AnyObject] ;
 
-    fn enumerate_text_segments_in_range(this, text_range: TextRange, type_: TextLayoutManagerSegmentType, options: u64, cb: fn(*u8, *u8, i64, i64, *u8), ctx: *u8) ;
+    fn enumerate_text_segments_in_range(this, text_range: TextRange, type_: TextLayoutManagerSegmentType, options: u64, cb: fn(*u8, *u8, rt::Rect, f64, *u8) -> i8, ctx: *u8) ;
 
     fn replace_contents_in_range(this, range: TextRange, with_text_elements: vec::Vec[TextElement]) ;
 
@@ -22535,9 +22535,9 @@ impl LayoutManager {
 
     fn get_line_fragment_insertion_points_for_character_at_index(this, char_index: u64, alternate_positions: bool, in_display_order: bool, positions: *u8, character_indexes: *u8) -> u64 ;
 
-    fn enumerate_line_fragments_for_glyph_range(this, glyph_range: rt::Range, cb: fn(*u8, i64, i64, *u8, rt::Range, *u8), ctx: *u8) ;
+    fn enumerate_line_fragments_for_glyph_range(this, glyph_range: rt::Range, cb: fn(*u8, rt::Rect, rt::Rect, *u8, rt::Range, *u8), ctx: *u8) ;
 
-    fn enumerate_enclosing_rects_for_glyph_range(this, glyph_range: rt::Range, within_selected_glyph_range: rt::Range, in_text_container: TextContainer, cb: fn(*u8, i64, *u8), ctx: *u8) ;
+    fn enumerate_enclosing_rects_for_glyph_range(this, glyph_range: rt::Range, within_selected_glyph_range: rt::Range, in_text_container: TextContainer, cb: fn(*u8, rt::Rect, *u8), ctx: *u8) ;
 
     fn draw_background_for_glyph_range(this, glyphs_to_show: rt::Range, at_point: rt::Point) ;
 
@@ -23965,7 +23965,7 @@ impl TableViewDiffableDataSource {
 
     fn from_raw(ptr: *u8) -> TableViewDiffableDataSource ;
 
-    fn init_with_table_view_cell_provider(this, table_view: TableView, cb: fn(*u8, *u8, *u8, i64, i64), ctx: *u8) -> *u8 ;
+    fn init_with_table_view_cell_provider(this, table_view: TableView, cb: fn(*u8, *u8, *u8, i64, *u8) -> *u8, ctx: *u8) -> *u8 ;
 
     // SKIPPED `init`: `NS_UNAVAILABLE` init, not a constructor
     fn new() -> TableViewDiffableDataSource ;
@@ -23985,10 +23985,10 @@ impl TableViewDiffableDataSource {
     fn row_for_section_identifier(this, identifier: *u8) -> i64 ;
 
     // SKIPPED `rowViewProvider`: return `NSTableViewDiffableDataSourceRowProvider _Nullable` — unmapped type `NSTableViewDiffableDataSourceRowProvider`
-    fn set_row_view_provider(this, cb: fn(*u8, *u8, i64, i64), ctx: *u8) ;
+    fn set_row_view_provider(this, cb: fn(*u8, *u8, i64, *u8) -> *u8, ctx: *u8) ;
 
     // SKIPPED `sectionHeaderViewProvider`: return `NSTableViewDiffableDataSourceSectionHeaderViewProvider _Nullable` — unmapped type `NSTableViewDiffableDataSourceSectionHeaderViewProvider`
-    fn set_section_header_view_provider(this, cb: fn(*u8, *u8, i64, i64), ctx: *u8) ;
+    fn set_section_header_view_provider(this, cb: fn(*u8, *u8, i64, *u8) -> *u8, ctx: *u8) ;
 
     fn default_row_animation(this) -> u64 ;
 
@@ -27109,7 +27109,7 @@ impl StepperTouchBarItem {
 
     fn stepper_touch_bar_item_with_identifier(identifier: str, formatter: Formatter) -> StepperTouchBarItem ;
 
-    fn stepper_touch_bar_item_with_identifier_drawing_handler(identifier: str, cb: fn(*u8, i64, i64), ctx: *u8) -> *u8 ;
+    fn stepper_touch_bar_item_with_identifier_drawing_handler(identifier: str, cb: fn(*u8, rt::Rect, f64), ctx: *u8) -> *u8 ;
 
     fn max_value(this) -> f64 ;
 
@@ -27564,7 +27564,7 @@ impl WritingToolsCoordinatorAnimationParameters {
     fn delay(this) -> f64 ;
 
     // SKIPPED `progressHandler`: return `void (^ _Nullable)(float)` — block
-    fn set_progress_handler(this, cb: fn(*u8, i64), ctx: *u8) ;
+    fn set_progress_handler(this, cb: fn(*u8, f32), ctx: *u8) ;
 
     // SKIPPED `completionHandler`: return `void (^ _Nullable)(void)` — block
     fn set_completion_handler(this, cb: fn(*u8), ctx: *u8) ;
@@ -33849,7 +33849,7 @@ impl TextElementProvider {
 
     fn from_raw(ptr: *u8) -> TextElementProvider ;
 
-    fn enumerate_text_elements_from_location(this, text_location: TextLocation, options: u64, cb: fn(*u8, *u8), ctx: *u8) -> option::Option[TextLocation] ;
+    fn enumerate_text_elements_from_location(this, text_location: TextLocation, options: u64, cb: fn(*u8, *u8) -> i8, ctx: *u8) -> option::Option[TextLocation] ;
 
     fn replace_contents_in_range(this, range: TextRange, with_text_elements: vec::Vec[TextElement]) ;
 

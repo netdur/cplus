@@ -276,7 +276,9 @@ Live ones:
 
 - `vendor/metal/` — `--framework Metal --merge` (single-module ObjC: typed wrappers,
   full-type chaining, value structs, object arrays; ~201 skips, see above).
-- `vendor/appkit/` — `--framework AppKit` (per-header ObjC, 280 modules).
+- `vendor/appkit/` — `--framework AppKit --merge --use CA=quartzcore` (single-module
+  ObjC, 881 types). The authority on the exact invocation is the `reproduce =`
+  line in each package's `Cplus.toml`; this list is a map, not a command.
 - `vendor/accelerate/` — `--framework Accelerate` (a pure-C framework via the C path).
 
 ## Extending the generator
