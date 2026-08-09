@@ -1,0 +1,393 @@
+// inspector — the neutral surface a developer inspector is written against.
+//
+// This module names no backend and touches no platform. It declares what an
+// inspector consumer needs — an address for a mounted node, a tagged value, a
+// property listing, and the vtable that answers them — exactly as
+// `agent_core::backend` does for the agent surface, and for the same reason:
+// C+ has no `dyn` and no method dispatch on a generic type parameter, so a
+// struct of fn-pointers over a type-erased receiver is how runtime
+// polymorphism is spelled here.
+//
+// WHY THIS IS NOT THE AGENT SURFACE. `agent_core` is curated and
+// permissioned: it hides unexposed nodes, limits actions to declared
+// affordances, and refuses point-addressed operations. Those rules protect a
+// user-facing automation surface and must not be weakened. A developer
+// inspector needs the opposite powers — every node including the unkeyed ones,
+// and writes to properties that are not affordances. So it gets its own vtable
+// rather than growing `Backend` a debug mode. Nothing in this package is
+// reachable from the agent surface.
+
+import "stdlib/vec" as vec;
+import "stdlib/text" as text;
+import "stdlib/option" as option;
+import "flex_layout/flex_layout" as flex;
+import "facet/facet" as core;
+import "facet/vocabulary" as vocab;
+import "facet/props" as props;
+
+type Frame = core::Frame;
+
+// ---- addressing --------------------------------------------------------------
+
+// Where a mounted node is, and whether that answer is still true.
+//
+// The address is the node pointer, because facet's own typed handles
+// (`label::Label`, `button::Button`) are built the same way and for the same
+// reason: a child lives in its own heap slot, so its address is stable from
+// insertion until it is itself removed. Appends, inserts, sibling removals and
+// reorders never move it.
+//
+// `seen` is flex's global removal counter at the moment the handle was issued.
+// ANY removal anywhere in ANY tree invalidates every outstanding handle. That
+// is deliberately conservative — a removal elsewhere cannot actually have
+// moved this node — but it is the check facet's own handles use, it costs one
+// comparison, and the alternative (per-node generations) is a second identity
+// system to keep in step. A client that sees `Stale` re-describes; describing
+// is cheap and structural change is rare next to property editing.
+//
+// A REMOTE client cannot hold one of these: a pointer does not survive a
+// socket. The flat `describe` listing is the wire address — an index into that
+// array, with `parent` linking it back into a tree — and a transport adapter
+// resolves index to Handle on the app's side. That is why `describe` returns a
+// flat parent-indexed vector rather than a nested structure.
+struct Handle {
+    opaque node: *core::Node,
+    seen: u64,
+    // Which window root this node was reached from, so a keyed re-resolve can
+    // be scoped to the right tree. Two windows sharing a key is legal.
+    window: usize,
+}
+
+impl Handle {
+    fn none() -> Handle {
+        return Handle { node: 0 as *core::Node, seen: 0 as u64, window: 0 as usize };
+    }
+
+    fn of(n: *core::Node, window: usize) -> Handle {
+        return Handle { node: n, seen: flex::removal_count(), window: window };
+    }
+
+    // Both halves: a handle to nothing is not live either.
+    fn is_live(this) -> bool {
+        if this.node == (0 as *core::Node) { return false; }
+        return this.seen == flex::removal_count();
+    }
+
+    fn is_none(this) -> bool { return this.node == (0 as *core::Node); }
+}
+
+// ---- values ------------------------------------------------------------------
+
+// The tagged vocabulary an inspector can carry across its boundary.
+//
+// Handlers, raw pointers, child nodes and owned collections are deliberately
+// absent. A value an inspector cannot round-trip is a value it must not claim
+// to edit, and a function pointer typed into a text box is not an edit — it is
+// a crash with extra steps.
+enum Value {
+    Nothing,
+    Bool(bool),
+    Int(i64),
+    Num(f64),
+    Str(text::Text),
+    Color(vocab::Color),
+    // A named member of a closed set (`flow_direction`, `display`). Carried as
+    // its spelling rather than its discriminant so a client never has to know
+    // the numbering, and so a rename is caught rather than silently accepted.
+    Enum(text::Text),
+}
+
+impl Value {
+    // The tag alone, for error messages and for type-checking a write before
+    // it is applied.
+    fn type_name(this) -> str {
+        return match this {
+            Value::Nothing => "nothing",
+            Value::Bool(_b) => "bool",
+            Value::Int(_i) => "int",
+            Value::Num(_n) => "number",
+            Value::Str(_s) => "text",
+            Value::Color(_c) => "color",
+            Value::Enum(_e) => "enum",
+        };
+    }
+
+    fn is_nothing(this) -> bool {
+        return match this {
+            Value::Nothing => true,
+            _ => false,
+        };
+    }
+
+    // A `Value` owns a `Text` in two of its arms, so it carries a destructor
+    // and a field of it cannot be moved out of an owning struct. The override
+    // ledger needs exactly that — hand back what was recorded while keeping
+    // the record intact until the restore has actually happened — so the
+    // duplicate is explicit here rather than a borrow that would outlive its
+    // bytes.
+    fn clone(this) -> Value {
+        return match this {
+            Value::Nothing => Value::Nothing,
+            Value::Bool(b) => Value::Bool(b),
+            Value::Int(i) => Value::Int(i),
+            Value::Num(n) => Value::Num(n),
+            Value::Str(s) => Value::Str(s.clone()),
+            Value::Color(c) => Value::Color(c),
+            Value::Enum(e) => Value::Enum(e.clone()),
+        };
+    }
+}
+
+// One row of a property listing.
+//
+// `name` is a `str` and not a `Text` because every name in this package comes
+// from a literal in the tables below — there is no path by which a caller
+// supplies one. A computed name would need an owned string for the reason
+// `facet::Data.key` documents at length; none is computed, so none is owned.
+struct Prop {
+    name: str,
+    value: Value,
+    // False for everything in `computed` and `native`, and for a declared
+    // property this build cannot write back. The UI draws no editor at all
+    // rather than a disabled one: a greyed-out field still reads as "this is
+    // the kind of thing you set", which for a laid-out frame is a lie.
+    writable: bool,
+    // True when an inspector write is currently overriding what the
+    // application declared, so the UI can offer a reset and mark the row.
+    overridden: bool,
+}
+
+impl Prop {
+    fn read_only(name: str, take v: Value) -> Prop {
+        return Prop { name: name, value: v, writable: false, overridden: false };
+    }
+    fn editable(name: str, take v: Value, overridden: bool) -> Prop {
+        return Prop { name: name, value: v, writable: true, overridden: overridden };
+    }
+}
+
+// ---- outcomes ----------------------------------------------------------------
+
+// Why a write did not happen. The distinctions are the point: an inspector
+// that answers a silent no-op to a misspelled property teaches the developer
+// that the property does not do anything, which is the opposite of true.
+enum Outcome {
+    Ok,
+    // The handle's generation is dead — something was removed from a tree
+    // since it was issued. Re-describe and try again.
+    Stale,
+    // The handle addresses nothing (null node).
+    NotFound,
+    // No property of that name on this node.
+    UnknownProperty,
+    // The property exists and does not take a value of that tag.
+    TypeMismatch,
+    // The property exists, is real, and is not writable through the inspector
+    // (a computed frame, a native class name).
+    ReadOnly,
+    // The property is writable in principle but not on THIS node in this
+    // build — a control-specific property on an unkeyed node, which v1 cannot
+    // reach without the generated dispatch layer. Distinct from
+    // `UnknownProperty` because the name was right.
+    Unsupported,
+}
+
+impl Outcome {
+    fn is_ok(this) -> bool { return this == Outcome::Ok; }
+
+    fn describe(this) -> str {
+        return match this {
+            Outcome::Ok => "ok",
+            Outcome::Stale => "stale: the tree changed, re-describe",
+            Outcome::NotFound => "no such node",
+            Outcome::UnknownProperty => "no property of that name on this node",
+            Outcome::TypeMismatch => "wrong value type for that property",
+            Outcome::ReadOnly => "that property is read-only",
+            Outcome::Unsupported => "that property needs a key on this node",
+        };
+    }
+}
+
+// ---- the tree listing --------------------------------------------------------
+
+// One node in a `describe` snapshot. Flat and parent-indexed, so the same
+// answer serves an in-process UI (which can follow `handle` directly) and a
+// transport adapter (which sends indices).
+struct Node {
+    handle: Handle,
+    // Index into the same vector, or None for a window root.
+    parent: option::Option[usize],
+    depth: usize,
+    key: text::Text,
+    slot: text::Text,
+    kind: u32,
+    // The laid-out frame, in the node's own parent's coordinates — flex's
+    // answer, not the platform's.
+    frame: Frame,
+    has_view: bool,
+    is_attached: bool,
+    is_focused: bool,
+    is_visible: bool,
+    dirty: u64,
+    child_count: usize,
+    // True for the inspector UI's own subtree. An embedded inspector is part
+    // of the tree it is inspecting, and a tool that lists itself as something
+    // to edit invites the developer to restyle the panel they are reading.
+    // The walk still descends (excluding it would need a second traversal
+    // rule); it marks instead, and the UI filters.
+    is_inspector: bool,
+}
+
+// What `inspect` answers for one node, in the three categories that must not
+// be flattened into a single list.
+//
+// Setting `width` writes a style; reading the frame reads what layout decided.
+// The browser calls these `style.width` and `offsetWidth` and keeps them in
+// separate panels, and facet's own documentation draws the same line. A
+// property grid that shows one `width` row is a grid that will eventually show
+// a number the developer cannot write back and cannot explain.
+struct Detail {
+    node: Node,
+    // Facet props and flex style: what the application asked for. Writable.
+    declared: vec::Vec[Prop],
+    // What layout and mount decided: frame, attachment, focus. Read-only.
+    computed: vec::Vec[Prop],
+    // What the platform owns: native class, backing view presence. Read-only,
+    // and empty when no platform module is installed.
+    native: vec::Vec[Prop],
+}
+
+// ---- the vtable --------------------------------------------------------------
+
+fn no_describe(_s: *u8) -> vec::Vec[Node] { return vec::new::[Node](); }
+fn no_inspect(_s: *u8, _h: Handle) -> option::Option[Detail] {
+    return option::Option[Detail]::None;
+}
+fn no_set(_s: *u8, _h: Handle, _p: str, take _v: Value) -> Outcome {
+    return Outcome::Unsupported;
+}
+fn no_reset(_s: *u8, _h: Handle, _p: str) -> Outcome { return Outcome::Unsupported; }
+fn no_highlight(_s: *u8, _h: Handle) { return; }
+fn no_clear_highlight(_s: *u8) { return; }
+
+// Every fn takes the type-erased receiver first; the implementor casts it back.
+// `Backend` is Copy — all fields are fn-pointers plus one pointer — so it
+// passes by value through the whole call chain the way `agent_core`'s does.
+//
+// The first four rows are portable: they read and write facet's own tree and
+// need no platform. The last two are the platform's, and a build with no
+// platform module keeps the no-ops, which do nothing rather than pretending.
+//
+// There is no `pick`. Point-addressed selection was built and removed — see
+// the note in docs/design.md. Selecting from the tree is the way in.
+struct Backend {
+    opaque surface: *u8,
+
+    describe: fn(*u8) -> vec::Vec[Node],
+    inspect: fn(*u8, Handle) -> option::Option[Detail],
+    set: fn(*u8, Handle, str, take Value) -> Outcome,
+    reset: fn(*u8, Handle, str) -> Outcome,
+
+    highlight: fn(*u8, Handle),
+    clear_highlight: fn(*u8),
+}
+
+impl Backend {
+    // The degraded backend: answers nothing, refuses every write, crashes
+    // nothing. What a consumer gets before anything installs a real one.
+    fn none() -> Backend {
+        return Backend {
+            surface: 0 as *u8,
+            describe: no_describe,
+            inspect: no_inspect,
+            set: no_set,
+            reset: no_reset,
+            highlight: no_highlight,
+            clear_highlight: no_clear_highlight,
+        };
+    }
+
+    // Call-through sugar, so a consumer writes `b.describe()` rather than
+    // spelling the receiver at every site.
+    fn describe_now(this) -> vec::Vec[Node] {
+        let f: fn(*u8) -> vec::Vec[Node] = this.describe;
+        return f(this.surface);
+    }
+    fn inspect_now(this, h: Handle) -> option::Option[Detail] {
+        let f: fn(*u8, Handle) -> option::Option[Detail] = this.inspect;
+        return f(this.surface, h);
+    }
+    fn set_now(this, h: Handle, p: str, take v: Value) -> Outcome {
+        let f: fn(*u8, Handle, str, take Value) -> Outcome = this.set;
+        return f(this.surface, h, p, v);
+    }
+    fn reset_now(this, h: Handle, p: str) -> Outcome {
+        let f: fn(*u8, Handle, str) -> Outcome = this.reset;
+        return f(this.surface, h, p);
+    }
+    fn highlight_now(this, h: Handle) {
+        let f: fn(*u8, Handle) = this.highlight;
+        f(this.surface, h);
+        return;
+    }
+    fn clear_highlight_now(this) {
+        let f: fn(*u8) = this.clear_highlight;
+        f(this.surface);
+        return;
+    }
+}
+
+// ---- kind names --------------------------------------------------------------
+
+// What a control kind is called, for a tree row that has no key to show.
+//
+// Hand-written and therefore capable of drifting from `props.cplus`, which the
+// generator owns. The test suite pins every constant against this table, so
+// drift fails the build rather than showing "node" where a date picker is.
+// When `gen_contract.py` grows an inspector dispatch layer this table is the
+// first thing it should emit.
+fn kind_name(kind: u32) -> str {
+    if kind == props::K_SPINNER { return "spinner"; }
+    if kind == props::K_BORDERED { return "bordered"; }
+    if kind == props::K_BOX { return "box"; }
+    if kind == props::K_BUTTON { return "button"; }
+    if kind == props::K_CAROUSEL { return "carousel"; }
+    if kind == props::K_CHECKBOX { return "checkbox"; }
+    if kind == props::K_COLLECTION { return "collection"; }
+    if kind == props::K_DATE_PICKER { return "date_picker"; }
+    if kind == props::K_TEXT_AREA { return "text_area"; }
+    if kind == props::K_TEXT_FIELD { return "text_field"; }
+    if kind == props::K_CANVAS { return "canvas"; }
+    if kind == props::K_HYBRID_WEB { return "hybrid_web"; }
+    if kind == props::K_IMAGE { return "image"; }
+    if kind == props::K_ICON_BUTTON { return "icon_button"; }
+    if kind == props::K_PAGE_DOTS { return "page_dots"; }
+    if kind == props::K_LABEL { return "label"; }
+    if kind == props::K_LIST { return "list"; }
+    if kind == props::K_MENU { return "menu"; }
+    if kind == props::K_CONTEXT_MENU { return "context_menu"; }
+    if kind == props::K_CONTEXT_MENU_ITEM { return "context_menu_item"; }
+    if kind == props::K_MENU_ITEM { return "menu_item"; }
+    if kind == props::K_POPUP { return "popup"; }
+    if kind == props::K_PROGRESS { return "progress"; }
+    if kind == props::K_RADIO { return "radio"; }
+    if kind == props::K_REFRESHABLE { return "refreshable"; }
+    if kind == props::K_SCROLL { return "scroll"; }
+    if kind == props::K_SEARCH_FIELD { return "search_field"; }
+    if kind == props::K_SLIDER { return "slider"; }
+    if kind == props::K_SPAN { return "span"; }
+    if kind == props::K_STEPPER { return "stepper"; }
+    if kind == props::K_SWIPE_ITEM { return "swipe_item"; }
+    if kind == props::K_SWIPEABLE { return "swipeable"; }
+    if kind == props::K_TOGGLE { return "toggle"; }
+    if kind == props::K_TABS { return "tabs"; }
+    if kind == props::K_TABLE { return "table"; }
+    if kind == props::K_TIME_PICKER { return "time_picker"; }
+    if kind == props::K_TOOLBAR_ITEM { return "toolbar_item"; }
+    if kind == props::K_WEB { return "web"; }
+    // Kind 0 is every container facet did not generate — column, row, stack,
+    // card, spacer, and the hand-written words built on them. They carry no
+    // control props, only the common band and flex style, which is exactly
+    // what tiers 1 and 2 edit.
+    return "node";
+}

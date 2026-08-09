@@ -1,0 +1,977 @@
+// tree — the facet-tree walker and the typed property dispatch.
+//
+// This is the inspector's read and write path, and it is PORTABLE. It walks
+// facet's own mounted tree, not a platform's view hierarchy, which is what
+// lets one implementation serve every backend. The agent surface needed an
+// `agent_appkit` because it walks `NSView`; the inspector needs a platform
+// module only for the two things facet genuinely cannot answer — where the
+// pointer is, and how to draw a highlight over a window.
+//
+// Walking facet rather than the platform is also the only way to see:
+//   - pure-layout nodes, which have no view at all;
+//   - spans and menu items, which are runs and rows inside someone else's view;
+//   - what the application DECLARED, as against what layout computed;
+//   - the dirty word, which is the whole of facet's update model.
+//
+// ---- the three tiers ----------------------------------------------------------
+//
+// Writable properties are not one flat set. They fall into three tiers, and
+// only the third needs to know what control it is talking to:
+//
+//   1. THE COMMON BAND. `props::CommonProps` is inline on EVERY node — opacity,
+//      background, corners, shadow, visibility, transform. One reader and one
+//      writer each, no kind dispatch, all 38 control kinds and every bare
+//      container at once.
+//   2. FLEX STYLE. facet's tree IS flex's tree, so width, padding, margin, gap,
+//      grow and shrink are style writes plus `C_LAYOUT`. Also uniform.
+//   3. CONTROL PROPS. `text` on a label, `title` on a button. These live behind
+//      the typed handles the generator emits, and those are reachable only by
+//      key — so tier 3 answers `Unsupported` on an unkeyed node. That is a real
+//      v1 limit, reported rather than hidden, and it closes when
+//      `gen_contract.py` emits an inspector dispatch layer.
+//
+// ---- what this module must never do -------------------------------------------
+//
+// Never raise `C_FOCUS`, `C_BLUR` or `C_FLUSH`. Those three are COMMANDS the
+// backend performs and clears, not state it re-reads. Re-applying a node with
+// every bit set re-issues them, and the symptom is the caret vanishing from
+// whatever the user was typing into on an unrelated node's update. Every write
+// below names the one bit it changed; the only wholesale re-read is
+// `core::touch_all`, which is `C_ALL_STATE` and excludes the commands by
+// construction.
+//
+// Never write the platform view directly. A native-only write leaves facet's
+// declared state stale and is overwritten by the next sync walk. Every edit
+// goes through the same setters an application calls, so it takes the same
+// path: prop, dirty bit, scheduled sync, backend apply.
+
+import "stdlib/vec" as vec;
+import "stdlib/text" as text;
+import "stdlib/option" as option;
+import "stdlib/status" as status;
+import "flex_layout/flex_layout" as flex;
+import "facet/facet" as core;
+import "facet/application" as app;
+import "facet/vocabulary" as vocab;
+import "facet/props" as props;
+import "facet/label" as label;
+import "facet/button" as button;
+import "facet/text_field" as text_field;
+import "facet/text_area" as text_area;
+import "facet/checkbox" as checkbox;
+import "facet/toggle" as toggle;
+import "./inspector" as insp;
+
+// ---- the override ledger -----------------------------------------------------
+
+// What a property was before the inspector first wrote it.
+//
+// Reset has to restore what the APPLICATION declared, not the type's default.
+// An app that shipped `opacity: 0.8` and an inspector that resets to 1.0 has
+// not undone the experiment — it has started a second one. So the first write
+// to a given (node, property) records the old value and every later write to
+// the same pair leaves that record alone.
+//
+// Volatile by design: the ledger dies with the process and is not consulted
+// when a node is rebuilt. An inspector that silently reapplied edits to new
+// nodes would be an application state store wearing a development tool's
+// clothes. `snippet_for` is the deliberate, explicit way an experiment leaves
+// this process — the developer copies it into source.
+struct Override {
+    opaque node: *core::Node,
+    prop: str,
+    original: insp::Value,
+}
+
+static OVERRIDES: vec::Vec[Override] = #zero::[vec::Vec[Override]]();
+
+// The inspector UI's own subtree root, if it is embedded in the tree it is
+// inspecting. Marked rather than skipped: the walk has one descent rule, and
+// the listing carries `is_inspector` so a UI can filter. An inspector that
+// offers its own panel as something to restyle is a tool inviting you to
+// break your view of the thing you are debugging.
+static SELF_ROOT: *core::Node = 0 as *core::Node;
+
+fn mark_self(n: *core::Node) { SELF_ROOT = n; return; }
+fn self_root() -> *core::Node { return SELF_ROOT; }
+fn clear_self() { SELF_ROOT = 0 as *core::Node; return; }
+
+fn ledger_index(n: *core::Node, prop: str) -> option::Option[usize] {
+    var i: usize = 0 as usize;
+    let c: usize = OVERRIDES.count();
+    while i < c {
+        match OVERRIDES.at_ptr(i) {
+            option::Option[*Override]::Some(p) => {
+                if { (*p).node } == n {
+                    if { (*p).prop } == prop { return option::Option[usize]::Some(i); }
+                }
+            }
+            option::Option[*Override]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return option::Option[usize]::None;
+}
+
+fn is_overridden(n: *core::Node, prop: str) -> bool {
+    return match ledger_index(n, prop) {
+        option::Option[usize]::Some(_i) => true,
+        option::Option[usize]::None => false,
+    };
+}
+
+// Record only the FIRST write. A second edit to the same property must not
+// overwrite the application's value with the inspector's own earlier one.
+fn ledger_record(n: *core::Node, prop: str, take original: insp::Value) {
+    match ledger_index(n, prop) {
+        option::Option[usize]::Some(_i) => { return; }
+        option::Option[usize]::None => { }
+    }
+    let _s: status::Status = OVERRIDES.append(Override {
+        node: n, prop: prop, original: original,
+    });
+    return;
+}
+
+// Duplicate the record, THEN drop it. `Override` owns a `Value` which owns a
+// `Text`, so the field cannot be moved out of it — and the copy has to be
+// taken before the removal anyway, because removal is what runs the
+// destructor that would free the bytes the answer points at.
+fn ledger_take(n: *core::Node, prop: str) -> option::Option[insp::Value] {
+    return match ledger_index(n, prop) {
+        option::Option[usize]::Some(i) => {
+            var copied: insp::Value = insp::Value::Nothing;
+            match OVERRIDES.at_ptr(i) {
+                option::Option[*Override]::Some(p) => { copied = { (*p).original }.clone(); }
+                option::Option[*Override]::None => { }
+            }
+            let _gone: option::Option[Override] = OVERRIDES.remove(i);
+            option::Option[insp::Value]::Some(copied)
+        }
+        option::Option[usize]::None => option::Option[insp::Value]::None,
+    };
+}
+
+fn override_count() -> usize { return OVERRIDES.count(); }
+
+// Drop every record without restoring anything. For tests and for a session
+// that is starting over; NOT what `reset` does.
+fn forget_all_overrides() {
+    OVERRIDES.remove_all();
+    return;
+}
+
+// ---- the walk ----------------------------------------------------------------
+
+fn row_of(
+    n: *core::Node,
+    parent: option::Option[usize],
+    depth: usize,
+    window: usize,
+    mine: bool,
+) -> insp::Node {
+    return insp::Node {
+        handle: insp::Handle::of(n, window),
+        parent: parent,
+        depth: depth,
+        key: text::from_str({ (*n).key() }),
+        slot: text::from_str(core::slot_of(n)),
+        kind: core::kind_of(n),
+        frame: core::frame_of(n),
+        has_view: core::view_of(n) != (0 as *u8),
+        is_attached: core::is_attached(n),
+        is_focused: core::is_focused(n),
+        is_visible: core::is_visible(n),
+        dirty: core::dirty_of(n),
+        child_count: core::child_count_of(n),
+        is_inspector: mine,
+    };
+}
+
+fn walk(
+    n: *core::Node,
+    parent: option::Option[usize],
+    depth: usize,
+    window: usize,
+    in_self: bool,
+    out: *vec::Vec[insp::Node],
+) {
+    if n == (0 as *core::Node) { return; }
+    var mine: bool = in_self;
+    if SELF_ROOT != (0 as *core::Node) {
+        if n == SELF_ROOT { mine = true; }
+    }
+    let idx: usize = { (*out).count() };
+    let _s: status::Status = { (*out).append(row_of(n, parent, depth, window, mine)) };
+    var i: usize = 0 as usize;
+    let c: usize = core::child_count_of(n);
+    while i < c {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(ch) => {
+                walk(ch, option::Option[usize]::Some(idx), depth +% (1 as usize),
+                     window, mine, out);
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// Every mounted node in every window of the running app, in window-open order
+// and then document order — the same order `mount::find` resolves in, so a row
+// number and a key lookup never disagree about which node is "first".
+fn describe() -> vec::Vec[insp::Node] {
+    var out: vec::Vec[insp::Node] = vec::new::[insp::Node]();
+    var w: usize = 0 as usize;
+    let n: usize = app::window_count();
+    while w < n {
+        let r: *core::Node = app::window_root(w);
+        if r != (0 as *core::Node) {
+            walk(r, option::Option[usize]::None, 0 as usize, w, false, #addr_of(out));
+        }
+        w = w +% (1 as usize);
+    }
+    return out;
+}
+
+// ---- reading -----------------------------------------------------------------
+
+fn num(v: f64) -> option::Option[insp::Value] {
+    return option::Option[insp::Value]::Some(insp::Value::Num(v));
+}
+fn boolean(v: bool) -> option::Option[insp::Value] {
+    return option::Option[insp::Value]::Some(insp::Value::Bool(v));
+}
+fn owned(v: str) -> option::Option[insp::Value] {
+    return option::Option[insp::Value]::Some(insp::Value::Str(text::from_str(v)));
+}
+fn colour(v: vocab::Color) -> option::Option[insp::Value] {
+    return option::Option[insp::Value]::Some(insp::Value::Color(v));
+}
+
+// A style length as a value. Only points survive the round trip: an `auto` or
+// a percent has no number an inspector could hand back unchanged, and
+// answering 0.0 for `auto` would be a lie the UI would then write back as a
+// real zero. Unset reads as `Nothing`, which the UI draws as an empty field.
+fn as_points(l: flex::StyleLength) -> option::Option[f64] {
+    return match l.unit {
+        flex::Unit::Point => option::Option[f64]::Some(l.value),
+        _ => option::Option[f64]::None,
+    };
+}
+
+fn same_points(l: flex::StyleLength, x: f64) -> bool {
+    return match as_points(l) {
+        option::Option[f64]::Some(y) => y == x,
+        option::Option[f64]::None => false,
+    };
+}
+
+fn len_value(l: flex::StyleLength) -> insp::Value {
+    return match as_points(l) {
+        option::Option[f64]::Some(x) => insp::Value::Num(x),
+        option::Option[f64]::None => insp::Value::Nothing,
+    };
+}
+
+// Four edges agree, or the answer is `Nothing`. A single `padding` box that
+// silently shows only the left edge is how a developer sets all four to the
+// value that was already on one of them.
+//
+// Compared as lengths rather than as `Value`s: matching a `Value` moves it,
+// and a comparison that consumes one of its operands cannot then return it.
+fn uniform(a: flex::StyleLength, b: flex::StyleLength,
+           c: flex::StyleLength, d: flex::StyleLength) -> insp::Value {
+    return match as_points(a) {
+        option::Option[f64]::Some(x) => {
+            if !same_points(b, x) { return insp::Value::Nothing; }
+            if !same_points(c, x) { return insp::Value::Nothing; }
+            if !same_points(d, x) { return insp::Value::Nothing; }
+            insp::Value::Num(x)
+        }
+        option::Option[f64]::None => insp::Value::Nothing,
+    };
+}
+
+// Tier 1 + tier 2: everything readable without knowing the control kind.
+fn get_uniform(n: *core::Node, prop: str) -> option::Option[insp::Value] {
+    // ---- tier 1: the common band ----
+    if prop == "opacity" { return num(core::opacity(n)); }
+    if prop == "visible" { return boolean(core::is_visible(n)); }
+    if prop == "enabled" { return boolean(core::is_enabled(n)); }
+    if prop == "input_transparent" { return boolean(core::input_transparent(n)); }
+    if prop == "background_color" { return colour(core::background_color(n)); }
+    if prop == "tooltip" { return owned(core::tooltip(n)); }
+    if prop == "accessibility_label" { return owned(core::accessibility_label(n)); }
+    if prop == "rotation" { return num(core::rotation(n)); }
+    if prop == "scale" { return num(core::scale(n)); }
+    if prop == "translation_x" { return num(core::translation_x(n)); }
+    if prop == "translation_y" { return num(core::translation_y(n)); }
+    if prop == "corner_radius" {
+        let c: vocab::Corners = core::corner_radius(n);
+        return num(c.top_leading);
+    }
+
+    // ---- tier 2: flex style ----
+    if prop == "width" { return option::Option[insp::Value]::Some(len_value({ (*n).style.width })); }
+    if prop == "height" { return option::Option[insp::Value]::Some(len_value({ (*n).style.height })); }
+    if prop == "grow" { return num({ (*n).style.flex_grow }); }
+    if prop == "shrink" { return num({ (*n).style.flex_shrink }); }
+    if prop == "padding_left" { return option::Option[insp::Value]::Some(len_value({ (*n).style.padding_left })); }
+    if prop == "padding_top" { return option::Option[insp::Value]::Some(len_value({ (*n).style.padding_top })); }
+    if prop == "padding_right" { return option::Option[insp::Value]::Some(len_value({ (*n).style.padding_right })); }
+    if prop == "padding_bottom" { return option::Option[insp::Value]::Some(len_value({ (*n).style.padding_bottom })); }
+    if prop == "padding" {
+        return option::Option[insp::Value]::Some(uniform(
+            { (*n).style.padding_left }, { (*n).style.padding_top },
+            { (*n).style.padding_right }, { (*n).style.padding_bottom }));
+    }
+    if prop == "margin_left" { return option::Option[insp::Value]::Some(len_value({ (*n).style.margin_left })); }
+    if prop == "margin_top" { return option::Option[insp::Value]::Some(len_value({ (*n).style.margin_top })); }
+    if prop == "margin_right" { return option::Option[insp::Value]::Some(len_value({ (*n).style.margin_right })); }
+    if prop == "margin_bottom" { return option::Option[insp::Value]::Some(len_value({ (*n).style.margin_bottom })); }
+    if prop == "margin" {
+        return option::Option[insp::Value]::Some(uniform(
+            { (*n).style.margin_left }, { (*n).style.margin_top },
+            { (*n).style.margin_right }, { (*n).style.margin_bottom }));
+    }
+    if prop == "gap_row" { return option::Option[insp::Value]::Some(len_value({ (*n).style.gap_row })); }
+    if prop == "gap_column" { return option::Option[insp::Value]::Some(len_value({ (*n).style.gap_column })); }
+    if prop == "gap" {
+        let gr: flex::StyleLength = { (*n).style.gap_row };
+        let gc: flex::StyleLength = { (*n).style.gap_column };
+        return match as_points(gr) {
+            option::Option[f64]::Some(x) => {
+                if same_points(gc, x) { num(x) }
+                else { option::Option[insp::Value]::Some(insp::Value::Nothing) }
+            }
+            option::Option[f64]::None =>
+                option::Option[insp::Value]::Some(insp::Value::Nothing),
+        };
+    }
+
+    return option::Option[insp::Value]::None;
+}
+
+// Does this node's key resolve back to this very node, in this window?
+//
+// Tier 3 goes through the generated typed handles, and those are reachable
+// only by key. Before using one, prove the key names THIS node: two windows
+// may share a key, and `find` answers the first match in open order. If the
+// key resolves elsewhere, the write must be refused rather than landing on a
+// stranger.
+fn keyed_resolves_here(n: *core::Node, window: usize) -> bool {
+    let k: str = { (*n).key() };
+    if k == "" { return false; }
+    let r: *core::Node = app::window_root(window);
+    if r == (0 as *core::Node) { return false; }
+    return match core::find_in(r, k) {
+        option::Option[*core::Node]::Some(p) => p == n,
+        option::Option[*core::Node]::None => false,
+    };
+}
+
+// Tier 3: control props, by key, for the kinds whose text or value is the
+// thing a developer actually reaches for.
+fn get_control(n: *core::Node, prop: str, window: usize) -> option::Option[insp::Value] {
+    let k: str = { (*n).key() };
+    if !keyed_resolves_here(n, window) { return option::Option[insp::Value]::None; }
+    let root: *core::Node = app::window_root(window);
+    let kind: u32 = core::kind_of(n);
+
+    if prop == "text" {
+        if kind == props::K_LABEL {
+            return match label::find(k, within: root) {
+                option::Option[label::Label]::Some(l) => owned(l.text()),
+                option::Option[label::Label]::None => option::Option[insp::Value]::None,
+            };
+        }
+        if kind == props::K_TEXT_FIELD {
+            return match text_field::find(k, within: root) {
+                option::Option[text_field::TextField]::Some(t) => owned(t.text()),
+                option::Option[text_field::TextField]::None => option::Option[insp::Value]::None,
+            };
+        }
+        if kind == props::K_TEXT_AREA {
+            return match text_area::find(k, within: root) {
+                option::Option[text_area::TextArea]::Some(t) => owned(t.text()),
+                option::Option[text_area::TextArea]::None => option::Option[insp::Value]::None,
+            };
+        }
+        return option::Option[insp::Value]::None;
+    }
+
+    if prop == "title" {
+        if kind == props::K_BUTTON {
+            return match button::find(k, within: root) {
+                option::Option[button::Button]::Some(b) => owned(b.title()),
+                option::Option[button::Button]::None => option::Option[insp::Value]::None,
+            };
+        }
+        return option::Option[insp::Value]::None;
+    }
+
+    if prop == "on" {
+        if kind == props::K_CHECKBOX {
+            return match checkbox::find(k, within: root) {
+                option::Option[checkbox::Checkbox]::Some(c) => boolean(c.on()),
+                option::Option[checkbox::Checkbox]::None => option::Option[insp::Value]::None,
+            };
+        }
+        if kind == props::K_TOGGLE {
+            return match toggle::find(k, within: root) {
+                option::Option[toggle::Toggle]::Some(t) => boolean(t.on()),
+                option::Option[toggle::Toggle]::None => option::Option[insp::Value]::None,
+            };
+        }
+        return option::Option[insp::Value]::None;
+    }
+
+    return option::Option[insp::Value]::None;
+}
+
+fn get(h: insp::Handle, prop: str) -> option::Option[insp::Value] {
+    if !h.is_live() { return option::Option[insp::Value]::None; }
+    let n: *core::Node = h.node;
+    match get_uniform(n, prop) {
+        option::Option[insp::Value]::Some(v) => { return option::Option[insp::Value]::Some(v); }
+        option::Option[insp::Value]::None => { }
+    }
+    return get_control(n, prop, h.window);
+}
+
+// ---- writing -----------------------------------------------------------------
+
+// Scalars only. A `str` pulled out of a `Value` would be a view into a `Text`
+// this function does not own, and a view outliving its bytes is the
+// use-after-free the borrow checker cannot see through a return. Text and
+// colour are matched where they are used instead.
+fn num_of(v: insp::Value) -> option::Option[f64] {
+    return match v {
+        insp::Value::Num(x) => option::Option[f64]::Some(x),
+        // A client that sends 12 for a length means 12.0. Refusing that would
+        // be pedantry dressed as type safety.
+        insp::Value::Int(i) => option::Option[f64]::Some(i as f64),
+        _ => option::Option[f64]::None,
+    };
+}
+
+fn bool_of(v: insp::Value) -> option::Option[bool] {
+    return match v {
+        insp::Value::Bool(b) => option::Option[bool]::Some(b),
+        _ => option::Option[bool]::None,
+    };
+}
+
+fn set_len(n: *core::Node, which: str, x: f64) {
+    let l: flex::StyleLength = flex::StyleLength::points(x);
+    if which == "width" { { (*n).set_width(l) }; }
+    if which == "height" { { (*n).set_height(l) }; }
+    if which == "padding" { { (*n).set_padding(flex::Edge::All, l) }; }
+    if which == "padding_left" { { (*n).set_padding(flex::Edge::Left, l) }; }
+    if which == "padding_top" { { (*n).set_padding(flex::Edge::Top, l) }; }
+    if which == "padding_right" { { (*n).set_padding(flex::Edge::Right, l) }; }
+    if which == "padding_bottom" { { (*n).set_padding(flex::Edge::Bottom, l) }; }
+    if which == "margin" { { (*n).set_margin(flex::Edge::All, l) }; }
+    if which == "margin_left" { { (*n).set_margin(flex::Edge::Left, l) }; }
+    if which == "margin_top" { { (*n).set_margin(flex::Edge::Top, l) }; }
+    if which == "margin_right" { { (*n).set_margin(flex::Edge::Right, l) }; }
+    if which == "margin_bottom" { { (*n).set_margin(flex::Edge::Bottom, l) }; }
+    if which == "gap" { { (*n).set_gap(flex::Gutter::All, l) }; }
+    if which == "gap_row" { { (*n).set_gap(flex::Gutter::Row, l) }; }
+    if which == "gap_column" { { (*n).set_gap(flex::Gutter::Column, l) }; }
+    // One bit for every one of them: layout is re-run, props are not re-read.
+    core::touch(n, props::C_LAYOUT);
+    return;
+}
+
+fn is_length_prop(prop: str) -> bool {
+    if prop == "width" { return true; }
+    if prop == "height" { return true; }
+    if prop == "padding" { return true; }
+    if prop == "padding_left" { return true; }
+    if prop == "padding_top" { return true; }
+    if prop == "padding_right" { return true; }
+    if prop == "padding_bottom" { return true; }
+    if prop == "margin" { return true; }
+    if prop == "margin_left" { return true; }
+    if prop == "margin_top" { return true; }
+    if prop == "margin_right" { return true; }
+    if prop == "margin_bottom" { return true; }
+    if prop == "gap" { return true; }
+    if prop == "gap_row" { return true; }
+    if prop == "gap_column" { return true; }
+    return false;
+}
+
+// The names a developer will type that name something real and read-only.
+// Answering `ReadOnly` rather than `UnknownProperty` is the difference between
+// "layout decided that" and "you misspelled it".
+fn is_computed_prop(prop: str) -> bool {
+    if prop == "frame_x" { return true; }
+    if prop == "frame_y" { return true; }
+    if prop == "frame_width" { return true; }
+    if prop == "frame_height" { return true; }
+    if prop == "attached" { return true; }
+    if prop == "focused" { return true; }
+    if prop == "kind" { return true; }
+    if prop == "key" { return true; }
+    if prop == "native_class" { return true; }
+    if prop == "has_view" { return true; }
+    return false;
+}
+
+fn apply_uniform(n: *core::Node, prop: str, v: insp::Value) -> insp::Outcome {
+    // ---- tier 1: the common band ----
+    if prop == "opacity" {
+        return match num_of(v) {
+            option::Option[f64]::Some(x) => { core::set_opacity(n, x); insp::Outcome::Ok }
+            option::Option[f64]::None => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "visible" {
+        return match bool_of(v) {
+            option::Option[bool]::Some(b) => { core::set_visible(n, b); insp::Outcome::Ok }
+            option::Option[bool]::None => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "enabled" {
+        return match bool_of(v) {
+            option::Option[bool]::Some(b) => { core::set_enabled(n, b); insp::Outcome::Ok }
+            option::Option[bool]::None => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "input_transparent" {
+        return match bool_of(v) {
+            option::Option[bool]::Some(b) => { core::set_input_transparent(n, b); insp::Outcome::Ok }
+            option::Option[bool]::None => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "rotation" {
+        return match num_of(v) {
+            option::Option[f64]::Some(x) => { core::set_rotation(n, x); insp::Outcome::Ok }
+            option::Option[f64]::None => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "scale" {
+        return match num_of(v) {
+            option::Option[f64]::Some(x) => { core::set_scale(n, x); insp::Outcome::Ok }
+            option::Option[f64]::None => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "translation_x" {
+        return match num_of(v) {
+            option::Option[f64]::Some(x) => { core::set_translation_x(n, x); insp::Outcome::Ok }
+            option::Option[f64]::None => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "translation_y" {
+        return match num_of(v) {
+            option::Option[f64]::Some(x) => { core::set_translation_y(n, x); insp::Outcome::Ok }
+            option::Option[f64]::None => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "corner_radius" {
+        return match num_of(v) {
+            option::Option[f64]::Some(x) => {
+                core::set_corner_radius(n, vocab::Corners::all(x));
+                insp::Outcome::Ok
+            }
+            option::Option[f64]::None => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "background_color" {
+        return match v {
+            insp::Value::Color(c) => { core::set_background_color(n, c); insp::Outcome::Ok }
+            _ => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "tooltip" {
+        return match v {
+            insp::Value::Str(s) => { core::set_tooltip(n, s.view()); insp::Outcome::Ok }
+            _ => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "accessibility_label" {
+        return match v {
+            insp::Value::Str(s) => { core::set_accessibility_label(n, s.view()); insp::Outcome::Ok }
+            _ => insp::Outcome::TypeMismatch,
+        };
+    }
+
+    // ---- tier 2: flex style ----
+    if prop == "grow" {
+        return match num_of(v) {
+            option::Option[f64]::Some(x) => { core::set_grow(n, x); insp::Outcome::Ok }
+            option::Option[f64]::None => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "shrink" {
+        return match num_of(v) {
+            option::Option[f64]::Some(x) => { core::set_shrink(n, x); insp::Outcome::Ok }
+            option::Option[f64]::None => insp::Outcome::TypeMismatch,
+        };
+    }
+    if is_length_prop(prop) {
+        return match num_of(v) {
+            option::Option[f64]::Some(x) => { set_len(n, prop, x); insp::Outcome::Ok }
+            option::Option[f64]::None => insp::Outcome::TypeMismatch,
+        };
+    }
+
+    return insp::Outcome::UnknownProperty;
+}
+
+// Tier 3. `Unsupported` and not `UnknownProperty` when the node has no usable
+// key: the name was right, this build cannot reach it here.
+fn apply_control(n: *core::Node, prop: str, v: insp::Value, window: usize) -> insp::Outcome {
+    let kind: u32 = core::kind_of(n);
+    let known: bool = (prop == "text") || (prop == "title") || (prop == "on");
+    if !known { return insp::Outcome::UnknownProperty; }
+    if !keyed_resolves_here(n, window) { return insp::Outcome::Unsupported; }
+    let k: str = { (*n).key() };
+    let root: *core::Node = app::window_root(window);
+
+    if prop == "text" {
+        return match v {
+            insp::Value::Str(s) => {
+                if kind == props::K_LABEL {
+                    match label::find(k, within: root) {
+                        option::Option[label::Label]::Some(l) => {
+                            let _h: label::Label = l.set_text(s.view());
+                            return insp::Outcome::Ok;
+                        }
+                        option::Option[label::Label]::None => { return insp::Outcome::NotFound; }
+                    }
+                }
+                if kind == props::K_TEXT_FIELD {
+                    match text_field::find(k, within: root) {
+                        option::Option[text_field::TextField]::Some(t) => {
+                            let _h: text_field::TextField = t.set_text(s.view());
+                            return insp::Outcome::Ok;
+                        }
+                        option::Option[text_field::TextField]::None => { return insp::Outcome::NotFound; }
+                    }
+                }
+                if kind == props::K_TEXT_AREA {
+                    match text_area::find(k, within: root) {
+                        option::Option[text_area::TextArea]::Some(t) => {
+                            let _h: text_area::TextArea = t.set_text(s.view());
+                            return insp::Outcome::Ok;
+                        }
+                        option::Option[text_area::TextArea]::None => { return insp::Outcome::NotFound; }
+                    }
+                }
+                return insp::Outcome::UnknownProperty;
+            }
+            _ => insp::Outcome::TypeMismatch,
+        };
+    }
+
+    if prop == "title" {
+        if kind != props::K_BUTTON { return insp::Outcome::UnknownProperty; }
+        return match v {
+            insp::Value::Str(s) => {
+                match button::find(k, within: root) {
+                    option::Option[button::Button]::Some(b) => {
+                        let _h: button::Button = b.set_title(s.view());
+                        return insp::Outcome::Ok;
+                    }
+                    option::Option[button::Button]::None => { return insp::Outcome::NotFound; }
+                }
+            }
+            _ => insp::Outcome::TypeMismatch,
+        };
+    }
+
+    // prop == "on"
+    return match bool_of(v) {
+        option::Option[bool]::Some(b) => {
+            if kind == props::K_CHECKBOX {
+                match checkbox::find(k, within: root) {
+                    option::Option[checkbox::Checkbox]::Some(c) => {
+                        let _h: checkbox::Checkbox = c.set_on(b);
+                        return insp::Outcome::Ok;
+                    }
+                    option::Option[checkbox::Checkbox]::None => { return insp::Outcome::NotFound; }
+                }
+            }
+            if kind == props::K_TOGGLE {
+                match toggle::find(k, within: root) {
+                    option::Option[toggle::Toggle]::Some(t) => {
+                        let _h: toggle::Toggle = t.set_on(b);
+                        return insp::Outcome::Ok;
+                    }
+                    option::Option[toggle::Toggle]::None => { return insp::Outcome::NotFound; }
+                }
+            }
+            return insp::Outcome::UnknownProperty;
+        }
+        option::Option[bool]::None => insp::Outcome::TypeMismatch,
+    };
+}
+
+// The one write door. Order matters: liveness before existence before
+// writability before type, so the answer names the FIRST thing that was wrong
+// rather than the last thing checked.
+fn set(h: insp::Handle, prop: str, take v: insp::Value) -> insp::Outcome {
+    if h.is_none() { return insp::Outcome::NotFound; }
+    if !h.is_live() { return insp::Outcome::Stale; }
+    if is_computed_prop(prop) { return insp::Outcome::ReadOnly; }
+    let n: *core::Node = h.node;
+
+    // Record what the application declared, before the first inspector write
+    // to this pair replaces it.
+    match get(h, prop) {
+        option::Option[insp::Value]::Some(orig) => { ledger_record(n, prop, orig); }
+        option::Option[insp::Value]::None => { }
+    }
+
+    let r: insp::Outcome = apply_uniform(n, prop, v);
+    return match r {
+        insp::Outcome::UnknownProperty => apply_control(n, prop, v, h.window),
+        _ => r,
+    };
+}
+
+// Put back what the application declared and forget the record. Resetting a
+// property that was never overridden is `Ok` and changes nothing: it is
+// already at the declared value, which is what was asked for.
+fn reset(h: insp::Handle, prop: str) -> insp::Outcome {
+    if h.is_none() { return insp::Outcome::NotFound; }
+    if !h.is_live() { return insp::Outcome::Stale; }
+    if is_computed_prop(prop) { return insp::Outcome::ReadOnly; }
+    let n: *core::Node = h.node;
+    return match ledger_take(n, prop) {
+        option::Option[insp::Value]::Some(orig) => {
+            let r: insp::Outcome = apply_uniform(n, prop, orig);
+            match r {
+                insp::Outcome::UnknownProperty => apply_control(n, prop, orig, h.window),
+                _ => r,
+            }
+        }
+        option::Option[insp::Value]::None => insp::Outcome::Ok,
+    };
+}
+
+// ---- inspect -----------------------------------------------------------------
+
+// Installed by a platform module; zero keeps the portable answer, which is
+// that facet knows nothing about native classes and says so by listing none.
+//
+// It RETURNS its rows rather than filling a vector through a pointer. A local
+// whose address is taken cannot then be moved into a returned struct — the
+// borrow checker treats the escape as a view that would dangle, which for a
+// vector about to be handed back by value is exactly the shape it is there to
+// refuse. Returning the vector never takes an address at all.
+static NATIVE_FN: fn(*core::Node) -> vec::Vec[insp::Prop] =
+    #zero::[fn(*core::Node) -> vec::Vec[insp::Prop]]();
+
+fn set_native_fn(f: fn(*core::Node) -> vec::Vec[insp::Prop]) { NATIVE_FN = f; return; }
+
+// The order is the order the UI draws, so it is grouped the way a developer
+// reads: what it is, then how big, then how it looks.
+fn declared_names() -> vec::Vec[str] {
+    var v: vec::Vec[str] = vec::new::[str]();
+    let _a: status::Status = v.append("text");
+    let _b: status::Status = v.append("title");
+    let _c: status::Status = v.append("on");
+    let _d: status::Status = v.append("visible");
+    let _e: status::Status = v.append("enabled");
+    let _f: status::Status = v.append("input_transparent");
+    let _g: status::Status = v.append("width");
+    let _h: status::Status = v.append("height");
+    let _i: status::Status = v.append("grow");
+    let _j: status::Status = v.append("shrink");
+    let _k: status::Status = v.append("padding");
+    let _l: status::Status = v.append("margin");
+    let _m: status::Status = v.append("gap");
+    let _n: status::Status = v.append("opacity");
+    let _o: status::Status = v.append("background_color");
+    let _p: status::Status = v.append("corner_radius");
+    let _q: status::Status = v.append("rotation");
+    let _r: status::Status = v.append("scale");
+    let _s: status::Status = v.append("translation_x");
+    let _t: status::Status = v.append("translation_y");
+    let _u: status::Status = v.append("tooltip");
+    let _w: status::Status = v.append("accessibility_label");
+    return v;
+}
+
+// Every declared property this node actually answers, in draw order. A name
+// the node does not carry (`title` on a label) is absent rather than present
+// and empty: an editor for a property that does not exist is an invitation to
+// write into nothing.
+fn declared_props(h: insp::Handle, n: *core::Node) -> vec::Vec[insp::Prop] {
+    var out: vec::Vec[insp::Prop] = vec::new::[insp::Prop]();
+    let names: vec::Vec[str] = declared_names();
+    var i: usize = 0 as usize;
+    let c: usize = names.count();
+    while i < c {
+        match names.at(i) {
+            option::Option[str]::Some(nm) => {
+                match get(h, nm) {
+                    option::Option[insp::Value]::Some(v) => {
+                        let _s: status::Status =
+                            out.append(insp::Prop::editable(nm, v, is_overridden(n, nm)));
+                    }
+                    option::Option[insp::Value]::None => { }
+                }
+            }
+            option::Option[str]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return out;
+}
+
+// What layout and mount decided. Never writable — setting `width` writes a
+// style, and reading the frame reads what came out the other side. Two
+// different questions that happen to share a word, which is why they are two
+// panels and not one list.
+fn computed_props(n: *core::Node) -> vec::Vec[insp::Prop] {
+    var out: vec::Vec[insp::Prop] = vec::new::[insp::Prop]();
+    let f: insp::Frame = core::frame_of(n);
+    let _a: status::Status = out.append(insp::Prop::read_only("frame_x", insp::Value::Num(f.left)));
+    let _b: status::Status = out.append(insp::Prop::read_only("frame_y", insp::Value::Num(f.top)));
+    let _c: status::Status = out.append(insp::Prop::read_only("frame_width", insp::Value::Num(f.width)));
+    let _d: status::Status = out.append(insp::Prop::read_only("frame_height", insp::Value::Num(f.height)));
+    let _e: status::Status = out.append(insp::Prop::read_only("attached", insp::Value::Bool(core::is_attached(n))));
+    let _f: status::Status = out.append(insp::Prop::read_only("focused", insp::Value::Bool(core::is_focused(n))));
+    let _g: status::Status = out.append(insp::Prop::read_only("kind",
+        insp::Value::Str(text::from_str(insp::kind_name(core::kind_of(n))))));
+    let _h: status::Status = out.append(insp::Prop::read_only("has_view",
+        insp::Value::Bool(core::view_of(n) != (0 as *u8))));
+    return out;
+}
+
+fn native_props(n: *core::Node) -> vec::Vec[insp::Prop] {
+    let nf: fn(*core::Node) -> vec::Vec[insp::Prop] = NATIVE_FN;
+    if nf == (0 as fn(*core::Node) -> vec::Vec[insp::Prop]) {
+        return vec::new::[insp::Prop]();
+    }
+    return nf(n);
+}
+
+fn inspect(h: insp::Handle) -> option::Option[insp::Detail] {
+    if !h.is_live() { return option::Option[insp::Detail]::None; }
+    let n: *core::Node = h.node;
+    return option::Option[insp::Detail]::Some(insp::Detail {
+        node: row_of(n, option::Option[usize]::None, 0 as usize, h.window, false),
+        declared: declared_props(h, n),
+        computed: computed_props(n),
+        native: native_props(n),
+    });
+}
+
+// ---- the C+ snippet ----------------------------------------------------------
+
+fn append_num(t: *text::Text, x: f64) {
+    // Whole numbers read as whole numbers: `12` and not `12.000000`, because
+    // the snippet is meant to be pasted into source a human will read.
+    let r: f64 = x - (((x as i64) as f64));
+    if r == 0.0f64 {
+        let _a: status::Status = { (*t).append({ (x as i64) }.to_text().view()) };
+        let _b: status::Status = { (*t).append(".0f64") };
+        return;
+    }
+    let _c: status::Status = { (*t).append(x.to_text().view()) };
+    let _d: status::Status = { (*t).append("f64") };
+    return;
+}
+
+// The experiment, as source. This is v1's whole persistence story and it is
+// deliberately the smallest one that works: the developer copies a line they
+// can read into the file it belongs in. An override ledger that reapplied
+// itself would be a development tool quietly becoming part of the application.
+//
+// Answers "" for a node with no key, because a snippet that cannot address
+// its target is not a snippet.
+fn snippet_for(h: insp::Handle, prop: str) -> text::Text {
+    var out: text::Text = text::new();
+    if !h.is_live() { return out; }
+    let n: *core::Node = h.node;
+    let k: str = { (*n).key() };
+    if k == "" { return out; }
+
+    match get(h, prop) {
+        option::Option[insp::Value]::Some(v) => {
+            let _a: status::Status = out.append("core::set_");
+            let _b: status::Status = out.append(prop);
+            let _c: status::Status = out.append("(mount::node(\"");
+            let _d: status::Status = out.append(k);
+            let _e: status::Status = out.append("\"), ");
+            match v {
+                insp::Value::Num(x) => { append_num(#addr_of(out), x); }
+                insp::Value::Int(i) => {
+                    let _f: status::Status = out.append(i.to_text().view());
+                }
+                insp::Value::Bool(b) => {
+                    let _g: status::Status = out.append(if b { "true" } else { "false" });
+                }
+                insp::Value::Str(s) => {
+                    let _h2: status::Status = out.append("\"");
+                    let _i: status::Status = out.append(s.view());
+                    let _j: status::Status = out.append("\"");
+                }
+                insp::Value::Color(_c2) => {
+                    let _k2: status::Status = out.append("/* colour */");
+                }
+                _ => { let _l: status::Status = out.append("/* unset */"); }
+            }
+            let _m: status::Status = out.append(");");
+        }
+        option::Option[insp::Value]::None => { }
+    }
+    return out;
+}
+
+// ---- the backend -------------------------------------------------------------
+
+fn bk_describe(_s: *u8) -> vec::Vec[insp::Node] { return describe(); }
+fn bk_inspect(_s: *u8, h: insp::Handle) -> option::Option[insp::Detail] { return inspect(h); }
+fn bk_set(_s: *u8, h: insp::Handle, p: str, take v: insp::Value) -> insp::Outcome {
+    return set(h, p, v);
+}
+fn bk_reset(_s: *u8, h: insp::Handle, p: str) -> insp::Outcome { return reset(h, p); }
+
+// Installed by a platform module. Zero keeps the portable no-ops from
+// `inspector`, so a build with no platform degrades to "cannot highlight"
+// rather than to a crash.
+static HIGHLIGHT_FN: fn(*u8, insp::Handle) = #zero::[fn(*u8, insp::Handle)]();
+static CLEAR_FN: fn(*u8) = #zero::[fn(*u8)]();
+
+fn install_platform(highlight: fn(*u8, insp::Handle), clear_highlight: fn(*u8)) {
+    HIGHLIGHT_FN = highlight;
+    CLEAR_FN = clear_highlight;
+    return;
+}
+
+fn bk_highlight(s: *u8, h: insp::Handle) {
+    let f: fn(*u8, insp::Handle) = HIGHLIGHT_FN;
+    if f != (0 as fn(*u8, insp::Handle)) { f(s, h); }
+    return;
+}
+fn bk_clear_highlight(s: *u8) {
+    let f: fn(*u8) = CLEAR_FN;
+    if f != (0 as fn(*u8)) { f(s); }
+    return;
+}
+
+// The in-process backend: no transport, no marshaling, and none needed.
+// `core::touch` asserts it is on the UI thread, and an embedded consumer is
+// already there. A socket adapter is the thing that will have to marshal, and
+// that is exactly where the cost belongs — not on the local case that does not
+// need it.
+fn local_backend() -> insp::Backend {
+    return insp::Backend {
+        surface: 0 as *u8,
+        describe: bk_describe,
+        inspect: bk_inspect,
+        set: bk_set,
+        reset: bk_reset,
+        highlight: bk_highlight,
+        clear_highlight: bk_clear_highlight,
+    };
+}

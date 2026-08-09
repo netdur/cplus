@@ -1,0 +1,1066 @@
+// widget — the inspector UI, as a facet component an application embeds.
+//
+// This is the module an application imports. It is a `Component` like any
+// other: state in its fields, handlers bound through `#addr_of(this)`, no
+// statics in the model. Embed it beside your own UI and you have a live
+// inspector; give it a socket-backed `Backend` later and the same file serves
+// a separate tool process, because it is written against the vtable rather
+// than against the local walker.
+//
+// ---- what this file owns, and what it does not --------------------------------
+//
+// The tree pane is `facet/tree`; the property pane is ordinary keyed-direct
+// facet. So this file owns a MODEL and a set of writes, not a layout engine
+// and not a row recycler.
+//
+// There is no virtual DOM and no diff: the panel addresses its own controls by
+// key and writes them, the same way any facet application does.
+
+import "stdlib/vec" as vec;
+import "stdlib/text" as text;
+import "stdlib/option" as option;
+import "stdlib/status" as status;
+import "stdlib/str" as _;
+import "flex_layout/flex_layout" as flex;
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/mount" as mount;
+import "facet/vocabulary" as vocab;
+import "facet/props" as props;
+import "facet/label" as label;
+import "facet/text_field" as tfield;
+import "facet/text_button" as tbutton;
+import "facet/tree" as ftree;
+import "./inspector" as insp;
+import "./tree" as tree;
+
+// The tree pane is `facet/tree` — a recycling NSOutlineView on macOS.
+//
+// This was a fixed pool of 160 rows with a hand-rolled collapse set and a
+// visible-row list. All of it already existed: `TreeNode` carries a stable
+// identity, expansion round-trips through the backend, the outline view
+// indents its own rows and recycles its cells, and `restore()` exists for
+// precisely the rebuild-then-put-the-state-back case. The pool also could not
+// grow past its own bound; an outline view holds thousands.
+//
+// No row builder is given, so the backend draws each node's `label` itself.
+// That matters for more than brevity: with no per-row facet nodes, scrolling
+// and folding create and destroy nothing in the tree the inspector is
+// WALKING — so the panel's own UI cannot churn `flex::removal_count()` and
+// invalidate the handles it just issued.
+//
+// Row height comes from the backend. Identity is the node's address, which is
+// stable for as long as the node lives and is derived from the item rather
+// than from where it sits — a positional id would move selection and
+// expansion to the slot instead of the node on any insert.
+
+// ---- keys --------------------------------------------------------------------
+//
+// Every control the panel owns is addressed by a composed key. They are built
+// rather than written out because the property list comes from `tree`, and two
+// lists of the same names that have to be kept in step is one list too many.
+
+fn joined(prefix: str, tail: str) -> text::Text {
+    var k: text::Text = text::from_str(prefix);
+    let _s: status::Status = k.append(tail);
+    return k;
+}
+
+fn index_key(prefix: str, i: usize) -> text::Text {
+    var k: text::Text = text::from_str(prefix);
+    let _s: status::Status = k.append({ (i as i64) }.to_text().view());
+    return k;
+}
+
+// The tail after the last colon — the property name or the row index a
+// composed key was built from.
+fn key_tail(k: text::Text) -> text::Text {
+    return match k.rfind(":") {
+        option::Option[usize]::Some(p) => {
+            match k.slice(p +% (1 as usize), k.count()) {
+                option::Option[text::Text]::Some(t) => t,
+                option::Option[text::Text]::None => text::new(),
+            }
+        }
+        option::Option[usize]::None => text::new(),
+    };
+}
+
+// ---- value rendering ---------------------------------------------------------
+
+fn f64_text(x: f64) -> text::Text {
+    // Whole numbers read as whole numbers. A padding box showing `12.000000`
+    // is a box a developer has to edit before they can think.
+    let whole: f64 = (x as i64) as f64;
+    if (x - whole) == 0.0f64 { return { (x as i64) }.to_text(); }
+    return x.to_text();
+}
+
+// `vocabulary` reserves two token values for colours that carry their own
+// channels: 255 is a literal `rgba`, 254 a light/dark pair resolved at paint
+// time. Every OTHER non-zero token is a name in the theme, whose channels are
+// all zero because the theme supplies them later.
+const TOK_NONE: u32 = 0u32;
+const TOK_ADAPTIVE: u32 = 254u32;
+const TOK_LITERAL: u32 = 255u32;
+
+fn channels(t: *text::Text, r: f64, g: f64, b: f64, a: f64) {
+    let _a: status::Status = { (*t).append("rgba(") };
+    let _b: status::Status = { (*t).append(f64_text(r).view()) };
+    let _c: status::Status = { (*t).append(", ") };
+    let _d: status::Status = { (*t).append(f64_text(g).view()) };
+    let _e: status::Status = { (*t).append(", ") };
+    let _f: status::Status = { (*t).append(f64_text(b).view()) };
+    let _g: status::Status = { (*t).append(", ") };
+    let _h: status::Status = { (*t).append(f64_text(a).view()) };
+    let _i: status::Status = { (*t).append(")") };
+    return;
+}
+
+fn colour_text(c: vocab::Color) -> text::Text {
+    // A theme token is a NAME, not a colour. Reporting rgba for one would
+    // invent four numbers the application never wrote — and they would all be
+    // zero, so it would report every themed colour as transparent black.
+    if c.token == TOK_NONE { return text::from_str("clear"); }
+    if c.token == TOK_LITERAL {
+        var t: text::Text = text::new();
+        channels(#addr_of(t), c.r, c.g, c.b, c.a);
+        return t;
+    }
+    if c.token == TOK_ADAPTIVE {
+        var t: text::Text = text::from_str("light ");
+        channels(#addr_of(t), c.r, c.g, c.b, c.a);
+        let _a: status::Status = t.append("  dark ");
+        channels(#addr_of(t), c.r2, c.g2, c.b2, c.a2);
+        return t;
+    }
+    var t: text::Text = text::from_str("token:");
+    let _s: status::Status = t.append({ (c.token as i64) }.to_text().view());
+    return t;
+}
+
+fn value_text(v: insp::Value) -> text::Text {
+    return match v {
+        insp::Value::Nothing => text::new(),
+        insp::Value::Bool(b) => text::from_str(if b { "true" } else { "false" }),
+        insp::Value::Int(i) => i.to_text(),
+        insp::Value::Num(x) => f64_text(x),
+        insp::Value::Str(s) => s.clone(),
+        insp::Value::Enum(e) => e.clone(),
+        insp::Value::Color(c) => colour_text(c),
+    };
+}
+
+// ---- value parsing -----------------------------------------------------------
+
+fn hex_digit(b: u8) -> i32 {
+    let c: i32 = b as i32;
+    if (c >= 48) && (c <= 57) { return c - 48; }          // 0-9
+    if (c >= 97) && (c <= 102) { return (c - 97) + 10; }  // a-f
+    if (c >= 65) && (c <= 70) { return (c - 65) + 10; }   // A-F
+    return -1;
+}
+
+fn hex_pair(t: text::Text, at: usize) -> i32 {
+    let hi: i32 = match t.byte_at(at) {
+        option::Option[u8]::Some(b) => hex_digit(b),
+        option::Option[u8]::None => -1,
+    };
+    let lo: i32 = match t.byte_at(at +% (1 as usize)) {
+        option::Option[u8]::Some(b) => hex_digit(b),
+        option::Option[u8]::None => -1,
+    };
+    if hi < 0 { return -1; }
+    if lo < 0 { return -1; }
+    return (hi * 16) + lo;
+}
+
+// `#2277ff`, the spelling every developer already has in their fingers.
+fn parse_hex_color(s: str) -> option::Option[vocab::Color] {
+    let t: text::Text = text::from_str(s);
+    if t.count() != (7 as usize) { return option::Option[vocab::Color]::None; }
+    if !t.has_prefix("#") { return option::Option[vocab::Color]::None; }
+    let r: i32 = hex_pair(t, 1 as usize);
+    let g: i32 = hex_pair(t, 3 as usize);
+    let b: i32 = hex_pair(t, 5 as usize);
+    if r < 0 { return option::Option[vocab::Color]::None; }
+    if g < 0 { return option::Option[vocab::Color]::None; }
+    if b < 0 { return option::Option[vocab::Color]::None; }
+    return option::Option[vocab::Color]::Some(vocab::Color::rgba(
+        (r as f64) / 255.0f64, (g as f64) / 255.0f64, (b as f64) / 255.0f64, 1.0f64));
+}
+
+// What the developer typed, read as the tag the property already holds. The
+// current value is the type declaration: a field showing `0.65` takes a
+// number, a field showing `true` takes a boolean. Nothing has to be declared
+// twice, and a property whose current value is `Nothing` is read as a length,
+// which is the only tag that reads as unset.
+fn parse_as(current: insp::Value, typed: str) -> option::Option[insp::Value] {
+    return match current {
+        insp::Value::Bool(_b) => {
+            if typed == "true" { option::Option[insp::Value]::Some(insp::Value::Bool(true)) }
+            else if typed == "false" { option::Option[insp::Value]::Some(insp::Value::Bool(false)) }
+            else { option::Option[insp::Value]::None }
+        }
+        insp::Value::Num(_x) => match typed.to_f64() {
+            option::Option[f64]::Some(f) => option::Option[insp::Value]::Some(insp::Value::Num(f)),
+            option::Option[f64]::None => option::Option[insp::Value]::None,
+        },
+        insp::Value::Int(_i) => match typed.to_i64() {
+            option::Option[i64]::Some(n) => option::Option[insp::Value]::Some(insp::Value::Int(n)),
+            option::Option[i64]::None => option::Option[insp::Value]::None,
+        },
+        insp::Value::Str(_s) =>
+            option::Option[insp::Value]::Some(insp::Value::Str(text::from_str(typed))),
+        insp::Value::Color(_c) => match parse_hex_color(typed) {
+            option::Option[vocab::Color]::Some(c) =>
+                option::Option[insp::Value]::Some(insp::Value::Color(c)),
+            option::Option[vocab::Color]::None => option::Option[insp::Value]::None,
+        },
+        // An unset length. Empty clears nothing (there is no "unset" write in
+        // v1), a number sets points.
+        insp::Value::Nothing => match typed.to_f64() {
+            option::Option[f64]::Some(f) => option::Option[insp::Value]::Some(insp::Value::Num(f)),
+            option::Option[f64]::None => option::Option[insp::Value]::None,
+        },
+        insp::Value::Enum(_e) =>
+            option::Option[insp::Value]::Some(insp::Value::Enum(text::from_str(typed))),
+    };
+}
+
+// ---- the component -----------------------------------------------------------
+
+struct Inspector {
+    backend: insp::Backend,
+    // The last snapshot, in document order with parent links.
+    rows: vec::Vec[insp::Node],
+    selected: insp::Handle,
+    // How many rows the last rebuild put into the model.
+    shown: usize,
+    // Whether the panel hides its own subtree from the tree it shows.
+    hide_self: bool,
+}
+
+fn new(take backend: insp::Backend, hide_self: bool = true) -> Inspector {
+    return Inspector {
+        backend: backend,
+        rows: vec::new::[insp::Node](),
+        selected: insp::Handle::none(),
+        shown: 0 as usize,
+        hide_self: hide_self,
+    };
+}
+
+// The default: drives the tree in this very process, with no transport.
+fn embedded() -> Inspector { return new(tree::local_backend()); }
+
+impl Inspector {
+    fn selection(this) -> insp::Handle { return this.selected; }
+    fn row_count(this) -> usize { return this.rows.count(); }
+    fn shown_count(this) -> usize { return this.shown; }
+
+    // Is row `i` of the snapshot eligible at all — i.e. not part of the
+    // panel's own subtree? Collapse is a separate question, answered by
+    // `recompute_visible`, because an ancestor's fold hides a row that is
+    // itself perfectly eligible.
+    fn eligible(this, i: usize) -> bool {
+        if !this.hide_self { return true; }
+        return match this.rows.at_ptr(i) {
+            option::Option[*insp::Node]::Some(p) => !{ (*p).is_inspector },
+            option::Option[*insp::Node]::None => false,
+        };
+    }
+
+    fn has_children(this, i: usize) -> bool {
+        return match this.rows.at_ptr(i) {
+            option::Option[*insp::Node]::Some(p) => ({ (*p).child_count } > (0 as usize)),
+            option::Option[*insp::Node]::None => false,
+        };
+    }
+
+    fn depth_at(this, i: usize) -> usize {
+        return match this.rows.at_ptr(i) {
+            option::Option[*insp::Node]::Some(p) => { (*p).depth }
+            option::Option[*insp::Node]::None => 0 as usize,
+        };
+    }
+
+    fn node_at(this, i: usize) -> *core::Node {
+        return match this.rows.at_ptr(i) {
+            option::Option[*insp::Node]::Some(p) => { (*p).handle.node }
+            option::Option[*insp::Node]::None => 0 as *core::Node,
+        };
+    }
+
+    // `column ▸ row ▸ button` for the selected node's ancestry, read from the
+    // flat listing's parent links.
+    fn trail(this, at: usize) -> text::Text {
+        var out: text::Text = text::new();
+        var chain: vec::Vec[usize] = vec::new::[usize]();
+        var cur: option::Option[usize] = option::Option[usize]::Some(at);
+        // Bounded by the listing's own size. A parent index always points
+        // backwards into the flat array, so the chain is finite, but the bound
+        // means a malformed snapshot cannot hang the panel either.
+        var steps: usize = 0 as usize;
+        let limit: usize = this.rows.count() +% (1 as usize);
+        while steps < limit {
+            let here: usize = match cur {
+                option::Option[usize]::Some(i) => i,
+                option::Option[usize]::None => { steps = limit; 0 as usize }
+            };
+            if steps < limit {
+                let _s: status::Status = chain.append(here);
+                cur = match this.rows.at_ptr(here) {
+                    option::Option[*insp::Node]::Some(p) => { (*p).parent }
+                    option::Option[*insp::Node]::None => option::Option[usize]::None,
+                };
+                steps = steps +% (1 as usize);
+            }
+        }
+        var j: usize = chain.count();
+        while j > (0 as usize) {
+            j = j -% (1 as usize);
+            match chain.at(j) {
+                option::Option[usize]::Some(i) => {
+                    match this.rows.at_ptr(i) {
+                        option::Option[*insp::Node]::Some(p) => {
+                            if !out.is_empty() { let _a: status::Status = out.append(" > "); }
+                            let _b: status::Status =
+                                out.append(insp::kind_name({ (*p).kind }));
+                            if !{ (*p).key.is_empty() } {
+                                let _c: status::Status = out.append(" #");
+                                let _d: status::Status = out.append({ (*p).key.view() });
+                            }
+                        }
+                        option::Option[*insp::Node]::None => { }
+                    }
+                }
+                option::Option[usize]::None => { }
+            }
+        }
+        return out;
+    }
+
+    // One tree row: what it is, then its address — `card#save`, the way a
+    // stylesheet writes it.
+    //
+    // No indent in the TEXT. Depth is the row's left padding, so the
+    // disclosure triangles line up in a column the way a tree's do; spaces in
+    // a button title would step the text and leave every triangle at the far
+    // left.
+    fn line_for(this, i: usize) -> text::Text {
+        var out: text::Text = text::new();
+        match this.rows.at_ptr(i) {
+            option::Option[*insp::Node]::Some(p) => {
+                let _a: status::Status = out.append(insp::kind_name({ (*p).kind }));
+                if !{ (*p).key.is_empty() } {
+                    let _b: status::Status = out.append("#");
+                    let _c: status::Status = out.append({ (*p).key.view() });
+                }
+                // A node with no backing view is drawn by an ancestor — a span
+                // in its label's string, a menu item in its menu. Worth saying,
+                // because it is exactly what a native tree cannot show.
+                if !{ (*p).has_view } {
+                    let _d: status::Status = out.append("   (viewless)");
+                }
+            }
+            option::Option[*insp::Node]::None => { }
+        }
+        return out;
+    }
+
+    fn index_of_handle(this, h: insp::Handle) -> option::Option[usize] {
+        var i: usize = 0 as usize;
+        let c: usize = this.rows.count();
+        while i < c {
+            match this.rows.at_ptr(i) {
+                option::Option[*insp::Node]::Some(p) => {
+                    if { (*p).handle.node } == h.node {
+                        return option::Option[usize]::Some(i);
+                    }
+                }
+                option::Option[*insp::Node]::None => { }
+            }
+            i = i +% (1 as usize);
+        }
+        return option::Option[usize]::None;
+    }
+}
+
+// ---- writing the panel -------------------------------------------------------
+
+fn set_label(key: text::Text, to: str) {
+    match label::find(key.view()) {
+        option::Option[label::Label]::Some(l) => { let _x: label::Label = l.set_text(to); }
+        option::Option[label::Label]::None => { }
+    }
+    return;
+}
+
+fn set_field(key: text::Text, to: str) {
+    match tfield::find(key.view()) {
+        option::Option[tfield::TextField]::Some(f) => {
+            let _x: tfield::TextField = f.set_text(to);
+        }
+        option::Option[tfield::TextField]::None => { }
+    }
+    return;
+}
+
+fn field_text(key: text::Text) -> text::Text {
+    return match tfield::find(key.view()) {
+        option::Option[tfield::TextField]::Some(f) => text::from_str(f.text()),
+        option::Option[tfield::TextField]::None => text::new(),
+    };
+}
+
+fn set_row_title(key: text::Text, to: str) {
+    match tbutton::find(key.view()) {
+        option::Option[tbutton::TextButton]::Some(b) => {
+            let _x: tbutton::TextButton = b.set_title(to);
+        }
+        option::Option[tbutton::TextButton]::None => { }
+    }
+    return;
+}
+
+// `display`, not `visible`.
+//
+// `set_visible` hides a node and LEAVES IT IN THE LAYOUT. With a fixed pool of
+// 160 tree rows that meant 160 rows of blank space under the eight in use, and
+// a property pane whose hidden rows still spaced out the visible ones.
+// `display: none` is how a node leaves the layout without leaving the tree.
+//
+// Set directly rather than through `core::set_shown`, which restores
+// `parked_display` — that field belongs to `switch_to`'s park/re-attach, and
+// borrowing it here would couple the panel to an outlet mechanism it does not
+// use.
+fn show_node(key: text::Text, on: bool) {
+    let n: *core::Node = mount::node(key.view());
+    if n == (0 as *core::Node) { return; }
+    core::set_visible(n, on);
+    if on { core::set_display(n, flex::Display::Flex); }
+    else { core::set_display(n, flex::Display::None); }
+    return;
+}
+
+fn say(msg: str) {
+    set_label(text::from_str("insp:status"), msg);
+    return;
+}
+
+// ---- the row -----------------------------------------------------------------
+
+// How tall a row is, stated in both places that decide it.
+const ROW_H: f64 = 20.0f64;
+
+// The key the row's own label answers to. Row nodes are detached from any
+// window, so this is resolved with `within:` against the row itself and can be
+// the same constant on every row.
+const ROW_KEY: str = "insp:row";
+
+// The row's SHAPE, built once per cell and then reused.
+//
+// The height is stated rather than measured. A tree row is a fixed-height row
+// the way a table's is, and stating it means the height query never has to
+// build and lay out a throwaway node to answer.
+fn tree_row_view(n: *ftree::TreeNode, _ctx: *u8) -> flex::Node {
+    return ui::label("", key: ROW_KEY,
+                     text_align: vocab::TextAlign::Start,
+                     text_color: vocab::Color::text(),
+                     line_break: vocab::LineBreak::TailTruncation)
+        .height(ROW_H);
+}
+
+// The recycling half: one item's text written into a row that already exists.
+//
+// Supplying this is what turns recycling ON — the backend reuses a cell only
+// when a bind is set, and rebuilds every row from scratch otherwise.
+fn tree_row_bind(n: *ftree::TreeNode, _ctx: *u8, row: *core::Node) {
+    if n == (0 as *ftree::TreeNode) { return; }
+    match label::find(ROW_KEY, within: row) {
+        option::Option[label::Label]::Some(l) => {
+            let _x: label::Label = l.set_text({ (*n).label_of() });
+        }
+        option::Option[label::Label]::None => { }
+    }
+    return;
+}
+
+// ---- the model ---------------------------------------------------------------
+
+// A node's identity, for selection and expansion.
+//
+// Its ADDRESS: unique, stable for as long as the node lives, and derived from
+// the item rather than from where it sits. A positional id ("row_7") renames
+// every row after any insert, so expansion and selection would follow the slot
+// instead of the node — the bug that reads as "the selection jumped".
+fn node_id(n: *core::Node) -> text::Text {
+    var t: text::Text = text::from_str("n");
+    let _s: status::Status = t.append({ ((n as usize) as i64) }.to_text().view());
+    return t;
+}
+
+// One snapshot row and everything under it, as tree model nodes.
+//
+// The snapshot is flat and in document order, so a node's children are the
+// later rows whose parent index is this one. `data` carries the facet node
+// straight through, so selection does not have to look anything up again.
+fn build_subtree(st: *Inspector, i: usize) -> ftree::TreeNode {
+    let n: *core::Node = { (*st).node_at(i) };
+    let line: text::Text = { (*st).line_for(i) };
+    let id: text::Text = node_id(n);
+    var t: ftree::TreeNode = ftree::TreeNode::new(
+        line.view(), id.view(),
+        is_branch: { (*st).has_children(i) },
+        data: n as *u8);
+
+    var j: usize = i +% (1 as usize);
+    let c: usize = { (*st).rows.count() };
+    while j < c {
+        var is_child: bool = false;
+        match { (*st).rows.at_ptr(j) } {
+            option::Option[*insp::Node]::Some(p) => {
+                match { (*p).parent } {
+                    option::Option[usize]::Some(x) => { is_child = x == i; }
+                    option::Option[usize]::None => { }
+                }
+            }
+            option::Option[*insp::Node]::None => { }
+        }
+        if is_child {
+            if { (*st).eligible(j) } {
+                let _s: status::Status = t.add_child(build_subtree(st, j));
+            }
+        }
+        j = j +% (1 as usize);
+    }
+    return t;
+}
+
+// The whole model, under one synthetic root the outline view does not draw.
+// Several window roots are several top-level rows.
+fn build_model(st: *Inspector) -> ftree::TreeNode {
+    var root: ftree::TreeNode = ftree::TreeNode::new("", "@root", is_branch: true);
+    var i: usize = 0 as usize;
+    let c: usize = { (*st).rows.count() };
+    while i < c {
+        var top: bool = false;
+        match { (*st).rows.at_ptr(i) } {
+            option::Option[*insp::Node]::Some(p) => {
+                top = match { (*p).parent } {
+                    option::Option[usize]::Some(_x) => false,
+                    option::Option[usize]::None => true,
+                };
+            }
+            option::Option[*insp::Node]::None => { }
+        }
+        if top {
+            if { (*st).eligible(i) } {
+                let _s: status::Status = root.add_child(build_subtree(st, i));
+            }
+        }
+        i = i +% (1 as usize);
+    }
+    return root;
+}
+
+// How many rows the model holds, for the status line.
+fn model_count(n: *ftree::TreeNode) -> usize {
+    if n == (0 as *ftree::TreeNode) { return 0 as usize; }
+    var total: usize = 0 as usize;
+    var i: usize = 0 as usize;
+    let c: usize = { (*n).child_count() };
+    while i < c {
+        match { (*n).child_ptr(i) } {
+            option::Option[*ftree::TreeNode]::Some(ch) => {
+                total = total +% (1 as usize) +% model_count(ch);
+            }
+            option::Option[*ftree::TreeNode]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return total;
+}
+
+// Rebuild the model, and put the user's expansion and selection back.
+//
+// `restore` is what makes a rebuild survivable: both are keyed by id, and the
+// ids are addresses, so a node that is still there keeps its fold and its
+// selection while one that has gone simply drops out. Read the CURRENT state
+// off the control first — the user's own clicks on the disclosure triangles
+// live there, not in this struct.
+fn rebuild_tree(st: *Inspector) {
+    // Built and counted whether or not the control is there. A panel that has
+    // not been mounted still has a model, and `shown` describing the model
+    // rather than the control is what makes it answerable headlessly.
+    var model: ftree::TreeNode = build_model(st);
+    { (*st).shown = model_count(#addr_of(model)) };
+
+    match ftree::find("insp:tree") {
+        option::Option[ftree::Tree]::Some(t) => {
+            // Read the CURRENT expansion off the control first — the user's
+            // own clicks on the disclosure triangles live there, not here.
+            var open: vocab::TextList = vocab::TextList::new();
+            var i: usize = 0 as usize;
+            let c: usize = t.expanded_count();
+            while i < c {
+                let _s: status::Status = open.add(t.expanded(i));
+                i = i +% (1 as usize);
+            }
+            let chosen: text::Text = text::from_str(t.selected());
+            // Set on the handle, not at construction — `tree()` takes a row
+            // builder but not a bind. Without it the backend reuses no cell
+            // and rebuilds every row from scratch.
+            let tb: ftree::Tree = t.set_row_bind(tree_row_bind);
+            let t2: ftree::Tree = tb.set_root(model);
+            let _t3: ftree::Tree = t2.restore(open, selected: chosen.view());
+        }
+        option::Option[ftree::Tree]::None => { }
+    }
+    return;
+}
+
+fn paint_props(st: *Inspector) {
+    let h: insp::Handle = { (*st).selected };
+    let names: vec::Vec[str] = tree::declared_names();
+
+    if h.is_none() {
+        set_label(text::from_str("insp:headline"), "nothing selected");
+        set_label(text::from_str("insp:trail"), "");
+        var i: usize = 0 as usize;
+        while i < names.count() {
+            match names.at(i) {
+                option::Option[str]::Some(nm) => { show_node(joined("insp:r:", nm), false); }
+                option::Option[str]::None => { }
+            }
+            i = i +% (1 as usize);
+        }
+        set_label(text::from_str("insp:computed"), "");
+        return;
+    }
+
+    let b: insp::Backend = { (*st).backend };
+    match b.inspect_now(h) {
+        option::Option[insp::Detail]::Some(d) => {
+            var head: text::Text = text::from_str(insp::kind_name(d.node.kind));
+            if !d.node.key.is_empty() {
+                let _a: status::Status = head.append("  #");
+                let _b2: status::Status = head.append(d.node.key.view());
+            }
+            set_label(text::from_str("insp:headline"), head.view());
+
+            match { (*st).index_of_handle(h) } {
+                option::Option[usize]::Some(at) => {
+                    let t: text::Text = { (*st).trail(at) };
+                    set_label(text::from_str("insp:trail"), t.view());
+                }
+                option::Option[usize]::None => {
+                    set_label(text::from_str("insp:trail"), "");
+                }
+            }
+
+            // A property the node does not answer gets no row at all, rather
+            // than an empty editor for something that does not exist.
+            var i: usize = 0 as usize;
+            while i < names.count() {
+                match names.at(i) {
+                    option::Option[str]::Some(nm) => {
+                        var found: bool = false;
+                        var over: bool = false;
+                        var shown_value: text::Text = text::new();
+                        var j: usize = 0 as usize;
+                        while j < d.declared.count() {
+                            match d.declared.at_ptr(j) {
+                                option::Option[*insp::Prop]::Some(p) => {
+                                    if { (*p).name } == nm {
+                                        found = true;
+                                        over = { (*p).overridden };
+                                        shown_value = value_text({ (*p).value }.clone());
+                                    }
+                                }
+                                option::Option[*insp::Prop]::None => { }
+                            }
+                            j = j +% (1 as usize);
+                        }
+                        show_node(joined("insp:r:", nm), found);
+                        if found {
+                            set_field(joined("insp:f:", nm), shown_value.view());
+                            // Overridden is marked by the NAME, not by colour
+                            // alone: a mark nobody can see is not a mark.
+                            var nm_text: text::Text = text::from_str(nm);
+                            if over { let _c: status::Status = nm_text.append("  *"); }
+                            set_label(joined("insp:n:", nm), nm_text.view());
+                            show_node(joined("insp:x:", nm), over);
+                        }
+                    }
+                    option::Option[str]::None => { }
+                }
+                i = i +% (1 as usize);
+            }
+
+            var comp: text::Text = text::new();
+            var k: usize = 0 as usize;
+            while k < d.computed.count() {
+                match d.computed.at_ptr(k) {
+                    option::Option[*insp::Prop]::Some(p) => {
+                        if !comp.is_empty() { let _e: status::Status = comp.append("    "); }
+                        let _f: status::Status = comp.append({ (*p).name });
+                        let _g: status::Status = comp.append(" ");
+                        let vt: text::Text = value_text({ (*p).value }.clone());
+                        let _h2: status::Status = comp.append(vt.view());
+                    }
+                    option::Option[*insp::Prop]::None => { }
+                }
+                k = k +% (1 as usize);
+            }
+            var l: usize = 0 as usize;
+            while l < d.native.count() {
+                match d.native.at_ptr(l) {
+                    option::Option[*insp::Prop]::Some(p) => {
+                        let _i2: status::Status = comp.append("    ");
+                        let _j2: status::Status = comp.append({ (*p).name });
+                        let _k2: status::Status = comp.append(" ");
+                        let vt: text::Text = value_text({ (*p).value }.clone());
+                        let _l2: status::Status = comp.append(vt.view());
+                    }
+                    option::Option[*insp::Prop]::None => { }
+                }
+                l = l +% (1 as usize);
+            }
+            set_label(text::from_str("insp:computed"), comp.view());
+        }
+        option::Option[insp::Detail]::None => {
+            set_label(text::from_str("insp:headline"), "stale - refresh");
+            set_label(text::from_str("insp:trail"), "");
+        }
+    }
+    return;
+}
+
+fn refresh(st: *Inspector) {
+    let b: insp::Backend = { (*st).backend };
+    { (*st).rows = b.describe_now() };
+
+    // The selection is a pointer into the tree, and a fresh snapshot re-issues
+    // every handle with the current generation. Re-find the same node so a
+    // refresh does not silently deselect.
+    let was: insp::Handle = { (*st).selected };
+    if !was.is_none() {
+        match { (*st).index_of_handle(was) } {
+            option::Option[usize]::Some(i) => {
+                match { (*st).rows.at_ptr(i) } {
+                    option::Option[*insp::Node]::Some(p) => { { (*st).selected = { (*p).handle } }; }
+                    option::Option[*insp::Node]::None => { }
+                }
+            }
+            option::Option[usize]::None => { { (*st).selected = insp::Handle::none() }; }
+        }
+    }
+
+    rebuild_tree(st);
+    paint_props(st);
+    say_counts(st);
+    return;
+}
+
+// What the pane is showing.
+//
+// There is no longer a "past the pane's end" to report: an outline view holds
+// as many rows as the model has. The two numbers can still differ, and the
+// remaining reason is the honest one — the panel filters its own subtree out
+// of the tree it shows.
+fn say_counts(st: *Inspector) {
+    let total: usize = { (*st).rows.count() };
+    let shown: usize = { (*st).shown };
+    var msg: text::Text = text::new();
+    let _a: status::Status = msg.append({ (shown as i64) }.to_text().view());
+    let _b: status::Status = msg.append(" nodes");
+    if total > shown {
+        let _c: status::Status = msg.append("  (");
+        let _d: status::Status = msg.append({ ((total -% shown) as i64) }.to_text().view());
+        let _e: status::Status = msg.append(" are the panel's own)");
+    }
+    say(msg.view());
+    return;
+}
+
+// ---- handlers ----------------------------------------------------------------
+
+fn on_refresh(_sender: *u8, ctx: *u8) {
+    refresh(ctx as *Inspector);
+    return;
+}
+
+fn on_tree_select(n: *ftree::TreeNode, ctx: *u8) {
+    let st: *Inspector = ctx as *Inspector;
+    if n == (0 as *ftree::TreeNode) { return; }
+    let target: *core::Node = { (*n).data } as *core::Node;
+    if target == (0 as *core::Node) { return; }
+
+    var found: insp::Handle = insp::Handle::none();
+    var i: usize = 0 as usize;
+    let c: usize = { (*st).rows.count() };
+    while i < c {
+        match { (*st).rows.at_ptr(i) } {
+            option::Option[*insp::Node]::Some(p) => {
+                if { (*p).handle.node } == target { found = { (*p).handle }; i = c; }
+            }
+            option::Option[*insp::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    if found.is_none() { say("that node is gone - refresh"); return; }
+
+    { (*st).selected = found };
+    let b: insp::Backend = { (*st).backend };
+    b.highlight_now(found);
+    paint_props(st);
+    return;
+}
+
+fn on_commit(sender: *u8, ctx: *u8) {
+    let st: *Inspector = ctx as *Inspector;
+    let h: insp::Handle = { (*st).selected };
+    if h.is_none() { say("nothing selected"); return; }
+
+    let prop: text::Text = key_tail(component::key_of(sender));
+    if prop.is_empty() { return; }
+    let typed: text::Text = field_text(joined("insp:f:", prop.view()));
+
+    let current: insp::Value = match tree::get(h, prop.view()) {
+        option::Option[insp::Value]::Some(v) => v,
+        option::Option[insp::Value]::None => insp::Value::Nothing,
+    };
+
+    match parse_as(current, typed.view()) {
+        option::Option[insp::Value]::Some(v) => {
+            let b: insp::Backend = { (*st).backend };
+            let r: insp::Outcome = b.set_now(h, prop.view(), v);
+            say(r.describe());
+            paint_props(st);
+        }
+        option::Option[insp::Value]::None => {
+            // The refusal is visible and the field goes back to the truth,
+            // rather than sitting there showing something that was never set.
+            say("could not read that value");
+            paint_props(st);
+        }
+    }
+    return;
+}
+
+fn on_reset_one(sender: *u8, ctx: *u8) {
+    let st: *Inspector = ctx as *Inspector;
+    let h: insp::Handle = { (*st).selected };
+    if h.is_none() { return; }
+    let prop: text::Text = key_tail(component::key_of(sender));
+    let b: insp::Backend = { (*st).backend };
+    let r: insp::Outcome = b.reset_now(h, prop.view());
+    say(r.describe());
+    paint_props(st);
+    return;
+}
+
+fn on_reset_all(_sender: *u8, ctx: *u8) {
+    let st: *Inspector = ctx as *Inspector;
+    let h: insp::Handle = { (*st).selected };
+    if h.is_none() { return; }
+    let b: insp::Backend = { (*st).backend };
+    let names: vec::Vec[str] = tree::declared_names();
+    var i: usize = 0 as usize;
+    while i < names.count() {
+        match names.at(i) {
+            option::Option[str]::Some(nm) => { let _r: insp::Outcome = b.reset_now(h, nm); }
+            option::Option[str]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    say("overrides reset");
+    paint_props(st);
+    return;
+}
+
+fn on_copy_snippet(_sender: *u8, ctx: *u8) {
+    let st: *Inspector = ctx as *Inspector;
+    let h: insp::Handle = { (*st).selected };
+    if h.is_none() { return; }
+    // Every property currently overridden on this node, as one line each. The
+    // experiment leaves the process the way it should: as source a human reads
+    // and pastes, not as a ledger that reapplies itself behind their back.
+    var out: text::Text = text::new();
+    let names: vec::Vec[str] = tree::declared_names();
+    var i: usize = 0 as usize;
+    while i < names.count() {
+        match names.at(i) {
+            option::Option[str]::Some(nm) => {
+                if tree::is_overridden(h.node, nm) {
+                    let line: text::Text = tree::snippet_for(h, nm);
+                    if !line.is_empty() {
+                        if !out.is_empty() { let _a: status::Status = out.append("  "); }
+                        let _b: status::Status = out.append(line.view());
+                    }
+                }
+            }
+            option::Option[str]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    if out.is_empty() { let _c: status::Status = out.append("no overrides on this node"); }
+    set_label(text::from_str("insp:snippet"), out.view());
+    return;
+}
+
+// ---- the tree ----------------------------------------------------------------
+
+fn prop_row(prop: str, me: *u8) -> core::Node {
+    let nk: text::Text = joined("insp:n:", prop);
+    let fk: text::Text = joined("insp:f:", prop);
+    let xk: text::Text = joined("insp:x:", prop);
+    let rk: text::Text = joined("insp:r:", prop);
+
+    var b: core::Builder = core::Builder::new();
+    b.add(ui::label(prop, key: nk.view(),
+                    text_align: vocab::TextAlign::Start,
+                    text_color: vocab::Color::text_secondary()).width(100.0f64));
+    var field: core::Node = ui::text_field("", key: fk.view(),
+                                           text_align: vocab::TextAlign::Start,
+                                           on_submit: on_commit, on_submit_ctx: me)
+        .grow(1.0f64);
+    // Basis 0, or the field starts from the width its TEXT wants and grows
+    // from there — which runs it, and the reset button after it, off the
+    // right edge of the pane. Flex's default shrink is 0, so nothing gives
+    // way. Same trap as the app side; it wants stating once per grow.
+    core::set_basis(#addr_of(field), 0.0f64);
+    b.add(field);
+    b.add(ui::text_button("reset", key: xk.view(),
+                          text_color: vocab::Color::link(),
+                          on_click: on_reset_one, on_click_ctx: me)
+        .width(44.0f64));
+    return ui::row(b, key: rk.view()).gap(8.0f64);
+}
+
+impl Inspector: component::Component {
+    fn build(ref this) -> core::Node {
+        let me: *u8 = #addr_of(this) as *u8;
+
+        // toolbar
+        var bar: core::Builder = core::Builder::new();
+        bar.add(ui::text_button("Refresh", key: "insp:refresh",
+                                on_click: on_refresh, on_click_ctx: me));
+        bar.add(ui::text_button("Reset all", key: "insp:reset_all",
+                                on_click: on_reset_all, on_click_ctx: me));
+        bar.add(ui::text_button("Copy as C+", key: "insp:copy",
+                                on_click: on_copy_snippet, on_click_ctx: me));
+        bar.add(ui::label("", key: "insp:status",
+                          text_align: vocab::TextAlign::Start,
+                          text_color: vocab::Color::text_secondary()).grow(1.0f64));
+        var toolbar: core::Node = ui::row(bar, key: "insp:toolbar").gap(12.0f64).padding(8.0f64);
+
+        // The tree pane: one control. It recycles its cells, indents its own
+        // rows, and owns expansion — none of which this file has to.
+        // Row shape, row bind, and a stated row height. The bind is the one
+        // that is not optional: cell reuse is gated on it, and without one the
+        // backend rebuilds every row from scratch.
+        var tree_pane: core::Node = ui::tree(
+            ftree::TreeNode::new("", "@root", is_branch: true),
+            key: "insp:tree",
+            row: tree_row_view,
+            on_select: on_tree_select, on_select_ctx: me,
+            row_height: ROW_H,
+        ).width(260.0f64);
+
+        // property pane
+        var col: core::Builder = core::Builder::new();
+        col.add(ui::label("nothing selected", key: "insp:headline",
+                          text_align: vocab::TextAlign::Start,
+                          font_weight: vocab::FontWeight::Bold));
+        col.add(ui::label("", key: "insp:trail",
+                          text_align: vocab::TextAlign::Start,
+                          text_color: vocab::Color::text_tertiary()));
+        col.add(ui::label("DECLARED", key: "insp:h_declared",
+                          text_align: vocab::TextAlign::Start,
+                          text_color: vocab::Color::text_tertiary()));
+        let names: vec::Vec[str] = tree::declared_names();
+        var j: usize = 0 as usize;
+        while j < names.count() {
+            match names.at(j) {
+                option::Option[str]::Some(nm) => { col.add(prop_row(nm, me)); }
+                option::Option[str]::None => { }
+            }
+            j = j +% (1 as usize);
+        }
+        col.add(ui::label("COMPUTED + NATIVE", key: "insp:h_computed",
+                          text_align: vocab::TextAlign::Start,
+                          text_color: vocab::Color::text_tertiary()));
+        col.add(ui::label("", key: "insp:computed",
+                          text_align: vocab::TextAlign::Start,
+                          text_color: vocab::Color::text_secondary(),
+                          max_lines: 4 as i64));
+        col.add(ui::label("", key: "insp:snippet",
+                          text_align: vocab::TextAlign::Start,
+                          text_color: vocab::Color::link(),
+                          max_lines: 4 as i64));
+        var prop_col: core::Node = ui::column(col, key: "insp:proplist")
+            .padding(10.0f64).gap(6.0f64);
+        var prop_scroll: core::Node = ui::scroll(key: "insp:propscroll");
+        let _ps: status::Status = prop_scroll.add_child(prop_col);
+        var prop_pane: core::Node = prop_scroll.grow(1.0f64);
+        // Basis 0, so the pane takes what is left beside the 300pt tree pane
+        // instead of starting from its content's width and growing past it.
+        core::set_basis(#addr_of(prop_pane), 0.0f64);
+
+        var body: core::Builder = core::Builder::new();
+        body.add(tree_pane);
+        body.add(prop_pane);
+        // Basis 0: the body's height comes from the space left under the
+        // toolbar, never from how tall its content happens to be. Without it a
+        // long property list makes the panel taller than the window.
+        var body_row: core::Node = ui::row(body, key: "insp:body")
+            .grow(1.0f64).shrink(1.0f64);
+        core::set_basis(#addr_of(body_row), 0.0f64);
+
+        var rootb: core::Builder = core::Builder::new();
+        rootb.add(toolbar);
+        rootb.add(body_row);
+        // NOT `grow` — the HOST sizes the panel. A side panel that grew would
+        // fight the application it sits beside for the window's width, and
+        // with the default shrink of 0 neither gives way: the app measured
+        // 1272 wide in an 1180 window and the panel went off the right edge.
+        return ui::column(rootb, key: "insp:root");
+    }
+}
+
+// A HOST embeds the panel by adding `build()`'s node to its own tree, and then
+// has to run these two itself: facet fires `Lifecycle` for the component the
+// runtime owns, not for one nested inside another component's tree. Exposed as
+// functions so the host writes one line each rather than reproducing the body.
+fn attach(st: *Inspector) {
+    // Hide the panel's own subtree from the tree it shows. Done here and not
+    // in `build`, because a node has to be mounted before it can be addressed.
+    var missed: bool = false;
+    if { (*st).hide_self } {
+        let own: *core::Node = mount::node("insp:root");
+        tree::mark_self(own);
+        // A host that called `attach` before its tree was mounted gets a panel
+        // that lists its own controls. Silently listing itself would look like
+        // a bug in the WALKER, so it is reported as what it is.
+        missed = own == (0 as *core::Node);
+    }
+    refresh(st);
+    if missed { say("attached before mount: the panel is listing itself"); }
+    return;
+}
+
+fn detach(st: *Inspector) {
+    if { (*st).hide_self } { tree::clear_self(); }
+    let b: insp::Backend = { (*st).backend };
+    b.clear_highlight_now();
+    return;
+}
+
+impl Inspector: component::Lifecycle {
+    fn on_attach(ref this) { attach(#addr_of(this)); return; }
+    fn on_detach(ref this) { detach(#addr_of(this)); return; }
+}

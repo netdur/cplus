@@ -1,7 +1,10 @@
 # Runtime iteration spike: hot reload and a live Facet inspector
 
-Status: research only. This document records two related approaches for changing
-a running C+ application during development:
+Status: approach 2 is BUILT — `vendor/inspector`, with `examples/inspector_probe`
+as the probe. Approach 1 remains research.
+
+This document records two related approaches for changing a running C+
+application during development:
 
 1. loading newly compiled C+ code into a stable host process;
 2. inspecting and manipulating an already-mounted Facet UI.
@@ -10,7 +13,36 @@ The second approach is much narrower, but it fits Facet's current architecture
 better and can deliver a large part of the useful UI-development experience
 without requiring general code hot reload.
 
-No implementation was made as part of this spike.
+## What shipped, and where this document was wrong
+
+The inspector's own design notes are [vendor/inspector/docs/design.md](../../vendor/inspector/docs/design.md).
+Three things below did not survive contact with the code:
+
+**The narrow initial scope was drawn in the wrong place.** This document
+proposed AppKit-only *and* keyed-node-only. Keys turned out to be needed for
+almost nothing: `props::CommonProps` is inline on every node and Facet's tree
+*is* Flex's tree, so opacity, background, corners, visibility, transform, width,
+padding, margin, gap, grow and shrink are all uniform across every control kind
+and every bare container, with no key and no kind dispatch. Only `text`, `title`
+and `on` need a key, because those go through the generated typed handles. The
+generated property metadata this document treats as a prerequisite is not needed
+for the useful part at all.
+
+**Embedded versus external was a false choice.** This document weighs an in-app
+window against an external tool. But `agent_mcp` and `agent_inapp` are both
+consumers of one `agent_core` vtable, and the inspector copies that: the panel
+is written against `inspector::Backend`, so where it runs is a binding at the
+call site rather than an architecture. The transport limits discussed under
+"Transport considerations" are real, and they are a socket adapter's problem,
+not the inspector's.
+
+**Handles did not need a revision scheme.** Facet's own typed handles are a node
+pointer plus Flex's global removal counter, and the same shape works here for
+one comparison. `describe` answers a flat, parent-indexed vector, so an index
+into that listing is the wire address a remote client uses.
+
+One thing this document flagged that proved exactly right: keep it away from the
+agent surface, and let `pick_at` exist only here.
 
 ## Executive conclusion
 
@@ -30,6 +62,12 @@ The recommended order is:
 2. add generated property metadata and optional runtime override persistence;
 3. consider reloadable code modules only for applications that need live
    behavior changes as well as visual changes.
+
+Step 1 is done. Step 2's generated metadata turned out not to be a prerequisite
+(see above); what remains of it is control-specific properties beyond `text`,
+`title` and `on`. Override persistence was deliberately not built — the
+inspector generates a C+ setter line to paste instead, so a development tool
+cannot quietly become an application state store.
 
 ## Approach 1: compiled-code hot reload
 

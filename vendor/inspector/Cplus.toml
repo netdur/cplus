@@ -1,0 +1,27 @@
+[package]
+name    = "inspector"
+version = "0.0.1"
+edition = "2026"
+
+# inspector — a developer-only live inspector for a mounted facet tree.
+#
+# - inspector/inspector: the neutral surface (Handle, Value, Prop, Backend vtable)
+# - inspector/tree:      the facet-tree walker and the typed get/set dispatch
+# - inspector/appkit:    highlight overlay and point picking (macOS)
+# - inspector/widget:    the facet-facing inspector UI applications embed
+#
+# This is NOT the agent surface. The agent surface is curated and permissioned;
+# this one sees unexposed nodes and writes properties that are not user
+# affordances. See docs/design.md.
+
+[[bin]]
+name = "inspector_tests"
+path = "src/test_main.cplus"
+
+[dependencies]
+stdlib      = "*"
+flex_layout = "*"
+facet       = "*"
+objc        = "*"
+appkit      = "*"
+quartzcore  = "*"
