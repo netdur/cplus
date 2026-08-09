@@ -250,6 +250,59 @@ pub struct EnumRepr {
     pub signed: bool,
 }
 
+/// v0.0.28 FFI packing: the byte boundary a `#[repr(..., packed)]` /
+/// `#[repr(..., packed = N)]` attribute caps every field's alignment at.
+/// Bare `packed` is `packed = 1` — C's `__attribute__((packed))`.
+///
+/// The key-value spelling carries N because `packed(N)` would need a nested
+/// call inside an attribute argument, a shape nothing else in the language
+/// uses; `#[link(name = "z")]` already established `name = VALUE`.
+///
+/// Returns the span of the argument so a bad N points at the number rather
+/// than at the whole attribute.
+pub fn struct_pack_of(attributes: &[Attribute]) -> Option<(i64, Span)> {
+    for a in attributes {
+        if a.path.name != "repr" {
+            continue;
+        }
+        for arg in &a.args {
+            match arg {
+                AttrArg::Ident(id) if id.name == "packed" => return Some((1, id.span)),
+                AttrArg::KeyValue(k, AttrValue::Int(n, sp)) if k.name == "packed" => {
+                    return Some((*n, *sp));
+                }
+                AttrArg::KeyValue(k, AttrValue::Ident(id)) if k.name == "packed" => {
+                    // `packed = C` and friends: not a number. Report it at the
+                    // value so E0926 can say what was expected.
+                    return Some((-1, id.span));
+                }
+                AttrArg::KeyValue(k, AttrValue::Str(_, sp)) if k.name == "packed" => {
+                    return Some((-1, *sp));
+                }
+                _ => {}
+            }
+        }
+    }
+    None
+}
+
+/// v0.0.28 bitfields: the declared width of `#[bits(N)] flags: u32`, with the
+/// span of N. A field without the attribute is a whole-field member and
+/// returns `None` — the two are different layout kinds, not a width of "all
+/// the bits", because a plain field also carries its type's alignment.
+pub fn field_bits_of(attributes: &[Attribute]) -> Option<(i64, Span)> {
+    for a in attributes {
+        if a.path.name != "bits" {
+            continue;
+        }
+        if let [AttrArg::Int(n, sp)] = a.args.as_slice() {
+            return Some((*n, *sp));
+        }
+        return Some((-1, a.span));
+    }
+    None
+}
+
 pub fn enum_repr_of(attributes: &[Attribute]) -> Option<EnumRepr> {
     for a in attributes {
         if a.path.name != "repr" {
@@ -389,6 +442,18 @@ pub struct InterfaceMethod {
     pub receiver: Option<Receiver>,
     pub params: Vec<Param>,
     pub return_type: Option<Type>,
+    /// v0.0.28: a DEFAULT body. `None` is the original shape — a signature
+    /// ending in `;` that every implementor must supply. `Some(block)` means
+    /// an implementor may omit the method, and `lower::expand_interface_defaults`
+    /// copies this body into the impl block as an ordinary method before
+    /// anything else runs.
+    ///
+    /// That copy is the whole implementation: sema, borrowck, monomorphize
+    /// and codegen see a hand-written method and nothing downstream knows
+    /// default bodies exist. It is also why this could land without touching
+    /// method monomorphization — a default body adds no new instantiation
+    /// source, only more of the existing one.
+    pub body: Option<Block>,
     pub span: Span,
 }
 

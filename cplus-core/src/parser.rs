@@ -518,9 +518,11 @@ impl Parser {
         if self.eat(&TokenKind::LParen) {
             while !self.at(&TokenKind::RParen) {
                 // v0.0.27 contracts: `#[requires(EXPR)]` takes full
-                // expressions (`n > 0`, `this.count() < cap`). Every other
-                // attribute keeps the flat ident/str/int grammar.
-                if path.name == "requires" {
+                // expressions (`n > 0`, `this.count() < cap`). v0.0.28 adds
+                // `#[ensures(EXPR)]`, which reads the same way plus the
+                // binding `result`. Every other attribute keeps the flat
+                // ident/str/int grammar.
+                if path.name == "requires" || path.name == "ensures" {
                     args.push(AttrArg::Expr(Box::new(
                         self.in_delimited(|p| p.parse_expr())?,
                     )));
@@ -866,18 +868,30 @@ impl Parser {
         } else {
             None
         };
-        // Interface methods end with `;` — no body.
-        let end = self
-            .expect(
-                &TokenKind::Semi,
-                "`;` (interface method signatures have no body)",
-            )?
-            .span;
+        // A signature ends with `;`. v0.0.28: it may instead carry a DEFAULT
+        // body, which implementors may omit — `fn describe(this) -> Text {
+        // ... }` inside an interface. The body is copied into each impl
+        // block that leaves the method out, so what follows is parsed as an
+        // ordinary method body.
+        let (body, end) = if self.at(&TokenKind::LBrace) {
+            let b = self.parse_block()?;
+            let sp = b.span;
+            (Some(b), sp)
+        } else {
+            let sp = self
+                .expect(
+                    &TokenKind::Semi,
+                    "`;` after an interface method signature, or `{ ... }` for a default body",
+                )?
+                .span;
+            (None, sp)
+        };
         Ok(InterfaceMethod {
             name,
             receiver,
             params,
             return_type,
+            body,
             span: start.merge(end),
         })
     }
@@ -5583,10 +5597,24 @@ mod tests {
     }
 
     #[test]
-    fn interface_method_requires_semicolon_not_body() {
-        // Interface methods declare signatures, not implementations —
-        // they must end with `;`, not `{ ... }`.
-        let err = parse_src("interface X { fn f(this) -> i32 { return 0; } }").unwrap_err();
+    fn interface_method_takes_a_semicolon_or_a_default_body() {
+        // v0.0.28: a body is the DEFAULT form — implementors may omit the
+        // method and `lower::expand_interface_defaults` copies this block
+        // into their impl block. A `;` is still the "you must write it"
+        // form, and anything else is still a parse error.
+        let p = parse_src("interface X { fn f(this) -> i32 { return 0; } }").unwrap();
+        let ItemKind::Interface(i) = &p.items[0].kind else {
+            panic!("expected interface");
+        };
+        assert!(i.methods[0].body.is_some(), "default body recorded");
+
+        let plain = parse_src("interface Y { fn g(this) -> i32; }").unwrap();
+        let ItemKind::Interface(y) = &plain.items[0].kind else {
+            panic!("expected interface");
+        };
+        assert!(y.methods[0].body.is_none(), "signature stays body-less");
+
+        let err = parse_src("interface Z { fn h(this) -> i32 = 4; }").unwrap_err();
         assert!(matches!(err.kind, ParseErrorKind::Unexpected { .. }));
     }
 

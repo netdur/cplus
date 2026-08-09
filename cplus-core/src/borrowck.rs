@@ -1068,11 +1068,37 @@ impl SigTable {
     /// The effective per-param keeps flags for an entry: declared
     /// (`#[keeps(this)]` gated to view-typed positions) unioned with the
     /// computed transitive flows. Empty vec means "ties nothing".
+    /// Which parameter positions the RECEIVER keeps a borrow of after the
+    /// call returns.
+    ///
+    /// `#[keeps(this)]` declares it; what it covers is every position that
+    /// can BE a borrow:
+    ///
+    /// - a view-typed parameter (`str`, a slice), which is a borrow written
+    ///   as a value and is the case the declaration was introduced for, and
+    /// - a **`ref` parameter** (v0.0.28), which is a borrow written as a
+    ///   borrow. Storing one means storing its address, and a receiver that
+    ///   outlives the borrow is the same dangling pointer either way.
+    ///
+    /// The second is what makes a scoped thread pool statically safe:
+    /// `scope.spawn_mut(ref data, worker)` ties `data` to `scope`, so the
+    /// parent cannot touch or drop `data` until the scope — whose destructor
+    /// joins the workers — is gone.
+    ///
+    /// `take` positions are moves, not borrows, and are covered only by the
+    /// view gate (a `Vec[str]` that consumes a `str` really does keep the
+    /// view its caller owns).
     fn effective_keeps(entry: &FnEntry) -> Vec<bool> {
-        let n = entry.param_view_flags.len().max(entry.computed_keeps.len());
+        let n = entry
+            .param_view_flags
+            .len()
+            .max(entry.computed_keeps.len())
+            .max(entry.param_muts.len());
         (0..n)
             .map(|i| {
-                (entry.keeps_this && entry.param_view_flags.get(i).copied().unwrap_or(false))
+                (entry.keeps_this
+                    && (entry.param_view_flags.get(i).copied().unwrap_or(false)
+                        || entry.param_muts.get(i).copied().unwrap_or(false)))
                     || entry.computed_keeps.get(i).copied().unwrap_or(false)
             })
             .collect()
@@ -3096,6 +3122,12 @@ impl<'p> Analyzer<'p> {
                     .iter()
                     .enumerate()
                     .map(|(i, t)| {
+                        // A `ref` parameter is a borrow whatever it is a
+                        // borrow OF, so the view gate does not apply to it
+                        // (see `effective_keeps`).
+                        if entry.keeps_this && entry.param_muts.get(i).copied().unwrap_or(false) {
+                            return true;
+                        }
                         (entry.keeps_this
                             || entry.computed_keeps.get(i).copied().unwrap_or(false))
                             && self.oracle.type_contains_view(&subst_type(t, &map))
@@ -6423,6 +6455,17 @@ impl Analyzer<'_> {
                 if !heal {
                     self.apply_expr(target, state);
                 }
+                // v0.0.28: a WRITE into a place someone else is borrowing is
+                // the same conflict as a mutating method call on it (E0381,
+                // `check_method_receiver_claim`) — the call form was checked
+                // and the plain assignment was not, so `d.n = 5;` slipped
+                // past a live borrow of `d` while `d.set(5);` did not.
+                //
+                // What made the gap matter: a scoped thread borrows a
+                // parent local for the length of the scope, and the parent
+                // writing a field of it during that window is a data race
+                // no destructor ordering can fix.
+                self.check_write_against_borrows(target, state);
                 // Rule E-VIEW on REASSIGNMENT (mirror of the `StmtKind::Let`
                 // arm): classify the value's borrow sources *before* the walk,
                 // so a view-returning RHS (`s = t.view()`) records the target
@@ -6964,6 +7007,25 @@ impl Analyzer<'_> {
         // §2.9 `ref`-on-Copy is local-mutability, not a borrow).
         self.check_intra_call_conflicts(args, &move_flags, &mut_flags, receiver_claim);
 
+        // v0.0.28, the cross-STATEMENT half of the same rule: a `ref`
+        // argument is an exclusive claim, and a place that something else is
+        // already borrowing cannot be claimed exclusively.
+        //
+        // `check_intra_call_conflicts` compares the arguments of ONE call to
+        // each other; `check_method_receiver_claim` compares a mutating
+        // receiver to live borrows. The gap between them was a `ref` ARGUMENT
+        // handed out twice — `s.spawn(d, w1); s.spawn(d, w2);` gives two
+        // workers exclusive access to the same place, which is the race a
+        // scope exists to prevent.
+        if let Some(muts) = mut_flags.as_ref() {
+            for (i, arg) in args.iter().enumerate() {
+                if !muts.get(i).copied().unwrap_or(false) {
+                    continue;
+                }
+                self.check_ref_arg_against_borrows(arg, state);
+            }
+        }
+
         // State transitions. Each move-arg of a *non-Copy* binding
         // transitions Owned → Moved. Copy-typed bindings (or bindings of
         // unknown type) stay Owned — for unknown we conservatively assume
@@ -7349,6 +7411,96 @@ impl Analyzer<'_> {
     /// methods this is over-strict but sound; tightening to "only
     /// `ref this` methods" requires plumbing receiver kind into the
     /// SigTable, deferred to a polish slice.
+    /// v0.0.28: E0381 for a `ref` argument naming an already-borrowed place.
+    ///
+    /// Deliberately fires even when the live borrower is this call's own
+    /// receiver: lending the same data to a scope twice is precisely the
+    /// aliasing a scoped thread pool must refuse, and "the same borrower" is
+    /// no defence when the borrower hands each lend to a different thread.
+    fn check_ref_arg_against_borrows(&mut self, arg: &Expr, state: &BTreeMap<Place, PlaceState>) {
+        let Some(place) = place_from_expr(arg) else {
+            return;
+        };
+        let root = Place::root(&place.root);
+        if !matches!(state.get(&root), Some(PlaceState::BorrowedShared(_))) {
+            return;
+        }
+        // A Copy binding's `ref` is local mutability, not a borrow (§2.9),
+        // and nothing can be aliasing it.
+        if !self.binding_is_non_copy(&place.root) {
+            return;
+        }
+        let Some((borrower, borrow_span)) = self
+            .live_borrows
+            .get(&root)
+            .and_then(|s| s.iter().next().map(|(n, sp)| (n.clone(), *sp)))
+        else {
+            return;
+        };
+        let name = &place.root;
+        self.diags.push(RawDiag {
+            code: "E0381",
+            message: format!(
+                "cannot lend `{name}` exclusively while it is borrowed by `{borrower}`"
+            ),
+            primary: arg.span,
+            suggestion: Some((
+                arg.span,
+                name.clone(),
+                format!(
+                    "a `ref` argument is exclusive access, and `{borrower}` is still reading \
+                     `{name}`. Give each exclusive user its own value, or finish with \
+                     `{borrower}` first."
+                ),
+            )),
+            label: Some((borrow_span, format!("`{borrower}` borrows `{name}` here"))),
+        });
+    }
+
+    /// v0.0.28: E0381 for an assignment into a borrowed place.
+    ///
+    /// `heal` reassignment of a MOVED binding is not a conflict (nothing
+    /// borrows a moved-out place), and neither is writing through a raw
+    /// pointer — the raw seam is the developer's, by design. Everything else
+    /// that names a live-borrowed root and writes to it is refused, with the
+    /// borrower named.
+    fn check_write_against_borrows(&mut self, target: &Expr, state: &BTreeMap<Place, PlaceState>) {
+        let Some(place) = place_from_expr(target) else {
+            return;
+        };
+        // `*p = v` / `p[i] = v` through a raw pointer: not a tracked place.
+        if matches!(target.kind, ExprKind::Unary { op: UnaryOp::Deref, .. }) {
+            return;
+        }
+        let root = Place::root(&place.root);
+        if !matches!(state.get(&root), Some(PlaceState::BorrowedShared(_))) {
+            return;
+        }
+        let Some((borrower, borrow_span)) = self
+            .live_borrows
+            .get(&root)
+            .and_then(|s| s.iter().next().map(|(n, sp)| (n.clone(), *sp)))
+        else {
+            return;
+        };
+        let name = &place.root;
+        self.diags.push(RawDiag {
+            code: "E0381",
+            message: format!("cannot write to `{name}` while it is borrowed by `{borrower}`"),
+            primary: target.span,
+            suggestion: Some((
+                target.span,
+                name.clone(),
+                format!(
+                    "`{borrower}` reads memory owned by `{name}`, so a write here could be \
+                     observed half-done. Finish with `{borrower}` (let it go out of scope) \
+                     before writing, or write before the borrow is established."
+                ),
+            )),
+            label: Some((borrow_span, format!("`{borrower}` borrows `{name}` here"))),
+        });
+    }
+
     fn check_method_receiver_claim(
         &mut self,
         receiver: &Expr,
@@ -7725,6 +7877,63 @@ mod tests {
     }
 
     // --- 5BC.1 tests preserved ---
+
+    // ---- v0.0.28: the three guarantees a thread scope rests on ----
+    //
+    // `stdlib/thread`'s `Scope::lend` is `#[keeps(this)] fn lend[T](ref this,
+    // ref data: T, f: fn(ref T))`. Everything that makes it safe is checked
+    // here, on a mock with the same shape — the scope keeps the borrow, so
+    // the data cannot die, cannot be written, and cannot be lent twice while
+    // a worker may still be holding it.
+
+    const SCOPE_MOCK: &str = "struct Data { n: i32 }\n         impl Data { fn drop(ref this) { return; } }\n         struct Scope { c: i32 }\n         impl Scope {\n             #[keeps(this)]\n             fn lend(ref this, ref d: Data) { this.c = this.c + 1; }\n             fn drop(ref this) { return; }\n         }\n";
+
+    #[test]
+    fn scope_outliving_its_lent_data_is_rejected() {
+        let codes = check_src(&format!(
+            "{SCOPE_MOCK}\
+             fn main() -> i32 {{\n                 var s: Scope = Scope {{ c: 0 }};\n                 {{ var d: Data = Data {{ n: 1 }}; s.lend(d); }}\n                 return 0;\n             }}"
+        ));
+        assert!(
+            codes.iter().any(|c| c == "E0514"),
+            "data must outlive the scope: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn writing_lent_data_is_rejected() {
+        let codes = check_src(&format!(
+            "{SCOPE_MOCK}\
+             fn main() -> i32 {{\n                 var s: Scope = Scope {{ c: 0 }};\n                 var d: Data = Data {{ n: 1 }};\n                 s.lend(d);\n                 d.n = 5;\n                 return 0;\n             }}"
+        ));
+        assert!(
+            codes.iter().any(|c| c == "E0381"),
+            "a write into borrowed data must be refused: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn lending_the_same_data_twice_is_rejected() {
+        let codes = check_src(&format!(
+            "{SCOPE_MOCK}\
+             fn main() -> i32 {{\n                 var s: Scope = Scope {{ c: 0 }};\n                 var d: Data = Data {{ n: 1 }};\n                 s.lend(d);\n                 s.lend(d);\n                 return 0;\n             }}"
+        ));
+        assert!(
+            codes.iter().any(|c| c == "E0381"),
+            "two exclusive lends of one place must be refused: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn lending_two_different_places_is_fine() {
+        // The rule is about the PLACE, not about the scope: two workers on
+        // two locals is the whole point of the API.
+        let codes = check_src(&format!(
+            "{SCOPE_MOCK}\
+             fn main() -> i32 {{\n                 var s: Scope = Scope {{ c: 0 }};\n                 var a: Data = Data {{ n: 1 }};\n                 var b: Data = Data {{ n: 2 }};\n                 s.lend(a);\n                 s.lend(b);\n                 return 0;\n             }}"
+        ));
+        assert!(codes.is_empty(), "two locals, two workers: {codes:?}");
+    }
 
     #[test]
     fn place_canonical_root_only() {

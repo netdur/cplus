@@ -47,6 +47,57 @@ earlier history lives in each version's archived plan.
   each through the `assert` path at entry, so a violation traps (and
   test builds report instead of aborting). v0 checks in every build
   profile; `#[ensures]` and doc/graph surfacing are follow-ups.
+- **Interface default method bodies** — an interface method may carry a
+  body instead of a `;`, and an implementor may omit it. The body is COPIED
+  into every impl block that left the method out, in `lower`, before
+  anything else runs: the same mechanism derive uses, and the reason this
+  cost no new machinery. Downstream sees a hand-written method — no new
+  method-instantiation source, no new dispatch kind, no `dyn`, and `This`
+  resolving through the impl block the copy now lives in. A default body
+  that calls a method the implementor lacks is diagnosed against THAT type
+  at its own impl block; an interface whose methods all have defaults takes
+  an empty impl (`impl A: Greet {}`) without tripping E0916. The cost is
+  code size: N implementors get N copies, the trade every generic in the
+  language already makes.
+- **Scoped threads (`thread::scope`)** — a set of threads that are all
+  joined before the value goes away, which is what lets a worker BORROW a
+  parent local instead of owning a copy of it. `Scope::lend(ref data, f)`
+  hands `data` to a fresh thread; `Scope::drop` joins every worker it
+  started, on every path out. No `Arc`, no copy back, no atomics for the
+  common split-work case.
+  What makes it safe is a borrow the checker can see: `lend` is
+  `#[keeps(this)]` on a `ref` parameter, which now ties that argument to the
+  receiver for the receiver's whole life (it used to tie view-typed
+  arguments only — a `str` is a borrow written as a value, and a `ref`
+  parameter is a borrow written as a borrow). Three mistakes became compile
+  errors: the lent value dying while the scope lives (**E0514**), a write
+  into it while a worker holds it (**E0381**), and lending the same place
+  twice (**E0381**, two workers with exclusive access to one value).
+  The last two closed real gaps in the borrow model that predate scopes: a
+  mutating method call on a borrowed place was refused, but a plain field
+  WRITE was not, and neither was passing the place as a `ref` argument. Both
+  now are, for views as much as for scopes.
+- **issue-10, the method-generic arm** — the body-instantiation pass had two
+  arms, generic free fns and generic-struct impls. A method carrying its own
+  type parameter (`impl Holder { fn lend[T](..) }`) is neither, so its body
+  was never walked under a concrete `T`: a generic type it mentioned never
+  got instantiated, monomorphize left it as a `TypeKind::Generic`, and
+  codegen panicked with "monomorphize did not rewrite this site". Method
+  instantiations now ride the same worklist, so what their bodies discover
+  is chased exactly like a free fn's.
+- **`#[ensures(EXPR)]`** — the other half of a contract. Same shape, same
+  purity rule (**E0924**) and same emission as `#[requires]`, plus the
+  binding `result`: the value being returned. It is checked at EVERY
+  return, after the value exists and before the scope-exit drops, so a
+  function with three returns is checked three times and no path out
+  skips it. A postcondition on a function that returns nothing is still
+  useful and still allowed — it speaks about `this` and `ref` parameters,
+  which is the half a precondition cannot express — but naming `result`
+  there is **E0928**, as is a parameter that collides with the binding.
+  A postcondition sits between the call and the `ret`, which `musttail`
+  forbids, so a contract turns a tail call into an ordinary one. Still
+  open from the original item: `old()` state capture, which needs a
+  snapshot rule against the ownership model.
 - **`#[repr(C)] union`**: one storage, several typed views — the shape real
   C headers contain and bindgen could not describe without lying. Same
   declaration form as a struct (it rides `StructDecl` with `is_union`), C's
@@ -58,6 +109,37 @@ earlier history lives in each version's archived plan.
   union having no tag: nothing can know which member is live, so no
   destructor could be run correctly. For an either/or VALUE in ordinary code
   the answer is still an enum with payloads, which has that tag.
+- **Packed structs and bitfields** — the other half of describing a C
+  header. `#[repr(C, packed)]` removes the padding between fields (and the
+  struct's own alignment with it); `#[repr(C, packed = N)]` caps each
+  field's alignment at N, C's `#pragma pack(N)`. `#[bits(N)]` gives an
+  integer field a width and packs it beside its neighbours: a field that
+  would cross its declared type's storage unit starts a new one, packing
+  lets it straddle instead, a signed field sign-extends on read, and a
+  write is a read-modify-write that preserves the neighbours sharing the
+  unit. Every rule is C's and none of it is reasoned about — `cpc/tests/
+  packed_layout_vs_clang.rs` builds nine shapes under both compilers and
+  compares sizes, alignments, the struct's BYTES after per-field writes,
+  and each field read back.
+  One consequence has a diagnostic: neither a bitfield nor an under-aligned
+  packed field has an address, so a `ref` parameter, a `ref this` receiver
+  and `#addr_of` are refused (**E0927** / **E0926**). Passing a bitfield to
+  a `ref u32` used to take the address of a temporary copy and discard the
+  write. Packed fields must be `Copy` (a destructor is handed the address of
+  what it tears down); a bitfield needs `#[repr(C)]`, an integer type, a
+  width of 1..=its type's bits, and a non-generic, non-union struct.
+- **`cpc-bindgen` emits both**: a bitfield becomes `#[bits(N)]` with its own
+  signedness, a packed record becomes `#[repr(C, packed)]`, and C's
+  alignment-forcing `unsigned :0;` becomes the padding width it stands for
+  (computed with the compiler's own placement rule, which the generator now
+  calls rather than re-deriving). What it emitted before was a `_packed0:
+  u32` storage slot and read-only accessors that assumed every bitfield in
+  the record lived in that first slot — wrong for a second run, for storage
+  wider than 32 bits, and for every signed field, with no way to write one.
+  A record under `#pragma pack(N)` is now REFUSED with a comment saying why:
+  clang's JSON AST records that a maximum field alignment applies without
+  saying what it is, and a guessed layout is the failure a binding generator
+  exists to prevent.
 - **FFI enums — explicit discriminants + `#[repr]`**: a payload-free
   enum takes C-style values (`NotFound = 404`, auto `prev + 1`
   otherwise; any constant expression folds) and an integer

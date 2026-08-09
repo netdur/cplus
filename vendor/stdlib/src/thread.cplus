@@ -36,9 +36,14 @@
 // the thread's kernel resources whenever it exits.
 
 import "./atomic" as atomic;
+import "./vec" as vec;
+import "./option" as option;
+import "./status" as status;
 
+extern fn pthread_create(tid: *u64, attr: *u8, start: fn(*u8) -> *u8, arg: *u8) -> i32;
 extern fn pthread_join(tid: u64, retval: *u8) -> i32;
 extern fn pthread_detach(tid: u64) -> i32;
+extern fn malloc(n: usize) -> *u8;
 extern fn free(p: *u8);
 
 // `#[lang("join_handle")]` designates the type `#thread_spawn` returns — see
@@ -66,9 +71,12 @@ struct JoinHandle[O] {
 // running; its result is dropped when it finishes).
 //
 // `O: Send` — the return value must be safely transferrable between
-// threads. v0.0.4 Phase 2 Slice 2A baseline: every type is Send.
-// Future tightening rejects `Rc[T]`, `MutexGuard[T]`, and structs
-// with raw-pointer fields (unless explicitly opted-in).
+// threads, and the bound is CHECKED: a struct that hides a raw pointer
+// (directly or through a field) does not satisfy it and the call is
+// E0502. Vouch for one with a marker impl (`impl Handle: Send {}`) when
+// you know the pointer is safe to move across threads. The docstring
+// here used to say every type was Send, which stopped being true and was
+// corrected 2026-08-09 by measuring it.
 fn spawn[O: Send](f: fn() -> O) -> JoinHandle[O] {
     return { #thread_spawn::[O](f) };
 }
@@ -124,6 +132,157 @@ impl JoinHandle[O] {
     }
 }
 
+// ═══════════════════════════ scoped threads ═══════════════════════════
+//
+// v0.0.28. `spawn` and `spawn_with` move their data into the worker, which
+// is why they can let it outlive the spawning function. The cost is that
+// every shared input needs an owner of its own — an `Arc`, a copy, or a
+// restructure — even when the parent is going to sit and wait anyway.
+//
+// A SCOPE is the other trade: it lends a parent local to a worker and
+// guarantees the worker is joined before the loan can end. `Scope::drop`
+// joins every thread it started, and the borrow checker knows the scope
+// borrows what was lent to it (`#[keeps(this)]` on a `ref` parameter), so
+// three things are compile errors rather than races:
+//
+//     var s: Scope = thread::scope();
+//     {
+//         var d: Data = ...;
+//         s.lend(d, worker);      // E0514: `d` dies while `s` still borrows it
+//     }
+//
+//     s.lend(d, w1);
+//     d.field = 3;                // E0381: write while borrowed
+//     s.lend(d, w2);              // E0381: two exclusive lends of one place
+//
+// The loan ends where the scope does, which is where the threads are joined
+// — so a lent value cannot be read, written, moved or dropped while a worker
+// still holds it. No `Arc`, no copy, no atomics.
+//
+// The worker signature is `fn(ref T)`: results come back through the lent
+// value, not through a join. A thread that must RETURN something is
+// `spawn`/`spawn_with`'s job.
+
+// The per-worker heap cell: which function to run and what to run it on.
+// One `malloc` per lend, freed after the join — it cannot live in the
+// scope's `Vec` because a `Vec` moves its elements when it grows, and the
+// worker is holding the address.
+struct _Lend[T] {
+    _f: fn(ref T),
+    // opaque: this is the ADDRESS OF THE PARENT'S VALUE, not an allocation
+    // this cell owns. What keeps it alive is the borrow checker: the scope
+    // borrows the value for as long as it lives, and the scope outlives
+    // every worker it started.
+    opaque _d: *T,
+}
+
+// The pthread entry point, one instantiation per lent type. Unpacks the
+// cell and calls the worker with the parent's value as a `ref` argument —
+// which is pointer-passed, so the worker writes the parent's memory
+// directly.
+fn _run_lend[T](arg: *u8) -> *u8 {
+    let cell: *_Lend[T] = { arg as *_Lend[T] };
+    let f: fn(ref T) = { (*cell)._f };
+    let d: *T = { (*cell)._d };
+    { f(*d) };
+    return { 0 as *u8 };
+}
+
+// A set of threads that are all joined before this value goes away.
+//
+// Declare one with `thread::scope()`, hand it work with `lend`, and let it
+// fall out of scope: `drop` joins every worker. There is no `finish()` —
+// a scope you could forget to finish would be a scope that proves nothing.
+struct Scope {
+    _tids: vec::Vec[u64],
+    _cells: vec::Vec[*u8],
+}
+
+// Open a thread scope. Every thread started through it is joined when the
+// returned value is dropped.
+fn scope() -> Scope {
+    return Scope {
+        _tids: vec::new::[u64](),
+        _cells: vec::new::[*u8](),
+    };
+}
+
+impl Scope {
+    // Run `f(data)` on a fresh thread, with `data` borrowed from the caller
+    // for the rest of this scope's life.
+    //
+    // `#[keeps(this)]` is the load-bearing declaration: it tells the borrow
+    // checker that this scope keeps the borrow after the call returns, which
+    // is what turns "the worker might outlive the data" into a compile
+    // error. Without it the pointer handed to the thread would be exactly
+    // the dangling pointer this API exists to make impossible.
+    //
+    // Returns `OutOfMemory` when the cell cannot be allocated OR the OS
+    // refuses the thread (both are a resource it would not give); in either
+    // case nothing was started and the scope is unchanged.
+    #[keeps(this)]
+    fn lend[T: Send](ref this, ref data: T, f: fn(ref T)) -> status::Status {
+        let raw: *u8 = { malloc(#size_of::[_Lend[T]]()) };
+        if raw.is_null() {
+            return status::Status::OutOfMemory;
+        }
+        let cell: *_Lend[T] = { raw as *_Lend[T] };
+        { (*cell)._f = f; }
+        { (*cell)._d = #addr_of(data) as *T; }
+        var tid: u64 = 0 as u64;
+        let rc: i32 = {
+            pthread_create(#addr_of(tid), 0 as *u8, _run_lend::[T], raw)
+        };
+        if rc != (0 as i32) {
+            { free(raw); }
+            return status::Status::OutOfMemory;
+        }
+        if this._tids.append(tid) != status::Status::Ok {
+            // The thread is running and we cannot record it. Joining here is
+            // the only way to keep the promise this type makes.
+            { pthread_join(tid, 0 as *u8); }
+            { free(raw); }
+            return status::Status::OutOfMemory;
+        }
+        if this._cells.append(raw) != status::Status::Ok {
+            // Same, one step later: the tid IS recorded, so the join happens
+            // at drop; only the cell would leak. Free it after joining now.
+            { pthread_join(tid, 0 as *u8); }
+            { free(raw); }
+            return status::Status::OutOfMemory;
+        }
+        return status::Status::Ok;
+    }
+
+    // How many workers this scope has started.
+    fn count(this) -> usize {
+        return this._tids.count();
+    }
+
+    // Join every worker, then release their cells. This is the guarantee the
+    // type is for: it runs at scope exit, on every path, and nothing the
+    // caller can write skips it.
+    fn drop(ref this) {
+        var i: usize = 0 as usize;
+        while i < this._tids.count() {
+            match this._tids.at(i) {
+                option::Option[u64]::Some(tid) => { { pthread_join(tid, 0 as *u8); } }
+                option::Option[u64]::None => { }
+            }
+            i = i + (1 as usize);
+        }
+        var j: usize = 0 as usize;
+        while j < this._cells.count() {
+            match this._cells.at(j) {
+                option::Option[*u8]::Some(p) => { { free(p); } }
+                option::Option[*u8]::None => { }
+            }
+            j = j + (1 as usize);
+        }
+        return;
+    }
+}
+
 // ───────────────────────────── tests ─────────────────────────────
 
 fn _ret_42() -> i32 {
@@ -132,6 +291,56 @@ fn _ret_42() -> i32 {
 
 fn _double_it(take x: i32) -> i32 {
     return x *% (2 as i32);
+}
+
+// ---- scoped threads ----
+
+struct _Cell {
+    v: i64,
+}
+
+fn _add_one_million(ref c: _Cell) {
+    var i: i64 = 0 as i64;
+    while i < (1000000 as i64) {
+        c.v = c.v +% (1 as i64);
+        i = i +% (1 as i64);
+    }
+    return;
+}
+
+#[test]
+fn scope_lends_a_local_and_joins_before_it_ends() {
+    // The worker writes the PARENT's local through the loan — no Arc, no
+    // copy back. The million iterations are there so the assertion would
+    // fail if `drop` did not actually join: reading `c.v` while the worker
+    // still ran would almost certainly catch it mid-count.
+    var c: _Cell = _Cell { v: 0 as i64 };
+    {
+        var s: Scope = scope();
+        assert s.lend::[_Cell](c, _add_one_million) == status::Status::Ok;
+        assert s.count() == (1 as usize);
+    }
+    assert c.v == 1000000;
+}
+
+#[test]
+fn scope_with_no_workers_is_fine() {
+    var s: Scope = scope();
+    assert s.count() == (0 as usize);
+}
+
+#[test]
+fn scope_lends_two_different_locals_at_once() {
+    var a: _Cell = _Cell { v: 0 as i64 };
+    var b: _Cell = _Cell { v: 0 as i64 };
+    {
+        var s: Scope = scope();
+        assert s.lend::[_Cell](a, _add_one_million) == status::Status::Ok;
+        assert s.lend::[_Cell](b, _add_one_million) == status::Status::Ok;
+        assert s.count() == (2 as usize);
+    }
+    assert a.v == 1000000;
+    assert b.v == 1000000;
 }
 
 #[test]

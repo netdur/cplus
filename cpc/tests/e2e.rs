@@ -1449,10 +1449,14 @@ fn multi_file_static_init_error_points_at_imported_file_gap3() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    // The bad static lives in lib.cplus; main.cplus is the entry and is clean.
+    // The bad initializer lives in lib.cplus; main.cplus is the entry and is
+    // clean. v0.0.27 made `static BAD: i32 = 1 + 2;` LEGAL (constant
+    // expressions fold), which is what this test used to rely on — an
+    // array literal in a non-scalar `const` is the shape lower still
+    // refuses, and the file it is refused against is what is being tested.
     std::fs::write(
         dir.join("src/lib.cplus"),
-        "static BAD: i32 = 1 + 2;\nfn ok() -> i32 { return 0; }\n",
+        "const BAD: [i32; 2] = [1, 2];\nfn ok() -> i32 { return 0; }\n",
     )
     .unwrap();
     std::fs::write(
@@ -1466,7 +1470,7 @@ fn multi_file_static_init_error_points_at_imported_file_gap3() {
         .arg(dir.join("src/main.cplus"))
         .output()
         .expect("invoke cpc check");
-    assert!(!out.status.success(), "bad static must fail the build");
+    assert!(!out.status.success(), "bad initializer must fail the build");
     let stderr = String::from_utf8_lossy(&out.stderr);
     let line = stderr
         .lines()

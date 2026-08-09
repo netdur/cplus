@@ -576,6 +576,28 @@ u.bits;                                        // reading another reinterprets t
 // must be Copy (no tag -> no destructor can be run correctly), not generic,
 // at least one. E0925 otherwise.
 
+// PACKED — no padding between fields. `packed` is `packed = 1`; `packed = N`
+// caps every field's alignment at N (C's `#pragma pack(N)`).
+#[repr(C, packed)] struct Wire { kind: u8, len: u32 }     // size 5, align 1
+#[repr(C, packed = 2)] struct Legacy { a: u8, b: u32 }    // b at offset 2
+
+// BITFIELDS — `#[bits(N)]` on an integer field. C's rules exactly: a field
+// that would cross its type's storage unit starts a new one, packing lets it
+// straddle instead, and a signed field sign-extends when read.
+#[repr(C)] struct Flags {
+    #[bits(3)] kind: u32,       // bits 0..3
+    #[bits(5)] level: u32,      // bits 3..8, same 4-byte unit
+    #[bits(4)] delta: i32,      // signed: reads back negative
+}
+var f: Flags = Flags { kind: 5 as u32, level: 21 as u32, delta: -3 as i32 };
+f.kind = 2 as u32;              // read-modify-write; neighbours preserved
+
+// Neither a bitfield nor an under-aligned packed field has an ADDRESS: no
+// `ref` parameter, no `#addr_of` (E0927 / E0926). Read and write them
+// directly, or copy into a local first. Packed fields must be Copy, and a
+// bitfield needs `#[repr(C)]`, an integer type, a width of 1..=its bits, and
+// a non-generic, non-union struct.
+
 #[link_name = "objc_msgSend"] extern fn msg_void(r: *u8, s: *u8);
 #[link_name = "objc_msgSend"] extern fn msg_str(r: *u8, s: *u8) -> *u8;
 
@@ -725,6 +747,27 @@ Borrow-shaped params (`str`, `T[]`, `ref x: NonCopy`) are rejected in `async fn`
 
 Shared mutable state exists (`mutex`, `atomic`, `arc`), but prefer partition+join. `Mutex[T]` is internally refcounted (no separate wrapper needed) — reach for it directly only when message-passing or partitioning won't do.
 
+### Interface default method bodies
+
+An interface method may carry a body instead of a `;`. Implementors may omit
+it; those that declare it override it.
+
+```cplus
+interface Shape {
+    fn area(this) -> i32;                                  // must be written
+    fn describe(this) -> i32 { return this.area() * 2; }   // default
+}
+impl Sq: Shape { fn area(this) -> i32 { return this.s * this.s; } }  // gets describe
+impl Rect: Shape { fn area(this) -> i32 { ... }
+                   fn describe(this) -> i32 { return 99; } }         // overrides it
+```
+
+The body is COPIED into each impl block that omitted it, before sema — so it
+is monomorphized like any other method, there is no `dyn`, and `This` means
+the implementing type. A default that calls a method the implementor lacks is
+an error against **that type**. An interface whose methods all have defaults
+takes an empty impl (`impl A: Greet {}`).
+
 ### `Send` / `Sync` marker impls
 
 `spawn`/`spawn_with` require their type params to be `Send`. A struct or enum that **hides a raw pointer** (directly or through a field) is `!Send` and `!Sync` — passing one across a `Send`/`Sync` bound is a compile error (**E0502**). A *bare* `*T` used directly (e.g. `thread::spawn::[*u8]`) stays Send. `Rc`/`MutexGuard` are `!Send` (Rc also `!Sync`).
@@ -739,7 +782,7 @@ impl Handle: Send {}                           // marker impl = the manual Send 
 impl Arc[T: Send + Sync]: Send {}              // Arc[X] is Send iff X is Send + Sync
 ```
 
-A marker impl's body is empty — and an empty impl of `Eq`/`Ord`/`Hash`/`Clone`/`ToText` derives the memberwise implementation instead (§3); any other interface requires a body. `Arc`/`Mutex`/`Channel` already carry the right conditional impls, so they work across threads when their payload does.
+A marker impl's body is empty — and an empty impl of `Eq`/`Ord`/`Hash`/`Clone`/`ToText` derives the memberwise implementation instead (§3); any other interface requires a body **unless every method it declares has a default** (below). `Arc`/`Mutex`/`Channel` already carry the right conditional impls, so they work across threads when their payload does.
 
 ---
 
@@ -748,6 +791,27 @@ A marker impl's body is empty — and an empty impl of `Eq`/`Ord`/`Hash`/`Clone`
 Nineteen widths: `f32x4 f64x2 f32x8 f64x4 i{8,16,32,64}x{16,8,4,2} u...` plus 256-bit doublings, plus `mask{N}x{M}` types distinct from signed-int SIMD. Constructors `splat`/`new`/`load`/`from_array`/`to_array`. Methods follow lane type: `add/sub/mul/div`, float `fma/sqrt/abs`, int `and/or/xor/shl/shr`. Compare returns `mask`, blend via `mask.select(a,b)`. SIMD does NOT cross `extern fn` boundaries — round-trip via `[f32; N]` (E0410 otherwise). Full reference: SPEC.md.
 
 ---
+
+### Scoped threads — lend a local, no `Arc`
+
+`spawn` / `spawn_with` MOVE their data into the worker. A **scope** lends it
+instead, and guarantees the worker is joined before the loan ends:
+
+```cplus
+var counts: Counts = Counts { hits: 0 };
+{
+    var s: thread::Scope = thread::scope();
+    s.lend::[Counts](counts, tally);      // tally: fn(ref Counts)
+}                                          // Scope::drop joins every worker
+use(counts.hits);                          // safe: the workers are done
+```
+
+`Scope::lend` is `#[keeps(this)]` on a `ref` parameter, so the borrow checker
+knows the scope holds the loan. Three mistakes are compile errors, not races:
+the lent value dying before the scope (**E0514**), writing it while a worker
+holds it (**E0381**), and lending the same place twice (**E0381** — two
+workers with exclusive access). Workers return through the lent value; a
+thread that must return a VALUE is `spawn`/`spawn_with`'s job.
 
 ## 12. Attributes (pure metadata, no codegen by them)
 
@@ -758,7 +822,13 @@ Only compiler-known attributes are accepted; an unknown attribute is rejected (E
 #[requires(n > 0)] fn f(n: i32) ...              // precondition, checked at entry (traps on
                                                  // violation; test builds report). Pure exprs
                                                  // over params/consts/fields; E0924 otherwise
+#[ensures(result >= n)] fn g(n: i32) -> i32 ...  // postcondition, checked at EVERY return.
+                                                 // `result` names the returned value; on a
+                                                 // fn returning nothing it names nothing
+                                                 // (E0928) — write it about `this`/params
 #[repr(C)] struct Foo { ... }                    // stable C layout
+#[repr(C, packed)] / #[repr(C, packed = 2)]      // no padding / cap alignment at N (§6)
+#[bits(3)] kind: u32,                            // bitfield inside a #[repr(C)] struct (§6)
 #[link_name = "real_sym"] extern fn alias(...);  // symbol aliasing
 #[unroll(4)] while ... { ... }                   // loop hint
 #[vectorize_width(8)] for i in ... { ... }       // vectorizer hint

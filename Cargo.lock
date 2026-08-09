@@ -55,6 +55,7 @@ dependencies = [
 name = "cpc-bindgen"
 version = "0.0.26"
 dependencies = [
+ "cplus-core",
  "serde_json",
 ]
 

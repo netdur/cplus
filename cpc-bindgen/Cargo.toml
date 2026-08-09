@@ -10,3 +10,7 @@ path = "src/main.rs"
 
 [dependencies]
 serde_json = "1"
+# v0.0.28: the bit-cursor rule a C record is laid out with lives in the
+# compiler (`sema::place_field`). Binding a header means reproducing that
+# layout exactly, so this generator calls it rather than re-deriving it.
+cplus-core = { path = "../cplus-core" }

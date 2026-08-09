@@ -377,6 +377,17 @@ pub struct StructDef {
     /// exists (E0361) and has the exact signature (E0362); codegen re-derives
     /// the same flag off the post-mono AST and emits the barrier.
     pub is_watched: bool,
+    /// v0.0.28: `#[repr(..., packed)]` / `#[repr(..., packed = N)]` — the
+    /// byte boundary every field's alignment is capped at. `Some(1)` is C's
+    /// `__attribute__((packed))`; `Some(N)` is `#pragma pack(N)`. `None` is
+    /// natural alignment. Set by `check_packing`, which owns the rules.
+    pub pack: Option<u64>,
+    /// v0.0.28 bitfields: declared width in bits per field, parallel to
+    /// `fields`. `0` marks a plain whole-type field, which is every field of
+    /// every struct that declares no bitfield at all — such a struct keeps
+    /// this empty rather than storing a run of zeros, so `has_bitfields` is
+    /// one `is_empty` and the common struct pays nothing.
+    pub bit_widths: Vec<u8>,
     /// Slice 10.FFI.5: true when the struct carries `#[repr(C)]`.
     /// Promises a C-compatible layout for FFI passing — fields stored
     /// in declaration order with the platform's C ABI padding rules.
@@ -1160,6 +1171,10 @@ fn check_with_files_inner(
     // v0.0.27: the union rules. AFTER the Copy fixpoint, because the central
     // one is about Copy-ness.
     cx.check_unions(program);
+    // v0.0.28: packing and bit widths. After field types are resolved (they
+    // are what a width is legal against) and before anything computes a
+    // layout — `struct_plan` reads what this pass records.
+    cx.check_packing(program);
     // OBS.1: runs here, not before the fixpoint — the snapshot hook form is
     // gated on the watched struct being `Copy`, which is not known until the
     // Copy/Drop fixpoint above has settled.
@@ -1858,6 +1873,268 @@ pub trait TypeShape {
         let _ = id;
         false
     }
+    /// v0.0.28: the `#[repr(..., packed[= N])]` cap on every field's
+    /// alignment, in bytes. `None` = natural alignment.
+    fn struct_pack(&self, id: StructId) -> Option<u64> {
+        let _ = id;
+        None
+    }
+    /// v0.0.28: declared bit widths, parallel to the fields; `0` is a plain
+    /// field. Empty when the struct declares no bitfield at all.
+    fn struct_bit_widths(&self, id: StructId) -> Vec<u8> {
+        let _ = id;
+        Vec::new()
+    }
+}
+
+/// v0.0.28: where one field sits inside its struct.
+///
+/// A plain field is `width == 0` and lives at `offset`. A bitfield is
+/// `width > 0` and lives in the `span_bytes` bytes starting at `offset`,
+/// `shift` bits up from that byte's low end — little-endian, C's rule, and
+/// the same numbers clang's `-fdump-record-layouts` prints as `off:lo-hi`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FieldPlace {
+    pub offset: u64,
+    pub shift: u8,
+    pub width: u8,
+    pub span_bytes: u8,
+}
+
+impl FieldPlace {
+    pub fn is_bitfield(&self) -> bool {
+        self.width > 0
+    }
+}
+
+impl StructPlan {
+    /// v0.0.28: the alignment an access to field `idx` may claim, given that
+    /// field's natural alignment.
+    ///
+    /// The struct's own alignment bounds it (a 2-aligned struct never hands
+    /// out an 8-aligned field), and so does the offset: a `u32` at byte 1 is
+    /// 1-aligned no matter what the struct is. Codegen states this number on
+    /// the load or store, and sema compares it against the natural one to
+    /// decide whether a pointer to the field could lie (E0926) — one rule,
+    /// so the check and the emission cannot disagree.
+    pub fn field_align(&self, idx: usize, natural: u64) -> u64 {
+        let Some(place) = self.places.get(idx) else {
+            return natural;
+        };
+        let from_offset = if place.offset == 0 {
+            u64::MAX
+        } else {
+            1u64 << place.offset.trailing_zeros()
+        };
+        natural.min(self.align).min(from_offset).max(1)
+    }
+}
+
+/// v0.0.28: the byte-exact placement of every field, plus the size and
+/// alignment that follow from it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StructPlan {
+    pub places: Vec<FieldPlace>,
+    pub size: u64,
+    pub align: u64,
+}
+
+/// v0.0.28: the bit width of an integer type, seeing through `distinct`
+/// aliases (a `distinct u32` is a `u32` at the C boundary, which is the whole
+/// point of it). `None` for everything that is not an integer — the answer
+/// E0927 turns into "this cannot carry a bit width".
+///
+/// `isize`/`usize` follow the target's pointer width, so a bitfield over one
+/// is legal and its width limit moves with the target, exactly as C's
+/// `size_t` bitfields do.
+pub fn int_bit_width(ty: &Ty, tables: &dyn TypeShape) -> Option<u64> {
+    match ty {
+        Ty::Distinct { base, .. } => int_bit_width(base, tables),
+        Ty::I8 | Ty::U8 => Some(8),
+        Ty::I16 | Ty::U16 => Some(16),
+        Ty::I32 | Ty::U32 => Some(32),
+        Ty::I64 | Ty::U64 => Some(64),
+        Ty::Isize | Ty::Usize => Some(crate::target::active_target().pointer_width as u64),
+        _ => None,
+    }
+}
+
+/// THE layout rule for a struct — sema's `layout_of` and codegen's type
+/// emission and field access all read this one answer, so a packed offset
+/// cannot mean one thing to `#size_of` and another to a `getelementptr`.
+///
+/// C's rules, measured against clang rather than reasoned about (the
+/// differential test in `tests/` compiles the same shapes both ways):
+///
+/// - A plain field starts at the next multiple of its alignment, capped at
+///   `packed = N`.
+/// - A bitfield starts at the current BIT cursor if `[cursor, cursor+width)`
+///   fits inside one naturally-aligned block the size of its declared type;
+///   otherwise the cursor moves up to the next multiple of that type's
+///   alignment. Under `packed` there is no such block, so a bitfield
+///   straddles freely — `#[repr(C, packed)] { #[bits(3)] a: u32, #[bits(30)]
+///   b: u32 }` puts `b` at bits 3..33, exactly as clang does.
+/// - A bitfield contributes its declared type's alignment (also capped by
+///   `packed`), which is why a struct of nothing but `u32` bitfields is
+///   4-aligned even when it is one byte wide.
+/// - The size rounds up to the alignment, so an array of the struct strides
+///   correctly.
+pub fn struct_plan(id: StructId, tables: &dyn TypeShape) -> Option<StructPlan> {
+    struct_plan_inner(id, tables, &mut Vec::new())
+}
+
+/// Place ONE field at `cursor_bits` and say where the cursor lands after it —
+/// the per-field step of [`struct_plan`], exposed because `cpc-bindgen` walks
+/// a C record with the same rule and must not re-derive it.
+///
+/// `width` is `None` for a plain field, `Some(n)` for an `n`-bit field.
+/// `Some(0)` is C's `unsigned :0;`, which reserves nothing and pushes the
+/// cursor to the next boundary of its declared type — the one bitfield form
+/// C+ does not spell (E0927) and bindgen therefore has to translate into an
+/// explicit padding width.
+pub fn place_field(
+    cursor_bits: u64,
+    size: u64,
+    align: u64,
+    width: Option<u8>,
+    pack: Option<u64>,
+) -> (FieldPlace, u64) {
+    fn align_up(off: u64, al: u64) -> u64 {
+        if al == 0 {
+            off
+        } else {
+            (off + al - 1) & !(al - 1)
+        }
+    }
+    let eff_al = match pack {
+        Some(p) => align.min(p),
+        None => align,
+    };
+    match width {
+        None => {
+            let at = align_up(cursor_bits, eff_al.saturating_mul(8));
+            (
+                FieldPlace {
+                    offset: at / 8,
+                    shift: 0,
+                    width: 0,
+                    span_bytes: 0,
+                },
+                at.saturating_add(size.saturating_mul(8)),
+            )
+        }
+        Some(0) => {
+            // Reserves no bits; its whole effect is on where the NEXT field
+            // starts. Packing removes the boundary it would align to.
+            let at = if pack.is_none() {
+                align_up(cursor_bits, align.saturating_mul(8))
+            } else {
+                cursor_bits
+            };
+            (
+                FieldPlace {
+                    offset: at / 8,
+                    shift: (at % 8) as u8,
+                    width: 0,
+                    span_bytes: 0,
+                },
+                at,
+            )
+        }
+        Some(w) => {
+            let mut at = cursor_bits;
+            if pack.is_none() {
+                let unit = size.saturating_mul(8);
+                if unit > 0 && (at % unit) + w as u64 > unit {
+                    at = align_up(at, align.saturating_mul(8));
+                }
+            }
+            let shift = (at % 8) as u8;
+            (
+                FieldPlace {
+                    offset: at / 8,
+                    shift,
+                    width: w,
+                    span_bytes: ((shift as u64 + w as u64).div_ceil(8)) as u8,
+                },
+                at.saturating_add(w as u64),
+            )
+        }
+    }
+}
+
+fn struct_plan_inner(
+    id: StructId,
+    tables: &dyn TypeShape,
+    visiting: &mut Vec<(bool, u32)>,
+) -> Option<StructPlan> {
+    fn align_up(off: u64, al: u64) -> u64 {
+        if al == 0 {
+            off
+        } else {
+            (off + al - 1) & !(al - 1)
+        }
+    }
+    let is_union = tables.struct_is_union(id);
+    let pack = tables.struct_pack(id);
+    let widths = tables.struct_bit_widths(id);
+    let ftys = tables.struct_field_tys(id);
+    let mut places = Vec::with_capacity(ftys.len());
+    let mut cursor_bits: u64 = 0;
+    let mut union_size: u64 = 0;
+    let mut max_align: u64 = 1;
+    let mut ok = true;
+    for (i, fty) in ftys.iter().enumerate() {
+        let Some((sz, al)) = layout_of_inner(fty, tables, visiting) else {
+            ok = false;
+            places.push(FieldPlace {
+                offset: 0,
+                shift: 0,
+                width: 0,
+                span_bytes: 0,
+            });
+            continue;
+        };
+        let eff_al = match pack {
+            Some(p) => al.min(p),
+            None => al,
+        };
+        max_align = max_align.max(eff_al);
+        let width = widths.get(i).copied().unwrap_or(0);
+        if is_union && width == 0 {
+            // Every member starts at 0; the size is the largest of them.
+            union_size = union_size.max(sz);
+            places.push(FieldPlace {
+                offset: 0,
+                shift: 0,
+                width: 0,
+                span_bytes: 0,
+            });
+            continue;
+        }
+        let (place, next) = place_field(
+            cursor_bits,
+            sz,
+            al,
+            (width > 0).then_some(width),
+            pack,
+        );
+        places.push(place);
+        cursor_bits = next;
+    }
+    if !ok {
+        return None;
+    }
+    let bytes = if is_union {
+        union_size
+    } else {
+        cursor_bits.div_ceil(8)
+    };
+    Some(StructPlan {
+        places,
+        size: align_up(bytes, max_align),
+        align: max_align.max(1),
+    })
 }
 
 /// v0.0.14 auto field-drop: does a value of `ty` need teardown?
@@ -2002,32 +2279,13 @@ fn layout_of_inner(
                 return Some((0, 1));
             }
             visiting.push((true, id.0));
-            // A UNION overlaps: every field starts at 0, so the size is the
-            // largest member and the alignment is the strictest — then the
-            // size rounds up to that alignment, exactly as C does, so an
-            // array of unions steps correctly.
-            let is_union = tables.struct_is_union(*id);
-            let mut off: u64 = 0;
-            let mut max_sz: u64 = 0;
-            let mut max_al: u64 = 1;
-            let mut ok = true;
-            for fty in tables.struct_field_tys(*id) {
-                match layout_of_inner(&fty, tables, visiting) {
-                    Some((sz, al)) => {
-                        max_al = max_al.max(al);
-                        if is_union {
-                            max_sz = max_sz.max(sz);
-                        } else {
-                            off = align_up(off, al);
-                            off = off.saturating_add(sz);
-                        }
-                    }
-                    None => ok = false,
-                }
-            }
+            // One rule, one place: the field-by-field walk (union overlap,
+            // packing, bitfield storage units) lives in `struct_plan`, so
+            // the size reported here and the offsets codegen GEPs to are the
+            // same computation and cannot drift.
+            let plan = struct_plan_inner(*id, tables, visiting);
             visiting.pop();
-            let total = if is_union { max_sz } else { off };
-            ok.then(|| (align_up(total, max_al), max_al.max(1)))
+            plan.map(|p| (p.size, p.align))
         }
         Ty::Enum(id) => {
             if !tables.enum_is_tagged(*id) {
@@ -2065,6 +2323,12 @@ impl TypeShape for SemaCx<'_> {
     }
     fn struct_is_union(&self, id: StructId) -> bool {
         self.structs[id.0 as usize].is_union
+    }
+    fn struct_pack(&self, id: StructId) -> Option<u64> {
+        self.structs[id.0 as usize].pack
+    }
+    fn struct_bit_widths(&self, id: StructId) -> Vec<u8> {
+        self.structs[id.0 as usize].bit_widths.clone()
     }
     fn enum_repr_bits(&self, id: EnumId) -> u8 {
         self.enums[id.0 as usize].repr.0
@@ -2827,6 +3091,11 @@ impl SemaCx<'_> {
                     self.structs.push(StructDef {
                         name: s.name.name.clone(),
                         is_union: s.is_union,
+                        // Filled by `check_packing`, which owns every rule
+                        // about them (E0926/E0927) and needs resolved field
+                        // types to state them.
+                        pack: None,
+                        bit_widths: Vec::new(),
                         fields: Vec::new(),
                         methods: HashMap::new(),
                         is_copy: false,
@@ -2947,6 +3216,221 @@ impl SemaCx<'_> {
     ///   description — the headers it exists to bind are never generic.
     /// - **At least one field** (E0925). A zero-size union has no meaning and
     ///   `layout_of` would answer 0, which no C header ever asks for.
+    /// v0.0.28: what `#[repr(..., packed)]` and `#[bits(N)]` may describe,
+    /// and the recording of what they do describe.
+    ///
+    /// Both exist for one reason — binding a C header without lying about
+    /// its shape — and every rule below is that reason applied:
+    ///
+    /// - **`packed = N` is a power of two, 1..=16** (E0926). Anything else
+    ///   names no boundary a C compiler recognizes.
+    /// - **Neither may appear on a generic struct** (E0927). A C header is
+    ///   never generic, and a bitfield's legality (below) cannot be judged
+    ///   until the field type is known.
+    /// - **A bitfield's type is an integer** (E0927), and its width is
+    ///   `1..=` that type's bit count. Width `0` — C's alignment-forcing
+    ///   `unsigned :0;` — is rejected rather than half-supported: it has no
+    ///   storage to name, and C+ struct literals name every field.
+    /// - **A bitfield needs `#[repr(C)]`** (E0927). Without the C-layout
+    ///   promise there is no storage-unit rule to be packed into.
+    /// - **No bitfields in a union** (E0927): every member of a union
+    ///   starts at offset 0, which is the one thing a bit position is not.
+    ///
+    /// The address rules (a bitfield and an under-aligned packed field have
+    /// no address that a `ref` or `#addr_of` may take) are enforced at the
+    /// use site, in `check_place_addressable`.
+    fn check_packing(&mut self, p: &Program) {
+        for item in &p.items {
+            self.current_file = item.origin_file.clone();
+            // An enum is a bare integer of its `#[repr]` width; there are no
+            // fields to move and no padding to remove, so `packed` on one
+            // names nothing. Saying so beats laying out a promise that has no
+            // effect.
+            if let ItemKind::Enum(e) = &item.kind {
+                if let Some((_, span)) = crate::ast::struct_pack_of(&e.attributes) {
+                    self.err(
+                        "E0926",
+                        format!(
+                            "`packed` has no meaning on `enum {}`: an enum is a single integer of its `#[repr]` width, with no fields to pack",
+                            e.name.name
+                        ),
+                        span,
+                    );
+                }
+                continue;
+            }
+            let ItemKind::Struct(s) = &item.kind else {
+                continue;
+            };
+            let pack = crate::ast::struct_pack_of(&s.attributes);
+            let any_bits = s
+                .fields
+                .iter()
+                .any(|f| crate::ast::field_bits_of(&f.attributes).is_some());
+            if pack.is_none() && !any_bits {
+                continue;
+            }
+            if !s.generic_params.is_empty() {
+                let (code, what) = if pack.is_some() {
+                    ("E0926", "`#[repr(packed)]`")
+                } else {
+                    ("E0927", "a bitfield")
+                };
+                self.err(
+                    code,
+                    format!(
+                        "`{}` is generic, so it cannot declare {what}: packing and bit widths describe a C-ABI layout, and a C header is never generic",
+                        s.name.name
+                    ),
+                    s.name.span,
+                );
+                continue;
+            }
+            let Some(&id) = self.struct_by_name.get(&s.name.name) else {
+                continue;
+            };
+            // ---- packing ----
+            let mut pack_bytes: Option<u64> = None;
+            if let Some((n, span)) = pack {
+                if n < 1 || n > 16 || !(n as u64).is_power_of_two() {
+                    self.err(
+                        "E0926",
+                        format!(
+                            "`packed = {}` is not a byte boundary: it must be a power of two from 1 to 16 (bare `packed` means `packed = 1`)",
+                            if n < 0 { "…".to_string() } else { n.to_string() }
+                        ),
+                        span,
+                    );
+                } else {
+                    pack_bytes = Some(n as u64);
+                }
+            }
+            // ---- bit widths ----
+            let field_tys: Vec<Ty> = self.structs[id.0 as usize]
+                .fields
+                .iter()
+                .map(|(_, t, _)| t.clone())
+                .collect();
+            let mut widths: Vec<u8> = vec![0; field_tys.len()];
+            let mut saw_bitfield = false;
+            for (i, f) in s.fields.iter().enumerate() {
+                let Some((n, span)) = crate::ast::field_bits_of(&f.attributes) else {
+                    continue;
+                };
+                if i >= field_tys.len() {
+                    continue;
+                }
+                let fty = &field_tys[i];
+                if matches!(fty, Ty::Error) {
+                    continue;
+                }
+                if s.is_union {
+                    self.err(
+                        "E0927",
+                        format!(
+                            "union member `{}` cannot be a bitfield: every member of a union starts at offset 0, which is the one thing a bit position is not",
+                            f.name.name
+                        ),
+                        span,
+                    );
+                    continue;
+                }
+                if !self.struct_is_repr_c(id) {
+                    self.err(
+                        "E0927",
+                        format!(
+                            "field `{}` is a bitfield, so `{}` must be `#[repr(C)]`: a bit width is a claim about C storage units, and without the C-layout promise there is none to pack into",
+                            f.name.name, s.name.name
+                        ),
+                        span,
+                    );
+                    continue;
+                }
+                let Some(bits) = int_bit_width(fty, self) else {
+                    self.err(
+                        "E0927",
+                        format!(
+                            "field `{}` has type `{}`, which cannot carry a bit width: a bitfield is an integer packed into a storage unit",
+                            f.name.name,
+                            self.ty_display_named(fty)
+                        ),
+                        span,
+                    );
+                    continue;
+                };
+                if n <= 0 {
+                    self.err(
+                        "E0927",
+                        format!(
+                            "`#[bits({})]` on field `{}`: a width must be at least 1. C's `:0` (force the next field to a boundary) has no storage to name and no way to appear in a struct literal, so it is not admitted",
+                            n, f.name.name
+                        ),
+                        span,
+                    );
+                    continue;
+                }
+                if n as u64 > bits {
+                    self.err(
+                        "E0927",
+                        format!(
+                            "`#[bits({})]` on field `{}` is wider than its type `{}` ({} bits)",
+                            n,
+                            f.name.name,
+                            self.ty_display_named(fty),
+                            bits
+                        ),
+                        span,
+                    );
+                    continue;
+                }
+                widths[i] = n as u8;
+                saw_bitfield = true;
+            }
+            // A packed field is under-aligned, and a destructor takes the
+            // address of what it tears down — `drop(ref this)` on a field at
+            // an odd offset is a misaligned receiver before its first line
+            // runs. The same reasoning as the union's `Copy` rule (E0925),
+            // reached from the other direction: there, nothing knows WHICH
+            // member to drop; here, nothing can hand the destructor a
+            // pointer it may believe. A C struct being described has no
+            // destructors to lose.
+            if pack_bytes.is_some() {
+                let non_copy: Vec<(String, Ty)> = self.structs[id.0 as usize]
+                    .fields
+                    .iter()
+                    .filter(|(_, t, _)| !matches!(t, Ty::Error))
+                    .map(|(n, t, _)| (n.clone(), t.clone()))
+                    .filter(|(_, t)| !self.is_copy(t))
+                    .collect();
+                for (fname, fty) in non_copy {
+                    let span = s
+                        .fields
+                        .iter()
+                        .find(|f| f.name.name == fname)
+                        .map(|f| f.span)
+                        .unwrap_or(s.name.span);
+                    self.err(
+                        "E0926",
+                        format!(
+                            "field `{}` of packed `{}` has non-`Copy` type `{}`: packing puts fields at offsets their types are not aligned to, and a destructor is handed the address of what it tears down — only `Copy` members are admitted",
+                            fname,
+                            s.name.name,
+                            self.ty_display_named(&fty)
+                        ),
+                        span,
+                    );
+                }
+            }
+            let def = &mut self.structs[id.0 as usize];
+            def.pack = pack_bytes;
+            def.bit_widths = if saw_bitfield { widths } else { Vec::new() };
+        }
+    }
+
+    fn struct_is_repr_c(&self, id: StructId) -> bool {
+        self.structs[id.0 as usize].is_repr_c
+    }
+
     fn check_unions(&mut self, p: &Program) {
         for item in &p.items {
             self.current_file = item.origin_file.clone();
@@ -5909,9 +6393,10 @@ impl SemaCx<'_> {
             );
         }
         self.check_return_region_declared(&m.params, &m.return_type);
-        // v0.0.27 contracts: method preconditions check in the
-        // receiver + parameter scope, before the body.
-        self.check_requires_attrs(&m.attributes);
+        // v0.0.27/v0.0.28 contracts: method pre- and postconditions check in
+        // the receiver + parameter scope, before the body.
+        let contract_ret = self.current_return.clone();
+        self.check_contract_attrs(&m.attributes, &contract_ret);
         self.check_function_body(
             &m.body,
             self.current_return.clone(),
@@ -6000,9 +6485,10 @@ impl SemaCx<'_> {
             );
         }
         self.check_return_region_declared(&m.params, &m.return_type);
-        // v0.0.27 contracts: method preconditions check in the
-        // receiver + parameter scope, before the body.
-        self.check_requires_attrs(&m.attributes);
+        // v0.0.27/v0.0.28 contracts: method pre- and postconditions check in
+        // the receiver + parameter scope, before the body.
+        let contract_ret = self.current_return.clone();
+        self.check_contract_attrs(&m.attributes, &contract_ret);
         self.check_function_body(
             &m.body,
             self.current_return.clone(),
@@ -6171,9 +6657,10 @@ impl SemaCx<'_> {
             );
         }
         self.check_return_region_declared(&m.params, &m.return_type);
-        // v0.0.27 contracts: method preconditions check in the
-        // receiver + parameter scope, before the body.
-        self.check_requires_attrs(&m.attributes);
+        // v0.0.27/v0.0.28 contracts: method pre- and postconditions check in
+        // the receiver + parameter scope, before the body.
+        let contract_ret = self.current_return.clone();
+        self.check_contract_attrs(&m.attributes, &contract_ret);
         self.check_function_body(
             &m.body,
             self.current_return.clone(),
@@ -7777,11 +8264,11 @@ impl SemaCx<'_> {
             );
         }
         self.check_return_region_declared(&f.params, &f.return_type);
-        // v0.0.27 contracts: `#[requires(EXPR)]` type-checks in the
-        // parameter scope, before the body (its reads must not perturb
-        // definite-assignment/move state — the purity rule guarantees the
-        // expression has no effects to record).
-        self.check_requires_attrs(&f.attributes);
+        // v0.0.27/v0.0.28 contracts: `#[requires(EXPR)]` / `#[ensures(EXPR)]`
+        // type-check in the parameter scope, before the body (their reads must
+        // not perturb definite-assignment/move state — the purity rule
+        // guarantees the expression has no effects to record).
+        self.check_contract_attrs(&f.attributes, &body_return);
         self.check_function_body(
             &f.body,
             body_return,
@@ -9416,6 +9903,13 @@ impl SemaCx<'_> {
             let _ = self.check_expr(arg, None);
             return Ty::Error;
         }
+        // v0.0.28: the pointer would outlive every fact that makes the
+        // access correct — the shift, or the reduced alignment.
+        if let Some((code, msg)) = self.unaddressable_field(arg) {
+            self.err(code, msg, arg.span);
+            let _ = self.check_expr(arg, None);
+            return Ty::Error;
+        }
         let ty = self.check_expr(arg, None);
         if matches!(ty, Ty::Error) {
             return Ty::Error;
@@ -10250,6 +10744,9 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             // Tuples and generic instantiations are structs; a union is
             // neither generic nor synthesized.
             is_union: false,
+            // A tuple has no attributes to carry a pack or a bit width.
+            pack: None,
+            bit_widths: Vec::new(),
             fields,
             methods: HashMap::new(),
             is_copy: false,
@@ -11304,15 +11801,52 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         self.instantiate_option(&to, span)
     }
 
-    /// v0.0.27 contracts: validate every `#[requires(EXPR)]` on the item
-    /// whose parameter scope is currently pushed. Each expression must be
-    /// PURE — operators, literals, parameter/const reads, field reads —
-    /// and type as `bool`. Calls, assignments, and anything effectful are
-    /// E0924: a contract that mutates state changes the program it guards.
-    fn check_requires_attrs(&mut self, attributes: &[Attribute]) {
+    /// v0.0.27/v0.0.28 contracts: validate every `#[requires(EXPR)]` and
+    /// `#[ensures(EXPR)]` on the item whose parameter scope is currently
+    /// pushed. Each expression must be PURE — operators, literals,
+    /// parameter/const reads, field reads — and type as `bool`. Calls,
+    /// assignments, and anything effectful are E0924: a contract that
+    /// mutates state changes the program it guards.
+    ///
+    /// An `#[ensures]` also sees `result`, the value being returned. It is
+    /// bound in a scope of its own so the contract can name it without the
+    /// body being able to, and a function that returns nothing has nothing
+    /// to bind — using it there is E0928 rather than an unknown identifier,
+    /// because the reader's question is "what would `result` even be".
+    fn check_contract_attrs(&mut self, attributes: &[Attribute], ret_ty: &Ty) {
         for a in attributes {
-            if a.path.name != "requires" {
-                continue;
+            let is_ensures = match a.path.name.as_str() {
+                "requires" => false,
+                "ensures" => true,
+                _ => continue,
+            };
+            let what = if is_ensures { "ensures" } else { "requires" };
+            if is_ensures {
+                // The contract's `result` and a parameter called `result`
+                // cannot both be meant. Say which one is in the way.
+                if self.lookup_local("result").is_some() {
+                    self.err(
+                        "E0928",
+                        "`#[ensures]` binds `result` to the returned value, so this function cannot also have a binding named `result` in scope".to_string(),
+                        a.span,
+                    );
+                }
+                self.scopes.push(HashMap::new());
+                if !matches!(ret_ty, Ty::Unit) {
+                    self.scopes.last_mut().unwrap().insert(
+                        "result".to_string(),
+                        LocalInfo {
+                            ty: ret_ty.clone(),
+                            mutable: false,
+                            moved: false,
+                            moved_at: None,
+                            assigned: true,
+                            // The contract READS the value on its way out; it
+                            // never owns it, so nothing here can move it.
+                            owns_value: false,
+                        },
+                    );
+                }
             }
             for arg in &a.args {
                 let crate::ast::AttrArg::Expr(e) = arg else {
@@ -11321,12 +11855,25 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 if let Some(span) = first_impure_in_contract(e) {
                     self.err(
                         "E0924",
-                        "a `#[requires]` expression must be pure: operators, literals, parameter and `const` reads, and field reads only — no calls or assignments".to_string(),
+                        format!("a `#[{what}]` expression must be pure: operators, literals, parameter and `const` reads, and field reads only — no calls or assignments"),
                         span,
                     );
                     continue;
                 }
+                if is_ensures && matches!(ret_ty, Ty::Unit) {
+                    if let Some(span) = first_result_read(e) {
+                        self.err(
+                            "E0928",
+                            "`result` names the value being returned, and this function returns nothing — an `#[ensures]` here can only speak about parameters and `this`".to_string(),
+                            span,
+                        );
+                        continue;
+                    }
+                }
                 let _ = self.check_expr(e, Some(Ty::Bool));
+            }
+            if is_ensures {
+                self.scopes.pop();
             }
         }
     }
@@ -12871,6 +13418,14 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 ),
                 receiver.span,
             );
+        }
+        // v0.0.28: `ref this` is pointer-passed, so calling one on a packed
+        // field hands the method a misaligned receiver — the same escape a
+        // `ref` argument makes, one syntax over.
+        if matches!(rcv, Receiver::Mut) {
+            if let Some((code, msg)) = self.unaddressable_field(receiver) {
+                self.err(code, msg, receiver.span);
+            }
         }
         // `take this` consumes the receiver place — but only for a non-Copy
         // receiver (`is_copy` is bound-aware for a `Ty::Param`). `consume_place`
@@ -15852,6 +16407,14 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         if self.arg_bypasses_check(arg, expected) {
             return;
         }
+        // v0.0.28: a `ref` parameter is pointer-passed, so the argument's
+        // address is taken whether or not the source says so. A bitfield or a
+        // packed field has none to give.
+        if expected.mutable && !expected.move_ && !expected.borrow_ {
+            if let Some((code, msg)) = self.unaddressable_field(arg) {
+                self.err(code, msg, arg.span);
+            }
+        }
         if expected.mutable
             && !expected.move_
             && !expected.borrow_
@@ -15927,6 +16490,68 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
     /// expressions or places this lightweight resolver can't follow
     /// (method results, calls, etc.). Used by `reject_partial_move_of_drop`
     /// to walk a projection chain.
+    /// v0.0.28: the reason this place has no address worth taking, or `None`
+    /// when it has one.
+    ///
+    /// Two shapes, one cause — the field is not where its type says it would
+    /// be:
+    ///
+    /// - A **bitfield** is bits inside a unit it shares with its neighbours.
+    ///   There is no `u32` at any address to point a `*u32` at, and a write
+    ///   through such a pointer would overwrite the neighbours. (Before this
+    ///   check existed, `bump(s.a)` on a `ref u32` parameter took the address
+    ///   of a temporary copy and the write was silently lost.)
+    /// - A field of a **packed** struct sits at an offset its own type does
+    ///   not align to. The pointer would be typed `*u32` and be odd; every
+    ///   reader of it — the callee, LLVM's vectorizer, a strict-alignment
+    ///   target — is entitled to assume it is not.
+    ///
+    /// Reading and writing the field directly stays legal in both cases: the
+    /// compiler knows the shift and the alignment at the access site. It is
+    /// only the escaping POINTER that cannot carry them.
+    fn unaddressable_field(&self, e: &Expr) -> Option<(&'static str, String)> {
+        let ExprKind::Field { receiver, name } = &e.kind else {
+            return None;
+        };
+        let Ty::Struct(id) = self.place_ty_quiet(receiver)? else {
+            return None;
+        };
+        let def = self.structs.get(id.0 as usize)?;
+        if def.pack.is_none() && def.bit_widths.is_empty() {
+            return None;
+        }
+        let idx = def.fields.iter().position(|(n, _, _)| n == &name.name)?;
+        let plan = struct_plan(id, self)?;
+        let place = *plan.places.get(idx)?;
+        if place.is_bitfield() {
+            return Some((
+                "E0927",
+                format!(
+                    "`{}` is a bitfield: it shares a storage unit with its neighbours, so it has no address of its own to borrow or point at. Read or write it directly, or copy it into a local first",
+                    name.name
+                ),
+            ));
+        }
+        let fty = &self.structs[id.0 as usize].fields[idx].1;
+        let natural = layout_of(fty, self).map(|(_, a)| a)?;
+        let actual = plan.field_align(idx, natural);
+        if actual < natural {
+            return Some((
+                "E0926",
+                format!(
+                    "`{}` sits at offset {} of a packed struct, so it is {}-byte aligned where its type `{}` wants {}: a pointer to it would be a `{}` that is not aligned like one. Copy it into a local and take that instead",
+                    name.name,
+                    place.offset,
+                    actual,
+                    self.ty_display_named(fty),
+                    natural,
+                    self.ty_display_named(fty),
+                ),
+            ));
+        }
+        None
+    }
+
     fn place_ty_quiet(&self, e: &Expr) -> Option<Ty> {
         match &e.kind {
             ExprKind::Ident(name) => self.lookup_local(name).map(|i| i.ty.clone()),
@@ -17244,6 +17869,10 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             // Tuples and generic instantiations are structs; a union is
             // neither generic nor synthesized.
             is_union: false,
+            // A generic template cannot declare either (E0926/E0927): both
+            // describe a C-ABI shape, and C headers are not generic.
+            pack: None,
+            bit_widths: Vec::new(),
             fields,
             methods: HashMap::new(),
             is_copy: false, // recomputed by compute_struct_copy_flags? not for late-synthesized
@@ -17724,6 +18353,32 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         for (name, args) in fn_seed {
             ctl.enqueue(true, name, args);
         }
+        // issue-10 (v0.0.28): METHOD-level generics — `impl Holder { fn
+        // lend[T](..) }`. This pass had two arms, generic free fns and
+        // generic-struct impls, and a method that carries its own type
+        // parameter is neither: its body was never walked under a concrete
+        // `T`, so a generic type it mentions (`Cell[T]`) never got the
+        // instantiation the rewrite later looks up. Monomorphize then left
+        // `Cell[T]` as a `TypeKind::Generic` and codegen panicked on it —
+        // the same drift as the free-fn path, one dispatch kind over.
+        //
+        // Method instantiations ride the same worklist, keyed
+        // `Type\u{1f}method`, so anything their bodies discover is chased
+        // exactly like a free fn's.
+        let method_seed: Vec<(String, Vec<Ty>)> = self
+            .method_instantiations
+            .iter()
+            .filter(|(_, _, args)| param_free(args, &self.structs, &self.enums))
+            .map(|(sid, mname, args)| {
+                (
+                    format!("{}\u{1f}{}", self.structs[sid.0 as usize].name, mname),
+                    args.clone(),
+                )
+            })
+            .collect();
+        for (name, args) in method_seed {
+            ctl.enqueue(true, name, args);
+        }
         while let Some((is_fn, name, args)) = ctl.queue.pop_front() {
             if !ctl.done.insert((is_fn, name.clone(), args.clone())) {
                 continue;
@@ -17732,7 +18387,57 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             // process sites with `&mut self` (the walker itself only borrows
             // `program`).
             let mut walks: Vec<(Vec<BodySite>, HashMap<String, Ty>)> = Vec::new();
-            if is_fn {
+            if let Some((type_name, method_name)) = name.split_once('\u{1f}') {
+                // issue-10: a method-level generic. Its subst is the METHOD's
+                // own parameters bound to this instantiation's args, layered
+                // over the receiver's if the receiver is itself an
+                // instantiation (`Vec[i32]::map[U]` binds T from the
+                // receiver's `generic_origin` and U from the call).
+                let (template, outer): (String, HashMap<String, Ty>) = self
+                    .struct_by_name
+                    .get(type_name)
+                    .and_then(|id| self.structs[id.0 as usize].generic_origin.clone())
+                    .map(|(tmpl, targs)| {
+                        let params = impls_by_target
+                            .get(&tmpl)
+                            .and_then(|idxs| idxs.first().copied())
+                            .and_then(|i| match &program.items[i].kind {
+                                ItemKind::Impl(b) => Some(b.target_generic_params.clone()),
+                                _ => None,
+                            })
+                            .unwrap_or_default();
+                        let map: HashMap<String, Ty> = params
+                            .iter()
+                            .map(|g| g.name.name.clone())
+                            .zip(targs.iter().cloned())
+                            .collect();
+                        (tmpl, map)
+                    })
+                    .unwrap_or_else(|| (type_name.to_string(), HashMap::new()));
+                for item in &program.items {
+                    let ItemKind::Impl(b) = &item.kind else {
+                        continue;
+                    };
+                    if b.target.name != template {
+                        continue;
+                    }
+                    for m in &b.methods {
+                        if m.name.name != method_name || m.generic_params.len() != args.len() {
+                            continue;
+                        }
+                        let mut subst = outer.clone();
+                        subst.extend(
+                            m.generic_params
+                                .iter()
+                                .map(|g| g.name.name.clone())
+                                .zip(args.iter().cloned()),
+                        );
+                        let mut sites: Vec<BodySite> = Vec::new();
+                        walk_body_sites_in_block(&m.body, &mut sites);
+                        walks.push((sites, subst));
+                    }
+                }
+            } else if is_fn {
                 if let Some(&idx) = fn_items_by_name.get(&name) {
                     if let ItemKind::Function(f) = &program.items[idx].kind {
                         if f.generic_params.len() == args.len() {
@@ -20265,6 +20970,28 @@ fn int_lit_max_magnitude(t: &Ty, negated: bool) -> Option<u64> {
 /// and parenthesized/grouping shapes. Everything else — calls, method
 /// calls, assignments, blocks, struct literals, awaits — is effectful or
 /// evaluation-order-bearing and has no place in a precondition.
+/// v0.0.28: the span of the first `result` read in a contract expression, or
+/// `None`. Used to say "this function returns nothing" at the word itself.
+fn first_result_read(e: &Expr) -> Option<ByteSpan> {
+    match &e.kind {
+        ExprKind::Ident(n) => (n == "result").then_some(e.span),
+        ExprKind::Field { receiver, .. } => first_result_read(receiver),
+        ExprKind::Unary { operand, .. } => first_result_read(operand),
+        ExprKind::Binary { lhs, rhs, .. } => {
+            first_result_read(lhs).or_else(|| first_result_read(rhs))
+        }
+        ExprKind::Cast { expr, .. } | ExprKind::CastChecked { expr, .. } => {
+            first_result_read(expr)
+        }
+        ExprKind::Index { receiver, index } => {
+            first_result_read(receiver).or_else(|| first_result_read(index))
+        }
+        // Anything else is impure and already rejected by E0924, so there is
+        // no shape left that could hide a `result` read.
+        _ => None,
+    }
+}
+
 fn first_impure_in_contract(e: &Expr) -> Option<ByteSpan> {
     match &e.kind {
         ExprKind::IntLit(..)
@@ -30738,6 +31465,113 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
         assert!(codes.contains(&"E0924"), "got {:?}", codes);
     }
 
+    // ---- interface default method bodies (v0.0.28) ----
+
+    #[test]
+    fn interface_default_body_fills_an_omitted_method() {
+        // `Sq` declares only `area`; `describe` comes from the interface.
+        // `Rect` declares both, and its own wins.
+        let diags = check_src_lowered(
+            "interface Shape {\n                 fn area(this) -> i32;\n                 fn describe(this) -> i32 { return this.area() * 2; }\n             }\n             struct Sq { s: i32 }\n             impl Sq: Shape { fn area(this) -> i32 { return this.s * this.s; } }\n             struct Rect { w: i32, h: i32 }\n             impl Rect: Shape {\n                 fn area(this) -> i32 { return this.w * this.h; }\n                 fn describe(this) -> i32 { return 99; }\n             }\n             fn main() -> i32 {\n                 let a: Sq = Sq { s: 3 };\n                 let b: Rect = Rect { w: 2, h: 5 };\n                 return a.describe() - 18 + b.describe() - 99;\n             }",
+        );
+        assert!(diags.is_empty(), "got {:#?}", diags);
+    }
+
+    #[test]
+    fn all_defaulted_interface_takes_an_empty_impl() {
+        // An empty impl of a USER interface is E0916 — unless every method
+        // it requires has a default, in which case there is nothing left to
+        // write and the block is complete as it stands.
+        let diags = check_src_lowered(
+            "interface Greet { fn hello(this) -> i32 { return 7; } }\n             struct A { n: i32 }\n             impl A: Greet {}\n             fn twice[T: Greet](x: T) -> i32 { return x.hello() + x.hello(); }\n             fn main() -> i32 { let a: A = A { n: 0 }; return twice::[A](a) - 14; }",
+        );
+        assert!(diags.is_empty(), "got {:#?}", diags);
+    }
+
+    #[test]
+    fn default_body_is_checked_against_the_implementing_type() {
+        // The body is copied into each impl block, so a method the
+        // implementor lacks is a diagnostic about THAT type — the interface
+        // itself never type-checks a body it may have no implementor for.
+        let codes = errors(
+            "interface Bad { fn go(this) -> i32 { return this.missing(); } }\n             struct S { n: i32 }\n             impl S: Bad {}\n             fn main() -> i32 { let s: S = S { n: 0 }; return s.go(); }",
+        );
+        assert!(codes.contains(&"E0324"), "got {:?}", codes);
+    }
+
+    // issue-10 (v0.0.28): a METHOD-level generic is a third dispatch kind,
+    // and the body-instantiation pass only had arms for the other two. A
+    // generic type mentioned inside such a method never got instantiated,
+    // monomorphize left it as `TypeKind::Generic`, and codegen panicked.
+    #[test]
+    fn method_level_generic_body_instantiates_its_types() {
+        let diags = check_src_lowered(
+            "struct Cell[T] { v: T }\n             struct Holder { n: i32 }\n             impl Holder {\n                 fn size_of_cell[T](this, probe: T) -> usize { return #size_of::[Cell[T]](); }\n             }\n             fn main() -> i32 {\n                 let h: Holder = Holder { n: 0 };\n                 return (h.size_of_cell::[i32](1) - (4 as usize)) as i32;\n             }",
+        );
+        assert!(diags.is_empty(), "got {:#?}", diags);
+    }
+
+    #[test]
+    fn ensures_contracts_typecheck_clean() {
+        // `result` is the value being returned; a method postcondition can
+        // also speak about `this` AFTER the body ran, which is the half a
+        // precondition cannot express.
+        let lowered = check_src_lowered(
+            "#[ensures(result >= n)]
+             fn double(n: i32) -> i32 { return n + n; }
+             struct C { n: i32 }
+             impl C {
+                 #[ensures(this.n > 0)]
+                 fn bump(ref this) { this.n = this.n + 1; }
+             }
+             struct P { x: i32, y: i32 }
+             #[ensures(result.x > 0)]
+             fn mk(v: i32) -> P { return P { x: v, y: v }; }
+             fn main() -> i32 { return double(0); }",
+        );
+        assert!(lowered.is_empty(), "got {:#?}", lowered);
+    }
+
+    #[test]
+    fn ensures_result_needs_something_to_return_e0928() {
+        let unit = errors(
+            "#[ensures(result > 0)]
+             fn nothing(n: i32) { return; }
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(unit.contains(&"E0928"), "unit fn: {:?}", unit);
+        // A parameter called `result` and the contract's `result` cannot
+        // both be meant.
+        let shadow = errors(
+            "#[ensures(result > 0)]
+             fn f(result: i32) -> i32 { return result; }
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(shadow.contains(&"E0928"), "param collision: {:?}", shadow);
+        // A postcondition on a unit fn is fine when it speaks about what it
+        // CAN speak about.
+        let ok = check_src_lowered(
+            "struct C { n: i32 }
+             impl C {
+                 #[ensures(this.n > 0)]
+                 fn bump(ref this) { this.n = this.n + 1; }
+             }
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(ok.is_empty(), "unit fn about `this`: {:?}", ok);
+    }
+
+    #[test]
+    fn ensures_impure_rejected_e0924() {
+        let codes = errors(
+            "fn probe(x: i32) -> bool { return x > 0; }
+             #[ensures(probe(result))]
+             fn f(n: i32) -> i32 { return n; }
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.contains(&"E0924"), "got {:?}", codes);
+    }
+
     #[test]
     fn requires_nonbool_rejected_e0302() {
         let codes = errors(
@@ -30769,6 +31603,108 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
             "#[lang(\"string\")] struct Text { p: *u8, n: usize, c: usize }\n             impl Text { fn drop(ref this) { return; } }\n             union U { a: i32, t: Text }\n             fn main() -> i32 { return 0; }",
         );
         assert!(codes.contains(&"E0925"), "got {:?}", codes);
+    }
+
+    // ---- packed structs + bitfields (v0.0.28) ----
+
+    #[test]
+    fn packed_and_bitfield_layout_matches_c() {
+        // Every number here was measured against clang on the same
+        // declarations (`cpc/tests/packed_layout_vs_clang.rs` re-measures the
+        // whole set, bytes and all, on every run). The four rules they pin:
+        // a bitfield keeps its type's ALIGNMENT (A is 4-aligned though it is
+        // one byte wide); a bitfield that would cross its type's storage unit
+        // starts a new one (B is 8, not 5); packing removes the padding and
+        // the alignment with it (E is 5/1); and `packed = N` caps rather than
+        // flattens (H is 14/2).
+        let diags = check_src(
+            "#[repr(C)] struct A { #[bits(3)] a: u32, #[bits(5)] b: u32, c: u8 }\n             #[repr(C)] struct B { #[bits(3)] a: u32, #[bits(30)] b: u32 }\n             #[repr(C, packed)] struct E { a: u8, b: u32 }\n             #[repr(C, packed = 2)] struct H { a: u8, b: u32, d: f64 }\n             struct Arr { xs: [A; 3] }\n             fn main() -> i32 {\n                 if #size_of::[A]() != (4 as usize) { return 1; }\n                 if #align_of::[A]() != (4 as usize) { return 2; }\n                 if #size_of::[B]() != (8 as usize) { return 3; }\n                 if #size_of::[E]() != (5 as usize) { return 4; }\n                 if #align_of::[E]() != (1 as usize) { return 5; }\n                 if #size_of::[H]() != (14 as usize) { return 6; }\n                 if #align_of::[H]() != (2 as usize) { return 7; }\n                 if #size_of::[Arr]() != (12 as usize) { return 8; }\n                 return 0;\n             }",
+        );
+        assert!(diags.is_empty(), "got {:#?}", diags);
+    }
+
+    #[test]
+    fn bitfield_shape_rules_e0927() {
+        // A width needs an integer to be a width OF.
+        let float = errors(
+            "#[repr(C)] struct S { #[bits(3)] f: f32 }\nfn main() -> i32 { return 0; }",
+        );
+        assert!(float.contains(&"E0927"), "float bitfield: {:?}", float);
+        // ...and must fit in it.
+        let wide = errors(
+            "#[repr(C)] struct S { #[bits(9)] f: u8 }\nfn main() -> i32 { return 0; }",
+        );
+        assert!(wide.contains(&"E0927"), "over-wide: {:?}", wide);
+        // C's `:0` has no storage to name and no way to appear in a literal.
+        let zero = errors(
+            "#[repr(C)] struct S { #[bits(0)] f: u32 }\nfn main() -> i32 { return 0; }",
+        );
+        assert!(zero.contains(&"E0927"), "zero width: {:?}", zero);
+        // A bit position is a claim about C storage units; without the
+        // C-layout promise there is none.
+        let no_repr = errors(
+            "struct S { #[bits(3)] f: u32 }\nfn main() -> i32 { return 0; }",
+        );
+        assert!(no_repr.contains(&"E0927"), "no repr(C): {:?}", no_repr);
+        // Every member of a union starts at offset 0.
+        let uni = errors(
+            "#[repr(C)] union U { #[bits(3)] a: u32, b: u32 }\nfn main() -> i32 { return 0; }",
+        );
+        assert!(uni.contains(&"E0927"), "union bitfield: {:?}", uni);
+        // A C header is never generic.
+        let gen = errors(
+            "#[repr(C)] struct S[T] { #[bits(3)] a: u32, t: T }\nfn main() -> i32 { return 0; }",
+        );
+        assert!(gen.contains(&"E0927"), "generic: {:?}", gen);
+    }
+
+    #[test]
+    fn packed_shape_rules_e0926() {
+        // A byte boundary is a power of two.
+        let three = errors(
+            "#[repr(C, packed = 3)] struct S { a: u8, b: u32 }\nfn main() -> i32 { return 0; }",
+        );
+        assert!(three.contains(&"E0926"), "packed = 3: {:?}", three);
+        // An enum is one integer; there is nothing to pack.
+        let en = errors("#[repr(packed)] enum E { A, B }\nfn main() -> i32 { return 0; }");
+        assert!(en.contains(&"E0926"), "packed enum: {:?}", en);
+        // A destructor is handed the address of what it tears down, and a
+        // packed field has none it can believe.
+        let drop_field = errors(
+            "#[lang(\"string\")] struct Text { p: *u8, n: usize, c: usize }\n             impl Text { fn drop(ref this) { return; } }\n             #[repr(C, packed)] struct S { a: u8, t: Text }\n             fn main() -> i32 { return 0; }",
+        );
+        assert!(drop_field.contains(&"E0926"), "non-Copy field: {:?}", drop_field);
+    }
+
+    #[test]
+    fn no_address_of_a_bitfield_or_packed_field() {
+        // A bitfield shares its unit — there is no `u32` at any address.
+        // Before this rule, `bump(s.a)` took the address of a COPY and the
+        // write was silently discarded.
+        let bf = errors(
+            "#[repr(C)] struct S { #[bits(3)] a: u32, #[bits(5)] b: u32 }\n             fn bump(ref v: u32) -> () { v = v + (1 as u32); }\n             fn main() -> i32 { var s: S = S { a: 1 as u32, b: 2 as u32 }; bump(s.a); return 0; }",
+        );
+        assert!(bf.contains(&"E0927"), "ref to bitfield: {:?}", bf);
+        let addr = errors(
+            "#[repr(C)] struct S { #[bits(3)] a: u32, #[bits(5)] b: u32 }\n             fn main() -> i32 { var s: S = S { a: 1 as u32, b: 2 as u32 };\n                 let q: *u32 = #addr_of(s.a); return 0; }",
+        );
+        assert!(addr.contains(&"E0927"), "addr_of bitfield: {:?}", addr);
+        // A packed field is where its type is not aligned.
+        let pk = errors(
+            "#[repr(C, packed)] struct P { x: u8, y: u32 }\n             fn bump(ref v: u32) -> () { v = v + (1 as u32); }\n             fn main() -> i32 { var p: P = P { x: 1 as u8, y: 7 as u32 }; bump(p.y); return 0; }",
+        );
+        assert!(pk.contains(&"E0926"), "ref to packed field: {:?}", pk);
+        // `ref this` is the same escape one syntax over.
+        let recv = errors(
+            "#[repr(C)] struct Inner { v: u32 }\n             impl Inner { fn bump(ref this) -> () { this.v = this.v + (1 as u32); } }\n             #[repr(C, packed)] struct Outer { tag: u8, inner: Inner }\n             fn main() -> i32 { var o: Outer = Outer { tag: 1 as u8, inner: Inner { v: 5 as u32 } };\n                 o.inner.bump(); return 0; }",
+        );
+        assert!(recv.contains(&"E0926"), "ref this on packed field: {:?}", recv);
+        // The aligned field of a packed struct keeps its address: the rule is
+        // about the offset, not about the attribute.
+        let ok = errors(
+            "#[repr(C, packed)] struct P { a: u8, b: u8 }\n             fn bump(ref v: u8) -> () { v = v + (1 as u8); }\n             fn main() -> i32 { var p: P = P { a: 1 as u8, b: 2 as u8 }; bump(p.b); return 0; }",
+        );
+        assert!(ok.is_empty(), "1-aligned packed field: {:?}", ok);
     }
 
     #[test]

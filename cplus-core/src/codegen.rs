@@ -2098,6 +2098,12 @@ impl crate::sema::TypeShape for TypeTable {
     fn struct_is_union(&self, id: StructId) -> bool {
         self.struct_defs[id.0 as usize].is_union
     }
+    fn struct_pack(&self, id: StructId) -> Option<u64> {
+        self.struct_defs[id.0 as usize].pack
+    }
+    fn struct_bit_widths(&self, id: StructId) -> Vec<u8> {
+        self.struct_defs[id.0 as usize].bit_widths.clone()
+    }
     fn struct_field_tys(&self, id: StructId) -> Vec<Ty> {
         self.struct_defs[id.0 as usize]
             .fields
@@ -2176,6 +2182,24 @@ struct StructInfo {
     /// v0.0.27: a `union` — every field lives at offset 0 and the type is a
     /// size/alignment blob rather than a member list.
     is_union: bool,
+    /// v0.0.28: `#[repr(..., packed[= N])]`, re-derived off the post-mono
+    /// AST through the same `ast::struct_pack_of` sema reads — so the two
+    /// cannot disagree about what the attribute said. What the packing MEANS
+    /// is `sema::struct_plan`'s, which both sides call.
+    pack: Option<u64>,
+    /// v0.0.28: declared bit widths parallel to `fields`, empty when the
+    /// struct declares no bitfield. Same re-derivation as `pack`.
+    bit_widths: Vec<u8>,
+    /// v0.0.28: the byte-exact placement of every field, from
+    /// `sema::struct_plan`. `Some` exactly when this struct's layout is NOT
+    /// the one LLVM would compute from an ordinary element list — it packs,
+    /// it has bitfields, or it contains (however deeply) a struct that does.
+    ///
+    /// When it is `Some`, the emitted LLVM type is a byte blob and every
+    /// field address is a byte offset out of this plan. Which is how clang
+    /// lowers its own records: the frontend owns the layout, and the LLVM
+    /// type only has to agree on the total size.
+    plan: Option<crate::sema::StructPlan>,
     /// Fields in declaration order. The pair is (field name, field type).
     fields: Vec<(String, Ty)>,
     /// Methods declared in `impl` blocks for this struct.
@@ -2426,9 +2450,31 @@ fn collect_types(
                 let is_lang_future = lang_item("future");
                 // OBS.1: presence-only, same shape as the `repr` read in sema.
                 let is_watched = s.attributes.iter().any(|a| a.path.name == "watch");
+                // v0.0.28: sema has already accepted these (E0926/E0927), so
+                // the values here are legal by construction; only the reading
+                // is repeated, through the shared `ast` helpers.
+                let pack = crate::ast::struct_pack_of(&s.attributes)
+                    .and_then(|(n, _)| (n > 0).then_some(n as u64));
+                let mut bit_widths: Vec<u8> = s
+                    .fields
+                    .iter()
+                    .map(|f| {
+                        crate::ast::field_bits_of(&f.attributes)
+                            .map(|(n, _)| n.clamp(0, 64) as u8)
+                            .unwrap_or(0)
+                    })
+                    .collect();
+                if bit_widths.iter().all(|w| *w == 0) {
+                    bit_widths.clear();
+                }
                 t.struct_defs.push(StructInfo {
                     name: s.name.name.clone(),
                     is_union: s.is_union,
+                    pack,
+                    bit_widths,
+                    // Computed in the last pass of `collect_types`, once
+                    // every field type is resolved.
+                    plan: None,
                     fields: Vec::new(),
                     methods: HashMap::new(),
                     is_drop: false,
@@ -2640,7 +2686,53 @@ fn collect_types(
     // — the answer must be identical so the borrow-checker's classification
     // (sema's `is_copy`) matches the ABI choice codegen makes here.
     compute_copy_flags(&mut t);
+    // v0.0.28, last pass: the layout plan, which needs every field type of
+    // every struct already resolved (a plan reads its fields' layouts, and
+    // one of those may itself be planned).
+    //
+    // The containment rule is why this is a whole pass rather than a flag:
+    // a struct that merely CONTAINS a bitfield struct must also be laid out
+    // by plan, because LLVM would place that member at its own align-1 view
+    // of the type and disagree with the alignment C gives it.
+    let planned: Vec<Option<crate::sema::StructPlan>> = (0..t.struct_defs.len())
+        .map(|i| {
+            let id = StructId(i as u32);
+            plan_owned(id, &t, &mut Vec::new()).then(|| crate::sema::struct_plan(id, &t))?
+        })
+        .collect();
+    for (i, plan) in planned.into_iter().enumerate() {
+        t.struct_defs[i].plan = plan;
+    }
     t
+}
+
+/// v0.0.28: does this struct's layout have to come from a plan rather than
+/// from LLVM's own reading of an element list? True when it packs or declares
+/// a bitfield, and true transitively for anything holding such a struct.
+fn plan_owned(id: StructId, t: &TypeTable, visiting: &mut Vec<u32>) -> bool {
+    if visiting.contains(&id.0) {
+        return false;
+    }
+    let info = &t.struct_defs[id.0 as usize];
+    if info.pack.is_some() || !info.bit_widths.is_empty() {
+        return true;
+    }
+    visiting.push(id.0);
+    let any = info
+        .fields
+        .iter()
+        .any(|(_, ty)| ty_holds_planned(ty, t, visiting));
+    visiting.pop();
+    any
+}
+
+fn ty_holds_planned(ty: &Ty, t: &TypeTable, visiting: &mut Vec<u32>) -> bool {
+    match ty {
+        Ty::Struct(id) => plan_owned(*id, t, visiting),
+        Ty::Array(elem, _) => ty_holds_planned(elem, t, visiting),
+        Ty::Distinct { base, .. } => ty_holds_planned(base, t, visiting),
+        _ => false,
+    }
 }
 
 /// Mirror of sema's Copy fixpoint, on codegen's own `TypeTable`.
@@ -3529,6 +3621,21 @@ fn static_layout(ty: &Ty, types: &TypeTable) -> Option<(u64, u64)> {
     crate::sema::layout_of(ty, types)
 }
 
+/// v0.0.28: an `iN` literal, printed the way LLVM prints one — two's
+/// complement, so a mask whose top bit is set comes out negative
+/// (`and i40 %raw, -8589934585`, which is clang's own text for the same
+/// mask). Printing it unsigned would exceed the type and be rejected.
+fn iN_const(v: u128, bits: u32) -> String {
+    let width = bits.min(127);
+    let modulus = 1u128 << width;
+    let v = v & (modulus - 1);
+    if v >= modulus >> 1 {
+        format!("-{}", modulus - v)
+    } else {
+        format!("{v}")
+    }
+}
+
 /// Slice 1C: scoped `!alias.scope` / `!noalias` metadata publication.
 ///
 /// The borrow checker proves that for every pointer-passed `ref`/`take`
@@ -4195,6 +4302,17 @@ fn write_struct_decls(out: &mut String, types: &TypeTable, _p: &Program) {
     // Struct named-type declarations (Phase 2B).
     for (i, s) in types.struct_defs.iter().enumerate() {
         let owner = StructId(i as u32);
+        // v0.0.28: a planned struct is emitted as the bytes it occupies.
+        // Nothing may be read out of the element list — every field address
+        // is a byte offset from `StructInfo::plan` — so a single blob says
+        // exactly as much as clang's `{ i8, i8, [2 x i8] }` does, which is
+        // "this is N bytes, ask the frontend what is in them". Alignment
+        // rides on the alloca / global / access instead, because an LLVM
+        // struct of bytes has none to give.
+        if let Some(plan) = &s.plan {
+            writeln!(out, "%{} = type <{{ [{} x i8] }}>", s.name, plan.size).unwrap();
+            continue;
+        }
         if s.is_union {
             // LLVM has no union type. clang lowers one as its most-aligned
             // member followed by enough padding to reach the union's size —
@@ -4272,8 +4390,12 @@ fn ty_from(t: &Type, types: &TypeTable) -> Ty {
         // Slice 7GEN.5c: monomorphize rewrites every `TypeKind::Generic`
         // to a concrete `TypeKind::Path(mangled_name)` before codegen.
         // If we reach here it means the rewrite missed a site.
-        TypeKind::Generic { .. } => {
-            panic!("codegen reached TypeKind::Generic — monomorphize did not rewrite this site")
+        TypeKind::Generic { name, args } => {
+            panic!(
+                "codegen reached TypeKind::Generic `{}[{}]` — monomorphize did not rewrite this site",
+                name,
+                args.len()
+            )
         }
         // Slice 10.FFI.1: raw pointer lowers to LLVM `ptr` regardless
         // of pointee. Pointee info is sema-level only.
@@ -6772,6 +6894,9 @@ fn gen_function(
                 }
             }
         }
+        // v0.0.28: the postconditions are not emitted here — they run at
+        // every return, so the statement lowering carries them.
+        state.take_ensures(&f.attributes);
     }
     // Emit body
     if is_naked {
@@ -6780,6 +6905,9 @@ fn gen_function(
         state.gen_body_block(&f.body);
     }
 
+    // v0.0.28 contracts: a unit fn may end without a `return` at all — the
+    // postconditions still have to run on that path.
+    state.gen_ensures(None);
     // Ensure final terminator
     if !state.terminated {
         if is_naked {
@@ -8335,8 +8463,12 @@ fn gen_method(
             }
         }
     }
+    // v0.0.28: postconditions run at every return, not here.
+    state.take_ensures(&m.attributes);
     state.gen_body_block(&m.body);
 
+    // v0.0.28: same fall-off-the-end path as the fn emitter.
+    state.gen_ensures(None);
     if !state.terminated {
         match &return_ty {
             Ty::Unit => state.emit_terminator("ret void"),
@@ -8560,8 +8692,12 @@ fn gen_str_method(
             }
         }
     }
+    // v0.0.28: postconditions run at every return, not here.
+    state.take_ensures(&m.attributes);
     state.gen_body_block(&m.body);
 
+    // v0.0.28: same fall-off-the-end path as the fn emitter.
+    state.gen_ensures(None);
     if !state.terminated {
         match &return_ty {
             Ty::Unit => state.emit_terminator("ret void"),
@@ -8802,6 +8938,32 @@ struct FnState<'a> {
     /// one load + `fmul %v.x, %v.x` — the standard adjacent-load
     /// pattern the vectorizer recognizes.
     field_load_cache: std::collections::HashMap<(String, String), (String, Ty)>,
+    /// v0.0.28: alignment known to be LOWER than the ABI alignment of the
+    /// type being accessed through a pointer — the case `#[repr(C, packed)]`
+    /// creates and nothing else does.
+    ///
+    /// Keyed by the pointer's SSA name because `gen_place` hands back a bare
+    /// pointer and a dozen call sites store through it; threading an
+    /// alignment through all of them would be the same fact written twelve
+    /// times. Every entry is a MINIMUM, so a name that is reused can only
+    /// ever under-claim — which is always sound, where over-claiming is the
+    /// misaligned access itself.
+    ptr_align: std::collections::HashMap<String, u64>,
+    /// v0.0.28: temporaries `gen_place` handed back in place of a bitfield's
+    /// (nonexistent) address, mapped to the field they are a copy of.
+    ///
+    /// A read is finished the moment the temp holds the value. A WRITE has to
+    /// go back into the shared storage unit, and `gen_assign_inner` is where
+    /// that is noticed — it looks the slot up here after `gen_place` instead
+    /// of re-deciding what the target was, which also gives `s.flags += 1`
+    /// the right shape for free: the compound op reads the temp, and the
+    /// result is merged back through `gen_bitfield_store`.
+    bitfield_slots: std::collections::HashMap<String, (StructId, usize, String)>,
+    /// v0.0.28 contracts: the `#[ensures(EXPR)]` expressions of the function
+    /// being emitted. Held here rather than passed down because a
+    /// postcondition has to run at EVERY return, and the returns are found
+    /// deep in statement lowering.
+    ensures: Vec<Expr>,
 }
 
 impl<'a> FnState<'a> {
@@ -8847,7 +9009,56 @@ impl<'a> FnState<'a> {
             tramps,
             coro_promise: None,
             field_load_cache: std::collections::HashMap::new(),
+            ptr_align: std::collections::HashMap::new(),
+            bitfield_slots: std::collections::HashMap::new(),
+            ensures: Vec::new(),
         }
+    }
+
+    /// v0.0.28: collect `#[ensures(EXPR)]` off the item being emitted. Called
+    /// once, beside the `#[requires]` entry emission, so the two halves of a
+    /// contract are set up in the same place.
+    fn take_ensures(&mut self, attributes: &[Attribute]) {
+        for a in attributes {
+            if a.path.name != "ensures" {
+                continue;
+            }
+            for arg in &a.args {
+                if let crate::ast::AttrArg::Expr(e) = arg {
+                    self.ensures.push((**e).clone());
+                }
+            }
+        }
+    }
+
+    /// v0.0.28: check the postconditions at a return.
+    ///
+    /// `ret_val` is the value about to be returned, if there is one; it is
+    /// spilled to a slot and bound as `result` for the duration of the
+    /// checks, which is the only way an `#[ensures]` can name it. The binding
+    /// lives in a scope of its own so it cannot outlive the check, and the
+    /// checks run BEFORE scope-exit drops and `defer`s — a postcondition
+    /// describes what the function is handing back, not what its teardown
+    /// leaves behind.
+    fn gen_ensures(&mut self, ret_val: Option<&(String, Ty)>) {
+        if self.ensures.is_empty() || self.terminated {
+            return;
+        }
+        let checks = std::mem::take(&mut self.ensures);
+        self.scopes.push(HashMap::new());
+        if let Some((v, ty)) = ret_val {
+            let slot = self.alloca_anon(ty.clone());
+            self.gen_store(ty, v, &slot);
+            self.bind("result", slot, ty.clone());
+        }
+        for e in &checks {
+            if self.terminated {
+                break;
+            }
+            self.gen_assert(e);
+        }
+        self.scopes.pop();
+        self.ensures = checks;
     }
 
     /// v0.0.8 bench-gap finding 1: invalidate the per-expression
@@ -8937,8 +9148,9 @@ impl<'a> FnState<'a> {
         // anonymous counter for the suffix to keep names deterministic.
         self.tmp_counter += 1;
         let slot = format!("%{}.addr{}", sanitize(name_hint), self.tmp_counter);
+        let al = self.stated_align(&ty);
         self.allocas
-            .push(format!("{slot} = alloca {}", self.lty(&ty)));
+            .push(format!("{slot} = alloca {}{al}", self.lty(&ty)));
         self.bracket_lifetime(&slot, &ty);
         slot
     }
@@ -8946,10 +9158,37 @@ impl<'a> FnState<'a> {
     fn alloca_anon(&mut self, ty: Ty) -> String {
         self.tmp_counter += 1;
         let slot = format!("%a{}", self.tmp_counter);
+        let al = self.stated_align(&ty);
         self.allocas
-            .push(format!("{slot} = alloca {}", self.lty(&ty)));
+            .push(format!("{slot} = alloca {}{al}", self.lty(&ty)));
         self.bracket_lifetime(&slot, &ty);
         slot
+    }
+
+    /// v0.0.28: the `, align N` an alloca of `ty` has to state.
+    ///
+    /// A planned struct is emitted as a blob of bytes, and a blob of bytes
+    /// tells LLVM nothing about alignment — so the one place that knows,
+    /// says. Everything else keeps LLVM's own answer, which for an ordinary
+    /// struct is the same number.
+    fn stated_align(&self, ty: &Ty) -> String {
+        match self.planned_align(ty) {
+            Some(al) => format!(", align {al}"),
+            None => String::new(),
+        }
+    }
+
+    /// The alignment of a type whose layout the frontend owns — a planned
+    /// struct, or an array of one. `None` means LLVM's own answer is right
+    /// and nothing needs to be stated.
+    fn planned_align(&self, ty: &Ty) -> Option<u64> {
+        let planned = match ty {
+            Ty::Struct(id) => self.types.struct_defs[id.0 as usize].plan.is_some(),
+            Ty::Array(elem, _) => self.planned_align(elem).is_some(),
+            Ty::Distinct { base, .. } => self.planned_align(base).is_some(),
+            _ => false,
+        };
+        planned.then(|| static_layout(ty, self.types).map(|(_, al)| al))?
     }
 
     /// Phase 5 Slice 5.D: alloca a slot whose LLVM type is given as a raw
@@ -8979,20 +9218,232 @@ impl<'a> FnState<'a> {
     /// falls back to may-alias-anything, the conservative default.
     fn gen_load(&mut self, tmp: &str, ty: &Ty, ptr: &str) {
         let lty = self.lty(ty);
+        let al = self.reduced_align(ty, ptr);
         match self.md.tbaa_tag_for(ty, self.types) {
-            Some(id) => self.emit(&format!("{tmp} = load {lty}, ptr {ptr}, !tbaa !{id}")),
-            None => self.emit(&format!("{tmp} = load {lty}, ptr {ptr}")),
+            Some(id) => self.emit(&format!("{tmp} = load {lty}, ptr {ptr}{al}, !tbaa !{id}")),
+            None => self.emit(&format!("{tmp} = load {lty}, ptr {ptr}{al}")),
         }
+    }
+
+    /// The `, align N` fragment for an access through `ptr`, empty unless a
+    /// packed field put a lower alignment on that pointer than the type's own.
+    fn reduced_align(&self, ty: &Ty, ptr: &str) -> String {
+        let Some(&al) = self.ptr_align.get(ptr) else {
+            return String::new();
+        };
+        let natural = static_layout(ty, self.types).map(|(_, a)| a).unwrap_or(1);
+        if al >= natural {
+            return String::new();
+        }
+        format!(", align {al}")
+    }
+
+    /// Record that `ptr` addresses memory aligned to at most `align` bytes.
+    fn note_ptr_align(&mut self, ptr: &str, align: u64) {
+        let e = self.ptr_align.entry(ptr.to_string()).or_insert(align);
+        *e = (*e).min(align);
     }
 
     /// v0.0.7 Slice 1.2: emit a `store` instruction with the right
     /// TBAA tag for `ty`. Mirror of `gen_load`.
     fn gen_store(&mut self, ty: &Ty, val: &str, ptr: &str) {
         let lty = self.lty(ty);
+        let al = self.reduced_align(ty, ptr);
         match self.md.tbaa_tag_for(ty, self.types) {
-            Some(id) => self.emit(&format!("store {lty} {val}, ptr {ptr}, !tbaa !{id}")),
-            None => self.emit(&format!("store {lty} {val}, ptr {ptr}")),
+            Some(id) => self.emit(&format!("store {lty} {val}, ptr {ptr}{al}, !tbaa !{id}")),
+            None => self.emit(&format!("store {lty} {val}, ptr {ptr}{al}")),
         }
+    }
+
+    /// v0.0.28: the address of field `idx` of struct `id`, given a pointer to
+    /// the struct, plus the alignment a load or store through that address
+    /// may claim.
+    ///
+    /// For an ordinary struct this is the `getelementptr` by element index
+    /// that has always been emitted, and the alignment is LLVM's own (None).
+    /// For a PLANNED struct the emitted type is a byte blob, so the address
+    /// is a byte offset out of the plan — and the alignment has to be stated,
+    /// because bytes carry none: it is the field's natural alignment, capped
+    /// by the struct's own and by the largest power of two dividing the
+    /// offset. That last term is what makes `#[repr(C, packed)]`'s `u32` at
+    /// offset 1 a correctly-declared `align 1` load instead of a silent
+    /// misaligned access.
+    ///
+    /// A bitfield's "address" is the address of the bytes its storage spans;
+    /// only `gen_bitfield_load`/`gen_bitfield_store` may use it, and sema
+    /// (E0927) keeps `ref` and `#addr_of` away from one.
+    fn field_addr(&mut self, id: StructId, idx: usize, base: &str) -> (String, Option<u64>) {
+        let info = &self.types.struct_defs[id.0 as usize];
+        // A union's members all start at offset 0 — the union's own pointer
+        // IS every field's pointer (see `gen_field`).
+        if info.is_union {
+            return (base.to_string(), None);
+        }
+        let Some(plan) = info.plan.clone() else {
+            let llvm_struct = llvm_ty(&Ty::Struct(id), self.types);
+            let p = self.next_tmp();
+            self.emit(&format!(
+                "{p} = getelementptr inbounds {llvm_struct}, ptr {base}, i32 0, i32 {idx}"
+            ));
+            return (p, None);
+        };
+        let place = plan.places[idx];
+        let fty = info.fields[idx].1.clone();
+        let natural = static_layout(&fty, self.types).map(|(_, a)| a).unwrap_or(1);
+        // The storage integer of a bitfield is read as bytes; nothing
+        // guarantees more than the byte it starts on. Plain fields get the
+        // shared rule, the same one E0926 measures a `#addr_of` against.
+        let align = if place.is_bitfield() {
+            // A storage integer has no natural alignment of its own — it is
+            // as aligned as its first byte, which is what the struct's
+            // alignment and the offset together say. `u64::MAX` asks the
+            // shared rule for exactly that and nothing narrower.
+            plan.field_align(idx, u64::MAX)
+        } else {
+            plan.field_align(idx, natural)
+        };
+        let align = align.max(1);
+        if place.offset == 0 {
+            self.note_ptr_align(base, align);
+            return (base.to_string(), Some(align));
+        }
+        let p = self.next_tmp();
+        self.emit(&format!(
+            "{p} = getelementptr inbounds i8, ptr {base}, i64 {}",
+            place.offset
+        ));
+        self.note_ptr_align(&p, align);
+        (p, Some(align))
+    }
+
+    /// The `FieldPlace` of a field that is a bitfield, or `None` for every
+    /// ordinary field. The one predicate the access paths branch on.
+    fn bitfield_place(&self, id: StructId, idx: usize) -> Option<crate::sema::FieldPlace> {
+        let info = &self.types.struct_defs[id.0 as usize];
+        let place = *info.plan.as_ref()?.places.get(idx)?;
+        place.is_bitfield().then_some(place)
+    }
+
+    /// v0.0.28: read a bitfield — load the bytes it spans as one integer,
+    /// shift its low end down, and cut it to width. Signed fields are cut by
+    /// `shl`/`ashr` so the sign bit propagates, which is C's rule and clang's
+    /// own lowering.
+    ///
+    /// No TBAA tag: the storage integer is not any field's type, and several
+    /// fields share it.
+    fn gen_bitfield_load(&mut self, id: StructId, idx: usize, base: &str) -> (String, Ty) {
+        let place = self.bitfield_place(id, idx).expect("caller checked");
+        let fty = self.types.struct_defs[id.0 as usize].fields[idx].1.clone();
+        let (ptr, align) = self.field_addr(id, idx, base);
+        let nbits = place.span_bytes as u32 * 8;
+        let unit = format!("i{nbits}");
+        let raw = self.next_tmp();
+        self.emit(&format!(
+            "{raw} = load {unit}, ptr {ptr}, align {}",
+            align.unwrap_or(1)
+        ));
+        let signed = fty.is_signed_int();
+        let cut = self.next_tmp();
+        if signed {
+            // Push the field's high bit to the top of the unit, then bring it
+            // back arithmetically: the vacated bits come from the sign.
+            let hi = nbits - place.shift as u32 - place.width as u32;
+            let shifted = if hi == 0 {
+                raw.clone()
+            } else {
+                let t = self.next_tmp();
+                self.emit(&format!("{t} = shl {unit} {raw}, {hi}"));
+                t
+            };
+            self.emit(&format!(
+                "{cut} = ashr {unit} {shifted}, {}",
+                nbits - place.width as u32
+            ));
+        } else {
+            let shifted = if place.shift == 0 {
+                raw.clone()
+            } else {
+                let t = self.next_tmp();
+                self.emit(&format!("{t} = lshr {unit} {raw}, {}", place.shift));
+                t
+            };
+            let mask = (1u128 << place.width) - 1;
+            self.emit(&format!(
+                "{cut} = and {unit} {shifted}, {}",
+                iN_const(mask, nbits)
+            ));
+        }
+        // Fit the unit to the field's own width.
+        let fbits = crate::sema::int_bit_width(&fty, self.types).unwrap_or(32) as u32;
+        let out = self.next_tmp();
+        let flty = self.lty(&fty);
+        match fbits.cmp(&nbits) {
+            std::cmp::Ordering::Less => {
+                self.emit(&format!("{out} = trunc {unit} {cut} to {flty}"));
+            }
+            std::cmp::Ordering::Greater if signed => {
+                self.emit(&format!("{out} = sext {unit} {cut} to {flty}"));
+            }
+            std::cmp::Ordering::Greater => {
+                self.emit(&format!("{out} = zext {unit} {cut} to {flty}"));
+            }
+            std::cmp::Ordering::Equal => return (cut, fty),
+        }
+        (out, fty)
+    }
+
+    /// v0.0.28: write a bitfield — read the storage integer, clear the
+    /// field's bits, drop the new value into them, write it back. The
+    /// neighbours sharing the unit are preserved by the mask, which is the
+    /// whole reason this is a read-modify-write and not a store.
+    fn gen_bitfield_store(&mut self, id: StructId, idx: usize, base: &str, val: &str) {
+        let place = self.bitfield_place(id, idx).expect("caller checked");
+        let fty = self.types.struct_defs[id.0 as usize].fields[idx].1.clone();
+        let (ptr, align) = self.field_addr(id, idx, base);
+        let align = align.unwrap_or(1);
+        let nbits = place.span_bytes as u32 * 8;
+        let unit = format!("i{nbits}");
+        let fbits = crate::sema::int_bit_width(&fty, self.types).unwrap_or(32) as u32;
+        let flty = self.lty(&fty);
+        let widened = match fbits.cmp(&nbits) {
+            std::cmp::Ordering::Less => {
+                let t = self.next_tmp();
+                self.emit(&format!("{t} = zext {flty} {val} to {unit}"));
+                t
+            }
+            std::cmp::Ordering::Greater => {
+                let t = self.next_tmp();
+                self.emit(&format!("{t} = trunc {flty} {val} to {unit}"));
+                t
+            }
+            std::cmp::Ordering::Equal => val.to_string(),
+        };
+        let mask = (1u128 << place.width) - 1;
+        let clipped = self.next_tmp();
+        self.emit(&format!(
+            "{clipped} = and {unit} {widened}, {}",
+            iN_const(mask, nbits)
+        ));
+        let placed = if place.shift == 0 {
+            clipped.clone()
+        } else {
+            let t = self.next_tmp();
+            self.emit(&format!("{t} = shl {unit} {clipped}, {}", place.shift));
+            t
+        };
+        let raw = self.next_tmp();
+        self.emit(&format!("{raw} = load {unit}, ptr {ptr}, align {align}"));
+        let hole = self.next_tmp();
+        let keep = !(mask << place.shift);
+        self.emit(&format!(
+            "{hole} = and {unit} {raw}, {}",
+            iN_const(keep, nbits)
+        ));
+        let merged = self.next_tmp();
+        self.emit(&format!("{merged} = or {unit} {hole}, {placed}"));
+        self.emit(&format!(
+            "store {unit} {merged}, ptr {ptr}, align {align}"
+        ));
     }
 
     /// v0.0.7 Slice 1.1: emit `llvm.lifetime.start` inline at the
@@ -9848,13 +10299,17 @@ impl<'a> FnState<'a> {
                         .expect("sema verified the field name");
                     let fty = struct_fields[idx].1.clone();
                     let fllvm = self.lty(&fty);
-                    let fp = self.next_tmp();
-                    self.emit(&format!(
-                        "{fp} = getelementptr inbounds {llvm_struct}, ptr {src_slot}, i32 0, i32 {idx}"
-                    ));
+                    // v0.0.28: a bitfield binding takes the field's VALUE —
+                    // it has no storage of its own to point at.
+                    let fval = if self.bitfield_place(*id, idx).is_some() {
+                        self.gen_bitfield_load(*id, idx, &src_slot).0
+                    } else {
+                        let (fp, _) = self.field_addr(*id, idx, &src_slot);
+                        let v = self.next_tmp();
+                        self.gen_load(&v, &fty, &fp);
+                        v
+                    };
                     let bind_slot = self.alloca_named(&binding.name, fty.clone());
-                    let fval = self.next_tmp();
-                    self.emit(&format!("{fval} = load {fllvm}, ptr {fp}"));
                     self.emit(&format!("store {fllvm} {fval}, ptr {bind_slot}"));
                     if !is_copy_ty(&fty, self.types) {
                         self.noalias_local_slots.push(bind_slot.clone());
@@ -9966,7 +10421,11 @@ impl<'a> FnState<'a> {
                 //   - foo is not a builtin (`println` lowers to printf)
                 // Methods, indirect (FnPtr) calls, and assoc-fn calls are not
                 // currently handled (small surface; revisit if measured).
-                if self.tail_call_eligible {
+                // A postcondition is emitted between the call and the `ret`,
+                // which is exactly what `musttail` forbids. The contract wins;
+                // a plain call is always correct, `musttail` is an
+                // optimization.
+                if self.tail_call_eligible && self.ensures.is_empty() {
                     if let Some(e) = value {
                         if let ExprKind::Call {
                             callee, args: _, ..
@@ -10156,6 +10615,15 @@ impl<'a> FnState<'a> {
                     }
                     None => None,
                 };
+                // v0.0.28 contracts: the postconditions run HERE — after the
+                // returned value exists and before the scope-exit drops, with
+                // `result` bound to it. Every `return` in the function reaches
+                // this line, so there is no path out that skips them.
+                let ensures_val = ret_val.clone().map(|v| (v, ret_ty.clone()));
+                self.gen_ensures(ensures_val.as_ref());
+                if self.terminated {
+                    return;
+                }
                 // Defensive: clear the flag in case gen_expr didn't reach
                 // gen_named_call (e.g. ExprKind::Call routed through a
                 // different lowering path).
@@ -11334,15 +11802,19 @@ impl<'a> FnState<'a> {
                 _ => self.gen_expr(&f.value).expect("field init has value").0,
             };
             let idx = info.field_index(&f.name.name);
-            let ptr = self.next_tmp();
-            self.emit(&format!(
-                "{ptr} = getelementptr inbounds {llvm_struct}, ptr {slot}, i32 0, i32 {idx}"
-            ));
-            // v0.0.7 Slice 1.2: TBAA-tagged struct field write at
-            // struct-literal initialization. Primitive-typed fields
-            // carry their per-type leaf; aggregate fields stay
-            // untagged (gen_store handles both via tbaa_tag_for).
-            self.gen_store(&field_ty, &val, &ptr);
+            // v0.0.28: a bitfield member is written by read-modify-write into
+            // the storage unit it shares — the slot is zeroed first, so the
+            // neighbours it preserves are the ones already initialized here.
+            if self.bitfield_place(id, idx as usize).is_some() {
+                self.gen_bitfield_store(id, idx as usize, &slot, &val);
+            } else {
+                let (ptr, _) = self.field_addr(id, idx as usize, &slot);
+                // v0.0.7 Slice 1.2: TBAA-tagged struct field write at
+                // struct-literal initialization. Primitive-typed fields
+                // carry their per-type leaf; aggregate fields stay
+                // untagged (gen_store handles both via tbaa_tag_for).
+                self.gen_store(&field_ty, &val, &ptr);
+            }
             // G-023 fix: if the field value was a bare-Ident source,
             // ownership transferred into the field — flip the source's
             // drop_flag so the scope-exit drop doesn't free inner heap
@@ -11652,6 +12124,12 @@ impl<'a> FnState<'a> {
     /// extract T's alignment offset. Folded to a constant at -O1+.
     fn gen_intrinsic_align_of(&mut self, type_args: &[crate::ast::Type]) -> (String, Ty) {
         let t = ty_from(&type_args[0], self.types);
+        // v0.0.28: a planned struct is emitted as bytes, so LLVM's answer to
+        // this question would be 1. The plan is the answer — the same number
+        // sema reports and the same one the alloca states.
+        if let Some(al) = self.planned_align(&t) {
+            return (al.to_string(), Ty::Usize);
+        }
         let llvm_t = llvm_ty(&t, self.types);
         let ptr_tmp = self.next_tmp();
         let int_tmp = self.next_tmp();
@@ -12061,7 +12539,7 @@ impl<'a> FnState<'a> {
             unreachable!("sema validated");
         };
         let info = self.types.struct_defs[id.0 as usize].clone();
-        let llvm_struct = self.lty(&struct_ty);
+        let _llvm_struct = self.lty(&struct_ty);
         let idx = info.field_index(&name.name);
         let field_ty = info.field_type(&name.name);
         // A UNION's members all start at offset 0, and an opaque pointer needs
@@ -12069,20 +12547,20 @@ impl<'a> FnState<'a> {
         // union's own pointer, and the LOAD's type is what picks the member.
         // That is the whole of "reading a different member reinterprets the
         // bytes", expressed in one branch.
-        let ptr = if info.is_union {
-            slot.clone()
+        // v0.0.28: a bitfield is not at an address you can load its type
+        // from — it is bits inside a shared unit. Same for the union's
+        // offset-0 rule and the packed byte offset: `field_addr` owns both.
+        let v = if self.bitfield_place(id, idx as usize).is_some() {
+            self.gen_bitfield_load(id, idx as usize, &slot).0
         } else {
-            let p = self.next_tmp();
-            self.emit(&format!(
-                "{p} = getelementptr inbounds {llvm_struct}, ptr {slot}, i32 0, i32 {idx}"
-            ));
-            p
+            let (ptr, _) = self.field_addr(id, idx as usize, &slot);
+            let v = self.next_tmp();
+            // v0.0.7 Slice 1.2: TBAA-tagged struct field load. Primitive
+            // fields get the per-type leaf; aggregate fields fall through
+            // to the v0.0.8 aggregate-leaf path.
+            self.gen_load(&v, &field_ty, &ptr);
+            v
         };
-        let v = self.next_tmp();
-        // v0.0.7 Slice 1.2: TBAA-tagged struct field load. Primitive
-        // fields get the per-type leaf; aggregate fields fall through
-        // to the v0.0.8 aggregate-leaf path.
-        self.gen_load(&v, &field_ty, &ptr);
         // v0.0.8 bench-gap finding 1: memoize for the rest of the
         // current expression.
         if let ExprKind::Ident(local) = &receiver.kind {
@@ -12145,19 +12623,24 @@ impl<'a> FnState<'a> {
                     unreachable!("sema validated");
                 };
                 let info = self.types.struct_defs[id.0 as usize].clone();
-                let llvm_struct = self.lty(&recv_ty);
+                let _llvm_struct = self.lty(&recv_ty);
                 let idx = info.field_index(&name.name);
                 let field_ty = info.field_type(&name.name);
+                // v0.0.28: a bitfield HAS no place. Sema (E0927) keeps `ref`
+                // and `#addr_of` off one, so anything still asking for its
+                // address wants to read it — hand back a temporary holding
+                // the value, which is what a copy of a bitfield is. Writes
+                // never arrive here: `gen_assign_inner` intercepts them.
+                if self.bitfield_place(id, idx as usize).is_some() {
+                    let (v, vty) = self.gen_bitfield_load(id, idx as usize, &recv_slot);
+                    let tmp = self.alloca_anon(vty.clone());
+                    self.gen_store(&vty, &v, &tmp);
+                    self.bitfield_slots
+                        .insert(tmp.clone(), (id, idx as usize, recv_slot.clone()));
+                    return (tmp, vty);
+                }
                 // Union: offset 0, see `gen_field`.
-                let ptr = if info.is_union {
-                    recv_slot.clone()
-                } else {
-                    let p = self.next_tmp();
-                    self.emit(&format!(
-                        "{p} = getelementptr inbounds {llvm_struct}, ptr {recv_slot}, i32 0, i32 {idx}"
-                    ));
-                    p
-                };
+                let (ptr, _) = self.field_addr(id, idx as usize, &recv_slot);
                 (ptr, field_ty)
             }
             ExprKind::Index { receiver, index } => {
@@ -15455,11 +15938,7 @@ impl<'a> FnState<'a> {
                 .find(|(_, (fname, _))| fname == &name.name)
                 .map(|(i, (_, t))| (i as u32, t.clone()))
             {
-                let llvm_struct = llvm_ty(&Ty::Struct(id), self.types);
-                let field_ptr = self.next_tmp();
-                self.emit(&format!(
-                    "{field_ptr} = getelementptr inbounds {llvm_struct}, ptr {recv_ptr}, i32 0, i32 {idx}"
-                ));
+                let (field_ptr, _) = self.field_addr(id, idx as usize, &recv_ptr);
                 let fn_val = self.next_tmp();
                 // v0.0.7 Slice 1.2: fn-ptr field load — ptr leaf.
                 let fnptr_ty = Ty::RawPtr(Box::new(Ty::Unit));
@@ -15502,11 +15981,11 @@ impl<'a> FnState<'a> {
             let struct_info = &self.types.struct_defs[id.0 as usize];
             let field_idx = struct_info.field_index(field_name);
             let field_ty = struct_info.field_type(field_name);
-            let llvm_struct = self.lty(&recv_ty);
-            let gep = self.next_tmp();
-            self.emit(&format!(
-                "{gep} = getelementptr inbounds {llvm_struct}, ptr {recv_ptr}, i32 0, i32 {field_idx}"
-            ));
+            if self.bitfield_place(id, field_idx as usize).is_some() {
+                let (v, vty) = self.gen_bitfield_load(id, field_idx as usize, &recv_ptr);
+                return Some((v, vty));
+            }
+            let (gep, _) = self.field_addr(id, field_idx as usize, &recv_ptr);
             let v = self.next_tmp();
             self.gen_load(&v, &field_ty, &gep);
             return Some((v, field_ty));
@@ -16248,7 +16727,7 @@ impl<'a> FnState<'a> {
                     // this optimization targets, so route them through the
                     // general path below, which drops the old value first.
                     if !self.needs_drop(&struct_ty) {
-                        let llvm_struct = self.lty(&struct_ty);
+                        let _llvm_struct = self.lty(&struct_ty);
                         let (dest_slot, _dest_ty) = self.gen_place(target);
                         for f in fields {
                             let (val, _) = self
@@ -16256,11 +16735,12 @@ impl<'a> FnState<'a> {
                                 .expect("struct-literal field init has value");
                             let idx = info.field_index(&f.name.name);
                             let field_ty = info.field_type(&f.name.name);
-                            let ptr = self.next_tmp();
-                            self.emit(&format!(
-                                "{ptr} = getelementptr inbounds {llvm_struct}, ptr {dest_slot}, i32 0, i32 {idx}"
-                            ));
-                            self.gen_store(&field_ty, &val, &ptr);
+                            if self.bitfield_place(id, idx as usize).is_some() {
+                                self.gen_bitfield_store(id, idx as usize, &dest_slot, &val);
+                            } else {
+                                let (ptr, _) = self.field_addr(id, idx as usize, &dest_slot);
+                                self.gen_store(&field_ty, &val, &ptr);
+                            }
                             // G-023 fix: same mark_moved as gen_struct_lit.
                             if let ExprKind::Ident(n) = &f.value.kind {
                                 self.mark_moved(n);
@@ -16314,6 +16794,15 @@ impl<'a> FnState<'a> {
             self.gen_load(&cur, &target_ty, &slot);
             self.gen_compound_op(op, &target_ty, &cur, &rhs_v)
         };
+        // v0.0.28: the target was a bitfield. `slot` is the copy `gen_place`
+        // made of it (which is exactly what the compound op above wanted to
+        // read); the write itself goes back into the storage unit it shares
+        // with its neighbours. Nothing below applies — an integer bitfield is
+        // never a Drop place.
+        if let Some((bid, bidx, base)) = self.bitfield_slots.get(&slot).cloned() {
+            self.gen_bitfield_store(bid, bidx, &base, &to_store);
+            return;
+        }
         // A plain `=` to a Drop place overwrites the value it currently owns —
         // tear that old value down first, or it leaks (#8 for bindings; A1/A2
         // for fields/elements). The RHS is already evaluated above, so a move
@@ -18583,6 +19072,59 @@ fn main() -> i32 {\n\
             "precondition must precede the body:
 {f_def}"
         );
+    }
+
+    /// v0.0.28 contracts: a postcondition runs at EVERY return, after the
+    /// value exists and before the scope-exit drops — so a function with two
+    /// returns checks twice, and the check sits between the body and the
+    /// `ret` rather than at entry (where a precondition goes).
+    #[test]
+    fn ensures_emits_a_check_at_every_return() {
+        let ir = gen_src(
+            "#[ensures(result >= 0)]
+             fn absv(n: i32) -> i32 {
+                 if n < 0 { return 0 - n; }
+                 return n;
+             }
+             fn main() -> i32 { return absv(-1) - 1; }",
+        );
+        let f_def = ir
+            .split("define ")
+            .find(|s| s.contains("@absv("))
+            .expect("absv defined");
+        // Count the postcondition's own comparison rather than traps: a
+        // debug build's overflow check on `0 - n` traps too, and counting
+        // those would make this test about arithmetic instead.
+        assert_eq!(
+            f_def.matches("icmp sge i32").count(),
+            2,
+            "one check per return:\n{f_def}"
+        );
+        // Each check reads the value being RETURNED — it loads the slot the
+        // return value was just stored into, not the parameter.
+        assert!(
+            f_def.contains("ret i32"),
+            "returns still emitted:\n{f_def}"
+        );
+    }
+
+    /// A postcondition sits between the call and the `ret`, which is exactly
+    /// what `musttail` forbids — the contract wins and the tail call becomes
+    /// an ordinary one.
+    #[test]
+    fn ensures_disables_musttail() {
+        let ir = gen_src(
+            "fn inner(n: i32) -> i32 { return n; }
+             #[ensures(result >= 0)]
+             fn outer(n: i32) -> i32 { return inner(n); }
+             fn main() -> i32 { return outer(0); }",
+        );
+        let f_def = ir
+            .split("define ")
+            .find(|s| s.contains("@outer("))
+            .expect("outer defined");
+        assert!(!f_def.contains("musttail"), "no musttail:\n{f_def}");
+        assert!(f_def.contains("llvm.trap"), "check still emitted:\n{f_def}");
     }
 
     /// v0.0.27 FFI unions: the LLVM type is the most-aligned member plus

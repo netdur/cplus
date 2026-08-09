@@ -70,6 +70,11 @@ pub fn lower_multi(
     // synthesized methods take part in every later lowering step and reach
     // sema exactly like user-written code.
     cx.expand_derives(prog);
+    // v0.0.28: interface DEFAULT bodies. Copy each defaulted method the impl
+    // block left out into the block itself, before anything else runs — for
+    // the same reason derive does it here, and with the same consequence:
+    // the rest of the compiler sees a hand-written method.
+    cx.expand_interface_defaults(prog);
     // v0.0.9 Phase 4: collect consts and validate initializers (both
     // const and static initializers must be literals). Done before the
     // per-item walk so the substitution pass sees a populated table.
@@ -3346,6 +3351,80 @@ impl Lower {
     /// Expand every empty derivable-interface impl in the merged program.
     /// Runs before all other lowering steps so the generated methods are
     /// first-class citizens of every later pass.
+    /// v0.0.28 — interface default method bodies.
+    ///
+    /// An interface method may carry a body instead of a `;`. Any `impl T:
+    /// I` block that does not declare the method gets a COPY of that body,
+    /// spliced in here as an ordinary `Method` before sema ever sees it.
+    ///
+    /// The copy is deliberate, and it is what made this cheap enough to land:
+    /// a default body adds no new method-instantiation source, no new
+    /// dispatch kind and no `dyn`. `This` inside the body resolves through
+    /// the impl block it now lives in, exactly as it would if the user had
+    /// typed the method there — which also means a default body that names a
+    /// method the implementing type lacks is diagnosed against that type, at
+    /// its own impl block, rather than once at the interface.
+    ///
+    /// The cost of copying rather than sharing is code size: N implementors
+    /// of a defaulted method get N monomorphized copies. That is what
+    /// "monomorphized like everything else" means here, and it is the same
+    /// trade every generic in the language already makes.
+    fn expand_interface_defaults(&mut self, prog: &mut Program) {
+        // Pass 1: every interface's defaulted methods, by interface name.
+        let mut defaults: std::collections::HashMap<String, Vec<InterfaceMethod>> =
+            std::collections::HashMap::new();
+        for item in &prog.items {
+            let ItemKind::Interface(i) = &item.kind else {
+                continue;
+            };
+            let with_bodies: Vec<InterfaceMethod> = i
+                .methods
+                .iter()
+                .filter(|m| m.body.is_some())
+                .cloned()
+                .collect();
+            if !with_bodies.is_empty() {
+                defaults.insert(i.name.name.clone(), with_bodies);
+            }
+        }
+        if defaults.is_empty() {
+            return;
+        }
+        // Pass 2: fill the gaps in each impl block.
+        for item in &mut prog.items {
+            let ItemKind::Impl(b) = &mut item.kind else {
+                continue;
+            };
+            let Some(iface) = b.interface_name.clone() else {
+                continue;
+            };
+            let Some(methods) = defaults.get(&iface.name) else {
+                continue;
+            };
+            for im in methods {
+                if b.methods.iter().any(|m| m.name.name == im.name.name) {
+                    // The implementor overrode it; the default is not used.
+                    continue;
+                }
+                let Some(body) = im.body.clone() else { continue };
+                b.methods.push(Method {
+                    name: im.name.clone(),
+                    generic_params: Vec::new(),
+                    receiver: im.receiver,
+                    params: im.params.clone(),
+                    return_type: im.return_type.clone(),
+                    body,
+                    is_declaration: false,
+                    span: im.span,
+                    is_pub: false,
+                    attributes: Vec::new(),
+                    is_async: false,
+                    is_gen: false,
+                });
+            }
+        }
+    }
+
     fn expand_derives(&mut self, prog: &mut Program) {
         // Pass 1 (read-only): the type tables generation consults.
         let mut struct_fields: std::collections::HashMap<String, Vec<(String, Type)>> =

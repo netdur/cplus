@@ -65,6 +65,13 @@ enum ArgsSpec {
     /// (`#[requires(n > 0)]`). The parser produced `AttrArg::Expr`s;
     /// sema owns type-checking and the purity rule (E0924).
     ExprArgs,
+    /// v0.0.28 packing: `#[repr(...)]` takes a LIST now, because a C shape
+    /// can need two independent claims at once — `#[repr(C, packed)]` is
+    /// "C field order" plus "no internal padding". Each element is either an
+    /// ident from the allow-list or `packed = N`. Which combinations mean
+    /// anything on which item is sema's rule (E0926), not this table's: the
+    /// vocabulary is all that is checked here.
+    ReprArgs(&'static [&'static str]),
 }
 
 struct AttrSpec {
@@ -113,10 +120,21 @@ const KNOWN_ATTRS: &[AttrSpec] = &[
     // E0923); this table only gates the argument vocabulary.
     AttrSpec {
         name: "repr",
-        args: ArgsSpec::OneIdentFrom(&[
-            "C", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64",
+        args: ArgsSpec::ReprArgs(&[
+            "C", "packed", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64",
         ]),
         targets: TARGET_STRUCT | TARGET_ENUM,
+        allow_duplicate: false,
+    },
+    // v0.0.28 bitfields: `#[bits(N)] flags: u32` gives a field a WIDTH in
+    // bits and packs it beside its neighbours inside one storage unit. The
+    // width's legality against the field's type, and the requirement that
+    // the struct be `#[repr(C)]` at all, are sema's (E0927) — the layout
+    // rules are C's and need the resolved field type to state.
+    AttrSpec {
+        name: "bits",
+        args: ArgsSpec::ExactlyOneInt,
+        targets: TARGET_FIELD,
         allow_duplicate: false,
     },
     // v0.0.27 contracts: `#[requires(EXPR, ...)]` — machine-checked
@@ -125,6 +143,17 @@ const KNOWN_ATTRS: &[AttrSpec] = &[
     // the `assert` path at function entry.
     AttrSpec {
         name: "requires",
+        args: ArgsSpec::ExprArgs,
+        targets: TARGET_FN | TARGET_METHOD,
+        allow_duplicate: true,
+    },
+    // v0.0.28 contracts: `#[ensures(EXPR, ...)]` — the other half. Same
+    // shape and same purity rule as `#[requires]`; what it adds is the
+    // binding `result`, which names the value being returned. Sema owns
+    // both (E0924 purity, E0928 for a `result` that names nothing);
+    // codegen emits them at every return, after the value exists.
+    AttrSpec {
+        name: "ensures",
         args: ArgsSpec::ExprArgs,
         targets: TARGET_FN | TARGET_METHOD,
         allow_duplicate: true,
@@ -619,6 +648,20 @@ impl Ctx {
                     self.emit_bad_repr_arg(attr, spec, allowed);
                 }
             }
+            ArgsSpec::ReprArgs(allowed) => {
+                let ok = !attr.args.is_empty()
+                    && attr.args.iter().all(|a| match a {
+                        AttrArg::Ident(id) => allowed.contains(&id.name.as_str()),
+                        // `packed = N` is the only key-value repr argument.
+                        // The value's range is sema's (E0926); the shape is
+                        // this table's.
+                        AttrArg::KeyValue(k, _) => k.name == "packed",
+                        _ => false,
+                    });
+                if !ok {
+                    self.emit_bad_repr_arg(attr, spec, allowed);
+                }
+            }
             ArgsSpec::OptionalIdentFrom(allowed) => {
                 let ok = match attr.args.as_slice() {
                     [] => true,
@@ -1103,8 +1146,22 @@ mod tests {
 
     #[test]
     fn repr_bad_arg_on_enum_rejected() {
-        let diags = check_src("#[repr(packed)] enum E { A, B }");
+        // A word this table does not know is rejected here, on shape alone.
+        let diags = check_src("#[repr(f32)] enum E { A, B }");
         assert!(!codes(&diags).is_empty(), "bad repr arg must reject");
+    }
+
+    #[test]
+    fn repr_packed_is_vocabulary_here_and_a_rule_in_sema() {
+        // v0.0.28: `packed` is a legal repr WORD, so this pass accepts it
+        // wherever `repr` is legal. Whether it MEANS anything on an enum is
+        // sema's (E0926) — this table gates vocabulary, not sense.
+        let diags = check_src("#[repr(packed)] enum E { A, B }");
+        assert!(codes(&diags).is_empty(), "got {:?}", codes(&diags));
+        let list = check_src("#[repr(C, packed)] struct S { a: u8, b: u32 }");
+        assert!(codes(&list).is_empty(), "got {:?}", codes(&list));
+        let kv = check_src("#[repr(C, packed = 2)] struct S { a: u8, b: u32 }");
+        assert!(codes(&kv).is_empty(), "got {:?}", codes(&kv));
     }
 
     #[test]

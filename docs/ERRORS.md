@@ -4,7 +4,7 @@
 
 Every C+ diagnostic carries a numbered code, a source span, and often a machine-applicable suggestion. `cpc --diagnostics=json` emits the same information in a machine-readable shape for editors and agents. Codes prefixed with **W** are non-fatal warnings; the build continues. The normative ranges and what each phase owns are fixed in [§20 of the language specification](/docs/spec).
 
-This is the complete index — **186 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **145** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
+This is the complete index — **189 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **148** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
 
 ## Lexical
 
@@ -780,6 +780,50 @@ fn main() -> i32 { let x = U { a: 1, b: 2 }; return 0; }
 **Fix.** Keep every member `Copy`, keep the union non-generic and non-empty, and name exactly one member when constructing it — the one being made live.
 
 <sub>repro: checked · cplus-core/src/sema.rs:check_unions · test cplus-core/src/sema.rs:union_shape_rules_e0925</sub>
+
+### E0926 · Invalid `#[repr(packed)]`
+
+A `#[repr(..., packed)]` / `#[repr(..., packed = N)]` declaration broke one of the rules that follow from packing moving fields off their natural alignment: `N` is not a power of two from 1 to 16, the attribute is on an `enum` (a single integer, with no fields to pack), a field's type is not `Copy` (a destructor is handed the address of what it tears down, and a packed field has none it can believe), or a `ref` / `#addr_of` tried to take the address of a field sitting at an offset its own type is not aligned to.
+
+```cplus
+#[repr(C, packed)] struct P { x: u8, y: u32 }
+fn bump(ref v: u32) -> () { v = v + (1 as u32); }
+fn main() -> i32 { var p: P = P { x: 1 as u8, y: 7 as u32 }; bump(p.y); return 0; }
+// -> [E0926] `y` sits at offset 1 of a packed struct
+```
+
+**Fix.** Keep `packed = N` a power of two in 1..=16, put it on a struct, keep every field `Copy`, and read or write an under-aligned field directly instead of pointing at it — copy it into a local when something needs an address.
+
+<sub>repro: checked · cplus-core/src/sema.rs:check_packing · test cplus-core/src/sema.rs:packed_shape_rules_e0926</sub>
+
+### E0927 · Invalid bitfield
+
+A `#[bits(N)]` field broke one of the rules that follow from a bitfield being bits inside a storage unit it shares: its type is not an integer, `N` is 0 or wider than that type, the struct is not `#[repr(C)]` (a bit position is a claim about C storage units), the field is a union member (every union member starts at offset 0), the struct is generic (a C header is not), or a `ref` / `#addr_of` tried to take its address — it has none of its own, and a pointer to it would read and write its neighbours.
+
+```cplus
+#[repr(C)] struct S { #[bits(3)] a: u32, #[bits(5)] b: u32 }
+fn bump(ref v: u32) -> () { v = v + (1 as u32); }
+fn main() -> i32 { var s: S = S { a: 1 as u32, b: 2 as u32 }; bump(s.a); return 0; }
+// -> [E0927] `a` is a bitfield: it has no address of its own
+```
+
+**Fix.** Give the field an integer type and a width from 1 to that type's bit count, declare the struct `#[repr(C)]` and non-generic, and read or write the field directly instead of borrowing it. C's `:0` (force the next field to a boundary) has no C+ spelling; declare padding as a named field with the width you want skipped.
+
+<sub>repro: checked · cplus-core/src/sema.rs:check_packing · test cplus-core/src/sema.rs:bitfield_shape_rules_e0927</sub>
+
+### E0928 · Invalid `#[ensures]`
+
+An `#[ensures(EXPR)]` used `result` where there is nothing to name — the function returns `()` — or the function already has a binding called `result`, so the contract's `result` and the declared one cannot both be meant. (A postcondition's purity rule is E0924, the same one `#[requires]` follows.)
+
+```cplus
+#[ensures(result > 0)]
+fn nothing(n: i32) { return; }
+// -> [E0928] `result` names the value being returned, and this function returns nothing
+```
+
+**Fix.** On a function that returns nothing, write the postcondition about parameters and `this` instead; a `ref` parameter or `this` field is exactly what such a function changes. Otherwise rename the parameter that collides with `result`.
+
+<sub>repro: checked · cplus-core/src/sema.rs:check_contract_attrs · test cplus-core/src/sema.rs:ensures_result_needs_something_to_return_e0928</sub>
 
 ## Control flow and matching
 

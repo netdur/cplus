@@ -1414,19 +1414,52 @@ impl Emitter {
             }
         }
         // struct: walk fields, emit a #[repr(C)] struct.
-        self.out.push_str(&format!("#[repr(C)] struct {name} {{\n"));
+        //
+        // v0.0.28: bitfields and packing are things C+ can SAY now, so they
+        // are said. What this emitted before was a `_packed0: u32` storage
+        // slot plus read-only accessors that assumed every bitfield in the
+        // record lived in that first slot — a layout claim that was wrong for
+        // any second run, for any storage wider than 32 bits, and for every
+        // signed bitfield, with no way to write one at all.
+        let attrs: Vec<&str> = decl
+            .get("inner")
+            .and_then(|v| v.as_array())
+            .map(|xs| {
+                xs.iter()
+                    .filter_map(|a| a.get("kind").and_then(|k| k.as_str()))
+                    .filter(|k| k.ends_with("Attr"))
+                    .collect()
+            })
+            .unwrap_or_default();
+        // `#pragma pack(N)`: clang's JSON records THAT a maximum field
+        // alignment applies and not what it is, so the layout cannot be
+        // reproduced from this AST. Refuse the record rather than emit a
+        // struct whose offsets are a guess — a wrong layout is the exact
+        // failure this binding generator exists to prevent.
+        if attrs.contains(&"MaxFieldAlignmentAttr") {
+            self.out.push_str(&format!(
+                "// UNBOUND struct `{name}`: `#pragma pack(N)` applies, and clang's JSON AST\n//   does not carry N — the field offsets cannot be reproduced from it.\n//   Declare this one by hand with `#[repr(C, packed = N)]`.\n"
+            ));
+            return;
+        }
+        let packed = attrs.contains(&"PackedAttr");
+        let repr = if packed { "#[repr(C, packed)]" } else { "#[repr(C)]" };
+        self.out.push_str(&format!("{repr} struct {name} {{\n"));
         let inner = decl
             .get("inner")
             .and_then(|v| v.as_array())
             .cloned()
             .unwrap_or_default();
-        let mut bitfields: Vec<(String, String, u32, u32)> = Vec::new(); // (parent, name, bit_offset, width)
-        let mut bit_cursor: u32 = 0;
-        let mut storage_field_idx = 0u32;
         let mut plain_fields: Vec<(String, String)> = Vec::new();
-        let mut packed_fields: Vec<String> = Vec::new();
+        let mut zero_fields: Vec<String> = Vec::new();
         let mut has_ptr_field = false;
         let mut anon_field_idx = 0u32;
+        let mut pad_idx = 0u32;
+        // The bit cursor, advanced by the SAME rule the compiler lays a
+        // struct out with (`sema::place_field`), so the padding this emits
+        // for a `:0` is the padding the compiler would have inserted.
+        let mut cursor_bits: u64 = 0;
+        let pack = packed.then_some(1u64);
         for field in &inner {
             if field.get("kind").and_then(|k| k.as_str()) != Some("FieldDecl") {
                 continue;
@@ -1436,10 +1469,17 @@ impl Emitter {
             // them a stable positional name so the `#[repr(C)]` layout stays valid
             // (these are reinterpret-accessed anyway, like the union byte shim).
             let raw_name = field.get("name").and_then(|n| n.as_str()).unwrap_or("");
+            let is_bitfield = field.get("isBitfield").and_then(|v| v.as_bool()) == Some(true);
             let fname = if raw_name.is_empty() {
                 let n = anon_field_idx;
                 anon_field_idx += 1;
-                format!("_field{n}")
+                // An unnamed BITFIELD is padding, and it has to keep its
+                // storage: dropping it would move every field after it.
+                if is_bitfield {
+                    format!("_bitpad{n}")
+                } else {
+                    format!("_field{n}")
+                }
             } else {
                 sanitize_ident(raw_name)
             };
@@ -1448,24 +1488,6 @@ impl Emitter {
                 .and_then(|t| t.get("qualType"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
-            // Bitfield: `isBitfield=true` with a width sub-expression.
-            if field.get("isBitfield").and_then(|v| v.as_bool()) == Some(true) {
-                let width = bitfield_width(field).unwrap_or(0);
-                bitfields.push((name.to_string(), fname.clone(), bit_cursor, width));
-                bit_cursor += width;
-                // Continue scanning; we collapse all bitfields into a
-                // single u32 storage slot named `_packed{idx}`.
-                continue;
-            } else if !bitfields.is_empty() {
-                // Flush the accumulated bitfield run into a storage field.
-                let bytes = bit_cursor.div_ceil(8).max(1);
-                let _ = bytes;
-                self.out
-                    .push_str(&format!("    _packed{storage_field_idx}: u32,\n"));
-                packed_fields.push(format!("_packed{storage_field_idx}"));
-                storage_field_idx += 1;
-                bit_cursor = 0;
-            }
             let cplus_ty = match self.map_type(qt) {
                 Ok(t) => t,
                 Err(why) => {
@@ -1474,6 +1496,54 @@ impl Emitter {
                     continue;
                 }
             };
+            let (size, align) = int_layout(&cplus_ty).unwrap_or((0, 1));
+            if is_bitfield {
+                let width = bitfield_width(field).unwrap_or(0);
+                if size == 0 {
+                    self.out.push_str(&format!(
+                        "    // SKIPPED bitfield `{fname}: {qt}` — not an integer type\n"
+                    ));
+                    continue;
+                }
+                if width == 0 {
+                    // C's `unsigned :0;` — no storage, but the next field
+                    // starts at the following boundary of this type. C+ has
+                    // no spelling for it (E0927), so translate its EFFECT
+                    // into the padding width it stands for.
+                    let (_, next) = cplus_core::sema::place_field(
+                        cursor_bits,
+                        size,
+                        align,
+                        Some(0),
+                        pack,
+                    );
+                    let pad_bits = next - cursor_bits;
+                    if pad_bits > 0 {
+                        let pname = format!("_zeropad{pad_idx}");
+                        pad_idx += 1;
+                        self.out.push_str(&format!(
+                            "    #[bits({pad_bits})] {pname}: {cplus_ty},\n"
+                        ));
+                        zero_fields.push(pname);
+                    }
+                    cursor_bits = next;
+                    continue;
+                }
+                let (_, next) = cplus_core::sema::place_field(
+                    cursor_bits,
+                    size,
+                    align,
+                    Some(width as u8),
+                    pack,
+                );
+                cursor_bits = next;
+                self.out
+                    .push_str(&format!("    #[bits({width})] {fname}: {cplus_ty},\n"));
+                plain_fields.push((fname, cplus_ty));
+                continue;
+            }
+            let (_, next) = cplus_core::sema::place_field(cursor_bits, size, align, None, pack);
+            cursor_bits = next;
             // Raw-pointer fields must be `opaque` (C+ ownership: the struct
             // doesn't own them). That makes them un-settable cross-module, so a
             // constructor fn is emitted below for structs that have any.
@@ -1484,17 +1554,11 @@ impl Emitter {
             self.out.push_str(&format!("    {prefix}{cname}: {cplus_ty},\n"));
             plain_fields.push((cname, cplus_ty));
         }
-        if !bitfields.is_empty() {
-            self.out
-                .push_str(&format!("    _packed{storage_field_idx}: u32,\n"));
-            packed_fields.push(format!("_packed{storage_field_idx}"));
-        }
         self.out.push_str("}\n");
         // Constructor for structs with opaque (pointer) fields, since callers in
-        // other modules can't set opaque fields via a struct literal. Bitfield
-        // storage (`_packed{n}`) is also not caller-settable, so it's initialized
-        // to 0 here rather than exposed as a parameter — the literal must name
-        // every field, packed slots included.
+        // other modules can't set opaque fields via a struct literal. A `:0`
+        // padding field carries no value anyone can mean, so it is initialized
+        // to 0 here rather than exposed — the literal must name every field.
         if has_ptr_field && !plain_fields.is_empty() {
             let params = plain_fields
                 .iter()
@@ -1503,26 +1567,10 @@ impl Emitter {
                 .join(", ");
             let mut init_parts: Vec<String> =
                 plain_fields.iter().map(|(n, _)| format!("{n}: {n}")).collect();
-            init_parts.extend(packed_fields.iter().map(|p| format!("{p}: 0 as u32")));
+            init_parts.extend(zero_fields.iter().map(|p| format!("{p}: 0")));
             let inits = init_parts.join(", ");
             self.out
                 .push_str(&format!("fn {name}_new({params}) -> {name} {{\n    return {name} {{ {inits} }};\n}}\n"));
-        }
-        // Emit bitfield accessors after the struct.
-        for (parent, fname, off, width) in bitfields {
-            if width == 0 {
-                continue;
-            }
-            let mask: u64 = if width >= 32 {
-                0xFFFF_FFFF
-            } else {
-                (1u64 << width) - 1
-            };
-            self.out.push_str(&format!(
-                "impl {parent} {{\n\
-                 \x20   fn {fname}(this) -> u32 {{ return (this._packed0 >> ({off} as u32)) & ({mask} as u32); }}\n\
-                 }}\n",
-            ));
         }
     }
 
@@ -1892,6 +1940,19 @@ fn read_enum_value(node: &serde_json::Value) -> Option<i64> {
         .find_map(search)
 }
 
+/// Size and alignment of the C+ integer types a bitfield may have — the two
+/// numbers `sema::place_field` needs to place one. `None` for anything else,
+/// which is a bitfield this generator will not pretend to describe.
+fn int_layout(cplus_ty: &str) -> Option<(u64, u64)> {
+    match cplus_ty {
+        "i8" | "u8" | "bool" => Some((1, 1)),
+        "i16" | "u16" => Some((2, 2)),
+        "i32" | "u32" => Some((4, 4)),
+        "i64" | "u64" | "isize" | "usize" => Some((8, 8)),
+        _ => None,
+    }
+}
+
 fn bitfield_width(field: &serde_json::Value) -> Option<u32> {
     // Clang's JSON nests the bitfield width as either:
     //   inner[0].kind == "ConstantExpr" with `value: "N"` (modern clang)
@@ -2086,6 +2147,104 @@ mod tests {
         let extra = e.collect_value_reachable_records(&inner, &in_header);
         assert_eq!(extra.len(), 1);
         assert_eq!(extra[0].get("name").and_then(|v| v.as_str()), Some("tagPOINT"));
+    }
+
+    // v0.0.28: a C record's bitfields and packing are emitted as the C+
+    // declarations that MEAN them, not as a `_packed0: u32` storage slot with
+    // read-only accessors bolted on. `cpc/tests/packed_layout_vs_clang.rs`
+    // proves the compiler lays these out the way clang does; this proves the
+    // generator writes the right ones.
+    fn bitfield_json(name: &str, ty: &str, width: u32) -> serde_json::Value {
+        serde_json::json!({
+            "kind": "FieldDecl", "name": name, "isBitfield": true,
+            "type": {"qualType": ty},
+            "inner": [{"kind": "ConstantExpr", "value": width.to_string()}]
+        })
+    }
+
+    fn unnamed_bitfield_json(ty: &str, width: u32) -> serde_json::Value {
+        serde_json::json!({
+            "kind": "FieldDecl", "isBitfield": true,
+            "type": {"qualType": ty},
+            "inner": [{"kind": "ConstantExpr", "value": width.to_string()}]
+        })
+    }
+
+    #[test]
+    fn bitfields_emit_bits_attributes() {
+        let mut e = Emitter::new("h.h", false);
+        e.emit_record(&serde_json::json!({
+            "kind": "RecordDecl", "name": "F", "tagUsed": "struct",
+            "completeDefinition": true, "loc": { "file": "h.h" },
+            "inner": [
+                bitfield_json("a", "unsigned int", 3),
+                bitfield_json("b", "unsigned int", 5),
+                {"kind": "FieldDecl", "name": "c", "type": {"qualType": "unsigned char"}},
+                bitfield_json("s", "int", 4),
+            ]
+        }));
+        let out = e.out.clone();
+        assert!(out.contains("#[repr(C)] struct F"), "{out}");
+        assert!(out.contains("#[bits(3)] a: u32,"), "{out}");
+        assert!(out.contains("#[bits(5)] b: u32,"), "{out}");
+        assert!(out.contains("    c: u8,"), "{out}");
+        // A signed bitfield keeps its signedness — the old accessor form read
+        // every bitfield back as `u32`.
+        assert!(out.contains("#[bits(4)] s: i32,"), "{out}");
+        assert!(!out.contains("_packed0"), "storage-slot shim is gone: {out}");
+    }
+
+    #[test]
+    fn zero_width_bitfield_becomes_the_padding_it_stands_for() {
+        // `unsigned :0;` after a 3-bit field pushes the next field to bit 32.
+        // C+ has no spelling for it, so the generator emits the 29 bits it
+        // reserves — the same cursor the compiler would land on.
+        let mut e = Emitter::new("h.h", false);
+        e.emit_record(&serde_json::json!({
+            "kind": "RecordDecl", "name": "Z", "tagUsed": "struct",
+            "completeDefinition": true, "loc": { "file": "h.h" },
+            "inner": [
+                bitfield_json("a", "unsigned int", 3),
+                unnamed_bitfield_json("unsigned int", 0),
+                bitfield_json("b", "unsigned int", 3),
+                unnamed_bitfield_json("unsigned int", 2),
+                bitfield_json("d", "unsigned int", 1),
+            ]
+        }));
+        let out = e.out.clone();
+        assert!(out.contains("#[bits(29)] _zeropad0: u32,"), "{out}");
+        assert!(out.contains("#[bits(2)] _bitpad1: u32,"), "{out}");
+        assert!(out.contains("#[bits(1)] d: u32,"), "{out}");
+    }
+
+    #[test]
+    fn packed_record_says_packed_and_pragma_pack_refuses() {
+        let mut e = Emitter::new("h.h", false);
+        e.emit_record(&serde_json::json!({
+            "kind": "RecordDecl", "name": "W", "tagUsed": "struct",
+            "completeDefinition": true, "loc": { "file": "h.h" },
+            "inner": [
+                {"kind": "PackedAttr"},
+                {"kind": "FieldDecl", "name": "kind", "type": {"qualType": "unsigned char"}},
+                {"kind": "FieldDecl", "name": "len", "type": {"qualType": "unsigned int"}},
+            ]
+        }));
+        assert!(e.out.contains("#[repr(C, packed)] struct W"), "{}", e.out);
+
+        // `#pragma pack(N)` — clang's JSON says THAT one applies and not what
+        // N is, so the record is refused rather than described wrongly.
+        let mut e = Emitter::new("h.h", false);
+        e.emit_record(&serde_json::json!({
+            "kind": "RecordDecl", "name": "L", "tagUsed": "struct",
+            "completeDefinition": true, "loc": { "file": "h.h" },
+            "inner": [
+                {"kind": "MaxFieldAlignmentAttr"},
+                {"kind": "FieldDecl", "name": "a", "type": {"qualType": "unsigned char"}},
+                {"kind": "FieldDecl", "name": "b", "type": {"qualType": "unsigned int"}},
+            ]
+        }));
+        assert!(e.out.contains("UNBOUND struct `L`"), "{}", e.out);
+        assert!(!e.out.contains("struct L {"), "no wrong layout: {}", e.out);
     }
 
     #[test]
