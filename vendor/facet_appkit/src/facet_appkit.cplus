@@ -89,6 +89,7 @@ fn uninstall() {
     gestures::uninstall_key_reader();
     component::uninstall_sender_readers();
     theme::set_is_dark_fn(0 as fn() -> bool);
+    theme::set_theme_changed_fn(0 as fn());
     INSTALLED = false;
     return;
 }

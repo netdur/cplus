@@ -29,18 +29,27 @@ type Theme = app::Theme;
 // paint time.
 // Backend hook: repaint token-colored chrome after a theme change (the same
 // sweep the appearance observer runs). Installed by the backend; without one
-// set_theme still stores (new mounts resolve the new palette). App-scoped:
-// the hook repaints the RUNNING app's windows.
+// set_theme still stores (new mounts resolve the new palette).
+//
+// A STATIC, like IS_DARK_FN below, and for the same reason: this is the
+// BACKEND's hook, and one backend serves the process. It lived on the
+// Application record once, and that stranded it: `backend::install()` runs
+// before any app record is current (App::run installs the backend and THEN
+// calls make_current), so the hook landed on the process-default record and
+// the running app's record kept a null — every appearance flip notified and
+// repainted nothing. App-scoping still holds where it matters: the sweep the
+// backend installs walks the CURRENT app's windows when it fires.
+static THEME_CHANGED_FN: fn() = #zero::[fn()]();
+
 fn set_theme_changed_fn(f: fn()) {
-    let s: *app::Application = app::current();
-    { (*s).theme_changed_fn = f };
+    THEME_CHANGED_FN = f;
     return;
 }
 
 fn set_theme(take t: Theme) {
     let s: *app::Application = app::current();
     { (*s).theme = t };
-    let f: fn() = { (*s).theme_changed_fn };
+    let f: fn() = THEME_CHANGED_FN;
     if f != (0 as fn()) { f(); }
     return;
 }
@@ -173,7 +182,7 @@ fn on_appearance_change(handler: fn(*u8), ctx: *u8 = 0 as *u8) {
 // Then the app's handler, if it registered one.
 fn notify_appearance_changed() {
     let s: *app::Application = app::current();
-    let repaint: fn() = { (*s).theme_changed_fn };
+    let repaint: fn() = THEME_CHANGED_FN;
     if repaint != (0 as fn()) { repaint(); }
     let f: fn(*u8) = { (*s).appearance_cb };
     if f == (0 as fn(*u8)) { return; }

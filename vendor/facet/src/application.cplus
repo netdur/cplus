@@ -169,7 +169,6 @@ struct Application {
     // routes/menu — is reached through `current()`.
     opaque host: *u8,
     theme: Theme,
-    theme_changed_fn: fn(),
     appearance_cb: fn(*u8),
     opaque appearance_ctx: *u8,
     nav: Navigation,
@@ -181,7 +180,6 @@ impl Application {
         return Application {
             host: 0 as *u8,
             theme: Theme::new(),
-            theme_changed_fn: 0 as fn(),
             appearance_cb: 0 as fn(*u8),
             appearance_ctx: 0 as *u8,
             nav: Navigation::new(),
