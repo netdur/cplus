@@ -243,6 +243,62 @@ fn err_response(id: f64, code: f64, msg: str) -> json::Value {
     return json::Value::Object(m);
 }
 
+// ---- a second namespace -------------------------------------------------------
+//
+// One server process, two capability models.
+//
+// The agent surface is curated and permissioned: it hides unexposed nodes,
+// limits actions to declared affordances, and refuses point-addressed
+// operations. A DEVELOPER surface — the live inspector — needs the opposite of
+// all three, and growing `agent_core::Backend` a debug mode to serve it would
+// weaken a user-facing permission model for a development tool.
+//
+// So the capability models stay separate and only the TRANSPORT is shared. This
+// module knows nothing about what it is carrying: an extension registers a
+// method prefix and a handler, and every request whose method starts with that
+// prefix goes there instead of to the surface vtable. The dependency runs the
+// other way — the extension imports this module, not the reverse — so nothing
+// here gains a dependency and nothing here can reach into the extension.
+//
+// ARMING IS EXPLICIT AND IS THE GATE. An extension is more powerful than the
+// agent surface, so its presence in the binary must not be enough to expose it;
+// a process that never calls `arm_extension` answers "method not found" to
+// every extension method. The consent gate still runs FIRST and covers both:
+// arming grants no path around it.
+static EXT_HANDLER: fn(str, json::Value, f64) -> json::Value =
+    #zero::[fn(str, json::Value, f64) -> json::Value]();
+// Owned, not a `str`. A borrowed {ptr,len} in a static is sound for a literal
+// and a use-after-free for anything computed, and a caller composing a prefix
+// is not a mistake this module should be able to punish.
+static EXT_PREFIX: text::Text = #zero::[text::Text]();
+static EXT_ARMED: bool = false;
+
+fn arm_extension(prefix: str, h: fn(str, json::Value, f64) -> json::Value) {
+    EXT_PREFIX = text::from_str(prefix);
+    EXT_HANDLER = h;
+    EXT_ARMED = true;
+    return;
+}
+
+// Close the namespace again. The handler is cleared too, so a disarm cannot be
+// undone by a stray re-arm of the flag alone.
+fn disarm_extension() {
+    EXT_ARMED = false;
+    EXT_HANDLER = #zero::[fn(str, json::Value, f64) -> json::Value]();
+    EXT_PREFIX = text::new();
+    return;
+}
+
+fn extension_armed() -> bool { return EXT_ARMED; }
+
+fn is_extension_method(method: str) -> bool {
+    if !EXT_ARMED { return false; }
+    if EXT_HANDLER == (0 as fn(str, json::Value, f64) -> json::Value) { return false; }
+    let p: str = { EXT_PREFIX.view() };
+    if p == "" { return false; }
+    return text::from_str(method).has_prefix(p);
+}
+
 // ---- the dispatch -----------------------------------------------------------
 
 // JSON-RPC error codes: -32601 method-not-found (standard); -32001 the
@@ -263,6 +319,14 @@ fn dispatch(
 ) -> json::Value {
     if auth::decision_eq(gate.check(auth::request(auth::Channel::External)), auth::Decision::Reject) {
         return err_response(id, - 32001 as f64, "consent denied");
+    }
+
+    // After the gate, before the surface. An extension namespace is a second
+    // capability model over the same transport, and it is behind consent like
+    // everything else — arming opens a namespace, not a bypass.
+    if is_extension_method(method) {
+        let h: fn(str, json::Value, f64) -> json::Value = EXT_HANDLER;
+        return h(method, params, id);
     }
 
     if method == "describe_ui" {
@@ -315,7 +379,11 @@ fn dispatch(
         };
         return ok_response(id, result);
     }
-    return err_response(id, - 32601 as f64, "method not found");
+    // Naming the method it received. An extension method arriving at a process
+    // that never armed the namespace lands here, and "method not found" alone
+    // would read as a protocol mismatch rather than a missing `arm_extension`.
+    let unknown: text::Text = "method not found: ${method}";
+    return err_response(id, - 32601 as f64, unknown.view());
 }
 
 // Convenience: dispatch a raw JSON-RPC request string and return the response
@@ -805,6 +873,125 @@ fn every_verb_that_takes_a_target_requires_one() {
     let p: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
         "{\"method\":\"poll_event\",\"id\":5}");
     assert p.contains("-32602") == false;
+    return;
+}
+
+// ---- the extension namespace ---------------------------------------------------
+
+// A stand-in for a real extension (the live inspector is the one this exists
+// for). It answers its own methods and records that it was reached, so a test
+// can tell "routed here" from "answered by the surface".
+static EXT_CALLS: i32 = 0;
+
+fn fake_extension(method: str, params: json::Value, id: f64) -> json::Value {
+    EXT_CALLS = EXT_CALLS + 1;
+    var m: vec::Vec[json::Member] = vec::new::[json::Member]();
+    m.append(member("from", jstr("extension")));
+    m.append(member("method", jstr(method)));
+    return ok_response(id, json::Value::Object(m));
+}
+
+#[test]
+fn an_unarmed_extension_namespace_is_simply_not_there() {
+    disarm_extension();
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
+    assert extension_armed() == false;
+
+    // Present in the binary is not the same as exposed. A process that never
+    // armed the namespace does not serve it.
+    let r: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"inspector.describe\",\"id\":1}");
+    assert r.contains("-32601");
+    // ...and it names the method, so a missing `arm_extension` does not read as
+    // a protocol mismatch.
+    assert r.contains("inspector.describe");
+    assert r.contains("extension") == false;
+    return;
+}
+
+#[test]
+fn an_armed_namespace_routes_its_own_methods_and_leaves_the_surface_alone() {
+    disarm_extension();
+    EXT_CALLS = 0;
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
+
+    arm_extension("inspector.", fake_extension);
+    assert extension_armed();
+
+    let r: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"inspector.describe\",\"id\":1}");
+    assert r.contains("\"from\":\"extension\"");
+    assert EXT_CALLS == 1;
+
+    // The agent surface is untouched by the arming: same methods, same answers,
+    // and the extension never sees them.
+    let d: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"describe_ui\",\"id\":2}");
+    assert d.contains("exposed-node");
+    assert d.contains("extension") == false;
+    assert EXT_CALLS == 1;
+
+    // A method that merely resembles the prefix is not in it.
+    let n: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"inspector\",\"id\":3}");
+    assert n.contains("-32601");
+    assert EXT_CALLS == 1;
+
+    disarm_extension();
+    assert extension_armed() == false;
+    let after: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"inspector.describe\",\"id\":4}");
+    assert after.contains("-32601");
+    assert EXT_CALLS == 1;
+    return;
+}
+
+// Arming opens a namespace, not a way around consent. An extension is strictly
+// more powerful than the agent surface, so a gate that stopped covering it
+// would be the one place the whole permission model leaks.
+#[test]
+fn the_consent_gate_covers_the_extension_namespace_too() {
+    disarm_extension();
+    EXT_CALLS = 0;
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
+    arm_extension("inspector.", fake_extension);
+
+    let denied: text::Text = handle_request(surf, fake_backend(), sub, auth::deny_all(),
+        "{\"method\":\"inspector.describe\",\"id\":1}");
+    assert denied.contains("-32001");
+    assert denied.contains("extension") == false;
+    // Refused BEFORE the handler ran, not after it answered.
+    assert EXT_CALLS == 0;
+
+    disarm_extension();
+    return;
+}
+
+// The prefix is owned, so a caller that composes one is not punished for it.
+// A `str` static here would be a borrowed {ptr,len} into a Text that is gone by
+// the first request — sound for a literal, a use-after-free for anything else.
+#[test]
+fn a_composed_prefix_survives_the_call_that_armed_it() {
+    disarm_extension();
+    EXT_CALLS = 0;
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
+
+    var built: text::Text = text::from_str("insp");
+    let _a: status::Status = built.append("ector.");
+    arm_extension(built.view(), fake_extension);
+    // The Text that supplied it is finished with here; the prefix must not be.
+    built = text::from_str("clobbered");
+
+    let r: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"inspector.set\",\"id\":1}");
+    assert r.contains("\"from\":\"extension\"");
+    assert EXT_CALLS == 1;
+
+    disarm_extension();
     return;
 }
 

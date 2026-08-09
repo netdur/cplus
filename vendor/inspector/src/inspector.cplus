@@ -138,6 +138,54 @@ impl Value {
     }
 }
 
+// ---- construction ------------------------------------------------------------
+
+// What to build, for the structural verbs.
+//
+// The vocabulary is a MAKER NAME and not a control kind, and the difference is
+// load-bearing. Kind 0 is every container facet did not generate — row, column
+// and spacer are all kind 0 — so a kind code cannot say which of them to build.
+// The maker name can, and it is spelled exactly as `elements` spells the
+// function, so the line the journal emits is the call that was made rather than
+// a translation of it.
+//
+// Deliberately three fields. A spec that could carry arbitrary props would be a
+// second property-writing path to keep in step with `set`, and the node is
+// addressable the instant it exists — so the honest shape is "make the thing,
+// then edit it with the editor that is already there".
+struct Spec {
+    maker: text::Text,
+    // Empty is legal, and gives an unkeyed node. That is not a degraded case:
+    // it is what an application's own pure-layout containers look like, and the
+    // inspector edits tiers 1 and 2 on them exactly as it does anywhere else.
+    // Tier 3 will refuse, the same way it already refuses on any unkeyed node.
+    key: text::Text,
+    // The one string the makers that take one take — a label's text, a button's
+    // title, a field's initial text. Ignored by the containers, which take none.
+    label: text::Text,
+}
+
+impl Spec {
+    fn of(maker: str, key: str = "", label: str = "") -> Spec {
+        return Spec {
+            maker: text::from_str(maker),
+            key: text::from_str(key),
+            label: text::from_str(label),
+        };
+    }
+
+    // Owned `Text` in all three fields, so a caller that needs to both journal
+    // a spec and build from it duplicates rather than borrows — same reason
+    // `Value::clone` exists.
+    fn clone(this) -> Spec {
+        return Spec {
+            maker: this.maker.clone(),
+            key: this.key.clone(),
+            label: this.label.clone(),
+        };
+    }
+}
+
 // One row of a property listing.
 //
 // `name` is a `str` and not a `Text` because every name in this package comes
@@ -190,6 +238,32 @@ enum Outcome {
     // reach without the generated dispatch layer. Distinct from
     // `UnknownProperty` because the name was right.
     Unsupported,
+
+    // ---- structural refusals -------------------------------------------------
+    // Four, rather than one `Refused`, for the reason the four above are four:
+    // a developer who is told "no" learns nothing, and a developer who is told
+    // which no it was stops guessing.
+
+    // The parent cannot take an inspector-inserted child. Either it is a leaf
+    // control (a label has no host view, so the child's view would land in the
+    // label's PARENT while the node sat under the label — visibly wrong and
+    // wrong in the measure too), or it is a control that owns its own children
+    // through recycling or a pane registry, which a raw insert would fight.
+    NotAContainer,
+    // A window root, or the inspector panel's own subtree. A root is closed
+    // with `app::close_window`, not deleted out from under itself; the panel is
+    // the thing the developer is reading, and a tool that can delete its own
+    // controls is a tool that can end a debugging session by accident.
+    Protected,
+    // No maker of that name. Distinct from `NotAContainer` the way
+    // `UnknownProperty` is distinct from `Unsupported`: this one is a spelling.
+    UnknownKind,
+    // A move that would put a node inside its own subtree. The tree would stop
+    // being a tree, and the walk that found the cycle would not return.
+    Cycle,
+    // `undo` with an empty trash, or a restore whose parent has since gone.
+    // Not an error the caller made — the state to undo is simply not there.
+    NothingToUndo,
 }
 
 impl Outcome {
@@ -204,6 +278,11 @@ impl Outcome {
             Outcome::TypeMismatch => "wrong value type for that property",
             Outcome::ReadOnly => "that property is read-only",
             Outcome::Unsupported => "that property needs a key on this node",
+            Outcome::NotAContainer => "that node does not take inserted children",
+            Outcome::Protected => "a window root and the panel itself are not editable",
+            Outcome::UnknownKind => "no element of that name can be made here",
+            Outcome::Cycle => "cannot move a node inside itself",
+            Outcome::NothingToUndo => "nothing to undo",
         };
     }
 }
@@ -269,14 +348,23 @@ fn no_set(_s: *u8, _h: Handle, _p: str, take _v: Value) -> Outcome {
 fn no_reset(_s: *u8, _h: Handle, _p: str) -> Outcome { return Outcome::Unsupported; }
 fn no_highlight(_s: *u8, _h: Handle) { return; }
 fn no_clear_highlight(_s: *u8) { return; }
+fn no_insert(_s: *u8, _h: Handle, _at: usize, take _sp: Spec) -> Outcome {
+    return Outcome::Unsupported;
+}
+fn no_remove(_s: *u8, _h: Handle) -> Outcome { return Outcome::Unsupported; }
+fn no_reparent(_s: *u8, _h: Handle, _p: Handle, _at: usize) -> Outcome {
+    return Outcome::Unsupported;
+}
+fn no_undo(_s: *u8) -> Outcome { return Outcome::NothingToUndo; }
 
 // Every fn takes the type-erased receiver first; the implementor casts it back.
 // `Backend` is Copy — all fields are fn-pointers plus one pointer — so it
 // passes by value through the whole call chain the way `agent_core`'s does.
 //
-// The first four rows are portable: they read and write facet's own tree and
-// need no platform. The last two are the platform's, and a build with no
-// platform module keeps the no-ops, which do nothing rather than pretending.
+// All the rows but two are portable: they read and write facet's own tree and
+// need no platform. `highlight` and `clear_highlight` are the platform's, and a
+// build with no platform module keeps their no-ops, which do nothing rather
+// than pretending.
 //
 // There is no `pick`. Point-addressed selection was built and removed — see
 // the note in docs/design.md. Selecting from the tree is the way in.
@@ -290,6 +378,29 @@ struct Backend {
 
     highlight: fn(*u8, Handle),
     clear_highlight: fn(*u8),
+
+    // ---- structure -----------------------------------------------------------
+    // Portable like the first four: `facet/mount` already owns every one of
+    // these operations against the LIVE tree — it creates the views, computes
+    // the native slot through passthrough containers, notifies detach while
+    // the subtree is still whole, and pulls the views out in the right order.
+    // Nothing here reimplements any of that; it addresses it and refuses the
+    // cases mount would happily perform and a developer would not want.
+
+    // Build `Spec` and put it in the node at `at`, clamped to the end.
+    insert: fn(*u8, Handle, usize, take Spec) -> Outcome,
+    // Take the node out and keep it, so `undo` can put it back. The tree is
+    // left exactly as `remove_child` leaves it — detached, views released from
+    // the host, handlers notified.
+    remove: fn(*u8, Handle) -> Outcome,
+    // Move an existing node under a new parent at `at`. One verb rather than
+    // remove-then-insert at the call site, because between the two the node is
+    // owned by nobody the caller can name.
+    reparent: fn(*u8, Handle, Handle, usize) -> Outcome,
+    // Put back the most recent removal. One level is not a compromise here:
+    // an inspector edit is an experiment, and the mistake it guards against is
+    // deleting the wrong row and losing the subtree under it.
+    undo: fn(*u8) -> Outcome,
 }
 
 impl Backend {
@@ -304,6 +415,10 @@ impl Backend {
             reset: no_reset,
             highlight: no_highlight,
             clear_highlight: no_clear_highlight,
+            insert: no_insert,
+            remove: no_remove,
+            reparent: no_reparent,
+            undo: no_undo,
         };
     }
 
@@ -334,6 +449,22 @@ impl Backend {
         let f: fn(*u8) = this.clear_highlight;
         f(this.surface);
         return;
+    }
+    fn insert_now(this, parent: Handle, at: usize, take sp: Spec) -> Outcome {
+        let f: fn(*u8, Handle, usize, take Spec) -> Outcome = this.insert;
+        return f(this.surface, parent, at, sp);
+    }
+    fn remove_now(this, h: Handle) -> Outcome {
+        let f: fn(*u8, Handle) -> Outcome = this.remove;
+        return f(this.surface, h);
+    }
+    fn reparent_now(this, h: Handle, parent: Handle, at: usize) -> Outcome {
+        let f: fn(*u8, Handle, Handle, usize) -> Outcome = this.reparent;
+        return f(this.surface, h, parent, at);
+    }
+    fn undo_now(this) -> Outcome {
+        let f: fn(*u8) -> Outcome = this.undo;
+        return f(this.surface);
     }
 }
 

@@ -1,0 +1,769 @@
+// mcp — the inspector on the wire, as a namespace inside the agent's server.
+//
+// One server process, two capability models. The agent surface is curated and
+// permissioned; this one sees unexposed nodes and writes properties that are not
+// user affordances. Those models must not merge — but they can share a
+// TRANSPORT, and duplicating a JSON-RPC server, a socket, a teardown hook and a
+// consent gate to avoid sharing one would have been a second thing to keep
+// correct for no gain.
+//
+// So `agent_mcp` grew one erased hook — a method prefix and a handler — and
+// this module registers `inspector.` into it. The dependency runs THIS way:
+// `inspector` imports `agent_mcp`, never the reverse. Nothing in the agent
+// packages knows the inspector exists, and `agent_core::Backend` did not gain a
+// debug mode.
+//
+// ---- arming is the gate --------------------------------------------------------
+//
+// Linking this module in is not enough to expose it. `arm` is an explicit call
+// an application makes, and a process that never makes it answers "method not
+// found" to every `inspector.*` method. The agent's consent gate still runs
+// first and covers this namespace too: arming opens a door, not a bypass.
+//
+// ---- the wire address ----------------------------------------------------------
+//
+// A `Handle` is a node pointer, and a pointer does not survive a socket. So
+// `describe` answers a flat, parent-indexed listing and an INDEX into it is the
+// address every other method takes. This module holds the last listing and
+// resolves indices against it — which is exactly why `describe` was built to
+// return a flat vector rather than a nested one.
+//
+// `revision` rides along on every answer. It is flex's global removal counter,
+// the same number `Handle` liveness is one comparison against, so a client that
+// sees its revision move knows its indices may have moved with it.
+//
+// ---- the thread ----------------------------------------------------------------
+//
+// `mount::install` records the UI thread and `core::touch` asserts on it, so a
+// write arriving on a socket thread ABORTS the process rather than racing
+// quietly. Every tree touch below therefore goes through `run_ui`, a synchronous
+// hop the platform module installs.
+//
+// The READS are rendered to JSON on the far side of that hop too, rather than
+// answered as data and serialised afterwards. Two reasons, and the second is the
+// one that decided it: a read serialised later is a read of a tree that has
+// moved on since, and `Detail` carries `str` views (every `Prop.name` is a
+// literal) which cannot cross a raw-pointer store at all. A `json::Value` owns
+// its `Text`s and borrows nothing, so it crosses freely.
+
+import "stdlib/vec" as vec;
+import "stdlib/text" as text;
+import "stdlib/option" as option;
+import "stdlib/status" as status;
+import "flex_layout/flex_layout" as flex;
+import "json/json" as json;
+import "agent_mcp/agent_mcp" as bridge;
+import "facet/vocabulary" as vocab;
+import "./inspector" as insp;
+import "./tree" as tree;
+
+// ---- JSON helpers --------------------------------------------------------------
+
+fn jstr(s: str) -> json::Value { return json::Value::Text(text::from_str(s)); }
+fn jnum(n: f64) -> json::Value { return json::Value::Number(n); }
+fn jbool(b: bool) -> json::Value { return json::Value::Bool(b); }
+
+fn member(k: str, take v: json::Value) -> json::Member {
+    return json::Member { key: text::from_str(k), value: v };
+}
+
+fn obj_get(v: json::Value, key: str) -> json::Value {
+    return match v.value(key) {
+        option::Option[json::Value]::Some(val) => val,
+        option::Option[json::Value]::None => json::Value::Null,
+    };
+}
+
+fn as_usize(v: json::Value, fallback: usize) -> usize {
+    return match v.as_number() {
+        option::Option[f64]::Some(n) => {
+            if n < 0.0f64 { fallback } else { n as usize }
+        }
+        option::Option[f64]::None => fallback,
+    };
+}
+
+fn as_text(v: json::Value) -> text::Text {
+    return match v.as_text() {
+        option::Option[text::Text]::Some(t) => t,
+        option::Option[text::Text]::None => text::new(),
+    };
+}
+
+// ---- envelopes -----------------------------------------------------------------
+
+fn ok_response(id: f64, take result: json::Value) -> json::Value {
+    var m: vec::Vec[json::Member] = vec::new::[json::Member]();
+    m.append(member("jsonrpc", jstr("2.0")));
+    m.append(member("id", jnum(id)));
+    m.append(member("result", result));
+    return json::Value::Object(m);
+}
+
+fn err_response(id: f64, code: f64, msg: str) -> json::Value {
+    var e: vec::Vec[json::Member] = vec::new::[json::Member]();
+    e.append(member("code", jnum(code)));
+    e.append(member("message", jstr(msg)));
+    var m: vec::Vec[json::Member] = vec::new::[json::Member]();
+    m.append(member("jsonrpc", jstr("2.0")));
+    m.append(member("id", jnum(id)));
+    m.append(member("error", json::Value::Object(e)));
+    return json::Value::Object(m);
+}
+
+// A required parameter is absent. The same -32602 the agent surface uses, and
+// for the same reason it exists there: every reader below falls back, so a
+// misspelled parameter name would otherwise answer success and act on index 0.
+fn missing_param(id: f64, method: str, param: str) -> json::Value {
+    let msg: text::Text = "${method}: missing required parameter \"${param}\"";
+    return err_response(id, - 32602 as f64, msg.view());
+}
+
+// ---- values on the wire --------------------------------------------------------
+
+// A colour is rendered by what it IS, never by inventing channels.
+//
+// `vocabulary` reserves 255 for a literal rgba and 254 for a light/dark pair;
+// every other non-zero token is a theme ROLE whose channels are all zero because
+// the theme supplies them at paint time. Emitting rgba for a role would report
+// every themed colour as transparent black, and emitting `token: 255` for a
+// literal would throw away the only colour actually present. Both were live
+// bugs in the panel; the wire inherits the fix rather than the bug.
+const TOK_NONE: u32 = 0u32;
+const TOK_ADAPTIVE: u32 = 254u32;
+const TOK_LITERAL: u32 = 255u32;
+
+fn rgba_array(r: f64, g: f64, b: f64, a: f64) -> json::Value {
+    var arr: vec::Vec[json::Value] = vec::new::[json::Value]();
+    arr.append(jnum(r));
+    arr.append(jnum(g));
+    arr.append(jnum(b));
+    arr.append(jnum(a));
+    return json::Value::Array(arr);
+}
+
+fn color_json(c: vocab::Color) -> json::Value {
+    var m: vec::Vec[json::Member] = vec::new::[json::Member]();
+    m.append(member("token", jnum(c.token as f64)));
+    if c.token == TOK_LITERAL {
+        m.append(member("rgba", rgba_array(c.r, c.g, c.b, c.a)));
+        return json::Value::Object(m);
+    }
+    if c.token == TOK_ADAPTIVE {
+        m.append(member("light", rgba_array(c.r, c.g, c.b, c.a)));
+        m.append(member("dark", rgba_array(c.r2, c.g2, c.b2, c.a2)));
+        return json::Value::Object(m);
+    }
+    // A role, or `clear`. No channels, because there are none to report.
+    return json::Value::Object(m);
+}
+
+fn value_json(v: insp::Value) -> json::Value {
+    return match v {
+        // Not zero. An unset length has no number an inspector could hand back
+        // unchanged, and `0` is a value a client would then write back as a
+        // real zero.
+        insp::Value::Nothing => json::Value::Null,
+        insp::Value::Bool(b) => jbool(b),
+        insp::Value::Int(i) => jnum(i as f64),
+        insp::Value::Num(x) => jnum(x),
+        insp::Value::Str(s) => json::Value::Text(s.clone()),
+        insp::Value::Enum(e) => json::Value::Text(e.clone()),
+        insp::Value::Color(c) => color_json(c),
+    };
+}
+
+fn prop_json(p: *insp::Prop) -> json::Value {
+    var m: vec::Vec[json::Member] = vec::new::[json::Member]();
+    m.append(member("name", jstr({ (*p).name })));
+    // The tag, so a client knows what a write to this name will accept without
+    // having to infer it from the value it happens to be holding.
+    m.append(member("type", jstr({ (*p).value }.type_name())));
+    m.append(member("value", value_json({ (*p).value }.clone())));
+    m.append(member("writable", jbool({ (*p).writable })));
+    m.append(member("overridden", jbool({ (*p).overridden })));
+    return json::Value::Object(m);
+}
+
+fn props_json(ps: vec::Vec[insp::Prop]) -> json::Value {
+    var arr: vec::Vec[json::Value] = vec::new::[json::Value]();
+    var i: usize = 0 as usize;
+    while i < ps.count() {
+        match ps.at_ptr(i) {
+            option::Option[*insp::Prop]::Some(p) => { arr.append(prop_json(p)); }
+            option::Option[*insp::Prop]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return json::Value::Array(arr);
+}
+
+// One listing row. `index` is its own address — stated rather than left implicit
+// in the array position, because a client that filters the array locally must
+// still be able to address what it kept.
+fn node_json(p: *insp::Node, index: usize) -> json::Value {
+    var m: vec::Vec[json::Member] = vec::new::[json::Member]();
+    m.append(member("index", jnum(index as f64)));
+    m.append(member("parent", match { (*p).parent } {
+        option::Option[usize]::Some(pi) => jnum(pi as f64),
+        option::Option[usize]::None => json::Value::Null,
+    }));
+    m.append(member("depth", jnum({ (*p).depth } as f64)));
+    m.append(member("kind", jstr(insp::kind_name({ (*p).kind }))));
+    m.append(member("key", jstr({ (*p).key })));
+    m.append(member("children", jnum({ (*p).child_count } as f64)));
+    // What a walk of the platform's view hierarchy could never tell you, and
+    // the whole reason this listing walks facet's tree instead.
+    m.append(member("has_view", jbool({ (*p).has_view })));
+    m.append(member("attached", jbool({ (*p).is_attached })));
+    m.append(member("focused", jbool({ (*p).is_focused })));
+    m.append(member("visible", jbool({ (*p).is_visible })));
+    var f: vec::Vec[json::Member] = vec::new::[json::Member]();
+    f.append(member("x", jnum({ (*p).frame.left })));
+    f.append(member("y", jnum({ (*p).frame.top })));
+    f.append(member("w", jnum({ (*p).frame.width })));
+    f.append(member("h", jnum({ (*p).frame.height })));
+    m.append(member("frame", json::Value::Object(f)));
+    // The panel's own subtree, marked rather than hidden. A remote client is a
+    // different consumer from the embedded panel and may legitimately want to
+    // see it; what it must not do is edit it by accident, and the verbs refuse
+    // that independently.
+    if { (*p).is_inspector } { m.append(member("is_inspector", jbool(true))); }
+    return json::Value::Object(m);
+}
+
+// ---- the marshal ---------------------------------------------------------------
+//
+// `core::touch` asserts it is on the thread `mount::install` recorded, so a
+// write from a socket thread aborts. The hop is a platform concern — libdispatch
+// on Darwin — so it is INSTALLED rather than implemented here, and an unset one
+// runs the work directly. That is right for the headless tests and for an
+// in-process caller that is already on the UI thread, and wrong only for a
+// socket server on a platform whose shim was never installed, which is a build
+// that has no windows to inspect either.
+// Context FIRST, like every fn-pointer in this package's vtable. It also keeps
+// the shape out of the bound-method convention: a fn-pointer parameter ending
+// in `*u8` reads as a wired handler whose next slot carries a receiver (W0824),
+// and the `*u8` here is the work function's own context, not a receiver.
+static MARSHAL: fn(*u8, fn(*u8)) = #zero::[fn(*u8, fn(*u8))]();
+
+fn set_marshal(f: fn(*u8, fn(*u8))) { MARSHAL = f; return; }
+
+fn run_ui(work: fn(*u8), ctx: *u8) {
+    let f: fn(*u8, fn(*u8)) = MARSHAL;
+    if f == (0 as fn(*u8, fn(*u8))) { work(ctx); return; }
+    f(ctx, work);
+    return;
+}
+
+// ---- the session ---------------------------------------------------------------
+
+static BACKEND: insp::Backend = #zero::[insp::Backend]();
+static SNAPSHOT: vec::Vec[insp::Node] = #zero::[vec::Vec[insp::Node]]();
+static ARMED: bool = false;
+
+fn armed() -> bool { return ARMED; }
+
+fn snapshot_count() -> usize { return SNAPSHOT.count(); }
+
+// Publish `inspector.*` into the agent's server.
+//
+// The backend is a parameter and not `tree::local_backend()` by construction:
+// `widget` is written against the vtable for the same reason, and a test wants
+// to arm a degraded one and prove every verb refuses.
+fn arm(take b: insp::Backend) {
+    BACKEND = b;
+    ARMED = true;
+    bridge::arm_extension("inspector.", handle);
+    return;
+}
+
+fn disarm() {
+    ARMED = false;
+    BACKEND = insp::Backend::none();
+    SNAPSHOT.remove_all();
+    bridge::disarm_extension();
+    return;
+}
+
+// ---- the marshalled call -------------------------------------------------------
+
+const OP_DESCRIBE: u32 = 1u32;
+const OP_INSPECT: u32 = 2u32;
+const OP_SET: u32 = 3u32;
+const OP_RESET: u32 = 4u32;
+const OP_INSERT: u32 = 5u32;
+const OP_REMOVE: u32 = 6u32;
+const OP_REPARENT: u32 = 7u32;
+const OP_UNDO: u32 = 8u32;
+const OP_HIGHLIGHT: u32 = 9u32;
+const OP_CLEAR: u32 = 10u32;
+const OP_JOURNAL: u32 = 11u32;
+
+// What the client sent for `value`, kept in the shape JSON gave it.
+//
+// Carried raw rather than parsed, because parsing needs the property's CURRENT
+// tag and reading that is itself a tree read — so it belongs on the far side of
+// the hop with everything else.
+const TAG_NONE: u32 = 0u32;
+const TAG_NUM: u32 = 1u32;
+const TAG_BOOL: u32 = 2u32;
+const TAG_STR: u32 = 3u32;
+
+// One request, across the thread hop and back.
+//
+// One struct and an opcode rather than a context type per verb: the hop takes a
+// `fn(*u8)` and nothing else, so every verb would otherwise need its own runner,
+// its own struct and its own copy of the resolve-and-refuse preamble.
+//
+// It carries no ANSWER beyond an outcome. `Detail` holds `Prop`s, whose `name`
+// is a `str` — a borrowed view, because every one of them is a literal — so the
+// whole of `Detail` is view-carrying and storing it through a raw pointer is a
+// flow no analysis can see (E0516). Rendering it to JSON on the far side solves
+// that at the root rather than annotating around it: a `json::Value` owns its
+// `Text`s and borrows nothing, so it crosses freely. It also puts the read and
+// its serialisation on the same side of the hop, which is what makes the answer
+// a snapshot rather than a read of a tree that has moved on since.
+struct Call {
+    op: u32,
+    node: usize,
+    parent: usize,
+    at: usize,
+    prop: text::Text,
+    raw: text::Text,
+    num: f64,
+    flag: bool,
+    tag: u32,
+    spec: insp::Spec,
+    // ---- out ----
+    outcome: insp::Outcome,
+}
+
+// The answer channel, as a one-element vector.
+//
+// A vector because a field cannot be moved out of a struct that carries a
+// destructor, and `json::Value` carries one — the same rule that made the
+// removal trash three parallel vectors. `remove_last` hands the whole element
+// over, which is exactly the move that was wanted.
+static OUT: vec::Vec[json::Value] = #zero::[vec::Vec[json::Value]]();
+
+fn put_out(take v: json::Value) {
+    OUT.remove_all();
+    let _s: status::Status = OUT.append(v);
+    return;
+}
+
+fn take_out() -> option::Option[json::Value] { return OUT.remove_last(); }
+
+fn new_call(op: u32) -> Call {
+    return Call {
+        op: op,
+        node: 0 as usize,
+        parent: 0 as usize,
+        at: 0 as usize,
+        prop: text::new(),
+        raw: text::new(),
+        num: 0.0f64,
+        flag: false,
+        tag: TAG_NONE,
+        spec: insp::Spec::of(""),
+        outcome: insp::Outcome::NotFound,
+    };
+}
+
+// An index into the last listing, as a handle. `Handle::none()` for an index
+// that was never issued, which every verb reports as `NotFound` — the same
+// answer a null handle gets, because "no such address" is what both are.
+fn resolve(i: usize) -> insp::Handle {
+    return match SNAPSHOT.at_ptr(i) {
+        option::Option[*insp::Node]::Some(p) => { (*p).handle }
+        option::Option[*insp::Node]::None => insp::Handle::none(),
+    };
+}
+
+// Build the value a `set` will write, on the UI thread, against the property's
+// current tag. `None` when the node does not answer that property at all, which
+// the caller reports as `UnknownProperty` rather than guessing a tag for it.
+fn value_for(h: insp::Handle, prop: str, tag: u32, num: f64, flag: bool, raw: str)
+    -> option::Option[insp::Value] {
+    if tag == TAG_BOOL { return option::Option[insp::Value]::Some(insp::Value::Bool(flag)); }
+    if tag == TAG_NUM {
+        // Against the current tag, so a client sending `12` for an integer
+        // property gets an integer rather than a number that reads back
+        // differently from what it wrote.
+        return match tree::get(h, prop) {
+            option::Option[insp::Value]::Some(cur) => match cur {
+                insp::Value::Int(_i) =>
+                    option::Option[insp::Value]::Some(insp::Value::Int(num as i64)),
+                _ => option::Option[insp::Value]::Some(insp::Value::Num(num)),
+            },
+            option::Option[insp::Value]::None => option::Option[insp::Value]::None,
+        };
+    }
+    if tag == TAG_STR {
+        // The panel's rule, unchanged: a string is read as the tag the property
+        // already holds, which is what makes `"#2277ff"` a colour on a colour
+        // property and a literal seven characters on a text one.
+        return tree::parse_for(h, prop, raw);
+    }
+    return option::Option[insp::Value]::None;
+}
+
+// The far side of the hop. Everything that touches the tree happens here and
+// nowhere else.
+fn run_call(ctx: *u8) {
+    let c: *Call = ctx as *Call;
+    let b: insp::Backend = BACKEND;
+    let op: u32 = { (*c).op };
+
+    if op == OP_DESCRIBE {
+        SNAPSHOT = b.describe_now();
+        var arr: vec::Vec[json::Value] = vec::new::[json::Value]();
+        var i: usize = 0 as usize;
+        while i < SNAPSHOT.count() {
+            match SNAPSHOT.at_ptr(i) {
+                option::Option[*insp::Node]::Some(p) => { arr.append(node_json(p, i)); }
+                option::Option[*insp::Node]::None => { }
+            }
+            i = i +% (1 as usize);
+        }
+        var m: vec::Vec[json::Member] = vec::new::[json::Member]();
+        m.append(member("revision", jnum(flex::removal_count() as f64)));
+        m.append(member("nodes", json::Value::Array(arr)));
+        put_out(json::Value::Object(m));
+        { (*c).outcome = insp::Outcome::Ok };
+        return;
+    }
+    if op == OP_JOURNAL {
+        var arr: vec::Vec[json::Value] = vec::new::[json::Value]();
+        var i: usize = 0 as usize;
+        let n: usize = tree::journal_count();
+        while i < n {
+            match tree::journal_at(i) {
+                option::Option[text::Text]::Some(line) => {
+                    arr.append(json::Value::Text(line.clone()));
+                }
+                option::Option[text::Text]::None => { }
+            }
+            i = i +% (1 as usize);
+        }
+        var m: vec::Vec[json::Member] = vec::new::[json::Member]();
+        m.append(member("lines", json::Value::Array(arr)));
+        put_out(json::Value::Object(m));
+        { (*c).outcome = insp::Outcome::Ok };
+        return;
+    }
+    if op == OP_UNDO {
+        { (*c).outcome = b.undo_now() };
+        return;
+    }
+    if op == OP_CLEAR {
+        b.clear_highlight_now();
+        { (*c).outcome = insp::Outcome::Ok };
+        return;
+    }
+
+    let h: insp::Handle = resolve({ (*c).node });
+    if h.is_none() { { (*c).outcome = insp::Outcome::NotFound }; return; }
+
+    if op == OP_INSPECT {
+        match b.inspect_now(h) {
+            option::Option[insp::Detail]::Some(d) => {
+                var m: vec::Vec[json::Member] = vec::new::[json::Member]();
+                m.append(member("revision", jnum(flex::removal_count() as f64)));
+                m.append(member("node", node_json(#addr_of(d.node), { (*c).node })));
+                // Three lists, never one. Setting `width` writes a style and
+                // reading the frame reads what layout decided; a single `width`
+                // row is a number the client cannot write back and cannot
+                // explain.
+                m.append(member("declared", props_json(d.declared)));
+                m.append(member("computed", props_json(d.computed)));
+                m.append(member("native", props_json(d.native)));
+                put_out(json::Value::Object(m));
+                { (*c).outcome = insp::Outcome::Ok };
+            }
+            // A live handle that inspects to nothing went stale between the
+            // listing and the read, which is a re-describe and not a mistake.
+            option::Option[insp::Detail]::None => {
+                { (*c).outcome = insp::Outcome::Stale };
+            }
+        }
+        return;
+    }
+    if op == OP_HIGHLIGHT {
+        b.highlight_now(h);
+        { (*c).outcome = insp::Outcome::Ok };
+        return;
+    }
+    // A property name arrives as a request-scoped `Text`, and the override
+    // ledger records the name it was given as a BORROWED `str`. Handing it a
+    // view of the request would leave it holding freed bytes — and the symptom
+    // is not a crash but a `reset` that answers `Ok` and restores nothing. So
+    // the name is exchanged for this package's own literal first, and a name in
+    // neither table never reaches a setter at all.
+    if op == OP_RESET {
+        let pp: *text::Text = { #addr_of((*c).prop) };
+        match tree::canonical_prop({ (*pp).view() }) {
+            option::Option[str]::Some(name) => {
+                { (*c).outcome = b.reset_now(h, name) };
+            }
+            option::Option[str]::None => {
+                { (*c).outcome = insp::Outcome::UnknownProperty };
+            }
+        }
+        return;
+    }
+    if op == OP_SET {
+        let pp: *text::Text = { #addr_of((*c).prop) };
+        let rp: *text::Text = { #addr_of((*c).raw) };
+        let prop: str = match tree::canonical_prop({ (*pp).view() }) {
+            option::Option[str]::Some(name) => name,
+            option::Option[str]::None => {
+                { (*c).outcome = insp::Outcome::UnknownProperty };
+                return;
+            }
+        };
+        match value_for(h, prop, { (*c).tag }, { (*c).num }, { (*c).flag }, { (*rp).view() }) {
+            option::Option[insp::Value]::Some(v) => {
+                { (*c).outcome = b.set_now(h, prop, v) };
+            }
+            // No value could be built. A read-only property is the interesting
+            // case: it is real, it has a name in the table, and it answers no
+            // readable value — so `set` is left to say `ReadOnly` rather than
+            // this guessing `UnknownProperty` for something that plainly exists.
+            option::Option[insp::Value]::None => {
+                { (*c).outcome = b.set_now(h, prop, insp::Value::Nothing) };
+            }
+        }
+        return;
+    }
+    if op == OP_REMOVE {
+        { (*c).outcome = b.remove_now(h) };
+        return;
+    }
+    if op == OP_INSERT {
+        let sp: insp::Spec = { (*c).spec }.clone();
+        { (*c).outcome = b.insert_now(h, { (*c).at }, sp) };
+        return;
+    }
+    // op == OP_REPARENT
+    let p: insp::Handle = resolve({ (*c).parent });
+    if p.is_none() { { (*c).outcome = insp::Outcome::NotFound }; return; }
+    { (*c).outcome = b.reparent_now(h, p, { (*c).at }) };
+    return;
+}
+
+// ---- outcomes on the wire ------------------------------------------------------
+
+// The refusal, by name and by sentence. Both, because a client matching on a
+// name should not have to parse prose, and a developer reading a transcript
+// should not have to look the name up.
+fn outcome_name(o: insp::Outcome) -> str {
+    return match o {
+        insp::Outcome::Ok => "ok",
+        insp::Outcome::Stale => "stale",
+        insp::Outcome::NotFound => "not_found",
+        insp::Outcome::UnknownProperty => "unknown_property",
+        insp::Outcome::TypeMismatch => "type_mismatch",
+        insp::Outcome::ReadOnly => "read_only",
+        insp::Outcome::Unsupported => "unsupported",
+        insp::Outcome::NotAContainer => "not_a_container",
+        insp::Outcome::Protected => "protected",
+        insp::Outcome::UnknownKind => "unknown_kind",
+        insp::Outcome::Cycle => "cycle",
+        insp::Outcome::NothingToUndo => "nothing_to_undo",
+    };
+}
+
+fn outcome_members(o: insp::Outcome) -> vec::Vec[json::Member] {
+    var m: vec::Vec[json::Member] = vec::new::[json::Member]();
+    m.append(member("outcome", jstr(outcome_name(o))));
+    if !o.is_ok() { m.append(member("reason", jstr(o.describe()))); }
+    // The client's staleness token, on every answer. It is flex's removal
+    // counter — the number `Handle` liveness is one comparison against — so a
+    // client that sees it move knows its indices may have moved with it.
+    m.append(member("revision", jnum(flex::removal_count() as f64)));
+    return m;
+}
+
+fn outcome_result(o: insp::Outcome) -> json::Value {
+    return json::Value::Object(outcome_members(o));
+}
+
+// ---- the methods ---------------------------------------------------------------
+
+// A verb whose answer is a document rather than an outcome. The document was
+// built on the far side of the hop; an empty channel means the verb refused,
+// and then the outcome is the answer.
+fn do_answering(id: f64, take c: Call) -> json::Value {
+    run_ui(run_call, #addr_of(c) as *u8);
+    let o: insp::Outcome = c.outcome;
+    return match take_out() {
+        option::Option[json::Value]::Some(v) => ok_response(id, v),
+        option::Option[json::Value]::None => ok_response(id, outcome_result(o)),
+    };
+}
+
+fn do_describe(id: f64) -> json::Value {
+    return do_answering(id, new_call(OP_DESCRIBE));
+}
+
+fn do_inspect(id: f64, params: json::Value) -> json::Value {
+    if !params.has("node") { return missing_param(id, "inspector.inspect", "node"); }
+    var c: Call = new_call(OP_INSPECT);
+    c.node = as_usize(obj_get(params, "node"), 0 as usize);
+    return do_answering(id, c);
+}
+
+fn do_set(id: f64, params: json::Value) -> json::Value {
+    if !params.has("node") { return missing_param(id, "inspector.set", "node"); }
+    if !params.has("property") { return missing_param(id, "inspector.set", "property"); }
+    // Absent and null are both refused; an explicit `""` still writes an empty
+    // string. Same rule the agent surface learned: a misspelled parameter that
+    // answers success is an app that looks broken and an RPC that looks fine.
+    if !params.has("value") { return missing_param(id, "inspector.set", "value"); }
+
+    var c: Call = new_call(OP_SET);
+    c.node = as_usize(obj_get(params, "node"), 0 as usize);
+    c.prop = as_text(obj_get(params, "property"));
+    let v: json::Value = obj_get(params, "value");
+    match v {
+        json::Value::Number(n) => { c.tag = TAG_NUM; c.num = n; }
+        json::Value::Bool(b) => { c.tag = TAG_BOOL; c.flag = b; }
+        json::Value::Text(t) => { c.tag = TAG_STR; c.raw = t.clone(); }
+        _ => { c.tag = TAG_NONE; }
+    }
+    if c.tag == TAG_NONE {
+        return err_response(id, - 32602 as f64,
+            "inspector.set: \"value\" must be a number, a boolean or a string");
+    }
+    run_ui(run_call, #addr_of(c) as *u8);
+    return ok_response(id, outcome_result(c.outcome));
+}
+
+fn do_reset(id: f64, params: json::Value) -> json::Value {
+    if !params.has("node") { return missing_param(id, "inspector.reset", "node"); }
+    if !params.has("property") { return missing_param(id, "inspector.reset", "property"); }
+    var c: Call = new_call(OP_RESET);
+    c.node = as_usize(obj_get(params, "node"), 0 as usize);
+    c.prop = as_text(obj_get(params, "property"));
+    run_ui(run_call, #addr_of(c) as *u8);
+    return ok_response(id, outcome_result(c.outcome));
+}
+
+fn do_insert(id: f64, params: json::Value) -> json::Value {
+    if !params.has("node") { return missing_param(id, "inspector.insert", "node"); }
+    if !params.has("element") { return missing_param(id, "inspector.insert", "element"); }
+    var c: Call = new_call(OP_INSERT);
+    c.node = as_usize(obj_get(params, "node"), 0 as usize);
+    let maker: text::Text = as_text(obj_get(params, "element"));
+    let key: text::Text = as_text(obj_get(params, "key"));
+    let label: text::Text = as_text(obj_get(params, "text"));
+    c.spec = insp::Spec::of(maker.view(), key.view(), label.view());
+    // Absent `at` appends. `insert_child` clamps, so a very large index is the
+    // end — but saying so is better than relying on it.
+    c.at = as_usize(obj_get(params, "at"), (0 as usize) -% (1 as usize));
+    run_ui(run_call, #addr_of(c) as *u8);
+    return ok_response(id, outcome_result(c.outcome));
+}
+
+fn do_remove(id: f64, params: json::Value) -> json::Value {
+    if !params.has("node") { return missing_param(id, "inspector.remove", "node"); }
+    var c: Call = new_call(OP_REMOVE);
+    c.node = as_usize(obj_get(params, "node"), 0 as usize);
+    run_ui(run_call, #addr_of(c) as *u8);
+    return ok_response(id, outcome_result(c.outcome));
+}
+
+fn do_reparent(id: f64, params: json::Value) -> json::Value {
+    if !params.has("node") { return missing_param(id, "inspector.reparent", "node"); }
+    if !params.has("parent") { return missing_param(id, "inspector.reparent", "parent"); }
+    var c: Call = new_call(OP_REPARENT);
+    c.node = as_usize(obj_get(params, "node"), 0 as usize);
+    c.parent = as_usize(obj_get(params, "parent"), 0 as usize);
+    c.at = as_usize(obj_get(params, "at"), (0 as usize) -% (1 as usize));
+    run_ui(run_call, #addr_of(c) as *u8);
+    return ok_response(id, outcome_result(c.outcome));
+}
+
+fn do_simple(id: f64, op: u32) -> json::Value {
+    var c: Call = new_call(op);
+    run_ui(run_call, #addr_of(c) as *u8);
+    return ok_response(id, outcome_result(c.outcome));
+}
+
+fn do_highlight(id: f64, params: json::Value) -> json::Value {
+    if !params.has("node") { return missing_param(id, "inspector.highlight", "node"); }
+    var c: Call = new_call(OP_HIGHLIGHT);
+    c.node = as_usize(obj_get(params, "node"), 0 as usize);
+    run_ui(run_call, #addr_of(c) as *u8);
+    return ok_response(id, outcome_result(c.outcome));
+}
+
+// What this build can make and what it can write. Discovery, so a client does
+// not have to carry a copy of two lists that live in `tree` and would drift.
+fn do_vocabulary(id: f64) -> json::Value {
+    var elements: vec::Vec[json::Value] = vec::new::[json::Value]();
+    let mk: vec::Vec[str] = tree::maker_names();
+    var i: usize = 0 as usize;
+    while i < mk.count() {
+        match mk.at(i) {
+            option::Option[str]::Some(nm) => { elements.append(jstr(nm)); }
+            option::Option[str]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    var props: vec::Vec[json::Value] = vec::new::[json::Value]();
+    let pn: vec::Vec[str] = tree::declared_names();
+    var j: usize = 0 as usize;
+    while j < pn.count() {
+        match pn.at(j) {
+            option::Option[str]::Some(nm) => { props.append(jstr(nm)); }
+            option::Option[str]::None => { }
+        }
+        j = j +% (1 as usize);
+    }
+    var m: vec::Vec[json::Member] = vec::new::[json::Member]();
+    m.append(member("elements", json::Value::Array(elements)));
+    m.append(member("properties", json::Value::Array(props)));
+    return ok_response(id, json::Value::Object(m));
+}
+
+// The session's edits, as the source that would make them.
+//
+// The same answer `Copy as C+` gives in the panel, and it matters more here: an
+// agent that edits a running app and cannot say what it did in the language the
+// app is written in has produced a change nobody can keep.
+//
+// Marshalled like every other read of shared state — the journal is appended to
+// by the structural verbs, which run on the UI thread.
+fn do_journal(id: f64) -> json::Value {
+    return do_answering(id, new_call(OP_JOURNAL));
+}
+
+// ---- the handler ---------------------------------------------------------------
+
+// Registered into `agent_mcp` by `arm`. The bridge has already run the consent
+// gate and matched the prefix; this only has to say which verb.
+fn handle(method: str, params: json::Value, id: f64) -> json::Value {
+    // Disarmed mid-session, or armed by something that then dropped its
+    // backend. Refused rather than run against a zeroed vtable, whose fn
+    // pointers are null.
+    if !ARMED {
+        return err_response(id, - 32601 as f64, "inspector namespace is not armed");
+    }
+    if method == "inspector.describe" { return do_describe(id); }
+    if method == "inspector.inspect" { return do_inspect(id, params); }
+    if method == "inspector.set" { return do_set(id, params); }
+    if method == "inspector.reset" { return do_reset(id, params); }
+    if method == "inspector.insert" { return do_insert(id, params); }
+    if method == "inspector.remove" { return do_remove(id, params); }
+    if method == "inspector.reparent" { return do_reparent(id, params); }
+    if method == "inspector.undo" { return do_simple(id, OP_UNDO); }
+    if method == "inspector.highlight" { return do_highlight(id, params); }
+    if method == "inspector.clear_highlight" { return do_simple(id, OP_CLEAR); }
+    if method == "inspector.vocabulary" { return do_vocabulary(id); }
+    if method == "inspector.journal" { return do_journal(id); }
+    let unknown: text::Text = "method not found: ${method}";
+    return err_response(id, - 32601 as f64, unknown.view());
+}

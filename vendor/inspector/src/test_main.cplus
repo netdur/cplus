@@ -25,6 +25,10 @@ import "./inspector" as insp;
 import "./tree" as tree;
 import "./widget" as widget;
 import "./appkit" as platform;
+import "./mcp" as mcp;
+import "agent_mcp/agent_mcp" as bridge;
+import "agent_core/events" as aevents;
+import "agent_core/auth" as aauth;
 
 // ---- helpers -----------------------------------------------------------------
 
@@ -181,7 +185,28 @@ fn fresh() {
     app::reset_default_for_tests();
     tree::forget_all_overrides();
     tree::clear_self();
+    // The trash holds removed subtrees and a pointer to the parent they came
+    // from. Both are meaningless once the windows are gone, and dropping the
+    // subtrees here is what releases them.
+    tree::empty_trash();
+    tree::forget_journal();
     return;
+}
+
+// The key of `parent`'s child at `at`. Answered as a comparison rather than as
+// a `str`, so no view of a node's key outlives the call that read it.
+fn child_key_is(parent: *core::Node, at: usize, want: str) -> bool {
+    return match core::child_of(parent, at) {
+        option::Option[*core::Node]::Some(c) => ({ (*c).key() } == want),
+        option::Option[*core::Node]::None => false,
+    };
+}
+
+fn journal_line_is(i: usize, want: str) -> bool {
+    return match tree::journal_at(i) {
+        option::Option[text::Text]::Some(line) => line.view() == want,
+        option::Option[text::Text]::None => false,
+    };
 }
 
 // ==============================================================================
@@ -1109,7 +1134,7 @@ fn a_theme_token_renders_as_a_token_and_a_literal_renders_as_channels() {
 
 #[test]
 fn hex_colours_parse_and_bad_ones_are_refused() {
-    assert match widget::parse_hex_color("#2277ff") {
+    assert match tree::parse_hex_color("#2277ff") {
         option::Option[vocab::Color]::Some(c) => {
             // 0x22 == 34, 34/255 is a shade over 0.13.
             (c.r > 0.12f64) && (c.r < 0.14f64) && (c.b > 0.99f64)
@@ -1117,7 +1142,7 @@ fn hex_colours_parse_and_bad_ones_are_refused() {
         option::Option[vocab::Color]::None => false,
     };
     // Uppercase is the same colour.
-    assert match widget::parse_hex_color("#2277FF") {
+    assert match tree::parse_hex_color("#2277FF") {
         option::Option[vocab::Color]::Some(_c) => true,
         option::Option[vocab::Color]::None => false,
     };
@@ -1126,19 +1151,19 @@ fn hex_colours_parse_and_bad_ones_are_refused() {
 
 #[test]
 fn a_malformed_colour_is_refused_rather_than_read_as_black() {
-    assert match widget::parse_hex_color("2277ff") {          // no hash
+    assert match tree::parse_hex_color("2277ff") {          // no hash
         option::Option[vocab::Color]::Some(_c) => false,
         option::Option[vocab::Color]::None => true,
     };
-    assert match widget::parse_hex_color("#22") {             // too short
+    assert match tree::parse_hex_color("#22") {             // too short
         option::Option[vocab::Color]::Some(_c) => false,
         option::Option[vocab::Color]::None => true,
     };
-    assert match widget::parse_hex_color("#gggggg") {         // not hex
+    assert match tree::parse_hex_color("#gggggg") {         // not hex
         option::Option[vocab::Color]::Some(_c) => false,
         option::Option[vocab::Color]::None => true,
     };
-    assert match widget::parse_hex_color("") {
+    assert match tree::parse_hex_color("") {
         option::Option[vocab::Color]::Some(_c) => false,
         option::Option[vocab::Color]::None => true,
     };
@@ -1149,21 +1174,21 @@ fn a_malformed_colour_is_refused_rather_than_read_as_black() {
 // number, one showing `true` takes a boolean. Nothing is declared twice.
 #[test]
 fn typed_input_is_read_as_the_tag_the_property_already_holds() {
-    assert match widget::parse_as(insp::Value::Num(1.0f64), "0.65") {
+    assert match tree::parse_as(insp::Value::Num(1.0f64), "0.65") {
         option::Option[insp::Value]::Some(v) => match v {
             insp::Value::Num(x) => x == 0.65f64,
             _ => false,
         },
         option::Option[insp::Value]::None => false,
     };
-    assert match widget::parse_as(insp::Value::Bool(false), "true") {
+    assert match tree::parse_as(insp::Value::Bool(false), "true") {
         option::Option[insp::Value]::Some(v) => match v {
             insp::Value::Bool(b) => b,
             _ => false,
         },
         option::Option[insp::Value]::None => false,
     };
-    assert match widget::parse_as(insp::Value::Str(text::from_str("a")), "anything at all") {
+    assert match tree::parse_as(insp::Value::Str(text::from_str("a")), "anything at all") {
         option::Option[insp::Value]::Some(v) => match v {
             insp::Value::Str(s) => s.view() == "anything at all",
             _ => false,
@@ -1171,7 +1196,7 @@ fn typed_input_is_read_as_the_tag_the_property_already_holds() {
         option::Option[insp::Value]::None => false,
     };
     // An unset length reads as a number, which is the only tag "unset" takes.
-    assert match widget::parse_as(insp::Value::Nothing, "16") {
+    assert match tree::parse_as(insp::Value::Nothing, "16") {
         option::Option[insp::Value]::Some(v) => match v {
             insp::Value::Num(x) => x == 16.0f64,
             _ => false,
@@ -1183,15 +1208,15 @@ fn typed_input_is_read_as_the_tag_the_property_already_holds() {
 
 #[test]
 fn unreadable_input_is_refused_rather_than_written_as_zero() {
-    assert match widget::parse_as(insp::Value::Num(1.0f64), "wide") {
+    assert match tree::parse_as(insp::Value::Num(1.0f64), "wide") {
         option::Option[insp::Value]::Some(_v) => false,
         option::Option[insp::Value]::None => true,
     };
-    assert match widget::parse_as(insp::Value::Bool(false), "yes") {
+    assert match tree::parse_as(insp::Value::Bool(false), "yes") {
         option::Option[insp::Value]::Some(_v) => false,
         option::Option[insp::Value]::None => true,
     };
-    assert match widget::parse_as(insp::Value::Color(vocab::Color::none()), "blue") {
+    assert match tree::parse_as(insp::Value::Color(vocab::Color::none()), "blue") {
         option::Option[insp::Value]::Some(_v) => false,
         option::Option[insp::Value]::None => true,
     };
@@ -1534,6 +1559,965 @@ fn native_rows_explain_a_viewless_node_rather_than_being_empty() {
     // Put the portable no-ops back so test order cannot matter.
     tree::set_native_fn(#zero::[fn(*core::Node) -> vec::Vec[insp::Prop]]());
     tree::install_platform(#zero::[fn(*u8, insp::Handle)](), #zero::[fn(*u8)]());
+    return;
+}
+
+// ==============================================================================
+// structure
+// ==============================================================================
+//
+// Adding and removing nodes. `facet/mount` owns the operations and has its own
+// suite over them; what is under test here is the ADDRESSING and the refusals —
+// the cases mount would perform faithfully and a developer would not have
+// wanted, plus the journal that turns an edit back into source.
+
+// ---- unit ----
+
+#[test]
+fn a_spec_carries_its_maker_and_clones_whole() {
+    let sp: insp::Spec = insp::Spec::of("label", "greeting", "hello");
+    assert sp.maker.view() == "label";
+    assert sp.key.view() == "greeting";
+    assert sp.label.view() == "hello";
+
+    let copy: insp::Spec = sp.clone();
+    assert copy.maker.view() == "label";
+    assert copy.label.view() == "hello";
+    // The original is intact: `clone` duplicates rather than moving out, which
+    // is what lets `insert` both build from a spec and journal it.
+    assert sp.label.view() == "hello";
+
+    // Key and label default, because the common case is a bare container.
+    let bare: insp::Spec = insp::Spec::of("column");
+    assert bare.key.is_empty();
+    assert bare.label.is_empty();
+    return;
+}
+
+#[test]
+fn every_maker_name_builds_and_an_unknown_one_builds_nothing() {
+    let names: vec::Vec[str] = tree::maker_names();
+    assert names.count() > (0 as usize);
+    var i: usize = 0 as usize;
+    while i < names.count() {
+        match names.at(i) {
+            option::Option[str]::Some(nm) => {
+                // The listed vocabulary and the vocabulary that builds are one
+                // list. A name the UI offers and `make` refuses is the drift
+                // this pins.
+                match tree::make(insp::Spec::of(nm, "k", "t")) {
+                    option::Option[core::Node]::Some(n) => {
+                        assert { n.key() } == "k";
+                    }
+                    option::Option[core::Node]::None => { assert false; }
+                }
+            }
+            option::Option[str]::None => { assert false; }
+        }
+        i = i +% (1 as usize);
+    }
+
+    match tree::make(insp::Spec::of("frobnicate", "k", "t")) {
+        option::Option[core::Node]::Some(_n) => { assert false; }
+        option::Option[core::Node]::None => { }
+    }
+    return;
+}
+
+#[test]
+fn containers_host_children_and_leaf_controls_do_not() {
+    var empty: core::Builder = core::Builder::new();
+    var col: core::Node = ui::column(empty, key: "c");
+    assert tree::can_host_children(#addr_of(col));
+
+    var scroll: core::Node = ui::scroll(key: "s");
+    assert tree::can_host_children(#addr_of(scroll));
+
+    var lab: core::Node = ui::label("x", key: "l");
+    assert !tree::can_host_children(#addr_of(lab));
+
+    var btn: core::Node = ui::button("x", key: "b");
+    assert !tree::can_host_children(#addr_of(btn));
+
+    // A null parent is not a container either, rather than a crash.
+    assert !tree::can_host_children(0 as *core::Node);
+    return;
+}
+
+#[test]
+fn within_finds_a_descendant_itself_and_nothing_else() {
+    var inner: core::Builder = core::Builder::new();
+    inner.add(ui::label("deep", key: "deep"));
+    var mid: core::Builder = core::Builder::new();
+    mid.add(ui::column(inner, key: "mid"));
+    var root: core::Node = ui::column(mid, key: "root");
+
+    let r: *core::Node = #addr_of(root);
+    assert tree::within(r, r);
+    match core::child_of(r, 0 as usize) {
+        option::Option[*core::Node]::Some(m) => {
+            assert tree::within(r, m);
+            // ...and not the other way. Containment has a direction, which is
+            // the whole point of the cycle check that uses it.
+            assert !tree::within(m, r);
+        }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+
+    var stranger: core::Node = ui::label("elsewhere", key: "elsewhere");
+    assert !tree::within(r, #addr_of(stranger));
+    return;
+}
+
+// ---- e2e ----
+
+#[test]
+fn add_child_appends_into_the_live_tree_and_the_walk_sees_it() {
+    fresh();
+    var body: core::Builder = core::Builder::new();
+    body.add(ui::label("a", key: "a"));
+    var root: core::Node = ui::column(body, key: "root");
+    app::open_window(#addr_of(root));
+
+    let h: insp::Handle = row_for(tree::describe(), "root");
+    // Past the end: `insert_child` clamps, so any index beyond the last is an
+    // append. That is what makes "Add child" one verb rather than two.
+    assert tree::insert(h, 99 as usize, insp::Spec::of("label", "b", "hello")).is_ok();
+
+    let r: *core::Node = #addr_of(root);
+    assert core::child_count_of(r) == (2 as usize);
+    assert child_key_is(r, 0 as usize, "a");
+    assert child_key_is(r, 1 as usize, "b");
+
+    // And the inspector's own walk sees it, with a live handle and the tier-3
+    // property the new node's kind carries.
+    let rows: vec::Vec[insp::Node] = tree::describe();
+    let nh: insp::Handle = row_for(rows, "b");
+    assert !nh.is_none();
+    assert nh.is_live();
+    assert text_eq(nh, "text", "hello");
+    return;
+}
+
+#[test]
+fn insert_lands_at_the_index_asked_for() {
+    fresh();
+    var body: core::Builder = core::Builder::new();
+    body.add(ui::label("a", key: "a"));
+    body.add(ui::label("c", key: "c"));
+    var root: core::Node = ui::column(body, key: "root");
+    app::open_window(#addr_of(root));
+
+    let h: insp::Handle = row_for(tree::describe(), "root");
+    assert tree::insert(h, 1 as usize, insp::Spec::of("label", "b", "mid")).is_ok();
+
+    let r: *core::Node = #addr_of(root);
+    assert core::child_count_of(r) == (3 as usize);
+    assert child_key_is(r, 0 as usize, "a");
+    assert child_key_is(r, 1 as usize, "b");
+    assert child_key_is(r, 2 as usize, "c");
+    return;
+}
+
+#[test]
+fn an_inserted_node_is_editable_through_the_ordinary_property_path() {
+    fresh();
+    var body: core::Builder = core::Builder::new();
+    var root: core::Node = ui::column(body, key: "root");
+    app::open_window(#addr_of(root));
+
+    let h: insp::Handle = row_for(tree::describe(), "root");
+    assert tree::insert(h, 0 as usize, insp::Spec::of("column", "made")).is_ok();
+
+    // The point of making the node rather than configuring it: it is
+    // addressable the instant it exists, by the editor that was already there.
+    let made: insp::Handle = row_for(tree::describe(), "made");
+    assert tree::set(made, "padding", insp::Value::Num(12.0f64)).is_ok();
+    assert get_num(made, "padding") == 12.0f64;
+    assert tree::set(made, "opacity", insp::Value::Num(0.5f64)).is_ok();
+    assert get_num(made, "opacity") == 0.5f64;
+    return;
+}
+
+#[test]
+fn remove_takes_the_node_out_and_undo_puts_it_back_where_it_was() {
+    fresh();
+    var body: core::Builder = core::Builder::new();
+    body.add(ui::label("a", key: "a"));
+    body.add(ui::label("b", key: "b"));
+    body.add(ui::label("c", key: "c"));
+    var root: core::Node = ui::column(body, key: "root");
+    app::open_window(#addr_of(root));
+
+    let r: *core::Node = #addr_of(root);
+    let h: insp::Handle = row_for(tree::describe(), "b");
+    assert tree::remove(h).is_ok();
+    assert core::child_count_of(r) == (2 as usize);
+    assert child_key_is(r, 0 as usize, "a");
+    assert child_key_is(r, 1 as usize, "c");
+    assert row_for(tree::describe(), "b").is_none();
+    // Held, not freed. That is the difference between `remove_child` and
+    // `remove_node`, and it is what makes the verb undoable.
+    assert tree::trash_count() == (1 as usize);
+
+    assert tree::undo_remove().is_ok();
+    assert core::child_count_of(r) == (3 as usize);
+    // Back in the MIDDLE, not appended: the index went into the trash with it.
+    assert child_key_is(r, 1 as usize, "b");
+    assert tree::trash_count() == (0 as usize);
+    assert !row_for(tree::describe(), "b").is_none();
+    return;
+}
+
+#[test]
+fn undo_unwinds_in_reverse_and_a_restored_parent_can_take_its_child_back() {
+    fresh();
+    var inner: core::Builder = core::Builder::new();
+    inner.add(ui::label("kid", key: "kid"));
+    var body: core::Builder = core::Builder::new();
+    body.add(ui::column(inner, key: "holder"));
+    var root: core::Node = ui::column(body, key: "root");
+    app::open_window(#addr_of(root));
+
+    assert tree::remove(row_for(tree::describe(), "kid")).is_ok();
+    assert tree::remove(row_for(tree::describe(), "holder")).is_ok();
+    assert tree::trash_count() == (2 as usize);
+
+    // The holder comes back first, and only then is there a parent for the kid
+    // to go back into. A stack, and it has to be one.
+    assert tree::undo_remove().is_ok();
+    assert !row_for(tree::describe(), "holder").is_none();
+    assert tree::undo_remove().is_ok();
+    assert !row_for(tree::describe(), "kid").is_none();
+    assert tree::trash_count() == (0 as usize);
+    return;
+}
+
+#[test]
+fn reparent_moves_a_node_between_containers() {
+    fresh();
+    var left: core::Builder = core::Builder::new();
+    left.add(ui::label("x", key: "x"));
+    var right: core::Builder = core::Builder::new();
+    var body: core::Builder = core::Builder::new();
+    body.add(ui::column(left, key: "left"));
+    body.add(ui::column(right, key: "right"));
+    var root: core::Node = ui::column(body, key: "root");
+    app::open_window(#addr_of(root));
+
+    let rows: vec::Vec[insp::Node] = tree::describe();
+    assert tree::reparent(row_for(rows, "x"), row_for(rows, "right"), 0 as usize).is_ok();
+
+    let after: vec::Vec[insp::Node] = tree::describe();
+    let lh: insp::Handle = row_for(after, "left");
+    let rh: insp::Handle = row_for(after, "right");
+    assert core::child_count_of(lh.node) == (0 as usize);
+    assert core::child_count_of(rh.node) == (1 as usize);
+    assert child_key_is(rh.node, 0 as usize, "x");
+    // Moved, not copied and not dropped — the walk still finds exactly one.
+    assert !row_for(after, "x").is_none();
+    return;
+}
+
+#[test]
+fn an_insert_leaves_handles_live_and_a_removal_ends_them() {
+    fresh();
+    var body: core::Builder = core::Builder::new();
+    body.add(ui::label("a", key: "a"));
+    body.add(ui::label("b", key: "b"));
+    var root: core::Node = ui::column(body, key: "root");
+    app::open_window(#addr_of(root));
+
+    let held: insp::Handle = row_for(tree::describe(), "a");
+    assert held.is_live();
+
+    // An insert does not touch flex's removal counter, so a client's whole
+    // snapshot survives it.
+    assert tree::insert(row_for(tree::describe(), "root"), 0 as usize,
+                        insp::Spec::of("spacer")).is_ok();
+    assert held.is_live();
+
+    // A removal ends EVERY outstanding generation, everywhere. Conservative on
+    // purpose, and the same rule facet's own typed handles use.
+    assert tree::remove(row_for(tree::describe(), "b")).is_ok();
+    assert !held.is_live();
+    assert tree::set(held, "opacity", insp::Value::Num(0.5f64)) == insp::Outcome::Stale;
+    return;
+}
+
+#[test]
+fn the_journal_reads_as_the_source_that_made_the_edit() {
+    fresh();
+    var body: core::Builder = core::Builder::new();
+    body.add(ui::label("a", key: "a"));
+    var root: core::Node = ui::column(body, key: "root");
+    app::open_window(#addr_of(root));
+
+    let h: insp::Handle = row_for(tree::describe(), "root");
+    // An append is `add_child`, which is what an application writes...
+    assert tree::insert(h, 9 as usize, insp::Spec::of("label", "b", "hello")).is_ok();
+    assert journal_line_is(0 as usize,
+        "mount::add_child(mount::node(\"root\"), ui::label(\"hello\", key: \"b\"));");
+
+    // ...and only a genuine mid-list insert carries an index.
+    assert tree::insert(h, 0 as usize, insp::Spec::of("spacer", "sp")).is_ok();
+    assert journal_line_is(1 as usize,
+        "mount::insert_child(mount::node(\"root\"), ui::spacer(key: \"sp\"), 0);");
+
+    assert tree::remove(row_for(tree::describe(), "a")).is_ok();
+    assert journal_line_is(2 as usize, "mount::remove(\"a\");");
+    assert tree::journal_count() == (3 as usize);
+
+    tree::forget_journal();
+    assert tree::journal_count() == (0 as usize);
+    return;
+}
+
+#[test]
+fn the_journal_says_so_rather_than_inventing_an_address_it_does_not_have() {
+    fresh();
+    var inner: core::Builder = core::Builder::new();
+    var body: core::Builder = core::Builder::new();
+    body.add(ui::column(inner));
+    var root: core::Node = ui::column(body, key: "root");
+    app::open_window(#addr_of(root));
+
+    // An unkeyed parent has no expression that addresses it. Inventing one
+    // would produce a line that compiles and edits a different node.
+    let un: insp::Handle = unkeyed_of_kind(tree::describe(), 0u32);
+    assert !un.is_none();
+    assert tree::insert(un, 0 as usize, insp::Spec::of("label", "", "hi")).is_ok();
+    assert journal_line_is(0 as usize,
+        "// inserted label under an unkeyed node - give that node a key to address this");
+
+    // Same for a removal with no key of its own.
+    let made: insp::Handle = unkeyed_of_kind(tree::describe(), props::K_LABEL);
+    assert !made.is_none();
+    assert tree::remove(made).is_ok();
+    assert journal_line_is(1 as usize,
+        "// removed an unkeyed label - no key, so no line that addresses it");
+    return;
+}
+
+// ---- negative ----
+
+#[test]
+fn a_leaf_control_refuses_an_inserted_child() {
+    fresh();
+    var body: core::Builder = core::Builder::new();
+    body.add(ui::label("a", key: "a"));
+    body.add(ui::button("go", key: "go"));
+    var root: core::Node = ui::column(body, key: "root");
+    app::open_window(#addr_of(root));
+
+    let rows: vec::Vec[insp::Node] = tree::describe();
+    // A label hosts no views: the child's view would land in the LABEL'S
+    // parent while the node sat under the label. Faithful, and not what
+    // anybody meant.
+    assert tree::insert(row_for(rows, "a"), 0 as usize, insp::Spec::of("label"))
+        == insp::Outcome::NotAContainer;
+    assert tree::insert(row_for(rows, "go"), 0 as usize, insp::Spec::of("label"))
+        == insp::Outcome::NotAContainer;
+    // Refused all the way down: nothing was made and nothing was journalled.
+    assert core::child_count_of(row_for(rows, "a").node) == (0 as usize);
+    assert tree::journal_count() == (0 as usize);
+    return;
+}
+
+#[test]
+fn an_unknown_maker_is_its_own_refusal_and_changes_nothing() {
+    fresh();
+    var body: core::Builder = core::Builder::new();
+    var root: core::Node = ui::column(body, key: "root");
+    app::open_window(#addr_of(root));
+
+    let h: insp::Handle = row_for(tree::describe(), "root");
+    // `UnknownKind` and not `NotAContainer`: the parent was fine, the spelling
+    // was not. Same distinction as `UnknownProperty` against `Unsupported`.
+    assert tree::insert(h, 0 as usize, insp::Spec::of("blink", "k"))
+        == insp::Outcome::UnknownKind;
+    assert core::child_count_of(#addr_of(root)) == (0 as usize);
+    assert tree::journal_count() == (0 as usize);
+    return;
+}
+
+#[test]
+fn a_window_root_is_protected_from_removal() {
+    fresh();
+    var body: core::Builder = core::Builder::new();
+    body.add(ui::label("a", key: "a"));
+    var root: core::Node = ui::column(body, key: "root");
+    app::open_window(#addr_of(root));
+
+    // A second window, so there is somewhere a root could be moved TO that is
+    // not inside itself.
+    var other_body: core::Builder = core::Builder::new();
+    var other: core::Node = ui::column(other_body, key: "other");
+    app::open_window(#addr_of(other));
+
+    // A root is closed with `app::close_window`, not deleted out from under
+    // itself. It still takes children, because that is a different question.
+    let rows: vec::Vec[insp::Node] = tree::describe();
+    let h: insp::Handle = row_for(rows, "root");
+    assert tree::remove(h) == insp::Outcome::Protected;
+    assert tree::reparent(h, row_for(rows, "other"), 0 as usize)
+        == insp::Outcome::Protected;
+    // Into ITSELF is the cycle check, which runs first because it is the
+    // cheaper answer and the more specific one.
+    assert tree::reparent(h, h, 0 as usize) == insp::Outcome::Cycle;
+    assert tree::insert(h, 0 as usize, insp::Spec::of("spacer")).is_ok();
+    return;
+}
+
+#[test]
+fn the_panels_own_subtree_is_protected_from_every_structural_verb() {
+    fresh();
+    var panel_body: core::Builder = core::Builder::new();
+    panel_body.add(ui::label("a control of the panel's own", key: "insp:label"));
+    var body: core::Builder = core::Builder::new();
+    body.add(ui::label("app", key: "app"));
+    body.add(ui::column(panel_body, key: "insp:root"));
+    var root: core::Node = ui::column(body, key: "root");
+    app::open_window(#addr_of(root));
+
+    let rows: vec::Vec[insp::Node] = tree::describe();
+    tree::mark_self(row_for(rows, "insp:root").node);
+
+    // The panel is the thing the developer is READING. A tool that can delete
+    // its own controls can end a debugging session by accident — and unlike a
+    // property edit, that one has no field to type the old value back into.
+    let own: insp::Handle = row_for(rows, "insp:root");
+    let inside: insp::Handle = row_for(rows, "insp:label");
+    let app_side: insp::Handle = row_for(rows, "app");
+    assert tree::remove(own) == insp::Outcome::Protected;
+    // Not just the root of it: everything under it, which is what the walk in
+    // `within` is for.
+    assert tree::remove(inside) == insp::Outcome::Protected;
+    assert tree::insert(own, 0 as usize, insp::Spec::of("label"))
+        == insp::Outcome::Protected;
+    assert tree::reparent(app_side, own, 0 as usize) == insp::Outcome::Protected;
+    // ...while the application beside it is editable as ever.
+    assert tree::remove(app_side).is_ok();
+    return;
+}
+
+#[test]
+fn a_move_into_a_nodes_own_subtree_is_refused_as_a_cycle() {
+    fresh();
+    var inner: core::Builder = core::Builder::new();
+    var mid: core::Builder = core::Builder::new();
+    mid.add(ui::column(inner, key: "inner"));
+    var body: core::Builder = core::Builder::new();
+    body.add(ui::column(mid, key: "outer"));
+    var root: core::Node = ui::column(body, key: "root");
+    app::open_window(#addr_of(root));
+
+    let rows: vec::Vec[insp::Node] = tree::describe();
+    let outer: insp::Handle = row_for(rows, "outer");
+    let inner_h: insp::Handle = row_for(rows, "inner");
+
+    // Checked BEFORE the removal. Afterwards the answer would still be no and
+    // the tree would already be cut.
+    assert tree::reparent(outer, inner_h, 0 as usize) == insp::Outcome::Cycle;
+    assert tree::reparent(outer, outer, 0 as usize) == insp::Outcome::Cycle;
+    assert core::child_count_of(outer.node) == (1 as usize);
+    assert tree::trash_count() == (0 as usize);
+    return;
+}
+
+#[test]
+fn undo_refuses_rather_than_restoring_into_a_parent_that_has_gone() {
+    fresh();
+    var inner: core::Builder = core::Builder::new();
+    inner.add(ui::label("kid", key: "kid"));
+    var body: core::Builder = core::Builder::new();
+    body.add(ui::column(inner, key: "holder"));
+    var root: core::Node = ui::column(body, key: "root");
+    app::open_window(#addr_of(root));
+
+    assert tree::remove(row_for(tree::describe(), "kid")).is_ok();
+    // The APPLICATION deletes the holder — `mount::remove` drops it outright
+    // rather than putting it in the inspector's trash. The stored parent
+    // pointer now names a node in no window.
+    assert mount::remove("holder");
+
+    assert tree::undo_remove() == insp::Outcome::NothingToUndo;
+    // And the subtree is still held rather than inserted somewhere it cannot
+    // be seen or reached.
+    assert tree::trash_count() == (1 as usize);
+    return;
+}
+
+#[test]
+fn undo_with_nothing_removed_says_so() {
+    fresh();
+    assert tree::trash_count() == (0 as usize);
+    assert tree::undo_remove() == insp::Outcome::NothingToUndo;
+    return;
+}
+
+#[test]
+fn structural_verbs_refuse_a_null_or_stale_handle() {
+    fresh();
+    var body: core::Builder = core::Builder::new();
+    body.add(ui::label("a", key: "a"));
+    body.add(ui::label("b", key: "b"));
+    var root: core::Node = ui::column(body, key: "root");
+    app::open_window(#addr_of(root));
+
+    let none: insp::Handle = insp::Handle::none();
+    assert tree::insert(none, 0 as usize, insp::Spec::of("label")) == insp::Outcome::NotFound;
+    assert tree::remove(none) == insp::Outcome::NotFound;
+    assert tree::reparent(none, none, 0 as usize) == insp::Outcome::NotFound;
+
+    // Liveness before existence: a handle from before a removal is `Stale`,
+    // which tells the client to re-describe, rather than `NotFound`, which
+    // would say the node was never there.
+    let held: insp::Handle = row_for(tree::describe(), "root");
+    assert tree::remove(row_for(tree::describe(), "b")).is_ok();
+    assert tree::insert(held, 0 as usize, insp::Spec::of("label")) == insp::Outcome::Stale;
+    assert tree::remove(held) == insp::Outcome::Stale;
+    assert tree::reparent(held, held, 0 as usize) == insp::Outcome::Stale;
+    return;
+}
+
+#[test]
+fn the_structural_outcomes_all_describe_themselves() {
+    // Every refusal a developer can provoke has to say which one it was. A
+    // single "no" is what teaches people to guess.
+    assert insp::Outcome::NotAContainer.describe() != "";
+    assert insp::Outcome::Protected.describe() != "";
+    assert insp::Outcome::UnknownKind.describe() != "";
+    assert insp::Outcome::Cycle.describe() != "";
+    assert insp::Outcome::NothingToUndo.describe() != "";
+    assert !insp::Outcome::NotAContainer.is_ok();
+    assert !insp::Outcome::Protected.is_ok();
+    assert !insp::Outcome::UnknownKind.is_ok();
+    assert !insp::Outcome::Cycle.is_ok();
+    assert !insp::Outcome::NothingToUndo.is_ok();
+    return;
+}
+
+#[test]
+fn the_degraded_backend_refuses_every_structural_verb_and_crashes_nothing() {
+    fresh();
+    let b: insp::Backend = insp::Backend::none();
+    let h: insp::Handle = insp::Handle::none();
+    assert b.insert_now(h, 0 as usize, insp::Spec::of("label")) == insp::Outcome::Unsupported;
+    assert b.remove_now(h) == insp::Outcome::Unsupported;
+    assert b.reparent_now(h, h, 0 as usize) == insp::Outcome::Unsupported;
+    assert b.undo_now() == insp::Outcome::NothingToUndo;
+    return;
+}
+
+#[test]
+fn the_local_backend_routes_every_structural_verb_to_the_tree() {
+    fresh();
+    var body: core::Builder = core::Builder::new();
+    body.add(ui::label("a", key: "a"));
+    var root: core::Node = ui::column(body, key: "root");
+    app::open_window(#addr_of(root));
+
+    // The panel is written against the vtable, so a row that is wired wrong is
+    // a panel button that silently does nothing.
+    let b: insp::Backend = tree::local_backend();
+    let h: insp::Handle = row_for(b.describe_now(), "root");
+    assert b.insert_now(h, 9 as usize, insp::Spec::of("label", "made", "hi")).is_ok();
+    assert !row_for(b.describe_now(), "made").is_none();
+
+    assert b.remove_now(row_for(b.describe_now(), "made")).is_ok();
+    assert row_for(b.describe_now(), "made").is_none();
+    assert b.undo_now().is_ok();
+    assert !row_for(b.describe_now(), "made").is_none();
+
+    let rows: vec::Vec[insp::Node] = b.describe_now();
+    assert b.reparent_now(row_for(rows, "made"), row_for(rows, "root"), 0 as usize).is_ok();
+    assert child_key_is(row_for(rows, "root").node, 0 as usize, "made");
+    return;
+}
+
+// ==============================================================================
+// the wire
+// ==============================================================================
+//
+// The inspector as a namespace inside the agent's JSON-RPC server. Driven the
+// way a socket drives it — a request line in, a response line out — through
+// `agent_mcp::handle_request`, so what is under test is the whole path
+// including the prefix routing and the consent gate, not just this package's
+// half of it.
+
+// A request line for the inspector namespace, dispatched through the agent
+// bridge exactly as the socket server does.
+fn rpc(line: str) -> text::Text {
+    var sub: aevents::Subscriber = aevents::subscriber(aevents::everything(), 4 as usize);
+    let surf: *u8 = 0 as *u8;
+    return bridge::handle_request(surf, bridge::fake_backend(), sub,
+                                  aauth::serve(bridge::allow_all), line);
+}
+
+// A window with something to address, described once so the wire indices exist.
+fn wire_ready() {
+    fresh();
+    tree::empty_trash();
+    tree::forget_journal();
+    mcp::disarm();
+    mcp::arm(tree::local_backend());
+    return;
+}
+
+#[test]
+fn describe_puts_the_tree_on_the_wire_with_indices_as_addresses() {
+    wire_ready();
+    var body: core::Builder = core::Builder::new();
+    body.add(ui::label("hello", key: "greeting"));
+    var root: core::Node = ui::column(body, key: "root");
+    app::open_window(#addr_of(root));
+
+    let r: text::Text = rpc("{\"method\":\"inspector.describe\",\"id\":1}");
+    assert r.contains("\"key\":\"root\"");
+    assert r.contains("\"key\":\"greeting\"");
+    // The index is stated on the row, not left implicit in the array position:
+    // a client that filters locally must still be able to address what it kept.
+    assert r.contains("\"index\":0");
+    assert r.contains("\"index\":1");
+    assert r.contains("\"revision\"");
+    // What a walk of the platform's view hierarchy could never say, and the
+    // whole reason this listing walks facet's tree instead.
+    assert r.contains("\"has_view\"");
+    assert r.contains("\"kind\":\"label\"");
+    assert mcp::snapshot_count() == (2 as usize);
+    return;
+}
+
+#[test]
+fn inspect_keeps_declared_computed_and_native_apart_on_the_wire() {
+    wire_ready();
+    var body: core::Builder = core::Builder::new();
+    body.add(ui::label("hello", key: "greeting"));
+    var root: core::Node = ui::column(body, key: "root");
+    app::open_window(#addr_of(root));
+    let _d: text::Text = rpc("{\"method\":\"inspector.describe\",\"id\":1}");
+
+    let r: text::Text = rpc("{\"method\":\"inspector.inspect\",\"params\":{\"node\":1},\"id\":2}");
+    assert r.contains("\"declared\"");
+    assert r.contains("\"computed\"");
+    assert r.contains("\"native\"");
+    // Setting `width` writes a style; reading the frame reads what layout
+    // decided. Two questions that share a word, so two lists.
+    assert r.contains("\"frame_width\"");
+    assert r.contains("\"opacity\"");
+    // Every row carries its tag, so a client knows what a write will take
+    // without inferring it from the value it happens to hold.
+    assert r.contains("\"type\":\"number\"");
+    assert r.contains("\"writable\":true");
+    return;
+}
+
+#[test]
+fn a_write_goes_through_the_same_setters_the_panel_uses() {
+    wire_ready();
+    var body: core::Builder = core::Builder::new();
+    body.add(ui::label("hello", key: "greeting"));
+    var root: core::Node = ui::column(body, key: "root");
+    app::open_window(#addr_of(root));
+    let _d: text::Text = rpc("{\"method\":\"inspector.describe\",\"id\":1}");
+
+    // A number for a number property.
+    let a: text::Text = rpc("{\"method\":\"inspector.set\",\"params\":{\"node\":0,\"property\":\"opacity\",\"value\":0.4},\"id\":2}");
+    assert a.contains("\"outcome\":\"ok\"");
+    assert get_num(row_for(tree::describe(), "root"), "opacity") == 0.4f64;
+
+    // A string for a text property — tier 3, and it reaches through the key.
+    let b: text::Text = rpc("{\"method\":\"inspector.set\",\"params\":{\"node\":1,\"property\":\"text\",\"value\":\"rewritten\"},\"id\":3}");
+    assert b.contains("\"outcome\":\"ok\"");
+    assert text_eq(row_for(tree::describe(), "greeting"), "text", "rewritten");
+
+    // A hex string for a colour property: the panel's rule, unchanged. The
+    // string is read as the tag the property already holds, which is what makes
+    // `#2277ff` a colour here and seven literal characters on a text property.
+    let c: text::Text = rpc("{\"method\":\"inspector.set\",\"params\":{\"node\":0,\"property\":\"background_color\",\"value\":\"#2277ff\"},\"id\":4}");
+    assert c.contains("\"outcome\":\"ok\"");
+
+    // And reset puts back what the application declared.
+    let d: text::Text = rpc("{\"method\":\"inspector.reset\",\"params\":{\"node\":0,\"property\":\"opacity\"},\"id\":5}");
+    assert d.contains("\"outcome\":\"ok\"");
+    assert get_num(row_for(tree::describe(), "root"), "opacity") == 1.0f64;
+    return;
+}
+
+#[test]
+fn the_structural_verbs_are_on_the_wire_with_their_journal() {
+    wire_ready();
+    var body: core::Builder = core::Builder::new();
+    body.add(ui::label("a", key: "a"));
+    var root: core::Node = ui::column(body, key: "root");
+    app::open_window(#addr_of(root));
+    let _d: text::Text = rpc("{\"method\":\"inspector.describe\",\"id\":1}");
+
+    let i: text::Text = rpc("{\"method\":\"inspector.insert\",\"params\":{\"node\":0,\"element\":\"label\",\"key\":\"made\",\"text\":\"hi\"},\"id\":2}");
+    assert i.contains("\"outcome\":\"ok\"");
+    assert !row_for(tree::describe(), "made").is_none();
+
+    // Indices are re-issued by a describe. The client's own is the one it was
+    // handed, so a structural edit is followed by a re-describe — which is
+    // exactly what `revision` is on every answer to prompt.
+    let _d2: text::Text = rpc("{\"method\":\"inspector.describe\",\"id\":3}");
+    let r: text::Text = rpc("{\"method\":\"inspector.remove\",\"params\":{\"node\":1},\"id\":4}");
+    assert r.contains("\"outcome\":\"ok\"");
+    assert row_for(tree::describe(), "a").is_none();
+
+    let u: text::Text = rpc("{\"method\":\"inspector.undo\",\"id\":5}");
+    assert u.contains("\"outcome\":\"ok\"");
+    assert !row_for(tree::describe(), "a").is_none();
+
+    // The edits come back as the source that would make them. An agent that
+    // changes a running app and cannot say what it did in the app's own
+    // language has produced a change nobody can keep.
+    let j: text::Text = rpc("{\"method\":\"inspector.journal\",\"id\":6}");
+    assert j.contains("mount::add_child");
+    assert j.contains("ui::label(\\\"hi\\\", key: \\\"made\\\")");
+    assert j.contains("mount::remove(\\\"a\\\")");
+    return;
+}
+
+#[test]
+fn the_vocabulary_is_answered_rather_than_carried_by_the_client() {
+    wire_ready();
+    let r: text::Text = rpc("{\"method\":\"inspector.vocabulary\",\"id\":1}");
+    // Both lists come from `tree`, so a client never holds a copy that can
+    // drift from what this build actually makes and writes.
+    assert r.contains("\"elements\"");
+    assert r.contains("\"label\"");
+    assert r.contains("\"column\"");
+    assert r.contains("\"properties\"");
+    assert r.contains("\"padding\"");
+    assert r.contains("\"background_color\"");
+    return;
+}
+
+// ---- negative ----
+
+#[test]
+fn refusals_travel_by_name_and_by_sentence() {
+    wire_ready();
+    var body: core::Builder = core::Builder::new();
+    body.add(ui::label("a", key: "a"));
+    var root: core::Node = ui::column(body, key: "root");
+    app::open_window(#addr_of(root));
+    let _d: text::Text = rpc("{\"method\":\"inspector.describe\",\"id\":1}");
+
+    // A client matching on a name should not have to parse prose; a developer
+    // reading a transcript should not have to look the name up. So both.
+    let leaf: text::Text = rpc("{\"method\":\"inspector.insert\",\"params\":{\"node\":1,\"element\":\"label\"},\"id\":2}");
+    assert leaf.contains("\"outcome\":\"not_a_container\"");
+    assert leaf.contains("does not take inserted children");
+
+    let kind: text::Text = rpc("{\"method\":\"inspector.insert\",\"params\":{\"node\":0,\"element\":\"blink\"},\"id\":3}");
+    assert kind.contains("\"outcome\":\"unknown_kind\"");
+
+    let root_rm: text::Text = rpc("{\"method\":\"inspector.remove\",\"params\":{\"node\":0},\"id\":4}");
+    assert root_rm.contains("\"outcome\":\"protected\"");
+
+    let ro: text::Text = rpc("{\"method\":\"inspector.set\",\"params\":{\"node\":0,\"property\":\"frame_width\",\"value\":10},\"id\":5}");
+    assert ro.contains("\"outcome\":\"read_only\"");
+
+    let bad_prop: text::Text = rpc("{\"method\":\"inspector.set\",\"params\":{\"node\":0,\"property\":\"colour\",\"value\":10},\"id\":6}");
+    assert bad_prop.contains("\"outcome\":\"unknown_property\"");
+
+    // An index that was never issued is "no such address", the same answer a
+    // null handle gets — because that is what both are.
+    let oob: text::Text = rpc("{\"method\":\"inspector.inspect\",\"params\":{\"node\":9999},\"id\":7}");
+    assert oob.contains("\"outcome\":\"not_found\"");
+    return;
+}
+
+#[test]
+fn a_missing_parameter_is_refused_rather_than_defaulted_to_node_zero() {
+    wire_ready();
+    var body: core::Builder = core::Builder::new();
+    var root: core::Node = ui::column(body, key: "root");
+    app::open_window(#addr_of(root));
+    let _d: text::Text = rpc("{\"method\":\"inspector.describe\",\"id\":1}");
+
+    // Every reader here falls back, so an absent `node` would silently act on
+    // index 0 — the window root. The agent surface learned this the expensive
+    // way; the same rule applies to a namespace that can DELETE what it hits.
+    let n: text::Text = rpc("{\"method\":\"inspector.remove\",\"params\":{},\"id\":2}");
+    assert n.contains("-32602");
+    assert n.contains("node");
+    assert n.contains("\"outcome\"") == false;
+
+    let p: text::Text = rpc("{\"method\":\"inspector.set\",\"params\":{\"node\":0,\"value\":1},\"id\":3}");
+    assert p.contains("-32602");
+    assert p.contains("property");
+
+    let v: text::Text = rpc("{\"method\":\"inspector.set\",\"params\":{\"node\":0,\"property\":\"opacity\"},\"id\":4}");
+    assert v.contains("-32602");
+    assert v.contains("value");
+
+    // A value of a type no property takes is refused at the edge, not turned
+    // into a guess.
+    let obj: text::Text = rpc("{\"method\":\"inspector.set\",\"params\":{\"node\":0,\"property\":\"opacity\",\"value\":{}},\"id\":5}");
+    assert obj.contains("-32602");
+    return;
+}
+
+#[test]
+fn the_namespace_is_absent_until_it_is_armed_and_absent_again_after() {
+    fresh();
+    mcp::disarm();
+    assert mcp::armed() == false;
+
+    // Linking the module in is not exposure. A process that never armed the
+    // namespace does not serve it — which is the whole gate, because this
+    // namespace is strictly more powerful than the agent surface beside it.
+    let off: text::Text = rpc("{\"method\":\"inspector.describe\",\"id\":1}");
+    assert off.contains("-32601");
+    assert off.contains("\"nodes\"") == false;
+
+    mcp::arm(tree::local_backend());
+    assert mcp::armed();
+    let on: text::Text = rpc("{\"method\":\"inspector.describe\",\"id\":2}");
+    assert on.contains("\"nodes\"");
+
+    mcp::disarm();
+    let after: text::Text = rpc("{\"method\":\"inspector.describe\",\"id\":3}");
+    assert after.contains("-32601");
+    return;
+}
+
+#[test]
+fn arming_the_inspector_is_not_a_way_around_the_agents_consent_gate() {
+    wire_ready();
+    var body: core::Builder = core::Builder::new();
+    var root: core::Node = ui::column(body, key: "root");
+    app::open_window(#addr_of(root));
+
+    // The gate runs FIRST and covers both namespaces. An inspector that could
+    // be reached with consent denied would be the one hole in the whole
+    // permission model — and it is the more powerful of the two surfaces.
+    var sub: aevents::Subscriber = aevents::subscriber(aevents::everything(), 4 as usize);
+    let denied: text::Text = bridge::handle_request(0 as *u8, bridge::fake_backend(), sub,
+        aauth::deny_all(), "{\"method\":\"inspector.describe\",\"id\":1}");
+    assert denied.contains("-32001");
+    assert denied.contains("\"nodes\"") == false;
+    return;
+}
+
+#[test]
+fn a_degraded_backend_refuses_on_the_wire_without_crashing() {
+    fresh();
+    mcp::disarm();
+    // Armed, but with the vtable that answers nothing. The namespace is open
+    // and every verb declines — which is what a build with no walker installed
+    // should look like from outside, rather than a null call.
+    mcp::arm(insp::Backend::none());
+
+    let d: text::Text = rpc("{\"method\":\"inspector.describe\",\"id\":1}");
+    assert d.contains("\"nodes\"");
+    assert mcp::snapshot_count() == (0 as usize);
+
+    let s: text::Text = rpc("{\"method\":\"inspector.set\",\"params\":{\"node\":0,\"property\":\"opacity\",\"value\":1},\"id\":2}");
+    assert s.contains("\"outcome\":\"not_found\"");
+
+    let u: text::Text = rpc("{\"method\":\"inspector.undo\",\"id\":3}");
+    assert u.contains("\"outcome\":\"nothing_to_undo\"");
+
+    mcp::disarm();
+    return;
+}
+
+// THE TRAP THIS NAMESPACE EXISTS TO WALK INTO, and it cost a debugging session.
+//
+// The override ledger records the property name it was given as a BORROWED
+// `str`, sound because every name reaching it is a literal from
+// `declared_names`. A socket parses a name into a request-scoped `Text`, and
+// recording a view of that leaves the ledger pointing at freed bytes. Nothing
+// crashes: `reset` compares the dangling name against the one it was asked for,
+// matches nothing, and answers `Ok` having restored nothing at all.
+//
+// So a wire write must be reachable by a wire reset, which is what this pins.
+#[test]
+fn a_property_named_over_the_wire_is_still_addressable_by_a_later_reset() {
+    wire_ready();
+    var body: core::Builder = core::Builder::new();
+    var root: core::Node = ui::column(body, key: "root");
+    core::set_opacity(#addr_of(root), 0.9f64);
+    app::open_window(#addr_of(root));
+    let _d: text::Text = rpc("{\"method\":\"inspector.describe\",\"id\":1}");
+
+    let _s: text::Text = rpc("{\"method\":\"inspector.set\",\"params\":{\"node\":0,\"property\":\"opacity\",\"value\":0.25},\"id\":2}");
+    assert get_num(row_for(tree::describe(), "root"), "opacity") == 0.25f64;
+    assert tree::override_count() == (1 as usize);
+
+    // The ledger entry is findable — by the panel, which uses the literal, and
+    // by a second request, which does not.
+    assert tree::is_overridden(row_for(tree::describe(), "root").node, "opacity");
+
+    let r: text::Text = rpc("{\"method\":\"inspector.reset\",\"params\":{\"node\":0,\"property\":\"opacity\"},\"id\":3}");
+    assert r.contains("\"outcome\":\"ok\"");
+    // Back to what the APPLICATION declared — 0.9, not the type default of 1.0.
+    assert get_num(row_for(tree::describe(), "root"), "opacity") == 0.9f64;
+    assert tree::override_count() == (0 as usize);
+    return;
+}
+
+// A name in neither table is refused before it can be recorded, rather than
+// stored and found to be nonsense later.
+#[test]
+fn canonical_prop_answers_this_packages_own_literal_or_nothing() {
+    assert match tree::canonical_prop("opacity") {
+        option::Option[str]::Some(n) => n == "opacity",
+        option::Option[str]::None => false,
+    };
+    // Read-only names resolve too, so a caller naming one is told it is
+    // read-only rather than that it does not exist.
+    assert match tree::canonical_prop("frame_width") {
+        option::Option[str]::Some(n) => n == "frame_width",
+        option::Option[str]::None => false,
+    };
+    assert match tree::canonical_prop("colour") {
+        option::Option[str]::Some(_n) => false,
+        option::Option[str]::None => true,
+    };
+    assert match tree::canonical_prop("") {
+        option::Option[str]::Some(_n) => false,
+        option::Option[str]::None => true,
+    };
+    return;
+}
+
+#[test]
+fn an_unknown_inspector_method_names_itself() {
+    wire_ready();
+    let r: text::Text = rpc("{\"method\":\"inspector.teleport\",\"id\":1}");
+    assert r.contains("-32601");
+    assert r.contains("inspector.teleport");
+    return;
+}
+
+// A theme token is a NAME, not a colour. Reporting rgba for one would invent
+// four numbers the application never wrote, and they would all be zero — so
+// every themed colour would go out as transparent black. Both halves were live
+// bugs in the panel; the wire inherits the fix, not the bug.
+#[test]
+fn a_theme_token_crosses_the_wire_as_a_name_and_a_literal_as_channels() {
+    wire_ready();
+    var body: core::Builder = core::Builder::new();
+    var root: core::Node = ui::column(body, key: "root");
+    core::set_background_color(#addr_of(root), vocab::Color::control_background());
+    app::open_window(#addr_of(root));
+    let _d: text::Text = rpc("{\"method\":\"inspector.describe\",\"id\":1}");
+
+    let themed: text::Text = rpc("{\"method\":\"inspector.inspect\",\"params\":{\"node\":0},\"id\":2}");
+    assert themed.contains("\"type\":\"color\"");
+    // A role carries its token and NO channels, because there are none yet.
+    assert themed.contains("\"rgba\"") == false;
+
+    let _s: text::Text = rpc("{\"method\":\"inspector.set\",\"params\":{\"node\":0,\"property\":\"background_color\",\"value\":\"#2277ff\"},\"id\":3}");
+    let literal: text::Text = rpc("{\"method\":\"inspector.inspect\",\"params\":{\"node\":0},\"id\":4}");
+    assert literal.contains("\"token\":255");
+    assert literal.contains("\"rgba\"");
     return;
 }
 

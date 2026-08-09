@@ -152,82 +152,12 @@ fn value_text(v: insp::Value) -> text::Text {
     };
 }
 
-// ---- value parsing -----------------------------------------------------------
-
-fn hex_digit(b: u8) -> i32 {
-    let c: i32 = b as i32;
-    if (c >= 48) && (c <= 57) { return c - 48; }          // 0-9
-    if (c >= 97) && (c <= 102) { return (c - 97) + 10; }  // a-f
-    if (c >= 65) && (c <= 70) { return (c - 65) + 10; }   // A-F
-    return -1;
-}
-
-fn hex_pair(t: text::Text, at: usize) -> i32 {
-    let hi: i32 = match t.byte_at(at) {
-        option::Option[u8]::Some(b) => hex_digit(b),
-        option::Option[u8]::None => -1,
-    };
-    let lo: i32 = match t.byte_at(at +% (1 as usize)) {
-        option::Option[u8]::Some(b) => hex_digit(b),
-        option::Option[u8]::None => -1,
-    };
-    if hi < 0 { return -1; }
-    if lo < 0 { return -1; }
-    return (hi * 16) + lo;
-}
-
-// `#2277ff`, the spelling every developer already has in their fingers.
-fn parse_hex_color(s: str) -> option::Option[vocab::Color] {
-    let t: text::Text = text::from_str(s);
-    if t.count() != (7 as usize) { return option::Option[vocab::Color]::None; }
-    if !t.has_prefix("#") { return option::Option[vocab::Color]::None; }
-    let r: i32 = hex_pair(t, 1 as usize);
-    let g: i32 = hex_pair(t, 3 as usize);
-    let b: i32 = hex_pair(t, 5 as usize);
-    if r < 0 { return option::Option[vocab::Color]::None; }
-    if g < 0 { return option::Option[vocab::Color]::None; }
-    if b < 0 { return option::Option[vocab::Color]::None; }
-    return option::Option[vocab::Color]::Some(vocab::Color::rgba(
-        (r as f64) / 255.0f64, (g as f64) / 255.0f64, (b as f64) / 255.0f64, 1.0f64));
-}
-
-// What the developer typed, read as the tag the property already holds. The
-// current value is the type declaration: a field showing `0.65` takes a
-// number, a field showing `true` takes a boolean. Nothing has to be declared
-// twice, and a property whose current value is `Nothing` is read as a length,
-// which is the only tag that reads as unset.
-fn parse_as(current: insp::Value, typed: str) -> option::Option[insp::Value] {
-    return match current {
-        insp::Value::Bool(_b) => {
-            if typed == "true" { option::Option[insp::Value]::Some(insp::Value::Bool(true)) }
-            else if typed == "false" { option::Option[insp::Value]::Some(insp::Value::Bool(false)) }
-            else { option::Option[insp::Value]::None }
-        }
-        insp::Value::Num(_x) => match typed.to_f64() {
-            option::Option[f64]::Some(f) => option::Option[insp::Value]::Some(insp::Value::Num(f)),
-            option::Option[f64]::None => option::Option[insp::Value]::None,
-        },
-        insp::Value::Int(_i) => match typed.to_i64() {
-            option::Option[i64]::Some(n) => option::Option[insp::Value]::Some(insp::Value::Int(n)),
-            option::Option[i64]::None => option::Option[insp::Value]::None,
-        },
-        insp::Value::Str(_s) =>
-            option::Option[insp::Value]::Some(insp::Value::Str(text::from_str(typed))),
-        insp::Value::Color(_c) => match parse_hex_color(typed) {
-            option::Option[vocab::Color]::Some(c) =>
-                option::Option[insp::Value]::Some(insp::Value::Color(c)),
-            option::Option[vocab::Color]::None => option::Option[insp::Value]::None,
-        },
-        // An unset length. Empty clears nothing (there is no "unset" write in
-        // v1), a number sets points.
-        insp::Value::Nothing => match typed.to_f64() {
-            option::Option[f64]::Some(f) => option::Option[insp::Value]::Some(insp::Value::Num(f)),
-            option::Option[f64]::None => option::Option[insp::Value]::None,
-        },
-        insp::Value::Enum(_e) =>
-            option::Option[insp::Value]::Some(insp::Value::Enum(text::from_str(typed))),
-    };
-}
+// Value PARSING lives in `tree`, not here. It was written for this panel's text
+// fields, and the socket adapter needs exactly the same rule — "read what
+// arrived as the tag the property already holds" — so leaving it in the UI
+// module would have meant two parsers that must agree and one place to notice
+// when they stop. Rendering stays here, because a text field and a JSON field
+// genuinely differ.
 
 // ---- the component -----------------------------------------------------------
 
@@ -370,21 +300,69 @@ impl Inspector {
         return out;
     }
 
-    fn index_of_handle(this, h: insp::Handle) -> option::Option[usize] {
+    // The snapshot row of `at`'s parent, or None when `at` is a window root.
+    fn parent_row_of(this, at: usize) -> option::Option[usize] {
+        return match this.rows.at_ptr(at) {
+            option::Option[*insp::Node]::Some(p) => { (*p).parent }
+            option::Option[*insp::Node]::None => option::Option[usize]::None,
+        };
+    }
+
+    // Which child of its parent `at` is. The snapshot is in document order, so
+    // a parent's children appear in child order — counting the earlier rows
+    // that share the parent gives the index without going back to the tree.
+    fn child_index_of(this, at: usize) -> usize {
+        let mine: usize = match this.parent_row_of(at) {
+            option::Option[usize]::Some(p) => p,
+            option::Option[usize]::None => { return 0 as usize; }
+        };
+        var seen: usize = 0 as usize;
         var i: usize = 0 as usize;
-        let c: usize = this.rows.count();
-        while i < c {
+        while i < at {
             match this.rows.at_ptr(i) {
                 option::Option[*insp::Node]::Some(p) => {
-                    if { (*p).handle.node } == h.node {
-                        return option::Option[usize]::Some(i);
+                    match { (*p).parent } {
+                        option::Option[usize]::Some(x) => {
+                            if x == mine { seen = seen +% (1 as usize); }
+                        }
+                        option::Option[usize]::None => { }
                     }
                 }
                 option::Option[*insp::Node]::None => { }
             }
             i = i +% (1 as usize);
         }
+        return seen;
+    }
+
+    fn handle_at(this, i: usize) -> insp::Handle {
+        return match this.rows.at_ptr(i) {
+            option::Option[*insp::Node]::Some(p) => { (*p).handle }
+            option::Option[*insp::Node]::None => insp::Handle::none(),
+        };
+    }
+
+    // The snapshot row for a node, by address. Both lookups are this one: a
+    // handle's identity IS its node pointer, and its generation is a liveness
+    // question rather than an identity one.
+    fn index_of_node(this, n: *core::Node) -> option::Option[usize] {
+        if n == (0 as *core::Node) { return option::Option[usize]::None; }
+        var i: usize = 0 as usize;
+        let c: usize = this.rows.count();
+        while i < c {
+            match this.rows.at_ptr(i) {
+                option::Option[*insp::Node]::Some(p) => {
+                    if { (*p).handle.node } == n { return option::Option[usize]::Some(i); }
+                }
+                option::Option[*insp::Node]::None => { }
+            }
+            i = i +% (1 as usize);
+        }
         return option::Option[usize]::None;
+    }
+
+    fn index_of_handle(this, h: insp::Handle) -> option::Option[usize] {
+        return this.index_of_node(h.node);
     }
 }
 
@@ -834,7 +812,7 @@ fn on_commit(sender: *u8, ctx: *u8) {
         option::Option[insp::Value]::None => insp::Value::Nothing,
     };
 
-    match parse_as(current, typed.view()) {
+    match tree::parse_as(current, typed.view()) {
         option::Option[insp::Value]::Some(v) => {
             let b: insp::Backend = { (*st).backend };
             let r: insp::Outcome = b.set_now(h, prop.view(), v);
@@ -882,6 +860,124 @@ fn on_reset_all(_sender: *u8, ctx: *u8) {
     return;
 }
 
+// ---- structure ---------------------------------------------------------------
+//
+// Five verbs over the three fields above them. They read the fields at click
+// time rather than holding parsed state, for the reason the property editor
+// does: the control IS the state, and a second copy of it is a second thing to
+// keep in step.
+
+fn spec_from_fields() -> insp::Spec {
+    let m: text::Text = field_text(text::from_str("insp:new_maker"));
+    let k: text::Text = field_text(text::from_str("insp:new_key"));
+    let t: text::Text = field_text(text::from_str("insp:new_text"));
+    return insp::Spec::of(m.view(), k.view(), t.view());
+}
+
+// After a structural edit the snapshot is a generation behind — an insert
+// leaves handles live, but a remove ends every one of them. Re-describing is
+// the answer to both and it is cheap, so both take it.
+//
+// `say` comes AFTER the refresh: `refresh` finishes with `say_counts`, which
+// writes the same label.
+fn after_structure(st: *Inspector, r: insp::Outcome) {
+    refresh(st);
+    say(r.describe());
+    return;
+}
+
+// Insert, and SELECT what was inserted. Making a node and then having to hunt
+// for it in the tree to give it a text is two steps where one will do.
+fn do_insert(st: *Inspector, parent: insp::Handle, at: usize) {
+    if parent.is_none() { say("nothing selected"); return; }
+    let p: *core::Node = parent.node;
+    // `insert_child` clamps, so the index the new child actually lands at is
+    // not always the one asked for.
+    let before: usize = core::child_count_of(p);
+    let landed: usize = if at > before { before } else { at };
+
+    let b: insp::Backend = { (*st).backend };
+    let r: insp::Outcome = b.insert_now(parent, at, spec_from_fields());
+    after_structure(st, r);
+    if !r.is_ok() { return; }
+
+    match core::child_of(p, landed) {
+        option::Option[*core::Node]::Some(fresh) => {
+            match { (*st).index_of_node(fresh) } {
+                option::Option[usize]::Some(i) => {
+                    { (*st).selected = { (*st).handle_at(i) } };
+                    let b2: insp::Backend = { (*st).backend };
+                    b2.highlight_now({ (*st).selected });
+                    paint_props(st);
+                }
+                option::Option[usize]::None => { }
+            }
+        }
+        option::Option[*core::Node]::None => { }
+    }
+    return;
+}
+
+fn on_add_child(_sender: *u8, ctx: *u8) {
+    let st: *Inspector = ctx as *Inspector;
+    let h: insp::Handle = { (*st).selected };
+    if h.is_none() { say("nothing selected"); return; }
+    // Append: `insert` clamps, so any index past the end is the end.
+    do_insert(st, h, core::child_count_of(h.node));
+    return;
+}
+
+// Before and after are the same verb over the SELECTED node's parent, which is
+// what makes them the two a developer reaches for — "another one of these,
+// next to this one" is the whole of structural editing most of the time.
+fn insert_beside(st: *Inspector, offset: usize) {
+    let h: insp::Handle = { (*st).selected };
+    if h.is_none() { say("nothing selected"); return; }
+    match { (*st).index_of_handle(h) } {
+        option::Option[usize]::Some(at) => {
+            match { (*st).parent_row_of(at) } {
+                option::Option[usize]::Some(prow) => {
+                    let idx: usize = { (*st).child_index_of(at) };
+                    do_insert(st, { (*st).handle_at(prow) }, idx +% offset);
+                }
+                option::Option[usize]::None => { say("that is a window root"); }
+            }
+        }
+        option::Option[usize]::None => { say("that node is gone - refresh"); }
+    }
+    return;
+}
+
+fn on_add_before(_sender: *u8, ctx: *u8) {
+    insert_beside(ctx as *Inspector, 0 as usize);
+    return;
+}
+
+fn on_add_after(_sender: *u8, ctx: *u8) {
+    insert_beside(ctx as *Inspector, 1 as usize);
+    return;
+}
+
+fn on_delete(_sender: *u8, ctx: *u8) {
+    let st: *Inspector = ctx as *Inspector;
+    let h: insp::Handle = { (*st).selected };
+    if h.is_none() { say("nothing selected"); return; }
+    let b: insp::Backend = { (*st).backend };
+    let r: insp::Outcome = b.remove_now(h);
+    // The removed node is held, not freed, so this is undoable. The selection
+    // goes with it: `refresh` cannot find the node and clears it.
+    after_structure(st, r);
+    return;
+}
+
+fn on_undo(_sender: *u8, ctx: *u8) {
+    let st: *Inspector = ctx as *Inspector;
+    let b: insp::Backend = { (*st).backend };
+    let r: insp::Outcome = b.undo_now();
+    after_structure(st, r);
+    return;
+}
+
 fn on_copy_snippet(_sender: *u8, ctx: *u8) {
     let st: *Inspector = ctx as *Inspector;
     let h: insp::Handle = { (*st).selected };
@@ -907,7 +1003,22 @@ fn on_copy_snippet(_sender: *u8, ctx: *u8) {
         }
         i = i +% (1 as usize);
     }
-    if out.is_empty() { let _c: status::Status = out.append("no overrides on this node"); }
+    // Then the structural journal, which belongs to the SESSION rather than to
+    // the selected node — a node that was deleted has no row to select and
+    // still has a line worth pasting.
+    var k: usize = 0 as usize;
+    let jc: usize = tree::journal_count();
+    while k < jc {
+        match tree::journal_at(k) {
+            option::Option[text::Text]::Some(line) => {
+                if !out.is_empty() { let _d: status::Status = out.append("  "); }
+                let _e: status::Status = out.append(line.view());
+            }
+            option::Option[text::Text]::None => { }
+        }
+        k = k +% (1 as usize);
+    }
+    if out.is_empty() { let _c: status::Status = out.append("no edits to copy"); }
     set_label(text::from_str("insp:snippet"), out.view());
     return;
 }
@@ -939,6 +1050,22 @@ fn prop_row(prop: str, me: *u8) -> core::Node {
                           on_click: on_reset_one, on_click_ctx: me)
         .width(44.0f64));
     return ui::row(b, key: rk.view()).gap(8.0f64);
+}
+
+// One labelled field of the structure block. `prop_row`'s shape without the
+// reset button — same 100pt name column, so the two blocks read as one form.
+fn make_row(name: str, key: str, initial: str) -> core::Node {
+    let nk: text::Text = joined("insp:mn:", name);
+    var b: core::Builder = core::Builder::new();
+    b.add(ui::label(name, key: nk.view(),
+                    text_align: vocab::TextAlign::Start,
+                    text_color: vocab::Color::text_secondary()).width(100.0f64));
+    var field: core::Node = ui::text_field(initial, key: key,
+                                           text_align: vocab::TextAlign::Start)
+        .grow(1.0f64);
+    core::set_basis(#addr_of(field), 0.0f64);
+    b.add(field);
+    return ui::row(b).gap(8.0f64);
 }
 
 impl Inspector: component::Component {
@@ -991,6 +1118,57 @@ impl Inspector: component::Component {
             }
             j = j +% (1 as usize);
         }
+        // ---- structure ----
+        //
+        // The same live-tree machinery as a property write, addressed the same
+        // way: the selection is the target, and the three fields say what to
+        // make. `Before` and `After` operate on the selection's PARENT, which
+        // is what makes "another one of these, next to this one" one click.
+        col.add(ui::label("STRUCTURE", key: "insp:h_structure",
+                          text_align: vocab::TextAlign::Start,
+                          text_color: vocab::Color::text_tertiary()));
+        col.add(make_row("element", "insp:new_maker", "label"));
+        col.add(make_row("key", "insp:new_key", ""));
+        col.add(make_row("text", "insp:new_text", ""));
+
+        var sb: core::Builder = core::Builder::new();
+        sb.add(ui::text_button("Add child", key: "insp:add_child",
+                               text_color: vocab::Color::link(),
+                               on_click: on_add_child, on_click_ctx: me));
+        sb.add(ui::text_button("Before", key: "insp:add_before",
+                               text_color: vocab::Color::link(),
+                               on_click: on_add_before, on_click_ctx: me));
+        sb.add(ui::text_button("After", key: "insp:add_after",
+                               text_color: vocab::Color::link(),
+                               on_click: on_add_after, on_click_ctx: me));
+        sb.add(ui::text_button("Delete", key: "insp:delete",
+                               text_color: vocab::Color::link(),
+                               on_click: on_delete, on_click_ctx: me));
+        sb.add(ui::text_button("Undo", key: "insp:undo",
+                               text_color: vocab::Color::link(),
+                               on_click: on_undo, on_click_ctx: me));
+        col.add(ui::row(sb, key: "insp:structbar").gap(12.0f64));
+
+        // The vocabulary, written out rather than remembered. It comes from
+        // `tree` so the two lists cannot drift.
+        var makers: text::Text = text::new();
+        let mk: vec::Vec[str] = tree::maker_names();
+        var m: usize = 0 as usize;
+        while m < mk.count() {
+            match mk.at(m) {
+                option::Option[str]::Some(nm) => {
+                    if !makers.is_empty() { let _sp: status::Status = makers.append("  "); }
+                    let _mm: status::Status = makers.append(nm);
+                }
+                option::Option[str]::None => { }
+            }
+            m = m +% (1 as usize);
+        }
+        col.add(ui::label(makers.view(), key: "insp:makers",
+                          text_align: vocab::TextAlign::Start,
+                          text_color: vocab::Color::text_tertiary(),
+                          max_lines: 2 as i64));
+
         col.add(ui::label("COMPUTED + NATIVE", key: "insp:h_computed",
                           text_align: vocab::TextAlign::Start,
                           text_color: vocab::Color::text_tertiary()));
@@ -998,10 +1176,13 @@ impl Inspector: component::Component {
                           text_align: vocab::TextAlign::Start,
                           text_color: vocab::Color::text_secondary(),
                           max_lines: 4 as i64));
+        // Eight lines, not four: the snippet now carries the session's
+        // structural journal as well as the selected node's overrides, and a
+        // truncated snippet is one a developer pastes half of.
         col.add(ui::label("", key: "insp:snippet",
                           text_align: vocab::TextAlign::Start,
                           text_color: vocab::Color::link(),
-                          max_lines: 4 as i64));
+                          max_lines: 8 as i64));
         var prop_col: core::Node = ui::column(col, key: "insp:proplist")
             .padding(10.0f64).gap(6.0f64);
         var prop_scroll: core::Node = ui::scroll(key: "insp:propscroll");

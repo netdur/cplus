@@ -109,6 +109,33 @@ fn serve_uds(
 
 ---
 
+## Extension namespace
+
+One server, more than one capability model. An extension registers a method
+prefix and a handler; every request whose method starts with that prefix is
+routed there instead of to the surface vtable. This module knows nothing about
+what it is carrying, and the dependency runs extension → `agent_mcp`, never
+back — so nothing here gains a dependency and `agent_core::Backend` never grows
+a debug mode to serve a development tool.
+
+| fn | Signature | Notes |
+|---|---|---|
+| `arm_extension` | `(prefix: str, h: fn(str, json::Value, f64) -> json::Value)` | Opens the namespace. The prefix is copied, so a composed one is safe. |
+| `disarm_extension` | `()` | Closes it and clears the handler. |
+| `extension_armed` | `() -> bool` | |
+| `is_extension_method` | `(method: str) -> bool` | |
+
+**Arming is the gate.** An extension is typically more powerful than the agent
+surface, so its presence in the binary must not be enough to expose it: a
+process that never arms answers `-32601` — naming the method, so a missing
+`arm_extension` does not read as a protocol mismatch. The consent gate runs
+**first** and covers the namespace too; arming grants no path around it.
+
+The live inspector is the extension this exists for — see
+`vendor/inspector/docs/wire.md`.
+
+---
+
 ## Package
 
 | | |

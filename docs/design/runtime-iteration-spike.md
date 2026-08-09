@@ -1,7 +1,10 @@
 # Runtime iteration spike: hot reload and a live Facet inspector
 
 Status: approach 2 is BUILT — `vendor/inspector`, with `examples/inspector_probe`
-as the probe. Approach 1 remains research.
+as the probe. It reads and writes properties, adds and removes nodes, and is
+reachable both in-app and over the agent's MCP socket. Approach 1 remains
+research: nothing about behaviour — a handler, a function body — is reachable
+from any of it, which is the boundary the two approaches actually divide on.
 
 This document records two related approaches for changing a running C+
 application during development:
@@ -41,8 +44,36 @@ pointer plus Flex's global removal counter, and the same shape works here for
 one comparison. `describe` answers a flat, parent-indexed vector, so an index
 into that listing is the wire address a remote client uses.
 
+**Structural editing was blocked on policies that mount then grew.** This
+document, and the inspector's own notes, listed insert/delete/reparent as
+needing identity, focus, selection, scroll and component-lifecycle policies that
+did not exist. `facet/mount` has since grown `insert_child`, `add_child`,
+`remove_child`, `remove_node` and `remove(key)` against the live tree, each
+handling exactly those concerns. The inspector's structural verbs are therefore
+an addresser and a set of refusals over mount, not a tree editor — see the
+package's design notes. What they do *not* reach is behaviour: a button the
+inspector makes has no handler and cannot be given one, which is the real
+boundary between approach 2 and approach 1.
+
 One thing this document flagged that proved exactly right: keep it away from the
 agent surface, and let `pick_at` exist only here.
+
+One thing it got half right, and this is now built: the inspector's *capability*
+model must stay separate from the agent's, but the *transport* need not be a
+separate server. `agent_mcp` grew one erased namespace hook and `inspector/mcp`
+registers `inspector.` into it, so there is no second server, socket, teardown
+hook or consent gate. `agent_core::Backend` did not gain a debug mode, and the
+dependency runs `inspector` → `agent_mcp` and never back. The "Transport
+considerations" section below is therefore answered rather than open: the
+listing is flat and parent-indexed so an index is the wire address, `inspect`
+is a per-node read rather than part of the tree dump, and the 8 KiB request
+buffer bounds requests, not answers.
+
+The cost this document did predict correctly is the thread. `mount::install`
+records the UI thread and `core::touch` asserts on it, so every socket-borne
+write hops through a synchronous `dispatch_sync_f` installed by the platform
+module — the embedded panel needs none of it, which is exactly where the cost
+was said to belong.
 
 ## Executive conclusion
 
@@ -63,11 +94,14 @@ The recommended order is:
 3. consider reloadable code modules only for applications that need live
    behavior changes as well as visual changes.
 
-Step 1 is done. Step 2's generated metadata turned out not to be a prerequisite
-(see above); what remains of it is control-specific properties beyond `text`,
-`title` and `on`. Override persistence was deliberately not built — the
-inspector generates a C+ setter line to paste instead, so a development tool
-cannot quietly become an application state store.
+Step 1 is done, and has since grown structural editing: insert, delete,
+reparent and one level of undo, over `facet/mount`'s live-tree verbs. Step 2's
+generated metadata turned out not to be a prerequisite (see above); what remains
+of it is control-specific properties beyond `text`, `title` and `on`, and a
+maker table beyond the nine hand-written elements the structural verbs can
+build. Override persistence was deliberately not built — the inspector generates
+a C+ line to paste, for property and structural edits alike, so a development
+tool cannot quietly become an application state store.
 
 ## Approach 1: compiled-code hot reload
 

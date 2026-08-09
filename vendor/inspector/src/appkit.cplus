@@ -37,6 +37,51 @@ import "facet/application" as app;
 import "facet/mount" as mount;
 import "./inspector" as insp;
 import "./tree" as tree;
+import "./mcp" as mcp;
+
+// ---- the hop to the UI thread --------------------------------------------------
+//
+// The second thing facet's tree cannot answer for itself, and it only comes up
+// off-process: `mount::install` records the thread it ran on and `core::touch`
+// asserts on it, so a write arriving from the socket server's thread ABORTS —
+// deliberately, because a worker writing the tree is a data race that otherwise
+// surfaces as a distant, unattributable crash.
+//
+// `dispatch_sync_f` is the right shape and libdispatch's plain-C one: a function
+// pointer and a context, run on the main queue, RETURNING when the work is done.
+// The synchronous half is not a detail — an RPC has to have the answer before it
+// can write the response, and `facet_appkit`'s `run_on_main` is deliberately
+// async for a different job.
+//
+// Already on the main thread, it calls straight through. `dispatch_sync` onto
+// the main queue FROM the main queue deadlocks, and an in-process caller — a
+// panel, a test — is exactly that case.
+extern fn dlsym(handle: *u8, symbol: *u8) -> *u8;
+extern fn dispatch_sync_f(queue: *u8, ctx: *u8, work: fn(*u8));
+
+// `dispatch_get_main_queue()` is a macro over a libdispatch global, so there is
+// no function to call — dlsym the symbol (RTLD_DEFAULT is -2 on Darwin).
+fn main_queue() -> *u8 {
+    let rtld_default: *u8 = { ((0 as usize) -% (2 as usize)) as *u8 };
+    return { dlsym(rtld_default, #str_ptr("_dispatch_main_q\0")) };
+}
+
+fn on_main_thread() -> bool {
+    let ns_thread: *u8 = rt::get_class(#str_ptr("NSThread\0"));
+    if ns_thread == (0 as *u8) { return true; }
+    return rt::msg_i8(ns_thread, rt::sel(#str_ptr("isMainThread\0"))) != (0 as i8);
+}
+
+fn run_on_main_sync(ctx: *u8, work: fn(*u8)) {
+    if on_main_thread() { work(ctx); return; }
+    let q: *u8 = main_queue();
+    // No queue means no libdispatch to hop through. Running directly is wrong
+    // on a worker, and it is the only thing left that is not "do nothing at
+    // all" — which for an RPC would be an answer that is silently a lie.
+    if q == (0 as *u8) { work(ctx); return; }
+    { dispatch_sync_f(q, ctx, work) };
+    return;
+}
 
 #[link_name = "CGColorCreateGenericRGB"]
 extern fn cg_rgba(r: f64, g: f64, b: f64, a: f64) -> *u8;
@@ -249,5 +294,9 @@ fn native_props(n: *core::Node) -> vec::Vec[insp::Prop] {
 fn install() {
     tree::install_platform(highlight, clear_highlight);
     tree::set_native_fn(native_props);
+    // Installed here and not in `mcp` so that module stays portable: the hop is
+    // libdispatch, and a build with no platform shim keeps `mcp`'s direct call,
+    // which is right for headless and for an in-process caller.
+    mcp::set_marshal(run_on_main_sync);
     return;
 }
