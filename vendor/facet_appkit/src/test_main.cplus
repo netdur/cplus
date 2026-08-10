@@ -2812,6 +2812,139 @@ fn a_row_is_realised_into_its_cell_and_torn_down_when_the_cell_is_reused() {
     return;
 }
 
+// ---- a row's CONTENT is positioned -------------------------------------------
+// `place_row` frames the cell and the row root. Everything INSIDE the row is
+// placed by `geometry::reposition`, and that call was missing: the frame walk
+// the window scheduler runs cannot reach a realised row, because a realised row
+// is not in any window. So every view in a row kept the frame its factory made
+// it with — each label 4x16 at the origin, `labelWithString:@""`'s own size,
+// since `setStringValue:` does not resize. The row's HEIGHT was right
+// (`height_imp` lays out an unrealised copy), so the table reserved exactly the
+// right space and drew the whole row into the top-left corner of it.
+//
+// Two labels, because ONE at the origin is indistinguishable from one correctly
+// placed. The second has to sit below the first.
+
+fn rp_row(i: usize, ctx: *u8) -> core::Node {
+    var b: core::Builder = core::Builder::new();
+    b.add(label::label("first line", key: "a"));
+    b.add(label::label("second line", key: "b"));
+    return core::column(b, key: "");
+}
+
+fn rp_bind(i: usize, row: *core::Node, ctx: *u8) {
+    match label::find("a", within: row) {
+        option::Option[label::Label]::Some(l) => {
+            let _x: label::Label = l.set_text(digits_i64(i as i64).view());
+        }
+        option::Option[label::Label]::None => { }
+    }
+    return;
+}
+
+fn rp_list(count: usize, bound: bool) -> core::Node {
+    var n: core::Node = list::list(key: "rp");
+    let p: *core::Node = #addr_of(n);
+    match list::find("rp", within: p) {
+        option::Option[list::List]::Some(x) => {
+            let a: list::List = x.set_row(rp_row);
+            let b: list::List = a.set_count(count);
+            if bound { let _c: list::List = b.set_row_bind(rp_bind); }
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    return n;
+}
+
+// Both labels span the cell and the second is BELOW the first. The row root is
+// a bare column — nothing keys it, so it is unbacked and its labels pass
+// straight through into the cell, which is why these are the cell's own
+// subviews.
+fn assert_row_content_is_placed(cell: *u8) {
+    let cw: f64 = { ak::View::from_raw(cell).frame().w };
+    assert cw > 1.0f64;
+    let subs: vec::Vec[ak::View] = ak::View::from_raw(cell).subviews();
+    assert subs.count() == (2 as usize);
+    var first_h: f64 = 0.0f64;
+    match subs.at_ptr(0 as usize) {
+        option::Option[*ak::View]::Some(sv) => {
+            let f: rt::Rect = { (*sv).frame() };
+            assert f.y == 0.0f64;
+            // Stretched across the row rather than left at the 4pt an empty
+            // label is born with.
+            assert f.w == cw;
+            assert f.h > 1.0f64;
+            first_h = f.h;
+        }
+        option::Option[*ak::View]::None => { assert false; }
+    }
+    match subs.at_ptr(1 as usize) {
+        option::Option[*ak::View]::Some(sv) => {
+            let f: rt::Rect = { (*sv).frame() };
+            // The whole claim: an unplaced row stacks every label at the origin.
+            assert f.y == first_h;
+            assert f.w == cw;
+        }
+        option::Option[*ak::View]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn a_realised_list_rows_content_is_placed_not_left_at_the_origin() {
+    backend::install();
+    var n: core::Node = rp_list(3 as usize, false);
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    let cell: *u8 = recycler::view_for_row(v, 0 as i64);
+    assert cell != (0 as *u8);
+    assert_row_content_is_placed(cell);
+    views::view_release(v);
+    return;
+}
+
+// The reuse branch places too. It re-lays-out and re-places rather than
+// rebuilding, so the frames have to be pushed again — a bind can change what
+// the row measures.
+#[test]
+fn a_recycled_rows_content_is_placed_again_on_every_reuse() {
+    backend::install();
+    var n: core::Node = rp_list(100 as usize, true);
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    let cell: *u8 = recycler::make_cell(v);
+    assert cell != (0 as *u8);
+    recycler::fill_into(v, cell, 0 as i64);
+    assert_row_content_is_placed(cell);
+    // Reused: nothing is rebuilt, and the placement survives that.
+    recycler::fill_into(v, cell, 42 as i64);
+    assert_row_content_is_placed(cell);
+    views::view_release(v);
+    return;
+}
+
+// The tree runs the same helper now, so its rows are placed on the same terms.
+fn rp_tree_row(n: *tree::TreeNode, ctx: *u8) -> core::Node {
+    var b: core::Builder = core::Builder::new();
+    b.add(label::label("first line", key: "a"));
+    b.add(label::label("second line", key: "b"));
+    return core::column(b, key: "");
+}
+
+#[test]
+fn a_realised_tree_rows_content_is_placed_not_left_at_the_origin() {
+    backend::install();
+    var root: tree::TreeNode = tree::TreeNode::new("root", id: "root");
+    let _a: status::Status = root.add_child(tree::TreeNode::new("delta", id: "delta"));
+    var t: core::Node = tree::tree(root, key: "rpt", row: rp_tree_row);
+    let tp: *core::Node = #addr_of(t);
+    let v: *u8 = views::create(0 as *u8, tp);
+    core::set_view(tp, v, views::view_release);
+    views::apply(0 as *u8, tp);
+    let cell: *u8 = recycler::tree_view_for_row(v, 0 as i64);
+    assert cell != (0 as *u8);
+    assert_row_content_is_placed(cell);
+    return;
+}
+
 // ---- the bind step -----------------------------------------------------------
 // The reason recycling was not yet fast: the CELL was reused and the WORK was
 // not. With a bind, a cell's subtree is built once and every later row writes
@@ -6303,6 +6436,138 @@ fn a_grouped_list_counts_headers_as_rows_and_translates_back() {
 
 #[link_name = "objc_msgSend"]
 extern fn msg_i8_id_i64(recv: *u8, sel: *u8, a: *u8, b: i64) -> i8;
+
+// What index the row bind was handed, and how many times it ran.
+static GB_LAST: i64 = -1 as i64;
+static GB_CALLS: i64 = 0 as i64;
+
+fn gb_bind(i: usize, row: *core::Node, ctx: *u8) {
+    GB_LAST = i as i64;
+    GB_CALLS = GB_CALLS + (1 as i64);
+    return;
+}
+
+#[test]
+fn a_grouped_lists_bind_is_handed_the_DATA_index_not_the_table_row() {
+    // Every index into a grouped table is translated on the way in — that is
+    // what `resolve_row` is for, and `build_row` uses it. The BIND did not:
+    // it passed the raw table row straight to the application, so a grouped
+    // list with a bind built row `resolve_row(r)` and then wrote row `r`'s data
+    // into it. The two disagree by the number of headers above, so every row
+    // below the first header showed the wrong item — and the further down the
+    // table, the further off.
+    //
+    // Groups of 2 and 3 over 5 items, so the table is:
+    //   0 header | 1 data0 | 2 data1 | 3 header | 4 data2 | 5 data3 | 6 data4
+    backend::install();
+    var l: core::Node = list::list(key: "gb", grouped: true);
+    let p: *core::Node = #addr_of(l);
+    match list::find("gb", within: p) {
+        option::Option[list::List]::Some(x) => {
+            let a: list::List = x.set_row(g_row, ctx: 0 as *u8);
+            let b: list::List = a.set_count(5 as usize);
+            let c: list::List = b.set_row_bind(gb_bind, ctx: 0 as *u8);
+            let d: list::List = c.set_group_count(2 as usize);
+            let _e: list::List = d.set_group(g_size, g_header, ctx: 0 as *u8);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+
+    // Table row 1 is DATA ROW 0.
+    GB_LAST = -1 as i64;
+    let _c1: *u8 = recycler::view_for_row(v, 1 as i64);
+    assert GB_LAST == (0 as i64);
+
+    // Table row 4 is DATA ROW 2 — header, two rows, header, THIS. The same row
+    // `a_lists_selection_reads_back_the_data_index` already translates the
+    // other way for selection.
+    GB_LAST = -1 as i64;
+    let _c4: *u8 = recycler::view_for_row(v, 4 as i64);
+    assert GB_LAST == (2 as i64);
+
+    // And the last row is data 4, not table row 6.
+    GB_LAST = -1 as i64;
+    let _c6: *u8 = recycler::view_for_row(v, 6 as i64);
+    assert GB_LAST == (4 as i64);
+    return;
+}
+
+#[test]
+fn a_uniform_grouped_list_does_not_give_every_row_the_HEADERS_height() {
+    // `uneven_rows: false` — the DEFAULT — means "measure one row and answer
+    // with it for all". In a grouped table the row that gets measured first is
+    // table row 0, which is a HEADER: a different builder, a different shape,
+    // and in this fixture 10pt against the rows' 20pt. Every data row then
+    // answered 10pt, so a grouped list collapsed to header height throughout
+    // unless the application stated `row_height`.
+    //
+    // NSTableView asks heightOfRow: for every row and starts at 0, so the
+    // header is always the one that lands in the shared slot.
+    backend::install();
+    var l: core::Node = list::list(key: "gu", grouped: true);
+    let p: *core::Node = #addr_of(l);
+    match list::find("gu", within: p) {
+        option::Option[list::List]::Some(x) => {
+            let a: list::List = x.set_row(g_row, ctx: 0 as *u8);
+            let b: list::List = a.set_count(5 as usize);
+            let d: list::List = b.set_group_count(2 as usize);
+            let _e: list::List = d.set_group(g_size, g_header, ctx: 0 as *u8);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+
+    // In AppKit's own order: the header first.
+    let h0: f64 = recycler::height_of_row(v, 0 as i64);
+    assert h0 > 0.0f64;
+    // Then a data row, which is TALLER than the header and must say so.
+    let h1: f64 = recycler::height_of_row(v, 1 as i64);
+    assert h1 > h0;
+    // And still, further down, past the second header.
+    let h4: f64 = recycler::height_of_row(v, 4 as i64);
+    assert h4 == h1;
+    // The other header keeps the header's height.
+    let h3: f64 = recycler::height_of_row(v, 3 as i64);
+    assert h3 == h0;
+    return;
+}
+
+#[test]
+fn a_grouped_lists_row_bind_never_runs_on_a_HEADER() {
+    // A header is built by `group_header`, not by `row` — so the row bind has
+    // no business writing into it. Handed the raw table row, the bind ran on
+    // every header too, writing data row `r`'s content over a header that was
+    // never shaped to hold it.
+    backend::install();
+    var l: core::Node = list::list(key: "gb2", grouped: true);
+    let p: *core::Node = #addr_of(l);
+    match list::find("gb2", within: p) {
+        option::Option[list::List]::Some(x) => {
+            let a: list::List = x.set_row(g_row, ctx: 0 as *u8);
+            let b: list::List = a.set_count(5 as usize);
+            let c: list::List = b.set_row_bind(gb_bind, ctx: 0 as *u8);
+            let d: list::List = c.set_group_count(2 as usize);
+            let _e: list::List = d.set_group(g_size, g_header, ctx: 0 as *u8);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+
+    // Table rows 0 and 3 are the two headers.
+    GB_CALLS = 0 as i64;
+    let _h0: *u8 = recycler::view_for_row(v, 0 as i64);
+    assert GB_CALLS == (0 as i64);
+    let _h3: *u8 = recycler::view_for_row(v, 3 as i64);
+    assert GB_CALLS == (0 as i64);
+    // A data row still binds, so this is not just an inert bind.
+    let _d1: *u8 = recycler::view_for_row(v, 1 as i64);
+    assert GB_CALLS == (1 as i64);
+    return;
+}
 
 #[test]
 fn a_lists_selection_reads_back_the_data_index() {

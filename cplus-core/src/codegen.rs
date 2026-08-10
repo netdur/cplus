@@ -15981,14 +15981,35 @@ impl<'a> FnState<'a> {
             let struct_info = &self.types.struct_defs[id.0 as usize];
             let field_idx = struct_info.field_index(field_name);
             let field_ty = struct_info.field_type(field_name);
-            if self.bitfield_place(id, field_idx as usize).is_some() {
-                let (v, vty) = self.gen_bitfield_load(id, field_idx as usize, &recv_ptr);
-                return Some((v, vty));
+            // The fold reproduces the BODY, not the RETURN. A declared return
+            // type that differs from the field's is a coercion site — `Text` ->
+            // `str` is the one sema has — and the fold emitted a bare field load
+            // typed as the field, which the caller then read as the return type:
+            // a `%Text` (`{ ptr, i64, i64 }`) value stored into a `{ ptr, i64 }`
+            // slot, invalid IR that clang refuses with no source line, in a .ll
+            // the driver deletes on the way out.
+            //
+            // `fn get(this) -> str { return this.t; }` was the whole reachable
+            // shape: `ref this` never matched this pattern (Receiver::Read only),
+            // `.view()` is not a bare field access, and a free fn taking the
+            // struct by value is not a method. So the same accessor compiled or
+            // not depending on which of three equivalent spellings it used.
+            //
+            // The real call path already coerces every return correctly
+            // (`gen_text_to_str` off the callee's own return statement), so a
+            // coercing getter is handed back to it. Nothing is lost: the fold
+            // exists to shrink the IR clang sees, and clang's own inliner still
+            // folds the call at -O.
+            if field_ty == info.return_type {
+                if self.bitfield_place(id, field_idx as usize).is_some() {
+                    let (v, vty) = self.gen_bitfield_load(id, field_idx as usize, &recv_ptr);
+                    return Some((v, vty));
+                }
+                let (gep, _) = self.field_addr(id, field_idx as usize, &recv_ptr);
+                let v = self.next_tmp();
+                self.gen_load(&v, &field_ty, &gep);
+                return Some((v, field_ty));
             }
-            let (gep, _) = self.field_addr(id, field_idx as usize, &recv_ptr);
-            let v = self.next_tmp();
-            self.gen_load(&v, &field_ty, &gep);
-            return Some((v, field_ty));
         }
 
         // Build the LLVM call argument list. v0.0.8 fix A: Copy `this`
@@ -20286,6 +20307,51 @@ fn main() -> i32 {\n\
         assert!(
             main_body.contains("getelementptr inbounds %P,"),
             "expected inlined GEP into P, got:\n{main_body}"
+        );
+    }
+
+    #[test]
+    fn fix_d_coercing_getter_is_not_inlined_and_returns_a_str() {
+        // The fold reproduces the BODY and called it the RETURN. When the
+        // declared return type differs from the field's, the difference is a
+        // coercion — `Text` -> `str`, the one sema has — and the fold emitted a
+        // bare field load typed as the field, which the caller stored into a
+        // slot typed as the return: a `{ ptr, i64, i64 }` value into a
+        // `{ ptr, i64 }` slot. clang refuses the module, naming only the .ll
+        // the driver deletes on the way out, so the accessor had no source line
+        // to point at.
+        //
+        // The same accessor in three spellings, of which only this one broke:
+        // `ref this` never matched the pattern (Read receiver only), `.view()`
+        // is not a bare field access, and a free fn taking the struct by value
+        // is not a method.
+        let src = "\
+            extern fn free(p: *u8);\n\
+            #[lang(\"string\")]\n\
+            struct MyText { ptr: *u8, len: usize, cap: usize }\n\
+            impl MyText { fn drop(ref this) { { free(this.ptr); } return; } }\n\
+            struct Store { t: MyText }\n\
+            impl Store { fn get(this) -> str { return this.t; } }\n\
+            fn main() -> i32 { let s: Store = Store { t: \"m\" };\n\
+                let x: str = s.get(); return 0; }\n";
+        let ir = gen_src(src);
+        // The getter is emitted and CALLED — the coercion lives in its body.
+        assert!(
+            ir.contains("@Store.get"),
+            "a coercing getter must still be emitted, got:\n{ir}"
+        );
+        let main_start = ir.find("@main()").expect("@main present");
+        let main_end = ir[main_start..].find("\n}").expect("@main close");
+        let main_body = &ir[main_start..main_start + main_end];
+        assert!(
+            main_body.contains("call fastcc { ptr, i64 } @Store.get"),
+            "a coercing getter must go through the call that coerces, got:\n{main_body}"
+        );
+        // And the load the fold used to emit — the whole `%MyText` — is gone
+        // from the caller, which is the invalid IR itself.
+        assert!(
+            !main_body.contains("load %MyText"),
+            "the caller must not load the raw field, got:\n{main_body}"
         );
     }
 

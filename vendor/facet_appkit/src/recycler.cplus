@@ -51,6 +51,7 @@ import "facet/tree" as tree;
 import "./controls" as controls;
 import "./paint" as paint;
 import "./compose" as compose;
+import "./geometry" as geometry;
 import "objc/runtime" as rt;
 import "objc/synthesis" as synth;
 import "objc/bridge" as bridge;
@@ -184,6 +185,22 @@ fn is_header_row(s: *RowSource, row: i64) -> bool {
     return resolve_row(s, row) < (0 as i64);
 }
 
+// The first table row that shows DATA: 0 when ungrouped, and past the leading
+// header when grouped. It is a scan rather than a constant because a group of
+// size ZERO contributes a header and no rows, so the first data row is not
+// always row 1. Reached only on the uniform-height path, once per query, over
+// a row count that is headers-plus-items.
+fn first_data_row(s: *RowSource) -> i64 {
+    if { (*s).groups } <= (0 as i64) { return 0 as i64; }
+    let total: i64 = table_row_count(s);
+    var r: i64 = 0 as i64;
+    while r < total {
+        if resolve_row(s, r) >= (0 as i64) { return r; }
+        r = r +% (1 as i64);
+    }
+    return 0 as i64;
+}
+
 // Headers plus rows. A grouped table's row count is not its item count, which
 // is the whole reason every index has to be translated.
 fn table_row_count(s: *RowSource) -> i64 {
@@ -272,7 +289,15 @@ fn height_imp(self_obj: *u8, cmd: *u8, tv: *u8, row: i64) -> f64 {
         { (*s).heights_width = w };
     } else if row >= (0 as i64) {
         var probe: usize = row as usize;
-        if { (*s).uniform } { probe = 0 as usize; }
+        // `uniform` says every DATA row measures the same. It says nothing
+        // about a HEADER, which comes from `group_header` — a different
+        // builder and a different shape. Slot 0 of a GROUPED table is the
+        // first header, so sharing it handed every row the header's height,
+        // and a grouped list collapsed to header height throughout unless the
+        // application stated `row_height`. NSTableView asks from row 0 down,
+        // so the header always won the slot.
+        let uniform: bool = { (*s).uniform };
+        if uniform && !is_header_row(s, row) { probe = first_data_row(s) as usize; }
         match { (*hp).at(probe) } {
             option::Option[f64]::Some(cached) => { if cached > 0.0f64 { return cached; } }
             option::Option[f64]::None => { }
@@ -357,7 +382,7 @@ fn fill_cell(s: *RowSource, cell: *u8, row: i64, w: f64) {
         mount::sync_from(existing);
         // The row's own size can change with its data, so it is re-laid out
         // and re-placed — the cheap half of what a rebuild did.
-        place_row(cell, existing, w);
+        let _h: f64 = place_row(cell, existing, w);
         return;
     }
     if existing != (0 as *core::Node) { release_cell_row(cell); }
@@ -376,7 +401,7 @@ fn fill_cell(s: *RowSource, cell: *u8, row: i64, w: f64) {
             // data of whichever row happened to build its cell.
             bind_into(s, row, np);
             mount::sync_from(np);
-            place_row(cell, np, w);
+            let _h: f64 = place_row(cell, np, w);
             synth::set_associated(cell, cell_node_key(), np as *u8);
         }
         option::Option[box::Box[core::Node]]::None => { }
@@ -384,32 +409,72 @@ fn fill_cell(s: *RowSource, cell: *u8, row: i64, w: f64) {
     return;
 }
 
-// Lay the row out at the cell's width and give both the cell and the row's
-// root view that size.
-fn place_row(cell: *u8, np: *core::Node, w: f64) {
+// Lay the row out at the cell's width, push the frames onto the views inside
+// it, and give both the cell and the row's root view that size. Answers the
+// height it settled on, which is what the tree's cell frame is written from.
+//
+// `floor_h` is what a row that measures under a point falls back to.
+//
+// THE `reposition` CALL WAS MISSING and nothing stood in for it. A realised
+// row is not in any window, so `relayout_root` — the only other caller of the
+// frame walk — never reaches it, and nothing else in this package sets a
+// descendant's frame. Every view in a row therefore kept the frame its factory
+// made it with: each label 4x16 at the origin, because `create_label` calls
+// `labelWithString:@""` and `setStringValue:` does not resize. The row's
+// HEIGHT was right all along (`height_imp` lays out an unrealised copy), so the
+// table reserved exactly the right space and drew the whole row into the
+// top-left corner of it.
+fn place_row(cell: *u8, np: *core::Node, w: f64, floor_h: f64 = 1.0f64) -> f64 {
     { (*np).calculate_layout(width: w) };
     var h: f64 = { (*np).frame().height };
-    if h < 1.0f64 { h = 1.0f64; }
+    if h < 1.0f64 { h = floor_h; }
+    // Before the cell is framed, and reading the LAYOUT frames rather than the
+    // views', so the order against the two `setFrame:`s below does not matter.
+    geometry::reposition(np);
     { msg_void_rect(cell, rt::sel(#str_ptr("setFrame:\0")),
                     rt::Rect { x: 0.0f64, y: 0.0f64, w: w, h: h }) };
     let rv: *u8 = core::view_of(np);
     if rv != (0 as *u8) { geometry_place(rv, w, h); }
-    return;
+    return h;
 }
 
 fn has_bind(s: *RowSource) -> bool {
     return { (*s).bind } != props::no_bind;
 }
 
+// Write row `row` — a TABLE row — into `into`.
+//
+// The translation is the whole job. `build_row` resolves a table row to a data
+// index before it picks a builder, and this did not: it handed the raw table
+// row to the application, so a grouped list BUILT `resolve_row(r)` and then
+// wrote row `r`'s data into it. The two disagree by the number of headers
+// above, so every row below the first header showed the wrong item, and the
+// further down the table the further off — with groups of 2 and 3, table row 4
+// is data row 2 and was written with data row 4.
+//
+// A HEADER binds nothing. It was built by `group_header`, not by `row`, so the
+// row bind has no shape to write into; handed a raw table row it ran on every
+// header as well. `controls::rebind_rows` — the collection's copy of this same
+// translation — had both halves right all along (`data_index_of`, then
+// `if data >= 0`), which is the shape to compare against if this drifts again.
+//
+// Ungrouped, `resolve_row` is the identity, so nothing changes for a flat list.
 fn bind_into(s: *RowSource, row: i64, into: *core::Node) {
     let f: fn(usize, *core::Node, *u8) = { (*s).bind };
     if f == props::no_bind { return; }
-    f(row as usize, into, { (*s).row_ctx });
+    let at: i64 = resolve_row(s, row);
+    if at < (0 as i64) { return; }
+    f(at as usize, into, { (*s).row_ctx });
     return;
 }
 
-// The realised root fills the cell. Its own children were placed by the frame
-// walk relative to it, so only the root needs a frame here.
+// The realised root fills the cell. Its own children were placed by the
+// `geometry::reposition` call in `place_row` just above, relative to it, so
+// only the root needs a frame here.
+//
+// That claim used to be made against "the frame walk" with no caller named,
+// and it was false: no walk ran on this path at all. Name the call, so the
+// next reader can check it.
 fn geometry_place(v: *u8, w: f64, h: f64) {
     { msg_void_rect(v, rt::sel(#str_ptr("setFrame:\0")),
                     rt::Rect { x: 0.0f64, y: 0.0f64, w: w, h: h }) };
@@ -1059,13 +1124,7 @@ fn tree_view_for_item_imp(self_obj: *u8, cmd: *u8, ov: *u8, col: *u8, item: *u8)
         if existing != (0 as *core::Node) {
             tree_bind_into(p, n, existing);
             mount::sync_from(existing);
-            { (*existing).calculate_layout(width: w) };
-            var bh: f64 = { (*existing).frame().height };
-            if bh < 1.0f64 { bh = outline_default_row_height(ov); }
-            { msg_void_rect(cell, rt::sel(#str_ptr("setFrame:\0")),
-                            rt::Rect { x: 0.0f64, y: 0.0f64, w: w, h: bh }) };
-            let rv: *u8 = core::view_of(existing);
-            if rv != (0 as *u8) { geometry_place(rv, w, bh); }
+            let _bh: f64 = place_row(cell, existing, w, outline_default_row_height(ov));
             return cell;
         }
     }
@@ -1080,15 +1139,10 @@ fn tree_view_for_item_imp(self_obj: *u8, cmd: *u8, ov: *u8, col: *u8, item: *u8)
     match box::new::[core::Node](node) {
         option::Option[box::Box[core::Node]]::Some(b) => {
             let np: *core::Node = { b.into_raw() } as *core::Node;
-            let rv: *u8 = mount::realise(np, cell);
+            let _rv: *u8 = mount::realise(np, cell);
             tree_bind_into(p, n, np);
             mount::sync_from(np);
-            { (*np).calculate_layout(width: w) };
-            var h: f64 = { (*np).frame().height };
-            if h < 1.0f64 { h = outline_default_row_height(ov); }
-            { msg_void_rect(cell, rt::sel(#str_ptr("setFrame:\0")),
-                            rt::Rect { x: 0.0f64, y: 0.0f64, w: w, h: h }) };
-            if rv != (0 as *u8) { geometry_place(rv, w, h); }
+            let _h: f64 = place_row(cell, np, w, outline_default_row_height(ov));
             synth::set_associated(cell, cell_node_key(), np as *u8);
         }
         option::Option[box::Box[core::Node]]::None => { }
