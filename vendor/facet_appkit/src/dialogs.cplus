@@ -169,7 +169,11 @@ struct AlertHost {
     // rather than a wider `answer`, so an alert and a choose keep the signature
     // they have and only a prompt pays for the string.
     typed: fn(str, *u8),
+    // ONE CONTEXT PER HANDLER. `typed` used to read `answer_ctx` — right only
+    // while both answers come from the same object, and the shared slot also
+    // meant only one of the two could ever be a bound method.
     opaque answer_ctx: *u8,
+    opaque typed_ctx: *u8,
 }
 
 fn alert_host_key() -> *u8 { return { 29040 as *u8 }; }
@@ -201,7 +205,7 @@ fn prompt_ok(sender: *u8, ctx: *u8) {
         option::Option[text_field::TextField]::Some(f) => {
             let typed: str = f.text();
             let g: fn(str, *u8) = { (*h).typed };
-            if g != (0 as fn(str, *u8)) { g(typed, { (*h).answer_ctx }); }
+            if g != (0 as fn(str, *u8)) { g(typed, { (*h).typed_ctx }); }
         }
         option::Option[text_field::TextField]::None => { }
     }
@@ -311,32 +315,37 @@ fn no_typed(v: str, ctx: *u8) { return; }
 // sheet itself is one body. Three copies of the window plumbing was how the
 // second one would have started drifting from the first.
 fn alert_sheet(title: str, message: str, primary: str, secondary: str = "",
-               on_answer: fn(i32, *u8) = 0 as fn(i32, *u8), ctx: *u8 = 0 as *u8) {
+               on_answer: fn(i32, *u8) = 0 as fn(i32, *u8),
+               on_answer_ctx: *u8 = 0 as *u8) {
     present_sheet(alert_tree(title, message, primary, secondary), 140.0f64,
-                  on_answer, no_typed, ctx);
+                  on_answer, on_answer_ctx, no_typed, 0 as *u8);
     return;
 }
 
 
 fn choose_sheet(title: str, message: str, take options: vec::Vec[text::Text],
-                on_answer: fn(i32, *u8) = 0 as fn(i32, *u8), ctx: *u8 = 0 as *u8) {
+                on_answer: fn(i32, *u8) = 0 as fn(i32, *u8),
+                on_answer_ctx: *u8 = 0 as *u8) {
     // Tall enough for the buttons it actually has.
     let n: f64 = options.count() as f64;
     present_sheet(choose_tree(title, message, options), 110.0f64 + (n * 34.0f64),
-                  on_answer, no_typed, ctx);
+                  on_answer, on_answer_ctx, no_typed, 0 as *u8);
     return;
 }
 
 fn prompt_sheet(title: str, message: str, placeholder: str, primary: str,
-                secondary: str = "", on_typed: fn(str, *u8) = no_typed,
-                on_answer: fn(i32, *u8) = 0 as fn(i32, *u8), ctx: *u8 = 0 as *u8) {
+                secondary: str = "",
+                on_typed: fn(str, *u8) = no_typed, on_typed_ctx: *u8 = 0 as *u8,
+                on_answer: fn(i32, *u8) = 0 as fn(i32, *u8),
+                on_answer_ctx: *u8 = 0 as *u8) {
     present_sheet(prompt_tree(title, message, placeholder, primary, secondary),
-                  175.0f64, on_answer, on_typed, ctx);
+                  175.0f64, on_answer, on_answer_ctx, on_typed, on_typed_ctx);
     return;
 }
 
 fn present_sheet(take tree: core::Node, height: f64,
-                 on_answer: fn(i32, *u8), on_typed: fn(str, *u8), ctx: *u8) {
+                 on_answer: fn(i32, *u8), on_answer_ctx: *u8,
+                 on_typed: fn(str, *u8), on_typed_ctx: *u8) {
     let parent: *u8 = app::window_native(app::newest_window_root());
     var root: core::Node = tree;
 
@@ -383,7 +392,8 @@ fn present_sheet(take tree: core::Node, height: f64,
 
     match box::new::[AlertHost](AlertHost {
         root: rp, sheet: w, parent: parent,
-        answer: on_answer, typed: on_typed, answer_ctx: ctx,
+        answer: on_answer, typed: on_typed,
+        answer_ctx: on_answer_ctx, typed_ctx: on_typed_ctx,
     }) {
         option::Option[box::Box[AlertHost]]::Some(hb) => {
             let hp: *AlertHost = { hb.into_raw() } as *AlertHost;

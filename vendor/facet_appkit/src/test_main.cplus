@@ -3179,7 +3179,7 @@ fn an_alert_is_a_facet_tree_the_agent_can_address() {
     AL_ANSWER = -1;
     let before: usize = app::window_count();
     dialogs::alert_sheet("Discard?", "Three edits will be lost.", "Discard", "Keep",
-                         on_answer: al_answered, ctx: 0 as *u8);
+                         on_answer: al_answered, on_answer_ctx: 0 as *u8);
     // It is a real window of the app, so `find` reaches into it — which is the
     // same door the agent surface uses.
     assert app::window_count() == (before + (1 as usize));
@@ -3215,7 +3215,7 @@ fn an_alert_is_a_facet_tree_the_agent_can_address() {
 fn an_alert_with_one_button_has_no_second_one() {
     backend::install();
     let before: usize = app::window_count();
-    dialogs::alert_sheet("Saved", "", "OK", "", on_answer: al_answered, ctx: 0 as *u8);
+    dialogs::alert_sheet("Saved", "", "OK", "", on_answer: al_answered, on_answer_ctx: 0 as *u8);
     match button::find("alert:secondary") {
         option::Option[button::Button]::Some(_b) => { assert false; }
         option::Option[button::Button]::None => { }
@@ -6272,7 +6272,8 @@ fn a_grouped_collection_interleaves_headers_with_the_same_flat_rows() {
             let a: collection::Collection = h.set_row(g_row, ctx: 0 as *u8);
             let b: collection::Collection = a.set_count(5 as usize);
             let d: collection::Collection = b.set_group_count(2 as usize);
-            let _e: collection::Collection = d.set_group(g_size, g_header, ctx: 0 as *u8);
+            let e: collection::Collection = d.set_group_size(g_size, size_ctx: 0 as *u8);
+            let _f: collection::Collection = e.set_group_header(g_header, header_ctx: 0 as *u8);
         }
         option::Option[collection::Collection]::None => { assert false; }
     }
@@ -6330,7 +6331,8 @@ fn clicking_a_collection_row_selects_it_and_reports_the_data_index() {
             let a: collection::Collection = x.set_row(g_row, ctx: 0 as *u8);
             let b: collection::Collection = a.set_count(5 as usize);
             let d: collection::Collection = b.set_group_count(2 as usize);
-            let _e: collection::Collection = d.set_group(g_size, g_header, ctx: 0 as *u8);
+            let e: collection::Collection = d.set_group_size(g_size, size_ctx: 0 as *u8);
+            let _f: collection::Collection = e.set_group_header(g_header, header_ctx: 0 as *u8);
         }
         option::Option[collection::Collection]::None => { assert false; }
     }
@@ -6417,7 +6419,8 @@ fn a_grouped_list_counts_headers_as_rows_and_translates_back() {
             let a: list::List = x.set_row(g_row, ctx: 0 as *u8);
             let b: list::List = a.set_count(5 as usize);
             let d: list::List = b.set_group_count(2 as usize);
-            let _e: list::List = d.set_group(g_size, g_header, ctx: 0 as *u8);
+            let e: list::List = d.set_group_size(g_size, size_ctx: 0 as *u8);
+            let _f: list::List = e.set_group_header(g_header, header_ctx: 0 as *u8);
         }
         option::Option[list::List]::None => { assert false; }
     }
@@ -6447,6 +6450,59 @@ fn gb_bind(i: usize, row: *core::Node, ctx: *u8) {
     return;
 }
 
+// Each half of a group description carries its OWN context.
+//
+// They shared one `ctx:` when they shared one call, and a bound method's
+// receiver goes in the `*u8` immediately after its handler — so only the
+// handler adjacent to that slot could ever be one. `header` bound, `size` did
+// not, and which one was an accident of parameter order. Two calls, two slots,
+// and the two halves can now come from different objects entirely.
+static GS_SEEN: i64 = 0 as i64;
+static GH_SEEN: i64 = 0 as i64;
+
+fn gs_ctx_probe(g: usize, ctx: *u8) -> usize {
+    if ctx != (0 as *u8) { GS_SEEN = { *(ctx as *i64) }; }
+    return 2 as usize;
+}
+fn gh_ctx_probe(g: usize, ctx: *u8) -> flex::Node {
+    if ctx != (0 as *u8) { GH_SEEN = { *(ctx as *i64) }; }
+    var b: core::Node = box_view::box(color: vocab::Color::rgba(0.9f64, 0.9f64, 0.9f64));
+    b.set_height(flex::StyleLength::points(10.0f64));
+    return b;
+}
+
+#[test]
+fn each_half_of_a_group_carries_its_own_context() {
+    backend::install();
+    var size_owner: i64 = 111 as i64;
+    var header_owner: i64 = 222 as i64;
+    GS_SEEN = 0 as i64;
+    GH_SEEN = 0 as i64;
+
+    var l: core::Node = list::list(key: "gctx", grouped: true);
+    let p: *core::Node = #addr_of(l);
+    match list::find("gctx", within: p) {
+        option::Option[list::List]::Some(x) => {
+            let a: list::List = x.set_row(g_row, ctx: 0 as *u8);
+            let b: list::List = a.set_count(4 as usize);
+            let c: list::List = b.set_group_count(2 as usize);
+            let d: list::List = c.set_group_size(gs_ctx_probe,
+                                                 size_ctx: #addr_of(size_owner) as *u8);
+            let _e: list::List = d.set_group_header(gh_ctx_probe,
+                                                    header_ctx: #addr_of(header_owner) as *u8);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    // Row 0 is a header — that reads the HEADER's context. Row 1 is data,
+    // which resolves through the size fn and reads the SIZE's.
+    let _h: *u8 = recycler::view_for_row(v, 0 as i64);
+    assert GH_SEEN == (222 as i64);
+    assert GS_SEEN == (111 as i64);
+    return;
+}
+
 #[test]
 fn a_grouped_lists_bind_is_handed_the_DATA_index_not_the_table_row() {
     // Every index into a grouped table is translated on the way in — that is
@@ -6468,7 +6524,8 @@ fn a_grouped_lists_bind_is_handed_the_DATA_index_not_the_table_row() {
             let b: list::List = a.set_count(5 as usize);
             let c: list::List = b.set_row_bind(gb_bind, ctx: 0 as *u8);
             let d: list::List = c.set_group_count(2 as usize);
-            let _e: list::List = d.set_group(g_size, g_header, ctx: 0 as *u8);
+            let e: list::List = d.set_group_size(g_size, size_ctx: 0 as *u8);
+            let _f: list::List = e.set_group_header(g_header, header_ctx: 0 as *u8);
         }
         option::Option[list::List]::None => { assert false; }
     }
@@ -6513,7 +6570,8 @@ fn a_uniform_grouped_list_does_not_give_every_row_the_HEADERS_height() {
             let a: list::List = x.set_row(g_row, ctx: 0 as *u8);
             let b: list::List = a.set_count(5 as usize);
             let d: list::List = b.set_group_count(2 as usize);
-            let _e: list::List = d.set_group(g_size, g_header, ctx: 0 as *u8);
+            let e: list::List = d.set_group_size(g_size, size_ctx: 0 as *u8);
+            let _f: list::List = e.set_group_header(g_header, header_ctx: 0 as *u8);
         }
         option::Option[list::List]::None => { assert false; }
     }
@@ -6550,7 +6608,8 @@ fn a_grouped_lists_row_bind_never_runs_on_a_HEADER() {
             let b: list::List = a.set_count(5 as usize);
             let c: list::List = b.set_row_bind(gb_bind, ctx: 0 as *u8);
             let d: list::List = c.set_group_count(2 as usize);
-            let _e: list::List = d.set_group(g_size, g_header, ctx: 0 as *u8);
+            let e: list::List = d.set_group_size(g_size, size_ctx: 0 as *u8);
+            let _f: list::List = e.set_group_header(g_header, header_ctx: 0 as *u8);
         }
         option::Option[list::List]::None => { assert false; }
     }
@@ -6582,7 +6641,8 @@ fn a_lists_selection_reads_back_the_data_index() {
             let a: list::List = x.set_row(g_row, ctx: 0 as *u8);
             let b: list::List = a.set_count(5 as usize);
             let d: list::List = b.set_group_count(2 as usize);
-            let _e: list::List = d.set_group(g_size, g_header, ctx: 0 as *u8);
+            let e: list::List = d.set_group_size(g_size, size_ctx: 0 as *u8);
+            let _f: list::List = e.set_group_header(g_header, header_ctx: 0 as *u8);
         }
         option::Option[list::List]::None => { assert false; }
     }
@@ -7081,7 +7141,8 @@ fn without_mix_groups_a_row_stays_in_the_group_it_started_in() {
             let a: collection::Collection = x.set_row(g_row, ctx: 0 as *u8);
             let b: collection::Collection = a.set_count(5 as usize);
             let d: collection::Collection = b.set_group_count(2 as usize);
-            let _e: collection::Collection = d.set_group(g_size, g_header, ctx: 0 as *u8);
+            let e: collection::Collection = d.set_group_size(g_size, size_ctx: 0 as *u8);
+            let _f: collection::Collection = e.set_group_header(g_header, header_ctx: 0 as *u8);
         }
         option::Option[collection::Collection]::None => { assert false; }
     }

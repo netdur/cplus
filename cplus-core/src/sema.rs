@@ -2711,10 +2711,31 @@ impl SemaCx<'_> {
     /// `view_release` — where the single pointer is the thing to free, not a
     /// context, and warning on those would be noise that teaches the reader
     /// to ignore the lint.
+    /// The arity floor has ONE exception, and it is decided by the RETURN
+    /// type. A release hook answers nothing — it is handed a pointer and frees
+    /// it — so `fn(*u8)` returning unit stays excluded, which is the whole
+    /// point of the floor. A bare `fn(*u8)` that returns a VALUE is not a
+    /// release hook and cannot be one: it is asked a question about the
+    /// context it was given. `is_enabled: fn(*u8) -> bool` and `title_of:
+    /// fn(*u8) -> Text` on `MenuItem::new` are exactly that shape, and so are
+    /// `should_close` on `open_window` and `enabled_fn` on
+    /// `install_menu_validation` — four predicates and a getter that could
+    /// never receive a bound method, none of which the floor let the lint see.
+    ///
+    /// What this still misses, stated so nobody re-derives it: a one-parameter
+    /// handler that returns UNIT and is nonetheless a handler — `will_close`
+    /// next to `should_close`. Telling it from a release hook needs the
+    /// parameter's NAME, and name-based intent inference is not something this
+    /// compiler does.
     fn is_handler_shaped(t: &crate::ast::Type) -> bool {
         match &t.kind {
-            crate::ast::TypeKind::FnPtr { params, .. } => {
-                params.len() >= 2 && params.last().is_some_and(Self::is_raw_u8)
+            crate::ast::TypeKind::FnPtr {
+                params, return_type, ..
+            } => {
+                if !params.last().is_some_and(Self::is_raw_u8) {
+                    return false;
+                }
+                params.len() >= 2 || return_type.is_some()
             }
             _ => false,
         }
@@ -6008,6 +6029,28 @@ impl SemaCx<'_> {
                 continue;
             };
             self.current_file = item.origin_file.clone();
+            // W0824/W0825 on METHODS. The lint ran only from `check_function`,
+            // which walks `ItemKind::Function` — free functions — so in the
+            // whole history of the check it had never looked at a single
+            // method. Every handler-taking method in the tree was invisible to
+            // it, which is why `list::set_group` and `collection::set_group`
+            // shipped taking two handlers and offering one shared `ctx:`: at
+            // most one of them could ever receive a bound method, and nothing
+            // said so. The generated controls are correct because the
+            // GENERATOR follows the convention, not because anything enforced
+            // it — so the hand-written signatures were the ones that drifted.
+            //
+            // An INTERFACE impl is skipped: its signature is dictated by the
+            // interface declaration, so the impl's author cannot act on the
+            // advice. Same reasoning as the `span_is_in_local_package` guard
+            // inside the lint itself.
+            if b.interface_name.is_none() {
+                for m in &b.methods {
+                    if !m.is_declaration {
+                        self.check_handler_ctx_slots(&m.params);
+                    }
+                }
+            }
             // Slice 4C: per-item context. Methods inherit their impl
             // block's origin_file — every impl block lives in the same
             // file as its type (enforced by the resolver).
@@ -22027,6 +22070,94 @@ mod tests {
     // server past 4 GB in ~2.5 s — with no diagnostic, because
     // `INSTANTIATION_LIMIT` counts instantiations and this exhausts memory
     // inside a couple of dozen of them.
+
+    // ---- W0824: the ctx-slot lint, on METHODS and on one-param predicates ----
+
+    // The lint ran only from `check_function`, which walks free functions, so
+    // it had never looked at a method. Both `set_group`s shipped taking two
+    // handlers and offering one shared `ctx:` because of it.
+    #[test]
+    fn w0824_fires_on_an_impl_method_not_only_a_free_fn() {
+        let src = "struct S { v: i32 }\n\
+                   impl S {\n\
+                       fn set_group(this, size: fn(usize, *u8) -> usize,\n\
+                                    header: fn(usize, *u8) -> i32,\n\
+                                    ctx: *u8 = 0 as *u8) { return; }\n\
+                   }\n";
+        let ds = check_src(src);
+        assert!(
+            codes_of(&ds).contains(&"W0824"),
+            "a method's unslotted handler must warn, got: {:?}",
+            codes_of(&ds)
+        );
+    }
+
+    // The adjacent slot still silences it, on a method as on a free fn.
+    #[test]
+    fn w0824_is_silent_when_a_method_slots_every_handler() {
+        let src = "struct S { v: i32 }\n\
+                   impl S {\n\
+                       fn set_group(this, size: fn(usize, *u8) -> usize,\n\
+                                    size_ctx: *u8 = 0 as *u8,\n\
+                                    header: fn(usize, *u8) -> i32,\n\
+                                    header_ctx: *u8 = 0 as *u8) { return; }\n\
+                   }\n";
+        let ds = check_src(src);
+        assert!(
+            !codes_of(&ds).contains(&"W0824"),
+            "one slot per handler must silence the lint, got: {:?}",
+            codes_of(&ds)
+        );
+    }
+
+    // An INTERFACE impl cannot change its own signature — the interface
+    // declares it — so warning there is advice its reader cannot take.
+    #[test]
+    fn w0824_is_silent_on_an_interface_impl() {
+        let src = "interface Sink { fn take_it(ref this, f: fn(usize, *u8) -> usize); }\n\
+                   struct S { v: i32 }\n\
+                   impl S: Sink { fn take_it(ref this, f: fn(usize, *u8) -> usize) { return; } }\n";
+        let ds = check_src(src);
+        assert!(
+            !codes_of(&ds).contains(&"W0824"),
+            "an interface impl's signature is not its author's to change, got: {:?}",
+            codes_of(&ds)
+        );
+    }
+
+    // The arity floor exists so release hooks stay quiet. A `fn(*u8)` that
+    // RETURNS something is not a release hook and never can be — it is asked a
+    // question about the context it was handed. `is_enabled: fn(*u8) -> bool`
+    // is that shape, and the floor hid four of them.
+    #[test]
+    fn w0824_fires_on_a_one_param_handler_that_returns_a_value() {
+        let src = "struct S { v: i32 }\n\
+                   impl S {\n\
+                       fn add(this, is_enabled: fn(*u8) -> bool) { return; }\n\
+                   }\n";
+        let ds = check_src(src);
+        assert!(
+            codes_of(&ds).contains(&"W0824"),
+            "a one-param PREDICATE must warn, got: {:?}",
+            codes_of(&ds)
+        );
+    }
+
+    // And the floor still holds for the shape it was written for: a release
+    // hook answers nothing, so `fn(*u8)` returning unit stays excluded.
+    #[test]
+    fn w0824_stays_silent_on_a_unit_returning_release_hook() {
+        let src = "struct S { v: i32 }\n\
+                   impl S {\n\
+                       fn own(this, release: fn(*u8)) { return; }\n\
+                   }\n";
+        let ds = check_src(src);
+        assert!(
+            !codes_of(&ds).contains(&"W0824"),
+            "a release hook must stay quiet, got: {:?}",
+            codes_of(&ds)
+        );
+    }
 
     // ---- OBS.1: `#[watch]` hook existence + signature ----
 

@@ -131,7 +131,7 @@ shared band every element carries.
 | `set_count` / `count()` | usize | **facet's own** |
 | `set_row(_:ctx:)` / `build_row(at:)` | fn(usize, *u8) -> Node | **facet's own** |
 | `set_group_count` / `group_count()` | usize | **facet's own** |
-| `set_group(size:header:ctx:)` / `group_size(at:)` / `build_group_header(at:)` | **facet's own** |
+| `set_group_size(size:size_ctx:)` / `set_group_header(header:header_ctx:)` / `group_size(at:)` / `build_group_header(at:)` | **facet's own** |
 | `set_selected_index` / `selected_index()` | i64, -1 = none | **facet's own** |
 | `reorder_from()` / `reorder_to()` | i64, read-only | **facet's own** |
 
@@ -264,7 +264,7 @@ shared band every element carries.
 | `set_count` / `count()` | usize | **facet's own** |
 | `set_row(_:ctx:)` / `build_row(at:)` | fn(usize, *u8) -> Node | **facet's own** |
 | `set_group_count` / `group_count()` | usize | **facet's own** |
-| `set_group(size:header:ctx:)` / `group_size(at:)` / `build_group_header(at:)` | **facet's own** |
+| `set_group_size(size:size_ctx:)` / `set_group_header(header:header_ctx:)` / `group_size(at:)` / `build_group_header(at:)` | **facet's own** |
 | `set_selected_index` / `selected_index()` | i64, -1 = none | **facet's own** |
 | `reorder_from()` / `reorder_to()` | i64, read-only | **facet's own** |
 

@@ -3697,8 +3697,8 @@ fn materialise_collection(n: *core::Node) {
     // rewrite of one.
     if { (*p).groupable_items_view.is_grouped } && { (*p).group_count } > (0 as i64) {
         fill_groups(n, { (*p).group_count },
-                    { (*p).group_size }, { (*p).group_ctx },
-                    { (*p).group_header }, { (*p).group_ctx },
+                    { (*p).group_size }, { (*p).group_size_ctx },
+                    { (*p).group_header }, { (*p).group_header_ctx },
                     { (*p).row }, { (*p).row_ctx });
         return;
     }
@@ -3751,7 +3751,7 @@ fn expected_children(n: *core::Node, p: *props::CollectionProps) -> usize {
     var total: usize = { (*p).group_count } as usize;
     var g: i64 = 0 as i64;
     while g < { (*p).group_count } {
-        total = total +% size(g as usize, { (*p).group_ctx });
+        total = total +% size(g as usize, { (*p).group_size_ctx });
         g = g +% (1 as i64);
     }
     return total;
@@ -3798,7 +3798,7 @@ fn data_index_of(n: *core::Node, child: i64) -> i64 {
     while g < { (*p).group_count } {
         if at == child { return -1 as i64; }              // the header itself
         at = at +% (1 as i64);
-        let rows: i64 = size(g as usize, { (*p).group_ctx }) as i64;
+        let rows: i64 = size(g as usize, { (*p).group_size_ctx }) as i64;
         var k: i64 = 0 as i64;
         while k < rows {
             if at == child { return flat; }
@@ -3908,7 +3908,7 @@ fn group_of(n: *core::Node, child: i64) -> i64 {
     var at: i64 = 0 as i64;
     var g: i64 = 0 as i64;
     while g < { (*p).group_count } {
-        let rows: i64 = size(g as usize, { (*p).group_ctx }) as i64;
+        let rows: i64 = size(g as usize, { (*p).group_size_ctx }) as i64;
         if child >= at && child <= (at +% rows) { return g; }
         at = at +% rows +% (1 as i64);
         g = g +% (1 as i64);

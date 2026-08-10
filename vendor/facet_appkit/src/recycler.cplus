@@ -138,8 +138,9 @@ struct RowSource {
     // `groups == 0` means ungrouped and the translation is the identity.
     groups: i64,
     group_size: fn(usize, *u8) -> usize,
+    opaque group_size_ctx: *u8,
     group_header: fn(usize, *u8) -> core::Node,
-    opaque group_ctx: *u8,
+    opaque group_header_ctx: *u8,
 }
 
 // A TABLE row back to what it shows. Negative is a header: `-(g+1)`, because 0
@@ -154,7 +155,7 @@ fn resolve_row(s: *RowSource, row: i64) -> i64 {
     while g < { (*s).groups } {
         if at == row { return -(g +% (1 as i64)); }
         at = at +% (1 as i64);
-        let rows: i64 = size(g as usize, { (*s).group_ctx }) as i64;
+        let rows: i64 = size(g as usize, { (*s).group_size_ctx }) as i64;
         var k: i64 = 0 as i64;
         while k < rows {
             if at == row { return flat; }
@@ -209,7 +210,7 @@ fn table_row_count(s: *RowSource) -> i64 {
     var total: i64 = { (*s).groups };
     var g: i64 = 0 as i64;
     while g < { (*s).groups } {
-        total = total +% (size(g as usize, { (*s).group_ctx }) as i64);
+        total = total +% (size(g as usize, { (*s).group_size_ctx }) as i64);
         g = g +% (1 as i64);
     }
     return total;
@@ -268,7 +269,7 @@ fn build_row(s: *RowSource, i: i64) -> core::Node {
     let at: i64 = resolve_row(s, i);
     if at < (0 as i64) {
         let h: fn(usize, *u8) -> core::Node = { (*s).group_header };
-        return h((-at -% (1 as i64)) as usize, { (*s).group_ctx });
+        return h((-at -% (1 as i64)) as usize, { (*s).group_header_ctx });
     }
     let f: fn(usize, *u8) -> core::Node = { (*s).row };
     return f(at as usize, { (*s).row_ctx });
@@ -679,7 +680,8 @@ fn apply_recycling_list(v: *u8, n: *core::Node, dirty: u64) {
             groups: 0 as i64,
             group_size: props::no_group_size,
             group_header: props::no_group_header,
-            group_ctx: 0 as *u8,
+            group_size_ctx: 0 as *u8,
+            group_header_ctx: 0 as *u8,
         }) {
             option::Option[box::Box[RowSource]]::Some(b) => {
                 s = { b.into_raw() } as *RowSource;
@@ -728,7 +730,8 @@ fn apply_recycling_list(v: *u8, n: *core::Node, dirty: u64) {
         else { { (*s).groups = 0 as i64 }; }
         { (*s).group_size = { (*p).group_size } };
         { (*s).group_header = { (*p).group_header } };
-        { (*s).group_ctx = { (*p).group_ctx } };
+        { (*s).group_size_ctx = { (*p).group_size_ctx } };
+        { (*s).group_header_ctx = { (*p).group_header_ctx } };
     }
     let rh: i64 = { (*p).row_height };
     if rh > (0 as i64) { { (*s).fixed_height = rh as f64 }; }

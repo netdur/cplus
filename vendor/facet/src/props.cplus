@@ -616,8 +616,9 @@ struct CollectionProps {
     bind: fn(usize, *flex::Node, *u8),    // facet — writes row `i` INTO an existing row, for recycling
     group_count: i64,    // facet — how many groups, when is_grouped
     group_size: fn(usize, *u8) -> usize,    // facet — how many rows group `g` holds
+    opaque group_size_ctx: *u8,
     group_header: fn(usize, *u8) -> flex::Node,    // facet — builds the header row for group `g`
-    opaque group_ctx: *u8,
+    opaque group_header_ctx: *u8,
     selected_index: i64,    // facet — which row is selected, or -1 for none
     reorder_from: i64,    // facet — the row a completed reorder moved, or -1
     reorder_to: i64,    // facet — where it moved to, or -1
@@ -637,8 +638,9 @@ impl CollectionProps {
             bind: no_bind,
             group_count: 0 as i64,
             group_size: no_group_size,
+            group_size_ctx: 0 as *u8,
             group_header: no_group_header,
-            group_ctx: 0 as *u8,
+            group_header_ctx: 0 as *u8,
             selected_index: -1 as i64,
             reorder_from: -1 as i64,
             reorder_to: -1 as i64,
@@ -1078,8 +1080,9 @@ struct ListProps {
     bind: fn(usize, *flex::Node, *u8),    // facet — writes row `i` INTO an existing row, for recycling
     group_count: i64,    // facet — how many groups, when is_grouped
     group_size: fn(usize, *u8) -> usize,    // facet — how many rows group `g` holds
+    opaque group_size_ctx: *u8,
     group_header: fn(usize, *u8) -> flex::Node,    // facet — builds the header row for group `g`
-    opaque group_ctx: *u8,
+    opaque group_header_ctx: *u8,
     selected_index: i64,    // facet — which row is selected, or -1 for none
     reorder_from: i64,    // facet — the row a completed reorder moved, or -1
     reorder_to: i64,    // facet — where it moved to, or -1
@@ -1119,8 +1122,9 @@ impl ListProps {
             bind: no_bind,
             group_count: 0 as i64,
             group_size: no_group_size,
+            group_size_ctx: 0 as *u8,
             group_header: no_group_header,
-            group_ctx: 0 as *u8,
+            group_header_ctx: 0 as *u8,
             selected_index: -1 as i64,
             reorder_from: -1 as i64,
             reorder_to: -1 as i64,

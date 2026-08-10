@@ -173,11 +173,16 @@ fn make_shell_window(take chrome: Chrome) -> ak::Window {
 // One of these per open window, heap-allocated and pinned to the NSWindow.
 // `root` is what ties an AppKit callback back to a facet tree.
 
+// ONE CONTEXT PER HOOK. They shared one `ctx`, which is right only while both
+// answers come from the same object — and a shared slot also meant neither
+// hook could take a bound method, because a receiver is read from the `*u8`
+// immediately after its own handler and `ctx` sat before both of them.
 struct WindowHost {
     opaque root: *core::Node,
     should_close: fn(*u8) -> bool,
+    opaque should_close_ctx: *u8,
     will_close: fn(*u8),
-    opaque ctx: *u8,
+    opaque will_close_ctx: *u8,
     delegate: ak::WindowDelegate,
 }
 
@@ -197,7 +202,7 @@ fn appkit_should_close(user: *u8, win_ptr: *u8) -> i8 {
     let h: *WindowHost = user as *WindowHost;
     let f: fn(*u8) -> bool = { (*h).should_close };
     if f == (0 as fn(*u8) -> bool) { return 1 as i8; }
-    if f({ (*h).ctx }) { return 1 as i8; }
+    if f({ (*h).should_close_ctx }) { return 1 as i8; }
     return 0 as i8;
 }
 
@@ -205,7 +210,7 @@ fn appkit_will_close(user: *u8, notif: *u8) {
     if user == (0 as *u8) { return; }
     let h: *WindowHost = user as *WindowHost;
     let f: fn(*u8) = { (*h).will_close };
-    if f != (0 as fn(*u8)) { f({ (*h).ctx }); }
+    if f != (0 as fn(*u8)) { f({ (*h).will_close_ctx }); }
     // Out of the app's window list, and the tree detaches — the same path an
     // explicit unmount takes, so on_detach handlers fire exactly once.
     let root: *core::Node = { (*h).root };
@@ -229,13 +234,15 @@ fn appkit_did_resize(user: *u8, notif: *u8) {
     return;
 }
 
-fn install_window_host(win: ak::Window, root: *core::Node, ctx: *u8,
-                       should_close: fn(*u8) -> bool, will_close: fn(*u8)) {
+fn install_window_host(win: ak::Window, root: *core::Node,
+                       should_close: fn(*u8) -> bool, should_close_ctx: *u8,
+                       will_close: fn(*u8), will_close_ctx: *u8) {
     var h: WindowHost = WindowHost {
         root: root,
         should_close: should_close,
+        should_close_ctx: should_close_ctx,
         will_close: will_close,
-        ctx: ctx,
+        will_close_ctx: will_close_ctx,
         delegate: ak::WindowDelegate_new(0 as *u8),
     };
     match box::new::[WindowHost](h) {
@@ -266,9 +273,10 @@ fn install_window_host(win: ak::Window, root: *core::Node, ctx: *u8,
 // The root Node is NOT owned here — the caller (a facade, a screen loop) holds
 // it for the window's life, because facet's cursors point into it.
 fn open_window(root: *core::Node, take chrome: Chrome,
-               ctx: *u8 = 0 as *u8,
                should_close: fn(*u8) -> bool = default_should_close,
-               will_close: fn(*u8) = default_will_close) -> *u8 {
+               should_close_ctx: *u8 = 0 as *u8,
+               will_close: fn(*u8) = default_will_close,
+               will_close_ctx: *u8 = 0 as *u8) -> *u8 {
     if root == (0 as *core::Node) { return 0 as *u8; }
     let c: Chrome = chrome;
     let width: f64 = c.width;
@@ -293,7 +301,8 @@ fn open_window(root: *core::Node, take chrome: Chrome,
     let mounted: bool = mount::mount(root);
     app::set_window_native(root, win.raw());
     OPEN_WINDOWS = OPEN_WINDOWS +% (1 as i64);
-    install_window_host(win, root, ctx, should_close, will_close);
+    install_window_host(win, root, should_close, should_close_ctx,
+                        will_close, will_close_ctx);
 
     // The root's own view was inserted nowhere by the walk — the facade puts
     // it in the window, which is here.
@@ -616,16 +625,19 @@ fn app_appearance() -> vocab::Appearance {
 // it a target to validate would take that away.
 fn menu_enabled_key() -> *u8 { return 29012 as *u8; }
 fn menu_title_key() -> *u8 { return 29013 as *u8; }
-fn menu_vctx_key() -> *u8 { return 29014 as *u8; }
+// One stashed context PER handler. It was one shared key, read by both — which
+// is only right while the two answers come from the same object, and says so
+// nowhere.
+fn menu_ectx_key() -> *u8 { return 29014 as *u8; }
+fn menu_tctx_key() -> *u8 { return 29015 as *u8; }
 static MENU_VALIDATION_READY: bool = false;
 
 fn imp_validate_menu_item(self_obj: *u8, cmd: *u8, item: *u8) -> i8 {
-    let ctx: *u8 = { synth::get_associated(self_obj, menu_vctx_key()) };
     // The title first: a menu item may rename itself and still be disabled.
     let tf: *u8 = { synth::get_associated(self_obj, menu_title_key()) };
     if tf != (0 as *u8) && item != (0 as *u8) {
         let f: fn(*u8) -> text::Text = { tf as fn(*u8) -> text::Text };
-        let t: text::Text = f(ctx);
+        let t: text::Text = f({ synth::get_associated(self_obj, menu_tctx_key()) });
         if t.view() != "" {
             { rt::msg_void_id(item, rt::sel(#str_ptr("setTitle:\0")), bridge::nsstring(t.view())) };
         }
@@ -633,12 +645,14 @@ fn imp_validate_menu_item(self_obj: *u8, cmd: *u8, item: *u8) -> i8 {
     let ef: *u8 = { synth::get_associated(self_obj, menu_enabled_key()) };
     if ef == (0 as *u8) { return 1 as i8; }
     let g: fn(*u8) -> bool = { ef as fn(*u8) -> bool };
-    if g(ctx) { return 1 as i8; }
+    if g({ synth::get_associated(self_obj, menu_ectx_key()) }) { return 1 as i8; }
     return 0 as i8;
 }
 
 fn install_menu_validation(item: *u8, enabled_fn: fn(*u8) -> bool,
-                           title_fn: fn(*u8) -> text::Text, ctx: *u8) {
+                           enabled_ctx: *u8,
+                           title_fn: fn(*u8) -> text::Text,
+                           title_ctx: *u8) {
     let target: *u8 = { rt::msg_id(item, rt::sel(#str_ptr("target\0"))) };
     if target == (0 as *u8) { return; }
     if !MENU_VALIDATION_READY {
@@ -649,11 +663,12 @@ fn install_menu_validation(item: *u8, enabled_fn: fn(*u8) -> bool,
     }
     if enabled_fn != (0 as fn(*u8) -> bool) {
         synth::set_associated(target, menu_enabled_key(), { enabled_fn as *u8 });
+        synth::set_associated(target, menu_ectx_key(), enabled_ctx);
     }
     if title_fn != (0 as fn(*u8) -> text::Text) {
         synth::set_associated(target, menu_title_key(), { title_fn as *u8 });
+        synth::set_associated(target, menu_tctx_key(), title_ctx);
     }
-    synth::set_associated(target, menu_vctx_key(), ctx);
     return;
 }
 
@@ -725,7 +740,8 @@ fn new_menu_item(it: *screen::MenuItem) -> *u8 {
     let enabled_fn: fn(*u8) -> bool = { (*it).is_enabled };
     let title_fn: fn(*u8) -> text::Text = { (*it).title_of };
     if enabled_fn != (0 as fn(*u8) -> bool) || title_fn != (0 as fn(*u8) -> text::Text) {
-        install_menu_validation(item, enabled_fn, title_fn, { (*it).click_ctx });
+        install_menu_validation(item, enabled_fn, { (*it).enabled_ctx },
+                                title_fn, { (*it).title_ctx });
     }
     return item;
 }

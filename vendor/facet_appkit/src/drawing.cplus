@@ -147,9 +147,9 @@ fn canvas_draw_rect_imp(self_obj: *u8, cmd: *u8, dirty: rt::Rect) {
         scale_of(self_obj));
 
     // The application draws. It appends commands and touches nothing else.
-    let f: fn(*u8, *vocab::Canvas, vocab::Rect) = d.draw;
-    f(d.ctx, #addr_of(surface),
-      vocab::Rect::of(dirty.x, dirty.y, dirty.w, dirty.h));
+    let f: fn(*vocab::Canvas, vocab::Rect, *u8) = d.draw;
+    f(#addr_of(surface),
+      vocab::Rect::of(dirty.x, dirty.y, dirty.w, dirty.h), d.ctx);
 
     replay(ctx, #addr_of(surface));
     return;

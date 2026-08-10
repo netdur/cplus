@@ -1804,11 +1804,18 @@ impl Canvas {
 // What an application writes to fill a `canvas`: a callback given the surface
 // to draw into and the rect that needs redrawing.
 // IDrawable.Draw(ICanvas, RectF).
-struct Drawable { draw: fn(*u8, *Canvas, Rect), opaque ctx: *u8 }
-fn draw_none(ctx: *u8, into: *Canvas, dirty: Rect) { return; }
+//
+// THE CONTEXT IS LAST, and that is not cosmetic. A bound method is a function
+// and a receiver; the receiver's address is written into the `*u8` slot beside
+// the handler and read back out of the fn's LAST parameter. This took its ctx
+// FIRST, so `Drawable::of(this.draw_chart)` could never work however correct
+// the `ctx:` beside it looked — W0825 is the diagnostic that says so, and it
+// was firing on this very declaration.
+struct Drawable { draw: fn(*Canvas, Rect, *u8), opaque ctx: *u8 }
+fn draw_none(into: *Canvas, dirty: Rect, ctx: *u8) { return; }
 impl Drawable {
     fn none() -> Drawable { return Drawable { draw: draw_none, ctx: 0 as *u8 }; }
-    fn of(draw: fn(*u8, *Canvas, Rect), ctx: *u8 = 0 as *u8) -> Drawable {
+    fn of(draw: fn(*Canvas, Rect, *u8), ctx: *u8 = 0 as *u8) -> Drawable {
         return Drawable { draw: draw, ctx: ctx };
     }
     fn is_none(this) -> bool { return this.draw == draw_none; }
@@ -2049,9 +2056,10 @@ ROW_SOURCE_FIELDS = [
     ("group_count", "i64", "0 as i64", "facet — how many groups, when is_grouped"),
     ("group_size", "fn(usize, *u8) -> usize", "no_group_size",
      "facet — how many rows group `g` holds"),
+    ("opaque group_size_ctx", "*u8", "0 as *u8", None),
     ("group_header", "fn(usize, *u8) -> flex::Node", "no_group_header",
      "facet — builds the header row for group `g`"),
-    ("opaque group_ctx", "*u8", "0 as *u8", None),
+    ("opaque group_header_ctx", "*u8", "0 as *u8", None),
     # `SelectionMode` had the same shape of hole: a switch with nothing to
     # switch. The ledger carries SelectedItem/SelectedItems, both dropped as MODEL
     # ("the selection is an index") — and then no index was declared. -1 is
@@ -2813,31 +2821,56 @@ def emit_control(row_type, merged):
         o.append(f"        let p: *props::{props} = this._props();\n")
         o.append(f"        if p == (0 as *props::{props}) {{ return 0 as usize; }}\n")
         o.append("        return { (*p).group_count } as usize;\n    }\n")
-        o.append("\n    // Both halves in one call: a group with a header and no size holds\n")
-        o.append("    // no rows, and one with a size and no header is not visibly a group.\n")
-        o.append("    // Naming half of it is a description that cannot render.\n")
-        o.append(f"    fn set_group(this, size: fn(usize, *u8) -> usize,\n")
-        o.append(f"                 header: fn(usize, *u8) -> core::Node,\n")
-        o.append(f"                 ctx: *u8 = 0 as *u8) -> {cur} {{\n")
+        o.append("\n    // TWO CALLS, one per half, each with its own context slot.\n")
+        o.append("    //\n")
+        o.append("    // They were one call — `set_group(size:header:ctx:)` — on the\n")
+        o.append("    // argument that naming half of a group is a description that cannot\n")
+        o.append("    // render. That argument did not hold: `set_group_count` was always\n")
+        o.append("    // its own call, so a half-named group was already reachable, and the\n")
+        o.append("    // defaults answer it cleanly (no size means no rows, which renders as\n")
+        o.append("    // an ungrouped sequence).\n")
+        o.append("    //\n")
+        o.append("    // What it cost was real. A bound method is a function AND a receiver,\n")
+        o.append("    // and the receiver goes in the `*u8` IMMEDIATELY AFTER its handler —\n")
+        o.append("    // so one shared slot meant only the handler adjacent to it could ever\n")
+        o.append("    // be one. `header` bound, `size` did not, and which one was an\n")
+        o.append("    // accident of parameter order. An application grouping a list had to\n")
+        o.append("    // write half of one description as a component method and the other\n")
+        o.append("    // half as a free function.\n")
+        o.append("    //\n")
+        o.append("    // The ledger separates them for a reason of its own: a group's SIZE\n")
+        o.append("    // is intrinsic to the grouped ItemsSource (a group is a collection;\n")
+        o.append("    // its count is its own), while the header is a GroupHeaderTemplate.\n")
+        o.append("    // One is data and one is presentation. Bundling them into a single\n")
+        o.append("    // call is what merged the two contexts in the first place.\n")
+        o.append(f"    fn set_group_size(this, size: fn(usize, *u8) -> usize,\n")
+        o.append(f"                      size_ctx: *u8 = 0 as *u8) -> {cur} {{\n")
         o.append(f"        let p: *props::{props} = this._props();\n")
         o.append(f"        if p == (0 as *props::{props}) {{ return this; }}\n")
         o.append("        { (*p).group_size = size };\n")
-        o.append("        { (*p).group_header = header };\n")
-        o.append("        { (*p).group_ctx = ctx };\n")
+        o.append("        { (*p).group_size_ctx = size_ctx };\n")
         o.append("        core::touch(this._p, P_GROUP);\n")
         o.append("        return this;\n    }\n")
-        o.append("\n    // How many rows group `at` holds. 0 until set_group names a size.\n")
+        o.append(f"\n    fn set_group_header(this, header: fn(usize, *u8) -> core::Node,\n")
+        o.append(f"                        header_ctx: *u8 = 0 as *u8) -> {cur} {{\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return this; }}\n")
+        o.append("        { (*p).group_header = header };\n")
+        o.append("        { (*p).group_header_ctx = header_ctx };\n")
+        o.append("        core::touch(this._p, P_GROUP);\n")
+        o.append("        return this;\n    }\n")
+        o.append("\n    // How many rows group `at` holds. 0 until a size is named.\n")
         o.append("    fn group_size(this, at: usize) -> usize {\n")
         o.append(f"        let p: *props::{props} = this._props();\n")
         o.append(f"        if p == (0 as *props::{props}) {{ return 0 as usize; }}\n")
         o.append("        let f: fn(usize, *u8) -> usize = { (*p).group_size };\n")
-        o.append("        return f(at, { (*p).group_ctx });\n    }\n")
-        o.append("\n    // The header row for group `at`. Empty until set_group names one.\n")
+        o.append("        return f(at, { (*p).group_size_ctx });\n    }\n")
+        o.append("\n    // The header row for group `at`. Empty until one is named.\n")
         o.append("    fn build_group_header(this, at: usize) -> core::Node {\n")
         o.append(f"        let p: *props::{props} = this._props();\n")
         o.append(f"        if p == (0 as *props::{props}) {{ return flex::Node::new(); }}\n")
         o.append("        let f: fn(usize, *u8) -> core::Node = { (*p).group_header };\n")
-        o.append("        return f(at, { (*p).group_ctx });\n    }\n")
+        o.append("        return f(at, { (*p).group_header_ctx });\n    }\n")
         o.append("\n    // ---- the selection -------------------------------------------\n")
         o.append("    // `selection_mode` says whether a row CAN be picked; this says\n")
         o.append("    // which one was. The ledger carries SelectedItem and Stage 1 dropped it\n")
@@ -3146,7 +3179,8 @@ def emit_manifest(rows_by_control):
             o.append("| `set_row(_:ctx:)` / `build_row(at:)` | fn(usize, *u8) -> Node "
                      "| **facet's own** |\n")
             o.append("| `set_group_count` / `group_count()` | usize | **facet's own** |\n")
-            o.append("| `set_group(size:header:ctx:)` / `group_size(at:)` / "
+            o.append("| `set_group_size(size:size_ctx:)` / "
+                     "`set_group_header(header:header_ctx:)` / `group_size(at:)` / "
                      "`build_group_header(at:)` | **facet's own** |\n")
             o.append("| `set_selected_index` / `selected_index()` | i64, -1 = none "
                      "| **facet's own** |\n")

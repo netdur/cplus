@@ -67,10 +67,35 @@ MODEL and never declared the imperative replacement. facet now does, in the
 shape `count` + `row` already set:
 
 ```
-set_group_count(usize)                       how many groups
-set_group(size:header:ctx:)                  how big each is, and its header
-set_selected_index(i64)  / selected_index()  which row, or -1
+set_group_count(usize)                            how many groups
+set_group_size(size:size_ctx:)                    how big each one is
+set_group_header(header:header_ctx:)              what its header looks like
+set_selected_index(i64)  / selected_index()       which row, or -1
 ```
+
+The size and the header are TWO CALLS, one slot each. They were one
+(`set_group(size:header:ctx:)`) on the argument that half a group description
+cannot render — but `set_group_count` was always its own call, so a half-named
+group was already reachable, and the defaults answer it (no size means no rows,
+which renders as an ungrouped sequence). What the single shared `ctx:` did cost
+was real: a bound method's receiver is read from the `*u8` immediately after
+its own handler, so only the handler adjacent to that slot could ever be one.
+`header` bound and `size` did not, decided by nothing but parameter order.
+
+It also put the two halves back where the ledger has them. A group's SIZE is
+intrinsic to the grouped ItemsSource — a group is a collection and its count is
+its own — while the header is a GroupHeaderTemplate. One is data, one is
+presentation; bundling them into a single call is what merged their contexts.
+
+**`GroupFooterTemplate` is NOT adopted, and that is a decision.** The ledger
+carries a footer per group beside the header, and facet takes only the header.
+A group footer is a running total or a "3 more" line — content that belongs to
+the group's DATA, and facet's grouping is imperative precisely because the
+grouped ItemsSource was dropped as MODEL: there is no group object for a footer
+to be about. The whole-sequence `Footer` / `FooterTemplate` IS adopted
+(`set_footer` on `list` and `carousel`), because that one is about the control
+rather than about a group. Revisit this if a model tier ever lands; until then
+a footer row is a row, and `row(i)` already builds those.
 
 `row` is UNCHANGED and that is the point — a group is a run of the same flat
 sequence, so `row(i)` still means row `i` of the whole and grouping an existing

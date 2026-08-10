@@ -53,8 +53,14 @@ struct MenuItem {
     //
     // `title_of` is the half a bool cannot express: `Close "editor_tabs.cplus"`
     // rather than `Close`. Returning an empty Text keeps the built title.
+    // ONE SLOT PER HANDLER. All three used to read `click_ctx`, which works
+    // only while the three answers come from the same object — and the shared
+    // slot also meant a bound method could reach `on_click` alone, because a
+    // receiver is read from the `*u8` immediately after its own handler.
     is_enabled: fn(*u8) -> bool,
+    opaque enabled_ctx: *u8,
     title_of: fn(*u8) -> text::Text,
+    opaque title_ctx: *u8,
     // A rule between groups of items rather than an item — every other field is
     // ignored except `menu`, which says which group it divides. Once screens
     // append into shared menus, "where does my group begin" needs an answer.
@@ -84,7 +90,9 @@ impl MenuItem {
         on_click: fn(*u8, *u8) = 0 as fn(*u8, *u8),
         ctx: *u8 = 0 as *u8,
         is_enabled: fn(*u8) -> bool = 0 as fn(*u8) -> bool,
+        is_enabled_ctx: *u8 = 0 as *u8,
         title_of: fn(*u8) -> text::Text = 0 as fn(*u8) -> text::Text,
+        title_of_ctx: *u8 = 0 as *u8,
         is_separator: bool = false,
     ) -> MenuItem {
         return MenuItem {
@@ -93,7 +101,9 @@ impl MenuItem {
             key: text::from_str(key),
             action: action,
             is_enabled: is_enabled,
+            enabled_ctx: is_enabled_ctx,
             title_of: title_of,
+            title_ctx: title_of_ctx,
             is_separator: is_separator,
             on_click: on_click,
             click_ctx: ctx,
@@ -145,11 +155,14 @@ impl AppMenu {
         on_click: fn(*u8, *u8) = null_click_fn(),
         ctx: *u8 = 0 as *u8,
         is_enabled: fn(*u8) -> bool = 0 as fn(*u8) -> bool,
+        is_enabled_ctx: *u8 = 0 as *u8,
         title_of: fn(*u8) -> text::Text = 0 as fn(*u8) -> text::Text,
+        title_of_ctx: *u8 = 0 as *u8,
     ) {
         this.items.append(MenuItem::new(menu, title, key: key, action: menu_action_none(),
                                         on_click: on_click, ctx: ctx,
-                                        is_enabled: is_enabled, title_of: title_of));
+                                        is_enabled: is_enabled, is_enabled_ctx: is_enabled_ctx,
+                                        title_of: title_of, title_of_ctx: title_of_ctx));
         return;
     }
 

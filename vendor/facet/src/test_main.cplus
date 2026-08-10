@@ -2811,7 +2811,7 @@ fn a_canvas_carries_its_drawable() {
 // That is the whole argument for recording rather than calling through: a
 // drawing is testable the way a tree is.
 
-fn draw_two_shapes(ctx: *u8, into: *vocab::Canvas, dirty: vocab::Rect) {
+fn draw_two_shapes(into: *vocab::Canvas, dirty: vocab::Rect, ctx: *u8) {
     { (*into).set_fill(vocab::Color::system_red()) };
     { (*into).fill_rect(vocab::Rect::of(1.0f64, 2.0f64, 3.0f64, 4.0f64)) };
     { (*into).set_stroke_width(2.0f64) };
@@ -2825,8 +2825,8 @@ fn a_drawable_records_its_commands_in_order() {
     var c: vocab::Canvas = vocab::Canvas::of(vocab::Size::of(100.0f64, 50.0f64));
     let d: vocab::Drawable = vocab::Drawable::of(draw_two_shapes);
     assert d.is_none() == false;
-    let f: fn(*u8, *vocab::Canvas, vocab::Rect) = d.draw;
-    f(d.ctx, #addr_of(c), vocab::Rect::sized(100.0f64, 50.0f64));
+    let f: fn(*vocab::Canvas, vocab::Rect, *u8) = d.draw;
+    f(#addr_of(c), vocab::Rect::sized(100.0f64, 50.0f64), d.ctx);
 
     assert c.count() == (4 as usize);
     assert c.at(0 as usize).op == vocab::DrawOp::SetFill;

@@ -1517,11 +1517,18 @@ impl Canvas {
 // What an application writes to fill a `canvas`: a callback given the surface
 // to draw into and the rect that needs redrawing.
 // IDrawable.Draw(ICanvas, RectF).
-struct Drawable { draw: fn(*u8, *Canvas, Rect), opaque ctx: *u8 }
-fn draw_none(ctx: *u8, into: *Canvas, dirty: Rect) { return; }
+//
+// THE CONTEXT IS LAST, and that is not cosmetic. A bound method is a function
+// and a receiver; the receiver's address is written into the `*u8` slot beside
+// the handler and read back out of the fn's LAST parameter. This took its ctx
+// FIRST, so `Drawable::of(this.draw_chart)` could never work however correct
+// the `ctx:` beside it looked — W0825 is the diagnostic that says so, and it
+// was firing on this very declaration.
+struct Drawable { draw: fn(*Canvas, Rect, *u8), opaque ctx: *u8 }
+fn draw_none(into: *Canvas, dirty: Rect, ctx: *u8) { return; }
 impl Drawable {
     fn none() -> Drawable { return Drawable { draw: draw_none, ctx: 0 as *u8 }; }
-    fn of(draw: fn(*u8, *Canvas, Rect), ctx: *u8 = 0 as *u8) -> Drawable {
+    fn of(draw: fn(*Canvas, Rect, *u8), ctx: *u8 = 0 as *u8) -> Drawable {
         return Drawable { draw: draw, ctx: ctx };
     }
     fn is_none(this) -> bool { return this.draw == draw_none; }
